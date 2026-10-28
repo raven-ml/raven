@@ -80,6 +80,7 @@ let backtrack p dtype ~trials ~running ~shrink trial last =
     (alpha, (payload, (searching, (first, (n, Nx.add_s j 1l)))))
   in
   let lanes = Nx.shape running in
+  let at = Nx.placement running in
   let _, (payload, (searching, (first, (n, _)))) =
     Rune.iterate
       Nx.Ptree.(
@@ -90,11 +91,12 @@ let backtrack p dtype ~trials ~running ~shrink trial last =
           (Nx.logical_not (Nx.any searching))
           (Nx.greater_equal_s j (Int32.of_int trials)))
       ~f:step
-      ( Nx.ones dtype lanes,
+      ( Nx.ones_at at dtype lanes,
         ( last,
           ( running,
-            ( Nx.full dtype lanes Float.nan,
-              (Nx.zeros Nx.int32 lanes, Nx.scalar Nx.int32 0l) ) ) ) )
+            ( Nx.full_at at dtype lanes Float.nan,
+              (Nx.zeros_at at Nx.int32 lanes, Nx.scalar_at at Nx.int32 0l) ) )
+        ) )
   in
   (payload, Nx.logical_and running (Nx.logical_not searching), n, first)
 
@@ -135,22 +137,23 @@ let armijo ~phi0 ~slope0 =
 
 let c2 = 0.9
 
-type ('p, 'd) wolfe = {
-  alpha : (float, 'd) Nx.t;
-  lo : (float, 'd) Nx.t * ((float, 'd) Nx.t * (float, 'd) Nx.t);
+type ('p, 'q, 'd) wolfe = {
+  alpha : (float, 'q, 'd) Nx.t;
+  lo : (float, 'q, 'd) Nx.t * ((float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t);
   at : 'p;
-  hi : (float, 'd) Nx.t * (float, 'd) Nx.t;
-  zoom : (bool, Nx.bool_elt) Nx.t;
-  searching : (bool, Nx.bool_elt) Nx.t;
-  widths : (float, 'd) Nx.t * (float, 'd) Nx.t;
-  tries : (int32, Nx.int32_elt) Nx.t;
-  trip : (int32, Nx.int32_elt) Nx.t;
+  hi : (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t;
+  zoom : 'd Nx.bool_t;
+  searching : 'd Nx.bool_t;
+  widths : (float, 'q, 'd) Nx.t * (float, 'q, 'd) Nx.t;
+  tries : 'd Nx.int32_t;
+  trip : 'd Nx.int32_t;
 }
 
 let wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin =
   let lanes = Nx.shape running in
-  let zero = Nx.zeros dtype lanes
-  and inf = Nx.full dtype lanes Float.infinity in
+  let at = Nx.placement running in
+  let zero = Nx.zeros_at at dtype lanes
+  and inf = Nx.full_at at dtype lanes Float.infinity in
   let rounding = Nx.mul_s (Nx.abs phi0) (sqrt (Num.eps dtype)) in
   let step s =
     let la, (lphi, lslope) = s.lo and ha, hphi = s.hi in
@@ -285,15 +288,15 @@ let wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin =
       ~f:(fun c -> pack (step (unpack c)))
       (pack
          {
-           alpha = Nx.ones dtype lanes;
+           alpha = Nx.ones_at at dtype lanes;
            lo = (zero, (phi0, slope0));
            at = origin;
            hi = (zero, phi0);
-           zoom = Nx.zeros Nx.bool lanes;
+           zoom = Nx.zeros_like running;
            searching = running;
            widths = (inf, inf);
-           tries = Nx.zeros Nx.int32 lanes;
-           trip = Nx.scalar Nx.int32 0l;
+           tries = Nx.zeros_at at Nx.int32 lanes;
+           trip = Nx.scalar_at at Nx.int32 0l;
          })
     |> unpack
   in
@@ -313,16 +316,16 @@ let wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin =
    status, the evaluations and the count of iterations, which every lane
    shares. *)
 
-type 'd state = {
-  x : (float, 'd) Nx.t;
-  fx : (float, 'd) Nx.t;
-  before : (float, 'd) Nx.t;
-  mapped : (float, 'd) Nx.t;
-  e : (float, 'd) Nx.t;
-  q : (float, 'd) Nx.t;
-  st : (int32, Nx.int32_elt) Nx.t;
-  n : (int32, Nx.int32_elt) Nx.t;
-  k : (int32, Nx.int32_elt) Nx.t;
+type ('q, 'd) state = {
+  x : (float, 'q, 'd) Nx.t;
+  fx : (float, 'q, 'd) Nx.t;
+  before : (float, 'q, 'd) Nx.t;
+  mapped : (float, 'q, 'd) Nx.t;
+  e : (float, 'q, 'd) Nx.t;
+  q : (float, 'q, 'd) Nx.t;
+  st : 'd Nx.int32_t;
+  n : 'd Nx.int32_t;
+  k : 'd Nx.int32_t;
 }
 
 let finite v = every (Nx.isfinite v)
@@ -332,9 +335,10 @@ let along alpha v =
 
 let start x0 fx =
   let lanes = lanes x0 in
+  let at = Nx.beside x0 in
   let st =
     settle
-      (Nx.full Nx.int32 lanes running)
+      (Nx.full_at at Nx.int32 lanes running)
       (Nx.logical_not (finite fx))
       Not_finite
   in
@@ -345,10 +349,10 @@ let start x0 fx =
     before = nan;
     mapped = nan;
     e = Nx.full_like x0 Float.infinity;
-    q = Nx.full (Nx.dtype x0) lanes Float.nan;
+    q = Nx.full_at at (Nx.dtype x0) lanes Float.nan;
     st;
-    n = Nx.ones Nx.int32 lanes;
-    k = Nx.scalar Nx.int32 0l;
+    n = Nx.ones_at at Nx.int32 lanes;
+    k = Nx.scalar_at at Nx.int32 0l;
   }
 
 (* [q] is the contraction of the undamped map over the last step, [|N x − N x'|

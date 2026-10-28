@@ -4,23 +4,23 @@
   ---------------------------------------------------------------------------*)
 
 type status = Converged | Budget_spent | Not_bracketed | Not_finite | Stalled
-type fact = Fact : string * (float, 'b) Nx.t -> fact
-type spent = { used : (int32, Nx.int32_elt) Nx.t; unit : string; budget : int }
+type 'd fact = Fact : string * (float, 'b, 'd) Nx.t -> 'd fact
+type 'd spent = { used : 'd Nx.int32_t; unit : string; budget : int }
 
 (* An answer is its value and error with each lane's status, evaluations and
    budget used, and what its report needs: the entry point [fn], the solve's
    [settings], [fix], the budget's unit and size, and the lanes' facts. *)
-type 'a t = {
+type ('a, 'd) t = {
   fn : string;
   settings : string;
   fix : status -> (string * float) list -> string;
   spent : (string * int) option;
   value : 'a;
   error : 'a;
-  status : (int32, Nx.int32_elt) Nx.t;
-  evaluations : (int32, Nx.int32_elt) Nx.t;
-  used : (int32, Nx.int32_elt) Nx.t;
-  facts : fact list;
+  status : 'd Nx.int32_t;
+  evaluations : 'd Nx.int32_t;
+  used : 'd Nx.int32_t;
+  facts : 'd fact list;
 }
 
 let code = function
@@ -36,7 +36,7 @@ let of_code c = List.find (fun s -> Int32.equal (code s) c) statuses
 let v ~fn ~settings ?spent ~fix ~value ~error ~status ~evaluations ~facts () =
   let used, spent =
     match spent with
-    | Some (s : spent) -> (s.used, Some (s.unit, s.budget))
+    | Some (s : _ spent) -> (s.used, Some (s.unit, s.budget))
     | None -> (Nx.zeros_like status, None)
   in
   { fn; settings; fix; spent; value; error; status; evaluations; used; facts }
@@ -48,19 +48,15 @@ let is st t = Nx.equal_s t.status (code st)
 let ok t = is Converged t
 
 (* The facts as a structure of tensors of any dtype. *)
-let facts =
-  let module M = struct
-    type _ t = fact list
+let walk_facts c l =
+  let open Nx.Ptree.Walk in
+  list
+    (fun c (Fact (name, x)) ->
+      case c name;
+      Fact (name, tensor c x))
+    c l
 
-    let walk c l =
-      let open Nx.Ptree.Walk in
-      list
-        (fun c (Fact (name, x)) ->
-          case c name;
-          Fact (name, tensor c x))
-        c l
-  end in
-  Nx.Ptree.instantiate (module M)
+let facts () = Nx.Ptree.v walk_facts
 
 let reason = function
   | Converged -> "converged"
@@ -108,7 +104,7 @@ let get t =
   let ok = ok t in
   let converged = Nx.sum (Nx.cast Nx.int32 ok) in
   Nx.check
-    Nx.Ptree.(pair tensor (pair tensor (pair tensor (pair tensor facts))))
+    Nx.Ptree.(pair tensor (pair tensor (pair tensor (pair tensor (facts ())))))
     ok
     (t.status, (t.evaluations, (t.used, (converged, t.facts))))
     (fun i (status, (evaluations, (used, (converged, facts)))) ->
@@ -120,21 +116,16 @@ let get t =
              (List.map (fun (Fact (name, x)) -> (name, Nx.item [] x)) facts)));
   t.value
 
-let ptree (type a) (s : a Nx.Ptree.t) : a t Nx.Ptree.t =
-  let module M = struct
-    type nonrec _ t = a t
-
-    let walk c t =
+let ptree s =
+  Nx.Ptree.v (fun c t ->
       let open Nx.Ptree.Walk in
       let value = field c "value" (structure s) t.value in
       let error = field c "error" (structure s) t.error in
       let status = field c "status" tensor t.status in
       let evaluations = field c "evaluations" tensor t.evaluations in
       let used = field c "used" tensor t.used in
-      let facts = field c "report" (structure facts) t.facts in
-      { t with value; error; status; evaluations; used; facts }
-  end in
-  Nx.Ptree.instantiate (module M)
+      let facts = field c "report" walk_facts t.facts in
+      { t with value; error; status; evaluations; used; facts })
 
 let name = function
   | Converged -> "converged"

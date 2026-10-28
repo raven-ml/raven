@@ -26,18 +26,21 @@ type tableau = {
 
 (* An implicit method: an ESDIRK tableau, whose first stage is explicit and
    whose others share the diagonal [gamma], with what its stage solves need. *)
-type ('y, 't) implicit = {
+type ('y, 't, 'd) implicit = {
   gamma : float;
   mass : ('y -> 'y) option;
-  derivative : (float, 't) Nx.t -> 'y -> 'y -> 'y;
+  derivative : (float, 't, 'd) Nx.t -> 'y -> 'y -> 'y;
   linear : 'y Linear.t;
 }
 
-type ('y, 't) meth = { tableau : tableau; implicit : ('y, 't) implicit option }
+type ('y, 't, 'd) meth = {
+  tableau : tableau;
+  implicit : ('y, 't, 'd) implicit option;
+}
 
 (* A method is a [meth]; ['k] names the entry points that take it, [`Formula]
    for a march and [`Embedded] for a solve that controls its steps. *)
-type (-'k, 'y, 't) t = ('y, 't) meth
+type (-'k, 'y, 't, 'd) t = ('y, 't, 'd) meth
 
 let first_same_as_last a b c =
   let s = Array.length b in
@@ -316,14 +319,14 @@ let kvaerno5 ?mass ~linear derivative =
 
 (* Marches *)
 
-type ('y, 't) field = (float, 't) Nx.t -> 'y -> 'y
-type 't time = (float, 't) Nx.t
+type ('y, 't, 'd) field = (float, 't, 'd) Nx.t -> 'y -> 'y
+type ('t, 'd) time = (float, 't, 'd) Nx.t
 
 (* The leaves' dtypes and shapes, which a field's value must keep. *)
 let layout y v =
   ( Nx.Ptree.visits y v,
     Nx.Ptree.fold y
-      (fun _ x acc -> (Nx_dtype.to_string (Nx.dtype x), Nx.shape x) :: acc)
+      (fun _ x acc -> (Nx.Dtype.name (Nx.dtype x), Nx.shape x) :: acc)
       v [] )
 
 let eval fn y f t v =
@@ -362,16 +365,16 @@ let explicit_step fn y m f t h v k0 =
 
 (* Each float leaf's [e / (abs + rel max (|v|, |w|))] as one vector of [dtype],
    then their root mean square in a fixed order. *)
-let error_norm (type t) y tol (dtype : (float, t) Nx.dtype) e v w =
+let error_norm (type t) y tol at (dtype : (float, t) Nx.dtype) e v w =
   let es, _ = Nx.Ptree.flatten y e in
   let vs, _ = Nx.Ptree.flatten y v and ws, _ = Nx.Ptree.flatten y w in
-  let leaf (type a c) (e : (a, c) Nx.t) pv pw =
-    let go (type d) (e : (float, d) Nx.t) =
+  let leaf (type a c) (e : (a, c, 'd) Nx.t) pv pw =
+    let go (type d) (e : (float, d, 'd) Nx.t) =
       let v = Nx.unpack (Nx.dtype e) pv and w = Nx.unpack (Nx.dtype e) pw in
       let r = Tol.ratio tol ~e ~y:(Nx.maximum (Nx.abs v) (Nx.abs w)) in
       [ Nx.reshape [| -1 |] (Nx.cast dtype r) ]
     in
-    match Nx_dtype.kind (Nx.dtype e) with Float -> go e | _ -> []
+    match Nx.Dtype.kind (Nx.dtype e) with Float -> go e | _ -> []
   in
   let rows =
     List.concat
@@ -381,7 +384,7 @@ let error_norm (type t) y tol (dtype : (float, t) Nx.dtype) e v w =
   in
   let flat =
     match rows with
-    | [] -> Nx.zeros dtype [| 0 |]
+    | [] -> Nx.zeros_at at dtype [| 0 |]
     | rows -> Nx.concatenate ~axis:0 rows
   in
   Nx.reshape [||] (Num.rms_rows (Nx.reshape [| 1; -1 |] flat))
@@ -410,17 +413,17 @@ type stated = Searched | Stated
    stage values, whether a stage solve failed, its error estimate when the
    embedded weights do not give it, and the field's evaluations past the first
    stage. *)
-type 'y stepped = {
+type ('y, 'd) stepped = {
   next : 'y;
   stages : 'y array;
   values : 'y array;
-  failed : (bool, Nx.bool_elt) Nx.t;
+  failed : 'd Nx.bool_t;
   error : 'y option;
-  evaluations : (int32, Nx.int32_elt) Nx.t;
+  evaluations : 'd Nx.int32_t;
 }
 
-let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
-    k0 =
+let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t) h
+    v k0 =
   let s = Array.length m.b in
   let tdtype = Nx.dtype t in
   let (Linear.Space { dtype; size; ravel; unravel }) =
@@ -442,11 +445,13 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
       (fun u -> Rune.detach (ravel u))
       unravel
   in
-  let solve = Linear.prepare imp.linear dtype size operator precondition in
+  let solve =
+    Linear.prepare imp.linear (Nx.beside t) dtype size operator precondition
+  in
   let zeros = Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v in
   let ks = Array.make s k0 and zs = Array.make s v in
-  let failed = ref (Nx.scalar Nx.bool false) in
-  let count = ref (Nx.scalar Nx.int32 0l) in
+  let failed = ref (Nx.scalar_at (Nx.beside t) Nx.bool false) in
+  let count = ref (Nx.scalar_at (Nx.beside t) Nx.int32 0l) in
   for i = 1 to s - 1 do
     let r = ref zeros in
     Array.iteri
@@ -455,13 +460,20 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
       m.a.(i);
     let r = !r in
     let ti = Nx.add t (Nx.mul_s h m.c.(i)) in
-    let difference z = Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) v z in
+    let difference z =
+      Nx.Ptree.axpy y (Nx.scalar_at (Nx.beside t) tdtype (-1.)) v z
+    in
     let residual z =
       Nx.Ptree.axpy y (minus hg) (eval fn y f ti z)
-        (Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) r (mass (difference z)))
+        (Nx.Ptree.axpy y
+           (Nx.scalar_at (Nx.beside t) tdtype (-1.))
+           r
+           (mass (difference z)))
     in
     let predictor =
-      Nx.Ptree.axpy y hg ks.(i - 1) (Nx.Ptree.axpy y (Nx.scalar tdtype 1.) r v)
+      Nx.Ptree.axpy y hg
+        ks.(i - 1)
+        (Nx.Ptree.axpy y (Nx.scalar_at (Nx.beside t) tdtype 1.) r v)
     in
     (* Newton on detached values: the stage, whether it converged, whether it
        failed, and its iterations. *)
@@ -473,7 +485,8 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
         let dz = run.u in
         let z' = Nx.add z dz in
         let norm =
-          error_norm y tol tdtype (unravel dz) (detached v) (unravel z')
+          error_norm y tol (Nx.beside t) tdtype (unravel dz) (detached v)
+            (unravel z')
         in
         let theta = Nx.div norm last in
         let first = Nx.equal_s k 0l in
@@ -509,9 +522,10 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
           Nx.logical_or converged broken)
         ~f:step
         ( start,
-          ( Nx.full tdtype [||] Float.infinity,
-            ( Nx.scalar Nx.int32 0l,
-              (Nx.scalar Nx.bool false, Nx.scalar Nx.bool false) ) ) )
+          ( Nx.full_at (Nx.beside t) tdtype [||] Float.infinity,
+            ( Nx.scalar_at (Nx.beside t) Nx.int32 0l,
+              ( Nx.scalar_at (Nx.beside t) Nx.bool false,
+                Nx.scalar_at (Nx.beside t) Nx.bool false ) ) ) )
     in
     let z =
       match stated with
@@ -528,7 +542,10 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
     ks.(i) <-
       Nx.Ptree.map y
         (fun _ x -> Nx.div x (Nx.cast (Nx.dtype x) hg))
-        (Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) r (mass (difference z)))
+        (Nx.Ptree.axpy y
+           (Nx.scalar_at (Nx.beside t) tdtype (-1.))
+           r
+           (mass (difference z)))
   done;
   {
     next = zs.(s - 1);
@@ -536,7 +553,11 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t) Nx.t) h v
     values = zs;
     failed = !failed;
     error =
-      Some (Nx.Ptree.axpy y (Nx.scalar tdtype (-1.)) zs.(s - 2) zs.(s - 1));
+      Some
+        (Nx.Ptree.axpy y
+           (Nx.scalar_at (Nx.beside t) tdtype (-1.))
+           zs.(s - 2)
+           zs.(s - 1));
     evaluations = !count;
   }
 
@@ -551,10 +572,10 @@ let step ?stages fn y m f t h v k0 =
         next;
         stages = ks;
         values = [||];
-        failed = Nx.scalar Nx.bool false;
+        failed = Nx.scalar_at (Nx.beside t) Nx.bool false;
         error = None;
         evaluations =
-          Nx.scalar Nx.int32
+          Nx.scalar_at (Nx.beside t) Nx.int32
             (Int32.of_int (if Option.is_some k0 then s - 1 else s));
       }
   | Some imp, Some (tol, stated) ->
@@ -568,7 +589,7 @@ let march y m ~steps f ~at y0 =
   let dtype = Nx.dtype at in
   let interval c step t0 t1 carry =
     let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
-    March.steps c dtype steps
+    March.steps c (Nx.beside at) dtype steps
       (fun j carry -> step (Nx.add t0 (Nx.mul j h)) h carry)
       carry
   in
@@ -596,10 +617,11 @@ let shrink = 0.2
 let grow = 10.
 
 (* [true] when every element of every leaf of [v] is finite. *)
-let finite y v =
+let finite y at v =
   Nx.Ptree.fold y
     (fun _ x acc -> Nx.logical_and acc (Nx.all (Nx.isfinite x)))
-    v (Nx.scalar Nx.bool true)
+    v
+    (Nx.scalar_at at Nx.bool true)
 
 (* What a search carries besides its state: the history a delay reads, or the
    signs an event watches. [start t v] is the memory at the first time; [field
@@ -609,23 +631,23 @@ let finite y v =
    step, if any; [accept m ~t ~t_end ~h ~v ~ks v'] the memory after an accepted
    step from [(t, v)] to [(t_end, v')]. Each also gives conditions that end a
    lane, with their status, settled in order. *)
-type outcome = (bool, Nx.bool_elt) Nx.t * Solution.status
+type 'd outcome = 'd Nx.bool_t * Solution.status
 
-type ('y, 't, 'm) memory = {
-  tree : 'm Nx.Ptree.t;
-  start : 't time -> 'y -> 'm * outcome list;
-  field : 'm -> ('y, 't) field;
-  first : ('m -> ('y, 't) field) option;
-  limit : 'm -> 't time option;
+type ('y, 't, 'm, 'd) memory = {
+  tree : ('m, 'd) Nx.Ptree.t;
+  start : ('t, 'd) time -> 'y -> 'm * 'd outcome list;
+  field : 'm -> ('y, 't, 'd) field;
+  first : ('m -> ('y, 't, 'd) field) option;
+  limit : 'm -> ('t, 'd) time option;
   accept :
     'm ->
-    t:'t time ->
-    t_end:'t time ->
-    h:'t time ->
+    t:('t, 'd) time ->
+    t_end:('t, 'd) time ->
+    h:('t, 'd) time ->
     v:'y ->
     ks:'y array ->
     'y ->
-    'm * outcome list;
+    'm * 'd outcome list;
 }
 
 (* The memory of a solve that needs none. *)
@@ -640,32 +662,28 @@ let plain f =
   }
 
 (* The search's carry. *)
-type ('y, 't, 'm) search = {
+type ('y, 't, 'm, 'd) search = {
   v : 'y;  (** The state. *)
   k : 'y;  (** The field at the state. *)
   ys : 'y;  (** The states at the times of [at] reached so far. *)
   errs : 'y;  (** The accumulated local errors there. *)
   acc : 'y;  (** The accumulated local errors at the state. *)
-  interval : (int32, Nx.int32_elt) Nx.t;
-  sigma : (float, 't) Nx.t;  (** The state's fraction of its interval. *)
-  h : (float, 't) Nx.t;  (** The next step's size, absolute. *)
-  prev : (float, 't) Nx.t;  (** The last accepted error ratio. *)
-  rejected : (bool, Nx.bool_elt) Nx.t;
-  ends : (float, 't) Nx.t;  (** The accepted steps' ends, as fractions. *)
-  counts : (int32, Nx.int32_elt) Nx.t;  (** The accepted steps per interval. *)
-  accepted : (int32, Nx.int32_elt) Nx.t;
-  attempts : (int32, Nx.int32_elt) Nx.t;
-  evals : (int32, Nx.int32_elt) Nx.t;
-  status : (int32, Nx.int32_elt) Nx.t;
+  interval : 'd Nx.int32_t;
+  sigma : (float, 't, 'd) Nx.t;  (** The state's fraction of its interval. *)
+  h : (float, 't, 'd) Nx.t;  (** The next step's size, absolute. *)
+  prev : (float, 't, 'd) Nx.t;  (** The last accepted error ratio. *)
+  rejected : 'd Nx.bool_t;
+  ends : (float, 't, 'd) Nx.t;  (** The accepted steps' ends, as fractions. *)
+  counts : 'd Nx.int32_t;  (** The accepted steps per interval. *)
+  accepted : 'd Nx.int32_t;
+  attempts : 'd Nx.int32_t;
+  evals : 'd Nx.int32_t;
+  status : 'd Nx.int32_t;
   memory : 'm;
 }
 
-let search_ptree (type v t m) (y : v Nx.Ptree.t) (tree : m Nx.Ptree.t) :
-    (v, t, m) search Nx.Ptree.t =
-  let module M = struct
-    type nonrec _ t = (v, t, m) search
-
-    let walk c s =
+let search_ptree y tree =
+  Nx.Ptree.v (fun c s ->
       let open Nx.Ptree.Walk in
       let v = field c "v" (structure y) s.v in
       let k = field c "k" (structure y) s.k in
@@ -702,12 +720,10 @@ let search_ptree (type v t m) (y : v Nx.Ptree.t) (tree : m Nx.Ptree.t) :
         evals;
         status;
         memory;
-      }
-  end in
-  Nx.Ptree.instantiate (module M)
+      })
 
 let scalar_at t i =
-  Nx.reshape [||] (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) t)
+  Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) t)
 
 (* What to change for a solve that stopped short, from its lane's facts. *)
 let fix tol (st : Solution.status) facts =
@@ -742,7 +758,7 @@ let fix tol (st : Solution.status) facts =
    [−1]: strictly, or with repeats when [repeats] is [`Allowed]. *)
 let disorder repeats at =
   let n = Nx.dim 0 at in
-  if n < 2 then Nx.scalar Nx.int32 (-1l)
+  if n < 2 then Nx.scalar_at (Nx.beside at) Nx.int32 (-1l)
   else
     let d =
       Nx.sub (Nx.slice [ Nx.R (1, n) ] at) (Nx.slice [ Nx.R (0, n - 1) ] at)
@@ -756,7 +772,8 @@ let disorder repeats at =
     in
     let bad = Nx.logical_not fine in
     let first = Nx.cast Nx.int32 (Nx.argmax (Nx.cast Nx.int32 bad)) in
-    Nx.where (Nx.any bad) (Nx.add_s first 1l) (Nx.scalar Nx.int32 (-1l))
+    Nx.where (Nx.any bad) (Nx.add_s first 1l)
+      (Nx.scalar_at (Nx.beside at) Nx.int32 (-1l))
 
 (* Checks the arguments every solve over [at] checks. *)
 let check fn ~at ~budget =
@@ -807,11 +824,11 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
      relative to the span of [at]. A scale that is zero, from a component at
      zero with no [abs], makes the estimate meaningless; the fallback then
      starts small and the controller grows it. *)
-  let one = Nx.scalar dtype 1. in
+  let one = Nx.scalar_at (Nx.beside at) dtype 1. in
   let span_all = Nx.abs (Nx.sub (Nx.get [ n - 1 ] at0) t0) in
   let fallback = Nx.mul_s span_all 1e-6 in
-  let d0 = error_norm y tol dtype v0 v0 v0
-  and d1 = error_norm y tol dtype k0 v0 v0 in
+  let d0 = error_norm y tol (Nx.beside at) dtype v0 v0 v0
+  and d1 = error_norm y tol (Nx.beside at) dtype k0 v0 v0 in
   let tiny = Nx.logical_or (Nx.less_s d0 1e-5) (Nx.less_s d1 1e-5) in
   let h0 =
     cap
@@ -822,7 +839,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
   let v1 = Nx.Ptree.axpy y (Nx.mul h0 direction) k0 v0 in
   let k1 = fd (Nx.add t0 (Nx.mul h0 direction)) v1 in
   let diff = Nx.Ptree.axpy y (Nx.neg one) k0 k1 in
-  let d2 = Nx.div (error_norm y tol dtype diff v0 v0) h0 in
+  let d2 = Nx.div (error_norm y tol (Nx.beside at) dtype diff v0 v0) h0 in
   let dmax = Nx.maximum d1 d2 in
   let small = Nx.less_equal_s dmax 1e-15 in
   let h1 =
@@ -854,7 +871,8 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       | Some l -> { s with h = Nx.minimum s.h l }
     in
     let j =
-      Nx.minimum s.interval (Nx.scalar Nx.int32 (Int32.of_int (n_int - 1)))
+      Nx.minimum s.interval
+        (Nx.scalar_at (Nx.beside at) Nx.int32 (Int32.of_int (n_int - 1)))
     in
     let a = scalar_at starts j and b = scalar_at stops j in
     let span = Nx.sub b a in
@@ -891,8 +909,8 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     (* A failed stage solve rejects the attempt. *)
     let r =
       Nx.where stepped.failed
-        (Nx.full dtype [||] Float.infinity)
-        (error_norm y tol dtype e s.v v')
+        (Nx.full_at (Nx.beside at) dtype [||] Float.infinity)
+        (error_norm y tol (Nx.beside at) dtype e s.v v')
     in
     let k' = ks.(stages - 1) in
     let running = Elementwise.searching s.status in
@@ -942,7 +960,8 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let acc' = Nx.Ptree.axpy y one abs_e s.acc in
     let finishing = Nx.logical_and ok lands in
     let row =
-      Nx.equal (Nx.arange Nx.int32 0 n 1)
+      Nx.equal
+        (Nx.arange_at (Nx.beside at) Nx.int32 0 n 1)
         (Nx.broadcast_to [| n |] (Nx.add_s j 1l))
     in
     let put_row c rows v =
@@ -961,7 +980,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     in
     let slot =
       Nx.equal
-        (Nx.arange Nx.int32 0 budget 1)
+        (Nx.arange_at (Nx.beside at) Nx.int32 0 budget 1)
         (Nx.broadcast_to [| budget |] s.accepted)
     in
     let ends =
@@ -971,7 +990,9 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
         s.ends
     in
     let at_j =
-      Nx.equal (Nx.arange Nx.int32 0 n_int 1) (Nx.broadcast_to [| n_int |] j)
+      Nx.equal
+        (Nx.arange_at (Nx.beside at) Nx.int32 0 n_int 1)
+        (Nx.broadcast_to [| n_int |] j)
     in
     let counts =
       Nx.add s.counts
@@ -982,7 +1003,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let st = s.status in
     let st =
       Elementwise.settle st
-        (Nx.logical_and ok (Nx.logical_not (finite y k')))
+        (Nx.logical_and ok (Nx.logical_not (finite y (Nx.beside at) k')))
         Not_finite
     in
     let memory, outcomes = mem.accept s.memory ~t ~t_end ~h:hh ~v:s.v ~ks v' in
@@ -1041,21 +1062,21 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
       ys = stacked v0;
       errs = stacked (zeros_like v0);
       acc = zeros_like v0;
-      interval = Nx.scalar Nx.int32 0l;
-      sigma = Nx.zeros dtype [||];
+      interval = Nx.scalar_at (Nx.beside at) Nx.int32 0l;
+      sigma = Nx.zeros_at (Nx.beside at) dtype [||];
       h = h_start;
-      prev = Nx.full dtype [||] 1e-4;
-      rejected = Nx.scalar Nx.bool false;
-      ends = Nx.zeros dtype [| budget |];
-      counts = Nx.zeros Nx.int32 [| n_int |];
-      accepted = Nx.scalar Nx.int32 0l;
-      attempts = Nx.scalar Nx.int32 0l;
-      evals = Nx.scalar Nx.int32 2l;
+      prev = Nx.full_at (Nx.beside at) dtype [||] 1e-4;
+      rejected = Nx.scalar_at (Nx.beside at) Nx.bool false;
+      ends = Nx.zeros_at (Nx.beside at) dtype [| budget |];
+      counts = Nx.zeros_at (Nx.beside at) Nx.int32 [| n_int |];
+      accepted = Nx.scalar_at (Nx.beside at) Nx.int32 0l;
+      attempts = Nx.scalar_at (Nx.beside at) Nx.int32 0l;
+      evals = Nx.scalar_at (Nx.beside at) Nx.int32 2l;
       status =
         Nx.where
           (Nx.greater_equal_s disorder 0l)
-          (Nx.scalar Nx.int32 (Solution.code Stalled))
-          (Nx.scalar Nx.int32 Elementwise.running);
+          (Nx.scalar_at (Nx.beside at) Nx.int32 (Solution.code Stalled))
+          (Nx.scalar_at (Nx.beside at) Nx.int32 Elementwise.running);
       memory = m0;
     }
   in
@@ -1083,7 +1104,8 @@ let reached ~at s =
   let starts = Nx.slice [ Nx.R (0, n_int) ] at0
   and stops = Nx.slice [ Nx.R (1, n) ] at0 in
   let j =
-    Nx.minimum s.interval (Nx.scalar Nx.int32 (Int32.of_int (n_int - 1)))
+    Nx.minimum s.interval
+      (Nx.scalar_at (Nx.beside s.interval) Nx.int32 (Int32.of_int (n_int - 1)))
   in
   let a = scalar_at starts j and b = scalar_at stops j in
   Nx.where
@@ -1131,9 +1153,11 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
     let inner ((v, (k, mm)), i) =
       let idx = Nx.add offset i in
       let sigma0 =
-        Nx.where (Nx.equal_s i 0l) (Nx.zeros dtype [||])
+        Nx.where (Nx.equal_s i 0l)
+          (Nx.zeros_at (Nx.beside at) dtype [||])
           (scalar_at s.ends
-             (Nx.maximum (Nx.sub_s idx 1l) (Nx.scalar Nx.int32 0l)))
+             (Nx.maximum (Nx.sub_s idx 1l)
+                (Nx.scalar_at (Nx.beside at) Nx.int32 0l)))
       in
       let sigma1 = scalar_at s.ends idx in
       let t = Nx.add a (Nx.mul span sigma0)
@@ -1154,7 +1178,7 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
         ~max:budget
         ~until:(fun (_, i) -> Nx.greater_equal i count)
         ~f:inner
-        ((v, (k, mm)), Nx.scalar Nx.int32 0l)
+        ((v, (k, mm)), Nx.scalar_at (Nx.beside at) Nx.int32 0l)
     in
     (carry, fst carry)
   in
@@ -1202,8 +1226,9 @@ let sample y m ~tol ~budget f ~at y0 =
     let stack1 v = Nx.Ptree.map y (fun _ x -> Nx.unsqueeze ~axes:[ 0 ] x) v in
     Solution.v ~fn ~settings:"" ~fix:(fix tol) ~value:(stack1 y0)
       ~error:(stack1 (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) y0))
-      ~status:(Nx.scalar Nx.int32 (Solution.code Converged))
-      ~evaluations:(Nx.scalar Nx.int32 0l) ~facts:[] ()
+      ~status:(Nx.scalar_at (Nx.beside at) Nx.int32 (Solution.code Converged))
+      ~evaluations:(Nx.scalar_at (Nx.beside at) Nx.int32 0l)
+      ~facts:[] ()
   else
     let ((s, _) as found) =
       search fn `Refused y m ~tol ~budget (plain f) ~at y0
@@ -1300,7 +1325,10 @@ let node y ext h v (ks, zs) theta =
             Option.value ~default:1.
               (lagrange ~mul:( *. ) ~sub_s:( -. ) ~scale:( *. ) cs j theta)
           in
-          acc := Nx.Ptree.axpy y (Nx.scalar (Nx.dtype h) w) zs.(i) !acc)
+          acc :=
+            Nx.Ptree.axpy y
+              (Nx.scalar_at (Nx.beside h) (Nx.dtype h) w)
+              zs.(i) !acc)
         idx;
       !acc
 
@@ -1328,7 +1356,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
       status =
         Nx.where
           (Nx.equal_s (Rune.detach span) 0.)
-          (Nx.scalar Nx.int32 (Solution.code Stalled))
+          (Nx.scalar_at (Nx.beside t0) Nx.int32 (Solution.code Stalled))
           s.status;
     }
   in
@@ -1368,27 +1396,28 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
       Nx.Ptree.(pair tensor tensor)
       Nx.Ptree.(pair y y)
       ~f:slot
-      ~init:(y0, (k0, (zeros, Nx.zeros dtype [||])))
-      (Nx.arange Nx.int32 0 budget 1, s.ends)
+      ~init:(y0, (k0, (zeros, Nx.zeros_at (Nx.beside t0) dtype [||])))
+      (Nx.arange_at (Nx.beside t0) Nx.int32 0 budget 1, s.ends)
   in
   (* The breaks as fractions of the span: past the accepted steps, the last
      one's end. *)
   let live =
     Nx.less
-      (Nx.arange Nx.int32 0 budget 1)
+      (Nx.arange_at (Nx.beside t0) Nx.int32 0 budget 1)
       (Nx.broadcast_to [| budget |] s.accepted)
   in
   let last =
     Nx.where
       (Nx.greater_s s.accepted 0l)
       (scalar_at s.ends
-         (Nx.maximum (Nx.sub_s s.accepted 1l) (Nx.scalar Nx.int32 0l)))
-      (Nx.zeros dtype [||])
+         (Nx.maximum (Nx.sub_s s.accepted 1l)
+            (Nx.scalar_at (Nx.beside t0) Nx.int32 0l)))
+      (Nx.zeros_at (Nx.beside t0) dtype [||])
   in
   let fractions =
     Nx.concatenate ~axis:0
       [
-        Nx.zeros dtype [| 1 |];
+        Nx.zeros_at (Nx.beside t0) dtype [| 1 |];
         Nx.where live s.ends (Nx.broadcast_to [| budget |] last);
       ]
   in
@@ -1494,13 +1523,14 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let s, disorder = search fn `Allowed y m ~tol ~budget watching ~at y0 in
   let signs, before = s.memory in
   let n = Nx.dim 0 signs in
-  let int32 x = Nx.scalar Nx.int32 x in
+  let int32 x = Nx.scalar_at (Nx.beside t0) Nx.int32 x in
   let span = Nx.sub t1 t0 in
   let fraction i = scalar_at s.ends (Nx.maximum i (int32 0l)) in
   (* The accepted steps but the last, taken again with the tracked field. *)
   let replay (v, (k, i)) =
     let sigma0 =
-      Nx.where (Nx.equal_s i 0l) (Nx.zeros dtype [||])
+      Nx.where (Nx.equal_s i 0l)
+        (Nx.zeros_at (Nx.beside t0) dtype [||])
         (fraction (Nx.sub_s i 1l))
     in
     let sigma1 = fraction i in
@@ -1526,11 +1556,12 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     Nx.where
       (Nx.greater_equal_s s.accepted 2l)
       (fraction (Nx.sub_s s.accepted 2l))
-      (Nx.zeros dtype [||])
+      (Nx.zeros_at (Nx.beside t0) dtype [||])
   and sigma1 =
     Nx.where
       (Nx.greater_equal_s s.accepted 1l)
-      (fraction last) (Nx.zeros dtype [||])
+      (fraction last)
+      (Nx.zeros_at (Nx.beside t0) dtype [||])
   in
   let t_a = Nx.add t0 (Nx.mul span sigma0)
   and h = Nx.mul span (Nx.sub sigma1 sigma0) in
@@ -1562,12 +1593,12 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let eye =
     Nx.cast dtype
       (Nx.equal
-         (Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1))
-         (Nx.reshape [| 1; n |] (Nx.arange Nx.int32 0 n 1)))
+         (Nx.reshape [| n; 1 |] (Nx.arange_at (Nx.beside t0) Nx.int32 0 n 1))
+         (Nx.reshape [| 1; n |] (Nx.arange_at (Nx.beside t0) Nx.int32 0 n 1)))
   in
   (* Each component, with a zero on its old side: the crossing is where it takes
      its new sign, so a step that starts on a zero brackets it. *)
-  let tiny = Nx.full dtype [||] (Num.tiny dtype) in
+  let tiny = Nx.full_at (Nx.beside t0) dtype [||] (Num.tiny dtype) in
   let component ts =
     let all =
       Rune.vmap
@@ -1598,12 +1629,13 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   in
   let c = Nx.cast Nx.int32 (Nx.argmin key) in
   let pick v =
-    Nx.reshape [||]
-      (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 c)) v)
+    Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] (Nx.cast Nx.int64 c)) v)
   in
   let lost = Nx.logical_and crossing (Nx.logical_not (Nx.any found)) in
   let status =
-    Nx.where lost (Nx.scalar Nx.int32 (Solution.code Stalled)) s.status
+    Nx.where lost
+      (Nx.scalar_at (Nx.beside t0) Nx.int32 (Solution.code Stalled))
+      s.status
   in
   let s = { s with status } in
   let ok = Nx.equal_s status (Solution.code Converged) in
@@ -1611,7 +1643,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
      tracked piece, or [t1] without a crossing, and the state there. *)
   let onehot =
     Nx.cast dtype
-      (Nx.equal (Nx.arange Nx.int32 0 n 1) (Nx.broadcast_to [| n |] c))
+      (Nx.equal
+         (Nx.arange_at (Nx.beside t0) Nx.int32 0 n 1)
+         (Nx.broadcast_to [| n |] c))
   in
   let time =
     Rune.root Nx.Ptree.tensor
@@ -1630,7 +1664,9 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let held v = Nx.where (Nx.broadcast_to (Nx.shape v) ok) v (Rune.detach v) in
   let value = (held time, Nx.Ptree.map y (fun _ x -> held x) state, index) in
   let error =
-    ( Nx.where crossing (pick (Nx.div_s (Nx.sub b a) 2.)) (Nx.zeros dtype [||]),
+    ( Nx.where crossing
+        (pick (Nx.div_s (Nx.sub b a) 2.))
+        (Nx.zeros_at (Nx.beside t0) dtype [||]),
       s.acc,
       int32 0l )
   in
@@ -1674,14 +1710,15 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
     let stack1 v = Nx.Ptree.map y (fun _ x -> Nx.unsqueeze ~axes:[ 0 ] x) v in
     Solution.v ~fn ~settings:"" ~fix:(fix tol) ~value:(stack1 y0)
       ~error:(stack1 (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) y0))
-      ~status:(Nx.scalar Nx.int32 (Solution.code Converged))
-      ~evaluations:(Nx.scalar Nx.int32 0l) ~facts:[] ()
+      ~status:(Nx.scalar_at (Nx.beside at) Nx.int32 (Solution.code Converged))
+      ~evaluations:(Nx.scalar_at (Nx.beside at) Nx.int32 0l)
+      ~facts:[] ()
   else
     let degree = Array.length emb.dense.(0) in
     let t_first = Nx.get [ 0 ] at and t_last = Nx.get [ n - 1 ] at in
     let smallest = Nx.min (Rune.detach lags)
     and largest = Nx.max (Rune.detach lags) in
-    let int32 x = Nx.scalar Nx.int32 x in
+    let int32 x = Nx.scalar_at (Nx.beside at) Nx.int32 x in
     let n_lags = Nx.dim 0 lags in
     let past s =
       let v = history s in
@@ -1705,7 +1742,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
        that ends a step reads from the [`Left] and the first stage of the next
        from the [`Right]. *)
     let lookup side (starts, (widths, (count, coef))) s =
-      let logical = Nx.arange Nx.int32 0 pieces 1 in
+      let logical = Nx.arange_at (Nx.beside at) Nx.int32 0 pieces 1 in
       let k =
         Nx.add
           (Nx.sub_s (Nx.broadcast_to [| pieces |] count) (Int32.of_int pieces))
@@ -1713,24 +1750,22 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
       in
       let slots = Nx.cast Nx.int64 (slot_of k) in
       let ordered =
-        Nx.where (Nx.greater_equal_s k 0l)
-          (Nx.take ~indices:slots starts)
+        Nx.where (Nx.greater_equal_s k 0l) (Nx.take slots starts)
           (Nx.full_like starts Float.neg_infinity)
       in
       let i =
         Nx.maximum
           (Nx.sub_s (Nx.searchsorted ~side:`Right ordered s) 1L)
-          (Nx.zeros Nx.int64 (Nx.shape s))
+          (Nx.zeros_at (Nx.beside at) Nx.int64 (Nx.shape s))
       in
-      let slot = Nx.take ~indices:i slots in
-      let start = Nx.take ~indices:slot starts
-      and width = Nx.take ~indices:slot widths in
+      let slot = Nx.take i slots in
+      let start = Nx.take slot starts and width = Nx.take slot widths in
       let width = Nx.where (Nx.equal_s width 0.) (Nx.ones_like width) width in
       let theta = Nx.div (Nx.sub s start) width in
       let pieces =
         Nx.Ptree.map y
           (fun _ c ->
-            let g = Nx.take ~axis:0 ~indices:slot c in
+            let g = Nx.take ~axis:0 slot c in
             let theta =
               Nx.reshape
                 (Array.append [| Nx.dim 0 s |] (Array.make (Nx.ndim g - 2) 1))
@@ -1789,12 +1824,13 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
             let coef =
               Nx.Ptree.map y
                 (fun _ x ->
-                  Nx.zeros (Nx.dtype x)
+                  Nx.zeros_at (Nx.beside at) (Nx.dtype x)
                     (Array.append [| pieces; degree + 1 |] (Nx.shape x)))
                 v
             in
-            ( ( Nx.zeros dtype [| pieces |],
-                (Nx.ones dtype [| pieces |], (int32 0l, coef)) ),
+            ( ( Nx.zeros_at (Nx.beside at) dtype [| pieces |],
+                (Nx.ones_at (Nx.beside at) dtype [| pieces |], (int32 0l, coef))
+              ),
               [
                 ( Nx.logical_or
                     (Nx.less_equal_s smallest 0.)
@@ -1815,7 +1851,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
             in
             let at_slot =
               Nx.equal
-                (Nx.arange Nx.int32 0 pieces 1)
+                (Nx.arange_at (Nx.beside at) Nx.int32 0 pieces 1)
                 (Nx.broadcast_to [| pieces |] (slot_of count))
             in
             let put rows x =
@@ -1848,7 +1884,8 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
       | k ->
           let nb = List.length k in
           let kk =
-            Nx.reshape [| nb; n_lags |] (Num.constant dtype (Array.concat k))
+            Nx.reshape [| nb; n_lags |]
+              (Num.constant (Nx.beside at) dtype (Array.concat k))
           in
           let points = Nx.add t_first (Nx.matmul kk lags) in
           let points =
@@ -1859,7 +1896,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
           Nx.concatenate ~axis:0 [ at; points ]
     in
     let order = Nx.argsort (Rune.detach merged) in
-    let sorted = Nx.take ~indices:order merged in
+    let sorted = Nx.take order merged in
     let rows = Nx.slice [ Nx.R (0, n) ] (Nx.argsort order) in
     let disorder =
       Nx.where
@@ -1877,9 +1914,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
       }
     in
     let s, _ = search fn `Allowed y m ~tol ~budget memory ~at:sorted y0 in
-    let pick v =
-      Nx.Ptree.map y (fun _ x -> Nx.take ~axis:0 ~indices:rows x) v
-    in
+    let pick v = Nx.Ptree.map y (fun _ x -> Nx.take ~axis:0 rows x) v in
     let t = reached ~at:sorted s in
     report fn m ~tol ~budget ~at:sorted (s, disorder)
       ~facts:
@@ -1887,7 +1922,7 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
           Fact ("lags not positive", Nx.cast dtype (Nx.less_equal_s smallest 0.));
           Fact ("beyond pieces", Nx.cast dtype (short ~t s.memory));
           Fact ("largest lag", largest);
-          Fact ("pieces", Nx.full dtype [||] (float pieces));
+          Fact ("pieces", Nx.full_at (Nx.beside at) dtype [||] (float pieces));
           Fact ("pieces needed", needed ~t s.memory);
         ]
       ~value:(pick (samples fn y m memory ~tol ~budget ~at:sorted y0 s))

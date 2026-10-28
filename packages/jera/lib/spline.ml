@@ -3,8 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'b ends =
-  [ `Natural | `Not_a_knot | `Clamped of (float, 'b) Nx.t * (float, 'b) Nx.t ]
+type ('b, 'd) ends =
+  [ `Natural
+  | `Not_a_knot
+  | `Clamped of (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t ]
 
 let rows i j v = Nx.slice [ Nx.R (i, j) ] v
 

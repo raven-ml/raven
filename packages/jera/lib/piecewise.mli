@@ -6,52 +6,61 @@
 (** Piecewise functions: the implementation of {!Jera.Piecewise}, whose
     functions are the series of {!Cheb}, which {!Ode.path} builds too. *)
 
-type ('v, 'b) t = ('v, 'b) Cheb.series
+type ('v, 'b, 'd) t = ('v, 'b, 'd) Cheb.series
 
-val v : 'v Nx.Ptree.t -> breaks:(float, 'b) Nx.t -> 'v -> ('v, 'b) t
+val v :
+  ('v, 'd) Nx.Ptree.t -> breaks:(float, 'b, 'd) Nx.t -> 'v -> ('v, 'b, 'd) t
 
-type 'b ends = 'b Spline.ends
+type ('b, 'd) ends = ('b, 'd) Spline.ends
 
-val linear : (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+val linear :
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  ((float, 'b, 'd) Nx.t, 'b, 'd) t
 
 val cubic :
-  'b ends -> (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+  ('b, 'd) ends ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  ((float, 'b, 'd) Nx.t, 'b, 'd) t
 
-val steffen : (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+val steffen :
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  ((float, 'b, 'd) Nx.t, 'b, 'd) t
 
 val hermite :
-  (float, 'b) Nx.t ->
-  values:(float, 'b) Nx.t ->
-  slopes:(float, 'b) Nx.t ->
-  ((float, 'b) Nx.t, 'b) t
+  (float, 'b, 'd) Nx.t ->
+  values:(float, 'b, 'd) Nx.t ->
+  slopes:(float, 'b, 'd) Nx.t ->
+  ((float, 'b, 'd) Nx.t, 'b, 'd) t
 
 val chebyshev :
-  'v Nx.Ptree.t ->
+  ('v, 'd) Nx.Ptree.t ->
   degree:int ->
   pieces:int ->
-  ((float, 'b) Nx.t -> 'v) ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  ('v, 'b) t
+  ((float, 'b, 'd) Nx.t -> 'v) ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  ('v, 'b, 'd) t
 
 val adapt :
-  'v Nx.Ptree.t ->
+  ('v, 'd) Nx.Ptree.t ->
   degree:int ->
   tol:Tol.t ->
   budget:int ->
-  ((float, 'b) Nx.t -> 'v) ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  ('v, 'b) t Solution.t
+  ((float, 'b, 'd) Nx.t -> 'v) ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (('v, 'b, 'd) t, 'd) Solution.t
 
-val eval : ('v, 'b) t -> (float, 'b) Nx.t -> 'v
+val eval : ('v, 'b, 'd) t -> (float, 'b, 'd) Nx.t -> 'v
+val eval_at : ('v, 'b, 'd) t -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t -> 'v
+val derivative : ('v, 'b, 'd) t -> ('v, 'b, 'd) t
+val integral : ('v, 'b, 'd) t -> ('v, 'b, 'd) t
+val extend : [ `Hold | `Polynomial ] -> ('v, 'b, 'd) t -> ('v, 'b, 'd) t
+val breaks : ('v, 'b, 'd) t -> (float, 'b, 'd) Nx.t
+val coefficients : ('v, 'b, 'd) t -> 'v
 
-val eval_at :
-  ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
-
-val derivative : ('v, 'b) t -> ('v, 'b) t
-val integral : ('v, 'b) t -> ('v, 'b) t
-val extend : [ `Hold | `Polynomial ] -> ('v, 'b) t -> ('v, 'b) t
-val breaks : ('v, 'b) t -> (float, 'b) Nx.t
-val coefficients : ('v, 'b) t -> 'v
-val ptree : 'v Nx.Ptree.t -> (float, 'b) Nx.dtype -> ('v, 'b) t Nx.Ptree.t
+val ptree :
+  ('v, 'd) Nx.Ptree.t -> (float, 'b) Nx.dtype -> (('v, 'b, 'd) t, 'd) Nx.Ptree.t

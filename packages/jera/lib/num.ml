@@ -3,51 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let eps (type b) (dtype : (float, b) Nx.dtype) =
-  match dtype with
-  | Nx.Float64 -> epsilon_float
-  | Nx.Float32 -> Float.ldexp 1. (-23)
-  | Nx.Float16 -> Float.ldexp 1. (-10)
-  | Nx.BFloat16 -> Float.ldexp 1. (-7)
-  | Nx.Float8_e4m3 -> Float.ldexp 1. (-3)
-  | Nx.Float8_e5m2 -> Float.ldexp 1. (-2)
+let eps dtype = (Nx.Dtype.float_format dtype).epsilon
+let tiny dtype = (Nx.Dtype.float_format dtype).min_normal
+let huge dtype = (Nx.Dtype.float_format dtype).max_finite
+let precision dtype = (Nx.Dtype.float_format dtype).fraction_bits + 1
+let bits dtype = Nx.Dtype.bits dtype
+let constant at dtype a = Nx.place at (Nx.create dtype [| Array.length a |] a)
 
-let tiny (type b) (dtype : (float, b) Nx.dtype) =
-  match dtype with
-  | Nx.Float64 -> Float.min_float
-  | Nx.Float32 | Nx.BFloat16 -> Float.ldexp 1. (-126)
-  | Nx.Float16 -> Float.ldexp 1. (-14)
-  | Nx.Float8_e4m3 -> Float.ldexp 1. (-6)
-  | Nx.Float8_e5m2 -> Float.ldexp 1. (-14)
-
-let huge (type b) (dtype : (float, b) Nx.dtype) =
-  match dtype with
-  | Nx.Float64 -> Float.max_float
-  | Nx.Float32 -> Float.ldexp (2. -. Float.ldexp 1. (-23)) 127
-  | Nx.BFloat16 -> Float.ldexp (2. -. Float.ldexp 1. (-7)) 127
-  | Nx.Float16 -> 65504.
-  | Nx.Float8_e4m3 -> 448.
-  | Nx.Float8_e5m2 -> 57344.
-
-let precision dtype = 1 - Float.to_int (Float.log2 (eps dtype))
-
-let bits (type b) (dtype : (float, b) Nx.dtype) =
-  match dtype with
-  | Nx.Float64 -> 64
-  | Nx.Float32 -> 32
-  | Nx.Float16 | Nx.BFloat16 -> 16
-  | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> 8
-
-let constant dtype a = Nx.create dtype [| Array.length a |] a
-
-let on_float (type a c) fn (f : (float, c) Nx.t -> (float, c) Nx.t)
-    (x : (a, c) Nx.t) : (a, c) Nx.t =
-  match Nx_dtype.kind (Nx.dtype x) with
+let on_float (type a c) fn (f : (float, c, 'd) Nx.t -> (float, c, 'd) Nx.t)
+    (x : (a, c, 'd) Nx.t) : (a, c, 'd) Nx.t =
+  match Nx.Dtype.kind (Nx.dtype x) with
   | Float -> f x
   | _ ->
       invalid_arg
         (Printf.sprintf "%s: a %s leaf; the leaves must be float tensors" fn
-           (Nx_dtype.to_string (Nx.dtype x)))
+           (Nx.Dtype.name (Nx.dtype x)))
 
 let shape s =
   "[" ^ String.concat "," (Array.to_list (Array.map string_of_int s)) ^ "]"
@@ -106,33 +76,38 @@ let i64 = { bits = Nx.int64; min = Int64.min_int; one = 1L }
 let i32 = { bits = Nx.int32; min = Int32.min_int; one = 1l }
 let i16 = { bits = Nx.int16; min = -32768; one = 1 }
 let i8 = { bits = Nx.int8; min = -128; one = 1 }
+let i4 = { bits = Nx.int4; min = -8; one = 1 }
 
-let ordered_midpoint (type b) (a : (float, b) Nx.t) (b : (float, b) Nx.t) :
-    (float, b) Nx.t =
+let ordered_midpoint (type b) (a : (float, b, 'd) Nx.t)
+    (b : (float, b, 'd) Nx.t) : (float, b, 'd) Nx.t =
   match Nx.dtype a with
-  | Nx.Float64 -> mid i64 Nx.float64 a b
-  | Nx.Float32 -> mid i32 Nx.float32 a b
-  | Nx.Float16 -> mid i16 Nx.float16 a b
-  | Nx.BFloat16 -> mid i16 Nx.bfloat16 a b
-  | Nx.Float8_e4m3 -> mid i8 Nx.float8_e4m3 a b
-  | Nx.Float8_e5m2 -> mid i8 Nx.float8_e5m2 a b
+  | Nx.Dtype.Float64 -> mid i64 Nx.float64 a b
+  | Nx.Dtype.Float32 -> mid i32 Nx.float32 a b
+  | Nx.Dtype.Float16 -> mid i16 Nx.float16 a b
+  | Nx.Dtype.Bfloat16 -> mid i16 Nx.bfloat16 a b
+  | Nx.Dtype.Float8_e4m3fn -> mid i8 Nx.float8_e4m3fn a b
+  | Nx.Dtype.Float8_e5m2 -> mid i8 Nx.float8_e5m2 a b
+  | Nx.Dtype.Float4_e2m1fn -> mid i4 Nx.float4_e2m1fn a b
 
-let adjacent (type b) (a : (float, b) Nx.t) (b : (float, b) Nx.t) =
+let adjacent (type b) (a : (float, b, 'd) Nx.t) (b : (float, b, 'd) Nx.t) =
   match Nx.dtype a with
-  | Nx.Float64 -> next i64 a b
-  | Nx.Float32 -> next i32 a b
-  | Nx.Float16 | Nx.BFloat16 -> next i16 a b
-  | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> next i8 a b
+  | Nx.Dtype.Float64 -> next i64 a b
+  | Nx.Dtype.Float32 -> next i32 a b
+  | Nx.Dtype.Float16 | Nx.Dtype.Bfloat16 -> next i16 a b
+  | Nx.Dtype.Float8_e4m3fn | Nx.Dtype.Float8_e5m2 -> next i8 a b
+  | Nx.Dtype.Float4_e2m1fn -> next i4 a b
 
 let sum_rows r =
   let k = Nx.dim 0 r and n = Nx.dim 1 r in
-  if n = 0 then Nx.zeros (Nx.dtype r) [| k |]
+  if n = 0 then Nx.sum ~axes:[ 1 ] r
   else
     let rec pow2 m = if m >= n then m else pow2 (2 * m) in
     let m = pow2 1 in
     let r =
       if m = n then r
-      else Nx.concatenate ~axis:1 [ r; Nx.zeros (Nx.dtype r) [| k; m - n |] ]
+      else
+        Nx.concatenate ~axis:1
+          [ r; Nx.zeros_at (Nx.beside r) (Nx.dtype r) [| k; m - n |] ]
     in
     (* Neighbours added by sums over axes of two: a sum of two terms has one
        association, so each level rounds alike eagerly and compiled, and each
@@ -146,5 +121,6 @@ let sum_rows r =
 
 let rms_rows r =
   let n = Nx.dim 1 r in
-  if n = 0 then Nx.zeros (Nx.dtype r) [| Nx.dim 0 r |]
+  if n = 0 then Nx.sum ~axes:[ 1 ] r
   else Nx.sqrt (Nx.div_s (sum_rows (Nx.square r)) (float n))
+

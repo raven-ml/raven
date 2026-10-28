@@ -23,7 +23,7 @@ let name = function
   | Broyden -> "broyden"
   | Anderson m -> Printf.sprintf "anderson, memory %d" m
 
-let int32 k = Nx.scalar Nx.int32 k
+let int32 like k = Nx.scalar_at (Nx.beside like) Nx.int32 k
 let half_square v = Nx.mul_s (Search.dot v v) 0.5
 
 (* Newton
@@ -160,7 +160,7 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
   @@ Search.iterations ~budget
        Nx.Ptree.(pair tensor tensor)
        step
-       (s, (b, int32 0l))
+       (s, (b, int32 b 0l))
 
 (* Anderson
 
@@ -177,7 +177,7 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
   let size = Nx.dim 0 s.x in
   let m = Int.min memory size in
   let bound = 1. /. sqrt (Num.eps dtype) in
-  let index = Nx.arange Nx.int32 0 (Int.max m 1) 1 in
+  let index = Nx.arange_at (Nx.beside s.x) Nx.int32 0 (Int.max m 1) 1 in
   let mix (df, (dg, count)) x fx =
     let g = Nx.add x fx in
     if m = 0 then g
@@ -193,10 +193,10 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
       let both =
         Nx.logical_and (Nx.reshape [| m; 1 |] kept) (Nx.reshape [| 1; m |] kept)
       in
-      let r = Nx.where both r (Nx.eye dtype m) in
+      let r = Nx.where both r (Nx.eye_at (Nx.beside r) dtype m) in
       let rhs = Nx.matmul (Nx.transpose q) fx in
       let rhs = Nx.where kept rhs (Nx.zeros_like rhs) in
-      let gamma = Nx.solve_triangular ~upper:true r rhs in
+      let gamma = Nx.solve_triangular ~triangle:Upper r rhs in
       Nx.sub g (Nx.matmul dg gamma)
   in
   let step (s : _ Search.state) (df, (dg, count)) =
@@ -212,7 +212,8 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
         Nx.Ptree.(pair tensor (pair tensor tensor))
         ~max:1
         ~until:(fun (_, (_, settled)) -> settled)
-        ~f:(fun _ -> (g0, (residual g0, Nx.scalar Nx.bool true)))
+        ~f:(fun _ ->
+          (g0, (residual g0, Nx.scalar_at (Nx.beside g0) Nx.bool true)))
         (x, (fx, Nx.logical_or better (Nx.logical_not run)))
     in
     let picard = Nx.logical_and run (Nx.logical_not better) in
@@ -236,18 +237,18 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
       ( Nx.where keep df' df,
         ( Nx.where keep dg' dg,
           Nx.where keep
-            (Nx.minimum (Nx.add_s count 1l) (int32 (Int32.of_int m)))
+            (Nx.minimum (Nx.add_s count 1l) (int32 count (Int32.of_int m)))
             count ) )
     in
     ( { s with x = Search.hold keep x s.x; fx = Search.hold keep fx s.fx; st; n },
       history )
   in
-  let history = Nx.zeros dtype [| size; Int.max m 1 |] in
+  let history = Nx.zeros_at (Nx.beside s.x) dtype [| size; Int.max m 1 |] in
   fst
   @@ Search.iterations ~budget
        Nx.Ptree.(pair tensor (pair tensor tensor))
        step
-       (s, (history, (history, int32 0l)))
+       (s, (history, (history, int32 history 0l)))
 
 (* Solve *)
 
@@ -284,7 +285,7 @@ let solve x m ~linear ~tol ~budget f guess =
     if size = 0 then
       {
         (Search.start x0 (residual x0)) with
-        st = Nx.scalar Nx.int32 (Solution.code Converged);
+        st = Nx.scalar_at (Nx.beside x0) Nx.int32 (Solution.code Converged);
       }
     else
       let s = Search.start x0 (residual x0) in
@@ -308,7 +309,7 @@ let solve x m ~linear ~tol ~budget f guess =
     Rune.root x
       ~linear_solve:(Linear.derivative fn x linear)
       ~residual:(fun v ->
-        let minus = Nx.scalar dtype (-1.) in
+        let minus = Nx.scalar_at (Nx.beside s.x) dtype (-1.) in
         Nx.Ptree.map2 x
           (fun _ res off ->
             Nx.where (Nx.broadcast_to (Nx.shape res) ok) res off)
@@ -361,8 +362,9 @@ let blocks fn op b =
   let basis j =
     Nx.broadcast_to (Nx.shape b)
       (Nx.cast (Nx.dtype b)
-         (Nx.equal (Nx.arange Nx.int32 0 k 1)
-            (Nx.scalar Nx.int32 (Int32.of_int j))))
+         (Nx.equal_s
+            (Nx.arange_at (Nx.beside b) Nx.int32 0 k 1)
+            (Int32.of_int j)))
   in
   let a = Nx.stack ~axis:(-1) (List.init k (fun j -> op (basis j))) in
   let u = batched a b in
@@ -428,7 +430,12 @@ let lanes ~tol ~budget ~jacobian f guess =
   let s = Search.start x0 (residual x0) in
   let s =
     if k = 0 then
-      { s with st = Nx.full Nx.int32 lanes (Solution.code Converged) }
+      {
+        s with
+        st =
+          Nx.full_at (Nx.placement s.st) Nx.int32 lanes
+            (Solution.code Converged);
+      }
     else
       newton_search ~tol ~budget
         ~trials:(Num.precision (Nx.dtype guess))

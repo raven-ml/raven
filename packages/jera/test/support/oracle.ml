@@ -7,7 +7,7 @@ open Windtrap
 
 (* Witnesses *)
 
-let floats t = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Placement.host t))
+let floats t = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on t))
 
 type tolerance = { rel : float; abs : float }
 
@@ -34,7 +34,7 @@ type leaf = { dtype : string; shape : int array; elements : float array }
 
 let leaf t =
   {
-    dtype = Nx_dtype.to_string (Nx.dtype t);
+    dtype = Nx.Dtype.name (Nx.dtype t);
     shape = Nx.shape t;
     elements = floats t;
   }

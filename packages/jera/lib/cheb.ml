@@ -5,9 +5,9 @@
 
 type extension = Bounded | Hold | Polynomial
 
-type ('v, 'b) series = {
-  s : 'v Nx.Ptree.t;
-  breaks : (float, 'b) Nx.t;
+type ('v, 'b, 'd) series = {
+  s : ('v, 'd) Nx.Ptree.t;
+  breaks : (float, 'b, 'd) Nx.t;
   coefficients : 'v;
   extension : extension;
 }
@@ -55,8 +55,7 @@ let locate fn e breaks x =
   in
   let i = Nx.clamp ~min:0L ~max:(Int64.of_int (n - 1)) i in
   let x = match e with Hold -> inside | Bounded | Polynomial -> x in
-  let lo = Nx.take ~indices:i breaks
-  and hi = Nx.take ~indices:(Nx.add_s i 1L) breaks in
+  let lo = Nx.take i breaks and hi = Nx.take (Nx.add_s i 1L) breaks in
   (i, Nx.sub_s (Nx.div (Nx.mul_s (Nx.sub x lo) 2.) (Nx.sub hi lo)) 1.)
 
 let nodes n =
@@ -71,7 +70,10 @@ let along m c =
   let shape = Nx.shape c in
   let rest = Array.sub shape 2 (Array.length shape - 2) in
   let r = Array.length m and k = shape.(1) in
-  let m = Nx.create (Nx.dtype c) [| r; k |] (Array.concat (Array.to_list m)) in
+  let m =
+    Nx.place (Nx.beside c)
+      (Nx.create (Nx.dtype c) [| r; k |] (Array.concat (Array.to_list m)))
+  in
   let flat = Nx.reshape [| shape.(0); k; Array.fold_left ( * ) 1 rest |] c in
   Nx.reshape (Array.concat [ [| shape.(0); r |]; rest ]) (Nx.matmul m flat)
 

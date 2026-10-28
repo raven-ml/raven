@@ -14,22 +14,22 @@ val yoshida6 : t
 val yoshida8 : t
 val v : kick:float array -> drift:float array -> t
 
-type ('s, 'b) flow = (float, 'b) Nx.t -> 's -> 's
+type ('s, 'b, 'd) flow = (float, 'b, 'd) Nx.t -> 's -> 's
 
 val step :
   t ->
-  kick:('s, 'b) flow ->
-  drift:('s, 'b) flow ->
-  (float, 'b) Nx.t ->
+  kick:('s, 'b, 'd) flow ->
+  drift:('s, 'b, 'd) flow ->
+  (float, 'b, 'd) Nx.t ->
   's ->
   's
 
 val march :
-  's Nx.Ptree.t ->
+  ('s, 'd) Nx.Ptree.t ->
   t ->
   steps:int ->
-  kick:('s, 'b) flow ->
-  drift:('s, 'b) flow ->
-  at:(float, 'b) Nx.t ->
+  kick:('s, 'b, 'd) flow ->
+  drift:('s, 'b, 'd) flow ->
+  at:(float, 'b, 'd) Nx.t ->
   's ->
   's

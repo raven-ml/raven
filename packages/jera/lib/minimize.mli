@@ -5,32 +5,36 @@
 
 (** Minima: the implementation of {!Jera.Minimize}. *)
 
-type ('x, 'f) t
+type ('x, 'f, 'd) t
 
-val bfgs : linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
-val lbfgs : memory:int -> linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
-val newton : linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+val bfgs : linear:'x Linear.t -> ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
+
+val lbfgs :
+  memory:int -> linear:'x Linear.t -> ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
+
+val newton : linear:'x Linear.t -> ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
 
 val levenberg_marquardt :
-  'r Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r) t
+  ('r, 'd) Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r, 'd) t
 
-val nelder_mead : ('x, 'x -> (float, 'b) Nx.t) t
+val nelder_mead : ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
 
 val solve :
-  'x Nx.Ptree.t ->
-  ('x, 'f) t ->
+  ('x, 'd) Nx.Ptree.t ->
+  ('x, 'f, 'd) t ->
   ?within:'x * 'x ->
   tol:Tol.t ->
   budget:int ->
   'f ->
   'x ->
-  'x Solution.t
+  ('x, 'd) Solution.t
 
-val iterates : 'x Nx.Ptree.t -> ('x, 'f) t -> steps:int -> 'f -> 'x -> 'x
+val iterates :
+  ('x, 'd) Nx.Ptree.t -> ('x, 'f, 'd) t -> steps:int -> 'f -> 'x -> 'x
 
 val bracket :
   tol:Tol.t ->
-  ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-  lo:(float, 'b) Nx.t ->
-  hi:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t Solution.t
+  ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+  lo:(float, 'b, 'd) Nx.t ->
+  hi:(float, 'b, 'd) Nx.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Solution.t

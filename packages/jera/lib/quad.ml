@@ -178,7 +178,10 @@ module Rule = struct
       (Array.init half (fun i -> (x.(i), w.(i))))
       (Some w.(half))
 
-  let nodes r dtype = (Num.constant dtype r.x, Num.constant dtype r.w)
+  let nodes_at at r dtype =
+    (Num.constant at dtype r.x, Num.constant at dtype r.w)
+
+  let nodes r dtype = nodes_at Nx.Host.on r dtype
 end
 
 (* Ranges *)
@@ -187,10 +190,10 @@ module Range = struct
   (* A range is [[a, b]] with its ends broadcast to one shape, the half-line
      from [a], or the whole line around [c]. Its tensor gives the lanes' shape
      and dtype. *)
-  type 'b t =
-    | Finite of (float, 'b) Nx.t * (float, 'b) Nx.t
-    | From of (float, 'b) Nx.t
-    | Line of (float, 'b) Nx.t
+  type ('b, 'd) t =
+    | Finite of (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
+    | From of (float, 'b, 'd) Nx.t
+    | Line of (float, 'b, 'd) Nx.t
 
   let v a b =
     match Nx.broadcast_arrays [ a; b ] with
@@ -201,11 +204,12 @@ module Range = struct
   let line c = Line c
   let shape = function Finite (a, _) | From a | Line a -> Nx.shape a
   let dtype = function Finite (a, _) | From a | Line a -> Nx.dtype a
+  let at = function Finite (a, _) | From a | Line a -> Nx.beside a
 end
 
 module Box = struct
   (* A box is its corners broadcast to one shape [lanes @ [d]]. *)
-  type 'b t = { lo : (float, 'b) Nx.t; hi : (float, 'b) Nx.t }
+  type ('b, 'd) t = { lo : (float, 'b, 'd) Nx.t; hi : (float, 'b, 'd) Nx.t }
 
   let v lo hi =
     let fail () =
@@ -223,10 +227,10 @@ module Box = struct
     | exception Invalid_argument _ -> fail ()
 end
 
-type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
+type ('b, 'd) integrand = (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 
 (* The facts a report prints of a range. *)
-let range_facts : _ Range.t -> Solution.fact list = function
+let range_facts : (_, 'd) Range.t -> 'd Solution.fact list = function
   | Range.Finite (a, b) -> [ Fact ("a", a); Fact ("b", b) ]
   | From a -> [ Fact ("a", a) ]
   | Line c -> [ Fact ("c", c) ]
@@ -273,18 +277,19 @@ let whole_line (r : _ Rule.t) =
 
 let sum fn r f range =
   let dtype = Range.dtype range in
+  let at = Range.at range in
   let rank = Array.length (Range.shape range) in
   let weighted anchor (offsets, weights) =
-    let points = Nx.add anchor (along rank (Num.constant dtype offsets)) in
+    let points = Nx.add anchor (along rank (Num.constant at dtype offsets)) in
     let y = call fn f points in
-    Nx.sum ~axes:[ 0 ] (Nx.mul (along rank (Num.constant dtype weights)) y)
+    Nx.sum ~axes:[ 0 ] (Nx.mul (along rank (Num.constant at dtype weights)) y)
   in
   match range with
   | Range.Finite (a, b) ->
       let mid = Nx.div_s (Nx.add a b) 2. and half = Nx.div_s (Nx.sub b a) 2. in
-      let x = along rank (Num.constant dtype r.Rule.x) in
+      let x = along rank (Num.constant at dtype r.Rule.x) in
       let y = call fn f (Nx.add mid (Nx.mul half x)) in
-      let w = along rank (Num.constant dtype r.w) in
+      let w = along rank (Num.constant at dtype r.w) in
       Nx.mul half (Nx.sum ~axes:[ 0 ] (Nx.mul w y))
   | From a -> weighted a (half_line r)
   | Line c -> weighted c (whole_line r)
@@ -335,11 +340,12 @@ let image range t =
 
 let rules fn (r : _ Rule.t) gauss f range (t0, t1) =
   let dtype = Nx.dtype t0 in
+  let at = Nx.beside t0 in
   let rank = Nx.ndim t0 in
   let along c =
     Nx.reshape
       (Array.append [| Array.length c |] (Array.make rank 1))
-      (Num.constant dtype c)
+      (Num.constant at dtype c)
   in
   let half = Nx.div_s (Nx.sub t1 t0) 2. in
   let t =
@@ -376,10 +382,13 @@ let adaptive r ~tol ~budget f range =
       (Partition.fractions dtype (flat level) (flat index))
   in
   let p =
-    Partition.refine Nx.Ptree.tensor ~budget ~lanes ~dims:1 ~cost:m
+    Partition.refine Nx.Ptree.tensor ~at:(Range.at range) ~budget ~lanes ~dims:1
+      ~cost:m
       ~evaluate:(fun level index ->
         let k, g = pieces search detached level index in
-        (k, Nx.abs (Nx.sub k g), Nx.zeros Nx.int64 (Nx.shape k)))
+        ( k,
+          Nx.abs (Nx.sub k g),
+          Nx.zeros_at (Nx.placement k) Nx.int64 (Nx.shape k) ))
       ~point:(fun _ t -> fst (image detached t))
       ~verdict:(fun p live ->
         let total = Partition.sum live p.data in
@@ -555,6 +564,7 @@ let tanh_sinh ~tol f range =
   let fn = "Jera.Quad.tanh_sinh" in
   let dtype = Range.dtype range in
   let lanes = Range.shape range in
+  let at = Range.at range in
   let kind =
     match range with
     | Range.Finite _ -> `Finite
@@ -564,23 +574,27 @@ let tanh_sinh ~tol f range =
   let sch = schedule kind dtype in
   let n_chunks = Array.length sch.level in
   let table a =
-    Nx.create dtype [| n_chunks; de_chunk |] (Array.concat (Array.to_list a))
+    Nx.place at
+      (Nx.create dtype [| n_chunks; de_chunk |]
+         (Array.concat (Array.to_list a)))
   in
   let side = table sch.side and offset = table sch.offset in
   let weight = table sch.weight and outer = table sch.outer in
   let levels =
-    Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.level)
+    Nx.place at
+      (Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.level))
   in
-  let lasts = Nx.create Nx.bool [| n_chunks |] sch.last in
+  let lasts = Nx.place at (Nx.create Nx.bool [| n_chunks |] sch.last) in
   let counts =
-    Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.count)
+    Nx.place at
+      (Nx.create Nx.int32 [| n_chunks |] (Array.map Int32.of_int sch.count))
   in
   let column v =
     Nx.reshape
       (Array.append [| de_chunk |] (Array.make (Array.length lanes) 1))
       v
   in
-  let row t i = column (Nx.take ~axis:0 ~indices:i t) in
+  let row t i = column (Nx.take ~axis:0 i t) in
   let detached =
     match range with
     | Range.Finite (a, b) -> Range.Finite (Rune.detach a, Rune.detach b)
@@ -588,7 +602,7 @@ let tanh_sinh ~tol f range =
     | Line c -> Line (Rune.detach c)
   in
   let search x = Rune.detach (f x) in
-  let zeros = Nx.zeros dtype lanes in
+  let zeros = Nx.zeros_at at dtype lanes in
   (* The carry: the next chunk, then per lane the running sum of the level, the
      last two estimates, the largest term in the truncation's last unit, the
      final level, the status and the evaluations. *)
@@ -602,9 +616,7 @@ let tanh_sinh ~tol f range =
     let tail =
       Nx.maximum tail (Nx.max ~axes:[ 0 ] (Nx.mul (Nx.abs t) (row outer i64)))
     in
-    let at table =
-      Nx.reshape [||] (Nx.take ~indices:(Nx.reshape [| 1 |] i64) table)
-    in
+    let at table = Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] i64) table) in
     let n = Nx.add n (Nx.mul (Nx.cast Nx.int32 run) (at counts)) in
     let k = at levels and ends = at lasts in
     (* At a level's end: I_k = I_(k−1) / 2 + 2^-k R_k, I_0 = R_0. *)
@@ -657,14 +669,14 @@ let tanh_sinh ~tol f range =
       ~until:(fun (_, (_, (_, (_, (_, (_, (st, _))))))) ->
         Nx.logical_not (Nx.any (Elementwise.searching st)))
       ~f:step
-      ( Nx.scalar Nx.int32 0l,
+      ( Nx.scalar_at at Nx.int32 0l,
         ( zeros,
           ( zeros,
             ( zeros,
               ( zeros,
-                ( Nx.zeros Nx.int32 lanes,
-                  ( Nx.full Nx.int32 lanes Elementwise.running,
-                    Nx.zeros Nx.int32 lanes ) ) ) ) ) ) )
+                ( Nx.zeros_at at Nx.int32 lanes,
+                  ( Nx.full_at at Nx.int32 lanes Elementwise.running,
+                    Nx.zeros_at at Nx.int32 lanes ) ) ) ) ) ) )
   in
   let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: 2^-K times the terms of every level up to each lane's final
@@ -761,7 +773,7 @@ let genz_malik d =
 (* The ratio of the fourth differences' scales, λ₂² / λ₃². *)
 let ratio = 9. /. 70. /. (9. /. 10.)
 
-let cubature ~tol ~budget f (box : _ Box.t) =
+let cubature ~tol ~budget f (box : (_, 'd) Box.t) =
   let fn = "Jera.Quad.cubature" in
   let shape = Nx.shape box.lo in
   let rank = Array.length shape in
@@ -772,10 +784,13 @@ let cubature ~tol ~budget f (box : _ Box.t) =
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   let lanes = Array.sub shape 0 (rank - 1) in
   let dtype = Nx.dtype box.lo in
+  let at = Nx.beside box.lo in
   let rule = genz_malik d in
   let n_points = Array.length rule.points in
   let u =
-    Nx.create dtype [| n_points; d |] (Array.concat (Array.to_list rule.points))
+    Nx.place at
+      (Nx.create dtype [| n_points; d |]
+         (Array.concat (Array.to_list rule.points)))
   in
   let ones k = Array.make k 1 in
   (* Each box's degree-7 sum, its difference from the degree-5 sum and its split
@@ -803,7 +818,7 @@ let cubature ~tol ~budget f (box : _ Box.t) =
     let along w =
       Nx.reshape
         (Array.append [| n_points |] (ones rank))
-        (Num.constant dtype w)
+        (Num.constant at dtype w)
     in
     let s7 = Nx.mul vol (Nx.sum ~axes:[ 0 ] (Nx.mul (along rule.w7) y)) in
     let s5 = Nx.mul vol (Nx.sum ~axes:[ 0 ] (Nx.mul (along rule.w5) y)) in
@@ -840,14 +855,14 @@ let cubature ~tol ~budget f (box : _ Box.t) =
       Nx.squeeze
         ~axes:[ rank - 1 ]
         (Nx.take_along_axis ~axis:(rank - 1)
-           ~indices:(Nx.unsqueeze ~axes:[ rank - 1 ] a)
+           (Nx.unsqueeze ~axes:[ rank - 1 ] a)
            v)
     in
     let lo = along lo0 in
     Nx.add lo (Nx.mul (Nx.sub (along hi0) lo) t)
   in
   let b =
-    Partition.refine Nx.Ptree.tensor ~budget ~lanes ~dims:d ~cost:n_points
+    Partition.refine Nx.Ptree.tensor ~at ~budget ~lanes ~dims:d ~cost:n_points
       ~evaluate:(fun levels indices ->
         let lo, hi = bounds lo0 hi0 levels indices in
         sums search lo hi)
@@ -917,10 +932,13 @@ let sobol_words d i =
   let v = Array.init d directions in
   let gray = Nx.bitwise_xor i (Nx.rshift i 1) in
   let gray = Nx.unsqueeze ~axes:[ 1 ] gray in
-  let x = ref (Nx.zeros Nx.uint32 [| Nx.dim 0 i; d |]) in
+  let at = Nx.beside i in
+  let x = ref (Nx.zeros_at at Nx.uint32 [| Nx.dim 0 i; d |]) in
   for b = 0 to 31 do
     let column =
-      Nx.create Nx.uint32 [| 1; d |] (Array.map (fun r -> Int32.of_int r.(b)) v)
+      Nx.place at
+        (Nx.create Nx.uint32 [| 1; d |]
+           (Array.map (fun r -> Int32.of_int r.(b)) v))
     in
     let set =
       Nx.not_equal
@@ -939,7 +957,7 @@ let unit_points dtype words =
   let top = if k = 32 then words else Nx.rshift words (32 - k) in
   Nx.mul_s (Nx.add_s (Nx.cast dtype top) 0.5) (Float.ldexp 1. (-k))
 
-let qmc key ~tol ~budget f (box : _ Box.t) =
+let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
   let fn = "Jera.Quad.qmc" in
   let shape = Nx.shape box.lo in
   let rank = Array.length shape in
@@ -950,14 +968,18 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
   let lanes = Array.sub shape 0 (rank - 1) in
   let dtype = Nx.dtype box.lo in
-  let shift = Nx.bitcast Nx.uint32 (Nx.Rng.bits key [| shifts; d |]) in
+  let at = Nx.beside box.lo in
+  let shift =
+    Nx.bitcast Nx.uint32
+      (Nx.Rng.bits_at (Nx.beside (Nx.Rng.to_tensor key)) ~key [| shifts; d |])
+  in
   (* The integrand's sum over chunk [j]'s points under each shift, of shape
      [[shifts] @ lanes]. *)
   let chunk_sums f lo hi j =
     let first = Nx.mul_s (Nx.cast Nx.uint32 j) (Int32.of_int qmc_chunk) in
     let i =
       Nx.add
-        (Nx.arange Nx.uint32 0 qmc_chunk 1)
+        (Nx.arange_at at Nx.uint32 0 qmc_chunk 1)
         (Nx.broadcast_to [| qmc_chunk |] first)
     in
     let words =
@@ -1031,7 +1053,7 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
     in
     (n, (sums, (used, (estimate, (error, st)))))
   in
-  let zeros = Nx.zeros dtype lanes in
+  let zeros = Nx.zeros_at at dtype lanes in
   let carry =
     Nx.Ptree.(
       pair tensor (pair tensor (pair tensor (pair tensor (pair tensor tensor)))))
@@ -1041,10 +1063,11 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
       ~until:(fun (_, (_, (_, (_, (_, st))))) ->
         Nx.logical_not (Nx.any (Elementwise.searching st)))
       ~f:step
-      ( Nx.scalar Nx.int32 0l,
-        ( Nx.zeros dtype (Array.append [| shifts |] lanes),
-          ( Nx.zeros Nx.int32 lanes,
-            (zeros, (zeros, Nx.full Nx.int32 lanes Elementwise.running)) ) ) )
+      ( Nx.scalar_at at Nx.int32 0l,
+        ( Nx.zeros_at at dtype (Array.append [| shifts |] lanes),
+          ( Nx.zeros_at at Nx.int32 lanes,
+            (zeros, (zeros, Nx.full_at at Nx.int32 lanes Elementwise.running))
+          ) ) )
   in
   let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: the mean over each lane's final points, tracked, chunk by
@@ -1057,7 +1080,7 @@ let qmc key ~tol ~budget f (box : _ Box.t) =
   let total, () =
     Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:sum_chunk
       ~init:zeros
-      (Nx.arange Nx.int32 0 budget 1)
+      (Nx.arange_at at Nx.int32 0 budget 1)
   in
   let count = Nx.mul_s (Nx.cast dtype used) (float (qmc_chunk * shifts)) in
   Solution.v ~fn

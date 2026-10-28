@@ -6,7 +6,10 @@
 (* Coefficients of shape [[P_1; …; P_d; D_1; …; D_d] @ value], D_k the series'
    lengths. Construction works in the interleaved layout [[P_1; D_1; …; P_d;
    D_d] @ value], one axis at a time. *)
-type 'b t = { breaks : (float, 'b) Nx.t list; coefficients : (float, 'b) Nx.t }
+type ('b, 'd) t = {
+  breaks : (float, 'b, 'd) Nx.t list;
+  coefficients : (float, 'b, 'd) Nx.t;
+}
 
 let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
 let dims g = List.length g.breaks
@@ -80,10 +83,11 @@ let chebyshev ~degree ~pieces f ~lo ~hi =
       (Num.shape (Nx.shape hi));
   let d = Nx.dim 0 lo and m = degree + 1 in
   let dtype = Nx.dtype lo in
+  let at = Nx.beside lo in
   let s =
-    Num.constant dtype (Array.init pieces (fun k -> float k /. float pieces))
+    Num.constant at dtype (Array.init pieces (fun k -> float k /. float pieces))
   in
-  let u = Num.constant dtype (Cheb.nodes degree) in
+  let u = Num.constant at dtype (Cheb.nodes degree) in
   let breaks =
     List.init d (fun k ->
         let a = Nx.get [ k ] lo and b = Nx.get [ k ] hi in
@@ -159,7 +163,7 @@ let eval g x =
     List.fold_left2
       (fun acc b (i, _) ->
         Nx.add (Nx.mul_s acc (Int64.of_int (Nx.dim 0 b - 1))) i)
-      (Nx.zeros Nx.int64 [| n |])
+      (Nx.zeros_at (Nx.beside g.coefficients) Nx.int64 [| n |])
       g.breaks located
   in
   let shape = Nx.shape g.coefficients in
@@ -172,8 +176,7 @@ let eval g x =
   let y =
     List.fold_left
       (fun y (_, u) -> Cheb.clenshaw u y)
-      (Nx.take ~axis:0 ~indices:index c)
-      located
+      (Nx.take ~axis:0 index c) located
   in
   (* A NaN coordinate is NaN whatever the degrees. *)
   let nan = Nx.any ~axes:[ 1 ] (Nx.isnan flat) in
@@ -205,14 +208,9 @@ let integral ~axis g = along "Jera.Grid.integral" Cheb.integral ~axis g
 
 (* Access *)
 
-let ptree (type b) (_ : (float, b) Nx.dtype) : b t Nx.Ptree.t =
-  let module M = struct
-    type nonrec _ t = b t
-
-    let walk c g =
+let ptree (_ : (float, 'b) Nx.dtype) =
+  Nx.Ptree.v (fun c g ->
       let open Nx.Ptree.Walk in
       let breaks = field c "breaks" (list tensor) g.breaks in
       let coefficients = field c "coefficients" tensor g.coefficients in
-      { breaks; coefficients }
-  end in
-  Nx.Ptree.instantiate (module M)
+      { breaks; coefficients })

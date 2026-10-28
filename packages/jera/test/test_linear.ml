@@ -20,6 +20,10 @@ let is st s = Nx.item [] (Solution.is st s)
 
 (* A system of [n] unknowns, diagonally dominant so well conditioned: a matrix
    of entries in [-1, 1] plus [n + 1] on its diagonal, and a right-hand side. *)
+(* [n η], [η] float64's least positive subnormal: the floor of every bound
+   (Jera.Linear.dense). *)
+let underflow n = Float.of_int n *. Float.min_float *. epsilon_float
+
 let system =
   let open Gen in
   (let* n = int_range 0 9 in
@@ -36,8 +40,19 @@ let dense a r = Linear.solve one Linear.dense (product a) r
 
 (* Dense *)
 
+(* The least positive subnormal. *)
+let eta = Float.min_float *. epsilon_float
+
 let dense_tests =
   [
+    test "a subnormal solution of a large operator converges" (fun () ->
+        (* u = 0.6 η rounds to η, so the residual 10 η − 6 η = 4 η is the
+           least a float u gives, which the bound must admit. *)
+        let s =
+          Linear.solve one Linear.dense (fun u -> Nx.mul_s u 10.)
+            (vec [| 6. *. eta |])
+        in
+        equal (array float_exact) [| eta |] (Nx.to_array (Solution.get s)));
     prop "the solution is Nx.solve's on the matrix" system (fun (a, r) ->
         cover "an empty system" (Nx.dim 0 r = 0);
         cover "one unknown" (Nx.dim 0 r = 1);
@@ -219,9 +234,9 @@ let cg_tests =
         cover "an empty system" (Nx.dim 0 r = 0);
         let s = cg a r in
         let u = Solution.get s in
-        let norm x = Nx.item [] (Nx.norm x) in
+        let norm x = Nx.item [] (Nx.vector_norm (Nx.dtype x) x) in
         at_most float_exact
-          ~than:(1e-12 *. norm r)
+          ~than:((1e-12 *. norm r) +. underflow (Nx.dim 0 r))
           (norm (Nx.sub (product a u) r));
         if Nx.dim 0 r > 0 then
           equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);
@@ -279,9 +294,9 @@ let gmres_tests =
         cover "an empty system" (Nx.dim 0 r = 0);
         cover "more unknowns than a cycle's steps" (Nx.dim 0 r > 4);
         let u = Solution.get (gmres ~restart:4 a r) in
-        let norm x = Nx.item [] (Nx.norm x) in
+        let norm x = Nx.item [] (Nx.vector_norm (Nx.dtype x) x) in
         at_most float_exact
-          ~than:(1e-12 *. norm r)
+          ~than:((1e-12 *. norm r) +. underflow (Nx.dim 0 r))
           (norm (Nx.sub (product a u) r));
         if Nx.dim 0 r > 0 then
           equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);

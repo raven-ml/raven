@@ -8,32 +8,33 @@
 
 (** {1:witnesses Witnesses} *)
 
-val tensor : ?rel:float -> ?abs:float -> unit -> ('a, 'b) Nx.t Windtrap.testable
+val tensor :
+  ?rel:float -> ?abs:float -> unit -> ('a, 'b, 'd) Nx.t Windtrap.testable
 (** [tensor ?rel ?abs ()] compares dtype, shape and elements. Without a
     tolerance, floats compare bit for bit; with one, within [rel] of the larger
     magnitude or within [abs], every NaN equal to every NaN. *)
 
 val structure :
-  ?rel:float -> ?abs:float -> 's Nx.Ptree.t -> 's Windtrap.testable
+  ?rel:float -> ?abs:float -> ('s, 'd) Nx.Ptree.t -> 's Windtrap.testable
 (** [structure ?rel ?abs s] compares two values of [s]: equal visits, then each
     tensor as {!tensor} does. *)
 
 (** {1:host Host values} *)
 
-val floats : ('a, 'b) Nx.t -> float array
+val floats : ('a, 'b, 'd) Nx.t -> float array
 (** [floats t] is [t]'s elements as float64, read on the host. *)
 
-val dot : (float, 'b) Nx.t -> (float, 'b) Nx.t -> float
+val dot : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> float
 (** [dot u v] is [Σ u v] over two real tensors of one shape, in OCaml floats. *)
 
 (** {1:differences Finite differences} *)
 
 val central :
   eps:float ->
-  ((float, 'b) Nx.t -> (float, 'c) Nx.t) ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'c) Nx.t
+  ((float, 'b, 'd) Nx.t -> (float, 'c, 'd) Nx.t) ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'c, 'd) Nx.t
 (** [central ~eps f x v] is [(f (x + eps·v) − f (x − eps·v)) / 2·eps]. *)
 
 val slope : float -> float -> float

@@ -6,24 +6,24 @@
 (** Stochastic differential equations: the implementation of {!Jera.Sde}. *)
 
 module Brownian : sig
-  type 'b t
+  type ('b, 'd) t
 
   val v :
-    Nx.Rng.t ->
+    'd Nx.Rng.key ->
     (float, 'b) Nx.dtype ->
     shape:int array ->
     t0:float ->
     t1:float ->
     depth:int ->
-    'b t
+    ('b, 'd) t
 
   val increment :
-    'b t ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t * (float, 'b) Nx.t
+    ('b, 'd) t ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
 
-  val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('f, 'd) t -> ('f, 'e) t
 end
 
 type t
@@ -34,12 +34,12 @@ val sra1 : t
 val reversible_heun : t
 
 val march :
-  'y Nx.Ptree.t ->
+  ('y, 'd) Nx.Ptree.t ->
   t ->
   steps:int ->
-  drift:((float, 't) Nx.t -> 'y -> 'y) ->
-  diffusion:((float, 't) Nx.t -> 'y -> (float, 't) Nx.t -> 'y) ->
-  't Brownian.t ->
-  at:(float, 't) Nx.t ->
+  drift:((float, 't, 'd) Nx.t -> 'y -> 'y) ->
+  diffusion:((float, 't, 'd) Nx.t -> 'y -> (float, 't, 'd) Nx.t -> 'y) ->
+  ('t, 'd) Brownian.t ->
+  at:(float, 't, 'd) Nx.t ->
   'y ->
   'y

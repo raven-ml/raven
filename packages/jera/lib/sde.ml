@@ -6,11 +6,11 @@
 module Brownian = struct
   (* The interval's ends are scalar tensors, so a compiled function that takes a
      path as its argument reads them as data. *)
-  type 'b t = {
-    key : Nx.Rng.t;
+  type ('b, 'd) t = {
+    key : 'd Nx.Rng.key;
     shape : int array;
-    t0 : (float, 'b) Nx.t;
-    t1 : (float, 'b) Nx.t;
+    t0 : (float, 'b, 'd) Nx.t;
+    t1 : (float, 'b, 'd) Nx.t;
     depth : int;
   }
 
@@ -30,36 +30,30 @@ module Brownian = struct
     {
       key;
       shape = Array.copy shape;
-      t0 = Nx.scalar dtype t0;
-      t1 = Nx.scalar dtype t1;
+      t0 = Nx.scalar_at (Nx.beside (Nx.Rng.to_tensor key)) dtype t0;
+      t1 = Nx.scalar_at (Nx.beside (Nx.Rng.to_tensor key)) dtype t1;
       depth;
     }
 
-  let ptree (type b) (_ : (float, b) Nx.dtype) : b t Nx.Ptree.t =
-    let module M = struct
-      type nonrec _ t = b t
-
-      let walk c w =
-        let open Nx.Ptree.Walk in
-        let key = field c "key" (structure Nx.Rng.ptree) w.key in
-        let shape =
-          field c "shape"
-            (fun c s -> Array.of_list (list int c (Array.to_list s)))
-            w.shape
-        in
-        let t0 = field c "t0" tensor w.t0 in
-        let t1 = field c "t1" tensor w.t1 in
-        let depth = field c "depth" int w.depth in
-        { key; shape; t0; t1; depth }
-    end in
-    Nx.Ptree.instantiate (module M)
+  let walk c w =
+    let open Nx.Ptree.Walk in
+    let key = field c "key" Nx.Rng.walk w.key in
+    let shape =
+      field c "shape"
+        (fun c s -> Array.of_list (list int c (Array.to_list s)))
+        w.shape
+    in
+    let t0 = field c "t0" tensor w.t0 in
+    let t1 = field c "t1" tensor w.t1 in
+    let depth = field c "depth" int w.depth in
+    { key; shape; t0; t1; depth }
 
   (* Two standard normal draws of node [id], a pure function of the key. *)
   let draws w id =
     let k = Nx.Rng.fold_in_tensor w.key id in
-    let dtype = Nx.dtype w.t0 in
-    ( Nx.Rng.normal (Nx.Rng.fold_in k 0) dtype w.shape,
-      Nx.Rng.normal (Nx.Rng.fold_in k 1) dtype w.shape )
+    let dtype = Nx.dtype w.t0 and at = Nx.beside w.t0 in
+    ( Nx.Rng.normal_at at ~key:(Nx.Rng.fold_in k 0) dtype w.shape,
+      Nx.Rng.normal_at at ~key:(Nx.Rng.fold_in k 1) dtype w.shape )
 
   (* W(τ) − W(t0) and I(τ) = ∫_t0^τ (W r − W t0) dr. The descent keeps an
      interval [a, a + h] that holds τ, W and I at a, and the interval's
@@ -71,13 +65,14 @@ module Brownian = struct
   let point w tau =
     let dtype = Nx.dtype w.t0 in
     let span = Nx.sub w.t1 w.t0 in
-    let z1, z2 = draws w (Nx.scalar Nx.int32 0l) in
+    let at = Nx.beside w.t0 in
+    let z1, z2 = draws w (Nx.scalar_at at Nx.int32 0l) in
     let a = ref w.t0 and h = ref span in
-    let wa = ref (Nx.zeros dtype w.shape)
-    and ia = ref (Nx.zeros dtype w.shape) in
+    let wa = ref (Nx.zeros_at at dtype w.shape)
+    and ia = ref (Nx.zeros_at at dtype w.shape) in
     let inc = ref (Nx.mul z1 (Nx.sqrt span)) in
     let area = ref (Nx.mul z2 (Nx.sqrt (Nx.div_s span 12.))) in
-    let id = ref (Nx.scalar Nx.int32 1l) in
+    let id = ref (Nx.scalar_at at Nx.int32 1l) in
     for _ = 1 to w.depth do
       let z, n = draws w !id in
       let half = Nx.div_s !h 2. in
@@ -155,7 +150,7 @@ let reversible_heun = Reversible_heun
 let layout y v =
   ( Nx.Ptree.visits y v,
     Nx.Ptree.fold y
-      (fun _ x acc -> (Nx_dtype.to_string (Nx.dtype x), Nx.shape x) :: acc)
+      (fun _ x acc -> (Nx.Dtype.name (Nx.dtype x), Nx.shape x) :: acc)
       v [] )
 
 let checked fn what y v r =
@@ -177,13 +172,14 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   let f t v = checked fn "drift" y v (drift t v) in
   let g t v dw = checked fn "diffusion" y v (diffusion t v dw) in
   let dtype = Nx.dtype at in
-  let one = Nx.scalar dtype 1. in
+  let here = Nx.beside at in
+  let one = Nx.scalar_at here dtype 1. in
   (* [v + a x] and [v + x] over the float leaves. *)
   let axpy a x v = Nx.Ptree.axpy y a x v in
   let add x v = axpy one x v in
   let interval c step t0 t1 carry =
     let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
-    March.steps c dtype steps
+    March.steps c here dtype steps
       (fun j carry ->
         let t = Nx.add t0 (Nx.mul j h) in
         let dw, area = Brownian.increment w t (Nx.add t h) in
@@ -227,12 +223,15 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
         let hat' =
           add noise
             (axpy h fhat
-               (axpy (Nx.neg one) hat (Nx.Ptree.scale y (Nx.scalar dtype 2.) v)))
+               (axpy (Nx.neg one) hat
+                  (Nx.Ptree.scale y (Nx.scalar_at here dtype 2.) v)))
         in
         let t1 = Nx.add t h in
         let fhat' = f t1 hat' in
         let v = axpy (Nx.div_s h 2.) fhat (axpy (Nx.div_s h 2.) fhat' v) in
-        let v = add (g t1 hat' half) (axpy (Nx.scalar dtype 0.5) noise v) in
+        let v =
+          add (g t1 hat' half) (axpy (Nx.scalar_at here dtype 0.5) noise v)
+        in
         (v, (hat', fhat'))
       in
       let t0 = Nx.get [ 0 ] at in

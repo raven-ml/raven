@@ -5,7 +5,7 @@
 
 open Elementwise
 
-let int32 x = Nx.scalar Nx.int32 x
+let int32 like x = Nx.scalar_at (Nx.beside like) Nx.int32 x
 
 (* Bracket *)
 
@@ -53,7 +53,7 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
     (br, (st, (n, k)))
   in
   let initial =
-    let st = Nx.full Nx.int32 (Nx.shape a0) running in
+    let st = Nx.full_at (Nx.placement a0) Nx.int32 (Nx.shape a0) running in
     let finite = Nx.logical_and (Nx.isfinite fa0) (Nx.isfinite fb0) in
     let st = settle st (Nx.logical_not finite) Not_finite in
     let root_end = Nx.logical_or (Nx.equal fa0 zero) (Nx.equal fb0 zero) in
@@ -62,7 +62,9 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
     let st = settle st (Nx.logical_or same (Nx.equal a0 b0)) Not_bracketed in
     finish
       ( ((a0, b0), (fa0, fb0)),
-        (st, (Nx.full Nx.int32 (Nx.shape a0) 2l, int32 0l)) )
+        ( st,
+          (Nx.full_at (Nx.placement a0) Nx.int32 (Nx.shape a0) 2l, int32 a0 0l)
+        ) )
   in
   let step ((((a, b), (fa, fb)) as br), (st, (n, k))) =
     let run = searching st in
@@ -130,7 +132,9 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
           (Nx.greater_equal_s k (Int32.of_int limit)))
       ~f:step initial
   in
-  let st = settle st (Nx.ones Nx.bool (Nx.shape st)) Stalled in
+  let st =
+    settle st (Nx.ones_at (Nx.placement st) Nx.bool (Nx.shape st)) Stalled
+  in
   (br, st, n)
 
 let bracket ~tol f ~lo ~hi =
@@ -223,7 +227,11 @@ let newton ~tol ~budget ~slope f x0 =
   in
   let s =
     if Nx.numel x0 = 0 then
-      { s with st = Nx.full Nx.int32 shape (Solution.code Converged) }
+      {
+        s with
+        st =
+          Nx.full_at (Nx.placement x0) Nx.int32 shape (Solution.code Converged);
+      }
     else fst (Search.iterations ~budget Nx.Ptree.unit step (s, ()))
   in
   let st = s.st and n = s.n and x = flat s.x and error = flat s.e in

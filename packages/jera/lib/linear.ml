@@ -53,26 +53,26 @@ let name = function
 
 (* Vectors *)
 
-(* The float tensors of values of a structure as one vector of their dtype ['d]:
+(* The float tensors of values of a structure as one vector of their dtype ['q]:
    [ravel v] is [v]'s vector, and [unravel u] is [like] with its float tensors
    read from [u] in walk order. *)
-type 'x space =
+type ('x, 'd) space =
   | Space : {
-      dtype : (float, 'd) Nx.dtype;
+      dtype : (float, 'q) Nx.dtype;
       size : int;
-      ravel : 'x -> (float, 'd) Nx.t;
-      unravel : (float, 'd) Nx.t -> 'x;
+      ravel : 'x -> (float, 'q, 'd) Nx.t;
+      unravel : (float, 'q, 'd) Nx.t -> 'x;
     }
-      -> 'x space
+      -> ('x, 'd) space
 
-let is_float (Nx.P t) = Nx_dtype.is Float (Nx.dtype t)
+let is_float (Nx.P t) = Nx.Dtype.is Float (Nx.dtype t)
 
 let space fn what x like =
   let leaves, _ = Nx.Ptree.flatten x like in
   let floats = List.filter is_float leaves in
   let dtypes =
     List.sort_uniq compare
-      (List.map (fun (Nx.P t) -> Nx_dtype.to_string (Nx.dtype t)) floats)
+      (List.map (fun (Nx.P t) -> Nx.Dtype.name (Nx.dtype t)) floats)
   in
   if List.length dtypes > 1 then
     invalid_arg
@@ -90,7 +90,12 @@ let space fn what x like =
             else None)
           leaves
       with
-      | [] -> Nx.zeros dtype [| 0 |]
+      | [] -> (
+          match leaves with
+          | Nx.P t :: _ -> Nx.zeros_at (Nx.beside t) dtype [| 0 |]
+          | [] ->
+              invalid_arg
+                (Printf.sprintf "%s: %s holds no tensor to solve on" fn what))
       | parts -> Nx.concatenate ~axis:0 parts
     in
     let unravel u =
@@ -113,7 +118,7 @@ let space fn what x like =
   match floats with
   | [] -> make Nx.float64
   | Nx.P t :: _ -> (
-      match Nx_dtype.kind (Nx.dtype t) with
+      match Nx.Dtype.kind (Nx.dtype t) with
       | Float -> make (Nx.dtype t)
       | _ -> assert false)
 
@@ -121,7 +126,7 @@ let space fn what x like =
 let layout x v =
   ( Nx.Ptree.visits x v,
     Nx.Ptree.fold x
-      (fun _ t acc -> (Nx_dtype.to_string (Nx.dtype t), Nx.shape t) :: acc)
+      (fun _ t acc -> (Nx.Dtype.name (Nx.dtype t), Nx.shape t) :: acc)
       v [] )
 
 let checked fn what x a u =
@@ -140,14 +145,14 @@ let checked fn what x a u =
    the residual must meet, the conditions that end a lane before the check, in
    order, the budget spent, the applications of [a] and the report's facts. *)
 
-type 'd run = {
-  u : (float, 'd) Nx.t;
-  residual : (float, 'd) Nx.t;
-  bound : (float, 'd) Nx.t;
-  outcomes : ((bool, Nx.bool_elt) Nx.t * Solution.status) list;
-  spent : Solution.spent option;
-  applications : (int32, Nx.int32_elt) Nx.t;
-  facts : Solution.fact list;
+type ('q, 'd) run = {
+  u : (float, 'q, 'd) Nx.t;
+  residual : (float, 'q, 'd) Nx.t;
+  bound : (float, 'q, 'd) Nx.t;
+  outcomes : ('d Nx.bool_t * Solution.status) list;
+  spent : 'd Solution.spent option;
+  applications : 'd Nx.int32_t;
+  facts : 'd Solution.fact list;
 }
 
 let finite x = Nx.all (Nx.isfinite x)
@@ -158,19 +163,34 @@ let dot x y = Nx.sum (Nx.mul x y)
 (* The constant of the dense solve's bound on its backward error. *)
 let backward = 16.
 
+(* [n η], [η] the dtype's least positive subnormal: a solution of subnormal
+   magnitude is a multiple of [η], so its residual keeps a rounding of order
+   [‖A‖ n η] that a bound proportional to the data's norms loses to
+   underflow. *)
+let underflow dtype n = float n *. Num.tiny dtype *. Num.eps dtype
+
+(* A direct solve's bound on the residual: [c n ε (‖A‖ ‖x‖ + ‖r‖) +
+   c n η (1 + ‖A‖)], the backward error of LU with partial pivoting and the
+   rounding of a subnormal solution. *)
+let direct_bound dtype n norm_a x r =
+  Nx.add
+    (Nx.mul_s
+       (Nx.add (Nx.mul norm_a (Nx.vector_norm (Nx.dtype x) x))
+          (Nx.vector_norm (Nx.dtype r) r))
+       (backward *. float n *. Num.eps dtype))
+    (Nx.mul_s (Nx.add_s norm_a 1.) (backward *. underflow dtype n))
+
 (* The matrix of [apply], one column per vector of the standard basis. *)
-let materialise dtype n apply =
+let materialise at dtype n apply =
   Nx.transpose
-    (Rune.vmap Nx.Ptree.(tensor @-> returns tensor) apply (Nx.eye dtype n))
+    (Rune.vmap
+       Nx.Ptree.(tensor @-> returns tensor)
+       apply (Nx.eye_at at dtype n))
 
 (* The run of a dense solve: the solution [x] of the materialised [m]. *)
 let checked_dense (type d) (dtype : (float, d) Nx.dtype) n apply m
-    (r : (float, d) Nx.t) x =
-  let bound =
-    Nx.mul_s
-      (Nx.add (Nx.mul (Nx.norm m) (Nx.norm x)) (Nx.norm r))
-      (backward *. float n *. Num.eps dtype)
-  in
+    (r : (float, d, 'd) Nx.t) x =
+  let bound = direct_bound dtype n (Nx.vector_norm (Nx.dtype m) m) x r in
   {
     u = x;
     residual = Nx.sub (apply x) r;
@@ -178,21 +198,21 @@ let checked_dense (type d) (dtype : (float, d) Nx.dtype) n apply m
     outcomes =
       [ (Nx.logical_not (Nx.logical_and (finite m) (finite r)), Not_finite) ];
     spent = None;
-    applications = Nx.scalar Nx.int32 (Int32.of_int (n + 1));
+    applications = Nx.scalar_at (Nx.beside r) Nx.int32 (Int32.of_int (n + 1));
     facts = [];
   }
 
 let direct dtype n apply r =
-  let m = materialise dtype n apply in
+  let m = materialise (Nx.beside r) dtype n apply in
   checked_dense dtype n apply m r (Nx.solve m r)
 
 (* The dense matrix factored once, for many right-hand sides. *)
-let factored dtype n apply =
-  let m = materialise dtype n apply in
+let factored at dtype n apply =
+  let m = materialise at dtype n apply in
   let perm, l, u = Nx.lu m in
   fun r ->
-    let z = Nx.solve_triangular ~unit_diag:true l (Nx.take ~indices:perm r) in
-    checked_dense dtype n apply m r (Nx.solve_triangular ~upper:true u z)
+    let z = Nx.solve_triangular ~unit_diag:true l (Nx.take perm r) in
+    checked_dense dtype n apply m r (Nx.solve_triangular ~triangle:Upper u z)
 
 (* Banded
 
@@ -213,19 +233,20 @@ let factored dtype n apply =
    zero where [mask] is false, of [shape]. *)
 let gather shape index mask x =
   let n = Array.length index in
-  let at = Nx.create Nx.int64 [| n |] (Array.map Int64.of_int index) in
-  let inside = Nx.create Nx.bool [| n |] mask in
-  let v = Nx.take ~indices:at (Nx.reshape [| -1 |] x) in
+  let place v = Nx.place (Nx.beside x) v in
+  let at = place (Nx.create Nx.int64 [| n |] (Array.map Int64.of_int index)) in
+  let inside = place (Nx.create Nx.bool [| n |] mask) in
+  let v = Nx.take at (Nx.reshape [| -1 |] x) in
   Nx.reshape shape (Nx.where inside v (Nx.zeros_like v))
 
 (* The band of [apply], [n] unknowns, half-width [w]. *)
-let probe (type d) (dtype : (float, d) Nx.dtype) n w apply =
+let probe (type d) at (dtype : (float, d) Nx.dtype) n w apply =
   let k = (2 * w) + 1 in
   let residues =
     Nx.equal
-      (Nx.reshape [| k; 1 |] (Nx.arange Nx.int32 0 k 1))
+      (Nx.reshape [| k; 1 |] (Nx.arange_at at Nx.int32 0 k 1))
       (Nx.reshape [| 1; n |]
-         (Nx.mod_s (Nx.arange Nx.int32 0 n 1) (Int32.of_int k)))
+         (Nx.mod_s (Nx.arange_at at Nx.int32 0 n 1) (Int32.of_int k)))
   in
   let y =
     Rune.vmap
@@ -242,7 +263,7 @@ let probe (type d) (dtype : (float, d) Nx.dtype) n w apply =
 (* The factors of the band [b]: [U]'s rows, [n × (2w + 1)] from the diagonal,
    the multipliers, [n × w], and the interchanges, the offset of the row moved
    to the top at each step. *)
-let factor (type d) (b : (float, d) Nx.t) n w =
+let factor (type d) (b : (float, d, 'd) Nx.t) n w =
   let k = (2 * w) + 1 and rows = w + 1 in
   let cell f = Array.init (rows * k) (fun e -> f (e / k) (e mod k)) in
   (* The first window: [W.(a).(b)] is [B.(a).(b − a + w)]. *)
@@ -256,15 +277,16 @@ let factor (type d) (b : (float, d) Nx.t) n w =
     Nx.concatenate ~axis:0
       [
         Nx.slice [ Nx.R (Int.min rows n, n) ] b;
-        Nx.zeros (Nx.dtype b) [| Int.min rows n; k |];
+        Nx.zeros_at (Nx.beside b) (Nx.dtype b) [| Int.min rows n; k |];
       ]
   in
-  let row_index = Nx.reshape [| rows; 1 |] (Nx.arange Nx.int32 0 rows 1) in
+  let row_index =
+    Nx.reshape [| rows; 1 |] (Nx.arange_at (Nx.beside b) Nx.int32 0 rows 1)
+  in
   let step win next =
     let column = Nx.slice [ Nx.A; Nx.I 0 ] win in
     let p = Nx.cast Nx.int32 (Nx.argmax (Nx.abs column)) in
-    let top =
-      Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 p)) win
+    let top = Nx.take ~axis:0 (Nx.reshape [| 1 |] (Nx.cast Nx.int64 p)) win
     and first = Nx.slice [ Nx.R (0, 1) ] win in
     let win =
       Nx.where (Nx.equal_s row_index 0l)
@@ -303,27 +325,26 @@ let factor (type d) (b : (float, d) Nx.t) n w =
   (u, l, p)
 
 (* The solution of [A x = r] from the band's factors. *)
-let substitute (type d) (u, l, p) n w (r : (float, d) Nx.t) =
+let substitute (type d) (u, l, p) n w (r : (float, d, 'd) Nx.t) =
   let rows = w + 1 in
-  let index = Nx.arange Nx.int32 0 rows 1 in
+  let index = Nx.arange_at (Nx.beside r) Nx.int32 0 rows 1 in
   let incoming =
     Nx.concatenate ~axis:0
       [
         Nx.slice [ Nx.R (Int.min rows n, n) ] r;
-        Nx.zeros (Nx.dtype r) [| Int.min rows n |];
+        Nx.zeros_at (Nx.beside r) (Nx.dtype r) [| Int.min rows n |];
       ]
   in
   let first =
     Nx.concatenate ~axis:0
       [
         Nx.slice [ Nx.R (0, Int.min rows n) ] r;
-        Nx.zeros (Nx.dtype r) [| rows - Int.min rows n |];
+        Nx.zeros_at (Nx.beside r) (Nx.dtype r) [| rows - Int.min rows n |];
       ]
   in
   let forward win (l, (p, next)) =
     let top =
-      Nx.reshape [||]
-        (Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 p)) win)
+      Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] (Nx.cast Nx.int64 p)) win)
     in
     let win =
       Nx.where (Nx.equal_s index 0l)
@@ -356,22 +377,18 @@ let substitute (type d) (u, l, p) n w (r : (float, d) Nx.t) =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor tensor)
       Nx.Ptree.tensor ~f:backward
-      ~init:(Nx.zeros (Nx.dtype r) [| 2 * w |])
+      ~init:(Nx.zeros_at (Nx.beside r) (Nx.dtype r) [| 2 * w |])
       (Nx.flip ~axes:[ 0 ] u, Nx.flip ~axes:[ 0 ] z)
   in
   Nx.flip ~axes:[ 0 ] x
 
-let band (type d) (dtype : (float, d) Nx.dtype) n w apply =
-  let b = probe dtype n w apply in
+let band (type d) at (dtype : (float, d) Nx.dtype) n w apply =
+  let b = probe at dtype n w apply in
   let factors = factor b n w in
-  let norm = Nx.norm b and finite_b = finite b in
-  fun (r : (float, d) Nx.t) ->
+  let norm = Nx.vector_norm (Nx.dtype b) b and finite_b = finite b in
+  fun (r : (float, d, 'd) Nx.t) ->
     let x = substitute factors n w r in
-    let bound =
-      Nx.mul_s
-        (Nx.add (Nx.mul norm (Nx.norm x)) (Nx.norm r))
-        (backward *. float n *. Num.eps dtype)
-    in
+    let bound = direct_bound dtype n norm x r in
     {
       u = x;
       residual = Nx.sub (apply x) r;
@@ -379,7 +396,8 @@ let band (type d) (dtype : (float, d) Nx.dtype) n w apply =
       outcomes =
         [ (Nx.logical_not (Nx.logical_and finite_b (finite r)), Not_finite) ];
       spent = None;
-      applications = Nx.scalar Nx.int32 (Int32.of_int ((2 * w) + 2));
+      applications =
+        Nx.scalar_at (Nx.beside r) Nx.int32 (Int32.of_int ((2 * w) + 2));
       facts = [];
     }
 
@@ -392,8 +410,12 @@ let band (type d) (dtype : (float, d) Nx.dtype) n w apply =
    non-positive curvature, and the count of steps. *)
 
 let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
-    precondition (r : (float, d) Nx.t) =
-  let target = Nx.mul_s (Nx.norm r) rel in
+    precondition (r : (float, d, 'd) Nx.t) =
+  let target =
+    Nx.add_s
+      (Nx.mul_s (Nx.vector_norm (Nx.dtype r) r) rel)
+      (underflow dtype (Nx.dim 0 r))
+  in
   let step (u, (res, (p, (rz, (_, k))))) =
     let q = apply p in
     let curvature = dot p q in
@@ -409,7 +431,8 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
   in
   let stops (_, (res, (_, (_, (flat, k))))) =
     Nx.logical_or
-      (Nx.logical_or flat (Nx.less_equal (Nx.norm res) target))
+      (Nx.logical_or flat
+         (Nx.less_equal (Nx.vector_norm (Nx.dtype res) res) target))
       (Nx.logical_or
          (Nx.greater_equal_s k (Int32.of_int budget))
          (Nx.logical_not (finite res)))
@@ -422,7 +445,11 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
           (pair tensor (pair tensor (pair tensor (pair tensor tensor)))))
       ~max:budget ~until:stops ~f:step
       ( Nx.zeros_like r,
-        (r, (z, (dot r z, (Nx.scalar Nx.bool false, Nx.scalar Nx.int32 0l)))) )
+        ( r,
+          ( z,
+            ( dot r z,
+              ( Nx.scalar_at (Nx.beside r) Nx.bool false,
+                Nx.scalar_at (Nx.beside r) Nx.int32 0l ) ) ) ) )
   in
   {
     u;
@@ -432,7 +459,7 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
       [
         (Nx.logical_not (Nx.logical_and (finite r) (finite res)), Not_finite);
         (flat, Stalled);
-        (Nx.greater (Nx.norm res) target, Budget_spent);
+        (Nx.greater (Nx.vector_norm (Nx.dtype res) res) target, Budget_spent);
       ];
     spent = Some { used = k; unit = "iterations"; budget };
     applications = Nx.add_s k 1l;
@@ -459,7 +486,7 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
    carry holds [u], the residual [r − a u] and the count of cycles. *)
 
 let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
-    (res : (float, d) Nx.t) =
+    (res : (float, d, 'd) Nx.t) =
   let rows = restart + 1 in
   let outer x y =
     Nx.mul (Nx.reshape [| Nx.dim 0 x; 1 |] x) (Nx.reshape [| 1; Nx.dim 0 y |] y)
@@ -479,7 +506,7 @@ let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
     in
     let w, c1 = orthogonalise w in
     let w, c2 = orthogonalise w in
-    let c = Nx.add c1 c2 and norm = Nx.norm w in
+    let c = Nx.add c1 c2 and norm = Nx.vector_norm (Nx.dtype w) w in
     let v = Nx.add v (outer next (normalise w norm)) in
     let h = Nx.add h (outer (Nx.add c (Nx.mul next norm)) column) in
     let qj = Nx.matmul here q in
@@ -497,8 +524,9 @@ let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
     in
     ((v, (h, q)), ())
   in
-  let beta = Nx.norm res in
-  let basis = Nx.eye dtype rows in
+  let beta = Nx.vector_norm (Nx.dtype res) res in
+  let at = Nx.beside res in
+  let basis = Nx.eye_at at dtype rows in
   let (v, (h, q)), () =
     Rune.scan
       Nx.Ptree.(pair tensor (pair tensor tensor))
@@ -506,19 +534,23 @@ let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
       Nx.Ptree.unit ~f:step
       ~init:
         ( outer (Nx.get [ 0 ] basis) (normalise res beta),
-          (Nx.zeros dtype [| rows; restart |], basis) )
+          (Nx.zeros_at at dtype [| rows; restart |], basis) )
       ( Nx.slice [ Nx.R (0, restart) ] basis,
-        (Nx.slice [ Nx.R (1, rows) ] basis, Nx.eye dtype restart) )
+        (Nx.slice [ Nx.R (1, rows) ] basis, Nx.eye_at at dtype restart) )
   in
   let r = Nx.slice [ Nx.R (0, restart) ] (Nx.matmul q h) in
   let unread = Nx.cast dtype (Nx.equal_s (Nx.diagonal r) 0.) in
   let g = Nx.mul (Nx.slice [ Nx.R (0, restart); Nx.I 0 ] q) beta in
-  let y = Nx.solve_triangular ~upper:true (Nx.add r (Nx.diag unread)) g in
+  let y = Nx.solve_triangular ~triangle:Upper (Nx.add r (Nx.diag unread)) g in
   precondition (Nx.matmul y (Nx.slice [ Nx.R (0, restart) ] v))
 
 let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
-    apply precondition (r : (float, d) Nx.t) =
-  let target = Nx.mul_s (Nx.norm r) rel in
+    apply precondition (r : (float, d, 'd) Nx.t) =
+  let target =
+    Nx.add_s
+      (Nx.mul_s (Nx.vector_norm (Nx.dtype r) r) rel)
+      (underflow dtype (Nx.dim 0 r))
+  in
   let cycles = budget / restart in
   let cycle (u, (res, k)) =
     let u = Nx.add u (arnoldi dtype ~restart apply precondition res) in
@@ -526,7 +558,7 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
   in
   let stops (_, (res, k)) =
     Nx.logical_or
-      (Nx.less_equal (Nx.norm res) target)
+      (Nx.less_equal (Nx.vector_norm (Nx.dtype res) res) target)
       (Nx.logical_or
          (Nx.greater_equal_s k (Int32.of_int cycles))
          (Nx.logical_not (finite res)))
@@ -535,7 +567,7 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
     Rune.iterate
       Nx.Ptree.(pair tensor (pair tensor tensor))
       ~max:cycles ~until:stops ~f:cycle
-      (Nx.zeros_like r, (r, Nx.scalar Nx.int32 0l))
+      (Nx.zeros_like r, (r, Nx.scalar_at (Nx.beside r) Nx.int32 0l))
   in
   {
     u;
@@ -544,7 +576,7 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
     outcomes =
       [
         (Nx.logical_not (Nx.logical_and (finite r) (finite res)), Not_finite);
-        (Nx.greater (Nx.norm res) target, Budget_spent);
+        (Nx.greater (Nx.vector_norm (Nx.dtype res) res) target, Budget_spent);
       ];
     spent =
       Some
@@ -560,11 +592,11 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
 (* [s] prepared for [apply], [n] unknowns, with [precondition] on vectors: the
    matrix materialised and factored once, so each right-hand side costs the
    substitutions. *)
-let prepare (type d) s (dtype : (float, d) Nx.dtype) n apply precondition :
-    (float, d) Nx.t -> d run =
+let prepare (type d) s at (dtype : (float, d) Nx.dtype) n apply precondition :
+    (float, d, 'd) Nx.t -> (d, 'd) run =
   match s with
-  | Dense -> factored dtype n apply
-  | Banded w -> band dtype n w apply
+  | Dense -> factored at dtype n apply
+  | Banded w -> band at dtype n w apply
   | Cg { rel; budget; _ } -> conjugate dtype ~rel ~budget apply precondition
   | Gmres { restart; rel; budget; _ } ->
       generalised dtype ~restart ~rel ~budget apply precondition
@@ -574,7 +606,8 @@ let prepare (type d) s (dtype : (float, d) Nx.dtype) n apply precondition :
 let run s dtype n apply precondition r =
   match s with
   | Dense -> direct dtype n apply r
-  | Banded _ | Cg _ | Gmres _ -> prepare s dtype n apply precondition r
+  | Banded _ | Cg _ | Gmres _ ->
+      prepare s (Nx.beside r) dtype n apply precondition r
 
 (* [s]'s preconditioner on the vectors of [ravel] and [unravel]. *)
 let preconditioner fn x s ravel unravel =
@@ -586,7 +619,10 @@ let preconditioner fn x s ravel unravel =
 let failed run =
   List.fold_left
     (fun acc (c, _) -> Nx.logical_or acc c)
-    (Nx.logical_not (Nx.less_equal (Nx.norm run.residual) run.bound))
+    (Nx.logical_not
+       (Nx.less_equal
+          (Nx.vector_norm (Nx.dtype run.residual) run.residual)
+          run.bound))
     run.outcomes
 
 (* Derivatives *)
@@ -628,31 +664,32 @@ let solve x s a r =
       {
         u = rv;
         residual = rv;
-        bound = Nx.zeros dtype [||];
+        bound = Nx.zeros_at (Nx.beside rv) dtype [||];
         outcomes = [];
         spent = None;
-        applications = Nx.scalar Nx.int32 0l;
+        applications = Nx.scalar_at (Nx.beside rv) Nx.int32 0l;
         facts = [];
       }
     else run s dtype size apply (preconditioner fn x s ravel unravel) rv
   in
   let u = Rune.detach result.u and residual = Rune.detach result.residual in
-  let norm = Nx.norm residual and bound = Rune.detach result.bound in
+  let norm = Nx.vector_norm (Nx.dtype residual) residual
+  and bound = Rune.detach result.bound in
   let st =
     List.fold_left
       (fun st (c, status) -> settle st (Rune.detach c) status)
-      (Nx.scalar Nx.int32 running)
+      (Nx.scalar_at (Nx.beside rv) Nx.int32 running)
       result.outcomes
   in
   let st = settle st (Nx.logical_not (Nx.less_equal norm bound)) Stalled in
-  let st = settle st (Nx.scalar Nx.bool true) Converged in
+  let st = settle st (Nx.scalar_at (Nx.beside rv) Nx.bool true) Converged in
   let ok = Nx.equal_s st (Solution.code Converged) in
   let estimate = unravel u in
   (* A lane that did not converge holds its estimate, with a zero derivative. *)
   let value =
     Rune.root x ~linear_solve:(derivative fn x s)
       ~residual:(fun v ->
-        let minus = Nx.scalar dtype (-1.) in
+        let minus = Nx.scalar_at (Nx.beside rv) dtype (-1.) in
         Nx.Ptree.map2 x
           (fun _ res off ->
             Nx.where (Nx.broadcast_to (Nx.shape res) ok) res off)

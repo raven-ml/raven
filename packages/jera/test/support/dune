@@ -2,4 +2,4 @@
  (name jera_test)
  (wrapped false)
  (modules oracle)
- (libraries windtrap nx nx.dtype))
+ (libraries windtrap nx nx.array))

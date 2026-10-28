@@ -269,7 +269,8 @@ let march_tests =
         in
         let compiled =
           Rune.jit
-            Nx.Ptree.(Sde.Brownian.ptree f64 @-> tensor @-> returns tensor)
+            Nx.Ptree.(
+              Nx.Ptree.v Sde.Brownian.walk @-> tensor @-> returns tensor)
             f
         in
         let x = vec [| 1.; 0.5; 2. |] in

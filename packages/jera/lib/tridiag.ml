@@ -42,10 +42,13 @@ let shift_down v =
 let solve ~sub ~diag ~sup r =
   let pair = Nx.Ptree.(pair tensor tensor) in
   let quad =
-    Nx.Ptree.iso
-      (fun ((a, b), (c, d)) -> (a, b, c, d))
-      (fun (a, b, c, d) -> ((a, b), (c, d)))
-      (Nx.Ptree.pair pair pair)
+    Nx.Ptree.v (fun c (a, b, e, d) ->
+        let open Nx.Ptree.Walk in
+        let a = index c 0 tensor a in
+        let b = index c 1 tensor b in
+        let e = index c 2 tensor e in
+        let d = index c 3 tensor d in
+        (a, b, e, d))
   in
   let zero = Nx.zeros_like diag in
   let _, p01, _, p11 =

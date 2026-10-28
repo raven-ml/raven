@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('v, 'b) t = ('v, 'b) Cheb.series = {
-  s : 'v Nx.Ptree.t;
-  breaks : (float, 'b) Nx.t;
+type ('v, 'b, 'd) t = ('v, 'b, 'd) Cheb.series = {
+  s : ('v, 'd) Nx.Ptree.t;
+  breaks : (float, 'b, 'd) Nx.t;
   coefficients : 'v;
   extension : Cheb.extension;
 }
@@ -58,8 +58,10 @@ let v s ~breaks c =
 
 (* Interpolants *)
 
-type 'b ends =
-  [ `Natural | `Not_a_knot | `Clamped of (float, 'b) Nx.t * (float, 'b) Nx.t ]
+type ('b, 'd) ends =
+  [ `Natural
+  | `Not_a_knot
+  | `Clamped of (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t ]
 
 let samples fn x y =
   check_breaks fn "the knots" x;
@@ -108,7 +110,7 @@ let hermite x ~values ~slopes =
 (* [k / pieces] of the way from [a] to [b], the last break [b] itself. *)
 let uniform_breaks ~pieces a b =
   let s =
-    Num.constant (Nx.dtype a)
+    Num.constant (Nx.beside a) (Nx.dtype a)
       (Array.init pieces (fun k -> float k /. float pieces))
   in
   Nx.concatenate ~axis:0
@@ -129,7 +131,7 @@ let chebyshev s ~degree ~pieces f a b =
   let u =
     Nx.reshape
       [| 1; degree + 1 |]
-      (Num.constant (Nx.dtype a) (Cheb.nodes degree))
+      (Num.constant (Nx.beside a) (Nx.dtype a) (Cheb.nodes degree))
   in
   let points =
     Nx.add
@@ -167,7 +169,10 @@ let adapt s ~degree ~tol ~budget f a b =
       (Num.shape (Nx.shape b));
   let dtype = Nx.dtype a in
   let m = degree + 1 in
-  let u = Nx.reshape [| 1; m |] (Num.constant dtype (Cheb.nodes degree)) in
+  let u =
+    Nx.reshape [| 1; m |]
+      (Num.constant (Nx.beside a) dtype (Cheb.nodes degree))
+  in
   (* The pieces of [[0, 1]], [[k; 1]], as their ends' fractions. *)
   let fractions level index =
     let flat v = Nx.reshape [| Nx.dim 0 v |] v in
@@ -219,10 +224,12 @@ let adapt s ~degree ~tol ~budget f a b =
   let a0 = Rune.detach a and b0 = Rune.detach b in
   let x t = Nx.add a0 (Nx.mul (Nx.sub b0 a0) t) in
   let p =
-    Partition.refine s ~budget ~lanes:[||] ~dims:1 ~cost:m
+    Partition.refine s ~at:(Nx.beside a) ~budget ~lanes:[||] ~dims:1 ~cost:m
       ~evaluate:(fun level index ->
         let c = fit search_f (points a0 b0 (fractions level index)) in
-        (c, tails c, Nx.zeros Nx.int64 [| Nx.dim 0 level |]))
+        ( c,
+          tails c,
+          Nx.zeros_at (Nx.placement level) Nx.int64 [| Nx.dim 0 level |] ))
       ~point:(fun _ t -> x t)
       ~verdict:(fun p used ->
         ( Nx.any (Nx.logical_and used (Nx.isnan p.error)),
@@ -241,7 +248,7 @@ let adapt s ~degree ~tol ~budget f a b =
   let order =
     Nx.argsort (Nx.where used_mask t0 (Nx.full_like t0 Float.infinity))
   in
-  let sorted v = Nx.take ~axis:0 ~indices:order v in
+  let sorted v = Nx.take ~axis:0 order v in
   let level = sorted level
   and index = sorted index
   and live = sorted used_mask in
@@ -331,7 +338,7 @@ let series fn p q i u =
     (fun _ c ->
       Num.on_float fn
         (fun c ->
-          let g = Nx.take ~axis:0 ~indices:i c in
+          let g = Nx.take ~axis:0 i c in
           let y = Cheb.clenshaw (Nx.cast (Nx.dtype c) u) g in
           let value = Array.sub (Nx.shape c) 2 (Nx.ndim c - 2) in
           Nx.reshape (Array.append q value) y)
@@ -383,7 +390,9 @@ let widths p =
     (Nx.slice [ Nx.R (1, n + 1) ] p.breaks)
     (Nx.slice [ Nx.R (0, n) ] p.breaks)
 
-type op = { op : 'c. (float, 'c) Nx.t -> (float, 'c) Nx.t -> (float, 'c) Nx.t }
+type 'd op = {
+  op : 'c. (float, 'c, 'd) Nx.t -> (float, 'c, 'd) Nx.t -> (float, 'c, 'd) Nx.t;
+}
 
 let calculus fn { op } p =
   let w = widths p in
@@ -410,12 +419,8 @@ let extend e p =
 let breaks p = p.breaks
 let coefficients p = p.coefficients
 
-let ptree (type v b) (s : v Nx.Ptree.t) (_ : (float, b) Nx.dtype) :
-    (v, b) t Nx.Ptree.t =
-  let module M = struct
-    type nonrec _ t = (v, b) t
-
-    let walk c p =
+let ptree s (_ : (float, 'b) Nx.dtype) =
+  Nx.Ptree.v (fun c p ->
       let open Nx.Ptree.Walk in
       let extension =
         field c "extension"
@@ -430,6 +435,4 @@ let ptree (type v b) (s : v Nx.Ptree.t) (_ : (float, b) Nx.dtype) :
       in
       let breaks = field c "breaks" tensor p.breaks in
       let coefficients = field c "coefficients" (structure s) p.coefficients in
-      { p with breaks; coefficients; extension }
-  end in
-  Nx.Ptree.instantiate (module M)
+      { p with breaks; coefficients; extension })

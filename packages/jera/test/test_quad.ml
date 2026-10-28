@@ -665,7 +665,7 @@ let qmc_tests =
             (Quad.qmc k ~tol:(Tol.rel 1e-5) ~budget:64 f (unit_box [||] 3))
         in
         let compiled =
-          Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) integral
+          Rune.jit Nx.Ptree.(Nx.Ptree.v Nx.Rng.walk @-> returns tensor) integral
         in
         equal (Oracle.tensor ~rel:1e-12 ()) (integral key) (compiled key));
     test "dimensions past the table raise" (fun () ->

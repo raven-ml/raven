@@ -3,15 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('d, 'b) t = {
-  level : (int32, Nx.int32_elt) Nx.t;
-  index : (int64, Nx.int64_elt) Nx.t;
-  axis : (int64, Nx.int64_elt) Nx.t;
-  data : 'd;
-  error : (float, 'b) Nx.t;
-  used : (int32, Nx.int32_elt) Nx.t;
-  status : (int32, Nx.int32_elt) Nx.t;
-  evaluations : (int32, Nx.int32_elt) Nx.t;
+type ('q, 'b, 'd) t = {
+  level : 'd Nx.int32_t;
+  index : 'd Nx.int64_t;
+  axis : 'd Nx.int64_t;
+  data : 'q;
+  error : (float, 'b, 'd) Nx.t;
+  used : 'd Nx.int32_t;
+  status : 'd Nx.int32_t;
+  evaluations : 'd Nx.int32_t;
 }
 
 let max_level = 62
@@ -33,19 +33,22 @@ let widen m v =
       (Nx.reshape (Array.append (Nx.shape m) (Array.make extra 1)) m)
 
 (* The slot numbers, [[budget] @ lanes]. *)
-let slots ~budget ~lanes =
+let slots ~at ~budget ~lanes =
   Nx.broadcast_to
     (Array.append [| budget |] lanes)
     (Nx.reshape
        (Array.append [| budget |] (Array.make (Array.length lanes) 1))
-       (Nx.arange Nx.int32 0 budget 1))
+       (Nx.arange_at at Nx.int32 0 budget 1))
 
 let live slot p =
   Nx.less slot
     (Nx.broadcast_to (Nx.shape slot) (Nx.unsqueeze ~axes:[ 0 ] p.used))
 
 let in_use p =
-  live (slots ~budget:(Nx.dim 0 p.error) ~lanes:(Nx.shape p.used)) p
+  live
+    (slots ~at:(Nx.beside p.used) ~budget:(Nx.dim 0 p.error)
+       ~lanes:(Nx.shape p.used))
+    p
 
 let sum live v =
   Nx.sum ~axes:[ 0 ] (Nx.where (widen live v) v (Nx.zeros_like v))
@@ -56,7 +59,7 @@ let worst_slot live p =
 
 (* Slot [j] of [v], [[budget] @ lanes @ rest], per lane. *)
 let pick j v =
-  if Nx.ndim j = 0 then Nx.take ~axis:0 ~indices:j v
+  if Nx.ndim j = 0 then Nx.take ~axis:0 j v
   else
     let j = Nx.unsqueeze ~axes:[ 0 ] j in
     let j =
@@ -65,7 +68,7 @@ let pick j v =
         j
     in
     let j = Nx.broadcast_to (Array.append [| 1 |] (tail v)) j in
-    Nx.squeeze ~axes:[ 0 ] (Nx.take_along_axis ~axis:0 ~indices:j v)
+    Nx.squeeze ~axes:[ 0 ] (Nx.take_along_axis ~axis:0 j v)
 
 (* Each lane's worst box: its split axis, and its level and ends along it. A box
    of one axis splits along it. *)
@@ -78,7 +81,7 @@ let worst_box live p =
     if one_axis then Nx.squeeze ~axes:[ r ] v
     else
       Nx.squeeze ~axes:[ r ]
-        (Nx.take_along_axis ~axis:r ~indices:(Nx.unsqueeze ~axes:[ r ] a) v)
+        (Nx.take_along_axis ~axis:r (Nx.unsqueeze ~axes:[ r ] a) v)
   in
   let level = along (pick j p.level) in
   let t0, t1 = fractions (Nx.dtype p.error) level (along (pick j p.index)) in
@@ -88,24 +91,21 @@ let worst p ~point =
   let _, a, _, t0, t1 = worst_box (in_use p) p in
   (point a t0, point a t1)
 
-let refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
+let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
   let tree () =
-    Nx.Ptree.iso
-      (fun ( level,
-             (index, (axis, (data, (error, (used, (status, evaluations)))))) )
-         -> { level; index; axis; data; error; used; status; evaluations })
-      (fun p ->
-        ( p.level,
-          ( p.index,
-            (p.axis, (p.data, (p.error, (p.used, (p.status, p.evaluations)))))
-          ) ))
-      Nx.Ptree.(
-        pair tensor
-          (pair tensor
-             (pair tensor
-                (pair s (pair tensor (pair tensor (pair tensor tensor)))))))
+    Nx.Ptree.v (fun c p ->
+        let open Nx.Ptree.Walk in
+        let level = field c "level" tensor p.level in
+        let index = field c "index" tensor p.index in
+        let axis = field c "axis" tensor p.axis in
+        let data = field c "data" (structure s) p.data in
+        let error = field c "error" tensor p.error in
+        let used = field c "used" tensor p.used in
+        let status = field c "status" tensor p.status in
+        let evaluations = field c "evaluations" tensor p.evaluations in
+        { level; index; axis; data; error; used; status; evaluations })
   in
-  let slot = slots ~budget ~lanes in
+  let slot = slots ~at ~budget ~lanes in
   let settle p =
     let live = live slot p in
     let not_finite, met = verdict p live in
@@ -139,7 +139,8 @@ let refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
         let a = pick j p.axis in
         let on_a =
           Nx.equal
-            (Nx.broadcast_to (Nx.shape index) (Nx.arange Nx.int64 0 dims 1))
+            (Nx.broadcast_to (Nx.shape index)
+               (Nx.arange_at (Nx.beside index) Nx.int64 0 dims 1))
             (Nx.unsqueeze ~axes:[ Nx.ndim a ] a)
         in
         ( Nx.where on_a (Nx.add_s level 1l) level,
@@ -177,7 +178,9 @@ let refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
       }
   in
   let initial =
-    let whole dt = Nx.zeros dt (Array.concat [ [| 1 |]; lanes; [| dims |] ]) in
+    let whole dt =
+      Nx.zeros_at at dt (Array.concat [ [| 1 |]; lanes; [| dims |] ])
+    in
     let data, error, axis = evaluate (whole Nx.int32) (whole Nx.int64) in
     let shape = Array.append [| budget |] lanes in
     let first v =
@@ -185,20 +188,20 @@ let refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
       let at0 =
         Nx.reshape
           (Array.append [| budget |] (Array.make (Nx.ndim v - 1) 1))
-          (Nx.equal_s (Nx.arange Nx.int32 0 budget 1) 0l)
+          (Nx.equal_s (Nx.arange_at at Nx.int32 0 budget 1) 0l)
       in
       Nx.where (Nx.broadcast_to (Nx.shape v) at0) v (Nx.zeros_like v)
     in
     settle
       {
-        level = Nx.zeros Nx.int32 (Array.append shape [| dims |]);
-        index = Nx.zeros Nx.int64 (Array.append shape [| dims |]);
+        level = Nx.zeros_at at Nx.int32 (Array.append shape [| dims |]);
+        index = Nx.zeros_at at Nx.int64 (Array.append shape [| dims |]);
         axis = first axis;
         data = Nx.Ptree.map s (fun _ v -> first v) data;
         error = first error;
-        used = Nx.ones Nx.int32 lanes;
-        status = Nx.full Nx.int32 lanes Elementwise.running;
-        evaluations = Nx.full Nx.int32 lanes (Int32.of_int cost);
+        used = Nx.ones_at at Nx.int32 lanes;
+        status = Nx.full_at at Nx.int32 lanes Elementwise.running;
+        evaluations = Nx.full_at at Nx.int32 lanes (Int32.of_int cost);
       }
   in
   Rune.iterate (tree ()) ~max:budget
@@ -213,7 +216,9 @@ let integrate p f =
     else
       Nx.concatenate ~axis:0
         [
-          v; Nx.zeros (Nx.dtype v) (Array.append [| padded - budget |] (tail v));
+          v;
+          Nx.zeros_at (Nx.beside v) (Nx.dtype v)
+            (Array.append [| padded - budget |] (tail v));
         ]
   in
   let chunks v =
@@ -229,7 +234,7 @@ let integrate p f =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor (pair tensor tensor))
       Nx.Ptree.unit ~f:sum_chunk
-      ~init:(Nx.zeros dtype (Nx.shape p.used))
+      ~init:(Nx.zeros_at (Nx.placement p.used) dtype (Nx.shape p.used))
       ( chunks (unused p.level),
         (chunks (unused p.index), chunks (Nx.cast dtype used)) )
   in

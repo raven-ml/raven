@@ -61,12 +61,12 @@ let run c y ~at ~interval ~state init =
     in
     prepend y y0 ys
 
-let steps c dtype n f init =
+let steps c at dtype n f init =
   if n = 0 then init
-  else if n = 1 then f (Nx.zeros dtype [||]) init
+  else if n = 1 then f (Nx.zeros_at at dtype [||]) init
   else
     fst
       (Rune.scan c Nx.Ptree.tensor Nx.Ptree.unit
          ~f:(fun carry j -> (f j carry, ()))
          ~init
-         (Nx.arange_f dtype 0. (float n) 1.))
+         (Nx.arange_f_at at dtype 0. (float n) 1.))

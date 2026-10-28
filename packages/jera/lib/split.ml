@@ -75,7 +75,7 @@ let yoshida8 =
       0.914844246229740;
     |]
 
-type ('s, 'b) flow = (float, 'b) Nx.t -> 's -> 's
+type ('s, 'b, 'd) flow = (float, 'b, 'd) Nx.t -> 's -> 's
 
 (* The drifts and inner kicks of one step, without its end kicks. *)
 let inner m ~kick ~drift h s =
@@ -98,7 +98,7 @@ let march p m ~steps ~kick ~drift ~at s0 =
     let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
     let s = kick (Nx.mul_s h m.kick.(0)) s in
     let s =
-      March.steps p (Nx.dtype at) (steps - 1)
+      March.steps p (Nx.beside at) (Nx.dtype at) (steps - 1)
         (fun _ s -> kick (Nx.mul_s h merged) (inner m ~kick ~drift h s))
         s
     in

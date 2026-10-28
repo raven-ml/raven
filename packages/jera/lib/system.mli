@@ -12,19 +12,19 @@ val broyden : 'x t
 val anderson : memory:int -> 'x t
 
 val solve :
-  'x Nx.Ptree.t ->
+  ('x, 'd) Nx.Ptree.t ->
   'x t ->
   linear:'x Linear.t ->
   tol:Tol.t ->
   budget:int ->
   ('x -> 'x) ->
   'x ->
-  'x Solution.t
+  ('x, 'd) Solution.t
 
 val lanes :
   tol:Tol.t ->
   budget:int ->
-  jacobian:((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-  ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t Solution.t
+  jacobian:((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+  ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+  (float, 'b, 'd) Nx.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Solution.t

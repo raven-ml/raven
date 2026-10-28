@@ -12,53 +12,70 @@ module Rule : sig
   val kronrod : int -> [ `Formula | `Embedded ] t
 
   val nodes :
-    _ t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t * (float, 'b) Nx.t
+    _ t ->
+    (float, 'b) Nx.dtype ->
+    (float, 'b, Nx.host) Nx.t * (float, 'b, Nx.host) Nx.t
+
+  val nodes_at :
+    'd Nx.Placement.t ->
+    _ t ->
+    (float, 'b) Nx.dtype ->
+    (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
 end
 
 module Range : sig
-  type 'b t
+  type ('b, 'd) t
 
-  val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
-  val from : (float, 'b) Nx.t -> 'b t
-  val line : (float, 'b) Nx.t -> 'b t
+  val v : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> ('b, 'd) t
+  val from : (float, 'b, 'd) Nx.t -> ('b, 'd) t
+  val line : (float, 'b, 'd) Nx.t -> ('b, 'd) t
 end
 
 module Box : sig
-  type 'b t
+  type ('b, 'd) t
 
-  val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
+  val v : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> ('b, 'd) t
 end
 
-type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
+type ('b, 'd) integrand = (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 
 val fixed :
-  [> `Formula ] Rule.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t
+  [> `Formula ] Rule.t ->
+  ('b, 'd) integrand ->
+  ('b, 'd) Range.t ->
+  (float, 'b, 'd) Nx.t
 
 val cumulative :
-  [> `Formula ] Rule.t -> 'b integrand -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  [> `Formula ] Rule.t ->
+  ('b, 'd) integrand ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 
 val adaptive :
   [> `Embedded ] Rule.t ->
   tol:Tol.t ->
   budget:int ->
-  'b integrand ->
-  'b Range.t ->
-  (float, 'b) Nx.t Solution.t
+  ('b, 'd) integrand ->
+  ('b, 'd) Range.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Solution.t
 
 val tanh_sinh :
-  tol:Tol.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t Solution.t
+  tol:Tol.t ->
+  ('b, 'd) integrand ->
+  ('b, 'd) Range.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Solution.t
 
 val cubature :
   tol:Tol.t ->
   budget:int ->
-  'b integrand ->
-  'b Box.t ->
-  (float, 'b) Nx.t Solution.t
+  ('b, 'd) integrand ->
+  ('b, 'd) Box.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Solution.t
 
 val qmc :
-  Nx.Rng.t ->
+  'd Nx.Rng.key ->
   tol:Tol.t ->
   budget:int ->
-  'b integrand ->
-  'b Box.t ->
-  (float, 'b) Nx.t Solution.t
+  ('b, 'd) integrand ->
+  ('b, 'd) Box.t ->
+  ((float, 'b, 'd) Nx.t, 'd) Solution.t

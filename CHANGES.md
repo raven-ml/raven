@@ -1399,6 +1399,15 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- Every function is polymorphic in its data's device set, which its types
+  carry: `('a, 'd) Solution.t`, `('x, 'f, 'd) Minimize.t`, `('b, 'd) Grid.t`
+  and the like. Constants are placed whole on each device the data lies on.
+- `Sde.Brownian.v` takes a key of the path's set and `Brownian.walk`
+  replaces `Brownian.ptree`; `Quad.qmc` takes such a key. A Rule's
+  `Quad.Rule.nodes` are host values, and `Quad.Rule.nodes_at` places them.
+- `Linear.dense` and `banded` bound the residual of a subnormal solution by
+  `c n η (1 + ‖A‖)`, `η` the least subnormal, and `cg` and `gmres` by
+  `rel ‖r‖ + n η`, so tiny well-posed systems no longer end `Stalled`.
 - `System.lanes` and `System.solve` with `newton` converge a lane whose line
   search finds no decrease over a step at the floats' limit when the error
   bound of that step meets `tol`. A zero with an unknown at 0 ended `Stalled`:

@@ -22,15 +22,19 @@ val bits : (float, 'b) Nx.dtype -> int
 (** [bits dtype] is the width of [dtype]'s floats in bits, which bounds the
     bisections of their ordered-integer images. *)
 
-val constant : (float, 'b) Nx.dtype -> float array -> (float, 'b) Nx.t
-(** [constant dtype a] is [a] as a 1-D tensor of [dtype], each element computed
-    on the host in float64 and rounded once. *)
+val constant :
+  'd Nx.Placement.t ->
+  (float, 'b) Nx.dtype ->
+  float array ->
+  (float, 'b, 'd) Nx.t
+(** [constant at dtype a] is [a] as a 1-D tensor of [dtype] at [at], each
+    element computed on the host in float64 and rounded once. *)
 
 val on_float :
   string ->
-  ((float, 'c) Nx.t -> (float, 'c) Nx.t) ->
-  ('a, 'c) Nx.t ->
-  ('a, 'c) Nx.t
+  ((float, 'c, 'd) Nx.t -> (float, 'c, 'd) Nx.t) ->
+  ('a, 'c, 'd) Nx.t ->
+  ('a, 'c, 'd) Nx.t
 (** [on_float fn f x] is [f x] for a float [x].
 
     Raises [Invalid_argument] naming [fn] if [x] is not a float tensor. *)
@@ -38,25 +42,27 @@ val on_float :
 val shape : int array -> string
 (** [shape s] formats [s] as ["[2,3]"]. *)
 
-val check_increasing : string -> string -> (float, 'b) Nx.t -> unit
+val check_increasing : string -> string -> (float, 'b, 'd) Nx.t -> unit
 (** [check_increasing fn what x] checks that the 1-D [x] is strictly increasing,
     raising [Invalid_argument] through {!Nx.check} naming [fn], [what], the
     first index that is not above its predecessor and both values. *)
 
-val ordered_midpoint : (float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val ordered_midpoint :
+  (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [ordered_midpoint a b] is the float halfway between [a <= b] in the order of
     the floats themselves: the midpoint of their ordered-integer images, so a
     bisection by it ends within the dtype's width of steps. *)
 
-val adjacent : (float, 'b) Nx.t -> (float, 'b) Nx.t -> (bool, Nx.bool_elt) Nx.t
+val adjacent : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> 'd Nx.bool_t
 (** [adjacent a b] is [true] where no float lies strictly between [a <= b]. *)
 
-val sum_rows : (float, 'b) Nx.t -> (float, 'b) Nx.t
+val sum_rows : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [sum_rows r] is the sum of each row of [r], of shape [[k; n]], added
     pairwise in a fixed order so that eager and compiled calls round alike: of
     shape [[k]]. A row of no element is [0]. *)
 
-val rms_rows : (float, 'b) Nx.t -> (float, 'b) Nx.t
+val rms_rows : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [rms_rows r] is the root mean square of each row of [r], of shape [[k; n]],
     summed pairwise in a fixed order so that eager and compiled calls round
     alike: of shape [[k]]. A row of no element is [0]. *)
+

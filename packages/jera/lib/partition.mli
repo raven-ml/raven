@@ -12,53 +12,51 @@
     of largest error until the lane settles. Shapes are static: every array has
     the slots in front, [[budget] @ lanes]. *)
 
-type ('d, 'b) t = {
-  level : (int32, Nx.int32_elt) Nx.t;
+type ('q, 'b, 'd) t = {
+  level : 'd Nx.int32_t;
       (** Each box's level along each axis, [[budget] @ lanes @ [d]]. *)
-  index : (int64, Nx.int64_elt) Nx.t;  (** Each box's index, as [level]. *)
-  axis : (int64, Nx.int64_elt) Nx.t;
+  index : 'd Nx.int64_t;  (** Each box's index, as [level]. *)
+  axis : 'd Nx.int64_t;
       (** The axis each box would split along, [[budget] @ lanes]. *)
-  data : 'd;  (** Each box's data, leaves of shape [[budget] @ lanes @ _]. *)
-  error : (float, 'b) Nx.t;
+  data : 'q;  (** Each box's data, leaves of shape [[budget] @ lanes @ _]. *)
+  error : (float, 'b, 'd) Nx.t;
       (** Each box's error, [[budget] @ lanes]; the largest is bisected. *)
-  used : (int32, Nx.int32_elt) Nx.t;
-      (** The slots in use per lane, the first ones. *)
-  status : (int32, Nx.int32_elt) Nx.t;  (** Each lane's status. *)
-  evaluations : (int32, Nx.int32_elt) Nx.t;  (** Each lane's points evaluated. *)
+  used : 'd Nx.int32_t;  (** The slots in use per lane, the first ones. *)
+  status : 'd Nx.int32_t;  (** Each lane's status. *)
+  evaluations : 'd Nx.int32_t;  (** Each lane's points evaluated. *)
 }
-(** The type for partitions with box data ['d] and errors of dtype ['b]. *)
+(** The type for partitions with box data ['q] and errors of dtype ['b]. *)
 
 val fractions :
   (float, 'b) Nx.dtype ->
-  (int32, Nx.int32_elt) Nx.t ->
-  (int64, Nx.int64_elt) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t
+  'd Nx.int32_t ->
+  'd Nx.int64_t ->
+  (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
 (** [fractions dtype level index] are the ends [index / 2^level] and
     [(index + 1) / 2^level]. *)
 
 val refine :
-  'd Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  at:'d Nx.Placement.t ->
   budget:int ->
   lanes:int array ->
   dims:int ->
   cost:int ->
   evaluate:
-    ((int32, Nx.int32_elt) Nx.t ->
-    (int64, Nx.int64_elt) Nx.t ->
-    'd * (float, 'b) Nx.t * (int64, Nx.int64_elt) Nx.t) ->
-  point:((int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-  verdict:
-    (('d, 'b) t ->
-    (bool, Nx.bool_elt) Nx.t ->
-    (bool, Nx.bool_elt) Nx.t * (bool, Nx.bool_elt) Nx.t) ->
-  ('d, 'b) t
-(** [refine s ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict] is the
+    ('d Nx.int32_t ->
+    'd Nx.int64_t ->
+    'q * (float, 'b, 'd) Nx.t * 'd Nx.int64_t) ->
+  point:('d Nx.int64_t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+  verdict:(('q, 'b, 'd) t -> 'd Nx.bool_t -> 'd Nx.bool_t * 'd Nx.bool_t) ->
+  ('q, 'b, 'd) t
+(** [refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict] is the
     partition of [[0, 1]^dims] per lane of shape [lanes] at which each lane
-    settled. [evaluate level index] is the data, error and split axis of [k]
-    boxes per lane, of shapes [[k] @ lanes @ _]; each box costs [cost] points.
-    [point axis t] is the problem's coordinate of fraction [t] along [axis], per
-    lane. [verdict p live] is, per lane, whether [p] is not finite and whether
-    it meets its tolerance, given {!in_use}'s [live].
+    settled, its arrays made at [at], which must cut nothing (a placement
+    {!Nx.beside} gives). [evaluate level index] is the data, error and split
+    axis of [k] boxes per lane, of shapes [[k] @ lanes @ _]; each box costs
+    [cost] points. [point axis t] is the problem's coordinate of fraction [t]
+    along [axis], per lane. [verdict p live] is, per lane, whether [p] is not
+    finite and whether it meets its tolerance, given {!in_use}'s [live].
 
     A lane settles, in this order: [Not_finite] or [Converged] by [verdict];
     [Stalled] when its worst box is at level 62 along its split axis, or no
@@ -66,24 +64,24 @@ val refine :
     slots are used. A bisection puts the left half in the worst box's slot and
     the right half in the next free one. *)
 
-val in_use : ('d, 'b) t -> (bool, Nx.bool_elt) Nx.t
+val in_use : ('q, 'b, 'd) t -> 'd Nx.bool_t
 (** [in_use p] is whether each slot holds a box, [[budget] @ lanes]. *)
 
-val sum : (bool, Nx.bool_elt) Nx.t -> (float, 'c) Nx.t -> (float, 'c) Nx.t
+val sum : 'd Nx.bool_t -> (float, 'c, 'd) Nx.t -> (float, 'c, 'd) Nx.t
 (** [sum live v] is the sum of [v], [[budget] @ lanes @ _], over the slots
     {!in_use} marks [live]. *)
 
 val worst :
-  ('d, 'b) t ->
-  point:((int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t
+  ('q, 'b, 'd) t ->
+  point:('d Nx.int64_t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+  (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
 (** [worst p ~point] is, per lane, the ends of the box of largest error along
     its split axis, mapped by [point] as {!refine} maps them. *)
 
 val integrate :
-  ('d, 'b) t ->
-  ((int32, Nx.int32_elt) Nx.t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t) ->
-  (float, 'b) Nx.t
+  ('q, 'b, 'd) t ->
+  ('d Nx.int32_t -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t) ->
+  (float, 'b, 'd) Nx.t
 (** [integrate p f] is the sum of [f level index] over the boxes in use, [f]
     taking a chunk of [k] boxes per lane and returning [[k] @ lanes]. The chunks
     run under a {!Rune.scan}, so reverse mode keeps one chunk's values; an

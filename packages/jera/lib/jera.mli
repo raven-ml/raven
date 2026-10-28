@@ -122,8 +122,11 @@
       precondition on a formula's tensor data raises [Invalid_argument] through
       {!Nx.check}: at once eagerly, when the compiled call returns under
       {!Rune.val-jit}.
-    - {b Devices.} Constants are computed on the host in float64 and rounded
-      once to the working dtype. *)
+    - {b Devices.} Every result lies on its data's device set ['d], and the
+      types carry it. Constants are computed on the host in float64, rounded
+      once to the working dtype and placed whole on each device the data lies
+      on. A {!Quad.Rule}'s nodes are host values, and {!Quad.Rule.nodes_at}
+      places them. *)
 
 module Tol : sig
   (** Tolerances.
@@ -184,7 +187,7 @@ module Solution : sig
       Nx.where ok (Solution.best s) (Nx.zeros_like lo)
       ]} *)
 
-  type 'a t
+  type ('a, 'd) t
   (** The type for answers of type ['a]. *)
 
   (** The type for a lane's outcome. *)
@@ -198,7 +201,7 @@ module Solution : sig
             fell below the resolution of the floats, or the problem has no
             answer the method can reach, such as a pole in a bracket. *)
 
-  val get : 'a t -> 'a
+  val get : ('a, 'd) t -> 'a
   (** [get s] is the answer if every lane converged.
 
       Raises [Failure] with the report of the first lane in C order that did not
@@ -207,32 +210,32 @@ module Solution : sig
       elements of its problem converged. Inside {!Rune.val-jit}, [get] returns
       {!best} and the compiled call raises when it returns. *)
 
-  val best : 'a t -> 'a
+  val best : ('a, 'd) t -> 'a
   (** [best s] is the estimate in every lane. A lane that did not converge holds
       its last finite estimate, and its derivative is zero. *)
 
-  val ok : 'a t -> (bool, Nx.bool_elt) Nx.t
+  val ok : ('a, 'd) t -> 'd Nx.bool_t
   (** [ok s] is [is Converged s]. *)
 
-  val is : status -> 'a t -> (bool, Nx.bool_elt) Nx.t
+  val is : status -> ('a, 'd) t -> 'd Nx.bool_t
   (** [is st s] is [true] in each lane whose status is [st], of the lanes'
       shape. *)
 
-  val error : 'a t -> 'a
+  val error : ('a, 'd) t -> 'a
   (** [error s] is each lane's error estimate, of the answer's structure, as its
       solve defines it: an estimate, never a bound. *)
 
-  val evaluations : 'a t -> (int32, Nx.int32_elt) Nx.t
+  val evaluations : ('a, 'd) t -> 'd Nx.int32_t
   (** [evaluations s] is each lane's count of the points at which the problem's
       function was evaluated, of the lanes' shape. *)
 
-  val ptree : 'a Nx.Ptree.t -> 'a t Nx.Ptree.t
+  val ptree : ('a, 'd) Nx.Ptree.t -> (('a, 'd) t, 'd) Nx.Ptree.t
   (** [ptree s] is the structure of answers of structure [s], so a compiled
       function returns one: the answer at [value], the error at [error], the
       statuses at [status], the counts at [evaluations], the budget used at
       [used] and the report's data under [report]. *)
 
-  val pp : Format.formatter -> 'a t -> unit
+  val pp : Format.formatter -> ('a, 'd) t -> unit
   (** [pp ppf s] formats the count of lanes in each status and the report {!get}
       would raise for the first lane that did not converge. It reads the
       statuses, so it runs eagerly. *)
@@ -276,10 +279,13 @@ module Linear : sig
   (** [dense] materialises [a] as an [n × n] matrix, [n] the size of the vector,
       with one application to each vector of the standard basis, and solves it
       with {!Nx.solve}: [n + 1] applications with the check, and [2n³/3] flops.
-      Its bound is [c n ε (‖A‖ ‖u‖ + ‖r‖)], the backward error of an LU
-      factorisation with partial pivoting, with [c = 16], [ε] the dtype's
-      machine epsilon, [‖A‖] the Frobenius norm of the matrix and the vectors'
-      norms Euclidean. It suits systems of up to some thousands of elements. *)
+      Its bound is [c n ε (‖A‖ ‖u‖ + ‖r‖) + c n η (1 + ‖A‖)]: the backward
+      error of an LU factorisation with partial pivoting, and the rounding of
+      a solution of subnormal magnitude, whose components are multiples of
+      [η], with [c = 16], [ε] the dtype's machine epsilon, [η] its least
+      positive subnormal, [‖A‖] the Frobenius norm of the matrix and the
+      vectors' norms Euclidean. It suits systems of up to some thousands of
+      elements. *)
 
   val banded : width:int -> 'x t
   (** [banded ~width] is for an [a] whose matrix has entries only within [width]
@@ -301,11 +307,13 @@ module Linear : sig
       application of [a] and of [precondition] per iteration, and [O(n)] other
       work on three vectors. [precondition] approximates the inverse of [a] and
       is symmetric positive-definite itself; [Fun.id] is none. It stops when the
-      residual it carries meets [‖a u − r‖ ≤ rel ‖r‖], the vectors' norms
-      Euclidean, which is also its bound, so [r = 0] gives [u = 0] with the
-      check alone. [budget] iterations end the lane [Budget_spent], and a
-      direction [p] with [pᵀ a p ≤ 0], which no positive-definite [a] has, ends
-      it [Stalled].
+      residual it carries meets [‖a u − r‖ ≤ rel ‖r‖ + n η], the vectors' norms
+      Euclidean and [η] the dtype's least positive subnormal, which is also
+      its bound, so [r = 0] gives [u = 0] with the check alone. A solution of
+      subnormal magnitude may miss it by its rounding, of order [‖a‖ n η], and
+      end [Stalled]. [budget] iterations end the lane
+      [Budget_spent], and a direction [p] with [pᵀ a p ≤ 0], which no
+      positive-definite [a] has, ends it [Stalled].
 
       Raises [Invalid_argument] if [rel] is not in (0, 1) or if [budget < 1]. *)
 
@@ -317,16 +325,19 @@ module Linear : sig
       an application of [a] and of [precondition], orthogonalised twice by
       Gram–Schmidt, then the [u] of least residual in their span; it keeps
       [restart + 1] vectors. Between cycles it applies [a] to [u] for the
-      residual, and stops when [‖a u − r‖ ≤ rel ‖r‖], the vectors' norms
-      Euclidean, which is also its bound, so [r = 0] gives [u = 0] with no
-      application. After [budget / restart] cycles, the lane ends
-      [Budget_spent]. [precondition] approximates the inverse of [a] and of its
-      transpose, as a derivative solves both; [Fun.id] is none.
+      residual, and stops when [‖a u − r‖ ≤ rel ‖r‖ + n η], the vectors' norms
+      Euclidean and [η] the dtype's least positive subnormal, which is also
+      its bound (a solution of subnormal magnitude may miss it by its
+      rounding, as {!cg}'s may), so [r = 0] gives
+      [u = 0] with no application. After [budget / restart] cycles, the lane
+      ends [Budget_spent]. [precondition] approximates the inverse of [a] and of
+      its transpose, as a derivative solves both; [Fun.id] is none.
 
       Raises [Invalid_argument] if [restart < 1], if [budget < restart] or if
       [rel] is not in (0, 1). *)
 
-  val solve : 'x Nx.Ptree.t -> 'x t -> ('x -> 'x) -> 'x -> 'x Solution.t
+  val solve :
+    ('x, 'd) Nx.Ptree.t -> 'x t -> ('x -> 'x) -> 'x -> ('x, 'd) Solution.t
   (** [solve x s a r] is the [u] with [a u = r], found by [s].
 
       Raises [Invalid_argument] if the float tensors of [r] differ in dtype, or
@@ -363,10 +374,10 @@ module Root : sig
 
   val bracket :
     tol:Tol.t ->
-    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    lo:(float, 'b) Nx.t ->
-    hi:(float, 'b) Nx.t ->
-    (float, 'b) Nx.t Solution.t
+    ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    lo:(float, 'b, 'd) Nx.t ->
+    hi:(float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [bracket ~tol f ~lo ~hi] is a zero of [f] between [lo] and [hi] in each
       element, given in either order, which broadcast together.
 
@@ -384,10 +395,10 @@ module Root : sig
   val newton :
     tol:Tol.t ->
     budget:int ->
-    slope:((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t Solution.t
+    slope:((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    (float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [newton ~tol ~budget ~slope f x0] is a zero of [f] near [x0] in each
       element, by Newton's method: [slope x] is [f]'s derivative, elementwise.
       It steers the steps only, so a wrong slope slows a solve and cannot end it
@@ -511,14 +522,14 @@ module System : sig
       Raises [Invalid_argument] if [memory < 0]. *)
 
   val solve :
-    'x Nx.Ptree.t ->
+    ('x, 'd) Nx.Ptree.t ->
     'x t ->
     linear:'x Linear.t ->
     tol:Tol.t ->
     budget:int ->
     ('x -> 'x) ->
     'x ->
-    'x Solution.t
+    ('x, 'd) Solution.t
   (** [solve x m ~linear ~tol ~budget f guess] is a zero of [f] near [guess] by
       [m]. [linear] solves the method's linear systems and the derivative's. Its
       evaluations count the calls of [f], [budget] its iterations.
@@ -530,10 +541,10 @@ module System : sig
   val lanes :
     tol:Tol.t ->
     budget:int ->
-    jacobian:((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t Solution.t
+    jacobian:((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    (float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [lanes ~tol ~budget ~jacobian f guess] is a zero of [f] in each lane: one
       problem per lane, the last axis holding its [k] coordinates, as
       {!Root.newton} is elementwise for one. [f] computes each lane's result
@@ -607,11 +618,11 @@ module Minimize : sig
       converge. Where [H] is singular the derivative does not exist and is not
       finite. *)
 
-  type ('x, 'f) t
+  type ('x, 'f, 'd) t
   (** The type for methods for objectives of type ['f] over values of type ['x].
   *)
 
-  val bfgs : linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+  val bfgs : linear:'x Linear.t -> ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [bfgs ~linear] is BFGS, for a smooth objective of up to some thousands of
       unknowns.
 
@@ -624,7 +635,8 @@ module Minimize : sig
       work per iteration, one evaluation of [f] and its gradient per trial;
       superlinear convergence near a minimum. *)
 
-  val lbfgs : memory:int -> linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+  val lbfgs :
+    memory:int -> linear:'x Linear.t -> ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [lbfgs ~memory ~linear] is limited-memory BFGS (Liu and Nocedal, 1989),
       for a smooth objective of many unknowns.
 
@@ -636,7 +648,7 @@ module Minimize : sig
 
       Raises [Invalid_argument] if [memory < 1]. *)
 
-  val newton : linear:'x Linear.t -> ('x, 'x -> (float, 'b) Nx.t) t
+  val newton : linear:'x Linear.t -> ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [newton ~linear] is Newton's method, for a smooth, ill-conditioned
       objective.
 
@@ -649,7 +661,7 @@ module Minimize : sig
       quadratic convergence near a minimum. *)
 
   val levenberg_marquardt :
-    'r Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r) t
+    ('r, 'd) Nx.Ptree.t -> linear:'x Linear.t -> ('x, 'x -> 'r, 'd) t
   (** [levenberg_marquardt r ~linear] is for [|r x|² / 2] given by its residual
       [r], a value of structure [r] whose float tensors are one vector.
 
@@ -671,7 +683,7 @@ module Minimize : sig
       rune's gradient of [|r|² / 2]; at a rank-deficient minimum the derivative
       does not exist and is not finite. *)
 
-  val nelder_mead : ('x, 'x -> (float, 'b) Nx.t) t
+  val nelder_mead : ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [nelder_mead] is the Nelder–Mead simplex, for an objective with no useful
       gradient: non-smooth or piecewise constant.
 
@@ -692,14 +704,14 @@ module Minimize : sig
       objective with no useful gradient has a minimum with no equation. *)
 
   val solve :
-    'x Nx.Ptree.t ->
-    ('x, 'f) t ->
+    ('x, 'd) Nx.Ptree.t ->
+    ('x, 'f, 'd) t ->
     ?within:'x * 'x ->
     tol:Tol.t ->
     budget:int ->
     'f ->
     'x ->
-    'x Solution.t
+    ('x, 'd) Solution.t
   (** [solve x m ~within:(lo, hi) ~tol ~budget f x0] is a local minimum of [f]
       from [x0] by [m], in the box [[lo, hi]] when given: values of [x0]'s
       structure whose float tensors bound each coordinate, infinite for no
@@ -734,7 +746,8 @@ module Minimize : sig
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
       differ in dtype, or if [f] returns other than a scalar. *)
 
-  val iterates : 'x Nx.Ptree.t -> ('x, 'f) t -> steps:int -> 'f -> 'x -> 'x
+  val iterates :
+    ('x, 'd) Nx.Ptree.t -> ('x, 'f, 'd) t -> steps:int -> 'f -> 'x -> 'x
   (** [iterates x m ~steps f x0] is the first [steps] estimates of [m]'s search
       from [x0], [x0] first, detached, stacked on a new leading axis of every
       tensor. A lane stops at a zero gradient, or when its search finds no
@@ -745,10 +758,10 @@ module Minimize : sig
 
   val bracket :
     tol:Tol.t ->
-    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    lo:(float, 'b) Nx.t ->
-    hi:(float, 'b) Nx.t ->
-    (float, 'b) Nx.t Solution.t
+    ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    lo:(float, 'b, 'd) Nx.t ->
+    hi:(float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [bracket ~tol f ~lo ~hi] is a minimum of [f] in each [[lo, hi]],
       elementwise: every element is its own problem, the ends broadcast together
       and come in either order, and [f] must compute each element of its result
@@ -818,38 +831,47 @@ module Quad : sig
         Raises [Invalid_argument] if [n] is neither. *)
 
     val nodes :
-      _ t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t * (float, 'b) Nx.t
+      _ t ->
+      (float, 'b) Nx.dtype ->
+      (float, 'b, Nx.host) Nx.t * (float, 'b, Nx.host) Nx.t
     (** [nodes r dtype] is [(x, w)], [r]'s nodes in increasing order and their
         weights, 1-D tensors of [dtype]: [Σ w f(x)] approximates [∫₋₁¹ f]. A sum
         in log space is [logsumexp (log w + ℓ x)]. *)
+
+    val nodes_at :
+      'd Nx.Placement.t ->
+      _ t ->
+      (float, 'b) Nx.dtype ->
+      (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
+    (** [nodes_at p r dtype] is {!nodes}[ r dtype] at [p]. *)
   end
 
   (** {1:ranges Ranges} *)
 
   (** Ranges of integration, one per element. *)
   module Range : sig
-    type 'b t
+    type ('b, 'd) t
     (** The type for ranges of dtype ['b]. *)
 
-    val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
+    val v : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> ('b, 'd) t
     (** [v a b] is [[a, b]], [a] and [b] broadcast together. An integral over
         [[a, b]] with [b < a] is minus the integral over [[b, a]]. *)
 
-    val from : (float, 'b) Nx.t -> 'b t
+    val from : (float, 'b, 'd) Nx.t -> ('b, 'd) t
     (** [from a] is the half-line from [a] to [+∞], at unit scale: a rule's
         nodes spread over distances near [1] from [a]. Scale the variable so the
         integrand's width is near 1. *)
 
-    val line : (float, 'b) Nx.t -> 'b t
+    val line : (float, 'b, 'd) Nx.t -> ('b, 'd) t
     (** [line c] is the whole line, around [c] at unit scale. *)
   end
 
   (** Boxes of integration, one per lane. *)
   module Box : sig
-    type 'b t
+    type ('b, 'd) t
     (** The type for boxes of dtype ['b]. *)
 
-    val v : (float, 'b) Nx.t -> (float, 'b) Nx.t -> 'b t
+    val v : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> ('b, 'd) t
     (** [v lo hi] is the box with corners [lo] and [hi], which broadcast
         together to [lanes @ [d]]: a point's coordinates are the last axis. An
         axis with [hi < lo] flips the integral's sign, as {!Range.v}.
@@ -858,7 +880,7 @@ module Quad : sig
         scalars. *)
   end
 
-  type 'b integrand = (float, 'b) Nx.t -> (float, 'b) Nx.t
+  type ('b, 'd) integrand = (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
   (** The type for integrands: [f x] is [f] at each point of [x]: of [x]'s shape
       over a range, and over a box of [x]'s shape without its last, coordinate
       axis. *)
@@ -866,7 +888,10 @@ module Quad : sig
   (** {1:formulas Formulas} *)
 
   val fixed :
-    [> `Formula ] Rule.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t
+    [> `Formula ] Rule.t ->
+    ('b, 'd) integrand ->
+    ('b, 'd) Range.t ->
+    (float, 'b, 'd) Nx.t
   (** [fixed r f range] is [r]'s sum for the integral of [f] over each element
       of [range], of [range]'s shape. [f] receives the points of shape
       [[m] @ shape], [m] the rule's nodes. A finite range maps the rule
@@ -884,7 +909,10 @@ module Quad : sig
       points. *)
 
   val cumulative :
-    [> `Formula ] Rule.t -> 'b integrand -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+    [> `Formula ] Rule.t ->
+    ('b, 'd) integrand ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t
   (** [cumulative r f knots] is the integral of [f] from the first knot to each,
       by [r] on each interval between knots: for [knots] of shape [[n] @ shape],
       a result of the same shape whose row [0] is zero and row [i] the sum of
@@ -906,9 +934,9 @@ module Quad : sig
     [> `Embedded ] Rule.t ->
     tol:Tol.t ->
     budget:int ->
-    'b integrand ->
-    'b Range.t ->
-    (float, 'b) Nx.t Solution.t
+    ('b, 'd) integrand ->
+    ('b, 'd) Range.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [adaptive r ~tol ~budget f range] is the integral of [f] over each element
       of [range]. [f] receives points of shape [[m; k] @ shape], [m] the rule's
       points and [k] pieces.
@@ -931,7 +959,10 @@ module Quad : sig
       Raises [Invalid_argument] if [budget < 1], or as {!fixed} does. *)
 
   val tanh_sinh :
-    tol:Tol.t -> 'b integrand -> 'b Range.t -> (float, 'b) Nx.t Solution.t
+    tol:Tol.t ->
+    ('b, 'd) integrand ->
+    ('b, 'd) Range.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [tanh_sinh ~tol f range] is the integral of [f] over each element of
       [range] by a double-exponential rule: tanh-sinh on a finite range,
       exp-sinh on {!Range.from} and sinh-sinh on {!Range.line}. Its nodes crowd
@@ -959,9 +990,9 @@ module Quad : sig
   val cubature :
     tol:Tol.t ->
     budget:int ->
-    'b integrand ->
-    'b Box.t ->
-    (float, 'b) Nx.t Solution.t
+    ('b, 'd) integrand ->
+    ('b, 'd) Box.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [cubature ~tol ~budget f box] is the integral of [f] over each lane's box,
       of [d] dimensions with [2 ≤ d ≤ 10]. [f] receives points of shape
       [[m; k] @ lanes @ [d]], [m] the rule's points and [k] boxes, and reduces
@@ -982,12 +1013,12 @@ module Quad : sig
       if [f]'s result is not the points' shape without its last axis. *)
 
   val qmc :
-    Nx.Rng.t ->
+    'd Nx.Rng.key ->
     tol:Tol.t ->
     budget:int ->
-    'b integrand ->
-    'b Box.t ->
-    (float, 'b) Nx.t Solution.t
+    ('b, 'd) integrand ->
+    ('b, 'd) Box.t ->
+    ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [qmc key ~tol ~budget f box] is the integral of [f] over each lane's box,
       of any dimension [d] up to 1111, by randomised quasi-Monte Carlo. [f]
       receives points of shape [[64; 16] @ lanes @ [d]], a chunk of 64 points
@@ -1048,7 +1079,7 @@ module Piecewise : sig
       derivative is its final partition's interpolant's, and zero when it did
       not converge. *)
 
-  type ('v, 'b) t
+  type ('v, 'b, 'd) t
   (** The type for piecewise series with values of structure ['v] over breaks of
       dtype ['b]: each float leaf of the coefficients has shape
       [[pieces; degree + 1] @ value], and evaluation at points of shape [q]
@@ -1058,7 +1089,8 @@ module Piecewise : sig
       piece of zero width is empty: no point lies in it, and the end pieces are
       the first and last of positive width. *)
 
-  val v : 'v Nx.Ptree.t -> breaks:(float, 'b) Nx.t -> 'v -> ('v, 'b) t
+  val v :
+    ('v, 'd) Nx.Ptree.t -> breaks:(float, 'b, 'd) Nx.t -> 'v -> ('v, 'b, 'd) t
   (** [v s ~breaks c] is the series with [pieces + 1] [breaks] and the
       coefficients [c], each leaf of shape [[pieces; degree + 1] @ value].
 
@@ -1075,8 +1107,10 @@ module Piecewise : sig
       the samples do not have [n] rows, or, through {!Nx.check}, if [x] is not
       strictly increasing. *)
 
-  type 'b ends =
-    [ `Natural | `Not_a_knot | `Clamped of (float, 'b) Nx.t * (float, 'b) Nx.t ]
+  type ('b, 'd) ends =
+    [ `Natural
+    | `Not_a_knot
+    | `Clamped of (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t ]
   (** The type for a cubic spline's end conditions, which change it near the
       ends:
       - [`Natural]: zero second derivative at both ends;
@@ -1086,11 +1120,17 @@ module Piecewise : sig
       - [`Clamped (s0, s1)]: the slopes [s0] and [s1], of shape [value], at the
         ends. *)
 
-  val linear : (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+  val linear :
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'b, 'd) t
   (** [linear x y] is the broken line through the samples: degree 1. *)
 
   val cubic :
-    'b ends -> (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+    ('b, 'd) ends ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'b, 'd) t
   (** [cubic ends x y] is the cubic spline through the samples, twice
       continuously differentiable: degree 3. Its system is solved in parallel by
       {!Nx.associative_scan}, stable because it is diagonally dominant.
@@ -1098,17 +1138,20 @@ module Piecewise : sig
       Raises [Invalid_argument] also if a clamped slope's shape is not [value].
   *)
 
-  val steffen : (float, 'b) Nx.t -> (float, 'b) Nx.t -> ((float, 'b) Nx.t, 'b) t
+  val steffen :
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'b, 'd) t
   (** [steffen x y] is Steffen's (1990) interpolant, once continuously
       differentiable: degree 3. It has no extremum between knots that the data
       lack, so the interpolant of monotone samples is monotone. Its end slopes
       are the end intervals' secants. *)
 
   val hermite :
-    (float, 'b) Nx.t ->
-    values:(float, 'b) Nx.t ->
-    slopes:(float, 'b) Nx.t ->
-    ((float, 'b) Nx.t, 'b) t
+    (float, 'b, 'd) Nx.t ->
+    values:(float, 'b, 'd) Nx.t ->
+    slopes:(float, 'b, 'd) Nx.t ->
+    ((float, 'b, 'd) Nx.t, 'b, 'd) t
   (** [hermite x ~values ~slopes] is the piecewise cubic with the given values
       and slopes at the knots: degree 3, once continuously differentiable.
 
@@ -1118,13 +1161,13 @@ module Piecewise : sig
   (** {1:fits Fits} *)
 
   val chebyshev :
-    'v Nx.Ptree.t ->
+    ('v, 'd) Nx.Ptree.t ->
     degree:int ->
     pieces:int ->
-    ((float, 'b) Nx.t -> 'v) ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t ->
-    ('v, 'b) t
+    ((float, 'b, 'd) Nx.t -> 'v) ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    ('v, 'b, 'd) t
   (** [chebyshev s ~degree ~pieces f a b] interpolates [f] on [pieces] equal
       pieces of [[a, b]] at each piece's [degree + 1] Chebyshev points of the
       second kind, ends included ([degree = 0] takes the midpoint). [f] receives
@@ -1140,14 +1183,14 @@ module Piecewise : sig
       not a scalar, or if [f]'s leaves do not start with the points' shape. *)
 
   val adapt :
-    'v Nx.Ptree.t ->
+    ('v, 'd) Nx.Ptree.t ->
     degree:int ->
     tol:Tol.t ->
     budget:int ->
-    ((float, 'b) Nx.t -> 'v) ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t ->
-    ('v, 'b) t Solution.t
+    ((float, 'b, 'd) Nx.t -> 'v) ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    (('v, 'b, 'd) t, 'd) Solution.t
   (** [adapt s ~degree ~tol ~budget f a b] matches [f] on [[a, b]] to [tol] by
       series of [degree]. It solves one problem; {!Rune.val-vmap} gives each
       lane its own.
@@ -1170,7 +1213,7 @@ module Piecewise : sig
 
   (** {1:eval Evaluation} *)
 
-  val eval : ('v, 'b) t -> (float, 'b) Nx.t -> 'v
+  val eval : ('v, 'b, 'd) t -> (float, 'b, 'd) Nx.t -> 'v
   (** [eval p x] is [p] at each point of [x], of shape [q]: each leaf of shape
       [q @ value].
 
@@ -1178,8 +1221,7 @@ module Piecewise : sig
       if a point that is not NaN lies outside the domain of a value that is not
       extended. *)
 
-  val eval_at :
-    ('v, 'b) t -> (int64, Nx.int64_elt) Nx.t -> (float, 'b) Nx.t -> 'v
+  val eval_at : ('v, 'b, 'd) t -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t -> 'v
   (** [eval_at p i u] is the series of piece [i] at the local coordinate [u] in
       [[−1, 1]], [i] and [u] of one shape [q]: each leaf of shape [q @ value].
       [u] outside [[−1, 1]] extrapolates the piece's series.
@@ -1195,30 +1237,33 @@ module Piecewise : sig
       derivative of a held series holds its end slopes, and the integral of a
       held series holds its end values. *)
 
-  val derivative : ('v, 'b) t -> ('v, 'b) t
+  val derivative : ('v, 'b, 'd) t -> ('v, 'b, 'd) t
   (** [derivative p] is the derivative of [p] in [x] on each piece, of degree
       one less (and [0] from degree [0]). At a break where [p]'s derivative
       jumps it takes the value of the piece that ends there. *)
 
-  val integral : ('v, 'b) t -> ('v, 'b) t
+  val integral : ('v, 'b, 'd) t -> ('v, 'b, 'd) t
   (** [integral p] is the antiderivative of [p] that is zero at the first break
       and continuous across breaks, of degree one more. *)
 
-  val extend : [ `Hold | `Polynomial ] -> ('v, 'b) t -> ('v, 'b) t
+  val extend : [ `Hold | `Polynomial ] -> ('v, 'b, 'd) t -> ('v, 'b, 'd) t
   (** [extend e p] is [p] defined at every finite point: [`Hold] takes the value
       at the nearest end, and [`Polynomial] continues the end pieces' series. It
       replaces [p]'s extension. An infinite point still raises. *)
 
   (** {1:access Access} *)
 
-  val breaks : ('v, 'b) t -> (float, 'b) Nx.t
+  val breaks : ('v, 'b, 'd) t -> (float, 'b, 'd) Nx.t
   (** [breaks p] is [p]'s breaks, of shape [[pieces + 1]]. *)
 
-  val coefficients : ('v, 'b) t -> 'v
+  val coefficients : ('v, 'b, 'd) t -> 'v
   (** [coefficients p] is [p]'s coefficients, each leaf of shape
       [[pieces; degree + 1] @ value]. *)
 
-  val ptree : 'v Nx.Ptree.t -> (float, 'b) Nx.dtype -> ('v, 'b) t Nx.Ptree.t
+  val ptree :
+    ('v, 'd) Nx.Ptree.t ->
+    (float, 'b) Nx.dtype ->
+    (('v, 'b, 'd) t, 'd) Nx.Ptree.t
   (** [ptree s dtype] is the structure of series with values of structure [s]
       over breaks of [dtype]: the breaks at [breaks], the coefficients under
       [coefficients], and the extension reported at [extension] as one of the
@@ -1249,7 +1294,7 @@ module Grid : sig
       along each axis in turn. {b Derivative.} The composition's, in the values,
       the axes and the points. *)
 
-  type 'b t
+  type ('b, 'd) t
   (** The type for grid series over breaks of dtype ['b]. The coefficients have
       shape [[pieces_1; …; pieces_d; degree_1 + 1; …; degree_d + 1] @ value]. *)
 
@@ -1262,15 +1307,16 @@ module Grid : sig
       leading axes do not match the axes, or, through {!Nx.check}, if an axis is
       not strictly increasing. *)
 
-  val linear : axes:(float, 'b) Nx.t list -> (float, 'b) Nx.t -> 'b t
+  val linear :
+    axes:(float, 'b, 'd) Nx.t list -> (float, 'b, 'd) Nx.t -> ('b, 'd) t
   (** [linear ~axes values] is the multilinear interpolant: degree 1 along each
       axis. *)
 
   val cubic :
     [ `Natural | `Not_a_knot ] ->
-    axes:(float, 'b) Nx.t list ->
-    (float, 'b) Nx.t ->
-    'b t
+    axes:(float, 'b, 'd) Nx.t list ->
+    (float, 'b, 'd) Nx.t ->
+    ('b, 'd) t
   (** [cubic ends ~axes values] is the tensor-product cubic spline, with
       {!Piecewise.ends}' [ends] along every axis: degree 3 along each axis. *)
 
@@ -1279,10 +1325,10 @@ module Grid : sig
   val chebyshev :
     degree:int ->
     pieces:int ->
-    ((float, 'b) Nx.t -> (float, 'b) Nx.t) ->
-    lo:(float, 'b) Nx.t ->
-    hi:(float, 'b) Nx.t ->
-    'b t
+    ((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
+    lo:(float, 'b, 'd) Nx.t ->
+    hi:(float, 'b, 'd) Nx.t ->
+    ('b, 'd) t
   (** [chebyshev ~degree ~pieces f ~lo ~hi] interpolates [f] on the box from
       [lo] to [hi], both of shape [[d]], split into [pieces] equal pieces along
       each axis, at the tensor product of each piece's [degree + 1] Chebyshev
@@ -1296,7 +1342,7 @@ module Grid : sig
 
   (** {1:eval Evaluation} *)
 
-  val eval : 'b t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  val eval : ('b, 'd) t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
   (** [eval g x] is [g] at the points [x] of shape [q @ [d]]: of shape
       [q @ value].
 
@@ -1305,13 +1351,13 @@ module Grid : sig
 
   (** {1:calculus Calculus} *)
 
-  val derivative : axis:int -> 'b t -> 'b t
+  val derivative : axis:int -> ('b, 'd) t -> ('b, 'd) t
   (** [derivative ~axis g] is the partial derivative of [g] along [axis], of one
       degree less along it.
 
       Raises [Invalid_argument] if [axis] is negative or not below [d]. *)
 
-  val integral : axis:int -> 'b t -> 'b t
+  val integral : axis:int -> ('b, 'd) t -> ('b, 'd) t
   (** [integral ~axis g] is the antiderivative of [g] along [axis], zero at that
       axis's first break, of one degree more along it.
 
@@ -1319,7 +1365,7 @@ module Grid : sig
 
   (** {1:access Access} *)
 
-  val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
+  val ptree : (float, 'b) Nx.dtype -> (('b, 'd) t, 'd) Nx.Ptree.t
   (** [ptree dtype] is the structure of grid values over breaks of [dtype]: the
       breaks of each axis as a list at [breaks], and the coefficients at
       [coefficients]. *)
@@ -1352,36 +1398,36 @@ module Ode : sig
 
   (** {1:methods Methods} *)
 
-  type (-'k, 'y, 't) t
+  type (-'k, 'y, 't, 'd) t
   (** The type for one-step methods with tags ['k] over states ['y] and times of
       dtype ['t]. A method with more tags can be used as one with fewer, by
-      coercion: [(Ode.tsit5 :> ([ `Formula ], _, _) Ode.t)]. *)
+      coercion: [(Ode.tsit5 :> ([ `Formula ], _, _, _) Ode.t)]. *)
 
-  val euler : ([ `Formula ], 'y, 't) t
+  val euler : ([ `Formula ], 'y, 't, 'd) t
   (** [euler] is the explicit Euler method: order 1, one field evaluation per
       step. *)
 
-  val rk4 : ([ `Formula ], 'y, 't) t
+  val rk4 : ([ `Formula ], 'y, 't, 'd) t
   (** [rk4] is the classical Runge–Kutta method: order 4, four evaluations per
       step. *)
 
-  val ssprk3 : ([ `Formula ], 'y, 't) t
+  val ssprk3 : ([ `Formula ], 'y, 't, 'd) t
   (** [ssprk3] is the three-stage strong-stability-preserving method of Shu and
       Osher (1988): order 3, three evaluations per step. A step is a convex
       combination of Euler steps, so it keeps any convex bound Euler keeps under
       the same step size, such as a total-variation bound of a hyperbolic
       discretisation. *)
 
-  val bs3 : ([ `Formula | `Embedded ], 'y, 't) t
+  val bs3 : ([ `Formula | `Embedded ], 'y, 't, 'd) t
   (** [bs3] is Bogacki and Shampine's (1989) method of order 3 with an embedded
       order 2: three evaluations per step, its last stage the next step's first.
   *)
 
-  val tsit5 : ([ `Formula | `Embedded ], 'y, 't) t
+  val tsit5 : ([ `Formula | `Embedded ], 'y, 't, 'd) t
   (** [tsit5] is Tsitouras' (2011) method of order 5 with an embedded order 4:
       six evaluations per step, its last stage the next step's first. *)
 
-  val dopri5 : ([ `Formula | `Embedded ], 'y, 't) t
+  val dopri5 : ([ `Formula | `Embedded ], 'y, 't, 'd) t
   (** [dopri5] is Dormand and Prince's (1980) method of order 5 with an embedded
       order 4: six evaluations per step, its last stage the next step's first.
   *)
@@ -1390,7 +1436,7 @@ module Ode : sig
     a:float array array ->
     b:float array ->
     c:float array ->
-    ([ `Formula ], 'y, 't) t
+    ([ `Formula ], 'y, 't, 'd) t
   (** [tableau ~a ~b ~c] is the explicit Runge–Kutta method of Butcher tableau
       [(a, b, c)] with [s] stages: stage [i] evaluates the field at
       [t + c.(i) h] on [y + h Σ_(j<i) a.(i).(j) k_j], and the step is
@@ -1404,8 +1450,8 @@ module Ode : sig
   val kvaerno5 :
     ?mass:('y -> 'y) ->
     linear:'y Linear.t ->
-    ((float, 't) Nx.t -> 'y -> 'y -> 'y) ->
-    ([ `Embedded ], 'y, 't) t
+    ((float, 't, 'd) Nx.t -> 'y -> 'y -> 'y) ->
+    ([ `Embedded ], 'y, 't, 'd) t
   (** [kvaerno5 ~mass ~linear derivative] is Kværnø's (2004) singly diagonally
       implicit method of order 5 with an embedded order 4, for stiff fields:
       [derivative t y dy] is the field's Jacobian at [(t, y)] applied to [dy],
@@ -1438,19 +1484,19 @@ module Ode : sig
 
   (** {1:marches Marches} *)
 
-  type 't time = (float, 't) Nx.t
+  type ('t, 'd) time = (float, 't, 'd) Nx.t
   (** The type for times. *)
 
-  type ('y, 't) field = 't time -> 'y -> 'y
+  type ('y, 't, 'd) field = ('t, 'd) time -> 'y -> 'y
   (** The type for fields: [f t y] is the derivative of [y] at the scalar time
       [t], a value of [y]'s structure, dtypes and shapes. *)
 
   val march :
-    'y Nx.Ptree.t ->
-    ([> `Formula ], 'y, 't) t ->
+    ('y, 'd) Nx.Ptree.t ->
+    ([> `Formula ], 'y, 't, 'd) t ->
     steps:int ->
-    ('y, 't) field ->
-    at:'t time ->
+    ('y, 't, 'd) field ->
+    at:('t, 'd) time ->
     'y ->
     'y
   (** [march y m ~steps f ~at y0] is the state at each time of [at], stacked on
@@ -1499,15 +1545,15 @@ module Ode : sig
       its detached estimate, with a zero derivative. *)
 
   val solve :
-    'y Nx.Ptree.t ->
-    ([> `Embedded ], 'y, 't) t ->
+    ('y, 'd) Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't, 'd) t ->
     tol:Tol.t ->
     budget:int ->
-    ('y, 't) field ->
-    t0:'t time ->
-    t1:'t time ->
+    ('y, 't, 'd) field ->
+    t0:('t, 'd) time ->
+    t1:('t, 'd) time ->
     'y ->
-    'y Solution.t
+    ('y, 'd) Solution.t
   (** [solve y m ~tol ~budget f ~t0 ~t1 y0] is the state at [t1] of the solution
       from [y0] at [t0], scalars; [t1] may equal or precede [t0]. At [t1 = t0]
       it is [y0], converged with a zero error.
@@ -1516,14 +1562,14 @@ module Ode : sig
       scalar, or as {!march} does for a field of another structure. *)
 
   val sample :
-    'y Nx.Ptree.t ->
-    ([> `Embedded ], 'y, 't) t ->
+    ('y, 'd) Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't, 'd) t ->
     tol:Tol.t ->
     budget:int ->
-    ('y, 't) field ->
-    at:'t time ->
+    ('y, 't, 'd) field ->
+    at:('t, 'd) time ->
     'y ->
-    'y Solution.t
+    ('y, 'd) Solution.t
   (** [sample y m ~tol ~budget f ~at y0] is the state at each time of [at],
       stacked on a new leading axis of each leaf, [y0] first at [at.(0)], with
       [budget] attempts across all of them. The steps land on every time of
@@ -1548,15 +1594,15 @@ module Ode : sig
       error, which [tol] does not control. *)
 
   val path :
-    'y Nx.Ptree.t ->
-    ([> `Embedded ], 'y, 't) t ->
+    ('y, 'd) Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't, 'd) t ->
     tol:Tol.t ->
     budget:int ->
-    ('y, 't) field ->
-    t0:'t time ->
-    t1:'t time ->
+    ('y, 't, 'd) field ->
+    t0:('t, 'd) time ->
+    t1:('t, 'd) time ->
     'y ->
-    ('y, 't) Piecewise.t Solution.t
+    (('y, 't, 'd) Piecewise.t, 'd) Solution.t
   (** [path y m ~tol ~budget f ~t0 ~t1 y0] is the solution from [y0] at [t0] to
       [t1] as a function of time: a series of [budget] pieces, one per accepted
       step in increasing time, each the step's continuous extension. The pieces
@@ -1585,16 +1631,16 @@ module Ode : sig
   (** {1:events Events} *)
 
   val event :
-    'y Nx.Ptree.t ->
-    ([> `Embedded ], 'y, 't) t ->
+    ('y, 'd) Nx.Ptree.t ->
+    ([> `Embedded ], 'y, 't, 'd) t ->
     tol:Tol.t ->
     budget:int ->
-    ('y, 't) field ->
-    event:('t time -> 'y -> (float, 'e) Nx.t) ->
-    t0:'t time ->
-    t1:'t time ->
+    ('y, 't, 'd) field ->
+    event:(('t, 'd) time -> 'y -> (float, 'e, 'd) Nx.t) ->
+    t0:('t, 'd) time ->
+    t1:('t, 'd) time ->
     'y ->
-    ('t time * 'y * (int32, Nx.int32_elt) Nx.t) Solution.t
+    (('t, 'd) time * 'y * 'd Nx.int32_t, 'd) Solution.t
   (** [event y m ~tol ~budget f ~event ~t0 ~t1 y0] is the solve from [y0] at
       [t0] toward [t1] that ends at the first crossing of an event: the time,
       the state there, and the flat index of the component of [event] that
@@ -1642,11 +1688,12 @@ module Ode : sig
 
       {[
       Solution.ptree
-        Nx.Ptree.(
-          iso
-            (fun (t, (y, i)) -> (t, y, i))
-            (fun (t, y, i) -> (t, (y, i)))
-            (pair tensor (pair s tensor)))
+        (Nx.Ptree.v (fun c (t, y, i) ->
+             let open Nx.Ptree.Walk in
+             let t = index c 0 tensor t in
+             let y = index c 1 (structure s) y in
+             let i = index c 2 tensor i in
+             (t, y, i)))
       ]}
 
       Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
@@ -1656,17 +1703,17 @@ module Ode : sig
   (** {1:delays Delays} *)
 
   val delay :
-    'y Nx.Ptree.t ->
-    ([> `Formula | `Embedded ], 'y, 't) t ->
+    ('y, 'd) Nx.Ptree.t ->
+    ([> `Formula | `Embedded ], 'y, 't, 'd) t ->
     tol:Tol.t ->
     budget:int ->
     pieces:int ->
-    ('t time -> 'y -> 'y -> 'y) ->
-    lags:'t time ->
-    history:('t time -> 'y) ->
-    at:'t time ->
+    (('t, 'd) time -> 'y -> 'y -> 'y) ->
+    lags:('t, 'd) time ->
+    history:(('t, 'd) time -> 'y) ->
+    at:('t, 'd) time ->
     'y ->
-    'y Solution.t
+    ('y, 'd) Solution.t
   (** [delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0] is the state at
       each time of [at], increasing, of the solution of
       [y' t = f t (y t) (y (t − τ))] for the constant lags [τ] of [lags], 1-D,
@@ -1725,17 +1772,17 @@ module Sde : sig
       given that interval's increment and area, a quadratic, and lose their
       stated order. *)
   module Brownian : sig
-    type 'b t
+    type ('b, 'd) t
     (** The type for Brownian paths of dtype ['b]. *)
 
     val v :
-      Nx.Rng.t ->
+      'd Nx.Rng.key ->
       (float, 'b) Nx.dtype ->
       shape:int array ->
       t0:float ->
       t1:float ->
       depth:int ->
-      'b t
+      ('b, 'd) t
     (** [v key dtype ~shape ~t0 ~t1 ~depth] is a Brownian path of independent
         standard components of shape [shape] over [[t0, t1]], resolved to
         [(t1 − t0) / 2^depth].
@@ -1745,10 +1792,10 @@ module Sde : sig
         negative. *)
 
     val increment :
-      'b t ->
-      (float, 'b) Nx.t ->
-      (float, 'b) Nx.t ->
-      (float, 'b) Nx.t * (float, 'b) Nx.t
+      ('b, 'd) t ->
+      (float, 'b, 'd) Nx.t ->
+      (float, 'b, 'd) Nx.t ->
+      (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
     (** [increment w s t] is [W t − W s] and the space–time Lévy area over
         [[s, t]],
         [H = (1 / (t − s)) ∫_s^t (W r − W s − (r − s) / (t − s) (W t − W s)) dr],
@@ -1760,13 +1807,13 @@ module Sde : sig
         Raises [Invalid_argument] through {!Nx.check} if [s] or [t] lies outside
         [[t0, t1]]. *)
 
-    val ptree : (float, 'b) Nx.dtype -> 'b t Nx.Ptree.t
-    (** [ptree dtype] is the structure of paths of [dtype]: the key at [key],
-        the shape's dimensions reported at [shape], the interval's ends at [t0]
-        and [t1], and the depth reported at [depth]. A path draws from its key,
-        so a compiled function takes it as an argument of this structure; a path
-        it captures is a constant, whose draws it refuses ({!Rune.Jit_error}).
-    *)
+    val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('f, 'd) t -> ('f, 'e) t
+    (** [walk c w] walks the path [w]: its key at [key] ({!Nx.Rng.walk}), the
+        shape's dimensions reported at [shape], the interval's ends at [t0] and
+        [t1], and the depth reported at [depth]. [Nx.Ptree.v walk] describes
+        paths. A path draws from its key, so a compiled function takes it as an
+        argument; a path it captures holds a constant key, and draws the same
+        numbers on every call. *)
   end
 
   (** {1:methods Methods} *)
@@ -1800,13 +1847,13 @@ module Sde : sig
   (** {1:marches Marches} *)
 
   val march :
-    'y Nx.Ptree.t ->
+    ('y, 'd) Nx.Ptree.t ->
     t ->
     steps:int ->
-    drift:((float, 't) Nx.t -> 'y -> 'y) ->
-    diffusion:((float, 't) Nx.t -> 'y -> (float, 't) Nx.t -> 'y) ->
-    't Brownian.t ->
-    at:(float, 't) Nx.t ->
+    drift:((float, 't, 'd) Nx.t -> 'y -> 'y) ->
+    diffusion:((float, 't, 'd) Nx.t -> 'y -> (float, 't, 'd) Nx.t -> 'y) ->
+    ('t, 'd) Brownian.t ->
+    at:(float, 't, 'd) Nx.t ->
     'y ->
     'y
   (** [march y m ~steps ~drift ~diffusion w ~at y0] is the state at each time of
@@ -1876,16 +1923,16 @@ module Split : sig
       within rounding, and the sequence is palindromic: each array equals its
       reverse. *)
 
-  type ('s, 'b) flow = (float, 'b) Nx.t -> 's -> 's
+  type ('s, 'b, 'd) flow = (float, 'b, 'd) Nx.t -> 's -> 's
   (** The type for flows: [flow h s] is the state [s] moved by its part over the
       duration [h]: a scalar, or in {!step} a tensor that broadcasts against the
       state's leaves. *)
 
   val step :
     t ->
-    kick:('s, 'b) flow ->
-    drift:('s, 'b) flow ->
-    (float, 'b) Nx.t ->
+    kick:('s, 'b, 'd) flow ->
+    drift:('s, 'b, 'd) flow ->
+    (float, 'b, 'd) Nx.t ->
     's ->
     's
   (** [step m ~kick ~drift h s] is [s] after one step [h] of [m]. A negative [h]
@@ -1898,12 +1945,12 @@ module Split : sig
       receive [h] times each coefficient, of [h]'s shape. *)
 
   val march :
-    's Nx.Ptree.t ->
+    ('s, 'd) Nx.Ptree.t ->
     t ->
     steps:int ->
-    kick:('s, 'b) flow ->
-    drift:('s, 'b) flow ->
-    at:(float, 'b) Nx.t ->
+    kick:('s, 'b, 'd) flow ->
+    drift:('s, 'b, 'd) flow ->
+    at:(float, 'b, 'd) Nx.t ->
     's ->
     's
   (** [march s m ~steps ~kick ~drift ~at s0] is the state at each time of [at],

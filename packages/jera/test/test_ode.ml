@@ -63,7 +63,7 @@ let error m n =
     (Float.abs (Nx.item [ 1 ] p -. rp))
 
 let methods =
-  let formula m = (m :> ([ `Formula ], _, _) Ode.t) in
+  let formula m = (m :> ([ `Formula ], _, _, _) Ode.t) in
   [
     ("euler", Ode.euler, 1, 256);
     ("ssprk3", Ode.ssprk3, 3, 32);
@@ -307,7 +307,7 @@ let error_tests =
 
 let decay k _ y = Nx.neg (Nx.mul k y)
 
-let solve ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _) Ode.t))
+let solve ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _, _) Ode.t))
     ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) ?(budget = 1000) f ~t0 ~t1 y0 =
   Ode.solve one m ~tol ~budget f ~t0:(scalar t0) ~t1:(scalar t1) y0
 
@@ -315,7 +315,7 @@ let solve ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _) Ode.t))
 let forced2 t y = Nx.add (Nx.mul (Nx.cos t) y) (Nx.sin (Nx.mul_s t 3.))
 
 let solve_tests =
-  let embedded m = (m :> ([ `Embedded ], _, _) Ode.t) in
+  let embedded m = (m :> ([ `Embedded ], _, _, _) Ode.t) in
   [
     cases
       ~name:(fun (n, _, _) -> n)
@@ -528,13 +528,13 @@ let solve_derivative_tests =
       (fun () ->
         (* Compiled tanh is within ulps of eager's, which changes the steps:
            from 0.5 on the host, eager takes 230 evaluations and compiled 236.
-           The answers then differ by up to their global errors, which tol
-           does not bound. The steps' errors grow by at most e^(L T) to T
-           (Hairer, Nørsett and Wanner, I, §II.3), with L = 1 bounding the
-           field's Jacobian in the maximum norm, as sech² q ≤ 1, and each
-           step's error is below its estimate, which measures the order-4
-           solution the step does not take. Rounding, a few ulps in each of
-           about 40 steps, adds under 1e-12, a ten-thousandth of the bound. *)
+           The answers then differ by up to their global errors, which tol does
+           not bound. The steps' errors grow by at most e^(L T) to T (Hairer,
+           Nørsett and Wanner, I, §II.3), with L = 1 bounding the field's
+           Jacobian in the maximum norm, as sech² q ≤ 1, and each step's error
+           is below its estimate, which measures the order-4 solution the step
+           does not take. Rounding, a few ulps in each of about 40 steps, adds
+           under 1e-12, a ten-thousandth of the bound. *)
         let soft _ (q, p) = (p, Nx.neg (Nx.tanh q)) in
         let f y0 =
           Ode.solve pair Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:1000 soft
@@ -563,12 +563,12 @@ let solve_derivative_tests =
 
 (* Paths *)
 
-let path ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _) Ode.t))
+let path ?(m = (Ode.tsit5 :> ([ `Embedded ], _, _, _) Ode.t))
     ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) ?(budget = 200) f ~t0 ~t1 y0 =
   Ode.path one m ~tol ~budget f ~t0:(scalar t0) ~t1:(scalar t1) y0
 
 let path_tests =
-  let embedded m = (m :> ([ `Embedded ], _, _) Ode.t) in
+  let embedded m = (m :> ([ `Embedded ], _, _, _) Ode.t) in
   let between = Nx.linspace f64 0. 2. 101 in
   let exact k t0 y0 t = Nx.mul_s (Nx.exp (Nx.mul_s (Nx.sub_s t t0) (-.k))) y0 in
   [
@@ -879,15 +879,16 @@ let event_tests =
         raises_match
           (Exn.failure ~substring:"The crossing of component [1] near t")
           (fun () -> Solution.get s));
-    test "a compiled function returns the answer through an iso" (fun () ->
+    test "a compiled function returns the answer as a triple" (fun () ->
         let s = pair in
         let answer =
           Solution.ptree
-            Nx.Ptree.(
-              iso
-                (fun (t, (y, i)) -> (t, y, i))
-                (fun (t, y, i) -> (t, (y, i)))
-                (pair tensor (pair s tensor)))
+            (Nx.Ptree.v (fun c (t, y, i) ->
+                 let open Nx.Ptree.Walk in
+                 let t = index c 0 tensor t in
+                 let y = index c 1 (structure s) y in
+                 let i = index c 2 tensor i in
+                 (t, y, i)))
         in
         let f q0 = drop (fun _ (q, _) -> q) q0 in
         let t, _, i =
