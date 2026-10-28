@@ -63,10 +63,29 @@ let rec dim : type v s d. (v, s, d) t -> int -> int =
   | Shards { shape; _ } -> shape.(i)
   | Handle { over; _ } -> dim over i
 
+(* [s] as a fresh array. Iarray.to_array copies by a call into the
+   runtime's C, which costs more than reading a shape; an array literal
+   allocates inline, so a shape of up to four axes is copied into one. *)
+let thaw s =
+  let r = Iarray.length s in
+  let a =
+    match r with
+    | 0 -> [||]
+    | 1 -> [| 0 |]
+    | 2 -> [| 0; 0 |]
+    | 3 -> [| 0; 0; 0 |]
+    | 4 -> [| 0; 0; 0; 0 |]
+    | r -> Array.make r 0
+  in
+  for i = 0 to r - 1 do
+    Array.unsafe_set a i (Iarray.unsafe_get s i)
+  done;
+  a
+
 let rec shape : type v s d. (v, s, d) t -> int array =
  fun x ->
   match x with
-  | Array _ | Traced _ -> Iarray.to_array (L.shape (own_layout x))
+  | Array _ | Traced _ -> thaw (L.shape (own_layout x))
   | Shards { shape; _ } -> Array.copy shape
   | Handle { over; _ } -> shape over
 
