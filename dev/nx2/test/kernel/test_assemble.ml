@@ -358,11 +358,33 @@ let law_guards (b : Support.backend) (c, side) =
 
 let cases = Gen.with_pp pp_case (case_gen ())
 
-(* A fill alone, which drawn cases reach rarely; and pieces of one element
-   at each index, as many as the operands a call reads at once and its
-   neighbours, and twice as many. *)
+(* A fill alone, which drawn cases reach rarely; pads whose piece covers
+   inner axes whole, which join the rows where the piece's steps compose,
+   through plain, reversed, stepped and broadcast views, and an empty piece
+   that starts far outside, of a byte dtype and of a sub-byte one; and
+   pieces of one element at each index, as many as the operands a call
+   reads at once and its neighbours, and twice as many. *)
 let examples =
   let m = A.max_operands in
+  let pad ?view ?(dtype = D.Any D.Float32) shape region =
+    let view = Option.value view ~default:(plain (Array.length shape)) in
+    let rs = Random.State.make [| Array.length shape |] in
+    let region =
+      Array.map (fun (start, count) -> { M.start; count; step = 1 }) region
+    in
+    {
+      dtype;
+      shape;
+      fill = canonical dtype (element dtype rs);
+      regions = [| region |];
+      pieces =
+        [|
+          operand dtype (sliced region shape) view (fun _ -> element dtype rs);
+        |];
+      form = "pad";
+    }
+  in
+  let joined = [| (0, 2); (1, 1); (0, 2) |] in
   let ones n =
     let np = n - 1 in
     let rs = Random.State.make [| n |] in
@@ -387,6 +409,14 @@ let examples =
     pieces = [||];
     form = "slices";
   }
+  :: pad [| 3; 4; 1; 1 |] [| (1, 1); (0, 4); (0, 1); (0, 1) |]
+  :: pad [| 2; 3; 2 |] joined
+  :: pad [| 1; 3; 1; 2 |] [| (0, 1); (1, 2); (0, 1); (0, 2) |]
+  :: pad ~view:{ (plain 3) with reversed = Some 2 } [| 2; 3; 2 |] joined
+  :: pad ~view:{ (plain 3) with stepped = true } [| 2; 3; 2 |] joined
+  :: pad ~view:{ (plain 3) with broadcast = [ 2 ] } [| 2; 3; 2 |] joined
+  :: pad [| 2; 3 |] [| (max_int, 0); (0, 3) |]
+  :: pad ~dtype:(D.Any D.Int4) [| 2; 3 |] [| (max_int, 0); (0, 3) |]
   :: List.map ones [ m - 1; m; m + 1; (2 * m) - 1; 2 * m; (2 * m) + 1 ]
 
 let laws (b : Support.backend) =

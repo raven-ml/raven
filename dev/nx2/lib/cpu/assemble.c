@@ -9,7 +9,8 @@
    region in order, so the last piece holding an element wins. Pieces of
    unit steps whose regions are disjoint and fill the result, as a
    concatenation's do, leave nothing to fill. One such piece inside the
-   result, as a pad's, is one job over the result's rows, each row filled
+   result, as a pad's, is one job over the result's rows, axes the piece
+   covers whole joined into the rows where they can be, each row filled
    before the piece, copied, and filled after it, so that every element is
    written once; of a sub-byte dtype, whose rows may share bytes, it fills
    the 2·rank boxes around the piece, then copies it. Any other set fills
@@ -121,6 +122,36 @@ typedef struct {
   const int64_t *shape, *lo, *hi, *sd, *sp;
 } padding;
 
+/* Merges in place the [r] axes of a pad, whose extents, piece's [lo] and
+   [hi], and result's and piece's steps are the rows of [ax], and answers
+   the rank left. An axis of one element the piece covers is dropped, and
+   one it covers whole joins the axis before it where each operand steps
+   across the two as along one: a depthwise convolution's [n; h; w; c; 1;
+   1] input pads in rows of w·c elements, where its last axis would give
+   rows of one element, each dwarfed by its unit's call. */
+static int pad_axes(int r, int64_t (*ax)[NX_MAX_RANK]) {
+  int64_t *s = ax[0], *lo = ax[1], *hi = ax[2], *sd = ax[3], *sp = ax[4];
+  int n = 0;
+  for (int i = 0; i < r; i++) {
+    int whole = lo[i] == 0 && hi[i] == s[i];
+    if (whole && s[i] == 1) continue;
+    int64_t jd, jp;
+    if (whole && n > 0 && !__builtin_mul_overflow(sd[i], s[i], &jd) &&
+        !__builtin_mul_overflow(sp[i], s[i], &jp) && jd == sd[n - 1] &&
+        jp == sp[n - 1]) {
+      s[n - 1] *= s[i];
+      lo[n - 1] *= s[i];
+      hi[n - 1] *= s[i];
+      sd[n - 1] = sd[i];
+      sp[n - 1] = sp[i];
+      continue;
+    }
+    for (int k = 0; k < 5; k++) ax[k][n] = ax[k][i];
+    n++;
+  }
+  return n;
+}
+
 /* Fills [n] elements of the result's row from position [pd]. */
 static void fill_run(const padding *p, int64_t pd, int64_t n) {
   if (n <= 0) return;
@@ -171,8 +202,9 @@ static int intervals(int np, int r, const int64_t *ranges, int64_t (*lo)[NX_MAX_
     for (int i = 0; i < r; i++) {
       const int64_t *x = ranges + 3 * (j * r + i);
       if (x[2] != 1 && x[1] > 1) return 0;
-      lo[j][i] = x[0];
-      hi[j][i] = x[0] + x[1];
+      /* A range of no element may start anywhere: its box is at 0. */
+      lo[j][i] = x[1] == 0 ? 0 : x[0];
+      hi[j][i] = lo[j][i] + x[1];
     }
   return 1;
 }
@@ -344,17 +376,23 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   int padded = !e && total > 0 && !covered && unit && np == 1 && r > 0 &&
                bits >= 8;
   if (padded) {
+    /* The piece covers some axis in part, so one axis at least is left. */
+    int64_t ax[5][NX_MAX_RANK];
+    const int64_t *from[5] = {shape, lo[0], hi[0], step, a[1].dim + r};
+    for (int k = 0; k < 5; k++)
+      memcpy(ax[k], from[k], sizeof(int64_t) * (size_t)r);
+    int m = pad_axes(r, ax);
     padding pd = {.a = a,
                   .f = {&a[0], fill},
-                  .r = r,
-                  .parts = (shape[r - 1] + PAD_PART - 1) / PAD_PART,
-                  .shape = shape,
-                  .lo = lo[0],
-                  .hi = hi[0],
-                  .sd = step,
-                  .sp = a[1].dim + r};
+                  .r = m,
+                  .parts = (ax[0][m - 1] + PAD_PART - 1) / PAD_PART,
+                  .shape = ax[0],
+                  .lo = ax[1],
+                  .hi = ax[2],
+                  .sd = ax[3],
+                  .sp = ax[4]};
     int64_t bytes = 2 * total * (bits / 8);
-    nx_cpu_job(total / shape[r - 1] * pd.parts, bytes, moves_cost(dt, moved),
+    nx_cpu_job(total / ax[0][m - 1] * pd.parts, bytes, moves_cost(dt, moved),
                pad_units, &pd);
   }
   if (!e && total > 0 && !covered && !padded) {
