@@ -2,7 +2,7 @@
  (names test_vega test_schedule test_loss_scale)
  (modules test_vega test_schedule test_loss_scale)
  (package vega)
- (libraries vega nx nx.dtype windtrap))
+ (libraries vega nx nx.array rig windtrap))
 
 (test
  (name test_vega_jit)

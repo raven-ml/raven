@@ -8,8 +8,8 @@ let lr = Vega.lr 1e-3
 let shapes = [ ("256", [| 256; 256 |]); ("1024", [| 1024; 1024 |]) ]
 
 let make_step_bench name init step (label, shape) =
-  let params = Nx.rand Nx.Float32 shape in
-  let grads = Nx.rand Nx.Float32 shape in
+  let params = Nx.Rng.uniform Nx.float32 shape in
+  let grads = Nx.Rng.uniform Nx.float32 shape in
   let state = ref (init p params) in
   Thumper.bench (Printf.sprintf "%s/%s" name label) (fun () ->
       let params, st = step !state ~params ~grads in

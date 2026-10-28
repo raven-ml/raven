@@ -133,6 +133,18 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- **Breaking:** states and structures carry the parameters' device set, as
+  `('p, 'd) adam_state` over an `('p, 'd) Nx.Ptree.t`. Each `*_init` makes
+  the step counter beside the parameters and raises when they hold no array.
+- **Breaking:** a step's `~lr` is a function of its state's counter, which the
+  step applies: pass a `Vega.Schedule` or `Vega.lr v`, no longer
+  `sched st.step`. `Vega.Schedule.t` takes the set, `'d Schedule.t`.
+- **Breaking:** `Vega.Loss_scale.static` and `dynamic` take the placement of
+  the scale, and `Loss_scale.ptree` is `Loss_scale.walk`.
+- Optimizers step complex parameters: each part is a real coordinate with its
+  own state, and a step descends along the conjugate of `Rune.grad`'s
+  gradient. They passed complex leaves through unchanged.
+- `Vega.clip_by_global_norm` returns a structure of no array unchanged.
 - **Breaking:** `Vega.global_dot` and `global_norm` are removed for
   `Nx.Ptree.dot` and `Nx.Ptree.norm`, which return scalar tensors; read one
   for logging with `Nx.item []`.

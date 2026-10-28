@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Every step compiles with its state as a consumed argument: the parameters and
+(* Every step compiles with its state as a donated argument: the parameters and
    the optimizer state go into [Rune.jit] and come back out, and the compiled
    trajectory matches the eager one leaf for leaf, the counter included. *)
 
@@ -13,19 +13,15 @@ let steps = 6
 
 (* A float32 matrix and vector: Adafactor factors the one and not the other. *)
 module Wb = struct
-  type t = { w : Nx.float32_t; b : Nx.float32_t }
+  type t = { w : Nx.host Nx.float32_t; b : Nx.host Nx.float32_t }
 
-  module Walked = struct
-    type nonrec _ t = t
+  let walk c { w; b } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" tensor w in
+    let b = field c "b" tensor b in
+    { w; b }
 
-    let walk c { w; b } =
-      let open Nx.Ptree.Walk in
-      let w = field c "w" tensor w in
-      let b = field c "b" tensor b in
-      { w; b }
-  end
-
-  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
+  let ptree : (t, Nx.host) Nx.Ptree.t = Nx.Ptree.v walk
 end
 
 let fill i n = Array.init n (fun j -> sin (float_of_int ((i * 7919) + j)))
@@ -42,7 +38,7 @@ let grads (x : Wb.t) =
   let t = Lazy.force target in
   { Wb.w = Nx.mul_s (Nx.sub x.w t.w) 2.0; b = Nx.mul_s (Nx.sub x.b t.b) 2.0 }
 
-let max_diff (type a b) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
+let max_diff (type a b d) (x : (a, b, d) Nx.t) (y : (a, b, d) Nx.t) =
   Nx.item []
     (Nx.max (Nx.abs (Nx.sub (Nx.cast Nx.float64 x) (Nx.cast Nx.float64 y))))
 
@@ -56,8 +52,8 @@ let compiles state ~init ~step () =
   in
   let eager = run body in
   let compiled =
-    run
-      (Rune.jit Nx.Ptree.(consumes both @@ returns both) body)
+    let f = Rune.jit Nx.Ptree.(both @-> returns both) body in
+    run (fun x -> f (Nx.Ptree.donate both x))
   in
   ignore
     (Nx.Ptree.map2 both
@@ -106,9 +102,11 @@ let tests =
     test "adafactor"
       (compiles Vega.adafactor_ptree
          ~init:(fun p x -> Vega.adafactor_init p x)
-         ~step:(fun (st : Wb.t Vega.adafactor_state) ->
-           let t = Nx.cast Nx.float32 (Nx.add_s st.step 1l) in
-           Vega.adafactor_step Wb.ptree ~lr:(Nx.mul_s (Nx.rsqrt t) 1e-2) st));
+         ~step:(fun st ->
+           let lr step =
+             Nx.mul_s (Nx.rsqrt (Nx.cast Nx.float32 (Nx.add_s step 1l))) 1e-2
+           in
+           Vega.adafactor_step Wb.ptree ~lr st));
   ]
 
 (* A loss-scaled Adam step compiles once and follows the eager steps, through a
@@ -116,7 +114,7 @@ let tests =
    at the third step, where it is an infinity. *)
 let test_loss_scaled_compiles () =
   let both = Nx.Ptree.pair Wb.ptree (Vega.adam_ptree Wb.ptree) in
-  let all = Nx.Ptree.pair both Vega.Loss_scale.ptree in
+  let all = Nx.Ptree.pair both (Nx.Ptree.v Vega.Loss_scale.walk) in
   let body poison ((params, st), ls) =
     let g = grads params in
     let scaled x = Nx.add (Vega.Loss_scale.scale ls x) poison in
@@ -135,11 +133,12 @@ let test_loss_scaled_compiles () =
     let params = wb 1 in
     go 0
       ( (params, Vega.adam_init Wb.ptree params),
-        Vega.Loss_scale.dynamic ~init:1024.0 () )
+        Vega.Loss_scale.dynamic ~init:1024.0 Nx.Host.on )
   in
   let eager = run body in
   let compiled =
-    run (Rune.jit Nx.Ptree.(tensor @-> consumes all @@ returns all) body)
+    let f = Rune.jit Nx.Ptree.(tensor @-> all @-> returns all) body in
+    run (fun poison x -> f poison (Nx.Ptree.donate all x))
   in
   equal ~msg:"one backoff and two growths" float_exact 2048.0
     (Nx.item [] (snd compiled).Vega.Loss_scale.scale);
@@ -178,9 +177,8 @@ let test_radam_compiled_rectification () =
   in
   let both = Nx.Ptree.pair p (Vega.adam_ptree p) in
   let compiled =
-    path
-      (Rune.jit Nx.Ptree.(consumes both @@ returns both) (step target32))
-      (Nx.zeros Nx.float32 [| 3 |])
+    let f = Rune.jit Nx.Ptree.(both @-> returns both) (step target32) in
+    path (fun x -> f (Nx.Ptree.donate both x)) (Nx.zeros Nx.float32 [| 3 |])
   in
   let exact = path (step target64) (Nx.zeros Nx.float64 [| 3 |]) in
   Array.iteri
@@ -215,7 +213,7 @@ let () =
   exit
     (run "vega jit"
        [
-         group "a step compiles with its state consumed" tests;
+         group "a step compiles with its state donated" tests;
          group "precision"
            [
              test "compiled radam rectifies as in float64"

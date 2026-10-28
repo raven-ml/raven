@@ -7,16 +7,16 @@ module Schedule = Schedule
 
 (* Helpers *)
 
-let scalar (type a b) (dt : (a, b) Nx_dtype.t) x =
-  Nx.scalar dt (Nx_dtype.of_float dt x)
-
 (* A parameter structure may carry leaves that are not parameters: an RNG key
    threaded through a compiled step, a step counter, a batch of indices. Rune
    does not differentiate them — their slot in the gradient structure holds
    zeros — and an optimizer must not update them either. Adam's square root over
    an integer leaf is meaningless, and even plain descent would round its step
-   into the value. Carry them instead. *)
-let updates (type a b) (p : (a, b) Nx.t) = Nx_dtype.is Float (Nx.dtype p)
+   into the value. Carry them instead. Float and complex leaves step. *)
+let updates (type a b d) (p : (a, b, d) Nx.t) =
+  match Nx.Dtype.kind (Nx.dtype p) with
+  | Float | Complex -> true
+  | Signed | Unsigned | Boolean -> false
 
 (* Validation *)
 
@@ -57,25 +57,25 @@ let aligned fn p skeleton name x =
   | None -> leaves
   | Some m -> invalid_arg (fn ^ ": " ^ m)
 
-let take (type a b) fn name path (x : (a, b) Nx.t) rest : (a, b) Nx.t =
+let take (type a b d) fn name path (x : (a, b, d) Nx.t) rest : (a, b, d) Nx.t =
   match !rest with
   | [] -> invalid_arg (fn ^ ": the structure's walk visited one value two ways")
   | Nx.P y :: tail -> (
       rest := tail;
-      match Nx_dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
+      match Nx.Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
       | Some Equal -> y
       | None ->
           invalid_argf "%s: %s: %s in %s, %s in the parameters" fn
             (describe path)
-            (Nx_dtype.to_string (Nx.dtype y))
+            (Nx.Dtype.name (Nx.dtype y))
             name
-            (Nx_dtype.to_string (Nx.dtype x)))
+            (Nx.Dtype.name (Nx.dtype x)))
 
-(* A step computes at float32, or at float64 for a float64 leaf, and returns
-   each leaf at its own dtype. Float16 and bfloat16 leaves round once, when the
-   result is stored: at their dtype, Adam's [eps = 1e-8] rounds to zero in
-   float16 and [b2 = 0.999] to one in bfloat16. *)
-type 'w compute = (float, 'w) Nx.t
+(* A step computes at float32, or at float64 for a float64 or complex128 leaf,
+   and returns each leaf at its own dtype. Float16 and bfloat16 leaves round
+   once, when the result is stored: at their dtype, Adam's [eps = 1e-8] rounds
+   to zero in float16 and [b2 = 0.999] to one in bfloat16. *)
+type ('w, 'd) compute = (float, 'w, 'd) Nx.t
 
 (* The compute dtypes, as a witness a step's arithmetic is written against. *)
 type _ wide = F32 : Nx.float32_elt wide | F64 : Nx.float64_elt wide
@@ -88,38 +88,59 @@ let dtype : type w. w wide -> (float, w) Nx.dtype = function
    are the state's values of the parameters' skeleton, each with its name for
    errors. At a float leaf, [f w x g s] takes the parameter, its gradient and
    its leaf of each part, in order, cast to the compute dtype [w], and returns
-   the new parameter and the parts' new leaves, which are cast back; other
-   leaves pass through unchanged. The result is the new parameters and the new
-   parts. *)
+   the new parameter and the parts' new leaves, which are cast back.
+
+   A complex leaf steps as its real and imaginary parts, two real coordinates
+   per element, stacked along a new first axis: [f] sees the leaf of real
+   parameters a real optimizer would. Its gradient there is the conjugate of
+   Rune's: the gradient of a real objective of [z = x + iy] is
+   [∂f/∂x - i ∂f/∂y], whose parts' gradient is [(∂f/∂x, ∂f/∂y)], so the step
+   descends along the conjugate. Other leaves pass through unchanged. The
+   result is the new parameters and the new parts. *)
 let leafwise fn p ~params ~grads parts
     ~(f :
        'w.
        'w wide ->
-       'w compute ->
-       'w compute ->
-       'w compute array ->
-       'w compute * 'w compute array) =
+       ('w, 'd) compute ->
+       ('w, 'd) compute ->
+       ('w, 'd) compute array ->
+       ('w, 'd) compute * ('w, 'd) compute array) =
   let skeleton = snd (Nx.Ptree.flatten p params) in
   let aligned name x = ref (aligned fn p skeleton name x) in
   let grads = aligned "the gradients" grads in
   let parts = Array.of_list parts in
   let leaves = Array.map (fun (name, x) -> (name, aligned name x)) parts in
   let parts' = Array.map (fun _ -> ref []) parts in
-  let step (type a b) (x : (a, b) Nx.t) g s =
-    let dt = Nx.dtype x in
-    let run (type w) (w : w wide) =
-      let wide = dtype w in
-      let x, s =
-        f w (Nx.cast wide x) (Nx.cast wide g) (Array.map (Nx.cast wide) s)
-      in
-      (Nx.cast dt x, Array.map (Nx.cast dt) s)
+  let real (type b w) (w : w wide) (x : (float, b, _) Nx.t) g s =
+    let dt = Nx.dtype x and wide = dtype w in
+    let x, s =
+      f w (Nx.cast wide x) (Nx.cast wide g) (Array.map (Nx.cast wide) s)
     in
-    match dt with Nx_dtype.Float64 -> run F64 | _ -> run F32
+    (Nx.cast dt x, Array.map (Nx.cast dt) s)
+  in
+  let complex (type b w) (w : w wide) (x : (Complex.t, b, _) Nx.t) g s =
+    let dt = Nx.dtype x and wide = dtype w in
+    let parts z = Nx.stack [ Nx.real wide z; Nx.imag wide z ] in
+    let join r = Nx.complex dt ~re:(Nx.get [ 0 ] r) ~im:(Nx.get [ 1 ] r) in
+    let g = Nx.stack [ Nx.real wide g; Nx.neg (Nx.imag wide g) ] in
+    let x, s = f w (parts x) g (Array.map parts s) in
+    (join x, Array.map join s)
+  in
+  let step (type a b) (x : (a, b, _) Nx.t) (g : (a, b, _) Nx.t)
+      (s : (a, b, _) Nx.t array) :
+      (a, b, _) Nx.t * (a, b, _) Nx.t array =
+    let dt = Nx.dtype x in
+    match (Nx.Dtype.kind dt, dt) with
+    | Float, Float64 -> real F64 x g s
+    | Float, _ -> real F32 x g s
+    | Complex, Complex128 -> complex F64 x g s
+    | Complex, _ -> complex F32 x g s
+    | (Signed | Unsigned | Boolean), _ -> (x, s)
   in
   let update path x =
     let g = take fn "the gradients" path x grads in
     let s = Array.map (fun (name, rest) -> take fn name path x rest) leaves in
-    let x, s = if updates x then step x g s else (x, s) in
+    let x, s = step x g s in
     Array.iteri (fun i y -> parts'.(i) := Nx.P y :: !(parts'.(i))) s;
     x
   in
@@ -129,12 +150,15 @@ let leafwise fn p ~params ~grads parts
 
 (* A scalar of the step counter, computed once per step at each compute dtype
    that asks for it. *)
-type counted = { f32 : Nx.float32_t Lazy.t; f64 : Nx.float64_t Lazy.t }
+type 'd counted = {
+  f32 : 'd Nx.float32_t Lazy.t;
+  f64 : 'd Nx.float64_t Lazy.t;
+}
 
-let counted (f : 'w. (float, 'w) Nx.dtype -> 'w compute) =
+let counted (f : 'w. (float, 'w) Nx.dtype -> ('w, 'd) compute) =
   { f32 = lazy (f Nx.float32); f64 = lazy (f Nx.float64) }
 
-let at : type w. counted -> w wide -> w compute =
+let at : type w d. d counted -> w wide -> (w, d) compute =
  fun c -> function F32 -> Lazy.force c.f32 | F64 -> Lazy.force c.f64
 
 (* [one_minus_exp x] is [1 - exp x] for [x <= 0] without the cancellation of
@@ -143,72 +167,95 @@ let at : type w. counted -> w wide -> w compute =
    [x] where [u] rounds to one, and [u - 1] below [-1], which loses nothing and
    stays defined where [u] underflows to zero. *)
 let one_minus_exp x =
-  let dt = Nx.dtype x in
-  let one = scalar dt 1.0 in
   let u = Nx.exp x in
-  let near = Nx.div (Nx.mul (Nx.sub u one) x) (Nx.log u) in
-  let expm1 = Nx.where (Nx.equal u one) x near in
-  Nx.neg (Nx.where (Nx.less x (scalar dt (-1.0))) (Nx.sub u one) expm1)
+  let near = Nx.div (Nx.mul (Nx.sub_s u 1.0) x) (Nx.log u) in
+  let expm1 = Nx.where (Nx.equal_s u 1.0) x near in
+  Nx.neg (Nx.where (Nx.less_s x (-1.0)) (Nx.sub_s u 1.0) expm1)
+
+(* [counter fn p params] is a step counter of zero whole on every device of the
+   parameters' set, so that it, and the scalars a step makes of it, stand
+   beside a leaf on any of those devices. *)
+let counter fn p params =
+  match fst (Nx.Ptree.flatten p params) with
+  | Nx.P x :: _ ->
+      let every = Nx.Placement.(on (devices (Nx.placement x))) in
+      Nx.scalar_at every Nx.int32 0l
+  | [] -> invalid_arg (fn ^ ": the parameters hold no array")
 
 (* Gradient transformations *)
 
 let clip_by_global_norm p ~max_norm grads =
   validate_positive "Vega.clip_by_global_norm" "max_norm" max_norm;
-  (* The norm is accumulated at float32, which every device computes. *)
-  let norm = Nx.Ptree.norm p Nx.float32 grads in
-  let factor =
-    Nx.where
-      (Nx.greater_s norm max_norm)
-      (Nx.rdiv_s max_norm norm) (Nx.scalar Nx.float32 1.0)
-  in
-  Nx.Ptree.scale p factor grads
+  match fst (Nx.Ptree.flatten p grads) with
+  | [] -> grads
+  | _ :: _ ->
+      (* The norm is accumulated at float32, which every device computes. *)
+      let norm = Nx.Ptree.norm p Nx.float32 grads in
+      let factor =
+        Nx.where
+          (Nx.greater_s norm max_norm)
+          (Nx.rdiv_s max_norm norm) (Nx.ones_like norm)
+      in
+      Nx.Ptree.scale p factor grads
+
+(* A complex gradient is clipped part by part, as two real coordinates. *)
+let clip (type a b d) ~max (g : (a, b, d) Nx.t) : (a, b, d) Nx.t =
+  let dt = Nx.dtype g in
+  match Nx.Dtype.kind dt with
+  | Complex ->
+      let parts (type w) (w : w wide) =
+        let part z = Nx.clamp ~min:(-.max) ~max (z (dtype w) g) in
+        Nx.complex dt ~re:(part Nx.real) ~im:(part Nx.imag)
+      in
+      (match dt with Complex128 -> parts F64 | Complex64 -> parts F32)
+  | Float | Signed | Unsigned | Boolean ->
+      let of_float = Nx.Dtype.of_float dt in
+      Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g
 
 let clip_by_value p ~max grads =
   validate_positive "Vega.clip_by_value" "max" max;
-  Nx.Ptree.map p
-    (fun _ g ->
-      let of_float = Nx_dtype.of_float (Nx.dtype g) in
-      Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g)
-    grads
+  Nx.Ptree.map p (fun _ g -> clip ~max g) grads
 
 (* Loss scaling *)
 
 module Loss_scale = struct
-  type t = { scale : Nx.float32_t; good_steps : Nx.int32_t }
+  type 'd t = { scale : 'd Nx.float32_t; good_steps : 'd Nx.int32_t }
 
   (* Static scales are marked by [good_steps = -1]: the mark is itself a tensor,
      so [adjust] can pass them through with [Nx.where] arithmetic instead of
      control flow — under [jit] the state is an ordinary input, not a trace-time
      constant. *)
 
-  let static v =
+  let make at v good_steps =
+    {
+      scale = Nx.scalar_at at Nx.float32 v;
+      good_steps = Nx.scalar_at at Nx.int32 good_steps;
+    }
+
+  let static at v =
     validate_positive "Vega.Loss_scale.static" "scale" v;
-    { scale = Nx.scalar Nx.float32 v; good_steps = Nx.scalar Nx.int32 (-1l) }
+    make at v (-1l)
 
-  let dynamic ?(init = 32768.0) () =
+  let dynamic ?(init = 32768.0) at =
     validate_positive "Vega.Loss_scale.dynamic" "init" init;
-    { scale = Nx.scalar Nx.float32 init; good_steps = Nx.scalar Nx.int32 0l }
+    make at init 0l
 
-  module Walked = struct
-    type nonrec _ t = t
+  let walk c { scale; good_steps } =
+    let open Nx.Ptree.Walk in
+    let scale = field c "scale" tensor scale in
+    let good_steps = field c "good_steps" tensor good_steps in
+    { scale; good_steps }
 
-    let walk c { scale; good_steps } =
-      let open Nx.Ptree.Walk in
-      let scale = field c "scale" tensor scale in
-      let good_steps = field c "good_steps" tensor good_steps in
-      { scale; good_steps }
-  end
-
-  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
   let scale t x = Nx.mul x (Nx.cast (Nx.dtype x) t.scale)
 
   let unscale p t grads =
     Nx.Ptree.map p (fun _ g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
 
-  let all_finite p grads =
+  let all_finite p t grads =
     Nx.Ptree.fold p
       (fun _ g acc -> Nx.logical_and acc (Nx.all (Nx.isfinite g)))
-      grads (Nx.scalar Nx.bool true)
+      grads
+      (Nx.scalar_at (Nx.placement t.scale) Nx.bool true)
 
   let adjust ~growth_interval ~growth_factor ~backoff_factor t ~finite =
     let dynamic = Nx.greater_equal_s t.good_steps 0l in
@@ -234,7 +281,7 @@ module Loss_scale = struct
     validate_positive "Vega.Loss_scale.step" "growth_factor" growth_factor;
     validate_positive "Vega.Loss_scale.step" "backoff_factor" backoff_factor;
     let grads = unscale p t grads in
-    let finite = all_finite p grads in
+    let finite = all_finite p t grads in
     let x =
       Nx.Ptree.map2 s (fun _ x' x -> Nx.where finite x' x) (update grads) x
     in
@@ -243,7 +290,7 @@ end
 
 (* Learning rates *)
 
-let lr v = Nx.scalar Nx.float32 v
+let lr = Schedule.constant
 
 (* Shared arithmetic of the steps *)
 
@@ -254,29 +301,25 @@ let zeros p x = Nx.Ptree.map p (fun _ t -> Nx.zeros_like t) x
 let descend ~lr x d = Nx.sub x (Nx.mul d (Nx.cast (Nx.dtype x) lr))
 
 (* [ema b m x] is [b * m + (1 - b) * x]: the moving average [m] after [x]. *)
-let ema b m x =
-  let dt = Nx.dtype x in
-  Nx.add (Nx.mul m (scalar dt b)) (Nx.mul x (scalar dt (1.0 -. b)))
+let ema b m x = Nx.add (Nx.mul_s m b) (Nx.mul_s x (1.0 -. b))
 
 (* The layer-wise trust ratio of LARS and LAMB: [|x| / (|u| + 1e-6)] for the
    leaf [x] and its update [u], or [1] when either norm is zero, as a scalar at
    [x]'s dtype. *)
 let trust_ratio x u =
-  let dt = Nx.dtype x in
   let norm t = Nx.sqrt (Nx.sum (Nx.mul t t)) in
   let xn = norm x and un = norm u in
-  let zero = scalar dt 0.0 in
   Nx.where
-    (Nx.logical_and (Nx.greater xn zero) (Nx.greater un zero))
-    (Nx.div xn (Nx.add un (scalar dt 1e-6)))
-    (scalar dt 1.0)
+    (Nx.logical_and (Nx.greater_s xn 0.0) (Nx.greater_s un 0.0))
+    (Nx.div xn (Nx.add_s un 1e-6))
+    (Nx.ones_like xn)
 
 (* SGD and LARS *)
 
-type 'p sgd_state = { velocity : 'p; step : Nx.int32_t }
+type ('p, 'd) sgd_state = { velocity : 'p; step : 'd Nx.int32_t }
 
 module Sgd_state = struct
-  type 'p t = 'p sgd_state
+  type ('p, 'd) t = ('p, 'd) sgd_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -287,11 +330,14 @@ end
 
 let sgd_ptree p = Nx.Ptree.nest (module Sgd_state) p
 
-let sgd_init p params =
-  { velocity = zeros p params; step = Nx.scalar Nx.int32 0l }
+let velocity_init fn p params =
+  { velocity = zeros p params; step = counter fn p params }
+
+let sgd_init p params = velocity_init "Vega.sgd_init" p params
 
 let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
   let fn = "Vega.sgd_step" in
+  let lr = lr st.step in
   validate_unit_interval fn "momentum" momentum;
   let step = Nx.add_s st.step 1l in
   if momentum = 0.0 then
@@ -300,10 +346,13 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
        capturing) the velocity tensors at all. *)
     let f _ x g _ = (descend ~lr x g, [||]) in
     let params, _ = leafwise fn p ~params ~grads [] ~f in
-    (params, { velocity = grads; step })
+    (* The velocity a later step with momentum reads holds what [leafwise]'s
+       would: a complex leaf's descent coordinates, the conjugate gradient. *)
+    let velocity = Nx.Ptree.map p (fun _ g -> Nx.conjugate g) grads in
+    (params, { velocity; step })
   else
     let f _ x g s =
-      let v = Nx.add (Nx.mul s.(0) (scalar (Nx.dtype x) momentum)) g in
+      let v = Nx.add (Nx.mul_s s.(0) momentum) g in
       (descend ~lr x v, [| v |])
     in
     let params, parts =
@@ -311,19 +360,19 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
     in
     (params, { velocity = parts.(0); step })
 
-let lars_init = sgd_init
+let lars_init p params = velocity_init "Vega.lars_init" p params
 
 let lars_step p ~lr ?(momentum = 0.9) ?(weight_decay = 0.01) ?(nesterov = false)
     st ~params ~grads =
   let fn = "Vega.lars_step" in
+  let lr = lr st.step in
   validate_unit_interval fn "momentum" momentum;
   validate_non_negative fn "weight_decay" weight_decay;
   let f _ x g s =
-    let dt = Nx.dtype x in
-    let u = Nx.add g (Nx.mul x (scalar dt weight_decay)) in
+    let u = Nx.add g (Nx.mul_s x weight_decay) in
     let u = Nx.mul u (trust_ratio x u) in
-    let v = Nx.add (Nx.mul s.(0) (scalar dt momentum)) u in
-    let d = if nesterov then Nx.add u (Nx.mul v (scalar dt momentum)) else v in
+    let v = Nx.add (Nx.mul_s s.(0) momentum) u in
+    let d = if nesterov then Nx.add u (Nx.mul_s v momentum) else v in
     (descend ~lr x d, [| v |])
   in
   let params, parts =
@@ -333,10 +382,10 @@ let lars_step p ~lr ?(momentum = 0.9) ?(weight_decay = 0.01) ?(nesterov = false)
 
 (* The Adam family: Adam, AdamW, RAdam and LAMB *)
 
-type 'p adam_state = { mu : 'p; nu : 'p; step : Nx.int32_t }
+type ('p, 'd) adam_state = { mu : 'p; nu : 'p; step : 'd Nx.int32_t }
 
 module Adam_state = struct
-  type 'p t = 'p adam_state
+  type ('p, 'd) t = ('p, 'd) adam_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -348,15 +397,17 @@ end
 
 let adam_ptree p = Nx.Ptree.nest (module Adam_state) p
 
-let adam_init p params =
-  { mu = zeros p params; nu = zeros p params; step = Nx.scalar Nx.int32 0l }
+let moments_init fn p params =
+  { mu = zeros p params; nu = zeros p params; step = counter fn p params }
+
+let adam_init p params = moments_init "Vega.adam_init" p params
 
 (* [bias_correction step b] is [1 - b^t] at the counter [t = step], as [-expm1
    (t ln b)]: [1 - pow b t] would lose the digits that matter to cancellation,
    since [b^t] is within [1e-3] of one for Adam's [b2] and small [t]. *)
 let bias_correction step b =
   counted (fun dt ->
-      one_minus_exp (Nx.mul (Nx.cast dt step) (scalar dt (Float.log b))))
+      one_minus_exp (Nx.mul_s (Nx.cast dt step) (Float.log b)))
 
 (* One step of Adam's moments over every leaf, shared by the family: [apply x
    mu_hat nu_hat] is the new parameter from the old one and the bias-corrected
@@ -365,7 +416,12 @@ let bias_correction step b =
    does not already determine. *)
 let adam_update fn p ~b1 ~b2
     ~(apply :
-       'w. 'w wide -> 'w compute -> 'w compute -> 'w compute -> 'w compute) st
+       'w.
+       'w wide ->
+       ('w, 'd) compute ->
+       ('w, 'd) compute ->
+       ('w, 'd) compute ->
+       ('w, 'd) compute) st
     ~params ~grads =
   let step = Nx.add_s st.step 1l in
   let c1 = bias_correction step b1 and c2 = bias_correction step b2 in
@@ -385,30 +441,32 @@ let validate_adam fn ~b1 ~b2 ~eps =
 
 (* Adam's direction from the bias-corrected moments. *)
 let adam_direction ~eps mu_hat nu_hat =
-  Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar (Nx.dtype mu_hat) eps))
+  Nx.div mu_hat (Nx.add_s (Nx.sqrt nu_hat) eps)
 
 let adam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.adam_step" in
+  let lr = lr st.step in
   validate_adam fn ~b1 ~b2 ~eps;
   let apply _ x mu_hat nu_hat =
     descend ~lr x (adam_direction ~eps mu_hat nu_hat)
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
-let adamw_init = adam_init
+let adamw_init p params = moments_init "Vega.adamw_init" p params
 
 let adamw_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
     ?(weight_decay = 0.01) st ~params ~grads =
   let fn = "Vega.adamw_step" in
+  let lr = lr st.step in
   validate_adam fn ~b1 ~b2 ~eps;
   validate_non_negative fn "weight_decay" weight_decay;
   let apply _ x mu_hat nu_hat =
     let d = adam_direction ~eps mu_hat nu_hat in
-    descend ~lr x (Nx.add d (Nx.mul x (scalar (Nx.dtype x) weight_decay)))
+    descend ~lr x (Nx.add d (Nx.mul_s x weight_decay))
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
-let radam_init = adam_init
+let radam_init p params = moments_init "Vega.radam_init" p params
 
 (* The first step at which [rho] reaches 5, where RAdam starts rectifying. It
    depends on [b2] alone, so it is found on the host in float64 and the step
@@ -430,23 +488,21 @@ let radam_switch b2 =
 
 let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.radam_step" in
+  let lr = lr st.step in
   validate_adam fn ~b1 ~b2 ~eps;
   let rho_inf = (2.0 /. (1.0 -. b2)) -. 1.0 in
   let step = Nx.add_s st.step 1l in
   let rectified = Nx.greater_equal_s step (radam_switch b2) in
   let r =
     counted (fun dt ->
-        let c v = scalar dt v in
         let t = Nx.cast dt step in
-        let x = Nx.mul t (c (Float.log b2)) in
-        let tail =
-          Nx.div (Nx.mul (Nx.mul (c 2.0) t) (Nx.exp x)) (one_minus_exp x)
-        in
-        let rho = Nx.sub (c rho_inf) tail in
+        let x = Nx.mul_s t (Float.log b2) in
+        let tail = Nx.div (Nx.mul (Nx.mul_s t 2.0) (Nx.exp x)) (one_minus_exp x) in
+        let rho = Nx.rsub_s rho_inf tail in
         let k = rho_inf /. ((rho_inf -. 4.0) *. (rho_inf -. 2.0)) in
         Nx.sqrt
           (Nx.div
-             (Nx.mul (Nx.mul (Nx.sub rho (c 4.0)) (Nx.sub rho (c 2.0))) (c k))
+             (Nx.mul_s (Nx.mul (Nx.sub_s rho 4.0) (Nx.sub_s rho 2.0)) k)
              rho))
   in
   let apply w x mu_hat nu_hat =
@@ -455,26 +511,27 @@ let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
-let lamb_init = adam_init
+let lamb_init p params = moments_init "Vega.lamb_init" p params
 
 let lamb_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8)
     ?(weight_decay = 0.01) st ~params ~grads =
   let fn = "Vega.lamb_step" in
+  let lr = lr st.step in
   validate_adam fn ~b1 ~b2 ~eps;
   validate_non_negative fn "weight_decay" weight_decay;
   let apply _ x mu_hat nu_hat =
     let d = adam_direction ~eps mu_hat nu_hat in
-    let u = Nx.add d (Nx.mul x (scalar (Nx.dtype x) weight_decay)) in
+    let u = Nx.add d (Nx.mul_s x weight_decay) in
     descend ~lr x (Nx.mul u (trust_ratio x u))
   in
   adam_update fn p ~b1 ~b2 ~apply st ~params ~grads
 
 (* RMSprop *)
 
-type 'p rmsprop_state = { nu : 'p; velocity : 'p; step : Nx.int32_t }
+type ('p, 'd) rmsprop_state = { nu : 'p; velocity : 'p; step : 'd Nx.int32_t }
 
 module Rmsprop_state = struct
-  type 'p t = 'p rmsprop_state
+  type ('p, 'd) t = ('p, 'd) rmsprop_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -490,21 +547,21 @@ let rmsprop_init p params =
   {
     nu = zeros p params;
     velocity = zeros p params;
-    step = Nx.scalar Nx.int32 0l;
+    step = counter "Vega.rmsprop_init" p params;
   }
 
 let rmsprop_step p ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.0) st ~params
     ~grads =
   let fn = "Vega.rmsprop_step" in
+  let lr = lr st.step in
   validate_unit_interval fn "decay" decay;
   validate_positive fn "eps" eps;
   validate_unit_interval fn "momentum" momentum;
   let f _ x g s =
-    let dt = Nx.dtype x in
     let nu = ema decay s.(0) (Nx.mul g g) in
-    let u = Nx.div g (Nx.add (Nx.sqrt nu) (scalar dt eps)) in
+    let u = Nx.div g (Nx.add_s (Nx.sqrt nu) eps) in
     let v =
-      if momentum = 0.0 then u else Nx.add (Nx.mul s.(1) (scalar dt momentum)) u
+      if momentum = 0.0 then u else Nx.add (Nx.mul_s s.(1) momentum) u
     in
     (descend ~lr x v, [| nu; v |])
   in
@@ -514,10 +571,10 @@ let rmsprop_step p ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.0) st ~params
 
 (* Adagrad *)
 
-type 'p adagrad_state = { sum_of_squares : 'p; step : Nx.int32_t }
+type ('p, 'd) adagrad_state = { sum_of_squares : 'p; step : 'd Nx.int32_t }
 
 module Adagrad_state = struct
-  type 'p t = 'p adagrad_state
+  type ('p, 'd) t = ('p, 'd) adagrad_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -529,14 +586,18 @@ end
 let adagrad_ptree p = Nx.Ptree.nest (module Adagrad_state) p
 
 let adagrad_init p params =
-  { sum_of_squares = zeros p params; step = Nx.scalar Nx.int32 0l }
+  {
+    sum_of_squares = zeros p params;
+    step = counter "Vega.adagrad_init" p params;
+  }
 
 let adagrad_step p ~lr ?(eps = 1e-8) st ~params ~grads =
   let fn = "Vega.adagrad_step" in
+  let lr = lr st.step in
   validate_positive fn "eps" eps;
   let f _ x g s =
     let s = Nx.add s.(0) (Nx.mul g g) in
-    let d = Nx.div g (Nx.add (Nx.sqrt s) (scalar (Nx.dtype x) eps)) in
+    let d = Nx.div g (Nx.add_s (Nx.sqrt s) eps) in
     (descend ~lr x d, [| s |])
   in
   let parts = [ ("sum_of_squares", st.sum_of_squares) ] in
@@ -545,16 +606,16 @@ let adagrad_step p ~lr ?(eps = 1e-8) st ~params ~grads =
 
 (* Adan *)
 
-type 'p adan_state = {
+type ('p, 'd) adan_state = {
   mu : 'p;
   delta : 'p;
   nu : 'p;
   prev_grads : 'p;
-  step : Nx.int32_t;
+  step : 'd Nx.int32_t;
 }
 
 module Adan_state = struct
-  type 'p t = 'p adan_state
+  type ('p, 'd) t = ('p, 'd) adan_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -574,29 +635,29 @@ let adan_init p params =
     delta = zeros p params;
     nu = zeros p params;
     prev_grads = zeros p params;
-    step = Nx.scalar Nx.int32 0l;
+    step = counter "Vega.adan_init" p params;
   }
 
 let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
     ?(weight_decay = 0.02) st ~params ~grads =
   let fn = "Vega.adan_step" in
+  let lr = lr st.step in
   validate_unit_interval fn "b1" b1;
   validate_unit_interval fn "b2" b2;
   validate_unit_interval fn "b3" b3;
   validate_positive fn "eps" eps;
   validate_non_negative fn "weight_decay" weight_decay;
   let f _ x g s =
-    let dt = Nx.dtype x in
     let dg = Nx.sub g s.(3) in
     let mu = ema b1 s.(0) g and delta = ema b2 s.(1) dg in
-    let ahead = Nx.add g (Nx.mul dg (scalar dt b2)) in
+    let ahead = Nx.add g (Nx.mul_s dg b2) in
     let nu = ema b3 s.(2) (Nx.mul ahead ahead) in
     let d =
       Nx.div
-        (Nx.add mu (Nx.mul delta (scalar dt b2)))
-        (Nx.add (Nx.sqrt nu) (scalar dt eps))
+        (Nx.add mu (Nx.mul_s delta b2))
+        (Nx.add_s (Nx.sqrt nu) eps)
     in
-    let d = Nx.add d (Nx.mul x (scalar dt weight_decay)) in
+    let d = Nx.add d (Nx.mul_s x weight_decay) in
     (descend ~lr x d, [| mu; delta; nu; g |])
   in
   let parts =
@@ -620,10 +681,10 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
 
 (* Lion *)
 
-type 'p lion_state = { mu : 'p; step : Nx.int32_t }
+type ('p, 'd) lion_state = { mu : 'p; step : 'd Nx.int32_t }
 
 module Lion_state = struct
-  type 'p t = 'p lion_state
+  type ('p, 'd) t = ('p, 'd) lion_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -633,10 +694,12 @@ module Lion_state = struct
 end
 
 let lion_ptree p = Nx.Ptree.nest (module Lion_state) p
-let lion_init p params = { mu = zeros p params; step = Nx.scalar Nx.int32 0l }
+let lion_init p params =
+  { mu = zeros p params; step = counter "Vega.lion_init" p params }
 
 let lion_step p ~lr ?(b1 = 0.9) ?(b2 = 0.99) st ~params ~grads =
   let fn = "Vega.lion_step" in
+  let lr = lr st.step in
   validate_unit_interval fn "b1" b1;
   validate_unit_interval fn "b2" b2;
   let f _ x g s =
@@ -647,15 +710,15 @@ let lion_step p ~lr ?(b1 = 0.9) ?(b2 = 0.99) st ~params ~grads =
 
 (* Adafactor *)
 
-type 'p adafactor_state = {
+type ('p, 'd) adafactor_state = {
   nu_row : 'p;
   nu_col : 'p;
   nu : 'p;
-  step : Nx.int32_t;
+  step : 'd Nx.int32_t;
 }
 
 module Adafactor_state = struct
-  type 'p t = 'p adafactor_state
+  type ('p, 'd) t = ('p, 'd) adafactor_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -676,13 +739,14 @@ let adafactor_ptree p = Nx.Ptree.nest (module Adafactor_state) p
 let adafactor_init p ?(factored = true) params =
   let factors x = factored && updates x && Nx.ndim x >= 2 in
   let unused x =
-    if updates x then Nx.zeros (Nx.dtype x) [||] else Nx.zeros_like x
+    if updates x then Nx.scalar_like x (Nx.Dtype.zero (Nx.dtype x))
+    else Nx.zeros_like x
   in
+  (* A statistic is the mean of zeros over its axis, so it lies where the
+     step's means of squared gradients will. *)
   let factor axis x =
-    if factors x then (
-      let shape = Array.copy (Nx.shape x) in
-      shape.(Array.length shape - axis) <- 1;
-      Nx.zeros (Nx.dtype x) shape)
+    if factors x then
+      Nx.mean ~axes:[ Nx.ndim x - axis ] ~keepdims:true (Nx.zeros_like x)
     else unused x
   in
   {
@@ -692,12 +756,13 @@ let adafactor_init p ?(factored = true) params =
       Nx.Ptree.map p
         (fun _ x -> if factors x then unused x else Nx.zeros_like x)
         params;
-    step = Nx.scalar Nx.int32 0l;
+    step = counter "Vega.adafactor_init" p params;
   }
 
 let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
     ?(clipping_threshold = 1.0) st ~params ~grads =
   let fn = "Vega.adafactor_step" in
+  let lr = lr st.step in
   validate_positive fn "decay_rate" decay_rate;
   validate_positive fn "eps" eps;
   validate_positive fn "clipping_threshold" clipping_threshold;
@@ -705,13 +770,11 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
   (* An average keeps [1 - t^-decay_rate] of its old value and takes
      [t^-decay_rate] of the new one, [exp e] for [e = -decay_rate log t]. *)
   let exponent dt =
-    Nx.mul (Nx.log (Nx.cast dt step)) (scalar dt (-.decay_rate))
+    Nx.mul_s (Nx.log (Nx.cast dt step)) (-.decay_rate)
   in
   let keep = counted (fun dt -> one_minus_exp (exponent dt)) in
   let fresh = counted (fun dt -> Nx.exp (exponent dt)) in
   let f w x g s =
-    let dt = Nx.dtype x in
-    let eps = scalar dt eps in
     let average m v = Nx.add (Nx.mul m (at keep w)) (Nx.mul v (at fresh w)) in
     let g2 = Nx.mul g g in
     let n = Nx.ndim x in
@@ -720,15 +783,15 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
         let row = average s.(0) (Nx.mean ~axes:[ n - 1 ] ~keepdims:true g2) in
         let col = average s.(1) (Nx.mean ~axes:[ n - 2 ] ~keepdims:true g2) in
         let row_mean = Nx.mean ~axes:[ n - 2 ] ~keepdims:true row in
-        let nu = Nx.div (Nx.mul row col) (Nx.add row_mean eps) in
-        (Nx.div g (Nx.add (Nx.sqrt nu) eps), [| row; col; s.(2) |])
+        let nu = Nx.div (Nx.mul row col) (Nx.add_s row_mean eps) in
+        (Nx.div g (Nx.add_s (Nx.sqrt nu) eps), [| row; col; s.(2) |])
       else
         let nu = average s.(2) g2 in
-        (Nx.div g (Nx.add (Nx.sqrt nu) eps), [| s.(0); s.(1); nu |])
+        (Nx.div g (Nx.add_s (Nx.sqrt nu) eps), [| s.(0); s.(1); nu |])
     in
     let rms = Nx.sqrt (Nx.mean (Nx.mul u u)) in
     let clip =
-      Nx.minimum (scalar dt 1.0) (Nx.div (scalar dt clipping_threshold) rms)
+      Nx.minimum_s (Nx.rdiv_s clipping_threshold rms) 1.0
     in
     (descend ~lr x (Nx.mul u clip), s)
   in
@@ -738,16 +801,16 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
 
 (* L-BFGS *)
 
-type 'p lbfgs_state = {
+type ('p, 'd) lbfgs_state = {
   params : 'p;
   grads : 'p;
   s : 'p;
   y : 'p;
-  step : Nx.int32_t;
+  step : 'd Nx.int32_t;
 }
 
 module Lbfgs_state = struct
-  type 'p t = 'p lbfgs_state
+  type ('p, 'd) t = ('p, 'd) lbfgs_state
 
   let walk c st =
     let open Nx.Ptree.Walk in
@@ -767,7 +830,8 @@ let lbfgs_init p ?(history = 10) params =
   let memory () =
     Nx.Ptree.map p
       (fun _ leaf ->
-        Nx.zeros (Nx.dtype leaf) (Array.append [| history |] (Nx.shape leaf)))
+        let shape = Array.append [| history |] (Nx.shape leaf) in
+        Nx.zeros_like (Nx.broadcast_to shape (Nx.unsqueeze ~axes:[ 0 ] leaf)))
       params
   in
   {
@@ -775,7 +839,7 @@ let lbfgs_init p ?(history = 10) params =
     grads = zeros p params;
     s = memory ();
     y = memory ();
-    step = Nx.scalar Nx.int32 0l;
+    step = counter "Vega.lbfgs_init" p params;
   }
 
 (* A leaf's memory is its pairs stacked along axis 0, newest first: [slot i]
@@ -795,10 +859,8 @@ let top x memory =
   if n = 1 then x
   else Nx.concatenate ~axis:0 [ x; Nx.slice [ Nx.R (1, n) ] memory ]
 
-let is_float64 (type a b) (t : (a, b) Nx.t) =
-  match Nx_dtype.equal_witness (Nx.dtype t) Nx.float64 with
-  | Some _ -> true
-  | None -> false
+let is_float64 (type a b d) (t : (a, b, d) Nx.t) =
+  match Nx.dtype t with Float64 | Complex128 -> true | _ -> false
 
 (* The newest pair's step is the move the last call made; this call completes
    its gradient difference, [grads - st.grads]. The direction is the two-loop
@@ -809,6 +871,7 @@ let is_float64 (type a b) (t : (a, b) Nx.t) =
    shares, so the step traces under jit. *)
 let lbfgs_step p ~lr grads st =
   let fn = "Vega.lbfgs_step" in
+  let lr = lr st.step in
   let skeleton = snd (Nx.Ptree.flatten p st.params) in
   let rest = ref (aligned fn p skeleton "the gradients" grads) in
   Nx.Ptree.fold p
@@ -819,17 +882,23 @@ let lbfgs_step p ~lr grads st =
       (fun _ t acc -> acc && ((not (updates t)) || is_float64 t))
       st.params true
   in
+  (* The recursion runs over the real coordinates, two per complex element,
+     whose gradient is the conjugate of Rune's ([leafwise]); [Nx.Ptree.dot]
+     pairs complex arrays part by part. *)
+  let conjugate = Nx.Ptree.map p (fun _ g -> Nx.conjugate g) in
   let difference =
     Nx.Ptree.map2 p (fun _ a b -> if updates a then Nx.sub a b else a)
   in
   let y =
-    Nx.Ptree.map2 p (fun _ d m -> top d m) (difference grads st.grads) st.y
+    Nx.Ptree.map2 p
+      (fun _ d m -> top d m)
+      (conjugate (difference grads st.grads))
+      st.y
   in
-  (* A structure of no leaf has no memory to read: one empty pair serves. *)
   let history =
     match fst (Nx.Ptree.flatten p st.s) with
     | Nx.P t :: _ -> Nx.dim 0 t
-    | [] -> 1
+    | [] -> invalid_arg (fn ^ ": the parameters hold no array")
   in
   let run (type w) (w : w wide) =
     let dt = dtype w in
@@ -838,11 +907,11 @@ let lbfgs_step p ~lr grads st =
       let s = Nx.Ptree.map p (fun _ m -> slot i m) st.s
       and y = Nx.Ptree.map p (fun _ m -> slot i m) y in
       let ys = dot y s in
-      (s, y, Nx.where (Nx.greater_s ys 0.0) (Nx.recip ys) (scalar dt 0.0))
+      (s, y, Nx.where (Nx.greater_s ys 0.0) (Nx.recip ys) (Nx.zeros_like ys))
     in
     let pairs = Array.init history pair in
-    let alphas = Array.make history (scalar dt 0.0) in
-    let q = ref grads in
+    let alphas = Array.map (fun (_, _, rho) -> Nx.zeros_like rho) pairs in
+    let q = ref (conjugate grads) in
     for i = 0 to history - 1 do
       let s, y, rho = pairs.(i) in
       alphas.(i) <- Nx.mul rho (dot s !q);
@@ -852,7 +921,7 @@ let lbfgs_step p ~lr grads st =
     let gamma =
       Nx.where (Nx.greater_s rho0 0.0)
         (Nx.recip (Nx.mul rho0 (dot y0 y0)))
-        (scalar dt 1.0)
+        (Nx.ones_like rho0)
     in
     let r = ref (Nx.Ptree.scale p gamma !q) in
     for i = history - 1 downto 0 do

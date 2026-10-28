@@ -47,25 +47,25 @@ let test_schedule_validation () =
     (fun () ->
       ignore
         (S.exponential_decay ~init_value:1.0 ~decay_rate:0.5 ~decay_steps:0
-          : S.t));
+          : Nx.host S.t));
   raises
     (Invalid_argument "Schedule.cosine_decay: decay_steps must be positive")
     (fun () ->
-      ignore (S.cosine_decay ~init_value:1.0 ~decay_steps:(-1) () : S.t));
+      ignore (S.cosine_decay ~init_value:1.0 ~decay_steps:(-1) () : Nx.host S.t));
   raises
     (Invalid_argument
        "Schedule.warmup_cosine_decay: warmup_steps must be positive") (fun () ->
       ignore
         (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:0
            ~decay_steps:10 ()
-          : S.t));
+          : Nx.host S.t));
   raises
     (Invalid_argument
        "Schedule.warmup_cosine_decay: decay_steps must be positive") (fun () ->
       ignore
         (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
            ~decay_steps:0 ()
-          : S.t))
+          : Nx.host S.t))
 
 let test_polynomial_decay () =
   let s =
@@ -103,11 +103,11 @@ let test_piecewise_constant () =
 
 let test_piecewise_constant_validation () =
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.piecewise_constant ~boundaries:[ 10 ] ~values:[ 1.0 ] : S.t));
+      ignore (S.piecewise_constant ~boundaries:[ 10 ] ~values:[ 1.0 ] : Nx.host S.t));
   raises_match Exn.invalid_arg (fun () ->
       ignore
         (S.piecewise_constant ~boundaries:[ 20; 10 ] ~values:[ 1.; 2.; 3. ]
-          : S.t))
+          : Nx.host S.t))
 
 let test_join () =
   let s =
@@ -137,9 +137,9 @@ let test_join_step_reset () =
     (List.rev !calls)
 
 let test_join_validation () =
-  raises_match Exn.invalid_arg (fun () -> ignore (S.join [] : S.t));
+  raises_match Exn.invalid_arg (fun () -> ignore (S.join [] : Nx.host S.t));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.join [ (0, S.constant 1.0) ] : S.t))
+      ignore (S.join [ (0, S.constant 1.0) ] : Nx.host S.t))
 
 let test_cosine_decay_restarts () =
   let s = S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:100 () in
@@ -176,9 +176,9 @@ let test_one_cycle () =
 
 let test_step_count_validation () =
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.cosine_decay_restarts ~init_value:1. ~decay_steps:0 () : S.t));
+      ignore (S.cosine_decay_restarts ~init_value:1. ~decay_steps:0 () : Nx.host S.t));
   raises_match Exn.invalid_arg (fun () ->
-      ignore (S.one_cycle ~max_value:1. ~total_steps:0 () : S.t))
+      ignore (S.one_cycle ~max_value:1. ~total_steps:0 () : Nx.host S.t))
 
 let () =
   exit

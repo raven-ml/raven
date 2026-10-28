@@ -14,7 +14,8 @@
     variant, only {!eval} to read a schedule at a host counter for logging or
     for loops that keep their own count.
 
-    Optimizer steps take the schedule's result as their [~lr]:
+    Optimizer steps take a schedule as their [~lr] and apply it to their
+    state's counter:
 
     {[
       let sched =
@@ -22,28 +23,29 @@
       in
       let step (params, st) =
         ...
-        Vega.adamw_step model ~lr:(sched st.step) st ~params ~grads
+        Vega.adamw_step model ~lr:sched st ~params ~grads
     ]} *)
 
-type t = Nx.int32_t -> Nx.float32_t
+type 'd t = 'd Nx.int32_t -> 'd Nx.float32_t
 (** The type for learning-rate schedules.
 
     [s step] is the learning rate at the scalar counter [step], as a scalar
-    [float32] tensor. Schedules are defined for [step >= 0] and constructors are
-    at their initial value at [step = 0]. A training loop evaluates its schedule
-    at the state's number of completed steps, starting at [0]. *)
+    [float32] tensor at [step]'s placement. Schedules are defined for
+    [step >= 0] and constructors are at their initial value at [step = 0]. An
+    optimizer step evaluates its schedule at the state's number of completed
+    steps, starting at [0]. *)
 
-val eval : t -> int -> float
-(** [eval s step] is the schedule's value at the host counter [step], as a host
-    float. Use it for logging a schedule, plotting one, or driving an eager loop
-    from its own [int] counter. *)
+val eval : Nx.host t -> int -> float
+(** [eval s step] is the schedule's value at the host counter [step], as an
+    OCaml float. Use it for logging a schedule, plotting one, or driving an
+    eager loop from its own [int] counter. *)
 
 (** {1:basic Basic} *)
 
-val constant : float -> t
+val constant : float -> 'd t
 (** [constant lr] is the schedule that always returns [lr]. *)
 
-val linear : init_value:float -> end_value:float -> steps:int -> t
+val linear : init_value:float -> end_value:float -> steps:int -> 'd t
 (** [linear ~init_value ~end_value ~steps] interpolates linearly from
     [init_value] to [end_value] over [steps]. Clamps to [end_value] after
     [steps].
@@ -53,7 +55,7 @@ val linear : init_value:float -> end_value:float -> steps:int -> t
 (** {1:decay Decay} *)
 
 val cosine_decay :
-  init_value:float -> decay_steps:int -> ?alpha:float -> unit -> t
+  init_value:float -> decay_steps:int -> ?alpha:float -> unit -> 'd t
 (** [cosine_decay ~init_value ~decay_steps ?alpha ()] is cosine decay from
     [init_value] to [alpha * init_value] over [decay_steps].
 
@@ -62,7 +64,7 @@ val cosine_decay :
     Raises [Invalid_argument] if [decay_steps] is not positive. *)
 
 val exponential_decay :
-  init_value:float -> decay_rate:float -> decay_steps:int -> t
+  init_value:float -> decay_rate:float -> decay_steps:int -> 'd t
 (** [exponential_decay ~init_value ~decay_rate ~decay_steps] is
     [init_value * decay_rate{^ (step / decay_steps)}].
 
@@ -75,7 +77,7 @@ val polynomial_decay :
   decay_steps:int ->
   ?power:float ->
   unit ->
-  t
+  'd t
 (** [polynomial_decay ~init_value ~end_value ~decay_steps ?power ()] decays from
     [init_value] to [end_value] over [decay_steps] using a polynomial schedule:
     [end_value + (init_value - end_value) * (1 - step/decay_steps)^power].
@@ -88,7 +90,7 @@ val polynomial_decay :
 (** {1:warmup Warmup} *)
 
 val warmup_cosine :
-  init_value:float -> peak_value:float -> warmup_steps:int -> t
+  init_value:float -> peak_value:float -> warmup_steps:int -> 'd t
 (** [warmup_cosine ~init_value ~peak_value ~warmup_steps] is cosine warmup from
     [init_value] to [peak_value] over [warmup_steps]. Clamps to [peak_value]
     after [warmup_steps].
@@ -102,7 +104,7 @@ val warmup_cosine_decay :
   decay_steps:int ->
   ?end_value:float ->
   unit ->
-  t
+  'd t
 (** [warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
      ?end_value ()] is linear warmup from [init_value] to [peak_value] over
     [warmup_steps], then cosine decay to [end_value] over [decay_steps].
@@ -121,7 +123,7 @@ val cosine_decay_restarts :
   ?m_mul:float ->
   ?alpha:float ->
   unit ->
-  t
+  'd t
 (** [cosine_decay_restarts ~init_value ~decay_steps ?t_mul ?m_mul ?alpha ()] is
     cosine decay that periodically resets to [init_value] (SGDR).
 
@@ -141,7 +143,7 @@ val one_cycle :
   ?final_div_factor:float ->
   ?pct_start:float ->
   unit ->
-  t
+  'd t
 (** [one_cycle ~max_value ~total_steps ?div_factor ?final_div_factor ?pct_start
      ()] is the 1cycle schedule.
 
@@ -156,7 +158,7 @@ val one_cycle :
 
 (** {1:composition Composition} *)
 
-val piecewise_constant : boundaries:int list -> values:float list -> t
+val piecewise_constant : boundaries:int list -> values:float list -> 'd t
 (** [piecewise_constant ~boundaries ~values] is a step function. [values] has
     one more element than [boundaries]. The schedule returns [values.(i)] for
     steps in the i-th segment.
@@ -169,7 +171,7 @@ val piecewise_constant : boundaries:int list -> values:float list -> t
     [List.length values <> List.length boundaries + 1] or if [boundaries] is not
     strictly increasing. *)
 
-val join : (int * t) list -> t
+val join : (int * 'd t) list -> 'd t
 (** [join segments] sequences schedules end-to-end. Each [(n, s)] runs [s] for
     [n] steps, evaluated at the counter relative to the segment's start. The
     last segment's schedule is used for all steps beyond the total.

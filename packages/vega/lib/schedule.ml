@@ -8,7 +8,7 @@
    schedule computes eagerly and traces inside a compiled step, where it
    derives the learning rate from the optimizer state's own step leaf. *)
 
-type t = Nx.int32_t -> Nx.float32_t
+type 'd t = 'd Nx.int32_t -> 'd Nx.float32_t
 
 let f32 = Nx.float32
 let to_f32 step = Nx.cast f32 step
@@ -21,10 +21,10 @@ let cosine_factor ratio =
 (* step / steps, clamped to 1. *)
 let clamp_ratio ~steps s =
   Nx.div_s
-    (Nx.minimum s (Nx.scalar f32 (float_of_int steps)))
+    (Nx.minimum_s s (float_of_int steps))
     (float_of_int steps)
 
-let constant value _step = Nx.scalar f32 value
+let constant value step = Nx.scalar_like (to_f32 step) value
 
 let linear ~init_value ~end_value ~steps =
   if steps <= 0 then invalid_arg "Schedule.linear: steps must be positive";
@@ -56,7 +56,7 @@ let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) () =
   fun step ->
     (* The fraction left, [(steps - s) / steps], is exactly zero from the end
        of the decay on; [1 - s / steps] can round below it. *)
-    let s = Nx.minimum (to_f32 step) (Nx.scalar f32 steps) in
+    let s = Nx.minimum_s (to_f32 step) steps in
     let remaining = Nx.div_s (Nx.rsub_s steps s) steps in
     let poly = Nx.pow_s remaining power in
     Nx.add_s (Nx.mul_s poly (init_value -. end_value)) end_value
@@ -184,13 +184,13 @@ let piecewise_constant ~boundaries ~values =
   done;
   fun step ->
     let s = to_f32 step in
-    let acc = ref (Nx.scalar f32 values.(Array.length values - 1)) in
+    let acc = ref (Nx.scalar_like s values.(Array.length values - 1)) in
     for i = Array.length boundaries - 1 downto 0 do
       acc :=
         Nx.where
           (Nx.greater_s s (float_of_int boundaries.(i)))
           !acc
-          (Nx.scalar f32 values.(i))
+          (Nx.scalar_like s values.(i))
     done;
     !acc
 

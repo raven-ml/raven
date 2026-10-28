@@ -16,19 +16,15 @@ let steps_of ls = Nx.item [] ls.Ls.good_steps
 
 (* Two float32 leaves, to exercise the structural operations. *)
 module Pair = struct
-  type t = { a : Nx.float32_t; b : Nx.float32_t }
+  type t = { a : Nx.host Nx.float32_t; b : Nx.host Nx.float32_t }
 
-  module Walked = struct
-    type nonrec _ t = t
+  let walk c { a; b } =
+    let open Nx.Ptree.Walk in
+    let a = field c "a" tensor a in
+    let b = field c "b" tensor b in
+    { a; b }
 
-    let walk c { a; b } =
-      let open Nx.Ptree.Walk in
-      let a = field c "a" tensor a in
-      let b = field c "b" tensor b in
-      { a; b }
-  end
-
-  let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
+  let ptree : (t, Nx.host) Nx.Ptree.t = Nx.Ptree.v walk
 end
 
 (* [after ls ~finite] is the scale after one step whose gradients are finite or
@@ -43,30 +39,30 @@ let after ?growth_interval ?growth_factor ?backoff_factor ls ~finite =
 (* Constructors *)
 
 let test_constructors () =
-  let s = Ls.static 128.0 in
+  let s = Ls.static Nx.Host.on 128.0 in
   equal ~msg:"static scale" float_exact 128.0 (scale_of s);
   equal ~msg:"static marker" int32 (-1l) (steps_of s);
-  let d = Ls.dynamic () in
+  let d = Ls.dynamic Nx.Host.on in
   equal ~msg:"dynamic default init is 2^15" float_exact 32768.0 (scale_of d);
   equal ~msg:"dynamic counter starts at 0" int32 0l (steps_of d);
   equal ~msg:"dynamic ~init" float_exact 4.0
-    (scale_of (Ls.dynamic ~init:4.0 ()));
-  raises_match Exn.invalid_arg (fun () -> Ls.static 0.0);
-  raises_match Exn.invalid_arg (fun () -> Ls.dynamic ~init:(-1.0) ())
+    (scale_of (Ls.dynamic ~init:4.0 Nx.Host.on));
+  raises_match Exn.invalid_arg (fun () -> Ls.static Nx.Host.on 0.0);
+  raises_match Exn.invalid_arg (fun () -> Ls.dynamic ~init:(-1.0) Nx.Host.on)
 
 (* Scaling *)
 
 let test_scale () =
-  let ls = Ls.dynamic ~init:1024.0 () in
+  let ls = Ls.dynamic ~init:1024.0 Nx.Host.on in
   equal ~msg:"scale multiplies" float_exact 1536.0
     (Nx.item [] (Ls.scale ls (Nx.scalar f32 1.5)))
 
 let test_scale_half_dtype () =
-  let ls = Ls.static 8.0 in
+  let ls = Ls.static Nx.Host.on 8.0 in
   let loss = Nx.scalar Nx.float16 2.0 in
   let scaled = Ls.scale ls loss in
   is_true ~msg:"scale keeps the input dtype"
-    (Nx_dtype.equal (Nx.dtype scaled) Nx.float16);
+    (Nx.Dtype.equal (Nx.dtype scaled) Nx.float16);
   equal ~msg:"scaled value" float_exact 16.0 (Nx.item [] scaled)
 
 (* The loss-scaled step *)
@@ -130,11 +126,11 @@ let test_scaled_follows_plain =
       let start = (x, Vega.adam_init Pair.ptree x) in
       let expected = iterate n (plain t) start in
       let got, ls =
-        iterate n (scaled ~growth_interval:2 t) (start, Ls.dynamic ~init ())
+        iterate n (scaled ~growth_interval:2 t) (start, Ls.dynamic ~init Nx.Host.on)
       in
       close_trees expected got;
       equal ~msg:"the scale doubles every two finite steps" float_exact
-        (scale_of (Ls.dynamic ~init ()) *. (2.0 ** float_of_int (n / 2)))
+        (scale_of (Ls.dynamic ~init Nx.Host.on) *. (2.0 ** float_of_int (n / 2)))
         (scale_of ls))
 
 (* A step whose gradients hold a NaN or an infinity in one element of one leaf
@@ -144,7 +140,7 @@ let test_overflow_skips () =
   let x = { Pair.a = vec [| 1.0; 2.0 |]; b = vec [| 3.0 |] } in
   let t = { Pair.a = vec [| 0.0; 0.0 |]; b = vec [| 0.0 |] } in
   let start = (x, Vega.adam_init Pair.ptree x) in
-  let warm, ls = iterate 2 (scaled t) (start, Ls.dynamic ~init:1024.0 ()) in
+  let warm, ls = iterate 2 (scaled t) (start, Ls.dynamic ~init:1024.0 Nx.Host.on) in
   let poisoned bad =
     let st = snd warm in
     let g = grads (fst warm) t in
@@ -171,12 +167,12 @@ let test_visits () =
     [ "scale: a leaf"; "good_steps: a leaf" ]
     (List.map
        (Format.asprintf "%a" Nx.Ptree.pp_visit)
-       (Nx.Ptree.visits Ls.ptree (Ls.dynamic ())))
+       (Nx.Ptree.visits (Nx.Ptree.v Ls.walk) (Ls.dynamic Nx.Host.on)))
 
 (* The dynamic schedule *)
 
 let test_backoff () =
-  let ls = Ls.dynamic ~init:1024.0 () in
+  let ls = Ls.dynamic ~init:1024.0 Nx.Host.on in
   let ls = after ls ~finite:false in
   equal ~msg:"overflow halves the scale" float_exact 512.0 (scale_of ls);
   equal ~msg:"overflow resets the counter" int32 0l (steps_of ls);
@@ -184,7 +180,7 @@ let test_backoff () =
   equal ~msg:"backoff_factor" float_exact 128.0 (scale_of ls)
 
 let test_growth () =
-  let ls = ref (Ls.dynamic ~init:1024.0 ()) in
+  let ls = ref (Ls.dynamic ~init:1024.0 Nx.Host.on) in
   for i = 1 to 2 do
     ls := after ~growth_interval:3 !ls ~finite:true;
     equal
@@ -200,7 +196,7 @@ let test_growth () =
   equal ~msg:"growth_factor" float_exact 8192.0 (scale_of grown)
 
 let test_backoff_resets_progress () =
-  let ls = Ls.dynamic ~init:1024.0 () in
+  let ls = Ls.dynamic ~init:1024.0 Nx.Host.on in
   let ls = after ~growth_interval:3 ls ~finite:true in
   let ls = after ~growth_interval:3 ls ~finite:true in
   (* Two finite steps, then an overflow: the counter restarts from zero. *)
@@ -211,7 +207,7 @@ let test_backoff_resets_progress () =
   equal ~msg:"counter restarted" int32 1l (steps_of ls)
 
 let test_static_unchanged () =
-  let ls = Ls.static 64.0 in
+  let ls = Ls.static Nx.Host.on 64.0 in
   let after_ok = after ~growth_interval:1 ls ~finite:true in
   equal ~msg:"static scale ignores finite steps" float_exact 64.0
     (scale_of after_ok);
@@ -223,7 +219,7 @@ let test_static_unchanged () =
     (steps_of after_bad)
 
 let test_validation () =
-  let ls = Ls.dynamic () in
+  let ls = Ls.dynamic Nx.Host.on in
   raises_match Exn.invalid_arg (fun () ->
       after ~growth_interval:0 ls ~finite:true);
   raises_match Exn.invalid_arg (fun () ->
