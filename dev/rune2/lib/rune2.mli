@@ -1100,7 +1100,9 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     among them, and whether tolk's [DEBUG] is 2 or more. A view thus reads in
     place, without a copy, from a program compiled for its layout. Each result
     that takes no donated argument's memory is fresh, at the placement eager
-    computation gives it. *)
+    computation gives it. A value [f] captures on another device, which [f]
+    places where the program computes, is copied there once per program, which
+    holds the copy. *)
 
 (** {2:donation Donation}
 
@@ -1380,8 +1382,8 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     - a loop {!section-rules} names as evaluated, or an operation the compiler
       does not lower;
     - a check on a device other than the host;
-    - no value, or a value with an element on a device other than the program's
-      or over several devices.
+    - no value, an argument or a result with an element on a device other than
+      the program's, or a value over several devices.
 
     It also declines a program whose device computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a

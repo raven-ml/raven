@@ -476,6 +476,89 @@ let test_host_values () =
     (Nx.Placement.equal (Nx.placement y) Nx.Host.on);
   equal bits_t (bits (Nx.full f32 [| 2 |] 3.)) (bits y)
 
+(* A constant on another device that the function places where it computes is
+   copied there: the call compiles and gives eager's bits, at every dtype and
+   for views of the constant, an offset one included. A result that is such a
+   constant, unplaced, lies on its device: the call evaluates. *)
+module Away = (val Nx.devices [ Nx_support.memory 2 ])
+
+type placed_case =
+  | Placed_case :
+      ('v, 's) Nx.dtype * int array * operand * bool
+      -> placed_case
+
+let placed_cases =
+  let open Gen in
+  (let* s = shape in
+   let* o = operand s in
+   let+ (Nx.Dtype.Any dt) = of_list Nx.Dtype.all and+ offset = bool in
+   Placed_case (dt, s, o, offset))
+  |> with_pp (fun ppf (Placed_case (dt, s, o, offset)) ->
+      Format.fprintf ppf "%a %a, %a%s" Nx.pp_dtype dt pp_shape s pp_view o.view
+        (if offset then ", one element in" else ""))
+
+(* [o]'s value of [dt] and [s], as a view of an array on [Away], one element
+   into a longer one where [offset]. *)
+let away (type v s) (dt : (v, s) Nx.dtype) s o ~offset : (v, s, Away.d) Nx.t =
+  let r = Array.length s in
+  let create s vs =
+    let x = Nx.cast dt (Nx.create Nx.float64 s vs) in
+    if not offset then Nx.place Away.on x
+    else
+      let n = numel s in
+      let longer = Nx.concatenate ~axis:0 [ Nx.flatten x; Nx.flatten x ] in
+      Nx.reshape s (Nx.slice [ Nx.R (1, n + 1) ] (Nx.place Away.on longer))
+  in
+  match o.view with
+  | Plain -> create s o.values
+  | Flipped -> Nx.flip (create s o.values)
+  | Strided when r = 0 -> create s (Array.sub o.values 0 1)
+  | Strided ->
+      let s' = Array.copy s in
+      s'.(r - 1) <- 2 * s.(r - 1);
+      let every i = if i = r - 1 then Nx.Rs (0, s'.(i), 2) else Nx.A in
+      Nx.slice (List.init r every) (create s' o.values)
+  | Broadcast when r = 0 -> create s o.values
+  | Broadcast ->
+      let s1 = Array.copy s in
+      s1.(0) <- 1;
+      if s.(0) = 0 then create s [||]
+      else Nx.broadcast_to s (create s1 o.values)
+
+let law_placed (Placed_case (dt, s, o, offset)) =
+  cover "a sub-byte dtype" (Nx.Dtype.bits dt < 8);
+  cover "a view" (o.view <> Plain);
+  cover "an offset constant" (offset && numel s > 1);
+  cover "a zero-size shape" (numel s = 0);
+  let c = away dt s o ~offset in
+  let f x = (Nx.neg x, Nx.place Nx.Host.on c) in
+  let x = Nx.ones f32 [| 2 |] in
+  let calls = Rune.evaluations () in
+  let _, y =
+    Rune.jit T.(tensor @-> returns (pair tensor tensor)) f x
+  in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
+  equal codes_t (codes (snd (f x))) (codes y)
+
+(* A set of the host and a memory device: a program over it computes on the
+   host. *)
+module Pair = (val Nx.devices [ Rig.host; Nx_support.memory 3 ])
+
+let test_constant_result () =
+  let on r x = Nx.place (Nx.Placement.device Pair.v r) x in
+  let c = on (Nx_support.memory 3) (v [| 0.5; -2. |]) in
+  let x = on Rig.host (v [| 1.; 2. |]) in
+  let calls = Rune.evaluations () in
+  let y, d =
+    Rune.jit T.(tensor @-> returns (pair tensor tensor))
+      (fun x -> (Nx.neg x, c)) x
+  in
+  equal ~msg:"evaluated" int 1 (Rune.evaluations () - calls);
+  equal bits_t (bits (v [| -1.; -2. |])) (bits y);
+  equal ~msg:"on its device" bool true
+    (Nx.Placement.equal (Nx.placement d) (Nx.placement c));
+  equal bits_t (bits (v [| 0.5; -2. |])) (bits d)
+
 (* A jit inside a jit is staged into the outer program, a call over constants
    included. *)
 let test_nested () =
@@ -2185,6 +2268,10 @@ let () =
              test "the function runs once per key" test_runs_once;
              test "structures in and out" test_structures;
              test "host arguments" test_host_values;
+             prop "a constant placed where the program computes" placed_cases
+               law_placed;
+             test "a constant result off the program's device"
+               test_constant_result;
              test "a jit inside a jit" test_nested;
              test "an integer maximum of a running sum wraps"
                test_wrapped_max;

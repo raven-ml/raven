@@ -233,6 +233,9 @@ type state = {
   device : Ops.device;
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t list) list;
+  uploads : (value * A.any) list ref;
+      (** The constants of other devices, each with its copy on this one,
+          which every lowering of the program shares. *)
   views : unit Ops.Tbl.t;
       (** The nodes of the arguments and captures, without their movements:
           views of storage. *)
@@ -263,7 +266,22 @@ let bind st (A.Any a) =
     view_of st u;
     u
 
-(* The node of a constant: its one array, bound once. *)
+(* The array [a] of another device copied to [st]'s, once, as JAX embeds a
+   constant where its program runs: its run, into memory of its own, viewed
+   as [a] views its own. *)
+let uploaded st (A.Any a) =
+  let dt = A.dtype a and l = A.layout a in
+  if L.numel l = 0 then A.Any a
+  else
+    let first, length = run_bytes dt l in
+    let src = Rig.Buffer.view (A.buffer a) ~first ~length in
+    let dst = Rig.Buffer.create st.rig length in
+    Rig.Buffer.copy ~src ~dst;
+    A.Any (A.v dt (within dt l) dst)
+
+(* The node of a constant: its one array, bound once. A constant on another
+   device, which the program places where it computes, is uploaded there
+   once per program, and its copy bound. *)
 let capture (type v s d) st (x : (v, s, d) Nx.t) =
   match List.find_opt (fun (v, _) -> same v (V x)) st.captures with
   | Some (_, u) -> u
@@ -271,8 +289,25 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
       let arrays = Nx.Repr.shards x in
       if Iarray.length arrays <> 1 then
         decline "a constant over several devices";
-      on_rig st (Nx.placement x) "a constant";
-      let u = bind st (A.Any (Iarray.get arrays 0)) in
+      let a = A.Any (Iarray.get arrays 0) in
+      let u =
+        match device_of (Nx.placement x) with
+        | Some r when Rig.equal r st.rig -> bind st a
+        | Some _ ->
+            let made = List.find_opt (fun (v, _) -> same v (V x)) in
+            let copy =
+              match made !(st.uploads) with
+              | Some (_, c) -> c
+              | None ->
+                  let c = uploaded st a in
+                  st.uploads := (V x, c) :: !(st.uploads);
+                  c
+            in
+            bind st copy
+        | None ->
+            decline "a constant placed at %s, over several devices"
+              (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x))
+      in
       st.captures <- (V x, u) :: st.captures;
       u
 
@@ -1460,13 +1495,15 @@ and inline_over st cs (q : Program.t) operands =
    [forms], each laid out over its run as [layouts] says, its run at [phases],
    the arguments [donated] says lending their storage where a result may take
    it. *)
-let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
+let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
+    ~donated =
   let st =
     {
       rig;
       device = Ops.Single (Rig.name rig);
       captures = [];
       bound = [];
+      uploads;
       views = Ops.Tbl.create 8;
       loops = 0;
     }
@@ -1576,7 +1613,9 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
                 stores := Option.get assigned.stored.(j) :: !stores;
                 Lent k
             | _ -> stored (F f) (assigned.read j (node st env y)))
-        | _ -> stored (F f) (capture st y))
+        | _ ->
+            on_rig st f.placement "a result";
+            stored (F f) (capture st y))
       p.outputs
   in
   let one dt u =
@@ -1741,6 +1780,9 @@ type t = {
   results : output array;  (** Each output's, read once. *)
   lock : Mutex.t;
   variants : variant list Atomic.t;
+  uploads : (value * A.any) list ref;
+      (** The copies of the constants of other devices, made by the first
+          lowering, under [lock]. *)
 }
 
 (* The program's device: the one its first argument, or else its first result,
@@ -1804,7 +1846,8 @@ let variant t layouts phases donated settings =
           let linked =
             match
               link t.rig
-                (lower ~rig:t.rig t.program t.forms ~layouts ~phases ~donated)
+                (lower ~rig:t.rig ~uploads:t.uploads t.program t.forms ~layouts
+                   ~phases ~donated)
             with
             | l -> Ok l
             | exception e -> (
@@ -1829,7 +1872,8 @@ let make ~name p forms =
     in
     let phases = Array.map (fun _ -> 0) forms in
     let donated = Array.map (fun _ -> false) forms in
-    ignore (lower ~rig p forms ~layouts ~phases ~donated);
+    let uploads = ref [] in
+    ignore (lower ~rig ~uploads p forms ~layouts ~phases ~donated);
     {
       name;
       rig;
@@ -1838,6 +1882,7 @@ let make ~name p forms =
       results = Array.map (fun v -> output_of (form v)) p.outputs;
       lock = Mutex.create ();
       variants = Atomic.make [];
+      uploads;
     }
   with
   | t -> Ok t
