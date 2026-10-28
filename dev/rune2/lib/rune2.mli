@@ -1109,14 +1109,20 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     they give up die once the call has checked its arguments, and a later use of
     one raises [Invalid_argument] naming [Rune.jit]. A result may take a donated
     argument's memory instead of fresh memory where the two have one dtype,
-    element count and placement, no other result or check reads the argument,
-    and the result either reads it only at each element's own index (through
-    elementwise functions, casts and bitcasts that keep the width, reshapes in C
-    order, copies, placements, a scatter's target or a contraction's [init]), is
-    the argument itself, or reads no donated argument at all. A donated argument
-    whose memory another value shares, or that is a view off 16 bytes or out of
-    C order, lends nothing. Each donated argument lends to one result at most,
-    the results of a scatter first. A result's values are the same either way.
+    element count and placement, no check reads the argument, and the result
+    either reads it only at each element's own index (through elementwise
+    functions, casts and bitcasts that keep the width, reshapes in C order,
+    copies, placements, a scatter's target or a contraction's [init]), is the
+    argument itself, or reads no donated argument while nothing reads that one.
+    A result that takes an argument's memory is stored over it: each other value
+    of the call that reads the result reads it there, after the store, and each
+    that reads the argument as it was reads it before. Where no order of the
+    stores holds both, as for two results that each read the other's argument,
+    the latest result of the cycle that takes memory gives up that argument,
+    and the arguments are lent again without the pair. A donated argument whose
+    memory another value shares, or that is a view off 16 bytes or out of C
+    order, lends nothing. Each donated argument lends to one result at most, the
+    results of a scatter first. A result's values are the same either way.
 
     A traced function reads a donated value it captures as its arrays and
     consumes nothing: the value is lent ({!Nx.section-moving}), its memory

@@ -193,6 +193,16 @@ let store dt o u =
   in
   Ops.after o [ Ops.store o v ]
 
+(* [read_back dt shape s] is the node of the value of [dt] and [shape] that the
+   storage [s] holds in C order, as {!store} stored it. *)
+let read_back dt shape s =
+  let n = numel shape in
+  let l = L.contiguous (Iarray.of_array shape) in
+  if packed dt then viewed dt (unpack dt s) l
+  else
+    let flat = if parts dt = 2 then Shape.reshape s (ints [ n; 2 ]) else s in
+    viewed dt flat l
+
 (* Lowering *)
 
 type out =
@@ -287,9 +297,9 @@ let construct_name = function
    A result may take the storage of a donated argument it reads only at its own
    index, along every path: through maps that load it plainly at the map's
    shape, copies, reshapes of C order, bitcasts of one width, placements, a
-   scatter's target and a contraction's [init]. Then each kernel that reads the
-   argument computes the result or what it reads, and reads each element before
-   the result's kernel writes over it. A result that reads no donated argument
+   scatter's target and a contraction's [init]. Then the result's kernel reads
+   each element before it writes over it; another kernel that reads the
+   argument runs before ({!assign}). A result that reads no donated argument
    may take the storage of one that nothing reads. *)
 
 module Is = Set.Make (Int)
@@ -348,15 +358,13 @@ let operand_reaches (type r) rc (op : r Nx.Prim.t) =
 
 (* [lend ~donated ~computed ~reaches ~scattered ~fits] is the argument each
    result takes the storage of, or [-1], in three passes: the results of a
-   scatter that read an argument at their own index, then the other results that
-   do, then the results that read no donated argument, each taking one that
-   nothing reads. An argument that a result reads fits no other result, so the
-   first two passes never compete for one. [donated.(k)] is whether argument [k]
-   is donated, [computed.(j)] whether the program computes result [j],
+   scatter that read an argument at their own index, then the other results
+   that do, then the results that read no donated argument, each taking one
+   that nothing reads. [donated.(k)] is whether argument [k] is donated,
+   [computed.(j)] whether the program computes result [j],
    [reaches.(j)] its reach, [scattered.(j)] whether a scatter computes it, and
    [fits k j] whether argument [k] may lend to result [j]: of its dtype, size
-   and placement, and read by no other result or check. An argument lends
-   once. *)
+   and placement, and read by no check. An argument lends once. *)
 let lend ~donated ~computed ~reaches ~scattered ~fits =
   let n = Array.length reaches in
   let arguments = Array.length donated in
@@ -374,10 +382,138 @@ let lend ~donated ~computed ~reaches ~scattered ~fits =
   let own j = Is.elements reaches.(j).own in
   pass (fun j -> if scattered.(j) then own j else []);
   pass own;
+  let unread k = Array.for_all (fun r -> not (Is.mem k r.reads)) reaches in
   pass (fun j ->
       if Is.exists (fun k -> donated.(k)) reaches.(j).reads then []
-      else List.init arguments Fun.id);
+      else List.filter unread (List.init arguments Fun.id));
   lent
+
+(* Assignments
+
+   A lent result is an assignment to its argument's storage, as tinygrad's
+   assign is: every other value of the program that reads it, a result or a
+   check, reads that storage once it is stored. A kernel that reads an
+   argument as it was runs before the store over it, and one that reads a
+   stored result runs after that store, so the stores need an order in which
+   both hold. A momentum step has one: the velocity's store reads the
+   parameters as they were, and the parameters' store reads the velocity where
+   it was stored. Two results that each read the other's argument as it was
+   have none: the latest result of such a cycle gives up the argument it
+   took, and the arguments are lent again without that pair, until an order
+   exists. *)
+
+(* The first cycle of the graph [succ] over [0 .. n - 1], if one exists. *)
+let cycle succ =
+  let n = Array.length succ in
+  let state = Array.make n 0 and path = ref [] and found = ref None in
+  let rec visit i =
+    if !found = None then
+      match state.(i) with
+      | 1 ->
+          let rec upto acc = function
+            | j :: rest -> if j = i then i :: acc else upto (j :: acc) rest
+            | [] -> acc
+          in
+          found := Some (upto [] !path)
+      | 2 -> ()
+      | _ ->
+          state.(i) <- 1;
+          path := i :: !path;
+          List.iter visit succ.(i);
+          path := List.tl !path;
+          state.(i) <- 2
+  in
+  for i = 0 to n - 1 do
+    if state.(i) = 0 then visit i
+  done;
+  !found
+
+type assigned = {
+  stored : Ops.t option array;  (** Each lent result's storage, stored. *)
+  read : int -> Ops.t -> Ops.t;
+      (** [read j u] is the node [u] of result [j], or of a check where [j] is
+          [-1], reading each lent result but [j] from its storage. *)
+}
+
+(* [assign ~nodes ~checks ~store ~view ~buffer lent] is [Ok] the assignments of
+   the results [lent] lends to, or [Error j] where their stores have no order,
+   [j] the latest lent result of a cycle: [nodes.(j)] is result [j]'s node,
+   [None] where no kernel computes it, as for an argument kept; [checks] holds
+   each check's nodes, which the stores order as a result's; [store j k u]
+   stores [u], result [j]'s value, over argument [k]'s storage, [view j s]
+   reads result [j] from the storage once [s] stored it, and [buffer k] is
+   argument [k]'s buffer. *)
+let assign ~nodes ~checks ~store ~view ~buffer lent =
+  let n = Array.length nodes in
+  let assigned j = lent.(j) >= 0 && Option.is_some nodes.(j) in
+  let node j = Option.get nodes.(j) in
+  let stored = Array.make n None in
+  (* [u] reading each lent result it reaches but [self] from its storage; of
+     two lent results of one node, the later reads the earlier's. *)
+  let rec read self u =
+    let slice = lazy (Ops.backward_slice ~calls:Skip u) in
+    let reached i =
+      let w = node i in
+      if w == u then i < self || not (self >= 0 && assigned self)
+      else Ops.Nodes.mem w (Lazy.force slice)
+    in
+    let pairs =
+      List.filter_map
+        (fun i ->
+          if i <> self && assigned i && reached i then
+            Some (node i, view i (store_of i))
+          else None)
+        (List.init n Fun.id)
+    in
+    Ops.substitute ~calls:Skip ~pass:Once u pairs
+  and store_of j =
+    match stored.(j) with
+    | Some s -> s
+    | None ->
+        let s = store j lent.(j) (read j (node j)) in
+        stored.(j) <- Some s;
+        s
+  in
+  (* [succ.(i)] holds the results whose kernels run after [i]'s: after its
+     store where [i] is lent, before the store over an argument it reads as
+     it was. *)
+  let olds = Ops.Tbl.create 8 and stores = Ops.Tbl.create 8 in
+  for j = 0 to n - 1 do
+    if assigned j then begin
+      Ops.Tbl.replace olds (buffer lent.(j)) j;
+      Ops.Tbl.replace stores (store_of j) j
+    end
+  done;
+  let checks = Array.of_list checks in
+  let succ = Array.make (n + Array.length checks) [] in
+  (* The edges of vertex [r], whose nodes [us] read as result [self]. *)
+  let edges r ~self us =
+    let after x =
+      match Ops.Tbl.find_opt stores x with
+      | Some i when i <> r ->
+          succ.(i) <- r :: succ.(i);
+          false
+      | _ -> true
+    in
+    List.iter
+      (fun u ->
+        List.iter
+          (fun x ->
+            match Ops.Tbl.find_opt olds x with
+            | Some i when i <> r -> succ.(r) <- i :: succ.(r)
+            | _ -> ())
+          (Ops.toposort ~calls:Skip ~gate:after (read self u)))
+      us
+  in
+  for r = 0 to n - 1 do
+    if Option.is_some nodes.(r) then edges r ~self:r [ node r ]
+  done;
+  Array.iteri (fun c us -> edges (n + c) ~self:(-1) us) checks;
+  match cycle succ with
+  | None -> Ok { stored; read }
+  | Some c ->
+      let lent_in = List.filter (fun j -> j < n && assigned j) c in
+      Error (List.fold_left max (-1) lent_in)
 
 (* Programs
 
@@ -1366,14 +1502,9 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   let fits k j =
     let (F f) = forms.(k) in
     let (F g) = form p.outputs.(j) in
-    let read_elsewhere =
-      List.exists (fun r -> Is.mem k r.reads) checks_read
-      || Array.exists Fun.id
-           (Array.mapi (fun i r -> i <> j && Is.mem k r.reads) reaches)
-    in
     donated.(k)
     && Option.is_some params.(k)
-    && (not read_elsewhere)
+    && (not (List.exists (fun r -> Is.mem k r.reads) checks_read))
     && Nx.Dtype.equal f.dtype g.dtype
     && numel (shape_of f) = numel (shape_of g)
     && Nx.Placement.equal f.placement g.placement
@@ -1382,7 +1513,43 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     && phases.(k) = 0
   in
   let computed = Array.map (fun (V y) -> var env y >= 0) p.outputs in
-  let lent = lend ~donated ~computed ~reaches ~scattered:scattered_out ~fits in
+  (* Arguments are lent, and lent again without each pair whose stores close a
+     cycle, until the stores have an order. *)
+  let dtype j =
+    let (F g) = form p.outputs.(j) in
+    D.Any g.dtype
+  in
+  let buffer k = Option.get params.(k) in
+  let store_over j k u =
+    let (D.Any dt) = dtype j in
+    store dt (buffer k) u
+  in
+  let view j s =
+    let (D.Any dt) = dtype j in
+    let (F g) = form p.outputs.(j) in
+    read_back dt (shape_of g) s
+  in
+  let rec settle refused =
+    let fits k j = fits k j && not (List.mem (k, j) refused) in
+    let scattered = scattered_out in
+    let lent = lend ~donated ~computed ~reaches ~scattered ~fits in
+    let nodes =
+      Array.mapi
+        (fun j (V y) ->
+          match var env y with
+          | v when v >= 0 && not (lent.(j) >= 0 && v = p.params.(lent.(j))) ->
+              Some (node st env y)
+          | _ -> None)
+        p.outputs
+    in
+    let checks =
+      List.map (fun (c : made) -> c.first :: List.map snd c.data) cs.made
+    in
+    match assign ~nodes ~checks ~store:store_over ~view ~buffer lent with
+    | Ok a -> (lent, a)
+    | Error j -> settle ((lent.(j), j) :: refused)
+  in
+  let lent, assigned = settle [] in
   let stores = ref [] in
   let buffer dt n =
     if packed dt then Ops.new_buffer st.device (D.bytes dt n) Uint8
@@ -1406,10 +1573,9 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
             match lent.(j) with
             | k when k >= 0 && v = p.params.(k) -> Taken k
             | k when k >= 0 ->
-                let b = Option.get params.(k) in
-                stores := store f.dtype b (node st env y) :: !stores;
+                stores := Option.get assigned.stored.(j) :: !stores;
                 Lent k
-            | _ -> stored (F f) (node st env y))
+            | _ -> stored (F f) (assigned.read j (node st env y)))
         | _ -> stored (F f) (capture st y))
       p.outputs
   in
@@ -1421,8 +1587,11 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   let checks =
     List.rev_map
       (fun (c : made) ->
-        let first = one D.Int64 c.first in
-        let data = List.map (fun ((D.Any dt as d), u) -> (d, one dt u)) c.data in
+        let read = assigned.read (-1) in
+        let first = one D.Int64 (read c.first) in
+        let data =
+          List.map (fun ((D.Any dt as d), u) -> (d, one dt (read u))) c.data
+        in
         ({ shape = c.shape; first; data; fail = c.fail } : check))
       cs.made
   in

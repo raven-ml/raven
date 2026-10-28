@@ -750,8 +750,8 @@ let test_constructs () =
 
    A compiled call consumes the donated handles among its arguments: their
    donors die. A result takes a donated argument's memory where it reads the
-   argument only at its own index and nothing else of the call reads it, and
-   its values are the same either way. *)
+   argument only at its own index and the stores have an order, and its values
+   are the same either way. *)
 
 let fresh xs = Nx.create f32 [| Array.length xs |] xs
 
@@ -793,9 +793,9 @@ let test_lending () =
   let b = Nx.Repr.read x Nx_array.buffer in
   let y, z = g (Nx.donate x) in
   let shares v = Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array v))) in
-  equal ~msg:"two results that read it: neither in place"
+  equal ~msg:"two results that read it: the first in place"
     (Testable.pair bool bool)
-    (false, false) (shares y, shares z);
+    (true, false) (shares y, shares z);
   equal bits_t (bits (Nx.neg (fresh xs))) (bits y);
   equal bits_t (bits (Nx.add (fresh xs) (fresh xs))) (bits z)
 
@@ -883,6 +883,276 @@ let law_donation (Donation_case (dt, s, xo, yo, e)) =
   cover "the result takes the argument's memory" took;
   cover "the result is fresh" (Option.is_some !result && not took);
   equal (outcome_t bits_t) eager jitted
+
+(* Two donated leaves [(w, v)] and two results: [v' = e1 (w, v)], and [w' =
+   e2 (w, v')] where [through], reading the leaf [v] through [v']'s memory, or
+   [e2 (w, v)] apart, in the order [(w', v')], or [(v', w')] where [swap];
+   and a third result [e3 (w', v')], which reads both. *)
+type state_case =
+  | State_case : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      w : operand;
+      v : operand;
+      e1 : expr;
+      e2 : expr;
+      e3 : expr;
+      through : bool;
+      swap : bool;
+    }
+      -> state_case
+
+let pp_state ppf (State_case c) =
+  Format.fprintf ppf "%a %a, w %a, v %a: v' = %a, w' = %a over %s, %a%s"
+    Nx.pp_dtype c.dt pp_shape c.s pp_view c.w.view pp_view c.v.view pp c.e1 pp
+    c.e2
+    (if c.through then "v'" else "v")
+    pp c.e3
+    (if c.swap then ", (v', w')" else "")
+
+let state_cases =
+  let open Gen in
+  (let* s = shape in
+   let rank = Array.length s in
+   let* e1 = expr ~rank and+ e2 = expr ~rank and+ e3 = expr ~rank in
+   let* w = operand s and+ v = operand s in
+   let+ through = bool and+ swap = bool and+ wide = bool in
+   let e1 = exact e1 and e2 = exact e2 and e3 = exact e3 in
+   if wide then State_case { dt = f64; s; w; v; e1; e2; e3; through; swap }
+   else State_case { dt = f32; s; w; v; e1; e2; e3; through; swap })
+  |> with_pp pp_state
+
+let state_step (State_case c) w v =
+  let v' = eval w v c.e1 in
+  let w' = eval w (if c.through then v' else v) c.e2 in
+  let third = eval w' v' c.e3 in
+  if c.swap then (v', (w', third)) else (w', (v', third))
+
+let state_examples =
+  let plain = { view = Plain; values = [| 1.; -0.; 2.5; -3. |] } in
+  let case ?(through = true) ?(swap = false) ?(e3 = Bin (Add, X, Y)) e1 e2 =
+    State_case
+      { dt = f32; s = [| 4 |]; w = plain; v = plain; e1; e2; e3; through; swap }
+  in
+  [
+    (* A momentum step, in either order. *)
+    case
+      (Bin (Add, Bin (Mul, Y, K 0.5), Bin (Mul, Bin (Sub, X, K 2.), K 2.)))
+      (Bin (Sub, X, Bin (Mul, Y, K 0.5)));
+    case ~swap:true
+      (Bin (Add, Bin (Mul, Y, K 0.5), Bin (Mul, Bin (Sub, X, K 2.), K 2.)))
+      (Bin (Sub, X, Bin (Mul, Y, K 0.5)));
+    (* Results that read each other's leaf before their stores. *)
+    case ~through:false (Bin (Add, X, Y)) (Bin (Sub, Y, X));
+    (* A leaf returned as it is. *)
+    case (Bin (Add, Y, K 1.)) X;
+    case ~swap:true (Bin (Add, Y, K 1.)) (Bin (Mul, X, Y));
+  ]
+
+(* A step over two donated leaves gives the bits of one over the leaves kept,
+   whichever results take their memory. *)
+let law_states (State_case c as case) =
+  let two = T.(pair tensor tensor) in
+  let step (w, v) = state_step case w v in
+  let g = Rune.jit T.(two @-> returns (pair tensor two)) step in
+  let make () = (make c.dt c.s c.w, make c.dt c.s c.v) in
+  let both (a, (b, d)) = (bits a, (bits b, bits d)) in
+  let t = outcome_t Testable.(pair bits_t (pair bits_t bits_t)) in
+  let eager = outcome (fun () -> both (step (make ()))) in
+  let w, v = make () in
+  let memory x =
+    if numel c.s = 0 then None else Some (Nx.Repr.read x Nx_array.buffer)
+  in
+  let leaves = List.filter_map memory [ w; v ] in
+  let result = ref None in
+  let calls = Rune.evaluations () in
+  let jitted =
+    outcome (fun () ->
+        let r = g (Nx.donate w, Nx.donate v) in
+        result := Some r;
+        both r)
+  in
+  (* The stores have an order: the call compiles. *)
+  (match jitted with
+  | Value _ -> equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
+  | Raised _ -> ());
+  let lent x =
+    match Nx.Repr.array x with
+    | Some a ->
+        List.exists (fun b -> Rig.Buffer.overlaps b (Nx_array.buffer a)) leaves
+    | None -> false
+  in
+  let took =
+    match !result with Some (a, (b, _)) -> [ lent a; lent b ] | None -> []
+  in
+  cover "a zero-size shape" (numel c.s = 0);
+  cover "a view operand" (c.w.view <> Plain || c.v.view <> Plain);
+  cover "both results take a leaf's memory" (took = [ true; true ]);
+  cover "one result takes a leaf's memory"
+    (took = [ true; false ] || took = [ false; true ]);
+  equal t eager jitted
+
+(* A momentum step's results each take a leaf's memory, call after call: the
+   parameters' update reads the velocity's from where it was stored, whatever
+   the order of the results, at every dtype. Where each result reads the other's
+   leaf before its store, no order of the stores exists, and the later result
+   takes fresh memory. [run ~msg ~start ~same step lends] runs [step] compiled
+   over the donated leaves [start ()] three times against eager, [same] its
+   results' equality, and [lends] whether each result took a leaf's memory. *)
+let test_states () =
+  let address x = Nx.Repr.read x Nx_array.buffer in
+  let run ~msg ~start ~same step lends =
+    let two = T.(pair tensor tensor) in
+    let g = Rune.jit T.(two @-> returns two) step in
+    let compiled = ref (start ()) and eager = ref (start ()) in
+    for _ = 1 to 3 do
+      let leaves = [ address (fst !compiled); address (snd !compiled) ] in
+      compiled := g (Nx.donate (fst !compiled), Nx.donate (snd !compiled));
+      eager := step !eager;
+      let took x =
+        List.exists (fun b -> Rig.Buffer.overlaps b (address x)) leaves
+      in
+      equal ~msg:(msg ^ ": in place") (Testable.pair bool bool) lends
+        (took (fst !compiled), took (snd !compiled));
+      same (fst !eager) (fst !compiled);
+      same (snd !eager) (snd !compiled)
+    done
+  in
+  let floats ~msg a b = equal ~msg bits_t (bits a) (bits b) in
+  let start () =
+    (fresh [| 1.; -0.; 2.5; -3. |], fresh [| 0.5; 2.; -1.; 4. |])
+  in
+  let x = fresh [| 0.25; 1.; -2.; 3. |] in
+  let momentum (w, v) =
+    let v = Nx.add (Nx.mul_s v 0.9) (Nx.mul_s (Nx.sub w x) 2.) in
+    (Nx.sub w (Nx.mul_s v 0.1), v)
+  in
+  let run_f ~msg = run ~msg ~start ~same:(floats ~msg) in
+  run_f ~msg:"leaves updated apart"
+    (fun (w, v) -> (Nx.add_s w 1., Nx.add_s v 1.))
+    (true, true);
+  run_f ~msg:"a momentum step" momentum (true, true);
+  run_f ~msg:"a momentum step, the velocity first"
+    (fun s ->
+      let w, v = momentum s in
+      (v, w))
+    (true, true);
+  run_f ~msg:"a cycle" (fun (a, b) -> (Nx.add a b, Nx.sub b a)) (true, false);
+  (* Sub-byte and complex leaves, stored and read back. *)
+  let ints = Nx.create Nx.int4 [| 5 |] in
+  run ~msg:"int4"
+    ~start:(fun () -> (ints [| 7; -8; 0; 3; -1 |], ints [| 1; 2; -3; 4; 0 |]))
+    ~same:(fun a b ->
+      equal ~msg:"int4" (array int) (Nx.to_array a) (Nx.to_array b))
+    (fun (w, v) ->
+      let v = Nx.add v (Nx.sub w (Nx.ones_like w)) in
+      (Nx.sub w v, v))
+    (true, true);
+  let complex re =
+    Nx.create Nx.complex64 [| 3 |]
+      (Array.map (fun r -> { Complex.re = r; im = -.r }) re)
+  in
+  (* Read through a copy: a view of the result would share the memory the next
+     call takes. *)
+  let parts ~msg a b =
+    let b = Nx.copy b in
+    floats ~msg (Nx.real f32 a) (Nx.real f32 b);
+    floats ~msg (Nx.imag f32 a) (Nx.imag f32 b)
+  in
+  run ~msg:"complex64"
+    ~start:(fun () -> (complex [| 1.; -0.; 2.5 |], complex [| 0.5; 2.; -1. |]))
+    ~same:(parts ~msg:"complex64")
+    (fun (w, v) ->
+      let v = Nx.add v (Nx.sub w (Nx.ones_like w)) in
+      (Nx.sub w v, v))
+    (true, true)
+
+(* A result that takes no leaf's memory reads a lent result from its store: a
+   loop over a lent result runs once, and a scatter into a donated pool lends
+   it while another result reads the pool's new value. Each call compiles and
+   gives eager's values. *)
+let test_readers () =
+  let address x = Nx.Repr.read x Nx_array.buffer in
+  let rows = Nx.reshape [| 2; 3 |] (fresh [| 0.5; -2.; 1.5; 0.25; 3.; -1. |]) in
+  let f (w, a) =
+    let w' = Nx.add_s w 1. in
+    let c, _ =
+      Rune.scan T.tensor T.tensor T.unit
+        ~f:(fun c r -> (Nx.mul c r, ()))
+        ~init:w' rows
+    in
+    (w', (Nx.add a c, c))
+  in
+  let two = T.(pair tensor tensor) in
+  let g = Rune.jit T.(two @-> returns (pair tensor two)) f in
+  let start () = (fresh [| 1.; -0.; 2.5 |], fresh [| 0.5; 2.; -1. |]) in
+  let ew, (ea, ec) = f (start ()) in
+  let w, a = start () in
+  let bw = address w and ba = address a in
+  let calls = Rune.evaluations () in
+  let w', (a', c) = g (Nx.donate w, Nx.donate a) in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
+  equal ~msg:"in place" (Testable.pair bool bool) (true, true)
+    (Rig.Buffer.overlaps bw (address w'), Rig.Buffer.overlaps ba (address a'));
+  equal bits_t (bits ew) (bits w');
+  equal bits_t (bits ea) (bits a');
+  equal bits_t (bits ec) (bits c);
+  let p = Nx.create Nx.int64 [| 2 |] [| 2L; 0L |] in
+  let u = fresh [| 9.; -0. |] in
+  let step pool =
+    let pool = Nx.scatter ~axis:0 p u pool in
+    (pool, Nx.sum pool)
+  in
+  let h = Rune.jit T.(tensor @-> returns (pair tensor tensor)) step in
+  let pool () = fresh [| 1.; 2.; 3. |] in
+  let ep, es = step (pool ()) in
+  let q = pool () in
+  let bq = address q in
+  let q', sum = h (Nx.donate q) in
+  equal ~msg:"the pool in place" bool true
+    (Rig.Buffer.overlaps bq (address q'));
+  equal bits_t (bits ep) (bits q');
+  equal bits_t (bits es) (bits sum);
+  (* A loop's stop, a check, reads a lent result from its store and a leaf as
+     it was: it would run between the two stores, after the parameters' and
+     before the velocity's, which the parameters' reads. The velocity takes
+     fresh memory. *)
+  let step (w, v) =
+    let v' = Nx.add_s v 1. in
+    let w' = Nx.mul w v' in
+    let until c = Nx.less (Nx.max c) (Nx.scalar f32 1e30) in
+    ignore (Rune.iterate' ~max:3 ~until ~f:Nx.neg (Nx.add w' v));
+    (w', v')
+  in
+  let k = Rune.jit T.(two @-> returns two) step in
+  let ew, ev = step (start ()) in
+  let w, v = start () in
+  let bw = address w and bv = address v in
+  let calls = Rune.evaluations () in
+  let w', v' = k (Nx.donate w, Nx.donate v) in
+  equal ~msg:"a loop's stop: compiled" int 0 (Rune.evaluations () - calls);
+  equal ~msg:"a loop's stop: in place" (Testable.pair bool bool) (true, false)
+    (Rig.Buffer.overlaps bw (address w'), Rig.Buffer.overlaps bv (address v'));
+  equal bits_t (bits ew) (bits w');
+  equal bits_t (bits ev) (bits v')
+
+(* A donated argument that a compiled remat's backward pass reads lends to a
+   result that reads it at its own index: the backward pass reads it as it was,
+   before the store over it. *)
+let test_remat_lends () =
+  let cube x = Nx.mul x (Nx.mul x x) in
+  let r = Rune.remat T.(tensor @-> returns tensor) cube in
+  let f x = (Nx.add_s x 1., Rune.grad' (fun x -> Nx.sum (r x)) x) in
+  let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
+  let xs = [| 1.; -0.; 2.5; -3. |] in
+  let ey, eg = f (fresh xs) in
+  let x = fresh xs in
+  let b = Nx.Repr.read x Nx_array.buffer in
+  let y, d = g (Nx.donate x) in
+  equal ~msg:"in place" bool true
+    (Rig.Buffer.overlaps b (Nx.Repr.read y Nx_array.buffer));
+  equal bits_t (bits ey) (bits y);
+  equal ~msg:"the gradient" bits_t (bits eg) (bits d)
 
 (* A contraction reads its [init] at its own index and its operands along
    their contracted axes: an [init] lends, and one that is also an operand
@@ -1850,6 +2120,15 @@ let () =
                test_evaluated_donation;
              prop ~examples:donation_examples "donation keeps the values"
                donation_cases law_donation;
+             prop ~examples:state_examples
+               "a step over donated leaves keeps the values" state_cases
+               law_states;
+             test "a step's results lend in an order of their stores"
+               test_states;
+             test "an argument a remat's backward pass reads lends"
+               test_remat_lends;
+             test "a result that takes no memory reads a lent one's store"
+               test_readers;
              test "a contraction's init lends, an operand does not"
                test_contract_init;
              test "a scatter's target lends" test_scatter_lends;
