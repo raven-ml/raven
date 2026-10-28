@@ -235,8 +235,10 @@ let test_nested () =
   equal bits_t (bits (Nx.stack ys')) (bits ys)
 
 (* A scan under jit, and a jit inside a step, are the eager scan's. *)
+(* Compiled, the scan gives the fold's bits for exact functions
+   (Rune.jit's classes). *)
 let test_jit () =
-  let step c x = (Nx.sin (Nx.add c x), Nx.cos c) in
+  let step c x = (Nx.abs (Nx.add c x), Nx.neg c) in
   let init = v [| 0.25; -1. |] in
   let c, ys = Rune.scan' ~f:step ~init (xs3 ()) in
   let c', ys' =
@@ -334,15 +336,24 @@ let law_iterate (Iterate_case (dt, s, trips, max, co, g)) =
         in
         codes (fst (go 0 (init, k0))))
   in
-  let iterated =
-    outcome (fun () ->
-        codes
-          (fst
-             (Rune.iterate
-                Nx.Ptree.(pair tensor tensor)
-                ~max ~until ~f:step (init, k0))))
+  let iterate step (init, k0) =
+    fst (Rune.iterate Nx.Ptree.(pair tensor tensor) ~max ~until ~f:step (init, k0))
   in
-  equal (outcome_t codes_t) expected iterated
+  let iterated = outcome (fun () -> codes (iterate step (init, k0))) in
+  equal (outcome_t codes_t) expected iterated;
+  (* Compiled, the loop gives eager's bits where its step is exact. *)
+  let g' = exact_any dt g in
+  let exact_step (x, k) =
+    (Nx.broadcast_to s (eval_any x x g'), Nx.add k (Nx.scalar Nx.int32 1l))
+  in
+  let jitted =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun init k0 -> iterate exact_step (init, k0))
+  in
+  equal ~msg:"compiled" (outcome_t codes_t)
+    (outcome (fun () -> codes (iterate exact_step (init, k0))))
+    (outcome (fun () -> codes (jitted init k0)))
 
 let test_iterate_refused () =
   invalid ~sub:"Rune.iterate': until is still false after max = 2 steps"

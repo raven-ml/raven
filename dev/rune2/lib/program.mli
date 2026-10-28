@@ -205,6 +205,10 @@ val make :
 (** [make ~owner ~params eqns ~outputs ~adds ~slots] is the program of the
     equations [eqns], in order. *)
 
+val sums : t list -> addition array * form array * int array list
+(** [sums ps] is the sums of a loop of the programs [ps], as {!feeds} gives
+    them, with the sum each addition of each program feeds, in order. *)
+
 val feeds : t -> addition array * form array * int array
 (** [feeds step] is the sums of a loop of the step [step]: one per total and
     shape its additions add to, in the order of their first additions, their
@@ -336,6 +340,9 @@ exception Evaluate
 
 val operands : construct -> value list
 (** [operands c] is the values [c] reads, captures included. *)
+
+val carried : construct -> t list
+(** [carried c] is the programs [c] carries. *)
 
 type map = { f : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t }
 (** A function on values of every dtype and set. *)

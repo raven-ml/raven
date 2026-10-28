@@ -375,10 +375,80 @@ let test_loop () =
   equal bits_t (bits (fst eager)) (bits (fst jitted));
   equal bits_t (bits (snd eager)) (bits (snd jitted))
 
+(* Staged loops: a loop's step is traced once and compiles as one loop of the
+   program, which runs no eager kernel, whatever its number of trips. *)
+
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
 let count (type d) (x : (float, Nx.float32_elt, d) Nx.t) = Nx.place Count.on x
+
+(* The occurrences of [word] in [s]. *)
+let occurrences word s =
+  let n = String.length word and k = ref 0 in
+  for i = 0 to String.length s - n do
+    if String.sub s i n = word then incr k
+  done;
+  !k
+
+let test_staged_scan () =
+  let traces = ref 0 in
+  let step c r =
+    incr traces;
+    (Nx.add c (Nx.mul c r), Nx.mul_s c 2.)
+  in
+  let rows n =
+    count (Nx.reshape [| n; 2 |] (Nx.linspace f32 (-0.01) 0.01 (2 * n)))
+  in
+  let xs = rows 100 in
+  let init = count (v [| 0.5; -0. |]) in
+  let f init xs = Rune.scan' ~f:step ~init xs in
+  let printed xs =
+    Format.asprintf "%a" Rune.pp_program
+      (Rune.program
+         T.(pair tensor tensor)
+         T.(pair tensor tensor)
+         (fun (a, b) -> f a b)
+         (init, xs))
+  in
+  let short = printed (rows 3) and long = printed xs in
+  equal ~msg:"one scan" int 1 (occurrences "scan" long);
+  equal ~msg:"its step once" int
+    (occurrences "Map" short)
+    (occurrences "Map" long);
+  let g = Rune.jit T.(tensor @-> tensor @-> returns (pair tensor tensor)) f in
+  traces := 0;
+  ignore (g init xs);
+  equal ~msg:"one trace" int 1 !traces;
+  traces := 0;
+  C.reset ();
+  let c, ys = g init xs in
+  equal ~msg:"no retrace" int 0 !traces;
+  equal ~msg:"no eager kernel" int 0 (C.calls ());
+  let c', ys' = f init xs in
+  equal ~msg:"carry" bits_t (bits c') (bits c);
+  equal ~msg:"outputs" bits_t (bits ys') (bits ys)
+
+let test_staged_iterate () =
+  let traces = ref 0 in
+  let until x =
+    incr traces;
+    let s = Nx.sum x in
+    Nx.less s (Nx.scalar_like s 0.01)
+  in
+  let halve x = Nx.mul_s x 0.5 in
+  let g = Rune.jit' (fun x -> Rune.iterate' ~max:50 ~until ~f:halve x) in
+  let x = count (v [| 1.; 2.; 3. |]) in
+  ignore (g x);
+  traces := 0;
+  C.reset ();
+  let y = g x in
+  equal ~msg:"no retrace" int 0 !traces;
+  equal ~msg:"no eager kernel" int 0 (C.calls ());
+  equal bits_t (bits (Rune.iterate' ~max:50 ~until ~f:halve x)) (bits y);
+  invalid ~sub:"Rune.iterate': until is still false after max = 3 steps"
+    (fun () ->
+      Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until ~f:halve x) x)
 
 (* A custom rule's primal, a linear call's function and a remat's function
    compile with the program that calls them: a compiled call over them runs no
@@ -986,12 +1056,7 @@ let test_inlined () =
   let printed =
     Format.asprintf "%a" Rune.pp_program (Rune.program T.tensor T.tensor f x)
   in
-  let calls = ref 0 and i = ref 0 in
-  while !i + 4 <= String.length printed do
-    if String.sub printed !i 4 = "call" then incr calls;
-    incr i
-  done;
-  equal ~msg:"calls" int 0 !calls;
+  equal ~msg:"calls" int 0 (occurrences "call" printed);
   equal (array (float_rel ~rel:1e-14 ~abs:1e-300))
     (Nx.to_array (Rune.grad' (fun x -> Nx.sum (Nx.mul x (Nx.sin x))) x))
     (Nx.to_array (Rune.jit' f x))
@@ -1037,6 +1102,9 @@ let () =
            ];
          group "constructs"
            [
+             test "a scan's step traces once and compiles one loop"
+               test_staged_scan;
+             test "an iterate compiles one loop" test_staged_iterate;
              test "custom rules and remats compile with their program"
                test_constructs;
            ];

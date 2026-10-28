@@ -208,7 +208,14 @@ let covers (Case c) =
   cover "the second device" (Array.exists (fun w -> w = Dev 1) c.at);
   cover "a leaf on both devices" (Array.exists (fun w -> w = Whole) c.at)
 
-let law_jvp (Case c as case) =
+(* A compiled loop gives the fold's bits where its step's functions are exact
+   (Rune.jit's classes): the laws compare compiled calls on the case's
+   functions made exact. *)
+let exactly (Case c) =
+  let x e = elementwise (exact e) in
+  Case { c with g = x c.g; k = x c.k; h = x c.h }
+
+let law_jvp' ~jit (Case c as case) =
   covers case;
   let o = operands c.dt c.s c.n c.ops c.at in
   let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
@@ -244,37 +251,43 @@ let law_jvp (Case c as case) =
   let l = if constant c.g then l else bits_t in
   let tt = outcome_t' (Testable.pair t3 (Testable.triple l l l)) in
   equal ~msg:"eager" tt expected (outcome (fun () -> both (jvp scanned)));
-  let a3 =
-    T.(
-      tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> tensor
-      @-> returns
-            (pair
-               (pair tensor (pair tensor tensor))
-               (pair tensor (pair tensor tensor))))
-  in
-  let staged =
-    Rune.jit a3 (fun c0 xs w t0 tx tw ->
-        Rune.jvp (triple ()) (triple ()) scanned (c0, (xs, w)) (t0, (tx, tw)))
-  in
-  let t0, (tx, tw) = t in
-  equal ~msg:"jit of jvp" tt expected
-    (outcome (fun () -> both (staged c0 xs w t0 tx tw)));
-  let jitted =
-    Rune.jit
+  if jit then begin
+    let a3 =
       T.(
-        tensor @-> tensor @-> tensor
-        @-> returns (pair tensor (pair tensor tensor)))
-      (fun c0 xs w -> scanned (c0, (xs, w)))
-  in
-  equal ~msg:"jvp of jit" tt expected
-    (outcome (fun () ->
-         both
-           (Rune.jvp (triple ()) (triple ())
-              (fun (a, (b, c)) -> jitted a b c)
-              (c0, (xs, w))
-              t)))
+        tensor @-> tensor @-> tensor @-> tensor @-> tensor @-> tensor
+        @-> returns
+              (pair
+                 (pair tensor (pair tensor tensor))
+                 (pair tensor (pair tensor tensor))))
+    in
+    let staged =
+      Rune.jit a3 (fun c0 xs w t0 tx tw ->
+          Rune.jvp (triple ()) (triple ()) scanned (c0, (xs, w)) (t0, (tx, tw)))
+    in
+    let t0, (tx, tw) = t in
+    equal ~msg:"jit of jvp" tt expected
+      (outcome (fun () -> both (staged c0 xs w t0 tx tw)));
+    let jitted =
+      Rune.jit
+        T.(
+          tensor @-> tensor @-> tensor
+          @-> returns (pair tensor (pair tensor tensor)))
+        (fun c0 xs w -> scanned (c0, (xs, w)))
+    in
+    equal ~msg:"jvp of jit" tt expected
+      (outcome (fun () ->
+           both
+             (Rune.jvp (triple ()) (triple ())
+                (fun (a, (b, c)) -> jitted a b c)
+                (c0, (xs, w))
+                t)))
+  end
 
-let law_grad (Case c as case) =
+let law_jvp case =
+  law_jvp' ~jit:false case;
+  law_jvp' ~jit:true (exactly case)
+
+let law_grad' ~jit (Case c as case) =
   covers case;
   let o = operands c.dt c.s c.n c.ops c.at in
   let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
@@ -294,23 +307,30 @@ let law_grad (Case c as case) =
   let l = lenient ~nan:unread in
   let tt = outcome_t' (Testable.triple l l l) in
   equal ~msg:"eager" tt expected (grad scanned);
-  let staged =
-    Rune.jit
-      T.(
-        tensor @-> tensor @-> tensor
-        @-> returns (pair tensor (pair tensor tensor)))
-      (fun c0 xs w -> Rune.grad (triple ()) (objective scanned) (c0, (xs, w)))
-  in
-  equal ~msg:"jit of grad" tt expected
-    (outcome (fun () -> bits3 (staged c0 xs w)));
-  let jitted =
-    Rune.jit
-      T.(
-        tensor @-> tensor @-> tensor
-        @-> returns (pair tensor (pair tensor tensor)))
-      (fun c0 xs w -> scanned (c0, (xs, w)))
-  in
-  equal ~msg:"grad of jit" tt expected (grad (fun (a, (b, c)) -> jitted a b c))
+  if jit then begin
+    let staged =
+      Rune.jit
+        T.(
+          tensor @-> tensor @-> tensor
+          @-> returns (pair tensor (pair tensor tensor)))
+        (fun c0 xs w -> Rune.grad (triple ()) (objective scanned) (c0, (xs, w)))
+    in
+    equal ~msg:"jit of grad" tt expected
+      (outcome (fun () -> bits3 (staged c0 xs w)));
+    let jitted =
+      Rune.jit
+        T.(
+          tensor @-> tensor @-> tensor
+          @-> returns (pair tensor (pair tensor tensor)))
+        (fun c0 xs w -> scanned (c0, (xs, w)))
+    in
+    equal ~msg:"grad of jit" tt expected
+      (grad (fun (a, (b, c)) -> jitted a b c))
+  end
+
+let law_grad case =
+  law_grad' ~jit:false case;
+  law_grad' ~jit:true (exactly case)
 
 (* Maps: one of [c0], [xs] and [w] has lanes, the others are captured. *)
 type mapped = Carry | Rows | Capture
@@ -324,7 +344,7 @@ let map_cases =
         | Rows -> "rows"
         | Capture -> "capture"))
 
-let law_vmap ((Case c as case), (m, lanes)) =
+let law_vmap' ~jit ((Case c as case), (m, lanes)) =
   covers case;
   cover "lanes in the carry" (m = Carry);
   let o = operands c.dt c.s c.n c.ops c.at in
@@ -356,10 +376,16 @@ let law_vmap ((Case c as case), (m, lanes)) =
   let tt = outcome_t' bits_t in
   equal ~msg:"eager" tt expected
     (outcome (fun () -> bits (Rune.vmap' (at scanned) batch)));
-  equal ~msg:"jit of vmap" tt expected
-    (outcome (fun () -> bits (Rune.jit' (Rune.vmap' (at scanned)) batch)));
-  equal ~msg:"vmap of jit" tt expected
-    (outcome (fun () -> bits (Rune.vmap' (Rune.jit' (at scanned)) batch)))
+  if jit then begin
+    equal ~msg:"jit of vmap" tt expected
+      (outcome (fun () -> bits (Rune.jit' (Rune.vmap' (at scanned)) batch)));
+    equal ~msg:"vmap of jit" tt expected
+      (outcome (fun () -> bits (Rune.vmap' (Rune.jit' (at scanned)) batch)))
+  end
+
+let law_vmap (case, m) =
+  law_vmap' ~jit:false (case, m);
+  law_vmap' ~jit:true (exactly case, m)
 
 (* Compositions: a scan whose step scans, under jvp, grad and a map, and second
    orders through a scan. Their zeros are a loop's wherever a step reads no

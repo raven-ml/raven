@@ -779,13 +779,16 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     staged there. A program that holds an {!iterate} is evaluated under a
     transformation, which receives its operations.
 
-    {b Rules.} A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
+    {b Loops and rules.} A {!scan} or an {!iterate} compiles as one loop of the
+    program, its step compiled once whatever its number of steps; a step reads
+    its rows and writes its outputs in place, and the carry is updated in place
+    each step. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
     {!custom_transpose} compile as their function's operations, the program's
     own.
 
-    {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
-    map's {!lanes} or {!lane_index}, an operation the compiler does not lower,
-    values on several devices, or one tolk cannot compile, runs as its
+    {b Evaluated programs.} A program that holds a map's {!lanes} or
+    {!lane_index}, a check in a loop's step, an operation the compiler does not
+    lower, values on several devices, or one tolk cannot compile, runs as its
     operations evaluated by nx, giving eager's values; a result that is an
     argument is a copy of it, and a call with donated arguments claims them
     first, consumes them and lends nothing.
