@@ -728,7 +728,8 @@ let cache_keys =
       test "is sorted by name" (fun () ->
           let names = List.map fst (shaping ()) in
           equal (list string) (List.sort compare names) names);
-      test "is the same list while no setting that reaches output changes"
+      test "is the same list while no setting that reaches output changes, \
+            and once a context ends"
         (fun () ->
           let v = Setting.int ~reach:Output (fresh ()) 1 in
           unchanged_by (fun () -> ignore (shaping ()));
@@ -738,7 +739,23 @@ let cache_keys =
           unchanged_by (fun () ->
               ignore
                 (Domain.join
-                   (Domain.spawn (fun () -> context [ B (v, 2) ] shaping)))));
+                   (Domain.spawn (fun () -> context [ B (v, 2) ] shaping))));
+          unchanged_by (fun () -> context [ B (v, 1) ] ignore);
+          let before = shaping () in
+          satisfies
+            ~claim:
+              "the list read before, inside a context that binds a \
+               setting to its value"
+            entries
+            (fun l -> l == before)
+            (context [ B (v, 1) ] shaping);
+          unchanged_by (fun () ->
+              try context [ B (v, 2) ] (fun () -> raise Exit) with Exit -> ());
+          unchanged_by (fun () ->
+              context [ B (v, 2) ] (fun () -> ignore (shaping ())));
+          unchanged_by (fun () ->
+              context [ B (v, 2); B (Setting.beam, 3) ] (fun () ->
+                  context [ B (v, 1) ] (fun () -> ignore (shaping ())))));
       test "is read without allocating while nothing changes" (fun () ->
           ignore (shaping ());
           equal int (words (fun () -> [])) (words shaping));

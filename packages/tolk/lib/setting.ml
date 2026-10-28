@@ -136,10 +136,14 @@ let rec update f =
   let a = Domain.DLS.get entries in
   let ((shown, e) as current) = Atomic.get a in
   let declared = Atomic.get outputs in
-  let next =
-    if shown == declared then (shown, f e) else (declared, render declared)
-  in
-  if not (Atomic.compare_and_set a current next) then update f
+  if shown == declared then begin
+    (* Entries [f] keeps are left as they are, so that no list is made. *)
+    let e' = f e in
+    if e' != e && not (Atomic.compare_and_set a current (shown, e')) then
+      update f
+  end
+  else if not (Atomic.compare_and_set a current (declared, render declared))
+  then update f
 
 (* A declaration merges its entry into the declaring domain's. *)
 let rec record key show =
@@ -206,21 +210,37 @@ let set v x =
   match v.reach with
   | Process -> ()
   | Output ->
-      let entry ((key, _) as e) =
-        if String.equal key v.key then (key, v.show (value v)) else e
-      in
-      update (List.map entry)
+      (* An entry that already shows the value keeps the list as it is, so that
+         binding a setting to its value changes nothing a cache keys on. The
+         text is read at each try, as the value may change meanwhile. *)
+      update (fun e ->
+          let text = v.show (value v) in
+          let entry ((key, _) as e) =
+            if String.equal key v.key then (key, text) else e
+          in
+          let shows (key, t) = String.equal key v.key && String.equal t text in
+          if List.exists shows e then e else List.map entry e)
 
 type binding = B : 'a t * 'a -> binding
 
+(* A context that ends puts back the entries it found where the restored ones
+   show the same text, so that a context changes no list a cache compares
+   physically once it returns. *)
 let context bindings f =
+  let a = Domain.DLS.get entries in
+  let found = Atomic.get a in
   let swap saved (B (v, x)) =
     let previous = value v in
     set v x;
     B (v, previous) :: saved
   in
   let saved = List.fold_left swap [] bindings in
-  let restore () = List.iter (fun (B (v, x)) -> set v x) saved in
+  let restore () =
+    List.iter (fun (B (v, x)) -> set v x) saved;
+    let ((shown, e) as current) = Atomic.get a in
+    if e != snd found && shown == fst found && e = snd found then
+      ignore (Atomic.compare_and_set a current found)
+  in
   Fun.protect ~finally:restore f
 
 (* Tolk's settings *)

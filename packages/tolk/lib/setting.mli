@@ -110,7 +110,10 @@ val shaping : unit -> (string * string) list
     caches of programs, schedules and searches key on. Two values have the same
     text only if they are equal: a number is written in hexadecimal and [None]
     as [""]. While no such setting changes on the calling domain, the result is
-    the same list, and reading it allocates nothing. *)
+    the same list, and reading it allocates nothing. A {!context} that binds
+    settings to the values they hold leaves it the same list while it runs, and
+    once a {!context} ends the list is the one it found, unless a setting was
+    declared or changed meanwhile. *)
 
 (** {1:tolk Tolk's settings}
 
