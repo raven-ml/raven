@@ -1090,4 +1090,10 @@ val evaluations : unit -> int
     that ran their program evaluated by nx, the compiler having declined it,
     for the suites. *)
 
+val variants : unit -> int
+(** [variants ()] is the number of compiled variants that calls on the
+    calling domain lowered and linked, or that the compiler declined, for
+    the suites. A compiled program makes one variant per layout, phase and
+    donation of its arguments and value of tolk's settings. *)
+
 (**/**)

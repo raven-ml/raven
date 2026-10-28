@@ -1536,6 +1536,9 @@ let same_variant layouts phases donated settings v =
   && same_settings v.settings settings
   && Array.for_all2 L.equal v.layouts layouts
 
+let variants_made = Domain.DLS.new_key (fun () -> ref 0)
+let variants () = !(Domain.DLS.get variants_made)
+
 let variant t layouts phases donated settings =
   let find () =
     List.find_opt
@@ -1566,6 +1569,7 @@ let variant t layouts phases donated settings =
           in
           let v = { layouts; phases; donated; settings; linked } in
           Atomic.set t.variants (v :: Atomic.get t.variants);
+          incr (Domain.DLS.get variants_made);
           v)
 
 let make ~name p forms =

@@ -73,6 +73,10 @@ val run : t -> Program.value array -> Program.value array
     {!Nx.Prim.Consumer.with_} does, and what linking a variant raises when it
     does not decline it. *)
 
+val variants : unit -> int
+(** [variants ()] is the number of variants the calls on the calling domain
+    made, each lowered and linked or declined once. *)
+
 val evaluations : unit -> int
 (** [evaluations ()] is the number of compiled calls on the calling domain
     whose program or variant the compiler declined, so that nx evaluated it. *)
