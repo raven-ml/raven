@@ -70,11 +70,11 @@
     contribution, sign of zero included: [grad' (fun x -> Nx.sum (Nx.mul x x))]
     at [-0.] is [-0.]. The contributions through a gather, as [Nx.take]'s, and
     the copies of a broadcast are summed from [+0.], as [Nx.sum] sums. An
-    element that receives none is [+0.]. A {!scan}'s carry holds a derivative at
-    every step: where a step gives a carry array none, the next takes a zero
-    from it, so the derivative may receive zeros of either sign, and NaN where
-    such a zero meets an infinite partial derivative, where the steps written
-    out one after another give none.
+    element that receives none is [+0.]. A {!scan}'s or an {!iterate}'s carry
+    holds a derivative at every step: where a step gives a carry array none, the
+    next takes a zero from it, so the derivative may receive zeros of either
+    sign, and NaN where such a zero meets an infinite partial derivative, where
+    the steps written out one after another give none.
 
     {b Placement.} A cotangent lies where the transposed operations put it,
     as {!Nx} routes them: at its array's placement where every value it meets
@@ -680,12 +680,12 @@ val iterate :
     {b Derivatives.} The derivative is that of the steps taken; [until] has
     none. Reverse mode runs the loop forward, keeping of each step the values
     its tangent's operations read, then the steps' transposes in reverse. It
-    keeps the steps taken where the loop runs outside every other
-    transformation. Under {!jit}, a map whose lanes stop apart, or forward mode
-    around it, it keeps room for [max] steps, and transposes only the steps
-    taken, but a value the step captures receives a zero cotangent where the
-    loop takes no step, NaN where that zero meets an infinite partial
-    derivative.
+    keeps the steps taken where the loop runs at the call, the values it reads
+    no other transformation's. Inside a traced function ({!jit}, a {!scan}'s
+    step, a {!remat}), a map, or forward mode around it, it keeps room for [max]
+    steps and transposes only the steps taken, but a value the step captures
+    receives a zero cotangent where the loop takes no step, NaN where that zero
+    meets an infinite partial derivative.
 
     {b Maps.} Under {!vmap}, where [until] depends on the lanes, each lane stops
     on its own [until], and the loop runs until the last lane stops. A lane that

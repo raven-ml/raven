@@ -404,6 +404,15 @@ val threaded : ?lanes:int -> t -> (value array -> value array) -> value array
     value at the form it was traced at, it is the identity, and the running
     value out is added to the total ({!add_to}). *)
 
+type _ Effect.t +=
+  | Where : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form option Effect.t
+        (** Answered by the innermost collect or tracer of the total around the
+            call that holds a running value of it, with that value's form; a map
+            passes it on. *)
+
+val where : ('v, 's, 'd) total -> 'd Nx.Placement.t option
+(** [where t] is the placement {!Where} answers, [None] with none around. *)
+
 val running :
   ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option
 (** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with

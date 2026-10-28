@@ -136,7 +136,7 @@ let law_derivatives (Case c) =
   (* Compiled, reverse mode keeps room for [max] steps, and a value the step
      captures receives a zero where the loop takes none, NaN where it meets an
      infinite partial derivative. *)
-  let lj = lenient ~nan:(constant c.g || c.trips = 0) in
+  let lj = lenient ~nan:(constant c.g) in
   equal ~msg:"jit of grad"
     (outcome_t (Testable.pair lj lj))
     expected
@@ -288,6 +288,29 @@ let law_lanes (Lanes c) =
       (outcome (fun () ->
            bits
              (Rune.grad' (fun x -> Nx.sum (Rune.vmap s (iterated w) (x, t))) x)));
+    equal ~msg:"jit of vmap of grad" (outcome_t l) per_lane
+      (outcome (fun () ->
+           bits
+             (Rune.jit
+                T.(pair tensor tensor @-> returns tensor)
+                (Rune.vmap s (grad (iterated w)))
+                (x, t))));
+    (* Forward mode, inside and around the map. *)
+    let jvp f xt =
+      snd (Rune.jvp' (fun x -> f (x, snd xt)) (fst xt) (Nx.ones_like (fst xt)))
+    in
+    let per_lane =
+      outcome (fun () -> bits (one_by_one (jvp (written w)) n (x, t)))
+    in
+    equal ~msg:"vmap of jvp" (outcome_t l) per_lane
+      (outcome (fun () -> bits (Rune.vmap s (jvp (iterated w)) (x, t))));
+    equal ~msg:"jvp of vmap" (outcome_t l) per_lane
+      (outcome (fun () ->
+           bits
+             (snd
+                (Rune.jvp'
+                   (fun x -> Rune.vmap s (iterated w) (x, t))
+                   x (Nx.ones_like x)))));
     (* A captured parameter's gradient sums every lane's. *)
     let gw f =
       outcome (fun () -> bits (Rune.grad' (fun w -> Nx.sum (f w)) w))
@@ -330,6 +353,30 @@ let test_donors () =
        (Rune.vmap'
           (fun x -> Rune.grad' (fun x -> Nx.sum (g x)) x)
           (Nx.reshape [| 2; 1 |] x)))
+
+(* A constant init whose stop reads the lanes through a capture: its carry is
+   placed where the stop lies, and each lane stops on its own. *)
+let test_constant_init () =
+  let f t =
+    Rune.iterate' ~max:10
+      ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.max t))
+      ~f:(fun y -> Nx.add_s y 1.)
+      (Nx.zeros f64 [| 1 |])
+  in
+  equal bits_t
+    (bits (Nx.create f64 [| 2; 1 |] [| 1.; 3. |]))
+    (bits (Rune.vmap' f (Nx.create f64 [| 2; 1 |] [| 1.; 3. |])));
+  (* Its forward derivative, the tangents beside the primals. *)
+  let g x =
+    Rune.iterate' ~max:10
+      ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.scalar f64 3.))
+      ~f:(fun y -> Nx.add y x)
+      (Nx.zeros f64 [| 1 |])
+  in
+  let x = Nx.create f64 [| 2; 1 |] [| 1.; 3. |] in
+  equal bits_t
+    (bits (Nx.create f64 [| 2; 1 |] [| 3.; 1. |]))
+    (bits (Rune.vmap' (fun x -> snd (Rune.jvp' g x (Nx.ones_like x))) x))
 
 (* Lanes held keep a NaN or infinite carry bit for bit. *)
 let test_nonfinite () =
@@ -423,6 +470,11 @@ let test_totals () =
           (fun x -> Nx.reshape [| 1 |] (total (fun () -> ignore (f x))))
           x
        |> Nx.reshape [| 3 |]));
+  equal ~msg:"around nested maps" bits_t
+    (bits (Nx.scalar f64 704.))
+    (bits
+       (total (fun () ->
+            ignore (Rune.vmap' (Rune.vmap' f) (Nx.reshape [| 1; 3; 1 |] x)))));
   equal ~msg:"around grad of the map" bits_t
     (bits (Nx.scalar f64 704.))
     (bits
@@ -568,6 +620,7 @@ let () =
              prop "each lane stops on its own" lane_cases law_lanes;
              test "a stopped lane computes its donor's step" test_donors;
              test "a stopped lane keeps a non-finite carry" test_nonfinite;
+             test "a constant init" test_constant_init;
              test "lanes in a step" test_lanes_in_step;
              test "an iterate in a step" test_nested;
              test "totals count each lane's steps" test_totals;

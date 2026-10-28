@@ -1347,19 +1347,25 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
 (* A loop's sums whose lanes were held apart, each lane's chain: their lanes,
    where a collect inside the map seeded them; and otherwise, as the lanes'
    values decide them and lie where those do, their sum over the lanes added
-   here to the total's running value around the map, where it can take them,
-   their lanes then the identity. *)
+   here to the total's running value around the map, where it can take them, or
+   as an addition, which a map around sums over its lanes; their lanes then the
+   identity. *)
 and held_sums n adds ~seeded i sums =
   if seeded then Array.map (lane_v i) sums
   else
     Array.mapi
-      (fun k (Program.Addition (t, into, out)) ->
+      (fun k (Program.Addition (t, _, out)) ->
         let (Program.V b) = sums.(k) in
         (if n > 0 then
-           match Program.running t into with
-           | None -> ()
-           | Some r -> (
-               match Program.coerce_at (Prim.form r) b with
+           let at =
+             match Program.where t with
+             | Some p -> Prim.coerce out.dtype (Nx.Placement.devices p) b
+             | None -> Program.coerce_at out b
+           in
+           match at with
+           | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
+           | None -> (
+               match Program.coerce_at out b with
                | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
                | None -> Program.unset (Program.V b)));
         lane_v i (Loops.filled ~zero:false (Program.stacked n (Program.F out))))
