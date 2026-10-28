@@ -231,6 +231,31 @@ and bluestein t ~sign ax z =
   let v = line t ~sign:1 ax (mul a k) in
   mul (map (fun u -> cut u ax 0 p) v) (map at c)
 
+(* Error bound
+
+   The interface's error bound follows from each step's, in the unit roundoff
+   [u] of the parts and [γ] as [Nx_kernel] defines it.
+
+   Twiddles. A twiddle [w] is within [12 u] of [e^(±2πi k/n)], and exact at
+   whole quarter turns. Its parts are the sines [Lower_real] states within 4
+   ulps of arguments of at most [π/2], which carry at most [4 u] of relative
+   error. A twiddle's product errs by at most [√2 γ(2) + 12 u <= 15 u] relative.
+
+   Small primes. A [p]-point transform of the points [z] scales their norm by
+   [√p] exactly, and is within [c(p) u] of its result's norm. A [2]-point
+   transform rounds each part once, [u] relative to its result. One by the table
+   is within [(√2 (p + 2) u + 12 u) Σ|z|] of each result.
+
+   Bluestein. The chirp's product errs as a twiddle's does, by [15 u ‖z‖₂] in
+   norm, and the forward transform, of norm [√m ‖z‖₂], adds [e(m) u] of it. The
+   kernel [K], the transform of the [2p - 1] chirp values over [m], is at most
+   [(2p - 1) / m <= 1] in magnitude, and within [(e(m) + 12) u √(2p - 1) / √m]
+   of it in norm. That moves the product by [(e(m) + 12) u √p ‖z‖₂], since a
+   transform's entries are at most [√p ‖z‖₂], and the product rounds within [3
+   u]. The inverse transform multiplies these errors by [√m] and adds [e(m) u m
+   ‖z‖₂], and the last chirp adds [15 u √p ‖z‖₂], against a result of norm [√p
+   ‖z‖₂]. *)
+
 (* Transforms *)
 
 let sign : Nx_kernel.direction -> int = function Forward -> -1 | Inverse -> 1
