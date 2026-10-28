@@ -170,16 +170,21 @@ let of_layout (type v s d) (dtype : (v, s) dtype) layout
   then { dtype; layout = L.contiguous (L.shape layout); placement }
   else { dtype; layout; placement }
 
+(* [x]'s layout, as its form has it, allocating nothing for a value on one
+   device. *)
+let form_layout (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Array { a; _ } -> Nx_array.layout a
+  | Handle { arrays; _ } when Iarray.length arrays = 1 ->
+      Nx_array.layout (Iarray.get arrays 0)
+  | Shards _ | Handle _ -> L.contiguous (layout_shape x)
+  | Traced { form; _ } -> form.layout
+
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
   match x with
-  | Array { at; a; _ } ->
-      { dtype = Nx_array.dtype a; layout = Nx_array.layout a; placement = at }
-  | Handle { at; arrays; _ } when Iarray.length arrays = 1 ->
-      let a = Iarray.get arrays 0 in
-      { dtype = Nx_array.dtype a; layout = Nx_array.layout a; placement = at }
-  | Shards { at; _ } | Handle { at; _ } ->
-      of_layout (dtype x) (L.contiguous (layout_shape x)) at
   | Traced { form; _ } -> form
+  | Array _ | Shards _ | Handle _ ->
+      { dtype = dtype x; layout = form_layout x; placement = placement x }
 
 let expect (type v s) (dt : (v, s) dtype) (Any x : 'd any) : (v, s, 'd) t =
   match D.equal_witness dt (dtype x) with
@@ -1355,16 +1360,6 @@ let rec make_reductions : type d r.
   | r :: rest ->
       let v = make_reduction m k layout placement r in
       (v, make_reductions m (k + reduction_width r) layout placement rest)
-
-(* [x]'s layout, as its form has it, allocating nothing for a value on one
-   device. *)
-let form_layout (type v s d) (x : (v, s, d) t) =
-  match x with
-  | Array { a; _ } -> Nx_array.layout a
-  | Handle { arrays; _ } when Iarray.length arrays = 1 ->
-      Nx_array.layout (Iarray.get arrays 0)
-  | Shards _ | Handle _ -> L.contiguous (layout_shape x)
-  | Traced { form; _ } -> form.layout
 
 (* [x]'s shape moved by [mv]. Raises naming [by] where [mv] does not apply: as
    {!check_shape} does for a target shape no layout has, and otherwise naming
