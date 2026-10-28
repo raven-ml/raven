@@ -6489,6 +6489,23 @@ end
 (* Operators *)
 
 module Infix = struct
+  let ( + ) a b = add a b
+  let ( - ) a b = sub a b
+  let ( * ) a b = mul a b
+  let ( / ) a b = div a b
+  let ( ** ) a b = pow a b
+  let ( ~- ) x = neg x
+  let ( +$ ) x c = add_s x c
+  let ( -$ ) x c = sub_s x c
+  let ( *$ ) x c = mul_s x c
+  let ( /$ ) x c = div_s x c
+  let ( **$ ) x c = pow_s x c
+  let ( land ) a b = bitwise_and a b
+  let ( lor ) a b = bitwise_or a b
+  let ( lxor ) a b = bitwise_xor a b
+  let ( *@ ) a b = matmul a b
+  let ( .%{} ) x p = get p x
+  let ( .${} ) x idx = slice idx x
   let ( = ) a b = equal a b
   let ( <> ) a b = not_equal a b
   let ( < ) a b = less a b
@@ -6504,21 +6521,3 @@ module Infix = struct
   let ( && ) a b = logical_and a b
   let ( || ) a b = logical_or a b
 end
-
-let ( + ) a b = add a b
-let ( - ) a b = sub a b
-let ( * ) a b = mul a b
-let ( / ) a b = div a b
-let ( ** ) a b = pow a b
-let ( ~- ) x = neg x
-let ( +$ ) x c = add_s x c
-let ( -$ ) x c = sub_s x c
-let ( *$ ) x c = mul_s x c
-let ( /$ ) x c = div_s x c
-let ( **$ ) x c = pow_s x c
-let ( land ) a b = bitwise_and a b
-let ( lor ) a b = bitwise_or a b
-let ( lxor ) a b = bitwise_xor a b
-let ( *@ ) a b = matmul a b
-let ( .%{} ) x p = get p x
-let ( .${} ) x idx = slice idx x

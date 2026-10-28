@@ -121,16 +121,16 @@ let forms =
     { name = "rsub_s"; scalar = (fun x c -> Nx.rsub_s c x); full = (fun a b -> Nx.sub b a) };
     { name = "rdiv_s"; scalar = (fun x c -> Nx.rdiv_s c x); full = (fun a b -> Nx.div b a) };
     { name = "rpow_s"; scalar = (fun x c -> Nx.rpow_s c x); full = (fun a b -> Nx.pow b a) };
-    { name = "( +$ )"; scalar = (fun x c -> Nx.(x +$ c)); full = (fun a b -> Nx.add a b) };
-    { name = "( -$ )"; scalar = (fun x c -> Nx.(x -$ c)); full = (fun a b -> Nx.sub a b) };
-    { name = "( *$ )"; scalar = (fun x c -> Nx.(x *$ c)); full = (fun a b -> Nx.mul a b) };
-    { name = "( /$ )"; scalar = (fun x c -> Nx.(x /$ c)); full = (fun a b -> Nx.div a b) };
-    { name = "( + )"; scalar = (fun x c -> Nx.(x + c_of x c)); full = (fun a b -> Nx.add a b) };
-    { name = "( - )"; scalar = (fun x c -> Nx.(x - c_of x c)); full = (fun a b -> Nx.sub a b) };
-    { name = "( * )"; scalar = (fun x c -> Nx.(x * c_of x c)); full = (fun a b -> Nx.mul a b) };
-    { name = "( / )"; scalar = (fun x c -> Nx.(x / c_of x c)); full = (fun a b -> Nx.div a b) };
-    { name = "( ** )"; scalar = (fun x c -> Nx.(x ** c_of x c)); full = (fun a b -> Nx.pow a b) };
-    { name = "( **$ )"; scalar = (fun x c -> Nx.(x **$ c)); full = (fun a b -> Nx.pow a b) };
+    { name = "Infix ( +$ )"; scalar = (fun x c -> Nx.Infix.(x +$ c)); full = (fun a b -> Nx.add a b) };
+    { name = "Infix ( -$ )"; scalar = (fun x c -> Nx.Infix.(x -$ c)); full = (fun a b -> Nx.sub a b) };
+    { name = "Infix ( *$ )"; scalar = (fun x c -> Nx.Infix.(x *$ c)); full = (fun a b -> Nx.mul a b) };
+    { name = "Infix ( /$ )"; scalar = (fun x c -> Nx.Infix.(x /$ c)); full = (fun a b -> Nx.div a b) };
+    { name = "Infix ( + )"; scalar = (fun x c -> Nx.Infix.(x + c_of x c)); full = (fun a b -> Nx.add a b) };
+    { name = "Infix ( - )"; scalar = (fun x c -> Nx.Infix.(x - c_of x c)); full = (fun a b -> Nx.sub a b) };
+    { name = "Infix ( * )"; scalar = (fun x c -> Nx.Infix.(x * c_of x c)); full = (fun a b -> Nx.mul a b) };
+    { name = "Infix ( / )"; scalar = (fun x c -> Nx.Infix.(x / c_of x c)); full = (fun a b -> Nx.div a b) };
+    { name = "Infix ( ** )"; scalar = (fun x c -> Nx.Infix.(x ** c_of x c)); full = (fun a b -> Nx.pow a b) };
+    { name = "Infix ( **$ )"; scalar = (fun x c -> Nx.Infix.(x **$ c)); full = (fun a b -> Nx.pow a b) };
   ]
 
 let tests =
@@ -185,10 +185,10 @@ type pair_form = {
 
 let pair_forms =
   [
-    { pname = "( land )"; op = (fun a b -> Nx.(a land b)); fn = Nx.bitwise_and };
-    { pname = "( lor )"; op = (fun a b -> Nx.(a lor b)); fn = Nx.bitwise_or };
-    { pname = "( lxor )"; op = (fun a b -> Nx.(a lxor b)); fn = Nx.bitwise_xor };
-    { pname = "( *@ )"; op = (fun a b -> Nx.(a *@ b)); fn = Nx.matmul };
+    { pname = "Infix ( land )"; op = (fun a b -> Nx.Infix.(a land b)); fn = Nx.bitwise_and };
+    { pname = "Infix ( lor )"; op = (fun a b -> Nx.Infix.(a lor b)); fn = Nx.bitwise_or };
+    { pname = "Infix ( lxor )"; op = (fun a b -> Nx.Infix.(a lxor b)); fn = Nx.bitwise_xor };
+    { pname = "Infix ( *@ )"; op = (fun a b -> Nx.Infix.(a *@ b)); fn = Nx.matmul };
   ]
 
 let law_pair f (Operand (dt, x, _, _)) =
@@ -199,11 +199,75 @@ let pair_laws =
   group "each binary operator is its function"
     (List.map (fun f -> prop f.pname operand (law_pair f)) pair_forms)
 
+(* OCaml's operators under [open Nx]: each field of [under_nx] compiles only
+   while [Nx]'s top level defines none of OCaml's operators. [size] counts a
+   shape's elements with [( * )] beside [Nx]'s functions, as a program under
+   the open does. *)
+
+type stdlib_ops = {
+  int2 : (int -> int -> int) list;
+  shifts : (int -> int -> int) list;
+  int1 : (int -> int) list;
+  float2 : (float -> float -> float) list;
+  float1 : (float -> float) list;
+  compare : (int -> int -> bool) list;
+  logic : (bool -> bool -> bool) list;
+  append : int list -> int list -> int list;
+  concat : string -> string -> string;
+  pipe : int -> (int -> int) -> int;
+  apply : (int -> int) -> int -> int;
+  deref : int ref -> int;
+  assign : int ref -> int -> unit;
+  size : int array -> int;
+}
+
+let under_nx =
+  let open Nx in
+  {
+    int2 = [ ( + ); ( - ); ( * ); ( / ); ( mod ); ( land ); ( lor ); ( lxor ) ];
+    shifts = [ ( lsl ); ( lsr ); ( asr ) ];
+    int1 = [ ( ~- ); ( ~+ ); lnot ];
+    float2 = [ ( +. ); ( -. ); ( *. ); ( /. ); ( ** ) ];
+    float1 = [ ( ~-. ); ( ~+. ) ];
+    compare = [ ( = ); ( <> ); ( < ); ( <= ); ( > ); ( >= ); ( == ); ( != ) ];
+    logic = [ ( && ); ( || ) ];
+    append = ( @ );
+    concat = ( ^ );
+    pipe = ( |> );
+    apply = ( @@ );
+    deref = ( ! );
+    assign = ( := );
+    size = (fun s -> Array.fold_left ( * ) 1 (shape (zeros float32 s)));
+  }
+
+let test_stdlib () =
+  let o = under_nx in
+  let r = ref 0 in
+  o.assign r 3;
+  equal (list int) [ 9; 5; 14; 3; 1; 2; 7; 5 ]
+    (List.map (fun f -> f 7 2) o.int2);
+  (* [-7] is [2^63 - 7] as 63 bits, so [lsr] fills with zeros. *)
+  equal (list int) [ -28; 2305843009213693950; -2 ]
+    (List.map (fun f -> f (-7) 2) o.shifts);
+  equal (list int) [ -7; 7; -8 ] (List.map (fun f -> f 7) o.int1);
+  equal (list float_exact) [ 9.; 5.; 14.; 3.5; 49. ]
+    (List.map (fun f -> f 7. 2.) o.float2);
+  equal (list float_exact) [ -7.; 7. ] (List.map (fun f -> f 7.) o.float1);
+  equal (list bool) [ false; true; false; false; true; true; false; true ]
+    (List.map (fun f -> f 7 2) o.compare);
+  equal (list bool) [ false; true ] (List.map (fun f -> f true false) o.logic);
+  equal (list int) [ 7; 2 ] (o.append [ 7 ] [ 2 ]);
+  equal string "72" (o.concat "7" "2");
+  equal int 8 (o.pipe 7 succ);
+  equal int 8 (o.apply succ 7);
+  equal int 3 (o.deref r);
+  equal int 6 (o.size [| 2; 3 |])
+
 (* Cases *)
 
 let test_negation () =
   equal (array float_exact) [| -1.; 0.; -0. |]
-    (Nx.to_array Nx.(-create float32 [| 3 |] [| 1.; -0.; 0. |]))
+    (Nx.to_array Nx.Infix.(-Nx.create Nx.float32 [| 3 |] [| 1.; -0.; 0. |]))
 
 let test_logical () =
   let a = Nx.create Nx.bool [| 4 |] [| false; false; true; true |]
@@ -213,7 +277,7 @@ let test_logical () =
 
 let test_reads_as_prose () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  equal (array float_exact) [| 3.; 5.; 7. |] (Nx.to_array Nx.(x *$ 2. +$ 1.));
+  equal (array float_exact) [| 3.; 5.; 7. |] (Nx.to_array Nx.Infix.(x *$ 2. +$ 1.));
   equal (array float_exact) [| 1.; 0.; -1. |] (Nx.to_array (Nx.rsub_s 2. x));
   equal (array bool) [| false; true; false |]
     (Nx.to_array Nx.Infix.((x >$ 1.) && (x <$ 3.)))
@@ -230,11 +294,11 @@ let test_placement () =
 
 let test_index_operators () =
   let x = Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1) in
-  equal (array int32) [| 5l |] (Nx.to_array Nx.(x.%{[ 1; 2 ]}));
-  equal (array int32) [| 3l; 4l; 5l |] (Nx.to_array Nx.(x.%{[ 1 ]}));
-  equal (array int32) [| 1l; 4l |] (Nx.to_array Nx.(x.${[ A; I 1 ]}));
-  invalid ~by:"Nx.get" (fun () -> Nx.(x.%{[ 2 ]}));
-  invalid ~by:"Nx.slice" (fun () -> Nx.(x.${[ A; I 3 ]}))
+  equal (array int32) [| 5l |] (Nx.to_array Nx.Infix.(x.%{[ 1; 2 ]}));
+  equal (array int32) [| 3l; 4l; 5l |] (Nx.to_array Nx.Infix.(x.%{[ 1 ]}));
+  equal (array int32) [| 1l; 4l |] (Nx.to_array Nx.Infix.(x.${Nx.[ A; I 1 ]}));
+  invalid ~by:"Nx.get" (fun () -> Nx.Infix.(x.%{[ 2 ]}));
+  invalid ~by:"Nx.slice" (fun () -> Nx.Infix.(x.${Nx.[ A; I 3 ]}))
 
 let refusals =
   [
@@ -253,6 +317,7 @@ let cases_group =
       test "a formula reads as its arithmetic" test_reads_as_prose;
       test "a scalar form computes where its operand lies" test_placement;
       test ".%{} is get and .${} is slice" test_index_operators;
+      test "open Nx keeps OCaml's operators" test_stdlib;
       cases "refusals name the scalar form" ~name:fst refusals (fun (by, f) ->
           invalid ~by f);
     ]

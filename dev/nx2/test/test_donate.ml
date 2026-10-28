@@ -1823,11 +1823,11 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
       c ~consumes:true "argwhere" 1 (fun d ->
           show (Nx.argwhere (d 0 (x [| 2; 3 |]))));
-      c "( *@ )" ~by:"matmul" 2 (fun d ->
-          show Nx.(d 0 (x [| 2; 3 |]) *@ d 1 (x [| 3; 2 |])));
-      c "( .%{} )" ~by:"get" 1 (fun d -> show Nx.((d 0 (x [| 2; 3 |])).%{[ 1 ]}));
-      c "( .${} )" ~by:"slice" 1 (fun d ->
-          show Nx.((d 0 (x [| 2; 3 |])).${[ A; R (0, 2) ]}));
+      c "Infix.( *@ )" ~by:"matmul" 2 (fun d ->
+          show Nx.Infix.(d 0 (x [| 2; 3 |]) *@ d 1 (x [| 3; 2 |])));
+      c "Infix.( .%{} )" ~by:"get" 1 (fun d -> show Nx.Infix.((d 0 (x [| 2; 3 |])).%{[ 1 ]}));
+      c "Infix.( .${} )" ~by:"slice" 1 (fun d ->
+          show Nx.Infix.((d 0 (x [| 2; 3 |])).${Nx.[ A; R (0, 2) ]}));
     ]
 
 (* The functions of floats. *)
@@ -2292,12 +2292,12 @@ let integers =
              [ v ]));
       c ~consumes:true "unravel_index" 1 (fun d ->
           showl (Nx.unravel_index (d 0 (ints [| 0; 4; 7 |])) [| 2; 3 |]));
-      c "( land )" ~by:"bitwise_and" 2 (fun d ->
-          show Nx.(d 0 (x [| 4 |]) land d 1 (Nx.flip (x [| 4 |]))));
-      c "( lor )" ~by:"bitwise_or" 2 (fun d ->
-          show Nx.(d 0 (x [| 4 |]) lor d 1 (Nx.flip (x [| 4 |]))));
-      c "( lxor )" ~by:"bitwise_xor" 2 (fun d ->
-          show Nx.(d 0 (x [| 4 |]) lxor d 1 (Nx.flip (x [| 4 |]))));
+      c "Infix.( land )" ~by:"bitwise_and" 2 (fun d ->
+          show Nx.Infix.(d 0 (x [| 4 |]) land d 1 (Nx.flip (x [| 4 |]))));
+      c "Infix.( lor )" ~by:"bitwise_or" 2 (fun d ->
+          show Nx.Infix.(d 0 (x [| 4 |]) lor d 1 (Nx.flip (x [| 4 |]))));
+      c "Infix.( lxor )" ~by:"bitwise_xor" 2 (fun d ->
+          show Nx.Infix.(d 0 (x [| 4 |]) lxor d 1 (Nx.flip (x [| 4 |]))));
     ]
 
 (* The functions of booleans. *)
@@ -2329,17 +2329,17 @@ let operators =
   let xs fn by op = c fn ~by 1 (fun d -> show (op (d 0 (x [| 4 |])) 1.5)) in
   table "float32"
     [
-      x2 "( + )" "add" Nx.( + );
-      x2 "( - )" "sub" Nx.( - );
-      x2 "( * )" "mul" Nx.( * );
-      x2 "( / )" "div" Nx.( / );
-      x2 "( ** )" "pow" Nx.( ** );
-      c "( ~- )" ~by:"neg" 1 (fun d -> show Nx.(-d 0 (x [| 4 |])));
-      xs "( +$ )" "add_s" Nx.( +$ );
-      xs "( -$ )" "sub_s" Nx.( -$ );
-      xs "( *$ )" "mul_s" Nx.( *$ );
-      xs "( /$ )" "div_s" Nx.( /$ );
-      xs "( **$ )" "pow_s" Nx.( **$ );
+      x2 "Infix.( + )" "add" Nx.Infix.( + );
+      x2 "Infix.( - )" "sub" Nx.Infix.( - );
+      x2 "Infix.( * )" "mul" Nx.Infix.( * );
+      x2 "Infix.( / )" "div" Nx.Infix.( / );
+      x2 "Infix.( ** )" "pow" Nx.Infix.( ** );
+      c "Infix.( ~- )" ~by:"neg" 1 (fun d -> show Nx.Infix.(-d 0 (x [| 4 |])));
+      xs "Infix.( +$ )" "add_s" Nx.Infix.( +$ );
+      xs "Infix.( -$ )" "sub_s" Nx.Infix.( -$ );
+      xs "Infix.( *$ )" "mul_s" Nx.Infix.( *$ );
+      xs "Infix.( /$ )" "div_s" Nx.Infix.( /$ );
+      xs "Infix.( **$ )" "pow_s" Nx.Infix.( **$ );
       x2 "Infix.( = )" "equal" Nx.Infix.( = );
       x2 "Infix.( <> )" "not_equal" Nx.Infix.( <> );
       x2 "Infix.( < )" "less" Nx.Infix.( < );

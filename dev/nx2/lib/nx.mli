@@ -330,7 +330,8 @@ val placement : ('v, 's, 'd) t -> 'd Placement.t
 
     An [_at] form raises as its host form does, and raises
     [Invalid_argument] naming itself where its placement cuts an axis the
-    shape lacks. *)
+    shape lacks. A value made here combines with others through the functions
+    of {!section-arith} and their operators in {!Infix}. *)
 
 val zeros : ('v, 's) dtype -> int array -> ('v, 's, host) t
 (** [zeros dt s] is the host value of shape [s] whose every element is zero.
@@ -1124,7 +1125,10 @@ val scatter :
     or if its operation does not take the operands' dtype: what each takes is
     stated with it. The host computes every dtype stated. Where a device's
     kernels do not compute one, as a GPU's may not compute complex numbers,
-    the function raises naming itself. *)
+    the function raises naming itself. The operators of these functions, such
+    as [a + b] for [add a b], are in {!Infix} ({!section-operators}), with
+    those of the comparisons, the bitwise functions, {!matmul}, {!get} and
+    {!slice}. *)
 
 val add : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [add a b] is the elementwise sum. Every dtype but booleans. *)
@@ -1260,64 +1264,68 @@ val greater_equal_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
 
 (** {2:operators Operators}
 
-    The arithmetic operators, for a local open: [Nx.(sin x * x +$ 1.)].
-    Comparisons and logical operators live in {!Infix}, so that [Nx.( … )]
-    keeps OCaml's own. The remainder has no operator: {!mod_} takes the
-    dividend's sign. *)
+    {!Infix} holds the operators over values, so that [open Nx] keeps OCaml's
+    operators. Each operator is the function its doc names, and raises as that
+    function does. A local open applies them to one expression, as
+    [Nx.Infix.(a * b +$ 1.)], and [let open Nx.Infix in] to the rest of a
+    block. Inside [Nx.( … )], [Infix.( … )] adds them, as in
+    [Nx.(Infix.(sin x * x +$ 1.))]. Within an open of {!Infix}, OCaml's
+    operators are reached through [Stdlib], as [Stdlib.( + )]. {!mod_}, whose
+    result takes the dividend's sign, has no operator. *)
 
-val ( + ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a + b] is [add a b]. *)
-
-val ( - ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a - b] is [sub a b]. *)
-
-val ( * ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a * b] is [mul a b]. *)
-
-val ( / ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a / b] is [div a b]. *)
-
-val ( ** ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a ** b] is [pow a b]. *)
-
-val ( ~- ) : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [-x] is [neg x]. *)
-
-val ( +$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [x +$ c] is [add_s x c]. *)
-
-val ( -$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [x -$ c] is [sub_s x c]. *)
-
-val ( *$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [x *$ c] is [mul_s x c]. *)
-
-val ( /$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [x /$ c] is [div_s x c]. *)
-
-val ( **$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [x **$ c] is [pow_s x c]. *)
-
-val ( land ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a land b] is [bitwise_and a b]. *)
-
-val ( lor ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a lor b] is [bitwise_or a b]. *)
-
-val ( lxor ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a lxor b] is [bitwise_xor a b]. *)
-
-val ( *@ ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [a *@ b] is [matmul a b]. *)
-
-val ( .%{} ) : ('v, 's, 'd) t -> int list -> ('v, 's, 'd) t
-(** [x.%{p}] is [get p x]. *)
-
-val ( .${} ) : ('v, 's, 'd) t -> 'd index list -> ('v, 's, 'd) t
-(** [x.${idx}] is [slice idx x]. *)
-
-(** Comparisons and logical operators, for [open Nx.Infix]. *)
+(** Operators over values, for a local open. *)
 module Infix : sig
+  val ( + ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a + b] is [add a b]. *)
+
+  val ( - ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a - b] is [sub a b]. *)
+
+  val ( * ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a * b] is [mul a b]. *)
+
+  val ( / ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a / b] is [div a b]. *)
+
+  val ( ** ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a ** b] is [pow a b]. *)
+
+  val ( ~- ) : ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [-x] is [neg x]. *)
+
+  val ( +$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+  (** [x +$ c] is [add_s x c]. *)
+
+  val ( -$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+  (** [x -$ c] is [sub_s x c]. *)
+
+  val ( *$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+  (** [x *$ c] is [mul_s x c]. *)
+
+  val ( /$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+  (** [x /$ c] is [div_s x c]. *)
+
+  val ( **$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+  (** [x **$ c] is [pow_s x c]. *)
+
+  val ( land ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a land b] is [bitwise_and a b]. *)
+
+  val ( lor ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a lor b] is [bitwise_or a b]. *)
+
+  val ( lxor ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a lxor b] is [bitwise_xor a b]. *)
+
+  val ( *@ ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+  (** [a *@ b] is [matmul a b]. *)
+
+  val ( .%{} ) : ('v, 's, 'd) t -> int list -> ('v, 's, 'd) t
+  (** [x.%{p}] is [get p x]. *)
+
+  val ( .${} ) : ('v, 's, 'd) t -> 'd index list -> ('v, 's, 'd) t
+  (** [x.${idx}] is [slice idx x]. *)
+
   val ( = ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> 'd bool_t
   (** [a = b] is [equal a b]. *)
 
@@ -2515,7 +2523,7 @@ val attention :
 
     {[
     let window p = Nx.(logical_and (causal p) (less p.q (add_s p.k 128L)))
-    let alibi slopes p s = Nx.(s - cast float32 (p.q - p.k) * slopes)
+    let alibi slopes p s = Nx.(Infix.(s - cast float32 (p.q - p.k) * slopes))
     (* slopes [hq; 1; 1] *)
     let o, lse = Nx.attention ~mask:window ~score:(alibi slopes) ~kv q
     ]}

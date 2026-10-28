@@ -246,7 +246,7 @@ let score_of c : (Nx.host Nx.pair -> Nx.host Nx.float32_t -> Nx.host Nx.float32_
   | Identity -> None
   | Alibi slopes ->
       let slopes = Nx.create Nx.float32 [| hq c; 1; 1 |] slopes in
-      Some (fun p s -> Nx.(s - (cast float32 (p.q - p.k) * slopes)))
+      Some (fun p s -> Nx.(Infix.(s - (cast float32 (p.q - p.k) * slopes))))
   | Bias bias ->
       let bias = Nx.create Nx.float32 [| hq c; c.tq; c.tk |] bias in
       Some (fun _ s -> Nx.add s bias)
