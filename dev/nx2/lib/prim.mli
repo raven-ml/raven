@@ -6,7 +6,7 @@
 (** Operations as data, and values' facts: the functions over {!Value.prim} and
     {!Value.t} that the engine and [Nx.Prim] share.
 
-    Every function is total over the constructors. {!route} states each
+    Every function is total over the constructors. {!val-route} states each
     operation's rule once: the shapes, dtypes, axes and attributes its
     operands must have, where it reads them, and each result's layout and
     placement, from {!Route}; {!results_at} makes the results' forms from what
@@ -134,16 +134,16 @@ val operands : 'r prim -> operands
 
 val own_index :
   'r prim -> (int list * Nx_array.Layout.t * Nx_array.Dtype.any) option
-(** [own_index op] is the positions in {!operands} of the operands [op] reads
-    only at its first result's own index, each of which a kernel may take as
-    that result's destination ({!Nx_kernel.S}), with that result's layout and
-    dtype: a map's plain loads, a scatter's [into], a contraction's [init], an
-    assembly's first piece where it covers the whole result. [None] for an
-    operation with none. *)
+(** [own_index op] is the positions in {!val-operands} of the operands [op]
+    reads only at its first result's own index, each of which a kernel may
+    take as that result's destination ({!Nx_kernel.S}), with that result's
+    layout and dtype: a map's plain loads, a scatter's [into], a
+    contraction's [init], an assembly's first piece where it covers the whole
+    result. [None] for an operation with none. *)
 
 val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
 (** [iteri f op] is [f i x] for each operand [x] of [op], at its position [i] in
-    {!operands}. *)
+    {!val-operands}. *)
 
 val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
 (** [exists f op] is whether [f x] for some operand [x] of [op]. Neither it
@@ -155,7 +155,7 @@ val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 
 val mapi :
   ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
-(** [mapi m op] is [op] with each operand [x] at position [i] in {!operands}
+(** [mapi m op] is [op] with each operand [x] at position [i] in {!val-operands}
     replaced by [m i x]: [op] itself where [m] returns each operand
     itself. *)
 
@@ -200,10 +200,10 @@ val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
 (** The type for what an operation's rule decides. *)
 type routed = {
   route : unit Route.t option;
-      (** Where it reads each operand, in {!operands}' order, where its
+      (** Where it reads each operand, in {!val-operands}' order, where its
           results lie and how its devices compute them: [None] for [Place]
           and [Check], which are not routed. *)
-  layouts : Nx_array.Layout.t array;  (** Its results' ({!layouts}). *)
+  layouts : Nx_array.Layout.t array;  (** Its results' ({!val-layouts}). *)
 }
 
 val route : by:string -> 'r prim -> routed
@@ -213,7 +213,7 @@ val route : by:string -> 'r prim -> routed
     no operands lies where its map names, else on the host, each device of
     that placement computing its window of the results.
 
-    Raises as {!layouts} does, then as {!Route.route} does. *)
+    Raises as {!val-layouts} does, then as {!Route.route} does. *)
 
 val results_at :
   unit Devices.placement ->
@@ -223,7 +223,7 @@ val results_at :
   'r
 (** [results_at p layouts m op] is [op]'s result, its value at position [k]
     made by [m k f], [f] the form eager execution gives it at [p], laid out as
-    [layouts], [op]'s {!layouts}; [()] for [Check]. A [Place]'s result lies
+    [layouts], [op]'s {!val-layouts}; [()] for [Check]. A [Place]'s result lies
     at its own placement. It checks nothing. *)
 
 val results :
@@ -231,7 +231,7 @@ val results :
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
   'r prim ->
   'r
-(** [results ~by m op] is {!results_at} of what {!route} decides for [op]:
+(** [results ~by m op] is {!results_at} of what {!val-route} decides for [op]:
     its results' layouts, at the placement of its results.
 
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
@@ -351,7 +351,7 @@ val load_any : 'd load -> 'd any
 val routine_name : ('d, 'r) linalg -> string
 (** [routine_name l] names [l]'s routine in messages, as ["Cholesky"]. *)
 
-(** {1:results Results} *)
+(** {1:reading Reading results} *)
 
 (** The outputs of a map whose dtypes are known at run time, and how to read
     its result as values. *)

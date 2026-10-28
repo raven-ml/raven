@@ -21,7 +21,7 @@
     unread and adds the check to the calling domain's {e pending} checks on
     the set, which the domain's systhreads share. A pending check holds its
     data's memory and its reduction's, a flag's own memory for one flag
-    ({!Rig.Claim.hold}), so that no donation writes what its failure
+    ({!Rig.Claim.val-hold}), so that no donation writes what its failure
     reports. A {!wait} on the set drains them: it reads them oldest first
     and raises the first failure. A failing check's exception is built by
     its [fail], which may read the values it receives and so wait on the
@@ -69,7 +69,7 @@ val issue :
   unit
 (** [issue ~by ok data fail] issues the check of the flags [ok] on [data],
     as stated above. [ok] and [data] must be alive, and [data] must
-    broadcast to [ok]'s shape ({!Prim.layouts} of the [Check]).
+    broadcast to [ok]'s shape ({!Prim.val-layouts} of the [Check]).
 
     Raises [fail i d] on the host, where flag [i] is the first false one and
     [d] the data's elements at [i]; what reading an earlier check raises

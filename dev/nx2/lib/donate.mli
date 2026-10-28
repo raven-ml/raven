@@ -19,7 +19,7 @@
       route too, so that one they refuse kills nothing. A function of several
       operations checks only that each operand lives, since its operations
       run in an order it fixes.
-    + {!claim} claims the handles, which kills their donors for good, naming
+    + {!val-claim} claims the handles, which kills their donors for good, naming
       the consumer.
     + The consumer reads each handle as its arrays and each donor beside one
       as live ({!called}, {!arrays}).
@@ -79,7 +79,7 @@ val read : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 
     The steps of the protocol above, which an operation and a function of
     several operations take alike. A claim reads its consumer's operands by
-    their positions in the list {!claim} takes. *)
+    their positions in the list {!val-claim} takes. *)
 
 type 'd claim
 (** The type for one consumer's claim on the handles among its operands, of
@@ -139,13 +139,13 @@ val consumed : 'd claim -> unit
 
 val with_consumer : by:string -> 'd Value.any list -> ('d claim -> 'a) -> 'a
 (** [with_consumer ~by xs f] checks that each of [xs] lives, then is [f c] for
-    [c], the claim of [by] on the handles among them ({!claim}), and ends [c]
-    ({!consumed}) when [f] returns or raises. [f] must not keep an array it
-    reads by [c], or a value over one, past its return, but those {!take}
+    [c], the claim of [by] on the handles among them ({!val-claim}), and ends
+    [c] ({!consumed}) when [f] returns or raises. [f] must not keep an array
+    it reads by [c], or a value over one, past its return, but those {!take}
     gave.
 
     Raises [Invalid_argument] naming [by] for a dead value, claiming nothing,
-    as {!claim} does, and what [f] raises. *)
+    as {!val-claim} does, and what [f] raises. *)
 
 val arrays : 'd claim -> int -> Nx_array.any array
 (** [arrays c i] is operand [i]'s arrays, one per device, shared with nothing.

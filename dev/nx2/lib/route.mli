@@ -50,8 +50,8 @@
     [y], [z], then [x3], [x4], …:
 
     {v
-Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
-at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
+    Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
+    at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
 
     The expression is [Placement.on s], [Placement.device s] with the

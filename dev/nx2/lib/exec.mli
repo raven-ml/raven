@@ -6,7 +6,7 @@
 (** Computing operations by their set's kernels, each device its window.
 
     This module computes an operation whose operands have bytes and lie
-    where its route reads them ({!Prim.route}). Its callers choose the
+    where its route reads them ({!Prim.val-route}). Its callers choose the
     route, read the operands there ({!placer}) and give it the memory a
     donation frees. It settles no check. This module lies above {!Prim},
     {!Route} and {!Place}; {!Partial}, {!Check} and {!Eval} call it.
@@ -41,7 +41,7 @@
     Unless a value's doc says otherwise, it raises as stated above, and
     allocates the results' memory and the values over it. *)
 
-(** {1:windows Windows} *)
+(** {1:computing Windows} *)
 
 val windows :
   by:string ->
@@ -52,7 +52,7 @@ val windows :
   'r
 (** [windows ~by ?into route layouts op] is [op] computed by windows, its
     operands lying where [route] reads them, its results at [route]'s result
-    laid out as [layouts] ({!Prim.layouts}), fresh but the first, which is
+    laid out as [layouts] ({!Prim.val-layouts}), fresh but the first, which is
     [into] where it is given: memory of a donated operand ({!Donate.reuse})
     that holds the first result's window on the one device of the route's
     result.
@@ -69,7 +69,7 @@ val is_local : 'r Value.prim -> bool
 val local : by:string -> 'r Value.prim -> 'r
 (** [local ~by op] is the map [op], for which {!is_local} holds, computed on
     its loads' one device without a route: its rule checked
-    ({!Prim.layouts}), its results fresh there, the set's kernels called
+    ({!Prim.val-layouts}), its results fresh there, the set's kernels called
     once.
 
     Raises [Invalid_argument] naming [by] where [op]'s operands break its

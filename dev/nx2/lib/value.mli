@@ -27,7 +27,7 @@ type ('v, 's, +'d) payload = ..
 type death = Live | Died of string  (** Given to the function named. *)
 (** Whether a value lives. Values are made [Live]. The consumer of a
     donation sets its donor's word to [Died], for good, by one
-    compare-and-set from [Live] ({!Donate.claim}). *)
+    compare-and-set from [Live] ({!Donate.val-claim}). *)
 
 type ('v, 's, 'd) t =
   | Array of {

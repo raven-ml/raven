@@ -7,13 +7,13 @@
 
     An operation's {e eager meaning} is {!run}'s. Its operands must be alive,
     and none may be traced. Its rule is checked and routed once
-    ({!Prim.route}) before anything is allocated, claimed or computed. Each
+    ({!Prim.val-route}) before anything is allocated, claimed or computed. Each
     operand is read where the route reads it, by views where it lies
     ({!Exec.placer}), and the operation computes by partials ({!Partial}) or
     by windows ({!Exec.windows}), as the route says. An operation of no
-    operands computes where {!Prim.route} puts it, each device its window.
+    operands computes where {!Prim.val-route} puts it, each device its window.
     The operation consumes the donated handles among its operands as {!Donate}
-    states: it claims them after the route ({!Donate.claim}), its first
+    states: it claims them after the route ({!Donate.val-claim}), its first
     result takes the memory of a handle that may hold it and lies where the
     route puts the results ({!Donate.reuse}), and the claim ends once the
     operation returns or raises ({!Donate.consumed}). One that raises frees
@@ -105,7 +105,7 @@ val run : by:string -> 'r prim -> 'r
 
     Raises [Invalid_argument] naming [by] for a dead or traced operand and
     where [op]'s operands break its rule, before any handle is claimed, and
-    as {!Donate.claim}, {!Exec} and {!Check.issue} state. *)
+    as {!Donate.val-claim}, {!Exec} and {!Check.issue} state. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning, as stated above: {!run}'s where no

@@ -30,7 +30,7 @@
     Errors are [Invalid_argument] naming the [by] the caller passes. *)
 
 type host
-(** The brand of {!host}. *)
+(** The brand of {!val-host}. *)
 
 type +'d t
 (** The type for sets of brand ['d]. *)
@@ -70,7 +70,7 @@ val kernels : 'd t -> (module Nx_kernel.S) option
 (** [kernels s] is who computes on [s] eagerly. It reads a field. *)
 
 val pp : Format.formatter -> 'd t -> unit
-(** [pp] formats a set as [set 2 [CUDA:0; CUDA:1]], {!host} as [host]. *)
+(** [pp] formats a set as [set 2 [CUDA:0; CUDA:1]], {!val-host} as [host]. *)
 
 (** {1:placements Placements} *)
 
