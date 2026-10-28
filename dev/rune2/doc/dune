@@ -8,7 +8,8 @@
   03-maps.md
   04-loops.md
   05-totals.md
-  06-compilation.md)
+  06-compilation.md
+  07-one-call.md)
  (enabled_if
   (and
    (<> %{profile} sanitize)
