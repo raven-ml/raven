@@ -1143,6 +1143,9 @@ let rec walk ~name ~witness (p : Program.t) consts cts =
         let n = next.(e) - base in
         if reached base n then
           scan_rule env step ~length ~init ~xs ~captures (cts_at base n)
+    | Do { c = Remat { body; args }; base } ->
+        let n = next.(e) - base in
+        if reached base n then remat_rule env body args (cts_at base n)
     | Do { base; _ } ->
         if reached base (next.(e) - base) then
           invalid_arg (name ^ ": a loop or call has no transpose yet")
@@ -1343,6 +1346,30 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
       (fun j (V x) ->
         if has_row.(j) then env.give x (held (Loops.flip (take ()))))
       lxs
+
+(* A remat's transpose linearizes its function again at its constant arguments,
+   then transposes that, so that the forward pass kept its arguments alone. *)
+and remat_rule env (body : Program.t) args cts =
+  let la = Array.map (fun (V x) -> env.lin x) args in
+  let consts =
+    Array.map
+      (fun (V x) -> V (env.const x))
+      (Loops.pick (Array.map not la) args)
+  in
+  let lins = Loops.pick la args in
+  let tape, captures =
+    Trace.trace Tape ~name:env.name (Array.map form lins) (fun ts ->
+        eval body (Loops.merge la ts consts))
+  in
+  let n = Array.length lins in
+  let tconsts =
+    Array.append (Array.make n None) (Array.map Option.some captures)
+  in
+  let r =
+    walk ~name:env.name ~witness:env.witness tape tconsts
+      (Array.init (Array.length tape.outputs) cts)
+  in
+  Array.iteri (fun k (V x) -> Option.iter (fun c -> env.give x c) r.(k)) lins
 
 let transpose ?witness l cts =
   let p = l.tape in

@@ -7,7 +7,7 @@ open Program
 module P = Nx_kernel.Prog
 module Prim = Nx.Prim
 
-type kind = Body | Jit | Tape
+type kind = Body | Jit | Tape | Staged
 
 type state = {
   kind : kind;
@@ -41,7 +41,7 @@ let operand (type v s d) st i (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
             (st.name
            ^ ": the function captures a value another transformation traces; \
               pass it as an argument")
-      | Body | Tape -> (
+      | Body | Tape | Staged -> (
           match captured st (V x) with
           | Some n -> Nx.Prim.traced i (Nx.Prim.form x) (Var n)
           | None ->
@@ -329,7 +329,7 @@ let claims st i = function
   | Call _ -> false
   | Add (_, x) -> st.kind <> Tape || owns i x
   | (Lanes (a, _) | Lane_index a) when bound a = None -> false
-  | c -> st.kind = Jit || List.exists (owned i) (operands c)
+  | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
 
 let record st i = function
   | Add _ when st.kind = Tape ->
@@ -348,8 +348,8 @@ let record st i = function
 
 (* Partial evaluation of programs
 
-   The tape tracer splits a loop over its variables as it splits a map: what
-   reads none of them computes at the call, the rest is recorded. *)
+   The tape tracer splits a loop or a remat over its variables as it splits a
+   map: what reads none of them computes at the call, the rest is recorded. *)
 
 let nots = Array.map not
 
@@ -366,6 +366,7 @@ let rec answer st i c =
   match (st.kind, c) with
   | Tape, Scan { step; length; init; xs; captures; seeds } ->
       scan_parts st i step ~length ~init ~xs ~captures ~seeds
+  | Tape, Remat { body; args } -> remat_parts st i body args
   | _ -> record st i c
 
 (* A scan over the tape's variables is two scans, as JAX's partial evaluation of
@@ -565,6 +566,30 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
   let ys = Array.map (fun u -> if u then un () else kn ()) uy in
   Array.concat [ carry; ys; sums ]
 
+(* A remat over the tape's variables computes at the call the outputs that read
+   none of them, its function partially evaluated once, and records itself over
+   its arguments: transposing it evaluates its function again, as JAX's
+   checkpoint keeps its inputs as residuals. The record of that first evaluation
+   is dropped, so the tape keeps the arguments alone. *)
+and remat_parts st i (body : Program.t) args =
+  let ua = Array.map (owned i) args in
+  let known = ref [||] in
+  let _ =
+    trace_in Tape ~name:st.name
+      (Array.map form (Loops.pick ua args))
+      (fun inner uvs ->
+        let out = eval body (Loops.merge ua uvs (Loops.pick (nots ua) args)) in
+        known :=
+          Array.map
+            (fun (V y as v) -> if owns inner y then None else Some v)
+            out;
+        [||])
+  in
+  if Array.for_all Option.is_some !known then Array.map Option.get !known
+  else
+    let r = record st i (Remat { body; args }) in
+    Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
+
 and trace kind ~name inputs f = trace_in kind ~name inputs (fun _ vs -> f vs)
 
 and trace_in kind ~name inputs f =
@@ -612,7 +637,9 @@ and trace_in kind ~name inputs f =
               (Invalid_argument (st.name ^ ": a tangent is added to a total")))
     | _ -> None
   in
-  let reach = match kind with Body | Tape -> Nx.Prim.Values | Jit -> Extent in
+  let reach =
+    match kind with Body | Tape -> Nx.Prim.Values | Jit | Staged -> Extent
+  in
   let traced () =
     Effect.Deep.match_with
       (fun () ->
@@ -624,7 +651,7 @@ and trace_in kind ~name inputs f =
   let outs =
     match kind with
     | Tape -> traced ()
-    | Body | Jit -> Nx.Rng.refusing name traced
+    | Body | Jit | Staged -> Nx.Rng.refusing name traced
   in
   let owner = Option.get !owner in
   let captures = List.rev st.captures and adds = List.rev st.adds in

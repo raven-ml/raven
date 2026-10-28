@@ -11,18 +11,19 @@
     constant of the transformation.
 
     {b Functions of a construct are traced.} The functions that {!scan},
-    {!iterate}, {!jit}, {!custom_jvp}, {!custom_vjp} and {!custom_transpose}
-    receive are {e traced} at the call: their OCaml code runs over stand-ins of
-    their arguments' arrays, values with a dtype, a shape and a placement but no
-    elements, and what it computes from them is recorded as a program, which the
-    construct then evaluates. A loop's step is traced once, and again where it
-    places a carry array it received of every set ({!scan}). So a step's code
-    runs once or a few times whatever the number of steps, as do its side
-    effects, and inside it {!Nx.item} of a stand-in, or of a value computed from
-    one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
-    value is {!Nx.where} or a nested {!iterate}. An operation that reads no
-    stand-in computes at the call, once, but in {!jit}, which stages every
-    operation its function applies. A draw without [~key] inside a traced
+    {!iterate}, {!remat}, {!jit}, {!custom_jvp}, {!custom_vjp} and
+    {!custom_transpose} receive are {e traced} at the call: their OCaml code
+    runs over stand-ins of their arguments' arrays, values with a dtype, a shape
+    and a placement but no elements, and what it computes from them is recorded
+    as a program, which the construct then evaluates. A loop's step is traced
+    once, and again where it places a carry array it received of every set
+    ({!scan}). So a step's code runs once or a few times whatever the number of
+    steps, as do its side effects, and inside it {!Nx.item} of a stand-in, or of
+    a value computed from one, raises
+    ([Nx.item: the value is traced by Rune.scan]); a branch on a value is
+    {!Nx.where} or a nested {!iterate}. An operation that reads no stand-in
+    computes at the call, once, but in {!remat} and {!jit}, which stage every
+    operation their function applies. A draw without [~key] inside a traced
     function raises, naming the construct, so a step draws from a key in its
     carry or its rows. Outside every transformation a construct is its program
     evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
@@ -644,6 +645,24 @@ val iterate :
     element, at the trace if [f]'s carry differs from the one it received as
     {!scan} says, and if [until] is still false after [max] steps
     (["Rune.iterate: until is still false after max = 50 steps"]). *)
+
+(** {1:remat Rematerialization} *)
+
+val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [remat s f] is [f], [s] its signature as for {!jit}, whose reverse mode
+    keeps [f]'s arguments and the values it captures, and computes [f]'s
+    intermediate values again in the backward pass: it trades computation for
+    memory. [f] is traced at each call over stand-ins of its arguments' arrays,
+    every operation it applies staged, those over values it captures included,
+    and its program evaluated, so outside every transformation [remat s f x] is
+    [f x], bit for bit but for a NaN's sign and payload. Every transformation
+    sees [remat s f] as it sees [f]: its derivatives in either mode, and its
+    map, are [f]'s. An addition to a {!Total} that [f] makes counts once,
+    however often the backward pass computes [f] again. Where [f] runs an
+    {!iterate}, a transformation runs [f]'s program where it is called, so
+    reverse mode keeps its intermediate values.
+
+    Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 
 (** {1:jit Compilation} *)
 

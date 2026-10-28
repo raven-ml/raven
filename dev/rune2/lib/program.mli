@@ -21,9 +21,9 @@
 
     Constructs are performed as one effect. A handler of a transformation or a
     tracer answers the constructs over its own values; one no handler answers
-    runs as its {e default}: a loop evaluates its programs, a call its body,
-    [Detach] is its operand, an addition does nothing, and [Lanes] and
-    [Lane_index] raise. The default runs where the construct was performed,
+    runs as its {e default}: a loop evaluates its programs, a call and a remat
+    their body, [Detach] is its operand, an addition does nothing, and [Lanes]
+    and [Lane_index] raise. The default runs where the construct was performed,
     inside every interpretation around that point. *)
 
 (** {1:values Values} *)
@@ -139,8 +139,8 @@ and construct =
     }
       -> construct
       (** [body] applied to [args]. Its default runs [compiled] where it has
-          one, no operand is traced and no tracer stages the operations
-          around the call ({!staging}), and evaluates [body] otherwise. *)
+          one, no operand is traced and no tracer stages the operations around
+          the call ({!staging}), and evaluates [body] otherwise. *)
   | Custom : {
       name : string;  (** The entry point, in messages. *)
       primal : t;
@@ -183,6 +183,9 @@ and construct =
           [apply]'s results, then its additions. Without [apply], it is the
           tangents of a {!Pullback} rule's results, which only a tape takes: its
           default raises [Invalid_argument]. *)
+  | Remat : { body : t; args : value array } -> construct
+      (** [body] applied to [args], the function's arguments then its captures,
+          whose reverse mode keeps [args] alone and computes [body] again. *)
 
 and derivative =
   | Tangent of t
@@ -301,8 +304,7 @@ val pp : Format.formatter -> t -> unit
     each equation, and [return] with its outputs, then [adds] with its
     additions. Each program's variables are numbered from where the previous
     one's end, so no two programs share a name. An operation is its results,
-    each [%n : dtype shape at placement], [=], the operation as
-    {!Nx.Prim.pp} formats it, and on the next line [with x0 = …] for each
-    operand; a construct is its results, its operands, and each program it
-    carries under a label, indented; a map is numbered in the order the
-    program first names it. *)
+    each [%n : dtype shape at placement], [=], the operation as {!Nx.Prim.pp}
+    formats it, and on the next line [with x0 = …] for each operand; a construct
+    is its results, its operands, and each program it carries under a label,
+    indented; a map is numbered in the order the program first names it. *)

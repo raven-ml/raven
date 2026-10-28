@@ -127,6 +127,7 @@ and construct =
       forms : form array;
     }
       -> construct
+  | Remat : { body : t; args : value array } -> construct
 
 and derivative = Tangent of t | Pullback of t
 
@@ -196,6 +197,7 @@ let map_operands m = function
           captures = map_values m c.captures;
           residuals = map_values m c.residuals;
         }
+  | Remat r -> Remat { r with args = map_values m r.args }
 
 let operands = function
   | Detach x -> [ V x ]
@@ -211,6 +213,7 @@ let operands = function
   | Custom { args; captures; _ } -> Array.to_list (Array.append args captures)
   | Linear { args; captures; residuals; _ } ->
       Array.to_list (Array.concat [ args; captures; residuals ])
+  | Remat { args; _ } -> Array.to_list args
 
 let map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _) as c -> c
@@ -226,6 +229,7 @@ let map_programs f = function
       Custom { c with primal = f c.primal; derivative }
   | Linear c ->
       Linear { c with apply = Option.map f c.apply; transpose = f c.transpose }
+  | Remat r -> Remat { r with body = f r.body }
 
 (* Forms *)
 
@@ -308,6 +312,7 @@ let additions = function
   | Custom { primal; derivative = Pullback _; _ } -> primal.adds
   | Linear { apply = Some a; _ } -> a.adds
   | Linear { apply = None; _ } -> [||]
+  | Remat { body; _ } -> body.adds
 
 (* A loop's sums' forms where it starts them from [seeds]: the placed of each
    sum's and its seed's. *)
@@ -364,6 +369,7 @@ let forms = function
   | Linear { apply = Some a; forms; _ } ->
       Array.append forms (Array.map form (tail a))
   | Linear { apply = None; forms; _ } -> forms
+  | Remat { body; _ } -> Array.map form body.outputs
 
 (* Values of a form *)
 
@@ -483,6 +489,7 @@ and default = function
         (name
        ^ ": a custom_vjp rule has no forward derivative; give the function a \
           custom_jvp rule")
+  | Remat { body; args } -> eval body args
 
 (* [p], a custom rule's primal, with its results and additions alone. Where its
    residuals are its parameters, constants or results, nothing reads only them,
@@ -685,7 +692,7 @@ type names = {
 let carried = function
   | Scan { step; _ } -> [ step ]
   | Iterate { until; step; _ } -> [ until; step ]
-  | Call { body; _ } -> [ body ]
+  | Call { body; _ } | Remat { body; _ } -> [ body ]
   | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
   | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
   | Detach _ | Lanes _ | Lane_index _ | Add _ -> []
@@ -872,6 +879,9 @@ and pp_construct names ~indent (p : t) ppf c =
         pad program until pad program step
   | Call { body; args; _ } ->
       Format.fprintf ppf "call (%a)@\n%s  body%a" values (Array.to_list args)
+        pad program body
+  | Remat { body; args } ->
+      Format.fprintf ppf "remat (%a)@\n%s  body%a" values (Array.to_list args)
         pad program body
   | Custom { name; primal; derivative; args; captures; _ } ->
       let kind, d =

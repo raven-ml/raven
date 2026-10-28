@@ -656,8 +656,8 @@ let rec spine : type f d. string -> int -> (f, d) Ptree.fn -> (f, d) spine =
         }
   | Returns _ -> invalid_argf "%s: the signature has no argument" name
 
-(* [traced name a r f args forms] is [f]'s program over stand-ins of [forms]
-   for [args]' leaves, and the result it returned, as jit traces it. *)
+(* [traced name a r f args forms] is [f]'s program over stand-ins of [forms] for
+   [args]' leaves, and the result it returned, as jit traces it. *)
 let traced name a r f args forms =
   let like = ref None in
   let body, _ =
@@ -669,9 +669,9 @@ let traced name a r f args forms =
   (body, Option.get !like)
 
 (* A call's program comes from its key's entry: traced over stand-ins of its
-   leaves the first time the key is met, then compiled. The call is a
-   construct, so a transformation around it evaluates the program over its
-   values; with none, its compiled form runs. *)
+   leaves the first time the key is met, then compiled. The call is a construct,
+   so a transformation around it evaluates the program over its values; with
+   none, its compiled form runs. *)
 let call name t a r f args =
   let leaves, skeleton = Ptree.flatten a args in
   let args_v = Array.of_list (List.map (fun (Nx.P y) -> V y) leaves) in
@@ -692,6 +692,28 @@ let jit_named name s =
     u.curry (fun args -> call name t a u.result (u.apply f) args)
 
 let jit s = jit_named "Rune.jit" s
+
+(* Rematerialization *)
+
+let remat_named name s =
+  let (Spine u) = spine name 0 s in
+  let a = Ptree.v u.walk.walk in
+  fun f ->
+    u.curry (fun args ->
+        let args_v = values a args in
+        let like = ref None in
+        let body, captures =
+          Trace.trace Staged ~name (Array.map form args_v) (fun vs ->
+              let y = u.apply f (rebuild a ~like:args vs) in
+              like := Some y;
+              values u.result y)
+        in
+        let y = Option.get !like in
+        let out = run (Remat { body; args = Array.append args_v captures }) in
+        rebuild u.result ~like:y
+          (slice out 0 (Array.length (values u.result y))))
+
+let remat s = remat_named "Rune.remat" s
 
 (* Maps *)
 

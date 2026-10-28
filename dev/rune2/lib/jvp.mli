@@ -17,11 +17,11 @@
     outside it and answers those over its duals: [Detach] is the primal, an
     addition adds the primal outward, [Lanes] is the dual of the primal's and
     the tangent's lanes, a custom rule or a linear call over an argument it
-    tracks applies its rule, a scan is performed outward with its program's
-    derivative over the primals and the tangents (a scan's carry has a tangent
-    where its init has one or a step gives it one, a zero until then), and the
-    others run their default where they were performed ({!Program.Evaluate}), so
-    that their programs' operations reach the rules.
+    tracks applies its rule, a scan and a remat are performed outward with their
+    programs' derivatives over the primals and the tangents (a scan's carry has
+    a tangent where its init has one or a step gives it one, a zero until then),
+    and the others run their default where they were performed
+    ({!Program.Evaluate}), so that their programs' operations reach the rules.
 
     A custom rule ({!Program.Custom}) is performed outward on the arguments'
     primals, so that each differentiation around applies it too. Its results'

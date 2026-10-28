@@ -650,6 +650,21 @@ let test_totals_inside () =
   equal ~msg:"jvp" bits_t
     (bits (snd (Rune.jvp' (inside folded) x v)))
     (bits (snd (Rune.jvp' (inside scanned) x v)));
+  let remat x =
+    Rune.remat
+      T.(tensor @-> returns tensor)
+      (fun x ->
+        Total.add t (Nx.sum (Nx.mul x x));
+        x)
+      x
+  in
+  let written x =
+    Total.add t (Nx.sum (Nx.mul x x));
+    x
+  in
+  equal ~msg:"grad of a remat" bits_t
+    (bits (Rune.grad' (inside written) x))
+    (bits (Rune.grad' (inside remat) x));
   (* An iterate's chain reaches a collect outside the differentiation as its
      primal. *)
   let iterated x =

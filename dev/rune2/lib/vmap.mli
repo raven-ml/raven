@@ -33,13 +33,13 @@
     of a lane value, detaching its batch outward; a custom rule or a linear call
     over lane values by performing it outward with each of its programs traced
     again at its signature over the batches and evaluated over their lanes, the
-    additions of a pullback or a transpose summed over the lanes; a scan over
-    lane values, performing it outward with its program mapped over the batches
-    (a scan's carry has lanes where its init has them or a step gives them, its
-    init broadcast until then, and its additions are every lane's); and the
-    other constructs over lane values by running their default where they were
-    performed ({!Program.Evaluate}), so that their programs' operations reach
-    the rules. It answers {!Program.Running} with [None]. *)
+    additions of a pullback or a transpose summed over the lanes; a scan and a
+    remat over lane values, performing them outward with their programs mapped
+    over the batches (a scan's carry has lanes where its init has them or a step
+    gives them, its init broadcast until then, and its additions are every
+    lane's); and the other constructs over lane values by running their default
+    where they were performed ({!Program.Evaluate}), so that their programs'
+    operations reach the rules. It answers {!Program.Running} with [None]. *)
 
 val run :
   name:string ->

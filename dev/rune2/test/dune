@@ -6,6 +6,7 @@
   test_constructs
   test_loops
   test_loop_rules
+  test_remat
   test_jvp
   test_grad
   test_vmap
@@ -17,6 +18,7 @@
   test_constructs
   test_loops
   test_loop_rules
+  test_remat
   test_jvp
   test_grad
   test_vmap

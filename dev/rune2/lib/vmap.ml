@@ -710,9 +710,9 @@ end
 
 (* Programs' maps
 
-   A loop over lane values is performed outward with its program mapped: [eval
-   p] traced under a map of its own, of the same name and lanes, over the
-   batches and the shared values, as JAX batches a jaxpr. *)
+   A loop or a remat over lane values is performed outward with its program
+   mapped: [eval p] traced under a map of its own, of the same name and lanes,
+   over the batches and the shared values, as JAX batches a jaxpr. *)
 
 let lane_v i (Program.V x) = Program.V (lane i x)
 let batch_v i n (Program.V x) = Program.V (batch i n x)
@@ -751,11 +751,14 @@ let rec answer ~name i axis n (c : Program.construct) k =
   (* An iterate has no rule before stage 6, and evaluating it inside a trace
      would read its stop: a construct whose programs hold one runs its default,
      step by step. *)
-  | Scan { step; _ } when Loops.holds_iterate step ->
+  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
+    ->
       Effect.Deep.discontinue k Program.Evaluate
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
         (scan ~name i axis n step ~length ~init ~xs ~captures ~seeds)
+  | Remat { body; args } ->
+      Effect.Deep.continue k (remat ~name i axis n body args)
   | Iterate _ | Call _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
@@ -854,6 +857,37 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
         else v
       else lane_v i v)
     r
+
+(* A remat's map is the remat of its function's map, as JAX's checkpoint
+   batches, so that a reverse mode around the map sees the remat. *)
+and remat ~name i axis n (body : Program.t) args =
+  let la = Array.map (owned_v i) args in
+  let bargs =
+    Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
+  in
+  let laned = ref [||] in
+  let mapped vs =
+    let outs =
+      run ~name ~axis n (fun w ->
+          let out = Program.eval body (lanes_of w la vs) in
+          laned := Array.map (owned_v w) out;
+          Array.map (fun v -> if owned_v w v then batch_v w n v else v) out)
+    in
+    let no = Array.length body.outputs - Array.length body.adds in
+    Array.iteri
+      (fun k (Program.Addition (t, f)) ->
+        ignore (Program.perform (Add (t, Program.cast f outs.(no + k)))))
+      body.adds;
+    Array.sub outs 0 no
+  in
+  let prog, own =
+    (* Traced as the remat's function was: every operation staged. *)
+    Trace.trace Staged ~name (Array.map Program.form bargs) mapped
+  in
+  let r =
+    Program.perform (Remat { body = prog; args = Array.append bargs own })
+  in
+  Array.mapi (fun k v -> if !laned.(k) then lane_v i v else v) r
 
 (* [f]'s results' batches over the lanes of the batches [bs], in a map of this
    one's name and size. *)

@@ -29,10 +29,9 @@ let device_of p =
 (* Storage
 
    A parameter binds the run of its storage that its layout reads: from the
-   element at or below its first position whose bits start on 16 bytes,
-   through its last. Views at other offsets of one layout then share a
-   program, and the run's start fixes the phase at which tolk aligns its
-   accesses. *)
+   element at or below its first position whose bits start on 16 bytes, through
+   its last. Views at other offsets of one layout then share a program, and the
+   run's start fixes the phase at which tolk aligns its accesses. *)
 
 let alignment = 16
 
@@ -74,10 +73,10 @@ let tdtype (type v s) (dt : (v, s) D.t) = Arith.dtype (D.Any dt)
 
 (* Packed elements
 
-   A sub-byte dtype's elements lie [8 / bits] to a byte, the first in the
-   lowest bits. A node holds one element a byte ({!Lower_arith}), so the
-   storage's bytes are unpacked where a parameter reads them and a result is
-   packed where it is stored. *)
+   A sub-byte dtype's elements lie [8 / bits] to a byte, the first in the lowest
+   bits. A node holds one element a byte ({!Lower_arith}), so the storage's
+   bytes are unpacked where a parameter reads them and a result is packed where
+   it is stored. *)
 
 let uint8 u n = Shape.const_like ~dtype:Uint8 u (`Int (Tolk.Bigint.of_int n))
 
@@ -91,7 +90,9 @@ let shifts b k m =
 let of_code (type v s) (dt : (v, s) D.t) c =
   match dt with
   | D.Int4 ->
-      let int n = Shape.const_like ~dtype:Int8 c (`Int (Tolk.Bigint.of_int n)) in
+      let int n =
+        Shape.const_like ~dtype:Int8 c (`Int (Tolk.Bigint.of_int n))
+      in
       Ops.sub (Ops.bitwise_xor (Ops.bitcast c Int8) (int 8)) (int 8)
   | _ -> c
 
@@ -104,7 +105,9 @@ let code (type v s) (dt : (v, s) D.t) u =
 let unpack dt bytes =
   let m = Shape.max_numel bytes and b = D.bits dt in
   let k = 8 / b in
-  let wide = Shape.expand (Shape.reshape bytes (ints [ m; 1 ])) (ints [ m; k ]) in
+  let wide =
+    Shape.expand (Shape.reshape bytes (ints [ m; 1 ])) (ints [ m; k ])
+  in
   let codes =
     Ops.bitwise_and (Ops.shr wide (shifts b k m)) (uint8 wide ((1 lsl b) - 1))
   in
@@ -125,8 +128,8 @@ let pack dt u =
 
 (* Views
 
-   A layout over a flat node of its storage's elements, [[m]] or [[m; 2]] for
-   a complex dtype: a slice where it is contiguous, and otherwise a gather at
+   A layout over a flat node of its storage's elements, [[m]] or [[m; 2]] for a
+   complex dtype: a slice where it is contiguous, and otherwise a gather at
    [offset + Σ index·stride]. *)
 
 let zeros (type v s) (dt : (v, s) D.t) shape =
@@ -154,7 +157,8 @@ let viewed (type v s) (dt : (v, s) D.t) flat l =
       let step = L.stride l i in
       let v = if step = 1 then v else Ops.mul v (Ops.int step) in
       Shape.expand
-        (Shape.reshape v (List.init r (fun j -> Ops.Int (if j = i then n else 1))))
+        (Shape.reshape v
+           (List.init r (fun j -> Ops.Int (if j = i then n else 1))))
         full
     in
     let base =
@@ -162,11 +166,13 @@ let viewed (type v s) (dt : (v, s) D.t) flat l =
         (Shape.expand (Ops.int 0) full)
         (`Int (Tolk.Bigint.of_int off))
     in
-    let at = List.fold_left Ops.add base (List.mapi along (Array.to_list shape)) in
+    let at =
+      List.fold_left Ops.add base (List.mapi along (Array.to_list shape))
+    in
     Ops.index flat [ at ]
 
-(* [storage ~device ~phase dt l] is a buffer node for the run of a value of
-   [dt] laid out by [l], an element at least, and the value's node over it. *)
+(* [storage ~device ~phase dt l] is a buffer node for the run of a value of [dt]
+   laid out by [l], an element at least, and the value's node over it. *)
 let storage ~device ~phase (type v s) (dt : (v, s) D.t) l =
   let _, n = run dt l in
   if packed dt then
@@ -202,8 +208,8 @@ type out =
   | Empty  (** No element. *)
   | Kept of value  (** A constant of every set, returned as it is. *)
 
-(* A check: the buffers its first failure's index and each of its data there
-   are stored into, one element each, and its failure. *)
+(* A check: the buffers its first failure's index and each of its data there are
+   stored into, one element each, and its failure. *)
 type check = {
   shape : int array;
   first : Ops.t;
@@ -271,20 +277,20 @@ let construct = function
   | Lanes _ -> "Rune.lanes"
   | Lane_index _ -> "Rune.lane_index"
   | Call _ -> "a call"
+  | Remat _ -> "Rune.remat"
   | Add _ -> "an addition"
   | Detach _ -> "Rune.detach"
   | Custom { name; _ } | Linear { name; _ } -> name
 
 (* Lending
 
-   A result may take the storage of a donated argument it reads only at its
-   own index, along every path: through maps that load it plainly at the
-   map's shape, copies, reshapes of C order, bitcasts of one width,
-   placements, a scatter's target and a contraction's [init]. Then each
-   kernel that reads the argument computes the result or what it reads, and
-   reads each element before the result's kernel writes over it. A result
-   that reads no donated argument may take the storage of one that nothing
-   reads. *)
+   A result may take the storage of a donated argument it reads only at its own
+   index, along every path: through maps that load it plainly at the map's
+   shape, copies, reshapes of C order, bitcasts of one width, placements, a
+   scatter's target and a contraction's [init]. Then each kernel that reads the
+   argument computes the result or what it reads, and reads each element before
+   the result's kernel writes over it. A result that reads no donated argument
+   may take the storage of one that nothing reads. *)
 
 module Is = Set.Make (Int)
 
@@ -342,14 +348,14 @@ let operand_reaches (type r) rc (op : r Nx.Prim.t) =
 
 (* [lend ~donated ~computed ~reaches ~scattered ~fits] is the argument each
    result takes the storage of, or [-1], in three passes as RFC 0006 orders
-   them: the results of a scatter that read an argument at their own index,
-   then the other results that do, then the results that read no donated
-   argument, each taking one that nothing reads. [donated.(k)] is whether
-   argument [k] is donated, [computed.(j)] whether the program computes result
-   [j], [reaches.(j)] its reach, [scattered.(j)] whether a scatter computes
-   it, and [fits k j] whether argument [k] may lend to result [j]: of its
-   dtype, size and placement, and read by no other result or check. An
-   argument lends once. *)
+   them: the results of a scatter that read an argument at their own index, then
+   the other results that do, then the results that read no donated argument,
+   each taking one that nothing reads. [donated.(k)] is whether argument [k] is
+   donated, [computed.(j)] whether the program computes result [j],
+   [reaches.(j)] its reach, [scattered.(j)] whether a scatter computes it, and
+   [fits k j] whether argument [k] may lend to result [j]: of its dtype, size
+   and placement, and read by no other result or check. An argument lends
+   once. *)
 let lend ~donated ~computed ~reaches ~scattered ~fits =
   let n = Array.length reaches in
   let arguments = Array.length donated in
@@ -373,11 +379,13 @@ let lend ~donated ~computed ~reaches ~scattered ~fits =
   lent
 
 (* [lower ~rig p forms ~layouts ~phases ~donated] is [p] over arguments of
-   [forms], each laid out over its run as [layouts] says, its run at
-   [phases], the arguments [donated] says lending their storage where a
-   result may take it. *)
+   [forms], each laid out over its run as [layouts] says, its run at [phases],
+   the arguments [donated] says lending their storage where a result may take
+   it. *)
 let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
-  let st = { rig; device = Ops.Single (Rig.name rig); captures = []; bound = [] } in
+  let st =
+    { rig; device = Ops.Single (Rig.name rig); captures = []; bound = [] }
+  in
   let env = Array.make p.slots None in
   let reach_env = Array.make p.slots nothing in
   let scattered = Array.make p.slots false in
@@ -429,14 +437,13 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
       let ok = flat Nx.bool (node ok) in
       let index = Shape.arange ~dtype:Int64 n in
       let count = Shape.const_like index (`Int (Tolk.Bigint.of_int n)) in
-      let masked =
-        Ops.where (Ops.ne ok (uint8 ok 0)) count index
-      in
+      let masked = Ops.where (Ops.ne ok (uint8 ok 0)) count index in
       let first =
         Shape.reshape
           (List.hd
-             (Lower_reduce.reduce Nx_kernel.(Monoid Min) [ 0 ] ~src:(D.Any D.Int64)
-                (D.Any D.Int64) masked))
+             (Lower_reduce.reduce
+                Nx_kernel.(Monoid Min)
+                [ 0 ] ~src:(D.Any D.Int64) (D.Any D.Int64) masked))
           (ints [ 1 ])
       in
       let rec walk : type e.
@@ -451,7 +458,8 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
             in
             let others, rest = walk rest in
             let read = function
-              | a :: tl -> (A.get (A.expect dt a) (Iarray.of_list [ 0 ]), rest tl)
+              | a :: tl ->
+                  (A.get (A.expect dt a) (Iarray.of_list [ 0 ]), rest tl)
               | [] -> invalid_arg "Rune.jit: a check's data"
             in
             ((D.Any dt, at) :: others, read)
@@ -461,9 +469,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     end
   in
   let issue (type r) base (op : r Nx.Prim.t) =
-    (match op with
-    | Place (q, _) -> on_rig st q "a placement"
-    | _ -> ());
+    (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
     match op with
     | Check { ok; data; fail } -> check ok data fail
     | _ ->
@@ -508,12 +514,14 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
       || Array.exists Fun.id
            (Array.mapi (fun i r -> i <> j && Is.mem k r.reads) reaches)
     in
-    donated.(k) && Option.is_some params.(k) && (not read_elsewhere)
+    donated.(k)
+    && Option.is_some params.(k)
+    && (not read_elsewhere)
     && Nx.Dtype.equal f.dtype g.dtype
     && numel (shape_of f) = numel (shape_of g)
     && (match (f.placement, g.placement) with
-       | Some a, Some b -> Nx.Placement.equal a b
-       | _ -> false)
+      | Some a, Some b -> Nx.Placement.equal a b
+      | _ -> false)
     && L.is_contiguous layouts.(k)
     && L.offset layouts.(k) = 0
     && phases.(k) = 0
@@ -524,9 +532,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
         match Nx.Prim.payload p.owner y with Some (Var _) -> true | _ -> false)
       p.outputs
   in
-  let lent =
-    lend ~donated ~computed ~reaches ~scattered:scattered_out ~fits
-  in
+  let lent = lend ~donated ~computed ~reaches ~scattered:scattered_out ~fits in
   let stores = ref [] in
   let buffer (F f) =
     let n = numel (shape_of f) in
@@ -563,7 +569,11 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   in
   let one (type v s) (dt : (v, s) D.t) u =
     let f : (v, s, _) Nx.Prim.form =
-      { dtype = dt; layout = L.contiguous (Iarray.of_list [ 1 ]); placement = None }
+      {
+        dtype = dt;
+        layout = L.contiguous (Iarray.of_list [ 1 ]);
+        placement = None;
+      }
     in
     let o = buffer (F f) in
     stores := store dt o u :: !stores;
@@ -573,9 +583,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     List.rev_map
       (fun (shape, first, data, fail) ->
         let first = one D.Int64 first in
-        let data =
-          List.map (fun (D.Any dt as d, u) -> (d, one dt u)) data
-        in
+        let data = List.map (fun ((D.Any dt as d), u) -> (d, one dt u)) data in
         { shape; first; data; fail })
       !checks
   in
@@ -673,7 +681,8 @@ let link rig l =
       in
       let out_slots =
         Array.map
-          (function Stored o -> slot o | Lent _ | Taken _ | Empty | Kept _ -> -1)
+          (function
+            | Stored o -> slot o | Lent _ | Taken _ | Empty | Kept _ -> -1)
           l.outs
       in
       let checks =
@@ -689,7 +698,9 @@ let link rig l =
           ~targets:(fun _ -> Engine.target rig)
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) linear
       in
-      let schedule = Engine.link ~devices:(fun _ -> rig) ~bound:l.bound linear in
+      let schedule =
+        Engine.link ~devices:(fun _ -> rig) ~bound:l.bound linear
+      in
       {
         schedule = Some (schedule, vars);
         inputs = !next;
@@ -704,16 +715,17 @@ let link rig l =
 type t = {
   name : string;
   rig : Rig.t;
-  home : form;  (** A placed form on [rig], at whose set arguments of every
-                    set are placed. *)
+  home : form;
+      (** A placed form on [rig], at whose set arguments of every set are
+          placed. *)
   program : Program.t;
   forms : form array;
   lock : Mutex.t;
   variants : variant list Atomic.t;
 }
 
-(* The program's device, and a form placed whole on it: its arguments', or
-   else its results'. *)
+(* The program's device, and a form placed whole on it: its arguments', or else
+   its results'. *)
 let device (p : Program.t) forms =
   let first = ref None in
   let consider (F f as form) =
@@ -781,7 +793,9 @@ let make ~name p forms =
   match
     let rig, home = device p forms in
     let layouts =
-      Array.map (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout))) forms
+      Array.map
+        (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout)))
+        forms
     in
     let phases = Array.map (fun _ -> 0) forms in
     let donated = Array.map (fun _ -> false) forms in
@@ -803,8 +817,8 @@ let make ~name p forms =
 (* Calls *)
 
 (* [consumed ~by args f] is [f arrays take] under a consumer of the placed
-   values of [args], [arrays k] the arrays of placed argument [k] and
-   [take k a] the memory of its array [a] for a result, if it may take it
+   values of [args], [arrays k] the arrays of placed argument [k] and [take k a]
+   the memory of its array [a] for a result, if it may take it
    ({!Nx.Prim.Consumer.take}). *)
 let consumed ~by args f =
   let placed =
@@ -839,7 +853,9 @@ let consumed ~by args f =
 let placed rig (F home) (V x as v) =
   match (Nx.placement x, home.placement) with
   | None, Some q -> (
-      let f = { home with dtype = Nx.dtype x; layout = (Nx.Prim.form x).layout } in
+      let f =
+        { home with dtype = Nx.dtype x; layout = (Nx.Prim.form x).layout }
+      in
       match Nx.Prim.coerce f x with
       | Some x ->
           V (Nx.place (Nx.Placement.device (Nx.Placement.devices q) rig) x)
@@ -870,12 +886,12 @@ let over (V x) arrays =
         (Nx.Repr.of_shards q
            (Iarray.of_array (Array.map (A.expect f.dtype) arrays)))
 
-(* [p] evaluated over the arrays of a consumer of [args]: the donors it
-   claimed are dead, so the arrays of every placed argument stand for it, a
-   donor beside its handle included. Each result is copied, since no value
-   over the arrays may outlive the consumer. A value over an argument's
-   memory shares it for good, so a later donation of that argument computes
-   into fresh memory: the cost of this path. *)
+(* [p] evaluated over the arrays of a consumer of [args]: the donors it claimed
+   are dead, so the arrays of every placed argument stand for it, a donor beside
+   its handle included. Each result is copied, since no value over the arrays
+   may outlive the consumer. A value over an argument's memory shares it for
+   good, so a later donation of that argument computes into fresh memory: the
+   cost of this path. *)
 let evaluated p args arrays =
   let values =
     Array.mapi
@@ -891,7 +907,8 @@ let evaluate ~name p args =
   else
     (* A result that is an argument is a copy of it. *)
     Array.map
-      (fun (V y as r) -> if Array.exists (same r) args then V (Nx.copy y) else r)
+      (fun (V y as r) ->
+        if Array.exists (same r) args then V (Nx.copy y) else r)
       (eval p args)
 
 (* The element of the one-element array over [b], read on the host. *)
@@ -1015,4 +1032,3 @@ and linked t v args leaves take =
       | None -> p.outputs.(j)
       | Some _ -> result t.rig o buffers.(j))
     outputs
-
