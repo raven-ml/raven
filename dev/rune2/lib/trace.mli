@@ -41,7 +41,9 @@
     ({!Program.Call}) to its default, which issues the call's equations to it,
     and the tape tracer answers a custom rule ({!Program.Custom}) over its
     variables with {!Program.Evaluate}, so that its primal runs where it was
-    performed and is recorded.
+    performed and is recorded, and a pullback's tangents (a {!Program.Linear}
+    call without a function) over none of its variables with zeros: they are
+    linear in tangents it does not hold.
 
     {e Closure conversion.} A value of another interpretation that an equation
     or an output reads is a {e capture}: the body and tape tracers bind it to a

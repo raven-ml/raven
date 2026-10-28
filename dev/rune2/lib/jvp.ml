@@ -1124,9 +1124,12 @@ module Rules = struct
             in
             Array.concat [ with_tangents c ys (sub out 0 ny); res_out; adds ]
         | Pullback b ->
-            (* Tangents the tape does not hold are zeros. *)
-            if not (Array.exists tangible_v ys && Array.exists (taped c) ts)
-            then Array.concat [ ys; res_out; adds ]
+            (* The results' tangents are the pullback's linear call over the
+               arguments' tangents, which the tape around records. Where the
+               tangents are a derived program's variables, as in a loop's step,
+               the tape's partial evaluation of the program records it. *)
+            if not (Array.exists tangible_v ys) then
+              Array.concat [ ys; res_out; adds ]
             else
               let dys =
                 perform

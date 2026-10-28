@@ -657,6 +657,35 @@ let compiled_tests =
           (Nx.add (Nx.sin (v3 ())) (Nx.sin (along ())))
           (scan xs);
         exact ~msg:"grad" (Nx.full f64 [| 2; 3 |] 100.) (Rune.grad' run xs));
+    test "a custom_vjp in a scan's step and a remat" (fun () ->
+        let xs =
+          Nx.reshape [| 2; 3 |] (Nx.concatenate ~axis:0 [ v3 (); along () ])
+        in
+        let hundreds = Nx.full f64 [| 2; 3 |] 100. in
+        let total ~f xs =
+          Nx.sum
+            (fst
+               (Rune.scan tensor tensor Nx.Ptree.unit ~f
+                  ~init:(Nx.zeros f64 [| 3 |]) xs))
+        in
+        let rows c x = (Nx.add c (fake_grad_sin x), ()) in
+        exact ~msg:"grad of the rows" hundreds (Rune.grad' (total ~f:rows) xs);
+        exact ~msg:"jit of grad" hundreds
+          (Rune.jit' (Rune.grad' (total ~f:rows)) xs);
+        (* The carry's tangent starts as a zero the scan instantiates, which
+           the rule's tangents read alone on the first step. *)
+        let carried c x = (Nx.add (fake_grad_sin c) x, ()) in
+        let c1 = Nx.add (Nx.sin (Nx.zeros f64 [| 3 |])) (v3 ()) in
+        let c2 = Nx.add (Nx.sin c1) (along ()) in
+        near ~msg:"value" (Nx.sum c2) (total ~f:carried xs);
+        exact ~msg:"grad through the carry"
+          (Nx.reshape [| 2; 3 |]
+             (Nx.concatenate ~axis:0
+                [ Nx.full f64 [| 3 |] 100.; Nx.full f64 [| 3 |] 1. ]))
+          (Rune.grad' (total ~f:carried) xs);
+        let r = Rune.remat Nx.Ptree.(tensor @-> returns tensor) fake_grad_sin in
+        exact ~msg:"grad of a remat" (Nx.full f64 [| 3 |] 100.)
+          (Rune.grad' (fun x -> Nx.sum (r x)) (v3 ())));
   ]
 
 (* A rule whose tangent map calls custom rules on its tangents: [v c] with its

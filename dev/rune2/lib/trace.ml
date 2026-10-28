@@ -651,6 +651,15 @@ and trace_in kind ~name inputs f =
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (answer st i c))
+    | Construct (Linear { apply = None; forms; _ }), Some _ when st.kind = Tape
+      ->
+        (* A pullback's tangents over none of the tape's variables: linear in
+           its tangents, which are known, so zeros. A loop's step derived under
+           reverse mode makes them where a carry's tangent is a zero it
+           instantiated. *)
+        Some
+          (fun k ->
+            Effect.Deep.continue k (Array.map (Loops.filled ~zero:false) forms))
     | Staging, Some _ when st.kind = Jit ->
         Some (fun k -> Effect.Deep.continue k true)
     (* A traced program cannot read a total: a loop in it adds its sum. *)
