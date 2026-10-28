@@ -12,7 +12,7 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 
 | | Library | Like | What it does |
 |-|---------|------|-------------|
-| | [**nx**](../packages/nx/doc/index.md) | NumPy | N-dimensional arrays with pluggable backends |
+| | [**nx**](../packages/nx/doc/index.md) | NumPy | N-dimensional arrays on the host and on devices |
 | ᚱ | [**rune**](../packages/rune/doc/index.md) | JAX | Automatic differentiation and functional transformations |
 | ᚲ | [**kaun**](../packages/kaun/doc/index.md) | PyTorch / Flax | Neural networks and training |
 | ᚹ | [**vega**](../packages/vega/doc/index.md) | Optax | Gradient-based optimizers and schedules |

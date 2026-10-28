@@ -122,26 +122,60 @@
 
     <h2>see it in action</h2>
 
-    <p>Tokenize text, build a classifier, and train it — three libraries working together:</p>
+    <p>Tokenize text, build a classifier, and train it in one compiled step. Five libraries work together here: Brot, Nx, Kaun, Rune and Vega.</p>
 
     <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
 (* Tokenize text with Brot *)
 let tokenizer = Brot.from_file "tokenizer.json" |> Result.get_ok
-let encode text = Brot.encode_ids tokenizer text
 
-(* Build a model with Kaun *)
-let model = Layer.sequential [
-  Layer.embedding ~vocab_size:30522 ~embed_dim:128 ();
-  Layer.relu ();
-  Layer.linear ~in_features:128 ~out_features:2 ();
-]
+let encode text =
+  let ids = Brot.encode_ids tokenizer text in
+  Nx.create Nx.int64 [| Array.length ids |] (Array.map Int64.of_int ids)
 
-(* Train with automatic differentiation — Rune under the hood *)
-let trainer = Train.make ~model
-  ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ())
-let st = Train.init trainer ~dtype:Nx.Float32
-let st = Train.fit trainer st train_data</code></pre>
+(* A model with Kaun: a record of layers and the walk that names them *)
+module Model = struct
+  type ('a, 'd) t = { embed : ('a, 'd) Embedding.t; out : ('a, 'd) Linear.t }
+
+  let walk c { embed; out } =
+    let open Nx.Ptree.Walk in
+    let embed = field c "embed" Embedding.walk embed in
+    let out = field c "out" Linear.walk out in
+    { embed; out }
+
+  let apply p ids =
+    let h = Nx.mean ~axes:[ 0 ] (Embedding.apply p.embed ids) in
+    Linear.apply p.out (Fn.relu h)
+end
+
+let model = Nx.Ptree.instantiate (module Model)
+let state = Nx.Ptree.pair model (Vega.adam_ptree model)
+
+let params =
+  let k = Nx.Rng.split (Nx.Rng.key 0) in
+  { Model.embed = Embedding.init ~key:k.(0) ~vocab:30522 ~dim:128;
+    out = Linear.init ~key:k.(1) ~inputs:128 ~outputs:2 }
+
+(* Train with Rune's gradients and Vega's Adam, compiled into one program,
+   once per text length *)
+let step =
+  Rune.jit
+    Nx.Ptree.(tensor @-> tensor @-> state @-> returns (pair tensor state))
+    (fun ids label (params, opt) ->
+      let loss p = Loss.softmax_cross_entropy_sparse (Model.apply p ids) label in
+      let l, grads = Rune.value_and_grad model loss params in
+      let params, opt =
+        Vega.adam_step model ~lr:(Vega.lr 1e-3) opt ~params ~grads
+      in
+      (l, (params, opt)))
+
+let train data =
+  List.fold_left
+    (fun s (text, label) ->
+      let label = Nx.scalar Nx.int64 label in
+      snd (step (encode text) label (Nx.Ptree.donate state s)))
+    (params, Vega.adam_init model params)
+    data</code></pre>
 
     <hr>
 
@@ -156,7 +190,7 @@ let st = Train.fit trainer st train_data</code></pre>
         </div>
         <div class="library-map-item">
           <a href="/docs/nx/" class="color-blue">nx</a>
-          <span class="desc">N-dimensional arrays with pluggable backends (NumPy)</span>
+          <span class="desc">N-dimensional arrays on the host and on devices (NumPy)</span>
         </div>
         <div class="library-map-item">
           <a href="/docs/tolk/" class="color-slate"><span class="rune-symbol">ᛏ</span> tolk</a>

@@ -18,7 +18,7 @@ Raven is machine learning and scientific computing in OCaml, from neural network
 
 ```ocaml
 (* nx — n-dimensional arrays *)
-let x = Nx.linspace float32 0. 10. 100
+let x = Nx.linspace Nx.float32 0. 10. 100
 let y = Nx.sin x
 
 (* rune — automatic differentiation *)
@@ -32,7 +32,7 @@ let ids = Brot.encode_ids tokenizer "The meaning of life is"
 let cos_integral = Jera.Quad.(fixed (Rule.gauss 10) Nx.cos (Range.v (Nx.zeros_like x) x))
 
 (* kaun — neural networks *)
-let layer = Kaun.Linear.init ~inputs:768 ~outputs:10
+let layer = Kaun.Linear.init ~key:(Nx.Rng.key 0) ~inputs:100 ~outputs:10
 let logits = Kaun.Linear.apply layer x
 
 (* talon — dataframes *)

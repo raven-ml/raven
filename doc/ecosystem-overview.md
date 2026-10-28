@@ -36,8 +36,9 @@ on it.
 **Rune** adds functional transformations on top of Nx: `grad`, `jvp`,
 `vmap`. Your Nx code becomes differentiable without changes.
 
-**Kaun** builds on Rune to provide layers, losses, initializers, data
-batching, metrics, and HuggingFace Hub integration. Models
+**Kaun** builds on Nx to provide layers, losses, initializers, data
+batching, metrics, and HuggingFace Hub integration; its models are
+differentiated with Rune in your own code. Models
 are typed records you define; optimizers come from **Vega**.
 
 **Jera** builds on Rune to solve systems, find minima, integrate,
@@ -66,17 +67,26 @@ their domain.
 
 ## Nx: N-Dimensional Arrays
 
-Nx provides the numerical foundation for the entire ecosystem.
-NumPy-like operations on n-dimensional arrays with 19 data types
-(float16 through complex128), broadcasting, slicing, linear algebra,
-FFT, and I/O.
+Nx provides the numerical foundation for the entire ecosystem:
+operations on n-dimensional arrays with 21 data types (4-bit floats
+and integers through complex128), broadcasting, slicing, linear
+algebra, FFT, and I/O.
+
+A value's type carries the device set it lies on. A value made from
+numbers is a host value, `(_, _, Nx.host) Nx.t`, which lies in the
+process's memory and which the host computes on. `Nx.devices` mints a
+set from devices rig opens, with a brand of its own, so values of two
+sets never meet by mistake, and `Nx.place` moves a value onto it, whole
+on each device or cut across them. A set minted without `~kernels` over
+GPUs computes nothing eagerly, and an operation there raises: its work
+runs under `Rune.jit`. Random draws take a key, `~key`, or the next key
+of a `Nx.Rng.with_key` scope ([nx.mli](../packages/nx/lib/nx.mli),
+Device sets and Rng).
 
 ```ocaml
-open Nx
-
-let x = linspace Float32 0. 10. 100
-let y = sin x
-let mean_y = mean y
+let x = Nx.linspace Nx.float32 0. 10. 100
+let y = Nx.sin x
+let mean_y = Nx.mean y
 ```
 
 [Nx documentation →](../packages/nx/doc/index.md)
@@ -111,13 +121,17 @@ single tensor.
 
 <!-- $MDX skip -->
 ```ocaml
-open Nx
-open Rune
-
-let f x = add (mul x x) (sin x)
-let f' = grad' f
-let f'' = grad' f'
+let f x = Nx.add (Nx.mul x x) (Nx.sin x)
+let f' x = Rune.grad' f x
+let f'' x = Rune.grad' f' x
 ```
+
+`Rune.jit` compiles a function through tolk into kernels for the
+device its values lie on, and composes with the other transformations,
+so a compiled function differentiates and maps like any other. A
+program over values on several devices runs as its operations
+evaluated by nx, which needs devices nx computes on eagerly
+([rune.mli, jit](../packages/rune/lib/rune.mli)).
 
 [Rune documentation →](../packages/rune/doc/index.md)
 
@@ -133,13 +147,14 @@ compose `Rune.value_and_grad` with a Vega optimizer update.
 ```ocaml
 open Kaun
 
-type 'a mlp = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+type ('a, 'd) mlp = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
 let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 
 let params =
-  { l1 = Linear.init ~inputs:784 ~outputs:128;
-    l2 = Linear.init ~inputs:128 ~outputs:10 }
+  let k = Nx.Rng.split (Nx.Rng.key 0) in
+  { l1 = Linear.init ~key:k.(0) ~inputs:784 ~outputs:128;
+    l2 = Linear.init ~key:k.(1) ~inputs:128 ~outputs:10 }
 ```
 
 [Kaun documentation →](../packages/kaun/doc/index.md)
@@ -237,7 +252,7 @@ let x = Nx.linspace Nx.float32 0. 6.28 100
 
 let () =
   line ~x:(num x) ~y:(num (Nx.sin x)) ()
-  |> title (Text.v "sin(x)")
+  |> title "sin(x)"
   |> save "sine.svg"
 ```
 

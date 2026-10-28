@@ -2,12 +2,12 @@
 
 ## Prerequisites
 
-Raven requires **OCaml 5.2** or later and **opam**.
+Raven requires **OCaml 5.5** or later and **opam**.
 
 If you don't have opam installed, follow the [official instructions](https://opam.ocaml.org/doc/Install.html). Then create a switch:
 
 ```bash
-opam switch create raven 5.2.0
+opam switch create raven 5.5.0
 eval $(opam env)
 ```
 
@@ -24,7 +24,7 @@ Or install individual libraries:
 ```bash
 opam install nx          # just arrays
 opam install rune        # arrays + autodiff
-opam install kaun        # arrays + autodiff + neural networks
+opam install kaun        # arrays + neural networks (add rune and vega to train)
 opam install brot        # tokenization
 opam install talon       # dataframes
 ```
@@ -77,9 +77,8 @@ Create a file `main.ml`:
 
 ```ocaml
 let () =
-  let open Nx in
-  let x = linspace Float32 0. 1. 5 in
-  print_data x
+  let x = Nx.linspace Nx.float32 0. 1. 5 in
+  Nx.print x
 ```
 
 Build and run:
@@ -102,6 +101,6 @@ For the best development experience, use an editor with OCaml LSP support:
 
 **Opam switch issues**: Run `eval $(opam env)` after creating or switching opam switches.
 
-**Build failures**: Check your OCaml version with `ocaml --version`. Raven requires 5.2.0 or later.
+**Build failures**: Check your OCaml version with `ocaml --version`. Raven requires 5.5.0 or later.
 
 **Getting help**: Report issues at [github.com/raven-ml/raven/issues](https://github.com/raven-ml/raven/issues).

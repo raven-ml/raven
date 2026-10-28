@@ -44,7 +44,7 @@ Owl deserves credit for the amount of work and love that has been poured into it
 
 However, Owl can't compete with NumPy or PyTorch on performance, and performance parity isn't optional if we want teams to seriously consider OCaml over Python.
 
-Raven reaches for that performance two ways. Nx runs each operation eagerly on kernels written for each device, and `Rune.jit` compiles a whole function through tolk, fusing its operations into few kernels.
+Raven reaches for that performance two ways. Nx runs each operation eagerly on the host's kernels, and `Rune.jit` compiles a whole function through tolk, fusing its operations into few kernels for the CPUs and GPUs its values lie on.
 
 Building for the JIT changes everything about your design: API choices, memory layouts, operator fusion strategies, even how you structure the development experience. Rather than retrofitting these assumptions onto existing work, we decided a clean slate would be more effective.
 
@@ -57,7 +57,7 @@ Raven is designed from the ground up to (1) compete with Python's scientific com
 Raven is a comprehensive ecosystem that spans the entire scientific computing stack. Here's what we're building:
 
 **Foundation**
-- **Nx**: N-dimensional arrays with pluggable backends (NumPy equivalent)
+- **Nx**: N-dimensional arrays on the host and on devices (NumPy equivalent)
 - **Brot**: Fast, HuggingFace-compatible tokenization (HF Tokenizers equivalent)
 - **Talon**: Dataframes with typed queries (pandas/Polars equivalent)
 
@@ -76,7 +76,7 @@ Libraries spanning the full scientific computing stack, all designed to work tog
 **Key Innovations**
 While we aim to feel familiar to Python users, Raven brings genuine innovations to scientific computing:
 
-**Nx** uses pluggable backends inspired by Tinygrad's minimalist approach, giving us flexibility to optimize for different hardware without monolithic complexity.
+**Nx** expresses every array function through sixteen kinds of primitive operation. The host computes them eagerly, Rune's transformations interpret them, and `Rune.jit` lowers them through tolk to kernels for each device. A value's type carries the device set it lies on, so values of two sets never meet by mistake.
 
 **Rune** implements automatic differentiation using OCaml's effects system. As far as we know, it is the first project of this scale to use effects for autodiff, building on recent research, and implementing Jax's vision for functional numerical computation with a truly functional foundation.
 

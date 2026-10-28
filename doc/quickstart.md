@@ -25,70 +25,67 @@ Create a `dune-project` and `dune` file:
  (libraries kaun rune vega nx))
 ```
 
-Installing `kaun` pulls in `nx` and `rune` automatically; `vega` provides the optimizers.
+Installing `kaun` pulls in `nx`; `rune` differentiates and `vega` provides the optimizers, each installed beside it.
 
 ## Step 1: Arrays with Nx
 
-Nx provides n-dimensional arrays. Every value has a data type and a shape.
+Nx provides n-dimensional arrays. Every value has a data type, a shape, and the device set it lies on. A value made from numbers is a host value, of type `(_, _, Nx.host) Nx.t`, which lies in the process's memory and which the host computes on ([nx.mli, Device sets](../packages/nx/lib/nx.mli)). A random draw takes a key, so a program that fixes its keys draws the same numbers on every run.
 
 ```ocaml
-open Nx
-
 let () =
   (* Create arrays *)
-  let a = create Float32 [|2; 3|] [|1.; 2.; 3.; 4.; 5.; 6.|] in
-  let b = ones Float32 [|2; 3|] in
+  let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let b = Nx.ones Nx.float32 [| 2; 3 |] in
 
   (* Element-wise operations *)
-  let c = add a b in
-  print_data c;
+  let c = Nx.add a b in
+  Nx.print c;
 
   (* Reductions *)
-  Printf.printf "sum = %.1f\n" (item [] (sum a));
-  Printf.printf "mean = %.1f\n" (item [] (mean a));
+  Printf.printf "sum = %.1f\n" (Nx.item [] (Nx.sum a));
+  Printf.printf "mean = %.1f\n" (Nx.item [] (Nx.mean a));
+
+  (* Random draws: equal keys give equal numbers *)
+  let keys = Nx.Rng.split (Nx.Rng.key 0) in
+  let x = Nx.Rng.uniform ~key:keys.(0) Nx.float32 [| 3; 4 |] in
+  let y = Nx.Rng.uniform ~key:keys.(1) Nx.float32 [| 4; 2 |] in
 
   (* Matrix multiplication *)
-  let x = rand Float32 [|3; 4|] in
-  let y = rand Float32 [|4; 2|] in
-  let z = matmul x y in
-  Printf.printf "matmul shape: %s\n"
-    (Array.to_list (shape z) |> List.map string_of_int |> String.concat "x")
+  let z = Nx.matmul x y in
+  Format.printf "matmul shape: %a@." Nx.pp_shape (Nx.shape z)
 ```
 
 ## Step 2: Gradients with Rune
 
-Rune computes derivatives of Nx functions automatically. Write a function using Nx operations, then use `grad'` to differentiate it (the primed variants take a single tensor; the unprimed ones work over any parameter structure).
+Rune computes derivatives of Nx functions automatically. Write a function using Nx operations, then use `grad'` to differentiate it (the primed variants take a single array; the unprimed ones work over any parameter structure).
 
 ```ocaml
-open Nx
-open Rune
-
 let () =
   (* f(x) = x² + sin(x) *)
-  let f x = add (mul x x) (sin x) in
+  let f x = Nx.add (Nx.mul x x) (Nx.sin x) in
 
   (* grad' returns the derivative function *)
-  let f' = grad' f in
+  let f' = Rune.grad' f in
 
-  let x = scalar Float32 2.0 in
-  Printf.printf "f(2)  = %.4f\n" (item [] (f x));
-  Printf.printf "f'(2) = %.4f\n" (item [] (f' x));
+  let x = Nx.scalar Nx.float32 2.0 in
+  Printf.printf "f(2)  = %.4f\n" (Nx.item [] (f x));
+  Printf.printf "f'(2) = %.4f\n" (Nx.item [] (f' x));
 
   (* Higher-order: second derivative *)
-  let f'' = grad' f' in
-  Printf.printf "f''(2) = %.4f\n" (item [] (f'' x))
+  let f'' = Rune.grad' f' in
+  Printf.printf "f''(2) = %.4f\n" (Nx.item [] (f'' x))
 ```
 
 ## Step 3: Training with Kaun
 
-Kaun provides layers, losses, and initializers built on Rune. A model is a plain record with a hand-written `walk`, one line per field, instantiated by `Nx.Ptree.instantiate`; the training step is `value_and_grad` plus one Vega optimizer update, and the loop is a plain for loop — no trainer, no layer type.
+Kaun provides layers, losses, and initializers. A model is a plain record with a hand-written `walk`, one line per field, instantiated by `Nx.Ptree.instantiate`. A layer's constructor draws its parameters from the key it is given. The training step is `value_and_grad` plus one Vega optimizer update, and the loop is a plain for loop, with no trainer and no layer type.
 
 <!-- $MDX skip -->
 ```ocaml
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -102,18 +99,17 @@ end
 let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-
   (* XOR dataset *)
-  let x = Nx.create Nx.float32 [|4; 2|]
-    [|0.; 0.; 0.; 1.; 1.; 0.; 1.; 1.|] in
-  let y = Nx.create Nx.float32 [|4; 1|]
-    [|0.; 1.; 1.; 0.|] in
+  let x = Nx.create Nx.float32 [| 4; 2 |]
+    [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Nx.create Nx.float32 [| 4; 1 |]
+    [| 0.; 1.; 1.; 0. |] in
 
-  (* Model parameters *)
+  (* Model parameters, drawn from two keys of one seed *)
+  let keys = Nx.Rng.split (Nx.Rng.key 42) in
   let params =
-    { Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1 }
+    { Mlp.l1 = Linear.init ~key:keys.(0) ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~key:keys.(1) ~inputs:8 ~outputs:1 }
   in
 
   (* Training step: value_and_grad + one Adam update *)
@@ -143,9 +139,38 @@ let () =
   done
 ```
 
+## Step 4: Compiling the Step
+
+`Rune.jit` compiles a function, given its signature: one structure per argument, joined by `@->`, and the result's after `returns`. The step's code runs once, when the first call traces it, and later calls run the compiled program. Donating the state at the call, with `Nx.Ptree.donate`, lets the step write the next state into its memory. In Step 3, replace the step and the loop with:
+
+<!-- $MDX skip -->
+```ocaml
+  let st = Nx.Ptree.pair mlp (Vega.adam_ptree mlp) in
+  let step =
+    Rune.jit
+      Nx.Ptree.(st @-> returns (pair st tensor))
+      (fun (params, ostate) ->
+        let l, grads = Rune.value_and_grad mlp loss params in
+        let params, ostate =
+          Vega.adam_step mlp ~lr:(Vega.lr 0.05) ostate ~params ~grads
+        in
+        ((params, ostate), l))
+  in
+  let state = ref (params, Vega.adam_init mlp params) in
+  for i = 1 to 500 do
+    let s, l = step (Nx.Ptree.donate st !state) in
+    state := s;
+    if i mod 100 = 0 then Printf.printf "step %4d  loss %.6f\n" i (Nx.item [] l)
+  done;
+```
+
+The Predict block is unchanged. A donated value is dead once the call has read it, and a later use of the old state raises ([nx.mli, Donation](../packages/nx/lib/nx.mli)).
+
+The same step runs on a GPU. `Nx.devices` mints a device set from a GPU that rig opens, `Nx.place` and `Nx.Ptree.place` put the data and the parameters there, and the step compiles for that device. A set minted without `~kernels` over GPUs computes nothing eagerly, and an operation there raises, so work there runs under `Rune.jit`, one device per compiled program. [Compilation](../packages/rune/doc/05-compilation.md) covers devices.
+
 ## Next Steps
 
 - **[Nx](../packages/nx/doc/01-getting-started.md)** — full guide to arrays, slicing, broadcasting, linear algebra
 - **[Rune](../packages/rune/doc/01-getting-started.md)** — all transformations: grad, jvp, vmap, and more
 - **[Kaun](../packages/kaun/doc/01-getting-started.md)** — layers, losses, data, metrics, pretrained models
-- **[Ecosystem Overview](ecosystem-overview.md)** — how all 9 libraries fit together
+- **[Ecosystem Overview](ecosystem-overview.md)** — how the libraries fit together
