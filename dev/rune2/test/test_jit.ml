@@ -722,6 +722,52 @@ let test_checks () =
   equal ~msg:"read by a check: in place" bool false took;
   equal bits_t (bits (Nx.neg (m [| 1.; 2.; -0.; 2.5 |]))) (bits y)
 
+(* A loop's step that checks, on the host, compiles with the loop: the call
+   raises the first failure of the first step that fails, as the steps written
+   out raise it. Compiled, a result takes a donated argument's memory, which an
+   evaluated program never lends. *)
+let test_loop_checks () =
+  let scan xs =
+    fst
+      (Rune.scan' ~init:(Nx.zeros_like (Nx.get [ 0 ] xs))
+         ~f:(fun c r -> (Nx.add c (checked r), Nx.neg c))
+         xs)
+  in
+  let g = Rune.jit' scan in
+  let rows xs = Nx.create f32 [| 3; 2 |] xs in
+  let both msg xs =
+    equal ~msg failure
+      (raised (fun () -> scan (rows xs)))
+      (raised (fun () -> g (rows xs)))
+  in
+  let passing = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
+  let lending =
+    Rune.jit
+      T.(tensor @-> tensor @-> returns (pair tensor tensor))
+      (fun w xs -> (Nx.neg w, scan xs))
+  in
+  let w = v [| 1.; 2. |] in
+  let b = Nx.Repr.read w Nx_array.buffer in
+  let nw, y = lending (Nx.donate w) passing in
+  let a = Option.get (Nx.Repr.array nw) in
+  equal ~msg:"compiled: the result took the donated memory" bool true
+    (Rig.Buffer.overlaps b (Nx_array.buffer a));
+  equal ~msg:"passing" bits_t (bits (scan passing)) (bits y);
+  both "the first step that fails" [| 1.; 2.; -1.; 1.; 7.; 1. |];
+  both "the first check that fails in that step" [| 1.; 2.; 5.; -1.; -1.; 9. |];
+  both "the second check" [| 1.; 2.; 1.; -2.5; 1.; 9. |];
+  let iterate x =
+    Rune.iterate' ~max:4
+      ~until:(fun x -> Nx.greater (Nx.sum x) (Nx.scalar f32 4.))
+      ~f:(fun x -> Nx.add (Nx.neg (checked x)) (Nx.scalar_like x 1.))
+      x
+  in
+  let h = Rune.jit' iterate in
+  let at xs = Nx.create f32 [| 2 |] xs in
+  equal ~msg:"an iterate's step" failure
+    (raised (fun () -> iterate (at [| 0.5; -2. |])))
+    (raised (fun () -> h (at [| 0.5; -2. |])))
+
 (* The cache
 
    A call retraces exactly when its key, the abstract value of its arguments,
@@ -1207,6 +1253,8 @@ let () =
              test "an iterate compiles one loop" test_staged_iterate;
              test "custom rules and remats compile with their program"
                test_constructs;
+             test "a loop's checks raise as the steps written out"
+               test_loop_checks;
            ];
          group "derived"
            [

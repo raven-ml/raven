@@ -515,7 +515,12 @@ let identity st form =
    stop at the carry it stores, and stores the flag that the stop does not hold
    yet, which the engine reads before the next trip. Once the trips are done, a
    stop that still fails raises the iterate's failure, a check of the
-   program. *)
+   program.
+
+   A step's checks are carried values of the loop: the first trip in which one
+   fails keeps each check's first failure and its data there, and later trips
+   leave them, so the loop's checks raise the first failure of the first step
+   that fails. *)
 
 (* How a node reads a value: not at all, at each element's own index only
    (through elementwise operations, casts and bitcasts of one width, reshapes
@@ -571,6 +576,117 @@ let rec checked (p : Program.t) =
       | Op _ -> false
       | Do { c; _ } -> List.exists checked (carried c))
     p.eqns
+
+(* Whether a construct of [p] carries a program that makes a check: a loop's
+   step checks only its own operations. *)
+let checked_inside (p : Program.t) =
+  Array.exists
+    (function Op _ -> false | Do { c; _ } -> List.exists checked (carried c))
+    p.eqns
+
+(* The checks [p] makes, of at least one element: each one's element count
+   and its data's dtypes, in order. *)
+let step_checks (p : Program.t) =
+  let rec dtypes : type d e. (d, e) Nx.Prim.data -> D.any list = function
+    | [] -> []
+    | x :: rest -> D.Any (Nx.dtype x) :: dtypes rest
+  in
+  List.filter_map
+    (function
+      | Op { op = Check { ok; data; _ }; _ } ->
+          let n = numel (Nx.shape ok) in
+          if n = 0 then None else Some (n, dtypes data)
+      | Op _ | Do _ -> None)
+    (Array.to_list p.eqns)
+
+let int64 n =
+  let c = Ops.const ~dtype:Int64 (`Int (Tolk.Bigint.of_int n)) in
+  Shape.reshape c (ints [ 1 ])
+
+(* [a] where [c], a boolean of one element, holds, and [b] elsewhere. *)
+let pick c a b =
+  let rank = List.length (Shape.shape a) in
+  let c = Shape.reshape c (List.init rank (fun _ -> Ops.Int 1)) in
+  Ops.where (Shape.expand c (Shape.shape a)) a b
+
+(* A loop's checks, carried: whether a trip failed, then for each check the
+   index of its failure in the first trip that failed, or its element count,
+   and its data there. Each trip that follows the first that failed leaves
+   them, so the loop raises the first failure of the first trip that failed,
+   as the steps written out would. *)
+type carried_checks = {
+  counts : (int * D.any list) list;
+  lowered : made list ref;  (** The step's own, in order, once lowered. *)
+}
+
+let check_inits cc =
+  int64 0
+  :: List.concat_map
+       (fun (n, dts) ->
+         int64 n
+         :: List.map
+              (fun (D.Any dt as d) ->
+                Shape.expand
+                  (Shape.reshape
+                     (Ops.const ~dtype:(tdtype dt) (`Int Tolk.Bigint.zero))
+                     (List.map (fun _ -> Ops.Int 1) (Arith.dims d [| 1 |])))
+                  (Arith.dims d [| 1 |]))
+              dts)
+       cc.counts
+
+(* The carried checks' next values, given their values [carried] and the
+   checks [made] of this trip, in order. *)
+let check_nexts cc carried (made : made list) =
+  cc.lowered := made;
+  let frozen = Ops.ne carried.(0) (int64 0) in
+  let failed =
+    List.map2 (fun (n, _) (m : made) -> Ops.lt m.first (int64 n)) cc.counts made
+  in
+  let any =
+    List.fold_left
+      (fun acc f -> Ops.maximum acc (Ops.where f (int64 1) (int64 0)))
+      (int64 0) failed
+  in
+  let at = ref 1 in
+  let parts =
+    List.map2
+      (fun (n, _) (m : made) ->
+        let first = carried.(!at) in
+        incr at;
+        let first' =
+          pick frozen first (pick (Ops.ne any (int64 0)) m.first (int64 n))
+        in
+        let data =
+          List.map
+            (fun (_, u) ->
+              let d = carried.(!at) in
+              incr at;
+              pick frozen d (pick (Ops.ne any (int64 0)) u d))
+            m.data
+        in
+        first' :: data)
+      cc.counts made
+  in
+  pick frozen carried.(0) any :: List.concat parts
+
+(* The checks of the loop's last values [finals], each the step's check with
+   its first failure and data there. *)
+let check_finals cs cc finals =
+  let at = ref 1 in
+  List.iter2
+    (fun (_, dts) (m : made) ->
+      let first = finals.(!at) in
+      incr at;
+      let data =
+        List.map
+          (fun d ->
+            let u = finals.(!at) in
+            incr at;
+            (d, u))
+          dts
+      in
+      cs.made <- { m with first; data } :: cs.made)
+    cc.counts !(cc.lowered)
 
 (* [a + b], nodes of values of [f]'s form. *)
 let sum (F f) a b =
@@ -647,28 +763,43 @@ and loop st cs env c =
                   zeros f.dtype (shape_of f));
               starts;
             ]
-        else if checked step then decline "a check in a loop's step"
+        else if checked_inside step then
+          decline "a check in a construct of a loop's step"
         else
+          let ns = Array.length starts in
+          let cc = { counts = step_checks step; lowered = ref [] } in
           let trip carried rows =
             let sub = env_of step in
             let caps = Array.map (fun (V x) -> node st env x) captures in
+            let inner = { made = []; read = [] } in
             let out =
-              outputs st cs sub
+              outputs st inner sub
                 (Array.concat [ Array.sub carried 0 nc; rows; caps ])
             in
-            let sums = Array.sub carried nc (Array.length starts) in
+            cs.read <- inner.read @ cs.read;
+            let sums = Array.sub carried nc ns in
             let add k j =
               sums.(j) <- sum sum_forms.(j) sums.(j) out.(nc + ny + k)
             in
             Array.iteri add feeds;
-            (Array.append (Array.sub out 0 nc) sums, Array.sub out nc ny)
+            let checks =
+              check_nexts cc
+                (Array.sub carried (nc + ns) (Array.length carried - nc - ns))
+                (List.rev inner.made)
+            in
+            ( Array.concat [ Array.sub out 0 nc; sums; Array.of_list checks ],
+              Array.sub out nc ny )
+          in
+          let inits =
+            Array.concat [ inits; starts; Array.of_list (check_inits cc) ]
           in
           let carried, ys =
-            repeat st ~n ~stop:None (Array.append inits starts)
+            repeat st ~n ~stop:None inits
               (Array.map (fun (V x) -> node st env x) xs)
               trip
           in
-          let ns = Array.length starts in
+          check_finals cs cc
+            (Array.sub carried (nc + ns) (Array.length carried - nc - ns));
           Array.concat
             [ Array.sub carried 0 nc; ys; Array.sub carried nc ns ]
       in
@@ -679,12 +810,16 @@ and loop st cs env c =
       let nc = Array.length init in
       let _, sum_forms, feeds = Program.sums [ until; step ] in
       let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
-      if checked step || checked until then decline "a check in a loop's step";
+      if checked_inside step || checked_inside until then
+        decline "a check in a construct of a loop's step";
+      let cc =
+        { counts = step_checks step @ step_checks until; lowered = ref [] }
+      in
       let ucaps = Array.map (fun (V x) -> node st env x) until_captures in
       let scaps = Array.map (fun (V x) -> node st env x) step_captures in
       (* The stop at a carry, adding its additions to the sums: whether the
          loop runs on, a boolean node. *)
-      let test carry sums =
+      let test cs carry sums =
         let out = outputs st cs (env_of until) (Array.append carry ucaps) in
         let base = Array.length out - Array.length until_feeds in
         Array.iteri
@@ -695,29 +830,43 @@ and loop st cs env c =
       in
       let inits = Array.map (fun (V x) -> node st env x) init in
       let sums = starts st env forms ~at:nc seeds in
-      let go = test inits sums in
+      let go = test cs inits sums in
+      let ns = Array.length sums in
       let carried =
         if max = 0 then Array.concat [ inits; sums; [| go |] ]
         else
           let trip carried _ =
             let carry = Array.sub carried 0 nc in
-            let sums = Array.sub carried nc (Array.length sums) in
+            let sums = Array.sub carried nc ns in
+            let inner = { made = []; read = [] } in
             let out =
-              outputs st cs (env_of step) (Array.append carry scaps)
+              outputs st inner (env_of step) (Array.append carry scaps)
             in
             let carry = Array.sub out 0 nc in
             let base = Array.length out - Array.length step_feeds in
             Array.iteri
               (fun k j -> sums.(j) <- sum sum_forms.(j) sums.(j) out.(base + k))
               step_feeds;
-            let go = test carry sums in
-            (Array.concat [ carry; sums; [| go |] ], [||])
+            let go = test inner carry sums in
+            cs.read <- inner.read @ cs.read;
+            let checks =
+              check_nexts cc
+                (Array.sub carried (nc + ns + 1)
+                   (Array.length carried - nc - ns - 1))
+                (List.rev inner.made)
+            in
+            (Array.concat [ carry; sums; [| go |]; Array.of_list checks ], [||])
           in
-          fst
-            (repeat st ~n:max
-               ~stop:(Some (Array.length sums + nc))
-               (Array.concat [ inits; sums; [| go |] ])
-               [||] trip)
+          let carried =
+            fst
+              (repeat st ~n:max ~stop:(Some (nc + ns))
+                 (Array.concat
+                    [ inits; sums; [| go |]; Array.of_list (check_inits cc) ])
+                 [||] trip)
+          in
+          let k = nc + ns + 1 in
+          check_finals cs cc (Array.sub carried k (Array.length carried - k));
+          Array.sub carried 0 (nc + ns + 1)
       in
       (* Once the trips are done, the stop holds or the loop fails. *)
       let go = carried.(Array.length carried - 1) in
