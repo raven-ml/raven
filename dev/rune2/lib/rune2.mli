@@ -544,8 +544,8 @@ val vmap : ?axis:axis -> ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     the shape of the arrays it reads. A lane lies where its rows lie: an
     argument cut along axis 0 across devices computes each lane on the devices
     that hold its row, and [Nx.place] of a lane at its own placement moves
-    nothing. An {!iterate} whose [until] depends on the lanes raises
-    [Invalid_argument].
+    nothing. The lanes of an {!iterate} stop apart where its [until] depends on
+    them.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if the arguments hold no array
@@ -653,9 +653,7 @@ val scan :
     its operands) and none of the rows' or captures' own, then runs the step's
     transpose over the rows in reverse. A row's cotangent is stacked like the
     outputs, and a captured array's is the sum over the steps of each step's,
-    added in reverse order of the steps. Where the step runs an {!iterate}, a
-    transformation runs the scan's steps one by one where it is called, and
-    reverse mode keeps each step's values as it would the steps written out.
+    added in reverse order of the steps.
 
     Raises [Invalid_argument] if [xs] has no array
     (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
@@ -674,10 +672,36 @@ val iterate :
   'c ->
   'c
 (** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
-    [c], from [init], until [until carry] holds, and returns that carry, where
-    the last step returns it. [until] returns one boolean and is tested before
-    each step, so an [init] that satisfies it is returned unchanged. [f] and
-    [until] are traced at the call, [f] as {!scan}'s step is.
+    [c], from [init], until [until carry] holds, and returns that carry. [until]
+    returns one boolean and is tested before each step, so an [init] that
+    satisfies it is returned unchanged. [f] and [until] are traced at the call,
+    [f] as {!scan}'s step is.
+
+    {b Derivatives.} The derivative is that of the steps taken; [until] has
+    none. Reverse mode runs the loop forward, keeping of each step the values
+    its tangent's operations read, then the steps' transposes in reverse. It
+    keeps the steps taken where the loop runs outside every other
+    transformation. Under {!jit}, a map whose lanes stop apart, or forward mode
+    around it, it keeps room for [max] steps, and transposes only the steps
+    taken, but a value the step captures receives a zero cotangent where the
+    loop takes no step, NaN where that zero meets an infinite partial
+    derivative.
+
+    {b Maps.} Under {!vmap}, where [until] depends on the lanes, each lane stops
+    on its own [until], and the loop runs until the last lane stops. A lane that
+    has stopped keeps its carry bit for bit and computes the step of the first
+    lane still running, its {e donor}, on the donor's carry and its row of every
+    array the step captures with lanes, its own discarded: the step never runs
+    at a point no lane reached. Inside the step a stopped lane's {!Nx.check}s
+    pass, its {!lane_index} is its donor's, its additions to a {!Total} are
+    dropped, and {!lanes} of the map raises, the lanes standing at different
+    steps. A captured array every lane shares receives, under reverse mode, a
+    stopped lane's zero cotangent times its donor's partial derivative, which
+    turns an infinite gradient into NaN. Each lane's additions depend on its
+    values, so a {!Total.collect} around the map must hold a running value on
+    their set. Where [until] does not depend on the lanes, they stop together.
+    The error at [max] names the first lane still running, as in
+    ["Rune.iterate: until is still false after max = 50 steps, in lane 3"].
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
@@ -697,11 +721,7 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     [f x], bit for bit but for a NaN's sign and payload. Every transformation
     sees [remat s f] as it sees [f]: its derivatives in either mode, and its
     map, are [f]'s. An addition to a {!Total} that [f] makes counts once,
-    however often the backward pass computes [f] again. Where [f] runs an
-    {!iterate}, a transformation runs [f]'s program where it is called, so
-    reverse mode keeps its intermediate values. Inside a {!jit}, [f]'s
-    operations compile with the program's, and the compiler may keep their
-    values for the backward pass instead of computing them again.
+    however often the backward pass computes [f] again.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 
@@ -785,8 +805,7 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     call is inlined: its program's operations, or its derived program's, are
     staged there. Inside a {!scan}'s or an {!iterate}'s step, a {!remat}'s
     function or a custom rule, a call stays one: evaluated, it runs compiled,
-    so the construct gives its function's bits. A program that holds an {!iterate} is evaluated under a
-    transformation, which receives its operations.
+    so the construct gives its function's bits.
 
     {b Loops and rules.} A {!scan} or an {!iterate} compiles as one loop of the
     program, its step compiled once whatever its number of steps: each step
@@ -794,7 +813,9 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     storage, rows a copy where theirs do not lie 16 bytes apart. A check in a
     step raises, once the call returns, the first failure of the first step
     that fails, as the steps written out would, and an {!iterate} stops at the
-    first failure. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
+    first failure. A loop a derivative or a map makes of an {!iterate} is
+    evaluated: one that runs a count of its rows, reversed, stacks its steps or
+    holds lanes apart. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
     {!custom_transpose} compile as their function's operations, the program's
     own.
 

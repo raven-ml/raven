@@ -129,6 +129,10 @@ and construct =
           (** Over the carry, a row and the captures; to the carry, the outputs
               and the additions. *)
       length : int;  (** The number of rows. *)
+      trips : value option;
+          (** A 0-d [int32] from [0] to [length]: the rows that run, the first
+              ones; all with none. The outputs of the others are zeros. *)
+      reverse : bool;  (** Whether the rows run from the last. *)
       init : value array;
       xs : value array;  (** Rows along axis 0. *)
       captures : value array;
@@ -138,9 +142,19 @@ and construct =
       -> construct
   | Iterate : {
       name : string;  (** The entry point, in messages. *)
-      step : t;  (** Over the carry and its captures, to the carry. *)
+      step : t;
+          (** Over the carry and its captures, to the carry, the outputs where
+              [rows] stacks them, and the additions. *)
       until : t;  (** Over the carry and its captures, to one boolean. *)
       max : int;
+      rows : rows option;
+          (** Where given, the results after the carry are the number of steps
+              taken, a 0-d [int32] where the stop lies, then each output stacked
+              along a new axis 0 over the steps taken. *)
+      stopped : int option;
+          (** A carry holding one stop per lane of the maps the loop runs in,
+              whose first still false one the message names when [until] is
+              still false after [max] steps. *)
       init : value array;
       step_captures : value array;
       until_captures : value array;
@@ -152,7 +166,8 @@ and construct =
       args : value array;
       site : site;
           (** [body]'s compiled form, applied to arguments of [args]' forms then
-              its totals' running values in, and the programs derived from it. *)
+              its totals' running values in, and the programs derived from it.
+          *)
       seeds : value array;  (** As a scan's. *)
     }
       -> construct
@@ -207,6 +222,11 @@ and construct =
       (** [body] applied to [args], the function's arguments then its captures,
           whose reverse mode keeps [args] alone and computes [body] again; its
           sums start from [seeds], as a scan's. *)
+
+and rows =
+  | Taken
+      (** As many rows as steps taken: no tracer can stage such an iterate. *)
+  | Max  (** [max] rows, those past the steps taken zeros. *)
 
 and derivative =
   | Tangent of t
@@ -386,6 +406,16 @@ val running :
 (** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with
     none around. *)
 
+val threading :
+  ?lanes:int -> addition array -> (value array -> value array * 'a) -> 'a
+(** [threading ~lanes adds f] is [snd (f totals)], [totals] the running values
+    in of the totals [adds] thread, as {!threaded} takes them, and
+    [fst (f totals)] their running values out, handed back. *)
+
+val unset : value -> 'a
+(** [unset v] raises [Invalid_argument] for a running value [v] computed on a
+    set its total's running value does not lie on. *)
+
 val add_to : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.t -> unit
 (** [add_to t x] adds [x] to [t]: the running value of the innermost collect or
     tracer that answers for [t] ({!Running}) becomes itself plus [x], and with
@@ -431,6 +461,21 @@ type _ Effect.t +=
   | Bound : axis -> int option Effect.t
         (** Answered by each map with its number of lanes, when the axis names
             it. *)
+
+val mentions : axis -> t -> bool
+(** [mentions a p] is [true] iff [p] or a program its constructs carry reads the
+    lanes or the lane index of the map named [a]. *)
+
+val reads_lanes : t -> bool
+(** [reads_lanes p] is [true] iff [p] or a program its constructs carry reads
+    the lanes or the lane index of a map. *)
+
+val reads_params : t -> bool array -> bool
+(** [reads_params p mask] is [true] iff one of [p]'s arguments [k] with
+    [mask.(k)] is read by what [p]'s results need. *)
+
+val count : value -> int
+(** [count v] is the value of [v], a 0-d [int32]. *)
 
 val bound : axis -> int option
 (** [bound a] is [Some n] inside the map named [a] of [n] lanes, and [None] with

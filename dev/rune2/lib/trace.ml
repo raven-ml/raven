@@ -464,11 +464,12 @@ let index_of v vs =
 
 let rec answer st i c =
   match (st.kind, c) with
-  | Tape, Scan { step; length; init; xs; captures; seeds } ->
-      scan_parts st i step ~length ~init ~xs ~captures ~seeds
+  | Tape, Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
+      scan_parts st i step ~length ~trips ~reverse ~init ~xs ~captures ~seeds
   | Tape, Remat { body; args; seeds } -> remat_parts st i body args ~seeds
   | Tape, Call { body; args; site; seeds } ->
       call_parts st i body args site ~seeds
+  | Tape, Iterate _ -> iterate_parts st i c
   | _ -> record st i c
 
 (* A scan over the tape's variables is two scans, as JAX's partial evaluation of
@@ -478,7 +479,8 @@ let rec answer st i c =
    carry is unknown where its init is or where the step makes it so, a fixpoint.
    A residual that is a capture or a row of the step is read where it lies, not
    stacked. *)
-and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
+and scan_parts st i (step : Program.t) ~length ~trips ~reverse ~init ~xs
+    ~captures ~seeds =
   let name = st.name in
   let nc = Array.length init and nx = Array.length xs in
   let ny = Array.length step.outputs - nc - Array.length step.adds in
@@ -574,6 +576,8 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
          {
            step = kprog;
            length;
+           trips;
+           reverse;
            init = Loops.pick ku init;
            xs = kxs;
            captures = Array.append kcaps own;
@@ -631,6 +635,8 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
           {
             step = Loops.reorder tape (Array.of_list order);
             length;
+            trips;
+            reverse;
             init = Loops.pick u init;
             xs =
               Array.concat
@@ -656,6 +662,229 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
   let carry = Array.map (fun u -> if u then un () else kn ()) u in
   let ys = Array.map (fun u -> if u then un () else kn ()) uy in
   Array.concat [ carry; ys; sums ]
+
+(* An iterate over the tape's variables is a known iterate, computed at the
+   call, of the carries and outputs that read none of them, which stacks the
+   step's residuals over the steps it takes, and a recorded linear scan of the
+   others over those steps, reading the residuals as rows. Its stop reads known
+   values alone. The stacks hold the steps taken where the known iterate runs at
+   the call, its operands no tracer's and no map read in its programs; and
+   otherwise [max] rows, the linear scan running the rows of the steps taken. A
+   residual that is a capture of the step is read where it lies. *)
+and iterate_parts st i (c : construct) =
+  match c with
+  | Iterate it ->
+      let name = st.name in
+      let nc = Array.length it.init in
+      let ny = Array.length it.step.outputs - nc - Array.length it.step.adds in
+      let captures = it.step_captures in
+      let ucap = Array.map (owned i) captures in
+      if Array.exists (owned i) it.until_captures then
+        invalid_arg (name ^ ": an iterate's stop reads a tangent");
+      let cforms = Array.map form captures in
+      let rec fix u (cf : form array) =
+        let gained = Array.make nc false and uy = ref [||] in
+        let kinds = ref [||] and tape = ref None in
+        let kforms =
+          Array.append (Loops.pick (nots u) cf) (Loops.pick (nots ucap) cforms)
+        and uforms = Array.append (Loops.pick u cf) (Loops.pick ucap cforms) in
+        let count m = Array.length (Loops.pick m m) in
+        let known kvs =
+          match
+            Loops.split [ nc - count u; Array.length captures - count ucap ] kvs
+          with
+          | [ kc; kk ] ->
+              let stash = ref [||] in
+              let p, res =
+                trace_in Tape ~name uforms (fun inner uvs ->
+                    match Loops.split [ count u; count ucap ] uvs with
+                    | [ uc; uk ] ->
+                        let args =
+                          Array.append (Loops.merge u uc kc)
+                            (Loops.merge ucap uk kk)
+                        in
+                        let out =
+                          threaded it.step (fun totals ->
+                              eval ~totals it.step args)
+                        in
+                        let mine (V y) = owns inner y in
+                        let c = Array.sub out 0 nc
+                        and y = Array.sub out nc ny in
+                        Array.iteri
+                          (fun k v -> gained.(k) <- (not u.(k)) && mine v)
+                          c;
+                        uy := Array.map mine y;
+                        let kc' =
+                          Array.mapi
+                            (fun k v -> if gained.(k) then args.(k) else v)
+                            c
+                        in
+                        stash :=
+                          Array.append
+                            (Loops.pick (nots u) kc')
+                            (Loops.pick (nots !uy) y);
+                        Array.append (Loops.pick u c) (Loops.pick !uy y)
+                    | _ -> invalid_arg "Rune: an iterate's parts")
+              in
+              tape := Some p;
+              kinds :=
+                Array.map
+                  (fun r ->
+                    match index_of r kk with
+                    | Some j -> Capture j
+                    | None -> Stacked)
+                  res;
+              Array.append !stash
+                (Loops.pick (Array.map (fun k -> k = Stacked) !kinds) res)
+          | _ -> invalid_arg "Rune: an iterate's parts"
+        in
+        let kprog, own = trace Body ~name kforms known in
+        if Array.exists Fun.id gained then fix (Array.map2 ( || ) u gained) cf
+        else (u, !uy, kprog, own, Option.get !tape, !kinds)
+      in
+      let u = Array.map (owned i) it.init in
+      let u, uy, kprog, own, tape, kinds = fix u (Array.map form it.init) in
+      let ku = nots u and kuy = nots uy in
+      (* The stop over the known carries: an unknown one it does not read. *)
+      let kuntil, uown =
+        trace Body ~name
+          (Array.append
+             (Loops.pick ku (Array.map form it.init))
+             (Array.map form it.until_captures))
+          (fun vs ->
+            let nk = Array.length (Loops.pick ku ku) in
+            let kc = Array.sub vs 0 nk
+            and caps = Array.sub vs nk (Array.length vs - nk) in
+            let filler =
+              Array.map
+                (fun v -> Loops.filled ~zero:true (form v))
+                (Loops.pick u it.init)
+            in
+            threaded it.until (fun totals ->
+                eval ~totals it.until
+                  (Array.append (Loops.merge u filler kc) caps)))
+      in
+      if reads_params it.until (Array.mapi (fun k _ -> u.(k)) it.init) then
+        invalid_arg (name ^ ": an iterate's stop reads a tangent");
+      let kinit = Loops.pick ku it.init in
+      let kcaps = Loops.pick (nots ucap) captures in
+      let operands =
+        Array.concat [ kinit; kcaps; own; it.until_captures; uown; it.seeds ]
+      in
+      let rows =
+        match it.rows with
+        | Some r -> r
+        | None ->
+            let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
+            if
+              Array.for_all untraced operands
+              && (not (staging ()))
+              && (not (reads_lanes kprog))
+              && not (reads_lanes kuntil)
+            then Taken
+            else Max
+      in
+      let stopped =
+        Option.map
+          (fun j ->
+            let k = ref (-1) in
+            Array.iteri (fun l ku -> if ku && l <= j then incr k) ku;
+            !k)
+          it.stopped
+      in
+      let kr =
+        perform
+          (Iterate
+             {
+               it with
+               step = kprog;
+               until = kuntil;
+               rows = Some rows;
+               stopped;
+               init = kinit;
+               step_captures = Array.append kcaps own;
+               until_captures = Array.append it.until_captures uown;
+             })
+      in
+      let nkc = Array.length kinit
+      and nky = Array.length (Loops.pick kuy kuy) in
+      let nst =
+        Array.length (Loops.pick (Array.map (fun k -> k = Stacked) kinds) kinds)
+      in
+      let trips = kr.(nkc) in
+      let stacked = Array.sub kr (nkc + 1 + nky) nst in
+      let sums =
+        Array.sub kr
+          (nkc + 1 + nky + nst)
+          (Array.length kr - nkc - 1 - nky - nst)
+      in
+      let nuc = Array.length (Loops.pick u u)
+      and nuy = Array.length (Loops.pick uy uy) in
+      let lr =
+        if nuc + nuy = 0 then [||]
+        else begin
+          (* The tape's parameters: its unknown carries and captures, then the
+             residuals; the linear step's: the carries, the stacked residuals,
+             then the unknown captures and the residual captures. *)
+          let nuk = Array.length (Loops.pick ucap ucap) in
+          let nu = nuc + nuk in
+          let res p =
+            List.filter
+              (fun j -> p kinds.(j))
+              (List.init (Array.length kinds) Fun.id)
+          in
+          let stacked_r = res (fun k -> k = Stacked) in
+          let caps_r = res (function Capture _ -> true | _ -> false) in
+          let range a n = List.init n (fun j -> a + j) in
+          let order =
+            List.concat
+              [
+                range 0 nuc;
+                List.map (fun j -> nu + j) stacked_r;
+                range nuc nuk;
+                List.map (fun j -> nu + j) caps_r;
+              ]
+          in
+          let at j =
+            match kinds.(j) with
+            | Capture c -> kcaps.(c)
+            | Stacked | Row _ -> invalid_arg "Rune: a stacked residual"
+          in
+          let length, trips =
+            match rows with
+            | Taken -> (count trips, None)
+            | Max -> (it.max, Some trips)
+          in
+          record st i
+            (Scan
+               {
+                 step = Loops.reorder tape (Array.of_list order);
+                 length;
+                 trips;
+                 reverse = false;
+                 init = Loops.pick u it.init;
+                 xs = stacked;
+                 captures =
+                   Array.append (Loops.pick ucap captures)
+                     (Array.of_list (List.map at caps_r));
+                 seeds = [||];
+               })
+        end
+      in
+      let next a =
+        let k = ref (-1) in
+        fun () ->
+          incr k;
+          a.(!k)
+      in
+      let kn = next kr and un = next lr in
+      let carry = Array.map (fun u -> if u then un () else kn ()) u in
+      if Option.is_none it.rows then Array.append carry sums
+      else
+        let _ = kn () in
+        let ys = Array.map (fun u -> if u then un () else kn ()) uy in
+        Array.concat [ carry; [| trips |]; ys; sums ]
+  | _ -> invalid_arg "Rune: an iterate's parts"
 
 (* A remat over the tape's variables computes at the call the outputs that read
    none of them, its function partially evaluated once, and records itself over
@@ -772,9 +1001,7 @@ and trace_in ?(totals = [||]) kind ~name inputs f =
            one to its tangents: its primal runs where it was performed, and its
            operations are recorded. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
-    | Construct (Call { site; _ } as c), Some i
-      when claims st i c
-           && (st.kind = Jit || (st.kind = Tape && Program.iterates site)) ->
+    | Construct (Call _ as c), Some i when claims st i c && st.kind = Jit ->
         (* Inlined: the default runs where the call was performed, which issues
            the call's equations here. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)

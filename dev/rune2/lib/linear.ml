@@ -1125,10 +1125,15 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
         if reached base (Array.length forms) then
           linear_call env ~name ~apply ~transpose ~args ~captures ~residuals
             ~forms (acc_at base)
-    | Do { c = Scan { step; length; init; xs; captures; _ }; base } ->
+    | Do
+        {
+          c = Scan { step; length; trips; reverse; init; xs; captures; _ };
+          base;
+        } ->
         let n = next.(e) - base in
         if reached base n then
-          scan_rule env step ~length ~init ~xs ~captures (cts_at base n)
+          scan_rule env step ~length ~trips ~reverse ~init ~xs ~captures
+            (cts_at base n)
     | Do { c = Remat { body; args; _ }; base } ->
         let n = next.(e) - base in
         if reached base n then remat_rule env body args (cts_at base n)
@@ -1143,13 +1148,14 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
     (fun k c -> if Option.is_none c then acc.(p.params.(k)) else None)
     consts
 
-(* A linear scan's transpose is the scan of its step's transpose over the rows
-   in reverse, as JAX transposes a scan: its carry holds the cotangents of the
-   carries that receive one, a fixpoint, and the running sums of the linear
-   captures' cotangents; its rows are the constant rows and the outputs'
-   cotangents. A carry or a sum starts from the identity that keeps every sign,
-   so that a single contribution is itself. *)
-and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
+(* A linear scan's transpose is the scan of its step's transpose over the same
+   rows in the other order, as JAX transposes a scan: its carry holds the
+   cotangents of the carries that receive one, a fixpoint, and the running sums
+   of the linear captures' cotangents; its rows are the constant rows and the
+   outputs' cotangents. A carry or a sum starts from the identity that keeps
+   every sign, so that a single contribution is itself. *)
+and scan_rule env (step : Program.t) ~length ~trips ~reverse ~init ~xs ~captures
+    cts =
   let nc = Array.length init and nx = Array.length xs in
   let ncap = Array.length captures in
   let ny = Array.length step.outputs - nc - Array.length step.adds in
@@ -1282,12 +1288,13 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
            {
              step = prog;
              length;
+             trips = Option.map const trips;
+             reverse = not reverse;
              init =
                Array.append (Loops.pick m init')
                  (Array.map (Loops.filled ~zero:false)
                     (Loops.pick a (Array.map form caps)));
-             xs =
-               Array.append (Array.map Loops.flip cxs) (Array.map Loops.flip ys);
+             xs = Array.append cxs ys;
              captures = Array.append ckk own;
              seeds = [||];
            })
@@ -1298,18 +1305,19 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
       r.(!next)
     in
     (* A carry's init receives no cotangent where the step's transpose gives the
-       carry none: only the last row's could, and it is a zero. *)
+       carry none: only the last row's could, and it is a zero; but where the
+       rows that run are counted, none may run. *)
     Array.iteri
       (fun k (V x) ->
         if m.(k) then
           let c = take () in
-          if got.(k) && env.lin x then env.give x (held c))
+          if (got.(k) || Option.is_some trips) && env.lin x then
+            env.give x (held c))
       init;
     Array.iteri (fun j (V x) -> if a.(j) then env.give x (held (take ()))) caps;
     let lxs = Loops.pick lx xs in
     Array.iteri
-      (fun j (V x) ->
-        if has_row.(j) then env.give x (held (Loops.flip (take ()))))
+      (fun j (V x) -> if has_row.(j) then env.give x (held (take ())))
       lxs
 
 (* A remat's transpose linearizes its function again at its constant arguments,

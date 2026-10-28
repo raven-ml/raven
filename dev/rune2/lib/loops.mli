@@ -27,13 +27,6 @@ val zeros_like : Program.value -> Program.value
 val add : Program.value -> Program.value -> Program.value
 (** [add a b] is [Nx.add a b], [b] read at [a]'s form. *)
 
-val holds_iterate : Program.t -> bool
-(** [holds_iterate p] is [true] iff [p] or a program its constructs carry has an
-    iterate. *)
-
-val flip : Program.value -> Program.value
-(** [flip x] is [x] with its axis 0 reversed, a view. *)
-
 val reorder : Program.t -> int array -> Program.t
 (** [reorder p order] is [p] whose argument [k] is [p]'s argument [order.(k)],
     its totals' running values in last as in [p]. *)

@@ -533,7 +533,17 @@ let scan_named name c x y ~f ~init xs =
   let ny = Array.length (values y ys_like) in
   let r =
     run
-      (Scan { step; length; init = init_v; xs = xs_v; captures; seeds = [||] })
+      (Scan
+         {
+           step;
+           length;
+           trips = None;
+           reverse = false;
+           init = init_v;
+           xs = xs_v;
+           captures;
+           seeds = [||];
+         })
   in
   ( rebuild c ~like:init (slice r 0 nc),
     rebuild y ~like:ys_like (slice r nc (nc + ny)) )
@@ -569,6 +579,8 @@ let iterate_named name c ~max ~until ~f init =
            step;
            until;
            max;
+           rows = None;
+           stopped = None;
            init = init_v;
            step_captures;
            until_captures;

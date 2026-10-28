@@ -1338,22 +1338,16 @@ let rec answer ~name ~tape i (c : Program.construct) k =
       with
       | Some r -> Effect.Deep.continue k r
       | None -> Effect.Deep.discontinue k Program.Evaluate)
-  (* An iterate has no rule before stage 6, and evaluating it inside a trace
-     would read its stop: a construct whose programs hold one runs its default,
-     step by step. *)
-  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
-    ->
-      Effect.Deep.discontinue k Program.Evaluate
-  | Call { site; _ } when Program.iterates site ->
-      Effect.Deep.discontinue k Program.Evaluate
-  | Scan { step; length; init; xs; captures; seeds } ->
+  | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       Effect.Deep.continue k
-        (scan ~name ~tape i step ~length ~init ~xs ~captures ~seeds)
+        (scan ~name ~tape i step ~length ~trips ~reverse ~init ~xs ~captures
+           ~seeds)
   | Remat { body; args; seeds } ->
       Effect.Deep.continue k (remat ~name ~tape i body args seeds)
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name ~tape i body args site seeds)
-  | Lane_index _ | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
+  | Iterate _ -> Effect.Deep.continue k (iterate ~name ~tape i c)
+  | Lane_index _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
    tangent for each carry that has one at the call or gains one from the step: a
@@ -1364,7 +1358,8 @@ let rec answer ~name ~tape i (c : Program.construct) k =
    one more carry, the sum's tangent, from its seed's: the derived step's
    additions are primals, which a total outside the differentiation receives,
    and a total inside it receives the sums as duals. *)
-and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
+and scan ~name ~tape i (step : Program.t) ~length ~trips ~reverse ~init ~xs
+    ~captures ~seeds =
   let nc = Array.length init in
   let ny = Array.length step.outputs - nc - Array.length step.adds in
   let _, sum_forms, feeds = Program.feeds step in
@@ -1498,6 +1493,8 @@ and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
          {
            step = prog;
            length;
+           trips = Option.map (pv i) trips;
+           reverse;
            init =
              Array.concat
                [
@@ -1597,10 +1594,14 @@ and call ~name ~tape i (body : Program.t) args site seeds =
   let made () =
     let has_y = ref [||] in
     let derive vs =
-      match Loops.split [ Array.length pargs; count targs; count tseeds ] vs with
+      match
+        Loops.split [ Array.length pargs; count targs; count tseeds ] vs
+      with
       | [ ps; ts; tss ] ->
           let ys = ref [||] in
-          let tss = if seeds = [||] then Array.make na None else spread smask tss in
+          let tss =
+            if seeds = [||] then Array.make na None else spread smask tss
+          in
           let (_ : Program.value array) =
             Program.threaded body (fun totals ->
                 run ~name ?tape (fun j ->
@@ -1642,16 +1643,218 @@ and call ~name ~tape i (body : Program.t) args site seeds =
       Array.map2 (dualv i ~fresh:false) (Array.append y adds) (spread d.flags t)
   | _ -> invalid_arg "Rune: a call's derivative"
 
+(* An iterate's derivative is an iterate whose carry holds the primal carry, the
+   tangents of the carries that have one or a step gives one, a fixpoint, the
+   tangents of the sums that have one, and the stop. The stop has no derivative:
+   it is tested on the primals, once before the loop and after each step, inside
+   it, so that every test's additions are chained with their tangents as the
+   steps' are, and the loop's own stop reads it. *)
+and iterate ~name ~tape i (c : Program.construct) =
+  match c with
+  | Iterate it -> (
+      let nc = Array.length it.init in
+      let ny = Array.length it.step.outputs - nc - Array.length it.step.adds in
+      let sum_adds, sum_forms, feeds = Program.sums [ it.until; it.step ] in
+      let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
+      let ns = Array.length sum_adds in
+      let pinit = Array.map (pv i) it.init in
+      let psc = Array.map (pv i) it.step_captures
+      and tsc = Array.map (tv i) it.step_captures in
+      let puc = Array.map (pv i) it.until_captures
+      and tuc = Array.map (tv i) it.until_captures in
+      let zero v = Loops.filled ~zero:false (Program.form v) in
+      (* Each sum's running value before the loop, from its seed, and the stop
+         at [init]. *)
+      let seeds =
+        if it.seeds = [||] then Array.map (Loops.filled ~zero:false) sum_forms
+        else it.seeds
+      in
+      let tested =
+        derive ~name ~tape i
+          ~totals:(Array.map (fun j -> seeds.(j)) until_feeds)
+          it.until
+          (Array.append it.init it.until_captures)
+      in
+      let stop0 = fst tested.(0) in
+      let sums0 = Array.map (fun v -> (pv i v, tv i v)) seeds in
+      Array.iteri (fun k j -> sums0.(j) <- tested.(1 + k)) until_feeds;
+      let tinit k =
+        match tv i it.init.(k) with Some t -> t | None -> zero pinit.(k)
+      in
+      let tsum s =
+        match snd sums0.(s) with Some t -> t | None -> zero (fst sums0.(s))
+      in
+      (* [pf], [tf] and [sf] are the forms of the primal and tangent carries and
+         the sums' tangents. *)
+      let rec fix has hs pf tf sf =
+        let gained = Array.make nc false and gained_s = Array.make ns false in
+        let has_y = ref [||] in
+        let count m = Array.length (Loops.pick m m) in
+        let carried =
+          Array.concat
+            [
+              pf; Loops.pick has tf; Loops.pick hs sf; [| Program.form stop0 |];
+            ]
+        in
+        let forms =
+          Array.concat
+            [
+              carried;
+              Array.map Program.form psc;
+              Array.map Program.form (somes tsc);
+              Array.map Program.form puc;
+              Array.map Program.form (somes tuc);
+            ]
+        in
+        let lengths =
+          [
+            nc;
+            count has;
+            count hs;
+            1;
+            Array.length psc;
+            Array.length (somes tsc);
+            Array.length puc;
+            Array.length (somes tuc);
+          ]
+        in
+        let step vs =
+          match Loops.split lengths vs with
+          | [ pc; tc; ts; _; ps; ts_c; pu; tu ] ->
+              let tsums = spread hs ts in
+              Program.threading sum_adds (fun running ->
+                  run ~name ?tape (fun j ->
+                      let duals ps ts mask =
+                        Array.map2 (seeded j) ps
+                          (spread (Array.map Option.is_some mask) ts)
+                      in
+                      let acc =
+                        Array.mapi (fun s v -> seeded j v tsums.(s)) running
+                      in
+                      let c = Array.map2 (seeded j) pc (spread has tc) in
+                      let totals feeds = Array.map (fun s -> acc.(s)) feeds in
+                      let out =
+                        Program.eval ~totals:(totals step_feeds) it.step
+                          (Array.append c (duals ps ts_c tsc))
+                      in
+                      Array.iteri
+                        (fun k s -> acc.(s) <- out.(nc + ny + k))
+                        step_feeds;
+                      let c' = Array.sub out 0 nc in
+                      let test =
+                        Program.eval ~totals:(totals until_feeds) it.until
+                          (Array.append c' (duals pu tu tuc))
+                      in
+                      Array.iteri
+                        (fun k s -> acc.(s) <- test.(1 + k))
+                        until_feeds;
+                      let p, t = parts j c' in
+                      let yp, yt = parts j (Array.sub out nc ny) in
+                      let sp, st = parts j acc in
+                      let tc' =
+                        Array.init nc (fun k ->
+                            gained.(k) <- (not has.(k)) && Option.is_some t.(k);
+                            match t.(k) with
+                            | Some t -> Some t
+                            | None ->
+                                if has.(k) then Some (zero p.(k)) else None)
+                      in
+                      let ts' =
+                        Array.init ns (fun s ->
+                            gained_s.(s) <-
+                              (not hs.(s)) && Option.is_some st.(s);
+                            match st.(s) with
+                            | Some t -> Some t
+                            | None ->
+                                if hs.(s) then Some (zero sp.(s)) else None)
+                      in
+                      has_y := Array.map Option.is_some yt;
+                      let carry =
+                        Array.concat
+                          [
+                            p;
+                            somes (Loops.pick has tc');
+                            somes (Loops.pick hs ts');
+                            [| pv j test.(0) |];
+                          ]
+                      in
+                      (sp, Array.concat [ carry; yp; somes yt ])))
+          | _ -> invalid_arg "Rune: an iterate's derivative"
+        in
+        let prog, own = Trace.trace Body ~name forms step in
+        if Array.exists Fun.id gained || Array.exists Fun.id gained_s then
+          fix
+            (Array.map2 ( || ) has gained)
+            (Array.map2 ( || ) hs gained_s)
+            pf tf sf
+        else (prog, own, has, hs, !has_y)
+      in
+      let has = Array.map (fun v -> Option.is_some (tv i v)) it.init in
+      let hs = Array.map (fun (_, t) -> Option.is_some t) sums0 in
+      let prog, own, has, hs, has_y =
+        fix has hs
+          (Array.map Program.form pinit)
+          (Array.init nc (fun k -> Program.form (tinit k)))
+          (Array.init ns (fun s -> Program.form (tsum s)))
+      in
+      let init =
+        Array.concat
+          [
+            pinit;
+            Loops.pick has (Array.init nc tinit);
+            Loops.pick hs (Array.init ns tsum);
+            [| stop0 |];
+          ]
+      in
+      let until, uown =
+        Trace.trace Body ~name (Array.map Program.form init) (fun vs ->
+            [| vs.(Array.length vs - 1) |])
+      in
+      let r =
+        Program.perform
+          (Iterate
+             {
+               it with
+               step = prog;
+               until;
+               init;
+               step_captures =
+                 Array.concat [ psc; somes tsc; puc; somes tuc; own ];
+               until_captures = uown;
+               seeds = Array.map fst sums0;
+             })
+      in
+      let count m = Array.length (Loops.pick m m) in
+      let nt = count has and nts = count hs and nty = count has_y in
+      let stacked = Option.is_some it.rows in
+      let lengths =
+        [ nc; nt; nts; 1 ]
+        @ (if stacked then [ 1; ny; nty ] else [ 0; 0; 0 ])
+        @ [ ns ]
+      in
+      match Loops.split lengths r with
+      | [ c; tc; ts; _; trips; y; ty; sums ] ->
+          Array.concat
+            [
+              Array.map2 (dualv i ~fresh:false) c (spread has tc);
+              trips;
+              Array.map2 (dualv i ~fresh:true) y (spread has_y ty);
+              Array.map2 (dualv i ~fresh:false) sums (spread hs ts);
+            ]
+      | _ -> invalid_arg "Rune: an iterate's derivative")
+  | _ -> invalid_arg "Rune: an iterate's derivative"
+
 (* [p]'s outputs over [xs], each with its tangent, from a differentiation [j]
    like [i] seeded from [i]'s tangents of [xs]. *)
-and derive ~name ~tape i p xs =
+and derive ?totals ~name ~tape i p xs =
   run ~name ?tape (fun j ->
       let seeded (Program.V x as v) =
         match Prim.payload i x with
         | Some (Dual d) -> Program.V (seed j d.primal d.tangent)
         | _ -> v
       in
-      let out = Program.eval p (Array.map seeded xs) in
+      let totals = Option.map (Array.map seeded) totals in
+      let out = Program.eval ?totals p (Array.map seeded xs) in
       Array.map
         (fun (Program.V y) ->
           match Prim.payload j y with

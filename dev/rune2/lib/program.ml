@@ -145,6 +145,8 @@ and construct =
   | Scan : {
       step : t;
       length : int;
+      trips : value option;
+      reverse : bool;
       init : value array;
       xs : value array;
       captures : value array;
@@ -156,13 +158,20 @@ and construct =
       step : t;
       until : t;
       max : int;
+      rows : rows option;
+      stopped : int option;
       init : value array;
       step_captures : value array;
       until_captures : value array;
       seeds : value array;
     }
       -> construct
-  | Call : { body : t; args : value array; site : site; seeds : value array }
+  | Call : {
+      body : t;
+      args : value array;
+      site : site;
+      seeds : value array;
+    }
       -> construct
   | Custom : {
       name : string;
@@ -189,6 +198,7 @@ and construct =
   | Remat : { body : t; args : value array; seeds : value array } -> construct
 
 and derivative = Tangent of t | Pullback of t
+and rows = Taken | Max
 
 and site = {
   name : string;
@@ -331,6 +341,7 @@ let map_operands m = function
       Scan
         {
           s with
+          trips = Option.map (fun (V x) -> V (m.f x)) s.trips;
           init = map_values m s.init;
           xs = map_values m s.xs;
           captures = map_values m s.captures;
@@ -371,8 +382,9 @@ let operands = function
   | Lanes (_, x) -> [ V x ]
   | Add (_, x) -> [ V x ]
   | Lane_index _ -> []
-  | Scan { init; xs; captures; seeds; _ } ->
-      Array.to_list (Array.concat [ init; xs; captures; seeds ])
+  | Scan { trips; init; xs; captures; seeds; _ } ->
+      Option.to_list trips
+      @ Array.to_list (Array.concat [ init; xs; captures; seeds ])
   | Iterate { init; step_captures; until_captures; seeds; _ } ->
       Array.to_list
         (Array.concat [ init; step_captures; until_captures; seeds ])
@@ -503,19 +515,44 @@ let rec forms = function
   | Lane_index (_, placement) ->
       [| F { dtype = Nx.int32; layout = contiguous [||]; placement } |]
   | Add _ -> [||]
-  | Scan { step; length; init; _ } ->
+  | Scan { step; length; trips; init; _ } ->
       let nc = Array.length init and no = Array.length step.outputs in
       let na = Array.length step.adds in
       let carry =
         if length = 0 then Array.map form init
+        else if Option.is_some trips then Array.map form init
         else Array.map form (slice step.outputs 0 nc)
       in
       let ys = Array.map form (slice step.outputs nc (no - na)) in
       let _, sums, _ = sums [ step ] in
       Array.concat [ carry; Array.map (stacked length) ys; sums ]
-  | Iterate { step; until; init; _ } ->
+  | Iterate { name; step; until; max; rows; init; _ } ->
       let _, sums, _ = sums [ until; step ] in
-      Array.append (Array.map form init) sums
+      let carry = Array.map form init in
+      let stacked =
+        match rows with
+        | None -> [||]
+        | Some Taken ->
+            invalid_arg
+              (name ^ ": an iterate stacking the steps it takes has no form")
+        | Some Max ->
+            let nc = Array.length init in
+            let no = Array.length step.outputs - Array.length step.adds in
+            (* The count lies where the stop does. *)
+            let (F u) = form until.outputs.(0) in
+            let trips =
+              F
+                {
+                  dtype = Nx.int32;
+                  layout = contiguous [||];
+                  placement = Nx.Placement.uncut u.placement;
+                }
+            in
+            Array.append [| trips |]
+              (Array.map (stacked max)
+                 (Array.map form (slice step.outputs nc no)))
+      in
+      Array.concat [ carry; stacked; sums ]
   | Call { body = p; _ } | Remat { body = p; _ } -> results p
   | Custom { primal; derivative = Tangent t; _ } ->
       Array.append (results primal) (Array.map form (tail t))
@@ -580,6 +617,16 @@ let stops (V y) =
         (Format.asprintf "Rune: until gave a %a value, not a boolean"
            Nx.pp_dtype (Nx.dtype y))
 
+(* A running value computed on a set its total's running value does not lie
+   on. *)
+let unset (V y) =
+  invalid_arg
+    (Format.asprintf
+       "Rune.Total.add: a running total takes a value on %a, as the lanes of a \
+        map held apart compute it, which its running value's set cannot hold; \
+        give the collect's zero that placement"
+       Nx.Placement.pp (Nx.placement y))
+
 let rec eval ?totals p args =
   let na = Array.length p.adds in
   let totals =
@@ -630,11 +677,23 @@ and default = function
   | Lanes _ -> no_map "Rune.lanes"
   | Lane_index _ -> no_map "Rune.lane_index"
   | Add _ -> [||]
-  | Scan { step; length; init; xs; captures; seeds } ->
-      scan step ~length ~init ~xs ~captures ~seeds
+  | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
+      scan step ~length ~trips ~reverse ~init ~xs ~captures ~seeds
   | Iterate
-      { name; step; until; max; init; step_captures; until_captures; seeds } ->
-      iterate name step ~until ~max ~init ~step_captures ~until_captures ~seeds
+      {
+        name;
+        step;
+        until;
+        max;
+        rows;
+        stopped;
+        init;
+        step_captures;
+        until_captures;
+        seeds;
+      } ->
+      iterate name step ~until ~max ~rows ~stopped ~init ~step_captures
+        ~until_captures ~seeds
   | Call { body; args; site; seeds } ->
       let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
       from_seeds body seeds (fun totals ->
@@ -695,6 +754,15 @@ and from_seeds p seeds f =
    whose running value [p] cannot take, starts from the identity, and its end is
    added to it. *)
 and threaded ?lanes p f =
+  threading ?lanes p.adds (fun totals ->
+      let out = f totals in
+      let n = Array.length out - Array.length p.adds in
+      (slice out n (Array.length out), slice out 0 n))
+
+and threading :
+    'a. ?lanes:int -> addition array -> (value array -> value array * 'a) -> 'a
+    =
+ fun ?lanes adds f ->
   let at (type v s d) (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form =
     match lanes with
     | None -> f
@@ -705,23 +773,34 @@ and threaded ?lanes p f =
           placement = Nx.Placement.with_leading_axis f.placement;
         }
   in
+  (* Each total's running value in, and how its running value out is handed
+     back: at the form [p] gave it, or at the running value's set, where a map
+     whose lanes stop apart computed it there. *)
   let ins =
     Array.map
-      (fun (Addition (t, into, _)) ->
-        let into = at into in
-        match running t into with
-        | Some r when Option.is_some (coerce_at into r) -> (V r, true)
-        | _ -> (filled ~zero:false (F into), false))
-      p.adds
+      (fun (Addition (t, into, out)) ->
+        let into = at into and out = at out in
+        let r = running t into in
+        let typed (V y as v) =
+          match coerce_at out y with
+          | Some y -> y
+          | None -> (
+              match r with
+              | Some r -> (
+                  match coerce_at (Nx.Prim.form r) y with
+                  | Some y -> y
+                  | None -> unset v)
+              | None -> unset v)
+        in
+        match r with
+        | Some r when Option.is_some (coerce_at into r) ->
+            (V r, fun v -> replace t (typed v))
+        | _ -> (filled ~zero:false (F into), fun v -> add_to t (typed v)))
+      adds
   in
-  let out = f (Array.map fst ins) in
-  let n = Array.length out - Array.length p.adds in
-  Array.iteri
-    (fun k (Addition (t, _, out_form)) ->
-      let y = cast_at (at out_form) out.(n + k) in
-      if snd ins.(k) then replace t y else add_to t y)
-    p.adds;
-  slice out 0 n
+  let outs, r = f (Array.map fst ins) in
+  Array.iteri (fun k (_, back) -> back outs.(k)) ins;
+  r
 
 (* [x] added to the innermost collect or tracer that answers for [t], as its
    running value plus [x], and otherwise performed as an addition. *)
@@ -781,53 +860,120 @@ and feeding p feeds acc f =
 and evaluate p feeds acc args =
   feeding p feeds acc (fun totals -> eval ~totals p args)
 
-and scan step ~length ~init ~xs ~captures ~seeds =
+and scan step ~length ~trips ~reverse ~init ~xs ~captures ~seeds =
   let nc = Array.length init in
   let no = Array.length step.outputs and na = Array.length step.adds in
   let ny = no - nc - na in
   let _, forms, feeds = sums [ step ] in
   let feeds = List.hd feeds and acc = accumulators forms seeds in
-  let carry = ref init and ys = Array.make ny [] in
-  for i = 0 to length - 1 do
+  let t = match trips with None -> length | Some v -> count v in
+  if t < 0 || t > length then
+    invalid_arg (Printf.sprintf "Rune: a scan of %d rows runs %d" length t);
+  let carry = ref init and ys = Array.make_matrix ny length None in
+  for s = 0 to t - 1 do
+    let i = if reverse then t - 1 - s else s in
     let row = Array.map (fun (V x) -> V (Nx.get [ i ] x)) xs in
     let out =
       evaluate step feeds acc (Array.concat [ !carry; row; captures ])
     in
     carry := slice out 0 nc;
     for j = 0 to ny - 1 do
-      ys.(j) <- out.(nc + j) :: ys.(j)
+      ys.(j).(i) <- Some out.(nc + j)
     done
   done;
   let ys =
-    if length = 0 then
-      Array.map
-        (fun v -> filled ~zero:true (stacked 0 (form v)))
-        (slice step.outputs nc (nc + ny))
-    else
-      Array.mapi (fun j l -> stack (form step.outputs.(nc + j)) (List.rev l)) ys
+    Array.mapi (fun j rows -> stacked_rows step.outputs.(nc + j) rows) ys
   in
   Array.concat [ !carry; ys; acc ]
 
-and iterate name step ~until ~max ~init ~step_captures ~until_captures ~seeds =
+(* The rows of an output traced as [y], each computed or a zero, stacked. *)
+and stacked_rows y rows =
+  let f = form y in
+  if rows = [||] then filled ~zero:true (stacked 0 f)
+  else
+    stack f
+      (Array.to_list
+         (Array.map (function Some v -> v | None -> filled ~zero:true f) rows))
+
+(* An [int32] count. *)
+and count (V x) =
+  match D.equal_witness (Nx.dtype x) Nx.int32 with
+  | Some Type.Equal -> Int32.to_int (Nx.item [] x : int32)
+  | None -> invalid_arg "Rune: a count that is not an int32"
+
+and iterate name step ~until ~max ~rows ~stopped ~init ~step_captures
+    ~until_captures ~seeds =
+  let nc = Array.length init in
+  let ny = Array.length step.outputs - nc - Array.length step.adds in
   let _, forms, feeds = sums [ until; step ] in
   let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
   let acc = accumulators forms seeds in
+  let ys = ref [] in
+  let last = ref None in
   let rec go k carry =
     let out =
       evaluate until until_feeds acc (Array.append carry until_captures)
     in
-    if stops out.(0) then carry
+    last := Some out.(0);
+    if stops out.(0) then (k, carry)
     else if k = max then
       invalid_arg
-        (Printf.sprintf "%s: until is still false after max = %d steps" name max)
+        (Printf.sprintf "%s: until is still false after max = %d steps%s" name
+           max
+           (match stopped with Some j -> running_lane carry.(j) | None -> ""))
     else
       let out =
         evaluate step step_feeds acc (Array.append carry step_captures)
       in
-      go (k + 1) (slice out 0 (Array.length carry))
+      ys := slice out nc (nc + ny) :: !ys;
+      go (k + 1) (slice out 0 nc)
   in
-  let carry = go 0 init in
-  Array.append carry acc
+  let k, carry = go 0 init in
+  match rows with
+  | None -> Array.append carry acc
+  | Some rows ->
+      let taken = Array.of_list (List.rev !ys) in
+      let length = match rows with Taken -> k | Max -> max in
+      let stacked =
+        Array.init ny (fun j ->
+            stacked_rows
+              step.outputs.(nc + j)
+              (Array.init length (fun i ->
+                   if i < k then Some taken.(i).(j) else None)))
+      in
+      (* The count lies where the stop does. *)
+      let (V s) = Option.get !last in
+      let trips =
+        V
+          (Nx.scalar_at
+             (Nx.Placement.uncut (Nx.placement s))
+             Nx.int32 (Int32.of_int k))
+      in
+      Array.concat [ carry; [| trips |]; stacked; acc ]
+
+(* The lanes a map's iterate names when it runs out of steps: of its lanes'
+   stops [flags], the first still false, each axis's position. *)
+and running_lane (V flags) =
+  match D.equal_witness (Nx.dtype flags) Nx.bool with
+  | None -> ""
+  | Some Type.Equal -> (
+      let shape = Nx.shape flags in
+      let all = (Nx.to_array flags : bool array) in
+      let rec first i =
+        if i >= Array.length all then None
+        else if not all.(i) then Some i
+        else first (i + 1)
+      in
+      match first 0 with
+      | None -> ""
+      | Some i ->
+          let index = Array.make (Array.length shape) 0 and rest = ref i in
+          for d = Array.length shape - 1 downto 0 do
+            index.(d) <- !rest mod shape.(d);
+            rest := !rest / shape.(d)
+          done;
+          String.concat ""
+            (Array.to_list (Array.map (Printf.sprintf ", in lane %d") index)))
 
 (* Pruning *)
 
@@ -925,6 +1071,46 @@ type names = {
   mutable next : int;
   mutable bases : (t * int) list;
 }
+
+let rec mentions a (p : t) =
+  Array.exists
+    (function
+      | Op _ -> false
+      | Do { c = Lanes (b, _) | Lane_index (b, _); _ } when same_axis a b ->
+          true
+      | Do { c; _ } -> List.exists (mentions a) (carried c))
+    p.eqns
+
+let rec reads_lanes (p : t) =
+  Array.exists
+    (function
+      | Op _ -> false
+      | Do { c = Lanes _ | Lane_index _; _ } -> true
+      | Do { c; _ } -> List.exists reads_lanes (carried c))
+    p.eqns
+
+let reads_params p mask =
+  let q =
+    prune p
+      ~outputs:
+        (Array.init (Array.length p.outputs - Array.length p.adds) Fun.id)
+  in
+  let read = ref false in
+  let see (type v s d) (x : (v, s, d) Nx.t) =
+    match Nx.Prim.payload q.owner x with
+    | Some (Var n) ->
+        Array.iteri (fun k m -> if m && q.params.(k) = n then read := true) mask
+    | _ -> ()
+  in
+  Array.iter
+    (function
+      | Op { op; _ } ->
+          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+          List.iter (fun (Nx.Prim.Any x) -> see x) xs
+      | Do { c; _ } -> List.iter (fun (V x) -> see x) (operands c))
+    q.eqns;
+  Array.iter (fun (V x) -> see x) q.outputs;
+  !read
 
 let owned (p : t) (V x) =
   match Nx.Prim.payload p.owner x with Some (Var _) -> true | _ -> false
@@ -1098,18 +1284,29 @@ and pp_construct names ~indent (p : t) ppf c =
   | Lane_index (a, _) ->
       Format.fprintf ppf "lane_index of map %d" (map_number names a)
   | Add (_, x) -> Format.fprintf ppf "add %a" value (V x)
-  | Scan { step; length; init; xs; captures; seeds } ->
-      Format.fprintf ppf "scan %d rows, init (%a), xs (%a), captures (%a)"
-        length values (Array.to_list init) values (Array.to_list xs) values
+  | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
+      Format.fprintf ppf "scan %d rows%a%s, init (%a), xs (%a), captures (%a)"
+        length
+        (fun ppf -> function
+          | Some t -> Format.fprintf ppf ", the first %a" value t | None -> ())
+        trips
+        (if reverse then " last first" else "")
+        values (Array.to_list init) values (Array.to_list xs) values
         (Array.to_list captures);
       seeded_from ppf seeds;
       Format.fprintf ppf "@\n%s  step%a" pad program step
-  | Iterate { step; until; max; init; step_captures; until_captures; _ } ->
+  | Iterate { step; until; max; rows; init; step_captures; until_captures; _ }
+    ->
       Format.fprintf ppf
-        "iterate at most %d, init (%a), captures (%a) and (%a)@\n\
+        "iterate at most %d%s, init (%a), captures (%a) and (%a)@\n\
          %s  until%a@\n\
          %s  step%a"
-        max values (Array.to_list init) values
+        max
+        (match rows with
+        | None -> ""
+        | Some Taken -> ", stacking the steps taken"
+        | Some Max -> ", stacking max steps")
+        values (Array.to_list init) values
         (Array.to_list until_captures)
         values
         (Array.to_list step_captures)

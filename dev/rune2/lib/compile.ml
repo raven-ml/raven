@@ -687,7 +687,11 @@ and construct st cs env c base =
 
 and loop st cs env c =
   match c with
-  | Scan { step; length = n; init; xs; captures; seeds } ->
+  | Scan { trips = Some _; _ } | Scan { reverse = true; _ } ->
+      decline "a scan that runs some of its rows, or reversed"
+  | Iterate { rows = Some _; _ } | Iterate { stopped = Some _; _ } ->
+      decline "an iterate that stacks its steps, or whose lanes stop apart"
+  | Scan { step; length = n; init; xs; captures; seeds; _ } ->
       let forms = Program.forms c in
       let nc = Array.length init and na = Array.length step.adds in
       let ny = Array.length step.outputs - nc - na in
@@ -736,7 +740,8 @@ and loop st cs env c =
       in
       Array.map (result env c) finals
   | Iterate
-      { name; step; until; max; init; step_captures; until_captures; seeds } ->
+      { name; step; until; max; init; step_captures; until_captures; seeds; _ }
+    ->
       let forms = Program.forms c in
       let nc = Array.length init in
       let _, _, feeds = Program.sums [ until; step ] in

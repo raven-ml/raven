@@ -39,9 +39,8 @@
     scan's carry has lanes where its init has them or a step gives them, its
     init broadcast until then, and its additions are every lane's; a call's map
     is derived once per derivation at its site, {!Program.derive}); and the
-    other constructs over lane values, and a scan, remat or call whose program
-    holds an iterate, by running their default where they were performed
-    ({!Program.Evaluate}), so that their programs' operations reach the rules.
+    other constructs over lane values by running their default where they were
+    performed ({!Program.Evaluate}), so that their programs' operations reach the rules.
     It answers {!Program.Running} with [None]. *)
 
 val run :

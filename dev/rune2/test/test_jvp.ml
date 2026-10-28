@@ -843,8 +843,10 @@ let law_iterate (Iterate_case (dt, s, trips, co, tco, g)) =
   let jvp f = Rune.jvp p p f (init, k0) (tinit, k0) in
   let expected = outcome (fun () -> both (jvp looped)) in
   cover "a refused step" (match expected with Raised _ -> true | _ -> false);
+  (* A carry's tangent is a zero where a step gives none, of either sign, as a
+     scan's is. *)
   equal
-    (outcome_t (Testable.pair bits_t bits_t))
+    (outcome_t (Testable.pair bits_t (lenient ~nan:(constant g))))
     expected
     (outcome (fun () -> both (jvp iterated)))
 

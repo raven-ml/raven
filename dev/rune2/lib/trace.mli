@@ -20,7 +20,8 @@
       extent is inlined.
     - The {e staged} tracer ([Extent]) traces a remat's function as the jit
       tracer does, so that what the function computes from its captures or
-      constants alone is computed again too.
+      constants alone is computed again too, and answers {!Program.Staging} as
+      it does.
     - The {e tape} tracer ([Values]) records the linear part of a function whose
       other part computes at the call, as a forward-mode derivative over its
       variables does: of a loop it receives, the outputs that read none of its
@@ -46,8 +47,7 @@
     compiled; every call in the jit tracer's extent is inlined: it runs its
     default where it was performed ({!Program.Evaluate}), which issues the
     call's equations to the tracer. The tape tracer answers a call over its
-    variables, but one whose program holds an iterate, which it inlines, with
-    two calls derived at its site ({!Program.derive}): the known part,
+    variables with two calls derived at its site ({!Program.derive}): the known part,
     performed at the call, of the results that read none of its variables, also
     returning the residuals the rest reads and threading the call's totals, and
     a recorded call of the rest over its variables and the residuals. The tape

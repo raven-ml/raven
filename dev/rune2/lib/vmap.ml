@@ -484,7 +484,142 @@ let place (type v s d e) i n ~by (q : e Nx.Placement.t) (x : (v, s, d) Nx.t) ()
     let q' = Nx.Placement.with_leading_axis q in
     [| Batch (Program.V (Prim.eval ~by (Place (q', b)))) |]
 
-let rule (type r) n i ~by (op : r Prim.t) : r =
+(* Lanes that stop apart
+
+   A loop whose lanes stop apart runs over every lane until the last one stops,
+   and a stopped lane is held: it keeps its values, and computes the step at the
+   first lane still running, its donor, on the donor's values detached, so that
+   no lane computes at a point no lane reached and a held lane's derivative
+   reaches no other lane. Inside the step a held lane's check passes, its
+   additions are dropped, its lane index is its donor's, and the map's lanes
+   raise, the lanes standing at different steps. *)
+
+(* The lanes that run, one boolean per lane, and each lane's donor, an [int32]
+   per lane: itself where it runs. *)
+type held = { running : Program.value; donors : Program.value }
+
+let as_bool (type v s d) (x : (v, s, d) Nx.t) : (bool, Nx.bool_elt, d) Nx.t =
+  match D.equal_witness (Nx.dtype x) Nx.bool with
+  | Some Type.Equal -> x
+  | None -> invalid_arg "Rune: lane flags that are not booleans"
+
+let as_int32 (type v s d) (x : (v, s, d) Nx.t) : (int32, Nx.int32_elt, d) Nx.t =
+  match D.equal_witness (Nx.dtype x) Nx.int32 with
+  | Some Type.Equal -> x
+  | None -> invalid_arg "Rune: lane indices that are not int32"
+
+(* [vs] at one brand, the first one's, for [b.k]. *)
+type at_one = { k : 'd. 'd Prim.any array -> Program.value }
+
+let at_one vs b =
+  let (Program.V r) = vs.(0) in
+  let at (Program.V x) =
+    match Prim.coerce (Nx.dtype x) (Nx.Placement.devices (Nx.placement r)) x with
+    | Some x -> Prim.Any x
+    | None -> invalid_arg "Rune: lane values on two sets"
+  in
+  b.k (Array.map at vs)
+
+(* [b.k c x] with [c], a value per lane, and [x], a batch, at one brand. *)
+type beside = {
+  k : 'w 'q 'v 's 'd. ('w, 'q, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> Program.value;
+}
+
+let beside c x b =
+  at_one [| c; x |]
+    {
+      k =
+        (fun vs ->
+          match vs with
+          | [| Prim.Any c; Prim.Any x |] -> b.k c x
+          | _ -> invalid_arg "Rune: lane values");
+    }
+
+(* [x] at [y]'s dtype, which it has. *)
+let same (type v s w r d) (y : (v, s, d) Nx.t) (x : (w, r, d) Nx.t) :
+    (v, s, d) Nx.t =
+  match D.equal_witness (Nx.dtype x) (Nx.dtype y) with
+  | Some Type.Equal -> x
+  | None -> invalid_arg "Rune: lane values of two dtypes"
+
+(* [c], a value per lane, along [x]'s lanes. *)
+let along c x =
+  let r = Nx.ndim x - 1 in
+  Nx.broadcast_to (Nx.shape x)
+    (Nx.reshape (Array.append [| Nx.numel c |] (Array.make r 1)) c)
+
+(* The batch [x'] where [running] holds, and [x] elsewhere. *)
+let hold running x' x =
+  at_one [| running; x'; x |]
+    {
+      k =
+        (function
+        | [| Prim.Any c; Prim.Any y; Prim.Any x |] ->
+            Program.V (Nx.where (along (as_bool c) y) y (same y x))
+        | _ -> invalid_arg "Rune: lane values");
+    }
+
+(* The batch [x] where [running] holds, and elsewhere the row of its donor,
+   detached. *)
+let lend { running; donors } v =
+  at_one [| running; donors; v |]
+    {
+      k =
+        (function
+        | [| Prim.Any c; Prim.Any d; Prim.Any x |] ->
+            let rows = Nx.take ~axis:0 (Nx.cast Nx.int64 (as_int32 d)) x in
+            let rows = Program.like rows (Program.perform (Detach rows)).(0) in
+            Program.V (Nx.where (along (as_bool c) x) x rows)
+        | _ -> invalid_arg "Rune: lane values");
+    }
+
+let not_flags (Program.V f) = Program.V (Nx.logical_not (as_bool f))
+
+let or_flags a b =
+  beside a b
+    { k = (fun a b -> Program.V (Nx.logical_or (as_bool a) (as_bool b))) }
+
+let and_flags a b =
+  beside a b
+    { k = (fun a b -> Program.V (Nx.logical_and (as_bool a) (as_bool b))) }
+
+(* Each lane's count [t], one more where [running] holds. *)
+let count_up running t =
+  beside running t
+    {
+      k =
+        (fun r t ->
+          Program.V (Nx.add (as_int32 t) (Nx.cast Nx.int32 (as_bool r))));
+    }
+
+(* Each lane's donor: itself where it runs, else the first lane that runs. *)
+let donors n (Program.V running) =
+  let r = as_bool running in
+  let own = Nx.arange_at (Nx.placement r) Nx.int32 0 n 1 in
+  if n = 0 then Program.V own
+  else
+    let first = Nx.cast Nx.int32 (Nx.argmax ~axis:0 (Nx.cast Nx.int32 r)) in
+    Program.V (Nx.where r own (Nx.broadcast_to [| n |] first))
+
+(* The lane flags [running] at [x]'s brand. *)
+let flags_at (type v s d) ~what (Program.V running) (x : (v, s, d) Nx.t) :
+    (bool, Nx.bool_elt, d) Nx.t =
+  let r = as_bool running in
+  match Prim.coerce (Nx.dtype r) (Nx.Placement.devices (Nx.placement x)) r with
+  | Some r -> r
+  | None ->
+      invalid_arg
+        (what
+       ^ ": a value of every set inside the step of an iterate whose lanes \
+          stop apart, beside lanes on a set")
+
+(* A batch of additions whose held lanes' values are the identity. *)
+let dropped running b =
+  let r = flags_at ~what:"Rune.Total.add" running b in
+  Nx.where (along r b) b
+    (Program.like b (Loops.filled ~zero:false (Program.form (Program.V b))))
+
+let rule (type r) n held i ~by (op : r Prim.t) : r =
   let b x = batch i n x in
   let loads ls = Iarray.map (load i n) ls in
   let batched (bop : r Prim.t) = results i ~by op (issued ~by bop) in
@@ -560,7 +695,16 @@ let rule (type r) n i ~by (op : r Prim.t) : r =
          failing lane. *)
       Prim.results ~by (fun _ _ -> invalid_arg "Rune: a check's result") op;
       let fail idx e = fail (Array.sub idx 1 (Array.length idx - 1)) e in
-      Prim.eval ~by (Check { ok = b ok; data = data i n d; fail })
+      let ok = b ok in
+      (* A held lane's check passes. *)
+      let ok =
+        match held with
+        | None -> ok
+        | Some h ->
+            let r = flags_at ~what:"Nx.check" h.running ok in
+            Nx.logical_or ok (Nx.logical_not (along r ok))
+      in
+      Prim.eval ~by (Check { ok; data = data i n d; fail })
 
 (* Constructs *)
 
@@ -569,6 +713,10 @@ let operand i (Program.V x) = owned i x
 (* A call answers whose program names the map, a lane value read or none. *)
 let claims i axis : Program.construct -> bool = function
   | Lanes (a, x) -> Program.same_axis a axis || owned i x
+  (* An iterate whose programs read the map's lanes may stop them apart. *)
+  | Iterate { step; until; _ }
+    when Program.mentions axis step || Program.mentions axis until ->
+      true
   | Lane_index (a, _) -> Program.same_axis a axis
   | Add _ -> true
   | Call { args; site; _ } ->
@@ -751,6 +899,17 @@ end
    mapped: [eval p] traced under a map of its own, of the same name and lanes,
    over the batches and the shared values, as JAX batches a jaxpr. *)
 
+(* A form's batch over [n] lanes. *)
+let stacked_form (type v s d) n (f : (v, s, d) Nx.Prim.form) :
+    (v, s, d) Nx.Prim.form =
+  let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
+  {
+    f with
+    layout =
+      Nx_array.Layout.contiguous (Iarray.of_array (Array.append [| n |] shape));
+    placement = Nx.Placement.with_leading_axis f.placement;
+  }
+
 let lane_v i (Program.V x) = Program.V (lane i x)
 let batch_v i n (Program.V x) = Program.V (batch i n x)
 let owned_v i (Program.V x) = owned i x
@@ -765,43 +924,54 @@ let lanes_of w mask vs =
 
 (* [Lanes] of this map is every lane's value, the batch, a constant; of another
    map, every lane's batch, a lane value. An addition adds the sum of its lanes'
-   values, once, and nothing with no lane. *)
-let rec answer ~name i axis n (c : Program.construct) k =
+   values, once, and nothing with no lane. Where lanes are held, a held lane's
+   index is its donor's, its additions are dropped, and the map's lanes
+   raise. *)
+let rec answer ~name ?held i axis n (c : Program.construct) k =
   let one x = Effect.Deep.continue k [| Program.V x |] in
   match c with
+  | Lanes (a, _) when Program.same_axis a axis && Option.is_some held ->
+      Effect.Deep.discontinue k
+        (Invalid_argument
+           "Rune.lanes: the lanes of the map stand at different steps of an \
+            iterate whose lanes stop apart")
   | Lanes (a, x) when Program.same_axis a axis -> one (batch i n x)
   | Lanes (a, x) ->
       let b = batch i n x in
       let r = Program.like b (Program.perform (Lanes (a, b))).(0) in
       one (lane i (Nx.swapaxes 0 1 r))
-  | Lane_index (_, p) ->
-      (* [p] cuts no axis, so the indices' batch at [p] gives lanes at [p]. *)
-      one (lane i (Nx.arange_at p Nx.int32 0 n 1))
+  | Lane_index (_, p) -> (
+      (* [p] cuts no axis, so the indices' batch at [p] gives lanes at [p]; a
+         held lane's is its donor's. *)
+      match held with
+      | Some h ->
+          let (Program.V d) = h.donors in
+          one (lane i (Nx.place p (as_int32 d)))
+      | None -> one (lane i (Nx.arange_at p Nx.int32 0 n 1)))
   | Add (t, x) ->
-      if n > 0 then Program.add_to t (Nx.sum ~axes:[ 0 ] (batch i n x));
+      if n > 0 then begin
+        let b = batch i n x in
+        let b = match held with Some h -> dropped h.running b | None -> b in
+        Program.add_to t (Nx.sum ~axes:[ 0 ] b)
+      end;
       Effect.Deep.continue k [||]
   | Detach x ->
       let b = batch i n x in
       one (lane i (Program.like b (Program.perform (Detach b)).(0)))
   | Custom _ | Linear _ ->
-      let r = Rules.rule { i; n; map = map ~name axis n } c in
+      let r = Rules.rule { i; n; map = map ~name ?held axis n } c in
       Effect.Deep.continue k (Option.get r)
-  (* An iterate has no rule before stage 6, and evaluating it inside a trace
-     would read its stop: a construct whose programs hold one runs its default,
-     step by step. *)
-  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
-    ->
-      Effect.Deep.discontinue k Program.Evaluate
-  | Call { site; _ } when Program.iterates site ->
-      Effect.Deep.discontinue k Program.Evaluate
-  | Scan { step; length; init; xs; captures; seeds } ->
+  | Scan { trips = Some (V t); _ } when owned i t ->
+      Effect.Deep.continue k (masked_scan ~name ?held i axis n c)
+  | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       Effect.Deep.continue k
-        (scan ~name i axis n step ~length ~init ~xs ~captures ~seeds)
+        (scan ~name ?held i axis n step ~length ~trips ~reverse ~init ~xs
+           ~captures ~seeds)
   | Remat { body; args; seeds } ->
-      Effect.Deep.continue k (remat ~name i axis n body args seeds)
+      Effect.Deep.continue k (remat ~name ?held i axis n body args seeds)
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name i axis n body args site seeds)
-  | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
+  | Iterate _ -> Effect.Deep.continue k (iterate ~name ?held i axis n c)
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
    carry that has them at the call or gains them from the step: a fixpoint, as
@@ -809,7 +979,8 @@ let rec answer ~name i axis n (c : Program.construct) k =
    broadcast; a row with lanes is read along the batch's axis 1. Additions are
    every lane's, a shared one broadcast, so that a total around the map receives
    each lane's chain. *)
-and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
+and scan ~name ?held i axis n (step : Program.t) ~length ~trips ~reverse ~init
+    ~xs ~captures ~seeds =
   let nc = Array.length init and nx = Array.length xs in
   let ncap = Array.length captures in
   let ny = Array.length step.outputs - nc - Array.length step.adds in
@@ -831,7 +1002,7 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
           let ys = ref [||] in
           let (_ : Program.value array) =
             Program.threaded ~lanes:n step (fun running ->
-                run ~name ~axis n (fun w ->
+                interpret ~name ~axis ?held n (fun w ->
                     let args =
                       Array.concat
                         [
@@ -881,6 +1052,8 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
          {
            step = prog;
            length;
+           trips;
+           reverse;
            init = Array.init nc (carry lc);
            xs = bxs;
            captures = Array.append bcaps own;
@@ -899,9 +1072,466 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
       else lane_v i v)
     r
 
+(* An iterate's map. Its carry has lanes where its init has them or a step gives
+   them, a fixpoint. Where its stop is every lane's, the lanes stop together:
+   the iterate of its programs' maps. Otherwise, and inside the step of an
+   iterate whose lanes stop apart, they stop apart: every carry holds each
+   lane's, beside one more, each lane's stop, which each lane tests at its init
+   and after each of its steps; the loop runs until every lane has stopped, and
+   a lane that has stopped is held. *)
+and iterate ~name ?held i axis n (c : Program.construct) =
+  match c with
+  | Iterate it ->
+      let nc = Array.length it.init in
+      let ny = Array.length it.step.outputs - nc - Array.length it.step.adds in
+      if it.rows = Some Taken then
+        invalid_arg (it.name ^ ": a map of an iterate stacking its steps taken");
+      let laned = Array.map (owned_v i) in
+      let lsc = laned it.step_captures and luc = laned it.until_captures in
+      let batched ls vs =
+        Array.map2 (fun l v -> if l then batch_v i n v else v) ls vs
+      in
+      let bsc = batched lsc it.step_captures
+      and buc = batched luc it.until_captures in
+      let carry lc k =
+        if lc.(k) then batch_v i n it.init.(k) else it.init.(k)
+      in
+      let forms = Array.map Program.form in
+      (* The carries with lanes, and their forms. *)
+      let rec fix lc cf =
+        let gained = Array.make nc false in
+        let (_ : Program.t * Program.value array) =
+          Trace.trace Body ~name
+            (Array.append cf (forms bsc))
+            (fun vs ->
+              interpret ~name ~axis ?held n (fun w ->
+                  let args =
+                    Array.append
+                      (lanes_of w lc (Array.sub vs 0 nc))
+                      (lanes_of w lsc (Array.sub vs nc (Array.length bsc)))
+                  in
+                  let out = Program.eval it.step args in
+                  Array.iteri
+                    (fun k v -> gained.(k) <- owned_v w v && not lc.(k))
+                    (Array.sub out 0 nc);
+                  [||]))
+        in
+        if Array.exists Fun.id gained then
+          let lc = Array.map2 ( || ) lc gained in
+          fix lc
+            (Array.mapi
+               (fun k f -> if gained.(k) then Program.form (carry lc k) else f)
+               cf)
+        else (lc, cf)
+      in
+      let lc = laned it.init in
+      let lc, cf =
+        fix lc (Array.init nc (fun k -> Program.form (carry lc k)))
+      in
+      let stop_laned =
+        let laned = ref false in
+        let (_ : Program.t * Program.value array) =
+          Trace.trace Body ~name
+            (Array.append cf (forms buc))
+            (fun vs ->
+              interpret ~name ~axis ?held n (fun w ->
+                  let args =
+                    Array.append
+                      (lanes_of w lc (Array.sub vs 0 nc))
+                      (lanes_of w luc (Array.sub vs nc (Array.length buc)))
+                  in
+                  laned := owned_v w (Program.eval it.until args).(0);
+                  [||]))
+        in
+        !laned
+      in
+      if (not stop_laned) && Option.is_none held then
+        together ~name i axis n c lc cf ~bsc ~buc ~lsc ~luc ~ny
+      else apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny
+  | _ -> invalid_arg "Rune: an iterate's map"
+
+(* Lanes that stop together: the iterate of its step's and stop's maps, every
+   lane's sums chained apart. *)
+and together ~name i axis n c lc cf ~bsc ~buc ~lsc ~luc ~ny =
+  match c with
+  | Iterate it ->
+      let nc = Array.length lc in
+      let ly = ref [||] in
+      let mapped (p : Program.t) caps lcaps keep =
+        Trace.trace Body ~name
+          (Array.append cf (Array.map Program.form caps))
+          (fun vs ->
+            Program.threaded ~lanes:n p (fun running ->
+                interpret ~name ~axis n (fun w ->
+                    let totals = Array.map (lane_v w) running in
+                    let args =
+                      Array.append
+                        (lanes_of w lc (Array.sub vs 0 nc))
+                        (lanes_of w lcaps (Array.sub vs nc (Array.length caps)))
+                    in
+                    let out = Program.eval ~totals p args in
+                    let nr = Array.length out - Array.length p.adds in
+                    Array.append
+                      (keep w (Array.sub out 0 nr))
+                      (Array.map (batch_v w n)
+                         (Array.sub out nr (Array.length p.adds))))))
+      in
+      let step, sown =
+        mapped it.step bsc lsc (fun w out ->
+            let c =
+              Array.init nc (fun k ->
+                  if lc.(k) then batch_v w n out.(k) else out.(k))
+            in
+            let y = Array.sub out nc ny in
+            ly := Array.map (owned_v w) y;
+            Array.append c
+              (Array.map (fun v -> if owned_v w v then batch_v w n v else v) y))
+      in
+      let until, uown = mapped it.until buc luc (fun _ out -> [| out.(0) |]) in
+      let r =
+        Program.perform
+          (Iterate
+             {
+               it with
+               step;
+               until;
+               init =
+                 Array.init nc (fun k ->
+                     if lc.(k) then batch_v i n it.init.(k) else it.init.(k));
+               step_captures = Array.append bsc sown;
+               until_captures = Array.append buc uown;
+               seeds = Array.map (batch_v i n) it.seeds;
+             })
+      in
+      let stacked = if Option.is_some it.rows then 1 + ny else 0 in
+      Array.mapi
+        (fun k v ->
+          if k < nc then if lc.(k) then lane_v i v else v
+          else if k = nc && stacked > 0 then v
+          else if k < nc + stacked then
+            if !ly.(k - nc - 1) then
+              let (Program.V y) = v in
+              Program.V (lane i (Nx.moveaxis 1 0 y))
+            else v
+          else lane_v i v)
+        r
+  | _ -> invalid_arg "Rune: an iterate's map"
+
+(* Lanes that stop apart. Each lane tests its stop at its init, outside the
+   loop, and after each of its steps, inside it. *)
+and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
+  match c with
+  | Iterate it ->
+      let nc = Array.length it.init in
+      let rows = Option.is_some it.rows in
+      let all = Array.make nc true in
+      let sum_adds, sum_forms, feeds = Program.sums [ it.until; it.step ] in
+      let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
+      (* [p] over the lanes of [vs] where [laned], its totals from the sums
+         [acc], each lane's: its results' batches, and the sums' ends, a held
+         lane's kept. *)
+      let over ?h p feeds laned vs acc =
+        evaluated ~name ~axis ?held:h n p feeds laned vs acc
+      in
+      let b0 = Array.map (batch_v i n) it.init in
+      let acc0 =
+        if it.seeds = [||] then
+          Array.map
+            (fun f -> Loops.filled ~zero:false (Program.stacked n f))
+            sum_forms
+        else Array.map (batch_v i n) it.seeds
+      in
+      let flags, acc1 =
+        over ?h:held it.until until_feeds (Array.append all luc)
+          (Array.append b0 buc) acc0
+      in
+      (* A lane an outer loop holds starts stopped. *)
+      let stopped0 =
+        match held with
+        | None -> flags.(0)
+        | Some h -> or_flags flags.(0) (not_flags h.running)
+      in
+      let trips0 =
+        let (Program.V f) = stopped0 in
+        Program.V (Nx.zeros_at (Nx.placement f) Nx.int32 [| n |])
+      in
+      let ys = Array.sub it.step.outputs nc ny in
+      let totals = lanes_placed n sum_adds in
+      let step_of cf =
+        let outs = ref [||] in
+        let p, own =
+          Trace.trace ~totals Body ~name
+            (Array.append cf (Array.map Program.form bsc))
+            (fun vs ->
+              let b = Array.sub vs 0 nc and stopped = vs.(nc) in
+              let base = if rows then nc + 2 else nc + 1 in
+              let caps = Array.sub vs base (Array.length vs - base) in
+              Program.threading ~lanes:n sum_adds (fun acc ->
+                  let running = not_flags stopped in
+                  let h = { running; donors = donors n running } in
+                  let bd = Array.map (lend h) b in
+                  let capsd =
+                    Array.map2 (fun l v -> if l then lend h v else v) lsc caps
+                  in
+                  let out, acc =
+                    over ~h it.step step_feeds (Array.append all lsc)
+                      (Array.append bd capsd) acc
+                  in
+                  let b' =
+                    Array.init nc (fun k -> hold running out.(k) b.(k))
+                  in
+                  let ys' =
+                    Array.init ny (fun j ->
+                        hold running
+                          out.(nc + j)
+                          (Loops.filled ~zero:true
+                             (Program.stacked n (Program.form ys.(j)))))
+                  in
+                  let f, acc =
+                    over ~h it.until until_feeds (Array.append all luc)
+                      (Array.append b' buc) acc
+                  in
+                  let stopped' = or_flags stopped f.(0) in
+                  let trips =
+                    if rows then [| count_up running vs.(nc + 1) |] else [||]
+                  in
+                  let carry = Array.concat [ b'; [| stopped' |]; trips ] in
+                  outs := Array.map Program.form carry;
+                  (acc, Array.append carry ys')))
+        in
+        (p, own, !outs)
+      in
+      let init =
+        Array.concat
+          [ b0; [| stopped0 |]; (if rows then [| trips0 |] else [||]) ]
+      in
+      let cf = Array.map Program.form init in
+      let step, own, _ = step_of cf in
+      let until, uown =
+        Trace.trace Body ~name cf (fun vs ->
+            let (Program.V s) = vs.(nc) in
+            [| Program.V (Nx.all (as_bool s)) |])
+      in
+      let r =
+        Program.perform
+          (Iterate
+             {
+               it with
+               step;
+               until;
+               stopped = Some nc;
+               init;
+               step_captures = Array.append bsc own;
+               until_captures = uown;
+               seeds = acc1;
+             })
+      in
+      let carried = Array.length init in
+      let lanes v = lane_v i v in
+      let rows_lanes (Program.V y) = Program.V (lane i (Nx.moveaxis 1 0 y)) in
+      Array.concat
+        [
+          Array.map lanes (Array.sub r 0 nc);
+          (if rows then
+             Array.append
+               [| lanes r.(nc + 1) |]
+               (Array.map rows_lanes (Array.sub r (carried + 1) ny))
+           else [||]);
+          held_sums n sum_adds ~seeded:(it.seeds <> [||]) i
+            (Array.sub r
+               (carried + if rows then 1 + ny else 0)
+               (Array.length sum_adds));
+        ]
+  | _ -> invalid_arg "Rune: an iterate's map"
+
+(* A loop's sums whose lanes were held apart, each lane's chain: their lanes,
+   where a collect inside the map seeded them; and otherwise, as the lanes'
+   values decide them and lie where those do, their sum over the lanes added
+   here to the total's running value around the map, where it can take them,
+   their lanes then the identity. *)
+and held_sums n adds ~seeded i sums =
+  if seeded then Array.map (lane_v i) sums
+  else
+    Array.mapi
+      (fun k (Program.Addition (t, into, out)) ->
+        let (Program.V b) = sums.(k) in
+        (if n > 0 then
+           match Program.running t into with
+           | None -> ()
+           | Some r -> (
+               match Program.coerce_at (Prim.form r) b with
+               | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
+               | None -> Program.unset (Program.V b)));
+        lane_v i (Loops.filled ~zero:false (Program.stacked n (Program.F out))))
+      adds
+
+(* Every lane's running value of each of [adds]'s totals, stacked. *)
+and lanes_placed n adds =
+  Array.map
+    (fun (Program.Addition (t, into, out)) ->
+      Program.Addition (t, stacked_form n into, out))
+    adds
+
+(* [p] over the lanes of [vs] where [laned], its totals from the sums [acc],
+   each lane's: its results' batches, and the sums' ends, a held lane's kept. A
+   sum [p] cannot take at the form it traced its running value in at, as one a
+   held lane's computed on a set, is added to after a run from the identity. *)
+and evaluated ~name ~axis ?held n (p : Program.t) feeds laned vs acc =
+  let fits =
+    Array.mapi
+      (fun k (Program.Addition (_, into, _)) ->
+        let (Program.V a) = acc.(feeds.(k)) in
+        Option.is_some (Program.coerce_at into a))
+      p.adds
+  in
+  let out =
+    interpret ~name ~axis ?held n (fun w ->
+        let totals =
+          Array.mapi
+            (fun k (Program.Addition (_, into, _)) ->
+              if fits.(k) then lane_v w acc.(feeds.(k))
+              else Loops.filled ~zero:false (Program.F into))
+            p.adds
+        in
+        let out = Program.eval ~totals p (lanes_of w laned vs) in
+        Array.map (batch_v w n) out)
+  in
+  let nr = Array.length out - Array.length feeds in
+  let acc = Array.copy acc in
+  Array.iteri
+    (fun k j ->
+      let o = out.(nr + k) in
+      let o = if fits.(k) then o else Loops.add acc.(j) o in
+      acc.(j) <-
+        (match held with Some h -> hold h.running o acc.(j) | None -> o))
+    feeds;
+  (Array.sub out 0 nr, acc)
+
+(* A scan whose rows that run differ between lanes: it runs the most rows any
+   lane runs, a lane holding its carry from its last row on, and computing the
+   step at its donor's values meanwhile. *)
+and masked_scan ~name ?held i axis n (c : Program.construct) =
+  match c with
+  | Scan ({ trips = Some trips; _ } as sc) ->
+      let nc = Array.length sc.init and nx = Array.length sc.xs in
+      let ny = Array.length sc.step.outputs - nc - Array.length sc.step.adds in
+      let lcap = Array.map (owned_v i) sc.captures in
+      let bcaps =
+        Array.map2 (fun l v -> if l then batch_v i n v else v) lcap sc.captures
+      in
+      let b0 = Array.map (batch_v i n) sc.init in
+      let bxs =
+        Array.map
+          (fun v ->
+            let (Program.V b) = batch_v i n v in
+            Program.V (Nx.moveaxis 0 1 b))
+          sc.xs
+      in
+      let (Program.V tb) = batch_v i n trips in
+      let tb = as_int32 tb in
+      let at = Nx.Placement.uncut (Nx.placement tb) in
+      let most =
+        if n = 0 then Program.V (Nx.scalar_at at Nx.int32 0l)
+        else Program.V (Nx.max tb)
+      in
+      let row = Program.V (Nx.arange_at at Nx.int32 0 sc.length 1) in
+      let sum_adds, _, feeds = Program.sums [ sc.step ] in
+      let feeds = List.hd feeds in
+      let all = Array.make (nc + nx) true in
+      let ys = Array.sub sc.step.outputs nc ny in
+      let totals = lanes_placed n sum_adds in
+      let step_of cf =
+        let outs = ref [||] in
+        let p, own =
+          Trace.trace ~totals Body ~name
+            (Array.concat
+               [
+                 cf;
+                 Array.map Loops.row bxs;
+                 [| Loops.row row |];
+                 Array.map Program.form bcaps;
+               ])
+            (fun vs ->
+              let b = Array.sub vs 0 nc and xr = Array.sub vs nc nx in
+              let k = vs.(nc + nx) in
+              let caps = Array.sub vs (nc + nx + 1) (Array.length bcaps) in
+              Program.threading ~lanes:n sum_adds (fun acc ->
+                  let runs =
+                    beside (Program.V tb) k
+                      {
+                        k =
+                          (fun t k ->
+                            Program.V
+                              (Nx.less
+                                 (Nx.broadcast_to [| n |] (as_int32 k))
+                                 (as_int32 t)));
+                      }
+                  in
+                  let running =
+                    match held with
+                    | None -> runs
+                    | Some h -> and_flags runs h.running
+                  in
+                  let h = { running; donors = donors n running } in
+                  let args =
+                    Array.concat
+                      [
+                        Array.map (lend h) b;
+                        Array.map (lend h) xr;
+                        Array.map2
+                          (fun l v -> if l then lend h v else v)
+                          lcap caps;
+                      ]
+                  in
+                  let out, acc' =
+                    evaluated ~name ~axis ~held:h n sc.step feeds
+                      (Array.append all lcap) args acc
+                  in
+                  let b' =
+                    Array.init nc (fun j -> hold running out.(j) b.(j))
+                  in
+                  let ys' =
+                    Array.init ny (fun j ->
+                        hold running
+                          out.(nc + j)
+                          (Loops.filled ~zero:true
+                             (Program.stacked n (Program.form ys.(j)))))
+                  in
+                  outs := Array.map Program.form b';
+                  (acc', Array.append b' ys')))
+        in
+        (p, own, !outs)
+      in
+      let step, own, _ = step_of (Array.map Program.form b0) in
+      let r =
+        Program.perform
+          (Scan
+             {
+               sc with
+               step;
+               trips = Some most;
+               init = b0;
+               xs = Array.append bxs [| row |];
+               captures = Array.append bcaps own;
+               seeds = Array.map (batch_v i n) sc.seeds;
+             })
+      in
+      let ns = Array.length sum_adds in
+      let base = Array.length r - ns in
+      Array.append
+        (Array.mapi
+           (fun k v ->
+             if k >= nc && k < nc + ny then
+               let (Program.V y) = v in
+               Program.V (lane i (Nx.moveaxis 1 0 y))
+             else lane_v i v)
+           (Array.sub r 0 base))
+        (held_sums n sum_adds ~seeded:(sc.seeds <> [||]) i (Array.sub r base ns))
+  | _ -> invalid_arg "Rune: a scan's map"
+
 (* A remat's map is the remat of its function's map, as JAX's checkpoint
    batches, so that a reverse mode around the map sees the remat. *)
-and remat ~name i axis n (body : Program.t) args seeds =
+and remat ~name ?held i axis n (body : Program.t) args seeds =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
@@ -910,7 +1540,7 @@ and remat ~name i axis n (body : Program.t) args seeds =
   let no = Array.length body.outputs - Array.length body.adds in
   let mapped vs =
     Program.threaded ~lanes:n body (fun running ->
-        run ~name ~axis n (fun w ->
+        interpret ~name ~axis ?held n (fun w ->
             let totals = Array.map (lane_v w) running in
             let out = Program.eval ~totals body (lanes_of w la vs) in
             laned := Array.sub (Array.map (owned_v w) out) 0 no;
@@ -950,7 +1580,7 @@ and call ~name i axis n (body : Program.t) args site seeds =
     let laned = ref [||] in
     let mapped vs =
       Program.threaded ~lanes:n body (fun running ->
-          run ~name ~axis n (fun w ->
+          interpret ~name ~axis n (fun w ->
               let totals = Array.map (lane_v w) running in
               let out = Program.eval ~totals body (lanes_of w la vs) in
               laned := Array.sub (Array.map (owned_v w) out) 0 no;
@@ -959,7 +1589,9 @@ and call ~name i axis n (body : Program.t) args site seeds =
                 out))
     in
     let prog, _ = Trace.trace Jit ~name forms mapped in
-    let totals = Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) prog.adds in
+    let totals =
+      Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) prog.adds
+    in
     ((prog, Array.append forms totals), !laned, None)
   in
   let derivation = Program.Vmap { lanes = la; n; named } in
@@ -974,28 +1606,30 @@ and call ~name i axis n (body : Program.t) args site seeds =
            seeds = Array.map (batch_v i n) seeds;
          })
   in
-  Array.mapi
-    (fun k v -> if k >= no || d.flags.(k) then lane_v i v else v)
-    r
+  Array.mapi (fun k v -> if k >= no || d.flags.(k) then lane_v i v else v) r
 
 (* [f]'s results' batches over the lanes of the batches [bs], in a map of this
-   one's name and size. *)
-and map ~name axis n f bs =
-  run ~name ~axis n (fun j ->
+   one's name, size and held lanes. *)
+and map ~name ?held axis n f bs =
+  interpret ~name ~axis ?held n (fun j ->
       let lanes = Array.map (fun (Program.V b) -> Program.V (lane j b)) bs in
       Array.map (fun (Program.V y) -> Program.V (batch j n y)) (f lanes))
 
-and run :
+and interpret :
     'a.
-    name:string -> axis:Program.axis -> int -> (Prim.interpretation -> 'a) -> 'a
-    =
- fun ~name ~axis n f ->
+    name:string ->
+    axis:Program.axis ->
+    ?held:held ->
+    int ->
+    (Prim.interpretation -> 'a) ->
+    'a =
+ fun ~name ~axis ?held n f ->
   let owner = ref None in
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
     | Program.Construct c, Some i when claims i axis c ->
-        Some (answer ~name i axis n c)
+        Some (answer ~name ?held i axis n c)
     | Program.Bound a, _ when Program.same_axis a axis ->
         Some (fun k -> Effect.Deep.continue k (Some n))
     (* A collect around the map receives the lanes' sum as one addition. *)
@@ -1005,9 +1639,11 @@ and run :
   Effect.Deep.match_with
     (fun () ->
       Prim.interpret ~name Values
-        (fun i ~by op -> rule n i ~by op)
+        (fun i ~by op -> rule n held i ~by op)
         (fun i ->
           owner := Some i;
           f i))
     ()
     { retc = Fun.id; exnc = raise; effc }
+
+let run ~name ~axis n f = interpret ~name ~axis n f

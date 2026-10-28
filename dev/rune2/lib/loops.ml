@@ -33,17 +33,7 @@ let filled ~zero (F f) =
   V (Nx.full_at f.placement f.dtype (shape_of f) v)
 
 let zeros_like (V x) = V (Nx.zeros_like x)
-let flip (V x) = V (Nx.flip ~axes:[ 0 ] x)
-
 let add (V a) b = V (Nx.add a (like a b))
-
-let rec holds_iterate (p : Program.t) =
-  Array.exists
-    (function
-      | Op _ -> false
-      | Do { c = Iterate _; _ } -> true
-      | Do { c; _ } -> List.exists holds_iterate (carried c))
-    p.eqns
 
 (* Programs *)
 

@@ -1002,7 +1002,8 @@ let test_scan () =
   in
   equal codes_t (codes (one_by_one f xs)) (codes (Rune.vmap' f xs));
   (* An iterate whose until every lane shares steps its lanes together; one
-     whose until reads a lane raises. *)
+     whose until reads a lane stops each lane on its own, and names the first
+     lane still running at the bound. *)
   let c = T.(pair tensor tensor) in
   let g x =
     snd
@@ -1014,7 +1015,17 @@ let test_scan () =
   equal ~msg:"iterate" codes_t
     (codes (one_by_one g xs))
     (codes (Rune.vmap' g xs));
-  invalid ~sub:"Rune.vmap" (fun () ->
+  let h =
+    Rune.iterate' ~max:5
+      ~until:(fun y -> Nx.greater_s (Nx.sum y) 1.)
+      ~f:(fun y -> Nx.add_s (Nx.mul_s y 2.) 0.5)
+  in
+  equal ~msg:"lanes stopping apart" codes_t
+    (codes (one_by_one h xs))
+    (codes (Rune.vmap' h xs));
+  invalid
+    ~sub:"Rune.iterate': until is still false after max = 5 steps, in lane 0"
+    (fun () ->
       Rune.vmap'
         (Rune.iterate' ~max:5
            ~until:(fun y -> Nx.greater_s (Nx.sum y) 10.)
