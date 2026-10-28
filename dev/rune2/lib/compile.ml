@@ -46,7 +46,8 @@ let within (type v s) (dt : (v, s) D.t) l =
   if L.numel l = 0 then l
   else
     let start, _ = run dt l in
-    L.v ~offset:(L.offset l - start) ~strides:(L.strides l) (L.shape l)
+    if start = 0 then l
+    else L.v ~offset:(L.offset l - start) ~strides:(L.strides l) (L.shape l)
 
 (* The run's bytes: its first, and their number. *)
 let run_bytes (type v s) (dt : (v, s) D.t) l =
@@ -1112,7 +1113,9 @@ type variant = {
   layouts : L.t array;  (** Each argument's over its run ({!within}). *)
   phases : int array;
   donated : bool array;
-  settings : settings;
+  settings : settings Atomic.t;
+      (** The settings, as the latest call that met them gave them, so that
+          an unchanged list compares physically. *)
   linked : (linked, string) result;
       (** [Error why] where the lowering or tolk declines the variant, which
           then evaluates. *)
@@ -1181,11 +1184,24 @@ let link rig l =
 
 (* Programs *)
 
+(* An output's form, and for a placed one the layout and bytes of the memory
+   its result takes. *)
+type output = { form : form; contiguous : L.t; bytes : int }
+
+let output_of (F f as form) =
+  let shape = shape_of f in
+  {
+    form;
+    contiguous = L.contiguous (Iarray.of_array shape);
+    bytes = D.bytes f.dtype (numel shape);
+  }
+
 type t = {
   name : string;
   rig : Rig.t;
   program : Program.t;
   forms : form array;
+  results : output array;  (** Each output's, read once. *)
   lock : Mutex.t;
   variants : variant list Atomic.t;
 }
@@ -1219,8 +1235,24 @@ let declined = function
   | Invalid_argument why | Failure why -> Some why
   | _ -> None
 
+(* Whether [v]'s settings are [settings]. [Tolk.Setting.shaping] gives one
+   list while no setting changes, but a new one of the same text after a
+   change undone, as a compile's own settings are: the equal list met is kept,
+   so that the next call compares physically. *)
+let same_settings v ((s, d) as settings : settings) =
+  let s', d' = Atomic.get v in
+  Bool.equal d d'
+  && (s == s'
+     || s = s'
+        && begin
+          Atomic.set v settings;
+          true
+        end)
+
 let same_variant layouts phases donated settings v =
-  v.phases = phases && v.donated = donated && v.settings = settings
+  Array.for_all2 Int.equal v.phases phases
+  && Array.for_all2 Bool.equal v.donated donated
+  && same_settings v.settings settings
   && Array.for_all2 L.equal v.layouts layouts
 
 let variant t layouts phases donated settings =
@@ -1251,6 +1283,7 @@ let variant t layouts phases donated settings =
                     Error why
                 | None -> raise e)
           in
+          let settings = Atomic.make settings in
           let v = { layouts; phases; donated; settings; linked } in
           Atomic.set t.variants (v :: Atomic.get t.variants);
           v)
@@ -1271,6 +1304,7 @@ let make ~name p forms =
       rig;
       program = p;
       forms;
+      results = Array.map (fun v -> output_of (form v)) p.outputs;
       lock = Mutex.create ();
       variants = Atomic.make [];
     }
@@ -1305,16 +1339,14 @@ let consumed ~by args f =
               Option.map A.buffer
                 (Nx.Prim.Consumer.take c k (A.dtype a) (A.layout a))))
 
-let result rig (F f) buffer =
-  let shape = shape_of f in
+let value rig r buffer =
+  let (F f) = r.form in
   let buffer =
-    match buffer with
-    | Some b -> b
-    | None -> Rig.Buffer.create rig (D.bytes f.dtype (numel shape))
+    match buffer with Some b -> b | None -> Rig.Buffer.create rig r.bytes
   in
   V
     (Nx.Repr.unsafe_of_array (Nx.Placement.devices f.placement)
-       (A.v f.dtype (L.contiguous (Iarray.of_array shape)) buffer))
+       (A.v f.dtype r.contiguous buffer))
 
 (* Evaluation *)
 
@@ -1402,12 +1434,15 @@ let rec run t args =
 (* [linked t v args leaves take] runs the variant [v] of [t] on [args], whose
    arrays under the call's consumer are [leaves]. *)
 and linked t v args leaves take =
-  let p = t.program in
   let slots = Array.make v.inputs [] in
+  (* The run an argument binds: its buffer itself where the run is all of
+     it. *)
   let run_of k =
     let (A.Any a) = leaves.(k) in
     let first, length = run_bytes (A.dtype a) (A.layout a) in
-    Rig.Buffer.view (A.buffer a) ~first ~length
+    let b = A.buffer a in
+    if first = 0 && length = Rig.Buffer.length b then b
+    else Rig.Buffer.view b ~first ~length
   in
   (* A lending argument's memory, or a copy of it where nx's consumer does not
      give its memory, as where another value reads it. *)
@@ -1436,17 +1471,13 @@ and linked t v args leaves take =
         slots.(s) <-
           [ (match lending.(k) with Some b -> b | None -> run_of k) ])
     v.leaf_slots;
-  let outputs = Array.map form p.outputs in
-  let fresh (F f) =
-    Rig.Buffer.create t.rig (D.bytes f.dtype (numel (shape_of f)))
-  in
   let buffers =
     Array.mapi
       (fun j s ->
         match v.outs.(j) with
         | Lent k | Taken k -> lending.(k)
         | Stored _ ->
-            let b = fresh outputs.(j) in
+            let b = Rig.Buffer.create t.rig t.results.(j).bytes in
             slots.(s) <- [ b ];
             Some b
         | Empty -> None)
@@ -1461,4 +1492,4 @@ and linked t v args leaves take =
     v.checks;
   Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
   List.iter (answer slots) v.checks;
-  Array.mapi (fun j o -> result t.rig o buffers.(j)) outputs
+  Array.mapi (fun j r -> value t.rig r buffers.(j)) t.results

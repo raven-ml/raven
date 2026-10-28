@@ -111,10 +111,12 @@ let lanes axes =
     (fun a -> match Program.bound a with Some n -> n | None -> -1)
     axes
 
+(* [last] is the latest call's key and entry, which a call with the key reads
+   without the table's lock. *)
 type 'y t = {
   name : string;
   table : 'y entry Programs.t;
-  last : key option Atomic.t;
+  last : (key * 'y entry) option Atomic.t;
 }
 
 let create ~name () =
@@ -155,24 +157,28 @@ let find t leaves skeleton ~paths trace =
   in
   let miss () =
     Option.iter
-      (fun k -> report "retrace: %s" (difference (paths ()) key k))
+      (fun (k, _) -> report "retrace: %s" (difference (paths ()) key k))
       (Atomic.get t.last)
   in
-  let forms = stand_ins leaves in
   let make () =
+    let forms = stand_ins leaves in
     let body, like = trace forms in
     let compile = compiled t.name in
     let site = Program.site ~name:t.name ~compile body forms in
     { body; like; site; lanes = lanes (Program.axes site) }
   in
-  let e = Programs.find t.table key ~miss make in
-  let now = lanes (Program.axes e.site) in
   let e =
-    if now = e.lanes then e
+    match Atomic.get t.last with
+    | Some (k, e) when same_key k key -> e
+    | _ -> Programs.find t.table key ~miss make
+  in
+  let now = lanes (Program.axes e.site) in
+  let key, e =
+    if now = e.lanes then (key, e)
     else
       let key = { key with lanes = Some now } in
       let miss () = report "retrace: a map's lanes differ" in
-      Programs.find t.table key ~miss make
+      (key, Programs.find t.table key ~miss make)
   in
-  Atomic.set t.last (Some key);
+  Atomic.set t.last (Some (key, e));
   e

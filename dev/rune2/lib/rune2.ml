@@ -635,6 +635,18 @@ let traced name a r f args forms =
   in
   (body, Option.get !like)
 
+(* A result's structure, rebuilt from a call's outputs, its leaves read once
+   at the trace. *)
+type 'y results = { rebuild : value array -> 'y }
+
+let results r like =
+  let leaves = fst (Ptree.flatten r like) in
+  let rebuild vs =
+    Ptree.rebuild r ~like
+      (List.mapi (fun k (Nx.P l) -> Nx.P (Program.like l vs.(k))) leaves)
+  in
+  { rebuild }
+
 (* A call's program comes from its key's entry: traced over stand-ins of its
    leaves the first time the key is met, then compiled. The call is a construct,
    so a transformation around it evaluates the program over its values; with
@@ -645,11 +657,15 @@ let call name t a r f args =
   let paths () =
     List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
-  let e = Jit.find t leaves skeleton ~paths (traced name a r f args) in
+  let trace forms =
+    let body, like = traced name a r f args forms in
+    (body, results r like)
+  in
+  let e = Jit.find t leaves skeleton ~paths trace in
   let out =
     run (Call { body = e.body; args = args_v; site = e.site })
   in
-  rebuild r ~like:e.like (slice out 0 (Array.length (values r e.like)))
+  let y = e.like.rebuild out in y
 
 let jit_named name s =
   let (Spine u) = spine name 0 s in
