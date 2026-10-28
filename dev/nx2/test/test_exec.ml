@@ -1449,6 +1449,10 @@ let effectless f =
   in
   Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
 
+(* The minor words one call of [f] allocates, to the word: allocation depends on
+   the call, not the machine, so a baseline records it. *)
+let allocated f = Printf.sprintf "%.0f words" (words f)
+
 let allocation =
   group "allocation"
     [
@@ -1469,25 +1473,26 @@ let allocation =
           let a = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
           equal (array bits) [| 2.; 3.; 4. |]
             (elements (effectless (fun () -> Nx.add_s a 1.))));
-      test "a copy of a one-element host value allocates its budget"
+      test "a copy of a one-element host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:124. (words (fun () -> Nx.copy a)));
-      test "a matmul of 4x4 float32 host values allocates its budget"
+          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 113 words |});
+      test "a matmul of 4x4 float32 host values allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          at_most (float 0.5) ~than:177. (words (fun () -> Nx.matmul a a)));
-      test "a slice of a 4x4 host value by ranges allocates its budget"
+          expect (allocated (fun () -> Nx.matmul a a))
+          @@ __POS_OF__ {| 177 words |});
+      test "a slice of a 4x4 host value by ranges allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          at_most (float 0.5) ~than:273.
-            (words (fun () -> Nx.slice Nx.[ R (1, 3); A ] a)));
-      test "a set of a row of a 4x4 host value allocates its budget"
+          expect (allocated (fun () -> Nx.slice Nx.[ R (1, 3); A ] a))
+          @@ __POS_OF__ {| 225 words |});
+      test "a set of a row of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
-          at_most (float 0.5) ~than:538.
-            (words (fun () -> Nx.set Nx.[ I 1 ] v a)));
+          expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
+          @@ __POS_OF__ {| 483 words |});
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any

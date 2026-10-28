@@ -920,21 +920,30 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
     in
     equal string want (printed (reduce_at w k.rshow r axes x))
 
-(* The minor words a float32 sum along an axis cut across three devices
-   allocates: each device's partial, their stack, its move, the reduction
-   of it, and the move of the parts to the result. It counts 12,108 words
-   alone and 12,096 after the tests before it in the process, which move
-   it by up to 14 words, so it is stated as its nearest hundred, 46 words
-   above the lower edge of the rounding and 42 below the upper. *)
+(* The minor words a float32 sum along an axis cut across devices allocates grow
+   with the devices, each holding a partial that the closing stacks and moves,
+   and not with the elements: three devices allocate more than one, and four
+   more than three, and ten times the rows over three devices add less than a
+   word per added element, which an allocation per element would exceed. *)
 let test_closing_words () =
-  let x =
-    Nx.place (Set3.split ~axis:0)
-      (Nx.Repr.of_array Nx.Host.v
-         (A.of_array D.Float32 [| 6; 4 |] (Array.make 24 1.)))
+  let sum (type d) (p : d Nx.Placement.t) s =
+    let n = Array.fold_left ( * ) 1 s in
+    let x =
+      Nx.place p
+        (Nx.Repr.of_array Nx.Host.v
+           (A.of_array D.Float32 (Iarray.of_array s) (Array.make n 1.)))
+    in
+    words (fun () -> Nx.sum ~axes:[ 0 ] x)
   in
-  let w = words (fun () -> Nx.sum ~axes:[ 0 ] x) in
-  let hundreds = Float.round (w /. 100.) *. 100. in
-  expect (Printf.sprintf "%.0f words" hundreds) @@ __POS_OF__ {|12100 words|}
+  let module One = (val Nx.devices [ m 0 ]) in
+  let three = sum (Set3.split ~axis:0) [| 6; 4 |] in
+  less float_exact ~msg:"one device" ~than:three (sum One.on [| 6; 4 |]);
+  less float_exact ~msg:"four devices"
+    ~than:(sum (Set4.split ~axis:0) [| 6; 4 |])
+    three;
+  less float_exact ~msg:"ten times the rows"
+    ~than:(three +. Float.of_int ((60 - 6) * 4))
+    (sum (Set3.split ~axis:0) [| 60; 4 |])
 
 (* An extreme's position over two axes of a value cut along the second
    over three devices: the first tile, columns 0 and 1, holds an extreme at
@@ -2418,7 +2427,9 @@ let reductions =
         reduced_case law_reduced;
       test "a position over cut axes is the smallest of a tie across tiles"
         test_arg_ties;
-      test "a sum over an axis cut across three devices allocates its closing"
+      test
+        "a sum over an axis cut across devices allocates with the devices, \
+         not the elements"
         test_closing_words;
       test "a float maximum or minimum over a cut axis is a NaN beside one"
         test_cut_extreme_nan;
