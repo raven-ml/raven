@@ -1,14 +1,14 @@
 # Rune
 
-Functional transformations — automatic differentiation, vectorizing maps,
-and friends — for OCaml, inspired by [JAX](https://github.com/jax-ml/jax).
+Transformations of OCaml functions over [nx](../nx/) values: automatic
+differentiation, vectorizing maps, loops and compilation, after
+[JAX](https://github.com/jax-ml/jax).
 
 Rune differentiates ordinary OCaml functions over ordinary OCaml values:
-there is no special tensor type (functions compute with plain
-[Nx](../nx/) tensors) and no runtime tree encoding (parameters are your
-own typed records). Write once how to walk a record's parts, an
-`Nx.Ptree.S` module with one `walk` and a line per field, and every
-transformation works on it directly, preserving its type.
+functions compute with plain `Nx.t` values, and parameters are your own
+typed records. Write once how to walk a record's parts, an `Nx.Ptree.S`
+module with one `walk` and a line per field, and every transformation
+takes and returns values of that record type.
 
 ## The Core Idea
 
@@ -16,7 +16,7 @@ transformation works on it directly, preserving its type.
 type 'a params = { w : 'a; b : 'a }
 
 module Params = struct
-  type 'a t = 'a params
+  type ('a, _) t = 'a params
 
   let walk c { w; b } =
     let open Nx.Ptree.Walk in
@@ -32,60 +32,69 @@ let loss p = Nx.mean (Nx.square (Nx.sub (Nx.add (Nx.matmul x p.w) p.b) y))
 let grads = Rune.grad params_ptree loss params
 ```
 
-Leaves may mix dtypes freely: a single forward and backward pass
-produces gradients for all of them, each with its leaf's dtype. Records
-nest into records, so models compose structurally — see
-[kaun](../kaun/) for neural-network layers built this way, and
-[vega](../vega/) for optimizers that consume the same structures.
+Leaves may mix dtypes: one forward and one backward pass give a gradient
+for each, of its leaf's dtype. Records nest into records, so models
+compose structurally: see [kaun](../kaun/) for neural-network layers
+built this way, and [vega](../vega/) for optimizers over the same
+structures.
 
 ## Features
 
-- **Reverse mode** — `grad` and `value_and_grad` for scalar objectives;
+- **Reverse mode**: `grad` and `value_and_grad` for scalar objectives;
   `vjp` returns the result and its pullback, applied to any number of
-  cotangents; `value_and_grad_aux` returns an objective's auxiliary data
-- **Forward mode** — `jvp` for Jacobian-vector products in a single
-  forward pass
-- **Vectorizing map** — `vmap` lifts a per-example function to batched
+  cotangents; `value_and_grad_aux` returns an objective's auxiliary data;
+  `linear_transpose` transposes a linear function
+- **Forward mode**: `jvp` for Jacobian-vector products in one forward
+  pass; `linearize` keeps the tangent map to apply again
+- **Vectorizing map**: `vmap` lifts a per-example function to batched
   inputs, mapping axis 0 of every argument its signature lists
-- **Composition** — transformations nest freely: `vmap` of `grad` is
-  per-sample gradients, `jvp` of `grad` is a Hessian-vector product,
-  `grad` of `grad` is second order
-- **Jacobians and Hessians** — `jacfwd'` and `jacrev'`; a Hessian is
+- **Composition**: transformations nest: `vmap` of `grad` is per-sample
+  gradients, `jvp` of `grad` a Hessian-vector product, `grad` of `grad`
+  a second derivative
+- **Jacobians and Hessians**: `jacfwd'` and `jacrev'`; a Hessian is
   `jacfwd' (grad' f)`
-- **Gradient checkpointing** — `remat` recomputes a sub-computation in
-  the backward pass, trading compute for memory
-- **Custom rules** — `custom_jvp` gives a function a tangent map that
-  serves both modes at every order, and `custom_vjp` a pullback
-- **Totals and lanes** — `Total` collects a write-only sum that code
-  anywhere inside a function adds to, threading it through `scan` bodies and
-  `remat` calls and summing it over a `vmap`'s lanes; `axis` names a map and
-  `lanes` reads its lanes as data
-- **Gradient checking** — `check_grads` compares reverse mode against
-  finite differences
-- **Loops** — `scan` folds over rows and compiles as a loop under `jit`;
-  a branch on a value is OCaml's `if` on `Nx.item`
-- **Compilation** — `jit` traces a function once per key and replays it
-  as fused kernels on the devices its values are placed on (the host, CUDA,
-  Metal); an argument marked `consumes` in its signature is given up by each
-  call, and its storage is reused for the results. `grad`, `jvp` and `vmap`
-  of a compiled function compile too
-- **Stopping gradients** — `detach` holds a value constant
-- **Structures** — every transformation takes the structures it walks,
-  so results may be structures too; primed variants (`grad'`, `vmap'`,
-  ...) serve single-tensor functions
+- **Loops**: `scan` folds a step over rows and `iterate` repeats one
+  until a condition holds; each traces its step once, at the call, and
+  has derivatives in either mode
+- **Gradient checkpointing**: `remat` recomputes a function in the
+  backward pass, trading compute for memory
+- **Custom rules**: `custom_jvp` gives a function a tangent map that
+  serves both modes at every order, `custom_vjp` a pullback, and
+  `custom_transpose` a linear function its transpose
+- **Totals and lanes**: `Total` collects a write-only sum that code
+  anywhere inside a function adds to, once per execution; `axis` names a
+  map, and `lanes` and `lane_index` read its lanes
+- **Gradient checking**: `check_grads` compares reverse mode with finite
+  differences, and `check_transpose` a transpose with its function
+- **Compilation**: `jit` traces a function once per abstract value of its
+  arguments and runs the program compiled on the devices its values lie
+  on (the host, CUDA, Metal, AMD); a call consumes the arguments the
+  caller donates (`Nx.donate`), and its results may take their memory
+- **Programs**: `program`, `pp_program` and `eval_shape` show what a
+  function traces, without computing it
+- **Stopping gradients**: `detach` holds a value constant
+- **Structures**: every transformation takes the structures it walks,
+  so results may be structures too; primed forms (`grad'`, `vmap'`,
+  ...) serve functions of one array
 
 ## Quick Start
 
-Gradient descent is `value_and_grad` plus a record update:
+Gradient descent is `value_and_grad` plus a record update, compiled with
+`jit`; donating the parameters lets the update take their memory:
 
 ```ocaml
-let step p =
-  let l, g = Rune.value_and_grad params_ptree loss p in
-  ({ w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }, l)
+let step =
+  Rune.jit
+    Nx.Ptree.(params_ptree @-> returns (pair params_ptree tensor))
+    (fun p ->
+      let l, g = Rune.value_and_grad params_ptree loss p in
+      ({ w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }, l))
+
+let params, l = step (Nx.Ptree.donate params_ptree params)
 ```
 
 Per-sample gradients compose `vmap` with `grad`. The signature says that
-the mapped function takes two tensors and returns the parameters'
+the mapped function takes two arrays and returns the parameters'
 structure; each argument is mapped over its axis 0:
 
 ```ocaml
@@ -96,15 +105,27 @@ let per_sample =
     xs ys
 ```
 
-See the [API reference](lib/rune.mli) for the full contracts.
+A loop's step is traced once per call, eagerly too: it branches with
+`Nx.where` and draws from the keys it receives:
+
+```ocaml
+let walk, () =
+  Rune.scan Nx.Ptree.tensor (Nx.Ptree.v Nx.Rng.walk) Nx.Ptree.unit
+    ~init:(Nx.zeros Nx.float32 [| 2 |])
+    ~f:(fun x key -> (Nx.add x (Nx.Rng.normal ~key Nx.float32 [| 2 |]), ()))
+    (Nx.Rng.split_batch ~n:100 (Nx.Rng.key 0))
+```
+
+See the [guide](doc/index.md) and the [API reference](lib/rune.mli) for
+the full contracts.
 
 ## Examples
 
-- [`01-gradient-descent`](examples/01-gradient-descent) — fit a linear
+- [`01-gradient-descent`](examples/01-gradient-descent): fit a linear
   model by differentiating a function of a typed record
-- [`02-per-sample-grads`](examples/02-per-sample-grads) — per-example
+- [`02-per-sample-grads`](examples/02-per-sample-grads): per-example
   gradients via `vmap` of `grad`, checked against the loop
-- [`03-hessian`](examples/03-hessian) — Newton's method with the
+- [`03-hessian`](examples/03-hessian): Newton's method with the
   Hessian `jacfwd' (grad' f)`, a matrix-free Hessian-vector product, and
   `check_grads`
 
@@ -116,21 +137,19 @@ dune exec packages/rune/examples/01-gradient-descent/main.exe
 
 ## Limitations
 
-Rune aims to fail loudly rather than return wrong gradients.
-Current gaps:
+Rune raises rather than return a wrong derivative:
 
-- **Ops without differentiation rules raise.** Reverse mode has no rule
-  for `svd`, `eig`, `eigh`, `Rune.lanes`, and `mod`; forward mode additionally
-  lacks `qr`. Differentiating through them raises `Invalid_argument` —
-  `detach` the input if gradients should not flow through. (`cholesky`,
-  reverse-mode `qr`, and the whole FFT family are supported.)
-- **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`,
-  `svd`, `eig`, `eigh`) over batched inputs.
-- **Implicit RNG under `vmap` draws identical values for every lane** —
-  the RNG key is a constant of the map. Thread distinct randomness in as
-  mapped inputs instead.
-- **`jit` unrolls `scan`**, so a recurrence's compile time grows with
-  its sequence length.
+- **Derivatives with no definition raise.** The tangents of
+  `Nx.qr ~factors:Complete` of a tall matrix, of
+  `Nx.svd ~factors:Complete` of a non-square one, and of a block scale of
+  `Nx.contract` that depends on the parameters raise `Invalid_argument`;
+  `detach` the input if gradients should not flow through.
+- **A construct's functions read no values.** `scan`, `iterate`,
+  `remat`, `jit` and the custom rules trace their functions, so
+  `Nx.item` or a draw without `~key` inside them raises.
+- **Eager loops over small arrays pay per operation.** An eager `scan`
+  evaluates its traced step per row, which costs more per operation than
+  computing it directly; `jit` removes that cost.
 
 ## Contributing
 
