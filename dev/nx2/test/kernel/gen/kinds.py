@@ -77,6 +77,13 @@ def to_double(v):
     return float(r)
 
 
+def cr(f, x):
+    """f(x) correctly rounded to binary64. libm's sin, cos and log2 differ
+    by an ulp between machines."""
+    with mp.workprec(320):
+        return to_double(f(mpf(x)))
+
+
 def hexf(x):
     return "nan" if x != x else x.hex()
 
@@ -387,7 +394,7 @@ def binary_points(fn, rng):
             # results near the overflow and underflow thresholds
             x = rng.uniform(1.0001, 100)
             for t in (1023.99, -1021.9, -1074.5):
-                pts.append((x, t / math.log2(x)))
+                pts.append((x, t / cr(lambda v: E.log(v, 2), x)))
     else:
         for _ in range(1500):
             y = math.ldexp(1 + rng.random(), rng.randint(-1074, 1023)) * rng.choice([1, -1])
@@ -517,7 +524,7 @@ def complex_points(fn, rng, single):
         for _ in range(8):
             d = math.ldexp(1, -rng.randint(k_lo, k_hi))
             t = rng.uniform(0, 2 * math.pi)
-            pts.append((cx + d * math.cos(t), cy + d * math.sin(t)))
+            pts.append((cx + d * cr(E.cos, t), cy + d * cr(E.sin, t)))
 
     for _ in range(n):
         pts.append((mag(lo_e, hi_e), mag(lo_e, hi_e)))
@@ -547,11 +554,12 @@ def complex_points(fn, rng, single):
         for _ in range(n):
             t = rng.uniform(-math.pi, math.pi)
             r = 1 + math.ldexp(rng.uniform(-1, 1), -rng.randint(1, 60))
-            pts.append((r * math.cos(t), r * math.sin(t)))
+            pts.append((r * cr(E.cos, t), r * cr(E.sin, t)))
         for c in ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)):
             near(*c)
         for _ in range(n // 4):
-            pts.append((-mag(-30, 30) ** 2, mag(lo_e, -20)))
+            m = mag(-30, 30)
+            pts.append((-m * m, mag(lo_e, -20)))
     if fn in ("asin", "acos", "atan", "asinh", "acosh", "atanh"):
         imaginary = fn in ("atan", "asinh")
         cuts = ((0.0, 1.0), (0.0, -1.0)) if imaginary else ((1.0, 0.0), (-1.0, 0.0))

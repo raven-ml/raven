@@ -1929,12 +1929,15 @@ def igamma_points(fmt):
     points += [(a, x) for a in (0.0, 0.5, 1.0, 30.0, math.inf, math.nan, -1.0, -math.inf) for x in edges + [-math.inf]]
     points += [(0.0, r(x)) for x in (1e-300, 1e-10, 0.5, 1.1, 3.0, 30.0, 1e300)] + [(-0.0, r(1.0))]
     points += [(fmt.max, r(1.0)), (fmt.max, fmt.max), (r(1.0), fmt.max)]
-    # Random points, x near a and far from it.
+    # Random points, x near a and far from it; z is a standard normal by
+    # Box-Muller, in mpmath as POINT_PREC says.
     with mp.workprec(POINT_PREC):
         lo, hi = mpmath.log(mpf("1e-4")), mpmath.log(mpf(2) ** 10)
         for _ in range(96):
             a = r(mpmath.exp(lo + (hi - lo) * mpf(rng.random())))
-            points.append((a, r(mpf(a) * mpmath.exp(mpf(rng.gauss(0, 1))))))
+            u, v = mpf(rng.random()), mpf(rng.random())
+            z = mpmath.sqrt(-2 * mpmath.log(1 - v)) * mpmath.cos(2 * mpmath.pi * u)
+            points.append((a, r(mpf(a) * mpmath.exp(z))))
         for _ in range(48):
             points.append((r(mpmath.exp(mpf(rng.uniform(-10, 14)))), r(mpmath.exp(mpf(rng.uniform(-30, 10))))))
     return points
@@ -2212,8 +2215,8 @@ def beta_boundary_points(fmt):
         (0.5, 0.7, 0.5), (0.3, 3.0, 0.5),
         (0.01, 0.5, BETA_X_FAR), (0.5, 5.0, BETA_X_FAR),
         (0.5, 4.0, BETA_X_NEAR),
-        (0.1, 0.5, BETA_POWER_X ** (1 / 0.1)),
-        (0.5, 5.0, BETA_POWER_BX ** 2 / 5),
+        (0.1, 0.5, float(Fraction(BETA_POWER_X) ** 10)),
+        (0.5, 5.0, BETA_POWER_BX * BETA_POWER_BX / 5),
         (50.0, 10.0, BETA_BPSER_BX / 10),
         (30.0, 5.0, BETA_BUP_X),
         (50.0, 50.0, 0.5), (30.0, 60.0, 30 / 90),
