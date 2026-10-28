@@ -146,6 +146,139 @@ let kink_props =
       | Uniform _ | Zeros _ | Kinks -> None)
     real_cases
 
+(* Finite gradients
+
+   A composed function selects among arms by [where], and an arm may be
+   singular where it is not selected; its zero cotangent must not turn the
+   gradient NaN there. Over every tuple of a grid of each function's
+   boundaries, wherever forward mode's tangent along an operand is finite at
+   operands other than NaN, so is the gradient along it; the adjoint law
+   checks its value on each domain. lgamma, digamma, lbeta and the incomplete
+   gamma functions and their inverses are left out: their gradients are still
+   NaN at some of these points. *)
+
+type 's ft = (float, 's, Nx.host) Nx.t
+
+type composed =
+  | One of { fname : string; f1 : 's. 's ft -> 's ft }
+  | Two of { fname : string; f2 : 's. 's ft -> 's ft -> 's ft }
+  | Three of { fname : string; f3 : 's. 's ft -> 's ft -> 's ft -> 's ft }
+
+let fname = function One c -> c.fname | Two c -> c.fname | Three c -> c.fname
+let arity = function One _ -> 1 | Two _ -> 2 | Three _ -> 3
+
+let apply (type s) c (rows : s ft list) : s ft =
+  match (c, rows) with
+  | One c, [ x ] -> c.f1 x
+  | Two c, [ x; y ] -> c.f2 x y
+  | Three c, [ x; y; z ] -> c.f3 x y z
+  | _ -> invalid_arg "apply"
+
+let composed =
+  [
+    One { fname = "rsqrt"; f1 = Nx.rsqrt };
+    One { fname = "asinh"; f1 = Nx.asinh };
+    One { fname = "acosh"; f1 = Nx.acosh };
+    One { fname = "atanh"; f1 = Nx.atanh };
+    One { fname = "erfc"; f1 = Nx.erfc };
+    One { fname = "erfinv"; f1 = Nx.erfinv };
+    One { fname = "ndtr"; f1 = Nx.ndtr };
+    One { fname = "log_ndtr"; f1 = Nx.log_ndtr };
+    One { fname = "ndtri"; f1 = Nx.ndtri };
+    One { fname = "i0e"; f1 = Nx.i0e };
+    One { fname = "i1e"; f1 = Nx.i1e };
+    One { fname = "sigmoid"; f1 = Nx.sigmoid };
+    One { fname = "softplus"; f1 = Nx.softplus };
+    Two { fname = "hypot"; f2 = Nx.hypot };
+    Two { fname = "atan2"; f2 = Nx.atan2 };
+    Three { fname = "lerp"; f3 = Nx.lerp };
+    Three { fname = "betainc"; f3 = Nx.betainc };
+    Three { fname = "betaincc"; f3 = Nx.betaincc };
+    Three { fname = "log_betainc"; f3 = Nx.log_betainc };
+    Three { fname = "log_betaincc"; f3 = Nx.log_betaincc };
+  ]
+
+(* A float format's precision and greatest exponent. *)
+type format = { p : int; emax : int }
+
+let f64_format = { p = 53; emax = 1023 }
+let f32_format = { p = 24; emax = 127 }
+let f16_format = { p = 11; emax = 15 }
+let bf16_format = { p = 8; emax = 127 }
+
+(* Zeros, the branch boundaries of the composed forms and their neighbours in
+   the format, its smallest subnormal and normal, its largest finite value,
+   the infinities and NaN; a coarser grid for three operands. *)
+let boundaries f =
+  let eps = Float.ldexp 1. (1 - f.p) in
+  let near b = [ b; b *. (1. -. (eps /. 2.)); b *. (1. +. eps) ] in
+  let pos =
+    [
+      0.; Float.ldexp 1. (2 - f.emax - f.p); Float.ldexp 1. (1 - f.emax);
+      1e-8; 0.25; 1.5; 3.; 10.; 30.; Float.ldexp (2. -. eps) f.emax;
+      Float.ldexp 1. (f.emax / 2); Float.infinity;
+    ]
+    @ List.concat_map near [ 0x1p-28; 0.5; 1.; 2.; 0x1p28 ]
+  in
+  (Float.nan :: pos) @ List.map Float.neg pos
+
+let coarse =
+  [
+    0.; -0.; 0x1p-28; 0.5; 1.; 2.; 30.; 0x1p28; Float.infinity; -1.;
+    Float.neg_infinity; Float.nan;
+  ]
+
+(* Every [k]-tuple of [vs], as [k] rows. *)
+let grid k vs =
+  let rec tuples k =
+    if k = 0 then [ [] ]
+    else
+      List.concat_map (fun t -> List.map (fun v -> v :: t) vs) (tuples (k - 1))
+  in
+  let ts = Array.of_list (tuples k) in
+  let n = Array.length ts in
+  Nx.create f64 [| k; n |]
+    (Array.init (k * n) (fun i -> List.nth ts.(i mod n) (i / n)))
+
+let finite_law (type s) ((w : (float, s) D.t), fmt) c =
+  let k = arity c in
+  let x = grid k (if k = 3 then coarse else boundaries fmt) in
+  let n = (Nx.shape x).(1) in
+  let xs = Nx.to_array x in
+  let operand q i = xs.((q * n) + i) in
+  let f x =
+    let x = Nx.cast w x in
+    Nx.cast f64 (apply c (List.init k (fun r -> Nx.get [ r ] x)))
+  in
+  let g = Nx.to_array (Rune.grad' (fun x -> Nx.sum (f x)) x) in
+  let bad = ref [] in
+  for r = 0 to k - 1 do
+    let along = Array.init (k * n) (fun i -> if i / n = r then 1. else 0.) in
+    let t = Nx.to_array (snd (Rune.jvp' f x (Nx.create f64 [| k; n |] along))) in
+    for i = 0 to n - 1 do
+      let ops = List.init k (fun q -> operand q i) in
+      let gi = g.((r * n) + i) in
+      let nan = List.exists Float.is_nan ops in
+      if (not nan) && Float.is_finite t.(i) && not (Float.is_finite gi) then
+        let ops = String.concat ", " (List.map (Printf.sprintf "%h") ops) in
+        bad :=
+          Printf.sprintf "operand %d at (%s): tangent %h, gradient %h" r ops
+            t.(i) gi
+          :: !bad
+    done
+  done;
+  equal ~msg:"gradients not finite where the tangent is" (list string) []
+    (List.rev !bad)
+
+let finite_cases =
+  [
+    cases "float64" ~name:fname composed (finite_law (f64, f64_format));
+    cases "float32" ~name:fname composed (finite_law (Nx.float32, f32_format));
+    cases "float16" ~name:fname composed (finite_law (Nx.float16, f16_format));
+    cases "bfloat16" ~name:fname composed
+      (finite_law (Nx.bfloat16, bf16_format));
+  ]
+
 (* Values the conventions state *)
 
 let floats = array (float 1e-12)
@@ -730,6 +863,7 @@ let () =
          group "adjoint" adjoint_props;
          group "complex adjoint" complex_props;
          group "jacrev' is jacfwd' at ties and zeros" kink_props;
+         group "finite gradients of composed functions" finite_cases;
          group "conventions"
            [
              test "complex gradients" test_complex;

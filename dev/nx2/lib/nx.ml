@@ -2013,23 +2013,28 @@ let lerp a b w =
 (* [sqrt (x^2 + y^2)] with nothing overflowing: at float32, the squares summed
    at float64, which holds them; at float64, [m sqrt (1 + (n / m)^2)] for the
    larger magnitude [m] and the smaller [n], zero for two zeros. An infinity
-   where either is, even beside a NaN. *)
+   where either is, even beside a NaN. Where a constant is selected, the
+   general form reads [1] for each operand, so that its derivative, singular
+   there, does not reach the gradient. *)
 let hypotenuse (type w) (w : (float, w) D.t) x y =
   let lit = E.const w in
   let ax = E.abs x and ay = E.abs y in
+  let inf v = E.(v = lit Float.infinity) in
+  let infinite = E.(inf ax || inf ay) in
+  let zeros = E.(ax = lit 0. && ay = lit 0.) in
+  let fixed = E.(infinite || zeros) in
+  let ax = E.(where fixed (lit 1.) ax) and ay = E.(where fixed (lit 1.) ay) in
   let h =
     match w with
     | D.Float32 ->
-        let x = E.cast D.Float64 x and y = E.cast D.Float64 y in
+        let x = E.cast D.Float64 ax and y = E.cast D.Float64 ay in
         E.(cast w (sqrt (fma x x (y * y))))
     | _ ->
         let m = E.maximum ax ay in
         let r = E.(minimum ax ay / m) in
-        let s = E.(sqrt (fma r r (lit 1.))) in
-        E.(where (m = lit 0.) (lit 0.) (m * s))
+        E.(m * sqrt (fma r r (lit 1.)))
   in
-  let inf v = E.(v = lit Float.infinity) in
-  E.(where (inf ax || inf ay) (lit Float.infinity) h)
+  E.(where infinite (lit Float.infinity) (where zeros (lit 0.) h))
 
 let hypot x y =
   float_map ~by:"Nx.hypot" [ x; y ] (fun w ins -> hypotenuse w ins.(0) ins.(1))
@@ -2046,11 +2051,17 @@ let asinh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
       float_map ~by:"Nx.asinh" [ x ] (fun w ins ->
           let lit = E.const w and x = ins.(0) in
           let a = E.abs x in
-          let far = E.(log a + lit Special.ln2) in
-          let a2 = E.(a * a) in
+          let large = E.(lit big <= a) in
+          (* Each arm reads [a] where it is selected and a point of its
+             domain elsewhere, so that the other's singularity, [log 0] or
+             [inf / inf], does not reach the gradient. *)
+          let a_far = E.(where large a (lit big)) in
+          let a_near = E.(where large (lit 1.) a) in
+          let far = E.(log a_far + lit Special.ln2) in
+          let a2 = E.(a_near * a_near) in
           let root = E.(sqrt (lit 1. + a2)) in
-          let near = E.(log1p (a + (a2 / (lit 1. + root)))) in
-          let r = E.(where (lit big <= a) far near) in
+          let near = E.(log1p (a_near + (a2 / (lit 1. + root)))) in
+          let r = E.(where large far near) in
           let signed = E.(where (x < lit 0.) (-r) r) in
           E.(where (a < lit tiny) x signed))
 
@@ -2060,10 +2071,15 @@ let acosh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   | _ ->
       float_map ~by:"Nx.acosh" [ x ] (fun w ins ->
           let lit = E.const w and x = ins.(0) in
-          let far = E.(log x + lit Special.ln2) in
-          let root = E.(sqrt (fma x x (lit (-1.)))) in
-          let mid = E.(log (x + x - recip (x + root))) in
-          let t = E.(x - lit 1.) in
+          (* Each arm reads [x] where it is selected and a point of its
+             domain elsewhere, as asinh's do; a NaN reaches [near]. *)
+          let x_far = E.(where (lit big <= x) x (lit big)) in
+          let x_mid = E.(where (lit 2. <= x && x < lit big) x (lit 2.)) in
+          let x_near = E.(where (x < lit 1. || lit 2. <= x) (lit 1.5) x) in
+          let far = E.(log x_far + lit Special.ln2) in
+          let root = E.(sqrt (fma x_mid x_mid (lit (-1.)))) in
+          let mid = E.(log (x_mid + x_mid - recip (x_mid + root))) in
+          let t = E.(x_near - lit 1.) in
           let near = E.(log1p (t + sqrt (fma t t (t + t)))) in
           let r = E.(where (lit 2. <= x) mid near) in
           let r = E.(where (lit big <= x) far r) in
@@ -2078,11 +2094,17 @@ let atanh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
       float_map ~by:"Nx.atanh" [ x ] (fun w ins ->
           let lit = E.const w and x = ins.(0) in
           let a = E.abs x in
+          let below = E.(a < lit 0.5) in
+          (* [small] reads [0] where [large] is selected, so that its
+             overflow far past [1] does not reach the gradient. *)
+          let small =
+            let a = E.(where below a (lit 0.)) in
+            let t = E.(a + a) in
+            E.(t + (t * a / (lit 1. - a)))
+          in
           let t = E.(a + a) in
-          let one_minus = E.(lit 1. - a) in
-          let small = E.(t + (t * a / one_minus)) in
-          let large = E.(t / one_minus) in
-          let q = E.(where (a < lit 0.5) small large) in
+          let large = E.(t / (lit 1. - a)) in
+          let q = E.(where below small large) in
           let r = E.(lit 0.5 * log1p q) in
           let signed = E.(where (x < lit 0.) (-r) r) in
           E.(where (a < lit tiny) x signed))
