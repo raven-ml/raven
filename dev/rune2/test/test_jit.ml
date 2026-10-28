@@ -375,6 +375,54 @@ let test_loop () =
   equal bits_t (bits (fst eager)) (bits (fst jitted));
   equal bits_t (bits (snd eager)) (bits (snd jitted))
 
+module C = Nx_support.Counting
+module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
+
+let count (type d) (x : (float, Nx.float32_elt, d) Nx.t) = Nx.place Count.on x
+
+(* A custom rule's primal, a linear call's function and a remat's function
+   compile with the program that calls them: a compiled call over them runs no
+   eager kernel, under reverse mode too. The functions are exact, so the
+   compiled values are eager's bits. *)
+let test_constructs () =
+  let tensor = T.tensor in
+  let square x = Nx.mul x x in
+  let square_vjp =
+    Rune.custom_vjp tensor tensor (fun x ->
+        (square x, fun ct -> Nx.mul ct (Nx.mul_s x 2.)))
+  in
+  let square_jvp =
+    Rune.custom_jvp tensor tensor (fun x ->
+        (square x, fun dx -> Nx.mul dx (Nx.mul_s x 2.)))
+  in
+  let triple =
+    Rune.custom_transpose tensor tensor
+      (fun v -> Nx.mul_s v 3.)
+      ~transpose:(fun w -> Nx.mul_s w 3.)
+  in
+  let twice =
+    Rune.remat T.(tensor @-> returns tensor) (fun x -> square (square x))
+  in
+  let x = count (v [| 0.5; -1.; 2. |]) in
+  let compiled name f =
+    let g = Rune.jit' f in
+    let expected = f x in
+    ignore (g x);
+    C.reset ();
+    let y = g x in
+    equal ~msg:(name ^ ": no eager kernel") int 0 (C.calls ());
+    equal ~msg:name bits_t (bits expected) (bits y)
+  in
+  let grad f x = Rune.grad' (fun x -> Nx.sum (f x)) x in
+  compiled "custom_vjp" (fun x -> Nx.add (square_vjp x) x);
+  compiled "custom_jvp" (fun x -> Nx.add (square_jvp x) x);
+  compiled "custom_transpose" triple;
+  compiled "remat" twice;
+  compiled "grad of a custom_vjp" (grad square_vjp);
+  compiled "grad of a custom_jvp" (grad square_jvp);
+  compiled "grad of a custom_transpose" (grad triple);
+  compiled "grad of a remat" (grad twice)
+
 (* Donation
 
    A compiled call consumes the donated handles among its arguments: their
@@ -986,6 +1034,11 @@ let () =
              test "checks raise as eagerly" test_checks;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
+           ];
+         group "constructs"
+           [
+             test "custom rules and remats compile with their program"
+               test_constructs;
            ];
          group "derived"
            [

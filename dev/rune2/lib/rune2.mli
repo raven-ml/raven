@@ -693,7 +693,9 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     map, are [f]'s. An addition to a {!Total} that [f] makes counts once,
     however often the backward pass computes [f] again. Where [f] runs an
     {!iterate}, a transformation runs [f]'s program where it is called, so
-    reverse mode keeps its intermediate values.
+    reverse mode keeps its intermediate values. Inside a {!jit}, [f]'s
+    operations compile with the program's, and the compiler may keep their
+    values for the backward pass instead of computing them again.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 
@@ -777,13 +779,16 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     staged there. A program that holds an {!iterate} is evaluated under a
     transformation, which receives its operations.
 
+    {b Rules.} A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
+    {!custom_transpose} compile as their function's operations, the program's
+    own.
+
     {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
-    map's {!lanes} or {!lane_index}, a {!custom_jvp}, {!custom_vjp} or
-    {!custom_transpose}, an operation the compiler does not lower, values on
-    several devices, or one tolk cannot compile, runs as its operations
-    evaluated by nx, giving
-    eager's values; a result that is an argument is a copy of it, and a call
-    with donated arguments claims them first, consumes them and lends nothing.
+    map's {!lanes} or {!lane_index}, an operation the compiler does not lower,
+    values on several devices, or one tolk cannot compile, runs as its
+    operations evaluated by nx, giving eager's values; a result that is an
+    argument is a copy of it, and a call with donated arguments claims them
+    first, consumes them and lends nothing.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)

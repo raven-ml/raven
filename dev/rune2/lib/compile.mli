@@ -31,11 +31,15 @@ val report : ('a, out_channel, unit) format -> 'a
 val make : name:string -> Program.t -> Program.form array -> (t, string) result
 (** [make ~name p forms] is [p], traced over arguments of [forms], ready to
     link once per variant at its first call ({!run}), or [Error why] where the
-    lowering declines it, [why] saying which value, construct or failure: a loop
-    or a map's construct ({!Program.Scan}, {!Program.Iterate},
+    lowering declines it, [why] saying which value, construct or failure: a
+    loop or a map's construct ({!Program.Scan}, {!Program.Iterate},
     {!Program.Lanes}, {!Program.Lane_index}), an operation that {!Lower.op}
     does not lower, a value on another device than the others or over several,
-    or a check off the host. [name] is the entry point messages name. *)
+    or a check off the host. [name] is the entry point messages name.
+
+    A construct's programs lower with [p]'s: a call's, a remat's, a custom
+    rule's primal and a linear call's function as their equations over the
+    construct's operands. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], values of

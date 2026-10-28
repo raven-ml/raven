@@ -258,7 +258,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
       st.captures <- (V x, u) :: st.captures;
       u
 
-let construct = function
+let construct_name = function
   | Scan _ -> "a scan"
   | Iterate _ -> "an iterate"
   | Lanes _ -> "Rune.lanes"
@@ -365,6 +365,180 @@ let lend ~donated ~computed ~reaches ~scattered ~fits =
       else List.init arguments Fun.id);
   lent
 
+(* Programs
+
+   A program lowers equation by equation into an environment of its own: each
+   variable's node, its reach, and whether a scatter computes it. A construct
+   whose programs compute where it is called, a call, a remat, a custom rule's
+   primal and a linear call's function, lowers its program into an
+   environment whose parameters are its operands' nodes, as JAX lowers a
+   compiled call or a custom rule by inlining its jaxpr. *)
+
+type env = {
+  p : Program.t;
+  nodes : Ops.t option array;
+  reaches : reach array;
+  scattered : bool array;
+}
+
+let env_of (p : Program.t) =
+  {
+    p;
+    nodes = Array.make p.slots None;
+    reaches = Array.make p.slots nothing;
+    scattered = Array.make p.slots false;
+  }
+
+let var env x =
+  match Nx.Prim.payload env.p.owner x with Some (Var n) -> n | _ -> -1
+
+let node st env x =
+  match var env x with
+  | n when n >= 0 -> Option.get env.nodes.(n)
+  | _ -> capture st x
+
+let reach env x =
+  match var env x with n when n >= 0 -> env.reaches.(n) | _ -> nothing
+
+let scattered_at env x =
+  match var env x with n when n >= 0 -> env.scattered.(n) | _ -> false
+
+(* The checks a program makes: the index of each one's first failure and its
+   data there, and what each reads, in the program's order, newest first. *)
+type made = {
+  shape : int array;
+  first : Ops.t;
+  data : (D.any * Ops.t) list;
+  fail : int array -> A.any list -> exn;
+}
+
+type checks = { mutable made : made list; mutable read : reach list }
+
+(* The first failure of [ok], a boolean node of [n] elements: the least index
+   whose flag is false, or [n]. *)
+let first_failure n ok =
+  let index = Shape.arange ~dtype:Int64 n in
+  let count = Shape.const_like index (`Int (Tolk.Bigint.of_int n)) in
+  let masked = Ops.where (Ops.ne ok (uint8 ok 0)) count index in
+  Shape.reshape
+    (List.hd
+       (Lower_reduce.reduce
+          Nx_kernel.(Monoid Min)
+          [ 0 ] ~src:(D.Any D.Int64) (D.Any D.Int64) masked))
+    (ints [ 1 ])
+
+let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
+    (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
+  if not (Rig.equal st.rig Rig.host) then
+    decline "a check off the host, which raises at a later wait";
+  let shape = Nx.shape ok in
+  let n = numel shape in
+  cs.read <- reach env ok :: cs.read;
+  if n > 0 then begin
+    let flat (type v s) (dt : (v, s) D.t) u =
+      Shape.reshape u (Arith.dims (D.Any dt) [| n |])
+    in
+    let first = first_failure n (flat Nx.bool (node st env ok)) in
+    let rec walk : type e.
+        (d, e) Nx.Prim.data -> (D.any * Ops.t) list * (A.any list -> e) =
+      function
+      | [] -> ([], fun _ -> ())
+      | x :: rest ->
+          cs.read <- reach env x :: cs.read;
+          let dt = Nx.dtype x in
+          let at =
+            Lower_index.gather (D.Any dt) ~axis:0 first (flat dt (node st env x))
+          in
+          let others, rest = walk rest in
+          let read = function
+            | a :: tl -> (A.get (A.expect dt a) (Iarray.of_list [ 0 ]), rest tl)
+            | [] -> invalid_arg "Rune.jit: a check's data"
+          in
+          ((D.Any dt, at) :: others, read)
+    in
+    let data, read = walk data in
+    cs.made <- { shape; first; data; fail = (fun i a -> fail i (read a)) } :: cs.made
+  end
+
+let issue st cs env (type r) base (op : r Nx.Prim.t) =
+  (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
+  match op with
+  | Check { ok; data; fail } -> check st cs env ok data fail
+  | _ ->
+      let ys =
+        match Lower.op ~device:st.device (fun x -> node st env x) op with
+        | ys -> ys
+        | exception Invalid_argument why -> decline "%s" why
+      in
+      let r = combine (operand_reaches { get = (fun x -> reach env x) } op) in
+      let scatter = match op with Scatter _ -> true | _ -> false in
+      Array.iteri
+        (fun k y ->
+          env.nodes.(base + k) <- Some y;
+          env.reaches.(base + k) <- r;
+          env.scattered.(base + k) <- scatter)
+        ys
+
+(* The node of a value of [f]'s form filled with [-0.], the identity that keeps
+   every sign: a tangent map's additions that no differentiation made. *)
+let identity st form =
+  let (V x) = Loops.filled ~zero:false form in
+  capture st x
+
+let rec program st cs env =
+  Array.iter
+    (function
+      | Op { op; base; _ } -> issue st cs env base op
+      | Do { c; base } -> construct st cs env c base)
+    env.p.eqns
+
+and construct st cs env c base =
+  let bind outs =
+    Array.iteri
+      (fun k (u, r, sc) ->
+        env.nodes.(base + k) <- Some u;
+        env.reaches.(base + k) <- r;
+        env.scattered.(base + k) <- sc)
+      outs
+  in
+  match c with
+  | Detach x -> bind [| (node st env x, reach env x, scattered_at env x) |]
+  | Call { body; args; _ } | Remat { body; args } ->
+      bind (inline st cs env body args)
+  | Linear { apply = Some a; args; captures; _ } ->
+      bind (inline st cs env a (Array.append args captures))
+  | Custom { primal; derivative; args; captures; _ } ->
+      (* The default's results: the primal's, its residuals computed, then a
+         tangent map's additions, which no differentiation made. *)
+      let out = inline st cs env primal (Array.append args captures) in
+      let tadds =
+        match derivative with
+        | Tangent t ->
+            let n = Array.length t.outputs in
+            Array.init (Array.length t.adds) (fun k ->
+                let v = t.outputs.(n - Array.length t.adds + k) in
+                (identity st (form v), nothing, false))
+        | Pullback _ -> [||]
+      in
+      bind (Array.append out tadds)
+  | c -> decline "%s" (construct_name c)
+
+(* [q]'s outputs over the operands [args] of [env]'s program: each one's node,
+   reach, and whether a scatter computes it. *)
+and inline st cs env (q : Program.t) args =
+  let sub = env_of q in
+  Array.iteri
+    (fun k (V x) ->
+      let v = q.params.(k) in
+      sub.nodes.(v) <- Some (node st env x);
+      sub.reaches.(v) <- reach env x;
+      sub.scattered.(v) <- scattered_at env x)
+    args;
+  program st cs sub;
+  Array.map
+    (fun (V y) -> (node st sub y, reach sub y, scattered_at sub y))
+    q.outputs
+
 (* [lower ~rig p forms ~layouts ~phases ~donated] is [p] over arguments of
    [forms], each laid out over its run as [layouts] says, its run at [phases],
    the arguments [donated] says lending their storage where a result may take
@@ -373,17 +547,15 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   let st =
     { rig; device = Ops.Single (Rig.name rig); captures = []; bound = [] }
   in
-  let env = Array.make p.slots None in
-  let reach_env = Array.make p.slots nothing in
-  let scattered = Array.make p.slots false in
+  let env = env_of p in
   let params =
     Array.mapi
       (fun k (F f) ->
         let var = p.params.(k) in
-        reach_env.(var) <- { reads = Is.singleton k; own = Is.singleton k };
+        env.reaches.(var) <- { reads = Is.singleton k; own = Is.singleton k };
         let shape = shape_of f in
         if numel shape = 0 then begin
-          env.(var) <- Some (zeros f.dtype shape);
+          env.nodes.(var) <- Some (zeros f.dtype shape);
           None
         end
         else begin
@@ -391,108 +563,17 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
           let b, u =
             storage ~device:st.device ~phase:phases.(k) f.dtype layouts.(k)
           in
-          env.(var) <- Some u;
+          env.nodes.(var) <- Some u;
           Some b
         end)
       forms
   in
-  let node : type v s d. (v, s, d) Nx.t -> Ops.t =
-   fun x ->
-    match Nx.Prim.payload p.owner x with
-    | Some (Var n) -> Option.get env.(n)
-    | _ -> capture st x
-  in
-  let reach : type v s d. (v, s, d) Nx.t -> reach =
-   fun x ->
-    match Nx.Prim.payload p.owner x with
-    | Some (Var n) -> reach_env.(n)
-    | _ -> nothing
-  in
-  let checks = ref [] and check_reads = ref [] in
-  let check (type d e) (ok : (bool, _, d) Nx.t) (data : (d, e) Nx.Prim.data)
-      (fail : int array -> e -> exn) =
-    if not (Rig.equal st.rig Rig.host) then
-      decline "a check off the host, which raises at a later wait";
-    let shape = Nx.shape ok in
-    let n = numel shape in
-    check_reads := reach ok :: !check_reads;
-    if n > 0 then begin
-      let flat (type v s) (dt : (v, s) D.t) u =
-        Shape.reshape u (Arith.dims (D.Any dt) [| n |])
-      in
-      (* The first failure: the least index whose flag is false, or [n]. *)
-      let ok = flat Nx.bool (node ok) in
-      let index = Shape.arange ~dtype:Int64 n in
-      let count = Shape.const_like index (`Int (Tolk.Bigint.of_int n)) in
-      let masked = Ops.where (Ops.ne ok (uint8 ok 0)) count index in
-      let first =
-        Shape.reshape
-          (List.hd
-             (Lower_reduce.reduce
-                Nx_kernel.(Monoid Min)
-                [ 0 ] ~src:(D.Any D.Int64) (D.Any D.Int64) masked))
-          (ints [ 1 ])
-      in
-      let rec walk : type e.
-          (d, e) Nx.Prim.data -> (D.any * Ops.t) list * (A.any list -> e) =
-        function
-        | [] -> ([], fun _ -> ())
-        | x :: rest ->
-            check_reads := reach x :: !check_reads;
-            let dt = Nx.dtype x in
-            let at =
-              Lower_index.gather (D.Any dt) ~axis:0 first (flat dt (node x))
-            in
-            let others, rest = walk rest in
-            let read = function
-              | a :: tl ->
-                  (A.get (A.expect dt a) (Iarray.of_list [ 0 ]), rest tl)
-              | [] -> invalid_arg "Rune.jit: a check's data"
-            in
-            ((D.Any dt, at) :: others, read)
-      in
-      let data, read = walk data in
-      checks := (shape, first, data, fun i a -> fail i (read a)) :: !checks
-    end
-  in
-  let issue (type r) base (op : r Nx.Prim.t) =
-    (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
-    match op with
-    | Check { ok; data; fail } -> check ok data fail
-    | _ ->
-        let ys =
-          match Lower.op ~device:st.device node op with
-          | ys -> ys
-          | exception Invalid_argument why -> decline "%s" why
-        in
-        let r = combine (operand_reaches { get = reach } op) in
-        let scatter = match op with Scatter _ -> true | _ -> false in
-        Array.iteri
-          (fun k y ->
-            env.(base + k) <- Some y;
-            reach_env.(base + k) <- r;
-            scattered.(base + k) <- scatter)
-          ys
-  in
-  Array.iter
-    (function
-      | Op { op; base; _ } -> issue base op
-      | Do { c = Detach x; base } ->
-          env.(base) <- Some (node x);
-          reach_env.(base) <- reach x
-      | Do { c; _ } -> decline "%s" (construct c))
-    p.eqns;
+  let cs = { made = []; read = [] } in
+  program st cs env;
   (* Results lent their arguments' storage. *)
-  let reaches = Array.map (fun (V y) -> reach y) p.outputs in
-  let checks_read = !check_reads in
-  let scattered_out =
-    Array.map
-      (fun (V y) ->
-        match Nx.Prim.payload p.owner y with
-        | Some (Var v) -> scattered.(v)
-        | _ -> false)
-      p.outputs
-  in
+  let reaches = Array.map (fun (V y) -> reach env y) p.outputs in
+  let checks_read = cs.read in
+  let scattered_out = Array.map (fun (V y) -> scattered_at env y) p.outputs in
   let fits k j =
     let (F f) = forms.(k) in
     let (F g) = form p.outputs.(j) in
@@ -511,12 +592,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     && L.offset layouts.(k) = 0
     && phases.(k) = 0
   in
-  let computed =
-    Array.map
-      (fun (V y) ->
-        match Nx.Prim.payload p.owner y with Some (Var _) -> true | _ -> false)
-      p.outputs
-  in
+  let computed = Array.map (fun (V y) -> var env y >= 0) p.outputs in
   let lent = lend ~donated ~computed ~reaches ~scattered:scattered_out ~fits in
   let stores = ref [] in
   let buffer dt n =
@@ -535,16 +611,16 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     Array.mapi
       (fun j (V y) ->
         let f = Nx.Prim.form y in
-        match Nx.Prim.payload p.owner y with
-        | Some (Var v) -> (
+        match var env y with
+        | v when v >= 0 -> (
             on_rig st f.placement "a result";
             match lent.(j) with
             | k when k >= 0 && v = p.params.(k) -> Taken k
             | k when k >= 0 ->
                 let b = Option.get params.(k) in
-                stores := store f.dtype b (node y) :: !stores;
+                stores := store f.dtype b (node st env y) :: !stores;
                 Lent k
-            | _ -> stored (F f) (node y))
+            | _ -> stored (F f) (node st env y))
         | _ -> stored (F f) (capture st y))
       p.outputs
   in
@@ -555,11 +631,11 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   in
   let checks =
     List.rev_map
-      (fun (shape, first, data, fail) ->
-        let first = one D.Int64 first in
-        let data = List.map (fun ((D.Any dt as d), u) -> (d, one dt u)) data in
-        { shape; first; data; fail })
-      !checks
+      (fun (c : made) ->
+        let first = one D.Int64 c.first in
+        let data = List.map (fun ((D.Any dt as d), u) -> (d, one dt u)) c.data in
+        ({ shape = c.shape; first; data; fail = c.fail } : check))
+      cs.made
   in
   let sink =
     match !stores with [] -> None | s -> Some (Ops.sink (List.rev s))
@@ -661,7 +737,8 @@ let link rig l =
       in
       let checks =
         List.map
-          (fun c -> (c, slot c.first, List.map (fun (_, o) -> slot o) c.data))
+          (fun (c : check) ->
+            (c, slot c.first, List.map (fun (_, o) -> slot o) c.data))
           l.checks
       in
       let linear, vars =
