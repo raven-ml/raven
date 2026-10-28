@@ -4,7 +4,8 @@
  (files
   index.md
   01-tracing.md
-  02-derivatives.md)
+  02-derivatives.md
+  03-maps.md)
  (enabled_if
   (and
    (<> %{profile} sanitize)
