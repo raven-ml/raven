@@ -2403,20 +2403,17 @@ let ewma ?axis ~alpha x =
 
 (* Activations *)
 
-(* [1 / (1 + t)] above zero and [t / (1 + t)] below, [t = exp (-|x|)]: below
-   zero [exp (-x)] would overflow where the result is still a subnormal. *)
-(* CR: Share q = t / (1 + t), choosing q below zero and 1 - q otherwise.
-   At float64 x = 37, 1 + t rounds to 1 and the reciprocal returns 1;
-   the existing golden is the float just below 1. The complement keeps
-   that tail and replaces the extra reciprocal with subtraction in this
-   Map. Check endpoint classification exactly beside the ULP bound,
-   which currently accepts this violation of sigmoid's contract. *)
+(* [q = t / (1 + t)] below zero and [1 - q] above, [t = exp (-|x|)]: below
+   zero [exp (-x)] would overflow where the result is still a subnormal, and
+   above it [1 / (1 + t)] is [1.] once [1 + t] rounds to [1.], where the
+   result may still round below it: at float64 [x = 37], [t] is about
+   [2^-53.4], so [1 - q] is the float below [1.]. *)
 let sigmoid x =
   float_map ~by:"Nx.sigmoid" [ x ] (fun w ins ->
       let lit = E.const w and x = ins.(0) in
       let t = E.(exp (-abs x)) in
-      let d = E.(lit 1. + t) in
-      E.(where (x < lit 0.) (t / d) (recip d)))
+      let q = E.(t / (lit 1. + t)) in
+      E.(where (x < lit 0.) q (lit 1. - q)))
 
 let softplus x =
   float_map ~by:"Nx.softplus" [ x ] (fun w ins ->

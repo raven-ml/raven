@@ -613,6 +613,22 @@ let within (type s) (dt : (float, s) D.t) k f pick () =
           k)
     pts
 
+(* Sigmoid's results at the reference points [dt] holds are [0.] and [1.]
+   where mpmath's value rounds there in [dt], and only there. *)
+let ends (type s) (dt : (float, s) D.t) () =
+  let pts =
+    List.filter (fun (x, _, _) -> representable dt x) (Array.to_list reference)
+  in
+  let xs = Array.of_list (List.map (fun (x, _, _) -> x) pts) in
+  let got = Nx.to_array (Nx.sigmoid (value dt [| Array.length xs |] xs)) in
+  List.iteri
+    (fun i (x, r, _) ->
+      let rd = D.of_float dt r and v = got.(i) in
+      let agree e = Bool.equal (rd = e) (v = e) in
+      if not (agree 0. && agree 1.) then
+        failf "at %h: %h, mpmath's %h rounds to %h" x v r rd)
+    pts
+
 let sigmoid_ulps = 3.
 let softplus_ulps = 3.
 
@@ -1027,6 +1043,8 @@ let () =
          group "sigmoid"
            [
              accuracy "accuracy" sigmoid_ulps (fun x -> Nx.sigmoid x) (fun (_, r, _) -> r);
+             test "float64 ends where the exact value rounds" (ends D.Float64);
+             test "float32 ends where the exact value rounds" (ends D.Float32);
              narrow "sigmoid" Nx.sigmoid;
            ];
          group "softplus"
