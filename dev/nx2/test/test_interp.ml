@@ -633,10 +633,29 @@ let law_forms (shape, a, b, k) =
       let traced = tagged i ~by:"test" op in
       same_results name op traced eager)
 
+(* A float32 of the coordinate along axis 1 plus load 0: past the rank of a loop
+   of one axis. *)
+let past_rank =
+  P.v ~ins:[| D.Any D.Float32 |]
+    [| In 0; Coord 1; Op1 (Cast, D.Any D.Float32, 1); Op2 (Binary Add, 0, 2) |]
+    ~outs:[| 3 |]
+
+(* A value of shape [s] holding [xs] on Count's set. *)
+let placed dt s xs = Nx.place Count.on (Nx.create dt s xs)
+
+let row i : M.range iarray =
+  [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
+
 (* Ill-formed operations raise naming [by], eagerly and under either reach,
    before any kernel (Laws 7 and 13). *)
 let ill_formed () =
   let x = operand Concrete [| 3 |] and y = operand Concrete [| 2 |] in
+  let x23 = placed Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
+  let positions s =
+    placed Nx.int64 s (Array.make (Array.fold_left ( * ) 1 s) 0L)
+  in
+  let flags = placed Nx.bool [| 2 |] [| true; false |] in
+  let line = L.contiguous [| 3 |] in
   [
     Case
       ( "loads of another shape",
@@ -659,7 +678,76 @@ let ill_formed () =
             at = None;
           } );
     Case ("a permutation of another rank", Move (Permute [| 1; 0 |], x));
+    Case ("a reshape of another size", Move (Reshape [| 4 |], x));
     Case ("a wider bitcast of an odd axis", Bitcast (Nx.float64, x));
+    Case
+      ( "a map's coordinate past its rank",
+        Map
+          {
+            layout = line;
+            prog = past_rank;
+            outs = Nx.Prim.[ f32 ];
+            loads = [| Plain x |];
+            at = None;
+          } );
+    Case
+      ( "a reduction's coordinate past its rank",
+        Reduce
+          {
+            layout = line;
+            axes = [| 0 |];
+            prog = past_rank;
+            reductions = Nx.Prim.[ Monoid (Sum, 0, f32) ];
+            loads = [| Plain x |];
+          } );
+    Case
+      ( "a scan's coordinate past its rank",
+        Scan
+          {
+            layout = line;
+            axis = 0;
+            prog = past_rank;
+            reduction = Monoid (Sum, 0, f32);
+            loads = [| Plain x |];
+            carry = None;
+          } );
+    Case
+      ( "a gather's positions of another rank",
+        Gather { axis = 0; idx = positions [| 2 |]; x = x23 } );
+    Case
+      ( "a gather along an axis past the rank",
+        Gather { axis = 2; idx = positions [| 2; 3 |]; x = x23 } );
+    Case
+      ( "a scatter's positions and updates of two shapes",
+        Scatter
+          {
+            combine = Set;
+            unique = false;
+            axis = 1;
+            idx = positions [| 2; 1 |];
+            updates = placed Nx.int32 [| 2; 2 |] [| 0l; 0l; 0l; 0l |];
+            into = x23;
+          } );
+    Case
+      ( "a scatter that adds bools",
+        Scatter
+          {
+            combine = Add;
+            unique = false;
+            axis = 0;
+            idx = positions [| 2 |];
+            updates = flags;
+            into = flags;
+          } );
+    Case
+      ( "an assembly's piece of another shape than its region",
+        Assemble
+          {
+            dtype = Nx.int32;
+            shape = [| 2; 3 |];
+            fill = 0l;
+            pieces = [ (row 0, x23) ];
+          } );
     Case
       ( "data of another shape",
         Check

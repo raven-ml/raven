@@ -281,56 +281,6 @@ let unloaded =
             (elements y));
     ]
 
-(* An operation its rule refuses raises naming its function before any kernel
-   runs, even where its arrays could only be moved after a copy. *)
-let refused name op =
-  C.reset ();
-  raises_match (Exn.invalid_arg ~substring:"t: ") (fun () ->
-      Eval.run ~by:"t" op);
-  equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ())
-
-let rules =
-  group "rules"
-    [
-      test "an ill-formed bitcast or movement calls no kernel" (fun () ->
-          let x = f32 [| 1.; 2.; 3. |] in
-          refused "a wider bitcast of an odd axis"
-            (Value.Bitcast (D.Float64, x));
-          refused "a permutation of another rank"
-            (Value.Move (Permute [| 1; 0 |], x));
-          refused "a reshape of another size" (Value.Move (Reshape [| 4 |], x)));
-      test "a coordinate past a loop's rank calls no kernel" (fun () ->
-          let layout = Nx_array.Layout.contiguous [| 3 |] in
-          refused "a map"
-            (Value.Map
-               {
-                 layout;
-                 prog = coords 1;
-                 outs = Value.[ D.Float32 ];
-                 loads = [||];
-                 at = Some at1;
-               });
-          refused "a reduction"
-            (Value.Reduce
-               {
-                 layout;
-                 axes = [| 0 |];
-                 prog = coords 1;
-                 reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
-                 loads = [||];
-               });
-          refused "a scan"
-            (Value.Scan
-               {
-                 layout;
-                 axis = 0;
-                 prog = coords 1;
-                 reduction = Monoid (Sum, 0, D.Float32);
-                 loads = [||];
-                 carry = None;
-               }));
-    ]
-
 (* Donation's reuse: an elementwise operation writes into a donated operand's
    memory where rig holds it exclusive and it fits the result. *)
 let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
@@ -761,7 +711,4 @@ let views =
 
 let () =
   exit
-    (run "nx maps"
-       [
-         maps; eager; unloaded; rules; donation; arithmetic; views;
-       ])
+    (run "nx maps" [ maps; eager; unloaded; donation; arithmetic; views ])

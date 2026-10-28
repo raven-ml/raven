@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Gather, Scatter and Assemble through the engine's private modules, copied
-   here: their rules raise before any kernel, a split placement computes what
-   one device does, and a donated target takes the result. *)
+   here: a split placement computes what one device does, and a donated target
+   takes the result. *)
 
 open Windtrap
 module A = Nx_array
@@ -53,50 +53,6 @@ let scatter ?(unique = false) combine axis idx updates into =
 
 let row i : M.range iarray =
   [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
-
-let rules =
-  group "rules"
-    [
-      test "a gather of the wrong rank raises before any kernel" (fun () ->
-          let x = x23 () in
-          C.reset ();
-          raises
-            (Invalid_argument "t: positions [2] do not fit [2; 3] along axis 0")
-            (fun () -> gather 0 (positions [| 2 |] [| 0; 1 |]) x);
-          raises
-            (Invalid_argument
-               "t: axis 2 of an operand of rank 2")
-            (fun () -> gather 2 (positions [| 2; 3 |] (Array.make 6 0)) x);
-          equal ~msg:"kernel calls" int 0 (C.calls ()));
-      test "a scatter's operands raise before any kernel" (fun () ->
-          let x = x23 () in
-          C.reset ();
-          raises
-            (Invalid_argument "t: positions [2; 1] and updates [2; 2] differ")
-            (fun () ->
-              scatter Set 1
-                (positions [| 2; 1 |] [| 0; 0 |])
-                (on D.Int32 [| 2; 2 |] [| 0l; 0l; 0l; 0l |])
-                x);
-          raises (Invalid_argument "t: Add does not take bool") (fun () ->
-              let b = on D.Bool [| 2 |] [| true; false |] in
-              scatter Add 0 (positions [| 2 |] [| 0; 1 |]) b b);
-          equal ~msg:"kernel calls" int 0 (C.calls ()));
-      test "an assembly's pieces raise before any kernel" (fun () ->
-          C.reset ();
-          raises
-            (Invalid_argument "t: piece 0 has shape [2; 3], its region [1; 3]")
-            (fun () ->
-              Eval.run ~by:"t"
-                (Value.Assemble
-                   {
-                     dtype = D.Int32;
-                     shape = [| 2; 3 |];
-                     fill = 0l;
-                     pieces = [ (row 0, x23 ()) ];
-                   }));
-          equal ~msg:"kernel calls" int 0 (C.calls ()));
-    ]
 
 let placements =
   group "placements"
@@ -165,4 +121,4 @@ let donation =
             (elements v));
     ]
 
-let () = exit (run "nx index ops" [ rules; placements; donation ])
+let () = exit (run "nx index ops" [ placements; donation ])
