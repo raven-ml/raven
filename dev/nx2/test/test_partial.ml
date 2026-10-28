@@ -1006,17 +1006,18 @@ let test_cut_extreme_nan () =
 
 (* Float reductions over cut axes of many terms *)
 
-(* A float or complex dtype and how its elements' bits print. *)
+(* A float or complex dtype and how its elements' bits print, NaN signs and
+   payloads included. *)
 type lane_kind = Lane_kind : ('v, 's) D.t * ('v -> string) -> lane_kind
 
 let complex_bits c = float_bits c.Complex.re ^ "," ^ float_bits c.im
 
 let lane_kinds =
   [
-    Lane_kind (D.Float32, nan_bits);
-    Lane_kind (D.Float64, nan_bits);
-    Lane_kind (D.Float16, nan_bits);
-    Lane_kind (D.Bfloat16, nan_bits);
+    Lane_kind (D.Float32, float_bits);
+    Lane_kind (D.Float64, float_bits);
+    Lane_kind (D.Float16, float_bits);
+    Lane_kind (D.Bfloat16, float_bits);
     Lane_kind (D.Complex64, complex_bits);
     Lane_kind (D.Complex128, complex_bits);
   ]
@@ -1172,7 +1173,7 @@ let law_lanes c =
     && not (has (function Nan _ -> true | _ -> false)));
   cover "a signalling NaN term" (signals dt data);
   let x = signalling dt c.lshape data in
-  float_law show c.lwhere c.lr c.laxes x
+  float_law (nan_blind ~parts:(c.lr <> Prod) dt show) c.lwhere c.lr c.laxes x
 
 (* Contractions over cut axes *)
 
