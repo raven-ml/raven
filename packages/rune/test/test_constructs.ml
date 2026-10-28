@@ -9,7 +9,6 @@
 
 open Windtrap
 open Compose
-module Rune = Rune2
 module Total = Rune.Total
 module T = Nx.Ptree
 

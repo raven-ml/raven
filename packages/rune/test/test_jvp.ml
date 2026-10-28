@@ -13,7 +13,6 @@ open Windtrap
 open Rune2_support
 open Cases
 open Witness
-module Rune = Rune2
 
 let numel = Operand.numel
 let finite a = Array.for_all Float.is_finite a

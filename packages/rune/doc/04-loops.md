@@ -5,7 +5,7 @@ input and stacks what the steps return; `iterate` runs until a test holds.
 The step is traced once per trace of the loop, whatever the number of
 steps, and every
 transformation of a loop is a loop of its step's transformation. The Loops,
-Roots and Rematerialization sections of [`rune2.mli`](../lib/rune2.mli)
+Roots and Rematerialization sections of [`rune.mli`](../lib/rune.mli)
 state the rules.
 
 ## A scan and its gradient
@@ -16,14 +16,14 @@ This scan computes the running product of its rows:
 let xs = Nx.create Nx.float64 [| 4 |] [| 1.; 2.; 3.; 4. |]
 
 let running_product xs =
-  Rune2.scan' ~init:(Nx.scalar Nx.float64 1.)
+  Rune.scan' ~init:(Nx.scalar Nx.float64 1.)
     ~f:(fun acc row ->
       let next = Nx.Infix.(acc * row) in
       (next, next))
     xs
 
 let total, prefixes = running_product xs
-let g = Rune2.grad' (fun xs -> fst (running_product xs)) xs
+let g = Rune.grad' (fun xs -> fst (running_product xs)) xs
 ```
 
 ```ocaml
@@ -46,7 +46,7 @@ tolerance, at most `max` times:
 
 ```ocaml
 let newton a =
-  Rune2.iterate' ~max:50
+  Rune.iterate' ~max:50
     ~until:(fun x -> Nx.all (Nx.less_s (Nx.abs Nx.Infix.((x * x) - a)) 1e-12))
     ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
     a
@@ -65,7 +65,7 @@ others run:
 
 ```ocaml
 let lanes_apart =
-  Rune2.vmap' newton (Nx.create Nx.float64 [| 3 |] [| 1.; 16.; 1e6 |])
+  Rune.vmap' newton (Nx.create Nx.float64 [| 3 |] [| 1.; 16.; 1e6 |])
 ```
 
 ```ocaml
@@ -80,9 +80,9 @@ steps, so lane 1 is the first:
 
 ```ocaml
 let too_few () =
-  Rune2.vmap'
+  Rune.vmap'
     (fun a ->
-      Rune2.iterate' ~max:3
+      Rune.iterate' ~max:3
         ~until:(fun x ->
           Nx.all (Nx.less_s (Nx.abs Nx.Infix.((x * x) - a)) 1e-12))
         ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
@@ -108,13 +108,13 @@ residual, and takes the derivative from the residual: here
 ```ocaml
 let sqrt_root a =
   let residual x = Nx.Infix.((x * x) - a) in
-  Rune2.root Nx.Ptree.tensor ~residual (fun () -> newton a)
+  Rune.root Nx.Ptree.tensor ~residual (fun () -> newton a)
 
 let a = Nx.create Nx.float64 [| 2 |] [| 4.; 9. |]
-let da = Rune2.grad' (fun a -> Nx.sum (sqrt_root a)) a
+let da = Rune.grad' (fun a -> Nx.sum (sqrt_root a)) a
 
 let checked =
-  Rune2.check_grads Nx.Ptree.tensor (fun a -> Nx.sum (sqrt_root a)) a
+  Rune.check_grads Nx.Ptree.tensor (fun a -> Nx.sum (sqrt_root a)) a
 ```
 
 ```ocaml
@@ -138,13 +138,13 @@ sees `remat s f` as it sees `f`, so the gradient is unchanged:
 
 ```ocaml
 let layer =
-  Rune2.remat
+  Rune.remat
     Nx.Ptree.(tensor @-> returns tensor)
     (fun x -> Nx.tanh (Nx.sin x))
 
 let deep xs =
   fst
-    (Rune2.scan' ~init:(Nx.scalar Nx.float64 0.5)
+    (Rune.scan' ~init:(Nx.scalar Nx.float64 0.5)
        ~f:(fun acc row ->
          let next = layer Nx.Infix.(acc + row) in
          (next, next))
@@ -152,14 +152,14 @@ let deep xs =
 
 let plain xs =
   fst
-    (Rune2.scan' ~init:(Nx.scalar Nx.float64 0.5)
+    (Rune.scan' ~init:(Nx.scalar Nx.float64 0.5)
        ~f:(fun acc row ->
          let next = Nx.tanh (Nx.sin Nx.Infix.(acc + row)) in
          (next, next))
        xs)
 
 let gap =
-  Nx.item [] (Nx.max (Nx.abs Nx.Infix.(Rune2.grad' deep xs - Rune2.grad' plain xs)))
+  Nx.item [] (Nx.max (Nx.abs Nx.Infix.(Rune.grad' deep xs - Rune.grad' plain xs)))
 ```
 
 ```ocaml

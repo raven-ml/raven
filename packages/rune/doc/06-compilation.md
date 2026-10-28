@@ -3,7 +3,7 @@
 `jit s f` is `f` compiled through tolk, raven's compiler. A call traces `f`
 over stand-ins of its arguments into a program, keyed by the arguments'
 abstract value, and runs the program compiled. The Compilation section of
-[`rune2.mli`](../lib/rune2.mli) and its subsections state the rules.
+[`rune.mli`](../lib/rune.mli) and its subsections state the rules.
 
 ## Keys
 
@@ -15,7 +15,7 @@ in their elements share it:
 let traces = ref 0
 
 let affine =
-  Rune2.jit'
+  Rune.jit'
     (fun x ->
       incr traces;
       Nx.Infix.((x *$ 2.) +$ 1.))
@@ -35,7 +35,7 @@ let () =
 
 The first two calls share the key `float64 [3]` on the host, whatever their
 elements; the third has the shape `[5]`, a new key. With the environment
-variable `RUNE_JIT_DEBUG` set to a nonzero integer when rune2 is
+variable `RUNE_JIT_DEBUG` set to a nonzero integer when rune is
 initialised, each retrace prints on standard error how its key differs from
 the latest call's (the Keys section).
 
@@ -56,10 +56,10 @@ let mse (w, b) =
   Nx.mean Nx.Infix.(err * err)
 
 let step =
-  Rune2.jit
+  Rune.jit
     Nx.Ptree.(params @-> returns (pair tensor params))
     (fun ((w, b) as p) ->
-      let loss, (gw, gb) = Rune2.value_and_grad params mse p in
+      let loss, (gw, gb) = Rune.value_and_grad params mse p in
       (loss, (Nx.Infix.(w - (gw *$ 0.1)), Nx.Infix.(b - (gb *$ 0.1)))))
 
 let rec train n p =
@@ -87,10 +87,10 @@ the compiled program.
 A donated argument gives up its memory to the call, which may write a result
 into it. The donated value dies once the call has checked its arguments, and
 a later use raises, naming the entry point, here `Rune.jit'` (the
-Donation section of [`rune2.mli`](../lib/rune2.mli)):
+Donation section of [`rune.mli`](../lib/rune.mli)):
 
 ```ocaml
-let decay = Rune2.jit' (fun w -> Nx.Infix.(w *$ 0.5))
+let decay = Rune.jit' (fun w -> Nx.Infix.(w *$ 0.5))
 
 let w = Nx.create Nx.float64 [| 3 |] [| 2.; 4.; 6. |]
 let kept = decay w
@@ -120,7 +120,7 @@ returns (the Checks section):
 
 ```ocaml
 let checked_log =
-  Rune2.jit' (fun x ->
+  Rune.jit' (fun x ->
       Nx.check Nx.Ptree.tensor (Nx.greater_s x 0.) x (fun i _ ->
           Failure (Printf.sprintf "log of a nonpositive element at %d" i.(0)));
       Nx.log x)
@@ -139,7 +139,7 @@ The first failing index in C order is `1`, and the call's results are lost.
 ## Accuracy
 
 A compiled call computes each nx function to the accuracy the Numerics section
-of [`rune2.mli`](../lib/rune2.mli) states. Addition and multiplication are exact
+of [`rune.mli`](../lib/rune.mli) states. Addition and multiplication are exact
 there, in the sense that a compiled call gives eager's bits for them, so a
 function of them does too:
 
@@ -147,7 +147,7 @@ function of them does too:
 let poly x = Nx.Infix.((x * x * x) - (x *$ 3.) + x)
 let probe = Nx.create Nx.float64 [| 3 |] [| 0.1; 1.7; -2.3 |]
 let bits x = Array.map Int64.bits_of_float (Nx.to_array x)
-let exact = bits (Rune2.jit' poly probe) = bits (poly probe)
+let exact = bits (Rune.jit' poly probe) = bits (poly probe)
 ```
 
 ```ocaml

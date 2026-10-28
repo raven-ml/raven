@@ -11,7 +11,6 @@
    derivative is used. *)
 
 open Windtrap
-module Rune = Rune2
 module Total = Rune.Total
 
 let f64 = Nx.float64

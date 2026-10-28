@@ -3,6 +3,7 @@
 
 (library
  (name nx)
+ (public_name nx)
  (modules
   grid
   devices

@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Functional transformations for Nx arrays"
 description:
-  "Functional transformations for Nx arrays: typed autodiff (grad/vjp/jvp), vmap, and more, built on OCaml effect handlers. Transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass."
+  "Transformations of functions over Nx arrays: derivatives in forward and reverse mode, vmap over named axes, traced loops and custom rules, and compilation through tolk. They take any parameter structure described by Nx.Ptree, with mixed dtypes in one pass."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
@@ -20,6 +20,7 @@ depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
   "nx" {= version}
+  "rig" {= version}
   "tolk" {= version}
   "windtrap" {with-test & >= "0.2.0"}
   "ppx_windtrap" {with-test & >= "0.2.0"}

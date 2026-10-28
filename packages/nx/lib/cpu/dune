@@ -19,6 +19,7 @@
 
 (library
  (name nx_cpu)
+ (public_name nx.cpu)
  (libraries nx_array nx_kernel rig rig.pool)
  (foreign_stubs
   (language c)

@@ -9,7 +9,6 @@
    hand. *)
 
 open Windtrap
-module Rune = Rune2
 
 let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a

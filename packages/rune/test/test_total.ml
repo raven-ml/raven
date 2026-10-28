@@ -8,7 +8,6 @@
 
 open Windtrap
 open Compose
-module Rune = Rune2
 module Total = Rune.Total
 
 let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f

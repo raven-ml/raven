@@ -4,6 +4,7 @@
 
 (library
  (name nx_kernel)
+ (public_name nx.kernel)
  (libraries nx_array rig)
  (install_c_headers
   nx_kernel

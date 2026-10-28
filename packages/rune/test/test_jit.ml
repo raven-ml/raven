@@ -12,7 +12,6 @@ open Windtrap
 open Rune2_support
 open Operand
 open Witness
-module Rune = Rune2
 module T = Nx.Ptree
 
 let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f

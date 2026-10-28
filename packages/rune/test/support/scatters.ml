@@ -6,7 +6,6 @@
 open Windtrap
 open Operand
 open Witness
-module Rune = Rune2
 
 type positions = Full | Trailing | Leading | Transposed
 

@@ -11,7 +11,6 @@
 
 open Windtrap
 open Compose
-module Rune = Rune2
 module D = Nx.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog

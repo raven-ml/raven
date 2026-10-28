@@ -1,19 +1,18 @@
-# rune2
+# rune
 
-rune2 computes derivatives, maps, loops and compiled versions of OCaml
+rune computes derivatives, maps, loops and compiled versions of OCaml
 functions whose arguments and results hold nx arrays. Its entry points are
-values of the module `Rune2`, and each takes the function it transforms.
+values of the module `Rune`, and each takes the function it transforms.
 
-rune2 is a library of the `dev` project, private until it replaces rune. A
-program in this repository adds `rune2` and `nx` to its `libraries`:
+A program adds `rune` and `nx` to its `libraries`:
 
 ```dune
 (executable
  (name main)
- (libraries nx rune2))
+ (libraries nx rune))
 ```
 
-The preamble of [`rune2.mli`](../lib/rune2.mli) defines the terms these
+The preamble of [`rune.mli`](../lib/rune.mli) defines the terms these
 pages use: structures, signatures, transformations, constructs, stand-ins
 and programs.
 
@@ -24,7 +23,7 @@ This program computes the gradient of `sum x²` at `x = [1; 2; 3]`:
 ```ocaml
 let x = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |]
 let loss x = Nx.sum Nx.Infix.(x * x)
-let g = Rune2.grad Nx.Ptree.tensor loss x
+let g = Rune.grad Nx.Ptree.tensor loss x
 ```
 
 ```ocaml
@@ -37,23 +36,23 @@ The gradient of `Σ xᵢ²` is `2x`, so `g` is `[2; 4; 6]`.
 - `Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |]` makes a float64 array of
   shape `[3]` holding 1, 2 and 3, on the host. A differentiation tracks
   float and complex arrays; the gradient of an integer or boolean array is
-  zero (the Derivatives section of [`rune2.mli`](../lib/rune2.mli)).
+  zero (the Derivatives section of [`rune.mli`](../lib/rune.mli)).
 - `loss` returns `Nx.sum` of the squares, one float element. `grad`
   requires such a result; any other result is differentiated by `vjp`
-  (`grad` in the Reverse mode section of [`rune2.mli`](../lib/rune2.mli)).
+  (`grad` in the Reverse mode section of [`rune.mli`](../lib/rune.mli)).
   `Nx.Infix.( … )` opens nx's operators locally, so `x * x` is `Nx.mul x x`.
 - `Nx.Ptree.tensor` is the *structure* of the parameters: it says that `x` is
-  one array. rune2 never inspects an OCaml value by itself, so each
+  one array. rune never inspects an OCaml value by itself, so each
   transformation and construct takes one structure for each value whose arrays
   it reads. A pair of arrays is `Nx.Ptree.(pair tensor tensor)`.
-- `Rune2.grad Nx.Ptree.tensor loss x` runs `loss` once, over values that
+- `Rune.grad Nx.Ptree.tensor loss x` runs `loss` once, over values that
   carry a tangent, records the operations on the tangents, and runs that
   record backward from the result. The gradient has the structure, dtypes
   and shapes of `x` (the Reverse mode section).
 
 Functions of one array have shorter forms, named with a prime, which take
-no structure: `Rune2.grad' loss x` is the same gradient (the Functions of one
-array section of [`rune2.mli`](../lib/rune2.mli)).
+no structure: `Rune.grad' loss x` is the same gradient (the Functions of one
+array section of [`rune.mli`](../lib/rune.mli)).
 
 ## Two parameters
 
@@ -73,7 +72,7 @@ let w = Nx.create Nx.float64 [||] [| 1. |]
 let b = Nx.create Nx.float64 [||] [| 0. |]
 
 let value, (gw, gb) =
-  Rune2.value_and_grad Nx.Ptree.(pair tensor tensor) mse (w, b)
+  Rune.value_and_grad Nx.Ptree.(pair tensor tensor) mse (w, b)
 ```
 
 ```ocaml
@@ -99,9 +98,9 @@ bound once and called many times:
 
 ```ocaml
 let step =
-  Rune2.jit
+  Rune.jit
     Nx.Ptree.(tensor @-> returns tensor)
-    (fun w -> Nx.Infix.(w - (Rune2.grad' loss w *$ 0.1)))
+    (fun w -> Nx.Infix.(w - (Rune.grad' loss w *$ 0.1)))
 
 let w2 = step (step x)
 ```
@@ -113,14 +112,14 @@ float64 [3] [0.64, 1.28, 1.92]
 
 Each step moves `x` against the gradient `2x`, so `w ↦ 0.8 w`, and two
 steps give `0.64 x = [0.64; 1.28; 1.92]`, to the accuracy a compiled call
-keeps (the Numerics section of [`rune2.mli`](../lib/rune2.mli)).
+keeps (the Numerics section of [`rune.mli`](../lib/rune.mli)).
 
 The first call traces the function over stand-ins of `x`, values with a
 dtype, shape and placement but no elements, into a program, and compiles
 it. The second call has the same *key*, the dtypes, shapes and placements
 of its arguments among others, so it runs the compiled program without
-tracing again (the Keys section of [`rune2.mli`](../lib/rune2.mli)).
-Writing `Rune2.jit s f x` at each call makes a new compiled function each
+tracing again (the Keys section of [`rune.mli`](../lib/rune.mli)).
+Writing `Rune.jit s f x` at each call makes a new compiled function each
 time, which traces every call; the preamble's life cycle says why `step`
 is bound once.
 
@@ -135,6 +134,6 @@ is bound once.
 - [Totals](05-totals.md): sums collected from inside a function.
 - [Compilation](06-compilation.md): keys, donation, checks and accuracy.
 - [One call](07-one-call.md): the gradient of a compiled loop, followed
-  through rune2.
+  through rune.
 - [Callbacks](08-callbacks.md): a state from a solver outside nx, its
   adjoint solve as a custom rule, in a loop, under a gradient and compiled.

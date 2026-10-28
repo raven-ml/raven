@@ -5,7 +5,6 @@
 
 (* Calls whose search reports the cram test reads. *)
 
-module Rune = Rune2
 
 let x () = Nx.ones Nx.float32 [| 4 |]
 

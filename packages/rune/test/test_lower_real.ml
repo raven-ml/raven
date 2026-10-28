@@ -16,7 +16,6 @@ open Windtrap
 module D = Nx_array.Dtype
 module K = Nx_kernel.Prog
 module P = Nx.Prim
-module Rune = Rune2
 module T = Nx.Ptree
 
 let n = 256

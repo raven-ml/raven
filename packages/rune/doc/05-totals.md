@@ -5,7 +5,7 @@ and the caller reads it when the function returns: `Total.collect t ~init f`
 is `f ()` beside `init` plus the additions to `t` that reached it. Nothing
 reads a total before its `collect` returns, so an addition never changes a
 value the function computes. The Totals section of
-[`rune2.mli`](../lib/rune2.mli) states the rules.
+[`rune.mli`](../lib/rune.mli) states the rules.
 
 ## A penalty from inside a loop
 
@@ -13,22 +13,22 @@ Here each step of a scan adds the square of its carry to a total, as a
 regulariser would, and the caller collects it:
 
 ```ocaml
-let penalty : (float, Nx.float64_elt, Nx.host) Rune2.Total.t =
-  Rune2.Total.make ()
+let penalty : (float, Nx.float64_elt, Nx.host) Rune.Total.t =
+  Rune.Total.make ()
 
 let xs = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |]
 
 let run xs =
   fst
-    (Rune2.scan' ~init:(Nx.scalar Nx.float64 0.)
+    (Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
        ~f:(fun acc row ->
          let next = Nx.Infix.(acc + row) in
-         Rune2.Total.add penalty Nx.Infix.(next * next);
+         Rune.Total.add penalty Nx.Infix.(next * next);
          (next, next))
        xs)
 
 let final, collected =
-  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () -> run xs)
+  Rune.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () -> run xs)
 ```
 
 ```ocaml
@@ -47,10 +47,10 @@ A compiled function adds its additions once per call, as the call returns,
 and computes their sums in its program:
 
 ```ocaml
-let compiled = Rune2.jit' run
+let compiled = Rune.jit' run
 
 let _, compiled_total =
-  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
+  Rune.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
       compiled xs)
 ```
 
@@ -68,8 +68,8 @@ first:
 let batch = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 0.; 0.; 1. |]
 
 let _, mapped_total =
-  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
-      Rune2.vmap' run batch)
+  Rune.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
+      Rune.vmap' run batch)
 ```
 
 ```ocaml
@@ -87,8 +87,8 @@ execution of the code that makes it:
 
 ```ocaml
 let _, grad_total =
-  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
-      Rune2.grad' run xs)
+  Rune.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
+      Rune.grad' run xs)
 ```
 
 ```ocaml

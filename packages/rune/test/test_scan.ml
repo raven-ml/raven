@@ -12,7 +12,6 @@ open Windtrap
 open Rune2_support
 open Witness
 open Expr
-module Rune = Rune2
 module T = Nx.Ptree
 module D = Nx.Dtype
 module Total = Rune.Total

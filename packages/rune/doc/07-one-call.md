@@ -1,8 +1,8 @@
 # One call
 
-This page follows one call through rune2: the gradient of a compiled
+This page follows one call through rune: the gradient of a compiled
 function that holds a scan. Each step names the module that takes it and
-the section of [`rune2.mli`](../lib/rune2.mli) that states its rule.
+the section of [`rune.mli`](../lib/rune.mli) that states its rule.
 
 ## The program
 
@@ -13,10 +13,10 @@ counts its own runs:
 let runs = ref 0
 
 let f =
-  Rune2.jit' (fun xs ->
+  Rune.jit' (fun xs ->
       incr runs;
       let _, sums =
-        Rune2.scan' ~init:(Nx.scalar Nx.float64 0.)
+        Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
           ~f:(fun acc row ->
             let next = Nx.Infix.(acc + row) in
             (next, next))
@@ -25,8 +25,8 @@ let f =
       Nx.sum Nx.Infix.(sums * sums))
 
 let xs = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |]
-let g1 = Rune2.grad' f xs
-let g2 = Rune2.grad' f (Nx.create Nx.float64 [| 3 |] [| 0.; 0.; 1. |])
+let g1 = Rune.grad' f xs
+let g2 = Rune.grad' f (Nx.create Nx.float64 [| 3 |] [| 0.; 0.; 1. |])
 ```
 
 ```ocaml
@@ -43,7 +43,7 @@ The running sums of `[1; 2; 3]` are `s = [1; 3; 6]`, and `xᵢ` enters every
 
 ## Binding
 
-`Rune2.jit' body` makes a compiled function with no program. It keeps one
+`Rune.jit' body` makes a compiled function with no program. It keeps one
 program per key, and each program compiles once per *variant*, the layout
 of its arguments in memory among others (the preamble's life cycle, and the
 Keys and Compiled programs sections). The module `Jit` keeps the programs.
@@ -62,12 +62,12 @@ host, a key it has not seen. It traces the body over a stand-in of `xs`:
 the body's code runs, `runs` becomes `1`, and every operation it applies is
 recorded, the scan as one construct carrying its step's program. The step
 is traced once, for all three rows (the Tracing section). This is the
-program, as `Rune2.program` shows it, the host printed as `CPU`:
+program, as `Rune.program` shows it, the host printed as `CPU`:
 
 ```ocaml
 let body xs =
   let _, sums =
-    Rune2.scan' ~init:(Nx.scalar Nx.float64 0.)
+    Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
       ~f:(fun acc row ->
         let next = Nx.Infix.(acc + row) in
         (next, next))
@@ -78,8 +78,8 @@ let body xs =
 
 ```ocaml
 # let () =
-    Format.printf "%a@." Rune2.pp_program
-      (Rune2.program Nx.Ptree.tensor Nx.Ptree.tensor body xs);;
+    Format.printf "%a@." Rune.pp_program
+      (Rune.program Nx.Ptree.tensor Nx.Ptree.tensor body xs);;
 program (%0)
   %1 : float64 [] at CPU = Map [float64:0x0000000000000000] at CPU
   %2 : float64 [] at CPU, %3 : float64 [3] at CPU = scan 3 rows, init (%1), xs (%0), captures ()

@@ -9,8 +9,6 @@
    the formula. The rows that share a workload with packages/rune's suite
    keep its code and id. *)
 
-module Rune = Rune2
-
 let f32 = Nx.float32
 let ops = 100
 

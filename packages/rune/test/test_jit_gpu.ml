@@ -9,7 +9,6 @@
 
 open Windtrap
 open Rune2_support
-module Rune = Rune2
 
 let gpu =
   lazy

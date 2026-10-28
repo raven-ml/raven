@@ -8,7 +8,6 @@
 
 open Windtrap
 open Compose
-module Rune = Rune2
 module T = Nx.Ptree
 module D = Nx.Dtype
 

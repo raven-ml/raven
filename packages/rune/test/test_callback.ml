@@ -8,7 +8,6 @@
    branch, and never at a trace. *)
 
 open Windtrap
-module Rune = Rune2
 module T = Nx.Ptree
 
 let f64 = Nx.float64

@@ -15,4 +15,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries nx rune2))
+ (libraries nx rune))

@@ -7,7 +7,6 @@
    result's structure without computing it. *)
 
 open Windtrap
-module Rune = Rune2
 module T = Nx.Ptree
 
 let f32 = Nx.float32

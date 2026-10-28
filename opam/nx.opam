@@ -3,10 +3,10 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "N-dimensional arrays for OCaml"
 description:
-  "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem."
+  "Nx provides n-dimensional arrays as values on device sets, with OCaml's type safety: 21 data types, broadcasting, slicing, linear algebra, FFT, and I/O, computed where the values lie. The numerical foundation for the Raven ecosystem."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
-license: "ISC AND MIT"
+license: "ISC AND BSD-3-Clause AND BSD-3-Clause-Open-MPI AND MIT"
 tags: ["numerical-computation" "tensor-library" "machine-learning"]
 homepage: "https://github.com/raven-ml/raven"
 doc: "https://raven-ml.dev/docs/"

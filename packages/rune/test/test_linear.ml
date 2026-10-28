@@ -13,7 +13,6 @@
 open Windtrap
 open Rune2_support
 open Witness
-module Rune = Rune2
 module T = Nx.Ptree
 module D = Nx.Dtype
 

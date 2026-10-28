@@ -16,7 +16,6 @@
    [--cold ID] runs one case's first call and prints its milliseconds: run it
    with [CACHEDB] at an empty path and [PARALLEL=1]. *)
 
-module Rune = Rune2
 
 let f64 = Nx.float64
 

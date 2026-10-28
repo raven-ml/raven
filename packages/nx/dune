@@ -1,4 +1,4 @@
-; The flags of every library, test and bench under dev/nx2. A stanza names
+; The flags of every library, test and bench under packages/nx. A stanza names
 ; no flag of its own.
 ;
 ; Since dune language 3.21 the dev profile compiles with the compiler's

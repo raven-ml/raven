@@ -1,9 +1,9 @@
-; rune2's bench suite. Not attached to runtest: run it with `dune build
+; rune's bench suite. Not attached to runtest: run it with `dune build
 ; @bench`, or run the built exe from its directory under _build/default.
 
 (executable
  (name bench_rune2)
- (libraries nx rune2 thumper))
+ (libraries nx rune thumper))
 
 (rule
  (alias bench)

@@ -1,7 +1,5 @@
-; rune2's library, private until it replaces packages/rune, whose public
-; library is named rune.
-
 (library
- (name rune2)
+ (name rune)
+ (public_name rune)
  (private_modules program trace scalar factor custom jvp linear vmap cache compile jit loop)
  (libraries nx nx_array nx_kernel tolk rig tolk.engine))

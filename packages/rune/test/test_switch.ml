@@ -7,7 +7,6 @@
    mode, reverse mode, maps and jit, against the branch run as OCaml code. *)
 
 open Windtrap
-module Rune = Rune2
 module T = Nx.Ptree
 module Total = Rune.Total
 

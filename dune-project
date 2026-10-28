@@ -67,10 +67,10 @@
 (package
  (name nx)
  (dir packages/nx)
- (license "ISC AND MIT")
+ (license "ISC AND BSD-3-Clause AND BSD-3-Clause-Open-MPI AND MIT")
  (synopsis "N-dimensional arrays for OCaml")
  (description
-  "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")
+  "Nx provides n-dimensional arrays as values on device sets, with OCaml's type safety: 21 data types, broadcasting, slicing, linear algebra, FFT, and I/O, computed where the values lie. The numerical foundation for the Raven ecosystem.")
  (depends
   (ocaml
    (>= 5.5.0))
@@ -156,12 +156,14 @@
  (dir packages/rune)
  (synopsis "Functional transformations for Nx arrays")
  (description
-  "Functional transformations for Nx arrays: typed autodiff (grad/vjp/jvp), vmap, and more, built on OCaml effect handlers. Transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass.")
+  "Transformations of functions over Nx arrays: derivatives in forward and reverse mode, vmap over named axes, traced loops and custom rules, and compilation through tolk. They take any parameter structure described by Nx.Ptree, with mixed dtypes in one pass.")
  (depends
   (ocaml
    (>= 5.5.0))
   dune
   (nx
+   (= :version))
+  (rig
    (= :version))
   (tolk
    (= :version))

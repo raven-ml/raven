@@ -1,10 +1,10 @@
 # Callbacks
 
 A callback runs OCaml on the values of a traced or transformed function
-(the Callbacks section of [`rune2.mli`](../lib/rune2.mli)). This page
+(the Callbacks section of [`rune.mli`](../lib/rune.mli)). This page
 builds the pattern of a model whose state comes from a solver outside nx.
 The solver computes the state, an adjoint solve computes its gradient,
-and rune2 differentiates, loops and compiles around both.
+and rune differentiates, loops and compiles around both.
 
 ## A state from a solver
 
@@ -31,7 +31,7 @@ callback's call is traced, as in a loop's step or under `jit`.
 
 A callback has no derivative, so the gradient of `u` comes from a custom
 rule (the Custom differentiation rules section of
-[`rune2.mli`](../lib/rune2.mli)). Differentiating the
+[`rune.mli`](../lib/rune.mli)). Differentiating the
 state equation along `θ` gives `(θ² + 1) u̇ = -2θ u θ̇`. The cotangent of
 `θ` is therefore `-2θ u λ`, where the *adjoint* `λ` solves the transposed
 system `(θ² + 1) λ = ū` for the cotangent `ū` of `u`. The adjoint solve
@@ -47,10 +47,10 @@ let adjoint (theta, (u, ct)) =
 let state =
   let one = Nx.Ptree.(tensor @-> returns tensor) in
   let three = Nx.Ptree.(pair tensor (pair tensor tensor) @-> returns tensor) in
-  Rune2.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun theta ->
-      let u = Rune2.callback one ~like:theta solve theta in
+  Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun theta ->
+      let u = Rune.callback one ~like:theta solve theta in
       let pullback ct =
-        Rune2.callback three ~like:theta adjoint (theta, (u, ct))
+        Rune.callback three ~like:theta adjoint (theta, (u, ct))
       in
       (u, pullback))
 ```
@@ -68,12 +68,12 @@ The loss sums the states of four parameters with a scan:
 ```ocaml
 let loss thetas =
   fst
-    (Rune2.scan' ~init:(Nx.scalar f64 0.)
+    (Rune.scan' ~init:(Nx.scalar f64 0.)
        ~f:(fun acc theta -> (Nx.add acc (state theta), theta))
        thetas)
 
 let thetas = Nx.create f64 [| 4 |] [| -1.; 0.; 0.5; 2. |]
-let g = Rune2.grad' loss thetas
+let g = Rune.grad' loss thetas
 ```
 
 ```ocaml
@@ -105,14 +105,14 @@ error below 1e-12: true
 Under `jit` the gradient's programs hold the callbacks. A call evaluates
 each program around them, and each stretch without one is a compiled call
 of its own (the Evaluated programs section of
-[`rune2.mli`](../lib/rune2.mli)). The callbacks still run once per row and
+[`rune.mli`](../lib/rune.mli)). The callbacks still run once per row and
 per call, never at the trace:
 
 ```ocaml
 # let () =
     solves := 0;
     adjoints := 0;
-    let step = Rune2.jit' (Rune2.grad' loss) in
+    let step = Rune.jit' (Rune.grad' loss) in
     ignore (step thetas);
     ignore (step thetas);
     Printf.printf "%d solves, %d adjoint solves\n" !solves !adjoints;;
@@ -123,4 +123,4 @@ Two calls of four rows each make eight solves and eight adjoint solves.
 On a set other than the host, `solve` and `adjoint` would receive their
 arguments where they lie and place them on the host with `Nx.place`
 before reading them, then place their results where `like`'s lie, as
-`Rune2.callback` requires.
+`Rune.callback` requires.

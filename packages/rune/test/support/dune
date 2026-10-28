@@ -1,13 +1,13 @@
-; Lowered operations compiled and run on the host, for rune2's lowering suites.
+; Lowered operations compiled and run on the host, for rune's lowering suites.
 
 (library
  (name lowered)
  (modules lowered)
- (libraries nx nx_array nx_kernel rune2 rig tolk tolk.engine))
+ (libraries nx nx_array nx_kernel rune rig tolk tolk.engine))
 
-; The generators, references and witnesses rune2's suites share.
+; The generators, references and witnesses rune's suites share.
 
 (library
  (name rune2_support)
  (modules operand expr witness cases memory scatters)
- (libraries nx nx_array nx_kernel nx_support rig rune2 windtrap))
+ (libraries nx nx_array nx_kernel nx_support rig rune windtrap))

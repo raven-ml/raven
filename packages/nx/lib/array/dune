@@ -2,6 +2,7 @@
 
 (library
  (name nx_array)
+ (public_name nx.array)
  (libraries rig)
  (private_modules shape)
  (install_c_headers nx_array nx_dtype)

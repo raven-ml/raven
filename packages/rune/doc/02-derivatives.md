@@ -1,11 +1,11 @@
 # Derivatives
 
-rune2 differentiates in two modes. Forward mode carries a tangent beside
+rune differentiates in two modes. Forward mode carries a tangent beside
 each value and gives a function's change along one direction of its
 parameters. Reverse mode records the operations on tangents and runs the
 record backward, and gives the change of one result along every parameter.
 The Derivatives and Reverse mode sections of
-[`rune2.mli`](../lib/rune2.mli) state the rules this page applies.
+[`rune.mli`](../lib/rune.mli) state the rules this page applies.
 
 ## Forward and reverse over a structure
 
@@ -22,9 +22,9 @@ let a = Nx.create Nx.float64 [| 2 |] [| 1.; 2. |]
 let b = Nx.create Nx.float64 [| 2 |] [| 3.; 4. |]
 
 let _, (dy0, dy1) =
-  Rune2.jvp pair pair f (a, b) (Nx.ones_like a, Nx.zeros_like b)
+  Rune.jvp pair pair f (a, b) (Nx.ones_like a, Nx.zeros_like b)
 
-let _, pullback = Rune2.vjp pair pair f (a, b)
+let _, pullback = Rune.vjp pair pair f (a, b)
 let ua, ub = pullback (Nx.ones_like a, Nx.zeros_like a)
 ```
 
@@ -45,7 +45,7 @@ and the cotangent the result's.
 evaluates its record for each tangent without running `f` again:
 
 ```ocaml
-let _, along = Rune2.linearize pair pair f (a, b)
+let _, along = Rune.linearize pair pair f (a, b)
 let t1, _ = along (Nx.ones_like a, Nx.zeros_like b)
 let t2, _ = along (Nx.zeros_like a, Nx.ones_like b)
 ```
@@ -66,7 +66,7 @@ Hessian-vector product of `g` is the forward derivative of its gradient:
 
 ```ocaml
 let g x = Nx.sum Nx.Infix.(x * x * x)
-let hvp x v = snd (Rune2.jvp' (Rune2.grad' g) x v)
+let hvp x v = snd (Rune.jvp' (Rune.grad' g) x v)
 let h = hvp a (Nx.ones_like a)
 ```
 
@@ -83,7 +83,7 @@ it (the Controlling differentiation section). Here only the first factor
 is differentiated:
 
 ```ocaml
-let held = Rune2.grad' (fun x -> Nx.sum Nx.Infix.(x * Rune2.detach x)) a
+let held = Rune.grad' (fun x -> Nx.sum Nx.Infix.(x * Rune.detach x)) a
 ```
 
 ```ocaml
@@ -99,7 +99,7 @@ undetached product would give `2a`.
 A complex array is two real parts per element, and its tangent displaces
 both. The gradient of a real function of `z = x + iy` is
 `∂f/∂x − i ∂f/∂y` (Tangents and cotangents, in the Derivatives section of
-[`rune2.mli`](../lib/rune2.mli)). For `|z|² = x² + y²` that is
+[`rune.mli`](../lib/rune.mli)). For `|z|² = x² + y²` that is
 `2x − 2iy = 2 conj z`:
 
 ```ocaml
@@ -108,7 +108,7 @@ let z =
     [| { Complex.re = 1.; im = 2. }; { Complex.re = -3.; im = 0.5 } |]
 
 let norm2 z = Nx.sum (Nx.real Nx.float64 Nx.Infix.(z * Nx.conjugate z))
-let gz = Rune2.grad' norm2 z
+let gz = Rune.grad' norm2 z
 ```
 
 ```ocaml
@@ -126,7 +126,7 @@ shrinks `|z|²`.
 directions, and returns `Ok ()` when they agree within its tolerance:
 
 ```ocaml
-let checked = Rune2.check_grads Nx.Ptree.tensor (fun x -> Nx.sum (Nx.exp x)) a
+let checked = Rune.check_grads Nx.Ptree.tensor (fun x -> Nx.sum (Nx.exp x)) a
 ```
 
 ```ocaml
@@ -149,7 +149,7 @@ until its steps stop moving, and gives the pullback of `√a`, `g / (2x)`:
 
 ```ocaml
 let sqrt_newton =
-  Rune2.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun a ->
+  Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun a ->
       let rec go x =
         let next = Nx.Infix.((x + (a / x)) /$ 2.) in
         let moved = Nx.item [] (Nx.max (Nx.abs Nx.Infix.(next - x))) in
@@ -159,7 +159,7 @@ let sqrt_newton =
       (x, fun g -> Nx.Infix.(g / (x *$ 2.))))
 
 let r = Nx.create Nx.float64 [| 2 |] [| 4.; 9. |]
-let dr = Rune2.grad' (fun a -> Nx.sum (sqrt_newton a)) r
+let dr = Rune.grad' (fun a -> Nx.sum (sqrt_newton a)) r
 ```
 
 ```ocaml
@@ -175,12 +175,12 @@ rule is traced, as under `jit`, the read raises:
 
 ```ocaml
 # let () =
-    match Rune2.jit' sqrt_newton r with
+    match Rune.jit' sqrt_newton r with
     | _ -> print_endline "no error"
     | exception Invalid_argument msg -> print_endline msg;;
 Nx.item: the value is traced by Rune.custom_vjp
 ```
 
 The Custom differentiation rules section of
-[`rune2.mli`](../lib/rune2.mli) says where a rule runs on values and where
+[`rune.mli`](../lib/rune.mli) says where a rule runs on values and where
 it is traced.

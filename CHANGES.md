@@ -247,6 +247,16 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `scan`, `iterate`, `remat`, `jit` and the custom rules trace
+  their functions at the call, eagerly too: a step's code runs once, and
+  `Nx.item` or a draw without `~key` inside it raises.
+- **Breaking:** the gradient of a real function of `z = x + iy` is
+  `∂f/∂x - i ∂f/∂y`, against whose conjugate a step descends.
+- **Breaking:** a compiled call consumes the arguments donated at the call
+  (`Nx.Ptree.donate`), in place of `Nx.Ptree.consumes`.
+- **Breaking:** `Rune.Jit_error` is `Invalid_argument`, `lane_index` names
+  its map, and `scan` over zero rows returns `init`.
+
 - A `Rune.jit` program holds the storage it captures (`Rig.Claim.hold`):
   another call that consumes a capture computes from a copy, and the
   capture stays live for every library, where its documentation said a
@@ -4046,12 +4056,34 @@ thread.
 
 ### Nx
 
-- `Nx_io.save_image`, `encode_png` and the deflated entries of `save_npz`
+- **Breaking:** a value is `('v, 's, 'd) Nx.t` on the device set `'d` that
+  `Nx.devices` mints; `Nx.place` moves values between sets. A value made from
+  numbers is a host value, and the `_at` forms make it at a placement.
+- **Breaking:** a kernel library implements `Nx_kernel.S` (`nx.kernel`,
+  formerly `nx.backend`), and `nx.dtype` is `Nx.Dtype` in `nx.array`.
+- `Nx.donate x` gives `x` up to the one operation that reads it, which may
+  write its result into `x`'s memory.
+- **Breaking:** `nx.amd`, nx's one GPU kernel library, is removed: a set of
+  GPU devices computes the programs `Rune.jit` compiles for it.
+- **Breaking:** draws are `Nx.Rng`'s, with `~key` or a scope's key: `Nx.rand`,
+  `randn`, `randint`, `bernoulli`, `categorical`, `permutation`, `shuffle`
+  and `truncated_normal` go.
+- **Breaking:** random streams change: a key or seed draws other numbers than
+  before, so seeded results move.
+- **Breaking:** `Nx.contiguous` goes, since layout is a cost: `Nx.copy`
+  stores a value afresh. `Nx.norm` is `Nx.vector_norm` and `matrix_norm`.
+- **Breaking:** `maximum_filter`, `minimum_filter` and `uniform_filter` go:
+  compose `Nx.sliding_window` with `max`, `min` or `mean`. `/@`, `%`, `mod`
+  and `**@` go: `Nx.solve` and `matrix_power` remain.
+- **Breaking:** `Nx_io.save_image` is `save_png` and `save_jpeg`;
+  `load_image` keeps the file's channels, without `?grayscale`; `?overwrite`,
+  `gunzip` (use `Lz.Gzip`) and `load_npz_entry` go.
+- `Nx_io.save_png`, `encode_png` and the deflated entries of `save_npz`
   compress with `lz`: they write other bytes, which load as the same images
   and arrays.
 - `Nx_io.load_image` loads a PNG whose image data has bytes after its zlib
   stream, which the PNG specification says to ignore; they were refused.
-- Decode errors from `Nx_io.gunzip`, PNG loading and the NPZ loaders give
+- Decode errors from PNG loading and the NPZ loaders give
   the failing byte's offset and the format's message.
 - `Nx_io.load_npy`, `load_npz`, `load_npz_entry` and `load_safetensors` refuse
   a bool element whose byte is other than 0 or 1, raising `Failure` naming the

@@ -8,7 +8,6 @@
 
 open Windtrap
 open Special
-module Rune = Rune2
 
 type u = { u : 'b. (float, 'b, Nx.host) Nx.t -> (float, 'b, Nx.host) Nx.t }
 
