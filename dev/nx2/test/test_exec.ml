@@ -8,6 +8,7 @@
    creations and allocation. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 module M = Nx_array.Move
@@ -78,10 +79,6 @@ module Refuse2 = (val Nx.devices ~kernels:(module Refusing) [ m 2; m 3 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 (* Operands: a shape, and arrays of it laid out C-contiguous, transposed, offset
    or broadcast, each holding [data]. *)

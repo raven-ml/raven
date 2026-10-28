@@ -9,6 +9,7 @@
    logsumexp and logmeanexp against their definitions. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
@@ -22,10 +23,6 @@ let same_bits =
        ~equal:(fun a b ->
          (Float.is_nan a && Float.is_nan b)
          || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)))
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 (* Shapes and axes *)
 

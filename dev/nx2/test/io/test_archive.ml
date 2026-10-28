@@ -9,14 +9,12 @@
    differs; only [float] converts. *)
 
 open Windtrap
+open Nx_support
 open Io_support
 module Archive = Nx_io.Archive
 module P = Nx.Ptree
 
 let vec dt xs = Nx.create dt [| Array.length xs |] xs
-
-(* Placements compare as Nx.Placement.equal does. *)
-let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let fails_with message f = raises (Failure message) (fun () -> ignore (f ()))
 
 let refuses message f =

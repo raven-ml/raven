@@ -9,20 +9,12 @@
    the call. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 let numel s = Array.fold_left ( * ) 1 s
-
-let index s k =
-  let r = Array.length s in
-  let idx = Array.make r 0 and k = ref k in
-  for a = r - 1 downto 0 do
-    idx.(a) <- !k mod s.(a);
-    k := !k / s.(a)
-  done;
-  idx
 
 let position s idx =
   let k = ref 0 in

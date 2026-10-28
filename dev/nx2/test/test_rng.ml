@@ -7,6 +7,7 @@
    sampler's distribution within stated bounds, over drawn keys. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module Rng = Nx.Rng
 
@@ -17,9 +18,6 @@ module Count = (val Nx.devices ~kernels:(module Nx_support.Counting) [ m 3 ])
 
 let message f =
   match f () with _ -> "no exception" | exception Invalid_argument m -> m
-
-(* Placements over any one set. *)
-let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 (* [x]'s elements in row-major order, computed on the host. *)
 let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
@@ -1774,15 +1772,6 @@ let others =
    C order, whatever the dtype, shape and placement: at the call on the host,
    and on another set at the next wait there, the draw itself waiting for
    nothing. *)
-
-(* The index of the flat position [i] of a value of shape [s], in C order. *)
-let index s i =
-  let idx = Array.make (Array.length s) 0 and k = ref i in
-  for a = Array.length s - 1 downto 0 do
-    idx.(a) <- !k mod s.(a);
-    k := !k / s.(a)
-  done;
-  idx
 
 (* A parameter's shape, whether it is also checked split over [S2] along its
    first axis, doubled to divide evenly, and two flat positions in it, which may

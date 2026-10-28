@@ -7,6 +7,7 @@
    against the array layer that computes what it states. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
@@ -297,10 +298,6 @@ let maps =
     ]
 
 (* Movements and bitcasts, against nx.array's *)
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let pp_move ppf = function
   | M.Reshape s -> Format.fprintf ppf "reshape %a" pp_ints (Iarray.to_array s)

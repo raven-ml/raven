@@ -8,12 +8,9 @@
    and rows before the first offset and after the last. *)
 
 open Windtrap
+open Nx_support
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let pp_int64s ppf a =
   Format.fprintf ppf "[%s]"

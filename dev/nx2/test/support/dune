@@ -3,7 +3,7 @@
 (library
  (name nx_support)
  (modules nx_support)
- (libraries nx nx_array nx_kernel nx_cpu nx_kernels_support rig))
+ (libraries nx nx_array nx_kernel nx_cpu nx_kernels_support rig windtrap))
 
 ; The domain lock as a thread holds it, through the runtime's hooks, and a
 ; job that occupies the pool.

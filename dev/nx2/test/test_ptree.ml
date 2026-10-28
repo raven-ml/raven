@@ -9,6 +9,7 @@
    of a value's float arrays. *)
 
 open Windtrap
+open Nx_support
 module D = Nx_array.Dtype
 module P = Nx.Ptree
 
@@ -40,10 +41,6 @@ let same xs ys =
          | None -> false)
        xs ys
 
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
-
 let pp_leaf ppf (Nx.P a) =
   Format.fprintf ppf "%s %a" (D.name (Nx.dtype a)) pp_ints (Nx.shape a)
 
@@ -54,8 +51,7 @@ let leaves =
     ~equal:same
 
 let leaf = Testable.make ~pp:pp_leaf ~equal:(fun a b -> same [ a ] [ b ])
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-let is_on p a = equal placement p (Nx.placement a)
+let is_on p a = equal (placement ()) p (Nx.placement a)
 
 let visit_equal a b =
   match (a, b) with

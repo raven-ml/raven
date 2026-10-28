@@ -12,6 +12,7 @@
    says, or raises where a cut along k does not hold whole blocks. *)
 
 open Windtrap
+open Nx_support
 module D = Nx_array.Dtype
 
 let to_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
@@ -950,8 +951,6 @@ let placed =
      and+ whole = frequency [ (1, constant true); (8, constant false) ] in
      (vw, if whole then Whole else Cut { axis; tiles }))
 
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-
 (* What the interface says of dequant's result: it lies where a cut along [n]
    or a leading axis puts it, and where one along [k] of a weight with values
    does where its tiles divide the blocks; where they do not, the weight is
@@ -1037,14 +1036,14 @@ let placement_law ((_, w), c) =
         (bits got);
       (match d with
       | Lies d ->
-          equal ~msg:"where dequant's result lies" placement (at d)
+          equal ~msg:"where dequant's result lies" (placement ()) (at d)
             (Nx.placement got)
       | Raises | Unstated -> ());
       let y = run () in
       applied ~at:f32 w x y;
       (match d with
       | Lies d ->
-          equal ~msg:"where apply's result lies" placement
+          equal ~msg:"where apply's result lies" (placement ())
             (at (product_at w d))
             (Nx.placement y)
       | Raises | Unstated -> ());

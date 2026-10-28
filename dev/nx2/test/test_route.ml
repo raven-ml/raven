@@ -7,6 +7,7 @@
    each operand a result window depends on. *)
 
 open Windtrap
+open Nx_support
 module R = Nx_array.Move
 
 type b
@@ -27,10 +28,6 @@ let refused msg f = raises (Invalid_argument msg) f
    pair. *)
 let matrix_product =
   Route.Axes [| [| Becomes 0; Reduced 0 |]; [| Reduced 0; Becomes 1 |] |]
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let pp_axis ppf : Route.axis -> unit = function
   | Becomes a -> Format.pp_print_int ppf a

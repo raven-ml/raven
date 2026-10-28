@@ -9,6 +9,7 @@
    dtype the kind does not take raises naming the function. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
@@ -21,10 +22,6 @@ type host = Nx.host
 (* Arrays of any dtype *)
 
 type case = Case : ('v, 's) A.t -> case
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let pp_case ppf (Case a) =
   Format.fprintf ppf "%a %a" D.pp (A.dtype a) L.pp (A.layout a)

@@ -8,6 +8,7 @@
    creations beside a reference, at its placement. *)
 
 open Windtrap
+open Nx_support
 module D = Nx_array.Dtype
 
 let m = Nx_support.memory
@@ -17,29 +18,6 @@ module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ m 2 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-(* Placements of one brand, compared as {!Nx.Placement.equal} does. *)
-let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
-
-let same_float a b =
-  (Float.is_nan a && Float.is_nan b)
-  || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
-
-let same (type v s) (dt : (v, s) D.t) (a : v) (b : v) =
-  match D.kind dt with
-  | D.Float -> same_float a b
-  | D.Complex -> same_float a.Complex.re b.Complex.re && same_float a.im b.im
-  | D.Signed | D.Unsigned | D.Boolean -> a = b
-
-let elements dt =
-  Testable.make ~pp:(Format.pp_print_list (D.pp_value dt)) ~equal:(fun a b ->
-      List.length a = List.length b && List.for_all2 (same dt) a b)
-
-let equal_elements dt a b =
-  equal (elements dt) (Array.to_list a) (Array.to_list b)
 
 (* The value an int64 [i] stores as in [dt], by the cast rule. *)
 let of_int64 (type v s) (dt : (v, s) D.t) i : v =

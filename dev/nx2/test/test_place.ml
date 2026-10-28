@@ -7,6 +7,7 @@
    holds. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module M = Nx_array.Move
 
@@ -466,10 +467,6 @@ type reshape = {
   wanted : where;
 }
 
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
-
 let pp_reshape ppf c =
   Format.fprintf ppf "%a %a at %a to %a, wanted at %a" pp_layout c.layout
     pp_ints c.s pp_where c.w pp_ints c.s' pp_where c.wanted
@@ -521,7 +518,6 @@ let reshape_case = Gen.with_pp pp_reshape reshape_case
 module Mem = (val Nx.devices (List.init 4 Nx_support.memory))
 
 let on_mem = over Mem.v (Nx.Mesh.v Mem.v [ ("a", 2); ("b", 2) ])
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 (* Each cut axis of [w] with its number of tiles. *)
 let cuts = function
@@ -584,7 +580,7 @@ let law_reshape c =
     end
   in
   let y = Nx.reshape c.s' x in
-  equal placement (on_mem w') (Nx.placement y);
+  equal (placement ()) (on_mem w') (Nx.placement y);
   holds ~dev:Nx_support.memory (A.to_array a) c.s' w' (V y)
 
 (* A reshape of a host creation, placed: each device holds its window of the
@@ -593,7 +589,7 @@ let law_wanted c =
   let n = Array.fold_left ( * ) 1 c.s in
   let x = Nx.reshape c.s (Nx.arange Nx.float32 0 n 1) in
   let y = Nx.place (on_mem c.wanted) (Nx.reshape c.s' x) in
-  equal placement (on_mem c.wanted) (Nx.placement y);
+  equal (placement ()) (on_mem c.wanted) (Nx.placement y);
   holds ~dev:Nx_support.memory (floats c.s) c.s' c.wanted (V y)
 
 (* gpt-oss's 2880 inputs are 90 blocks of 32: four devices divide the
@@ -640,11 +636,11 @@ let reshapes =
                       (on_mem r)))
               (fun () -> Nx.reshape s' x);
           let y = Nx.reshape s' (Nx.place (on_mem r) x) in
-          equal placement (on_mem w') (Nx.placement y);
+          equal (placement ()) (on_mem w') (Nx.placement y);
           holds ~dev:Nx_support.memory (floats s) s' w' (V y));
       test "blocks that four devices divide stay cut when merged" (fun () ->
           let p, y = blocks 92 in
-          equal placement (Mem.split ~axis:1) p;
+          equal (placement ()) (Mem.split ~axis:1) p;
           holds ~dev:Nx_support.memory
             (floats [| 2; 92; 32 |])
             [| 2; 2944 |] (Split 1) (V y));

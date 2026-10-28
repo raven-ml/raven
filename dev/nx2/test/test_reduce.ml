@@ -11,16 +11,13 @@
    and values cut along the reduced axis. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog
 
 type host = Nx.host
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let value a : (_, _, host) Nx.t = Nx.Repr.of_array Nx.Host.v a
 let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))

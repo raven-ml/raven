@@ -8,6 +8,7 @@
    shape; at the call on the host, at the next wait on another set. *)
 
 open Windtrap
+open Nx_support
 module D = Nx_array.Dtype
 module P = Nx.Ptree
 
@@ -24,23 +25,7 @@ exception Element of string
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let numel s = Array.fold_left ( * ) 1 s
-
-(* Placements over any one set. *)
-let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let pass _ _ = Failure "the check passed its data"
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
-
-(* The index of the flat position [i] of a value of shape [s], in C order. *)
-let index s i =
-  let idx = Array.make (Array.length s) 0 and k = ref i in
-  for a = Array.length s - 1 downto 0 do
-    idx.(a) <- !k mod s.(a);
-    k := !k / s.(a)
-  done;
-  idx
 
 (* Flags of a shape with some extents of 0 or 1, mostly true. *)
 let flags =

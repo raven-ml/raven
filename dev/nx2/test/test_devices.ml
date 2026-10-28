@@ -6,13 +6,13 @@
 (* Device sets, meshes and placements, through Nx. *)
 
 open Windtrap
+open Nx_support
 
 let m = Nx_support.memory
 
 module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 module S2 = (val Nx.devices [ m 0; m 1 ])
 
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let pp p = Format.asprintf "%a" Nx.Placement.pp p
 let names s = List.map Rig.name (Nx.rigs s)
@@ -45,8 +45,10 @@ let placements =
     [
       test "a set's placements are its own" (fun () ->
           equal bool true (Nx.Placement.devices S4.on == S4.v);
-          equal placement (Nx.Placement.on S4.v) S4.on;
-          equal placement (Nx.Placement.split ~axis:1 S4.v) (S4.split ~axis:1));
+          equal (placement ()) (Nx.Placement.on S4.v) S4.on;
+          equal (placement ())
+            (Nx.Placement.split ~axis:1 S4.v)
+            (S4.split ~axis:1));
       test "placements print as the placement that makes them" (fun () ->
           equal string (Rig.name Rig.host) (pp Nx.Host.on);
           equal string "on [m0; m1]" (pp S2.on);
@@ -60,7 +62,7 @@ let placements =
           equal string "m2" (pp p);
           equal bool true (Nx.Placement.devices p == S4.v);
           equal bool true (p == Nx.Placement.device S4.v (m 2));
-          not_equal placement S4.on p;
+          not_equal (placement ()) S4.on p;
           let x = Nx.place p (Nx.zeros Nx.float32 [| 3 |]) in
           equal (list string) [ "m2" ]
             (List.map
@@ -74,7 +76,7 @@ let placements =
           invalid ~by:"Nx.Placement.device" (fun () ->
               Nx.Placement.device S2.v (m 2)));
       test "a split is not the whole on every device" (fun () ->
-          not_equal placement S4.on (S4.split ~axis:0));
+          not_equal (placement ()) S4.on (S4.split ~axis:0));
       cases "split refuses the axis" ~name:string_of_int
         [ -1; Nx_array.Layout.max_rank ] (fun axis ->
           invalid ~by:"Nx.Placement.split" (fun () -> S2.split ~axis));
@@ -86,12 +88,12 @@ let meshes =
       test "a mesh of every axis cut in order is the split over the set"
         (fun () ->
           let mesh = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ] in
-          equal placement (S4.split ~axis:0)
+          equal (placement ()) (S4.split ~axis:0)
             (Nx.Placement.mesh mesh [ (0, [ "a"; "b" ]) ]);
-          equal placement S4.on (Nx.Placement.mesh mesh []));
+          equal (placement ()) S4.on (Nx.Placement.mesh mesh []));
       test "a mesh cut over its minor axis first is not the split" (fun () ->
           let mesh = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ] in
-          not_equal placement (S4.split ~axis:0)
+          not_equal (placement ()) (S4.split ~axis:0)
             (Nx.Placement.mesh mesh [ (0, [ "b"; "a" ]) ]));
       test "a mesh of two cuts prints its extents and cuts" (fun () ->
           let mesh = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ] in

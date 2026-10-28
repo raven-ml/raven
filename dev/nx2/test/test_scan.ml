@@ -9,14 +9,11 @@
    calls its function at most 2⌈log₂ n⌉ times. *)
 
 open Windtrap
+open Nx_support
 module P = Nx.Ptree
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let numel s = Array.fold_left ( * ) 1 s
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
 let ceil_log2 n =
   let rec go k p = if p >= n then k else go (k + 1) (2 * p) in

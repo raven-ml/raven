@@ -7,6 +7,7 @@
    value's elements back, at every dtype and brand. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
@@ -17,31 +18,10 @@ module S2 = (val Nx.devices [ m 0; m 1 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
-
 (* Elements *)
 
 (* Two elements of [dt] are one value: floats by their bits, any two NaNs
    alike. *)
-let same_float a b =
-  (Float.is_nan a && Float.is_nan b)
-  || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
-
-let same (type v s) (dt : (v, s) D.t) (a : v) (b : v) =
-  match D.kind dt with
-  | D.Float -> same_float a b
-  | D.Complex -> same_float a.Complex.re b.Complex.re && same_float a.im b.im
-  | D.Signed | D.Unsigned | D.Boolean -> a = b
-
-let elements dt =
-  Testable.make ~pp:(Format.pp_print_list (D.pp_value dt)) ~equal:(fun a b ->
-      List.length a = List.length b && List.for_all2 (same dt) a b)
-
-let equal_elements dt a b =
-  equal (elements dt) (Array.to_list a) (Array.to_list b)
-
 (* Values of [dt] at shape [s], from drawn bytes: every value of the format,
    NaNs, signed zeros and infinities among them. *)
 let drawn (type v s) (dt : (v, s) D.t) s : v array Gen.t =

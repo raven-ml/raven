@@ -8,6 +8,7 @@
    call. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 
 let m = Nx_support.memory
@@ -23,15 +24,6 @@ let numel s = Array.fold_left ( * ) 1 s
 
 let check ok data fail =
   Nx.Prim.eval ~by:"test" (Nx.Prim.Check { ok; data; fail })
-
-(* The index of the flat position [i] of a value of shape [s], in C order. *)
-let index s i =
-  let idx = Array.make (Array.length s) 0 and k = ref i in
-  for a = Array.length s - 1 downto 0 do
-    idx.(a) <- !k mod s.(a);
-    k := !k / s.(a)
-  done;
-  idx
 
 exception Failed of int
 exception At of int array * float

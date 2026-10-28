@@ -226,3 +226,39 @@ let signalled a =
     a
 
 let quieted a = map_nans (fun frac v -> Int64.logor v (quiet_bit frac)) a
+
+(* Witnesses and indices *)
+
+let pp_ints ppf a =
+  Format.fprintf ppf "[%s]"
+    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
+
+let index s k =
+  let idx = Array.make (Array.length s) 0 and k = ref k in
+  for a = Array.length s - 1 downto 0 do
+    idx.(a) <- !k mod s.(a);
+    k := !k / s.(a)
+  done;
+  idx
+
+let placement () =
+  Windtrap.Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
+let same_float a b =
+  (Float.is_nan a && Float.is_nan b)
+  || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+
+let same (type v s) (dt : (v, s) Nx_array.Dtype.t) (a : v) (b : v) =
+  match Nx_array.Dtype.kind dt with
+  | Float -> same_float a b
+  | Complex -> same_float a.Complex.re b.Complex.re && same_float a.im b.im
+  | Signed | Unsigned | Boolean -> a = b
+
+let elements dt =
+  Windtrap.Testable.make
+    ~pp:(Format.pp_print_list (Nx_array.Dtype.pp_value dt))
+    ~equal:(fun a b ->
+      List.length a = List.length b && List.for_all2 (same dt) a b)
+
+let equal_elements dt a b =
+  Windtrap.equal (elements dt) (Array.to_list a) (Array.to_list b)

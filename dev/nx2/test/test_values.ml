@@ -6,6 +6,7 @@
 (* Values from arrays and arrays from values, through Nx and Nx.Repr. *)
 
 open Windtrap
+open Nx_support
 module A = Nx_array
 
 let m = Nx_support.memory
@@ -13,7 +14,6 @@ let m = Nx_support.memory
 module S2 = (val Nx.devices [ m 0; m 1 ])
 module Other = (val Nx.devices [ m 2 ])
 
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
 
@@ -234,7 +234,7 @@ let repr =
             Nx.Repr.of_shards (S2.split ~axis:0)
               (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ])
           in
-          equal placement (S2.split ~axis:0) (Nx.placement x));
+          equal (placement ()) (S2.split ~axis:0) (Nx.placement x));
     ]
 
 (* The one message format: every refusal of the interface, called wrongly. *)
@@ -310,7 +310,7 @@ let law_placed ((_, p), shape) =
   assume (Array.length shape > 0);
   let x = Nx.place p (Nx.zeros f32 shape) in
   let q = Nx.placement x in
-  equal placement p q;
+  equal (placement ()) p q;
   equal (list string)
     (List.map Rig.name (Nx.rigs (Nx.Placement.devices p)))
     (List.map Rig.name (Nx.rigs (Nx.Placement.devices q)))
