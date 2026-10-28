@@ -3,7 +3,8 @@
 (mdx
  (files
   index.md
-  01-tracing.md)
+  01-tracing.md
+  02-derivatives.md)
  (enabled_if
   (and
    (<> %{profile} sanitize)
