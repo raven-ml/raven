@@ -4235,13 +4235,13 @@ module Rng : sig
       shape lacks, and where a device of [p] does not hold [key], naming the
       {!place} to write. A sampler with array parameters draws where they
       lie, reading [key] beside them as an operation reads its operands
-      ({!Nx.section-devices}). A key with batch axes [b] draws
+      ({!Nx.section-routing}). A key with batch axes [b] draws
       [b] followed by the draw's shape, one draw per key, each the draw that
       key alone gives. Float draws compute at float64 for float64 and at
       float32 for the other floats, and round once to their dtype.
 
-      A sampler reads its key and consumes no donation of it
-      ({!Nx.donate}): the key lives on.
+      A donated key reaching a sampler is lent ({!Nx.section-moving}), and
+      lives on.
 
       A sampler's parameters are arrays, and the draw has their broadcast
       shape. Each parameter is checked against its domain: an element outside
