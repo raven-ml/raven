@@ -121,10 +121,18 @@ val window :
     [i] of [p]'s devices. Raises [Invalid_argument] naming [by] if [p] cuts an
     axis [shape] lacks. *)
 
-val uncut : 'd placement -> 'd placement
-(** [uncut p] is [p] with every axis whole on each of its devices, so that a
-    grid axis that cut one holds copies. It is [p] itself if [p] cuts no
-    axis. *)
+val uncut : ?axis:int -> 'd placement -> 'd placement
+(** [uncut ~axis p] is [p] with [axis] whole on each of its devices, so that
+    the grid axes that cut it hold copies; without [axis], every axis. It is
+    [p] itself if [p] cuts none of them. *)
+
+val shift_axes : by:string -> 'd placement -> int -> 'd placement
+(** [shift_axes ~by p n] is the placement of a value whose axis [a + n] is
+    axis [a] of a value at [p]: it cuts axis [a + n] as [p] cuts axis [a],
+    over the same devices. It is [p] itself if [p] cuts no axis.
+
+    Raises [Invalid_argument] naming [by] if [p] cuts an axis [a] for which
+    [a + n] is negative or not below {!Nx_array.Layout.max_rank}. *)
 
 val pp_placement : Format.formatter -> 'd placement -> unit
 (** [pp_placement] formats a placement on one device as the device's name,

@@ -174,16 +174,33 @@ let window ~by p shape i =
   | Ok w -> w
   | Error e -> invalid_argf "%s: %s" by e
 
-let uncut p =
+let uncut ?axis p =
   if not (Grid.is_cut p.grid) then p
   else
-    let whole g (axis, _) = Grid.uncut g ~axis in
-    normal p.set (Array.fold_left whole p.grid (Grid.cuts p.grid))
+    let cuts = Grid.cuts p.grid in
+    match axis with
+    | None ->
+        let whole g (axis, _) = Grid.uncut g ~axis in
+        normal p.set (Array.fold_left whole p.grid cuts)
+    | Some axis ->
+        if Array.exists (fun (a, _) -> a = axis) cuts then
+          normal p.set (Grid.uncut p.grid ~axis)
+        else p
 
 let pp_placement ppf p =
   Grid.pp
     (fun ppf k -> Format.pp_print_string ppf (Rig.name p.set.rigs.(k)))
     ppf p.grid
+
+let shift_axes ~by p n =
+  let g = p.grid in
+  Array.iter
+    (fun (a, _) ->
+      if a + n < 0 || a + n >= Nx_array.Layout.max_rank then
+        invalid_argf "%s: %a cuts axis %d, and a layout has no axis %d" by
+          pp_placement p a (a + n))
+    (Grid.cuts g);
+  if not (Grid.is_cut g) then p else normal p.set (Grid.map_axes (( + ) n) g)
 
 (* Meshes *)
 

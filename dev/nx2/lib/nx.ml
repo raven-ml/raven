@@ -105,27 +105,15 @@ module Placement = struct
   let mesh m cuts = Devices.mesh ~by:"Nx.Placement.mesh" m cuts
   let devices = Devices.set
   let equal = Devices.equal
-  let uncut = Devices.uncut
+  let uncut p = Devices.uncut p
   let pp = Devices.pp_placement
 
   let with_leading_axis p =
-    let by = "Nx.Placement.with_leading_axis" in
-    let g = Devices.grid p in
-    Array.iter
-      (fun (a, _) ->
-        if a + 1 >= Nx_array.Layout.max_rank then
-          invalid_argf "%s: %a cuts axis %d, the last of %d a layout has" by
-            Devices.pp_placement p a Nx_array.Layout.max_rank)
-      (Grid.cuts g);
-    if not (Grid.is_cut g) then p
-    else Devices.v ~by (Devices.set p) (Grid.map_axes succ g)
+    Devices.shift_axes ~by:"Nx.Placement.with_leading_axis" p 1
 
   let without_leading_axis p =
-    let g = Devices.grid p in
-    if not (Grid.is_cut g) then p
-    else
-      Devices.v ~by:"Nx.Placement.without_leading_axis" (Devices.set p)
-        (Grid.map_axes pred (Grid.uncut g ~axis:0))
+    Devices.shift_axes ~by:"Nx.Placement.without_leading_axis"
+      (Devices.uncut ~axis:0 p) (-1)
 end
 
 module type Devices = sig
@@ -212,8 +200,11 @@ let full_like x v = like ~by:"Nx.full_like" x v
 let zeros_like x = like ~by:"Nx.zeros_like" x (D.zero (dtype x))
 let ones_like x = like ~by:"Nx.ones_like" x (D.one (dtype x))
 
-(* The 0-d [v] of [dt] beside [x], whole on each of [x]'s devices. *)
-let scalar_beside ~by x dt v = fill ~by (Devices.uncut (placement x)) dt [||] v
+(* Where [x] lies, whole on each of its devices. *)
+let beside x = Devices.uncut (placement x)
+
+(* The 0-d [v] of [dt] beside [x]. *)
+let scalar_beside ~by x dt v = fill ~by (beside x) dt [||] v
 
 let scalar_like x v = scalar_beside ~by:"Nx.scalar_like" x (dtype x) v
 
@@ -1293,7 +1284,7 @@ let vector_at ~by p dt vs =
    [x]'s devices. *)
 let written ~by x ps =
   let vs = Array.of_list (List.map Int64.of_int ps) in
-  vector_at ~by (Devices.uncut (placement x)) D.Int64 vs
+  vector_at ~by (beside x) D.Int64 vs
 
 (* A window's start [st], of [n] positions along an axis of extent [d],
    clamped into [0, d - n]. *)
@@ -3610,7 +3601,7 @@ let rows_order ~by keys =
         let q = positions_of ~by (take_axis ~by 0 p (column ~by j keys)) in
         from (j - 1) (take_axis ~by 0 q p)
     in
-    if w = 0 then arange_by ~by (Devices.uncut (placement keys)) D.Int64 0 n 1
+    if w = 0 then arange_by ~by (beside keys) D.Int64 0 n 1
     else from (w - 2) (positions_of ~by (column ~by (w - 1) keys))
 
 let lexsort keys =
@@ -3642,7 +3633,7 @@ let search ~by side s v =
   let lead = if rows then [| Prim.dim v 0 |] else shape v in
   let before = match side with `Left -> 0 | `Right -> 1 in
   (* The counts lie where [v] lies, whole on each of its devices. *)
-  let at = Devices.uncut (placement v) in
+  let at = beside v in
   let r = rounds m in
   let step i = 1 lsl (r - 1 - i) in
   let compared probe =
@@ -3716,7 +3707,7 @@ let unique ?size keys =
   let p = rows_order ~by keys in
   let k = take_axis ~by 0 p (keys64 ~by ~merge:false keys) in
   (* Its counters lie where [keys] lies, whole on each of its devices. *)
-  let at = Devices.uncut (placement keys) in
+  let at = beside keys in
   let i = arange_by ~by at D.Int64 0 n 1 in
   let before =
     take_axis ~by 0
@@ -3771,7 +3762,7 @@ let positions_by ~by ?size c =
   in
   let total = reduce ~by Sum [| 0 |] counts in
   let l = match size with Some l -> l | None -> length ~by total in
-  let at = Devices.uncut (placement c) in
+  let at = beside c in
   let i = arange_by ~by at D.Int64 0 n 1 in
   (* An index of no count goes to its own position below zero, which writes
      nothing, so the targets are distinct. *)
@@ -3964,7 +3955,7 @@ let slice idx x =
 (* Refuses a [v] that fits the selection at no count of its masks: the
    masks' axes, their counts unknown until read, take any extent. *)
 let fits_masks ~by entries v x =
-  let one = fill ~by (Devices.uncut (placement x)) D.Int64 [| 1 |] 0L in
+  let one = fill ~by (beside x) D.Int64 [| 1 |] 0L in
   let dry = List.map (function Some e -> e | None -> T one) entries in
   let ps = picks ~by dry x in
   let sel = selection x ps in
@@ -4017,7 +4008,7 @@ let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
   let h = Array.map (fun q -> q *. Float.of_int (n - 1)) qs in
   let lo = Array.map (fun h -> Float.to_int (Float.floor h)) h in
   let hi = Array.map (fun l -> Stdlib.min (l + 1) (n - 1)) lo in
-  let here = Devices.uncut (placement x) in
+  let here = beside x in
   let index l = vector_at ~by here D.Int64 (Array.map Int64.of_int l) in
   let below = take_axis ~by a (index lo) s
   and above = take_axis ~by a (index hi) s in
@@ -4111,11 +4102,11 @@ let histogram (type s d) ?weights
         cast_by ~by dt
           (scattered ~by Add flat
              (fill ~by (placement flat) D.Int64 [| numel flat |] 1L)
-             (fill ~by (Devices.uncut (placement flat)) D.Int64 [| cells |] 0L))
+             (fill ~by (beside flat) D.Int64 [| cells |] 0L))
     | Some w ->
         scattered ~by Add flat
           (Eval.reshape ~by [| numel w |] w)
-          (fill ~by (Devices.uncut (placement flat)) dt [| cells |] 0.)
+          (fill ~by (beside flat) dt [| cells |] 0.)
   in
   Eval.reshape ~by bins h
 
@@ -4680,7 +4671,7 @@ let first_named ~by ~axes named =
   let r = s.(0) in
   let j = numel named / r in
   let last = j - 1 in
-  let here = Devices.uncut (placement named) in
+  let here = beside named in
   let after =
     Eval.reshape ~by s (leaf ~by here D.Int64 [| r; j |] E.(i64 last - coord 1))
   in
@@ -4769,11 +4760,8 @@ let grouped ~by ~segments ~c ~call ~named ids x =
   (* The counters lie where [ids] lies, whole on each of its devices, and
      values of [r] rows as [ids]'s rows do, so that a scatter into one reads
      [ids]'s rows where they lie. *)
-  let here = Devices.uncut (placement ids) in
-  let by_rows =
-    let p = placement ids in
-    Devices.v ~by (Devices.set p) (Grid.uncut (Devices.grid p) ~axis:1)
-  in
+  let here = beside ids in
+  let by_rows = Devices.uncut ~axis:1 (placement ids) in
   let int64 v = fill ~by here D.Int64 [||] (Int64.of_int v) in
   let along t p = take_along ~by 1 p t in
   let arith2 f a b =
@@ -4906,7 +4894,7 @@ let map_segments ~segments ids f x =
   in
   let p = numel ids in
   if segments = 0 || p = 0 then
-    let here = Devices.uncut (placement x) in
+    let here = beside x in
     let y, out =
       call ~g:0 ~c:1
         (fill ~by here D.Int64 [| 0 |] 0L)
@@ -5370,7 +5358,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         invalid_argf "%s: keys of no dimension need a scale" by
     | None -> 1. /. Float.sqrt (Float.of_int dk)
   in
-  let at = Devices.uncut (placement q) in
+  let at = beside q in
   let st, mask, score = recorded ~at ~tq ?mask ?score () in
   let captures =
     List.filter_map Fun.id [ mask; score ]
@@ -5640,13 +5628,13 @@ let extended_by ~by x n =
   padded ~by ~lo:(Array.make r 0) ~hi (D.zero (dtype x)) x
 
 let odd_bins ~by x n =
-  let at = Devices.uncut (placement x) in
+  let at = beside x in
   take_by ~by ~axis:(-1) (arange_by ~by at D.Int64 1 (2 * n) 2) x
 
 (* The [n] elements of [dt] along one axis beside [x], whole on each of its
    devices, [f k] at [k], computed at float64. *)
 let along_axis ~by x dt n f =
-  let p = Devices.uncut (placement x) in
+  let p = beside x in
   leaf ~by p dt [| n |] (at dt (f E.(cast D.Float64 (coord 0))))
 
 (* [x]'s last axis's first element, or its last, times [c]. *)
@@ -5849,7 +5837,7 @@ let frame_step ~window = function
 (* [win], or the Hann window, of [window] points beside [x], whole on each of
    its devices. *)
 let taper ~by x dt ~window = function
-  | None -> hann_by ~by (Devices.uncut (placement x)) dt window
+  | None -> hann_by ~by (beside x) dt window
   | Some w ->
       if not (Prim.has_shape w [| window |]) then
         invalid_argf "%s: win %a is not [%d]" by pp_value w window;
@@ -6030,7 +6018,7 @@ module Ptree = struct
      placement in walk order, whole on each of its devices. *)
   let first_placement (type d) ~by s x : d Devices.placement =
     match (operands s x : d Value.any list) with
-    | Value.Any a :: _ -> Devices.uncut (placement a)
+    | Value.Any a :: _ -> beside a
     | [] -> invalid_argf "%s: the structure holds no array to lie beside" by
 
   let dot (type c d) s (dt : (float, c) dtype) x y : (float, c, d) tensor =
@@ -6181,7 +6169,7 @@ let check s ok data fail =
       {
         Value.dtype = dtype x;
         layout = Nx_array.Layout.contiguous [||];
-        placement = Devices.uncut (placement x);
+        placement = beside x;
       }
     in
     P (Eval.traced i form Stand_in)

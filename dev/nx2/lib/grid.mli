@@ -68,7 +68,8 @@ val map_axes : (int -> int) -> t -> t
 
 val uncut : t -> axis:int -> t
 (** [uncut g ~axis] is [g] with the value's [axis] whole on every device: the
-    grid axes that cut it hold copies. [g] itself if [axis] is not cut. *)
+    grid axes that cut it hold copies. If [g] does not cut [axis], it is a
+    grid {!equal} to [g]. *)
 
 val cut_like :
   t -> like:t -> axes:int list -> axis:int -> (t, string) result

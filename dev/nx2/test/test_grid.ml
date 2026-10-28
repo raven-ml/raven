@@ -3,10 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Device grids, through the engine's private Grid, copied here. *)
+(* Device grids, and the placements Devices makes of them, through the
+   engine's private Grid and Devices, copied here. *)
 
 open Windtrap
 module M = Nx_array.Move
+
+type b
 
 let grid = Testable.make ~pp:(Grid.pp Format.pp_print_int) ~equal:Grid.equal
 
@@ -22,6 +25,9 @@ let all = [| 0; 1; 2; 3 |]
 let on = v all [| 4 |] [||]
 let split axis = v all [| 4 |] [| (axis, [| 0 |]) |]
 let mesh cuts = v all [| 2; 2 |] cuts
+
+let pair : b Devices.t =
+  Devices.mint ~by:"t" [ Nx_support.memory 0; Nx_support.memory 1 ]
 let pp g = Format.asprintf "%a" (Grid.pp Format.pp_print_int) g
 
 (* Grids over four devices, of a value of rank [rank]. *)
@@ -453,6 +459,10 @@ let operations =
                (Grid.window (split 1) [| 6 |] 0)));
       test "uncutting an axis leaves copies on the same devices" (fun () ->
           equal grid on (Grid.uncut (split 1) ~axis:1));
+      test "uncutting a placement's whole axis is the placement itself"
+        (fun () ->
+          let p = Devices.split ~by:"t" ~axis:1 pair in
+          equal bool true (Devices.uncut ~axis:0 p == p));
       cases "Grid.cut_like refuses" ~name:fst
         [
           ( "grids of two meshes",

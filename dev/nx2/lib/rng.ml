@@ -1453,9 +1453,7 @@ let permutation_by ~by p key n =
   in
   let key = resolve ~by key in
   let axis = Array.length (source_batch key) in
-  let sorted =
-    Devices.v ~by (Devices.set p) (Grid.uncut (Devices.grid p) ~axis)
-  in
+  let sorted = Devices.uncut ~axis p in
   let words = draw ~by ~at:sorted key D.Uint64 [| n |] prog in
   let _, positions =
     Eval.eval ~by
