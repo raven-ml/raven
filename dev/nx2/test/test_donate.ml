@@ -108,147 +108,228 @@ let test_sharer_keeps () =
   equal ~msg:"a view made earlier keeps its elements" (array float_exact)
     [| 1.; 2. |] (elements v)
 
-let test_refused_kills_none () =
-  let x1 = fresh [| 1.; 2. |] in
-  let d1 = Nx.donate x1 in
-  ignore (Nx.mul (Nx.donate x1) (fresh [| 3.; 4. |]));
-  let x2 = fresh [| 5.; 6. |] in
-  invalid ~sub:"Nx.add: float32 [2] was donated to Nx.mul" (fun () ->
-      Nx.add (Nx.donate x2) d1);
-  equal ~msg:"the other donor lives" (array float_exact) [| 10.; 12. |]
-    (elements (Nx.add x2 x2));
-  (* Refused on its first operand, an add kills no handle of its second,
-     which it would broadcast. *)
-  let dead = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  ignore (Nx.copy (Nx.donate dead));
-  let b = Nx.donate (fresh [| 7.; 8. |]) in
-  invalid ~sub:"Nx.add: float32 [2; 2] was donated to Nx.copy" (fun () ->
-      Nx.add dead b);
-  equal ~msg:"the broadcast operand's handle lives" (array float_exact)
-    [| 7.; 8. |] (elements (Nx.copy b));
-  (* A function that computes a narrow float at float32 refuses before the
-     cast that would consume its operand. *)
-  let narrow s = Nx.cast Nx.bfloat16 (fresh_at s (Array.make (s.(0) * s.(1)) 1.)) in
-  let x3 = narrow [| 2; 2 |] in
-  invalid ~sub:"Nx.matrix_rank: rtol" (fun () ->
-      Nx.matrix_rank ~rtol:(-1.) (Nx.donate x3));
-  equal ~msg:"matrix_rank's refused donor lives" (array int) [| 2; 2 |]
-    (Nx.shape (Nx.copy x3));
-  let x4 = narrow [| 2; 3 |] in
-  invalid ~sub:"Nx.cond: " (fun () -> Nx.cond f32 ~p:`One (Nx.donate x4));
-  equal ~msg:"cond's refused donor lives" (array int) [| 2; 3 |]
-    (Nx.shape (Nx.copy x4));
-  (* A norm refuses before the cast to its precision, which would consume
-     its operand. *)
-  List.iter
-    (fun (name, s, f) ->
-      let x = narrow s in
-      invalid ~sub:(name ^ ": ") (fun () -> f (Nx.donate x));
-      equal ~msg:(name ^ "'s refused donor lives") (array int) s
-        (Nx.shape (Nx.copy x)))
-    [
-      ("Nx.vector_norm", [| 2; 2 |], fun d ->
-          ignore (Nx.vector_norm f32 ~ord:Float.nan d));
-      ("Nx.vector_norm", [| 2; 2 |], fun d ->
-          ignore (Nx.vector_norm f32 ~axes:[ 2 ] d));
-      ("Nx.vector_norm", [| 2; 0 |], fun d ->
-          ignore (Nx.vector_norm Nx.float64 ~ord:Float.infinity d));
-      ("Nx.matrix_norm", [| 2; 0 |], fun d ->
-          ignore (Nx.matrix_norm Nx.float64 ~ord:`Two d));
-      ("Nx.matrix_norm", [| 2; 0 |], fun d ->
-          ignore (Nx.matrix_norm f32 ~ord:`NegOne d));
-      ("Nx.cond", [| 2; 2 |], fun d -> ignore (Nx.cond Nx.float8_e4m3fn d));
-      ("Nx.cond", [| 2; 0 |], fun d -> ignore (Nx.cond f32 d));
-    ];
-  (* A routine that takes its result's dtype first refuses its operand's
-     dtype before it consumes the operand. *)
-  List.iter
-    (fun (name, f) ->
-      let x = narrow [| 2; 2 |] in
-      invalid ~sub:(name ^ ": ") (fun () -> f (Nx.donate x));
-      equal ~msg:(name ^ "'s refused donor lives") (array int) [| 2; 2 |]
-        (Nx.shape (Nx.copy x)))
-    [
-      ("Nx.svd", fun d -> ignore (Nx.svd f32 d));
-      ("Nx.eigh", fun d -> ignore (Nx.eigh f32 d));
-      ("Nx.eig", fun d -> ignore (Nx.eig Nx.complex64 d));
-      ("Nx.slogdet", fun d -> ignore (Nx.slogdet f32 d));
-      ("Nx.lstsq", fun d -> ignore (Nx.lstsq f32 d (narrow [| 2; 2 |])));
-    ];
-  (* A composite that slices its operand into one map, or conjugates it,
-     refuses before either. *)
-  let x5 = fresh [| 1.; 2.; 3. |] in
-  invalid ~sub:"Nx.cross: " (fun () ->
-      Nx.cross (Nx.donate x5) (fresh [| 1.; 2. |]));
-  equal ~msg:"cross's refused donor lives" (array int) [| 3 |]
-    (Nx.shape (Nx.copy x5));
-  let z6 = Nx.complex Nx.complex64 ~re:(fresh [| 1.; 2. |]) ~im:(fresh [| 3.; 4. |]) in
-  invalid ~sub:"Nx.hfft: " (fun () -> Nx.hfft Nx.float32 ~axes:[ 1 ] (Nx.donate z6));
-  equal ~msg:"hfft's refused donor lives" (array int) [| 2 |]
-    (Nx.shape (Nx.copy z6));
-  let z7 = Nx.complex Nx.complex64 ~re:(fresh [| 1.; 2. |]) ~im:(fresh [| 3.; 4. |]) in
-  invalid ~sub:"Nx.vecdot: " (fun () ->
-      Nx.vecdot (Nx.donate z7) (Nx.zeros Nx.complex64 [| 3 |]));
-  let parts () = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let z8 = Nx.complex Nx.complex64 ~re:(parts ()) ~im:(parts ()) in
-  invalid ~sub:"Nx.vecdot: " (fun () ->
-      Nx.vecdot (Nx.donate z8) (Nx.zeros Nx.complex64 [| 3; 2 |]));
-  equal ~msg:"vecdot's refused donors live" (array int) [| 2; 2 |]
-    [| Nx.numel (Nx.copy z7); Nx.ndim (Nx.copy z8) |];
-  let x9 = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  invalid ~sub:"Nx.multi_dot: " (fun () ->
-      Nx.multi_dot [ Nx.donate x9; fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |]; fresh [| 1.; 2.; 3. |] ]);
-  equal ~msg:"multi_dot's refused donor lives" (array int) [| 2; 2 |]
-    (Nx.shape (Nx.copy x9));
-  (* A value that fits no count refuses before the mask is read; one that
-     fits all but the count refuses once it has consumed the mask, and
-     leaves the target. *)
-  let m10 = Nx.greater_s (fresh [| 1.; 3. |]) 0. and x10 = fresh [| 1.; 3. |] in
-  invalid ~sub:"Nx.set: " (fun () ->
-      Nx.set [ Nx.M (Nx.donate m10) ] (Nx.zeros f32 [| 2; 2 |]) (Nx.donate x10));
-  equal ~msg:"set's refused mask and target live" (array int) [| 2; 2 |]
-    [| Nx.numel (Nx.copy m10); Nx.numel (Nx.copy x10) |];
-  let m13 = Nx.greater_s (fresh [| 1.; 3. |]) 0. and x13 = fresh [| 1.; 3. |] in
-  invalid ~sub:"Nx.set: " (fun () ->
-      Nx.set [ Nx.M (Nx.donate m13) ] (Nx.zeros f32 [| 3 |]) (Nx.donate x13));
-  invalid ~sub:(dead_in "Nx.copy" m13 "Nx.set") (fun () -> Nx.copy m13);
-  equal ~msg:"set's target lives past its count" (array int) [| 2 |]
-    (Nx.shape (Nx.copy x13));
-  let dead = fresh [| 1.; 3. |] in
-  ignore (Nx.copy (Nx.donate dead));
-  let m11 = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
-  invalid ~sub:"Nx.slice: float32 [2] was donated to Nx.copy" (fun () ->
-      Nx.slice [ Nx.M (Nx.donate m11) ] dead);
-  equal ~msg:"slice's refused mask lives" (array int) [| 2 |]
-    (Nx.shape (Nx.copy m11));
-  let c12 = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
-  invalid ~sub:"Nx.extract: " (fun () ->
-      Nx.extract ~fill:300 (Nx.donate c12) (Nx.zeros Nx.uint8 [| 2 |]));
-  equal ~msg:"extract's refused condition lives" (array int) [| 2 |]
-    (Nx.shape (Nx.copy c12))
+(* A refused call kills nothing: each case makes its operands, passes those it
+   donates through [d], and raises naming its function before any claim; then
+   every donor [d] took keeps its elements, and so does its handle. The causes:
+   a dead operand, beside a handle it would broadcast or align; an argument a
+   function of several operations refuses before its first operation, a cast to
+   its precision or a slice; a kind refusing a dtype; and a rule refusing its
+   operands. *)
+type donating = { d : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t }
 
-(* An operation that broadcasts a handle, refused by its dtype or by a dead
-   operand, kills nothing and names the dead operand. *)
-let test_broadcast_refused () =
+let refusals =
+  let dead s xs =
+    let x = fresh_at s xs in
+    ignore (Nx.copy (Nx.donate x));
+    x
+  in
+  (* A handle of a donor that [Nx.mul] consumed. *)
+  let consumed xs =
+    let x = fresh xs in
+    let h = Nx.donate x in
+    ignore (Nx.mul (Nx.donate x) (fresh xs));
+    h
+  in
+  let narrow s =
+    Nx.cast Nx.bfloat16 (fresh_at s (Array.make (s.(0) * s.(1)) 1.))
+  in
   let ints s xs =
     let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 s xs) in
     Nx.add a (Nx.zeros_like a)
   in
-  let y = ints [| 2 |] [| 1l; 2l |] in
-  let z = ints [| 2; 2 |] [| 3l; 4l; 5l; 6l |] in
-  let h = Nx.donate y in
-  invalid ~sub:"Nx.atan2: Atan2 does not take int32" (fun () -> Nx.atan2 h z);
-  equal ~msg:"the integers' handle reaches a later consumer" (array int32)
-    [| 1l; 2l |]
-    (elements (Nx.copy h));
-  let dead = fresh_at [| 2; 2 |] [| 1.; 0.; 1.; 0. |] in
-  ignore (Nx.copy (Nx.donate dead));
-  let h = Nx.donate (fresh [| 1.; 2. |]) in
-  invalid ~sub:"Nx.logical_and: float32 [2; 2] was donated to Nx.copy"
-    (fun () -> Nx.logical_and h dead);
-  equal ~msg:"the floats' handle reaches a later consumer" (array float_exact)
-    [| 1.; 2. |]
-    (elements (Nx.copy h))
+  let truths () = Nx.less (fresh [| 0.; 2. |]) (fresh [| 1.; 1. |]) in
+  let complex () =
+    Nx.complex Nx.complex64 ~re:(fresh [| 1.; 2. |]) ~im:(fresh [| 3.; 4. |])
+  in
+  let positions () = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
+  let case name sub call = (name, sub, call) in
+  [
+    case "a dead second operand" "Nx.add: float32 [2] was donated to Nx.mul"
+      (fun { d } ->
+        ignore (Nx.add (d (fresh [| 5.; 6. |])) (consumed [| 1.; 2. |])));
+    case "a dead operand beside a handle it broadcasts"
+      "Nx.add: float32 [2; 2] was donated to Nx.copy" (fun { d } ->
+        ignore
+          (Nx.add
+             (dead [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
+             (d (fresh [| 7.; 8. |]))));
+    case "a dead operand beside a handle it aligns"
+      "Nx.add: float32 [2] was donated to Nx.mul" (fun { d } ->
+        ignore (Nx.add (d (fresh [| 5. |])) (consumed [| 1.; 2. |])));
+    case "a dead operand beside a float handle a logical and broadcasts"
+      "Nx.logical_and: float32 [2; 2] was donated to Nx.copy" (fun { d } ->
+        ignore
+          (Nx.logical_and
+             (d (fresh [| 1.; 2. |]))
+             (dead [| 2; 2 |] [| 1.; 0.; 1.; 0. |])));
+    case "a dead operand beside a mask"
+      "Nx.slice: float32 [2] was donated to Nx.copy" (fun { d } ->
+        let m = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
+        ignore (Nx.slice [ Nx.M (d m) ] (dead [| 2 |] [| 1.; 3. |])));
+    case "matrix_rank's negative tolerance, at a narrow float"
+      "Nx.matrix_rank: rtol" (fun { d } ->
+        ignore (Nx.matrix_rank ~rtol:(-1.) (d (narrow [| 2; 2 |]))));
+    case "cond of a 1-norm of a matrix not square, at a narrow float"
+      "Nx.cond: " (fun { d } ->
+        ignore (Nx.cond f32 ~p:`One (d (narrow [| 2; 3 |]))));
+    case "vector_norm's NaN order" "Nx.vector_norm: " (fun { d } ->
+        ignore (Nx.vector_norm f32 ~ord:Float.nan (d (narrow [| 2; 2 |]))));
+    case "vector_norm's axis past the rank" "Nx.vector_norm: " (fun { d } ->
+        ignore (Nx.vector_norm f32 ~axes:[ 2 ] (d (narrow [| 2; 2 |]))));
+    case "vector_norm's infinite order of no element" "Nx.vector_norm: "
+      (fun { d } ->
+        ignore
+          (Nx.vector_norm Nx.float64 ~ord:Float.infinity
+             (d (narrow [| 2; 0 |]))));
+    case "matrix_norm's 2-norm of no element" "Nx.matrix_norm: " (fun { d } ->
+        ignore (Nx.matrix_norm Nx.float64 ~ord:`Two (d (narrow [| 2; 0 |]))));
+    case "matrix_norm's -1-norm of no element" "Nx.matrix_norm: " (fun { d } ->
+        ignore (Nx.matrix_norm f32 ~ord:`NegOne (d (narrow [| 2; 0 |]))));
+    case "cond at a dtype of no infinity" "Nx.cond: " (fun { d } ->
+        ignore (Nx.cond Nx.float8_e4m3fn (d (narrow [| 2; 2 |]))));
+    case "cond of no element" "Nx.cond: " (fun { d } ->
+        ignore (Nx.cond f32 (d (narrow [| 2; 0 |]))));
+    case "svd of a narrow float" "Nx.svd: " (fun { d } ->
+        ignore (Nx.svd f32 (d (narrow [| 2; 2 |]))));
+    case "eigh of a narrow float" "Nx.eigh: " (fun { d } ->
+        ignore (Nx.eigh f32 (d (narrow [| 2; 2 |]))));
+    case "eig of a narrow float" "Nx.eig: " (fun { d } ->
+        ignore (Nx.eig Nx.complex64 (d (narrow [| 2; 2 |]))));
+    case "slogdet of a narrow float" "Nx.slogdet: " (fun { d } ->
+        ignore (Nx.slogdet f32 (d (narrow [| 2; 2 |]))));
+    case "lstsq of a narrow float" "Nx.lstsq: " (fun { d } ->
+        ignore (Nx.lstsq f32 (d (narrow [| 2; 2 |])) (narrow [| 2; 2 |])));
+    case "cross of vectors of two extents" "Nx.cross: " (fun { d } ->
+        ignore (Nx.cross (d (fresh [| 1.; 2.; 3. |])) (fresh [| 1.; 2. |])));
+    case "hfft along an axis past the rank" "Nx.hfft: " (fun { d } ->
+        ignore (Nx.hfft Nx.float32 ~axes:[ 1 ] (d (complex ()))));
+    case "vecdot of vectors of two extents" "Nx.vecdot: " (fun { d } ->
+        ignore (Nx.vecdot (d (complex ())) (Nx.zeros Nx.complex64 [| 3 |])));
+    case "vecdot of matrices of two extents" "Nx.vecdot: " (fun { d } ->
+        let parts () = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+        let z = Nx.complex Nx.complex64 ~re:(parts ()) ~im:(parts ()) in
+        ignore (Nx.vecdot (d z) (Nx.zeros Nx.complex64 [| 3; 2 |])));
+    case "multi_dot of operands that do not chain" "Nx.multi_dot: "
+      (fun { d } ->
+        let m () = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+        ignore (Nx.multi_dot [ d (m ()); m (); fresh [| 1.; 2.; 3. |] ]));
+    case "set of a value that fits no count" "Nx.set: " (fun { d } ->
+        let m = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
+        ignore
+          (Nx.set
+             [ Nx.M (d m) ]
+             (Nx.zeros f32 [| 2; 2 |])
+             (d (fresh [| 1.; 3. |]))));
+    case "extract's fill outside the dtype" "Nx.extract: " (fun { d } ->
+        let c = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
+        ignore (Nx.extract ~fill:300 (d c) (Nx.zeros Nx.uint8 [| 2 |])));
+    case "atan2 of integers, a handle it broadcasts"
+      "Nx.atan2: Atan2 does not take int32" (fun { d } ->
+        ignore
+          (Nx.atan2
+             (d (ints [| 2 |] [| 1l; 2l |]))
+             (ints [| 2; 2 |] [| 3l; 4l; 5l; 6l |])));
+    case "atan2 of integers, the first donated"
+      "Nx.atan2: Atan2 does not take int32" (fun { d } ->
+        ignore
+          (Nx.atan2 (d (ints [| 2 |] [| 1l; 2l |])) (ints [| 2 |] [| 3l; 4l |])));
+    case "atan2 of integers, the second donated"
+      "Nx.atan2: Atan2 does not take int32" (fun { d } ->
+        ignore
+          (Nx.atan2 (ints [| 2 |] [| 3l; 4l |]) (d (ints [| 2 |] [| 1l; 2l |]))));
+    case "sin of integers" "Nx.sin: Sin does not take int32" (fun { d } ->
+        ignore (Nx.sin (d (ints [| 2 |] [| 1l; 2l |]))));
+    case "bitwise_and of floats" "Nx.bitwise_and: And does not take float32"
+      (fun { d } ->
+        ignore (Nx.bitwise_and (d (fresh [| 1.; 2. |])) (fresh [| 3.; 4. |])));
+    case "fma of booleans, the first donated" "Nx.fma: Fma does not take bool"
+      (fun { d } -> ignore (Nx.fma (d (truths ())) (truths ()) (truths ())));
+    case "fma of booleans, the second donated" "Nx.fma: Fma does not take bool"
+      (fun { d } -> ignore (Nx.fma (truths ()) (d (truths ())) (truths ())));
+    case "fma of booleans, the third donated" "Nx.fma: Fma does not take bool"
+      (fun { d } -> ignore (Nx.fma (truths ()) (truths ()) (d (truths ()))));
+    case "a scatter's sum into booleans" "Nx.scatter: Add does not take bool"
+      (fun { d } ->
+        ignore
+          (Nx.scatter ~combine:Add ~axis:0 (positions ()) (truths ())
+             (d (truths ()))));
+    case "a scatter's updates of another shape than its positions"
+      "Nx.scatter: " (fun { d } ->
+        ignore
+          (Nx.scatter ~axis:0 (positions ())
+             (fresh [| 1.; 2.; 3. |])
+             (d (fresh [| 1.; 2. |]))));
+    case "a contraction's init of another shape than its result"
+      "test: init of shape" (fun { d } ->
+        let a = fresh_at [| 2; 3 |] (Array.make 6 1.) in
+        ignore
+          (Nx.Prim.eval ~by:"test"
+             (Contract
+                {
+                  batch = [||];
+                  contracting = [| (1, 1) |];
+                  acc = D.Any D.Float32;
+                  out = f32;
+                  a;
+                  b = a;
+                  init = Some (d (fresh_at [| 2; 3 |] (Array.make 6 2.)));
+                  a_scale = None;
+                  b_scale = None;
+                  segments = None;
+                })));
+    case "a map's load of another shape than its loop" "test: load 1 has shape"
+      (fun { d } ->
+        let prog =
+          Nx_kernel.Prog.v
+            ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
+            [| Nx_kernel.Prog.In 0 |] ~outs:[| 0 |]
+        in
+        ignore
+          (Nx.Prim.eval ~by:"test"
+             (Map
+                {
+                  layout = Nx_array.Layout.contiguous [| 2 |];
+                  prog;
+                  outs = [ f32 ];
+                  loads =
+                    [|
+                      Plain (d (fresh [| 1.; 2. |]));
+                      Plain (fresh [| 1.; 2.; 3. |]);
+                    |];
+                  at = None;
+                })));
+  ]
+
+let test_refusals =
+  cases
+    ~name:(fun (name, _, _) -> name)
+    "a refused call kills nothing" refusals
+    (fun (_, sub, call) ->
+      let checks = ref [] in
+      let d : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t =
+       fun x ->
+        let before = Nx.to_string x in
+        let h = Nx.donate x in
+        let check () =
+          equal ~msg:"the donor" string before (Nx.to_string x);
+          equal ~msg:"its handle" string before (Nx.to_string (Nx.copy h))
+        in
+        checks := check :: !checks;
+        h
+      in
+      invalid ~sub (fun () -> call { d });
+      at_least ~msg:"donors taken" int ~than:1 (List.length !checks);
+      List.iter (fun check -> check ()) (List.rev !checks))
+
+(* A set whose value fits its selection but for the mask's count reads the mask,
+   which it consumes, before it refuses, and leaves the target. *)
+let test_set_count_refused () =
+  let m = Nx.greater_s (fresh [| 1.; 3. |]) 0. and x = fresh [| 1.; 3. |] in
+  invalid ~sub:"Nx.set: " (fun () ->
+      Nx.set [ Nx.M (Nx.donate m) ] (Nx.zeros f32 [| 3 |]) (Nx.donate x));
+  invalid ~sub:(dead_in "Nx.copy" m "Nx.set") (fun () -> Nx.copy m);
+  equal ~msg:"the target lives" (array float_exact) [| 1.; 3. |]
+    (elements (Nx.copy x))
 
 (* A function of several operations reads its handles as live values over
    their memory, shared, and kills nothing: the donor beside its handle, one
@@ -347,104 +428,6 @@ let test_lent () =
       ignore (Nx.mul (Nx.donate x) t));
   equal ~msg:"the tracer's donor" (array float_exact) [| 1.; 2. |] (peek x);
   equal ~msg:"the tracer's donor: fresh memory" bool false (in_place x)
-
-(* A kind refusing its operands' dtypes kills nothing, though its result would
-   fit a handle's memory: an operation checks before it takes the memory. *)
-let test_dtype_refused () =
-  let ints xs =
-    let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 [| 2 |] xs) in
-    Nx.add a (Nx.zeros_like a)
-  in
-  let y = ints [| 1l; 2l |] and x = ints [| 3l; 4l |] in
-  let refused sub f = invalid ~sub f in
-  refused "Nx.atan2: Atan2 does not take int32" (fun () ->
-      Nx.atan2 (Nx.donate y) x);
-  refused "Nx.atan2: Atan2 does not take int32" (fun () ->
-      Nx.atan2 x (Nx.donate y));
-  refused "Nx.sin: Sin does not take int32" (fun () -> Nx.sin (Nx.donate y));
-  equal ~msg:"the integers live" (array int32) [| 2l; 4l |]
-    (elements (Nx.add y y));
-  let f = fresh [| 1.; 2. |] and g = fresh [| 3.; 4. |] in
-  refused "Nx.bitwise_and: And does not take float32" (fun () ->
-      Nx.bitwise_and (Nx.donate f) g);
-  equal ~msg:"the floats live" (array float_exact) [| 2.; 4. |]
-    (elements (Nx.add f f));
-  let truths () = Nx.less (fresh [| 0.; 2. |]) (fresh [| 1.; 1. |]) in
-  let p = truths () and q = truths () and r = truths () in
-  let fma = "Nx.fma: Fma does not take bool" in
-  refused fma (fun () -> Nx.fma (Nx.donate p) q r);
-  refused fma (fun () -> Nx.fma q (Nx.donate p) r);
-  refused fma (fun () -> Nx.fma q r (Nx.donate p));
-  equal ~msg:"the booleans live" (array bool) [| true; false |]
-    (elements (Nx.copy p))
-
-(* An operation whose rule refuses its operands kills nothing, though its
-   result would take a handle's memory: a scatter's combine refusing the
-   target's dtype or updates of another shape than the positions, a
-   contraction's init of another shape than its result, a map's load of
-   another shape than its loop. *)
-let test_rule_refused () =
-  let truths () = Nx.less (fresh [| 0.; 2. |]) (fresh [| 1.; 1. |]) in
-  let b = truths () and u = truths () in
-  let p = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
-  invalid ~sub:"Nx.scatter: Add does not take bool" (fun () ->
-      Nx.scatter ~combine:Add ~axis:0 p u (Nx.donate b));
-  equal ~msg:"the booleans live" (array bool) [| true; false |]
-    (elements (Nx.copy b));
-  let x = fresh [| 1.; 2. |] in
-  invalid ~sub:"Nx.scatter" (fun () ->
-      Nx.scatter ~axis:0 p (fresh [| 1.; 2.; 3. |]) (Nx.donate x));
-  equal ~msg:"the scatter's target lives" (array float_exact) [| 1.; 2. |]
-    (elements (Nx.copy x));
-  let a = fresh_at [| 2; 3 |] (Array.make 6 1.) in
-  let g = fresh_at [| 2; 3 |] (Array.make 6 2.) in
-  invalid ~sub:"test: init of shape" (fun () ->
-      Nx.Prim.eval ~by:"test"
-        (Contract
-           {
-             batch = [||];
-             contracting = [| (1, 1) |];
-             acc = D.Any D.Float32;
-             out = f32;
-             a;
-             b = a;
-             init = Some (Nx.donate g);
-             a_scale = None;
-             b_scale = None;
-             segments = None;
-           }));
-  equal ~msg:"the init lives" (array float_exact) (Array.make 6 2.)
-    (elements (Nx.copy g));
-  let x = fresh [| 1.; 2. |] in
-  let prog =
-    Nx_kernel.Prog.v
-      ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
-      [| Nx_kernel.Prog.In 0 |] ~outs:[| 0 |]
-  in
-  invalid ~sub:"test: load 1 has shape" (fun () ->
-      Nx.Prim.eval ~by:"test"
-        (Map
-           {
-             layout = Nx_array.Layout.contiguous [| 2 |];
-             prog;
-             outs = [ f32 ];
-             loads = [| Plain (Nx.donate x); Plain (fresh [| 1.; 2.; 3. |]) |];
-             at = None;
-           }));
-  equal ~msg:"the map's load lives" (array float_exact) [| 1.; 2. |]
-    (elements (Nx.copy x))
-
-(* An operation that aligns its operands, as [add] broadcasts [1] to [2],
-   checks them all before it consumes any. *)
-let test_aligned_refusal () =
-  let x2 = fresh [| 1.; 2. |] in
-  let d2 = Nx.donate x2 in
-  ignore (Nx.mul (Nx.donate x2) (fresh [| 3.; 4. |]));
-  let x1 = fresh [| 5. |] in
-  invalid ~sub:"Nx.add: float32 [2] was donated to Nx.mul" (fun () ->
-      Nx.add (Nx.donate x1) d2);
-  equal ~msg:"the other donor lives" (array float_exact) [| 10. |]
-    (elements (Nx.add x1 x1))
 
 (* A creation has bytes from the call on, so a donation of one dies as any
    value's does. *)
@@ -2911,12 +2894,9 @@ let () =
              test "a one-to-one movement passes the handle on" test_passed_on;
              test "a value sharing the memory keeps its elements"
                test_sharer_keeps;
-             test "a refused consumer kills no donor" test_refused_kills_none;
-             test "a dtype refusal kills no donor" test_dtype_refused;
-             test "a rule's refusal kills no donor" test_rule_refused;
-             test "a refused broadcast kills no donor" test_broadcast_refused;
-             test "an aligning consumer checks before it consumes"
-               test_aligned_refusal;
+             test_refusals;
+             test "a set refused for its value's count consumes the mask alone"
+               test_set_count_refused;
              test "a donated creation dies" test_creation_dies;
              test "a value whose shards lie in one allocation is donated"
                test_shards_of_one_allocation;
