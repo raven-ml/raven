@@ -2,7 +2,6 @@
  (name bench_decode)
  (libraries
   nx
-  nx.amd
   rig
   rig.cuda
   rig.metal

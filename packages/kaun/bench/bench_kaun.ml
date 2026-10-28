@@ -28,10 +28,10 @@ let d_out = 10
 let lr = 1e-3
 
 module Mlp = struct
-  type 'a t = {
-    l1 : 'a Kaun.Linear.t;
-    l2 : 'a Kaun.Linear.t;
-    l3 : 'a Kaun.Linear.t;
+  type ('a, 'd) t = {
+    l1 : ('a, 'd) Kaun.Linear.t;
+    l2 : ('a, 'd) Kaun.Linear.t;
+    l3 : ('a, 'd) Kaun.Linear.t;
   }
 
   let walk c { l1; l2; l3 } =
@@ -56,10 +56,10 @@ let cnn_img = 28
 let cnn_feats = 16 * 5 * 5
 
 module Cnn = struct
-  type 'a t = {
-    c1 : 'a Kaun.Conv.t;
-    c2 : 'a Kaun.Conv.t;
-    head : 'a Kaun.Linear.t;
+  type ('a, 'd) t = {
+    c1 : ('a, 'd) Kaun.Conv.t;
+    c2 : ('a, 'd) Kaun.Conv.t;
+    head : ('a, 'd) Kaun.Linear.t;
   }
 
   let walk c { c1; c2; head } =
@@ -89,13 +89,15 @@ let cnn = Nx.Ptree.instantiate (module Cnn)
 let () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* MLP: inputs, parameters, and both optimizer states. *)
-  let x = Nx.randn Nx.float32 [| batch; d_in |] in
+  let x = Nx.Rng.normal Nx.float32 [| batch; d_in |] in
   let y = one_hot batch in
   let params =
     {
-      Mlp.l1 = Kaun.Linear.init ~inputs:d_in ~outputs:d_h1;
-      l2 = Kaun.Linear.init ~inputs:d_h1 ~outputs:d_h2;
-      l3 = Kaun.Linear.init ~inputs:d_h2 ~outputs:d_out;
+      Mlp.l1 =
+        Kaun.Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:d_in ~outputs:d_h1;
+      l2 = Kaun.Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:d_h1 ~outputs:d_h2;
+      l3 =
+        Kaun.Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:d_h2 ~outputs:d_out;
     }
   in
   let loss p = Kaun.Loss.softmax_cross_entropy (Mlp.apply p x) y in
@@ -117,13 +119,19 @@ let () =
   in
 
   (* CNN: inputs, parameters, and Adam state. *)
-  let cx = Nx.randn Nx.float32 [| cnn_batch; 1; cnn_img; cnn_img |] in
+  let cx = Nx.Rng.normal Nx.float32 [| cnn_batch; 1; cnn_img; cnn_img |] in
   let cy = one_hot cnn_batch in
   let cnn_params =
     {
-      Cnn.c1 = Kaun.Conv.init ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
-      c2 = Kaun.Conv.init ~in_channels:8 ~out_channels:16 ~kernel_size:(3, 3);
-      head = Kaun.Linear.init ~inputs:cnn_feats ~outputs:d_out;
+      Cnn.c1 =
+        Kaun.Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:8
+          ~kernel_size:(3, 3);
+      c2 =
+        Kaun.Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:8 ~out_channels:16
+          ~kernel_size:(3, 3);
+      head =
+        Kaun.Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:cnn_feats
+          ~outputs:d_out;
     }
   in
   let cnn_loss p = Kaun.Loss.softmax_cross_entropy (Cnn.apply p cx) cy in
@@ -139,8 +147,10 @@ let () =
   (* A single Linear layer in isolation: forward, and value_and_grad through
      it. *)
   let lin_in = 512 and lin_out = 512 and lin_batch = 128 in
-  let lin = Kaun.Linear.init ~inputs:lin_in ~outputs:lin_out in
-  let lx = Nx.randn Nx.float32 [| lin_batch; lin_in |] in
+  let lin =
+    Kaun.Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:lin_in ~outputs:lin_out
+  in
+  let lx = Nx.Rng.normal Nx.float32 [| lin_batch; lin_in |] in
   let lin_loss p = Nx.sum (Kaun.Linear.apply p lx) in
 
   let budgets =

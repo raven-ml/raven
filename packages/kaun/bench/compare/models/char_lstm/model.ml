@@ -67,11 +67,13 @@ let read_spec path =
 (* Model *)
 
 module Lstm = struct
-  type 'a t = {
-    emb : 'a Kaun.Embedding.t;  (** [vocab; embed] *)
-    ih : 'a Kaun.Linear.t;  (** [embed; 4 * hidden], the input-to-gate map *)
-    hh : 'a Kaun.Linear.t;  (** [hidden; 4 * hidden], the state-to-gate map *)
-    head : 'a Kaun.Linear.t;  (** [hidden; vocab] *)
+  type ('a, 'd) t = {
+    emb : ('a, 'd) Kaun.Embedding.t;  (** [vocab; embed] *)
+    ih : ('a, 'd) Kaun.Linear.t;
+        (** [embed; 4 * hidden], the input-to-gate map *)
+    hh : ('a, 'd) Kaun.Linear.t;
+        (** [hidden; 4 * hidden], the state-to-gate map *)
+    head : ('a, 'd) Kaun.Linear.t;  (** [hidden; vocab] *)
   }
 
   let walk c p =
@@ -83,21 +85,23 @@ module Lstm = struct
     { emb; ih; hh; head }
 end
 
-(* The structure the transformations walk, and the momentum state over it. *)
+(* The structure the transformations walk, and the momentum state over it, at
+   the set a run places them on. *)
 
-let model = Nx.Ptree.instantiate (module Lstm)
-let state = Nx.Ptree.pair model (Vega.sgd_ptree model)
+let model () = Nx.Ptree.instantiate (module Lstm)
+let state model = Nx.Ptree.pair model (Vega.sgd_ptree model)
 
 (* Logits for a whole [batch; seq_len] id grid, as [batch; seq_len; vocab].
 
    The input-to-gate map does not depend on the recurrent state, so it applies
    to the sequence in one matmul; only the state-to-gate map runs per step. The
    four gate blocks sit side by side along the last axis in the order the
-   fixture's weights store them: input, forget, cell, output. *)
+   fixture's weights store them: input, forget, cell, output. The initial state
+   is zeros beside the first step's gates. *)
 let logits spec p ids =
   let x = Kaun.Embedding.apply p.Lstm.emb ids in
   let xg = Kaun.Linear.apply p.Lstm.ih x in
-  let zero = Nx.zeros Nx.float32 [| spec.batch; spec.hidden |] in
+  let zero = Nx.zeros_like (Nx.slice [ A; I 0; R (0, spec.hidden) ] xg) in
   let h = ref zero and c = ref zero in
   let outputs = ref [] in
   for t = 0 to spec.seq_len - 1 do
@@ -124,10 +128,10 @@ let loss spec p inputs targets =
 (* Training step
 
    The step's batch is read and the parameters and the optimizer state are
-   consumed: a compiled step writes the updated state over the storage of the
-   one it was given. The loss comes back beside the updated state. *)
+   donated at the call, so the call frees the storage of the state it was given.
+   The loss comes back beside the updated state. *)
 
-let train_step spec inputs targets (params, opt) =
+let train_step model spec inputs targets (params, opt) =
   let objective p = loss spec p inputs targets in
   let l, grads = Rune.value_and_grad model objective params in
   let state =
@@ -152,7 +156,7 @@ let load_fixture spec path =
   let linear ~inputs ~outputs ~w ~b =
     let w = weight ~shape:[| outputs; inputs |] w in
     let b = weight ~shape:[| outputs |] b in
-    { Kaun.Linear.w = Nx.contiguous (Nx.transpose w); b = Some b }
+    { Kaun.Linear.w = Nx.copy (Nx.transpose w); b = Some b }
   in
   let params =
     {
@@ -185,32 +189,43 @@ let now_ms () = Unix.gettimeofday () *. 1e3
 
 let run spec ~fixture ~variant ~device ~steps =
   let params, tokens = load_fixture spec fixture in
+  let module D = (val Nx.devices [ Devices.first device ]) in
+  let model = model () in
+  let state = state model in
   let step =
     match variant with
-    | "eager" -> train_step spec
+    | "eager" -> train_step model spec
     | "jit" ->
-        Rune.jit
-          Nx.Ptree.(
-            tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
-          (train_step spec)
+        let compiled =
+          Rune.jit
+            Nx.Ptree.(
+              tensor @-> tensor @-> state @-> returns (pair tensor state))
+            (train_step model spec)
+        in
+        fun inputs targets s ->
+          let before = Rune.evaluations () in
+          let r = compiled inputs targets (Nx.Ptree.donate state s) in
+          (* A step rune declines to lower would time nx's operations under
+             the jit variant's name. *)
+          if Rune.evaluations () > before then
+            failwith "char_lstm: the jit step ran evaluated";
+          r
     | v -> failwith ("unknown variant " ^ v)
   in
   let n_batches = (Nx.shape tokens).(0) in
   (* The state starts on the device, so the compiled step runs there and its
      results stay there. *)
+  let params = Nx.Ptree.place (module Lstm) D.on params in
   let state =
-    ref
-      (Nx.Ptree.map state
-         (fun _ t -> Nx.place (Nx.Placement.on (Devices.first device)) t)
-         (params, Vega.sgd_init model params))
+    ref (params, Vega.sgd_init (Nx.Ptree.instantiate (module Lstm)) params)
   in
   let losses = Array.make steps 0. and step_ms = Array.make steps 0. in
   for i = 0 to steps - 1 do
     let batch = Nx.slice [ I (i mod n_batches) ] tokens in
-    let inputs = Nx.contiguous (Nx.slice [ A; R (0, spec.seq_len) ] batch) in
-    let targets =
-      Nx.contiguous (Nx.slice [ A; R (1, spec.seq_len + 1) ] batch)
+    let cut lo =
+      Nx.place D.on (Nx.copy (Nx.slice [ A; R (lo, lo + spec.seq_len) ] batch))
     in
+    let inputs = cut 0 and targets = cut 1 in
     let t0 = now_ms () in
     let loss, next = step inputs targets !state in
     (* Reading the loss forces the step to complete: on a device the value is
@@ -241,13 +256,13 @@ let emit ~variant ~device ~losses ~step_ms =
    variant this process cannot run must not be reported as one it can. *)
 let device_works name =
   match
-    Rune.jit'
-      (fun x -> Nx.add x x)
-      (Nx.place
-         (Nx.Placement.on (Devices.first name))
-         (Nx.ones Nx.float32 [| 4 |]))
+    let module D = (val Nx.devices [ Devices.first name ]) in
+    let before = Rune.evaluations () in
+    Nx.sync
+      (Rune.jit' (fun x -> Nx.add x x) (Nx.ones_at D.on Nx.float32 [| 4 |]));
+    Rune.evaluations () = before
   with
-  | (_ : Nx.float32_t) -> true
+  | compiled -> compiled
   | exception _ -> false
 
 let emit_variants () =

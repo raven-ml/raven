@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* The jitted decode step of a GPT-2 124M shaped decoder: one token in, one
-   token out, through key-value caches, with the state consumed and the sampled
+   token out, through key-value caches, with the state donated and the sampled
    token read back on the host as a generate loop does. The stack is built here
    from kaun layers with zero weights: the step's cost does not depend on their
    values, and kaun ships no model to depend on. Each weight, and the position
@@ -36,45 +36,50 @@ and heads = 12
 let head_dim = embd / heads
 let eps = 1e-5
 
+(* The decoder lies on the host. *)
+type tensor = Nx.host Nx.float32_t
+
 type block = {
-  ln1 : Nx.float32_t Layer_norm.t;
-  attn : Nx.float32_t Attention.t;
-  ln2 : Nx.float32_t Layer_norm.t;
-  fc : Nx.float32_t Linear.t;
-  proj : Nx.float32_t Linear.t;
+  ln1 : (tensor, Nx.host) Layer_norm.t;
+  attn : (tensor, Nx.host) Attention.t;
+  ln2 : (tensor, Nx.host) Layer_norm.t;
+  fc : (tensor, Nx.host) Linear.t;
+  proj : (tensor, Nx.host) Linear.t;
 }
 
 type model = {
-  wte : Nx.float32_t Embedding.t;
-  wpe : Nx.float32_t Embedding.t;
+  wte : (tensor, Nx.host) Embedding.t;
+  wpe : (tensor, Nx.host) Embedding.t;
   blocks : block list;
-  ln_f : Nx.float32_t Layer_norm.t;
+  ln_f : (tensor, Nx.host) Layer_norm.t;
 }
 
 let model () =
-  let zeros ~fan_in ~fan_out dtype shape =
-    Nx.copy (Init.zeros ~fan_in ~fan_out dtype shape)
+  let key = Nx.Rng.key 0 in
+  let zeros key ~fan_in ~fan_out dtype shape =
+    Nx.copy (Init.zeros key ~fan_in ~fan_out dtype shape)
   in
   let norm () =
-    let { Layer_norm.gamma; beta } = Layer_norm.init ~dim:embd in
+    let { Layer_norm.gamma; beta } = Layer_norm.init ~dim:embd Nx.Host.on in
     { Layer_norm.gamma = Nx.copy gamma; beta = Nx.copy beta }
   in
   let linear ~inputs ~outputs =
-    Linear.make ~w_init:zeros ~bias_init:zeros ~inputs ~outputs Nx.float32
+    Linear.make ~w_init:zeros ~bias_init:zeros ~key ~inputs ~outputs Nx.float32
   in
   let block () =
     {
       ln1 = norm ();
       attn =
-        Attention.make ~w_init:zeros ~bias_init:zeros ~embed_dim:embd Nx.float32;
+        Attention.make ~w_init:zeros ~bias_init:zeros ~key ~embed_dim:embd
+          Nx.float32;
       ln2 = norm ();
       fc = linear ~inputs:embd ~outputs:inner;
       proj = linear ~inputs:inner ~outputs:embd;
     }
   in
   {
-    wte = Embedding.make ~init:zeros ~vocab ~dim:embd Nx.float32;
-    wpe = Embedding.make ~init:zeros ~vocab:positions ~dim:embd Nx.float32;
+    wte = Embedding.make ~init:zeros ~key ~vocab ~dim:embd Nx.float32;
+    wpe = Embedding.make ~init:zeros ~key ~vocab:positions ~dim:embd Nx.float32;
     blocks = List.init layers (fun _ -> block ());
     ln_f = norm ();
   }
@@ -109,7 +114,18 @@ let logits m h =
 
 let cache ~slots =
   List.init layers (fun _ ->
-      Attention.Cache.make ~slots ~kv_heads:heads ~head_dim Nx.float32)
+      Attention.Cache.make ~slots ~kv_heads:heads ~head_dim Nx.float32
+        Nx.Host.on)
+
+(* [lowered name f] is [f ()], refused when a compiled call in it ran
+   evaluated: a compiled row that rune declines to lower would time
+   evaluation and look like a regression of the compiler. *)
+let lowered name f =
+  let before = Rune.evaluations () in
+  let y = f () in
+  if Rune.evaluations () > before then
+    failwith (name ^ ": a compiled call ran evaluated");
+  y
 
 (* A decode loop warmed past its two compilations. The returned thunk decodes
    one token at a fixed position in the middle of the cache, from the previous
@@ -117,17 +133,18 @@ let cache ~slots =
    of samples. *)
 let decoder params ~len =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
-  let step =
+  let compiled =
     Rune.jit
       Nx.Ptree.(
-        tensor @-> Cache_index.ptree @-> consumes caches
-        @@ returns (pair tensor caches))
+        tensor @-> v Cache_index.walk @-> caches
+        @-> returns (pair tensor caches))
       (fun token index caches ->
         let seq = (Nx.shape token).(1) in
         let h, caches = cached params caches index token in
         let last = Nx.slice [ A; I (seq - 1) ] h in
         (Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 (logits params last)), caches))
   in
+  let step token index cs = compiled token index (Nx.Ptree.donate caches cs) in
   let state =
     ref
       (step
@@ -146,7 +163,7 @@ let decoder params ~len =
     state := step token middle caches;
     ignore (Nx.item [ 0; 0 ] (fst !state) : int64)
   in
-  advance ();
+  lowered "decode" advance;
   advance
 
 (* A case: its name, and its setup, which compiles the case's program and
@@ -186,17 +203,22 @@ and inputs = 2880
 let random shape =
   let last = Array.length shape - 1 in
   let words = Array.mapi (fun i n -> if i = last then n / 4 else n) shape in
-  Nx.reshape shape (Nx.bitcast Nx.uint8 (Nx.Rng.bits (Nx.Rng.key 42) words))
+  Nx.reshape shape
+    (Nx.bitcast Nx.uint8 (Nx.Rng.bits ~key:(Nx.Rng.key 42) words))
 
-let compiled f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f
-let eager f = f
+(* How a product runs: compiled, or eagerly, which only the host does. *)
+type run = Compiled | Eager
 
-let routed ~run ~tokens device =
-  let place t = Nx.place (Nx.Placement.on device) (Nx.copy t) in
+(* [own at t] is [t] copied to storage of its own, at [at]. *)
+let own at t = Nx.place at (Nx.copy t)
+
+let routed ~run ~tokens at =
   let w =
-    Nx_quant.mxfp4
-      ~scales:(place (Nx.full Nx.uint8 [| experts; outputs; inputs / 32 |] 127))
-      (place (random [| experts; outputs; inputs / 2 |]))
+    Nx_quant.place at
+      (Nx_quant.mxfp4
+         ~scales:
+           (Nx.copy (Nx.full Nx.uint8 [| experts; outputs; inputs / 32 |] 127))
+         (Nx.copy (random [| experts; outputs; inputs / 2 |])))
   in
   (* Each token's experts, distinct, spread over all of them. *)
   let ids =
@@ -206,17 +228,20 @@ let routed ~run ~tokens device =
   let x = Nx.full Nx.float32 [| tokens; 1; inputs |] 0.5 in
   let product ids x =
     Nx.map_segments ~segments:experts ids
-      (fun owners rows ->
-        Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:owners w) rows)
+      (fun owners rows -> Nx_quant.apply (Nx_quant.take ~axis:0 owners w) rows)
       x
   in
-  let f = run product in
-  let ids = place ids and x = place x in
-  ignore (f ids x);
-  fun () -> f ids x
-
-(* [wait y] returns once the work that writes [y] is done. *)
-let wait y = List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards y))
+  let f =
+    match run with
+    | Eager -> product
+    | Compiled ->
+        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) product
+  in
+  let ids = own at ids and x = own at x in
+  (match run with
+  | Eager -> ignore (f ids x)
+  | Compiled -> ignore (lowered "moe" (fun () -> f ids x)));
+  fun () -> Nx.sync (f ids x)
 
 (* Dense quantised products, one per format, at a decode step's shape: one token
    by a [[| 4096; 4096 |]] projection, compiled. MXFP4 is read from a
@@ -232,8 +257,9 @@ type part = Fixed of int array | Random of int
 (* The float16 [1.], little-endian. *)
 let one = [| 0x00; 0x3c |]
 
-(* [dense] rows of blocks of [per] values, each laid out as [parts]. *)
-let blocks ~per parts place =
+(* [dense] rows of blocks of [per] values, each laid out as [parts], on the host
+   in storage of their own. *)
+let blocks ~per parts =
   let n = dense / per in
   let part = function
     | Random len -> random [| dense; n; len |]
@@ -243,76 +269,74 @@ let blocks ~per parts place =
           (Nx.create Nx.uint8 [| 1; 1; len |] b)
   in
   let b = Nx.concatenate ~axis:2 (List.map part parts) in
-  place (Nx.reshape [| dense; -1 |] b)
+  Nx.copy (Nx.reshape [| dense; -1 |] b)
 
 let formats =
   [
     ( "mxfp4",
-      fun place ->
+      fun () ->
         Nx_quant.mxfp4
-          ~scales:(place (Nx.full Nx.uint8 [| dense; dense / 32 |] 127))
-          (place (random [| dense; dense / 2 |])) );
+          ~scales:(Nx.copy (Nx.full Nx.uint8 [| dense; dense / 32 |] 127))
+          (Nx.copy (random [| dense; dense / 2 |])) );
     ( "mxfp4 blocks",
-      fun place ->
-        Nx_quant.mxfp4_blocks
-          (blocks ~per:32 [ Fixed [| 127 |]; Random 16 ] place) );
-    ( "q8_0",
-      fun place -> Nx_quant.q8_0 (blocks ~per:32 [ Fixed one; Random 32 ] place)
-    );
+      fun () ->
+        Nx_quant.mxfp4_blocks (blocks ~per:32 [ Fixed [| 127 |]; Random 16 ]) );
+    ("q8_0", fun () -> Nx_quant.q8_0 (blocks ~per:32 [ Fixed one; Random 32 ]));
     ( "q4_k",
-      fun place ->
-        Nx_quant.q4_k
-          (blocks ~per:256 [ Fixed one; Fixed one; Random 140 ] place) );
-    ( "q6_k",
-      fun place ->
-        Nx_quant.q6_k (blocks ~per:256 [ Random 208; Fixed one ] place) );
+      fun () ->
+        Nx_quant.q4_k (blocks ~per:256 [ Fixed one; Fixed one; Random 140 ]) );
+    ("q6_k", fun () -> Nx_quant.q6_k (blocks ~per:256 [ Random 208; Fixed one ]));
   ]
 
-let linear make device =
-  let place t = Nx.place (Nx.Placement.on device) (Nx.copy t) in
-  let w = make place in
+let linear make at =
+  let w = Nx_quant.place at (make ()) in
   let f = Rune.jit' (Nx_quant.apply w) in
-  let x = place (Nx.full Nx.float32 [| 1; dense |] 0.5) in
-  ignore (f x);
-  fun () -> f x
+  let x = own at (Nx.full Nx.float32 [| 1; dense |] 0.5) in
+  ignore (lowered "linear" (fun () -> f x));
+  fun () -> Nx.sync (f x)
 
-(* A case of [product] on the device [device ()] opens, each call waited for. *)
-let on device name product =
+(* A product made at a placement of any set: its one call, waited for. *)
+type product = { at : 'd. 'd Nx.Placement.t -> unit -> unit }
+
+(* A case of [product] on the set [devices ()] mints, over the devices it opens.
+   A GPU's set has no kernels, so its products are compiled. *)
+let on devices name product =
   {
     name;
     setup =
       (fun () ->
-        let call = product (device ()) in
-        fun () -> wait (call ()));
+        let module D = (val devices () : Nx.Devices) in
+        product.at D.on);
   }
 
-let routed_on device ~run ~tokens suffix =
-  on device
+let routed_on devices ~run ~tokens suffix =
+  on devices
     (Printf.sprintf "routed product, %d tokens%s" tokens suffix)
-    (routed ~run ~tokens)
+    { at = (fun at -> routed ~run ~tokens at) }
 
 (* The routed products of each count of [tokens], then the dense ones. *)
-let products ~tokens device =
-  List.map (fun tokens -> routed_on device ~run:compiled ~tokens "") tokens
+let products ~tokens devices =
+  List.map (fun tokens -> routed_on devices ~run:Compiled ~tokens "") tokens
   @ List.map
       (fun (format, make) ->
-        on device (Printf.sprintf "%s product, 1 token" format) (linear make))
+        on devices
+          (Printf.sprintf "%s product, 1 token" format)
+          { at = (fun at -> linear make at) })
       formats
 
 let host =
-  let device () = Nx.Device.host in
-  products ~tokens:[ 1; 64 ] device
-  @ [ routed_on device ~run:eager ~tokens:1 ", eager" ]
+  let devices () = (module Nx.Host : Nx.Devices) in
+  products ~tokens:[ 1; 64 ] devices
+  @ [ routed_on devices ~run:Eager ~tokens:1 ", eager" ]
 
-let opened ?backend o = Result.map (Nx.Device.make ?backend) (Rig.open_ o)
 let get_ok = function Ok d -> d | Error e -> failwith e
 
 (* The GPU: CUDA's first, else AMD's first. *)
 let gpu =
   lazy
-    (match opened (Rig_cuda.gpu 0) with
+    (match Rig.open_ (Rig_cuda.gpu 0) with
     | Ok d -> d
-    | Error _ -> get_ok (opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0)))
+    | Error _ -> get_ok (Rig.open_ (Rig_amd_amdgpu.gpu 0)))
 
 (* Whether a [vendor] GPU opens, asked of a fresh process: a GPU's driver must
    not be initialized before the fork that isolates a case. *)
@@ -331,7 +355,7 @@ let metal () =
     [
       ( "metal",
         products ~tokens:[ 1; 512 ] (fun () ->
-            get_ok (opened (Rig_metal.gpu 0))) );
+            Nx.devices [ get_ok (Rig.open_ (Rig_metal.gpu 0)) ]) );
     ]
   else []
 
@@ -340,7 +364,11 @@ let quant () =
     match List.find_opt opens [ "cuda"; "amd" ] with
     | None -> []
     | Some vendor ->
-        [ (vendor, products ~tokens:[ 1; 512 ] (fun () -> Lazy.force gpu)) ]
+        [
+          ( vendor,
+            products ~tokens:[ 1; 512 ] (fun () ->
+                Nx.devices [ Lazy.force gpu ]) );
+        ]
   in
   (("host", host) :: metal ()) @ gpu
 

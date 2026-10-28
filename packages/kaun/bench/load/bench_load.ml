@@ -33,20 +33,30 @@ let () =
     if !dtype = "" then Llama.stored_dtype weights
     else Llama.dtype_of_string !dtype
   in
-  let device = if !device = "" then None else Some (Devices.first !device) in
-  let placement = Option.map (fun d _ ~axis:_ -> Nx.Placement.on d) device in
-  let params = Llama.of_hf ?placement cfg dt weights in
-  let imported = since () in
-  Printf.printf "load %.3f s, import %.3f s" loaded imported;
-  Option.iter
-    (fun _ ->
-      let ids = Nx.create Nx.int64 [| 1; 8 |] (Array.init 8 Int64.of_int) in
-      let forward ids =
-        Llama.logits cfg params
-          (Nx.slice [ A; I 7 ] (Llama.hidden cfg params ids))
-      in
-      let logits = Rune.jit' forward ids in
-      ignore (Nx.item [ 0; 0 ] logits : float);
-      Printf.printf ", first compiled call %.3f s" (since ()))
-    device;
+  (* [import at] imports each leaf at [at] as it is read. *)
+  let import at =
+    let params = Llama.of_hf ~placement:(fun _ ~axis:_ -> at) cfg dt weights in
+    let imported = since () in
+    Printf.printf "load %.3f s, import %.3f s" loaded imported;
+    params
+  in
+  if !device = "" then ignore (import Nx.Host.on)
+  else begin
+    let module D = (val Nx.devices [ Devices.first !device ]) in
+    let params = import D.on in
+    let cfg = Llama.place_config D.on cfg in
+    let ids =
+      Nx.place D.on (Nx.create Nx.int64 [| 1; 8 |] (Array.init 8 Int64.of_int))
+    in
+    let forward ids =
+      Llama.logits cfg params
+        (Nx.slice [ A; I 7 ] (Llama.hidden cfg params ids))
+    in
+    let before = Rune.evaluations () in
+    let logits = Rune.jit' forward ids in
+    ignore (Nx.item [ 0; 0 ] logits : float);
+    if Rune.evaluations () > before then
+      failwith "bench_load: the first compiled call ran evaluated";
+    Printf.printf ", first compiled call %.3f s" (since ())
+  end;
   print_newline ()
