@@ -315,7 +315,7 @@ let test_import_attention () =
       (Nx.split ~axis:0 3 (float ~shape:[| 3 * d |] "attn.c_attn.bias"))
   in
   let linear (w, b) = { Kaun.Linear.w; b = Some b } in
-  let p : Nx.float32_t Attention.t =
+  let p : (Nx.host Nx.float32_t, Nx.host) Attention.t =
     match List.map linear fused with
     | [ q; k; v ] ->
         let out =

@@ -16,7 +16,7 @@
 
 (** {1:types Types} *)
 
-type 'a t = { w : 'a; b : 'a option }
+type ('a, _) t = { w : 'a; b : 'a option }
 (** The type for convolution parameters over payload ['a].
 
     At tensor payloads, [w] has shape [[| out_channels; in_channels; kh; kw |]]
@@ -28,16 +28,19 @@ type 'a t = { w : 'a; b : 'a option }
 (** {1:constructors Constructors} *)
 
 val make :
-  ?w_init:'b Init.t ->
-  ?bias_init:'b Init.t ->
+  ?w_init:('b, 'd) Init.t ->
+  ?bias_init:('b, 'd) Init.t ->
   ?bias:bool ->
+  key:'d Nx.Rng.key ->
   in_channels:int ->
   out_channels:int ->
   kernel_size:int * int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t t
-(** [make ~in_channels ~out_channels ~kernel_size:(kh, kw) dtype] is a fresh
-    layer of [out_channels] filters of shape [in_channels × kh × kw], with:
+  ((float, 'b, 'd) Nx.t, 'd) t
+(** [make ~key ~in_channels ~out_channels ~kernel_size:(kh, kw) dtype] is a
+    fresh layer of [out_channels] filters of shape [in_channels × kh × kw],
+    drawn from [key] and lying where it lies, the filters and the bias from two
+    keys {!Nx.Rng.split} makes of it, with:
 
     - [w_init], the weight initializer, applied with
       [~fan_in:(in_channels * kh * kw)] and [~fan_out:(out_channels * kh * kw)],
@@ -48,25 +51,27 @@ val make :
     - [bias], whether the layer has a bias parameter. Defaults to [true];
       [false] sets [b] to [None] and ignores [bias_init].
 
-    Random initializers draw from the implicit RNG scope (see {!Nx.Rng}).
-
     Raises [Invalid_argument] if [in_channels], [out_channels], [kh] or [kw] is
     not positive. *)
 
 val init :
-  in_channels:int -> out_channels:int -> kernel_size:int * int -> Nx.float32_t t
-(** [init ~in_channels ~out_channels ~kernel_size] is
-    [make ~in_channels ~out_channels ~kernel_size Nx.float32]: Glorot-uniform
-    weights, zero bias. *)
+  key:'d Nx.Rng.key ->
+  in_channels:int ->
+  out_channels:int ->
+  kernel_size:int * int ->
+  ('d Nx.float32_t, 'd) t
+(** [init ~key ~in_channels ~out_channels ~kernel_size] is
+    [make ~key ~in_channels ~out_channels ~kernel_size Nx.float32]:
+    Glorot-uniform weights, zero bias. *)
 
 (** {1:applying Applying} *)
 
 val apply :
   ?stride:int * int ->
   ?padding:[ `Same | `Valid ] ->
-  (float, 'b) Nx.t t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply p x] cross-correlates [p]'s filters with [x] and adds the bias (no
     shift when [p.b] is [None]). [x] must have shape
     [[| batch; in_channels; height; width |]] (NCHW); the result has shape
@@ -87,7 +92,7 @@ val apply :
 
 (** {1:structure Structure} *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks [p]'s parameters: [w] at ["w"], then [b] at ["b"],
     reporting whether [b] is present, so a layer with a bias and one without are
     distinct structures. It is the layer's {!Nx.Ptree.S} instance.

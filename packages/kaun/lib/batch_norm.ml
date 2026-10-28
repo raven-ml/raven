@@ -5,7 +5,7 @@
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-type 'a t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a }
 
 let walk c { gamma; beta } =
   let open Nx.Ptree.Walk in
@@ -14,7 +14,7 @@ let walk c { gamma; beta } =
   { gamma; beta }
 
 module Stats = struct
-  type 'a t = { mean : 'a; var : 'a }
+  type ('a, _) t = { mean : 'a; var : 'a }
 
   let walk c { mean; var } =
     let open Nx.Ptree.Walk in
@@ -23,25 +23,21 @@ module Stats = struct
     { mean; var }
 end
 
-let init ~features =
+let init ~features at =
   if features <= 0 then
     invalid_argf "Batch_norm.init: features must be positive, got %d" features;
-  ( {
-      gamma = Nx.ones Nx.float32 [| features |];
-      beta = Nx.zeros Nx.float32 [| features |];
-    },
-    {
-      Stats.mean = Nx.zeros Nx.float32 [| features |];
-      var = Nx.ones Nx.float32 [| features |];
-    } )
+  let ones () = Nx.ones_at at Nx.float32 [| features |] in
+  let zeros () = Nx.zeros_at at Nx.float32 [| features |] in
+  ( { gamma = ones (); beta = zeros () },
+    { Stats.mean = zeros (); var = ones () } )
 
 (* Half and quarter precision floats are too coarse for the statistics: their
    normalization runs in a float32 island (see [apply]). Wider dtypes keep their
    own arithmetic, so the float32 and float64 graphs are exactly the pre-island
    ones. *)
 let low_precision : type b. (float, b) Nx.dtype -> bool = function
-  | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
-  | Nx.Float32 | Nx.Float64 -> false
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
+  | Float32 | Float64 -> false
 
 let apply ?(axis = -1) ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
     ~training x =

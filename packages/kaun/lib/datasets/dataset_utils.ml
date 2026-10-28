@@ -102,13 +102,71 @@ let ensure_file url dest_path =
   if not (Sys.file_exists dest_path) then download_file url dest_path
   else Log.debug (fun m -> m "Found %s" dest_path)
 
+(* [create_beside dst] is a file created exclusively beside [dst], under a
+   random name, and its descriptor: a name a crashed run left behind is skipped
+   for another. *)
+let create_beside dst =
+  let flags = Unix.[ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC ] in
+  let rec go tries =
+    let tmp = Printf.sprintf "%s.%08x.tmp" dst (Random.State.bits rng) in
+    match Unix.openfile tmp flags 0o644 with
+    | fd -> (tmp, fd)
+    | exception Unix.Unix_error (Unix.EEXIST, _, _) when tries > 1 ->
+        go (tries - 1)
+  and rng = Random.State.make_self_init () in
+  go 16
+
+let rec write_all fd b off n =
+  if n > 0 then
+    let k = Unix.write_bigarray fd b off n in
+    write_all fd b (off + k) (n - k)
+
+(* [gunzip ~src ~dst] writes the data of the gzip file [src] to [dst] as it
+   decodes it, in bounded memory, through a file created beside [dst], synced,
+   then renamed: [dst] holds the whole data or is as it was, and a failure
+   removes the partial file. *)
+let gunzip ~src ~dst =
+  let tmp, fd = create_beside dst in
+  let decode fd_in =
+    let d = Lz.Gzip.decoder () in
+    let input = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout 65536 in
+    let emit run = write_all fd run 0 (Bigarray.Array1.dim run) in
+    let rec feed data ~last =
+      match Lz.Decoder.step d ~last data emit with
+      | Error e -> failwith (Format.asprintf "%s: %a" src Lz.pp_error e)
+      | Ok (Lz.Done _) -> ()
+      | Ok (Lz.More k) ->
+          let n = Bigarray.Array1.dim data in
+          if k < n then feed (Bigarray.Array1.sub data k (n - k)) ~last
+          else if last then feed (Bigarray.Array1.sub input 0 0) ~last
+          else read ()
+    and read () =
+      let n = Unix.read_bigarray fd_in input 0 (Bigarray.Array1.dim input) in
+      feed (Bigarray.Array1.sub input 0 n) ~last:(n = 0)
+    in
+    read ()
+  in
+  match
+    Fun.protect
+      ~finally:(fun () -> Unix.close fd)
+      (fun () ->
+        let fd_in = Unix.openfile src [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
+        Fun.protect ~finally:(fun () -> Unix.close fd_in) (fun () -> decode fd_in);
+        Unix.fsync fd);
+    Unix.rename tmp dst
+  with
+  | () -> ()
+  | exception e ->
+      (try Sys.remove tmp with Sys_error _ -> ());
+      raise e
+
 let ensure_decompressed_gz ~gz_path ~target_path =
   if Sys.file_exists target_path then (
     Log.debug (fun m -> m "Found %s" target_path);
     true)
   else if Sys.file_exists gz_path then (
     Log.info (fun m -> m "Decompressing %s..." gz_path);
-    Nx_io.gunzip ~src:gz_path ~dst:target_path;
+    gunzip ~src:gz_path ~dst:target_path;
     Log.info (fun m -> m "Decompressed to %s" target_path);
     true)
   else (

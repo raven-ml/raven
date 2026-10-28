@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a t = { w : 'a; b : 'a option }
+type ('a, _) t = { w : 'a; b : 'a option }
 
 let walk c { w; b } =
   let open Nx.Ptree.Walk in
@@ -12,7 +12,7 @@ let walk c { w; b } =
   { w; b }
 
 let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
-    ?(bias = true) ~in_channels ~out_channels ~kernel_size dtype =
+    ?(bias = true) ~key ~in_channels ~out_channels ~kernel_size dtype =
   let kh, kw = kernel_size in
   if in_channels <= 0 || out_channels <= 0 || kh <= 0 || kw <= 0 then
     Printf.ksprintf invalid_arg
@@ -21,17 +21,20 @@ let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
       in_channels out_channels kh kw;
   let fan_in = in_channels * kh * kw in
   let fan_out = out_channels * kh * kw in
+  let keys = Nx.Rng.split key in
   let w =
-    w_init ~fan_in ~fan_out dtype [| out_channels; in_channels; kh; kw |]
+    w_init keys.(0) ~fan_in ~fan_out dtype
+      [| out_channels; in_channels; kh; kw |]
   in
   let b =
-    if bias then Some (bias_init ~fan_in ~fan_out dtype [| out_channels |])
+    if bias then
+      Some (bias_init keys.(1) ~fan_in ~fan_out dtype [| out_channels |])
     else None
   in
   { w; b }
 
-let init ~in_channels ~out_channels ~kernel_size =
-  make ~in_channels ~out_channels ~kernel_size Nx.float32
+let init ~key ~in_channels ~out_channels ~kernel_size =
+  make ~key ~in_channels ~out_channels ~kernel_size Nx.float32
 
 (* TF-style padding: [`Valid] pads nothing; [`Same] pads so that the output size
    is [ceil (size / stride)], splitting any odd total towards the end. *)

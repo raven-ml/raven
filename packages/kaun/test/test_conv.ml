@@ -32,7 +32,10 @@ let arange_image shape n = image shape (Array.init n float_of_int)
 
 let test_conv_init_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
-  let p = Conv.init ~in_channels:3 ~out_channels:5 ~kernel_size:(2, 4) in
+  let p =
+    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:3 ~out_channels:5
+      ~kernel_size:(2, 4)
+  in
   shape_is ~msg:"w shape" [| 5; 3; 2; 4 |] p.Conv.w;
   match p.Conv.b with
   | None -> fail "init should create a bias"
@@ -92,7 +95,10 @@ let test_conv_stride () =
 
 let test_conv_shape_contracts () =
   Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
-  let p = Conv.init ~in_channels:3 ~out_channels:4 ~kernel_size:(3, 3) in
+  let p =
+    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:3 ~out_channels:4
+      ~kernel_size:(3, 3)
+  in
   let x = Nx.zeros Nx.float32 [| 2; 3; 8; 7 |] in
   shape_is ~msg:"valid, stride 1" [| 2; 4; 6; 5 |] (Conv.apply p x);
   shape_is ~msg:"same, stride 1 preserves the spatial size" [| 2; 4; 8; 7 |]
@@ -104,13 +110,13 @@ let test_conv_shape_contracts () =
 
 let test_conv_custom_inits_and_fans () =
   let fans = ref None in
-  let w_init ~fan_in ~fan_out dtype shape =
+  let w_init key ~fan_in ~fan_out dtype shape =
     fans := Some (fan_in, fan_out);
-    Init.constant 2.0 ~fan_in ~fan_out dtype shape
+    Init.constant 2.0 key ~fan_in ~fan_out dtype shape
   in
   let p =
-    Conv.make ~w_init ~bias_init:(Init.constant 1.0) ~in_channels:2
-      ~out_channels:3 ~kernel_size:(2, 2) Nx.float32
+    Conv.make ~key:(Nx.Rng.next_key ()) ~w_init ~bias_init:(Init.constant 1.0)
+      ~in_channels:2 ~out_channels:3 ~kernel_size:(2, 2) Nx.float32
   in
   values_are ~msg:"w_init" ~tol:0.0 (Array.make 24 2.0) p.Conv.w;
   (match p.Conv.b with
@@ -125,8 +131,8 @@ let test_conv_custom_inits_and_fans () =
 let test_conv_no_bias () =
   Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
   let p =
-    Conv.make ~bias:false ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2)
-      Nx.float32
+    Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:2
+      ~out_channels:2 ~kernel_size:(2, 2) Nx.float32
   in
   is_true ~msg:"no bias parameter" (p.Conv.b = None);
   let paths = paths p in
@@ -134,24 +140,28 @@ let test_conv_no_bias () =
 
 let test_conv_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
-  let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2) in
+  let p =
+    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
+      ~kernel_size:(2, 2)
+  in
   let paths = paths p in
   equal ~msg:"with bias" (list string) [ "w"; "b" ] paths
 
 let test_conv_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
-  let x = Nx.randn Nx.float64 [| 2; 2; 4; 4 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 2; 2; 4; 4 |] in
   let loss p =
     let y = Conv.apply p x in
     Nx.sum (Nx.mul y y)
   in
   let p =
-    Conv.make ~in_channels:2 ~out_channels:2 ~kernel_size:(2, 2) Nx.float64
+    Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
+      ~kernel_size:(2, 2) Nx.float64
   in
   grads_ok (Rune.check_grads conv64 loss p);
   let no_bias =
-    Conv.make ~bias:false ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 3)
-      Nx.float64
+    Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:2
+      ~out_channels:2 ~kernel_size:(3, 3) Nx.float64
   in
   let strided_loss p =
     let y = Conv.apply ~stride:(2, 2) ~padding:`Same p x in
@@ -162,13 +172,14 @@ let test_conv_gradients () =
 let test_conv_input_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
   let p =
-    Conv.make ~in_channels:2 ~out_channels:3 ~kernel_size:(2, 2) Nx.float64
+    Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:3
+      ~kernel_size:(2, 2) Nx.float64
   in
   let loss x =
     let y = Conv.apply ~padding:`Same p x in
     Nx.sum (Nx.mul y y)
   in
-  let x = Nx.randn Nx.float64 [| 1; 2; 3; 3 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 1; 2; 3; 3 |] in
   grads_ok (Rune.check_grads Nx.Ptree.tensor loss x)
 
 let test_conv_rejects_bad_geometry () =
@@ -176,16 +187,21 @@ let test_conv_rejects_bad_geometry () =
     (Invalid_argument
        "Conv.make: channels and kernel size must be positive, got \
         in_channels=0 out_channels=4 kernel_size=(3, 3)") (fun () ->
-      Conv.make ~in_channels:0 ~out_channels:4 ~kernel_size:(3, 3) Nx.float32);
+      Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:0 ~out_channels:4
+        ~kernel_size:(3, 3) Nx.float32);
   raises
     (Invalid_argument
        "Conv.make: channels and kernel size must be positive, got \
         in_channels=2 out_channels=2 kernel_size=(3, 0)") (fun () ->
-      Conv.make ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 0) Nx.float32)
+      Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
+        ~kernel_size:(3, 0) Nx.float32)
 
 let test_conv_rejects_bad_input () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let p = Conv.init ~in_channels:2 ~out_channels:2 ~kernel_size:(3, 3) in
+  let p =
+    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
+      ~kernel_size:(3, 3)
+  in
   raises
     (Invalid_argument
        "Conv.apply: input must be [batch; channels; height; width], got rank 3")
@@ -245,7 +261,7 @@ let test_max_pool_gradient_routes_to_max () =
 
 let test_pool_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
-  let x = Nx.randn Nx.float64 [| 1; 2; 4; 4 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 1; 2; 4; 4 |] in
   let max_loss x =
     let y = Pool.max_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x in
     Nx.sum (Nx.mul y y)

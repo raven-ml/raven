@@ -15,6 +15,7 @@ depends: [
   "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
   "nx" {= version}
+  "lz" {= version}
   "logs"
   "jsont"
   "bytesrw"

@@ -10,7 +10,7 @@ let invalid_argf fn fmt =
 
 (* Metrics compute on the host, element by element and in float64, which a
    device may not hold. *)
-let host x = Nx.place Nx.Placement.host x
+let host x = Nx.place Nx.Host.on x
 
 let shape_str s =
   "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
@@ -57,9 +57,7 @@ let top_k_accuracy ~k predictions labels =
   (* The label is in the top k iff fewer than [k] classes score strictly higher,
      which needs no sort and resolves ties in the label's favor. *)
   let label_score =
-    Nx.take_along_axis ~axis:(-1)
-      ~indices:(Nx.unsqueeze ~axes:[ -1 ] labels)
-      predictions
+    Nx.take_along_axis ~axis:(-1) (Nx.unsqueeze ~axes:[ -1 ] labels) predictions
   in
   let higher =
     Nx.sum ~axes:[ -1 ] (Nx.cast Nx.int32 (Nx.greater predictions label_score))

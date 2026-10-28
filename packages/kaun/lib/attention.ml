@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a t = {
-  q : 'a Linear.t;
-  k : 'a Linear.t;
-  v : 'a Linear.t;
-  out : 'a Linear.t;
+type ('a, 'd) t = {
+  q : ('a, 'd) Linear.t;
+  k : ('a, 'd) Linear.t;
+  v : ('a, 'd) Linear.t;
+  out : ('a, 'd) Linear.t;
 }
 
 let walk c { q; k; v; out } =
@@ -18,7 +18,7 @@ let walk c { q; k; v; out } =
   let out = field c "out" Linear.walk out in
   { q; k; v; out }
 
-let make ?w_init ?bias_init ?bias ?q_dim ?kv_dim ~embed_dim dtype =
+let make ?w_init ?bias_init ?bias ?q_dim ?kv_dim ~key ~embed_dim dtype =
   let q_dim = Option.value q_dim ~default:embed_dim in
   let kv_dim = Option.value kv_dim ~default:embed_dim in
   if embed_dim <= 0 || q_dim <= 0 || kv_dim <= 0 then
@@ -26,23 +26,24 @@ let make ?w_init ?bias_init ?bias ?q_dim ?kv_dim ~embed_dim dtype =
       "Attention.make: embed_dim, q_dim and kv_dim must be positive, got \
        embed_dim=%d q_dim=%d kv_dim=%d"
       embed_dim q_dim kv_dim;
-  let proj ~inputs ~outputs =
-    Linear.make ?w_init ?bias_init ?bias ~inputs ~outputs dtype
+  let keys = Nx.Rng.split ~n:4 key in
+  let proj i ~inputs ~outputs =
+    Linear.make ?w_init ?bias_init ?bias ~key:keys.(i) ~inputs ~outputs dtype
   in
   {
-    q = proj ~inputs:embed_dim ~outputs:q_dim;
-    k = proj ~inputs:embed_dim ~outputs:kv_dim;
-    v = proj ~inputs:embed_dim ~outputs:kv_dim;
-    out = proj ~inputs:q_dim ~outputs:embed_dim;
+    q = proj 0 ~inputs:embed_dim ~outputs:q_dim;
+    k = proj 1 ~inputs:embed_dim ~outputs:kv_dim;
+    v = proj 2 ~inputs:embed_dim ~outputs:kv_dim;
+    out = proj 3 ~inputs:q_dim ~outputs:embed_dim;
   }
 
-let init ~embed_dim = make ~embed_dim Nx.float32
+let init ~key ~embed_dim = make ~key ~embed_dim Nx.float32
 
 (* Half and quarter precision floats are too coarse for the attention scores:
    see [scaled_dot_product_attention]. *)
 let low_precision : type b. (float, b) Nx.dtype -> bool = function
-  | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
-  | Nx.Float32 | Nx.Float64 -> false
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
+  | Float32 | Float64 -> false
 
 let shape_to_string s =
   "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
@@ -240,11 +241,11 @@ let merge l y =
         (Nx.reshape [| batch; seq; heads * d |] (Nx.swapaxes 1 2 y))
   | _ -> invalid_arg "Attention.merge: y must have shape [batch; heads; seq; d]"
 
-let causal_mask ~seq ?valid () =
+let causal_mask ~seq ?valid at =
   if seq <= 0 then
     Printf.ksprintf invalid_arg
       "Attention.causal_mask: seq must be positive, got %d" seq;
-  let idx = Nx.arange Nx.int32 0 seq 1 in
+  let idx = Nx.arange_at (Nx.Placement.uncut at) Nx.int32 0 seq 1 in
   let row = Nx.reshape [| 1; seq |] idx and col = Nx.reshape [| seq; 1 |] idx in
   (* [tri.(i).(j)] is [j <= i]: query [i] sees keys up to itself. *)
   let tri = Nx.less_equal row col in
@@ -286,7 +287,8 @@ let apply ~head_dim ?mask ?rope p x =
     match rope with
     | None -> (q, k)
     | Some t ->
-        let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int64 0 seq 1) in
+        let at = Nx.beside x in
+        let pos = Nx.reshape [| 1; seq |] (Nx.arange_at at Nx.int64 0 seq 1) in
         (Rope.apply t ~pos q, Rope.apply t ~pos k)
   in
   Nx.reshape shape (merge p.out (attend ?mask q k v))
@@ -294,15 +296,15 @@ let apply ~head_dim ?mask ?rope p x =
 (* Key-value cache *)
 
 module Cache = struct
-  type 'a t = { keys : 'a; values : 'a }
+  type ('a, _) t = { keys : 'a; values : 'a }
 
-  let make ~slots ~kv_heads ~head_dim dtype =
+  let make ~slots ~kv_heads ~head_dim dtype at =
     if slots < 0 || kv_heads <= 0 || head_dim <= 0 then
       Printf.ksprintf invalid_arg
         "Attention.Cache.make: slots must not be negative and kv_heads and \
          head_dim must be positive, got slots=%d kv_heads=%d head_dim=%d"
         slots kv_heads head_dim;
-    let pool () = Nx.zeros dtype [| slots; kv_heads; head_dim |] in
+    let pool () = Nx.zeros_at at dtype [| slots; kv_heads; head_dim |] in
     { keys = pool (); values = pool () }
 
   (* Pools hold tokens first, [batch; seq; kv_heads; head_dim]; heads come first

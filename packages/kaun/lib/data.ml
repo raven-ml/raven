@@ -19,12 +19,12 @@ let examples op t =
 let cut perm t start stop =
   match perm with
   | None -> Nx.slice [ Nx.R (start, stop) ] t
-  | Some perm ->
-      Nx.take ~axis:0 ~indices:(Nx.slice [ Nx.R (start, stop) ] perm) t
+  | Some perm -> Nx.take ~axis:0 (Nx.slice [ Nx.R (start, stop) ] perm) t
 
 (* Each traversal forces the outer thunk once, drawing one permutation per epoch
-   from the ambient RNG scope; the recursion threads it along. *)
-let batch_seq ~shuffle ~drop_last ~batch_size ~n slice =
+   from the ambient RNG scope, whole on each device of [at]; the recursion
+   threads it along. *)
+let batch_seq ~shuffle ~drop_last ~batch_size ~n ~at slice =
   let rec from perm start () =
     if start >= n || (drop_last && start + batch_size > n) then Seq.Nil
     else
@@ -34,13 +34,14 @@ let batch_seq ~shuffle ~drop_last ~batch_size ~n slice =
   fun () ->
     if n = 0 then Seq.Nil
     else
-      let perm = if shuffle then Some (Nx.permutation n) else None in
+      let perm = if shuffle then Some (Nx.Rng.permutation_at at n) else None in
       from perm 0 ()
 
 let batches ?(shuffle = false) ?(drop_last = false) ~batch_size x =
   check_batch_size "batches" batch_size;
   let n = examples "batches" x in
-  batch_seq ~shuffle ~drop_last ~batch_size ~n (fun perm start stop ->
+  let at = Nx.beside x in
+  batch_seq ~shuffle ~drop_last ~batch_size ~n ~at (fun perm start stop ->
       cut perm x start stop)
 
 let batches2 ?(shuffle = false) ?(drop_last = false) ~batch_size (x, y) =
@@ -49,5 +50,6 @@ let batches2 ?(shuffle = false) ?(drop_last = false) ~batch_size (x, y) =
   let ny = examples "batches2" y in
   if n <> ny then
     invalid_argf "Data.batches2: x has %d examples but y has %d" n ny;
-  batch_seq ~shuffle ~drop_last ~batch_size ~n (fun perm start stop ->
+  let at = Nx.beside x in
+  batch_seq ~shuffle ~drop_last ~batch_size ~n ~at (fun perm start stop ->
       (cut perm x start stop, cut perm y start stop))

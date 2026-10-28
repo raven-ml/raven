@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t = {
+type 'd t = {
   frequencies : float array;
-  cos : Nx.float32_t; (* [| context; pairs |] *)
-  sin : Nx.float32_t;
+  cos : 'd Nx.float32_t; (* [| context; pairs |] *)
+  sin : 'd Nx.float32_t;
 }
 
 (* The angles in float64, rounded once to float32: a float32 product of a long
@@ -100,6 +100,10 @@ let yarn ~theta ~head_dim ~factor ~beta_fast ~beta_slow ~original_context
     (base ~fn:"yarn" ~theta ~head_dim)
   |> of_frequencies ~context
 
+let place at t =
+  let at = Nx.Placement.uncut at in
+  { t with cos = Nx.place at t.cos; sin = Nx.place at t.sin }
+
 let frequencies t = Array.copy t.frequencies
 let context t = Nx.dim 0 t.cos
 
@@ -120,7 +124,7 @@ let apply t ~pos x =
         "Rope.apply: pos must have shape [%d; %d] or [1; %d]" batch seq seq);
   let dt = Nx.dtype x in
   let rows table =
-    Nx.cast dt (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 ~indices:pos table))
+    Nx.cast dt (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 pos table))
   in
   let cos = rows t.cos and sin = rows t.sin in
   let x1 = Nx.slice [ A; A; A; R (0, half) ] x in

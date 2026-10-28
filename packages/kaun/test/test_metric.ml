@@ -243,9 +243,10 @@ let auc_tests =
 (* Metrics compute on the host: a placed input is read once, and nothing is
    placed on its device. *)
 let placed_tests =
-  let device = Nx.Device.cpu 1 in
-  let on_device x = Nx.place (Nx.Placement.on device) x in
-  let uploads f = received (Nx.Device.memory device) f in
+  let device = Result.get_ok (Rig.memory_device "kaun-test-metric") in
+  let module S = (val Nx.devices [ device ]) in
+  let on_device x = Nx.place S.on x in
+  let uploads f = received device f in
   let preds = predicting 3 [| 0; 2; 1; 2 |]
   and ls = labels [| 0L; 2L; 2L; 2L |] in
   let p = on_device preds and l = on_device ls in

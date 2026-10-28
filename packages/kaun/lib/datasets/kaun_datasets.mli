@@ -21,7 +21,10 @@ val mnist :
   ?normalize:bool ->
   ?data_format:[ `NCHW | `NHWC ] ->
   unit ->
-  Nx.float32_t * Nx.int64_t * Nx.float32_t * Nx.int64_t
+  Nx.host Nx.float32_t
+  * Nx.host Nx.int64_t
+  * Nx.host Nx.float32_t
+  * Nx.host Nx.int64_t
 (** [mnist ()] is [(train_x, train_y, test_x, test_y)]: 60,000 training and
     10,000 test examples.
 
@@ -41,7 +44,10 @@ val cifar10 :
   ?normalize:bool ->
   ?data_format:[ `NCHW | `NHWC ] ->
   unit ->
-  Nx.float32_t * Nx.int64_t * Nx.float32_t * Nx.int64_t
+  Nx.host Nx.float32_t
+  * Nx.host Nx.int64_t
+  * Nx.host Nx.float32_t
+  * Nx.host Nx.int64_t
 (** [cifar10 ()] is [(train_x, train_y, test_x, test_y)]: 50,000 training and
     10,000 test examples.
 

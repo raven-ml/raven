@@ -14,31 +14,31 @@
 
 (** {1:elementwise Element-wise activations} *)
 
-val relu : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val relu : ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 (** [relu x] is zero where [x <= 0] and [x] elsewhere: [-0.] maps to [0.] and
     NaN stays NaN. Its derivative at [0] is [0]. *)
 
-val leaky_relu : ?negative_slope:float -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val leaky_relu : ?negative_slope:float -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 (** [leaky_relu x] is [x] where [x > 0] and [negative_slope * x] elsewhere.
 
     [negative_slope] defaults to [0.01]. *)
 
-val gelu : (float, 'b) Nx.t -> (float, 'b) Nx.t
+val gelu : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [gelu x] is the exact Gaussian error linear unit [x * Φ(x)], computed as
     [0.5 * x * (1 + erf(x / sqrt 2))] where [Φ] is the standard normal CDF.
 
     See {!gelu_approx} for the cheaper tanh approximation. *)
 
-val gelu_approx : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val gelu_approx : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [gelu_approx x] is the tanh approximation of {!gelu}:
     [0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))]. It agrees with
     {!gelu} to about [1e-3] absolute error; use it to match models trained with
     the approximation (GPT-2 style). *)
 
-val silu : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val silu : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [silu x] is [x * Nx.sigmoid x], also known as Swish. *)
 
-val softplus : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val softplus : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [softplus x] is [log(1 + exp(x))], a smooth approximation of {!relu}.
     Computed as [max(x, 0) + log(1 + exp(-|x|))], which does not overflow for
     large [x]. *)
@@ -60,7 +60,7 @@ val softplus : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     and keeps the cumulative sum of {!keep_top_p} and the noise of the draw out
     of half precision, where neither has the resolution a vocabulary needs. *)
 
-val keep_top_k : k:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val keep_top_k : k:'d Nx.int64_t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [keep_top_k ~k logits] is [logits] with every entry below the [k]-th largest
     of its row set to negative infinity; the last axis is the vocabulary.
     Entries equal to the [k]-th largest are all kept, so ties can leave more
@@ -70,7 +70,8 @@ val keep_top_k : k:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
     Raises [Invalid_argument] if [logits] is a scalar or [k] is neither a scalar
     nor of [logits]'s leading shape. *)
 
-val keep_top_p : p:(float, 'b) Nx.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val keep_top_p :
+  p:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [keep_top_p ~p logits] is [logits] with the least likely entries of each row
     set to negative infinity, keeping the fewest entries whose softmax
     probabilities sum to at least [p] (nucleus sampling). The most likely entry

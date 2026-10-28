@@ -16,8 +16,8 @@
     index it was given to every layer and never looks inside; a layer calls
     {!extend} on each of its pools and attends under {!mask}. A layer that keeps
     one entry per block of positions reads its pools through {!val-every}, and
-    one that attends to a few columns per token through {!select}. {!ptree} is
-    an index's structure, which a compiled step's signature names.
+    one that attends to a few columns per token through {!select}. {!walk} is an
+    index's structure, which a compiled step's signature names.
 
     For a reader coming from serving systems: the table is a block table whose
     blocks hold one position each, and the slot a token stores at, the one its
@@ -72,18 +72,19 @@
       included, are tensors: under [Rune.jit] they are inputs of the step, and
       one compiled program serves every position and every allocation. *)
 
-type t
-(** The type for cache indices of [batch] lanes of [seq] tokens each. *)
+type 'd t
+(** The type for cache indices of [batch] lanes of [seq] tokens each, on the set
+    ['d]. *)
 
 (** {1:constructors Constructors} *)
 
 val make :
-  ?row:Nx.int64_t ->
-  ?every:(int * Nx.int64_t) list ->
-  pos:Nx.int64_t ->
-  table:Nx.int64_t ->
+  ?row:'d Nx.int64_t ->
+  ?every:(int * 'd Nx.int64_t) list ->
+  pos:'d Nx.int64_t ->
+  table:'d Nx.int64_t ->
   unit ->
-  t
+  'd t
 (** [make ~pos ~table ()] is the index of tokens at positions [pos] in sequences
     held at the slots [table], with:
 
@@ -108,7 +109,7 @@ val make :
     Raises [Invalid_argument] if a shape is wrong, an axis is empty, an [m] is
     below [2] or two pairs have one [m]. *)
 
-val rows : ?every:int list -> context:int -> int array -> t
+val rows : ?every:int list -> context:int -> int array -> Nx.host t
 (** [rows ~context lens] gives sequence [b] its own run of [context] slots,
     [b * context] to [b * context + context - 1], and places its [lens.(b)]
     tokens at positions [0] to [lens.(b) - 1]. Lanes are padded on the left to
@@ -124,7 +125,7 @@ val rows : ?every:int list -> context:int -> int array -> t
     length is negative or exceeds [context], or an [m] of [every] is below [2]
     or appears twice. *)
 
-val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
+val whole : ?lens:int array -> batch:int -> seq:int -> unit -> Nx.host t
 (** [whole ~batch ~seq ()] is the index of whole sequences at positions [0] to
     [seq - 1]: nothing is read and nothing is kept, so a layer given it leaves
     its cache as it was. With [lens], lane [b] holds [lens.(b)] tokens padded on
@@ -133,7 +134,7 @@ val whole : ?lens:int array -> batch:int -> seq:int -> unit -> t
     Raises [Invalid_argument] if [batch] or [seq] is not positive or a length
     does not fit. *)
 
-val packed : seq:int -> int array array -> t
+val packed : seq:int -> int array array -> Nx.host t
 (** [packed ~seq lens] is the whole index of lanes that each hold several
     sequences one after another: lane [b] holds sequences of [lens.(b).(0)],
     [lens.(b).(1)], ... tokens, padded on the left to [seq] as in {!whole}, and
@@ -150,7 +151,7 @@ val packed : seq:int -> int array array -> t
     Raises [Invalid_argument] if there is no lane, [seq] is not positive, a
     length is negative or a lane's lengths sum past [seq]. *)
 
-val window : int -> t -> t
+val window : int -> 'd t -> 'd t
 (** [window w index] is [index] whose tokens see only the last [w] positions at
     or before their own, themselves included. It replaces the window [index]
     had. An index is built without a window; a model whose layers differ passes
@@ -159,7 +160,7 @@ val window : int -> t -> t
 
     Raises [Invalid_argument] if [w] is not positive. *)
 
-val select : Nx.int64_t -> t -> t
+val select : 'd Nx.int64_t -> 'd t -> 'd t
 (** [select columns index] is [index] whose token [i] of lane [b] reads only the
     columns [columns.(b).(i)], of shape [[| batch; seq; k |]]: {!extend}'s
     [seen] has shape [[| batch; seq; k; ... |]], entry [c] of a token holding
@@ -179,7 +180,7 @@ val select : Nx.int64_t -> t -> t
     Raises [Invalid_argument] if [columns] does not have that shape, [k] is [0]
     or [index] is a {!draft}. *)
 
-val draft : slots:Nx.int64_t -> sees:Nx.bool_t -> t -> t
+val draft : slots:'d Nx.int64_t -> sees:'d Nx.bool_t -> 'd t -> 'd t
 (** [draft ~slots ~sees index] is [index] whose tokens are a draft verified in
     one call, a tree of guesses for instance, with:
 
@@ -209,7 +210,7 @@ val draft : slots:Nx.int64_t -> sees:Nx.bool_t -> t -> t
     Raises [Invalid_argument] if [slots] or [sees] does not have that shape, or
     if [index] is whole, reads blocks ({!val-every}) or selects columns. *)
 
-val every : int -> t -> t
+val every : int -> 'd t -> 'd t
 (** [every m index] is [index] read in blocks of [m] positions, for a layer that
     keeps one entry per block (a compressed key, a summary): column [j] is the
     slot the index's table of blocks of [m] positions names for block [j],
@@ -243,7 +244,7 @@ val every : int -> t -> t
     columns, is a {!draft} or {!packed}, or has a table and none for blocks of
     [m] positions. *)
 
-val advance : t -> t
+val advance : 'd t -> 'd t
 (** [advance index] is the index of the next token of every lane. It keeps
     [index]'s window and {!val-every} and drops its selection and its {!draft}:
     [seq] is [1] and the position is one past the lane's greatest. A lane of
@@ -255,20 +256,20 @@ val advance : t -> t
 
 (** {1:tokens The call's tokens} *)
 
-val batch : t -> int
+val batch : 'd t -> int
 (** [batch index] is the number of lanes. *)
 
-val seq : t -> int
+val seq : 'd t -> int
 (** [seq index] is the number of tokens per lane. *)
 
-val context : t -> int
+val context : 'd t -> int
 (** [context index] is the number of columns a sequence can hold, the width of
     what {!extend} returns: the table's on an index with one, plus [seq] under a
     {!draft}, and [seq] on a whole index. Under {!val-every} a column is a
     block: the width of the table of blocks, or [(seq + m - 1) / m] on a whole
     index. *)
 
-val positions : t -> Nx.int64_t
+val positions : 'd t -> 'd Nx.int64_t
 (** [positions index], of shape [[| batch; seq |]], is the tokens' positions
     clamped to [0] and the last column of the positions' table ([seq - 1] on a
     whole index), for rotating and for indexing a table of position embeddings:
@@ -277,15 +278,19 @@ val positions : t -> Nx.int64_t
 (** {1:pools Pools} *)
 
 val extend :
-  t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t
+  'd t ->
+  ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t
 (** [extend index values pool] is [(seen, pool')], with [pool] of shape
     [[| slots; ... |]], of any dtype and width:
 
     - [pool'] is [pool] with [values], of shape [[| batch; seq; ... |]], stored
       where the call's tokens sit, at the column that stands at each one's
       position (under {!val-every}, only a block's last token has one): one
-      {!Nx.scatter}[ ~unique_indices:true] over the tokens, in place on a pool a
-      compiled step consumes. Every slot the call does not target is as it was.
+      {!Nx.scatter} over the tokens, written into [pool]'s memory where [pool]
+      is donated ({!Nx.donate}) and the computation lends it ([Rune.jit] in a
+      program on one device). Every slot the call does not target is as it was.
     - [seen], of shape [[| batch; context; ... |]], is what those tokens attend
       over, read from [pool']: column [j] is the slot holding position [j], or
       block [j] under {!val-every}, so the call's own stores are in it. A column
@@ -307,12 +312,12 @@ val extend :
     whole pool once per token. Compiled, the slot numbers and the zeroing fuse
     into the gather: the read is one gated load per element. That holds while
     the slot numbers stay an unevaluated expression of the index's tensors;
-    forcing them into storage, as {!Nx.contiguous} does, costs a buffer and a
-    kernel per pool per layer.
+    forcing them into storage, as {!Nx.copy} does, costs a buffer and a kernel
+    per pool per layer.
 
     Raises [Invalid_argument] if [values] does not have that shape. *)
 
-val mask : t -> Nx.bool_t
+val mask : 'd t -> 'd Nx.bool_t
 (** [mask index], of shape [[| batch; seq; context |]], is which columns of
     {!extend}'s [seen] each token sees: those that stand at or before its
     position, and under the index's {!window} only the last of them. On a whole
@@ -324,12 +329,12 @@ val mask : t -> Nx.bool_t
 
 (** {1:structure Structure} *)
 
-val ptree : t Nx.Ptree.t
-(** [ptree] is the structure of an index, for the signature of a compiled step
-    and for {!Nx.Ptree.map} over its tensors. Its leaves are the index's
-    tensors, its tables of blocks, its selection and its draft included: int64,
-    and bool for a draft's [sees]. It reports what a compiled program depends on
-    beyond them. In walk order:
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'd t -> 'e t
+(** [walk c index] walks an index at [c]'s path: [Nx.Ptree.v walk] is its
+    structure, for the signature of a compiled step and for {!Nx.Ptree.map} over
+    its tensors. Its leaves are the index's tensors, its tables of blocks, its
+    selection and its draft included: int64, and bool for a draft's [sees]. It
+    reports what a compiled program depends on beyond them. In walk order:
     - [tokens] reports case ["whole"] for an index built by {!whole}, or
       ["packed"] for one built by {!packed}, then walks its positions at
       [tokens.pos]; or case ["tabled"], then whether [row] is present and, if it
@@ -345,3 +350,10 @@ val ptree : t Nx.Ptree.t
 
     Two indices share a compiled program only if they agree on all of these
     reports; one that differs, such as another window, compiles its own. *)
+
+val place : 'e Nx.Placement.t -> 'd t -> 'e t
+(** [place at index] is [index] with its tensors whole on each device of [at]
+    ({!Nx.Placement.uncut}), as {!Nx.place}: an index made from OCaml values
+    ({!rows}, {!whole}, {!packed}) lies on the host, and a model on other
+    devices reads it where it computes. Its tensors' leading axes differ
+    (tokens, rows, slots), so no cut of [at] applies to all of them. *)

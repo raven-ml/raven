@@ -8,7 +8,7 @@
    differentiate. *)
 
 (* A float constant in [x]'s element type, for the [_s] scalar operations. *)
-let const x v = Nx_dtype.of_float (Nx.dtype x) v
+let const x v = Nx.Dtype.of_float (Nx.dtype x) v
 
 (* [x] where it is positive or NaN, and zero elsewhere, [-0.] included: there [x
    <= 0] is false. Selecting the zero gives the derivative [0] at [0]. *)
@@ -86,7 +86,7 @@ let keep_top_k ~k logits =
   let k = column ~fn:"keep_top_k" ~lead k in
   let at = Nx.clamp ~min:0L ~max:(Int64.of_int (vocab - 1)) (Nx.sub_s k 1L) in
   let sorted = sorted_desc logits in
-  keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits
+  keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) at sorted) logits
 
 let keep_top_p ~p logits =
   let lead, vocab = last_axis ~fn:"keep_top_p" logits in
@@ -105,4 +105,4 @@ let keep_top_p ~p logits =
   let at =
     Nx.clamp ~min:0L ~max:(Int64.of_int (vocab - 1)) (Nx.sub_s count 1L)
   in
-  keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) ~indices:at sorted) logits
+  keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) at sorted) logits

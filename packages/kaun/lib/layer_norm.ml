@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a }
 
 let walk c { gamma; beta } =
   let open Nx.Ptree.Walk in
@@ -11,21 +11,24 @@ let walk c { gamma; beta } =
   let beta = field c "beta" leaf beta in
   { gamma; beta }
 
-let make ~dim dtype =
+let make ~dim dtype at =
   if dim <= 0 then
     Printf.ksprintf invalid_arg "Layer_norm.make: dim must be positive, got %d"
       dim;
-  { gamma = Nx.ones dtype [| dim |]; beta = Nx.zeros dtype [| dim |] }
+  {
+    gamma = Nx.ones_at at dtype [| dim |];
+    beta = Nx.zeros_at at dtype [| dim |];
+  }
 
-let init ~dim = make ~dim Nx.float32
+let init ~dim at = make ~dim Nx.float32 at
 
 (* Half and quarter precision floats are too coarse for the statistics: their
    normalization runs in a float32 island. Wider dtypes keep their own
    arithmetic, so the float32 and float64 graphs are exactly the pre-island
    ones. *)
 let low_precision : type b. (float, b) Nx.dtype -> bool = function
-  | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
-  | Nx.Float32 | Nx.Float64 -> false
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
+  | Float32 | Float64 -> false
 
 (* [(x - mean x) / sqrt (var x + eps)] along the last axis. Biased variance of
    the centered values: mean((x - mu)^2). Centering before squaring keeps the

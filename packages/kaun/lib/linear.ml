@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a t = { w : 'a; b : 'a option }
+type ('a, _) t = { w : 'a; b : 'a option }
 
 let walk c { w; b } =
   let open Nx.Ptree.Walk in
@@ -12,21 +12,25 @@ let walk c { w; b } =
   { w; b }
 
 let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
-    ?(bias = true) ~inputs ~outputs dtype =
+    ?(bias = true) ~key ~inputs ~outputs dtype =
   if inputs <= 0 || outputs <= 0 then
     Printf.ksprintf invalid_arg
       "Linear.make: inputs and outputs must be positive, got inputs=%d \
        outputs=%d"
       inputs outputs;
-  let w = w_init ~fan_in:inputs ~fan_out:outputs dtype [| inputs; outputs |] in
+  let keys = Nx.Rng.split key in
+  let w =
+    w_init keys.(0) ~fan_in:inputs ~fan_out:outputs dtype [| inputs; outputs |]
+  in
   let b =
     if bias then
-      Some (bias_init ~fan_in:inputs ~fan_out:outputs dtype [| outputs |])
+      Some
+        (bias_init keys.(1) ~fan_in:inputs ~fan_out:outputs dtype [| outputs |])
     else None
   in
   { w; b }
 
-let init ~inputs ~outputs = make ~inputs ~outputs Nx.float32
+let init ~key ~inputs ~outputs = make ~key ~inputs ~outputs Nx.float32
 
 let apply p x =
   let y = Nx.matmul x p.w in

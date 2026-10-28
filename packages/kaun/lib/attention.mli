@@ -27,11 +27,11 @@
 
 (** {1:types Types} *)
 
-type 'a t = {
-  q : 'a Linear.t;
-  k : 'a Linear.t;
-  v : 'a Linear.t;
-  out : 'a Linear.t;
+type ('a, 'd) t = {
+  q : ('a, 'd) Linear.t;
+  k : ('a, 'd) Linear.t;
+  v : ('a, 'd) Linear.t;
+  out : ('a, 'd) Linear.t;
 }
 (** The type for attention parameters over payload ['a]: the query, key, value
     and output projections. *)
@@ -39,38 +39,40 @@ type 'a t = {
 (** {1:constructors Constructors} *)
 
 val make :
-  ?w_init:'b Init.t ->
-  ?bias_init:'b Init.t ->
+  ?w_init:('b, 'd) Init.t ->
+  ?bias_init:('b, 'd) Init.t ->
   ?bias:bool ->
   ?q_dim:int ->
   ?kv_dim:int ->
+  key:'d Nx.Rng.key ->
   embed_dim:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t t
-(** [make ~embed_dim dtype] is a fresh layer attending over [embed_dim]
-    features: [q] maps [embed_dim] to [q_dim], [k] and [v] map [embed_dim] to
-    [kv_dim], and [out] maps [q_dim] back to [embed_dim]. [q_dim] and [kv_dim]
-    default to [embed_dim]; a smaller [kv_dim] is grouped-query attention.
-    [w_init], [bias_init] and [bias] are passed to every projection and have the
-    defaults of {!Linear.make}.
+  ((float, 'b, 'd) Nx.t, 'd) t
+(** [make ~key ~embed_dim dtype] is a fresh layer attending over [embed_dim]
+    features, drawn from [key] and lying where it lies: [q] maps [embed_dim] to
+    [q_dim], [k] and [v] map [embed_dim] to [kv_dim], and [out] maps [q_dim]
+    back to [embed_dim]. [q_dim] and [kv_dim] default to [embed_dim]; a smaller
+    [kv_dim] is grouped-query attention. [w_init], [bias_init] and [bias] are
+    passed to every projection and have the defaults of {!Linear.make}.
 
-    Random initializers draw from the implicit RNG scope (see {!Nx.Rng}).
+    The four projections are drawn from four keys {!Nx.Rng.split} makes of
+    [key].
 
     Raises [Invalid_argument] if a dimension is not positive. *)
 
-val init : embed_dim:int -> Nx.float32_t t
-(** [init ~embed_dim] is [make ~embed_dim Nx.float32]: Glorot-uniform weights,
-    zero biases. *)
+val init : key:'d Nx.Rng.key -> embed_dim:int -> ('d Nx.float32_t, 'd) t
+(** [init ~key ~embed_dim] is [make ~key ~embed_dim Nx.float32]: Glorot-uniform
+    weights, zero biases. *)
 
 (** {1:applying Attention of a sequence over itself} *)
 
 val apply :
   head_dim:int ->
-  ?mask:(bool, Nx.bool_elt) Nx.t ->
-  ?rope:Rope.t ->
-  (float, 'b) Nx.t t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
+  ?rope:'d Rope.t ->
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply ~head_dim p x] is multi-head self-attention over [x], with:
 
     - [head_dim], the feature width of one head. It must divide the projection
@@ -91,10 +93,11 @@ val apply :
     [kv_heads] does not divide [heads], or [mask] has another shape. *)
 
 val causal_mask :
-  seq:int -> ?valid:(bool, Nx.bool_elt) Nx.t -> unit -> (bool, Nx.bool_elt) Nx.t
-(** [causal_mask ~seq ()] is the mask of shape [[| seq; seq |]] under which
-    query [i] sees keys [j <= i]. With [valid], of shape [[| batch; seq |]] and
-    [true] at real tokens, the result has shape [[| batch; seq; seq |]] and
+  seq:int -> ?valid:'d Nx.bool_t -> 'd Nx.Placement.t -> 'd Nx.bool_t
+(** [causal_mask ~seq at] is the mask of shape [[| seq; seq |]], whole on each
+    device of [at], under which query [i] sees keys [j <= i]: a mask made from a
+    length alone takes its placement. With [valid], of shape [[| batch; seq |]]
+    and [true] at real tokens, the result has shape [[| batch; seq; seq |]] and
     hides padded keys as well.
 
     Raises [Invalid_argument] if [seq] is not positive or [valid] has another
@@ -110,9 +113,9 @@ val causal_mask :
 
     Everything is functional: {!cached} returns the written cache and never
     mutates its argument. Thread the cache through the decode loop like any
-    other state; under a compiled function whose signature consumes it
-    ({!Nx.Ptree.consumes} in [Rune.jit]'s signature), the write happens in the
-    cache's own storage and the cache given to the call is dead after it.
+    other state; a cache donated to a compiled call ({!Nx.Ptree.donate}) is dead
+    after the call, and is written in its own storage where [Rune.jit] lends the
+    call its memory, as rune.mli's donation rules state.
 
     The addressing laws are {!Cache_index}'s. The layer adds five:
 
@@ -134,13 +137,13 @@ val causal_mask :
       layer. A model defines its training forward pass as {!cached} over
       {!Cache_index.whole}, so it has one implementation and none to keep equal.
     + {b One tensor per cache leaf.} Two sequences share a prefix by naming the
-      same slots in an index's table, never by two leaves holding one tensor: a
-      compiled call that consumes a storage two leaves reach raises before it
-      runs, naming both. *)
+      same slots in an index's table, never by two leaves holding one tensor,
+      which a call reads as two values: each leaf's writes are its own, and the
+      prefix is stored twice. *)
 
 (** Key-value caches. *)
 module Cache : sig
-  type 'a t = { keys : 'a; values : 'a }
+  type ('a, _) t = { keys : 'a; values : 'a }
   (** The type for key-value caches over payload ['a]. At tensor payloads,
       [keys] and [values] each have shape [[| slots; kv_heads; head_dim |]]:
       slot [s] holds the key and value of whatever token a cache index stored
@@ -151,15 +154,18 @@ module Cache : sig
     kv_heads:int ->
     head_dim:int ->
     (float, 'b) Nx.dtype ->
-    (float, 'b) Nx.t t
-  (** [make ~slots ~kv_heads ~head_dim dtype] is a cache of [slots] slots
-      holding zeros. Use the parameters' dtype. [slots] may be [0]: the state a
+    'd Nx.Placement.t ->
+    ((float, 'b, 'd) Nx.t, 'd) t
+  (** [make ~slots ~kv_heads ~head_dim dtype at] is a cache of [slots] slots
+      holding zeros, made at [at] (a cache is made from no value, and its pools
+      are the largest arrays a decoder keeps, so they are made where they will
+      lie). Use the parameters' dtype. [slots] may be [0]: the state a
       {!Cache_index.whole} call is given.
 
       Raises [Invalid_argument] if [slots] is negative or another dimension is
       not positive. *)
 
-  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
   (** [walk c cache] walks [cache.keys] then [cache.values], at the paths
       ["keys"] and ["values"]: the cache's {!Nx.Ptree.S} instance. A decoder's
       caches, one per block in block order, are
@@ -167,11 +173,11 @@ module Cache : sig
       leaf paths are ["0.keys"], ["0.values"], ["1.keys"], ... *)
 
   val extend :
-    Cache_index.t ->
-    (float, 'b) Nx.t t ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t * (float, 'b) Nx.t * (float, 'b) Nx.t t
+    'd Cache_index.t ->
+    ((float, 'b, 'd) Nx.t, 'd) t ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) t
   (** [extend index cache k v] is [(k', v', cache')]: [cache] with the call's
       keys [k] and values [v] stored, both of shape
       [[| batch; kv_heads; seq; head_dim |]], and what the call's tokens attend
@@ -186,12 +192,12 @@ end
 
 val cached :
   head_dim:int ->
-  ?rope:Rope.t ->
-  (float, 'b) Nx.t t ->
-  (float, 'b) Nx.t Cache.t ->
-  Cache_index.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Cache.t
+  ?rope:'d Rope.t ->
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  ((float, 'b, 'd) Nx.t, 'd) Cache.t ->
+  'd Cache_index.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Cache.t
 (** [cached ~head_dim p cache index x] is causal self-attention of the tokens
     [x], of shape [[| batch; seq; embed_dim |]], over their sequences, and
     [cache] with their keys and values written. The result has [x]'s shape.
@@ -210,9 +216,9 @@ val cached :
     {!apply}: a model's whole-sequence forward pass is this function over
     {!Cache_index.whole}. Otherwise each leaf costs one scatter of the call's
     tokens and one gather of its context; both trace once under [Rune.jit]
-    whatever the index holds. Consumed by a compiled step on a device, the
-    step's cost does not depend on the size of the cache. Differentiable through
-    Rune.
+    whatever the index holds. Consumed by a compiled step that lends it the
+    pools' memory, the step's cost does not depend on the size of the cache.
+    Differentiable through Rune.
 
     Raises [Invalid_argument] if [x] does not have shape
     [[| batch; seq; embed_dim |]] with the index's batch and seq, [head_dim]
@@ -242,9 +248,9 @@ val cached :
 
 val split :
   head_dim:int ->
-  (float, 'b) Nx.t Linear.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  ((float, 'b, 'd) Nx.t, 'd) Linear.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [split ~head_dim l x] projects [x], of shape [[| batch; seq; embed |]],
     through [l] and splits the result into heads: shape
     [[| batch; heads; seq; head_dim |]], where [heads] is [l]'s output width
@@ -255,13 +261,13 @@ val split :
     not positive or does not divide [l]'s output width. *)
 
 val attend :
-  ?mask:(bool, Nx.bool_elt) Nx.t ->
+  ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
   ?scale:float ->
-  ?sinks:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  ?sinks:(float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [attend q k v] is grouped-query attention of [q], of shape
     [[| batch; heads; n; d |]], over [k] and [v], of shape
     [[| batch; kv_heads; m; d |]] and [[| batch; kv_heads; m; dv |]]: the result
@@ -282,7 +288,10 @@ val attend :
     Raises [Invalid_argument] if a shape is not as above or [kv_heads] does not
     divide [heads]. *)
 
-val merge : (float, 'b) Nx.t Linear.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val merge :
+  ((float, 'b, 'd) Nx.t, 'd) Linear.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [merge l y] concatenates the heads of [y], of shape
     [[| batch; heads; seq; d |]], and projects them through [l]: shape
     [[| batch; seq; embed |]]. It undoes {!split}.
@@ -293,13 +302,13 @@ val merge : (float, 'b) Nx.t Linear.t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** {1:core The attention core} *)
 
 val scaled_dot_product_attention :
-  ?mask:(bool, Nx.bool_elt) Nx.t ->
+  ?mask:(bool, Nx.bool_elt, 'd) Nx.t ->
   ?scale:float ->
-  ?sinks:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  ?sinks:(float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [scaled_dot_product_attention q k v] is [softmax (q @ kᵀ * scale) @ v]: each
     of the [n] query rows takes a weighted average of the [m] value rows,
     weighted by the softmax of its scaled dot products with the key rows.
@@ -331,12 +340,12 @@ val scaled_dot_product_attention :
 
     Without [scale] and [sinks] the computation is exactly the one above.
 
-    For half and quarter precision inputs (float16, bfloat16, float8) the
-    scores, masking, sinks and softmax are computed in a float32 island: [q],
-    [k] and [sinks] are upcast, the probabilities are cast back to the input
-    dtype, and the value matmul runs at the input dtype. Float32 and float64
-    inputs use their own dtype throughout, exactly as if the island were absent.
-    {!apply} and {!cached} inherit this contract.
+    For narrow inputs (float16, bfloat16, float8, float4) the scores, masking,
+    sinks and softmax are computed in a float32 island: [q], [k] and [sinks] are
+    upcast, the probabilities are cast back to the input dtype, and the value
+    matmul runs at the input dtype. Float32 and float64 inputs use their own
+    dtype throughout, exactly as if the island were absent. {!apply} and
+    {!cached} inherit this contract.
 
     Raises [Invalid_argument] if [q], [k] or [v] has fewer than 2 axes, [q] and
     [k] differ in their last axis, [k] and [v] differ in their second-to-last
@@ -345,7 +354,7 @@ val scaled_dot_product_attention :
 
 (** {1:structure Structure} *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks the projections [q], [k], [v] then [out], each by
     {!Linear.walk}, at those paths: the layer's {!Nx.Ptree.S} instance. Leaf
     paths are ["q.w"], ["q.b"], ..., ["out.b"].

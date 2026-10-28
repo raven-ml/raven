@@ -1,4 +1,4 @@
 (library
  (name kaun)
  (public_name kaun)
- (libraries nx nx.dtype nx.io))
+ (libraries nx nx.array nx.io))

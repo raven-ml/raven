@@ -6494,6 +6494,22 @@ thread.
 
 ### Kaun
 
+- **Breaking:** layers carry their arrays' device set, as `('a, 'd) Linear.t`.
+  Drawn layers' `init` and `make` take `~key` and place the parameters where
+  the key lies; `Init.t` draws from a key.
+- **Breaking:** `Layer_norm`, `Rms_norm` and `Batch_norm.init`,
+  `Attention.Cache.make` and `Attention.causal_mask` take the placement of
+  the arrays they make.
+- **Breaking:** `Rope.t` and `Cache_index.t` take their set, are built on the
+  host, and move whole onto a model's devices with `Rope.place` and
+  `Cache_index.place`. `Cache_index.ptree` is `Cache_index.walk`.
+- **Breaking:** `Fn.gelu_approx`, `silu` and `softplus` take float tensors
+  only, as the `Nx.exp` they compute with does.
+- **Breaking:** `Kaun_datasets` loaders and `Metric.confusion_matrix` return
+  host values; `Data`'s shuffle permutes where the data lies, and
+  `Dropout.apply`'s `?key` is a key at the input's set.
+- `Kaun_datasets` decompresses in bounded memory and removes a partial file
+  when decompression fails.
 - `Kaun_datasets` creates its cache directory under an absolute Windows path
   such as `C:\Users\…`; loaders raised `Unix_error (EINVAL, "mkdir", ".\C:")`.
 - `Kaun_datasets.cifar10` raises `Failure` naming the file when a batch does

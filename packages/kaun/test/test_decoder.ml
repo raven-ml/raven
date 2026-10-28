@@ -8,8 +8,8 @@
    fold over the blocks, [cached], that threads key-value caches along a cache
    index, [hidden], which is [cached] over a cache index that keeps nothing, and
    [logits] applied to either. The tests are the laws a model written this way
-   must satisfy, each run eagerly and through a compiled step that consumes its
-   caches. *)
+   must satisfy, each run eagerly and through a compiled step given its caches
+   donated. *)
 
 open Windtrap
 open Kaun
@@ -28,19 +28,19 @@ let at =
 (* A Llama-shaped block: RMS norm, grouped-query attention with rotary
    positions, SwiGLU. *)
 
-type 'a block = {
-  attn_norm : 'a Rms_norm.t;
-  attn : 'a Attention.t;
-  ffn_norm : 'a Rms_norm.t;
-  gate : 'a Linear.t;
-  up : 'a Linear.t;
-  down : 'a Linear.t;
+type ('a, 'd) block = {
+  attn_norm : ('a, 'd) Rms_norm.t;
+  attn : ('a, 'd) Attention.t;
+  ffn_norm : ('a, 'd) Rms_norm.t;
+  gate : ('a, 'd) Linear.t;
+  up : ('a, 'd) Linear.t;
+  down : ('a, 'd) Linear.t;
 }
 
-type 'a model = {
-  tok : 'a Embedding.t;
-  blocks : 'a block list;
-  norm : 'a Rms_norm.t;
+type ('a, 'd) model = {
+  tok : ('a, 'd) Embedding.t;
+  blocks : ('a, 'd) block list;
+  norm : ('a, 'd) Rms_norm.t;
 }
 
 module Block = struct
@@ -56,7 +56,7 @@ module Block = struct
 end
 
 module Model = struct
-  type 'a t = 'a model
+  type ('a, 'd) t = ('a, 'd) model
 
   let walk c m =
     let open Nx.Ptree.Walk in
@@ -66,10 +66,12 @@ module Model = struct
     { tok; blocks; norm }
 end
 
-let model_ptree : Nx.float32_t model Nx.Ptree.t =
+let model_ptree : ((Nx.host Nx.float32_t, Nx.host) model, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Model)
 
-let caches : Nx.float32_t Attention.Cache.t list Nx.Ptree.t =
+let caches :
+    ((Nx.host Nx.float32_t, Nx.host) Attention.Cache.t list, Nx.host) Nx.Ptree.t
+    =
   Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
 
 let vocab = 17
@@ -84,22 +86,25 @@ let rope = Rope.make ~head_dim ~context:64 ()
 let model () =
   Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->
   let linear ~inputs ~outputs =
-    Linear.make ~bias:false ~inputs ~outputs Nx.float32
+    Linear.make ~key:(Nx.Rng.next_key ()) ~bias:false ~inputs ~outputs
+      Nx.float32
   in
   let block () =
     {
-      attn_norm = Rms_norm.init ~dim;
-      attn = Attention.make ~bias:false ~kv_dim ~embed_dim:dim Nx.float32;
-      ffn_norm = Rms_norm.init ~dim;
+      attn_norm = Rms_norm.init ~dim Nx.Host.on;
+      attn =
+        Attention.make ~key:(Nx.Rng.next_key ()) ~bias:false ~kv_dim
+          ~embed_dim:dim Nx.float32;
+      ffn_norm = Rms_norm.init ~dim Nx.Host.on;
       gate = linear ~inputs:dim ~outputs:ffn;
       up = linear ~inputs:dim ~outputs:ffn;
       down = linear ~inputs:ffn ~outputs:dim;
     }
   in
   {
-    tok = Embedding.init ~vocab ~dim;
+    tok = Embedding.init ~key:(Nx.Rng.next_key ()) ~vocab ~dim;
     blocks = List.init layers (fun _ -> block ());
-    norm = Rms_norm.init ~dim;
+    norm = Rms_norm.init ~dim Nx.Host.on;
   }
 
 let block b cache index x =
@@ -118,7 +123,7 @@ let block b cache index x =
 let cache ~slots =
   List.init layers (fun _ ->
       Attention.Cache.make ~slots ~kv_heads:(kv_dim / head_dim) ~head_dim
-        Nx.float32)
+        Nx.float32 Nx.Host.on)
 
 let cached m caches index ids =
   let x, rev =
@@ -160,7 +165,7 @@ let close ~msg expected actual =
 let finite ~msg t = is_true ~msg (Array.for_all Float.is_finite (flat t))
 
 (* One call, eagerly or through a compiled step that reads the tokens and the
-   index, consumes the caches, and returns the stream beside them. *)
+   index, takes the caches donated, and returns the stream beside them. *)
 
 let eager m caches index tokens = cached m caches index tokens
 
@@ -168,11 +173,11 @@ let compiled m =
   let step =
     Rune.jit
       Nx.Ptree.(
-        tensor @-> Cache_index.ptree @-> consumes caches
-        @@ returns (pair tensor caches))
+        tensor @-> v Cache_index.walk @-> caches
+        @-> returns (pair tensor caches))
       (fun tokens index caches -> cached m caches index tokens)
   in
-  fun caches index tokens -> step tokens index caches
+  fun c index tokens -> step tokens index (Nx.Ptree.donate caches c)
 
 (* Every law below holds for both. *)
 let both name f =
@@ -180,7 +185,7 @@ let both name f =
     test (name ^ ", eager") (fun () ->
         let m = model () in
         f m (eager m));
-    test (name ^ ", compiled and consuming its caches") (fun () ->
+    test (name ^ ", compiled, its caches donated") (fun () ->
         let m = model () in
         f m (compiled m));
   ]
@@ -247,7 +252,7 @@ let test_chunks m call =
    gives the same outputs. *)
 let test_slot_renaming m call =
   let n = Array.length prompt and pool = 23 in
-  let order = Nx.to_array (Nx.Rng.permutation (Nx.Rng.key 7) pool) in
+  let order = Nx.to_array (Nx.Rng.permutation ~key:(Nx.Rng.key 7) pool) in
   let slots = Array.init n (fun j -> Int64.to_int order.(j)) in
   close ~msg:"a random permutation of the slots"
     (feed m call ~slots:(Array.init n Fun.id) ~pool [ 4; 3; 2 ])
@@ -377,14 +382,12 @@ let test_empty_lane m call =
   in
   finite ~msg:"a call of padding alone is finite" h'
 
-(* Greedy generation through a compiled step that consumes its caches equals
+(* Greedy generation through a compiled step given its caches donated equals
    re-running the whole sequence for every token, and every cache leaf is
    written in its own storage. The sampled token and the logits it was taken
-   from are results beside the caches. *)
-
-(* On CPU:1, a device with storage of its own, the cache stays on the device and
-   each step writes it in place. *)
-let test_generation_matches_recomputation () =
+   from are results beside the caches. [~in_place] checks the storage alone,
+   [~in_place:false] the tokens and logits alone. *)
+let test_generation_matches_recomputation ~in_place () =
   let m = model () in
   let steps = 5 in
   let start = [| 3; 14; 1 |] in
@@ -405,46 +408,42 @@ let test_generation_matches_recomputation () =
   let step =
     Rune.jit
       Nx.Ptree.(
-        tensor @-> Cache_index.ptree @-> consumes caches
-        @@ returns (pair (pair tensor tensor) caches))
+        tensor @-> v Cache_index.walk @-> caches
+        @-> returns (pair (pair tensor tensor) caches))
       (fun token index kv ->
         let seq = Nx.dim 1 token in
         let h, kv = cached m kv index token in
         let scores = logits m (Nx.slice [ A; I (seq - 1) ] h) in
         ((Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 scores), scores), kv))
   in
+  let step token index c = step token index (Nx.Ptree.donate caches c) in
   let context = Array.length start + steps in
   let index = ref (Cache_index.rows ~context [| Array.length start |]) in
-  let placed =
-    Nx.Ptree.map caches
-      (fun _ t -> Nx.place (Nx.Placement.on (Nx.Device.cpu 1)) t)
-      (cache ~slots:context)
-  in
-  let s = ref (step (ids [| start |]) !index placed) in
-  (* Each pool's storage. *)
+  let s = ref (step (ids [| start |]) !index (cache ~slots:context)) in
+  (* Each pool's storage, read without sharing it: a value over its memory
+     would keep the next call from taking it. *)
   let storage kv =
-    let of_leaf x =
-      match Nx.Repr.v x with
-      | Placed p -> Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p)
-      | Host _ | Traced _ -> invalid_arg "storage: not a placed value"
-    in
+    let of_leaf x = [ Nx.Repr.read x Nx_array.buffer ] in
     Nx.Ptree.fold caches (fun _ t acc -> acc @ of_leaf t) kv []
   in
   let sampled () = fst (fst !s) and sampled_from () = snd (fst !s) in
   List.iteri
     (fun i (next, scores) ->
       let msg = Printf.sprintf "step %d" i in
-      close ~msg:(msg ^ ", logits") scores (sampled_from ());
-      equal ~msg:(msg ^ ", token") int next
-        (Int64.to_int (Nx.item [ 0; 0 ] (sampled ())));
+      if not in_place then begin
+        close ~msg:(msg ^ ", logits") scores (sampled_from ());
+        equal ~msg:(msg ^ ", token") int next
+          (Int64.to_int (Nx.item [ 0; 0 ] (sampled ())))
+      end;
       if i < steps - 1 then begin
         let before = storage (snd !s) in
         index := Cache_index.advance !index;
         s := step (sampled ()) !index (snd !s);
-        equal
-          ~msg:(msg ^ ", every cache leaf is written in its own storage")
-          (list at) before
-          (storage (snd !s))
+        if in_place then
+          equal
+            ~msg:(msg ^ ", every cache leaf is written in its own storage")
+            (list at) before
+            (storage (snd !s))
       end)
     recomputed
 
@@ -501,9 +500,10 @@ let () =
               ]);
          group "generation"
            [
-             test
-               "jitted generation matches recomputation and reuses every leaf"
-               test_generation_matches_recomputation;
+             test "jitted generation matches recomputation"
+               (test_generation_matches_recomputation ~in_place:false);
+             test "jitted generation reuses every cache leaf"
+               (test_generation_matches_recomputation ~in_place:true);
            ];
          group "gradients"
            [

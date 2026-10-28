@@ -13,16 +13,18 @@
 
     A value of type {!t} is the schedule: one inverse frequency per feature
     pair, and the cosine and sine of each pair's angle at every position below
-    the schedule's context, computed once on the host. It has no parameters and
-    never enters a parameter tree. Every published schedule is a choice of those
-    frequencies, so a new one is a constructor and {!apply} never changes. *)
+    the schedule's context, computed once on the host, as every value made from
+    numbers is; {!place} moves it where a model computes. It has no parameters
+    and never enters a parameter tree. Every published schedule is a choice of
+    those frequencies, so a new one is a constructor and {!apply} never changes.
+*)
 
-type t
-(** The type for rotary schedules: the inverse frequencies of one attention
-    head, [head_dim / 2] of them, and their angles' cosines and sines at the
-    positions [0] to [context - 1], in float32. *)
+type 'd t
+(** The type for rotary schedules on the set ['d]: the inverse frequencies of
+    one attention head, [head_dim / 2] of them, and their angles' cosines and
+    sines at the positions [0] to [context - 1], in float32. *)
 
-val of_frequencies : context:int -> float array -> t
+val of_frequencies : context:int -> float array -> Nx.host t
 (** [of_frequencies ~context f] is the schedule whose pair [i] has inverse
     frequency [f.(i)], for a head of [2 * Array.length f] features and positions
     below [context]. Its cosines and sines are of angles computed in float64,
@@ -32,7 +34,7 @@ val of_frequencies : context:int -> float array -> t
     Raises [Invalid_argument] if [f] is empty or holds a non-finite number, or
     [context] is not positive. *)
 
-val make : ?theta:float -> head_dim:int -> context:int -> unit -> t
+val make : ?theta:float -> head_dim:int -> context:int -> unit -> Nx.host t
 (** [make ~head_dim ~context ()] is the standard schedule: pair [i] has
     frequency [theta ** (-2 i / head_dim)]. [theta] defaults to [10000.].
 
@@ -47,7 +49,7 @@ val llama3 :
   high_freq_factor:float ->
   original_context:int ->
   context:int ->
-  t
+  Nx.host t
 (** [llama3 ...] is the Llama 3.1 long-context schedule: the standard
     frequencies with the low ones divided by [factor], the high ones kept, and a
     linear blend between, the bands being set by the wavelengths
@@ -67,7 +69,7 @@ val yarn :
   beta_slow:float ->
   original_context:int ->
   context:int ->
-  t
+  Nx.host t
 (** [yarn ...] is the YaRN long-context schedule (Peng et al., 2023), with the
     correction range left untruncated, as gpt-oss uses it. Pair [i] blends the
     standard frequency [f] and the interpolated one [f / factor]:
@@ -91,14 +93,19 @@ val yarn :
     [beta_slow], [original_context] or [context] is not positive, [factor] is
     below [1], or [beta_fast <= beta_slow]. *)
 
-val frequencies : t -> float array
+val place : 'e Nx.Placement.t -> 'd t -> 'e t
+(** [place at t] is [t] with its cosines and sines whole on each device of [at]
+    ({!Nx.Placement.uncut}), where a model on [at] reads them. *)
+
+val frequencies : 'd t -> float array
 (** [frequencies t] is a copy of [t]'s inverse frequencies, in pair order. *)
 
-val context : t -> int
+val context : 'd t -> int
 (** [context t] is the number of positions [t] rotates: positions [0] to
     [context t - 1]. *)
 
-val apply : t -> pos:Nx.int64_t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val apply :
+  'd t -> pos:'d Nx.int64_t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [apply t ~pos x] rotates [x], of shape [[| batch; heads; seq; head_dim |]],
     by the positions [pos], of shape [[| batch; seq |]] (or [[| 1; seq |]],
     shared by the batch). Feature [i] is paired with feature [i + head_dim / 2]:

@@ -10,7 +10,7 @@ open Windtrap
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -33,8 +33,8 @@ let test_xor_trains () =
   let x = Lazy.force xor_x and y = Lazy.force xor_y in
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      Mlp.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:8 ~outputs:1;
     }
   in
   let loss p = Loss.sigmoid_bce (Mlp.apply p x) y in
@@ -67,8 +67,8 @@ let test_sgd_decreases_loss () =
   let x = Lazy.force xor_x and y = Lazy.force xor_y in
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      Mlp.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:8 ~outputs:1;
     }
   in
   let loss p = Loss.mse (Mlp.apply p x) y in

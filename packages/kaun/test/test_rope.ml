@@ -172,8 +172,8 @@ let test_pairs_first_half_with_second () =
 let test_relative () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let t = Rope.make ~head_dim:8 ~context:108 () in
-  let q = Nx.randn Nx.float32 [| 1; 1; 1; 8 |] in
-  let k = Nx.randn Nx.float32 [| 1; 1; 1; 8 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 1; 1; 1; 8 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 1; 1; 1; 8 |] in
   let dot pq pk =
     let at p x = Rope.apply t ~pos:(pos_of [| [| p |] |]) x in
     Nx.item [] (Nx.sum (Nx.mul (at pq q) (at pk k)))
@@ -212,11 +212,11 @@ let test_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
   let t = Rope.make ~head_dim:4 ~context:10 () in
   let pos = pos_of [| [| 2; 5; 9 |] |] in
-  let w = Nx.randn Nx.float64 [| 1; 2; 3; 4 |] in
+  let w = Nx.Rng.normal Nx.float64 [| 1; 2; 3; 4 |] in
   match
     Rune.check_grads Nx.Ptree.tensor
       (fun x -> Nx.sum (Nx.mul w (Rope.apply t ~pos x)))
-      (Nx.randn Nx.float64 [| 1; 2; 3; 4 |])
+      (Nx.Rng.normal Nx.float64 [| 1; 2; 3; 4 |])
   with
   | Ok () -> ()
   | Error m -> fail m
@@ -225,7 +225,7 @@ let test_jit_matches_eager () =
   Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
   let t = Rope.make ~head_dim:4 ~context:10 () in
   let pos = pos_of [| [| 2; 5; 9 |] |] in
-  let x = Nx.randn Nx.float32 [| 1; 2; 3; 4 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 3; 4 |] in
   let f x = Rope.apply t ~pos x in
   values_are ~msg:"compiled rotation" ~tol:1e-5
     (Nx.to_array (f x))

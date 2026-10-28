@@ -227,6 +227,8 @@
   dune
   (nx
    (= :version))
+  (lz
+   (= :version))
   logs
   jsont
   bytesrw

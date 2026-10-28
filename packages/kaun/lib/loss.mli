@@ -33,18 +33,18 @@ type reduction = [ `Mean | `Sum ]
 
 val mse :
   ?reduction:reduction ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t
 (** [mse predictions targets] is the reduction over all elements of the squared
     error [(predictions - targets)²]. Shape compatibility follows Nx
     broadcasting semantics. *)
 
 val mae :
   ?reduction:reduction ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t
 (** [mae predictions targets] is the reduction over all elements of the absolute
     error [|predictions - targets|]. Shape compatibility follows Nx broadcasting
     semantics. Its gradient is discontinuous where an element of [predictions]
@@ -53,9 +53,9 @@ val mae :
 val huber :
   ?delta:float ->
   ?reduction:reduction ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t
 (** [huber ?delta predictions targets] is the reduction over all elements of the
     Huber loss of the error [d = predictions - targets]: [d²/2] where
     [|d| <= delta] and [delta * (|d| - delta/2)] beyond. Quadratic near zero
@@ -69,9 +69,9 @@ val huber :
 
 val sigmoid_bce :
   ?reduction:reduction ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t
 (** [sigmoid_bce logits targets] is the reduction over all elements of the
     binary cross-entropy between [sigmoid logits] and [targets]:
     [-(y log p + (1 - y) log (1 - p))] with [p = sigmoid logits] and
@@ -84,9 +84,9 @@ val sigmoid_bce :
 
 val softmax_cross_entropy :
   ?reduction:reduction ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t
 (** [softmax_cross_entropy logits targets] is the reduction over examples of the
     cross-entropy between [softmax logits] and [targets] along the last axis:
     [-Σ targets * log_softmax logits]. [logits] has shape [[...; classes]];
@@ -95,21 +95,23 @@ val softmax_cross_entropy :
     log-sum-exp trick, so it is stable at extreme logits. Use
     {!softmax_cross_entropy_sparse} when targets are class indices.
 
-    For half and quarter precision logits (float16, bfloat16, float8) the
-    log-probabilities and the reduction are computed in a float32 island and the
-    result is cast back: a half precision log-sum-exp over a large vocabulary
-    biases the gradient. Pass the logits at their own dtype; the cast inside the
-    loss fuses into the reduction, where a cast at the call site would
-    materialize float32 logits. The result comes back at the logits' dtype: a
-    [`Sum] over many tokens can exceed float16's range, and a bfloat16 mean is
-    quantized to about [1/64] near [3], so cast the scalar up before logging or
-    accumulating it.
+    For narrow logits (float16, bfloat16, float8, float4) the log-probabilities
+    and the reduction are computed in a float32 island and the result is cast
+    back: a half precision log-sum-exp over a large vocabulary biases the
+    gradient. Pass the logits at their own dtype; the cast inside the loss fuses
+    into the reduction, where a cast at the call site would materialize float32
+    logits. The result comes back at the logits' dtype: a [`Sum] over many
+    tokens can exceed float16's range, and a bfloat16 mean is quantized to about
+    [1/64] near [3], so cast the scalar up before logging or accumulating it.
 
     Raises [Invalid_argument] if [logits] has rank [0], if its class dimension
     is empty, or if [targets]' shape differs from [logits]'. *)
 
 val softmax_cross_entropy_sparse :
-  ?reduction:reduction -> (float, 'a) Nx.t -> Nx.int64_t -> (float, 'a) Nx.t
+  ?reduction:reduction ->
+  (float, 'a, 'd) Nx.t ->
+  'd Nx.int64_t ->
+  (float, 'a, 'd) Nx.t
 (** [softmax_cross_entropy_sparse logits labels] is {!softmax_cross_entropy}
     with integer class labels: [labels] has [logits]' shape without the last
     axis, and each label is the index of the true class, in

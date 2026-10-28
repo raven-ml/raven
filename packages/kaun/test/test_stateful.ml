@@ -25,8 +25,8 @@ let bn_x = lazy (t32 [| 4; 2 |] [| 1.0; -2.0; 3.0; 4.0; -1.0; 10.0; 5.0; 0.0 |])
 
 let test_bn_normalizes_batch () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
-  let params, stats = Batch_norm.init ~features:5 in
-  let x = Nx.randn Nx.float32 [| 64; 5 |] in
+  let params, stats = Batch_norm.init ~features:5 Nx.Host.on in
+  let x = Nx.Rng.normal Nx.float32 [| 64; 5 |] in
   let x = Nx.add_s (Nx.mul_s x 3.0) 7.0 in
   let y, _ = Batch_norm.apply params stats ~training:true x in
   check_arr ~eps:1e-4 ~msg:"per-feature mean is 0" (Array.make 5 0.0)
@@ -35,7 +35,7 @@ let test_bn_normalizes_batch () =
     (Nx.var ~axes:[ 0 ] y)
 
 let test_bn_affine_after_normalization () =
-  let params, stats = Batch_norm.init ~features:2 in
+  let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let params = { params with Batch_norm.gamma = vec [| 2.0; 0.5 |] } in
   let params = { params with Batch_norm.beta = vec [| 3.0; -1.0 |] } in
   let y, _ = Batch_norm.apply params stats ~training:true (Lazy.force bn_x) in
@@ -45,7 +45,7 @@ let test_bn_affine_after_normalization () =
     (Nx.var ~axes:[ 0 ] y)
 
 let test_bn_running_stats_one_step () =
-  let params, stats = Batch_norm.init ~features:2 in
+  let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let x = Lazy.force bn_x in
   let _, stats' =
     Batch_norm.apply ~momentum:0.9 params stats ~training:true x
@@ -62,7 +62,7 @@ let test_bn_running_stats_one_step () =
     stats'.Batch_norm.Stats.var
 
 let test_bn_running_stats_converge () =
-  let params, stats = Batch_norm.init ~features:2 in
+  let params, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let x = Lazy.force bn_x in
   let stats = ref stats in
   for _ = 1 to 200 do
@@ -77,7 +77,7 @@ let test_bn_running_stats_converge () =
     !stats.Batch_norm.Stats.var
 
 let test_bn_eval_uses_running_stats () =
-  let params, _ = Batch_norm.init ~features:2 in
+  let params, _ = Batch_norm.init ~features:2 Nx.Host.on in
   let params = { params with Batch_norm.gamma = vec [| 2.0; 1.0 |] } in
   let params = { params with Batch_norm.beta = vec [| 0.5; 0.0 |] } in
   let stats =
@@ -99,7 +99,7 @@ let test_bn_eval_uses_running_stats () =
   is_true ~msg:"eval returns the stats unchanged" (stats' == stats)
 
 let test_bn_grads_flow_to_params () =
-  let _, stats = Batch_norm.init ~features:2 in
+  let _, stats = Batch_norm.init ~features:2 Nx.Host.on in
   let params =
     { Batch_norm.gamma = vec [| 1.3; 0.7 |]; beta = vec [| 0.2; -0.4 |] }
   in
@@ -123,38 +123,42 @@ let test_bn_grads_flow_to_params () =
        (Nx.to_array grads.Batch_norm.beta))
 
 let test_bn_stats_saved () =
-  let params, _ = Batch_norm.init ~features:2 in
+  let params, _ = Batch_norm.init ~features:2 Nx.Host.on in
   let stats =
     { Batch_norm.Stats.mean = vec [| 1.0; 2.0 |]; var = vec [| 3.0; 4.0 |] }
   in
-  let bn = Nx.Ptree.(field "bn" (instantiate (module Batch_norm))) in
-  let bn_stats =
-    Nx.Ptree.(
-      field "bn" (field "stats" (instantiate (module Batch_norm.Stats))))
-  in
+  let bn = Nx.Ptree.instantiate (module Batch_norm) in
+  let bn_stats = Nx.Ptree.instantiate (module Batch_norm.Stats) in
   let archive =
     Nx_io.Archive.union
       [
-        Nx_io.Archive.of_value bn params; Nx_io.Archive.of_value bn_stats stats;
+        Nx_io.Archive.of_value ~prefix:"bn" bn params;
+        Nx_io.Archive.of_value ~prefix:"bn.stats" bn_stats stats;
       ]
   in
   equal ~msg:"dot-joined names" (list string)
     [ "bn.beta"; "bn.gamma"; "bn.stats.mean"; "bn.stats.var" ]
     (Nx_io.Archive.names archive);
-  let _, like = Batch_norm.init ~features:2 in
-  let stats' = Nx_io.Archive.to_value bn_stats ~like archive in
+  let _, like = Batch_norm.init ~features:2 Nx.Host.on in
+  let stats' =
+    Nx_io.Archive.to_value ~prefix:"bn.stats" bn_stats ~like archive
+  in
   check_arr ~msg:"mean round trips" [| 1.0; 2.0 |] stats'.Batch_norm.Stats.mean;
   check_arr ~msg:"var round trips" [| 3.0; 4.0 |] stats'.Batch_norm.Stats.var
 
 let test_bn_init_validates () =
   raises_match ~msg:"features = 0"
     (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> Batch_norm.init ~features:0)
+    (fun () -> Batch_norm.init ~features:0 Nx.Host.on)
 
 (* The full training-step round trip: a model mixing stateless and stateful
    layers, the stats returned through value_and_grad_aux. *)
 module Model = struct
-  type 'a t = { lin : 'a Linear.t; bn : 'a Batch_norm.t; out : 'a Linear.t }
+  type ('a, 'd) t = {
+    lin : ('a, 'd) Linear.t;
+    bn : ('a, 'd) Batch_norm.t;
+    out : ('a, 'd) Linear.t;
+  }
 
   let walk c { lin; bn; out } =
     let open Nx.Ptree.Walk in
@@ -174,14 +178,14 @@ let model = Nx.Ptree.instantiate (module Model)
 
 let test_bn_train_step_roundtrip () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  let x = Nx.randn Nx.float32 [| 16; 2 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 16; 2 |] in
   let y = Nx.sum ~axes:[ 1 ] ~keepdims:true (Nx.mul x x) in
-  let bn, stats = Batch_norm.init ~features:8 in
+  let bn, stats = Batch_norm.init ~features:8 Nx.Host.on in
   let params =
     {
-      Model.lin = Linear.init ~inputs:2 ~outputs:8;
+      Model.lin = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:8;
       bn;
-      out = Linear.init ~inputs:8 ~outputs:1;
+      out = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:8 ~outputs:1;
     }
   in
   let step (params, stats, ostate) =
@@ -259,19 +263,21 @@ let test_bn_stats_need_no_detach =
     (fun (seed, n, features, momentum) ->
       cover "a one-row batch" (n = 1);
       Nx.Rng.with_key (Nx.Rng.key seed) @@ fun () ->
-      let x = Nx.randn Nx.float32 [| n; 2 |] in
-      let y = Nx.randn Nx.float32 [| n; 1 |] in
+      let x = Nx.Rng.normal Nx.float32 [| n; 2 |] in
+      let y = Nx.Rng.normal Nx.float32 [| n; 1 |] in
       let params =
         {
-          Model.lin = Linear.init ~inputs:2 ~outputs:features;
-          bn = fst (Batch_norm.init ~features);
-          out = Linear.init ~inputs:features ~outputs:1;
+          Model.lin =
+            Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:features;
+          bn = fst (Batch_norm.init ~features Nx.Host.on);
+          out =
+            Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:features ~outputs:1;
         }
       in
       let stats =
         {
-          Batch_norm.Stats.mean = Nx.randn Nx.float32 [| features |];
-          var = Nx.exp (Nx.randn Nx.float32 [| features |]);
+          Batch_norm.Stats.mean = Nx.Rng.normal Nx.float32 [| features |];
+          var = Nx.exp (Nx.Rng.normal Nx.float32 [| features |]);
         }
       in
       let step forward =
@@ -394,37 +400,21 @@ let test_dropout_keyed_eval_identity () =
 
 (* Under jit: the keyed form compiles, the keyless form is refused loudly. *)
 
-(* What decides is where the mask's key comes from, not whether [?key] was
-   passed. With no scope at all the draw is a compile-time constant, so jit
-   refuses it. *)
+(* A traced function refuses a draw without a key: keyless dropout under jit
+   raises, naming the compiled call. *)
 let test_dropout_keyless_jit_raises () =
   let f = Rune.jit' (fun x -> Dropout.apply ~rate:0.5 ~training:true x) in
-  raises_match ~msg:"unscoped dropout raises inside jit"
-    (function Rune.Jit_error _ -> true | _ -> false)
-    (fun () -> ignore (f (vec [| 1.0; 2.0; 3.0 |])))
-
-(* ...but the same keyless call compiles when the caller roots a scope at the
-   step's own key, which is what lets a model keep its draw sites key-free. *)
-let test_dropout_keyless_scope_jit_compiles () =
-  let f =
-    Rune.jit
-      Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
-      (fun key ->
-        Nx.Rng.with_key key @@ fun () ->
-        Dropout.apply ~rate:0.5 ~training:true (Nx.ones Nx.float32 [| 64 |]))
-  in
-  let at k = Nx.to_array (f (Nx.Rng.key k)) in
-  is_true ~msg:"the compiled mask follows the key it is given" (at 1 <> at 2);
-  equal ~msg:"and replays for the same key" (array float_exact) (at 1) (at 1)
+  raises_match ~msg:"keyless dropout raises inside jit"
+    (Exn.invalid_arg ~substring:"Rune.jit") (fun () ->
+      ignore (f (vec [| 1.0; 2.0; 3.0 |])))
 
 module Keyed_x = struct
-  type keyed_x = { x : Nx.float32_t; key : Nx.Rng.t }
-  type _ t = keyed_x
+  type keyed_x = { x : Nx.host Nx.float32_t; key : Nx.host Nx.Rng.key }
 
   let walk c { x; key } =
     let open Nx.Ptree.Walk in
     let x = field c "x" tensor x in
-    let key = field c "key" (structure Nx.Rng.ptree) key in
+    let key = field c "key" Nx.Rng.walk key in
     { x; key }
 end
 
@@ -433,11 +423,7 @@ let test_dropout_keyed_jit_matches_eager () =
   let apply { Keyed_x.x; key } =
     Dropout.apply ~rate:0.5 ~training:true ~key x
   in
-  let f =
-    Rune.jit
-      Nx.Ptree.(Nx.Ptree.instantiate (module Keyed_x) @-> returns tensor)
-      apply
-  in
+  let f = Rune.jit Nx.Ptree.(v Keyed_x.walk @-> returns tensor) apply in
   let k = Nx.Rng.key 21 and k' = Nx.Rng.key 22 in
   check_arr ~eps:0.0 ~msg:"jit == eager, same key"
     (Nx.to_array (apply { Keyed_x.x; key = k }))
@@ -450,7 +436,7 @@ let test_dropout_keyed_jit_matches_eager () =
    per-step key an input leaf derived by [fold_in] from a root seed. *)
 
 module Mlp = struct
-  type 'a t = { w1 : 'a; w2 : 'a }
+  type ('a, 'd) t = { w1 : 'a; w2 : 'a }
 
   let walk c { w1; w2 } =
     let open Nx.Ptree.Walk in
@@ -460,17 +446,17 @@ module Mlp = struct
 end
 
 module Mlp_in = struct
-  type 'a t = { p : 'a Mlp.t; key : Nx.Rng.t }
+  type ('a, 'd) t = { p : ('a, 'd) Mlp.t; key : 'd Nx.Rng.key }
 
   let walk c { p; key } =
     let open Nx.Ptree.Walk in
     let p = field c "p" Mlp.walk p in
-    let key = field c "key" (structure Nx.Rng.ptree) key in
+    let key = field c "key" Nx.Rng.walk key in
     { p; key }
 end
 
 module Mlp_out = struct
-  type 'a t = { p : 'a Mlp.t; loss : Nx.float32_t }
+  type ('a, 'd) t = { p : ('a, 'd) Mlp.t; loss : 'd Nx.float32_t }
 
   let walk c { p; loss } =
     let open Nx.Ptree.Walk in
@@ -592,10 +578,7 @@ let tests =
         test "keyed training keeps about 1 - rate with inverted scaling"
           test_dropout_keyed_statistics;
         test "keyed eval mode is the identity" test_dropout_keyed_eval_identity;
-        test "unscoped dropout raises inside jit"
-          test_dropout_keyless_jit_raises;
-        test "keyless dropout compiles inside a scope on a traced key"
-          test_dropout_keyless_scope_jit_compiles;
+        test "keyless dropout raises inside jit" test_dropout_keyless_jit_raises;
         test "keyed dropout compiles and matches eager"
           test_dropout_keyed_jit_matches_eager;
         test "jitted train steps with fold_in keys reproduce from the seed"

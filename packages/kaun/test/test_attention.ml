@@ -14,8 +14,11 @@ let attention64 = Nx.Ptree.instantiate (module Attention)
 (* Raw q/k/v inputs as a structure, to gradient-check the attention core with
    respect to its inputs. *)
 module Qkv64 = struct
-  type qkv = { q : Nx.float64_t; k : Nx.float64_t; v : Nx.float64_t }
-  type _ t = qkv
+  type qkv = {
+    q : Nx.host Nx.float64_t;
+    k : Nx.host Nx.float64_t;
+    v : Nx.host Nx.float64_t;
+  }
 
   let walk c { q; k; v } =
     let open Nx.Ptree.Walk in
@@ -25,7 +28,7 @@ module Qkv64 = struct
     { q; k; v }
 end
 
-let qkv64 = Nx.Ptree.instantiate (module Qkv64)
+let qkv64 = Nx.Ptree.v Qkv64.walk
 
 let paths s x =
   List.rev
@@ -90,9 +93,9 @@ let test_core_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
   let p =
     {
-      Qkv64.q = Nx.randn Nx.float64 [| 3; 2 |];
-      k = Nx.randn Nx.float64 [| 4; 2 |];
-      v = Nx.randn Nx.float64 [| 4; 2 |];
+      Qkv64.q = Nx.Rng.normal Nx.float64 [| 3; 2 |];
+      k = Nx.Rng.normal Nx.float64 [| 4; 2 |];
+      v = Nx.Rng.normal Nx.float64 [| 4; 2 |];
     }
   in
   let loss { Qkv64.q; k; v } =
@@ -105,9 +108,9 @@ let test_core_masked_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
   let p =
     {
-      Qkv64.q = Nx.randn Nx.float64 [| 2; 2 |];
-      k = Nx.randn Nx.float64 [| 2; 2 |];
-      v = Nx.randn Nx.float64 [| 2; 2 |];
+      Qkv64.q = Nx.Rng.normal Nx.float64 [| 2; 2 |];
+      k = Nx.Rng.normal Nx.float64 [| 2; 2 |];
+      v = Nx.Rng.normal Nx.float64 [| 2; 2 |];
     }
   in
   let mask = Nx.create Nx.bool [| 2; 2 |] [| true; false; true; true |] in
@@ -147,9 +150,9 @@ let test_core_rejects_bad_shapes () =
 
 let test_core_is_total () =
   Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let q = Nx.randn Nx.float32 [| 2; 3 |] in
-  let k = Nx.randn Nx.float32 [| 4; 3 |]
-  and v = Nx.randn Nx.float32 [| 4; 5 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 2; 3 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 4; 3 |]
+  and v = Nx.Rng.normal Nx.float32 [| 4; 5 |] in
   let mask =
     Nx.create Nx.bool [| 2; 4 |]
       [| false; false; false; false; true; false; true; true |]
@@ -166,9 +169,9 @@ let test_core_empty_row_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let p =
     {
-      Qkv64.q = Nx.randn Nx.float64 [| 2; 2 |];
-      k = Nx.randn Nx.float64 [| 3; 2 |];
-      v = Nx.randn Nx.float64 [| 3; 2 |];
+      Qkv64.q = Nx.Rng.normal Nx.float64 [| 2; 2 |];
+      k = Nx.Rng.normal Nx.float64 [| 3; 2 |];
+      v = Nx.Rng.normal Nx.float64 [| 3; 2 |];
     }
   in
   let mask =
@@ -191,13 +194,11 @@ let test_core_empty_row_gradients () =
 
 module Qkvs64 = struct
   type qkvs = {
-    q : Nx.float64_t;
-    k : Nx.float64_t;
-    v : Nx.float64_t;
-    sinks : Nx.float64_t;
+    q : Nx.host Nx.float64_t;
+    k : Nx.host Nx.float64_t;
+    v : Nx.host Nx.float64_t;
+    sinks : Nx.host Nx.float64_t;
   }
-
-  type _ t = qkvs
 
   let walk c { q; k; v; sinks } =
     let open Nx.Ptree.Walk in
@@ -208,7 +209,7 @@ module Qkvs64 = struct
     { q; k; v; sinks }
 end
 
-let qkvs64 = Nx.Ptree.instantiate (module Qkvs64)
+let qkvs64 = Nx.Ptree.v Qkvs64.walk
 
 (* The definition, computed directly: a softmax over the scores with the sinks
    appended as a last column, that column dropped. [q], [k] and [v] are [batch;
@@ -238,9 +239,9 @@ let sink_values dtype = Nx.create dtype [| 4; 1 |] [| -1.5; 0.25; 2.0; 0.75 |]
 
 let test_core_scale () =
   Nx.Rng.with_key (Nx.Rng.key 39) @@ fun () ->
-  let q = Nx.randn Nx.float32 [| 2; 3; 4 |] in
-  let k = Nx.randn Nx.float32 [| 2; 5; 4 |] in
-  let v = Nx.randn Nx.float32 [| 2; 5; 4 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 2; 3; 4 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 2; 5; 4 |] in
+  let v = Nx.Rng.normal Nx.float32 [| 2; 5; 4 |] in
   same ~msg:"the default scale is 1 / sqrt d"
     (Attention.scaled_dot_product_attention q k v)
     (Attention.scaled_dot_product_attention ~scale:0.5 q k v);
@@ -250,15 +251,15 @@ let test_core_scale () =
 
 let test_sinks_are_an_appended_column () =
   Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->
-  let q = Nx.randn Nx.float32 [| 2; 4; 3; 6 |] in
-  let k = Nx.randn Nx.float32 [| 2; 4; 5; 6 |] in
-  let v = Nx.randn Nx.float32 [| 2; 4; 5; 6 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 2; 4; 3; 6 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
+  let v = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
   let sinks = sink_values Nx.float32 in
   same ~msg:"without a mask"
     (sink_reference ~sinks q k v)
     (Attention.scaled_dot_product_attention ~sinks q k v);
   let mask =
-    Nx.less (Nx.randn Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
+    Nx.less (Nx.Rng.normal Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
   in
   same ~msg:"under a mask"
     (sink_reference ~mask ~sinks q k v)
@@ -266,7 +267,7 @@ let test_sinks_are_an_appended_column () =
   same ~msg:"the scale does not multiply the sinks"
     (sink_reference ~mask ~scale:1.3 ~sinks q k v)
     (Attention.scaled_dot_product_attention ~mask ~scale:1.3 ~sinks q k v);
-  let per_query = Nx.randn Nx.float32 [| 2; 4; 3 |] in
+  let per_query = Nx.Rng.normal Nx.float32 [| 2; 4; 3 |] in
   let by_head h =
     Attention.scaled_dot_product_attention
       ~sinks:(Nx.slice [ A; R (h, h + 1) ] per_query)
@@ -289,9 +290,9 @@ let test_sinks_keep_attention_total () =
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let p =
     {
-      Qkvs64.q = Nx.randn Nx.float64 [| 2; 2; 2 |];
-      k = Nx.randn Nx.float64 [| 2; 3; 2 |];
-      v = Nx.randn Nx.float64 [| 2; 3; 2 |];
+      Qkvs64.q = Nx.Rng.normal Nx.float64 [| 2; 2; 2 |];
+      k = Nx.Rng.normal Nx.float64 [| 2; 3; 2 |];
+      v = Nx.Rng.normal Nx.float64 [| 2; 3; 2 |];
       sinks = Nx.create Nx.float64 [| 2; 1 |] [| 0.5; -1.0 |];
     }
   in
@@ -324,9 +325,9 @@ let test_sink_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
   let p =
     {
-      Qkvs64.q = Nx.randn Nx.float64 [| 3; 4; 2 |];
-      k = Nx.randn Nx.float64 [| 3; 4; 2 |];
-      v = Nx.randn Nx.float64 [| 3; 4; 2 |];
+      Qkvs64.q = Nx.Rng.normal Nx.float64 [| 3; 4; 2 |];
+      k = Nx.Rng.normal Nx.float64 [| 3; 4; 2 |];
+      v = Nx.Rng.normal Nx.float64 [| 3; 4; 2 |];
       sinks = Nx.create Nx.float64 [| 3; 1 |] [| 0.5; -1.0; 3.0 |];
     }
   in
@@ -341,12 +342,12 @@ let test_sink_gradients () =
 
 let test_sinks_compiled () =
   Nx.Rng.with_key (Nx.Rng.key 44) @@ fun () ->
-  let q = Nx.randn Nx.float32 [| 2; 4; 3; 6 |] in
-  let k = Nx.randn Nx.float32 [| 2; 4; 5; 6 |] in
-  let v = Nx.randn Nx.float32 [| 2; 4; 5; 6 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 2; 4; 3; 6 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
+  let v = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 6 |] in
   let sinks = sink_values Nx.float32 in
   let mask =
-    Nx.less (Nx.randn Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
+    Nx.less (Nx.Rng.normal Nx.float32 [| 3; 5 |]) (Nx.scalar Nx.float32 0.5)
   in
   let f q =
     Attention.scaled_dot_product_attention ~mask ~scale:0.7 ~sinks q k v
@@ -369,9 +370,9 @@ let test_sinks_reject_bad_shapes () =
 
 let test_init_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let p = Attention.init ~embed_dim:8 in
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:8 in
   List.iter
-    (fun (name, (l : Nx.float32_t Linear.t)) ->
+    (fun (name, (l : (Nx.host Nx.float32_t, Nx.host) Linear.t)) ->
       shape_is ~msg:(name ^ ".w shape") [| 8; 8 |] l.Linear.w;
       match l.Linear.b with
       | None -> fail (name ^ " should have a bias")
@@ -386,20 +387,22 @@ let test_init_shapes () =
 let test_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
   let paths = paths (Nx.Ptree.instantiate (module Attention)) in
-  let p = Attention.init ~embed_dim:4 in
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
   equal ~msg:"with biases" (list string)
     [ "q.w"; "q.b"; "k.w"; "k.b"; "v.w"; "v.b"; "out.w"; "out.b" ]
     (paths p);
-  let no_bias = Attention.make ~bias:false ~embed_dim:4 Nx.float32 in
+  let no_bias =
+    Attention.make ~key:(Nx.Rng.next_key ()) ~bias:false ~embed_dim:4 Nx.float32
+  in
   equal ~msg:"without biases" (list string)
     [ "q.w"; "k.w"; "v.w"; "out.w" ]
     (paths no_bias)
 
-let causal seq = Attention.causal_mask ~seq ()
+let causal seq = Attention.causal_mask ~seq Nx.Host.on
 
 let test_apply_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
-  let p = Attention.init ~embed_dim:8 in
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:8 in
   let batched = Nx.zeros Nx.float32 [| 2; 5; 8 |] in
   shape_is ~msg:"batched input keeps its shape" [| 2; 5; 8 |]
     (Attention.apply ~head_dim:2 p batched);
@@ -448,7 +451,7 @@ let test_causal_first_position_is_itself () =
 
 let test_causal_ignores_the_future () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
-  let p = Attention.init ~embed_dim:8 in
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:8 in
   let base = Array.init 32 (fun i -> sin (float_of_int i)) in
   let changed = Array.mapi (fun i a -> if i >= 24 then a +. 10.0 else a) base in
   let x1 = Nx.create Nx.float32 [| 4; 8 |] base in
@@ -470,7 +473,7 @@ let test_permutation_equivariance () =
   (* Self-attention has no notion of position: permuting the sequence permutes
      the output the same way. *)
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let p = Attention.init ~embed_dim:4 in
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
   let base = Array.init 12 (fun i -> cos (float_of_int i)) in
   let perm = [| 2; 0; 1 |] in
   let permute rows a =
@@ -488,12 +491,12 @@ let test_permutation_equivariance () =
    loss. *)
 let test_padding_mask_hides_padded_keys () =
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
-  let p = Attention.init ~embed_dim:4 in
-  let x = Nx.randn Nx.float32 [| 2; 3; 4 |] in
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 4 |] in
   let valid =
     Nx.create Nx.bool [| 2; 3 |] [| false; true; true; true; true; true |]
   in
-  let mask = Attention.causal_mask ~seq:3 ~valid () in
+  let mask = Attention.causal_mask ~seq:3 ~valid Nx.Host.on in
   shape_is ~msg:"one mask per row" [| 2; 3; 3 |] mask;
   equal ~msg:"padded keys hidden" (array bool)
     [| false; false; false; false; true; false; false; true; true |]
@@ -512,20 +515,23 @@ let test_padding_mask_hides_padded_keys () =
 (* Grouped-query attention: each key-value head serves a group of query heads.
    It must equal ordinary attention with every key-value head repeated. *)
 let grouped_pair dtype =
-  let p = Attention.make ~bias:false ~kv_dim:4 ~embed_dim:8 dtype in
+  let p =
+    Attention.make ~key:(Nx.Rng.next_key ()) ~bias:false ~kv_dim:4 ~embed_dim:8
+      dtype
+  in
   let repeat (l : _ Linear.t) =
     (* head_dim 2: kv head [h] becomes query heads [2 h] and [2 h + 1]. *)
     let cols =
       Nx.create Nx.int64 [| 8 |] [| 0L; 1L; 0L; 1L; 2L; 3L; 2L; 3L |]
     in
-    { l with Linear.w = Nx.take ~axis:1 ~indices:cols l.Linear.w }
+    { l with Linear.w = Nx.take ~axis:1 cols l.Linear.w }
   in
   (p, { p with k = repeat p.k; v = repeat p.v })
 
 let test_grouped_equals_repeated () =
   Nx.Rng.with_key (Nx.Rng.key 28) @@ fun () ->
   let grouped, repeated = grouped_pair Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 5; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
   let at p = Nx.to_array (Attention.apply ~head_dim:2 ~mask:(causal 5) p x) in
   equal ~msg:"2 key-value heads serving 4 query heads"
     (array (float 1e-5))
@@ -533,8 +539,8 @@ let test_grouped_equals_repeated () =
 
 let test_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
-  let x = Nx.randn Nx.float64 [| 3; 4 |] in
-  let p = Attention.make ~embed_dim:4 Nx.float64 in
+  let x = Nx.Rng.normal Nx.float64 [| 3; 4 |] in
+  let p = Attention.make ~key:(Nx.Rng.next_key ()) ~embed_dim:4 Nx.float64 in
   let loss ?mask ?rope p =
     let y = Attention.apply ~head_dim:2 ?mask ?rope p x in
     Nx.sum (Nx.mul y y)
@@ -544,7 +550,7 @@ let test_gradients () =
   let rope = Rope.make ~head_dim:2 ~context:64 () in
   grads_ok (Rune.check_grads attention64 (loss ~mask:(causal 3) ~rope) p);
   let grouped, _ = grouped_pair Nx.float64 in
-  let x = Nx.randn Nx.float64 [| 2; 3; 8 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 2; 3; 8 |] in
   grads_ok
     (Rune.check_grads attention64
        (fun p ->
@@ -570,10 +576,12 @@ let index_at ~pos ~slots =
    heads, head_dim 2. *)
 let head_dim = 2
 let rope = Rope.make ~head_dim ~context:64 ()
-let layer dtype = Attention.make ~kv_dim:4 ~embed_dim:8 dtype
+
+let layer dtype =
+  Attention.make ~key:(Nx.Rng.next_key ()) ~kv_dim:4 ~embed_dim:8 dtype
 
 let cache_at dtype slots =
-  Attention.Cache.make ~slots ~kv_heads:2 ~head_dim dtype
+  Attention.Cache.make ~slots ~kv_heads:2 ~head_dim dtype Nx.Host.on
 
 let cache slots = cache_at Nx.float32 slots
 let call p c index x = Attention.cached ~head_dim ~rope p c index x
@@ -582,7 +590,7 @@ let close ~msg a b = equal ~msg (array (float 1e-5)) (flat a) (flat b)
 let test_cached_prefill_matches_apply () =
   Nx.Rng.with_key (Nx.Rng.key 20) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 5; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
   let y, _ = call p (cache 12) (Cache_index.rows ~context:6 [| 5; 5 |]) x in
   close ~msg:"a whole prompt through the cache = causal apply"
     (Attention.apply ~head_dim ~mask:(causal 5) ~rope p x)
@@ -593,7 +601,7 @@ let test_cached_prefill_matches_apply () =
 let test_cached_whole () =
   Nx.Rng.with_key (Nx.Rng.key 34) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 5; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
   let c = cache 0 in
   let y, c' = call p c (Cache_index.whole ~batch:2 ~seq:5 ()) x in
   close ~msg:"causal apply"
@@ -616,7 +624,7 @@ let test_cached_whole () =
 let test_cached_window () =
   Nx.Rng.with_key (Nx.Rng.key 35) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 6; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 6; 8 |] in
   let band =
     Nx.create Nx.bool [| 6; 6 |]
       (Array.init 36 (fun t ->
@@ -676,11 +684,15 @@ let test_index_window () =
     [ false; false; true; true ]
     (mask (Cache_index.advance windowed));
   equal ~msg:"map keeps the window" (list bool) (mask windowed)
-    (mask (Nx.Ptree.map Cache_index.ptree (fun _ t -> t) windowed));
+    (mask (Nx.Ptree.map (Nx.Ptree.v Cache_index.walk) (fun _ t -> t) windowed));
   raises
     (Invalid_argument
        "Nx.Ptree.map2: window: Some in the first value, None in the second")
-    (fun () -> Nx.Ptree.map2 Cache_index.ptree (fun _ a _ -> a) windowed index);
+    (fun () ->
+      Nx.Ptree.map2
+        (Nx.Ptree.v Cache_index.walk)
+        (fun _ a _ -> a)
+        windowed index);
   raises (Invalid_argument "Cache_index.window: window must be positive, got 0")
     (fun () -> Cache_index.window 0 index)
 
@@ -870,13 +882,14 @@ let test_index_select_structure () =
   let columns = int64s [| 1; 2; 1 |] [| 3; 5 |] in
   let selected = Cache_index.select columns index in
   let count index =
-    Nx.Ptree.fold Cache_index.ptree (fun _ _ n -> n + 1) index 0
+    Nx.Ptree.fold (Nx.Ptree.v Cache_index.walk) (fun _ _ n -> n + 1) index 0
   in
   equal ~msg:"fold visits the selection" int (count index + 1) (count selected);
   equal ~msg:"map reaches the selection" (list bool) [ true; true ]
     (bools
        (Cache_index.mask
-          (Nx.Ptree.map Cache_index.ptree
+          (Nx.Ptree.map
+             (Nx.Ptree.v Cache_index.walk)
              (fun _ t ->
                if Nx.shape t = [| 1; 2; 1 |] then Nx.zeros_like t else t)
              selected)));
@@ -885,17 +898,26 @@ let test_index_select_structure () =
   raises
     (Invalid_argument
        "Nx.Ptree.map2: columns: Some in the first value, None in the second")
-    (fun () -> Nx.Ptree.map2 Cache_index.ptree (fun _ a _ -> a) selected index)
+    (fun () ->
+      Nx.Ptree.map2
+        (Nx.Ptree.v Cache_index.walk)
+        (fun _ a _ -> a)
+        selected index)
 
 module Selected = struct
-  type t = { index : Cache_index.t; pool : Nx.float32_t; seen : Nx.float32_t }
+  type t = {
+    index : Nx.host Cache_index.t;
+    pool : Nx.host Nx.float32_t;
+    seen : Nx.host Nx.float32_t;
+  }
 
   let ptree =
-    Nx.Ptree.(
-      iso
-        (fun (index, (pool, seen)) -> { index; pool; seen })
-        (fun { index; pool; seen } -> (index, (pool, seen)))
-        (pair Cache_index.ptree (pair tensor tensor)))
+    Nx.Ptree.v (fun c s ->
+        let open Nx.Ptree.Walk in
+        let i = field c "index" Cache_index.walk s.index in
+        let pool = field c "pool" tensor s.pool in
+        let seen = field c "seen" tensor s.seen in
+        { index = i; pool; seen })
 end
 
 (* Compiled, the columns are an input: what is read and stored is eager's. *)
@@ -1165,11 +1187,12 @@ let test_index_every_rejects () =
         [1; context], context positive") (fun () ->
       make [ (4, int64s [| 2; 3 |] (Array.make 6 0)) ]);
   let count index =
-    Nx.Ptree.fold Cache_index.ptree (fun _ _ n -> n + 1) index 0
+    Nx.Ptree.fold (Nx.Ptree.v Cache_index.walk) (fun _ _ n -> n + 1) index 0
   in
   equal ~msg:"the structure visits every table" int 4 (count rows);
   let unallocated =
-    Nx.Ptree.map Cache_index.ptree
+    Nx.Ptree.map
+      (Nx.Ptree.v Cache_index.walk)
       (fun _ t ->
         if Nx.shape t = [| 1; 3 |] then Nx.neg (Nx.ones_like t) else t)
       four
@@ -1182,12 +1205,14 @@ let test_index_every_rejects () =
   raises
     (Invalid_argument
        "Nx.Ptree.map2: every: int 4 in the first value, int 1 in the second")
-    (fun () -> Nx.Ptree.map2 Cache_index.ptree (fun _ a _ -> a) four rows);
+    (fun () ->
+      Nx.Ptree.map2 (Nx.Ptree.v Cache_index.walk) (fun _ a _ -> a) four rows);
   raises
     (Invalid_argument
        "Nx.Ptree.map2: tokens.blocks: length 2 in the first value, length 1 in \
         the second") (fun () ->
-      Nx.Ptree.map2 Cache_index.ptree
+      Nx.Ptree.map2
+        (Nx.Ptree.v Cache_index.walk)
         (fun _ a _ -> a)
         rows
         (Cache_index.rows ~every:[ 4 ] ~context:12 [| 2 |]))
@@ -1198,21 +1223,22 @@ let test_index_every_rejects () =
    entries it sees. *)
 
 type stream = {
-  index : Cache_index.t;
-  x : Nx.float32_t;
-  y : Nx.float32_t;
-  sources : Nx.float32_t;
-  entries : Nx.float32_t;
+  index : Nx.host Cache_index.t;
+  x : Nx.host Nx.float32_t;
+  y : Nx.host Nx.float32_t;
+  sources : Nx.host Nx.float32_t;
+  entries : Nx.host Nx.float32_t;
 }
 
 let stream_ptree =
-  Nx.Ptree.(
-    iso
-      (fun (index, ((x, y), (sources, entries))) ->
-        { index; x; y; sources; entries })
-      (fun { index; x; y; sources; entries } ->
-        (index, ((x, y), (sources, entries))))
-      (pair Cache_index.ptree (pair (pair tensor tensor) (pair tensor tensor))))
+  Nx.Ptree.v (fun c (s : stream) ->
+      let open Nx.Ptree.Walk in
+      let i = field c "index" Cache_index.walk s.index in
+      let x = field c "x" tensor s.x in
+      let y = field c "y" tensor s.y in
+      let sources = field c "sources" tensor s.sources in
+      let entries = field c "entries" tensor s.entries in
+      { index = i; x; y; sources; entries })
 
 let stream s =
   let batch = Cache_index.batch s.index and seq = Cache_index.seq s.index in
@@ -1323,7 +1349,7 @@ let test_index_every_compiled () =
 let test_cached_chunking_is_invariant () =
   Nx.Rng.with_key (Nx.Rng.key 21) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 7; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 7; 8 |] in
   let whole = Attention.apply ~head_dim ~mask:(causal 7) ~rope p x in
   let slots = [| Array.init 8 Fun.id |] in
   let feed chunks =
@@ -1349,8 +1375,8 @@ let test_cached_chunking_is_invariant () =
 let test_cached_ragged_batch () =
   Nx.Rng.with_key (Nx.Rng.key 22) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 5; 8 |] in
-  let next = Nx.randn Nx.float32 [| 2; 1; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 8 |] in
+  let next = Nx.Rng.normal Nx.float32 [| 2; 1; 8 |] in
   let alone row len =
     let xs = Nx.slice [ R (row, row + 1); R (5 - len, 5) ] x in
     let index = Cache_index.rows ~context:6 [| len |] in
@@ -1400,7 +1426,7 @@ let test_cached_ragged_batch () =
 let test_cached_slots_are_free () =
   Nx.Rng.with_key (Nx.Rng.key 23) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 4; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 4; 8 |] in
   let pos = [| [| 0; 1; 2; 3 |]; [| 0; 1; 2; 3 |] |] in
   let contiguous, _ =
     call p (cache 8)
@@ -1419,8 +1445,8 @@ let test_cached_slots_are_free () =
 let test_cached_shared_prefix () =
   Nx.Rng.with_key (Nx.Rng.key 29) @@ fun () ->
   let p = layer Nx.float32 in
-  let prefix = Nx.randn Nx.float32 [| 1; 3; 8 |] in
-  let tails = Nx.randn Nx.float32 [| 2; 1; 8 |] in
+  let prefix = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
+  let tails = Nx.Rng.normal Nx.float32 [| 2; 1; 8 |] in
   let _, c =
     call p (cache 8)
       (index_at ~pos:[| [| 0; 1; 2 |] |] ~slots:[| [| 0; 1; 2; 3 |] |])
@@ -1461,7 +1487,7 @@ let test_cached_update_is_functional () =
   let _, c' =
     call p c
       (Cache_index.rows ~context:4 [| 2 |])
-      (Nx.randn Nx.float32 [| 1; 2; 8 |])
+      (Nx.Rng.normal Nx.float32 [| 1; 2; 8 |])
   in
   values_are ~msg:"the argument is untouched" ~tol:0.0 (Array.make 16 0.0)
     c.Attention.Cache.keys;
@@ -1474,7 +1500,7 @@ let test_cached_update_is_functional () =
 let test_cached_addresses () =
   Nx.Rng.with_key (Nx.Rng.key 31) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 2; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
   let slots = [| [| 0; 1; 2; 3 |] |] in
   let keys_after index =
     let _, c = call p (cache 4) index x in
@@ -1519,7 +1545,7 @@ let test_cached_addresses () =
 let test_cached_masked_columns_are_zero () =
   Nx.Rng.with_key (Nx.Rng.key 32) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 2; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 2; 8 |] in
   let nan rows = Nx.full Nx.float32 [| rows; 2; 2 |] Float.nan in
   let poisoned =
     Nx.Ptree.Payload.map
@@ -1550,18 +1576,19 @@ let test_cached_masked_columns_are_zero () =
    tensors, so one compilation serves every position and every table. *)
 
 type step = {
-  x : Nx.float32_t;
-  index : Cache_index.t;
-  c : Nx.float32_t Attention.Cache.t;
+  x : Nx.host Nx.float32_t;
+  index : Nx.host Cache_index.t;
+  c : (Nx.host Nx.float32_t, Nx.host) Attention.Cache.t;
 }
 
 let step_ptree =
-  Nx.Ptree.(
-    iso
-      (fun (x, (index, c)) -> { x; index; c })
-      (fun { x; index; c } -> (x, (index, c)))
-      (pair tensor
-         (pair Cache_index.ptree (instantiate (module Attention.Cache)))))
+  Nx.Ptree.v (fun cur (s : step) ->
+      let open Nx.Ptree.Walk in
+      let x = field cur "x" tensor s.x in
+      let i = field cur "index" Cache_index.walk s.index in
+      let cache = Nx.Ptree.instantiate (module Attention.Cache) in
+      let c = field cur "c" (structure cache) s.c in
+      { x; index = i; c })
 
 (* Under a window, a column below the window of every token of the lane is
    allocated and at or before their positions, and still contributes exactly
@@ -1569,7 +1596,7 @@ let step_ptree =
 let test_cached_windowed_columns_are_zero () =
   Nx.Rng.with_key (Nx.Rng.key 36) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 5; 8 |] in
   let windowed c index x =
     Attention.cached ~head_dim ~rope p c (Cache_index.window 2 index) x
   in
@@ -1615,7 +1642,7 @@ let test_cached_windowed_columns_are_zero () =
 let test_cached_step_jits_once () =
   Nx.Rng.with_key (Nx.Rng.key 24) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 4; 8 |] in
   (* The pools start as storage, as the steps return them: a constant pool is
      one element expanded, which a compiled call keys apart. *)
   let stored =
@@ -1663,17 +1690,18 @@ let test_cached_step_jits_once () =
 let test_a_changed_window_compiles_again () =
   Nx.Rng.with_key (Nx.Rng.key 27) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 1; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 1; 8 |] in
   let kv = Nx.Ptree.instantiate (module Attention.Cache) in
   let traces = ref 0 in
   let step =
     Rune.jit
       Nx.Ptree.(
-        tensor @-> Cache_index.ptree @-> consumes kv @@ returns (pair tensor kv))
+        tensor @-> v Cache_index.walk @-> kv @-> returns (pair tensor kv))
       (fun x index c ->
         incr traces;
         call p c index x)
   in
+  let step x index c = step x index (Nx.Ptree.donate kv c) in
   let index = index_at ~pos:[| [| 2 |] |] ~slots:[| [| 3; 0; 2; 1 |] |] in
   let check w =
     let index = Cache_index.window w index in
@@ -1690,37 +1718,34 @@ let test_a_changed_window_compiles_again () =
   check 2;
   equal ~msg:"and the first window replays its own" int 2 !traces
 
-(* Two cache leaves that hold one tensor cannot be consumed: the call raises
-   before it runs, naming both, and the cache stays usable. *)
-let test_one_storage_behind_two_caches_raises () =
+(* Two cache leaves that hold one tensor, donated to a compiled call: the call
+   reads each as the tensor was when called, and the tensor dies once. *)
+let test_one_storage_behind_two_caches () =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
   let step =
     Rune.jit
-      Nx.Ptree.(consumes caches @@ returns caches)
-      (List.map (fun (c : Nx.float32_t Attention.Cache.t) ->
+      Nx.Ptree.(caches @-> returns caches)
+      (List.map (fun (c : (Nx.host Nx.float32_t, Nx.host) Attention.Cache.t) ->
            { c with Attention.Cache.keys = Nx.add_s c.keys 1.0 }))
   in
-  let c =
-    Nx.Ptree.map
-      (Nx.Ptree.instantiate (module Attention.Cache))
-      (fun _ t -> Nx.place (Nx.Placement.on (Nx.Device.cpu 1)) t)
-      (cache 4)
-  in
-  raises_match
-    (function
-      | Invalid_argument msg ->
-          String.equal msg
-            "Rune.jit: 0.0.keys is consumed and 0.1.keys reaches its storage"
-      | _ -> false)
-    (fun () -> step [ c; c ]);
-  close ~msg:"the cache stays usable" (cache 4).Attention.Cache.keys c.keys
+  let c = cache 4 in
+  let out = step (Nx.Ptree.donate caches [ c; c ]) in
+  List.iter
+    (fun (o : (Nx.host Nx.float32_t, Nx.host) Attention.Cache.t) ->
+      close ~msg:"each leaf reads the tensor as it was"
+        (Nx.add_s (cache 4).Attention.Cache.keys 1.0)
+        o.keys)
+    out;
+  raises_match ~msg:"the donated tensor is dead"
+    (Exn.invalid_arg ~substring:"Nx.to_array") (fun () ->
+      ignore (Nx.to_array c.Attention.Cache.keys))
 
 (* Eager and compiled runs agree on what addresses nothing: neither raises and
    both write no slot. *)
 let test_cached_out_of_range_under_jit () =
   Nx.Rng.with_key (Nx.Rng.key 33) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 3; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 3; 8 |] in
   let step { x; index; c } =
     let y, c = call p c index x in
     { x = y; index; c }
@@ -1746,7 +1771,7 @@ let test_cached_out_of_range_under_jit () =
 
 let test_cached_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 25) @@ fun () ->
-  let x = Nx.randn Nx.float64 [| 1; 3; 8 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 1; 3; 8 |] in
   let p = layer Nx.float64 in
   let loss p =
     (* Gradients must flow through the cache from prefill into the step. *)
@@ -1832,9 +1857,9 @@ let draft_agrees ~window ~p ~parents ~kept =
   Nx.Rng.with_key (Nx.Rng.key 40) @@ fun () ->
   let n = Array.length parents in
   let p_layer = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; p; 8 |] in
-  let tokens = Array.init n (fun _ -> Nx.randn Nx.float32 [| 1; 1; 8 |]) in
-  let bonus = Nx.randn Nx.float32 [| 1; 1; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; p; 8 |] in
+  let tokens = Array.init n (fun _ -> Nx.Rng.normal Nx.float32 [| 1; 1; 8 |]) in
+  let bonus = Nx.Rng.normal Nx.float32 [| 1; 1; 8 |] in
   let c = after_prefix ~window p_layer x p in
   let depth = depths parents and paths = ancestors parents in
   let index =
@@ -2085,9 +2110,9 @@ let test_draft_rejects () =
 let test_draft_compiled () =
   Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
   let p_layer = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 4; 8 |] in
   let c =
-    after_prefix ~window:None p_layer (Nx.randn Nx.float32 [| 1; 3; 8 |]) 3
+    after_prefix ~window:None p_layer (Nx.Rng.normal Nx.float32 [| 1; 3; 8 |]) 3
   in
   let traces = ref 0 in
   let step { x; index; c } =
@@ -2207,7 +2232,7 @@ let test_packed_alone =
       cover "a window" (Option.is_some window);
       Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
       let p_layer = layer Nx.float32 in
-      let x = Nx.randn Nx.float32 [| 2; 9; 8 |] in
+      let x = Nx.Rng.normal Nx.float32 [| 2; 9; 8 |] in
       let y, _ =
         call p_layer (cache 0)
           (windowed window (Cache_index.packed ~seq:9 lens))
@@ -2239,14 +2264,16 @@ let test_packed_alone =
 let test_packed_compiled () =
   Nx.Rng.with_key (Nx.Rng.key 43) @@ fun () ->
   let p_layer = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 6; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 6; 8 |] in
   let traces = ref 0 in
   let forward (x, index) =
     incr traces;
     fst (call p_layer (cache 0) index x)
   in
   let compiled =
-    Rune.jit Nx.Ptree.(pair tensor Cache_index.ptree @-> returns tensor) forward
+    Rune.jit
+      Nx.Ptree.(pair tensor (Nx.Ptree.v Cache_index.walk) @-> returns tensor)
+      forward
   in
   List.iter
     (fun lens ->
@@ -2269,7 +2296,7 @@ let composed ?scale ?sinks p c index x =
 let test_pieces_compose_cached () =
   Nx.Rng.with_key (Nx.Rng.key 47) @@ fun () ->
   let p = layer Nx.float32 in
-  let x = Nx.randn Nx.float32 [| 2; 3; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 3; 8 |] in
   let exact ~msg (y, (c : _ Attention.Cache.t)) (y', (c' : _ Attention.Cache.t))
       =
     equal ~msg (array float_exact) (flat y) (flat y');
@@ -2292,14 +2319,14 @@ let test_pieces_compose_cached () =
 
 let test_attend_sinks_per_query_head () =
   Nx.Rng.with_key (Nx.Rng.key 41) @@ fun () ->
-  let q = Nx.randn Nx.float32 [| 2; 4; 5; 2 |] in
-  let k = Nx.randn Nx.float32 [| 2; 2; 5; 2 |] in
-  let v = Nx.randn Nx.float32 [| 2; 2; 5; 2 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 2; 4; 5; 2 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 2; 2; 5; 2 |] in
+  let v = Nx.Rng.normal Nx.float32 [| 2; 2; 5; 2 |] in
   let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
   let mask = causal 5 in
   (* Key-value head [h] repeated for query heads [2 h] and [2 h + 1]. *)
   let repeat t =
-    Nx.take ~axis:1 ~indices:(Nx.create Nx.int64 [| 4 |] [| 0L; 0L; 1L; 1L |]) t
+    Nx.take ~axis:1 (Nx.create Nx.int64 [| 4 |] [| 0L; 0L; 1L; 1L |]) t
   in
   let direct =
     sink_reference ~mask ~scale:0.8
@@ -2315,7 +2342,7 @@ let test_composed_sinks_chunking () =
   Nx.Rng.with_key (Nx.Rng.key 45) @@ fun () ->
   let p = layer Nx.float32 in
   let sinks = Nx.create Nx.float32 [| 4 |] [| -1.5; 0.25; 2.0; 0.75 |] in
-  let x = Nx.randn Nx.float32 [| 1; 7; 8 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 1; 7; 8 |] in
   let slots = [| Array.init 8 Fun.id |] in
   let feed chunks =
     let _, ys, _ =
@@ -2423,7 +2450,8 @@ let test_cached_rejects_bad_geometry () =
     (Invalid_argument
        "Attention.cached: the cache must have shape [slots; 2; 2]") (fun () ->
       Attention.cached ~head_dim p
-        (Attention.Cache.make ~slots:4 ~kv_heads:1 ~head_dim Nx.float32)
+        (Attention.Cache.make ~slots:4 ~kv_heads:1 ~head_dim Nx.float32
+           Nx.Host.on)
         index
         (Nx.zeros Nx.float32 [| 1; 2; 8 |]))
 
@@ -2433,8 +2461,8 @@ let test_rejects_bad_geometry () =
     (Invalid_argument
        "Attention.make: embed_dim, q_dim and kv_dim must be positive, got \
         embed_dim=0 q_dim=0 kv_dim=0") (fun () ->
-      Attention.make ~embed_dim:0 Nx.float32);
-  let p = Attention.init ~embed_dim:4 in
+      Attention.make ~key:(Nx.Rng.next_key ()) ~embed_dim:0 Nx.float32);
+  let p = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4 in
   raises
     (Invalid_argument
        "Attention.apply: input must have at least sequence and feature axes")
@@ -2460,7 +2488,9 @@ let test_rejects_bad_geometry () =
     (Invalid_argument
        "Attention.apply: the key and value projections differ in width (k=4 \
         v=2)") (fun () ->
-      let v = Linear.make ~inputs:4 ~outputs:2 Nx.float32 in
+      let v =
+        Linear.make ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:2 Nx.float32
+      in
       Attention.apply ~head_dim:2 { p with Attention.v }
         (Nx.zeros Nx.float32 [| 2; 4 |]))
 
@@ -2580,8 +2610,8 @@ let () =
                test_cached_step_jits_once;
              test "a changed window compiles again"
                test_a_changed_window_compiles_again;
-             test "one storage behind two caches raises"
-               test_one_storage_behind_two_caches_raises;
+             test "two leaves over one tensor read it as two values"
+               test_one_storage_behind_two_caches;
              test "eager and compiled runs agree on what addresses nothing"
                test_cached_out_of_range_under_jit;
              test "gradients flow through the cache" test_cached_gradients;

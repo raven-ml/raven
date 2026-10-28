@@ -73,7 +73,7 @@ val load_safetensors :
   ?offline:bool ->
   ?revision:string ->
   string ->
-  Nx_io.Archive.t
+  Nx.host Nx_io.Archive.t
 (** [load_safetensors repo_id] is the tensors of [repo_id]'s SafeTensors
     weights. When the repository has a [model.safetensors.index.json] index, the
     shards it references are fetched and the result holds each tensor the index

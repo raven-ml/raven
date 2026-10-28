@@ -14,7 +14,7 @@
 
     {[
     module Mlp = struct
-      type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+      type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
       let walk c { l1; l2 } =
         let open Nx.Ptree.Walk in
@@ -26,6 +26,13 @@
     end
 
     let mlp = Nx.Ptree.instantiate (module Mlp)
+
+    let params =
+      let k = Nx.Rng.split (Nx.Rng.key 0) in
+      {
+        Mlp.l1 = Linear.init ~key:k.(0) ~inputs:4 ~outputs:8;
+        l2 = Linear.init ~key:k.(1) ~inputs:8 ~outputs:2;
+      }
     ]}
 
     The paths [walk] gives each leaf, here [l1.w], [l1.b], [l2.w] and [l2.b],
@@ -33,10 +40,10 @@
 
 (** {1:types Types} *)
 
-type 'a t = { w : 'a; b : 'a option }
+type ('a, _) t = { w : 'a; b : 'a option }
 (** The type for linear-layer parameters over payload ['a].
 
-    At tensor payloads — [(float, 'b) Nx.t t] — [w] has shape
+    At tensor payloads — [((float, 'b, 'd) Nx.t, 'd) t] — [w] has shape
     [[| inputs; outputs |]] and [b], when present, shape [[| outputs |]]. [b] is
     [None] for layers built without a bias ({!make}[ ~bias:false]); such layers
     have no bias parameter at all, so {!walk} skips it and {!apply} performs no
@@ -45,15 +52,17 @@ type 'a t = { w : 'a; b : 'a option }
 (** {1:constructors Constructors} *)
 
 val make :
-  ?w_init:'b Init.t ->
-  ?bias_init:'b Init.t ->
+  ?w_init:('b, 'd) Init.t ->
+  ?bias_init:('b, 'd) Init.t ->
   ?bias:bool ->
+  key:'d Nx.Rng.key ->
   inputs:int ->
   outputs:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t t
-(** [make ~inputs ~outputs dtype] is a fresh layer mapping [inputs] features to
-    [outputs] features, with:
+  ((float, 'b, 'd) Nx.t, 'd) t
+(** [make ~key ~inputs ~outputs dtype] is a fresh layer mapping [inputs]
+    features to [outputs] features, drawn from [key] and lying where it lies,
+    with:
 
     - [w_init], the weight initializer, applied with [~fan_in:inputs] and
       [~fan_out:outputs]. Defaults to {!Init.glorot_uniform}.
@@ -62,17 +71,20 @@ val make :
     - [bias], whether the layer has a bias parameter. Defaults to [true];
       [false] sets [b] to [None] and ignores [bias_init].
 
-    Random initializers draw from the implicit RNG scope (see {!Nx.Rng}).
+    The weight and the bias are drawn from two keys {!Nx.Rng.split} makes of
+    [key].
 
     Raises [Invalid_argument] if [inputs] or [outputs] is not positive. *)
 
-val init : inputs:int -> outputs:int -> Nx.float32_t t
-(** [init ~inputs ~outputs] is [make ~inputs ~outputs Nx.float32]:
+val init :
+  key:'d Nx.Rng.key -> inputs:int -> outputs:int -> ('d Nx.float32_t, 'd) t
+(** [init ~key ~inputs ~outputs] is [make ~key ~inputs ~outputs Nx.float32]:
     Glorot-uniform weights, zero bias. *)
 
 (** {1:applying Applying} *)
 
-val apply : (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val apply :
+  ((float, 'b, 'd) Nx.t, 'd) t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [apply p x] is [x @ p.w + p.b] (the shift is omitted when [p.b] is [None]).
     [x]'s last axis must have size [inputs]; leading axes are treated as batch
     axes, so the result has [x]'s shape with the last axis replaced by
@@ -82,7 +94,7 @@ val apply : (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 
 (** {1:structure Structure} *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks [p]'s parameters: [w] at ["w"], then [b] at ["b"],
     reporting whether [b] is present, so a layer with a bias and one without are
     distinct structures. It is the layer's {!Nx.Ptree.S} instance.

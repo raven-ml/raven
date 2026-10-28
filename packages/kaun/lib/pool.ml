@@ -21,14 +21,21 @@ let check name ~kernel_size ~stride x =
     Printf.ksprintf invalid_arg
       "Pool.%s: kernel (%d, %d) does not fit input (%d, %d)" name kh kw h w
 
+(* The windows of the last two axes: [[...; oh; ow; kh; kw]], a view. *)
+let windows ~kernel_size:(kh, kw) ~stride:(sh, sw) x =
+  let r = Nx.ndim x in
+  x
+  |> Nx.sliding_window ~axis:(r - 2) ~window:kh ~step:sh
+  |> Nx.sliding_window ~axis:(r - 1) ~window:kw ~step:sw
+
+let window_axes x = [ Nx.ndim x; Nx.ndim x + 1 ]
+
 let max_pool2d ~kernel_size ?stride x =
   let stride = Option.value stride ~default:kernel_size in
   check "max_pool2d" ~kernel_size ~stride x;
-  let kh, kw = kernel_size and sh, sw = stride in
-  Nx.maximum_filter ~kernel_size:[| kh; kw |] ~stride:[| sh; sw |] x
+  Nx.max ~axes:(window_axes x) (windows ~kernel_size ~stride x)
 
 let avg_pool2d ~kernel_size ?stride x =
   let stride = Option.value stride ~default:kernel_size in
   check "avg_pool2d" ~kernel_size ~stride x;
-  let kh, kw = kernel_size and sh, sw = stride in
-  Nx.uniform_filter ~kernel_size:[| kh; kw |] ~stride:[| sh; sw |] x
+  Nx.mean ~axes:(window_axes x) (windows ~kernel_size ~stride x)

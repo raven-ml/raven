@@ -24,11 +24,11 @@
       ((params, ostate), Nx.item [] l)
     ]}
 
-    Random initialization and shuffling draw from the ambient {!Nx.Rng} scope;
-    open one with {!Nx.Rng.with_key} for reproducibility. Under [Rune.jit] what
-    matters is the key the scope is rooted at, not whether a draw named one:
-    root it at a key threaded through the step's inputs and the keyless draws
-    inside compile, exactly as an explicit key ({!Dropout}) would. *)
+    Layers are made from a key ({!Init}), which decides their draws and where
+    their parameters lie. Shuffling ({!Data}) and keyless dropout draw from the
+    ambient {!Nx.Rng} scope; open one with {!Nx.Rng.with_key} for
+    reproducibility. A traced function, as [Rune.jit]'s, refuses a draw without
+    a key: a compiled step passes its dropout key as an input. *)
 
 (** {1:layers Layers}
 

@@ -7,15 +7,20 @@ open Windtrap
 open Kaun
 
 (* Each layer is a structure. *)
-module _ : Nx.Ptree.S with type 'a t = 'a Linear.t = Linear
-module _ : Nx.Ptree.S with type 'a t = 'a Conv.t = Conv
-module _ : Nx.Ptree.S with type 'a t = 'a Embedding.t = Embedding
-module _ : Nx.Ptree.S with type 'a t = 'a Layer_norm.t = Layer_norm
-module _ : Nx.Ptree.S with type 'a t = 'a Rms_norm.t = Rms_norm
-module _ : Nx.Ptree.S with type 'a t = 'a Batch_norm.t = Batch_norm
-module _ : Nx.Ptree.S with type 'a t = 'a Batch_norm.Stats.t = Batch_norm.Stats
-module _ : Nx.Ptree.S with type 'a t = 'a Attention.t = Attention
-module _ : Nx.Ptree.S with type 'a t = 'a Attention.Cache.t = Attention.Cache
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Linear.t = Linear
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Conv.t = Conv
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Embedding.t = Embedding
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Layer_norm.t = Layer_norm
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Rms_norm.t = Rms_norm
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Batch_norm.t = Batch_norm
+
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Batch_norm.Stats.t =
+  Batch_norm.Stats
+
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Attention.t = Attention
+
+module _ : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) Attention.Cache.t =
+  Attention.Cache
 
 (* Float64 instances for gradient checking; the layers' maps are dtype-generic,
    so each instance is just a type pin. *)
@@ -42,7 +47,7 @@ let values_are ?msg ~tol expected t =
 
 let test_linear_init_shapes () =
   Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
-  let p = Linear.init ~inputs:3 ~outputs:5 in
+  let p = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:3 ~outputs:5 in
   shape_is ~msg:"w shape" [| 3; 5 |] p.Linear.w;
   match p.Linear.b with
   | None -> fail "init should create a bias"
@@ -61,7 +66,10 @@ let test_linear_apply_affine () =
 
 let test_linear_no_bias () =
   Nx.Rng.with_key (Nx.Rng.key 2) @@ fun () ->
-  let p = Linear.make ~bias:false ~inputs:4 ~outputs:3 Nx.float32 in
+  let p =
+    Linear.make ~key:(Nx.Rng.next_key ()) ~bias:false ~inputs:4 ~outputs:3
+      Nx.float32
+  in
   is_true ~msg:"no bias parameter" (p.Linear.b = None);
   let x = Nx.create Nx.float32 [| 2; 4 |] (Array.init 8 float_of_int) in
   values_are ~msg:"apply is the plain matmul" ~tol:1e-6
@@ -70,14 +78,14 @@ let test_linear_no_bias () =
 
 let test_linear_batched_apply () =
   Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let p = Linear.init ~inputs:4 ~outputs:2 in
+  let p = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:2 in
   let x = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
   shape_is ~msg:"leading axes are batch axes" [| 2; 3; 2 |] (Linear.apply p x)
 
 let test_linear_custom_inits () =
   let p =
-    Linear.make ~w_init:(Init.constant 2.0) ~bias_init:(Init.constant 1.0)
-      ~inputs:2 ~outputs:3 Nx.float32
+    Linear.make ~key:(Nx.Rng.next_key ()) ~w_init:(Init.constant 2.0)
+      ~bias_init:(Init.constant 1.0) ~inputs:2 ~outputs:3 Nx.float32
   in
   values_are ~msg:"w_init" ~tol:0.0 (Array.make 6 2.0) p.Linear.w;
   match p.Linear.b with
@@ -86,28 +94,39 @@ let test_linear_custom_inits () =
 
 let test_linear_names () =
   Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
-  let with_bias = Linear.init ~inputs:2 ~outputs:2 in
+  let with_bias = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:2 in
   let paths = paths (Nx.Ptree.instantiate (module Linear)) in
   equal ~msg:"with bias" (list string) [ "w"; "b" ] (paths with_bias);
-  let no_bias = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
+  let no_bias =
+    Linear.make ~key:(Nx.Rng.next_key ()) ~bias:false ~inputs:2 ~outputs:2
+      Nx.float32
+  in
   equal ~msg:"without bias" (list string) [ "w" ] (paths no_bias)
 
 let test_linear_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
-  let x = Nx.randn Nx.float64 [| 4; 3 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 4; 3 |] in
   let loss p =
     let y = Linear.apply p x in
     Nx.sum (Nx.mul y y)
   in
-  let p = Linear.make ~inputs:3 ~outputs:2 Nx.float64 in
+  let p =
+    Linear.make ~key:(Nx.Rng.next_key ()) ~inputs:3 ~outputs:2 Nx.float64
+  in
   grads_ok (Rune.check_grads linear64 loss p);
-  let no_bias = Linear.make ~bias:false ~inputs:3 ~outputs:2 Nx.float64 in
+  let no_bias =
+    Linear.make ~key:(Nx.Rng.next_key ()) ~bias:false ~inputs:3 ~outputs:2
+      Nx.float64
+  in
   grads_ok (Rune.check_grads linear64 loss no_bias)
 
 let test_linear_map2_bias_mismatch () =
   Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
-  let p = Linear.init ~inputs:2 ~outputs:2 in
-  let q = Linear.make ~bias:false ~inputs:2 ~outputs:2 Nx.float32 in
+  let p = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:2 in
+  let q =
+    Linear.make ~key:(Nx.Rng.next_key ()) ~bias:false ~inputs:2 ~outputs:2
+      Nx.float32
+  in
   raises
     (Invalid_argument
        "Nx.Ptree.map2: b: Some in the first value, None in the second")
@@ -118,11 +137,13 @@ let test_linear_rejects_bad_geometry () =
   raises
     (Invalid_argument
        "Linear.make: inputs and outputs must be positive, got inputs=0 \
-        outputs=4") (fun () -> Linear.make ~inputs:0 ~outputs:4 Nx.float32);
+        outputs=4") (fun () ->
+      Linear.make ~key:(Nx.Rng.next_key ()) ~inputs:0 ~outputs:4 Nx.float32);
   raises
     (Invalid_argument
        "Linear.make: inputs and outputs must be positive, got inputs=3 \
-        outputs=-1") (fun () -> Linear.make ~inputs:3 ~outputs:(-1) Nx.float32)
+        outputs=-1") (fun () ->
+      Linear.make ~key:(Nx.Rng.next_key ()) ~inputs:3 ~outputs:(-1) Nx.float32)
 
 (* Embedding *)
 
@@ -135,7 +156,7 @@ let embedding_4x3 () =
 
 let test_embedding_init_shape () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let p = Embedding.init ~vocab:7 ~dim:4 in
+  let p = Embedding.init ~key:(Nx.Rng.next_key ()) ~vocab:7 ~dim:4 in
   shape_is ~msg:"table shape" [| 7; 4 |] p.Embedding.table;
   equal ~msg:"names" (list string) [ "table" ]
     (paths (Nx.Ptree.instantiate (module Embedding)) p)
@@ -161,7 +182,7 @@ let test_embedding_scalar_id () =
 
 let test_embedding_duplicate_id_gradient () =
   Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
-  let p = Embedding.make ~vocab:3 ~dim:2 Nx.float64 in
+  let p = Embedding.make ~key:(Nx.Rng.next_key ()) ~vocab:3 ~dim:2 Nx.float64 in
   let ids = Nx.create Nx.int64 [| 3 |] [| 0L; 2L; 0L |] in
   let loss p = Nx.sum (Embedding.apply p ids) in
   let g = Rune.grad embedding64 loss p in
@@ -172,7 +193,7 @@ let test_embedding_duplicate_id_gradient () =
 
 let test_embedding_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
-  let p = Embedding.make ~vocab:5 ~dim:3 Nx.float64 in
+  let p = Embedding.make ~key:(Nx.Rng.next_key ()) ~vocab:5 ~dim:3 Nx.float64 in
   let ids = Nx.create Nx.int64 [| 2; 2 |] [| 0L; 3L; 3L; 1L |] in
   let loss p =
     let y = Embedding.apply p ids in
@@ -191,12 +212,13 @@ let test_embedding_rejects_bad_geometry () =
   raises
     (Invalid_argument
        "Embedding.make: vocab and dim must be positive, got vocab=0 dim=3")
-    (fun () -> Embedding.make ~vocab:0 ~dim:3 Nx.float32)
+    (fun () ->
+      Embedding.make ~key:(Nx.Rng.next_key ()) ~vocab:0 ~dim:3 Nx.float32)
 
 (* Layer norm *)
 
 let test_layer_norm_init_shapes () =
-  let p = Layer_norm.init ~dim:6 in
+  let p = Layer_norm.init ~dim:6 Nx.Host.on in
   shape_is ~msg:"gamma shape" [| 6 |] p.Layer_norm.gamma;
   shape_is ~msg:"beta shape" [| 6 |] p.Layer_norm.beta;
   values_are ~msg:"gamma is ones" ~tol:0.0 (Array.make 6 1.0) p.Layer_norm.gamma;
@@ -219,8 +241,8 @@ let test_layer_norm_analytic () =
 
 let test_layer_norm_standardizes () =
   Nx.Rng.with_key (Nx.Rng.key 10) @@ fun () ->
-  let x = Nx.add_s (Nx.mul_s (Nx.randn Nx.float32 [| 3; 16 |]) 3.0) 7.0 in
-  let y = Layer_norm.apply (Layer_norm.init ~dim:16) x in
+  let x = Nx.add_s (Nx.mul_s (Nx.Rng.normal Nx.float32 [| 3; 16 |]) 3.0) 7.0 in
+  let y = Layer_norm.apply (Layer_norm.init ~dim:16 Nx.Host.on) x in
   shape_is ~msg:"shape preserved" [| 3; 16 |] y;
   let row_means = Nx.to_array (Nx.mean ~axes:[ 1 ] y) in
   let row_vars = Nx.to_array (Nx.mean ~axes:[ 1 ] (Nx.mul y y)) in
@@ -233,7 +255,7 @@ let test_layer_norm_standardizes () =
     row_vars
 
 let test_layer_norm_constant_input () =
-  let p = Layer_norm.init ~dim:4 in
+  let p = Layer_norm.init ~dim:4 Nx.Host.on in
   let x = Nx.full Nx.float32 [| 2; 4 |] 5.0 in
   values_are ~msg:"constant vectors map to beta" ~tol:0.0 (Array.make 8 0.0)
     (Layer_norm.apply p x)
@@ -241,7 +263,7 @@ let test_layer_norm_constant_input () =
 let test_layer_norm_eps () =
   (* With eps = 3, the row [0; 2] has variance 1 and normalizes by sqrt (1 + 3)
      = 2. *)
-  let p = Layer_norm.init ~dim:2 in
+  let p = Layer_norm.init ~dim:2 Nx.Host.on in
   let x = Nx.create Nx.float32 [| 1; 2 |] [| 0.; 2. |] in
   values_are ~msg:"eps enters the denominator" ~tol:1e-6 [| -0.5; 0.5 |]
     (Layer_norm.apply ~eps:3.0 p x)
@@ -250,11 +272,11 @@ let test_layer_norm_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 11) @@ fun () ->
   let p =
     {
-      Layer_norm.gamma = Nx.randn Nx.float64 [| 4 |];
-      beta = Nx.randn Nx.float64 [| 4 |];
+      Layer_norm.gamma = Nx.Rng.normal Nx.float64 [| 4 |];
+      beta = Nx.Rng.normal Nx.float64 [| 4 |];
     }
   in
-  let x = Nx.randn Nx.float64 [| 3; 4 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 3; 4 |] in
   let loss p =
     let y = Layer_norm.apply p x in
     Nx.sum (Nx.mul y y)
@@ -262,7 +284,7 @@ let test_layer_norm_gradients () =
   grads_ok (Rune.check_grads layer_norm64 loss p)
 
 let test_layer_norm_rejects_bad_input () =
-  let p = Layer_norm.init ~dim:4 in
+  let p = Layer_norm.init ~dim:4 Nx.Host.on in
   raises
     (Invalid_argument
        "Layer_norm.apply: last axis has size 3 but the layer normalizes 4 \
@@ -271,7 +293,7 @@ let test_layer_norm_rejects_bad_input () =
   raises (Invalid_argument "Layer_norm.apply: eps must be >= 0, got -1")
     (fun () -> Layer_norm.apply ~eps:(-1.0) p (Nx.zeros Nx.float32 [| 2; 4 |]));
   raises (Invalid_argument "Layer_norm.make: dim must be positive, got 0")
-    (fun () -> Layer_norm.make ~dim:0 Nx.float32)
+    (fun () -> Layer_norm.make ~dim:0 Nx.float32 Nx.Host.on)
 
 (* RMS norm *)
 
@@ -288,12 +310,12 @@ let test_rms_norm_eps () =
   (* [0; 2] has mean square 2; with eps = 2 it normalizes by sqrt (2 + 2). *)
   let x = Nx.create Nx.float32 [| 1; 2 |] [| 0.; 2. |] in
   values_are ~msg:"eps enters under the square root" ~tol:1e-6 [| 0.; 1. |]
-    (Rms_norm.apply ~eps:2.0 (Rms_norm.init ~dim:2) x)
+    (Rms_norm.apply ~eps:2.0 (Rms_norm.init ~dim:2 Nx.Host.on) x)
 
 let test_rms_norm_unit_rms () =
   Nx.Rng.with_key (Nx.Rng.key 12) @@ fun () ->
-  let x = Nx.add_s (Nx.mul_s (Nx.randn Nx.float32 [| 3; 16 |]) 3.0) 7.0 in
-  let y = Rms_norm.apply (Rms_norm.init ~dim:16) x in
+  let x = Nx.add_s (Nx.mul_s (Nx.Rng.normal Nx.float32 [| 3; 16 |]) 3.0) 7.0 in
+  let y = Rms_norm.apply (Rms_norm.init ~dim:16 Nx.Host.on) x in
   shape_is ~msg:"shape preserved" [| 3; 16 |] y;
   Array.iteri
     (fun i v ->
@@ -302,22 +324,26 @@ let test_rms_norm_unit_rms () =
 
 let test_rms_norm_does_not_center () =
   let y =
-    Rms_norm.apply (Rms_norm.init ~dim:4) (Nx.full Nx.float32 [| 2; 4 |] 5.0)
+    Rms_norm.apply
+      (Rms_norm.init ~dim:4 Nx.Host.on)
+      (Nx.full Nx.float32 [| 2; 4 |] 5.0)
   in
   values_are ~msg:"a constant vector keeps its sign and unit size" ~tol:1e-5
     (Array.make 8 1.0) y
 
 let test_rms_norm_gradients () =
   Nx.Rng.with_key (Nx.Rng.key 13) @@ fun () ->
-  let p = Nx.Ptree.cast (module Rms_norm) Nx.float64 (Rms_norm.init ~dim:5) in
+  let p =
+    Nx.Ptree.cast (module Rms_norm) Nx.float64 (Rms_norm.init ~dim:5 Nx.Host.on)
+  in
   let p =
     {
       Rms_norm.gamma =
-        Nx.add p.gamma (Nx.mul_s (Nx.randn Nx.float64 [| 5 |]) 0.3);
+        Nx.add p.gamma (Nx.mul_s (Nx.Rng.normal Nx.float64 [| 5 |]) 0.3);
     }
   in
-  let x = Nx.randn Nx.float64 [| 3; 5 |] in
-  let w = Nx.randn Nx.float64 [| 3; 5 |] in
+  let x = Nx.Rng.normal Nx.float64 [| 3; 5 |] in
+  let w = Nx.Rng.normal Nx.float64 [| 3; 5 |] in
   grads_ok
     (Rune.check_grads rms_norm64
        (fun p -> Nx.sum (Nx.mul w (Rms_norm.apply p x)))
@@ -328,9 +354,9 @@ let test_rms_norm_gradients () =
        x)
 
 let test_rms_norm_rejects_bad_input () =
-  let p = Rms_norm.init ~dim:4 in
+  let p = Rms_norm.init ~dim:4 Nx.Host.on in
   raises (Invalid_argument "Rms_norm.make: dim must be positive, got 0")
-    (fun () -> Rms_norm.make ~dim:0 Nx.float32);
+    (fun () -> Rms_norm.make ~dim:0 Nx.float32 Nx.Host.on);
   raises
     (Invalid_argument
        "Rms_norm.apply: last axis has size 3 but the layer normalizes 4 \

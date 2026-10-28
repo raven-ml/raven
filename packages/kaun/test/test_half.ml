@@ -26,7 +26,7 @@ let close ?msg ~tol expected actual =
   let ft = if tol = 0. then float_exact else float tol in
   equal ?msg (array ft) (to_arr expected) (to_arr actual)
 
-let dtype_is ?msg dt t = is_true ?msg (Nx_dtype.equal (Nx.dtype t) dt)
+let dtype_is ?msg dt t = is_true ?msg (Nx.Dtype.equal (Nx.dtype t) dt)
 
 (* Exactly representable at half precision: multiples of 0.25 in a small
    range. *)
@@ -48,21 +48,29 @@ let test_cast_dtypes () =
       { Embedding.table = mat f32 4 3 (grid 12) }
   in
   dtype_is ~msg:"embedding table" f16 emb.Embedding.table;
-  let ln = Nx.Ptree.cast (module Layer_norm) f16 (Layer_norm.init ~dim:4) in
+  let ln =
+    Nx.Ptree.cast (module Layer_norm) f16 (Layer_norm.init ~dim:4 Nx.Host.on)
+  in
   dtype_is ~msg:"layer norm gamma" f16 ln.Layer_norm.gamma;
   let attn =
-    Nx.Ptree.cast (module Attention) f16 (Attention.init ~embed_dim:4)
+    Nx.Ptree.cast
+      (module Attention)
+      f16
+      (Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:4)
   in
   dtype_is ~msg:"attention q.w" f16 attn.Attention.q.Linear.w;
-  let bn, stats = Batch_norm.init ~features:3 in
+  let bn, stats = Batch_norm.init ~features:3 Nx.Host.on in
   dtype_is ~msg:"batch norm gamma" f16
     (Nx.Ptree.cast (module Batch_norm) f16 bn).gamma;
   dtype_is ~msg:"batch norm stats mean" f16
     (Nx.Ptree.cast (module Batch_norm.Stats) f16 stats).mean;
-  let conv = Conv.init ~in_channels:1 ~out_channels:2 ~kernel_size:(2, 2) in
+  let conv =
+    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:2
+      ~kernel_size:(2, 2)
+  in
   dtype_is ~msg:"conv w" f16 (Nx.Ptree.cast (module Conv) f16 conv).Conv.w;
   let cache =
-    Attention.Cache.make ~slots:3 ~kv_heads:2 ~head_dim:2 Nx.float32
+    Attention.Cache.make ~slots:3 ~kv_heads:2 ~head_dim:2 Nx.float32 Nx.Host.on
   in
   dtype_is ~msg:"cache keys" f16
     (Nx.Ptree.cast (module Attention.Cache) f16 cache).keys
@@ -177,7 +185,7 @@ let test_attention_apply_half () =
     }
   in
   let x = mat f32 3 dim (grid 12) in
-  let mask = Attention.causal_mask ~seq:3 () in
+  let mask = Attention.causal_mask ~seq:3 Nx.Host.on in
   let expected = Attention.apply ~head_dim:2 ~mask p x in
   let actual =
     Attention.apply ~head_dim:2 ~mask
@@ -209,8 +217,11 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
   Nx.Rng.with_key (Nx.Rng.key 50) @@ fun () ->
   let head_dim = 2 in
   let rope = Rope.make ~head_dim ~context:64 () in
-  let p32 = Attention.make ~bias:false ~kv_dim:4 ~embed_dim:8 f32 in
-  let x32 = Nx.mul_s (Nx.randn f32 [| 1; 6; 8 |]) 0.5 in
+  let p32 =
+    Attention.make ~key:(Nx.Rng.next_key ()) ~bias:false ~kv_dim:4 ~embed_dim:8
+      f32
+  in
+  let x32 = Nx.mul_s (Nx.Rng.normal f32 [| 1; 6; 8 |]) 0.5 in
   let slots = Nx.create Nx.int64 [| 1; 6 |] (Array.init 6 Int64.of_int) in
   let run (type c) (dt : (float, c) Nx.dtype) chunks =
     let p = Nx.Ptree.cast (module Attention) dt p32 and x = Nx.cast dt x32 in
@@ -227,7 +238,9 @@ let test_cached_attention_half (type b) name (dt : (float, b) Nx.dtype) ~tol ()
               (Nx.slice [ A; R (at, at + n) ] x)
           in
           (at + n, y :: ys, c))
-        (0, [], Attention.Cache.make ~slots:6 ~kv_heads:2 ~head_dim dt)
+        ( 0,
+          [],
+          Attention.Cache.make ~slots:6 ~kv_heads:2 ~head_dim dt Nx.Host.on )
         chunks
     in
     Nx.cast f32 (Nx.concatenate ~axis:1 (List.rev ys))
@@ -299,7 +312,7 @@ let test_batch_norm_island () =
         50.5;
       |]
   in
-  let p, stats = Batch_norm.init ~features:3 in
+  let p, stats = Batch_norm.init ~features:3 Nx.Host.on in
   let expected, estats = Batch_norm.apply p stats ~training:true x in
   let actual, astats =
     Batch_norm.apply
@@ -352,22 +365,33 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
    calls (a captured scale would be a trace-time constant) and a poisoned batch
    must be skippable without recompiling. *)
 
-type fit_in = { w : Nx.float32_t; x : Nx.float32_t; ls : Vega.Loss_scale.t }
-type fit_out = { w : Nx.float32_t; loss : Nx.float32_t; ls : Vega.Loss_scale.t }
+type fit_in = {
+  w : Nx.host Nx.float32_t;
+  x : Nx.host Nx.float32_t;
+  ls : Nx.host Vega.Loss_scale.t;
+}
+
+type fit_out = {
+  w : Nx.host Nx.float32_t;
+  loss : Nx.host Nx.float32_t;
+  ls : Nx.host Vega.Loss_scale.t;
+}
 
 let fit_in =
-  Nx.Ptree.(
-    iso
-      (fun ((w, x), ls) -> { w; x; ls })
-      (fun ({ w; x; ls } : fit_in) -> ((w, x), ls))
-      (pair (pair tensor tensor) Vega.Loss_scale.ptree))
+  Nx.Ptree.v (fun c ({ w; x; ls } : fit_in) ->
+      let open Nx.Ptree.Walk in
+      let w = field c "w" tensor w in
+      let x = field c "x" tensor x in
+      let ls = field c "ls" Vega.Loss_scale.walk ls in
+      ({ w; x; ls } : fit_in))
 
 let fit_out =
-  Nx.Ptree.(
-    iso
-      (fun ((w, loss), ls) -> { w; loss; ls })
-      (fun ({ w; loss; ls } : fit_out) -> ((w, loss), ls))
-      (pair (pair tensor tensor) Vega.Loss_scale.ptree))
+  Nx.Ptree.v (fun c ({ w; loss; ls } : fit_out) ->
+      let open Nx.Ptree.Walk in
+      let w = field c "w" tensor w in
+      let loss = field c "loss" tensor loss in
+      let ls = field c "ls" Vega.Loss_scale.walk ls in
+      ({ w; loss; ls } : fit_out))
 
 let test_f16_train_loss_scaled () =
   let x = mat f32 4 2 [| 1.0; 0.5; -0.5; 1.0; 0.25; -1.0; -1.0; -0.25 |] in
@@ -392,7 +416,7 @@ let test_f16_train_loss_scaled () =
         { w; loss; ls })
   in
   let w = ref (Nx.zeros f32 [| 2; 1 |]) in
-  let ls = ref (Vega.Loss_scale.dynamic ~init:1024.0 ()) in
+  let ls = ref (Vega.Loss_scale.dynamic ~init:1024.0 Nx.Host.on) in
   let losses = ref [] in
   let run_step x =
     let out = step ({ w = !w; x; ls = !ls } : fit_in) in

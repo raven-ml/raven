@@ -13,25 +13,32 @@
 
 (** {1:types Types} *)
 
-type 'a t = { gamma : 'a }
+type ('a, _) t = { gamma : 'a }
 (** The type for RMS-norm parameters over payload ['a]. At tensor payloads
     [gamma] (the scale) has shape [[| dim |]], one entry per feature. *)
 
 (** {1:constructors Constructors} *)
 
-val make : dim:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
-(** [make ~dim dtype] is a fresh normalization over [dim] features with [gamma]
-    all ones.
+val make :
+  dim:int ->
+  (float, 'b) Nx.dtype ->
+  'd Nx.Placement.t ->
+  ((float, 'b, 'd) Nx.t, 'd) t
+(** [make ~dim dtype at] is a fresh normalization over [dim] features at [at],
+    with [gamma] all ones.
 
     Raises [Invalid_argument] if [dim] is not positive. *)
 
-val init : dim:int -> Nx.float32_t t
-(** [init ~dim] is [make ~dim Nx.float32]. *)
+val init : dim:int -> 'd Nx.Placement.t -> ('d Nx.float32_t, 'd) t
+(** [init ~dim at] is [make ~dim Nx.float32 at]. *)
 
 (** {1:applying Applying} *)
 
 val apply :
-  ?eps:float -> (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  ?eps:float ->
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply p x] scales each vector along [x]'s last axis to unit root mean
     square and rescales it:
 
@@ -41,17 +48,16 @@ val apply :
     [eps] keeps the division finite for a zero vector and defaults to [1e-6].
     The result has [x]'s shape. Differentiable through Rune.
 
-    For half and quarter precision inputs (float16, bfloat16, float8) the mean
-    square and the division run in a float32 island and the normalized values
-    are cast back to [x]'s dtype before the [gamma] scale, as in
-    {!Layer_norm.apply}.
+    For narrow inputs (float16, bfloat16, float8, float4) the mean square and
+    the division run in a float32 island and the normalized values are cast back
+    to [x]'s dtype before the [gamma] scale, as in {!Layer_norm.apply}.
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
     have size [dim], or if [eps] is negative. *)
 
 (** {1:structure Structure} *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks [p]'s parameters, [gamma], at that path: the layer's
     {!Nx.Ptree.S} instance. [Nx.Ptree.instantiate (module Rms_norm)] is the
     layer at one dtype, and [Nx.Ptree.cast (module Rms_norm) dtype p] converts

@@ -20,7 +20,7 @@
     {[
     Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
     let data = Data.batches2 ~shuffle:true ~batch_size:32 (x, y) in
-    let state = ref (params, Vega.adam_init (module Model) params) in
+    let state = ref (params, Vega.adam_init model params) in
     for _epoch = 1 to 10 do
       data |> Seq.iter (fun batch -> state := fst (step !state batch))
     done
@@ -30,8 +30,8 @@ val batches :
   ?shuffle:bool ->
   ?drop_last:bool ->
   batch_size:int ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t Seq.t
+  ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t Seq.t
 (** [batches ~batch_size x] is the sequence of minibatches of [x]: consecutive
     slices of [batch_size] examples along axis 0, in order. Each batch has shape
     [batch_size] followed by [x]'s remaining axes. Without shuffling, batches
@@ -39,9 +39,9 @@ val batches :
     sequence.
 
     - [shuffle] visits the examples in a random order instead. The permutation
-      is drawn from the ambient RNG scope at each traversal of the sequence, so
-      every traversal reshuffles (see the module preamble); batches are then
-      copies. Defaults to [false].
+      is drawn from the ambient RNG scope at each traversal of the sequence,
+      where [x] lies, so every traversal reshuffles (see the module preamble);
+      batches are then copies. Defaults to [false].
     - [drop_last] drops the final batch when fewer than [batch_size] examples
       remain; otherwise that final batch is smaller. Defaults to [false].
 
@@ -51,8 +51,8 @@ val batches2 :
   ?shuffle:bool ->
   ?drop_last:bool ->
   batch_size:int ->
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t ->
-  (('a, 'b) Nx.t * ('c, 'd) Nx.t) Seq.t
+  ('a, 'b, 'd) Nx.t * ('c, 'e, 'd) Nx.t ->
+  (('a, 'b, 'd) Nx.t * ('c, 'e, 'd) Nx.t) Seq.t
 (** [batches2 ~batch_size (x, y)] is like {!batches} for a dataset of paired
     examples — inputs [x] and targets [y] with equal axis-0 sizes. Batches pair
     [x]'s slice with [y]'s, and shuffling permutes both with the same

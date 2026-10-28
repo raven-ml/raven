@@ -29,38 +29,40 @@ let leaves paths = List.map (fun p -> p ^ ": a leaf") paths
 let test_linear () =
   let linear = Nx.Ptree.instantiate (module Linear) in
   check_layer ~msg:"with a bias" linear
-    (Linear.make ~inputs:3 ~outputs:2 f32)
+    (Linear.make ~key:(Nx.Rng.next_key ()) ~inputs:3 ~outputs:2 f32)
     ~visits:[ "w: a leaf"; "b: Some"; "b: a leaf" ]
     ~names:[ "w"; "b" ];
   check_layer ~msg:"without a bias" linear
-    (Linear.make ~bias:false ~inputs:3 ~outputs:2 f32)
+    (Linear.make ~key:(Nx.Rng.next_key ()) ~bias:false ~inputs:3 ~outputs:2 f32)
     ~visits:[ "w: a leaf"; "b: None" ] ~names:[ "w" ]
 
 let test_conv () =
   let conv = Nx.Ptree.instantiate (module Conv) in
   check_layer ~msg:"conv" conv
-    (Conv.make ~in_channels:1 ~out_channels:2 ~kernel_size:(3, 3) f32)
+    (Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:2
+       ~kernel_size:(3, 3) f32)
     ~visits:[ "w: a leaf"; "b: Some"; "b: a leaf" ]
     ~names:[ "w"; "b" ];
   check_layer ~msg:"conv without bias" conv
-    (Conv.make ~bias:false ~in_channels:1 ~out_channels:2 ~kernel_size:(3, 3)
-       f32)
+    (Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:1
+       ~out_channels:2 ~kernel_size:(3, 3) f32)
     ~visits:[ "w: a leaf"; "b: None" ] ~names:[ "w" ]
 
 let test_norms () =
   check_layer ~msg:"embedding"
     (Nx.Ptree.instantiate (module Embedding))
-    (Embedding.make ~vocab:5 ~dim:2 f32)
+    (Embedding.make ~key:(Nx.Rng.next_key ()) ~vocab:5 ~dim:2 f32)
     ~visits:(leaves [ "table" ]) ~names:[ "table" ];
   check_layer ~msg:"layer norm"
     (Nx.Ptree.instantiate (module Layer_norm))
-    (Layer_norm.make ~dim:2 f32)
+    (Layer_norm.make ~dim:2 f32 Nx.Host.on)
     ~visits:(leaves [ "gamma"; "beta" ])
     ~names:[ "gamma"; "beta" ];
   check_layer ~msg:"rms norm"
     (Nx.Ptree.instantiate (module Rms_norm))
-    (Rms_norm.make ~dim:2 f32) ~visits:(leaves [ "gamma" ]) ~names:[ "gamma" ];
-  let p, s = Batch_norm.init ~features:2 in
+    (Rms_norm.make ~dim:2 f32 Nx.Host.on)
+    ~visits:(leaves [ "gamma" ]) ~names:[ "gamma" ];
+  let p, s = Batch_norm.init ~features:2 Nx.Host.on in
   check_layer ~msg:"batch norm"
     (Nx.Ptree.instantiate (module Batch_norm))
     p
@@ -79,10 +81,12 @@ let test_attention () =
   in
   check_layer ~msg:"attention"
     (Nx.Ptree.instantiate (module Attention))
-    (Attention.make ~embed_dim:4 f32)
+    (Attention.make ~key:(Nx.Rng.next_key ()) ~embed_dim:4 f32)
     ~visits:(List.concat_map with_bias [ "q"; "k"; "v"; "out" ])
     ~names:paths;
-  let c = Attention.Cache.make ~slots:2 ~kv_heads:1 ~head_dim:2 f32 in
+  let c =
+    Attention.Cache.make ~slots:2 ~kv_heads:1 ~head_dim:2 f32 Nx.Host.on
+  in
   let cache = Nx.Ptree.instantiate (module Attention.Cache) in
   check_layer ~msg:"cache" cache c
     ~visits:(leaves [ "keys"; "values" ])
@@ -94,12 +98,12 @@ let test_attention () =
     ~names:[ "0.keys"; "0.values"; "1.keys"; "1.values" ]
 
 let test_cast () =
-  let p = Attention.make ~embed_dim:4 f32 in
+  let p = Attention.make ~key:(Nx.Rng.next_key ()) ~embed_dim:4 f32 in
   let half = Nx.Ptree.cast (module Attention) Nx.bfloat16 p in
   let dtypes =
     Nx.Ptree.fold
       (Nx.Ptree.instantiate (module Attention))
-      (fun _ x acc -> Nx_dtype.to_string (Nx.dtype x) :: acc)
+      (fun _ x acc -> Nx.Dtype.name (Nx.dtype x) :: acc)
       half []
   in
   equal ~msg:"every projection is cast" (list string)
@@ -126,7 +130,9 @@ let test_index_whole () =
       "columns: None";
       "draft: None";
     ]
-    (visits Cache_index.ptree (Cache_index.whole ~batch:2 ~seq:3 ()));
+    (visits
+       (Nx.Ptree.v Cache_index.walk)
+       (Cache_index.whole ~batch:2 ~seq:3 ()));
   equal ~msg:"packed" (list string)
     [
       "tokens: case \"packed\"";
@@ -136,7 +142,9 @@ let test_index_whole () =
       "columns: None";
       "draft: None";
     ]
-    (visits Cache_index.ptree (Cache_index.packed ~seq:3 [| [| 1; 2 |] |]))
+    (visits
+       (Nx.Ptree.v Cache_index.walk)
+       (Cache_index.packed ~seq:3 [| [| 1; 2 |] |]))
 
 let test_index_tabled () =
   let index =
@@ -161,7 +169,7 @@ let test_index_tabled () =
       "columns: None";
       "draft: None";
     ]
-    (visits Cache_index.ptree index);
+    (visits (Nx.Ptree.v Cache_index.walk) index);
   let made =
     Cache_index.make ~row:(int64s [| 1 |] [| 0L |])
       ~pos:(int64s [| 1; 1 |] [| 0L |])
@@ -183,7 +191,7 @@ let test_index_tabled () =
       "columns: a leaf";
       "draft: None";
     ]
-    (visits Cache_index.ptree selected);
+    (visits (Nx.Ptree.v Cache_index.walk) selected);
   equal ~msg:"a draft" (list string)
     [
       "tokens: case \"tabled\"";
@@ -199,13 +207,15 @@ let test_index_tabled () =
       "draft.slots: a leaf";
       "draft.sees: a leaf";
     ]
-    (visits Cache_index.ptree (drafted made))
+    (visits (Nx.Ptree.v Cache_index.walk) (drafted made))
 
 let test_index_keys () =
   (* Everything a compiled program depends on changes what the index visits. *)
   let index = Cache_index.rows ~every:[ 4 ] ~context:8 [| 3; 2 |] in
   let differ ~msg a b =
-    is_true ~msg (visits Cache_index.ptree a <> visits Cache_index.ptree b)
+    is_true ~msg
+      (visits (Nx.Ptree.v Cache_index.walk) a
+      <> visits (Nx.Ptree.v Cache_index.walk) b)
   in
   differ ~msg:"a window" index (Cache_index.window 2 index);
   differ ~msg:"another window"
@@ -224,20 +234,22 @@ let test_index_keys () =
 
 let test_index_round_trip () =
   let round_trip ~msg index =
-    let leaves, _ = Nx.Ptree.flatten Cache_index.ptree index in
+    let leaves, _ = Nx.Ptree.flatten (Nx.Ptree.v Cache_index.walk) index in
     let copy =
-      Nx.Ptree.rebuild Cache_index.ptree ~like:index
+      Nx.Ptree.rebuild
+        (Nx.Ptree.v Cache_index.walk)
+        ~like:index
         (List.map (fun (Nx.P x) -> Nx.P (Nx.copy x)) leaves)
     in
     equal
       ~msg:(msg ^ ": the copy visits what the index visits")
       (list string)
-      (visits Cache_index.ptree index)
-      (visits Cache_index.ptree copy);
+      (visits (Nx.Ptree.v Cache_index.walk) index)
+      (visits (Nx.Ptree.v Cache_index.walk) copy);
     let values l =
       List.map
         (fun (Nx.P x) -> Nx.to_array (Nx.cast Nx.float64 x))
-        (fst (Nx.Ptree.flatten Cache_index.ptree l))
+        (fst (Nx.Ptree.flatten (Nx.Ptree.v Cache_index.walk) l))
     in
     equal
       ~msg:(msg ^ ": and holds the same tensors")

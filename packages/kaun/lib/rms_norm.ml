@@ -3,23 +3,23 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a t = { gamma : 'a }
+type ('a, _) t = { gamma : 'a }
 
 let walk c { gamma } = { gamma = Nx.Ptree.Walk.(field c "gamma" leaf gamma) }
 
-let make ~dim dtype =
+let make ~dim dtype at =
   if dim <= 0 then
     Printf.ksprintf invalid_arg "Rms_norm.make: dim must be positive, got %d"
       dim;
-  { gamma = Nx.ones dtype [| dim |] }
+  { gamma = Nx.ones_at at dtype [| dim |] }
 
-let init ~dim = make ~dim Nx.float32
+let init ~dim at = make ~dim Nx.float32 at
 
 (* Half and quarter precision floats are too coarse for the mean square: the
    normalization runs in a float32 island, as in [Layer_norm]. *)
 let low_precision : type b. (float, b) Nx.dtype -> bool = function
-  | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
-  | Nx.Float32 | Nx.Float64 -> false
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
+  | Float32 | Float64 -> false
 
 let normalize ~eps x =
   let axes = [ Array.length (Nx.shape x) - 1 ] in

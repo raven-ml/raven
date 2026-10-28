@@ -17,8 +17,8 @@
 val max_pool2d :
   kernel_size:int * int ->
   ?stride:int * int ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [max_pool2d ~kernel_size:(kh, kw) x] is the maximum of each [kh × kw] window
     over [x]'s last two axes.
 
@@ -32,7 +32,7 @@ val max_pool2d :
 val avg_pool2d :
   kernel_size:int * int ->
   ?stride:int * int ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [avg_pool2d ~kernel_size x] is like {!max_pool2d} except each window is
     reduced to its mean. Same defaults and errors as {!max_pool2d}. *)

@@ -14,26 +14,33 @@
 
 (** {1:types Types} *)
 
-type 'a t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a }
 (** The type for layer-norm parameters over payload ['a]. At tensor payloads,
     [gamma] (the scale) and [beta] (the shift) both have shape [[| dim |]], one
     entry per normalized feature. *)
 
 (** {1:constructors Constructors} *)
 
-val make : dim:int -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
-(** [make ~dim dtype] is a fresh identity normalization over [dim] features:
-    [gamma] all ones, [beta] all zeros.
+val make :
+  dim:int ->
+  (float, 'b) Nx.dtype ->
+  'd Nx.Placement.t ->
+  ((float, 'b, 'd) Nx.t, 'd) t
+(** [make ~dim dtype at] is a fresh identity normalization over [dim] features
+    at [at]: [gamma] all ones, [beta] all zeros.
 
     Raises [Invalid_argument] if [dim] is not positive. *)
 
-val init : dim:int -> Nx.float32_t t
-(** [init ~dim] is [make ~dim Nx.float32]. *)
+val init : dim:int -> 'd Nx.Placement.t -> ('d Nx.float32_t, 'd) t
+(** [init ~dim at] is [make ~dim Nx.float32 at]. *)
 
 (** {1:applying Applying} *)
 
 val apply :
-  ?eps:float -> (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  ?eps:float ->
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply p x] normalizes each vector along [x]'s last axis and rescales it:
 
     {v (x - mean(x)) / sqrt (var(x) + eps) * gamma + beta v}
@@ -43,18 +50,18 @@ val apply :
     for constant vectors — a constant vector maps to [beta] — and defaults to
     [1e-5]. The result has [x]'s shape. Differentiable through Rune.
 
-    For half and quarter precision inputs (float16, bfloat16, float8) the
-    statistics and normalization are computed in a float32 island: [x] is
-    upcast, normalized at float32, and the normalized values are cast back to
-    [x]'s dtype before the [gamma]/[beta] affine transform. Float32 and float64
-    inputs use their own dtype throughout, exactly as if the island were absent.
+    For narrow inputs (float16, bfloat16, float8, float4) the statistics and
+    normalization are computed in a float32 island: [x] is upcast, normalized at
+    float32, and the normalized values are cast back to [x]'s dtype before the
+    [gamma]/[beta] affine transform. Float32 and float64 inputs use their own
+    dtype throughout, exactly as if the island were absent.
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
     have size [dim], or if [eps] is negative. *)
 
 (** {1:structure Structure} *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks [p]'s parameters, [gamma] then [beta], at those paths: the
     layer's {!Nx.Ptree.S} instance. [Nx.Ptree.instantiate (module Layer_norm)]
     is the layer at one dtype, and [Nx.Ptree.cast (module Layer_norm) dtype p]

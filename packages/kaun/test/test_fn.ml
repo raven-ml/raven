@@ -206,7 +206,7 @@ let test_masks_compose_and_sample () =
     List.init 40 (fun i ->
         Int64.to_int
           (Nx.item [ 0 ]
-             (Nx.Rng.categorical (Nx.Rng.key i)
+             (Nx.Rng.categorical ~key:(Nx.Rng.key i)
                 (Nx.reshape [| 1; 4 |] (policy logits)))))
   in
   is_true ~msg:"only surviving tokens are drawn"

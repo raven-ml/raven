@@ -43,21 +43,21 @@
     {[
     Nx_io.Archive.union
       [
-        Nx_io.Archive.of_value (Nx.Ptree.field "model" model) params;
-        Nx_io.Archive.of_value
-          (Nx.Ptree.field "stats" (Nx.Ptree.instantiate (module Model.Stats)))
+        Nx_io.Archive.of_value ~prefix:"model" model params;
+        Nx_io.Archive.of_value ~prefix:"stats"
+          (Nx.Ptree.instantiate (module Model.Stats))
           stats;
       ]
     ]} *)
 
 (** {1:params Parameters} *)
 
-type 'a t = { gamma : 'a; beta : 'a }
+type ('a, _) t = { gamma : 'a; beta : 'a }
 (** The type for batch-norm parameters over payload ['a]: per-feature scale
     [gamma] and shift [beta], at tensor payloads each of shape [[| features |]].
 *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks [p]'s parameters, [gamma] then [beta], at those paths: the
     parameters' {!Nx.Ptree.S} instance.
     [Nx.Ptree.instantiate (module Batch_norm)] is the parameters at one dtype,
@@ -70,13 +70,13 @@ val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
     consumed by eval-mode {!apply}. Not parameters — never differentiate or
     optimize them; thread them through the training loop as auxiliary state. *)
 module Stats : sig
-  type 'a t = { mean : 'a; var : 'a }
+  type ('a, _) t = { mean : 'a; var : 'a }
   (** The type for running statistics over payload ['a], at tensor payloads each
       of shape [[| features |]]. The exponential moving average accumulates
       small increments, so keep statistics at float32 even when the parameters
       are half precision. *)
 
-  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
   (** [walk c s] walks [s]'s statistics, [mean] then [var], at those paths: the
       statistics' {!Nx.Ptree.S} instance.
       [Nx.Ptree.instantiate (module Batch_norm.Stats)] is the statistics at one
@@ -86,11 +86,14 @@ end
 
 (** {1:constructors Constructors} *)
 
-val init : features:int -> Nx.float32_t t * Nx.float32_t Stats.t
-(** [init ~features] is a fresh layer for [features]-dimensional features:
-    parameters with [gamma] all ones and [beta] all zeros, and statistics with
-    [mean] all zeros and [var] all ones (so an untrained layer's eval mode is
-    close to the identity of a standardized input).
+val init :
+  features:int ->
+  'd Nx.Placement.t ->
+  ('d Nx.float32_t, 'd) t * ('d Nx.float32_t, 'd) Stats.t
+(** [init ~features at] is a fresh layer for [features]-dimensional features at
+    [at]: parameters with [gamma] all ones and [beta] all zeros, and statistics
+    with [mean] all zeros and [var] all ones (so an untrained layer's eval mode
+    is close to the identity of a standardized input).
 
     Raises [Invalid_argument] if [features <= 0]. *)
 
@@ -100,11 +103,11 @@ val apply :
   ?axis:int ->
   ?momentum:float ->
   ?eps:float ->
-  (float, 'b) Nx.t t ->
-  (float, 'b) Nx.t Stats.t ->
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  ((float, 'b, 'd) Nx.t, 'd) Stats.t ->
   training:bool ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Stats.t
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Stats.t
 (** [apply p stats ~training x] is [(y, stats')] where [y] normalizes [x] per
     feature and applies the affine transform:
     [y = gamma * (x - mean) / sqrt (var + eps) + beta].
@@ -122,12 +125,12 @@ val apply :
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].
 
-    For half and quarter precision inputs (float16, bfloat16, float8) the
-    statistics and normalization are computed in a float32 island: [x] (and, in
-    eval mode, [stats]) are upcast, normalized at float32, and the normalized
-    values are cast back to [x]'s dtype before the [gamma]/[beta] affine
-    transform. Float32 and float64 inputs use their own dtype throughout,
-    exactly as if the island were absent.
+    For narrow inputs (float16, bfloat16, float8, float4) the statistics and
+    normalization are computed in a float32 island: [x] (and, in eval mode,
+    [stats]) are upcast, normalized at float32, and the normalized values are
+    cast back to [x]'s dtype before the [gamma]/[beta] affine transform. Float32
+    and float64 inputs use their own dtype throughout, exactly as if the island
+    were absent.
 
     [momentum] defaults to [0.99] (per training step; unused in eval mode) and
     [eps] to [1e-5].
