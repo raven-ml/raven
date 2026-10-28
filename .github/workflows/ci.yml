@@ -99,7 +99,7 @@ jobs:
 
       # Every nx suite runs with the C of nx built under AddressSanitizer and
       # UndefinedBehaviorSanitizer. The codecs parse untrusted bytes, and the
-      # bit kernels read and write views at any bit: their properties run
+      # array layer reads and writes views at any bit: their properties run
       # first, over 1000 cases each. A domain's thread exits on the signal
       # stack the OCaml runtime allocated, which AddressSanitizer would unmap
       # as its own. The documentation's examples run in the step above: the
@@ -111,7 +111,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/io/runtest
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune exec --workspace dune-workspace.asan packages/nx/test/test_bit.exe
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/array/runtest
           opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/runtest
 
       - name: Build and test brot
