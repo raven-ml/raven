@@ -121,6 +121,109 @@ let test_iterate () =
       return %3
     |}
 
+(* A custom rule carries its primal and its derivative, and a linear call its
+   function and transpose: under grad, the rule's call on the primals and the
+   linear call of its pullback's transpose. *)
+let test_custom () =
+  let sin_vjp =
+    Rune.custom_vjp T.tensor T.tensor (fun x ->
+        (Nx.sin x, fun g -> Nx.mul g (Nx.cos x)))
+  in
+  let f x = Rune.grad' (fun x -> Nx.sum (sin_vjp x)) x in
+  print_string (print (Rune.program T.tensor T.tensor f (v [| 1.; 2. |])));
+  expect (output ()) @@ __POS_OF__ {|
+    program (%0)
+      %1 : float32 [2] at CPU, %2 : float32 [2] at CPU = Rune.custom_vjp (%0), captures ()
+        primal
+          program (%11)
+            %12 : float32 [2] at CPU = Map [sin(x0)] (x0: float32 [2] at CPU)
+              with x0 = %11
+            %13 : float32 [2] at CPU = Map [cos(x0)] (x0: float32 [2] at CPU)
+              with x0 = %11
+            return %12, %13
+        pullback
+          program (%14, %15)
+            %16 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+              with x0 = %14, x1 = %15
+            return %16
+      %3 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
+        with x0 = %1
+      %4 : float32 [] of every set = Map [float32:0x0000803f]
+      %5 : float32 [] at CPU = Place (x0: float32 [] of every set)
+        with x0 = %4
+      %6 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
+        with x0 = %5
+      %7 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
+        with x0 = %6
+      %8 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
+        with x0 = %7
+      %9 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = %8, x1 = %2
+      %10 : float32 [2] at CPU = Copy (x0: float32 [2] at CPU)
+        with x0 = %9
+      return %10
+    |}
+
+let test_linear () =
+  let twice =
+    Rune.custom_transpose T.tensor T.tensor
+      (fun v -> Nx.mul_s v 2.)
+      ~transpose:(fun w -> Nx.mul_s w 3.)
+  in
+  let f x =
+    Rune.grad'
+      (fun x ->
+        Nx.sum (Rune.custom_jvp T.tensor T.tensor (fun x -> (x, twice)) x))
+      x
+  in
+  print_string (print (Rune.program T.tensor T.tensor f (v [| 1.; 2. |])));
+  expect (output ()) @@ __POS_OF__ {|
+    program (%0)
+      %1 : float32 [2] at CPU = Rune.custom_jvp (%0), captures ()
+        primal
+          program (%10)
+            return %10
+        tangent map
+          program (%11)
+            %12 : float32 [2] at CPU = linear Rune.custom_transpose (%11), captures (), residuals ()
+              function
+                program (%13)
+                  %14 : float32 [2] at CPU = Map [mul(x0, float32:0x00000040)] (x0: float32 [2] at CPU)
+                    with x0 = %13
+                  return %14
+              transpose
+                program (%15)
+                  %16 : float32 [2] at CPU = Map [mul(x0, float32:0x00004040)] (x0: float32 [2] at CPU)
+                    with x0 = %15
+                  return %16
+            return %12
+      %2 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
+        with x0 = %1
+      %3 : float32 [] of every set = Map [float32:0x0000803f]
+      %4 : float32 [] at CPU = Place (x0: float32 [] of every set)
+        with x0 = %3
+      %5 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
+        with x0 = %4
+      %6 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
+        with x0 = %5
+      %7 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
+        with x0 = %6
+      %8 : float32 [2] at CPU = linear Rune.custom_transpose (%7), captures (), residuals ()
+        function
+          program (%15)
+            %16 : float32 [2] at CPU = Map [mul(x0, float32:0x00004040)] (x0: float32 [2] at CPU)
+              with x0 = %15
+            return %16
+        transpose
+          program (%13)
+            %14 : float32 [2] at CPU = Map [mul(x0, float32:0x00000040)] (x0: float32 [2] at CPU)
+              with x0 = %13
+            return %14
+      %9 : float32 [2] at CPU = Copy (x0: float32 [2] at CPU)
+        with x0 = %8
+      return %9
+    |}
+
 (* Two traces of one function print alike. *)
 let test_stable () =
   let f (x, y) = Nx.add (Nx.mul x y) (Nx.scalar_like x 2.) in
@@ -156,6 +259,8 @@ let () =
              test "a scan carries its step" test_scan;
              test "constants, detach, totals and grad" test_constructs;
              test "an iterate carries its test and step" test_iterate;
+             test "a custom rule carries its programs" test_custom;
+             test "a linear call carries its programs" test_linear;
              test "two traces print alike" test_stable;
              test "eval_shape" test_eval_shape;
            ];

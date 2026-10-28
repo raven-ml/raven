@@ -150,7 +150,8 @@ and construct =
       residuals : bool;
           (** Whether the residuals among the results are used: then they carry
               the derivatives of every differentiation around the call. A
-              differentiation applying a {!Pullback} asks for them. *)
+              differentiation applying the rule asks for them, unless it is
+              asked for its own, which it derives again. *)
       applied : bool;
           (** Whether a reverse mode inside the call applies its {!Pullback},
               which a forward mode around then has no rule to answer. *)

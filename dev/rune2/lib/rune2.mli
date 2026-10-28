@@ -692,7 +692,8 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     Narrow floats compute at [float32] and round once.
 
     {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
-    map's {!lanes} or {!lane_index}, an operation the compiler does not lower,
+    map's {!lanes} or {!lane_index}, a {!custom_jvp}, {!custom_vjp} or
+    {!custom_transpose}, an operation the compiler does not lower,
     values on several devices, or a result of every set computed from the
     arguments, or one tolk cannot compile, runs as its operations evaluated by
     nx, giving eager's values; a result that is an argument is a copy of

@@ -1023,8 +1023,8 @@ module Rules = struct
      derivative's code. That needs the residuals with their derivatives around:
      the call performed outward is asked for them, and where this call is asked
      for its own, the residuals are derived again, as the primal's code computes
-     them. Forward mode has no rule for a pullback's results: where reverse mode
-     inside asks it for residuals, it differentiates the rule's code. *)
+     them. Forward mode has no rule for a pullback's results: where a reverse
+     mode inside applies the pullback, it differentiates the rule's code. *)
   let custom c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
       ~applied =
     tracks c ~name captures;

@@ -30,11 +30,12 @@
     derivatives around: the call performed outward is asked for them, and a call
     asked for its own derives them again, the residuals' slice of the primal
     evaluated under a differentiation seeded from this one's tangents. Forward
-    mode has no rule for a pullback's results: asked for residuals by a reverse
-    mode inside, it takes their tangents from the rule's code; otherwise a float
-    or complex result raises. A linear call ({!Program.Linear}) is the call on
-    the primals and the call on the tangents, which a tape records as one
-    operation, plus the derivative of its function's code along the captures.
+    mode has no rule for a pullback's results: where a reverse mode inside
+    applies the pullback ([applied]), it takes their tangents from the rule's
+    code; otherwise a float or complex result raises. A linear call
+    ({!Program.Linear}) is the call on the primals and the call on the tangents,
+    which a tape records as one operation, plus the derivative of its function's
+    code along the captures.
 
     Under reverse mode a tangent map is not evaluated where no result has a
     float or complex array. The handler raises [Invalid_argument] for a rule
