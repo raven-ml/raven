@@ -26,7 +26,7 @@ Nx is a numerical computing library for OCaml, close to NumPy in its names and i
 - **Arrays are values:** an Nx operation returns a new array and never changes its operands. Where NumPy assigns into an array, Nx's `set` and `scatter` return the updated array. Giving an array up with `donate` lets the operation that reads it write its result into the array's memory.
 - **Arrays lie on device sets:** an array made from numbers is a host array, computed by Nx's C kernels. An array may also lie on the devices of a set, and an operation computes where its operands lie.
 - **Types fix dtypes:** the operands of an operation share a dtype by their types, and Nx never promotes or casts one implicitly. `cast` converts explicitly. Nx has boolean and bit arrays, and no string arrays.
-- **Randomness comes from keys:** every draw is a function of a key, given as `~key` or taken from the enclosing `Rng.with_key` scope. There is no global generator state to seed.
+- **Randomness comes from keys:** every draw is a function of a key, given as `~key` or taken from the enclosing `Rng.with_key` scope. Outside every scope a draw takes the next key of the domain's own, seeded from the system's entropy.
 - **Operators come from a local open:** `Nx.(a * b + c)` applies Nx's arithmetic operators to arrays inside the parentheses, and `*$`, `+$` take a scalar operand.
 
 If you notice an undocumented difference, please open an issue; it's probably a bug.
@@ -168,7 +168,7 @@ concat = np.concatenate([arr1, arr2], axis=0)
 let element = Nx.item [0; 1] arr
 
 (* An array with one element replaced (arrays are values) *)
-let arr' = Nx.(set [ I 0; I 1 ] (scalar float32 5.0) arr)
+let arr' = Nx.(set [ I 0; I 1 ] (scalar float64 5.0) arr)
 
 (* Get a slice/subarray *)
 let row = Nx.get [0] arr
@@ -372,8 +372,8 @@ let reproducible =
   Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
     Nx.Rng.uniform Nx.float64 [| 3; 3 |])
 
-(* Or give each draw its own key *)
-let keys = Nx.Rng.split ~n:2 (Nx.Rng.key 42)
+(* Or give each draw its own key; a key is used one way only *)
+let keys = Nx.Rng.split ~n:2 (Nx.Rng.key 7)
 let a = Nx.Rng.normal ~key:keys.(0) Nx.float64 [| 3 |]
 let b = Nx.Rng.normal ~key:keys.(1) Nx.float64 [| 3 |]
 

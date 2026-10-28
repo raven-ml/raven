@@ -99,7 +99,7 @@ let x =
 
 ### Broadcasting rules
 
-Shapes are compatible when, aligned from the right, every dimension pair is either equal or one of them is 1. The result shape takes the maximum at each position.
+Shapes are compatible when, aligned from the right, every dimension pair is either equal or one of them is 1, and missing leading dimensions count as 1. At each position the result takes the extent that is not 1, or 1.
 
 ```
 [|   3; 4|]  +  [|1; 4|]  →  [|3; 4|]   ✓
@@ -124,7 +124,6 @@ let () =
 
 Specify a permutation for higher-rank arrays:
 
-<!-- $MDX skip -->
 ```ocaml
 (* Permute [batch; height; width; channels] to [batch; channels; height; width] *)
 let nhwc_to_nchw x = Nx.transpose ~axes:[0; 3; 1; 2] x
@@ -136,8 +135,8 @@ Move or swap individual dimensions:
 
 <!-- $MDX skip -->
 ```ocaml
-Nx.moveaxis 0 2 x    (* move axis 0 to position 2 *)
-Nx.swapaxes 1 2 x    (* swap axes 1 and 2 *)
+let moved = Nx.moveaxis 0 2 x      (* move axis 0 to position 2 *)
+let swapped = Nx.swapaxes 1 2 x    (* swap axes 1 and 2 *)
 ```
 
 ### flip
@@ -146,8 +145,8 @@ Reverse elements along axes:
 
 <!-- $MDX skip -->
 ```ocaml
-Nx.flip ~axes:[1] x     (* mirror columns *)
-Nx.flip x                (* reverse all dimensions *)
+let mirrored = Nx.flip ~axes:[1] x    (* mirror columns *)
+let reversed = Nx.flip x              (* reverse all dimensions *)
 ```
 
 ## Indexing and Slicing
@@ -176,8 +175,9 @@ let v = Nx.item [1; 2] matrix    (* element at row 1, column 2 *)
 
 ### slice
 
-Each index addresses one axis and is an array of positions on it; the axis is
-replaced by the index's shape. `I i` is one position, so its axis goes:
+An index selects positions along one axis and replaces the axis by the
+index's shape; `N` adds an axis of extent 1, and a mask `M` covers as many
+axes as it has. `I i` is one position, so its axis goes:
 
 ```ocaml
 let () =

@@ -5,4 +5,4 @@
   (and
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (libraries nx nx.io unix))
+ (libraries nx nx.array nx.io unix))

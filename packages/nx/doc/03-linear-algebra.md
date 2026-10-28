@@ -165,26 +165,27 @@ Matrix inverse and pseudo-inverse:
 
 <!-- $MDX skip -->
 ```ocaml
-let a_inv = Nx.inv a          (* square; NaN for a singular matrix *)
+let a_inv = Nx.inv a          (* square; NaN for a matrix with a zero pivot *)
 let a_pinv = Nx.pinv a        (* works for any shape *)
 ```
 
 ## When a Matrix Fails
 
-No linear-algebra function raises on the values of a matrix. A matrix on which a function is undefined, such as one that is not positive-definite given to `cholesky`, one with a zero pivot given to `solve` or `inv`, or one holding NaN or an infinity given to `svd`, `eig` or `eigh`, has NaN in every element of its results. Each matrix of a batch is computed on its own, so one failing matrix leaves the others unchanged, and any one element of a matrix's result tells whether it failed:
+No linear-algebra function raises on the values of a matrix. A matrix on which a function is undefined, such as one that is not positive-definite given to `cholesky`, one with a zero pivot given to `solve` or `inv`, or one holding NaN or an infinity given to `svd`, `eig` or `eigh`, has NaN in every element of its float results, and a rank of -1 from `matrix_rank` or `lstsq`. Each matrix of a batch is computed on its own, so one failing matrix leaves the others unchanged, and any one element of a matrix's result tells whether it failed:
 
 <!-- $MDX skip -->
 ```ocaml
-let l = Nx.cholesky covariances in                       (* [|batch; n; n|] *)
-let ok = Nx.all ~axes:[ -2; -1 ] (Nx.isfinite l) in     (* [|batch|] *)
+let l = Nx.cholesky covariances                       (* [|batch; n; n|] *)
+let ok = Nx.all ~axes:[ -2; -1 ] (Nx.isfinite l)     (* [|batch|] *)
 ```
 
 A caller that wants an exception checks, naming the matrix that failed:
 
 <!-- $MDX skip -->
 ```ocaml
-Nx.check Nx.Ptree.unit ok () (fun i () ->
-    Failure (Printf.sprintf "covariance %d is not positive-definite" i.(0)))
+let () =
+  Nx.check Nx.Ptree.unit ok () (fun i () ->
+      Failure (Printf.sprintf "covariance %d is not positive-definite" i.(0)))
 ```
 
 Outside a function's stated precondition, NaN or an infinity in an operand propagates through the arithmetic to some elements of the results.
@@ -275,8 +276,8 @@ let shifted = Nx.fftshift spectrum     (* shift zero-frequency to center *)
 
 A spectrum is complex. `magnitude` and `angle` extract its polar components as
 float arrays, and `complex` reassembles one. The first argument picks the
-result dtype, since leaving the complex domain has to name what to land in;
-this is why `magnitude` is not called `abs`, which preserves the dtype:
+result dtype, since leaving the complex domain has to name what to land in.
+`abs` takes floats and integers only:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -290,7 +291,8 @@ let rebuilt =
     ~im:Nx.(mul mags (sin phase))
 ```
 
-`real`, `imag`, and `conjugate` give the cartesian view of the same array.
+`real` and `imag` compute the cartesian parts as new arrays of the dtype they
+take first, and `conjugate` negates the imaginary parts.
 
 ## Next Steps
 
