@@ -15,7 +15,11 @@ module Fixtures = struct
     let open Nx in
     let x = linspace float32 (-1.) 1. width
     and y = linspace float32 (-1.) 1. height in
-    let xv, yv = meshgrid x y in
+    let xv, yv =
+      match meshgrid ~indexing:`Xy [ x; y ] with
+      | [ xv; yv ] -> (xv, yv)
+      | _ -> assert false
+    in
     let radial = sqrt (add (square xv) (square yv)) and angle = atan2 yv xv in
     let r, g, b =
       match palette with
@@ -29,7 +33,7 @@ module Fixtures = struct
             add_s (mul_s (sin (mul_s radial Float.pi)) 0.4) 0.3 )
     in
     let noise =
-      mul_s (Rng.normal (Rng.key seed) float32 [| height; width |]) 0.05
+      mul_s (Rng.normal ~key:(Rng.key seed) float32 [| height; width |]) 0.05
     in
     let channel c =
       cast uint8 (mul_s (clamp ~min:0. ~max:1. (add c noise)) 255.)
@@ -49,7 +53,10 @@ module Fixtures = struct
   let gray_720 () = Lazy.force gray_720
 end
 
-let force_tensor tensor = Nx.contiguous tensor
+(* A case's work is done once the tensor's set has computed it. *)
+let force_tensor tensor =
+  Nx.sync tensor;
+  tensor
 
 let bench_grayscale img =
   let gray = Sowilo.to_grayscale img in
