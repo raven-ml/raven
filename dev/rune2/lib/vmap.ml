@@ -1543,7 +1543,7 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
       in
       let (Program.V tb) = batch_v i n trips in
       let tb = as_int32 tb in
-      let at = Nx.Placement.uncut (Nx.placement tb) in
+      let at = Nx.beside tb in
       let most =
         if n = 0 then Program.V (Nx.scalar_at at Nx.int32 0l)
         else Program.V (Nx.max tb)

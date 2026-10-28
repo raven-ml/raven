@@ -153,7 +153,7 @@ let per g n t = Nx.reshape (Array.append g [| n; 1 |]) t
 let pick n f =
   let field i = Nx.unsqueeze ~axes:[ -2 ] (f i) in
   let first = field 0 in
-  let at = Nx.Placement.uncut (Nx.placement first) in
+  let at = Nx.beside first in
   let index = Nx.reshape [| n; 1 |] (Nx.arange_at at Nx.int32 0 n 1) in
   let rec go i acc =
     if i = n then acc
@@ -514,7 +514,7 @@ let route ids =
 (* Group [g] of the experts [[| e; n; k |]] is expert [g]'s rows: the ids
    below [g] counted. *)
 let by_expert r e =
-  let at = Nx.Placement.uncut (Nx.placement r.sorted) in
+  let at = Nx.beside r.sorted in
   Nx.searchsorted ~side:`Left r.sorted (Nx.arange_at at Nx.int64 0 (e + 1) 1)
 
 (* The experts the sorted ids name, in range, each once: [min p e] slots, slot
@@ -537,7 +537,7 @@ let slots r e =
          (Nx.less_s sorted (Int64.of_int e)))
   in
   let rank = Nx.cumsum (Nx.cast Nx.int64 first) in
-  let here = Nx.Placement.uncut (Nx.placement rank) in
+  let here = Nx.beside rank in
   let at =
     Nx.searchsorted ~side:`Left rank (Nx.arange_at here Nx.int64 1 (s + 2) 1)
   in
@@ -561,7 +561,7 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
   (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
   let xs = Array.sub (Nx.shape x) 0 (Array.length r.lead) in
   let m = Array.fold_left ( * ) 1 xs in
-  let here = Nx.Placement.uncut (Nx.placement x) in
+  let here = Nx.beside x in
   let positions = Nx.reshape xs (Nx.arange_at here Nx.int64 0 m 1) in
   let source = Nx.reshape [| r.p |] (Nx.broadcast_to r.lead positions) in
   let rows =

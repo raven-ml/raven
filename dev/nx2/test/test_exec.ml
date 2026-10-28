@@ -1147,7 +1147,7 @@ let creations =
           let one = Nx.place Factor.on data in
           let check name ~factored want f b =
             Atomic.set Factoring.factored 0;
-            let y = f (a (Nx.Placement.uncut (Nx.placement b))) b in
+            let y = f (a (Nx.beside b)) b in
             equal ~msg:(name ^ ": factorizations") int factored
               (Atomic.get Factoring.factored);
             equal ~msg:(name ^ ": bits") (array bits) want y
@@ -1172,7 +1172,7 @@ let creations =
                       "Nx.solve: operand 1 lies at split ~axis:%d [m2; m3] and \
                        is read at on [m2; m3]; Nx.place (Placement.on s) y"
                       axis))
-                (fun () -> solve (a (Nx.Placement.uncut (Nx.placement b))) b))
+                (fun () -> solve (a (Nx.beside b)) b))
             [ (0, rows); (1, columns) ]);
       test "placing a host creation copies its bytes and computes nothing"
         (fun () ->

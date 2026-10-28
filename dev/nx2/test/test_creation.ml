@@ -643,6 +643,18 @@ let test_like_placement () =
   equal (array float_exact) (Array.make 8 1.) (Nx.to_array (Nx.ones_like x));
   equal (array float_exact) [| 2. |] (Nx.to_array (Nx.scalar_like x 2.))
 
+(* [beside x] is [x]'s placement uncut, and a value of another shape made
+   there combines with [x] however [x] is cut. *)
+let law_beside p =
+  let cut = not (Nx.Placement.equal (Nx.Placement.uncut p) p) in
+  cover "a cut placement" cut;
+  cover "an uncut placement" (not cut);
+  let x = Nx.place p (Nx.arange_f Nx.float32 0. 24. 1. |> Nx.reshape [| 2; 3; 4 |]) in
+  equal (placement ()) (Nx.Placement.uncut p) (Nx.beside x);
+  let k = Nx.arange_f_at (Nx.beside x) Nx.float32 0. 4. 1. in
+  let want = Array.init 24 (fun i -> Float.of_int (i + (i mod 4))) in
+  equal (array float_exact) want (Nx.to_array (Nx.add x k))
+
 (* A sub-byte fill is one kernel call on a device of nx.cpu's kernels. *)
 let test_like_sub_byte () =
   let check (type v s) (dt : (v, s) D.t) (v : v) =
@@ -670,11 +682,17 @@ let like =
       test "a split reference: a like is split, scalar_like whole on each"
         test_like_placement;
       test "a host reference gives host values" test_like_host;
+      prop "beside is the uncut placement, and combines" placement_gen
+        law_beside;
       test "a sub-byte reference fills in one kernel call" test_like_sub_byte;
       refusals
         [
           ("Nx.full_like", fun () -> ignore (Nx.full_like (Nx.zeros Nx.uint4 [| 1 |]) 16));
           ("Nx.scalar_like", fun () -> ignore (Nx.scalar_like (Nx.zeros Nx.int8 [| 1 |]) 128));
+          ( "Nx.add",
+            fun () ->
+              let x = Nx.place (S2.split ~axis:0) (Nx.zeros Nx.float32 [| 4; 3 |]) in
+              ignore (Nx.add x (Nx.arange_at (Nx.placement x) Nx.float32 0 3 1)) );
         ]
 
     ]

@@ -677,7 +677,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
           match pcarry with
           | Some x -> cast_any c x
           | None ->
-              Nx.ones_at (Nx.Placement.uncut (Nx.placement v)) c (shape1 ())
+              Nx.ones_at (Nx.beside v) c (shape1 ())
         in
         let tan = linear_scan ~axis v (Nx.mul (after ~axis first (up y)) t) in
         match ct with
@@ -700,7 +700,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
          the weights' change from [y_(i-1)] to [y_i]. *)
       let f c up v t =
         let y = up y in
-        let here = Nx.Placement.uncut (Nx.placement y) in
+        let here = Nx.beside y in
         let lowest =
           Nx.full_at here c (shape1 ()) (D.of_float c Float.neg_infinity)
         in
@@ -720,7 +720,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
       let f c up v t =
         let m = up m in
         let dm, _ = scan1 t (Moments (0, c)) None in
-        let here = Nx.Placement.uncut (Nx.placement v) in
+        let here = Nx.beside v in
         let zero = Nx.zeros_at here c (shape1 ()) in
         let centred t =
           let s = Nx.cumsum ~axis t in

@@ -12,7 +12,7 @@ let lit x v = Nx.scalar_like x (D.of_float (Nx.dtype x) v)
 let adjoint x = Nx.conjugate (Nx.matrix_transpose x)
 
 (* The identity of [n] rows in [dt], whole on each of [x]'s devices. *)
-let eye_beside x dt n = Nx.eye_at (Nx.Placement.uncut (Nx.placement x)) dt n
+let eye_beside x dt n = Nx.eye_at (Nx.beside x) dt n
 
 (* [x]'s real part in its own dtype. *)
 let real_part x = Nx.mul (Nx.add x (Nx.conjugate x)) (lit x 0.5)

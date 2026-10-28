@@ -14,8 +14,8 @@
     lies at a {e placement}: on the host, on one device of its set, whole on
     every device of it, or cut into {e windows} across them, where each
     device holds one window of the value. A value is made where it is asked:
-    on the host, at a placement with an [_at] form, or beside another value
-    with a [_like] form ({!section-creation}).
+    on the host, at a placement with an [_at] form, or at another value's
+    placement with a [_like] form ({!section-creation}).
 
     An operation computes where its operands lie and moves none of them.
     {!place} moves a value, and an operation whose operands do not lie
@@ -320,18 +320,39 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 val placement : ('v, 's, 'd) t -> 'd Placement.t
 (** [placement x] is where [x]'s bytes lie. *)
 
+val beside : ('v, 's, 'd) t -> 'd Placement.t
+(** [beside x] is {!Placement.uncut}[ (placement x)], whole on each device
+    [x] lies on. A value of another shape made there combines with [x]. At
+    [placement x] such a value is cut along its own axes, which need not line
+    up with [x]'s. For [x] of shape [[4; 3]] split along axis [0],
+    [arange_at (placement x) float32 0 3 1] is split along its only axis,
+    which [add x] reads along axis [1], and raises. *)
+
 (** {1:creation Creation}
 
     A value made from a dtype, a shape and numbers is a host value. The [_at]
     forms make it at a placement, each device computing its window; the
-    [_like] forms make it beside a value, at that value's placement, or whole
-    on each of its devices where the shape has no axis the placement cuts. A
+    [_like] forms make it at a value's placement, or whole on each of its
+    devices where the shape has no axis the placement cuts. A
     creation holds its elements from the call on.
 
     An [_at] form raises as its host form does, and raises
     [Invalid_argument] naming itself where its placement cuts an axis the
     shape lacks. A value made here combines with others through the functions
-    of {!section-arith} and their operators in {!Infix}. *)
+    of {!section-arith} and their operators in {!Infix}.
+
+    A function meant for values of every set makes its constants {!beside}
+    its operands, and names the set with a locally abstract type:
+
+    {[
+      let shift (type d) (x : (float, 's, d) Nx.t) =
+        Nx.add x (Nx.arange_f_at (Nx.beside x) (Nx.dtype x) 0. 3. 1.)
+    ]}
+
+    A host value written there in place of the [_at] form is then a type
+    error at the operation that meets [x]. Without the annotation, OCaml
+    infers [x]'s set as {!host}, and the error appears where the function is
+    applied to a value of another set. *)
 
 val zeros : ('v, 's) dtype -> int array -> ('v, 's, host) t
 (** [zeros dt s] is the host value of shape [s] whose every element is zero.
@@ -511,8 +532,7 @@ val full_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
     Raises [Invalid_argument] as {!full} does. *)
 
 val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [scalar_like x v] is {!scalar_at}[ (placement x) (dtype x) v], whole on
-    each device of [x]'s placement.
+(** [scalar_like x v] is {!scalar_at}[ (beside x) (dtype x) v].
 
     Raises [Invalid_argument] as {!scalar} does. *)
 

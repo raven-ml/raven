@@ -376,7 +376,7 @@ let from_each (type v s e) ~by ~axis (w : (v, s, e) Nx.t) : (v, s, e) Nx.t =
   let shape = Nx.shape reversed in
   let one = Array.mapi (fun a d -> if a = axis then 1 else d) shape in
   let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
-  let here = Nx.Placement.uncut (Nx.placement w) in
+  let here = Nx.beside w in
   let carry = Nx.full_at here c one (neg_zero c) in
   let r =
     Prim.eval ~by
@@ -425,7 +425,7 @@ let scan_rule (type d r) env layout axis prog
         (fun (V w) ->
           let n = Nx.dim axis w and r = Nx.ndim w in
           let along = Array.init r (fun a -> if a = axis then n else 1) in
-          let here = Nx.Placement.uncut (Nx.placement w) in
+          let here = Nx.beside w in
           let count = Nx.arange_at here Nx.int32 1 (n + 1) 1 in
           let count = Nx.reshape along (Nx.cast (Nx.dtype w) count) in
           ignore (running k (D.Any dt) (Nx.div w count)))
@@ -439,7 +439,7 @@ let scan_rule (type d r) env layout axis prog
 (* The positions of [x]'s elements in C order, in its shape, whole on each of
    its devices. *)
 let iota x =
-  let here = Nx.Placement.uncut (Nx.placement x) in
+  let here = Nx.beside x in
   Nx.reshape (Nx.shape x)
     (Nx.arange_at here Nx.int64 0 (Array.fold_left ( * ) 1 (Nx.shape x)) 1)
 
@@ -604,7 +604,7 @@ let assemble_rule (type v s) env (dtype : (v, s) D.t) shape pieces (V w) =
         let running =
           if List.exists (fun (r, _) -> overlap r region) earlier then
             let counts = Iarray.map (fun (r : Move.range) -> r.count) region in
-            let here = Nx.Placement.uncut (Nx.placement running) in
+            let here = Nx.beside running in
             let zeros = Nx.zeros_at here dtype (Iarray.to_array counts) in
             Prim.eval ~by:env.name
               (Assemble
@@ -722,7 +722,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
         | Some (Nx_kernel.Rows s) -> rebrand r (env.const s.offsets)
         | Some (Contracting s) -> rebrand r (env.const s.offsets)
         | None ->
-            Nx.zeros_at (Nx.Placement.uncut (Nx.placement r)) Nx.int64 [| 0 |]
+            Nx.zeros_at (Nx.beside r) Nx.int64 [| 0 |]
       in
       let contract ~batch ~contracting ~segments x x_scale y y_scale out =
         Prim.eval ~by
@@ -839,7 +839,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
    0 and, for an even [n], bin [n/2], [c] at the others. *)
 let bins (type v s d) ~axis (x : (v, s, d) Nx.t) n c : (v, s, d) Nx.t =
   let k = (n / 2) + 1 and r = Nx.ndim x in
-  let here = Nx.Placement.uncut (Nx.placement x) in
+  let here = Nx.beside x in
   let j = Nx.arange_at here Nx.int32 0 k 1 in
   let at b = Nx.equal_s j (Int32.of_int b) in
   let ends = if n mod 2 = 0 then Nx.logical_or (at 0) (at (n / 2)) else at 0 in
@@ -1018,7 +1018,7 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
   let total =
     Nx.sum ~axes:[ 0 ] (like w (Program.perform (Lanes (a, w))).(0))
   in
-  let placement = Nx.Placement.uncut (Nx.placement w) in
+  let placement = Nx.beside w in
   let index = (Program.perform (Lane_index (a, placement))).(0) in
   let own = cast Nx.int32 (Nx.Placement.devices placement) index in
   let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 own) in

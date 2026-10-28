@@ -204,7 +204,7 @@ let apply (type v s d) (k : (v, s) kind) op (x : (v, s, d) Nx.t) :
       (* The ramp made whole on each of [x]'s devices, then cut as [x] is. *)
       let n = Array.fold_left ( * ) 1 s in
       let p = Nx.placement x in
-      let ramp = Nx.arange_at (Nx.Placement.uncut p) D.Int32 0 n 1 in
+      let ramp = Nx.arange_at (Nx.beside x) D.Int32 0 n 1 in
       let c = Nx.cumsum ~axis:a (Nx.place p (Nx.reshape s ramp)) in
       k.combine x (Nx.cast k.dtype c)
 

@@ -968,7 +968,7 @@ and rows_mask (V m) (Emission f) =
   | None, vs ->
       let (V x) = vs.(0) in
       let shape = Array.sub (Nx.shape x) 0 (f.lead + 1) in
-      let at = Nx.Placement.uncut (Nx.placement m) in
+      let at = Nx.beside m in
       V (Nx.ones_at at (Nx.dtype m) shape)
 
 (* A map's emission, its lanes the first axis, with its lanes merged into the
@@ -1321,7 +1321,7 @@ and iterate name step ~until ~max ~rows ~stopped ~init ~step_captures
       let trips =
         V
           (Nx.scalar_at
-             (Nx.Placement.uncut (Nx.placement s))
+             (Nx.beside s)
              Nx.int32 (Int32.of_int k))
       in
       Array.concat [ carry; [| trips |]; stacked; acc ]

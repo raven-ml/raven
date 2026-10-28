@@ -202,7 +202,7 @@ let take ~indices r =
   else
     let row = Nx.positions ~size:total lens in
     let shift = Nx.sub (Nx.take indices (starts r.offsets)) (starts offsets) in
-    let here = Nx.Placement.uncut (Nx.placement row) in
+    let here = Nx.beside row in
     let at =
       Nx.add (Nx.arange_at here Nx.int64 0 total 1) (Nx.take row shift)
     in
@@ -291,7 +291,7 @@ let quantile qs r =
     qs;
   let values, offsets = elements r in
   let n = length r and k = Array.length qs in
-  let here = Nx.Placement.uncut (Nx.placement values) in
+  let here = Nx.beside values in
   if k = 0 then Nx.zeros_at here (Nx.dtype values) [| 0; n |]
   else
     let marks =
@@ -374,7 +374,7 @@ let codes fn r =
          so each word's keys are reversed before they join into it. *)
       let reversed x = Nx.flip ~axes:[ -1 ] x in
       let position =
-        let here = Nx.Placement.uncut (Nx.placement chunk) in
+        let here = Nx.beside chunk in
         reversed
           (Nx.reshape [| 1; words; q |] (Nx.arange_at here Nx.int64 0 e 1))
       in
@@ -406,7 +406,7 @@ let codes fn r =
       in
       let runs = differs (Nx.any ~axes:[ 1 ]) sorted in
       let at =
-        Nx.arange_at (Nx.Placement.uncut (Nx.placement sorted)) Nx.int64 0 m 1
+        Nx.arange_at (Nx.beside sorted) Nx.int64 0 m 1
       in
       let first_of starts = Nx.cummax (Nx.where starts at (Nx.zeros_like at)) in
       let fresh =
@@ -441,7 +441,7 @@ let codes fn r =
           ~shortest:(Int64.to_int read.(2))
           code
   in
-  let here = Nx.Placement.uncut (Nx.placement len) in
+  let here = Nx.beside len in
   if n = 0 then Nx.zeros_at here Nx.int64 [| 0 |]
   else
     let read = ints fn [ Nx.max len; Nx.min len ] in

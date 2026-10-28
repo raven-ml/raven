@@ -445,7 +445,7 @@ let lanes a x = like x (first (perform (Lanes (a, x))))
 
 (* A lane's index lies whole on each of [x]'s devices. *)
 let lane_index a x =
-  let placement = Nx.Placement.uncut (Nx.placement x) in
+  let placement = Nx.beside x in
   let index = first (perform (Lane_index (a, placement))) in
   cast Nx.int32 (Nx.Placement.devices placement) index
 
@@ -564,7 +564,7 @@ module Probe = struct
       let at = Nx.create Nx.int64 [| Array.length rows |] rows in
       Array.map
         (fun (V x) ->
-          let at = Nx.place (Nx.Placement.uncut (Nx.placement x)) at in
+          let at = Nx.place (Nx.beside x) at in
           V (Nx.take ~axis:0 at x))
         vs
 
@@ -1238,7 +1238,7 @@ let vmap' ?axis f x =
 let jacfwd' f x =
   let name = "Rune.jacfwd'" in
   let sx = Nx.shape x and n = Nx.numel x in
-  let here = Nx.Placement.uncut (Nx.placement x) in
+  let here = Nx.beside x in
   let iota = Nx.arange_at here Nx.int32 0 n 1 in
   let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
   let basis = Nx.reshape (Array.append [| n |] sx) (Nx.cast (Nx.dtype x) e) in
@@ -1267,7 +1267,7 @@ let jacrev' f x =
        place in the argument's dtype; use Rune.jacfwd'"
       name;
   let sy = Nx.shape y and n = Nx.numel y in
-  let here = Nx.Placement.uncut (Nx.placement y) in
+  let here = Nx.beside y in
   let iota = Nx.arange_at here Nx.int32 0 n 1 in
   let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
   let basis = Nx.reshape (Array.append [| n |] sy) (Nx.cast (Nx.dtype y) e) in
