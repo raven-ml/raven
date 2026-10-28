@@ -1229,14 +1229,6 @@ let floats2 =
         (String.concat "; " (Array.to_list (Array.map string_of_float a))))
     (Gen.array ~size:(Gen.int_range 1 3) (Gen.of_list [ 0.; 1.; -2.; 3.5 ]))
 
-let commands =
-  [
-    command "make" (floats2 @-> makes value) make_ref make_sys;
-    command "read" (value ^-> returns outcome) read_ref read_sys;
-    command "consume" (value ^-> returns outcome) consume_ref consume_sys;
-    command "composite" (value ^-> returns outcome) composite_ref composite_sys;
-  ]
-
 (* On two domains: handles given to consumers and movements. A handle's state
    is the set of what it may be: free, or taken by a named function. In
    sequence it is known; an operation of two handles that loses one to another
@@ -1375,23 +1367,25 @@ let difference h1 h2 =
 
 let call_sys h1 h2 = refused (fun () -> difference h1 h2)
 
-let handles =
+(* The consumers of two handles, listed twice, so that two domains often take
+   one pair in opposite orders. *)
+let call = command "call" (handle ^-> handle ^-> judges taken) call_ref call_sys
+let sub2 = command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys
+
+let commands =
   [
-    command "make" (pair @-> makes handle) make_handle make_handle_sys;
-    command "call" (handle ^-> handle ^-> judges taken) call_ref call_sys;
+    command "make" (floats2 @-> makes value) make_ref make_sys;
+    command "read" (value ^-> returns outcome) read_ref read_sys;
+    command "consume" (value ^-> returns outcome) consume_ref consume_sys;
+    command "composite" (value ^-> returns outcome) composite_ref composite_sys;
+    command "make a handle" (pair @-> makes handle) make_handle make_handle_sys;
     command "add" (handle ^-> judges taken) add_ref add_sys;
     command "mul" (handle ^-> judges taken) mul_ref mul_sys;
     command "reshape" (handle ^-> judges taken) reshape_ref reshape_sys;
-    command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
-  ]
-
-(* A consumer of two handles alone, so that two domains often take one pair in
-   opposite orders. *)
-let crossed =
-  [
-    command "make" (pair @-> makes handle) make_handle make_handle_sys;
-    command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
-    command "call" (handle ^-> handle ^-> judges taken) call_ref call_sys;
+    call;
+    sub2;
+    call;
+    sub2;
   ]
 
 (* On one domain: donors, their handles and values of their own, across
@@ -2940,9 +2934,8 @@ let () =
              test_dead_names;
              test_donated;
              test "a captured array lives" test_captured;
-             stateful ~domains:2 "reads and consumers on two domains" commands;
-             stateful ~domains:2 "handles taken on two domains" handles;
-             stateful ~domains:2 "two-handle consumers on two domains" crossed;
+             stateful ~domains:2
+               "reads, consumers and handles taken on two domains" commands;
              test "donated tells a handle, live or not" test_is_handle;
              test "a consumer kills its handles' donors, naming itself"
                test_consumer_kills;
