@@ -44,20 +44,6 @@ let ran ~by answer dsts ops =
   | Declined -> false
   | refusal -> A.refused by refusal (Array.to_list (Array.append dsts ops))
 
-(* The array a kernel's load reads. *)
-let load_array : Nx_kernel.load -> A.any = function
-  | Nx_kernel.Plain a -> A.Any a
-  | Nx_kernel.Padded { x; _ } -> A.Any x
-
-(* As [ran], for a loop over [loads]. *)
-let ran_loads ~by ?(reads = []) answer dsts loads =
-  match (answer : A.answer) with
-  | Done -> true
-  | Declined -> false
-  | refusal ->
-      A.refused by refusal
-        (Array.to_list dsts @ List.map load_array (Array.to_list loads) @ reads)
-
 (* Values from arrays *)
 
 let make = Prim.of_arrays
@@ -96,11 +82,6 @@ let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
       make p ~shape:(Iarray.to_array shape) (fresh ~by p f.dtype shape)
 
 (* Programs on one device *)
-
-(* [prog] over [loads] into [dsts], by the kernels' map. [false] where the
-   kernels decline. *)
-let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
-  ran_loads ~by (K.map prog ~dsts loads) dsts loads
 
 (* [K]'s map of the one node [k] over the plain operands that follow [dst];
    [Wrong_dtype] where [k] does not take their dtypes, as no program does. *)
@@ -191,167 +172,106 @@ let nth (type v s d) j (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) j
 let dsts_at op r j = Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
 
 (* [op]'s kernel over its operands' arrays, into the results [r]'s arrays at
-   position [j]: [false] where it declines. A refusal raises naming [by]. *)
+   position [j]: [false] where it declines. A refusal raises naming [by], the
+   results' arrays there, then the operands' in their order
+   ({!Prim.val-operands}). *)
 let call : type r.
     by:string -> (module Nx_kernel.S) -> r Value.prim -> r -> int -> bool =
  fun ~by kernels op r j ->
   let (module K : Nx_kernel.S) = kernels in
-  match op with
-  | Value.Map { prog; loads; _ } ->
-      map_on ~by kernels prog (kernel_loads loads) (dsts_at op r j)
-  | Value.Reduce { layout; axes; prog; reductions; loads } ->
-      let dsts = dsts_at op r j and loads = kernel_loads loads in
-      let rs = Prim.reductions reductions
-      and shape = Iarray.to_array (L.shape layout) in
-      ran_loads ~by (K.reduce prog ~shape ~axes rs ~dsts loads) dsts loads
-  | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
-      let dsts = dsts_at op r j and loads = kernel_loads loads in
-      let reduction = Prim.reduction reduction in
-      let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
-      let reads = Option.to_list carry in
-      ran_loads ~by ~reads (K.scan ?carry prog ~axis reduction ~dsts loads) dsts
-        loads
-  | Value.Contract
-      {
-        batch;
-        contracting;
-        acc;
-        a;
-        b;
-        init;
-        a_scale;
-        b_scale;
-        segments;
-        _;
-      } ->
-      let dst = nth j r and a = one a and b = one b in
-      let init = Option.map one init in
-      let scale : _ Value.scale -> Nx_kernel.scale = function
-        | Exponent x -> Exponent (one x)
-        | Value x -> Value (one x)
-      in
-      let a_scale = Option.map scale a_scale in
-      let b_scale = Option.map scale b_scale in
-      let segments =
-        Option.map
-          (fun (g : _ Nx_kernel.segments) : _ Nx_kernel.segments ->
-            match g with
-            | Rows r -> Rows { r with offsets = one r.offsets }
-            | Contracting r -> Contracting { r with offsets = one r.offsets })
-          segments
-      in
-      let array : Nx_kernel.scale -> A.any = function
-        | Exponent x -> A.Any x
-        | Value x -> A.Any x
-      in
-      (* The arrays a refusal names, in the operation's operand order. *)
-      let ops =
-        match (init, a_scale, b_scale, segments) with
-        | None, None, None, None -> [| A.Any a; A.Any b |]
-        | Some i, None, None, None -> [| A.Any a; A.Any b; A.Any i |]
-        | _ ->
-            let opt f o = Option.to_list (Option.map f o) in
-            let offsets = function
-              | Nx_kernel.Rows { offsets; _ } | Contracting { offsets; _ } ->
-                  A.Any offsets
-            in
-            Array.of_list
-              (List.concat
-                 [
-                   [ A.Any a; A.Any b ];
-                   opt (fun i -> A.Any i) init;
-                   opt array a_scale;
-                   opt array b_scale;
-                   opt offsets segments;
-                 ])
-      in
-      ran ~by
-        (K.contract ~batch ~contracting ~segments ~acc ~dst ~init
-           { array = A.Any a; scale = a_scale }
-           { array = A.Any b; scale = b_scale })
-        [| A.Any dst |] ops
-  | Value.Gather { axis; idx; x } ->
-      let dst = nth j r and i = one idx and x = one x in
-      ran ~by (K.gather ~axis ~dst i x) [| A.Any dst |] [| A.Any i; A.Any x |]
-  | Value.Scatter { combine; unique; axis; idx; updates; into } ->
-      let dst = nth j r and into = one into in
-      let i = one idx and u = one updates in
-      ran ~by
-        (K.scatter combine ~unique ~axis ~dst ~into i u)
-        [| A.Any dst |]
-        [| A.Any into; A.Any i; A.Any u |]
-  | Value.Sort { axis; descending; x; _ } ->
-      let values, positions = r in
-      let v = nth j values and q = nth j positions and a = one x in
-      ran ~by
-        (K.sort ~axis ~descending ~values:v ~positions:q a)
-        [| A.Any v; A.Any q |] [| A.Any a |]
-  | Value.Fold { pad; x; _ } ->
-      let dst = nth j r and v = one x in
-      ran ~by (K.fold pad ~dst v) [| A.Any dst |] [| A.Any v |]
-  | Value.Fft (Value.C2c { direction; axes; x }) ->
-      let dst = nth j r and x = one x in
-      ran ~by (K.c2c direction ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
-  | Value.Fft (Value.R2c { axes; x; _ }) ->
-      let dst = nth j r and x = one x in
-      ran ~by (K.r2c ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
-  | Value.Fft (Value.C2r { axes; x; _ }) ->
-      let dst = nth j r and x = one x in
-      ran ~by (K.c2r ~axes ~dst x) [| A.Any dst |] [| A.Any x |]
-  | Value.Linalg l -> (
-      match (l, r) with
-      | Value.Cholesky { triangle; a }, y ->
-          let dst = nth j y and a = one a in
-          ran ~by (K.cholesky triangle ~dst a) [| A.Any dst |] [| A.Any a |]
-      | Value.Lu a, (lu, pivots, perm) ->
-          let lu = nth j lu and pivots = nth j pivots and perm = nth j perm in
-          let a = one a in
-          ran ~by (K.lu ~lu ~pivots ~perm a)
-            [| A.Any lu; A.Any pivots; A.Any perm |]
-            [| A.Any a |]
-      | Value.Qr { a; _ }, (q, r) ->
-          let q = nth j q and r = nth j r and a = one a in
-          ran ~by (K.qr ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
-      | Value.Svd_values { a; _ }, s ->
-          let s = nth j s and a = one a in
-          ran ~by (K.svd ~s a) [| A.Any s |] [| A.Any a |]
-      | Value.Svd { a; _ }, (s, u, vh) ->
-          let s = nth j s and u = nth j u and vh = nth j vh and a = one a in
-          ran ~by
-            (K.svd ~s ~vectors:(~u, ~vh) a)
-            [| A.Any s; A.Any u; A.Any vh |]
-            [| A.Any a |]
-      | Value.Eigh_values { a; _ }, w ->
-          let w = nth j w and a = one a in
-          ran ~by (K.eigh ~w a) [| A.Any w |] [| A.Any a |]
-      | Value.Eigh { a; _ }, (w, v) ->
-          let w = nth j w and v = nth j v and a = one a in
-          ran ~by (K.eigh ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-      | Value.Eig_values { a; _ }, w ->
-          let w = nth j w and a = one a in
-          ran ~by (K.eig ~w a) [| A.Any w |] [| A.Any a |]
-      | Value.Eig { a; _ }, (w, v) ->
-          let w = nth j w and v = nth j v and a = one a in
-          ran ~by (K.eig ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-      | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y ->
-          let dst = nth j y and a = one a and b = one b in
-          ran ~by
-            (K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst a b)
-            [| A.Any dst |] [| A.Any a; A.Any b |])
-  | Value.Assemble { fill; pieces; _ } ->
-      let dst = nth j r in
-      let pieces =
-        Array.of_list (List.map (fun (rs, x) -> (rs, one x)) pieces)
-      in
-      ran ~by
-        (K.assemble ~fill ~dst pieces)
-        [| A.Any dst |]
-        (Array.map (fun (_, v) -> A.Any v) pieces)
-  | Value.Copy x ->
-      let dst = nth j r and x = one x in
-      ran ~by (map1 (module K) Copy ~dst x) [| A.Any dst |] [| A.Any x |]
-  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
-      invalid_arg "Exec.call: an operation no kernel computes"
+  let answer : A.answer =
+    match op with
+    | Value.Map { prog; loads; _ } ->
+        K.map prog ~dsts:(dsts_at op r j) (kernel_loads loads)
+    | Value.Reduce { layout; axes; prog; reductions; loads } ->
+        let rs = Prim.reductions reductions
+        and shape = Iarray.to_array (L.shape layout) in
+        K.reduce prog ~shape ~axes rs ~dsts:(dsts_at op r j)
+          (kernel_loads loads)
+    | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
+        let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
+        K.scan ?carry prog ~axis (Prim.reduction reduction)
+          ~dsts:(dsts_at op r j) (kernel_loads loads)
+    | Value.Contract
+        {
+          batch;
+          contracting;
+          acc;
+          a;
+          b;
+          init;
+          a_scale;
+          b_scale;
+          segments;
+          _;
+        } ->
+        let scale : _ Value.scale -> Nx_kernel.scale = function
+          | Exponent x -> Exponent (one x)
+          | Value x -> Value (one x)
+        in
+        let segments =
+          Option.map
+            (fun (g : _ Nx_kernel.segments) : _ Nx_kernel.segments ->
+              match g with
+              | Rows r -> Rows { r with offsets = one r.offsets }
+              | Contracting r -> Contracting { r with offsets = one r.offsets })
+            segments
+        in
+        K.contract ~batch ~contracting ~segments ~acc ~dst:(nth j r)
+          ~init:(Option.map one init)
+          { array = A.Any (one a); scale = Option.map scale a_scale }
+          { array = A.Any (one b); scale = Option.map scale b_scale }
+    | Value.Gather { axis; idx; x } ->
+        K.gather ~axis ~dst:(nth j r) (one idx) (one x)
+    | Value.Scatter { combine; unique; axis; idx; updates; into } ->
+        K.scatter combine ~unique ~axis ~dst:(nth j r) ~into:(one into)
+          (one idx) (one updates)
+    | Value.Sort { axis; descending; x; _ } ->
+        let values, positions = r in
+        K.sort ~axis ~descending ~values:(nth j values)
+          ~positions:(nth j positions) (one x)
+    | Value.Fold { pad; x; _ } -> K.fold pad ~dst:(nth j r) (one x)
+    | Value.Fft (Value.C2c { direction; axes; x }) ->
+        K.c2c direction ~axes ~dst:(nth j r) (one x)
+    | Value.Fft (Value.R2c { axes; x; _ }) -> K.r2c ~axes ~dst:(nth j r) (one x)
+    | Value.Fft (Value.C2r { axes; x; _ }) -> K.c2r ~axes ~dst:(nth j r) (one x)
+    | Value.Linalg l -> (
+        match (l, r) with
+        | Value.Cholesky { triangle; a }, y ->
+            K.cholesky triangle ~dst:(nth j y) (one a)
+        | Value.Lu a, (lu, pivots, perm) ->
+            K.lu ~lu:(nth j lu) ~pivots:(nth j pivots) ~perm:(nth j perm)
+              (one a)
+        | Value.Qr { a; _ }, (q, r) -> K.qr ~q:(nth j q) ~r:(nth j r) (one a)
+        | Value.Svd_values { a; _ }, s -> K.svd ~s:(nth j s) (one a)
+        | Value.Svd { a; _ }, (s, u, vh) ->
+            K.svd ~s:(nth j s) ~vectors:(~u:(nth j u), ~vh:(nth j vh)) (one a)
+        | Value.Eigh_values { a; _ }, w -> K.eigh ~w:(nth j w) (one a)
+        | Value.Eigh { a; _ }, (w, v) ->
+            K.eigh ~w:(nth j w) ~v:(nth j v) (one a)
+        | Value.Eig_values { a; _ }, w -> K.eig ~w:(nth j w) (one a)
+        | Value.Eig { a; _ }, (w, v) -> K.eig ~w:(nth j w) ~v:(nth j v) (one a)
+        | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y
+          ->
+            K.solve_triangular triangle ~adjoint ~unit_diagonal ~dst:(nth j y)
+              (one a) (one b))
+    | Value.Assemble { fill; pieces; _ } ->
+        let pieces =
+          Array.of_list (List.map (fun (rs, x) -> (rs, one x)) pieces)
+        in
+        K.assemble ~fill ~dst:(nth j r) pieces
+    | Value.Copy x -> map1 (module K) Copy ~dst:(nth j r) (one x)
+    | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+        invalid_arg "Exec.call: an operation no kernel computes"
+  in
+  match answer with
+  | Done -> true
+  | Declined -> false
+  | refusal ->
+      let (Prim.Operands xs) = Prim.operands op in
+      let operand (Value.Any x) = A.Any (one x) in
+      A.refused by refusal
+        (Array.to_list (dsts_at op r j) @ List.map operand xs)
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
    its routine, a reduction and a scan by what they compute, as
