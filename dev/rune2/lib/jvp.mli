@@ -21,8 +21,12 @@
     with their programs' derivatives over the primals and the tangents (a scan's
     carry has a tangent where its init has one or a step gives it one, a zero
     until then; a call's derivative is derived once per derivation at its site,
-    {!Program.derive}), and the others run their default where they were
-    performed ({!Program.Evaluate}), so that their programs' operations reach the rules.
+    {!Program.derive}), an iterate, a switch, a root and a solve are performed
+    outward with their derivatives too, an operator's tangent is the operator
+    of the tangents, and [Lane_index] and a switch whose index no
+    interpretation traces run their default where they were performed
+    ({!Program.Evaluate}), so that their programs' operations reach the
+    rules.
 
     A custom rule ({!Program.Custom}) is performed outward on the arguments'
     primals, so that each differentiation around applies it too. Its results'

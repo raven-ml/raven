@@ -1314,9 +1314,8 @@ let parts j ys = (Array.map (pv j) ys, Array.map (tv j) ys)
    primal, so that every differentiation around detaches the value and a total
    receives the primal. [Lanes] is linear: its tangent is the lanes of the
    tangent. A custom rule or a linear call applies its rule ([Rules]). A scan,
-   a remat and a call are performed with their programs' derivatives. Iterates
-   have no rule of their own yet: they run where they were performed, inside
-   the interpretation, which receives their programs' operations. *)
+   a remat, a call, an iterate, a switch, a root and a solve are performed with
+   their programs' derivatives. *)
 let rec answer ~name ~tape i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))

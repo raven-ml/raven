@@ -38,10 +38,10 @@
     performing them outward with their programs mapped over the batches (a
     scan's carry has lanes where its init has them or a step gives them, its
     init broadcast until then, and its additions are every lane's; a call's map
-    is derived once per derivation at its site, {!Program.derive}); and the
-    other constructs over lane values by running their default where they were
-    performed ({!Program.Evaluate}), so that their programs' operations reach the rules.
-    It answers {!Program.Running} with [None]. *)
+    is derived once per derivation at its site, {!Program.derive}); an
+    iterate, a switch, a root and a solve over lane values, performing them
+    outward mapped; and an operator over lane values, applying it over the
+    lanes. It answers {!Program.Running} with [None]. *)
 
 val run :
   name:string ->

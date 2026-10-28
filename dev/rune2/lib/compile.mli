@@ -32,16 +32,20 @@ val make : name:string -> Program.t -> Program.form array -> (t, string) result
 (** [make ~name p forms] is [p], traced over arguments of [forms], ready to
     link once per variant at its first call ({!run}), or [Error why] where the
     lowering declines it, [why] saying which value, construct or failure: a
-    map's construct ({!Program.Lanes}, {!Program.Lane_index}), an operation
-    that {!Lower.op} does not lower, a value on another device than the others
-    or over several, or a check off the host. [name] is the entry point
-    messages name.
+    map's construct ({!Program.Lanes}, {!Program.Lane_index}), a scan that
+    runs a count of its rows, an iterate that stacks its steps or whose lanes
+    stop apart, a root, a solve or an operator, an addition, a linear call
+    with no function to apply, an operation that {!Lower.op} does not lower, a
+    value on another device than the others or over several, or a check off
+    the host. [name] is the entry point messages name.
 
     A construct's programs lower with [p]'s: a call's, a remat's, a custom
     rule's primal and a linear call's function as their equations over the
     construct's operands, and a scan or an iterate as one loop of [p], a range
     of its trips around one call of its step, the parts of the step that read
-    no trip's parameter computed before the loop. A loop until a stop tests a
+    no trip's parameter computed before the loop. A construct's totals run
+    from its seeds, or from the identity without, carried through a loop's
+    trips, and its sums are its results. A loop until a stop tests a
     flag the engine reads before each trip, and its failure after [max] trips
     is a check of [p]. Every check a trip makes, a nested loop's included, is
     carried: the first trip that fails keeps each one's first failure and data,
