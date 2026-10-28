@@ -13,8 +13,8 @@ reductions, and scalar loops.
 ## Running
 
 ```bash
-dune exec nx/examples/10-machine-learning/pca.exe
-dune exec nx/examples/10-machine-learning/kmeans.exe
-dune exec nx/examples/10-machine-learning/dbscan.exe
-dune exec nx/examples/10-machine-learning/tsne.exe
+dune exec packages/nx/examples/10-machine-learning/pca.exe
+dune exec packages/nx/examples/10-machine-learning/kmeans.exe
+dune exec packages/nx/examples/10-machine-learning/dbscan.exe
+dune exec packages/nx/examples/10-machine-learning/tsne.exe
 ```

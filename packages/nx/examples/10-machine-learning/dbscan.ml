@@ -3,35 +3,38 @@
     Generate two dense clusters with scattered noise, find clusters using
     neighbourhood density, and report cluster sizes and noise count. *)
 
-open Nx
-
 let () =
   let eps = 1.5 in
   let min_samples = 5 in
 
   (* Two tight blobs plus uniform noise *)
-  let c1 = add_s (mul_s (randn Float64 [| 80; 2 |]) 0.6) 3.0 in
-  let c2 = sub_s (mul_s (randn Float64 [| 80; 2 |]) 0.6) 3.0 in
-  let noise = sub_s (mul_s (rand Float64 [| 20; 2 |]) 14.0) 7.0 in
-  let data = concatenate ~axis:0 [ c1; c2; noise ] in
-  let n = (shape data).(0) in
+  let data =
+    Nx.(
+      let c1 = (Rng.normal float64 [| 80; 2 |] *$ 0.6) +$ 3.0 in
+      let c2 = (Rng.normal float64 [| 80; 2 |] *$ 0.6) -$ 3.0 in
+      let noise = (Rng.uniform float64 [| 20; 2 |] *$ 14.0) -$ 7.0 in
+      concatenate ~axis:0 [ c1; c2; noise ])
+  in
+  let n = Nx.dim 0 data in
   Printf.printf "Data: %d points (eps=%.1f, min_samples=%d)\n\n" n eps
     min_samples;
 
   (* Pairwise Euclidean distance matrix [n, n] *)
-  let diff = sub (unsqueeze ~axes:[ 1 ] data) (unsqueeze ~axes:[ 0 ] data) in
-  let dist = sqrt (sum ~axes:[ 2 ] (square diff)) in
+  let diff =
+    Nx.sub (Nx.unsqueeze ~axes:[ 1 ] data) (Nx.unsqueeze ~axes:[ 0 ] data)
+  in
+  let dist = Nx.sqrt (Nx.sum ~axes:[ 2 ] (Nx.square diff)) in
 
   (* Neighbour adjacency and core-point mask *)
-  let neighbours = less_equal_s dist eps in
-  let counts = sum ~axes:[ 1 ] (cast Float64 neighbours) in
-  let core = greater_equal_s counts (Float.of_int min_samples) in
+  let neighbours = Nx.less_equal_s dist eps in
+  let counts = Nx.sum ~axes:[ 1 ] (Nx.cast Nx.float64 neighbours) in
+  let core = Nx.greater_equal_s counts (Float.of_int min_samples) in
 
   (* BFS cluster expansion *)
   let labels = Array.make n (-1) in
   let cluster_id = ref 0 in
   for i = 0 to n - 1 do
-    if labels.(i) = -1 && item [ i ] core then begin
+    if labels.(i) = -1 && Nx.item [ i ] core then begin
       let c = !cluster_id in
       incr cluster_id;
       labels.(i) <- c;
@@ -40,9 +43,9 @@ let () =
       while not (Queue.is_empty q) do
         let p = Queue.pop q in
         for j = 0 to n - 1 do
-          if labels.(j) = -1 && item [ p; j ] neighbours then begin
+          if labels.(j) = -1 && Nx.item [ p; j ] neighbours then begin
             labels.(j) <- c;
-            if item [ j ] core then Queue.push j q
+            if Nx.item [ j ] core then Queue.push j q
           end
         done
       done

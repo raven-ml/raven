@@ -1,10 +1,10 @@
 # `05-reductions-and-statistics`
 
-Summarize data with reductions — means, variances, and aggregations along any
+Summarize data with reductions: means, variances, and aggregations along any
 axis. This example analyzes daily temperature readings across four cities.
 
 ```bash
-dune exec nx/examples/05-reductions-and-statistics/main.exe
+dune exec packages/nx/examples/05-reductions-and-statistics/main.exe
 ```
 
 ## What You'll Learn
@@ -32,42 +32,45 @@ dune exec nx/examples/05-reductions-and-statistics/main.exe
 
 ## Output Walkthrough
 
-The dataset is a 4×7 matrix — 4 cities, 7 days of temperature readings:
+The dataset is a 4×7 matrix, 4 cities by 7 days of temperature readings:
 
 ```ocaml
-let city_means = mean ~axes:[ 1 ] temps in
+let city_means = Nx.mean ~axes:[ 1 ] temps in
 ```
 
 ```
 City averages:
-  Paris       mean=22.9  std=2.3
-  Cairo       mean=32.0  std=2.1
-  Helsinki    mean=-5.6  std=2.6
-  London      mean=14.9  std=1.3
+  Paris       mean=22.9  std=2.2
+  Cairo       mean=32.0  std=2.0
+  Helsinki    mean=-5.6  std=2.7
+  London      mean=14.9  std=1.2
 ```
+
+`std` divides by the number of elements by default; `~ddof:1` gives the
+sample standard deviation.
 
 ### Axis semantics
 
 - `~axes:[1]` reduces across columns (days) → one value per city
 - `~axes:[0]` reduces across rows (cities) → one value per day
-- No axis → reduces everything to a scalar
+- No axis → reduces everything to a 0-d array, which `Nx.item []` reads
 
 ### Outlier detection with z-scores
 
 Using `keepdims:true` to broadcast the mean and std against the original data:
 
 ```ocaml
-let mu = mean ~axes:[ 1 ] ~keepdims:true temps in
-let sigma = std ~axes:[ 1 ] ~keepdims:true temps in
-let z_scores = (temps - mu) / sigma in
-let outlier_mask = greater_s (abs z_scores) 1.5
+let mu = Nx.mean ~axes:[ 1 ] ~keepdims:true temps in
+let sigma = Nx.std ~axes:[ 1 ] ~keepdims:true temps in
+let z_scores = Nx.((temps - mu) / sigma) in
+let outlier_mask = Nx.greater_s (Nx.abs z_scores) 1.5
 ```
 
 ### Condition testing
 
 ```ocaml
-let all_above_zero = all (greater_s temps 0.0) in    (* false — Helsinki *)
-let any_below_neg5 = any (less_s temps (-5.0)) in     (* true  — Helsinki *)
+let all_above_zero = Nx.all (Nx.greater_s temps 0.0) in   (* false: Helsinki *)
+let any_below_neg5 = Nx.any (Nx.less_s temps (-5.0)) in   (* true: Helsinki *)
 ```
 
 ## Try It

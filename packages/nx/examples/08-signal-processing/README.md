@@ -1,11 +1,11 @@
 # `08-signal-processing`
 
-Analyze frequencies with FFT — decompose signals and filter noise. This example
+Analyze frequencies with FFT: decompose signals and filter noise. This example
 builds a signal from two sine waves plus noise, identifies the component
 frequencies, and filters the noise in the frequency domain.
 
 ```bash
-dune exec nx/examples/08-signal-processing/main.exe
+dune exec packages/nx/examples/08-signal-processing/main.exe
 ```
 
 ## What You'll Learn
@@ -23,13 +23,13 @@ dune exec nx/examples/08-signal-processing/main.exe
 | Function                      | Purpose                                           |
 | ----------------------------- | ------------------------------------------------- |
 | `rfft dtype t`                | Real-valued FFT (time domain to frequency domain) |
-| `irfft dtype ~n t`            | Inverse real FFT (frequency domain back to time)  |
+| `irfft dtype ~s:[ n ] t`      | Inverse real FFT (frequency domain back to time)  |
 | `rfftfreq dtype ~d n`         | Frequency bin labels for `rfft` output            |
 | `magnitude dtype z`           | Element-wise modulus of a complex spectrum        |
 | `linspace dtype start stop n` | Evenly spaced time samples                        |
 | `sin t`                       | Element-wise sine                                 |
-| `randn dtype shape`           | Gaussian noise from the ambient `Rng` scope       |
-| `Nx.Infix` (`+`, `*`, `*$`)   | Clean arithmetic on arrays                        |
+| `Rng.normal dtype shape`      | Gaussian noise from the enclosing `Rng` scope     |
+| `Nx.( … )` (`+`, `*`, `*$`)   | Arithmetic on arrays inside a local open          |
 
 ## Output Walkthrough
 
@@ -45,14 +45,14 @@ Components: 5 Hz (amplitude 1.0) + 20 Hz (amplitude 0.5) + noise
 ### Frequency analysis
 
 The signal is `float32`, so `rfft complex64` keeps the spectrum in single
-precision — half the bytes a `complex128` spectrum would take — and
+precision, half the bytes a `complex128` spectrum would take, and
 `rfftfreq float32` labels it without a cast. After `rfft`, compute magnitudes
 scaled by 2/N to get amplitudes:
 
 ```
 Dominant frequencies:
-  5.0 Hz  (magnitude 1.002)
-  20.0 Hz  (magnitude 0.501)
+  5.0 Hz  (magnitude 1.015)
+  20.0 Hz  (magnitude 0.578)
 ```
 
 The FFT correctly recovers both sine components. Noise spreads across many
@@ -60,13 +60,32 @@ bins with small magnitudes.
 
 ### Noise filtering
 
-Zero all frequency bins below a threshold, then reconstruct with `irfft`:
+Zero all frequency bins below a threshold, then reconstruct with `irfft`.
+`~s:[ n ]` asks for the signal's 256 points:
 
 ```
 After filtering (threshold=0.2):
-  Original first 8:  [1.29, 1.16, 0.81, 0.44, ...]
-  Filtered first 8:  [1.00, 1.16, 0.79, 0.36, ...]
+  Original first 8:  float32 [8]
+  [0.22988267,
+   0.7398268,
+   0.99007213,
+   0.7713344,
+   0.84304893,
+   0.817631,
+   0.6292006,
+   0.86067283]
+  Filtered first 8:  float32 [8]
+  [0.025653671,
+   0.41949153,
+   0.74212563,
+   0.94442606,
+   1.0048546,
+   0.93415594,
+   0.7724451,
+   0.5793805]
 ```
+
+The noise differs from run to run, so do these values.
 
 The filtered signal retains the two sine waves while removing noise.
 

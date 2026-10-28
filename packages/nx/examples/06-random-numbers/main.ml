@@ -1,56 +1,62 @@
-(** Implicit RNG with reproducible scopes — generate distributions, sample, and
+(** Random numbers from keys and scopes: generate distributions, sample, and
     shuffle.
 
     Roll dice, estimate pi with Monte Carlo, and generate noisy training data.
-    Every result is reproducible inside an [Rng.with_key] scope: same seed, same
-    numbers. Outside any scope the global fallback provides convenient but
-    non-reproducible randomness. *)
-
-open Nx
-open Nx.Infix
+    Every draw is a function of a key: a sampler given [~key] draws from it, and
+    one called without it takes the next key of the enclosing [Rng.with_key]
+    scope, so the same seed gives the same numbers. Outside any scope, keys are
+    seeded from the system's entropy and runs differ. *)
 
 let () =
   (* --- Dice simulation: roll 10 six-sided dice --- *)
-  let dice = randint ~low:1 ~high:7 [| 10 |] in
-  Printf.printf "10 dice rolls: %s\n\n" (to_string dice);
+  let dice = Nx.Rng.randint ~low:1 ~high:7 [| 10 |] in
+  Printf.printf "10 dice rolls: %s\n\n" (Nx.to_string dice);
 
   (* --- Uniform random floats in [0, 1) --- *)
-  let uniform = rand Float64 [| 5 |] in
-  Printf.printf "Uniform [0,1): %s\n\n" (to_string uniform);
+  let uniform = Nx.Rng.uniform Nx.float64 [| 5 |] in
+  Printf.printf "Uniform [0,1): %s\n\n" (Nx.to_string uniform);
 
   (* --- Normal distribution (mean=0, std=1) --- *)
-  let normal = randn Float64 [| 5 |] in
-  Printf.printf "Normal(0,1):   %s\n\n" (to_string normal);
+  let normal = Nx.Rng.normal Nx.float64 [| 5 |] in
+  Printf.printf "Normal(0,1):   %s\n\n" (Nx.to_string normal);
 
   (* --- Monte Carlo pi estimation ---
 
      Drop N random points in a unit square. The fraction landing inside the unit
      circle (distance from origin < 1) approximates pi/4. *)
   let n = 100_000 in
-  let xs = rand float64 [| n |] in
-  let ys = rand float64 [| n |] in
-  let inside = less_s ((xs * xs) + (ys * ys)) 1.0 in
-  let count = sum (cast Float64 inside) in
-  let pi_est = item [] count *. 4.0 /. Float.of_int n in
+  let xs = Nx.Rng.uniform Nx.float64 [| n |] in
+  let ys = Nx.Rng.uniform Nx.float64 [| n |] in
+  let inside = Nx.(less_s ((xs * xs) + (ys * ys)) 1.0) in
+  let count = Int64.to_float (Nx.item [] (Nx.count inside)) in
+  let pi_est = count *. 4.0 /. Float.of_int n in
   Printf.printf "Monte Carlo pi (%d points): %.4f  (actual: %.4f)\n\n" n pi_est
     Float.pi;
 
   (* --- Synthetic training data: y = 3x + 2 + noise --- *)
-  let x = rand Float64 [| 8 |] in
-  let noise = randn Float64 [| 8 |] *$ 0.1 in
-  let y = (x *$ 3.0) +$ 2.0 + noise in
-  Printf.printf "x:     %s\n" (to_string x);
-  Printf.printf "y ~ 3x+2: %s\n\n" (to_string y);
+  let x = Nx.Rng.uniform Nx.float64 [| 8 |] in
+  let noise = Nx.(Rng.normal float64 [| 8 |] *$ 0.1) in
+  let y = Nx.((x *$ 3.0) +$ 2.0 + noise) in
+  Printf.printf "x:     %s\n" (Nx.to_string x);
+  Printf.printf "y ~ 3x+2: %s\n\n" (Nx.to_string y);
 
-  (* --- Reproducibility: Rng.with_key gives the same result --- *)
-  let a = Rng.with_key (Rng.key 99) (fun () -> randn Float64 [| 3 |]) in
-  let b = Rng.with_key (Rng.key 99) (fun () -> randn Float64 [| 3 |]) in
-  Printf.printf "Same seed, run 1: %s\n" (to_string a);
-  Printf.printf "Same seed, run 2: %s\n" (to_string b);
-  Printf.printf "Identical? %b\n\n" (item [] (all (equal a b)));
+  (* --- Reproducibility: one seed gives one result --- *)
+  let draw () = Nx.Rng.normal Nx.float64 [| 3 |] in
+  let a = Nx.Rng.with_key (Nx.Rng.key 99) draw in
+  let b = Nx.Rng.with_key (Nx.Rng.key 99) draw in
+  Printf.printf "Same seed, run 1: %s\n" (Nx.to_string a);
+  Printf.printf "Same seed, run 2: %s\n" (Nx.to_string b);
+  Printf.printf "Identical? %b\n\n" (Nx.item [] (Nx.array_equal a b));
 
-  (* --- Shuffle: random permutation of a dataset --- *)
-  let data = arange int32 0 8 1 in
-  let shuffled = shuffle data in
-  Printf.printf "Original:  %s\n" (to_string data);
-  Printf.printf "Shuffled:  %s\n" (to_string shuffled)
+  (* --- Explicit keys: split one key into independent ones --- *)
+  let keys = Nx.Rng.split ~n:2 (Nx.Rng.key 7) in
+  let c = Nx.Rng.normal ~key:keys.(0) Nx.float64 [| 3 |] in
+  let d = Nx.Rng.normal ~key:keys.(1) Nx.float64 [| 3 |] in
+  Printf.printf "Key 0: %s\n" (Nx.to_string c);
+  Printf.printf "Key 1: %s\n\n" (Nx.to_string d);
+
+  (* --- Shuffle: gather a dataset at a random permutation of its rows --- *)
+  let data = Nx.arange Nx.int32 0 8 1 in
+  let shuffled = Nx.take (Nx.Rng.permutation 8) data in
+  Printf.printf "Original:  %s\n" (Nx.to_string data);
+  Printf.printf "Shuffled:  %s\n" (Nx.to_string shuffled)

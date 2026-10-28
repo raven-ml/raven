@@ -2,10 +2,10 @@
 
 Change array shapes and let broadcasting align dimensions automatically. This
 example reshapes a flat signal into frames, centers data by subtracting column
-means, and builds an outer product — all without explicit loops.
+means, and builds an outer product, all without explicit loops.
 
 ```bash
-dune exec nx/examples/04-reshaping-and-broadcasting/main.exe
+dune exec packages/nx/examples/04-reshaping-and-broadcasting/main.exe
 ```
 
 ## What You'll Learn
@@ -36,18 +36,16 @@ dune exec nx/examples/04-reshaping-and-broadcasting/main.exe
 Reshape a flat 12-element signal into a 3×4 matrix of frames:
 
 ```ocaml
-let signal = arange_f float64 0.0 12.0 1.0 in
-let frames = reshape [| 3; 4 |] signal
+let signal = Nx.arange_f Nx.float64 0.0 12.0 1.0 in
+let frames = Nx.reshape [| 3; 4 |] signal
 ```
 
 ```
 Flat signal (12 samples):
-[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+float64 [12] [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
 Reshaped into 3 frames of 4:
-[[0, 1, 2, 3],
- [4, 5, 6, 7],
- [8, 9, 10, 11]]
+float64 [3; 4] [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]]
 ```
 
 ### Broadcasting in action
@@ -56,34 +54,30 @@ Subtracting column means from data. The `keepdims:true` parameter gives
 the mean shape `[1; 3]` instead of `[3]`, which broadcasts against `[4; 3]`:
 
 ```ocaml
-let col_means = mean ~axes:[ 0 ] ~keepdims:true data in
-let centered = data - col_means
+let col_means = Nx.mean ~axes:[ 0 ] ~keepdims:true data in
+let centered = Nx.(data - col_means)
 ```
 
 ### Outer product via broadcasting
 
-Reshape vectors into compatible shapes and multiply — no loops needed:
+Reshape vectors into compatible shapes and multiply, with no loop:
 
 ```ocaml
-let outer = reshape [| 4; 1 |] x * reshape [| 1; 3 |] y
+let outer = Nx.(reshape [| 4; 1 |] x * reshape [| 1; 3 |] y)
 ```
 
 ```
 Outer product (x × y):
-[[10, 20, 30],
- [20, 40, 60],
- [30, 60, 90],
- [40, 80, 120]]
+float64 [4; 3] [[10, 20, 30], [20, 40, 60], [30, 60, 90], [40, 80, 120]]
 ```
 
 ## Broadcasting Rules
 
-Two dimensions are compatible for broadcasting when they are either:
-1. Equal, or
-2. One of them is 1
-
-When dimensions differ, the size-1 dimension is stretched to match. This is
-why `keepdims:true` is essential for reductions used in arithmetic.
+Shapes are aligned at their last axes, and missing leading axes count as 1.
+Two aligned extents are compatible when they are equal or one of them is 1,
+and an extent of 1 stretches to match the other. A reduction with
+`keepdims:true` keeps its reduced axes as extents of 1, so its result lines up
+with the array it came from.
 
 ## Try It
 
