@@ -2,8 +2,8 @@
 
 raven's API documentation is the doc comments in each `.mli` and the guide
 pages under a library's `doc/`. This page sets its standard. rig
-(`dev/rig`) is the first library documented to it, and the excerpts below
-come from its `rig.mli`.
+(`packages/rig`) is the first library documented to it, and the excerpts
+below come from its `rig.mli`.
 
 ## Two readers
 
