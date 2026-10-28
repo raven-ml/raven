@@ -1085,9 +1085,7 @@ let roll_by ~by ?axis k x =
           (region s a k (d - k), part 0 (d - k));
         ]
   in
-  match axis with
-  | Some _ -> rolled
-  | None -> Eval.reshape ~by (shape x) rolled
+  Eval.reshape ~by (shape x) rolled
 
 let roll ?axis k x = roll_by ~by:"Nx.roll" ?axis k x
 
@@ -1739,8 +1737,7 @@ let scan_along ~by m axis x = scan_by ~by (Monoid (m, 0, dtype x)) axis x
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
 let scan ~by r ?axis x =
   let y, a = along ~by axis x in
-  let z = scan_by ~by r a y in
-  match axis with Some _ -> z | None -> Eval.reshape ~by (shape x) z
+  Eval.reshape ~by (shape x) (scan_by ~by r a y)
 
 let monoid_scan ~by m ?axis x = scan ~by (Monoid (m, 0, dtype x)) ?axis x
 let cumsum ?axis x = monoid_scan ~by:"Nx.cumsum" Sum ?axis x
@@ -2349,8 +2346,7 @@ let ewma ?axis ~alpha x =
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
   let y, a = along ~by axis x in
-  let z = average ~by ~alpha a y in
-  match axis with Some _ -> z | None -> Eval.reshape ~by (shape x) z
+  Eval.reshape ~by (shape x) (average ~by ~alpha a y)
 
 (* Activations *)
 
