@@ -280,7 +280,8 @@ let warm_rows () =
 (* Custom: a custom_jvp call outside every transformation, the shape of a log
    density with its gradient: a rule of [ops] sines and a sum, whose tangent map
    pairs the tangent with a value the rule computes. The rule and its map are
-   traced, then the rule's value evaluated. *)
+   traced, then the rule's value evaluated. And a second derivative through such
+   a rule. *)
 let custom_rows () =
   let x = one () in
   let density =
@@ -288,7 +289,20 @@ let custom_rows () =
         let y = chain x in
         (Nx.sum y, fun dx -> Nx.sum (Nx.mul y dx)))
   in
-  [ Thumper.bench "custom-jvp-call" (fun () -> density x) ]
+  (* The same shape as a custom_vjp, under grad of grad: each order evaluates
+     the residuals' code once. *)
+  let rule =
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+        let y = chain x in
+        (Nx.sum y, fun g -> Nx.mul g y))
+  in
+  let grad_grad x =
+    Rune.grad' (fun x -> Nx.sum (Rune.grad' rule x)) x
+  in
+  [
+    Thumper.bench "custom-jvp-call" (fun () -> density x);
+    Thumper.bench "custom-vjp-grad-grad" (fun () -> grad_grad x);
+  ]
 
 let () =
   exit
