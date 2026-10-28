@@ -25,9 +25,9 @@
     reports. A {!wait} on the set drains them: it reads them oldest first
     and raises the first failure. A failing check's exception is built by
     its [fail], which may read the values it receives and so wait on the
-    set. A wait inside that build passes over the check it builds, and a
-    wait on another systhread meanwhile builds the exception itself and
-    raises it. The failure raises at one wait.
+    set. A wait inside that build reads only the checks issued before the
+    one it builds, and a wait on another systhread meanwhile builds the
+    exception itself and raises it. The failure raises at one wait.
 
     Once a pending check's reduction is submitted, the check records the
     value its device has submitted ({!Rig.submitted}). Issuing a check on a
@@ -52,15 +52,14 @@
     submitted per check, which nothing waits for. On another machine's
     device the host reads it through a copy, which follows that device's
     later work, so settling such a check waits for the work submitted
-    there; no rig read avoids that yet. A failing check's elements are read
-    on the host, through a copy where the host does not address them.
+    there. A failing check's elements are read on the host, through a copy
+    where the host does not address them.
 
     This module lies above {!Exec} and {!Partial}, which compute what it
-    reads, and below {!Eval}, [Rng] and [Nx]. {!Eval.run}
-    issues each check, and waits on a value's set before it places the
-    value onto the host from another set. [Nx]'s reads of a value on the
-    host wait on its set first. [Nx] and [Rng] read values on the host
-    through {!on_host}. *)
+    reads, and below {!Eval}, [Rng] and [Nx]. {!Eval.run} issues each check,
+    and waits on a value's set before it places the value onto the host from
+    another set. [Nx]'s reads of a value on the host wait on its set first.
+    [Nx] and [Rng] read values on the host through {!on_host}. *)
 
 val issue :
   by:string ->
@@ -79,20 +78,16 @@ val issue :
 
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
-    checks the calling domain issued on [x]'s set: it reads them in issue
-    order up to the first that fails, which raises its exception, and drops
-    the later ones unread. It builds the exception of a failing check that
-    another systhread is building, and raises it. Inside the build of a
-    check's exception, it reads only the checks issued before that one.
-    Each drained check's hold on its data ends then ({!Rig.Claim.release}).
+    calling domain's pending checks on [x]'s set as stated above. Each
+    drained check's hold on its data ends then ({!Rig.Claim.release}).
 
-    Raises [Invalid_argument] naming [by] for a traced [x]. *)
+    Raises the first failure among them, and [Invalid_argument] naming [by]
+    for a traced [x]. *)
 
 val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 (** [on_host ~by x] is an array on the host holding [x]'s elements, [x]
     placed there ({!Place.value}), which is [x]'s own array where [x] lies
-    on the host. No interpretation receives
-    it, and it settles no check.
+    on the host. No interpretation receives it, and it settles no check.
 
     Raises [Invalid_argument] naming [by] for a traced [x], and what
     {!Place.value} raises. *)

@@ -8,9 +8,8 @@
     This module computes an operation whose operands have bytes and lie
     where its route reads them ({!Prim.route}). Its callers choose the
     route, read the operands there ({!placer}) and give it the memory a
-    donation frees. It settles no check. Below it lie {!Prim}, {!Route} and
-    {!Place}; above it {!Partial}, {!Check} and {!Eval} call it, and it calls
-    none of them.
+    donation frees. It settles no check. This module lies above {!Prim},
+    {!Route} and {!Place}; {!Partial}, {!Check} and {!Eval} call it.
 
     An operation's results lie at its route's result. Each device of that
     placement computes its {e window} of the results ({!Devices.window}) by

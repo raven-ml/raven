@@ -11,9 +11,8 @@
     operand is read where the route reads it, by views where it lies
     ({!Exec.placer}), and the operation computes by partials ({!Partial}) or
     by windows ({!Exec.windows}), as the route says. An operation of no
-    operands, a creation, computes at the placement its map names, each
-    device its window, and other operations of no operands on the host. The
-    operation consumes the donated handles among its operands as {!Donate}
+    operands computes where {!Prim.route} puts it, each device its window.
+    The operation consumes the donated handles among its operands as {!Donate}
     states: it claims them after the route ({!Donate.claim}), its first
     result takes the memory of a handle that may hold it and lies where the
     route puts the results ({!Donate.reuse}), and the claim ends once the
