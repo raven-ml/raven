@@ -1256,7 +1256,9 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
         Program.V (Nx.zeros_at (Nx.placement f) Nx.int32 [| n |])
       in
       let ys = Array.sub it.step.outputs nc ny in
-      let totals = lanes_placed n sum_adds in
+      let live = held_totals ~seeded:(it.seeds <> [||]) sum_adds in
+      let thread f = threading_live n live sum_adds sum_forms f in
+      let totals = lanes_placed n (Loops.pick live sum_adds) in
       let step_of cf =
         let outs = ref [||] in
         let p, own =
@@ -1266,7 +1268,7 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
               let b = Array.sub vs 0 nc and stopped = vs.(nc) in
               let base = if rows then nc + 2 else nc + 1 in
               let caps = Array.sub vs base (Array.length vs - base) in
-              Program.threading ~lanes:n sum_adds (fun acc ->
+              thread (fun acc ->
                   let running = not_flags stopped in
                   let h = { running; donors = donors n running } in
                   let bd = Array.map (lend h) b in
@@ -1323,7 +1325,7 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
                init;
                step_captures = Array.append bsc own;
                until_captures = uown;
-               seeds = acc1;
+               seeds = Loops.pick live acc1;
              })
       in
       let carried = Array.length init in
@@ -1338,11 +1340,40 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
                (Array.map rows_lanes (Array.sub r (carried + 1) ny))
            else [||]);
           held_sums n sum_adds ~seeded:(it.seeds <> [||]) i
-            (Array.sub r
-               (carried + if rows then 1 + ny else 0)
-               (Array.length sum_adds));
+            (unheld n live sum_forms
+               (Array.sub r
+                  (carried + if rows then 1 + ny else 0)
+                  (Array.length (Loops.pick live live))));
         ]
   | _ -> invalid_arg "Rune: an iterate's map"
+
+(* Which of a loop's sums a collect or a tracer holds: one inside the map, which
+   seeded them, or one around it. The others no addition reaches. *)
+and held_totals ~seeded adds =
+  Array.map
+    (fun (Program.Addition (t, _, _)) ->
+      seeded
+      || match Program.where t with Program.Nowhere -> false | At _ -> true)
+    adds
+
+(* [f acc], every lane's sums [acc] those [live] says held, each lane's running
+   value where the trace is, the others the identity, handed back. *)
+and threading_live n live adds forms f =
+  let identity k = Loops.filled ~zero:false (Program.stacked n forms.(k)) in
+  Program.threading ~lanes:n (Loops.pick live adds) (fun held ->
+      let acc =
+        Loops.merge live held
+          (Array.init (Array.length live) identity
+          |> Loops.pick (Array.map not live))
+      in
+      let acc', r = f acc in
+      (Loops.pick live acc', r))
+
+(* A loop's sums of the held ones [sums], the others the identity. *)
+and unheld n live forms sums =
+  let identity k = Loops.filled ~zero:false (Program.stacked n forms.(k)) in
+  Loops.merge live sums
+    (Loops.pick (Array.map not live) (Array.init (Array.length live) identity))
 
 (* A loop's sums whose lanes were held apart, each lane's chain: their lanes,
    where a collect inside the map seeded them; and otherwise, as the lanes'
@@ -1356,18 +1387,17 @@ and held_sums n adds ~seeded i sums =
     Array.mapi
       (fun k (Program.Addition (t, _, out)) ->
         let (Program.V b) = sums.(k) in
-        (if n > 0 then
-           let at =
-             match Program.where t with
-             | Some p -> Prim.coerce out.dtype (Nx.Placement.devices p) b
-             | None -> Program.coerce_at out b
-           in
-           match at with
-           | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
-           | None -> (
-               match Program.coerce_at out b with
-               | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
-               | None -> Program.unset (Program.V b)));
+        (* With nothing holding the total, an addition does nothing. *)
+        (match (n, Program.where t) with
+        | 0, _ | _, Nowhere -> ()
+        | _, At None -> (
+            match Program.coerce_at out b with
+            | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
+            | None -> Program.unset (Program.V b))
+        | _, At (Some p) -> (
+            match Prim.coerce out.dtype (Nx.Placement.devices p) b with
+            | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
+            | None -> Program.unset (Program.V b)));
         lane_v i (Loops.filled ~zero:false (Program.stacked n (Program.F out))))
       adds
 
@@ -1375,6 +1405,11 @@ and held_sums n adds ~seeded i sums =
 and lanes_placed n adds =
   Array.map
     (fun (Program.Addition (t, into, out)) ->
+      let into =
+        match Program.where t with
+        | At (Some p) -> { into with placement = p }
+        | At None | Nowhere -> into
+      in
       Program.Addition (t, stacked_form n into, out))
     adds
 
@@ -1441,11 +1476,13 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
         else Program.V (Nx.max tb)
       in
       let row = Program.V (Nx.arange_at at Nx.int32 0 sc.length 1) in
-      let sum_adds, _, feeds = Program.sums [ sc.step ] in
+      let sum_adds, sum_forms, feeds = Program.sums [ sc.step ] in
+      let seeded = sc.seeds <> [||] in
+      let live = held_totals ~seeded sum_adds in
       let feeds = List.hd feeds in
       let all = Array.make (nc + nx) true in
       let ys = Array.sub sc.step.outputs nc ny in
-      let totals = lanes_placed n sum_adds in
+      let totals = lanes_placed n (Loops.pick live sum_adds) in
       let step_of cf =
         let outs = ref [||] in
         let p, own =
@@ -1461,7 +1498,7 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
               let b = Array.sub vs 0 nc and xr = Array.sub vs nc nx in
               let k = vs.(nc + nx) in
               let caps = Array.sub vs (nc + nx + 1) (Array.length bcaps) in
-              Program.threading ~lanes:n sum_adds (fun acc ->
+              threading_live n live sum_adds sum_forms (fun acc ->
                   let runs =
                     beside (Program.V tb) k
                       {
@@ -1519,10 +1556,10 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
                init = b0;
                xs = Array.append bxs [| row |];
                captures = Array.append bcaps own;
-               seeds = Array.map (batch_v i n) sc.seeds;
+               seeds = Loops.pick live (Array.map (batch_v i n) sc.seeds);
              })
       in
-      let ns = Array.length sum_adds in
+      let ns = Array.length (Loops.pick live live) in
       let base = Array.length r - ns in
       Array.append
         (Array.mapi
@@ -1532,7 +1569,8 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
                Program.V (lane i (Nx.moveaxis 1 0 y))
              else lane_v i v)
            (Array.sub r 0 base))
-        (held_sums n sum_adds ~seeded:(sc.seeds <> [||]) i (Array.sub r base ns))
+        (held_sums n sum_adds ~seeded i
+           (unheld n live sum_forms (Array.sub r base ns)))
   | _ -> invalid_arg "Rune: a scan's map"
 
 (* A remat's map is the remat of its function's map, as JAX's checkpoint

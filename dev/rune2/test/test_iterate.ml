@@ -479,7 +479,24 @@ let test_totals () =
     (bits (Nx.scalar f64 704.))
     (bits
        (total (fun () ->
-            ignore (Rune.grad' (fun x -> Nx.sum (Rune.vmap' f x)) x))))
+            ignore (Rune.grad' (fun x -> Nx.sum (Rune.vmap' f x)) x))));
+  (* With no collect open, the additions do nothing. *)
+  ignore (Rune.vmap' f x);
+  ignore (Rune.vmap' (Rune.vmap' f) (Nx.reshape [| 1; 3; 1 |] x));
+  ignore (Rune.jit' (Rune.vmap' f) x);
+  ignore
+    (Rune.scan' ~init:(Nx.scalar f64 0.)
+       ~f:(fun c r ->
+         Total.add t (Nx.scalar f64 1.);
+         (Nx.add c (Nx.sum (Rune.vmap' f (Nx.add_s r 0.))), c))
+       (Nx.reshape [| 1; 3; 1 |] x));
+  (* A jit around the map with no collect holds the counts where they lie, so a
+     later call under a collect adds them. *)
+  let g = Rune.jit' (Rune.vmap' f) in
+  ignore (g x);
+  equal ~msg:"a jit's later call" bits_t
+    (bits (Nx.scalar f64 704.))
+    (bits (total (fun () -> ignore (g x))))
 
 (* Carries of other dtypes and structures. *)
 let test_carries () =

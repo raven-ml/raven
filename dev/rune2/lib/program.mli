@@ -404,14 +404,23 @@ val threaded : ?lanes:int -> t -> (value array -> value array) -> value array
     value at the form it was traced at, it is the identity, and the running
     value out is added to the total ({!add_to}). *)
 
-type _ Effect.t +=
-  | Where : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form option Effect.t
-        (** Answered by the innermost collect or tracer of the total around the
-            call that holds a running value of it, with that value's form; a map
-            passes it on. *)
+(** Where a total's running value lies. *)
+type 'd where =
+  | Nowhere  (** No collect or tracer holds one. *)
+  | At of 'd Nx.Placement.t option
+      (** At this placement; [None] where the holder, a jit's program, takes it
+          where the first addition lies. *)
 
-val where : ('v, 's, 'd) total -> 'd Nx.Placement.t option
-(** [where t] is the placement {!Where} answers, [None] with none around. *)
+type _ Effect.t +=
+  | Where : ('v, 's, 'd) total -> 'd where Effect.t
+        (** Answered by the innermost collect of the total around the call, at
+            its running value's placement, and by a tracer between that threads
+            the total, at its running value's, or else as the one around it, the
+            jit tracer holding it where the first addition lies where none does;
+            a map passes it on. *)
+
+val where : ('v, 's, 'd) total -> 'd where
+(** [where t] is the answer to {!Where}, [Nowhere] with none around. *)
 
 val running :
   ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option

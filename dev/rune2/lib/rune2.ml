@@ -491,7 +491,9 @@ module Total = struct
       | Where u -> (
           match same_total u t with
           | Some Type.Equal ->
-              Some (fun k -> Effect.Deep.continue k (Some (Nx.Prim.form !sum)))
+              Some
+                (fun k ->
+                  Effect.Deep.continue k (At (Some (Nx.placement !sum))))
           | None -> None)
       | _ -> None
     in

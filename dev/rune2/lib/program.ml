@@ -604,14 +604,13 @@ let running t f =
 
 let replace t x = Effect.perform (Replace (t, x))
 
-type _ Effect.t +=
-  | Where : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form option Effect.t
+type 'd where = Nowhere | At of 'd Nx.Placement.t option
+type _ Effect.t += Where : ('v, 's, 'd) total -> 'd where Effect.t
 
 let where t =
   match Effect.perform (Where t) with
-  | Some (f : _ Nx.Prim.form) -> Some f.placement
-  | None -> None
-  | exception Effect.Unhandled (Where _) -> None
+  | w -> w
+  | exception Effect.Unhandled (Where _) -> Nowhere
 
 (* Evaluation *)
 

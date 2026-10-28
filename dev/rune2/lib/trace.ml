@@ -427,13 +427,12 @@ let held st t =
     (fun (Thread th) -> Option.is_some (same_total th.total t))
     st.threads
 
-let form_of (type v s d) st (t : (v, s, d) total) :
-    (v, s, d) Nx.Prim.form option =
-  let rec go : thread list -> (v, s, d) Nx.Prim.form option = function
-    | [] -> None
+let placement_of (type v s d) st (t : (v, s, d) total) : d Nx.Placement.t =
+  let rec go : thread list -> d Nx.Placement.t = function
+    | [] -> invalid_arg "Rune: a total the trace threads no running value of"
     | Thread th :: rest -> (
         match same_total th.total t with
-        | Some Type.Equal -> Some (Nx.Prim.form th.now)
+        | Some Type.Equal -> Nx.placement th.now
         | None -> go rest)
   in
   go st.threads
@@ -1038,8 +1037,18 @@ and trace_in ?(totals = [||]) kind ~name inputs f =
     (* A traced program threads the totals its extent adds to. *)
     | Running (t, f), Some i when st.kind <> Tape ->
         Some (fun k -> Effect.Deep.continue k (Some (thread st i t f)))
-    | Where t, Some _ when st.kind <> Tape && held st t ->
-        Some (fun k -> Effect.Deep.continue k (form_of st t))
+    (* A trace holds a total's running value where one around it lies, at its
+       own where it threads one; a jit's program, kept for later calls, holds it
+       where none does. *)
+    | Where t, Some _ when st.kind <> Tape ->
+        Some
+          (fun k ->
+            Effect.Deep.continue k
+              (match Program.where t with
+              | Nowhere when st.kind = Jit -> At None
+              | Nowhere -> Nowhere
+              | At _ as a ->
+                  if held st t then At (Some (placement_of st t)) else a))
     | Replace (t, x), Some i when st.kind <> Tape ->
         Some
           (fun k ->

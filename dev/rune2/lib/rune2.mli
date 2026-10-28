@@ -699,8 +699,9 @@ val iterate :
     stopped lane's zero cotangent times its donor's partial derivative, which
     turns an infinite gradient into NaN. Each lane's additions depend on its
     values, so a {!Total.collect} around the map must hold a running value on
-    their set. Where [until] does not depend on the lanes, they stop together.
-    The error at [max] names the first lane still running, as in
+    their set; with no [collect] open, they do nothing. Where [until] does not
+    depend on the lanes, they stop together. The error at [max] names the first
+    lane still running, as in
     ["Rune.iterate: until is still false after max = 50 steps, in lane 3"].
 
     Raises [Invalid_argument] if [max < 0]
