@@ -94,18 +94,7 @@ let any_cases =
       Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
         pp_view x.view pp_view y.view Expr.pp e)
 
-let rec extreme : Expr.t -> bool = function
-  | K (Least | Greatest) -> true
-  | X | Y | K _ -> false
-  | Un (_, e) -> extreme e
-  | Bin (_, e, e') -> extreme e || extreme e'
-
 let law_any (Any_case (dt, s, xo, yo, e)) =
-  (* Left out until fixed: a compiled [square (mul c y)] at a 32-bit integer
-     dtype whose [c * c] wraps to 0, as [c = 65536] or [min_int], gives
-     garbage. *)
-  let integer = Nx.Dtype.is Signed dt || Nx.Dtype.is Unsigned dt in
-  assume (not (Nx.Dtype.bits dt = 32 && integer && extreme e));
   let x = make dt s xo and y = make dt s yo in
   let kind : type v. v Nx.Dtype.kind -> string = function
     | Float ->
@@ -258,6 +247,48 @@ let law_bitcast (Bitcast_case (src, dt, view, offset, seed)) =
   let y = Rune.jit' (Nx.bitcast dt) x in
   equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
   equal codes_t (raw (Nx.bitcast dt x)) (raw y)
+
+(* [square (c * y)] at each integer width where [c * c] wraps to 0, [c] being
+   2^(bits / 2) or the greatest power of two, the least signed value: every
+   square is 0, the value eager gives, on each call. *)
+let test_square_wraps () =
+  let ints x =
+    Array.to_list (Array.map Int64.to_int (Nx.to_array (Nx.cast Nx.int64 x)))
+  in
+  let check (Nx.Dtype.Any dt) =
+    let bits = Nx.Dtype.bits dt in
+    let power k = Int64.shift_left 1L k in
+    List.iter
+      (fun c ->
+        let name = Format.asprintf "%a times %Ld" Nx.pp_dtype dt c in
+        let y = Nx.cast dt (Nx.arange Nx.int64 0 8 1) in
+        let f y = Nx.square (Nx.mul (Nx.cast dt (Nx.scalar Nx.int64 c)) y) in
+        let expected = ints (f y) in
+        equal ~msg:name (list int) (List.init 8 (fun _ -> 0)) expected;
+        for _ = 1 to 3 do
+          equal ~msg:name (list int) expected (ints (Rune.jit' f y))
+        done)
+      [ power (bits / 2); power (bits - 1) ]
+  in
+  List.iter check
+    Nx.Dtype.
+      [
+        Any Nx.int8; Any Nx.int16; Any Nx.int32; Any Nx.int64; Any Nx.uint8;
+        Any Nx.uint16; Any Nx.uint32; Any Nx.uint64;
+      ];
+  let direct (type s) name (dt : (int32, s) Nx.dtype) c =
+    let y = Nx.arange dt 0 8 1 in
+    let f y = Nx.square (Nx.mul (Nx.scalar dt c) y) in
+    for _ = 1 to 3 do
+      equal ~msg:name (list int)
+        (List.init 8 (fun _ -> 0))
+        (ints (Rune.jit' f y))
+    done
+  in
+  direct "int32 65536" Nx.int32 65536l;
+  direct "int32 min_int" Nx.int32 Int32.min_int;
+  direct "uint32 65536" Nx.uint32 65536l;
+  direct "uint32 2^31" Nx.uint32 Int32.min_int
 
 (* Each nx.quant format's decode compiles whole and gives eager's values. *)
 let test_quant_decodes () =
@@ -2623,6 +2654,8 @@ let () =
              test "special values are exact" test_specials;
              test "integer constants keep their bits and wrap"
                test_int_constants;
+             test "a square of a product whose constant squares to 0"
+               test_square_wraps;
            ];
          group "jit"
            [

@@ -1888,6 +1888,24 @@ let fold_const_alu a =
         Some (consts ~dtype:(dtype a) (List.map alu lanes))
       else None
 
+(* [c1 op c2] for the operation [f] of a committed integer type, which reads
+   a weak constant at its width: a weak result past that width is wrapped to
+   it, as on int32 (x * 65536) * 65536 is x * 0, not x * 2^32. *)
+let wrap_folded f c1 c2 =
+  let dt = dtype f and c = alu c1 (op f) [ c2 ] in
+  let weak u = op u = Op.Const && List.mem (dtype u) Dtype.weaks in
+  if not (List.mem dt Dtype.ints && weak c1 && weak c2) then c
+  else
+    match (value c1, value c2) with
+    | (`Int _ as v1), (`Int _ as v2) -> (
+        match exec_alu (op f) Dtype.Weak_int [ v1; v2 ] with
+        | `Int _ as v ->
+            let w = Dtype.truncate dt v in
+            if Dtype.equal_const w v then c
+            else const_like c1 (w :> Dtype.const)
+        | _ -> c)
+    | _ -> c
+
 (* the B with q == B//div and B%div == base%div, or None. only such congruence
    is needed to recombine, and canonicalization moves consts freely: the
    quotient may be merged ((x//c + a)//div -> (x + a*c)//(c*div) for div>0) and
@@ -2688,8 +2706,8 @@ let symbolic =
                       ccast c (Ops.dtype f)
                     else c
                   in
-                  let c = alu (at_width (m "c1")) o [ at_width (m "c2") ] in
-                  Some (alu (m "x") o [ c ])))
+                  let c1 = at_width (m "c1") and c2 = at_width (m "c2") in
+                  Some (alu (m "x") o [ wrap_folded f c1 c2 ])))
             (Op.Set.to_list Op.Set.associative)
         @ [
             (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)

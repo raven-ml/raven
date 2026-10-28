@@ -38,12 +38,14 @@ val threefry2x32 : Ops.t -> Ops.t -> Ops.t
 
 val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
 (** [simplifying_patterns ops] lowers, for a target with the operations [ops]:
-    - a floor division ({!Op.Floordiv}) of an integer by a power of two to a
-      right shift if [ops] has {!Op.Shr}, and any other to a truncating division
-      ({!Op.Cdiv}), corrected where the operands' signs can differ;
-    - a floor remainder ({!Op.Floormod}) of an integer by a power of two to a
-      mask if [ops] has {!Op.And}, and any other to a truncating remainder
-      ({!Op.Cmod}), corrected where the operands' signs can differ;
+    - a floor division ({!Op.Floordiv}) of an integer by a power of two, read
+      in the integer's type, to a right shift if [ops] has {!Op.Shr}, and any
+      other to a truncating division ({!Op.Cdiv}), corrected where the
+      operands' signs can differ;
+    - a floor remainder ({!Op.Floormod}) of an integer by a power of two, read
+      in the integer's type, to a mask if [ops] has {!Op.And}, and any other to
+      a truncating remainder ({!Op.Cmod}), corrected where the operands' signs
+      can differ;
     - {!Op.Threefry} to {!threefry2x32} if [ops] lacks it. *)
 
 val late_patterns :
@@ -56,12 +58,14 @@ val late_patterns :
       {!Op.Cmplt};
     - the conjunction of two negated booleans to the negated disjunction if
       [ops] has {!Op.Or};
-    - a multiplication of an integer by a power of two to a left shift if [ops]
-      has {!Op.Shl};
+    - a multiplication of an integer by a power of two, read modulo 2 to the
+      integer's width, to a left shift if [ops] has {!Op.Shl}: the shift is
+      below the width, as on int32 [x * 2^32] is [x * 0];
     - if [ops] has {!Op.Shr}, a truncating division of an integer by a power of
-      two to a right shift, rounding negative dividends up first; and, unless
-      [disable_fast_idiv], a truncating division or remainder by any other
-      constant with {!fast_idiv} where it applies;
+      two, read in the integer's type, to a right shift, rounding negative
+      dividends up first; and, unless [disable_fast_idiv], a truncating
+      division or remainder by any other constant with {!fast_idiv} where it
+      applies;
     - multiplications by [-1] to {!Op.Neg}, and additions of a negation to
       {!Op.Sub}, if [ops] has them;
     - if [ops] has {!Op.Cmplt}, negated comparisons of signed integers with

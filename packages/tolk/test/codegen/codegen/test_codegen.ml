@@ -2649,6 +2649,60 @@ let invalid_lanes =
             (List.assoc 0 (Run.on_host prg [ (1, x) ])));
     ]
 
+(* Squares that wrap *)
+
+(* The kernel that stores into slot 0 [(x * c) * (x * c)] of element [i] of slot
+   1, over 8 elements of [dtype], with [opts]. *)
+let square_kernel ~opts dtype c =
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int 8 ] 0 dtype in
+  let x = Call.param ~shape:[ Int 8 ] 1 dtype in
+  let i = Ops.range (Int 8) [ 0 ] in
+  let c = Ops.const ~dtype (`Int c) in
+  let p = Ops.index x [ i ] * c in
+  Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (p * p)) [ i ] ]
+
+(* [c * c] is a multiple of [2^bits] where [c] is [2^(bits / 2)] or the
+   greatest power of two, so each square wraps to 0, a lane at a time or 8
+   lanes at once. *)
+let square_wraps () =
+  let upcast =
+    Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
+  in
+  let power k = Bigint.shift_left Bigint.one k in
+  List.iter
+    (fun dtype ->
+      let bits = Dtype.bitsize dtype in
+      let top =
+        match Dtype.min dtype with
+        | `Int z when Bigint.sign z < 0 -> z
+        | _ -> power (bits - 1)
+      in
+      List.iter
+        (fun (c, opts) ->
+          let k = square_kernel ~opts dtype c in
+          let prg = Codegen.to_program k (Lazy.force host) in
+          let x = Array.init 8 (fun j -> `Int (Bigint.of_int j)) in
+          let msg =
+            Format.asprintf "%a times %s, %d opts" Dtype.pp dtype
+              (Bigint.to_string c) (List.length opts)
+          in
+          equal ~msg (array Dtypes.value)
+            (Array.make 8 (`Int Bigint.zero))
+            (List.assoc 0 (Run.on_host prg [ (1, x) ])))
+        (List.concat_map
+           (fun c -> [ (c, []); (c, [ upcast ]) ])
+           [ power (bits / 2); top ]))
+    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+
+let square_wrapping =
+  group "squares that wrap"
+    [
+      test "a square of a product whose constant squares to 0 is 0"
+        square_wraps;
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -3110,6 +3164,7 @@ let () =
          signed_zeros;
          nan_constants;
          invalid_lanes;
+         square_wrapping;
          gated_stores;
          divisions;
          range_shrinking;

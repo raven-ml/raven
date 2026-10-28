@@ -741,10 +741,101 @@ let lowered_divisions =
             values)
         divisors)
 
+(* A weak constant on a committed integer is read at its width: [x * 2^k]
+   shifts [x] by [k] only where [2^k] is that power of two at the width, which
+   is below it, and keeps the value wrapping gives. *)
+let powers_at_width =
+  test "a product by a power of two shifts by less than its width" (fun () ->
+      let shift_counts u =
+        List.filter_map
+          (fun n ->
+            if Ops.op n <> Shl then None
+            else
+              match Ops.vmax (Ops.nth n 1) with
+              | `Int k -> Some (Bigint.to_int k)
+              | _ -> None)
+          (Ops.toposort ~calls:Enter u)
+      in
+      List.iter
+        (fun dtype ->
+          let bits = Dtype.bitsize dtype in
+          let x = v ~dtype "x" 0 7 in
+          List.iter
+            (fun k ->
+              let c = Ops.const (`Int Bigint.(shift_left one k)) in
+              let e = Ops.alu x Mul [ c ] in
+              let r = late_with (ops [ Shl ]) e in
+              let msg = Format.asprintf "%a times 2^%d" Dtype.pp dtype k in
+              List.iter
+                (fun n -> less ~msg int ~than:bits n)
+                (shift_counts r);
+              List.iter
+                (fun n ->
+                  let vars = [ ("x", i n) ] in
+                  equal ~msg const (at vars e) (at vars r))
+                [ 0; 1; 7 ])
+            [ 1; bits - 1; bits; bits + 3 ])
+        Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
+
+(* A quotient or remainder reads a weak divisor in its operand's type: on
+   int32, 2^31 is the least int32, and no shift computes a division by it.
+   Where the divisor is a power of two in the type, the lowering keeps the
+   values. *)
+let quotients_at_width =
+  test "a quotient by a power of two reads it in its operand's type" (fun () ->
+      let shr_and = ops [ Shr; And ] in
+      List.iter
+        (fun dtype ->
+          let bits = Dtype.bitsize dtype in
+          let lo, hi =
+            match (Dtype.min dtype, Dtype.max dtype) with
+            | `Int lo, `Int hi -> (lo, hi)
+            | _ -> failwith "an integer type has integer bounds"
+          in
+          let x = var ~dtype "x" lo hi in
+          List.iter
+            (fun k ->
+              let c = Ops.const (`Int Bigint.(shift_left one k)) in
+              let msg = Format.asprintf "%a by 2^%d" Dtype.pp dtype k in
+              let points =
+                List.filter
+                  (fun n -> Bigint.(geq n lo))
+                  [ lo; Bigint.minus_one; Bigint.zero; Bigint.one; hi ]
+              in
+              let power = Dtype.is_unsigned dtype || k < bits - 1 in
+              List.iter
+                (fun e ->
+                  let r = late_with shr_and (simplify_with shr_and e) in
+                  let shifts =
+                    List.exists
+                      (fun n -> Ops.op n = Shr)
+                      (Ops.toposort ~calls:Enter r)
+                  in
+                  if not power then is_false ~msg shifts
+                  else
+                    List.iter
+                      (fun n ->
+                        let vars = [ ("x", `Int n) ] in
+                        equal ~msg const (at vars e) (at vars r))
+                      points)
+                [
+                  Ops.alu x Floordiv [ c ];
+                  Ops.alu x Floormod [ c ];
+                  Ops.alu x Cdiv [ c ];
+                ])
+            [ 1; bits - 2; bits - 1 ])
+        Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
+
 let late =
   group "late_patterns"
     (late_graphs
-    @ [ truncations_keep_values; late_rules_keep_values; lowered_divisions ])
+    @ [
+        truncations_keep_values;
+        late_rules_keep_values;
+        lowered_divisions;
+        powers_at_width;
+        quotients_at_width;
+      ])
 
 (* Constants other than integers *)
 

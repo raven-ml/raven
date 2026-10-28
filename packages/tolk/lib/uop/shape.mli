@@ -448,7 +448,9 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       its type; an integer selection that computes a maximum,
       [where (a < b) b a] with [a] or [b] a constant, is {!Ops.maximum};
     - {b constants}: two applications of an associative operation to constants
-      fold the constants together, sums, products and maxima for integers only;
+      fold the constants together, sums, products and maxima for integers only,
+      a weak result on a committed integer wrapped to its width, as
+      [(x * 65536) * 65536] on int32 is [x * 0];
       [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where [c1 * c2]
       does not wrap ({!Ops.exact}); constants move to the end of integer sums
       and products;

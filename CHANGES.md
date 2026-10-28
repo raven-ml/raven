@@ -1551,6 +1551,10 @@ thread.
 
 ### Tolk (new)
 
+- A compiled integer product or quotient by a power of two shifts only by less
+  than its type's width, and folded constants wrap to it. On int32,
+  `(y * 65536) * (y * 65536)` was a shift by 32, which C leaves undefined: its
+  values varied by run where they are 0.
 - A compiled integer maximum of products moves a factor out of the maximum only
   where no product wraps: the uint32 maximum of a running sum over the greatest
   value twice was one less than that value.

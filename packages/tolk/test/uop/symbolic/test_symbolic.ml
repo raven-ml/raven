@@ -909,6 +909,29 @@ let wrapping =
           let red = Ops.reduce Ops.O.(Ops.cast r Int8 * p * q) Max [ r ] in
           keeps_machine_value red
             [ [ ("p", i 2); ("q", i 3) ]; [ ("p", i 12); ("q", i 12) ] ]);
+      (* c * c wraps to 0 at each width where c is 2^(bits / 2) or the
+         greatest power of two, the least signed value: the square is 0. *)
+      test "a square of a product folds its constants at their width"
+        (fun () ->
+          List.iter
+            (fun dtype ->
+              let bits = Dtype.bitsize dtype in
+              let w = var ~dtype "w" 0 7 in
+              let power k = Bigint.shift_left Bigint.one k in
+              let top =
+                match Dtype.min dtype with
+                | `Int z when Bigint.sign z < 0 -> z
+                | _ -> power (bits - 1)
+              in
+              List.iter
+                (fun c ->
+                  let c = Ops.const ~dtype (`Int c) in
+                  let u = Ops.O.(w * c * (w * c)) in
+                  keeps_machine_value u
+                    (List.map (fun n -> [ ("w", i n) ]) [ 0; 1; 7 ]);
+                  equal uop (Ops.const ~dtype (`Int Bigint.zero)) (sym u))
+                [ power (bits / 2); top ])
+            Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]);
       test "(x // c1) // c2 stays where c1 * c2 wraps" (fun () ->
           let w =
             Ops.variable ~dtype:Int32 "w" (Dtype.min Int32) (Dtype.max Int32)

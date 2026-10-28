@@ -116,17 +116,36 @@ let floormod_to_mod a b =
           b
           (const_like b (`Int Bigint.zero)))
 
-(* The exponent of a constant that is 2^i, 0 <= i < 64. *)
-let power_of_two c =
+(* The value of the integer constant [c] as an operation on [x] reads it: at
+   [x]'s width, as a product does, [`Product], or as a quotient or remainder
+   does, [`Quotient]. A product reads it modulo 2^bits, so on int32 2^31 is
+   2^31 and 2^32 is 0, and a quotient in [x]'s type, where 2^31 is the least
+   int32. A weak [x] reads it whole. *)
+let at_width reading x c =
+  let dt = dtype x in
   match value c with
-  | `Int z when Bigint.sign z > 0 && Bigint.popcount z = 1 && Bigint.numbits z <= 64 ->
+  | `Int z when List.mem dt Dtype.weaks -> Some z
+  | `Int z -> (
+      match (Dtype.truncate dt (`Int z), reading) with
+      | `Int w, `Product when Bigint.sign w < 0 ->
+          Some Bigint.(w + shift_left one (Dtype.bitsize dt))
+      | `Int w, _ -> Some w
+      | _ -> None)
+  | _ -> None
+
+(* The exponent of a constant that is 2^i, 0 <= i < 64, as an operation on [x]
+   reads it ({!at_width}): below [x]'s width, so that no shift by the width or
+   more, which C leaves undefined, computes it. *)
+let power_of_two reading x c =
+  match at_width reading x c with
+  | Some z
+    when Bigint.sign z > 0 && Bigint.popcount z = 1 && Bigint.numbits z <= 64 ->
       Some (Bigint.numbits z - 1)
   | _ -> None
 
-(* The exponent of a constant that is 2^i, 1 <= i < 64: a shift by 0 is left as
-   it is. *)
-let shift_of c =
-  match power_of_two c with Some v when v > 0 -> Some v | _ -> None
+(* As {!power_of_two}, 1 <= i: a shift by 0 is left as it is. *)
+let shift_of reading x c =
+  match power_of_two reading x c with Some v when v > 0 -> Some v | _ -> None
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
@@ -143,7 +162,9 @@ let simplifying_patterns ops =
              rule
                Upat.O.(x_int // c)
                (fun m ->
-                 Option.map (fun v -> O.(m "x" lsr int v)) (shift_of (m "c")));
+                 Option.map
+                   (fun v -> O.(m "x" lsr int v))
+                   (shift_of `Quotient (m "x") (m "c")));
            ];
          [
            rule
@@ -157,7 +178,7 @@ let simplifying_patterns ops =
                (fun m ->
                  Option.map
                    (fun v -> O.(m "x" land z_const Bigint.(pred (shift_left one v))))
-                   (power_of_two (m "c")));
+                   (power_of_two `Quotient (m "x") (m "c")));
            ];
          [
            rule Upat.O.(a % b) (fun m -> Some (floormod_to_mod (m "a") (m "b")));
@@ -203,7 +224,9 @@ let late_patterns ~disable_fast_idiv ops =
              rule
                Upat.O.(x_int * c)
                (fun m ->
-                 Option.map (fun v -> O.(m "x" lsl int v)) (shift_of (m "c")));
+                 Option.map
+                   (fun v -> O.(m "x" lsl int v))
+                   (shift_of `Product (m "x") (m "c")));
            ];
          when_ ops Shr
            (List.concat
@@ -214,7 +237,7 @@ let late_patterns ~disable_fast_idiv ops =
                     (fun m ->
                       Option.map
                         (fun v -> O.(m "x" lsr int v))
-                        (shift_of (m "c")));
+                        (shift_of `Quotient (m "x") (m "c")));
                   rule (cdiv x_int c) (fun m ->
                       Option.map
                         (fun v ->
@@ -226,7 +249,7 @@ let late_patterns ~disable_fast_idiv ops =
                             else l
                           in
                           O.((x + where l (m "c" - int 1) (int 0)) lsr int v))
-                        (shift_of (m "c")));
+                        (shift_of `Quotient (m "x") (m "c")));
                 ];
                 (if disable_fast_idiv then []
                  else

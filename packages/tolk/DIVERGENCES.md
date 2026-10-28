@@ -4176,3 +4176,39 @@ submission, and a range a loop of rig's program (D146).
   `JITBEAM=3 › a width given and JITBEAM's alike compile alike`; and the
   `Tolk.Setting` suite: `shaping › under bindings is shaping in their
   context, and binds nothing`.
+
+## D161. A folded weak constant wraps, and a power of two is read at its width
+
+- **tinygrad:** `uop/symbolic.py:278-280` (two stage ALU folding), which
+  folds `c1 op c2` as weak constants, unbounded, under an operation on a
+  committed integer; `codegen/decomp/op.py:64-96` (`powers_of_two`), which
+  turns a product, quotient or remainder by `2^i`, `i < 64`, into a shift or
+  a mask by the constant's exact value, where the operation reads a weak
+  constant at its operand's width. On int32, `(y * 65536) * (y * 65536)`
+  becomes `(y * y) << 32`, a shift by the full width, which C leaves
+  undefined: clang gives poison. Repro: `y = Tensor.arange(8,
+  dtype=dtypes.int32).contiguous().realize(); p = y * c; (p * p).tolist()`
+  renders `<< 32` and `<< 36` on the CPU for `c = 65536`, and for `c =
+  -2**31` renders `<< 62` and the literal `73786976294838206464`, which clang
+  refuses.
+- **tolk:** `lib/uop/shape.ml:1891-1907` (`wrap_folded`) and `2709-2710`;
+  `lib/codegen/decomp/decomp_op.ml:119-148` (`at_width`, `power_of_two`,
+  `shift_of`); `test/gen/tinygrad.patch`, which makes tinygrad's rules the
+  same before the goldens are generated.
+- **Differs:** a weak result of folding two weak constants under an
+  operation on a committed integer, past its width, is wrapped to it, as the
+  operation reads it: `(x * 65536) * 65536` on int32 is `x * 0`. A product by
+  a power of two reads the constant modulo `2^bits`, and a quotient or
+  remainder reads it in the operand's type, before it becomes a shift or a
+  mask: no shift reaches the width, and on int32 a division by `2^31`, the
+  least int32, is no shift.
+- **Reason:** (b). rune2's compiled `Nx.square (Nx.mul c y)` at int32 and
+  uint32, with `c` 65536 or the least int32, gave values that varied by run
+  where eager gives 0: rune2's `jit gives eager's bits for exact functions at
+  every dtype` left such functions out.
+- **Pinned by:** the `Symbolic` suite: `integers wrap › a square of a
+  product folds its constants at their width`; the `Decomp_op` suite:
+  `late_patterns › a product by a power of two shifts by less than its
+  width` and `› a quotient by a power of two reads it in its operand's
+  type`; the `Codegen` suite: `squares that wrap › a square of a product
+  whose constant squares to 0 is 0`.
