@@ -29,7 +29,7 @@ quill
 
 This launches an interactive toplevel. Type OCaml expressions, press
 Enter to evaluate. All Raven packages are pre-loaded — try
-`Nx.create Float32 [|3|] [|1.; 2.; 3.|]` right away.
+`Nx.create Nx.float32 [|3|] [|1.; 2.; 3.|]` right away.
 
 | Key | Action |
 | --- | --- |

@@ -57,7 +57,7 @@ leaves — no special layer type:
 <!-- quill:cell id="c_mnist_model_code" -->
 ```ocaml
 module Model = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -84,9 +84,9 @@ moments) is a record shaped like the parameters themselves.
 let batch_size = 64
 
 let params =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  Model.{ l1 = Linear.init ~inputs:784 ~outputs:128;
-          l2 = Linear.init ~inputs:128 ~outputs:10 }
+  let keys = Nx.Rng.split (Nx.Rng.key 42) in
+  Model.{ l1 = Linear.init ~key:keys.(0) ~inputs:784 ~outputs:128;
+          l2 = Linear.init ~key:keys.(1) ~inputs:128 ~outputs:10 }
 
 let st = ref (params, Vega.adam_init model params)
 ```
