@@ -227,6 +227,29 @@ let signalled a =
 
 let quieted a = map_nans (fun frac v -> Int64.logor v (quiet_bit frac)) a
 
+let signalling (type v s) (dt : (v, s) Nx_array.Dtype.t) s (data : v array) =
+  Nx.Repr.of_array Nx.Host.v
+    (signalled (Nx_array.of_array dt (Iarray.of_array s) data))
+
+let signals (type v s) (dt : (v, s) Nx_array.Dtype.t) (data : v array) =
+  match Nx_array.Dtype.kind dt with
+  | (Float | Complex) when Nx_array.Dtype.bits dt >= 8 ->
+      let bytes a = Nx_array.to_array (Option.get (Nx_array.bitcast Uint8 a)) in
+      let a = signalled (Nx_array.of_array dt [| Array.length data |] data) in
+      bytes a <> bytes (quieted a)
+  | _ -> false
+
+(* Allocation *)
+
+let words f =
+  ignore (f ());
+  let n = 1000 in
+  let before = Gc.minor_words () in
+  for _ = 1 to n do
+    ignore (Sys.opaque_identity (f ()))
+  done;
+  (Gc.minor_words () -. before) /. Float.of_int n
+
 (* Witnesses and indices *)
 
 let pp_ints ppf a =

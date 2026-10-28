@@ -58,6 +58,21 @@ val quieted : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
     operation returns it: its quiet bit set, its sign and the rest of its
     payload kept. float8_e4m3fn's NaNs are quiet already. *)
 
+val signalling :
+  ('v, 's) Nx_array.Dtype.t -> int array -> 'v array -> ('v, 's, Nx.host) Nx.t
+(** [signalling dt s data] is the host value of shape [s] holding [data] in
+    C order, {!signalled}. *)
+
+val signals : ('v, 's) Nx_array.Dtype.t -> 'v array -> bool
+(** [signals dt data] is [true] iff [data] holds a NaN that {!signalled}
+    makes signalling. *)
+
+(** {1:allocation Allocation} *)
+
+val words : (unit -> 'a) -> float
+(** [words f] is the minor words one call of [f] allocates, the mean over a
+    thousand calls after a first uncounted one. *)
+
 (** {1:witnesses Witnesses and indices} *)
 
 val pp_ints : Format.formatter -> int array -> unit
