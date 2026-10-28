@@ -5,7 +5,7 @@
   test_jit
   test_constructs
   test_loops
-  test_loop_rules
+  test_scan
   test_iterate
   test_root
   test_switch
@@ -21,7 +21,7 @@
   test_jit
   test_constructs
   test_loops
-  test_loop_rules
+  test_scan
   test_iterate
   test_root
   test_switch
