@@ -352,8 +352,8 @@ val full : ('v, 's) dtype -> int array -> 'v -> ('v, 's, host) t
 (** [full dt s v] is the host value of shape [s] whose every element is [v], a
     float stored as {!Dtype.of_float} says.
 
-    Raises [Invalid_argument] if an extent is negative or [v] is an [int] outside
-    [dt]'s range. *)
+    Raises [Invalid_argument] if an extent is negative or [v] is an [int]
+    outside [dt]'s range. *)
 
 val full_at :
   'd Placement.t -> ('v, 's) dtype -> int array -> 'v -> ('v, 's, 'd) t
@@ -2133,7 +2133,8 @@ val cast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     A float rounds once to the nearest value of a float format, ties to even.
     Past the format's largest finite value it is an infinity in [float64],
     [float32], [float16], [bfloat16] and [float8_e5m2], and saturates in the
-    formats with none, [float8_e4m3fn] and [float4_e2m1fn]. NaN stays NaN, but in [float4_e2m1fn], where it is [+0.]. Into an
+    formats with none, [float8_e4m3fn] and [float4_e2m1fn]. NaN stays NaN,
+    but in [float4_e2m1fn], where it is [+0.]. Into an
     integer, a float truncates toward zero and saturates to the range, NaN
     giving [0]; an integer is kept modulo the width; a boolean is [0] or [1].
     Into a boolean, any element is [true] where it is not zero, NaN included. An
@@ -2273,9 +2274,10 @@ val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val dot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [dot a b] is the sum of the products of [a]'s last axis with [b]'s only
-    axis, for a 1-d [b], or its second to last otherwise. The result's axes are [a]'s
-    others, then [b]'s: two vectors give their 0-d inner product, two matrices
-    their product. It does not broadcast, and accumulates as {!matmul}.
+    axis, for a 1-d [b], or its second to last otherwise. The result's axes
+    are [a]'s others, then [b]'s: two vectors give their 0-d inner product,
+    two matrices their product. It does not broadcast, and accumulates as
+    {!matmul}.
 
     Raises [Invalid_argument] if an operand is 0-d, the summed extents differ,
     or the dtype is a boolean. *)
@@ -2382,17 +2384,17 @@ val tensordot :
   ('v, 's, 'd) t
 (** [tensordot ~axes:(la, lb) a b] is the sum of the products of [a] and [b]
     over the axes [la] of [a], paired in order with the axes [lb] of [b]
-    (default [a]'s last two with [b]'s first two). The result's axes are [a]'s others,
-    then [b]'s, each in order: [~axes:([], [])] gives the outer product. It
-    accumulates as {!matmul}.
+    (default [a]'s last two with [b]'s first two). The result's axes are
+    [a]'s others, then [b]'s, each in order: [~axes:([], [])] gives the
+    outer product. It accumulates as {!matmul}.
 
     Raises [Invalid_argument] if [la] and [lb] differ in length, an axis is
     not one of its operand's or repeats, or paired extents differ. *)
 
 val inner : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [inner a b] is the sum of the products of [a]'s last axis with [b]'s
-    last axis; the result's axes are [a]'s others, then [b]'s. A 0-d operand gives
-    {!mul}[ a b]. It accumulates as {!matmul}.
+    last axis; the result's axes are [a]'s others, then [b]'s. A 0-d operand
+    gives {!mul}[ a b]. It accumulates as {!matmul}.
 
     Raises [Invalid_argument] if the last extents differ. *)
 
@@ -2402,8 +2404,8 @@ val outer : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val vecdot : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [vecdot ~axis a b] is the sum of the products of [conjugate a] and [b]
-    along each operand's axis [axis] (default [-1]); their other axes broadcast to the
-    result's shape. It accumulates as {!matmul}.
+    along each operand's axis [axis] (default [-1]); their other axes
+    broadcast to the result's shape. It accumulates as {!matmul}.
 
     Raises [Invalid_argument] if [axis] is not an axis of both, their extents
     along it differ, or their other axes do not broadcast. *)
