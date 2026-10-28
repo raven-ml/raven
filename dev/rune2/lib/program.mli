@@ -3,32 +3,51 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Programs: functions traced once into equations, evaluated again.
+(** Programs, which record a traced function, and the constructs that carry
+    them.
 
     A {e program} has parameters, equations and outputs. Its {e variables} are
-    the traced values of the tracer that made it ({!Trace}), each numbered by
-    its payload: the parameters first, then each equation's results. An equation
-    is an [Nx.Prim] operation over variables and constants, or a {e construct}
-    over them: a call that a transformation around it may answer, such as a loop
-    carrying its step's program. A constant is a value the tracer received and
-    did not own: an array, or a donated handle read as its arrays.
+    the values a tracer ({!Trace}) made while it traced, each numbered by its
+    payload ({!Var}) below the program's [slots]. A traced program numbers them
+    from [0] in the order the tracer met them, the function's arguments first. A
+    program made from another, as by {!widen}, may number them in another order.
+    An equation applies an [Nx.Prim] operation or a construct to variables and
+    {e constants}, the values no [Nx.Prim] interpretation traces: an array, or a
+    donated handle ([Nx.donate]) read as its arrays. A {e construct} is an
+    operation that a transformation answers by a rule of its own, such as a
+    loop, which carries its step's program. The docs below describe a program as
+    {e over} its parameters and {e to} its outputs, each listed in order.
 
     {!eval} issues each equation again, an operation through [Nx.Prim.eval] and
-    a construct through {!perform}, under whatever interpretations are around
-    the call. A program {e threads} each total it adds to: its last parameters
-    are the totals' running values in, which its additions add to in the order
-    they were made, and its last outputs their running values out. Its construct
-    feeds it the running values of the collects around its call and hands them
-    the ends ({!run}), so that evaluating a program adds nothing.
+    a construct through {!perform}, under the interpretations around the call. A
+    total's {e running value} is its start plus the additions made to it so far
+    within the innermost collect ({!Rune2.Total.collect}) or tracer that holds
+    it, where a collect starts from its zero and a tracer from a parameter. A
+    program {e threads} each total it adds to: its last parameters are the
+    totals' running values in, its additions add to them in the order they were
+    made, and its last outputs are the {e running values out}. A construct whose
+    programs thread totals has one {e sum} per total and shape they thread, the
+    chain of that total's additions in the order they are made ({!sums}). The
+    construct takes each sum's start from the collect or tracer around its call
+    and hands it back the sum's end ({!run}), so evaluating a program adds to no
+    total by itself.
 
-    Constructs are performed as one effect. A handler of a transformation or a
-    tracer answers the constructs over its own values; one no handler answers
-    runs as its {e default}: a loop evaluates its programs, a call and a remat
-    their body, [Detach] is its operand, an addition does nothing, and [Lanes]
-    and [Lane_index] raise. The default runs where the construct was performed,
-    inside every interpretation around that point. *)
+    A construct is performed as one effect ({!Construct}). The innermost handler
+    that answers it gives its results: a tracer's handler, a map, forward mode,
+    or for an [Add] a collect of its total. One that no handler answers, or that
+    a handler discontinues with {!Evaluate}, runs its {e default} where it was
+    performed, inside every interpretation around that point. Each constructor
+    states its default.
 
-(** {1:values Values} *)
+    A program is never changed once made, and any domain may evaluate it. A
+    call's {!site} keeps the programs transformations derive from it, one per
+    derivation, which the calls of every domain share ({!derive}). *)
+
+(** {1:values Values}
+
+    A program's variables and constants are nx values of any dtype on any device
+    set, held as {!value}s. A {!form} is the dtype, layout and placement a
+    tracer records for one. *)
 
 type value =
   | V : ('v, 's, 'd) Nx.t -> value  (** A value of any dtype and set. *)
@@ -54,12 +73,15 @@ val cast_at : ('v, 's, 'd) Nx.Prim.form -> value -> ('v, 's, 'd) Nx.t
 (** [cast_at f v] is {!cast} at [f]'s dtype and set. *)
 
 val like : ('v, 's, 'd) Nx.t -> value -> ('v, 's, 'd) Nx.t
-(** [like x v] is [v] at [x]'s type: {!cast} at [x]'s dtype and set. *)
+(** [like x v] is {!cast} of [v] at [x]'s dtype and set. *)
 
 val same : value -> value -> bool
 (** [same u v] is [true] iff [u] and [v] are one value. *)
 
-(** {1:names Names} *)
+(** {1:names Names}
+
+    A map's axis and a total are names. Each is fresh when made, on any domain,
+    and is compared by identity. *)
 
 type axis
 (** The type for names of maps. *)
@@ -71,7 +93,9 @@ val same_axis : axis -> axis -> bool
 (** [same_axis a b] is [true] iff [a] and [b] are one name. *)
 
 type ('v, 's, 'd) total
-(** The type for totals of [('v, 's, 'd) Nx.t] values. *)
+(** The type for totals of [('v, 's, 'd) Nx.t] values. A {e total} names a sum
+    that additions ({!add_to}) accumulate within a collect
+    ({!Rune2.Total.collect}). *)
 
 val total : unit -> ('v, 's, 'd) total
 (** [total ()] is a fresh total. *)
@@ -85,7 +109,10 @@ val same_total :
 val total_id : ('v, 's, 'd) total -> int
 (** [total_id t] is a number no other total has. *)
 
-(** {1:programs Programs} *)
+(** {1:programs Programs}
+
+    A program's equations are in the order they were issued, and each reads only
+    parameters, constants and earlier equations' results. *)
 
 type ('v, 's, 'd) Nx.Prim.payload +=
   | Var : int -> ('v, 's, 'd) Nx.Prim.payload  (** A variable's number. *)
@@ -101,7 +128,7 @@ type t = private {
   owner : Nx.Prim.interpretation;  (** The tracer whose variables it has. *)
   params : int array;
       (** The variables its arguments bind, in order, then each total's running
-          value in. *)
+          value in. A traced program's arguments end with its captures. *)
   eqns : eqn array;  (** In the order they are issued. *)
   outputs : value array;
       (** Variables or constants, each total's running value out last. *)
@@ -111,106 +138,127 @@ type t = private {
 
 and eqn =
   | Op : { by : string; op : 'r Nx.Prim.t; base : int } -> eqn
-      (** [op], applied by [by], its result at position [k] the variable
-          [base + k]. *)
+      (** [op], applied by the function named [by] in messages. Its result [k]
+          is the variable [base + k]. *)
   | Do : { c : construct; base : int } -> eqn
-      (** [c], its result [k] the variable [base + k]. *)
+      (** [c]. Its result [k] is the variable [base + k]. *)
 
 and construct =
   | Detach : ('v, 's, 'd) Nx.t -> construct
-      (** The operand, with a zero derivative; one result. *)
+      (** The operand, with a zero derivative; one result. Its default is the
+          operand. *)
   | Lanes : axis * ('v, 's, 'd) Nx.t -> construct
       (** Every lane's operand stacked along a new axis 0, in the map named by
-          the axis; one result. *)
+          the axis; one result. The map answers it where no tracer inside the
+          map receives it. Its default raises [Invalid_argument]. *)
   | Lane_index : axis * 'd Nx.Placement.t -> construct
-      (** The calling lane's index in the map named by the axis: one 0-d [int32]
-          result at the placement, which must cut no axis. *)
+      (** The calling lane's index in the map named by the axis, one 0-d [int32]
+          result at the placement, which must cut no axis. It is answered as
+          [Lanes] is, and its default raises [Invalid_argument]. *)
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
-      (** The operand added to the total; no result. *)
+      (** The operand added to the total; no result. Its default does nothing.
+      *)
   | Scan : {
       step : t;
           (** Over the carry, a row and the captures; to the carry, the outputs
-              and the additions. *)
+              and the running values out. *)
       length : int;  (** The number of rows. *)
       trips : value option;
-          (** A 0-d [int32] from [0] to [length]: the rows that run, the first
-              ones; all with none. The outputs of the others are zeros. *)
-      reverse : bool;  (** Whether the rows run from the last. *)
+          (** A 0-d [int32] from [0] to [length], the number of leading rows
+              that run. Every row runs where it is [None]. The outputs at the
+              other rows are zeros. *)
+      reverse : bool;  (** Whether the rows that run run from the last. *)
       init : value array;
       xs : value array;  (** Rows along axis 0. *)
       captures : value array;
       seeds : value array;
-          (** Where each sum starts, or none: each starts at the identity. *)
+          (** Where each sum starts, one per sum in {!sums}' order. Each starts
+              at the identity [-0.] ({!eval}) where [seeds] is empty. *)
     }
       -> construct
+      (** [step] folded over the rows of [xs] from the carry [init]. Its results
+          are the last carry, each output stacked along a new axis 0, then the
+          sums. Its default evaluates [step] once per row that runs, and raises
+          [Invalid_argument] where [trips] lies outside [0] to [length]. *)
   | Iterate : {
       name : string;  (** The entry point, in messages. *)
       step : t;
-          (** Over the carry and its captures, to the carry, the outputs where
-              [rows] stacks them, and the additions. *)
-      until : t;  (** Over the carry and its captures, to one boolean. *)
+          (** Over the carry and its captures; to the carry, the outputs where
+              [rows] stacks them, and the running values out. *)
+      until : t;  (** Over the carry and its captures; to one boolean. *)
       max : int;
       rows : rows option;
           (** Where given, the results after the carry are the number of steps
-              taken, a 0-d [int32] where the stop lies, then each output stacked
-              along a new axis 0 over the steps taken. *)
+              taken, a 0-d [int32] at the uncut placement of [until]'s last
+              result, then each output stacked along a new axis 0, one row per
+              step as {!rows} counts them. *)
       stopped : int option;
-          (** A carry holding one stop per lane of the maps the loop runs in,
-              whose first still false one the message names when [until] is
-              still false after [max] steps. *)
+          (** The index of the carry holding one stop flag per lane of the maps
+              around the loop. When [until] is still false after [max] steps,
+              the message names the first lane whose flag is false. *)
       init : value array;
       step_captures : value array;
       until_captures : value array;
       seeds : value array;  (** As a scan's. *)
     }
       -> construct
+      (** [step] applied to the carry from [init] while [until] is false, at
+          most [max] times. Its results are the last carry, [rows]' results,
+          then the sums. Its default evaluates [until] and [step] in turn,
+          [until] at most [max + 1] times, and raises [Invalid_argument] where
+          [until] is still false after [max] steps. *)
   | Call : {
       body : t;
       args : value array;
       site : site;
-          (** [body]'s compiled form, applied to arguments of [args]' forms then
-              its totals' running values in, and the programs derived from it.
-          *)
+          (** [body]'s compiled form where it has one, applied to arguments of
+              [args]' forms then its totals' running values in, and the programs
+              derived from it. *)
       seeds : value array;  (** As a scan's. *)
     }
       -> construct
-      (** [body] applied to [args]. Its default runs the compiled form where no
-          operand is traced and no tracer stages the operations around the call
-          ({!staging}), and evaluates [body] otherwise. *)
+      (** [body] applied to [args]. Its default runs the site's compiled form
+          where the site has one, no operand and no running value in is traced,
+          and no tracer stages the operations around the call ({!staging}). It
+          evaluates [body] otherwise. *)
   | Custom : {
       name : string;  (** The entry point, in messages. *)
       primal : t;
           (** Over the arguments and the captures; to the [ny] results, the
-              residuals and the additions. *)
+              residuals and the running values out. *)
       derivative : derivative;
       ny : int;
       args : value array;
       captures : value array;
       residuals : bool;
-          (** Whether the residuals among the results are used: then they carry
+          (** Whether the residuals among the results, the values the derivative
+              reads beside the arguments, are used. Where they are, they carry
               the derivatives of every differentiation around the call. A
-              differentiation applying the rule asks for them, unless it is
-              asked for its own, which it derives again. *)
+              differentiation applying the rule asks the call it performs
+              outward for them, and one asked for its own residuals derives them
+              again. *)
       applied : bool;
-          (** Whether a reverse mode inside the call applies its {!Pullback},
-              which a forward mode around then has no rule to answer. *)
+          (** Whether a reverse mode inside the call applies its {!Pullback}.
+              Where it does, a forward mode around differentiates the primal's
+              code. Where it does not, a forward mode raises for a result with a
+              tangent ({!Jvp}). *)
       seeds : value array;  (** Where [primal]'s sums start, as a scan's. *)
     }
       -> construct
       (** A call of a function with a custom derivative: the results, the
           residuals (unused where [residuals] is [false]), [primal]'s sums, then
-          a tangent map's running totals out. The default evaluates [primal]
-          without what only the residuals read, and adds nothing for a tangent
-          map. *)
+          a tangent map's running values out. The default evaluates [primal],
+          without what only the residuals read where [residuals] is [false]. A
+          tangent map's running values out are then zeros. *)
   | Linear : {
       name : string;
       apply : t option;
           (** Over the arguments and the captures; to the results and the
-              additions. [None] where only the transpose is known, as for a
-              {!Pullback} rule's tangents. *)
+              running values out. [None] where only the transpose is known, as
+              for a {!Pullback} rule's tangents. *)
       transpose : t;
           (** Over a cotangent per result and the residuals; to a cotangent per
-              argument and the additions. *)
+              argument and the running values out. *)
       args : value array;
       captures : value array;
       residuals : value array;
@@ -218,39 +266,43 @@ and construct =
     }
       -> construct
       (** A function linear in its arguments with the transpose [transpose]:
-          [apply]'s results, then its additions. Without [apply], it is the
-          tangents of a {!Pullback} rule's results, which only a tape takes: its
-          default raises [Invalid_argument]. *)
+          [apply]'s results, then its running values out. Its default evaluates
+          [apply]. Without [apply], it is the tangents of a {!Pullback} rule's
+          results, which only a tape receives, and its default raises
+          [Invalid_argument]. *)
   | Remat : { body : t; args : value array; seeds : value array } -> construct
-      (** [body] applied to [args], the function's arguments then its captures,
-          whose reverse mode keeps [args] alone and computes [body] again; its
-          sums start from [seeds], as a scan's. *)
+      (** [body] applied to [args], the function's arguments then its captures.
+          Its reverse mode keeps [args] alone and computes [body] again. Its
+          sums start from [seeds], as a scan's. Its default evaluates [body]. *)
   | Switch : switch -> construct
       (** The branch at [index] applied to [captures]; the others run nothing.
-          Its sums are every branch's, as a loop's: a branch that does not run
-          leaves its own where they start. Its default reads [index] and raises
-          [Invalid_argument] where no branch has it. *)
+          Its sums are every branch's, as a loop's. A branch that does not run
+          leaves its own sums where they start. Its default reads [index] and
+          raises [Invalid_argument] where no branch has it. *)
   | Operator : {
       id : int;  (** The operator's number. *)
       transposed : bool;  (** Whether it applies the operator's transpose. *)
       lanes : (int * bool array) list;
           (** The maps it applies the operator over, outermost first, each with
-              which of [data] hold its lanes: its arguments hold every lane's
-              along leading axes of these lengths, and those data too. *)
+              its lanes and which of [data] hold them. The arguments and those
+              data hold every lane's value along leading axes of these lengths.
+          *)
       args : value array;
       data : value array;
           (** The values the operator is made from, on which it does not act
               linearly. *)
-      forms : form array;  (** The results', the arguments' forms. *)
+      forms : form array;  (** The results' forms, which are the arguments'. *)
     }
       -> construct
-      (** An abstract linear operator applied to [args], a value per array of
-          the space it acts on, as a linear solve is traced against: a program
-          holding it is evaluated once {!fill} has given it a body. Its default
-          raises [Invalid_argument]. *)
+      (** An abstract linear operator, as a linear solve is traced against,
+          applied to [args], one value per array of the space it acts on. A
+          program holding one must be filled ({!fill}) before it is evaluated.
+          Its default raises [Invalid_argument]. *)
   | Root : {
       name : string;  (** The entry point, in messages. *)
       system : system;
+          (** Its programs, at the level of the construct, so that a map of the
+              construct maps them. *)
       solution : value array;  (** The solution's arrays. *)
       theta : value array;
           (** The values from outside the residual reads, which the solution
@@ -265,19 +317,26 @@ and construct =
       name : string;
       system : system;
       transposed : bool;  (** Whether it solves the transposed system. *)
-      b : value array;  (** The right-hand side, an array per solution's. *)
+      b : value array;
+          (** The right-hand side, one array per array of the solution. *)
       data : value array;  (** The solution, then [theta]. *)
       captures : value array;  (** The linear solve's captures. *)
     }
       -> construct
-      (** The [v] with [J v = b], [J] the residual's derivative along the
-          solution at [data], or [Jᵀ v = b]: the system's linear solve with its
-          operator filled ({!fill}) by [J] or [Jᵀ]. Linear in [b]. *)
+      (** The [v] with [J v = b], or [Jᵀ v = b] where [transposed], where [J] is
+          the residual's derivative along the solution at [data]. It is the
+          system's linear solve with its operator filled ({!fill}) by [J] or
+          [Jᵀ], and is linear in [b]. Its default fills the operator and
+          evaluates the linear solve. *)
 
 and system = {
-  id : int;  (** The linear solve's operator. *)
+  id : int;
+      (** The number of the operator ({!Operator}) the linear solve is traced
+          against. *)
   operator :
     transposed:bool -> lanes:(int * bool array) list -> t * value array;
+      (** The programs of [J] and [Jᵀ] at one lane, over the maps an operator
+          lies under ({!fill}). *)
   residual : t;  (** Over the solution then [theta]. *)
   jacobian : t;  (** [J v], over [v], the solution then [theta]. *)
   transpose : t;  (** [Jᵀ w], over [w], the solution then [theta]. *)
@@ -291,19 +350,15 @@ and switch = {
   index : value;  (** A 0-d [int32]: the branch that runs. *)
   branches : t array;
       (** Each over [captures], then its totals' running values in; to the
-          results, of one form in every branch, then its running totals out. *)
+          results, of one form in every branch, then its running values out. *)
   captures : value array;
   seeds : value array;  (** As a scan's. *)
 }
 
-(** A root's programs, at the level of the construct that holds them: a map of
-    the construct maps them. [operator] gives the programs of [J] and [Jᵀ] at
-    one lane, over the maps an operator lies under ({!fill}). *)
-
 and rows =
   | Taken
-      (** As many rows as steps taken: no tracer can stage such an iterate. *)
-  | Max  (** [max] rows, those past the steps taken zeros. *)
+      (** As many rows as steps taken. No tracer can stage such an iterate. *)
+  | Max  (** [max] rows, zeros past the steps taken. *)
 
 and derivative =
   | Tangent of t
@@ -314,8 +369,8 @@ and derivative =
           cotangent per argument and the additions. *)
 
 and site
-(** The type for a call's {e site}: its program compiled, made at its first
-    run, and the programs a transformation derives from it ({!derive}). *)
+(** The type for a call's {e site}: its program, compiled where the site is made
+    by {!site}, and the programs transformations derive from it ({!derive}). *)
 
 val make :
   owner:Nx.Prim.interpretation ->
@@ -329,38 +384,39 @@ val make :
     equations [eqns], in order. *)
 
 val sums : t list -> addition array * form array * int array list
-(** [sums ps] is the sums of a loop of the programs [ps]: one per total and
-    shape they thread, in the order they first take them, each with its first
-    addition, their forms, and for each program the sum each of its totals
-    feeds, in order. *)
+(** [sums ps] is [(adds, forms, feeds)], the sums of a loop of the programs
+    [ps]. [adds] holds each sum's first addition, in the order [ps] first thread
+    them, and [forms] the sums' forms. [feeds] holds, per program, the sum each
+    of its totals feeds, in order. *)
 
 val feeds : t -> addition array * form array * int array
-(** [feeds step] is the sums of a loop of the step [step]: one per total and
-    shape it threads, in order, their forms, and the sum each of [step]'s totals
-    feeds, in order. *)
+(** [feeds step] is {!sums} of [[step]], with [step]'s feeds alone. *)
 
 val eval : ?totals:value array -> t -> value array -> value array
 (** [eval ~totals p args] is [p]'s outputs with its arguments bound to [args]
-    and its totals' running values in to [totals], in order, each the additive
-    identity that keeps every sign ([-0.]) without [totals], so that its running
-    values out are the sums of its additions. Raises what an equation raises. *)
+    and its totals' running values in to [totals], in order. Without [totals],
+    each running value in is [-0.], the identity that keeps every sign ([0]
+    where the dtype has no negative zero), so that the running values out are
+    the sums of its additions. Raises [Invalid_argument] where [args] and
+    [totals] do not match [p]'s parameters, and what an equation raises. *)
 
 val eval_seeded : t -> seeds:value array -> value array -> value array
-(** [eval_seeded p ~seeds args] is [p]'s outputs over [args], its sums, one per
-    total and shape it threads, started from [seeds] as a scan's are. *)
+(** [eval_seeded p ~seeds args] is [p]'s outputs over [args], its sums started
+    from [seeds] as a scan's are. *)
 
 val prune : t -> outputs:int array -> t
 (** [prune p ~outputs] is [p] with its outputs [outputs], in order, then its
-    totals' running values out, keeping the equations they read and every check.
-*)
+    totals' running values out. It keeps the equations they read and every
+    check. *)
 
 (** {1:sites Sites}
 
     A transformation of a call derives a program from the call's ({!derive}):
-    its forward-mode derivative, its map, its parts known and unknown to a
-    tape, or its transpose. A derivation is a value, and a site keeps one
-    program per derivation, so that two calls share a derived program only
-    when their derivations are equal, and a derived program compiles once. *)
+    its forward-mode derivative, its map, its parts known and unknown to a tape,
+    or its transpose. A site keeps one program per derivation and argument
+    forms, compared by the forms' dtypes, shapes and placements and by the lanes
+    of the maps the site's program names. Two calls share a derived program only
+    when these are equal, and a derived program compiles once. *)
 
 val site :
   name:string ->
@@ -386,24 +442,24 @@ type derivation =
   | Jvp of { tangents : bool array; reverse : bool }
       (** Forward mode, [tangents.(k)] whether argument [k] has a tangent;
           [reverse] whether the tangents are a tape's, which only a program
-          holding a custom rule tells apart ({!customs}). Over the primals, then
-          the tangents there are; to the results, the tangents there are, then
-          the additions. *)
+          holding a custom rule or a linear call tells apart ({!customs}). Over
+          the primals, then the tangents there are; to the results, the tangents
+          there are, then the running values out. *)
   | Vmap of { lanes : bool array; n : int; named : bool }
-      (** A map of [n] lanes, [lanes.(k)] whether argument [k] has them;
-          [named] whether the program names the map. Over the batches and the
-          shared arguments; to the results, a batch where it has lanes, then
-          the additions, every lane's. *)
+      (** A map of [n] lanes, [lanes.(k)] whether argument [k] holds every
+          lane's along a leading axis of [n]; [named] whether the program names
+          the map. Over the arguments; to the results, each with that leading
+          axis where it has lanes, then the running values out, every lane's. *)
   | Known of { unknown : bool array }
       (** The part of the program that reads no argument where [unknown] holds,
-          computed at the call: over the other arguments; to its results, the
-          residuals, then the additions. Its linear part: over the unknown
-          arguments then the residuals, to the unknown results. *)
+          computed at the call. Over the other arguments; to its results, the
+          residuals, then the running values out. Its linear part is over the
+          unknown arguments then the residuals, to the unknown results. *)
   | Transpose of { linear : bool array; cts : bool array }
       (** The transpose of a linear program over the arguments where [linear]
           holds, given a cotangent of each result where [cts] holds: over the
           other arguments and the cotangents; to the cotangents of the linear
-          arguments that receive one, then the additions. *)
+          arguments that receive one, then the running values out. *)
 
 type derived = {
   program : t;
@@ -424,70 +480,112 @@ val derive :
   (unit -> (t * form array) * bool array * (t * form array) option) ->
   derived
 (** [derive ~map s d forms make] is the program of [s] derived by [d] from
-    arguments of [forms], made by [make ()] the first time [s] meets [d] with
-    arguments of [forms]' dtypes, shapes and placements and with the maps that
-    [s]'s program names of the same lanes. [make ()] gives the program and its
-    arguments' forms, its flags, and a linear part with its arguments' forms.
-    [map] is a map that the derivation runs in, [(axis, n)], whose lanes no
-    handler around answers. Calls on several domains share the derived
-    programs, as {!Jit} shares its programs. *)
+    arguments of [forms], made by [make ()] the first time [s] meets [d] and
+    [forms]. [make ()] gives the program and its arguments' forms, its flags,
+    and a linear part with its arguments' forms. [map] is a map that the
+    derivation runs in, [(axis, n)], whose lanes no handler around answers. The
+    site's key takes [n] as that map's lanes. *)
 
 val derivations : unit -> int
 (** [derivations ()] is the number of programs [derive] made on the calling
     domain. *)
 
-(** {1:constructs Constructs} *)
+(** {1:constructs Constructs}
+
+    A construct's results are those of the innermost handler that answers
+    {!Construct}, or its default's. Those of a loop, a switch, a call, a remat
+    and a custom rule end with their programs' sums ({!sums}). A custom rule's
+    then end with its tangent map's running values out, and a linear call's with
+    its [apply]'s. {!run} delivers them to their totals. *)
+
+type _ Effect.t +=
+  | Construct : construct -> value array Effect.t
+        (** The effect {!perform} performs: a handler that answers it continues
+            with the construct's results, of the forms {!forms} gives. *)
+
+exception Evaluate
+(** Discontinuing {!Construct} with [Evaluate] runs the construct's default. No
+    handler outside sees the construct. *)
 
 val perform : construct -> value array
-(** [perform c] is [c]'s results, as the innermost handler answering [c] gives
-    them, or [c]'s default. A loop's and a call's results end with the sums of
-    their programs' additions. *)
+(** [perform c] performs {!Construct} [c] and returns its results. *)
 
 val run : construct -> value array
-(** [run c] is [perform c] after which each addition of [c]'s results is added
-    to its total ({!add_to}). A loop first asks each total it adds to for its
-    running value ({!Running}): where one answers, the loop's sum starts from it
-    and its end replaces it ({!Replace}), so that the total is the one its
-    additions give made in turn. A call ({!Call}) does so as its default. *)
+(** [run c] performs [c] and delivers its sums to their totals. A sum starts
+    from its total's running value where a collect or tracer answers {!Running},
+    and its end then replaces that value ({!Replace}), so that the total equals
+    what the additions give made one by one. Otherwise the sum starts from the
+    identity and its end is added to the total ({!add_to}), as are a custom
+    rule's tangent map's running values out. Raises [Invalid_argument], before
+    [c] runs, where a collect would refuse one of its additions ({!accepts}). *)
+
+val forms : construct -> form array
+(** [forms c] is the forms of [c]'s results, as its default gives them. Raises
+    [Invalid_argument] as {!perform} would for [Lanes] outside its map. *)
+
+(** {2:running Running values}
+
+    The effects below let a construct start its sums from the running values
+    around its call and hand back their ends. A construct asks for a total's
+    running value ({!Running}) at the form it traced it at. Where a collect or
+    tracer answers, the construct starts from that value and hands back the
+    running value out ({!Replace}). Where none answers, the construct starts
+    from the identity and adds the running value out to the total ({!add_to}),
+    as {!threaded} also does where the value has another form. A map answers
+    {!Running} with [None], so a construct inside it with no collect or tracer
+    of the total between starts from the identity, and the map sums its lanes'
+    ends. *)
 
 type _ Effect.t +=
   | Running :
       ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form
       -> ('v, 's, 'd) Nx.t option Effect.t
         (** Answered by the innermost collect of the total around the call with
-            its running value, if it has the shape of the form given, and by a
-            tracer between with a variable holding the total's running value
-            where the call is, which the program it traces threads. A map
-            between answers [None], so that a loop whose additions reach a
-            collect through it adds its sum. *)
+            its running value, where that has the form's shape. A tracer other
+            than a tape between answers with a variable holding the total's
+            running value where the call is, which the program it traces
+            threads. A map between answers [None]. *)
   | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
         (** Answered by the collect or tracer that answered {!Running}, whose
             running value becomes the value given. *)
 
+val running :
+  ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option
+(** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with
+    none around. *)
+
 val threaded : ?lanes:int -> t -> (value array -> value array) -> value array
-(** [threaded ~lanes p f] is [f totals], an evaluation of [p] from its totals'
-    running values in [totals], without its running values out, which are handed
-    back to the totals: of [p]'s forms, or with a leading axis of [lanes], every
-    lane's of a map, where given. Each running value in is that of the innermost
-    collect or tracer answering for its total ({!Running}), which takes the
-    running value out ({!Replace}); where none answers, or [p] cannot take its
-    value at the form it was traced at, it is the identity, and the running
-    value out is added to the total ({!add_to}). *)
+(** [threaded ~lanes p f] calls [f] with the running values in of [p]'s totals
+    and returns its results before the running values out, handing those back.
+    With [lanes], each has a leading axis of [lanes], one row per lane of a map.
+*)
+
+val threading :
+  ?lanes:int -> addition array -> (value array -> value array * 'a) -> 'a
+(** [threading ~lanes adds f] is [snd (f totals)], where [totals] are the
+    running values in of the totals [adds] thread, as {!threaded} takes them. It
+    hands [fst (f totals)] back as their running values out. *)
+
+val add_to : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.t -> unit
+(** [add_to t x] adds [x] to [t]: the running value of the innermost collect or
+    tracer that answers for [t] ({!Running}) becomes itself plus [x], and with
+    none [Add] of [x] is performed. *)
 
 (** Where a total's running value lies. *)
 type 'd where =
-  | Nowhere  (** No collect or tracer holds one. *)
+  | Nowhere  (** Nothing around the call answers with a placement. *)
   | At of 'd Nx.Placement.t option
       (** At this placement; [None] where the holder, a jit's program, takes it
           where the first addition lies. *)
 
 type _ Effect.t +=
   | Where : ('v, 's, 'd) total -> 'd where Effect.t
-        (** Answered by the innermost collect of the total around the call, at
-            its running value's placement, and by a tracer between that threads
-            the total, at its running value's, or else as the one around it, the
-            jit tracer holding it where the first addition lies where none does;
-            a map passes it on. *)
+        (** Answered by the innermost collect of the total around the call with
+            its running value's placement. A tracer between that threads the
+            total answers with its own running value's placement where the
+            holder around it answers [At]. Otherwise a tracer answers as the
+            holder around it does, and the jit tracer [At None] where none is
+            around. A map passes it on. *)
 
 val where : ('v, 's, 'd) total -> 'd where
 (** [where t] is the answer to {!Where}, [Nowhere] with none around. *)
@@ -502,40 +600,18 @@ val accepts : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> unit
 (** [accepts t f] performs {!Accepts}, nothing with none around. *)
 
 val admits : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> unit
-(** [admits t f] raises [Invalid_argument] where {!add_to} of a value of [f]'s
-    shape would be refused: where nothing answers {!Running} of [t] at [f], as
-    {!accepts}. *)
-
-val running :
-  ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option
-(** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with
-    none around. *)
-
-val threading :
-  ?lanes:int -> addition array -> (value array -> value array * 'a) -> 'a
-(** [threading ~lanes adds f] is [snd (f totals)], [totals] the running values
-    in of the totals [adds] thread, as {!threaded} takes them, and
-    [fst (f totals)] their running values out, handed back. *)
+(** [admits t f] raises [Invalid_argument] where nothing answers {!Running} of
+    [t] at [f] and {!accepts} of [t] at [f] raises, so where {!add_to} of a
+    value of [f]'s shape would be refused. *)
 
 val unset : value -> 'a
 (** [unset v] raises [Invalid_argument] for a running value [v] computed on a
-    set its total's running value does not lie on. *)
+    device set its total's running value does not lie on. *)
 
-val add_to : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.t -> unit
-(** [add_to t x] adds [x] to [t]: the running value of the innermost collect or
-    tracer that answers for [t] ({!Running}) becomes itself plus [x], and with
-    none [Add] of [x] is performed. *)
+(** {2:operands Operands and carried programs}
 
-type _ Effect.t +=
-  | Construct : construct -> value array Effect.t
-        (** The effect {!perform} performs: a handler that answers it continues
-            with the construct's results, of the forms {!forms} gives. *)
-
-exception Evaluate
-(** A handler that answers {!Construct} by discontinuing it with [Evaluate] has
-    the construct run its default where it was performed, inside every
-    interpretation around that point, and no handler outside it sees the
-    construct. *)
+    The values below take a construct's operands and programs apart, and make
+    programs and forms from them. *)
 
 val operands : construct -> value list
 (** [operands c] is the values [c] reads, captures included. *)
@@ -551,49 +627,58 @@ val map_operands : map -> construct -> construct
 
 val map_programs : (t -> t) -> construct -> construct
 (** [map_programs f c] is [c] with each program [p] it carries replaced by
-    [f p], and a call with a site of no compiled form and no derived
-    program. *)
+    [f p]. A call gets a site of its new body, with no compiled form and no
+    derived program yet. *)
 
 val stacked : int -> form -> form
 (** [stacked n f] is the form of a value of [f]'s with a leading axis of [n], in
     C order. *)
 
-val forms : construct -> form array
-(** [forms c] is the forms of [c]'s results, as its default gives them. Raises
-    [Invalid_argument] as {!perform} would for [Lanes] outside its map. *)
-
-type _ Effect.t +=
-  | Bound : axis -> int option Effect.t
-        (** Answered by each map with its number of lanes, when the axis names
-            it. *)
-
-val mentions : axis -> t -> bool
-(** [mentions a p] is [true] iff [p] or a program its constructs carry reads the
-    lanes or the lane index of the map named [a]. *)
-
 val switched : t array -> form array
-(** [switched branches] is the forms of a switch's results over [branches]: each
-    the placed of the branches', where nx would compute a constant beside the
-    others. *)
+(** [switched branches] is the forms of a switch's results over [branches],
+    those of its first branch's results, which every branch shares. *)
 
 val widen : t -> at:int array -> int -> t
-(** [widen p ~at n] is [p] over [n] arguments, its [k]th the [at.(k)]th of them,
-    the others unread, then its totals' running values in. *)
+(** [widen p ~at n] is [p] over [n] arguments, where [p]'s argument [k] is
+    argument [at.(k)] and the others are unread, then its totals' running values
+    in. *)
 
 val unite : (t * value array) array -> params:int -> t array * value array
-(** [unite traced ~params] is the programs [traced], each over [params]
-    parameters then its captures, each over those parameters then the captures
-    of them all, each value once; and those captures. *)
+(** [unite traced ~params] is [(ps, captures)]. Each program of [traced] is over
+    [params] parameters then its own captures. Its counterpart in [ps] is over
+    those parameters then [captures], the captures of them all with each value
+    once. *)
 
 val fill :
   t ->
   id:int ->
   (transposed:bool -> lanes:(int * bool array) list -> t * value array) ->
   t
-(** [fill p ~id body] is [p] with each application of the operator [id] in it
-    and in the programs its constructs carry a call of [q] over the
+(** [fill p ~id body] is [p] with each application of the operator [id], in [p]
+    and the programs its constructs carry, replaced by a call of [q] over the
     application's arguments, its data, then [captures], where
     [(q, captures) = body ~transposed ~lanes]. *)
+
+val count : value -> int
+(** [count v] is the value of [v], a 0-d [int32]. *)
+
+(** {2:queries Maps and staging}
+
+    A tracer {e stages} the operations applied in its extent when it records
+    each one, those over constants included ({!Trace.kind}). *)
+
+type _ Effect.t +=
+  | Bound : axis -> int option Effect.t
+        (** Answered by each map with its number of lanes, when the axis names
+            it. *)
+
+val bound : axis -> int option
+(** [bound a] is [Some n] inside the map named [a] of [n] lanes, and [None] with
+    none around. *)
+
+val mentions : axis -> t -> bool
+(** [mentions a p] is [true] iff [p] or a program its constructs carry reads the
+    lanes or the lane index of the map named [a]. *)
 
 val reads_lanes : ?index:bool -> t -> bool
 (** [reads_lanes p] is [true] iff [p] or a program its constructs carry reads
@@ -603,32 +688,29 @@ val reads_params : t -> bool array -> bool
 (** [reads_params p mask] is [true] iff one of [p]'s arguments [k] with
     [mask.(k)] is read by what [p]'s results need. *)
 
-val count : value -> int
-(** [count v] is the value of [v], a 0-d [int32]. *)
-
-val bound : axis -> int option
-(** [bound a] is [Some n] inside the map named [a] of [n] lanes, and [None] with
-    none around. *)
-
 type _ Effect.t +=
   | Staging : bool Effect.t
-        (** Answered [true] by each tracer that stages every operation of its
-            extent, as the jit tracer does. *)
+        (** Answered [true] by the jit and staged tracers ({!Trace.kind}), which
+            record every operation applied while they trace. *)
 
 val staging : unit -> bool
 (** [staging ()] is [true] iff a tracer around the call stages the operations
-    applied there, so that a call there is inlined, not run compiled. *)
+    applied there. A call's default there evaluates its body and does not run
+    its compiled form. *)
 
-(** {1:printing Printing} *)
+(** {1:printing Printing}
+
+    A program prints as each constant it or a program it carries reads, as
+    [cK : dtype shape at placement], numbered in the order they are first read;
+    then [program (%0, …)] with its arguments and [totals (…)] with its running
+    values in, each equation, [return] with its results and [totals] with its
+    running values out. Each program's variables are numbered from where the
+    previous one's end, so no two programs share a name. An operation prints as
+    its results, each [%n : dtype shape at placement], [=], the operation as
+    {!Nx.Prim.pp} formats it, and on the next line [with x0 = …] for each
+    operand. A construct prints as its results, its operands, and the programs
+    it carries under labels, indented (a root its residual, a solve its linear
+    solve). Maps are numbered in the order the program first names them. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] formats a program: first each constant it or a program it carries
-    reads, as [cK : dtype shape at placement], numbered in the order they are
-    first read; then [program (%0, %1, …)], its parameters,
-    each equation, and [return] with its outputs, then [adds] with its
-    additions. Each program's variables are numbered from where the previous
-    one's end, so no two programs share a name. An operation is its results,
-    each [%n : dtype shape at placement], [=], the operation as {!Nx.Prim.pp}
-    formats it, and on the next line [with x0 = …] for each operand; a construct
-    is its results, its operands, and each program it carries under a label,
-    indented; a map is numbered in the order the program first names it. *)
+(** [pp] formats a program. *)
