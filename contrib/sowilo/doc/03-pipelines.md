@@ -1,6 +1,6 @@
 # Pipelines and Integration
 
-Sowilo operations are pure functions on Rune tensors. They compose naturally
+Sowilo operations are pure functions on Nx tensors. They compose naturally
 with `|>`, work in batches, and integrate with Kaun training loops.
 
 ## Composing Operations

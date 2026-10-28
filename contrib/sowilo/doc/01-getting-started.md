@@ -20,18 +20,20 @@ cd raven && dune build sowilo
 
 ## Loading Images
 
-Sowilo operates on Rune tensors. Load an image with `Nx_io`, convert it to
-a Rune tensor, then to float32:
+Sowilo operates on Nx tensors. Load an image with `Nx_io`, then convert it
+to float32:
 
 <!-- $MDX skip -->
 ```ocaml
 open Sowilo
 
 let img =
-  Nx_io.load_image "photo.png"  (* Nx uint8 tensor [H; W; C] *)
-                  (* Rune uint8 tensor *)
-  |> to_float                   (* Rune float32 tensor in [0, 1] *)
+  Nx_io.load_image "photo.png"  (* uint8 tensor [H; W; C] on the host *)
+  |> to_float                   (* float32 tensor in [0, 1] *)
 ```
+
+`load_image` keeps the file's channels: an RGB file gives three, an RGBA file
+four and a grey file one, which `to_grayscale` refuses as already grey.
 
 `to_float` divides by 255 and casts to float32. This is the standard input
 format for all sowilo operations.
@@ -75,7 +77,7 @@ let () =
   in
 
   (* Save: convert back to uint8, then to Nx for I/O *)
-  Nx_io.save_image (to_uint8 edges) "edges.png"
+  Nx_io.save_png "edges.png" (to_uint8 edges)
 ```
 
 Operations compose naturally with `|>`. Each takes a tensor and returns a
@@ -190,12 +192,12 @@ grayscale input (C = 1).
 
 ## Saving Results
 
-Convert back to uint8 and use `Nx_io.save_image`:
+Convert back to uint8 and use `Nx_io.save_png`:
 
 <!-- $MDX skip -->
 ```ocaml
 let save result path =
-  Nx_io.save_image (to_uint8 result) path
+  Nx_io.save_png path (to_uint8 result)
 ```
 
 ## Displaying with Hugin

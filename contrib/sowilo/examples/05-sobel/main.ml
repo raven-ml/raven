@@ -15,9 +15,7 @@ let normalize_gradient img =
   let range = max_val -. min_val in
   if range <= 1e-6 then Nx.zeros_like img
   else
-    Nx.div
-      (Nx.sub abs_img (Nx.scalar Nx.float32 min_val))
-      (Nx.scalar Nx.float32 range)
+    Nx.div_s (Nx.sub_s abs_img min_val) range
 
 let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in

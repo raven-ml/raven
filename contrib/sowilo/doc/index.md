@@ -1,8 +1,8 @@
 # Sowilo
 
-Differentiable computer vision on Rune tensors.
+Differentiable computer vision on Nx tensors.
 
-Sowilo provides image processing operations expressed purely through Rune
+Sowilo provides image processing operations expressed purely through Nx
 tensor operations. Filters, edge detectors, morphological operations, color
 transforms, and geometric transforms -- all compatible with `Rune.grad'`
 and `Rune.vmap'`.
@@ -17,6 +17,11 @@ Images are `Nx.t` tensors with channels-last layout:
 
 Operations expect float32 tensors with values in [0, 1]. Use `to_float` to
 convert from uint8 and `to_uint8` to convert back.
+
+An image lies on any device set, and an operation computes where it lies:
+its kernels and constants are made beside the image, and its result is on
+the image's set, as the Device sets section of
+[`sowilo.mli`](../lib/sowilo.mli) states.
 
 ## What's Included
 
@@ -46,7 +51,7 @@ let () =
   in
 
   (* Save result *)
-  Nx_io.save_image (to_uint8 edges) "edges.png"
+  Nx_io.save_png "edges.png" (to_uint8 edges)
 ```
 
 ## Learn More

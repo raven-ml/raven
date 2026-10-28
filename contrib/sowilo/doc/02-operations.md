@@ -1,7 +1,7 @@
 # Operations Reference
 
 Every operation in sowilo, organized by category. All functions operate on
-Rune float32 tensors with values in [0, 1] unless otherwise noted.
+Nx float32 tensors with values in [0, 1] unless otherwise noted.
 
 ## Type Conversion and Preprocessing
 
@@ -262,7 +262,7 @@ independently to each channel with Same padding.
 <!-- $MDX skip -->
 ```ocaml
 (* Sharpen kernel *)
-let kernel = Nx.create Nx.Float32 [| 3; 3 |]
+let kernel = Nx.create Nx.float32 [| 3; 3 |]
   [| 0.; -1.; 0.; -1.; 5.; -1.; 0.; -1.; 0. |]
 let sharpened = Sowilo.filter2d kernel img
 ```
@@ -393,7 +393,7 @@ let tight = Sowilo.canny ~low:0.3 ~high:0.7 ~sigma:1.0 gray
 ## Differentiability Summary
 
 Most operations are differentiable because they are built from standard
-Rune tensor operations. The two exceptions are:
+Nx tensor operations. The two exceptions are:
 
 | Operation | Differentiable | Reason |
 |-----------|---------------|--------|

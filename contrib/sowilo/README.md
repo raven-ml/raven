@@ -16,7 +16,7 @@ let () =
   let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
-  Nx_io.save_image (to_uint8 edges) "edges.png"
+  Nx_io.save_png "edges.png" (to_uint8 edges)
 ```
 
 ## Features
@@ -32,7 +32,7 @@ let () =
 
 ## Image Conventions
 
-Images are Rune tensors with channels-last layout. Operations expect float32
+Images are Nx tensors with channels-last layout. Operations expect float32
 values in [0, 1].
 
 - Single image: `[H; W; C]` (height, width, channels)
