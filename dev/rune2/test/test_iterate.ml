@@ -553,12 +553,28 @@ let test_transpose () =
       ~f:(fun x -> Nx.mul_s x 0.5)
       x
   in
-  raises
-    (Invalid_argument
-       "Rune.linear_transpose: an iterate's stop reads the function's argument")
-    (fun () ->
-      let (_ : _ -> _) = Rune.linear_transpose t t stopped (vec [| 0.; 0. |]) in
-      ())
+  let refused f =
+    raises
+      (Invalid_argument
+         "Rune.linear_transpose: an iterate's stop reads the function's \
+          argument") (fun () ->
+        let (_ : _ -> _) = Rune.linear_transpose t t f (vec [| 0.; 0. |]) in
+        ())
+  in
+  refused stopped;
+  (* So does one whose stop captures the argument, or reads a carry the steps
+     compute from it. *)
+  refused (fun x ->
+      Rune.iterate' ~max:3
+        ~until:(fun c -> Nx.less (Nx.max (Nx.add c x)) (Nx.scalar f64 1.))
+        ~f:(fun c -> Nx.mul_s c 0.5)
+        (vec [| 4.; 4. |]));
+  refused (fun x ->
+      fst
+        (Rune.iterate (p2 ()) ~max:3
+           ~until:(fun (_, s) -> Nx.greater (Nx.max s) (Nx.scalar f64 1.))
+           ~f:(fun (y, s) -> (Nx.mul_s y 2., Nx.add s x))
+           (x, vec [| 0.; 0. |])))
 
 (* Maps *)
 

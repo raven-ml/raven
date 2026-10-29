@@ -23,6 +23,23 @@ type t = {
 
 let tangible x = Scalar.tangible (D.Any (Nx.dtype x))
 
+let refused ~name what =
+  invalid_arg
+    (Printf.sprintf
+       "%s: a custom_jvp tangent map applies %s to a tangent; a tangent map \
+        must be linear in its tangents"
+       name what)
+
+(* A tape of [f] over [forms]. An iterate whose stop reads the tape's variables
+   is the function's own on a function's tape, and on a derivative's a tangent
+   map's, as only a custom_jvp tangent map's code reads tangents. *)
+let taped ~name ~fn forms f =
+  try Trace.trace Tape ~name forms f
+  with Trace.Stop_reads ->
+    if fn then
+      invalid_arg (name ^ ": an iterate's stop reads the function's argument")
+    else refused ~name "an iterate's stop"
+
 (* Linearize *)
 
 let linearize ~name xs f =
@@ -34,7 +51,7 @@ let linearize ~name xs f =
   in
   let primals = ref [||] and outs = ref [||] in
   let tape, captures =
-    Trace.trace Tape ~name forms (fun ts ->
+    taped ~name ~fn:false forms (fun ts ->
         let tape =
           if Array.length ts = 0 then None
           else
@@ -72,7 +89,7 @@ let linearize ~name xs f =
 
 (* [f] traced over stand-ins of [xs]: linear in them where it is linear. *)
 let trace ~name xs f =
-  let tape, captures = Trace.trace Tape ~name (Array.map form xs) f in
+  let tape, captures = taped ~name ~fn:true (Array.map form xs) f in
   let outs = Array.init (Array.length tape.outputs) Option.some in
   { name; tape; ins = Array.length xs; captures; outs; fn = true }
 
@@ -159,12 +176,7 @@ let nonlinear env what =
     invalid_arg
       (Printf.sprintf "%s: %s is not linear in the function's argument" env.name
          what)
-  else
-    invalid_arg
-      (Printf.sprintf
-         "%s: a custom_jvp tangent map applies %s to a tangent; a tangent map \
-          must be linear in its tangents"
-         env.name what)
+  else refused ~name:env.name what
 
 let shape_of layout = Iarray.to_array (L.shape layout)
 let identity dt = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0))
@@ -432,8 +444,8 @@ let scan_rule (type d r) env layout axis prog
           let along = Array.init r (fun a -> if a = axis then n else 1) in
           let here = Nx.beside w in
           (* Each cotangent divided by its count and summed from each index on
-             in the carrier of its dtype, which counts more terms than a
-             narrow float holds, and rounded once. *)
+             in the carrier of its dtype, which counts more terms than a narrow
+             float holds, and rounded once. *)
           let cd = Nx.dtype w in
           let (D.Any c) = Nx_kernel.carrier (D.Any cd) in
           let count = Nx.arange_at here Nx.int32 1 (n + 1) 1 in
@@ -733,8 +745,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
         match segments with
         | Some (Nx_kernel.Rows s) -> rebrand r (env.const s.offsets)
         | Some (Contracting s) -> rebrand r (env.const s.offsets)
-        | None ->
-            Nx.zeros_at (Nx.beside r) Nx.int64 [| 0 |]
+        | None -> Nx.zeros_at (Nx.beside r) Nx.int64 [| 0 |]
       in
       let contract ~batch ~contracting ~segments x x_scale y y_scale out =
         Prim.eval ~by
@@ -1038,10 +1049,10 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
 
 (* A linear call's transpose: its transpose program over the results'
    cotangents, zeros for one with none, and its residuals, or a pullback on
-   values over the cotangents alone, its outputs given to the arguments. Where the call has its function, the transpose is itself a
-   linear call whose transpose is that function, so that transposing it again
-   applies the function. The additions reach the scopes around the backward
-   pass. *)
+   values over the cotangents alone, its outputs given to the arguments. Where
+   the call has its function, the transpose is itself a linear call whose
+   transpose is that function, so that transposing it again applies the
+   function. The additions reach the scopes around the backward pass. *)
 let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
     cts =
   let ct k (F f) =
@@ -1287,9 +1298,7 @@ and scan_rule env (step : Program.t) ~length ~trips ~reverse ~init ~xs ~captures
                   none (Array.length step.adds);
                 ]
             in
-            let r =
-              walk ~name:env.name ~fn:env.fn step consts out_cts
-            in
+            let r = walk ~name:env.name ~fn:env.fn step consts out_cts in
             let carry =
               Array.init nc (fun k ->
                   gained.(k) <- (not m.(k)) && Option.is_some r.(k);
@@ -1405,7 +1414,7 @@ and switch_rule env (sw : construct) cts =
       let transposed (b : Program.t) vs =
         let cs = Array.sub vs 0 nc and gs = Array.sub vs nc ny in
         let tape, tcaps =
-          Trace.trace Tape ~name:env.name lforms (fun ts ->
+          taped ~name:env.name ~fn:env.fn lforms (fun ts ->
               eval b (Loops.merge la ts cs))
         in
         let nl = Array.length lins in
@@ -1456,11 +1465,11 @@ and switch_rule env (sw : construct) cts =
 
 (* A remat's transpose linearizes its function again at its constant arguments,
    then transposes that, so that the forward pass kept its arguments alone.
-   Where a tracer stages it, it is the remat of that transpose over the
-   constant arguments and the cotangents given, differentiated, as JAX
-   transposes a checkpoint: compiled, it computes the function's values again
-   apart from the forward pass's, once the cotangents are computed. Elsewhere it
-   computes where it is, as that remat would. *)
+   Where a tracer stages it, it is the remat of that transpose over the constant
+   arguments and the cotangents given, differentiated, as JAX transposes a
+   checkpoint: compiled, it computes the function's values again apart from the
+   forward pass's, once the cotangents are computed. Elsewhere it computes where
+   it is, as that remat would. *)
 and remat_rule env (body : Program.t) args cts =
   let name = env.name in
   let la = Array.map (fun (V x) -> env.lin x) args in
@@ -1477,7 +1486,7 @@ and remat_rule env (body : Program.t) args cts =
      cotangents [ws]. *)
   let transposed cs ws =
     let tape, captures =
-      Trace.trace Tape ~name (Array.map form lins) (fun ts ->
+      taped ~name ~fn:env.fn (Array.map form lins) (fun ts ->
           eval body (Loops.merge la ts cs))
     in
     let tconsts =
@@ -1524,9 +1533,9 @@ and remat_rule env (body : Program.t) args cts =
       lins
 
 (* A linear call's transpose is the call of its program's transpose, as JAX
-   transposes a compiled call's jaxpr: derived once per derivation at the
-   call's site, over the constant arguments and the cotangents given, traced as
-   a compiled function is, and compiled. *)
+   transposes a compiled call's jaxpr: derived once per derivation at the call's
+   site, over the constant arguments and the cotangents given, traced as a
+   compiled function is, and compiled. *)
 and call_rule env (body : Program.t) args site cts =
   let name = env.name in
   let la = Array.map (fun (V x) -> env.lin x) args in
@@ -1553,14 +1562,11 @@ and call_rule env (body : Program.t) args site cts =
       in
       let out_cts =
         Array.append
-          (Loops.merge gc
-             (Array.map Option.some ws)
+          (Loops.merge gc (Array.map Option.some ws)
              (none (no - Array.length ws)))
           (none na)
       in
-      let r =
-        walk ~name:env.name ~fn:env.fn body bound out_cts
-      in
+      let r = walk ~name:env.name ~fn:env.fn body bound out_cts in
       let lin = Loops.pick la r in
       got := Array.map Option.is_some lin;
       Array.map (fun c -> (Option.get c).v) (Loops.pick !got lin)
@@ -1568,12 +1574,11 @@ and call_rule env (body : Program.t) args site cts =
     let prog, _ = Trace.trace Jit ~name forms transposed in
     ((prog, forms), !got, None)
   in
-  let derivation =
-    Program.Transpose { linear = la; cts = gc }
-  in
+  let derivation = Program.Transpose { linear = la; cts = gc } in
   let d = Program.derive site derivation forms made in
   let r =
-    Program.run (Call { body = d.program; args = ins; site = d.at; seeds = [||] })
+    Program.run
+      (Call { body = d.program; args = ins; site = d.at; seeds = [||] })
   in
   let next = ref 0 in
   Array.iteri

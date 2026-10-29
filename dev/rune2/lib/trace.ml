@@ -13,6 +13,8 @@ let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
 type kind = Body | Jit | Tape | Staged
 
+exception Stop_reads
+
 (* A total the program threads: the variable of its running value in, and its
    running value where the trace is. *)
 type thread =
@@ -704,8 +706,7 @@ and iterate_parts st i (c : construct) =
       let ny = Array.length it.step.outputs - nc - Array.length it.step.adds in
       let captures = it.step_captures in
       let ucap = Array.map (owned i) captures in
-      if Array.exists (owned i) it.until_captures then
-        invalid_arg (name ^ ": an iterate's stop reads the function's argument");
+      if Array.exists (owned i) it.until_captures then raise Stop_reads;
       let cforms = Array.map form captures in
       let rec fix u (cf : form array) =
         let gained = Array.make nc false and uy = ref [||] in
@@ -790,7 +791,7 @@ and iterate_parts st i (c : construct) =
                   (Array.append (Loops.merge u filler kc) caps)))
       in
       if reads_params it.until (Array.mapi (fun k _ -> u.(k)) it.init) then
-        invalid_arg (name ^ ": an iterate's stop reads the function's argument");
+        raise Stop_reads;
       let kinit = Loops.pick ku it.init in
       let kcaps = Loops.pick (nots ucap) captures in
       let operands =

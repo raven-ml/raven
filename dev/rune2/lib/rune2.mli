@@ -525,10 +525,14 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     tangent raises, naming the entry point, when the derivative is transposed
     (in {!grad}, or as a {!vjp} pullback is applied), as in
     ["Rune.grad: a custom_jvp tangent map applies Exp to a tangent; a tangent
-     map must be linear in its tangents"]. Reverse mode transposes the linear
-    part: a value a tangent map adds to a tangent, or selects beside one with
-    {!Nx.where}, counts as zero. A pullback or a transpose reads a result's
-    cotangent at the result's set.
+     map must be linear in its tangents"]. An {!iterate} in a tangent map whose
+    stop reads a tangent takes steps that depend on it, and raises at the call
+    of {!grad}, {!vjp} or {!linearize}, as in
+    ["Rune.grad: a custom_jvp tangent map applies an iterate's stop to a
+     tangent; a tangent map must be linear in its tangents"]. Reverse mode
+    transposes the linear part: a value a tangent map adds to a tangent, or
+    selects beside one with {!Nx.where}, counts as zero. A pullback or a
+    transpose reads a result's cotangent at the result's set.
 
     {b Maps.} {!vmap} batches a rule over an argument that belongs to the map:
     the rule and its derivative are traced and evaluated over the lanes, and a

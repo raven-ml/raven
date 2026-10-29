@@ -80,6 +80,11 @@ type kind =
     message naming the tracer. A tape's draws are those of the code around it,
     since its known part runs at the call. *)
 
+exception Stop_reads
+(** Raised by a tape's trace of an iterate whose stop reads a value computed
+    from the tape's variables, through its carry or its captures: its number of
+    steps depends on them, so it has no transpose. *)
+
 val trace :
   ?totals:Program.addition array ->
   ?asked:Program.asked list ref ->
@@ -92,6 +97,6 @@ val trace :
     [forms], and its captures, in order. The interpretation is named [name] in
     messages, as ["Rune.scan"]. A total's running value in lies where [totals]
     places it. Without that, it lies where the first value asked of it
-    ({!Program.Running}) or added to it lies. [asked] receives, in order,
-    each probe [f] asked about ({!Program.Open}), which the tracer passes on,
-    and the answer. Raises what [f] raises. *)
+    ({!Program.Running}) or added to it lies. [asked] receives, in order, each
+    probe [f] asked about ({!Program.Open}), which the tracer passes on, and the
+    answer. Raises what [f] raises. *)

@@ -245,8 +245,8 @@ let jvp_tests =
           (Rune.jit' (fun x -> snd (Rune.jvp' f x (along ()))));
         runs ~derivatives:0 "a custom_vjp eagerly" g;
         runs ~derivatives:1 "a custom_vjp under grad" (grad g);
-        (* A tangent map applies once, at the call; a pullback once per
-           backward pass. *)
+        (* A tangent map applies once, at the call; a pullback once per backward
+           pass. *)
         let twice f x =
           let _, pb = Rune.vjp' f x in
           ignore (pb (along ()));
@@ -461,8 +461,8 @@ let order_tests =
           (snd (Rune.jvp' primal (scalar x) (scalar 1.))));
     test "a differentiation of a capture leaves the rule to the argument's"
       (fun () ->
-        (* s sin x with a tangent map of 100 s along x: the differentiation
-           over s differentiates the code, the one over x applies the rule. *)
+        (* s sin x with a tangent map of 100 s along x: the differentiation over
+           s differentiates the code, the one over x applies the rule. *)
         let rule s =
           Rune.custom_jvp tensor tensor (fun x ->
               let c = Nx.mul_s s 100. in
@@ -477,9 +477,11 @@ let order_tests =
         near ~msg:"jvp over forward" (scalar 450.)
           (jvp (fun x -> fst (forward x)));
         near ~msg:"under jit" (scalar 450.)
-          (Rune.jit' (fun x -> snd (Rune.jvp' (fun x -> fst (reverse x)) x dx))
+          (Rune.jit'
+             (fun x -> snd (Rune.jvp' (fun x -> fst (reverse x)) x dx))
              (scalar x));
-        near ~msg:"under a map" (vec [| 450.; 450. |])
+        near ~msg:"under a map"
+          (vec [| 450.; 450. |])
           (Rune.vmap'
              (fun x -> snd (Rune.jvp' (fun x -> fst (reverse x)) x dx))
              (vec [| x; 0.1 |]));
@@ -509,16 +511,15 @@ let order_tests =
                      (Nx.mul_s x 2.)))));
     test "a differentiation of a capture differentiates the rule's additions"
       (fun () ->
-        (* The rule adds s² to [total]: from a zero of s, the total's
-           derivative along s is 1 + 2 s = 4. *)
+        (* The rule adds s² to [total]: from a zero of s, the total's derivative
+           along s is 1 + 2 s = 4. *)
         let rule s =
           Rune.custom_jvp tensor tensor (fun x ->
               Total.add total (Nx.mul s s);
               (Nx.mul s x, fun dx -> dx))
         in
         let collected ~zero x s =
-          snd
-            (Total.collect total ~zero:(zero s) (fun () -> ignore (rule s x)))
+          snd (Total.collect total ~zero:(zero s) (fun () -> ignore (rule s x)))
         in
         let s = scalar 1.5 and x = scalar 2. in
         let at_zero _ = scalar 0. in
@@ -624,9 +625,9 @@ let order_tests =
 
 (* Reads *)
 
-(* √x by Newton's iteration from x, which stops once the residual it reads
-   with [Nx.item] is small: the number of steps depends on the argument's
-   values. [steps] counts them. *)
+(* √x by Newton's iteration from x, which stops once the residual it reads with
+   [Nx.item] is small: the number of steps depends on the argument's values.
+   [steps] counts them. *)
 let steps = ref 0
 
 let newton x =
@@ -706,10 +707,11 @@ let read_tests =
         near ~msg:"at a root" (Nx.ones f64 [| 3 |])
           (newton_jvp (Nx.ones f64 [| 3 |]));
         equal ~msg:"at a root, steps" int 0 !steps;
-        (* A map and a loop step that capture the argument alone run the rule
-           as written: the step once per loop call. *)
+        (* A map and a loop step that capture the argument alone run the rule as
+           written: the step once per loop call. *)
         let cs = Nx.create f64 [| 2; 1 |] [| 0.5; -2. |] in
-        near ~msg:"a map over captures" (Nx.mul cs (Nx.reshape [| 1; 3 |] root))
+        near ~msg:"a map over captures"
+          (Nx.mul cs (Nx.reshape [| 1; 3 |] root))
           (counted "a map over captures" (fun () ->
                Rune.vmap' (fun c -> Nx.mul c (newton_jvp x)) cs));
         near ~msg:"a loop step over captures"
@@ -787,7 +789,8 @@ let read_tests =
         let traced = "Nx.item: the value is traced" in
         (* Under reverse mode the tangent map runs on the tape's tangents. *)
         invalid ~sub:traced (fun () -> Rune.grad' (sum solving_jvp) x);
-        invalid ~sub:traced (fun () -> Rune.jit' (Rune.grad' (sum solving_vjp)) x);
+        invalid ~sub:traced (fun () ->
+            Rune.jit' (Rune.grad' (sum solving_vjp)) x);
         invalid ~sub:traced (fun () ->
             Rune.jit' (fun x -> snd (Rune.jvp' solving_jvp x (along ()))) x);
         invalid ~sub:traced (fun () ->
@@ -808,7 +811,8 @@ let read_tests =
               (Nx.mul_s x s, fun dx -> Nx.mul_s dx s))
         in
         exact ~msg:"custom_vjp eagerly" (scaled x) (f x);
-        exact ~msg:"custom_vjp under grad" (scaled (Nx.ones f64 [| 2 |]))
+        exact ~msg:"custom_vjp under grad"
+          (scaled (Nx.ones f64 [| 2 |]))
           (Rune.grad' (sum f) x);
         exact ~msg:"custom_jvp eagerly" (scaled x) (g x);
         exact ~msg:"custom_jvp under jvp" (scaled x) (snd (Rune.jvp' g x x)));
@@ -883,8 +887,7 @@ let error_tests =
         in
         exact ~msg:"no differentiation applies it" (v3 ()) (f (v3 ()));
         raises (Failure "map") (fun () -> Rune.jvp' f (v3 ()) (along ())));
-    test "an exception of the rule keeps the backtrace of its raise"
-      (fun () ->
+    test "an exception of the rule keeps the backtrace of its raise" (fun () ->
         let raise_exit () = raise (Sys.opaque_identity Exit) in
         let f =
           Rune.custom_jvp tensor tensor (fun _ -> (raise_exit (), Fun.id))
@@ -972,7 +975,20 @@ let error_tests =
              (v3 ()));
         let _, pb = Rune.vjp' f (v3 ()) in
         invalid ~sub:"Rune.vjp': a custom_jvp tangent map applies Exp"
-          (fun () -> pb (along ())));
+          (fun () -> pb (along ()));
+        (* An iterate whose stop reads a tangent takes a number of steps that
+           depends on it. *)
+        let halved =
+          nonlinear
+            (Rune.iterate' ~max:4
+               ~until:(fun d -> Nx.less (Nx.max d) (Nx.scalar f64 1.))
+               ~f:(fun d -> Nx.mul_s d 0.5))
+        in
+        invalid
+          ~sub:
+            "Rune.grad': a custom_jvp tangent map applies an iterate's stop to \
+             a tangent; a tangent map must be linear in its tangents" (fun () ->
+            Rune.grad' (fun x -> Nx.sum (halved x)) (v3 ())));
     test "a tangent map that adds a tangent to a total raises under grad"
       (fun () ->
         let f =
@@ -1070,8 +1086,8 @@ let compiled_tests =
         exact ~msg:"grad of the rows" hundreds (Rune.grad' (total ~f:rows) xs);
         exact ~msg:"jit of grad" hundreds
           (Rune.jit' (Rune.grad' (total ~f:rows)) xs);
-        (* The carry's tangent starts as a zero the scan instantiates, which
-           the rule's tangents read alone on the first step. *)
+        (* The carry's tangent starts as a zero the scan instantiates, which the
+           rule's tangents read alone on the first step. *)
         let carried c x = (Nx.add (fake_grad_sin c) x, ()) in
         let c1 = Nx.add (Nx.sin (Nx.zeros f64 [| 3 |])) (v3 ()) in
         let c2 = Nx.add (Nx.sin c1) (along ()) in
@@ -1336,8 +1352,9 @@ let map_tests =
           (array (Windtrap.pair (float 1e-12) (float 1e-12)))
           (pairs (snd (Rune.jvp' (fun z -> Nx.mul z z) z t)))
           (pairs (snd (Rune.jvp' (Rune.vmap' square) z t))));
-    test "a tangent map that reads a map's lanes runs where a differentiation \
-          applies it" (fun () ->
+    test
+      "a tangent map that reads a map's lanes runs where a differentiation \
+       applies it" (fun () ->
         let axis = Rune.axis () in
         let mark =
           Rune.custom_jvp tensor Nx.Ptree.unit (fun _ ->
@@ -1658,8 +1675,8 @@ let adjoint_law (xs, vs, ws) =
   let dot a b = Nx.item [] (Nx.sum (Nx.mul a b)) in
   equal ~msg:"<w, J v> = <Jᵀ w, v>" (float 1e-12) (dot w dy) (dot g v)
 
-(* s sin x with a tangent map of 100 s along x: a differentiation of x
-   applies the rule, one of s alone differentiates the code. *)
+(* s sin x with a tangent map of 100 s along x: a differentiation of x applies
+   the rule, one of s alone differentiates the code. *)
 let capture_law (xs, ss, vs) =
   cover "no element" (Array.length xs = 0);
   cover "several elements" (Array.length xs > 1);
@@ -1684,7 +1701,8 @@ let in_step f x =
   let _, ys =
     Rune.scan Nx.Ptree.unit tensor tensor
       ~f:(fun () r -> ((), f r))
-      ~init:() (Nx.reshape [| 1; n |] x)
+      ~init:()
+      (Nx.reshape [| 1; n |] x)
   in
   Nx.reshape [| n |] ys
 
@@ -1828,8 +1846,7 @@ let read_law ((xs, _), (vs, _), (ws, _)) =
 
 let law_tests =
   [
-    prop "a rule on values gives the traced rule's bits" gen_breaking
-      real_law;
+    prop "a rule on values gives the traced rule's bits" gen_breaking real_law;
     prop "a complex rule on values gives the traced rule's bits" gen_breaking
       complex_law;
     prop "a derivative that reads values gives its traced twin's bits"
