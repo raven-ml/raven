@@ -3477,6 +3477,8 @@ schedule/rangeify/pad_reduce_safe.golden
 schedule/rangeify/pad_reduce_safe_kernels.golden
 schedule/rangeify/pad_reduce_unsafe.golden
 schedule/rangeify/pad_reduce_unsafe_kernels.golden
+schedule/rangeify/padded_pair.golden
+schedule/rangeify/padded_pair_kernels.golden
 schedule/rangeify/padded_twice.golden
 schedule/rangeify/padded_twice_kernels.golden
 schedule/rangeify/partial_fuse.golden
@@ -3580,6 +3582,8 @@ schedule/rangeify/symbolic_contiguous.golden
 schedule/rangeify/symbolic_contiguous_kernels.golden
 schedule/rangeify/symbolic_kept.golden
 schedule/rangeify/symbolic_kept_kernels.golden
+schedule/rangeify/tiled_chain.golden
+schedule/rangeify/tiled_chain_kernels.golden
 schedule/rangeify/two_outputs.golden
 schedule/rangeify/two_outputs_kernels.golden
 schedule/rangeify/ugly_reduceop_pairing.golden
@@ -3602,6 +3606,14 @@ schedule/rangeify/variable_two.golden
 schedule/rangeify/variable_two_kernels.golden
 schedule/rangeify/where.golden
 schedule/rangeify/where_kernels.golden
+schedule/rangeify/windowed_chain.golden
+schedule/rangeify/windowed_chain_kernels.golden
+schedule/rangeify/windowed_pair.golden
+schedule/rangeify/windowed_pair_kernels.golden
+schedule/rangeify/windowed_scaled.golden
+schedule/rangeify/windowed_scaled_kernels.golden
+schedule/rangeify/windowed_scaled_long.golden
+schedule/rangeify/windowed_scaled_long_kernels.golden
 schedule/rangeify/zero_size_children.golden
 schedule/rangeify/zero_size_children_kernels.golden
 schedule/schedule/add.golden

@@ -68,22 +68,62 @@ let pm_gate_substitute =
           else raise Bottom_up_gate);
     ])
 
-(* The distinct indices the stages of a graph are read at, each of which
-   inlining copies the stage's value to: [total] in all, and [by_axis] those of
-   the stages over each range axis. The axes of a stage's ranges are its own and
-   name it while the cleanups rebuild it on its rewritten value. *)
-type reads = { total : int; by_axis : (int list, int) Hashtbl.t }
+(* The product of the largest sizes of the ranges among [rs], a float since it
+   can pass [max_int]. *)
+let extent rs =
+  let size n r =
+    if op r <> Op.Range then n
+    else n *. Dtype.Value.to_float (vmax (nth r 0))
+  in
+  List.fold_left size 1. rs
+
+(* The ranges the indices [xs] run in, each once. *)
+let read_ranges xs =
+  let add r rs = if List.memq r rs then rs else r :: rs in
+  List.fold_left (fun rs x -> Nodes.fold add (ranges x) rs) [] xs
+
+(* The copies the read [idx] of the stage [buf] makes of the stage's value once
+   inlined: one, or one per trip of the reductions its index runs in, as a
+   running sum's windows of [w] compute each element they read [w] times. A
+   trip is counted only where it computes an element again, which storing would
+   save, so the count is at most the trips of the index per element: a sum that
+   reads each element once computes each once. A read whose index runs in no
+   reduction, as a broadcast through an expand, a reshape or padding, copies
+   the value once. Trips in padding count, since only the inlined value's loads
+   are gated there. A coordinate the value does not vary along counts neither
+   elements nor trips: substituting its index leaves the value as it is. A
+   symbolic size counts at its largest. *)
+let read_copies buf idx =
+  let live =
+    List.filter
+      (fun (r, _) -> op r = Op.Range && Nodes.mem r (ranges (nth buf 0)))
+      (zip (List.tl (src buf)) (List.tl (src idx)))
+  in
+  let read = read_ranges (List.map snd live) in
+  let reduce =
+    List.filter (fun r -> Axis_type.equal (axis_type r) Reduce) read
+  in
+  let elements = extent (List.map fst live) in
+  if elements <= 0. then 1.
+  else Float.max 1. (Float.min (extent reduce) (extent read /. elements))
+
+(* The copies the reads of the stages of a graph make of their values once
+   inlined ({!read_copies}): [total] in all, and [by_axis] those of the stages
+   over each range axis. Reads at several distinct indices copy the value at
+   each. The axes of a stage's ranges are its own and name it while the
+   cleanups rebuild it on its rewritten value. *)
+type reads = { total : float; by_axis : (int list, float) Hashtbl.t }
 
 (* The reads of the stages of [tsink]. A read through a stack is not counted: by
    now every stage has a device, so the cleanups never turn it into a read of
    the stage. *)
 let stage_reads tsink =
-  let total = ref 0 and by_axis = Hashtbl.create 16 and seen = Tbl.create 64 in
-  let count r =
+  let total = ref 0. and by_axis = Hashtbl.create 16 and seen = Tbl.create 64 in
+  let count c r =
     if op r = Op.Range then
       let k = axis_id r in
-      let n = Option.value (Hashtbl.find_opt by_axis k) ~default:0 in
-      Hashtbl.replace by_axis k (n + 1)
+      let n = Option.value (Hashtbl.find_opt by_axis k) ~default:0. in
+      Hashtbl.replace by_axis k (n +. c)
   in
   (* Each node is pushed once, outside call bodies, in no order. *)
   let push stack u =
@@ -97,8 +137,10 @@ let stage_reads tsink =
     | [] -> ()
     | u :: rest ->
         if op u = Op.Index && op (nth u 0) = Op.Stage then begin
-          incr total;
-          List.iter count (List.tl (src (nth u 0)))
+          let buf = nth u 0 in
+          let c = read_copies buf u in
+          total := !total +. c;
+          List.iter (count c) (List.tl (src buf))
         end;
         walk (List.fold_left push rest (src_without_body u))
   in
@@ -107,23 +149,23 @@ let stage_reads tsink =
 
 (* Each read of a stage counts at every axis of its ranges, and other stages can
    share an axis, a device range or one a symbolic size names, so the least
-   count bounds the stage's reads from above. A stage of no ranges is read at
-   one index. *)
-let reads_of reads buf =
+   count bounds the stage's copies from above. A stage of no ranges is read at
+   one index, once. *)
+let stage_copies reads buf =
   let least n r =
     if op r <> Op.Range then n
     else
-      min n
-        (Option.value (Hashtbl.find_opt reads.by_axis (axis_id r)) ~default:0)
+      Float.min n
+        (Option.value (Hashtbl.find_opt reads.by_axis (axis_id r)) ~default:0.)
   in
-  match List.fold_left least max_int (List.tl (src buf)) with
-  | n when n = max_int -> 1
-  | n -> max n 1
+  match List.fold_left least Float.infinity (List.tl (src buf)) with
+  | n when n = Float.infinity -> 1.
+  | n -> Float.max n 1.
 
 (* The nodes that inlining a stage may add to its readers: the nodes of its
-   value that its ranges reach, which the inlining copies, times the indices it
-   is read at. *)
-let inline_budget = 1024
+   value that its ranges reach, which the inlining copies, times the copies its
+   reads make. *)
+let inline_budget = 1024.
 
 (* The nodes of [computed] that inlining [buf] copies: those inside its ranges,
    which the substitution of the read's indices rebuilds. *)
@@ -186,35 +228,33 @@ let remove_bufferize ~reads src buf idx =
        buffers loaded again: one that reads more than one buffer stays
        stored. *)
     let read_by_every_output =
-      let read =
-        List.concat_map
-          (fun x -> Nodes.to_list (ranges x))
-          (List.tl (Ops.src idx))
-      in
+      let read = read_ranges (List.tl (Ops.src idx)) in
       (opts buf).keep = Broadcast
       && read <> []
       && List.for_all (fun r -> Axis_type.equal (axis_type r) Reduce) read
       && Tbl.length accessed > 1
     in
-    (* Inlined, the value is copied to each position it is read at. Its
-       producers are inlined already, so the copies compound: [k] values each
-       reading the one before at two positions are [2^k] copies of the first.
-       A value read at several positions whose copies exceed the budget stays
-       stored, so that an inlining adds at most the budget to its readers and
-       the kernels of a program grow at most linearly in it. *)
-    let duplicates =
-      (* No stage is read more often than all are, and the copied nodes are
+    (* Inlined, the value is copied to each position it is read at, and
+       computed again at each trip of a reduction over a window. Its producers
+       are inlined already, so the copies compound: [k] values each reading the
+       one before at two positions are [2^k] copies of the first. A value whose
+       copies exceed the budget stays stored, so that an inlining adds at most
+       the budget to the code and the work of its readers, and the kernels of
+       a program grow at most linearly in it. *)
+    let copies =
+      (* No stage is copied more often than all are, and the copied nodes are
          among the computed ones, so most values are under the budget before
-         their reads or copies are counted. *)
-      let n = List.length computed in
-      n * reads.total > inline_budget
+         their copies are counted. *)
+      let n = float_of_int (List.length computed) in
+      n *. reads.total > inline_budget
       &&
-      let r = reads_of reads buf in
-      r > 1 && n * r > inline_budget && copied buf computed * r > inline_budget
+      let c = stage_copies reads buf in
+      c > 1.
+      && n *. c > inline_budget
+      && float_of_int (copied buf computed) *. c > inline_budget
     in
     if
-      Tbl.length accessed > 3 || recomputes || read_by_every_output
-      || duplicates
+      Tbl.length accessed > 3 || recomputes || read_by_every_output || copies
     then None
     else
       (* A call returns no value here: a reduction reaches one only through the

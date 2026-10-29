@@ -121,6 +121,7 @@ let programs =
     "pad";
     "pad_reduce_safe";
     "pad_reduce_unsafe";
+    "padded_pair";
     "padded_twice";
     "partial_fuse";
     "partially_invalid";
@@ -170,6 +171,7 @@ let programs =
     "symbolic_contiguous";
     "prefix_sum_broadcast";
     "symbolic_kept";
+    "tiled_chain";
     "two_outputs";
     "ugly_reduceop_pairing";
     "unit_axis_staged";
@@ -181,6 +183,10 @@ let programs =
     "variable_staged";
     "variable_two";
     "where";
+    "windowed_chain";
+    "windowed_pair";
+    "windowed_scaled";
+    "windowed_scaled_long";
     "zero_size_children";
   ]
   @ gathers
@@ -1133,9 +1139,10 @@ let kernels_reading reads =
     (Rangeify.get_kernel_graph
        (Ops.sink [ Ops.after o [ Ops.end_ store [ i ] ] ]))
 
-(* [staged v] is [v] of [source] at [s], staged over [s] of [32]. *)
-let staged v =
-  let s = loop 32 0 in
+(* [staged v] is [v] of [source] at [s], staged over [s] of [size] (default
+   [32]). *)
+let staged ?(size = Ops.Int 32) v =
+  let s = Ops.range ~axis_type:Loop size [ 0 ] in
   Ops.bufferize ~opts:removable (v (Ops.index source [ s ])) [ s ]
 
 let at k i = [ Ops.O.(i + int k) ]
@@ -1179,6 +1186,105 @@ let copies =
             :: List.init 31 (fun k -> Ops.index b (at k i))
           in
           equal int 1 (kernels_reading reads));
+    ]
+
+(* Recomputation
+
+   A stage inlined into a reduction is computed at each trip of the reductions
+   its read's indices run in, at most as often as each element is read, and
+   stays stored when the nodes its ranges reach times the copies its reads make
+   for one output exceed 1024. *)
+
+(* The kernels of a graph that stores, at each [i] of [16], the sum over [k] of
+   [width] of [read i k]. *)
+let kernels_reducing ~width read =
+  let o = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
+  let i = loop 16 9 and k = Ops.range ~axis_type:Reduce (Int width) [ 10 ] in
+  let store = Ops.store (Ops.index o [ i ]) (Ops.reduce (read i k) Add [ k ]) in
+  kernels
+    (Rangeify.get_kernel_graph
+       (Ops.sink [ Ops.after o [ Ops.end_ store [ i ] ] ]))
+
+let windows' read = kernels_reducing ~width:16 read
+
+(* [windows v] reads [v] at [i + k] for [k] of [16], as a running sum's windows
+   do: 256 trips over a stage of 32 elements, 8 an element. *)
+let windows v = windows' (fun i k -> Ops.index v [ Ops.O.(i + k) ])
+
+let recomputation =
+  group "get_kernel_graph › recomputation"
+    [
+      (* [k] of [2] at [2i + k] reads each of the 32 elements once. *)
+      test "a value of 1200 nodes reduced once an element is inlined" (fun () ->
+          let read v i k = Ops.index v [ Ops.O.((i * int 2) + k) ] in
+          equal int 1 (kernels_reducing ~width:2 (read (staged (chain 600)))));
+      test "a cheap value reduced in windows is inlined" (fun () ->
+          equal int 1 (windows (staged (chain 2))));
+      (* [staged (chain 63)] copies 128 nodes, computed 8 times an element. *)
+      test "a value reduced in windows whose work is 1024 nodes is inlined"
+        (fun () -> equal int 1 (windows (staged (chain 63))));
+      test "a value reduced in windows whose work is 1040 nodes is stored"
+        (fun () -> equal int 2 (windows (staged (chain 64))));
+      (* Each window computes the 128 copied nodes 8 times an element, and the
+         two 16 times. *)
+      test "two windowed reads of a stage add up" (fun () ->
+          let v = staged (chain 63) in
+          let read i k =
+            Ops.O.(Ops.index v [ i + k ] + Ops.index v [ i + k + int 1 ])
+          in
+          equal int 2 (kernels_reducing ~width:16 read));
+      (* At most 32 elements, the stage is read 8 times an element. *)
+      test "a value of symbolic size counts at its largest" (fun () ->
+          let n =
+            Ops.variable "n" (`Int (Bigint.of_int 31)) (`Int (Bigint.of_int 32))
+          in
+          equal int 2 (windows (staged ~size:(Sym n) (chain 64))));
+      (* [b] of [4] is an axis the value does not vary along, which the cleanups
+         drop before inlining: 32 elements, read 8 times each. *)
+      test "a value reduced in windows counts no axis it does not vary along"
+        (fun () ->
+          let b = Ops.range ~axis_type:Loop (Int 4) [ 2 ] and s = loop 32 0 in
+          let v =
+            Ops.bufferize ~opts:removable
+              (chain 64 (Ops.index source [ s ]))
+              [ b; s ]
+          in
+          equal int 2
+            (windows' (fun i k -> Ops.index v [ Ops.O.int 0; Ops.O.(i + k) ])));
+      (* A window of 2 over a stage of 4 read at 16 outputs reads each element
+         8 times, of which the window computes it again twice. *)
+      test "a read counts at most the trips of its reductions" (fun () ->
+          let v = staged ~size:(Int 4) (chain 200) in
+          let read i k = Ops.index v [ Ops.O.((i + k) % int 4) ] in
+          equal int 1 (kernels_reducing ~width:2 read));
+      (* Inlined, the value's loads are gated in the padding and its arithmetic
+         runs at each of the 16 trips, 4 an element. *)
+      test "a value reduced through padding counts the padding's trips"
+        (fun () ->
+          let v = staged ~size:(Int 4) (chain 200) in
+          let read _ k = Ops.index v [ Shape.valid k Ops.O.(k < int 4) ] in
+          equal int 2 (kernels_reducing ~width:16 read));
+      (* [a] is read at its reader [b]'s own index, and [b] in windows: [a] is
+         inlined into [b] first, whose copies then count [a]'s nodes. *)
+      test "a value inlined into a windowed stage counts in its copies"
+        (fun () ->
+          let a = staged (chain 63) and s = loop 32 1 in
+          let b =
+            Ops.bufferize ~opts:removable
+              Ops.O.(Ops.index a [ s ] + Ops.index source [ s ])
+              [ s ]
+          in
+          equal int 2 (windows b));
+      (* [i mod 4] and [i] valid below [4] read a stage of 4 elements at 16
+         outputs, each computing it once. *)
+      test "a value broadcast through a reshape is inlined" (fun () ->
+          let v = staged ~size:(Int 4) (chain 200) in
+          equal int 1
+            (kernels_reading (fun i -> [ Ops.index v [ Ops.O.(i % int 4) ] ])));
+      test "a value read through padding is inlined" (fun () ->
+          let v = staged ~size:(Int 4) (chain 200) in
+          let at i = Shape.valid i Ops.O.(i < int 4) in
+          equal int 1 (kernels_reading (fun i -> [ Ops.index v [ at i ] ])));
     ]
 
 (* Dead reads
@@ -1232,5 +1338,6 @@ let () =
          states;
          cost;
          copies;
+         recomputation;
          dead_reads;
        ])

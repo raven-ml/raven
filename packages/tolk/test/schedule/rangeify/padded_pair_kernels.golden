@@ -1,0 +1,104 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024, device="CPU") tag=()
+1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024, device="CPU")
+2 Ops.CONST dtypes.weakint [] 1024
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.INDEX dtypes.float [1, 3]
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.CMPLT dtypes.bool [3, 5]
+7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+8 Ops.CONST dtypes.bool [] Invalid
+9 Ops.WHERE dtypes.weakint [6, 3, 8]
+10 Ops.INDEX dtypes.float [7, 9]
+11 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU")
+12 Ops.INDEX dtypes.float [11, 9]
+13 Ops.MUL dtypes.float [10, 12]
+14 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="CPU")
+15 Ops.INDEX dtypes.float [14, 9]
+16 Ops.ADD dtypes.float [13, 15]
+17 Ops.MUL dtypes.float [16, 12]
+18 Ops.ADD dtypes.float [17, 15]
+19 Ops.MUL dtypes.float [18, 12]
+20 Ops.ADD dtypes.float [19, 15]
+21 Ops.MUL dtypes.float [20, 12]
+22 Ops.ADD dtypes.float [21, 15]
+23 Ops.MUL dtypes.float [22, 12]
+24 Ops.ADD dtypes.float [23, 15]
+25 Ops.MUL dtypes.float [24, 12]
+26 Ops.ADD dtypes.float [25, 15]
+27 Ops.MUL dtypes.float [26, 12]
+28 Ops.ADD dtypes.float [27, 15]
+29 Ops.MUL dtypes.float [28, 12]
+30 Ops.ADD dtypes.float [29, 15]
+31 Ops.MUL dtypes.float [30, 12]
+32 Ops.ADD dtypes.float [31, 15]
+33 Ops.MUL dtypes.float [32, 12]
+34 Ops.ADD dtypes.float [33, 15]
+35 Ops.MUL dtypes.float [34, 12]
+36 Ops.ADD dtypes.float [35, 15]
+37 Ops.MUL dtypes.float [36, 12]
+38 Ops.ADD dtypes.float [37, 15]
+39 Ops.MUL dtypes.float [38, 12]
+40 Ops.ADD dtypes.float [39, 15]
+41 Ops.MUL dtypes.float [40, 12]
+42 Ops.ADD dtypes.float [41, 15]
+43 Ops.MUL dtypes.float [42, 12]
+44 Ops.ADD dtypes.float [43, 15]
+45 Ops.MUL dtypes.float [44, 12]
+46 Ops.ADD dtypes.float [45, 15]
+47 Ops.CONST dtypes.weakfloat [] 0.0
+48 Ops.WHERE dtypes.float [6, 46, 47]
+49 Ops.CONST dtypes.weakint [] 1020
+50 Ops.CMPLT dtypes.bool [3, 49]
+51 Ops.CONST dtypes.bool [] True
+52 Ops.CMPNE dtypes.bool [50, 51]
+53 Ops.CONST dtypes.weakint [] -1020
+54 Ops.ADD dtypes.weakint [3, 53]
+55 Ops.WHERE dtypes.weakint [52, 54, 8]
+56 Ops.INDEX dtypes.float [7, 55]
+57 Ops.INDEX dtypes.float [11, 55]
+58 Ops.MUL dtypes.float [56, 57]
+59 Ops.INDEX dtypes.float [14, 55]
+60 Ops.ADD dtypes.float [58, 59]
+61 Ops.MUL dtypes.float [60, 57]
+62 Ops.ADD dtypes.float [61, 59]
+63 Ops.MUL dtypes.float [62, 57]
+64 Ops.ADD dtypes.float [63, 59]
+65 Ops.MUL dtypes.float [64, 57]
+66 Ops.ADD dtypes.float [65, 59]
+67 Ops.MUL dtypes.float [66, 57]
+68 Ops.ADD dtypes.float [67, 59]
+69 Ops.MUL dtypes.float [68, 57]
+70 Ops.ADD dtypes.float [69, 59]
+71 Ops.MUL dtypes.float [70, 57]
+72 Ops.ADD dtypes.float [71, 59]
+73 Ops.MUL dtypes.float [72, 57]
+74 Ops.ADD dtypes.float [73, 59]
+75 Ops.MUL dtypes.float [74, 57]
+76 Ops.ADD dtypes.float [75, 59]
+77 Ops.MUL dtypes.float [76, 57]
+78 Ops.ADD dtypes.float [77, 59]
+79 Ops.MUL dtypes.float [78, 57]
+80 Ops.ADD dtypes.float [79, 59]
+81 Ops.MUL dtypes.float [80, 57]
+82 Ops.ADD dtypes.float [81, 59]
+83 Ops.MUL dtypes.float [82, 57]
+84 Ops.ADD dtypes.float [83, 59]
+85 Ops.MUL dtypes.float [84, 57]
+86 Ops.ADD dtypes.float [85, 59]
+87 Ops.MUL dtypes.float [86, 57]
+88 Ops.ADD dtypes.float [87, 59]
+89 Ops.MUL dtypes.float [88, 57]
+90 Ops.ADD dtypes.float [89, 59]
+91 Ops.WHERE dtypes.float [50, 47, 90]
+92 Ops.ADD dtypes.float [48, 91]
+93 Ops.STORE dtypes.void [4, 92]
+94 Ops.END dtypes.void [93, 3]
+95 Ops.SINK dtypes.void [94] KernelInfo()
+96 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU") tag=()
+97 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU") tag=()
+98 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="CPU") tag=()
+99 Ops.CALL dtypes.void [95, 0, 96, 97, 98] CallInfo()
+100 Ops.AFTER dtypes.float [0, 99]
+101 Ops.SINK dtypes.void [100]
+

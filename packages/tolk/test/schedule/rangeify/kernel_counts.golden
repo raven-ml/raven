@@ -97,6 +97,12 @@ symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1
 read_at_offsets	2
+windowed_chain	2
+windowed_scaled	1
+windowed_scaled_long	2
+windowed_pair	2
+tiled_chain	1
+padded_pair	1
 expand_staged	2
 expand_kept	2
 padded_twice	1
