@@ -3213,6 +3213,30 @@ let test_take_moves_positions () =
     (fun k g -> equal ~msg:(Printf.sprintf "m%d" k) int (positions + tile) g)
     grew
 
+(* A take along an axis of positions split along it, beside a value split
+   along another, moves to each device only the positions its window of
+   the results reads: a quarter of them, of which it held a quarter. *)
+let test_take_along_moves_window () =
+  let n = 1024 and columns = 64 in
+  let split axis = Set4.split ~axis in
+  let value () = Nx.place (split 1) (Nx.zeros D.Float32 [| n; columns |]) in
+  let p =
+    Nx.place (split 0)
+      (Nx.Repr.of_array Nx.Host.v
+         (A.of_array D.Int64 [| n; columns |]
+            (Array.init (n * columns) (fun i -> Int64.of_int (i mod n)))))
+  in
+  let take x = Nx.take_along_axis ~axis:0 p x in
+  ignore (elements (take (value ())));
+  let x = value () in
+  let y, grew = grown (fun () -> take x) in
+  equal (placement ()) (split 1) (Nx.placement y);
+  let window = n * (columns / 4) in
+  List.iteri
+    (fun k g ->
+      equal ~msg:(Printf.sprintf "m%d" k) int ((8 * window) + (4 * window)) g)
+    grew
+
 (* An [Add] of many updates split over four devices into a small target
    whole on each moves partial sums of the target's size, never the
    updates: gathering them would add three quarters of them on each
@@ -3250,6 +3274,8 @@ let traffic =
         test_scatter_in_place;
       test "a take of positions no order reads moves the positions alone"
         test_take_moves_positions;
+      test "a take along an axis moves only the positions each device reads"
+        test_take_along_moves_window;
       test "an addition of updates split over devices moves sums alone"
         test_summed_moves_sums;
     ]
