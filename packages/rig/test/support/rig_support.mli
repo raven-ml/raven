@@ -481,7 +481,10 @@ val recv_timeout : Unix.file_descr -> float -> unit
 (** [recv_timeout fd s] bounds each read on the socket [fd] to [s] seconds, [0.]
     for none, on every system: [Unix.setsockopt_float] hands Windows the bound
     in a unit it reads as milliseconds. A read past the bound raises
-    [Unix.Unix_error] with [EAGAIN] or [EWOULDBLOCK], [ETIMEDOUT] on Windows. *)
+    [Unix.Unix_error] with [EAGAIN] or [EWOULDBLOCK], [ETIMEDOUT] on Windows.
+    macOS refuses the bound with [EINVAL] on a socket whose connection has
+    ended, so a socket whose peer may end it is bounded before
+    [Unix.connect]. *)
 
 val descriptor_limit : unit -> int
 (** [descriptor_limit ()] is this process's soft limit of its descriptors:

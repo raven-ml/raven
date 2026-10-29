@@ -492,12 +492,12 @@ let serving a =
 let dial port =
   let module Wire = Rig_remote_proxy.Wire in
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Rig_support.recv_timeout fd patience;
   match Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) with
   | exception Unix.Unix_error ((Unix.ECONNREFUSED | Unix.ECONNRESET), _, _) ->
       Unix.close fd;
       None
   | () -> (
-      Rig_support.recv_timeout fd patience;
       match Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1) with
       | Ok () -> Some fd
       | Error _ ->
