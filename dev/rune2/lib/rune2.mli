@@ -549,10 +549,11 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 
     {b Totals.} The additions a rule makes reach the innermost open
     {!Total.collect} of their total around the call, once per call. A tangent
-    map's are made once per differentiation that applies it, none without one; a
-    pullback's once per backward pass that applies it, to the {!Total.collect}
-    around that pass. Under reverse mode a tangent map that adds a tangent to a
-    total raises at the call. *)
+    map's are made once per differentiation that applies it, none without one,
+    summed from a negative zero and that sum added as one addition, each lane's
+    in turn under a map; a pullback's once per backward pass that applies it, to
+    the {!Total.collect} around that pass. Under reverse mode a tangent map that
+    adds a tangent to a total raises at the call. *)
 
 val custom_jvp :
   ('p, 'd) Nx.Ptree.t ->
@@ -790,14 +791,22 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
     value in the order they are made, at any depth: a loop inside another loop's
     step, a {!remat} or a custom rule in a step, and a {!jit}, which computes
     the sums in its program. So the total equals the sum of the same additions
-    made one after another, under every differentiation too. Under a
+    made one after another, under every differentiation too, but for a
+    {!custom_jvp} tangent map's, which that function states. Under a
     differentiation an addition adds its value's primal. A construct that makes
-    no addition leaves a running value as it is. Inside a {!vmap}, each lane
-    makes the additions of the code it runs: a [collect] inside the map receives
-    its lane's, and one outside it receives, as one addition, their sum over the
-    lanes as {!Nx.sum} computes it along the stacked axis, or nothing from a map
-    of no lane; a construct inside the map sums its additions there starting
-    from an identity that changes no sum (a negative zero). *)
+    no addition leaves a running value as it is.
+
+    Inside a {!vmap}, each lane makes the additions of the code it runs. A
+    [collect] inside the map receives its lane's. One outside it receives the
+    additions one after another, in the order the map makes them, and each
+    addition's lanes in turn, in C order of their indices, an outer map's
+    varying slowest. A loop, a {!jit}, a {!remat} or a custom rule's function
+    inside the map adds each of its additions to the running value around the
+    map as it is made. Where an {!iterate}'s lanes stop apart, each step adds
+    the lanes still running; where a {!switch}'s lanes take different branches,
+    the branches add one after another, the lowest index first. So with one lane
+    the total equals the one the code makes without the map, and a map of no
+    lane adds nothing. *)
 
 (** Write-only sums. *)
 module Total : sig

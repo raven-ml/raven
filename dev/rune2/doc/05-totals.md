@@ -61,7 +61,8 @@ float64 [] 46
 
 The compiled scan makes the same three additions, so the total is `46`.
 Inside a map each lane makes the additions of the code it runs, and a
-`collect` outside the map receives their sum over the lanes:
+`collect` outside the map receives each addition's lanes in turn, lane 0
+first:
 
 ```ocaml
 let batch = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 0.; 0.; 1. |]
@@ -76,8 +77,8 @@ let _, mapped_total =
 float64 [] 47
 ```
 
-The first lane adds `46`, as above; the second's carries are `0`, `0` and
-`1`, so it adds `1`, and the total is `47`.
+The first lane's additions come to `46`, as above; the second's carries
+are `0`, `0` and `1`, so its additions come to `1`, and the total is `47`.
 
 ## Under a differentiation
 

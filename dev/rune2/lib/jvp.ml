@@ -1465,7 +1465,8 @@ let differentiable (Program.F f) =
 
 (* A construct over duals: [Detach], an addition and an emission are performed
    outward on the primal, so that every differentiation around detaches the
-   value, a total receives the primal and a probe is offered it. [Lanes] is
+   value, a total receives the primal and a probe is offered it; an addition to
+   a running value adds the primals, and its tangent the tangents. [Lanes] is
    linear: its tangent is the lanes of the tangent. A custom rule or a linear
    call applies its rule ([Rules]). A scan, a remat, a call, an iterate, a
    switch, a root and a solve are performed with their programs' derivatives. *)
@@ -1475,6 +1476,30 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Add (t, x) ->
       Program.add_to t (primal i x);
       Effect.Deep.continue k [||]
+  | Accumulate { lanes; running; x } ->
+      let y =
+        Program.perform
+          (Accumulate { lanes; running = primal i running; x = primal i x })
+      in
+      let y = Program.like running y.(0) in
+      (* Linear: the running value's tangent plus the rows of [x]'s, which a
+         collect inside the differentiation receives. *)
+      let y =
+        match (tangent i running, tangent i x) with
+        | None, None -> y
+        | Some tr, None -> dual i ~fresh:false y tr
+        | tr, Some tx ->
+            let tr =
+              match tr with
+              | Some t -> t
+              | None ->
+                  Program.like running
+                    (Loops.filled ~zero:false
+                       (Program.form (Program.V (primal i running))))
+            in
+            dual i ~fresh:false y (Program.added ~lanes tr tx)
+      in
+      Effect.Deep.continue k [| Program.V y |]
   | Emit _ ->
       let primals = Program.map_operands { f = (fun x -> primal i x) } c in
       ignore (Program.perform primals);

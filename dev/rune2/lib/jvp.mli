@@ -20,7 +20,9 @@
     The interpretation's handler of constructs ({!Program.construct}) lies just
     outside it and answers each construct that reads a dual by the construct's
     derivative. [Detach] and an addition act on the primal, so a total receives
-    primals. [Lanes] of a dual is the dual of the primal's and the tangent's
+    primals; an [Accumulate]'s result also carries the sum of its running
+    value's and its rows' tangents, which a collect inside the differentiation
+    holds. [Lanes] of a dual is the dual of the primal's and the tangent's
     lanes, and an operator's tangent ({!Program.Operator}) is the operator of
     the tangents. A scan, an iterate, a switch, a remat, a call, a root and a
     solve are performed outward with their programs' derivatives over the

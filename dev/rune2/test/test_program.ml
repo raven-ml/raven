@@ -68,8 +68,7 @@ let test_constructs () =
   expect (output ()) @@ __POS_OF__ {|
     c0 : float32 [2] at CPU
     program (%0), totals (%1)
-      %2 : float32 [2] at CPU = Map [add(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-        with x0 = %1, x1 = %0
+      %2 : float32 [2] at CPU = accumulate %1 + %0
       %3 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
         with x0 = %0, x1 = c0
       %4 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)

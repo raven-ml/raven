@@ -33,11 +33,10 @@
     total by itself.
 
     A construct is performed as one effect ({!Construct}). The innermost handler
-    that answers it gives its results: a tracer's handler, a map, forward mode,
-    or for an [Add] a collect of its total. One that no handler answers, or that
-    a handler discontinues with {!Evaluate}, runs its {e default} where it was
-    performed, inside every interpretation around that point. Each constructor
-    states its default.
+    that answers it gives its results: a tracer's handler, a map or forward
+    mode. One that no handler answers, or that a handler discontinues with
+    {!Evaluate}, runs its {e default} where it was performed, inside every
+    interpretation around that point. Each constructor states its default.
 
     A program is never changed once made, and any domain may evaluate it. A
     call's {!site} keeps the programs transformations derive from it, one per
@@ -186,8 +185,18 @@ and construct =
           result at the placement, which must cut no axis. It is answered as
           [Lanes] is, and its default raises [Invalid_argument]. *)
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
-      (** The operand added to the total; no result. Its default does nothing.
-      *)
+      (** The operand added to a total no collect or tracer holds ({!add_to});
+          no result. Its default does nothing. *)
+  | Accumulate : {
+      lanes : int;
+      running : ('v, 's, 'd) Nx.t;
+      x : ('v, 's, 'd) Nx.t;
+    }
+      -> construct
+      (** A running value plus each row of [x] over its first [lanes] axes, in C
+          order, one result: [running] plus [x] where [lanes] is [0]. Each row
+          has [running]'s shape. Its default adds the rows one after another
+          ({!added}). *)
   | Emit : emission -> construct
       (** An emission offered to the innermost collect of its probe; no result.
           Its default does nothing. *)
@@ -592,11 +601,13 @@ type derivation =
           holding a custom rule or a linear call tells apart ({!customs}). Over
           the primals, then the tangents there are; to the results, the tangents
           there are, then the running values out. *)
-  | Vmap of { lanes : bool array; n : int; named : bool }
+  | Vmap of { lanes : bool array; shared : bool array; n : int; named : bool }
       (** A map of [n] lanes, [lanes.(k)] whether argument [k] holds every
-          lane's along a leading axis of [n]; [named] whether the program names
-          the map. Over the arguments; to the results, each with that leading
-          axis where it has lanes, then the running values out, every lane's. *)
+          lane's along a leading axis of [n], [shared.(k)] whether total [k]'s
+          running value is one every lane shares; [named] whether the program
+          names the map. Over the arguments; to the results, each with that
+          leading axis where it has lanes, then the running values out, every
+          lane's but the shared ones. *)
   | Known of { unknown : bool array; donated : bool array }
       (** The part of the program that reads no argument where [unknown] holds,
           computed at the call. Over the other arguments; to its results, the
@@ -689,10 +700,17 @@ val forms : construct -> form array
     tracer answers, the construct starts from that value and hands back the
     running value out ({!Replace}). Where none answers, the construct starts
     from the identity and adds the running value out to the total ({!add_to}),
-    as {!threaded} also does where the value has another form. A map answers
-    {!Running} with [None], so a construct inside it with no collect or tracer
-    of the total between starts from the identity, and the map sums its lanes'
-    ends. *)
+    as {!threaded} also does where the value has another form. An addition to a
+    running value is the construct [Accumulate], whose result is the next
+    running value, so a traced program records its additions as equations and
+    evaluates them wherever it runs.
+
+    A map answers {!Running} with the running value around it, held as a value
+    of the map that every lane shares, and passes on the {!Replace} of such a
+    value. A shared running value plus a lane value is each lane's row added in
+    turn, lane 0 first, and the result is shared again. A running value of a
+    holder inside the map, a collect or the identity a construct starts from, is
+    each lane's own. *)
 
 type _ Effect.t +=
   | Running :
@@ -703,7 +721,7 @@ type _ Effect.t +=
             form's set, and [None] where it lies on another. A tracer other than
             a tape between answers with a variable holding the total's running
             value where the call is, which the program it traces threads. A map
-            between answers [None]. *)
+            between answers with the answer around it, shared by its lanes. *)
   | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
         (** Answered by the collect or tracer that answered {!Running}, whose
             running value becomes the value given. *)
@@ -713,22 +731,31 @@ val running :
 (** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with
     none around. *)
 
-val threaded : ?lanes:int -> t -> (value array -> value array) -> value array
+val threaded :
+  ?lanes:int * bool array -> t -> (value array -> value array) -> value array
 (** [threaded ~lanes p f] calls [f] with the running values in of [p]'s totals
     and returns its results before the running values out, handing those back.
-    With [lanes], each has a leading axis of [lanes], one row per lane of a map.
-*)
+    With [lanes = (n, laned)], the running value of each total [k] with
+    [laned.(k)] has a leading axis of [n], one row per lane of a map. *)
 
 val threading :
-  ?lanes:int -> addition array -> (value array -> value array * 'a) -> 'a
+  ?lanes:int * bool array ->
+  addition array ->
+  (value array -> value array * 'a) ->
+  'a
 (** [threading ~lanes adds f] is [snd (f totals)], where [totals] are the
     running values in of the totals [adds] thread, as {!threaded} takes them. It
     hands [fst (f totals)] back as their running values out. *)
 
 val add_to : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.t -> unit
 (** [add_to t x] adds [x] to [t]: the running value of the innermost collect or
-    tracer that answers for [t] ({!Running}) becomes itself plus [x], and with
-    none [Add] of [x] is performed. *)
+    tracer that answers for [t] ({!Running}) becomes its [Accumulate] with [x],
+    and with none [Add] of [x] is performed. *)
+
+val added :
+  lanes:int -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
+(** [added ~lanes r x] is [r] plus each row of [x] over its first [lanes] axes,
+    one after another in C order: [Accumulate]'s default. *)
 
 (** Where a total's running value lies. *)
 type 'd where =

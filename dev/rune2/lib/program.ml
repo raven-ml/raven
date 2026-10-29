@@ -98,7 +98,7 @@ let fresh_site () = Atomic.fetch_and_add sites 1
 
 type derivation =
   | Jvp of { tangents : bool array; reverse : bool }
-  | Vmap of { lanes : bool array; n : int; named : bool }
+  | Vmap of { lanes : bool array; shared : bool array; n : int; named : bool }
   | Known of { unknown : bool array; donated : bool array }
   | Transpose of { linear : bool array; cts : bool array }
 
@@ -111,7 +111,8 @@ let same_abstract (F f) (F g) =
 let same_derivation a b =
   match (a, b) with
   | Jvp a, Jvp b -> a.tangents = b.tangents && a.reverse = b.reverse
-  | Vmap a, Vmap b -> a.lanes = b.lanes && a.n = b.n && a.named = b.named
+  | Vmap a, Vmap b ->
+      a.lanes = b.lanes && a.shared = b.shared && a.n = b.n && a.named = b.named
   | Known a, Known b -> a.unknown = b.unknown && a.donated = b.donated
   | Transpose a, Transpose b -> a.linear = b.linear && a.cts = b.cts
   | (Jvp _ | Vmap _ | Known _ | Transpose _), _ -> false
@@ -131,7 +132,7 @@ module Table = Cache.Make (struct
     let tag =
       match k.derivation with
       | Jvp { tangents; _ } -> Hashtbl.hash (0, tangents)
-      | Vmap { lanes; n; _ } -> Hashtbl.hash (1, lanes, n)
+      | Vmap { lanes; shared; n; _ } -> Hashtbl.hash (1, lanes, shared, n)
       | Known { unknown; donated } -> Hashtbl.hash (2, unknown, donated)
       | Transpose { linear; cts; _ } -> Hashtbl.hash (3, linear, cts)
     in
@@ -169,6 +170,12 @@ and construct =
   | Lanes : axis * ('v, 's, 'd) Nx.t -> construct
   | Lane_index : axis * 'd Nx.Placement.t -> construct
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
+  | Accumulate : {
+      lanes : int;
+      running : ('v, 's, 'd) Nx.t;
+      x : ('v, 's, 'd) Nx.t;
+    }
+      -> construct
   | Emit : emission -> construct
   | Callback : callback -> construct
   | Scan : {
@@ -340,8 +347,8 @@ and carried_by = function
   | Linear { apply; transpose = Host _; _ } -> Option.to_list apply
   | Root { system; _ } | Solve { system; _ } ->
       [ system.residual; system.jacobian; system.solve ]
-  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Callback _
-  | Operator _ ->
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Accumulate _ | Emit _
+  | Callback _ | Operator _ ->
       []
 
 let make ~owner ~params eqns ~outputs ~adds ~slots =
@@ -493,6 +500,8 @@ let map_operands m = function
   | Lanes (a, x) -> Lanes (a, m.f x)
   | Lane_index _ as c -> c
   | Add (t, x) -> Add (t, m.f x)
+  | Accumulate { lanes; running; x } ->
+      Accumulate { lanes; running = m.f running; x = m.f x }
   | Callback c -> Callback { c with args = map_values m c.args }
   | Emit (Emission e) ->
       let mask = Option.map (fun (V x) -> V (m.f x)) e.mask in
@@ -569,6 +578,7 @@ let operands = function
   | Detach x -> [ V x ]
   | Lanes (_, x) -> [ V x ]
   | Add (_, x) -> [ V x ]
+  | Accumulate { running; x; _ } -> [ V running; V x ]
   | Emit (Emission e) -> Array.to_list e.values @ Option.to_list e.mask
   | Lane_index _ -> []
   | Callback { args; _ } -> Array.to_list args
@@ -604,8 +614,8 @@ let once f =
             p)
 
 let rec map_programs f = function
-  | (Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Callback _ | Operator _)
-    as c ->
+  | ( Detach _ | Lanes _ | Lane_index _ | Add _ | Accumulate _ | Emit _
+    | Callback _ | Operator _ ) as c ->
       c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
@@ -700,8 +710,8 @@ let feeds step =
    shape its programs thread, which it starts from its seeds; then for a custom
    rule its tangent map's running totals out, chains from the identity. *)
 let additions = function
-  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Callback _
-  | Operator _ | Root _ | Solve _ ->
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Accumulate _ | Emit _
+  | Callback _ | Operator _ | Root _ | Solve _ ->
       [||]
   | Scan { step = p; _ } | Call { body = p; _ } | Remat { body = p; _ } ->
       let adds, _, _ = sums [ p ] in
@@ -753,6 +763,7 @@ let rec forms = function
   | Lane_index (_, placement) ->
       [| F { dtype = Nx.int32; layout = contiguous [||]; placement } |]
   | Add _ -> [||]
+  | Accumulate { running; _ } -> [| form (V running) |]
   | Callback { forms; _ } -> forms
   | Scan { step; length; trips; init; _ } ->
       let nc = Array.length init and no = Array.length step.outputs in
@@ -1159,6 +1170,7 @@ and default = function
   | Lanes _ -> no_map "Rune.lanes"
   | Lane_index _ -> no_map "Rune.lane_index"
   | Add _ | Emit _ -> [||]
+  | Accumulate { lanes; running; x } -> [| V (added ~lanes running x) |]
   | Callback c -> called c
   | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       scan step ~length ~trips ~reverse ~init ~xs ~captures ~seeds
@@ -1296,26 +1308,29 @@ and threaded ?lanes p f =
       (slice out n (Array.length out), slice out 0 n))
 
 and threading :
-    'a. ?lanes:int -> addition array -> (value array -> value array * 'a) -> 'a
-    =
+    'a.
+    ?lanes:int * bool array ->
+    addition array ->
+    (value array -> value array * 'a) ->
+    'a =
  fun ?lanes adds f ->
-  let at (type v s d) (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form =
+  let at (type v s d) k (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form =
     match lanes with
-    | None -> f
-    | Some n ->
+    | Some (n, laned) when laned.(k) ->
         {
           f with
           layout = contiguous (Array.append [| n |] (shape_of f));
           placement = Nx.Placement.with_leading_axis f.placement;
         }
+    | _ -> f
   in
   (* Each total's running value in, and how its running value out is handed
      back: at the form [p] gave it, or at the running value's set, where a map
      whose lanes stop apart computed it there. *)
   let ins =
-    Array.map
-      (fun (Addition (t, into, out)) ->
-        let into = at into and out = at out in
+    Array.mapi
+      (fun k (Addition (t, into, out)) ->
+        let into = at k into and out = at k out in
         let r = running t into in
         let typed (V y as v) =
           match coerce_at out y with
@@ -1354,8 +1369,31 @@ and threading :
 and add_to : type v s d. (v, s, d) total -> (v, s, d) Nx.t -> unit =
  fun t x ->
   match running t (Nx.Prim.form x) with
-  | Some r -> replace t (Nx.add r x)
+  | Some r -> replace t (accumulate ~lanes:0 r x)
   | None -> ignore (perform (Add (t, x)))
+
+and accumulate : type v s d.
+    lanes:int -> (v, s, d) Nx.t -> (v, s, d) Nx.t -> (v, s, d) Nx.t =
+ fun ~lanes running x ->
+  like running (perform (Accumulate { lanes; running; x })).(0)
+
+(* [r] plus each row of [x] over its first [lanes] axes in C order, the last of
+   those axes varying fastest. *)
+and added : type v s d.
+    lanes:int -> (v, s, d) Nx.t -> (v, s, d) Nx.t -> (v, s, d) Nx.t =
+ fun ~lanes r x ->
+  let shape = Nx.shape x in
+  let rec over r index axis =
+    if axis = lanes then
+      Nx.add r (if lanes = 0 then x else Nx.get (List.rev index) x)
+    else
+      let r = ref r in
+      for j = 0 to shape.(axis) - 1 do
+        r := over !r (j :: index) (axis + 1)
+      done;
+      !r
+  in
+  over r [] 0
 
 (* [p], a custom rule's primal, with its results and running totals alone. Where
    its residuals are its parameters, constants or results, nothing reads only
@@ -2176,6 +2214,11 @@ and pp_construct names ~indent (p : t) ppf c =
   | Lane_index (a, _) ->
       Format.fprintf ppf "lane_index of map %d" (map_number names a)
   | Add (_, x) -> Format.fprintf ppf "add %a" value (V x)
+  | Accumulate { lanes = 0; running; x } ->
+      Format.fprintf ppf "accumulate %a + %a" value (V running) value (V x)
+  | Accumulate { lanes; running; x } ->
+      Format.fprintf ppf "accumulate %a + the rows over %d axes of %a" value
+        (V running) lanes value (V x)
   | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       Format.fprintf ppf "scan %d rows%a%s, init (%a), xs (%a), captures (%a)"
         length

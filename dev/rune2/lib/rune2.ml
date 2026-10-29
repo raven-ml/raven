@@ -488,22 +488,6 @@ module Total = struct
     let effc (type a) (e : a Effect.t) :
         ((a, _) Effect.Deep.continuation -> _) option =
       match e with
-      | Construct (Add (u, x)) -> (
-          match same_total u (Nx.placement x) t at with
-          | Some Type.Equal ->
-              Some
-                (fun k ->
-                  if Nx.shape x <> Nx.shape init then
-                    Effect.Deep.discontinue k (refused (Nx.shape x))
-                  else begin
-                    sum := Nx.add !sum x;
-                    Effect.Deep.continue k [||]
-                  end)
-          | None when mine u ->
-              Some
-                (fun k ->
-                  Effect.Deep.discontinue k (elsewhere (Nx.placement x)))
-          | None -> None)
       | Accepts (u, f) -> (
           match same_total u f.placement t at with
           | Some Type.Equal ->

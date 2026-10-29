@@ -375,8 +375,9 @@ let owned i (V x) = owns i x
 
 (* Whether [i]'s handler answers [c]: a construct over its variables, or any of
    the extent of a tracer that stages every operation. A map's operation with no
-   such map around is left to its default, which raises. An addition reaches
-   only a tape: the others answer for the totals' running values ({!thread}). *)
+   such map around is left to its default, which raises. An addition no running
+   value takes reaches only a tape, which refuses it: the others answer for the
+   totals' running values ({!thread}) and record the additions to them. *)
 let claims st i = function
   | Add (_, x) -> st.kind = Tape && owns i x
   (* An abstract operator is recorded, to be filled in, whatever it reads. *)
@@ -1092,8 +1093,10 @@ and remat_parts st i (body : Program.t) args ~seeds =
   if Array.for_all Option.is_some !known then Array.map Option.get !known
   else
     let args = Array.append args !kept in
+    (* The replay hands back no sum, so it reads no running value. *)
     let r =
-      record st i (Remat { body = replay; args; seeds; differentiated = true })
+      record st i
+        (Remat { body = replay; args; seeds = [||]; differentiated = true })
     in
     Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
 
@@ -1235,6 +1238,11 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
         (* A custom rule over a tape's variables, as a tangent map that applies
            one to its tangents: its primal runs where it was performed, and its
            operations are recorded. *)
+        Some (fun k -> Effect.Deep.discontinue k Evaluate)
+    | Construct (Accumulate _ as c), Some i when st.kind = Tape && claims st i c
+      ->
+        (* A collect's running value plus a tangent, as a tangent map's collect
+           makes it: its operations are recorded, which transpose. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct (Call _ as c), Some i when claims st i c && st.kind = Jit ->
         (* Inlined: the default runs where the call was performed, which issues

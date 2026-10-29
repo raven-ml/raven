@@ -37,14 +37,20 @@
     The interpretation's handler of constructs ({!Program.construct}) lies just
     outside it. It answers {!Program.Bound} for its name, [Lanes] and
     [Lane_index] of its name, a call, an iterate or a switch whose programs name
-    the map, every addition, and each other construct over lane values. It
+    the map, every addition, and each other construct over its values. It
     performs a construct outward over the batches with its programs batched over
     the lanes, a call's batched program derived at its site ({!Program.derive}).
-    An addition adds the sum of its lanes' values outward once, so a shared
-    value adds [n] copies. The handler answers {!Program.Running} with [None].
-    Where an iterate or a switch runs the lanes apart, the additions of a lane
-    that has stopped or taken another branch are dropped, and [Lanes] of the map
-    raises [Invalid_argument]. *)
+
+    The handler answers {!Program.Running} with the running value around the
+    map, held as a value of the map that every lane shares, and passes the
+    {!Program.Replace} of one outward. An [Accumulate] to such a value adds the
+    batch's rows outward in turn, lane 0 first, so a value every lane shares
+    adds [n] copies; its result is shared again. A construct whose seed is
+    shared keeps that sum shared through its batched programs. An [Accumulate]
+    to a lane's own running value runs its default over the lanes. Where an
+    iterate or a switch runs the lanes apart, a lane that has stopped or taken
+    another branch adds the identity, and [Lanes] of the map raises
+    [Invalid_argument]. *)
 
 val run :
   name:string ->

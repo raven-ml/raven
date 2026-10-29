@@ -357,6 +357,7 @@ let construct_name = function
   | Solve { name; _ } -> name ^ "'s linear solve"
   | Switch { name; _ } -> name
   | Add _ -> "an addition"
+  | Accumulate _ -> "Rune.Total.add"
   | Emit _ -> "an emission"
   | Detach _ -> "Rune.detach"
   | Callback _ -> "Rune.callback"
@@ -1033,6 +1034,17 @@ and construct st cs env c base =
   in
   match c with
   | Detach x -> bind [| operand st env (V x) |]
+  | Accumulate { lanes; running; x } ->
+      (* The default's rows, added one after another, unrolled: the chain fuses
+         into one kernel, where a loop over the rows would run a trip per row.
+         The program grows with the rows. *)
+      let q, _ =
+        Trace.trace Staged ~name:"Rune.Total.add"
+          [| form (V running); form (V x) |]
+          (fun vs ->
+            [| V (added ~lanes (like running vs.(0)) (like x vs.(1))) |])
+      in
+      bind (inline st cs env q [| V running; V x |])
   | Remat { body; args; seeds; differentiated = true } when st.loops = 0 ->
       (* Inside a loop's step, the remat is a call body's, which shares no node
          with the forward loop. *)
