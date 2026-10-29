@@ -53,6 +53,15 @@ val trace :
     operation that is not linear in them, and drops a term that does not depend
     on them. Raises what [f] raises. *)
 
+val trace_tangents :
+  name:string ->
+  Program.value array ->
+  (Program.value array -> Program.value array) ->
+  t
+(** [trace_tangents ~name xs f] is {!trace} of a derivative [f] of tangents
+    [xs]: an operation not linear in them is a custom_jvp tangent map's, and
+    {!transpose} and the trace raise naming it so. *)
+
 val apply : t -> Program.value array -> Program.value option array
 (** [apply l ts] is the tangent of each output of the linearized function,
     [None] for zero, at the tangents [ts] of [l]'s parameters.

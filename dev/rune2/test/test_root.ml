@@ -869,6 +869,37 @@ let stated_tests =
                Nx.sum
                  (Rune.root one ~residual:(fun x -> Nx.sub x a) (fun () -> a)))
              e));
+    test "a residual's tangent map that is not linear raises under grad"
+      (fun () ->
+        (* [x²] whose tangent map applies [f] to the tangent. *)
+        let squared f =
+          Rune.custom_jvp one one (fun x ->
+              (Nx.mul x x, fun dx -> Nx.mul (f dx) (Nx.mul_s x 2.)))
+        in
+        let grad f =
+          Rune.grad'
+            (fun a ->
+              Nx.sum
+                (Rune.root one
+                   ~residual:(fun x -> Nx.sub (squared f x) a)
+                   (fun () -> Nx.sqrt a)))
+            (vec [| 4. |])
+        in
+        raises_match
+          (Exn.invalid_arg
+             ~substring:
+               "a custom_jvp tangent map applies Exp to a tangent; a tangent \
+                map must be linear in its tangents") (fun () -> grad Nx.exp);
+        raises_match
+          (Exn.invalid_arg
+             ~substring:
+               "a custom_jvp tangent map applies an iterate's stop to a \
+                tangent; a tangent map must be linear in its tangents")
+          (fun () ->
+            grad
+              (Rune.iterate' ~max:4
+                 ~until:(fun d -> Nx.less (Nx.max d) (scalar 1.))
+                 ~f:(fun d -> Nx.mul_s d 0.5))));
     test "the default solve refuses leaves of two dtypes" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"Rune.root") (fun () ->
             Rune.grad'

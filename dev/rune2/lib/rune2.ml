@@ -969,8 +969,10 @@ let root_named name ?linear_solve x ~residual solve =
       (Trace.trace Body ~name operand_forms (fun vs ->
            Program.silenced @@ fun () ->
            let ws, xs, th = split vs in
+           (* [J v] is the residual's derivative, so an operation not linear in
+              [v] is a tangent map's. *)
            let l =
-             Linear.trace ~name
+             Linear.trace_tangents ~name
                (Array.map (Loops.filled ~zero:true) forms)
                (fun v -> Program.eval jacobian (Array.concat [ v; xs; th ]))
            in

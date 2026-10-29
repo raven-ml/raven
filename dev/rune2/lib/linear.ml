@@ -88,10 +88,13 @@ let linearize ~name xs f =
   )
 
 (* [f] traced over stand-ins of [xs]: linear in them where it is linear. *)
-let trace ~name xs f =
-  let tape, captures = taped ~name ~fn:true (Array.map form xs) f in
+let traced ~fn ~name xs f =
+  let tape, captures = taped ~name ~fn (Array.map form xs) f in
   let outs = Array.init (Array.length tape.outputs) Option.some in
-  { name; tape; ins = Array.length xs; captures; outs; fn = true }
+  { name; tape; ins = Array.length xs; captures; outs; fn }
+
+let trace ~name xs f = traced ~fn:true ~name xs f
+let trace_tangents ~name xs f = traced ~fn:false ~name xs f
 
 let apply l ts =
   if Array.length ts <> l.ins then
