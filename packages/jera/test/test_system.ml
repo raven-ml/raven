@@ -565,7 +565,9 @@ let lane_tests =
         in
         let f b = Solution.get (in_lanes a b (Nx.zeros f64 [| 3; 2 |])) in
         let b = Nx.reshape [| 3; 2 |] (Nx.linspace f64 (-2.) 2. 6) in
-        equal (Oracle.tensor ()) (f b) (Rune.jit' f b));
+        (* The compiled solve sums in an order of its own, so the zeros agree
+           to rounding. *)
+        equal (Oracle.tensor ~rel:1e-14 ()) (f b) (Rune.jit' f b));
     test "invalid arguments raise" (fun () ->
         invalid_with "Jera.System.lanes: the guess is a scalar" (fun () ->
             System.lanes ~tol:tight ~budget:5 ~jacobian:Fun.id Fun.id
