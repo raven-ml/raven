@@ -388,6 +388,8 @@ let jit_rows () =
     host (Nx.add a (Nx.matrix_transpose a))
   in
   let angles = between f32 41 (-30.) 30. [| 65536 |] in
+  let bases = between f32 43 0.01 30. [| 65536 |] in
+  let exponents = between f32 47 (-3.) 3. [| 65536 |] in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -496,6 +498,10 @@ let jit_rows () =
     warm "tanh-float32-64K"
       (fun () -> Rune.jit' Nx.tanh)
       (fun f -> synced (f angles));
+    (* Powers of bases in [[0.01, 30)] to exponents in [[-3, 3)]. *)
+    warm "pow-float32-64K"
+      (fun () -> Rune.jit (pair_fn ()) Nx.pow)
+      (fun f -> synced (f bases exponents));
   ]
 
 (* Loops whose lanes stop apart: Newton's iteration for one value's square root,
