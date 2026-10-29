@@ -673,7 +673,8 @@ module Lock : sig
 
   val guarded : string -> (unit -> 'a) -> 'a
   (** [guarded fn f] is [f ()] run with the calling thread's signals blocked
-      but inside the path's waits. It raises [Invalid_argument], naming
+      but inside the path's waits, except on Windows, where OCaml has no
+      signal masks and it blocks none. It raises [Invalid_argument], naming
       [fn], having run nothing, if the calling thread holds a lock of rig's
       or of a driver's. A path's opener's [make] and its public functions
       that may take a lock run their whole body inside it

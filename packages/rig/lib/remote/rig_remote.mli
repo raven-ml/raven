@@ -344,7 +344,8 @@ val serve :
     program's own code: rig's calls they make block signals as {!Rig}'s
     Errors section states, and a signal's handler may run between them, its
     exception ending [serve] as an asynchronous one. [serve]'s own steps
-    block signals but in their waits.
+    block signals but in their waits, except on Windows, where nothing
+    blocks them ({!Rig}'s Errors section).
 
     [Ok ()] once the controller has closed the job, as {!close} states.
     [Error why] once the job has failed, [why] its root cause

@@ -287,11 +287,30 @@ let test_break_ends_sleep () =
   equal ~msg:"sleeps the signal ended" int 1 (P.broken_sleeps p);
   still_works d p ~last:first
 
-(* A Ctrl-C while a driver's call runs outside its waits lands nowhere in the
-   call: the signal comes at the start of the driver's allocation, whose hook
-   then allocates, where the handler of a signal the thread takes runs. The
-   allocation finishes, the device stays live, and Sys.Break raises as the
-   call returns, at its first poll point after the driver.
+(* On Windows nothing blocks the signal (rig.mli's Errors and failure): its
+   Sys.Break raises at the hook's next poll point, inside the driver's
+   allocation, and loses the device. *)
+let lost_to_break d p ~finished =
+  equal ~msg:"the driver's allocation finished" bool false finished;
+  equal ~msg:"the loss" (option string) (Some "Stdlib.Sys.Break") (Rig.lost d);
+  Rig.close d;
+  equal ~msg:"stops" int 1 (P.stops p)
+
+(* After a Ctrl-C during a driver's call outside its waits, the call finished
+   and the device works, or on Windows the device is lost. *)
+let ended_call d p ~finished ~last =
+  if Sys.win32 then lost_to_break d p ~finished
+  else begin
+    equal ~msg:"the driver's allocation finished" bool true finished;
+    still_works d p ~last
+  end
+
+(* Outside Windows, a Ctrl-C while a driver's call runs outside its waits
+   lands nowhere in the call: the signal comes at the start of the driver's
+   allocation, whose hook then allocates, where the handler of a signal the
+   thread takes runs. The allocation finishes, the device stays live, and
+   Sys.Break raises as the call returns, at its first poll point after the
+   driver.
 
    [`Caller] raises the signal in the calling thread, which blocks it until
    the call gives its mask back. [`Other] raises it in a thread of no OCaml
@@ -318,8 +337,7 @@ let test_break_in_call taker () =
       ignore (Sys.opaque_identity (List.init 64 Fun.id));
       finished := true);
   equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
-  equal ~msg:"the driver's allocation finished" bool true !finished;
-  still_works d p ~last:first
+  ended_call d p ~finished:!finished ~last:first
 
 (* The edge's brackets ([rig_edge.h]'s Signals), as a driver's finaliser and
    its waits use them. *)
@@ -328,9 +346,10 @@ external unshield : unit -> unit = "caml_rig_edge_unshield"
 external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
 external block : unit -> unit = "caml_rig_edge_block"
 
-(* A Ctrl-C during a wait of a driver's finaliser, which runs shielded inside
-   the driver's allocation, takes nothing there: the allocation finishes,
-   the device stays live, and Sys.Break raises as the call returns. *)
+(* Outside Windows, a Ctrl-C during a wait of a driver's finaliser, which runs
+   shielded inside the driver's allocation, takes nothing there: the
+   allocation finishes, the device stays live, and Sys.Break raises as the
+   call returns. *)
 let test_break_in_shielded_wait () =
   let d, p = P.open_ "turn:break-shielded" in
   let base = Rig.submitted d in
@@ -346,8 +365,7 @@ let test_break_in_shielded_wait () =
       unshield ();
       finished := true);
   equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
-  equal ~msg:"the driver's allocation finished" bool true !finished;
-  still_works d p ~last:first
+  ended_call d p ~finished:!finished ~last:first
 
 (* A wait that loses its device to the hang bound, with an exception at any
    allocation from the loss on, leaves the device's stop to run once, by the

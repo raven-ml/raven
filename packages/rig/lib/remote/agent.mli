@@ -34,7 +34,8 @@ val serve :
     thread's signals blocked ([rig_mask] of [rig_edge.h]), and unblock them
     only across their waits. Its finalisers and exit handler take none,
     even in their waits. A command an agent serves runs as its caller's
-    code does: the rig calls it makes block signals themselves. *)
+    code does: the rig calls it makes block signals themselves. On Windows
+    none of these block a signal ({!Rig}'s Errors and failure). *)
 
 val masked : (unit -> 'a) -> 'a
 (** [masked f] is [f ()] with the calling thread's signals blocked. *)

@@ -662,7 +662,11 @@ val signaled : t -> int
     for its life. Blocking applies to the calling thread only: a signal sent to
     the process while this thread blocks it goes to another thread that does
     not, and a program with several threads chooses the one that takes it with
-    [Thread.sigmask].
+    [Thread.sigmask]. On Windows, where OCaml has no signal masks, rig blocks
+    no signal: one runs its handler at the next allocation or poll point of
+    any thread that runs OCaml code, a driver's call, finaliser or exit
+    handler included, and the handler's exception, a Ctrl-C's [Sys.Break]
+    included, ends that call there as an asynchronous one.
 
     A driver changes the memory and code that a device's work uses when it
     allocates, maps or gives back memory, and when it loads, looks up or

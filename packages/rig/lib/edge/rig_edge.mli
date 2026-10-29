@@ -440,7 +440,10 @@ type grown =
     included, so that no signal's exception escapes them into the code they
     interrupt or skips the exit handlers after them. A thread the driver
     starts blocks them for its life, so that a signal sent to the process
-    runs its handler on a thread of the program's.
+    runs its handler on a thread of the program's. On Windows, where OCaml
+    has no signal masks, none of these block a signal: its handler runs at
+    any allocation or poll point of a driver's function, finaliser or exit
+    handler.
 
     rig guarantees these properties, so that a driver checks none of them:
     {ul

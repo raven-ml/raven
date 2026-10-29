@@ -322,7 +322,9 @@ let no_rail : (Rig_remote_abi.rail, string) result = Error "not returned"
 (* A rail with this process and one with another machine, with a Ctrl-C at
    each of their allocations: a function of a capability blocks signals, so
    the Ctrl-C lands before the rail takes an id, or once it is made, never
-   between its two machines' halves. *)
+   between its two machines' halves. Windows blocks nothing, so there the
+   Ctrl-C ends the rail as an exception at that allocation would, and a rail
+   after it is made. *)
 let break_in_rail () =
   with_job ~n:2 @@ fun j _ ->
   let r1, r2 = two_hosts j in
@@ -341,6 +343,8 @@ let break_in_rail () =
           (match !made with
           | Ok _ -> ()
           | Error why when !made != no_rail -> failf "%s: Error %s" msg why
+          | Error _ when Sys.win32 ->
+              is_ok ~msg:(msg ^ ", a rail after it") (rail r1 peer)
           | Error _ -> equal ~msg:(msg ^ ", ids taken") int 0 taken);
           reached))
     [ ("a rail with this process", None); ("a rail between machines", Some r2) ];

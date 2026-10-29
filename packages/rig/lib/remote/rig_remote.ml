@@ -68,7 +68,8 @@ let request m q =
 (* Rails *)
 
 (* The rail function of [m]'s host. A function of a capability, it blocks
-   signals as rig's do, so a Ctrl-C lands once both machines hold the rail. *)
+   signals as rig's do, so a Ctrl-C lands once both machines hold the rail,
+   but on Windows, which blocks none. *)
 let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
     (Rig_remote_abi.rail, string) result =
   Agent.masked @@ fun () ->
