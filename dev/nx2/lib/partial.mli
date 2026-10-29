@@ -19,7 +19,8 @@
     its device alone, over a route this module builds that reads every
     operand on that device and puts every result there. This module lies
     above {!Exec}; {!Check} and {!Eval} route operations and give it those
-    whose route computes by partials.
+    whose route computes by partials. A scatter into a target cut along its
+    axis computes by partials too, and closes nothing ({!section-scatters}).
 
     A device's windows of the operands along the folded axes are its
     {e tile}. The devices that hold one window of the results form a
@@ -206,6 +207,19 @@
     as the dtype, so have the bits of the gather on one device, a NaN's
     included.
 
+    {1:scatters Scatters}
+
+    A [Scatter] into an [into] cut along its axis computes on each device its
+    window of the results, which lie where [into] does. A device writes into
+    its window of [into] the updates of its windows of [idx] and [updates],
+    whole along the axis, at the positions moved by its window's start, so
+    that one outside its window writes nothing. Each element so takes the
+    updates whose positions name it, in their order on one device. A [Set]
+    so has the bits of the scatter on one device, and so does an [Add] where
+    the kernels add an element's updates in their order, as nx.cpu's do
+    ({!Nx_cpu}); a [Max] or [Min] has them but for a NaN's sign and
+    payload.
+
     {1:traffic Traffic}
 
     A device of a group of [N], [t] of whose tiles hold terms, receives,
@@ -218,7 +232,8 @@
     [Scan], a device receives the totals of the other tiles of its group
     holding terms, one row of its window off the axis each, two for an
     [Arg]. A [Gather] moves its slots as a [Reduce] of one reduction does,
-    and no part of its positions. No part of an operand moves.
+    and no part of its positions. A [Scatter] moves nothing. No part of an
+    operand moves.
 
     A [Reduce] of [k] reductions runs [k] loops over each device's loads,
     [Moments] two over its terms, laid out once where they are not a load.
@@ -226,9 +241,11 @@
     results on each device but the first, and on the first where the
     carrier is not the result's dtype. A tile cut into pieces reads each of
     its scales once per piece, and a piece of [Rows]' groups runs one
-    [Scan] over its device's offsets. A [Gather] runs on each device one
-    map shifting its positions where its tile starts past [0], one gather
-    and one bitcast, and one bitcast over the results. *)
+    [Scan] over its device's offsets. A [Scatter] runs on each device one
+    map shifting its positions where its window starts past [0] and one
+    scatter. A [Gather] runs on each device one map shifting its positions
+    where its tile starts past [0], one gather and one bitcast, and one
+    bitcast over the results. *)
 
 val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 (** [run ~by route op] is [op], its operands lying where [route], its route,
@@ -236,7 +253,7 @@ val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 
     Raises as {!Exec} states for the kernels, naming [by], and
     [Invalid_argument] as an internal fault for an operation other than a
-    [Reduce], a [Scan] of no carry, a [Gather] or a [Contract] of no
-    segments or of [Rows], since no route computes another by partials,
+    [Reduce], a [Scan] of no carry, a [Gather], a [Scatter] or a [Contract]
+    of no segments or of [Rows], since no route computes another by partials,
     and where the result's grid and the folded operand's are not of one
     mesh ({!Grid.cut_like}). *)

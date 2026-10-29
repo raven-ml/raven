@@ -1246,7 +1246,7 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
         | (Becomes _ | Reduced _) when e <= 1 -> Whole
         | Becomes j -> Regroups { axis = j; extent = s.(d) }
         | Reduced p -> Blocks { factor = p; extent = s.(d) }
-        | Whole | Blocks _ | Scanned _ | Regroups _ -> Whole)
+        | Whole | Blocks _ | Scanned _ | Indexed _ | Regroups _ -> Whole)
       ss
   in
   let some f o = match o with Some x -> [| f x |] | None -> [||] in
@@ -1313,8 +1313,16 @@ let rule : type r. r prim -> Route.rule =
       in
       Axes [| reading [||] (rank idx); Array.init (rank x) source |]
   | Scatter { axis; idx; updates; into; _ } ->
+      (* [into]'s axis is the results', which take the updates at
+         positions: cut, each device writes those in its window
+         ({!Partial}). *)
+      let target a = if a = axis then Route.Indexed axis else Becomes a in
       Axes
-        (Array.map (reading [| axis |]) [| rank idx; rank updates; rank into |])
+        [|
+          reading [| axis |] (rank idx);
+          reading [| axis |] (rank updates);
+          Array.init (rank into) target;
+        |]
   | Sort { axis; x; _ } -> Axes [| reading [| axis |] (rank x) |]
   | Fold { pad; x; _ } -> fold_rule pad x
   | Fft f ->

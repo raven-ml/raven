@@ -539,26 +539,32 @@ let shape_of_results (Op op) =
        op);
   !first
 
-(* Whether a scan runs along the results' axis [a] of [rule]: the law holds of
-   no window that cuts it. *)
+(* Whether a scan runs along the results' axis [a] of [rule], or a scatter
+   writes at positions along it: the law holds of no window that cuts it. *)
 let scans (rule : Route.rule) a =
   match rule with
   | Elementwise -> false
-  | Axes t -> Array.exists (Array.mem (Route.Scanned a)) t
+  | Axes t ->
+      let along r =
+        Array.mem (Route.Scanned a) r || Array.mem (Route.Indexed a) r
+      in
+      Array.exists along t
 
 (* Whether [rule]'s results keep their axis [a] whole: no operand's axis
-   becomes it, scans along it or regroups into it. *)
+   becomes it, scans along it, is written at positions along it or regroups
+   into it. *)
 let keeps (rule : Route.rule) a =
   match rule with
   | Elementwise -> false
   | Axes t ->
       let into : Route.axis -> bool = function
-        | Becomes b | Scanned b | Regroups { axis = b; _ } -> b = a
+        | Becomes b | Scanned b | Indexed b | Regroups { axis = b; _ } -> b = a
         | Whole | Reduced _ | Blocks _ -> false
       in
       not (Array.exists (Array.exists into) t)
 
-(* A window of [o]'s results, whole along an axis its rule keeps or scans. *)
+(* A window of [o]'s results, whole along an axis its rule keeps, scans or
+   writes at positions. *)
 let window_of (Op op as o) =
   let open Gen in
   let rule = Prim.rule op and s = shape_of_results o in

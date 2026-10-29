@@ -36,6 +36,7 @@ let pp_axis ppf : Route.axis -> unit = function
   | Blocks { factor; extent } ->
       Format.fprintf ppf "blocks of %d of %d" factor extent
   | Scanned a -> Format.fprintf ppf "scanned %d" a
+  | Indexed a -> Format.fprintf ppf "indexed %d" a
   | Regroups { axis; extent } ->
       Format.fprintf ppf "regroups %d of %d" axis extent
 
@@ -108,6 +109,7 @@ let operand_of factors out =
   and+ along = array ~size:(constant r) extent
   and+ reduced = array ~size:(constant r) bool
   and+ scanned = array ~size:(constant r) bool
+  and+ indexed = array ~size:(constant r) bool
   and+ regroups = array ~size:(constant r) bool
   and+ rows = array ~size:(constant r) (of_list [ 2; 4; 6; 8; 12; 16 ])
   and+ blocks = array ~size:(constant r) (of_list [ 0; 2; 4 ]) in
@@ -128,7 +130,10 @@ let operand_of factors out =
   in
   let axis a t : Route.axis =
     if regroup a t then Regroups { axis = t; extent = out.(t) }
-    else if t >= 0 then if scanned.(a) then Scanned t else Becomes t
+    else if t >= 0 then
+      if scanned.(a) then Scanned t
+      else if indexed.(a) then Indexed t
+      else Becomes t
     else if reduced.(a) && in_blocks a then
       Blocks { factor = factor a; extent = factors.(factor a) }
     else if reduced.(a) then Reduced (factor a)
@@ -273,7 +278,7 @@ let depends c i (w : R.range array) =
       Array.mapi
         (fun a d ->
           match t.(i).(a) with
-          | Route.Becomes a' | Scanned a' -> w.(a')
+          | Route.Becomes a' | Scanned a' | Indexed a' -> w.(a')
           | Regroups { axis; extent = e } ->
               let r = w.(axis) in
               let lo = r.start * d / e in
@@ -308,7 +313,8 @@ let factor_of c i a =
   | Axes t -> (
       match t.(i).(a) with
       | Route.Reduced f -> Some f
-      | Becomes _ | Whole | Scanned _ | Regroups _ | Blocks _ -> None)
+      | Becomes _ | Whole | Scanned _ | Indexed _ | Regroups _ | Blocks _ ->
+          None)
 
 (* The factor of operand [i]'s axis [a] and its extent, if it holds the
    factor's blocks. *)
@@ -318,7 +324,8 @@ let blocks_of c i a =
   | Axes t -> (
       match t.(i).(a) with
       | Route.Blocks { factor; extent } -> Some (factor, extent)
-      | Becomes _ | Whole | Scanned _ | Regroups _ | Reduced _ -> None)
+      | Becomes _ | Whole | Scanned _ | Indexed _ | Regroups _ | Reduced _ ->
+          None)
 
 let is_reduced c i a = factor_of c i a <> None || blocks_of c i a <> None
 
@@ -375,7 +382,7 @@ let landing c i p =
       | Route.Elementwise -> Some (a, a)
       | Axes r -> (
           match r.(i).(a) with
-          | Route.Becomes a' | Scanned a' -> Some (a, a')
+          | Route.Becomes a' | Scanned a' | Indexed a' -> Some (a, a')
           | Regroups { axis; extent }
             when c.shapes.(i).(a) mod t = 0 && extent mod t = 0 ->
               Some (a, axis)
@@ -404,7 +411,8 @@ let law =
             | Axes t ->
                 Array.exists
                   (Array.exists (function
-                    | Route.Becomes _ | Scanned _ | Regroups _ -> false
+                    | Route.Becomes _ | Scanned _ | Indexed _ | Regroups _ ->
+                        false
                     | Whole | Reduced _ | Blocks _ -> true))
                   t
           in
@@ -426,8 +434,8 @@ let law =
                                aligned
                                = (c.shapes.(i).(a) mod n = 0
                                  && extent mod n = 0)
-                           | Becomes _ | Scanned _ | Whole | Reduced _
-                           | Blocks _ ->
+                           | Becomes _ | Scanned _ | Indexed _ | Whole
+                           | Reduced _ | Blocks _ ->
                                false)
                          (Grid.cuts (Devices.grid p)))
                      ps)
@@ -725,13 +733,14 @@ let refusals =
           in
           settle (2 * Array.length ps))
 
-(* Whether [c]'s rule folds axis [a] of operand [i]: reduces or scans it. *)
+(* Whether [c]'s rule folds axis [a] of operand [i]: reduces, scans or
+   indexes it. *)
 let folded c i a =
   match c.rule with
   | Route.Elementwise -> false
   | Axes t -> (
       match t.(i).(a) with
-      | Route.Reduced _ | Blocks _ | Scanned _ -> true
+      | Route.Reduced _ | Blocks _ | Scanned _ | Indexed _ -> true
       | Becomes _ | Whole | Regroups _ -> false)
 
 (* Whether an axis [c]'s rule folds has no element. *)
@@ -1162,7 +1171,8 @@ let move_law =
                 | Route.Whole -> true
                 | Regroups { extent; _ } ->
                     s.(a) mod t <> 0 || extent mod t <> 0
-                | Becomes _ | Scanned _ | Reduced _ | Blocks _ -> false)
+                | Becomes _ | Scanned _ | Indexed _ | Reduced _ | Blocks _ ->
+                    false)
             | Elementwise -> false
           in
           cover "a move reading a cut axis whole" true;

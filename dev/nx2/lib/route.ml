@@ -13,6 +13,7 @@ type axis =
   | Reduced of int
   | Blocks of { factor : int; extent : int }
   | Scanned of int
+  | Indexed of int
   | Regroups of { axis : int; extent : int }
 
 type rule = Elementwise | Axes of axis array array
@@ -32,8 +33,8 @@ let factor_axis f = Nx_array.Layout.max_rank + f
 let is_factor a = a >= Nx_array.Layout.max_rank
 
 (* The union's axis that a cut of axis [a] of operand [i], of shape [s], into
-   [t] tiles lands on: the result axis it becomes or scans, the one it
-   regroups into where [t] divides both extents, or its factor, in blocks
+   [t] tiles lands on: the result axis it becomes, scans or indexes, the one
+   it regroups into where [t] divides both extents, or its factor, in blocks
    where [t] divides both extents. *)
 let lands rule i s a t =
   let divides extent = s.(a) mod t = 0 && extent mod t = 0 in
@@ -41,7 +42,7 @@ let lands rule i s a t =
   | Elementwise -> Some a
   | Axes r -> (
       match r.(i).(a) with
-      | Becomes a' | Scanned a' -> Some a'
+      | Becomes a' | Scanned a' | Indexed a' -> Some a'
       | Reduced f -> Some (factor_axis f)
       | Blocks { factor; extent } ->
           if divides extent then Some (factor_axis factor) else None
@@ -139,7 +140,7 @@ let window rule ~operand:i shape (w : M.range array) =
       Array.mapi
         (fun a d ->
           match t.(i).(a) with
-          | Becomes a' | Scanned a' -> w.(a')
+          | Becomes a' | Scanned a' | Indexed a' -> w.(a')
           | Regroups { axis; extent } ->
               let r = w.(axis) in
               let scale n = n * d / extent in
@@ -200,7 +201,9 @@ let aligned rule shapes target =
               match r.(i).(a) with
               | Regroups { axis; extent } ->
                   axis = a' && (s.(a) mod t <> 0 || extent mod t <> 0)
-              | Becomes _ | Scanned _ | Whole | Reduced _ | Blocks _ -> false)
+              | Becomes _ | Scanned _ | Indexed _ | Whole | Reduced _ | Blocks _
+                ->
+                  false)
             (Array.init (Array.length s) Fun.id)
         in
         Array.exists Fun.id (Array.mapi straddles shapes)
@@ -213,7 +216,8 @@ let aligned rule shapes target =
       in
       uncut_all undone target
 
-(* The axes of operand [i], of rank [rank], that [rule] reduces or scans. *)
+(* The axes of operand [i], of rank [rank], that [rule] reduces, scans or
+   indexes. *)
 let folds rule i rank =
   match rule with
   | Elementwise -> [||]
@@ -222,7 +226,7 @@ let folds rule i rank =
         (List.filter
            (fun a ->
              match t.(i).(a) with
-             | Reduced _ | Blocks _ | Scanned _ -> true
+             | Reduced _ | Blocks _ | Scanned _ | Indexed _ -> true
              | Becomes _ | Whole | Regroups _ -> false)
            (List.init rank Fun.id))
 

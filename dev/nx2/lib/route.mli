@@ -13,15 +13,15 @@
 
     Each operand is read where it lies, and the results lie at the
     {e forward union} of the operands' cuts. A cut of an operand's axis that
-    becomes a result axis, is scanned along it, or regroups into one in tiles
-    that divide both extents, cuts that result axis over the same devices,
-    each device holding the tile it holds of the operand. A cut of an axis
-    read whole cuts nothing. A cut of an axis the operation reduces cuts
-    nothing in the results, and the devices compute by partials
-    ({!Partial}), where every operand that holds that axis is cut alike along
-    it; an axis of its blocks is cut alike in tiles that divide both
-    extents. Grid axes that cut a reduced axis hold copies of the
-    results.
+    becomes a result axis, is scanned along it, is written at positions along
+    it, or regroups into one in tiles that divide both extents, cuts that
+    result axis over the same devices, each device holding the tile it holds
+    of the operand. A cut of an axis read whole cuts nothing. A cut of an
+    axis the operation reduces cuts nothing in the results, and the devices
+    compute by partials ({!Partial}), where every operand that holds that
+    axis is cut alike along it; an axis of its blocks is cut alike in tiles
+    that divide both extents. Grid axes that cut a reduced axis hold copies
+    of the results. A scatter along a cut axis computes by partials too.
 
     The cuts join in operand order. The first operand gives its cuts, and
     each next one adds its own where they join the union so far
@@ -64,9 +64,9 @@ type axis =
           results reads the operand's axis at its range along [a]. *)
   | Whole
       (** Read whole on each device: an axis the operation acts along, as a
-          [Moments] or [Logsumexp] scan's, a sort's, a transform's or a
-          scatter's axis, one a padded load pads, crops or windows,
-          and one an assembly joins or pads along. *)
+          [Moments] or [Logsumexp] scan's, a sort's, a transform's, or a
+          scatter's axis of its positions and updates, one a padded load
+          pads, crops or windows, and one an assembly joins or pads along. *)
   | Reduced of int
       (** Gone from the results: a reduction's axes, a contraction's
           contracting pairs, a gather's source axis and [b]'s axis of
@@ -93,6 +93,12 @@ type axis =
           load reading it plain: cut as the operand is, as [Becomes a] routes
           it, but a window of the results depends on the terms before it, so
           the window law does not hold along it ({!Partial}). *)
+  | Indexed of int
+      (** The results' axis [a] of [Indexed a], which a scatter writes at
+          the positions another operand holds: cut as the operand is, as
+          [Becomes a] routes it, but a window of the results takes the
+          updates whose positions fall in it, so the window law does not
+          hold along it ({!Partial}). *)
   | Regroups of { axis : int; extent : int }
       (** The results' [axis], of [extent] elements, another extent than the
           operand's, both above one: a reshape that factors or merges the
@@ -155,11 +161,11 @@ val window :
     operands' windows, under the {e window law}: for every window [w] of the
     results, the operation over each operand's [window r ~operand:i s w] equals
     the window [w] of the operation over the whole operands, bitwise. It
-    computes every route that reads no operand cut along a [Reduced] or a
-    [Scanned] axis. A kernel library declines a window as it declines the
-    whole ({!Nx_kernel.section-contract}). It meets the law where an
-    element's association and its algorithm depend on the extents the
-    element reads whole, the dtypes, the attributes, the library and the
+    computes every route that reads no operand cut along a [Reduced], a
+    [Scanned] or an [Indexed] axis. A kernel library declines a window as it
+    declines the whole ({!Nx_kernel.section-contract}). It meets the law
+    where an element's association and its algorithm depend on the extents
+    the element reads whole, the dtypes, the attributes, the library and the
     device model, never on the extents its window cuts, as nx.cpu's do
     ({!Nx_cpu}); on a library that does not state so, a float or complex
     window keeps its library's bounds alone. A float or complex contraction
@@ -192,10 +198,12 @@ type compute =
       (** Each device computes its window of the results over its operands'
           windows ({!window}), under the window law. *)
   | Partials
-      (** An operand is read cut along an axis the operation reduces or scans,
-          each such axis holding elements: the devices that hold one window of
-          the results compute it from partial results over the terms each
-          holds ({!Partial}). *)
+      (** An operand is read cut along an axis the operation reduces, scans
+          or writes at positions, each such axis holding elements: the
+          devices that hold one window of the results compute it from
+          partial results over the terms each holds, or, for a scatter, each
+          device its own window from the updates whose positions fall in it
+          ({!Partial}). *)
 
 type 'd t = {
   operands : 'd Devices.placement array;

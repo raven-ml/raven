@@ -304,8 +304,10 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     contraction sums makes the devices compute by partials where every
     operand holding the axis is cut alike, and cuts nothing in the result;
     so does one of the axis a gather reads at positions. One along a scan's
-    axis stays in it. An operand whole on every device is read by a view of
-    each device's window.
+    axis stays in it, and so does one along the axis a scatter writes at
+    positions, each device writing the updates that land in its window. An
+    operand whole on every device is read by a view of each device's
+    window.
 
     An operation raises [Invalid_argument] where two operands cut one
     result axis over different devices or tiles, where a device needs a
@@ -1173,7 +1175,10 @@ val scatter :
     float, else of the dtype's parts. Without
     {!donate} it costs a copy of [x]; [scatter ~axis p u (donate x)] writes
     only the updates, into [x]'s memory, where {!donate} lets the consumer
-    write there.
+    write there. Where [x] is cut along [axis], each device writes the
+    updates whose positions fall in its window, reading [p] and [u] whole
+    along [axis] ({!section-routing}): each element takes its updates in
+    their order on one device.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p] and [u]
     differ in shape, their shape differs from [x]'s off [axis], or [combine]

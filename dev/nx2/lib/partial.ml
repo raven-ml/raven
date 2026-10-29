@@ -46,7 +46,8 @@ let reads rule i shape (w : M.range array) tile =
         (fun a r ->
           match t.(i).(a) with
           | Route.Reduced f -> tile f
-          | Becomes _ | Scanned _ | Regroups _ | Blocks _ | Whole -> r)
+          | Becomes _ | Scanned _ | Indexed _ | Regroups _ | Blocks _ | Whole ->
+              r)
         window
 
 (* The tile of each device of [route]'s result, in order: its window along
@@ -898,7 +899,8 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
             let n = Prim.dim x ax / Prim.dim v ax and q = r.(factor) in
             let lo = q.M.start / n and hi = (q.start + q.count + n - 1) / n in
             w.(ax) <- { M.start = lo; count = hi - lo; step = 1 }
-        | Becomes _ | Whole | Reduced _ | Scanned _ | Regroups _ -> ()
+        | Becomes _ | Whole | Reduced _ | Scanned _ | Indexed _ | Regroups _ ->
+            ()
       in
       (match rule with
       | Axes t -> Array.iteri narrow t.(i)
@@ -1034,10 +1036,40 @@ let gather (type v s d) ~by (route : unit Route.t) rule axis
   let y = gathered ~by cl (reduced ~by cl (Monoid (Max, 0, u)) s) in
   on ~by y (Value.Bitcast (dt, y))
 
+(* Scatters *)
+
+let scatter (type v s d) ~by (route : unit Route.t) rule combine unique axis
+    (idx : d Value.index) (updates : (v, s, d) Value.t)
+    (into : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let p = route.result in
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let shape = Prim.shape into in
+  (* Device [j] writes into its window the updates at the positions moved
+     to the window's start: one outside it writes nothing. *)
+  let own j =
+    let w = Devices.window ~by p shape j in
+    let here = Devices.one set ks.(j) in
+    if Route.empty w then
+      A.create (Devices.rig set ks.(j)) (Prim.dtype into) (Route.extents w)
+    else
+      let read i x =
+        view ~by ks.(j) here (Route.window rule ~operand:i (Prim.shape x) w) x
+      in
+      let i = shift ~by (-w.(axis).start) (Value.Any (read 0 idx)) in
+      let idx = Prim.expect D.Int64 i in
+      let updates = read 1 updates and into = read 2 into in
+      array
+        (at ~by here
+           (Value.Scatter { combine; unique; axis; idx; updates; into }))
+  in
+  Prim.of_arrays p ~shape (Iarray.init (Array.length ks) own)
+
 let run (type r) ~by route (op : r Value.prim) : r =
   let rule = Prim.rule op in
   match op with
   | Value.Gather { axis; idx; x } -> gather ~by route rule axis idx x
+  | Value.Scatter { combine; unique; axis; idx; updates; into } ->
+      scatter ~by route rule combine unique axis idx updates into
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       reduce ~by route rule layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
@@ -1060,7 +1092,7 @@ let run (type r) ~by route (op : r Value.prim) : r =
   | Value.Contract { segments = Some (Contracting _); _ } ->
       invalid_arg "Partial.run: groups of a contracting pair by partials"
   | Value.Scan { carry = Some _; _ }
-  | Value.Map _ | Value.Scatter _ | Value.Sort _ | Value.Fft _
-  | Value.Linalg _ | Value.Fold _ | Value.Assemble _ | Value.Copy _
-  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
+  | Value.Map _ | Value.Sort _ | Value.Fft _ | Value.Linalg _ | Value.Fold _
+  | Value.Assemble _ | Value.Copy _ | Value.Move _ | Value.Bitcast _
+  | Value.Place _ | Value.Check _ ->
       invalid_arg "Partial.run: an operation no route computes by partials"

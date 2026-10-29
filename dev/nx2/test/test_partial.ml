@@ -653,6 +653,12 @@ let reduce_at (type v s) w (rshow : v -> string) r axes
       reduce rshow r axes
         (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
 
+(* [y]'s bits, as [k] shows them for a sub-byte dtype, whose element's bits
+   are its value, which no byte holds alone. *)
+let shown_bits (type v s d) (k : (v, s) reduced) (y : (v, s, d) Nx.t) =
+  if D.bits k.rdtype < 8 then Array.map k.rshow (elements y)
+  else Array.map string_of_int (bytes y)
+
 (* Gathers along cut axes *)
 
 (* A gather along an axis at positions of one axis, or of the value's rank. *)
@@ -832,11 +838,7 @@ let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
   let p =
     Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array ps) p)
   in
-  (* A sub-byte element's bits are its value, which no byte holds alone. *)
-  let bits y =
-    if D.bits k.rdtype < 8 then Array.map k.rshow (elements y)
-    else Array.map string_of_int (bytes y)
-  in
+  let bits y = shown_bits k y in
   let expected = bits (gather p x) in
   (* The result lies at the union of the positions' cuts and [x]'s, but
      the gathered axis's ({!Nx.section-routing}). [major i] is where the
@@ -951,6 +953,171 @@ let test_take_flat () =
   equal (array int)
     (bytes (Nx.take p x))
     (bytes (Nx.take (Nx.place (Nx.beside y) p) y))
+
+(* Scatters into cut targets *)
+
+(* Where positions and updates lie: whole on each of the target's devices,
+   or cut alike along its cut axes but the scattered one. *)
+type beside = Uncut | Cut_alike
+
+let pp_beside ppf = function
+  | Uncut -> Format.pp_print_string ppf "whole"
+  | Cut_alike -> Format.pp_print_string ppf "cut alike"
+
+(* A target's dtype, shape and elements, where it lies, the axis, how it
+   combines, where the positions and updates lie, their shape, the
+   positions and the updates. *)
+type scase =
+  | Scase :
+      ('v, 's) reduced
+      * int array
+      * 'v array
+      * where
+      * int
+      * Nx.combine
+      * beside
+      * int array
+      * int64 array
+      * 'v array
+      -> scase
+
+let combine_name = function
+  | Nx.Set -> "set"
+  | Add -> "add"
+  | Max -> "max"
+  | Min -> "min"
+
+let pp_scase ppf (Scase (k, s, data, w, a, c, at, us, p, u)) =
+  let show f l = String.concat "; " (Array.to_list (Array.map f l)) in
+  Format.fprintf ppf "%s %a [%s] at %a, %s along %d at %a [%s] of %a [%s]"
+    (D.name k.rdtype) pp_ints s (show k.rshow data) pp_where w
+    (combine_name c) a pp_ints us (show Int64.to_string p) pp_beside at
+    (show k.rshow u)
+
+let scattered_case =
+  let open Gen in
+  with_pp pp_scase
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* w = where_of rank in
+     let cut = List.map fst (tiles w) in
+     let* a = one_of [ of_list cut; int_range 0 (rank - 1) ] in
+     let* m = int_range 0 6 in
+     let us = Array.mapi (fun i e -> if i = a then m else e) s in
+     let alike = if List.exists (( <> ) a) cut then [ Cut_alike ] else [] in
+     let* at = of_list (Uncut :: alike) in
+     let n = Array.fold_left ( * ) 1 us in
+     let position =
+       one_of
+         [
+           map Int64.of_int (int_range (-2) (s.(a) + 1));
+           of_list [ Int64.min_int; Int64.max_int ];
+         ]
+     in
+     let* p = array ~size:(constant n) position in
+     let* (Reduced k) = of_list reduced_kinds in
+     let combines =
+       match D.kind k.rdtype with
+       | D.Boolean -> [ Nx.Set; Max; Min ]
+       | D.Float | D.Complex | D.Signed | D.Unsigned ->
+           [ Nx.Set; Add; Max; Min ]
+     in
+     let* c = of_list combines in
+     let value = of_list k.rvalues in
+     let* data = array ~size:(constant (Array.fold_left ( * ) 1 s)) value in
+     let+ u = array ~size:(constant n) value in
+     Scase (k, s, data, w, a, c, at, us, p, u))
+
+(* A scatter into a target at any placement, of positions and updates whole
+   on each of its devices or cut alike along axes off the scattered one,
+   gives its bits on one device. *)
+let law_scattered (Scase (k, s, data, w, a, c, at, us, p, u)) =
+  let ts = tiles w in
+  let cut = List.map fst ts in
+  let e = s.(a) in
+  cover "an uneven cut" (List.exists (fun (c, t) -> s.(c) mod t <> 0) ts);
+  cover "an empty window"
+    (List.exists (fun (c, t) -> s.(c) > 0 && s.(c) < t) ts);
+  cover "a cut over several mesh axes"
+    (match w with Cuts (x, y) -> x = y | _ -> false);
+  cover "a scatter along a cut axis" (List.mem a cut);
+  cover "a scatter along a cut empty axis" (List.mem a cut && e = 0);
+  cover "a scatter along a cut axis, beside another cut"
+    (List.mem a cut && List.length cut > 1);
+  cover "a scatter along an axis no cut names" (not (List.mem a cut));
+  cover "an uneven cut of the scattered axis"
+    (List.exists (fun (c, t) -> c = a && e mod t <> 0) ts);
+  cover "an int64 extreme position, scattered along a cut axis"
+    (List.mem a cut
+    && Array.exists (fun q -> q = Int64.min_int || q = Int64.max_int) p);
+  cover "updates cut alike, scattered along a cut axis"
+    (at = Cut_alike && List.mem a cut);
+  List.iter
+    (fun c' ->
+      cover
+        ("a scatter by " ^ combine_name c' ^ " along a cut axis")
+        (c = c' && List.mem a cut))
+    [ Nx.Set; Add; Max; Min ];
+  let inside q = q >= 0L && q < Int64.of_int e in
+  cover "a repeated position"
+    (let q = List.filter inside (Array.to_list p) in
+     List.length (List.sort_uniq compare q) < List.length q);
+  cover "a negative position" (Array.exists (fun q -> q < 0L) p);
+  cover "a position past the axis"
+    (Array.exists (fun q -> q >= Int64.of_int e) p);
+  let last t = ((t - 1) * (e / t)) + Stdlib.min (t - 1) (e mod t) in
+  cover "a position in the last tile of a cut axis"
+    (List.exists
+       (fun (c, t) ->
+         c = a && e >= t
+         && Array.exists (fun q -> q >= Int64.of_int (last t) && inside q) p)
+       ts);
+  cover "no update" (p = [||]);
+  cover "a signalling NaN" (signals k.rdtype data || signals k.rdtype u);
+  cover "a sub-byte dtype" (D.bits k.rdtype < 8);
+  let x = signalling k.rdtype s data and u = signalling k.rdtype us u in
+  let p =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array us) p)
+  in
+  let scatter p u x = Nx.scatter ~combine:c ~axis:a p u x in
+  (* A maximum's or a minimum's NaN is a NaN, its bits unpromised. *)
+  let bits y =
+    match c with
+    | Nx.Set | Add -> shown_bits k y
+    | Max | Min -> Array.map k.rshow (elements y)
+  in
+  let expected = bits (scatter p u x) in
+  let run (type d) (q : d Nx.Placement.t) (alike : d Nx.Placement.t) =
+    let r = match at with Uncut -> Nx.Placement.uncut q | Cut_alike -> alike in
+    let y = scatter (Nx.place r p) (Nx.place r u) (Nx.place q x) in
+    let placement =
+      Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+    in
+    equal ~msg:"where it lies" placement q (Nx.placement y);
+    let donated =
+      scatter (Nx.place r p) (Nx.place r u) (Nx.donate (Nx.place q x))
+    in
+    equal ~msg:"into a donated target" (array string) (bits y) (bits donated);
+    bits y
+  in
+  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let off cuts = mesh (List.filter (fun (c, _) -> c <> a) cuts) in
+  let split3 c = Set3.split ~axis:c and split4 c = Set4.split ~axis:c in
+  let actual =
+    match w with
+    | Split3 c -> run (split3 c) (split3 c)
+    | Split4 c -> run (split4 c) (split4 c)
+    | Cuts (c, d) ->
+        let cuts =
+          if c = d then [ (c, [ "a"; "b" ]) ]
+          else [ (c, [ "a" ]); (d, [ "b" ]) ]
+        in
+        run (mesh cuts) (off cuts)
+    | Minor c ->
+        let cuts = [ (c, [ "b" ]) ] in
+        run (mesh cuts) (off cuts)
+  in
+  equal (array string) expected actual
 
 (* Float reductions over cut axes *)
 
@@ -2723,6 +2890,11 @@ let placed =
       cases ~name:ranked_name
         "a gather past the greatest rank reads its axis whole" ranked
         test_gather_rank;
+      prop ~count:1000
+        "a scatter into a target at any placement, of positions and updates \
+         whole on each of its devices or cut alike off the scattered axis, \
+         gives its bits on one device"
+        scattered_case law_scattered;
     ]
 
 let reductions =
