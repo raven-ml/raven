@@ -16,9 +16,9 @@ type value =
           negated largest finite, [false]. *)
   | Greatest  (** The greatest finite value, as {!Least}. *)
   | C of float * float
-      (** A complex element's real and imaginary parts, each stored by
-          {!Nx.Dtype.of_float} at the component's dtype; at a dtype that is not
-          complex, its real part. *)
+      (** A complex element's real and imaginary parts, each rounded to the
+          component's dtype as it is stored; at a dtype that is not complex, its
+          real part. *)
 
 val pp_value : Format.formatter -> value -> unit
 (** [pp_value] formats a float as [%h], the ends as [least] and [greatest], a

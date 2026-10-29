@@ -659,13 +659,21 @@ type lanes =
     }
       -> lanes
 
-(* [re] whose drawn floats take [im]'s as imaginary parts, in storage order and
-   repeated: the two views may hold different numbers of elements. *)
-let paired (re : Operand.t) (im : Operand.t) =
+(* [re] whose values take [im]'s as imaginary parts, in storage order and
+   repeated: the two views may hold different numbers of elements. A finite end
+   is the component's, so that each part reaches it. *)
+let paired (type v s) (dt : (v, s) Nx.dtype) (re : Operand.t) (im : Operand.t) =
   let n = Array.length im.values in
-  let pair k (a : Operand.value) : Operand.value =
-    match (a, im.values.(k mod n)) with F a, F b -> C (a, b) | a, _ -> a
+  let top =
+    if D.equal dt c64 then (D.float_format D.Float32).max_finite
+    else Float.max_float
   in
+  let part : Operand.value -> float = function
+    | F a | C (a, _) -> a
+    | Least -> -.top
+    | Greatest -> top
+  in
+  let pair k a : Operand.value = C (part a, part im.values.(k mod n)) in
   if n = 0 then re else { re with values = Array.mapi pair re.values }
 
 let lane_cases =
@@ -684,7 +692,7 @@ let lane_cases =
    match D.kind dt with
    | Float -> Lanes { dt; s; trips; max; g = no_sums g; x; w }
    | _ ->
-       let x = paired x xi and w = paired w wi in
+       let x = paired dt x xi and w = paired dt w wi in
        Lanes { dt; s; trips; max; g = exact_at dt (generic g); x; w })
   |> with_pp (fun ppf (Lanes c) ->
       Format.fprintf ppf "%a %a, trips [%s], max %d: %a" Nx.pp_dtype c.dt
@@ -757,20 +765,22 @@ let law_lanes (Lanes c) =
   let x = Operand.make c.dt (Array.append [| n |] c.s) c.x in
   let w = Operand.make c.dt c.s c.w in
   let t = Nx.create Nx.int32 [| n |] (Array.map Int32.of_int c.trips) in
-  let step ?(g = c.g) w (x, k) =
-    (Nx.broadcast_to c.s (eval_at c.dt x (Nx.mul x w) g), tick k)
+  let step ?(g = c.g) ?(y = Nx.mul) w (x, k) =
+    (Nx.broadcast_to c.s (eval_at c.dt x (y x w) g), tick k)
   in
   let until t (_, k) = Nx.greater_equal k t in
-  let iterated ?g w (x, t) =
+  let iterated ?g ?y w (x, t) =
     fst
-      (Rune.iterate (p2 ()) ~max:c.max ~until:(until t) ~f:(step ?g w)
+      (Rune.iterate (p2 ()) ~max:c.max ~until:(until t) ~f:(step ?g ?y w)
          (x, k0 ()))
   in
-  let written ?g w (x, t) =
-    fst (looped ~max:c.max ~until:(until t) ~f:(step ?g w) (x, k0 ()))
+  let written ?g ?y w (x, t) =
+    fst (looped ~max:c.max ~until:(until t) ~f:(step ?g ?y w) (x, k0 ()))
   in
-  (* Compiled, the step's functions are exact. *)
+  (* Compiled, the step's functions are exact: a complex product is not, so the
+     step's operand is a sum there. *)
   let exact = Expr.exact c.g in
+  let y = if D.is Complex c.dt then Nx.add else Nx.mul in
   let s = T.(p2 () @-> returns tensor) in
   (* A lane that runs out of steps is named, the first one. *)
   let first_short =
@@ -779,10 +789,10 @@ let law_lanes (Lanes c) =
     in
     go 0
   in
-  let expected g =
+  let expected ?y g =
     outcome (fun () ->
         (* The step is traced before any lane runs out of steps. *)
-        ignore (written ~g w (Nx.ones c.dt c.s, k0 ()));
+        ignore (written ~g ?y w (Nx.ones c.dt c.s, k0 ()));
         Option.iter
           (fun k ->
             invalid_arg
@@ -791,16 +801,17 @@ let law_lanes (Lanes c) =
                   lane %d"
                  c.max k))
           first_short;
-        codes (one_by_one (written ~g w) n (x, t)))
+        codes (one_by_one (written ~g ?y w) n (x, t)))
   in
   let map f = outcome (fun () -> codes (Rune.vmap s f (x, t))) in
   let ct = outcome_t codes_t in
   equal ~msg:"vmap" ct (expected c.g) (map (iterated w));
-  let expected = expected exact in
-  equal ~msg:"vmap of jit" ct expected (map (Rune.jit s (iterated ~g:exact w)));
+  let expected = expected ~y exact in
+  equal ~msg:"vmap of jit" ct expected
+    (map (Rune.jit s (iterated ~g:exact ~y w)));
   equal ~msg:"jit of vmap" ct expected
     (outcome (fun () ->
-         codes (Rune.jit s (Rune.vmap s (iterated ~g:exact w)) (x, t))));
+         codes (Rune.jit s (Rune.vmap s (iterated ~g:exact ~y w)) (x, t))));
   (* Each lane's gradient is its own loop's; a stopped lane's is finite where
      its own steps are. *)
   if Option.is_none first_short then begin
@@ -825,16 +836,18 @@ let law_lanes (Lanes c) =
        also sums no terms along an axis. *)
     let g = unsummed exact in
     let exact_lanes =
-      outcome (fun () -> bits (one_by_one (grad (written ~g w)) n (x, t)))
+      outcome (fun () -> bits (one_by_one (grad (written ~g ~y w)) n (x, t)))
     in
     let calls = Rune.evaluations () in
     equal ~msg:"jit of vmap of grad" l exact_lanes
       (outcome (fun () ->
-           let f = Rune.vmap s (grad (iterated ~g w)) in
+           let f = Rune.vmap s (grad (iterated ~g ~y w)) in
            bits (Rune.jit s f (x, t))));
     equal ~msg:"jit of grad of vmap" l exact_lanes
       (outcome (fun () ->
-           let f = grad_at c.dt (fun x -> Rune.vmap s (iterated ~g w) (x, t)) in
+           let f =
+             grad_at c.dt (fun x -> Rune.vmap s (iterated ~g ~y w) (x, t))
+           in
            bits (Rune.jit' f x)));
     equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
     (* Forward mode, inside and around the map. *)
@@ -853,11 +866,13 @@ let law_lanes (Lanes c) =
                 (Rune.jvp'
                    (fun x -> Rune.vmap s (iterated w) (x, t))
                    x (Nx.ones_like x)))));
+    (* Compiled, on the same step: a tie's share of a maximum sums the tied
+       tangents, in an order a compiled call may change. *)
     let calls = Rune.evaluations () in
     equal ~msg:"jit of jvp of vmap" l
-      (outcome (fun () -> bits (one_by_one (jvp (written ~g:exact w)) n (x, t))))
+      (outcome (fun () -> bits (one_by_one (jvp (written ~g ~y w)) n (x, t))))
       (outcome (fun () ->
-           let f x = Rune.vmap s (iterated ~g:exact w) (x, t) in
+           let f x = Rune.vmap s (iterated ~g ~y w) (x, t) in
            bits (Rune.jit' (fun x -> snd (Rune.jvp' f x (Nx.ones_like x))) x)));
     equal ~msg:"jvp compiled" int 0 (Rune.evaluations () - calls);
     (* A captured parameter's gradient sums each step's of every lane, in an
@@ -1001,16 +1016,22 @@ let apart_cases =
       Format.fprintf ppf "%a %a, lanes [%s], trips [%s], max %d: %a" Nx.pp_dtype
         dt Operand.pp_shape s (ints lanes) (ints trips) max pp g)
 
-(* Each case the law covers, so that every run reaches it. *)
+(* Each case the law covers, so that every run reaches it, and lanes stopping
+   apart at every dtype. *)
 let apart_examples =
-  let g = exact_at Nx.int32 (generic (Bin (Sub, Y, Un (Square, X)))) in
+  let e = generic (Bin (Sub, Y, Un (Square, X))) in
   let x lanes s =
     let n = Operand.numel lanes * Operand.numel s in
     let values = Array.init n (fun k -> Operand.F (float_of_int (k - 2))) in
     { Operand.view = Plain; values }
   in
   let apart dt s lanes trips max =
-    Apart (dt, s, lanes, trips, max, g, x lanes s)
+    Apart (dt, s, lanes, trips, max, exact_at dt e, x lanes s)
+  in
+  let each (D.Any dt) =
+    let values = Array.init 6 (fun k -> Operand.F (float_of_int (k mod 2))) in
+    let x = { Operand.view = Plain; values } in
+    Apart (dt, [| 2 |], [| 3 |], [| 0; 2; 1 |], 2, exact_at dt e, x)
   in
   [
     apart f32 [| 2 |] [| 3 |] [| 0; 2; 1 |] 2;
@@ -1020,6 +1041,7 @@ let apart_examples =
     apart c64 [| 2 |] [| 1 |] [| 1 |] 1;
     apart Nx.uint8 [| 2 |] [| 0 |] [||] 0;
   ]
+  @ List.map each D.all
 
 let law_apart (Apart (dt, s, lanes, trips, max, g, co)) =
   let n = Array.length trips in

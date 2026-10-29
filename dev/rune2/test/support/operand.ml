@@ -23,9 +23,7 @@ let value (type v s) (dt : (v, s) D.t) w : v =
   | F x -> D.of_float dt x
   | C (re, im) -> (
       match D.kind dt with
-      | Complex ->
-          let part x = (D.of_float dt x).Complex.re in
-          { Complex.re = part re; im = part im }
+      | Complex -> { Complex.re; im }
       | _ -> D.of_float dt re)
   | Least | Greatest -> (
       match D.kind dt with
