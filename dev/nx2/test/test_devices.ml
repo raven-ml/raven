@@ -158,4 +158,66 @@ let coercions =
             Nx.Host.v on2);
     ]
 
-let () = exit (run "nx devices" [ sets; placements; meshes; coercions ])
+(* Witnesses: placements of every kind over several sets, a set unpacked twice
+   and twin mints of one device list among them, as values of no brand. *)
+type any = Any : 'd Nx.Placement.t -> any
+
+let witnesses =
+  let module Twin = (val Nx.devices [ m 0; m 1 ]) in
+  let set = Nx.devices [ m 3 ] in
+  let module A = (val set) in
+  let module B = (val set) in
+  let by_set =
+    [|
+      [| Any Nx.Host.on; Any (Nx.Host.split ~axis:0) |];
+      [| Any S2.on; Any (S2.split ~axis:0); Any (Nx.Placement.device S2.v (m 1)) |];
+      [| Any S4.on; Any (S4.split ~axis:1) |];
+      [| Any Twin.on; Any (Twin.split ~axis:1) |];
+      [| Any A.on; Any (B.split ~axis:0) |];
+    |]
+  in
+  (* A placement with its row in [by_set], the set it is over. *)
+  let pick a = Gen.map (fun i -> a.(i)) (Gen.int_range 0 (Array.length a - 1)) in
+  let in_row r = Gen.map (fun p -> (r, p)) (pick by_set.(r)) in
+  let row = Gen.int_range 0 (Array.length by_set - 1) in
+  let placement = Gen.bind row in_row in
+  let s2 = 1 and twin = 3 and named_twice = 4 in
+  (* Pairs over one set, over any two, and the twin mints and the two names of
+     one set often enough that every run draws them. *)
+  let pair =
+    Gen.frequency
+      [
+        (2, Gen.bind row (fun r -> Gen.pair (in_row r) (in_row r)));
+        (2, Gen.pair placement placement);
+        (1, Gen.pair (in_row s2) (in_row twin));
+        ( 1,
+          Gen.constant ((named_twice, Any A.on), (named_twice, Any (B.split ~axis:0)))
+        );
+      ]
+  in
+  let same (_, Any p) (_, Any q) = Option.is_some (Nx.Placement.same p q) in
+  group "witnesses"
+    [
+      prop "a placement is of its own brand" placement (fun a ->
+          equal bool true (same a a));
+      prop "two placements are of one brand iff they are over one set" pair
+        (fun (((r, _) as a), ((r', _) as b)) ->
+          cover "one set" (r = r');
+          cover "two sets" (r <> r');
+          cover "twin mints" (r = s2 && r' = twin);
+          cover "one set under two names" (r = named_twice && r' = r);
+          equal bool (r = r') (same a b));
+      test "one set unpacked twice is of one brand" (fun () ->
+          match Nx.Placement.same A.on B.on with
+          | None -> fail "A and B name one set"
+          | Some Type.Equal ->
+              let x : (float, Nx.float32_elt, A.d) Nx.t =
+                Nx.place B.on (Nx.ones Nx.float32 [| 2 |])
+              in
+              equal (array float_exact) [| 1.; 1. |] (Nx.to_array x));
+      test "twin mints of one device list are of two brands" (fun () ->
+          equal bool false (same (s2, Any S2.on) (twin, Any Twin.on)));
+    ]
+
+let () =
+  exit (run "nx devices" [ sets; placements; meshes; coercions; witnesses ])

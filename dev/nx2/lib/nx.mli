@@ -144,7 +144,12 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
     brand ['d] keeps its values apart from other sets'. {!Placement} says
     where a value lies within its set, and {!place} moves a value between
     sets, and between placements of one. The host is a set like any other,
-    {!Host}. *)
+    {!Host}.
+
+    A brand names one set. A set's module unpacked twice names its brand
+    twice, one type under two names, and two mints of one device list are
+    two sets of two brands. {!Placement.same} tells whether two brands name
+    one set. *)
 
 type +'d devices
 (** The type for device sets of brand ['d]: distinct devices, and the kernels
@@ -209,6 +214,10 @@ module Placement : sig
   (** [equal p q] is [true] iff [p] and [q] are of one set and every device
       holds the same window of a value at [p] and at [q], whatever their
       brands. *)
+
+  val same : 'd t -> 'e t -> ('d, 'e) Type.eq option
+  (** [same p q] is [Some Equal] iff [p] and [q] are of one set, whatever
+      they cut. ['d] and ['e] then name one brand ({!section-devices}). *)
 
   val uncut : 'd t -> 'd t
   (** [uncut p] is [p] with every axis whole on each of its devices, each
@@ -5370,8 +5379,8 @@ module Prim : sig
   val coerce :
     ('v, 's) dtype -> 'd devices -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
   (** [coerce dt s x] is [Some x] at [dt] and [s]'s brand iff [x]'s dtype is
-      [dt] and [x] lies on [s], at any placement of [s]. Each brand names one
-      set, so a value on [s] is a value of [s]'s brand.
+      [dt] and [x] lies on [s], at any placement of [s]: a value on [s] is a
+      value of [s]'s brand ({!Placement.same}).
 
       For an interpretation that binds the values it makes where OCaml cannot
       relate their types: one that binds its stand-ins makes each binding at

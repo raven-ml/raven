@@ -105,6 +105,16 @@ module Placement = struct
   let mesh m cuts = Devices.mesh ~by:"Nx.Placement.mesh" m cuts
   let devices = Devices.set
   let equal = Devices.equal
+
+  (* nx.mli keeps a placement's brand abstract, and every placement of brand
+     ['d] is over the set minted at ['d], whose brands are one type: the cast
+     holds there. Inside nx, ['d t] is [place] at every ['d] and ties
+     nothing. *)
+  let same (type d e) (p : d t) (q : e t) : (d, e) Type.eq option =
+    if Devices.number (Devices.set p) = Devices.number (Devices.set q) then
+      Some (Obj.magic Type.Equal : (d, e) Type.eq)
+    else None
+
   let uncut p = Devices.uncut p
   let pp = Devices.pp_placement
 
