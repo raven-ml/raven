@@ -1692,14 +1692,13 @@ let subnormal32 x =
 let rune_laws =
   group "Rune laws"
     [
-      xfail ~reason:"a compiled root of a subnormal float32 is 15 ulps off"
-        (test "a compiled square root of a subnormal float32 is within Nx.pow's \
-               4 ulps" (fun () ->
-             let o = List.find (fun o -> o.name = "root 2") ops in
-             let x = Quantity.v Unit.one (f32 [| 0x1.cp-147 |]) in
-             equal (ulps 4)
-               (floats (Quantity.value Unit.one (o.eager x x)))
-               (floats (Quantity.value Unit.one (o.jitted x x)))));
+      test "a compiled square root of a subnormal float32 is within Nx.pow's \
+            4 ulps" (fun () ->
+          let o = List.find (fun o -> o.name = "root 2") ops in
+          let x = Quantity.v Unit.one (f32 [| 0x1.cp-147 |]) in
+          equal (ulps 4)
+            (floats (Quantity.value Unit.one (o.eager x x)))
+            (floats (Quantity.value Unit.one (o.jitted x x))));
       prop "jit equals eager for every operation, raises included"
         Gen.(
           quad (of_list ~pp:pp_op ops) (pair length length)
