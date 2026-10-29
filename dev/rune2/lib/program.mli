@@ -205,7 +205,8 @@ and construct =
       (** [step] folded over the rows of [xs] from the carry [init]. Its results
           are the last carry, each output stacked along a new axis 0, then the
           sums. Its default evaluates [step] once per row that runs, and raises
-          [Invalid_argument] where [trips] lies outside [0] to [length]. *)
+          [Invalid_argument] where [trips] lies outside [0] to [length], which a
+          compiled program clamps to them. *)
   | Iterate : {
       name : string;  (** The entry point, in messages. *)
       step : t;

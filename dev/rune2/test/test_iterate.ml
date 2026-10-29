@@ -383,6 +383,7 @@ let law_derivatives (Case c) =
   cover "no step" (c.trips = 0);
   cover "several steps" (c.trips > 1);
   cover "max reached" (c.max < c.trips);
+  cover "room past the steps" (c.trips > 0 && c.max > c.trips);
   cover "a view operand"
     (c.o.(0).view <> Operand.Plain || c.o.(1).view <> Operand.Plain);
   let make k = Operand.make c.dt c.s c.o.(k) in
@@ -439,18 +440,39 @@ let law_derivatives (Case c) =
   equal ~msg:"grad" lp expected (grad (iterated c.g));
   (* Compiled, reverse mode keeps room for [max] steps, and where the loop takes
      fewer the capture receives a zero cotangent, NaN where it meets an infinite
-     partial derivative. *)
+     partial derivative. Its bits are the written loop's where the step's
+     functions are exact and sum no terms along an axis. *)
   let capture = if c.max > c.trips then lenient ~nan:true else l in
   let room = outcome_t (Testable.pair l capture) in
-  equal ~msg:"jit of grad" room expected
-    (outcome (fun () ->
-         let gx, gw =
-           Rune.jit
-             T.(p2 () @-> returns (p2 ()))
-             (Rune.grad (p2 ()) (fun xw -> Nx.sum (iterated c.g xw)))
-             xw
-         in
-         (bits gx, bits gw)));
+  let ge = unsummed (exact c.g) in
+  let le = if constant ge then lenient ~nan:true else bits_t in
+  let le_capture = if c.max > c.trips then lenient ~nan:true else le in
+  let calls = Rune.evaluations () in
+  equal ~msg:"jit of grad"
+    (outcome_t (Testable.pair le le_capture))
+    (grad (written ge))
+    (compiled (fun () ->
+         outcome (fun () ->
+             let gx, gw =
+               Rune.jit
+                 T.(p2 () @-> returns (p2 ()))
+                 (Rune.grad (p2 ()) (fun xw -> Nx.sum (iterated ge xw)))
+                 xw
+             in
+             (bits gx, bits gw))));
+  equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
+  (* A linearization's record compiles as forward mode's steps. *)
+  let tangent = function Value (_, t) -> Value t | Raised m -> Raised m in
+  let calls = Rune.evaluations () in
+  equal ~msg:"jit of a linearization" (outcome_t le)
+    (tangent (jvp (written ge)))
+    (compiled (fun () ->
+         outcome (fun () ->
+             let at xw txw =
+               snd (Rune.linearize (p2 ()) t (iterated ge) xw) txw
+             in
+             bits (Rune.jit T.(p2 () @-> p2 () @-> returns tensor) at xw txw))));
+  equal ~msg:"linearization compiled" int 0 (Rune.evaluations () - calls);
   (* Inside a remat reverse mode keeps room for [max] steps, as compiled. *)
   let remat f = Rune.remat T.(p2 () @-> returns tensor) f in
   equal ~msg:"grad of a remat" room expected
@@ -711,6 +733,8 @@ let law_lanes (Lanes c) =
     (n > 1 && Array.exists (fun t -> t <> c.trips.(0)) c.trips);
   cover "a lane with no step" (Array.exists (( = ) 0) c.trips);
   cover "max reached" (c.max < Array.fold_left Int.max 0 c.trips);
+  cover "room past a lane's steps"
+    (Array.exists (fun t -> t > 0 && t < c.max) c.trips);
   cover "no lane" (n = 0);
   cover "a complex dtype" (D.is Complex c.dt);
   let x = Operand.make c.dt (Array.append [| n |] c.s) c.x in
@@ -780,12 +804,22 @@ let law_lanes (Lanes c) =
     equal ~msg:"grad of vmap" l per_lane
       (outcome (fun () ->
            bits (grad_at c.dt (fun x -> Rune.vmap s (iterated w) (x, t)) x)));
-    equal ~msg:"jit of vmap of grad" l
+    (* Compiled, the bits are each lane's loop's where the step's derivative
+       also sums no terms along an axis. *)
+    let g = unsummed exact in
+    let exact_lanes =
+      outcome (fun () -> bits (one_by_one (grad (written ~g w)) n (x, t)))
+    in
+    let calls = Rune.evaluations () in
+    equal ~msg:"jit of vmap of grad" l exact_lanes
       (outcome (fun () ->
-           bits (one_by_one (grad (written ~g:exact w)) n (x, t))))
-      (outcome (fun () ->
-           let f = Rune.vmap s (grad (iterated ~g:exact w)) in
+           let f = Rune.vmap s (grad (iterated ~g w)) in
            bits (Rune.jit s f (x, t))));
+    equal ~msg:"jit of grad of vmap" l exact_lanes
+      (outcome (fun () ->
+           let f = grad_at c.dt (fun x -> Rune.vmap s (iterated ~g w) (x, t)) in
+           bits (Rune.jit' f x)));
+    equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
     (* Forward mode, inside and around the map. *)
     let jvp f xt =
       snd (Rune.jvp' (fun x -> f (x, snd xt)) (fst xt) (Nx.ones_like (fst xt)))
@@ -1284,9 +1318,16 @@ let test_complex_carry () =
   let grad z =
     Rune.grad' (fun z -> Nx.sum (Nx.real f64 (Nx.mul (g z) (g z)))) z
   in
-  equal codes_t
-    (codes (Nx.stack [ grad (Nx.get [ 0 ] c); grad (Nx.get [ 1 ] c) ]))
-    (codes (Rune.vmap' grad c))
+  let per_lane = Nx.stack [ grad (Nx.get [ 0 ] c); grad (Nx.get [ 1 ] c) ] in
+  equal codes_t (codes per_lane) (codes (Rune.vmap' grad c));
+  (* Compiled, its stacked steps and the backward loop's rows are complex. *)
+  let calls = Rune.evaluations () in
+  equal ~msg:"jit of grad" codes_t
+    (codes (grad (Nx.get [ 0 ] c)))
+    (codes (Rune.jit' grad (Nx.get [ 0 ] c)));
+  equal ~msg:"jit of vmap of grad" codes_t (codes per_lane)
+    (codes (Rune.jit' (Rune.vmap' grad) c));
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
 
 (* A map of one lane is the loop, and lanes of lanes are each lane's loop. *)
 let test_one_lane () =

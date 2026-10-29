@@ -45,6 +45,8 @@ Jit/scatter-1024x16	alloc_words	exact	1205
 Jit/scatter-1024x16	wall_time	batch=512	n=20	8.397e-06	7.895e-06 7.907e-06 7.911e-06 7.926e-06 7.954e-06 7.964e-06 8.031e-06 8.380e-06 8.384e-06 8.387e-06 8.407e-06 8.408e-06 8.454e-06 8.485e-06 8.497e-06 8.502e-06 8.548e-06 8.554e-06 8.562e-06 8.993e-06
 Jit/sort-4096	alloc_words	exact	818
 Jit/sort-4096	wall_time	batch=32	n=20	8.992e-05	8.946e-05 8.948e-05 8.953e-05 8.954e-05 8.956e-05 8.956e-05 8.957e-05 8.966e-05 8.979e-05 8.990e-05 8.994e-05 9.012e-05 9.021e-05 9.063e-05 9.077e-05 9.219e-05 1.060e-04 1.060e-04 1.064e-04 1.097e-04
+JitLoops/newton-grad-1024-replay	alloc_words	exact	896
+JitLoops/newton-grad-1024-replay	wall_time	batch=128	n=20	4.263e-05	4.218e-05 4.218e-05 4.220e-05 4.220e-05 4.226e-05 4.227e-05 4.228e-05 4.230e-05 4.233e-05 4.245e-05 4.281e-05 4.353e-05 4.391e-05 4.729e-05 4.750e-05 4.750e-05 4.752e-05 4.767e-05 4.774e-05 4.840e-05
 JitLoops/vmap-newton-256-lanes-replay	alloc_words	exact	962
 JitLoops/vmap-newton-256-lanes-replay	wall_time	batch=512	n=20	1.176e-05	1.053e-05 1.056e-05 1.078e-05 1.110e-05 1.124e-05 1.163e-05 1.165e-05 1.167e-05 1.168e-05 1.173e-05 1.178e-05 1.179e-05 1.181e-05 1.182e-05 1.182e-05 1.182e-05 1.183e-05 1.185e-05 1.186e-05 1.188e-05
 Loops/fold-eager-100x1000	alloc_words	exact	6728000

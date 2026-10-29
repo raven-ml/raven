@@ -642,6 +642,10 @@ let int64 n =
   let c = Ops.const ~dtype:Int64 (`Int (Tolk.Bigint.of_int n)) in
   Shape.reshape c (ints [ 1 ])
 
+let int32 n =
+  let c = Ops.const ~dtype:Int32 (`Int (Tolk.Bigint.of_int n)) in
+  Shape.reshape c (ints [ 1 ])
+
 let fresh_checks failed = { made = []; read = []; failed }
 
 (* [m] made, after the checks [cs] holds. *)
@@ -814,6 +818,34 @@ let blank u =
   Shape.expand
     (Ops.const ~dtype:(Ops.dtype u) (`Int Tolk.Bigint.zero))
     (Shape.shape u)
+
+(* A loop's trip count, an [int32] node of one element, clamped to [0] to
+   [n]. *)
+let counted n t =
+  let t = Shape.reshape t (ints [ 1 ]) in
+  Ops.minimum
+    (Ops.maximum t (Shape.const_like t (`Int Tolk.Bigint.zero)))
+    (Shape.const_like t (`Int (Tolk.Bigint.of_int n)))
+
+(* Of [u], [n] rows of a value of [d] along axis 0, the first [t] rows, [t] a
+   count from [counted], then zeros. Where [reversed] holds, row [j] below [t]
+   is [u]'s row [t - 1 - j], so that a loop running rows forward runs a
+   reversed scan's from its last row that runs. *)
+let leading d ~reversed ~n t u =
+  let parts = Arith.parts d u in
+  let shape = Shape.shape (List.hd parts) in
+  let along v =
+    let lead = Ops.Int n :: List.map (fun _ -> Ops.Int 1) (List.tl shape) in
+    Shape.expand (Shape.reshape v lead) shape
+  in
+  let j = Shape.arange ~dtype:Int64 n in
+  let t = Shape.expand (Ops.cast t Int64) (ints [ n ]) in
+  if reversed then
+    let last = Ops.sub t (Shape.const_like t (`Int Tolk.Bigint.one)) in
+    Lower_index.gather d ~axis:0 (along (Ops.sub last j)) u
+  else
+    let kept = along (Ops.lt j t) in
+    Arith.of_parts d (List.map (fun p -> Ops.where kept p (blank p)) parts)
 
 (* A loop's checks, carried: for each check its trip made, in order, its first
    failure in the first trip that failed, or its element count, and its data
@@ -1073,9 +1105,9 @@ and switch st cs env c (s : Program.switch) =
 
 and loop st cs env c =
   match c with
-  | Scan { trips = Some _; _ } -> decline "a scan that runs some of its rows"
-  | Iterate { rows = Some _; _ } -> decline "an iterate that stacks its steps"
-  | Scan { step; length = n; reverse; init; xs; captures; seeds; _ } ->
+  | Iterate { rows = Some Taken; _ } ->
+      decline "an iterate that stacks the steps it takes"
+  | Scan { step; length = n; trips; reverse; init; xs; captures; seeds } ->
       let forms = Program.forms c in
       let nc = Array.length init and na = Array.length step.adds in
       let ny = Array.length step.outputs - nc - na in
@@ -1094,6 +1126,25 @@ and loop st cs env c =
             ]
         else
           let ns = Array.length starts in
+          (* A scan that runs its first [t] rows is a loop that stops once it
+             counts [t] trips, run forward over rows that a reversed scan
+             reads reversed below [t]; its outputs are those rows, then zeros.
+             [t] is an iterate's count of its steps, at most [n]. *)
+          let t =
+            Option.map
+              (fun (V x) -> counted n (on_device st (node st env x)))
+              trips
+          in
+          let xs =
+            Array.map
+              (fun (V x) ->
+                let u = node st env x in
+                match t with
+                | Some t when reverse ->
+                    leading (D.Any (Nx.dtype x)) ~reversed:true ~n t u
+                | _ -> u)
+              xs
+          in
           let trip inner carried rows =
             let sub = env_of step in
             let caps = Array.map (fun (V x) -> node st env x) captures in
@@ -1111,16 +1162,41 @@ and loop st cs env c =
                    ])
             in
             Array.iteri (fun k j -> sums.(j) <- out.(nc + ny + k)) feeds;
-            (Array.append (Array.sub out 0 nc) sums, Array.sub out nc ny)
+            let count =
+              match t with
+              | None -> [||]
+              | Some t ->
+                  let k = Ops.add carried.(nc + ns) (int32 1) in
+                  [| k; Ops.lt k t |]
+            in
+            ( Array.concat [ Array.sub out 0 nc; sums; count ],
+              Array.sub out nc ny )
+          in
+          let count =
+            match t with
+            | None -> [||]
+            | Some t -> [| int32 0; Ops.lt (int32 0) t |]
           in
           let carried, ys =
-            repeat st cs ~n ~reverse ~hoist:true ~stop:None ~bound:[||]
-              (Array.append inits starts)
-              (Array.map (fun (V x) -> node st env x) xs)
-              trip
+            repeat st cs ~n
+              ~reverse:(reverse && Option.is_none t)
+              ~hoist:true
+              ~stop:(Option.map (fun _ -> nc + ns + 1) t)
+              ~bound:[||]
+              (Array.concat [ inits; starts; count ])
+              xs trip
           in
-          Array.concat
-            [ Array.sub carried 0 nc; ys; Array.sub carried nc ns ]
+          let ys =
+            match t with
+            | None -> ys
+            | Some t ->
+                Array.mapi
+                  (fun j u ->
+                    let (F f) = forms.(nc + j) in
+                    leading (D.Any f.dtype) ~reversed:reverse ~n t u)
+                  ys
+          in
+          Array.concat [ Array.sub carried 0 nc; ys; Array.sub carried nc ns ]
       in
       Array.map (result env c) finals
   | Iterate
@@ -1129,12 +1205,12 @@ and loop st cs env c =
         step;
         until;
         max;
+        rows;
         stopped;
         init;
         step_captures;
         until_captures;
         seeds;
-        _;
       } ->
       let forms = Program.forms c in
       let nc = Array.length init in
@@ -1158,12 +1234,21 @@ and loop st cs env c =
         let no = Ops.ne (int64 0) (int64 0) in
         Ops.where (Ops.ne cs.failed (int64 0)) no (Ops.eq stop (uint8 stop 0))
       in
+      (* Where the iterate stacks its steps, it counts them in the carry, and
+         each trip writes its outputs' row. *)
+      let stacks = Option.is_some rows in
+      let ny = Array.length step.outputs - nc - Array.length step.adds in
       let inits = Array.map (fun (V x) -> node st env x) init in
-      let sums = starts st env forms ~at:nc seeds in
+      let sums = starts st env forms ~at:(nc + Bool.to_int stacks + ny) seeds in
       let go = test cs inits sums in
       let ns = Array.length sums in
-      let carried =
-        if max = 0 then Array.concat [ inits; sums; [| go |] ]
+      let count = if stacks then [| int32 0 |] else [||] in
+      let carried, ys =
+        if max = 0 then
+          ( Array.concat [ inits; sums; count; [| go |] ],
+            Array.init ny (fun j ->
+                let (F f) = forms.(nc + 1 + j) in
+                zeros f.dtype (shape_of f)) )
         else
           let trip inner carried _ =
             let carry = Array.sub carried 0 nc in
@@ -1177,14 +1262,28 @@ and loop st cs env c =
             let base = Array.length out - Array.length step_feeds in
             Array.iteri (fun k j -> sums.(j) <- out.(base + k)) step_feeds;
             let go = test inner carry sums in
-            (Array.concat [ carry; sums; [| go |] ], [||])
+            let count =
+              if stacks then [| Ops.add carried.(nc + ns) (int32 1) |] else [||]
+            in
+            (Array.concat [ carry; sums; count; [| go |] ], Array.sub out nc ny)
           in
-          fst
-            (repeat st cs ~n:max ~reverse:false ~hoist:true
-               ~stop:(Some (nc + ns))
-               ~bound:[||]
-               (Array.concat [ inits; sums; [| go |] ])
-               [||] trip)
+          let carried, ys =
+            repeat st cs ~n:max ~reverse:false ~hoist:true
+              ~stop:(Some (nc + ns + Array.length count))
+              ~bound:[||]
+              (Array.concat [ inits; sums; count; [| go |] ])
+              [||] trip
+          in
+          let ys =
+            Array.mapi
+              (fun j u ->
+                let (F f) = forms.(nc + 1 + j) in
+                leading (D.Any f.dtype) ~reversed:false ~n:max
+                  carried.(nc + ns)
+                  u)
+              ys
+          in
+          (carried, ys)
       in
       (* Once the trips are done, the stop holds or the loop fails, naming
          the first lane still running where the lanes stop apart. *)
@@ -1205,7 +1304,12 @@ and loop st cs env c =
               data = [ (D.Any D.Int64, lane) ];
               fail = (fun _ a -> fail (named a));
             });
-      Array.map (result env c) (Array.sub carried 0 (Array.length carried - 1))
+      let count =
+        if stacks then [| Shape.reshape carried.(nc + ns) [] |] else [||]
+      in
+      Array.map (result env c)
+        (Array.concat
+           [ Array.sub carried 0 nc; count; ys; Array.sub carried nc ns ])
   | c -> decline "%s" (construct_name c)
 
 (* A loop's result reads every operand, nowhere at its own index, and so do

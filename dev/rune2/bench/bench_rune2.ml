@@ -766,6 +766,11 @@ let jit_loop_rows () =
     warm "newton-1024-replay"
       (fun () -> Rune.jit' newton)
       (fun g -> synced (g a));
+    (* Its gradient: the loop stacks its steps in room for 64, and the
+       backward loop runs over the steps taken. *)
+    warm "newton-grad-1024-replay"
+      (fun () -> Rune.jit' (Rune.grad' (fun a -> Nx.sum (newton a))))
+      (fun g -> synced (g a));
     (* The lanes stop apart: the loop runs while any lane runs on. *)
     warm
       (Printf.sprintf "vmap-newton-%d-lanes-replay" lanes)

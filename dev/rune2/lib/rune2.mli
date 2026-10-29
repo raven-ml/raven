@@ -1432,11 +1432,14 @@ val jit :
     the first failure of the first step that fails, as the steps written out
     would, and an {!iterate} stops at the first failure. A map's {!iterate}
     whose lanes stop apart runs while any lane runs on, a lane that has stopped
-    {{!section-maps}held}. An {!iterate}'s derivative or map is evaluated where
-    it runs a count of rows or stacks its steps. A {!switch} compiles as one
-    loop per branch of at most one trip, which runs where the index names its
-    branch, so a branch not taken computes nothing. A {!remat}, a {!custom_jvp},
-    a {!custom_vjp} and a {!custom_transpose} compile as their function's
+    {{!section-maps}held}. Under reverse mode or {!linearize} an {!iterate}
+    stacks what its steps keep in room for [max] steps, rows past the steps
+    taken zeros, and its derivative is a loop over the steps taken. Under
+    reverse mode that loop runs from the last step, reading and writing its rows
+    through copies in reverse order. A {!switch} compiles as one loop per branch
+    of at most one trip, which runs where the index names its branch, so a
+    branch not taken computes nothing. A {!remat}, a {!custom_jvp}, a
+    {!custom_vjp} and a {!custom_transpose} compile as their function's
     operations, the program's own. *)
 
 (** {2:emissions Emissions}
@@ -1458,8 +1461,7 @@ val jit :
     - an emission {!section-emissions} names as evaluated;
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;
-    - a loop {!section-rules} names as evaluated, or an operation the compiler
-      does not lower;
+    - an operation the compiler does not lower;
     - a check on a device other than the host;
     - no value, an argument or a result with an element on a device other than
       the program's, or a value over several devices. A result the function
