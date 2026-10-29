@@ -16,16 +16,12 @@ module L = Nx_array.Layout
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 
 (* A host value of [dt] and shape [s] over drawn bytes: NaNs, signed zeros,
-   infinities and extremes among its elements. *)
+   infinities and extremes among its elements, and bool bytes other than 0 and
+   1, each of which is [true]. *)
 let drawn (type v s) (dt : (v, s) D.t) s : (v, s, Nx.host) Nx.t Gen.t =
   let open Gen in
   let n = Array.fold_left ( * ) 1 s in
   let+ data = string_of ~size:(constant (D.bytes dt n)) char in
-  let data =
-    match dt with
-    | D.Bool -> String.map (fun c -> Char.chr (Char.code c land 1)) data
-    | _ -> data
-  in
   Nx.Repr.of_array Nx.Host.v
     (A.v dt (L.contiguous (Iarray.of_array s))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
@@ -101,6 +97,43 @@ let law_not (One (dt, x)) =
     (Array.map (fun v -> of_truth dt (not (truth dt v))) (Nx.to_array x))
     (Nx.to_array (Nx.logical_not x))
 
+(* A bool is true iff its byte is not zero: each operation reads a byte other
+   than 0 or 1 as it reads 1. *)
+let bools =
+  Gen.with_pp
+    (fun ppf (a, b) -> Format.fprintf ppf "%a, %a" pp_value a pp_value b)
+    (let open Gen in
+     let* s = shape in
+     let* narrow = bool in
+     let s' = if narrow then Array.map (fun _ -> 1) s else s in
+     let* a = drawn D.Bool s in
+     let+ b = drawn D.Bool s' in
+     (a, b))
+
+let law_bool_bytes (a, b) =
+  let bytes x = Nx.to_array (Nx.bitcast Nx.uint8 x) in
+  cover "a byte other than 0 or 1"
+    (Array.exists (fun v -> v > 1) (Array.append (bytes a) (bytes b)));
+  let canonical x = Nx.create Nx.bool (Nx.shape x) (Nx.to_array x) in
+  let a' = canonical a and b' = canonical b in
+  let same name f =
+    equal ~msg:name (array bool) (Nx.to_array (f a' b')) (Nx.to_array (f a b))
+  in
+  same "logical_and" Nx.logical_and;
+  same "logical_or" Nx.logical_or;
+  same "logical_xor" Nx.logical_xor;
+  same "logical_not" (fun a _ -> Nx.logical_not a);
+  same "equal" Nx.equal;
+  same "less" Nx.less;
+  same "maximum" Nx.maximum;
+  same "where" (fun a b -> Nx.where a b (Nx.logical_not b));
+  equal ~msg:"cast" (array int32)
+    (Nx.to_array (Nx.cast Nx.int32 a'))
+    (Nx.to_array (Nx.cast Nx.int32 a));
+  equal ~msg:"count" (array int64)
+    (Nx.to_array (Nx.count a'))
+    (Nx.to_array (Nx.count a))
+
 let truths =
   group "truth"
     [
@@ -111,6 +144,7 @@ let truths =
       prop "logical_xor is one where exactly one is true" two
         (law_logical (fun a b -> Nx.logical_xor a b) ( <> ));
       prop "logical_not is one where x is zero" (one all) law_not;
+      prop "a bool byte other than 0 or 1 reads as true" bools law_bool_bytes;
       test "a NaN and a negative zero" (fun () ->
           let x = Nx.create Nx.float32 [| 3 |] [| nan; -0.; 2. |] in
           equal (array float_exact) [| 1.; 0.; 1. |]
