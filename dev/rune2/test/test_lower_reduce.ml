@@ -559,11 +559,13 @@ let is_complex (D.Any dt) = D.is D.Complex dt
 let reduced_empty c = List.exists (fun a -> c.shape.(a) = 0) c.axes
 let cover_monoids c ms = List.iter (fun m -> cover (monoid_name m) (c.m = m)) ms
 
-(* Examples every run takes: a one-element and a zero-size operand, and for
-   float32 and float16 five rows: NaNs of both signs and kinds; infinities of
-   both signs before a signalling NaN; zeros of both signs; all [-0]; and
-   infinities of both signs, a NaN made from numbers by a sum or a product. A
-   scan's carries are [1], a signalling NaN, [+0], [-0] and [-∞]. *)
+(* Examples every run takes: a one-element and a zero-size operand, a
+   reduction's transposed operand over both its axes, and for float32 and
+   float16 five rows: NaNs of both signs and kinds; infinities of both signs
+   before a signalling NaN; zeros of both signs; all [-0]; and infinities of
+   both signs, a NaN made from numbers by a sum or a product. A scan's
+   one-element operand has a carry, and its five rows the carries [1], a
+   signalling NaN, [+0], [-0] and [-∞]. *)
 
 (* Complex numbers as raws: each part's float64 bits. *)
 let complex_raws zs =
@@ -676,9 +678,18 @@ let examples ?(scan = false) dts ms =
       | Some (raws, carry) ->
           [ ex dt m [| 5; 4 |] [ 1 ] raws (if scan then Some carry else None) ]
     in
-    ex dt m [| 1 |] [ 0 ] (Array.make (raws_of dt 1) 1L) None
+    let carry =
+      if scan then Some (Array.make (raws_of (K.carrier dt) 1) 1L) else None
+    in
+    let across =
+      if scan then []
+      else
+        let raws = Array.init (raws_of dt 6) Int64.of_int in
+        [ { (ex dt m [| 3; 2 |] [ 0; 1 ] raws None) with view = Transposed } ]
+    in
+    ex dt m [| 1 |] [ 0 ] (Array.make (raws_of dt 1) 1L) carry
     :: ex dt m zero [ 1 ] [||] None
-    :: special
+    :: (across @ special)
   in
   List.concat_map (fun dt -> List.concat_map (each dt) ms) dts
 
