@@ -295,6 +295,17 @@ let holds p s q =
   in
   Array.for_all Fun.id (Array.mapi held (Grid.devices q))
 
+(* Whether [p] is the whole on every device of its set. *)
+let everywhere p =
+  let g = Devices.grid p in
+  (not (Grid.is_cut g)) && Grid.count g = Devices.count (Devices.set p)
+
+let gathers r i p s =
+  let q = Devices.grid r.operands.(i) in
+  (not (Grid.equal (Devices.grid p) q))
+  && (not (everywhere p))
+  && not (holds p s q)
+
 (* Refusals *)
 
 (* The name the remedy of a refusal gives operand [i]. *)
@@ -342,25 +353,18 @@ let pp_call ~by set ppf q =
         (List.map cut (Array.to_list cuts))
 
 (* Raises: operand [i], at [p], is read at the union [u] moved back to its
-   axes, of shape [s], over [set]. The remedy places it there, or, for
-   positions read cut, which an operation may have reshaped from the
-   program's, whole on every device of the set, where they hold every
-   window. *)
-let refuse ~by ~positions rule set i p s u =
+   axes, of shape [s], over [set]. The remedy places it there. *)
+let refuse ~by rule set i p s u =
   let q = backward rule i s u in
-  let fix =
-    if List.mem i positions && Grid.is_cut q then Devices.grid (Devices.on set)
-    else q
-  in
   invalid_argf "%s: operand %d lies at %a and is read at %a; Nx.place (%a) %s"
     by i Devices.pp_placement p Devices.pp_placement (Devices.v ~by set q)
-    (pp_call ~by set) fix (name i)
+    (pp_call ~by set) q (name i)
 
 (* Routes *)
 
 (* The route of operands joined in [order], or the refusal of the first
    operand it cannot read where it lies. *)
-let attempt ~by ~positions rule ps shapes order =
+let attempt ~by rule ps shapes order =
   let set = Devices.set ps.(0) in
   let other i = Devices.number (Devices.set ps.(i)) <> Devices.number set in
   let lifted i = forward rule i shapes.(i) (Devices.grid ps.(i)) in
@@ -387,7 +391,7 @@ let attempt ~by ~positions rule ps shapes order =
   let reads = Array.mapi read ps in
   match Array.find_index Option.is_none reads with
   | Some i ->
-      Error (fun () -> refuse ~by ~positions rule set i ps.(i) shapes.(i) u)
+      Error (fun () -> refuse ~by rule set i ps.(i) shapes.(i) u)
   | None ->
       let operands = Array.map Option.get reads in
       (* The results lie at an operand's own placement where it is theirs,
@@ -405,11 +409,13 @@ let attempt ~by ~positions rule ps shapes order =
 (* The route of operands not all at one placement, or at one that cuts an
    axis an operation other than an elementwise one may read whole. The
    operands join in order. Where that refuses one, those of positions join
-   last, so that the values they read keep their cuts; where that refuses
-   too, its refusal is raised. *)
+   last, so that the values they read keep their cuts. Where that refuses
+   too, the positions not whole on every device of the set join as if they
+   were, so that the union is the values' alone and each device reads the
+   positions it needs, which then move there. *)
 let general ~by ~positions rule ps shapes =
   let all = List.init (Array.length ps) Fun.id in
-  match attempt ~by ~positions rule ps shapes all with
+  match attempt ~by rule ps shapes all with
   | Ok r -> r
   | Error first -> (
       let indices, values =
@@ -417,9 +423,24 @@ let general ~by ~positions rule ps shapes =
       in
       if indices = [] then first ()
       else
-        match attempt ~by ~positions rule ps shapes (values @ indices) with
+        match attempt ~by rule ps shapes (values @ indices) with
         | Ok r -> r
-        | Error last -> last ())
+        | Error last -> (
+            let set = Devices.set ps.(0) in
+            let same i =
+              Devices.number (Devices.set ps.(i)) = Devices.number set
+            in
+            let gathered =
+              List.filter (fun i -> same i && not (everywhere ps.(i))) indices
+            in
+            if gathered = [] then last ()
+            else
+              let on = Devices.on set in
+              let moved i p = if List.mem i gathered then on else p in
+              let ps = Array.mapi moved ps in
+              match attempt ~by rule ps shapes (values @ indices) with
+              | Ok r -> r
+              | Error refused -> refused ()))
 
 let route ~by ?(positions = []) rule ps shapes =
   for i = 0 to Array.length ps - 1 do

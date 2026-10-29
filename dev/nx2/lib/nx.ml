@@ -1422,12 +1422,27 @@ let window ~by start n d =
 
 (* [y] read along [axis] at the positions [p], in C order: [y]'s axis of
    extent the number of [p]'s elements. [p] runs along the axis, broadcast
-   across the others, which a kernel reads as row takes. *)
+   across the others, which a kernel reads as row takes. One position is
+   broadcast as the last axis, then moved to [axis], so that its cut stays
+   on [axis]: a reshape would pair its axis with the first unit axis. *)
 let gather_axis ~by axis p y =
   let s = shape y and n = numel p in
-  let col = Array.mapi (fun i _ -> if i = axis then n else 1) s in
+  let r = Array.length s in
   let wide = Array.mapi (fun i d -> if i = axis then n else d) s in
-  let idx = Eval.broadcast ~by wide (Eval.reshape ~by col p) in
+  let idx =
+    if n <> 1 then
+      let col = Array.mapi (fun i _ -> if i = axis then n else 1) s in
+      Eval.broadcast ~by wide (Eval.reshape ~by col p)
+    else
+      let other i = s.(if i < axis then i else i + 1) in
+      let row = Array.append (Array.init (r - 1) other) [| 1 |] in
+      let row = Eval.broadcast ~by row (Eval.reshape ~by [| 1 |] p) in
+      let to_axis i =
+        if i < axis then i else if i = axis then r - 1 else i - 1
+      in
+      if axis = r - 1 then row
+      else Eval.move ~by (Permute (Iarray.init r to_axis)) row
+  in
   Eval.eval ~by (Value.Gather { axis; idx; x = y })
 
 (* [y] read along [axis] at the positions [p]: [y]'s axis replaced by [p]'s

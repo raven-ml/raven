@@ -116,6 +116,58 @@ and plain : type r. by:string -> r prim -> r =
       Check.issue ~by ok data fail
   | _ -> routed ~by (Prim.route ~by op) op
 
+(* [op] with the positions [route] gathers moved where it reads them
+   ({!Route.gathers}). Only a gather's and a scatter's positions, operand
+   [0], move, so other operations check nothing, and positions read where
+   they lie check one placement. *)
+and gather : type r. by:string -> unit Route.t -> r prim -> r prim =
+ fun ~by route op ->
+  match op with
+  | Gather g when moves route g.idx ->
+      Gather { g with idx = moved ~by route g.idx }
+  | Scatter s when moves route s.idx ->
+      Scatter { s with idx = moved ~by route s.idx }
+  | _ -> op
+
+and moves : type v s d. unit Route.t -> (v, s, d) t -> bool =
+ fun route x ->
+  let p = Prim.placement x in
+  (not (Grid.equal (Devices.grid p) (Devices.grid route.operands.(0))))
+  && Route.gathers route 0 p (Prim.shape x)
+
+(* [x] where [route] reads it. An axis that [x]'s placement does not cut and
+   that each of its arrays repeats, as a broadcast does, moves one element
+   long, whole on each device, and is stretched back by a view, so that
+   only [x]'s own elements move. *)
+and moved : type v s d. by:string -> unit Route.t -> (v, s, d) t -> (v, s, d) t
+    =
+ fun ~by route x ->
+  let q = Devices.grid route.operands.(0) in
+  let s = Prim.shape x and arrays = Prim.arrays x in
+  let at = Prim.placement x in
+  let set = Devices.set at in
+  let cuts = Grid.cuts (Devices.grid at) in
+  let cut a = Array.exists (fun (c, _) -> c = a) cuts in
+  let repeats a =
+    s.(a) > 1
+    && (not (cut a))
+    && Iarray.for_all
+         (fun arr ->
+           let l = A.layout arr in
+           A.Layout.numel l = 0 || A.Layout.stride l a = 0)
+         arrays
+  in
+  let axes = Array.init (Array.length s) Fun.id in
+  if not (Array.exists repeats axes) then placed ~by (Devices.v ~by set q) x
+  else
+    let one a =
+      { A.Move.start = 0; count = (if repeats a then 1 else s.(a)); step = 1 }
+    in
+    let whole q a = if repeats a then Grid.uncut q ~axis:a else q in
+    let q = Devices.v ~by set (Array.fold_left whole q axes) in
+    let core = run ~by (Move (Slice (Iarray.init (Array.length s) one), x)) in
+    run ~by (Move (Broadcast (Iarray.of_array s), placed ~by q core))
+
 (* [op], a placement, a check, or another operation, computed as its rule
    decided [r] ({!Prim.route}): by partials or by windows as the route
    computes, its first result into [into] where it is given. *)
@@ -127,6 +179,7 @@ and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
   | _ -> (
       (* Every operation but a placement and a check has a route. *)
       let route = Option.get r.Prim.route in
+      let op = gather ~by route op in
       match route.compute with
       | Partials -> Partial.run ~by route op
       | Windows -> Exec.windows ~by ?into route r.layouts op)

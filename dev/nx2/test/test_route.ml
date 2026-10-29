@@ -682,9 +682,8 @@ let readable rank =
 
 (* The operand that the refusal [msg] of [c] over [ps] names, where it is
    read, and the placement and call of its remedy, its text checked against
-   them. The remedy of an operand of [positions] read cut is the whole on
-   every device. *)
-let parse ?(positions = []) c ps msg =
+   them. *)
+let parse c ps msg =
   let r = require_some ~msg (refusal msg) in
   let i = r.operand in
   let p = ps.(i) in
@@ -700,13 +699,8 @@ let parse ?(positions = []) c ps msg =
   in
   equal bool ~msg:"it lacks a window it is read at" false
     (holds p c.shapes.(i) q);
-  let fix, call =
-    if List.mem i positions && Grid.is_cut (Devices.grid q) then
-      (Devices.on s4, "Placement.on s")
-    else (q, call)
-  in
   equal string ~msg:"the call" call r.call;
-  (i, q, fix, call)
+  (i, q, call)
 
 let refusals =
   prop ~count:2000
@@ -716,7 +710,7 @@ let refusals =
       match route c.rule c.ps c.shapes with
       | _ -> ()
       | exception Invalid_argument msg ->
-          let i, q, fix, call = parse c c.ps msg in
+          let i, q, call = parse c c.ps msg in
           cover "read whole on every device" (Devices.equal q (Devices.on s4));
           cover "read on one device" (Devices.device q <> None);
           cover "read split"
@@ -725,15 +719,15 @@ let refusals =
             (String.starts_with ~prefix:"Placement.mesh" call);
           (* The remedies, written one after another, let the call route. *)
           let ps = Array.copy c.ps in
-          ps.(i) <- fix;
+          ps.(i) <- q;
           let rec settle n =
             match route c.rule ps c.shapes with
             | _ -> ()
             | exception Invalid_argument msg ->
                 if n = 0 then fail ("the remedies do not settle: " ^ msg)
                 else begin
-                  let i, _, fix, _ = parse c ps msg in
-                  ps.(i) <- fix;
+                  let i, q, _ = parse c ps msg in
+                  ps.(i) <- q;
                   settle (n - 1)
                 end
           in
@@ -746,11 +740,18 @@ let compute =
       | Partials -> Format.pp_print_string ppf "partials")
     ~equal:( = )
 
+(* The operands [r], a route of [c], gathers. *)
+let gathered c r =
+  List.filter
+    (fun i ->
+      Route.gathers r i c.ps.(i) c.shapes.(i))
+    (List.init (Array.length c.ps) Fun.id)
+
 (* Operands of positions join last only where program order refuses one.
    Where that order routes, a call naming them routes alike. Where it
    refuses, a call naming them reads each operand where it holds what it is
-   read at, or refuses, and its remedies settle, positions read cut placed
-   whole on every device. *)
+   read at, but positions it gathers, which hold it whole on every device,
+   or refuses an operand of values, and its remedies settle. *)
 let positioned =
   let pp ppf (c, positions) =
     Format.fprintf ppf "%a positions %a" pp_case c pp_ints
@@ -766,16 +767,26 @@ let positioned =
       | r ->
           cover "routed in program order, positions named" (positions <> []);
           let r' = at c.ps in
+          equal (list int) ~msg:"gathered" [] (gathered c r');
           equal (array placement) ~msg:"operands" r.operands r'.operands;
           equal placement ~msg:"results" r.result r'.result;
           equal compute ~msg:"compute" r.compute r'.compute
       | exception Invalid_argument _ -> (
           match at c.ps with
           | r ->
-              cover "routed with positions last" true;
+              let moved = gathered c r in
+              cover "routed with positions last" (moved = []);
+              cover "routed with positions gathered" (moved <> []);
+              List.iter
+                (fun i ->
+                  equal bool ~msg:"gathers positions" true
+                    (List.mem i positions))
+                moved;
               Array.iteri
                 (fun i q ->
-                  let p = c.ps.(i) in
+                  let p =
+                    if List.mem i moved then Devices.on s4 else c.ps.(i)
+                  in
                   equal bool
                     ~msg:
                       (Format.asprintf "operand %d at %a holds its reads at %a"
@@ -786,10 +797,9 @@ let positioned =
           | exception Invalid_argument msg ->
               let ps = Array.copy c.ps in
               let rec settle n msg =
-                let i, q, fix, _ = parse ~positions c ps msg in
-                cover "positions read cut, placed whole"
-                  (List.mem i positions && Grid.is_cut (Devices.grid q));
-                ps.(i) <- fix;
+                let i, q, _ = parse c ps msg in
+                equal bool ~msg:"names positions" false (List.mem i positions);
+                ps.(i) <- q;
                 match at ps with
                 | _ -> ()
                 | exception Invalid_argument msg ->

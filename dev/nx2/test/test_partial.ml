@@ -669,14 +669,17 @@ let pp_gather ppf = function
   | Along a -> Format.fprintf ppf "take_along_axis %d" a
 
 (* Where the positions lie: whole on each of the value's devices; cut alike
-   along the value's cut axes but the gathered one; or, beside a value cut
-   over the mesh's minor axis, along an axis over its major one. *)
-type positions = Whole | Alike | Major of int
+   along the value's cut axes but the gathered one; beside a value cut over
+   the mesh's minor axis, along an axis over its major one; or split along
+   an axis over every device of the value's set, where no order reads them
+   beside the value. *)
+type positions = Whole | Alike | Major of int | Spread of int
 
 let pp_positions ppf = function
   | Whole -> Format.pp_print_string ppf "whole"
   | Alike -> Format.pp_print_string ppf "cut alike"
   | Major a -> Format.fprintf ppf "cut %d/a" a
+  | Spread a -> Format.fprintf ppf "split %d" a
 
 (* A value's dtype, shape and elements, where it lies, the gather, where the
    positions lie, and their shape and elements. *)
@@ -761,12 +764,24 @@ let gathered_case =
            List.filter_map
              (fun i -> if i = c && c <> a then None else Some (Major i))
              (List.init rank Fun.id)
-       (* One position's cut lands on the first unit axis of the column
-          [take] reshapes it to, which the gather reads whole. *)
-       | Minor _, Take _ -> if m = 1 then [] else [ Major 0 ]
+       | Minor _, Take _ -> [ Major 0 ]
        | (Split3 _ | Split4 _ | Cuts _), _ -> []
      in
-     let* at = of_list ((Whole :: alike) @ major) in
+     (* Split along an axis the value's cut also becomes, or beside a value
+        of no element, which every device holds, positions are read where
+        they lie. *)
+     let spread =
+       if Array.mem 0 s then []
+       else
+       match g with
+       | Take _ -> [ Spread 0 ]
+       | Along a ->
+           List.filter_map
+             (fun i ->
+               if List.mem i cut && i <> a then None else Some (Spread i))
+             (List.init rank Fun.id)
+     in
+     let* at = of_list ((Whole :: alike) @ major @ spread) in
      let position =
        one_of
          [
@@ -782,8 +797,10 @@ let gathered_case =
      Gcase (k, s, data, w, g, at, ps, p))
 
 (* A gather of a value at any placement, at positions whole on each of its
-   devices or cut along axes the value's gathered cut leaves, gives its bits
-   on one device. *)
+   devices, cut along axes the value's gathered cut leaves, or split where
+   no order reads them, gives its bits on one device. Positions split so
+   move whole to every device, and the result lies as beside positions
+   whole there. *)
 let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
   let ts = tiles w in
   let cut = List.map fst ts in
@@ -804,9 +821,32 @@ let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
   cover "positions cut alike, gathered along a cut axis"
     (at = Alike && List.mem a cut);
   cover "positions cut over the major axis, gathered along a cut axis"
-    (match at with Major _ -> List.mem a cut | Whole | Alike -> false);
+    (match at with
+    | Major _ -> List.mem a cut
+    | Whole | Alike | Spread _ -> false);
   cover "positions cut along the gathered axis"
     (at = Major a && match g with Along _ -> true | Take _ -> false);
+  let spread =
+    match at with Spread _ -> true | Whole | Alike | Major _ -> false
+  in
+  cover "positions moved, gathered along a cut axis" (spread && List.mem a cut);
+  cover "positions moved, beside a cut of another axis"
+    (spread && List.exists (( <> ) a) cut);
+  cover "positions moved, split along the gathered axis"
+    (at = Spread a && match g with Along _ -> true | Take _ -> false);
+  cover "one position moved" (spread && Array.length p = 1);
+  (* Split positions move only where no device holds what it would read
+     beside the value: where every cut axis has a nonempty tile on each
+     device. Where one holds no element, the route may read them where
+     they lie. *)
+  let placed =
+    match at with
+    | Whole | Alike | Major _ -> true
+    | Spread i ->
+        let n = match w with Split3 _ -> 3 | Split4 _ | Cuts _ | Minor _ -> 4 in
+        List.for_all (fun (c, t) -> s.(c) >= t) ts && ps.(i) >= n
+  in
+  cover "positions moved where no device holds its reads" (spread && placed);
   cover "a negative position" (Array.exists (fun q -> q < 0L) p);
   cover "a position past the axis"
     (Array.exists (fun q -> q >= Int64.of_int e) p);
@@ -850,12 +890,25 @@ let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
       | Whole -> (Nx.Placement.uncut q, want)
       | Alike -> (alike, want)
       | Major i -> major i
+      | Spread i -> (Nx.Placement.split ~axis:i (Nx.Placement.devices q), want)
     in
     let y = gather (Nx.place r p) (Nx.place q x) in
     let placement =
       Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
     in
-    equal ~msg:"where it lies" placement want (Nx.placement y);
+    (* Read where they lie, split positions put their cut on the result's
+       axis they become. *)
+    let kept i =
+      let o = match g with Along _ -> i | Take _ -> a in
+      Nx.Placement.split ~axis:o (Nx.Placement.devices q)
+    in
+    (match at with
+    | Spread i when not placed ->
+        let y = Nx.placement y in
+        let want = if Nx.Placement.equal want y then want else kept i in
+        equal ~msg:"where it lies" placement want y
+    | Whole | Alike | Major _ | Spread _ ->
+        equal ~msg:"where it lies" placement want (Nx.placement y));
     bits y
   in
   let mesh cuts = Nx.Placement.mesh mesh4 cuts in
@@ -889,9 +942,9 @@ let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
   in
   equal (array string) expected actual
 
-(* Positions cut over the devices that cut the gathered axis raise: no
-   device holds both a tile and the positions it reads. The refusal places
-   the positions whole on each device, which then computes. *)
+(* Positions cut over the devices that cut the gathered axis move whole to
+   every device, which then gathers from its tile: the result lies whole on
+   every device, as beside positions whole there. *)
 let test_gather_both_cut () =
   let v = Nx.arange D.Float32 0 8 1 in
   let x = Nx.place (Set4.split ~axis:0) v in
@@ -899,45 +952,42 @@ let test_gather_both_cut () =
     Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 4 |] [| 7L; 0L; 3L; 4L |])
   in
   let p = Nx.place (Set4.split ~axis:0) host in
-  raises
-    (Invalid_argument
-       "Nx.take_along_axis: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] \
-        and is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x")
-    (fun () -> Nx.take_along_axis ~axis:0 p x);
-  equal (array int)
-    (bytes (Nx.take_along_axis ~axis:0 host v))
-    (bytes (Nx.take_along_axis ~axis:0 (Nx.place Set4.on p) x))
+  let y = Nx.take_along_axis ~axis:0 p x in
+  equal (placement ()) Set4.on (Nx.placement y);
+  equal (array int) (bytes (Nx.take_along_axis ~axis:0 host v)) (bytes y)
 
-(* Positions refused where they lie are placed whole on every device of the
-   set, whatever the operation reshaped them into, which then computes:
-   positions on one device beside a value cut across the set, and a [take]'s
-   positions cut along their axis beside a value cut along another. *)
-let test_positions_fix () =
+(* Positions that no order reads where they lie move whole to every device
+   of the set, whatever the operation reshaped them into: positions on one
+   device beside a value cut across the set, and a [take]'s positions cut
+   along their axis, of one element or several, beside a value cut along
+   another or along the gathered axis. The result lies as beside positions
+   whole on every device: where the value lies, or whole on every device
+   where the value is cut along the gathered axis. *)
+let test_positions_moved () =
   let v = Nx.reshape [| 4; 6 |] (Nx.arange D.Float32 0 24 1) in
-  let host =
-    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 4 |] [| 3L; 0L; 5L; 1L |])
+  let positions l =
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array D.Int64 [| List.length l |] (Array.of_list l))
   in
-  let placement =
-    Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-  in
-  (* The value keeps its cut, which the result takes. *)
-  let check name msg axis p x =
-    raises ~msg:name (Invalid_argument msg) (fun () -> Nx.take ~axis p x);
-    let y = Nx.take ~axis (Nx.place Set4.on p) x in
-    equal ~msg:name placement (Nx.placement x) (Nx.placement y);
+  let check ?want name axis host p x =
+    let y = Nx.take ~axis p x in
+    let want = Option.value want ~default:(Nx.placement x) in
+    equal ~msg:name (placement ()) want (Nx.placement y);
     equal ~msg:name (array int) (bytes (Nx.take ~axis host v)) (bytes y)
   in
-  check "one device"
-    "Nx.take: operand 0 lies at m0 and is read at split ~axis:0 [m0; m1; m2; \
-     m3]; Nx.place (Placement.on s) x"
-    1
+  let host = positions [ 3L; 0L; 5L; 1L ] in
+  check "one device" 1 host
     (Nx.place (Nx.Placement.device Set4.v (m 0)) host)
     (Nx.place (Set4.split ~axis:0) v);
-  check "a take's positions cut"
-    "Nx.take: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and is read at \
-     split ~axis:1 [m0; m1; m2; m3]; Nx.place (Placement.on s) x"
-    0
+  check "a take's positions cut" 0 host
     (Nx.place (Set4.split ~axis:0) host)
+    (Nx.place (Set4.split ~axis:1) v);
+  let one = positions [ 2L ] in
+  check "one position cut" 1 one
+    (Nx.place (Set4.split ~axis:0) one)
+    (Nx.place (Set4.split ~axis:0) v);
+  check ~want:Set4.on "one position cut, along a cut axis" 1 one
+    (Nx.place (Set4.split ~axis:0) one)
     (Nx.place (Set4.split ~axis:1) v)
 
 (* Positions cut finer than the value they read, along an axis it holds in
@@ -1173,10 +1223,10 @@ let law_scattered (Scase (k, s, data, w, a, c, at, us, p, u)) =
   in
   equal (array string) expected actual
 
-(* Updates cut along the scattered axis raise, and so do positions: a
-   device's window takes updates from every device. Each refusal names the
-   [Nx.place] that puts its operand whole on each device, which then
-   computes. *)
+(* Updates cut along the scattered axis raise: a device's window takes
+   updates from every device. The refusal names the [Nx.place] that puts
+   them whole on each device, which then computes. Positions cut so move
+   whole to every device. *)
 let test_scatter_cut_updates () =
   let x = Nx.zeros D.Float32 [| 8 |] in
   let u = Nx.arange D.Float32 1 5 1 in
@@ -1185,19 +1235,17 @@ let test_scatter_cut_updates () =
   in
   let split v = Nx.place (Set4.split ~axis:0) v in
   let scatter p u = Nx.scatter ~axis:0 p u (split x) in
-  raises
-    (Invalid_argument
-       "Nx.scatter: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and is \
-        read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x")
-    (fun () -> scatter (split host) (split u));
-  raises
-    (Invalid_argument
-       "Nx.scatter: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] and is \
-        read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
-    (fun () -> scatter (Nx.place Set4.on host) (split u));
-  equal (array int)
-    (bytes (Nx.scatter ~axis:0 host u x))
-    (bytes (scatter (Nx.place Set4.on host) (Nx.place Set4.on u)))
+  let refusal =
+    Invalid_argument
+      "Nx.scatter: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+       read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y"
+  in
+  raises refusal (fun () -> scatter (split host) (split u));
+  raises refusal (fun () -> scatter (Nx.place Set4.on host) (split u));
+  let expected = bytes (Nx.scatter ~axis:0 host u x) in
+  equal (array int) expected
+    (bytes (scatter (Nx.place Set4.on host) (Nx.place Set4.on u)));
+  equal (array int) expected (bytes (scatter (split host) (Nx.place Set4.on u)))
 
 (* Float reductions over cut axes *)
 
@@ -2991,6 +3039,25 @@ let test_scatter_in_place () =
       at_least ~msg:(Printf.sprintf "m%d, the target whole" k) int ~than:(4 * tile) g)
     whole
 
+(* A take of positions split over four devices, beside a value split along
+   another axis, moves the positions alone: each device holds a copy of all
+   of them and its tile of the results. Placing the value whole would add
+   three of its tiles on each device. *)
+let test_take_moves_positions () =
+  let n = 4096 and columns = 64 in
+  let split axis = Set4.split ~axis in
+  let value () = Nx.place (split 1) (Nx.zeros D.Float32 [| n; columns |]) in
+  let p = Nx.place (split 0) (Nx.arange D.Int64 0 n 1) in
+  let take x = Nx.take ~axis:0 p x in
+  ignore (elements (take (value ())));
+  let x = value () in
+  let y, grew = grown (fun () -> take x) in
+  equal (placement ()) (split 1) (Nx.placement y);
+  let positions = 8 * n and tile = 4 * n * (columns / 4) in
+  List.iteri
+    (fun k g -> equal ~msg:(Printf.sprintf "m%d" k) int (positions + tile) g)
+    grew
+
 let traffic =
   group "traffic"
     [
@@ -3000,6 +3067,8 @@ let traffic =
         law_moved;
       test "a scatter into a cut target writes each tile where it lies"
         test_scatter_in_place;
+      test "a take of positions no order reads moves the positions alone"
+        test_take_moves_positions;
     ]
 
 let placed =
@@ -3016,15 +3085,14 @@ let placed =
       test "a concatenation along a cut axis reads it whole" test_concat_cut;
       prop ~count:1000
         "a gather of a value at any placement, at positions whole on each of \
-         its devices or cut along axes its gathered cut leaves, gives its \
-         bits on one device"
+         its devices, cut along axes its gathered cut leaves, or split, \
+         gives its bits on one device"
         gathered_case law_gathered;
       test "take of a flattening cut along its leading axis" test_take_flat;
-      test "a gather of positions cut as the gathered axis raises, naming \
-            the fix"
+      test "a gather of positions cut as the gathered axis moves them"
         test_gather_both_cut;
-      test "refused positions are placed whole on every device"
-        test_positions_fix;
+      test "positions no order reads move whole to every device"
+        test_positions_moved;
       test "positions cut finer than their value are read where they lie"
         test_positions_finer;
       cases ~name:ranked_name
@@ -3035,7 +3103,8 @@ let placed =
          whole on each of its devices or cut alike off the scattered axis, \
          gives its bits on one device"
         scattered_case law_scattered;
-      test "a scatter of cut updates or positions raises, naming the fix"
+      test "a scatter of cut updates raises, naming the fix; cut positions \
+            move"
         test_scatter_cut_updates;
     ]
 

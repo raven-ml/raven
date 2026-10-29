@@ -27,9 +27,13 @@
     each next one adds its own where they join the union so far
     ({!Grid.union}), and none where they do not. Where that order refuses an
     operand, as below, the operands of positions join last, so that the
-    values read at positions keep their cuts, and the route is that order's
-    or its refusal. An operand alone on one device beside operands whole on
-    every device of the set puts the results on that device. A cut of the
+    values read at positions keep their cuts. Where that order refuses too,
+    each operand of positions on the set joins as if it lay whole on every
+    device of it, and the route is that order's or its refusal: such an
+    operand is read where the union puts it, and moves there
+    ({!gathers}). An operand alone on
+    one device beside operands whole on every device of the set puts the
+    results on that device. A cut of the
     union along an axis that an operand regroups into in tiles that do not
     divide both extents is undone.
 
@@ -57,10 +61,7 @@
     The expression is [Placement.on s], [Placement.device s] with the
     device's name, [Placement.split ~axis s], or a [Placement.mesh] over
     [Mesh.v s] whose axes, named ["g0"], ["g1"], …, are the read placement's
-    grid axes in normal form ({!Grid}). For an operand of positions read
-    cut it is [Placement.on s], whole on every device, where they hold every
-    window. The operation may have reshaped the program's positions into the
-    operand, so a cut placement it is read at may not fit them. *)
+    grid axes in normal form ({!Grid}). *)
 
 (** The type for what an operation makes of an operand's axis. *)
 type axis =
@@ -213,8 +214,10 @@ type compute =
 type 'd t = {
   operands : 'd Devices.placement array;
       (** Where each operand is read, in the operation's operand order: its
-          own placement, or one whose window on each device its own holds
-          there. *)
+          own placement, one whose window on each device its own holds
+          there, or, for an operand of positions that no order reads where
+          it lies, one it moves to before the devices compute
+          ({!gathers}). *)
   result : 'd Devices.placement;
   compute : compute;
 }
@@ -233,13 +236,22 @@ val route :
     [r] names each axis of each operand. Operands all at one placement are
     read there and their results lie there, where it cuts no axis or [r] is
     [Elementwise]. A route reads an operand at a placement other than its
-    own only through views of its arrays. An axis that [r] reduces and that
-    has no element is read whole by every operand; one it scans or indexes
-    keeps its cut, and the devices compute by windows.
+    own only through views of its arrays, or, for its positions, by moving
+    them there ({!gathers}). An axis
+    that [r] reduces and that has no element is read whole by every
+    operand; one it scans or indexes keeps its cut, and the devices compute
+    by windows.
 
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
     axis its shape lacks ({!Grid.window}), and with the preamble's message
     where an operand cannot be read where it lies. *)
+
+val gathers : 'd t -> int -> 'e Devices.placement -> int array -> bool
+(** [gathers r i p s] is [true] iff [r] reads its operand [i], at [p] of
+    shape [s], at a placement [p] does not hold on each device: the operand
+    moves there first, each device receiving the part of its window it
+    lacks. It allocates only where [p] is neither that placement nor whole
+    on every device. *)
 
 val pp_call :
   by:string -> 'd Devices.t -> Format.formatter -> Grid.t -> unit

@@ -325,9 +325,12 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
 
-    The {!place} of a gather's or a scatter's positions read cut, which the
-    operation may have reshaped from the program's, puts them whole on
-    every device of the set.
+    Where neither order reads a gather's or a scatter's positions where
+    they lie, the result lies where the other operands put it, and the
+    positions move to where its devices read them before they compute.
+    Each device receives the positions its window reads that it lacks,
+    [8] bytes each, and a position the operation broadcasts moves once. No
+    other operand moves.
 
     A traced operation raises it as eager execution would
     ({!Prim.results}). *)
@@ -1094,7 +1097,8 @@ val take : ?axis:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     outside [\[0, d)] reads zero. A gather, which has the bits it has on one
     device wherever [x] lies, cut along [axis] too, but for an [x] of
     {!Nx_array.Layout.max_rank} axes, or a [complex128] one of one fewer,
-    which is read whole along it ({!section-routing}).
+    which is read whole along it ({!section-routing}). Positions that cannot
+    be read where they lie move first to the devices that read them.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x]. *)
 
