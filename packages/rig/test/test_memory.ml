@@ -655,6 +655,18 @@ let test_host_refused () =
         (32 * 1024 * kib)
         (B.length (B.create Rig.host (32 * 1024 * kib))))
 
+(* A host buffer its budget refuses raises Out_of_memory for its own bytes:
+   the 112 more it counts where it starts on 128 bytes are not the
+   allocation's. *)
+let test_host_budget_refused () =
+  Gc.full_major ();
+  Gc.full_major ();
+  let n = 1000 in
+  with_host_budget
+    (Support.host_held () + n)
+    (fun () ->
+      raises_match (out_of_memory Rig.host n) (fun () -> B.create Rig.host n))
+
 (* A host buffer holds its bytes in the host's budget until it is collected,
    small ones included, with up to 112 more where it starts on 128 bytes. *)
 let test_host_held () =
@@ -1291,6 +1303,8 @@ let tests =
           test_host_held;
         test "a host allocation the C library refuses raises for the host"
           test_host_refused;
+        test "a host allocation its budget refuses raises for its own bytes"
+          test_host_budget_refused;
       ];
     group ~timeout "kinds"
       [

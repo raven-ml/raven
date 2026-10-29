@@ -1582,10 +1582,13 @@ let alloc_entry d kind n =
 let alloc d kind n = of_entry d (alloc_entry d kind n)
 let reserve n () = if heap_reserve n Dev.host.budget then Some () else None
 
+(* Reserves what a host buffer of [n] bytes takes of the heap; a refusal
+   names [n], the allocation's bytes. *)
 let heap_reserved n =
-  match reserve n () with
+  let footprint = heap_footprint n in
+  match reserve footprint () with
   | Some () -> ()
-  | None -> reclaiming Dev.host ~pool:Dev.host n (reserve n)
+  | None -> reclaiming Dev.host ~pool:Dev.host n (reserve footprint)
 
 (* [n] reserved bytes of the heap. A refusal of the C library runs the ladder,
    and after its rounds gives the reservation back. *)
@@ -1614,7 +1617,7 @@ let host_memory n =
     let addr = ba_address empty in
     own ~keep:empty_keep ~host:addr ~address:addr ~handle:0n Dev.host no_entry
   else begin
-    heap_reserved (heap_footprint n);
+    heap_reserved n;
     let ba = host_bytes n in
     let addr = ba_address ba in
     own ~keep:(Heap ba) ~host:addr ~address:addr ~handle:0n Dev.host no_entry
