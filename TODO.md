@@ -63,7 +63,7 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### API
 
-- copies: nx2's placement, allocation and assembly through
+- copies: nx's placement, allocation and assembly through
   `Buffer.submit_copy`, boxes and `Buffer.submit_fill`; done when placing on
   N GPUs costs one wait
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
@@ -127,10 +127,10 @@ raven / llama.cpp (Vulkan; ROCm):
   per `Worker.map`. Decided by time: on fudge (6P+8E), quiet, wall and CPU
   at 1, 2, 4, 6 and 14 domains, and 6 pinned to the P-cores; `s` at the
   default and at 4M; a sample of the 14-domain run, the stop-the-world
-  barrier against `pthread_mutex_lock`. nx2's P-core cap, on this CPU
+  barrier against `pthread_mutex_lock`. nx's P-core cap, on this CPU
   (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
   64x32x32 at x1.59 slower. The M1 Max's cap at its 8 P-cores
-  (`hw.perflevel0.physicalcpu`, as nx2's) needs the same runs on the Mac
+  (`hw.perflevel0.physicalcpu`, as nx's) needs the same runs on the Mac
 - tolk.engine: no GPU test of a loop whose body mixes a GPU kernel and a
   host program
 - search timing on NV clears no L2 (tinygrad's invalidate_caches); AMD
@@ -234,13 +234,6 @@ raven / llama.cpp (Vulkan; ROCm):
   time `compile/wide/sum-1e6` at 2-5 levels
 - `betaincinv`, once tolk compiles long programs (~20-25k ops)
 - GC stress for nx's C stubs: run them once under the stressed collector
-- an A/B on fudge of the base-handler design (branch `effect-base`,
-  bfe681ebd) against main on the eager rows decides whether it lands, and
-  with it the public `Nx.Op.request`/`Nx.Op.handle`: no perform beside
-  another domain's extent, no `Effect.Unhandled` raised
-
-## nx2
-
 - the kinds quiet the NaN they return. `nx_nan1`, `nx_nan2`, `nx_maximum`
   and `nx_minimum` keep a signalling NaN's bits (`nx_kinds.h`), while
   reductions, scans, scatters and ranges promise it quieted, so each Max or
@@ -282,14 +275,10 @@ raven / llama.cpp (Vulkan; ROCm):
   criterion is at least 2x over the copy on CUDA and AMD
 - order and counting operations: check their contracts, public laws and
   bench baselines
-- nx.io on nx2, then Rune over nx2 with tolk lowering, before the GPT-2 and
-  gpt-oss comparisons; rune.mli refuses a traced value on "another fiber",
-  where `Nx.Prim` refuses one on a fiber a scheduler outside the
-  interpretation forks: state rune's boundary as nx's
-- the GPU kernel libraries, nx.cuda, nx.metal and nx.amd, from branch
-  `nx2-gpu` (`dev/nx2/lib/{cuda,metal,amd}`) onto nx2's current kernel
-  interface
-- nx.ragged and nx.wide on nx2
+- the GPT-2 and gpt-oss comparisons on the new nx and rune
+- eager GPU kernel libraries (nx.cuda, nx.metal, nx.amd; branch `nx2-gpu`,
+  `dev/nx2/lib/{cuda,metal,amd}`) onto nx's current kernel interface. Until
+  then a GPU set computes under `Rune.jit` only
 - nx.cpu's jobs size their threads by older cost estimates, many below the
   call prices' measured kind and term costs, so costly kinds get too few
   threads (a float64 pow over 16 K elements runs on 3): derive the job
