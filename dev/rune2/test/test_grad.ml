@@ -538,6 +538,24 @@ let test_zeros () =
     [| (false, 0.) |]
     (g (Nx.broadcast_to [| 2 |]) [| 1. |])
 
+(* A truncated normal over [[0, inf]] does not move with its upper bound,
+   whose masses' unselected branches meet a zero cotangent with no infinite
+   factor. A draw's tangent through a broadcast bound, which a tangent of
+   distinct elements moves, is its tangent through the bound's copy. *)
+let test_draws () =
+  let lower = Nx.zeros f64 [| 8 |] in
+  let over upper = Nx.Rng.truncated_normal ~key:(Nx.Rng.key 3) lower upper in
+  equal ~msg:"at an infinite upper bound" floats (Array.make 8 0.)
+    (Nx.to_array
+       (Rune.grad' (fun u -> Nx.sum (over u)) (Nx.full f64 [| 8 |] infinity)));
+  let upper = Nx.full f64 [| 8 |] 2. in
+  let from lower = Nx.Rng.truncated_normal ~key:(Nx.Rng.key 5) lower upper in
+  let bound = Nx.broadcast_to [| 8 |] (Nx.scalar f64 (-1.)) in
+  let t = v (Array.init 8 (fun i -> Float.of_int (i - 3))) in
+  equal ~msg:"through a broadcast lower bound" floats
+    (Nx.to_array (snd (Rune.jvp' from (Nx.copy bound) t)))
+    (Nx.to_array (snd (Rune.jvp' from bound t)))
+
 (* Interface *)
 
 (* An integer parameter's gradient, and an unused one's, are zero. *)
@@ -996,6 +1014,7 @@ let () =
              test "kinks" test_kinks;
              test "selections" test_selections;
              test "signs of zero" test_zeros;
+             test "a truncated normal's bounds" test_draws;
            ];
          group "interface"
            [
