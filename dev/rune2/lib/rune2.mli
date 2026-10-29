@@ -410,9 +410,16 @@ val linear_transpose :
     adds that does not depend on its argument, as an affine function has, is
     dropped. The cotangent of an integer or boolean array is zero.
 
-    Raises [Invalid_argument] as {!vjp}'s pullback does for its argument, and,
-    when the transpose is applied, for an {!iterate} over the argument and
-    naming an operation of [f] that is not linear in its argument, as in
+    An {!iterate} over the argument is the steps it takes, transposed, where its
+    stop reads no value computed from the argument, so that the number of steps
+    does not depend on it.
+
+    Raises [Invalid_argument] at the call for an {!iterate} whose stop reads a
+    value computed from the argument
+    (["Rune.linear_transpose: an iterate's stop reads the function's argument"]),
+    and as {!iterate} raises at the call. When the transpose is applied, it
+    raises as {!vjp}'s pullback does for its argument, and naming an operation
+    of [f] that is not linear in its argument, as in
     ["Rune.linear_transpose: Sin is not linear in the function's argument"]. *)
 
 val check_grads :
@@ -499,9 +506,9 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     rule's arguments. The rule receives them without their derivatives, and must
     not use another value that differentiation tracks: pass such a value as an
     argument. A read of one with {!Nx.item} is not a use: it reads the primal,
-    as {!section-derivatives} states under Reads. A differentiation that
-    tracks only values the rule captures differentiates the rule's code, as it
-    does any other code.
+    as {!section-derivatives} states under Reads. A differentiation that tracks
+    only values the rule captures differentiates the rule's code, as it does any
+    other code.
 
     {b Orders.} A differentiation around another differentiates the derivative's
     code, with the arrays it reads, which the rule computes: the second
@@ -597,14 +604,14 @@ val custom_vjp :
     Raises [Invalid_argument] at the call where [pb] is traced
     ({!section-custom}) if its result differs from [args] in its
     {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
-    differ; if [rule] uses a value that a differentiation applying it
-    tracks, as {!custom_jvp} does; and under forward mode around no such reverse
-    mode, if the result has a float or complex array
+    differ; if [rule] uses a value that a differentiation applying it tracks, as
+    {!custom_jvp} does; and under forward mode around no such reverse mode, if
+    the result has a float or complex array
     (["Rune.jvp: a custom_vjp rule has no forward derivative; give the function
       a custom_jvp rule"]). Where [pb] runs on values, the check of its result
     raises in the backward pass, as does a [pb] that uses or reads a value its
-    differentiation tracks (["Nx.mul: a value of Rune.grad', used after
-    Rune.grad' returned"]). *)
+    differentiation tracks
+    (["Nx.mul: a value of Rune.grad', used after Rune.grad' returned"]). *)
 
 val custom_transpose :
   ('p, 'd) Nx.Ptree.t ->
@@ -1077,14 +1084,13 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     sees [remat s f] as it sees [f]: its derivatives in either mode, and its
     map, are [f]'s. An addition to a {!Total} that [f] makes counts once,
     however often the backward pass computes [f] again. Inside a {!jit}, the
-    backward pass computes again each of [f]'s intermediate values that reads
-    a value the program computes, among [f]'s arguments and captures, once the
-    cotangents of [f]'s results are computed, so the program keeps none of
-    them from one pass to the other. A value [f] computes from the program's
-    arguments and constants alone is the forward pass's, kept for the
-    backward pass, and so is one [f] computes in a {!scan}'s or an
-    {!iterate}'s step from the step's captures alone, which the loop computes
-    once.
+    backward pass computes again each of [f]'s intermediate values that reads a
+    value the program computes, among [f]'s arguments and captures, once the
+    cotangents of [f]'s results are computed, so the program keeps none of them
+    from one pass to the other. A value [f] computes from the program's
+    arguments and constants alone is the forward pass's, kept for the backward
+    pass, and so is one [f] computes in a {!scan}'s or an {!iterate}'s step from
+    the step's captures alone, which the loop computes once.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 
@@ -1149,26 +1155,24 @@ val jit :
     multiple of 16), and whether the caller donated it; together with tolk's
     settings that shape what it compiles, the search widths [BEAM] and [JITBEAM]
     among them where no [beam] is given, and whether tolk's [DEBUG] is 2 or
-    more. A view thus reads in
-    place, without a copy, from a program compiled for its layout. Each result
-    that takes no donated argument's memory is fresh, at the placement eager
-    computation gives it. A value [f] captures on another device, which [f]
-    places where the program computes, is copied there once per program, which
-    holds the copy. *)
+    more. A view thus reads in place, without a copy, from a program compiled
+    for its layout. Each result that takes no donated argument's memory is
+    fresh, at the placement eager computation gives it. A value [f] captures on
+    another device, which [f] places where the program computes, is copied there
+    once per program, which holds the copy. *)
 
 (** {2:search Search}
 
     A [beam] above [0] searches each kernel of a program, and of the programs
     derived from it, for the optimisations that run it fastest, keeping the
-    [beam] fastest candidates of each round and timing them on its device,
-    which makes the first call of a variant much longer; [0] searches none.
-    [parallel] compiles the candidates on at most that many domains, and on one
-    where it is below [2]. An explicit [beam] stands for the [BEAM] and
-    [JITBEAM] settings, and [parallel] for the [PARALLEL] setting, which decide
-    otherwise: a change of [BEAM] or [JITBEAM] around a call of a function given
-    [beam] compiles nothing, and functions given different widths share no
-    program. A call inlined in an enclosing [jit] compiles as that one's program
-    does. *)
+    [beam] fastest candidates of each round and timing them on its device, which
+    makes the first call of a variant much longer; [0] searches none. [parallel]
+    compiles the candidates on at most that many domains, and on one where it is
+    below [2]. An explicit [beam] stands for the [BEAM] and [JITBEAM] settings,
+    and [parallel] for the [PARALLEL] setting, which decide otherwise: a change
+    of [BEAM] or [JITBEAM] around a call of a function given [beam] compiles
+    nothing, and functions given different widths share no program. A call
+    inlined in an enclosing [jit] compiles as that one's program does. *)
 
 (** {2:donation Donation}
 
@@ -1597,13 +1601,13 @@ module Lower = Lower
 module Lower_arith = Lower_arith
 
 val derivations : unit -> int
-(** [derivations ()] is the number of programs that transformations of
-    compiled calls derived on the calling domain, for the suites. *)
+(** [derivations ()] is the number of programs that transformations of compiled
+    calls derived on the calling domain, for the suites. *)
 
 val evaluations : unit -> int
-(** [evaluations ()] is the number of compiled calls on the calling domain
-    that ran their program evaluated by nx, the compiler having declined it,
-    for the suites. *)
+(** [evaluations ()] is the number of compiled calls on the calling domain that
+    ran their program evaluated by nx, the compiler having declined it, for the
+    suites. *)
 
 val variants : unit -> int
 (** [variants ()] is the number of compiled variants that calls on the calling

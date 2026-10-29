@@ -527,7 +527,36 @@ let test_transpose () =
   equal bits_t
     (bits (vec [| 4.; -8. |]))
     (bits
-       (Rune.linear_transpose t t scaled (vec [| 1.; -2. |]) (vec [| 1.; 2. |])))
+       (Rune.linear_transpose t t scaled (vec [| 1.; -2. |]) (vec [| 1.; 2. |])));
+  (* An iterate over the argument whose stop counts its steps is the steps
+     taken, transposed. *)
+  let counted x =
+    fst
+      (Rune.iterate (p2 ()) ~max:3
+         ~until:(fun (_, k) -> Nx.greater_equal_s k 2l)
+         ~f:(fun (x, k) -> (Nx.mul_s x 2., tick k))
+         (x, k0 ()))
+  in
+  equal bits_t
+    (bits (vec [| 4.; -8. |]))
+    (bits
+       (Rune.linear_transpose t t counted
+          (vec [| 0.; 0. |])
+          (vec [| 1.; -2. |])));
+  (* One whose stop reads the argument has no transpose, and raises at the
+     call. *)
+  let stopped x =
+    Rune.iterate' ~max:3
+      ~until:(fun x -> Nx.less (Nx.max x) (Nx.scalar f64 1.))
+      ~f:(fun x -> Nx.mul_s x 0.5)
+      x
+  in
+  raises
+    (Invalid_argument
+       "Rune.linear_transpose: an iterate's stop reads the function's argument")
+    (fun () ->
+      let (_ : _ -> _) = Rune.linear_transpose t t stopped (vec [| 0.; 0. |]) in
+      ())
 
 (* Maps *)
 
@@ -1121,8 +1150,7 @@ let () =
            [
              prop "iterate's derivatives are its loop's" cases law_derivatives;
              test "the steps taken" test_trips_taken;
-             test "linear_transpose over an iterate of a constant"
-               test_transpose;
+             test "linear_transpose over an iterate" test_transpose;
              test "an integer carry has none" test_integer_carry;
            ];
          group "maps"

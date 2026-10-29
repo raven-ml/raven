@@ -170,9 +170,9 @@ let plan_of i (p : P.t) (loads : 'd Prim.load iarray) =
 let kept part loads =
   Iarray.init (Array.length part.kept) (fun j -> Iarray.get loads part.kept.(j))
 
-(* Whether a loop over [loads], which it has, keeps a known part that reads
-   none of them: computed apart, that part would be a creation with no operand
-   to lie beside, so the loop is recorded whole. *)
+(* Whether a loop over [loads], which it has, keeps a known part that reads none
+   of them: computed apart, that part would be a creation with no operand to lie
+   beside, so the loop is recorded whole. *)
 let unread plan loads =
   Iarray.length loads > 0
   && match plan.known with Some p -> Array.length p.kept = 0 | None -> false
@@ -372,10 +372,9 @@ let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
 let owned i (V x) = owns i x
 
 (* Whether [i]'s handler answers [c]: a construct over its variables, or any of
-   the extent of a tracer that stages every operation. A map's operation with
-   no such map around is left to its default, which raises. An addition reaches
-   only a tape: the others answer for the totals' running values
-   ({!thread}). *)
+   the extent of a tracer that stages every operation. A map's operation with no
+   such map around is left to its default, which raises. An addition reaches
+   only a tape: the others answer for the totals' running values ({!thread}). *)
 let claims st i = function
   | Add (_, x) -> st.kind = Tape && owns i x
   (* An abstract operator is recorded, to be filled in, whatever it reads. *)
@@ -386,8 +385,8 @@ let claims st i = function
 (* The running value of [t] at the shape of [f] where the trace is: its
    thread's, made where the trace has none, its running value in a parameter of
    [f]'s shape. The parameter lies where the trace's hints place it, as a jit
-   does where a call found the running value, and otherwise where [f], the
-   first addition, does. *)
+   does where a call found the running value, and otherwise where [f], the first
+   addition, does. *)
 let thread (type v s d) st i (t : (v, s, d) total) (f : (v, s, d) Nx.Prim.form)
     : (v, s, d) Nx.t =
   let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
@@ -706,7 +705,7 @@ and iterate_parts st i (c : construct) =
       let captures = it.step_captures in
       let ucap = Array.map (owned i) captures in
       if Array.exists (owned i) it.until_captures then
-        invalid_arg (name ^ ": an iterate's stop reads a tangent");
+        invalid_arg (name ^ ": an iterate's stop reads the function's argument");
       let cforms = Array.map form captures in
       let rec fix u (cf : form array) =
         let gained = Array.make nc false and uy = ref [||] in
@@ -791,7 +790,7 @@ and iterate_parts st i (c : construct) =
                   (Array.append (Loops.merge u filler kc) caps)))
       in
       if reads_params it.until (Array.mapi (fun k _ -> u.(k)) it.init) then
-        invalid_arg (name ^ ": an iterate's stop reads a tangent");
+        invalid_arg (name ^ ": an iterate's stop reads the function's argument");
       let kinit = Loops.pick ku it.init in
       let kcaps = Loops.pick (nots ucap) captures in
       let operands =
@@ -933,9 +932,9 @@ and switch_parts st i (c : construct) =
          program over the known captures, to its known results, its residuals
          and its running totals out, and its own captures; its linear program
          over the unknown captures then its residuals; which results it leaves
-         unknown; and how many residuals it has. With [fill = (at, slots)],
-         the known program's residuals are the [slots] instead, residual [r]
-         at slot [at.(r)], each slot it leaves zeros made in its trace. *)
+         unknown; and how many residuals it has. With [fill = (at, slots)], the
+         known program's residuals are the [slots] instead, residual [r] at slot
+         [at.(r)], each slot it leaves zeros made in its trace. *)
       let split ?fill (b : Program.t) ~unknown =
         let lin = ref None and uy = ref [||] and nr = ref 0 in
         let known kvs =
@@ -1074,17 +1073,15 @@ and remat_parts st i (body : Program.t) args ~seeds =
   in
   if Array.for_all Option.is_some !known then Array.map Option.get !known
   else
-    let r =
-      record st i (Remat { body; args; seeds; differentiated = true })
-    in
+    let r = record st i (Remat { body; args; seeds; differentiated = true }) in
     Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
 
-(* A call over the tape's variables is two calls, as JAX's partial evaluation
-   of a compiled call gives: a known call, computed at the call, of the results
+(* A call over the tape's variables is two calls, as JAX's partial evaluation of
+   a compiled call gives: a known call, computed at the call, of the results
    that read none of them, which returns the residuals the rest reads as more
    results and threads the call's totals; and a recorded call of the rest,
-   linear in the tape's variables, over them and the residuals. Both are
-   derived once per derivation at the call's site and compiled. *)
+   linear in the tape's variables, over them and the residuals. Both are derived
+   once per derivation at the call's site and compiled. *)
 and call_parts st i (body : Program.t) args site ~seeds =
   let name = st.name in
   let ua = Array.map (owned i) args in
@@ -1097,8 +1094,8 @@ and call_parts st i (body : Program.t) args site ~seeds =
       let kys = ref [||] in
       let tape, res =
         trace_in Tape ~name (Array.map form uargs) (fun inner uvs ->
-            (* The totals' running values are the known trace's: a tangent
-               added to one raises as it is handed back. *)
+            (* The totals' running values are the known trace's: a tangent added
+               to one raises as it is handed back. *)
             let ys =
               threaded body (fun totals ->
                   eval ~totals body (Loops.merge ua uvs kvs))
@@ -1108,11 +1105,11 @@ and call_parts st i (body : Program.t) args site ~seeds =
             kys := Loops.pick (nots !unknown) ys;
             Loops.pick !unknown ys)
       in
-      (* A residual that is an argument of the known part is that argument,
-         as JAX's partial evaluation forwards a known input: the known part
-         would return a copy of it. Where the known part consumes a donated
-         argument, it returns every residual: no value tells which other
-         argument shares the donated one's donor, which dies with it. *)
+      (* A residual that is an argument of the known part is that argument, as
+         JAX's partial evaluation forwards a known input: the known part would
+         return a copy of it. Where the known part consumes a donated argument,
+         it returns every residual: no value tells which other argument shares
+         the donated one's donor, which dies with it. *)
       let consumes = Array.exists Fun.id kdonated in
       let forwarded =
         Array.map (fun r -> if consumes then None else index_of r kvs) res
@@ -1235,8 +1232,8 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
             Effect.Deep.continue k (Array.map (Loops.filled ~zero:false) forms))
     | Staging, Some _ when st.kind = Jit || st.kind = Staged ->
         Some (fun k -> Effect.Deep.continue k true)
-    (* No differentiation around the tracer runs a custom rule called inside
-       it: the rule may capture stand-ins, which its traced call records. *)
+    (* No differentiation around the tracer runs a custom rule called inside it:
+       the rule may capture stand-ins, which its traced call records. *)
     | Rule _, Some _ -> Some (fun k -> Effect.Deep.continue k None)
     (* A traced program threads the totals its extent adds to. *)
     | Running (t, f), Some i when st.kind <> Tape ->
