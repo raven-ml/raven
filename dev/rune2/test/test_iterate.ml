@@ -657,9 +657,7 @@ let law_lanes (Lanes c) =
     in
     equal ~msg:"vmap of grad" l per_lane
       (outcome (fun () -> bits (Rune.vmap s (grad (iterated w)) (x, t))));
-    equal ~msg:"grad of vmap"
-      (outcome_t (lenient ~nan:(constant c.g)))
-      per_lane
+    equal ~msg:"grad of vmap" l per_lane
       (outcome (fun () ->
            bits
              (Rune.grad' (fun x -> Nx.sum (Rune.vmap s (iterated w) (x, t))) x)));

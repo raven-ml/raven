@@ -518,7 +518,9 @@ type at_one = { k : 'd. 'd Prim.any array -> Program.value }
 let at_one vs b =
   let (Program.V r) = vs.(0) in
   let at (Program.V x) =
-    match Prim.coerce (Nx.dtype x) (Nx.Placement.devices (Nx.placement r)) x with
+    match
+      Prim.coerce (Nx.dtype x) (Nx.Placement.devices (Nx.placement r)) x
+    with
     | Some x -> Prim.Any x
     | None -> invalid_arg "Rune: lane values on two sets"
   in
@@ -552,6 +554,15 @@ let along c x =
   Nx.broadcast_to (Nx.shape x)
     (Nx.reshape (Array.append [| Nx.numel c |] (Array.make r 1)) c)
 
+(* [Nx.where c y x], whose transpose gives the operand it does not select [-0.],
+   the additive identity that keeps every sign, where [Nx.where]'s gives [+0.].
+   A held carry receives a lane's cotangent through the step and through the
+   hold, one of them that zero, which would turn a [-0.] into [+0.]. *)
+let keep (type v s d) c (y : (v, s, d) Nx.t) (x : (v, s, d) Nx.t) =
+  match D.kind (Nx.dtype y) with
+  | Float | Complex -> Nx.neg (Nx.where c (Nx.neg y) (Nx.neg x))
+  | Signed | Unsigned | Boolean -> Nx.where c y x
+
 (* The batch [x'] where [running] holds, and [x] elsewhere. *)
 let hold running x' x =
   at_one [| running; x'; x |]
@@ -559,13 +570,15 @@ let hold running x' x =
       k =
         (function
         | [| Prim.Any c; Prim.Any y; Prim.Any x |] ->
-            Program.V (Nx.where (along (as_bool c) y) y (same y x))
+            Program.V (keep (along (as_bool c) y) y (same y x))
         | _ -> invalid_arg "Rune: lane values");
     }
 
 (* The batch [x] where [running] holds, and elsewhere the row of its donor,
-   detached. *)
-let lend { running; donors } v =
+   detached. With [~kept], the default, a held lane's cotangent is the [-0.] of
+   {!keep}, for a carry that receives a held lane's cotangent through its hold
+   too; without, it is [+0.], for a capture whose lane receives nothing else. *)
+let lend ?(kept = true) { running; donors } v =
   at_one [| running; donors; v |]
     {
       k =
@@ -573,7 +586,8 @@ let lend { running; donors } v =
         | [| Prim.Any c; Prim.Any d; Prim.Any x |] ->
             let rows = Nx.take ~axis:0 (Nx.cast Nx.int64 (as_int32 d)) x in
             let rows = Program.like rows (Program.perform (Detach rows)).(0) in
-            Program.V (Nx.where (along (as_bool c) x) x rows)
+            let c = along (as_bool c) x in
+            Program.V (if kept then keep c x rows else Nx.where c x rows)
         | _ -> invalid_arg "Rune: lane values");
     }
 
@@ -1463,8 +1477,8 @@ and unheld n live forms sums =
 and held_sums n adds ~seeded i sums =
   if seeded then Array.map (lane_v i) sums
   else
-    (* Every sum is read back before any is delivered, so that one that
-       raises delivers none. *)
+    (* Every sum is read back before any is delivered, so that one that raises
+       delivers none. *)
     let deliveries =
       Array.mapi
         (fun k (Program.Addition (t, _, out)) ->
@@ -1812,7 +1826,9 @@ and switch_apart ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
   in
   let run k running vs acc =
     let h = { running; donors = donors n running } in
-    let caps = Array.map2 (fun l v -> if l then lend h v else v) lcap vs in
+    let caps =
+      Array.map2 (fun l v -> if l then lend ~kept:false h v else v) lcap vs
+    in
     evaluated ~name ~axis ~held:h n branches.(k) (List.nth feeds k) lcap caps
       acc
   in
@@ -1889,8 +1905,7 @@ and switch_apart ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
 
 (* A remat's map is the remat of its function's map, as JAX's checkpoint
    batches, so that a reverse mode around the map sees the remat. *)
-and remat ~name ?held i axis n (body : Program.t) args seeds ~differentiated
-    =
+and remat ~name ?held i axis n (body : Program.t) args seeds ~differentiated =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
@@ -1925,17 +1940,17 @@ and remat ~name ?held i axis n (body : Program.t) args seeds ~differentiated
 
 (* A call's map is the call of its program's map, as JAX batches a compiled
    call's jaxpr: derived once per derivation at the call's site, traced as a
-   compiled function is, and compiled. The map's name enters the derivation
-   only where the program names it, so maps of other names share the program
+   compiled function is, and compiled. The map's name enters the derivation only
+   where the program names it, so maps of other names share the program
    otherwise. *)
 and call ~name ?held i axis n (body : Program.t) args site seeds =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
   in
-  (* Where lanes are held, two more arguments, every lane's: which lanes run
-     and each lane's donor, so that the derived program holds them apart as
-     the map around it does. *)
+  (* Where lanes are held, two more arguments, every lane's: which lanes run and
+     each lane's donor, so that the derived program holds them apart as the map
+     around it does. *)
   let m = Array.length bargs in
   let extra =
     match held with Some h -> [| h.running; h.donors |] | None -> [||]
