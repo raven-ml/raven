@@ -1349,24 +1349,23 @@ and iterate name step ~until ~max ~rows ~stopped ~init ~step_captures
 and running_lane (V flags) =
   match D.equal_witness (Nx.dtype flags) Nx.bool with
   | None -> ""
-  | Some Type.Equal -> (
-      let shape = Nx.shape flags in
+  | Some Type.Equal ->
       let all = (Nx.to_array flags : bool array) in
       let rec first i =
-        if i >= Array.length all then None
-        else if not all.(i) then Some i
-        else first (i + 1)
+        if i >= Array.length all || not all.(i) then i else first (i + 1)
       in
-      match first 0 with
-      | None -> ""
-      | Some i ->
-          let index = Array.make (Array.length shape) 0 and rest = ref i in
-          for d = Array.length shape - 1 downto 0 do
-            index.(d) <- !rest mod shape.(d);
-            rest := !rest / shape.(d)
-          done;
-          String.concat ""
-            (Array.to_list (Array.map (Printf.sprintf ", in lane %d") index)))
+      lane_names (Nx.shape flags) (first 0)
+
+and lane_names shape i =
+  if i >= Array.fold_left ( * ) 1 shape then ""
+  else
+    let index = Array.make (Array.length shape) 0 and rest = ref i in
+    for d = Array.length shape - 1 downto 0 do
+      index.(d) <- !rest mod shape.(d);
+      rest := !rest / shape.(d)
+    done;
+    String.concat ""
+      (Array.to_list (Array.map (Printf.sprintf ", in lane %d") index))
 
 (* Pruning *)
 

@@ -861,6 +861,27 @@ let check_finals cs (made : made list) finals =
 
 let empty u = Shape.max_numel u = 0
 
+(* Where an iterate's lanes stop apart, their flags the carry [j] of [carried]:
+   the index of the first still false, an [int64] node of one element, or the
+   flags' count, and the lanes it names once read back. *)
+let running forms carried = function
+  | None -> None
+  | Some j -> (
+      let (F f) = forms.(j) in
+      let shape = shape_of f in
+      let n = numel shape in
+      match D.equal_witness f.dtype Nx.bool with
+      | Some Type.Equal when n > 0 ->
+          let flags = Shape.reshape carried.(j) (ints [ n ]) in
+          let named = function
+            | [ a ] ->
+                let i = A.get (A.expect D.Int64 a) (Iarray.of_list [ 0 ]) in
+                Program.lane_names shape (Int64.to_int i)
+            | _ -> invalid_arg "Rune.jit: an iterate's lanes"
+          in
+          Some (first_failure n flags, named)
+      | _ -> None)
+
 (* Whether an equation or an output of [p] names its variable [n]. *)
 let names (p : Program.t) n =
   let is (type v s d) (x : (v, s, d) Nx.t) =
@@ -1053,8 +1074,7 @@ and switch st cs env c (s : Program.switch) =
 and loop st cs env c =
   match c with
   | Scan { trips = Some _; _ } -> decline "a scan that runs some of its rows"
-  | Iterate { rows = Some _; _ } | Iterate { stopped = Some _; _ } ->
-      decline "an iterate that stacks its steps, or whose lanes stop apart"
+  | Iterate { rows = Some _; _ } -> decline "an iterate that stacks its steps"
   | Scan { step; length = n; reverse; init; xs; captures; seeds; _ } ->
       let forms = Program.forms c in
       let nc = Array.length init and na = Array.length step.adds in
@@ -1104,8 +1124,18 @@ and loop st cs env c =
       in
       Array.map (result env c) finals
   | Iterate
-      { name; step; until; max; init; step_captures; until_captures; seeds; _ }
-    ->
+      {
+        name;
+        step;
+        until;
+        max;
+        stopped;
+        init;
+        step_captures;
+        until_captures;
+        seeds;
+        _;
+      } ->
       let forms = Program.forms c in
       let nc = Array.length init in
       let _, _, feeds = Program.sums [ until; step ] in
@@ -1156,14 +1186,25 @@ and loop st cs env c =
                (Array.concat [ inits; sums; [| go |] ])
                [||] trip)
       in
-      (* Once the trips are done, the stop holds or the loop fails. *)
+      (* Once the trips are done, the stop holds or the loop fails, naming
+         the first lane still running where the lanes stop apart. *)
       let go = carried.(Array.length carried - 1) in
-      raises cs
-        (Ops.where go (uint8 go 0) (uint8 go 1))
-        (fun () ->
-          Invalid_argument
-            (Printf.sprintf "%s: until is still false after max = %d steps"
-               name max));
+      let ok = Ops.where go (uint8 go 0) (uint8 go 1) in
+      let fail lane =
+        Invalid_argument
+          (Printf.sprintf "%s: until is still false after max = %d steps%s"
+             name max lane)
+      in
+      (match running forms carried stopped with
+      | None -> raises cs ok (fun () -> fail "")
+      | Some (lane, named) ->
+          note cs
+            {
+              shape = [| 1 |];
+              first = first_failure 1 (Shape.reshape ok (ints [ 1 ]));
+              data = [ (D.Any D.Int64, lane) ];
+              fail = (fun _ a -> fail (named a));
+            });
       Array.map (result env c) (Array.sub carried 0 (Array.length carried - 1))
   | c -> decline "%s" (construct_name c)
 

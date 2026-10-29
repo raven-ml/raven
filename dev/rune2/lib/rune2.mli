@@ -1429,13 +1429,14 @@ val jit :
     of an array do not lie a multiple of 16 bytes apart, the step reads them
     from a copy whose rows do. A check in a step raises, once the call returns,
     the first failure of the first step that fails, as the steps written out
-    would, and an {!iterate} stops at the first failure. An {!iterate}'s
-    derivative or map is evaluated where it runs a count of rows, stacks its
-    steps or holds lanes apart. A {!switch} compiles as one loop per branch of
-    at most one trip, which runs where the index names its branch, so a branch
-    not taken computes nothing. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and
-    a {!custom_transpose} compile as their function's operations, the program's
-    own. *)
+    would, and an {!iterate} stops at the first failure. A map's {!iterate}
+    whose lanes stop apart runs while any lane runs on, a lane that has stopped
+    {{!section-maps}held}. An {!iterate}'s derivative or map is evaluated where
+    it runs a count of rows or stacks its steps. A {!switch} compiles as one
+    loop per branch of at most one trip, which runs where the index names its
+    branch, so a branch not taken computes nothing. A {!remat}, a {!custom_jvp},
+    a {!custom_vjp} and a {!custom_transpose} compile as their function's
+    operations, the program's own. *)
 
 (** {2:emissions Emissions}
 

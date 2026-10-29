@@ -671,15 +671,20 @@ let law_lanes (Lanes c) =
   let x = Operand.make c.dt (Array.append [| n |] c.s) c.x in
   let w = Operand.make c.dt c.s c.w in
   let t = Nx.create Nx.int32 [| n |] (Array.map Int32.of_int c.trips) in
-  let step w (x, k) = (Nx.broadcast_to c.s (eval x (Nx.mul x w) c.g), tick k) in
+  let step ?(g = c.g) w (x, k) =
+    (Nx.broadcast_to c.s (eval x (Nx.mul x w) g), tick k)
+  in
   let until t (_, k) = Nx.greater_equal k t in
-  let iterated w (x, t) =
+  let iterated ?g w (x, t) =
     fst
-      (Rune.iterate (p2 ()) ~max:c.max ~until:(until t) ~f:(step w) (x, k0 ()))
+      (Rune.iterate (p2 ()) ~max:c.max ~until:(until t) ~f:(step ?g w)
+         (x, k0 ()))
   in
-  let written w (x, t) =
-    fst (looped ~max:c.max ~until:(until t) ~f:(step w) (x, k0 ()))
+  let written ?g w (x, t) =
+    fst (looped ~max:c.max ~until:(until t) ~f:(step ?g w) (x, k0 ()))
   in
+  (* Compiled, the step's functions are exact. *)
+  let exact = Expr.exact c.g in
   let s = T.(p2 () @-> returns tensor) in
   (* A lane that runs out of steps is named, the first one. *)
   let first_short =
@@ -688,10 +693,10 @@ let law_lanes (Lanes c) =
     in
     go 0
   in
-  let expected =
+  let expected g =
     outcome (fun () ->
         (* The step is traced before any lane runs out of steps. *)
-        ignore (written w (Nx.ones c.dt c.s, k0 ()));
+        ignore (written ~g w (Nx.ones c.dt c.s, k0 ()));
         Option.iter
           (fun k ->
             invalid_arg
@@ -700,14 +705,16 @@ let law_lanes (Lanes c) =
                   lane %d"
                  c.max k))
           first_short;
-        codes (one_by_one (written w) n (x, t)))
+        codes (one_by_one (written ~g w) n (x, t)))
   in
   let map f = outcome (fun () -> codes (Rune.vmap s f (x, t))) in
   let ct = outcome_t codes_t in
-  equal ~msg:"vmap" ct expected (map (iterated w));
-  equal ~msg:"vmap of jit" ct expected (map (Rune.jit s (iterated w)));
+  equal ~msg:"vmap" ct (expected c.g) (map (iterated w));
+  let expected = expected exact in
+  equal ~msg:"vmap of jit" ct expected (map (Rune.jit s (iterated ~g:exact w)));
   equal ~msg:"jit of vmap" ct expected
-    (outcome (fun () -> codes (Rune.jit s (Rune.vmap s (iterated w)) (x, t))));
+    (outcome (fun () ->
+         codes (Rune.jit s (Rune.vmap s (iterated ~g:exact w)) (x, t))));
   (* Each lane's gradient is its own loop's; a stopped lane's is finite where
      its own steps are. *)
   if Option.is_none first_short then begin
@@ -722,9 +729,12 @@ let law_lanes (Lanes c) =
       (outcome (fun () ->
            bits
              (Rune.grad' (fun x -> Nx.sum (Rune.vmap s (iterated w) (x, t))) x)));
-    equal ~msg:"jit of vmap of grad" l per_lane
+    equal ~msg:"jit of vmap of grad" l
       (outcome (fun () ->
-           bits (Rune.jit s (Rune.vmap s (grad (iterated w))) (x, t))));
+           bits (one_by_one (grad (written ~g:exact w)) n (x, t))))
+      (outcome (fun () ->
+           let f = Rune.vmap s (grad (iterated ~g:exact w)) in
+           bits (Rune.jit s f (x, t))));
     (* Forward mode, inside and around the map. *)
     let jvp f xt =
       snd (Rune.jvp' (fun x -> f (x, snd xt)) (fst xt) (Nx.ones_like (fst xt)))
@@ -741,6 +751,13 @@ let law_lanes (Lanes c) =
                 (Rune.jvp'
                    (fun x -> Rune.vmap s (iterated w) (x, t))
                    x (Nx.ones_like x)))));
+    let calls = Rune.evaluations () in
+    equal ~msg:"jit of jvp of vmap" l
+      (outcome (fun () -> bits (one_by_one (jvp (written ~g:exact w)) n (x, t))))
+      (outcome (fun () ->
+           let f x = Rune.vmap s (iterated ~g:exact w) (x, t) in
+           bits (Rune.jit' (fun x -> snd (Rune.jvp' f x (Nx.ones_like x))) x)));
+    equal ~msg:"jvp compiled" int 0 (Rune.evaluations () - calls);
     (* A captured parameter's gradient sums each step's of every lane, in an
        order the map chooses: step [j]'s is the gradient at row [j] of a stack
        of the parameter, of the lane's loop whose step [j] reads that row. *)
@@ -793,6 +810,79 @@ let lane_examples =
         w = one 1.;
       };
   ]
+
+(* Lanes of [x] at any dtype, along one map or two, each with its trip count:
+   compiled, the lanes stopping apart or together, the map gives eager's bits
+   and its failure, with no call evaluated. *)
+type apart =
+  | Apart :
+      ('v, 's) Nx.dtype
+      * int array
+      * int array
+      * int array
+      * int
+      * Expr.t
+      * Operand.t
+      -> apart
+
+let apart_cases =
+  let open Gen in
+  (let* s = Operand.shape in
+   let* lanes = of_list [ [| 0 |]; [| 1 |]; [| 3 |]; [| 2; 2 |]; [| 1; 3 |] ] in
+   let n = Array.fold_left ( * ) 1 lanes in
+   let* pattern = int_range 0 2 in
+   let* trips =
+     match pattern with
+     | 0 -> array ~size:(constant n) (int_range 0 3)
+     | 1 ->
+         let+ t = int_range 1 3 in
+         Array.make n t
+     | _ -> constant (Array.make n 0)
+   in
+   let most = Array.fold_left Int.max 0 trips in
+   let* max = of_list [ most; most + 1; most - 1 ] in
+   let* g = gen ~rank:(Array.length s) in
+   let* x = Operand.draw (Array.append lanes s) in
+   let+ (D.Any dt) = of_list D.all in
+   Apart (dt, s, lanes, trips, Int.max 0 max, exact_at dt (generic g), x))
+  |> with_pp (fun ppf (Apart (dt, s, lanes, trips, max, g, _)) ->
+      let ints a =
+        String.concat "; " (Array.to_list (Array.map string_of_int a))
+      in
+      Format.fprintf ppf "%a %a, lanes [%s], trips [%s], max %d: %a" Nx.pp_dtype
+        dt Operand.pp_shape s (ints lanes) (ints trips) max pp g)
+
+let law_apart (Apart (dt, s, lanes, trips, max, g, co)) =
+  let n = Array.length trips in
+  let apart = n > 1 && Array.exists (( <> ) trips.(0)) trips in
+  cover "lanes stopping apart" apart;
+  cover "lanes stopping together" (n > 1 && (not apart) && trips.(0) > 0);
+  cover "no lane steps" (n > 0 && Array.for_all (( = ) 0) trips);
+  cover "one lane" (n = 1);
+  cover "lanes of lanes" (Array.length lanes = 2);
+  cover "max reached" (max < Array.fold_left Int.max 0 trips);
+  cover "no lane" (n = 0);
+  cover "max = 0" (max = 0);
+  let x = Operand.make dt (Array.append lanes s) co in
+  let t = Nx.create Nx.int32 lanes (Array.map Int32.of_int trips) in
+  let step (x, k) = (Nx.broadcast_to s (eval_any x x g), tick k) in
+  let iterated (x, t) =
+    fst
+      (Rune.iterate (p2 ()) ~max
+         ~until:(fun (_, k) -> Nx.greater_equal k t)
+         ~f:step
+         (x, k0 ()))
+  in
+  let sg = T.(p2 () @-> returns tensor) in
+  let mapped =
+    if Array.length lanes = 1 then Rune.vmap sg iterated
+    else Rune.vmap sg (Rune.vmap sg iterated)
+  in
+  let expected = outcome (fun () -> codes (mapped (x, t))) in
+  let calls = Rune.evaluations () in
+  equal ~msg:"compiled" (outcome_t codes_t) expected
+    (outcome (fun () -> codes (Rune.jit sg mapped (x, t))));
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
 
 (* A key in the carry, folded with the step count at each step: eagerly,
    compiled, per lane with lanes stopping apart, and under reverse mode, the
@@ -998,10 +1088,15 @@ let test_nested () =
       x
   in
   let x = Nx.create f64 [| 3; 1 |] [| 0.5; 2.; 7. |] in
-  equal codes_t
-    (codes
-       (one_by_one (fun (x, _) -> outer x) 3 (x, Nx.zeros Nx.int32 [| 3 |])))
-    (codes (Rune.vmap' outer x))
+  let expected =
+    codes (one_by_one (fun (x, _) -> outer x) 3 (x, Nx.zeros Nx.int32 [| 3 |]))
+  in
+  equal codes_t expected (codes (Rune.vmap' outer x));
+  (* Compiled, the inner loop's lanes are held inside the outer's. *)
+  let calls = Rune.evaluations () in
+  equal ~msg:"compiled" codes_t expected
+    (codes (Rune.jit' (Rune.vmap' outer) x));
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
 
 (* A map of the derivative of an iterate in a loop's step: the step's tape
    stacks every step the loop may take, and counts those each lane takes. *)
@@ -1222,6 +1317,8 @@ let () =
            [
              prop ~examples:lane_examples "each lane stops on its own"
                lane_cases law_lanes;
+             prop "compiled, lanes stop apart at every dtype" apart_cases
+               law_apart;
              prop "a key in the carry draws as the loop" keyed_cases law_keyed;
              test "a stopped lane computes its donor's step" test_donors;
              test "a stopped lane keeps a non-finite carry" test_nonfinite;

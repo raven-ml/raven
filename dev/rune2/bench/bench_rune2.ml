@@ -510,11 +510,12 @@ let lane_newton a =
     ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
     (Nx.add_s a 1.)
 
-let lane_rows () =
+let lane_values () =
   let spread i = Float.of_int i.(0) /. Float.of_int (lanes - 1) in
-  let a =
-    host (Nx.init f32 [| lanes |] (fun i -> 0.5 *. (20_000. ** spread i)))
-  in
+  host (Nx.init f32 [| lanes |] (fun i -> 0.5 *. (20_000. ** spread i)))
+
+let lane_rows () =
+  let a = lane_values () in
   let mapped = Rune.vmap' lane_newton in
   [
     Thumper.bench (Printf.sprintf "vmap-newton-%d-lanes-eager" lanes) (fun () ->
@@ -748,6 +749,7 @@ let jit_loop_rows () =
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
   let a = between f32 42 0.5 4.5 [| 1024 |] in
+  let lanes_a = lane_values () in
   [
     warm "lorenz-scan-n100-replay"
       (fun () ->
@@ -764,6 +766,11 @@ let jit_loop_rows () =
     warm "newton-1024-replay"
       (fun () -> Rune.jit' newton)
       (fun g -> synced (g a));
+    (* The lanes stop apart: the loop runs while any lane runs on. *)
+    warm
+      (Printf.sprintf "vmap-newton-%d-lanes-replay" lanes)
+      (fun () -> Rune.jit' (Rune.vmap' lane_newton))
+      (fun g -> synced (g lanes_a));
   ]
 
 (* TrainStep: one compiled training step of a perceptron 784 -> 256 -> 128 ->

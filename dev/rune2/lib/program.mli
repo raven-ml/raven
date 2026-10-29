@@ -454,6 +454,12 @@ val sums : t list -> addition array * form array * int array list
 val feeds : t -> addition array * form array * int array
 (** [feeds step] is {!sums} of [[step]], with [step]'s feeds alone. *)
 
+val lane_names : int array -> int -> string
+(** [lane_names shape i] is how an iterate whose lanes stop apart names, when it
+    runs out of steps, the lane at index [i] in C order of lanes of [shape]:
+    [", in lane k"] for each axis's position [k], outermost first. It is [""]
+    where [i] is at least the number of lanes. *)
+
 val eval : ?totals:value array -> t -> value array -> value array
 (** [eval ~totals p args] is [p]'s outputs with its arguments bound to [args]
     and its totals' running values in to [totals], in order. Without [totals],
