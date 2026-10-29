@@ -1788,6 +1788,80 @@ let construct_results (p : t) i base =
     (fun n -> not (Array.mem n p.params))
     (List.init (Int.max 0 (next - base)) (fun k -> base + k))
 
+(* Replays *)
+
+(* Whether evaluating [c] runs a callback: a linear construct's transpose and a
+   custom rule's derivative run only in a backward pass, and a root's
+   evaluation reads its solution alone. *)
+let rec runs = function
+  | Callback _ -> true
+  | Linear { apply; _ } -> List.exists runs_in (Option.to_list apply)
+  | Custom { primal; _ } -> runs_in primal
+  | Root _ -> false
+  | c -> List.exists runs_in (carried_by c)
+
+and runs_in p =
+  Array.exists (function Do { c; _ } -> runs c | Op _ -> false) p.eqns
+
+let replayed p ~unknown =
+  let dep = Array.make p.slots false in
+  Array.iteri (fun k u -> if u then dep.(p.params.(k)) <- true) unknown;
+  let reads (V x) =
+    match Nx.Prim.payload p.owner x with Some (Var n) -> dep.(n) | _ -> false
+  in
+  let kept = ref [] and replayable = ref true in
+  let keeps i eq =
+    match eq with
+    | Op { op; base; _ } ->
+        let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+        if List.exists (fun (Nx.Prim.Any x) -> reads (V x)) xs then
+          List.iter (fun n -> dep.(n) <- true) (construct_results p i base);
+        false
+    | Do { c; base } ->
+        let unknown = List.exists reads (operands c) in
+        if unknown then
+          List.iter (fun n -> dep.(n) <- true) (construct_results p i base);
+        if not (runs c) then false
+        else begin
+          (* Kept only where it computes on known values alone: its results
+             are then values to keep, and dropping it drops no addition or
+             emission. *)
+          if unknown || emitting eq || additions c <> [||] then
+            replayable := false;
+          Array.iteri
+            (fun k (F f) ->
+              kept := V (Nx.Prim.traced p.owner f (Var (base + k))) :: !kept)
+            (forms c);
+          true
+        end
+  in
+  let eqns =
+    List.filteri (fun i eq -> not (keeps i eq)) (Array.to_list p.eqns)
+  in
+  if not !replayable then None
+  else
+    let kept = Array.of_list (List.rev !kept) in
+    let na = Array.length p.adds in
+    let no = Array.length p.outputs - na in
+    let ni = Array.length p.params - na in
+    let var (V x) =
+      match Nx.Prim.payload p.owner x with
+      | Some (Var n) -> n
+      | _ -> invalid_arg "Rune: a replay's kept value"
+    in
+    let keeping =
+      { p with outputs = Array.concat [ slice p.outputs 0 no; kept; tail p ] }
+    in
+    let params =
+      Array.concat
+        [ slice p.params 0 ni; Array.map var kept; slice p.params ni (ni + na) ]
+    in
+    let replay =
+      make ~owner:p.owner ~params eqns ~outputs:p.outputs ~adds:p.adds
+        ~slots:p.slots
+    in
+    Some (keeping, replay)
+
 let rec pp_program names ~indent ppf (p : t) =
   let pad = String.make indent ' ' in
   let b = base names p in

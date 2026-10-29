@@ -346,6 +346,93 @@ let law_rule_scan xs =
   equal ~msg:"primal calls" fl (List.map (fun x -> [ x ]) xs) (flog ());
   equal ~msg:"adjoint calls" Testable.int n !adj
 
+(* Under reverse mode a remat keeps a callback's results: nothing runs again
+   in the backward pass. *)
+let test_remat () =
+  let x = scalar 1.5 in
+  let cb, log = logged Nx.cos in
+  let body x = Nx.mul (Nx.sin x) (cb (scalar 1.)) in
+  let g = Rune.grad' (Rune.remat tt body) x in
+  equal ~msg:"gradient" (Testable.float 1e-12) (cos 1.5 *. cos 1.) (Nx.item [] g);
+  equal ~msg:"calls" fl [ [ 1. ] ] (log ());
+  let f, flog, adj = cube () in
+  let g = Rune.grad' (Rune.remat tt (fun x -> Nx.sin (f x))) x in
+  let c = 1.5 *. 1.5 *. 1.5 in
+  equal ~msg:"rule's gradient" (Testable.float 1e-12)
+    (cos c *. 3. *. 1.5 *. 1.5) (Nx.item [] g);
+  equal ~msg:"rule's primal calls" fl [ [ 1.5 ] ] (flog ());
+  equal ~msg:"rule's adjoint calls" Testable.int 1 !adj
+
+(* Memory *)
+
+module Memory = Rune2_support.Memory
+
+(* Under reverse mode a remat keeps its arguments and its callbacks' results
+   and computes the rest again, so a pullback holds the result's bytes and the
+   callback's. A callback inside a loop the derivative splits keeps the loop's
+   values instead, and still runs once. *)
+let test_remat_memory () =
+  let n = 4096 and f32 = Nx.float32 in
+  let tt = T.(tensor @-> returns tensor) in
+  let x = Nx.place Memory.On.on (Nx.ones f32 [| n |]) in
+  let calls = ref 0 in
+  (* A rule whose pullback keeps no array: the remat keeps its result alone. *)
+  let twice ~host x =
+    if host then
+      Rune.callback tt ~like:x
+        (fun v ->
+          incr calls;
+          Nx.mul_s v 2.)
+        x
+    else Nx.mul_s x 2.
+  in
+  let double ~host x = (twice ~host x, fun ct -> twice ~host:false ct) in
+  (* Its pullback a callback too, which only the backward pass runs. *)
+  let both x = (twice ~host:true x, fun ct -> twice ~host:true ct) in
+  let body ~host x =
+    let y = Rune.custom_vjp T.tensor T.tensor (double ~host) x in
+    Nx.mul (Nx.sin y) (Nx.exp y)
+  in
+  let kept = ref [] in
+  let held f =
+    let r = Memory.held (fun () -> kept := Rune.vjp' f x :: !kept) in
+    ignore (Sys.opaque_identity !kept);
+    kept := [];
+    r
+  in
+  let remat ~host = Rune.remat tt (body ~host) in
+  equal ~msg:"no callback" Testable.int (4 * n) (held (remat ~host:false));
+  equal ~msg:"a callback" Testable.int (2 * 4 * n) (held (remat ~host:true));
+  equal ~msg:"calls" Testable.int 2 !calls;
+  let pulled x =
+    let y = Rune.custom_vjp T.tensor T.tensor both x in
+    Nx.mul (Nx.sin y) (Nx.exp y)
+  in
+  equal ~msg:"a pullback's callback" Testable.int (2 * 4 * n)
+    (held (Rune.remat tt pulled));
+  let ct = Nx.place Memory.On.on (Nx.ones f32 [| n |]) in
+  calls := 0;
+  let y, pb = Rune.vjp' (remat ~host:true) x in
+  let g = pb ct in
+  let y0, pb0 = Rune.vjp' (body ~host:false) x in
+  equal ~msg:"result" Testable.(array (float_rel ~rel:1e-6 ~abs:0.))
+    (Nx.to_array y0) (Nx.to_array y);
+  equal ~msg:"gradient" Testable.(array (float_rel ~rel:1e-6 ~abs:0.))
+    (Nx.to_array (pb0 ct)) (Nx.to_array g);
+  equal ~msg:"calls with the backward pass" Testable.int 1 !calls;
+  calls := 0;
+  let loop x =
+    fst
+      (Rune.scan T.tensor T.tensor T.tensor
+         ~f:(fun c r -> (Nx.add c (body ~host:true r), r))
+         ~init:(Nx.zeros_like x) (Nx.reshape [| 1; n |] x))
+  in
+  let g = Rune.grad' (fun x -> Nx.sum (Rune.remat tt loop x)) x in
+  let g0 = Rune.grad' (fun x -> Nx.sum (body ~host:false x)) x in
+  equal ~msg:"a loop's gradient" Testable.(array (float_rel ~rel:1e-6 ~abs:0.))
+    (Nx.to_array g0) (Nx.to_array g);
+  equal ~msg:"a loop's calls" Testable.int 1 !calls
+
 (* The results' forms are [like]'s, which is never read. *)
 let test_like () =
   let x = vec [| 1.; 2. |] in
@@ -464,6 +551,8 @@ let () =
              test "refusals" test_refusals;
              test "a custom rule around it" test_rule;
              prop "a custom rule in a scan, under grad" values law_rule_scan;
+             test "a remat keeps the results" test_remat;
+             test "a remat keeps the results alone" test_remat_memory;
            ];
          group "interface"
            [

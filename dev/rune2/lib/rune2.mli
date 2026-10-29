@@ -1115,6 +1115,12 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     pass, and so is one [f] computes in a {!scan}'s or an {!iterate}'s step from
     the step's captures alone, which the loop computes once.
 
+    A {!callback} that [f] calls outside a custom rule's derivative runs once:
+    the backward pass keeps the results of each construct of [f] that runs
+    one, and computes the rest again from them. Where such a construct reads
+    a value a differentiation tracks, adds to a total or emits, the backward
+    pass keeps every value [f] computes instead.
+
     Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 
 (** {1:jit Compilation}

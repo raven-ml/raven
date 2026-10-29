@@ -1060,15 +1060,29 @@ and switch_parts st i (c : construct) =
    is dropped, so the tape keeps the arguments alone. *)
 and remat_parts st i (body : Program.t) args ~seeds =
   let ua = Array.map (owned i) args in
-  let known = ref [||] in
+  (* A callback's results are kept and the rest of the body is computed again,
+     so that the backward pass runs no callback. *)
+  let keeping, replay =
+    if not (Program.holds Program.calls body) then (body, body)
+    else
+      match Program.replayed body ~unknown:ua with
+      | Some kr -> kr
+      | None -> invalid_arg "Rune: a remat's callbacks"
+  in
+  let na = Array.length body.adds in
+  let no = Array.length body.outputs - na in
+  let nk = Array.length keeping.outputs - na - no in
+  let known = ref [||] and kept = ref [||] in
   let _ =
     trace_in Tape ~name:st.name
       (Array.map form (Loops.pick ua args))
       (fun inner uvs ->
         let out =
-          eval_seeded body ~seeds
+          eval_seeded keeping ~seeds
             (Loops.merge ua uvs (Loops.pick (nots ua) args))
         in
+        kept := Array.sub out no nk;
+        let out = Array.append (Array.sub out 0 no) (Array.sub out (no + nk) na) in
         known :=
           Array.map
             (fun (V y as v) -> if owns inner y then None else Some v)
@@ -1077,7 +1091,10 @@ and remat_parts st i (body : Program.t) args ~seeds =
   in
   if Array.for_all Option.is_some !known then Array.map Option.get !known
   else
-    let r = record st i (Remat { body; args; seeds; differentiated = true }) in
+    let args = Array.append args !kept in
+    let r =
+      record st i (Remat { body = replay; args; seeds; differentiated = true })
+    in
     Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
 
 (* A call over the tape's variables is two calls, as JAX's partial evaluation of
@@ -1222,6 +1239,14 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
     | Construct (Call _ as c), Some i when claims st i c && st.kind = Jit ->
         (* Inlined: the default runs where the call was performed, which issues
            the call's equations here. *)
+        Some (fun k -> Effect.Deep.discontinue k Evaluate)
+    | Construct (Remat { body; args; _ } as c), Some i
+      when st.kind = Tape && claims st i c && Program.holds Program.calls body
+           && Option.is_none
+                (Program.replayed body ~unknown:(Array.map (owned i) args)) ->
+        (* A remat whose callback reads the tape's variables, or adds or emits,
+           is inlined: the backward pass keeps all its values and runs no
+           callback again. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (answer st i c))

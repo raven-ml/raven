@@ -523,6 +523,17 @@ val prune : t -> outputs:int array -> t
     totals' running values out. It keeps the equations they read, every
     check and every callback. *)
 
+val replayed : t -> unknown:bool array -> (t * t) option
+(** [replayed p ~unknown] is [Some (keeping, replay)], where [unknown] marks
+    the arguments of [p] whose values are unknown. Of [p]'s equations, those
+    whose evaluation runs a callback are {e kept}; a linear construct's
+    transpose and a custom rule's derivative are not evaluated. [keeping] is [p] with each
+    kept equation's results as more outputs, before its running values out.
+    [replay] is [p] without the kept equations, their results read from more
+    parameters after its arguments, in the same order; it gives [p]'s
+    outputs. It is [None] where a kept equation reads a value that depends on
+    an unknown argument, adds to a total or emits. *)
+
 (** {1:sites Sites}
 
     A transformation of a call derives a program from the call's ({!derive}):
