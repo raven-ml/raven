@@ -179,13 +179,18 @@ let gen_layout =
     let+ kind = of_list kinds in
     (d, c, kind)
   in
-  let search = list ~size:(int_range 0 3) (of_list [ 0; 1; 2; 3; 9 ]) in
-  (let+ files = list ~size:(int_range 0 6) file
-   and+ searches = pair search search in
+  (* Few entries are a library: on Windows only [p.dll] made as a file, one
+     entry in four. The tree holds up to a dozen entries and a search draws a
+     directory once more for each entry it holds, so that on every platform
+     each cover of the law below holds in one case in seven or more. *)
+  (let* files = list ~size:(int_range 0 12) file in
    (* A name is made once in a directory. *)
    let files =
      List.sort_uniq (fun (d, c, _) (d', c', _) -> compare (d, c) (d', c')) files
    in
+   let dirs = [ 0; 1; 2; 3; 9 ] @ List.map (fun (d, _, _) -> d) files in
+   let search = list ~size:(int_range 0 4) (of_list dirs) in
+   let+ searches = pair search search in
    { files; searches })
   |> with_pp pp_layout
 
