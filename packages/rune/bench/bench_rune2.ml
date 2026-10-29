@@ -599,6 +599,37 @@ let body_rows () =
         synced (grad_rule_in_scope rows));
   ]
 
+(* Totals: 64 lanes, each adding its row's sum and, on each of a scan's 16
+   trips, the row's element, to a total collected around the map, which adds the
+   lanes of each addition in turn. *)
+let summed = Rune.Total.make ()
+
+let lane_sums r =
+  Rune.Total.add summed (Nx.sum r);
+  fst
+    (Rune.scan'
+       ~f:(fun c xi ->
+         Rune.Total.add summed xi;
+         (Nx.add c xi, c))
+       ~init:(Nx.zeros_like (Nx.get [ 0 ] r))
+       r)
+
+let total_rows () =
+  let rows = Nx.reshape [| 64; 16 |] (floats (64 * 16)) in
+  let around f =
+    snd
+      (Rune.Total.collect summed
+         ~init:(host (Nx.scalar f32 0.))
+         (fun () -> ignore (synced (f rows))))
+  in
+  [
+    Thumper.bench "vmap-scan-64-lanes-eager" (fun () ->
+        synced (around (Rune.vmap' lane_sums)));
+    warm "vmap-scan-64-lanes-replay"
+      (fun () -> Rune.jit' (Rune.vmap' lane_sums))
+      (fun g -> synced (around g));
+  ]
+
 (* Roots: the gradient of a scan whose step holds a root, x² = a + r for each
    row r, its solve Newton's iteration and its linear solve the default dense
    one: the backward scan solves the transposed system once per row. *)
@@ -922,6 +953,7 @@ let () =
          Thumper.group "JitFootprint" (footprint_rows ());
          Thumper.group "TrainStep" (train_rows ());
          Thumper.group "Bodies" (body_rows ());
+         Thumper.group "Totals" (total_rows ());
          Thumper.group "Roots" (root_rows ());
          Thumper.group "Probes" (probe_rows ());
        ])

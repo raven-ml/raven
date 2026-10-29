@@ -129,6 +129,10 @@ Roots/grad-root-in-scan-16-eager	alloc_words	exact	205134
 Roots/grad-root-in-scan-16-eager	wall_time	batch=16	n=20	6.008e-04	5.904e-04 5.918e-04 5.929e-04 5.930e-04 5.932e-04 5.956e-04 5.963e-04 5.985e-04 5.993e-04 6.005e-04 6.011e-04 6.012e-04 6.015e-04 6.015e-04 6.017e-04 6.018e-04 6.026e-04 6.028e-04 6.032e-04 6.036e-04
 Roots/grad-root-in-scan-16-replay	alloc_words	exact	902
 Roots/grad-root-in-scan-16-replay	wall_time	batch=256	n=20	2.937e-05	2.873e-05 2.887e-05 2.901e-05 2.908e-05 2.918e-05 2.921e-05 2.928e-05 2.928e-05 2.928e-05 2.934e-05 2.940e-05 2.940e-05 2.942e-05 2.946e-05 2.947e-05 2.955e-05 2.963e-05 2.970e-05 3.006e-05 3.029e-05
+Totals/vmap-scan-64-lanes-eager	alloc_words	exact	330059
+Totals/vmap-scan-64-lanes-eager	wall_time	batch=8	n=20	7.235e-04	7.131e-04 7.134e-04 7.139e-04 7.142e-04 7.146e-04 7.154e-04 7.157e-04 7.165e-04 7.206e-04 7.232e-04 7.239e-04 7.267e-04 7.267e-04 7.273e-04 7.278e-04 7.280e-04 7.299e-04 7.303e-04 7.308e-04 7.321e-04
+Totals/vmap-scan-64-lanes-replay	alloc_words	exact	1469
+Totals/vmap-scan-64-lanes-replay	wall_time	batch=1024	n=20	7.983e-06	7.662e-06 7.801e-06 7.824e-06 7.833e-06 7.916e-06 7.938e-06 7.938e-06 7.942e-06 7.954e-06 7.971e-06 7.994e-06 7.995e-06 8.013e-06 8.070e-06 8.083e-06 8.083e-06 8.090e-06 8.102e-06 8.127e-06 8.148e-06
 Trace/chain-100	alloc_words	exact	14897
 Trace/chain-100	wall_time	batch=512	n=20	1.468e-05	1.446e-05 1.450e-05 1.450e-05 1.451e-05 1.452e-05 1.453e-05 1.454e-05 1.456e-05 1.457e-05 1.463e-05 1.473e-05 1.477e-05 1.483e-05 1.484e-05 1.488e-05 1.488e-05 1.491e-05 1.493e-05 1.495e-05 1.511e-05
 TrainStep/train-step	alloc_words	exact	10533
