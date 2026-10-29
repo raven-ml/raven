@@ -102,6 +102,15 @@ def assigned_read_twice():
     return a + a.permute(1, 0)
 
 
+def read_around_assign():
+    # two outputs of one computation, one reading storage before an assign over it and one after
+    a = empty(16).contiguous()
+    v = empty(16) * empty(16)
+    before = v + a
+    a.assign(a * a)
+    return before, v * v + a
+
+
 def assigned_contiguous():
     # assigned storage materialised again, and returned too
     a = empty(8).contiguous()
@@ -315,6 +324,7 @@ PROGRAMS = {
     "stage_of_assigned": stage_of_assigned,
     "assigned_read_twice": assigned_read_twice,
     "assigned_contiguous": assigned_contiguous,
+    "read_around_assign": read_around_assign,
     "sum_kept_broadcast": lambda: (lambda s: s + s.permute(1, 0))(empty(4, 4).sum(1, keepdim=True).expand(4, 4)),
     "mean_kept_broadcast": lambda: (lambda x: x - x.mean((0, 2), keepdim=True))(empty(2, 3, 4)),
     "unit_axis_staged": lambda: (lambda x: x + x.flip(1))(empty(1, 4).exp2()),

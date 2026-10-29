@@ -489,12 +489,12 @@ let merge_consumer_rngs rctx x consumer_rngs =
 
    Stored values of one shape and device share their loops when the nodes each
    computes before it reads storage or another stored value share a computed
-   node, and neither reads what the other writes. Each then indexes the shared
-   nodes alike, which are computed once, and the stores end as one kernel that
-   writes them all: a double word's high and low parts, the two ends of one
-   chain, are one kernel. A reduction of one of them alone keeps them apart,
-   since a kernel of two reductions can lose the optimisations each would
-   take. *)
+   node, neither reads what the other writes, and neither waits for a write
+   over storage the other reads as it was. Each then indexes the shared nodes
+   alike, which are computed once, and the stores end as one kernel that writes
+   them all: a double word's high and low parts, the two ends of one chain, are
+   one kernel. A reduction of one of them alone keeps them apart, since a
+   kernel of two reductions can lose the optimisations each would take. *)
 
 let computed u =
   Op.Set.mem (op u) (Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ]))
@@ -510,11 +510,22 @@ let region rctx s =
     in
     List.filter computed (toposort ~calls:Skip ~gate:fused value)
 
-(* Whether [a] reads [b], or the storage [b] writes, through anything: its value
-   or where it stores, which may be storage another store wrote. *)
-let reads a b =
-  let slice = backward_slice ~calls:Skip a in
-  Nodes.mem b slice || Nodes.mem (base (nth b 0)) slice
+(* Whether the store [b], of backward slice [slice], is read through anything:
+   its value or where it stores, which may be storage another store wrote. *)
+let reads slice b = Nodes.mem b slice || Nodes.mem (base (nth b 0)) slice
+
+(* Whether a store of backward slice [sa] waits for a write over storage that
+   one of [sb] reads in a state before it. One kernel of both would run
+   neither before nor after the write, as for [v + a] and [v * v + a'], where
+   [a'] is [a] once assigned. *)
+let waits_over sa sb =
+  Nodes.fold
+    (fun w found ->
+      found
+      || op w = Op.After
+         && (not (Nodes.mem w sb))
+         && Nodes.mem (base (nth w 0)) sb)
+    sa false
 
 let joinable regions a b =
   let reductions s =
@@ -523,12 +534,16 @@ let joinable regions a b =
   let within s t =
     List.for_all (fun r -> List.memq r (Tbl.find regions t)) (reductions s)
   in
+  let apart () =
+    let sa = backward_slice ~calls:Skip a
+    and sb = backward_slice ~calls:Skip b in
+    reads sa b || reads sb a || waits_over sa sb || waits_over sb sa
+  in
   List.equal Sint.equal (shape (nth a 1)) (shape (nth b 1))
   && Option.equal equal_device (device (nth a 0)) (device (nth b 0))
   && base (nth a 0) != base (nth b 0)
-  && (not (reads a b))
-  && (not (reads b a))
   && within a b && within b a
+  && not (apart ())
 
 let share_loops rctx topo =
   (* A store of no loop ends nothing, so it stays alone. *)

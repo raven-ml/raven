@@ -3497,6 +3497,8 @@ schedule/rangeify/preserve_multistage_reduce.golden
 schedule/rangeify/preserve_multistage_reduce_kernels.golden
 schedule/rangeify/push_pads_elementwise.golden
 schedule/rangeify/push_pads_elementwise_kernels.golden
+schedule/rangeify/read_around_assign.golden
+schedule/rangeify/read_around_assign_kernels.golden
 schedule/rangeify/read_at_offsets.golden
 schedule/rangeify/read_at_offsets_kernels.golden
 schedule/rangeify/reduce_broadcast_not_recomputed.golden

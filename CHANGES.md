@@ -1551,6 +1551,10 @@ thread.
 
 ### Tolk (new)
 
+- `Rangeify.get_kernel_graph` no longer runs two outputs as one kernel where
+  one reads a storage before a write over it and the other after. The kernel
+  read one state for both, a wrong value with no error, as for `v + a` and
+  `v * v + a'`, where `a'` is `a` once assigned.
 - A host kernel whose upcast lanes are not a power of two, such as a uint4 sort
   of a strided view, no longer crashes Clang 18 on x86: the host computes
   vectors of a power of two of lanes only.

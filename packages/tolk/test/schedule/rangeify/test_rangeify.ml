@@ -130,6 +130,7 @@ let programs =
     "precompiled_function_1";
     "preserve_multistage_reduce";
     "push_pads_elementwise";
+    "read_around_assign";
     "read_at_offsets";
     "reduce_broadcast_not_recomputed";
     "reduce_expand_child";
@@ -659,6 +660,22 @@ let shared =
           let old = Shape.reshape out2 (ints [ 4; 4 ]) in
           let sink = stores2 Ops.O.(v + old) Ops.O.(v * v) in
           equal int 2 (kernels_of sink);
+          writes sink);
+      test "outputs reading a storage before and after its overwrite run apart"
+        (fun () ->
+          let a = Call.param ~device:cpu ~shape:[ Int 16 ] 5 Float32 in
+          let written = Ops.after a [ Ops.store a Ops.O.(a * a) ] in
+          let at u = Shape.reshape u (ints [ 4; 4 ]) in
+          let store o v = Ops.after o [ Ops.store (at o) v ] in
+          let sink =
+            Ops.sink
+              [
+                written;
+                store out Ops.O.(v + at a);
+                store out2 Ops.O.((v * v) + at written);
+              ]
+          in
+          equal int 3 (kernels_of sink);
           writes sink);
     ]
 
