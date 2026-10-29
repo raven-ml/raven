@@ -46,21 +46,20 @@
       asin, acos                     5        9
       log1p                          5        5
       atan2                          6        8
-      exp, cos                       9        9
+      exp, cos, pow                  9        9
       cosh                          10       10
       tan                           19       19
       tanh                          18       18
       expm1, sinh                   23       23
-      pow                     9 + 6 |y log2 |x||
     v}
 
-    [pow]'s bound grows with its result's exponent [y log2 |x|]. [log], which
-    reads none of tolk's kinds, holds its bound on every target that rounds
-    division correctly. On the CPU host target, tolk computes [exp2], [log2] and
-    [sin] by {!Tolk.Transcendental}, within one ulp, and [exp], [sin] and [cos]
-    are within 2 ulps at [float32]. [exp2] at an integer and [log2] at a power
-    of two may be inexact; their bounds still hold there. The bounds hold at
-    tolk's default {!Tolk.Setting.transcendental}.
+    [log], which reads none of tolk's kinds, holds its bound on every target
+    that rounds division correctly. On the CPU host target, tolk computes
+    [exp2], [log2] and [sin] by {!Tolk.Transcendental}, within one ulp, [exp],
+    [sin] and [cos] are within 2 ulps at [float32], and [pow] within 2 at both
+    dtypes. [exp2] at an integer and [log2] at a power of two may be inexact;
+    their bounds still hold there. The bounds hold at tolk's default
+    {!Tolk.Setting.transcendental}.
 
     Where every operand is [±0], [±inf] or a NaN, a kind gives the zero,
     infinity, [±1] or NaN that C99 Annex F (ISO/IEC 9899, F.9) gives, with the
@@ -140,5 +139,5 @@ val exp_parts : Ops.t -> Ops.t * Ops.t
     precision, [hi] rounded. *)
 
 val exp2_split : Ops.t -> Ops.t -> Ops.t
-(** [exp2_split hi lo] is [2{^hi + lo}]. [|lo|] must be at most the gap from
-    [|hi|] to the next float above it. *)
+(** [exp2_split hi lo] is [2{^hi + lo}]. [|lo|] must be at most twice the gap
+    from [|hi|] to the next float above it. *)

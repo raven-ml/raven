@@ -215,10 +215,12 @@ let fmod x y =
 
 (* Exponentials and logarithms *)
 
-(* 2^(hi + lo) for |lo| at most an ulp of hi: 2^hi (1 + lo ln2). A positive hi
-   takes 2^(hi - 1), doubled after the product, since hi may round up to where
-   2^hi overflows while 2^(hi + lo) does not. Where 2^hi is infinite, zero or
-   NaN, the product is NaN or 2^hi, and 2^hi is kept. *)
+(* 2^(hi + lo) for |lo| at most two ulps of hi: 2^hi (1 + lo ln2), whose
+   relative error (lo ln2)^2 / 2 is below 2^-30 at float32 and 2^-80 at
+   float64 where 2^hi is finite and non-zero. A positive hi takes 2^(hi - 1),
+   doubled after the product, since hi may round up to where 2^hi overflows
+   while 2^(hi + lo) does not. Where 2^hi is infinite, zero or NaN, the product
+   is NaN or 2^hi, and 2^hi is kept. *)
 let exp2_split hi lo =
   let up = gt hi (zero hi) in
   let y = Ops.exp2 (where up (hi -: one hi) hi) in
@@ -267,9 +269,10 @@ let ln2_hi = (6.9313812256e-01, 6.93147180369123816490e-01)
 let ln2_lo = (9.0580006145e-06, 1.90821492927058770002e-10)
 let sqrt2 = (0x1.6a09e6p+0, 0x1.6a09e667f3bcdp+0)
 
-(* (m, e) with a = m 2^e, m in (1/sqrt 2, sqrt 2] and e an integer of a's type,
-   for a finite a > 0: a subnormal is scaled into the normals first. *)
-let normalized a =
+(* (m, e) with a = m 2^e, m in (top / 2, top] and e an integer of a's type,
+   for a finite a > 0 and top in (1, 2): a subnormal is scaled into the normals
+   first. *)
+let normalized ?(top = sqrt2) a =
   let sub = lt (bits a) (word (bits a) (pick a min_normal_bits)) in
   let s = where sub (a *: con a sub_scale) a in
   let mb = pick a mbits in
@@ -281,7 +284,7 @@ let normalized a =
          (word (bits s) one_bits))
   in
   let e = Ops.cast (ilogb a) (Ops.dtype a) in
-  let high = gt m (con a sqrt2) in
+  let high = gt m (con a top) in
   (where high (m *: half a) m, where high (e +: one a) e)
 
 let log x =
@@ -444,14 +447,85 @@ let tanh x =
   let t = expm1 (two x *: a) in
   copysign (where (ge a (num x hyp_far)) (one x) (t /: (t +: two x))) x
 
-(* pow: 2^(y log2|x|), the product split exactly by an fma, with C99 F.9.4.4's
-   special values. log2's 4 ulps are a relative 8u of log2|x|, as if y were
-   perturbed by 8u. Then h = y log2|x| moves by 8u|h|, which 2^h turns into a
-   relative 8 ln2 |h| u, about 5.5|h| ulps, within the bound's 6 |h|. *)
+(* log2 a as hi + lo for a finite a > 0, |lo| within half an ulp of hi, to a
+   relative 2^-12 u. With a = m 2^e, m in (sqrt3 / 2, sqrt3] and b = 1.5 from
+   sqrt1_5 on, else 1, log2 a is e + log2 b + log2 (m / b), and log2 (m / b) is
+   2 log2e s A(s^2) for s = (m - b) / (m + b) and A(z) = atanh(s) / s =
+   1 + z / 3 + z^2 R(z). m - b is exact, |s| at most 0.10103 and z at most
+   0.0103. s, z, z / 3, A and the products by s and log2e are carried in two
+   parts by fmas.
+   z^2 R(z), at most 2^-15.5 of A, is the one term rounded in the working
+   precision: its relative 4u, R a minimax fit within 0.28u at float32 and 0.5u
+   at float64, gives 2^-13.5 u, and the low parts' roundings at most 2^-12.9 u.
+   Drawn operands, subnormals included, measure 2^-13.4 u. *)
+
+let sqrt3 = (0x1.bb67aep+0, 0x1.bb67ae8584caap+0)
+let sqrt1_5 = (0x1.3988e2p+0, 0x1.3988e1409212ep+0)
+let log2_1_5 = (0x1.2b8034p-1, 0x1.2b803473f7ad1p-1)
+let log2_1_5_lo = (0x1.cfdeb4p-27, -0x1.817fd3b7d7e5dp-58)
+let third = (0x1.555556p-2, 0x1.5555555555555p-2)
+let third_lo = (-0x1.555556p-27, 0x1.5555555555555p-56)
+
+let log2_poly =
+  ( [ 0x1.ccebf6p-4; 0x1.248f68p-3; 0x1.99999ap-3 ],
+    [
+      0x1.f1bd4d19e411fp-5;
+      0x1.10f421d252391p-4;
+      0x1.3b13e56a89c64p-4;
+      0x1.745d171591ad7p-4;
+      0x1.c71c71c731ac1p-4;
+      0x1.2492492492476p-3;
+      0x1.999999999999ap-3;
+    ] )
+
+(* hi + lo times the float c + c_lo, in two parts. *)
+let mul2 (hi, lo) c c_lo =
+  let p = hi *: c in
+  (p, mulacc hi c (negated p) +: ((hi *: c_lo) +: (lo *: c)))
+
+let log2_parts a =
+  let m, e = normalized ~top:sqrt3 a in
+  let upper = ge m (con a sqrt1_5) in
+  let b = where upper (num a 1.5) (one a) in
+  (* m + b in two parts: b's exponent is at least m's *)
+  let d = b +: m in
+  let d_lo = m -: (d -: b) in
+  let f = m -: b in
+  let s = f /: d in
+  let s_lo = (mulacc (negated s) d f -: (s *: d_lo)) /: d in
+  let z = s *: s in
+  let z_lo = mulacc s s (negated z) +: (two a *: s *: s_lo) in
+  let t, t_lo = mul2 (z, z_lo) (con a third) (con a third_lo) in
+  let zc = z +: z_lo in
+  let w = zc *: zc *: horner zc (pick a log2_poly) in
+  let p = one a +: t in
+  let p_lo = t -: (p -: one a) +: (t_lo +: w) in
+  let q, q_lo = mul2 (two a *: s, two a *: s_lo) p p_lo in
+  let l, l_lo = mul2 (q, q_lo) (con a log2e) (con a log2e_lo) in
+  let c = where upper (con a log2_1_5) (zero a) in
+  let c_lo = where upper (con a log2_1_5_lo) (zero a) in
+  let g, g_lo = two_sum c l in
+  let hi, hi_lo = two_sum e g in
+  (* lo carries z^2 R(z) at up to 2^-15.5 of hi: |lo| is brought within half
+     an ulp of hi, so that h's low part is within 1.5 ulps of h *)
+  let lo = hi_lo +: (g_lo +: (c_lo +: l_lo)) in
+  let r = hi +: lo in
+  (r, lo -: (r -: hi))
+
+(* pow: 2^(y log2|x|), log2|x| in two parts and their product by y carried in
+   two by an fma, with C99 F.9.4.4's special values. The parts' relative 2^-12 u
+   moves h = y log2|x| by 2^-12 u |h|, which 2^h turns into a relative
+   2^-12.5 |h| u: at most 0.18 ulp, since past |h| = 1075 the result overflows
+   or rounds to 0. With exp2_split's 8.5 ulps, as exp's, pow is within 9. *)
 let pow x y =
-  let l = Ops.log2 (magnitude x) in
+  let a = magnitude x in
+  let finite = gt a (zero x) &&: lt a (inf x) in
+  let l, l_lo = log2_parts (where finite a (one x)) in
+  let special = where (eq a (zero x)) (negated (inf x)) a in
+  let l = where finite l special in
   let h = y *: l in
-  let v = exp2_split h (mulacc y l (negated h)) in
+  let h_lo = mulacc y l (negated h) +: where finite (y *: l_lo) (zero x) in
+  let v = exp2_split h h_lo in
   let integer v = eq (trunc v) v in
   let odd = integer y &&: Ops.logical_not (integer (y *: half y)) in
   let v = where (odd &&: negative x) (negated v) v in

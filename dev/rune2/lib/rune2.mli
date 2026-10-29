@@ -1257,22 +1257,21 @@ val jit :
       Nx.asin, Nx.acos                 5        9
       Nx.log1p                         5        5
       Nx.atan2                         6        8
-      Nx.exp, Nx.cos                   9        9
+      Nx.exp, Nx.cos, Nx.pow           9        9
       Nx.cosh                         10       10
       Nx.tanh                         18       18
       Nx.tan                          19       19
       Nx.expm1, Nx.sinh               23       23
-      Nx.pow x y                9 + 6 |y log2 |x||
     v}
 
     {!Nx.log} needs only correctly rounded division. On the host CPU, {!Nx.exp},
-    {!Nx.sin} and {!Nx.cos} are within 2 ulps at [float32]. Where every operand
-    is [±0.], [±inf] or a NaN, a function gives the value of C99 Annex F
-    (ISO/IEC 9899, F.9), a zero's sign included: [sin (-0.)] is [-0.] and
-    [log 0.] is [-inf]. {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN
-    included, and where [x] is [-1.] and [y] is infinite. A function nx composes
-    from these, such as {!Nx.asinh} or {!Nx.softmax}, computes as nx composes
-    it.
+    {!Nx.sin} and {!Nx.cos} are within 2 ulps at [float32], and {!Nx.pow}
+    within 2 at both dtypes. Where every operand is [±0.], [±inf] or a NaN, a
+    function gives the value of C99 Annex F (ISO/IEC 9899, F.9), a zero's sign
+    included: [sin (-0.)] is [-0.] and [log 0.] is [-inf]. {!Nx.pow} is [1.]
+    where [y] is [±0.] or [x] is [1.], NaN included, and where [x] is [-1.] and
+    [y] is infinite. A function nx composes from these, such as {!Nx.asinh} or
+    {!Nx.softmax}, computes as nx composes it.
 
     {b Complex functions.} A result [z'] of exact value [z] holds a {e normwise}
     bound [c] in the sense that [|z' - z| / |z| <= c u], to first order, for the

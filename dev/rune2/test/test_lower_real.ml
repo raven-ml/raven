@@ -466,11 +466,6 @@ let mod_tuples wide =
       List.map (fun y -> [| x; y |]) (e @ [ 3.; -0.75; 0.1; Float.infinity ]))
     (e @ [ 7.; -7.5; 1e30; 0. ])
 
-(* pow's bound grows with the exponent of its result. *)
-let pow_bound _ e =
-  let p = Float.abs (e.(1) *. Float.log2 (Float.abs e.(0))) in
-  9. +. (6. *. if Float.is_nan p then 0. else p)
-
 let binary =
   let b ?tuples ?covers ?within ?(range = wide_range) name k pts =
     kind ?tuples ?covers ?within ~range name (Op2 (Binary k, 0, 1)) [ pts; pts ]
@@ -513,7 +508,7 @@ let binary =
         ];
     b "pow" K.Pow
       (both log_points exp2_points)
-      ?within:(Some ((fun e -> Float.pow e.(0) e.(1)), pow_bound))
+      ?within:(f2 Float.pow (2., 2.))
       ~tuples:pow_tuples
       ~range:(fixed (-20., 20.))
       ~covers:
@@ -532,6 +527,13 @@ let binary =
             fun _ e -> e.(0) = -1. && Float.abs e.(1) = Float.infinity );
           ("1 to a NaN", fun _ e -> e.(0) = 1. && Float.is_nan e.(1));
           ("a zero base, negative power", fun _ e -> e.(0) = 0. && e.(1) < 0.);
+          ("a subnormal base", fun w e -> is_sub w e.(0));
+          ( "a finite result of an exponent past 64",
+            fun w e ->
+              let r = Float.pow e.(0) e.(1) in
+              Float.abs (e.(1) *. Float.log2 (Float.abs e.(0))) > 64.
+              && Float.is_finite (round w r)
+              && r <> 0. );
         ];
     b "atan2" K.Atan2 atan_points ~tuples:atan2_tuples
       ?within:(f2 Float.atan2 (6., 8.))
@@ -751,12 +753,77 @@ let log_near_one =
       ("0x1.410308102a104p+0", "0x1.cf76ac1e049dfp-3");
     ]
 
+(* Operands of pow and their correctly rounded results, from mpmath at 266
+   bits: subnormal bases and results, and exponents [y log2 |x|] past 64. *)
+let pow_far =
+  let case (type s) (dt : (float, s) D.t) cases =
+    let col f =
+      Array.of_list (List.map (fun c -> Float.of_string (f c)) cases)
+    in
+    let x = col (fun (x, _, _) -> x) and y = col (fun (_, y, _) -> y) in
+    let n = Array.length x in
+    let ins = Iarray.of_array [| D.Any dt; D.Any dt |] in
+    let prog = K.of_node ~ins (Op2 (Binary Pow, 0, 1)) in
+    let layout = Nx_array.Layout.contiguous [| n |] in
+    let loads =
+      Iarray.of_array
+        [| P.Plain (Nx.create dt [| n |] x); P.Plain (Nx.create dt [| n |] y) |]
+    in
+    let op () =
+      fst
+        (P.eval ~by:"t"
+           (P.Map { layout; prog; outs = [ dt ]; loads; at = None }))
+    in
+    let got = Lowered.run op in
+    let wide = D.equal dt D.Float64 in
+    List.concat
+      (List.mapi
+         (fun i (x, y, r) ->
+           let d = ulps wide (Float.of_string r) got.(i) in
+           if d <= 2. then []
+           else
+             [
+               Printf.sprintf "pow(%s, %s): %h, %g ulps from %s" x y got.(i) d
+                 r;
+             ])
+         cases)
+  in
+  test "pow within 2 ulps at far exponents and subnormals" (fun () ->
+      equal (list string) []
+        (case D.Float32
+           [
+             ("0x1.cp-147", "0x1p-1", "0x1.deeea2p-74");
+             ("0x1.0bb15p+0", "-0x1.e30ecp+9", "0x1.ae74e4p-63");
+             ("0x1.000002p+1", "0x1.ead958p+6", "0x1.a36cfp+122");
+             ("0x1.e5b66p-130", "-0x1.745282p-1", "0x1.d1a326p+93");
+             ("0x1.67b4ccp-127", "0x1p+0", "0x1.67b4ccp-127");
+             ("0x1.cd360ep-1", "0x1.a67a5ap+9", "0x1.921048p-128");
+             ("0x1p-149", "-0x1.555556p-2", "0x1.966006p+49");
+           ]
+        @ case D.Float64
+            [
+              ( "0x1.0000005a98fdcp+0",
+                "0x1.c8cf46d10f26bp+34",
+                "0x1.e6015ed352aeap+932" );
+              ( "0x0.0000000000025p-1022",
+                "-0x1.900084bf4d66p-1",
+                "0x1.fee17b8c2fa83p+834" );
+              ("0x1.d961271d0722bp-342", "0x1.8p+1", "0x0.652a212f3a524p-1022");
+              ( "0x0.000000000000cp-1022",
+                "-0x1.9e7b4d3dba0e7p-5",
+                "0x1.1dc05b292856bp+54" );
+              ( "0x1.fd3c200443b9bp-1023",
+                "0x1.0061afdc4d90cp+0",
+                "0x0.5892bcce770d6p-1022" );
+              ("0x0.0000000000001p-1022", "0x1p-1", "0x1p-537");
+            ]))
+
 let () =
   exit
     (run "Lower_real"
        [
          group "unary" (List.map prop_of unary @ [ log_near_one ]);
-         group "binary" (List.map prop_of binary);
+         group "binary" (List.map prop_of binary @ [ pow_far ]);
          group "compare" (List.map prop_of compare);
          group "fma" [ prop_of fma ];
        ])
