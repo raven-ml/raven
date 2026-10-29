@@ -55,6 +55,28 @@ let statement =
         Hashtbl.replace stated (prog, args) s;
         s
 
+(* The major version of LLVM that a statement names, as in "Ubuntu clang
+   version 18.1.3". Apple's Clang numbers its own releases, so its statement
+   names none. *)
+let llvm_major stated =
+  let key = "clang version " in
+  let n = String.length key and len = String.length stated in
+  let rec find i =
+    if i + n > len then None
+    else if String.sub stated i n = key then Some i
+    else find (i + 1)
+  in
+  match find 0 with
+  | None -> None
+  | Some i when i >= 6 && String.sub stated (i - 6) 6 = "Apple " -> None
+  | Some i ->
+      let first = i + n in
+      let rec last j =
+        if j < len && stated.[j] >= '0' && stated.[j] <= '9' then last (j + 1)
+        else j
+      in
+      int_of_string_opt (String.sub stated first (last first - first))
+
 (* Clang *)
 
 external mac_fp16 : unit -> bool = "caml_tolk_cpu_mac_fp16"
@@ -107,7 +129,7 @@ let clang arch =
      instead of a function call. -ffp-contract=off keeps each product and sum
      its own rounding, as the graph states them. -ffile-compilation-dir=. keeps
      the working directory out of the object, and out of what Clang states. *)
-  let args =
+  let base =
     [
       "-c";
       "-x";
@@ -122,12 +144,26 @@ let clang arch =
       "-ffile-compilation-dir=.";
       "--target=" ^ machine ^ "-none-unknown-elf";
     ]
-    @ target_args @ [ "-"; "-o"; "-" ]
+    @ target_args
+  in
+  let io = [ "-"; "-o"; "-" ] in
+  (* LLVM 18's straight-line vectorizer narrows the integer lanes it packs and
+     can then extend a lane to a narrower type, which is invalid IR: for four
+     clamped gather indices on a processor with AVX-512 it wrote [sext <4 x
+     i32> to <4 x i16>], on which instruction selection crashed. LLVM 19 packs
+     them correctly. Under LLVM 18 only, the vectorizer is off, so that other
+     Clangs compile as before. The flag follows -O2, which would turn the
+     vectorizer back on. The statement is memoized: asking for the arguments
+     again costs a lookup. *)
+  let args () =
+    match llvm_major (statement cc (base @ io)) with
+    | Some 18 -> base @ ("-fno-slp-vectorize" :: io)
+    | _ -> base @ io
   in
   let table () =
     Printf.sprintf "compile_%s_obj_%s_%s" cc
       (String.map (function ',' -> '_' | c -> c) arch)
-      (Digest.to_hex (Digest.string (statement cc args)))
+      (Digest.to_hex (Digest.string (statement cc (args ()))))
   in
   Renderer.Compiler.v ~cachekey:table ~disassemble:Helpers.cpu_objdump
-    (fun src -> compile cc args src)
+    (fun src -> compile cc (args ()) src)

@@ -148,8 +148,8 @@ index efb2e82..8d56317 100644
 +
 +# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of an even number of
 +# distinct lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order: a scalar reads a view across lanes
-+# for free, and a vector pays shuffles for it. llvm widens a vector of a number of lanes other than a power of two, and clang 18 crashed
-+# on one, so vector_operation splits the lanes into vectors of the largest power of two that divides their number
++# for free, and a vector pays shuffles for it. vector_operation splits the lanes into vectors of the largest power of two that divides
++# their number
 +def do_devectorize(ctx:tuple[DType, ...], b:UOp):
    if b.shape == (): return None
    # broadcasting needs to be already unpacked, Invalid matches any dtype and shape

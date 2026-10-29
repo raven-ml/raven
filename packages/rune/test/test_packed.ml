@@ -268,8 +268,8 @@ let bit_operands = operands ~pp:Format.pp_print_bool Nx.bit Gen.bool
 
 (* A [2; 3] view of a [3; 5] uint4 of distinct elements, every other row and
    column, flipped. Its sort along the last axis compiles a kernel of 3 rows by
-   the 2 nibbles of a byte, which Clang 18 crashed on as one vector of 6
-   lanes. *)
+   the 2 nibbles of a byte, read at clamped indices, which Clang 18's
+   vectorizer turned into invalid code for a processor with AVX-512. *)
 let strided_view =
   let step name = List.find (fun (l : layout) -> l.name = name) layout_steps in
   let steps =

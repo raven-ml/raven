@@ -33,6 +33,40 @@ let pressure =
   Buffer.add_string b "}\n";
   Buffer.contents b
 
+(* Part of the kernel rune compiles for a uint4 sort along the last axis of a
+   strided view: four gathers at clamped indices, two of 2 minus the clamp and
+   two of 7 minus it, and the nibbles they read, selected in pairs. *)
+let clamped_gathers =
+  {|typedef unsigned char unsigned_char2 __attribute__((aligned(2),ext_vector_type(2)));
+typedef long long2 __attribute__((aligned(16),ext_vector_type(2)));
+typedef unsigned long unsigned_long2 __attribute__((aligned(16),ext_vector_type(2)));
+typedef signed char signed_char2 __attribute__((aligned(2),ext_vector_type(2)));
+__attribute__((min_vector_width(512))) void r_3_2(unsigned char* restrict data0_3, long* restrict data1_8, unsigned char* restrict data2_8) {
+  long val2 = (*(data1_8+5));
+  int alu2 = (((int)((val2&3l)))^-1);
+  int alu3 = ((alu2<-3)?-3:alu2);
+  unsigned char val3 = (*(data2_8+(2-(alu3^-1))));
+  long val4 = (*(data1_8+6));
+  int alu4 = (((int)((val4&3l)))^-1);
+  int alu5 = ((alu4<-3)?-3:alu4);
+  unsigned char val5 = (*(data2_8+(2-(alu5^-1))));
+  long val6 = (*(data1_8+0));
+  int alu6 = (((int)((val6&3l)))^-1);
+  int alu7 = ((alu6<-3)?-3:alu6);
+  unsigned char val7 = (*(data2_8+(7-(alu7^-1))));
+  long val8 = (*(data1_8+1));
+  int alu8 = (((int)((val8&3l)))^-1);
+  int alu9 = ((alu8<-3)?-3:alu8);
+  unsigned char val9 = (*(data2_8+(7-(alu9^-1))));
+  unsigned_char2 cast0 = (unsigned_char2){((unsigned char)(0u)),((unsigned char)(4u))};
+  unsigned_char2 alu12 = (__builtin_convertvector((__builtin_bit_cast(unsigned_long2, (long2)(((long2){val6,val8}&3l)))<3ul), signed_char2)?((unsigned_char2){val7,val9}&((unsigned char)(15u))):((unsigned char)(0u)));
+  unsigned_char2 alu13 = ((alu12&((unsigned char)(15u)))<<cast0);
+  unsigned_char2 alu16 = (__builtin_convertvector((__builtin_bit_cast(unsigned_long2, (long2)(((long2){val2,val4}&3l)))<3ul), signed_char2)?((unsigned_char2){val3,val5}&((unsigned char)(15u))):((unsigned char)(0u)));
+  unsigned_char2 alu17 = ((alu16&((unsigned char)(15u)))<<cast0);
+  *(data0_3+0) = (alu13[0]+alu13[1]);
+  *(data0_3+2) = (alu17[0]+alu17[1]);
+}|}
+
 (* The kernels of kernels.golden, each a linear program named after its kernel,
    whose sources are the kernel's nodes in order. *)
 let kernels = lazy (Ops.src (Golden.sink "kernels.golden"))
@@ -259,6 +293,13 @@ let features =
         (fun (arch, name) ->
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
             (compile arch (rendered arch name)));
+      (* LLVM 18's straight-line vectorizer narrowed the four indices into
+         invalid IR for these processors, and Clang 18 crashed on it. *)
+      cases ~name:Fun.id "four clamped gathers compile for AVX-512 on"
+        [ "x86_64,x86-64-v4"; "x86_64,skylake-avx512"; "x86_64,znver4" ]
+        (fun arch ->
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch clamped_gathers));
       test "arm64 leaves x18 alone" (fun () ->
           let text = disassembly "arm64,generic" pressure in
           is_false ~msg:"x18" (mentions "x18" text);

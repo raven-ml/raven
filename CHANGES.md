@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- `Compiler_cpu.clang` compiles without the straight-line vectorizer under a
+  Clang of LLVM 18, which wrote invalid code for clamped gathers on AVX-512
+  processors and crashed ("SmallVector unable to grow"), as Ubuntu 24.04's did.
 - A compiled minimum of a minimum against one value, or maximum of a maximum,
   picks what eager evaluation picks at a tie or a NaN, where LLVM folded it to
   the inner one: `Nx.where (Nx.less m c) m c`, `m = Nx.minimum c x`, gave `-0.`
@@ -1579,9 +1582,6 @@ thread.
   one reads a storage before a write over it and the other after. The kernel
   read one state for both, a wrong value with no error, as for `v + a` and
   `v * v + a'`, where `a'` is `a` once assigned.
-- A host kernel whose upcast lanes are not a power of two, such as a uint4 sort
-  of a strided view, no longer crashes Clang 18 on x86: the host computes
-  vectors of a power of two of lanes only.
 - `Decomp_op`'s division rules read a weak divisor in the dividend's type: on
   int8, `x // 128` skipped the sign correction for -128, and `1 // 128` gave 0
   for -1.

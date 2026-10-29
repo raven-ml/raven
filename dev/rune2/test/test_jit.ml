@@ -3011,8 +3011,9 @@ let law_scan (Scan_case (s, axis, xs)) =
 
    A uint4 sort along the last axis of a [2; 3] view of a [3; 5] uint4 of
    distinct elements, every other row and column, flipped: its kernel is 3 rows
-   by the 2 nibbles of a byte, which Clang 18 crashed on as one vector of 6
-   lanes. *)
+   by the 2 nibbles of a byte, read at clamped indices. Clang 18 crashed on old
+   rune's clamps for a processor with AVX-512: its vectorizer turned them into
+   invalid code. *)
 
 let strided_sorts =
   let pp = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in

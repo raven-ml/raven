@@ -25,7 +25,10 @@ val clang : string -> Renderer.Compiler.t
 
     Objects are optimized at [-O2] and position independent. Math functions do
     not set [errno], so that a square root is one instruction. On [arm64] the
-    register [x18] is left alone, since macOS and Windows clobber it.
+    register [x18] is left alone, since macOS and Windows clobber it. Under a
+    Clang of LLVM 18, the straight-line vectorizer, which packs independent
+    scalar operations into vectors, is off, since it writes invalid code for
+    some packed integer lanes.
 
     Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
@@ -34,7 +37,8 @@ val clang : string -> Renderer.Compiler.t
     installation, the processor and features it compiles for, and every option,
     or why it rejects them or does not run. An object is read back only for its
     source, compiled by the same Clang with the same options. Clang is asked
-    once per process, when the table is first needed.
+    once per process for each set of options, when the table or a compile
+    first needs it.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     Clang's diagnostics if Clang rejects the source or does not run, and
     {!Renderer.Compiler.disassemble} prints what [objdump -d] prints

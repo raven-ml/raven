@@ -3663,16 +3663,18 @@ driver signals its own (D146).
   their shared loads that each lane's multiply-add reads back
   (`clang_matmul_upcasted*`); Clang compiles them to the same instructions.
 
-  LLVM widens a vector whose lanes are not a power of two to the next power
-  of two. Ubuntu 24.04's Clang 18.1.3 crashed on x86 ("SmallVector unable to
-  grow") compiling rune's sort of a uint4 [2; 3] view along its last axis:
-  its kernel `r_3_2`, a masked axis of 3 upcast whole by the 2 nibbles of a
-  byte, selected 6 bytes by a comparison of 6 longs. Clang 19 compiles it.
-  Split into vectors of a power of two of lanes, which LLVM never widens, the
-  kernel selects 3 pairs of bytes by 3 comparisons of pairs of longs, and the
-  host keeps its vectors where an axis of 3 is upcast whole: the 48 and 24
-  lanes of lorenz_simple's kernels `r_128_16_3_4_4_3_3_400_400` and
-  `r_32_3_2_4_3_400` are 3 vectors of 16 and 3 of 8.
+  Split into vectors of a power of two of lanes, rune's sort of a uint4
+  [2; 3] view along its last axis, kernel `r_3_2`, selects 3 pairs of bytes by
+  3 comparisons of pairs of longs, and the host keeps its vectors where an
+  axis of 3 is upcast whole: the 48 and 24 lanes of lorenz_simple's kernels
+  `r_128_16_3_4_4_3_3_400_400` and `r_32_3_2_4_3_400` are 3 vectors of 16 and
+  3 of 8. The split was made for Ubuntu 24.04's Clang 18.1.3, which crashed
+  on x86 compiling `r_3_2` ("SmallVector unable to grow"), on the belief that
+  its 6-lane vector was the cause. It was not: the kernel's 3 pairs crash the
+  same way, on processors with AVX-512, from LLVM 18's straight-line
+  vectorizer (D167). Its other recorded reason is speed: on fudge, under
+  load, lorenz/step-batch-128-host replayed in 8.6 ms with the split against
+  14.7 ms before it.
 - **Rejected:** compile time is paid once and replay on every call, so
   neither trade below was taken. `#pragma clang loop vectorize(disable)`
   changes nothing on vector kernels (Clang 0.24 s with and without it on
@@ -3692,12 +3694,12 @@ driver signals its own (D146).
   computes 3 vectors of 8`, `› a host selection of 8, 16 or 32 lanes by a
   comparison of integers takes each lane's arm` and `› a host selection of 3,
   6, 12, 24 or 48 lanes by a comparison of integers takes each lane's arm`
-  (every case, under Clang 18 on x86), `› a weak constant stored into four lanes of half on the host
+  (every case), `› a weak constant stored into four lanes of half on the host
   converts them` and `multiply-adds` (every test); the Spec suite's `vectors
   in programs › a program of a renderer that computes on vectors …`;
   rune's Rune.jit suite: `lanes` (every test); rune's packed suite: `a
   compiled call computes eager's values › a uint4 sort along the last axis
-  of every other row and column, flipped`, under Clang 18 on x86, and
+  of every other row and column, flipped`, and
   `stated values › a window set into bits at an odd offset keeps the bits
   around it`, whose last vector of 8 lanes selects 0 in every lane; rune's
   Rune.quant suite:
@@ -4529,3 +4531,42 @@ submission, and a range a loop of rig's program (D146).
   `late_patterns › late_nests_cmplt.golden` and `› a nest of extremes against
   one value keeps its values › *`; rune2's Jit suite: `classes › a
   selection of a minimum against its constant is exact`.
+
+## D167. Clang of LLVM 18 compiles without its straight-line vectorizer
+
+- **tinygrad:** `runtime/support/compiler_cpu.py:21` (`ClangCompiler.compile`,
+  Clang's arguments at `-O2`, which runs LLVM's SLP vectorizer).
+- **tolk:** `lib/runtime/support/compiler_cpu.ml:61` (`llvm_major`, the LLVM
+  version a Clang's `-###` statement names) and `:158` (`args`, which adds
+  `-fno-slp-vectorize` when it is 18).
+- **Differs:** a Clang that states LLVM 18 compiles every kernel with
+  `-fno-slp-vectorize`, after `-O2`, which would turn the vectorizer back on.
+  Every other Clang, Apple's included, compiles with the arguments tinygrad
+  passes.
+- **Reason:** (b): rune's packed suite, `a compiled call computes eager's
+  values › a uint4 sort along the last axis of every other row and column,
+  flipped`, failed on CI runners with AVX-512 under Ubuntu 24.04's Clang
+  18.1.3 ("SmallVector unable to grow"), and passed on runners without it.
+  The kernel `r_3_2` loads 6 nibbles at clamped indices, `2 - min(i & 3, 2)`
+  or `7 - min(i & 3, 2)`, the minimum written `~max(~x, -3)`. Before the
+  vectorizer, LLVM holds four of these indices as `sext` of `2 - x` and `zext
+  nneg` of `x ^ 7`; for `x86-64-v4`, `skylake-avx512` or `znver4` the
+  vectorizer packs them into one vector, narrows it to 16 bits, and writes
+  `sext <4 x i32> ... to <4 x i16>`, invalid IR, on which X86 instruction
+  selection crashes. Clang 18.1.8 does the same; Clang 19.1.7 compiles the
+  source, and without the vectorizer so does 18. `x86-64-v3` packs nothing
+  there. Of the 6048 kernels rune's suites compile, this is the only one whose
+  IR Clang 19 rejects when Clang 18 writes it for `x86-64-v4`. D141's split of
+  6 lanes into 3 pairs was not the cure: the suite failed the same way on CI
+  after it. Rewriting the source does not hold either: writing that minimum as
+  `(-3<x)?x:-3` or `__builtin_elementwise_max`, or selecting with scalar
+  comparisons, lets this kernel compile, but each only moves what the
+  vectorizer meets, for a rendering of every kernel tinygrad also writes.
+  Disabling the vectorizer for every Clang would change the objects of 44%
+  of a sample of those kernels (265 of 604, Clang 18 for the host): it stays
+  on wherever it is correct.
+- **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
+  for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
+  `x86_64,znver4`), which compiles the indices of `r_3_2` and fails under
+  Clang 18 without the flag; rune's packed suite above, under Clang 18 on an
+  x86 host with AVX-512.

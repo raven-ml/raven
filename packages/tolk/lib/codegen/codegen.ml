@@ -297,10 +297,9 @@ let segment v first w =
 (* An elementwise operation of a renderer that computes on vectors keeps its
    lanes on one axis, the flat order of its shape: each source is a vector of
    those lanes in order, or a scalar every lane reads. An operation of m·2^k
-   lanes is m operations on vectors of 2^k consecutive lanes, which LLVM never
-   widens; one of an odd number of lanes computes each lane apart (see
-   [do_devectorize]). Where every source is a scalar, the operation is
-   computed once and expanded. *)
+   lanes is m operations on vectors of 2^k consecutive lanes; one of an odd
+   number of lanes computes each lane apart (see [do_devectorize]). Where
+   every source is a scalar, the operation is computed once and expanded. *)
 let vector_operation b s =
   let n = Helpers.prod (int_shape s) in
   let operand x =
@@ -362,10 +361,8 @@ let vector_dtypes (ren : Renderer.t) =
     List.filter (fun dt -> not (emulated dt)) (Renderer.supported_dtypes ren)
 
 (* Whether [n] lanes, more than one, hold a vector of two lanes or more: [n]
-   is even. LLVM widens a vector of a number of lanes other than a power of two
-   to the next one, and Clang 18 crashed on one for x86, a selection of 6 bytes
-   by a comparison of 6 longs, so [vector_operation] splits the lanes into
-   vectors of the largest power of two that divides [n]. *)
+   is even. [vector_operation] splits the lanes into vectors of the largest
+   power of two that divides [n]. *)
 let vector_lanes n = n > 1 && n land 1 = 0
 
 (* Elementwise operations, loads and stores of vectors compute each lane apart,

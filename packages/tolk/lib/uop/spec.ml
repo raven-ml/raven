@@ -428,10 +428,9 @@ let program_rules vectors : t =
          (* Every elementwise operation on values is on scalars: renderers whose
             vectors are structs without arithmetic cannot write one on a
             vector. A renderer that computes on vectors takes an operation on
-            one axis of a power of two of lanes, which LLVM never widens, each
-            source of it a vector of its lanes or a scalar every lane reads. A
-            bitcast of memory views it, and a node without a shape is judged
-            by the other rules. *)
+            one axis of a power of two of lanes, each source of it a vector of
+            its lanes or a scalar every lane reads. A bitcast of memory views
+            it, and a node without a shape is judged by the other rules. *)
          decide (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) "x" (fun x ->
              let lanes s =
                match (shape_opt s, shape_opt x) with
