@@ -186,7 +186,7 @@ let jvp_tests =
         in
         let b = vec [| 1.9; 0.8; -0.6 |] in
         let (_, dy), t =
-          Total.collect seen ~zero:(Nx.zeros f64 [| 3 |]) (fun () ->
+          Total.collect seen ~init:(Nx.zeros f64 [| 3 |]) (fun () ->
               Rune.jvp' (fun a -> f (a, b)) (v3 ()) (along ()))
         in
         exact ~msg:"tangent" (Nx.mul (along ()) b) dy;
@@ -414,7 +414,7 @@ let order_tests =
               (Nx.sin x, fun g -> Nx.mul (Nx.mul_s (Nx.cos x) 2.) g))
         in
         let _, total =
-          Total.collect t ~zero:(scalar 0.) (fun () ->
+          Total.collect t ~init:(scalar 0.) (fun () ->
               d2 (fun x -> Nx.sum (adds x)) (scalar x))
         in
         exact ~msg:"one addition" (scalar x) total);
@@ -519,7 +519,7 @@ let order_tests =
               (Nx.mul s x, fun dx -> dx))
         in
         let collected ~zero x s =
-          snd (Total.collect total ~zero:(zero s) (fun () -> ignore (rule s x)))
+          snd (Total.collect total ~init:(zero s) (fun () -> ignore (rule s x)))
         in
         let s = scalar 1.5 and x = scalar 2. in
         let at_zero _ = scalar 0. in
@@ -571,7 +571,7 @@ let order_tests =
     test "a rule's addition counts once in every pair of modes" (fun () ->
         let x = scalar 0.5 in
         let check msg f =
-          let _, t = Total.collect total ~zero:(scalar 0.) f in
+          let _, t = Total.collect total ~init:(scalar 0.) f in
           exact ~msg (scalar 0.5) t
         in
         let f x = Nx.sum (cube x) in
@@ -600,7 +600,7 @@ let order_tests =
           (d2 (fun x -> Nx.sum (Rune.grad' f x)) x));
     test "a rule with no tensor result is not applied under grad" (fun () ->
         let g, t =
-          Total.collect total ~zero:(scalar 0.) (fun () ->
+          Total.collect total ~init:(scalar 0.) (fun () ->
               Rune.grad'
                 (fun x ->
                   mark x;
@@ -612,7 +612,7 @@ let order_tests =
     test "a rule with no tensor result observes the tangents under jvp"
       (fun () ->
         let _, t =
-          Total.collect total ~zero:(scalar 0.) (fun () ->
+          Total.collect total ~init:(scalar 0.) (fun () ->
               Rune.jvp'
                 (fun x ->
                   mark x;
@@ -902,7 +902,7 @@ let error_tests =
         check "under a map" (Rune.vmap' f);
         check "under jit" (Rune.jit' f);
         check "in a collect" (fun x ->
-            Total.collect total ~zero:(scalar 0.) (fun () -> f x)));
+            Total.collect total ~init:(scalar 0.) (fun () -> f x)));
     test "a rule that uses a value its differentiation tracks raises" (fun () ->
         let uses rule x =
           let w = Nx.mul x x in
@@ -1002,7 +1002,7 @@ let error_tests =
           ~sub:
             "Rune.Total.add: a custom_jvp tangent map adds a tangent under \
              reverse mode; a total takes values" (fun () ->
-            Total.collect total ~zero:(scalar 0.) (fun () ->
+            Total.collect total ~init:(scalar 0.) (fun () ->
                 Rune.grad' (fun x -> Nx.sum (f x)) (v3 ()))));
   ]
 
@@ -1220,7 +1220,7 @@ let map_tests =
               ((), fun dy -> Total.add seen dy))
         in
         let _, total =
-          Total.collect seen ~zero:(Nx.zeros f64 [| 3 |]) (fun () ->
+          Total.collect seen ~init:(Nx.zeros f64 [| 3 |]) (fun () ->
               Rune.jvp'
                 (Rune.vmap' (fun r ->
                      observe (Nx.sin r);
@@ -1288,7 +1288,7 @@ let map_tests =
                   Nx.mul g (Nx.cos x) ))
         in
         let _, total =
-          Total.collect t ~zero:(scalar 0.) (fun () ->
+          Total.collect t ~init:(scalar 0.) (fun () ->
               Rune.grad' (fun x -> Nx.sum (Rune.vmap' f x)) (xs ()))
         in
         exact (scalar 6.) total);
@@ -1306,13 +1306,13 @@ let map_tests =
         in
         let sines = Nx.sum (Nx.sin (xs ())) in
         let jv, total =
-          Total.collect t ~zero:(scalar 0.) (fun () ->
+          Total.collect t ~init:(scalar 0.) (fun () ->
               Rune.vmap' (fun x -> snd (Rune.jvp' f x (Nx.ones_like x))) (xs ()))
         in
         near ~msg:"jvp, tangent" (Nx.cos (xs ())) jv;
         near ~msg:"jvp, total" sines total;
         let g, total =
-          Total.collect t ~zero:(scalar 0.) (fun () ->
+          Total.collect t ~init:(scalar 0.) (fun () ->
               Rune.vmap' (Rune.grad' (fun x -> Nx.sum (f x))) (xs ()))
         in
         near ~msg:"grad, gradient" (Nx.cos (xs ())) g;
@@ -1514,7 +1514,7 @@ let transpose_tests =
         let t = Total.make () in
         let summed v =
           let _, s =
-            Total.collect t ~zero:(scalar 0.) (fun () -> Total.add t (Nx.sum v))
+            Total.collect t ~init:(scalar 0.) (fun () -> Total.add t (Nx.sum v))
           in
           Nx.add v (Nx.broadcast_to [| 3 |] s)
         in

@@ -1,8 +1,8 @@
 # Totals
 
 A total is a write-only sum. Code anywhere inside a function adds to it,
-and the caller reads it when the function returns: `Total.collect t ~zero f`
-is `f ()` beside `zero` plus the additions to `t` that reached it. Nothing
+and the caller reads it when the function returns: `Total.collect t ~init f`
+is `f ()` beside `init` plus the additions to `t` that reached it. Nothing
 reads a total before its `collect` returns, so an addition never changes a
 value the function computes. The Totals section of
 [`rune2.mli`](../lib/rune2.mli) states the rules.
@@ -28,7 +28,7 @@ let run xs =
        xs)
 
 let final, collected =
-  Rune2.Total.collect penalty ~zero:(Nx.scalar Nx.float64 0.) (fun () -> run xs)
+  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () -> run xs)
 ```
 
 ```ocaml
@@ -50,7 +50,7 @@ and computes their sums in its program:
 let compiled = Rune2.jit' run
 
 let _, compiled_total =
-  Rune2.Total.collect penalty ~zero:(Nx.scalar Nx.float64 0.) (fun () ->
+  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
       compiled xs)
 ```
 
@@ -67,7 +67,7 @@ Inside a map each lane makes the additions of the code it runs, and a
 let batch = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 0.; 0.; 1. |]
 
 let _, mapped_total =
-  Rune2.Total.collect penalty ~zero:(Nx.scalar Nx.float64 0.) (fun () ->
+  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
       Rune2.vmap' run batch)
 ```
 
@@ -86,7 +86,7 @@ execution of the code that makes it:
 
 ```ocaml
 let _, grad_total =
-  Rune2.Total.collect penalty ~zero:(Nx.scalar Nx.float64 0.) (fun () ->
+  Rune2.Total.collect penalty ~init:(Nx.scalar Nx.float64 0.) (fun () ->
       Rune2.grad' run xs)
 ```
 

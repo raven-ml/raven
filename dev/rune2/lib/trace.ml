@@ -395,7 +395,7 @@ let thread (type v s d) st i (t : (v, s, d) total) (f : (v, s, d) Nx.Prim.form)
   let rec find : thread list -> (v, s, d) Nx.t option = function
     | [] -> None
     | Thread th :: rest -> (
-        match same_total th.total t with
+        match same_total th.total th.into.placement t f.placement with
         | Some Type.Equal
           when Iarray.to_array (Nx_array.Layout.shape th.into.layout) = shape ->
             Some th.now
@@ -407,7 +407,7 @@ let thread (type v s d) st i (t : (v, s, d) total) (f : (v, s, d) Nx.Prim.form)
       let rec hinted : addition list -> d Nx.Placement.t option = function
         | [] -> None
         | Addition (u, into, _) :: rest -> (
-            match same_total u t with
+            match same_total u into.placement t f.placement with
             | Some Type.Equal
               when Iarray.to_array (Nx_array.Layout.shape into.layout) = shape
               ->
@@ -431,18 +431,14 @@ let thread (type v s d) st i (t : (v, s, d) total) (f : (v, s, d) Nx.Prim.form)
       st.threads <- Thread { total = t; into; var; now } :: st.threads;
       now
 
-(* Whether the trace holds a running value of [t], and where it lies. *)
-let held st t =
-  List.exists
-    (fun (Thread th) -> Option.is_some (same_total th.total t))
-    st.threads
-
-let placement_of (type v s d) st (t : (v, s, d) total) : d Nx.Placement.t =
-  let rec go : thread list -> d Nx.Placement.t = function
-    | [] -> invalid_arg "Rune: a total the trace threads no running value of"
+(* Where the trace holds a running value of [t] on [p]'s set. *)
+let placement_of (type v s d) st (t : (v, s, d) total) (p : d Nx.Placement.t) :
+    d Nx.Placement.t option =
+  let rec go : thread list -> d Nx.Placement.t option = function
+    | [] -> None
     | Thread th :: rest -> (
-        match same_total th.total t with
-        | Some Type.Equal -> Nx.placement th.now
+        match same_total th.total th.into.placement t p with
+        | Some Type.Equal -> Some (Nx.placement th.now)
         | None -> go rest)
   in
   go st.threads
@@ -454,7 +450,7 @@ let replace (type v s d) st i (t : (v, s, d) total) (x : (v, s, d) Nx.t) =
     | [] ->
         invalid_arg "Rune: a running value of a total the trace does not hold"
     | Thread th :: rest -> (
-        match same_total th.total t with
+        match same_total th.total th.into.placement t (Nx.placement x) with
         | Some Type.Equal
           when Iarray.to_array (Nx_array.Layout.shape th.into.layout) = shape ->
             th.now <- operand st i x
@@ -1242,15 +1238,17 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
     (* A trace holds a total's running value where one around it lies, at its
        own where it threads one; a jit's program, kept for later calls, holds it
        where none does. *)
-    | Where t, Some _ when st.kind <> Tape ->
+    | Where (t, p), Some _ when st.kind <> Tape ->
         Some
           (fun k ->
             Effect.Deep.continue k
-              (match Program.where t with
+              (match Program.where t p with
               | Nowhere when st.kind = Jit -> At None
               | Nowhere -> Nowhere
-              | At _ as a ->
-                  if held st t then At (Some (placement_of st t)) else a))
+              | At _ as a -> (
+                  match placement_of st t p with
+                  | Some q -> At (Some q)
+                  | None -> a)))
     | Replace (t, x), Some i when st.kind <> Tape ->
         Some
           (fun k ->

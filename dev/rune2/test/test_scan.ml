@@ -440,7 +440,7 @@ let test_in_loops () =
       ~init:(v [| 0.; 0. |])
   in
   let folded xs () = ignore (fold step ~init:(v [| 0.; 0. |]) xs) in
-  let total f = snd (Total.collect t ~zero:(zero ()) f) in
+  let total f = snd (Total.collect t ~init:(zero ()) f) in
   equal bits_t
     (bits (total (folded xs)))
     (bits (total (fun () -> scanned () xs)));
@@ -529,8 +529,8 @@ let law_totals (n, z, adds) =
   let init = v [| 0.; 0. |] in
   let totals f =
     let ((), a), b =
-      Total.collect t ~zero:(Nx.scalar f32 z) (fun () ->
-          Total.collect u ~zero:(Nx.scalar f32 z) f)
+      Total.collect t ~init:(Nx.scalar f32 z) (fun () ->
+          Total.collect u ~init:(Nx.scalar f32 z) f)
     in
     (bits a, bits b)
   in
@@ -560,7 +560,7 @@ let test_scopes_inside () =
   let t = Total.make () in
   let step c x =
     let (), s =
-      Total.collect t ~zero:(Nx.scalar f32 0.) (fun () ->
+      Total.collect t ~init:(Nx.scalar f32 0.) (fun () ->
           Total.add t (Nx.sum x))
     in
     (Nx.add c s, s)
@@ -1434,7 +1434,7 @@ let test_constant_row () =
 let test_constant_addition () =
   let u = Total.make () in
   let (), total =
-    Total.collect u ~zero:(Nx.scalar f32 0.) (fun () ->
+    Total.collect u ~init:(Nx.scalar f32 0.) (fun () ->
         ignore
           (Rune.scan t t Nx.Ptree.unit
              ~f:(fun c x ->
@@ -1506,7 +1506,7 @@ let test_totals () =
     Total.add t (Nx.scalar f64 1.);
     Nx.sum (fst (fold step ~init:c xs))
   in
-  let total f = snd (Total.collect t ~zero:(Nx.scalar f64 0.) f) in
+  let total f = snd (Total.collect t ~init:(Nx.scalar f64 0.) f) in
   let c = vec [| 0.5; 2. |] in
   let check msg g =
     equal ~msg bits_t
@@ -1522,7 +1522,7 @@ let test_totals () =
     Rune.vmap'
       (fun c ->
         snd
-          (Total.collect t ~zero:(Nx.scalar f64 0.) (fun () ->
+          (Total.collect t ~init:(Nx.scalar f64 0.) (fun () ->
                Total.add t (Nx.sum c);
                ignore (f c))))
       (Nx.create f64 [| 2; 2 |] [| 1e16; 1.; -1e16; 2. |])
@@ -1541,7 +1541,7 @@ let test_totals_inside () =
   in
   let inside loop x =
     snd
-      (Total.collect t ~zero:(Nx.scalar f64 0.) (fun () ->
+      (Total.collect t ~init:(Nx.scalar f64 0.) (fun () ->
            Total.add t (Nx.sum (Nx.sin x));
            ignore (loop x)))
   in
@@ -1580,7 +1580,7 @@ let test_totals_inside () =
       x
   in
   let (), total =
-    Total.collect t ~zero:(Nx.scalar f64 0.) (fun () ->
+    Total.collect t ~init:(Nx.scalar f64 0.) (fun () ->
         ignore (Rune.jvp' iterated (vec [| 1. |]) (vec [| 1. |])))
   in
   equal ~msg:"an iterate under jvp" bits_t

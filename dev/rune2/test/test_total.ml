@@ -20,7 +20,7 @@ let test_collect () =
   let t = Total.make () in
   let a = Nx.scalar f32 1.5 and b = Nx.scalar f32 (-0.25) in
   let r, sum =
-    Total.collect t ~zero:(zero ()) (fun () ->
+    Total.collect t ~init:(zero ()) (fun () ->
         Total.add t a;
         Total.add t b;
         "done")
@@ -28,18 +28,18 @@ let test_collect () =
   equal string "done" r;
   equal bits_t (bits Nx.(add (add (zero ()) a) b)) (bits sum);
   (* No addition keeps the zero's bits. *)
-  let _, sum = Total.collect t ~zero:(zero ()) (fun () -> ()) in
+  let _, sum = Total.collect t ~init:(zero ()) (fun () -> ()) in
   equal bits_t (bits (zero ())) (bits sum);
   (* With no scope open, an addition does nothing: the next collect receives
      none. *)
   Total.add t a;
-  let _, sum = Total.collect t ~zero:(zero ()) (fun () -> ()) in
+  let _, sum = Total.collect t ~init:(zero ()) (fun () -> ()) in
   equal ~msg:"no scope" bits_t (bits (zero ())) (bits sum);
   (* A scope of another total lets the additions pass. *)
   let u = Total.make () in
   let ((), inner), outer =
-    Total.collect t ~zero:(zero ()) (fun () ->
-        Total.collect u ~zero:(zero ()) (fun () ->
+    Total.collect t ~init:(zero ()) (fun () ->
+        Total.collect u ~init:(zero ()) (fun () ->
             Total.add t a;
             Total.add u b))
   in
@@ -51,9 +51,9 @@ let test_same_total () =
   let t = Total.make () in
   let a = Nx.scalar f32 1.5 and b = Nx.scalar f32 (-0.25) in
   let ((), inner), outer =
-    Total.collect t ~zero:(zero ()) (fun () ->
+    Total.collect t ~init:(zero ()) (fun () ->
         Total.add t a;
-        Total.collect t ~zero:(zero ()) (fun () -> Total.add t b))
+        Total.collect t ~init:(zero ()) (fun () -> Total.add t b))
   in
   equal bits_t (bits Nx.(add (zero ()) b)) (bits inner);
   equal bits_t (bits Nx.(add (zero ()) a)) (bits outer)
@@ -63,7 +63,7 @@ let test_scope_in_jit () =
   let t = Total.make () in
   let f x =
     let y, s =
-      Total.collect t ~zero:(zero ()) (fun () ->
+      Total.collect t ~init:(zero ()) (fun () ->
           Total.add t (Nx.sum x);
           Nx.neg x)
     in
@@ -82,9 +82,9 @@ let test_raising_jit () =
   in
   let x = Nx.scalar f32 2. in
   let caught g = try ignore (g x) with Exit -> () in
-  let (), eager = Total.collect t ~zero:(zero ()) (fun () -> caught f) in
+  let (), eager = Total.collect t ~init:(zero ()) (fun () -> caught f) in
   let (), jitted =
-    Total.collect t ~zero:(zero ()) (fun () -> caught (Rune.jit' f))
+    Total.collect t ~init:(zero ()) (fun () -> caught (Rune.jit' f))
   in
   equal bits_t (bits Nx.(add (zero ()) x)) (bits eager);
   equal bits_t (bits (zero ())) (bits jitted)
@@ -109,30 +109,143 @@ let law_additions (z, cs) =
     Nx.neg x
   in
   let x = Nx.scalar f32 1. and zero () = Nx.scalar f32 z in
-  let y, s = Total.collect t ~zero:(zero ()) (fun () -> f x) in
-  let y', s' = Total.collect t ~zero:(zero ()) (fun () -> Rune.jit' f x) in
+  let y, s = Total.collect t ~init:(zero ()) (fun () -> f x) in
+  let y', s' = Total.collect t ~init:(zero ()) (fun () -> Rune.jit' f x) in
   equal bits_t (bits y) (bits y');
   equal bits_t (bits s) (bits s')
 
 let test_shape_refused () =
   let t = Total.make () in
-  invalid ~sub:"Rune.Total.add: shape [2], where the total's zero has []"
+  invalid ~sub:"Rune.Total.add: shape [2], where the total's init has []"
     (fun () ->
-      Total.collect t ~zero:(zero ()) (fun () -> Total.add t (v [| 1.; 2. |])))
+      Total.collect t ~init:(zero ()) (fun () -> Total.add t (v [| 1.; 2. |])))
+
+(* A total made at the top level serves every set; each addition lies on its
+   collect's [init]'s set, eagerly and traced. *)
+module M1 = (val Nx.devices [ Nx_support.memory 1 ])
+module M2 = (val Nx.devices [ Nx_support.memory 2 ])
+
+let top : (float, Nx.float32_elt, 'd) Total.t = Total.make ()
+let placed x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)
+
+let summed (type d) (p : d Nx.Placement.t) ~jit =
+  let at x = Nx.scalar_at p f32 x in
+  let f () =
+    Total.add top (at 1.5);
+    Total.add top (at (-0.25))
+  in
+  let run () =
+    if jit then
+      ignore
+        (Rune.jit'
+           (fun x ->
+             f ();
+             x)
+           (at 0.))
+    else f ()
+  in
+  let (), sum = Total.collect top ~init:(at (-0.)) run in
+  (bits sum, placed sum)
+
+let test_sets () =
+  let want =
+    bits Nx.(add (add (zero ()) (scalar f32 1.5)) (scalar f32 (-0.25)))
+  in
+  List.iter
+    (fun jit ->
+      let msg = if jit then "jit" else "eager" in
+      equal ~msg (pair bits_t string) (want, "m1") (summed M1.on ~jit);
+      equal ~msg (pair bits_t string) (want, "m2") (summed M2.on ~jit))
+    [ false; true ]
+
+(* Another mint of [M1]'s device list: another set. *)
+module M1' = (val Nx.devices [ Nx_support.memory 1 ])
+
+(* An addition on [M2] under a collect on [M1] raises, wherever it is made, and
+   reaches no collect around: the one on [M2] keeps its [init]. *)
+let test_set_refused () =
+  let sub =
+    "Rune.Total.add: a value on [m2], where the total's init lies on [m1]"
+  in
+  let x2 () = Nx.scalar_at M2.on f32 1. in
+  let add x = Total.add top x in
+  let warm =
+    Rune.jit' (fun x ->
+        add x;
+        x)
+  in
+  ignore
+    (Total.collect top ~init:(Nx.scalar_at M2.on f32 0.) (fun () ->
+         warm (x2 ())));
+  let made =
+    [
+      ("eager", fun () -> add (x2 ()));
+      ( "jit",
+        fun () ->
+          ignore
+            (Rune.jit'
+               (fun x ->
+                 add x;
+                 x)
+               (x2 ())) );
+      ("a warm jit", fun () -> ignore (warm (x2 ())));
+      ( "scan",
+        fun () ->
+          ignore
+            (Rune.scan'
+               ~f:(fun c r ->
+                 add r;
+                 (c, r))
+               ~init:(x2 ())
+               (Nx.full_at M2.on f32 [| 3 |] 1.)) );
+      ( "vmap",
+        fun () ->
+          ignore
+            (Rune.vmap'
+               (fun x ->
+                 add x;
+                 x)
+               (Nx.full_at M2.on f32 [| 2 |] 1.)) );
+      ( "grad",
+        fun () ->
+          ignore
+            (Rune.grad'
+               (fun x ->
+                 add x;
+                 x)
+               (x2 ())) );
+    ]
+  in
+  List.iter
+    (fun (msg, f) ->
+      let outer = Nx.scalar_at M2.on f32 (-0.) in
+      let (), sum =
+        Total.collect top ~init:outer (fun () ->
+            raises_match ~msg (Exn.invalid_arg ~substring:sub) (fun () ->
+                Total.collect top ~init:(Nx.scalar_at M1.on f32 0.) f))
+      in
+      equal ~msg bits_t (bits outer) (bits sum))
+    made;
+  invalid
+    ~sub:
+      "Rune.Total.add: a value on another set of the devices [m1] than the \
+       total's init's" (fun () ->
+      Total.collect top ~init:(Nx.scalar_at M1'.on f32 0.) (fun () ->
+          add (Nx.scalar_at M1.on f32 1.)))
 
 (* A construct whose delivery to one total raises delivers to none: the
    additions of a construct that raises reach no total. *)
 let test_delivery_raises () =
   let refused
-      ?(sub = "Rune.Total.add: shape [3], where the total's zero has [2]") f =
+      ?(sub = "Rune.Total.add: shape [3], where the total's init has [2]") f =
     invalid ~sub (fun () -> ignore (f ()))
   in
   let t1 = Total.make () and t2 = Total.make () in
   let z n = Nx.zeros f32 [| n |] in
   let (), s1 =
-    Total.collect t1 ~zero:(z 2) (fun () ->
+    Total.collect t1 ~init:(z 2) (fun () ->
         refused (fun () ->
-            Total.collect t2 ~zero:(z 2) (fun () ->
+            Total.collect t2 ~init:(z 2) (fun () ->
                 Rune.scan' ~init:(Nx.zeros f32 [||])
                   ~f:(fun c r ->
                     Total.add t1 (Nx.add (z 2) r);
@@ -143,9 +256,9 @@ let test_delivery_raises () =
   equal bits_t (bits (z 2)) (bits s1);
   (* Under a map, and in a root's solve. *)
   let (), s1 =
-    Total.collect t1 ~zero:(z 2) (fun () ->
+    Total.collect t1 ~init:(z 2) (fun () ->
         refused (fun () ->
-            Total.collect t2 ~zero:(z 2) (fun () ->
+            Total.collect t2 ~init:(z 2) (fun () ->
                 Rune.vmap'
                   (fun x ->
                     fst
@@ -159,9 +272,9 @@ let test_delivery_raises () =
   in
   equal ~msg:"under a map" bits_t (bits (z 2)) (bits s1);
   let (), s1 =
-    Total.collect t1 ~zero:(z 2) (fun () ->
+    Total.collect t1 ~init:(z 2) (fun () ->
         refused (fun () ->
-            Total.collect t2 ~zero:(z 2) (fun () ->
+            Total.collect t2 ~init:(z 2) (fun () ->
                 Rune.vmap'
                   (Rune.iterate' ~max:4
                      ~until:(fun x -> Nx.greater_equal_s x 3.)
@@ -173,9 +286,9 @@ let test_delivery_raises () =
   in
   equal ~msg:"under a map whose lanes stop apart" bits_t (bits (z 2)) (bits s1);
   let (), s1 =
-    Total.collect t1 ~zero:(z 2) (fun () ->
+    Total.collect t1 ~init:(z 2) (fun () ->
         refused (fun () ->
-            Total.collect t2 ~zero:(z 2) (fun () ->
+            Total.collect t2 ~init:(z 2) (fun () ->
                 Rune.root Nx.Ptree.tensor
                   ~residual:(fun x -> Nx.sub x (v [| 1. |]))
                   (fun () ->
@@ -194,12 +307,12 @@ let test_delivery_raises () =
   in
   let x = Nx.ones f32 [| 2 |] in
   let call n =
-    Total.collect t1 ~zero:(z 2) (fun () ->
-        if n = 2 then ignore (Total.collect t2 ~zero:(z n) (fun () -> f x))
+    Total.collect t1 ~init:(z 2) (fun () ->
+        if n = 2 then ignore (Total.collect t2 ~init:(z n) (fun () -> f x))
         else
           refused
-            ~sub:"Rune.Total.add: shape [2], where the total's zero has [3]"
-            (fun () -> Total.collect t2 ~zero:(z n) (fun () -> f x)))
+            ~sub:"Rune.Total.add: shape [2], where the total's init has [3]"
+            (fun () -> Total.collect t2 ~init:(z n) (fun () -> f x)))
   in
   equal ~msg:"a compiled call" bits_t (bits x) (bits (snd (call 2)));
   equal ~msg:"a compiled call refused" bits_t (bits (z 2)) (bits (snd (call 3)))
@@ -207,7 +320,7 @@ let test_delivery_raises () =
 let test_raises () =
   let t = Total.make () in
   raises Exit (fun () ->
-      Total.collect t ~zero:(zero ()) (fun () ->
+      Total.collect t ~init:(zero ()) (fun () ->
           Total.add t (Nx.scalar f32 1.);
           raise Exit))
 
@@ -224,7 +337,7 @@ let test_jit_scope () =
   let calls = Rune.evaluations () in
   let (y, z), sum =
     Total.collect t
-      ~zero:(v [| 0.; 0. |])
+      ~init:(v [| 0.; 0. |])
       (fun () ->
         let y = g x in
         (y, g x))
@@ -415,7 +528,7 @@ let law_chained c =
      the additions written out, or made in constructs. *)
   let collected f x =
     let y, s =
-      Total.collect t ~zero:(value c.zero) (fun () ->
+      Total.collect t ~init:(value c.zero) (fun () ->
           Total.add t (value c.pre);
           f x)
     in
@@ -517,7 +630,7 @@ let test_jit_running () =
   let x = v [| 1. |] in
   let total f =
     snd
-      (Total.collect t ~zero:(Nx.scalar f32 1e8) (fun () ->
+      (Total.collect t ~init:(Nx.scalar f32 1e8) (fun () ->
            f ();
            f ()))
   in
@@ -538,6 +651,8 @@ let () =
          prop "jit adds what eager adds" additions law_additions;
          test "a jit that raises adds nothing" test_raising_jit;
          test "an addition of another shape raises" test_shape_refused;
+         test "a top-level total serves every set" test_sets;
+         test "an addition on another set raises" test_set_refused;
          test "an exception passes through collect" test_raises;
          test "a construct whose delivery raises delivers nothing"
            test_delivery_raises;

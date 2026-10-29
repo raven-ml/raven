@@ -291,7 +291,7 @@ let test_once () =
         three x)
   in
   let (), total =
-    Total.collect t ~zero:(Nx.scalar f32 0.) (fun () ->
+    Total.collect t ~init:(Nx.scalar f32 0.) (fun () ->
         ignore (Rune.grad' (fun x -> Nx.sum (r x)) x))
   in
   equal bits_t (bits (Nx.scalar f32 (-0.5))) (bits total)

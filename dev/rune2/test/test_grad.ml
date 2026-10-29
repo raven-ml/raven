@@ -681,7 +681,7 @@ let test_detach () =
 let test_total () =
   let total = Rune.Total.make () in
   let _, sum =
-    Rune.Total.collect total ~zero:(v [| 0. |]) (fun () ->
+    Rune.Total.collect total ~init:(v [| 0. |]) (fun () ->
         Rune.grad'
           (fun x ->
             Rune.Total.add total x;

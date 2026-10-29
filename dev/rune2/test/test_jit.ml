@@ -2365,7 +2365,7 @@ let test_compositions () =
   in
   let collected h =
     let zero = Nx.scalar f64 0. in
-    snd (Rune.Total.collect t ~zero (fun () -> ignore (h ())))
+    snd (Rune.Total.collect t ~init:zero (fun () -> ignore (h ())))
   in
   let totals msg h =
     close ~msg
@@ -2452,8 +2452,8 @@ let test_loop_totals () =
   let collected f x =
     let zero = Nx.scalar f64 (-0.) and zu = Nx.full f64 [| 3 |] (-0.) in
     let (y, a), b =
-      Rune.Total.collect u ~zero:zu (fun () ->
-          Rune.Total.collect t ~zero (fun () -> f x))
+      Rune.Total.collect u ~init:zu (fun () ->
+          Rune.Total.collect t ~init:zero (fun () -> f x))
     in
     (bits y, bits a, bits b)
   in
@@ -2564,8 +2564,8 @@ let test_seed_tangents () =
   let sums first x =
     let zero = Nx.zeros f64 [| 2 |] in
     let (_, s1), s2 =
-      Rune.Total.collect t2 ~zero (fun () ->
-          Rune.Total.collect t1 ~zero (fun () ->
+      Rune.Total.collect t2 ~init:zero (fun () ->
+          Rune.Total.collect t1 ~init:zero (fun () ->
               Rune.Total.add (if first then t1 else t2) x;
               g c))
     in

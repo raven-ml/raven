@@ -287,7 +287,7 @@ let test_fiber () =
     (bits (Rune.vmap' ~axis:a lane xs));
   let t = Total.make () in
   let (), sum =
-    Total.collect t ~zero:(zero ()) (fun () ->
+    Total.collect t ~init:(zero ()) (fun () ->
         in_fiber (fun () -> Total.add t (Nx.scalar f32 1.5)))
   in
   equal ~msg:"an addition" bits_t (bits (Nx.scalar f32 1.5)) (bits sum)
@@ -317,7 +317,7 @@ let test_elsewhere () =
             xs);
       let t = Total.make () in
       let (), sum =
-        Total.collect t ~zero:(zero ()) (fun () ->
+        Total.collect t ~init:(zero ()) (fun () ->
             elsewhere start (fun () -> Total.add t (Nx.scalar f32 1.5)))
       in
       equal ~msg bits_t (bits (zero ())) (bits sum))

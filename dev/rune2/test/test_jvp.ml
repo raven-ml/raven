@@ -691,7 +691,7 @@ let law_jacobian (s, xo, k, e) =
 let test_total () =
   let total = Rune.Total.make () in
   let _, sum =
-    Rune.Total.collect total ~zero:(v [| 0. |]) (fun () ->
+    Rune.Total.collect total ~init:(v [| 0. |]) (fun () ->
         Rune.jvp'
           (fun x ->
             Rune.Total.add total x;

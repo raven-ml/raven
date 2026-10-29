@@ -92,19 +92,26 @@ val axis : unit -> axis
 val same_axis : axis -> axis -> bool
 (** [same_axis a b] is [true] iff [a] and [b] are one name. *)
 
-type ('v, 's, 'd) total
+type ('v, 's, +'d) total
 (** The type for totals of [('v, 's, 'd) Nx.t] values. A {e total} names a sum
     that additions ({!add_to}) accumulate within a collect
-    ({!Rune2.Total.collect}). *)
+    ({!Rune2.Total.collect}). It names no set: ['d] is the set of the values one
+    use of it reads, which every comparison of totals checks at run time. *)
 
 val total : unit -> ('v, 's, 'd) total
 (** [total ()] is a fresh total. *)
 
+val one_total : ('v, 's, 'd) total -> ('w, 'r, 'e) total -> bool
+(** [one_total t u] is [true] iff [t] and [u] are one total, on any sets. *)
+
 val same_total :
   ('v, 's, 'd) total ->
+  'd Nx.Placement.t ->
   ('w, 'r, 'e) total ->
+  'e Nx.Placement.t ->
   (('v, 's, 'd) Nx.t, ('w, 'r, 'e) Nx.t) Type.eq option
-(** [same_total t u] is [Some Equal] iff [t] and [u] are one total. *)
+(** [same_total t p u q] is [Some Equal] iff [t] and [u] are one total and [p]
+    and [q] of one set ({!Nx.Placement.same}). *)
 
 val total_id : ('v, 's, 'd) total -> int
 (** [total_id t] is a number no other total has. *)
@@ -625,10 +632,11 @@ type _ Effect.t +=
       ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form
       -> ('v, 's, 'd) Nx.t option Effect.t
         (** Answered by the innermost collect of the total around the call with
-            its running value, where that has the form's shape. A tracer other
-            than a tape between answers with a variable holding the total's
-            running value where the call is, which the program it traces
-            threads. A map between answers [None]. *)
+            its running value, where that has the form's shape and lies on the
+            form's set, and [None] where it lies on another. A tracer other than
+            a tape between answers with a variable holding the total's running
+            value where the call is, which the program it traces threads. A map
+            between answers [None]. *)
   | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
         (** Answered by the collect or tracer that answered {!Running}, whose
             running value becomes the value given. *)
@@ -663,13 +671,14 @@ type 'd where =
           where the first addition lies. *)
 
 type _ Effect.t +=
-  | Where : ('v, 's, 'd) total -> 'd where Effect.t
+  | Where : ('v, 's, 'd) total * 'd Nx.Placement.t -> 'd where Effect.t
         (** Answered by the innermost collect of the total around the call with
-            its running value's placement. A tracer between that threads the
-            total answers with its own running value's placement where the
-            holder around it answers [At]. Otherwise a tracer answers as the
-            holder around it does, and the jit tracer [At None] where none is
-            around. A map passes it on. *)
+            its running value's placement, [At None] where that lies on another
+            set than the placement's. A tracer between that threads the total
+            answers with its own running value's placement where the holder
+            around it answers [At]. Otherwise a tracer answers as the holder
+            around it does, and the jit tracer [At None] where none is around. A
+            map passes it on. *)
 
 type _ Effect.t +=
   | Open : 'a probe -> bool Effect.t
@@ -711,14 +720,14 @@ val silenced : (unit -> 'a) -> 'a
     pass, a remat's replay, a root's derivative and a custom rule's primal
     derived again evaluate their programs, which offer nothing. *)
 
-val where : ('v, 's, 'd) total -> 'd where
-(** [where t] is the answer to {!Where}, [Nowhere] with none around. *)
+val where : ('v, 's, 'd) total -> 'd Nx.Placement.t -> 'd where
+(** [where t p] is the answer to {!Where}, [Nowhere] with none around. *)
 
 type _ Effect.t +=
   | Accepts : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> unit Effect.t
         (** Answered by the innermost collect of the total around the call,
             which raises [Invalid_argument] where it would refuse an addition of
-            the form's shape; tracers and maps pass it on. *)
+            the form's shape or set; tracers and maps pass it on. *)
 
 val accepts : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> unit
 (** [accepts t f] performs {!Accepts}, nothing with none around. *)

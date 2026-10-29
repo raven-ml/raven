@@ -717,7 +717,7 @@ let test_totals () =
   let t = Rune.Total.make () in
   let xs = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 0.5; -0.25 |] in
   let collect ?(zero = Nx.zeros f64 [| 2 |]) f =
-    snd (Rune.Total.collect t ~zero (fun () -> ignore (Rune.vmap' f xs)))
+    snd (Rune.Total.collect t ~init:zero (fun () -> ignore (Rune.vmap' f xs)))
   in
   equal ~msg:"lanes' values" floats [| 4.5; 5.75 |]
     (Nx.to_array
@@ -732,7 +732,7 @@ let test_totals () =
   let none = Nx.create f64 [| 0; 2 |] [||] in
   let _, total =
     Rune.Total.collect t
-      ~zero:(v [| -0.; -0. |])
+      ~init:(v [| -0.; -0. |])
       (fun () ->
         Rune.vmap'
           (fun x ->
@@ -748,7 +748,7 @@ let test_totals () =
     Rune.vmap'
       (fun x ->
         snd
-          (Rune.Total.collect t ~zero:(Nx.zeros f64 [| 2 |]) (fun () ->
+          (Rune.Total.collect t ~init:(Nx.zeros f64 [| 2 |]) (fun () ->
                Rune.Total.add t x;
                Rune.Total.add t x)))
       xs

@@ -459,66 +459,94 @@ module Total = struct
     accepts t (Nx.Prim.form x);
     add_to t x
 
-  let collect (type v s d) (t : (v, s, d) t) ~(zero : (v, s, d) Nx.t) f =
-    let sum = ref zero in
+  let collect (type v s d) (t : (v, s, d) t) ~(init : (v, s, d) Nx.t) f =
+    let sum = ref init in
+    let at = Nx.placement init in
+    let rigs p = List.map Rig.name (Nx.rigs (Nx.Placement.devices p)) in
+    let on ppf p = Format.fprintf ppf "[%s]" (String.concat "; " (rigs p)) in
     let refused shape =
       Invalid_argument
         (Format.asprintf
-           "Rune.Total.add: shape %a, where the total's zero has %a"
-           pp_shape shape pp_shape (Nx.shape zero))
+           "Rune.Total.add: shape %a, where the total's init has %a" pp_shape
+           shape pp_shape (Nx.shape init))
     in
+    (* Two sets of one device list are told apart by name only. *)
+    let elsewhere p =
+      Invalid_argument
+        (if rigs p = rigs at then
+           Format.asprintf
+             "Rune.Total.add: a value on another set of the devices %a than \
+              the total's init's"
+             on p
+         else
+           Format.asprintf
+             "Rune.Total.add: a value on %a, where the total's init lies on %a"
+             on p on at)
+    in
+    (* [u] is [t] on another set than [init]'s, whose additions are refused. *)
+    let mine u = one_total u t in
     let effc (type a) (e : a Effect.t) :
         ((a, _) Effect.Deep.continuation -> _) option =
       match e with
       | Construct (Add (u, x)) -> (
-          match same_total u t with
-          | None -> None
+          match same_total u (Nx.placement x) t at with
           | Some Type.Equal ->
               Some
                 (fun k ->
-                  if Nx.shape x <> Nx.shape zero then
+                  if Nx.shape x <> Nx.shape init then
                     Effect.Deep.discontinue k (refused (Nx.shape x))
                   else begin
                     sum := Nx.add !sum x;
                     Effect.Deep.continue k [||]
-                  end))
+                  end)
+          | None when mine u ->
+              Some
+                (fun k ->
+                  Effect.Deep.discontinue k (elsewhere (Nx.placement x)))
+          | None -> None)
       | Accepts (u, f) -> (
-          match same_total u t with
-          | None -> None
+          match same_total u f.placement t at with
           | Some Type.Equal ->
               let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
               Some
                 (fun k ->
-                  if shape <> Nx.shape zero then
+                  if shape <> Nx.shape init then
                     Effect.Deep.discontinue k (refused shape)
-                  else Effect.Deep.continue k ()))
+                  else Effect.Deep.continue k ())
+          | None when mine u ->
+              Some (fun k -> Effect.Deep.discontinue k (elsewhere f.placement))
+          | None -> None)
       | Running (u, f) -> (
-          match same_total u t with
+          match same_total u f.placement t at with
           | Some Type.Equal ->
               let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
               Some
                 (fun k ->
                   Effect.Deep.continue k
-                    (if shape = Nx.shape zero then Some !sum else None))
+                    (if shape = Nx.shape init then Some !sum else None))
+          | None when mine u -> Some (fun k -> Effect.Deep.continue k None)
           | None -> None)
       | Replace (u, x) -> (
-          match same_total u t with
+          match same_total u (Nx.placement x) t at with
           | Some Type.Equal ->
               Some
                 (fun k ->
                   sum := x;
                   Effect.Deep.continue k ())
           | None -> None)
-      | Where u -> (
-          match same_total u t with
+      | Where (u, p) -> (
+          match same_total u p t at with
           | Some Type.Equal ->
               Some
                 (fun k ->
                   Effect.Deep.continue k (At (Some (Nx.placement !sum))))
+          | None when mine u -> Some (fun k -> Effect.Deep.continue k (At None))
           | None -> None)
       | _ -> None
     in
-    let r = Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc } in
+    let r =
+      Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc }
+    in
     (r, !sum)
 end
 

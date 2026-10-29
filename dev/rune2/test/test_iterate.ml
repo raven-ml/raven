@@ -1330,7 +1330,7 @@ let test_totals () =
   in
   let x = Nx.create f64 [| 3; 1 |] [| 0.; 2.; 5. |] in
   let zero () = Nx.place Nx.Host.on (Nx.scalar f64 0.) in
-  let total f = snd (Total.collect u ~zero:(zero ()) f) in
+  let total f = snd (Total.collect u ~init:(zero ()) f) in
   (* Three, one and no steps: 7 tests, 4 steps. *)
   equal ~msg:"around the map" bits_t
     (bits (Nx.scalar f64 704.))

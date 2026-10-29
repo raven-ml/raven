@@ -1444,9 +1444,12 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
    seeded them, or one around it. The others no addition reaches. *)
 and held_totals ~seeded adds =
   Array.map
-    (fun (Program.Addition (t, _, _)) ->
+    (fun (Program.Addition (t, _, out)) ->
       seeded
-      || match Program.where t with Program.Nowhere -> false | At _ -> true)
+      ||
+      match Program.where t out.placement with
+      | Program.Nowhere -> false
+      | At _ -> true)
     adds
 
 (* [f acc], every lane's sums [acc] those [live] says held, each lane's running
@@ -1489,7 +1492,7 @@ and held_sums n adds ~seeded i sums =
             fun () -> Program.add_to t y
           in
           (* With nothing holding the total, an addition does nothing. *)
-          match (n, Program.where t) with
+          match (n, Program.where t out.placement) with
           | 0, _ | _, Nowhere -> Fun.id
           | _, At None -> (
               match Program.coerce_at out b with
@@ -1512,7 +1515,7 @@ and lanes_placed n adds =
   Array.map
     (fun (Program.Addition (t, into, out)) ->
       let into =
-        match Program.where t with
+        match Program.where t into.placement with
         | At (Some p) -> { into with placement = p }
         | At None | Nowhere -> into
       in

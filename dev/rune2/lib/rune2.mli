@@ -768,37 +768,40 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
 
     A {e total} is a write-only sum, which code anywhere inside a function adds
     to and the caller reads when the function returns:
-    {!Total.collect}[ t ~zero f] is [f ()] with [zero] plus the additions to [t]
+    {!Total.collect}[ t ~init f] is [f ()] with [init] plus the additions to [t]
     that reach it. Nothing reads a total before its [collect] returns, so an
     addition never changes a value the function computes, and with no [collect]
     of [t] open it does nothing.
 
     An addition reaches the innermost open [collect] of its total around the
     call, once per execution of the code that makes it. A [collect]'s
-    {e running value} is its [zero] plus the additions that have reached it so
+    {e running value} is its [init] plus the additions that have reached it so
     far. The additions a traced function makes reach it when the construct that
     traced the function returns, so a construct that raises adds none: a {!jit}
     adds its function's additions once per call, as the call returns. An
-    addition of another shape than its [collect]'s zero raises where it is made,
-    inside a traced function as the function is traced. A step of {!scan} or
-    {!iterate}, and an [until] once per test, makes its additions once per step.
-    A construct adds its additions to the running value in the order they are
-    made, at any depth: a loop inside another loop's step, a {!remat} or a
-    custom rule in a step, and a {!jit}, which computes the sums in its program.
-    So the total equals the sum of the same additions made one after another,
-    under every differentiation too. Under a differentiation an addition adds
-    its value's primal. A construct that makes no addition leaves a running
-    value as it is. Inside a {!vmap}, each lane makes the additions of the code
-    it runs: a [collect] inside the map receives its lane's, and one outside it
-    receives, as one addition, their sum over the lanes as {!Nx.sum} computes it
-    along the stacked axis, or nothing from a map of no lane; a construct inside
-    the map sums its additions there starting from an identity that changes no
-    sum (a negative zero). *)
+    addition of another shape than its [collect]'s [init], or on another device
+    set, raises where it is made, inside a traced function as the function is
+    traced. A step of {!scan} or {!iterate}, and an [until] once per test, makes
+    its additions once per step. A construct adds its additions to the running
+    value in the order they are made, at any depth: a loop inside another loop's
+    step, a {!remat} or a custom rule in a step, and a {!jit}, which computes
+    the sums in its program. So the total equals the sum of the same additions
+    made one after another, under every differentiation too. Under a
+    differentiation an addition adds its value's primal. A construct that makes
+    no addition leaves a running value as it is. Inside a {!vmap}, each lane
+    makes the additions of the code it runs: a [collect] inside the map receives
+    its lane's, and one outside it receives, as one addition, their sum over the
+    lanes as {!Nx.sum} computes it along the stacked axis, or nothing from a map
+    of no lane; a construct inside the map sums its additions there starting
+    from an identity that changes no sum (a negative zero). *)
 
 (** Write-only sums. *)
 module Total : sig
-  type ('v, 's, 'd) t
-  (** The type for totals of [('v, 's, 'd) Nx.t] values. *)
+  type ('v, 's, +'d) t
+  (** The type for totals of [('v, 's, 'd) Nx.t] values. ['d] is covariant, so a
+      total made at a library's top level serves every device set:
+      [let t : (float, Nx.float64_elt, 'd) Rune2.Total.t = Rune2.Total.make ()].
+      A collect's [init] fixes the set of the additions it receives. *)
 
   val make : unit -> ('v, 's, 'd) t
   (** [make ()] is a fresh total, distinct from every other. *)
@@ -807,18 +810,19 @@ module Total : sig
   (** [add t v] adds [v] to the innermost open {!collect} of [t], and does
       nothing if none is open.
 
-      Raises [Invalid_argument] if [v]'s shape is not the [zero]'s of the
-      [collect] it reaches. *)
+      Raises [Invalid_argument] naming both sets if [v] lies on another set than
+      the [init] of the [collect] it reaches, or naming both shapes if [v]'s
+      shape is not [init]'s. *)
 
   val collect :
     ('v, 's, 'd) t ->
-    zero:('v, 's, 'd) Nx.t ->
+    init:('v, 's, 'd) Nx.t ->
     (unit -> 'r) ->
     'r * ('v, 's, 'd) Nx.t
-  (** [collect t ~zero f] is [(f (), total)], [total] being [zero] plus each
-      addition to [t] that reaches it, in the order they reach it. If [f]
-      raises, [collect] raises the same exception, with the backtrace of its
-      raise. *)
+  (** [collect t ~init f] is [(f (), total)], [total] being [init] plus each
+      addition to [t] that reaches it, in the order they reach it, and [init]
+      itself if none does. If [f] raises, [collect] raises the same exception,
+      with the backtrace of its raise. *)
 end
 
 (** {1:probes Probes} *)

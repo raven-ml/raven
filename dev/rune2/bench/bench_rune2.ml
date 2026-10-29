@@ -551,7 +551,7 @@ let grad_rule_in_scope x =
     (fun x ->
       let y, _ =
         Rune.Total.collect added
-          ~zero:(host (Nx.scalar f32 0.))
+          ~init:(host (Nx.scalar f32 0.))
           (fun () -> scanned_rule x)
       in
       Nx.sum y)

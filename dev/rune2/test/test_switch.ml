@@ -116,12 +116,12 @@ let test_untaken () =
   List.iter
     (fun (mode, apply) ->
       let y, n =
-        Total.collect t ~zero:(scalar 0.) (fun () -> apply counted x)
+        Total.collect t ~init:(scalar 0.) (fun () -> apply counted x)
       in
       equal ~msg:(mode ^ " value") close (scalar 1.) y;
       equal ~msg:(mode ^ " additions") close (scalar 0.) n;
       let _, n =
-        Total.collect t ~zero:(scalar 0.) (fun () -> apply counted (scalar 2.))
+        Total.collect t ~init:(scalar 0.) (fun () -> apply counted (scalar 2.))
       in
       equal ~msg:(mode ^ " taken additions") close (scalar 1.) n)
     modes
@@ -213,11 +213,11 @@ let test_lane_masks () =
   in
   (* The lanes' additions lie where the lanes do: so does the running value. *)
   let zero = Nx.mul_s (Nx.sum lanes) 0. in
-  let y, n = Total.collect t ~zero (fun () -> Rune.vmap' f lanes) in
+  let y, n = Total.collect t ~init:zero (fun () -> Rune.vmap' f lanes) in
   equal ~msg:"value" close (per_lane written lanes) y;
   equal ~msg:"additions" close (scalar 3.) n;
   let _, n =
-    Total.collect t ~zero (fun () -> Rune.vmap' f (vec [| -1.; -2. |]))
+    Total.collect t ~init:zero (fun () -> Rune.vmap' f (vec [| -1.; -2. |]))
   in
   equal ~msg:"no lane takes it" close (scalar 0.) n;
   invalid ~sub:"Rune.switch: index 2 outside 0 .. 1, in lane 1" (fun () ->
@@ -308,7 +308,9 @@ let test_traced_lanes () =
       (fun () -> x)
   in
   let zero = Nx.mul_s (Nx.sum lanes) 0. in
-  let y, n = Total.collect t ~zero (fun () -> Rune.jit' (Rune.vmap' f) lanes) in
+  let y, n =
+    Total.collect t ~init:zero (fun () -> Rune.jit' (Rune.vmap' f) lanes)
+  in
   equal ~msg:"jit value" close (per_lane written lanes) y;
   equal ~msg:"jit additions" close (scalar 3.) n;
   let stepped =
@@ -382,7 +384,7 @@ let test_total_derivatives () =
   let t = Total.make () in
   let f x =
     snd
-      (Total.collect t ~zero:(Nx.mul_s x 0.) (fun () ->
+      (Total.collect t ~init:(Nx.mul_s x 0.) (fun () ->
            Rune.cond' (Nx.greater_s x 0.)
              (fun () ->
                Total.add t (Nx.mul x x);
@@ -469,7 +471,7 @@ let test_compiled () =
         x)
       (fun () -> Nx.neg x)
   in
-  let collected f x = Total.collect t ~zero:(scalar 0.) (fun () -> f x) in
+  let collected f x = Total.collect t ~init:(scalar 0.) (fun () -> f x) in
   let collatz x =
     Rune.iterate' ~max:200
       ~until:(fun x -> Nx.less_equal_s x 1.)

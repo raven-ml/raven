@@ -61,7 +61,7 @@ let test_constructs () =
     Nx.add (Rune.detach x) (Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) x)
   in
   let p, _ =
-    Rune.Total.collect total ~zero:(Nx.zeros f32 [| 2 |]) (fun () ->
+    Rune.Total.collect total ~init:(Nx.zeros f32 [| 2 |]) (fun () ->
         Rune.program T.tensor T.tensor f (v [| 1.; 2. |]))
   in
   print_string (print p);

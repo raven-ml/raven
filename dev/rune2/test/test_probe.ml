@@ -690,7 +690,7 @@ let test_total () =
   let run f =
     collected p (fun () ->
         let c, t =
-          Rune.Total.collect total ~zero:(Nx.zeros f64 [| 1 |]) (fun () -> f xs)
+          Rune.Total.collect total ~init:(Nx.zeros f64 [| 1 |]) (fun () -> f xs)
         in
         (bits c, bits t))
   in

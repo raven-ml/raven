@@ -58,10 +58,23 @@ let axes = Atomic.make 0
 let axis () = Atomic.fetch_and_add axes 1
 let same_axis = Int.equal
 
-type ('v, 's, 'd) total = { id : ('v, 's, 'd) Nx.t Type.Id.t }
+(* A total names no set: its values' set is the one they lie on, which each
+   comparison checks. *)
+type ('v, 's, 'd) total = { id : ('v * 's) Type.Id.t }
 
 let total () = { id = Type.Id.make () }
-let same_total t u = Type.Id.provably_equal t.id u.id
+let one_total t u = Option.is_some (Type.Id.provably_equal t.id u.id)
+
+let same_total (type v s d w r e) (t : (v, s, d) total) (p : d Nx.Placement.t)
+    (u : (w, r, e) total) (q : e Nx.Placement.t) :
+    ((v, s, d) Nx.t, (w, r, e) Nx.t) Type.eq option =
+  match Type.Id.provably_equal t.id u.id with
+  | None -> None
+  | Some Type.Equal -> (
+      match Nx.Placement.same p q with
+      | Some Type.Equal -> Some Type.Equal
+      | None -> None)
+
 let total_id t = Type.Id.uid t.id
 
 type 'a probe =
@@ -628,7 +641,11 @@ let sums programs =
           found := !found @ [ (a, F f) ];
           k
       | (Addition (u, _, _), F g) :: rest ->
-          if Option.is_some (same_total t u) && shape_of g = shape then k
+          if
+            one_total t u
+            && Option.is_some (Nx.Placement.same out.placement g.placement)
+            && shape_of g = shape
+          then k
           else go (k + 1) rest
     in
     go 0 !found
@@ -831,10 +848,12 @@ let rec unobserved p =
     { p with eqns; emits = false }
 
 type 'd where = Nowhere | At of 'd Nx.Placement.t option
-type _ Effect.t += Where : ('v, 's, 'd) total -> 'd where Effect.t
 
-let where t =
-  match Effect.perform (Where t) with
+type _ Effect.t +=
+  | Where : ('v, 's, 'd) total * 'd Nx.Placement.t -> 'd where Effect.t
+
+let where t p =
+  match Effect.perform (Where (t, p)) with
   | w -> w
   | exception Effect.Unhandled (Where _) -> Nowhere
 
@@ -871,7 +890,7 @@ let unset (V y) =
     (Format.asprintf
        "Rune.Total.add: a running total takes a value on %a, as the lanes of a \
         map held apart compute it, which its running value's set cannot hold; \
-        give the collect's zero that placement"
+        give the collect's init that placement"
        Nx.Placement.pp (Nx.placement y))
 
 let rec eval ?totals p args =
@@ -1464,7 +1483,7 @@ let run c =
         match seeds.(k) with
         | Seed (u, v) -> (
             (* The chain's end lies where its seed does. *)
-            match same_total u t with
+            match same_total u (Nx.placement v) t f.placement with
             | Some Type.Equal ->
                 let y = like v r.(base + k) in
                 fun () -> replace t y

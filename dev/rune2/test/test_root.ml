@@ -690,7 +690,7 @@ let total_tests =
     test "solve's additions count once, the residual's none, under grad"
       (fun () ->
         let _, n =
-          Rune.Total.collect total ~zero:(scalar 0.) (fun () ->
+          Rune.Total.collect total ~init:(scalar 0.) (fun () ->
               Rune.grad' (fun a -> Nx.sum (counted a)) (vec [| 2.; 3. |]))
         in
         equal (exact ()) (scalar 1.) n);
@@ -701,7 +701,7 @@ let total_tests =
           Rune.grad'
             (fun a ->
               let x, n =
-                Rune.Total.collect total ~zero:(scalar 0.) (fun () -> counted a)
+                Rune.Total.collect total ~init:(scalar 0.) (fun () -> counted a)
               in
               Nx.mul n (Nx.sum x))
             a
@@ -709,7 +709,7 @@ let total_tests =
         equal (close ()) (Nx.recip (Nx.mul_s (Nx.sqrt a) 2.)) g);
     test "vmap's lanes each count solve's additions" (fun () ->
         let _, n =
-          Rune.Total.collect total ~zero:(scalar 0.) (fun () ->
+          Rune.Total.collect total ~init:(scalar 0.) (fun () ->
               Rune.vmap' counted (vec [| 2.; 3.; 5. |]))
         in
         equal (exact ()) (scalar 3.) n);
@@ -735,7 +735,7 @@ let total_tests =
       test (name ^ ": solve's additions count once, linear_solve's none")
         (fun () ->
           let _, got =
-            Rune.Total.collect total ~zero:(scalar 0.) (fun () -> f ())
+            Rune.Total.collect total ~init:(scalar 0.) (fun () -> f ())
           in
           equal (exact ()) (scalar n) got))
     [
@@ -1290,7 +1290,7 @@ let compiled_tests =
         let f a = Nx.sum (Nx.sin (adding_root a)) in
         let a = vec [| 0.5; 2.; 3. |] in
         let collect g =
-          Rune.Total.collect total ~zero:(scalar 0.) (fun () -> g a)
+          Rune.Total.collect total ~init:(scalar 0.) (fun () -> g a)
         in
         let g, n = collect (Rune.grad' f) in
         let g', n' = compiled (fun () -> collect (Rune.jit' (Rune.grad' f))) in
