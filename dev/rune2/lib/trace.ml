@@ -493,6 +493,13 @@ let rec answer st i c =
       call_parts st i body args site ~seeds
   | Tape, Iterate _ -> iterate_parts st i c
   | Tape, Switch _ -> switch_parts st i c
+  (* A tape's variables are linear, as a transpose traces them: a callback over
+     one has no transpose. *)
+  | Tape, Callback _ ->
+      invalid_arg
+        ("Rune.callback: " ^ st.name
+       ^ " tracks an argument of a call with a float result; a custom rule \
+          around the call gives its derivative")
   | _ -> record st i c
 
 (* A scan over the tape's variables is two scans, as JAX's partial evaluation of

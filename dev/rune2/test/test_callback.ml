@@ -162,6 +162,59 @@ let test_nested () =
   equal ~msg:"lanes' results" Testable.(list float_exact) (floats (Nx.neg x))
     (floats y)
 
+(* With [~lanes], a held lane receives its donor's rows, and an argument the
+   map does not hold is broadcast; a pair of results splits. *)
+let test_lanes_more () =
+  let rows = ref [] in
+  let g (c, b) =
+    rows := (floats c, floats b) :: !rows;
+    (Nx.add_s c 1., Nx.sum ~axes:[ 1 ] b)
+  in
+  let pp = T.(pair tensor tensor @-> returns (pair tensor tensor)) in
+  let step b c =
+    fst (Rune.callback ~lanes:g pp ~like:(c, scalar 0.) (fun _ -> assert false) (c, b))
+  in
+  let loop k =
+    Rune.iterate T.tensor ~max:5
+      ~until:(fun c -> Nx.greater_equal c k)
+      ~f:(step (vec [| 1.; 2. |]))
+      (Nx.zeros_like k)
+  in
+  let r = Rune.vmap tt loop (vec [| 1.; 2. |]) in
+  equal ~msg:"results" Testable.(list float_exact) [ 1.; 2. ] (floats r);
+  let fl2 = Testable.(list (pair (list float_exact) (list float_exact))) in
+  equal ~msg:"rows" fl2
+    [ ([ 0.; 0. ], [ 1.; 2.; 1.; 2. ]); ([ 1.; 1. ], [ 1.; 2.; 1.; 2. ]) ]
+    (List.rev !rows)
+
+(* A scan, and an iterate over no lane value, inside a map: each lane runs its
+   own calls. *)
+let test_map_loops () =
+  let cb, log = logged (fun v -> Nx.add_s v 1.) in
+  let xs = vec [| 1.; 2. |] in
+  let _ =
+    Rune.vmap tt
+      (fun x ->
+        fst
+          (Rune.scan T.tensor T.tensor T.tensor
+             ~f:(fun c r -> (cb (Nx.add c r), r))
+             ~init:x (vec [| 10.; 20. |])))
+      xs
+  in
+  equal ~msg:"a scan" fl [ [ 11. ]; [ 12. ]; [ 32. ]; [ 33. ] ] (log ());
+  let cb, log = logged (fun v -> Nx.add_s v 1.) in
+  let r =
+    Rune.vmap tt
+      (fun x ->
+        Nx.add x
+          (Rune.iterate T.tensor ~max:5
+             ~until:(fun c -> Nx.greater_equal c (scalar 2.))
+             ~f:cb (scalar 0.)))
+      xs
+  in
+  equal ~msg:"an iterate" Testable.(list float_exact) [ 3.; 4. ] (floats r);
+  equal ~msg:"an iterate's calls" Testable.int 4 (List.length (log ()))
+
 (* Lanes whose iterate stops apart: a held lane's step calls nothing. *)
 let law_held ks =
   cover "lanes stopping apart" (List.length (List.sort_uniq compare ks) > 1);
@@ -183,6 +236,115 @@ let law_held ks =
              ks))
   in
   equal ~msg:"calls" fl expected (log ())
+
+(* Derivatives: a tracked argument reaching a float result raises; a custom
+   rule around the call gives the derivative. *)
+let test_refusals () =
+  let x = scalar 2. in
+  let cb x = Rune.callback tt ~like:x Nx.sin x in
+  let refused name =
+    Invalid_argument
+      ("Rune.callback: " ^ name
+     ^ " tracks an argument of a call with a float result; a custom rule \
+        around the call gives its derivative")
+  in
+  raises ~msg:"grad" (refused "Rune.grad'") (fun () -> Rune.grad' cb x);
+  raises ~msg:"jvp" (refused "Rune.jvp'") (fun () -> Rune.jvp' cb x x);
+  raises ~msg:"vjp" (refused "Rune.vjp'") (fun () -> Rune.vjp' cb x);
+  raises ~msg:"linearize" (refused "Rune.linearize") (fun () ->
+      Rune.linearize T.tensor T.tensor cb x);
+  raises ~msg:"linear_transpose" (refused "Rune.linear_transpose") (fun () ->
+      Rune.linear_transpose T.tensor T.tensor cb x x);
+  (* A value the differentiation tracks, captured, is no argument: the
+     function runs outside the differentiation, where using it raises. *)
+  let captured x =
+    Rune.callback tt ~like:x (fun v -> Nx.mul v x) (scalar 1.)
+  in
+  raises ~msg:"a captured tracked value"
+    (Invalid_argument "Nx.mul: a value of Rune.grad', used outside Rune.grad''s extent") (fun () ->
+      Rune.grad' captured x);
+  raises ~msg:"in a scan" (refused "Rune.grad'") (fun () ->
+      Rune.grad'
+        (fun x ->
+          fst
+            (Rune.scan T.tensor T.tensor T.tensor
+               ~f:(fun c r -> (Nx.add c (cb r), r))
+               ~init:x (Nx.reshape [| 1 |] x)))
+        x);
+  (* An untracked argument computes a constant, once. *)
+  let cb, log = logged Nx.sin in
+  let g = Rune.grad' (fun x -> Nx.mul x (cb (scalar 1.))) x in
+  equal ~msg:"untracked" (Testable.float 1e-15) (sin 1.) (Nx.item [] g);
+  equal ~msg:"untracked calls" fl [ [ 1. ] ] (log ());
+  (* A result with no derivative is no refusal. *)
+  let int_like = Nx.scalar Nx.int32 0l in
+  let s = T.(tensor @-> returns tensor) in
+  let g =
+    Rune.grad'
+      (fun x ->
+        let k = Rune.callback s ~like:int_like (fun v -> Nx.cast Nx.int32 v) x in
+        Nx.mul x (Nx.cast f64 k))
+      x
+  in
+  equal ~msg:"an integer result" Testable.float_exact 2. (Nx.item [] g)
+
+(* A cube computed by a callback, whose pullback calls an adjoint through
+   another: the pattern of a density whose gradient an external solver
+   computes. *)
+let cube () =
+  let fwd, flog = logged (fun v -> Nx.mul v (Nx.mul v v)) in
+  let adj = ref 0 in
+  let adjoint (x, ct) =
+    incr adj;
+    Nx.mul ct (Nx.mul_s (Nx.mul x x) 3.)
+  in
+  let p = T.(pair tensor tensor @-> returns tensor) in
+  let f =
+    Rune.custom_vjp T.tensor T.tensor (fun x ->
+        (fwd x, fun ct -> Rune.callback p ~like:x adjoint (x, ct)))
+  in
+  (f, flog, adj)
+
+let test_rule () =
+  let f, flog, adj = cube () in
+  let x = scalar 1.5 in
+  let g = Rune.grad' f x in
+  equal ~msg:"gradient" (Testable.float 1e-12) (3. *. 1.5 *. 1.5) (Nx.item [] g);
+  equal ~msg:"primal calls" fl [ [ 1.5 ] ] (flog ());
+  equal ~msg:"adjoint calls" Testable.int 1 !adj;
+  (* Compiled, the rule's primal runs once per execution, its derivative's
+     included. *)
+  let f, flog, adj = cube () in
+  let g = Rune.grad' (Rune.jit' f) x in
+  equal ~msg:"compiled gradient" (Testable.float 1e-12) 6.75 (Nx.item [] g);
+  equal ~msg:"compiled primal calls" fl [ [ 1.5 ] ] (flog ());
+  equal ~msg:"compiled adjoint calls" Testable.int 1 !adj;
+  raises ~msg:"second order"
+    (Invalid_argument
+       "Rune.callback: Rune.grad' tracks an argument of a call with a float \
+        result; a custom rule around the call gives its derivative")
+    (fun () -> Rune.grad' (Rune.grad' f) x)
+
+(* The rule inside a scan, under grad: once per row forward and once per row
+   in the backward pass. *)
+let law_rule_scan xs =
+  let n = List.length xs in
+  cover "no row" (n = 0);
+  cover "rows" (n > 1);
+  let f, flog, adj = cube () in
+  let loss xs =
+    fst
+      (Rune.scan T.tensor T.tensor T.tensor
+         ~f:(fun c r -> (Nx.add c (f r), r))
+         ~init:(scalar 0.) xs)
+  in
+  let g = Rune.grad' loss (vec (Array.of_list xs)) in
+  equal ~msg:"gradient"
+    Testable.(list (float 1e-12))
+    (List.map (fun x -> 3. *. x *. x) xs)
+    (floats g);
+  equal ~msg:"primal calls" fl (List.map (fun x -> [ x ]) xs) (flog ());
+  equal ~msg:"adjoint calls" Testable.int n !adj
 
 (* The results' forms are [like]'s, which is never read. *)
 let test_like () =
@@ -293,7 +455,15 @@ let () =
            [
              prop "per lane, and with lanes" values law_vmap;
              test "nested maps" test_nested;
+             test "lanes held, broadcast and paired" test_lanes_more;
+             test "loops inside a map" test_map_loops;
              prop "held lanes call nothing" Gen.(list ~size:(int_range 1 4) (int_range 0 3)) law_held;
+           ];
+         group "derivatives"
+           [
+             test "refusals" test_refusals;
+             test "a custom rule around it" test_rule;
+             prop "a custom rule in a scan, under grad" values law_rule_scan;
            ];
          group "interface"
            [

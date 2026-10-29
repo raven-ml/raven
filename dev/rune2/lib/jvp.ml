@@ -1457,6 +1457,12 @@ let dualv i ~fresh v = function
 (* [ys]'s primals and tangents as [j] holds them. *)
 let parts j ys = (Array.map (pv j) ys, Array.map (tv j) ys)
 
+(* Whether a result of the form has a derivative. *)
+let differentiable (Program.F f) =
+  match Nx.Dtype.kind f.dtype with
+  | Float | Complex -> true
+  | Signed | Unsigned | Boolean -> false
+
 (* A construct over duals: [Detach], an addition and an emission are performed
    outward on the primal, so that every differentiation around detaches the
    value, a total receives the primal and a probe is offered it. [Lanes] is
@@ -1528,9 +1534,19 @@ let rec answer ~name ~tape i (c : Program.construct) k =
       Effect.Deep.continue k
         (Program.silenced (fun () -> solve ~name ~tape i c))
   | Lane_index _ -> Effect.Deep.discontinue k Program.Evaluate
-  | Callback _ ->
-      Effect.Deep.discontinue k
-        (Invalid_argument (name ^ ": Rune.callback has no derivative"))
+  (* A callback has no derivative: it raises where a tracked argument may reach
+     a result that has one, and otherwise runs on the primals. *)
+  | Callback cb ->
+      let tracked = Array.exists (fun a -> Option.is_some (tv i a)) cb.args in
+      if tracked && Array.exists differentiable cb.forms then
+        Effect.Deep.discontinue k
+          (Invalid_argument
+             ("Rune.callback: " ^ name
+            ^ " tracks an argument of a call with a float result; a custom \
+               rule around the call gives its derivative"))
+      else
+        let args = Array.map (pv i) cb.args in
+        Effect.Deep.continue k (Program.perform (Callback { cb with args }))
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
    tangent for each carry that has one at the call or gains one from the step: a
@@ -2283,6 +2299,9 @@ and run :
     | Program.Within, _ -> Some (fun k -> Effect.Deep.continue k true)
     | Program.Construct c, Some i
       when List.exists (owned i) (Program.operands c) ->
+        Some (answer ~name ~tape i c)
+    (* A callback runs outside the differentiation, whatever it reads. *)
+    | Program.Construct (Callback _ as c), Some i ->
         Some (answer ~name ~tape i c)
     | Program.Rule r, Some i ->
         let c =
