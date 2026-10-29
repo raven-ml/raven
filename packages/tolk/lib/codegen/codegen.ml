@@ -743,7 +743,9 @@ let reduce_ranges_to_acc (slots, ren) r =
     if num_axes = 0 && fuses ren r x then rtag ~tag:fusable update else update
   in
   let acc_out = store acc_initted update in
-  Some (after acc [ rtag ~tag:mergeable (end_ acc_out rngs) ])
+  (* The read waits on [acc_init] too: [sym] folds a store of the loaded
+     accumulator away, so [acc_out]'s loop can end holding no store. *)
+  Some (after acc [ rtag ~tag:mergeable (end_ acc_out rngs); acc_init ])
 
 let expand_horizontal_reduce ren r =
   let op, num_axes = reduce_arg r and inp = nth r 0 in

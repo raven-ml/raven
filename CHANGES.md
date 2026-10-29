@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- A reduction to which no lane adds, as an int16 fold that sums no term into
+  some elements, gives its identity. Its program read the accumulator's
+  registers without storing the identity there (`Codegen.to_program`).
 - `Rangeify.get_kernel_graph` no longer runs two outputs as one kernel where
   one reads a storage before a write over it and the other after. The kernel
   read one state for both, a wrong value with no error, as for `v + a` and

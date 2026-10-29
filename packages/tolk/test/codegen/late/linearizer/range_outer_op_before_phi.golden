@@ -24,7 +24,7 @@
 22 Ops.ADD dtypes.float [14, 21]
 23 Ops.STORE dtypes.void [13, 22]
 24 Ops.END dtypes.void [23, 11]
-25 Ops.AFTER dtypes.float [4, 24]
+25 Ops.AFTER dtypes.float [4, 24, 8]
 26 Ops.INDEX dtypes.float [25, 2]
 27 Ops.LOAD dtypes.float [26]
 28 Ops.ADD dtypes.float [27, 20]

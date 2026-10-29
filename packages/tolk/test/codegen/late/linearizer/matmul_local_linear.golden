@@ -44,7 +44,7 @@
 42 Ops.MULACC dtypes.float [34, 38, 41]
 43 Ops.STORE dtypes.void [40, 42]
 44 Ops.END dtypes.void [43, 31]
-45 Ops.AFTER dtypes.float [3, 44]
+45 Ops.AFTER dtypes.float [3, 44, 30]
 46 Ops.INDEX dtypes.float [45, 13]
 47 Ops.LOAD dtypes.float [46]
 48 Ops.ADD dtypes.int [26, 29]

@@ -53,7 +53,7 @@
 51 Ops.ADD dtypes.float [22, 50]
 52 Ops.STORE dtypes.void [21, 51]
 53 Ops.END dtypes.void [52, 19]
-54 Ops.AFTER dtypes.float [9, 53]
+54 Ops.AFTER dtypes.float [9, 53, 16]
 55 Ops.INDEX dtypes.float [54, 12]
 56 Ops.LOAD dtypes.float [55]
 57 Ops.CONST dtypes.weakfloat [] 0.0003906250058207661
@@ -77,7 +77,7 @@
 75 Ops.ADD dtypes.float [74, 50]
 76 Ops.STORE dtypes.void [73, 75]
 77 Ops.END dtypes.void [76, 19]
-78 Ops.AFTER dtypes.float [68, 77]
+78 Ops.AFTER dtypes.float [68, 77, 71]
 79 Ops.INDEX dtypes.float [78, 12]
 80 Ops.LOAD dtypes.float [79]
 81 Ops.MUL dtypes.float [80, 58]

@@ -29,7 +29,7 @@
 27 Ops.ADD dtypes.float [19, 26]
 28 Ops.STORE dtypes.void [18, 27]
 29 Ops.END dtypes.void [28, 16]
-30 Ops.AFTER dtypes.float [7, 29]
+30 Ops.AFTER dtypes.float [7, 29, 14]
 31 Ops.INDEX dtypes.float [30, 10]
 32 Ops.LOAD dtypes.float [31]
 33 Ops.CONST dtypes.weakfloat [] 1.0
@@ -86,7 +86,7 @@
 84 Ops.MULACC dtypes.float [82, 82, 83]
 85 Ops.STORE dtypes.void [74, 84]
 86 Ops.END dtypes.void [85, 72]
-87 Ops.AFTER dtypes.float [7, 86]
+87 Ops.AFTER dtypes.float [7, 86, 70]
 88 Ops.INDEX dtypes.float [87, 10]
 89 Ops.LOAD dtypes.float [88]
 90 Ops.CONST dtypes.weakint [] -1

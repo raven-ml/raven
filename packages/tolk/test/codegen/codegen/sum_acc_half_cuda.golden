@@ -21,7 +21,7 @@
 19 Ops.ADD dtypes.float [14, 18]
 20 Ops.STORE dtypes.void [13, 19]
 21 Ops.END dtypes.void [20, 11]
-22 Ops.AFTER dtypes.float [4, 21]
+22 Ops.AFTER dtypes.float [4, 21, 8]
 23 Ops.INDEX dtypes.float [22, 2]
 24 Ops.LOAD dtypes.float [23]
 25 Ops.CAST dtypes.half [24] dtypes.half
@@ -36,7 +36,7 @@
 34 Ops.ADD dtypes.float [33, 18]
 35 Ops.STORE dtypes.void [32, 34]
 36 Ops.END dtypes.void [35, 11]
-37 Ops.AFTER dtypes.float [28, 36]
+37 Ops.AFTER dtypes.float [28, 36, 30]
 38 Ops.INDEX dtypes.float [37, 2]
 39 Ops.LOAD dtypes.float [38]
 40 Ops.CAST dtypes.half [39] dtypes.half

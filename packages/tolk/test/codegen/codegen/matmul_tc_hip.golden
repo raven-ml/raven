@@ -217,7 +217,7 @@
 215 Ops.STORE dtypes.void [211, 214]
 216 Ops.GROUP dtypes.void [180, 185, 190, 195, 200, 205, 210, 215]
 217 Ops.END dtypes.void [216, 54]
-218 Ops.AFTER dtypes.float [23, 217]
+218 Ops.AFTER dtypes.float [23, 217, 29, 33, 37, 41, 43, 47, 49, 53]
 219 Ops.INDEX dtypes.float [218, 25]
 220 Ops.LOAD dtypes.float [219]
 221 Ops.CAST dtypes.half [220] dtypes.half
@@ -318,7 +318,7 @@
 316 Ops.STORE dtypes.void [313, 315]
 317 Ops.GROUP dtypes.void [288, 292, 296, 300, 304, 308, 312, 316]
 318 Ops.END dtypes.void [317, 54]
-319 Ops.AFTER dtypes.float [267, 318]
+319 Ops.AFTER dtypes.float [267, 318, 269, 271, 273, 275, 277, 279, 281, 283]
 320 Ops.INDEX dtypes.float [319, 25]
 321 Ops.LOAD dtypes.float [320]
 322 Ops.CAST dtypes.half [321] dtypes.half

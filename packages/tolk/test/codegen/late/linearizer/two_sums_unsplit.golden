@@ -20,7 +20,7 @@
 18 Ops.ADD dtypes.float [14, 17]
 19 Ops.STORE dtypes.void [13, 18]
 20 Ops.END dtypes.void [19, 11] tag="mergeable"
-21 Ops.AFTER dtypes.float [4, 20]
+21 Ops.AFTER dtypes.float [4, 20, 8]
 22 Ops.INDEX dtypes.float [21, 2]
 23 Ops.LOAD dtypes.float [22]
 24 Ops.ALLOC dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
@@ -60,7 +60,7 @@
 58 Ops.WHERE dtypes.float [57, 56, 34]
 59 Ops.STORE dtypes.void [33, 58]
 60 Ops.END dtypes.void [59, 31] tag="mergeable"
-61 Ops.AFTER dtypes.float [24, 60]
+61 Ops.AFTER dtypes.float [24, 60, 28]
 62 Ops.INDEX dtypes.float [61, 2]
 63 Ops.LOAD dtypes.float [62]
 64 Ops.ADD dtypes.float [23, 63]

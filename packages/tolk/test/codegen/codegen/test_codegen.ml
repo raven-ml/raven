@@ -3040,6 +3040,76 @@ let square_wrapping =
         divisors_wrap;
     ]
 
+(* An accumulator no lane adds to *)
+
+(* [x] summed into each element [l] of three, where [l² mod 3 = 2]. No [l]
+   satisfies it, but only a lane of [l] upcast whole, of one [l], shows it:
+   each lane's addition to the accumulator folds to adding 0. *)
+let unselected_sum_kernel () =
+  let open Ops.O in
+  let upcast =
+    Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
+  in
+  let out = Call.param ~shape:[ Int 3 ] 0 Int32 in
+  let x = Call.param ~shape:[ Int 64 ] 1 Int32 in
+  let l = Ops.range ~axis_type:Weak (Int 3) [ 1 ] in
+  let r = Ops.range ~axis_type:Reduce (Int 64) [ 0 ] in
+  let gate = (l * l) % int 3 > int 1 in
+  let value = Ops.where gate (Ops.index x [ r ]) (Ops.int ~dtype:Int32 0) in
+  let sum = Ops.reduce value Op.Add [ r ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ upcast ] ())
+    [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
+
+(* The register elements [prg]'s instructions load before any stores them, by
+   constant index; an element at a computed index is left out. *)
+let unwritten_reads prg =
+  let element u =
+    let at = Ops.nth u 0 in
+    let b = Ops.buf_uop at and i = Ops.nth at 1 in
+    if Ops.addrspace b = Some Dtype.Reg && Ops.vmin i = Ops.vmax i then
+      Some (b, Ops.vmin i)
+    else None
+  in
+  let accessed u =
+    if (is Op.Load u || is Op.Store u) && is Op.Index (Ops.nth u 0) then
+      element u
+    else None
+  in
+  let written = ref [] in
+  let unwritten (b, i) =
+    not (List.exists (fun (b', i') -> b' == b && i' = i) !written)
+  in
+  List.filter_map
+    (fun u ->
+      match accessed u with
+      | Some e when is Op.Store u ->
+          written := e :: !written;
+          None
+      | Some (b, i) when unwritten (b, i) -> Some i
+      | _ -> None)
+    (Ops.src (Ops.nth prg 1))
+
+(* An unwritten register can hold 0, so only the first test fails whenever the
+   initial store is lost; the second states the value. *)
+let unselected_sum =
+  group "an accumulator no lane adds to"
+    [
+      test "is stored before it is read" (fun () ->
+          let prg =
+            Codegen.to_program (unselected_sum_kernel ()) (Lazy.force host)
+          in
+          equal (list Dtypes.value) [] (unwritten_reads prg));
+      test "sums to zero" (fun () ->
+          let prg =
+            Codegen.to_program (unselected_sum_kernel ()) (Lazy.force host)
+          in
+          let x = Array.init 64 (fun j -> `Int (Bigint.of_int (j + 1))) in
+          equal (array Dtypes.value)
+            (Array.make 3 (`Int Bigint.zero))
+            (List.assoc 0 (Run.on_host prg [ (1, x) ])));
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -3502,6 +3572,7 @@ let () =
          nan_constants;
          invalid_lanes;
          square_wrapping;
+         unselected_sum;
          gated_stores;
          divisions;
          range_shrinking;

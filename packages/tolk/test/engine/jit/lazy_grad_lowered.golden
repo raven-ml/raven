@@ -284,7 +284,7 @@
 282 Ops.END dtypes.void [281, 168]
 283 Ops.END dtypes.void [282, 167]
 284 Ops.END dtypes.void [283, 166]
-285 Ops.AFTER dtypes.float [144, 284]
+285 Ops.AFTER dtypes.float [144, 284, 147, 149, 151, 153, 155, 159, 161, 165]
 286 Ops.INDEX dtypes.float [285, 27]
 287 Ops.LOAD dtypes.float [286]
 288 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="CPU")
@@ -363,7 +363,7 @@
 361 Ops.GROUP dtypes.void [323, 360]
 362 Ops.END dtypes.void [361, 140]
 363 Ops.END dtypes.void [362, 139]
-364 Ops.AFTER dtypes.float [130, 363]
+364 Ops.AFTER dtypes.float [130, 363, 134, 138]
 365 Ops.INDEX dtypes.float [364, 128]
 366 Ops.LOAD dtypes.float [365]
 367 Ops.INDEX dtypes.float [364, 136]

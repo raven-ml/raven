@@ -4367,3 +4367,30 @@ submission, and a range a loop of rig's program (D146).
   not the other's`; rune2's `classes › an associative scan over a tuple
   gives eager's bits` and the `scan/tridiagonal-100` row of its compile
   bench.
+
+## D164. An accumulator's read waits on its initial store
+
+- **tinygrad:** `codegen/__init__.py:197-204` (`reduce_ranges_to_acc`), whose
+  read of the accumulator after the loop is ordered after the loop's END
+  alone, with `uop/symbolic.py:454` (`sym`'s first load/store folding rule, a
+  store of a load of its own index to `NOOP`).
+- **tolk:** `lib/codegen/codegen.ml:730-748` (`reduce_ranges_to_acc`);
+  `test/gen/tinygrad.patch`, which makes tinygrad's the same before the
+  goldens are generated.
+- **Differs:** the read after the loop is ordered after the initial store as
+  well as the END. In tinygrad, when every lane of an accumulation folds to
+  adding 0, which devectorizing shows only lane by lane after the accumulator
+  is built, `sym` folds each store of the loop to `NOOP`: the END holds no
+  store, nothing orders the read after the initial store, which is then
+  removed, and the program reads registers it never wrote. tinygrad's later
+  `ef6ec5f15` (#18858) keeps a folded store's sources as an AFTER on its
+  `NOOP` instead, which its specification at the pinned commit rejects; the
+  entry goes when the pin passes it.
+- **Reason:** (b). rune's compiled Fold (`dev/rune2/lib/lower_index.ml`,
+  `fold`) of an int16 `[3; 3]` by `lo [0; -1]`, `interior [0; 1]` and two
+  windows of step 2 sums no term into some elements, and it read uninitialized
+  registers there, where nx2's Fold contract gives 0: rune2's `a fold wraps
+  integers and holds its float bound` failed.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `an
+  accumulator no lane adds to › is stored before it is read` and `› sums to
+  zero`.

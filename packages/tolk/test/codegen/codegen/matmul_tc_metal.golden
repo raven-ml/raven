@@ -73,7 +73,7 @@
 71 Ops.STORE dtypes.void [64, 70]
 72 Ops.GROUP dtypes.void [69, 71]
 73 Ops.END dtypes.void [72, 47]
-74 Ops.AFTER dtypes.float [38, 73]
+74 Ops.AFTER dtypes.float [38, 73, 44, 46]
 75 Ops.INDEX dtypes.float [74, 40]
 76 Ops.LOAD dtypes.float [75]
 77 Ops.CAST dtypes.half [76] dtypes.half
@@ -102,7 +102,7 @@
 100 Ops.STORE dtypes.void [93, 99]
 101 Ops.GROUP dtypes.void [98, 100]
 102 Ops.END dtypes.void [101, 47]
-103 Ops.AFTER dtypes.float [85, 102]
+103 Ops.AFTER dtypes.float [85, 102, 87, 89]
 104 Ops.INDEX dtypes.float [103, 40]
 105 Ops.LOAD dtypes.float [104]
 106 Ops.CAST dtypes.half [105] dtypes.half

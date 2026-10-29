@@ -30,7 +30,7 @@
 28 Ops.ADD dtypes.float [20, 27]
 29 Ops.STORE dtypes.void [19, 28]
 30 Ops.END dtypes.void [29, 17]
-31 Ops.AFTER dtypes.float [7, 30]
+31 Ops.AFTER dtypes.float [7, 30, 14]
 32 Ops.INDEX dtypes.float [31, 10]
 33 Ops.LOAD dtypes.float [32]
 34 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
@@ -56,7 +56,7 @@
 54 Ops.ADD dtypes.float [53, 27]
 55 Ops.STORE dtypes.void [52, 54]
 56 Ops.END dtypes.void [55, 17]
-57 Ops.AFTER dtypes.float [47, 56]
+57 Ops.AFTER dtypes.float [47, 56, 50]
 58 Ops.INDEX dtypes.float [57, 10]
 59 Ops.LOAD dtypes.float [58]
 60 Ops.ADD dtypes.float [59, 42]

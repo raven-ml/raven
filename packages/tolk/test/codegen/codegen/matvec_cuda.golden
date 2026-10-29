@@ -74,7 +74,7 @@
 72 Ops.CONST dtypes.weakint [] 2
 73 Ops.CAST dtypes.int [72] dtypes.int
 74 Ops.SHRINK dtypes.float [66, 71, 73]
-75 Ops.AFTER dtypes.float [25, 61]
+75 Ops.AFTER dtypes.float [25, 61, 27, 29]
 76 Ops.INDEX dtypes.float [75, 14]
 77 Ops.LOAD dtypes.float [76]
 78 Ops.INDEX dtypes.float [75, 20]
@@ -98,7 +98,7 @@
 96 Ops.STORE dtypes.void [92, 95]
 97 Ops.GROUP dtypes.void [91, 96]
 98 Ops.END dtypes.void [97, 62]
-99 Ops.AFTER dtypes.float [12, 98]
+99 Ops.AFTER dtypes.float [12, 98, 18, 22]
 100 Ops.INDEX dtypes.float [99, 14]
 101 Ops.LOAD dtypes.float [100]
 102 Ops.CMPEQ dtypes.bool [34, 14]
@@ -137,7 +137,7 @@
 135 Ops.LOAD dtypes.float [134]
 136 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=2048, addrspace=AddrSpace.LOCAL)
 137 Ops.SHRINK dtypes.float [136, 71, 73]
-138 Ops.AFTER dtypes.float [116, 131]
+138 Ops.AFTER dtypes.float [116, 131, 118, 120]
 139 Ops.INDEX dtypes.float [138, 14]
 140 Ops.LOAD dtypes.float [139]
 141 Ops.INDEX dtypes.float [138, 20]
@@ -161,7 +161,7 @@
 159 Ops.STORE dtypes.void [155, 158]
 160 Ops.GROUP dtypes.void [154, 159]
 161 Ops.END dtypes.void [160, 132]
-162 Ops.AFTER dtypes.float [111, 161]
+162 Ops.AFTER dtypes.float [111, 161, 113, 115]
 163 Ops.INDEX dtypes.float [162, 14]
 164 Ops.LOAD dtypes.float [163]
 165 Ops.STORE dtypes.void [11, 164]

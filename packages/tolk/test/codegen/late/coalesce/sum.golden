@@ -38,7 +38,7 @@
 36 Ops.ADD dtypes.float [13, 35]
 37 Ops.STORE dtypes.void [12, 36]
 38 Ops.END dtypes.void [37, 10] tag="mergeable"
-39 Ops.AFTER dtypes.float [4, 38]
+39 Ops.AFTER dtypes.float [4, 38, 9]
 40 Ops.INDEX dtypes.float [39, 6]
 41 Ops.LOAD dtypes.float [40]
 42 Ops.STORE dtypes.void [3, 41]

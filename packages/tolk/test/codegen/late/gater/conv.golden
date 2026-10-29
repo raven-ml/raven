@@ -65,7 +65,7 @@
 63 Ops.MULACC dtypes.float [50, 61, 62]
 64 Ops.STORE dtypes.void [28, 63]
 65 Ops.END dtypes.void [64, 24, 25, 26] tag="mergeable"
-66 Ops.AFTER dtypes.float [14, 65]
+66 Ops.AFTER dtypes.float [14, 65, 21]
 67 Ops.INDEX dtypes.float [66, 17]
 68 Ops.LOAD dtypes.float [67]
 69 Ops.STORE dtypes.void [13, 68]

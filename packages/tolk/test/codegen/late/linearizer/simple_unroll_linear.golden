@@ -166,7 +166,7 @@
 164 Ops.STORE dtypes.void [83, 160]
 165 Ops.GROUP dtypes.void [161, 162, 163, 164]
 166 Ops.END dtypes.void [165, 62]
-167 Ops.AFTER dtypes.float [5, 166]
+167 Ops.AFTER dtypes.float [5, 166, 58, 59, 60, 61]
 168 Ops.INDEX dtypes.float [167, 9]
 169 Ops.LOAD dtypes.float [168]
 170 Ops.INDEX dtypes.float [167, 11]

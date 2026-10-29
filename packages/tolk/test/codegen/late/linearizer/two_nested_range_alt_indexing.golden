@@ -40,7 +40,7 @@
 38 Ops.STORE dtypes.void [16, 37]
 39 Ops.END dtypes.void [38, 14]
 40 Ops.END dtypes.void [39, 11]
-41 Ops.AFTER dtypes.float [4, 40]
+41 Ops.AFTER dtypes.float [4, 40, 8]
 42 Ops.INDEX dtypes.float [41, 2]
 43 Ops.LOAD dtypes.float [42]
 44 Ops.STORE dtypes.void [3, 43]

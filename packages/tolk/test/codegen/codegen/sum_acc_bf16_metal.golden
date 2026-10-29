@@ -26,7 +26,7 @@
 24 Ops.ADD dtypes.float [14, 23]
 25 Ops.STORE dtypes.void [13, 24]
 26 Ops.END dtypes.void [25, 11]
-27 Ops.AFTER dtypes.float [4, 26]
+27 Ops.AFTER dtypes.float [4, 26, 8]
 28 Ops.INDEX dtypes.float [27, 2]
 29 Ops.LOAD dtypes.float [28]
 30 Ops.BITCAST dtypes.uint [29] dtypes.uint
@@ -67,7 +67,7 @@
 65 Ops.ADD dtypes.float [64, 23]
 66 Ops.STORE dtypes.void [63, 65]
 67 Ops.END dtypes.void [66, 11]
-68 Ops.AFTER dtypes.float [59, 67]
+68 Ops.AFTER dtypes.float [59, 67, 61]
 69 Ops.INDEX dtypes.float [68, 2]
 70 Ops.LOAD dtypes.float [69]
 71 Ops.BITCAST dtypes.uint [70] dtypes.uint

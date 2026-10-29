@@ -71,7 +71,7 @@
 69 Ops.END dtypes.void [68, 48]
 70 Ops.END dtypes.void [69, 40]
 71 Ops.END dtypes.void [70, 37]
-72 Ops.AFTER dtypes.float [5, 71]
+72 Ops.AFTER dtypes.float [5, 71, 36]
 73 Ops.INDEX dtypes.float [72, 14]
 74 Ops.LOAD dtypes.float [73]
 75 Ops.ADD dtypes.int [32, 33]

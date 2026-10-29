@@ -290,7 +290,7 @@
 288 Ops.STORE dtypes.void [278, 287]
 289 Ops.GROUP dtypes.void [133, 163, 194, 205, 235, 246, 277, 288]
 290 Ops.END dtypes.void [289, 76] tag="mergeable"
-291 Ops.AFTER dtypes.float [59, 290]
+291 Ops.AFTER dtypes.float [59, 290, 61, 63, 65, 67, 69, 71, 73, 75]
 292 Ops.INDEX dtypes.float [291, 3]
 293 Ops.LOAD dtypes.float [292]
 294 Ops.STORE dtypes.void [58, 293]
@@ -405,7 +405,7 @@
 403 Ops.STORE dtypes.void [396, 402]
 404 Ops.GROUP dtypes.void [347, 355, 363, 371, 379, 387, 395, 403]
 405 Ops.END dtypes.void [404, 46] tag="mergeable"
-406 Ops.AFTER dtypes.float [23, 405]
+406 Ops.AFTER dtypes.float [23, 405, 26, 29, 31, 34, 36, 39, 42, 45]
 407 Ops.INDEX dtypes.float [406, 3]
 408 Ops.LOAD dtypes.float [407]
 409 Ops.STORE dtypes.void [22, 408]

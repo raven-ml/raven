@@ -64,7 +64,7 @@
 62 Ops.END dtypes.void [61, 29]
 63 Ops.END dtypes.void [62, 28]
 64 Ops.END dtypes.void [63, 27]
-65 Ops.AFTER dtypes.float [17, 64]
+65 Ops.AFTER dtypes.float [17, 64, 24]
 66 Ops.INDEX dtypes.float [65, 20]
 67 Ops.LOAD dtypes.float [66]
 68 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=16, device="CPU")
