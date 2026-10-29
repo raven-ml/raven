@@ -77,30 +77,139 @@ let derivative2 name ~bound (d : b) =
 
 let d { u } = { u = (fun x -> Rune.grad' (fun x -> Nx.sum (u x)) x) }
 
-(* [f]'s derivative in its [i]th argument, held to [grad_golden name] eagerly
-   and compiled. *)
-let derivative3 name ~bound i { c } =
-  let d a b x =
-    match i with
-    | 0 -> Rune.grad' (fun a -> Nx.sum (c a b x)) a
-    | 1 -> Rune.grad' (fun b -> Nx.sum (c a b x)) b
-    | _ -> Rune.grad' (fun x -> Nx.sum (c a b x)) x
+(* Partials
+
+   A function's partials share most of their program, and an incomplete beta's
+   or gamma's takes seconds to compile, most of it Clang's. So the gradient in
+   every argument is compiled once per dtype and run once, at the points of
+   every partial's golden together, and each partial reads its own values.
+   Eagerly each partial is taken alone. *)
+
+type g = {
+  g : 'b. (float, 'b, Nx.host) Nx.t array -> (float, 'b, Nx.host) Nx.t array;
+}
+
+(* A compiled gradient's partials, by name: [golden name ~f32 rows] is the
+   partial [name] at the rows of its golden, at the dtype [~f32] names, and
+   [edge name ~f32] at the extra arguments the gradient ran at. *)
+type joint = {
+  golden : string -> f32:bool -> row list -> float array;
+  edge : string -> f32:bool -> float array;
+}
+
+(* [joint ~edge names g] runs [g] once per dtype, at the rows of every golden of
+   [names] and then at the arguments [edge]; the [i]th array [g] returns is the
+   partial named by the [i]th of [names]. *)
+let joint ?(edge = [||]) names { g } =
+  let at (type b) (dt : (float, b) Nx.dtype) short =
+    lazy
+      (let rows = List.map (fun name -> rows (grad_golden name) short) names in
+       let edge =
+         Array.to_list
+           (Array.map
+              (fun args ->
+                { args; value = Float.nan; overflow = false; scale = Float.nan })
+              edge)
+       in
+       let got = Array.map read (g (args dt (List.concat (rows @ [ edge ])))) in
+       let (_, golden), parts =
+         List.fold_left_map
+           (fun (i, start) r ->
+             let n = List.length r in
+             ((i + 1, start + n), Array.sub got.(i) start n))
+           (0, 0) rows
+       in
+       let at_edge i = Array.sub got.(i) golden (List.length edge) in
+       List.mapi
+         (fun i (name, part) -> (name, (part, at_edge i)))
+         (List.combine names parts))
   in
-  let eager = { f = (fun v -> d v.(0) v.(1) v.(2)) } in
-  let compiled =
-    {
-      f =
-        (fun v ->
-          Rune.jit
-            Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
-            d v.(0) v.(1) v.(2));
-    }
+  let f32 = at Nx.float32 "f32" and f64 = at Nx.float64 "f64" in
+  let get name single =
+    List.assoc name (Lazy.force (if single then f32 else f64))
   in
+  {
+    golden = (fun name ~f32 _ -> fst (get name f32));
+    edge = (fun name ~f32 -> snd (get name f32));
+  }
+
+(* [partial name ~bound ~eager compiled] is the partial [name] held eagerly and
+   as [compiled] reads it, at both dtypes. *)
+let partial name ~bound ~eager compiled =
   group name
     [
       group "eagerly" (check ~bound (grad_golden name) eager);
-      group "compiled" (check ~bound (grad_golden name) compiled);
+      group "compiled" (check_values ~bound (grad_golden name) compiled);
     ]
+
+(* The derivative of [b] in its first argument, or its second. *)
+let d_first { b } = { b = (fun a x -> Rune.grad' (fun a -> Nx.sum (b a x)) a) }
+let d_second { b } = { b = (fun a x -> Rune.grad' (fun x -> Nx.sum (b a x)) x) }
+
+(* [b]'s partials [first] and [second], each with its bound. *)
+let partials2 (first, bound1) (second, bound2) { b } =
+  let g v =
+    let s = Nx.Ptree.(pair tensor tensor) in
+    let g1, g2 =
+      Rune.jit
+        Nx.Ptree.(s @-> returns s)
+        (Rune.grad s (fun (a, x) -> Nx.sum (b a x)))
+        (v.(0), v.(1))
+    in
+    [| g1; g2 |]
+  in
+  let compiled = joint [ first; second ] { g } in
+  let eager d = { f = (fun a -> d.b a.(0) a.(1)) } in
+  [
+    partial first ~bound:bound1
+      ~eager:(eager (d_first { b }))
+      (compiled.golden first);
+    partial second ~bound:bound2
+      ~eager:(eager (d_second { b }))
+      (compiled.golden second);
+  ]
+
+(* The gradients of the incomplete beta [value] and of its logarithm [log],
+   compiled as one program and read by name as [joint] reads them: nx computes
+   both from one tail, which the two share. The partials are [value]'s, named
+   [value_name ^ "_a"], [value_name ^ "_b"] and [value_name ^ "_x"], then
+   [log]'s, named likewise. *)
+let tail_grads ?edge (value_name, { c = value }) (log_name, { c = log }) =
+  let g v =
+    let s = Nx.Ptree.(pair (pair tensor tensor) tensor) in
+    let grad c = Rune.grad s (fun ((a, b), x) -> Nx.sum (c a b x)) in
+    let ((ga, gb), gx), ((la, lb), lx) =
+      Rune.jit
+        Nx.Ptree.(s @-> returns (pair s s))
+        (fun p -> (grad value p, grad log p))
+        ((v.(0), v.(1)), v.(2))
+    in
+    [| ga; gb; gx; la; lb; lx |]
+  in
+  let names name = [ name ^ "_a"; name ^ "_b"; name ^ "_x" ] in
+  joint ?edge (names value_name @ names log_name) { g }
+
+(* [c]'s partials, as [compiled] reads them: in [x] within [in_x], in [a] and
+   [b] within [in_ab]. *)
+let partials3 name ~in_x ~in_ab { c } compiled =
+  let eager i =
+    let d a b x =
+      match i with
+      | 0 -> Rune.grad' (fun a -> Nx.sum (c a b x)) a
+      | 1 -> Rune.grad' (fun b -> Nx.sum (c a b x)) b
+      | _ -> Rune.grad' (fun x -> Nx.sum (c a b x)) x
+    in
+    { f = (fun v -> d v.(0) v.(1) v.(2)) }
+  in
+  let one suffix ~bound i =
+    let name = name ^ suffix in
+    partial name ~bound ~eager:(eager i) (compiled.golden name)
+  in
+  [
+    one "_x" ~bound:(everywhere in_x) 2;
+    one "_a" ~bound:in_ab 0;
+    one "_b" ~bound:in_ab 1;
+  ]
 
 let second = Relative (0x1p-40, 0x1p-16)
 
@@ -174,15 +283,29 @@ let bessel_at_zero =
    and at [b = 0] the lower tail as [b h], [h = ∫₀ˣ t^(a-1) / (1 - t) dt]: at [b
    = 1], [g = -log x], and at [a = 1], [h = -log (1 - x)]. The derivatives there
    are held to [2^-40] relative at float64 and [2^-16] at float32, eagerly, and
-   one on each edge compiled at float32, each compile taking seconds. *)
-type run = Eager | Eager_and_compiled
+   one on each edge compiled at float32, by the run of the tails' gradients that
+   their partials read. *)
+let edge_xs = [| 0.1; 0.5; 0.9 |]
+let on_edge a b = Array.map (fun x -> [| a; b; x |]) edge_xs
+
+let lower_grads =
+  tail_grads ~edge:(on_edge 1. 0.)
+    ("betainc", { c = Nx.betainc })
+    ("log_betainc", { c = Nx.log_betainc })
+
+let upper_grads =
+  tail_grads ~edge:(on_edge 0. 1.)
+    ("betaincc", { c = Nx.betaincc })
+    ("log_betaincc", { c = Nx.log_betaincc })
 
 let beta_at_zero =
-  let xs = [| 0.1; 0.5; 0.9 |] in
-  let at (type b) (dt : (float, b) Nx.dtype) tol jit =
+  let xs = edge_xs in
+  let at (type b) (dt : (float, b) Nx.dtype) tol ~f32 =
     let x = Nx.create dt [| 3 |] xs and c v = Nx.full dt [| 3 |] v in
-    let check ?(run = Eager) name expected u v =
-      let read y = Nx.to_array (Nx.cast Nx.float64 y) in
+    let at_edge grads name =
+      if f32 then Some (fun () -> grads.edge name ~f32) else None
+    in
+    let check ?compiled name expected u v =
       let compare how got =
         Array.iteri
           (fun i x ->
@@ -195,13 +318,13 @@ let beta_at_zero =
           xs
       in
       compare "eagerly" (read (u v));
-      match run with
-      | Eager -> ()
-      | Eager_and_compiled -> compare "compiled" (read (Rune.jit' u v))
+      Option.iter (fun got -> compare "compiled" (got ())) compiled
     in
     let grad f v = Rune.grad' (fun v -> Nx.sum (f v)) v in
     let g x = -.log x and h x = -.log1p (-.x) in
-    check ~run:jit "betaincc in a" g
+    check
+      ?compiled:(at_edge upper_grads "betaincc_a")
+      "betaincc in a" g
       (grad (fun a -> Nx.betaincc a (c 1.) x))
       (c 0.);
     check "betainc in a"
@@ -216,7 +339,9 @@ let beta_at_zero =
       (fun x -> -1. /. (x *. g x))
       (grad (fun x -> Nx.log_betaincc (c 0.) (c 1.) x))
       x;
-    check ~run:jit "betainc in b" h
+    check
+      ?compiled:(at_edge lower_grads "betainc_b")
+      "betainc in b" h
       (grad (fun b -> Nx.betainc (c 1.) b x))
       (c 0.);
     check "betaincc in b"
@@ -234,12 +359,8 @@ let beta_at_zero =
   in
   test "the incomplete beta's derivatives at a = 0 and b = 0 are its slopes"
     (fun () ->
-      at Nx.float64 0x1p-40 Eager;
-      at Nx.float32 0x1p-16 Eager_and_compiled)
-
-(* The derivative of [b] in its first argument, or its second. *)
-let d_first { b } = { b = (fun a x -> Rune.grad' (fun a -> Nx.sum (b a x)) a) }
-let d_second { b } = { b = (fun a x -> Rune.grad' (fun x -> Nx.sum (b a x)) x) }
+      at Nx.float64 0x1p-40 ~f32:false;
+      at Nx.float32 0x1p-16 ~f32:true)
 
 (* In [a], [2^-40 (1 + |log f|)] relative at float64 and [2^-16 (1 + |log f|)]
    at float32, the scale holding [1 + |log f|]; in [x], 16 times the function's
@@ -248,37 +369,35 @@ let in_a = everywhere (Relative_scaled (0x1p-40, 0x1p-16))
 let linear_in_x = everywhere (Inverse (64, 512))
 
 let incomplete_gamma_derivatives =
+  let gammaincinv_p args =
+    Inverse (64, 16 * int_of_float (log_ulps 16 args.(1)))
+  in
+  let inverse_a = everywhere (Relative (0x1p-40, 0x1p-16)) in
+  let near_zeros = everywhere (Near_zeros (256, 256)) in
   group "incomplete gamma derivatives"
-    [
-      derivative2 "gammainc_a" ~bound:in_a (d_first { b = Nx.gammainc });
-      derivative2 "gammainc_x" ~bound:linear_in_x (d_second { b = Nx.gammainc });
-      derivative2 "gammaincc_a" ~bound:in_a (d_first { b = Nx.gammaincc });
-      derivative2 "gammaincc_x" ~bound:linear_in_x
-        (d_second { b = Nx.gammaincc });
-      derivative2 "log_gammainc_a" ~bound:in_a (d_first { b = Nx.log_gammainc });
-      derivative2 "log_gammainc_x"
-        ~bound:(everywhere (Near_zeros (256, 256)))
-        (d_second { b = Nx.log_gammainc });
-      derivative2 "log_gammaincc_a" ~bound:in_a
-        (d_first { b = Nx.log_gammaincc });
-      derivative2 "log_gammaincc_x"
-        ~bound:(everywhere (Near_zeros (256, 256)))
-        (d_second { b = Nx.log_gammaincc });
-      derivative2 "gammaincinv_a"
-        ~bound:(everywhere (Relative (0x1p-40, 0x1p-16)))
-        (d_first { b = Nx.gammaincinv });
-      derivative2 "gammaincinv_p"
-        ~bound:(fun args ->
-          Inverse (64, 16 * int_of_float (log_ulps 16 args.(1))))
-        (d_second { b = Nx.gammaincinv });
-      derivative2 "gammainccinv_a"
-        ~bound:(everywhere (Relative (0x1p-40, 0x1p-16)))
-        (d_first { b = Nx.gammainccinv });
-      derivative2 "gammainccinv_p"
-        ~bound:(fun args ->
-          Inverse (64, 16 * int_of_float (log_ulps 16 args.(1))))
-        (d_second { b = Nx.gammainccinv });
-    ]
+    (List.concat
+       [
+         partials2 ("gammainc_a", in_a)
+           ("gammainc_x", linear_in_x)
+           { b = Nx.gammainc };
+         partials2 ("gammaincc_a", in_a)
+           ("gammaincc_x", linear_in_x)
+           { b = Nx.gammaincc };
+         partials2 ("log_gammainc_a", in_a)
+           ("log_gammainc_x", near_zeros)
+           { b = Nx.log_gammainc };
+         partials2 ("log_gammaincc_a", in_a)
+           ("log_gammaincc_x", near_zeros)
+           { b = Nx.log_gammaincc };
+         partials2
+           ("gammaincinv_a", inverse_a)
+           ("gammaincinv_p", gammaincinv_p)
+           { b = Nx.gammaincinv };
+         partials2
+           ("gammainccinv_a", inverse_a)
+           ("gammainccinv_p", gammaincinv_p)
+           { b = Nx.gammainccinv };
+       ])
 
 let derivatives =
   group "derivatives"
@@ -290,17 +409,19 @@ let derivatives =
       derivative "i0e" ~bound:(everywhere (Ulps 128)) (d { u = Nx.i0e });
       group "incomplete beta"
         (List.concat_map
-           (fun (name, in_x, c) ->
-             [
-               derivative3 (name ^ "_x") ~bound:(everywhere in_x) 2 c;
-               derivative3 (name ^ "_a") ~bound:in_a 0 c;
-               derivative3 (name ^ "_b") ~bound:in_a 1 c;
-             ])
+           (fun (name, in_x, c, compiled) ->
+             partials3 name ~in_x ~in_ab:in_a c compiled)
            [
-             ("betainc", Inverse (64, 1024), { c = Nx.betainc });
-             ("betaincc", Inverse (64, 1024), { c = Nx.betaincc });
-             ("log_betainc", Near_zeros (512, 512), { c = Nx.log_betainc });
-             ("log_betaincc", Near_zeros (512, 512), { c = Nx.log_betaincc });
+             ("betainc", Inverse (64, 1024), { c = Nx.betainc }, lower_grads);
+             ("betaincc", Inverse (64, 1024), { c = Nx.betaincc }, upper_grads);
+             ( "log_betainc",
+               Near_zeros (512, 512),
+               { c = Nx.log_betainc },
+               lower_grads );
+             ( "log_betaincc",
+               Near_zeros (512, 512),
+               { c = Nx.log_betaincc },
+               upper_grads );
            ]);
       derivative "i1e"
         ~bound:(fun args ->

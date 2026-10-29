@@ -2942,6 +2942,23 @@ let scan_cases =
         (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_view)
         (Array.to_list (Array.map (fun (o : Operand.t) -> o.view) xs)))
 
+(* Cases that reach every cover, so that each run meets them whatever the seed
+   draws: no element and one operand; one element; a power of two over two
+   operands; an odd extent past 64 over four, three of them views. *)
+let scan_examples =
+  let o view n =
+    { view; values = Array.init n (fun i -> F (Float.of_int ((i mod 5) - 2))) }
+  in
+  [
+    Scan_case ([| 0 |], 0, [| o Plain 0 |]);
+    Scan_case ([| 1; 2 |], 0, [| o Flipped 2 |]);
+    Scan_case ([| 8 |], 0, [| o Plain 8; o Strided 16 |]);
+    Scan_case
+      ( [| 2; 65 |],
+        -1,
+        [| o Plain 130; o Permuted 130; o Broadcast 65; o (Offset 1) 131 |] );
+  ]
+
 let law_scan (Scan_case (s, axis, xs)) =
   let n = s.(if axis < 0 then Array.length s + axis else axis) in
   cover "no element" (n = 0);
@@ -2987,7 +3004,7 @@ let () =
                test_int_constants;
              test "a square of a product whose constant squares to 0"
                test_square_wraps;
-             prop ~count:60
+             prop ~count:20 ~examples:scan_examples
                "an associative scan over a tuple gives eager's bits" scan_cases
                law_scan;
            ];

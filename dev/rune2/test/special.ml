@@ -136,27 +136,30 @@ type f = {
   f : 'b. (float, 'b, Nx.host) Nx.t array -> (float, 'b, Nx.host) Nx.t;
 }
 
-let eval (type b) (dt : (float, b) Nx.dtype) { f } rows =
+(* [args dt rows] is each argument of [rows] as an array of [dt]. *)
+let args (type b) (dt : (float, b) Nx.dtype) rows =
   let n = List.length rows in
   let arity = match rows with [] -> 0 | r :: _ -> Array.length r.args in
-  let args =
-    Array.init arity (fun i ->
-        Nx.cast dt
-          (Nx.create Nx.float64 [| n |]
-             (Array.of_list (List.map (fun r -> r.args.(i)) rows))))
-  in
-  Nx.to_array (Nx.cast Nx.float64 (f args))
+  Array.init arity (fun i ->
+      Nx.cast dt
+        (Nx.create Nx.float64 [| n |]
+           (Array.of_list (List.map (fun r -> r.args.(i)) rows))))
 
-(* [check ~bound file f] holds [f] to [bound args] at every row of [file], at
-   float32 and float64, and fails listing the rows that miss it, worst first. *)
-let check ~bound file f =
+(* [read y] is [y]'s elements as floats. *)
+let read y = Nx.to_array (Nx.cast Nx.float64 y)
+
+let eval (type b) (dt : (float, b) Nx.dtype) { f } rows =
+  read (f (args dt rows))
+
+(* [check_values ~bound file got] holds [got ~f32 rows], the values at the rows
+   of [file] at one dtype, to [bound args] at every row, at float32 and float64,
+   and fails listing the rows that miss it, worst first. *)
+let check_values ~bound file got =
   List.map
     (fun (short, f32) ->
       test short (fun () ->
           let rows = rows file short in
-          let got =
-            if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows
-          in
+          let got = got ~f32 rows in
           let misses =
             List.concat
               (List.mapi
@@ -186,3 +189,8 @@ let check ~bound file f =
                 (Format.pp_print_list pp_miss)
                 (List.filteri (fun i _ -> i < 8) misses)))
     [ ("f32", true); ("f64", false) ]
+
+(* [check ~bound file f] is [check_values] of [f] at each dtype. *)
+let check ~bound file f =
+  check_values ~bound file (fun ~f32 rows ->
+      if f32 then eval Nx.float32 f rows else eval Nx.float64 f rows)
