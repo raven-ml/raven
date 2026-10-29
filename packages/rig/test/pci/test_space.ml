@@ -183,13 +183,21 @@ let aligns =
       Some min_int;
     ]
 
+(* Spaces that hold ranges, for the test on two domains: a create runs in a
+   program's prefix only, so a refused one tests nothing there, and a space with
+   no room leaves no range for [remember] to take. *)
+let roomy =
+  Gen.pair
+    (Gen.of_list ~pp:pp_hex [ 0; 4096; 1 lsl 40; 0x2000_0000_0000 ])
+    (Gen.of_list ~pp:pp_hex [ 0x3000; 0x1_0000; 0x1_0123; 1 lsl 20; 1 lsl 44 ])
+
 let alloc align n s = Space.alloc ?align s n
 
-let commands ~covered =
+let commands ~covered ~spaces =
   let alloc_judge = alloc_judge ~covered in
   [
     command "create"
-      (Gen.pair bases lengths @-> makes space)
+      (spaces @-> makes space)
       create
       (fun (base, n) -> Space.create ~base n);
     command "alloc"
@@ -347,9 +355,11 @@ let () =
          group ~timeout:patience "ranges"
            [
              stateful "allocations stay apart and within the fit bound"
-               ~count:300 (commands ~covered:true);
+               ~count:300
+               (commands ~covered:true ~spaces:(Gen.pair bases lengths));
              stateful "two domains allocate and free at once" ~domains:2
-               ~count:50 (commands ~covered:false);
+               ~count:50
+               (commands ~covered:false ~spaces:roomy);
              test "creating a space allocates nothing but its handle" test_lazy;
              test "freeing every range makes the space whole" test_whole;
              test "an exception at any allocation of a call leaves the lock \
