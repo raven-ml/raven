@@ -714,6 +714,27 @@ let test_placement () =
   let g = Rune.grad' (fun x -> Nx.sum (Nx.place Nx.Host.on (there x))) h in
   equal ~msg:"a place's cotangent" string (where h) (where g)
 
+(* A take of positions split over two devices, from a value whole on both or
+   split along the taken axis, has the gradient it has on one device, where
+   the value lies: a position both devices hold sums the two halves'
+   cotangents. *)
+let test_cut_take () =
+  let module Two = Operand.Two in
+  let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
+  let h = Nx.create f64 [| 4; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
+  let ph = Nx.create Nx.int64 [| 4 |] [| 3L; 0L; 3L; 1L |] in
+  let f p x = Nx.sum (Nx.square (Nx.take ~axis:0 p x)) in
+  let expected = Nx.to_array (Rune.grad' (f ph) h) in
+  let split = Two.split ~axis:0 in
+  let check msg q =
+    let x = Nx.place q h in
+    let g = Rune.grad' (f (Nx.place split ph)) x in
+    equal ~msg string (where x) (where g);
+    equal ~msg floats expected (Nx.to_array (Nx.place Nx.Host.on g))
+  in
+  check "whole" Two.on;
+  check "split" split
+
 let test_jacrev () =
   let a = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let x = v [| 1.; 2.; -3. |] in
@@ -990,6 +1011,7 @@ let () =
              test "detach" test_detach;
              test "totals" test_total;
              test "placement" test_placement;
+             test "a take of split positions" test_cut_take;
              test "jacrev'" test_jacrev;
              test "check_grads" test_check_grads;
            ];

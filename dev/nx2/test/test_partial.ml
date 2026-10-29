@@ -1247,6 +1247,161 @@ let test_scatter_cut_updates () =
     (bytes (scatter (Nx.place Set4.on host) (Nx.place Set4.on u)));
   equal (array int) expected (bytes (scatter (split host) (Nx.place Set4.on u)))
 
+(* Scatters of cut updates *)
+
+(* Where an [Add]'s target lies beside positions and updates split along
+   the scattered axis: whole on every device of three or four, the
+   updates split over them, or cut along an axis over the mesh's minor
+   axis, the updates over its major one. *)
+type summed = On3 | On4 | Beside of int
+
+let pp_summed ppf = function
+  | On3 -> Format.pp_print_string ppf "whole over 3"
+  | On4 -> Format.pp_print_string ppf "whole over 4"
+  | Beside c -> Format.fprintf ppf "cut %d/b" c
+
+(* Elements whose sums are exact in every order: integers, which wrap, and
+   floats of few bits, signed zeros, infinities and NaNs among them, a
+   NaN's bits shown alike. *)
+let summed_kinds =
+  let float dt =
+    Reduced
+      {
+        rdtype = dt;
+        rvalues = [ 0.; -0.; 1.; -1.; 2.; 0.5; infinity; neg_infinity; nan ];
+        rshow = nan_bits;
+        is_nan = Float.is_nan;
+      }
+  in
+  let complex =
+    Reduced
+      {
+        rdtype = D.Complex64;
+        rvalues =
+          List.map
+            (fun (re, im) -> { Complex.re; im })
+            [ (0., 0.); (1., -1.); (-0., 2.); (0.5, 0.); (infinity, 1.) ];
+        rshow = complex_bits;
+        is_nan = (fun c -> Float.is_nan c.Complex.re || Float.is_nan c.im);
+      }
+  in
+  let ints =
+    List.filter
+      (fun (Reduced k) ->
+        match D.kind k.rdtype with
+        | D.Signed | D.Unsigned -> true
+        | D.Float | D.Complex | D.Boolean -> false)
+      reduced_kinds
+  in
+  [ float D.Float32; float D.Float64; float D.Float16; float D.Bfloat16 ]
+  @ (complex :: ints)
+
+(* A target's dtype, shape and elements, where it lies, the axis, the
+   updates' shape, the positions and the updates. *)
+type sumcase =
+  | Sumcase :
+      ('v, 's) reduced
+      * int array
+      * 'v array
+      * summed
+      * int
+      * int array
+      * int64 array
+      * 'v array
+      -> sumcase
+
+let pp_sumcase ppf (Sumcase (k, s, data, w, a, us, p, u)) =
+  let show f l = String.concat "; " (Array.to_list (Array.map f l)) in
+  Format.fprintf ppf "%s %a [%s] at %a, add along %d %a [%s] of [%s]"
+    (D.name k.rdtype) pp_ints s (show k.rshow data) pp_summed w a pp_ints us
+    (show Int64.to_string p) (show k.rshow u)
+
+let summed_case =
+  let open Gen in
+  with_pp pp_sumcase
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* a = int_range 0 (rank - 1) in
+     let* w =
+       one_of
+         [
+           of_list [ On3; On4 ];
+           map (fun c -> Beside c) (int_range 0 (rank - 1));
+         ]
+     in
+     let* m = int_range 0 9 in
+     let us = Array.mapi (fun i e -> if i = a then m else e) s in
+     let n = Array.fold_left ( * ) 1 us in
+     let position =
+       one_of
+         [
+           map Int64.of_int (int_range (-2) (s.(a) + 1));
+           of_list [ Int64.min_int; Int64.max_int ];
+         ]
+     in
+     let* p = array ~size:(constant n) position in
+     let* (Reduced k) = of_list summed_kinds in
+     let value = of_list k.rvalues in
+     let* data = array ~size:(constant (Array.fold_left ( * ) 1 s)) value in
+     let+ u = array ~size:(constant n) value in
+     Sumcase (k, s, data, w, a, us, p, u))
+
+(* A scatter's [Add] of positions and updates split along the scattered axis
+   sums each device's updates into the target where it lies, whole or cut,
+   and gives the values it gives on one device. *)
+let law_summed (Sumcase (k, s, data, w, a, us, p, u)) =
+  let devices = match w with On3 -> 3 | On4 | Beside _ -> 4 in
+  let tiles = match w with Beside _ -> 2 | On3 | On4 -> devices in
+  let e = s.(a) and m = us.(a) in
+  let inside q = q >= 0L && q < Int64.of_int e in
+  cover "a target cut beside the updates"
+    (match w with Beside _ -> true | On3 | On4 -> false);
+  cover "a target cut along the scattered axis" (w = Beside a);
+  cover "an empty tile of updates" (m > 0 && m < tiles);
+  cover "no update" (Array.length p = 0);
+  cover "updates in several tiles" (m >= tiles && Array.length p > 0);
+  cover "a position outside the target"
+    (Array.exists (fun q -> not (inside q)) p);
+  cover "a repeated position"
+    (let q = List.filter inside (Array.to_list p) in
+     List.length (List.sort_uniq compare q) < List.length q);
+  cover "a sub-byte dtype" (D.bits k.rdtype < 8);
+  let kind =
+    match D.kind k.rdtype with
+    | D.Float -> "a float"
+    | D.Complex -> "a complex number"
+    | D.Signed | D.Unsigned | D.Boolean -> "an integer"
+  in
+  List.iter
+    (fun c -> cover c (kind = c))
+    [ "a float"; "a complex number"; "an integer" ];
+  let x = A.of_array k.rdtype (Iarray.of_array s) data in
+  let x = Nx.Repr.of_array Nx.Host.v x in
+  let u =
+    Nx.Repr.of_array Nx.Host.v (A.of_array k.rdtype (Iarray.of_array us) u)
+  in
+  let p =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array us) p)
+  in
+  let scatter p u x = Nx.scatter ~combine:Add ~axis:a p u x in
+  let shown y = Array.map k.rshow (elements y) in
+  let expected = shown (scatter p u x) in
+  let run (type d) (q : d Nx.Placement.t) (r : d Nx.Placement.t) =
+    let y = scatter (Nx.place r p) (Nx.place r u) (Nx.place q x) in
+    equal ~msg:"where it lies" (placement ()) q (Nx.placement y);
+    shown y
+  in
+  let actual =
+    match w with
+    | On3 -> run Set3.on (Set3.split ~axis:a)
+    | On4 -> run Set4.on (Set4.split ~axis:a)
+    | Beside c ->
+        run
+          (Nx.Placement.mesh mesh4 [ (c, [ "b" ]) ])
+          (Nx.Placement.mesh mesh4 [ (a, [ "a" ]) ])
+  in
+  equal (array string) expected actual
+
 (* Float reductions over cut axes *)
 
 (* Over axes cut across devices, a float or complex sum, product, mean,
@@ -3058,6 +3213,32 @@ let test_take_moves_positions () =
     (fun k g -> equal ~msg:(Printf.sprintf "m%d" k) int (positions + tile) g)
     grew
 
+(* An [Add] of many updates split over four devices into a small target
+   whole on each moves partial sums of the target's size, never the
+   updates: gathering them would add three quarters of them on each
+   device. *)
+let test_summed_moves_sums () =
+  let n = 64 and m = 1 lsl 16 in
+  let split = Set4.split ~axis:0 in
+  let positions =
+    Nx.place split
+      (Nx.Repr.of_array Nx.Host.v
+         (A.of_array D.Int64 [| m |]
+            (Array.init m (fun i -> Int64.of_int (i mod n)))))
+  in
+  let updates = Nx.place split (Nx.ones D.Float32 [| m |]) in
+  let target () = Nx.place Set4.on (Nx.zeros D.Float32 [| n |]) in
+  let add x = Nx.scatter ~combine:Add ~axis:0 positions updates x in
+  ignore (elements (add (target ())));
+  let x = target () in
+  let y, grew = grown (fun () -> add x) in
+  equal (placement ()) Set4.on (Nx.placement y);
+  equal (array float_exact) (Array.make n (Float.of_int (m / n))) (elements y);
+  List.iteri
+    (fun k g ->
+      less ~msg:(Printf.sprintf "m%d" k) int ~than:(3 * 4 * m / 4) g)
+    grew
+
 let traffic =
   group "traffic"
     [
@@ -3069,6 +3250,8 @@ let traffic =
         test_scatter_in_place;
       test "a take of positions no order reads moves the positions alone"
         test_take_moves_positions;
+      test "an addition of updates split over devices moves sums alone"
+        test_summed_moves_sums;
     ]
 
 let placed =
@@ -3103,6 +3286,10 @@ let placed =
          whole on each of its devices or cut alike off the scattered axis, \
          gives its bits on one device"
         scattered_case law_scattered;
+      prop ~count:1000
+        "a scatter's addition of updates split along its axis sums them into \
+         the target where it lies, as on one device"
+        summed_case law_summed;
       test "a scatter of cut updates raises, naming the fix; cut positions \
             move"
         test_scatter_cut_updates;

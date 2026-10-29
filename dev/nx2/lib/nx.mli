@@ -305,10 +305,11 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     axis that a reduction or a contraction sums makes the devices compute by
     partials where every operand holding the axis is cut alike, and cuts
     nothing in the result; so does one of the axis a gather reads at
-    positions. One along a scan's axis stays in it, and so does one along
-    the axis a scatter writes at positions, each device writing the updates
-    that land in its window. An operand whole on every device is read by a
-    view of each device's window.
+    positions, and one of the axis along which a scatter's [Add] reads its
+    positions and updates. One along a scan's axis stays in it, and so does
+    one along the axis a scatter writes at positions, each device writing
+    the updates that land in its window. An operand whole on every device
+    is read by a view of each device's window.
 
     An operation raises [Invalid_argument] where two operands cut one
     result axis over different devices or tiles, where a device needs a
@@ -1187,7 +1188,15 @@ val scatter :
     write there. Where [x] is cut along [axis], each device writes the
     updates whose positions fall in its window, reading [p] and [u] whole
     along [axis] ({!section-routing}): each element takes its updates in
-    their order on one device.
+    their order on one device. Where an [Add]'s [p] and [u] are cut along
+    [axis], but for an [x] of {!Nx_array.Layout.max_rank} axes, which reads
+    them whole there, each device adds the updates it holds into its
+    window of [x], and the devices sum these partial results, moving them
+    as a {!sum} over a cut axis does and never [u]. An integer result is
+    exact, and a float or complex element within
+    [γ(k + t - 1) (|x| + Σ|u|)] of the exact sum, [k] its updates and [t]
+    the tiles of [u] holding updates. An element no update lands on keeps
+    its value, but a signalling NaN may be quieted.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p] and [u]
     differ in shape, their shape differs from [x]'s off [axis], or [combine]

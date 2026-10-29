@@ -70,13 +70,15 @@ type axis =
           results reads the operand's axis at its range along [a]. *)
   | Whole
       (** Read whole on each device: an axis the operation acts along, as a
-          [Moments] or [Logsumexp] scan's, a sort's, a transform's, or a
-          scatter's axis of its positions and updates, one a padded load
-          pads, crops or windows, and one an assembly joins or pads along. *)
+          [Moments] or [Logsumexp] scan's, a sort's, a transform's, a
+          scatter's axis of its positions and updates but an [Add]'s, one
+          a padded load pads, crops or windows, and one an assembly joins
+          or pads along. *)
   | Reduced of int
       (** Gone from the results: a reduction's axes, a contraction's
-          contracting pairs, a gather's source axis and [b]'s axis of
-          [Rows]' groups ({!Nx_kernel.type-segments}), but one a padded load
+          contracting pairs, a gather's source axis, an [Add] scatter's
+          axis of its positions and updates, and [b]'s axis of [Rows]'
+          groups ({!Nx_kernel.type-segments}), but one a padded load
           of the reduction pads, crops or windows, which is [Whole] for every
           load. The axes of [Reduced f] for one factor [f] range over one
           index: a reduction's axis [a] is [Reduced a] in each load, a
@@ -239,8 +241,9 @@ val route :
     own only through views of its arrays, or, for its positions, by moving
     them there ({!gathers}). An axis
     that [r] reduces and that has no element is read whole by every
-    operand; one it scans or indexes keeps its cut, and the devices compute
-    by windows.
+    operand; one it scans keeps its cut, and the devices compute by
+    windows; one it indexes keeps its cut, and every other axis keeps
+    its own.
 
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
     axis its shape lacks ({!Grid.window}), and with the preamble's message

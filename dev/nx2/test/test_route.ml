@@ -818,12 +818,25 @@ let folded c i a =
       | Route.Reduced _ | Blocks _ | Scanned _ | Indexed _ -> true
       | Becomes _ | Whole | Regroups _ -> false)
 
-(* Whether an axis [c]'s rule folds has no element. *)
+(* Whether an axis [c]'s rule folds, but an indexed one, has no element:
+   beside a target of no element, a scatter's updates still fold. *)
 let empty_fold c =
+  let indexed i a =
+    match c.rule with
+    | Route.Elementwise -> false
+    | Axes t -> (
+        match t.(i).(a) with
+        | Route.Indexed _ -> true
+        | Reduced _ | Blocks _ | Scanned _ | Becomes _ | Whole | Regroups _ ->
+            false)
+  in
   Array.exists Fun.id
     (Array.mapi
        (fun i s ->
-         Array.exists Fun.id (Array.mapi (fun a d -> folded c i a && d = 0) s))
+         Array.exists Fun.id
+           (Array.mapi
+              (fun a d -> folded c i a && d = 0 && not (indexed i a))
+              s))
        c.shapes)
 
 (* Whether operands read at [operands] are read cut along an axis [c]'s rule

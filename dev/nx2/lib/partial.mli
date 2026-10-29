@@ -6,10 +6,11 @@
 (** Folds over a cut axis: operations whose route computes by partials
     ({!Route.Partials}).
 
-    A {e fold} is a reduction, a scan without carry, a contraction or a
-    gather, and its {e folded} axes are those it reduces, scans or
-    contracts, [b]'s axis of [Rows]' groups ({!Nx_kernel.type-segments})
-    and the axis a gather reads at positions. Its route
+    A {e fold} is a reduction, a scan without carry, a contraction, a
+    gather or a scatter's [Add], and its {e folded} axes are those it
+    reduces, scans or contracts, [b]'s axis of [Rows]' groups
+    ({!Nx_kernel.type-segments}), the axis a gather reads at positions and
+    the axis of an [Add]'s positions and updates. Its route
     reads an operand cut along a folded axis, so no device holds every term
     of its window of the results. Each device computes a {e partial}, the
     fold of the terms its operands' windows hold, and the partials
@@ -220,6 +221,23 @@
     ({!Nx_cpu}); a [Max] or [Min] has them but for a NaN's sign and
     payload.
 
+    An [Add] whose positions and updates are cut along its axis is a fold
+    of the updates, its tile its windows of them along the axis. A device
+    adds the updates of its tile, at its window of the positions moved by
+    its window's start, into its window of the results in the carrier:
+    into [into]'s window for the first tile, cast to the carrier, and into
+    [-0] for every other, which adds nothing. The stack moves as a
+    reduction's does, and the parts are the slots added in tile order by
+    one map, with no [+0] added, rounded once into the dtype. Each element
+    so is [into]'s plus its updates. Over integers this is exact, with the
+    bits of the scatter on one device. A float or complex element of [k]
+    updates over [t] tiles holding updates is within
+    [γ(k + t - 1) (|x| + Σ|u|)] of the exact sum, a complex one part by
+    part, as a reduction's sum is: each update passes at most the updates
+    of its tile there and [t - 1] slots. Where no update lands, an element
+    keeps [into]'s value, a [-0]'s sign included, but a signalling NaN may
+    be quieted.
+
     {1:traffic Traffic}
 
     A device of a group of [N], [t] of whose tiles hold terms, receives,
@@ -232,7 +250,9 @@
     [Scan], a device receives the totals of the other tiles of its group
     holding terms, one row of its window off the axis each, two for an
     [Arg]. A [Gather] moves its slots as a [Reduce] of one reduction does,
-    and no part of its positions. A [Scatter] moves nothing. No part of an
+    and no part of its positions. A [Scatter] into a cut target moves
+    nothing; an [Add] of cut updates moves its slots as a [Reduce] of one
+    reduction does, and no part of its positions or updates. No part of an
     operand moves.
 
     A [Reduce] of [k] reductions runs [k] loops over each device's loads,
@@ -243,9 +263,11 @@
     its scales once per piece, and a piece of [Rows]' groups runs one
     [Scan] over its device's offsets. A [Scatter] runs on each device one
     map shifting its positions where its window starts past [0] and one
-    scatter. A [Gather] runs on each device one map shifting its positions
-    where its tile starts past [0], one gather and one bitcast, and one
-    bitcast over the results. *)
+    scatter, and an [Add] of cut updates one map for its target, one
+    casting its updates where the carrier is not the dtype, then one map
+    adding the slots and one casting the result. A [Gather] runs on each
+    device one map shifting its positions where its tile starts past [0],
+    one gather and one bitcast, and one bitcast over the results. *)
 
 val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 (** [run ~by route op] is [op], its operands lying where [route], its route,

@@ -1064,12 +1064,67 @@ let scatter (type v s d) ~by (route : unit Route.t) rule combine unique axis
   in
   Prim.of_arrays p ~shape (Iarray.init (Array.length ks) own)
 
+(* An [Add] of updates cut along its axis: device [j] adds its tile of
+   them, at the positions moved to its window's start, into its window,
+   in the carrier: the first tile into [into]'s, every other into [-0],
+   which adds nothing. The slots close by one map adding them in tile
+   order, with no [+0] added, and the result rounds once. *)
+let summed (type v s d) ~by (route : unit Route.t) rule unique axis
+    (idx : d Value.index) (updates : (v, s, d) Value.t)
+    (into : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let p = route.result in
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let shape = Prim.shape into and su = Prim.shape updates in
+  let dt = Prim.dtype into in
+  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+  let tiles = tiles ~by route ~operand:1 su [| axis |] in
+  let cl =
+    closing ~by route ~operand:1 ~axes:[ axis ] ~extent:(fun _ -> su.(axis))
+      shape
+  in
+  let own j =
+    let w = Devices.window ~by p shape j and t = tiles.(j).(0) in
+    let here = Devices.one set ks.(j) in
+    let read i x =
+      view ~by ks.(j) here (reads rule i (Prim.shape x) w (fun _ -> t)) x
+    in
+    let i = shift ~by (-w.(axis).start) (Value.Any (read 0 idx)) in
+    let idx = Prim.expect D.Int64 i in
+    let start =
+      if t.start = 0 then E.any (E.cast c (E.input 0 dt))
+      else E.any (E.neg (E.const c (D.zero c)))
+    in
+    let target = map ~by here [ Value.Any (read 2 into) ] [ start ] in
+    let into = Prim.expect c (List.hd target) in
+    let updates = cast ~by (D.Any c) (Value.Any (read 1 updates)) in
+    let updates = Prim.expect c updates in
+    array
+      (at ~by here
+         (Value.Scatter { combine = Add; unique; axis; idx; updates; into }))
+  in
+  let s = Place.value ~by cl.placed (stack ~by cl c shape own) in
+  let slots = List.map (fun i -> Value.Any (slot ~by cl i s)) (slots cl) in
+  let sum =
+    List.fold_left
+      (fun acc k -> E.(acc + input k c))
+      (E.input 0 c)
+      (List.init (List.length slots - 1) (fun k -> k + 1))
+  in
+  let total = Prim.expect c (List.hd (map ~by cl.parts slots [ E.any sum ])) in
+  let y = gathered ~by cl total in
+  Prim.expect dt (cast ~by (D.Any dt) (Value.Any y))
+
 let run (type r) ~by route (op : r Value.prim) : r =
   let rule = Prim.rule op in
   match op with
   | Value.Gather { axis; idx; x } -> gather ~by route rule axis idx x
   | Value.Scatter { combine; unique; axis; idx; updates; into } ->
-      scatter ~by route rule combine unique axis idx updates into
+      (* An [Add]'s updates are read cut along the axis only where the
+         route sums them. *)
+      let cuts = Grid.cuts (Devices.grid route.operands.(1)) in
+      if Array.exists (fun (a, _) -> a = axis) cuts then
+        summed ~by route rule unique axis idx updates into
+      else scatter ~by route rule combine unique axis idx updates into
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       reduce ~by route rule layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->

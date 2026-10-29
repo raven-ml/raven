@@ -230,12 +230,25 @@ let folds rule i rank =
              | Becomes _ | Whole | Regroups _ -> false)
            (List.init rank Fun.id))
 
-(* Whether an axis [rule] folds of an operand of [shapes] has no element. *)
+(* Whether an axis [rule] folds of an operand of [shapes] has no element,
+   but an indexed one: over a target of no element along it, an [Add]'s
+   updates still fold, their positions all outside. *)
 let folds_empty rule shapes =
+  let indexed i a =
+    match rule with
+    | Axes t -> (
+        match t.(i).(a) with
+        | Indexed _ -> true
+        | Becomes _ | Whole | Reduced _ | Blocks _ | Scanned _ | Regroups _ ->
+            false)
+    | Elementwise -> false
+  in
   Array.exists Fun.id
     (Array.mapi
        (fun i s ->
-         Array.exists (fun a -> s.(a) = 0) (folds rule i (Array.length s)))
+         Array.exists
+           (fun a -> s.(a) = 0 && not (indexed i a))
+           (folds rule i (Array.length s)))
        shapes)
 
 (* How the devices compute over operands of [shapes] read at [operands]: by
