@@ -32,6 +32,11 @@ let submit ?(buffers = [||]) ?waits s =
   Rig.submit ?waits (Rig.Submission.Run.make s) ~buffers
 
 let timeout = 60.
+
+(* The cases of each law that covers labels. The rarest label marks about one
+   case in sixteen: 300 cases miss it with odds under one in a hundred
+   million, where 100 missed it in about one run in 600. *)
+let law_cases = 300
 let answer = Testable.make ~pp:R.pp_answer ~equal:( = )
 
 (* Claims through views of one memory, against a model *)
@@ -1848,7 +1853,7 @@ let tests =
   [
     group ~timeout "claims"
       [
-        prop
+        prop ~count:law_cases
           ~examples:
             [
               (* A donation overlapping a read that begins before a shorter
@@ -1935,8 +1940,8 @@ let tests =
       ];
     group ~timeout "claims from C"
       [
-        prop "rig_buffers_claim claims every buffer or none" states
-          claim_all_law;
+        prop ~count:law_cases
+          "rig_buffers_claim claims every buffer or none" states claim_all_law;
         test "a claim from C is a read claim" test_c_claims;
         test
           "a claim from C holds the memory and waits until the word shows \
