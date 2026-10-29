@@ -37,6 +37,10 @@ Jit/callback-1-hit	alloc_words	exact	1793
 Jit/callback-1-hit	wall_time	batch=2048	n=20	3.555e-06	3.449e-06 3.507e-06 3.514e-06 3.516e-06 3.521e-06 3.529e-06 3.545e-06 3.548e-06 3.550e-06 3.553e-06 3.556e-06 3.561e-06 3.565e-06 3.579e-06 3.581e-06 3.593e-06 3.600e-06 3.623e-06 3.636e-06 3.715e-06
 Jit/chain-100-rooted-hit	alloc_words	exact	721
 Jit/chain-100-rooted-hit	wall_time	batch=512	n=20	1.278e-05	1.263e-05 1.265e-05 1.267e-05 1.270e-05 1.271e-05 1.272e-05 1.272e-05 1.274e-05 1.274e-05 1.277e-05 1.279e-05 1.280e-05 1.287e-05 1.288e-05 1.289e-05 1.292e-05 1.294e-05 1.300e-05 1.301e-05 1.338e-05
+Jit/cumsum-neg-log-uniform-8x1024	alloc_words	exact	738
+Jit/cumsum-neg-log-uniform-8x1024	wall_time	batch=64	n=20	7.146e-05	7.025e-05 7.034e-05 7.044e-05 7.046e-05 7.063e-05 7.088e-05 7.099e-05 7.124e-05 7.132e-05 7.140e-05 7.153e-05 7.155e-05 7.253e-05 7.365e-05 7.883e-05 7.908e-05 7.920e-05 7.953e-05 8.614e-05 1.009e-04
+Jit/cumsum-scaled-float32-100x400	alloc_words	exact	722
+Jit/cumsum-scaled-float32-100x400	wall_time	batch=8	n=20	9.407e-04	9.376e-04 9.387e-04 9.389e-04 9.390e-04 9.391e-04 9.392e-04 9.399e-04 9.401e-04 9.406e-04 9.406e-04 9.409e-04 9.410e-04 9.418e-04 9.422e-04 9.478e-04 9.564e-04 9.581e-04 9.593e-04 9.891e-04 9.973e-04
 Jit/donated-step-4096	alloc_words	exact	940
 Jit/donated-step-4096	wall_time	batch=4096	n=20	1.504e-06	1.486e-06 1.491e-06 1.495e-06 1.497e-06 1.498e-06 1.499e-06 1.499e-06 1.501e-06 1.503e-06 1.503e-06 1.504e-06 1.506e-06 1.506e-06 1.509e-06 1.511e-06 1.513e-06 1.514e-06 1.517e-06 1.518e-06 1.532e-06
 Jit/eigh-float32-64x8x8	alloc_words	exact	891

@@ -396,6 +396,7 @@ let jit_rows () =
   let angles = between f32 41 (-30.) 30. [| 65536 |] in
   let bases = between f32 43 0.01 30. [| 65536 |] in
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
+  let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -515,6 +516,23 @@ let jit_rows () =
     warm "tanh-float32-64K"
       (fun () -> Rune.jit' Nx.tanh)
       (fun f -> synced (f angles));
+    (* A running sum over the negated logs of uniform draws, as nested
+       sampling's error estimate: its windows of 256 read each element up to
+       256 times, which compute each draw and its log once when stored. *)
+    warm "cumsum-neg-log-uniform-8x1024"
+      (fun () ->
+        ( Rune.jit
+            Nx.Ptree.(v Nx.Rng.walk @-> returns tensor)
+            (fun key ->
+              let u = Nx.Rng.uniform ~key f64 [| 8; 1024 |] in
+              Nx.cumsum ~axis:1 (Nx.neg (Nx.log u))),
+          Nx.Rng.key 48 ))
+      (fun (f, key) -> synced (f key));
+    (* A running sum of a cheap value, its windows of 400 each computing it
+       again at every trip when inlined: stored, it is computed once. *)
+    warm "cumsum-scaled-float32-100x400"
+      (fun () -> Rune.jit' (fun x -> Nx.cumsum ~axis:1 (Nx.mul_s x 2.)))
+      (fun f -> synced (f scaled));
     (* Powers of bases in [[0.01, 30)] to exponents in [[-3, 3)]. *)
     warm "pow-float32-64K"
       (fun () -> Rune.jit (pair_fn ()) Nx.pow)
