@@ -901,6 +901,11 @@ let law_lanes (Lanes c) =
    [w = -0], is -0. *)
 let lane_examples =
   let one v = { Operand.view = Plain; values = [| F v |] } in
+  let several n =
+    let part k = float_of_int (k - 1) *. 0.75 in
+    let values = Array.init n (fun k -> Operand.C (part k, part (n - k))) in
+    { Operand.view = Plain; values }
+  in
   [
     Lanes
       {
@@ -921,6 +926,37 @@ let lane_examples =
         g = Bin (Sub, Y, Un (Square, X));
         x = one 2.;
         w = one 1.;
+      };
+    (* Each other case the law covers, so that every run reaches it. *)
+    Lanes
+      {
+        dt = c128;
+        s = [| 2 |];
+        trips = [| 0; 2; 1 |];
+        max = 2;
+        g = exact_at c128 (generic (Bin (Mul, X, Y)));
+        x = several 6;
+        w = several 2;
+      };
+    Lanes
+      {
+        dt = f32;
+        s = [| 2 |];
+        trips = [| 1; 3 |];
+        max = 2;
+        g = Bin (Mul, X, Y);
+        x = several 4;
+        w = several 2;
+      };
+    Lanes
+      {
+        dt = f64;
+        s = [| 2 |];
+        trips = [||];
+        max = 1;
+        g = Bin (Mul, X, Y);
+        x = several 0;
+        w = several 2;
       };
   ]
 
@@ -964,6 +1000,26 @@ let apart_cases =
       in
       Format.fprintf ppf "%a %a, lanes [%s], trips [%s], max %d: %a" Nx.pp_dtype
         dt Operand.pp_shape s (ints lanes) (ints trips) max pp g)
+
+(* Each case the law covers, so that every run reaches it. *)
+let apart_examples =
+  let g = exact_at Nx.int32 (generic (Bin (Sub, Y, Un (Square, X)))) in
+  let x lanes s =
+    let n = Operand.numel lanes * Operand.numel s in
+    let values = Array.init n (fun k -> Operand.F (float_of_int (k - 2))) in
+    { Operand.view = Plain; values }
+  in
+  let apart dt s lanes trips max =
+    Apart (dt, s, lanes, trips, max, g, x lanes s)
+  in
+  [
+    apart f32 [| 2 |] [| 3 |] [| 0; 2; 1 |] 2;
+    apart f64 [||] [| 2; 2 |] [| 1; 3; 0; 2 |] 2;
+    apart Nx.int32 [| 2 |] [| 3 |] [| 2; 2; 2 |] 2;
+    apart Nx.int8 [||] [| 3 |] [| 0; 0; 0 |] 0;
+    apart c64 [| 2 |] [| 1 |] [| 1 |] 1;
+    apart Nx.uint8 [| 2 |] [| 0 |] [||] 0;
+  ]
 
 let law_apart (Apart (dt, s, lanes, trips, max, g, co)) =
   let n = Array.length trips in
@@ -1400,10 +1456,11 @@ let test_memory () =
   (* Each step taken keeps its carry, which the sine's tangent reads; with no
      step, the result is the argument. *)
   let carry = n * 4 in
-  equal ~msg:"a third step" int carry (held 3 - held 2);
-  equal ~msg:"a fourth step" int carry (held 4 - held 3);
+  let two = held 2 and three = held 3 and four = held 4 in
+  equal ~msg:"a third step" int carry (three - two);
+  equal ~msg:"a fourth step" int carry (four - three);
   at_most ~msg:"three steps of max = 50, and the result" int ~than:(4 * carry)
-    (held 3);
+    three;
   equal ~msg:"no step" int 0 (held 0);
   ignore (Sys.opaque_identity x)
 
@@ -1411,6 +1468,9 @@ let () =
   exit
     (run "rune2 iterate"
        [
+         (* First, so that its collections run over a small heap. *)
+         group "memory"
+           [ test "reverse mode keeps the steps taken" test_memory ];
          group "eagerly"
            [
              test "iterate is the while loop" test_iterate;
@@ -1435,10 +1495,10 @@ let () =
            ];
          group "maps"
            [
-             prop ~examples:lane_examples "each lane stops on its own"
+             prop ~examples:lane_examples ~count:40 "each lane stops on its own"
                lane_cases law_lanes;
-             prop "compiled, lanes stop apart at every dtype" apart_cases
-               law_apart;
+             prop ~examples:apart_examples ~count:30
+               "compiled, lanes stop apart at every dtype" apart_cases law_apart;
              prop "a key in the carry draws as the loop" keyed_cases law_keyed;
              test "a stopped lane computes its donor's step" test_donors;
              test "a stopped lane keeps a non-finite carry" test_nonfinite;
@@ -1451,6 +1511,4 @@ let () =
              test "a complex carry's gradient" test_complex_carry;
              test "one lane, and lanes of lanes" test_one_lane;
            ];
-         group "memory"
-           [ test "reverse mode keeps the steps taken" test_memory ];
        ])
