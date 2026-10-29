@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- `Rangeify.get_kernel_graph` stores a value read at several indices when its
+  copies would add over 1024 nodes. Copies of copies grew kernels exponentially:
+  a tridiagonal solve by `Nx.associative_scan` compiled in 62 s, now 2.4 s.
 - `Decomp_op`'s division rules read a weak divisor in the dividend's type: on
   int8, `x // 128` skipped the sign correction for -128, and `1 // 128` gave 0
   for -1.

@@ -135,6 +135,15 @@ def precompiled_function():
     return f(empty(4, 4)) + 1
 
 
+def read_at_offsets():
+    """A value of some forty nodes over three buffers, read at 32 offsets: inlined, its copies would be over a thousand
+    nodes."""
+    a, b, c = empty(64), empty(64), empty(64)
+    x = a
+    for _ in range(16): x = x * b + c
+    return sum((x[k:k + 32] for k in range(1, 32)), start=x[:32])
+
+
 def mesh(*shape):
     """A value of `shape` sharded on its first two axes across four devices."""
     rng = UOp.range(4, -1, AxisType.DEVICE)
@@ -297,6 +306,7 @@ PROGRAMS = {
     "symbolic_kept": symbolic_kept,
     "symbolic_contiguous": lambda: (empty(4, 10)[:, :Variable("v", 1, 10).bind(3)] + 1).contiguous().sum(0),
     "variable_read_twice": lambda: (lambda x: x.sum() + x.max())(empty(4, 10)[:, :Variable("v", 1, 10).bind(3)].exp2()),
+    "read_at_offsets": read_at_offsets,
     # values whose staging a later pass removes or keeps
     "expand_staged": lambda: (lambda e: e + e.permute(1, 0))(empty(4, 1).exp2().expand(4, 4)),
     "expand_kept": lambda: (lambda e: e + e.permute(1, 0))(

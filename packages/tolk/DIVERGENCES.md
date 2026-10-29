@@ -4277,3 +4277,62 @@ submission, and a range a loop of rig's program (D146).
   divisor past its width reads it in its type`; the `Codegen` suite:
   `constants past the width › a weak divisor past the width divides as its
   value there`.
+
+## D163. A value read at several positions inlines at most 1024 nodes
+
+- **tinygrad:** `schedule/rangeify.py:50-102` (`remove_bufferize`, which
+  inlines a stored value that reads at most three buffers and no reduction
+  reading a buffer, at every position it is read at) and `:351-358`
+  (`get_kernel_graph`).
+- **tolk:** `lib/schedule/rangeify.ml:75-123` (`reads`, `stage_reads` and
+  `reads_of`: the distinct indices each stage is read at), `:126-137`
+  (`inline_budget`, `copied`), `:205` (`duplicates`, in `remove_bufferize`)
+  and `:791-808` (`pm_cleanups`, `get_kernel_graph`, which counts the reads
+  before the cleanups); `test/gen/tinygrad.patch`, which gives tinygrad the
+  same rule.
+- **Differs:** a stage read at `r > 1` distinct indices stays stored when `n
+  * r > 1024`, where `n` counts the nodes of its value, its producers
+  already inlined, that its ranges reach: those an index copies, since the
+  substitution leaves the others shared. Inlined, a value is copied to each
+  index it is read at, and the copies compound: a value whose readers are
+  inlined at several positions in turn is copied again with them, so `k`
+  values each read at two positions are `2^k` copies of the first, in one
+  kernel. tinygrad has the same exponential behaviour. With the bound an
+  inlining copies at most 1024 nodes into its readers, and a program of `N`
+  nodes and `S` stages makes kernels of at most `N + 1024 S` nodes, the
+  reads the cleanups make aside. The reads are counted once, in a walk of
+  the graph the cleanups start from, at each axis of a stage's ranges; a
+  stage's count is the least over its axes, since stages over one device
+  range share that axis, so stages with no other range pool their reads and
+  may stay stored when read once. A read the cleanups make is not counted,
+  and a read through a stack is not one: every stage has a device by then,
+  so no cleanup turns it into a read of the stage. A value read at one
+  position, or whose copies stay under the bound, is inlined as before:
+  elementwise and stencil fusion, whose values are tens of nodes read at a
+  few positions, keep their kernels, and no other golden changes. The bound
+  is where a copy costs as much as a kernel: on fudge a kernel's compile
+  costs about 30 ms, mostly Clang's, and a kernel of a thousand nodes about
+  50 ms in all, growing faster than its nodes. It is also past where storing
+  the value is cheaper to run: a thousand operations an element against one
+  store and `r` loads. XLA's fusion bounds the same duplication by the
+  copies alone, at 15
+  (`FusionNodeIndexingEvaluation::kAllowedCodeDuplication`).
+- **Reason:** (b). rune2's compiled `Nx.associative_scan`, whose prefix
+  circuit reads each level's pairs and results at two or three positions:
+  jera's tridiagonal solve of 100 equations, three scans one of them over
+  4-tuples, compiled cold in 62 s and compiles in 2.4 s (fudge, under load),
+  as a scan of 1000 4-tuples does; a scan of 4 is 0.05 s either way.
+  tinygrad compiles the same graph as slowly, 3.4 s at 32 elements. The
+  kernels left are about 30 ms each to compile, so the solve stays slower
+  than storing every level by hand (1.3 s).
+- **Pinned by:** the Rangeify suite's `read_at_offsets` (a value of some
+  forty nodes read at 32 offsets, stored) rows of `kernel_counts.golden` and
+  its kernel golden, from the equally patched tinygrad; `cost › levels each
+  read twice make kernels that stop growing with depth`; the `copies` group:
+  `a value of 1200 nodes read at one index is inlined`, `› a value read
+  twice whose copies are 1024 nodes is inlined`, `› a value read twice whose
+  copies are 1028 nodes is stored`, `› a value of 600 nodes outside its
+  ranges read twice is inlined` and `› reads of a stage sharing a range are
+  not the other's`; rune2's `classes › an associative scan over a tuple
+  gives eager's bits` and the `scan/tridiagonal-100` row of its compile
+  bench.

@@ -2740,7 +2740,7 @@ index a5cf57d..dff4198 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 0239aa4..bbbda13 100644
+index 0239aa4..4c5801d 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,7 +1,7 @@
@@ -2752,7 +2752,31 @@ index 0239aa4..bbbda13 100644
  from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo, ParamArg
  from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrite_group
  from tinygrad.uop.symbolic import symbolic
-@@ -77,13 +77,23 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -47,7 +47,22 @@ def gate_substitute(ctx, b:UOp) -> None:
+ pm_gate_substitute = PatternMatcher([(UPat(GroupOp.All, name="b"), gate_substitute)], compiled=False)
+ # if a buffer is being stored just for permutes or something, remove it
+ # we want to reexpress the indexes of idx2 in terms of the implied b1
+-def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
++# the distinct indices each stage is read at, each of which inlining copies its value to. keyed by the axes of the stage's
++# ranges, which are its own and name it while the cleanups rebuild it. a read through a stack is not counted: by now every
++# stage has a device, so the cleanups never turn it into a read of the stage
++def stage_reads(sink:UOp) -> dict[tuple, int]:
++  reads: dict[tuple, int] = {}
++  for u in sink.toposort(enter_calls=False):
++    if u.op is Ops.INDEX and u.src[0].op is Ops.STAGE:
++      for r in u.src[0].src[1:]:
++        if r.op is Ops.RANGE: reads[r.arg[:-1]] = reads.get(r.arg[:-1], 0) + 1
++  return reads
++
++# the nodes that inlining a stage may add to its readers: the nodes of its value that its ranges reach, which the inlining
++# copies, times the indices it is read at
++INLINE_BUDGET = 1024
++
++def remove_bufferize(ctx:dict[tuple, int], src:UOp, buf:UOp, idx:UOp):
+   # see if we can't do it, should this ever hit?
+   assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
+   assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
+@@ -77,13 +92,32 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
        indexes.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
      return True
@@ -2774,10 +2798,19 @@ index 0239aa4..bbbda13 100644
 +  read = [r for x in idx.src[1:] for r in x.ranges]
 +  if buf.arg.broadcast and len(accessed_buffers) > 1 and read and all(r.axis_type is AxisType.REDUCE for r in read): return None
 +
++  # inlined, the value is copied to each position it is read at. its producers are inlined already, so the copies compound: k
++  # values each reading the one before at two positions are 2^k copies of the first. a value read at several positions whose
++  # copies exceed the budget stays stored, so that an inlining adds at most the budget to its readers
++  # each read counts at every axis of the stage's ranges, and other stages can share an axis, a device range or one a
++  # symbolic size names, so the least count bounds the stage's reads from above
++  rngs = [r for r in buf.src[1:] if r.op is Ops.RANGE]
++  reads = max(min([ctx.get(r.arg[:-1], 0) for r in rngs], default=1), 1)
++  if reads > 1 and len([x for x in computed if any(r in x.ranges for r in rngs)]) * reads > INLINE_BUDGET: return None
++
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -97,8 +107,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -97,8 +131,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
  
    # if it makes it here, the bufferize is removed
    # this is the ranges replaced
@@ -2791,7 +2824,7 @@ index 0239aa4..bbbda13 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -227,10 +240,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -227,10 +264,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -2814,7 +2847,7 @@ index 0239aa4..bbbda13 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -258,6 +281,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -258,6 +305,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -2824,7 +2857,7 @@ index 0239aa4..bbbda13 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -281,7 +307,9 @@ class LocalAddBufferContext:
+@@ -281,7 +331,9 @@ class LocalAddBufferContext:
    range:int = 0
  
  def debuf(ctx:LocalAddBufferContext, buf:UOp):
@@ -2835,6 +2868,15 @@ index 0239aa4..bbbda13 100644
    ret = param.reshape(buf.max_shape)
    # if the buffer has symbolic shape, shrink the max-sized view to the actual shape
    if buf.max_shape != buf.shape: ret = ret.shrink(tuple((0, s) for s in buf.shape))
+@@ -354,7 +406,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+ 
+   # cleanups for speed and runability
+   tsink = graph_rewrite(tsink,
+-                        symbolic+pm_reduce_simplify+pm_const_buffer_folding+pm_remove_bufferize,
++                        symbolic+pm_reduce_simplify+pm_const_buffer_folding+pm_remove_bufferize, ctx=stage_reads(tsink),
+                         name="symbolic+reduce_collapse+debuf")
+   next_range = max((x.arg[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
+   tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py

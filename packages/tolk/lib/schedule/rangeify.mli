@@ -28,7 +28,16 @@ val get_kernel_graph : Ops.t -> Ops.t
         - an index of a stage by the stage's own ranges is the stage's value;
         - an index of a stage that a later pass may inline back is the staged
           value, recomputed at the index, unless it reads more than three
-          storages or a reduction in it reads one;
+          storages, a reduction in it reads one, or the stage is read at
+          several distinct indices and the nodes of its value inside its
+          ranges, which each index copies, times their number exceed 1024, so
+          that copies of copies cannot grow the kernels faster than the
+          program. The indices are those of the graph this step starts from: a
+          read the step itself makes, such as inlining a reader of the stage
+          at several indices, is not counted. They are counted at each range
+          of the stage, taking the least count, and stages over one device
+          range share it: two such stages read once each, with no range of
+          their own, count as read twice;
         - an index of storage whose every write is invalid is invalid;
         - a store of a value into itself does nothing;
      }

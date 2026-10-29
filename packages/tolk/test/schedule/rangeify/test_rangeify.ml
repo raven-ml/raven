@@ -130,6 +130,7 @@ let programs =
     "precompiled_function_1";
     "preserve_multistage_reduce";
     "push_pads_elementwise";
+    "read_at_offsets";
     "reduce_broadcast_not_recomputed";
     "reduce_expand_child";
     "reduce_expand_reduce";
@@ -1036,6 +1037,33 @@ let words f =
   ignore (Sys.opaque_identity (f ()));
   Gc.minor_words () -. before
 
+(* [halvings d] is [d] levels over [16] rows of [2^d] values: each level
+   multiplies the even and the odd elements of the one before, which it reads
+   at two positions. Inlined into its reader, a level is two copies of the one
+   before, so a kernel of all [d] levels would compute [2^d] products a
+   row. *)
+let halvings d =
+  let rec level x m =
+    if m = 1 then x
+    else
+      let pairs = Shape.reshape x (ints [ 16; m / 2; 2 ]) in
+      let half i =
+        Shape.reshape
+          (Shape.shrink pairs [ None; None; Some (Ops.Int i, Ops.Int (i + 1)) ])
+          (ints [ 16; m / 2 ])
+      in
+      level Ops.O.(half 0 * half 1) (m / 2)
+  in
+  let m = 1 lsl d in
+  stores (Shape.reshape (level (input ~shape:[ 16; m ] 1) m) (ints [ 16 ]))
+
+(* The nodes of the largest kernel of [sink]'s kernel graph. *)
+let largest sink =
+  List.fold_left
+    (fun n c -> max n (List.length (Ops.toposort ~calls:Skip (Ops.nth c 0))))
+    0
+    (calls (schedule sink))
+
 (* Work linear in the length is [a * n + b] with [b >= 0], so twice the length
    costs at most twice the work. The tenth of slack covers tables that double
    their capacity at different lengths in the two runs. *)
@@ -1050,6 +1078,90 @@ let cost =
           in
           let short = work 100 and long = work 200 in
           less float_exact ~than:(2.2 *. short) long);
+      (* Inlined, four more levels make the largest kernel sixteen times
+         larger. Stored once its copies are many, a level starts a kernel
+         again, and the depth only shifts where the kernels end: at most one
+         level's doubling. *)
+      test "levels each read twice make kernels that stop growing with depth"
+        (fun () ->
+          let shallow = largest (halvings 12) and deep = largest (halvings 16) in
+          less int ~than:(4 * shallow) deep);
+    ]
+
+(* Copies
+
+   Hand-built kernel graphs of stages that a later pass may inline back. A
+   stage's value inlined is copied to each distinct index it is read at, and
+   stays stored when it is read at several and the nodes its ranges reach times
+   their number exceed 1024. *)
+
+let removable : Ops.bufferize_opts =
+  { device = Some cpu; addrspace = Global; keep = Removable }
+
+let loop n id = Ops.range ~axis_type:Loop (Int n) [ id ]
+let source = Call.param ~device:cpu ~shape:[ Int 256 ] 1 Float32
+
+(* [chain k x] is [k] steps of [y * y + x] from [x]: [2k] nodes over [x]'s. *)
+let chain k x =
+  let rec go y k = if k = 0 then y else go Ops.O.((y * y) + x) (k - 1) in
+  go x k
+
+(* The kernels of a graph that stores, at each [i] of [16], the sum of [reads
+   i]. *)
+let kernels_reading reads =
+  let o = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
+  let i = loop 16 9 in
+  let store = Ops.store (Ops.index o [ i ]) (sum_of (reads i)) in
+  kernels
+    (Rangeify.get_kernel_graph
+       (Ops.sink [ Ops.after o [ Ops.end_ store [ i ] ] ]))
+
+(* [staged v] is [v] of [source] at [s], staged over [s] of [32]. *)
+let staged v =
+  let s = loop 32 0 in
+  Ops.bufferize ~opts:removable (v (Ops.index source [ s ])) [ s ]
+
+let at k i = [ Ops.O.(i + int k) ]
+let once v i = [ Ops.index v (at 0 i) ]
+let twice v i = [ Ops.index v (at 0 i); Ops.index v (at 16 i) ]
+
+let copies =
+  group "get_kernel_graph › copies"
+    [
+      test "a value of 1200 nodes read at one index is inlined" (fun () ->
+          equal int 1 (kernels_reading (once (staged (chain 600)))));
+      (* [staged (chain k)] copies [2k + 2] nodes: the chain, [s] and the read
+         of [source] at [s]. Read twice, [k = 255] copies 1024. *)
+      test "a value read twice whose copies are 1024 nodes is inlined"
+        (fun () -> equal int 1 (kernels_reading (twice (staged (chain 255)))));
+      test "a value read twice whose copies are 1028 nodes is stored" (fun () ->
+          equal int 2 (kernels_reading (twice (staged (chain 256)))));
+      (* The chain reads [source] at [0] alone: an index of the stage copies
+         none of it. *)
+      test "a value of 600 nodes outside its ranges read twice is inlined"
+        (fun () ->
+          let outside = chain 300 (Ops.index source [ Ops.O.int 0 ]) in
+          let v = staged (fun x -> Ops.O.(x + outside)) in
+          equal int 1 (kernels_reading (twice v)));
+      (* [b] and [a] share the range [s], as stages over one device range do:
+         the reads of [b] count at [s], not as reads of [a]. *)
+      test "reads of a stage sharing a range are not the other's" (fun () ->
+          let s = loop 48 0 and t = loop 2 1 in
+          let a =
+            Ops.bufferize ~opts:removable
+              (chain 100 (Ops.index source [ Ops.O.((s * int 2) + t) ]))
+              [ s; t ]
+          in
+          let b =
+            let x = Ops.index source [ s ] in
+            Ops.bufferize ~opts:removable Ops.O.(x * x) [ s ]
+          in
+          let reads i =
+            Ops.index a [ i; Ops.O.int 0 ]
+            :: Ops.index a [ i; Ops.O.int 1 ]
+            :: List.init 31 (fun k -> Ops.index b (at k i))
+          in
+          equal int 1 (kernels_reading reads));
     ]
 
 (* Dead reads
@@ -1102,5 +1214,6 @@ let () =
          loops;
          states;
          cost;
+         copies;
          dead_reads;
        ])

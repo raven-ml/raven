@@ -96,6 +96,7 @@ variable_staged	2
 symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1
+read_at_offsets	2
 expand_staged	2
 expand_kept	2
 padded_twice	1
