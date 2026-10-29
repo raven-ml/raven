@@ -37,13 +37,6 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 # comgr is absent where the goldens are generated, and rendering needs none.
 compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
 
-import tinygrad.runtime.ops_metal as ops_metal
-
-# Making a Metal renderer makes its compiler, which starts Metal's code
-# generation service, whose threads make the processes forked for each golden
-# crash at random; rendering needs no compiler.
-ops_metal.MetalCompiler.support.MTLCodeGenServiceCreate = lambda name: None
-
 from golden import graph, table, text
 from tinygrad import Tensor, Variable, dtypes
 from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_alloc_to_buf, pm_linearize_cleanups

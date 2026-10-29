@@ -45,26 +45,60 @@ HEADER = f"# tinygrad {TINYGRAD}\n"
 # tinygrad (buffer numbering, caches). It writes the goldens to a file, out of
 # reach of anything tinygrad prints.
 #
-# On macOS, a compiler that tinygrad makes for a CUDA renderer starts a compile
-# server in a docker container, which can outlive the generator and hold its
-# output open. No golden compiles through a server, so the child stubs
-# `Compiler.server` when `tinygrad.device` is imported: then, and not before,
-# since a generator sets tinygrad's environment before importing it.
+# No golden compiles a program for a GPU, so the child gives every machine
+# stand-ins for what a GPU renderer's compiler needs from the machine, when
+# tinygrad first imports it: then, and not before, since a generator sets
+# tinygrad's environment before importing it. A stand-in keeps tinygrad's cache
+# key, the one compiler field a golden records, and compiles nothing. The same
+# stand-ins on every machine keep the goldens the same on all of them.
+#
+# - A Metal renderer makes its compiler from `runtime/ops_metal.py`, which loads
+#   the Objective-C runtime and Metal's frameworks, which macOS alone has; on
+#   macOS the compiler's code generation service makes the forked processes
+#   crash at random. The child replaces the module.
+# - A CUDA renderer's `NVRTCCompiler` asks NVRTC its version off macOS, and on
+#   macOS starts a compile server in a docker container, which can outlive the
+#   generator and hold its output open. The child replaces its `__init__`, and
+#   `Compiler.server`, which other compilers call on macOS, starts no server.
 CHILD = """
 import importlib.abc, importlib.machinery, json, os, runpy, sys, golden
 
-class NoCompileServer(importlib.abc.MetaPathFinder):
+class MetalCompilerModule(importlib.abc.Loader):
+    def create_module(self, spec): return None
+    def exec_module(self, module):
+        from tinygrad.device import Compiler, CompileError
+        class MetalCompiler(Compiler):
+            def __init__(self): super().__init__("compile_metal_direct")
+            def compile(self, src): raise CompileError("no golden compiles for Metal")
+        module.MetalCompiler = MetalCompiler
+
+def no_server(device):
+    device.Compiler.server = lambda self, *args: None
+
+def no_nvrtc(compiler_cuda):
+    from tinygrad.device import Compiler, CompileError
+    def __init__(self, arch, ptx=True, cache_key="cuda"):
+        self.ptx, self.arch = ptx, arch
+        Compiler.__init__(self, f"compile_{cache_key}_{arch}")
+    def compile(self, src): raise CompileError("no golden compiles with NVRTC")
+    compiler_cuda.NVRTCCompiler.__init__, compiler_cuda.NVRTCCompiler.compile = __init__, compile
+
+PATCHED = {"tinygrad.device": no_server, "tinygrad.runtime.support.compiler_cuda": no_nvrtc}
+
+class Stubs(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path, target=None):
-        if name != "tinygrad.device": return None
+        if name == "tinygrad.runtime.ops_metal":
+            return importlib.machinery.ModuleSpec(name, MetalCompilerModule())
+        if name not in PATCHED: return None
         spec = importlib.machinery.PathFinder.find_spec(name, path)
         exec_module = spec.loader.exec_module
         def stubbed(module):
             exec_module(module)
-            module.Compiler.server = lambda self, *args: None
+            PATCHED[name](module)
         spec.loader.exec_module = stubbed
         return spec
 
-sys.meta_path.insert(0, NoCompileServer())
+sys.meta_path.insert(0, Stubs())
 runpy.run_path(sys.argv[1])
 goldens = []
 for name, body in golden.GOLDENS:

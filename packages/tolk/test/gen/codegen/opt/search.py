@@ -37,12 +37,6 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 # comgr is absent where the goldens are generated, and no case compiles.
 compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
 
-import tinygrad.runtime.ops_metal as ops_metal
-
-# Making a Metal renderer starts Metal's code generation service, whose threads
-# make the processes forked for each golden crash at random.
-ops_metal.MetalCompiler.support.MTLCodeGenServiceCreate = lambda name: None
-
 from golden import graph, table
 from graph import kernels, stage
 from tinygrad import Tensor, UOp, dtypes

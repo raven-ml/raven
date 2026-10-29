@@ -314,7 +314,10 @@ a NaN's bits (DIVERGENCES D13, D24 and D27), a selection of `-0.` beside
 a load, which stays a selection (D52), its tensor-core matcher the
 widened operands of D29, and its constant arithmetic the corrections of the
 README's CPython rows, so that the goldens hold the graphs and values
-tolk makes. No Python runs at test time. To regenerate:
+tolk makes. No golden needs a GPU or its toolchain: the compilers of Metal and
+CUDA renderers are stand-ins with the real ones' cache keys that compile
+nothing, so the goldens are the same on every machine. No Python runs at test
+time. To regenerate:
 
 1. `uv run packages/tolk/test/gen/generate.py --check` writes nothing,
    prints the diff of every golden that would change, and fails if one would.

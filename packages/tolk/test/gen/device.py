@@ -19,16 +19,10 @@ fields.
 """
 
 import tinygrad.runtime.support.compiler_amd as compiler_amd
-import tinygrad.runtime.support.compiler_cuda as compiler_cuda
-import tinygrad.runtime.ops_metal as ops_metal
 
-# Making a renderer makes its compiler, which loads its library in tinygrad and
-# nothing in tolk: comgr and NVRTC are absent where the goldens are
-# generated, and on macOS NVRTC starts a compile server in docker. Metal's code
-# generation service makes the forked processes crash at random.
+# Making a HIP renderer makes its compiler, which asserts that comgr is loaded;
+# comgr is absent where the goldens are generated, and no case compiles.
 compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
-compiler_cuda.NVRTCCompiler.__init__ = lambda self, arch, ptx=True, cache_key="cuda": None
-ops_metal.MetalCompiler.support.MTLCodeGenServiceCreate = lambda name: None
 
 from golden import graph, table
 from graph import kernels
