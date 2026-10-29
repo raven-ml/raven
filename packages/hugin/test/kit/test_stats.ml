@@ -102,14 +102,15 @@ let gen_cluster size =
   in
   array ~size:(constant size) (map (fun k -> succ k base) (int_range 0 3))
 
+let gen_non_finite = Gen.of_list [ nan; infinity; neg_infinity ]
+
 (* [size] non-finite values but one finite, at any place, if [size] is not
    zero. *)
 let gen_lone size =
   let open Gen in
   if size = 0 then constant [||]
   else
-    let+ values =
-      array ~size:(constant size) (of_list [ nan; infinity; neg_infinity ])
+    let+ values = array ~size:(constant size) gen_non_finite
     and+ at = int_range 0 (size - 1)
     and+ v = float_range (-100.) 100. in
     Array.mapi (fun i x -> if i = at then v else x) values
@@ -129,16 +130,19 @@ let gen_case =
   let* len = frequency [ (1, int_range 0 2); (4, int_range 3 40) ] in
   let size = Array.fold_left ( * ) 1 lead * len in
   (* Independent draws almost never give samples whose finite values are all
-     equal or span too little for their bins, and give one finite value in
-     about one case in twenty-five. A repeated value draws the first, a
-     cluster of floats a few spacings apart, kept in float64, the second, and
-     one finite value among non-finite ones the third. *)
+     equal or span too little for their bins, and give one finite value, or a
+     group without one, in about one case in twenty-five. A repeated value
+     draws the first, a cluster of floats a few spacings apart, kept in
+     float64, the second, one finite value among non-finite ones the third,
+     and non-finite values alone the fourth. *)
   let+ dtype, values =
     frequency
       [
         (4, pair (of_list dtypes) (array ~size:(constant size) gen_value));
         (1, pair (of_list dtypes) (map (Array.make size) gen_value));
         (1, pair (of_list dtypes) (gen_lone size));
+        ( 1,
+          pair (of_list dtypes) (array ~size:(constant size) gen_non_finite) );
         (1, map (fun v -> (F64, v)) (gen_cluster size));
       ]
   and+ bins = option (int_range 1 12) in
@@ -259,9 +263,8 @@ let law_density c =
     (fun g group ->
       let msg = Printf.sprintf "group %d" g in
       let total = Float.of_int (List.length (finite group)) in
-      if total = 0. then (
-        cover "a group without a finite value" true;
-        equal floats ~msg (Array.make n nan) density.(g))
+      cover "a group without a finite value" (total = 0.);
+      if total = 0. then equal floats ~msg (Array.make n nan) density.(g)
       else (
         Array.iteri
           (fun j d ->
@@ -291,16 +294,24 @@ let law_batch c =
       equal floats ~msg:(Printf.sprintf "group %d" g) (host row) count.(g))
     (groups c.len values)
 
+(* The cases of each law that covers labels. The rarest label, a dtype, marks
+   about one case in twelve: 300 cases miss it with odds under one in a
+   billion, where 100 missed it in one run in 5000. *)
+let law_cases = 300
+
 let laws =
   group "laws"
     [
-      prop "edges span the finite values in bins of equal width" gen_case
+      prop ~count:law_cases
+        "edges span the finite values in bins of equal width" gen_case
         (fun c ->
           List.iter (fun d -> cover (dtype_name d) (c.dtype = d)) dtypes;
           law_edges c);
-      prop "each bin counts the finite values between its edges" gen_case
+      prop ~count:law_cases
+        "each bin counts the finite values between its edges" gen_case
         law_counts;
-      prop "densities times widths sum to one" gen_case law_density;
+      prop ~count:law_cases "densities times widths sum to one" gen_case
+        law_density;
       prop "groups count as Nx.histogram row by row" gen_case law_batch;
     ]
 
