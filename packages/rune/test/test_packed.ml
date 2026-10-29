@@ -266,14 +266,36 @@ let uint4_operands =
 
 let bit_operands = operands ~pp:Format.pp_print_bool Nx.bit Gen.bool
 
+(* A [2; 3] view of a [3; 5] uint4 of distinct elements, every other row and
+   column, flipped. Its sort along the last axis compiles a kernel of 3 rows by
+   the 2 nibbles of a byte, which Clang 18 crashed on as one vector of 6
+   lanes. *)
+let strided_view =
+  let step name = List.find (fun (l : layout) -> l.name = name) layout_steps in
+  let steps =
+    List.map step [ "every other row"; "every other column"; "flipped" ]
+  in
+  Gen.with_pp
+    (fun ppf a -> Ref.pp Format.pp_print_int ppf (Ref.of_nx a))
+    (Gen.map
+       (fun xs ->
+         let xs = Array.of_list (List.filteri (fun i _ -> i < 15) xs) in
+         lay_out steps (offset Nx.uint4 [| 3; 5 |] 0 xs))
+       (Gen.permutation (List.init 16 Fun.id)))
+
+let sort_of_a_strided_view a =
+  let sort =
+    List.find (fun f -> f.name = "sort along the last axis") (integers Nx.uint4)
+  in
+  sort.check a a
+
 let values =
   group "a compiled call computes eager's values"
     [
       equals_eager "int4" int4_operands (integers Nx.int4);
       equals_eager "uint4" uint4_operands (integers Nx.uint4);
-      (* Two [4; 4] views, one a bit into its byte: the reductions of a
-         function of both share their loops, which these indices split
-         apart. *)
+      (* Two [4; 4] views, one a bit into its byte: the reductions of a function
+         of both share their loops, which these indices split apart. *)
       equals_eager "bit" bit_operands bits
         ~examples:
           [
@@ -281,6 +303,10 @@ let values =
               offset Nx.bit [| 4; 4 |] 1 (Array.make 16 false),
               offset Nx.bit [| 4; 4 |] 0 (Array.make 16 false) );
           ];
+      prop ~count:12
+        "a uint4 sort along the last axis of every other row and column, \
+         flipped"
+        strided_view sort_of_a_strided_view;
     ]
 
 (* Four bits are a width *)

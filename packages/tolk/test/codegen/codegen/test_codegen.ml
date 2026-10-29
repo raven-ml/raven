@@ -2251,6 +2251,194 @@ let applies_operations_to_vectors_of_lanes row =
 
 let computes_on_vectors row = (renderer_of_row row).vector_alu
 
+let lanes_of u =
+  let lanes = function Ops.Int n -> n | Ops.Sym _ -> 0 in
+  List.fold_left (fun n d -> n * lanes d) 1 (Shape.shape u)
+
+(* The lanes of an elementwise operation on a vector, if they are a number other
+   than a power of two. *)
+let odd_lanes u =
+  if not (on_a_vector u) then None
+  else
+    let n = lanes_of u in
+    if n > 0 && n land (n - 1) = 0 then None else Some n
+
+let computes_on_powers_of_two uops =
+  equal (list int) [] (List.filter_map odd_lanes uops)
+
+(* The elementwise operations on vectors among [uops]: each operation, its
+   lanes, and how many vectors of those lanes compute it. *)
+let vector_operations uops =
+  let tally =
+    List.filter_map
+      (fun u -> if on_a_vector u then Some (Ops.op u, lanes_of u) else None)
+      uops
+  in
+  List.map
+    (fun k -> (fst k, snd k, List.length (List.filter (( = ) k) tally)))
+    (List.sort_uniq compare tally)
+
+let op_w = Testable.make ~pp:Op.pp ~equal:Op.equal
+
+(* The lanes of the vector types a host source declares, each once. *)
+let vector_types src =
+  let key = "ext_vector_type(" in
+  let rec go acc i =
+    match String.index_from_opt src i 'e' with
+    | None -> List.sort_uniq compare acc
+    | Some j
+      when j + String.length key <= String.length src
+           && String.sub src j (String.length key) = key ->
+        let k = j + String.length key in
+        let close = String.index_from src k ')' in
+        go (int_of_string (String.sub src k (close - k)) :: acc) close
+    | Some j -> go acc (j + 1)
+  in
+  go [] 0
+
+(* [prg] computes each of its elementwise operations on vectors as [parts]
+   vectors of [lanes] lanes, and its source declares vectors of [lanes] lanes
+   and of other powers of two only. *)
+let splits_into ~parts ~lanes prg =
+  let ops = vector_operations (Ops.src (Ops.nth prg 1)) in
+  greater ~msg:"operations on vectors" int ~than:0 (List.length ops);
+  equal
+    (list (triple op_w int int))
+    (List.map (fun (o, _, _) -> (o, lanes, parts)) ops)
+    ops;
+  let types = vector_types (source prg) in
+  equal (list int) [ lanes ] (List.filter (( = ) lanes) types);
+  equal (list int) [] (List.filter (fun n -> n land (n - 1) <> 0) types)
+
+(* A sum of the two high nibbles of each pair of bytes, its output axis of 3
+   upcast whole and its reduce unrolled: a body of 6 lanes. *)
+let six_lanes_kernel () =
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int 3 ] 0 Uint8 in
+  let x = Call.param ~shape:[ Int 6 ] 1 Uint8 in
+  let l = Ops.range (Int 3) [ 0 ] in
+  let r = Ops.range ~axis_type:Reduce (Int 2) [ 1 ] in
+  let byte = Ops.index x [ (l * int 2) + r ] in
+  let nibble =
+    (byte lsr Ops.int ~dtype:Uint8 4) land Ops.int ~dtype:Uint8 15
+  in
+  let sum = Ops.reduce nibble Op.Add [ r ] in
+  let whole axis target = Opt.Split { axis; amount = 0; target; top = false } in
+  let opts = [ whole 0 Upcast; whole 1 Unroll ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
+
+(* A selection of [y - x] where [x] is below [y] and of [x] elsewhere, [x] of
+   [rows * cols] float32 elements and [y] of [cols] that each row reads, upcast
+   whole along both axes: a body of [rows * cols] lanes, as the host lorenz
+   kernels upcast an axis of 3 whole by 16 or 8 lanes. *)
+let rows_kernel rows cols =
+  let n = rows * cols in
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int n ] 0 Float32 in
+  let x = Call.param ~shape:[ Int n ] 1 Float32 in
+  let y = Call.param ~shape:[ Int cols ] 2 Float32 in
+  let i = Ops.range (Int rows) [ 0 ] in
+  let j = Ops.range (Int cols) [ 1 ] in
+  let at = (i * int cols) + j in
+  let a = Ops.index x [ at ] and b = Ops.index y [ j ] in
+  let whole axis =
+    Opt.Split { axis; amount = 0; target = Upcast; top = false }
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 1; whole 0 ] ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index out [ at ]) (Ops.where (a < b) (b - a) a))
+        [ i; j ];
+    ]
+
+(* [rows] is odd and [cols] a power of two. *)
+let selects_rows rows cols () =
+  let prg = Codegen.to_program (rows_kernel rows cols) (Lazy.force host) in
+  splits_into ~parts:rows ~lanes:cols prg;
+  let x = Array.init (rows * cols) (fun k -> Float.of_int ((k * 7 mod 11) - 5))
+  and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4)) in
+  let floats = Array.map (fun f -> `Float f) in
+  let expected =
+    Array.mapi
+      (fun k a -> if a < y.(k mod cols) then y.(k mod cols) -. a else a)
+      x
+  in
+  equal (array Dtypes.value) (floats expected)
+    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+
+(* The kernel that stores into slot 0, of [dt], element [i] of slot 3 where
+   element [i] of slot 1 is below that of slot 2, both of [cmp], and of slot 4
+   elsewhere, over [n] elements upcast whole, by their largest power of two
+   first, at most 16: a selection of [n] lanes of [dt] by a comparison of [n]
+   lanes of [cmp]. *)
+let compare_select cmp dt n =
+  let upcast amount =
+    Opt.Split { axis = 0; amount; target = Upcast; top = false }
+  in
+  let w = min 16 (n land -n) in
+  let opts = if w = n || w = 1 then [ upcast 0 ] else [ upcast w; upcast 0 ] in
+  let open Ops.O in
+  let param slot dt = Call.param ~shape:[ Int n ] slot dt in
+  let out = param 0 dt and a = param 1 cmp and b = param 2 cmp in
+  let c = param 3 dt and d = param 4 dt in
+  let i = Ops.range (Int n) [ 0 ] in
+  let at p = Ops.index p [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [
+      Ops.end_
+        (Ops.store (at out) (Ops.where (at a < at b) (at c) (at d)))
+        [ i ];
+    ]
+
+(* Each lane compares the bounds of [cmp], their neighbours and 0, and selects
+   between the bounds of [dt] and lanes counted from them. *)
+let selects_by_comparison (cmp, dt, n) =
+  let big = function `Int i -> i | _ -> invalid_arg "an integer bound" in
+  let lo = big (Dtype.min cmp) and hi = big (Dtype.max cmp) in
+  let edges =
+    [|
+      lo;
+      Bigint.add lo Bigint.one;
+      Bigint.minus_one;
+      Bigint.zero;
+      Bigint.one;
+      Bigint.sub hi Bigint.one;
+      hi;
+    |]
+  in
+  let edges =
+    Array.of_list (List.filter (fun e -> Bigint.leq lo e) (Array.to_list edges))
+  in
+  let m = Array.length edges in
+  let a = Array.init n (fun k -> edges.(k mod m))
+  and b = Array.init n (fun k -> edges.(k * 3 / 2 mod m)) in
+  let vlo = big (Dtype.min dt) and vhi = big (Dtype.max dt) in
+  let c = Array.init n (fun k -> Bigint.add vlo (Bigint.of_int k))
+  and d = Array.init n (fun k -> Bigint.sub vhi (Bigint.of_int k)) in
+  let ints = Array.map (fun i -> `Int i) in
+  let expected =
+    Array.init n (fun k -> if Bigint.lt a.(k) b.(k) then c.(k) else d.(k))
+  in
+  let prg = Codegen.to_program (compare_select cmp dt n) (Lazy.force host) in
+  computes_on_powers_of_two (Ops.src (Ops.nth prg 1));
+  equal (array Dtypes.value) (ints expected)
+    (List.assoc 0
+       (Run.on_host prg [ (1, ints a); (2, ints b); (3, ints c); (4, ints d) ]))
+
+let comparisons cmps dts lanes =
+  List.concat_map
+    (fun cmp ->
+      List.concat_map (fun dt -> List.map (fun n -> (cmp, dt, n)) lanes) dts)
+    cmps
+
+let widths = Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+let signed = Dtype.[ Int8; Int16; Int32; Int64 ]
+let unsigned = Dtype.[ Uint8; Uint16; Uint32; Uint64 ]
+
 (* A fold of an int8 [2; 2] to [2; 1], kernel [1; 2], dilation [1; 2] and
    padding [(0, 0); (1, 1)], every window in the padding. In devectorize, the
    gated load of each upcast lane folds to its own 0, so the select around it is
@@ -2329,6 +2517,39 @@ let vectors =
         (per_row
            ~only:(fun row -> compiles row && computes_on_vectors row)
            applies_operations_to_vectors_of_lanes);
+      test "a host program of 6 lanes computes 3 vectors of 2" (fun () ->
+          let prg =
+            Codegen.to_program (six_lanes_kernel ()) (Lazy.force host)
+          in
+          splits_into ~parts:3 ~lanes:2 prg;
+          let bytes = Array.map (fun b -> `Int (Bigint.of_int b)) in
+          equal (array Dtypes.value)
+            (bytes [| 0x1 + 0x2; 0xf + 0x0; 0x7 + 0x8 |])
+            (List.assoc 0
+               (Run.on_host prg
+                  [ (1, bytes [| 0x10; 0x2f; 0xf3; 0x04; 0x7a; 0x80 |]) ])));
+      group "a host program computes on vectors of a power of two of lanes"
+        (per_row
+           ~only:(fun row -> compiles row && computes_on_vectors row)
+           (fun row -> computes_on_powers_of_two (instructions row)));
+      test "a host program of 48 lanes computes 3 vectors of 16"
+        (selects_rows 3 16);
+      test "a host program of 24 lanes computes 3 vectors of 8"
+        (selects_rows 3 8);
+      cases
+        "a host selection of 8, 16 or 32 lanes by a comparison of integers \
+         takes each lane's arm"
+        ~name:(fun (cmp, dt, n) ->
+          Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
+        (comparisons widths widths [ 8; 16; 32 ])
+        selects_by_comparison;
+      cases
+        "a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of \
+         integers takes each lane's arm"
+        ~name:(fun (cmp, dt, n) ->
+          Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
+        (comparisons signed unsigned [ 3; 6; 12; 24; 48 ])
+        selects_by_comparison;
     ]
 
 (* Signed zeros *)

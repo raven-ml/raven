@@ -13,7 +13,7 @@ linearizes them for Clang:
   compiler that contracts would fuse into one multiply-add;
 - `half_neg`, `half_abs` and `half_copysign`, a negation, an absolute value and
   a copysign of 32 halves, the last two as rune writes them, and `half_min`,
-  the minimum of 18 floats converted to halves, which negates the halves:
+  the minimum of 32 floats converted to halves, which negates the halves:
   vectors of more than 16 halves, on which Clang 18 crashed for an x86
   processor with AVX-512.
 """
@@ -56,7 +56,7 @@ KERNELS = [
     ("half_neg", lambda: -empty(32, dtype=dtypes.half)),
     ("half_abs", lambda: half_abs(empty(32, dtype=dtypes.half))),
     ("half_copysign", lambda: half_copysign(empty(32, dtype=dtypes.half), empty(32, dtype=dtypes.half))),
-    ("half_min", lambda: empty(18).cast(dtypes.half).min()),
+    ("half_min", lambda: empty(32).cast(dtypes.half).min()),
 ]
 
 

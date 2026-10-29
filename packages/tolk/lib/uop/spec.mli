@@ -72,8 +72,8 @@ val program : t
 val vector_program : t
 (** [vector_program] is {!program} for a renderer that computes on vectors
     ({!Renderer.t.vector_alu}): an elementwise operation on values may have one
-    axis, its lanes, when each of its sources is a vector of those lanes or a
-    scalar every lane reads. *)
+    axis, its lanes, a power of two of them, when each of its sources is a
+    vector of those lanes or a scalar every lane reads. *)
 
 val hcq : t
 (** [hcq] is {!shared} with the operations of command-queue programs: the

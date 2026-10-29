@@ -285,10 +285,22 @@ let rec in_order n x =
   else if is Op.Stack x && List.for_all moved (src x) then Some x
   else None
 
+(* The [w] lanes of [v] from lane [first], [v] a vector of lanes in order: a
+   stack of its elements if it is one, the lanes of a computed vector
+   otherwise. *)
+let segment v first w =
+  let lane i =
+    if is Op.Stack v then nth v (first + i) else index_ints v [ first + i ]
+  in
+  stack (List.init w lane)
+
 (* An elementwise operation of a renderer that computes on vectors keeps its
-   lanes whole, on one axis, the flat order of its shape: each source is a
-   vector of those lanes in order, or a scalar every lane reads. Where every
-   source is a scalar, the operation is computed once and expanded. *)
+   lanes on one axis, the flat order of its shape: each source is a vector of
+   those lanes in order, or a scalar every lane reads. An operation of m·2^k
+   lanes is m operations on vectors of 2^k consecutive lanes, which LLVM never
+   widens; one of an odd number of lanes computes each lane apart (see
+   [do_devectorize]). Where every source is a scalar, the operation is
+   computed once and expanded. *)
 let vector_operation b s =
   let n = Helpers.prod (int_shape s) in
   let operand x =
@@ -300,12 +312,22 @@ let vector_operation b s =
       | None, None -> invalid_arg "a vector operand of lanes out of order"
   in
   let src = List.map operand (src b) in
-  if List.equal ( == ) src (Ops.src b) then None
+  let w = n land -n in
+  if w = n && List.equal ( == ) src (Ops.src b) then None
   else if List.for_all (fun x -> shape x = []) src then
     Some (mop (replace b ~src) (Expand s))
-  else
+  else if w = n then
     let flat = replace b ~src in
     Some (if List.compare_length_with s 1 = 0 then flat else reshape flat s)
+  else
+    let part j =
+      let lanes x =
+        if shape x = [] || is_invalid x then x else segment x (j * w) w
+      in
+      replace b ~src:(List.map lanes src)
+    in
+    let lanes p = List.init w (fun i -> index_ints p [ i ]) in
+    Some (reshape (stack (List.concat_map lanes (List.init (n / w) part))) s)
 
 (* Whether an operation of [n] lanes on the sources [srcs], each a scalar every
    lane reads or a vector of the lanes in order, computes each lane once. A lane
@@ -339,10 +361,17 @@ let vector_dtypes (ren : Renderer.t) =
     let emulated = Decomp_dtype.emulates ren in
     List.filter (fun dt -> not (emulated dt)) (Renderer.supported_dtypes ren)
 
+(* Whether [n] lanes, more than one, hold a vector of two lanes or more: [n]
+   is even. LLVM widens a vector of a number of lanes other than a power of two
+   to the next one, and Clang 18 crashed on one for x86, a selection of 6 bytes
+   by a comparison of 6 longs, so [vector_operation] splits the lanes into
+   vectors of the largest power of two that divides [n]. *)
+let vector_lanes n = n > 1 && n land 1 = 0
+
 (* Elementwise operations, loads and stores of vectors compute each lane apart,
-   except an elementwise operation on the [vectors] types of several distinct
-   lanes whose sources hold them in order: a scalar reads a view across lanes for
-   free, and a vector pays shuffles for it. *)
+   except an elementwise operation on the [vectors] types of an even number of
+   distinct lanes whose sources hold them in order: a scalar reads a view across
+   lanes for free, and a vector pays shuffles for it. *)
 let do_devectorize vectors b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
@@ -360,7 +389,7 @@ let do_devectorize vectors b =
   then None
   else if
     Op.Set.mem (op b) Op.Set.elementwise
-    && Helpers.prod (int_shape s) > 1
+    && vector_lanes (Helpers.prod (int_shape s))
     && on_vectors b
     && List.for_all (fun x -> invalid x || lanes x) (src b)
     && distinct_lanes
@@ -436,7 +465,10 @@ let boolean u =
 (* Constants in vectors. A scalar expanded to a vector, which [const_like] makes
    of the vectors the passes after devectorize compute on, is read as the
    scalar: by an elementwise operation, which reads it in every lane, and at any
-   lane. A selection by a vector of constant conditions picks each lane. *)
+   lane. A lane of a value that is a scalar is that scalar: a vector operation
+   whose vector sources fold to constants, such as a selection by a comparison
+   that holds in every lane, is computed once. A selection by a vector of
+   constant conditions picks each lane. *)
 let pm_vector_constants =
   pm (fun () ->
       [
@@ -468,7 +500,11 @@ let pm_vector_constants =
               if shape scalar = [] then Some (mop scalar (Expand (shape x)))
               else Some scalar);
         rule (Upat.op Op.Index ~name:"x") (fun m ->
-            match src (m "x") with [ e; _ ] -> splat e | _ -> None);
+            match src (m "x") with
+            | [ e; _ ] when shape e = [] && addrspace e = Some Dtype.Alu ->
+                Some e
+            | [ e; _ ] -> splat e
+            | _ -> None);
       ])
 
 let devectorizer2 =

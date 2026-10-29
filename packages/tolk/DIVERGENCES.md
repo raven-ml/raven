@@ -1419,7 +1419,7 @@ driver sizes local memory as it loads a function (D146).
   Devectorize leaves none there while every source keeps its width, which D76
   keeps when every lane of a gated load's index is `Invalid`. A renderer that
   computes on vectors (D141) is checked against `Spec.vector_program`, which
-  takes an operation on one axis of lanes.
+  takes an operation on one axis of a power of two of lanes.
 - **Reason:** (b). CUDA's vectors are structs without arithmetic, casts or
   selects, so a vector operation left after devectorize is a kernel that does
   not compile there, and one Metal renders without complaint; rune compiles
@@ -3541,11 +3541,12 @@ driver signals its own (D146).
   and `:156-159` (the upcast by 4 of a kernel that has none).
 - **tolk:** `lib/renderer/renderer.mli:138` (`vector_alu`);
   `lib/codegen/codegen.ml:235` (`constant_lanes`), `:270` (`in_order`),
-  `:292` (`vector_operation`), `:315` (`distinct_lanes`), `:336`
-  (`vector_dtypes`), `:346` (`do_devectorize`), `:385` (`address_lanes`),
-  `:440` (`pm_vector_constants`) and `:824` (`product_operands`); `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909`
-  (`clang_vectors`) and `:1144` (`clang_kernel`); `lib/uop/spec.ml:500`
-  (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
+  `:291` (`segment`), `:304` (`vector_operation`), `:337`
+  (`distinct_lanes`), `:358` (`vector_dtypes`), `:369` (`vector_lanes`),
+  `:375` (`do_devectorize`), `:414` (`address_lanes`), `:472`
+  (`pm_vector_constants`) and `:861` (`product_operands`);
+  `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909` (`clang_vectors`) and
+  `:1144` (`clang_kernel`); `lib/uop/spec.ml:504` (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
   `lib/codegen/opt/heuristic.ml:446` (`host_vector_bytes`), `:463`
   (`parallel_operations`) and `:494` (`upcast_vectors`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
@@ -3554,23 +3555,29 @@ driver signals its own (D146).
   and whose others are lanes of a vector raised in a bind of the first lane's
   source that the match never needed.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_alu`;
-  Clang does). There an elementwise operation of several lanes on a type the
-  target computes natively stays one operation on a vector of its lanes, on
-  one axis, when each source holds them in order: a vector operation,
-  constants in any view (a literal), a stack of loads of memory, a load in as
-  many lanes as read it, and of lanes of vectors, each in one lane, or a
-  scalar that every lane reads, and when no two of its lanes read the same
-  sources: a lane of a vector operation is its own, a lane of a stack its
-  element. A source that holds computed lanes in another order, a broadcast or
-  a permutation across lanes, or apart in registers, as an accumulator's
-  lanes, costs a vector shuffles that a scalar reads for free, and lanes that
-  repeat are computed once each apart: such an operation computes each lane
-  apart. Loads, stores, tensor-core products,
-  calls, and operations on a weak type (an address) or an emulated one still
-  compute each lane apart; an address is computed lane by lane through the
-  vector operations it reads, so that accesses still merge. A sum fuses each
-  lane of a vector product into its running sum, and a selection by constant
-  conditions picks each lane. A program for such a renderer is checked against
+  Clang does). There an elementwise operation of an even number of lanes on
+  a type the target computes natively stays an operation on vectors of its
+  lanes, on one axis, when each source holds them in order: a vector
+  operation, constants in any view (a literal), a stack of loads of memory, a
+  load in as many lanes as read it, and of lanes of vectors, each in one
+  lane, or a scalar that every lane reads, and when no two of its lanes read
+  the same sources: a lane of a vector operation is its own, a lane of a
+  stack its element. Its lanes are one vector when they are a power of two,
+  and m vectors of 2^k consecutive lanes when they are m·2^k, m odd: 48 lanes
+  are 3 vectors of 16, 6 lanes 3 of 2. A source that holds computed lanes in
+  another order, a broadcast or a permutation across lanes, or apart in
+  registers, as an accumulator's lanes, costs a vector shuffles that a scalar
+  reads for free, and lanes that repeat are computed once each apart: such an
+  operation computes each lane apart. An operation of an odd number of lanes,
+  3 or 9, holds no vector of a power of two of lanes beyond 1, and computes
+  each lane apart too. Loads, stores, tensor-core products, calls, and
+  operations on a weak type (an address) or an emulated one still compute each
+  lane apart; an address is computed lane by lane through the vector
+  operations it reads, so that accesses still merge. A sum fuses each lane of
+  a vector product into its running sum, a selection by constant conditions
+  picks each lane, and a lane of a vector whose sources fold to scalars, as a
+  selection by a comparison that holds in every lane, is the scalar. A program
+  for such a renderer is checked against
   `Spec.vector_program` (D58). Clang writes the vectors as `ext_vector_type`
   values: a conversion is `__builtin_convertvector`, square roots,
   truncations and multiply-adds are `__builtin_elementwise_*`, a scalar
@@ -3625,6 +3632,17 @@ driver signals its own (D146).
   (alternated under load). A matmul's upcast products now build vectors of
   their shared loads that each lane's multiply-add reads back
   (`clang_matmul_upcasted*`); Clang compiles them to the same instructions.
+
+  LLVM widens a vector whose lanes are not a power of two to the next power
+  of two. Ubuntu 24.04's Clang 18.1.3 crashed on x86 ("SmallVector unable to
+  grow") compiling rune's sort of a uint4 [2; 3] view along its last axis:
+  its kernel `r_3_2`, a masked axis of 3 upcast whole by the 2 nibbles of a
+  byte, selected 6 bytes by a comparison of 6 longs. Clang 19 compiles it.
+  Split into vectors of a power of two of lanes, which LLVM never widens, the
+  kernel selects 3 pairs of bytes by 3 comparisons of pairs of longs, and the
+  host keeps its vectors where an axis of 3 is upcast whole: the 48 and 24
+  lanes of lorenz_simple's kernels `r_128_16_3_4_4_3_3_400_400` and
+  `r_32_3_2_4_3_400` are 3 vectors of 16 and 3 of 8.
 - **Rejected:** compile time is paid once and replay on every call, so
   neither trade below was taken. `#pragma clang loop vectorize(disable)`
   changes nothing on vector kernels (Clang 0.24 s with and without it on
@@ -3637,11 +3655,22 @@ driver signals its own (D146).
 - **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
   from the patched tinygrad, and `execution on the host › every kernel the
   interpreter runs writes what it computes`; the Codegen suite's `vectors in
-  programs › a host program computes on vectors of its lanes` (every host
-  case), `› a weak constant stored into four lanes of half on the host
+  programs › a host program computes on vectors of its lanes` and `› a host
+  program computes on vectors of a power of two of lanes` (every host case),
+  `› a host program of 6 lanes computes 3 vectors of 2`, `› a host program
+  of 48 lanes computes 3 vectors of 16`, `› a host program of 24 lanes
+  computes 3 vectors of 8`, `› a host selection of 8, 16 or 32 lanes by a
+  comparison of integers takes each lane's arm` and `› a host selection of 3,
+  6, 12, 24 or 48 lanes by a comparison of integers takes each lane's arm`
+  (every case, under Clang 18 on x86), `› a weak constant stored into four lanes of half on the host
   converts them` and `multiply-adds` (every test); the Spec suite's `vectors
   in programs › a program of a renderer that computes on vectors …`;
-  rune's Rune.jit suite: `lanes` (every test); rune's Rune.quant suite:
+  rune's Rune.jit suite: `lanes` (every test); rune's packed suite: `a
+  compiled call computes eager's values › a uint4 sort along the last axis
+  of every other row and column, flipped`, under Clang 18 on x86, and
+  `stated values › a window set into bits at an odd offset keeps the bits
+  around it`, whose last vector of 8 lanes selects 0 in every lane; rune's
+  Rune.quant suite:
   `decoding` (every law); rune's lower_index suite: `quantised products › a
   product decodes a checkpoint's codes 16 at once on the host` (with D143)
   and `› a product over GGUF's Q6_K blocks converts each scale once`; the
@@ -3947,8 +3976,7 @@ submission, and a range a loop of rig's program (D146).
   scalar loops among them, compiles to the same instructions, and on a
   processor without AVX-512 the mark changes nothing.
 - **Reason:** (b). The renderer writes vectors wider than 256 bits: 32 halves
-  for an elementwise float16 kernel (D141), and up to 72 bytes (`float18`)
-  where a small axis is upcast whole. Clang 18 crashes (a segfault in
+  for an elementwise float16 kernel (D141). Clang 18 crashes (a segfault in
   `DAGTypeLegalizer::SplitVectorResult`) splitting a negation, an absolute
   value or a copysign of more than 16 halves for a processor with AVX-512
   that prefers 256-bit vectors, with or without AVX512-FP16. Such a vector is
@@ -3962,7 +3990,7 @@ submission, and a range a loop of rig's program (D146).
   halves. tinygrad computes each lane apart and writes no such vector.
 - **Pinned by:** `Tolk.Compiler_cpu › features › a kernel over more than 16
   halves compiles for AVX-512`, which renders `half_neg`, `half_abs`,
-  `half_copysign` (32 lanes) and `half_min` (18 lanes) for
+  `half_copysign` and `half_min` (32 lanes each) for
   `skylake-avx512`, `icelake-server` and `sapphirerapids` and fails under
   `CC` naming Clang 18 without the mark; the x86 Clang goldens, whose kernels
   carry it; rune's `Rune.jit programs › computes eager's values within the
