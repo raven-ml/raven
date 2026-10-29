@@ -174,10 +174,11 @@
     at [-0.] is [-0.]. The contributions through a gather, as [Nx.take]'s, and
     the copies of a broadcast are summed from [+0.], as [Nx.sum] sums. An
     element that receives none is [+0.]. A {!scan}'s or an {!iterate}'s carry
-    holds a derivative at every step: where a step gives a carry array none, the
-    next takes a zero from it, so the derivative may receive zeros of either
-    sign, and NaN where such a zero meets an infinite partial derivative, where
-    the steps written out one after another give none.
+    holds a derivative at every step: where the call or a step gives a carry
+    array none, the next step takes a zero from it, so the derivative may
+    receive zeros of either sign, and NaN where such a zero meets an infinite
+    partial derivative, where the steps written out one after another give
+    none.
 
     {b Selections.} Under reverse mode the cotangent of the operand {!Nx.where}
     does not select is [+0.] there; where that operand's derivative is infinite
