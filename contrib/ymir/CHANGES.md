@@ -4,6 +4,11 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Region.weights` weighs a region at a float narrower than float32
+  (float16, bfloat16, float8) at float32 and rounds the weights once. The
+  kernel ran at the narrow float, which cannot hold a cell's offsets or their
+  squares: at float8 every 40-cell grid raised that the transforms fold it,
+  and float16 offsets past 65504 gave NaN weights.
 - `Direction.separation` and `Direction.position_angle` keep their accuracy
   on rows of unequal norms, as `Nx.Ptree.map` can build, and at separations
   far below float64's rounding: both read `a × b`, computed with fused

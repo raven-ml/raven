@@ -21,7 +21,8 @@ type ('w, 'e) shape =
     }
 
 (* A planar shape centred on the origin of the plane its placement maps into.
-   Weights map corners in float64 and cast the offsets to the shape's dtype. *)
+   Weights map corners in float64 and cast the offsets to the shape's dtype, or
+   to float32 for a narrower one. *)
 type ('w, 'e) t = {
   shape : ('w, 'e) shape;
   placement : ('w, Transform.plane) Transform.t;
@@ -130,14 +131,15 @@ let plane_of ?unit placement value ~cells =
   | Transform.D _, _ ->
       invalid_arg "Region.weights: the placement returned directions"
 
-(* [overlap r g] is the kernel's result for each of [g]'s cells against [r],
-   [[batch; h; w]], and the shape's own area in its plane, [[batch]], both in
-   the square of the shape's plane unit. *)
-let overlap (type w e) ({ shape; placement } : (w, e) t) (g : (w, e) Grid.t) =
+(* [kernel r mapped] is the kernel's result for each cell of the corner lattice
+   [mapped] against [r], [[batch; h; w]], and the shape's own area in its
+   plane, [[batch]], both in the square of the shape's plane unit, computed at
+   [r]'s dtype. *)
+let kernel (type w e) ({ shape; placement } : (w, e) t) mapped =
   let sized size =
     let unit = Quantity.unit size in
     let dtype : (float, e) Nx.dtype = Nx.dtype (payload size) in
-    let plane, _ = plane_of ~unit placement (Grid.mapped g) ~cells:2 in
+    let plane, _ = plane_of ~unit placement mapped ~cells:2 in
     (unit, dtype, plane)
   in
   let corners dtype plane =
@@ -186,7 +188,7 @@ let overlap (type w e) ({ shape; placement } : (w, e) t) (g : (w, e) Grid.t) =
           plane_of placement (Transform.value world vertices) ~cells:1
         in
         let points = Nx.cast dtype points in
-        let plane, _ = plane_of ~unit placement (Grid.mapped g) ~cells:2 in
+        let plane, _ = plane_of ~unit placement mapped ~cells:2 in
         let xs, ys = corners dtype plane in
         let n = Nx.dim (-2) points in
         let vertex j k =
@@ -217,6 +219,50 @@ let overlap (type w e) ({ shape; placement } : (w, e) t) (g : (w, e) Grid.t) =
   in
   check_cells o.area xs ys;
   (o, own)
+
+(* A dtype narrower than float32 holds neither the cells' offsets nor the
+   kernel's squares and cross products: float16 overflows past 65504, float8
+   e4m3 saturates at 448 and merges corners 16 cells out. Such a region is
+   weighed at float32, and its weights rounded once to its dtype. *)
+let dtype_of (type w e) ({ shape; _ } : (w, e) t) : (float, e) Nx.dtype =
+  match shape with
+  | Circle r -> Nx.dtype (payload r)
+  | Annulus { outer; _ } -> Nx.dtype (payload outer)
+  | Ellipse { a; _ } -> Nx.dtype (payload a)
+  | Polygon { dtype; _ } -> dtype
+
+let narrow (type e) (dtype : (float, e) Nx.dtype) =
+  match dtype with
+  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 -> true
+  | Float32 | Float64 -> false
+
+(* [widened r] is [r] with its sizes at float32. *)
+let widened (type w e) ({ shape; placement } : (w, e) t) :
+    (w, Nx.float32_elt) t =
+  let q x = Quantity.v (Quantity.unit x) (Nx.cast Nx.float32 (payload x)) in
+  let shape =
+    match shape with
+    | Circle r -> Circle (q r)
+    | Annulus { inner; outer } -> Annulus { inner = q inner; outer = q outer }
+    | Ellipse { a; b; angle } -> Ellipse { a = q a; b = q b; angle = q angle }
+    | Polygon { vertices; world; _ } ->
+        Polygon { dtype = Nx.float32; vertices; world }
+  in
+  { shape; placement }
+
+let overlap (type w e) (r : (w, e) t) (g : (w, e) Grid.t) :
+    e Overlap.t * (float, e) Nx.t =
+  let mapped = Grid.mapped g in
+  let dtype = dtype_of r in
+  if not (narrow dtype) then kernel r mapped
+  else
+    let (o : Nx.float32_elt Overlap.t), own = kernel (widened r) mapped in
+    ( {
+        o with
+        weight = Nx.cast dtype o.weight;
+        area = Nx.cast dtype o.area;
+      },
+      Nx.cast dtype own )
 
 let weights r g = (fst (overlap r g)).weight
 

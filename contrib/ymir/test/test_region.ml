@@ -413,6 +413,143 @@ let shape_laws =
 
 (* Errors *)
 
+(* Narrow floats *)
+
+(* [narrow_agrees dt half (c, r, (angle, shear))] states that a circle at
+   [dt] on a rotated and sheared grid weighs as the float64 circle of [r]
+   rounded to [dt], within [half], half [dt]'s spacing below 1, and that its
+   derivative in the radius is the float64 one within [2 half] relative. *)
+let narrow_agrees (type e) (dt : (float, e) Nx.dtype) half
+    ((row, col), r, (angle, shear)) =
+  let m =
+    let c = Float.cos angle and s = Float.sin angle in
+    [| c; shear -. s; s; c |]
+  in
+  let linear dtype =
+    Grid.pixels ~shape:[| 40; 40 |] dtype
+      (Transform.linear (one (Nx.create f64 [| 2; 2 |] m)))
+  in
+  let centre = (m.(0) *. row +. m.(1) *. col, m.(2) *. row +. m.(3) *. col) in
+  let r_dt = Nx.item [] (Nx.cast f64 (Nx.scalar dt r)) in
+  let w dtype r =
+    Region.weights (Region.circle (at centre) ~radius:(one r)) (linear dtype)
+  in
+  let expected = Nx.to_array (w f64 (Nx.scalar f64 r_dt)) in
+  let got = Nx.to_array (Nx.cast f64 (w dt (Nx.scalar dt r))) in
+  equal (array (float (half +. 1e-5))) expected got;
+  let d dtype r =
+    Nx.item []
+      (Nx.cast f64
+         (Rune.grad'
+            (fun r ->
+              Nx.sum
+                (Region.weights
+                   (Region.circle (at centre) ~radius:(one r))
+                   (linear dtype)))
+            r))
+  in
+  equal
+    (float_rel ~rel:(2. *. half) ~abs:1e-5)
+    (d f64 (Nx.scalar f64 r_dt))
+    (d dt (Nx.scalar dt r))
+
+(* [shapes_agree dt half] states that an annulus, an ellipse and a polygon at
+   [dt] on a rotated and sheared grid weigh as at float64 with their sizes
+   rounded to [dt], within [half]. *)
+let shapes_agree (type e) (dt : (float, e) Nx.dtype) half =
+  let m = [| 0.76; 0.2 -. 0.64; 0.64; 0.76 |] in
+  let linear dtype =
+    Grid.pixels ~shape:[| 40; 40 |] dtype
+      (Transform.linear (one (Nx.create f64 [| 2; 2 |] m)))
+  in
+  let place (row, col) =
+    at ((m.(0) *. row) +. (m.(1) *. col), (m.(2) *. row) +. (m.(3) *. col))
+  in
+  let rounded x = Nx.item [] (Nx.cast f64 (Nx.scalar dt x)) in
+  let agree name w64 w =
+    equal ~msg:name
+      (array (float (half +. 1e-5)))
+      (Nx.to_array w64)
+      (Nx.to_array (Nx.cast f64 w))
+  in
+  let annulus dtype inner outer =
+    Region.annulus (place (20.2, 17.7))
+      ~inner:(one (Nx.scalar dtype inner))
+      ~outer:(one (Nx.scalar dtype outer))
+  in
+  agree "annulus"
+    (Region.weights (annulus f64 (rounded 3.3) (rounded 7.1)) (linear f64))
+    (Region.weights (annulus dt 3.3 7.1) (linear dt));
+  let ellipse dtype a b angle =
+    Region.ellipse (place (19.6, 21.3))
+      ~a:(one (Nx.scalar dtype a))
+      ~b:(one (Nx.scalar dtype b))
+      ~angle:(Quantity.v Unit.degree (Nx.scalar dtype angle))
+  in
+  agree "ellipse"
+    (Region.weights
+       (ellipse f64 (rounded 8.2) (rounded 3.1) (rounded 30.))
+       (linear f64))
+    (Region.weights (ellipse dt 8.2 3.1 30.) (linear dt));
+  let polygon dtype =
+    let vs = [| 12.; 15.; 26.5; 13.; 24.; 27.; 16.; 23.5 |] in
+    let world = Array.make 8 0. in
+    for j = 0 to 3 do
+      let row = vs.(2 * j) and col = vs.((2 * j) + 1) in
+      world.(2 * j) <- (m.(0) *. row) +. (m.(1) *. col);
+      world.((2 * j) + 1) <- (m.(2) *. row) +. (m.(3) *. col)
+    done;
+    Region.polygon dtype Transform.id (one (Nx.create f64 [| 4; 2 |] world))
+  in
+  agree "polygon"
+    (Region.weights (polygon f64) (linear f64))
+    (Region.weights (polygon dt) (linear dt))
+
+let narrow =
+  group "Narrow floats"
+    [
+      test "each shape at a narrow float weighs as at float64" (fun () ->
+          shapes_agree Nx.float16 0x1p-12;
+          shapes_agree Nx.bfloat16 0x1p-9;
+          shapes_agree Nx.float8_e4m3 0x1p-5;
+          shapes_agree Nx.float8_e5m2 0x1p-4);
+      prop "a narrow float weighs at float32, rounded once"
+        Gen.(
+          pair (int_range 0 3)
+            (triple centres (float_range 0.5 12.)
+               (pair (float_range (-3.2) 3.2) (float_range (-0.5) 0.5))))
+        (fun (k, x) ->
+          (* Half the spacing of weights in [0.5, 1): 2^-(m + 2) for m
+             mantissa bits. *)
+          match k with
+          | 0 ->
+              cover "float16" true;
+              narrow_agrees Nx.float16 0x1p-12 x
+          | 1 ->
+              cover "bfloat16" true;
+              narrow_agrees Nx.bfloat16 0x1p-9 x
+          | 2 ->
+              cover "float8 e4m3" true;
+              narrow_agrees Nx.float8_e4m3 0x1p-5 x
+          | _ ->
+              cover "float8 e5m2" true;
+              narrow_agrees Nx.float8_e5m2 0x1p-4 x);
+      test "float16 offsets past its range weigh 0, not NaN" (fun () ->
+          (* 70000 cells is past float16's 65504. *)
+          let f16 = Nx.float16 in
+          let g = plane_at f16 [| 4; 4 |] in
+          let area r =
+            Nx.sum
+              (Region.weights
+                 (Region.circle (at (70000., 0.)) ~radius:(one r))
+                 g)
+          in
+          equal float_exact 0.
+            (Nx.item [] (Nx.cast f64 (area (Nx.scalar f16 3.))));
+          equal float_exact 0.
+            (Nx.item [] (Nx.cast f64 (Rune.grad' area (Nx.scalar f16 3.)))));
+    ]
+
 let errors =
   group "Errors"
     [
@@ -441,6 +578,24 @@ let errors =
                "Region.weights: the inner radius is above the outer one")
             (fun () ->
               Region.weights (annulus (20., 20.) 3. 2.) (plane [| 40; 40 |])));
+      test "a transform that folds the grid raises, at every float" (fun () ->
+          (* A rank-one map sends every cell to a segment. *)
+          let fold dtype =
+            Grid.pixels ~shape:[| 4; 4 |] dtype
+              (Transform.linear
+                 (one (Nx.create f64 [| 2; 2 |] [| 1.; 1.; 1.; 1. |])))
+          in
+          let raises_fold f =
+            raises_match
+              (Exn.invalid_arg ~substring:"the transforms fold the grid")
+              f
+          in
+          raises_fold (fun () ->
+              Region.weights (circle (2., 2.) 1.) (fold f64));
+          raises_fold (fun () ->
+              Region.weights
+                (circle_at Nx.float8_e4m3 (2., 2.) 1.)
+                (fold Nx.float8_e4m3)));
     ]
 
 (* Derivatives *)
@@ -565,4 +720,4 @@ let derivatives =
 let () =
   exit
     (run "Region"
-       [ photutils; shapes; laws; shape_laws; errors; derivatives ])
+       [ photutils; shapes; laws; shape_laws; narrow; errors; derivatives ])

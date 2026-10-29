@@ -661,7 +661,8 @@ module Region : sig
   val weights : ('w, 'e) t -> ('w, 'e) Grid.t -> (float, 'e) Nx.t
   (** [weights r g] is each cell's weight in \[0, 1\], [batch @ Grid.shape g],
       the region's and the grid's batch axes broadcast. Corners map in float64
-      and their offsets in the shape's plane are cast to ['e].
+      and their offsets in the shape's plane are cast to ['e], or to float32
+      for a narrower float, whose weights are then rounded once to ['e].
 
       Raises [Invalid_argument] through {!Nx.check} where a size is negative or
       NaN, an annulus's [inner] is above its [outer], two edges of a polygon
