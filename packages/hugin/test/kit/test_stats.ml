@@ -344,26 +344,24 @@ let law_set c =
     ]
 
 (* A histogram of data cut over two devices equals the host's, its edges whole
-   on each device, as the constants it makes beside the data are. Nx.histogram
-   raises for coordinates cut over devices: its search reads them whole. *)
+   on each device, as the constants it makes beside the data are. *)
 let split =
-  xfail ~reason:"Nx.histogram raises for coordinates cut over devices"
-    (test "a histogram of data cut over two devices is the host's" (fun () ->
-         let v =
-           f64 [| 2; 5 |] [| 3.; -1.; 0.5; nan; 2.; 7.; 7.; 1.; -4.; 0. |]
-         in
-         let h = Stats.histogram ~bins:3 v in
-         let m = Stats.histogram ~bins:3 (Nx.place (Two.split ~axis:0) v) in
-         equal (placement ()) ~msg:"x" Two.on (Nx.placement m.x);
-         equal (placement ()) ~msg:"x2" Two.on (Nx.placement m.x2);
-         List.iter
-           (fun (msg, a, b) -> equal floats ~msg (host a) (host b))
-           [
-             ("x", h.x, m.x);
-             ("x2", h.x2, m.x2);
-             ("count", h.count, m.count);
-             ("density", h.density, m.density);
-           ]))
+  test "a histogram of data cut over two devices is the host's" (fun () ->
+      let v =
+        f64 [| 2; 5 |] [| 3.; -1.; 0.5; nan; 2.; 7.; 7.; 1.; -4.; 0. |]
+      in
+      let h = Stats.histogram ~bins:3 v in
+      let m = Stats.histogram ~bins:3 (Nx.place (Two.split ~axis:0) v) in
+      equal (placement ()) ~msg:"x" Two.on (Nx.placement m.x);
+      equal (placement ()) ~msg:"x2" Two.on (Nx.placement m.x2);
+      List.iter
+        (fun (msg, a, b) -> equal floats ~msg (host a) (host b))
+        [
+          ("x", h.x, m.x);
+          ("x2", h.x2, m.x2);
+          ("count", h.count, m.count);
+          ("density", h.density, m.density);
+        ])
 
 let laws =
   group "laws"
