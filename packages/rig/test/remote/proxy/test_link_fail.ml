@@ -540,28 +540,33 @@ let severed_abort () =
 
 (* The peer has read nothing the link sent: while the abort is held, the test
    reads what the link sent before, then fills the link's socket, as frames its
-   peer left unread would. The abort waits for the bound and gives up: the
-   peer receives the test's zeros and none of the abort. The other link's peer
-   reads its abort as the hold ends, within the bound: a peer that reads
-   nothing for the bound may miss it ([Rig_remote]'s failure section), since a
-   connection closed over the peer's beats resets, and Windows then drops what
-   the peer had not read. *)
+   peer left unread would. The abort waits for the bound from the hold's end
+   and gives up: the peer receives the test's zeros and none of the abort.
+   [fail] sends the abort and waits for it, unless the link's own thread saw
+   the failure first and sends it, so the job's close is what waits for the
+   bound. The other link's peer reads its abort as the hold ends, within the
+   bound, then ends its stream, as a peer does, so the close waits for that
+   link no longer: a peer that reads nothing for the bound may miss it
+   ([Rig_remote]'s failure section), since a connection closed over the
+   peer's beats resets, and Windows then drops what the peer had not read. *)
 let stalled_abort () =
   with_scene @@ fun s ->
   let woke = waiters s in
   Probe.arm Aborting;
-  let t0 = Unix.gettimeofday () in
   let failed = spawn (fun () -> Link.fail s.job why) in
   equal ~msg:"the abort is held" bool true (Probe.held ());
   drain s.p;
   fill s.d;
+  let t0 = Unix.gettimeofday () in
   Probe.resume ();
   let received = frames ~wait:patience s.q in
+  Unix.shutdown s.q Unix.SHUTDOWN_SEND;
   failed ();
+  woke ~received why;
+  Link.close s.job;
   after_bound t0;
   equal ~msg:"the bytes after the test's" (option string) None
-    (stray '\000' (read_all s.p));
-  woke ~received why
+    (stray '\000' (read_all s.p))
 
 (* After the abort the link reads and discards what its peer sends until the
    peer ends its stream or the bound passes. A peer that has read the abort
