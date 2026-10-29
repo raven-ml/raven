@@ -9,7 +9,8 @@
   04-loops.md
   05-totals.md
   06-compilation.md
-  07-one-call.md)
+  07-one-call.md
+  08-callbacks.md)
  (enabled_if
   (and
    (<> %{profile} sanitize)

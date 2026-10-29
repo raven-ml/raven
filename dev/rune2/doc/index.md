@@ -136,3 +136,5 @@ is bound once.
 - [Compilation](06-compilation.md): keys, donation, checks and accuracy.
 - [One call](07-one-call.md): the gradient of a compiled loop, followed
   through rune2.
+- [Callbacks](08-callbacks.md): a state from a solver outside nx, its
+  adjoint solve as a custom rule, in a loop, under a gradient and compiled.

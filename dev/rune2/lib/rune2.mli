@@ -29,7 +29,9 @@
     trace their function too. A transformation of a loop, a {!switch}, a
     {!remat} or a {!jit} is that construct over the transformation of its
     program: the derivative of a {!scan} is a scan of its step's derivative. A
-    custom rule and a {!root} have the derivatives their sections state.
+    custom rule and a {!root} have the derivatives their sections state. A
+    {!callback}'s function is never traced. It runs on values, once each time
+    its call executes ({!section-callbacks}).
 
     Two arrays agree {e bit for bit} when their elements have the same bits,
     except for a NaN's sign and payload, which nx leaves unspecified. Outside
@@ -1088,11 +1090,69 @@ val root :
     applies [op] after it returned; and, naming the {!jit}'s entry point, if it
     applies [op] inside a {!jit}. *)
 
-(** {1:callbacks Callbacks} *)
+(** {1:callbacks Callbacks}
+
+    A {e callback} runs an OCaml function on the values of a function that rune2
+    traces or transforms. The function receives arrays with elements, each where
+    it lies. A call {e executes} at the points {!section-executions} lists, and
+    the function runs once per execution, in the order of the executions, so it
+    may have effects, such as a run of a solver outside nx.
+
+    A callback has no derivative. A differentiation that tracks an argument of a
+    call with a float or complex result raises, naming the transformation, at
+    the call, at the trace of a step holding it or in {!grad}'s forward pass. A
+    {!linear_transpose} that tracks an argument raises whatever the result. A
+    custom rule around the call ({!section-custom}) gives a derivative, which
+    may call a callback in turn, and a second derivative through that callback
+    raises alike. On a set other than the host, the function places its
+    arguments where it computes ({!Nx.place}). An exception it raises passes
+    through unchanged, with its backtrace. *)
+
+(** {2:executions Executions}
+
+    A call executes:
+    - eagerly, once, where it is made;
+    - in a {!scan}'s step, once per row that runs, and in an {!iterate}, once
+      per step taken and in [until] once per test; where its arguments read no
+      stand-in, once per execution of the loop's call, as such an operation
+      computes ({!section-tracing});
+    - in a {!switch}, in the taken branch alone;
+    - under {!vmap}, once per lane that runs, in lane order, skipping a held
+      lane ({!section-maps});
+    - under a differentiation, as the code around it does, on the primals; in a
+      custom rule, once per run of the rule's function and of its derivative, a
+      pullback's on the cotangents too;
+    - in a {!root}'s [solve], as the code around the root does, and in its
+      [linear_solve], once per run a derivative makes;
+    - in a {!remat}, as {!remat} states;
+    - under {!jit}, once per call of the compiled function, never at a trace or
+      a compile ({!section-evaluated});
+    - in {!eval_shape} and {!program}, never. *)
+
+(** {3:callback_lanes Lanes}
+
+    With [~lanes:g], a map runs [g] in the function's place, once per execution
+    of the map, on arrays that lead with an axis of the lanes. The map
+    broadcasts along it an argument it does not hold, merges the lanes of nested
+    maps into it, outer lanes major, and gives a held lane its donor's rows.
+    [g]'s results lead with that axis. *)
 
 val callback :
   ?lanes:('a -> 'b) -> ('a -> 'b, 'd) Nx.Ptree.fn -> like:'b -> ('a -> 'b) -> 'a -> 'b
-(** [callback ~lanes s ~like f x] is [f x], run on [x]'s values. *)
+(** [callback ~lanes s ~like f x] is [f x], run on [x]'s values once per
+    execution of the call ({!section-executions}). [s] is [f]'s signature, of
+    one argument. [f] must return arrays of the dtypes, shapes and placements of
+    [like]'s, whose elements are never read, so [like] may be an argument or a
+    value of {!eval_shape}. With [~lanes:g], a {!vmap} runs [g] in [f]'s place
+    ({!section-callback_lanes}). A collect that [f] opens receives [f]'s
+    additions and emissions, and one that would reach no collect is dropped.
+
+    Raises [Invalid_argument] at the call if [s] has no argument or more than
+    one. At an execution, it raises if a result of [f] differs from [like]'s,
+    naming its path, as in
+    ["Rune.callback: the root: shape [3], where like has [2]"], if [f] adds to a
+    total or emits to a probe collected around the call, and if [f] draws
+    without a key. A differentiation raises as {!section-callbacks} states. *)
 
 (** {1:remat Rematerialization} *)
 
