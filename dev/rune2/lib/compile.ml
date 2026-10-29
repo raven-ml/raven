@@ -805,12 +805,13 @@ let identity st form =
    stop that still fails raises the iterate's failure, a check of the
    program.
 
-   A step's checks are carried values of the loop: the first trip in which one
-   fails keeps each check's first failure and its data there, and later trips
-   leave them, so the loop's checks raise the first failure of the first step
-   that fails. The lowering keeps whether a check of the program has failed so
-   far, which every iterate's stop reads, and a loop carries it where its trip
-   reads it or checks, so an iterate stops at the program's first failure. *)
+   A step's checks are carried values of the loop: each trip until one fails
+   gives each check's first failure and its data there, a check that holds its
+   element count, and later trips leave them, so the loop's checks raise the
+   first failure of the first step that fails. The lowering keeps whether a
+   check of the program has failed so far, which every iterate's stop reads,
+   and a loop carries it where its trip reads it or checks, so an iterate stops
+   at the program's first failure. *)
 
 (* How a node reads a value it reads: at each element's own index only
    (through elementwise operations, casts and bitcasts of one width, reshapes
@@ -915,7 +916,11 @@ let leading d ~reversed ~n t u =
    failure in the first trip that failed, or its element count, and its data
    there. Each trip after the first that failed leaves them, so the loop raises
    the first failure of the first trip that failed, as the steps written out
-   would. A check of a loop inside the step is one of the step's. *)
+   would. Until then a trip gives each check's own values: a check that holds
+   has its count as first failure, and its data, read where nothing failed, are
+   never raised. Each carry so reads its own check and the flag alone, and is
+   computed where its check is. A check of a loop inside the step is one of the
+   step's. *)
 let check_inits (made : made list) =
   List.concat_map
     (fun (m : made) ->
@@ -923,37 +928,27 @@ let check_inits (made : made list) =
     made
 
 (* The carried checks' next values, given their values [carried], whether a
-   check failed before the trip ([before]) and by its end ([after]), and the
-   checks [made] of this trip. *)
-let check_nexts ~before ~after carried (made : made list) =
-  let at = ref 0 in
-  let next u =
-    let c = carried.(!at) in
-    incr at;
-    pick before c (u c)
+   check failed before the trip ([before]), and the checks [made] of this
+   trip. *)
+let check_nexts ~before carried (made : made list) =
+  let next at u = (at + 1, pick before carried.(at) u) in
+  let nexts at (m : made) =
+    let at, first = next at m.first in
+    let at, data = List.fold_left_map (fun at (_, u) -> next at u) at m.data in
+    (at, first :: data)
   in
-  List.concat_map
-    (fun (m : made) ->
-      let n = int64 (numel m.shape) in
-      let first = next (fun _ -> pick after m.first n) in
-      first :: List.map (fun (_, u) -> next (fun c -> pick after u c)) m.data)
-    made
+  List.concat (snd (List.fold_left_map nexts 0 made))
 
 (* The loop's checks, each a check of the step with its carried first failure
    and data, of the carried values' finals [finals]. *)
 let check_finals cs (made : made list) finals =
-  let at = ref 0 in
-  let take () =
-    let u = finals.(!at) in
-    incr at;
-    u
+  let check at (m : made) =
+    let datum at (d, _) = (at + 1, (d, finals.(at))) in
+    let at', data = List.fold_left_map datum (at + 1) m.data in
+    note cs { m with first = finals.(at); data };
+    at'
   in
-  List.iter
-    (fun (m : made) ->
-      let first = take () in
-      let data = List.map (fun (d, _) -> (d, take ())) m.data in
-      note cs { m with first; data })
-    made
+  ignore (List.fold_left check 0 made)
 
 let empty u = Shape.max_numel u = 0
 
@@ -1576,7 +1571,6 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
     Array.of_list
       (check_nexts
          ~before:(Ops.ne before (int64 0))
-         ~after:(Ops.ne inner.failed (int64 0))
          (Array.init (Array.length cinits) (view_of cinits ccarried))
          made)
   in
