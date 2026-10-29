@@ -1109,24 +1109,30 @@ let law_compose (Case c as case) =
   in
   check "vmap of a nested scan" bits_t nested lanes;
   let sq f x =
-    let a, (b, y) = Rune.grad p (objective f) x in
+    let a, (b, y) = Rune.grad (triple ()) (objective f) x in
     Nx.add
       (Nx.add (Nx.sum (Nx.mul a a)) (Nx.sum (Nx.mul b b)))
       (Nx.sum (Nx.mul y y))
   in
-  let o2 = operands c.dt c.s c.n (Array.map moderated c.ops) c.at in
+  (* Second orders run at float64. The scan and the fold add the same terms in
+     different orders, so they differ by up to (k + 1) u sum |term|, but the
+     terms lie inside the reverse pass, out of the test's sight. A bound of
+     [1e-10] times the result's largest magnitude, or 1, is [1e6] u at float64,
+     room for terms [1e5] times the result; at float32 a bound of [1e-4] is 1700
+     u, which a draw whose terms cancel exceeds. *)
+  let f64 = Nx.float64 in
+  let o2 = operands f64 c.s c.n (Array.map moderated c.ops) c.at in
   let x2 = (o2.(0), (o2.(2), o2.(3))) in
   let t2 =
-    let m k sh = put Whole c.dt sh (moderated c.tans.(k)) in
+    let m k sh = put Whole f64 sh (moderated c.tans.(k)) in
     (m 0 c.s, (m 1 rows, m 2 c.s))
   in
   let s2, f2, _ =
-    functions ~free:c.free c.dt c.s c.n (smoothed c.g) (smoothed c.k)
+    functions ~free:c.free f64 c.s c.n (smoothed c.g) (smoothed c.k)
       (smoothed c.h) o2.(1)
   in
-  (* Within [tol] of the derivative's largest magnitude, or of 1: a sum that
-     cancels leaves a residue of that scale's rounding. *)
   let scaled =
+    let tol = 1e-10 in
     let values (_, a) = Array.map Int64.float_of_bits a in
     let scale (a, b, c) =
       Array.fold_left
@@ -1161,9 +1167,10 @@ let law_compose (Case c as case) =
           (outcome (fun () -> bits3 (g s2)))
     | _ -> cover ("a finite " ^ msg) false
   in
-  second "grad of grad" (fun f -> Rune.grad p (sq f) x2);
+  let q = triple () in
+  second "grad of grad" (fun f -> Rune.grad q (sq f) x2);
   second "jvp of grad" (fun f ->
-      snd (Rune.jvp p p (Rune.grad p (objective f)) x2 t2));
+      snd (Rune.jvp q q (Rune.grad q (objective f)) x2 t2));
   let per_lane f =
     let batch = Nx.stack [ c0; Nx.mul_s c0 2. ] in
     let g =
