@@ -462,8 +462,10 @@ let law_derivatives (Case c) =
         in
         (bits tx, bits tw))
   in
-  (* With forward mode around it too, and the transposed loop's carry holds a
-     tangent of the cotangent at every step: a zero where a step gives none. *)
+  (* With forward mode around it too. The transposed loop's carry, the carry's
+     cotangent, holds a tangent at every step: a zero where no step gave it one
+     yet, which a step's product turns into a zero of either sign, or NaN, in
+     the carry's and the capture's tangents alike (Sums). *)
   equal ~msg:"jvp of grad"
     (outcome_t (Testable.pair (lenient ~nan:true) (lenient ~nan:true)))
     (jvp_grad (written c.g))
@@ -568,25 +570,39 @@ let rec no_sums = function
   | Un (u, e) -> Un (u, no_sums e)
   | Bin (b, e, e') -> Bin (b, no_sums e, no_sums e')
 
-(* [y] is the sum of [terms], arrays of one shape, in some order: each element
-   within [(k + 1) u Σ|term|] of the exact sum of its [k] terms, [u] the dtype's
-   unit roundoff, and anything where [Σ|term|] is not finite, as where terms
-   overflow in one order alone or a held lane's zero meets an infinite partial
-   derivative. *)
+(* [y] is the sum of [terms], arrays of one shape, in some order, beside zeros
+   that may meet an infinite partial derivative, giving NaN. Each element is
+   NaN, or else: non-finite where a term is, NaN never where one is; within [2 k
+   u Σ|term|] of the sum of its [k] terms added in order where it is finite, [u]
+   the dtype's unit roundoff, as each sum is within [(k - 1) u Σ|term|] of the
+   exact one; infinite only where [Σ|term|] passes the dtype's greatest float,
+   so that a partial sum may overflow. An addition whose result is subnormal is
+   exact, so the bound holds there too. *)
 let summed (type s) (dt : (float, s) Nx.dtype) terms y =
-  let u = if D.equal dt f32 then 0x1p-24 else 0x1p-53 in
+  let f32 = D.equal dt f32 in
+  let u = if f32 then 0x1p-24 else 0x1p-53 in
+  let greatest = if f32 then 0x1.fffffep127 else Float.max_float in
   let k = Float.of_int (List.length terms) in
   let terms = List.map Nx.to_array terms and y = Nx.to_array y in
   Array.iteri
     (fun i y ->
       let at f = List.fold_left (fun a t -> a +. f t.(i)) 0. terms in
+      let any p = List.exists (fun t -> p t.(i)) terms in
       let total = at Fun.id and bound = at Float.abs in
-      if Float.is_finite bound then
-        at_most
-          ~msg:(Printf.sprintf "element %d: %h from %h" i y total)
-          float_exact
-          ~than:((k +. 1.) *. u *. bound)
-          (Float.abs (y -. total)))
+      let msg = Printf.sprintf "element %d: %h from %h" i y total in
+      cover "a capture's sum bounded" (Float.is_finite y && bound <= greatest);
+      cover "a lane's steps cancel"
+        (Float.is_finite bound && Float.abs total < bound);
+      if Float.is_nan y then ()
+      else if any Float.is_nan then failf "%s, a term NaN" msg
+      else if any (fun t -> Float.abs t = infinity) then
+        if Float.is_finite y then failf "%s, a term infinite" msg else ()
+      else if Float.is_finite y then
+        at_most ~msg float_exact
+          ~than:(2. *. k *. u *. bound)
+          (Float.abs (y -. total))
+      else if bound <= greatest then
+        failf "%s, the terms' magnitudes summing to %h" msg bound)
     y
 
 (* Lanes of [x] and a trip count each, the lanes stopping apart. *)
@@ -709,14 +725,30 @@ let law_lanes (Lanes c) =
                 (Rune.jvp'
                    (fun x -> Rune.vmap s (iterated w) (x, t))
                    x (Nx.ones_like x)))));
-    (* A captured parameter's gradient sums every lane's. *)
+    (* A captured parameter's gradient sums each step's of every lane, in an
+       order the map chooses: step [j]'s is the gradient at row [j] of a stack
+       of the parameter, of the lane's loop whose step [j] reads that row. *)
     let gw f = Rune.grad' (fun w -> Nx.sum (f w)) w in
-    let lane k w = written w (Nx.get [ k ] x, Nx.get [ k ] t) in
+    let rows = Nx.broadcast_to (Array.append [| Int.max 1 c.max |] c.s) w in
+    let at ws (x, k) =
+      step (Nx.get [ Int32.to_int (Nx.item [] k) ] ws) (x, k)
+    in
+    let term k =
+      let lane ws =
+        fst
+          (looped ~max:c.max
+             ~until:(until (Nx.get [ k ] t))
+             ~f:(at ws)
+             (Nx.get [ k ] x, k0 ()))
+      in
+      let g = Rune.grad' (fun ws -> Nx.sum (lane ws)) (Nx.copy rows) in
+      List.init c.max (fun j -> Nx.get [ j ] g)
+    in
     (* The step is traced, so a refused one raises with no lane too. *)
     let terms =
       outcome (fun () ->
           ignore (gw (fun w -> written w (Nx.ones c.dt c.s, k0 ())));
-          List.init n (fun k -> gw (lane k)))
+          List.concat (List.init n term))
     in
     let mapped =
       outcome (fun () -> gw (fun w -> Rune.vmap s (iterated w) (x, t)))
@@ -728,6 +760,23 @@ let law_lanes (Lanes c) =
         equal ~msg:"a capture's gradient" (outcome_t Testable.unit) (unit terms)
           (unit mapped)
   end
+
+(* One lane whose steps' terms of the capture's gradient cancel: from [x = 2],
+   [w = 1], the step [x w - x²] gives 130, -26 and -6. *)
+let lane_examples =
+  let one v = { Operand.view = Plain; values = [| F v |] } in
+  [
+    Lanes
+      {
+        dt = f64;
+        s = [| 1 |];
+        trips = [| 3 |];
+        max = 3;
+        g = Bin (Sub, Y, Un (Square, X));
+        x = one 2.;
+        w = one 1.;
+      };
+  ]
 
 (* A key in the carry, folded with the step count at each step: eagerly,
    compiled, per lane with lanes stopping apart, and under reverse mode, the
@@ -1155,7 +1204,8 @@ let () =
            ];
          group "maps"
            [
-             prop "each lane stops on its own" lane_cases law_lanes;
+             prop ~examples:lane_examples "each lane stops on its own"
+               lane_cases law_lanes;
              prop "a key in the carry draws as the loop" keyed_cases law_keyed;
              test "a stopped lane computes its donor's step" test_donors;
              test "a stopped lane keeps a non-finite carry" test_nonfinite;
