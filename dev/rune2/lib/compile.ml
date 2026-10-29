@@ -677,17 +677,21 @@ let note cs (m : made) =
   cs.made <- m :: cs.made
 
 (* The first failure of [ok], a boolean node of [n] elements: the least index
-   whose flag is false, or [n]. *)
+   whose flag is false, or [n]. It is stored: the check's data, the failed flag
+   and a loop's carries read it, and each would otherwise compute the reduction
+   again, with all that [ok] computes, such as a log density at every
+   candidate. *)
 let first_failure n ok =
   let index = Shape.arange ~dtype:Int64 n in
   let count = Shape.const_like index (`Int (Tolk.Bigint.of_int n)) in
   let masked = Ops.where (Ops.ne ok (uint8 ok 0)) count index in
-  Shape.reshape
-    (List.hd
-       (Lower_reduce.reduce
-          Nx_kernel.(Monoid Min)
-          [ 0 ] ~src:(D.Any D.Int64) (D.Any D.Int64) masked))
-    (ints [ 1 ])
+  Ops.contiguous
+    (Shape.reshape
+       (List.hd
+          (Lower_reduce.reduce
+             Nx_kernel.(Monoid Min)
+             [ 0 ] ~src:(D.Any D.Int64) (D.Any D.Int64) masked))
+       (ints [ 1 ]))
 
 (* The check that [ok], a boolean node of one element, holds, raising
    [failure] otherwise. *)
