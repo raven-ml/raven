@@ -1218,13 +1218,76 @@ let pp_state ppf (State_case c) =
     Expr.pp c.e3
     (if c.swap then ", (v', w')" else "")
 
+let rec reduces = function
+  | Expr.Un (Max _, _) -> true
+  | Un (_, e) -> reduces e
+  | Bin (_, a, b) -> reduces a || reduces b
+  | X | Y | K _ -> false
+
+(* [o] made plain, its elements repeated to fill shape [s]. *)
+let plain s (o : Operand.t) =
+  let n = numel s and m = Array.length o.values in
+  { view = Plain; values = Array.init n (fun i -> o.values.(i mod m)) }
+
+(* A read of [x] along axis [a], at other indices than its own: a maximum, a
+   minimum or a reversal. *)
+let across a =
+  Gen.of_list
+    Expr.
+      [
+        Un (Max a, X);
+        Un (Neg, Un (Max a, Un (Neg, X)));
+        Un (Max a, Bin (Minimum, X, Y));
+        Un (Flip a, X);
+      ]
+
+(* At a shape of an element and an axis, a step whose third result reads a
+   lent result's store over a leaf that another result reads as it was: [v']
+   is pointwise over a plain [w], so it takes [w]'s memory; [w'] reads [w] at
+   its own index and at others, so it does not, and [v] apart from [v']; and
+   [w'] and the third, which reads [v'], share a product by a constant. *)
+let overwritten s =
+  let open Gen in
+  (* Half the reads are along a unit axis where one exists, which a kernel
+     need not reduce. *)
+  let axes = List.init (Array.length s) Fun.id in
+  let units = List.filter (fun a -> s.(a) = 1) axes in
+  let* a =
+    if units = [] then of_list axes
+    else frequency [ (1, of_list axes); (1, of_list units) ]
+  in
+  let* r = across a in
+  let* u = of_list Expr.[ Neg; Abs; Square ]
+  and+ b = of_list Expr.[ Add; Sub; Mul; Minimum; Maximum ] in
+  let* e2 = Expr.gen ~rank:(Array.length s)
+  and+ e3 = Expr.gen ~rank:(Array.length s) in
+  let+ w = map (plain s) (draw s) in
+  let twice e = Expr.(Bin (Mul, e, K (F 2.))) in
+  Expr.
+    ( w,
+      Bin (b, Un (u, X), Y),
+      twice (Bin (Add, Bin (Add, e2, X), r)),
+      twice (Bin (Add, e3, Y)),
+      false )
+
+(* Half the steps of an element and an axis are [overwritten]'s. *)
 let state_cases =
   let open Gen in
   (let* s = shape in
    let rank = Array.length s in
-   let* e1 = Expr.gen ~rank and+ e2 = Expr.gen ~rank and+ e3 = Expr.gen ~rank in
-   let* w = draw s and+ v = draw s in
-   let+ through = bool and+ swap = bool and+ wide = bool in
+   let any =
+     let* e1 = Expr.gen ~rank
+     and+ e2 = Expr.gen ~rank
+     and+ e3 = Expr.gen ~rank in
+     let+ w = draw s and+ through = bool in
+     (w, e1, e2, e3, through)
+   in
+   let* w, e1, e2, e3, through =
+     if rank = 0 || numel s = 0 then any
+     else frequency [ (1, any); (1, overwritten s) ]
+   in
+   let* v = draw s in
+   let+ swap = bool and+ wide = bool in
    let e1 = Expr.exact e1 and e2 = Expr.exact e2 and e3 = Expr.exact e3 in
    if wide then State_case { dt = f64; s; w; v; e1; e2; e3; through; swap }
    else State_case { dt = f32; s; w; v; e1; e2; e3; through; swap })
@@ -1235,6 +1298,55 @@ let state_step (State_case c) w v =
   let w' = Expr.eval w (if c.through then v' else v) c.e2 in
   let third = Expr.eval w' v' c.e3 in
   if c.swap then (v', (w', third)) else (w', (v', third))
+
+(* Steps whose third result reads a lent result beside a reduction over a
+   leaf: it reads the stored result, never the leaf overwritten. *)
+let pinned_states =
+  let zeros n = Array.make n (F 0.) in
+  let s = [| 1; 2 |] in
+  Expr.
+    [
+      State_case
+        {
+          dt = f32;
+          s;
+          w = { view = Plain; values = zeros 2 };
+          v = { view = Offset 1; values = zeros 3 };
+          e1 = Un (Neg, Bin (Add, X, X));
+          e2 =
+            Bin
+              ( Add,
+                Bin
+                  ( Add,
+                    Bin (Add, Un (Neg, Un (Neg, Y)), X),
+                    Un (Max 0, Bin (Add, Y, Bin (Add, Y, K (F 0.)))) ),
+                Un
+                  ( Neg,
+                    Bin
+                      ( Add,
+                        Bin (Add, Un (Neg, Y), Un (Abs, X)),
+                        Bin (Add, Bin (Add, X, Y), Bin (Add, Y, X)) ) ) );
+          e3 = Un (Neg, Y);
+          through = false;
+          swap = true;
+        };
+      State_case
+        {
+          dt = f32;
+          s;
+          w = { view = Plain; values = zeros 2 };
+          v = { view = Plain; values = [| F 0.; F 1. |] };
+          e1 = Bin (Add, X, Un (Neg, Bin (Add, Y, Y)));
+          e2 =
+            Bin
+              ( Add,
+                Un (Neg, Bin (Add, Un (Recip, Bin (Add, Y, Y)), Y)),
+                Un (Max 0, Un (Max 0, Bin (Add, Un (Neg, Y), Un (Neg, X)))) );
+          e3 = Bin (Sub, K (F 0.), Un (Neg, Un (Neg, Un (Max 0, Y))));
+          through = false;
+          swap = false;
+        };
+    ]
 
 let state_examples =
   let plain = { view = Plain; values = [| F 1.; F (-0.); F 2.5; F (-3.) |] } in
@@ -1264,6 +1376,7 @@ let state_examples =
       case (Bin (Add, Y, K (F 1.))) X;
       case ~swap:true (Bin (Add, Y, K (F 1.))) (Bin (Mul, X, Y));
     ]
+  @ pinned_states
 
 (* A step over two donated leaves gives the bits of one over the leaves kept,
    whichever results take their memory. *)
@@ -1308,6 +1421,8 @@ let law_states (State_case c as case) =
   cover "both results take a leaf's memory" (took = [ true; true ]);
   cover "one result takes a leaf's memory"
     (took = [ true; false ] || took = [ false; true ]);
+  cover "a reduction beside a result that takes a leaf's memory"
+    (reduces c.e2 && List.mem true took);
   equal t eager jitted
 
 (* A momentum step's results each take a leaf's memory, call after call: the
