@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Region.weights` keeps a cell's derivative where its weight rounds to 0 or
+  1. A circle just past tangent to a cell edge cuts a sliver whose area rounds
+  to 0, and the clamp dropped its arc from the derivative in the radius: 1e-6
+  of the circumference at float64, 2e-3 at float32, for a radius of 3.5 cells.
 - `Wcs.read` refuses a header that omits LATPOLE where LATPOLE alone fixes
   the celestial pole (θ₀ = 0, CRVAL's latitude 0, LONPOLE 90° from φ₀), as
   FITS 4.0 gives it no default there; it read as 90°. astropy reads such a

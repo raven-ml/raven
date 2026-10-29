@@ -516,6 +516,29 @@ let derivatives =
               (Nx.scalar f64 0.)
           in
           equal float_exact 0. (Nx.item [] d));
+      test "a sliver whose area rounds to 0 keeps its arc in the derivative"
+        (fun () ->
+          (* The circle about (15, 20.3) of radius 3.5 + 4.7e-12 crosses the
+             edge at row 18.5 over a chord of 1.1e-5: the area beyond, in cell
+             (19, 20), is 5e-17 and rounds to 0, but its derivative in the
+             radius is the arc's length, 2 r asin (w / r) for the chord's half
+             w. Its terms' derivatives grow as 1 / w, 2e5, and cancel to it, so
+             rounding leaves it within 1e-4. *)
+          let r = 3.5 +. 4.687612152969837e-12 in
+          let d =
+            Rune.grad'
+              (fun r ->
+                Nx.get [ 19; 20 ]
+                  (Region.weights
+                     (Region.circle (at (15., 20.3)) ~radius:(one r))
+                     g))
+              (Nx.scalar f64 r)
+          in
+          let w = Float.sqrt ((r -. 3.5) *. (r +. 3.5)) in
+          equal
+            (float_rel ~rel:1e-4 ~abs:0.)
+            (2. *. r *. Float.asin (w /. r))
+            (Nx.item [] d));
       prop "a circle tangent to a cell edge has a finite, exact derivative"
         Gen.(
           pair (int_range 15 25)

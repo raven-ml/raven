@@ -21,9 +21,9 @@
 
    A cell with every corner inside weighs exactly 1. A cell whose nearest point
    is at least [r] from the centre and that does not hold the centre weighs
-   exactly 0. Other weights are clamped to [0, 1]. The weight is the area inside
-   over the cell's area, both signed by the cell's orientation, so either
-   orientation gives the same weight. *)
+   exactly 0. Other weights are clamped to [0, 1], keeping their derivative.
+   The weight is the area inside over the cell's area, both signed by the
+   cell's orientation, so either orientation gives the same weight. *)
 
 type 'e t = {
   weight : (float, 'e) Nx.t;
@@ -37,6 +37,29 @@ let sub (ax, ay) (bx, by) = (Nx.sub ax bx, Nx.sub ay by)
 let dot (ax, ay) (bx, by) = Nx.add (Nx.mul ax bx) (Nx.mul ay by)
 let along (ax, ay) t (dx, dy) = (Nx.fma t dx ax, Nx.fma t dy ay)
 let clamp01 t = Nx.clamp ~min:0. ~max:1. t
+
+(* [constant x] is [x] with derivative 0: its bits read through an integer of
+   their width, which rune does not differentiate. A float8 goes through
+   float16, which holds it exactly: a compiled function refuses a float8
+   bitcast. *)
+let rec constant : type e. (float, e) Nx.t -> (float, e) Nx.t =
+ fun x ->
+  let dtype = Nx.dtype x in
+  let through int = Nx.bitcast dtype (Nx.bitcast int x) in
+  match dtype with
+  | Float64 -> through Nx.int64
+  | Float32 -> through Nx.int32
+  | Float16 | BFloat16 -> through Nx.int16
+  | Float8_e4m3 | Float8_e5m2 ->
+      Nx.cast dtype (constant (Nx.cast Nx.float16 x))
+
+(* [fraction w] is [w] clamped to [0, 1] with [w]'s derivative. A weight leaves
+   [0, 1] only by rounding, so its derivative stays the exact one: a sliver
+   beyond a near-tangent edge, 5e-17 of the cell, rounds to 0, but the arc that
+   bounds it still moves with the radius. *)
+let fraction w =
+  let held = constant w in
+  Nx.add (clamp01 held) (Nx.sub w held)
 
 (* [θ - sin θ] without cancellation: its Taylor series below 0.5, where seven
    terms reach float64's rounding, and the difference above. *)
@@ -163,7 +186,7 @@ let disc r xs ys =
   let weight =
     Nx.where outside (Nx.zeros_like ratio)
       (Nx.where all_in (Nx.ones_like ratio)
-         (Nx.where flat (Nx.zeros_like ratio) (clamp01 ratio)))
+         (Nx.where flat (Nx.zeros_like ratio) (fraction ratio)))
   in
   let full = Nx.logical_and all_in (Nx.logical_not outside) in
   { weight; area = Nx.mul_s area 0.5; outside; full }
@@ -178,7 +201,7 @@ let annulus inner outer xs ys =
   let weight =
     Nx.where outside (Nx.zeros_like o.weight)
       (Nx.where full (Nx.ones_like o.weight)
-         (clamp01 (Nx.sub o.weight i.weight)))
+         (fraction (Nx.sub o.weight i.weight)))
   in
   { weight; area = o.area; outside; full }
 
@@ -407,6 +430,6 @@ let polygon vs xs ys =
   let weight =
     Nx.where outside (Nx.zeros_like ratio)
       (Nx.where full (Nx.ones_like ratio)
-         (Nx.where flat (Nx.zeros_like ratio) (clamp01 ratio)))
+         (Nx.where flat (Nx.zeros_like ratio) (fraction ratio)))
   in
   { weight; area = Nx.mul_s twice 0.5; outside; full }
