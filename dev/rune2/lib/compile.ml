@@ -2177,7 +2177,7 @@ let evaluated p args arrays =
   let values = Array.mapi (fun k v -> over v (arrays k)) args in
   (* A callback may keep what it receives, so it receives copies. *)
   let values =
-    if Program.holds (function Callback _ -> true | _ -> false) p then
+    if Program.holds Program.calls p then
       Array.map (fun (V x) -> V (Nx.copy x)) values
     else values
   in

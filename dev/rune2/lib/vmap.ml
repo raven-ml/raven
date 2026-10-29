@@ -741,6 +741,9 @@ let operand i (Program.V x) = owned i x
 
 (* A call answers whose program names the map, a lane value read or none. *)
 let claims i axis : Program.construct -> bool = function
+  (* A callback runs once per lane, whatever it reads, so a construct holding
+     one is mapped. *)
+  | c when Program.calls c -> true
   | Lanes (a, x) -> Program.same_axis a axis || owned i x
   (* An iterate whose programs read the map's lanes may stop them apart. *)
   | Iterate { step; until; _ }
@@ -981,6 +984,61 @@ let rows_of i (Program.V x as v) =
 let lanes_of w mask vs =
   Array.map2 (fun m v -> if m then lane_v w v else v) mask vs
 
+(* A callback over this map's lanes, performed outward as one callback over
+   their batches. With [~lanes], its function runs once on them, a held lane
+   given its donor's rows. Otherwise it runs once per lane that runs, in lane
+   order, on the lane's rows; a held lane's results are zeros. The flags of the
+   lanes that run are an argument, read on the host. *)
+let callback ?held i n (cb : Program.callback) : Program.callback =
+  let forms = Array.map (Program.stacked n) cb.forms in
+  let args = Array.map (batch_v i n) cb.args in
+  match (cb.lanes, held) with
+  | Some _, None -> { cb with maps = n :: cb.maps; args; forms }
+  | Some _, Some h ->
+      let args = Array.map (lend ~kept:false h) args in
+      { cb with maps = n :: cb.maps; args; forms }
+  | None, _ ->
+      let flags = match held with Some h -> [| h.running |] | None -> [||] in
+      let nf = Array.length flags in
+      let run vs =
+        let runs =
+          if nf = 0 then fun _ -> true
+          else
+            let (Program.V r) = vs.(0) in
+            let r = Nx.to_array (Nx.copy (as_bool r)) in
+            fun j -> r.(j)
+        in
+        let vs = Array.sub vs nf (Array.length vs - nf) in
+        let row j =
+          if not (runs j) then Array.map (Loops.filled ~zero:true) cb.forms
+          else
+            let ys =
+              cb.run (Array.map (fun (Program.V x) -> Program.V (Nx.get [ j ] x)) vs)
+            in
+            Program.conform cb ys;
+            ys
+        in
+        let rows = List.init n row in
+        Array.mapi
+          (fun k f ->
+            match rows with
+            | [] -> Loops.filled ~zero:true f
+            | first :: _ ->
+                let (Program.V y) = first.(k) in
+                Program.V
+                  (Nx.stack ~axis:0
+                     (List.map (fun ys -> Program.like y ys.(k)) rows)))
+          forms
+      in
+      {
+        run;
+        lanes = None;
+        maps = [];
+        args = Array.append flags args;
+        forms;
+        paths = cb.paths;
+      }
+
 (* [Lanes] of this map is every lane's value, the batch, a constant; of another
    map, every lane's batch, a lane value. An addition adds the sum of its lanes'
    values, once, and nothing with no lane. Where lanes are held, a held lane's
@@ -1026,9 +1084,9 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
       let e = Program.Emission { e with lead = e.lead + 1; values; mask } in
       ignore (Program.perform (Emit e));
       Effect.Deep.continue k [||]
-  | Callback _ ->
-      Effect.Deep.discontinue k
-        (Invalid_argument (name ^ ": Rune.callback under a map"))
+  | Callback cb ->
+      let r = Program.perform (Callback (callback ?held i n cb)) in
+      Effect.Deep.continue k (Array.map (lane_v i) r)
   | Detach x ->
       let b = batch i n x in
       one (lane i (Program.like b (Program.perform (Detach b)).(0)))

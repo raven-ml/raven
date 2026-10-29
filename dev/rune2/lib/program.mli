@@ -502,9 +502,17 @@ val eval : ?totals:value array -> t -> value array -> value array
     the sums of its additions. Raises [Invalid_argument] where [args] and
     [totals] do not match [p]'s parameters, and what an equation raises. *)
 
+val conform : callback -> value array -> unit
+(** [conform c ys] checks [ys] against [c]'s forms. Raises [Invalid_argument]
+    naming the first result's path where they differ. *)
+
 val eval_seeded : t -> seeds:value array -> value array -> value array
 (** [eval_seeded p ~seeds args] is [p]'s outputs over [args], its sums started
     from [seeds] as a scan's are. *)
+
+val calls : construct -> bool
+(** [calls c] is [true] iff [c] is a callback or a program it carries holds
+    one. *)
 
 val holds : (construct -> bool) -> t -> bool
 (** [holds pred p] is [true] iff [pred] holds for a construct of [p] or of a

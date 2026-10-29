@@ -100,6 +100,90 @@ let test_jit () =
   equal ~msg:"first" (Testable.float 1e-12) (exp 1. +. 1.) (Nx.item [] y1);
   equal ~msg:"second" (Testable.float 1e-12) (exp 2. +. 1.) (Nx.item [] y2)
 
+(* Under vmap: once per lane, in lane order, on the lane's rows; with [~lanes],
+   its function once on every lane. *)
+let law_vmap xs =
+  let n = List.length xs in
+  cover "no lane" (n = 0);
+  cover "lanes" (n > 1);
+  let x = vec (Array.of_list xs) in
+  let cb, log = logged (fun v -> Nx.mul_s v 3.) in
+  let y = Rune.vmap tt cb x in
+  equal ~msg:"per lane" fl (List.map (fun x -> [ x ]) xs) (log ());
+  equal ~msg:"results" Testable.(list float_exact) (floats (Nx.mul_s x 3.))
+    (floats y);
+  let each = ref 0 and all = ref [] in
+  let g v =
+    all := floats v :: !all;
+    Nx.mul_s v 3.
+  in
+  let y =
+    Rune.vmap tt
+      (fun x ->
+        Rune.callback ~lanes:g tt ~like:x
+          (fun v ->
+            incr each;
+            v)
+          x)
+      x
+  in
+  equal ~msg:"lanes" fl [ xs ] (List.rev !all);
+  equal ~msg:"its function" Testable.int 0 !each;
+  equal ~msg:"lanes' results" Testable.(list float_exact)
+    (floats (Nx.mul_s x 3.)) (floats y);
+  (* An argument the map does not hold is the same at every lane. *)
+  let cb, log = logged Nx.neg in
+  let _ = Rune.vmap tt (fun _ -> cb (scalar 2.)) x in
+  equal ~msg:"an argument the map does not hold" fl
+    (List.map (fun _ -> [ 2. ]) xs)
+    (log ())
+
+(* Nested maps: outer lanes major, per lane and with [~lanes]. *)
+let test_nested () =
+  let x = Nx.create f64 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
+  let cb, log = logged Nx.neg in
+  let y = Rune.vmap tt (Rune.vmap tt cb) x in
+  equal ~msg:"per lane" fl
+    (List.init 6 (fun k -> [ float_of_int k ]))
+    (log ());
+  equal ~msg:"results" Testable.(list float_exact) (floats (Nx.neg x))
+    (floats y);
+  let shapes = ref [] in
+  let g v =
+    shapes := (Nx.shape v, floats v) :: !shapes;
+    Nx.neg v
+  in
+  let inner x = Rune.callback ~lanes:g tt ~like:x Fun.id x in
+  let y = Rune.vmap tt (Rune.vmap tt inner) x in
+  equal ~msg:"lanes"
+    Testable.(list (pair (array int) (list float_exact)))
+    [ ([| 6 |], floats (Nx.reshape [| 6 |] x)) ]
+    (List.rev !shapes);
+  equal ~msg:"lanes' results" Testable.(list float_exact) (floats (Nx.neg x))
+    (floats y)
+
+(* Lanes whose iterate stops apart: a held lane's step calls nothing. *)
+let law_held ks =
+  cover "lanes stopping apart" (List.length (List.sort_uniq compare ks) > 1);
+  let cb, log = logged (fun v -> Nx.add_s v 1.) in
+  let loop k =
+    Rune.iterate T.tensor ~max:5
+      ~until:(fun c -> Nx.greater_equal c k)
+      ~f:cb (Nx.zeros_like k)
+  in
+  let k = vec (Array.of_list (List.map float_of_int ks)) in
+  let r = Rune.vmap tt loop k in
+  equal ~msg:"results" Testable.(list float_exact) (floats k) (floats r);
+  let top = List.fold_left max 0 ks in
+  let expected =
+    List.concat
+      (List.init top (fun t ->
+           List.filter_map
+             (fun k -> if k > t then Some [ float_of_int t ] else None)
+             ks))
+  in
+  equal ~msg:"calls" fl expected (log ())
+
 (* The results' forms are [like]'s, which is never read. *)
 let test_like () =
   let x = vec [| 1.; 2. |] in
@@ -204,6 +288,12 @@ let () =
                law_iterate;
              prop "a switch, its taken branch" Gen.(int_range 0 2) law_switch;
              test "a jit, once per execution" test_jit;
+           ];
+         group "maps"
+           [
+             prop "per lane, and with lanes" values law_vmap;
+             test "nested maps" test_nested;
+             prop "held lanes call nothing" Gen.(list ~size:(int_range 1 4) (int_range 0 3)) law_held;
            ];
          group "interface"
            [

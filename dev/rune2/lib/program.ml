@@ -413,6 +413,11 @@ let rec holds pred (p : t) =
       | Do { c; _ } -> pred c || List.exists (holds pred) (carried c))
     p.eqns
 
+let calls = function
+  | Callback _ -> true
+  | c ->
+      List.exists (holds (function Callback _ -> true | _ -> false)) (carried c)
+
 let custom = function Custom _ | Linear _ -> true | _ -> false
 
 (* A site of [body] with the compiling of [s], no compiled form and no derived
