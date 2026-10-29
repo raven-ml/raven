@@ -1028,10 +1028,14 @@ let apart_examples =
   let apart dt s lanes trips max =
     Apart (dt, s, lanes, trips, max, exact_at dt e, x lanes s)
   in
+  (* Each lane's carry is [0; 1]. A step that adds its flip changes it at each
+     step, at every dtype but a boolean one, where the flip alone does. *)
   let each (D.Any dt) =
     let values = Array.init 6 (fun k -> Operand.F (float_of_int (k mod 2))) in
     let x = { Operand.view = Plain; values } in
-    Apart (dt, [| 2 |], [| 3 |], [| 0; 2; 1 |], 2, exact_at dt e, x)
+    let flip = Un (Flip 0, Y) in
+    let g = match D.kind dt with Boolean -> flip | _ -> Bin (Add, X, flip) in
+    Apart (dt, [| 2 |], [| 3 |], [| 0; 2; 1 |], 2, exact_at dt g, x)
   in
   [
     apart f32 [| 2 |] [| 3 |] [| 0; 2; 1 |] 2;
