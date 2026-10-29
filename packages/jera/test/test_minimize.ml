@@ -343,15 +343,10 @@ let lm_tests =
           (Oracle.tensor ~rel:1e-6 ())
           (Oracle.central ~eps:1e-6 f y v)
           (Nx.sum (Nx.mul (Rune.grad' f y) v)));
-    xfail
-      ~reason:
-        "Rune.jit refuses this fit's Rune.root: \"a root's program captures\" \
-         from rune.ml's closed check on the Jacobian programs it derives; \
-         rune.mli states no such refusal"
-      (test "compiled equals eager (law 3)" (fun () ->
-           let f y = Solution.get (fit y) in
-           let y = model (vec [| 2.; -1.3 |]) in
-           equal (Oracle.tensor ()) (f y) (Rune.jit' f y)));
+    test "compiled equals eager (law 3)" (fun () ->
+        let f y = Solution.get (fit y) in
+        let y = model (vec [| 2.; -1.3 |]) in
+        equal (Oracle.tensor ()) (f y) (Rune.jit' f y));
     test "its iterates start at the start and reach the fit" (fun () ->
         let y = model (vec [| 2.; -1.3 |]) in
         let xs =
