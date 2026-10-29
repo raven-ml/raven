@@ -2687,6 +2687,72 @@ let test_captured_donor () =
     (bits (fresh [| 11.; 2. |]))
     (bits (g x))
 
+(* Associative scans over tuples *)
+
+(* A 2 x 2 int32 matrix as four arrays, [b · a] wrapping: exact, so every order
+   of the combinations gives the same bits. *)
+let product ((a00, a01), (a10, a11)) ((b00, b01), (b10, b11)) =
+  let open Nx in
+  ( (add (mul b00 a00) (mul b01 a10), add (mul b00 a01) (mul b01 a11)),
+    (add (mul b10 a00) (mul b11 a10), add (mul b10 a01) (mul b11 a11)) )
+
+let quad = T.(pair (pair tensor tensor) (pair tensor tensor))
+
+(* The extents a circuit treats apart: none, one, a power of two, one either
+   side of it, and past 64. *)
+let extent =
+  let open Gen in
+  frequency
+    [
+      (1, constant 0);
+      (1, constant 1);
+      (1, map (fun k -> 1 lsl k) (int_range 1 6));
+      (1, map (fun k -> (1 lsl k) + 1) (int_range 1 6));
+      (1, map (fun k -> (1 lsl k) - 1) (int_range 2 6));
+      (1, int_range 65 130);
+    ]
+
+(* The matrices' four arrays computed from one, two or four operands: tolk
+   inlines a value that reads at most three buffers into each of its readers. *)
+type scan_case = Scan_case of int array * int * Operand.t array
+
+let scan_cases =
+  let open Gen in
+  (let* n = extent in
+   let* s, axis = of_list [ ([| n |], 0); ([| n; 2 |], 0); ([| 2; n |], -1) ] in
+   let* k = of_list [ 1; 2; 4 ] in
+   let+ xs = array ~size:(constant k) (draw s) in
+   Scan_case (s, axis, xs))
+  |> with_pp (fun ppf (Scan_case (s, axis, xs)) ->
+      Format.fprintf ppf "%a along %d, views %a" pp_shape s axis
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_view)
+        (Array.to_list (Array.map (fun (o : Operand.t) -> o.view) xs)))
+
+let law_scan (Scan_case (s, axis, xs)) =
+  let n = s.(if axis < 0 then Array.length s + axis else axis) in
+  cover "no element" (n = 0);
+  cover "one element" (n = 1);
+  cover "a power of two past 1" (n > 1 && n land (n - 1) = 0);
+  cover "an odd extent past 1" (n > 1 && n mod 2 = 1);
+  cover "past 64 elements" (n > 64);
+  cover "one operand" (Array.length xs = 1);
+  cover "four operands" (Array.length xs = 4);
+  cover "a view operand"
+    (Array.exists (fun (o : Operand.t) -> o.view <> Plain) xs);
+  let m = Array.map (make Nx.int32 s) xs in
+  let k = Array.length m in
+  let x = ((m.(0), m.(1 mod k)), (m.(2 mod k), m.(3 mod k))) in
+  let f ((a, b), (c, d)) =
+    let x = ((a, Nx.add_s b 1l), (Nx.add_s c 2l, Nx.add_s d 3l)) in
+    Nx.associative_scan ~axis quad product x
+  in
+  let leaves ((a, b), (c, d)) = List.map codes [ a; b; c; d ] in
+  let eager = outcome (fun () -> leaves (f x)) in
+  let jitted =
+    compiled (fun () -> leaves (Rune.jit T.(quad @-> returns quad) f x))
+  in
+  equal (outcome_t (Testable.list codes_t)) eager jitted
+
 let () =
   exit
     (run "rune2 jit"
@@ -2707,6 +2773,9 @@ let () =
                test_int_constants;
              test "a square of a product whose constant squares to 0"
                test_square_wraps;
+             prop ~count:60
+               "an associative scan over a tuple gives eager's bits" scan_cases
+               law_scan;
            ];
          group "jit"
            [
