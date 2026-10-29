@@ -205,6 +205,50 @@ let simplifying_patterns ops =
             ]);
        ])
 
+(* Nested extremes *)
+
+(* [u] as a selection of [v] and [c] by their comparison, [(v < c) ? v : c] or
+   [(c < v) ? c : v] a minimum, [(v < c) ? c : v] or [(c < v) ? v : c] a
+   maximum: whether it is a minimum, and whether it picks [c] where the
+   comparison is false, at a tie or a NaN. *)
+let extreme_of c u =
+  if not (Op.equal (op u) Where) then None
+  else
+    match src u with
+    | [ cond; t; f ] when Op.equal (op cond) Cmplt -> (
+        match src cond with
+        | [ p; q ] when ((t == p && f == q) || (t == q && f == p)) && p != q ->
+            if p == c || q == c then
+              let v = if p == c then q else p in
+              Some (v, t == p, f == c)
+            else None
+        | _ -> None)
+    | _ -> None
+
+(* A minimum of a minimum against one [c], or a maximum of a maximum, is one
+   selection: the inner one where it picks [c] at a tie or the two pick alike,
+   and otherwise the one of [v] that picks [c] there, [(v < c) ? v : c] or
+   [(c < v) ? v : c]. LLVM's InstCombine folds the outer into the inner one
+   whatever they pick: with [m = (0.0 < v) ? 0.0 : v], [(m < 0.0) ? m : 0.0]
+   becomes [m], -0.0 at v = -0.0 where the selection gives 0.0, from -O1 on
+   every target in clang 19, and in NVRTC 13.4. Made one here, no such nest
+   reaches a compiler. *)
+let nested_extreme o =
+  match src o with
+  | [ cond; _; _ ] when Op.equal (op cond) Cmplt ->
+      List.find_map
+        (fun m ->
+          let c = if m == nth cond 0 then nth cond 1 else nth cond 0 in
+          match (extreme_of c o, extreme_of c m) with
+          | Some (v_o, min_o, keeps_o), Some (v, min_i, keeps_i)
+            when v_o == m && min_o = min_i ->
+              if keeps_i || keeps_o = keeps_i then Some m
+              else if min_i then Some (where O.(v < c) v c)
+              else Some (where O.(c < v) v c)
+          | _ -> None)
+        (src cond)
+  | _ -> None
+
 let late_patterns ~disable_fast_idiv ops =
   let var = Upat.var and cvar = Upat.cvar in
   let x_int = var ~dtype:Dtype.ints "x"
@@ -219,6 +263,7 @@ let late_patterns ~disable_fast_idiv ops =
   Pattern_matcher.v
     (fun () -> List.concat
        [
+         [ rule (Upat.op Where ~name:"o") (fun m -> nested_extreme (m "o")) ];
          (if Op.Set.mem Max ops || not (Op.Set.mem Cmplt ops) then []
           else
             [

@@ -1396,20 +1396,19 @@ let grouping =
           equal values [| `Float big |] (List.assoc 0 out));
     ]
 
-(* Zeros on arm64 *)
+(* Zeros a comparison reads *)
 
-(* [data0[0] = data1[0] < 0 ? data1[0] : 0] at [dt]: a select of a value and a
-   zero by their comparison, which clang's AArch64 backend lowers to a minimum
-   instruction keeping the value's zero. *)
-let zero_select dt =
+(* [data0[0] = data1[0] < c ? data1[0] : c] at [dt]: a select of a value and a
+   constant by their comparison, which a backend may lower to a minimum. *)
+let const_select dt c =
   let zero = Ops.int ~dtype:Int32 0 in
   let at slot = Ops.index (Call.param ~shape:[ Int 1 ] slot dt) [ zero ] in
   let x = Ops.load (at 1) [] in
-  let z = Ops.float ~dtype:dt 0. in
+  let c = Ops.float ~dtype:dt c in
   Linearizer.linearize
     (Ops.sink
-       ~kernel:(Ops.kernel_info ~name:"zero_select" ())
-       [ Ops.store (at 0) (Ops.where (Ops.lt x z) x z) ])
+       ~kernel:(Ops.kernel_info ~name:"const_select" ())
+       [ Ops.store (at 0) (Ops.where (Ops.lt x c) x c) ])
 
 (* A select of a value and a zero by a condition loaded from memory. *)
 let zero_masked dt =
@@ -1422,38 +1421,59 @@ let zero_masked dt =
        [ Ops.store (at 0 dt) (Ops.where c x (Ops.float ~dtype:dt 0.)) ])
 
 let arm64 = Cstyle.clang (target "CPU" "CLANG" "arm64,generic")
-let asm_barrier = "__asm__(\"\" : \"+w\"(z))"
+let riscv64 = Cstyle.clang (target "CPU" "CLANG" "riscv64,rv64g")
+let barrier reg = Printf.sprintf "__asm__(\"\" : \"+%s\"(z))" reg
 
-let contains s sub =
-  let n = String.length sub in
-  let rec at i =
-    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
-  in
-  at 0
-
-let zeros_on_arm64 =
-  group "zeros on arm64"
+(* Each Clang target, its register class for a float, the float types it
+   compares in, and those whose compared zeros its backend lowers to a minimum
+   or a maximum: x86_64 and riscv64 compare a bfloat16 in float32. *)
+let clang_targets =
+  Dtype.
     [
-      cases
-        ~name:(fun dt -> Dtype.name dt)
-        "a float zero a comparison reads is opaque to the backend on arm64, \
-         and a literal on x86_64"
-        Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+      ( "arm64",
+        arm64,
+        "w",
+        [ Float16; Bfloat16; Float32; Float64 ],
+        [ Float16; Bfloat16; Float32; Float64 ] );
+      ("x86_64", clang, "x", [ Float16; Float32; Float64 ], [ Float16 ]);
+      ( "riscv64",
+        riscv64,
+        "f",
+        [ Float16; Float32; Float64 ],
+        [ Float16; Float32; Float64 ] );
+    ]
+
+let per_target =
+  List.concat_map
+    (fun (name, r, reg, dts, zeros) ->
+      List.map (fun dt -> (name, r, reg, dt, List.mem dt zeros)) dts)
+    clang_targets
+
+let target_name (name, _, _, dt, _) = name ^ ", " ^ Dtype.name dt
+
+let zeros_compared =
+  group "zeros a comparison reads"
+    [
+      cases ~name:target_name
+        "a float zero a comparison reads is opaque to a backend that lowers it \
+         to an extreme, and a literal elsewhere"
+        per_target
+        (fun (_, r, reg, dt, zeros) ->
+          (* a failure prints the source *)
+          let says msg want uops =
+            let src = render r uops in
+            equal ~msg:(msg ^ " in\n" ^ src) bool want
+              (contains src (barrier reg))
+          in
+          says "0" zeros (const_select dt 0.);
+          says "-0" zeros (const_select dt (-0.));
+          says "1.5" false (const_select dt 1.5);
+          says "a mask" false (zero_masked dt));
+      cases ~name:Dtype.name
+        "a select of a value and a zero picks the zero at -0., on the host"
+        Dtype.[ Float16; Float32; Float64 ]
         (fun dt ->
-          let uops = zero_select dt in
-          equal ~msg:"arm64" bool true
-            (contains (render arm64 uops) asm_barrier);
-          equal ~msg:"x86_64" bool false
-            (contains (render clang uops) asm_barrier));
-      cases
-        ~name:(fun dt -> Dtype.name dt)
-        "a float zero that no comparison reads is a literal on arm64"
-        Dtype.[ Float16; Bfloat16; Float32; Float64 ]
-        (fun dt ->
-          equal bool false (contains (render arm64 (zero_masked dt)) asm_barrier));
-      test "a select of a value and a zero picks the zero at -0., on the host"
-        (fun () ->
-          let k = Run.program (Lazy.force host) (zero_select Float32) in
+          let k = Run.program (Lazy.force host) (const_select dt 0.) in
           match List.assoc 0 (Run.on_host k [ (1, [| `Float (-0.) |]) ]) with
           | [| `Float z |] -> equal float_exact 0. z
           | _ -> failf "one float");
@@ -1479,5 +1499,5 @@ let () =
          bf16_truncation;
          execution;
          division_group;
-         zeros_on_arm64;
+         zeros_compared;
        ])

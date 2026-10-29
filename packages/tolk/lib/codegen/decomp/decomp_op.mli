@@ -58,6 +58,12 @@ val late_patterns :
   (Renderer.t, Ops.t) Ops.Pattern_matcher.t
 (** [late_patterns ~disable_fast_idiv ops] rewrites, for a target with the
     operations [ops] and rendered by the context:
+    - a minimum of a minimum against one value [c], or a maximum of a maximum,
+      each a selection of its comparison's operands, to one selection: the
+      inner one where it picks [c] where its comparison is false, at a tie or
+      a NaN, or where the two pick alike, and otherwise the selection of the
+      inner one's other operand [v] that picks [c] there, [where (v < c) v c]
+      for minima and [where (c < v) v c] for maxima;
     - {!Op.Max} to a comparison and a selection if [ops] lacks it and has
       {!Op.Cmplt};
     - the conjunction of two negated booleans to the negated disjunction if

@@ -1551,6 +1551,12 @@ thread.
 
 ### Tolk (new)
 
+- A compiled minimum of a minimum against one value, or maximum of a maximum,
+  picks what eager evaluation picks at a tie or a NaN, where LLVM folded it to
+  the inner one: `Nx.where (Nx.less m c) m c`, `m = Nx.minimum c x`, gave `-0.`
+- On riscv64 a selection against a float zero keeps the zero's sign, as
+  `Cstyle.clang` already did on arm64, and on x86_64 at float16 with any C
+  library.
 - `Helpers.Diskcache.clear` empties every table at one step: a `put` or `get`
   meanwhile comes wholly before or after it, where a put could outlive it. An
   older tolk sharing the cache reads later entries as writes in progress.

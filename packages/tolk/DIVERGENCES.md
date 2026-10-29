@@ -2230,42 +2230,55 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   a pool split along the written axis is written whole`.
 - **Pinned by:** the `Multi` suite: `multi_pm › scatters › *`.
 
-## D88. On arm64 a float zero a comparison reads reaches C as a value the backend cannot see
+## D88. A float zero a host comparison reads reaches C as a value the backend cannot see
 
 - **tinygrad:** `renderer/cstyle.py:264` (`ClangRenderer`, whose
   `string_rewrite` writes a float zero as a literal, `0.0f`).
-- **tolk:** `lib/renderer/cstyle.ml:843` (`float_zero`), `:863`
-  (`opaque_zero`) and `:912` (`clang`, which adds it for an arm64 target);
-  `test/gen/tinygrad.patch`, which gives tinygrad's `ClangRenderer` the same
-  rule.
-- **Differs:** for an arm64 target, a float zero constant, at float16,
-  bfloat16, float32 or float64, that a comparison reads renders in the
+- **tolk:** `lib/renderer/cstyle.ml:1119` (`float_zero`), `:1128`
+  (`opaque`), `:1138` (`opaque_zeros`) and `:1202` (`clang`, which adds it
+  for each host target with its types); `test/gen/tinygrad.patch`, which
+  gives tinygrad's `ClangRenderer` the same rule.
+- **Differs:** a float zero constant that a comparison reads renders in the
   comparison as an empty `asm` statement over a register holding it,
-  `({float z = 0.0f; __asm__("" : "+w"(z)); z;})`, cast to its dtype. Every
-  other use of the zero, and every zero on x86_64, keeps the literal.
-- **Reason:** (b): clang's AArch64 backend lowers a select of a value and a
-  zero literal, by a comparison of the two, to `fminnm` or `fmaxnm`, which
-  keep the value's zero where the select returns the literal's: `(v < 0.0f) ?
-  v : 0.0f` is `-0.0` at `v = -0.0` from `-O1` up, in Homebrew clang 22.1.7
-  and Apple clang 17. A maximum against a zero, rendered as such a select,
-  meets it too, and an add of `+0.0` after it is then dropped. Under
-  `Rune.jit`, `Nx.where (Nx.less x z) x z` gave `-0.` where eager gives `0.`,
-  and a sum of a minimum against a folded zero gave `-0.`, which a float sum
-  never is. The lowering needs the select's operands to be the comparison's,
-  so a zero hidden in the comparison alone avoids it. Hidden everywhere, the
-  zero also kept the backend from making `c ? v : 0.0f`, a select by any
-  other condition, a mask: a routed MXFP4 product on the host, whose rows are
-  selected by their validity before the product, ran 1.17 times as long as
-  the same product without the select, and runs 1.05 times as long with the
-  literal there (single-threaded kernel, paired). `-ffp-exception-behavior=maytrap`
-  or `-frounding-math` also avoid the lowering, at 2.7× to 4.7× the time of a
-  matmul or an element-wise kernel.
-- **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros on arm64 ›
-  a float zero a comparison reads is opaque to the backend on arm64, and a
-  literal on x86_64`, `› a float zero that no comparison reads is a literal
-  on arm64` and `› a select of a value and a zero picks the zero at -0., on
-  the host`; rune's Jit programs suite: `a compiled program › selects a zero
-  as eagerly, whatever the other value's sign` and the rounded law's example.
+  `({float z = 0.0f; __asm__("" : "+w"(z)); z;})`, in a float for a narrow
+  type and cast back to it: on arm64 at float16, bfloat16, float32 and
+  float64, on riscv64 at float16, float32 and float64, and on x86_64 at
+  float16. The register class is the target's for a float: `w` on arm64, `x`
+  on x86_64, `f` on riscv64. Every other use of the zero, and every other
+  zero, keeps the literal.
+- **Reason:** (b): backends lower a select of a value and a zero, by a
+  comparison of the two, to an instruction or a call that may keep the
+  value's zero where the select returns the literal's: `(v < 0.0f) ? v :
+  0.0f` is `-0.0` at `v = -0.0`. clang's AArch64 backend makes it `fminnm` or
+  `fmaxnm` from `-O1` up, in clang 19, Homebrew clang 22.1.7 and Apple clang
+  17; its RISC-V backend `fmin` or `fmax`, in clang 19; its x86 backend, at
+  float16, a call to `fminf` or `fmaxf`, whose zero at a tie is the C
+  library's, in clang 19. At float32 and float64 the x86 backend's `minss`
+  and `maxss` pick as the select does. A maximum against a zero, rendered as
+  such a select, meets it too, and an add of `+0.0` after it is then
+  dropped. Under `Rune.jit`, `Nx.where (Nx.less x z) x z` gave `-0.` on arm64
+  where eager gives `0.`, and a sum of a minimum against a folded zero gave
+  `-0.`, which a float sum never is. The lowering needs the select's
+  operands to be the comparison's, so a zero hidden in the comparison alone
+  avoids it. Hidden everywhere, the zero also kept the backend from making
+  `c ? v : 0.0f`, a select by any other condition, a mask: a routed MXFP4
+  product on the host, whose rows are selected by their validity before the
+  product, ran 1.17 times as long as the same product without the select,
+  and runs 1.05 times as long with the literal there (single-threaded
+  kernel, paired). `-ffp-exception-behavior=maytrap` or `-frounding-math`
+  also avoid the lowering, at 2.7× to 4.7× the time of a matmul or an
+  element-wise kernel.
+- **Open:** the GPU renderers keep the literal, and NVRTC 13.4 lowers `(v <
+  0.0f) ? v : 0.0f` to `min.f32` for sm_89: under `Rune.jit` on the RTX 5000,
+  the selection gives `-0.` at `-0.`. NVRTC has no statement expressions, so
+  CUDA needs a helper function around the `asm`; Metal has no inline `asm`.
+  HIP and Metal are untested.
+- **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros a
+  comparison reads › a float zero a comparison reads is opaque to a backend
+  that lowers it to an extreme, and a literal elsewhere › *` and `› a select
+  of a value and a zero picks the zero at -0., on the host › *`; rune's Jit
+  programs suite: `a compiled program › selects a zero as eagerly, whatever
+  the other value's sign` and the rounded law's example.
 
 ## D89. A matrix-vector product is laid out by its matrix
 
@@ -4479,3 +4492,40 @@ submission, and a range a loop of rig's program (D146).
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a maximum of
   weak integers › is the greatest value it reduces`; `Tolk.Ops › data types ›
   identities.golden`.
+
+## D166. A minimum of a minimum against one value is one selection
+
+- **tinygrad:** `codegen/decomp/op.py:98` (`get_late_rewrite_patterns`),
+  which has no rule for a nest of selections.
+- **tolk:** `lib/codegen/decomp/decomp_op.ml:214` (`extreme_of`), `:236`
+  (`nested_extreme`) and `:252` (`late_patterns`); `test/gen/tinygrad.patch`,
+  which gives tinygrad's late patterns the same rule.
+- **Differs:** a selection of a value and `c` by their less-than comparison,
+  a minimum or a maximum against `c`, whose value is such a selection of the
+  same kind against the same `c`, is rewritten to one selection: the inner
+  one where it picks `c` where its comparison is false, at a tie or a NaN,
+  or where the two pick alike, and otherwise `where (v < c) v c` or `where (c
+  < v) v c` of the inner one's other operand `v`. Both are what the nest
+  computes at every `v`, NaN and both zeros included.
+- **Reason:** (b): LLVM's InstCombine (`foldSPFofSPF`) folds a minimum of a
+  minimum, or a maximum of a maximum, against one constant into the inner
+  selection, though the two pick apart at a tie or a NaN: with `m = (0.0 <
+  v) ? 0.0 : v`, `(m < 0.0) ? m : 0.0` becomes `m`, `-0.0` at `v = -0.0`
+  where the selection gives `0.0`, and with `1.0` for `0.0` NaN at a NaN
+  where it gives `1.0`. It runs on every target from `-O1` in clang 19, at
+  `-O3` for amdgcn, which HIP's comgr runs, and in NVRTC 13.4, and LLVM's
+  main of 2026-10 keeps it; tinygrad on x86_64 computes these `-0.0` and NaN.
+  Under `Rune.jit`, `Nx.where (Nx.less m c) m c` of `m = Nx.minimum c x` gave
+  `-0.` where eager gives `0.`, NaN where eager gives `c`, and a reciprocal
+  of it `-inf` for `inf`: rune2's `a step over donated leaves keeps the
+  values` failed. Made one selection before rendering, no such nest reaches
+  any compiler, and a single selection keeps its lowering to one instruction:
+  hiding the constant from LLVM in every comparison instead cost a maximum
+  before a 64 × 64 matmul 1.10 times its time and a 4096-point FFT 1.15
+  times on fudge (paired). LLVM can still form such a nest itself, as when it
+  vectorises scalar minima of a vector minimum's lanes; no tolk kernel is
+  known to.
+- **Pinned by:** the `Decomp_op` suite (`test/codegen/decomp/decomp_op`):
+  `late_patterns › late_nests_cmplt.golden` and `› a nest of extremes against
+  one value keeps its values › *`; rune2's Jit suite: `classes › a
+  selection of a minimum against its constant is exact`.

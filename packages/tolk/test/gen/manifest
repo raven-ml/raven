@@ -784,6 +784,7 @@ codegen/decomp/decomp_op/late_mulacc_none.golden
 codegen/decomp/decomp_op/late_negation_neg.golden
 codegen/decomp/decomp_op/late_negation_neg_sub.golden
 codegen/decomp/decomp_op/late_negation_none.golden
+codegen/decomp/decomp_op/late_nests_cmplt.golden
 codegen/decomp/decomp_op/simplifying_floordiv_none.golden
 codegen/decomp/decomp_op/simplifying_floordiv_shr_and.golden
 codegen/decomp/decomp_op/simplifying_floordiv_shr_and_threefry.golden

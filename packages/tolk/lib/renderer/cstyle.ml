@@ -1102,46 +1102,49 @@ let clang_lang =
     string_rewrite = Pattern_matcher.append clang_vectors base_rewrite;
   }
 
-(* clang's AArch64 backend lowers a select of a value and a float zero constant,
-   by a comparison of the two, to fminnm or fmaxnm, which return the zero of the
-   value's sign where the select returns the constant's: [(v < 0.0f) ? v : 0.0f]
-   is -0.0 at v = -0.0 from -O1 up, in Homebrew clang 22.1.7 and Apple clang 17.
-   A maximum against a zero, rendered as such a select, meets it too, and an add
-   of +0.0 after it is then folded away. The lowering needs the select's
-   operands to be the comparison's: on arm64 a float zero that a comparison
-   reads is rendered as a value the backend cannot see through, an empty asm
-   statement over a register holding it, and is a literal elsewhere. A select
-   of a zero by any other condition, [c ? v : 0.0f], stays one the backend
-   makes a mask of. *)
-let float_zero u =
+(* Backends lower a select of a value and a float zero by their comparison to
+   an instruction or a call that may return the zero of the value's sign
+   where the select returns the constant's: [(v < 0.0f) ? v : 0.0f] is -0.0
+   at v = -0.0. clang's AArch64 backend makes it fminnm or fmaxnm, in clang
+   19, Homebrew clang 22.1.7 and Apple clang 17, and its RISC-V backend fmin
+   or fmax, in clang 19; its x86 backend, for a half, calls fminf or fmaxf,
+   whose zero at a tie is the C library's. A maximum against a zero, rendered
+   as such a select, meets it too, and an add of +0.0 after it is then folded
+   away. The lowering needs the select's operands to be the comparison's: a
+   zero of the types [zeros] that a comparison reads is rendered as a value
+   the backend cannot see through, an empty asm statement over a register of
+   class [reg] holding it, a narrow float held in a float. A select of a zero
+   by any other condition, [c ? v : 0.0f], stays one the backend makes a mask
+   of. *)
+let float_zero zeros u =
   is Op.Cast u
-  && List.mem (dtype u) Dtype.floats
+  && List.mem (dtype u) zeros
   &&
   match src u with
   | [ c ] when is Op.Const c -> (
       match value c with `Float v -> v = 0. | _ -> false)
   | _ -> false
 
-let opaque ctx z =
-  let c = nth z 0 in
-  if Dtype.equal (dtype z) Dtype.Float64 then
-    strf "({double z = %s; __asm__(\"\" : \"+w\"(z)); z;})" (const_str c)
-  else
-    let zero =
-      strf "({float z = %sf; __asm__(\"\" : \"+w\"(z)); z;})" (const_str c)
-    in
-    if Dtype.equal (dtype z) Dtype.Float32 then zero
-    else strf "(%s)" (render_cast ctx z zero)
+let opaque ctx ~reg u =
+  let wide = Dtype.equal (dtype u) Dtype.Float64 in
+  let v =
+    strf "({%s z = %s; __asm__(\"\" : \"+%s\"(z)); z;})"
+      (if wide then "double" else "float")
+      ctx.%{u} reg
+  in
+  if wide || Dtype.equal (dtype u) Dtype.Float32 then v
+  else strf "(%s)" (render_cast ctx u v)
 
-let opaque_zero =
+let opaque_zeros ~reg zeros =
   Pattern_matcher.fold (fun () ->
       [
         rule_ctx
           (Upat.v ~op:(Op.Set.of_list Op.[ Cmplt; Cmpne; Cmpeq ]) ~name:"x" ())
           (fun ctx m ->
             let x = m "x" in
-            let operand u = if float_zero u then opaque ctx u else ctx.%{u} in
-            if not (List.exists float_zero (src x)) then None
+            let hidden = float_zero zeros in
+            let operand u = if hidden u then opaque ctx ~reg u else ctx.%{u} in
+            if not (List.exists hidden (src x)) then None
             else
               Option.map
                 (fun f -> f (List.map operand (src x)) (dtype x))
@@ -1217,7 +1220,11 @@ let clang (target : Helpers.Target.t) =
      LLVM 18 crashes splitting a negation, an absolute value or a copysign of
      more than 16 halves. A kernel is marked as one that uses 512-bit vectors,
      [min_vector_width(512)], which makes those types legal where the
-     processor has them; code that uses none is unchanged. *)
+     processor has them; code that uses none is unchanged.
+
+     A float zero hidden from the backend is held in a register of the
+     target's float class: [w] on arm64, [x] on x86 and [f] on riscv64. x86 and
+     riscv64 compare a bfloat16 in float32. *)
   let lang =
     if
       String.starts_with ~prefix:"arm64" arch
@@ -1226,7 +1233,10 @@ let clang (target : Helpers.Target.t) =
       {
         clang_lang with
         string_rewrite =
-          Pattern_matcher.append opaque_zero clang_lang.string_rewrite;
+          Pattern_matcher.append
+            (opaque_zeros ~reg:"w"
+               Dtype.[ Float16; Bfloat16; Float32; Float64 ])
+            clang_lang.string_rewrite;
       }
     else if String.starts_with ~prefix:"x86" arch then
       {
@@ -1235,10 +1245,21 @@ let clang (target : Helpers.Target.t) =
           (fun _ -> "__attribute__((min_vector_width(512))) void");
         type_map = (Dtype.Bfloat16, "unsigned short") :: clang_lang.type_map;
         string_rewrite =
-          Pattern_matcher.append pm_bf16_ushort_const
+          Pattern_matcher.concat
+            [
+              opaque_zeros ~reg:"x" [ Dtype.Float16 ];
+              pm_bf16_ushort_const;
+              clang_lang.string_rewrite;
+            ];
+      }
+    else
+      {
+        clang_lang with
+        string_rewrite =
+          Pattern_matcher.append
+            (opaque_zeros ~reg:"f" Dtype.[ Float16; Float32; Float64 ])
             clang_lang.string_rewrite;
       }
-    else clang_lang
   in
   Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false
     ~global_max:[ 1; 0; 0 ] ~extra_matcher:clang_extra_matcher

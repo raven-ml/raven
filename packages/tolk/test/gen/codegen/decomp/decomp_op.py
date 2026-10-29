@@ -182,6 +182,16 @@ def extremes():
             (hi < x) & (x < lo + 1), (lo < x) & (x < lo + 2), (hi - 2 < x) & (x < hi), (2**80 - 1 < x) & (x < 2**80 + 1)]
 
 
+# a minimum or a maximum of v and c by their comparison, each form picking its second arm at a tie or a NaN
+FORMS = [lambda v, c: (v < c).where(v, c), lambda v, c: (c < v).where(c, v),
+         lambda v, c: (v < c).where(c, v), lambda v, c: (c < v).where(v, c)]
+
+
+def nests():
+    x = UOp.param(0, dtypes.float)
+    return [o(i(x, k), k) for c in (0.0, 1.0) for k in (UOp.const(c, dtypes.float),) for i in FORMS for o in FORMS]
+
+
 def mulaccs():
     a, b, c = v("a", -5, 5), v("b", -5, 5), v("c", -5, 5)
     f, g, h = UOp.param(0, dtypes.float), UOp.param(1, dtypes.float), UOp.param(2, dtypes.float)
@@ -202,6 +212,7 @@ LATE = {
     "negation": (negations, {"none": (), "neg": (Ops.NEG,), "neg_sub": (Ops.NEG, Ops.SUB)}),
     "comparison": (comparisons, {"none": (), "cmplt": (Ops.CMPLT,), "cmpeq": (Ops.CMPEQ,)}),
     "extremes": (extremes, {"cmplt": (Ops.CMPLT,)}),
+    "nests": (nests, {"cmplt": (Ops.CMPLT,)}),
     "mulacc": (mulaccs, {"none": (), "mulacc": (Ops.MULACC,), "mulacc_shl": (Ops.MULACC, Ops.SHL)}),
     "division": (divisions, {"none": (), "fdiv": (Ops.FDIV,)}),
 }

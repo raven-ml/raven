@@ -422,6 +422,29 @@ let test_specials () =
       at f64 u)
     unaries
 
+(* [Nx.where (Nx.less m c) m c] of [m = Nx.minimum c x] is [c] where [m] ties
+   with [c] or is NaN, and [m] elsewhere: [0.] at [x = -0.] and [c = 0.], and
+   [1.] at a NaN and [c = 1.]. *)
+let test_nested_minimum () =
+  let xs = [| -0.; 0.; Float.nan; -1.; 1.; 2. |] in
+  let at (type s) (dt : (float, s) Nx.dtype) c =
+    let f x =
+      let c = Nx.scalar_like x c in
+      let m = Nx.minimum c x in
+      Nx.where (Nx.less m c) m c
+    in
+    let x = Nx.create dt [| Array.length xs |] xs in
+    let msg = Format.asprintf "%a at %g" Nx.pp_dtype dt c in
+    let y = compiled (fun () -> bits (Rune.jit' f x)) in
+    equal ~msg (outcome_t bits_t) (Value (bits (f x))) y
+  in
+  List.iter
+    (fun c ->
+      at Nx.float16 c;
+      at f32 c;
+      at f64 c)
+    [ 0.; 1. ]
+
 (* A sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact one, eagerly and
    compiled, so the two are within twice that of each other. A sum whose terms
    are not all finite is the same special value in both. *)
@@ -3029,6 +3052,8 @@ let () =
                strided_sorts law_strided_sort;
              test "nx.quant's decodes compile" test_quant_decodes;
              test "special values are exact" test_specials;
+             test "a selection of a minimum against its constant is exact"
+               test_nested_minimum;
              test "integer constants keep their bits and wrap"
                test_int_constants;
              test "a square of a product whose constant squares to 0"

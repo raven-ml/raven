@@ -24,7 +24,7 @@ let renderer_named = function
   | "none" -> nothing
   | name -> invalid_arg name
 
-let at vars u = Interpreter.eval ~vars u
+let at ?params vars u = Interpreter.eval ?params ~vars u
 let ops = Op.Set.of_list
 
 (* A golden holds the sink of its inputs and that sink rewritten. *)
@@ -531,6 +531,33 @@ let extremes () =
       (c (Bigint.pred two_to_80) < x) land (x < c (Bigint.succ two_to_80));
     ]
 
+(* A selection of a value [v] and a constant [c] by their comparison: a minimum,
+   [v < c ? v : c] or [c < v ? c : v], or a maximum, [v < c ? c : v] or
+   [c < v ? v : c]. At a tie or a NaN each picks its second arm, so no two
+   forms of a kind agree at every [v]. *)
+type form = Min_vc | Min_cv | Max_vc | Max_cv
+
+let forms = [ Min_vc; Min_cv; Max_vc; Max_cv ]
+
+let select form v c =
+  match form with
+  | Min_vc -> Ops.where Ops.O.(v < c) v c
+  | Min_cv -> Ops.where Ops.O.(c < v) c v
+  | Max_vc -> Ops.where Ops.O.(v < c) c v
+  | Max_cv -> Ops.where Ops.O.(c < v) v c
+
+let nest_forms = List.concat_map (fun i -> List.map (fun o -> (i, o)) forms) forms
+
+(* Each nest [(i, o)] of [nest_forms], [select o (select i x c) c], of a float32
+   parameter [x], at [c = 0.] and then [c = 1.]. *)
+let nests () =
+  let x = fparam () in
+  List.concat_map
+    (fun c ->
+      let c = Ops.float ~dtype:Float32 c in
+      List.map (fun (i, o) -> select o (select i x c) c) nest_forms)
+    [ 0.; 1. ]
+
 let mulaccs () =
   let a = v "a" (-5) 5 and b = v "b" (-5) 5 and c = v "c" (-5) 5 in
   let f = fparam () and g = fparam ~slot:1 () and h = fparam ~slot:2 () in
@@ -565,6 +592,7 @@ let late_families =
       comparisons,
       [ ("none", []); ("cmplt", [ Cmplt ]); ("cmpeq", [ Cmpeq ]) ] );
     ("extremes", extremes, [ ("cmplt", [ Cmplt ]) ]);
+    ("nests", nests, [ ("cmplt", [ Cmplt ]) ]);
     ( "mulacc",
       mulaccs,
       [ ("none", []); ("mulacc", [ Mulacc ]); ("mulacc_shl", [ Mulacc; Shl ]) ]
@@ -682,6 +710,80 @@ let late_rules_keep_values =
       let r = late_with every_late_op e in
       cover "rewritten" (not (Ops.equal r e));
       equal const (at vars e) (at vars r))
+
+(* What a nest is against: a float32 constant, a float32 parameter, an int32
+   constant or an int32 parameter. *)
+type against = Float_c of float | Float_p | Int_c of int | Int_p
+
+(* A nest of two extremes against one value computes as the nest at every
+   pair of [v] and [c] drawn from the zeros of both signs, a NaN, the
+   infinities and values around them, or small integers, and a nest of two
+   minima or two maxima is one selection. *)
+let nests_keep_values =
+  let floats =
+    List.map
+      (fun x -> `Float x)
+      [ -0.; 0.; Float.nan; 1.; -1.; 2.; 0.5; Float.infinity; Float.neg_infinity ]
+  and ints = List.map i [ -2; -1; 0; 1; 2 ] in
+  let kind = function Min_vc | Min_cv -> `Min | Max_vc | Max_cv -> `Max in
+  let selections u =
+    List.length
+      (List.filter (fun n -> Ops.op n = Where) (Ops.toposort ~calls:Enter u))
+  in
+  let n = function
+    | Min_vc -> "min v c"
+    | Min_cv -> "min c v"
+    | Max_vc -> "max v c"
+    | Max_cv -> "max c v"
+  in
+  let against_name = function
+    | Float_c c -> Printf.sprintf "float32 %g" c
+    | Float_p -> "a float32 parameter"
+    | Int_c c -> Printf.sprintf "int32 %d" c
+    | Int_p -> "an int32 parameter"
+  in
+  let all =
+    List.concat_map
+      (fun a -> List.map (fun io -> (a, io)) nest_forms)
+      [ Float_c 0.; Float_c (-0.); Float_c 1.; Float_c Float.nan; Float_p;
+        Int_c 0; Int_p ]
+  in
+  cases
+    ~name:(fun (a, (i, o)) ->
+      Printf.sprintf "%s of %s against %s" (n o) (n i) (against_name a))
+    "a nest of extremes against one value keeps its values" all
+    (fun (a, (i, o)) ->
+      let dt, values = match a with
+        | Float_c _ | Float_p -> (Dtype.Float32, floats)
+        | Int_c _ | Int_p -> (Dtype.Int32, ints)
+      in
+      let x = param dt in
+      let c, cs =
+        match a with
+        | Float_c c -> (Ops.float ~dtype:Float32 c, [ None ])
+        | Int_c c -> (Ops.int ~dtype:Int32 c, [ None ])
+        | Float_p | Int_p ->
+            (param ~slot:1 dt, List.map Option.some values)
+      in
+      let e = select o (select i x c) c in
+      let r = late_with (ops [ Cmplt ]) e in
+      if kind i = kind o then equal ~msg:"selections" int 1 (selections r);
+      List.iter
+        (fun cv ->
+          List.iter
+            (fun v ->
+              let params =
+                (0, v) :: (match cv with Some c -> [ (1, c) ] | None -> [])
+              in
+              let msg =
+                Format.asprintf "at %a%s" Dtype.pp_const v
+                  (match cv with
+                   | Some c -> Format.asprintf ", c %a" Dtype.pp_const c
+                   | None -> "")
+              in
+              equal ~msg const (at ~params [] e) (at ~params [] r))
+            values)
+        cs)
 
 (* The divisions of the old tolk's run of constant integer division, lowered as
    code generation lowers them: the simplifying patterns, then the late ones
@@ -906,6 +1008,7 @@ let late =
     @ [
         truncations_keep_values;
         late_rules_keep_values;
+        nests_keep_values;
         lowered_divisions;
         powers_at_width;
         quotients_at_width;

@@ -491,7 +491,7 @@ index e1d9579..0062a16 100644
      if DEBUG >= 2: print(f"emulating {fr} as {to}")
      pm = pm_float_decomp if fr in dtypes.floats else pm_long_decomp
 diff --git a/tinygrad/codegen/decomp/op.py b/tinygrad/codegen/decomp/op.py
-index 36907bf..c95b0a3 100644
+index 36907bf..6c48849 100644
 --- a/tinygrad/codegen/decomp/op.py
 +++ b/tinygrad/codegen/decomp/op.py
 @@ -1,6 +1,6 @@
@@ -502,7 +502,7 @@ index 36907bf..c95b0a3 100644
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher
  from tinygrad.renderer import Renderer
  
-@@ -51,27 +51,44 @@ def threefry2x32(x: UOp, key: UOp):
+@@ -51,56 +51,93 @@ def threefry2x32(x: UOp, key: UOp):
  
  # ***** decomposition patterns *****
  
@@ -549,7 +549,34 @@ index 36907bf..c95b0a3 100644
    pat.append((UPat.var("a")%UPat.var("b"), floormod_to_mod))
    # no real hardware supports THREEFRY, but NullRenderer does
    if Ops.THREEFRY not in ops: pat.append((UPat(Ops.THREEFRY, src=(UPat.var("x"), UPat.var("key"))), threefry2x32))
-@@ -85,22 +102,22 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
+   return PatternMatcher(pat)
+ 
++# u as a selection of v and c by their comparison, a minimum or a maximum: v, whether it is a minimum, and whether it picks c where
++# the comparison is false, at a tie or a NaN
++def _extreme_of(c:UOp, u:UOp):
++  if u.op is not Ops.WHERE or u.src[0].op is not Ops.CMPLT: return None
++  (p, q), t, f = u.src[0].src, u.src[1], u.src[2]
++  if not ((t is p and f is q) or (t is q and f is p)) or p is q or (p is not c and q is not c): return None
++  return (q if p is c else p), t is p, f is c
++# a minimum of a minimum against one c, or a maximum of a maximum, is one selection: the inner one where it picks c at a tie or
++# the two pick alike, and otherwise the one of v that picks c there. LLVM folds the outer into the inner one either way
++def _nested_extreme(o:UOp):
++  if o.src[0].op is not Ops.CMPLT: return None
++  for m in o.src[0].src:
++    c = o.src[0].src[1] if m is o.src[0].src[0] else o.src[0].src[0]
++    if (outer:=_extreme_of(c, o)) is None or (inner:=_extreme_of(c, m)) is None: continue
++    (v_o, min_o, keeps_o), (v, min_i, keeps_i) = outer, inner
++    if v_o is not m or min_o != min_i: continue
++    if keeps_i or keeps_o == keeps_i: return m
++    return (v < c).where(v, c) if min_i else (c < v).where(v, c)
++  return None
++
+ @functools.cache
+ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> PatternMatcher:
+-  pat: list[tuple[UPat, Callable]] = []
++  pat: list[tuple[UPat, Callable]] = [(UPat(Ops.WHERE, name="o"), _nested_extreme)]
+   # MAX can be rewritten as CMPLT + WHERE (max function is annoying on many cstyle backends). late: WHERE loses the bound MAX carries
+   if Ops.MAX not in ops and Ops.CMPLT in ops: pat += [(UPat(Ops.MAX, name="m"), lambda m: (m.src[0] < m.src[1]).where(m.src[1], m.src[0]))]
    if Ops.OR in ops: pat += [(UPat.var("x", dtypes.bool).logical_not()&UPat.var("y", dtypes.bool).logical_not(),
      lambda x,y: (x | y).logical_not())]
    # rewrite MUL/CDIV to SHL+SHR: x*(2**y) -> shl(x,y) and x//(2**y) -> shr(x,y)
@@ -577,7 +604,7 @@ index 36907bf..c95b0a3 100644
    if Ops.NEG in ops:
      pat += [(UPat.var('x')*-1, lambda ctx,x: x.alu(Ops.NEG))]
      if Ops.SUB in ops: pat += [(UPat.var('x')+UPat.var('y').alu(Ops.NEG), lambda ctx,x,y: x.alu(Ops.SUB, y))]
-@@ -119,8 +136,7 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
+@@ -119,8 +156,7 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
      pat += [(UPat.var('a')*UPat.var('b')+UPat.var('c'), lambda a,b,c: a.alu(Ops.MULACC, b, c))]
      # also fuse (x << n) + c → MULACC(x, 2^n, c) since MUL→SHL may run first
      if Ops.SHL in ops: pat += [(UPat.var('x').alu(Ops.SHL, UPat.cvar('n'))+UPat.var('c'), lambda x,n,c: x.alu(Ops.MULACC, x.const_like(1<<n.val), c))]
@@ -1773,7 +1800,7 @@ index 0dfa777..629350f 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 0dd26d2..12985b9 100644
+index 0dd26d2..0b9d0f1 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -1899,7 +1926,7 @@ index 0dd26d2..12985b9 100644
  
      child_count = Counter(v for ru in uops for v in ru.src)
      # find which PARAMs are stored to with a single toposort
-@@ -250,18 +289,102 @@ class CStyleLanguage(Renderer):
+@@ -250,18 +289,106 @@ class CStyleLanguage(Renderer):
          r[u] = l
        else:
          if u.op not in {Ops.RANGE, Ops.BUFFER, Ops.BINARY} and u.dtype != dtypes.void:
@@ -1917,18 +1944,22 @@ index 0dd26d2..12985b9 100644
      return (name, kernel, list(bufs.values()))
    def render(self, uops:list[UOp]) -> str: return self.render_kernel(*self._render(uops), uops)
  
-+# clang's AArch64 backend lowers a select of a value and a float zero constant, by a comparison of the two, to fminnm or
-+# fmaxnm, which return the zero of the value's sign. the lowering needs the select's operands to be the comparison's: on arm64
-+# a float zero that a comparison reads is rendered behind an empty asm statement, and is a literal elsewhere
-+def _float_zero(u:UOp) -> bool: return u.op is Ops.CAST and u.dtype in dtypes.floats and u.src[0].op is Ops.CONST and u.src[0].arg == 0
-+def _opaque_zero(ctx, x):
-+  c = x.src[0]
-+  if x.dtype == dtypes.float64: return f'({{double z = {c.arg}; __asm__("" : "+w"(z)); z;}})'
-+  z = f'({{float z = {c.arg}f; __asm__("" : "+w"(z)); z;}})'
-+  return z if x.dtype == dtypes.float else f"({ctx.render_cast(x, z)})"
++# backends lower a select of a value and a float zero by their comparison to an instruction or a call that may return the
++# zero of the value's sign: fminnm on arm64, fmin on riscv64, fminf for a half on x86. the lowering needs the select's operands
++# to be the comparison's: a zero of those types that a comparison reads is rendered behind an empty asm statement over a
++# register of the target's float class, and is a literal elsewhere. a narrow float is held in a float
++def _opaque_class(arch:str) -> tuple[str, tuple[DType, ...]]:
++  if arch.startswith(("arm64", "aarch64")): return "w", (dtypes.half, dtypes.bfloat16, dtypes.float, dtypes.float64)
++  if arch.startswith("x86"): return "x", (dtypes.half,)
++  return "f", (dtypes.half, dtypes.float, dtypes.float64)
++def _float_zero(u:UOp, zeros) -> bool: return u.op is Ops.CAST and u.dtype in zeros and u.src[0].op is Ops.CONST and u.src[0].arg == 0
++def _opaque_zero(ctx, x, reg):
++  z = f'({{{"double" if x.dtype == dtypes.float64 else "float"} z = {ctx[x]}; __asm__("" : "+{reg}"(z)); z;}})'
++  return z if x.dtype in (dtypes.float, dtypes.float64) else f"({ctx.render_cast(x, z)})"
 +def _opaque_compare(ctx, x):
-+  if not ctx.target.arch.startswith(("arm64", "aarch64")) or not any(_float_zero(s) for s in x.src): return None
-+  return ctx.code_for_op[x.op](*[_opaque_zero(ctx, s) if _float_zero(s) else ctx[s] for s in x.src], x.dtype)
++  reg, zeros = _opaque_class(ctx.target.arch)
++  if not any(_float_zero(s, zeros) for s in x.src): return None
++  return ctx.code_for_op[x.op](*[_opaque_zero(ctx, s, reg) if _float_zero(s, zeros) else ctx[s] for s in x.src], x.dtype)
 +
 +# clang computes on ext_vector_type values. a scalar operand of an infix operation is splat to every lane; a selection, a
 +# builtin or a conversion takes vectors, and masks as wide as the values they decide. a C cast between vectors reinterprets
@@ -2004,7 +2035,7 @@ index 0dd26d2..12985b9 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -277,7 +400,8 @@ class ClangRenderer(CStyleLanguage):
+@@ -277,7 +404,8 @@ class ClangRenderer(CStyleLanguage):
    code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.TRUNC, Ops.RECIPROCAL]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
@@ -2014,7 +2045,7 @@ index 0dd26d2..12985b9 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -292,7 +416,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -292,7 +420,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2031,7 +2062,7 @@ index 0dd26d2..12985b9 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -307,6 +439,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -307,6 +443,15 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2047,7 +2078,7 @@ index 0dd26d2..12985b9 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -316,6 +457,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -316,6 +461,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
@@ -2055,7 +2086,7 @@ index 0dd26d2..12985b9 100644
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
    type_map = { dtypes.int8: "char", dtypes.uint8: "uchar", dtypes.uint32: "uint", dtypes.uint16: "ushort", dtypes.uint64: "ulong",
                dtypes.bfloat16: "ushort" }
-@@ -343,6 +485,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -343,6 +489,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2063,7 +2094,7 @@ index 0dd26d2..12985b9 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -398,6 +541,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -398,6 +545,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2071,7 +2102,7 @@ index 0dd26d2..12985b9 100644
    global_max = (2147483647, 65535, 65535)
    local_max = (1024, 1024, 64)
    shared_max = 49152
-@@ -424,7 +568,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -424,7 +572,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
@@ -2081,7 +2112,7 @@ index 0dd26d2..12985b9 100644
    type_map = {dtypes.uint32: "uint", dtypes.bfloat16: "nv_bfloat16", dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
      (UPat(Ops.CAST, dtypes.fp8s, UPat.var("x", dtypes.fp8s), name='y'), lambda x,y: x.cast(dtypes.float).cast(y.dtype) if x.dtype!=y.dtype else None),
-@@ -501,8 +646,9 @@ class HIPRenderer(CStyleLanguage):
+@@ -501,8 +650,9 @@ class HIPRenderer(CStyleLanguage):
          (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
            f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
          (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
@@ -2093,7 +2124,7 @@ index 0dd26d2..12985b9 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -519,7 +665,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -519,7 +669,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
