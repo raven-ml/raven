@@ -78,6 +78,60 @@ let eigh () =
           (fun a -> Nx.eigh Nx.float32 a)
           a))
 
+(* A tridiagonal solve of 100 float64 equations by Thomas's elimination as
+   three associative scans: of 2 x 2 matrices as four arrays, for the pivots,
+   then of affine maps as pairs, for the eliminated and the substituted
+   values. A level is read at two or three positions: inlined whole, the
+   levels made one kernel that grew some 3 times per level, and tolk stores
+   one once its copies are many. *)
+let tridiagonal () =
+  let n = 100 in
+  let matrix (a00, a01, a10, a11) (b00, b01, b10, b11) =
+    let open Nx in
+    let p00 = add (mul b00 a00) (mul b01 a10)
+    and p01 = add (mul b00 a01) (mul b01 a11)
+    and p10 = add (mul b10 a00) (mul b11 a10)
+    and p11 = add (mul b10 a01) (mul b11 a11) in
+    let s =
+      maximum (maximum (abs p00) (abs p01)) (maximum (abs p10) (abs p11))
+    in
+    let s = where (equal s (zeros_like s)) (ones_like s) s in
+    (div p00 s, div p01 s, div p10 s, div p11 s)
+  in
+  let affine (a1, b1) (a2, b2) = Nx.(mul a1 a2, add (mul a2 b1) b2) in
+  let pair = Nx.Ptree.(pair tensor tensor) in
+  let quad =
+    Nx.Ptree.v (fun c (a, b, e, d) ->
+        let open Nx.Ptree.Walk in
+        let a = index c 0 tensor a in
+        let b = index c 1 tensor b in
+        let e = index c 2 tensor e in
+        let d = index c 3 tensor d in
+        (a, b, e, d))
+  in
+  let shift_down v =
+    let first = Nx.slice [ Nx.R (0, 1) ] v in
+    let rest = Nx.slice [ Nx.R (0, n - 1) ] v in
+    Nx.concatenate ~axis:0 [ Nx.zeros_like first; rest ]
+  in
+  let sub = input ~n (-1.) 0. and sup = input ~n (-1.) 0. in
+  let r = input ~n 0. 1. in
+  let solve diag =
+    let _, p01, _, p11 =
+      Nx.associative_scan quad matrix
+        (Nx.zeros_like diag, sup, Nx.neg sub, diag)
+    in
+    let ratio = Nx.div p01 p11 in
+    let den = Nx.sub diag (Nx.mul sub (shift_down ratio)) in
+    let _, d =
+      Nx.associative_scan pair affine (Nx.neg (Nx.div sub den), Nx.div r den)
+    in
+    let flip v = Nx.flip ~axes:[ 0 ] v in
+    let _, x = Nx.associative_scan pair affine (flip (Nx.neg ratio), flip d) in
+    flip x
+  in
+  compile solve (input ~n 3. 4.)
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -85,6 +139,7 @@ let cases =
     (* A float64 sine of an unbounded angle, reduced by the bits of 1/(2pi) at
        its exponent: its lowering's size. *)
     ("trig/sin", fun () -> compile Nx.sin (input (-10.) 10.));
+    ("scan/tridiagonal-100", tridiagonal);
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
   ]
