@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Vocabulary.spell` is `None` where an item of the spelling, the power of ten
+  left or a word to its exponent, is past the unit algebra's 4096-bit bound.
+  It returned spellings such as `1e-1236 m^309` with `m` = 1e4 π, whose items
+  no unit holds, so their text did not read back.
 - `Region.weights` keeps a cell's derivative where its weight rounds to 0 or
   1. A circle just past tangent to a cell edge cuts a sliver whose area rounds
   to 0, and the clamp dropped its arc from the derivative in the radius: 1e-6

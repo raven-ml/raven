@@ -982,10 +982,13 @@ module Vocabulary : sig
 
       Words with positive exponents come first, then negative ones; within each,
       words of entries over several symbols or with numbers, then words of one
-      symbol, in entry order. [spell] is [None] when no such product is [u], or
-      when an exponent or a rest leaves the unit algebra's bounds. It runs in
-      time linear in the vocabulary, and quadratic in its entries with numbers
-      that are not powers of ten when [u]'s number is not a power of ten. *)
+      symbol, in entry order. [spell] is [None] when no such product is [u],
+      when an exponent leaves [int], or when an item read as a unit of its own,
+      10{^ decade} or a word's prefixed unit to its exponent, is past the unit
+      algebra's bounds: the items may cancel such a coefficient, but none holds
+      one. It runs in time linear in the vocabulary, and quadratic in its
+      entries with numbers that are not powers of ten when [u]'s number is not
+      a power of ten. *)
 
   val pp : t -> Format.formatter -> Unit.t -> unit
   (** [pp voc] formats a unit as [spell voc] writes it, as in [MJy sr^-1]:

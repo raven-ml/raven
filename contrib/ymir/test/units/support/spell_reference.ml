@@ -284,6 +284,38 @@ let symbol_word cls s x =
 
 type role = N | H | S
 
+(* [formable u] is whether the unit of coordinates [u] is within the unit
+   algebra's bounds: each base to its power is a factor of it, and so is each
+   partial product of distinct bases. *)
+let formable u =
+  let base = function
+    | Prime p -> Unit.int p
+    | Pi -> Unit.pi
+    | Sym (name, None) -> Unit.symbol name
+    | Sym (name, Some scope) -> Unit.scoped ~scope name
+    | D25 -> invalid_arg "Spell_reference.formable"
+  in
+  let factor acc (k, (n, d)) = Unit.(acc * (root d (base k) ** n)) in
+  match List.fold_left factor Unit.one (K.bindings u) with
+  | _ -> true
+  | exception Invalid_argument _ -> false
+
+let tens p = K.of_list [ (Prime 2, (p, 1)); (Prime 5, (p, 1)) ]
+
+(* [readable cls s] is whether each of [s]'s items, read as a unit of its own,
+   is within the bounds: 10^decade, and each word's prefixed entry to its
+   exponent. *)
+let readable cls (s : Vocabulary.spelling) =
+  (s.decade = 0 || formable (tens s.decade))
+  && List.for_all
+       (fun (w : Vocabulary.word) ->
+         let c = List.find (fun c -> c.name = w.symbol) cls in
+         let prefixed =
+           if w.prefix = 0 then c.u else mulu c.u (tens w.prefix)
+         in
+         formable (pw prefixed (w.num, w.den)))
+       s.words
+
 let compound cls u =
   let candidates nwords =
     let r = List.fold_left (fun r (c, e) -> divu r (pw c.u e)) u nwords in
@@ -387,7 +419,8 @@ let compound cls u =
                   hi,
                   List.map (fun (c, _) -> c.i) nwords )
               in
-              Some (cost, ({ decade; words = out } : Vocabulary.spelling))
+              let s : Vocabulary.spelling = { decade; words = out } in
+              if readable cls s then Some (cost, s) else None
           | Some _ | None -> None)
       heads
   in

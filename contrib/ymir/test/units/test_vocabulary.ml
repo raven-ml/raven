@@ -501,6 +501,28 @@ let spell =
           let voc = Vocabulary.v [ ("y", Prefixable, y) ] in
           equal (option spelling) None (Vocabulary.spell voc Unit.(x ** 2));
           equal string "x^2" (text voc Unit.(x ** 2)));
+      test "a decade past the coefficient's bound has no spelling" (fun () ->
+          (* m^k is 10^(4k) pi^k, so pi^k is 1e-4k m^k: 10^1232 is within the
+             algebra's 4096 bits, 10^1236 past them. *)
+          let voc = Vocabulary.v [ ("m", Prefixable, Unit.(ten 4 * pi)) ] in
+          equal (option spelling)
+            (Some { decade = -1232; words = [ w "m" 308 ] })
+            (Vocabulary.spell voc Unit.(pi ** 308));
+          equal (option spelling) None (Vocabulary.spell voc Unit.(pi ** 309)));
+      test "a word past the coefficient's bound has no spelling" (fun () ->
+          (* (2 pi)^k (pi/2)^k is pi^2k, and 2^k is within the algebra's 4096
+             bits up to k = 4095. *)
+          let voc =
+            Vocabulary.v
+              [
+                ("a", Prefixable, Unit.(int 2 * pi));
+                ("b", Prefixable, Unit.(pi / int 2));
+              ]
+          in
+          equal (option spelling)
+            (Some { decade = 0; words = [ w "a" 4095; w "b" 4095 ] })
+            (Vocabulary.spell voc Unit.(pi ** 8190));
+          equal (option spelling) None (Vocabulary.spell voc Unit.(pi ** 8192)));
       test "an exponent within int is spelled, whatever its parts" (fun () ->
           (* The word's exponent is 2/3 of an entry whose exponent is 1/2^61;
              the entry's 1/3 power alone has a denominator past int. *)
@@ -597,35 +619,62 @@ let prefix_rule =
 
 (* Names never change a unit *)
 
-(* [pow u num den] is [u] to the power [num/den], term by term, so that no
-   intermediate root leaves the algebra's bounds. *)
+let rec gcd a b = if b = 0 then abs a else gcd b (a mod b)
+
+(* [times what a b] is [a * b], failing with [what] when it leaves [int]. *)
+let times what a b =
+  let p = a * b in
+  if a <> 0 && (p / a <> b || p = min_int) then failf "%s leaves int" (what ())
+  else p
+
+(* [pow u num den] is the terms of [u] to the power [num/den]. *)
 let pow u num den =
-  let rec gcd a b = if b = 0 then abs a else gcd b (a mod b) in
-  let times a b =
-    let p = a * b in
-    if a <> 0 && (p / a <> b || p = min_int) then
-      failf "%a to the power %d/%d leaves int" Unit.pp u num den
-    else p
+  let times =
+    times (fun () -> Format.asprintf "%a to the power %d/%d" Unit.pp u num den)
   in
   let raise_term (t, n, d) =
     let g = gcd n den and g' = gcd d num in
     let n = times (n / g) (num / g') and d = times (d / g') (den / g) in
     if d < 0 then (t, -n, -d) else (t, n, d)
   in
-  of_terms (List.map raise_term (Unit.terms u))
+  List.map raise_term (Unit.terms u)
 
 (* [read ~micro voc s] is the product of [s]'s words, each looked up in [voc]
-   with its prefix written with [micro] for micro, times 10^decade. *)
+   with its prefix written with [micro] for micro, times 10^decade. Each item
+   is formed as a unit of its own, as a reader of the spelling's text forms it;
+   the product sums their exponents term by term and forms the unit once, as
+   items within the algebra's bounds can multiply past them. *)
 let read ~micro voc (s : Vocabulary.spelling) =
   let word (x : Vocabulary.word) =
     let p =
       match x.prefix with 0 -> "" | -6 -> micro | k -> List.assoc k prefixes
     in
     match Vocabulary.lookup voc (p ^ x.symbol) with
-    | Some u -> pow u x.num x.den
+    | Some u ->
+        let terms = pow u x.num x.den in
+        ignore (of_terms terms);
+        terms
     | None -> failf "%s%s reads as nothing" p x.symbol
   in
-  List.fold_left (fun acc x -> Unit.(acc * word x)) (ten s.decade) s.words
+  (* a/b + c/d over lcm(b, d), reduced. *)
+  let sum (a, b) (c, d) =
+    let times = times (fun () -> strf "%d/%d + %d/%d" a b c d) in
+    let g = gcd b d in
+    let n = times a (d / g) + times c (b / g) in
+    if (a > 0) = (c > 0) && (n > 0) <> (a > 0) then
+      failf "%d/%d + %d/%d leaves int" a b c d;
+    let h = gcd n g in
+    (n / h, times (b / g) (d / h))
+  in
+  let add sums (t, n, d) =
+    match List.assoc_opt t sums with
+    | None -> (t, (n, d)) :: sums
+    | Some q -> (t, sum q (n, d)) :: List.remove_assoc t sums
+  in
+  let terms = Unit.terms (ten s.decade) @ List.concat_map word s.words in
+  List.fold_left add [] terms
+  |> List.filter_map (fun (t, (n, d)) -> if n = 0 then None else Some (t, n, d))
+  |> of_terms
 
 (* A unit near a vocabulary's entries: a product of a few of [units] to small
    rational powers, times a power of ten and sometimes a stray factor. *)

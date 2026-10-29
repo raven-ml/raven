@@ -441,6 +441,28 @@ let place voc t words =
     | Some words -> { decade = 0; words }
     | None -> { decade = t; words = List.map plain words }
 
+(* [readable voc s] raises [No_spelling] unless each of [s]'s items, read as a
+   unit of its own as a reader of its text forms it, is within the unit
+   algebra's bounds. The items may cancel a coefficient past them, as
+   (2π)^5000 (π/2)^5000 is π^10000, or 1e-1236 (1e4 π)^309 is π^309, but no
+   item may hold one. *)
+let readable voc s =
+  let within f =
+    match f () with
+    | _ -> ()
+    | exception Invalid_argument _ -> raise_notrace No_spelling
+  in
+  if s.decade <> 0 then within (fun () -> Unit.decimal (strf "1e%d" s.decade));
+  let item w =
+    let e = Smap.find w.symbol voc.symbols in
+    let u =
+      if w.prefix = 0 then e.unit
+      else Unit.( * ) (List.assoc w.prefix ten) e.unit
+    in
+    within (fun () -> Unit.power "Vocabulary.spell" u w.num w.den)
+  in
+  List.iter item s.words
+
 (* A cost is a spelling's items, a decade counting one; whether it has a named
    word; the sum of its exponents' magnitudes, a decade counting one; whether
    it has a decade; its named word's index, -1 for none; and its number words'
@@ -486,6 +508,7 @@ let product voc allowed numbers r head =
   | Some (t, 1) when List.for_all (fun (_, q) -> allowed q) words ->
       let words = List.stable_sort written words in
       let s = place voc t words in
+      readable voc s;
       let decade = s.decade <> 0 in
       let magnitudes acc (_, q) = plus acc (magnitude q) in
       let size =
