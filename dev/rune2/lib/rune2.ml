@@ -1195,6 +1195,32 @@ let jit_named ?beam ?parallel name s =
 
 let jit ?beam ?parallel s = jit_named ?beam ?parallel "Rune.jit" s
 
+(* Callbacks *)
+
+let paths s x =
+  Array.of_list
+    (List.rev (Ptree.fold s (fun p _ acc -> path_name p :: acc) x []))
+
+let callback (type a b d) ?lanes (s : (a -> b, d) Ptree.fn) ~(like : b)
+    (f : a -> b) (x : a) : b =
+  match s with
+  | Returns _ -> invalid_arg "Rune.callback: the signature has no argument"
+  | Arg (_, Arg _) ->
+      invalid_arg "Rune.callback: the signature has more than one argument"
+  | Arg (a, Returns r) ->
+      let on f vs = values r (f (rebuild a ~like:x vs)) in
+      let c =
+        {
+          run = on f;
+          lanes = Option.map on lanes;
+          maps = [];
+          args = values a x;
+          forms = Array.map form (values r like);
+          paths = paths r like;
+        }
+      in
+      rebuild r ~like (perform (Callback c))
+
 (* Rematerialization *)
 
 let remat_named name s =

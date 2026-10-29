@@ -1528,6 +1528,9 @@ let rec answer ~name ~tape i (c : Program.construct) k =
       Effect.Deep.continue k
         (Program.silenced (fun () -> solve ~name ~tape i c))
   | Lane_index _ -> Effect.Deep.discontinue k Program.Evaluate
+  | Callback _ ->
+      Effect.Deep.discontinue k
+        (Invalid_argument (name ^ ": Rune.callback has no derivative"))
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
    tangent for each carry that has one at the call or gains one from the step: a

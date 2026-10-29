@@ -346,6 +346,7 @@ let construct_name = function
   | Add _ -> "an addition"
   | Emit _ -> "an emission"
   | Detach _ -> "Rune.detach"
+  | Callback _ -> "Rune.callback"
   | Custom { name; _ } | Linear { name; _ } -> name
 
 (* Lending
@@ -2174,6 +2175,12 @@ let eval_all (p : Program.t) args =
    cost of this path. *)
 let evaluated p args arrays =
   let values = Array.mapi (fun k v -> over v (arrays k)) args in
+  (* A callback may keep what it receives, so it receives copies. *)
+  let values =
+    if Program.holds (function Callback _ -> true | _ -> false) p then
+      Array.map (fun (V x) -> V (Nx.copy x)) values
+    else values
+  in
   Array.map (fun (V y) -> V (Nx.copy y)) (eval_all p values)
 
 let evaluate ~name p args =

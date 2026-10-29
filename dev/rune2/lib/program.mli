@@ -191,6 +191,13 @@ and construct =
   | Emit : emission -> construct
       (** An emission offered to the innermost collect of its probe; no result.
           Its default does nothing. *)
+  | Callback : callback -> construct
+      (** A callback ([Rune.callback]): OCaml run on values, never traced. Its
+          default runs it ({!callback}) and checks its results against its
+          forms, raising [Invalid_argument] at the first that differs. Under
+          it, an addition or an emission that would reach a collect around the
+          call raises, one that would reach none is dropped, and a draw without
+          a key raises. *)
   | Scan : {
       step : t;
           (** Over the carry, a row and the captures; to the carry, the outputs
@@ -402,6 +409,21 @@ and switch = {
   seeds : value array;  (** As a scan's. *)
 }
 
+(** A callback's function and the values it runs on. *)
+and callback = {
+  run : value array -> value array;
+      (** The function on one execution's arrays, where [maps] is empty or
+          [lanes] is [None]. *)
+  lanes : (value array -> value array) option;
+      (** [~lanes]: the function on arrays with a leading axis of lanes. *)
+  maps : int list;
+      (** The lanes of the maps that batch the call through [lanes], outermost
+          first; [args] and the results lead with axes of these lengths. *)
+  args : value array;
+  forms : form array;  (** The results'. *)
+  paths : string array;  (** Each result's path, in messages. *)
+}
+
 (** An emission of one site: [values] are the arrays of a value of [like]'s
     structure, each with [lead] axes of lanes, then one of rows, one per
     execution of the site, then the value's shape. *)
@@ -484,10 +506,14 @@ val eval_seeded : t -> seeds:value array -> value array -> value array
 (** [eval_seeded p ~seeds args] is [p]'s outputs over [args], its sums started
     from [seeds] as a scan's are. *)
 
+val holds : (construct -> bool) -> t -> bool
+(** [holds pred p] is [true] iff [pred] holds for a construct of [p] or of a
+    program it carries. *)
+
 val prune : t -> outputs:int array -> t
 (** [prune p ~outputs] is [p] with its outputs [outputs], in order, then its
-    totals' running values out. It keeps the equations they read and every
-    check. *)
+    totals' running values out. It keeps the equations they read, every
+    check and every callback. *)
 
 (** {1:sites Sites}
 

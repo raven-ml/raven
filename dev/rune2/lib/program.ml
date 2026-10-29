@@ -170,6 +170,7 @@ and construct =
   | Lane_index : axis * 'd Nx.Placement.t -> construct
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
   | Emit : emission -> construct
+  | Callback : callback -> construct
   | Scan : {
       step : t;
       length : int;
@@ -266,6 +267,15 @@ and switch = {
   seeds : value array;
 }
 
+and callback = {
+  run : value array -> value array;
+  lanes : (value array -> value array) option;
+  maps : int list;
+  args : value array;
+  forms : form array;
+  paths : string array;
+}
+
 and emission =
   | Emission : {
       probe : 'a probe;
@@ -313,6 +323,13 @@ let rec emitting = function
   | Do { c; _ } -> List.exists (fun p -> p.emits) (carried_by c)
   | Op _ -> false
 
+(* Whether [eqn] is a callback or carries a program holding one. *)
+and calling = function
+  | Do { c = Callback _; _ } -> true
+  | Do { c; _ } ->
+      List.exists (fun p -> Array.exists calling p.eqns) (carried_by c)
+  | Op _ -> false
+
 and carried_by = function
   | Scan { step; _ } -> [ step ]
   | Iterate { until; step; _ } -> [ until; step ]
@@ -323,7 +340,9 @@ and carried_by = function
   | Linear { apply; transpose = Host _; _ } -> Option.to_list apply
   | Root { system; _ } | Solve { system; _ } ->
       [ system.residual; system.jacobian; system.solve ]
-  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _ -> []
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Callback _
+  | Operator _ ->
+      []
 
 let make ~owner ~params eqns ~outputs ~adds ~slots =
   let eqns = Array.of_list eqns in
@@ -460,6 +479,7 @@ let map_operands m = function
   | Lanes (a, x) -> Lanes (a, m.f x)
   | Lane_index _ as c -> c
   | Add (t, x) -> Add (t, m.f x)
+  | Callback c -> Callback { c with args = map_values m c.args }
   | Emit (Emission e) ->
       let mask = Option.map (fun (V x) -> V (m.f x)) e.mask in
       Emit (Emission { e with values = map_values m e.values; mask })
@@ -537,6 +557,7 @@ let operands = function
   | Add (_, x) -> [ V x ]
   | Emit (Emission e) -> Array.to_list e.values @ Option.to_list e.mask
   | Lane_index _ -> []
+  | Callback { args; _ } -> Array.to_list args
   | Scan { trips; init; xs; captures; seeds; _ } ->
       Option.to_list trips
       @ Array.to_list (Array.concat [ init; xs; captures; seeds ])
@@ -569,7 +590,9 @@ let once f =
             p)
 
 let rec map_programs f = function
-  | (Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _) as c -> c
+  | (Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Callback _ | Operator _)
+    as c ->
+      c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
   | Call c ->
@@ -663,8 +686,8 @@ let feeds step =
    shape its programs thread, which it starts from its seeds; then for a custom
    rule its tangent map's running totals out, chains from the identity. *)
 let additions = function
-  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _ | Root _
-  | Solve _ ->
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Callback _
+  | Operator _ | Root _ | Solve _ ->
       [||]
   | Scan { step = p; _ } | Call { body = p; _ } | Remat { body = p; _ } ->
       let adds, _, _ = sums [ p ] in
@@ -716,6 +739,7 @@ let rec forms = function
   | Lane_index (_, placement) ->
       [| F { dtype = Nx.int32; layout = contiguous [||]; placement } |]
   | Add _ -> [||]
+  | Callback { forms; _ } -> forms
   | Scan { step; length; trips; init; _ } ->
       let nc = Array.length init and no = Array.length step.outputs in
       let na = Array.length step.adds in
@@ -893,6 +917,91 @@ let unset (V y) =
         give the collect's init that placement"
        Nx.Placement.pp (Nx.placement y))
 
+(* Callbacks *)
+
+let refused what =
+  Invalid_argument
+    ("Rune.callback: the function " ^ what ^ " collected around the call")
+
+(* [f ()] outside every transformation and tracer around it, where an addition
+   or an emission that would reach a collect around the call raises and one
+   that would reach none is dropped, and a draw without a key raises. A collect
+   inside [f] is [f]'s own: it answers first. *)
+let guarded f =
+  let effc (type a) (e : a Effect.t) :
+      ((a, _) Effect.Deep.continuation -> _) option =
+    match e with
+    | Accepts (t, f) ->
+        Some
+          (fun k ->
+            match where t f.placement with
+            | Nowhere -> Effect.Deep.continue k ()
+            | At _ -> Effect.Deep.discontinue k (refused "adds to a total"))
+    | Running _ -> Some (fun k -> Effect.Deep.continue k None)
+    | Construct (Add _ | Emit _) -> Some (fun k -> Effect.Deep.continue k [||])
+    | Within -> Some (fun k -> Effect.Deep.continue k false)
+    | Staging -> Some (fun k -> Effect.Deep.continue k false)
+    | Bound _ -> Some (fun k -> Effect.Deep.continue k None)
+    | Rule _ -> Some (fun k -> Effect.Deep.continue k None)
+    | Open p ->
+        Some
+          (fun k ->
+            if opened p then
+              Effect.Deep.discontinue k (refused "emits to a probe")
+            else Effect.Deep.continue k false)
+    | _ -> None
+  in
+  let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()) in
+  Nx.Rng.refusing "Rune.callback" (fun () ->
+      Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc })
+
+(* [ys] of the forms [c] declares, or the first path where they differ. *)
+let conform c ys =
+  let fail fmt = Format.kasprintf invalid_arg ("Rune.callback: " ^^ fmt) in
+  if Array.length ys <> Array.length c.forms then
+    fail "%d results, where like has %d" (Array.length ys)
+      (Array.length c.forms);
+  Array.iteri
+    (fun k (V y) ->
+      let (F f) = c.forms.(k) in
+      let path = c.paths.(k) in
+      let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
+      if not (D.equal (Nx.dtype y) f.dtype) then
+        fail "%s: dtype %a, where like has %a" path Nx.pp_dtype (Nx.dtype y)
+          Nx.pp_dtype f.dtype
+      else if Nx.shape y <> shape then
+        fail "%s: shape %a, where like has %a" path Nx.pp_shape (Nx.shape y)
+          Nx.pp_shape shape
+      else if not (Nx.Placement.equal (Nx.placement y) f.placement) then
+        fail "%s: placement %a, where like has %a" path Nx.Placement.pp
+          (Nx.placement y) Nx.Placement.pp f.placement)
+    ys
+
+(* [c]'s results: its function's on its arguments, or under the maps that
+   batch it through [~lanes], that function's on every lane, the maps' axes
+   merged into one, outer lanes major. *)
+let called c =
+  let ys =
+    guarded @@ fun () ->
+    match (c.lanes, c.maps) with
+    | Some g, (_ :: _ as maps) ->
+        let k = List.length maps and n = List.fold_left ( * ) 1 maps in
+        let rest s j = Array.sub s j (Array.length s - j) in
+        let merge (V x) =
+          V (Nx.reshape (Array.append [| n |] (rest (Nx.shape x) k)) x)
+        in
+        (* A result without the lanes' axis is left for [conform]. *)
+        let split (V y) =
+          let s = Nx.shape y in
+          if Array.length s = 0 || s.(0) <> n then V y
+          else V (Nx.reshape (Array.append (Array.of_list maps) (rest s 1)) y)
+        in
+        Array.map split (g (Array.map merge c.args))
+    | _ -> c.run c.args
+  in
+  conform c ys;
+  ys
+
 let rec eval ?totals p args =
   let na = Array.length p.adds in
   let totals =
@@ -1036,6 +1145,7 @@ and default = function
   | Lanes _ -> no_map "Rune.lanes"
   | Lane_index _ -> no_map "Rune.lane_index"
   | Add _ | Emit _ -> [||]
+  | Callback c -> called c
   | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       scan step ~length ~trips ~reverse ~init ~xs ~captures ~seeds
   | Iterate
@@ -1425,7 +1535,7 @@ and prune p ~outputs =
     let keep =
       match eq with
       | Op { op = Check _; _ } -> true
-      | Do _ when emitting eq -> true
+      | Do _ when emitting eq || calling eq -> true
       | Op _ | Do _ -> !read
     in
     if keep then begin
@@ -1759,6 +1869,8 @@ and pp_construct names ~indent (p : t) ppf c =
   in
   match c with
   | Detach x -> Format.fprintf ppf "detach %a" value (V x)
+  | Callback c ->
+      Format.fprintf ppf "callback (%a)" values (Array.to_list c.args)
   | Emit (Emission e) ->
       Format.fprintf ppf "emit to probe %d at site %d, %d lanes (%a)"
         (probe_id e.probe) e.site e.lead values (Array.to_list e.values)

@@ -1026,6 +1026,9 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
       let e = Program.Emission { e with lead = e.lead + 1; values; mask } in
       ignore (Program.perform (Emit e));
       Effect.Deep.continue k [||]
+  | Callback _ ->
+      Effect.Deep.discontinue k
+        (Invalid_argument (name ^ ": Rune.callback under a map"))
   | Detach x ->
       let b = batch i n x in
       one (lane i (Program.like b (Program.perform (Detach b)).(0)))

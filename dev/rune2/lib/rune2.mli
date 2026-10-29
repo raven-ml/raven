@@ -1088,6 +1088,12 @@ val root :
     applies [op] after it returned; and, naming the {!jit}'s entry point, if it
     applies [op] inside a {!jit}. *)
 
+(** {1:callbacks Callbacks} *)
+
+val callback :
+  ?lanes:('a -> 'b) -> ('a -> 'b, 'd) Nx.Ptree.fn -> like:'b -> ('a -> 'b) -> 'a -> 'b
+(** [callback ~lanes s ~like f x] is [f x], run on [x]'s values. *)
+
 (** {1:remat Rematerialization} *)
 
 val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
