@@ -68,7 +68,8 @@ let connected () =
   (d, p)
 
 (* The next [n] bytes of [fd], fewer if its stream ends or no byte comes
-   within [quiet] first. *)
+   within [quiet] first. A link that closed while its peer writes resets the
+   connection: ECONNRESET, ECONNABORTED on Windows. *)
 let read_n fd n =
   let b = Bytes.create n in
   let rec go off =
@@ -77,7 +78,9 @@ let read_n fd n =
       match Unix.read fd b off (min (n - off) 65536) with
       | 0 -> off
       | k -> go (off + k)
-      | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
+      | exception
+          Unix.Unix_error ((Unix.ECONNRESET | Unix.ECONNABORTED), _, _) ->
+          off
       | exception
           Unix.Unix_error
             ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _) ->
