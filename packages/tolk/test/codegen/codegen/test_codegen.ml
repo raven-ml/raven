@@ -2696,6 +2696,45 @@ let square_wraps () =
            [ power (bits / 2); top ]))
     Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
 
+(* The kernel that stores into slot 0 [x * c0 + x * c1] of element [i] of slot
+   1, over 8 elements of [dtype], [c0] and [c1] weak. *)
+let like_terms_kernel dtype c0 c1 =
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int 8 ] 0 dtype in
+  let x = Call.param ~shape:[ Int 8 ] 1 dtype in
+  let i = Ops.range (Int 8) [ 0 ] in
+  let v = Ops.index x [ i ] in
+  let s = (v * Ops.const c0) + (v * Ops.const c1) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) s) [ i ] ]
+
+(* Like terms whose weak factors sum past the width, the greatest value and 3
+   or 2^(bits - 1) + 1 and 2^(bits - 1) + 3: the sum of the products, which
+   wraps, is [x * (c0 + c1)] at the width. *)
+let like_terms_wrap () =
+  List.iter
+    (fun dtype ->
+      let bits = Dtype.bitsize dtype in
+      let _, hi = Dtypes.int_bounds dtype in
+      let half = Bigint.shift_left Bigint.one (bits - 1) in
+      List.iter
+        (fun (c0, c1) ->
+          let k = like_terms_kernel dtype (`Int c0) (`Int c1) in
+          let prg = Codegen.to_program k (Lazy.force host) in
+          let x = Array.init 8 (fun j -> `Int (Bigint.of_int j)) in
+          let expected =
+            Array.init 8 (fun j ->
+                Dtype.truncate dtype (`Int Bigint.(of_int j * (c0 + c1))))
+          in
+          let msg =
+            Format.asprintf "%a x * %s + x * %s" Dtype.pp dtype
+              (Bigint.to_string c0) (Bigint.to_string c1)
+          in
+          equal ~msg (array Dtypes.value) expected
+            (List.assoc 0 (Run.on_host prg [ (1, x) ])))
+        Bigint.[ (hi, of_int 3); (succ half, half + of_int 3) ])
+    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+
 (* The kernel that stores into slot [k] the [k]th of [ops] of [x] and [c] at
    element [i] of [x], slot 4, over 8 elements of [dtype], [c] weak, with
    [opts]. *)
@@ -2775,6 +2814,7 @@ let square_wrapping =
     [
       test "a square of a product whose constant squares to 0 is 0"
         square_wraps;
+      test "like terms whose factors sum past the width wrap" like_terms_wrap;
       test "a weak divisor past the width divides as its value there"
         divisors_wrap;
     ]

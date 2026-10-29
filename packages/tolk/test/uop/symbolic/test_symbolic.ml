@@ -932,6 +932,45 @@ let wrapping =
                   equal uop (Ops.const ~dtype (`Int Bigint.zero)) (sym u))
                 [ power (bits / 2); top ])
             Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]);
+      (* Like terms whose weak factors sum past the width, as the greatest
+         value and 3: the combined factor is read at the width, so the sum,
+         and a quotient, remainder or comparison of it, which reads its
+         factor's divisors, keeps its value. *)
+      test "like terms combine their factors at their width" (fun () ->
+          List.iter
+            (fun dtype ->
+              let bits = Dtype.bitsize dtype in
+              let _, hi = Dtypes.int_bounds dtype in
+              let w = var ~dtype "w" 0 7 and z = var ~dtype "z" 0 3 in
+              let half = Bigint.shift_left Bigint.one (bits - 1) in
+              let k n = Ops.const (`Int n) in
+              let points =
+                List.concat_map
+                  (fun n ->
+                    [ [ ("w", i n); ("z", i 0) ]; [ ("w", i n); ("z", i 3) ] ])
+                  [ 0; 1; 7 ]
+              in
+              List.iter
+                (fun (c0, c1) ->
+                  List.iter
+                    (fun s ->
+                      List.iter
+                        (fun u -> keeps_machine_value u points)
+                        Ops.O.
+                          [
+                            s; s // int 2; s // int 3; s % int 4; s // int 16;
+                            s < int 16; (s + int 3) // int 8; Ops.ne s (int 0);
+                          ])
+                    Ops.O.
+                      [
+                        (w * k c0) + (w * k c1);
+                        z + (w * k c0) + (w * k c1);
+                        (w * k c0) + w;
+                        z + w + (w * k c0);
+                        z + (w * k c0) + w;
+                      ])
+                Bigint.[ (succ half, pred half); (hi, of_int 3); (hi, one) ])
+            Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]);
       test "(x // c1) // c2 stays where c1 * c2 wraps" (fun () ->
           let w =
             Ops.variable ~dtype:Int32 "w" (Dtype.min Int32) (Dtype.max Int32)
