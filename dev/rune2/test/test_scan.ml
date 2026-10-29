@@ -689,6 +689,10 @@ let functions (type s) ?(nested = false) ~free (dt : (float, s) Nx.dtype) s n g
       let c, ys =
         if scan then Rune.scan cs T.tensor T.tensor ~f:(step w) ~init:c two
         else
+          (* A copy of [w] per step, whose cotangent sums the inner steps'
+             before the outer loop adds it, in the order rune2.mli states for
+             the scan. *)
+          let w = Nx.copy w in
           let c, ys = fold (step w) ~init:c two in
           (c, Nx.stack ys)
       in
@@ -1016,6 +1020,35 @@ let moderated o =
       Array.map (fun v -> Operand.F (moderate v)) o.Operand.values;
   }
 
+(* The majorant of a {!smoothed} [e]: over operands [t >= |x|], its value and
+   its partial derivatives of the first two orders are non-negative and at least
+   the sums of magnitudes of the terms rune2's rules compute [e]'s with at [x].
+   Negation and [abs] keep their operand, a difference and the selections become
+   sums, and a running maximum a sum. Sin, whose rules read cos and sin, each at
+   most 1, becomes [1 + t + t^2 / 2]. Tanh's tangent is [(t + t y) (1 - y)],
+   terms of at most [4 |t|], its second order at most [16 |t|], and sigmoid's
+   composition is within the same: both become [1 + 4 t + 8 t^2]. *)
+let quadratic a b t =
+  Bin
+    ( Add,
+      K (F 1.),
+      Bin (Add, Bin (Mul, K (F a), t), Bin (Mul, K (F b), Un (Square, t))) )
+
+let rec majorant : Expr.t -> Expr.t = function
+  | (X | Y) as e -> e
+  | K v -> K (F (Float.abs (moderate v)))
+  | Un ((Neg | Abs), e) -> majorant e
+  | Un (Sin, e) -> quadratic 1. 0.5 (majorant e)
+  | Un ((Tanh | Sigmoid), e) -> quadratic 4. 8. (majorant e)
+  | Un (Max a, e) -> Un (Sum a, majorant e)
+  | Un (((Square | Cumsum _ | Flip _ | Sum _ | Mean _) as u), e) ->
+      Un (u, majorant e)
+  | Bin ((Sub | Maximum | Minimum | Where_less | Add), e, e') ->
+      Bin (Add, majorant e, majorant e')
+  | Bin (Mul, e, e') -> Bin (Mul, majorant e, majorant e')
+  | Un ((Exp | Sqrt | Log | Recip), _) | Bin ((Div | Pow), _, _) ->
+      invalid_arg "majorant: not smoothed"
+
 let law_compose (Case c as case) =
   rule_covers case;
   let o = operands c.dt c.s c.n c.ops c.at in
@@ -1030,29 +1063,6 @@ let law_compose (Case c as case) =
   let objective f p =
     let a, (b, y) = f p in
     Nx.add (Nx.add (Nx.sum a) (Nx.sum b)) (Nx.sum y)
-  in
-  (* A second order through a loop meets more zeros a loop holds than a step's
-     reads tell, so it is compared where every partial derivative is finite: the
-     case's functions smoothed, over operands within [-2, 2]. It sums a step's
-     contributions before adding them to the loop's, where the fold adds each in
-     turn: within [tol] of the larger, or of 1. *)
-  let tol = if D.equal c.dt Nx.float32 then 1e-4 else 1e-10 in
-  let within ~nan =
-    let l = lenient ~nan in
-    Testable.make ~pp:(Testable.pp bits_t)
-      ~equal:(fun ((s, a) as u) ((s', b) as v) ->
-        Testable.equal l u v
-        || s = s'
-           && Array.for_all2
-                (fun x y ->
-                  let x = Int64.float_of_bits x and y = Int64.float_of_bits y in
-                  x = y
-                  || (Float.is_nan x && Float.is_nan y)
-                  || (nan && Float.is_nan y)
-                  || Float.abs (x -. y)
-                     <= tol
-                        *. Float.max 1. (Float.max (Float.abs x) (Float.abs y)))
-                a b)
   in
   let check msg cmp (scanned, folded) g =
     equal ~msg
@@ -1086,12 +1096,8 @@ let law_compose (Case c as case) =
     (outcome_t' (Testable.triple jl jl jl))
     reference
     (outcome (fun () -> bits3 (snd (Rune.jvp p p nested_s x t))));
-  (* An inner reversed loop sums its steps' contributions to a capture before
-     the outer step adds them. *)
-  check "grad of a nested scan"
-    (within ~nan:(unread case))
-    nested
-    (fun f -> Rune.grad p (objective f) x);
+  let l = lenient ~nan:(unread case) in
+  check "grad of a nested scan" l nested (fun f -> Rune.grad p (objective f) x);
   let lanes f =
     let batch = Nx.stack [ c0; Nx.neg c0 ] in
     let y =
@@ -1115,12 +1121,20 @@ let law_compose (Case c as case) =
       (Nx.add (Nx.sum (Nx.mul a a)) (Nx.sum (Nx.mul b b)))
       (Nx.sum (Nx.mul y y))
   in
-  (* Second orders run at float64. The scan and the fold add the same terms in
-     different orders, so they differ by up to (k + 1) u sum |term|, but the
-     terms lie inside the reverse pass, out of the test's sight. A bound of
-     [1e-10] times the result's largest magnitude, or 1, is [1e6] u at float64,
-     room for terms [1e5] times the result; at float32 a bound of [1e-4] is 1700
-     u, which a draw whose terms cancel exceeds. *)
+  (* Second orders over the case's functions smoothed and operands within [-2,
+     2], at float64. The scan and the fold compute the same forward values and
+     first-order cotangents, then a second derivation linear in them whose sums
+     they associate differently: the loops' captures, and reductions nx
+     associates by the shape it reads. Such a value is a sum of terms, each a
+     product of factors both compute alike, and each within γ(R) of exact
+     barring underflow, R the roundings on its path; so the two are within
+     [2γ(R) Σ|terms|], and [(1 + γ(R))] more for the factors' own roundings. The
+     same derivation over {!majorant} functions and the operands' and tangents'
+     magnitudes gives at least Σ|terms| per element. R counts the roundings of a
+     path: through the derivation's four passes, each of [n + 2] steps of 3
+     operations per expression node and per term of a reduction, broadcast or
+     sum. At float32 the majorant's growth through a carry leaves the bound past
+     the values, so second orders run at float64 only. *)
   let f64 = Nx.float64 in
   let o2 = operands f64 c.s c.n (Array.map moderated c.ops) c.at in
   let x2 = (o2.(0), (o2.(2), o2.(3))) in
@@ -1132,46 +1146,141 @@ let law_compose (Case c as case) =
     functions ~free:c.free f64 c.s c.n (smoothed c.g) (smoothed c.k)
       (smoothed c.h) o2.(1)
   in
-  let scaled =
-    let tol = 1e-10 in
-    let values (_, a) = Array.map Int64.float_of_bits a in
-    let scale (a, b, c) =
-      Array.fold_left
-        (fun m v -> if Float.is_finite v then Float.max m (Float.abs v) else m)
-        1.
-        (Array.concat [ values a; values b; values c ])
+  let mag x = Nx.abs x in
+  let xm = (mag o2.(0), (mag o2.(2), mag o2.(3))) in
+  let tm = (mag (fst t2), (mag (fst (snd t2)), mag (snd (snd t2)))) in
+  let _, fm, _ =
+    let m e = majorant (smoothed e) in
+    functions ~free:c.free f64 c.s c.n (m c.g) (m c.k) (m c.h) (mag o2.(1))
+  in
+  let roundings =
+    let rec count (e : Expr.t) =
+      match e with
+      | X | Y | K _ -> (0, 0)
+      | Un (u, e) ->
+          let n, r = count e in
+          let r' =
+            match u with Cumsum _ | Sum _ | Max _ | Mean _ -> 1 | _ -> 0
+          in
+          (n + 1, r + r')
+      | Bin (_, e, e') ->
+          let n, r = count e and n', r' = count e' in
+          (n + n' + 1, r + r')
     in
-    Testable.make ~pp:(Testable.pp t3)
-      ~equal:(fun ((a, b, c) as u) (a', b', c') ->
-        let m = scale u in
-        let near (s, x) (s', y) =
-          s = s'
-          && Array.for_all2
-               (fun x y ->
-                 let x = Int64.float_of_bits x and y = Int64.float_of_bits y in
-                 x = y || Float.abs (x -. y) <= tol *. m)
-               x y
-        in
-        near a a' && near b b' && near c c')
+    let nodes, reductions =
+      List.fold_left
+        (fun (n, r) e ->
+          let n', r' = count e in
+          (n + n', r + r'))
+        (6, 4) [ c.g; c.k; c.h ]
+    in
+    let terms = max 2 (max c.n (Operand.numel c.s)) in
+    Float.of_int (4 * (c.n + 2) * 3 * (nodes + (reductions * terms)))
+  in
+  let gamma =
+    let ru = roundings *. 0x1p-53 in
+    if ru >= 1. then Float.infinity else ru /. (1. -. ru)
+  in
+  (* Within [2γ(R)] of the bound [(a', b', c')]'s value at each element. *)
+  let summed (a', b', c') =
+    let near (s, x) (s', y) (_, m) =
+      let ok = ref (s = s') in
+      Array.iteri
+        (fun i x ->
+          let x = Int64.float_of_bits x and y = Int64.float_of_bits y.(i) in
+          let m = Int64.float_of_bits m.(i) in
+          let tol = 2. *. gamma *. (1. +. gamma) *. m in
+          ok := !ok && (x = y || Float.abs (x -. y) <= tol))
+        x;
+      !ok
+    in
+    Testable.make ~pp:(Testable.pp t3) ~equal:(fun (a, b, c) (a2, b2, c2) ->
+        near a a2 a' && near b b2 b' && near c c2 c')
   in
   (* Where the fold's second derivative is finite: an infinity there meets a
      zero the loop holds, as at first order. *)
   let finite (_, a) =
     Array.for_all (fun x -> Float.is_finite (Int64.float_of_bits x)) a
   in
-  let second msg g =
-    let expected = outcome (fun () -> bits3 (g f2)) in
-    match expected with
-    | Value ((a, b, c) as e) when finite a && finite b && finite c ->
-        cover ("a finite " ^ msg) true;
-        equal ~msg (outcome_t' scaled) (Value e)
-          (outcome (fun () -> bits3 (g s2)))
-    | _ -> cover ("a finite " ^ msg) false
+  (* The bound holds barring underflow, which reaches values the law cannot see:
+     a case is left out where one it sees, the fold's outputs, first-order
+     cotangents or second orders, lies below [2^-900] but for a zero. *)
+  let clear (_, a) =
+    Array.for_all
+      (fun x ->
+        let v = Float.abs (Int64.float_of_bits x) in
+        v = 0. || v >= 0x1p-900)
+      a
   in
-  let q = triple () in
-  second "grad of grad" (fun f -> Rune.grad q (sq f) x2);
-  second "jvp of grad" (fun f ->
-      snd (Rune.jvp q q (Rune.grad q (objective f)) x2 t2));
+  let seen =
+    outcome (fun () ->
+        let a, (b, c) = f2 x2
+        and d, (e, f) = Rune.grad (triple ()) (objective f2) x2 in
+        List.map bits [ a; b; c; d; e; f ])
+  in
+  let near_underflow =
+    match seen with
+    | Value vs -> not (List.for_all clear vs)
+    | Raised _ -> false
+  in
+  (* The second orders reach the functions whose second derivatives take either
+     sign, and negative values and [-0.] among the operands. *)
+  let reaches msg =
+    let rec has p (e : Expr.t) =
+      p e
+      ||
+      match e with
+      | X | Y | K _ -> false
+      | Un (_, e) -> has p e
+      | Bin (_, e, e') -> has p e || has p e'
+    in
+    let fs = [ smoothed c.g; smoothed c.k; smoothed c.h ] in
+    let through label u =
+      cover
+        (msg ^ " through " ^ label)
+        (List.exists (has (function Un (v, _) -> v = u | _ -> false)) fs)
+    in
+    through "sin" Sin;
+    through "tanh" Tanh;
+    through "sigmoid" Sigmoid;
+    through "abs" Abs;
+    let leaves =
+      let a, (b, c') = x2 and t, (t', t'') = t2 in
+      List.concat_map
+        (fun x -> Array.to_list (Array.map Int64.float_of_bits (snd (bits x))))
+        [ a; b; c'; o2.(1); t; t'; t'' ]
+    in
+    cover
+      (msg ^ " of a negative operand")
+      (List.exists (fun v -> v < 0.) leaves);
+    cover
+      (msg ^ " of a -0. operand")
+      (List.exists (fun v -> v = 0. && Float.sign_bit v) leaves)
+  in
+  (* [second msg fold scan bound] compares [scan] with [fold] within [bound]'s
+     per element, where both [fold] and [bound] are finite. *)
+  let second msg fold scan bound =
+    let expected = outcome (fun () -> bits3 (fold ())) in
+    match (expected, outcome (fun () -> bits3 (bound ()))) with
+    | Value ((a, b, c) as e), Value ((a', b', c') as m)
+      when List.for_all finite [ a; b; c; a'; b'; c' ]
+           && List.for_all clear [ a; b; c ]
+           && not near_underflow ->
+        cover ("a bounded " ^ msg) true;
+        reaches msg;
+        equal ~msg
+          (outcome_t' (summed m))
+          (Value e)
+          (outcome (fun () -> bits3 (scan ())))
+    | _ -> cover ("a bounded " ^ msg) false
+  in
+  let gg f x () = Rune.grad (triple ()) (sq f) x in
+  second "grad of grad" (gg f2 x2) (gg s2 x2) (gg fm xm);
+  let jg f x t () =
+    let q = triple () in
+    snd (Rune.jvp q q (Rune.grad q (objective f)) x t)
+  in
+  second "jvp of grad" (jg f2 x2 t2) (jg s2 x2 t2) (jg fm xm tm);
   let per_lane f =
     let batch = Nx.stack [ c0; Nx.mul_s c0 2. ] in
     let g =
@@ -1179,7 +1288,7 @@ let law_compose (Case c as case) =
     in
     (g, (g, g))
   in
-  check "vmap of grad" (lenient ~nan:(unread case)) plain per_lane
+  check "vmap of grad" l plain per_lane
 
 (* Compiled loops at the edges a program's loops meet *)
 
