@@ -869,37 +869,51 @@ let stated_tests =
                Nx.sum
                  (Rune.root one ~residual:(fun x -> Nx.sub x a) (fun () -> a)))
              e));
-    test "a residual's tangent map that is not linear raises under grad"
+    test "a residual's tangent map that is not linear raises when transposed"
       (fun () ->
-        (* [x²] whose tangent map applies [f] to the tangent. *)
-        let squared f =
-          Rune.custom_jvp one one (fun x ->
-              (Nx.mul x x, fun dx -> Nx.mul (f dx) (Nx.mul_s x 2.)))
+        (* The identity, whose tangent map applies [f] to the tangent. *)
+        let ident f = Rune.custom_jvp one one (fun x -> (x, f)) in
+        let root ?linear_solve f a =
+          Rune.root ?linear_solve one
+            ~residual:(fun x -> Nx.sub (ident f x) a)
+            (fun () -> a)
         in
-        let grad f =
-          Rune.grad'
-            (fun a ->
-              Nx.sum
-                (Rune.root one
-                   ~residual:(fun x -> Nx.sub (squared f x) a)
-                   (fun () -> Nx.sqrt a)))
-            (vec [| 4. |])
+        let a = vec [| 4. |] and one_ = vec [| 1. |] in
+        let refused entry what =
+          Invalid_argument
+            (entry ^ ": a custom_jvp tangent map applies " ^ what
+           ^ " to a tangent; a tangent map must be linear in its tangents")
         in
-        raises_match
-          (Exn.invalid_arg
-             ~substring:
-               "a custom_jvp tangent map applies Exp to a tangent; a tangent \
-                map must be linear in its tangents") (fun () -> grad Nx.exp);
-        raises_match
-          (Exn.invalid_arg
-             ~substring:
-               "a custom_jvp tangent map applies an iterate's stop to a \
-                tangent; a tangent map must be linear in its tangents")
-          (fun () ->
-            grad
-              (Rune.iterate' ~max:4
-                 ~until:(fun d -> Nx.less (Nx.max d) (scalar 1.))
-                 ~f:(fun d -> Nx.mul_s d 0.5))));
+        let stop = "an iterate's stop" in
+        let halved =
+          Rune.iterate' ~max:4
+            ~until:(fun d -> Nx.less (Nx.max d) (scalar 1.))
+            ~f:(fun d -> Nx.mul_s d 0.5)
+        in
+        equal ~msg:"outside every transformation" (exact ()) a (root Nx.exp a);
+        (* The tangent [u] solves [J u = 1], [J] the tangent map at [1]. *)
+        equal ~msg:"under jvp" (close ())
+          (Nx.recip (Nx.exp one_))
+          (snd (Rune.jvp' (root Nx.exp) a one_));
+        let _, tangent = Rune.linearize one one (root halved) a in
+        equal ~msg:"under linearize" (close ()) (vec [| 2. |]) (tangent one_);
+        raises ~msg:"grad" (refused "Rune.grad'" "Exp") (fun () ->
+            Rune.grad' (fun a -> Nx.sum (root Nx.exp a)) a);
+        raises ~msg:"grad, a stop" (refused "Rune.grad'" stop) (fun () ->
+            Rune.grad' (fun a -> Nx.sum (root halved a)) a);
+        let _, pullback = Rune.vjp' (root Nx.exp) a in
+        raises ~msg:"a pullback" (refused "Rune.vjp'" "Exp") (fun () ->
+            pullback one_);
+        let _, pullback = Rune.vjp' (root halved) a in
+        raises ~msg:"a pullback, a stop" (refused "Rune.vjp'" stop) (fun () ->
+            pullback one_);
+        (* A linear solve that transposes the operator does at the call. *)
+        let by_jacrev op b =
+          Nx.reshape [| 1 |]
+            (Nx.solve (Rune.jacrev' op b) (Nx.reshape [| 1; 1 |] b))
+        in
+        raises ~msg:"a linear solve by reverse mode" (refused "Rune.root" "Exp")
+          (fun () -> root ~linear_solve:by_jacrev Nx.exp a));
     test "the default solve refuses leaves of two dtypes" (fun () ->
         raises_match (Exn.invalid_arg ~substring:"Rune.root") (fun () ->
             Rune.grad'

@@ -375,7 +375,11 @@ and system = {
           lies under ({!fill}). *)
   residual : t;  (** Over the solution then [theta]. *)
   jacobian : t;  (** [J v], over [v], the solution then [theta]. *)
-  transpose : t;  (** [Jᵀ w], over [w], the solution then [theta]. *)
+  transpose : name:string -> t;
+      (** [Jᵀ w], over [w], the solution then [theta], traced at its first
+          application, which reverse mode makes as it transposes the system. A
+          trace that raises names the entry point [name]: a residual's tangent
+          map that is not linear in its tangents raises then. *)
   solve : t;
       (** The linear solve against the operator [id], over the right-hand side,
           the solution, [theta], then its captures. *)
@@ -737,7 +741,12 @@ val operands : construct -> value list
 (** [operands c] is the values [c] reads, captures included. *)
 
 val carried : construct -> t list
-(** [carried c] is the programs [c] carries. *)
+(** [carried c] is the programs [c] carries, a system's transpose, which its
+    jacobian holds, aside. *)
+
+val once : (name:string -> t) -> name:string -> t
+(** [once f] is [f], whose first result that does not raise is the result of
+    every later application. *)
 
 type map = { f : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t }
 (** A function on values of every dtype and set. *)

@@ -270,7 +270,7 @@ and system = {
     transposed:bool -> lanes:(int * bool array) list -> t * value array;
   residual : t;
   jacobian : t;
-  transpose : t;
+  transpose : name:string -> t;
   solve : t;
 }
 
@@ -309,7 +309,7 @@ and carried_by = function
   | Linear { apply; transpose = Traced t; _ } -> Option.to_list apply @ [ t ]
   | Linear { apply; transpose = Host _; _ } -> Option.to_list apply
   | Root { system; _ } | Solve { system; _ } ->
-      [ system.residual; system.jacobian; system.transpose; system.solve ]
+      [ system.residual; system.jacobian; system.solve ]
   | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _ -> []
 
 let make ~owner ~params eqns ~outputs ~adds ~slots =
@@ -544,6 +544,17 @@ let operands = function
   | Switch { index; captures; seeds; _ } ->
       index :: Array.to_list (Array.append captures seeds)
 
+let once f =
+  let cell = ref None and lock = Mutex.create () in
+  fun ~name ->
+    Mutex.protect lock (fun () ->
+        match !cell with
+        | Some p -> p
+        | None ->
+            let p = f ~name in
+            cell := Some p;
+            p)
+
 let rec map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _) as c -> c
   | Scan s -> Scan { s with step = f s.step }
@@ -575,7 +586,7 @@ and map_system f s =
     s with
     residual = f s.residual;
     jacobian = f s.jacobian;
-    transpose = f s.transpose;
+    transpose = once (fun ~name -> f (s.transpose ~name));
     solve = f s.solve;
   }
 

@@ -2229,7 +2229,7 @@ and solve ~name ~tape i (s : Program.construct) =
           if not along_data then db
           else
             let jacobian =
-              if transposed then system.transpose else system.jacobian
+              if transposed then system.transpose ~name else system.jacobian
             in
             let dj =
               tangents_or_zeros

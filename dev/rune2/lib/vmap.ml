@@ -1700,7 +1700,9 @@ and root ~name i axis n (c : Program.construct) =
       s with
       residual = mapped s.residual (Array.append x th);
       jacobian = mapped s.jacobian (Array.concat [ x; x; th ]);
-      transpose = mapped s.transpose (Array.concat [ x; x; th ]);
+      transpose =
+        Program.once (fun ~name ->
+            mapped (s.transpose ~name) (Array.concat [ x; x; th ]));
       solve = mapped s.solve (Array.concat [ x; x; th; caps ]);
     }
   in

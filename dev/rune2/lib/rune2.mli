@@ -528,7 +528,8 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     ["Rune.grad: a custom_jvp tangent map applies Exp to a tangent; a tangent
      map must be linear in its tangents"]. An {!iterate} in a tangent map whose
     stop reads a tangent takes steps that depend on it, and raises at the call
-    of {!grad}, {!vjp} or {!linearize}, as in
+    of {!grad}, {!vjp} or {!linearize} (in a {!root}'s [residual], as its
+    section says), as in
     ["Rune.grad: a custom_jvp tangent map applies an iterate's stop to a
      tangent; a tangent map must be linear in its tangents"]. Reverse mode
     transposes the linear part: a value a tangent map adds to a tangent, or
@@ -1018,7 +1019,12 @@ val cond :
     a value [residual] or [linear_solve] computes from its argument raises.
     [solve] stages every operation it applies ({!section-tracing}), over the
     values it captures detached, so {!Nx.item} inside it of a value a
-    transformation around tracks raises.
+    transformation around tracks raises. A {!custom_jvp} in [residual] whose
+    tangent map is not linear in its tangents raises, naming the entry point,
+    only when reverse mode transposes the root's derivative: in {!grad}, as a
+    {!vjp} pullback is applied, or at the call when [linear_solve] transposes
+    [op]. That holds for an {!iterate} in the tangent map whose stop reads a
+    tangent too.
 
     {b Linear solves.} [linear_solve op b] returns a [v] with [op v = b] for the
     linear [op]. It is traced once, against an abstract [op], which a derivative

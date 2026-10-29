@@ -892,6 +892,15 @@ let dense name forms op bs =
             in
             unflat (Nx.solve (Nx.matrix_transpose rows) (flat bs)))
 
+(* Whether [p] applies the transpose of the operator [id]. *)
+let rec transposes id (p : Program.t) =
+  Array.exists
+    (function
+      | Program.Op _ -> false
+      | Do { c = Operator o; _ } when o.id = id -> o.transposed
+      | Do { c; _ } -> List.exists (transposes id) (Program.carried c))
+    p.eqns
+
 let root_named name ?linear_solve x ~residual solve =
   (* The solution, of [solve]'s code with no derivative: every operation staged,
      so that it computes on its captures detached. *)
@@ -964,15 +973,19 @@ let root_named name ?linear_solve x ~residual solve =
                in
                tangents i (Program.eval residual_p (Array.append xd th)))))
   in
+  (* Traced when reverse mode transposes the system, so that a tangent map's
+     operation not linear in its tangents raises there, naming its entry point,
+     and never under forward mode. *)
   let transpose =
+    Program.once @@ fun ~name:entry ->
     closed
-      (Trace.trace Body ~name operand_forms (fun vs ->
+      (Trace.trace Body ~name:entry operand_forms (fun vs ->
            Program.silenced @@ fun () ->
            let ws, xs, th = split vs in
            (* [J v] is the residual's derivative, so an operation not linear in
               [v] is a tangent map's. *)
            let l =
-             Linear.trace_tangents ~name
+             Linear.trace_tangents ~name:entry
                (Array.map (Loops.filled ~zero:true) forms)
                (fun v -> Program.eval jacobian (Array.concat [ v; xs; th ]))
            in
@@ -999,6 +1012,8 @@ let root_named name ?linear_solve x ~residual solve =
             values x (solve (fun v -> point (op (values x v))) (point bs))
         | None -> dense name forms op bs)
   in
+  (* A linear solve that transposes the operator needs its transpose to run. *)
+  if transposes id solve_p then ignore (transpose ~name);
   (* Each operator traced once per maps it lies under, as each evaluation of a
      solve, a backward loop's per row, fills it again; a compiled program
      holding the solve may run on several domains. *)
@@ -1011,7 +1026,7 @@ let root_named name ?linear_solve x ~residual solve =
         | None ->
             let p =
               mapped name
-                ((if transposed then transpose else jacobian), [||])
+                ((if transposed then transpose ~name else jacobian), [||])
                 ~nargs:nx operand_forms lanes
             in
             Hashtbl.add filled key p;

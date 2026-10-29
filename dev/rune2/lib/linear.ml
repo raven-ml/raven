@@ -1182,9 +1182,11 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
           Array.iteri (fun k (V a) -> if lin a then give a (fresh r.(k))) o.args
         end
     | Do { c = Solve sv; base } ->
-        (* A linear solve's transpose solves the transposed system. *)
+        (* A linear solve's transpose solves the transposed system, whose
+           operator is traced here so that its errors name the entry point. *)
         let n = Array.length sv.b in
         if reached base n then begin
+          if not sv.transposed then ignore (sv.system.transpose ~name:env.name);
           let cts =
             Array.mapi
               (fun k (V b) ->
