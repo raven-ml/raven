@@ -30,29 +30,32 @@
 
     Each holds a {e normwise} bound, in the sense that a result [z'] of exact
     value [z] has [|z' - z| / |z|] at most the table's multiple of [u], to first
-    order:
+    order. The bounds are derived from {!Lower_real}'s, an error of [n] ulps
+    there being one of at most [(2n + 1) u]:
 
     {v
       mul                                      2
-      fdiv, recip, sqrt, sign                  4
-      log                                     15
-      log2                                    16
-      atan, atanh                             18
-      exp                                     20
-      asin, acos, asinh, acosh                28
-      sin, cos, sinh, cosh                    33
-      tan, tanh                               77
-      exp2                                    19 + |y|
-      pow, z^w                                20 + 17 |w log z|
+      sign, sqrt                               3
+      fdiv, recip                              4
+      log                                     18
+      log2                                    20
+      atan, atanh, acos, acosh                21
+      asin, asinh                             23
+      exp                                     31
+      cos, cosh                               57
+      sin, sinh                               67
+      tan, tanh                               73
+      exp2                          30 + 1.4 |y|
+      pow, z^w                 31 + 20 |w log z|
     v}
 
     [exp2]'s bound grows with [|y|], since its phase [y ln2] is computed in the
     parts' type, and [pow]'s with its exponent, as the float [pow]'s does. A
-    bound holds where every part of the operands is finite and the result's
-    modulus is a normal float. [Fdiv] and [Recip] also need the operands' parts
-    below half the greatest float and the divisor's larger part normal, and
-    [Pow] needs [|w| |log z|] below the greatest float. There, the result has no
-    NaN part.
+    bound holds where every part of the operands is finite, the result's modulus
+    is a normal float and no value computed for it, a part of it included, is
+    subnormal. [Fdiv] and [Recip] also need the operands' parts below half the
+    greatest float and the divisor's larger part normal, and [Pow] needs
+    [|w| |log z|] below the greatest float. There, the result has no NaN part.
 
     {1:special Special values}
 

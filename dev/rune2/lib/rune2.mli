@@ -1272,30 +1272,33 @@ val jit :
     {v
       function                                      c
       Nx.mul                                        2
-      Nx.div, Nx.recip, Nx.sqrt, Nx.sign            4
-      Nx.log                                       15
-      Nx.log2                                      16
-      Nx.atan, Nx.atanh                            18
-      Nx.exp                                       20
-      Nx.asin, Nx.acos, Nx.asinh, Nx.acosh         28
-      Nx.sin, Nx.cos, Nx.sinh, Nx.cosh             33
-      Nx.tan, Nx.tanh                              77
-      Nx.exp2                                 19 + |y|
-      Nx.pow z w                       20 + 17 |w log z|
+      Nx.sign, Nx.sqrt                              3
+      Nx.div, Nx.recip                              4
+      Nx.log                                       18
+      Nx.log2                                      20
+      Nx.atan, Nx.atanh, Nx.acos, Nx.acosh         21
+      Nx.asin, Nx.asinh                            23
+      Nx.exp                                       31
+      Nx.cos, Nx.cosh                              57
+      Nx.sin, Nx.sinh                              67
+      Nx.tan, Nx.tanh                              73
+      Nx.exp2                            30 + 1.4 |y|
+      Nx.pow z w                    31 + 20 |w log z|
     v}
 
-    A bound holds where the operands' parts are finite and the result's modulus
-    is normal. {!Nx.div} and {!Nx.recip} also need the parts below half the
-    greatest float and the divisor's larger part normal, and {!Nx.pow} needs
-    [|w| |log z|] below the greatest float. A NaN part and no infinite one give
-    a NaN part, except [z{^w}] at [w = 0], which is [1]. At an infinite part,
-    each part of a transcendental function's result is a NaN, an infinity, a
-    zero or finite as Annex G (G.6) gives it, an infinite part with Annex G's
-    sign. There, where no part is a NaN, {!Nx.sign} gives the direction of the
-    infinite parts, one of [±1], [±i] and [(±1 ± i) / √2], and {!Nx.recip} the
-    sorts of [(1 + 0i) / z] by Smith's division, which divides by the divisor's
-    larger part. Zeros' signs are unspecified, and so is an infinity's sign that
-    comes from a NaN part or that Annex G leaves open. {!Nx.mul}, {!Nx.div} and
+    A bound holds where the operands' parts are finite, the result's modulus is
+    normal and no value computed for it, a part of it included, is subnormal.
+    {!Nx.div} and {!Nx.recip} also need the parts below half the greatest float
+    and the divisor's larger part normal, and {!Nx.pow} needs [|w| |log z|]
+    below the greatest float. A NaN part and no infinite one give a NaN part,
+    except [z{^w}] at [w = 0], which is [1]. At an infinite part, each part of a
+    transcendental function's result is a NaN, an infinity, a zero or finite as
+    Annex G (G.6) gives it, an infinite part with Annex G's sign. There, where
+    no part is a NaN, {!Nx.sign} gives the direction of the infinite parts, one
+    of [±1], [±i] and [(±1 ± i) / √2], and {!Nx.recip} the sorts of
+    [(1 + 0i) / z] by Smith's division, which divides by the divisor's larger
+    part. Zeros' signs are unspecified, and so is an infinity's sign that comes
+    from a NaN part or that Annex G leaves open. {!Nx.mul}, {!Nx.div} and
     {!Nx.pow} are unspecified at an infinite part. {!Nx.exp2} at [x = +inf] may
     give an infinite part the wrong sign where [y ln 2] lies within a relative
     [2u] of a non-zero multiple of [π/2].

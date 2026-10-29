@@ -215,15 +215,15 @@ let unaries =
     [
       unary "recip" Recip (fixed 4.) (nx 4.) ~domain:smith
         ~covers:[ ("zero", on (fun _ z -> zero z.re && zero z.im)) ];
-      unary "sign" Sign (fixed 4.) (nx 3.)
+      unary "sign" Sign (fixed 3.) (nx 3.)
         ~covers:
           [
             ( "tiny",
               on (fun _ z -> Complex.norm z < 1e-30 && Complex.norm z > 0.) );
           ];
-      unary "sqrt" Sqrt (fixed 4.) (nx 3.)
+      unary "sqrt" Sqrt (fixed 3.) (nx 3.)
         ~covers:[ ("the cut", cut_real (fun _ -> true)); real_axis ];
-      unary "exp" Exp (fixed 20.) (nx 4.)
+      unary "exp" Exp (fixed 31.) (nx 4.)
         ~covers:
           [
             ( "past the overflow of e^x",
@@ -232,7 +232,7 @@ let unaries =
             real_axis;
           ];
       unary "exp2" Exp2
-        (fun _ e -> 19. +. Float.abs e.(0).im)
+        (fun _ e -> 30. +. (1.4 *. Float.abs e.(0).im))
         (nx 4.)
         ~covers:
           [
@@ -240,7 +240,7 @@ let unaries =
               on (fun w z -> (z.re > if w then 1024. else 128.) && z.re < 1e4)
             );
           ];
-      unary "log" Log (fixed 15.) (nx 4.)
+      unary "log" Log (fixed 18.) (nx 4.)
         ~covers:
           [
             ("the cut", cut_real (fun _ -> true));
@@ -248,41 +248,41 @@ let unaries =
               on (fun _ z -> Float.abs (Complex.norm z -. 1.) < 1e-3) );
             ("the pole", on (fun _ z -> zero z.re && zero z.im));
           ];
-      unary "log2" Log2 (fixed 16.) (nx 4.)
+      unary "log2" Log2 (fixed 20.) (nx 4.)
         ~covers:[ ("the cut", cut_real (fun _ -> true)) ];
-      unary "sin" Sin (fixed 33.) (nx 6.) ~covers:[ trig_far; real_axis ];
-      unary "cos" Cos (fixed 33.) (nx 6.) ~covers:[ trig_far; imag_axis ];
-      unary "tan" Tan (fixed 77.) (nx 6.) ~covers:[ trig_far; real_axis ];
-      unary "sinh" Sinh (fixed 33.) (nx 6.) ~covers:[ hyp_far; imag_axis ];
-      unary "cosh" Cosh (fixed 33.) (nx 6.) ~covers:[ hyp_far; real_axis ];
-      unary "tanh" Tanh (fixed 77.) (nx 6.) ~covers:[ hyp_far; imag_axis ];
-      unary "asin" Asin (fixed 28.) (nx 5.)
+      unary "sin" Sin (fixed 67.) (nx 6.) ~covers:[ trig_far; real_axis ];
+      unary "cos" Cos (fixed 57.) (nx 6.) ~covers:[ trig_far; imag_axis ];
+      unary "tan" Tan (fixed 73.) (nx 6.) ~covers:[ trig_far; real_axis ];
+      unary "sinh" Sinh (fixed 67.) (nx 6.) ~covers:[ hyp_far; imag_axis ];
+      unary "cosh" Cosh (fixed 57.) (nx 6.) ~covers:[ hyp_far; real_axis ];
+      unary "tanh" Tanh (fixed 73.) (nx 6.) ~covers:[ hyp_far; imag_axis ];
+      unary "asin" Asin (fixed 23.) (nx 5.)
         ~covers:
           [
             ("a cut", cut_real (fun a -> a > 1.));
             ("a branch point", cut_real (( = ) 1.));
           ];
-      unary "acos" Acos (fixed 28.) (nx 5.)
+      unary "acos" Acos (fixed 21.) (nx 5.)
         ~covers:
           [
             ("a cut", cut_real (fun a -> a > 1.));
             ("a branch point", cut_real (( = ) 1.));
           ];
-      unary "atan" Atan (fixed 18.) (nx 5.)
+      unary "atan" Atan (fixed 21.) (nx 5.)
         ~covers:
           [
             ("a cut", cut_imag (fun a -> a > 1.));
             ("a pole", cut_imag (( = ) 1.));
           ];
-      unary "asinh" Asinh (fixed 28.) (nx 5.)
+      unary "asinh" Asinh (fixed 23.) (nx 5.)
         ~covers:
           [
             ("a cut", cut_imag (fun a -> a > 1.));
             ("a branch point", cut_imag (( = ) 1.));
           ];
-      unary "acosh" Acosh (fixed 28.) (nx 5.)
+      unary "acosh" Acosh (fixed 21.) (nx 5.)
         ~covers:[ ("the cut", on (fun _ z -> zero z.im && z.re < 1.)) ];
-      unary "atanh" Atanh (fixed 18.) (nx 5.)
+      unary "atanh" Atanh (fixed 21.) (nx 5.)
         ~covers:
           [
             ("a cut", cut_real (fun a -> a > 1.));
@@ -302,7 +302,7 @@ let binaries =
         ~covers:
           [ ("a zero divisor", fun _ e -> zero e.(1).re && zero e.(1).im) ];
       binary "pow" Pow ~domain:products
-        (fun _ e -> 20. +. (17. *. wlog e))
+        (fun _ e -> 31. +. (20. *. wlog e))
         (fun e -> 3. +. (3. *. wlog e))
         ~covers:
           [
