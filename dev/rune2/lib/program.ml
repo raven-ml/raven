@@ -420,6 +420,15 @@ let calls = function
 
 let custom = function Custom _ | Linear _ -> true | _ -> false
 
+(* Whether [p] or a program it carries checks. *)
+let rec checks (p : t) =
+  Array.exists
+    (function
+      | Op { op = Nx.Prim.Check _; _ } -> true
+      | Op _ -> false
+      | Do { c; _ } -> List.exists checks (carried_by c))
+    p.eqns
+
 (* A site of [body] with the compiling of [s], no compiled form and no derived
    program. *)
 let bare s body =
@@ -1541,6 +1550,7 @@ and prune p ~outputs =
       match eq with
       | Op { op = Check _; _ } -> true
       | Do _ when emitting eq || calling eq -> true
+      | Do { c; _ } when List.exists checks (carried_by c) -> true
       | Op _ | Do _ -> !read
     in
     if keep then begin
@@ -1861,6 +1871,214 @@ let replayed p ~unknown =
         ~slots:p.slots
     in
     Some (keeping, replay)
+
+(* Outlining *)
+
+(* Whether [eq] stays in an outlined program: it runs a callback, or adds to a
+   total, which no compiled program does. *)
+let hosted = function
+  | Do { c = Add _; _ } -> true
+  | Do { c; _ } -> runs c
+  | Op _ -> false
+
+let rec outlined ~fresh ~name ~compile (p : t) =
+  if not (runs_in p) then p
+  else
+    let owner = p.owner and n = Array.length p.eqns in
+    let var (V x) =
+      match Nx.Prim.payload owner x with Some (Var k) -> Some k | _ -> None
+    in
+    let reads = function
+      | Op { op; _ } ->
+          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+          List.map (fun (Nx.Prim.Any x) -> V x) xs
+      | Do { c; _ } -> operands c
+    in
+    (* The variables each equation binds. *)
+    let binds =
+      Array.mapi
+        (fun i -> function
+          | Op { by; op; base } ->
+              List.mapi (fun k _ -> base + k) (result_forms p ~by op)
+          | Do { c; base } -> (
+              match forms c with
+              | fs -> List.init (Array.length fs) (fun k -> base + k)
+              | exception Invalid_argument _ -> construct_results p i base))
+        p.eqns
+    in
+    (* Each variable's equation, [-1] for a parameter; its last reader, [n] for
+       an output; and a value of it as read. *)
+    let def = Array.make p.slots (-1) in
+    Array.iteri (fun i ks -> List.iter (fun k -> def.(k) <- i) ks) binds;
+    let last = Array.make p.slots (-1) and value = Array.make p.slots None in
+    let see i v =
+      match var v with
+      | Some k ->
+          last.(k) <- Int.max last.(k) i;
+          if Option.is_none value.(k) then value.(k) <- Some v
+      | None -> ()
+    in
+    Array.iteri (fun i eq -> List.iter (see i) (reads eq)) p.eqns;
+    Array.iter (see n) p.outputs;
+    let value k = Option.get value.(k) in
+    (* Every equation's results bind fresh variables from [p.slots], a stretch's
+       and a hosted equation's alike, so that each equation's variables run up
+       to the next one's base, as {!prune} reads them. *)
+    let renamed = Array.make p.slots (-1) and next = ref p.slots in
+    let m =
+      {
+        f =
+          (fun (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t ->
+            match Nx.Prim.payload owner x with
+            | Some (Var k) when renamed.(k) >= 0 ->
+                Nx.Prim.traced owner (Nx.Prim.form x) (Var renamed.(k))
+            | _ -> x);
+      }
+    in
+    let eqns = ref [] and stamp = Array.make p.slots (-1) in
+    let received = ref [] in
+    (* Equations [i] to [j - 1] as one call, over the variables they read from
+       before [i], to those read from [j] on. *)
+    let stretch i j =
+      let ins = ref [] and outs = ref [] in
+      for e = i to j - 1 do
+        List.iter
+          (fun v ->
+            match var v with
+            | Some k when def.(k) < i && stamp.(k) <> i ->
+                stamp.(k) <- i;
+                ins := k :: !ins
+            | _ -> ())
+          (reads p.eqns.(e));
+        List.iter (fun k -> if last.(k) >= j then outs := k :: !outs) binds.(e)
+      done;
+      let ins = List.rev !ins and outs = List.rev !outs in
+      let body =
+        make ~owner ~params:(Array.of_list ins)
+          (Array.to_list (slice p.eqns i j))
+          ~outputs:(Array.of_list (List.map value outs))
+          ~adds:[||] ~slots:p.slots
+      in
+      if outs <> [] || body.emits || checks body then begin
+        let args = List.map (fun k -> map_values m [| value k |]) ins in
+        let forms =
+          List.map
+            (fun k ->
+              let (F f) = form (value k) in
+              F { f with layout = contiguous (shape_of f) })
+            ins
+        in
+        let site = site ~name ~compile body (Array.of_list forms) in
+        let c = Call { body; args = Array.concat args; site; seeds = [||] } in
+        eqns := Do { c; base = !next } :: !eqns;
+        List.iter
+          (fun k ->
+            renamed.(k) <- !next;
+            incr next)
+          outs
+      end
+    in
+    let start = ref 0 in
+    Array.iteri
+      (fun i eq ->
+        match eq with
+        | Do { c; base } when hosted eq ->
+            if !start < i then stretch !start i;
+            let c = inner ~name ~compile (map_operands m c) in
+            List.iter
+              (fun v ->
+                Option.iter (fun k -> received := k :: !received) (var v))
+              (operands c);
+            let at = !next in
+            eqns := Do { c; base = at } :: !eqns;
+            List.iter
+              (fun k ->
+                renamed.(k) <- at + k - base;
+                next := Int.max !next (at + k - base + 1))
+              binds.(i);
+            start := i + 1
+        | Op _ | Do _ -> ())
+      p.eqns;
+    if !start < n then stretch !start n;
+    let outputs = map_values m p.outputs in
+    if fresh then
+      copied ~name ~compile owner eqns next ~received:!received outputs;
+    make ~owner ~params:p.params (List.rev !eqns) ~outputs ~adds:p.adds
+      ~slots:!next
+
+(* Each of [outputs] that is no stretch's result, one an earlier output is
+   already, or one a hosted equation reads ([received]), which a callback may
+   keep, replaced by the result of one more call, which returns its arguments: a
+   compiled program returns each in memory of its own. *)
+and copied ~name ~compile owner eqns next ~received outputs =
+  let var (V x) =
+    match Nx.Prim.payload owner x with Some (Var k) -> Some k | _ -> None
+  in
+  let called = Array.make !next false in
+  List.iter
+    (function
+      | Do { c = Call { body; _ } as c; base } when not (runs c) ->
+          for k = base to base + Array.length body.outputs - 1 do
+            called.(k) <- true
+          done
+      | Do _ | Op _ -> ())
+    !eqns;
+  List.iter (fun k -> called.(k) <- false) received;
+  let routed = ref [] in
+  Array.iteri
+    (fun j v ->
+      match var v with
+      | Some k when called.(k) -> called.(k) <- false
+      | Some _ | None -> routed := j :: !routed)
+    outputs;
+  let routed = Array.of_list (List.rev !routed) in
+  if routed <> [||] then begin
+    let ins = ref [] in
+    Array.iter
+      (fun j ->
+        match var outputs.(j) with
+        | Some k when not (List.mem_assoc k !ins) ->
+            ins := (k, outputs.(j)) :: !ins
+        | Some _ | None -> ())
+      routed;
+    let ins = Array.of_list (List.rev !ins) in
+    let body =
+      make ~owner ~params:(Array.map fst ins) []
+        ~outputs:(Array.map (fun j -> outputs.(j)) routed)
+        ~adds:[||] ~slots:!next
+    in
+    let forms =
+      Array.map
+        (fun (_, v) ->
+          let (F f) = form v in
+          F { f with layout = contiguous (shape_of f) })
+        ins
+    in
+    let site = site ~name ~compile body forms in
+    let args = Array.map snd ins in
+    eqns :=
+      Do { c = Call { body; args; site; seeds = [||] }; base = !next } :: !eqns;
+    Array.iter
+      (fun j ->
+        let (V x) = outputs.(j) in
+        outputs.(j) <- V (Nx.Prim.traced owner (Nx.Prim.form x) (Var !next));
+        incr next)
+      routed
+  end
+
+(* [c] with each program it evaluates outlined. *)
+and inner ~name ~compile c =
+  let o = outlined ~fresh:false ~name ~compile in
+  match c with
+  | Scan s -> Scan { s with step = o s.step }
+  | Iterate s -> Iterate { s with step = o s.step; until = o s.until }
+  | Switch s -> Switch { s with branches = Array.map o s.branches }
+  | Remat r -> Remat { r with body = o r.body }
+  | Custom r -> Custom { r with primal = o r.primal }
+  | Linear r -> Linear { r with apply = Option.map o r.apply }
+  | c -> c
+
+let outline ~name ~compile p = outlined ~fresh:true ~name ~compile p
 
 let rec pp_program names ~indent ppf (p : t) =
   let pad = String.make indent ' ' in

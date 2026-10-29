@@ -100,6 +100,312 @@ let test_jit () =
   equal ~msg:"first" (Testable.float 1e-12) (exp 1. +. 1.) (Nx.item [] y1);
   equal ~msg:"second" (Testable.float 1e-12) (exp 2. +. 1.) (Nx.item [] y2)
 
+(* Compiled: a call evaluates its program around the callback, each stretch
+   without one a compiled call, which compiles once. *)
+let test_outlined () =
+  let cb, log = logged (fun v -> Nx.exp v) in
+  let g = Rune.jit tt (fun x -> Nx.add_s (cb (Nx.sin (Nx.mul_s x 2.))) 1.) in
+  let calls () = (Rune.evaluations (), Rune.variants ()) in
+  let delta (e, v) =
+    let e', v' = calls () in
+    (e' - e, v' - v)
+  in
+  let pair = Testable.(pair int int) in
+  let before = calls () in
+  let y1 = g (scalar 0.5) in
+  equal ~msg:"first: evaluated, stretches compiled" pair (1, 2) (delta before);
+  let before = calls () in
+  let y2 = g (scalar 1.) in
+  equal ~msg:"second: evaluated, nothing compiled" pair (1, 0) (delta before);
+  equal ~msg:"calls" fl [ [ sin 1. ]; [ sin 2. ] ] (log ());
+  equal ~msg:"first" (Testable.float 1e-12) (exp (sin 1.) +. 1.) (Nx.item [] y1);
+  equal ~msg:"second" (Testable.float 1e-12)
+    (exp (sin 2.) +. 1.)
+    (Nx.item [] y2);
+  (* A scan whose step calls one runs row by row, its step's stretches compiled
+     calls. *)
+  let cb, log = logged Nx.cos in
+  let step c x =
+    let y = cb (Nx.mul_s x 3.) in
+    (Nx.add c (Nx.sin y), y)
+  in
+  let s = T.(tensor @-> returns (pair tensor tensor)) in
+  let g =
+    Rune.jit s (fun xs ->
+        Rune.scan T.tensor T.tensor T.tensor ~f:step
+          ~init:(Nx.zeros f64 [| 2 |]) xs)
+  in
+  let xs = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let before = calls () in
+  let c, ys = g xs in
+  let e, v = delta before in
+  equal ~msg:"scan: first, evaluated" Testable.int 1 e;
+  (* A row whose carry lies otherwise than another's has a variant of its
+     own. *)
+  at_least ~msg:"scan: first, stretches compiled" Testable.int ~than:2 v;
+  let before = calls () in
+  ignore (g xs);
+  equal ~msg:"scan: second" pair (1, 0) (delta before);
+  let rows = [ [ 3.; 6. ]; [ 9.; 12. ]; [ 15.; 18. ] ] in
+  equal ~msg:"scan: calls" fl (rows @ rows) (log ());
+  let cy = List.map (List.map cos) rows in
+  equal ~msg:"scan: outputs"
+    Testable.(list (float 1e-12))
+    (List.concat cy) (floats ys);
+  let sum j = List.fold_left (fun a r -> a +. sin (List.nth r j)) 0. cy in
+  equal ~msg:"scan: carry"
+    Testable.(list (float 1e-12))
+    [ sum 0; sum 1 ]
+    (floats c)
+
+(* [split f] is [f ()], whose first call of a compiled function holding a
+   callback compiles a stretch of its own. *)
+let split f =
+  let v = Rune.variants () in
+  let r = f () in
+  at_least ~msg:"stretches compiled" Testable.int ~than:1 (Rune.variants () - v);
+  r
+
+exception Big of float
+
+(* Compiled: a custom rule whose primal calls one between two stretches, its
+   residual computed by the first, which the callback reads. A stretch that only
+   checks still checks where nothing reads it. *)
+let test_outlined_rule () =
+  let cb, log = logged Nx.exp in
+  let f =
+    Rune.custom_jvp T.tensor T.tensor (fun x ->
+        let a = Nx.mul_s x 2. in
+        (Nx.sin (cb a), fun t -> Nx.mul t a))
+  in
+  let g = Rune.jit tt f in
+  let y1 = split (fun () -> g (scalar 0.5)) and y2 = g (scalar 1.) in
+  equal ~msg:"calls" fl [ [ 1. ]; [ 2. ] ] (log ());
+  equal ~msg:"first" (Testable.float 1e-12) (sin (exp 1.)) (Nx.item [] y1);
+  equal ~msg:"second" (Testable.float 1e-12) (sin (exp 2.)) (Nx.item [] y2);
+  let cb, log = logged Fun.id in
+  let f =
+    Rune.custom_jvp T.tensor T.tensor (fun x ->
+        Nx.check T.tensor
+          (Nx.less x (Nx.scalar_like x 3.))
+          x
+          (fun _ d -> Big (Nx.item [] d));
+        let a = Nx.exp x in
+        (cb x, fun t -> Nx.mul t a))
+  in
+  let g = Rune.jit tt f in
+  raises ~msg:"a check" (Big 4.) (fun () -> ignore (g (scalar 4.)));
+  equal ~msg:"no call after the check" fl [] (log ());
+  equal ~msg:"a passing check" Testable.float_exact 1.
+    (Nx.item [] (g (scalar 1.)))
+
+(* A set no kernel library computes on, as a GPU set is outside a compiler: a
+   memory device and an io device. *)
+module Bare =
+  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.io_device () ])
+
+(* On such a set the stretches compile, and the function receives its operands
+   where they lie and places them itself. *)
+let test_outlined_bare () =
+  let at = Nx.Placement.device Bare.v (Nx_support.memory 3) in
+  let x = Nx.place at (vec [| 0.5; 1. |]) in
+  let seen = ref [] in
+  let host v =
+    seen := Nx.Placement.equal (Nx.placement v) at :: !seen;
+    Nx.place (Nx.placement v) (Nx.exp (Nx.place Nx.Host.on v))
+  in
+  let s = T.(tensor @-> returns tensor) in
+  let g =
+    Rune.jit s (fun x ->
+        Nx.add_s (Rune.callback s ~like:x host (Nx.mul_s x 2.)) 1.)
+  in
+  let before = Rune.evaluations () in
+  let y = g x in
+  equal ~msg:"evaluated once" Testable.int 1 (Rune.evaluations () - before);
+  equal ~msg:"operands where they lie" Testable.(list bool) [ true ] !seen;
+  equal ~msg:"placement" Testable.bool true
+    (Nx.Placement.equal (Nx.placement y) at);
+  equal ~msg:"values"
+    Testable.(list (float 1e-12))
+    [ exp 1. +. 1.; exp 2. +. 1. ]
+    (floats (Nx.place Nx.Host.on y));
+  (* A result the function returns unchanged is the call's own memory. *)
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let g = Rune.jit s (fun x -> Rune.callback s ~like:x Fun.id x) in
+  let y = g x in
+  equal ~msg:"own memory" Testable.bool false
+    (Rig.Buffer.overlaps (memory x) (memory y));
+  equal ~msg:"its values"
+    Testable.(list float_exact)
+    [ 0.5; 1. ]
+    (floats (Nx.place Nx.Host.on y));
+  (* A stretch the compiler declines, as one holding a check off the host, and a
+     call with donated arguments are evaluated by nx, which raises there. *)
+  let g =
+    Rune.jit s (fun x ->
+        Nx.check T.tensor (Nx.less x (Nx.scalar_like x 3.)) x (fun _ _ -> Exit);
+        Rune.callback s ~like:x Fun.id x)
+  in
+  raises_match ~msg:"a check off the host"
+    (Exn.invalid_arg ~substring:"has no kernels") (fun () -> ignore (g x));
+  let g = Rune.jit s (fun x -> Nx.add_s (Rune.callback s ~like:x host x) 1.) in
+  raises_match ~msg:"donated" (Exn.invalid_arg ~substring:"has no kernels")
+    (fun () -> ignore (g (Nx.donate (Nx.place at (vec [| 0.5; 1. |])))));
+  (* A loop's step runs its stretches compiled, and nx stacks the rows of its
+     outputs, which raises there. *)
+  let step c r =
+    let y = Rune.callback s ~like:r host (Nx.mul_s r 2.) in
+    (Nx.add c y, y)
+  in
+  let init = Nx.place at (vec [| 0.; 0. |]) in
+  let carry xs =
+    fst
+      (Rune.scan T.tensor T.tensor T.unit
+         ~f:(fun c r -> (fst (step c r), ()))
+         ~init xs)
+  in
+  let rows xs = snd (Rune.scan T.tensor T.tensor T.tensor ~f:step ~init xs) in
+  let xs = Nx.place at (Nx.create f64 [| 2; 2 |] [| 0.5; 1.; 0.; 0.25 |]) in
+  equal ~msg:"a loop's carry"
+    Testable.(list (float 1e-12))
+    [ exp 1. +. 1.; exp 2. +. exp 0.5 ]
+    (floats (Nx.place Nx.Host.on (Rune.jit s carry xs)));
+  raises_match ~msg:"a loop's rows"
+    (Exn.invalid_arg ~substring:"has no kernels")
+    (fun () -> ignore (Rune.jit s rows xs))
+
+(* Compiled, a switch's taken branch, an iterate's steps and tests and a remat's
+   body call it as eager code does, each with stretches before and after it. *)
+let law_outlined_switch k =
+  let cbs =
+    List.init 3 (fun j -> logged (fun v -> Nx.add_s v (float_of_int j)))
+  in
+  let g =
+    Rune.jit tt (fun x ->
+        Rune.switch T.tensor (Nx.cast Nx.int32 x)
+          (List.map (fun (cb, _) () -> Nx.mul_s (cb (Nx.mul_s x 2.)) 3.) cbs))
+  in
+  let x = float_of_int k in
+  let y = split (fun () -> g (scalar x)) in
+  equal ~msg:"result" Testable.float_exact
+    (3. *. ((2. *. x) +. x))
+    (Nx.item [] y);
+  List.iteri
+    (fun j (_, log) ->
+      equal
+        ~msg:(Printf.sprintf "branch %d" j)
+        fl
+        (if j = k then [ [ 2. *. x ] ] else [])
+        (log ()))
+    cbs
+
+let law_outlined_iterate k =
+  cover "no trip" (k = 0);
+  let steps, slog = logged (fun v -> Nx.add_s v 1.) in
+  let tests, ulog = logged Fun.id in
+  let g =
+    Rune.jit tt (fun n ->
+        let until c = Nx.greater_equal (tests (Nx.mul_s c 1.)) n in
+        let f c = Nx.sub_s (steps (Nx.add_s c 1.)) 1. in
+        Nx.mul_s (Rune.iterate T.tensor ~max:10 ~until ~f (scalar 0.)) 2.)
+  in
+  let r = split (fun () -> g (scalar (float_of_int k))) in
+  equal ~msg:"result" Testable.float_exact (2. *. float_of_int k) (Nx.item [] r);
+  let upto a b = List.init (b - a) (fun i -> [ float_of_int (a + i) ]) in
+  equal ~msg:"steps" fl (upto 1 (k + 1)) (slog ());
+  equal ~msg:"tests" fl (upto 0 (k + 1)) (ulog ())
+
+let test_outlined_remat () =
+  let cb, log = logged Nx.exp in
+  let g = Rune.jit tt (Rune.remat tt (fun x -> Nx.sin (cb (Nx.mul_s x 2.)))) in
+  let y = split (fun () -> g (scalar 0.5)) in
+  equal ~msg:"value" (Testable.float 1e-12) (sin (exp 1.)) (Nx.item [] y);
+  equal ~msg:"calls" fl [ [ 1. ] ] (log ())
+
+(* Compiled, a check that fails raises before a later callback runs; an emission
+   between stretches is offered as eager code offers it; a donated argument is
+   consumed. *)
+let test_outlined_effects () =
+  let cb, log = logged Fun.id in
+  let g =
+    Rune.jit tt (fun x ->
+        Nx.check T.tensor
+          (Nx.less x (Nx.scalar_like x 3.))
+          x
+          (fun _ d -> Big (Nx.item [] d));
+        cb (Nx.mul_s x 2.))
+  in
+  raises ~msg:"a failed check" (Big 4.) (fun () -> ignore (g (scalar 4.)));
+  equal ~msg:"no call after it" fl [] (log ());
+  equal ~msg:"a passing check" Testable.float_exact 2.
+    (Nx.item [] (g (scalar 1.)));
+  equal ~msg:"calls once it passes" fl [ [ 2. ] ] (log ());
+  let p = Rune.Probe.make T.tensor in
+  let cb, log = logged Nx.exp in
+  let f x =
+    let a = Nx.mul_s x 2. in
+    Rune.Probe.emit p a;
+    let b = cb a in
+    Rune.Probe.emit p (Nx.add_s b 1.);
+    Nx.sin b
+  in
+  let offers g =
+    let r, l = Rune.Probe.collect p (fun () -> g (vec [| 0.5; 1. |])) in
+    (floats (Result.get_ok r), List.map floats l)
+  in
+  let ofl = Testable.(pair (list (float 1e-12)) (list (list (float 1e-12)))) in
+  let eager = offers f in
+  equal ~msg:"emissions" ofl eager (offers (Rune.jit tt f));
+  equal ~msg:"emissions: calls" fl [ [ 1.; 2. ]; [ 1.; 2. ] ] (log ());
+  let cb, log = logged Nx.exp in
+  let g = Rune.jit tt (fun x -> Nx.add_s (cb (Nx.mul_s x 2.)) 1.) in
+  let x = vec [| 0.5; 1. |] in
+  let y = g (Nx.donate x) in
+  equal ~msg:"donated: values"
+    Testable.(list (float 1e-12))
+    [ exp 1. +. 1.; exp 2. +. 1. ]
+    (floats y);
+  equal ~msg:"donated: calls" fl [ [ 1.; 2. ] ] (log ());
+  raises_match ~msg:"donated: consumed" (Exn.invalid_arg ~substring:"donated")
+    (fun () -> ignore (Nx.to_array x))
+
+(* Compiled, a result that a callback also received is in memory of its own,
+   which the callback may keep, and so is a result that repeats another. *)
+let test_outlined_kept () =
+  let kept = ref None in
+  let keep v =
+    kept := Some v;
+    Nx.add_s v 1.
+  in
+  let g =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor tensor))
+      (fun x ->
+        let a = Nx.mul_s x 2. in
+        (a, Rune.callback tt ~like:a keep a))
+  in
+  let a, b = g (vec [| 1.; 2. |]) in
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  equal ~msg:"own memory" Testable.bool false
+    (Rig.Buffer.overlaps (memory a) (memory (Option.get !kept)));
+  equal ~msg:"values"
+    Testable.(pair (list float_exact) (list float_exact))
+    ([ 2.; 4. ], [ 3.; 5. ])
+    (floats a, floats b);
+  let g =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor (pair tensor tensor)))
+      (fun x ->
+        let a = Nx.mul_s x 2. in
+        (a, (Rune.callback tt ~like:a Fun.id x, a)))
+  in
+  let a, (_, a') = g (vec [| 1.; 2. |]) in
+  equal ~msg:"a repeated result, own memory" Testable.bool false
+    (Rig.Buffer.overlaps (memory a) (memory a'));
+  equal ~msg:"a repeated result's values"
+    Testable.(list float_exact)
+    [ 2.; 4. ] (floats a')
+
 (* Under vmap: once per lane, in lane order, on the lane's rows; with [~lanes],
    its function once on every lane. *)
 let law_vmap xs =
@@ -537,6 +843,18 @@ let () =
                law_iterate;
              prop "a switch, its taken branch" Gen.(int_range 0 2) law_switch;
              test "a jit, once per execution" test_jit;
+             test "a jit, its stretches compiled" test_outlined;
+             test "a jit, a custom rule's stretches" test_outlined_rule;
+             prop "a jit, a switch's taken branch"
+               Gen.(int_range 0 2)
+               law_outlined_switch;
+             prop "a jit, an iterate's trips and tests"
+               Gen.(int_range 0 4)
+               law_outlined_iterate;
+             test "a jit, a remat's body" test_outlined_remat;
+             test "a jit, checks, emissions and donations" test_outlined_effects;
+             test "a jit, a result the function received" test_outlined_kept;
+             test "a jit on a set without kernels" test_outlined_bare;
            ];
          group "maps"
            [

@@ -402,6 +402,15 @@ let jit_rows () =
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
       (fun f -> synced (f a b));
+    (* A step that calls OCaml between two additions: its program evaluated
+       around the callback, each addition a compiled call. *)
+    warm "callback-1-hit"
+      (fun () ->
+        let s = Nx.Ptree.(tensor @-> returns tensor) in
+        Rune.jit (pair_fn ()) (fun a b ->
+            let c = Nx.add a b in
+            Nx.add (Rune.callback s ~like:c Fun.id c) b))
+      (fun f -> synced (f a b));
     warm "jit run chain"
       (fun () -> Rune.jit' chain_sum)
       (fun f -> synced (f x));

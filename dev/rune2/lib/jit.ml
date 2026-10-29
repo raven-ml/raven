@@ -370,8 +370,10 @@ let delivered (body : Program.t) ems out =
       (Array.sub out !at (Array.length out - !at))
 
 (* [compiled name body forms] runs [body] compiled, made the first time it runs,
-   or evaluated where the compiler declines it. *)
-let compiled ~beam ~parallel name body forms =
+   or evaluated where the compiler declines it. A declined program that runs a
+   callback is evaluated outlined: each stretch without one is a compiled call
+   of its own. *)
+let rec compiled ~beam ~parallel name body forms =
   let made = Atomic.make None and lock = Mutex.create () in
   let get () =
     match Atomic.get made with
@@ -388,17 +390,24 @@ let compiled ~beam ~parallel name body forms =
             in
             let c = Compile.make ~name ?beam ?parallel p forms in
             Result.iter_error (report "evaluates its program uncompiled: %s") c;
-            Atomic.set made (Some (p, ems, c));
-            (p, ems, c))
+            let q =
+              if Result.is_ok c then p
+              else
+                let compile = compiled ~beam ~parallel name in
+                Program.outline ~name ~compile p
+            in
+            let r = (q, q != p, ems, c) in
+            Atomic.set made (Some r);
+            r)
   in
   fun args ->
-    let p, ems, c = get () in
+    let p, fresh, ems, c = get () in
     let out =
       match c with
       | Ok c -> Compile.run c args
       | Error _ ->
           Compile.evaluated_call ();
-          Compile.evaluate ~name p args
+          Compile.evaluate ~fresh ~name p args
     in
     delivered body ems out
 

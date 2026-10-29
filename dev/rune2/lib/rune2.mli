@@ -1497,7 +1497,23 @@ val jit :
     It also declines a program whose device computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them and
-    lends nothing. *)
+    lends nothing.
+
+    A declined program that runs a {!callback} is {e split} around it. Each
+    maximal {e stretch} of its operations that runs no callback and adds to no
+    total is a compiled call of its own, compiled once per variant as a program
+    is, which computes as a compiled call does ({!section-numerics}). The
+    callbacks and additions between the stretches are evaluated. A loop, a
+    switch, a {!remat} or a custom rule whose function runs a callback is
+    evaluated, its step, branch or function split alike. A result that no
+    stretch computes, that repeats an earlier result or that a callback receives
+    passes through one more compiled call, which returns it in fresh memory.
+    Each compiled call costs a dispatch, a loop holding a callback runs step by
+    step, and a switch holding one reads its index on the host. A stretch the
+    compiler declines is evaluated, so on a set without kernels ({!Nx.devices})
+    a stretch that holds a check off the host or values on several devices
+    raises, and so do a call with donated arguments and a loop holding a
+    callback whose outputs it stacks, since nx stacks the rows. *)
 
 (** {2:inspect Inspecting a trace} *)
 
@@ -1639,8 +1655,8 @@ val derivations : unit -> int
 
 val evaluations : unit -> int
 (** [evaluations ()] is the number of compiled calls on the calling domain that
-    ran their program evaluated by nx, the compiler having declined it, for the
-    suites. *)
+    ran their program evaluated by nx or split around a callback
+    ({!section-evaluated}), the compiler having declined it, for the suites. *)
 
 val variants : unit -> int
 (** [variants ()] is the number of compiled variants that calls on the calling

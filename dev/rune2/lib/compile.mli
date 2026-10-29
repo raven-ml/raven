@@ -113,8 +113,15 @@ val evaluated_call : unit -> unit
     evaluates a program {!make} declined. *)
 
 val evaluate :
-  name:string -> Program.t -> Program.value array -> Program.value array
-(** [evaluate ~name p args] is [p]'s outputs evaluated by nx over [args], none
-    of them traced, each a copy in memory of its own. Where [args] hold
-    donated handles, it claims every argument first, as {!run} does, with
-    [name] in its messages, and evaluates [p] over their arrays. *)
+  fresh:bool ->
+  name:string ->
+  Program.t ->
+  Program.value array ->
+  Program.value array
+(** [evaluate ~fresh ~name p args] is [p]'s outputs evaluated over [args], its
+    operations by nx and its calls as their sites run them, none of them traced,
+    each a copy in memory of its own. Where [fresh] holds, [p]'s outputs are
+    each already in memory of its own, as those of {!Program.outline}'s programs
+    are, and are not copied. Where [args] hold donated handles, it claims every
+    argument first, as {!run} does, with [name] in its messages, and evaluates
+    [p] over their arrays. *)

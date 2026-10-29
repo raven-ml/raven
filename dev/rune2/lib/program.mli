@@ -520,8 +520,10 @@ val holds : (construct -> bool) -> t -> bool
 
 val prune : t -> outputs:int array -> t
 (** [prune p ~outputs] is [p] with its outputs [outputs], in order, then its
-    totals' running values out. It keeps the equations they read, every
-    check and every callback. *)
+    totals' running values out. It keeps the equations they read, every check,
+    emission and callback, and every construct whose programs hold one. An
+    equation's results are the variables from its base up to the next
+    equation's, so [p]'s bases must increase in order. *)
 
 val replayed : t -> unknown:bool array -> (t * t) option
 (** [replayed p ~unknown] is [Some (keeping, replay)], where [unknown] marks
@@ -533,6 +535,26 @@ val replayed : t -> unknown:bool array -> (t * t) option
     parameters after its arguments, in the same order; it gives [p]'s
     outputs. It is [None] where a kept equation reads a value that depends on
     an unknown argument, adds to a total or emits. *)
+
+val outline :
+  name:string ->
+  compile:(t -> form array -> value array -> value array) ->
+  t ->
+  t
+(** [outline ~name ~compile p] is [p] with each maximal run of its equations
+    that runs no callback, as {!replayed} counts them, and adds to no total as
+    one {!Call}: of a program over the values the run reads from before it, to
+    those read after it, at the site {!site} makes of it with [name] and
+    [compile]. A run that nothing reads after it, and that neither checks nor
+    emits, is dropped. The programs that a construct running a callback
+    evaluates, a loop's, a switch's, a remat's, a custom rule's primal and a
+    linear call's function, are outlined alike. Every equation's results bind
+    variables numbered from [p]'s slots on, in order, so that each equation's
+    results run up to the next one's base ({!prune}). Each of [p]'s outputs that
+    no such call returns, that an earlier output already is, or that an equation
+    left in place reads, which a callback may keep, is the result of one more
+    call, of a program that returns its arguments, so that every output is in
+    memory of its own. It is [p] where no equation runs a callback. *)
 
 (** {1:sites Sites}
 

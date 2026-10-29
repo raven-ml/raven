@@ -2261,7 +2261,7 @@ let eval_all (p : Program.t) args =
    may outlive the consumer. A value over an argument's memory shares it for
    good, so a later donation of that argument computes into fresh memory: the
    cost of this path. *)
-let evaluated p args arrays =
+let evaluated ~fresh p args arrays =
   let values = Array.mapi (fun k v -> over v (arrays k)) args in
   (* A callback may keep what it receives, so it receives copies. *)
   let values =
@@ -2269,15 +2269,17 @@ let evaluated p args arrays =
       Array.map (fun (V x) -> V (Nx.copy x)) values
     else values
   in
-  Array.map (fun (V y) -> V (Nx.copy y)) (eval_all p values)
+  let out = eval_all p values in
+  if fresh then out else Array.map (fun (V y) -> V (Nx.copy y)) out
 
-let evaluate ~name p args =
+let evaluate ~fresh ~name p args =
   if Array.exists (fun (V x) -> Nx.Prim.donated x) args then
-    consumed ~by:name args (fun arrays _ -> evaluated p args arrays)
+    consumed ~by:name args (fun arrays _ -> evaluated ~fresh p args arrays)
   else
     (* Each result is a copy. [eval] returns an argument or a constant as
        itself, and a reshape of one lies over its memory. *)
-    Array.map (fun (V y) -> V (Nx.copy y)) (eval_all p args)
+    let out = eval_all p args in
+    if fresh then out else Array.map (fun (V y) -> V (Nx.copy y)) out
 
 (* The element of the one-element array over [b], read on the host. *)
 let element (type v s) (dt : (v, s) D.t) b : A.any =
@@ -2328,7 +2330,7 @@ let rec run t args =
   match (variant t layouts phases donated (settings t.shaping)).linked with
   | Error _ ->
       evaluated_call ();
-      evaluated p args arrays
+      evaluated ~fresh:false p args arrays
   | Ok v -> linked t v args leaves take
 
 (* [linked t v args leaves take] runs the variant [v] of [t] on [args], whose
