@@ -2942,10 +2942,65 @@ let law_moved c =
   read ();
   less int ~than:c.under got
 
+(* The bytes [d] holds after four rounds of collection, each of which
+   returns to the device what it collected, and its cache freed. *)
+let settled d =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create d 0);
+    Rig.free_cache d
+  done;
+  Rig.allocated d
+
+(* The bytes each of the four memory devices holds more after [f ()], read
+   settled before it. A value read by a device that lacks its window is
+   gathered there into memory of the device's own. *)
+let grown f =
+  let devices = List.init 4 m in
+  let before = List.map settled devices in
+  let y = f () in
+  (y, List.map2 (fun d b -> Rig.allocated d - b) devices before)
+
+(* A scatter into a target split over four devices, of positions and
+   updates whole on each, writes each tile where it lies: each device holds
+   its tile of the results and the positions it shifts, under two tiles.
+   Read whole, each device would gather the four tiles, as placing the
+   target whole on each device does. *)
+let test_scatter_in_place () =
+  let n = 1 lsl 16 in
+  let tile = 4 * (n / 4) in
+  let split = Set4.split ~axis:0 in
+  let target () = Nx.place split (Nx.zeros D.Float32 [| n |]) in
+  let positions =
+    Nx.place Set4.on
+      (Nx.Repr.of_array Nx.Host.v
+         (A.of_array D.Int64 [| 4 |] [| 0L; 17000L; 40000L; 65535L |]))
+  in
+  let updates = Nx.place Set4.on (Nx.ones D.Float32 [| 4 |]) in
+  let scatter x = Nx.scatter ~axis:0 positions updates x in
+  ignore (elements (scatter (target ())));
+  let x = target () in
+  let y, grew = grown (fun () -> scatter x) in
+  equal (placement ()) split (Nx.placement y);
+  List.iteri
+    (fun k g -> less ~msg:(Printf.sprintf "m%d" k) int ~than:(2 * tile) g)
+    grew;
+  let _, whole = grown (fun () -> Nx.place Set4.on x) in
+  List.iteri
+    (fun k g ->
+      at_least ~msg:(Printf.sprintf "m%d, the target whole" k) int ~than:(4 * tile) g)
+    whole
+
 let traffic =
-  cases
-    ~name:(fun c -> c.name)
-    "a fold over a cut axis moves partials, not its operands" moved law_moved
+  group "traffic"
+    [
+      cases
+        ~name:(fun c -> c.name)
+        "a fold over a cut axis moves partials, not its operands" moved
+        law_moved;
+      test "a scatter into a cut target writes each tile where it lies"
+        test_scatter_in_place;
+    ]
 
 let placed =
   group "placements"
