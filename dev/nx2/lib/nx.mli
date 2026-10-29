@@ -4610,10 +4610,11 @@ module Rng : sig
       positive value. It inverts the smaller of the masses below and above
       [x], held as logarithms in the tails, so that bounds far out on one side
       keep their digits, and its cost does not depend on the interval's mass.
-      A draw lies in the interval, and at float32 within [6·2{^-23}] plus 3
-      units in the last place of the exact solution. The masses at each bound
-      are computed once per element of the bound as given, so a scalar bound
-      costs one.
+      A draw lies in the interval, and within [6ε] plus 3 units in the last
+      place of the exact solution, [ε] being [2{^-23}] at float32 and
+      [2{^-52}] at float64, however far out the bounds lie. The masses at each
+      bound are computed once per element of the bound as given, so a scalar
+      bound costs one.
 
       Raises [Invalid_argument] if the shapes do not broadcast or an element of
       [lower] or [upper] is NaN. *)

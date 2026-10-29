@@ -1498,10 +1498,24 @@ let inv_sqrt_2pi = 1. /. sqrt (2. *. Float.pi)
 let pdf x =
   if Float.is_finite x then inv_sqrt_2pi *. exp (-0.5 *. x *. x) else 0.
 
+(* [erfc (x / sqrt 2)] to the relative precision of [Float.erfc]: [x / sqrt 2]
+   is held as [th + tl], and [erfc (th + tl)] taken to first order in [tl],
+   since rounding [x / sqrt 2] alone moves the mass by [x^2] units of its last
+   place. *)
+let inv_sqrt2 = 0x1.6a09e667f3bcdp-1
+let inv_sqrt2_lo = -4.833646656726457e-17
+
+let erfc_over_sqrt2 x =
+  let th = x *. inv_sqrt2 in
+  let tl = Float.fma x inv_sqrt2 (-.th) +. (x *. inv_sqrt2_lo) in
+  let e = Float.erfc th in
+  if e = 0. || not (Float.is_finite x) then e
+  else e -. (2. /. Float.sqrt Float.pi *. Float.exp (-.th *. th) *. tl)
+
 (* The standard normal's masses below and above [x], each to its relative
    precision. *)
-let below x = 0.5 *. Float.erfc (-.x /. sqrt 2.)
-let above x = 0.5 *. Float.erfc (x /. sqrt 2.)
+let below x = 0.5 *. erfc_over_sqrt2 (-.x)
+let above x = 0.5 *. erfc_over_sqrt2 x
 
 (* The standard normal conditioned on [[a, b]], [a <= b]: its mean, variance
    and CDF, from the masses on the side of 0 that keeps their digits. *)
@@ -1542,6 +1556,150 @@ let rows dt k x = host_of dt [| n; k |] (Array.make (n * k) x)
 (* [xs] as rows of [k]. *)
 let rows_of k xs =
   Array.init (Array.length xs / k) (fun i -> Array.sub xs (i * k) k)
+
+(* Tails
+
+   Intervals from 5 standard deviations out to the dtype's largest float, on
+   either side, their bounds in either order, the far one unbounded, up to 3
+   wide, or 128 to 512 units in the last place of the near one, where the law
+   spans more than an ulp: each draw lies in its interval and inverts its own
+   uniform, within the bound the float32 law above holds, against the exact
+   solution found in float64. Past the square root of the largest float [x^2]
+   overflows while the tail's log mass is still finite, up to the square root
+   of twice it: that band and the last decade are drawn on their own. A bound
+   is a scalar in half the cases, since a bound's masses are computed at its
+   own shape. *)
+
+(* The inverse of Mills' ratio, [pdf x / Q x] for [x >= 5], from Laplace's
+   continued fraction [x + 1 / (x + 2 / (x + 3 / ...))], which has converged to
+   the float64 roundoff by 30 terms there. *)
+let inverse_mills x =
+  let t = ref x in
+  for k = 30 downto 1 do
+    t := x +. (Float.of_int k /. !t)
+  done;
+  !t
+
+(* [Q x / Q a] for [5 <= a <= x], which keeps its digits where [Q] underflows
+   and where [x + a] would overflow. *)
+let tail_ratio a x =
+  if x = Float.infinity then 0.
+  else
+    Float.exp (-.(x -. a) *. ((0.5 *. x) +. (0.5 *. a)))
+    *. inverse_mills a /. inverse_mills x
+
+(* The [x] in [[a, b]] with [Q x / Q a = r], [r] at least [2^-53], by
+   bisection to adjacent floats. The mass beyond [a + 40 / a] is below
+   [2^-53] of [Q a]. *)
+let tail_quantile a b r =
+  let lo = ref a and hi = ref (Float.min b (a +. (40. /. a))) in
+  let fin = ref false in
+  while not !fin do
+    let m = !lo +. ((!hi -. !lo) *. 0.5) in
+    if m <= !lo || m >= !hi then fin := true
+    else if tail_ratio a m > r then lo := m
+    else hi := m
+  done;
+  !lo
+
+type tail = {
+  dtype : float_dtype;
+  near : float;
+  far : float;
+  left : bool;
+  swapped : bool;
+  scalar : bool;
+}
+
+let pp_tail ppf t =
+  Format.fprintf ppf "%a, %s side, %h to %h%s%s" pp_dtype t.dtype
+    (if t.left then "left" else "right")
+    t.near t.far
+    (if t.swapped then ", swapped" else "")
+    (if t.scalar then ", scalar upper" else "")
+
+let log_uniform lo hi =
+  Gen.map
+    (fun e -> 10. ** e)
+    (Gen.float_range (Float.log10 lo) (Float.log10 hi))
+
+(* The unit in the last place of [x] at a precision of [eps], [x]'s spacing at
+   1. *)
+let ulp_at eps x = Float.ldexp eps (snd (Float.frexp x) - 1)
+
+let tails_gen =
+  let open Gen in
+  with_pp pp_tail
+  @@ let* (F dt as dtype) = wide in
+     let f = A.Dtype.float_format dt in
+     let top = f.max_finite in
+     let* near =
+       frequency
+         [
+           (3, log_uniform 5. 1e3);
+           (2, log_uniform 1e3 (top /. 10.));
+           (1, log_uniform (Float.sqrt top) (Float.sqrt 2. *. Float.sqrt top));
+           (1, log_uniform (top /. 10.) top);
+         ]
+     in
+     let near = A.Dtype.of_float dt (Float.min near top) in
+     let ulp = ulp_at f.epsilon near in
+     let* far =
+       frequency
+         [
+           (1, constant Float.infinity);
+           (2, map (fun w -> near +. w) (log_uniform 1e-3 3.));
+           ( 2,
+             map (fun k -> near +. (Float.of_int k *. ulp)) (int_range 128 512)
+           );
+         ]
+     in
+     let+ left = bool and+ swapped = bool and+ scalar = bool in
+     { dtype; near; far = A.Dtype.of_float dt far; left; swapped; scalar }
+
+let tails =
+  prop
+    "truncated_normal 5 standard deviations out to the largest float lands in \
+     its interval and inverts its uniform"
+    (Gen.pair keys tails_gen)
+    (fun (k, ({ dtype = F dt; near; far; left; swapped; scalar } as t)) ->
+      let f = A.Dtype.float_format dt in
+      let top = f.max_finite in
+      cover "float32 past 1e3 standard deviations"
+        (f.epsilon > 1e-10 && near > 1e3);
+      cover "float64 past 38 standard deviations"
+        (f.epsilon < 1e-10 && near > 38.);
+      cover "a near bound where x^2 overflows"
+        (near > Float.sqrt top && near < Float.sqrt 2. *. Float.sqrt top);
+      cover "an unbounded side" (far = Float.infinity);
+      cover "a width of 128 to 512 units in the last place"
+        (far > near && far -. near <= 512. *. ulp_at f.epsilon near);
+      cover "the left side" left;
+      cover "swapped bounds" swapped;
+      cover "a scalar bound" scalar;
+      let draws = 256 in
+      let sign = if left then -1. else 1. in
+      let l, h = if swapped then (far, near) else (near, far) in
+      let lower = host_of dt [| draws |] (Array.make draws (sign *. l)) in
+      let upper =
+        if scalar then host_of dt [||] [| sign *. h |]
+        else host_of dt [| draws |] (Array.make draws (sign *. h))
+      in
+      let xs = read (Rng.truncated_normal ~key:k lower upper) in
+      let us = read (Rng.uniform ~key:k dt [| draws |]) in
+      let rl = tail_ratio near l and rh = tail_ratio near h in
+      let worst = ref 0. in
+      Array.iteri
+        (fun i x ->
+          let x = sign *. x in
+          if not (x >= near && x <= far) then
+            failf "draw %d, %h, outside %a" i (sign *. x) pp_tail t;
+          let u = Float.max (0.5 *. f.epsilon) us.(i) in
+          let want = tail_quantile near far (((1. -. u) *. rl) +. (u *. rh)) in
+          let bound = (6. *. f.epsilon) +. (3. *. ulp_at f.epsilon want) in
+          worst := Float.max !worst (Float.abs (x -. want) /. bound))
+        xs;
+      at_most float_exact ~than:1. !worst)
 
 let others =
   group "inversions and normalisations"
@@ -1584,11 +1742,12 @@ let others =
           let want, var, cdf = truncated lo hi in
           near ~var want (mean xs);
           ks cdf xs);
-      (* A float32 draw against the quantile of its own uniform [u], floored at
-         2^-24, formed in float64 from the smaller of the masses below and above
-         it: within 6 ε + 3 ulps of float32. *)
-      prop "a float32 truncated_normal draw inverts its uniform"
-        (Gen.pair keys
+      (* A draw against the quantile of its own uniform [u], floored at 2^-p,
+         found by bisection on the smaller of the masses below and above it,
+         which keep their relative precision in float64: within 6 ε + 3 ulps
+         of its dtype. *)
+      prop "a truncated_normal draw inverts its uniform"
+        (Gen.triple keys wide
            (Gen.of_list ~pp:pp_bounds
               [
                 (Float.neg_infinity, Float.infinity);
@@ -1600,26 +1759,37 @@ let others =
                 (Float.neg_infinity, -6.);
                 (15., 16.);
               ]))
-        (fun (k, (a, b)) ->
-          let full v = host_of Nx.float32 [| n |] (Array.make n v) in
+        (fun (k, F dt, (a, b)) ->
+          let draws = 4096 in
+          let full v = host_of dt [| draws |] (Array.make draws v) in
           let xs = read (Rng.truncated_normal ~key:k (full a) (full b)) in
-          let us = read (Rng.uniform ~key:k Nx.float32 [| n |]) in
-          let us = Array.map (Float.max (Float.ldexp 1. (-24))) us in
+          let eps = (A.Dtype.float_format dt).epsilon in
+          let us = read (Rng.uniform ~key:k dt [| draws |]) in
+          let us = Array.map (Float.max (0.5 *. eps)) us in
           let right u = ((1. -. u) *. above a) +. (u *. above b) in
           let left u = ((1. -. u) *. below a) +. (u *. below b) in
-          let qs = Array.map (fun u -> Float.min (right u) (left u)) us in
-          let ys = read (Nx.ndtri (host_of Nx.float64 [| n |] qs)) in
-          let eps = Float.ldexp 1. (-23) in
+          (* A draw lies within 40 of 0, where the masses are below 2^-53. *)
+          let quantile u =
+            let lo = ref (Float.max (Float.min a b) (-40.)) in
+            let hi = ref (Float.min (Float.max a b) 40.) in
+            (* Whether [m] lies below the quantile. *)
+            let short m =
+              if right u < left u then above m > right u else below m < left u
+            in
+            let fin = ref false in
+            while not !fin do
+              let m = !lo +. ((!hi -. !lo) *. 0.5) in
+              if m <= !lo || m >= !hi then fin := true
+              else if short m then lo := m
+              else hi := m
+            done;
+            !lo
+          in
           let worst = ref 0. in
           Array.iteri
             (fun i x ->
-              let u = us.(i) in
-              let want = if right u < left u then -.ys.(i) else ys.(i) in
-              let want =
-                Float.min (Float.max want (Float.min a b)) (Float.max a b)
-              in
-              let ulp = Float.ldexp eps (snd (Float.frexp want) - 1) in
-              let bound = (6. *. eps) +. (3. *. ulp) in
+              let want = quantile us.(i) in
+              let bound = (6. *. eps) +. (3. *. ulp_at eps want) in
               worst := Float.max !worst (Float.abs (x -. want) /. bound))
             xs;
           at_most float_exact ~than:1. !worst);
@@ -2347,6 +2517,7 @@ let () =
          distributions;
          rejection;
          others;
+         group "tails" [ tails ];
          checks;
          scope;
          names;

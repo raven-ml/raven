@@ -326,13 +326,34 @@ let ndtri_central dc =
   let r = rsub_s T.ndtri_central_r (mul dc dc) in
   mul dc (div (horner t.ndtri_central_p r) (horner t.ndtri_central_q r))
 
+(* AS 241 fits its tail rationals for [sqrt (-log q)] up to [ndtri_fit_r], [x =
+   -38]. *)
+let ndtri_fit_r = 27.
+
 (* [x] with [ndtr x = 1/2 + d], from [d] and [log_q], the logarithm of the
    nearer tail's mass [1/2 - |d|], finite: a tail's mass may lie far below the
-   least positive float while its logarithm keeps its digits. AS 241's guess on
-   the nearer tail, then one Newton step: on [erf (x/sqrt 2)/2 = d] where [|d|
-   <= 0.425], whose residual is relative to [x]; on [log_ndtr x = log_q] in the
-   tails. One [erfc_parts] serves both steps, at the central [x/sqrt 2] or at
-   the tail's [-x/sqrt 2]. *)
+   least positive float while its logarithm keeps its digits. A guess on the
+   nearer tail, then one Newton step: on [erf (x/sqrt 2)/2 = d] where [|d| <=
+   0.425], from AS 241's central guess, whose residual is relative to [x]; on
+   [log_ndtr x = log_q] in the tails. One [erfc_parts] serves both steps, at
+   the central [x/sqrt 2] or at the tail's [-x/sqrt 2].
+
+   Where AS 241 is fitted its tail guess is within 1e-7 at float32 and 3e-17
+   at float64. Past it the rationals' relative error grows, to 1e-4 at [x =
+   -1.4e4], and their powers overflow from about [x = -4e13] at float32 and
+   [-3e45] at float64; there the guess is the asymptote [log (ndtr x) = -h -
+   log (2h) / 2 - 1 / (2h) - log (2 pi) / 2 + O (1 / h^2)] for [h = x^2/2],
+   solved for [h] by two fixed-point steps from [h = -log q - log (2 pi) / 2],
+   which leave a relative error of 4e-10 at [x = -38], 2e-12 at [-100] and
+   below the roundoff from [-500]. [log (2h)] is taken as [log h + log 2] and
+   [1 / (2h)] as [0.5 / h], so that neither overflows where [h] is finite, as
+   it is up to [sqrt (2 max_float)]. The step squares the guess's error, to
+   below the roundoff of [x].
+
+   Down to the table's threshold the tail step's ratio is [ndtr x / pdf x =
+   exp (log_ndtr x + x^2/2 + log (2 pi)/2)]; below, [(1 + s) / (-x)] from
+   [ndtr]'s series, where the sum in the exponent would cancel to a few units
+   of the roundoff of [x^2] and float32 would be off by [e^8] at [x = -1e4]. *)
 let ndtri_mass d log_q =
   let t = tables d in
   let central = cmple (abs d) (lit d T.ndtri_central_below) in
@@ -340,32 +361,38 @@ let ndtri_mass d log_q =
   let xc = ndtri_central dc in
   let lower = lt d 0. in
   let log_q = where central (lit d log_0_01) log_q in
-  let xt = ndtri_tail_guess log_q in
-  let th, tl = split_sqrt1_2 xt in
-  let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
-  let far = lt xt t.log_ndtr_below in
-  let n = ndtr_of th tl parts in
-  let xf = clamp far xt (2. *. t.log_ndtr_below) in
-  let lf =
-    where far
-      (log_ndtr_far xf (ndtr_series xf))
-      (log (where far (ones_like n) n))
+  let fit_log_q = -.(ndtri_fit_r *. ndtri_fit_r) in
+  let fit = ge log_q fit_log_q in
+  let rational = ndtri_tail_guess (clamp fit log_q fit_log_q) in
+  let v = rsub_s (-.log_sqrt_2pi) (clamp (logical_not fit) log_q fit_log_q) in
+  let fixed h =
+    sub (sub v (mul_s (add_s (log h) ln2) 0.5)) (mul_s (recip h) 0.5)
   in
-  (* Each step divides by the density, [exp (x^2/2) sqrt (2 pi)] centrally and
-     [ndtr x / pdf x = exp (log_ndtr x + x^2/2 + log (2 pi)/2)] in the tails:
-     one exponential serves both. *)
+  let asymptote = mul_s (sqrt (fixed (fixed v))) (-.Float.sqrt 2.) in
+  let xt = where fit rational asymptote in
+  let far = lt xt t.log_ndtr_below in
+  let xn = clamp (logical_not far) xt t.log_ndtr_below in
+  let xf = clamp far xt (2. *. t.log_ndtr_below) in
+  let th, tl = split_sqrt1_2 xn in
+  let parts = erfc_parts (where central (mul_s xc (1. /. Float.sqrt 2.)) th) in
+  let ln = log (ndtr_of th tl parts) in
+  let s = ndtr_series xf in
+  let lf = where far (log_ndtr_far xf s) ln in
+  (* Each step divides by the density: [exp (x^2/2) sqrt (2 pi)] centrally,
+     and in the tails the ratio above. One exponential serves both. *)
   let half_square x = mul (mul_s x 0.5) x in
   let e =
     exp
       (where central (half_square xc)
-         (add_s (add lf (half_square xt)) log_sqrt_2pi))
+         (add_s (add ln (half_square xn)) log_sqrt_2pi))
   in
   let residual = sub (mul_s parts.erf 0.5) dc in
   let central_x =
     sub xc (mul (mul_s residual (Float.sqrt (2. *. Float.pi))) e)
   in
-  let xt = sub xt (mul (sub lf log_q) e) in
-  where central central_x (where lower xt (neg xt))
+  let ratio = where far (div (add_s s 1.) (neg xf)) e in
+  let tail_x = sub xt (mul (sub lf log_q) ratio) in
+  where central central_x (where lower tail_x (neg tail_x))
 
 let ndtri_at p =
   let q = where (lt p 0.5) p (rsub_s 1. p) in
