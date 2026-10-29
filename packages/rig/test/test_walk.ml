@@ -70,8 +70,9 @@ let outcome d f =
 (* Walking *)
 
 (* The signals the calling thread blocks: every call rig makes below its core
-   blocks them and gives them back. *)
-let blocked () = List.sort compare (Thread.sigmask Unix.SIG_BLOCK [])
+   blocks them and gives them back. Windows has no signal masks. *)
+let blocked () =
+  if Sys.win32 then [] else List.sort compare (Thread.sigmask Unix.SIG_BLOCK [])
 
 let census () =
   collect ();
