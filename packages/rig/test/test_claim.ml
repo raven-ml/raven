@@ -69,18 +69,18 @@ let pp_case ppf c =
 
 let case =
   let open Gen in
-  let view n =
+  let view roles n =
     bind (int_range 0 n) (fun o ->
         triple
           (constant ~pp:Format.pp_print_int o)
           (int_range 0 (n - o))
           (of_list
              ~pp:(fun ppf _ -> Format.pp_print_string ppf "role")
-             [ Read; Donate; Skip ]))
+             roles))
   in
-  let views n =
+  let views size roles n =
     bind
-      (list ~size:(int_range 0 24) (view n))
+      (list ~size (view roles n))
       (fun vs ->
         (* The whole memory, donated, often enough to be alone. *)
         map (fun whole -> if whole then (0, n, Donate) :: vs else vs) bool)
@@ -90,11 +90,17 @@ let case =
       ~pp:(fun ppf _ -> Format.pp_print_string ppf "outside")
       [ Inside; Exported; Shared ]
   in
-  let any n =
+  let any ?(size = int_range 0 24) ?(roles = [ Read; Donate; Skip ]) n =
     map
       (fun (views, (claimed, outside), raises) ->
         { n; views; claimed; outside; raises })
-      (triple (views n) (pair bool outside) bool)
+      (triple (views size roles n) (pair bool outside) bool)
+  in
+  (* Nine donated views or more, which [with_] checks by sorting them all,
+     drawn as one case in four from nine views or more, three in five of them
+     donated: [any] reaches them in about one case in eighteen. *)
+  let many n =
+    any ~size:(int_range 9 24) ~roles:[ Read; Donate; Donate; Donate; Skip ] n
   in
   (* The whole memory donated with no other view, drawn by construction as one
      case in four: [any] reaches it in one of about thirty. Half of these have
@@ -111,7 +117,8 @@ let case =
   in
   with_pp pp_case
     (bind (int_range 1 32) (fun n ->
-         bind (int_range 0 3) (fun k -> if k = 0 then alone n else any n)))
+         bind (int_range 0 3) (fun k ->
+             if k = 0 then alone n else if k = 1 then many n else any n)))
 
 let overlap (o, l, _) (o', l', _) = l > 0 && l' > 0 && o < o' + l' && o' < o + l
 
