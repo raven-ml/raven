@@ -592,7 +592,17 @@ let test_refusals () =
         Nx.mul x (Nx.cast f64 k))
       x
   in
-  equal ~msg:"an integer result" Testable.float_exact 2. (Nx.item [] g)
+  equal ~msg:"an integer result" Testable.float_exact 2. (Nx.item [] g);
+  (* A transpose refuses a callback of its argument whatever its result. *)
+  raises ~msg:"linear_transpose, an integer result"
+    (refused "Rune.linear_transpose") (fun () ->
+      Rune.linear_transpose T.tensor T.tensor
+        (fun x ->
+          let k =
+            Rune.callback s ~like:int_like (fun v -> Nx.cast Nx.int32 v) x
+          in
+          Nx.mul x (Nx.cast f64 k))
+        x x)
 
 (* A cube computed by a callback, whose pullback calls an adjoint through
    another: the pattern of a density whose gradient an external solver
@@ -669,6 +679,87 @@ let test_remat () =
   equal ~msg:"rule's primal calls" fl [ [ 1.5 ] ] (flog ());
   equal ~msg:"rule's adjoint calls" Testable.int 1 !adj
 
+(* A root whose solve and linear solve call back: the solve runs once per
+   execution, and the linear solve once per run a derivative makes of it, also
+   inside a remat. *)
+let test_root () =
+  let solves = ref 0 and linear = ref 0 in
+  let third v = Nx.div_s v 3. in
+  let f a =
+    let residual x = Nx.sub (Nx.mul_s x 3.) a in
+    let linear_solve _ b =
+      Rune.callback tt ~like:b
+        (fun b ->
+          incr linear;
+          third b)
+        b
+    in
+    Rune.root T.tensor ~linear_solve ~residual (fun () ->
+        Rune.callback tt ~like:a
+          (fun a ->
+            incr solves;
+            third a)
+          a)
+  in
+  let counts () = (!solves, !linear) in
+  let pair = Testable.(pair int int) in
+  let a = scalar 1.5 in
+  equal ~msg:"value" Testable.float_exact 0.5 (Nx.item [] (f a));
+  equal ~msg:"eager" pair (1, 0) (counts ());
+  solves := 0;
+  let g = Rune.grad' f a in
+  equal ~msg:"gradient" (Testable.float 1e-12) (1. /. 3.) (Nx.item [] g);
+  equal ~msg:"grad" pair (1, 1) (counts ());
+  solves := 0;
+  linear := 0;
+  let g = Rune.grad' (Rune.remat tt f) a in
+  equal ~msg:"remat: gradient" (Testable.float 1e-12) (1. /. 3.) (Nx.item [] g);
+  equal ~msg:"remat" pair (1, 1) (counts ())
+
+(* The gradient of a remat holding a custom rule that calls back, under jit: the
+   rule's primal and its adjoint run once per execution. *)
+let rgrad x = cos (x *. x *. x) *. 3. *. x *. x
+
+let test_remat_jit () =
+  let f, flog, adj = cube () in
+  let g = Rune.jit' (Rune.grad' (Rune.remat tt (fun x -> Nx.sin (f x)))) in
+  let g1 = g (scalar 1.5) and g2 = g (scalar 2.) in
+  equal ~msg:"gradients"
+    Testable.(list (float 1e-12))
+    [ rgrad 1.5; rgrad 2. ]
+    [ Nx.item [] g1; Nx.item [] g2 ];
+  equal ~msg:"primal calls" fl [ [ 1.5 ]; [ 2. ] ] (flog ());
+  equal ~msg:"adjoint calls" Testable.int 2 !adj
+
+(* Under vmap, and compiled around it: once per lane. Each form shares one rule,
+   so that the compiled function compiles once per shape. *)
+let mapped =
+  List.map
+    (fun (how, wrap) ->
+      let f, flog, adj = cube () in
+      let g =
+        wrap (Rune.vmap tt (Rune.grad' (Rune.remat tt (fun x -> Nx.sin (f x)))))
+      in
+      (how, g, flog, adj))
+    [ ("vmap", Fun.id); ("jit", Rune.jit tt) ]
+
+let law_remat_vmap xs =
+  let n = List.length xs in
+  cover "no lane" (n = 0);
+  cover "lanes" (n > 1);
+  List.iter
+    (fun (how, g, flog, adj) ->
+      let seen = List.length (flog ()) and adjoints = !adj in
+      let r = g (vec (Array.of_list xs)) in
+      equal ~msg:(how ^ ": gradients")
+        Testable.(list (float 1e-12))
+        (List.map rgrad xs) (floats r);
+      equal ~msg:(how ^ ": primal calls") fl
+        (List.map (fun x -> [ x ]) xs)
+        (List.filteri (fun i _ -> i >= seen) (flog ()));
+      equal ~msg:(how ^ ": adjoint calls") Testable.int n (!adj - adjoints))
+    mapped
+
 (* Memory *)
 
 module Memory = Rune2_support.Memory
@@ -714,8 +805,10 @@ let test_remat_memory () =
     let y = Rune.custom_vjp T.tensor T.tensor both x in
     Nx.mul (Nx.sin y) (Nx.exp y)
   in
+  calls := 0;
   equal ~msg:"a pullback's callback" Testable.int (2 * 4 * n)
     (held (Rune.remat tt pulled));
+  equal ~msg:"a pullback's calls, forward" Testable.int 2 !calls;
   let ct = Nx.place Memory.On.on (Nx.ones f32 [| n |]) in
   calls := 0;
   let y, pb = Rune.vjp' (remat ~host:true) x in
@@ -726,6 +819,18 @@ let test_remat_memory () =
   equal ~msg:"gradient" Testable.(array (float_rel ~rel:1e-6 ~abs:0.))
     (Nx.to_array (pb0 ct)) (Nx.to_array g);
   equal ~msg:"calls with the backward pass" Testable.int 1 !calls;
+  calls := 0;
+  let y, pb = Rune.vjp' (Rune.remat tt pulled) x in
+  equal ~msg:"a pullback's calls, before it runs" Testable.int 1 !calls;
+  let g = pb ct in
+  equal ~msg:"a pullback's result"
+    Testable.(array (float_rel ~rel:1e-6 ~abs:0.))
+    (Nx.to_array y0) (Nx.to_array y);
+  equal ~msg:"a pullback's gradient"
+    Testable.(array (float_rel ~rel:1e-6 ~abs:0.))
+    (Nx.to_array (pb0 ct))
+    (Nx.to_array g);
+  equal ~msg:"a pullback's calls" Testable.int 2 !calls;
   calls := 0;
   let loop x =
     fst
@@ -870,6 +975,9 @@ let () =
              test "a custom rule around it" test_rule;
              prop "a custom rule in a scan, under grad" values law_rule_scan;
              test "a remat keeps the results" test_remat;
+             test "a root's solves" test_root;
+             test "a remat's gradient, compiled" test_remat_jit;
+             prop "a remat's gradient, mapped" values law_remat_vmap;
              test "a remat keeps the results alone" test_remat_memory;
            ];
          group "interface"
