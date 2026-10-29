@@ -812,10 +812,10 @@ let identity st form =
    far, which every iterate's stop reads, and a loop carries it where its trip
    reads it or checks, so an iterate stops at the program's first failure. *)
 
-(* How a node reads a value: not at all, at each element's own index only
+(* How a node reads a value it reads: at each element's own index only
    (through elementwise operations, casts and bitcasts of one width, reshapes
    and contiguous markers), or otherwise. *)
-type how = Apart | Own | Other
+type how = Own | Other
 
 let keeps_index u =
   let sized v =
@@ -828,24 +828,38 @@ let keeps_index u =
   | Tolk.Op.Reshape | Tolk.Op.Stage -> true
   | o -> Tolk.Op.Set.mem o Tolk.Op.Set.elementwise
 
-(* [reads ~from u] is how [u] reads [from]. The partial application walks each
-   node once. *)
-let reads ~from =
+(* [reads views u] is how [u] reads each value [views] holds: [(j, how)] for
+   each [views.(j) = Some v] that [u] reads, by increasing [j]. The partial
+   application walks each node once for all the values: a loop asks it of each
+   next value about each carried one, and a walk per carried value would walk
+   the step once for each. *)
+let reads views =
+  let index = Ops.Tbl.create 16 in
+  Array.iteri (fun j -> Option.iter (fun v -> Ops.Tbl.replace index v j)) views;
+  let rec merge a b =
+    match (a, b) with
+    | [], l | l, [] -> l
+    | ((i, h) as x) :: a', ((j, g) as y) :: b' ->
+        if i < j then x :: merge a' b
+        else if j < i then y :: merge a b'
+        else (i, if h = Other || g = Other then Other else Own) :: merge a' b'
+  in
   let memo = Ops.Tbl.create 64 in
   let rec go u =
-    if u == from then Own
-    else
-      match Ops.Tbl.find_opt memo u with
-      | Some r -> r
-      | None ->
-          let srcs = List.map go (Ops.src u) in
-          let r =
-            if List.for_all (( = ) Apart) srcs then Apart
-            else if keeps_index u && not (List.mem Other srcs) then Own
-            else Other
-          in
-          Ops.Tbl.add memo u r;
-          r
+    match Ops.Tbl.find_opt memo u with
+    | Some r -> r
+    | None ->
+        let r =
+          match Ops.Tbl.find_opt index u with
+          | Some j -> [ (j, Own) ]
+          | None ->
+              let r =
+                List.fold_left (fun acc s -> merge acc (go s)) [] (Ops.src u)
+              in
+              if keeps_index u then r else List.map (fun (j, _) -> (j, Other)) r
+        in
+        Ops.Tbl.add memo u r;
+        r
   in
   go
 
@@ -1539,8 +1553,8 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let made = List.rev inner.made in
   (* The flag is carried where the trip reads it or checks. *)
   let flag =
-    let read = reads ~from:before in
-    let reads_it u = read u <> Apart in
+    let read = reads [| Some before |] in
+    let reads_it u = read u <> [] in
     let unread =
       not (Array.exists reads_it nexts || Array.exists reads_it ys)
     in
@@ -1573,7 +1587,9 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let k = Array.length inits in
   (* A carried value whose next value reads another's in a cycle is copied,
      each trip, into storage of its own first. *)
-  let how = Array.init k (fun i -> reads ~from:(view i)) in
+  let read =
+    reads (Array.mapi (fun i c -> Option.map (fun _ -> view i) c) carried)
+  in
   let edges = Array.make k [] and copied = Array.make k false in
   let seen = Array.make k false in
   let rec reaches j i =
@@ -1587,10 +1603,9 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   for i = 0 to k - 1 do
     Array.fill seen 0 k false;
     let others =
-      List.filter
-        (fun j ->
-          j <> i && Option.is_some carried.(j) && how.(j) nexts.(i) <> Apart)
-        (List.init k Fun.id)
+      List.filter_map
+        (fun (j, _) -> if j <> i then Some j else None)
+        (read nexts.(i))
     in
     if List.exists (fun j -> reaches j i) others then copied.(i) <- true
     else edges.(i) <- others
@@ -1614,7 +1629,8 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
                 let w = Shape.reshape w (Shape.shape u) in
                 Ops.after w [ Ops.store w v ]
               end
-              else if how.(i) v = Other then Ops.contiguous v
+              else if List.assoc_opt i (read v) = Some Other then
+                Ops.contiguous v
               else v
             in
             stores := Ops.store p v :: !stores;
