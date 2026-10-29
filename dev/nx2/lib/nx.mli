@@ -1192,11 +1192,14 @@ val scatter :
     [axis], but for an [x] of {!Nx_array.Layout.max_rank} axes, which reads
     them whole there, each device adds the updates it holds into its
     window of [x], and the devices sum these partial results, moving them
-    as a {!sum} over a cut axis does and never [u]. An integer result is
-    exact, and a float or complex element within
-    [γ(k + t - 1) (|x| + Σ|u|)] of the exact sum, [k] its updates and [t]
-    the tiles of [u] holding updates. An element no update lands on keeps
-    its value, but a signalling NaN may be quieted.
+    as a {!sum} over a cut axis does and never [u]: each tile of [u]
+    holding updates sends a partial of each device's window of [x],
+    whatever the size of [u]. An integer result is exact. For finite
+    operands, barring overflow, a float or complex element is within
+    [γ(k + t) (|x| + Σ|u|)] of the exact sum before a narrow float's
+    rounding, [k] its updates and [t] the tiles of [u] holding updates. An
+    element no update lands on keeps its value; a NaN stays a NaN, its sign
+    and payload unpromised.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p] and [u]
     differ in shape, their shape differs from [x]'s off [axis], or [combine]

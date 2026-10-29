@@ -1304,17 +1304,20 @@ type sumcase =
       * int array
       * 'v array
       * summed
+      * bool
       * int
       * int array
       * int64 array
       * 'v array
       -> sumcase
 
-let pp_sumcase ppf (Sumcase (k, s, data, w, a, us, p, u)) =
+let pp_sumcase ppf (Sumcase (k, s, data, w, whole, a, us, p, u)) =
   let show f l = String.concat "; " (Array.to_list (Array.map f l)) in
-  Format.fprintf ppf "%s %a [%s] at %a, add along %d %a [%s] of [%s]"
+  Format.fprintf ppf "%s %a [%s] at %a, add along %d %a [%s]%s of [%s]"
     (D.name k.rdtype) pp_ints s (show k.rshow data) pp_summed w a pp_ints us
-    (show Int64.to_string p) (show k.rshow u)
+    (show Int64.to_string p)
+    (if whole then " whole" else "")
+    (show k.rshow u)
 
 let summed_case =
   let open Gen in
@@ -1329,6 +1332,7 @@ let summed_case =
            map (fun c -> Beside c) (int_range 0 (rank - 1));
          ]
      in
+     let* whole = bool in
      let* m = int_range 0 9 in
      let us = Array.mapi (fun i e -> if i = a then m else e) s in
      let n = Array.fold_left ( * ) 1 us in
@@ -1344,12 +1348,13 @@ let summed_case =
      let value = of_list k.rvalues in
      let* data = array ~size:(constant (Array.fold_left ( * ) 1 s)) value in
      let+ u = array ~size:(constant n) value in
-     Sumcase (k, s, data, w, a, us, p, u))
+     Sumcase (k, s, data, w, whole, a, us, p, u))
 
-(* A scatter's [Add] of positions and updates split along the scattered axis
-   sums each device's updates into the target where it lies, whole or cut,
-   and gives the values it gives on one device. *)
-let law_summed (Sumcase (k, s, data, w, a, us, p, u)) =
+(* A scatter's [Add] of updates split along the scattered axis, beside
+   positions split alike or whole on every device, sums each device's
+   updates into the target where it lies, whole or cut, and gives the
+   values it gives on one device. *)
+let law_summed (Sumcase (k, s, data, w, whole, a, us, p, u)) =
   let devices = match w with On3 -> 3 | On4 | Beside _ -> 4 in
   let tiles = match w with Beside _ -> 2 | On3 | On4 -> devices in
   let e = s.(a) and m = us.(a) in
@@ -1359,6 +1364,8 @@ let law_summed (Sumcase (k, s, data, w, a, us, p, u)) =
   cover "a target cut along the scattered axis" (w = Beside a);
   cover "an empty tile of updates" (m > 0 && m < tiles);
   cover "no update" (Array.length p = 0);
+  cover "positions whole" whole;
+  cover "a target of no element along the axis, of updates" (e = 0 && m > 0);
   cover "updates in several tiles" (m >= tiles && Array.length p > 0);
   cover "a position outside the target"
     (Array.exists (fun q -> not (inside q)) p);
@@ -1387,7 +1394,8 @@ let law_summed (Sumcase (k, s, data, w, a, us, p, u)) =
   let shown y = Array.map k.rshow (elements y) in
   let expected = shown (scatter p u x) in
   let run (type d) (q : d Nx.Placement.t) (r : d Nx.Placement.t) =
-    let y = scatter (Nx.place r p) (Nx.place r u) (Nx.place q x) in
+    let rp = if whole then Nx.Placement.uncut r else r in
+    let y = scatter (Nx.place rp p) (Nx.place r u) (Nx.place q x) in
     equal ~msg:"where it lies" (placement ()) q (Nx.placement y);
     shown y
   in

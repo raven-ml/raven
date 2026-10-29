@@ -230,13 +230,15 @@
     reduction's does, and the parts are the slots added in tile order by
     one map, with no [+0] added, rounded once into the dtype. Each element
     so is [into]'s plus its updates. Over integers this is exact, with the
-    bits of the scatter on one device. A float or complex element of [k]
-    updates over [t] tiles holding updates is within
-    [γ(k + t - 1) (|x| + Σ|u|)] of the exact sum, a complex one part by
-    part, as a reduction's sum is: each update passes at most the updates
-    of its tile there and [t - 1] slots. Where no update lands, an element
-    keeps [into]'s value, a [-0]'s sign included, but a signalling NaN may
-    be quieted.
+    bits of the scatter on one device. For finite operands, barring
+    overflow, a float or complex element of [k] updates over [t] tiles
+    holding updates is within [γ(k + t) (|x| + Σ|u|)] of the exact sum
+    before a narrow float's rounding, a complex one part by part: its
+    tile's scatter is within the kernels' [γ(k{_j} + 1)] for the [k{_j}]
+    updates there ({!Nx.scatter}), and the slots add [t - 1] roundings.
+    Where no update lands, an element keeps [into]'s value, a [-0]'s sign
+    included; a NaN stays a NaN whose sign and payload this module does
+    not state.
 
     {1:traffic Traffic}
 
@@ -263,9 +265,10 @@
     its scales once per piece, and a piece of [Rows]' groups runs one
     [Scan] over its device's offsets. A [Scatter] runs on each device one
     map shifting its positions where its window starts past [0] and one
-    scatter, and an [Add] of cut updates one map for its target, one
-    casting its updates where the carrier is not the dtype, then one map
-    adding the slots and one casting the result. A [Gather] runs on each
+    scatter, and an [Add] of cut updates also one map for its target and,
+    where the carrier is not the dtype, one casting its updates, then one
+    map adding the slots and, where the carrier is not the dtype, one
+    casting the result. A [Gather] runs on each
     device one map shifting its positions where its tile starts past [0],
     one gather and one bitcast, and one bitcast over the results. *)
 

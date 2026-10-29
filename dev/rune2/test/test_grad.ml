@@ -716,8 +716,9 @@ let test_placement () =
 
 (* A take of positions split over two devices, from a value whole on both or
    split along the taken axis, has the gradient it has on one device, where
-   the value lies: a position both devices hold sums the two halves'
-   cotangents. *)
+   the value lies. Beside a value whole on both, each device scatters its
+   half of the cotangent, and a position both hold sums the halves; beside
+   a value split so, the positions move to each half of the gradient. *)
 let test_cut_take () =
   let module Two = Operand.Two in
   let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
