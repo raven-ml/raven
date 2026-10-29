@@ -244,12 +244,12 @@ let halves_loss sd =
   Nx.sum (Nx.add (Nx.mul u u) (Nx.mul_s v 3.))
 
 (* Conjugate gradients for a symmetric positive definite [op], from zero. *)
-let cg op b =
+let cg ?(max = 50) op b =
   let dot x y = Nx.sum (Nx.mul x y) in
   let x, _ =
     Rune.iterate
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      ~max:50
+      ~max
       ~until:(fun (_, (r, _)) -> Nx.less_s (dot r r) 1e-28)
       ~f:(fun (x, (r, p)) ->
         let ap = op p in
@@ -1180,8 +1180,104 @@ let loop_tests =
 let pair_to_pair =
   Nx.Ptree.(pair tensor tensor @-> returns (pair tensor tensor))
 
+(* [f ()], no call it makes evaluated: the program compiles. *)
+let compiled f =
+  let calls = Rune.evaluations () in
+  let check () =
+    equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
+  in
+  match f () with
+  | r ->
+      check ();
+      r
+  | exception e ->
+      check ();
+      raise e
+
+(* Newton's square root from [start a], in at most [max] steps. *)
+let newton_from ~max start a =
+  Rune.root one
+    ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+    (fun () ->
+      Rune.iterate' ~max
+        ~until:(fun x ->
+          Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-13)
+        ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+        (start a))
+
+let raised f =
+  match f () with v -> Ok v | exception Invalid_argument m -> Error m
+
+let starts =
+  [
+    ("no step", Nx.sqrt, 100);
+    ("several steps", (fun a -> Nx.add_s a 1.), 100);
+    ("max reached", (fun a -> Nx.add_s a 1.), 2);
+  ]
+
+(* Compiled, a root whose solve iterates gives eager's value, gradient and
+   lanes' gradients, the lanes stopping apart, and eager's failure: from
+   [a + 1], Newton's iteration takes 14 steps for [a = 1e-6], 5 for [2] and
+   15 for [1e6]. *)
+let iterated_tests =
+  List.map
+    (fun (name, start, max) ->
+      test ("compiled from a start that takes " ^ name) (fun () ->
+          let a = vec [| 1e-6; 2.; 1e6 |] in
+          let f a = Nx.sum (Nx.sin (newton_from ~max start a)) in
+          let lanes a = Rune.vmap' (Rune.grad' f) (Nx.reshape [| 3; 1 |] a) in
+          let check msg g =
+            let expected = raised (fun () -> g a) in
+            let got = raised (fun () -> compiled (fun () -> Rune.jit' g a)) in
+            match (expected, got) with
+            | Ok e, Ok g -> equal ~msg (close ()) e g
+            | Error e, Error g -> equal ~msg string e g
+            | _ -> fail (msg ^ ": one raised, the other did not")
+          in
+          check "value" (newton_from ~max start);
+          check "grad" (Rune.grad' f);
+          check "lanes' grads" lanes))
+    starts
+
+(* A linear solve that adds to a total, its additions dropped. *)
+let adding_root a =
+  Rune.root one
+    ~linear_solve:(fun op b ->
+      Rune.Total.add total (scalar 10.);
+      Nx.div b (op (Nx.ones_like b)))
+    ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+    (fun () -> Nx.sqrt a)
+
 let compiled_tests =
   [
+    test "jit of grad drops a linear solve's additions, as eagerly" (fun () ->
+        let f a = Nx.sum (Nx.sin (adding_root a)) in
+        let a = vec [| 0.5; 2.; 3. |] in
+        let collect g =
+          Rune.Total.collect total ~zero:(scalar 0.) (fun () -> g a)
+        in
+        let g, n = collect (Rune.grad' f) in
+        let g', n' = compiled (fun () -> collect (Rune.jit' (Rune.grad' f))) in
+        equal ~msg:"gradient" (close ()) g g';
+        equal ~msg:"additions" (exact ()) n n');
+    test "jit of grad of a root in a scan's step is eager" (fun () ->
+        let a = vec [| 0.5; 2.; 3. |] in
+        let f = Rune.grad' (root_in_scan scanned_root) in
+        equal (close ()) (f a) (compiled (fun () -> Rune.jit' f a));
+        let g = Rune.vmap' f in
+        equal ~msg:"vmap" (close ())
+          (g (Nx.reshape [| 3; 1 |] a))
+          (compiled (fun () -> Rune.jit' g (Nx.reshape [| 3; 1 |] a))));
+    test "jit of grad of a linear solve whose iterate runs out of steps raises"
+      (fun () ->
+        let f = Rune.grad pair (solved_loss ~linear_solve:(cg ~max:1)) in
+        let message g =
+          match g (spd (), rhs ()) with
+          | _ -> "no failure"
+          | exception Invalid_argument m -> m
+        in
+        equal string (message f)
+          (compiled (fun () -> message (Rune.jit pair_to_pair f))));
     test "jit of grad is eager grad" (fun () ->
         let root a =
           Rune.root one
@@ -1190,7 +1286,8 @@ let compiled_tests =
         in
         let f a = Nx.sum (Nx.sin (root a)) in
         let a = vec [| 0.5; 2.; 3. |] in
-        equal (close ()) (Rune.grad' f a) (Rune.jit' (Rune.grad' f) a));
+        equal (close ()) (Rune.grad' f a)
+          (compiled (fun () -> Rune.jit' (Rune.grad' f) a)));
     test "jit of jvp is eager jvp" (fun () ->
         let root a =
           Rune.root one
@@ -1199,16 +1296,18 @@ let compiled_tests =
         in
         let f a = snd (Rune.jvp' root a (Nx.cos a)) in
         let a = vec [| 0.5; 2.; 3. |] in
-        equal (close ()) (f a) (Rune.jit' f a));
+        equal (close ()) (f a) (compiled (fun () -> Rune.jit' f a)));
     test "jit of grad of a mapped linear solve is eager" (fun () ->
         let ths = vec [| 0.3; -1.1; 0.7 |] in
         let f ths =
           Nx.sum (Rune.vmap' (system_loss ~linear_solve:mapped_dense) ths)
         in
-        equal (close ()) (Rune.grad' f ths) (Rune.jit' (Rune.grad' f) ths));
+        equal (close ()) (Rune.grad' f ths)
+          (compiled (fun () -> Rune.jit' (Rune.grad' f) ths)));
     test "jit of a root whose solve iterates is eager's value" (fun () ->
         let a = vec [| 0.5; 2.; 3. |] in
-        equal (close ()) (sqrt_root a) (Rune.jit' sqrt_root a));
+        equal (close ()) (sqrt_root a)
+          (compiled (fun () -> Rune.jit' sqrt_root a)));
     prop ~count:10
       "jit of jvp of a root whose solve iterates is the finite difference of \
        the closed-form root"
@@ -1216,10 +1315,11 @@ let compiled_tests =
         let v = direction a in
         equal (close ())
           (Oracle.central ~eps:1e-6 closed a v)
-          (Rune.jit
-             Nx.Ptree.(tensor @-> tensor @-> returns tensor)
-             (fun a v -> snd (Rune.jvp' loss a v))
-             a v));
+          (compiled (fun () ->
+               Rune.jit
+                 Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                 (fun a v -> snd (Rune.jvp' loss a v))
+                 a v)));
     prop ~count:10
       "jit of grad of a root whose solve iterates is the finite difference of \
        the closed-form root"
@@ -1227,16 +1327,19 @@ let compiled_tests =
         let v = direction a in
         equal (close ())
           (Oracle.central ~eps:1e-6 closed a v)
-          (scalar (Oracle.dot (Rune.jit' (Rune.grad' loss) a) v)));
+          (scalar
+             (Oracle.dot (compiled (fun () -> Rune.jit' (Rune.grad' loss) a)) v)));
     test "jit of vmap of a root whose solve iterates solves each lane"
       (fun () ->
         let a = vec [| 0.5; 2.; 3. |] in
-        equal (close ()) (Nx.sqrt a) (Rune.jit' (Rune.vmap' sqrt_root) a));
+        equal (close ()) (Nx.sqrt a)
+          (compiled (fun () -> Rune.jit' (Rune.vmap' sqrt_root) a)));
     test "jit of grad of a linear solve on iterate is the closed form's"
       (fun () ->
         let f = solved_loss ~linear_solve:cg in
         let ga, gb =
-          Rune.jit pair_to_pair (Rune.grad pair f) (spd (), rhs ())
+          compiled (fun () ->
+              Rune.jit pair_to_pair (Rune.grad pair f) (spd (), rhs ()))
         in
         let ga', gb' = Rune.grad pair closed_solve (spd (), rhs ()) in
         equal ~msg:"a" (close ()) ga' ga;
@@ -1258,5 +1361,5 @@ let () =
          group "the operator's contract" contract_tests;
          group "refusals" refusal_tests;
          group "totals" total_tests;
-         group "compiled" compiled_tests;
+         group "compiled" (compiled_tests @ iterated_tests);
        ])

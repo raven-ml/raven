@@ -1440,7 +1440,9 @@ val jit :
     of at most one trip, which runs where the index names its branch, so a
     branch not taken computes nothing. A {!remat}, a {!custom_jvp}, a
     {!custom_vjp} and a {!custom_transpose} compile as their function's
-    operations, the program's own. *)
+    operations, the program's own. So does a {!root}'s solve, and its derivative
+    compiles as its linear solve's operations, each application of the operator
+    compiled as the residual's derivative, or in reverse mode its transpose. *)
 
 (** {2:emissions Emissions}
 
@@ -1457,7 +1459,7 @@ val jit :
     eager's values. A program's {e device} is the one its first argument, or
     else its first result, lies whole on. The compiler declines, and so
     evaluates, a program that holds:
-    - a map's {!lanes} or {!lane_index}, or a {!root};
+    - a map's {!lanes} or {!lane_index};
     - an emission {!section-emissions} names as evaluated;
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;

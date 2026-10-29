@@ -1011,6 +1011,18 @@ and construct st cs env c base =
         | Pullback _ -> [||]
       in
       bind (Array.append out tadds)
+  | Root { solution; _ } -> bind (Array.map (operand st env) solution)
+  | Solve { system; transposed; b; data; captures; _ } ->
+      (* The linear solve's program, its operator applications calls of [J]
+         or [Jᵀ], its additions dropped: the default's. *)
+      let body ~transposed:t ~lanes =
+        system.operator ~transposed:(t <> transposed) ~lanes
+      in
+      let p = Program.fill system.solve ~id:system.id body in
+      let out =
+        threaded st cs env p (Array.concat [ b; data; captures ]) [||]
+      in
+      bind (Array.sub out 0 (Array.length b))
   | Scan _ | Iterate _ -> bind (loop st cs env c)
   | Switch s -> bind (switch st cs env c s)
   | c -> decline "%s" (construct_name c)

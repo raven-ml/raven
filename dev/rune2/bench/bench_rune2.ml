@@ -584,6 +584,10 @@ let root_rows () =
   [
     Thumper.bench "grad-root-in-scan-16-eager" (fun () ->
         synced (Rune.grad' f a));
+    (* Compiled: each row's derivative solves the root's linear system. *)
+    warm "grad-root-in-scan-16-replay"
+      (fun () -> Rune.jit' (Rune.grad' f))
+      (fun g -> synced (g a));
   ]
 
 (* WarmStart: a compiled function's first call, its trace, lowering and link,
