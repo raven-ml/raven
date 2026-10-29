@@ -21,8 +21,8 @@
     at [unit] in routes and reads them at an operation's brand, without a
     conversion. {!set} then gives a placement's set at whatever brand its
     caller names. [Nx] keeps its placements' brand abstract, which ties a
-    program's placement to its set's brand, and [Nx.Prim.coerce] gives a
-    value another brand only where that brand names the value's set.
+    program's placement to its set's brand, and [Nx.Placement.same], nx's one
+    brand cast, relates two brands only where they name one set.
 
     This module lies above {!Grid} alone, and is nx's one site that names
     nx.cpu.

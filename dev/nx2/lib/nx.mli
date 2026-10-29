@@ -5379,8 +5379,8 @@ module Prim : sig
   val coerce :
     ('v, 's) dtype -> 'd devices -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
   (** [coerce dt s x] is [Some x] at [dt] and [s]'s brand iff [x]'s dtype is
-      [dt] and [x] lies on [s], at any placement of [s]: a value on [s] is a
-      value of [s]'s brand ({!Placement.same}).
+      [dt] and [x] lies on [s], at any placement of [s]. A value on [s] is a
+      value of [s]'s brand ({!section-devices}).
 
       For an interpretation that binds the values it makes where OCaml cannot
       relate their types: one that binds its stand-ins makes each binding at
