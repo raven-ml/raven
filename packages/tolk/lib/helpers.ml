@@ -425,13 +425,82 @@ module Diskcache = struct
     && name.[32] = '_'
     && String.for_all is_digit (String.sub name 33 (n - 33))
 
-  (* An entry's file is named by the digest of its key; a write in progress adds
-     a suffix to that name. *)
+  (* Generations
+
+     A clear removes the entries one by one, so a put that renamed its entry
+     into place after the clear had listed the files would outlive the clear,
+     while a get after that put could still read an entry the clear removed
+     later: results no order of the calls gives. So each entry belongs to a
+     generation, and a get or a put works in the newest generation it finds. A
+     clear lists the files, then makes a newer generation, the one step at
+     which every table empties at once, then removes the files it listed:
+
+       get, put   find the newest generation, then work in its entries
+       clear      list the files, make a newer generation, remove what it listed
+
+     A call that found the old generation counts as before the clear: its
+     entry is gone, or stays where no call that finds the new one looks.
+
+     A generation is an empty file of [generations_dir], so that it adds no
+     byte to the files of the cache, named by a count and a name of its own:
+     [0000000000000002.<name>]. The newest is the greatest name, the same for
+     every process that reads the directory as it stands, as a local file
+     system shows it. A clear counts one past the newest, and removes a name
+     only once a greater one exists, so no generation comes back. Before the
+     first clear there is none. *)
+  let generations_dir =
+    Filename.concat cachedb (digest "generations" ^ "_generations")
+
+  let is_digest s = String.length s = 32 && String.for_all is_hex s
+  let count_digits = 16
+
+  let is_generation name =
+    String.length name = count_digits + 33
+    && String.for_all is_digit (String.sub name 0 count_digits)
+    && name.[count_digits] = '.'
+    && is_digest (String.sub name (count_digits + 1) 32)
+
+  (* The generations, none while their directory does not exist, or [None] if
+     it cannot be read. *)
+  let generations () =
+    match Unix.opendir generations_dir with
+    | exception Unix.Unix_error (ENOENT, _, _) -> Some []
+    | exception Unix.Unix_error _ -> None
+    | dir ->
+        let rec names acc =
+          match Unix.readdir dir with
+          | name -> names (if is_generation name then name :: acc else acc)
+          | exception End_of_file -> Some acc
+          | exception Unix.Unix_error _ -> None
+        in
+        Fun.protect ~finally:(fun () -> Unix.closedir dir) (fun () -> names [])
+
+  let newest names = List.fold_left max "" names
+
+  (* The cache's generation: [""] before the first clear, else the digest of
+     the newest generation's name, or [None] if it cannot be found. *)
+  let generation () =
+    Option.map
+      (fun names -> match newest names with "" -> "" | name -> digest name)
+      (generations ())
+
+  (* An entry's file is named by the digest of its key, followed by a dot and
+     the digest of its generation's name after the first clear; a write in
+     progress adds a suffix that ends in [.tmp]. An entry of a generation reads,
+     to a tolk from before generations, as a write in progress. *)
   let is_entry name =
     starts_with_digest name && (String.length name = 32 || name.[32] = '.')
 
-  let is_whole_entry name = starts_with_digest name && String.length name = 32
-  let entry_path table key = Filename.concat (table_dir table) (digest key)
+  let is_whole_entry name =
+    let n = String.length name in
+    starts_with_digest name
+    && (n = 32
+       || (n = 65 && name.[32] = '.' && is_digest (String.sub name 33 32)))
+
+  let entry_path table generation key =
+    let suffix = if generation = "" then "" else "." ^ generation in
+    Filename.concat (table_dir table) (digest key ^ suffix)
+
   let enabled () = Setting.value Setting.cachelevel >= 1
 
   (* An entry is the lengths of its key and value, a newline, the key and the
@@ -483,19 +552,23 @@ module Diskcache = struct
         (try Unix.close fd with Unix.Unix_error _ -> ())
 
   (* An entry missing when it is opened is a miss, even if a put renames one
-     into place before the error is read. *)
+     into place before the error is read, and so is any entry while the
+     generations cannot be read. *)
   let get ~table key =
     if not (enabled ()) then None
     else
-      let path = entry_path table key in
-      match read path with
-      | contents ->
-          let value = decode path key contents in
-          if Option.is_some value then mark path;
-          value
-      | exception Unix.Unix_error (ENOENT, _, _) -> None
-      | exception Unix.Unix_error (e, _, _) ->
-          if Sys.file_exists path then raise (sys_error path e) else None
+      match generation () with
+      | None -> None
+      | Some generation -> (
+          let path = entry_path table generation key in
+          match read path with
+          | contents ->
+              let value = decode path key contents in
+              if Option.is_some value then mark path;
+              value
+          | exception Unix.Unix_error (ENOENT, _, _) -> None
+          | exception Unix.Unix_error (e, _, _) ->
+              if Sys.file_exists path then raise (sys_error path e) else None)
 
   (* A file already gone is removed, even if another process makes it again
      before the error is read. *)
@@ -669,24 +742,76 @@ module Diskcache = struct
       let entry = encode key value in
       let bytes = String.length entry in
       if limit = 0 || held bytes <= limit then begin
+        let generation =
+          match generation () with
+          | Some generation -> generation
+          | None -> raise (Sys_error (generations_dir ^ ": unreadable"))
+        in
         make_room limit bytes;
-        write (entry_path table key) entry
+        write (entry_path table generation key) entry
       end
     end
 
+  (* Names of new generations, unique across the processes of every machine
+     sharing [cachedb]: the host, the process, a count and the time. *)
+  let names = Atomic.make 0
+
+  let fresh_name () =
+    let host = try Unix.gethostname () with Unix.Unix_error _ -> "" in
+    digest
+      (Printf.sprintf "%s %d %d %.6f" host (Unix.getpid ())
+         (Atomic.fetch_and_add names 1)
+         (Unix.gettimeofday ()))
+
+  (* [renew ()] makes a generation newer than every other, created exclusively,
+     then removes the older ones, which no call finds the newest any more. A
+     newer one than its own, another clear's, was made after this clear listed
+     its files, so this clear counts as at that step, and its own generation
+     stays, below the newest, for a later clear to remove. *)
+  let renew () =
+    let path name = Filename.concat generations_dir name in
+    let remove name = try Sys.remove (path name) with Sys_error _ -> () in
+    (try Unix.mkdir generations_dir 0o755 with Unix.Unix_error _ -> ());
+    match generations () with
+    | None -> ()
+    | Some names -> (
+        let count =
+          match newest names with
+          | "" -> 0
+          | name -> int_of_string (String.sub name 0 count_digits)
+        in
+        let name = Printf.sprintf "%016d.%s" (count + 1) (fresh_name ()) in
+        match
+          Unix.openfile (path name) [ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC ]
+            0o644
+        with
+        | exception Unix.Unix_error _ -> ()
+        | fd -> (
+            Unix.close fd;
+            match generations () with
+            | Some names when newest names = name ->
+                List.iter (fun old -> if old < name then remove old) names
+            | _ -> ()))
+
   (* Only files named like entries are removed, so a [CACHEDB] pointing at a
      directory holding other files keeps them. A write in progress is kept
-     unless stale: its put renames it once the clear is done, as if it came
-     after. The tables' directories are kept: a put that has made its table's
-     then writes into it, and would fail if a clear removed it in between. What
-     cannot be removed stays, as in a trim: a table another process clears and a
-     file another process has open on Windows. *)
+     unless stale: its put renames it into a generation no later call reads.
+     The tables' directories are kept: a put that has made its table's then
+     writes into it, and would fail if a clear removed it in between. What
+     cannot be removed stays, as in a trim: a file another program has open on
+     Windows. A clear that cannot make a generation removes the entries one by
+     one, ordered against no call. A clear that lists no entry counts as at its
+     listing, and makes no generation, so that it makes no file where there was
+     none. *)
   let clear () =
     let stale = Unix.gettimeofday () -. stale_write in
+    let listed = files () in
+    if List.exists (fun (name, _, _, _) -> is_whole_entry name) listed then
+      renew ();
     List.iter
       (fun (name, path, _, time) ->
         if is_whole_entry name || time < stale then ignore (discard path))
-      (files ());
+      listed;
     ignore (discard size_file)
 end
 

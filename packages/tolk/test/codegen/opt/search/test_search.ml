@@ -1186,12 +1186,23 @@ let cache_kinds =
         (List.exists (function Opt.Swap _ -> true | _ -> false) first);
       equal opts first (cached untimed))
 
-(* The entries of every table of the disk cache: the files of its
-   directories. *)
+(* The entries of every table of the disk cache: the files of the directories
+   named like a table's, by a digest and a version. *)
 let entries () =
+  let is_table name =
+    let n = String.length name and among chars s = String.for_all chars s in
+    let digit = function '0' .. '9' -> true | _ -> false in
+    let hex = function '0' .. '9' | 'a' .. 'f' -> true | _ -> false in
+    n > 33
+    && among hex (String.sub name 0 32)
+    && name.[32] = '_'
+    && among digit (String.sub name 33 (n - 33))
+  in
   let count n name =
     let dir = Filename.concat Helpers.cachedb name in
-    if Sys.is_directory dir then n + Array.length (Sys.readdir dir) else n
+    if is_table name && Sys.is_directory dir then
+      n + Array.length (Sys.readdir dir)
+    else n
   in
   if Sys.file_exists Helpers.cachedb then
     Array.fold_left count 0 (Sys.readdir Helpers.cachedb)

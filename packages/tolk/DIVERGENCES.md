@@ -256,18 +256,32 @@ stamps nothing (D146).
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk:** `lib/helpers.ml:406-691` (`Diskcache`).
+- **tolk:** `lib/helpers.ml:406-816` (`Diskcache`); `:428-485`
+  (`generation`), `:771` (`renew`) and `:806` (`clear`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
-  place; tables are versioned by tolk's own version.
+  place; tables are versioned by tolk's own version. Entries belong to a
+  generation, an empty file named by a count and a unique name; a clear
+  makes one past the newest, which empties every table at one step, then
+  removes the old files. tinygrad's clear (`helpers.py:416-419`) drops the tables one by one,
+  each drop committed on its own, so a reader between two drops sees one
+  table cleared and another not. A tolk from before generations reads an
+  entry of one as a write in progress: its clear and trim remove it only
+  once an hour old, and its trim does not count it.
 - **Reason:** (a). OCaml has no pickle, no type-safe serialization of
   arbitrary values: a cache returning any type would be `Marshal`, which
   crashes when a rebuilt program reads a value of a changed type. Without an
   SQLite transaction, writing aside and renaming is what keeps an entry whole
-  when a writer crashes or races another.
+  when a writer crashes or races another. Without SQLite's drop, a clear
+  that removes files one by one orders against no call, and a generation per
+  table would cost what one costs while promising less.
 - **Pinned by:** `Tolk.Helpers › Diskcache › get reads back any key and
-  value put` and `Tolk.Helpers › Diskcache › behaves as a table of
-  entries per table`, which run with `CACHEDB` set, as dune runs them.
+  value put`, `Tolk.Helpers › Diskcache › behaves as a table of entries per
+  table`, `› a put and a get on another domain come before or after a
+  clear`, `› a put and a get in another process come before or after a
+  clear` and `Tolk.Helpers › Diskcache on two domains › behaves as a table
+  of entries, whatever the order of the calls`, which run with `CACHEDB`
+  set, as dune runs them.
 
 ## D9. Narrow float conversions are IEEE conversions
 
@@ -4005,9 +4019,9 @@ submission, and a range a loop of rig's program (D146).
 - **tinygrad:** `helpers.py:416-447` (`diskcache_clear`, `diskcache_get`,
   `diskcache_put`): a put inserts or replaces a row and nothing removes one
   but `diskcache_clear`.
-- **tolk:** `lib/helpers.ml:478` (`mark`), `:511` (`size_file`), `:526`
-  (`count`), `:592` (`trim`), `:624` (`make_room`), `:663` (`put`) and
-  `:684` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
+- **tolk:** `lib/helpers.ml:547` (`mark`), `:584` (`size_file`), `:599`
+  (`count`), `:665` (`trim`), `:697` (`make_room`), `:736` (`put`) and
+  `:806` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
   for no bound).
 - **Differs:** a put that would take the cache's files past `CACHESIZE`
   bytes first removes entries of every table and version, the least recently

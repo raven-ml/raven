@@ -60,6 +60,11 @@ let play = function
       print_string
         (Option.value ~default:"<none>"
            (Diskcache.get ~table:Sys.argv.(1) Sys.argv.(2)))
+  | "put then get" ->
+      let table = Sys.argv.(1) in
+      Diskcache.put ~table Sys.argv.(2) Sys.argv.(2);
+      print_string
+        (Option.value ~default:"<none>" (Diskcache.get ~table Sys.argv.(3)))
   | "write" ->
       let table = Sys.argv.(1)
       and payload = String.make (1 lsl 20) Sys.argv.(2).[0] in
@@ -836,6 +841,67 @@ let clear_keeps_tables () =
   Diskcache.clear ();
   equal bool true (Sys.file_exists dir && Sys.is_directory dir)
 
+(* [during_clear f] clears the cache, running [f] once on its domain while the
+   clear is under way: at its first allocation after it has removed one of the
+   entries [first] and [second] while the other is still there. Is whether [f]
+   ran. *)
+let during_clear first second f =
+  let me = Domain.self () and armed = ref false and ran = ref false in
+  let alloc _ =
+    if !armed && Domain.self () = me && not !ran then
+      if Sys.file_exists first <> Sys.file_exists second then begin
+        ran := true;
+        f ()
+      end;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  Gc.minor ();
+  armed := true;
+  Fun.protect
+    ~finally:(fun () ->
+      armed := false;
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile)
+    Diskcache.clear;
+  !ran
+
+(* A clear has removed one of two entries and not the other when another domain
+   or process puts a new entry and then reads the other, and the clear goes on
+   once they return. Whatever order the calls take, that read sees the other
+   entry only if the put came before the clear, so the new entry cannot also
+   be there after the clear. *)
+let clear_orders_calls by =
+  let table = fresh_table () in
+  let first = put_entry ~table "x1" "old" in
+  let second = put_entry ~table "x2" "old" in
+  let seen = ref None in
+  let race () =
+    let left = if Sys.file_exists first then "x1" else "x2" in
+    seen :=
+      match by with
+      | `Domain ->
+          Domain.join
+            (Domain.spawn (fun () ->
+                 Diskcache.put ~table "new" "new";
+                 Diskcache.get ~table left))
+      | `Process -> (
+          match (succeeds (child "put then get" [ table; "new"; left ])) with
+          | "<none>" -> None
+          | v -> Some v)
+  in
+  equal ~msg:"the calls ran during the clear" bool true
+    (during_clear first second race);
+  let after = Diskcache.get ~table "new" in
+  satisfies ~claim:"the results of some order of the calls"
+    (pair (option string) (option string))
+    (fun (seen, after) -> not (Option.is_some seen && Option.is_some after))
+    (!seen, after);
+  Diskcache.clear ()
+
 (* A read and a mark hold an entry open, shared for deletion, while a put
    renames a new entry over it: on Windows a handle that does not share deletion
    makes that rename fail. *)
@@ -1024,6 +1090,11 @@ let diskcache =
           test "clear keeps the directories of the tables" clear_keeps_tables;
           test "a put replaces an entry that a read holds open"
             put_over_a_held_entry;
+          test "a put and a get on another domain come before or after a clear"
+            (fun () -> clear_orders_calls `Domain);
+          test
+            "a put and a get in another process come before or after a clear"
+            (fun () -> clear_orders_calls `Process);
           test "clear keeps another process's write in progress"
             clear_keeps_writes_in_progress;
           cases ~name:(Printf.sprintf "cachelevel=%d")

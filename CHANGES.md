@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- `Helpers.Diskcache.clear` empties every table at one step: a `put` or `get`
+  meanwhile comes wholly before or after it, where a put could outlive it. An
+  older tolk sharing the cache reads later entries as writes in progress.
 - `Rangeify.get_kernel_graph` stores a value whose copies, one per index it is
   read at and one per reduction trip that computes an element again, would add
   over 1024 nodes. A compiled `Nx.cumsum` of `Nx.log` of uniform draws computes

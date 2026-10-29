@@ -237,7 +237,13 @@ module Diskcache : sig
       cannot be removed, as on Windows while another process has it open,
       stays. The directories of the tables stay, so that a put meanwhile finds
       its table's, and so do the files under {!cachedb} that the cache did not
-      write. *)
+      write.
+
+      A put or a get that runs during a clear, on any domain or in any process,
+      comes wholly before or after it: calls behave as if made one at a time in
+      some order. It holds unless the clear cannot write in {!cachedb}, and on
+      a file system that shows every process the others' changes as they make
+      them, as a local one does. *)
 end
 
 (** {1:exec Programs} *)
