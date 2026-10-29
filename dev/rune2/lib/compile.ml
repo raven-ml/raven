@@ -209,6 +209,9 @@ type out =
   | Stored of Ops.t  (** Stored into this buffer. *)
   | Lent of int  (** Stored into argument [k]'s storage, which it takes. *)
   | Taken of int  (** Argument [k] unchanged, its storage taken. *)
+  | Copied of Rig.Buffer.t
+      (** The bytes of a constant of another device, copied there into fresh
+          memory on each call. *)
   | Empty  (** No element. *)
 
 (* A check: the buffers its first failure's index and each of its data there are
@@ -310,6 +313,24 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
       in
       st.captures <- (V x, u) :: st.captures;
       u
+
+(* The bytes of [x], a constant result of another device than the program's,
+   where a copy of them makes the result there with no kernel: one array,
+   empty or contiguous in C order from a byte boundary. *)
+let elsewhere (type v s d) st (x : (v, s, d) Nx.t) =
+  let arrays = Nx.Repr.shards x in
+  match device_of (Nx.placement x) with
+  | Some r when (not (Rig.equal r st.rig)) && Iarray.length arrays = 1 ->
+      let a = Iarray.get arrays 0 in
+      let dt = A.dtype a and l = A.layout a in
+      let bit = L.offset l * D.bits dt in
+      if L.numel l = 0 then
+        Some (Rig.Buffer.view (A.buffer a) ~first:0 ~length:0)
+      else if L.is_contiguous l && bit mod 8 = 0 then
+        let length = D.bytes dt (L.numel l) in
+        Some (Rig.Buffer.view (A.buffer a) ~first:(bit / 8) ~length)
+      else None
+  | _ -> None
 
 let construct_name = function
   | Scan _ -> "a scan"
@@ -1613,9 +1634,12 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
                 stores := Option.get assigned.stored.(j) :: !stores;
                 Lent k
             | _ -> stored (F f) (assigned.read j (node st env y)))
-        | _ ->
-            on_rig st f.placement "a result";
-            stored (F f) (capture st y))
+        | _ -> (
+            match elsewhere st y with
+            | Some a -> Copied a
+            | None ->
+                on_rig st f.placement "a result";
+                stored (F f) (capture st y)))
       p.outputs
   in
   let one dt u =
@@ -1750,7 +1774,7 @@ let link ~beam ~parallel rig l =
       let out_slots =
         Array.map
           (function
-            | Stored o -> slot o | Lent _ | Taken _ | Empty -> -1)
+            | Stored o -> slot o | Lent _ | Taken _ | Copied _ | Empty -> -1)
           l.outs
       in
       let checks =
@@ -2088,6 +2112,14 @@ and linked t v args leaves take =
             let b = Rig.Buffer.create t.rig t.results.(j).bytes in
             slots.(s) <- [ b ];
             Some b
+        | Copied src ->
+            (* Queued: the stamps order a later access of [dst] after it. *)
+            let length = Rig.Buffer.length src in
+            let dst = Rig.Buffer.create (Rig.Buffer.device src) length in
+            if length > 0 then
+              ignore
+                (Rig.Buffer.submit_copy ~src ~dst [| Rig.Buffer.row length |]);
+            Some dst
         | Empty -> None)
       v.out_slots
   in

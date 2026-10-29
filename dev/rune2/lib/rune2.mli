@@ -1449,7 +1449,10 @@ val jit :
       does not lower;
     - a check on a device other than the host;
     - no value, an argument or a result with an element on a device other than
-      the program's, or a value over several devices.
+      the program's, or a value over several devices. A result the function
+      returns without computing it, a constant with an element that lies whole
+      on another device, its elements in C order from a byte boundary, is no
+      such result: each call copies it into fresh memory of its own device.
 
     It also declines a program whose device computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a

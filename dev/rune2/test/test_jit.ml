@@ -759,11 +759,70 @@ let test_constant_result () =
       (fun x -> (Nx.neg x, c))
       x
   in
-  equal ~msg:"evaluated" int 1 (Rune.evaluations () - calls);
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
   equal bits_t (bits (v [| -1.; -2. |])) (bits y);
   equal ~msg:"on its device" bool true
     (Nx.Placement.equal (Nx.placement d) (Nx.placement c));
   equal bits_t (bits (v [| 0.5; -2. |])) (bits d)
+
+(* A set no kernel library computes on, as a GPU set is outside a compiler:
+   a memory device and an io device, which does not run on the host. *)
+let io = Nx_array_support.io_device ()
+
+module Bare = (val Nx.devices [ Nx_support.memory 3; io ])
+
+(* A constant result on the sibling of the device a program computes on, in a
+   set without kernels: the call compiles, the result is the constant's values
+   in fresh memory where the constant lies, and the computed result lies on its
+   device. *)
+let test_sibling_constant () =
+  let on r x = Nx.place (Nx.Placement.device Bare.v r) x in
+  let c = on io (v [| 0.5; -2. |]) in
+  let x = on (Nx_support.memory 3) (v [| 1.; 2. |]) in
+  let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  let apart msg a b =
+    equal ~msg bool false (Rig.Buffer.overlaps (memory a) (memory b))
+  in
+  let f =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor (pair tensor tensor)))
+      (fun x -> (Nx.neg x, (c, c)))
+  in
+  let calls = Rune.evaluations () in
+  let y, (d, d') = f x in
+  let _, (e, _) = f x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
+  equal ~msg:"on its device" bool true
+    (Nx.Placement.equal (Nx.placement d) (Nx.placement c));
+  equal ~msg:"computed on the first" bool true
+    (Nx.Placement.equal (Nx.placement y) (Nx.placement x));
+  equal bits_t (bits (v [| -1.; -2. |])) (bits (Nx.place Nx.Host.on y));
+  equal bits_t (bits (v [| 0.5; -2. |])) (bits (Nx.place Nx.Host.on d));
+  apart "fresh" d c;
+  apart "one memory per result" d d';
+  apart "one memory per call" d e;
+  (* A constant that is a view at an offset from a byte boundary, of whole and
+     of sub-byte elements, is its own elements, and so is an empty one. *)
+  let offset (type v s) msg (dt : (v, s) Nx.dtype) (e : v array) k =
+    let made = Nx.create dt [| Array.length e |] e in
+    let tail y = Nx.slice [ Rs (k, Array.length e, 1) ] y in
+    let c = tail (on io made) and want = tail made in
+    let calls = Rune.evaluations () in
+    let _, d =
+      Rune.jit
+        T.(tensor @-> returns (pair tensor tensor))
+        (fun x -> (Nx.neg x, c))
+        x
+    in
+    equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
+    equal ~msg:(msg ^ ": on its device") bool true
+      (Nx.Placement.equal (Nx.placement d) (Nx.placement c));
+    equal ~msg codes_t (raw want) (raw (Nx.place Nx.Host.on d))
+  in
+  offset "float32 at 1" f32 [| 1.; 2.; 3.; 4. |] 1;
+  offset "uint4 at 2" Nx.uint4 [| 1; 2; 3; 4; 5 |] 2;
+  offset "bit at 8" Nx.bit (Array.init 12 (fun k -> k mod 3 = 0)) 8;
+  offset "empty" f32 [| 1.; 2. |] 2
 
 (* A jit inside a jit is staged into the outer program, a call over constants
    included. *)
@@ -2663,6 +2722,8 @@ let () =
              test "a call over placed values copies nothing" test_placed_calls;
              test "a constant result off the program's device"
                test_constant_result;
+             test "a constant result on a sibling of the program's device"
+               test_sibling_constant;
              test "a jit inside a jit" test_nested;
              test "an integer maximum of a running sum wraps" test_wrapped_max;
              test "results are fresh" test_fresh;
