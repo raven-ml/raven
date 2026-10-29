@@ -1988,6 +1988,10 @@ type t = {
   uploads : (value * A.any) list ref;
       (** The copies of the constants of other devices, made by the first
           lowering, under [lock]. *)
+  mutable first : (L.t array * lowered) option;
+      (** The lowering {!make} checks, at contiguous layouts, phase [0] and no
+          donation, until the first variant takes it, under [lock]: a program's
+          first call lowers it once. *)
 }
 
 (* The program's device: the one its first argument, or else its first result,
@@ -2046,13 +2050,24 @@ let variant t layouts phases donated settings =
       match find () with
       | Some v -> v
       | None ->
+          let first = t.first in
+          t.first <- None;
+          let lowered () =
+            match first with
+            | Some (l, lowered)
+              when Array.for_all2 L.equal l layouts
+                   && Array.for_all (Int.equal 0) phases
+                   && not (Array.exists Fun.id donated) ->
+                lowered
+            | _ ->
+                lower ~rig:t.rig ~uploads:t.uploads t.program t.forms ~layouts
+                  ~phases ~donated
+          in
           (* A declined variant is kept; another failure, as an interrupted
              search, keeps nothing. *)
           let linked =
             match
-              link ~beam:t.beam ~parallel:t.parallel t.rig
-                (lower ~rig:t.rig ~uploads:t.uploads t.program t.forms ~layouts
-                   ~phases ~donated)
+              link ~beam:t.beam ~parallel:t.parallel t.rig (lowered ())
             with
             | l -> Ok l
             | exception e -> (
@@ -2078,7 +2093,7 @@ let make ~name ?beam ?parallel p forms =
     let phases = Array.map (fun _ -> 0) forms in
     let donated = Array.map (fun _ -> false) forms in
     let uploads = ref [] in
-    ignore (lower ~rig ~uploads p forms ~layouts ~phases ~donated);
+    let lowered = lower ~rig ~uploads p forms ~layouts ~phases ~donated in
     {
       name;
       rig;
@@ -2091,6 +2106,7 @@ let make ~name ?beam ?parallel p forms =
       lock = Mutex.create ();
       variants = Atomic.make [];
       uploads;
+      first = Some (layouts, lowered);
     }
   with
   | t -> Ok t
