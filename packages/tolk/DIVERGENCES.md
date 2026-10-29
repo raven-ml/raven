@@ -256,7 +256,7 @@ stamps nothing (D146).
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk:** `lib/helpers.ml:406-685` (`Diskcache`).
+- **tolk:** `lib/helpers.ml:406-691` (`Diskcache`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
   place; tables are versioned by tolk's own version.
@@ -4006,8 +4006,8 @@ submission, and a range a loop of rig's program (D146).
   `diskcache_put`): a put inserts or replaces a row and nothing removes one
   but `diskcache_clear`.
 - **tolk:** `lib/helpers.ml:478` (`mark`), `:511` (`size_file`), `:526`
-  (`count`), `:592` (`trim`), `:624` (`make_room`), `:657` (`put`) and
-  `:678` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
+  (`count`), `:592` (`trim`), `:624` (`make_room`), `:663` (`put`) and
+  `:684` (`clear`); `lib/setting.ml:247` (`cachesize`, 5 GiB by default, `0`
   for no bound).
 - **Differs:** a put that would take the cache's files past `CACHESIZE`
   bytes first removes entries of every table and version, the least recently
@@ -4018,9 +4018,11 @@ submission, and a range a loop of rig's program (D146).
   an hour or more before, the age at which ccache removes its temporary
   files, so that another process's write in progress stays. A hit sets its
   entry's time through a descriptor shared for deletion
-  (`lib/helpers_stubs.c`, `futimens` or `SetFileTime`), so that on Windows a
-  put renaming a new entry over it meanwhile still wins. Processes count each other's puts in the length of
-  one file, to which each put appends a byte per KiB. `diskcache_clear`
+  (`lib/helpers_stubs.c`, `futimens` or `SetFileTime`), and on Windows a put
+  renames its entry with POSIX semantics (`tolk_rename`), which replace a
+  file open shared for deletion, so that a put over an entry a read or a
+  mark holds meanwhile still wins. Processes count each other's puts in the
+  length of one file, to which each put appends a byte per KiB. `diskcache_clear`
   removes every entry; `clear` keeps a write in progress, an entry or size
   it cannot remove, as on Windows one another program holds open without
   sharing deletion, and the tables' directories, which a put meanwhile

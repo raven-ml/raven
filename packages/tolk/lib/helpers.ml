@@ -630,6 +630,11 @@ module Diskcache = struct
     in
     if limit > 0 && ((not measured) || over) then trim limit bytes
 
+  (* [rename src dst] renames [src] over [dst]. On Windows [Sys.rename] fails
+     while any handle has [dst] open, the cache's own reads and marks
+     included; this one replaces a file open shared for deletion. *)
+  external rename : string -> string -> unit = "tolk_rename"
+
   (* The entry is written aside and renamed into place, so readers never see it
      half written. On Windows the rename fails while a program that does not
      share the entry for deletion holds it open, which the cache's own reads and
@@ -651,8 +656,9 @@ module Diskcache = struct
         (try Sys.remove tmp with Sys_error _ -> ());
         raise e
     | () -> (
-        try Sys.rename tmp path
-        with Sys_error _ when Sys.file_exists path -> remove tmp)
+        try rename tmp path
+        with Unix.Unix_error (e, _, _) ->
+          if Sys.file_exists path then remove tmp else raise (sys_error path e))
 
   let put ~table key value =
     let limit = Setting.value Setting.cachesize in

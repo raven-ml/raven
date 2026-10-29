@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- On Windows, `Helpers.Diskcache.put` replaces an entry that a `get` holds
+  open, where it kept the old value. It renames its entry into place with
+  POSIX semantics, which replace a file open shared for deletion.
 - A maximum over a weak integer compiles. rune's Fold of a padded float window
   takes one where no term reaches an element. Its identity was a value no
   integer holds, and is the least value of its accumulator's width
