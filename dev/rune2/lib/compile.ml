@@ -231,6 +231,10 @@ type lowered = {
   bound : (Ops.t * Rig.Buffer.t list) list;  (** The captures' storage. *)
 }
 
+(* The storage a scatter combines into ({!Lower_index.scatter}): its buffer,
+   the node that holds the target there, and the target's node. *)
+type dst = { buf : Ops.t; filled : Ops.t; into : Ops.t }
+
 type state = {
   rig : Rig.t;
   device : Ops.device;
@@ -243,9 +247,18 @@ type state = {
       (** The nodes of the arguments and captures, without their movements:
           views of storage. *)
   mutable loops : int;  (** The loops' steps being lowered. *)
+  dsts : dst Ops.Tbl.t;
+      (** The storage each scatter that combines in a kernel of its own
+          combines into, by its result's node without reshapes. *)
 }
 
 let view_of st u = Ops.Tbl.replace st.views (Ops.base u) ()
+
+(* [u] without its reshapes, which keep its elements in C order: a reshape of
+   a scatter reads the scatter's storage as it lies, as does a reshape of an
+   argument. *)
+let rec unshaped u =
+  if Ops.op u = Tolk.Op.Reshape then unshaped (Ops.nth u 0) else u
 
 let on_rig st p what =
   match device_of p with
@@ -457,7 +470,13 @@ let lend ~donated ~computed ~reaches ~scattered ~fits =
    it was stored. Two results that each read the other's argument as it was
    have none: the latest result of such a cycle gives up the argument it
    took, and the arguments are lent again without that pair, until an order
-   exists. *)
+   exists.
+
+   A scatter that combines in a kernel of its own combines into the storage
+   of the result it is: its argument's, where it takes one, whose store is
+   then the scatter's kernel, and which writes only the updates where the
+   target is the argument itself; otherwise fresh storage, which the result
+   keeps, once ({!Lower_index.scatter}). *)
 
 (* The first cycle of the graph [succ] over [0 .. n - 1], if one exists. *)
 let cycle succ =
@@ -713,11 +732,36 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
   match op with
   | Check { ok; data; fail } -> check st cs env ok data fail
   | _ ->
+      (* A scatter combines into fresh storage, which {!lower} replaces by a
+         donated argument's where the scatter's result takes it. *)
+      let given = ref None in
+      let dst v =
+        let buf = Ops.new_buffer st.device (Shape.max_numel v) (Ops.dtype v) in
+        let filled = Ops.after buf [ Ops.store buf v ] in
+        given := Some (buf, filled);
+        filled
+      in
+      let dst =
+        match op with
+        | Scatter { into; _ } when not (packed (Nx.dtype into)) -> Some dst
+        | _ -> None
+      in
+      let host =
+        match Engine.target st.rig with
+        | t -> String.equal t.device "CPU"
+        | exception Invalid_argument _ -> false
+      in
+      let read x = node st env x in
       let ys =
-        match Lower.op ~device:st.device (fun x -> node st env x) op with
+        match Lower.op ?dst ~device:st.device ~host read op with
         | ys -> ys
         | exception Invalid_argument why -> decline "%s" why
       in
+      (match (op, !given) with
+      | Scatter { into; _ }, Some (buf, filled) ->
+          let into = read into in
+          Ops.Tbl.replace st.dsts (unshaped ys.(0)) { buf; filled; into }
+      | _ -> ());
       let r = combine (operand_reaches { get = (fun x -> reach env x) } op) in
       let scatter = match op with Scatter _ -> true | _ -> false in
       Array.iteri
@@ -1685,6 +1729,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
       uploads;
       views = Ops.Tbl.create 8;
       loops = 0;
+      dsts = Ops.Tbl.create 4;
     }
   in
   let env = env_of p in
@@ -1745,39 +1790,82 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
     let (F g) = form p.outputs.(j) in
     read_back dt (shape_of g) s
   in
+  (* Each result of a scatter that takes argument [k]'s storage, and the
+     substitution that makes the scatter combine there: its buffer becomes
+     [k]'s, and where its target is the argument itself, which [k]'s storage
+     holds already, so does the node that stored the target there. A scatter
+     combines into one argument's storage at most. *)
+  let placing lent =
+    let seen = Ops.Tbl.create 4 in
+    List.filter_map
+      (fun j ->
+        let (V y) = p.outputs.(j) in
+        let k = lent.(j) and v = var env y in
+        if k < 0 || v < 0 || v = p.params.(k) then None
+        else
+          match Ops.Tbl.find_opt st.dsts (unshaped (node st env y)) with
+          | Some d when not (Ops.Tbl.mem seen d.buf) ->
+              Ops.Tbl.replace seen d.buf ();
+              let arg = Option.get env.nodes.(p.params.(k)) in
+              let same = unshaped d.into == unshaped arg in
+              let held = if same then d.filled else d.buf in
+              Some (j, (held, buffer k))
+          | _ -> None)
+      (List.init (Array.length p.outputs) Fun.id)
+  in
   let rec settle refused =
     let fits k j = fits k j && not (List.mem (k, j) refused) in
     let scattered = scattered_out in
     let lent = lend ~donated ~computed ~reaches ~scattered ~fits in
+    let placed = placing lent in
+    let sub u =
+      match placed with
+      | [] -> u
+      | l -> Ops.substitute ~calls:Skip ~pass:Once u (List.map snd l)
+    in
     let nodes =
       Array.mapi
         (fun j (V y) ->
           match var env y with
           | v when v >= 0 && not (lent.(j) >= 0 && v = p.params.(lent.(j))) ->
-              Some (node st env y)
+              Some (sub (node st env y))
           | _ -> None)
         p.outputs
     in
     let checks =
-      List.map (fun (c : made) -> c.first :: List.map snd c.data) cs.made
+      List.map
+        (fun (c : made) -> List.map sub (c.first :: List.map snd c.data))
+        cs.made
     in
-    match assign ~nodes ~checks ~store:store_over ~view ~buffer lent with
-    | Ok a -> (lent, a)
+    (* A scatter combining in its argument's storage has stored over it. *)
+    let store j k u =
+      if List.mem_assoc j placed then Ops.base u else store_over j k u
+    in
+    match assign ~nodes ~checks ~store ~view ~buffer lent with
+    | Ok a -> (lent, a, nodes, sub)
     | Error j -> settle ((lent.(j), j) :: refused)
   in
-  let lent, assigned = settle [] in
+  let lent, assigned, nodes, sub = settle [] in
   let stores = ref [] in
   let buffer dt n =
     if packed dt then Ops.new_buffer st.device (D.bytes dt n) Uint8
     else Ops.new_buffer st.device (n * parts dt) (tdtype dt)
   in
+  (* A scatter's own storage is its result, once: nothing else holds it. *)
+  let taken = Ops.Tbl.create 4 in
   let stored (F f) u =
     let n = numel (shape_of f) in
     if n = 0 then Empty
     else
-      let o = buffer f.dtype n in
-      stores := store f.dtype o u :: !stores;
-      Stored o
+      match Ops.Tbl.find_opt st.dsts (unshaped u) with
+      | Some d when not (Ops.Tbl.mem taken d.buf) ->
+          Ops.Tbl.replace taken d.buf ();
+          stores := Ops.base u :: !stores;
+          Stored d.buf
+      | _ ->
+          let o = buffer f.dtype n in
+          stores := store f.dtype o u :: !stores;
+          Stored o
   in
   let outs =
     Array.mapi
@@ -1791,7 +1879,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
             | k when k >= 0 ->
                 stores := Option.get assigned.stored.(j) :: !stores;
                 Lent k
-            | _ -> stored (F f) (assigned.read j (node st env y)))
+            | _ -> stored (F f) (assigned.read j (Option.get nodes.(j))))
         | _ -> (
             match elsewhere st y with
             | Some a -> Copied a
@@ -1808,7 +1896,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
   let checks =
     List.rev_map
       (fun (c : made) ->
-        let read = assigned.read (-1) in
+        let read u = assigned.read (-1) (sub u) in
         let first = one D.Int64 (read c.first) in
         let data =
           List.map (fun ((D.Any dt as d), u) -> (d, one dt (read u))) c.data

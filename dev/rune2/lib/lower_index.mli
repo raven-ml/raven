@@ -27,9 +27,10 @@
     additions.
 
     {b Work.} The work of a scatter and of an assembly grows with their updates
-    or pieces and exceeds that of nx's kernels. Each raises [Invalid_argument]
-    where its work would be more than 16 times the kernel's ({!scatter},
-    {!assemble}). *)
+    or pieces and exceeds that of nx's kernels. Where it would be more than 16
+    times the kernel's, a scatter combines its updates in a loop of its own
+    instead, within that bound ({!scatter}), and an assembly raises
+    [Invalid_argument] ({!assemble}). *)
 
 open Tolk
 
@@ -40,6 +41,9 @@ val gather : Nx_array.Dtype.any -> axis:int -> Ops.t -> Ops.t -> Ops.t
     indexed load. *)
 
 val scatter :
+  ?dst:(Ops.t -> Ops.t) ->
+  host:bool ->
+  Ops.device ->
   Nx_array.Dtype.any ->
   Nx_kernel.combine ->
   axis:int ->
@@ -47,15 +51,33 @@ val scatter :
   updates:Ops.t ->
   Ops.t ->
   Ops.t
-(** [scatter d c ~axis ~idx ~updates into] is [into], a value of [d], with
-    [updates] combined by [c] at the positions [idx] holds along [axis], as
-    {!Nx_kernel.S.scatter} states. It compares each element of [into] with each
-    update along [axis], [n k] comparisons for [n] positions and [k] updates.
-    nx's kernel stores [n + k] elements. Under [Set], the last update in C order
-    of [updates] wins, whether or not the targets are promised distinct.
+(** [scatter ~dst ~host device d c ~axis ~idx ~updates into] is [into], a value
+    of [d], with [updates] combined by [c] at the positions [idx] holds along
+    [axis], as {!Nx_kernel.S.scatter} states, for a program on [device], whose
+    kernels compile for the host's processors where [host] holds
+    ({!Tolk_engine.target}). Under [Set], the last update in C order of
+    [updates] wins, whether or not the targets are promised distinct.
 
-    Raises [Invalid_argument] for a boolean [Add], and where
-    [n k > 16 (n + k)]. *)
+    For [n] positions and [k] updates along [axis], nx's kernel stores [n + k]
+    elements. Where [n k <= 16 (n + k)], the scatter compares each element of
+    [into] with each update along [axis], [n k] comparisons, in kernels it
+    shares with its neighbours. Otherwise it combines the updates in a kernel of
+    its own, into storage that holds [into], each element taking its updates in
+    C order: [n + k] work at each index of the other axes where [host] holds,
+    and at most [n + 16 k] elsewhere. There, a narrow float's [Add] sums in a
+    [float32] copy of [into] and marks where updates land in a byte per element
+    of [into].
+
+    Every other combine of that form combines into [dst v], where [v] is
+    [into]'s parts flat in C order: storage of [v]'s dtype and element count
+    that holds [v], such as a buffer once [v] is stored into it, an
+    {!Ops.after} over the store. The result is that storage once combined. The
+    scatter writes over it, so no value but the result may lie in it once the
+    scatter's kernel runs: it is fresh storage, or a donated argument's that
+    the result takes, which each value that reads the argument as it was reads
+    before. [dst] defaults to a fresh buffer that [v] is stored into.
+
+    Raises [Invalid_argument] for a boolean [Add]. *)
 
 val fold :
   Nx_array.Dtype.any -> Nx_kernel.pad -> int iarray -> Ops.t -> Ops.t

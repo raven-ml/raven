@@ -474,6 +474,15 @@ let float_specials (type s) (dt : (float, s) D.t) =
     field true 0 0L;
   ]
 
+(* The least and the greatest raw of the integer dtype [dt]. *)
+let int_ends (type v s) (dt : (v, s) D.t) =
+  match (width dt, D.is D.Signed dt) with
+  | 64, true -> (Int64.min_int, Int64.max_int)
+  | 64, false -> (0L, -1L)
+  | w, true ->
+      (Int64.of_int (-(1 lsl (w - 1))), Int64.of_int ((1 lsl (w - 1)) - 1))
+  | w, false -> (0L, Int64.of_int ((1 lsl w) - 1))
+
 let specials (D.Any dt as d) =
   match D.kind dt with
   | D.Float -> float_specials dt
@@ -493,16 +502,7 @@ let specials (D.Any dt as d) =
         ]
   | _ when is_bool d -> [ 0L; 1L; 1L; 0L ]
   | _ ->
-      let w = width dt in
-      let lo, hi =
-        match (w, D.is D.Signed dt) with
-        | 64, true -> (Int64.min_int, Int64.max_int)
-        | 64, false -> (0L, -1L)
-        | w, true ->
-            ( Int64.of_int (-(1 lsl (w - 1))),
-              Int64.of_int ((1 lsl (w - 1)) - 1) )
-        | w, false -> (0L, Int64.of_int ((1 lsl w) - 1))
-      in
+      let lo, hi = int_ends dt in
       [ lo; hi; 0L; 1L; -1L; 0L ]
 
 (* The raws of [n] elements of [d], cycling through its specials from [i]. *)
@@ -649,7 +649,10 @@ let distinct n t axis pos =
   done;
   pos
 
-let scatter_case dts combines =
+(* [scatter_case ~long dts combines] draws a scatter of [dts] by [combines].
+   Where [long], its axis has 33 to 40 positions under 33 to 48 updates, past
+   16 times eager's work: [n k > 16 (n + k)] iff [(n - 16) (k - 16) > 256]. *)
+let scatter_case ?(long = false) dts combines =
   let open Gen in
   let* d = among dts in
   let* combine = among combines in
@@ -657,7 +660,9 @@ let scatter_case dts combines =
   let* s = shape in
   let* view = among views in
   let* axis = int_range 0 (Array.length s - 1) in
-  let* m = extent in
+  let* n = if long then int_range 33 40 else constant s.(axis) in
+  let* m = if long then int_range 33 48 else extent in
+  let s = Array.mapi (fun i e -> if i = axis then n else e) s in
   let t = Array.mapi (fun i n -> if i = axis then m else n) s in
   let n = s.(axis) in
   let* pos = positions n (numel t) in
@@ -731,7 +736,7 @@ let scattered (type v s) (dt : (v, s) D.t) c =
   in
   (into, updates, op)
 
-let cover_scatter ?booleans c =
+let cover_scatter ?booleans ?(long = false) c =
   dtype_covers ?booleans c.s_dt;
   cover_floats c.s_dt (Array.append c.s_into c.s_updates);
   cover "a strided or broadcast view" (c.s_view <> Plain);
@@ -739,7 +744,10 @@ let cover_scatter ?booleans c =
     (Array.exists (outside c.s_shape.(c.s_axis)) c.s_pos);
   cover "two updates on one element" (collide c);
   cover "unique" c.s_unique;
-  cover "no update" (numel c.s_idx = 0)
+  cover "no update" (numel c.s_idx = 0);
+  if long then
+    cover "an axis between two others"
+      (c.s_axis > 0 && c.s_axis < Array.length c.s_shape - 1)
 
 let scatter_example i d combine =
   let s = [| 3; 4 |] and axis = i mod 2 in
@@ -787,27 +795,85 @@ let scatter_examples dts combines =
         scatter_example i d (List.nth combines (i mod List.length combines)))
       dts
 
+let moved ?long combines c =
+  let (D.Any dt) = c.s_dt in
+  cover_scatter ?long c;
+  List.iter (fun k -> cover (combine_name k) (c.s_combine = k)) combines;
+  let _, _, op = scattered dt c in
+  let e, l = exact dt op in
+  cover_untouched c (e, l);
+  (* A NaN where an update lands under Max or Min may be any NaN. *)
+  let count = landed c in
+  let shown o h =
+    if c.s_combine <> Set && count.(o) > 0 && nans dt h <> [] then "nan"
+    else h
+  in
+  equal (array string) (Array.mapi shown e) (Array.mapi shown l)
+
+(* Each dtype past the work bound, along an axis between two others, the
+   combines in turn; a float32 target of both zeros and a signalling NaN under
+   40 [-0] updates, all on its first two elements, for each combine; and a
+   target without elements. *)
+let long_examples dts combines =
+  let example i d =
+    let s = [| 2; 33; 3 |] and t = [| 2; 40; 3 |] in
+    let view = List.nth views (i mod 4) in
+    {
+      s_dt = d;
+      s_combine = List.nth combines (i mod List.length combines);
+      s_unique = false;
+      s_shape = s;
+      s_view = view;
+      s_axis = 1;
+      s_idx = t;
+      s_pos = example_positions 33 (numel t);
+      s_into = cycled ~i d (numel (base view s));
+      s_updates = cycled ~i:(i + 3) d (numel t);
+    }
+  in
+  let zeros combine =
+    let z = zero_example combine in
+    let into = Array.make 33 0x3f800000L in
+    into.(0) <- 0x80000000L;
+    into.(1) <- 0L;
+    into.(2) <- 0x7f800001L;
+    {
+      z with
+      s_shape = [| 33 |];
+      s_idx = [| 40 |];
+      s_pos = Array.init 40 (fun j -> Int64.of_int (j mod 2));
+      s_into = into;
+      s_updates = Array.make 40 0x80000000L;
+    }
+  in
+  let none =
+    let e = example 0 (List.hd dts) in
+    {
+      e with
+      s_shape = [| 0; 33; 3 |];
+      s_view = Plain;
+      s_idx = [| 0; 40; 3 |];
+      s_pos = [||];
+      s_into = [||];
+      s_updates = [||];
+    }
+  in
+  none :: List.map zeros combines @ List.mapi example dts
+
 let scatters_moved =
   prop ~count:40
     ~examples:(scatter_examples D.all [ Set; Max; Min ])
     "a scatter by Set, Max or Min gives eager's bits"
     (Gen.with_pp pp_scatter (scatter_case D.all [ Set; Max; Min ]))
-    (fun c ->
-      let (D.Any dt) = c.s_dt in
-      cover_scatter c;
-      List.iter
-        (fun k -> cover (combine_name k) (c.s_combine = k))
-        [ Set; Max; Min ];
-      let _, _, op = scattered dt c in
-      let e, l = exact dt op in
-      cover_untouched c (e, l);
-      (* A NaN where an update lands under Max or Min may be any NaN. *)
-      let count = landed c in
-      let shown o h =
-        if c.s_combine <> Set && count.(o) > 0 && nans dt h <> [] then "nan"
-        else h
-      in
-      equal (array string) (Array.mapi shown e) (Array.mapi shown l))
+    (moved [ Set; Max; Min ])
+
+let scatters_moved_long =
+  prop ~count:40
+    ~examples:(long_examples D.all [ Set; Max; Min ])
+    "a scatter by Set, Max or Min past 16 times eager's work gives eager's \
+     bits"
+    (Gen.with_pp pp_scatter (scatter_case ~long:true D.all [ Set; Max; Min ]))
+    (moved ~long:true [ Set; Max; Min ])
 
 let addable = List.filter (fun d -> not (is_bool d)) D.all
 
@@ -837,29 +903,44 @@ let zero_target ~negative c into updates =
       List.exists hit (List.init (Array.length x) Fun.id))
     (parts64 into) (parts64 updates)
 
+let added ?long c =
+  let (D.Any dt) = c.s_dt in
+  cover_scatter ?long ~booleans:false c;
+  cover "a narrow float" (is_narrow c.s_dt);
+  let into, updates, op = scattered dt c in
+  let floats = is_float c.s_dt || is_complex c.s_dt in
+  let zero negative = floats && zero_target ~negative c into updates in
+  cover "a -0 target whose landing updates are all -0" (zero true);
+  cover "a +0 target with -0 updates" (zero false);
+  let bits = exact dt op in
+  cover_untouched c bits;
+  if not (floats || is_bool c.s_dt) then begin
+    let lo, hi = int_ends dt in
+    let ends r = r = lo || r = hi in
+    cover "an integer at an end of its dtype"
+      (Array.exists ends c.s_into || Array.exists ends c.s_updates)
+  end;
+  if not floats then equal (array string) (fst bits) (snd bits)
+  else begin
+    let keep_e, keep_l = untouched c bits in
+    equal ~msg:"where no update lands" (list string) keep_e keep_l;
+    let e = Nx.to_array (op ()) and l = Lowered.run op in
+    sums dt ~mags:(magnitudes c into updates) ~terms:(landed c) e l
+  end
+
 let scatter_adds =
   prop ~count:40
     ~examples:(scatter_examples addable [ Add ])
     "a scatter by Add wraps integers and holds its float bound"
     (Gen.with_pp pp_scatter (scatter_case addable [ Add ]))
-    (fun c ->
-      let (D.Any dt) = c.s_dt in
-      cover_scatter ~booleans:false c;
-      cover "a narrow float" (is_narrow c.s_dt);
-      let into, updates, op = scattered dt c in
-      let floats = is_float c.s_dt || is_complex c.s_dt in
-      let zero negative = floats && zero_target ~negative c into updates in
-      cover "a -0 target whose landing updates are all -0" (zero true);
-      cover "a +0 target with -0 updates" (zero false);
-      let bits = exact dt op in
-      cover_untouched c bits;
-      if not floats then equal (array string) (fst bits) (snd bits)
-      else begin
-        let keep_e, keep_l = untouched c bits in
-        equal ~msg:"where no update lands" (list string) keep_e keep_l;
-        let e = Nx.to_array (op ()) and l = Lowered.run op in
-        sums dt ~mags:(magnitudes c into updates) ~terms:(landed c) e l
-      end)
+    added
+
+let scatter_adds_long =
+  prop ~count:40
+    ~examples:(long_examples addable [ Add ])
+    "a scatter by Add past 16 times eager's work holds its bound"
+    (Gen.with_pp pp_scatter (scatter_case ~long:true addable [ Add ]))
+    (added ~long:true)
 
 (* Folds *)
 
@@ -1410,17 +1491,6 @@ let refused what f =
       | Invalid_argument m -> String.starts_with ~prefix m | _ -> false)
     (fun () -> Lowered.run f)
 
-(* A scatter of [k] updates over an axis of [n] positions. *)
-let line_scatter n k () =
-  let into = Nx.create D.Float32 [| n |] (Array.make n 0.) in
-  let idx =
-    Nx.create D.Int64 [| k |] (Array.init k (fun j -> Int64.of_int (j mod n)))
-  in
-  let updates = Nx.create D.Float32 [| k |] (Array.init k Float.of_int) in
-  P.eval ~by:"t"
-    (P.Scatter
-       { combine = Set; unique = false; axis = 0; idx; updates; into })
-
 (* An assembly of [p] pieces of one element into 64. *)
 let spots p () =
   let piece i =
@@ -1436,12 +1506,28 @@ let spots p () =
          pieces = List.init p piece;
        })
 
+(* A scatter of [k] updates by [combine] over a line of [n] positions. *)
+let line_by combine n k () =
+  let into = Nx.create D.Float32 [| n |] (Array.make n 0.) in
+  let idx =
+    Nx.create D.Int64 [| k |] (Array.init k (fun j -> Int64.of_int (j mod n)))
+  in
+  let updates = Nx.create D.Float32 [| k |] (Array.init k Float.of_int) in
+  P.eval ~by:"t"
+    (P.Scatter { combine; unique = false; axis = 0; idx; updates; into })
+
 let work_bounds =
-  test "a scatter and an assembly past 16 times eager's work are refused"
+  test
+    "a scatter past 16 times eager's work computes, an assembly past it is \
+     refused"
     (fun () ->
-      (* [32·32 = 16 (32 + 32)], and [21·64 <= 16 (64 + 21) < 22·64]. *)
-      same_bits D.Float32 (line_scatter 32 32);
-      refused "a Scatter" (line_scatter 33 33);
+      (* [32·32 = 16 (32 + 32) < 33·33], [21·64 <= 16 (64 + 21) < 22·64]. *)
+      List.iter
+        (fun c ->
+          same_bits D.Float32 (line_by c 32 32);
+          same_bits D.Float32 (line_by c 33 33);
+          same_bits D.Float32 (line_by c 99 1000))
+        [ K.Set; Add; Max; Min ];
       same_bits D.Float32 (spots 21);
       refused "an Assemble" (spots 22))
 
@@ -1450,7 +1536,13 @@ let () =
     (run "Lower_index"
        [
          group "gathers and scatters"
-           [ gathers; scatters_moved; scatter_adds ];
+           [
+             gathers;
+             scatters_moved;
+             scatter_adds;
+             scatters_moved_long;
+             scatter_adds_long;
+           ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts" [ sorts ];
          group "work bounds" [ work_bounds ];

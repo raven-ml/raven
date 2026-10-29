@@ -229,7 +229,7 @@ let fft (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
 
 (* Operations *)
 
-let op ~device (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
+let op ?dst ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
     (o : r P.t) =
   match o with
   | Map { layout; prog; loads; outs = _; at = _ } -> body node layout prog loads
@@ -267,7 +267,7 @@ let op ~device (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
       [| Lower_index.gather (D.Any (Nx.dtype x)) ~axis (node idx) (node x) |]
   | Scatter { combine; unique = _; axis; idx; updates; into } ->
       [|
-        Lower_index.scatter
+        Lower_index.scatter ?dst ~host device
           (D.Any (Nx.dtype into))
           combine ~axis ~idx:(node idx) ~updates:(node updates) (node into);
       |]

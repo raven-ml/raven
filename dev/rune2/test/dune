@@ -47,6 +47,14 @@
   threads.posix
   windtrap))
 
+; Opens this machine's first GPU, so it holds the lock GPU tests share.
+
+(test
+ (name test_jit_gpu)
+ (modules test_jit_gpu)
+ (locks %{workspace_root}/gpu)
+ (libraries nx rig.gpus rune2 rune2_support tolk windtrap))
+
 ; nx's special functions' derivatives, against goldens gen/special_grad.py
 ; writes from correctly rounded references.
 

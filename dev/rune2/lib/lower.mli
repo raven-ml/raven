@@ -29,20 +29,24 @@
 open Tolk
 
 val op :
+  ?dst:(Ops.t -> Ops.t) ->
   device:Ops.device ->
+  host:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
   'r Nx.Prim.t ->
   Ops.t array
-(** [op ~device node o] is the node of each result of [o], in position order,
-    computed on [device]. It reads each operand [x] from [node x].
+(** [op ~dst ~device ~host node o] is the node of each result of [o], in
+    position order, computed on [device], whose kernels compile for the host's
+    processors where [host] holds ({!Tolk_engine.target}). It reads each
+    operand [x] from [node x]. A [Scatter] takes its storage from [dst] where
+    {!Lower_index.scatter} does; another operation ignores it.
 
     Raises [Invalid_argument], naming the operation, for one it does not lower:
     [Check], which its caller lowers itself, a [Linalg] that {!Lower_linalg.op}
-    refuses, a boolean [Add] [Scatter] or [Fold], a [Scatter] or an [Assemble]
-    that would do more than 16 times the work of nx's kernel
-    ({!Lower_index.scatter}, {!Lower_index.assemble}), a [Sort] along an axis of
-    more than [2{^31}] elements ({!Lower_index.sort}), an [Fft] of a precision
-    other than [float32] and [float64] or whose result's precision is not its
-    operand's, a [Contract] scaled in an accumulator other than [float32] or
-    [float64], a reduction or a scan of a complex [Prod], and a scan of a
-    [complex128] [Max], [Min] or [Arg]. *)
+    refuses, a boolean [Add] [Scatter] or [Fold], an [Assemble] that would do
+    more than 16 times the work of nx's kernel ({!Lower_index.assemble}), a
+    [Sort] along an axis of more than [2{^31}] elements ({!Lower_index.sort}),
+    an [Fft] of a precision other than [float32] and [float64] or whose
+    result's precision is not its operand's, a [Contract] scaled in an
+    accumulator other than [float32] or [float64], a reduction or a scan of a
+    complex [Prod], and a scan of a [complex128] [Max], [Min] or [Arg]. *)

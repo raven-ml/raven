@@ -79,6 +79,16 @@ val prog : Nx_kernel.Prog.t -> int array -> Ops.t array -> Ops.t array
 
     Raises [Invalid_argument] unless [ins] has one node per operand of [p]. *)
 
+val binary :
+  Nx_kernel.Prog.binary ->
+  Nx_array.Dtype.any ->
+  Ops.t list ->
+  Ops.t list ->
+  Ops.t list
+(** [binary k d xs ys] is the {!parts} of [k] applied to the elements of [d]
+    whose parts are [xs] and [ys], as {!prog} applies it. It applies only
+    elementwise operations, so its parts may be the scalars of a kernel. *)
+
 val cast : src:Nx_array.Dtype.any -> Nx_array.Dtype.any -> Ops.t -> Ops.t
 (** [cast ~src dt x] is the node [x] of a value of [src] stored into [dt], as
     {!Nx_kernel.Prog.Cast} stores it. *)

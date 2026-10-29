@@ -1653,6 +1653,105 @@ let test_pools () =
     eager := e
   done
 
+(* A gather of 1000 reads from 99 positions: its gradient scatters 1000
+   updates into 99 positions, past 16 times eager's work, and compiles. *)
+let test_dense_scatter () =
+  let n = 99 and k = 1000 in
+  let at j = Int64.of_int (j * 37 mod n) in
+  let at = Nx.create Nx.int64 [| k |] (Array.init k at) in
+  let w =
+    Nx.create f64 [| k |] (Array.init k (fun j -> Float.of_int (j mod 7)))
+  in
+  let f x = Rune.grad' (fun x -> Nx.sum (Nx.mul (Nx.take ~axis:0 at x) w)) x in
+  let x = Nx.create f64 [| n |] (Array.init n Float.of_int) in
+  let expected = Value (Nx.to_array (f x)) in
+  equal
+    (outcome_t (array (float_rel ~rel:1e-14 ~abs:1e-300)))
+    expected
+    (compiled (fun () -> Nx.to_array (Rune.jit' f x)))
+
+(* Scatters past the work bound into a donated target
+
+   A scatter of 48 updates into 40 positions combines in its target's memory:
+   the result takes it, and another result that reads the target reads it as
+   it was. Of one scatter returned twice, one result takes the target's memory
+   and the other is fresh. The other arguments keep their values. *)
+
+let long_scatter () =
+  let n = 40 and k = 48 in
+  let at j = Int64.of_int (j * 7 mod (n + 1)) in
+  let p = Nx.create Nx.int64 [| k |] (Array.init k at) in
+  let u =
+    Nx.create f32 [| k |] (Array.init k (fun j -> Float.of_int j /. 2.))
+  in
+  let x () = Nx.create f32 [| n |] (Array.init n (fun j -> -.Float.of_int j)) in
+  (p, u, x)
+
+let memory y = Nx_array.buffer (Option.get (Nx.Repr.array y))
+
+let test_long_donated () =
+  let p, u, x = long_scatter () in
+  let f x = (Nx.scatter ~combine:Add ~axis:0 p u x, Nx.mul x x) in
+  let s, sq = f (x ()) in
+  let p0 = Nx.to_array p and u0 = bits u in
+  let x = x () in
+  let b = Nx.Repr.read x Nx_array.buffer in
+  let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
+  let before = Rune.evaluations () in
+  let y, z = g (Nx.donate x) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal ~msg:"the scatter" bits_t (bits s) (bits y);
+  equal ~msg:"the target read as it was" bits_t (bits sq) (bits z);
+  equal ~msg:"the scatter in the target's memory" bool true
+    (Rig.Buffer.overlaps b (memory y));
+  equal ~msg:"the square apart" bool false (Rig.Buffer.overlaps b (memory z));
+  equal ~msg:"the positions kept" (array int64) p0 (Nx.to_array p);
+  equal ~msg:"the updates kept" bits_t u0 (bits u)
+
+(* A cache donated flat, reshaped to rows for the scatter and back: the
+   reshapes keep its elements in place, so the scatter combines there. *)
+let test_long_flat () =
+  let n = 40 and k = 48 and w = 3 in
+  let at j = Int64.of_int (j * 7 mod (n + 1)) in
+  let p = Nx.create Nx.int64 [| k; 1 |] (Array.init k at) in
+  let half j = Float.of_int j /. 2. in
+  let u = Nx.create f32 [| k; w |] (Array.init (k * w) half) in
+  let f c =
+    let rows = Nx.reshape [| n; w |] c in
+    let at = Nx.broadcast_to [| k; w |] p in
+    let s = Nx.scatter ~combine:Add ~axis:0 at u rows in
+    Nx.reshape [| n * w |] s
+  in
+  let x () =
+    Nx.create f32 [| n * w |] (Array.init (n * w) (fun j -> -.Float.of_int j))
+  in
+  let expected = bits (f (x ())) in
+  let before = Rune.evaluations () in
+  let took, y = in_place (Rune.jit' f) (x ()) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal bits_t expected (bits y);
+  equal ~msg:"in the cache's memory" bool true took
+
+let test_long_twice () =
+  let p, u, x = long_scatter () in
+  let f x =
+    let s = Nx.scatter ~combine:Add ~axis:0 p u x in
+    (s, s)
+  in
+  let s, _ = f (x ()) in
+  let x = x () in
+  let b = Nx.Repr.read x Nx_array.buffer in
+  let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f in
+  let before = Rune.evaluations () in
+  let y, z = g (Nx.donate x) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal ~msg:"the first" bits_t (bits s) (bits y);
+  equal ~msg:"the second" bits_t (bits s) (bits z);
+  equal ~msg:"one in the target's memory" int 1
+    (List.length
+       (List.filter (fun r -> Rig.Buffer.overlaps b (memory r)) [ y; z ]));
+  equal ~msg:"apart" bool false (Rig.Buffer.overlaps (memory y) (memory z))
+
 (* A scatter's target lends to the scatter, first. *)
 let test_scatter_lends () =
   let p = Nx.create Nx.int64 [| 2 |] [| 2L; 0L |] in
@@ -2931,6 +3030,18 @@ let () =
              test "a contraction's init lends, an operand does not"
                test_contract_init;
              test "a scatter's target lends" test_scatter_lends;
+             test "a gather's gradient into fewer positions compiles"
+               test_dense_scatter;
+             prop ~count:12 ~examples:Scatters.examples
+               "a scatter past 16 times eager's work compiles to eager's values"
+               (Gen.with_pp Scatters.pp Scatters.gen)
+               (Scatters.law (module Nx.Host));
+             test "a scatter past its work bound combines in a donated target"
+               test_long_donated;
+             test "a scatter returned twice takes a donated target once"
+               test_long_twice;
+             test "a scatter into a donated target reshaped combines there"
+               test_long_flat;
              test "donated pools scattered and read lend" test_pools;
              test "checks raise as eagerly" test_checks;
              test "a shortcut over a capture stages" test_shortcut_captures;

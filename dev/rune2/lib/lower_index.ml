@@ -16,11 +16,12 @@ let unlowered what =
    A scatter meets each update at every position along its axis, [n·k] work
    against eager's [n + k], and an assembly selects each of its [p] pieces at
    every element, [p·N] against eager's [N + m] for pieces of [m] elements in
-   all. Each is refused past [work_bound] times eager's work, and the jit then
-   evaluates its program uncompiled. The bound is a cost model's, not yet
-   timed: below it the extra work is a few comparisons and selects per unit
-   on elements the kernel holds, which the model takes as about what moving
-   each element through memory costs a host core, and as hidden on a GPU.
+   all. Past [work_bound] times eager's work, a scatter combines in a loop of
+   its own (below), and an assembly is refused: the jit then evaluates its
+   program uncompiled. The bound is a cost model's, not yet timed: below it
+   the extra work is a few comparisons and selects per unit on elements the
+   kernel holds, which the model takes as about what moving each element
+   through memory costs a host core, and as hidden on a GPU.
    Past it the work outgrows what compiling the rest of the program saves: an
    embedding's gradient, 512 updates over 50000 rows, would make 2.6e7
    comparisons per feature against eager's 5e4. *)
@@ -29,6 +30,7 @@ let work_bound = 16
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
 let dims s = List.map (fun n -> Ops.Int n) s
 let numel s = List.fold_left ( * ) 1 s
+let ceil_div a b = (a + b - 1) / b
 let int u n = Shape.const_like u (`Int (Bigint.of_int n))
 
 let broadcast c s =
@@ -130,13 +132,185 @@ let summed ca ~landed xs us =
   Arith.of_parts ca
     (List.map2 signed (List.combine xs us) (Arith.parts ca (List.hd sums)))
 
-let scatter (D.Any dt as d) (c : Nx_kernel.combine) ~axis ~idx ~updates into =
+(* Looped scatters
+
+   Past [work_bound], a scatter updates in place, in a kernel of its own,
+   storage that holds [into]: its caller's [dst], such as a fresh buffer that a
+   kernel stored [into] into, one element per thread, or a donated target's own
+   storage, which needs no copy. [into] is [p·n·q] elements, an axis of [n]
+   between [p] and [q], and the updates [p·k·q]. The axis is cut into runs of
+   positions. For each index of the axes before the axis and each run, a thread
+   walks the [k] updates in C order and combines each that lands in its run
+   with the element it lands on: every element meets its updates in eager's
+   order, and no two threads write one element. Work is [runs·k + n] at each
+   index of the other axes. On the host, the axes after the axis are a serial
+   loop inside the walk, so that an update writes a contiguous row, and
+   positions an expansion repeats along them are read once a row. On a GPU they
+   are threads too, adjacent ones at adjacent addresses.
+
+   The host takes one run: at 1024 rows of 64 floats into 4096, one thread's
+   walk takes 6 µs, and 16 runs split among its threads take 37 µs. A GPU takes
+   up to [gpu_runs], which bounds the walks to [gpu_runs·k].
+
+   A narrow float's Add sums in a [float32] copy and marks where updates land
+   in a byte per element, so that elsewhere the result keeps [into]'s bits,
+   which a trip through [float32] quiets. *)
+
+let gpu_runs = 16
+
+(* [spread u] is the axes along which the view [u] broadcasts its source: those
+   an expansion adds, moved by permutations. *)
+let rec spread u =
+  match Ops.op u with
+  | Op.Expand -> (
+      match Shape.marg u with
+      | Expand front ->
+          let m = List.length front in
+          List.init m Fun.id @ List.map (( + ) m) (spread (Ops.nth u 0))
+      | _ -> [])
+  | Op.Permute -> (
+      match Shape.marg u with
+      | Permute perm ->
+          let inner = spread (Ops.nth u 0) in
+          let moved i a = if List.mem a inner then [ i ] else [] in
+          List.concat (List.mapi moved perm)
+      | _ -> [])
+  | _ -> []
+
+(* [walk ~host ~rows ~w ~p ~n ~q ~k f args] is the kernel over [args] =
+   [y; i; u] or [y; i; u; hit] that combines by [f] each update of [u], at its
+   position in [i], into [y], [w] parts an element, and sets [hit] to [1] where
+   one lands. Where [rows], [i] holds one position per row of [q] updates. *)
+let walk ~host ~rows ~w ~p ~n ~q ~k f args =
+  let len = if host then n else ceil_div n (Int.min n gpu_runs) in
+  let runs = ceil_div n len in
+  let range t e id = Ops.range ~axis_type:t (Ops.Int e) [ id ] in
+  let a = range Weak p 0 and g = range Weak runs 1 in
+  let j, b =
+    if host then (range Reduce k 2, range Reduce q 3)
+    else (range Reduce k 3, range Weak q 2)
+  in
+  let y, i, u, hit =
+    match args with
+    | [ y; i; u ] -> (y, i, u, None)
+    | [ y; i; u; h ] -> (y, i, u, Some h)
+    | _ -> assert false
+  in
+  let open Ops.O in
+  let row = (a * int k) + j in
+  let update = (row * int q) + b in
+  let pos = Ops.load (Ops.index i [ (if rows then row else update) ]) [] in
+  let u64 v = Ops.const ~dtype:Uint64 (`Int (Bigint.of_int v)) in
+  let first = Ops.cast (g * int len) Int64 in
+  (* Unsigned, a negative position lies past every bound, and [pos - first]
+     wraps where it would overflow. *)
+  let upos = Ops.bitcast pos Uint64 in
+  let ufirst = Ops.cast (g * int len) Uint64 in
+  let run = Ops.bitwise_and (upos < u64 n) (upos - ufirst < u64 len) in
+  (* In the run, [pos] is [first + pos mod len], an address that names the
+     run's range. An update outside the run reads and stores nothing: its index
+     is invalid. *)
+  let within = Ops.bitcast (upos % u64 len) Int64 in
+  let at = Ops.cast (first + within) Weak_int in
+  let e = (((a * int n) + at) * int q) + b in
+  let part m o c =
+    Ops.index m [ Ops.where run ((o * int w) + int c) Ops.invalid ]
+  in
+  let state = Ops.after y (if host then [ j; b ] else [ j ]) in
+  let olds = List.init w (fun c -> Ops.load (part state e c) []) in
+  let us = List.init w (fun c -> Ops.load (part u update c) []) in
+  let stores = List.mapi (fun c v -> Ops.store (part y e c) v) (f olds us) in
+  let marks =
+    match hit with
+    | None -> []
+    | Some h ->
+        let one = Ops.const ~dtype:Uint8 (`Int Bigint.one) in
+        [ Ops.store (part h e 0) one ]
+  in
+  let body = Ops.group (stores @ marks) in
+  let ends =
+    if host then Ops.end_ (Ops.end_ (Ops.end_ body [ b ]) [ j ]) [ a; g ]
+    else Ops.end_ (Ops.end_ body [ j ]) [ a; g; b ]
+  in
+  let kernel = Ops.kernel_info ~name:"scatter" ~opts_to_apply:[] () in
+  Ops.sink ~kernel [ ends ]
+
+(* [fresh device v] is a buffer of [device] once [v] is stored into it. *)
+let fresh device v =
+  let b = Ops.new_buffer device (Shape.max_numel v) (Ops.dtype v) in
+  Ops.after b [ Ops.store b v ]
+
+let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
+    ~idx ~updates into =
+  let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
+  let r = List.length s in
+  let p = numel (List.filteri (fun i _ -> i < axis) s) in
+  let q = numel (List.filteri (fun i _ -> i > axis) s) in
+  let n = List.nth s axis and k = List.nth t axis in
+  if c = Add && D.is D.Boolean dt then unlowered "a boolean Add Scatter";
+  let w = if D.is D.Complex dt then 2 else 1 in
+  let narrow = c = Add && D.is D.Float dt && D.bits dt < 32 in
+  let ca = if narrow then D.Any D.Float32 else d in
+  let on_device v =
+    if Option.is_none (Ops.device v) then Ops.copy_to_device v device else v
+  in
+  (* [v], a node of [d], as the flat parts of [ca]. *)
+  let flat v =
+    let v = if narrow then Arith.cast ~src:d ca v else v in
+    Shape.reshape v [ Ops.Int (Shape.max_numel v) ]
+  in
+  let fresh = fresh device in
+  (* A kernel's argument starts on 16 bytes, as its parameter assumes: a view
+     at another phase, such as an argument's, is copied. *)
+  let arg v =
+    let v = Ops.contiguous (on_device v) in
+    let align, phase = Call.storage_phase v in
+    if align >= 16 && phase mod 16 = 0 then v else fresh v
+  in
+  let combined olds us =
+    match c with
+    | Set -> us
+    | Add -> Arith.binary Add ca olds us
+    | Max -> Arith.binary Maximum ca olds us
+    | Min -> Arith.binary Minimum ca olds us
+  in
+  (* Positions an expansion repeats along every axis after [axis] are read once
+     a row, from the view's first element along those axes. *)
+  let rows =
+    let spread = spread idx in
+    List.for_all
+      (fun i -> i <= axis || List.nth t i = 1 || List.mem i spread)
+      (List.init r Fun.id)
+  in
+  let i =
+    if not rows then Shape.reshape idx [ Ops.Int (numel t) ]
+    else
+      let first i = if i > axis then Some (Ops.Int 0, Ops.Int 1) else None in
+      Shape.reshape (Shape.shrink idx (List.init r first)) [ Ops.Int (p * k) ]
+  in
+  (* The store that fills [y] computes [into]: a constant [into] is a fill. *)
+  let y = if narrow then fresh (flat into) else dst (flat into) in
+  let hit = if not narrow then [] else [ fresh (zeros Uint8 [ numel s ]) ] in
+  let outs =
+    Call.custom_kernel
+      ([ y; arg i; arg (flat updates) ] @ hit)
+      (walk ~host ~rows ~w ~p ~n ~q ~k combined)
+  in
+  let y = Shape.reshape (List.hd outs) (Arith.dims ca (Array.of_list s)) in
+  if not narrow then y
+  else
+    let hit = Shape.reshape (List.nth outs 3) (dims s) in
+    Ops.where (Ops.ne hit (int hit 0)) (Arith.cast ~src:ca d y) into
+
+let scatter ?dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
+    ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
   let r = List.length s in
   let n = List.nth s axis and k = List.nth t axis in
   if n = 0 || numel t = 0 then into
   else if n * k > work_bound * (n + k) then
-    unlowered (Printf.sprintf "a Scatter of %d updates over %d positions" k n)
+    let dst = Option.value dst ~default:(fresh device) in
+    looped ~dst ~host device d c ~axis ~idx ~updates into
   else
     let wide = s @ [ k ] in
     (* A node of [idx]'s shape moved to [wide], its axis [axis] last. *)
@@ -205,8 +379,6 @@ let scatter (D.Any dt as d) (c : Nx_kernel.combine) ~axis ~idx ~updates into =
    rounds once. The same movements over a mark per term, [2] for a term other
    than [-0] and [1] for [-0], folded by their maximum, find where every term
    is [-0], which the sum, from tolk's [+0] accumulator, makes [+0]. *)
-
-let ceil_div a b = (a + b - 1) / b
 
 (* [only r i b] is [b] at axis [i] of [r] axes, [None] elsewhere. *)
 let only r i b = List.init r (fun j -> if j = i then Some b else None)

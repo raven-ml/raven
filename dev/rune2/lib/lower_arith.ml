@@ -585,6 +585,8 @@ let op2 (k : P.op2) (D.Any s as d) xs ys =
       [ byte (compare_exact c (one xs) (one ys)) ]
   | Compare c, Boolean -> [ byte (bool_compare c (one xs) (one ys)) ]
 
+let binary k d xs ys = op2 (Binary k) d xs ys
+
 let op3 (k : P.op3) (D.Any s as d) cs xs ys =
   match (k, cs) with
   | Where, [ c ] -> List.map2 (where (truth c)) xs ys

@@ -295,18 +295,25 @@ let grad_of_jit () =
       fun p -> Rune.grad small_mlp (fun p -> l p x) p)
     (fun g -> synced_all small_mlp (g p))
 
-(* 16 rows of 64 written into a donated table of 4096 rows, each call taking
-   the last one's result. A store of the rows alone over the donated memory
+(* [k] rows of 64 written into a donated table of 4096 rows, each call taking
+   the last one's result. A store of 16 rows alone over the donated memory
    costs about the eager call's 2 us; a pass over the table costs 50 times
-   that. *)
-let donated_scatter () =
-  let k = 16 and slots = 4096 and width = 64 in
+   that. 1024 rows, a cache's prefill, are past the masked form's work bound,
+   and combine in the table's memory. Where [flat], the table is held flat
+   and reshaped to rows around the scatter, which keeps it in place. *)
+let donated_scatter ?(flat = false) k =
+  let slots = 4096 and width = 64 in
   Thumper.bench_with_setup
-    (Printf.sprintf "scatter-%d-rows-into-donated-%dx%d" k slots width)
+    (Printf.sprintf "scatter-%d-rows-into-donated-%s%dx%d" k
+       (if flat then "flat-" else "")
+       slots width)
     ~setup:(fun () ->
       let write cache u i =
         let p = Nx.broadcast_to [| k; width |] (Nx.reshape [| k; 1 |] i) in
-        Nx.scatter ~axis:0 p u cache
+        if not flat then Nx.scatter ~axis:0 p u cache
+        else
+          let rows = Nx.reshape [| slots; width |] cache in
+          Nx.reshape [| slots * width |] (Nx.scatter ~axis:0 p u rows)
       in
       let g =
         Rune.jit
@@ -319,7 +326,8 @@ let donated_scatter () =
           (Nx.create Nx.int64 [| k |]
              (Array.init k (fun r -> Int64.of_int (r * (slots / k)))))
       in
-      let table = host (Nx.zeros f32 [| slots; width |]) in
+      let shape = if flat then [| slots * width |] else [| slots; width |] in
+      let table = host (Nx.zeros f32 shape) in
       (g, ref (g (Nx.donate table) u i), u, i))
     (fun (g, table, u, i) ->
       table := g (Nx.donate !table) u i;
@@ -436,7 +444,7 @@ let jit_rows () =
           Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
           (fun p u into -> Nx.scatter ~axis:0 p u into))
       (fun f -> synced (f qs us into));
-    donated_scatter ();
+    donated_scatter 16;
     (* An embedding's gradient: 1024 tokens' rows added into a table of
        zeros. *)
     warm "take-grad-1024-of-4096x64"
@@ -448,6 +456,8 @@ let jit_rows () =
                 Nx.sum (Nx.mul e e))
               table))
       (fun f -> synced (f tokens table));
+    donated_scatter 1024;
+    donated_scatter ~flat:true 1024;
     (* A sort keeping its positions: keys and positions sorted together. *)
     warm "sort-with-positions-4096"
       (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.sort x))

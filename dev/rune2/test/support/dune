@@ -9,5 +9,5 @@
 
 (library
  (name rune2_support)
- (modules operand expr witness cases memory)
+ (modules operand expr witness cases memory scatters)
  (libraries nx nx_array nx_kernel nx_support rig rune2 windtrap))
