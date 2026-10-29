@@ -1216,7 +1216,7 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
             let opened = Program.opened p in
             st.asked <- Asked (p, opened) :: st.asked;
             Effect.Deep.continue k opened)
-    | Construct (Emit (Emission em) as c), Some i -> (
+    | Construct { c = Some (Emit (Emission em) as c) }, Some i -> (
         match st.kind with
         | Tape when List.exists (owned i) (operands c) ->
             (* A tangent under reverse mode has no value to offer. *)
@@ -1233,22 +1233,23 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
             (* A site of the traced function, offered each time its program
                runs. *)
             Some (fun k -> Effect.Deep.continue k (record st i c)))
-    | Construct (Custom _ as c), Some i
+    | Construct { c = Some (Custom _ as c) }, Some i
       when st.kind = Tape && List.exists (owned i) (operands c) ->
         (* A custom rule over a tape's variables, as a tangent map that applies
            one to its tangents: its primal runs where it was performed, and its
            operations are recorded. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
-    | Construct (Accumulate _ as c), Some i when st.kind = Tape && claims st i c
-      ->
+    | Construct { c = Some (Accumulate _ as c) }, Some i
+      when st.kind = Tape && claims st i c ->
         (* A collect's running value plus a tangent, as a tangent map's collect
            makes it: its operations are recorded, which transpose. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
-    | Construct (Call _ as c), Some i when claims st i c && st.kind = Jit ->
+    | Construct { c = Some (Call _ as c) }, Some i
+      when claims st i c && st.kind = Jit ->
         (* Inlined: the default runs where the call was performed, which issues
            the call's equations here. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
-    | Construct (Remat { body; args; _ } as c), Some i
+    | Construct { c = Some (Remat { body; args; _ } as c) }, Some i
       when st.kind = Tape && claims st i c && Program.holds Program.calls body
            && Option.is_none
                 (Program.replayed body ~unknown:(Array.map (owned i) args)) ->
@@ -1256,10 +1257,10 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
            is inlined: the backward pass keeps all its values and runs no
            callback again. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
-    | Construct c, Some i when claims st i c ->
+    | Construct { c = Some c }, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (answer st i c))
-    | Construct (Linear { apply = None; forms; _ }), Some _ when st.kind = Tape
-      ->
+    | Construct { c = Some (Linear { apply = None; forms; _ }) }, Some _
+      when st.kind = Tape ->
         (* A pullback's tangents over none of the tape's variables: linear in
            its tangents, which are known, so zeros. A loop's step derived under
            reverse mode makes them where a carry's tangent is a zero it

@@ -108,7 +108,7 @@ let in_place ~name args f =
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match e with
-    | Construct (Add _) | Replace _ ->
+    | Construct { c = Some (Add _) } | Replace _ ->
         Some
           (fun k -> Effect.Deep.discontinue k (Invalid_argument (added name)))
     | _ -> None

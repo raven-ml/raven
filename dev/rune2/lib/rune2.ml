@@ -612,7 +612,7 @@ module Probe = struct
       match e with
       | Program.Open q when Option.is_some (Program.same_probe q p) ->
           Some (fun k -> Effect.Deep.continue k true)
-      | Construct (Emit (Emission em as m))
+      | Construct { c = Some (Emit (Emission em as m)) }
         when Option.is_some (Program.same_probe em.probe p) ->
           Some
             (fun k ->

@@ -356,7 +356,12 @@ let make ~owner ~params eqns ~outputs ~adds ~slots =
   let emits = Array.exists emitting eqns in
   { owner; params; eqns; outputs; adds; slots; emits }
 
-type _ Effect.t += Construct : construct -> value array Effect.t
+(* A construct travels in a cell, which {!perform} empties once no handler
+   answered: [Effect.Unhandled] holds the effect, and the runtime keeps the
+   last exception raised reachable while backtraces are recorded, so the
+   construct's arguments would outlive the call. *)
+type _ Effect.t +=
+  | Construct : { mutable c : construct option } -> value array Effect.t
 
 exception Evaluate
 
@@ -383,12 +388,17 @@ type rule = {
   rule : value array -> value array * (value array -> value array);
 }
 
-type _ Effect.t += Rule : rule -> (unit -> value array) option Effect.t
+(* A rule travels in a cell, emptied once no interpretation answered, as a
+   construct does. *)
+type _ Effect.t +=
+  | Rule : { mutable r : rule option } -> (unit -> value array) option Effect.t
 
 let rule r =
-  match Effect.perform (Rule r) with
+  match Effect.perform (Rule { r = Some r }) with
   | a -> a
-  | exception Effect.Unhandled (Rule _) -> None
+  | exception Effect.Unhandled (Rule cell) ->
+      cell.r <- None;
+      None
 
 (* Sites *)
 
@@ -963,7 +973,8 @@ let guarded f =
             | Nowhere -> Effect.Deep.continue k ()
             | At _ -> Effect.Deep.discontinue k (refused "adds to a total"))
     | Running _ -> Some (fun k -> Effect.Deep.continue k None)
-    | Construct (Add _ | Emit _) -> Some (fun k -> Effect.Deep.continue k [||])
+    | Construct { c = Some (Add _ | Emit _) } ->
+        Some (fun k -> Effect.Deep.continue k [||])
     | Within -> Some (fun k -> Effect.Deep.continue k false)
     | Staging -> Some (fun k -> Effect.Deep.continue k false)
     | Bound _ -> Some (fun k -> Effect.Deep.continue k None)
@@ -1067,9 +1078,12 @@ let rec eval ?totals p args =
   map_values m p.outputs
 
 and perform c =
-  match Effect.perform (Construct c) with
+  let unanswered = function Some c' -> c' == c | None -> false in
+  match Effect.perform (Construct { c = Some c }) with
   | r -> r
-  | exception Effect.Unhandled (Construct c') when c' == c -> fallback c
+  | exception Effect.Unhandled (Construct cell) when unanswered cell.c ->
+      cell.c <- None;
+      fallback c
   | exception Evaluate -> fallback c
 
 (* A construct whose programs emit gathers each site's rows as its default runs,
@@ -1098,7 +1112,7 @@ and gathering : 'a. ?lanes:bool -> (unit -> 'a) -> 'a =
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match e with
-    | Construct (Emit em) ->
+    | Construct { c = Some (Emit em) } ->
         Some
           (fun k ->
             keep em;
@@ -2312,8 +2326,10 @@ let silenced f =
       ((a, _) Effect.Deep.continuation -> _) option =
     match e with
     | Open _ -> Some (fun k -> Effect.Deep.continue k false)
-    | Construct (Emit _) -> Some (fun k -> Effect.Deep.continue k [||])
-    | Construct c when List.exists (fun p -> p.emits) (carried c) ->
+    | Construct { c = Some (Emit _) } ->
+        Some (fun k -> Effect.Deep.continue k [||])
+    | Construct { c = Some c } when List.exists (fun p -> p.emits) (carried c)
+      ->
         Some
           (fun k ->
             Effect.Deep.continue k (perform (map_programs unobserved c)))

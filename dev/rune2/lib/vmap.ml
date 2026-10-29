@@ -2129,7 +2129,7 @@ and interpret :
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
-    | Program.Construct c, Some i when claims i axis c ->
+    | Program.Construct { c = Some c }, Some i when claims i axis c ->
         Some (answer ~name ?held i axis n c)
     | Program.Within, _ -> Some (fun k -> Effect.Deep.continue k true)
     | Program.Bound a, _ when Program.same_axis a axis ->

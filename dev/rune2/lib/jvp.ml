@@ -1304,7 +1304,7 @@ module Rules = struct
     let effc (type a) (e : a Effect.t) :
         ((a, _) Effect.Deep.continuation -> _) option =
       match e with
-      | Construct (Add (_, x)) when taped c (V x) ->
+      | Construct { c = Some (Add (_, x)) } when taped c (V x) ->
           Some (fun k -> Effect.Deep.discontinue k (Invalid_argument added))
       | Replace (_, x) when taped c (V x) ->
           Some (fun k -> Effect.Deep.discontinue k (Invalid_argument added))
@@ -2322,13 +2322,13 @@ and run :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
     | Program.Within, _ -> Some (fun k -> Effect.Deep.continue k true)
-    | Program.Construct c, Some i
+    | Program.Construct { c = Some c }, Some i
       when List.exists (owned i) (Program.operands c) ->
         Some (answer ~name ~tape i c)
     (* A callback runs outside the differentiation, whatever it reads. *)
-    | Program.Construct (Callback _ as c), Some i ->
+    | Program.Construct { c = Some (Callback _ as c) }, Some i ->
         Some (answer ~name ~tape i c)
-    | Program.Rule r, Some i ->
+    | Program.Rule { r = Some r }, Some i ->
         let c =
           { Rules.i; entry = name; tape; derive = derive ~name ~tape i }
         in

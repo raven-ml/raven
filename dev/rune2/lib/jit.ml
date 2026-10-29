@@ -256,7 +256,7 @@ let rec lifted ~name ~adds forms f =
     let catch (type a) (e : a Effect.t) :
         ((a, _) Effect.Deep.continuation -> _) option =
       match e with
-      | Program.Construct (Emit em) ->
+      | Program.Construct { c = Some (Emit em) } ->
           Some
             (fun k ->
               ems := em :: !ems;
@@ -288,7 +288,7 @@ and converted ~name f =
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match e with
-    | Program.Construct c
+    | Program.Construct { c = Some c }
       when List.exists (fun (p : Program.t) -> p.emits) (Program.carried c) -> (
         match c with
         | Call _ | Remat _ | Custom _ ->

@@ -665,9 +665,10 @@ val derivations : unit -> int
     its [apply]'s. {!run} delivers them to their totals. *)
 
 type _ Effect.t +=
-  | Construct : construct -> value array Effect.t
-        (** The effect {!perform} performs: a handler that answers it continues
-            with the construct's results, of the forms {!forms} gives. *)
+  | Construct : { mutable c : construct option } -> value array Effect.t
+        (** The effect {!perform} performs, its construct in [c]: a handler
+            that answers it continues with the construct's results, of the
+            forms {!forms} gives. [c] is [None] once no handler answered. *)
 
 exception Evaluate
 (** Discontinuing {!Construct} with [Evaluate] runs the construct's default. No
@@ -949,19 +950,21 @@ type rule = {
 }
 
 type _ Effect.t +=
-  | Rule : rule -> (unit -> value array) option Effect.t
-        (** Answered by each interpretation of rune2. A differentiation that
-            tracks one of the arguments, whose primals no interpretation traces,
-            answers with the function the call applies where it was performed:
-            it runs the rule on those primals and returns the call's results.
-            Every other interpretation of rune2 answers [None]. An
-            interpretation outside rune2 ([Nx.Prim.interpret]) never answers
-            the effect, so one between the call and the differentiation does
-            not keep the rule from running in place; a rule that captures its
-            values then raises, as a value used outside its owner's extent. *)
+  | Rule : { mutable r : rule option } -> (unit -> value array) option Effect.t
+        (** Answered by each interpretation of rune2, the rule in [r], which
+            is [None] once none answered. A differentiation that tracks one of
+            the arguments, whose primals no interpretation traces, answers with
+            the function the call applies where it was performed: it runs the
+            rule on those primals and returns the call's results. Every other
+            interpretation of rune2 answers [None]. An interpretation outside
+            rune2 ([Nx.Prim.interpret]) never answers the effect, so one between
+            the call and the differentiation does not keep the rule from
+            running in place; a rule that captures its values then raises, as a
+            value used outside its owner's extent. *)
 
 val rule : rule -> (unit -> value array) option
-(** [rule r] is the answer to [Rule r], [None] with no interpretation around. *)
+(** [rule r] is the answer to {!Rule} of [r], [None] with no interpretation
+    around. *)
 
 (** {1:printing Printing}
 

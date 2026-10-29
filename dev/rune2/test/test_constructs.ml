@@ -256,6 +256,41 @@ let test_caught c =
     (bits (Nx.reshape [| 1 |] (Nx.scalar f32 (-1.25))))
     (bits (Rune.vmap' f xs))
 
+(* Arguments kept
+
+   While backtraces are recorded, the runtime keeps the last exception raised
+   reachable, and a construct no transformation answers is answered by catching
+   one. Once it returns, the construct keeps none of its arguments. *)
+
+let recording f =
+  let was = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace was) f
+
+(* Whether [f]'s argument is reachable once [f] returns, a first call made. *)
+let kept f =
+  ignore (f (v [| 0.5; 2. |]));
+  recording @@ fun () ->
+  let w = Weak.create 1 in
+  let[@inline never] call () =
+    let x = v [| 1.5; -0.25 |] in
+    Weak.set w 0 (Some x);
+    ignore (Sys.opaque_identity (f x))
+  in
+  call ();
+  Gc.full_major ();
+  Weak.check w 0
+
+let test_kept_detach () = equal bool false (kept Rune.detach)
+
+(* The constructs outside every transformation: a map answers those in it. *)
+let outside =
+  List.filter
+    (fun c -> not (String.ends_with ~suffix:" in a map" c.label))
+    constructs
+
+let test_kept c = equal bool false (kept (c.make Nx.neg))
+
 (* Extents *)
 
 type _ Effect.t += Pause : unit Effect.t
@@ -341,6 +376,9 @@ let () =
            test_exceptions;
          cases ~name:construct_name "a try inside a transformation sees it"
            constructs test_caught;
+         test "detach keeps no argument once it returns" test_kept_detach;
+         cases ~name:construct_name "keeps no argument once it returns"
+           outside test_kept;
          group "extents"
            [
              test "a fiber resumed on the domain" test_fiber;
