@@ -298,16 +298,17 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 
     Each device computes its window of an operation's result from the
     windows of the operands it holds. The result lies at the union of the
-    operands' cuts, joined in operand order. A cut of an axis that becomes
-    a result axis cuts that axis over the same devices. A cut of an axis
-    read whole cuts nothing. A cut of an axis that a reduction or a
-    contraction sums makes the devices compute by partials where every
-    operand holding the axis is cut alike, and cuts nothing in the result;
-    so does one of the axis a gather reads at positions. One along a scan's
-    axis stays in it, and so does one along the axis a scatter writes at
-    positions, each device writing the updates that land in its window. An
-    operand whole on every device is read by a view of each device's
-    window.
+    operands' cuts, joined in operand order, or, where that order cannot
+    read an operand where it lies, with a gather's or a scatter's positions
+    last. A cut of an axis that becomes a result axis cuts that axis over
+    the same devices. A cut of an axis read whole cuts nothing. A cut of an
+    axis that a reduction or a contraction sums makes the devices compute by
+    partials where every operand holding the axis is cut alike, and cuts
+    nothing in the result; so does one of the axis a gather reads at
+    positions. One along a scan's axis stays in it, and so does one along
+    the axis a scatter writes at positions, each device writing the updates
+    that land in its window. An operand whole on every device is read by a
+    view of each device's window.
 
     An operation raises [Invalid_argument] where two operands cut one
     result axis over different devices or tiles, where a device needs a
@@ -323,6 +324,10 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
     at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
+
+    The {!place} of a gather's or a scatter's positions read cut, which the
+    operation may have reshaped from the program's, puts them whole on
+    every device of the set.
 
     A traced operation raises it as eager execution would
     ({!Prim.results}). *)

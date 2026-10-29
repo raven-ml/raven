@@ -680,37 +680,43 @@ let readable rank =
   in
   ((Devices.on s4, "Placement.on s") :: ones) @ splits @ meshes
 
+(* The operand that the refusal [msg] of [c] over [ps] names, where it is
+   read, and the placement and call of its remedy, its text checked against
+   them. The remedy of an operand of [positions] read cut is the whole on
+   every device. *)
+let parse ?(positions = []) c ps msg =
+  let r = require_some ~msg (refusal msg) in
+  let i = r.operand in
+  let p = ps.(i) in
+  equal string ~msg:"where it lies"
+    (Format.asprintf "%a" Devices.pp_placement p)
+    r.lies;
+  equal string ~msg:"its name" (name i) r.named;
+  let q, call =
+    require_some ~msg:("a placement printed " ^ r.read)
+      (List.find_opt
+         (fun (q, _) -> Format.asprintf "%a" Devices.pp_placement q = r.read)
+         (readable (Array.length c.shapes.(i))))
+  in
+  equal bool ~msg:"it lacks a window it is read at" false
+    (holds p c.shapes.(i) q);
+  let fix, call =
+    if List.mem i positions && Grid.is_cut (Devices.grid q) then
+      (Devices.on s4, "Placement.on s")
+    else (q, call)
+  in
+  equal string ~msg:"the call" call r.call;
+  (i, q, fix, call)
+
 let refusals =
   prop ~count:2000
     "a refusal names an operand that lacks a window it is read at, and the \
      Nx.place after which the call routes"
     case (fun c ->
-      (* The operand a refusal names and where it is read, its text checked
-         against them. *)
-      let parse ps msg =
-        let r = require_some ~msg (refusal msg) in
-        let i = r.operand in
-        let p = ps.(i) in
-        equal string ~msg:"where it lies"
-          (Format.asprintf "%a" Devices.pp_placement p)
-          r.lies;
-        equal string ~msg:"its name" (name i) r.named;
-        let q, call =
-          require_some ~msg:("a placement printed " ^ r.read)
-            (List.find_opt
-               (fun (q, _) ->
-                 Format.asprintf "%a" Devices.pp_placement q = r.read)
-               (readable (Array.length c.shapes.(i))))
-        in
-        equal string ~msg:"the call" call r.call;
-        equal bool ~msg:"it lacks a window it is read at" false
-          (holds p c.shapes.(i) q);
-        (i, q, call)
-      in
       match route c.rule c.ps c.shapes with
       | _ -> ()
       | exception Invalid_argument msg ->
-          let i, q, call = parse c.ps msg in
+          let i, q, fix, call = parse c c.ps msg in
           cover "read whole on every device" (Devices.equal q (Devices.on s4));
           cover "read on one device" (Devices.device q <> None);
           cover "read split"
@@ -719,19 +725,78 @@ let refusals =
             (String.starts_with ~prefix:"Placement.mesh" call);
           (* The remedies, written one after another, let the call route. *)
           let ps = Array.copy c.ps in
-          ps.(i) <- q;
+          ps.(i) <- fix;
           let rec settle n =
             match route c.rule ps c.shapes with
             | _ -> ()
             | exception Invalid_argument msg ->
                 if n = 0 then fail ("the remedies do not settle: " ^ msg)
                 else begin
-                  let i, q, _ = parse ps msg in
-                  ps.(i) <- q;
+                  let i, _, fix, _ = parse c ps msg in
+                  ps.(i) <- fix;
                   settle (n - 1)
                 end
           in
           settle (2 * Array.length ps))
+
+let compute =
+  Testable.make
+    ~pp:(fun ppf -> function
+      | Route.Windows -> Format.pp_print_string ppf "windows"
+      | Partials -> Format.pp_print_string ppf "partials")
+    ~equal:( = )
+
+(* Operands of positions join last only where program order refuses one.
+   Where that order routes, a call naming them routes alike. Where it
+   refuses, a call naming them reads each operand where it holds what it is
+   read at, or refuses, and its remedies settle, positions read cut placed
+   whole on every device. *)
+let positioned =
+  let pp ppf (c, positions) =
+    Format.fprintf ppf "%a positions %a" pp_case c pp_ints
+      (Array.of_list positions)
+  in
+  prop ~count:2000
+    "a route naming operands of positions is the route in program order \
+     where that routes, and its refusals settle"
+    (Gen.with_pp pp (Gen.pair case (Gen.of_list [ []; [ 0 ] ])))
+    (fun (c, positions) ->
+      let at ps = Route.route ~by:"Nx.f" ~positions c.rule ps c.shapes in
+      match route c.rule c.ps c.shapes with
+      | r ->
+          cover "routed in program order, positions named" (positions <> []);
+          let r' = at c.ps in
+          equal (array placement) ~msg:"operands" r.operands r'.operands;
+          equal placement ~msg:"results" r.result r'.result;
+          equal compute ~msg:"compute" r.compute r'.compute
+      | exception Invalid_argument _ -> (
+          match at c.ps with
+          | r ->
+              cover "routed with positions last" true;
+              Array.iteri
+                (fun i q ->
+                  let p = c.ps.(i) in
+                  equal bool
+                    ~msg:
+                      (Format.asprintf "operand %d at %a holds its reads at %a"
+                         i Devices.pp_placement p Devices.pp_placement q)
+                    true
+                    (Devices.equal p q || holds p c.shapes.(i) q))
+                r.operands
+          | exception Invalid_argument msg ->
+              let ps = Array.copy c.ps in
+              let rec settle n msg =
+                let i, q, fix, _ = parse ~positions c ps msg in
+                cover "positions read cut, placed whole"
+                  (List.mem i positions && Grid.is_cut (Devices.grid q));
+                ps.(i) <- fix;
+                match at ps with
+                | _ -> ()
+                | exception Invalid_argument msg ->
+                    if n = 0 then fail ("the remedies do not settle: " ^ msg)
+                    else settle (n - 1) msg
+              in
+              settle (2 * Array.length ps) msg))
 
 (* Whether [c]'s rule folds axis [a] of operand [i]: reduces, scans or
    indexes it. *)
@@ -1277,6 +1342,14 @@ let () =
     (run "nx route"
        [
          group "laws"
-           [ law; refusals; computes; keeps; move_law; local_move_law ];
+           [
+             law;
+             refusals;
+             positioned;
+             computes;
+             keeps;
+             move_law;
+             local_move_law;
+           ];
          cases_;
        ])

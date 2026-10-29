@@ -25,11 +25,13 @@
 
     The cuts join in operand order. The first operand gives its cuts, and
     each next one adds its own where they join the union so far
-    ({!Grid.union}), and none where they do not. An operand alone on one
-    device beside operands whole on every device of the set puts the
-    results on that device. A cut of the union along an axis that an
-    operand regroups into in tiles that do not divide both extents is
-    undone.
+    ({!Grid.union}), and none where they do not. Where that order refuses an
+    operand, as below, the operands of positions join last, so that the
+    values read at positions keep their cuts, and the route is that order's
+    or its refusal. An operand alone on one device beside operands whole on
+    every device of the set puts the results on that device. A cut of the
+    union along an axis that an operand regroups into in tiles that do not
+    divide both extents is undone.
 
     Each operand is read at the union moved back to its axes. Where that is
     its own placement, it is read there. Where its own placement holds on
@@ -55,7 +57,10 @@
     The expression is [Placement.on s], [Placement.device s] with the
     device's name, [Placement.split ~axis s], or a [Placement.mesh] over
     [Mesh.v s] whose axes, named ["g0"], ["g1"], …, are the read placement's
-    grid axes in normal form ({!Grid}). *)
+    grid axes in normal form ({!Grid}). For an operand of positions read
+    cut it is [Placement.on s], whole on every device, where they hold every
+    window. The operation may have reshaped the program's positions into the
+    operand, so a cut placement it is read at may not fit them. *)
 
 (** The type for what an operation makes of an operand's axis. *)
 type axis =
@@ -215,15 +220,22 @@ type 'd t = {
 }
 
 val route :
-  by:string -> rule -> 'd Devices.placement array -> int array array -> 'd t
-(** [route ~by r ps shapes] routes an operation of rule [r] over operands at
-    [ps] of [shapes], as the module's preamble states. [ps] and [shapes] are
-    of one positive length, and [r] names each axis of each operand. Operands
-    all at one placement are read there and their results lie there, where it
-    cuts no axis or [r] is [Elementwise]. A route reads an operand at a
-    placement other than its own only through views of its arrays. An axis
-    that [r] reduces and that has no element is read whole by every operand;
-    one it scans keeps its cut, and the devices compute by windows.
+  by:string ->
+  ?positions:int list ->
+  rule ->
+  'd Devices.placement array ->
+  int array array ->
+  'd t
+(** [route ~by ~positions r ps shapes] routes an operation of rule [r]
+    over operands at [ps] of [shapes], as the module's preamble states, the
+    operands numbered in [positions] (default none) holding positions the
+    others are read at. [ps] and [shapes] are of one positive length, and
+    [r] names each axis of each operand. Operands all at one placement are
+    read there and their results lie there, where it cuts no axis or [r] is
+    [Elementwise]. A route reads an operand at a placement other than its
+    own only through views of its arrays. An axis that [r] reduces and that
+    has no element is read whole by every operand; one it scans or indexes
+    keeps its cut, and the devices compute by windows.
 
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
     axis its shape lacks ({!Grid.window}), and with the preamble's message

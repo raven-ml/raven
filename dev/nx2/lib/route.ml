@@ -342,58 +342,86 @@ let pp_call ~by set ppf q =
         (List.map cut (Array.to_list cuts))
 
 (* Raises: operand [i], at [p], is read at the union [u] moved back to its
-   axes, of shape [s], over [set]. *)
-let refuse ~by rule set i p s u =
+   axes, of shape [s], over [set]. The remedy places it there, or, for
+   positions read cut, which an operation may have reshaped from the
+   program's, whole on every device of the set, where they hold every
+   window. *)
+let refuse ~by ~positions rule set i p s u =
   let q = backward rule i s u in
+  let fix =
+    if List.mem i positions && Grid.is_cut q then Devices.grid (Devices.on set)
+    else q
+  in
   invalid_argf "%s: operand %d lies at %a and is read at %a; Nx.place (%a) %s"
     by i Devices.pp_placement p Devices.pp_placement (Devices.v ~by set q)
-    (pp_call ~by set) q (name i)
+    (pp_call ~by set) fix (name i)
 
 (* Routes *)
 
-(* The route of operands not all at one placement, or at one that cuts an
-   axis an operation other than an elementwise one may read whole. *)
-let general ~by rule ps shapes =
-  let n = Array.length ps in
+(* The route of operands joined in [order], or the refusal of the first
+   operand it cannot read where it lies. *)
+let attempt ~by ~positions rule ps shapes order =
   let set = Devices.set ps.(0) in
   let other i = Devices.number (Devices.set ps.(i)) <> Devices.number set in
   let lifted i = forward rule i shapes.(i) (Devices.grid ps.(i)) in
-  let refuse i u = refuse ~by rule set i ps.(i) shapes.(i) u in
-  (* The operands join in order. One of another set adds no cut, and is
-     refused below. One whose cuts do not join the union adds none, and is
-     refused below unless it holds what it is read at. *)
+  (* One of another set adds no cut, and is refused below. One whose cuts do
+     not join the union adds none, and is refused below unless it holds what
+     it is read at. *)
+  let order = List.filter (fun i -> not (other i)) order in
   let u =
     List.fold_left
-      (fun u i ->
-        if other i then u else Option.value (join u (lifted i)) ~default:u)
-      (lifted 0)
-      (List.init (n - 1) succ)
+      (fun u i -> Option.value (join u (lifted i)) ~default:u)
+      (lifted (List.hd order))
+      (List.tl order)
   in
   let u = aligned rule shapes u in
   (* A folded axis of no element is read whole: no device folds a term. *)
   let u = if folds_empty rule shapes then results u else u in
-  let operands =
-    Array.mapi
-      (fun i p ->
-        let q = backward rule i shapes.(i) u in
-        if other i then refuse i u
-        else if Grid.equal (Devices.grid p) q then p
-        else if holds p shapes.(i) q then Devices.v ~by set q
-        else refuse i u)
-      ps
+  let read i p =
+    let q = backward rule i shapes.(i) u in
+    if other i then None
+    else if Grid.equal (Devices.grid p) q then Some p
+    else if holds p shapes.(i) q then Some (Devices.v ~by set q)
+    else None
   in
-  (* The results lie at an operand's own placement where it is theirs, so
-     that operations chained over one placement keep it physically. *)
-  let r = results u in
-  let result =
-    let own p = Grid.equal (Devices.grid p) r in
-    match Array.find_opt own ps with
-    | Some p -> p
-    | None -> Devices.v ~by set r
-  in
-  { operands; result; compute = computed rule shapes operands }
+  let reads = Array.mapi read ps in
+  match Array.find_index Option.is_none reads with
+  | Some i ->
+      Error (fun () -> refuse ~by ~positions rule set i ps.(i) shapes.(i) u)
+  | None ->
+      let operands = Array.map Option.get reads in
+      (* The results lie at an operand's own placement where it is theirs,
+         so that operations chained over one placement keep it
+         physically. *)
+      let r = results u in
+      let result =
+        let own p = Grid.equal (Devices.grid p) r in
+        match Array.find_opt own ps with
+        | Some p -> p
+        | None -> Devices.v ~by set r
+      in
+      Ok { operands; result; compute = computed rule shapes operands }
 
-let route ~by rule ps shapes =
+(* The route of operands not all at one placement, or at one that cuts an
+   axis an operation other than an elementwise one may read whole. The
+   operands join in order. Where that refuses one, those of positions join
+   last, so that the values they read keep their cuts; where that refuses
+   too, its refusal is raised. *)
+let general ~by ~positions rule ps shapes =
+  let all = List.init (Array.length ps) Fun.id in
+  match attempt ~by ~positions rule ps shapes all with
+  | Ok r -> r
+  | Error first -> (
+      let indices, values =
+        List.partition (fun i -> List.mem i positions) all
+      in
+      if indices = [] then first ()
+      else
+        match attempt ~by ~positions rule ps shapes (values @ indices) with
+        | Ok r -> r
+        | Error last -> last ())
+
+let route ~by ?(positions = []) rule ps shapes =
   for i = 0 to Array.length ps - 1 do
     match Grid.window (Devices.grid ps.(i)) shapes.(i) 0 with
     | Ok _ -> ()
@@ -407,4 +435,4 @@ let route ~by rule ps shapes =
   let elementwise = match rule with Elementwise -> true | Axes _ -> false in
   if alone && (elementwise || not (Grid.is_cut (Devices.grid p))) then
     { operands = Array.make (Array.length ps) p; result = p; compute = Windows }
-  else general ~by rule ps shapes
+  else general ~by ~positions rule ps shapes

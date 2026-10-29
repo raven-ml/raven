@@ -890,19 +890,73 @@ let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
   equal (array string) expected actual
 
 (* Positions cut over the devices that cut the gathered axis raise: no
-   device holds both a tile and the positions it reads. *)
+   device holds both a tile and the positions it reads. The refusal places
+   the positions whole on each device, which then computes. *)
 let test_gather_both_cut () =
-  let x = Nx.place (Set4.split ~axis:0) (Nx.arange D.Float32 0 8 1) in
-  let p =
-    Nx.place (Set4.split ~axis:0)
-      (Nx.Repr.of_array Nx.Host.v
-         (A.of_array D.Int64 [| 4 |] [| 7L; 0L; 3L; 4L |]))
+  let v = Nx.arange D.Float32 0 8 1 in
+  let x = Nx.place (Set4.split ~axis:0) v in
+  let host =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 4 |] [| 7L; 0L; 3L; 4L |])
   in
+  let p = Nx.place (Set4.split ~axis:0) host in
   raises
     (Invalid_argument
-       "Nx.take_along_axis: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] \
-        and is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
-    (fun () -> Nx.take_along_axis ~axis:0 p x)
+       "Nx.take_along_axis: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] \
+        and is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x")
+    (fun () -> Nx.take_along_axis ~axis:0 p x);
+  equal (array int)
+    (bytes (Nx.take_along_axis ~axis:0 host v))
+    (bytes (Nx.take_along_axis ~axis:0 (Nx.place Set4.on p) x))
+
+(* Positions refused where they lie are placed whole on every device of the
+   set, whatever the operation reshaped them into, which then computes:
+   positions on one device beside a value cut across the set, and a [take]'s
+   positions cut along their axis beside a value cut along another. *)
+let test_positions_fix () =
+  let v = Nx.reshape [| 4; 6 |] (Nx.arange D.Float32 0 24 1) in
+  let host =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 4 |] [| 3L; 0L; 5L; 1L |])
+  in
+  let placement =
+    Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+  in
+  (* The value keeps its cut, which the result takes. *)
+  let check name msg axis p x =
+    raises ~msg:name (Invalid_argument msg) (fun () -> Nx.take ~axis p x);
+    let y = Nx.take ~axis (Nx.place Set4.on p) x in
+    equal ~msg:name placement (Nx.placement x) (Nx.placement y);
+    equal ~msg:name (array int) (bytes (Nx.take ~axis host v)) (bytes y)
+  in
+  check "one device"
+    "Nx.take: operand 0 lies at m0 and is read at split ~axis:0 [m0; m1; m2; \
+     m3]; Nx.place (Placement.on s) x"
+    1
+    (Nx.place (Nx.Placement.device Set4.v (m 0)) host)
+    (Nx.place (Set4.split ~axis:0) v);
+  check "a take's positions cut"
+    "Nx.take: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and is read at \
+     split ~axis:1 [m0; m1; m2; m3]; Nx.place (Placement.on s) x"
+    0
+    (Nx.place (Set4.split ~axis:0) host)
+    (Nx.place (Set4.split ~axis:1) v)
+
+(* Positions cut finer than the value they read, along an axis it holds in
+   halves, are read where they lie: each quarter lies within a half. *)
+let test_positions_finer () =
+  let v = Nx.reshape [| 8; 4 |] (Nx.arange D.Float32 0 32 1) in
+  let host =
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array D.Int64 [| 8; 2 |]
+         (Array.init 16 (fun i -> Int64.of_int (i mod 5))))
+  in
+  let x = Nx.place (Nx.Placement.mesh mesh4 [ (0, [ "a" ]) ]) v in
+  let p = Nx.place (Set4.split ~axis:0) host in
+  let y = Nx.take_along_axis ~axis:1 p x in
+  let placement =
+    Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+  in
+  equal placement (Nx.placement p) (Nx.placement y);
+  equal (array int) (bytes (Nx.take_along_axis ~axis:1 host v)) (bytes y)
 
 (* An [x] whose tiles' results would stack past the greatest rank, one more
    axis than [x]'s and one more for a [complex128]'s bits, is read whole
@@ -1118,6 +1172,32 @@ let law_scattered (Scase (k, s, data, w, a, c, at, us, p, u)) =
         run (mesh cuts) (off cuts)
   in
   equal (array string) expected actual
+
+(* Updates cut along the scattered axis raise, and so do positions: a
+   device's window takes updates from every device. Each refusal names the
+   [Nx.place] that puts its operand whole on each device, which then
+   computes. *)
+let test_scatter_cut_updates () =
+  let x = Nx.zeros D.Float32 [| 8 |] in
+  let u = Nx.arange D.Float32 1 5 1 in
+  let host =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [| 4 |] [| 7L; 0L; 3L; 4L |])
+  in
+  let split v = Nx.place (Set4.split ~axis:0) v in
+  let scatter p u = Nx.scatter ~axis:0 p u (split x) in
+  raises
+    (Invalid_argument
+       "Nx.scatter: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+        read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x")
+    (fun () -> scatter (split host) (split u));
+  raises
+    (Invalid_argument
+       "Nx.scatter: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+        read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
+    (fun () -> scatter (Nx.place Set4.on host) (split u));
+  equal (array int)
+    (bytes (Nx.scatter ~axis:0 host u x))
+    (bytes (scatter (Nx.place Set4.on host) (Nx.place Set4.on u)))
 
 (* Float reductions over cut axes *)
 
@@ -2885,8 +2965,13 @@ let placed =
          bits on one device"
         gathered_case law_gathered;
       test "take of a flattening cut along its leading axis" test_take_flat;
-      test "a gather of positions cut as the gathered axis raises"
+      test "a gather of positions cut as the gathered axis raises, naming \
+            the fix"
         test_gather_both_cut;
+      test "refused positions are placed whole on every device"
+        test_positions_fix;
+      test "positions cut finer than their value are read where they lie"
+        test_positions_finer;
       cases ~name:ranked_name
         "a gather past the greatest rank reads its axis whole" ranked
         test_gather_rank;
@@ -2895,6 +2980,8 @@ let placed =
          whole on each of its devices or cut alike off the scattered axis, \
          gives its bits on one device"
         scattered_case law_scattered;
+      test "a scatter of cut updates or positions raises, naming the fix"
+        test_scatter_cut_updates;
     ]
 
 let reductions =

@@ -1384,7 +1384,11 @@ let route_of (type r) ~by (op : r prim) : unit Route.t =
           ps.(i) <- placement x;
           shapes.(i) <- shape x)
         op;
-      Route.route ~by (rule op) ps shapes
+      (* A gather's and a scatter's positions are operand 0. *)
+      let positions : int list =
+        match op with Gather _ | Scatter _ -> [ 0 ] | _ -> []
+      in
+      Route.route ~by ~positions (rule op) ps shapes
 
 let rec make_outs : type d r.
     ('a 'b 'c. int -> ('a, 'b, 'c) form -> ('a, 'b, 'c) t) ->

@@ -235,7 +235,9 @@ type routed = {
 val route : by:string -> 'r prim -> routed
 (** [route ~by op] is what [op]'s rule decides, checked once. Operands that
     lie at one placement that cuts no axis are read there and their results
-    lie there; otherwise {!Route.route} of {!rule} decides. An operation of
+    lie there; otherwise {!Route.route} of {!rule} decides, given a
+    gather's or a scatter's positions, operand 0, as its [positions]. An
+    operation of
     no operands lies where its map names, else on the host, each device of
     that placement computing its window of the results.
 
