@@ -63,12 +63,35 @@ let plain =
 let angles =
   Gen.pair (Gen.float_range 0. 6.28) (Gen.float_range (-.pi /. 2.) (pi /. 2.))
 
-(* [exact_multiple k (x, y, z)] is [k] times the row when no component
-   rounds. *)
-let exact_multiple k (x, y, z) =
+(* [exact k (x, y, z)] is whether no component of [k] times the row rounds. *)
+let exact k (x, y, z) =
   let exact c = Float.is_finite (c *. k) && c *. k /. k = c in
-  assume (exact x && exact y && exact z);
+  exact x && exact y && exact z
+
+(* [exact_multiple k r] is [k] times the row [r], which [exact k r] holds
+   for. *)
+let exact_multiple k (x, y, z) =
+  assert (exact k (x, y, z));
   (x *. k, y *. k, z *. k)
+
+(* Rows with a power of two whose multiple of the row rounds no component:
+   2^500 or 2^-500 where one is exact, as for most rows, else 2^±100, else
+   2^±1. Only a row with components near both ends of the exponent range takes
+   none. *)
+let multiples =
+  let tiers =
+    [ [ 0x1p500; 0x1p-500 ]; [ 0x1p100; 0x1p-100 ]; [ 0x1p1; 0x1p-1 ] ]
+  in
+  let tier r =
+    List.map (List.filter (fun k -> exact k r)) tiers
+    |> List.find_opt (fun ks -> ks <> [])
+  in
+  let pp ppf (r, k) = Format.fprintf ppf "%a times %h" pp_row r k in
+  Gen.with_pp pp
+    Gen.(
+      let* r = such_that (fun r -> Option.is_some (tier r)) rows in
+      let+ k = of_list (Option.get (tier r)) in
+      (r, k))
 
 (* Constructors *)
 
@@ -82,8 +105,10 @@ let constructors =
           let d = Direction.of_xyz Frame.icrs (row r) in
           equal (float (3. *. eps)) 1. (norm (xyz d)));
       prop "of_xyz reads the ray: a power-of-two multiple gives the same bits"
-        Gen.(pair rows (of_list [ 0x1p-500; 0x1p500 ]))
+        multiples
         (fun (r, k) ->
+          cover "2^500" (k = 0x1p500);
+          cover "2^-500" (k = 0x1p-500);
           let k_r = exact_multiple k r in
           equal bits
             (xyz (Direction.of_xyz Frame.icrs (row r)))
@@ -244,11 +269,10 @@ let stated =
     ]
 
 let reads_the_ray =
-  let powers = Gen.of_list [ 0x1p-500; 0x1p500 ] in
-  let rows =
-    Gen.with_pp
-      (fun ppf (r, k) -> Format.fprintf ppf "%a times %h" pp_row r k)
-      (Gen.pair rows powers)
+  let rows = multiples in
+  let covers (_, k) =
+    cover "2^500" (k = 0x1p500);
+    cover "2^-500" (k = 0x1p-500)
   in
   let reads (r, k) f =
     let k_r = exact_multiple k r in
@@ -259,10 +283,12 @@ let reads_the_ray =
     [
       prop "lon and lat: a power-of-two multiple reads the same bits" rows
         (fun c ->
+          covers c;
           reads c lon;
           reads c lat);
       prop "separation and position_angle: the same, on either side" rows
         (fun c ->
+          covers c;
           reads c (fun d -> separation d other);
           reads c (fun d -> separation other d);
           reads c (fun d -> position_angle d other);
