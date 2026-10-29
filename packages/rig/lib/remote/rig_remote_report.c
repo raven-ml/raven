@@ -102,6 +102,17 @@ static void write_quiet(int fd, const char *b, size_t n) {
 }
 #endif
 
+/* [process_id ()] is this process's id, as caml_rig_remote_report_line
+   compares it: on Windows, Unix.getpid answers a handle to the process. */
+value caml_rig_remote_process_id(value unit) {
+  (void)unit;
+#ifdef _WIN32
+  return Val_long((intnat)GetCurrentProcessId());
+#else
+  return Val_long((intnat)getpid());
+#endif
+}
+
 /* [report_line fd pid line] writes [line] on [fd] if this process is [pid],
    ignoring every error. It runs no OCaml code: it releases the runtime with
    caml_enter_blocking_section_no_pending, so the signal handlers pending run

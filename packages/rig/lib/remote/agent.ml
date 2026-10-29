@@ -70,6 +70,8 @@ let spawn f x = masked (fun () -> Thread.create f x)
 external report_open : int -> Unix.file_descr option
   = "caml_rig_remote_report_open"
 
+external process_id : unit -> int = "caml_rig_remote_process_id" [@@noalloc]
+
 let report_var = "RIG_REMOTE_REPORT"
 
 type report = {
@@ -99,7 +101,7 @@ let report fd =
       Ok
         {
           fd;
-          pid = Unix.getpid ();
+          pid = process_id ();
           lock = Mutex.create ();
           holder = Atomic.make nobody;
           started = false;
