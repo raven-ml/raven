@@ -19,6 +19,8 @@ module Total = Rune.Total
 let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
 let f32 = Nx.float32
 let f64 = Nx.float64
+let c64 = Nx.complex64
+let c128 = Nx.complex128
 let v xs = Nx.create f32 [| Array.length xs |] xs
 let vec xs = Nx.create f64 [| Array.length xs |] xs
 let t = T.tensor
@@ -621,10 +623,11 @@ let summed (type s) (dt : (float, s) Nx.dtype) terms y =
         failf "%s, the terms' magnitudes summing to %h" msg bound)
     y
 
-(* Lanes of [x] and a trip count each, the lanes stopping apart. *)
+(* Lanes of [x] and a trip count each, the lanes stopping apart, at a float or
+   complex dtype. *)
 type lanes =
   | Lanes : {
-      dt : (float, 's) Nx.dtype;
+      dt : ('v, 's) Nx.dtype;
       s : int array;
       trips : int array;
       max : int;
@@ -643,10 +646,11 @@ let lane_cases =
    let* max = of_list [ most; most + 1; most - 1 ] in
    let* g = gen ~rank:(Array.length s) in
    let* x = Operand.draw (Array.append [| n |] s) and+ w = Operand.draw s in
-   let+ (D.Any dt) = of_list [ D.Any f32; Any f64 ] in
+   let+ (D.Any dt) = of_list [ D.Any f32; Any f64; Any c64; Any c128 ] in
+   let max = Int.max 0 max in
    match D.kind dt with
-   | Float -> Lanes { dt; s; trips; max = Int.max 0 max; g = no_sums g; x; w }
-   | _ -> assert false)
+   | Float -> Lanes { dt; s; trips; max; g = no_sums g; x; w }
+   | _ -> Lanes { dt; s; trips; max; g = exact_at dt (generic g); x; w })
   |> with_pp (fun ppf (Lanes c) ->
       Format.fprintf ppf "%a %a, trips [%s], max %d: %a" Nx.pp_dtype c.dt
         Operand.pp_shape c.s
@@ -661,6 +665,46 @@ let one_by_one f n (x, t) =
     let y = f (Nx.ones (Nx.dtype x) row, k0 ()) in
     Nx.zeros (Nx.dtype y) (Array.append [| 0 |] (Nx.shape y))
 
+(* [e] at [x] and [y], by the functions [dt] has. *)
+let eval_at (type v s d) (dt : (v, s) Nx.dtype) (x : (v, s, d) Nx.t)
+    (y : (v, s, d) Nx.t) e : (v, s, d) Nx.t =
+  match D.kind dt with Float -> eval x y e | _ -> eval_any x y e
+
+(* A float or complex array's bits, a complex one's real parts then its
+   imaginary ones. *)
+let bits_at (type v s d) (dt : (v, s) Nx.dtype) (x : (v, s, d) Nx.t) =
+  match D.kind dt with
+  | Float -> bits x
+  | Complex ->
+      let parts at = bits (Nx.stack [ Nx.real at x; Nx.imag at x ]) in
+      if D.equal dt c64 then parts f32 else parts f64
+  | _ -> assert false
+
+(* The gradient of the sum of [f x], of its real parts on a complex one. *)
+let grad_at (type v s d) (dt : (v, s) Nx.dtype)
+    (f : (v, s, d) Nx.t -> (v, s, d) Nx.t) (x : (v, s, d) Nx.t) =
+  match D.kind dt with
+  | Complex when D.equal dt c64 ->
+      Rune.grad' (fun x -> Nx.sum (Nx.real f32 (f x))) x
+  | Complex -> Rune.grad' (fun x -> Nx.sum (Nx.real f64 (f x))) x
+  | _ -> Rune.grad' (fun x -> Nx.sum (f x)) x
+
+(* [summed] at [dt], on each part of a complex array: a complex sum adds each
+   part as a real one. *)
+let summed_at (type v s d) (dt : (v, s) Nx.dtype) (terms : (v, s, d) Nx.t list)
+    (y : (v, s, d) Nx.t) =
+  match D.kind dt with
+  | Float -> summed dt terms y
+  | Complex ->
+      let parts : type r. (float, r) Nx.dtype -> unit =
+       fun at ->
+        let re x = Nx.real at x and im x = Nx.imag at x in
+        summed at (List.map re terms) (re y);
+        summed at (List.map im terms) (im y)
+      in
+      if D.equal dt c64 then parts f32 else parts f64
+  | _ -> assert false
+
 let law_lanes (Lanes c) =
   let n = Array.length c.trips in
   cover "lanes stopping apart"
@@ -668,11 +712,12 @@ let law_lanes (Lanes c) =
   cover "a lane with no step" (Array.exists (( = ) 0) c.trips);
   cover "max reached" (c.max < Array.fold_left Int.max 0 c.trips);
   cover "no lane" (n = 0);
+  cover "a complex dtype" (D.is Complex c.dt);
   let x = Operand.make c.dt (Array.append [| n |] c.s) c.x in
   let w = Operand.make c.dt c.s c.w in
   let t = Nx.create Nx.int32 [| n |] (Array.map Int32.of_int c.trips) in
   let step ?(g = c.g) w (x, k) =
-    (Nx.broadcast_to c.s (eval x (Nx.mul x w) g), tick k)
+    (Nx.broadcast_to c.s (eval_at c.dt x (Nx.mul x w) g), tick k)
   in
   let until t (_, k) = Nx.greater_equal k t in
   let iterated ?g w (x, t) =
@@ -719,16 +764,22 @@ let law_lanes (Lanes c) =
      its own steps are. *)
   if Option.is_none first_short then begin
     let l = outcome_t (if constant c.g then lenient ~nan:true else bits_t) in
-    let grad f xt = Rune.grad' (fun x -> Nx.sum (f (x, snd xt))) (fst xt) in
+    let bits = bits_at c.dt in
+    let grad f xt = grad_at c.dt (fun x -> f (x, snd xt)) (fst xt) in
     let per_lane =
       outcome (fun () -> bits (one_by_one (grad (written w)) n (x, t)))
     in
+    (* A lane whose gradient is -0 where a held lane's selection would add a
+       +0. *)
+    cover "a lane's gradient holds -0"
+      (match per_lane with
+      | Value (_, a) -> Array.exists (Int64.equal Int64.min_int) a
+      | Raised _ -> false);
     equal ~msg:"vmap of grad" l per_lane
       (outcome (fun () -> bits (Rune.vmap s (grad (iterated w)) (x, t))));
     equal ~msg:"grad of vmap" l per_lane
       (outcome (fun () ->
-           bits
-             (Rune.grad' (fun x -> Nx.sum (Rune.vmap s (iterated w) (x, t))) x)));
+           bits (grad_at c.dt (fun x -> Rune.vmap s (iterated w) (x, t)) x)));
     equal ~msg:"jit of vmap of grad" l
       (outcome (fun () ->
            bits (one_by_one (grad (written ~g:exact w)) n (x, t))))
@@ -761,7 +812,7 @@ let law_lanes (Lanes c) =
     (* A captured parameter's gradient sums each step's of every lane, in an
        order the map chooses: step [j]'s is the gradient at row [j] of a stack
        of the parameter, of the lane's loop whose step [j] reads that row. *)
-    let gw f = Rune.grad' (fun w -> Nx.sum (f w)) w in
+    let gw f = grad_at c.dt f w in
     let rows = Nx.broadcast_to (Array.append [| Int.max 1 c.max |] c.s) w in
     let at ws (x, k) =
       step (Nx.get [ Int32.to_int (Nx.item [] k) ] ws) (x, k)
@@ -774,7 +825,7 @@ let law_lanes (Lanes c) =
              ~f:(at ws)
              (Nx.get [ k ] x, k0 ()))
       in
-      let g = Rune.grad' (fun ws -> Nx.sum (lane ws)) (Nx.copy rows) in
+      let g = grad_at c.dt lane (Nx.copy rows) in
       List.init c.max (fun j -> Nx.get [ j ] g)
     in
     (* The step is traced, so a refused one raises with no lane too. *)
@@ -787,7 +838,7 @@ let law_lanes (Lanes c) =
       outcome (fun () -> gw (fun w -> Rune.vmap s (iterated w) (x, t)))
     in
     match (terms, mapped) with
-    | Value terms, Value y -> summed c.dt terms y
+    | Value terms, Value y -> summed_at c.dt terms y
     | _ ->
         let unit = function Value _ -> Value () | Raised m -> Raised m in
         equal ~msg:"a capture's gradient" (outcome_t Testable.unit) (unit terms)
@@ -795,10 +846,21 @@ let law_lanes (Lanes c) =
   end
 
 (* One lane whose steps' terms of the capture's gradient cancel: from [x = 2],
-   [w = 1], the step [x w - x²] gives 130, -26 and -6. *)
+   [w = 1], the step [x w - x²] gives 130, -26 and -6. One lane whose gradient,
+   [w = -0], is -0. *)
 let lane_examples =
   let one v = { Operand.view = Plain; values = [| F v |] } in
   [
+    Lanes
+      {
+        dt = f32;
+        s = [| 1 |];
+        trips = [| 1 |];
+        max = 1;
+        g = Y;
+        x = one 2.;
+        w = one (-0.);
+      };
     Lanes
       {
         dt = f64;

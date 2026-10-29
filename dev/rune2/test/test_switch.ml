@@ -276,6 +276,25 @@ let law_lanes (xs, ks) =
       (snd (Rune.jvp' (fun xs -> mapped three xs idx) xs (Nx.ones_like xs)))
   end
 
+(* A lane's gradient is its own branch's, sign of zero included: lane 0's branch
+   multiplies by [-0.], giving [-0.]; lane 1's reads nothing of [x], giving
+   [+0.], whatever lane 0's branch gives there. *)
+let test_lane_zeros () =
+  let f x k =
+    Rune.switch T.tensor k
+      [ (fun () -> Nx.mul_s x (-0.)); (fun () -> Nx.ones_like x) ]
+  in
+  let xs = vec [| 2.; 3. |] and idx = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
+  let s = T.(tensor @-> tensor @-> returns tensor) in
+  let grad_vmap xs = Rune.grad' (fun xs -> Nx.sum (Rune.vmap s f xs idx)) xs in
+  let codes x = Array.map Int64.bits_of_float (Nx.to_array x) in
+  let expected = codes (vec [| -0.; 0. |]) in
+  equal ~msg:"grad of vmap" (array int64) expected (codes (grad_vmap xs));
+  equal ~msg:"vmap of grad" (array int64) expected
+    (codes (Rune.vmap s (fun x k -> Rune.grad' (fun x -> f x k) x) xs idx));
+  equal ~msg:"jit of grad of vmap" (array int64) expected
+    (codes (Rune.jit' grad_vmap xs))
+
 (* The traced per-lane path: under jit and in a scan's step, each lane's branch,
    its additions and its checks. *)
 let test_traced_lanes () =
@@ -622,6 +641,7 @@ let () =
          test "maps" test_maps;
          test "a lane computes only its branch" test_lane_masks;
          prop "each lane takes its own branch" lane_cases law_lanes;
+         test "a lane's zero gradient keeps its sign" test_lane_zeros;
          test "lanes under a trace" test_traced_lanes;
          test "an index out of range raises" test_out_of_range;
          test "nested lane masks" test_nested_masks;
