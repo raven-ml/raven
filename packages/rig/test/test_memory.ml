@@ -668,7 +668,11 @@ let test_host_budget_refused () =
       raises_match (out_of_memory Rig.host n) (fun () -> B.create Rig.host n))
 
 (* A host buffer holds its bytes in the host's budget until it is collected,
-   small ones included, with up to 112 more where it starts on 128 bytes. *)
+   small ones included, with up to 112 more where it starts on 128 bytes, and
+   on Windows a page of 4 KiB less 16 more where it starts on a page, from
+   64 KiB. *)
+let host_slack n = if Sys.win32 && n >= 64 * kib then (4 * kib) - 16 else 112
+
 let test_host_held () =
   List.iter
     (fun n ->
@@ -684,7 +688,7 @@ let test_host_held () =
       in
       let msg = Printf.sprintf "%d bytes, live" n in
       at_least ~msg int ~than:(before + n) held;
-      at_most ~msg int ~than:(before + n + 112) held;
+      at_most ~msg int ~than:(before + n + host_slack n) held;
       Gc.full_major ();
       Gc.full_major ();
       equal

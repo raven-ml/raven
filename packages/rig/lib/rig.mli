@@ -766,7 +766,9 @@ val failure : unit -> string option
     except on a device whose memory the host addresses, such as Metal's,
     where it counts in the device's. A host buffer counts the bytes it
     takes of the C library's memory: its own, and up to 112 more where it
-    starts on 128 bytes ({!Buffer.create}). An allocation's bytes also pace the
+    starts on 128 bytes ({!Buffer.create}). On Windows, where [free] releases
+    no allocation aligned to a page, one that starts on a page counts a
+    page less 16 bytes more. An allocation's bytes also pace the
     OCaml collector, so a device nearing its budget collects unreachable
     buffers more often. Live buffers are freed only by {!Buffer.free}, so a
     program that keeps every buffer reachable and frees none runs out of
