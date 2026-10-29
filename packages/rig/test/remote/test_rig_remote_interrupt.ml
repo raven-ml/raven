@@ -217,27 +217,41 @@ let raise_in_devices () =
 
 (* Connects *)
 
-(* An address of the loopback where nothing listens: a connect to it answers
-   [Error] once it has made the process's job, and gives the job back. The
-   port's socket is closed before the connect: macOS drops a connect to a
-   bound socket that does not listen, so the connect would wait out its
-   bound, and a closed port refuses it at once. *)
-let with_silent_address f =
+(* An address of the loopback whose listener closes the first connection it
+   accepts: a connect to it answers [Error] once it has made the process's
+   job, and gives the job back. A port where nothing listens refuses a
+   connect at once only on Linux and macOS: Windows tries it again for about
+   2 s, which over every allocation of a connect passed 1000 s. *)
+let with_closing_address f =
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  Unix.listen fd 2;
+  let addr = Unix.getsockname fd in
   let port =
-    Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-    Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
-    match Unix.getsockname fd with
+    match addr with
     | Unix.ADDR_INET (_, p) -> p
     | Unix.ADDR_UNIX _ -> fail "no port"
   in
-  f ("127.0.0.1", port)
+  let closer =
+    Thread.create (fun () -> Unix.close (fst (Unix.accept ~cloexec:true fd))) ()
+  in
+  (* A connection of the test's own ends the accept if [f] made none; one
+     left in the backlog goes with the listener. *)
+  let release () =
+    let c = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+    Fun.protect
+      ~finally:(fun () -> Unix.close c)
+      (fun () -> Unix.connect c addr);
+    Thread.join closer
+  in
+  Fun.protect ~finally:release (fun () -> f ("127.0.0.1", port))
 
 (* A connect after a connect that raised: it answers [Error] for an address
-   where nothing listens, which it can only once the process's job of the
+   whose listener closes it, which it can only once the process's job of the
    connect that raised is not open. *)
 let connects_after msg =
-  with_silent_address @@ fun at ->
+  with_closing_address @@ fun at ->
   match Rig_remote.connect ~key:(as_key key) [ at ] with
   | Ok j ->
       Rig_remote.close j;
