@@ -8,18 +8,25 @@ module D = Nx.Dtype
 
 (* Values *)
 
-type value = F of float | Least | Greatest
+type value = F of float | Least | Greatest | C of float * float
 
 let pp_value ppf = function
   | F x -> Format.fprintf ppf "%h" x
   | Least -> Format.pp_print_string ppf "least"
   | Greatest -> Format.pp_print_string ppf "greatest"
+  | C (re, im) -> Format.fprintf ppf "%h+i%h" re im
 
 let value (type v s) (dt : (v, s) D.t) w : v =
   let least = w = Least in
   let signed m = if least then -.m else m in
   match w with
   | F x -> D.of_float dt x
+  | C (re, im) -> (
+      match D.kind dt with
+      | Complex ->
+          let part x = (D.of_float dt x).Complex.re in
+          { Complex.re = part re; im = part im }
+      | _ -> D.of_float dt re)
   | Least | Greatest -> (
       match D.kind dt with
       | Float -> signed (D.float_format dt).max_finite

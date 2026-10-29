@@ -15,9 +15,14 @@ type value =
       (** The least finite value: an integer dtype's least, a float format's
           negated largest finite, [false]. *)
   | Greatest  (** The greatest finite value, as {!Least}. *)
+  | C of float * float
+      (** A complex element's real and imaginary parts, each stored by
+          {!Nx.Dtype.of_float} at the component's dtype; at a dtype that is not
+          complex, its real part. *)
 
 val pp_value : Format.formatter -> value -> unit
-(** [pp_value] formats a float as [%h], the ends as [least] and [greatest]. *)
+(** [pp_value] formats a float as [%h], the ends as [least] and [greatest], a
+    complex element as its parts [%h] joined by [+i]. *)
 
 val value : ('v, 's) Nx.dtype -> value -> 'v
 (** [value dt v] is [v] at [dt]. A complex end is its component's end as the

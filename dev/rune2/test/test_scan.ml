@@ -992,7 +992,8 @@ let law_vmap (case, m) =
 let moderate : Operand.value -> float = function
   | Least -> -2.
   | Greatest -> 2.
-  | F v -> if Float.is_nan v then 0.5 else Float.min 2. (Float.max (-2.) v)
+  | F v | C (v, _) ->
+      if Float.is_nan v then 0.5 else Float.min 2. (Float.max (-2.) v)
 
 (* [e] with every partial derivative finite at finite operands: exp, sqrt, log,
    reciprocal, division and power replaced by smooth functions, a constant

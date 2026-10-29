@@ -659,6 +659,15 @@ type lanes =
     }
       -> lanes
 
+(* [re] whose drawn floats take [im]'s as imaginary parts, in storage order and
+   repeated: the two views may hold different numbers of elements. *)
+let paired (re : Operand.t) (im : Operand.t) =
+  let n = Array.length im.values in
+  let pair k (a : Operand.value) : Operand.value =
+    match (a, im.values.(k mod n)) with F a, F b -> C (a, b) | a, _ -> a
+  in
+  if n = 0 then re else { re with values = Array.mapi pair re.values }
+
 let lane_cases =
   let open Gen in
   (let* s = Operand.shape in
@@ -667,12 +676,16 @@ let lane_cases =
    let most = Array.fold_left Int.max 0 trips in
    let* max = of_list [ most; most + 1; most - 1 ] in
    let* g = gen ~rank:(Array.length s) in
-   let* x = Operand.draw (Array.append [| n |] s) and+ w = Operand.draw s in
+   let xs = Array.append [| n |] s in
+   let* x = Operand.draw xs and+ w = Operand.draw s in
+   let* xi = Operand.draw xs and+ wi = Operand.draw s in
    let+ (D.Any dt) = of_list [ D.Any f32; Any f64; Any c64; Any c128 ] in
    let max = Int.max 0 max in
    match D.kind dt with
    | Float -> Lanes { dt; s; trips; max; g = no_sums g; x; w }
-   | _ -> Lanes { dt; s; trips; max; g = exact_at dt (generic g); x; w })
+   | _ ->
+       let x = paired x xi and w = paired w wi in
+       Lanes { dt; s; trips; max; g = exact_at dt (generic g); x; w })
   |> with_pp (fun ppf (Lanes c) ->
       Format.fprintf ppf "%a %a, trips [%s], max %d: %a" Nx.pp_dtype c.dt
         Operand.pp_shape c.s
@@ -737,6 +750,10 @@ let law_lanes (Lanes c) =
     (Array.exists (fun t -> t > 0 && t < c.max) c.trips);
   cover "no lane" (n = 0);
   cover "a complex dtype" (D.is Complex c.dt);
+  cover "an imaginary part not zero"
+    (Array.exists
+       (function Operand.C (_, im) -> im <> 0. | _ -> false)
+       c.x.values);
   let x = Operand.make c.dt (Array.append [| n |] c.s) c.x in
   let w = Operand.make c.dt c.s c.w in
   let t = Nx.create Nx.int32 [| n |] (Array.map Int32.of_int c.trips) in
