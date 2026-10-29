@@ -799,7 +799,8 @@ let rec mapped name (p, caps) ~nargs forms lanes =
           (fun (n, m) f -> if laned m k then Program.stacked n f else f)
           lanes f
       in
-      Trace.trace Body ~name (Array.mapi stack forms) (fun bs ->
+      (* Staged, as the operator's programs are, in [root_named]. *)
+      Trace.trace Staged ~name (Array.mapi stack forms) (fun bs ->
           Vmap.run ~name ~axis:(Program.axis ()) n (fun w ->
               let vs =
                 Array.mapi
@@ -951,7 +952,11 @@ let root_named name ?linear_solve x ~residual solve =
     if caps <> [||] then invalid_argf "%s: a root's program captures" name;
     p
   in
-  (* [J v], the residual's derivative along the solution, and [Jᵀ w]. *)
+  (* [J v], the residual's derivative along the solution, and [Jᵀ w]. Each is a
+     function of the operands alone, traced staged: a body would run what reads
+     none of them, such as the zero tangent of a value the residual creates, at
+     the call, where under a jit it is the jit's value, a capture the system
+     does not carry. *)
   let tangents i out =
     Array.init nx (fun k ->
         let (V y) = out.(k) in
@@ -962,7 +967,7 @@ let root_named name ?linear_solve x ~residual solve =
   let jacobian =
     closed
       (* A root's derivative offers nothing. *)
-      (Trace.trace Body ~name operand_forms (fun vs ->
+      (Trace.trace Staged ~name operand_forms (fun vs ->
            Program.silenced @@ fun () ->
            let v, xs, th = split vs in
            Jvp.run ~name (fun i ->
@@ -979,7 +984,7 @@ let root_named name ?linear_solve x ~residual solve =
   let transpose =
     Program.once @@ fun ~name:entry ->
     closed
-      (Trace.trace Body ~name:entry operand_forms (fun vs ->
+      (Trace.trace Staged ~name:entry operand_forms (fun vs ->
            Program.silenced @@ fun () ->
            let ws, xs, th = split vs in
            (* [J v] is the residual's derivative, so an operation not linear in

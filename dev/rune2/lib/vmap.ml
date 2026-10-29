@@ -1685,9 +1685,12 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
 and root ~name i axis n (c : Program.construct) =
   let batched = Array.map (batch_v i n) in
   let forms = Array.map Program.form in
+  (* Each program of the system is a function of its operands alone, traced
+     staged: a body would run what reads none of them at the call, where under
+     a jit it is a capture the system does not carry. *)
   let mapped (p : Program.t) vs =
     let q, own =
-      Trace.trace Body ~name (forms vs) (fun bs ->
+      Trace.trace Staged ~name (forms vs) (fun bs ->
           interpret ~name ~axis n (fun w ->
               let out = Program.eval p (Array.map (lane_v w) bs) in
               Array.map (batch_v w n) out))

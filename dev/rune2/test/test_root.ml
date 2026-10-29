@@ -1262,8 +1262,30 @@ let adding_root a =
     ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
     (fun () -> Nx.sqrt a)
 
+(* The minimum of [Σ cosh (x - a)], its terms padded with zeros created in
+   the objective, stated as the zero of its gradient, which the residual takes:
+   [x = a]. The derivative of the padding reads none of the system's values. *)
+let minimum a =
+  let objective x =
+    let pad = Nx.zeros_at (Nx.beside x) f64 [| 2 |] in
+    Nx.sum (Nx.concatenate ~axis:0 [ Nx.cosh (Nx.sub x a); pad ])
+  in
+  Rune.root one ~residual:(Rune.grad' objective) (fun () -> Nx.copy a)
+
 let compiled_tests =
   [
+    test "a residual whose gradient pads with created zeros compiles" (fun () ->
+        let a = vec [| 0.5; 2.; 3. |] in
+        let f a = Nx.sum (Nx.sin (minimum a)) in
+        equal ~msg:"x = a" (close ()) a (minimum a);
+        equal ~msg:"value" (close ()) (minimum a)
+          (compiled (fun () -> Rune.jit' minimum a));
+        equal ~msg:"grad" (close ()) (Rune.grad' f a)
+          (compiled (fun () -> Rune.jit' (Rune.grad' f) a));
+        let rows = Nx.reshape [| 3; 1 |] a in
+        equal ~msg:"vmap" (close ())
+          (Rune.vmap' minimum rows)
+          (compiled (fun () -> Rune.jit' (Rune.vmap' minimum) rows)));
     test "jit of grad drops a linear solve's additions, as eagerly" (fun () ->
         let f a = Nx.sum (Nx.sin (adding_root a)) in
         let a = vec [| 0.5; 2.; 3. |] in
