@@ -2984,6 +2984,31 @@ let law_scan (Scan_case (s, axis, xs)) =
   in
   equal (outcome_t (Testable.list codes_t)) eager jitted
 
+(* Packed views
+
+   A uint4 sort along the last axis of a [2; 3] view of a [3; 5] uint4 of
+   distinct elements, every other row and column, flipped: its kernel is 3 rows
+   by the 2 nibbles of a byte, which Clang 18 crashed on as one vector of 6
+   lanes. *)
+
+let strided_sorts =
+  let pp = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
+  Gen.with_pp pp
+    (Gen.map
+       (List.filteri (fun i _ -> i < 15))
+       (Gen.permutation (List.init 16 Fun.id)))
+
+let law_strided_sort xs =
+  let every_other axis t =
+    Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis ~window:1 ~step:2 t)
+  in
+  let a = Nx.create Nx.uint4 [| 3; 5 |] (Array.of_list xs) in
+  let a = Nx.flip (every_other (-1) (every_other 0 a)) in
+  let sort a = fst (Nx.sort a) in
+  equal (outcome_t codes_t)
+    (outcome (fun () -> codes (sort a)))
+    (compiled (fun () -> codes (Rune.jit' sort a)))
+
 let () =
   exit
     (run "rune2 jit"
@@ -2998,6 +3023,10 @@ let () =
              prop "a sum is within its bound" sum_cases law_sum;
              prop ~count:20 ~examples:bitcast_examples
                "a bitcast gives eager's bits" bitcast_cases law_bitcast;
+             prop ~count:12
+               "a uint4 sort along the last axis of every other row and \
+                column, flipped, gives eager's codes"
+               strided_sorts law_strided_sort;
              test "nx.quant's decodes compile" test_quant_decodes;
              test "special values are exact" test_specials;
              test "integer constants keep their bits and wrap"
