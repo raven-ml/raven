@@ -826,6 +826,80 @@ let quotients_at_width =
             [ 1; bits - 2; bits - 1 ])
         Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
 
+(* A weak divisor past its operand's width is read in the operand's type, as
+   compiled code commits it: on int8, 128 is -128, 200 is -56 and -129 is 127,
+   and on uint8 259 is 3 and -3 is 253. Each lowering, the fast division included, keeps the values over
+   the whole range and over the non-negative half, where the operands' signs
+   seem to agree and the fast division applies. *)
+let divisors_past_width =
+  test "a quotient by a weak divisor past its width reads it in its type"
+    (fun () ->
+      let shr_and = ops [ Shr; And ] in
+      let lower e =
+        late_with ~disable_fast_idiv:false shr_and (simplify_with shr_and e)
+      in
+      let power k = Bigint.shift_left Bigint.one k in
+      List.iter
+        (fun dtype ->
+          let bits = Dtype.bitsize dtype in
+          let lo, hi = int_bounds dtype in
+          let half = power (bits - 1) and wide = power bits in
+          let twice = power (bits + 1) in
+          let divisors =
+            if Dtype.is_unsigned dtype then
+              Bigint.
+                [
+                  wide + of_int 3; wide + of_int 7; twice - of_int 5;
+                  of_int (-3);
+                ]
+            else
+              Bigint.
+                [
+                  half;
+                  half + of_int 3;
+                  wide - of_int 3;
+                  wide + of_int 7;
+                  pred lo;
+                ]
+          in
+          let points x_lo =
+            List.filter
+              (fun n -> Bigint.(geq n x_lo && leq n hi))
+              Bigint.
+                [
+                  lo; succ lo; minus_one; zero; one; of_int 7; of_int 100;
+                  pred hi; hi;
+                ]
+          in
+          List.iter
+            (fun (x_lo, range) ->
+              let x = var ~dtype "x" x_lo hi in
+              List.iter
+                (fun d ->
+                  let c = Ops.const (`Int d) in
+                  List.iter
+                    (fun (name, e) ->
+                      let r = lower e in
+                      List.iter
+                        (fun n ->
+                          let msg =
+                            Format.asprintf "%a %s: %s %s %s" Dtype.pp dtype
+                              range (Bigint.to_string n) name
+                              (Bigint.to_string d)
+                          in
+                          let vars = [ ("x", `Int n) ] in
+                          equal ~msg const (at vars e) (at vars r))
+                        (points x_lo))
+                    [
+                      ("//", Ops.alu x Floordiv [ c ]);
+                      ("%", Ops.alu x Floormod [ c ]);
+                      ("cdiv", Ops.alu x Cdiv [ c ]);
+                      ("cmod", Ops.alu x Cmod [ c ]);
+                    ])
+                divisors)
+            [ (lo, "whole"); (Bigint.zero, "non-negative") ])
+        Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
+
 let late =
   group "late_patterns"
     (late_graphs
@@ -835,6 +909,7 @@ let late =
         lowered_divisions;
         powers_at_width;
         quotients_at_width;
+        divisors_past_width;
       ])
 
 (* Constants other than integers *)

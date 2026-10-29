@@ -4231,9 +4231,9 @@ submission, and a range a loop of rig's program (D146).
   -2**31` renders `<< 62` and the literal `73786976294838206464`, which clang
   refuses.
 - **tolk:** `lib/uop/shape.ml:1891-1907` (`wrap_folded`) and `2709-2710`;
-  `lib/codegen/decomp/decomp_op.ml:119-148` (`at_width`, `power_of_two`,
-  `shift_of`); `test/gen/tinygrad.patch`, which makes tinygrad's rules the
-  same before the goldens are generated.
+  `lib/codegen/decomp/decomp_op.ml:101-117` and `149-162` (`at_width`,
+  `power_of_two`, `shift_of`); `test/gen/tinygrad.patch`, which makes
+  tinygrad's rules the same before the goldens are generated.
 - **Differs:** a weak result of folding two weak constants under an
   operation on a committed integer, past its width, is wrapped to it, as the
   operation reads it: `(x * 65536) * 65536` on int32 is `x * 0`. A product by
@@ -4249,5 +4249,31 @@ submission, and a range a loop of rig's program (D146).
   product folds its constants at their width`; the `Decomp_op` suite:
   `late_patterns › a product by a power of two shifts by less than its
   width` and `› a quotient by a power of two reads it in its operand's
-  type`; the `Codegen` suite: `squares that wrap › a square of a product
-  whose constant squares to 0 is 0`.
+  type`; the `Codegen` suite: `constants past the width › a square of a
+  product whose constant squares to 0 is 0`.
+
+## D162. A divisor past its operand's width is read in its operand's type
+
+- **tinygrad:** `codegen/decomp/op.py:54-62` (`floordiv_to_idiv`,
+  `floormod_to_mod`) and `97-103` (the `fast_idiv` rules), which read a weak
+  constant divisor's exact value where the division reads it in its operand's
+  type: the sign test skips the correction and `fast_idiv` divides by the
+  wrong number. Repro on the CPU: `x = Tensor([0, 1, 7, 100, 127],
+  dtype=dtypes.int8).contiguous().realize(); (x // 128).tolist()` gives
+  `[0, 0, 0, 0, 0]` for `[0, -1, -1, -1, -1]`, and on uint8 `x // 259` gives
+  `[0, 0, 0, 0, 0]` where `x % 259` gives `[0, 1, 1, 1, 1]`.
+- **tolk:** `lib/codegen/decomp/decomp_op.ml:118-128` (`divisor`) and its
+  uses in `floordiv_to_idiv`, `floormod_to_mod` and the `fast_idiv` rules;
+  `test/gen/tinygrad.patch`, which makes tinygrad's rules the same before the
+  goldens are generated.
+- **Differs:** a weak integer divisor past a committed integer operand's
+  width is wrapped to the operand's type before a division or remainder
+  lowers: on int8, 128 is -128 and 200 is -56, and on uint8 259 is 3.
+- **Reason:** none of (a) to (c): no raven call site is known to reach it.
+  It needs the maintainer's ruling, as D160 had: the gap gives a wrong value
+  with no error, and the change is a guard in the rules that read the
+  divisor, in tinygrad's place.
+- **Pinned by:** the `Decomp_op` suite: `late_patterns › a quotient by a weak
+  divisor past its width reads it in its type`; the `Codegen` suite:
+  `constants past the width › a weak divisor past the width divides as its
+  value there`.

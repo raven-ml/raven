@@ -89,7 +89,7 @@
 87 Ops.ADD dtypes.int [79, 86]
 88 Ops.CDIV dtypes.ulong [17, 19]
 89 Ops.CDIV dtypes.ulong [17, 18]
-90 Ops.CDIV dtypes.ulong [17, 22]
+90 Ops.CDIV dtypes.ulong [17, 33]
 91 Ops.CDIV dtypes.weakint [24, 11]
 92 Ops.CMOD dtypes.weakint [24, 11]
 93 Ops.CMPNE dtypes.bool [92, 33]

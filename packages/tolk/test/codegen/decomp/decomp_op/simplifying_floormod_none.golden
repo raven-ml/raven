@@ -78,7 +78,7 @@
 76 Ops.ADD dtypes.int [69, 75]
 77 Ops.CMOD dtypes.ulong [16, 18]
 78 Ops.CMOD dtypes.ulong [16, 17]
-79 Ops.CMOD dtypes.ulong [16, 21]
+79 Ops.CMOD dtypes.ulong [16, 36]
 80 Ops.CMOD dtypes.weakint [23, 24]
 81 Ops.CMPNE dtypes.bool [80, 36]
 82 Ops.CMPLT dtypes.bool [23, 36]

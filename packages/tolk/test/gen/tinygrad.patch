@@ -476,7 +476,7 @@ index e1d9579..0062a16 100644
      if DEBUG >= 2: print(f"emulating {fr} as {to}")
      pm = pm_float_decomp if fr in dtypes.floats else pm_long_decomp
 diff --git a/tinygrad/codegen/decomp/op.py b/tinygrad/codegen/decomp/op.py
-index 36907bf..3d7912d 100644
+index 36907bf..c95b0a3 100644
 --- a/tinygrad/codegen/decomp/op.py
 +++ b/tinygrad/codegen/decomp/op.py
 @@ -1,6 +1,6 @@
@@ -487,7 +487,27 @@ index 36907bf..3d7912d 100644
  from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher
  from tinygrad.renderer import Renderer
  
-@@ -62,16 +62,24 @@ def floormod_to_mod(a:UOp, b:UOp) -> UOp:
+@@ -51,27 +51,44 @@ def threefry2x32(x: UOp, key: UOp):
+ 
+ # ***** decomposition patterns *****
+ 
++# d as a division of a reads it: a weak int constant past a's width wrapped to a's type, as the renderer commits it, so that
++# on int8 200 is -56 and on uint8 259 is 3. the rules read the sign and value of the divisor the code divides by
++def divisor(a:UOp, d:UOp) -> UOp:
++  if d.op is not Ops.CONST or d.dtype not in dtypes.weaks or a.dtype in dtypes.weaks or not dtypes.is_int(a.dtype): return d
++  if type(d.val) is not int or (w:=truncate[a.dtype](d.val)) == d.val: return d
++  return d.const_like(w)
++
+ def floordiv_to_idiv(a:UOp, b:UOp) -> UOp:
++  b = divisor(a, b)
+   if (a.vmin >= 0 and b.vmin >= 0) or (a.vmax <= 0 and b.vmax <= 0): return a.alu(Ops.CDIV, b)
+   return a.alu(Ops.CDIV, b) - (a.alu(Ops.CMOD, b).ne(0) & (a<0).ne(b<0))
+ 
+ def floormod_to_mod(a:UOp, b:UOp) -> UOp:
++  b = divisor(a, b)
+   if (a.vmin >= 0 and b.vmin >= 0) or (a.vmax <= 0 and b.vmax <= 0): return a.alu(Ops.CMOD, b)
+   r = a.alu(Ops.CMOD, b)
+   # use where instead of mul to avoid being fused into MULACC (which int64 long-decomp doesn't handle)
    return r + (r.ne(0) & (a<0).ne(b<0)).where(b, b.const_like(0))
  
  powers_of_two: dict[int, int] = {2**i:i for i in range(64)}
@@ -514,7 +534,7 @@ index 36907bf..3d7912d 100644
    pat.append((UPat.var("a")%UPat.var("b"), floormod_to_mod))
    # no real hardware supports THREEFRY, but NullRenderer does
    if Ops.THREEFRY not in ops: pat.append((UPat(Ops.THREEFRY, src=(UPat.var("x"), UPat.var("key"))), threefry2x32))
-@@ -85,15 +93,15 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
+@@ -85,22 +102,22 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
    if Ops.OR in ops: pat += [(UPat.var("x", dtypes.bool).logical_not()&UPat.var("y", dtypes.bool).logical_not(),
      lambda x,y: (x | y).logical_not())]
    # rewrite MUL/CDIV to SHL+SHR: x*(2**y) -> shl(x,y) and x//(2**y) -> shr(x,y)
@@ -532,8 +552,17 @@ index 36907bf..3d7912d 100644
 +        if (v:=shift_of(x, c)) else None)]
      if not disable_fast_idiv:
        # fast_idiv handles non-pow2 divisors on non-negative inputs
-       pat += [(UPat(Ops.CDIV, src=(UPat.var("x", dtypes.ints), UPat.cvar("d"))), lambda ctx, x, d: fast_idiv(ctx, x, d.val))]
-@@ -119,8 +127,7 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
+-      pat += [(UPat(Ops.CDIV, src=(UPat.var("x", dtypes.ints), UPat.cvar("d"))), lambda ctx, x, d: fast_idiv(ctx, x, d.val))]
++      pat += [(UPat(Ops.CDIV, src=(UPat.var("x", dtypes.ints), UPat.cvar("d"))), lambda ctx, x, d: fast_idiv(ctx, x, divisor(x, d).val))]
+       # rewrite raw CMOD -> x - d*fast_idiv(x,d), only when fast_idiv can actually divide;
+       # avoids disturbing floormod_to_mod's general-path output (which uses a trunc Ops.CMOD as an implementation detail)
+       pat += [(UPat(Ops.CMOD, src=(UPat.var("x", dtypes.ints), UPat.cvar("d"))),
+-        lambda ctx, x, d: x - d * q if (q:=fast_idiv(ctx, x, d.val)) is not None else None)]
++        lambda ctx, x, d: x - divisor(x, d) * q if (q:=fast_idiv(ctx, x, divisor(x, d).val)) is not None else None)]
+   if Ops.NEG in ops:
+     pat += [(UPat.var('x')*-1, lambda ctx,x: x.alu(Ops.NEG))]
+     if Ops.SUB in ops: pat += [(UPat.var('x')+UPat.var('y').alu(Ops.NEG), lambda ctx,x,y: x.alu(Ops.SUB, y))]
+@@ -119,8 +136,7 @@ def get_late_rewrite_patterns(ops:tuple[Ops, ...], disable_fast_idiv:bool) -> Pa
      pat += [(UPat.var('a')*UPat.var('b')+UPat.var('c'), lambda a,b,c: a.alu(Ops.MULACC, b, c))]
      # also fuse (x << n) + c → MULACC(x, 2^n, c) since MUL→SHL may run first
      if Ops.SHL in ops: pat += [(UPat.var('x').alu(Ops.SHL, UPat.cvar('n'))+UPat.var('c'), lambda x,n,c: x.alu(Ops.MULACC, x.const_like(1<<n.val), c))]
@@ -954,7 +983,7 @@ index 7ec5fa2..e1dfb26 100644
  
  def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
 diff --git a/tinygrad/codegen/late/gater.py b/tinygrad/codegen/late/gater.py
-index 319a60c..612ddfa 100644
+index 319a60c..c185a41 100644
 --- a/tinygrad/codegen/late/gater.py
 +++ b/tinygrad/codegen/late/gater.py
 @@ -1,10 +1,29 @@
@@ -1408,7 +1437,7 @@ index f80c800..6aa4283 100644
  
              # get upcast axes for the tensor cores
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index 4136f84..98af487 100644
+index 4136f84..ceab1d5 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@

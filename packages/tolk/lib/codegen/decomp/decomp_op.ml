@@ -98,24 +98,6 @@ let same_sign a b =
 
 let sign_differs a b = O.(a < int 0 <> (b < int 0))
 
-let floordiv_to_idiv a b =
-  if same_sign a b then alu a Cdiv [ b ]
-  else
-    O.(alu a Cdiv [ b ] - ((alu a Cmod [ b ] <> int 0) land sign_differs a b))
-
-let floormod_to_mod a b =
-  if same_sign a b then alu a Cmod [ b ]
-  else
-    let r = alu a Cmod [ b ] in
-    (* A selection, not a multiplication, so that no multiply-add fuses it:
-       64-bit integer emulation does not lower one. *)
-    O.(
-      r
-      + where
-          ((r <> int 0) land sign_differs a b)
-          b
-          (const_like b (`Int Bigint.zero)))
-
 (* The value of the integer constant [c] as an operation on [x] reads it: at
    [x]'s width, as a product does, [`Product], or as a quotient or remainder
    does, [`Quotient]. A product reads it modulo 2^bits, so on int32 2^31 is
@@ -132,6 +114,37 @@ let at_width reading x c =
       | `Int w, _ -> Some w
       | _ -> None)
   | _ -> None
+
+(* [d] as a division of [a] reads it ({!at_width}): a weak constant past
+   [a]'s width wrapped to [a]'s type, as on int8 200 is -56 and on uint8 259
+   is 3, so that the rules read the sign and value of the divisor compiled
+   code divides by. Any other [d] is itself. *)
+let divisor a d =
+  if op d <> Op.Const || not (List.mem (dtype d) Dtype.weaks) then d
+  else
+    match (at_width `Quotient a d, value d) with
+    | Some w, `Int z when not (Bigint.equal w z) -> const_like d (`Int w)
+    | _ -> d
+
+let floordiv_to_idiv a b =
+  let b = divisor a b in
+  if same_sign a b then alu a Cdiv [ b ]
+  else
+    O.(alu a Cdiv [ b ] - ((alu a Cmod [ b ] <> int 0) land sign_differs a b))
+
+let floormod_to_mod a b =
+  let b = divisor a b in
+  if same_sign a b then alu a Cmod [ b ]
+  else
+    let r = alu a Cmod [ b ] in
+    (* A selection, not a multiplication, so that no multiply-add fuses it:
+       64-bit integer emulation does not lower one. *)
+    O.(
+      r
+      + where
+          ((r <> int 0) land sign_differs a b)
+          b
+          (const_like b (`Int Bigint.zero)))
 
 (* The exponent of a constant that is 2^i, 0 <= i < 64, as an operation on [x]
    reads it ({!at_width}): below [x]'s width, so that no shift by the width or
@@ -200,7 +213,9 @@ let late_patterns ~disable_fast_idiv ops =
   let cdiv x d = Upat.op Cdiv ~src:[ x; d ]
   and cmod x d = Upat.op Cmod ~src:[ x; d ] in
   let int_value u = match value u with `Int z -> Some z | _ -> None in
-  let fast ctx m = Option.bind (int_value (m "d")) (fast_idiv ctx (m "x")) in
+  let fast ctx m =
+    Option.bind (int_value (divisor (m "x") (m "d"))) (fast_idiv ctx (m "x"))
+  in
   Pattern_matcher.v
     (fun () -> List.concat
        [
@@ -259,7 +274,8 @@ let late_patterns ~disable_fast_idiv ops =
                        (cmod x_int (cvar "d"))
                        (fun ctx m ->
                          Option.map
-                           (fun q -> O.(m "x" - (m "d" * q)))
+                           (fun q ->
+                             O.(m "x" - (divisor (m "x") (m "d") * q)))
                            (fast ctx m));
                    ]);
               ]);

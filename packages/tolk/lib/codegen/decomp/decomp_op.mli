@@ -46,7 +46,11 @@ val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
       in the integer's type, to a mask if [ops] has {!Op.And}, and any other to
       a truncating remainder ({!Op.Cmod}), corrected where the operands' signs
       can differ;
-    - {!Op.Threefry} to {!threefry2x32} if [ops] lacks it. *)
+    - {!Op.Threefry} to {!threefry2x32} if [ops] lacks it.
+
+    A division or remainder of a committed integer reads a weak constant
+    divisor in the integer's type, here and in {!late_patterns}: on int8, a
+    divisor of 128 is [-128]. *)
 
 val late_patterns :
   disable_fast_idiv:bool ->

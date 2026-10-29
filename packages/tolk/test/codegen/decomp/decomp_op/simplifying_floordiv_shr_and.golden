@@ -82,7 +82,7 @@
 80 Ops.CDIV dtypes.ulong [17, 19]
 81 Ops.CONST dtypes.weakint [] 63
 82 Ops.SHR dtypes.ulong [17, 81]
-83 Ops.CDIV dtypes.ulong [17, 22]
+83 Ops.CDIV dtypes.ulong [17, 33]
 84 Ops.CDIV dtypes.weakint [24, 11]
 85 Ops.CMOD dtypes.weakint [24, 11]
 86 Ops.CMPNE dtypes.bool [85, 33]

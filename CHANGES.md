@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- `Decomp_op`'s division rules read a weak divisor in the dividend's type: on
+  int8, `x // 128` skipped the sign correction for -128, and `1 // 128` gave 0
+  for -1.
 - A kernel that reads a buffer state and depends on a kernel that overwrites
   it reads a copy of the state made before the overwrite
   (`Schedule.create_schedule`). It ran after the overwrite and read the new

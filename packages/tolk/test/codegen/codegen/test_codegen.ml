@@ -2696,11 +2696,87 @@ let square_wraps () =
            [ power (bits / 2); top ]))
     Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
 
+(* The kernel that stores into slot [k] the [k]th of [ops] of [x] and [c] at
+   element [i] of [x], slot 4, over 8 elements of [dtype], [c] weak, with
+   [opts]. *)
+let divide_kernel ~opts dtype ops c =
+  let x = Call.param ~shape:[ Int 8 ] 4 dtype in
+  let i = Ops.range (Int 8) [ 0 ] in
+  let store k op =
+    let out = Call.param ~shape:[ Int 8 ] k dtype in
+    let q = Ops.alu (Ops.index x [ i ]) op [ Ops.const (`Int c) ] in
+    Ops.store (Ops.index out [ i ]) q
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (Ops.group (List.mapi store ops)) [ i ] ]
+
+(* A weak divisor past the width, above or below it, divides as its value in
+   the dividend's type, a lane at a time or 8 lanes at once: on int8, 128 is
+   -128, and on uint8, -3 is 253. *)
+let divisors_wrap () =
+  let upcast =
+    Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
+  in
+  let ops =
+    [
+      (Op.Floordiv, Bigint.fdiv);
+      (Op.Floormod, fun n d -> Bigint.(n - (d * fdiv n d)));
+      (Op.Cdiv, Bigint.div);
+      (Op.Cmod, Bigint.rem);
+    ]
+  in
+  List.iter
+    (fun dtype ->
+      let bits = Dtype.bitsize dtype in
+      let lo, hi = Dtypes.int_bounds dtype in
+      let half = Bigint.shift_left Bigint.one (bits - 1) in
+      let wide = Bigint.shift_left Bigint.one bits in
+      let xs =
+        if Dtype.is_unsigned dtype then
+          Bigint.[ zero; one; of_int 2; of_int 7; of_int 100; half; pred hi; hi ]
+        else Bigint.[ lo; succ lo; minus_one; zero; one; of_int 7; pred hi; hi ]
+      in
+      let x = Array.of_list (List.map (fun n -> `Int n) xs) in
+      List.iter
+        (fun c ->
+          let d =
+            match Dtype.truncate dtype (`Int c) with
+            | `Int d -> d
+            | _ -> failwith "an integer type truncates to an integer"
+          in
+          List.iter
+            (fun opts ->
+              let k = divide_kernel ~opts dtype (List.map fst ops) c in
+              let prg = Codegen.to_program k (Lazy.force host) in
+              let outs = Run.on_host prg [ (4, x) ] in
+              List.iteri
+                (fun slot (op, f) ->
+                  let msg =
+                    Format.asprintf "%a x %a %s, %d opts" Dtype.pp dtype Op.pp
+                      op (Bigint.to_string c) (List.length opts)
+                  in
+                  equal ~msg (array Dtypes.value)
+                    (Array.of_list
+                       (List.map
+                          (fun n -> Dtype.truncate dtype (`Int (f n d)))
+                          xs))
+                    (List.assoc slot outs))
+                ops)
+            [ []; [ upcast ] ])
+        Bigint.
+          [
+            half; half + of_int 3; wide - of_int 3; wide + of_int 7;
+            neg (succ half);
+          ])
+    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+
 let square_wrapping =
-  group "squares that wrap"
+  group "constants past the width"
     [
       test "a square of a product whose constant squares to 0 is 0"
         square_wraps;
+      test "a weak divisor past the width divides as its value there"
+        divisors_wrap;
     ]
 
 (* Errors *)

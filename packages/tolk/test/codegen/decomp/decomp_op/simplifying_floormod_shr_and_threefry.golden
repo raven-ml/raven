@@ -65,7 +65,7 @@
 63 Ops.CMOD dtypes.ulong [16, 18]
 64 Ops.CONST dtypes.weakint [] 9223372036854775807
 65 Ops.AND dtypes.ulong [16, 64]
-66 Ops.CMOD dtypes.ulong [16, 21]
+66 Ops.CMOD dtypes.ulong [16, 36]
 67 Ops.CMOD dtypes.weakint [23, 24]
 68 Ops.CMPNE dtypes.bool [67, 36]
 69 Ops.CMPLT dtypes.bool [23, 36]
