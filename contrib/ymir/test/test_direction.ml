@@ -22,6 +22,12 @@ let ulps n =
   let n = float_of_int n in
   float_rel ~rel:(n *. eps) ~abs:(n *. Float.succ 0.)
 
+(* [Direction.separation]'s stated relative accuracy. *)
+let separation_accuracy = 1.3e-15
+
+(* [Direction.position_angle]'s stated accuracy, in radians. *)
+let position_accuracy = 2.1e-15
+
 let row (x, y, z) = vector x y z
 let icrs v = raw Frame.icrs v
 let xyz d = Nx.to_array (Direction.xyz d)
@@ -302,8 +308,38 @@ let measures =
         (fun (_, a, b, sep, pa) ->
           let a = icrs (Nx.create Nx.float64 [| 3 |] a)
           and b = icrs (Nx.create Nx.float64 [| 3 |] b) in
-          equal (float_rel ~rel:1e-15 ~abs:0.) sep (one (separation a b));
-          equal (float 1e-15) pa (one (position_angle a b)));
+          equal
+            (float_rel ~rel:separation_accuracy ~abs:0.)
+            sep
+            (one (separation a b));
+          equal (float position_accuracy) pa (one (position_angle a b)));
+      cases
+        ~name:(fun (n, _, _, _, _) -> n)
+        "rows of unequal norms, against a 60-digit reference"
+        Ymir_test.Unequal_norms_reference.pairs
+        (fun (_, a, b, sep, pa) ->
+          let a = icrs (Nx.create Nx.float64 [| 3 |] a)
+          and b = icrs (Nx.create Nx.float64 [| 3 |] b) in
+          equal
+            (float_rel ~rel:separation_accuracy ~abs:0.)
+            sep
+            (one (separation a b));
+          equal (float position_accuracy) pa (one (position_angle a b)));
+      cases
+        ~name:(fun t -> Printf.sprintf "%g" t)
+        "a separation far below float64's rounding keeps its accuracy"
+        [ 1e-160; 1e-300 ]
+        (fun t ->
+          (* From (1, 0, 0) to (1, t, 0) the separation is atan t, which is t
+             to rounding, and the bearing is east. [|a × b|]'s square is
+             below float64's least normal. *)
+          let a = icrs (vector 1. 0. 0.) and b = icrs (vector 1. t 0.) in
+          equal
+            (float_rel ~rel:separation_accuracy ~abs:0.)
+            t
+            (one (separation a b));
+          equal (float position_accuracy) (pi /. 2.)
+            (one (position_angle a b)));
       test "t_sepp, on vectors that are not unit" (fun () ->
           equal
             (float_rel ~rel:1e-15 ~abs:0.)
@@ -328,10 +364,13 @@ let measures =
           equal (float 1e-15) 0. (one (position_angle pole (lonlat pi 0.)));
           equal (float 1e-15) (pi /. 2.)
             (one (position_angle pole (lonlat (pi /. 2.) 0.))));
-      prop "separation is symmetric within 2 ulp" (Gen.pair plain plain)
-        (fun (a, b) ->
+      prop "separation is symmetric within twice its accuracy"
+        (Gen.pair plain plain) (fun (a, b) ->
           let a = icrs (row a) and b = icrs (row b) in
-          equal (ulps 2) (one (separation a b)) (one (separation b a)));
+          equal
+            (float_rel ~rel:(2. *. separation_accuracy) ~abs:0.)
+            (one (separation a b))
+            (one (separation b a)));
       prop "a rotation keeps separations within 1e-15 rad"
         (Gen.pair plain plain) (fun (a, b) ->
           let a = Direction.of_xyz Frame.icrs (row a)

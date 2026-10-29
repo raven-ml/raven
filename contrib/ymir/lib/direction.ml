@@ -92,23 +92,6 @@ let rows what v =
   check_finite what v;
   scale v
 
-(* [near a b] is [b], scaled rows, times 2, 1 or 1/2, whichever brings its
-   largest component within a factor √2 of [a]'s. Two close rows then have close
-   components, and their difference is exact, even where their largest
-   components fall on either side of a power of two, as a row next to [(1, 0,
-   0)] does. *)
-let near a b =
-  let root_two = Float.sqrt 2. in
-  let largest v = Nx.max ~axes:[ last v ] ~keepdims:true (Nx.abs v) in
-  let ma = largest a and mb = largest b in
-  let up = Nx.greater ma (Nx.mul_s mb root_two) in
-  let down = Nx.greater mb (Nx.mul_s ma root_two) in
-  let factor =
-    Nx.where up (Nx.full_like ma 2.)
-      (Nx.where down (Nx.full_like ma 0.5) (Nx.full_like ma 1.))
-  in
-  Nx.mul b factor
-
 (* [wrap a] maps an angle of [[-π, π]] into [[+0, 2π)]. An angle at or below
    zero gains 2π; a result of 2π, from a zero or a tiny negative angle, loses it
    again and is +0. *)
@@ -179,18 +162,40 @@ let lat d =
   let rho = Guard.sqrt pole (Nx.full_like rho2 0.) rho2 in
   radians (Guard.atan2 pole at_pole z rho)
 
+(* [pair fn a b] is [a]'s and [b]'s scaled rows. *)
 let pair fn a b =
   let a = rows (fn ^ ": the first direction's vector") a.xyz in
   let b = rows (fn ^ ": the second direction's vector") b.xyz in
-  (a, near a b)
+  (components a, components b)
 
-(* For [a] and [d = b - a], [atan2 |a × d| (a · b)]. In exact arithmetic [a × d
-   = a × b]; for close rows [d] is exact, so the result keeps its relative
-   accuracy at any separation. *)
+(* [difference p q r s] is [p q - r s] within 2 ulp whatever the cancellation
+   (Kahan): [e] is the rounding error of [r s], exact through a fused
+   multiply-add, and restores it. *)
+let difference p q r s =
+  let w = Nx.mul r s in
+  let e = Nx.fma (Nx.neg r) s w in
+  Nx.add (Nx.fma p q (Nx.neg w)) e
+
+(* [fused_cross a b] is [a × b], each component within 2 ulp. Each keeps its
+   relative accuracy however close the rays and whatever the rows' norms. *)
+let fused_cross (ax, ay, az) (bx, by, bz) =
+  (difference ay bz az by, difference az bx ax bz, difference ax by ay bx)
+
+(* [|a × b|]'s square underflows below 2^-1022 and loses its relative accuracy
+   there: where it is below [tiny_square], [a × b] is first lifted by [lift],
+   which brings any nonzero cross product of scaled rows, at least 2^-1074,
+   to a normal square, and any below [√tiny_square] to one in range. *)
+let tiny_square = 0x1p-960
+let lift = 0x1p600
+
+(* [atan2 |a × b| (a · b)], [|a × b|] read from [a × b] lifted where its square
+   is tiny, and divided by the exact lift. *)
 let separation a b =
   let a, b = pair "Direction.separation" a b in
-  let a = components a and b = components b in
-  let c2 = norm2 (cross a (sub3 b a)) in
+  let ((cx, cy, cz) as c) = fused_cross a b in
+  let tiny = Nx.less_s (norm2 c) tiny_square in
+  let k = Nx.where tiny (Nx.full_like cx lift) (Nx.full_like cx 1.) in
+  let c2 = norm2 (Nx.mul cx k, Nx.mul cy k, Nx.mul cz k) in
   let singular = Nx.equal_s c2 0. in
   let cos = dot a b in
   let flat =
@@ -198,40 +203,31 @@ let separation a b =
       (Nx.full_like cos Float.pi)
       (Nx.full_like cos 0.)
   in
-  radians
-    (Guard.atan2 singular flat
-       (Guard.sqrt singular (Nx.full_like c2 0.) c2)
-       cos)
+  let length = Guard.sqrt singular (Nx.full_like c2 0.) c2 in
+  radians (Guard.atan2 singular flat (Nx.div length k) cos)
 
-(* For [a = (x, y, z)], [atan2 (w · e) (w · n)] with north [n = (-x z, -y z, x²
-   + y²)] and east [e = |a| (-y, x, 0)], both of norm [|a| ρ]. Since [a] is
-   orthogonal to both, [w] may be [b], [b - a] or [b + a]: it is [b - a] for
-   rows on one side, [b + a] for rows on opposite sides, each exact for rows
-   close to [a] or to [-a], so the bearing keeps its accuracy there. At a pole
+(* For [a = (x, y, z)], [atan2 (b · e) (b · n)] with north [n = (-x z, -y z, x²
+   + y²)] and east [e = |a| (-y, x, 0)], both of norm [|a| ρ]. With [c = a × b],
+   [b · e = |a| c_z] and [b · n = |a|² b_z - z (a · b) = (c × a)_z]: both are
+   read from [c], which keeps their accuracy however close the rays and
+   whatever the rows' norms. At a pole
    north is the limit along longitude 0, [(-sign z, 0, 0)], and east is [(0, 1,
    0)]; these are constant, so the result's derivative with respect to [a] is 0
-   there. Where [a × w = 0] the bearing is 0. *)
+   there. Where [a × b = 0] the bearing is 0. *)
 let position_angle a b =
-  let a, b = pair "Direction.position_angle" a b in
-  let ((x, y, z) as a) = components a and ((bx, by, bz) as b) = components b in
-  let opposite = Nx.less_s (dot a b) 0. in
-  let side u v = Nx.where opposite (Nx.add u v) (Nx.sub u v) in
-  let ((wx, wy, wz) as w) = (side bx x, side by y, side bz z) in
+  let ((x, y, z) as a), ((bx, by, _) as b) =
+    pair "Direction.position_angle" a b
+  in
+  let ((cx, cy, cz) as c) = fused_cross a b in
   let pole = Nx.logical_and (Nx.equal_s x 0.) (Nx.equal_s y 0.) in
   let length = Guard.sqrt pole (Nx.full_like x 0.) (norm2 a) in
-  let east = Nx.(mul length (add (mul (neg y) wx) (mul x wy))) in
-  let north =
-    Nx.(
-      add
-        (neg (add (mul (mul x z) wx) (mul (mul y z) wy)))
-        (mul (add (square x) (square y)) wz))
-  in
+  let east = Nx.mul length cz and north = difference cx y cy x in
   let pole_north =
     Nx.where (Nx.less_s z 0.) (Nx.full_like z 1.) (Nx.full_like z (-1.))
   in
   let east = Nx.where pole by east
   and north = Nx.where pole (Nx.mul pole_north bx) north in
-  let singular = is_zero (cross a w) in
+  let singular = is_zero c in
   radians (wrap (Guard.atan2 singular (Nx.full_like east 0.) east north))
 
 (* Rotations *)

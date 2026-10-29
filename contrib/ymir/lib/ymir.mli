@@ -153,7 +153,7 @@ end
     never NaN:
     - {!Direction.lon} at a pole ([x = y = 0]): 0.
     - {!Direction.lat} at a pole: ±π/2; at a zero row: 0.
-    - {!Direction.separation} where [a × (b − a) = 0], that is coincident or
+    - {!Direction.separation} where [a × b = 0], that is coincident or
       antipodal rows or a zero row: π if [a · b < 0], else 0.
     - {!Direction.position_angle} at the same points: 0. With respect to [a] at
       a pole, its derivative is 0.
@@ -222,14 +222,19 @@ module Direction : sig
 
   val separation : 'f t -> 'f t -> (float, Nx.float64_elt) Nx.t Quantity.t
   (** [separation a b] is the angle between the rays, in \[0, π\] radians.
-      Leading axes broadcast. It is [atan2 |a × d| (a · b)] with [d = b − a],
-      which keeps relative accuracy at any separation: 3e-16 at 1 mas. *)
+      Leading axes broadcast. It is [atan2 |a × b| (a · b)], each component of
+      [a × b] within 2 ulp through a fused multiply-add and lifted by a power
+      of two where its square would underflow, so it is within 1.3e-15
+      relative at any separation above float64's least normal, whatever the
+      rows' norms. *)
 
   val position_angle : 'f t -> 'f t -> (float, Nx.float64_elt) Nx.t Quantity.t
   (** [position_angle a b] is [b]'s bearing from [a], east of north, in \[+0,
       2π) radians. Leading axes broadcast. At a pole, north is the limit along
       longitude 0: at the north pole it points toward longitude 180° and east
-      toward 90°. *)
+      toward 90°. It reads [a × b] as {!separation} does, east [|a| (a × b)_z]
+      and north [((a × b) × a)_z], so it is within 2.1e-15 radians at any
+      separation above float64's least normal, whatever the rows' norms. *)
 
   val ptree : unit -> 'f t Nx.Ptree.t
   (** [ptree ()] is the structure of directions: the frame as {!Frame.walk}

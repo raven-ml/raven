@@ -4,6 +4,11 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Direction.separation` and `Direction.position_angle` keep their accuracy
+  on rows of unequal norms, as `Nx.Ptree.map` can build, and at separations
+  far below float64's rounding: both read `a × b`, computed with fused
+  multiply-adds and scaled by a power of two. Rows of norms 1 and 1.3 at 1 µas
+  were 3e-6 off, and a separation of 1e-160 rad 6e-6 off.
 - `Vocabulary.spell` is `None` where an item of the spelling, the power of ten
   left or a word to its exponent, is past the unit algebra's 4096-bit bound.
   It returned spellings such as `1e-1236 m^309` with `m` = 1e4 π, whose items
