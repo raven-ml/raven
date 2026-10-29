@@ -3,19 +3,71 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The float kinds, lowered and compiled on the host. An exact kind gives nx's
-   eager bits, any NaN for a NaN. A transcendental kind is within its host bound
-   of a reference: at float32, OCaml's float64 functions rounded once; at
-   float64, nx's eager kernels, within the sum of both bounds. Each case is one
-   compiled map over a few hundred values of float32 or float64, drawn to reach
-   the kind's special values and the edges of its ranges. *)
+(* The float kinds at float32 and float64, as maps of one kind compiled by
+   Rune.jit, which must compile them whole: no call is evaluated. An exact kind
+   gives the bits of nx's eager kernel, any NaN for a NaN, over operands drawn
+   to reach its special values and the edges of its range. A transcendental kind
+   is within its host bound in ulps of the correctly rounded result (rune2.mli,
+   Numerics) at the points of golden/lower_real, which gen/lower_real.py writes
+   from mpmath; where every operand is a zero, an infinity or a NaN, it gives
+   Annex F's zero, infinity, ±1 or NaN, stated below. *)
 
 open Windtrap
 module D = Nx_array.Dtype
 module K = Nx_kernel.Prog
 module P = Nx.Prim
+module Rune = Rune2
+module T = Nx.Ptree
 
 let n = 256
+
+(* Compiling *)
+
+(* [counted f] is [f ()], whose compiled calls must compile whole: a declined
+   lowering, evaluated by nx, fails. *)
+let counted f =
+  let before = Rune.evaluations () in
+  let y = f () in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  y
+
+(* The program of [node] over operands of [dt]. *)
+let program (type s) (dt : (float, s) D.t) arity (node : K.node) =
+  let ins = Iarray.of_array (Array.make arity (D.Any dt)) in
+  let node : K.node =
+    match node with Op1 (u, _, j) -> Op1 (u, D.Any dt, j) | other -> other
+  in
+  K.of_node ~ins node
+
+(* [staged out prog] maps [prog] over operands of one shape into [out]: called
+   on operands, it gives nx's eager result and the result of the map staged in
+   Rune.jit. One staged map compiles once per shape. *)
+let staged out prog =
+  let map xs =
+    let layout =
+      Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape (List.hd xs)))
+    in
+    let loads = Iarray.of_list (List.map (fun x -> P.Plain x) xs) in
+    fst
+      (P.eval ~by:"t"
+         (P.Map { layout; prog; outs = [ out ]; loads; at = None }))
+  in
+  let compiled = Rune.jit T.(list tensor @-> returns tensor) map in
+  fun xs -> (map xs, counted (fun () -> compiled xs))
+
+let show v = if Float.is_nan v then "nan" else Printf.sprintf "%h" v
+
+(* Ulps: the distance in ordered-bit ranks, -0 and +0 one apart, of two floats
+   of float64 if [wide], else of float32. *)
+let ulps wide a b =
+  let mag v =
+    if wide then Int64.logand (Int64.bits_of_float v) Int64.max_int
+    else Int64.of_int32 (Int32.logand (Int32.bits_of_float v) Int32.max_int)
+  in
+  let ma = mag a and mb = mag b in
+  if Float.sign_bit a = Float.sign_bit b then
+    Int64.to_float (Int64.abs (Int64.sub ma mb))
+  else Int64.to_float (Int64.add (Int64.add ma mb) 1L)
 
 (* Values *)
 
@@ -29,6 +81,7 @@ let nans wide =
         0x7FF8000000000000L;
         0xFFF8000000000000L;
         0x7FF8000000000123L;
+        0x7FF0000000000001L;
         0xFFFC0000DEADBEEFL;
         0x7FFFFFFFFFFFFFFFL;
       ]
@@ -45,12 +98,17 @@ let edges wide =
   else
     List.map Int32.float_of_bits [ 1l; 0x007FFFFFl; 0x00800000l; 0x7F7FFFFFl ]
 
+(* Two NaNs, the zeros, the infinities and the least subnormal first, which
+   every example pairs. *)
 let specials wide =
   let signed = List.concat_map (fun v -> [ v; -.v ]) in
-  nans wide @ signed ([ 0.; Float.infinity; 1.; 0.5; 2. ] @ edges wide)
+  let nans = nans wide in
+  List.filteri (fun i _ -> i < 2) nans
+  @ signed ([ 0.; Float.infinity ] @ edges wide @ [ 1.; 0.5; 2. ])
+  @ List.filteri (fun i _ -> i >= 2) nans
 
-let is_nan_neg v = Float.is_nan v && Int64.bits_of_float v < 0L
-let is_neg_zero v = v = 0. && 1. /. v < 0.
+let is_nan_neg v = Float.is_nan v && Float.sign_bit v
+let is_neg_zero v = v = 0. && Float.sign_bit v
 
 let is_sub wide v =
   v <> 0. && Float.abs v < if wide then Float.min_float else 0x1p-126
@@ -65,8 +123,8 @@ let any_bits wide =
   if wide then Gen.map Int64.float_of_bits Gen.int64
   else Gen.map Int32.float_of_bits Gen.int32
 
-(* A value of the dtype [wide] says: a special value, one of [points] or a
-   neighbour, any bits, or a value of [range]. *)
+(* A value of float64 if [wide], else of float32: a special value, one of
+   [points] or a neighbour, any bits, or a value of [range]. *)
 let value wide points (lo, hi) =
   let points = List.map (round wide) points in
   Gen.frequency
@@ -81,383 +139,56 @@ let value wide points (lo, hi) =
       (3, Gen.map (round wide) (Gen.float_range lo hi));
     ]
 
-(* Kinds *)
+(* Exact kinds *)
 
-(* A kind's operands: per operand, the points and the range its values come
-   from; its special tuples; the cases it must reach, on one element of the
-   dtype [wide]; and, for a transcendental kind, its float64 function and its
-   bound in ulps at an element of the dtype [wide]. *)
+(* A kind's operands: per operand, the points its values come from; the range of
+   its uniform values; its special tuples; and the cases it must reach, on one
+   element of float64 if the first argument holds, else float32. *)
 type kind = {
   name : string;
   node : K.node;
   points : (bool -> float list) list;
-  range : bool -> float * float;
+  range : float * float;
   tuples : bool -> float array list;
   covers : (string * (bool -> float array -> bool)) list;
-  within : ((float array -> float) * (bool -> float array -> float)) option;
 }
 
 let arity k = List.length k.points
 
-let kind ?(tuples = fun _ -> []) ?(covers = []) ?within ~range name node points
-    =
-  { name; node; points; range; tuples; covers; within }
+let kind ?(tuples = fun _ -> []) ?(covers = []) ?(range = (-1e3, 1e3)) name node
+    points =
+  { name; node; points; range; tuples; covers }
 
-(* [f1 f b] and [f2 f b]: the float64 function [f] of one or two operands, and
-   the bound [b] at each dtype. *)
-let f1 f b = Some ((fun e -> f e.(0)), fun w _ -> if w then snd b else fst b)
-
-let f2 f b =
-  Some ((fun e -> f e.(0) e.(1)), fun w _ -> if w then snd b else fst b)
-
-let fixed r _ = r
-let by32 r32 r64 wide = if wide then r64 else r32
-let on f = fun wide (e : float array) -> f wide e.(0)
-let both a b wide = a wide @ b wide
-
-(* Each kind's points: the ends of its ranges, where its algorithm switches and
-   where its result saturates, at both dtypes. *)
+let on f wide (e : float array) = f wide e.(0)
+let none _ = []
 
 let rounding _ =
   [
     0.5; 1.5; 2.5; 0x1p22 +. 0.5; 0x1p23; 0x1p52; 4503599627370495.5; 0.49999997;
   ]
 
-let exp_points _ =
-  [
-    89.;
-    -104.;
-    86.;
-    88.72284;
-    -87.33655;
-    -103.27893;
-    -103.97208;
-    710.;
-    -746.;
-    708.;
-    709.782712893384;
-    -708.3964185322641;
-    -744.4400719213812;
-    -745.1332191019411;
-    0.34657359;
-  ]
-
-let exp2_points _ =
-  [
-    128.;
-    129.;
-    -126.;
-    -149.;
-    -150.;
-    -151.;
-    1024.;
-    1025.;
-    -1022.;
-    -1074.;
-    -1075.;
-    -1076.;
-    0.5;
-    -0.5;
-    3.;
-  ]
-
-let expm1_points _ =
-  [
-    -26.;
-    -40.;
-    0x1p-25;
-    0x1p-54;
-    0x1p-30;
-    88.72284;
-    709.782712893384;
-    89.;
-    710.;
-    0.34657359;
-    44.;
-    89.;
-    45.;
-  ]
-
-let log_points _ =
-  [
-    1.;
-    2.;
-    0.5;
-    0.70710677;
-    1.4142135;
-    0.70710678118654752;
-    1.4142135623730951;
-    3.;
-    10.;
-    0x1p-126;
-    0x1p-1022;
-    1e-40;
-    1e-310;
-  ]
-
-let log1p_points w = [ -1.; -0.5; 0x1p-25; 0x1p-54; -0.29289322 ] @ log_points w
-
-let trig_points _ =
-  [
-    0x1p15;
-    0x1p28;
-    0x1p-12;
-    0x1p-27;
-    0.78539816;
-    1.5707963267948966;
-    3.141592653589793;
-    1e22;
-    6381956970095103. *. 0x1p797;
-    1e30;
-    1e300;
-    105414350.;
-    2.1904577e+38;
-  ]
-
-let asin_points _ = [ 1.; -1.; 0.5; -0.5; 0.99999994; 0.9999999999999999 ]
-
-let atan_points _ =
-  [ 1.; -1.; 0.4375; 0.6875; 1.1875; 2.4375; 1e10; 1e300; 0x1p-960 ]
-
-let hyp_points _ =
-  [
-    90.;
-    712.;
-    89.41599;
-    710.4758600739439;
-    22.;
-    0.34657359;
-    44.;
-    45.;
-    0x1p-30;
-    6.;
-  ]
-
-let tanh_points _ = [ 0.625; 9.5; 19.5; 0x1p-30; 0.3 ]
-let erf_points _ = [ 1.; 2.5; 4.; 5.95; 0x1p-100; 1.75; 6.; 0.5; 4.25 ]
-let wide_range = by32 (-1e3, 1e3) (-1e3, 1e3)
-let none _ = []
+let roots _ = [ 2.; 0.5; 3.; 0x1p-126; 0x1p-1022; 1e-40; 1e-310 ]
 
 let unary =
-  let u = kind ~range:wide_range in
+  let u ?covers name k pts =
+    kind ?covers name (Op1 (Unary k, D.Any D.Float32, 0)) [ pts ]
+  in
   [
-    u "neg" (Op1 (Unary Neg, D.Any D.Float32, 0)) [ none ];
-    u "abs" (Op1 (Unary Abs, D.Any D.Float32, 0)) [ none ];
-    u "sign" (Op1 (Unary Sign, D.Any D.Float32, 0)) [ none ];
-    u "recip" (Op1 (Unary Recip, D.Any D.Float32, 0)) [ none ];
-    u "sqrt" (Op1 (Unary Sqrt, D.Any D.Float32, 0)) [ log_points ];
-    u "floor" (Op1 (Unary Floor, D.Any D.Float32, 0)) [ rounding ];
-    u "ceil" (Op1 (Unary Ceil, D.Any D.Float32, 0)) [ rounding ];
-    u "round"
-      (Op1 (Unary Round, D.Any D.Float32, 0))
-      [ rounding ]
+    u "neg" K.Neg none;
+    u "abs" K.Abs none;
+    u "sign" K.Sign none;
+    u "recip" K.Recip none;
+    u "sqrt" K.Sqrt roots;
+    u "floor" K.Floor rounding;
+    u "ceil" K.Ceil rounding;
+    u "round" K.Round rounding
       ~covers:
         [ ("a half", on (fun _ x -> Float.abs (x -. Float.trunc x) = 0.5)) ];
-    u "trunc" (Op1 (Unary Trunc, D.Any D.Float32, 0)) [ rounding ];
-    kind "exp"
-      (Op1 (Unary Exp, D.Any D.Float32, 0))
-      ?within:(f1 Float.exp (2., 2.))
-      [ exp_points ]
-      ~range:(by32 (-120., 120.) (-800., 800.))
-      ~covers:
-        [
-          ("overflow", on (fun w x -> x > if w then 709.79 else 88.73));
-          ("underflow to zero", on (fun w x -> x < if w then -745.2 else -104.));
-          ( "a subnormal result",
-            on (fun w x ->
-                if w then x < -708.4 && x > -745. else x < -87.4 && x > -103.)
-          );
-          ( "the near range",
-            on (fun w x -> Float.abs x <= if w then 708. else 86.) );
-        ];
-    kind "exp2"
-      (Op1 (Unary Exp2, D.Any D.Float32, 0))
-      ?within:(f1 Float.exp2 (4., 4.))
-      [ exp2_points ]
-      ~range:(by32 (-160., 160.) (-1100., 1100.))
-      ~covers:
-        [
-          ("an integer", on (fun _ x -> Float.is_integer x));
-          ("overflow", on (fun w x -> x >= if w then 1024. else 128.));
-          ( "a subnormal result",
-            on (fun w x ->
-                (x < if w then -1022. else -126.)
-                && x > if w then -1075. else -150.) );
-        ];
-    kind "expm1"
-      (Op1 (Unary Expm1, D.Any D.Float32, 0))
-      ?within:(f1 Float.expm1 (23., 23.))
-      [ expm1_points ]
-      ~range:(by32 (-40., 100.) (-50., 720.))
-      ~covers:
-        [
-          ( "tiny",
-            on (fun w x ->
-                x <> 0. && Float.abs x < if w then 0x1p-54 else 0x1p-25) );
-          ("past the cap", on (fun w x -> x > if w then 89. else 45.));
-          ("saturated below", on (fun w x -> x < if w then -40. else -26.));
-        ];
-    kind "log"
-      (Op1 (Unary Log, D.Any D.Float32, 0))
-      ?within:(f1 Float.log (1., 1.))
-      [ log_points ]
-      ~range:(fixed (-2., 1e4))
-      ~covers:
-        [
-          ("negative", on (fun _ x -> x < 0.));
-          ("a subnormal", on is_sub);
-          ("a negative subnormal", on (fun w x -> x < 0. && is_sub w x));
-        ];
-    kind "log2"
-      (Op1 (Unary Log2, D.Any D.Float32, 0))
-      ?within:(f1 Float.log2 (4., 4.))
-      [ log_points ]
-      ~range:(fixed (-2., 1e4))
-      ~covers:
-        [
-          ("a power of two", on (fun _ x -> x > 0. && fst (Float.frexp x) = 0.5));
-        ];
-    kind "log1p"
-      (Op1 (Unary Log1p, D.Any D.Float32, 0))
-      ?within:(f1 Float.log1p (5., 5.))
-      [ log1p_points ]
-      ~range:(fixed (-1.5, 10.))
-      ~covers:
-        [
-          ("-1", on (fun _ x -> x = -1.)); ("below -1", on (fun _ x -> x < -1.));
-        ];
+    u "trunc" K.Trunc rounding;
   ]
-  @ List.map
-      (fun (name, k, within) ->
-        kind name ?within
-          (Op1 (Unary k, D.Any D.Float32, 0))
-          [ trig_points ]
-          ~range:(by32 (-1e5, 1e5) (-1e9, 1e9))
-          ~covers:
-            [
-              ( "the big reduction",
-                on (fun w x ->
-                    (Float.abs x >= if w then 0x1p28 else 0x1p15)
-                    && Float.is_finite x) );
-              ( "huge",
-                on (fun _ x ->
-                    Float.abs x > 1e30 && Float.abs x < Float.infinity) );
-              ( "tiny",
-                on (fun w x ->
-                    x <> 0. && Float.abs x < if w then 0x1p-27 else 0x1p-12) );
-            ])
-      [
-        ("sin", K.Sin, f1 Float.sin (2., 2.));
-        ("cos", K.Cos, f1 Float.cos (2., 2.));
-        ("tan", K.Tan, f1 Float.tan (19., 19.));
-      ]
-  @ List.map
-      (fun (name, k, within) ->
-        kind name ?within
-          (Op1 (Unary k, D.Any D.Float32, 0))
-          [ asin_points ]
-          ~range:(fixed (-1.1, 1.1))
-          ~covers:
-            [
-              ("±1", on (fun _ x -> Float.abs x = 1.));
-              ("past 1", on (fun _ x -> Float.abs x > 1.));
-              ( "above 1/2",
-                on (fun _ x -> Float.abs x > 0.5 && Float.abs x < 1.) );
-            ])
-      [
-        ("asin", K.Asin, f1 Float.asin (5., 9.));
-        ("acos", K.Acos, f1 Float.acos (5., 9.));
-      ]
-  @ [
-      kind "atan"
-        (Op1 (Unary Atan, D.Any D.Float32, 0))
-        ?within:(f1 Float.atan (2., 7.))
-        [ atan_points ]
-        ~range:(fixed (-10., 10.))
-        ~covers:
-          [
-            ( "above 1",
-              on (fun _ x -> Float.abs x > 1. && Float.abs x < Float.infinity)
-            );
-          ];
-    ]
-  @ List.map
-      (fun (name, k, within) ->
-        kind name ?within
-          (Op1 (Unary k, D.Any D.Float32, 0))
-          [ hyp_points ]
-          ~range:(by32 (-100., 100.) (-720., 720.))
-          ~covers:
-            [
-              ("overflow", on (fun w x -> Float.abs x > if w then 711. else 90.));
-              ( "past the cap",
-                on (fun w x -> Float.abs x > if w then 45. else 23.) );
-            ])
-      [
-        ("sinh", K.Sinh, f1 Float.sinh (23., 23.));
-        ("cosh", K.Cosh, f1 Float.cosh (10., 10.));
-      ]
-  @ [
-      kind "tanh"
-        (Op1 (Unary Tanh, D.Any D.Float32, 0))
-        ?within:(f1 Float.tanh (18., 18.))
-        [ tanh_points ]
-        ~range:(fixed (-25., 25.))
-        ~covers:
-          [
-            ("small", on (fun _ x -> x <> 0. && Float.abs x < 0.625));
-            ("saturated", on (fun w x -> Float.abs x > if w then 19.5 else 9.5));
-          ];
-      kind "erf"
-        (Op1 (Unary Erf, D.Any D.Float32, 0))
-        ?within:(f1 Float.erf (2., 3.))
-        [ erf_points ]
-        ~range:(fixed (-7., 7.))
-        ~covers:
-          [
-            ("below 1", on (fun _ x -> Float.abs x < 1.));
-            ( "the far range",
-              on (fun _ x -> Float.abs x > 2.5 && Float.abs x < 5.95) );
-            ( "rounds to 1",
-              on (fun _ x -> Float.abs x > 6. && Float.abs x < Float.infinity)
-            );
-          ];
-    ]
 
-let pow_tuples _ =
-  let pairs =
-    [
-      (1., Float.nan);
-      (Float.nan, 0.);
-      (-1., Float.infinity);
-      (-1., Float.neg_infinity);
-      (-2., 0.5);
-      (-2., 3.);
-      (-2., 2.);
-      (-0., -3.);
-      (-0., -2.);
-      (0., -1.);
-      (Float.neg_infinity, 3.);
-      (Float.neg_infinity, -3.);
-      (-8., 1. /. 3.);
-      (0.5, Float.infinity);
-      (2., Float.neg_infinity);
-      (-3., 0x1p53);
-      (-3., 9007199254740991.);
-      (-1., 16777215.);
-      (2., 1024.);
-      (2., -1075.);
-      (10., 308.);
-      (10., -320.);
-      (1.0000001, 1e9);
-      (-1.5, 1e9 +. 1.);
-    ]
-  in
-  List.map (fun (x, y) -> [| x; y |]) pairs
-
-let atan2_tuples _ =
-  let z = [ 0.; -0.; Float.infinity; Float.neg_infinity; 1.; -1.; 1e-310 ] in
-  List.concat_map (fun y -> List.map (fun x -> [| y; x |]) z) z
+let zeros_apart _ e =
+  e.(0) = 0. && e.(1) = 0. && is_neg_zero e.(0) <> is_neg_zero e.(1)
 
 let mod_tuples wide =
   let e = edges wide in
@@ -467,31 +198,17 @@ let mod_tuples wide =
     (e @ [ 7.; -7.5; 1e30; 0. ])
 
 let binary =
-  let b ?tuples ?covers ?within ?(range = wide_range) name k pts =
-    kind ?tuples ?covers ?within ~range name (Op2 (Binary k, 0, 1)) [ pts; pts ]
+  let b ?tuples ?covers name k =
+    kind ?tuples ?covers name (Op2 (Binary k, 0, 1)) [ none; none ]
   in
   [
-    b "add" K.Add none;
-    b "sub" K.Sub none;
-    b "mul" K.Mul none;
-    b "fdiv" K.Fdiv none;
-    b "maximum" K.Maximum none
-      ~covers:
-        [
-          ( "zeros of both signs",
-            fun _ e ->
-              e.(0) = 0. && e.(1) = 0. && is_neg_zero e.(0) <> is_neg_zero e.(1)
-          );
-        ];
-    b "minimum" K.Minimum none
-      ~covers:
-        [
-          ( "zeros of both signs",
-            fun _ e ->
-              e.(0) = 0. && e.(1) = 0. && is_neg_zero e.(0) <> is_neg_zero e.(1)
-          );
-        ];
-    b "mod" K.Mod none ~tuples:mod_tuples
+    b "add" K.Add;
+    b "sub" K.Sub;
+    b "mul" K.Mul;
+    b "fdiv" K.Fdiv;
+    b "maximum" K.Maximum ~covers:[ ("zeros of both signs", zeros_apart) ];
+    b "minimum" K.Minimum ~covers:[ ("zeros of both signs", zeros_apart) ];
+    b "mod" K.Mod ~tuples:mod_tuples
       ~covers:
         [
           ( "an exponent gap past 1000",
@@ -506,46 +223,6 @@ let binary =
               && e.(0) <> 0. );
           ("a subnormal divisor", fun w e -> is_sub w e.(1));
         ];
-    b "pow" K.Pow
-      (both log_points exp2_points)
-      ?within:(f2 Float.pow (2., 2.))
-      ~tuples:pow_tuples
-      ~range:(fixed (-20., 20.))
-      ~covers:
-        [
-          ( "a negative base, odd power",
-            fun _ e ->
-              e.(0) < 0. && Float.is_integer e.(1) && Float.rem e.(1) 2. <> 0.
-          );
-          ( "a negative base, fraction",
-            fun _ e ->
-              e.(0) < 0.
-              && Float.is_finite e.(0)
-              && (not (Float.is_integer e.(1)))
-              && Float.is_finite e.(1) );
-          ( "-1 to an infinity",
-            fun _ e -> e.(0) = -1. && Float.abs e.(1) = Float.infinity );
-          ("1 to a NaN", fun _ e -> e.(0) = 1. && Float.is_nan e.(1));
-          ("a zero base, negative power", fun _ e -> e.(0) = 0. && e.(1) < 0.);
-          ("a subnormal base", fun w e -> is_sub w e.(0));
-          ( "a finite result of an exponent past 64",
-            fun w e ->
-              let r = Float.pow e.(0) e.(1) in
-              Float.abs (e.(1) *. Float.log2 (Float.abs e.(0))) > 64.
-              && Float.is_finite (round w r)
-              && r <> 0. );
-        ];
-    b "atan2" K.Atan2 atan_points ~tuples:atan2_tuples
-      ?within:(f2 Float.atan2 (6., 8.))
-      ~covers:
-        [
-          ("two zeros", fun _ e -> e.(0) = 0. && e.(1) = 0.);
-          ( "two infinities",
-            fun _ e ->
-              Float.abs e.(0) = Float.infinity
-              && Float.abs e.(1) = Float.infinity );
-          ("a negative x", fun _ e -> e.(1) < 0. && Float.is_finite e.(1));
-        ];
   ]
 
 let compare =
@@ -553,8 +230,7 @@ let compare =
     (fun (name, k) ->
       kind name
         (Op2 (Compare k, 0, 1))
-        [ none; none ]
-        ~range:(fixed (-2., 2.))
+        [ none; none ] ~range:(-2., 2.)
         ~tuples:(fun _ -> [ [| 0.; -0. |]; [| -0.; 0. |]; [| 1.; 1. |] ])
         ~covers:[ ("equal operands", fun _ e -> e.(0) = e.(1)) ])
     [
@@ -564,15 +240,27 @@ let compare =
       ("less_equal", K.Less_equal);
     ]
 
+(* Products that cancel to a few ulps of either dtype, a subnormal product and a
+   NaN third operand. *)
 let fma =
   let cancel w =
     if w then [ 1. +. 0x1p-30; -.(1. +. 0x1p-29) ]
     else [ 1. +. 0x1p-12; -.(1. +. 0x1p-11) ]
   in
+  let tuples w =
+    let a = List.hd (cancel w) in
+    let tiny = List.hd (edges w) in
+    [
+      [| a; a; -.(a *. a) |];
+      [| a; -.a; round w (a *. a) |];
+      [| tiny; 0.5; 0. |];
+      [| 1.; 1.; Float.nan |];
+      [| 1.; 1.; -0. |];
+    ]
+  in
   kind "fma"
     (Op3 (Fma, 0, 1, 2))
-    [ cancel; cancel; cancel ]
-    ~range:(fixed (-10., 10.))
+    [ cancel; cancel; cancel ] ~range:(-10., 10.) ~tuples
     ~covers:
       [
         ( "a NaN third",
@@ -581,13 +269,11 @@ let fma =
         );
       ]
 
-(* Cases *)
-
-(* A case: the dtype, and per element its operands. *)
+(* A case: whether it is float64, and per element its operands. *)
 let case k =
   let open Gen in
   let* wide = bool in
-  let free = List.map (fun p -> value wide (p wide) (k.range wide)) k.points in
+  let free = List.map (fun p -> value wide (p wide) k.range) k.points in
   let tuple =
     List.fold_right
       (fun g acc ->
@@ -602,32 +288,175 @@ let case k =
   in
   map (fun es -> (wide, es)) (array ~size:(constant n) element)
 
-let hex (type s) (dt : (float, s) D.t) v =
-  let b = K.bits dt v in
-  String.concat ""
-    (List.rev
-       (List.init (String.length b) (fun i ->
-            Printf.sprintf "%02x" (Char.code b.[i]))))
-
-let operands (type s) (dt : (float, s) D.t) es i =
-  Nx.create dt [| n |] (Array.map (fun e -> e.(i)) es)
-
-(* Ulps: the distance in ordered-bit ranks, -0 and +0 one apart, of two floats
-   of the dtype [wide]. *)
-let ulps wide a b =
-  let mag v =
-    if wide then Int64.logand (Int64.bits_of_float v) Int64.max_int
-    else Int64.of_int32 (Int32.logand (Int32.bits_of_float v) Int32.max_int)
+(* A case that reaches every cover: the kind's tuples, then every tuple of the
+   first [b] specials and points, [b] the most whose tuples fit in the rest of
+   [n]. *)
+let example k wide =
+  let tuples = List.map (Array.map (round wide)) (k.tuples wide) in
+  let pool =
+    Array.of_list
+      (specials wide
+      @ List.concat_map (fun p -> List.map (round wide) (p wide)) k.points)
   in
-  let ma = mag a and mb = mag b in
-  if Float.sign_bit a = Float.sign_bit b then
-    Int64.to_float (Int64.abs (Int64.sub ma mb))
-  else Int64.to_float (Int64.add (Int64.add ma mb) 1L)
+  let a = arity k in
+  let room = n - List.length tuples in
+  let rec base b =
+    if b > 1 && Float.of_int b ** Float.of_int a > Float.of_int room then
+      base (b - 1)
+    else b
+  in
+  let b = min (Array.length pool) (base n) in
+  let t = Array.of_list tuples in
+  let element i =
+    if i < Array.length t then t.(i)
+    else
+      let i = i - Array.length t in
+      Array.init a (fun j ->
+          pool.(i / int_of_float (Float.of_int b ** Float.of_int j) mod b))
+  in
+  (wide, Array.init n element)
 
+let operands (type s) (dt : (float, s) D.t) es =
+  List.init
+    (Array.length es.(0))
+    (fun j ->
+      Nx.create dt [| Array.length es |] (Array.map (fun e -> e.(j)) es))
+
+(* [same dt k es] compiles [k] over the operands [es] of [dt] and compares its
+   elements with eager's, shown as [k(operands) = result]. *)
+let same (type s) (dt : (float, s) D.t) k =
+  let prog = program dt (arity k) k.node in
+  let at es i y =
+    let args = String.concat ", " (Array.to_list (Array.map show es.(i))) in
+    Printf.sprintf "%s(%s) = %s" k.name args y
+  in
+  let both run show es =
+    let eager, compiled = run (operands dt es) in
+    let shown y = Array.mapi (fun i v -> at es i (show v)) (Nx.to_array y) in
+    equal (array string) (shown eager) (shown compiled)
+  in
+  match k.node with
+  | Op2 (Compare _, _, _) -> both (staged D.Bool prog) string_of_bool
+  | _ -> both (staged dt prog) show
+
+let law k =
+  let single = same D.Float32 k and double = same D.Float64 k in
+  prop ~count:20 k.name (case k)
+    ~examples:[ example k false; example k true ]
+    (fun (wide, es) ->
+      let cover_some label f = cover label (Array.exists (f wide) es) in
+      cover "float32" (not wide);
+      cover "float64" wide;
+      cover_some "a NaN" (fun _ e -> Array.exists Float.is_nan e);
+      cover_some "a negative NaN" (fun _ e -> Array.exists is_nan_neg e);
+      cover_some "-0" (fun _ e -> Array.exists is_neg_zero e);
+      cover_some "an infinity" (fun _ e ->
+          Array.exists (fun v -> Float.abs v = Float.infinity) e);
+      cover_some "a subnormal" (fun w e -> Array.exists (is_sub w) e);
+      List.iter (fun (label, f) -> cover_some label f) k.covers;
+      if wide then double es else single es)
+
+(* Transcendental kinds *)
+
+(* A value rounded to float32 and to float64. *)
+let both x = (x, x)
+let pi = (0x1.921fb6p+1, 0x1.921fb54442d18p+1)
+let half_pi = (0x1.921fb6p+0, 0x1.921fb54442d18p+0)
+let quarter_pi = (0x1.921fb6p-1, 0x1.921fb54442d18p-1)
+let three_quarter_pi = (0x1.2d97c8p+1, 0x1.2d97c7f3321d2p+1)
+let neg (a, b) = (-.a, -.b)
+let inf = Float.infinity
+let nan = Float.nan
+
+(* Annex F's values (F.9) where an operand is a zero, an infinity or a NaN, as
+   each kind's rule: at operands of float64 if [wide], else float32, the value,
+   or [None] where Annex F gives none and the goldens hold the kind. A value
+   where every operand is one of these and the value is a zero, an infinity, ±1
+   or a NaN is exact; another, such as acos 0, is held to the kind's bound. *)
+let pick wide (a, b) = if wide then b else a
 let special v = v = 0. || Float.is_nan v || Float.abs v = Float.infinity
 
-(* Where a kind's value is exact: at operands each a zero, an infinity or a NaN,
-   a reference of zero, infinity, ±1 or NaN; and pow's F.9.4.4 values. *)
+let annex1 name wide e =
+  let x = e.(0) in
+  let at (z, nz, i, ni) =
+    if Float.is_nan x then Some nan
+    else if x = 0. then Some (pick wide (if Float.sign_bit x then nz else z))
+    else if x = inf then Some (pick wide i)
+    else if x = -.inf then Some (pick wide ni)
+    else None
+  in
+  let z = both 0. and nz = both (-0.) and i = both inf and ni = both (-.inf) in
+  let one = both 1. and none = both (-1.) and nn = both nan in
+  at
+    (match name with
+    | "exp" | "exp2" -> (one, one, i, z)
+    | "expm1" -> (z, nz, i, none)
+    | "log" | "log2" -> (ni, ni, i, nn)
+    | "log1p" -> (z, nz, i, nn)
+    | "sin" | "tan" | "asin" -> (z, nz, nn, nn)
+    | "cos" -> (one, one, nn, nn)
+    | "acos" -> (half_pi, half_pi, nn, nn)
+    | "atan" -> (z, nz, half_pi, neg half_pi)
+    | "sinh" -> (z, nz, i, ni)
+    | "cosh" -> (one, one, i, i)
+    | "tanh" | "erf" -> (z, nz, one, none)
+    | _ -> invalid_arg name)
+
+let odd y = Float.is_integer y && Float.rem y 2. <> 0.
+
+(* pow x y, F.9.4.4: 1 at y = ±0 and at x = 1, NaN included, then the zeros' and
+   infinities' rules. *)
+let annex_pow _ e =
+  let x = e.(0) and y = e.(1) in
+  if y = 0. || x = 1. then Some 1.
+  else if Float.is_nan x || Float.is_nan y then Some nan
+  else if Float.abs y = inf then
+    let a = Float.abs x in
+    if a = 1. then Some 1. else Some (if a < 1. = (y > 0.) then 0. else inf)
+  else if x = 0. then
+    if y < 0. then Some (if odd y then Float.copy_sign inf x else inf)
+    else Some (if odd y then x else 0.)
+  else if Float.abs x = inf then
+    if y > 0. then Some (if odd y then x else inf)
+    else Some (if odd y then Float.copy_sign 0. x else 0.)
+  else None
+
+(* atan2 y x, F.9.1.4. *)
+let annex_atan2 wide e =
+  let y = e.(0) and x = e.(1) in
+  let signed v = Some (pick wide (if Float.sign_bit y then neg v else v)) in
+  if Float.is_nan x || Float.is_nan y then Some nan
+  else if y = 0. then if Float.sign_bit x then signed pi else Some y
+  else if Float.abs y = inf then
+    if x = inf then signed quarter_pi
+    else if x = -.inf then signed three_quarter_pi
+    else signed half_pi
+  else if x = 0. then signed half_pi
+  else if x = inf then Some (Float.copy_sign 0. y)
+  else if x = -.inf then signed pi
+  else None
+
+(* The rows of golden/lower_real/<name>.golden at float64 if [wide], else at
+   float32: operands and the correctly rounded value. *)
+let golden name wide =
+  let ic = open_in ("golden/lower_real/" ^ name ^ ".golden") in
+  let rows = ref [] in
+  (try
+     while true do
+       match String.split_on_char '\t' (input_line ic) with
+       | d :: cols when d = if wide then "f64" else "f32" ->
+           let vs = Array.of_list (List.map Float.of_string cols) in
+           let a = Array.length vs - 1 in
+           rows := (Array.sub vs 0 a, vs.(a)) :: !rows
+       | _ -> ()
+     done
+   with End_of_file -> close_in ic);
+  greater ~msg:(name ^ "'s rows") int ~than:0 (List.length !rows);
+  List.rev !rows
+
+(* Where a kind's value is exact: Annex F's zero, infinity, ±1 or NaN at
+   operands each a zero, an infinity or a NaN; and pow's 1 at [y = ±0], [x = 1]
+   and [x = -1], [y] infinite. *)
 let exact name e r =
   (Array.for_all special e && (special r || Float.abs r = 1.))
   || name = "pow"
@@ -642,188 +471,88 @@ let meets wide name tol e r got =
   else if exact name e r then ulps wide r got = 0.
   else ulps wide r got <= tol
 
-let check k (wide, es) =
-  let run (type s) (dt : (float, s) D.t) =
-    let xs = Array.init (arity k) (operands dt es) in
-    let ins = Iarray.of_array (Array.make (arity k) (D.Any dt)) in
-    let node : K.node =
-      match k.node with Op1 (u, _, j) -> Op1 (u, D.Any dt, j) | other -> other
+(* [accurate name node bound annex] holds [node] within [bound] ulps, at float32
+   and float64, at its golden points and where [annex] gives a value: at the
+   dtype's specials, every pair of them for a binary kind, and pow's golden
+   bases at y = ±0. *)
+let accurate name node (b32, b64) annex =
+  let at (type s) (dt : (float, s) D.t) wide tol =
+    let table = golden name wide in
+    let sp = specials wide in
+    let tuples =
+      match Array.length (fst (List.hd table)) with
+      | 1 -> List.map (fun x -> [| x |]) sp
+      | _ ->
+          List.concat_map (fun a -> List.map (fun b -> [| a; b |]) sp) sp
+          @ List.concat_map
+              (fun (e, _) -> [ [| e.(0); 0. |]; [| e.(0); -0. |] ])
+              (if name = "pow" then table else [])
     in
-    let prog = K.of_node ~ins node in
-    let layout = Nx_array.Layout.contiguous [| n |] in
-    let loads = Iarray.of_array (Array.map (fun x -> P.Plain x) xs) in
-    let args e = String.concat ", " (Array.to_list (Array.map (hex dt) e)) in
-    let show i y = Printf.sprintf "%s(%s) = %s" k.name (args es.(i)) y in
-    let map out =
-      fst
-        (P.eval ~by:"t"
-           (P.Map { layout; prog; outs = [ out ]; loads; at = None }))
+    let stated =
+      List.filter_map
+        (fun e -> Option.map (fun r -> (e, r)) (annex wide e))
+        tuples
     in
-    match k.node with
-    | Op2 (Compare _, _, _) ->
-        let op () = map D.Bool in
-        let eager = Nx.to_array (op ()) in
-        let lowered = Lowered.run op in
-        let show r = Array.mapi (fun i b -> show i (string_of_bool b)) r in
-        equal (array string) (show eager) (show lowered)
-    | _ -> (
-        let op () = map dt in
-        let lowered = Lowered.run op in
-        let bits r =
-          Array.mapi
-            (fun i y -> show i (if Float.is_nan y then "nan" else hex dt y))
-            r
-        in
-        match k.within with
-        | None ->
-            equal (array string) (bits (Nx.to_array (op ()))) (bits lowered)
-        | Some (f, bound) ->
-            (* float64 against eager, nx's bound of 2 ulps added *)
-            let refs, slack =
-              if wide then (Nx.to_array (op ()), 2.)
-              else (Array.map (fun e -> f32 (f e)) es, 0.)
-            in
-            let bad = ref [] in
-            Array.iteri
-              (fun i r ->
-                let tol = bound wide es.(i) +. slack in
-                let got = lowered.(i) in
-                if not (meets wide k.name tol es.(i) r got) then
-                  bad :=
-                    Printf.sprintf "%s, reference %s, %g ulps over %g"
-                      (show i (hex dt got))
-                      (hex dt r) (ulps wide r got) tol
-                    :: !bad)
-              refs;
-            equal (list string) [] (List.rev !bad))
-  in
-  let cover_some label f = cover label (Array.exists (f wide) es) in
-  cover "float32" (not wide);
-  cover "float64" wide;
-  cover_some "a NaN" (fun _ e -> Array.exists Float.is_nan e);
-  cover_some "a negative NaN" (fun _ e -> Array.exists is_nan_neg e);
-  cover_some "-0" (fun _ e -> Array.exists is_neg_zero e);
-  cover_some "an infinity" (fun _ e ->
-      Array.exists (fun v -> Float.abs v = Float.infinity) e);
-  cover_some "a subnormal" (fun w e -> Array.exists (is_sub w) e);
-  List.iter (fun (label, f) -> cover_some label f) k.covers;
-  if wide then run D.Float64 else run D.Float32
-
-let prop_of k = prop ~count:20 k.name (case k) (check k)
-
-(* float64 operands and their correctly rounded results, from mpmath at 200
-   bits: the drawn float64 cases meet eager's results within the sum of both
-   bounds, which cannot see a bound of one. *)
-let pinned name k bound pairs =
-  test name (fun () ->
-      let xs =
-        Array.of_list (List.map (fun (x, _) -> Float.of_string x) pairs)
-      in
-      let n = Array.length xs in
-      let x = Nx.create D.Float64 [| n |] xs in
-      let ins = Iarray.of_array [| D.Any D.Float64 |] in
-      let prog = K.of_node ~ins (Op1 (Unary k, D.Any D.Float64, 0)) in
-      let layout = Nx_array.Layout.contiguous [| n |] in
-      let loads = Iarray.of_array [| P.Plain x |] in
-      let op () =
-        fst
-          (P.eval ~by:"t"
-             (P.Map { layout; prog; outs = [ D.Float64 ]; loads; at = None }))
-      in
-      let got = Lowered.run op in
-      let far =
-        List.concat
-          (List.mapi
-             (fun i (x, r) ->
-               let d = ulps true (Float.of_string r) got.(i) in
-               if d <= bound then []
-               else [ Printf.sprintf "%s: %h, %g ulps from %s" x got.(i) d r ])
-             pairs)
-      in
-      equal (list string) [] far)
-
-(* Where tolk's log2 times ln 2 is two ulps off. *)
-let log_near_one =
-  pinned "log within one ulp near 1" K.Log 1.
-    [
-      ("0x1.481e0a20c684p+0", "0x1.fc4d0ea863fa9p-3");
-      ("0x1.203eace7848f4p+0", "0x1.e5eb7824a1d0cp-4");
-      ("0x1.936dc3c250523p-1", "-0x1.e816c6150210cp-3");
-      ("0x1.67372bc172382p-1", "-0x1.6ae862c1635bdp-2");
-      ("0x1.410308102a104p+0", "0x1.cf76ac1e049dfp-3");
-    ]
-
-(* Operands of pow and their correctly rounded results, from mpmath at 266
-   bits: subnormal bases and results, and exponents [y log2 |x|] past 64. *)
-let pow_far =
-  let case (type s) (dt : (float, s) D.t) cases =
-    let col f =
-      Array.of_list (List.map (fun c -> Float.of_string (f c)) cases)
-    in
-    let x = col (fun (x, _, _) -> x) and y = col (fun (_, y, _) -> y) in
-    let n = Array.length x in
-    let ins = Iarray.of_array [| D.Any dt; D.Any dt |] in
-    let prog = K.of_node ~ins (Op2 (Binary Pow, 0, 1)) in
-    let layout = Nx_array.Layout.contiguous [| n |] in
-    let loads =
-      Iarray.of_array
-        [| P.Plain (Nx.create dt [| n |] x); P.Plain (Nx.create dt [| n |] y) |]
-    in
-    let op () =
-      fst
-        (P.eval ~by:"t"
-           (P.Map { layout; prog; outs = [ dt ]; loads; at = None }))
-    in
-    let got = Lowered.run op in
-    let wide = D.equal dt D.Float64 in
+    let rows = table @ stated in
+    let es = Array.of_list (List.map fst rows) in
+    let run = staged dt (program dt (Array.length es.(0)) node) in
+    let got = Nx.to_array (snd (run (operands dt es))) in
     List.concat
       (List.mapi
-         (fun i (x, y, r) ->
-           let d = ulps wide (Float.of_string r) got.(i) in
-           if d <= 2. then []
+         (fun i (e, r) ->
+           if meets wide name tol e r got.(i) then []
            else
+             let args = String.concat ", " (Array.to_list (Array.map show e)) in
              [
-               Printf.sprintf "pow(%s, %s): %h, %g ulps from %s" x y got.(i) d
-                 r;
+               Printf.sprintf "%s(%s) = %s at %s, reference %s, %g ulps over %g"
+                 name args
+                 (show got.(i))
+                 (if wide then "float64" else "float32")
+                 (show r)
+                 (ulps wide r got.(i))
+                 tol;
              ])
-         cases)
+         rows)
   in
-  test "pow within 2 ulps at far exponents and subnormals" (fun () ->
+  test
+    (Printf.sprintf "%s within %d ulps at float32, %d at float64" name b32 b64)
+    (fun () ->
       equal (list string) []
-        (case D.Float32
-           [
-             ("0x1.cp-147", "0x1p-1", "0x1.deeea2p-74");
-             ("0x1.0bb15p+0", "-0x1.e30ecp+9", "0x1.ae74e4p-63");
-             ("0x1.000002p+1", "0x1.ead958p+6", "0x1.a36cfp+122");
-             ("0x1.e5b66p-130", "-0x1.745282p-1", "0x1.d1a326p+93");
-             ("0x1.67b4ccp-127", "0x1p+0", "0x1.67b4ccp-127");
-             ("0x1.cd360ep-1", "0x1.a67a5ap+9", "0x1.921048p-128");
-             ("0x1p-149", "-0x1.555556p-2", "0x1.966006p+49");
-           ]
-        @ case D.Float64
-            [
-              ( "0x1.0000005a98fdcp+0",
-                "0x1.c8cf46d10f26bp+34",
-                "0x1.e6015ed352aeap+932" );
-              ( "0x0.0000000000025p-1022",
-                "-0x1.900084bf4d66p-1",
-                "0x1.fee17b8c2fa83p+834" );
-              ("0x1.d961271d0722bp-342", "0x1.8p+1", "0x0.652a212f3a524p-1022");
-              ( "0x0.000000000000cp-1022",
-                "-0x1.9e7b4d3dba0e7p-5",
-                "0x1.1dc05b292856bp+54" );
-              ( "0x1.fd3c200443b9bp-1023",
-                "0x1.0061afdc4d90cp+0",
-                "0x0.5892bcce770d6p-1022" );
-              ("0x0.0000000000001p-1022", "0x1p-1", "0x1p-537");
-            ]))
+        (at D.Float32 false (Float.of_int b32)
+        @ at D.Float64 true (Float.of_int b64)))
+
+(* Each kind's host bound at float32 and float64 (rune2.mli, Numerics). *)
+let transcendental =
+  List.map
+    (fun (name, k, bound) ->
+      accurate name (Op1 (Unary k, D.Any D.Float32, 0)) bound (annex1 name))
+    [
+      ("exp", K.Exp, (2, 9));
+      ("exp2", K.Exp2, (4, 4));
+      ("expm1", K.Expm1, (23, 23));
+      ("log", K.Log, (1, 1));
+      ("log2", K.Log2, (4, 4));
+      ("log1p", K.Log1p, (5, 5));
+      ("sin", K.Sin, (2, 4));
+      ("cos", K.Cos, (2, 9));
+      ("tan", K.Tan, (19, 19));
+      ("asin", K.Asin, (5, 9));
+      ("acos", K.Acos, (5, 9));
+      ("atan", K.Atan, (2, 7));
+      ("sinh", K.Sinh, (23, 23));
+      ("cosh", K.Cosh, (10, 10));
+      ("tanh", K.Tanh, (18, 18));
+      ("erf", K.Erf, (2, 3));
+    ]
+  @ [
+      accurate "pow" (Op2 (Binary Pow, 0, 1)) (2, 2) annex_pow;
+      accurate "atan2" (Op2 (Binary Atan2, 0, 1)) (6, 8) annex_atan2;
+    ]
 
 let () =
   exit
     (run "Lower_real"
        [
-         group "unary" (List.map prop_of unary @ [ log_near_one ]);
-         group "binary" (List.map prop_of binary @ [ pow_far ]);
-         group "compare" (List.map prop_of compare);
-         group "fma" [ prop_of fma ];
+         group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
+         group "transcendental" transcendental;
        ])

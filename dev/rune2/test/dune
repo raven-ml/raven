@@ -62,6 +62,16 @@
  (deps
   (glob_files golden/special_grad/*.golden)))
 
+; The float kinds compiled by Rune.jit, against goldens gen/lower_real.py
+; writes from correctly rounded references.
+
+(test
+ (name test_lower_real)
+ (modules test_lower_real)
+ (libraries nx nx_array nx_kernel rune2 windtrap)
+ (deps
+  (glob_files golden/lower_real/*.golden)))
+
 ; The lowering's suites compile each lowered graph on the host and run it
 ; against nx's eager result.
 
@@ -70,7 +80,6 @@
   test_lower
   test_lower_arith
   test_lower_complex
-  test_lower_real
   test_lower_reduce
   test_lower_index
   test_lower_linalg
@@ -79,7 +88,6 @@
   test_lower
   test_lower_arith
   test_lower_complex
-  test_lower_real
   test_lower_reduce
   test_lower_index
   test_lower_linalg
