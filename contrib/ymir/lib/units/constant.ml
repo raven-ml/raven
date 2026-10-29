@@ -107,12 +107,12 @@ let fail fn k why = invalid_arg (strf "%s: %s: %s" fn k.name why)
 
 (* [no_factor fn k d] raises for [d], a dtype of booleans. *)
 let no_factor fn k d =
-  fail fn k (strf "%s holds no factor" (Nx_dtype.to_string d))
+  fail fn k (strf "%s holds no factor" (Nx.Dtype.name d))
 
 (* [round fn k subject d u] is the magnitude [u] of [k] rounded once to [d]. An
    error names [fn], [k] and [subject], the text that writes [u]. *)
 let round (type a b) fn k subject (d : (a, b) Nx.dtype) u : a =
-  let dt = Nx_dtype.to_string d in
+  let dt = Nx.Dtype.name d in
   let refuse why = fail fn k (strf "%s %s" subject why) in
   match Unit.round d u with
   | Ok x -> x
@@ -135,9 +135,10 @@ let negation (type a b) fn k (d : (a, b) Nx.dtype) : a -> a =
   | Float16 -> Float.neg
   | Float32 -> Float.neg
   | Float64 -> Float.neg
-  | BFloat16 -> Float.neg
-  | Float8_e4m3 -> Float.neg
+  | Bfloat16 -> Float.neg
+  | Float8_e4m3fn -> Float.neg
   | Float8_e5m2 -> Float.neg
+  | Float4_e2m1fn -> Float.neg
   | Complex64 -> fun x -> { x with re = Float.neg x.re }
   | Complex128 -> fun x -> { x with re = Float.neg x.re }
   | Int4 -> Int.neg
@@ -145,10 +146,10 @@ let negation (type a b) fn k (d : (a, b) Nx.dtype) : a -> a =
   | Int16 -> Int.neg
   | Int32 -> Int32.neg
   | Int64 -> Int64.neg
-  | UInt4 | UInt8 | UInt16 | UInt32 | UInt64 ->
+  | Uint4 | Uint8 | Uint16 | Uint32 | Uint64 ->
       fail fn k
         (strf "%s is negative, which %s does not hold" k.text
-           (Nx_dtype.to_string d))
+           (Nx.Dtype.name d))
   | Bool | Bit -> no_factor fn k d
 
 let quantity d k =

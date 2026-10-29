@@ -13,15 +13,15 @@
     0. *)
 
 val sqrt :
-  Nx.bool_t -> (float, 'a) Nx.t -> (float, 'a) Nx.t -> (float, 'a) Nx.t
+  'd Nx.bool_t -> (float, 'a, 'd) Nx.t -> (float, 'a, 'd) Nx.t -> (float, 'a, 'd) Nx.t
 (** [sqrt singular value x] is [sqrt x], and [value] where [singular]
     holds. *)
 
 val atan2 :
-  Nx.bool_t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t
+  'd Nx.bool_t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t
 (** [atan2 singular value y x] is [atan2 y x], and [value] where [singular]
     holds. *)

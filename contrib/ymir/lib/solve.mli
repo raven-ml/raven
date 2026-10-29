@@ -12,20 +12,20 @@
     is [false] there. *)
 
 val bracket :
-  ((float, 'a) Nx.t -> (float, 'a) Nx.t) ->
-  lo:(float, 'a) Nx.t ->
-  hi:(float, 'a) Nx.t ->
-  (float, 'a) Nx.t * Nx.bool_t
+  ((float, 'a, 'd) Nx.t -> (float, 'a, 'd) Nx.t) ->
+  lo:(float, 'a, 'd) Nx.t ->
+  hi:(float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t * 'd Nx.bool_t
 (** [bracket f ~lo ~hi] is a zero of [f] between [lo] and [hi] in each
     element ({!Jera.Root.bracket}), within twice float64's epsilon relative
     and four times it absolute, and where it converged. *)
 
 val lanes :
   scale:float ->
-  jacobian:((float, 'a) Nx.t -> (float, 'a) Nx.t) ->
-  ((float, 'a) Nx.t -> (float, 'a) Nx.t) ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t * Nx.bool_t
+  jacobian:((float, 'a, 'd) Nx.t -> (float, 'a, 'd) Nx.t) ->
+  ((float, 'a, 'd) Nx.t -> (float, 'a, 'd) Nx.t) ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t * 'd Nx.bool_t
 (** [lanes ~scale ~jacobian f guess] is a zero of [f] in each lane of
     [guess], [[...; k]], by Newton's method from [guess]
     ({!Jera.System.lanes}), and where it converged. Its tolerance is four

@@ -5,36 +5,36 @@
 
 (** Observations: the implementation of {!Ymir.Observation}. *)
 
-type ('w, 'e) t
+type ('w, 'e, 'd) t
 
 val v :
-  ?variance:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  ?valid:Nx.bit_t ->
-  ?area:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  ('w, 'e) Grid.t ->
-  (float, 'e) Nx.t Ymir_units.Quantity.t ->
-  ('w, 'e) t
+  ?variance:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  ?valid:'d Nx.bit_t ->
+  ?area:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  ('w, 'e, 'd) Grid.t ->
+  (float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  ('w, 'e, 'd) t
 
-val grid : ('w, 'e) t -> ('w, 'e) Grid.t
-val data : ('w, 'e) t -> (float, 'e) Nx.t Ymir_units.Quantity.t
-val variance : ('w, 'e) t -> (float, 'e) Nx.t Ymir_units.Quantity.t option
-val valid : ('w, 'e) t -> Nx.bit_t option
-val area : ('w, 'e) t -> (float, 'e) Nx.t Ymir_units.Quantity.t option
-val restrict : Nx.bit_t -> ('w, 'e) t -> ('w, 'e) t
-val map_world : ('w, 'v) Transform.t -> ('w, 'e) t -> ('v, 'e) t
-val add : ('w, 'e) t -> ('w, 'e) t -> ('w, 'e) t
-val sub : ('w, 'e) t -> ('w, 'e) t -> ('w, 'e) t
-val scale : (float, 'e) Nx.t Ymir_units.Quantity.t -> ('w, 'e) t -> ('w, 'e) t
-val window : start:Nx.int64_t -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
-val around : 'w -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
+val grid : ('w, 'e, 'd) t -> ('w, 'e, 'd) Grid.t
+val data : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Ymir_units.Quantity.t
+val variance : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Ymir_units.Quantity.t option
+val valid : ('w, 'e, 'd) t -> 'd Nx.bit_t option
+val area : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Ymir_units.Quantity.t option
+val restrict : 'd Nx.bit_t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
+val map_world : ('w, 'v, 'd) Transform.t -> ('w, 'e, 'd) t -> ('v, 'e, 'd) t
+val add : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
+val sub : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
+val scale : (float, 'e, 'd) Nx.t Ymir_units.Quantity.t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
+val window : start:'d Nx.int64_t -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
+val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
 
-type 'e integral = {
-  value : (float, 'e) Nx.t Ymir_units.Quantity.t;
-  variance : (float, 'e) Nx.t Ymir_units.Quantity.t option;
-  area : (float, 'e) Nx.t Ymir_units.Quantity.t;
-  coverage : (float, 'e) Nx.t;
+type ('e, 'd) integral = {
+  value : (float, 'e, 'd) Nx.t Ymir_units.Quantity.t;
+  variance : (float, 'e, 'd) Nx.t Ymir_units.Quantity.t option;
+  area : (float, 'e, 'd) Nx.t Ymir_units.Quantity.t;
+  coverage : (float, 'e, 'd) Nx.t;
 }
 (** {!Ymir.Observation.integral}. *)
 
-val integrate : ('w, 'e) Region.t -> ('w, 'e) t -> 'e integral
-val ptree : unit -> ('w, 'e) t Nx.Ptree.t
+val integrate : ('w, 'e, 'd) Region.t -> ('w, 'e, 'd) t -> ('e, 'd) integral
+val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t

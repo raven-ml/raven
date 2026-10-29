@@ -9,7 +9,14 @@
 
 open Err
 module A = Bigarray.Array1
-module S = Nx_dtype.Scalar
+module S = struct
+  type t = Nx.Dtype.any
+
+  let of_dtype dt = Nx.Dtype.Any dt
+  let to_string (Nx.Dtype.Any a) = Nx.Dtype.name a
+end
+
+module D = Nx.Dtype
 
 let strf = Printf.sprintf
 
@@ -120,23 +127,23 @@ let column_cards h nfields =
 
 let elt_element (e : Bintable.elt) : S.t =
   match e with
-  | L -> Bool
-  | X -> Bit
-  | A | B -> UInt8
-  | I -> Int16
-  | J -> Int32
-  | K -> Int64
-  | E -> Float32
-  | D -> Float64
-  | C -> Complex64
-  | M -> Complex128
+  | L -> D.Any D.Bool
+  | X -> D.Any D.Bit
+  | A | B -> D.Any D.Uint8
+  | I -> D.Any D.Int16
+  | J -> D.Any D.Int32
+  | K -> D.Any D.Int64
+  | E -> D.Any D.Float32
+  | D -> D.Any D.Float64
+  | C -> D.Any D.Complex64
+  | M -> D.Any D.Complex128
 
 let offset_of (e : Bintable.elt) =
   match e with
-  | B -> Some ("-128", S.Int8)
-  | I -> Some ("32768", UInt16)
-  | J -> Some ("2147483648", UInt32)
-  | K -> Some ("9223372036854775808", UInt64)
+  | B -> Some ("-128", D.Any D.Int8)
+  | I -> Some ("32768", D.Any D.Uint16)
+  | J -> Some ("2147483648", D.Any D.Uint32)
+  | K -> Some ("9223372036854775808", D.Any D.Uint64)
   | _ -> None
 
 let numeric (e : Bintable.elt) =
@@ -256,13 +263,13 @@ let describe hdu =
           let nm = name i in
           let element : S.t =
             match code with
-            | 'A' -> UInt8
+            | 'A' -> D.Any D.Uint8
             | 'I' ->
-                if width <= 2 then Int8
-                else if width <= 4 then Int16
-                else if width <= 9 then Int32
-                else Int64
-            | _ -> Float64
+                if width <= 2 then D.Any D.Int8
+                else if width <= 4 then D.Any D.Int16
+                else if width <= 9 then D.Any D.Int32
+                else D.Any D.Int64
+            | _ -> D.Any D.Float64
           in
           let tscal_t, tscal = num h (strf "TSCAL%d" i) ~default:"1" in
           let tzero_t, tzero = num h (strf "TZERO%d" i) ~default:"0" in
@@ -552,7 +559,7 @@ let host_of (a : bigbytes) =
 
 (* The stored elements of a binary column's [n] cells: a tensor of shape
    [n] @ cell shape in the stored format (bytes for L, bools for X). *)
-let stored c (cells : bigbytes) n shape : Nx.packed =
+let stored c (cells : bigbytes) n shape : Nx.host Nx.packed =
   match c.field with
   | Ascii _ -> assert false
   | Bin { form; count; _ } -> (
@@ -562,7 +569,7 @@ let stored c (cells : bigbytes) n shape : Nx.packed =
       | B | L ->
           Nx.P
             (Nx.reshape full
-               (Nx.of_buffer Nx.uint8 [| A.dim cells |] (host_of cells)))
+               (Hdu.tensor Nx.uint8 [| A.dim cells |] (host_of cells)))
       | I -> Nx.P (be Nx.int16)
       | J -> Nx.P (be Nx.int32)
       | K -> Nx.P (be Nx.int64)
@@ -592,26 +599,26 @@ let stored c (cells : bigbytes) n shape : Nx.packed =
               A.set o ((r * count) + k) ((byte lsr (7 - (k mod 8))) land 1)
             done
           done;
-          Nx.P (Nx.reshape full (Nx.of_buffer Nx.bool [| n * count |] b))
+          Nx.P (Nx.reshape full (Hdu.tensor Nx.bool [| n * count |] b))
       | A -> assert false)
 
 let t_byte = Char.code 'T'
 let f_byte = Char.code 'F'
 
 (* The stored numbers as the element: offsets added, L bytes read as T. *)
-let element c (s : Nx.packed) : Nx.packed =
+let element c (s : Nx.host Nx.packed) : Nx.host Nx.packed =
   match (c.field, s) with
   | Bin { form = { elt = L; _ }; _ }, Nx.P s -> (
-      match Nx.dtype s with UInt8 -> Nx.P (Nx.equal_s s t_byte) | _ -> Nx.P s)
+      match Nx.dtype s with Uint8 -> Nx.P (Nx.equal_s s t_byte) | _ -> Nx.P s)
   | Bin { form = { elt = X; _ }; _ }, Nx.P s -> Nx.P (Nx.cast Nx.bit s)
   | _ -> Image.with_offset c.column.element s
 
 (* Where the stored elements are undefined: TNULL, NaN, a logical byte other
    than T or F. *)
-let undefined c (Nx.P s) : Nx.bool_t option =
-  let tnull (type a b) (s : (a, b) Nx.t) v : Nx.bool_t option =
+let undefined c (Nx.P s) : _ Nx.bool_t option =
+  let tnull (type a b) (s : (a, b, Nx.host) Nx.t) v : _ Nx.bool_t option =
     match Nx.dtype s with
-    | UInt8 -> Some (Nx.equal_s s (Int64.to_int v))
+    | Uint8 -> Some (Nx.equal_s s (Int64.to_int v))
     | Int16 -> Some (Nx.equal_s s (Int64.to_int v))
     | Int32 -> Some (Nx.equal_s s (Int64.to_int32 v))
     | Int64 -> Some (Nx.equal_s s v)
@@ -620,7 +627,7 @@ let undefined c (Nx.P s) : Nx.bool_t option =
   match c.field with
   | Bin { form = { elt = L; _ }; _ } -> (
       match Nx.dtype s with
-      | UInt8 ->
+      | Uint8 ->
           Some
             (Nx.logical_and (Nx.not_equal_s s t_byte) (Nx.not_equal_s s f_byte))
       | _ -> None)
@@ -697,7 +704,7 @@ let ascii_real s d =
 
 (* An ASCII column's values in its element (int64 or float64 holding
    them), with undefined fields. *)
-let ascii_values c (cells : bigbytes) n a : Nx.packed * Nx.bool_t =
+let ascii_values c (cells : bigbytes) n a : Nx.host Nx.packed * _ Nx.bool_t =
   match c.field with
   | Bin _ -> assert false
   | Ascii { code; width = w; decimals; _ } ->
@@ -838,7 +845,7 @@ let heap_bytes t spans =
   out
 
 (* A heap column's stored elements, flat, with the row offsets. *)
-let heap_stored ~first_row t c cells n : Nx.packed * Nx.int64_t =
+let heap_stored ~first_row t c cells n : Nx.host Nx.packed * _ Nx.int64_t =
   let spans = descriptors ~first_row t c cells n in
   let total = Array.fold_left (fun acc (k, _, _) -> acc + k) 0 spans in
   let offsets = Array.make (n + 1) 0L in
@@ -973,18 +980,18 @@ let array_read t c (a, b) =
       let s = stored c cells n (array_shape c) in
       (s, undefined c s)
 
-let ascii_element c (Nx.P v) : Nx.packed =
+let ascii_element c (Nx.P v) : Nx.host Nx.packed =
   match c.column.element with
-  | Int8 -> Nx.P (Nx.cast Nx.int8 v)
-  | Int16 -> Nx.P (Nx.cast Nx.int16 v)
-  | Int32 -> Nx.P (Nx.cast Nx.int32 v)
+  | D.Any D.Int8 -> Nx.P (Nx.cast Nx.int8 v)
+  | D.Any D.Int16 -> Nx.P (Nx.cast Nx.int16 v)
+  | D.Any D.Int32 -> Nx.P (Nx.cast Nx.int32 v)
   | _ -> Nx.P v
 
 let to_element c s =
   match c.field with Ascii _ -> ascii_element c s | Bin _ -> element c s
 
 let raw (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
-    ((a, b) Nx.t, string) result =
+    ((a, b, Nx.host) Nx.t, string) result =
   catch (fun () ->
       let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
@@ -995,7 +1002,7 @@ let raw (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
       let (Nx.P e) = to_element c s in
       Nx.cast dtype e)
 
-let physical (type b) c (dtype : (float, b) Nx.dtype) s u : (float, b) Nx.t =
+let physical (type b) c (dtype : (float, b) Nx.dtype) s u : (float, b, Nx.host) Nx.t =
   let v =
     if c.column.scaled then Nx.cast dtype (scale c s)
     else (
@@ -1008,7 +1015,7 @@ let physical (type b) c (dtype : (float, b) Nx.dtype) s u : (float, b) Nx.t =
   | None -> v
 
 let values (type b) ?rows (dtype : (float, b) Nx.dtype) name hdu :
-    ((float, b) Nx.t, string) result =
+    ((float, b, Nx.host) Nx.t, string) result =
   catch (fun () ->
       let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
@@ -1042,7 +1049,7 @@ let validity ?rows name hdu =
           validity_of (undefined c s))
 
 let ragged (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
-    ((a, b) Nx_ragged.t, string) result =
+    ((a, b, Nx.host) Nx_ragged.t, string) result =
   catch (fun () ->
       let t = ok_or_fail (of_hdu hdu) in
       let c = find t name in
@@ -1052,7 +1059,7 @@ let ragged (type a b) ?rows (dtype : (a, b) Nx.dtype) name hdu :
       match c.column.layout with
       | Array _ -> fail_at c.place "an array column; read it with Table.raw"
       | Text _ ->
-          Image.check_holds c.place UInt8 (S.of_dtype dtype);
+          Image.check_holds c.place (D.Any D.Uint8) (S.of_dtype dtype);
           let src, spans = text_spans ~first_row:(fst r) t c cells n in
           Nx_ragged.map (Nx.cast dtype) (ragged_of_texts src spans)
       | Lists ->
@@ -1078,13 +1085,13 @@ let unit ~scope name hdu =
 
 (* A column read whole: its layout's constructor names its data. *)
 type data =
-  | Array of { values : Nx.packed; validity : Nx.bit_t option }
+  | Array of { values : Nx.host Nx.packed; validity : Nx.host Nx.bit_t option }
   | Lists : {
-      values : ('a, 'b) Nx_ragged.t;
-      validity : Nx.bit_t option;
+      values : ('a, 'b, Nx.host) Nx_ragged.t;
+      validity : Nx.host Nx.bit_t option;
     }
       -> data
-  | Text of (int, Nx.uint8_elt) Nx_ragged.t
+  | Text of (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
 
 let read ?rows hdu =
   catch (fun () ->
@@ -1142,26 +1149,27 @@ let code_of (type a b) (dtype : (a, b) Nx.dtype) : Bintable.elt * string option
   let no cast =
     invalid_arg
       (strf "Fits.Table.hdu: FITS has no column of %s; %s"
-         (Nx_dtype.to_string dtype) cast)
+         (Nx.Dtype.name dtype) cast)
   in
   match dtype with
   | Bool -> (L, None)
   | Bit -> (X, None)
-  | UInt8 -> (B, None)
+  | Uint8 -> (B, None)
   | Int8 -> (B, Some "-128")
   | Int16 -> (I, None)
-  | UInt16 -> (I, Some "32768")
+  | Uint16 -> (I, Some "32768")
   | Int32 -> (J, None)
-  | UInt32 -> (J, Some "2147483648")
+  | Uint32 -> (J, Some "2147483648")
   | Int64 -> (K, None)
-  | UInt64 -> (K, Some "9223372036854775808")
+  | Uint64 -> (K, Some "9223372036854775808")
   | Float32 -> (E, None)
   | Float64 -> (D, None)
   | Complex64 -> (C, None)
   | Complex128 -> (M, None)
   | Int4 -> no "cast it to int8"
-  | UInt4 -> no "cast it to uint8"
-  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 -> no "cast it to float32"
+  | Uint4 -> no "cast it to uint8"
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
+      no "cast it to float32"
 
 let wider : Bintable.elt -> string = function
   | B -> "int16"
@@ -1201,7 +1209,7 @@ let choose_null cplace elt held =
   in
   gap (stored_min elt)
 
-let be_of (type a b) (t : (a, b) Nx.t) f = Hdu.reading (Image.to_big_endian t) f
+let be_of (type a b) (t : (a, b, Nx.host) Nx.t) f = Hdu.reading (Image.to_big_endian t) f
 
 (* Rows of at most this many bytes make one slab of a write. *)
 let slab_bytes = 1 lsl 22
@@ -1216,7 +1224,7 @@ let invalid_of validity n =
    flat [t], big-endian, its [invalid] elements written as the column's
    undefined value: [null] for integers, NaN for floats, a zero byte for
    logicals. The bytes are valid during the call. *)
-let encode_flat (type a b) (elt : Bintable.elt) null (t : (a, b) Nx.t)
+let encode_flat (type a b) (elt : Bintable.elt) null (t : (a, b, Nx.host) Nx.t)
     (invalid : bool array) (f : bigbytes -> unit) =
   let n = Nx.numel t in
   let t = Nx.reshape [| n |] t in
@@ -1270,7 +1278,7 @@ let encode_flat (type a b) (elt : Bintable.elt) null (t : (a, b) Nx.t)
       | Some v when any -> (
           let m = mask () in
           match Nx.dtype s with
-          | UInt8 ->
+          | Uint8 ->
               be_of (Nx.where m (Nx.full Nx.uint8 [| n |] (Int64.to_int v)) s) f
           | Int16 ->
               be_of (Nx.where m (Nx.full Nx.int16 [| n |] (Int64.to_int v)) s) f
@@ -1285,7 +1293,7 @@ let encode_flat (type a b) (elt : Bintable.elt) null (t : (a, b) Nx.t)
    for its TNULL: [None] unless a cell is undefined. Only stored values from
    the type's minimum to the minimum plus the valid cells' count can be the
    least one no valid cell holds, so only those are kept. *)
-let scan_null (type a b) cplace elt (t : (a, b) Nx.t) validity =
+let scan_null (type a b) cplace elt (t : (a, b, Nx.host) Nx.t) validity =
   match (elt : Bintable.elt) with
   | B | I | J | K -> (
       match validity with
@@ -1437,7 +1445,7 @@ let array_plan cplace (Nx.P t) validity =
     writer = (fun ~wide:_ ~base:_ -> { cells; heap = no_heap; keys });
   }
 
-let lists_plan cplace (values : ('a, 'b) Nx_ragged.t) validity =
+let lists_plan cplace (values : ('a, 'b, Nx.host) Nx_ragged.t) validity =
   let v = Nx_ragged.values values in
   if Nx.ndim v <> 1 then
     invalid_arg
@@ -1513,7 +1521,7 @@ let lists_plan cplace (values : ('a, 'b) Nx_ragged.t) validity =
     writer;
   }
 
-let text_plan cplace (r : (int, Nx.uint8_elt) Nx_ragged.t) =
+let text_plan cplace (r : (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t) =
   let v = Nx_ragged.values r in
   let offsets = Array.map Int64.to_int (Nx.to_array (Nx_ragged.offsets r)) in
   let rows = Array.length offsets - 1 in

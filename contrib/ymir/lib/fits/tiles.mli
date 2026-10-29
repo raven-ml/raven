@@ -56,7 +56,7 @@ val describe : Header.t -> Hdu.store -> t
     unknown or not read (HCOMPRESS_1, PLIO_1), or the table does not hold
     the tiles. *)
 
-val read : t -> (int * int) array -> Nx.packed
+val read : t -> (int * int) array -> Nx.host Nx.packed
 (** [read t bounds] is the window [bounds], given in tensor axis order, in
     [ZBITPIX]'s format: the tiles it meets decoded, each once. [bounds] lie
     within the image, which [read] does not check. *)

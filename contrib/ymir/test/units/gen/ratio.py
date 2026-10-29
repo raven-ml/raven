@@ -52,7 +52,7 @@ FORMATS = {
     "float32": (24, -126, Fraction((2**24 - 1) * 2**104)),
     "float16": (11, -14, Fraction(65504)),
     "bfloat16": (8, -126, Fraction((2**8 - 1) * 2**120)),
-    "float8_e4m3": (4, -6, Fraction(448)),
+    "float8_e4m3fn": (4, -6, Fraction(448)),
     "float8_e5m2": (3, -14, Fraction(57344)),
 }
 

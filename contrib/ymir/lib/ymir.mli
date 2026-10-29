@@ -18,7 +18,16 @@
     {!Observation} holds data on a grid and integrates them over a region.
     {!Cosmology} is the background of a homogeneous expanding universe: its
     expansion rate, distances, volumes and times. {!Wcs} reads and writes a
-    FITS header's world coordinates. *)
+    FITS header's world coordinates.
+
+    {b Device sets.} A type that holds tensors names their device set, ['d]. A
+    function's results, and the constants it makes, lie where its operands
+    lie, as {!Nx.beside} places them, and a cut operand gives a result cut
+    alike. What a function makes from nothing lies on the host: FITS reads,
+    the cosmology presets, {!Constant.quantity} and {!Frame.matrix}; their
+    walks move them ({!Nx.Ptree.place}). {!Wcs.read} and {!Grid.pixels} take
+    the placement of what they make, since a {!Transform} cannot move between
+    sets. *)
 
 (** {1:units Units} *)
 
@@ -105,7 +114,7 @@ module Frame : sig
       the north supergalactic pole at Galactic (47.37°, +6.32°), the origin at l
       = 137.37°. *)
 
-  val matrix : 'a fixed t -> 'b fixed t -> (float, Nx.float64_elt) Nx.t
+  val matrix : 'a fixed t -> 'b fixed t -> (float, Nx.float64_elt, Nx.host) Nx.t
   (** [matrix a b] is [M], [[3; 3]] on the host, with [v_b = M · v_a]: for
       quantities that are not directions, such as a velocity ([M v]) or a
       covariance ([M Σ Mᵀ]).
@@ -123,7 +132,7 @@ module Frame : sig
   val pp : Format.formatter -> 'f t -> unit
   (** [pp] prints {!name}. *)
 
-  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'f t -> 'f t
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'f t -> 'f t
   (** [walk c f] reports {!name} as one case at [c]'s path and is [f]. A frame
       holds no tensors. *)
 end
@@ -168,19 +177,19 @@ end
     {[
     let near =
       Nx.Ptree.map (Direction.ptree ())
-        (fun _ x -> Nx.take ~axis:0 ~indices x)
+        (fun _ x -> Nx.take ~axis:0 indices x)
         stars
     ]} *)
 module Direction : sig
-  type 'f t
+  type ('f, 'd) t
   (** The type for directions in frame ['f]: float64 vectors [[...; 3]], each
       read as the ray it spans. *)
 
   val lonlat :
     'f Frame.t ->
-    lon:(float, Nx.float64_elt) Nx.t Quantity.t ->
-    lat:(float, Nx.float64_elt) Nx.t Quantity.t ->
-    'f t
+    lon:(float, Nx.float64_elt, 'd) Nx.t Quantity.t ->
+    lat:(float, Nx.float64_elt, 'd) Nx.t Quantity.t ->
+    ('f, 'd) t
   (** [lonlat f ~lon ~lat] is the unit vectors
       [(cos b cos l, cos b sin l, sin b)] at longitude [l] and latitude [b],
       their batch axes broadcast. Every finite angle names a direction: latitude
@@ -190,7 +199,7 @@ module Direction : sig
       Raises [Invalid_argument] if [lon] or [lat] is not an angle, or where an
       angle is infinite, as in ["Direction.lonlat: lat at [3] is infinite"]. *)
 
-  val of_xyz : 'f Frame.t -> (float, Nx.float64_elt) Nx.t -> 'f t
+  val of_xyz : 'f Frame.t -> (float, Nx.float64_elt, 'd) Nx.t -> ('f, 'd) t
   (** [of_xyz f v] is [v / |v|] along [v]'s last axis. A NaN row stays NaN. Its
       derivative is the projection onto the tangent plane.
 
@@ -199,28 +208,28 @@ module Direction : sig
       ["Direction.of_xyz: the vector at [17] is zero and names no direction"].
   *)
 
-  val frame : 'f t -> 'f Frame.t
+  val frame : ('f, 'd) t -> 'f Frame.t
   (** [frame d] is [d]'s frame. *)
 
-  val xyz : 'f t -> (float, Nx.float64_elt) Nx.t
+  val xyz : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t
   (** [xyz d] is [d]'s vectors, [[...; 3]]: unit vectors for values the
       constructors build. *)
 
-  val lon : 'f t -> (float, Nx.float64_elt) Nx.t Quantity.t
+  val lon : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** [lon d] is the longitude in \[+0, 2π) radians, [atan2 y x]. It is 0 at a
       pole, so a function that needs a meridian at a pole takes the meridian of
       longitude 0. *)
 
-  val lat : 'f t -> (float, Nx.float64_elt) Nx.t Quantity.t
+  val lat : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** [lat d] is the latitude in \[−π/2, π/2\] radians, [atan2 z ρ] with
       [ρ = √(x² + y²)]. *)
 
-  val rotate : ('b Frame.fixed as 'g) Frame.t -> 'a Frame.fixed t -> 'g t
+  val rotate : ('b Frame.fixed as 'g) Frame.t -> ('a Frame.fixed, 'd) t -> ('g, 'd) t
   (** [rotate g d] is [d] in frame [g]: [Frame.matrix (frame d) g] times each
       vector. It is linear in [d], within [1.5 · 2⁻⁵² · |v|] of the exact
       product per component, and rounds the same eagerly and compiled. *)
 
-  val separation : 'f t -> 'f t -> (float, Nx.float64_elt) Nx.t Quantity.t
+  val separation : ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** [separation a b] is the angle between the rays, in \[0, π\] radians.
       Leading axes broadcast. It is [atan2 |a × b| (a · b)], each component of
       [a × b] within 2 ulp through a fused multiply-add and lifted by a power
@@ -228,7 +237,7 @@ module Direction : sig
       relative at any separation above float64's least normal, whatever the
       rows' norms. *)
 
-  val position_angle : 'f t -> 'f t -> (float, Nx.float64_elt) Nx.t Quantity.t
+  val position_angle : ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** [position_angle a b] is [b]'s bearing from [a], east of north, in \[+0,
       2π) radians. Leading axes broadcast. At a pole, north is the limit along
       longitude 0: at the north pole it points toward longitude 180° and east
@@ -236,11 +245,14 @@ module Direction : sig
       and north [((a × b) × a)_z], so it is within 2.1e-15 radians at any
       separation above float64's least normal, whatever the rows' norms. *)
 
-  val ptree : unit -> 'f t Nx.Ptree.t
-  (** [ptree ()] is the structure of directions: the frame as {!Frame.walk}
-      reports it, then the vectors as a tensor of a fixed type, at the root
-      path. {!Nx.Ptree.cast} keeps them float64, and {!Nx.Ptree.map}, placement
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('f, 'd) t -> ('f, 'e) t
+  (** [walk c d] walks [d]: the frame as {!Frame.walk} reports it, then the
+      vectors as a tensor of a fixed type, at [c]'s path. {!Nx.Ptree.cast}
+      keeps them float64, {!Nx.Ptree.place} moves them, and {!Nx.Ptree.map}
       and rune's transformations treat them as any tensor. *)
+
+  val ptree : unit -> (('f, 'd) t, 'd) Nx.Ptree.t
+  (** [ptree ()] is [Nx.Ptree.v walk], the structure of directions. *)
 end
 
 (** {1:grids Transforms, grids and observations} *)
@@ -291,10 +303,10 @@ end
 
     Batch axes of points and parameters broadcast. *)
 module Transform : sig
-  type ('a, 'b) t
+  type ('a, 'b, 'd) t
   (** The type for maps from points of type ['a] to points of type ['b]. *)
 
-  type plane = (float, Nx.float64_elt) Nx.t Quantity.t
+  type 'd plane = (float, Nx.float64_elt, 'd) Nx.t Quantity.t
   (** The type for points [[...; n]] in a plane. Pixel coordinates are in
       {!Unit.one}, intermediate and tangent-plane coordinates in an angle. *)
 
@@ -335,10 +347,10 @@ module Transform : sig
 
   (** {1:constructors Constructors} *)
 
-  val id : ('a, 'a) t
+  val id : ('a, 'a, 'd) t
   (** [id] maps every point to itself. *)
 
-  val axes : int array -> origin:int -> (plane, plane) t
+  val axes : int array -> origin:int -> ('d plane, 'd plane, 'd) t
   (** [axes p ~origin] maps [x] to [x.(p.(k)) + origin] in component [k]. With
       [origin = 0] it permutes plane points of any unit; otherwise they are in
       {!Unit.one}.
@@ -346,28 +358,28 @@ module Transform : sig
       Raises [Invalid_argument] if [p] is not a permutation of [0], ...,
       [n - 1]. *)
 
-  val shift : plane -> (plane, plane) t
+  val shift : 'd plane -> ('d plane, 'd plane, 'd) t
   (** [shift r] maps [x] to [x - r]: the plane whose origin is [r]. Points are
       read in [r]'s unit.
 
       Raises [Invalid_argument] if [r] is a scalar. *)
 
-  val linear : plane -> (plane, plane) t
+  val linear : 'd plane -> ('d plane, 'd plane, 'd) t
   (** [linear m] maps [x], in {!Unit.one}, to [m · x] in [m]'s unit: CD, or PC
       in {!Unit.one}. [m] is [[...; n; n]].
 
       Raises [Invalid_argument] if [m] is not square on its last two axes. *)
 
-  val scale : plane -> (plane, plane) t
+  val scale : 'd plane -> ('d plane, 'd plane, 'd) t
   (** [scale d] maps [x], in {!Unit.one}, to [x.(k) · d.(k)] in component [k],
       in [d]'s unit: CDELT.
 
       Raises [Invalid_argument] if [d] is a scalar. *)
 
   val sip :
-    ?seed:(float, Nx.float64_elt) Nx.t * (float, Nx.float64_elt) Nx.t ->
-    (float, Nx.float64_elt) Nx.t * (float, Nx.float64_elt) Nx.t ->
-    (plane, plane) t
+    ?seed:(float, Nx.float64_elt, 'd) Nx.t * (float, Nx.float64_elt, 'd) Nx.t ->
+    (float, Nx.float64_elt, 'd) Nx.t * (float, Nx.float64_elt, 'd) Nx.t ->
+    ('d plane, 'd plane, 'd) t
   (** [sip ~seed (a, b)] maps pixel offsets [(u, v)] from CRPIX, in
       {!Unit.one}, to [(u + f, v + g)] with SIP's polynomials
       [f = Σ a.(p).(q) uᵖ v^q] and [g = Σ b.(p).(q) uᵖ v^q]; [a] and [b] are
@@ -378,7 +390,7 @@ module Transform : sig
       Raises [Invalid_argument] if a matrix is not square on its last two
       axes. *)
 
-  val tpv : ?stated:int array -> (float, Nx.float64_elt) Nx.t -> (plane, plane) t
+  val tpv : ?stated:int array -> (float, Nx.float64_elt, 'd) Nx.t -> ('d plane, 'd plane, 'd) t
   (** [tpv ~stated pv] maps intermediate coordinates [(ξ, η)], in an angle, to
       [(Σ pv.(0).(k) t_k (ξ, η), Σ pv.(1).(k) t_k (η, ξ))] in degrees, over
       TPV's forty terms [t_k]: [1], [x], [y], [r], then the monomials of
@@ -397,12 +409,12 @@ module Transform : sig
     ?stated:int array ->
     code ->
     'f Frame.t ->
-    pv:(float, Nx.float64_elt) Nx.t ->
-    native:plane ->
-    crval:plane ->
-    lonpole:plane ->
-    latpole:plane ->
-    (plane, 'f Direction.t) t
+    pv:(float, Nx.float64_elt, 'd) Nx.t ->
+    native:'d plane ->
+    crval:'d plane ->
+    lonpole:'d plane ->
+    latpole:'d plane ->
+    ('d plane, ('f, 'd) Direction.t, 'd) t
   (** [celestial code f ~pv ~native ~crval ~lonpole ~latpole] is the projection
       [code] with parameters [pv], [[...; m]], followed by the rotation taking
       the native point [native] (φ₀, θ₀) to [crval] (lon, lat) in [f], with the
@@ -429,11 +441,11 @@ module Transform : sig
   val rotation :
     ('a Frame.fixed as 'f) Frame.t ->
     ('b Frame.fixed as 'g) Frame.t ->
-    ('f Direction.t, 'g Direction.t) t
+    (('f, 'd) Direction.t, ('g, 'd) Direction.t, 'd) t
   (** [rotation f g] maps directions in [f] to the same directions in [g], as
       {!Direction.rotate} does. Its inverse is [rotation g f]. *)
 
-  val about : 'f Direction.t -> ('f Direction.t, plane) t
+  val about : ('f, 'd) Direction.t -> (('f, 'd) Direction.t, 'd plane, 'd) t
   (** [about c] maps directions to angular offsets about [c], in radians, x east
       and y north: the inverse of [celestial Arc] at [c] with LONPOLE 180°. The
       offset's norm is {!Direction.separation} from [c], and its bearing from +y
@@ -441,35 +453,35 @@ module Transform : sig
       origin is exactly the cap of angular radius ρ about [c]. At a pole the
       meridian is longitude 0, as {!Direction.lon} takes it. *)
 
-  val gnomonic : 'f Direction.t -> ('f Direction.t, plane) t
+  val gnomonic : ('f, 'd) Direction.t -> (('f, 'd) Direction.t, 'd plane, 'd) t
   (** [gnomonic c] is the same with [Tan]: great circles map to lines. *)
 
   (** {1:ops Operations} *)
 
-  val ( >> ) : ('a, 'b) t -> ('b, 'c) t -> ('a, 'c) t
+  val ( >> ) : ('a, 'b, 'd) t -> ('b, 'c, 'd) t -> ('a, 'c, 'd) t
   (** [t >> u] applies [t], then [u]. *)
 
-  val inverse : ('a, 'b) t -> ('b, 'a) t
+  val inverse : ('a, 'b, 'd) t -> ('b, 'a, 'd) t
   (** [inverse t] reverses [t]'s stages and flips each one's sense.
       [inverse (inverse t)] has [t]'s stages. *)
 
-  val apply : ('a, 'b) t -> 'a -> 'b
+  val apply : ('a, 'b, 'd) t -> 'a -> 'b
   (** [apply t x] maps [x] through each stage. Directions are read as the rays
       they span and returned as unit vectors.
 
       Raises [Invalid_argument] where a point is outside a stage's domain, or
       where a stage reads points of the wrong unit or size. *)
 
-  val covers : ('a, 'b) t -> 'a -> Nx.bool_t
-  (** [covers t x] is where [apply t x] is defined: [false] outside a stage's
-      domain and at NaN. It has [x]'s batch shape; for a transform with no stage
-      it is a scalar [true], which broadcasts over every point. It does not
-      raise at any point. *)
+  val covers : ('a, 'b, 'd) t -> 'a -> 'd Nx.bool_t option
+  (** [covers t x] is [Some m], [m] where [apply t x] is defined: [false]
+      outside a stage's domain and at NaN, of [x]'s batch shape. It is [None]
+      for a transform with no stage, which is defined at every point. It does
+      not raise at any point. *)
 
-  val pp : Format.formatter -> ('a, 'b) t -> unit
+  val pp : Format.formatter -> ('a, 'b, 'd) t -> unit
   (** [pp] formats a transform's stages. *)
 
-  val ptree : unit -> ('a, 'b) t Nx.Ptree.t
+  val ptree : unit -> (('a, 'b, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of transforms: the number of stages, then each
       stage at its index, reporting its family, its sense and its static data
       (permutation, origin, code, frame, stated terms) and walking its
@@ -497,7 +509,7 @@ end
     changes the world and keeps the measures. Measures are computed in
     float64. *)
 module Grid : sig
-  type ('w, 'e) t
+  type ('w, 'e, 'd) t
   (** The type for grids of cells whose world is ['w], with measures at dtype
       ['e]. *)
 
@@ -510,55 +522,56 @@ module Grid : sig
       states it. *)
 
   val pixels :
+    at:'d Nx.Placement.t ->
     shape:int array ->
     (float, 'e) Nx.dtype ->
-    (Transform.plane, 'w) Transform.t ->
-    ('w, 'e) t
-  (** [pixels ~shape dtype t] is the image of [shape] cells,
+    ('d Transform.plane, 'w, 'd) Transform.t ->
+    ('w, 'e, 'd) t
+  (** [pixels ~at ~shape dtype t] is the image of [shape] cells,
       [[|rows; columns|]], seen through [t]: the whole image, its own base, with
-      measures at [dtype].
+      measures at [dtype] and its window's start at [at].
 
       Raises [Invalid_argument] unless [shape] is two non-negative sizes. *)
 
   (** The type for a grid's kind. *)
-  type ('w, 'e) kind =
+  type ('w, 'e, 'd) kind =
     | Pixels : {
         base : int array;  (** The whole image's shape. *)
         shape : int array;  (** The window's shape. *)
-        start : Nx.int64_t;  (** The window's first cell, [[...; 2]]. *)
-        transform : (Transform.plane, 'w) Transform.t;
+        start : 'd Nx.int64_t;  (** The window's first cell, [[...; 2]]. *)
+        transform : ('d Transform.plane, 'w, 'd) Transform.t;
             (** From the whole image's pixel coordinates. *)
       }
-        -> ('w, 'e) kind
+        -> ('w, 'e, 'd) kind
 
-  val kind : ('w, 'e) t -> ('w, 'e) kind
+  val kind : ('w, 'e, 'd) t -> ('w, 'e, 'd) kind
   (** [kind g] is [g]'s kind and parts. *)
 
-  val shape : ('w, 'e) t -> int array
+  val shape : ('w, 'e, 'd) t -> int array
   (** [shape g] is the shape of [g]'s cells: the data's last axes. *)
 
-  val centres : ('w, 'e) t -> 'w
+  val centres : ('w, 'e, 'd) t -> 'w
   (** [centres g] is each cell's centre in the world, [batch @ shape g] points.
       A window's centres are its base's at the same cells, bit for bit.
 
       Raises [Invalid_argument] as {!Transform.apply} does. *)
 
-  val corners : ('w, 'e) t -> 'w
+  val corners : ('w, 'e, 'd) t -> 'w
   (** [corners g] is each cell's four corners in the world,
       [batch @ shape g @ [4]] points, counter-clockwise in the pixel plane. *)
 
-  val measure : ('w, 'e) t -> (float, 'e) Nx.t Quantity.t
+  val measure : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Quantity.t
   (** [measure g] is each cell's measure, [batch @ shape g]: in steradians on
       the sky, by Van Oosterom and Strackee's formula on corner differences,
       within about 1e-9 of a 0.031″ TAN pixel's solid angle; in the plane's unit
       squared in a plane, by the shoelace formula. *)
 
-  val map_world : ('w, 'v) Transform.t -> ('w, 'e) t -> ('v, 'e) t
+  val map_world : ('w, 'v, 'd) Transform.t -> ('w, 'e, 'd) t -> ('v, 'e, 'd) t
   (** [map_world t g] is [g]'s cells seen in the world [t] maps [g]'s world
       to: its transform followed by [t]. Its cells and their measures are
       [g]'s, taken in the world [g] was built with. *)
 
-  val agree : ('w, 'e) t -> ('w, 'e) t -> Nx.bool_t
+  val agree : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> 'd Nx.bool_t
   (** [agree a b] is where [a] and [b] are the same cells in the same world:
       [false] if their kinds, shapes, stages, codes, frames or units differ,
       and otherwise whether every parameter holds the same numbers, NaN equal
@@ -566,14 +579,14 @@ module Grid : sig
       exact: two headers that differ in their last digit give grids that do
       not agree. *)
 
-  val window : start:Nx.int64_t -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
+  val window : start:'d Nx.int64_t -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [window ~start ~shape g] is the block of [shape] cells of [g] from
       [start], [[...; 2]] along [g]'s own axes. Its batch axes are [start]'s.
 
       Raises [Invalid_argument] unless [shape] is two non-negative sizes and
       [start]'s last axis is 2. *)
 
-  val around : 'w -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
+  val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [around x ~shape g] is the [shape] block of [g]'s base centred on the cell
       holding each point [x], located through the inverse transform, with the
       extra cell of an even size on the high side. Its batch axes are [x]'s. It
@@ -583,7 +596,7 @@ module Grid : sig
 
       Raises [Invalid_argument] unless [shape] is two non-negative sizes. *)
 
-  val ptree : unit -> ('w, 'e) t Nx.Ptree.t
+  val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of grids: the kind, the base and window shapes
       and the dtype as static data, then the start and the transform. *)
 end
@@ -616,30 +629,30 @@ end
     A zero size weighs 0 with zero gradient. Regions have no set algebra: the
     fraction of a cell inside a union is no function of the two fractions. *)
 module Region : sig
-  type ('w, 'e) t
+  type ('w, 'e, 'd) t
   (** The type for regions placed from world ['w], sized at dtype ['e]. *)
 
   val circle :
-    ('w, Transform.plane) Transform.t ->
-    radius:(float, 'e) Nx.t Quantity.t ->
-    ('w, 'e) t
+    ('w, 'd Transform.plane, 'd) Transform.t ->
+    radius:(float, 'e, 'd) Nx.t Quantity.t ->
+    ('w, 'e, 'd) t
   (** [circle p ~radius] is the disc of [radius] about the origin of [p]'s
       plane, in a unit of that plane. *)
 
   val annulus :
-    ('w, Transform.plane) Transform.t ->
-    inner:(float, 'e) Nx.t Quantity.t ->
-    outer:(float, 'e) Nx.t Quantity.t ->
-    ('w, 'e) t
+    ('w, 'd Transform.plane, 'd) Transform.t ->
+    inner:(float, 'e, 'd) Nx.t Quantity.t ->
+    outer:(float, 'e, 'd) Nx.t Quantity.t ->
+    ('w, 'e, 'd) t
   (** [annulus p ~inner ~outer] is the ring between the discs of radii [inner]
       and [outer] about the origin of [p]'s plane. *)
 
   val ellipse :
-    ('w, Transform.plane) Transform.t ->
-    a:(float, 'e) Nx.t Quantity.t ->
-    b:(float, 'e) Nx.t Quantity.t ->
-    angle:(float, 'e) Nx.t Quantity.t ->
-    ('w, 'e) t
+    ('w, 'd Transform.plane, 'd) Transform.t ->
+    a:(float, 'e, 'd) Nx.t Quantity.t ->
+    b:(float, 'e, 'd) Nx.t Quantity.t ->
+    angle:(float, 'e, 'd) Nx.t Quantity.t ->
+    ('w, 'e, 'd) t
   (** [ellipse p ~a ~b ~angle] is the ellipse about the origin of [p]'s plane
       with semi-axis [a] along the direction at [angle] from the plane's +y
       toward +x, the position angle east of north on the sky, and semi-axis [b]
@@ -648,7 +661,7 @@ module Region : sig
       Raises [Invalid_argument] if [angle] is not an angle. *)
 
   val polygon :
-    (float, 'e) Nx.dtype -> ('w, Transform.plane) Transform.t -> 'w -> ('w, 'e) t
+    (float, 'e) Nx.dtype -> ('w, 'd Transform.plane, 'd) Transform.t -> 'w -> ('w, 'e, 'd) t
   (** [polygon dtype p vertices] is the polygon whose vertices, on axis −2 of
       [vertices] in either orientation, are mapped by [p] into its plane, with
       edges straight there. In [about c], edges are straight in angular offsets
@@ -658,7 +671,7 @@ module Region : sig
       Raises [Invalid_argument] if [vertices] has fewer than three points on
       axis −2. *)
 
-  val weights : ('w, 'e) t -> ('w, 'e) Grid.t -> (float, 'e) Nx.t
+  val weights : ('w, 'e, 'd) t -> ('w, 'e, 'd) Grid.t -> (float, 'e, 'd) Nx.t
   (** [weights r g] is each cell's weight in \[0, 1\], [batch @ Grid.shape g],
       the region's and the grid's batch axes broadcast. Corners map in float64
       and their offsets in the shape's plane are cast to ['e], or to float32
@@ -669,7 +682,7 @@ module Region : sig
       cross, or a cell maps to a quadrilateral that is not convex or not
       oriented as its window's first cell. *)
 
-  val ptree : unit -> ('w, 'e) t Nx.Ptree.t
+  val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of regions: the shape's kind, its sizes and
       its placement. *)
 end
@@ -695,16 +708,16 @@ end
     and a cell counts by the observation's [area] where it has one, its measure
     otherwise. *)
 module Observation : sig
-  type ('w, 'e) t
+  type ('w, 'e, 'd) t
   (** The type for observations on a grid whose world is ['w], at dtype ['e]. *)
 
   val v :
-    ?variance:(float, 'e) Nx.t Quantity.t ->
-    ?valid:Nx.bit_t ->
-    ?area:(float, 'e) Nx.t Quantity.t ->
-    ('w, 'e) Grid.t ->
-    (float, 'e) Nx.t Quantity.t ->
-    ('w, 'e) t
+    ?variance:(float, 'e, 'd) Nx.t Quantity.t ->
+    ?valid:'d Nx.bit_t ->
+    ?area:(float, 'e, 'd) Nx.t Quantity.t ->
+    ('w, 'e, 'd) Grid.t ->
+    (float, 'e, 'd) Nx.t Quantity.t ->
+    ('w, 'e, 'd) t
   (** [v ?variance ?valid ?area g data] is [data], [batch @ Grid.shape g], on
       [g]. [variance] is in the data's unit squared. [valid] is true where a
       sample was measured. [area] is the measure each cell's data are per, when
@@ -715,25 +728,25 @@ module Observation : sig
       variance's unit is not the data's squared, or [area] is not a measure of
       [g]'s cells or has another shape. *)
 
-  val grid : ('w, 'e) t -> ('w, 'e) Grid.t
+  val grid : ('w, 'e, 'd) t -> ('w, 'e, 'd) Grid.t
   (** [grid o] is [o]'s grid. *)
 
-  val data : ('w, 'e) t -> (float, 'e) Nx.t Quantity.t
+  val data : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Quantity.t
   (** [data o] is [o]'s data, 0 where invalid. *)
 
-  val variance : ('w, 'e) t -> (float, 'e) Nx.t Quantity.t option
+  val variance : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Quantity.t option
   (** [variance o] is [o]'s variance, 0 where invalid. *)
 
-  val valid : ('w, 'e) t -> Nx.bit_t option
+  val valid : ('w, 'e, 'd) t -> 'd Nx.bit_t option
   (** [valid o] is where [o]'s samples were measured, if known. *)
 
-  val area : ('w, 'e) t -> (float, 'e) Nx.t Quantity.t option
+  val area : ('w, 'e, 'd) t -> (float, 'e, 'd) Nx.t Quantity.t option
   (** [area o] is the measure [o]'s data are per, when not the cells' own. *)
 
-  val restrict : Nx.bit_t -> ('w, 'e) t -> ('w, 'e) t
+  val restrict : 'd Nx.bit_t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [restrict m o] keeps a sample valid where it was valid and [m] holds. *)
 
-  val map_world : ('w, 'v) Transform.t -> ('w, 'e) t -> ('v, 'e) t
+  val map_world : ('w, 'v, 'd) Transform.t -> ('w, 'e, 'd) t -> ('v, 'e, 'd) t
   (** [map_world t o] is [o] on [Grid.map_world t (grid o)]: its data,
       variance, validity and area are [o]'s. *)
 
@@ -743,7 +756,7 @@ module Observation : sig
       independent samples. Products, ratios and other functions of data are
       the program's, on {!data}, with variances from [Rune.jvp]. *)
 
-  val add : ('w, 'e) t -> ('w, 'e) t -> ('w, 'e) t
+  val add : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [add a b] is [a]'s data plus [b]'s, in [a]'s unit, on [a]'s grid. The
       variance is the sum of both when both have one; a sample is valid where
       it is valid in both.
@@ -755,32 +768,32 @@ module Observation : sig
       that differ raise through {!Nx.check}. Raises if [b]'s unit does not
       convert to [a]'s. *)
 
-  val sub : ('w, 'e) t -> ('w, 'e) t -> ('w, 'e) t
+  val sub : ('w, 'e, 'd) t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [sub a b] is [a]'s data less [b]'s, as {!add} combines them. *)
 
-  val scale : (float, 'e) Nx.t Quantity.t -> ('w, 'e) t -> ('w, 'e) t
+  val scale : (float, 'e, 'd) Nx.t Quantity.t -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [scale k o] is [o]'s data times [k], in their units' product, with the
       variance times [k²]. *)
 
-  val window : start:Nx.int64_t -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
+  val window : start:'d Nx.int64_t -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [window ~start ~shape o] is [o] on [Grid.window ~start ~shape (grid o)]:
       data, variance, validity and a per-cell area sliced with the grid, invalid
       beyond [o]'s cells. *)
 
-  val around : 'w -> shape:int array -> ('w, 'e) t -> ('w, 'e) t
+  val around : 'w -> shape:int array -> ('w, 'e, 'd) t -> ('w, 'e, 'd) t
   (** [around x ~shape o] is [o] on [Grid.around x ~shape (grid o)], sliced as
       {!window} slices. *)
 
-  type 'e integral = {
-    value : (float, 'e) Nx.t Quantity.t;
+  type ('e, 'd) integral = {
+    value : (float, 'e, 'd) Nx.t Quantity.t;
         (** Σ data × w × a over valid cells, [a] a cell's area for a field and
             one cell for values per cell. *)
-    variance : (float, 'e) Nx.t Quantity.t option;
+    variance : (float, 'e, 'd) Nx.t Quantity.t option;
         (** Σ variance × w² × a², the variance of [value] for independent
             samples, when the observation has a variance. *)
-    area : (float, 'e) Nx.t Quantity.t;
+    area : (float, 'e, 'd) Nx.t Quantity.t;
         (** Σ w × a over valid cells: [value / area] is the mean. *)
-    coverage : (float, 'e) Nx.t;
+    coverage : (float, 'e, 'd) Nx.t;
         (** The valid cells' overlap with the region as a share of the region's
             own area, both in the region's plane: below 1 where the region
             reaches beyond the image's edge or over invalid samples, through a
@@ -789,7 +802,7 @@ module Observation : sig
   (** The type for integrals of an observation over a region, each of the
       region's and window's batch axes broadcast. *)
 
-  val integrate : ('w, 'e) Region.t -> ('w, 'e) t -> 'e integral
+  val integrate : ('w, 'e, 'd) Region.t -> ('w, 'e, 'd) t -> ('e, 'd) integral
   (** [integrate r o] weighs [o]'s cells with {!Region.weights} and sums each
       term once in double-word arithmetic at ['e], with [w] the weight.
 
@@ -800,7 +813,7 @@ module Observation : sig
        window at sample (0, 51); take a larger ~shape"]. Raises as
       {!Region.weights} does. *)
 
-  val ptree : unit -> ('w, 'e) t Nx.Ptree.t
+  val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
   (** [ptree ()] is the structure of observations: the grid, then the data,
       variance, validity and area, each present or not. *)
 end
@@ -858,7 +871,7 @@ end
     float64, 24 and 20 in float32. The age is integrated from the big bang. Each
     function is a formula of nx operations: batched, compiled and differentiable
     in every parameter and in z, its derivative the sum's.
-    [Rune.grad (Nx.Ptree.instantiate (module Cosmology))] returns a cosmology
+    [Rune.grad (Nx.Ptree.instantiate (module Cosmology.Structure))] returns a cosmology
     whose fields are the derivatives, each per the unit its field holds.
 
     {b Accuracy.} Against the exact values of the same model, each distance,
@@ -922,12 +935,16 @@ module Cosmology : sig
       shapes, the number of massive species included; everything else is a leaf.
   *)
 
-  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
   (** [walk c x] reports [codata]'s year with [Walk.int], then walks the other
-      fields in order, quantities with {!Quantity.walk}. [Cosmology] is an
-      {!Nx.Ptree.S}. *)
+      fields in order, quantities with {!Quantity.walk}. *)
 
-  val pp : Format.formatter -> (float, 'b) Nx.t t -> unit
+  module Structure : Nx.Ptree.S with type ('a, 'd) t = 'a t
+  (** [Structure] is {!walk} as a structure whose arrays are all positions:
+      [Nx.Ptree.instantiate (module Cosmology.Structure)] describes a
+      cosmology of tensors. *)
+
+  val pp : Format.formatter -> (float, 'b, 'd) Nx.t t -> unit
   (** [pp] formats a cosmology's fields. *)
 
   (** {1:realisations Realisations}
@@ -942,41 +959,41 @@ module Cosmology : sig
       none. Each raises [Invalid_argument] for a dtype other than float32 and
       float64. *)
 
-  val planck2018 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val planck2018 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** Planck 2018 VI (Planck Collaboration 2020, A&A 641, A6), Table 2,
       TT,TE,EE+lowE+lensing+BAO: H{_ 0} = 67.66, ω{_ b} = 0.02242, ω{_ c} =
       0.11933. *)
 
-  val planck2015 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val planck2015 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** Planck 2015 XIII (Planck Collaboration 2016, A&A 594, A13), Table 4,
       TT,TE,EE+lowP+lensing+ext: H{_ 0} = 67.74, ω{_ b} = 0.02230, ω{_ c} =
       0.1188. *)
 
-  val planck2013 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val planck2013 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** Planck 2013 XVI (Planck Collaboration 2014, A&A 571, A16), Table 5,
       Planck+WP+highL+BAO, best fit: H{_ 0} = 67.77, ω{_ b} = 0.022161, ω{_ c} =
       0.11889. *)
 
-  val wmap9 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val wmap9 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** WMAP nine-year (Hinshaw et al. 2013, ApJS 208, 19), Table 4,
       WMAP+eCMB+BAO+H{_ 0}: H{_ 0} = 69.32, ω{_ b} = 0.02223, ω{_ c} = 0.1153.
   *)
 
-  val wmap7 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val wmap7 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** WMAP seven-year (Komatsu et al. 2011, ApJS 192, 18), Table 1,
       WMAP+BAO+H{_ 0}, maximum likelihood: H{_ 0} = 70.4, ω{_ b} = 0.02253,
       ω{_ c} = 0.1122. *)
 
-  val wmap5 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val wmap5 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** WMAP five-year (Komatsu et al. 2009, ApJS 180, 330), Table 1, WMAP+BAO+SN,
       maximum likelihood: H{_ 0} = 70.2, ω{_ b} = 0.02262, ω{_ c} = 0.1138. *)
 
-  val wmap3 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val wmap3 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** WMAP three-year (Spergel et al. 2007, ApJS 170, 377), Table 6, WMAP+SN
       Gold: h = 0.701 and ω{_ m} = 0.1349, which the paper prints in place of
       ω{_ c}. *)
 
-  val wmap1 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b) Nx.t t
+  val wmap1 : codata:Codata.t -> (float, 'b) Nx.dtype -> (float, 'b, Nx.host) Nx.t t
   (** WMAP first-year (Spergel et al. 2003, ApJS 148, 175), Table 7,
       WMAP+CBI+ACBAR+2dFGRS+Lyα: h = 0.72 and ω{_ m} = 0.133, which the paper
       prints in place of ω{_ c}. *)
@@ -987,7 +1004,7 @@ module Cosmology : sig
       shape. *)
 
   val hubble :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [hubble c z] is H(z), in [h0]'s unit. *)
 
   (** The type for components. *)
@@ -999,11 +1016,11 @@ module Cosmology : sig
     | Curvature
 
   val density_parameter :
-    (float, 'b) Nx.t t -> component -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+    (float, 'b, 'd) Nx.t t -> component -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
   (** [density_parameter c i z] is Ω{_ i}(z). The five sum to 1. *)
 
   val critical_density :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [critical_density c z] is 3H(z){^ 2}/8πG, in 3/(8π) u{^ 2} over G's unit
       for [h0] in u. *)
 
@@ -1014,13 +1031,13 @@ module Cosmology : sig
       as one rounded factor. *)
 
   val comoving_distance :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [comoving_distance c z] is χ, along the line of sight. *)
 
   val transverse :
-    (float, 'b) Nx.t t ->
-    (float, 'b) Nx.t Quantity.t ->
-    (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t ->
+    (float, 'b, 'd) Nx.t Quantity.t ->
+    (float, 'b, 'd) Nx.t Quantity.t
   (** [transverse c d] is the transverse comoving distance across a radial
       comoving separation [d], in [d]'s unit: d S(Ω{_ k} (d/D{_ H}){^ 2}), with
       S(x) = Σ{_ n} x{^ n}/(2n+1)!, which is sinh √x/√x for x > 0 and sin
@@ -1033,24 +1050,24 @@ module Cosmology : sig
       Raises [Invalid_argument] if [d] is not a length. *)
 
   val angular_diameter_distance :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [angular_diameter_distance c z] is D{_ M}(z)/(1 + z). *)
 
   val luminosity_distance :
-    (float, 'b) Nx.t t ->
-    ?observed:(float, 'b) Nx.t ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t ->
+    ?observed:(float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t Quantity.t
   (** [luminosity_distance c ~observed z] is (1 + observed) D{_ M}(z): [z]
       places the source, [observed] is the redshift the observer measures, [z]
       by default. A supernova fit passes its heliocentric redshift as
       [observed]. *)
 
   val distance_modulus :
-    (float, 'b) Nx.t t ->
-    ?observed:(float, 'b) Nx.t ->
-    (float, 'b) Nx.t ->
-    (float, 'b) Nx.t
+    (float, 'b, 'd) Nx.t t ->
+    ?observed:(float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t ->
+    (float, 'b, 'd) Nx.t
   (** [distance_modulus c ~observed z] is 5 log{_ 10}(D{_ L}/10 pc), a
       magnitude, with D{_ L} as {!luminosity_distance} gives it. It follows
       [log]'s domain: NaN where D{_ M} < 0, past a closed universe's antipode,
@@ -1061,13 +1078,13 @@ module Cosmology : sig
       A volume is in (c/u){^ 3} sr{^ -1} for [h0] in u. *)
 
   val comoving_volume :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [comoving_volume c z] is the comoving volume within [z] per steradian,
       D{_ H}{^ 3} χ̂{^ 3} W(Ω{_ k} χ̂{^ 2}) with χ̂ = χ/D{_ H} and W(x) = (S(4x) -
       1)/(2x). *)
 
   val comoving_volume_element :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [comoving_volume_element c z] is dV{_ C}/dz per steradian, c
       D{_ M}{^ 2}/H. *)
 
@@ -1076,11 +1093,11 @@ module Cosmology : sig
       A time is in 1/u for [h0] in u. *)
 
   val lookback_time :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [lookback_time c z] is the time light from [z] has travelled. *)
 
   val age :
-    (float, 'b) Nx.t t -> (float, 'b) Nx.t -> (float, 'b) Nx.t Quantity.t
+    (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t Quantity.t
   (** [age c z] is the time since the big bang at [z]. *)
 end
 
@@ -1180,12 +1197,13 @@ module Wcs : sig
 
   val read :
     ?alt:char ->
+    at:'d Nx.Placement.t ->
     'f Frame.t ->
     keywords ->
-    ((Transform.plane, 'f Direction.t) Transform.t, string) result
-  (** [read ~alt f kw] is the map from 0-based pixel indices, in tensor axis
-      order, to directions in [f], from [kw]'s primary description or its
-      alternate [alt] (['A'] to ['Z']). A celestial CUNIT is [deg], [arcmin],
+    (('d Transform.plane, ('f, 'd) Direction.t, 'd) Transform.t, string) result
+  (** [read ~alt ~at f kw] is the map from 0-based pixel indices, in tensor
+      axis order, to directions in [f], from [kw]'s primary description or its
+      alternate [alt] (['A'] to ['Z']), its parameters at [at]. A celestial CUNIT is [deg], [arcmin],
       [arcsec], [mas] or [rad]. It is an [Error] if [kw]'s frame is not [f],
       as in
       ["SCI: FK5 at equinox 2000.0; the caller expects icrs. Read with
@@ -1198,7 +1216,7 @@ module Wcs : sig
   val write :
     ?alt:char ->
     ?window:(int * int) array ->
-    (Transform.plane, 'f Direction.t) Transform.t ->
+    ('d Transform.plane, ('f, 'd) Direction.t, 'd) Transform.t ->
     keywords ->
     (edit list, string) result
   (** [write ~alt ~window t kw] is the edits, in order, that make [kw]'s

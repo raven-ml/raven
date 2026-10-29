@@ -21,13 +21,14 @@ type edit =
 
 val read :
   ?alt:char ->
+  at:'d Nx.Placement.t ->
   'f Frame.t ->
   keywords ->
-  ((Transform.plane, 'f Direction.t) Transform.t, string) result
+  (('d Transform.plane, ('f, 'd) Direction.t, 'd) Transform.t, string) result
 
 val write :
   ?alt:char ->
   ?window:(int * int) array ->
-  (Transform.plane, 'f Direction.t) Transform.t ->
+  ('d Transform.plane, ('f, 'd) Direction.t, 'd) Transform.t ->
   keywords ->
   (edit list, string) result

@@ -8,8 +8,8 @@ module Unit = Ymir_units.Unit
 
 let strf = Printf.sprintf
 
-type vectors = (float, Nx.float64_elt) Nx.t
-type 'f t = { frame : 'f Frame.t; xyz : vectors }
+type 'd vectors = (float, Nx.float64_elt, 'd) Nx.t
+type ('f, 'd) t = { frame : 'f Frame.t; xyz : 'd vectors }
 
 let frame d = d.frame
 let xyz d = d.xyz
@@ -67,7 +67,8 @@ let subnormal_lift = 0x1p54
    infinities scales by 0. *)
 let scale v =
   let magnitude =
-    Nx.(bitwise_and (bitcast int64 v) (scalar int64 sign_bit_off))
+    let bits = Nx.bitcast Nx.int64 v in
+    Nx.bitwise_and bits (Nx.scalar_like bits sign_bit_off)
   in
   let largest =
     Nx.bitcast Nx.float64 (Nx.max ~axes:[ last v ] ~keepdims:true magnitude)
@@ -81,8 +82,8 @@ let scale v =
   let exponent =
     Nx.rshift (Nx.bitcast Nx.int64 (Nx.mul largest lift)) mantissa_bits
   in
-  let exponent = Nx.maximum exponent (Nx.scalar Nx.int64 1L) in
-  let biased = Nx.sub (Nx.scalar Nx.int64 exponent_all_ones) exponent in
+  let exponent = Nx.maximum_s exponent 1L in
+  let biased = Nx.rsub_s exponent_all_ones exponent in
   Nx.mul (Nx.mul v lift)
     (Nx.bitcast Nx.float64 (Nx.lshift biased mantissa_bits))
 
@@ -113,14 +114,18 @@ let lonlat frame ~lon ~lat =
   and b = Quantity.value Unit.radian lat in
   check_angle "lon" l;
   check_angle "lat" b;
-  let l, b = Nx.broadcasted l b in
+  let l, b =
+    match Nx.broadcast_arrays [ l; b ] with
+    | [ l; b ] -> (l, b)
+    | _ -> assert false
+  in
   let cb = Nx.cos b in
   let xyz =
     Nx.stack ~axis:(-1) [ Nx.mul cb (Nx.cos l); Nx.mul cb (Nx.sin l); Nx.sin b ]
   in
   { frame; xyz }
 
-let of_xyz frame v =
+let of_xyz (type d) frame (v : (float, Nx.float64_elt, d) Nx.t) : (_, d) t =
   let shape = Nx.shape v in
   let n = Array.length shape in
   if n = 0 || shape.(n - 1) <> 3 then
@@ -247,14 +252,9 @@ let rotate g c =
 
 (* Structure *)
 
-type 'f direction = 'f t
 
-let ptree (type f) () : f t Nx.Ptree.t =
-  Nx.Ptree.instantiate
-    (module struct
-      type _ t = f direction
+let walk c d =
+  let frame = Frame.walk c d.frame in
+  { frame; xyz = Nx.Ptree.Walk.tensor c d.xyz }
 
-      let walk c d =
-        let frame = Frame.walk c d.frame in
-        { frame; xyz = Nx.Ptree.Walk.tensor c d.xyz }
-    end)
+let ptree () = Nx.Ptree.v walk

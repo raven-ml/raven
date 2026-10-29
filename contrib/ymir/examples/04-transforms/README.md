@@ -27,7 +27,7 @@ dune exec contrib/ymir/examples/04-transforms/main.exe
 | `Transform.gnomonic c`              | Directions to the tangent plane about `c` |
 | `Transform.inverse t`               | `t` run backwards                         |
 | `Transform.apply t x`               | Map points through `t`                    |
-| `Transform.covers t x`              | Where `apply t x` is defined              |
+| `Transform.covers t x`              | Where `apply t x` is defined; `None` without a stage |
 
 ## Next Steps
 

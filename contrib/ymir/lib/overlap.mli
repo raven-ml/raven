@@ -18,18 +18,18 @@
     polygon is the signed sum of the triangles fanned from the cell's first
     corner, each clipped to the cell (Liang and Barsky). *)
 
-type 'e t = {
-  weight : (float, 'e) Nx.t;  (** The weight, in \[0, 1\]. *)
-  area : (float, 'e) Nx.t;
+type ('e, 'd) t = {
+  weight : (float, 'e, 'd) Nx.t;  (** The weight, in \[0, 1\]. *)
+  area : (float, 'e, 'd) Nx.t;
       (** The cell's signed shoelace area, positive for a counter-clockwise
           cell. *)
-  outside : Nx.bool_t;  (** Where the weight is exactly 0 by the predicate. *)
-  full : Nx.bool_t;  (** Where the weight is exactly 1 by the predicate. *)
+  outside : 'd Nx.bool_t;  (** Where the weight is exactly 0 by the predicate. *)
+  full : 'd Nx.bool_t;  (** Where the weight is exactly 1 by the predicate. *)
 }
 (** The type for a cell's overlap with a shape. *)
 
 val disc :
-  (float, 'a) Nx.t -> (float, 'a) Nx.t array -> (float, 'a) Nx.t array -> 'a t
+  (float, 'a, 'd) Nx.t -> (float, 'a, 'd) Nx.t array -> (float, 'a, 'd) Nx.t array -> ('a, 'd) t
 (** [disc r xs ys] weighs the cells [xs], [ys] against the disc of radius [r]
     about the origin, [r] broadcast against the corners. A cell with every
     corner inside weighs exactly 1. A cell whose nearest point is at least
@@ -37,22 +37,22 @@ val disc :
     as does every cell for a zero radius. *)
 
 val annulus :
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t array ->
-  (float, 'a) Nx.t array ->
-  'a t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t array ->
+  (float, 'a, 'd) Nx.t array ->
+  ('a, 'd) t
 (** [annulus inner outer xs ys] is [disc outer xs ys]'s weight minus
     [disc inner xs ys]'s. A cell is exactly outside where it is outside the
     outer disc or wholly inside the inner one. *)
 
 val ellipse :
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t ->
-  (float, 'a) Nx.t array ->
-  (float, 'a) Nx.t array ->
-  'a t
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t array ->
+  (float, 'a, 'd) Nx.t array ->
+  ('a, 'd) t
 (** [ellipse a b angle xs ys] weighs the cells against the ellipse of
     semi-axis [a] along the direction at [angle] radians from +y toward +x
     and semi-axis [b] across it: {!disc} of radius [min a b] on the corners
@@ -61,10 +61,10 @@ val ellipse :
     ellipse's area at a ratio of 100. A zero semi-axis weighs 0. *)
 
 val polygon :
-  ((float, 'a) Nx.t * (float, 'a) Nx.t) array ->
-  (float, 'a) Nx.t array ->
-  (float, 'a) Nx.t array ->
-  'a t
+  ((float, 'a, 'd) Nx.t * (float, 'a, 'd) Nx.t) array ->
+  (float, 'a, 'd) Nx.t array ->
+  (float, 'a, 'd) Nx.t array ->
+  ('a, 'd) t
 (** [polygon vs xs ys] weighs the cells against the polygon of vertices
     [vs], in either orientation, each coordinate broadcast against the
     corners. A cell weighs exactly 1 when its corners are all inside and no
@@ -72,22 +72,22 @@ val polygon :
     it and no vertex is in it. *)
 
 val crosses :
-  (float, 'a) Nx.t * (float, 'a) Nx.t ->
-  (float, 'a) Nx.t * (float, 'a) Nx.t ->
-  (float, 'a) Nx.t * (float, 'a) Nx.t ->
-  (float, 'a) Nx.t * (float, 'a) Nx.t ->
-  Nx.bool_t
+  (float, 'a, 'd) Nx.t * (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t * (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t * (float, 'a, 'd) Nx.t ->
+  (float, 'a, 'd) Nx.t * (float, 'a, 'd) Nx.t ->
+  'd Nx.bool_t
 (** [crosses a b c d] is where the segments [a b] and [c d] cross at a point
     inside both. *)
 
 val cross :
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t
 (** [cross a b] is the planar cross product [a × b]. *)
 
 val sub :
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t ->
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t ->
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t
+  ('a, 'b, 'e) Nx.t * ('c, 'd, 'e) Nx.t ->
+  ('a, 'b, 'e) Nx.t * ('c, 'd, 'e) Nx.t ->
+  ('a, 'b, 'e) Nx.t * ('c, 'd, 'e) Nx.t
 (** [sub a b] is [a - b]. *)

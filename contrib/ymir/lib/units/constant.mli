@@ -10,6 +10,6 @@ type t
 val v : name:string -> string -> Unit.t -> t
 val name : t -> string
 val unit : t -> Unit.t
-val quantity : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t Quantity.t
-val uncertainty : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t Quantity.t
+val quantity : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx.t Quantity.t
+val uncertainty : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx.t Quantity.t
 val pp : Format.formatter -> t -> unit

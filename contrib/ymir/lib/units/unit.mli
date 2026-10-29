@@ -31,7 +31,7 @@ val of_string : string -> (t, string) result
 val pp : Format.formatter -> t -> unit
 val equal : t -> t -> bool
 val compare : t -> t -> int
-val ptree : t Nx.Ptree.t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> t -> t
 val metre : t
 val kilogram : t
 val second : t

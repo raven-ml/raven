@@ -12,12 +12,12 @@
    [value] after it, so the result there is [value] with derivative 0. *)
 
 (* [sqrt singular value x] is [sqrt x], and [value] where [singular] holds. *)
-let sqrt singular value (x : (float, _) Nx.t) =
+let sqrt singular value (x : (float, _, _) Nx.t) =
   Nx.where singular value (Nx.sqrt (Nx.where singular (Nx.full_like x 1.) x))
 
 (* [atan2 singular value y x] is [atan2 y x], and [value] where [singular]
    holds. *)
-let atan2 singular value (y : (float, _) Nx.t) x =
+let atan2 singular value (y : (float, _, _) Nx.t) x =
   let y = Nx.where singular (Nx.full_like y 0.) y
   and x = Nx.where singular (Nx.full_like x 1.) x in
   Nx.where singular value (Nx.atan2 y x)

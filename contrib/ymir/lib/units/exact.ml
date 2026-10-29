@@ -34,17 +34,21 @@ let int_bits n =
   let rec loop n k = if n = 0 then k else loop (n lsr 1) (k + 1) in
   loop n 0
 
-(* Float formats. [max] is the largest finite value; a format without infinity
-   (float8_e4m3) has its own. *)
+(* Float formats, read from the dtype's: [precision] counts the implicit bit,
+   [emin] is the least normal exponent and [max] the largest finite value. *)
 
 type format = { precision : int; emin : int; max : float }
 
-let float16 = { precision = 11; emin = -14; max = 65504. }
-let float32 = { precision = 24; emin = -126; max = Float.ldexp 0xffffffp0 104 }
-let float64 = { precision = 53; emin = -1022; max = Float.max_float }
-let bfloat16 = { precision = 8; emin = -126; max = Float.ldexp 0xffp0 120 }
-let float8_e4m3 = { precision = 4; emin = -6; max = 448. }
-let float8_e5m2 = { precision = 3; emin = -14; max = 57344. }
+let format dt =
+  let f = Nx.Dtype.float_format dt in
+  {
+    precision = f.fraction_bits + 1;
+    emin = snd (Float.frexp f.min_normal) - 1;
+    max = f.max_finite;
+  }
+
+let float32 = format Nx.Dtype.Float32
+let float64 = format Nx.Dtype.Float64
 let emax f = snd (Float.frexp f.max) - 1
 
 let classify f r =
@@ -292,7 +296,7 @@ let max_bits bits = Nat.sub (Nat.shift_left Nat.one bits) Nat.one
 let to_int n = Option.get (Nat.to_int n)
 
 let round : type a b.
-    (a, b) Nx_dtype.t -> (base * int * int) list -> (a, error) result =
+    (a, b) Nx.Dtype.t -> (base * int * int) list -> (a, error) result =
  fun d v ->
   let complex f =
     Result.map (fun re -> { Complex.re; im = 0. }) (round_float f v)
@@ -303,22 +307,23 @@ let round : type a b.
   in
   let int64 bits = Result.map Nat.to_int64 (round_int (max_bits bits) v) in
   match d with
-  | Float16 -> round_float float16 v
-  | Float32 -> round_float float32 v
-  | Float64 -> round_float float64 v
-  | BFloat16 -> round_float bfloat16 v
-  | Float8_e4m3 -> round_float float8_e4m3 v
-  | Float8_e5m2 -> round_float float8_e5m2 v
+  | Float16 -> round_float (format d) v
+  | Float32 -> round_float (format d) v
+  | Float64 -> round_float (format d) v
+  | Bfloat16 -> round_float (format d) v
+  | Float8_e4m3fn -> round_float (format d) v
+  | Float8_e5m2 -> round_float (format d) v
+  | Float4_e2m1fn -> round_float (format d) v
   | Complex64 -> complex float32
   | Complex128 -> complex float64
   | Int4 -> small 3
-  | UInt4 -> small 4
+  | Uint4 -> small 4
   | Int8 -> small 7
-  | UInt8 -> small 8
+  | Uint8 -> small 8
   | Int16 -> small 15
-  | UInt16 -> small 16
+  | Uint16 -> small 16
   | Int32 -> int32 31
-  | UInt32 -> int32 32
+  | Uint32 -> int32 32
   | Int64 -> int64 63
-  | UInt64 -> int64 64
+  | Uint64 -> int64 64
   | Bool | Bit -> Error Boolean

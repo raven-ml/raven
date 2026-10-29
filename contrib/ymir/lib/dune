@@ -18,4 +18,4 @@
   cosmology
   cosmology_tables
   wcs)
- (libraries nx nx.dtype nx.wide jera ymir.units))
+ (libraries nx nx.array nx.wide jera ymir.units))

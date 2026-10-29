@@ -302,7 +302,7 @@ let read_terms kw sfx axes =
 
 let sip_max_order = 9
 
-let sip_matrix kw p order =
+let sip_matrix at kw p order =
   let n = order + 1 in
   let m = Array.make (n * n) 0. in
   let rec fill i j =
@@ -314,7 +314,7 @@ let sip_matrix kw p order =
       fill i (j + 1)
   in
   let* m = fill 0 0 in
-  Ok (Nx.create Nx.float64 [| n; n |] m)
+  Ok (Nx.place at (Nx.create Nx.float64 [| n; n |] m))
 
 let sip_order kw key =
   let* o = kw.int key in
@@ -323,15 +323,15 @@ let sip_order kw key =
       fail kw "%s = %d: SIP's orders run from 0 to %d" key o sip_max_order
   | o -> Ok o
 
-let read_sip kw =
+let read_sip at kw =
   let pair a b =
     let* oa = sip_order kw (a ^ "_ORDER") in
     let* ob = sip_order kw (b ^ "_ORDER") in
     match (oa, ob) with
     | None, None -> Ok None
     | Some oa, Some ob ->
-        let* ma = sip_matrix kw a oa in
-        let* mb = sip_matrix kw b ob in
+        let* ma = sip_matrix at kw a oa in
+        let* mb = sip_matrix at kw b ob in
         Ok (Some (ma, mb))
     | Some _, None -> fail kw "%s_ORDER is absent beside %s_ORDER" b a
     | None, Some _ -> fail kw "%s_ORDER is absent beside %s_ORDER" a b
@@ -522,14 +522,15 @@ let pole kw key alt default =
              celestial pole"
             key)
 
-let read ?alt (frame : 'f Frame.t) kw =
+let read ?alt ~at (frame : 'f Frame.t) kw =
   let f64 = Nx.float64 in
+  let create s xs = Nx.place at (Nx.create f64 s xs) in
   let sfx = suffix "read" alt in
   let* axes = read_axes kw sfx in
   let* () = unread_distortion kw sfx in
   let* terms = read_terms kw sfx axes in
   let* sip =
-    if axes.sip || (sfx = "" && has kw.int "A_ORDER") then read_sip kw
+    if axes.sip || (sfx = "" && has kw.int "A_ORDER") then read_sip at kw
     else Ok None
   in
   let* (Frame found as fr) = read_frame kw sfx axes in
@@ -556,14 +557,14 @@ let read ?alt (frame : 'f Frame.t) kw =
     in
     let pc_stage pc (d1, d2) =
       Transform.(
-        linear (bare (Nx.create f64 [| 2; 2 |] (Array.of_list pc)))
-        >> scale (plane (Nx.create f64 [| 2 |] [| d1; d2 |])))
+        linear (bare (create [| 2; 2 |] (Array.of_list pc)))
+        >> scale (plane (create [| 2 |] [| d1; d2 |])))
     in
     match matrix with
     | `Cd cd ->
         Ok
           (Transform.linear
-             (plane (Nx.create f64 [| 2; 2 |] (Array.of_list cd))))
+             (plane (create [| 2; 2 |] (Array.of_list cd))))
     | `Pc pc ->
         let* d = cdelt () in
         Ok (pc_stage pc d)
@@ -582,7 +583,7 @@ let read ?alt (frame : 'f Frame.t) kw =
           0.,
           Projection.theta0 axes.code,
           Transform.tpv ~stated
-            (Nx.create f64 [| 2; Distortion.tpv_count |] pv) )
+            (create [| 2; Distortion.tpv_count |] pv) )
   in
   let delta0 = U.ratio Nx.float64 u U.degree *. crval_lat in
   let alt m =
@@ -604,17 +605,17 @@ let read ?alt (frame : 'f Frame.t) kw =
   in
   let projection =
     Transform.celestial ~stated axes.code frame
-      ~pv:(Nx.create f64 [| Array.length pv |] pv)
-      ~native:(deg (Nx.create f64 [| 2 |] [| phi0; theta0 |]))
-      ~crval:(Quantity.v u (Nx.create f64 [| 2 |] [| crval_lng; crval_lat |]))
-      ~lonpole:(deg (Nx.scalar f64 lonpole))
-      ~latpole:(deg (Nx.scalar f64 latpole))
+      ~pv:(create [| Array.length pv |] pv)
+      ~native:(deg (create [| 2 |] [| phi0; theta0 |]))
+      ~crval:(Quantity.v u (create [| 2 |] [| crval_lng; crval_lat |]))
+      ~lonpole:(deg (Nx.scalar_at at f64 lonpole))
+      ~latpole:(deg (Nx.scalar_at at f64 latpole))
   in
   let sip_stage = Option.value sip ~default:Transform.id in
   Ok
     Transform.(
       axes [| 1; 0 |] ~origin:1
-      >> shift (bare (Nx.create f64 [| 2 |] [| crpix1; crpix2 |]))
+      >> shift (bare (create [| 2 |] [| crpix1; crpix2 |]))
       >> sip_stage >> matrix_stages >> swap >> tpv_stage >> projection)
 
 (* Writing
@@ -632,10 +633,10 @@ let card ?(optional = false) key value = { key; value; optional }
 let same x y = Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y)
 let default x d key = card ~optional:(same x d) key (F x)
 
-type celestial = {
+type 'd celestial = {
   code : Transform.code;
   frame : frame;
-  crval : (float, Nx.float64_elt) Nx.t Quantity.t;
+  crval : (float, Nx.float64_elt, 'd) Nx.t Quantity.t;
   pv : float array;
   stated : int array;
   native : float array;  (** (φ₀, θ₀) in degrees. *)
@@ -650,14 +651,14 @@ type sip = {
 }
 
 (* The stage list, read as plain data. *)
-type step =
+type 'd step =
   | Axes of int array * int
   | Shift of float array
   | Linear of float array * U.t
   | Scale of float array * U.t
   | Sip of sip
   | Tpv of float array * int array
-  | Celestial of celestial
+  | Celestial of 'd celestial
   | Unspelled of string
 
 (* [host q] is [q]'s shape, float64 values and unit. *)
@@ -675,7 +676,7 @@ let rows m =
   let a = Nx.to_array m in
   Array.init (Nx.dim (-2) m) (fun i -> Array.sub a (i * n) n)
 
-let step : type a b. (a, b) Transform.stage -> step = function
+let step : type a b d. (a, b, d) Transform.stage -> d step = function
   | Transform.Plane (Transform.Axes { perm; origin }, Transform.Forward) ->
       Axes (perm, origin)
   | Plane (Transform.Shift r, Forward) ->
@@ -710,7 +711,7 @@ let step : type a b. (a, b) Transform.stage -> step = function
         }
   | s -> Unspelled (Transform.stage_name s)
 
-let rec steps : type a b. (a, b) Transform.t -> step list = function
+let rec steps : type a b d. (a, b, d) Transform.t -> d step list = function
   | Transform.Id -> []
   | Stage (s, rest) -> step s :: steps rest
 
@@ -724,7 +725,7 @@ let scalar_celestial (c : _ Transform.celestial) =
   && Nx.ndim c.pv = 1
 
 (* Every leaf of a stage FITS spells holds one value per keyword. *)
-let rec unbatched : type a b. (a, b) Transform.t -> bool = function
+let rec unbatched : type a b d. (a, b, d) Transform.t -> bool = function
   | Transform.Id -> true
   | Stage (s, rest) ->
       let ok =

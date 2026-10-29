@@ -6,33 +6,33 @@
 (** Regions: the implementation of {!Ymir.Region}, with the overlap that
     {!Observation.integrate} sums. *)
 
-type ('w, 'e) t
+type ('w, 'e, 'd) t
 
 val circle :
-  ('w, Transform.plane) Transform.t ->
-  radius:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  ('w, 'e) t
+  ('w, 'd Transform.plane, 'd) Transform.t ->
+  radius:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  ('w, 'e, 'd) t
 
 val annulus :
-  ('w, Transform.plane) Transform.t ->
-  inner:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  outer:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  ('w, 'e) t
+  ('w, 'd Transform.plane, 'd) Transform.t ->
+  inner:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  outer:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  ('w, 'e, 'd) t
 
 val ellipse :
-  ('w, Transform.plane) Transform.t ->
-  a:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  b:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  angle:(float, 'e) Nx.t Ymir_units.Quantity.t ->
-  ('w, 'e) t
+  ('w, 'd Transform.plane, 'd) Transform.t ->
+  a:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  b:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  angle:(float, 'e, 'd) Nx.t Ymir_units.Quantity.t ->
+  ('w, 'e, 'd) t
 
 val polygon :
-  (float, 'e) Nx.dtype -> ('w, Transform.plane) Transform.t -> 'w -> ('w, 'e) t
+  (float, 'e) Nx.dtype -> ('w, 'd Transform.plane, 'd) Transform.t -> 'w -> ('w, 'e, 'd) t
 
-val weights : ('w, 'e) t -> ('w, 'e) Grid.t -> (float, 'e) Nx.t
-val ptree : unit -> ('w, 'e) t Nx.Ptree.t
+val weights : ('w, 'e, 'd) t -> ('w, 'e, 'd) Grid.t -> (float, 'e, 'd) Nx.t
+val ptree : unit -> (('w, 'e, 'd) t, 'd) Nx.Ptree.t
 
-val overlap : ('w, 'e) t -> ('w, 'e) Grid.t -> 'e Overlap.t * (float, 'e) Nx.t
+val overlap : ('w, 'e, 'd) t -> ('w, 'e, 'd) Grid.t -> ('e, 'd) Overlap.t * (float, 'e, 'd) Nx.t
 (** [overlap r g] is the overlap of each of [g]'s cells with [r],
     [[batch; h; w]], whose [weight] is [weights r g], and the shape's own
     area in its plane, [[batch]]. Both areas are in the square of the unit of

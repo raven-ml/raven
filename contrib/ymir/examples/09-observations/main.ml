@@ -30,7 +30,7 @@ let image =
          *. exp (-.((r *. r) +. (c *. c)) /. (2. *. sigma *. sigma))
          /. (2. *. Float.pi *. sigma *. sigma))
 
-let print name (i : Nx.float64_elt Observation.integral) =
+let print name (i : (Nx.float64_elt, Nx.host) Observation.integral) =
   Printf.printf "%-8s sum = %9.3f e/s  area = %7.3f cells  coverage = %.3f\n"
     name
     (Nx.item [] (Quantity.value e_s i.value))
@@ -43,7 +43,7 @@ let () =
   let valid =
     Nx.init Nx.bit [| 64; 64 |] (fun i -> not (i.(0) = 31 && i.(1) = 36))
   in
-  let grid = Grid.pixels ~shape:[| 64; 64 |] f64 Transform.id in
+  let grid = Grid.pixels ~at:Nx.Host.on ~shape:[| 64; 64 |] f64 Transform.id in
   let obs = Observation.v ~variance ~valid grid (Quantity.v rate image) in
 
   (* A circular aperture and a background annulus about the source. *)

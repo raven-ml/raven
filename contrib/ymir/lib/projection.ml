@@ -91,6 +91,9 @@ let param pv k = component pv k
 let angle pv k = Nx.mul_s (param pv k) radian_per_degree
 let ones x = Nx.ones_like x
 let zeros x = Nx.zeros_like x
+
+(* [everywhere x] is [true] beside [x]. *)
+let everywhere x = Nx.ones_at (Nx.beside x) Nx.bool [||]
 let ( &&& ) = Nx.logical_and
 
 (* [safe_div singular a b] is [a / b], and 0 with derivative 0 where
@@ -175,7 +178,7 @@ let zpn_limit pv =
       (List.init zpn_terms (fun m -> expand (param pv m))) in
   let grid =
     Nx.mul_s
-      (Nx.cast Nx.float64 (Nx.arange Nx.int32 0 zpn_samples 1))
+      (Nx.cast Nx.float64 (Nx.arange_at (Nx.beside p1) Nx.int32 0 zpn_samples 1))
       radian_per_degree
   in
   let slope =
@@ -189,11 +192,12 @@ let zpn_limit pv =
   let falls = Nx.less_equal_s slope 0. in
   let shape = Nx.shape falls in
   let sentinel =
-    Nx.ones Nx.bool (Array.append (Array.sub shape 0 (Array.length shape - 1)) [| 1 |])
+    Nx.ones_at (Nx.beside falls) Nx.bool
+      (Array.append (Array.sub shape 0 (Array.length shape - 1)) [| 1 |])
   in
   let j = Nx.argmax ~axis:(-1) (Nx.cast Nx.int32 (Nx.concatenate ~axis:(-1) [ falls; sentinel ])) in
   let none = Nx.equal_s j (Int64.of_int zpn_samples) in
-  let j = Nx.cast Nx.float64 (Nx.maximum j (Nx.scalar Nx.int64 1L)) in
+  let j = Nx.cast Nx.float64 (Nx.maximum_s j 1L) in
   let hi = Nx.where none (Nx.full_like j pi) (Nx.mul_s j radian_per_degree) in
   let lo = Nx.where none (Nx.full_like j pi) (Nx.mul_s (Nx.sub_s j 1.) radian_per_degree) in
   let rising = Nx.greater_s p1 0. in
@@ -251,16 +255,16 @@ let deproject code pv x y =
   match code with
   | Tan ->
       let s = Nx.rsqrt (Nx.add_s (Nx.add (Nx.square x) (Nx.square y)) 1.) in
-      ((Nx.neg (Nx.mul y s), Nx.mul x s, s), Nx.ones Nx.bool [||])
+      ((Nx.neg (Nx.mul y s), Nx.mul x s, s), everywhere x)
   | Stg ->
       let r2 = Nx.add (Nx.square x) (Nx.square y) in
       let d = Nx.recip (Nx.add_s r2 4.) in
       ( ( Nx.mul (Nx.mul_s y (-4.)) d,
           Nx.mul (Nx.mul_s x 4.) d,
           Nx.mul (Nx.rsub_s 4. r2) d ),
-        Nx.ones Nx.bool [||] )
+        everywhere x )
   | Arc ->
-      let u, rho = unradial ~z:Fun.id ~s0:(Nx.scalar Nx.float64 1.) x y in
+      let u, rho = unradial ~z:Fun.id ~s0:(Nx.scalar_like x 1.) x y in
       (u, Nx.less_equal_s rho pi)
   | Zea ->
       let r2 = Nx.add (Nx.square x) (Nx.square y) in
@@ -392,11 +396,11 @@ let project code pv ((u1, u2, u3) as u) =
       let k = Nx.div (Nx.full_like u3 2.) (Nx.where inside (Nx.add_s u3 1.) (ones u3)) in
       ((Nx.mul k u2, Nx.neg (Nx.mul k u1)), inside)
   | Arc ->
-      (radial ~r:Fun.id ~k0:(Nx.scalar Nx.float64 1.) u, Nx.ones Nx.bool [||])
+      (radial ~r:Fun.id ~k0:(Nx.scalar_like u3 1.) u, everywhere u3)
   | Zea ->
       (* [R = 2 sin (Z / 2)]. *)
       let r z = Nx.mul_s (Nx.sin (Nx.div_s z 2.)) 2. in
-      (radial ~r ~k0:(Nx.scalar Nx.float64 1.) u, Nx.ones Nx.bool [||])
+      (radial ~r ~k0:(Nx.scalar_like u3 1.) u, everywhere u3)
   | Sin ->
       let xi = param pv 0 and eta = param pv 1 in
       let z = Nx.rsub_s 1. u3 in
@@ -445,7 +449,7 @@ let project code pv ((u1, u2, u3) as u) =
       (radial ~r ~k0:(Nx.rsub_s 0.5 w) u, Nx.less_s z pi)
   | Car ->
       let phi, theta, _ = lonlat u in
-      ((phi, theta), Nx.ones Nx.bool [||])
+      ((phi, theta), everywhere u3)
   | Mer ->
       let phi, _, rho = lonlat u in
       let inside = Nx.greater_s rho 0. in
@@ -453,7 +457,7 @@ let project code pv ((u1, u2, u3) as u) =
       ((phi, y), inside)
   | Cea ->
       let phi, _, _ = lonlat u in
-      ((phi, Nx.div u3 (param pv 0)), Nx.ones Nx.bool [||])
+      ((phi, Nx.div u3 (param pv 0)), everywhere u3)
   | Cyp ->
       let mu = param pv 0 and lambda = param pv 1 in
       let phi, _, rho = lonlat u in
@@ -468,7 +472,7 @@ let project code pv ((u1, u2, u3) as u) =
 
 (* [valid c pv] is where [pv] defines a projection, and the condition's text. *)
 let valid code pv =
-  let t = Nx.ones Nx.bool [||] in
+  let t = everywhere pv in
   match code with
   | Tan | Stg | Arc | Zea | Car | Mer | Sin -> (t, "")
   | Azp ->

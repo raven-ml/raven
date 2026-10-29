@@ -488,7 +488,7 @@ let copy_run place out k (v : values) j run =
 
 (* [read t bounds] is the window [bounds], given in tensor axis order, in
    ZBITPIX's format: the tiles it meets decoded, each once. *)
-let read t bounds : Nx.packed =
+let read t bounds : Nx.host Nx.packed =
   let rank = Array.length t.axes in
   (* file order *)
   let fb = Array.init rank (fun i -> bounds.(rank - 1 - i)) in
@@ -578,12 +578,12 @@ let read t bounds : Nx.packed =
   end;
   let shape = Array.map (fun (a, b) -> b - a) bounds in
   match t.zbitpix with
-  | 8 -> Nx.P (Nx.of_buffer Nx.uint8 shape host)
-  | 16 -> Nx.P (Nx.of_buffer Nx.int16 shape host)
-  | 32 -> Nx.P (Nx.of_buffer Nx.int32 shape host)
-  | 64 -> Nx.P (Nx.of_buffer Nx.int64 shape host)
-  | -32 -> Nx.P (Nx.of_buffer Nx.float32 shape host)
-  | _ -> Nx.P (Nx.of_buffer Nx.float64 shape host)
+  | 8 -> Nx.P (Hdu.tensor Nx.uint8 shape host)
+  | 16 -> Nx.P (Hdu.tensor Nx.int16 shape host)
+  | 32 -> Nx.P (Hdu.tensor Nx.int32 shape host)
+  | 64 -> Nx.P (Hdu.tensor Nx.int64 shape host)
+  | -32 -> Nx.P (Hdu.tensor Nx.float32 shape host)
+  | _ -> Nx.P (Hdu.tensor Nx.float64 shape host)
 
 (* Writing *)
 

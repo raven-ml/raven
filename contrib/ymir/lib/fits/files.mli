@@ -7,7 +7,7 @@
     {!Ymir_fits.Fits.v}, {!Ymir_fits.Fits.with_header},
     {!Ymir_fits.Fits.verify} and {!Ymir_fits.Fits.write}. *)
 
-val v : Header.t -> (int, Nx.uint8_elt) Nx.t -> Hdu.t
+val v : Header.t -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> Hdu.t
 val with_header : Header.t -> Hdu.t -> Hdu.t
 val verify : Hdu.t -> (unit, string) result
 val write : string -> Hdu.t list -> (unit, string) result

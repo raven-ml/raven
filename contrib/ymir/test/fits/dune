@@ -10,7 +10,7 @@
   test_hostile
   test_survey)
  (package ymir)
- (libraries ymir.fits ymir.units nx nx.dtype nx.ragged windtrap)
+ (libraries ymir.fits ymir.units nx nx.array nx.ragged windtrap)
  (deps
   (glob_files golden/*)
   (glob_files ../support/survey/*)))

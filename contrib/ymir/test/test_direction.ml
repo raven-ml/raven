@@ -604,9 +604,9 @@ let structure =
       test "cast keeps the vectors float64" (fun () ->
           let d = lonlat 1. 0.2 in
           let module D = struct
-            type 'a t = Frame.icrs Direction.t
+            type (_, 'd) t = (Frame.icrs, 'd) Direction.t
 
-            let walk c d = Nx.Ptree.Walk.structure (Direction.ptree ()) c d
+            let walk = Direction.walk
           end in
           let d' = Nx.Ptree.cast (module D) Nx.float32 d in
           equal bits (xyz d) (xyz d'));

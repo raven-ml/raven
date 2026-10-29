@@ -20,7 +20,7 @@ dune exec contrib/ymir/examples/08-grids-and-regions/main.exe
 
 | Function                          | Purpose                                      |
 | --------------------------------- | -------------------------------------------- |
-| `Grid.pixels ~shape dtype t`      | The cells of an image seen through `t`       |
+| `Grid.pixels ~at ~shape dtype t`  | The cells of an image seen through `t`       |
 | `Grid.measure g`                  | Each cell's area or solid angle              |
 | `Region.circle p ~radius`         | A disc in the plane of placement `p`         |
 | `Region.annulus p ~inner ~outer`  | A ring                                       |

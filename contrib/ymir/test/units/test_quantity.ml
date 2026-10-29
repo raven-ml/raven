@@ -18,14 +18,14 @@ let i32 xs = Nx.create Nx.int32 [| Array.length xs |] xs
 let floats = Nx.to_array
 let bits = array float_exact
 
-let q32 : Nx.float32_t Quantity.t Nx.Ptree.t =
-  Nx.Ptree.instantiate (module Quantity)
+let q32 : (Nx.host Nx.float32_t Quantity.t, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Quantity.Structure)
 
-let q64 : Nx.float64_t Quantity.t Nx.Ptree.t =
-  Nx.Ptree.instantiate (module Quantity)
+let q64 : (Nx.host Nx.float64_t Quantity.t, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Quantity.Structure)
 
-let qi32 : Nx.int32_t Quantity.t Nx.Ptree.t =
-  Nx.Ptree.instantiate (module Quantity)
+let qi32 : (Nx.host Nx.int32_t Quantity.t, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Quantity.Structure)
 
 (* [is_payload x y] states that [y] is the tensor [x] itself. *)
 let is_payload x y =
@@ -54,7 +54,7 @@ let at name = Nx.Ptree.Path.v [ Field name ]
 type 'a star = { flux : 'a Quantity.t; parallax : 'a Quantity.t }
 
 module Star = struct
-  type 'a t = 'a star
+  type ('a, _) t = 'a star
 
   let walk c s =
     let open Nx.Ptree.Walk in
@@ -130,11 +130,11 @@ let structure =
       test "a quantity of a pair reports its unit once, then the pair's leaves"
         (fun () ->
           let s =
-            Nx.Ptree.nest (module Quantity) Nx.Ptree.(pair tensor tensor)
+            Nx.Ptree.nest (module Quantity.Structure) Nx.Ptree.(pair tensor tensor)
           in
           let q =
             Nx.Ptree.Payload.map
-              (module Quantity)
+              (module Quantity.Structure)
               (fun _ x -> (x, Nx.neg x))
               (Quantity.v km (f32 [| 1. |]))
           in
@@ -174,7 +174,7 @@ let constructors =
           let q =
             Quantity.times km
               (Nx.Ptree.Payload.map
-                 (module Quantity)
+                 (module Quantity.Structure)
                  (fun _ _ -> "label")
                  (Quantity.v Unit.one (f32 [| 1. |])))
           in
@@ -253,7 +253,7 @@ let conversion =
           one_multiply Nx.float32 x u w;
           one_multiply Nx.float16 x u w;
           one_multiply Nx.bfloat16 x u w;
-          one_multiply Nx.float8_e4m3 x u w);
+          one_multiply Nx.float8_e4m3fn x u w);
       test "km to m multiplies by 1000" (fun () ->
           equal bits [| 1000.; -2500.; -0. |]
             (floats
@@ -293,7 +293,7 @@ let conversion =
       test "a bool payload raises, even in its own unit" (fun () ->
           let q =
             Nx.Ptree.cast
-              (module Quantity)
+              (module Quantity.Structure)
               Nx.bool
               (Quantity.v km (f32 [| 1. |]))
           in
@@ -320,8 +320,8 @@ let c128 zs = Nx.create Nx.complex128 [| Array.length zs |] zs
 let parts zs = Array.map (fun (z : Complex.t) -> (z.re, z.im)) zs
 let complex_w = array (pair float_exact float_exact)
 
-let qc64 : Nx.complex64_t Quantity.t Nx.Ptree.t =
-  Nx.Ptree.instantiate (module Quantity)
+let qc64 : (Nx.host Nx.complex64_t Quantity.t, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Quantity.Structure)
 
 let zs =
   Complex.
@@ -349,15 +349,12 @@ let complex =
             (parts
                (Nx.to_array
                   (Quantity.value Unit.metre (Quantity.v km (c64 zs))))));
-      xfail ~reason:"rune's jit compiles no complex tensor"
-        (test "complex64 converts under jit as eager does" (fun () ->
-             let value =
-               Rune.jit
-                 Nx.Ptree.(qc64 @-> returns tensor)
-                 (Quantity.value Unit.metre)
-             in
-             equal complex_w (parts scaled)
-               (parts (Nx.to_array (value (Quantity.v km (c64 zs)))))));
+      test "complex64 converts under jit as eager does" (fun () ->
+          let value =
+            Rune.jit Nx.Ptree.(qc64 @-> returns tensor) (Quantity.value Unit.metre)
+          in
+          equal complex_w (parts scaled)
+            (parts (Nx.to_array (value (Quantity.v km (c64 zs))))));
       test "complex64 converts under vmap as eager does" (fun () ->
           let convert =
             Rune.vmap
@@ -392,7 +389,7 @@ let golden_dtype = function
   | "float32" -> (F Nx.float32, Some (C Nx.complex64))
   | "float16" -> (F Nx.float16, None)
   | "bfloat16" -> (F Nx.bfloat16, None)
-  | "float8_e4m3" -> (F Nx.float8_e4m3, None)
+  | "float8_e4m3fn" -> (F Nx.float8_e4m3fn, None)
   | "float8_e5m2" -> (F Nx.float8_e5m2, None)
   | name -> failwith ("unknown golden format " ^ name)
 
@@ -445,16 +442,18 @@ let complex_specials =
 let refusal u which d =
   Printf.sprintf "Quantity.value: the factor from %s to %s is %s, %s %s"
     (Unit.to_string u) (Unit.to_string Unit.one) (Unit.to_string u) which
-    (Nx_dtype.to_string d)
+    (Nx.Dtype.name d)
 
 let golden_real (type b) (d : (float, b) Nx.dtype) u outcome =
   let x = Nx.create d [| Array.length specials |] specials in
   let q = Quantity.v u x in
   match outcome with
   | Factor f ->
-      (* Each special times a value of [d] is exact in float64 and in [d]. *)
-      equal ~msg:(Nx_dtype.to_string d) bits
-        (Array.map (fun x -> x *. f) (floats x))
+      (* Each special times a value of [d], exact in float64, stored in [d]:
+         a product past a format without infinities holds its largest
+         value. *)
+      equal ~msg:(Nx.Dtype.name d) bits
+        (Array.map (fun x -> Nx.Dtype.of_float d (x *. f)) (floats x))
         (floats (Quantity.value Unit.one q))
   | Refused which ->
       raises
@@ -466,7 +465,7 @@ let golden_complex (type b) (d : (Complex.t, b) Nx.dtype) u outcome =
   let q = Quantity.v u z in
   match outcome with
   | Factor f ->
-      equal ~msg:(Nx_dtype.to_string d) complex_w
+      equal ~msg:(Nx.Dtype.name d) complex_w
         (Array.map
            (fun (re, im) -> (re *. f, im *. f))
            (parts complex_specials))
@@ -552,7 +551,7 @@ let errors =
 
 (* Bool payloads *)
 
-let as_bool q = Nx.Ptree.cast (module Quantity) Nx.bool q
+let as_bool q = Nx.Ptree.cast (module Quantity.Structure) Nx.bool q
 let no_unit = Invalid_argument "Quantity.v: a bool tensor has no unit"
 
 let bools =
@@ -573,7 +572,7 @@ let bools =
       test "value raises on a bool payload a payload map built" (fun () ->
           let q =
             Nx.Ptree.Payload.map
-              (module Quantity)
+              (module Quantity.Structure)
               (fun _ x -> Nx.isnan x)
               (Quantity.v km (f32 [| 1. |]))
           in
@@ -593,7 +592,7 @@ let bools =
       test "value and convert raise on a bit payload" (fun () ->
           let q =
             Nx.Ptree.cast
-              (module Quantity)
+              (module Quantity.Structure)
               Nx.bit
               (Quantity.v km (f32 [| 1. |]))
           in
@@ -889,7 +888,7 @@ let unheld =
     ]
 
 let unheld_name (Unheld (d, n, _)) =
-  Format.asprintf "%s by %a" (Nx_dtype.to_string d) Unit.pp n
+  Format.asprintf "%s by %a" (Nx.Dtype.name d) Unit.pp n
 
 let unheld_case (Unheld (d, n, zero)) =
   let from = Unit.(n * metre) in
@@ -898,14 +897,14 @@ let unheld_case (Unheld (d, n, zero)) =
        (Printf.sprintf
           "Quantity.value: the factor from %s to m is %s, which %s does not \
            hold"
-          (Unit.to_string from) (Unit.to_string n) (Nx_dtype.to_string d)))
+          (Unit.to_string from) (Unit.to_string n) (Nx.Dtype.name d)))
     (fun () ->
       Quantity.value Unit.metre
         (Quantity.v from (Nx.create d [| 1 |] [| zero |])))
 
 let int_name (Case c) =
   Format.asprintf "%s by %s, refusing %s"
-    (Nx_dtype.to_string c.dtype)
+    (Nx.Dtype.name c.dtype)
     c.factor
     (Nx.to_string (Nx.create c.dtype [| 1 |] [| c.bad |]))
 
@@ -919,7 +918,7 @@ let int_case (Case c) =
     (Nx.to_string (vec c.product))
     (Nx.to_string (Quantity.value into q));
   let n = Array.length c.ok in
-  let dt = Nx_dtype.to_string c.dtype in
+  let dt = Nx.Dtype.name c.dtype in
   raises
     (Invalid_argument
        (Printf.sprintf
@@ -961,8 +960,8 @@ let integers =
                 (Quantity.v km (i32 [| 1l |]))
                 (Quantity.v Unit.metre (i32 [| 1l |]))));
       test "jit raises the uint32 overflow at 2^31 that eager raises" (fun () ->
-          let qu32 : Nx.uint32_t Quantity.t Nx.Ptree.t =
-            Nx.Ptree.instantiate (module Quantity)
+          let qu32 : (Nx.host Nx.uint32_t Quantity.t, Nx.host) Nx.Ptree.t =
+            Nx.Ptree.instantiate (module Quantity.Structure)
           in
           let value =
             Rune.jit
@@ -980,8 +979,8 @@ let integers =
           raises (Invalid_argument msg) (fun () -> Quantity.value Unit.metre q);
           raises (Invalid_argument msg) (fun () -> value q));
       test "jit raises the int4 overflow that eager raises" (fun () ->
-          let qi4 : Nx.int4_t Quantity.t Nx.Ptree.t =
-            Nx.Ptree.instantiate (module Quantity)
+          let qi4 : (Nx.host Nx.int4_t Quantity.t, Nx.host) Nx.Ptree.t =
+            Nx.Ptree.instantiate (module Quantity.Structure)
           in
           let value =
             Rune.jit
@@ -1129,8 +1128,8 @@ let algebra =
           equal bits [| 0.25; Float.infinity |]
             (floats (Quantity.value Unit.(km ** -2) q)));
       test "pow keeps an odd exponent past the dtype's integers" (fun () ->
-          (* 17 is not a float8_e4m3 value, nor 2049 a float16 one. *)
-          let e4m3 = Nx.create Nx.float8_e4m3 [| 1 |] [| -1. |] in
+          (* 17 is not a float8_e4m3fn value, nor 2049 a float16 one. *)
+          let e4m3 = Nx.create Nx.float8_e4m3fn [| 1 |] [| -1. |] in
           let h = Nx.create Nx.float16 [| 1 |] [| -1. |] in
           equal bits [| -1. |]
             (floats
@@ -1159,7 +1158,7 @@ let algebra =
           equal bits [| -2.; 2. |] (floats (Quantity.value km q)));
       test "root of a float narrower than float32 does not round the exponent"
         (fun () ->
-          (* 27 is 28 in float8_e4m3, whose cube root 3.04 rounds to 3; 0.001 is
+          (* 27 is 28 in float8_e4m3fn, whose cube root 3.04 rounds to 3; 0.001 is
              0.00100040435791015625 in float16, whose cube root 0.100013 rounds
              to 0.10003662109375. *)
           let root d x =
@@ -1168,7 +1167,7 @@ let algebra =
                  (Quantity.root 3
                     (Quantity.v Unit.one (Nx.create d [| 1 |] [| x |]))))
           in
-          equal bits [| 3. |] (root Nx.float8_e4m3 27.);
+          equal bits [| 3. |] (root Nx.float8_e4m3fn 27.);
           equal bits [| 0.10003662109375 |] (root Nx.float16 0.001));
       test "root passes NaN and -0 as Nx.pow gives them" (fun () ->
           let x = f64 [| Float.nan; -0. |] in
@@ -1199,8 +1198,8 @@ let inf = Float.infinity
 let ninf = Float.neg_infinity
 let nan = Float.nan
 
-(* The float dtypes whose products overflow to infinity. float8_e5m2 holds
-   infinity but its products saturate, and float8_e4m3 holds none. *)
+(* The IEEE float dtypes, and those that hold infinity: float8_e5m2 too.
+   float8_e4m3fn holds none. *)
 let ieee_dtypes = [ F Nx.float64; F Nx.float32; F Nx.float16; F Nx.bfloat16 ]
 let infinite_dtypes = ieee_dtypes @ [ F Nx.float8_e5m2 ]
 
@@ -1214,7 +1213,7 @@ let powers dtypes n xs ys =
     (fun (F d) ->
       let q = Quantity.pow n (Quantity.v Unit.one (in_dtype d xs)) in
       equal unit Unit.one (Quantity.unit q);
-      equal ~msg:(Nx_dtype.to_string d) bits ys
+      equal ~msg:(Nx.Dtype.name d) bits ys
         (floats (Quantity.value Unit.one q)))
     dtypes
 
@@ -1224,7 +1223,7 @@ let roots dtypes n u xs ys =
   List.iter
     (fun (F d) ->
       let q = Quantity.root n (Quantity.v u (in_dtype d xs)) in
-      let msg = Nx_dtype.to_string d in
+      let msg = Nx.Dtype.name d in
       equal ~msg unit (Unit.root n u) (Quantity.unit q);
       equal ~msg bits ys (floats (Quantity.value (Unit.root n u) q)))
     dtypes
@@ -1279,7 +1278,7 @@ let exponents =
           powers [ F Nx.float8_e5m2 ] max_int
             [| 1.; -1.; 0.5; 0.; -0.; inf; ninf; nan |]
             [| 1.; -1.; 0.; 0.; -0.; inf; ninf; nan |];
-          powers [ F Nx.float8_e4m3 ] max_int
+          powers [ F Nx.float8_e4m3fn ] max_int
             [| 1.; -1.; 0.5; 0.; -0.; nan |]
             [| 1.; -1.; 0.; 0.; -0.; nan |]);
       test "pow min_int is the reciprocal of an even power" (fun () ->
@@ -1289,7 +1288,7 @@ let exponents =
           powers [ F Nx.float8_e5m2 ] min_int
             [| 1.; -1.; 0.5; 0.; -0.; inf; ninf; nan |]
             [| 1.; 1.; inf; inf; inf; 0.; 0.; nan |];
-          powers [ F Nx.float8_e4m3 ] min_int [| 1.; -1.; nan |]
+          powers [ F Nx.float8_e4m3fn ] min_int [| 1.; -1.; nan |]
             [| 1.; 1.; nan |]);
       test "pow -1 is the reciprocal, signed zeros and infinities included"
         (fun () ->
@@ -1303,9 +1302,9 @@ let exponents =
               let x = in_dtype d xs in
               let q = Quantity.pow 1 (Quantity.v km x) in
               equal unit km (Quantity.unit q);
-              equal ~msg:(Nx_dtype.to_string d) bits (floats x)
+              equal ~msg:(Nx.Dtype.name d) bits (floats x)
                 (floats (Quantity.value km q)))
-            (F Nx.float8_e4m3 :: infinite_dtypes));
+            (F Nx.float8_e4m3fn :: infinite_dtypes));
       prop "pow's unit is the algebra's power, or raises as the algebra does"
         Gen.(
           pair units
@@ -1327,11 +1326,11 @@ let exponents =
               raises e (fun () -> Quantity.pow n (Quantity.v u x)));
       test
         "a narrow float overflows as its dtype stores it: to infinity, or to \
-         the float8 formats' largest value" (fun () ->
+         float8_e4m3fn's largest value, which has no infinity" (fun () ->
           powers [ F Nx.float16 ] 2 [| 300. |] [| inf |];
           powers [ F Nx.bfloat16 ] 2 [| 0x1p64 |] [| inf |];
-          powers [ F Nx.float8_e5m2 ] 2 [| 256.; -256. |] [| 57344.; 57344. |];
-          powers [ F Nx.float8_e4m3 ] 3 [| 16.; -16. |] [| 448.; -448. |]);
+          powers [ F Nx.float8_e5m2 ] 2 [| 256.; -256. |] [| inf; inf |];
+          powers [ F Nx.float8_e4m3fn ] 3 [| 16.; -16. |] [| 448.; -448. |]);
       group "pow max_int of an integer wraps to the inverse modulo 2^k"
         int_powers;
       test "pow min_int of an integer payload raises" (fun () ->
@@ -1358,14 +1357,14 @@ let exponents =
             (fun (F d) ->
               let x = in_dtype d xs in
               roots [ F d ] 1 km xs (floats x))
-            (F Nx.float8_e4m3 :: infinite_dtypes));
+            (F Nx.float8_e4m3fn :: infinite_dtypes));
       test "root max_int, odd, is the real root, -0 taking +0 as pow gives"
         (fun () ->
           let u = Unit.(second ** 3) in
           roots infinite_dtypes max_int u
             [| 0.; -0.; 1.; -1.; inf; ninf; nan |]
             [| 0.; 0.; 1.; -1.; inf; ninf; nan |];
-          roots [ F Nx.float8_e4m3 ] max_int u
+          roots [ F Nx.float8_e4m3fn ] max_int u
             [| 0.; -0.; 1.; -1.; nan |]
             [| 0.; 0.; 1.; -1.; nan |]);
       test "root max_int - 1, even, passes 0, -0, infinity and NaN" (fun () ->
@@ -1373,13 +1372,13 @@ let exponents =
           roots infinite_dtypes n km
             [| 0.; -0.; 1.; inf; nan |]
             [| 0.; 0.; 1.; inf; nan |];
-          roots [ F Nx.float8_e4m3 ] n km [| 0.; -0.; 1.; nan |]
+          roots [ F Nx.float8_e4m3fn ] n km [| 0.; -0.; 1.; nan |]
             [| 0.; 0.; 1.; nan |]);
       test "an even root of a negative scalar raises in every float dtype"
         (fun () ->
           List.iter
             (fun (F d) ->
-              let dt = Nx_dtype.to_string d in
+              let dt = Nx.Dtype.name d in
               raises
                 (Invalid_argument
                    (Printf.sprintf
@@ -1389,7 +1388,7 @@ let exponents =
                 (fun () ->
                   Quantity.root (max_int - 1)
                     (Quantity.v km (Nx.scalar d (-1.)))))
-            (F Nx.float8_e4m3 :: infinite_dtypes));
+            (F Nx.float8_e4m3fn :: infinite_dtypes));
       test "an even root of -infinity raises naming its element" (fun () ->
           raises
             (Invalid_argument
@@ -1399,12 +1398,12 @@ let exponents =
                 (Quantity.v km (in_dtype Nx.bfloat16 [| nan; ninf |]))));
       test "root of an exact power in every float dtype" (fun () ->
           roots
-            (F Nx.float8_e4m3 :: infinite_dtypes)
+            (F Nx.float8_e4m3fn :: infinite_dtypes)
             3
             Unit.(km ** 3)
             [| -8.; 8.; 1. |] [| -2.; 2.; 1. |];
           roots
-            (F Nx.float8_e4m3 :: infinite_dtypes)
+            (F Nx.float8_e4m3fn :: infinite_dtypes)
             2
             Unit.(km ** 2)
             [| 4.; 16.; 0.25 |] [| 2.; 4.; 0.5 |]);
@@ -1419,7 +1418,7 @@ let formatting =
           expect
             (Format.asprintf "%a" Quantity.pp
                (Quantity.v Unit.(km / second) (f32 [| 1.; 2.5 |])))
-          @@ __POS_OF__ {|[1, 2.5] 1e3 m s^-1|});
+          @@ __POS_OF__ {|float32 [2] [1, 2.5] 1e3 m s^-1|});
     ]
 
 (* Rune *)
@@ -1591,13 +1590,13 @@ type op = {
   name : string;
   w : float array testable;
   eager :
-    Nx.float32_t Quantity.t ->
-    Nx.float32_t Quantity.t ->
-    Nx.float32_t Quantity.t;
+    Nx.host Nx.float32_t Quantity.t ->
+    Nx.host Nx.float32_t Quantity.t ->
+    Nx.host Nx.float32_t Quantity.t;
   jitted :
-    Nx.float32_t Quantity.t ->
-    Nx.float32_t Quantity.t ->
-    Nx.float32_t Quantity.t;
+    Nx.host Nx.float32_t Quantity.t ->
+    Nx.host Nx.float32_t Quantity.t ->
+    Nx.host Nx.float32_t Quantity.t;
 }
 
 (* [ulps k] compares float32 arrays within [k] ulps relative, NaN equal to
@@ -1631,10 +1630,10 @@ let ops =
     op "map" (fun a _ -> Quantity.map Nx.sum a);
     op "pow 3" (fun a _ -> Quantity.pow 3 a);
     op "pow -2" (fun a _ -> Quantity.pow (-2) a);
-    (* Nx.pow's rounding is not specified, and may differ between eager and
-       compiled kernels. *)
-    op ~w:(ulps 2) "root 3" (fun a _ -> Quantity.root 3 a);
-    op ~w:(ulps 2) "root 2" (fun a _ -> Quantity.root 2 a);
+    (* Nx.pow is within 4 ulps at float32, so an eager and a compiled kernel
+       may differ by 8. *)
+    op ~w:(ulps 8) "root 3" (fun a _ -> Quantity.root 3 a);
+    op ~w:(ulps 8) "root 2" (fun a _ -> Quantity.root 2 a);
     op "times" (fun a b -> Quantity.times (Quantity.unit b) a);
     op "per" (fun a b -> Quantity.per (Quantity.unit b) a);
   ]
@@ -1684,15 +1683,35 @@ let scan init xs = Rune.scan q64 q64 q64 ~f:scan_step ~init xs
 let scan_jitted =
   Rune.jit Nx.Ptree.(q64 @-> q64 @-> returns (pair q64 q64)) scan
 
+(* [subnormal32 x] is whether [x] is a nonzero float32 below the least
+   normal. *)
+let subnormal32 x =
+  let x = Int32.float_of_bits (Int32.bits_of_float x) in
+  x <> 0. && Float.abs x < 0x1p-126
+
 let rune_laws =
   group "Rune laws"
     [
+      xfail ~reason:"a compiled root of a subnormal float32 is 15 ulps off"
+        (test "a compiled square root of a subnormal float32 is within Nx.pow's \
+               4 ulps" (fun () ->
+             let o = List.find (fun o -> o.name = "root 2") ops in
+             let x = Quantity.v Unit.one (f32 [| 0x1.cp-147 |]) in
+             equal (ulps 4)
+               (floats (Quantity.value Unit.one (o.eager x x)))
+               (floats (Quantity.value Unit.one (o.jitted x x)))));
       prop "jit equals eager for every operation, raises included"
         Gen.(
           quad (of_list ~pp:pp_op ops) (pair length length)
             (array ~size:(constant 3) any_float)
             (array ~size:(constant 3) any_float))
         (fun (o, (u, w), xs, ys) ->
+          (* A compiled root of a subnormal float32 misses Nx.pow's bound; the
+             test below pins it. *)
+          assume
+            (not
+               (String.starts_with ~prefix:"root" o.name
+               && Array.exists subnormal32 xs));
           let a = Quantity.v u (f32 xs) and b = Quantity.v w (f32 ys) in
           equal
             (result (pair string o.w) string)
@@ -1777,7 +1796,7 @@ let rune_laws =
 type 'a body = { size : 'a Quantity.t; temperature : 'a Quantity.t }
 
 module Body = struct
-  type 'a t = 'a body
+  type ('a, _) t = 'a body
 
   let walk c b =
     let open Nx.Ptree.Walk in
@@ -1786,7 +1805,7 @@ module Body = struct
     { size; temperature }
 end
 
-let body : Nx.float64_t body Nx.Ptree.t = Nx.Ptree.instantiate (module Body)
+let body : (Nx.host Nx.float64_t body, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Body)
 let mk = Unit.(milli kelvin)
 let temperatures = [ Unit.kelvin; mk ]
 let temperature = Gen.of_list ~pp:Unit.pp temperatures
@@ -1919,7 +1938,7 @@ type format = { dtype : dtype; prec : int; emin : int; max : float }
 and dtype = D : (float, 'b) Nx.dtype -> dtype
 
 let pp_format ppf { dtype = D d; _ } =
-  Format.pp_print_string ppf (Nx_dtype.to_string d)
+  Format.pp_print_string ppf (Nx.Dtype.name d)
 
 let float32 =
   {
@@ -1939,7 +1958,7 @@ let narrow_formats =
       emin = -126;
       max = Float.ldexp 0xffp0 120;
     };
-    { dtype = D Nx.float8_e4m3; prec = 4; emin = -6; max = 448. };
+    { dtype = D Nx.float8_e4m3fn; prec = 4; emin = -6; max = 448. };
   ]
 
 (* [ulp f x] is the unit in the last place of [x] in the format [f], its

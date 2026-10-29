@@ -11,10 +11,16 @@ let walk c q =
   Nx.Ptree.Walk.case c (Unit.to_string q.unit);
   { unit = q.unit; payload = Nx.Ptree.Walk.leaf c q.payload }
 
-let is_boolean (type a b) (x : (a, b) Nx.t) =
+module Structure = struct
+  type nonrec ('a, _) t = 'a t
+
+  let walk = walk
+end
+
+let is_boolean (type a b) (x : (a, b, _) Nx.t) =
   match Nx.dtype x with Bool | Bit -> true | _ -> false
 
-let dtype_name x = Nx_dtype.to_string (Nx.dtype x)
+let dtype_name x = Nx.Dtype.name (Nx.dtype x)
 
 let v unit payload =
   if is_boolean payload then
@@ -31,7 +37,7 @@ let per u q = { q with unit = Unit.(q.unit / u) }
 (* [element_name d i] names the element at index [i] of a payload of dtype [d],
    or the payload when it is a scalar: ["element [41] of an int32 payload"]. *)
 let element_name d i =
-  let dt = Nx_dtype.to_string d in
+  let dt = Nx.Dtype.name d in
   let article = if String.starts_with ~prefix:"int" dt then "an" else "a" in
   if Array.length i = 0 then strf "%s %s payload" article dt
   else
@@ -47,19 +53,19 @@ let element_name d i =
    by [f + 0i] would multiply an infinite part by the zero imaginary part and
    give NaN. *)
 let scale_components (type b c) (d : (float, b) Nx.dtype)
-    (x : (Complex.t, c) Nx.t) (f : Complex.t) =
+    (x : (Complex.t, c, _) Nx.t) (f : Complex.t) =
   Nx.bitcast (Nx.dtype x) (Nx.mul_s (Nx.bitcast d x) f.re)
 
 (* [int_range d f] is the range of [d] divided by [f], rounded inwards, and
    [f]'s text, for the dtypes whose elements are OCaml ints. *)
 let int_range (type b) (d : (int, b) Nx.dtype) f =
-  (Nx_dtype.min_value d / f, Nx_dtype.max_value d / f, string_of_int f)
+  (Nx.Dtype.min_value d / f, Nx.Dtype.max_value d / f, string_of_int f)
 
 (* [scale fn ~from ~into x f] is [x] times [f], the conversion from [from] to
    [into] in [x]'s dtype. An integer element overflows iff it is outside the
    dtype's range divided by [f], so every element is checked against that range
    first. *)
-let scale (type a b) fn ~from ~into (x : (a, b) Nx.t) (f : a) : (a, b) Nx.t =
+let scale (type a b) fn ~from ~into (x : (a, b, _) Nx.t) (f : a) : (a, b, _) Nx.t =
   let d = Nx.dtype x in
   let checked ((lo : a), (hi : a), factor) =
     let ok = Nx.logical_and (Nx.greater_equal_s x lo) (Nx.less_equal_s x hi) in
@@ -71,19 +77,20 @@ let scale (type a b) fn ~from ~into (x : (a, b) Nx.t) (f : a) : (a, b) Nx.t =
     Nx.mul_s x f
   in
   match d with
-  | Nx_dtype.Complex64 -> scale_components Nx.float32 x f
+  | Nx.Dtype.Complex64 -> scale_components Nx.float32 x f
   | Complex128 -> scale_components Nx.float64 x f
   | Int4 -> checked (int_range d f)
-  | UInt4 -> checked (int_range d f)
+  | Uint4 -> checked (int_range d f)
   | Int8 -> checked (int_range d f)
-  | UInt8 -> checked (int_range d f)
+  | Uint8 -> checked (int_range d f)
   | Int16 -> checked (int_range d f)
-  | UInt16 -> checked (int_range d f)
+  | Uint16 -> checked (int_range d f)
   | Int32 -> checked Int32.(div min_int f, div max_int f, to_string f)
-  | UInt32 -> checked (0l, Int32.unsigned_div (-1l) f, strf "%lu" f)
+  | Uint32 -> checked (0l, Int32.unsigned_div (-1l) f, strf "%lu" f)
   | Int64 -> checked Int64.(div min_int f, div max_int f, to_string f)
-  | UInt64 -> checked (0L, Int64.unsigned_div (-1L) f, strf "%Lu" f)
-  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+  | Uint64 -> checked (0L, Int64.unsigned_div (-1L) f, strf "%Lu" f)
+  | Float16 | Float32 | Float64 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
+  | Float4_e2m1fn ->
       Nx.mul_s x f
   | Bool | Bit -> assert false (* [Unit.ratio_named] refuses booleans. *)
 
@@ -137,7 +144,7 @@ let rec power x n =
     if n land 1 = 0 then half else Nx.mul x half
 
 let is_integer (type a b) (d : (a, b) Nx.dtype) =
-  match Nx_dtype.kind d with Signed | Unsigned -> true | _ -> false
+  match Nx.Dtype.kind d with Signed | Unsigned -> true | _ -> false
 
 let pow n q =
   let x = q.payload in
@@ -145,7 +152,7 @@ let pow n q =
   if n < 0 && is_integer d then
     invalid_arg
       (strf "Quantity.pow: %d is negative and the payload is %s" n
-         (Nx_dtype.to_string d));
+         (Nx.Dtype.name d));
   let unit = Unit.(q.unit ** n) in
   let payload =
     if n = 0 then Nx.ones_like x
@@ -184,7 +191,7 @@ let real_root n x =
     let r = root (Nx.where negative (Nx.neg x) x) in
     Nx.where negative (Nx.neg r) r
 
-let root (type b) n (q : (float, b) Nx.t t) =
+let root (type b) n (q : (float, b, _) Nx.t t) =
   if n < 1 then invalid_arg (strf "Quantity.root: %d is below 1" n);
   let unit = Unit.root n q.unit in
   let x = q.payload in
@@ -200,11 +207,11 @@ let root (type b) n (q : (float, b) Nx.t t) =
              "Quantity.root: %s is below 0, whose root of order %d is not real"
              (element_name d i) n));
   (* A dtype narrower than float32 would round the exponent: 1/3 is 0.34375 in
-     float8_e4m3, which takes 27 to 3.25. Such a payload is rooted in float32
+     float8_e4m3fn, which takes 27 to 3.25. Such a payload is rooted in float32
      and cast back. *)
   let payload =
     match d with
-    | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+    | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
         Nx.cast d (real_root n (Nx.cast Nx.float32 x))
     | Float32 | Float64 -> real_root n x
   in

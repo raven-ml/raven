@@ -60,6 +60,6 @@ let () =
       ~lat:(Quantity.v Unit.degree (Nx.create f64 [| 2 |] [| 2.; -2. |]))
   in
   let to_pixels = Transform.inverse pixel_to_sky in
-  Format.printf "covered: %a@." Nx.pp (Transform.covers to_pixels far);
+  Format.printf "covered: %a@." Nx.pp (Option.get (Transform.covers to_pixels far));
   try ignore (Transform.apply to_pixels far)
   with Invalid_argument msg -> print_endline msg

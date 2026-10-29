@@ -9,7 +9,7 @@ open Ymir
 let f64 = Nx.float64
 let planck = Cosmology.planck2018 ~codata:Codata.v2022 f64
 let z = Nx.create f64 [| 3 |] [| 0.1; 1.; 3. |]
-let cosmology = Nx.Ptree.instantiate (module Cosmology)
+let cosmology = Nx.Ptree.instantiate (module Cosmology.Structure)
 let kms_mpc = Unit.(kilo metre / second / mega Units.parsec)
 let mu c = Cosmology.distance_modulus c z
 
@@ -45,7 +45,7 @@ let image =
       100. *. exp (-.((r *. r) +. (c *. c)) /. 8.) /. (8. *. Float.pi))
 
 let obs =
-  let grid = Grid.pixels ~shape:[| 32; 32 |] f64 Transform.id in
+  let grid = Grid.pixels ~at:Nx.Host.on ~shape:[| 32; 32 |] f64 Transform.id in
   Observation.v grid (Quantity.v Unit.(one / Grid.cell) image)
 
 (* The sum in a circle as a function of p = (row, column, radius). *)

@@ -46,7 +46,7 @@ let crval =
     ~lat:(deg (scalar Reference.sky_crval.(1)))
 
 let sky ?area ?(unit = brightness) dtype =
-  let g = Grid.pixels ~shape:Reference.sky_shape dtype wcs in
+  let g = Grid.pixels ~at:Nx.Host.on ~shape:Reference.sky_shape dtype wcs in
   Observation.v ?area g (Quantity.v unit (image dtype Reference.sky_shape 73))
 
 let with_pixar dtype =
@@ -57,7 +57,7 @@ let target east north =
   Transform.(apply (inverse (about crval)))
     (arcsec (Nx.create f64 [| 2 |] [| east; north |]))
 
-let jansky (i : _ Observation.integral) = Nx.item [] (Quantity.value jy i.value)
+let jansky (i : (_, Nx.host) Observation.integral) = Nx.item [] (Quantity.value jy i.value)
 
 (* photutils *)
 
@@ -252,7 +252,7 @@ let unit_rule =
             (w *. pixar)
             (Nx.item [] (Quantity.value Unit.steradian i.area)));
       test "a per-cell area map windows with the data" (fun () ->
-          let g = Grid.pixels ~shape:Reference.sky_shape f64 wcs in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:Reference.sky_shape f64 wcs in
           let obs =
             Observation.v ~area:(Grid.measure g) g
               (Quantity.v brightness (image f64 Reference.sky_shape 73))
@@ -287,7 +287,7 @@ let validity =
         "invalid samples holding NaN give what zeros give, value and gradient"
         (fun () ->
           let data = image f64 Reference.sky_shape 73 in
-          let g = Grid.pixels ~shape:Reference.sky_shape f64 wcs in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:Reference.sky_shape f64 wcs in
           let with_under under =
             let data = Nx.where mask data (Nx.full_like data under) in
             Observation.v ~valid:(Nx.cast Nx.bit mask) g
@@ -320,7 +320,7 @@ let validity =
             (Nx.to_array (Nx.logical_and half mask))
             (Nx.to_array valid));
       test "the variance sums variance × w² × a²" (fun () ->
-          let g = Grid.pixels ~shape:Reference.sky_shape f64 wcs in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:Reference.sky_shape f64 wcs in
           let var = Nx.full f64 Reference.sky_shape 4. in
           let obs =
             Observation.v
@@ -345,8 +345,8 @@ let validity =
 
 (* The Guide's flux of an aperture with its sky annulus subtracted, in Jy, as a
    function of [east; north; radius] in arcseconds. *)
-let flux (type e) (obs : (Frame.icrs Direction.t, e) Observation.t)
-    (p : (float, e) Nx.t) =
+let flux (type e) (obs : ((Frame.icrs, Nx.host) Direction.t, e, Nx.host) Observation.t)
+    (p : (float, e, Nx.host) Nx.t) =
   let t = target 0.1 (-0.05) in
   let centre =
     Quantity.v Unit.arcsecond (Nx.cast f64 (Nx.slice [ Nx.R (0, 2) ] p))
@@ -416,7 +416,7 @@ let gradients =
 
 let arithmetic =
   let obs ?variance ?valid ?area seed =
-    let g = Grid.pixels ~shape:[| 4; 3 |] f64 Transform.id in
+    let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 4; 3 |] f64 Transform.id in
     Observation.v ?valid ?area
       ?variance:(Option.map (fun v -> Quantity.v Unit.(counts ** 2) v) variance)
       g
@@ -458,13 +458,13 @@ let arithmetic =
       test "grids that do not agree raise, naming the leaf" (fun () ->
           let shifted =
             Observation.v
-              (Grid.pixels ~shape:[| 4; 3 |] f64
+              (Grid.pixels ~at:Nx.Host.on ~shape:[| 4; 3 |] f64
                  (Transform.shift (one (Nx.create f64 [| 2 |] [| 0.; 0.5 |]))))
               (Quantity.v counts (image f64 [| 4; 3 |] 0))
           in
           let other =
             Observation.v
-              (Grid.pixels ~shape:[| 4; 3 |] f64
+              (Grid.pixels ~at:Nx.Host.on ~shape:[| 4; 3 |] f64
                  (Transform.shift (one (Nx.create f64 [| 2 |] [| 0.; 0.25 |]))))
               (Quantity.v counts (image f64 [| 4; 3 |] 0))
           in
@@ -476,7 +476,7 @@ let arithmetic =
           raises_match (Exn.invalid_arg ~substring:"Observation.add: the grids do not agree at base: int 3 in the first, int 2 in the second")
             (fun () ->
               Observation.add (obs 1)
-                (Observation.v (Grid.pixels ~shape:[| 4; 2 |] f64 Transform.id)
+                (Observation.v (Grid.pixels ~at:Nx.Host.on ~shape:[| 4; 2 |] f64 Transform.id)
                    (Quantity.v counts (Nx.zeros f64 [| 4; 2 |])))));
       test "areas must be equal" (fun () ->
           let area x = Quantity.v Unit.(one ** 2) (Nx.scalar f64 x) in

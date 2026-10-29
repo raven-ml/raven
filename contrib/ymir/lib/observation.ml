@@ -8,15 +8,15 @@ module Unit = Ymir_units.Unit
 
 let strf = Printf.sprintf
 
-type 'e q = (float, 'e) Nx.t Quantity.t
+type ('e, 'd) q = (float, 'e, 'd) Nx.t Quantity.t
 
 (* [data] and [variance] are 0 wherever [valid] is false. *)
-type ('w, 'e) t = {
-  grid : ('w, 'e) Grid.t;
-  data : 'e q;
-  variance : 'e q option;
-  valid : Nx.bit_t option;
-  area : 'e q option;
+type ('w, 'e, 'd) t = {
+  grid : ('w, 'e, 'd) Grid.t;
+  data : ('e, 'd) q;
+  variance : ('e, 'd) q option;
+  valid : 'd Nx.bit_t option;
+  area : ('e, 'd) q option;
 }
 
 let grid o = o.grid
@@ -52,12 +52,12 @@ let constant s =
 
 (* The unit of [g]'s measures: a steradian on the sky, the square of the plane's
    unit, which one cell's measure gives, in a plane. *)
-let measure_unit (type w e) (g : (w, e) Grid.t) =
+let measure_unit (type w e d) (g : (w, e, d) Grid.t) =
   match Grid.world g with
   | Transform.Sky _ -> Unit.steradian
   | Transform.Planar ->
       let one =
-        Grid.window ~start:(Nx.zeros Nx.int64 [| 2 |]) ~shape:[| 1; 1 |] g
+        Grid.window ~start:(Nx.zeros_like g.Grid.start) ~shape:[| 1; 1 |] g
       in
       Quantity.unit (Grid.measure one)
 
@@ -177,7 +177,7 @@ let component = Transform.component
 let cell_index rel h w =
   let batch = Array.sub (Nx.shape rel) 0 (Nx.ndim rel - 1) in
   let at k = Nx.reshape (Array.append batch [| 1; 1 |]) (component rel k) in
-  let axis n = Nx.arange Nx.int64 0 n 1 in
+  let axis n = Nx.arange_at (Nx.beside rel) Nx.int64 0 n 1 in
   ( Nx.add (at 0) (Nx.reshape [| h; 1 |] (axis h)),
     Nx.add (at 1) (Nx.reshape [| 1; w |] (axis w)) )
 
@@ -215,7 +215,7 @@ let gather rel h w x =
   let out =
     Nx.reshape
       (Array.append batch [| h; w |])
-      (Nx.take_along_axis ~axis:(-1) ~indices:idx xs)
+      (Nx.take_along_axis ~axis:(-1) idx xs)
   in
   (out, inside)
 
@@ -228,7 +228,7 @@ let slice_window rel grid' o =
   let valid =
     match o.valid with
     | Some m -> fst (gather rel h w (Nx.cast Nx.bool m))
-    | None -> snd (gather rel h w (Nx.zeros Nx.bool gs))
+    | None -> snd (gather rel h w (Nx.zeros_at (Nx.beside rel) Nx.bool gs))
   in
   {
     grid = grid';
@@ -248,11 +248,11 @@ let around x ~shape o =
 
 (* Integrals *)
 
-type 'e integral = {
-  value : 'e q;
-  variance : 'e q option;
-  area : 'e q;
-  coverage : (float, 'e) Nx.t;
+type ('e, 'd) integral = {
+  value : ('e, 'd) q;
+  variance : ('e, 'd) q option;
+  area : ('e, 'd) q;
+  coverage : (float, 'e, 'd) Nx.t;
 }
 
 (* Data whose unit has [Grid.cell⁻¹] are values per cell. *)
@@ -275,7 +275,7 @@ let check_border outside (g : _ Grid.t) =
         (logical_and (greater_equal_s rows 0L) (less_s rows b0))
         (logical_and (greater_equal_s cols 0L) (less_s cols b1)))
   in
-  let index n = Nx.arange Nx.int64 0 n 1 in
+  let index n = Nx.arange_at (Nx.beside rows) Nx.int64 0 n 1 in
   let i = Nx.reshape [| h; 1 |] (index h)
   and j = Nx.reshape [| 1; w |] (index w) in
   let edge at bound cond = Nx.logical_and (Nx.equal_s at bound) cond in
@@ -309,7 +309,7 @@ let integrate r o =
   let valid =
     match o.valid with
     | Some m -> Nx.cast Nx.bool m
-    | None -> Nx.scalar Nx.bool true
+    | None -> Nx.scalar_at (Nx.beside (payload o.data)) Nx.bool true
   in
   let du = Quantity.unit o.data in
   let a_unit, a =
@@ -365,12 +365,5 @@ let walk c o =
   let area = W.field c "area" (W.option Transform.quantity) o.area in
   { grid; data; variance; valid; area }
 
-type ('w, 'e) observation = ('w, 'e) t
 
-let ptree (type w e) () : (w, e) t Nx.Ptree.t =
-  Nx.Ptree.instantiate
-    (module struct
-      type _ t = (w, e) observation
-
-      let walk = walk
-    end)
+let ptree () = Nx.Ptree.v walk

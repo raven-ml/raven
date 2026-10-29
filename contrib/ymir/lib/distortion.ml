@@ -24,15 +24,20 @@ let entry m i j =
   Nx.slice (List.init (Nx.ndim m - 2) (fun _ -> Nx.A) @ [ Nx.I i; Nx.I j ]) m
 
 let pair v = (component v 0, component v 1)
+let both a b =
+  match Nx.broadcast_arrays [ a; b ] with
+  | [ a; b ] -> (a, b)
+  | _ -> assert false
+
 let stack2 a b =
-  let a, b = Nx.broadcasted a b in
+  let a, b = both a b in
   Nx.stack ~axis:(-1) [ a; b ]
 
 (* [matrix a b c d] is [[a; b]; [c; d]] on the last two axes. *)
 let matrix a b c d =
   let row x y = stack2 x y in
   let r0 = row a b and r1 = row c d in
-  let r0, r1 = Nx.broadcasted r0 r1 in
+  let r0, r1 = both r0 r1 in
   Nx.stack ~axis:(-2) [ r0; r1 ]
 
 let det2 m =

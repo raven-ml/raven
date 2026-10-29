@@ -97,6 +97,34 @@ let copy_in src ~offset dst ~at n =
     B.copy ~src:(B.view src ~first:offset ~length:n)
       ~dst:(B.view dst ~first:at ~length:n)
 
+(* [tensor dt shape b] is the host value of [dt] and [shape] over the bytes of
+   [b], a host buffer, or over a host copy of them where [b] lies elsewhere. *)
+let tensor dt shape b =
+  let b =
+    if Rig.equal (B.device b) Rig.host then b
+    else begin
+      let h = host_bytes (B.length b) in
+      copy_in b ~offset:0 h ~at:0 (B.length b);
+      h
+    end
+  in
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array shape) in
+  Nx.Repr.of_array Nx.Host.v (Nx_array.v dt layout b)
+
+(* [bytes t] is a fresh host buffer of [t]'s elements in C order. *)
+let bytes (t : (int, Nx.int8_unsigned_elt, Nx.host) Nx.t) =
+  let n = Nx.numel t in
+  let h = host_bytes n in
+  Nx.Repr.read t (fun a ->
+      let a =
+        if Nx_array.Layout.is_contiguous (Nx_array.layout a) then a
+        else Nx_array.copy a
+      in
+      copy_in (Nx_array.buffer a)
+        ~offset:(Nx_array.Layout.offset (Nx_array.layout a))
+        h ~at:0 n);
+  h
+
 let read_string src ~offset n =
   let b = host_bytes n in
   copy_in src ~offset b ~at:0 n;
@@ -284,18 +312,7 @@ let read path =
   | Error e -> Error e
   | Ok src -> catch (fun () -> walk ~name:path src)
 
-(* The C-order bytes of [t] in a host buffer: its own storage on the host, a
-   host copy otherwise. *)
-let buffer_of (t : (int, Nx.uint8_elt) Nx.t) =
-  let b = Nx.to_buffer t in
-  if Rig.equal (B.device b) Rig.host then b
-  else begin
-    let h = host_bytes (B.length b) in
-    B.copy ~src:b ~dst:h;
-    h
-  end
-
-let of_bytes ~name t = catch (fun () -> walk ~name (buffer_of t))
+let of_bytes ~name t = catch (fun () -> walk ~name (bytes t))
 
 (* Data *)
 
@@ -303,8 +320,7 @@ let store h = Once.get h.data
 
 let data h =
   let s = store h in
-  Nx.of_buffer Nx.uint8 [| s.size |]
-    (B.view s.buffer ~first:s.offset ~length:s.size)
+  tensor Nx.uint8 [| s.size |] (B.view s.buffer ~first:s.offset ~length:s.size)
 
 (* Lookup *)
 

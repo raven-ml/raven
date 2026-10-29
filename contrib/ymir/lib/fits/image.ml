@@ -5,7 +5,15 @@
 
 open Err
 module B = Rig.Buffer
-module S = Nx_dtype.Scalar
+module S = struct
+  type t = Nx.Dtype.any
+
+  let of_dtype dt = Nx.Dtype.Any dt
+  let equal (Nx.Dtype.Any a) (Nx.Dtype.Any b) = Nx.Dtype.equal a b
+  let to_string (Nx.Dtype.Any a) = Nx.Dtype.name a
+end
+
+module D = Nx.Dtype
 
 let strf = Printf.sprintf
 
@@ -14,59 +22,59 @@ let strf = Printf.sprintf
 (* The dtypes that hold every value of an element exactly, in the order an
    error lists them. *)
 let holders : S.t -> S.t list = function
-  | UInt8 ->
+  | D.Any D.Uint8 ->
       [
-        UInt8;
-        Int16;
-        UInt16;
-        Int32;
-        UInt32;
-        Int64;
-        UInt64;
-        Float16;
-        BFloat16;
-        Float32;
-        Float64;
-        Complex64;
-        Complex128;
+        D.Any D.Uint8;
+        D.Any D.Int16;
+        D.Any D.Uint16;
+        D.Any D.Int32;
+        D.Any D.Uint32;
+        D.Any D.Int64;
+        D.Any D.Uint64;
+        D.Any D.Float16;
+        D.Any D.Bfloat16;
+        D.Any D.Float32;
+        D.Any D.Float64;
+        D.Any D.Complex64;
+        D.Any D.Complex128;
       ]
-  | Int8 ->
+  | D.Any D.Int8 ->
       [
-        Int8;
-        Int16;
-        Int32;
-        Int64;
-        Float16;
-        BFloat16;
-        Float32;
-        Float64;
-        Complex64;
-        Complex128;
+        D.Any D.Int8;
+        D.Any D.Int16;
+        D.Any D.Int32;
+        D.Any D.Int64;
+        D.Any D.Float16;
+        D.Any D.Bfloat16;
+        D.Any D.Float32;
+        D.Any D.Float64;
+        D.Any D.Complex64;
+        D.Any D.Complex128;
       ]
-  | Int16 -> [ Int16; Int32; Int64; Float32; Float64; Complex64; Complex128 ]
-  | UInt16 ->
+  | D.Any D.Int16 -> [ D.Any D.Int16; D.Any D.Int32; D.Any D.Int64; D.Any D.Float32; D.Any D.Float64; D.Any D.Complex64; D.Any D.Complex128 ]
+  | D.Any D.Uint16 ->
       [
-        UInt16;
-        Int32;
-        UInt32;
-        Int64;
-        UInt64;
-        Float32;
-        Float64;
-        Complex64;
-        Complex128;
+        D.Any D.Uint16;
+        D.Any D.Int32;
+        D.Any D.Uint32;
+        D.Any D.Int64;
+        D.Any D.Uint64;
+        D.Any D.Float32;
+        D.Any D.Float64;
+        D.Any D.Complex64;
+        D.Any D.Complex128;
       ]
-  | Int32 -> [ Int32; Int64; Float64; Complex128 ]
-  | UInt32 -> [ UInt32; Int64; UInt64; Float64; Complex128 ]
-  | Int64 -> [ Int64 ]
-  | UInt64 -> [ UInt64 ]
-  | Float32 -> [ Float32; Float64; Complex64; Complex128 ]
-  | Float64 -> [ Float64; Complex128 ]
-  | Complex64 -> [ Complex64; Complex128 ]
+  | D.Any D.Int32 -> [ D.Any D.Int32; D.Any D.Int64; D.Any D.Float64; D.Any D.Complex128 ]
+  | D.Any D.Uint32 -> [ D.Any D.Uint32; D.Any D.Int64; D.Any D.Uint64; D.Any D.Float64; D.Any D.Complex128 ]
+  | D.Any D.Int64 -> [ D.Any D.Int64 ]
+  | D.Any D.Uint64 -> [ D.Any D.Uint64 ]
+  | D.Any D.Float32 -> [ D.Any D.Float32; D.Any D.Float64; D.Any D.Complex64; D.Any D.Complex128 ]
+  | D.Any D.Float64 -> [ D.Any D.Float64; D.Any D.Complex128 ]
+  | D.Any D.Complex64 -> [ D.Any D.Complex64; D.Any D.Complex128 ]
   | s -> [ s ]
 
 let is_complex : S.t -> bool = function
-  | Complex64 | Complex128 -> true
+  | D.Any D.Complex64 | D.Any D.Complex128 -> true
   | _ -> false
 
 let or_list = function
@@ -89,7 +97,7 @@ let check_holds place element (dtype : S.t) =
 
 (* Byte order *)
 
-let stored_dtype bitpix : Nx.packed =
+let stored_dtype bitpix : Nx.host Nx.packed =
   match bitpix with
   | 8 -> Nx.P (Nx.zeros Nx.uint8 [| 0 |])
   | 16 -> Nx.P (Nx.zeros Nx.int16 [| 0 |])
@@ -101,23 +109,22 @@ let stored_dtype bitpix : Nx.packed =
 (* [of_big_endian dtype shape bytes] reads the C-order elements of [dtype]
    held big-endian in the host buffer [bytes]: one pass that reverses each
    element's bytes on a little-endian machine. *)
-let of_big_endian (type a b) (dtype : (a, b) Nx.dtype) shape bytes : (a, b) Nx.t
+let of_big_endian (type a b) (dtype : (a, b) Nx.dtype) shape bytes : (a, b, Nx.host) Nx.t
     =
-  let w = Nx_dtype.itemsize dtype in
+  let w = (Nx.Dtype.bytes dtype 1) in
   let n = B.length bytes / w in
   if w = 1 then
-    Nx.reshape shape (Nx.bitcast dtype (Nx.of_buffer Nx.uint8 [| n |] bytes))
+    Nx.reshape shape (Nx.bitcast dtype (Hdu.tensor Nx.uint8 [| n |] bytes))
   else
-    let u = Nx.of_buffer Nx.uint8 [| n; w |] bytes in
+    let u = Hdu.tensor Nx.uint8 [| n; w |] bytes in
     let u = if Sys.big_endian then u else Nx.flip ~axes:[ 1 ] u in
     Nx.reshape shape (Nx.bitcast dtype u)
 
 (* [to_big_endian t] is a host buffer of [t]'s elements in C order, each
    big-endian. *)
-let to_big_endian (type a b) (t : (a, b) Nx.t) : B.t =
-  let t = Nx.contiguous (Nx.place Nx.Placement.host t) in
-  let w = Nx_dtype.itemsize (Nx.dtype t) in
-  let src = Nx.to_buffer (Nx.bitcast Nx.uint8 t) in
+let to_big_endian (type a b) (t : (a, b, Nx.host) Nx.t) : B.t =
+  let w = Nx.Dtype.bytes (Nx.dtype t) 1 in
+  let src = Hdu.bytes (Nx.bitcast Nx.uint8 t) in
   if w = 1 || Sys.big_endian then src
   else begin
     (* each element's bytes reversed, in one pass that allocates nothing *)
@@ -185,20 +192,20 @@ let max_rank = 32
    signed for bytes. *)
 let offset_element bitpix : (string * S.t) option =
   match bitpix with
-  | 8 -> Some ("-128", Int8)
-  | 16 -> Some ("32768", UInt16)
-  | 32 -> Some ("2147483648", UInt32)
-  | 64 -> Some ("9223372036854775808", UInt64)
+  | 8 -> Some ("-128", D.Any D.Int8)
+  | 16 -> Some ("32768", D.Any D.Uint16)
+  | 32 -> Some ("2147483648", D.Any D.Uint32)
+  | 64 -> Some ("9223372036854775808", D.Any D.Uint64)
   | _ -> None
 
 let own_element bitpix : S.t =
   match bitpix with
-  | 8 -> UInt8
-  | 16 -> Int16
-  | 32 -> Int32
-  | 64 -> Int64
-  | -32 -> Float32
-  | _ -> Float64
+  | 8 -> D.Any D.Uint8
+  | 16 -> D.Any D.Int16
+  | 32 -> D.Any D.Int32
+  | 64 -> D.Any D.Int64
+  | -32 -> D.Any D.Float32
+  | _ -> D.Any D.Float64
 
 let number h k ~default =
   match Header.find_struct Value.text k h with
@@ -379,7 +386,7 @@ let read_plain t store bounds =
   (host, out)
 
 (* The stored numbers of the window, in BITPIX's own format. *)
-let stored t hdu bounds : Nx.packed =
+let stored t hdu bounds : Nx.host Nx.packed =
   match t.storage with
   | Plain ->
       let host, out = read_plain t (Hdu.store hdu) bounds in
@@ -389,18 +396,20 @@ let stored t hdu bounds : Nx.packed =
 
 (* The stored numbers as the element: the offsets of Table 11 added, modulo
    the width, which flips the sign bit. *)
-let with_offset element (Nx.P s) : Nx.packed =
+let with_offset element (Nx.P s) : Nx.host Nx.packed =
   match ((element : S.t), Nx.dtype s) with
-  | Int8, UInt8 -> Nx.P (Nx.add_s (Nx.bitcast Nx.int8 s) (-128))
-  | UInt16, Int16 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint16 s) 32768)
-  | UInt32, Int32 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint32 s) Int32.min_int)
-  | UInt64, Int64 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint64 s) Int64.min_int)
+  | D.Any D.Int8, D.Uint8 -> Nx.P (Nx.add_s (Nx.bitcast Nx.int8 s) (-128))
+  | D.Any D.Uint16, D.Int16 -> Nx.P (Nx.add_s (Nx.bitcast Nx.uint16 s) 32768)
+  | D.Any D.Uint32, D.Int32 ->
+      Nx.P (Nx.add_s (Nx.bitcast Nx.uint32 s) Int32.min_int)
+  | D.Any D.Uint64, D.Int64 ->
+      Nx.P (Nx.add_s (Nx.bitcast Nx.uint64 s) Int64.min_int)
   | _ -> Nx.P s
 
 let as_element t s = with_offset t.element s
 
 let raw (type a b) ?window (dtype : (a, b) Nx.dtype) hdu :
-    ((a, b) Nx.t, string) result =
+    ((a, b, Nx.host) Nx.t, string) result =
   catch (fun () ->
       let t = ok_or_fail (of_hdu hdu) in
       let bounds = window_bounds t window in
@@ -410,10 +419,10 @@ let raw (type a b) ?window (dtype : (a, b) Nx.dtype) hdu :
 
 (* [undefined t s] is where the stored numbers [s] are undefined: BLANK on an
    integer format, NaN on a float one. *)
-let undefined t (Nx.P s) : Nx.bool_t option =
-  let blank (type a b) (s : (a, b) Nx.t) v : Nx.bool_t =
+let undefined t (Nx.P s) : _ Nx.bool_t option =
+  let blank (type a b) (s : (a, b, Nx.host) Nx.t) v : _ Nx.bool_t =
     match Nx.dtype s with
-    | UInt8 -> Nx.equal_s s (Int64.to_int v)
+    | Uint8 -> Nx.equal_s s (Int64.to_int v)
     | Int16 -> Nx.equal_s s (Int64.to_int v)
     | Int32 -> Nx.equal_s s (Int64.to_int32 v)
     | Int64 -> Nx.equal_s s v
@@ -422,7 +431,7 @@ let undefined t (Nx.P s) : Nx.bool_t option =
   if t.bitpix < 0 then Some (Nx.isnan s) else Option.map (blank s) t.blank
 
 let values (type b) ?window (dtype : (float, b) Nx.dtype) hdu :
-    ((float, b) Nx.t, string) result =
+    ((float, b, Nx.host) Nx.t, string) result =
   catch (fun () ->
       let t = ok_or_fail (of_hdu hdu) in
       let bounds = window_bounds t window in
@@ -468,34 +477,35 @@ let validity ?window hdu =
 let format_of (type a b) (dtype : (a, b) Nx.dtype) : int * string option =
   let no cast =
     invalid_arg
-      (strf "Fits.Image: FITS has no image of %s; %s" (Nx_dtype.to_string dtype)
+      (strf "Fits.Image: FITS has no image of %s; %s" (Nx.Dtype.name dtype)
          cast)
   in
   match dtype with
-  | UInt8 -> (8, None)
+  | Uint8 -> (8, None)
   | Int8 -> (8, Some "-128")
   | Int16 -> (16, None)
-  | UInt16 -> (16, Some "32768")
+  | Uint16 -> (16, Some "32768")
   | Int32 -> (32, None)
-  | UInt32 -> (32, Some "2147483648")
+  | Uint32 -> (32, Some "2147483648")
   | Int64 -> (64, None)
-  | UInt64 -> (64, Some "9223372036854775808")
+  | Uint64 -> (64, Some "9223372036854775808")
   | Float32 -> (-32, None)
   | Float64 -> (-64, None)
   | Bool | Bit -> no "cast it to uint8"
   | Int4 -> no "cast it to int8"
-  | UInt4 -> no "cast it to uint8"
-  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 -> no "cast it to float32"
+  | Uint4 -> no "cast it to uint8"
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
+      no "cast it to float32"
   | Complex64 | Complex128 ->
       no "store its real and imaginary parts as two images"
 
 (* The stored numbers of an element: the offset subtracted, modulo the width. *)
-let to_stored (type a b) (t : (a, b) Nx.t) : Nx.packed =
+let to_stored (type a b) (t : (a, b, Nx.host) Nx.t) : Nx.host Nx.packed =
   match Nx.dtype t with
   | Int8 -> Nx.P (Nx.bitcast Nx.uint8 (Nx.add_s t (-128)))
-  | UInt16 -> Nx.P (Nx.bitcast Nx.int16 (Nx.add_s t 32768))
-  | UInt32 -> Nx.P (Nx.bitcast Nx.int32 (Nx.add_s t Int32.min_int))
-  | UInt64 -> Nx.P (Nx.bitcast Nx.int64 (Nx.add_s t Int64.min_int))
+  | Uint16 -> Nx.P (Nx.bitcast Nx.int16 (Nx.add_s t 32768))
+  | Uint32 -> Nx.P (Nx.bitcast Nx.int32 (Nx.add_s t Int32.min_int))
+  | Uint64 -> Nx.P (Nx.bitcast Nx.int64 (Nx.add_s t Int64.min_int))
   | _ -> Nx.P t
 
 let encode t =
@@ -507,7 +517,7 @@ let slab_bytes = 1 lsl 22
 
 (* [each_slab t f] calls [f] with the big-endian elements of [t]'s slabs
    along its leading axis, in order. *)
-let each_slab (type a b) (t : (a, b) Nx.t) f =
+let each_slab (type a b) (t : (a, b, Nx.host) Nx.t) f =
   let shape = Nx.shape t in
   let lead = shape.(0) in
   let row = Nx.nbytes t / Int.max 1 lead in
@@ -647,7 +657,7 @@ let check_shape fn t =
     invalid_arg
       (strf "Fits.Image.%s: a scalar is no image; reshape it to [|1|]" fn)
 
-let hdu ?tiles header (t : ('a, 'b) Nx.t) =
+let hdu ?tiles header (t : ('a, 'b, Nx.host) Nx.t) =
   let bitpix, bzero = format_of (Nx.dtype t) in
   check_shape "hdu" t;
   let shape = Nx.shape t in
@@ -668,7 +678,7 @@ let hdu ?tiles header (t : ('a, 'b) Nx.t) =
               (strf
                  "Fits.Image.hdu: cfitsio-based tools cannot read 64-bit \
                   integer tiles; write the %s image without ~tiles"
-                 (Nx_dtype.to_string (Nx.dtype t)))
+                 (Nx.Dtype.name (Nx.dtype t)))
         | _ -> Tiles.Gzip_2
       in
       tiled header t ~bitpix ~others ~tile (Lossless codec)
@@ -685,7 +695,7 @@ let hdu ?tiles header (t : ('a, 'b) Nx.t) =
         ~stream:(Once.of_value (plain_stream header t))
         header data
 
-let quantized (type b) ?tiles q header (t : (float, b) Nx.t) =
+let quantized (type b) ?tiles q header (t : (float, b, Nx.host) Nx.t) =
   if not (Float.is_finite q && q > 0.) then
     invalid_arg (strf "Fits.Image.quantized: %g is not a positive step" q);
   check_shape "quantized" t;
@@ -698,7 +708,7 @@ let quantized (type b) ?tiles q header (t : (float, b) Nx.t) =
           (strf
              "Fits.Image.quantized: FITS quantizes float32 and float64; cast \
               the %s image to float32"
-             (Nx_dtype.to_string d))
+             (Nx.Dtype.name d))
   in
   let shape = Nx.shape t in
   let tiles =

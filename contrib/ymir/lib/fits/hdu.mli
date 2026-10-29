@@ -54,7 +54,7 @@ and sink = { append : Rig.Buffer.t -> unit; patch : int -> string -> unit }
 val header : t -> Header.t
 val name : t -> string
 val digest : t -> string
-val data : t -> (int, Nx.uint8_elt) Nx.t
+val data : t -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t
 
 val structure : t -> Header.t
 (** [structure h] is a header holding [h]'s structure, without encoding a
@@ -75,11 +75,7 @@ val derive : 'a Type.Id.t -> (t -> 'a) -> t -> 'a
 
 val read : string -> (t list, string) result
 val of_bytes :
-  name:string -> (int, Nx.uint8_elt) Nx.t -> (t list, string) result
-
-val buffer_of : (int, Nx.uint8_elt) Nx.t -> Rig.Buffer.t
-(** [buffer_of t] is the C-order bytes of [t] in a host buffer: [t]'s own
-    storage on the host, a host copy otherwise. *)
+  name:string -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> (t list, string) result
 
 (** {1:lookup Lookup} *)
 
@@ -111,6 +107,15 @@ val copy_in :
   Rig.Buffer.t -> offset:int -> Rig.Buffer.t -> at:int -> int -> unit
 (** [copy_in src ~offset dst ~at n] copies [n] bytes from byte [offset] of
     [src] to byte [at] of the host buffer [dst]. *)
+
+val tensor :
+  ('a, 'b) Nx.dtype -> int array -> Rig.Buffer.t -> ('a, 'b, Nx.host) Nx.t
+(** [tensor dt shape b] is the host value of [dt] and [shape] over the bytes
+    of [b] in C order: [b]'s own memory on the host, a host copy of it
+    elsewhere. [b] must not be written afterwards. *)
+
+val bytes : (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> Rig.Buffer.t
+(** [bytes t] is a new host buffer of [t]'s elements in C order. *)
 
 val read_string : Rig.Buffer.t -> offset:int -> int -> string
 (** [read_string src ~offset n] is the [n] bytes of [src] from byte

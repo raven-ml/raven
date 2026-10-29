@@ -10,34 +10,35 @@
     triples are their components 0, 1 and 2 ({!components}), each of the
     batch shape. *)
 
-type 'f t = { frame : 'f Frame.t; xyz : (float, Nx.float64_elt) Nx.t }
+type ('f, 'd) t = { frame : 'f Frame.t; xyz : (float, Nx.float64_elt, 'd) Nx.t }
 (** {!Ymir.Direction.t}: [xyz] is [[...; 3]]. *)
 
 val lonlat :
   'f Frame.t ->
-  lon:(float, Nx.float64_elt) Nx.t Ymir_units.Quantity.t ->
-  lat:(float, Nx.float64_elt) Nx.t Ymir_units.Quantity.t ->
-  'f t
+  lon:(float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t ->
+  lat:(float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t ->
+  ('f, 'd) t
 
-val of_xyz : 'f Frame.t -> (float, Nx.float64_elt) Nx.t -> 'f t
-val frame : 'f t -> 'f Frame.t
-val xyz : 'f t -> (float, Nx.float64_elt) Nx.t
-val lon : 'f t -> (float, Nx.float64_elt) Nx.t Ymir_units.Quantity.t
-val lat : 'f t -> (float, Nx.float64_elt) Nx.t Ymir_units.Quantity.t
-val rotate : ('b Frame.fixed as 'g) Frame.t -> 'a Frame.fixed t -> 'g t
+val of_xyz : 'f Frame.t -> (float, Nx.float64_elt, 'd) Nx.t -> ('f, 'd) t
+val frame : ('f, 'd) t -> 'f Frame.t
+val xyz : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t
+val lon : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
+val lat : ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
+val rotate : ('b Frame.fixed as 'g) Frame.t -> ('a Frame.fixed, 'd) t -> ('g, 'd) t
 
 val separation :
-  'f t -> 'f t -> (float, Nx.float64_elt) Nx.t Ymir_units.Quantity.t
+  ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
 
 val position_angle :
-  'f t -> 'f t -> (float, Nx.float64_elt) Nx.t Ymir_units.Quantity.t
+  ('f, 'd) t -> ('f, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Ymir_units.Quantity.t
 
-val ptree : unit -> 'f t Nx.Ptree.t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('f, 'd) t -> ('f, 'e) t
+val ptree : unit -> (('f, 'd) t, 'd) Nx.Ptree.t
 
 (** {1:vectors Vectors} *)
 
 val rows :
-  string -> (float, Nx.float64_elt) Nx.t -> (float, Nx.float64_elt) Nx.t
+  string -> (float, Nx.float64_elt, 'd) Nx.t -> (float, Nx.float64_elt, 'd) Nx.t
 (** [rows what v] is [v], [[...; 3]], with each row times the power of two
     that brings its largest component into \[2, 4). The scaling is exact and
     carries no derivative, and squares and cross products of a scaled finite
@@ -47,25 +48,25 @@ val rows :
     component, naming [what], as in
     ["Direction.lon: the vector at [3] is infinite"]. *)
 
-val components : ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t * ('a, 'b) Nx.t
+val components : ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t
 (** [components v] is [v]'s components 0, 1 and 2 on its last axis. *)
 
 val sub3 :
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t * ('e, 'f) Nx.t ->
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t * ('e, 'f) Nx.t ->
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t * ('e, 'f) Nx.t
+  ('a, 'b, 's) Nx.t * ('c, 'd, 's) Nx.t * ('e, 'f, 's) Nx.t ->
+  ('a, 'b, 's) Nx.t * ('c, 'd, 's) Nx.t * ('e, 'f, 's) Nx.t ->
+  ('a, 'b, 's) Nx.t * ('c, 'd, 's) Nx.t * ('e, 'f, 's) Nx.t
 (** [sub3 a b] is [a - b]. *)
 
 val dot :
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t * ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t * ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t
 (** [dot a b] is [a · b]. *)
 
 val cross :
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t * ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t * ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t * ('a, 'b) Nx.t * ('a, 'b) Nx.t
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t * ('a, 'b, 'd) Nx.t
 (** [cross a b] is [a × b]. *)
 
 val at : int array -> string

@@ -16,7 +16,7 @@
 open Ymir
 open Jera
 
-type vector = (float, Nx.float64_elt) Nx.t
+type vector = (float, Nx.float64_elt, Nx.host) Nx.t
 
 (* theta is the minimum [p]; cov is G C Gᵀ and fisher (JᵀJ)⁻¹, both [p; p]. *)
 type fit = {

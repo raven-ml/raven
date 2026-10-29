@@ -12,23 +12,23 @@ let cell = Unit.symbol "cell"
 (* [measured] counts the transform's first stages, those of the world the
    grid was built with, in which its measures are taken: {!map_world} appends
    stages and keeps the measures. *)
-type ('w, 'e) t = {
+type ('w, 'e, 'd) t = {
   dtype : (float, 'e) Nx.dtype;
   base : int array;
   shape : int array;
-  start : Nx.int64_t;
-  transform : (Transform.plane, 'w) Transform.t;
+  start : 'd Nx.int64_t;
+  transform : ('d Transform.plane, 'w, 'd) Transform.t;
   measured : int;
 }
 
-type ('w, 'e) kind =
+type ('w, 'e, 'd) kind =
   | Pixels : {
       base : int array;
       shape : int array;
-      start : Nx.int64_t;
-      transform : (Transform.plane, 'w) Transform.t;
+      start : 'd Nx.int64_t;
+      transform : ('d Transform.plane, 'w, 'd) Transform.t;
     }
-      -> ('w, 'e) kind
+      -> ('w, 'e, 'd) kind
 
 let kind g =
   Pixels
@@ -43,13 +43,13 @@ let check_shape fn what s =
       (Format.asprintf "%s: %s %a is not two non-negative sizes" fn what
          pp_shape s)
 
-let pixels ~shape dtype transform =
+let pixels ~at ~shape dtype transform =
   check_shape "Grid.pixels" "~shape" shape;
   {
     dtype;
     base = Array.copy shape;
     shape = Array.copy shape;
-    start = Nx.zeros Nx.int64 [| 2 |];
+    start = Nx.zeros_at at Nx.int64 [| 2 |];
     transform;
     measured = Transform.length transform;
   }
@@ -70,7 +70,7 @@ let lattice start h w offset =
   let s = Nx.cast Nx.float64 start in
   let batch = Array.sub (Nx.shape s) 0 (Nx.ndim s - 1) in
   let at k = Nx.reshape (Array.append batch [| 1; 1 |]) (component s k) in
-  let axis n = Nx.cast Nx.float64 (Nx.arange Nx.int32 0 n 1) in
+  let axis n = Nx.cast Nx.float64 (Nx.arange_at (Nx.beside s) Nx.int32 0 n 1) in
   let rows = Nx.add (at 0) (Nx.reshape [| h; 1 |] (axis h)) in
   let cols = Nx.add (at 1) (Nx.reshape [| 1; w |] (axis w)) in
   let shift v = if offset = 0. then v else Nx.add_s v offset in
@@ -218,15 +218,8 @@ let walk c g =
   in
   { g with base; shape; start; transform; measured }
 
-type ('w, 'e) grid = ('w, 'e) t
 
-let ptree (type w e) () : (w, e) t Nx.Ptree.t =
-  Nx.Ptree.instantiate
-    (module struct
-      type _ t = (w, e) grid
-
-      let walk = walk
-    end)
+let ptree () = Nx.Ptree.v walk
 
 (* Agreement
 
@@ -245,7 +238,7 @@ let paths g =
 
 (* [same a b] is where the leaves [a] and [b] hold the same number. *)
 let same (Nx.P a) (Nx.P b) =
-  if Nx_dtype.is Nx_dtype.Float (Nx.dtype a) then
+  if Nx.Dtype.is Nx.Dtype.Float (Nx.dtype a) then
     let a = Nx.cast Nx.float64 a and b = Nx.cast Nx.float64 b in
     Nx.logical_or (Nx.equal a b) (Nx.logical_and (Nx.isnan a) (Nx.isnan b))
   else Nx.equal (Nx.cast Nx.int64 a) (Nx.cast Nx.int64 b)
@@ -267,8 +260,9 @@ let compare a b =
            (paths a))
 
 let agree a b =
+  let on = Nx.beside a.start in
   match compare a b with
-  | Error _ -> Nx.scalar Nx.bool false
+  | Error _ -> Nx.scalar_at on Nx.bool false
   | Ok leaves ->
       List.fold_left
         (fun acc (eq, core, _, _) ->
@@ -278,7 +272,7 @@ let agree a b =
             else Nx.all ~axes:(List.init core (fun k -> n - 1 - k)) eq
           in
           Nx.logical_and acc eq)
-        (Nx.scalar Nx.bool true) leaves
+        (Nx.scalar_at on Nx.bool true) leaves
 
 let index_text i =
   "(" ^ String.concat ", " (Array.to_list (Array.map string_of_int i)) ^ ")"

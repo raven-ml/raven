@@ -52,7 +52,7 @@ let pp_edit ppf = function
   | Remove k -> Format.fprintf ppf "remove %s" k
 
 let edits = list (Testable.make ~pp:pp_edit ~equal:( = ))
-let read ?alt f h = ok (Wcs.read ?alt f (keywords h))
+let read ?alt f h = ok (Wcs.read ?alt ~at:Nx.Host.on f (keywords h))
 let write ?alt ?window t h = ok (Wcs.write ?alt ?window t (keywords h))
 
 (* [stages t] is [t]'s skeleton and each leaf's bits: equal for equal stages,
@@ -189,7 +189,7 @@ let set_i k v h = Fits.Header.set Fits.Value.int k v h
 let set_t k v h = Fits.Header.set Fits.Value.text k v h
 
 let errors =
-  let read_error h = require_error (Wcs.read Frame.icrs (keywords h)) in
+  let read_error h = require_error (Wcs.read ~at:Nx.Host.on Frame.icrs (keywords h)) in
   group "Errors"
     [
       test "a frame other than the caller's names the frame to read with"
@@ -197,7 +197,7 @@ let errors =
           equal string
             "SCI: ICRS; the caller expects galactic. Read with Frame.icrs."
             (require_error
-               (Wcs.read Frame.galactic
+               (Wcs.read ~at:Nx.Host.on Frame.galactic
                   (keywords (edit [ set_s "EXTNAME" "SCI" ])))));
       cases ~name:fst "unread descriptions"
         [

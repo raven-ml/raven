@@ -97,7 +97,7 @@ type sample = {
   z_hel : Sn.vector;
   m_b : Sn.vector;
   ceph : Sn.vector;
-  calibrator : (bool, Nx.bool_elt) Nx.t;
+  calibrator : (bool, Nx.bool_elt, Nx.host) Nx.t;
   chol : Sn.vector;
 }
 

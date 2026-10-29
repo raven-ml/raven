@@ -11,7 +11,7 @@ type layout = Array of int array | Lists | Text of int array
 
 type column = {
   name : string;
-  element : Nx_dtype.Scalar.t;
+  element : Nx.Dtype.any;
   layout : layout;
   scaled : bool;
   cards : Header.t;
@@ -31,24 +31,24 @@ val raw :
   ('a, 'b) Nx.dtype ->
   string ->
   Hdu.t ->
-  (('a, 'b) Nx.t, string) result
+  (('a, 'b, Nx.host) Nx.t, string) result
 
 val values :
   ?rows:int * int ->
   (float, 'b) Nx.dtype ->
   string ->
   Hdu.t ->
-  ((float, 'b) Nx.t, string) result
+  ((float, 'b, Nx.host) Nx.t, string) result
 
 val ragged :
   ?rows:int * int ->
   ('a, 'b) Nx.dtype ->
   string ->
   Hdu.t ->
-  (('a, 'b) Nx_ragged.t, string) result
+  (('a, 'b, Nx.host) Nx_ragged.t, string) result
 
 val validity :
-  ?rows:int * int -> string -> Hdu.t -> (Nx.bit_t option, string) result
+  ?rows:int * int -> string -> Hdu.t -> (Nx.host Nx.bit_t option, string) result
 
 val unit :
   scope:string -> string -> Hdu.t -> (Ymir_units.Unit.t option, string) result
@@ -57,13 +57,13 @@ val unit :
 
 (** {!Ymir_fits.Fits.Table.data}. *)
 type data =
-  | Array of { values : Nx.packed; validity : Nx.bit_t option }
+  | Array of { values : Nx.host Nx.packed; validity : Nx.host Nx.bit_t option }
   | Lists : {
-      values : ('a, 'b) Nx_ragged.t;
-      validity : Nx.bit_t option;
+      values : ('a, 'b, Nx.host) Nx_ragged.t;
+      validity : Nx.host Nx.bit_t option;
     }
       -> data
-  | Text of (int, Nx.uint8_elt) Nx_ragged.t
+  | Text of (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
 
 val read :
   ?rows:int * int -> Hdu.t -> ((string * Header.t * data) list, string) result

@@ -409,7 +409,7 @@ let exact_factor ts =
 (* [ratio_error fn d u w q e] is the message of [fn] when the conversion from
    [u] to [w], of exact quotient [q], has no value in [d] for the reason [e]. *)
 let ratio_error (type a b) fn (d : (a, b) Nx.dtype) u w q (e : Exact.error) =
-  let dt = Nx_dtype.to_string d in
+  let dt = Nx.Dtype.name d in
   let factor which =
     strf "%s: the factor from %s to %s is %s, %s" fn u.text w.text
       (unchecked_text q) which
@@ -624,15 +624,9 @@ let of_string s =
 
 (* Structure *)
 
-module Walked = struct
-  type nonrec _ t = t
-
-  let walk c u =
-    Nx.Ptree.Walk.case c u.text;
-    u
-end
-
-let ptree : t Nx.Ptree.t = Nx.Ptree.instantiate (module Walked)
+let walk c u =
+  Nx.Ptree.Walk.case c u.text;
+  u
 
 (* The SI. The operators shadow integer arithmetic from here on. *)
 

@@ -19,7 +19,7 @@ dune exec contrib/ymir/examples/07-fits-wcs/main.exe
 | Function                       | Purpose                                    |
 | ------------------------------ | ------------------------------------------ |
 | `Fits.Header.of_string`        | A header from 80-byte records or lines     |
-| `Wcs.read f kw`                | Pixel indices to directions in frame `f`   |
+| `Wcs.read ~at f kw`            | Pixel indices to directions in frame `f`   |
 | `Wcs.write ?window t kw`       | The keyword edits that spell `t`           |
 | `Grid.pixels`, `Observation.v` | An image's grid and data as an observation |
 

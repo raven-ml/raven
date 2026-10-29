@@ -64,7 +64,7 @@ let photutils =
       cases ~name "variances are the sums of w² PIXAR_SR² ERR²" indexed
         (fun ((_, (a : Nircam.aperture)) as t) ->
           let c, s = sums f64 t in
-          let var (i : _ Observation.integral) =
+          let var (i : (_, Nx.host) Observation.integral) =
             let v = Option.get i.variance in
             Nx.item [] (Quantity.value (Unit.( ** ) mjy 2) v)
           in
@@ -96,7 +96,7 @@ let windows =
    the circle's area, in MJy, as a function of [east; north; radius] in
    arcseconds. *)
 let flux (type e) (a : Nircam.aperture)
-    (obs : (Frame.icrs Direction.t, e) Observation.t) (p : (float, e) Nx.t) =
+    (obs : ((Frame.icrs, Nx.host) Direction.t, e, Nx.host) Observation.t) (p : (float, e, Nx.host) Nx.t) =
   let dtype = Nx.dtype p in
   let centre = arcsec (Nx.cast f64 (Nx.slice [ Nx.R (0, 2) ] p)) in
   let at = Transform.(about (target a) >> shift centre) in

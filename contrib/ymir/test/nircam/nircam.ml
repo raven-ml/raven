@@ -74,7 +74,7 @@ type errors = { whole : worst; partial : worst; variance : worst }
 (* [sums obs] is, over the circle and annulus of every aperture, the largest
    error over [Σ |data · w · PIXAR_SR|] of the sums and the largest relative
    difference of the variances. *)
-let sums (type e) (obs : (Frame.icrs Direction.t, e) Observation.t) =
+let sums (type e) (obs : ((Frame.icrs, Nx.host) Direction.t, e, Nx.host) Observation.t) =
   let data = Observation.data obs in
   let dtype = Nx.dtype (Quantity.value (Quantity.unit data) data) in
   let e = { whole = worst (); partial = worst (); variance = worst () } in
@@ -144,7 +144,7 @@ let area_convention obs =
    circle's area, in MJy, as a function of [east; north; radius] in
    arcseconds. *)
 let flux (type e) (a : Nircam.aperture)
-    (stamp : (Frame.icrs Direction.t, e) Observation.t) (p : (float, e) Nx.t) =
+    (stamp : ((Frame.icrs, Nx.host) Direction.t, e, Nx.host) Observation.t) (p : (float, e, Nx.host) Nx.t) =
   let dtype = Nx.dtype p in
   let centre = arcsec (Nx.cast f64 (Nx.slice [ Nx.R (0, 2) ] p)) in
   let at = Transform.(about (target a) >> shift centre) in

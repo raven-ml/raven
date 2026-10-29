@@ -17,7 +17,7 @@ let counts = Unit.(symbol "electron" / Grid.cell)
 let pi = Float.pi
 
 (* A grid whose world is its own pixel coordinates. *)
-let plane_at dtype shape = Grid.pixels ~shape dtype Transform.id
+let plane_at dtype shape = Grid.pixels ~at:Nx.Host.on ~shape dtype Transform.id
 let plane shape = plane_at f64 shape
 let at (row, col) = Transform.shift (one (Nx.create f64 [| 2 |] [| row; col |]))
 
@@ -167,7 +167,7 @@ let laws =
              pass outside it. *)
           let k = 1.0536e-8 and r = 3.7253595981663415e-09 in
           let g =
-            Grid.pixels ~shape:[| 40; 40 |] f64
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 40; 40 |] f64
               (Transform.linear
                  (one (Nx.create f64 [| 2; 2 |] [| 1.; 0.; 0.; k |])))
           in
@@ -209,7 +209,7 @@ let laws =
               (one (Nx.create f64 [| 2; 2 |] [| 0.; 1.; 1.; 0. |]))
           in
           let g = plane [| 40; 40 |]
-          and g' = Grid.pixels ~shape:[| 40; 40 |] f64 flip in
+          and g' = Grid.pixels ~at:Nx.Host.on ~shape:[| 40; 40 |] f64 flip in
           let w = Region.weights (circle (20.2, 17.7) 6.3) g in
           let w' = Region.weights (circle (17.7, 20.2) 6.3) g' in
           equal (array (float 1e-14)) (Nx.to_array w) (Nx.to_array w'));
@@ -341,7 +341,7 @@ let shape_laws =
                       (Nx.create f64 [| 2; 2 |] [| 0.; pixel; pixel; 0. |]))
               >> inverse (gnomonic centre))
           in
-          let g = Grid.pixels ~shape:[| 20; 20 |] f64 wcs in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 20; 20 |] f64 wcs in
           let corners = Grid.corners (Grid.window ~start:(Nx.create Nx.int64 [| 2 |] [| 7L; 12L |]) ~shape:[| 1; 1 |] g) in
           let vertices =
             Direction.of_xyz Frame.icrs
@@ -426,7 +426,7 @@ let narrow_agrees (type e) (dt : (float, e) Nx.dtype) half
     [| c; shear -. s; s; c |]
   in
   let linear dtype =
-    Grid.pixels ~shape:[| 40; 40 |] dtype
+    Grid.pixels ~at:Nx.Host.on ~shape:[| 40; 40 |] dtype
       (Transform.linear (one (Nx.create f64 [| 2; 2 |] m)))
   in
   let centre = (m.(0) *. row +. m.(1) *. col, m.(2) *. row +. m.(3) *. col) in
@@ -459,7 +459,7 @@ let narrow_agrees (type e) (dt : (float, e) Nx.dtype) half
 let shapes_agree (type e) (dt : (float, e) Nx.dtype) half =
   let m = [| 0.76; 0.2 -. 0.64; 0.64; 0.76 |] in
   let linear dtype =
-    Grid.pixels ~shape:[| 40; 40 |] dtype
+    Grid.pixels ~at:Nx.Host.on ~shape:[| 40; 40 |] dtype
       (Transform.linear (one (Nx.create f64 [| 2; 2 |] m)))
   in
   let place (row, col) =
@@ -511,7 +511,7 @@ let narrow =
       test "each shape at a narrow float weighs as at float64" (fun () ->
           shapes_agree Nx.float16 0x1p-12;
           shapes_agree Nx.bfloat16 0x1p-9;
-          shapes_agree Nx.float8_e4m3 0x1p-5;
+          shapes_agree Nx.float8_e4m3fn 0x1p-5;
           shapes_agree Nx.float8_e5m2 0x1p-4);
       prop "a narrow float weighs at float32, rounded once"
         Gen.(
@@ -530,7 +530,7 @@ let narrow =
               narrow_agrees Nx.bfloat16 0x1p-9 x
           | 2 ->
               cover "float8 e4m3" true;
-              narrow_agrees Nx.float8_e4m3 0x1p-5 x
+              narrow_agrees Nx.float8_e4m3fn 0x1p-5 x
           | _ ->
               cover "float8 e5m2" true;
               narrow_agrees Nx.float8_e5m2 0x1p-4 x);
@@ -581,7 +581,7 @@ let errors =
       test "a transform that folds the grid raises, at every float" (fun () ->
           (* A rank-one map sends every cell to a segment. *)
           let fold dtype =
-            Grid.pixels ~shape:[| 4; 4 |] dtype
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 4; 4 |] dtype
               (Transform.linear
                  (one (Nx.create f64 [| 2; 2 |] [| 1.; 1.; 1.; 1. |])))
           in
@@ -594,8 +594,8 @@ let errors =
               Region.weights (circle (2., 2.) 1.) (fold f64));
           raises_fold (fun () ->
               Region.weights
-                (circle_at Nx.float8_e4m3 (2., 2.) 1.)
-                (fold Nx.float8_e4m3)));
+                (circle_at Nx.float8_e4m3fn (2., 2.) 1.)
+                (fold Nx.float8_e4m3fn)));
     ]
 
 (* Derivatives *)

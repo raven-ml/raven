@@ -9,7 +9,8 @@
     symbols with rational exponents, with one canonical text. A conversion
     between two units is one correctly rounded multiply, or it raises.
     {!Quantity} is a value in a unit, a structure that rune's transformations
-    carry with no rule of their own.
+    carry with no rule of their own. A quantity's payload lies where its
+    operands' did; {!Constant.quantity} makes host values.
 
     The SI fixes some constants exactly, so they are units ({!Unit.planck}). A
     measured constant is a {!Constant} of a {!Codata} release the program names.
@@ -127,7 +128,7 @@ module Unit : sig
         a device that flushes subnormals would compute with 0;
       - [which overflows float16] if [v] is above the largest finite value plus
         half its ulp, or equal to it when that value's last bit is odd: a format
-        without infinity (float8_e4m3) raises where it would saturate;
+        without infinity (float8_e4m3fn) raises where it would saturate;
       - [which is not an integer] or [which int8 does not hold] for an integer
         dtype;
       - [whose evaluation needs a natural wider than 65536 bits] when [v]'s
@@ -135,7 +136,7 @@ module Unit : sig
       - ["Unit.ratio: bool holds no factor"] for [Nx.bool], and with [bit] for
         [Nx.bit].
 
-      Each message names [d] as {!Nx_dtype.to_string} writes it. *)
+      Each message names [d] as {!Nx.Dtype.name} writes it. *)
 
   (** {1:terms Terms} *)
 
@@ -225,10 +226,10 @@ module Unit : sig
 
   (** {1:structure Structure} *)
 
-  val ptree : t Nx.Ptree.t
-  (** [ptree] is the structure of a unit: one [Walk.case] holding its canonical
-      text, and no tensor. A compiled function that takes a unit compiles once
-      per unit. *)
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> t -> t
+  (** [walk c u] is [u], walked as one [Walk.case] holding its canonical text,
+      and no tensor. [Nx.Ptree.v walk] describes it, and a compiled function that
+      takes a unit compiles once per unit. *)
 
   (** {1:si The SI}
 
@@ -550,14 +551,18 @@ module Quantity : sig
   type !'p t
   (** The type for values ['p] in a unit. *)
 
-  val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
   (** [walk c q] reports [q]'s unit with one [Walk.case] holding its canonical
       text, then walks its payload with [Walk.leaf], both at [c]'s path. A
-      quantity's structure is [Nx.Ptree.instantiate (module Quantity)]. *)
+      quantity's structure is
+      [Nx.Ptree.instantiate (module Quantity.Structure)]. *)
+
+  module Structure : Nx.Ptree.S with type ('a, 'd) t = 'a t
+  (** [Structure] is {!walk} as a structure whose arrays are all positions. *)
 
   (** {1:constructors Constructors} *)
 
-  val v : Unit.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
+  val v : Unit.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t t
   (** [v u x] is [x] in [u]. Raises [Invalid_argument]
       ["Quantity.v: a bool tensor has no unit"] if [x] is a bool tensor, and
       with [a bit tensor] for a bit one. *)
@@ -567,7 +572,7 @@ module Quantity : sig
   val unit : 'p t -> Unit.t
   (** [unit q] is [q]'s unit. *)
 
-  val value : Unit.t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t
+  val value : Unit.t -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t
   (** [value u q] is [q]'s payload in [u]: the payload itself when [unit q] is
       [u], otherwise the payload times [Unit.ratio d (unit q) u], with [d] the
       payload's dtype. The result is within 1.5 ulps of the exact product, and
@@ -585,7 +590,7 @@ module Quantity : sig
 
   (** {1:conversions Changing the unit} *)
 
-  val convert : Unit.t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  val convert : Unit.t -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t
   (** [convert u q] is [v u (value u q)]. It raises as {!value} does, its
       message naming [Quantity.convert]. *)
 
@@ -598,7 +603,7 @@ module Quantity : sig
   (** {1:maps Maps} *)
 
   val map :
-    (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t t -> ('c, 'd) Nx.t t
+    (('a, 'b, 'e) Nx.t -> ('c, 'd, 'f) Nx.t) -> ('a, 'b, 'e) Nx.t t -> ('c, 'd, 'f) Nx.t t
   (** [map f q] is [f] of [q]'s payload, in [q]'s unit. It is correct when
       [f (c·x) = c·f x] for every positive scalar [c], such as a scaling, a sum
       or a mean; nothing checks [f]. Raises [Invalid_argument]
@@ -606,10 +611,10 @@ module Quantity : sig
       [a bit tensor] for a bit one. *)
 
   val map2 :
-    (('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) ->
-    ('a, 'b) Nx.t t ->
-    ('a, 'b) Nx.t t ->
-    ('a, 'b) Nx.t t
+    (('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t) ->
+    ('a, 'b, 'd) Nx.t t ->
+    ('a, 'b, 'd) Nx.t t ->
+    ('a, 'b, 'd) Nx.t t
   (** [map2 f a b] is [f] of [a]'s payload and [value (unit a) b], in [a]'s
       unit. It is correct when [f (c·x) (c·y) = c·f x y]. For an integer
       payload, [b] converts only when [unit b / unit a] is an integer: convert
@@ -618,22 +623,22 @@ module Quantity : sig
 
   (** {1:algebra Algebra} *)
 
-  val add : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  val add : ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t
   (** [add a b] is [map2 Nx.add a b]. Its messages name [Quantity.add], as in
       ["Quantity.add: pix{b} does not convert to pix{a}: their quotient keeps
        pix{a}^-1 pix{b}"] for [a] in [pix{a}] and [b] in [pix{b}]. *)
 
-  val sub : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  val sub : ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t
   (** [sub a b] is [map2 Nx.sub a b]. Its messages name [Quantity.sub]. *)
 
-  val mul : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  val mul : ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t
   (** [mul a b] is the product of the payloads in [Unit.(unit a * unit b)]. *)
 
-  val div : ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  val div : ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t
   (** [div a b] is the quotient of the payloads, as {!Nx.div} computes it, in
       [Unit.(unit a / unit b)]. *)
 
-  val pow : int -> ('a, 'b) Nx.t t -> ('a, 'b) Nx.t t
+  val pow : int -> ('a, 'b, 'd) Nx.t t -> ('a, 'b, 'd) Nx.t t
   (** [pow n q] is [q]'s payload to the power [n] in [Unit.(unit q ** n)],
       computed by repeated products: integers wrap, and the exponent is exact
       whatever the payload's dtype, so [pow 17] of [-1.] is [-1.] in float8. A
@@ -644,7 +649,7 @@ module Quantity : sig
       ["Quantity.pow: -1 is negative and the payload is int32"] for a negative
       [n] on an integer payload. *)
 
-  val root : int -> (float, 'b) Nx.t t -> (float, 'b) Nx.t t
+  val root : int -> (float, 'b, 'd) Nx.t t -> (float, 'b, 'd) Nx.t t
   (** [root n q] is the real [n]-th root of [q]'s payload in
       [Unit.root n (unit q)], by [Nx.pow] at the exponent [1/n], then, for
       [n >= 3], one Newton step that corrects the rounding of [1/n]. A payload
@@ -659,7 +664,7 @@ module Quantity : sig
 
   (** {1:fmt Formatting} *)
 
-  val pp : Format.formatter -> ('a, 'b) Nx.t t -> unit
+  val pp : Format.formatter -> ('a, 'b, 'd) Nx.t t -> unit
   (** [pp ppf q] formats [q]'s payload as {!Nx.val-pp} does, then its unit's
       canonical text. *)
 end
@@ -704,8 +709,8 @@ module Constant : sig
   val unit : t -> Unit.t
   (** [unit k] is [k]'s unit. *)
 
-  val quantity : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t Quantity.t
-  (** [quantity d k] is [k]'s value as a scalar of [d] in [unit k]: its
+  val quantity : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx.t Quantity.t
+  (** [quantity d k] is [k]'s value as a host scalar of [d] in [unit k]: its
       magnitude rounded once to [d] as {!Unit.ratio} rounds, then its sign. A
       complex dtype has a zero imaginary part. An integer dtype holds [k] only
       if it holds [k]'s magnitude, so [-128] is refused in int8, and an unsigned
@@ -715,13 +720,13 @@ module Constant : sig
       for the reasons {!Unit.ratio} gives, its message naming
       [Constant.quantity], [k] and [k]'s text, as in
       ["Constant.quantity: Newtonian constant of gravitation: 6.67430(15)e-11 is
-       0 in float8_e4m3"] and
+       0 in float8_e4m3fn"] and
       ["Constant.quantity: k: -128 has a magnitude int8 does not hold"]; or, for
       a negative [k] and an unsigned dtype, before any rounding, as in
       ["Constant.quantity: electron g factor: -2.00231930436092(36) is negative,
        which uint8 does not hold"]. *)
 
-  val uncertainty : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t Quantity.t
+  val uncertainty : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx.t Quantity.t
   (** [uncertainty d k] is [k]'s standard uncertainty, which is never negative,
       as a scalar of [d] in [unit k]: zero for an exact constant, otherwise
       rounded once as {!quantity} rounds. Raises [Invalid_argument] as

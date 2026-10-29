@@ -4,6 +4,19 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- **Breaking:** every type that holds tensors carries their device set:
+  `('f, 'd) Direction.t`, `('a, 'b, 'd) Transform.t`, `('w, 'e, 'd) Grid.t`
+  and the like. Functions compute where their operands lie, and constants
+  they make lie beside them.
+- **Breaking:** FITS reads give host values, as do `Constant.quantity`,
+  `Frame.matrix` and the cosmology presets. `Nx.Ptree.place` moves them.
+- **Breaking:** `Wcs.read` and `Grid.pixels` take `~at`, where their
+  tensors lie, since a transform cannot move between sets.
+- **Breaking:** `Transform.covers` is `None` for a transform with no stage.
+- **Breaking:** `Unit.ptree` is `Unit.walk`.
+- `Quantity.Structure` and `Cosmology.Structure` are the structure modules
+  `Nx.Ptree.instantiate` takes; `Direction.walk` moves a direction.
+- **Breaking:** a FITS element is an `Nx.Dtype.any`.
 - Gzip tiles decode and encode through `lz`. `Fits.Image.raw` and
   `Fits.Image.values` inflate a tile without copying it first, and a broken
   tile's `Error` ends as `lz` prints it (`malformed at byte 25: ...`).

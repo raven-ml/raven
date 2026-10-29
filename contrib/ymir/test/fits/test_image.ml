@@ -13,7 +13,7 @@ open Ymir_fits
 module H = Fits.Header
 module V = Fits.Value
 module I = Fits.Image
-module S = Nx_dtype.Scalar
+module D = Nx.Dtype
 
 let images = "golden/images.fits"
 let hdus () = require_ok (Fits.read images)
@@ -32,17 +32,17 @@ let expected name = List.assoc name (Lazy.force golden)
 
 (* A tensor's elements as the text astropy writes for integers, and as
    floats for floats. *)
-let texts (type a b) (t : (a, b) Nx.t) : string array =
+let texts (type a b) (t : (a, b, Nx.host) Nx.t) : string array =
   let a = Nx.to_array t in
   match Nx.dtype t with
-  | UInt8 -> Array.map string_of_int a
+  | Uint8 -> Array.map string_of_int a
   | Int8 -> Array.map string_of_int a
   | Int16 -> Array.map string_of_int a
-  | UInt16 -> Array.map string_of_int a
+  | Uint16 -> Array.map string_of_int a
   | Int32 -> Array.map Int32.to_string a
-  | UInt32 -> Array.map (Printf.sprintf "%lu") a
+  | Uint32 -> Array.map (Printf.sprintf "%lu") a
   | Int64 -> Array.map Int64.to_string a
-  | UInt64 -> Array.map (Printf.sprintf "%Lu") a
+  | Uint64 -> Array.map (Printf.sprintf "%Lu") a
   | _ -> failwith "texts: an integer dtype"
 
 let floats name = Array.map float_of_string (expected name)
@@ -52,7 +52,7 @@ let check_raw (type a b) name (dtype : (a, b) Nx.dtype) =
     require_ok (I.raw dtype (if name = "PRIMARY" then primary () else hdu name))
   in
   equal (array int) [| 5; 7 |] (Nx.shape t);
-  match Nx_dtype.kind dtype with
+  match Nx.Dtype.kind dtype with
   | Float ->
       equal (array float_exact) (floats name)
         (Nx.to_array (Nx.reshape [| 35 |] t))
@@ -82,23 +82,23 @@ let elements () =
   let w =
     result
       (Testable.make
-         ~pp:(fun ppf s -> Format.pp_print_string ppf (S.to_string s))
-         ~equal:S.equal)
+         ~pp:(fun ppf (D.Any d) -> Format.pp_print_string ppf (D.name d))
+         ~equal:(fun (D.Any a) (D.Any b) -> D.equal a b))
       string
   in
   List.iter
     (fun (name, e) -> equal w (Ok e) (element name))
     [
-      ("U8", S.UInt8);
-      ("I8", Int8);
-      ("U16", UInt16);
-      ("U32", UInt32);
-      ("I32", Int32);
-      ("I64", Int64);
-      ("U64", UInt64);
-      ("F32", Float32);
-      ("F64", Float64);
-      ("SCALED", Int16);
+      ("U8", D.Any D.Uint8);
+      ("I8", D.Any D.Int8);
+      ("U16", D.Any D.Uint16);
+      ("U32", D.Any D.Uint32);
+      ("I32", D.Any D.Int32);
+      ("I64", D.Any D.Int64);
+      ("U64", D.Any D.Uint64);
+      ("F32", D.Any D.Float32);
+      ("F64", D.Any D.Float64);
+      ("SCALED", D.Any D.Int16);
     ];
   equal (result bool string) (Ok true)
     (Result.map I.scaled (I.of_hdu (hdu "SCALED")));
@@ -163,7 +163,7 @@ let real =
     P (Nx.zeros Nx.bfloat16 [| 0 |]);
     P (Nx.zeros Nx.float32 [| 0 |]);
     P (Nx.zeros Nx.float64 [| 0 |]);
-    P (Nx.zeros Nx.float8_e4m3 [| 0 |]);
+    P (Nx.zeros Nx.float8_e4m3fn [| 0 |]);
     P (Nx.zeros Nx.bool [| 0 |]);
     P (Nx.zeros Nx.int4 [| 0 |]);
   ]
@@ -176,8 +176,8 @@ let exactness =
         (fun (Nx.P z) ->
           let d = Nx.dtype z in
           let ok = Result.is_ok (I.raw d h) in
-          equal ~msg:(Nx_dtype.to_string d) bool
-            (List.mem (Nx_dtype.to_string d) holds)
+          equal ~msg:(Nx.Dtype.name d) bool
+            (List.mem (Nx.Dtype.name d) holds)
             ok)
         real)
 
@@ -317,7 +317,7 @@ let not_images () =
 (* Writing *)
 
 let round_trip (type a b) ?(name = "") (dtype : (a, b) Nx.dtype)
-    (t : (a, b) Nx.t) =
+    (t : (a, b, Nx.host) Nx.t) =
   let path = temp_file ~suffix:".fits" () in
   let h = H.(empty |> set V.string "EXTNAME" "X") in
   require_ok (Fits.write path [ I.hdu h t ]);
@@ -328,19 +328,25 @@ let round_trip (type a b) ?(name = "") (dtype : (a, b) Nx.dtype)
   let r = require_ok (I.raw dtype (List.hd back)) in
   equal (array int) (Nx.shape t) (Nx.shape r);
   (* Bit for bit: compare the bytes. *)
-  let bytes x = Nx.to_array (Nx.bitcast Nx.uint8 (Nx.contiguous x)) in
+  let bytes x = Nx.to_array (Nx.bitcast Nx.uint8 (Nx.copy x)) in
   equal (array int) (bytes t) (bytes r)
+
+let strided =
+  test "a strided image writes its elements in C order" (fun () ->
+      let t = Nx.create Nx.int16 [| 2; 3 |] [| 1; -2; 300; 4; 5; -600 |] in
+      round_trip ~name:"transposed" Nx.int16 (Nx.transpose t);
+      round_trip ~name:"a column" Nx.int16 (Nx.slice [ Nx.A; Nx.I 1 ] t))
 
 let shape_gen = Gen.(array ~size:(int_range 1 3) (int_range 0 6))
 
 let dtypes_round_trip =
   let law (type a b) (dtype : (a, b) Nx.dtype) =
     prop
-      (Nx_dtype.to_string dtype ^ " reads back bit for bit")
+      (Nx.Dtype.name dtype ^ " reads back bit for bit")
       Gen.(pair shape_gen (list ~size:(int_range 0 300) int64))
       (fun (shape, bits) ->
         let n = Array.fold_left ( * ) 1 shape in
-        let w = Nx_dtype.itemsize dtype in
+        let w = (Nx.Dtype.bytes dtype 1) in
         let bits = Array.of_list bits in
         (* Element bytes drawn from random 64-bit words, NaN payloads
            included. *)
@@ -362,7 +368,7 @@ let dtypes_round_trip =
              else Nx.bitcast dtype (Nx.reshape [| n; w |] u))
         in
         cover "empty" (n = 0);
-        round_trip ~name:(Nx_dtype.to_string dtype) dtype t)
+        round_trip ~name:(Nx.Dtype.name dtype) dtype t)
   in
   [
     law Nx.uint8;
@@ -500,6 +506,7 @@ let () =
          group "writing"
            (dtypes_round_trip
            @ [
+               strided;
                test "unwritable dtypes" unwritable;
                test "structure is the writer's" structure;
                test "write keeps what it did not change" write_file;

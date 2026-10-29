@@ -11,7 +11,7 @@ let sum x = Nx.item [] (Nx.sum x)
 
 let () =
   (* A 9x9 grid whose world is its own pixel plane. *)
-  let plane = Grid.pixels ~shape:[| 9; 9 |] f64 Transform.id in
+  let plane = Grid.pixels ~at:Nx.Host.on ~shape:[| 9; 9 |] f64 Transform.id in
   Format.printf "cell measures: %a@." Quantity.pp
     (Quantity.map (Nx.slice [ Nx.I 0; Nx.R (0, 3) ]) (Grid.measure plane));
 
@@ -83,7 +83,7 @@ let () =
       >> linear cd
       >> inverse (gnomonic centre))
   in
-  let sky = Grid.pixels ~shape:[| 31; 31 |] f64 to_sky in
+  let sky = Grid.pixels ~at:Nx.Host.on ~shape:[| 31; 31 |] f64 to_sky in
   let arcsec2 = Unit.(arcsecond ** 2) in
   Printf.printf "centre cell = %.12f arcsec^2\n"
     (Nx.item [ 15; 15 ] (Quantity.value arcsec2 (Grid.measure sky)));

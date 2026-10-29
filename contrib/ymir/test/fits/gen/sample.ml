@@ -21,7 +21,7 @@ let shape = [| 37; 53 |]
 let f i = Float.of_int ((i.(0) * 53) + i.(1))
 
 let images =
-  let pair (type a b) n (t : (a, b) Nx.t) =
+  let pair (type a b) n (t : (a, b, Nx.host) Nx.t) =
     [
       Fits.Image.hdu ~tiles:[| 8; 8 |] (named n) t;
       Fits.Image.hdu (named ("SRC_" ^ n)) t;

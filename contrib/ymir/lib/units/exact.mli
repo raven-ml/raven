@@ -26,7 +26,7 @@ val budget : int
 (** [budget] is the width in bits of the widest natural an evaluation computes:
     2{^ 16}. *)
 
-val round : ('a, 'b) Nx_dtype.t -> (base * int * int) list -> ('a, error) result
+val round : ('a, 'b) Nx.Dtype.t -> (base * int * int) list -> ('a, error) result
 (** [round d v] is [v] rounded once to [d], where [v] is the product of each
     [(b, num, den)]'s [b] to the power [num/den].
 

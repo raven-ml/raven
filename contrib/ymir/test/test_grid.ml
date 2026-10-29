@@ -20,7 +20,7 @@ let starts xs =
   Nx.create Nx.int64 [| Array.length xs / 2; 2 |] (Array.map Int64.of_int xs)
 
 let start i j = Nx.create Nx.int64 [| 2 |] [| Int64.of_int i; Int64.of_int j |]
-let plane shape = Grid.pixels ~shape f64 Transform.id
+let plane shape = Grid.pixels ~at:Nx.Host.on ~shape f64 Transform.id
 let values u q = Nx.to_array (Quantity.value u q)
 
 (* A TAN image whose pixels are [scale] degrees on a side, axes along north and
@@ -94,12 +94,12 @@ let cells =
             (Nx.shape (Quantity.value Unit.one (Grid.measure g))));
       test "pixels refuses a shape of another rank" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"Grid.pixels") (fun () ->
-              Grid.pixels ~shape:[| 3 |] f64 Transform.id));
+              Grid.pixels ~at:Nx.Host.on ~shape:[| 3 |] f64 Transform.id));
       prop "a window's centres are its base's at the same cells, bit for bit"
         Gen.(pair (int_range (-20) 120) (int_range (-20) 120))
         (fun (i, j) ->
           let g =
-            Grid.pixels ~shape:[| 100; 100 |] f64
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 100; 100 |] f64
               (tan ~crpix:[| 50.; 50. |] ~scale:1e-3 (30., -20.))
           in
           let w = Grid.window ~start:(start i j) ~shape:[| 3; 4 |] g in
@@ -134,7 +134,7 @@ let measures =
         (fun (i, j, scale) ->
           let i, j = if scale > 0.1 then (i / 30, j / 30) else (i, j) in
           let g =
-            Grid.pixels ~shape:[| 1; 1 |] f64 (tan ~scale (110.8, -73.4))
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 1; 1 |] f64 (tan ~scale (110.8, -73.4))
           in
           let g = Grid.window ~start:(start i j) ~shape:[| 1; 1 |] g in
           let s = scale *. Float.pi /. 180. in
@@ -150,7 +150,7 @@ let measures =
       test "a TAN image's measures differ from the reference pixel's by cos³θ"
         (fun () ->
           let g =
-            Grid.pixels ~shape:[| 1; 1 |] f64 (tan ~scale:(1. /. 60.) (0., 0.))
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 1; 1 |] f64 (tan ~scale:(1. /. 60.) (0., 0.))
           in
           let at i =
             (values Unit.steradian
@@ -165,7 +165,7 @@ let measures =
           let t =
             Transform.(linear (deg (tensor [| 2; 2 |] [| 2.; 0.5; -1.; 3. |])))
           in
-          let g = Grid.pixels ~shape:[| 2; 2 |] f64 t in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 2 |] f64 t in
           equal
             (array (float 1e-14))
             [| 6.5; 6.5; 6.5; 6.5 |]
@@ -178,8 +178,8 @@ let measures =
               ~scale:8.67445987394292e-06
               (110.75544256521349, -73.46776600616062)
           in
-          let g64 = Grid.pixels ~shape:[| 3; 4 |] f64 t
-          and g32 = Grid.pixels ~shape:[| 3; 4 |] Nx.float32 t in
+          let g64 = Grid.pixels ~at:Nx.Host.on ~shape:[| 3; 4 |] f64 t
+          and g32 = Grid.pixels ~at:Nx.Host.on ~shape:[| 3; 4 |] Nx.float32 t in
           let xyz g = Nx.to_array (Direction.xyz (Grid.centres g)) in
           equal (array float_exact) (xyz g64) (xyz g32);
           equal (array float_exact)
@@ -188,7 +188,7 @@ let measures =
                   (Quantity.value Unit.steradian (Grid.measure g64))))
             (Nx.to_array (Quantity.value Unit.steradian (Grid.measure g32))));
       test "a float32 grid's measures are float32" (fun () ->
-          let g = Grid.pixels ~shape:[| 2; 2 |] Nx.float32 Transform.id in
+          let g = Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 2 |] Nx.float32 Transform.id in
           equal int 4
             (Array.length
                (Nx.to_array (Quantity.value Unit.one (Grid.measure g)))));
@@ -230,7 +230,7 @@ let around =
       test "a direction outside TAN's domain gets a window beyond the base"
         (fun () ->
           let g =
-            Grid.pixels ~shape:[| 100; 100 |] f64
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 100; 100 |] f64
               (tan ~crpix:[| 50.; 50. |] ~scale:1e-3 (0., 0.))
           in
           let x =
@@ -244,7 +244,7 @@ let around =
           equal (array int64) [| 49L; 39L; 100L; 100L |] (Nx.to_array start));
       test "a direction's window holds its cell" (fun () ->
           let g =
-            Grid.pixels ~shape:[| 100; 100 |] f64
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 100; 100 |] f64
               (tan ~crpix:[| 50.; 50. |] ~scale:1e-3 (30., -20.))
           in
           let x =
@@ -264,7 +264,7 @@ let around =
 (* Worlds and agreement *)
 
 let worlds =
-  let g () = Grid.pixels ~shape:[| 6; 5 |] f64 (tan ~scale:0.01 (30., 20.)) in
+  let g () = Grid.pixels ~at:Nx.Host.on ~shape:[| 6; 5 |] f64 (tan ~scale:0.01 (30., 20.)) in
   let to_galactic = Transform.rotation Frame.icrs Frame.galactic in
   group "Worlds"
     [
@@ -292,19 +292,19 @@ let worlds =
       test "a grid agrees with itself, and NaN with NaN" (fun () ->
           equal (array bool) [| true |]
             (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree (g ()) (g ()))));
-          let nan = Grid.pixels ~shape:[| 2; 2 |] f64
+          let nan = Grid.pixels ~at:Nx.Host.on ~shape:[| 2; 2 |] f64
               (Transform.shift (one (tensor [| 2 |] [| Float.nan; 1. |]))) in
           equal (array bool) [| true |]
             (Nx.to_array (Nx.reshape [| 1 |] (Grid.agree nan nan))));
       test "a different number or static datum does not agree" (fun () ->
           let other =
-            Grid.pixels ~shape:[| 6; 5 |] f64 (tan ~scale:0.0100001 (30., 20.))
+            Grid.pixels ~at:Nx.Host.on ~shape:[| 6; 5 |] f64 (tan ~scale:0.0100001 (30., 20.))
           in
           equal bool false (Nx.item [] (Grid.agree (g ()) other));
           equal bool false
             (Nx.item []
                (Grid.agree (g ())
-                  (Grid.pixels ~shape:[| 6; 4 |] f64 (tan ~scale:0.01 (30., 20.)))));
+                  (Grid.pixels ~at:Nx.Host.on ~shape:[| 6; 4 |] f64 (tan ~scale:0.01 (30., 20.)))));
           equal bool false
             (Nx.item []
                (Grid.agree (g ())

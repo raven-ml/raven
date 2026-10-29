@@ -131,13 +131,13 @@ let observation hdus =
       text = (fun k -> Fits.Header.find Fits.Value.string k h);
     }
   in
-  let* wcs = Wcs.read Frame.icrs keywords in
+  let* wcs = Wcs.read ~at:Nx.Host.on Frame.icrs keywords in
   let* bunit = Fits.Header.get Fits.Value.string "BUNIT" h in
   let* unit = Fits.Unit.parse bunit in
   let* pixar = Fits.Header.get Fits.Value.float "PIXAR_SR" h in
   let* data = Fits.Image.values Nx.float32 sci in
   let* sigma = Fits.Image.values Nx.float32 err in
-  let grid = Grid.pixels ~shape:(Nx.shape data) Nx.float32 wcs in
+  let grid = Grid.pixels ~at:Nx.Host.on ~shape:(Nx.shape data) Nx.float32 wcs in
   Ok
     (Observation.v
        ~variance:(Quantity.v (Unit.( ** ) unit 2) (Nx.square sigma))
@@ -331,7 +331,7 @@ let solved_rows () =
 
 let mosaic () =
   let shape = [| 4096; 4096 |] in
-  let g = Grid.pixels ~shape f64 (wcs ()) in
+  let g = Grid.pixels ~at:Nx.Host.on ~shape f64 (wcs ()) in
   let data =
     Nx.init f64 shape (fun i ->
         float_of_int (((i.(0) * 31) + (i.(1) * 17)) mod 101))

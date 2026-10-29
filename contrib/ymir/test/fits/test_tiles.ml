@@ -13,7 +13,6 @@ open Ymir_fits
 module H = Fits.Header
 module V = Fits.Value
 module I = Fits.Image
-module S = Nx_dtype.Scalar
 
 let path = "golden/tiles.fits"
 let hdus = lazy (require_ok (Fits.read path))
@@ -29,14 +28,14 @@ let golden =
 
 let expected name = List.assoc name (Lazy.force golden)
 
-let texts (type a b) (t : (a, b) Nx.t) : string array =
+let texts (type a b) (t : (a, b, Nx.host) Nx.t) : string array =
   let a = Nx.to_array t in
   match Nx.dtype t with
-  | UInt8 -> Array.map string_of_int a
+  | Uint8 -> Array.map string_of_int a
   | Int16 -> Array.map string_of_int a
-  | UInt16 -> Array.map string_of_int a
+  | Uint16 -> Array.map string_of_int a
   | Int32 -> Array.map Int32.to_string a
-  | UInt32 -> Array.map (Printf.sprintf "%lu") a
+  | Uint32 -> Array.map (Printf.sprintf "%lu") a
   | Int64 -> Array.map Int64.to_string a
   | _ -> failwith "texts: an integer dtype"
 
@@ -44,7 +43,7 @@ let check (type a b) name (dtype : (a, b) Nx.dtype) =
   let t = require_ok (I.raw dtype (hdu name)) in
   let n = Nx.numel t in
   let flat = Nx.reshape [| n |] t in
-  match Nx_dtype.kind dtype with
+  match Nx.Dtype.kind dtype with
   | Float ->
       equal (array float_exact)
         (Array.map float_of_string (expected name))
@@ -260,7 +259,7 @@ let quantized_nan () =
 let lossless =
   let law (type a b) (dtype : (a, b) Nx.dtype) =
     prop
-      (Nx_dtype.to_string dtype ^ " tiles read back bit for bit")
+      (Nx.Dtype.name dtype ^ " tiles read back bit for bit")
       Gen.(
         triple
           (array ~size:(int_range 1 3) (int_range 0 6))
@@ -268,7 +267,7 @@ let lossless =
           (list ~size:(int_range 1 40) int64))
       (fun (shape, tiles, bits) ->
         let n = Array.fold_left ( * ) 1 shape in
-        let w = Nx_dtype.itemsize dtype in
+        let w = (Nx.Dtype.bytes dtype 1) in
         let bits = Array.of_list bits in
         let byte i =
           Int64.(
@@ -289,7 +288,7 @@ let lossless =
         cover "partial tiles"
           (Array.exists2 (fun t s -> s mod t <> 0) tiles shape);
         let r = require_ok (I.raw dtype (I.hdu ~tiles H.empty t)) in
-        let bytes x = Nx.to_array (Nx.bitcast Nx.uint8 (Nx.contiguous x)) in
+        let bytes x = Nx.to_array (Nx.bitcast Nx.uint8 (Nx.copy x)) in
         equal (array int) (Nx.shape t) (Nx.shape r);
         equal (array int) (bytes t) (bytes r))
   in

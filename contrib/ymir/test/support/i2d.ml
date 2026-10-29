@@ -23,14 +23,14 @@ let observation (type e) ?ver ?window (dtype : (float, e) Nx.dtype) hdus =
       text = (fun k -> Fits.Header.find Fits.Value.string k h);
     }
   in
-  let* wcs = Wcs.read Frame.icrs keywords in
+  let* wcs = Wcs.read ~at:Nx.Host.on Frame.icrs keywords in
   let* bunit = Fits.Header.get Fits.Value.string "BUNIT" h in
   let* unit = Fits.Unit.parse bunit in
   let* pixar = Fits.Header.get Fits.Value.float "PIXAR_SR" h in
   let* data = Fits.Image.values ?window dtype sci in
   let* sigma = Fits.Image.values ?window dtype err in
   let* image = Fits.Image.of_hdu sci in
-  let grid = Grid.pixels ~shape:(Fits.Image.shape image) dtype wcs in
+  let grid = Grid.pixels ~at:Nx.Host.on ~shape:(Fits.Image.shape image) dtype wcs in
   let grid =
     match window with
     | None -> grid

@@ -28,7 +28,7 @@ val fk5_j2000 : fk5_j2000 t
 val galactic : galactic t
 val ecliptic_j2000 : ecliptic_j2000 t
 val supergalactic : supergalactic t
-val matrix : 'a fixed t -> 'b fixed t -> (float, Nx.float64_elt) Nx.t
+val matrix : 'a fixed t -> 'b fixed t -> (float, Nx.float64_elt, Nx.host) Nx.t
 
 val entries : 'a fixed t -> 'b fixed t -> float array
 (** [entries a b] is [matrix a b]'s nine entries in row-major order. The
@@ -37,4 +37,4 @@ val entries : 'a fixed t -> 'b fixed t -> float array
 
 val name : 'f t -> string
 val pp : Format.formatter -> 'f t -> unit
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'f t -> 'f t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> 'f t -> 'f t

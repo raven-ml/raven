@@ -37,15 +37,15 @@ let unhex s =
     (String.length h / 2)
     (fun i -> Char.chr (int_of_string ("0x" ^ String.sub h (2 * i) 2)))
 
-let texts (type a b) (t : (a, b) Nx.t) : string array =
+let texts (type a b) (t : (a, b, Nx.host) Nx.t) : string array =
   let a = Nx.to_array (Nx.reshape [| Nx.numel t |] t) in
   match Nx.dtype t with
-  | UInt8 -> Array.map string_of_int a
+  | Uint8 -> Array.map string_of_int a
   | Int8 -> Array.map string_of_int a
   | Int16 -> Array.map string_of_int a
-  | UInt16 -> Array.map string_of_int a
+  | Uint16 -> Array.map string_of_int a
   | Int32 -> Array.map Int32.to_string a
-  | UInt32 -> Array.map (Printf.sprintf "%lu") a
+  | Uint32 -> Array.map (Printf.sprintf "%lu") a
   | Int64 -> Array.map Int64.to_string a
   | Bool -> Array.map (fun b -> if b then "T" else "F") a
   | _ -> failwith "texts"
@@ -341,7 +341,7 @@ let read_back hdus =
 
 let bytes_of (Nx.P t) =
   Nx.to_array
-    (Nx.bitcast Nx.uint8 (Nx.contiguous (Nx.reshape [| Nx.numel t |] t)))
+    (Nx.bitcast Nx.uint8 (Nx.copy (Nx.reshape [| Nx.numel t |] t)))
 
 let round_trip () =
   (* A table written reads back as its columns. *)

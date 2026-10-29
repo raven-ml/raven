@@ -25,11 +25,11 @@
    The weight is the area inside over the cell's area, both signed by the
    cell's orientation, so either orientation gives the same weight. *)
 
-type 'e t = {
-  weight : (float, 'e) Nx.t;
-  area : (float, 'e) Nx.t;  (** The cell's shoelace area. *)
-  outside : Nx.bool_t;  (** Where the weight is exactly 0 by the predicate. *)
-  full : Nx.bool_t;  (** Where the weight is exactly 1 by the predicate. *)
+type ('e, 'd) t = {
+  weight : (float, 'e, 'd) Nx.t;
+  area : (float, 'e, 'd) Nx.t;  (** The cell's shoelace area. *)
+  outside : 'd Nx.bool_t;  (** Where the weight is exactly 0 by the predicate. *)
+  full : 'd Nx.bool_t;  (** Where the weight is exactly 1 by the predicate. *)
 }
 
 let cross (ax, ay) (bx, by) = Nx.sub (Nx.mul ax by) (Nx.mul ay bx)
@@ -42,15 +42,15 @@ let clamp01 t = Nx.clamp ~min:0. ~max:1. t
    their width, which rune does not differentiate. A float8 goes through
    float16, which holds it exactly: a compiled function refuses a float8
    bitcast. *)
-let rec constant : type e. (float, e) Nx.t -> (float, e) Nx.t =
+let rec constant : type e d. (float, e, d) Nx.t -> (float, e, d) Nx.t =
  fun x ->
   let dtype = Nx.dtype x in
   let through int = Nx.bitcast dtype (Nx.bitcast int x) in
   match dtype with
   | Float64 -> through Nx.int64
   | Float32 -> through Nx.int32
-  | Float16 | BFloat16 -> through Nx.int16
-  | Float8_e4m3 | Float8_e5m2 ->
+  | Float16 | Bfloat16 -> through Nx.int16
+  | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn ->
       Nx.cast dtype (constant (Nx.cast Nx.float16 x))
 
 (* [fraction w] is [w] clamped to [0, 1] with [w]'s derivative. A weight leaves
@@ -375,7 +375,8 @@ let polygon vs xs ys =
         (side a b p, side a b q, same))
   in
   let total = ref (Nx.zeros_like (Nx.add twice (fst vs.(0)))) in
-  let never = Nx.zeros Nx.bool [||] in
+  let on = Nx.beside twice in
+  let never = Nx.zeros_at on Nx.bool [||] in
   for j = 0 to n - 1 do
     let a, b = edge j in
     let orientation = Nx.sign (side c0 a b) in
@@ -404,8 +405,8 @@ let polygon vs xs ys =
   let inside = Array.init 4 (fun k -> winding vs (corner k)) in
   let all_in = Array.fold_left Nx.logical_and inside.(0) (Array.sub inside 1 3) in
   let any_in = Array.fold_left Nx.logical_or inside.(0) (Array.sub inside 1 3) in
-  let cross_any = ref (Nx.zeros Nx.bool [||]) in
-  let vertex_in = ref (Nx.zeros Nx.bool [||]) in
+  let cross_any = ref (Nx.zeros_at on Nx.bool [||]) in
+  let vertex_in = ref (Nx.zeros_at on Nx.bool [||]) in
   for j = 0 to n - 1 do
     let a = vs.(j) and b = vs.((j + 1) mod n) in
     for k = 0 to 3 do
@@ -417,7 +418,7 @@ let polygon vs xs ys =
         (fun acc k ->
           Nx.logical_and acc
             (Nx.greater_equal_s (side (corner k) (corner ((k + 1) mod 4)) a) 0.))
-        (Nx.ones Nx.bool [||]) [ 0; 1; 2; 3 ]
+        (Nx.ones_at on Nx.bool [||]) [ 0; 1; 2; 3 ]
     in
     vertex_in := Nx.logical_or !vertex_in within
   done;

@@ -102,7 +102,7 @@ module Fits = struct
 
     type column = Table.column = {
       name : string;
-      element : Nx_dtype.Scalar.t;
+      element : Nx.Dtype.any;
       layout : layout;
       scaled : bool;
       cards : H.t;
@@ -121,13 +121,13 @@ module Fits = struct
     let unit name hdu = Table.unit ~scope:(scope hdu) name hdu
 
     type data = Table.data =
-      | Array of { values : Nx.packed; validity : Nx.bit_t option }
+      | Array of { values : Nx.host Nx.packed; validity : Nx.host Nx.bit_t option }
       | Lists : {
-          values : ('a, 'b) Nx_ragged.t;
-          validity : Nx.bit_t option;
+          values : ('a, 'b, Nx.host) Nx_ragged.t;
+          validity : Nx.host Nx.bit_t option;
         }
           -> data
-      | Text of (int, Nx.uint8_elt) Nx_ragged.t
+      | Text of (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
 
     let read = Table.read
     let hdu = Table.hdu

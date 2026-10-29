@@ -19,6 +19,9 @@ let one x = Quantity.v Unit.one x
 let pixels xs = one (tensor [| Array.length xs / 2; 2 |] xs)
 let values q u = Nx.to_array (Quantity.value u q)
 
+(* [covers t x] is the mask of a transform with a stage. *)
+let covers t x = Option.get (Transform.covers t x)
+
 let max_abs a b =
   Array.fold_left max 0. (Array.map2 (fun x y -> Float.abs (x -. y)) a b)
 
@@ -119,10 +122,10 @@ let projections =
           less float_exact ~than:1e-12 worst);
       cases ~name "cover what WCSLIB maps" Reference.projections (fun p ->
           let t = projection p in
-          equal bool true (all_equal true (Transform.covers t (pixels p.pixels)));
+          equal bool true (all_equal true (covers t (pixels p.pixels)));
           equal bool true
             (all_equal true
-               (Transform.covers (Transform.inverse t) (lonlat_deg p.sky))));
+               (covers (Transform.inverse t) (lonlat_deg p.sky))));
       prop "map pixels back where they cover"
         Gen.(
           pair
@@ -137,7 +140,7 @@ let projections =
             [| p.pixels.(2 * i) +. (b *. 3.); p.pixels.((2 * i) + 1) -. (a *. 3.) |]
           in
           let t = projection p in
-          let covered = Nx.item [ 0 ] (Transform.covers t (pixels px)) in
+          let covered = Nx.item [ 0 ] (covers t (pixels px)) in
           cover "covered" covered;
           if covered then begin
             let back = Transform.(apply (inverse t) (apply t (pixels px))) in
@@ -150,11 +153,11 @@ let projections =
           let t = projection p in
           if Array.length p.outside > 0 then
             equal bool true
-              (all_equal false (Transform.covers t (pixels p.outside)));
+              (all_equal false (covers t (pixels p.outside)));
           if Array.length p.sky_outside > 0 then
             equal bool true
               (all_equal false
-                 (Transform.covers (Transform.inverse t)
+                 (covers (Transform.inverse t)
                     (lonlat_deg p.sky_outside))));
     ]
 
@@ -208,10 +211,10 @@ let distortions =
             (max_abs (values back Unit.one) d.sky_pixels));
       cases ~name "cover the image both ways" Reference.distorted (fun d ->
           let t = distorted d in
-          equal bool true (all_equal true (Transform.covers t (pixels d.pixels)));
+          equal bool true (all_equal true (covers t (pixels d.pixels)));
           equal bool true
             (all_equal true
-               (Transform.covers (Transform.inverse t) (lonlat_deg d.sky))));
+               (covers (Transform.inverse t) (lonlat_deg d.sky))));
       prop "an inverted distortion round-trips its pixels"
         Gen.(
           pair
@@ -246,7 +249,7 @@ let distortions =
           (* [x = u − 0.01 u²] folds at u = 50. *)
           let p = one (tensor [| 2; 2 |] [| 10.; 0.; 80.; 0. |]) in
           equal (array bool) [| true; false |]
-            (Nx.to_array (Transform.covers t p));
+            (Nx.to_array (covers t p));
           raises_match
             (Exn.invalid_arg ~substring:"point 1 is where the SIP distortion folds")
             (fun () -> Transform.apply t p));
@@ -424,7 +427,7 @@ let domains =
           let pts = lonlat_deg [| 10.; 0.; 95.; 0.; 180.; 0.; -89.; 0. |] in
           equal (array bool)
             [| true; false; false; true |]
-            (Nx.to_array (Transform.covers (Transform.gnomonic a) pts)));
+            (Nx.to_array (covers (Transform.gnomonic a) pts)));
       test "covers is false at NaN, and apply maps NaN to NaN" (fun () ->
           let p =
             Quantity.v Unit.radian
@@ -432,7 +435,7 @@ let domains =
           in
           let t = tan_about (at (0.5, 0.5)) in
           equal (array bool) [| false; true |]
-            (Nx.to_array (Transform.covers t p));
+            (Nx.to_array (covers t p));
           let d = Direction.xyz (Transform.apply t p) in
           equal float_exact Float.nan (Nx.item [ 0; 0 ] d));
       test "ARC's deprojection raises beyond 180 degrees" (fun () ->
@@ -441,14 +444,15 @@ let domains =
             Quantity.v Unit.degree (tensor [| 2; 2 |] [| 10.; 0.; 150.; 150. |])
           in
           equal (array bool) [| true; false |]
-            (Nx.to_array (Transform.covers t p));
+            (Nx.to_array (covers t p));
           raises_match
             (Exn.invalid_arg
                ~substring:"point 1 is 212.132 deg from the ARC plane's origin")
             (fun () -> Transform.apply t p));
       test "a transform with no stage covers everything" (fun () ->
-          equal (array bool) [| true |]
-            (Nx.to_array (Transform.covers Transform.id (pixels [| 1.; 2. |]))));
+          equal bool true
+            (Option.is_none
+               (Transform.covers Transform.id (pixels [| 1.; 2. |]))));
     ]
 
 (* Constructors *)
@@ -491,7 +495,7 @@ let constructors =
           in
           let p = Quantity.v Unit.degree (tensor [| 2 |] [| 0.; 0. |]) in
           equal (array bool) [| false |]
-            (Nx.to_array (Nx.reshape [| 1 |] (Transform.covers t p)));
+            (Nx.to_array (Nx.reshape [| 1 |] (covers t p)));
           raises_match (Exn.invalid_arg ~substring:"place no celestial pole")
             (fun () -> Transform.apply t p));
       test "a LATPOLE as near both poles takes eq. (8)'s minus sign"
@@ -708,8 +712,10 @@ let structure =
             (Format.asprintf "%a" Transform.pp (Transform.about (at (0., 0.))))
           @@ __POS_OF__
                {|
-            inverse (celestial ARC icrs ~crval:float64 [1,2] [[0, 0]] rad ~lonpole:
-              180 1/180 pi rad)
+            inverse (celestial ARC icrs
+                       ~crval:float64 [1; 2]
+                              [[0, 0]] rad
+                       ~lonpole:float64 [] 180 1/180 pi rad)
             |});
     ]
 

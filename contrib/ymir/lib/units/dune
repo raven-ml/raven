@@ -1,7 +1,7 @@
 (library
  (name ymir_units)
  (public_name ymir.units)
- (libraries nx nx.dtype)
+ (libraries nx nx.array)
  (private_modules
   nat
   prime

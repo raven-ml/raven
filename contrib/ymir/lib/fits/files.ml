@@ -58,7 +58,7 @@ let v header bytes =
           ~others:[] header
     | _ -> header
   in
-  let b = Hdu.buffer_of bytes in
+  let b = Hdu.bytes bytes in
   Hdu.constructed header (Once.of_value { Hdu.buffer = b; offset = 0; size })
 
 (* [groups records structural] splits [records] into the leading run of

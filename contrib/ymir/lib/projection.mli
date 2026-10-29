@@ -60,13 +60,13 @@ val theta0 : code -> float
 
 val deproject :
   code ->
-  (float, Nx.float64_elt) Nx.t ->
-  (float, Nx.float64_elt) Nx.t ->
-  (float, Nx.float64_elt) Nx.t ->
-  ((float, Nx.float64_elt) Nx.t
-  * (float, Nx.float64_elt) Nx.t
-  * (float, Nx.float64_elt) Nx.t)
-  * Nx.bool_t
+  (float, Nx.float64_elt, 'd) Nx.t ->
+  (float, Nx.float64_elt, 'd) Nx.t ->
+  (float, Nx.float64_elt, 'd) Nx.t ->
+  ((float, Nx.float64_elt, 'd) Nx.t
+  * (float, Nx.float64_elt, 'd) Nx.t
+  * (float, Nx.float64_elt, 'd) Nx.t)
+  * 'd Nx.bool_t
 (** [deproject code pv x y] is the native unit vector of the plane point
     [(x, y)], and where the point is in [code]'s domain. The mask is a scalar
     [true] for a projection whose deprojection covers the plane. ZPN and AIR
@@ -75,16 +75,16 @@ val deproject :
 
 val project :
   code ->
-  (float, Nx.float64_elt) Nx.t ->
-  (float, Nx.float64_elt) Nx.t
-  * (float, Nx.float64_elt) Nx.t
-  * (float, Nx.float64_elt) Nx.t ->
-  ((float, Nx.float64_elt) Nx.t * (float, Nx.float64_elt) Nx.t) * Nx.bool_t
+  (float, Nx.float64_elt, 'd) Nx.t ->
+  (float, Nx.float64_elt, 'd) Nx.t
+  * (float, Nx.float64_elt, 'd) Nx.t
+  * (float, Nx.float64_elt, 'd) Nx.t ->
+  ((float, Nx.float64_elt, 'd) Nx.t * (float, Nx.float64_elt, 'd) Nx.t) * 'd Nx.bool_t
 (** [project code pv u] is the plane point of the native unit vector [u], and
     where [u] is in [code]'s domain. The mask is a scalar [true] for a
     projection defined on the whole sphere. *)
 
-val valid : code -> (float, 'a) Nx.t -> Nx.bool_t * string
+val valid : code -> (float, 'a, 'd) Nx.t -> 'd Nx.bool_t * string
 (** [valid code pv] is where [pv] defines the projection [code], and the
     condition as text for a message, as ["P1 > 0"]. For a code that every
     [pv] defines, it is a scalar [true] and [""]. *)

@@ -429,7 +429,7 @@ let structure =
             [ {|the root: case "1e3 m"|} ]
             (List.map
                (Format.asprintf "%a" Nx.Ptree.pp_visit)
-               (Nx.Ptree.visits Unit.ptree Unit.(kilo metre))));
+               (Nx.Ptree.visits (Nx.Ptree.v Unit.walk) Unit.(kilo metre))));
     ]
 
 (* Any string *)

@@ -8,24 +8,24 @@ module Unit = Ymir_units.Unit
 
 let strf = Printf.sprintf
 
-type 'e q = (float, 'e) Nx.t Quantity.t
+type ('e, 'd) q = (float, 'e, 'd) Nx.t Quantity.t
 
-type ('w, 'e) shape =
-  | Circle of 'e q
-  | Annulus of { inner : 'e q; outer : 'e q }
-  | Ellipse of { a : 'e q; b : 'e q; angle : 'e q }
+type ('w, 'e, 'd) shape =
+  | Circle of ('e, 'd) q
+  | Annulus of { inner : ('e, 'd) q; outer : ('e, 'd) q }
+  | Ellipse of { a : ('e, 'd) q; b : ('e, 'd) q; angle : ('e, 'd) q }
   | Polygon of {
       dtype : (float, 'e) Nx.dtype;
       vertices : 'w;  (** On axis -2. *)
-      world : 'w Transform.endpoint;
+      world : ('w, 'd) Transform.endpoint;
     }
 
 (* A planar shape centred on the origin of the plane its placement maps into.
    Weights map corners in float64 and cast the offsets to the shape's dtype, or
    to float32 for a narrower one. *)
-type ('w, 'e) t = {
-  shape : ('w, 'e) shape;
-  placement : ('w, Transform.plane) Transform.t;
+type ('w, 'e, 'd) t = {
+  shape : ('w, 'e, 'd) shape;
+  placement : ('w, 'd Transform.plane, 'd) Transform.t;
 }
 
 let circle placement ~radius = { shape = Circle radius; placement }
@@ -135,7 +135,7 @@ let plane_of ?unit placement value ~cells =
    [mapped] against [r], [[batch; h; w]], and the shape's own area in its
    plane, [[batch]], both in the square of the shape's plane unit, computed at
    [r]'s dtype. *)
-let kernel (type w e) ({ shape; placement } : (w, e) t) mapped =
+let kernel (type w e d) ({ shape; placement } : (w, e, d) t) mapped =
   let sized size =
     let unit = Quantity.unit size in
     let dtype : (float, e) Nx.dtype = Nx.dtype (payload size) in
@@ -224,7 +224,7 @@ let kernel (type w e) ({ shape; placement } : (w, e) t) mapped =
    kernel's squares and cross products: float16 overflows past 65504, float8
    e4m3 saturates at 448 and merges corners 16 cells out. Such a region is
    weighed at float32, and its weights rounded once to its dtype. *)
-let dtype_of (type w e) ({ shape; _ } : (w, e) t) : (float, e) Nx.dtype =
+let dtype_of (type w e d) ({ shape; _ } : (w, e, d) t) : (float, e) Nx.dtype =
   match shape with
   | Circle r -> Nx.dtype (payload r)
   | Annulus { outer; _ } -> Nx.dtype (payload outer)
@@ -233,12 +233,12 @@ let dtype_of (type w e) ({ shape; _ } : (w, e) t) : (float, e) Nx.dtype =
 
 let narrow (type e) (dtype : (float, e) Nx.dtype) =
   match dtype with
-  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 -> true
+  | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
   | Float32 | Float64 -> false
 
 (* [widened r] is [r] with its sizes at float32. *)
-let widened (type w e) ({ shape; placement } : (w, e) t) :
-    (w, Nx.float32_elt) t =
+let widened (type w e d) ({ shape; placement } : (w, e, d) t) :
+    (w, Nx.float32_elt, d) t =
   let q x = Quantity.v (Quantity.unit x) (Nx.cast Nx.float32 (payload x)) in
   let shape =
     match shape with
@@ -250,13 +250,13 @@ let widened (type w e) ({ shape; placement } : (w, e) t) :
   in
   { shape; placement }
 
-let overlap (type w e) (r : (w, e) t) (g : (w, e) Grid.t) :
-    e Overlap.t * (float, e) Nx.t =
+let overlap (type w e d) (r : (w, e, d) t) (g : (w, e, d) Grid.t) :
+    (e, d) Overlap.t * (float, e, d) Nx.t =
   let mapped = Grid.mapped g in
   let dtype = dtype_of r in
   if not (narrow dtype) then kernel r mapped
   else
-    let (o : Nx.float32_elt Overlap.t), own = kernel (widened r) mapped in
+    let (o : (Nx.float32_elt, d) Overlap.t), own = kernel (widened r) mapped in
     ( {
         o with
         weight = Nx.cast dtype o.weight;
@@ -270,13 +270,14 @@ let weights r g = (fst (overlap r g)).weight
 
 module W = Nx.Ptree.Walk
 
-let walk_points : type w. w Transform.endpoint -> ('a, 'b) W.cursor -> w -> w =
+let walk_points : type w d.
+    (w, d) Transform.endpoint -> ('a, 'b, d, d) W.cursor -> w -> w =
  fun e c x ->
   match e with
   | Transform.Planar -> Transform.quantity c x
   | Transform.Sky _ -> W.structure (Direction.ptree ()) c x
 
-let walk (type w e) c ({ shape; placement } : (w, e) t) : (w, e) t =
+let walk (type w e d) c ({ shape; placement } : (w, e, d) t) : (w, e, d) t =
   let shape =
     match shape with
     | Circle r ->
@@ -304,12 +305,5 @@ let walk (type w e) c ({ shape; placement } : (w, e) t) : (w, e) t =
   in
   { shape; placement }
 
-type ('w, 'e) region = ('w, 'e) t
 
-let ptree (type w e) () : (w, e) t Nx.Ptree.t =
-  Nx.Ptree.instantiate
-    (module struct
-      type _ t = (w, e) region
-
-      let walk = walk
-    end)
+let ptree () = Nx.Ptree.v walk

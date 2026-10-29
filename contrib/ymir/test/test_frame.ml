@@ -229,7 +229,7 @@ let walk_visits (type f) (frame : f Frame.t) =
   let s =
     Nx.Ptree.instantiate
       (module struct
-        type _ t = f Frame.t
+        type (_, _) t = f Frame.t
 
         let walk = Frame.walk
       end)

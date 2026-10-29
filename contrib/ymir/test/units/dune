@@ -7,5 +7,5 @@
   test_constant
   test_vocabulary)
  (package ymir)
- (libraries ymir.units ymir_units_test nx nx.dtype rune windtrap)
+ (libraries ymir.units ymir_units_test nx nx.array rune windtrap)
  (deps golden/ratio.golden))

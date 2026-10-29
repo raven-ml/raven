@@ -171,7 +171,7 @@ module Fits : sig
       an [Error] naming [Nx_io.gunzip]. *)
 
   val of_bytes :
-    name:string -> (int, Nx.uint8_elt) Nx.t -> (hdu list, string) result
+    name:string -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> (hdu list, string) result
   (** [of_bytes ~name b] is the HDUs of the bytes [b] in C order, as {!read}
       reads a file. [name] starts their errors. *)
 
@@ -184,7 +184,7 @@ module Fits : sig
   val header : hdu -> Header.t
   (** [header hdu] is [hdu]'s header. *)
 
-  val data : hdu -> (int, Nx.uint8_elt) Nx.t
+  val data : hdu -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t
   (** [data hdu] is [hdu]'s data unit as stored, heap included, padding
       excluded: for a read HDU, a view of the file, which must not change while
       the view lives. *)
@@ -200,7 +200,7 @@ module Fits : sig
       writes, [DATASUM], so they identify the data; two files with equal headers
       and different data without [DATASUM] share a digest. *)
 
-  val v : Header.t -> (int, Nx.uint8_elt) Nx.t -> hdu
+  val v : Header.t -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> hdu
   (** [v h b] is the HDU of any kind with header [h] and data unit [b], as
       {!write} writes it after the first HDU: [DATASUM] and [CHECKSUM] go, and a
       primary image becomes an [IMAGE] extension.
@@ -326,7 +326,7 @@ module Fits : sig
     val shape : t -> int array
     (** [shape t] is [[|NAXISn; …; NAXIS1|]]. *)
 
-    val element : t -> Nx_dtype.Scalar.t
+    val element : t -> Nx.Dtype.any
     (** [element t] is the stored format, the standard's unsigned offsets
         included. *)
 
@@ -342,7 +342,7 @@ module Fits : sig
       ?window:(int * int) array ->
       ('a, 'b) Nx.dtype ->
       hdu ->
-      (('a, 'b) Nx.t, string) result
+      (('a, 'b, Nx.host) Nx.t, string) result
     (** [raw ~window dtype hdu] is the stored numbers of [hdu]'s image as
         [dtype]. It is an [Error] naming the dtypes that hold the element if
         [dtype] does not hold every value of it exactly. *)
@@ -351,17 +351,17 @@ module Fits : sig
       ?window:(int * int) array ->
       (float, 'b) Nx.dtype ->
       hdu ->
-      ((float, 'b) Nx.t, string) result
+      ((float, 'b, Nx.host) Nx.t, string) result
     (** [values ~window dtype hdu] is the physical values of [hdu]'s image, NaN
         where undefined. On an unscaled image it succeeds exactly when {!raw}
         does. *)
 
     val validity :
-      ?window:(int * int) array -> hdu -> (Nx.bit_t option, string) result
+      ?window:(int * int) array -> hdu -> (Nx.host Nx.bit_t option, string) result
     (** [validity ~window hdu] is [false] where a pixel is undefined ([BLANK] or
         NaN), or [None] if none is. *)
 
-    val hdu : ?tiles:int array -> Header.t -> ('a, 'b) Nx.t -> hdu
+    val hdu : ?tiles:int array -> Header.t -> ('a, 'b, Nx.host) Nx.t -> hdu
     (** [hdu ~tiles h t] is [t] as an image HDU with [h]'s cards that are not
         structural ({!write}); [BLANK] is dropped from a float image. With
         [tiles], a tile shape in tensor axis order, it is tile-compressed:
@@ -376,7 +376,7 @@ module Fits : sig
         rank with positive sizes, or if [t] is int64 or uint64 with [tiles]. *)
 
     val quantized :
-      ?tiles:int array -> float -> Header.t -> (float, 'b) Nx.t -> hdu
+      ?tiles:int array -> float -> Header.t -> (float, 'b, Nx.host) Nx.t -> hdu
     (** [quantized ~tiles q h t] stores [t] Rice-coded in integer steps of each
         tile's noise divided by [q], in tiles of one row unless [tiles],
         dithered by SUBTRACTIVE_DITHER_2, which keeps zeros exact; NaN pixels
@@ -438,8 +438,8 @@ module Fits : sig
 
     type column = {
       name : string;  (** TTYPEn, [""] when absent *)
-      element : Nx_dtype.Scalar.t;
-          (** [Bool] for L, [Bit] for X, [UInt8] for A *)
+      element : Nx.Dtype.any;
+          (** [Bool] for L, [Bit] for X, [Uint8] for A *)
       layout : layout;
       scaled : bool;  (** TSCAL or TZERO beyond the offsets *)
       cards : Header.t;  (** the column's other keywords, number removed *)
@@ -469,7 +469,7 @@ module Fits : sig
       ('a, 'b) Nx.dtype ->
       string ->
       hdu ->
-      (('a, 'b) Nx.t, string) result
+      (('a, 'b, Nx.host) Nx.t, string) result
     (** [raw ~rows dtype name hdu] is an {!Array} column's stored numbers, of
         shape [[rows] @ cell], when [dtype] holds every value of its element:
         [bool] for L, [bit] for X (most significant bit first), [complex64] or
@@ -480,7 +480,7 @@ module Fits : sig
       (float, 'b) Nx.dtype ->
       string ->
       hdu ->
-      ((float, 'b) Nx.t, string) result
+      ((float, 'b, Nx.host) Nx.t, string) result
     (** [values ~rows dtype name hdu] is a numeric {!Array} column's physical
         values, NaN where undefined: on a scaled column [TZERO + TSCAL × s]
         computed as one fma in float64, then cast once. *)
@@ -490,12 +490,12 @@ module Fits : sig
       ('a, 'b) Nx.dtype ->
       string ->
       hdu ->
-      (('a, 'b) Nx_ragged.t, string) result
+      (('a, 'b, Nx.host) Nx_ragged.t, string) result
     (** [ragged ~rows dtype name hdu] is a {!Lists} column's stored numbers, or
         a {!Text} column's bytes as [uint8], one list per cell. *)
 
     val validity :
-      ?rows:int * int -> string -> hdu -> (Nx.bit_t option, string) result
+      ?rows:int * int -> string -> hdu -> (Nx.host Nx.bit_t option, string) result
     (** [validity ~rows name hdu] is [false] where an element is undefined, in
         {!raw}'s shape or the ragged elements'; [None] if none is. *)
 
@@ -504,13 +504,13 @@ module Fits : sig
     *)
 
     type data =
-      | Array of { values : Nx.packed; validity : Nx.bit_t option }
+      | Array of { values : Nx.host Nx.packed; validity : Nx.host Nx.bit_t option }
       | Lists : {
-          values : ('a, 'b) Nx_ragged.t;
-          validity : Nx.bit_t option;
+          values : ('a, 'b, Nx.host) Nx_ragged.t;
+          validity : Nx.host Nx.bit_t option;
         }
           -> data
-      | Text of (int, Nx.uint8_elt) Nx_ragged.t
+      | Text of (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
           (** The type for a column's data. *)
 
     val read :

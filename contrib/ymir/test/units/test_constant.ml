@@ -156,7 +156,7 @@ let float_dtypes =
       D ("float32", Nx.float32);
       D ("float16", Nx.float16);
       D ("bfloat16", Nx.bfloat16);
-      D ("float8_e4m3", Nx.float8_e4m3);
+      D ("float8_e4m3fn", Nx.float8_e4m3fn);
       D ("float8_e5m2", Nx.float8_e5m2);
     ]
 
@@ -640,7 +640,7 @@ let edges =
         ("2051", 0, Is 2052.);
         ("20490000000001", -10, Is 2050.);
       ] );
-    ( D ("float8_e4m3", Nx.float8_e4m3),
+    ( D ("float8_e4m3fn", Nx.float8_e4m3fn),
       [
         ("448", 0, Is 448.);
         ("464", 0, Is 448.);
@@ -1073,12 +1073,12 @@ let membership =
 let documented =
   group "The interface's error examples"
     [
-      test "G is 0 in float8_e4m3" (fun () ->
+      test "G is 0 in float8_e4m3fn" (fun () ->
           raises
             (Invalid_argument
                "Constant.quantity: Newtonian constant of gravitation: \
-                6.67430(15)e-11 is 0 in float8_e4m3") (fun () ->
-              Constant.quantity Nx.float8_e4m3
+                6.67430(15)e-11 is 0 in float8_e4m3fn") (fun () ->
+              Constant.quantity Nx.float8_e4m3fn
                 (Codata.newtonian_gravitation Codata.v2022)));
       test "the electron g factor is negative, which uint8 does not hold"
         (fun () ->

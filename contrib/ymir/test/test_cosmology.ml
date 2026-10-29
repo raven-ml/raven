@@ -67,7 +67,7 @@ let planck_like =
     m_nu = [ 0.06 ];
   }
 
-let cosmology (type b) (d : (float, b) Nx.dtype) m : (float, b) Nx.t Cosmology.t
+let cosmology (type b) (d : (float, b) Nx.dtype) m : (float, b, Nx.host) Nx.t Cosmology.t
     =
   let s x = Nx.scalar d x in
   {
@@ -84,7 +84,7 @@ let cosmology (type b) (d : (float, b) Nx.dtype) m : (float, b) Nx.t Cosmology.t
         (Nx.create d [| List.length m.m_nu |] (Array.of_list m.m_nu));
   }
 
-let cosmology_ptree () = Nx.Ptree.instantiate (module Cosmology)
+let cosmology_ptree () = Nx.Ptree.instantiate (module Cosmology.Structure)
 
 (* Functions by name, as the goldens write them, each in the goldens' unit. *)
 
@@ -96,8 +96,8 @@ let component = function
   | "curvature" -> Curvature
   | s -> failwith ("unknown component " ^ s)
 
-let evaluate (type b) name (c : (float, b) Nx.t Cosmology.t) ?observed
-    (z : (float, b) Nx.t) : (float, b) Nx.t =
+let evaluate (type b) name (c : (float, b, Nx.host) Nx.t Cosmology.t) ?observed
+    (z : (float, b, Nx.host) Nx.t) : (float, b, Nx.host) Nx.t =
   match String.split_on_char ':' name with
   | [ "density_parameter"; i ] -> Cosmology.density_parameter c (component i) z
   | _ -> (
@@ -833,7 +833,7 @@ let fits =
       test "noisy data give the cosmology within 3 sigma" (fun () ->
           List.iter
             (fun seed ->
-              let w = Nx.Rng.normal (Nx.Rng.key seed) Nx.float64 [| n_sn |] in
+              let w = Nx.Rng.normal ~key:(Nx.Rng.key seed) Nx.float64 [| n_sn |] in
               let f = fit (Nx.add (magnitudes truth) (Nx.matmul chol w)) in
               for i = 0 to 2 do
                 less

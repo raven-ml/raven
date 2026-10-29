@@ -65,8 +65,8 @@ let formats =
       max = Float.ldexp 0xffp0 120;
     };
     {
-      name = "float8_e4m3";
-      dtype = D Nx.float8_e4m3;
+      name = "float8_e4m3fn";
+      dtype = D Nx.float8_e4m3fn;
       prec = 4;
       emin = -6;
       max = 448.;
@@ -616,9 +616,9 @@ let errors =
                "Unit.ratio: the factor from 6552e1 to 1 is 6552e1, which \
                 overflows float16") (fun () ->
               Unit.(ratio Nx.float16 (int 65520) one)));
-      test "float8_e4m3 rounds its overflow tie to its largest value" (fun () ->
+      test "float8_e4m3fn rounds its overflow tie to its largest value" (fun () ->
           equal float_exact 448.
-            (Unit.ratio Nx.float8_e4m3 (Unit.int 464) Unit.one));
+            (Unit.ratio Nx.float8_e4m3fn (Unit.int 464) Unit.one));
       test "an evaluation past the budget" (fun () ->
           (* (16777289 / 16777259)^1000000 is about 6, a quotient of two
              naturals of 24 million bits. *)

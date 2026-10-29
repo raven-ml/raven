@@ -51,6 +51,12 @@ let walk c x =
   let m_nu = field c "m_nu" Quantity.walk x.m_nu in
   { codata = x.codata; h0; omega_cb; omega_k; w0; wa; t_cmb; n_eff; m_nu }
 
+module Structure = struct
+  type nonrec ('a, _) t = 'a t
+
+  let walk = walk
+end
+
 let pp ppf c =
   Format.fprintf ppf
     "@[<hv 1>{codata = %d;@ h0 = %a;@ omega_cb = %a;@ omega_k = %a;@ w0 = %a;@ \
@@ -120,11 +126,11 @@ let check_dtype (type b) fn (d : (float, b) Nx.dtype) =
       invalid_arg
         (strf
            "%s: %s has no rule; the cosmology computes in float32 and float64"
-           fn (Nx_dtype.to_string d))
+           fn (Nx.Dtype.name d))
 
 (* [lanes fn c] checks [c] and is the broadcast shape of its leaves, [m_nu]'s
    without its last axis. *)
-let lanes (type b) fn (c : (float, b) Nx.t t) =
+let lanes (type b d) fn (c : (float, b, d) Nx.t t) =
   let h = payload c.h0 in
   check_dtype fn (Nx.dtype h);
   check_unit fn "h0" c.h0 rate;
@@ -252,12 +258,12 @@ let y_cap = 0x1p60
 (* The radiation's part of a^4 E^2, for one call: Omega_g, c_ur N_eff, c_nu,
    and y = m c^2 / (k_B T_ncdm T_CMB) on the lanes and a last axis of the
    massive species, if there are any. *)
-type 'b radiation = {
+type ('b, 'd) radiation = {
   tables : T.t;
-  omega_g : (float, 'b) Nx.t;
-  ur : (float, 'b) Nx.t;
+  omega_g : (float, 'b, 'd) Nx.t;
+  ur : (float, 'b, 'd) Nx.t;
   c_nu : float;
-  y : (float, 'b) Nx.t option;
+  y : (float, 'b, 'd) Nx.t option;
 }
 
 (* [neutrinos r a] is the neutrinos' term of a^4 E^2 at [a]. *)
@@ -272,25 +278,29 @@ let neutrinos r a =
 
 (* A model is a cosmology read for one call: its payloads in their own units,
    with H0 at 1 where it is not positive, and the constants of a^4 E^2. *)
-type 'b model = {
+type ('b, 'd) model = {
   tables : T.t;
   ndim : int; (* the lanes' rank *)
-  h : (float, 'b) Nx.t;
-  h_ok : (bool, Nx.bool_elt) Nx.t;
-  omega_cb : (float, 'b) Nx.t;
-  omega_k : (float, 'b) Nx.t;
-  omega_de : (float, 'b) Nx.t;
-  w0 : (float, 'b) Nx.t;
-  wa : (float, 'b) Nx.t;
-  radiation : 'b radiation;
+  h : (float, 'b, 'd) Nx.t;
+  h_ok : (bool, Nx.bool_elt, 'd) Nx.t;
+  omega_cb : (float, 'b, 'd) Nx.t;
+  omega_k : (float, 'b, 'd) Nx.t;
+  omega_de : (float, 'b, 'd) Nx.t;
+  w0 : (float, 'b, 'd) Nx.t;
+  wa : (float, 'b, 'd) Nx.t;
+  radiation : ('b, 'd) radiation;
 }
 
-let model (type b) (c : (float, b) Nx.t t) ~ndim : b model =
+(* [constant x k] is the constant [k] at [x]'s dtype, beside [x]. *)
+let constant x k =
+  Quantity.map (Nx.place (Nx.beside x)) (Constant.quantity (Nx.dtype x) k)
+
+let model (type b d) (c : (float, b, d) Nx.t t) ~ndim : (b, d) model =
   let h = payload c.h0 in
   let d = Nx.dtype h in
   let tables = match d with Float64 -> T.float64 | _ -> T.float32 in
   let h, h_ok = safe_h h in
-  let g = Constant.quantity d (Codata.newtonian_gravitation c.codata) in
+  let g = constant h (Codata.newtonian_gravitation c.codata) in
   (* Omega_g = 32 pi G sigma T^4 / (3 c^3 H0^2): the record's quantities and
      one rounded factor. *)
   let omega_g =
@@ -335,12 +345,12 @@ let model (type b) (c : (float, b) Nx.t t) ~ndim : b model =
 
 (* The components' terms of a^4 E^2 at [a], given [ln a] and [1 - a], which
    each caller computes where it does not cancel. *)
-type 'b terms = {
-  cold : (float, 'b) Nx.t;
-  curvature : (float, 'b) Nx.t;
-  dark : (float, 'b) Nx.t;
-  photons : (float, 'b) Nx.t;
-  neutrinos : (float, 'b) Nx.t;
+type ('b, 'd) terms = {
+  cold : (float, 'b, 'd) Nx.t;
+  curvature : (float, 'b, 'd) Nx.t;
+  dark : (float, 'b, 'd) Nx.t;
+  photons : (float, 'b, 'd) Nx.t;
+  neutrinos : (float, 'b, 'd) Nx.t;
 }
 
 let terms m ~a ~ln_a ~one_minus_a =
@@ -385,7 +395,7 @@ let safe_e2 e2 =
    lanes. *)
 let rule m xs =
   let n = Array.length xs in
-  Nx.create (Nx.dtype m.h) [| n |] xs
+  Nx.place (Nx.beside m.h) (Nx.create (Nx.dtype m.h) [| n |] xs)
   |> Nx.reshape (Array.append [| n |] (Array.make m.ndim 1))
 
 (* The integrals over the line of sight: chi / D_H and H0 t_L. *)
@@ -457,7 +467,7 @@ let call fn c z =
   (lanes, model c ~ndim:(Array.length lanes))
 
 let result lanes ok x = Nx.broadcast_to lanes (nan_where_not ok x)
-let all = List.fold_left Nx.logical_and
+let all ok oks = List.fold_left Nx.logical_and ok oks
 
 (* [at m z] is the terms of a^4 E^2 at [z], a safe redshift. *)
 let at m z =
@@ -503,9 +513,7 @@ let density_parameter c i z =
 let critical_density c z =
   let fn = "Cosmology.critical_density" in
   let lanes, m, e, ok = expansion fn c z in
-  let g =
-    Constant.quantity (Nx.dtype m.h) (Codata.newtonian_gravitation c.codata)
-  in
+  let g = constant m.h (Codata.newtonian_gravitation c.codata) in
   let h = Quantity.v (Quantity.unit c.h0) (result lanes ok (Nx.mul m.h e)) in
   Quantity.(div (pow 2 h) g |> times Unit.(int 3 / (int 8 * pi)))
 
@@ -526,7 +534,7 @@ let comoving_distance c z =
   let lanes, m, _, chi, ok = comoving "Cosmology.comoving_distance" c z in
   Quantity.v (distance_unit c) (result lanes ok (Nx.div chi m.h))
 
-let transverse (type b) (c : (float, b) Nx.t t) (d : (float, b) Nx.t Quantity.t)
+let transverse (type b d) (c : (float, b, d) Nx.t t) (d : (float, b, d) Nx.t Quantity.t)
     =
   let fn = "Cosmology.transverse" in
   check_unit fn "d" d Unit.metre;
@@ -646,7 +654,8 @@ type paper = {
   m_nu : string list;
 }
 
-let realise (type b) fn ~codata (d : (float, b) Nx.dtype) p : (float, b) Nx.t t
+let realise (type b) fn ~codata (d : (float, b) Nx.dtype) p :
+    (float, b, Nx.host) Nx.t t
     =
   check_dtype fn d;
   let number u = Unit.ratio d u Unit.one in
