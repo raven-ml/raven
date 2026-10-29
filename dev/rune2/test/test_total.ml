@@ -320,8 +320,8 @@ let chained =
         (Format.pp_print_list ~pp_sep:Format.pp_print_space value)
         (Array.to_list c.adds))
 
-(* One case of each mode, each inner construct among them, and no row and no
-   trip, so that every run reaches each. *)
+(* One case of each mode, each inner construct among them, no row, and a scan
+   and an iterate of no trip, so that every run reaches each. *)
 let chained_examples =
   List.mapi
     (fun k mode ->
@@ -332,7 +332,7 @@ let chained_examples =
         pre = (12., k mod 2 = 1);
         rows = k mod 4;
         inner;
-        trips = (k + 1) mod 4;
+        trips = (match k with 1 | 2 -> 0 | k -> k mod 4);
         adds = [| (1e8, false); (1e-8, true); (-1e8, false); value |];
         mode;
       })
@@ -346,11 +346,8 @@ let law_chained c =
     (fun m -> cover (Format.asprintf "under %a" pp_mode m) (c.mode = m))
     modes;
   cover "no row" (c.rows = 0);
-  cover "no trip" (c.trips = 0);
-  cover "under a jit of a transformation"
-    (match c.mode with
-    | Jit_forward | Jit_reverse | Jit_mapped -> true
-    | Eager | Jitted | Forward | Reverse | Mapped -> false);
+  cover "a scan of no trip" (c.inner = Scan_in && c.trips = 0);
+  cover "an iterate of no trip" (c.inner = Iterate_in && c.trips = 0);
   let t = Total.make () in
   (* A placed value is computed; one of every set is a formula. An addition
      scales its value by the carry's sum, one, so that it has a tangent. *)
