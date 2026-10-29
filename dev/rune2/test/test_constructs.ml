@@ -55,6 +55,8 @@ type construct = {
   entry : string; (* The entry point a message names. *)
   traced : bool; (* Whether [body] runs over stand-ins. *)
   per_key : bool; (* Whether a trace serves later calls, as a jit's does. *)
+  stages : bool; (* Whether it records operations on captures too. *)
+  bodies : int; (* How often one trace runs [body]: once per branch. *)
   make : (f32 -> f32) -> f32 -> f32;
       (* [make body] is bound once and called; a jit compiles at [make]. *)
   eager : (f32 -> f32) -> f32 -> f32; (* What the construct computes. *)
@@ -81,6 +83,8 @@ let constructs =
       entry;
       traced = false;
       per_key = false;
+      stages = false;
+      bodies = 1;
       make = rule custom;
       eager = Fun.id;
     }
@@ -95,6 +99,8 @@ let constructs =
       entry;
       traced = true;
       per_key = false;
+      stages = false;
+      bodies = 1;
       make;
       eager = Fun.id;
     }
@@ -105,6 +111,8 @@ let constructs =
       entry;
       traced = true;
       per_key = false;
+      stages = false;
+      bodies = 1;
       make;
       eager = Fun.id;
     }
@@ -125,13 +133,27 @@ let constructs =
       with
       eager = thrice;
     };
-    at "Rune.switch" (fun body x ->
-        Rune.switch T.tensor (Nx.scalar Nx.int32 0l)
-          [ (fun () -> body x); (fun () -> Nx.neg x) ]);
-    at "Rune.root" (fun body x ->
-        Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () -> body x));
-    at "Rune.remat" (fun body -> Rune.remat T.(tensor @-> returns tensor) body);
-    { (at "Rune.jit'" Rune.jit') with per_key = true };
+    {
+      (at "Rune.switch" (fun body x ->
+           Rune.switch T.tensor (Nx.scalar Nx.int32 0l)
+             [ (fun () -> body x); (fun () -> body (Nx.neg x)) ]))
+      with
+      stages = true;
+      bodies = 2;
+    };
+    {
+      (at "Rune.root" (fun body x ->
+           Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () -> body x)))
+      with
+      stages = true;
+    };
+    {
+      (at "Rune.remat" (fun body ->
+           Rune.remat T.(tensor @-> returns tensor) body))
+      with
+      stages = true;
+    };
+    { (at "Rune.jit'" Rune.jit') with per_key = true; stages = true };
     on_values "Rune.custom_jvp" Rune.custom_jvp;
     on_values "Rune.custom_vjp" Rune.custom_vjp;
     mapped "Rune.custom_jvp" Rune.custom_jvp;
@@ -174,7 +196,7 @@ let test_traces c =
   r := 2.;
   let second = g x0 in
   let plus a y = Nx.add_s y a in
-  equal ~msg:"runs" int (if c.per_key then 1 else 2) !runs;
+  equal ~msg:"runs" int (c.bodies * if c.per_key then 1 else 2) !runs;
   equal ~msg:"the first call" bits_t (bits (c.eager (plus 1.) x0)) (bits first);
   let seen = if c.per_key then 1. else 2. in
   equal ~msg:"the ref's contents" bits_t
@@ -186,14 +208,16 @@ let test_traces c =
 let test_reads c =
   let body y = Nx.add_s y (Nx.item [] (Nx.sum (Nx.neg y))) in
   if c.traced then
-    raises_match
-      (fun e ->
-        (match e with
-          | Invalid_argument m -> String.starts_with ~prefix:read_prefix m
-          | _ -> false)
-        && names c.entry e)
-      (fun () -> c.make body x0)
+    raises (Invalid_argument (read_prefix ^ c.entry)) (fun () -> c.make body x0)
   else equal bits_t (bits (body x0)) (bits (c.make body x0))
+
+(* An operation on captures alone computes at the call, so a read of its result
+   gives the value, but where the construct stages it. *)
+let test_staged c =
+  let body y = Nx.add_s y (Nx.item [] (Nx.sum (Nx.neg x0))) in
+  if c.stages then
+    raises (Invalid_argument (read_prefix ^ c.entry)) (fun () -> c.make body x0)
+  else equal bits_t (bits (c.eager body x0)) (bits (c.make body x0))
 
 (* A draw without a key raises naming the entry point, on values too. *)
 let test_keyless c =
@@ -309,6 +333,8 @@ let () =
            test_traces;
          cases ~name:construct_name "a read of a traced value raises" constructs
            test_reads;
+         cases ~name:construct_name "a read of captures alone raises if staged"
+           constructs test_staged;
          cases ~name:construct_name "a keyless draw raises" constructs
            test_keyless;
          cases ~name:construct_name "an exception reaches the call" constructs
