@@ -3110,6 +3110,35 @@ let unselected_sum =
             (List.assoc 0 (Run.on_host prg [ (1, x) ])));
     ]
 
+(* A maximum of weak integers
+
+   A pad's fill is a bare constant: where the value it pads folds away, a
+   maximum of the padding is one of weak integers, as in rune's Fold of a padded
+   window. Its identity is the least value of its accumulator's width. *)
+
+(* The greatest over [r1 < 5] of, where [r1 < 4], the greatest of a weak [0]
+   over [r0 < 2], and [0] elsewhere: [0]. *)
+let weak_max_kernel () =
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int 1 ] 0 Int32 in
+  let r1 = Ops.range ~axis_type:Reduce (Int 5) [ 1 ] in
+  let r0 = Ops.range ~axis_type:Reduce (Int 3) [ 0 ] in
+  let inner = Ops.where (r0 < int 2) (int 0) (Ops.const `Invalid) in
+  let inner = Ops.reduce inner Op.Max [ r0 ] in
+  let outer = Ops.reduce (Ops.where (r1 < int 4) inner (int 0)) Op.Max [ r1 ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.store (Ops.index out [ int 0 ]) (Ops.cast outer Int32) ]
+
+let weak_max =
+  group "a maximum of weak integers"
+    [
+      test "is the greatest value it reduces" (fun () ->
+          let prg = Codegen.to_program (weak_max_kernel ()) (Lazy.force host) in
+          equal (array Dtypes.value)
+            [| `Int Bigint.zero |]
+            (List.assoc 0 (Run.on_host prg [])));
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -3573,6 +3602,7 @@ let () =
          invalid_lanes;
          square_wrapping;
          unselected_sum;
+         weak_max;
          gated_stores;
          divisions;
          range_shrinking;

@@ -1213,7 +1213,9 @@ let identity_element op dt : Dtype.const =
   match op with
   | Op.Add -> Dtype.const dt (`Int Bigint.zero)
   | Op.Mul -> Dtype.const dt (`Int Bigint.one)
-  | Op.Max -> Dtype.const dt (Dtype.min dt :> Dtype.const)
+  (* A weak type has no least value: a weak integer's minimum is that of its
+     800-bit place in the lattice, which no integer holds. *)
+  | Op.Max -> Dtype.const dt (Dtype.min (Dtype.strong dt) :> Dtype.const)
   | op -> invalid_argf "%s has no identity element" (Op.name op)
 
 (* Numbers *)

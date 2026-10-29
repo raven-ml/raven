@@ -4394,3 +4394,27 @@ submission, and a range a loop of rig's program (D146).
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `an
   accumulator no lane adds to › is stored before it is read` and `› sums to
   zero`.
+
+## D165. A weak maximum's identity is its accumulator's least value
+
+- **tinygrad:** `uop/ops.py:61` (`identity_element`), whose `Ops.MAX` identity
+  is `dt.min`: for `weakint`, of bitsize 800 (`dtype.py:119`), `-2**799`.
+- **tolk:** `lib/uop/ops.ml:1212-1219` (`identity_element`);
+  `test/gen/tinygrad.patch`, which makes tinygrad's the same before the
+  goldens are generated.
+- **Differs:** a maximum over a weak type has as identity the least value of
+  `Dtype.strong` of the type, the width its accumulator is allocated at. In
+  tinygrad a weak integer's maximum, gated by an Invalid, takes `-2**799`:
+  `pm_reduce_identity` selects it where the gate fails, and committing the
+  selection's width (`cast_weak_srcs`, `commit_int`) raises "does not fit any
+  int". A weak maximum arises where a pad's bare fill is all that remains of a
+  committed maximum's operand.
+- **Reason:** (b). rune's compiled Fold (`dev/rune2/lib/lower_index.ml`,
+  `fold`) of a float64 `[2; 2; 2]` by `lo [2; 2; 0]`, `hi [0; -1; -1]`,
+  `interior [1; 0; 0]` and three windows maximises the uint8 marks of each
+  element's terms; where no term reaches an element, the mark is the pad's
+  fill, a weak `0`, and compiling raised: rune2's `a fold wraps integers and
+  holds its float bound` failed.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a maximum of
+  weak integers › is the greatest value it reduces`; `Tolk.Ops › data types ›
+  identities.golden`.

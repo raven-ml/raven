@@ -539,8 +539,10 @@ val promo_dtype : t list -> Dtype.t
     least upper bound ({!Dtype.least_upper}) otherwise. *)
 
 val identity_element : Op.t -> Dtype.t -> Dtype.const
-(** [identity_element op dt] is the value [e] of type [dt] with [op e x = x]:
-    [0] for {!Op.Add}, [1] for {!Op.Mul}, and [dt]'s least value for {!Op.Max}.
+(** [identity_element op dt] is the value [e] of type [dt] with [op e x = x]
+    for every [x] of type [Dtype.strong dt] ({!Dtype.strong}), the width an
+    accumulator of [dt] takes: [0] for {!Op.Add}, [1] for {!Op.Mul}, and that
+    type's least value for {!Op.Max}.
 
     Raises [Invalid_argument] for any other [op]. *)
 

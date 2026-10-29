@@ -1551,6 +1551,10 @@ thread.
 
 ### Tolk (new)
 
+- A maximum over a weak integer compiles. rune's Fold of a padded float window
+  takes one where no term reaches an element. Its identity was a value no
+  integer holds, and is the least value of its accumulator's width
+  (`Ops.identity_element`).
 - A reduction to which no lane adds, as an int16 fold that sums no term into
   some elements, gives its identity. Its program read the accumulator's
   registers without storing the identity there (`Codegen.to_program`).
