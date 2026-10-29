@@ -1021,15 +1021,23 @@ let test_mapless_pair_slots () =
     (List.init 4 (fun k -> String.make 64 (Char.chr (Char.code 'a' + k))))
     (List.map (fun (_, dst) -> contents dst) copies)
 
+(* [off_page n c] is [n] bytes [c] of host memory that starts off a page,
+   which a device that maps host memory maps only through staging memory. A
+   host buffer under 64 KiB may start on a page, and a device then borrows it
+   for a copy, staging nothing. *)
+let off_page n c =
+  let paged = B.export (filled (1 lsl 16) c) Bigarray.char in
+  B.of_bigarray (Bigarray.Array1.sub paged 64 n)
+
 (* Three copies at once from [d], whose memory the host does not address, to
-   the host, held at [p]'s gate until all three wait there for [d]'s legs into
-   staging memory: each makes a half of 32 MiB, since a device writes only a
-   half whose work is done. [burst_from p srcs] copies from [srcs], made by
-   [sources], and is the copies' destinations. *)
+   host memory off a page, held at [p]'s gate until all three wait there for
+   [d]'s legs into staging memory: each makes a half of 32 MiB, since a device
+   writes only a half whose work is done. [burst_from p srcs] copies from
+   [srcs], made by [sources], and is the copies' destinations. *)
 let sources d = List.map (on d) [ 'a'; 'b'; 'c' ]
 
 let burst_from p srcs =
-  let dsts = List.map (fun _ -> B.create Rig.host 64) srcs in
+  let dsts = List.map (fun _ -> off_page 64 '\000') srcs in
   P.gate p;
   let copier src dst = Thread.create (fun () -> B.copy ~src ~dst) () in
   let copiers = List.map2 copier srcs dsts in
@@ -1078,12 +1086,12 @@ let test_staging_pressure () =
 
 (* Staging memory keeps the halves that later copies use, and returns those
    that as many later takes as it has halves did not take, without waiting
-   for a collection. Copies between the host and [d], whose memory the host
-   does not address, stage through the host's halves, each mapped on [d] at
-   its first use. After a burst of three, three copies in turn put their
-   bytes one after the other in one half, the two halves they passed by go
-   back with their mappings at the next drain, and a second burst maps two
-   new halves. *)
+   for a collection. Copies between host memory off a page and [d], whose
+   memory the host does not address, stage through the host's halves, each
+   mapped on [d] at its first use. After a burst of three, three copies in
+   turn put their bytes one after the other in one half, the two halves they
+   passed by go back with their mappings at the next drain, and a second
+   burst maps two new halves. *)
 let test_staging_window () =
   let d, p = P.open_ ~host_visible:false "buffer:staging-window" in
   let maps () = List.length (P.host_maps p) in
@@ -1091,7 +1099,7 @@ let test_staging_window () =
   let first = burst_from p srcs in
   let after_burst = maps () in
   List.iter
-    (fun c -> B.copy ~src:(filled 64 c) ~dst:(B.create d 64))
+    (fun c -> B.copy ~src:(off_page 64 c) ~dst:(B.create d 64))
     [ 'x'; 'y'; 'z' ];
   equal ~msg:"maps of copies in turn" int after_burst (maps ());
   ignore (B.create Rig.host 0);
@@ -1102,16 +1110,18 @@ let test_staging_window () =
   burst_landed first;
   burst_landed second
 
-(* Copies from host memory that the host writes into staging memory put their
-   pieces one after the other in one half, and wait for no work there: a copy
-   gives its half back once the host wrote its piece, and while it waits for
-   the device's leg, a second copy writes after it in the same half, which the
-   device maps once. *)
+(* Copies from host memory off a page that the host writes into staging
+   memory put their pieces one after the other in one half, and wait for no
+   work there: a copy gives its half back once the host wrote its piece, and
+   while it waits for the device's leg, a second copy writes after it in the
+   same half, which the device maps once. *)
 let test_staging_packed () =
   let d, p = P.open_ ~host_visible:false "buffer:staging-packed" in
   let dsts = [ B.create d 64; B.create d 64 ] in
   P.gate p;
-  let copier c dst = Thread.create (fun () -> B.copy ~src:(filled 64 c) ~dst) () in
+  let copier c dst =
+    Thread.create (fun () -> B.copy ~src:(off_page 64 c) ~dst) ()
+  in
   let first = copier 'a' (List.nth dsts 0) in
   Support.await "the first copy waiting" (fun () -> P.sleepers p = 1);
   let second = copier 'b' (List.nth dsts 1) in
