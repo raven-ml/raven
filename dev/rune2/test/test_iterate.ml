@@ -144,21 +144,21 @@ let law_any (Any_case (dt, s, trips, max, co, g)) =
     (compiled (fun () -> outcome (fun () -> codes (jitted init (k0 ())))))
 
 let test_refused () =
-  invalid ~sub:"Rune.iterate': until is still false after max = 2 steps"
-    (fun () -> Rune.iterate' ~max:2 ~until:below_one ~f:halve (v [| 20. |]));
-  invalid ~sub:"Rune.iterate': max = -1 is negative" (fun () ->
-      Rune.iterate' ~max:(-1) ~until:below_one ~f:halve (v [| 20. |]));
-  invalid ~sub:"Rune.iterate': until must return one boolean, got shape [2]"
-    (fun () ->
-      Rune.iterate' ~max:2
-        ~until:(fun x -> Nx.less x x)
-        ~f:halve
-        (v [| 20.; 1. |]));
+  let halving ~max ~until x = Rune.iterate t ~max ~until ~f:halve x in
+  invalid ~sub:"Rune.iterate: until is still false after max = 2 steps"
+    (fun () -> halving ~max:2 ~until:below_one (v [| 20. |]));
+  invalid ~sub:"Rune.iterate: max = -1 is negative" (fun () ->
+      halving ~max:(-1) ~until:below_one (v [| 20. |]));
+  invalid ~sub:"Rune.iterate: until must return one boolean, got shape [2]"
+    (fun () -> halving ~max:2 ~until:(fun x -> Nx.less x x) (v [| 20.; 1. |]));
   invalid
-    ~sub:"Rune.iterate': the root: shape [1] in the carry the step returned"
+    ~sub:"Rune.iterate: the root: shape [1] in the carry the step returned"
     (fun () ->
-      Rune.iterate' ~max:2 ~until:below_one ~f:(Nx.sum ~keepdims:true)
-        (v [| 20.; 1. |]))
+      Rune.iterate t ~max:2 ~until:below_one ~f:(Nx.sum ~keepdims:true)
+        (v [| 20.; 1. |]));
+  (* A message names the entry point applied. *)
+  invalid ~sub:"Rune.iterate': max = -1 is negative" (fun () ->
+      Rune.iterate' ~max:(-1) ~until:below_one ~f:halve (v [| 20. |]))
 
 exception Until
 exception Step
@@ -301,6 +301,49 @@ let test_staged () =
   invalid ~sub:"Rune.iterate': until is still false after max = 3 steps"
     (fun () -> Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until ~f:halve x) x)
 
+(* A compiled call in a step stays a call, which computes at each step the bits
+   it computes outside the loop, over carries in every view and a capture. *)
+type call =
+  | Call : {
+      dt : (float, 's) Nx.dtype;
+      sine : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
+      s : int array;
+      trips : int;
+      c : Operand.t;
+      w : Operand.t;
+    }
+      -> call
+
+let sine32 = Rune.jit' (Nx.sin : (float, Nx.float32_elt, Nx.host) Nx.t -> _)
+let sine64 = Rune.jit' (Nx.sin : (float, Nx.float64_elt, Nx.host) Nx.t -> _)
+
+let call_cases =
+  let open Gen in
+  (let* s = Operand.shape in
+   let* trips = int_range 1 3 in
+   let* c = Operand.draw s and+ w = Operand.draw s in
+   let+ wide = bool in
+   if wide then Call { dt = f64; sine = sine64; s; trips; c; w }
+   else Call { dt = f32; sine = sine32; s; trips; c; w })
+  |> with_pp (fun ppf (Call c) ->
+      Format.fprintf ppf "%a %a, %d trips, carry %a" Nx.pp_dtype c.dt
+        Operand.pp_shape c.s c.trips Operand.pp_view c.c.view)
+
+let law_call (Call c) =
+  cover "a view" (c.c.view <> Operand.Plain);
+  cover "a zero-size carry" (Operand.numel c.s = 0);
+  let init = Operand.make c.dt c.s c.c and w = Operand.make c.dt c.s c.w in
+  (* Each call reads the carry, so that it computes in the step. *)
+  let step sine (x, k) = (Nx.add (sine x) (sine (Nx.maximum w x)), tick k) in
+  let until (_, k) = Nx.greater_equal_s k (Int32.of_int c.trips) in
+  let written sine = fst (looped ~max:3 ~until ~f:(step sine) (init, k0 ())) in
+  cover "a step the call computes apart from eager"
+    (bits (written c.sine) <> bits (written Nx.sin));
+  equal bits_t
+    (bits (written c.sine))
+    (bits
+       (fst (Rune.iterate (p2 ()) ~max:3 ~until ~f:(step c.sine) (init, k0 ()))))
+
 (* Derivatives *)
 
 (* A step [c -> g(c, c w)] over host leaves in every view, and a counter, the
@@ -354,7 +397,9 @@ let law_derivatives (Case c) =
   let written g (x, w) =
     fst (looped ~max:c.max ~until ~f:(step g w) (x, k0 ()))
   in
-  let l = lenient ~nan:(constant c.g) in
+  (* A carry whose step reads nothing keeps a zero tangent and cotangent where
+     the loop written out has none. *)
+  let l = if constant c.g then lenient ~nan:true else bits_t in
   let jvp f =
     outcome (fun () ->
         let y, t = Rune.jvp (p2 ()) t f xw txw in
@@ -362,10 +407,26 @@ let law_derivatives (Case c) =
   in
   let expected = jvp (written c.g) in
   cover "a refused step" (match expected with Raised _ -> true | _ -> false);
-  equal ~msg:"jvp"
-    (outcome_t (Testable.pair bits_t l))
-    expected
-    (jvp (iterated c.g));
+  let tj = outcome_t (Testable.pair bits_t l) in
+  equal ~msg:"jvp" tj expected (jvp (iterated c.g));
+  (* A linearization's record gives jvp's tangent, as often as it is applied. *)
+  let linearized =
+    outcome (fun () ->
+        let y, at = Rune.linearize (p2 ()) t (iterated c.g) xw in
+        let t = at txw in
+        (bits y, bits t, bits (at txw)))
+  in
+  let first = function
+    | Value (y, t, _) -> Value (y, t)
+    | Raised m -> Raised m
+  in
+  equal ~msg:"linearize"
+    (outcome_t (Testable.pair bits_t bits_t))
+    (jvp (iterated c.g))
+    (first linearized);
+  (match linearized with
+  | Value (_, t, t') -> equal ~msg:"linearize applied again" bits_t t t'
+  | Raised _ -> ());
   let grad f =
     outcome (fun () ->
         let gx, gw = Rune.grad (p2 ()) (fun xw -> Nx.sum (f xw)) xw in
@@ -374,10 +435,12 @@ let law_derivatives (Case c) =
   let expected = grad (written c.g) in
   let lp = outcome_t (Testable.pair l l) in
   equal ~msg:"grad" lp expected (grad (iterated c.g));
-  (* Compiled, reverse mode keeps room for [max] steps, and a value the step
-     captures receives a zero where the loop takes none, NaN where it meets an
-     infinite partial derivative. *)
-  equal ~msg:"jit of grad" lp expected
+  (* Compiled, reverse mode keeps room for [max] steps, and where the loop takes
+     fewer the capture receives a zero cotangent, NaN where it meets an infinite
+     partial derivative. *)
+  let capture = if c.max > c.trips then lenient ~nan:true else l in
+  let room = outcome_t (Testable.pair l capture) in
+  equal ~msg:"jit of grad" room expected
     (outcome (fun () ->
          let gx, gw =
            Rune.jit
@@ -386,6 +449,25 @@ let law_derivatives (Case c) =
              xw
          in
          (bits gx, bits gw)));
+  (* Inside a remat reverse mode keeps room for [max] steps, as compiled. *)
+  let remat f = Rune.remat T.(p2 () @-> returns tensor) f in
+  equal ~msg:"grad of a remat" room expected
+    (grad (fun xw -> remat (iterated c.g) xw));
+  let jvp_grad f =
+    outcome (fun () ->
+        let _, (tx, tw) =
+          Rune.jvp (p2 ()) (p2 ())
+            (Rune.grad (p2 ()) (fun xw -> Nx.sum (f xw)))
+            xw txw
+        in
+        (bits tx, bits tw))
+  in
+  (* With forward mode around it too, and the transposed loop's carry holds a
+     tangent of the cotangent at every step: a zero where a step gives none. *)
+  equal ~msg:"jvp of grad"
+    (outcome_t (Testable.pair (lenient ~nan:true) (lenient ~nan:true)))
+    (jvp_grad (written c.g))
+    (jvp_grad (iterated c.g));
   (* Forward mode compiles, where the step's functions are exact and sum no
      terms along an axis. *)
   let g = unsummed (exact c.g) in
@@ -395,7 +477,8 @@ let law_derivatives (Case c) =
       (fun xw txw -> Rune.jvp (p2 ()) t (iterated g) xw txw)
   in
   equal ~msg:"jit of jvp"
-    (outcome_t (Testable.pair bits_t (lenient ~nan:(constant g))))
+    (outcome_t
+       (Testable.pair bits_t (if constant g then lenient ~nan:true else bits_t)))
     (jvp (written g))
     (compiled (fun () ->
          outcome (fun () ->
@@ -429,6 +512,22 @@ let test_trips_taken () =
   equal ~msg:"a stop's tracked value" bits_t
     (bits (vec [| 0. |]))
     (bits (Rune.grad' (fun t -> Nx.sum (g t)) tol))
+
+(* An iterate of a constant computes at the call, so the function it scales
+   stays linear. *)
+let test_transpose () =
+  let doubled x =
+    fst
+      (Rune.iterate (p2 ()) ~max:3
+         ~until:(fun (_, k) -> Nx.greater_equal_s k 2l)
+         ~f:(fun (x, k) -> (Nx.mul_s x 2., tick k))
+         (x, k0 ()))
+  in
+  let scaled x = Nx.mul x (doubled (vec [| 1.; -1. |])) in
+  equal bits_t
+    (bits (vec [| 4.; -8. |]))
+    (bits
+       (Rune.linear_transpose t t scaled (vec [| 1.; -2. |]) (vec [| 1.; 2. |])))
 
 (* Maps *)
 
@@ -551,14 +650,16 @@ let law_lanes (Lanes c) =
   (* Each lane's gradient is its own loop's; a stopped lane's is finite where
      its own steps are. *)
   if Option.is_none first_short then begin
-    let l = outcome_t (lenient ~nan:(constant c.g)) in
+    let l = outcome_t (if constant c.g then lenient ~nan:true else bits_t) in
     let grad f xt = Rune.grad' (fun x -> Nx.sum (f (x, snd xt))) (fst xt) in
     let per_lane =
       outcome (fun () -> bits (one_by_one (grad (written w)) n (x, t)))
     in
     equal ~msg:"vmap of grad" l per_lane
       (outcome (fun () -> bits (Rune.vmap s (grad (iterated w)) (x, t))));
-    equal ~msg:"grad of vmap" l per_lane
+    equal ~msg:"grad of vmap"
+      (outcome_t (lenient ~nan:(constant c.g)))
+      per_lane
       (outcome (fun () ->
            bits
              (Rune.grad' (fun x -> Nx.sum (Rune.vmap s (iterated w) (x, t))) x)));
@@ -989,9 +1090,13 @@ let test_memory () =
     kept := [];
     held
   in
-  (* The result and each step's carry, which the sine's tangent reads; with no
+  (* Each step taken keeps its carry, which the sine's tangent reads; with no
      step, the result is the argument. *)
-  equal ~msg:"three steps" int (4 * n * 4) (held 3);
+  let carry = n * 4 in
+  equal ~msg:"a third step" int carry (held 3 - held 2);
+  equal ~msg:"a fourth step" int carry (held 4 - held 3);
+  at_most ~msg:"three steps of max = 50, and the result" int ~than:(4 * carry)
+    (held 3);
   equal ~msg:"no step" int 0 (held 0);
   ignore (Sys.opaque_identity x)
 
@@ -1011,11 +1116,15 @@ let () =
              test "a placed init and a constant step" test_placed_init;
              test "a step that captures a jit's argument" test_captured_argument;
              test "compiled, traced once, no eager kernel" test_staged;
+             prop "a compiled call in a step gives its own bits" call_cases
+               law_call;
            ];
          group "derivatives"
            [
              prop "iterate's derivatives are its loop's" cases law_derivatives;
              test "the steps taken" test_trips_taken;
+             test "linear_transpose over an iterate of a constant"
+               test_transpose;
              test "an integer carry has none" test_integer_carry;
            ];
          group "maps"
