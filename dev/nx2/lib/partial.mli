@@ -6,9 +6,10 @@
 (** Folds over a cut axis: operations whose route computes by partials
     ({!Route.Partials}).
 
-    A {e fold} is a reduction, a scan without carry or a contraction, and
-    its {e folded} axes are those it reduces, scans or contracts, and [b]'s
-    axis of [Rows]' groups ({!Nx_kernel.type-segments}). Its route
+    A {e fold} is a reduction, a scan without carry, a contraction or a
+    gather, and its {e folded} axes are those it reduces, scans or
+    contracts, [b]'s axis of [Rows]' groups ({!Nx_kernel.type-segments})
+    and the axis a gather reads at positions. Its route
     reads an operand cut along a folded axis, so no device holds every term
     of its window of the results. Each device computes a {e partial}, the
     fold of the terms its operands' windows hold, and the partials
@@ -36,15 +37,17 @@
     is cut, so a device whose tile is empty holds no slot.
 
     A partial is in the {e carrier} of the result's terms
-    ({!Nx_kernel.carrier}), a contraction's accumulator, or an [Arg]'s
-    term's dtype, and the closing rounds once into the result's dtype. So
+    ({!Nx_kernel.carrier}), a contraction's accumulator, an [Arg]'s term's
+    dtype or a gather's bits ({!section-gathers}), and the closing rounds
+    once into the result's dtype, a gather's exactly. So
     a result depends on the terms, the placement and the devices' kernels
     alone, and is the same on every run. Barring overflow and underflow,
     the bounds below are on a result before that rounding, which adds its
     own, where each device's kernels keep the bounds of
     {!Nx_kernel.section-bounds}. Let [n] be an output's terms, [t] the
     tiles holding terms and [u] the carrier's unit roundoff. A NaN result
-    is a NaN whose sign and payload this module does not state. *)
+    but a gather's is a NaN whose sign and payload this module does not
+    state. *)
 
 (** {1:reductions Reductions and contractions}
 
@@ -189,6 +192,20 @@
       device.
     - A device whose tile is empty holds empty results.
 
+    {1:gathers Gathers}
+
+    A [Gather] closes as a [Reduce] does, its tile its window of [x] along
+    the gathered axis. A device gathers from its tile at its window of the
+    positions, each moved by the tile's start, so that one outside the tile
+    reads the element of zero bits, and reads the result's bits as the
+    unsigned integer of the dtype's width, a [complex128]'s as two
+    [uint64]s along a new last axis, a [bit]'s as themselves. The closing is
+    the slots' [Max]. A position within the axis lies in one tile, whose
+    slot holds its element's bits there, every other slot zero bits; one
+    outside the axis reads zero bits from every tile. The parts, read back
+    as the dtype, so have the bits of the gather on one device, a NaN's
+    included.
+
     {1:traffic Traffic}
 
     A device of a group of [N], [t] of whose tiles hold terms, receives,
@@ -200,7 +217,8 @@
     position per output for each, and [Moments] three such closings. For a
     [Scan], a device receives the totals of the other tiles of its group
     holding terms, one row of its window off the axis each, two for an
-    [Arg]. No part of an operand moves.
+    [Arg]. A [Gather] moves its slots as a [Reduce] of one reduction does,
+    and no part of its positions. No part of an operand moves.
 
     A [Reduce] of [k] reductions runs [k] loops over each device's loads,
     [Moments] two over its terms, laid out once where they are not a load.
@@ -208,7 +226,9 @@
     results on each device but the first, and on the first where the
     carrier is not the result's dtype. A tile cut into pieces reads each of
     its scales once per piece, and a piece of [Rows]' groups runs one
-    [Scan] over its device's offsets. *)
+    [Scan] over its device's offsets. A [Gather] runs on each device one
+    map shifting its positions where its tile starts past [0], one gather
+    and one bitcast, and one bitcast over the results. *)
 
 val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 (** [run ~by route op] is [op], its operands lying where [route], its route,
@@ -216,7 +236,7 @@ val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 
     Raises as {!Exec} states for the kernels, naming [by], and
     [Invalid_argument] as an internal fault for an operation other than a
-    [Reduce], a [Scan] of no carry or a [Contract] of no segments or of
-    [Rows], since no route computes another by partials, and where the
-    result's grid and the folded operand's are not of one mesh
-    ({!Grid.cut_like}). *)
+    [Reduce], a [Scan] of no carry, a [Gather] or a [Contract] of no
+    segments or of [Rows], since no route computes another by partials,
+    and where the result's grid and the folded operand's are not of one
+    mesh ({!Grid.cut_like}). *)

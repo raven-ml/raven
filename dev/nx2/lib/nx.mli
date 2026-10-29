@@ -303,8 +303,9 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     read whole cuts nothing. A cut of an axis that a reduction or a
     contraction sums makes the devices compute by partials where every
     operand holding the axis is cut alike, and cuts nothing in the result;
-    one along a scan's axis stays in it. An operand whole on every device
-    is read by a view of each device's window.
+    so does one of the axis a gather reads at positions. One along a scan's
+    axis stays in it. An operand whole on every device is read by a view of
+    each device's window.
 
     An operation raises [Invalid_argument] where two operands cut one
     result axis over different devices or tiles, where a device needs a
@@ -1083,7 +1084,10 @@ val get : int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 val take : ?axis:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [take ~axis p x] replaces [x]'s axis [axis] by [p]'s axes, reading [x] at
     each position [p] holds; without [axis], [flatten x] is read. A position
-    outside [\[0, d)] reads zero. A gather.
+    outside [\[0, d)] reads zero. A gather, which has the bits it has on one
+    device wherever [x] lies, cut along [axis] too, but for an [x] of
+    {!Nx_array.Layout.max_rank} axes, or a [complex128] one of one fewer,
+    which is read whole along it ({!section-routing}).
 
     Raises [Invalid_argument] if [axis] is not an axis of [x]. *)
 
@@ -1092,7 +1096,7 @@ val take_along_axis :
 (** [take_along_axis ~axis p x] has [p]'s shape broadcast with [x]'s off
     [axis]; its element at [j] is [x]'s element at [j] with axis [axis]
     replaced by [p]'s element at [j]. A position outside [\[0, d)] reads zero.
-    A gather.
+    A gather, which computes over a cut [axis] as {!take} does.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p]'s rank is
     not [x]'s, or the shapes off [axis] do not broadcast. *)

@@ -989,9 +989,55 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
       in
       gathered ~by cl (Prim.expect out (List.hd z))
 
+(* Gathers *)
+
+(* The dtype of [dt]'s bits whose maximum of one element and zeros is that
+   element: [bit] itself, else the unsigned integer of [dt]'s width, two
+   [uint64]s for a [complex128]. *)
+let bits_of (type v s) (dt : (v, s) D.t) : D.any =
+  match D.bits dt with
+  | 1 -> D.Any D.Bit
+  | 4 -> D.Any D.Uint4
+  | 8 -> D.Any D.Uint8
+  | 16 -> D.Any D.Uint16
+  | 32 -> D.Any D.Uint32
+  | 64 | 128 -> D.Any D.Uint64
+  | n -> invalid_argf "Partial.bits_of: a dtype of %d bits" n
+
+let gather (type v s d) ~by (route : unit Route.t) rule axis
+    (idx : d Value.index) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let p = route.result in
+  let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
+  let out = Prim.shape idx and sx = Prim.shape x in
+  let dt = Prim.dtype x in
+  let (D.Any u) = bits_of dt in
+  let parts = D.bits dt / D.bits u in
+  let bits = if parts = 1 then out else Array.append out [| parts |] in
+  let tiles = tiles ~by route ~operand:1 sx [| axis |] in
+  let cl =
+    closing ~by route ~operand:1 ~axes:[ axis ] ~extent:(fun _ -> sx.(axis)) out
+  in
+  (* Device [j] gathers from its tile at the positions moved to the tile's
+     start, one outside it reading zero bits, and reads the result's bits as
+     [u]. *)
+  let own j =
+    let w = Devices.window ~by p out j and t = tiles.(j).(0) in
+    let here = Devices.one set ks.(j) in
+    let i = shift ~by (-t.start) (Value.Any (view ~by ks.(j) here w idx)) in
+    let x = view ~by ks.(j) here (reads rule 1 sx w (fun _ -> t)) x in
+    let idx = Prim.expect D.Int64 i in
+    let y = at ~by here (Value.Gather { axis; idx; x }) in
+    array (at ~by here (Value.Bitcast (u, y)))
+  in
+  (* Only the tile holding a position reads bits other than zeros there. *)
+  let s = stack ~by cl u bits own in
+  let y = gathered ~by cl (reduced ~by cl (Monoid (Max, 0, u)) s) in
+  on ~by y (Value.Bitcast (dt, y))
+
 let run (type r) ~by route (op : r Value.prim) : r =
   let rule = Prim.rule op in
   match op with
+  | Value.Gather { axis; idx; x } -> gather ~by route rule axis idx x
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       reduce ~by route rule layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
@@ -1014,8 +1060,7 @@ let run (type r) ~by route (op : r Value.prim) : r =
   | Value.Contract { segments = Some (Contracting _); _ } ->
       invalid_arg "Partial.run: groups of a contracting pair by partials"
   | Value.Scan { carry = Some _; _ }
-  | Value.Map _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
-  | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _
-  | Value.Copy _ | Value.Move _ | Value.Bitcast _ | Value.Place _
-  | Value.Check _ ->
+  | Value.Map _ | Value.Scatter _ | Value.Sort _ | Value.Fft _
+  | Value.Linalg _ | Value.Fold _ | Value.Assemble _ | Value.Copy _
+  | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Partial.run: an operation no route computes by partials"

@@ -206,9 +206,10 @@ val apply_experts :
     bits are a function of the shapes, the placements, its row and its
     expert: they do not depend on the other positions' experts, and may
     differ from {!apply}'s. The sum reads [k] of each matrix whole, and
-    routing the positions reads [ids] and [x] whole: a weight cut along
-    [k], and [ids] or [x] cut across devices, raise as the operation reading
-    them does ({!Nx.section-routing}). The sum needs kernels that compute a
+    routing the positions sorts [ids], which reads them whole, and gathers
+    [x]'s rows where they lie ({!Nx.take}): a weight cut along [k], and
+    [ids] cut across devices, raise as the operation reading them does
+    ({!Nx.section-routing}). The sum needs kernels that compute a
     segmented contraction, block-scaled for [Mxfp4], as nx.cpu's do.
 
     Raises [Invalid_argument] if the sum lies on a set whose kernels decline
@@ -221,11 +222,13 @@ val take : axis:int -> 'd Nx.int64_t -> 'd t -> 'd t
     [axis], gathered from its packed parts with no value decoded, [p] read as
     {!Nx.take} reads it: at each position in range,
     [dequant dt (take ~axis p w)] is [Nx.take ~axis p (dequant dt w)]. A
-    position out of range gathers zero bytes, which decode to zeros.
+    position out of range gathers zero bytes, which decode to zeros. Where
+    [w] is cut along [axis], each device gathers from its window, as
+    {!Nx.take} does.
 
     Raises [Invalid_argument] if [axis] is [w]'s last axis, negative or not,
-    since a gather along it would cut blocks, if [axis] is not an axis of
-    [w], and as {!Nx.take} does where [w] is cut along [axis]. *)
+    since a gather along it would cut blocks, and if [axis] is not an axis of
+    [w]. *)
 
 (** {1:structure Structure} *)
 

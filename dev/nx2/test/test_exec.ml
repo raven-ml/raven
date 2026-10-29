@@ -1153,8 +1153,9 @@ let creations =
             equal ~msg:(name ^ ": bits") (array bits) want y
           in
           (* Beside [b] on two devices, whole or cut, [a] lies whole on
-             each, which factors it. A solve reads [b]'s matrices whole, so a
-             [b] cut along one of their axes raises. *)
+             each, which factors it. A solve permutes [b]'s rows, a gather
+             that computes over cut rows, and reads its columns whole, so a
+             [b] cut along them raises. *)
           let both = Nx.place Factor2.on data in
           let rows = Nx.place (Factor2.split ~axis:0) data in
           let columns = Nx.place (Factor2.split ~axis:1) data in
@@ -1164,16 +1165,12 @@ let creations =
           check "lstsq, on two devices" ~factored:2 (placed lstsq) lstsq both;
           check "lstsq, rows cut" ~factored:2 (placed lstsq) lstsq rows;
           check "lstsq, columns cut" ~factored:2 (placed lstsq) lstsq columns;
-          List.iter
-            (fun (axis, b) ->
-              raises
-                (Invalid_argument
-                   (Printf.sprintf
-                      "Nx.solve: operand 1 lies at split ~axis:%d [m2; m3] and \
-                       is read at on [m2; m3]; Nx.place (Placement.on s) y"
-                      axis))
-                (fun () -> solve (a (Nx.beside b)) b))
-            [ (0, rows); (1, columns) ]);
+          check "solve, rows cut" ~factored:2 (placed solve) solve rows;
+          raises
+            (Invalid_argument
+               "Nx.solve: operand 1 lies at split ~axis:1 [m2; m3] and is read \
+                at on [m2; m3]; Nx.place (Placement.on s) y")
+            (fun () -> solve (a (Nx.beside columns)) columns));
       test "placing a host creation copies its bytes and computes nothing"
         (fun () ->
           let z = Nx.zeros D.Float32 [| 2 |] in

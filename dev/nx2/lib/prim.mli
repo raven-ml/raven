@@ -169,10 +169,14 @@ val rule : 'r prim -> Route.rule
     at its operand's windows where a cut keeps its blocks whole, and whole
     elsewhere. [Rows]' axis of [a] and its offsets are read whole, and [b]'s
     axis of its groups is reduced, a factor after the pairs that no axis of
-    [a] shares, whose fences the offsets hold ({!Partial}). A segmented
+    [a] shares, whose fences the offsets hold ({!Partial}). A gather's axis
+    of [x] is reduced, each device gathering from its window of it, where
+    [x] has fewer than {!Nx_array.Layout.max_rank} axes, a [complex128] one
+    fewer, since its partials stack along a new axis; it is read whole
+    otherwise. Its positions are read at the results' windows. A segmented
     contraction is read whole along its contracting pairs. An assembly's
-    axis becomes the result's where every piece's region covers all of it in
-    order, and is read whole elsewhere. *)
+    axis becomes the result's where every piece's region covers all of it
+    in order, and is read whole elsewhere. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over

@@ -1300,7 +1300,18 @@ let rule : type r. r prim -> Route.rule =
           Axes t
       | Elementwise -> invalid_arg "Prim.rule: a loop's rule")
   | Gather { axis; idx; x } ->
-      Axes [| reading [||] (rank idx); reading [| axis |] (rank x) |]
+      (* [x]'s axis is gone from the results, which read it at positions:
+         cut, each device gathers from its tile ({!Partial}), whose results
+         stack along a new leading axis, a [complex128]'s bits along a new
+         last one too. Where those pass the greatest rank, it is whole. *)
+      let pairs = match dtype x with D.Complex128 -> 1 | _ -> 0 in
+      let stacks = rank x + 1 + pairs <= L.max_rank in
+      let source a =
+        if a <> axis then Route.Becomes a
+        else if stacks then Reduced axis
+        else Whole
+      in
+      Axes [| reading [||] (rank idx); Array.init (rank x) source |]
   | Scatter { axis; idx; updates; into; _ } ->
       Axes
         (Array.map (reading [| axis |]) [| rank idx; rank updates; rank into |])

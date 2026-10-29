@@ -653,6 +653,305 @@ let reduce_at (type v s) w (rshow : v -> string) r axes
       reduce rshow r axes
         (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
 
+(* Gathers along cut axes *)
+
+(* A gather along an axis at positions of one axis, or of the value's rank. *)
+type gather = Take of int | Along of int
+
+let pp_gather ppf = function
+  | Take a -> Format.fprintf ppf "take along %d" a
+  | Along a -> Format.fprintf ppf "take_along_axis %d" a
+
+(* Where the positions lie: whole on each of the value's devices; cut alike
+   along the value's cut axes but the gathered one; or, beside a value cut
+   over the mesh's minor axis, along an axis over its major one. *)
+type positions = Whole | Alike | Major of int
+
+let pp_positions ppf = function
+  | Whole -> Format.pp_print_string ppf "whole"
+  | Alike -> Format.pp_print_string ppf "cut alike"
+  | Major a -> Format.fprintf ppf "cut %d/a" a
+
+(* A value's dtype, shape and elements, where it lies, the gather, where the
+   positions lie, and their shape and elements. *)
+type gcase =
+  | Gcase :
+      ('v, 's) reduced
+      * int array
+      * 'v array
+      * where
+      * gather
+      * positions
+      * int array
+      * int64 array
+      -> gcase
+
+let pp_gcase ppf (Gcase (k, s, data, w, g, at, ps, p)) =
+  Format.fprintf ppf "%s %a [%s] at %a, %a %a [%s] %a" (D.name k.rdtype) pp_ints
+    s
+    (String.concat "; " (Array.to_list (Array.map k.rshow data)))
+    pp_where w pp_gather g pp_ints ps
+    (String.concat "; " (Array.to_list (Array.map Int64.to_string p)))
+    pp_positions at
+
+(* The dtypes a gather draws: each of its own bits' dtype, packed 4-bit and
+   8-bit floats and 64-bit integers among them. *)
+let gathered_kinds =
+  let never _ = false in
+  let float dt values =
+    Reduced
+      { rdtype = dt; rvalues = values; rshow = nan_bits; is_nan = Float.is_nan }
+  in
+  let int64 dt =
+    Reduced
+      {
+        rdtype = dt;
+        rvalues = [ 0L; 1L; -1L; Int64.max_int; Int64.min_int ];
+        rshow = Int64.to_string;
+        is_nan = never;
+      }
+  in
+  reduced_kinds
+  @ [
+      float D.Float8_e4m3fn floats;
+      float D.Float8_e5m2 floats;
+      float D.Float4_e2m1fn [ 0.; -0.; 0.5; 1.5; 6.; -6. ];
+      int64 D.Int64;
+      int64 D.Uint64;
+      Reduced
+        {
+          rdtype = D.Int16;
+          rvalues = [ 0; 1; -1; 32767; -32768 ];
+          rshow = string_of_int;
+          is_nan = never;
+        };
+    ]
+
+let gathered_case =
+  let open Gen in
+  with_pp pp_gcase
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* w = where_of rank in
+     let cut = List.map fst (tiles w) in
+     let* a = one_of [ of_list cut; int_range 0 (rank - 1) ] in
+     let* g = of_list [ Take a; Along a ] in
+     let* m = int_range 0 4 in
+     let ps =
+       match g with
+       | Take _ -> [| m |]
+       | Along a -> Array.mapi (fun i e -> if i = a then m else e) s
+     in
+     (* Cut along an axis the value's cut also becomes, positions would
+        need both cuts on one axis. *)
+     let alike =
+       match g with
+       | Take _ -> []
+       | Along a -> if List.exists (( <> ) a) cut then [ Alike ] else []
+     in
+     let major =
+       match (w, g) with
+       | Minor c, Along a ->
+           List.filter_map
+             (fun i -> if i = c && c <> a then None else Some (Major i))
+             (List.init rank Fun.id)
+       (* One position's cut lands on the first unit axis of the column
+          [take] reshapes it to, which the gather reads whole. *)
+       | Minor _, Take _ -> if m = 1 then [] else [ Major 0 ]
+       | (Split3 _ | Split4 _ | Cuts _), _ -> []
+     in
+     let* at = of_list ((Whole :: alike) @ major) in
+     let position =
+       one_of
+         [
+           map Int64.of_int (int_range (-2) (s.(a) + 1));
+           of_list [ Int64.min_int; Int64.max_int ];
+         ]
+     in
+     let* p = array ~size:(constant (Array.fold_left ( * ) 1 ps)) position in
+     let* (Reduced k) = of_list gathered_kinds in
+     let+ data =
+       array ~size:(constant (Array.fold_left ( * ) 1 s)) (of_list k.rvalues)
+     in
+     Gcase (k, s, data, w, g, at, ps, p))
+
+(* A gather of a value at any placement, at positions whole on each of its
+   devices or cut along axes the value's gathered cut leaves, gives its bits
+   on one device. *)
+let law_gathered (Gcase (k, s, data, w, g, at, ps, p)) =
+  let ts = tiles w in
+  let cut = List.map fst ts in
+  let a = match g with Take a | Along a -> a in
+  let e = s.(a) in
+  cover "an uneven cut" (List.exists (fun (c, t) -> s.(c) mod t <> 0) ts);
+  cover "an empty window"
+    (List.exists (fun (c, t) -> s.(c) > 0 && s.(c) < t) ts);
+  cover "a cut over several mesh axes"
+    (match w with Cuts (x, y) -> x = y | _ -> false);
+  cover "a gather along a cut axis" (List.mem a cut);
+  cover "a gather along a cut empty axis" (List.mem a cut && e = 0);
+  cover "a gather along a cut axis with an empty tile"
+    (List.exists (fun (c, t) -> c = a && e > 0 && e < t) ts);
+  cover "a gather along a cut axis, beside another cut"
+    (List.mem a cut && List.length cut > 1);
+  cover "a gather along an axis no cut names" (not (List.mem a cut));
+  cover "positions cut alike, gathered along a cut axis"
+    (at = Alike && List.mem a cut);
+  cover "positions cut over the major axis, gathered along a cut axis"
+    (match at with Major _ -> List.mem a cut | Whole | Alike -> false);
+  cover "positions cut along the gathered axis"
+    (at = Major a && match g with Along _ -> true | Take _ -> false);
+  cover "a negative position" (Array.exists (fun q -> q < 0L) p);
+  cover "a position past the axis"
+    (Array.exists (fun q -> q >= Int64.of_int e) p);
+  (* Tile [t - 1] of [t] starts at [(t - 1) (e / t) + min (t - 1) (e mod t)]. *)
+  let last t = ((t - 1) * (e / t)) + Stdlib.min (t - 1) (e mod t) in
+  cover "a position in the last tile of a cut axis"
+    (List.exists
+       (fun (c, t) ->
+         c = a && e >= t
+         && Array.exists
+              (fun q -> q >= Int64.of_int (last t) && q < Int64.of_int e)
+              p)
+       ts);
+  cover "no position" (p = [||]);
+  cover "a signalling NaN" (signals k.rdtype data);
+  cover "a sub-byte dtype" (D.bits k.rdtype < 8);
+  cover "a complex128" (D.equal k.rdtype D.Complex128);
+  cover "a float8"
+    (D.equal k.rdtype D.Float8_e4m3fn || D.equal k.rdtype D.Float8_e5m2);
+  cover "a float4" (D.equal k.rdtype D.Float4_e2m1fn);
+  cover "a 64-bit integer"
+    (D.equal k.rdtype D.Int64 || D.equal k.rdtype D.Uint64);
+  let gather (type d) (p : (int64, _, d) Nx.t) (x : (_, _, d) Nx.t) =
+    match g with
+    | Take a -> Nx.take ~axis:a p x
+    | Along a -> Nx.take_along_axis ~axis:a p x
+  in
+  let x = signalling k.rdtype s data in
+  let p =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 (Iarray.of_array ps) p)
+  in
+  (* A sub-byte element's bits are its value, which no byte holds alone. *)
+  let bits y =
+    if D.bits k.rdtype < 8 then Array.map k.rshow (elements y)
+    else Array.map string_of_int (bytes y)
+  in
+  let expected = bits (gather p x) in
+  (* The result lies at the union of the positions' cuts and [x]'s, but
+     the gathered axis's ({!Nx.section-routing}). [major i] is where the
+     positions cut along [i] lie, and the result. *)
+  let run (type d) (q : d Nx.Placement.t) ~(alike : d Nx.Placement.t)
+      ~(want : d Nx.Placement.t) major =
+    let r, want =
+      match at with
+      | Whole -> (Nx.Placement.uncut q, want)
+      | Alike -> (alike, want)
+      | Major i -> major i
+    in
+    let y = gather (Nx.place r p) (Nx.place q x) in
+    let placement =
+      Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+    in
+    equal ~msg:"where it lies" placement want (Nx.placement y);
+    bits y
+  in
+  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let off cuts = List.filter (fun (c, _) -> c <> a) cuts in
+  let none _ = invalid_arg "law_gathered: a major axis beside no minor cut" in
+  let split (type d) (q : d Nx.Placement.t) c =
+    run q ~alike:q ~want:(if c = a then Nx.Placement.uncut q else q) none
+  in
+  let actual =
+    match w with
+    | Split3 c -> split (Set3.split ~axis:c) c
+    | Split4 c -> split (Set4.split ~axis:c) c
+    | Cuts (c, d) ->
+        let cuts =
+          if c = d then [ (c, [ "a"; "b" ]) ]
+          else [ (c, [ "a" ]); (d, [ "b" ]) ]
+        in
+        let rest = mesh (off cuts) in
+        run (mesh cuts) ~alike:rest ~want:rest none
+    | Minor c ->
+        let cuts = [ (c, [ "b" ]) ] in
+        let rest = mesh (off cuts) in
+        (* The positions' axis [i] becomes the result's [i] in
+           [take_along_axis], and [take]'s [a]. *)
+        let major i =
+          let o = match g with Along _ -> i | Take _ -> a in
+          let cuts = List.sort compare ((o, [ "a" ]) :: off cuts) in
+          (mesh [ (i, [ "a" ]) ], mesh cuts)
+        in
+        run (mesh cuts) ~alike:rest ~want:rest major
+  in
+  equal (array string) expected actual
+
+(* Positions cut over the devices that cut the gathered axis raise: no
+   device holds both a tile and the positions it reads. *)
+let test_gather_both_cut () =
+  let x = Nx.place (Set4.split ~axis:0) (Nx.arange D.Float32 0 8 1) in
+  let p =
+    Nx.place (Set4.split ~axis:0)
+      (Nx.Repr.of_array Nx.Host.v
+         (A.of_array D.Int64 [| 4 |] [| 7L; 0L; 3L; 4L |]))
+  in
+  raises
+    (Invalid_argument
+       "Nx.take_along_axis: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] \
+        and is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
+    (fun () -> Nx.take_along_axis ~axis:0 p x)
+
+(* An [x] whose tiles' results would stack past the greatest rank, one more
+   axis than [x]'s and one more for a [complex128]'s bits, is read whole
+   along the gathered axis, which raises where it is cut there; one of an
+   axis fewer gathers where it lies. *)
+type ranked = Ranked : ('v, 's) D.t * int * bool -> ranked
+
+let ranked =
+  [
+    Ranked (D.Float32, A.Layout.max_rank, true);
+    Ranked (D.Float32, A.Layout.max_rank - 1, false);
+    Ranked (D.Complex128, A.Layout.max_rank - 1, true);
+    Ranked (D.Complex128, A.Layout.max_rank - 2, false);
+  ]
+
+let ranked_name (Ranked (dt, r, _)) =
+  Printf.sprintf "%s of %d axes" (D.name dt) r
+
+let test_gather_rank (Ranked (dt, r, whole)) =
+  let s = Array.init r (fun i -> if i = 0 then 4 else 1) in
+  let x = Nx.cast dt (Nx.reshape s (Nx.arange D.Float32 0 4 1)) in
+  let p =
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array D.Int64 (Iarray.of_array s) [| 3L; 1L; 0L; 2L |])
+  in
+  let y = Nx.place (Set4.split ~axis:0) x in
+  let gather () = Nx.take_along_axis ~axis:0 (Nx.place (Nx.beside y) p) y in
+  if whole then
+    raises
+      (Invalid_argument
+         "Nx.take_along_axis: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] \
+          and is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
+      gather
+  else
+    equal (array int)
+      (bytes (Nx.take_along_axis ~axis:0 p x))
+      (bytes (gather ()))
+
+(* [take] without an axis reads the flattening, which keeps the cut of the
+   leading axis in tiles that divide both extents. *)
+let test_take_flat () =
+  let x = Nx.reshape [| 4; 6 |] (Nx.arange D.Float32 0 24 1) in
+  let p =
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array D.Int64 [| 7 |] [| 6L; 0L; 23L; 24L; -1L; 11L; 12L |])
+  in
+  let y = Nx.place (Set4.split ~axis:0) x in
+  equal (array int)
+    (bytes (Nx.take p x))
+    (bytes (Nx.take (Nx.place (Nx.beside y) p) y))
+
 (* Float reductions over cut axes *)
 
 (* Over axes cut across devices, a float or complex sum, product, mean,
@@ -2413,6 +2712,17 @@ let placed =
          bits, cut along those axes over the same devices"
         assembled_case law_assembled;
       test "a concatenation along a cut axis reads it whole" test_concat_cut;
+      prop ~count:1000
+        "a gather of a value at any placement, at positions whole on each of \
+         its devices or cut along axes its gathered cut leaves, gives its \
+         bits on one device"
+        gathered_case law_gathered;
+      test "take of a flattening cut along its leading axis" test_take_flat;
+      test "a gather of positions cut as the gathered axis raises"
+        test_gather_both_cut;
+      cases ~name:ranked_name
+        "a gather past the greatest rank reads its axis whole" ranked
+        test_gather_rank;
     ]
 
 let reductions =

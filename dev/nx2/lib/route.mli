@@ -65,19 +65,20 @@ type axis =
   | Whole
       (** Read whole on each device: an axis the operation acts along, as a
           [Moments] or [Logsumexp] scan's, a sort's, a transform's or a
-          gather's source axis, one a padded load pads, crops or windows,
+          scatter's axis, one a padded load pads, crops or windows,
           and one an assembly joins or pads along. *)
   | Reduced of int
       (** Gone from the results: a reduction's axes, a contraction's
-          contracting pairs and [b]'s axis of [Rows]' groups
-          ({!Nx_kernel.type-segments}), but one a padded load of the
-          reduction pads, crops or windows, which is [Whole] for every load.
-          The axes of [Reduced f] for one factor [f] range over one index: a
-          reduction's axis [a] is [Reduced a] in each load, a contraction's
-          pair [p] is [Reduced p] in both operands, and the axis of [b]'s
-          groups, which no axis of [a] shares, is the factor after the
-          pairs. Read whole on each device, or cut where the operand lies
-          so, each factor alike in every operand ({!route}). *)
+          contracting pairs, a gather's source axis and [b]'s axis of
+          [Rows]' groups ({!Nx_kernel.type-segments}), but one a padded load
+          of the reduction pads, crops or windows, which is [Whole] for every
+          load. The axes of [Reduced f] for one factor [f] range over one
+          index: a reduction's axis [a] is [Reduced a] in each load, a
+          gather's [a] is [Reduced a], a contraction's pair [p] is
+          [Reduced p] in both operands, and the axis of [b]'s groups, which
+          no axis of [a] shares, is the factor after the pairs. Read whole on
+          each device, or cut where the operand lies so, each factor alike in
+          every operand ({!route}). *)
   | Blocks of { factor : int; extent : int }
       (** Gone from the results as [Reduced factor] is, its index the block
           of the factor's index it holds: a contraction's scale along a

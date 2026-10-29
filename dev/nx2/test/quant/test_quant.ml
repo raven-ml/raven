@@ -1034,6 +1034,19 @@ let placement_law ((_, w), c) =
       equal ~msg:"its values" (array int64)
         (bits (Nx_quant.dequant Nx.float32 w))
         (bits got);
+      (* A take along the axis a cut of a leading axis or [n] names gathers
+         where the weight lies. *)
+      (match c with
+      | Cut { axis; _ } when axis < r - 1 ->
+          let e = (Nx_quant.shape w).(axis) in
+          let p = positions [ e - 1; 0; -1; e ] in
+          let taken p w =
+            Nx_quant.dequant Nx.float32 (Nx_quant.take ~axis p w)
+          in
+          equal ~msg:"its take" (array int64)
+            (bits (taken p w))
+            (bits (taken (Nx.place Mem.on p) wp))
+      | Cut _ | Whole -> ());
       (match d with
       | Lies d ->
           equal ~msg:"where dequant's result lies" (placement ()) (at d)
@@ -1440,8 +1453,8 @@ let experts_at ?(split = false) c w ids x =
 (* A weight at any placement, with ids and input whole or split along their
    first axis, gives rows within their bound, the same on every run, where
    each operation reads its operands where they lie. Routing the positions
-   sorts the ids and gathers the input's rows, which reads both whole, and
-   the sum reads [k] whole: ids or an input split with elements, and a
+   sorts the ids, which reads them whole, and gathers the input's rows where
+   they lie, and the sum reads [k] whole: ids split with elements, and a
    weight with values cut along [k], raise. Cut along its experts, a weight
    gives the bits it gives whole. *)
 let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
@@ -1484,7 +1497,7 @@ let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
     | Split { axis = 2; _ } -> summed
     | Split _ | Mesh_n -> false
   in
-  let routing_whole = split && (numel ids > 0 || numel x > 0) in
+  let routing_whole = split && numel ids > 0 in
   cover "a weight cut along n beside ids and input whole"
     (along_n && not split);
   if weight_whole || routing_whole then

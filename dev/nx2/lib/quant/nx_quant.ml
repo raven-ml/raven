@@ -612,10 +612,9 @@ let experts_cut w =
    float64, where a value past float32's range would be finite, enters as its
    values at [x]'s dtype: cut along its experts, all of them, each device
    decoding its own, a group per expert; else the experts the ids name alone,
-   a group per slot, which a gather along the experts reads whole. A
-   segmented contraction's association does not depend on its offsets
-   (Nx_kernel.S.contract), so a row's bits depend on the shapes, its row and
-   its expert. *)
+   a group per slot. A segmented contraction's association does not depend
+   on its offsets (Nx_kernel.S.contract), so a row's bits depend on the
+   shapes, its row and its expert. *)
 let experts ~ids w x =
   let r = route ids and e = (shape w).(0) in
   match w with
