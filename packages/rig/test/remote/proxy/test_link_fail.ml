@@ -162,17 +162,17 @@ let rec header ?(wait = patience) fd =
     if k = k_beat then header ~wait fd else Some (k, n)
 
 (* The frames of [fd] other than beats, until its stream ends or no byte comes
-   within [quiet]. *)
-let frames fd =
-  let rec go acc =
-    match header ~wait:0. fd with
+   within [quiet]. The first frame's first byte may take [wait] seconds. *)
+let frames ?(wait = 0.) fd =
+  let rec go wait acc =
+    match header ~wait fd with
     | None -> List.rev acc
     | Some (k, n) ->
         let p = read_n fd n in
         if String.length p < n then failf "a frame of kind %d cut" k;
-        go ((k, p) :: acc)
+        go 0. ((k, p) :: acc)
   in
-  go []
+  go wait []
 
 (* Writes a beat to [fd] each half second until the result is called: a peer
    alive whatever it reads. *)
@@ -204,6 +204,22 @@ let spawn f =
   fun () ->
     Thread.join t;
     match Option.get !r with Ok v -> v | Error e -> raise e
+
+(* The seconds from [t0] until a write of a beat to [fd], one every 50 ms, is
+   refused: its link has closed. Fails if the link takes every write for the
+   bound and [patience] more. *)
+let refused_after t0 fd =
+  let rec go () =
+    let t = Unix.gettimeofday () -. t0 in
+    if t > Float.of_int bound +. patience then fail "the link took every write"
+    else
+      match write fd beat with
+      | () ->
+          Thread.delay 0.05;
+          go ()
+      | exception Unix.Unix_error _ -> t
+  in
+  go ()
 
 (* Checks that the bound passed since [t0]. *)
 let after_bound t0 =
@@ -285,7 +301,8 @@ let with_scene ?(role = Wire.Agent 1) f =
 (* Starts the waiters of [s]'s failure: a wait on the job, a request to [h]'s
    peer, which reads it and never answers, and a rail of each link. The result
    checks, once given the root cause, that each woke with it, that each rail's
-   counts read [Int64.max_int], and that [h]'s peer was sent the abort. *)
+   counts read [Int64.max_int], and that [h]'s peer was sent the abort:
+   [received], the frames that peer read, or those it reads then. *)
 let waiters s =
   let el = Link.rail s.l ~id:1 ~send:[| t5 |] ~receive:[| t5 |] in
   let eh = Link.rail s.h ~id:1 ~send:[| t5 |] ~receive:[| t5 |] in
@@ -294,16 +311,17 @@ let waiters s =
   (match header s.q with
   | Some (k, n) when k = k_request -> ignore (read_n s.q n)
   | _ -> fail "the other link's peer was sent no request");
-  fun cause ->
+  fun ?received cause ->
     equal ~msg:"the job" state (Link.Failed cause) (waited ());
     equal ~msg:"the request" (result pass refused)
       (Error (`Failed cause))
       (requested ());
     failed_counts ~msg:"the faulted link's rail" el;
     failed_counts ~msg:"the other link's rail" eh;
+    let received = match received with Some r -> r | None -> frames s.q in
     equal ~msg:"what the other link's peer received" (list frame)
       [ (k_abort, str cause) ]
-      (frames s.q)
+      received
 
 (* Before a frame: an idle link. A severed one fails the job. A stalled peer,
    which sends nothing, fails it after the bound, and is sent the abort: the
@@ -523,7 +541,11 @@ let severed_abort () =
 (* The peer has read nothing the link sent: while the abort is held, the test
    reads what the link sent before, then fills the link's socket, as frames its
    peer left unread would. The abort waits for the bound and gives up: the
-   peer receives the test's zeros and none of the abort. *)
+   peer receives the test's zeros and none of the abort. The other link's peer
+   reads its abort as the hold ends, within the bound: a peer that reads
+   nothing for the bound may miss it ([Rig_remote]'s failure section), since a
+   connection closed over the peer's beats resets, and Windows then drops what
+   the peer had not read. *)
 let stalled_abort () =
   with_scene @@ fun s ->
   let woke = waiters s in
@@ -534,11 +556,12 @@ let stalled_abort () =
   drain s.p;
   fill s.d;
   Probe.resume ();
+  let received = frames ~wait:patience s.q in
   failed ();
   after_bound t0;
   equal ~msg:"the bytes after the test's" (option string) None
     (stray '\000' (read_all s.p));
-  woke why
+  woke ~received why
 
 (* After the abort the link reads and discards what its peer sends until the
    peer ends its stream or the bound passes. A peer that has read the abort
@@ -551,22 +574,9 @@ let drained_until_bound () =
   equal ~msg:"what the peer received" (list frame)
     [ (k_abort, str why) ]
     (frames s.p);
-  let rec writes () =
-    let t = Unix.gettimeofday () -. t0 in
-    if t > Float.of_int bound +. patience then None
-    else
-      match write s.p beat with
-      | () ->
-          Thread.delay 0.05;
-          writes ()
-      | exception Unix.Unix_error _ -> Some t
-  in
-  match writes () with
-  | None -> fail "the link took every write"
-  | Some t ->
-      at_least ~msg:"the seconds until a write was refused" float_exact
-        ~than:(Float.of_int bound -. skew)
-        t
+  at_least ~msg:"the seconds until a write was refused" float_exact
+    ~than:(Float.of_int bound -. skew)
+    (refused_after t0 s.p)
 
 (* After the abort the link reads a peer that sends nothing, as a stopped
    process does, only until the bound from its last byte: the job fails of
@@ -620,6 +630,40 @@ let drained_while_beating () =
     ~than:(Float.of_int bound -. skew)
     t
 
+(* An abort that leaves after the bound since the failure, as one behind a
+   long frame does: the link reads its peer for the bound after the abort, so
+   its socket does not close over the bytes of a peer yet to read the abort,
+   which would reset the connection under the abort. The abort is held past
+   the bound while the peer beats. *)
+let drained_after_late_abort () =
+  let d, p = connected () in
+  let job = Link.job () in
+  ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
+  Probe.arm Aborting;
+  let failed = spawn (fun () -> Link.fail job why) in
+  Fun.protect
+    ~finally:(fun () ->
+      Probe.resume ();
+      Unix.close p;
+      Link.close job)
+  @@ fun () ->
+  equal ~msg:"the abort is held" bool true (Probe.held ());
+  let t_held = Unix.gettimeofday () in
+  while Unix.gettimeofday () -. t_held < Float.of_int bound +. 1. do
+    write p beat;
+    Thread.delay 0.5
+  done;
+  Probe.resume ();
+  let t_sent = Unix.gettimeofday () in
+  failed ();
+  equal ~msg:"what the peer received" (list frame)
+    [ (k_abort, str why) ]
+    (frames p);
+  at_least ~msg:"the seconds from the abort until a write was refused"
+    float_exact
+    ~than:(Float.of_int bound -. skew)
+    (refused_after t_sent p)
+
 let () =
   Watchdog.start ();
   (* A failed link closes its socket once its peer has ended its stream or
@@ -670,5 +714,7 @@ let () =
                drained_until_silent;
              slow "a link reads a peer that beats after the failure"
                drained_while_beating;
+             slow "a link reads its peer for the bound after a late abort"
+               drained_after_late_abort;
            ];
        ])

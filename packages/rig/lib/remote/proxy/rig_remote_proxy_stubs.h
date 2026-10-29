@@ -164,6 +164,7 @@ struct rig_remote_link {
   int receiving; /* the receiving thread runs: copies' bytes may land */
   int abort_owed; /* the job began to fail: the peer is owed an abort */
   int broken;     /* a send failed: the stream may hold part of a frame */
+  int64_t abort_sent_ns; /* when its abort was sent whole, or 0 */
   _Atomic int failed;
   struct pending *pending, *pending_last;
   struct cmd *cmds, *cmds_last;

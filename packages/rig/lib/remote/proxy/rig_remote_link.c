@@ -32,9 +32,9 @@
    a socket closed over unread bytes makes the system reset the connection,
    which may drop the abort before the peer reads it. The peer ends its
    stream once it has read the abort, failed and sent its own. A peer that
-   does not end it within [bound_s] seconds, or sends nothing for that
-   long, is left. A link's socket closes once both its threads ended and no
-   abort is being sent.
+   does not end it within [bound_s] seconds of the failure and of the
+   abort's send, or sends nothing for that long, is left. A link's socket
+   closes once both its threads ended and no abort is being sent.
 
    Reasons are formatted here, because the threads that find a failure hold
    no runtime: a fixed phrase or the system's error after the link's name,
@@ -458,15 +458,16 @@ static void close_if_idle(struct rig_remote_link *l) {
 
 /* Sends an abort with [why], a string as wire.mli lays it out, after the
    frames sent before. A send that makes no progress for [bound_s] seconds
-   gives up: the peer reads nothing. */
-static void send_abort(struct rig_remote_link *l,
-                       const struct rig_remote_why *why) {
+   gives up: the peer reads nothing. 0 once sent, else [send_all]'s
+   answer. */
+static int send_abort(struct rig_remote_link *l,
+                      const struct rig_remote_why *why) {
   unsigned char buf[HEADER + 4 + MAX_WHY];
   put_header(buf, 4 + why->n, K_ABORT);
   for (int i = 0; i < 4; i++)
     buf[HEADER + i] = (unsigned char)(why->n >> (8 * i));
   memcpy(buf + HEADER + 4, why->s, why->n);
-  (void)send_all(l, buf, HEADER + 4 + why->n);
+  return send_all(l, buf, HEADER + 4 + why->n);
 }
 
 /* Settles the abort a failure owes [l]: sends it, unless the link sent its
@@ -481,8 +482,9 @@ static void abort_link(struct rig_remote_link *l) {
     l->sending = 1;
     pthread_mutex_unlock(&l->mu);
     hook(RIG_REMOTE_LINK_ABORTING, 0);
-    send_abort(l, atomic_load(&l->job->why));
+    int err = send_abort(l, atomic_load(&l->job->why));
     pthread_mutex_lock(&l->mu);
+    if (err == 0) l->abort_sent_ns = now_ns();
     l->sending = 0;
     pthread_cond_signal(&l->wake);
   }
@@ -1132,16 +1134,18 @@ static int recv_frame(struct rig_remote_link *l, int kind, uint64_t n, struct re
 }
 
 /* Reads and discards the peer's bytes until its stream ends, a receive
-   fails, [bound_s] seconds pass, or no byte has come for [bound_s] seconds,
-   so that no byte left unread makes the system reset the connection before
-   the peer has read this end's abort. The peer ends its stream once it has
-   read the abort and sent its own. A peer silent that long, such as a
-   stopped process, is gone by the bound that fails a job, and reads
-   nothing. */
+   fails, [bound_s] seconds pass since the read began and since the abort
+   was sent, or no byte has come for [bound_s] seconds, so that no byte left
+   unread makes the system reset the connection before the peer has read
+   this end's abort. An abort not yet sent, as one behind a long frame,
+   counts as sent now: the socket closes once it is sent, and would reset
+   the connection under it. The peer ends its stream once it has read the
+   abort and sent its own. A peer silent that long, such as a stopped
+   process, is gone by the bound that fails a job, and reads nothing. */
 static void drain(struct rig_remote_link *l, struct reader *rd) {
   unsigned char b[READ_AHEAD];
   int64_t bound = bound_s() * 1000000000LL;
-  int64_t until = now_ns() + bound;
+  int64_t start = now_ns();
   for (;;) {
     long m = (long)recv(l->fd, (char *)b, sizeof b, 0);
     if (m == 0) return;
@@ -1151,6 +1155,10 @@ static void drain(struct rig_remote_link *l, struct reader *rd) {
     }
     int e = rig_remote_sock_error();
     if (!again(e)) return;
+    pthread_mutex_lock(&l->mu);
+    int64_t sent = l->abort_owed || l->sending ? now_ns() : l->abort_sent_ns;
+    pthread_mutex_unlock(&l->mu);
+    int64_t until = (sent > start ? sent : start) + bound;
     int64_t end = rd->last + bound < until ? rd->last + bound : until;
     int64_t left = (end - now_ns()) / 1000000;
     if (left <= 0) return;

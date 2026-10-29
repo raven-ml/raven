@@ -260,7 +260,8 @@ val launched : unit -> (t, string) result option
     other processes an abort with its root cause, after the message each
     connection is sending, and ends its side of each connection. It then
     reads and discards what arrives on each connection until the other end
-    has ended its side too, for 10 seconds at most and no longer than 10
+    has ended its side too, until 10 seconds after the failure or after the
+    abort, if it left later behind a message, and no longer than 10
     seconds after the other end's last byte, and closes the connection only
     then, since a connection closed over unread bytes is reset, which may
     lose the abort. {!serve} returns, and {!connect} and {!launched} return
@@ -300,9 +301,9 @@ val close : t -> unit
     [j] is [None], and the process may start another job. A job that fails
     during [close] ends as a failed job does ({!section-failure}): [close]
     returns once every connection has closed, up to about 11 seconds after
-    the failure, and does not return to OCaml meanwhile, so a [Sys.Break]
-    from Ctrl-C raises only then. The process's exit waits the same way
-    for its last job.
+    the failure, or after an abort that left later behind a message, and
+    does not return to OCaml meanwhile, so a [Sys.Break] from Ctrl-C raises
+    only then. The process's exit waits the same way for its last job.
 
     Raises [Invalid_argument] as {!Rig.close} does, such as from a callback
     inside a call of rig's on the same thread. *)
