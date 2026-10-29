@@ -1073,14 +1073,16 @@ let diskcache =
         ]
 
 (* Calls on two domains, each branch on its own: an entry is put, read and
-   cleared while another domain puts, reads and clears. *)
+   cleared while another domain puts, reads and clears. windtrap leaves each
+   command out of a case with probability 1/4, and a case calls one it holds
+   about 19 times in 20, so 14 cases miss one of the six with odds near 1e-7. *)
 let diskcache_domains =
   match Sys.getenv_opt "CACHEDB" with
   | None -> group "Diskcache on two domains" []
   | Some _ ->
       group "Diskcache on two domains"
         [
-          stateful ~count:4 ~domains:2
+          stateful ~count:14 ~domains:2
             "behaves as a table of entries, whatever the order of the calls"
             model;
         ]
