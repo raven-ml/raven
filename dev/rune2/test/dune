@@ -72,6 +72,16 @@
  (deps
   (glob_files golden/lower_real/*.golden)))
 
+; The complex kinds compiled by Rune.jit, against goldens gen/lower_complex.py
+; writes from correctly rounded references.
+
+(test
+ (name test_lower_complex)
+ (modules test_lower_complex)
+ (libraries nx nx_array nx_kernel rune2 windtrap)
+ (deps
+  (glob_files golden/lower_complex/*.golden)))
+
 ; The lowering's suites compile each lowered graph on the host and run it
 ; against nx's eager result.
 
@@ -79,7 +89,6 @@
  (names
   test_lower
   test_lower_arith
-  test_lower_complex
   test_lower_reduce
   test_lower_index
   test_lower_linalg
@@ -87,7 +96,6 @@
  (modules
   test_lower
   test_lower_arith
-  test_lower_complex
   test_lower_reduce
   test_lower_index
   test_lower_linalg
