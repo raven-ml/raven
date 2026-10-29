@@ -421,7 +421,9 @@ val linear_transpose :
     and as {!iterate} raises at the call. When the transpose is applied, it
     raises as {!vjp}'s pullback does for its argument, and naming an operation
     of [f] that is not linear in its argument, as in
-    ["Rune.linear_transpose: Sin is not linear in the function's argument"]. *)
+    ["Rune.linear_transpose: Sin is not linear in the function's argument"], and
+    where [f] holds a {!root} that depends on its argument, which has no
+    transpose yet (["Rune.linear_transpose: a loop has no transpose yet"]). *)
 
 val check_grads :
   ?eps:float ->
