@@ -102,6 +102,18 @@ let gen_cluster size =
   in
   array ~size:(constant size) (map (fun k -> succ k base) (int_range 0 3))
 
+(* [size] non-finite values but one finite, at any place, if [size] is not
+   zero. *)
+let gen_lone size =
+  let open Gen in
+  if size = 0 then constant [||]
+  else
+    let+ values =
+      array ~size:(constant size) (of_list [ nan; infinity; neg_infinity ])
+    and+ at = int_range 0 (size - 1)
+    and+ v = float_range (-100.) 100. in
+    Array.mapi (fun i x -> if i = at then v else x) values
+
 let gen_case =
   let open Gen in
   let* lead =
@@ -116,14 +128,17 @@ let gen_case =
   in
   let* len = frequency [ (1, int_range 0 2); (4, int_range 3 40) ] in
   let size = Array.fold_left ( * ) 1 lead * len in
-  (* A repeated value draws samples whose finite values are all equal, and a
-     cluster of floats a few spacings apart, kept in float64, draws spans too
-     narrow for their bins: independent draws almost never give either. *)
+  (* Independent draws almost never give samples whose finite values are all
+     equal or span too little for their bins, and give one finite value in
+     about one case in twenty-five. A repeated value draws the first, a
+     cluster of floats a few spacings apart, kept in float64, the second, and
+     one finite value among non-finite ones the third. *)
   let+ dtype, values =
     frequency
       [
         (4, pair (of_list dtypes) (array ~size:(constant size) gen_value));
         (1, pair (of_list dtypes) (map (Array.make size) gen_value));
+        (1, pair (of_list dtypes) (gen_lone size));
         (1, map (fun v -> (F64, v)) (gen_cluster size));
       ]
   and+ bins = option (int_range 1 12) in
