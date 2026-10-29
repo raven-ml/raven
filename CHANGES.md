@@ -6399,6 +6399,8 @@ thread.
 
 ### Kaun
 
+- `Kaun_datasets` creates its cache directory under an absolute Windows path
+  such as `C:\Users\…`; loaders raised `Unix_error (EINVAL, "mkdir", ".\C:")`.
 - `Kaun_datasets.cifar10` raises `Failure` naming the file when a batch does
   not hold 10,000 entries. A longer batch wrote past its arrays, and a shorter
   one returned uninitialised bytes.

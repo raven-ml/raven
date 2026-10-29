@@ -7,36 +7,35 @@ let src = Logs.Src.create "kaun.datasets" ~doc:"Kaun datasets"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-let mkdir_p path =
-  if path = "" || path = "." || path = Filename.dir_sep then ()
+(* Parents first, through [Filename.dirname], which knows each system's roots:
+   ["/"] on Unix, ["C:\\"] and ["\\\\server\\share"] on Windows. A root is its
+   own [dirname], which ends the recursion. *)
+(* [trim path] drops [path]'s trailing separators, keeping a root whole. Older
+   Windows C runtimes fail to stat a directory named with one, and
+   [get_cache_dir]'s paths end with one. *)
+let rec trim path =
+  let n = String.length path in
+  let sep c = c = '/' || c = Filename.dir_sep.[0] in
+  if n > 1 && sep path.[n - 1] && Filename.dirname path <> path then
+    trim (String.sub path 0 (n - 1))
+  else path
+
+let rec mkdir_p path =
+  let path = trim path in
+  if path = "" then ()
+  else if Sys.file_exists path then (
+    if not (Sys.is_directory path) then
+      failwith
+        (Printf.sprintf "mkdir_p: '%s' exists but is not a directory" path))
   else
-    let components =
-      String.split_on_char Filename.dir_sep.[0] path |> List.filter (( <> ) "")
-    in
-    let is_absolute = path <> "" && path.[0] = Filename.dir_sep.[0] in
-    let initial_prefix = if is_absolute then Filename.dir_sep else "." in
-    ignore
-      (List.fold_left
-         (fun prefix comp ->
-           let next =
-             if prefix = Filename.dir_sep then Filename.dir_sep ^ comp
-             else Filename.concat prefix comp
-           in
-           (if Sys.file_exists next then (
-              if not (Sys.is_directory next) then
-                failwith
-                  (Printf.sprintf "mkdir_p: '%s' exists but is not a directory"
-                     next))
-            else
-              try Unix.mkdir next 0o755
-              with Unix.Unix_error (Unix.EEXIST, _, _) ->
-                if not (Sys.is_directory next) then
-                  failwith
-                    (Printf.sprintf
-                       "mkdir_p: '%s' appeared as non-directory after EEXIST"
-                       next));
-           next)
-         initial_prefix components)
+    let parent = Filename.dirname path in
+    if parent <> path then mkdir_p parent;
+    try Unix.mkdir path 0o755
+    with Unix.Unix_error (Unix.EEXIST, _, _) ->
+      if not (Sys.is_directory path) then
+        failwith
+          (Printf.sprintf "mkdir_p: '%s' appeared as non-directory after EEXIST"
+             path)
 
 let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
   let root =
