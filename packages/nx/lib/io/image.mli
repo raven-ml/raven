@@ -21,15 +21,17 @@ val probe : bytes -> int * int * int
     JPEG stream [src], as {!Nx_io.load_image} states them.
 
     Raises [Failure] if [src] is neither a PNG nor a JPEG stream, if its header
-    is malformed, or if the image has no pixel or more than [max_int] samples.
-*)
+    is malformed, if the image has no pixel or more than [max_int] samples, or
+    if a PNG's image data is too short to inflate to the scanlines its header
+    states. *)
 
 val decode : bytes -> bytes -> unit
 (** [decode src dst] writes the pixels of [src] into [dst], row by row from the
-    top, with the channels {!probe} gives.
+    top, with the channels {!probe} gives. [decode src] inflates a PNG's image
+    data, so that a caller allocates [dst] for data the file holds.
 
-    Raises [Failure] if [src] is malformed, or if its pixels do not fill [dst]
-    exactly. *)
+    Raises [Failure] if [src] is malformed, [decode src] where a PNG's image
+    data is, or if its pixels do not fill [dst] exactly. *)
 
 val png_encode :
   ppm:int ->

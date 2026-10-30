@@ -105,8 +105,9 @@ let load_image path =
   Fail.file path @@ fun () ->
   Storage.read (Storage.pages (Storage.open_file path)) @@ fun src ->
   let h, w, c = Image.probe src in
+  let write = Image.decode src in
   let pixels = Rig.Buffer.create Rig.host (h * w * c) in
-  Rig.Buffer.write pixels Bigarray.int8_unsigned (Image.decode src);
+  Rig.Buffer.write pixels Bigarray.int8_unsigned write;
   let layout = L.contiguous (Iarray.of_array [| h; w; c |]) in
   Nx.Repr.unsafe_of_array Nx.Host.v (A.v Nx_array.Dtype.Uint8 layout pixels)
 

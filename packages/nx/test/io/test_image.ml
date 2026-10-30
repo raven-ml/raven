@@ -599,6 +599,17 @@ let files =
           let path = file (with_idat png idat) in
           fails ~path ~naming:"invalid PNG zlib stream" (fun () ->
               Nx_io.load_image path));
+      test
+        "a PNG whose header states more pixels than its image data holds \
+         fails before its pixels are allocated" (fun () ->
+          (* Width past 2^30 and height past 2^20: petabytes of pixels from
+             a few hundred bytes of image data. *)
+          let png = read (fixture "png_filters.png") in
+          let png = flipped png (Chunk (0, 4)) 0x40 in
+          let png = flipped png (Chunk (0, 9)) 0x10 in
+          let path = file png in
+          fails ~path ~naming:"PNG image data too short for its dimensions"
+            (fun () -> Nx_io.load_image path));
       test "a file that is neither PNG nor JPEG fails" (fun () ->
           let path = file "GIF89a" in
           fails ~path (fun () -> Nx_io.load_image path));

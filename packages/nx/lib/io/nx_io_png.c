@@ -31,7 +31,8 @@ typedef enum {
   PNG_UNSUPPORTED,
   PNG_PALETTE,
   PNG_FILTER,
-  PNG_SIZE
+  PNG_SIZE,
+  PNG_SHORT
 } png_status;
 
 typedef struct {
@@ -55,6 +56,15 @@ typedef struct {
 
 static const uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
 
+/* The largest four-byte unsigned integer PNG allows, a side's bound (PNG,
+   7.1). */
+#define PNG_MAX_INTEGER 0x7fffffffu
+
+/* The most bytes a byte of a zlib stream inflates to: a deflate match of 258
+   bytes takes at least two bits, a code of one bit for its length and one
+   for its distance (RFC 1951, 3.2.5 and 3.2.7). */
+#define INFLATE_RATIO 1032
+
 static const char *png_message(png_status status) {
   switch (status) {
   case PNG_OK:
@@ -75,6 +85,8 @@ static const char *png_message(png_status status) {
     return "invalid PNG scanline filter";
   case PNG_SIZE:
     return "PNG dimensions are too large";
+  case PNG_SHORT:
+    return "PNG image data too short for its dimensions";
   }
   return "unknown PNG error";
 }
@@ -157,7 +169,8 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
       uint32_t height = read_be32(data + 4);
       unsigned depth = data[8];
       unsigned color = data[9];
-      if (width == 0 || height == 0 || !valid_depth(color, depth) ||
+      if (width == 0 || height == 0 || width > PNG_MAX_INTEGER ||
+          height > PNG_MAX_INTEGER || !valid_depth(color, depth) ||
           data[10] != 0 || data[11] != 0 || data[12] > 1)
         return PNG_IHDR;
       info->width = width;
@@ -522,6 +535,16 @@ CAMLprim value caml_nx_io_png_probe(value vsrc) {
     caml_failwith(png_message(status));
   if (info.width > (size_t)Max_long || info.height > (size_t)Max_long)
     caml_failwith(png_message(PNG_SIZE));
+  /* Image data that cannot inflate to the scanlines refuses the image, so
+     that the buffer they inflate into holds at most INFLATE_RATIO times the
+     file's image data, whatever its header states. */
+  size_t filtered;
+  status = scanline_size(&info, &filtered);
+  if (status != PNG_OK)
+    caml_failwith(png_message(status));
+  if (info.idat_size < SIZE_MAX / INFLATE_RATIO &&
+      filtered > (info.idat_size + 1) * INFLATE_RATIO)
+    caml_failwith(png_message(PNG_SHORT));
   vresult = caml_alloc_tuple(3);
   Store_field(vresult, 0, Val_long(info.width));
   Store_field(vresult, 1, Val_long(info.height));

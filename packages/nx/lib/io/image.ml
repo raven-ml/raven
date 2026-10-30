@@ -67,7 +67,7 @@ let png_probe src =
     failwith "invalid PNG image header";
   (width, height, channels)
 
-let png_decode src dst =
+let png_decode src =
   let idat, length = png_idat src in
   let filtered = Array1.create int8_unsigned c_layout length in
   (* Bytes after the zlib stream are the container's, and are ignored. *)
@@ -80,7 +80,7 @@ let png_decode src dst =
   | Error e ->
       Fail.failf "invalid PNG zlib stream: %s"
         (Format.asprintf "%a" Lz.pp_error e));
-  png_unfilter src filtered dst
+  fun dst -> png_unfilter src filtered dst
 
 (* [png_chunk kind data length] is the chunk [kind] of the first [length] bytes
    of [data]: its length, type, data and CRC-32. *)
@@ -181,6 +181,6 @@ let probe src =
     failwith "the image is too large";
   (height, width, channels)
 
-let decode src dst =
+let decode src =
   let _, decode = codec src in
-  decode src dst
+  decode src
