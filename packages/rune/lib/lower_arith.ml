@@ -463,31 +463,30 @@ let int_double (D.Any dt) x =
   | D.Uint64 when not exact -> odd64 ~signed:false x
   | _ -> Ops.cast x Float64
 
-(* The bounds of an integer dtype: its least value and the power of two past its
-   greatest. *)
+(* The bounds of an integer dtype, from its width: its least value and the
+   power of two past its greatest. A sub-byte dtype's are its own, not those of
+   the byte that holds it. *)
 let bounds (D.Any dt) =
-  let w = D.bits dt in
+  let w = D.bits dt and power n = Bigint.shift_left Bigint.one n in
   if D.is D.Signed dt then
-    (-.Float.ldexp 1. Stdlib.(w - 1), Float.ldexp 1. Stdlib.(w - 1))
-  else (0., Float.ldexp 1. w)
+    (Bigint.neg (power Stdlib.(w - 1)), power Stdlib.(w - 1))
+  else (Bigint.zero, power w)
 
 (* A float truncated toward zero into the integer dtype [d], saturated to its
    range, NaN giving 0. Only values in range convert, since C leaves the others
-   undefined. *)
+   undefined. The bounds are powers of two, which a float holds exactly. *)
 let truncate d x =
   let t = dtype d in
   let least, past = bounds d in
-  let lo = Shape.const_like x (`Float least)
-  and hi = Shape.const_like x (`Float past) in
-  let nan = is_nan x and low = x < lo and high = not_ (x < hi) in
+  let bound v = Shape.const_like x (`Float (Bigint.to_float v)) in
+  let nan = is_nan x
+  and low = x < bound least
+  and high = not_ (x < bound past) in
   let safe = where (nan || low || high) (Shape.const_like x (`Float 0.)) x in
   let edge v = Shape.const_like ~dtype:t x (`Int v) in
-  let greatest = Bigint.pred (Bigint.of_string (Printf.sprintf "%.0f" past)) in
   let in_range = Ops.cast safe t in
   where nan (edge Bigint.zero)
-    (where low
-       (edge (Bigint.of_string (Printf.sprintf "%.0f" least)))
-       (where high (edge greatest) in_range))
+    (where low (edge least) (where high (edge (Bigint.pred past)) in_range))
 
 let to_float32 = function
   | Single x -> x
