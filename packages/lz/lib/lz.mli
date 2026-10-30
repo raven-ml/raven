@@ -86,14 +86,24 @@
     domains, so it waits for the call to end.
 
     Since the collector never moves a buffer's bytes, a call releases the
-    domain lock while it works when the bytes it may work on reach a
-    threshold. The threshold is 8 KiB, except 4 KiB when deflate, zlib or
-    gzip encodes and 16 KiB when LZ4 or Snappy decodes. A whole-buffer
-    decode may work on the larger of [src] and [dst], since a short input
-    may fill all of [dst]. An encode may work on [src], and an encoder step
-    on its input and the input its encoder keeps ({!Encoder}). A decoder
-    step, which may fill a run from a few bytes, and an encoder step with
-    [~last:true] always release the lock. *)
+    domain lock once it has done a threshold of work, and takes it back
+    when it returns. A decode's work is the bytes it has read and written,
+    an encode's the input it has compressed, which for an encoder step
+    includes input that earlier steps took ({!Encoder}). The threshold is
+    8 KiB, except 4 KiB when deflate, zlib or gzip encodes and 16 KiB when
+    LZ4 or Snappy decodes. So a short call holds the lock whatever the
+    size of its input and destination, and a long one releases it
+    whatever the size of its input: a decode of a few KiB that writes
+    megabytes releases it, and a step on a few bytes that writes a few
+    hundred holds it. While the lock is released, another thread of the
+    domain may take it, and the call then waits on return until that
+    thread yields it.
+
+    A call checks its work between the units it works in, such as a
+    format's blocks and each 32 KiB of a decode's output. It may thus go
+    on for one unit past its threshold before it releases the lock, and a
+    call whose last unit takes it past the threshold holds the lock to its
+    end. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -682,3 +692,8 @@ val zstd_encode_limit :
   limit:int -> level:int -> bigbytes -> bigbytes -> int option
 
 val zstd_encoder_limit : limit:int -> level:int -> Encoder.t
+
+(* For the tests, which hold the lock rule exact: the times the calling
+   thread has released the domain lock in lz's calls. *)
+
+val releases : unit -> int

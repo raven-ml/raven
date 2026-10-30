@@ -12,7 +12,8 @@
   test_snappy
   test_checksum
   test_step
-  test_hostile)
+  test_hostile
+  test_lock)
  (libraries lz lz_support windtrap)
  (deps
   (glob_files golden/*)))

@@ -261,57 +261,6 @@ let largest_bound bound =
       past (t + 1);
       past (t + 2))
 
-(* The runtime lock *)
-
-type lock = Released | Held | Unproven
-
-(* [watch long ~small] runs [long ()] on another domain and, once it has
-   started, [small ()] 100 times here, which gives [long] time to enter its
-   kernel, then one minor collection, which waits for every domain that holds
-   its runtime lock. [finished] read before and after the collection tells
-   the three outcomes apart. *)
-let watch long ~small =
-  let started = Atomic.make false and finished = Atomic.make false in
-  let d =
-    Domain.spawn (fun () ->
-        Atomic.set started true;
-        let r = long () in
-        Atomic.set finished true;
-        r)
-  in
-  while not (Atomic.get started) do
-    Domain.cpu_relax ()
-  done;
-  for _ = 1 to 100 do
-    small ()
-  done;
-  let before = Atomic.get finished in
-  Gc.minor ();
-  let after = Atomic.get finished in
-  let r = Domain.join d in
-  let lock = if before then Unproven else if after then Held else Released in
-  (lock, r)
-
-let lock_released name long ~small ~check =
-  Windtrap.test name (fun () ->
-      let run k =
-        let lock, r = watch (long k) ~small in
-        check r;
-        lock
-      in
-      match run 1 with
-      | Released -> ()
-      | Held | Unproven -> (
-          match run 2 with
-          | Released -> ()
-          | Held ->
-              Windtrap.fail
-                "a minor collection begun while the long call ran returned \
-                 only after it ended"
-          | Unproven ->
-              Windtrap.skip
-                ~reason:"the long call ended before the collection began" ()))
-
 (* Short destinations *)
 
 type short = Short of int | Part of int

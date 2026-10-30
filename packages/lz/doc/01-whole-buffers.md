@@ -229,13 +229,12 @@ level against the reference implementations.
 Calls may run in parallel from any domains. A program must not run two
 in parallel when one writes a buffer the other reads or writes, and must
 not touch a buffer a call writes, or write one a call reads, from another
-domain (the preamble of [`lz.mli`](../lib/lz.mli)). A decode whose
-source or destination holds 16 KiB or more, and an encode of 16 KiB or
-more, also release the domain lock while they work. The domain's other
-threads then run, and a minor collection, which stops every domain, need
-not wait for the call (the Buffers and the domain lock section of
-[`lz.mli`](../lib/lz.mli)). This program decodes four pages on four
-domains:
+domain (the preamble of [`lz.mli`](../lib/lz.mli)). A call that has
+worked through a few KiB also releases the domain lock for the rest of
+its work. The domain's other threads then run, and a minor collection,
+which stops every domain, need not wait for the call (the Buffers and
+the domain lock section of [`lz.mli`](../lib/lz.mli)). This program
+decodes four pages on four domains:
 
 ```ocaml
 # let () =

@@ -116,7 +116,23 @@ struct block {
   uint8_t *oend;
   size_t at;
   const char *msg;
+  struct told *told;
 };
+
+/* The call's work (lz.h), and the input taken and output written when it
+   was last reported. */
+struct told {
+  struct lz_work *work;
+  const uint8_t *in;
+  uint8_t *out;
+};
+
+/* [tell t ip op] reports the work up to [ip] and [op]. */
+static void tell(struct told *t, const uint8_t *ip, uint8_t *op) {
+  lz_did(t->work, (size_t)(ip - t->in) + (size_t)(op - t->out));
+  t->in = ip;
+  t->out = op;
+}
 
 /* For an offset under 8, the smallest multiple of it that is 8 or more:
    once 8 bytes of the match are written, copying 8 bytes from that far
@@ -173,10 +189,12 @@ struct cursor {
 
 /* Decodes whole sequences while both buffers have their slack, and stops
    before the first sequence that may not fit: the exact loop decodes it.
-   Kept out of line, so that the exact loop's calls do not take its
-   registers. */
+   It also stops once the output reaches [span], before [oend], so that
+   its work is reported (lz.h); a sequence may run past [span]. Kept out
+   of line, so that the exact loop's calls do not take its registers. */
 __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
-                                                             struct cursor *c) {
+                                                             struct cursor *c,
+                                                             uint8_t *span) {
   const uint8_t *ip = c->ip;
   const uint8_t *const iend = b->src + b->len;
   uint8_t *op = c->op;
@@ -185,7 +203,7 @@ __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
   uint64_t last_match = c->last_match;
   unsigned s;
 
-  while (iend - ip >= IN_SLACK && oend - op >= OUT_SLACK) {
+  while (iend - ip >= IN_SLACK && span - op >= OUT_SLACK) {
     const uint8_t *const seq = ip;
     uint8_t *const out = op;
     unsigned token = *ip++;
@@ -267,8 +285,17 @@ static const uint8_t *last_token(const uint8_t *p, const uint8_t *end) {
 }
 
 static enum outcome block_decode(struct block *b) {
+  /* The fast loop in spans of LZ_WORK_SPAN of output, each reported. A
+     span it leaves short has a sequence for the exact loop. */
   struct cursor c = {b->src, b->op, 0};
-  if (fast_sequences(b, &c) == MALFORMED) return MALFORMED;
+  for (;;) {
+    uint8_t *span = (size_t)(b->oend - c.op) > LZ_WORK_SPAN + OUT_SLACK
+                        ? c.op + LZ_WORK_SPAN + OUT_SLACK
+                        : b->oend;
+    if (fast_sequences(b, &c, span) == MALFORMED) return MALFORMED;
+    if (span == b->oend || span - c.op >= OUT_SLACK) break;
+    tell(b->told, c.ip, c.op);
+  }
 
   const uint8_t *ip = c.ip;
   const uint8_t *const iend = b->src + b->len;
@@ -300,6 +327,7 @@ static enum outcome block_decode(struct block *b) {
        overflows however many of its bytes follow. */
     if (lit > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, seq, NULL);
     if (lit > (uint64_t)(iend - ip)) return fail(b, ENDS_EARLY, seq, NULL);
+    if (lit >= LZ_WORK_SPAN) tell(b->told, ip + lit, op + lit);
     memcpy(op, ip, lit);
     op += lit;
     ip += lit;
@@ -335,6 +363,7 @@ static enum outcome block_decode(struct block *b) {
     }
     len += MIN_MATCH;
     if (len > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, at_offset, NULL);
+    if (len >= LZ_WORK_SPAN) tell(b->told, ip, op + len);
     const uint8_t *m = op - off;
     if (off >= len) {
       memcpy(op, m, len);
@@ -348,11 +377,13 @@ static enum outcome block_decode(struct block *b) {
 }
 
 enum lz_status lz_lz4_block_decode(struct lz_io *io, struct lz_error *err) {
+  struct told t = {io->work, io->src, io->dst};
   struct block b = {.src = io->src,
                     .len = io->src_len,
                     .lo = io->dst,
                     .op = io->dst,
-                    .oend = io->dst + io->dst_cap};
+                    .oend = io->dst + io->dst_cap,
+                    .told = &t};
   switch (block_decode(&b)) {
   case DECODED:
     io->consumed = io->src_len;
@@ -568,6 +599,7 @@ static uint16_t *table_for(size_t n, bool *ok) {
 }
 
 enum lz_status lz_lz4_block_encode(struct lz_io *io) {
+  lz_did(io->work, io->src_len);
   bool ok;
   uint16_t *table = table_for(io->src_len, &ok);
   if (!ok) return LZ_ERROR;
@@ -603,7 +635,7 @@ static bool begins_magic(const uint8_t *p, size_t n) {
    number) into [dst] from [*out], advancing both past it. */
 static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
                                    uint8_t *dst, size_t cap, size_t *out,
-                                   struct lz_error *err) {
+                                   struct told *t, struct lz_error *err) {
   size_t q = *pos;
   if (n - q < 1) return lz_fail(err, LZ_TRUNCATED, (int64_t)n, NULL);
   unsigned flg = src[q];
@@ -645,6 +677,7 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
     size_t at_size = q;
     q += 4;
     if (word == 0) break;
+    tell(t, src + q, op);
     size_t len = word & ~STORED;
     if (len > max)
       return lz_fail(err, LZ_MALFORMED, (int64_t)at_size, "invalid block size");
@@ -679,6 +712,7 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
         return lz_fail(err, why, content_limit ? size_at : (int64_t)at_size,
                        msg);
       if (cut) return lz_fail(err, LZ_TRUNCATED, (int64_t)n, NULL);
+      if (len >= LZ_WORK_SPAN) tell(t, src + q + len, op + len);
       memcpy(op, src + q, len);
       produced = len;
     } else {
@@ -687,7 +721,8 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
                         .cut = cut,
                         .lo = flg & FLG_INDEPENDENT ? op : first,
                         .op = op,
-                        .oend = op + limit};
+                        .oend = op + limit,
+                        .told = t};
       switch (block_decode(&b)) {
       case DECODED:
         break;
@@ -733,6 +768,7 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
 enum lz_status lz_lz4_frame_decode(struct lz_io *io, struct lz_error *err) {
   const uint8_t *const src = io->src;
   size_t n = io->src_len, pos = 0, out = 0;
+  struct told t = {io->work, src, io->dst};
   do {
     const uint8_t *p = src + pos;
     size_t rest = n - pos;
@@ -754,7 +790,7 @@ enum lz_status lz_lz4_frame_decode(struct lz_io *io, struct lz_error *err) {
       return lz_fail(err, LZ_MALFORMED, (int64_t)pos, "unknown frame magic");
     pos += 4;
     enum lz_status s =
-        frame_decode(src, n, &pos, io->dst, io->dst_cap, &out, err);
+        frame_decode(src, n, &pos, io->dst, io->dst_cap, &out, &t, err);
     if (s != LZ_DONE) return s;
   } while (pos < n);
   io->consumed = n;
@@ -825,6 +861,7 @@ static enum lz_status frame_encode(struct lz_io *io, uint16_t *table) {
 }
 
 enum lz_status lz_lz4_frame_encode(struct lz_io *io) {
+  lz_did(io->work, io->src_len);
   bool ok;
   uint16_t *table = table_for(io->src_len, &ok);
   if (!ok) return LZ_ERROR;

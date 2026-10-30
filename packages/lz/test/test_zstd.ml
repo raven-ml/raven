@@ -1,6 +1,6 @@
 (* Zstandard decoding (RFC 8878): the vendor's goldens, the specification's
    refusals on frames built byte by byte, the stream against the
-   whole-buffer decode, and the decoder's memory and lock. Round trips and
+   whole-buffer decode, and the decoder's memory. Round trips and
    the bound belong to the encoder.
 
    An error's offset is the first byte of what is wrong: of a field the
@@ -844,7 +844,7 @@ let paths =
             Lz_support.zstd_paths);
     ]
 
-(* Memory and lock *)
+(* Memory *)
 
 let allocation =
   let words f =
@@ -861,26 +861,6 @@ let allocation =
       (* Ok { consumed; produced }: 2 words for Ok, 3 for the record. *)
       equal float_exact 5. (words (fun () -> Lz.Zstd.decode src dst) -. baseline))
 
-(* A long decode, of [k] times 336 frames of 200000 bytes, 64 MiB, leaves
-   this domain's minor collections running. *)
-let lock =
-  let small =
-    lazy (Lz_support.of_string (data "text_100.zst3"), Lz_support.create 100)
-  in
-  let long k =
-    let one = data "text_200000.zst3" and frames = 336 * k in
-    let src =
-      Lz_support.of_string (String.concat "" (List.init frames (fun _ -> one)))
-    in
-    let dst = Lz_support.create (frames * 200_000) in
-    fun () -> Lz.Zstd.decode src dst
-  in
-  Lz_support.lock_released "a long decode lets another domain collect" long
-    ~small:(fun () ->
-      let src, room = Lazy.force small in
-      ignore (Sys.opaque_identity (Lz.Zstd.decode src room)))
-    ~check:is_ok
-
 let () =
   exit
     (run "Zstd"
@@ -895,7 +875,6 @@ let () =
          stream;
          paths;
          allocation;
-         lock;
          group "arguments"
            [
              cases ~name:string_of_int "a level outside 1 to 12 raises"

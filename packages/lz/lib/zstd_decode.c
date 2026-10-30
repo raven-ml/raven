@@ -319,9 +319,16 @@ static bool fits(const struct lz_zstd_dec *st, uint64_t total) {
   return total <= st->content_size && (!st->last || total == st->content_size);
 }
 
+/* A block's work is reported before the next block's header (lz.h),
+   once there is TELL_MIN of it, so that a stream of small blocks does
+   not pay a report for each: [told] is the input taken at the last
+   report, [wrote] the output written since. */
+#define TELL_MIN 4096
+
 static enum lz_status step(struct lz_zstd_dec *st, struct lz_io *io,
                            bool final, struct lz_error *err) {
   const uint8_t *p;
+  size_t told = io->consumed, wrote = 0;
   for (;;) {
     switch (st->stage) {
     case MAGIC: {
@@ -365,6 +372,12 @@ static enum lz_status step(struct lz_zstd_dec *st, struct lz_io *io,
 
     case BLOCK_HEADER: {
       if (st->have == 0) st->block_at = here(st, io);
+      size_t work = io->consumed - told + wrote;
+      if (st->have == 0 && work >= TELL_MIN) {
+        lz_did(io->work, work);
+        told = io->consumed;
+        wrote = 0;
+      }
       if (!take(st, io, 3, st->unit, &p)) return starved(io, final, err);
       uint32_t h = lz_le24(p);
       st->last = h & 1;
@@ -405,6 +418,7 @@ static enum lz_status step(struct lz_zstd_dec *st, struct lz_io *io,
       if (st->checked) lz_xxh64_update(&st->hash, out.op, n);
       st->produced += n;
       io->produced += n;
+      wrote += n;
       if (st->sized && !fits(st, st->produced))
         return fail(st, err, LZ_MALFORMED, st->fcs_at, bad_size);
       st->stage = !st->last ? BLOCK_HEADER : st->checked ? CHECKSUM : END;

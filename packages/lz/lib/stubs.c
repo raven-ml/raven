@@ -2,13 +2,23 @@
    reached through the same few drivers below; lz.h states the contract
    they rely on.
 
-   A call releases the runtime lock when its input holds at least its
-   kernel's threshold of bytes, so that other domains and threads run while
-   it works. Below the threshold the release and reacquisition would cost a
-   measurable share of the call. Every OCaml value a call needs is read
-   before the release, and nothing on the heap is touched until the lock
-   is back; a bigarray's data never moves, and its value stays rooted by
-   CAMLparam. */
+   A call releases the runtime lock from inside its kernel, once the work
+   the kernel reports reaches the kernel's threshold (lz.h), so that the
+   domain's other threads run while it works, and takes it back when the
+   kernel returns. A call that does less work holds the lock, whatever
+   the size of its input or its destination: a release would cost a
+   measurable share of it, and while the lock is released another thread
+   of the domain may take it, and the call then waits on return until
+   that thread yields it, up to its time slice. Work counts what a call
+   does, not what it may do: a 2 KiB Zstandard frame decoding to 64 MiB
+   releases at its second block, and a step on 100 bytes that writes a
+   few hundred holds the lock.
+
+   A step copies its box to the C stack before its kernel runs, since
+   compaction may move the custom block while the lock is released, and
+   writes it back after. Every other value a call needs is read before
+   the kernel runs; a bigarray's data never moves, and its value stays
+   rooted by CAMLparam. */
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -32,15 +42,20 @@
 #include "zstd_dec_paths.h"
 #include "zstd_enc.h"
 
-/* Input bytes from which each kernel releases the runtime lock: the
-   smallest power of two whose call lasts at least 100 times a release and
-   reacquisition, so that the release costs under 1 % of the call. The call
-   is timed at the speed of the fastest vendor build of the codec, on
-   compressible input, and the release with the systhreads library linked
-   and a second domain running, where it costs the most. A decoder's input
-   is compressed bytes: its speed counts them, its decoded speed divided by
-   the ratio. On incompressible input a call runs faster, and the release
-   can cost more than 1 % of a call near the threshold. */
+/* Bytes of work from which each kernel releases the runtime lock: the
+   smallest power of two of input whose call lasts at least 100 times a
+   release and reacquisition, so that the release costs under 1 % of the
+   call. The call is timed at the speed of the fastest vendor build of the
+   codec, on compressible input, and the release with the systhreads
+   library linked and a second domain running, where it costs the most. A
+   decoder's input is compressed bytes: its speed counts them, its decoded
+   speed divided by the ratio. An encoder's work is its input, as
+   measured. A decoder's counts its input and its output, so on input of
+   ratio r it reaches the threshold after 1 / (1 + r) of the input
+   measured, where the release costs up to 1 + r % of the call. On
+   incompressible input a call runs faster, and the release can cost more
+   than 1 % of a call near the threshold. The cost leaves out the wait for
+   the lock when another thread of the domain has taken it. */
 #define RELEASE_DEFLATE_DECODE (8 * 1024)
 #define RELEASE_DEFLATE_ENCODE (4 * 1024)
 #define RELEASE_ZSTD_DECODE (8 * 1024)
@@ -54,6 +69,58 @@ void *lz_alloc(size_t n) { return caml_stat_alloc_noexc(n); }
 
 void lz_free(void *p) { caml_stat_free(p); }
 
+/* The lock */
+
+/* A call's work (lz.h) and whether its kernel has released the lock. [w]
+   comes first, so that [reach] finds the call from it. */
+struct call {
+  struct lz_work w;
+  bool released;
+};
+
+/* The releases the calling thread has made, for the tests (lz.mli). */
+static _Thread_local intnat releases;
+
+/* Every release goes through here. It runs no signal handler: a handler
+   may raise, and a raise from inside a kernel would skip what its stub
+   does after it, such as freeing an encode's tables. A signal that
+   arrives while the lock is released is handled at the first poll after
+   the stub takes it back. */
+static void release(struct call *c) {
+  caml_enter_blocking_section_no_pending();
+  releases++;
+  c->released = true;
+  c->w.limit = SIZE_MAX;
+}
+
+static void reach(struct lz_work *w) { release((struct call *)w); }
+
+static void start(struct call *c, size_t threshold) {
+  c->w.done = 0;
+  c->w.limit = threshold;
+  c->w.reach = reach;
+  c->released = false;
+}
+
+/* Takes the lock back if the call's kernel released it. */
+static void reacquire(struct call *c) {
+  if (!c->released) return;
+  caml_leave_blocking_section();
+  c->released = false;
+}
+
+/* [tally w before did] counts the [did] bytes a decoder kernel took and
+   wrote, of which [w] held [before] when it began: the work after its
+   last report, added without a release (lz.h). */
+static void tally(struct lz_work *w, size_t before, size_t did) {
+  if (w->done - before < did) w->done = before + did;
+}
+
+CAMLprim value lz_releases(value unit) {
+  (void)unit;
+  return Val_long(releases);
+}
+
 /* Buffers */
 
 /* An empty bigarray may have a NULL data pointer, and C forbids even
@@ -66,7 +133,7 @@ static uint8_t *ba_data(value ba) {
   return ba_len(ba) == 0 ? empty : (uint8_t *)Caml_ba_data_val(ba);
 }
 
-static struct lz_io io_of(value src, value dst) {
+static struct lz_io io_of(value src, value dst, struct call *c) {
   struct lz_io io = {
       .src = ba_data(src),
       .src_len = ba_len(src),
@@ -74,6 +141,7 @@ static struct lz_io io_of(value src, value dst) {
       .dst_cap = ba_len(dst),
       .consumed = 0,
       .produced = 0,
+      .work = &c->w,
   };
   return io;
 }
@@ -190,7 +258,8 @@ static value bound_val(size_t b) {
    stream is a sequence of members read to the input's end (gzip,
    Zstandard); otherwise it is one stream with an exact end. [run] is the
    run an encoder step fills from at most [quota] bytes of input; a
-   decoder's buffer is empty until the decoder asks for one (lz.h). */
+   decoder's buffer is empty until the decoder asks for one (lz.h).
+   [release] is the kernel's threshold (above). */
 struct codec {
   enum lz_status (*decode)(void *st, struct lz_io *io, bool final,
                            struct lz_error *err);
@@ -222,9 +291,11 @@ static enum lz_status whole(const struct codec *c, void *st, struct lz_io *io,
         .dst_cap = io->dst_cap - io->produced,
         .consumed = 0,
         .produced = 0,
+        .work = io->work,
     };
-    size_t base = io->consumed;
+    size_t base = io->consumed, before = io->work->done;
     enum lz_status s = c->decode(st, &m, true, err);
+    tally(io->work, before, m.consumed + m.produced);
     io->consumed += m.consumed;
     io->produced += m.produced;
     switch (s) {
@@ -248,12 +319,12 @@ static value decode_whole(const struct codec *c, void *st, value src,
                           value dst) {
   CAMLparam2(src, dst);
   disjoint(src, dst);
-  struct lz_io io = io_of(src, dst);
+  struct call k;
+  start(&k, c->release);
+  struct lz_io io = io_of(src, dst, &k);
   struct lz_error err;
-  bool release = io.src_len >= c->release;
-  if (release) caml_enter_blocking_section();
   enum lz_status s = whole(c, st, &io, &err);
-  if (release) caml_leave_blocking_section();
+  reacquire(&k);
   c->free(st);
   if (s == LZ_ERROR) CAMLreturn(error_result(&err, 0));
   CAMLreturn(ok_progress(io.consumed, io.produced));
@@ -263,12 +334,12 @@ static value encode_whole(const struct codec *c, void *st, value src,
                           value dst) {
   CAMLparam2(src, dst);
   disjoint(src, dst);
-  struct lz_io io = io_of(src, dst);
+  struct call k;
+  start(&k, c->release);
+  struct lz_io io = io_of(src, dst, &k);
   struct lz_error err;
-  bool release = io.src_len >= c->release;
-  if (release) caml_enter_blocking_section();
   enum lz_status s = c->encode(st, &io, true, &err);
-  if (release) caml_leave_blocking_section();
+  reacquire(&k);
   c->free(st);
   if (s == LZ_ERROR) caml_raise_out_of_memory();
   if (s != LZ_DONE) CAMLreturn(Val_none);
@@ -280,8 +351,8 @@ static value encode_whole(const struct codec *c, void *st, value src,
    whether a member has ended with no byte of another taken, and for a
    decoder where its next byte goes in its buffer. lz.ml keeps the buffer,
    who holds the state and whether it is dead. A step copies the box
-   before it releases the lock, since compaction may move the custom
-   block, and writes it back after. */
+   before its kernel runs, since compaction may move the custom block
+   while the kernel has the lock released, and writes it back after. */
 struct box {
   void *st;
   const struct codec *codec;
@@ -348,9 +419,14 @@ static enum lz_status dec_run(struct box *k, struct lz_io *io, bool last,
         .dst_cap = io->dst_cap,
         .produced = io->produced,
         .run = io->run,
+        .work = io->work,
     };
-    size_t before = io->consumed;
+    /* The run so far: a kernel that wraps the buffer does so while the
+       run is empty, so its growth is the kernel's output. */
+    size_t before = io->consumed, told = io->work->done;
+    size_t ran = io->produced - io->run;
     enum lz_status s = c->decode(k->st, &m, last, err);
+    tally(io->work, told, m.consumed + (m.produced - m.run) - ran);
     io->consumed += m.consumed;
     io->produced = m.produced;
     io->run = m.run;
@@ -395,23 +471,26 @@ static value grow(struct lz_io *io, value buf) {
 
 /* A step: the run begins where the last step's ended. A kernel that asks
    for a larger buffer gets it under the lock, and the step goes on in it,
-   so that [f] sees one run. */
+   so that [f] sees one run; a step that had released the lock releases
+   it again to go on. */
 CAMLprim value lz_dec_step(value v, value last, value src, value buf) {
   CAMLparam4(v, last, src, buf);
   struct box k = *Box_val(v);
-  struct lz_io io = io_of(src, buf);
+  struct call c;
+  start(&c, k.codec->release);
+  struct lz_io io = io_of(src, buf, &c);
   io.produced = k.pos;
   io.run = k.pos;
   struct lz_error err;
   bool l = Bool_val(last), fin = false;
   enum lz_status s;
   for (;;) {
-    bool release = io.src_len - io.consumed >= k.codec->release;
-    if (release) caml_enter_blocking_section();
     s = dec_run(&k, &io, l, &fin, &err);
-    if (release) caml_leave_blocking_section();
+    bool released = c.released;
+    reacquire(&c);
     if (s != LZ_NEED_BUFFER) break;
     buf = grow(&io, buf);
+    if (released) release(&c);
   }
   if (s == LZ_ERROR) {
     if (err.kind == LZ_NOMEM) caml_raise_out_of_memory();
@@ -427,17 +506,17 @@ CAMLprim value lz_dec_step(value v, value last, value src, value buf) {
 CAMLprim value lz_enc_step(value v, value last, value src, value buf) {
   CAMLparam4(v, last, src, buf);
   struct box k = *Box_val(v);
-  struct lz_io io = io_of(src, buf);
+  struct call c;
+  start(&c, k.codec->release);
+  struct lz_io io = io_of(src, buf, &c);
   struct lz_error err;
   bool l = Bool_val(last);
   if (io.src_len > k.codec->quota) {
     io.src_len = k.codec->quota;
     l = false;
   }
-  bool release = io.src_len >= k.codec->release;
-  if (release) caml_enter_blocking_section();
   enum lz_status s = k.codec->encode(k.st, &io, l, &err);
-  if (release) caml_leave_blocking_section();
+  reacquire(&c);
   if (s == LZ_ERROR) caml_raise_out_of_memory();
   CAMLreturn(outcome(io.consumed, 0, io.produced, s == LZ_DONE));
 }
@@ -598,12 +677,12 @@ static value simple_decode(enum lz_status (*f)(struct lz_io *,
                            size_t threshold, value src, value dst) {
   CAMLparam2(src, dst);
   disjoint(src, dst);
-  struct lz_io io = io_of(src, dst);
+  struct call c;
+  start(&c, threshold);
+  struct lz_io io = io_of(src, dst, &c);
   struct lz_error err;
-  bool release = io.src_len >= threshold;
-  if (release) caml_enter_blocking_section();
   enum lz_status s = f(&io, &err);
-  if (release) caml_leave_blocking_section();
+  reacquire(&c);
   if (s == LZ_ERROR) CAMLreturn(error_result(&err, 0));
   CAMLreturn(ok_progress(io.consumed, io.produced));
 }
@@ -612,11 +691,11 @@ static value simple_encode(enum lz_status (*f)(struct lz_io *),
                            size_t threshold, value src, value dst) {
   CAMLparam2(src, dst);
   disjoint(src, dst);
-  struct lz_io io = io_of(src, dst);
-  bool release = io.src_len >= threshold;
-  if (release) caml_enter_blocking_section();
+  struct call c;
+  start(&c, threshold);
+  struct lz_io io = io_of(src, dst, &c);
   enum lz_status s = f(&io);
-  if (release) caml_leave_blocking_section();
+  reacquire(&c);
   /* An encoder fails only when its table cannot be allocated. */
   if (s == LZ_ERROR) caml_raise_out_of_memory();
   if (s != LZ_DONE) CAMLreturn(Val_none);
@@ -659,11 +738,17 @@ CAMLprim value lz_snappy_bound_stub(value n) {
   return bound_val(lz_snappy_bound(Long_val(n)));
 }
 
-/* Checksums. A call below lz.ml's threshold takes the [noalloc] entry,
-   which neither allocates nor releases the lock; a longer one takes the
-   entry that releases it. A string's bytes may move during a collection,
-   so a string never releases the lock. Native code passes unboxed values;
-   the [_byte] entries serve bytecode. */
+/* Checksums. A checksum's work is its input, known before it starts: a
+   call below lz.ml's threshold takes the [noalloc] entry, which neither
+   allocates nor releases the lock, and a longer one the entry that
+   releases it at its start. A string's bytes may move during a
+   collection, so a string never releases the lock. Native code passes
+   unboxed values; the [_byte] entries serve bytecode. */
+
+static void release_now(struct call *k) {
+  start(k, 0);
+  release(k);
+}
 
 static const uint8_t *str_at(value s, intnat first) {
   return (const uint8_t *)String_val(s) + first;
@@ -698,9 +783,10 @@ CAMLprim value lz_crc32_ba_long(value crc, value b, value first, value len) {
   uint32_t c = (uint32_t)Long_val(crc);
   const uint8_t *p = ba_at(b, Long_val(first));
   size_t n = (size_t)Long_val(len);
-  caml_enter_blocking_section();
+  struct call k;
+  release_now(&k);
   c = lz_crc32(c, p, n);
-  caml_leave_blocking_section();
+  reacquire(&k);
   CAMLreturn(Val_long((intnat)c));
 }
 
@@ -732,9 +818,10 @@ CAMLprim value lz_adler32_ba_long(value a, value b, value first, value len) {
   uint32_t c = (uint32_t)Int32_val(a);
   const uint8_t *p = ba_at(b, Long_val(first));
   size_t n = (size_t)Long_val(len);
-  caml_enter_blocking_section();
+  struct call k;
+  release_now(&k);
   c = lz_adler32(c, p, n);
-  caml_leave_blocking_section();
+  reacquire(&k);
   CAMLreturn(caml_copy_int32((int32_t)c));
 }
 
@@ -768,9 +855,10 @@ CAMLprim value lz_xxh32_ba_long(value seed, value b, value first,
   uint32_t c = (uint32_t)Int32_val(seed);
   const uint8_t *p = ba_at(b, Long_val(first));
   size_t n = (size_t)Long_val(len);
-  caml_enter_blocking_section();
+  struct call k;
+  release_now(&k);
   c = lz_xxh32(c, p, n);
-  caml_leave_blocking_section();
+  reacquire(&k);
   CAMLreturn(caml_copy_int32((int32_t)c));
 }
 
@@ -804,9 +892,10 @@ CAMLprim value lz_xxh64_ba_long(value seed, value b, value first,
   uint64_t c = (uint64_t)Int64_val(seed);
   const uint8_t *p = ba_at(b, Long_val(first));
   size_t n = (size_t)Long_val(len);
-  caml_enter_blocking_section();
+  struct call k;
+  release_now(&k);
   c = lz_xxh64(c, p, n);
-  caml_leave_blocking_section();
+  reacquire(&k);
   CAMLreturn(caml_copy_int64((int64_t)c));
 }
 

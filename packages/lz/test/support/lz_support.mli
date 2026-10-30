@@ -105,27 +105,6 @@ val largest_bound : (int -> int) -> Windtrap.test
     bound; [t - 1]'s is no larger; [t + 1], [t + 2] and [max_int]
     raise. *)
 
-(** {1 The runtime lock} *)
-
-val lock_released :
-  string ->
-  (int -> unit -> 'a) ->
-  small:(unit -> unit) ->
-  check:('a -> unit) ->
-  Windtrap.test
-(** [lock_released name long ~small ~check] states that the call
-    [long k ()] runs with the runtime lock released. [long k] prepares a
-    call on [k] times a base input, long enough to outlast a minor
-    collection. The call runs on another domain while this one calls
-    [small ()] 100 times, then collects the minor heap, which waits for
-    every domain that holds its runtime lock; [check] is applied to the
-    call's result. The lock was released if the collection returned while
-    the call ran, and held if the collection began while the call ran and
-    returned only after it ended. A run where the call ended before the
-    collection began proves nothing. A run that proves no release is
-    repeated once with [k = 2]: held again fails the test, and proving
-    nothing again skips it. *)
-
 (** {1 Short destinations} *)
 
 (** How short a destination is of an output of [k] bytes, which prints as

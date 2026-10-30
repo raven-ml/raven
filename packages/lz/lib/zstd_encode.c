@@ -573,6 +573,7 @@ static enum lz_status whole(struct lz_zstd_enc *st, struct ze_work *w,
   size_t n = io->src_len;
   struct sink o = {io->dst, io->dst + io->dst_cap, false};
 
+  lz_did(io->work, n);
   begin(w);
   if (!fix(w, st->level, n <= ZE_BLOCK, n)) return nomem(err);
   put_header(&o, &w->p, true, n);
@@ -594,10 +595,13 @@ static enum lz_status whole(struct lz_zstd_enc *st, struct ze_work *w,
   return LZ_DONE;
 }
 
-/* [hold w s n] appends [n] input bytes to the window, first moving the
-   window down when they do not fit: it keeps the bytes a match may
-   still reach, the window before the next block. */
-static bool hold(struct ze_work *w, const uint8_t *s, size_t n) {
+/* [hold w s n work] appends [n] input bytes to the window, first moving
+   the window down when they do not fit: it keeps the bytes a match may
+   still reach, the window before the next block. The move, of the
+   window and the input in no block, over 4 MiB at levels 9 to 12, is
+   reported to [work]. */
+static bool hold(struct ze_work *w, const uint8_t *s, size_t n,
+                 struct lz_work *work) {
   size_t wsize = w->fixed ? (size_t)1 << w->p.wlog : 0;
   size_t need = 2 * wsize + 2 * ZE_BLOCK;
   if (w->cap < need) {
@@ -610,6 +614,7 @@ static bool hold(struct ze_work *w, const uint8_t *s, size_t n) {
   }
   if (w->hi + n > w->cap) {
     size_t keep = w->next > wsize ? w->next - wsize : 0;
+    lz_did(work, w->hi - keep);
     memmove(w->buf, w->buf + keep, w->hi - keep);
     w->pos += keep;
     w->next -= keep;
@@ -629,18 +634,23 @@ static enum lz_status step(struct lz_zstd_enc *st, struct ze_work *w,
   bool fin = last && n == io->src_len;
   struct sink o = {io->dst, io->dst + io->dst_cap, false};
 
-  if (!hold(w, io->src, n)) return nomem(err);
+  if (!hold(w, io->src, n, io->work)) return nomem(err);
   lz_xxh64_update(&w->xxh, io->src, n);
   w->taken += n;
   io->consumed = n;
 
+  /* The input in no block, reported before the blocks this step writes
+     and the tables they may set up: under [fin] they take all of it,
+     otherwise all but at most a block. */
+  size_t left = w->hi - w->next;
+  if (fin || left > ZE_BLOCK) lz_did(io->work, left);
   for (;;) {
-    size_t left = w->hi - w->next;
+    left = w->hi - w->next;
     if (!fin && left <= ZE_BLOCK) break;
     if (!w->fixed) {
       if (!fix(w, st->level, fin && w->taken <= ZE_BLOCK, w->taken))
         return nomem(err);
-      if (!hold(w, io->src, 0)) return nomem(err);
+      if (!hold(w, io->src, 0, io->work)) return nomem(err);
       put_header(&o, &w->p, false, 0);
     }
     if (left == 0) {

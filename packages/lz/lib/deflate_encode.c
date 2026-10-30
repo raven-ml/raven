@@ -1123,6 +1123,7 @@ struct lz_deflate_tables {
   size_t base;   /* the matchfinder's base */
   size_t block;  /* the open block's first byte */
   size_t recalc; /* where the lazy parsers next revise [min_len] */
+  size_t told;   /* where the parse's reported work ends (lz.h) */
   bool open;     /* a block is open */
   bool held;     /* it has ended and waits to be written */
   bool held_final;
@@ -1209,7 +1210,7 @@ static void restart(struct lz_deflate_tables *e) {
   e->bits = 0;
   e->nbits = 0;
   e->fill = 0;
-  e->pos = e->base = e->block = e->recalc = 0;
+  e->pos = e->base = e->block = e->recalc = e->told = 0;
   e->open = e->held = e->held_final = false;
   e->nseq = 0;
 }
@@ -1806,6 +1807,7 @@ static enum lz_status whole(struct lz_deflate_enc *st, struct lz_io *io,
                             struct lz_error *err) {
   struct out o = {io->dst, io->dst + io->dst_cap, 0, 0};
   size_t n = io->src_len;
+  lz_did(io->work, n);
   size_t hs = header_size(st->wrap);
   if (io->dst_cap < hs) return LZ_NEED_OUTPUT;
   write_header(st->wrap, st->level, o.p);
@@ -1848,6 +1850,21 @@ static void slide(struct lz_deflate_tables *e) {
   e->base -= keep;
   e->block -= keep;
   e->recalc -= keep;
+  e->told = e->told > keep ? e->told - keep : 0;
+}
+
+/* [tell e w last] reports the bytes the next parse covers that no parse
+   has reported: up to the input's end under [last], else up to
+   LOOKAHEAD before it ([parse]). A parse that ends a block stops early,
+   and the next covers the rest. */
+static void tell(struct lz_deflate_tables *e, struct lz_work *w, bool last) {
+  size_t stop = last                    ? e->fill
+                : e->fill >= LOOKAHEAD ? e->fill - LOOKAHEAD + 1
+                                        : 0;
+  size_t from = e->pos > e->told ? e->pos : e->told;
+  if (stop <= from) return;
+  e->told = stop;
+  lz_did(w, stop - from);
 }
 
 /* [take e src n] copies what fits of the [n] bytes at [src] into the
@@ -1919,6 +1936,7 @@ static enum lz_status step(struct lz_deflate_enc *st, struct lz_io *io,
       e->held = e->held_final = true;
       continue;
     }
+    tell(e, io->work, fin);
     if (parse(e, e->win, e->fill, fin) == BLOCK_END) {
       e->b.freq[EOB]++;
       e->held = true;

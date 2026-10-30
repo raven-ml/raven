@@ -606,6 +606,11 @@ enum lz_status lz_deflate_decode(struct lz_deflate_dec *st, struct lz_io *io,
   const char *msg;
   int64_t at;
 
+  /* The input taken and the output written when work was last reported
+     (lz.h). */
+  const uint8_t *in_told = in;
+  const uint8_t *out_told = out;
+
 #define PULL()                                                               \
   do {                                                                       \
     if (in == in_end) goto starved;                                          \
@@ -630,6 +635,13 @@ enum lz_status lz_deflate_decode(struct lz_deflate_dec *st, struct lz_io *io,
     at = (where);                                                            \
     msg = (text);                                                            \
     goto malformed;                                                          \
+  } while (0)
+/* Reports the input taken and output written since the last report. */
+#define TELL()                                                               \
+  do {                                                                       \
+    lz_did(io->work, (size_t)(in - in_told) + (size_t)(out - out_told));     \
+    in_told = in;                                                            \
+    out_told = out;                                                          \
   } while (0)
 /* The destination is full and the code at [where] asks for more: the end
    of a step's run, or past the whole-buffer decode's destination. */
@@ -726,14 +738,22 @@ enum lz_status lz_deflate_decode(struct lz_deflate_dec *st, struct lz_io *io,
       break;
     }
 
+    /* A field of any length, read in spans of LZ_WORK_SPAN with their
+       work reported between them. */
     case M_GZIP_NAME:
     case M_GZIP_COMMENT:
       if (st->flags & (mode == M_GZIP_NAME ? FNAME : FCOMMENT)) {
-        const uint8_t *z = memchr(in, 0, (size_t)(in_end - in));
-        const uint8_t *end = z ? z + 1 : in_end;
+        size_t n = (size_t)(in_end - in);
+        if (n > LZ_WORK_SPAN) n = LZ_WORK_SPAN;
+        const uint8_t *z = memchr(in, 0, n);
+        const uint8_t *end = z ? z + 1 : in + n;
         st->hcrc = lz_crc32(st->hcrc, in, (size_t)(end - in));
         in = end;
-        if (!z) goto starved;
+        if (!z && in == in_end) goto starved;
+        if (!z) {
+          TELL();
+          break;
+        }
       }
       mode = mode == M_GZIP_NAME ? M_GZIP_COMMENT : M_GZIP_HCRC;
       break;
@@ -757,6 +777,7 @@ enum lz_status lz_deflate_decode(struct lz_deflate_dec *st, struct lz_io *io,
         mode = M_CHECK;
         break;
       }
+      TELL();
       NEED(3);
       uint32_t type = BITS(3) >> 1;
       if (type == 3) FAIL(byte_of(BITPOS() + 1), "invalid block type");
@@ -894,21 +915,30 @@ enum lz_status lz_deflate_decode(struct lz_deflate_dec *st, struct lz_io *io,
     }
 
     case M_HUFF: {
-      if (in_end - in >= FAST_IN && out_end - out >= FAST_OUT) {
+      /* The fast loop, in spans of LZ_WORK_SPAN of output with their work
+         reported between them, until the input or the destination has
+         too little room left. */
+      enum fast_exit why = FAST_SLOW;
+      while (in_end - in >= FAST_IN && out_end - out >= FAST_OUT) {
+        uint8_t *span = (size_t)(out_end - out) > LZ_WORK_SPAN + FAST_OUT
+                            ? out + LZ_WORK_SPAN + FAST_OUT
+                            : out_end;
         struct cursor c = {in, out, bitbuf, bitsleft};
-        enum fast_exit why = fast(st, &c, out0, hist, in_end, out_end);
+        why = fast(st, &c, out0, hist, in_end, span);
         in = c.in;
         out = c.out;
         bitbuf = c.bitbuf;
         bitsleft = c.bitsleft;
-        if (why == FAST_END) {
-          mode = M_BLOCK;
-          break;
-        }
-        if (why == FAST_BAD_LITLEN) FAIL(HERE(), "invalid literal/length code");
-        if (why == FAST_BAD_DIST) FAIL(HERE(), "invalid distance code");
-        if (why == FAST_TOO_FAR) FAIL(HERE(), "invalid distance too far back");
+        if (why != FAST_SLOW || span == out_end) break;
+        TELL();
       }
+      if (why == FAST_END) {
+        mode = M_BLOCK;
+        break;
+      }
+      if (why == FAST_BAD_LITLEN) FAIL(HERE(), "invalid literal/length code");
+      if (why == FAST_BAD_DIST) FAIL(HERE(), "invalid distance code");
+      if (why == FAST_TOO_FAR) FAIL(HERE(), "invalid distance too far back");
 
       /* One symbol at a time: a literal, an end of block, or a length and
          its distance, taken whole or not at all. A distance is checked
@@ -1039,4 +1069,5 @@ leave:
 #undef HERE
 #undef FAIL
 #undef FULL
+#undef TELL
 }

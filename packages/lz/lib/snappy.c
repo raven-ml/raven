@@ -157,9 +157,28 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
   if (n > io->dst_cap) return lz_fail(err, LZ_TOO_LONG, 0, NULL);
 
   uint8_t *dst = io->dst, *op = dst, *op_end = dst + n;
+
+  /* The input and output when work was last reported (lz.h). The fast
+     loop stops LZ_WORK_SPAN of output past it, before [span], to report
+     again. */
+  const uint8_t *in_told = src;
+  uint8_t *out_told = dst, *span;
+#define SPAN()                                                               \
+  (span = (size_t)(op_end - out_told) > LZ_WORK_SPAN + OUT_SLACK             \
+              ? out_told + LZ_WORK_SPAN + OUT_SLACK                          \
+              : op_end)
+#define TELL(ip_, op_)                                                       \
+  do {                                                                       \
+    lz_did(io->work, (size_t)((ip_) - in_told) + (size_t)((op_) - out_told)); \
+    in_told = (ip_);                                                         \
+    out_told = (op_);                                                        \
+    SPAN();                                                                  \
+  } while (0)
+
+  SPAN();
   for (;;) {
     /* Elements with the slack around them, bounds unchecked. */
-    while (ip_end - ip >= IN_SLACK && op_end - op >= OUT_SLACK) {
+    while (ip_end - ip >= IN_SLACK && span - op >= OUT_SLACK) {
       uint32_t tag = ip[0], e = tags[tag];
       size_t len = e & 0xff;
       if (tag % 4 == LITERAL) {
@@ -178,6 +197,10 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
       else
         expand(op, off, len);
       op += len;
+    }
+    if (span - op < OUT_SLACK && span != op_end) {
+      TELL(ip, op);
+      continue;
     }
     if (ip == ip_end) break;
 
@@ -212,6 +235,7 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
       if (len == 0) len = (size_t)trailer + 1;
       if (len > (size_t)(ip_end - ip))
         return lz_fail(err, LZ_TRUNCATED, io->src_len, NULL);
+      if (len >= LZ_WORK_SPAN) TELL(ip + len, op + len);
       memcpy(op, ip, len);
       ip += len;
       op += len;
@@ -229,6 +253,8 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
   io->consumed = io->src_len;
   io->produced = n;
   return LZ_DONE;
+#undef TELL
+#undef SPAN
 }
 
 /* Encoding */
@@ -454,6 +480,7 @@ enum lz_status lz_snappy_encode(struct lz_io *io) {
   const uint8_t *src = io->src;
   size_t n = io->src_len;
   uint8_t *op = io->dst, *op_end = io->dst + io->dst_cap;
+  lz_did(io->work, n);
 
   for (uint64_t v = n;; v >>= 7) {
     if (op == op_end) return LZ_NEED_OUTPUT;

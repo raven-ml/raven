@@ -848,40 +848,6 @@ let allocation =
       is_ok r;
       equal int ~msg:"words allocated" (baseline + Obj.reachable_words (Obj.repr r)) words)
 
-(* [literals n] is a deflate stream of [n] copies of a fixed block of
-   64 KiB of literals, then an empty final block, with what it decodes
-   to. Each block takes a whole number of bytes: 3 header bits, 8 bits per
-   literal below 144, 9 per literal above and 7 for the end of block, with
-   six literals 0xff to make the total a multiple of 8. *)
-let literals n =
-  let data = Lz_support.corpus Text (64 * kib) ^ String.make 6 '\xff' in
-  let w = writer () in
-  List.iter (put w) (fixed ~final:false (List.init (String.length data) (fun i -> L (Char.code data.[i]))));
-  put w (huff fixed_lit.(256));
-  assert (w.n = 0);
-  let unit = contents w in
-  let last = pack (fixed [ L 256 ]) in
-  (String.concat "" (List.init n (fun _ -> unit)) ^ last, n * String.length data)
-
-(* A long decode, of [k] times 64 MiB, leaves this domain's minor
-   collections running. *)
-let domains =
-  let small = Lz_support.of_string (gzip_member (stored "hello") "hello") in
-  let small_dst = Lz_support.create 5 in
-  let long k =
-    let big, n = literals (1024 * k) in
-    let src = Lz_support.of_string big and dst = Lz_support.create n in
-    fun () -> (Lz.Deflate.decode src dst, String.length big, n)
-  in
-  Lz_support.lock_released "a long decode leaves another domain's calls running"
-    long
-    ~small:(fun () -> is_ok (Lz.Gzip.decode small small_dst))
-    ~check:(fun (r, consumed, produced) ->
-      equal
-        (result Lz_support.progress Lz_support.error)
-        (Ok { Lz.consumed; produced })
-        r)
-
 let () =
   exit
     (run "Deflate"
@@ -894,5 +860,5 @@ let () =
          empty;
          bounds;
          group "streaming" [ steps; exact_end; window ];
-         group "memory" [ allocation; domains ];
+         group "memory" [ allocation ];
        ])

@@ -47,13 +47,20 @@ measured without linking them.
   decode at libdeflate's speed needs it.
 - Lock release thresholds are measured per kernel (lib/stubs.c,
   lib/lz.ml), not the RFC's round numbers.
+- A call releases the lock from inside its kernel, by the work the kernel
+  reports (lib/lz.h), never by the sizes of its buffers: sizes released
+  on calls that did little work, and each such release beside a busy
+  thread of the domain cost a time slice to win the lock back.
 
 ## Traps
 
 - dune keeps a stale directory listing when files are created quickly in
   a new directory: `touch` the directory, never `dune clean`.
-- A custom block may move under compaction while the lock is released:
-  copy its fields before releasing, write them back after.
+- A custom block may move under compaction while the lock is released,
+  which any kernel may do at any report: copy its fields before every
+  kernel call, write them back after.
+- Tests of the lock count releases (`Lz.releases`); never time a
+  collection against a call.
 - `zstd -b` is multithreaded by default and writes no checksum: time it
   with `--single-thread`, and with the checksum on for the release table.
 - Benches and timings only under `flock -x ~/wt/TIMING.lock` on fudge's

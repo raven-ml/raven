@@ -48,12 +48,48 @@
      member is complete and every byte of it written (only with [last]),
      LZ_NEED_INPUT when it has consumed all of [src] and holds nothing it
      can write yet, LZ_NEED_OUTPUT when [dst] is full.
-   - A kernel never calls into the OCaml runtime: the stubs may run it with
-     the runtime lock released. It allocates only through [lz_alloc], which
-     is safe without the lock, and reports a refused allocation as LZ_ERROR
-     with LZ_NOMEM, which the stub raises as Out_of_memory. The
-     whole-buffer decode path allocates nothing: its state lives on the
-     stub's C stack.
+   - A kernel reports its work through [lz_did] (below), and the stubs may
+     release the runtime lock inside any report, taking it back once the
+     kernel returns. So a kernel touches nothing on the OCaml heap and
+     never calls into the runtime: it reads and writes [src] and [dst],
+     whose bytes the collector never moves, its state, which lives
+     outside the heap, and its own stack. It allocates only through
+     [lz_alloc], which is safe without the lock, and reports a refused
+     allocation as LZ_ERROR with LZ_NOMEM, which the stub raises as
+     Out_of_memory. The whole-buffer decode path allocates nothing: its
+     state lives on the stub's C stack.
+
+   Work
+
+   [io->work] counts a call's work in bytes, and the stubs release the
+   lock at the first report that brings it to the kernel's threshold. A
+   kernel reports often enough that it never works long unreported, and
+   rarely enough that its reports cost nothing measurable:
+
+   - a decoder counts the bytes it has taken and written. It reports
+     those since its last report before each block it begins (Zstandard
+     once they reach 4 KiB, which spares a stream of small blocks a
+     report each) and each time its fast loop has written LZ_WORK_SPAN
+     bytes since; an LZ4 or Snappy decoder also before it copies a
+     literal run, a match or a stored block of LZ_WORK_SPAN bytes or
+     more outside its fast loop, counting the copy;
+   - an encoder counts the input it compresses, and reports it before it
+     compresses it: a whole-buffer encode all of its input at its start,
+     a step the input each parse or each run of blocks covers. A
+     Zstandard step also reports the bytes a window slide moves, over
+     4 MiB at levels 9 to 12.
+
+   The stubs add a decoder's work after its last report, such as its last
+   block, without a release: it counts at the call's next report, if any.
+   Between two reports a kernel does at most one unit whose size the
+   format or the kernel bounds: a Zstandard block, of at most 128 KiB of
+   output; a deflate stored block or gzip header field, of at most
+   64 KiB; LZ_WORK_SPAN bytes of output and the code or sequence they end
+   in; a deflate encoder's block write and window slide, each of at most
+   a few hundred KiB; a step's copy of its input into its window. So a
+   call holds the lock for at most its threshold's work and one such
+   unit, and a call whose last unit brings its work to the threshold
+   holds it to its end.
 
    A streaming decoder's buffer
 
@@ -95,6 +131,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* A call's work: [done] bytes reported, and [reach], which the stubs run
+   once [done] reaches [limit]. */
+struct lz_work {
+  size_t done;
+  size_t limit;
+  void (*reach)(struct lz_work *w);
+};
+
+/* The most output a decoder writes inside a block between two reports. */
+#define LZ_WORK_SPAN (32 * 1024)
+
+/* [lz_did w n] reports [n] bytes of work. */
+static inline void lz_did(struct lz_work *w, size_t n) {
+  w->done += n;
+  if (w->done >= w->limit) w->reach(w);
+}
+
+/* [work] is never NULL. */
 struct lz_io {
   const uint8_t *src;
   size_t src_len;
@@ -104,6 +158,7 @@ struct lz_io {
   size_t produced;
   size_t run;
   size_t need;
+  struct lz_work *work;
 };
 
 enum lz_status {
@@ -163,8 +218,8 @@ static inline enum lz_status lz_fail(struct lz_error *err, int kind,
                                 bool last, struct lz_error *err);
      size_t lz_F_bound(size_t n);
 
-   An encoder fails only with LZ_NOMEM. [lz_F_enc_init] allocates nothing:
-   tables are allocated at the first [lz_F_encode], so that the stubs can
-   report a refusal. */
+   An encoder fails only with LZ_NOMEM. [lz_F_enc_init] allocates
+   nothing: tables are allocated at the first [lz_F_encode], so that the
+   stubs can report a refusal. */
 
 #endif

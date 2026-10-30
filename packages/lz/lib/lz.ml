@@ -502,3 +502,5 @@ let zstd_encode_limit ~limit ~level src dst =
 let zstd_encoder_limit ~limit ~level =
   check_limit "zstd_encoder_limit" limit;
   stream (zstd_encoder_limit limit (Zstd.level_of ~level ()))
+
+external releases : unit -> int = "lz_releases" [@@noalloc]
