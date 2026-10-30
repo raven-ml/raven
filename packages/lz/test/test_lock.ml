@@ -411,33 +411,66 @@ let lz4_literals n =
   in
   (s, n + 4 + 40, 1 + String.length (ext n))
 
+(* An LZ4 block of one sequence, [n] last literals, with the bytes it
+   decodes to and those of its codes: the exact loop copies them, since
+   no input follows them. *)
+let lz4_last n =
+  let ext = String.make ((n - 15) / 255) '\xff' ^ byte ((n - 15) mod 255) in
+  ("\xf0" ^ ext ^ String.make n 'a', n, 1 + String.length ext)
+
 (* lz's block of 1 MiB of zeros, whose matches past its first literal
    decode to all but its last bytes, and at most all of its input before
-   them. *)
+   them. Into an exact destination, its last match leaves fewer bytes
+   than the fast loop's slack, and the exact loop copies it. *)
 let lz4_zeros =
   let s = Lz.Lz4.Block.encode_string (String.make mib '\x00') in
   (s, mib, String.length s)
 
-(* An LZ4 block decoded into a destination with room past its output,
-   where the fast loop copies each sequence whole. The call releases
-   before a copy that would take its work past the threshold: the work it
-   has counted then is under the threshold and the codes it read since
-   its last report, at most [codes], whatever the copy's length. *)
-let lz4_copy =
+(* An LZ4 frame of one stored block of 64 KiB, and its codes: the header,
+   7 bytes, and the block's size, 4. *)
+let lz4_frame_stored =
+  let n = 64 * kib in
+  (lz4_frame [ lz4_stored (String.make n 'a') ], n, 7 + 4)
+
+(* A Snappy block of one literal of 64 KiB, and its codes: the preamble,
+   3 bytes, then the tag and the length less one in 2 bytes. *)
+let snappy_literal =
+  let n = 64 * kib in
+  let s = "\x80\x80\x04" ^ byte (61 lsl 2) ^ le 2 (n - 1) ^ String.make n 'a' in
+  (s, n, 3 + 1 + 2)
+
+(* A long copy, decoded into a destination [room] bytes past its output.
+   The call releases before a copy that would take its work past the
+   threshold: the work it has counted then is under the threshold and the
+   codes it read since its last report, at most [codes], whatever the
+   copy's length. With room, LZ4's fast loop copies each sequence whole;
+   into an exact destination, the exact loop copies the last ones. *)
+let long_copy =
+  let lz4 = (lz4_decode, Lz.Lz4.Block.decode) in
   cases
-    ~name:(fun (label, _) -> label)
-    "an LZ4 block releases before a long copy"
+    ~name:(fun (label, _, _, _) -> label)
+    "a decode releases before a long copy"
     [
-      ("a literal run of 64 KiB", lz4_literals (64 * kib));
-      ("a match of about 1 MiB", lz4_zeros);
+      ("LZ4, a literal run of 64 KiB", lz4, kib, lz4_literals (64 * kib));
+      ("LZ4, a match of about 1 MiB", lz4, kib, lz4_zeros);
+      ("LZ4, last literals of 64 KiB", lz4, 0, lz4_last (64 * kib));
+      ("LZ4, a match of about 1 MiB, exact", lz4, 0, lz4_zeros);
+      ( "LZ4 frame, a stored block of 64 KiB",
+        (lz4_decode, Lz.Lz4.Frame.decode),
+        0,
+        lz4_frame_stored );
+      ( "Snappy, a literal of 64 KiB",
+        (snappy_decode, Lz.Snappy.decode),
+        0,
+        snappy_literal );
     ]
-    (fun (_, (s, n, codes)) ->
+    (fun (_, (t, decode), room, (s, n, codes)) ->
       let src = Lz_support.of_string s in
-      let dst = Lz_support.create (n + kib) in
-      let r, k, at = released (fun () -> Lz.Lz4.Block.decode src dst) in
+      let dst = Lz_support.create (n + room) in
+      let r, k, at = released (fun () -> decode src dst) in
       ok_produced n r;
       equal int ~msg:"releases" 1 k;
-      less int ~msg:"work at the release" ~than:(lz4_decode + codes) at)
+      less int ~msg:"work at the release" ~than:(t + codes) at)
 
 (* Steps *)
 
@@ -545,4 +578,4 @@ let steps =
 let () =
   exit
     (run "Lock"
-       [ whole; blocks; short_input; concatenated; lz4_copy; steps ])
+       [ whole; blocks; short_input; concatenated; long_copy; steps ])
