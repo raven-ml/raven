@@ -1,6 +1,7 @@
 ; nx_kinds.h's kinds by name, and their loops as nx.cpu compiles its rows,
 ; both with the vectoriser flags and, on x86-64, x86-64-v3's instructions,
-; whose fma the header requires.
+; whose fma the header requires, read from the flags nx.cpu installs
+; (lib/cpu/dune).
 
 (library
  (name nx_kinds_support)
@@ -12,8 +13,8 @@
    (lib nx.kernel))
   (flags
    :standard
-   (:include ../../../lib/cpu/vector_flags.sexp)
-   (:include ../../../lib/cpu/v3_flags.sexp))
+   (:include %{lib:nx.cpu:vector_flags.sexp})
+   (:include %{lib:nx.cpu:v3_flags.sexp}))
   (names nx_kinds_support_stubs))
  (foreign_stubs
   (language c)
@@ -22,8 +23,8 @@
    (lib nx.kernel))
   (flags
    :standard
-   (:include ../../../lib/cpu/vector_flags.sexp)
-   (:include ../../../lib/cpu/v3_flags.sexp))
+   (:include %{lib:nx.cpu:vector_flags.sexp})
+   (:include %{lib:nx.cpu:v3_flags.sexp}))
   (names nx_kinds_support_loops)))
 
 ; The kernel libraries the suite runs its laws through, and nx.cpu's target

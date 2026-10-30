@@ -1,7 +1,8 @@
 ; nx.cpu's floors for the kernel bench: loops that move or read a row's
-; bytes, codecs, and fused multiply-adds at their peak, in C. They take
-; nx.cpu's vector flags and, on x86-64, its x86-64-v3 instructions, so
-; that the compiler builds their loops as it does the kernels'.
+; bytes, codecs, and fused multiply-adds at their peak, in C. They take the
+; vector flags and, on x86-64, the x86-64-v3 instructions that nx.cpu
+; installs (lib/cpu/dune), so that the compiler builds their loops as it
+; does the kernels'.
 
 (library
  (name nx_cpu_floors)
@@ -14,6 +15,6 @@
    (lib rig.pool))
   (flags
    :standard
-   (:include ../../../lib/cpu/vector_flags.sexp)
-   (:include ../../../lib/cpu/v3_flags.sexp))
+   (:include %{lib:nx.cpu:vector_flags.sexp})
+   (:include %{lib:nx.cpu:v3_flags.sexp}))
   (names nx_cpu_bench_stubs nx_cpu_bench_codec nx_cpu_bench_fma)))

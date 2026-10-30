@@ -39,6 +39,20 @@
   (flags :standard (:include v3_flags.sexp) (:include vnni_flags.sexp))
   (names gemm_vnni)))
 
+; nx.cpu installs the flags of its x86-64-v3 units beside the library, so
+; that C outside it compiles as those units do: nx_kinds.h, which needs
+; x86-64-v3's fma on x86-64, in nx's kinds suites, and the bench's floors.
+; Another dune file reads them as (:include %{lib:nx.cpu:v3_flags.sexp}),
+; which depends on the installed file, in this workspace and from an
+; installed nx alike.
+
+(install
+ (section lib)
+ (package nx)
+ (files
+  (v3_flags.sexp as cpu/v3_flags.sexp)
+  (vector_flags.sexp as cpu/vector_flags.sexp)))
+
 (rule
  (target v3_flags.sexp)
  (enabled_if
