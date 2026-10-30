@@ -102,3 +102,26 @@
   threads.posix
   unix
   windtrap))
+
+; toplevel.t loads rig's archives into the bytecode toplevel, from the
+; build directory, as dune ocaml top's directives do. Under sanitize and tsan
+; the stubs need a sanitizer's runtime, which the toplevel lacks. A load that
+; spins, as a second load once did, ends at the timeout.
+
+(cram
+ (applies_to toplevel)
+ (enabled_if
+  (and
+   (<> %{os_type} Win32)
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
+ (timeout 30)
+ (deps
+  %{bin:ocaml}
+  %{cma:../lib/edge/rig_edge}
+  %{cma:../lib/elf/rig_elf}
+  %{cma:../lib/pool/rig_pool}
+  %{cma:../lib/rig}
+  ../lib/edge/dllrig_edge_stubs%{ext_dll}
+  ../lib/pool/dllrig_pool_stubs%{ext_dll}
+  ../lib/dllrig_stubs%{ext_dll}))

@@ -735,9 +735,22 @@ static void heap_finalize(value v) {
   else free(base);
 }
 
-/* Builds the operations and installs the slice hook, once, as the library
-   initializes, with the size from which buffers start on a page. */
+/* Whether [caml_rig_heap_init] ran in this process. */
+static _Atomic int heap_initialized;
+
+/* Builds the operations and installs the slice hook as the library
+   initializes, with the size from which buffers start on a page. A process
+   holds one copy of this file however many copies of rig's OCaml modules a
+   toplevel loads, so a second call raises: installed twice, the hook would
+   be its own predecessor and [slice_end] would call itself forever. An
+   interactive toplevel goes on after the failure, holding the second copies
+   of the modules initialized before it, so the message asks for a restart. */
 value caml_rig_heap_init(value v_kept_from) {
+  if (atomic_exchange_explicit(&heap_initialized, 1, memory_order_relaxed))
+    caml_failwith(
+        "rig is already loaded in this process: a toplevel loads it once, by "
+        "#require or by the #load directives of dune ocaml top, not both; "
+        "restart the toplevel");
   heap_kept_from = (size_t)Long_val(v_kept_from);
   heap_page = rig_page_bytes();
   heap_cycle_floor = heap_llc_bytes() / 2;

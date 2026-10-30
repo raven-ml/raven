@@ -103,4 +103,6 @@ For the best development experience, use an editor with OCaml LSP support:
 
 **Build failures**: Check your OCaml version with `ocaml --version`. Raven requires 5.5.0 or later.
 
+**Toplevel**: Load Raven's libraries into a toplevel once, either with `#require` or with `#use_output "dune ocaml top"`, never both: a second load fails with `rig is already loaded in this process`.
+
 **Getting help**: Report issues at [github.com/raven-ml/raven/issues](https://github.com/raven-ml/raven/issues).
