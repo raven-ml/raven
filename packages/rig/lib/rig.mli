@@ -784,7 +784,9 @@ val failure : unit -> string option
        [custom_major_ratio] / 150 ({!Gc.control}) of the program's memory,
        the allocating domain's major heap and the host buffers live at the
        last cycle, or half the host's last-level cache if that is more, and
-       at least 4 MiB.}
+       at least 4 MiB. Above both floors, that amount is proportional to
+       [custom_major_ratio], so raising the ratio holds more dropped memory
+       between cycles and runs fewer of them.}
     {- The host keeps collected buffers of 64 KiB or more for reuse. It keeps
        up to 32 MiB of them, and beyond that only while the bytes of its kept
        and live buffers together stay within the peak of its live buffers
