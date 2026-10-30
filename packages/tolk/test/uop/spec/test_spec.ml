@@ -304,17 +304,17 @@ let vectors =
           in
           equal verdict (Some false)
             (judge Spec.vector_program (Ops.add quad quad)));
-      test
-        "a program of a renderer that computes on vectors has no operation on \
-         3 or 6 lanes" (fun () ->
-          let lanes n =
+      cases
+        "a program of a renderer that computes on vectors takes an operation \
+         on any number of lanes"
+        ~name:(Printf.sprintf "%d lanes")
+        [ 2; 3; 5; 6; 12 ]
+        (fun n ->
+          let lanes =
             Shape.stack (List.init n (fun i -> fvar (string_of_int i)))
           in
-          let three = lanes 3 and six = lanes 6 in
-          equal verdict (Some false)
-            (judge Spec.vector_program (Ops.add three three));
-          equal verdict (Some false)
-            (judge Spec.vector_program (Ops.add six six)));
+          equal verdict (Some true)
+            (judge Spec.vector_program (Ops.add lanes lanes)));
       test "a program reads a lane of a vector at a constant" (fun () ->
           let vector = Shape.stack [ fvar "a"; fvar "b" ] in
           let lane i = fresh_v ~src:[ vector; i ] Op.Index in

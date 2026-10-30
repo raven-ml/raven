@@ -13,16 +13,19 @@
 11 Ops.INDEX dtypes.float [10, 2]
 12 Ops.CONST dtypes.weakint [] 1
 13 Ops.INDEX dtypes.float [10, 12]
-14 Ops.ADD dtypes.float [11, 13]
-15 Ops.INDEX dtypes.float [10, 5]
-16 Ops.ADD dtypes.float [13, 15]
-17 Ops.STACK dtypes.float [14, 16]
-18 Ops.STORE dtypes.void [6, 17]
-19 Ops.WHERE dtypes.weakint [1, 5, 3]
-20 Ops.INDEX dtypes.float [0, 19]
-21 Ops.CONST dtypes.weakint [] 3
-22 Ops.INDEX dtypes.float [10, 21]
-23 Ops.ADD dtypes.float [15, 22]
-24 Ops.STORE dtypes.void [20, 23]
-25 Ops.SINK dtypes.void [18, 18, 24] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
+14 Ops.INDEX dtypes.float [10, 5]
+15 Ops.STACK dtypes.float [11, 13, 14]
+16 Ops.CONST dtypes.weakint [] 3
+17 Ops.INDEX dtypes.float [10, 16]
+18 Ops.STACK dtypes.float [13, 14, 17]
+19 Ops.ADD dtypes.float [15, 18]
+20 Ops.INDEX dtypes.float [19, 2]
+21 Ops.INDEX dtypes.float [19, 12]
+22 Ops.STACK dtypes.float [20, 21]
+23 Ops.STORE dtypes.void [6, 22]
+24 Ops.WHERE dtypes.weakint [1, 5, 3]
+25 Ops.INDEX dtypes.float [0, 24]
+26 Ops.INDEX dtypes.float [19, 5]
+27 Ops.STORE dtypes.void [25, 26]
+28 Ops.SINK dtypes.void [23, 23, 27] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
 

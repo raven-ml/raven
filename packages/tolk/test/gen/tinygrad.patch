@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..8d56317 100644
+index efb2e82..320397b 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace
@@ -67,7 +67,7 @@ index efb2e82..8d56317 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
-@@ -114,10 +120,92 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+@@ -114,10 +120,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -106,15 +106,9 @@ index efb2e82..8d56317 100644
 +  lanes = [l for l in x.src if l.op is Ops.INDEX]
 +  return x if all(constant(l) or memory(l) or l.op is Ops.INDEX for l in x.src) and len(set(lanes)) == len(lanes) else None
 +
-+# the w lanes of v from lane first, v a vector of lanes in order: a stack of its elements if it is one, the lanes of a computed vector
-+# otherwise
-+def segment(v:UOp, first:int, w:int) -> UOp:
-+  return UOp.stack(*[v.src[first+i] if v.op is Ops.STACK else v.index(UOp.const(first+i)) for i in range(w)])
-+
-+# an elementwise operation of a renderer that computes on vectors keeps its lanes on one axis, the flat order of its shape: each source
-+# is a vector of those lanes in order, or a scalar every lane reads. an operation of m*2**k lanes is m operations on vectors of 2**k
-+# consecutive lanes, which llvm never widens; one of an odd number of lanes computes each lane apart (see do_devectorize).
-+# where every source is a scalar, the operation is computed once and expanded
++# an elementwise operation of a renderer that computes on vectors keeps its lanes whole, on one axis, the flat order of its shape:
++# each source is a vector of those lanes in order, or a scalar every lane reads. where every source is a scalar, the operation is
++# computed once and expanded
 +def vector_operation(b:UOp) -> UOp|None:
 +  n = prod(b.shape)
 +  def operand(x:UOp) -> UOp:
@@ -123,12 +117,9 @@ index efb2e82..8d56317 100644
 +    if (v:=in_order(n, x)) is not None: return v
 +    raise RuntimeError("a vector operand of lanes out of order")
 +  src = tuple(operand(x) for x in b.src)
-+  w = n & -n
-+  if w == n and all(x is y for x,y in zip(src, b.src)): return None
++  if all(x is y for x,y in zip(src, b.src)): return None
 +  if all(x.shape == () for x in src): return b.replace(src=src)._mop(Ops.EXPAND, arg=b.shape)
-+  if w == n: return b.replace(src=src) if len(b.shape) == 1 else b.replace(src=src).reshape(b.shape)
-+  def part(j:int) -> UOp: return b.replace(src=tuple(x if x.shape == () or x.is_invalid else segment(x, j*w, w) for x in src))
-+  return UOp.stack(*[p.index(UOp.const(i)) for p in [part(j) for j in range(n//w)] for i in range(w)]).reshape(b.shape)
++  return b.replace(src=src) if len(b.shape) == 1 else b.replace(src=src).reshape(b.shape)
 +
 +# the dtypes whose elementwise operations ren computes on vectors: those it computes natively, if it computes on vectors at all.
 +# weak dtypes are those of addresses, which are computed lane by lane
@@ -146,22 +137,21 @@ index efb2e82..8d56317 100644
 +  lanes = [tuple(v.src[i] for v in vectors) for i in range(n)]
 +  return all(any(a is not b for a,b in zip(lanes[i], lanes[j])) for i in range(n) for j in range(i+1, n))
 +
-+# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of an even number of
-+# distinct lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order: a scalar reads a view across lanes
-+# for free, and a vector pays shuffles for it. vector_operation splits the lanes into vectors of the largest power of two that divides
-+# their number
++# elementwise operations, loads and stores of vectors compute each lane apart, except an elementwise operation of several distinct
++# lanes on the dtypes ctx holds, those computed on vectors, whose sources hold them in order: a scalar reads a view across lanes for free,
++# and a vector pays shuffles for it
 +def do_devectorize(ctx:tuple[DType, ...], b:UOp):
    if b.shape == (): return None
    # broadcasting needs to be already unpacked, Invalid matches any dtype and shape
    if not all(x.shape == b.shape or x.base.is_invalid for x in b.src): return None
 +  def lanes(x:UOp) -> bool: return splat(x) is not None or (x.dtype in ctx and in_order(prod(b.shape), x) is not None)
-+  if b.op in GroupOp.Elementwise and (n:=prod(b.shape)) > 1 and n % 2 == 0 and b.dtype in ctx and \
++  if b.op in GroupOp.Elementwise and prod(b.shape) > 1 and b.dtype in ctx and \
 +     all(x.base.is_invalid or lanes(x) for x in b.src) and \
 +     distinct_lanes(prod(b.shape), [x for x in b.src if not x.base.is_invalid]): return vector_operation(b)
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-@@ -134,9 +222,61 @@ def do_stack_wmma(u:UOp):
+@@ -134,9 +212,59 @@ def do_stack_wmma(u:UOp):
        src.append(b)
    return u.replace(src=tuple(src))
  
@@ -199,9 +189,8 @@ index efb2e82..8d56317 100644
 +  return UOp.stack(*[lane(a if boolean(x) else b, i) for i,x in enumerate(c.src)])
 +
 +# constants in vectors. a scalar expanded to a vector, which const_like makes of the vectors the passes after devectorize compute
-+# on, is read as the scalar: by an elementwise operation, which reads it in every lane, and at any lane. a lane of a value that is a
-+# scalar is that scalar: a vector operation whose vector sources fold to constants, such as a selection by a comparison that holds in
-+# every lane, is computed once. a selection by a vector of constant conditions picks each lane
++# on, is read as the scalar: by an elementwise operation, which reads it in every lane, and at any lane. a selection by a vector of
++# constant conditions picks each lane
 +def read_splats(x:UOp) -> UOp|None:
 +  if not any(splat(s) is not None for s in x.src): return None
 +  scalar = x.replace(src=tuple(c if (c:=splat(s)) is not None else s for s in x.src))
@@ -209,8 +198,7 @@ index efb2e82..8d56317 100644
 +pm_vector_constants = PatternMatcher([
 +  (UPat(Ops.WHERE, src=(UPat.var("c"), UPat.var("a"), UPat.var("b"))), pick_lanes),
 +  (UPat(GroupOp.Elementwise, name="x"), read_splats),
-+  (UPat(Ops.INDEX, src=(UPat.var("e"), UPat()), name="x"),
-+   lambda e,x: e if e.shape == () and e.addrspace is AddrSpace.ALU else splat(e)),
++  (UPat(Ops.INDEX, src=(UPat.var("e"), UPat()), name="x"), lambda e,x: splat(e)),
 +])
 +
  devectorizer2 = pm_mops+PatternMatcher([
@@ -223,7 +211,7 @@ index efb2e82..8d56317 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -151,10 +291,10 @@ devectorizer2 = pm_mops+PatternMatcher([
+@@ -151,10 +279,10 @@ devectorizer2 = pm_mops+PatternMatcher([
    (UPat(Ops.RESHAPE, dtype=dtypes.void, name="x"), lambda x: x.src[0]),
    # reshape of a single element shaped value to scalar is an index
    (UPat(Ops.RESHAPE, name="x"), lambda x: x.src[0].index(0) if x.marg == () and x.src[0].shape == (1,) else None),
@@ -237,7 +225,7 @@ index efb2e82..8d56317 100644
  ])
  
  def fix_group_for_reduce(x:UOp):
-@@ -194,19 +334,49 @@ def merge_reduce_ends(sink:UOp):
+@@ -194,19 +322,61 @@ def merge_reduce_ends(sink:UOp):
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -253,18 +241,30 @@ index efb2e82..8d56317 100644
 +# its operands gathered as the lanes are
 +def product_operands(p:UOp) -> tuple[UOp, UOp]|None:
 +  def lane(l:UOp): return (l.src[0], l.src[1]) if l.op is Ops.INDEX and len(l.src) == 2 and l.src[0].op is Ops.MUL and l.src[0].shape != () else None
++  # lane k of x: a stack's element, through reshapes, at a constant lane
++  def lane_of(x:UOp, k:UOp) -> UOp:
++    e, c = x, k.src[0] if k.op is Ops.CAST else k
++    while e.op is Ops.RESHAPE: e = e.src[0]
++    if e.op is Ops.STACK and c.op is Ops.CONST and all(l.shape == () for l in e.src): return e.src[c.arg]
++    return x.index(k)
 +  if p.op is Ops.MUL: return p.src[0], p.src[1]
 +  if (one:=lane(p)) is not None:
 +    m, k = one
-+    return tuple(x if x.shape == () else x.index(k) for x in m.src)  # type: ignore[return-value]
++    return tuple(x if x.shape == () else lane_of(x, k) for x in m.src)  # type: ignore[return-value]
 +  lanes = [l for x in p.src if (l:=lane(x)) is not None]
 +  if p.op is Ops.STACK and lanes and len(lanes) == len(p.src) and all(m is lanes[0][0] for m,_ in lanes):
-+    return tuple(x if x.shape == () else UOp.stack(*[x.index(k) for _,k in lanes]) for x in lanes[0][0].src)  # type: ignore[return-value]
++    return tuple(x if x.shape == () else UOp.stack(*[lane_of(x, k) for _,k in lanes]) for x in lanes[0][0].src)  # type: ignore[return-value]
 +  return None
++
++# the first term s of a sum of a product's lanes, when it is one lane, as the product of its operands' lanes: every other lane fuses
++# into a multiply-add, so the product of vectors is then read by no lane
++def first_lane(s:UOp) -> UOp:
++  if s.op is not Ops.INDEX or s.shape != () or (ab:=product_operands(s)) is None: return s
++  return ab[0].alu(Ops.MUL, ab[1])
 +
 +def fuse_product(s:UOp) -> UOp|None:
 +  if s.tag != "fusable": return None
-+  if len(s.src) == 2 and (ab:=product_operands(s.src[1])) is not None: return ab[0].alu(Ops.MULACC, ab[1], s.src[0])
++  if len(s.src) == 2 and (ab:=product_operands(s.src[1])) is not None: return ab[0].alu(Ops.MULACC, ab[1], first_lane(s.src[0]))
 +  return s.replace(tag=None)
 +pm_fuse_products = PatternMatcher([(UPat(Ops.ADD, name="s"), fuse_product)])
 +

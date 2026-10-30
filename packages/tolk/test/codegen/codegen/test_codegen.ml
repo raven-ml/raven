@@ -2255,17 +2255,6 @@ let lanes_of u =
   let lanes = function Ops.Int n -> n | Ops.Sym _ -> 0 in
   List.fold_left (fun n d -> n * lanes d) 1 (Shape.shape u)
 
-(* The lanes of an elementwise operation on a vector, if they are a number other
-   than a power of two. *)
-let odd_lanes u =
-  if not (on_a_vector u) then None
-  else
-    let n = lanes_of u in
-    if n > 0 && n land (n - 1) = 0 then None else Some n
-
-let computes_on_powers_of_two uops =
-  equal (list int) [] (List.filter_map odd_lanes uops)
-
 (* The elementwise operations on vectors among [uops]: each operation, its
    lanes, and how many vectors of those lanes compute it. *)
 let vector_operations uops =
@@ -2296,19 +2285,16 @@ let vector_types src =
   in
   go [] 0
 
-(* [prg] computes each of its elementwise operations on vectors as [parts]
-   vectors of [lanes] lanes, and its source declares vectors of [lanes] lanes
-   and of other powers of two only. *)
-let splits_into ~parts ~lanes prg =
+(* [prg] computes each of its elementwise operations on vectors once, as one
+   vector of [n] lanes, and its source declares that vector. *)
+let one_vector n prg =
   let ops = vector_operations (Ops.src (Ops.nth prg 1)) in
   greater ~msg:"operations on vectors" int ~than:0 (List.length ops);
   equal
     (list (triple op_w int int))
-    (List.map (fun (o, _, _) -> (o, lanes, parts)) ops)
+    (List.map (fun (o, _, _) -> (o, n, 1)) ops)
     ops;
-  let types = vector_types (source prg) in
-  equal (list int) [ lanes ] (List.filter (( = ) lanes) types);
-  equal (list int) [] (List.filter (fun n -> n land (n - 1) <> 0) types)
+  equal (list int) [ n ] (List.filter (( = ) n) (vector_types (source prg)))
 
 (* A sum of the two high nibbles of each pair of bytes, its output axis of 3
    upcast whole and its reduce unrolled: a body of 6 lanes. *)
@@ -2354,10 +2340,9 @@ let rows_kernel rows cols =
         [ i; j ];
     ]
 
-(* [rows] is odd and [cols] a power of two. *)
 let selects_rows rows cols () =
   let prg = Codegen.to_program (rows_kernel rows cols) (Lazy.force host) in
-  splits_into ~parts:rows ~lanes:cols prg;
+  one_vector (rows * cols) prg;
   let x = Array.init (rows * cols) (fun k -> Float.of_int ((k * 7 mod 11) - 5))
   and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4)) in
   let floats = Array.map (fun f -> `Float f) in
@@ -2367,6 +2352,90 @@ let selects_rows rows cols () =
       x
   in
   equal (array Dtypes.value) (floats expected)
+    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+
+(* A selection of [y - x] where [x] is below [y] and of [x] elsewhere, over [n]
+   float32 elements upcast whole: a body of [n] lanes. *)
+let lanes_kernel n =
+  let open Ops.O in
+  let param slot = Call.param ~shape:[ Int n ] slot Float32 in
+  let out = param 0 and x = param 1 and y = param 2 in
+  let i = Ops.range (Int n) [ 0 ] in
+  let a = Ops.index x [ i ] and b = Ops.index y [ i ] in
+  let whole = Opt.Split { axis = 0; amount = 0; target = Upcast; top = false } in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index out [ i ]) (Ops.where (a < b) (b - a) a))
+        [ i ];
+    ]
+
+(* Each operation of the selection computes one vector of [n] lanes, and no
+   lane of the selection apart. *)
+let selects_lanes n () =
+  let prg = Codegen.to_program (lanes_kernel n) (Lazy.force host) in
+  let uops = Ops.src (Ops.nth prg 1) in
+  equal
+    (list (triple op_w int int))
+    (List.sort compare (List.map (fun o -> (o, n, 1)) Op.[ Cmplt; Sub; Where ]))
+    (vector_operations uops);
+  equal (list int) [ n ] (List.filter (( = ) n) (vector_types (source prg)));
+  let apart u =
+    Op.Set.mem (Ops.op u) Op.Set.elementwise
+    && Shape.shape_opt u = Some []
+    && List.mem (Ops.dtype u) Dtype.[ Float32; Bool ]
+  in
+  equal (list Uops.uop) [] (List.filter apart uops);
+  let x = Array.init n (fun k -> Float.of_int ((k * 7 mod 11) - 5))
+  and y = Array.init n (fun k -> Float.of_int ((k * 5 mod 9) - 4)) in
+  let floats = Array.map (fun f -> `Float f) in
+  let expected = Array.map2 (fun a b -> if a < b then b -. a else a) x y in
+  equal (array Dtypes.value) (floats expected)
+    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+
+(* A dot product of 2 rows of [n] float64 pairs, the rows' axis upcast whole
+   and the reduce unrolled: a sum of each row's [n] lanes of products. *)
+let dot_kernel n =
+  let size = 2 * n in
+  let open Ops.O in
+  let out = Call.param ~shape:[ Int 2 ] 0 Float64 in
+  let x = Call.param ~shape:[ Int size ] 1 Float64 in
+  let y = Call.param ~shape:[ Int size ] 2 Float64 in
+  let l = Ops.range (Int 2) [ 0 ] in
+  let r = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
+  let at p = Ops.index p [ (l * int n) + r ] in
+  let sum = Ops.reduce (at x * at y) Op.Add [ r ] in
+  let whole axis target = Opt.Split { axis; amount = 0; target; top = false } in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 0 Upcast; whole 1 Unroll ] ())
+    [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
+
+(* Each lane's product past the first fuses into a multiply-add and the first
+   is a product of scalars: no product of vectors is left, and each row adds
+   its products in order, each rounded once with its sum. The inputs are drawn
+   so that rounding each product apart gives another sum in every row. *)
+let sums_products n () =
+  let prg = Codegen.to_program (dot_kernel n) (Lazy.force host) in
+  let uops = Ops.src (Ops.nth prg 1) in
+  equal
+    (list (triple op_w int int))
+    []
+    (List.filter
+       (fun (o, _, _) -> Op.equal o Op.Mul)
+       (vector_operations uops));
+  let f = Float.of_int in
+  let x = Array.init (2 * n) (fun k -> Float.sin (f (k + 1)) *. f (k + 1))
+  and y = Array.init (2 * n) (fun k -> Float.cos (f ((2 * k) + 1))) in
+  let row i =
+    let s = ref (x.(i * n) *. y.(i * n)) in
+    for k = 1 to n - 1 do
+      s := Float.fma x.((i * n) + k) y.((i * n) + k) !s
+    done;
+    `Float !s
+  in
+  let floats = Array.map (fun f -> `Float f) in
+  equal (array Dtypes.value) [| row 0; row 1 |]
     (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
 
 (* The kernel that stores into slot 0, of [dt], element [i] of slot 3 where
@@ -2424,7 +2493,6 @@ let selects_by_comparison (cmp, dt, n) =
     Array.init n (fun k -> if Bigint.lt a.(k) b.(k) then c.(k) else d.(k))
   in
   let prg = Codegen.to_program (compare_select cmp dt n) (Lazy.force host) in
-  computes_on_powers_of_two (Ops.src (Ops.nth prg 1));
   equal (array Dtypes.value) (ints expected)
     (List.assoc 0
        (Run.on_host prg [ (1, ints a); (2, ints b); (3, ints c); (4, ints d) ]))
@@ -2517,25 +2585,28 @@ let vectors =
         (per_row
            ~only:(fun row -> compiles row && computes_on_vectors row)
            applies_operations_to_vectors_of_lanes);
-      test "a host program of 6 lanes computes 3 vectors of 2" (fun () ->
+      test "a host program of 6 lanes computes one vector" (fun () ->
           let prg =
             Codegen.to_program (six_lanes_kernel ()) (Lazy.force host)
           in
-          splits_into ~parts:3 ~lanes:2 prg;
+          one_vector 6 prg;
           let bytes = Array.map (fun b -> `Int (Bigint.of_int b)) in
           equal (array Dtypes.value)
             (bytes [| 0x1 + 0x2; 0xf + 0x0; 0x7 + 0x8 |])
             (List.assoc 0
                (Run.on_host prg
                   [ (1, bytes [| 0x10; 0x2f; 0xf3; 0x04; 0x7a; 0x80 |]) ])));
-      group "a host program computes on vectors of a power of two of lanes"
-        (per_row
-           ~only:(fun row -> compiles row && computes_on_vectors row)
-           (fun row -> computes_on_powers_of_two (instructions row)));
-      test "a host program of 48 lanes computes 3 vectors of 16"
-        (selects_rows 3 16);
-      test "a host program of 24 lanes computes 3 vectors of 8"
-        (selects_rows 3 8);
+      test "a host program of 48 lanes computes one vector" (selects_rows 3 16);
+      test "a host program of 24 lanes computes one vector" (selects_rows 3 8);
+      cases "a host program of n lanes computes one vector"
+        ~name:(Printf.sprintf "%d lanes")
+        [ 3; 5; 7; 9; 12; 15 ]
+        (fun n -> selects_lanes n ());
+      cases
+        "a host sum of a product's unrolled lanes multiplies no vectors"
+        ~name:(Printf.sprintf "%d lanes")
+        [ 3; 4; 9 ]
+        (fun n -> sums_products n ());
       cases
         "a host selection of 8, 16 or 32 lanes by a comparison of integers \
          takes each lane's arm"

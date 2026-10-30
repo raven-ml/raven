@@ -1433,7 +1433,7 @@ driver sizes local memory as it loads a function (D146).
   Devectorize leaves none there while every source keeps its width, which D76
   keeps when every lane of a gated load's index is `Invalid`. A renderer that
   computes on vectors (D141) is checked against `Spec.vector_program`, which
-  takes an operation on one axis of a power of two of lanes.
+  takes an operation on one axis.
 - **Reason:** (b). CUDA's vectors are structs without arithmetic, casts or
   selects, so a vector operation left after devectorize is a kernel that does
   not compile there, and one Metal renders without complaint; rune compiles
@@ -3571,12 +3571,12 @@ driver signals its own (D146).
   and `:156-159` (the upcast by 4 of a kernel that has none).
 - **tolk:** `lib/renderer/renderer.mli:138` (`vector_alu`);
   `lib/codegen/codegen.ml:235` (`constant_lanes`), `:270` (`in_order`),
-  `:291` (`segment`), `:304` (`vector_operation`), `:337`
-  (`distinct_lanes`), `:358` (`vector_dtypes`), `:369` (`vector_lanes`),
-  `:375` (`do_devectorize`), `:414` (`address_lanes`), `:472`
-  (`pm_vector_constants`) and `:861` (`product_operands`);
-  `lib/renderer/cstyle.ml:546` (`mask_widths`), `:909` (`clang_vectors`) and
-  `:1144` (`clang_kernel`); `lib/uop/spec.ml:504` (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
+  `:292` (`vector_operation`), `:315` (`distinct_lanes`), `:336`
+  (`vector_dtypes`), `:346` (`do_devectorize`), `:385` (`address_lanes`),
+  `:440` (`pm_vector_constants`), `:827` (`product_operands`) and `:862`
+  (`first_lane`); `lib/renderer/cstyle.ml:562` (`mask_widths`), `:946`
+  (`clang_vectors`) and `:1181` (`clang_kernel`); `lib/uop/spec.ml:503`
+  (`vector_program`); `lib/codegen/decomp/decomp_dtype.ml:880` (`emulates`);
   `lib/codegen/opt/heuristic.ml:446` (`host_vector_bytes`), `:463`
   (`parallel_operations`) and `:494` (`upcast_vectors`);
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
@@ -3585,30 +3585,25 @@ driver signals its own (D146).
   and whose others are lanes of a vector raised in a bind of the first lane's
   source that the match never needed.
 - **Differs:** a renderer may compute on vectors (`Renderer.vector_alu`;
-  Clang does). There an elementwise operation of an even number of lanes on
-  a type the target computes natively stays an operation on vectors of its
-  lanes, on one axis, when each source holds them in order: a vector
+  Clang does). There an elementwise operation of several lanes on a type the
+  target computes natively stays one operation on a vector of its lanes, on
+  one axis, when each source holds them in order: a vector
   operation, constants in any view (a literal), a stack of loads of memory, a
   load in as many lanes as read it, and of lanes of vectors, each in one
   lane, or a scalar that every lane reads, and when no two of its lanes read
   the same sources: a lane of a vector operation is its own, a lane of a
-  stack its element. Its lanes are one vector when they are a power of two,
-  and m vectors of 2^k consecutive lanes when they are m·2^k, m odd: 48 lanes
-  are 3 vectors of 16, 6 lanes 3 of 2. A source that holds computed lanes in
+  stack its element. A source that holds computed lanes in
   another order, a broadcast or a permutation across lanes, or apart in
   registers, as an accumulator's lanes, costs a vector shuffles that a scalar
   reads for free, and lanes that repeat are computed once each apart: such an
-  operation computes each lane apart. An operation of an odd number of lanes,
-  3 or 9, holds no vector of a power of two of lanes beyond 1, and computes
-  each lane apart too. Loads, stores, tensor-core products, calls, and
-  operations on a weak type (an address) or an emulated one still compute each
-  lane apart; an address is computed lane by lane through the vector
+  operation computes each lane apart. Loads, stores, tensor-core products,
+  calls, and operations on a weak type (an address) or an emulated one still
+  compute each lane apart; an address is computed lane by lane through the vector
   operations it reads, so that accesses still merge. A sum fuses each lane of
-  a vector product into its running sum, a selection by constant conditions
-  picks each lane, and a lane of a vector whose sources fold to scalars, as a
-  selection by a comparison that holds in every lane, is the scalar. A program
-  for such a renderer is checked against
-  `Spec.vector_program` (D58). Clang writes the vectors as `ext_vector_type`
+  a vector product into its running sum, and computes its first lane, which
+  it adds to nothing, as a product of scalars, so that no vector product is
+  left; a selection by constant conditions picks each lane. A program for
+  such a renderer is checked against `Spec.vector_program` (D58). Clang writes the vectors as `ext_vector_type`
   values: a conversion is `__builtin_convertvector`, square roots,
   truncations and multiply-adds are `__builtin_elementwise_*`, a scalar
   operand of a builtin or a selection is splat, and a vector of booleans is a
@@ -3659,23 +3654,33 @@ driver signals its own (D146).
   lanes stay apart, where each is computed once. With D143, the
   host's products of a checkpoint's codes run 1.7-3.6 times as fast for one
   token's routed product and 2.4-3.3 times for a dense one, on an M1 Max
-  (alternated under load). A matmul's upcast products now build vectors of
-  their shared loads that each lane's multiply-add reads back
-  (`clang_matmul_upcasted*`); Clang compiles them to the same instructions.
+  (alternated under load). A matmul's upcast products read their loads, or
+  the lanes of a loaded vector, in each lane's multiply-add
+  (`clang_matmul_upcasted*`). They computed a vector product of their shared
+  loads for its first lane alone, the one the sum adds to nothing, and read
+  the other lanes back from the vectors of those loads; Clang compiled both
+  to the same instructions, and building them cost tolk's passes: as one
+  vector, a conv kernel's 9 unrolled lanes made the conv rows' linearize,
+  render and warm stages 19%, 26% and 17% slower.
 
-  Split into vectors of a power of two of lanes, rune's sort of a uint4
-  [2; 3] view along its last axis, kernel `r_3_2`, selects 3 pairs of bytes by
-  3 comparisons of pairs of longs, and the host keeps its vectors where an
-  axis of 3 is upcast whole: the 48 and 24 lanes of lorenz_simple's kernels
-  `r_128_16_3_4_4_3_3_400_400` and `r_32_3_2_4_3_400` are 3 vectors of 16 and
-  3 of 8. The split was made for Ubuntu 24.04's Clang 18.1.3, which crashed
-  on x86 compiling `r_3_2` ("SmallVector unable to grow"), on the belief that
-  its 6-lane vector was the cause. It was not: the kernel's 3 pairs crash the
-  same way, on processors with AVX-512, from LLVM 18's straight-line
-  vectorizer (D167). Its other recorded reason is speed: on fudge, under
-  load, lorenz/step-batch-128-host replayed in 8.6 ms with the split against
-  14.7 ms before it.
-- **Rejected:** compile time is paid once and replay on every call, so
+  Any number of lanes is one vector, which LLVM computes in the next power of
+  two. Computed lane by lane, Clang compiles each lane's copy of a body, in a
+  time that grows faster than the copies: jera's compiled Milstein march over
+  3 elements fuses into one kernel of 3 lanes, whose test compiled in 57 s
+  cold, and in 14 s as one vector.
+- **Rejected:** host vectors of a power of two of lanes only, made for Ubuntu
+  24.04's Clang 18.1.3, which crashed on x86 compiling rune's sort of a uint4
+  [2; 3] view (D167): m·2^k lanes as m vectors of 2^k, 6 lanes as 3 of 2, and
+  an odd number each lane apart. The crash was not from its 6-lane vector,
+  and the split's other reason, speed, does not hold: on fudge, quiet, taskset
+  0-5, lorenz/step-batch-128-host replays in 7.23 and 7.25 ms with its 48
+  lanes as 3 vectors of 16, and 7.23 and 7.23 ms as one vector. An odd
+  number as vectors of the powers of two that sum to all but its last lane,
+  and that lane apart, 5 lanes as 4 and 1, made eight_schools' kernel
+  `E_8_5_2` take Clang 8.9 s, all in LLVM's loop strength reduction, against
+  0.2 s, and its first call 13.6 s against 8.8 s.
+
+  Compile time is paid once and replay on every call, so
   neither trade below was taken. `#pragma clang loop vectorize(disable)`
   changes nothing on vector kernels (Clang 0.24 s with and without it on
   float64 `erfinv`, replay 0.99-1.00 times on 9 kernels); `-fno-vectorize`
@@ -3687,11 +3692,12 @@ driver signals its own (D146).
 - **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
   from the patched tinygrad, and `execution on the host › every kernel the
   interpreter runs writes what it computes`; the Codegen suite's `vectors in
-  programs › a host program computes on vectors of its lanes` and `› a host
-  program computes on vectors of a power of two of lanes` (every host case),
-  `› a host program of 6 lanes computes 3 vectors of 2`, `› a host program
-  of 48 lanes computes 3 vectors of 16`, `› a host program of 24 lanes
-  computes 3 vectors of 8`, `› a host selection of 8, 16 or 32 lanes by a
+  programs › a host program computes on vectors of its lanes` (every host
+  case), `› a host program of 6 lanes computes one vector`, `› a host program
+  of 48 lanes computes one vector`, `› a host program of 24 lanes computes
+  one vector`, `› a host program of n lanes computes one vector` and `› a
+  host sum of a product's unrolled lanes multiplies no vectors` (every case),
+  `› a host selection of 8, 16 or 32 lanes by a
   comparison of integers takes each lane's arm` and `› a host selection of 3,
   6, 12, 24 or 48 lanes by a comparison of integers takes each lane's arm`
   (every case), `› a weak constant stored into four lanes of half on the host
@@ -3701,8 +3707,8 @@ driver signals its own (D146).
   compiled call computes eager's values › a uint4 sort along the last axis
   of every other row and column, flipped`, and
   `stated values › a window set into bits at an odd offset keeps the bits
-  around it`, whose last vector of 8 lanes selects 0 in every lane; rune's
-  Rune.quant suite:
+  around it`; rune2's compile bench: `shaped-4k-3-lanes`; rune's Rune.quant
+  suite:
   `decoding` (every law); rune's lower_index suite: `quantised products › a
   product decodes a checkpoint's codes 16 at once on the host` (with D143)
   and `› a product over GGUF's Q6_K blocks converts each scale once`; the
