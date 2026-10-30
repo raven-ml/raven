@@ -182,13 +182,22 @@ module Big = struct
       done;
       ((n - 1) * limb) + !k
 
-  (* Bits [lo] to [lo + n - 1] of [a] as an integer, n <= 54. *)
+  (* Bits [lo] to [lo + n - 1] of [a] as an integer, n <= 54: the three
+     limbs from bit [lo] hold at least 61 of them. *)
   let field a lo n =
-    let r = ref 0 in
-    for i = n - 1 downto 0 do
-      r := (!r lsl 1) lor if bit a (lo + i) then 1 else 0
-    done;
-    !r
+    let q = lo / limb and s = lo mod limb in
+    let v =
+      (get a q lsr s)
+      lor (get a (q + 1) lsl (limb - s))
+      lor (get a (q + 2) lsl ((2 * limb) - s))
+    in
+    v land ((1 lsl n) - 1)
+
+  (* Whether any of bits 0 to [k - 1] of [a] is set. *)
+  let any_below a k =
+    let q = k / limb in
+    let rec whole i = i < q && (get a i <> 0 || whole (i + 1)) in
+    whole 0 || get a q land ((1 lsl (k mod limb)) - 1) <> 0
 
   (* A finite nonzero x as its sign, its significand as an integer below 2^53
      and the exponent of the significand's last bit. *)
@@ -208,11 +217,8 @@ module Big = struct
         if k <= 0 then field n 0 l
         else
           let m = field n k (l - k) in
-          let rest = ref false in
-          for i = 0 to k - 2 do
-            if bit n i then rest := true
-          done;
-          if bit n (k - 1) && (!rest || m land 1 = 1) then m + 1 else m
+          if bit n (k - 1) && (any_below n (k - 1) || m land 1 = 1) then m + 1
+          else m
       in
       let r = Float.ldexp (Float.of_int m) (max last e) in
       if neg then -.r else r
