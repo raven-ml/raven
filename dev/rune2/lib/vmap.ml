@@ -622,20 +622,36 @@ let along c x =
 (* [Nx.where c y x], whose transpose gives the operand it does not select [-0.],
    the additive identity that keeps every sign, where [Nx.where]'s gives [+0.].
    A held carry receives a lane's cotangent through the step and through the
-   hold, one of them that zero, which would turn a [-0.] into [+0.]. *)
-let keep (type v s d) c (y : (v, s, d) Nx.t) (x : (v, s, d) Nx.t) =
-  match D.kind (Nx.dtype y) with
-  | Float | Complex -> Nx.neg (Nx.where c (Nx.neg y) (Nx.neg x))
+   hold, one of them that zero, which would turn a [-0.] into [+0.]. It is
+   [-(where c (-y) (-x))], one map: as three operations, an eager map of
+   lanes that stop apart would run two more per carry and trip. [c] and [x]
+   have [y]'s shape. *)
+let keep (type v s d) ~by c (y : (v, s, d) Nx.t) (x : (v, s, d) Nx.t) =
+  let dt = Nx.dtype y in
+  match D.kind dt with
   | Signed | Unsigned | Boolean -> Nx.where c y x
+  | Float | Complex ->
+      let ins = Iarray.of_list [ D.Any Nx.bool; D.Any dt; D.Any dt ] in
+      let c' = P.E.input 0 Nx.bool in
+      let y' = P.E.input 1 dt and x' = P.E.input 2 dt in
+      let out = P.E.(neg (where c' (neg y') (neg x'))) in
+      let prog = P.of_exprs ~ins [| P.E.any out |] in
+      let layout = L.contiguous (Iarray.of_array (Nx.shape y)) in
+      let loads = Iarray.of_list Prim.[ Plain c; Plain y; Plain x ] in
+      let z, () =
+        Prim.eval ~by
+          (Map { layout; prog; outs = [ dt ]; loads; at = None })
+      in
+      z
 
 (* The batch [x'] where [running] holds, and [x] elsewhere. *)
-let hold running x' x =
+let hold ~by running x' x =
   at_one [| running; x'; x |]
     {
       k =
         (function
         | [| Prim.Any c; Prim.Any y; Prim.Any x |] ->
-            Program.V (keep (along (as_bool c) y) y (same y x))
+            Program.V (keep ~by (along (as_bool c) y) y (same y x))
         | _ -> invalid_arg "Rune: lane values");
     }
 
@@ -643,7 +659,7 @@ let hold running x' x =
    detached. With [~kept], the default, a held lane's cotangent is the [-0.] of
    {!keep}, for a carry that receives a held lane's cotangent through its hold
    too; without, it is [+0.], for a capture whose lane receives nothing else. *)
-let lend ?(kept = true) { running; donors } v =
+let lend ~by ?(kept = true) { running; donors } v =
   at_one [| running; donors; v |]
     {
       k =
@@ -652,7 +668,7 @@ let lend ?(kept = true) { running; donors } v =
             let rows = Nx.take ~axis:0 (Nx.cast Nx.int64 (as_int32 d)) x in
             let rows = Program.like rows (Program.perform (Detach rows)).(0) in
             let c = along (as_bool c) x in
-            Program.V (if kept then keep c x rows else Nx.where c x rows)
+            Program.V (if kept then keep ~by c x rows else Nx.where c x rows)
         | _ -> invalid_arg "Rune: lane values");
     }
 
@@ -1055,7 +1071,7 @@ let callback ?held i n (cb : Program.callback) : Program.callback =
   match (cb.lanes, held) with
   | Some _, None -> { cb with maps = n :: cb.maps; args; forms }
   | Some _, Some h ->
-      let args = Array.map (lend ~kept:false h) args in
+      let args = Array.map (lend ~by:"Rune.callback" ~kept:false h) args in
       { cb with maps = n :: cb.maps; args; forms }
   | None, _ ->
       let flags = match held with Some h -> [| h.running |] | None -> [||] in
@@ -1494,20 +1510,22 @@ and apart ~name ?held i axis n c ~bsc ~buc ~lsc ~luc ~ny =
               thread (fun acc ->
                   let running = not_flags stopped in
                   let h = { running; donors = donors n running } in
-                  let bd = Array.map (lend h) b in
+                  let bd = Array.map (lend ~by:name h) b in
                   let capsd =
-                    Array.map2 (fun l v -> if l then lend h v else v) lsc caps
+                    Array.map2
+                      (fun l v -> if l then lend ~by:name h v else v)
+                      lsc caps
                   in
                   let out, acc =
                     over ~h it.step step_feeds (Array.append all lsc)
                       (Array.append bd capsd) acc
                   in
                   let b' =
-                    Array.init nc (fun k -> hold running out.(k) b.(k))
+                    Array.init nc (fun k -> hold ~by:name running out.(k) b.(k))
                   in
                   let ys' =
                     Array.init ny (fun j ->
-                        hold running
+                        hold ~by:name running
                           out.(nc + j)
                           (Loops.filled ~zero:true
                              (Program.stacked n (Program.form ys.(j)))))
@@ -1630,7 +1648,9 @@ and evaluated ~name ~axis ?held n (p : Program.t) feeds ~shared laned vs acc =
         (if shared.(k) then o
          else
            let o = if fits.(k) then o else Loops.add acc.(j) o in
-           match held with Some h -> hold h.running o acc.(j) | None -> o))
+           match held with
+           | Some h -> hold ~by:name h.running o acc.(j)
+           | None -> o))
     feeds;
   (Array.sub out 0 nr, acc)
 
@@ -1704,10 +1724,10 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
                   let args =
                     Array.concat
                       [
-                        Array.map (lend h) b;
-                        Array.map (lend h) xr;
+                        Array.map (lend ~by:name h) b;
+                        Array.map (lend ~by:name h) xr;
                         Array.map2
-                          (fun l v -> if l then lend h v else v)
+                          (fun l v -> if l then lend ~by:name h v else v)
                           lcap caps;
                       ]
                   in
@@ -1716,11 +1736,11 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
                       (Array.append all lcap) args acc
                   in
                   let b' =
-                    Array.init nc (fun j -> hold running out.(j) b.(j))
+                    Array.init nc (fun j -> hold ~by:name running out.(j) b.(j))
                   in
                   let ys' =
                     Array.init ny (fun j ->
-                        hold running
+                        hold ~by:name running
                           out.(nc + j)
                           (Loops.filled ~zero:true
                              (Program.stacked n (Program.form ys.(j)))))
@@ -1915,7 +1935,9 @@ and switch_apart ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
   let run k running vs acc =
     let h = { running; donors = donors n running } in
     let caps =
-      Array.map2 (fun l v -> if l then lend ~kept:false h v else v) lcap vs
+      Array.map2
+        (fun l v -> if l then lend ~by:name ~kept:false h v else v)
+        lcap vs
     in
     evaluated ~name ~axis ~held:h n branches.(k) (List.nth feeds k) ~shared lcap
       caps acc
@@ -1926,7 +1948,9 @@ and switch_apart ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
     let res = zeros () in
     List.iter
       (fun (k, out) ->
-        Array.iteri (fun j o -> res.(j) <- hold (chose k) o res.(j)) out)
+        Array.iteri
+          (fun j o -> res.(j) <- hold ~by:name (chose k) o res.(j))
+          out)
       runs;
     res
   in
