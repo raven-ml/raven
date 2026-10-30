@@ -19,6 +19,9 @@ measured without linking them.
   by statement is rewritten.
 - Every SIMD or BMI2 path has the generic path beside it, chosen once by
   a CPU probe, and a test holds them to the same bits.
+- `bench/bench_lz.ml` builds its corpora with `Lz_support.corpus` and its
+  decode rows' inputs with lz's encoders; `bench/compare/` times lz
+  against the vendors for `bench/README.md`'s table.
 
 ## Decisions
 

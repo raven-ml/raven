@@ -1,39 +1,42 @@
-(* lz's codecs on the corpora reference.py writes: the decoders on the
-   vendors' encodings, the encoders and checksums on the raw bytes. Every
-   decode row first checks its output against the raw corpus, so a row
-   never times a wrong answer. *)
+(* lz's codecs on three 8 MiB corpora, built as the tests build them
+   (Lz_support.corpus): the decoders on lz's own encodings, the encoders
+   and checksums on the raw bytes. Every decode row first checks its output
+   against the raw corpus, so a row never times a wrong answer. *)
 
 open Bigarray
 
-let corpora = [ "text"; "columns"; "random" ]
+let size = 8 lsl 20
 
-let read name =
-  let path = Filename.concat "data" name in
-  if not (Sys.file_exists path) then begin
-    prerr_endline ("missing " ^ path ^ ": run reference.py first, see README.md");
-    exit 2
-  end;
-  let s = In_channel.with_open_bin path In_channel.input_all in
-  let b = Array1.create int8_unsigned c_layout (String.length s) in
-  String.iteri (fun i c -> Array1.unsafe_set b i (Char.code c)) s;
-  b
+let corpora =
+  [ ("text", Lz_support.Text); ("columns", Columns); ("random", Random) ]
 
 let create n = Array1.create int8_unsigned c_layout n
 
-(* Decoders: the file suffix reference.py writes and the decode that reads
-   it. *)
+(* [encoded bound encode raw] is [raw] encoded by [encode], into a
+   destination of [bound]'s size cut to the output. *)
+let encoded bound encode raw =
+  let dst = create (bound (Array1.dim raw)) in
+  match encode raw dst with
+  | Some n -> Array1.sub dst 0 n
+  | None -> failwith "the output exceeds the bound"
+
+let zstd3 = encoded Lz.Zstd.bound (Lz.Zstd.encode ~level:3)
+
+(* Decoders: a suffix naming the format and level, lz's encoder of the
+   input and the decode that reads it. *)
 let decoders =
   [
-    ("zlib6", Lz.Zlib.decode);
-    ("gz9", Lz.Gzip.decode);
-    ("deflate6", Lz.Deflate.decode);
-    ("zst1", Lz.Zstd.decode);
-    ("zst3", Lz.Zstd.decode);
-    ("zst12", Lz.Zstd.decode);
-    ("zst19", Lz.Zstd.decode);
-    ("lz4b", Lz.Lz4.Block.decode);
-    ("lz4f", Lz.Lz4.Frame.decode);
-    ("snappy", Lz.Snappy.decode);
+    ("zlib6", encoded Lz.Zlib.bound (Lz.Zlib.encode ~level:6), Lz.Zlib.decode);
+    ("gz9", encoded Lz.Gzip.bound (Lz.Gzip.encode ~level:9), Lz.Gzip.decode);
+    ( "deflate6",
+      encoded Lz.Deflate.bound (Lz.Deflate.encode ~level:6),
+      Lz.Deflate.decode );
+    ("zst1", encoded Lz.Zstd.bound (Lz.Zstd.encode ~level:1), Lz.Zstd.decode);
+    ("zst3", zstd3, Lz.Zstd.decode);
+    ("zst12", encoded Lz.Zstd.bound (Lz.Zstd.encode ~level:12), Lz.Zstd.decode);
+    ("lz4b", encoded Lz.Lz4.Block.bound Lz.Lz4.Block.encode, Lz.Lz4.Block.decode);
+    ("lz4f", encoded Lz.Lz4.Frame.bound Lz.Lz4.Frame.encode, Lz.Lz4.Frame.decode);
+    ("snappy", encoded Lz.Snappy.bound Lz.Snappy.encode, Lz.Snappy.decode);
   ]
 
 let check name raw dst = function
@@ -44,8 +47,8 @@ let check name raw dst = function
       failwith (Printf.sprintf "%s: %d bytes, not %d" name produced (Array1.dim raw))
   | Error { Lz.at; _ } -> failwith (Printf.sprintf "%s: an error at %d" name at)
 
-let decode corpus raw (suffix, decode) =
-  let src = lazy (read (corpus ^ "." ^ suffix)) in
+(* [src] is the corpus encoded, built once for every row that reads it. *)
+let decode corpus raw src (suffix, _, decode) =
   let dst = lazy (create (Array1.dim (Lazy.force raw))) in
   Thumper.bench_with_setup ("decode " ^ suffix)
     ~setup:(fun () ->
@@ -59,13 +62,13 @@ let decode corpus raw (suffix, decode) =
    output's end meets the block's literals there. *)
 let small corpus raw =
   let n = 64 lsl 10 in
-  let src = lazy (read (corpus ^ ".64k.zst3")) in
+  let raw = lazy (Array1.sub (Lazy.force raw) 0 n) in
+  let src = lazy (zstd3 (Lazy.force raw)) in
   let dst = lazy (create n) in
   Thumper.bench_with_setup "decode zst3 of 64 KiB, exact destination"
     ~setup:(fun () ->
       let src = Lazy.force src and dst = Lazy.force dst in
-      let raw = Array1.sub (Lazy.force raw) 0 n in
-      check (corpus ^ ".64k.zst3") raw dst (Lz.Zstd.decode src dst);
+      check (corpus ^ " 64 KiB zst3") (Lazy.force raw) dst (Lz.Zstd.decode src dst);
       (src, dst))
     (fun (src, dst) -> Lz.Zstd.decode src dst)
 
@@ -85,12 +88,12 @@ let stepped decoder src slice =
   in
   go 0
 
-let steps corpus =
+let steps srcs =
   List.concat_map
     (fun (suffix, decoder) ->
       List.map
         (fun (label, slice) ->
-          let src = lazy (read (corpus ^ "." ^ suffix)) in
+          let src = List.assoc suffix srcs in
           Thumper.bench_with_setup
             (Printf.sprintf "decode %s in %s steps" suffix label)
             ~setup:(fun () -> Lazy.force src)
@@ -191,19 +194,26 @@ let encode_steps raw =
       in
       go 0)
 
-let corpus name =
-  let raw = lazy (read (name ^ ".raw")) in
+let corpus (name, kind) =
+  let raw = lazy (Lz_support.of_string (Lz_support.corpus kind size)) in
+  let srcs =
+    List.map
+      (fun (suffix, encode, _) -> (suffix, lazy (encode (Lazy.force raw))))
+      decoders
+  in
   Thumper.group name
-    (List.map (decode name raw) decoders
+    (List.map
+       (fun ((suffix, _, _) as d) -> decode name raw (List.assoc suffix srcs) d)
+       decoders
     @ [ small name raw ]
-    @ steps name
+    @ steps srcs
     @ [ flushed_steps name raw ]
     @ List.map (encode raw) encoders
     @ [ encode_steps raw ])
 
 let checksums =
   let sizes = [ ("4 KiB", 4 lsl 10); ("64 KiB", 64 lsl 10); ("8 MiB", 8 lsl 20) ] in
-  let raw = lazy (read "random.raw") in
+  let raw = lazy (Lz_support.of_string (Lz_support.corpus Random size)) in
   let row (label, size) (name, f) =
     Thumper.bench_with_setup
       (Printf.sprintf "%s of %s" name label)

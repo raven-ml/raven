@@ -54,7 +54,7 @@ let kind_of_string = function
   | "random" -> Random
   | s -> invalid_arg ("Lz_support.kind_of_string: " ^ s)
 
-(* The xorshift64 generator of reference.py, seeded as it seeds it. *)
+(* The xorshift64 generator of gen/generate.py, seeded as it seeds it. *)
 let xorshift seed =
   let x = ref seed in
   fun () ->

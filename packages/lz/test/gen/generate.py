@@ -45,7 +45,7 @@ KIB = 1024
 MIB = 1024 * KIB
 
 
-# Corpora: the generators of bench/reference.py, as prefixes.
+# Corpora: the generators of test/support/lz_support.ml, as prefixes.
 
 def xorshift(seed):
     x = seed

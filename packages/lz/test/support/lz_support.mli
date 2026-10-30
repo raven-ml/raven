@@ -33,9 +33,9 @@ val stepped :
 
 (** {1 Corpora}
 
-    The corpora of [gen/generate.py] and [bench/reference.py], byte for
-    byte: [corpus kind n] is the first [n] bytes of the stream that both
-    scripts draw for [kind]. *)
+    The corpora of [gen/generate.py], byte for byte, which the benches
+    also time: [corpus kind n] is the first [n] bytes of the stream drawn
+    for [kind]. *)
 
 type kind = Text | Columns | Random
 

@@ -1,4 +1,20 @@
-# lz against the vendors
+# lz benchmarks
+
+`bench_lz.exe` times lz's codecs on three 8 MiB corpora that it builds
+when it starts, as the tests build them (`Lz_support.corpus`): `text`,
+words of made-up syllables, which compresses two- to threefold with no
+long-range repeats; `columns`, int64 keys with small gaps and float64
+prices of two decimals, as a Parquet page holds them; and `random`,
+incompressible bytes. Its decode rows read lz's own encodings of each
+corpus, encoded before the row runs; its encode and checksum rows read the
+raw bytes. Run it from the tree's root on a quiet machine:
+
+    dune build @packages/lz/bench/bench
+
+or run `bench_lz.exe` from this directory (`list` prints the rows,
+`bless` records them in `lz.thumper`).
+
+## lz against the vendors
 
 Whole-buffer encode and decode of Silesia (its twelve files concatenated,
 211,938,580 bytes) by lz and by the vendors, one thread each. MB/s counts
@@ -28,8 +44,8 @@ snappy.
   the vendors' Python bindings (cramjam's Rust codec for snappy), from
   the same raw corpora.
 
-`text`, `columns` and `random` are lz / vendor on the 8 MiB corpora of
-the bench, from the same runs.
+`text`, `columns` and `random` are lz / vendor on the bench's corpora,
+from the same runs.
 
 Re-run, from the tree's root, with the vendors built under
 `~/wt/lz-vendors/`. Fetch Silesia once into the output directory; the
