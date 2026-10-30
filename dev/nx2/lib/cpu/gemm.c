@@ -1000,9 +1000,12 @@ done:
    of [c] outputs, lane q of output j at l[q·ls + j], into lane 0's. */
 #define TREE(T, name)                                                        \
   static T name(const T *s, int64_t n) {                                     \
+    /* The first push folds nothing, 1 having no trailing zero: taken */     \
+    /* apart, it shows gcc that v[0] is set. */                              \
     T v[NX_CPU_TREE_DEPTH];                                                  \
-    int top = 0;                                                             \
-    for (int64_t b = 0; b < n; b++) {                                        \
+    v[0] = s[0];                                                             \
+    int top = 1;                                                             \
+    for (int64_t b = 1; b < n; b++) {                                        \
       v[top++] = s[b];                                                       \
       NX_CPU_TREE_STEP(b + 1, top, v[top - 2] = v[top - 2] + v[top - 1]);    \
     }                                                                        \

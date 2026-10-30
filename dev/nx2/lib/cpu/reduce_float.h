@@ -48,8 +48,9 @@ static inline __attribute__((always_inline)) void S(products_n)(
         l[t] = *(const S(pm) *)(pa[t] + j) * *(const S(pm) *)(pb[t] + j);
       UNROLL(4)
       for (int g = 8; g >= 1; g /= 2) {
+        int m = n - g < g ? n - g : g;
         UNROLL(8)
-        for (int t = 0; t < g && t + g < n; t++) l[t] += l[t + g];
+        for (int t = 0; t < m; t++) l[t] += l[t + g];
       }
       S(pv) r = l[0] + (S(pv)){0};
       if (sy == 1) *(S(pm) *)(y + j) = r;
@@ -62,8 +63,9 @@ static inline __attribute__((always_inline)) void S(products_n)(
       for (int t = 0; t < n; t++) l[t] = pa[t][j] * pb[t][j];
       UNROLL(4)
       for (int g = 8; g >= 1; g /= 2) {
+        int m = n - g < g ? n - g : g;
         UNROLL(8)
-        for (int t = 0; t < g && t + g < n; t++) l[t] += l[t + g];
+        for (int t = 0; t < m; t++) l[t] += l[t + g];
       }
       T r = l[0] + 0;
       y[j * sy] = r;

@@ -148,7 +148,7 @@ value nx_kinds_support_c64(value name, value args) {
   CAMLparam2(name, args);
   CAMLlocal1(r);
   int n = (int)Wosize_val(args) / 2;
-  nx_c64 x[2], y;
+  nx_c64 x[2] = {{0, 0}, {0, 0}}, y;
   if (n < 1 || n > 2 || (int)Wosize_val(args) != 2 * n) refuse(name);
   for (int i = 0; i < n; i++)
     x[i] = nx_c64_of(nx_bits_float((uint32_t)Long_val(Field(args, 2 * i))),
@@ -164,7 +164,7 @@ value nx_kinds_support_c128(value name, value args) {
   CAMLparam2(name, args);
   CAMLlocal1(r);
   int n = (int)(Wosize_val(args) / Double_wosize) / 2;
-  nx_c128 x[2], y;
+  nx_c128 x[2] = {{0, 0}, {0, 0}}, y;
   if (n < 1 || n > 2 || (int)(Wosize_val(args) / Double_wosize) != 2 * n)
     refuse(name);
   for (int i = 0; i < n; i++)
