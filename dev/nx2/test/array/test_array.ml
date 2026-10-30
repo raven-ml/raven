@@ -1642,17 +1642,19 @@ let tests =
         test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
         test "to_device and to_array refuse a dead buffer under no element"
           test_dead_empty;
-        stateful ~domains:2
+        (* Each case runs its program 50 times on two domains: 100 cases
+           whatever --prop-count asks. *)
+        stateful ~domains:2 ~count:100
           "writes to one byte from two domains keep each other" int4_commands;
-        stateful ~domains:2
+        stateful ~domains:2 ~count:100
           "a gather keeps the other elements of its end bytes, written from \
            another domain"
           gather_commands;
-        stateful ~domains:2
+        stateful ~domains:2 ~count:100
           "to_device packs a sub-byte view while another domain stores its \
            neighbours"
           (to_device_commands 4);
-        stateful ~domains:2
+        stateful ~domains:2 ~count:100
           "to_device copies a sub-byte span while another domain stores its \
            neighbours"
           (to_device_commands 5);

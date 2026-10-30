@@ -29,9 +29,17 @@
 ;
 ; The sanitize profile compiles the C with AddressSanitizer and
 ; UndefinedBehaviorSanitizer and links their runtimes and the debug runtime
-; into every executable, with rig's options: a report ends the process, and
-; the collector runs often enough that a value a stub holds unrooted fails at
-; once.
+; into every executable: a report ends the process, and the collector runs
+; often enough that a value a stub holds unrooted fails at once. Against
+; rig's options (packages/rig/dune), the minor heap is 256 KiB (s=32k) and
+; no heap check ends a major cycle. A minor collection stops every domain,
+; and on a machine with fewer free cores than a test's domains it waits for
+; each to be scheduled: under 32 KiB the two-domain tests of donation ran 4
+; to 5 times as long beside two busy processes on three cores, and timed
+; out. A heap check walks the whole heap, and the suites whose references
+; hold hundreds of thousands of values ran 5 to 20 times as long, past
+; their time. v=0 silences the debug runtime's messages, which an expect
+; test would read as output.
 ;
 ; Benches are not attached to runtest: run them with `dune build @bench`, or
 ; run a built exe from its directory under _build/default. Every bench rule
@@ -66,7 +74,7 @@
   (link_flags
    (:standard -runtime-variant d -cclib -fsanitize=address,undefined))
   (env-vars
-   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1)
+   (OCAMLRUNPARAM s=32k,o=20,M=1,m=1,v=0)
    (ASAN_OPTIONS
     halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1)
    (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
