@@ -1,12 +1,11 @@
 ; gpt-oss-20b's decode step and prefill, for focused work on the model's
 ; performance; the regular suites guard its kernels (kaun's bench/decode).
 
-(copy_files# ../{moe,gpt_oss,layer_loop}.{ml,mli})
-
 (executable
  (name bench_gpt_oss)
- (modules bench_gpt_oss moe gpt_oss layer_loop)
+ (modules bench_gpt_oss)
  (libraries
+  gpt_oss
   nx
   rig
   rig.cuda

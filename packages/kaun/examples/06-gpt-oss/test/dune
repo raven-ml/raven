@@ -1,8 +1,15 @@
-; The model's modules are the example's.
-
-(copy_files ../{moe,gpt_oss,layer_loop}.{ml,mli})
-
 (tests
  (names test_layer_loop test_structures)
  (package kaun)
- (libraries kaun kaun.hf jsont rune nx nx.array rig nx.io nx.quant windtrap))
+ (libraries
+  gpt_oss
+  kaun
+  kaun.hf
+  jsont
+  rune
+  nx
+  nx.array
+  rig
+  nx.io
+  nx.quant
+  windtrap))

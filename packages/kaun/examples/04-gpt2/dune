@@ -1,7 +1,15 @@
+; The model is a library, which the example's test links.
+
+(library
+ (name gpt2)
+ (modules gpt2)
+ (libraries kaun kaun.hf jsont nx nx.io rune))
+
 (executables
  (names main train)
- (modules gpt2 devices main train)
+ (modules devices main train)
  (libraries
+  gpt2
   kaun
   kaun.hf
   vega

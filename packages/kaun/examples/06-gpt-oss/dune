@@ -1,9 +1,14 @@
+; The model is a library, which the example's test and bench link.
+
+(library
+ (name gpt_oss)
+ (wrapped false)
+ (modules moe gpt_oss layer_loop)
+ (libraries kaun kaun.hf jsont nx nx.io nx.quant rune))
+
 (executables
  (names main validate validate_text validate_stream bench bench_step)
  (modules
-  moe
-  gpt_oss
-  layer_loop
   harmony
   devices
   main
@@ -13,6 +18,7 @@
   bench
   bench_step)
  (libraries
+  gpt_oss
   kaun
   kaun.hf
   jsont
