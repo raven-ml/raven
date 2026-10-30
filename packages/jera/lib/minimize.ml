@@ -626,6 +626,25 @@ type ('q, 'd) box = { lo : ('q, 'd) vector; hi : ('q, 'd) vector }
 
 let project box x = Nx.minimum box.hi (Nx.maximum box.lo x)
 
+(* A box holds no point where a coordinate's [lo] exceeds its [hi], or is [+∞],
+   or its [hi] is [−∞]: no float lies within. A lane in it stalls, whatever its
+   start gave. *)
+let empty box =
+  Nx.any
+    (Nx.logical_or (Nx.greater box.lo box.hi)
+       (Nx.logical_or
+          (Nx.equal_s box.lo Float.infinity)
+          (Nx.equal_s box.hi Float.neg_infinity)))
+
+let emptied box st =
+  match box with
+  | None -> st
+  | Some b -> Nx.where (empty b) (Nx.full_like st (Solution.code Stalled)) st
+
+let empty_box =
+  "lo exceeds hi, or lo is +∞ or hi −∞, in some coordinate: the box holds no \
+   point."
+
 let free box (x : _ vector) g =
   let w = Search.norm (Nx.sub x (project box (Nx.sub x g))) in
   let w = Nx.reshape (Array.append (Nx.shape w) [| 1 |]) w in
@@ -828,6 +847,17 @@ let fix (st : Solution.status) _ =
   | Not_finite -> "f or its gradient is not finite at the start."
   | Converged | Not_bracketed -> ""
 
+(* [fix], naming an empty box from the fact [box_facts] reports. *)
+let boxed_fix box (st : Solution.status) facts =
+  match (st, box) with
+  | Stalled, Some _ when List.assoc_opt "empty box" facts = Some 1. -> empty_box
+  | _ -> fix st facts
+
+let box_facts dtype box =
+  match box with
+  | None -> []
+  | Some b -> [ Solution.Fact ("empty box", Nx.cast dtype (empty b)) ]
+
 (* A minimum stated as the zero of rune's gradient of [objective] at [estimate];
    a lane that did not converge holds its estimate, with a zero derivative. *)
 let minimum fn x linear ~dtype ~st objective estimate =
@@ -912,35 +942,47 @@ let problem fn x kind linear f start =
   Problem
     { dtype; size; ravel; unravel; objective; evaluate; trials; meth; start }
 
+(* A side of the box as a vector: [ravel] of its value, or [inf] in each
+   coordinate of the vector [like] where the side is absent. *)
+let bound ravel like inf = function
+  | Some side -> ravel side
+  | None -> Nx.full_like like inf
+
 (* The answer at [estimate]: the zero of rune's gradient of [objective], or
-   under the box [within] the zero of [x − P (x − ∇f x)], so a coordinate held
-   at a bound follows the bound. *)
-let answer fn x linear ~dtype ~st ~ravel ~unravel ?within objective estimate =
-  match within with
-  | None -> minimum fn x linear ~dtype ~st objective estimate
-  | Some (lo, hi) ->
+   under the box of [lo] and [hi] the zero of [x − P (x − ∇f x)], so a
+   coordinate held at a bound follows the bound. *)
+let answer fn x linear ~dtype ~st ~ravel ~unravel ?lo ?hi objective estimate =
+  match (lo, hi) with
+  | None, None -> minimum fn x linear ~dtype ~st objective estimate
+  | _ ->
       let ok = Nx.equal_s st (Solution.code Converged) in
       let gradient = Rune.grad x objective in
       let xh = ravel estimate in
       Rune.root x
         ~linear_solve:(Linear.derivative fn x linear)
         ~residual:(fun v ->
-          let rv = ravel v and rlo = ravel lo and rhi = ravel hi in
+          let rv = ravel v in
+          let rlo = bound ravel rv Float.neg_infinity lo
+          and rhi = bound ravel rv Float.infinity hi in
           let clipped =
             Nx.minimum rhi (Nx.maximum rlo (Nx.sub rv (ravel (gradient v))))
           in
           unravel (Nx.where ok (Nx.sub rv clipped) (Nx.sub rv xh)))
         (fun () -> estimate)
 
-(* The box of [within] on the vectors of [p], detached: a lane whose [lo]
-   exceeds its [hi] somewhere has no point, and stalls. *)
-let box_of p (lo, hi) =
-  let detached v = Rune.detach (p v) in
-  { lo = detached lo; hi = detached hi }
+(* The box of [lo] and [hi] on the vectors of [ravel], detached, an absent side
+   infinite in each coordinate of [like]; none without either side. A lane whose
+   [lo] exceeds its [hi] somewhere has no point, and stalls. *)
+let box_of ravel like ?lo ?hi () =
+  match (lo, hi) with
+  | None, None -> None
+  | _ ->
+      let side v inf = Rune.detach (bound ravel like inf v) in
+      Some { lo = side lo Float.neg_infinity; hi = side hi Float.infinity }
 
-let gradient_solve fn x m kind linear ?within ~tol ~budget f start =
+let gradient_solve fn x m kind linear ?lo ?hi ~tol ~budget f start =
   let (Problem p) = problem fn x kind linear f start in
-  let box = Option.map (box_of p.ravel) within in
+  let box = box_of p.ravel p.start.x ?lo ?hi () in
   let start =
     match box with
     | None -> p.start
@@ -953,12 +995,7 @@ let gradient_solve fn x m kind linear ?within ~tol ~budget f start =
       st = settle s.st (Nx.logical_not (Nx.isfinite start.value)) Not_finite;
     }
   in
-  let s =
-    match box with
-    | Some b ->
-        { s with st = settle s.st (Nx.any (Nx.greater b.lo b.hi)) Stalled }
-    | None -> s
-  in
+  let s = { s with st = emptied box s.st } in
   let s =
     if p.size = 0 then
       {
@@ -970,22 +1007,7 @@ let gradient_solve fn x m kind linear ?within ~tol ~budget f start =
   in
   let value =
     answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
-      ?within p.objective (p.unravel s.x)
-  in
-  let fix (st : Solution.status) facts =
-    match (st, box) with
-    | Stalled, Some _ when List.assoc_opt "empty box" facts = Some 1. ->
-        "lo exceeds hi in some coordinate: the box holds no point."
-    | _ -> fix st facts
-  in
-  let facts =
-    match box with
-    | None -> []
-    | Some b ->
-        [
-          Solution.Fact
-            ("empty box", Nx.cast p.dtype (Nx.any (Nx.greater b.lo b.hi)));
-        ]
+      ?lo ?hi p.objective (p.unravel s.x)
   in
   Solution.v ~fn
     ~settings:
@@ -993,12 +1015,13 @@ let gradient_solve fn x m kind linear ?within ~tol ~budget f start =
          (Linear.name linear) Tol.pp tol budget
          (if Option.is_some box then ", in a box" else ""))
     ~spent:{ used = s.k; unit = "iterations"; budget }
-    ~fix ~value ~error:(p.unravel s.e) ~status:s.st ~evaluations:s.n
+    ~fix:(boxed_fix box) ~value ~error:(p.unravel s.e) ~status:s.st
+    ~evaluations:s.n
     ~facts:
       ([
          Solution.Fact ("gradient", Search.norm s.fx); Fact ("contraction", s.q);
        ]
-      @ facts)
+      @ box_facts p.dtype box)
     ()
 
 (* [rows x like xs] is the structure [like] with each float tensor read from the
@@ -1162,20 +1185,15 @@ let lm_damping ~running ~ok rho (lambda, nu) =
       (Nx.where rejected (Nx.mul lambda nu) lambda),
     Nx.where ok (Nx.full_like nu 2.) (Nx.where rejected (Nx.mul_s nu 2.) nu) )
 
-let lm_solve fn x r linear ?within ~tol ~budget f start =
+let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
   let (Lm p) = lm_problem fn x r linear f start in
-  let box = Option.map (box_of p.ravel) within in
+  let box = box_of p.ravel p.start ?lo ?hi () in
   (* Under a box the steps are projected onto it. *)
   let project = match box with None -> Fun.id | Some b -> project b in
   let x0 = project p.start in
   let s = Search.start x0 (p.residual x0) in
   let j0 = p.jacobian x0 in
-  let s =
-    match box with
-    | Some b ->
-        { s with st = settle s.st (Nx.any (Nx.greater b.lo b.hi)) Stalled }
-    | None -> s
-  in
+  let s = { s with st = emptied box s.st } in
   let lanes = [||] in
   let step (s : _ Search.state) (d, (lambda, (nu, (j, g)))) =
     let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
@@ -1238,7 +1256,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
   in
   let value =
     answer fn x linear ~dtype:p.dtype ~st:s.st ~ravel:p.ravel ~unravel:p.unravel
-      ?within p.cost (p.unravel s.x)
+      ?lo ?hi p.cost (p.unravel s.x)
   in
   Solution.v ~fn
     ~settings:
@@ -1247,8 +1265,13 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
          (Linear.name linear) Tol.pp tol budget
          (if Option.is_some box then ", in a box" else ""))
     ~spent:{ used = s.k; unit = "iterations"; budget }
-    ~fix ~value ~error:(p.unravel s.e) ~status:s.st ~evaluations:s.n
-    ~facts:[ Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q) ]
+    ~fix:(boxed_fix box) ~value ~error:(p.unravel s.e) ~status:s.st
+    ~evaluations:s.n
+    ~facts:
+      ([
+         Solution.Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q);
+       ]
+      @ box_facts p.dtype box)
     ()
 
 (* The first [steps] estimates of Levenberg–Marquardt from [start]: a lane stops
@@ -1434,11 +1457,11 @@ let spread (v, fv) =
   let best = Nx.take ~axis:0 (Nx.reshape [| 1 |] (Nx.argmin fv)) v in
   (Nx.reshape [| -1 |] best, Nx.max ~axes:[ 0 ] (Nx.abs (Nx.sub v best)))
 
-let simplex_solve fn x ?within ~tol ~budget f start =
+let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
   let (Simplex p) = simplex_problem fn x f start in
   let n = p.size in
   (* Under a box the simplex's vertices are clipped into it. *)
-  let box = Option.map (box_of p.ravel) within in
+  let box = box_of p.ravel p.start ?lo ?hi () in
   let project = match box with None -> Fun.id | Some b -> project b in
   let v0 = project (initial (project p.start)) in
   let fv0 = p.values v0 in
@@ -1448,11 +1471,7 @@ let simplex_solve fn x ?within ~tol ~budget f start =
       (Nx.logical_not (Nx.isfinite (Nx.get [ 0 ] fv0)))
       Not_finite
   in
-  let st0 =
-    match box with
-    | Some b -> settle st0 (Nx.any (Nx.greater b.lo b.hi)) Stalled
-    | None -> st0
-  in
+  let st0 = emptied box st0 in
   let step ((v, fv), (st, (_, evaluations))) =
     let (v, fv), spent = reflect ~project p.values n (v, fv) in
     let evaluations = Nx.add evaluations spent in
@@ -1530,7 +1549,7 @@ let simplex_solve fn x ?within ~tol ~budget f start =
     match st with
     | Budget_spent -> "Raise the budget, or loosen tol."
     | Not_finite -> "f is not finite at the start."
-    | Stalled -> "lo exceeds hi in some coordinate: the box holds no point."
+    | Stalled -> empty_box
     | Converged | Not_bracketed -> ""
   in
   Solution.v ~fn
@@ -1589,22 +1608,19 @@ let check_side fn x start name side =
              (Num.shape shape) name (Num.shape shape0)))
     (shapes start) (shapes side)
 
-let solve (type x f d) (x : (x, d) Nx.Ptree.t) (m : (x, f, d) t) ?within ~tol
+let solve (type x f d) (x : (x, d) Nx.Ptree.t) (m : (x, f, d) t) ?lo ?hi ~tol
     ~budget (f : f) (start : x) : (x, d) Solution.t =
   let fn = "Jera.Minimize.solve" in
   if budget < 1 then
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
-  Option.iter
-    (fun (lo, hi) ->
-      check_side fn x start "lo" lo;
-      check_side fn x start "hi" hi)
-    within;
+  Option.iter (check_side fn x start "lo") lo;
+  Option.iter (check_side fn x start "hi") hi;
   match m with
   | Gradient (kind, linear) ->
-      gradient_solve fn x m kind linear ?within ~tol ~budget f start
+      gradient_solve fn x m kind linear ?lo ?hi ~tol ~budget f start
   | Levenberg_marquardt (r, linear) ->
-      lm_solve fn x r linear ?within ~tol ~budget f start
-  | Nelder_mead -> simplex_solve fn x ?within ~tol ~budget f start
+      lm_solve fn x r linear ?lo ?hi ~tol ~budget f start
+  | Nelder_mead -> simplex_solve fn x ?lo ?hi ~tol ~budget f start
 
 let iterates (type x f d) (x : (x, d) Nx.Ptree.t) (m : (x, f, d) t) ~steps
     (f : f) (start : x) : x =

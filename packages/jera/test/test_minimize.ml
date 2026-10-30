@@ -454,6 +454,20 @@ let nelder_mead_tests =
 
 let unit_box b = (Nx.full_like b (-0.5), Nx.full_like b 0.5)
 
+(* The methods whose [linear] solves a box's derivative, a system that is not
+   symmetric: all but newton with [Linear.cg]. *)
+let derivative_methods = List.filter (fun (n, _) -> n <> "newton-cg") methods
+
+(* [centers] with each center whose square is below [10⁻³⁰⁰] set to 0, the
+   margin [convex] keeps above the subnormals: from 0, a bowl whose values are
+   subnormal moves its search by steps the floats cannot resolve, and it stalls,
+   as it states. *)
+let normal_centers =
+  Gen.map
+    (fun c -> Nx.where (Nx.less_s (Nx.square c) 1e-300) (Nx.zeros_like c) c)
+    centers
+  |> Gen.with_pp Nx.pp
+
 (* A linear least-squares problem [½ |a x − b|²] of [n] unknowns in a box: [a]
    stacks the identity on two rows of entries in [-2, 2], so [aᵀ a] is
    positive-definite with its unknowns coupled and the minimum is unique. A
@@ -504,7 +518,7 @@ let box_tests =
             let lo, hi = unit_box b in
             let x =
               Solution.get
-                (Minimize.solve one m ~within:(lo, hi) ~tol:tight ~budget:200
+                (Minimize.solve one m ~lo ~hi ~tol:tight ~budget:200
                    (objective a b) (Nx.zeros_like b))
             in
             let clipped =
@@ -575,8 +589,7 @@ let box_tests =
           Solution.get
             (Minimize.solve one
                (Minimize.newton ~linear:Linear.dense)
-               ~within:(lo, hi) ~tol:tight ~budget:200 (objective a b)
-               (Nx.zeros_like b))
+               ~lo ~hi ~tol:tight ~budget:200 (objective a b) (Nx.zeros_like b))
         in
         equal
           (Oracle.tensor ~abs:1e-8 ())
@@ -588,8 +601,7 @@ let box_tests =
           Solution.get
             (Minimize.solve one
                (Minimize.bfgs ~linear:Linear.dense)
-               ~within:(Nx.zeros f64 [| 2 |], hi)
-               ~tol:tight ~budget:100
+               ~lo:(Nx.zeros f64 [| 2 |]) ~hi ~tol:tight ~budget:100
                (fun x -> Nx.mul_s (Nx.sum (Nx.square (Nx.sub x c))) 0.5)
                (Nx.zeros f64 [| 2 |]))
         in
@@ -608,7 +620,8 @@ let box_tests =
         let p =
           Solution.get
             (Minimize.solve one lm
-               ~within:(vec [| 0.; -5. |], vec [| 10.; -1.5 |])
+               ~lo:(vec [| 0.; -5. |])
+               ~hi:(vec [| 10.; -1.5 |])
                ~tol:tight ~budget:100
                (fun p -> Nx.sub (model p) y)
                (vec [| 1.; -2. |]))
@@ -621,7 +634,7 @@ let box_tests =
           Nx.matmul (Nx.transpose a) (Nx.sub (Nx.matmul a x) b)
         in
         let s =
-          Minimize.solve one lm ~within:(lo, hi) ~tol:tight ~budget:200
+          Minimize.solve one lm ~lo ~hi ~tol:tight ~budget:200
             (fun x -> Nx.sub (Nx.matmul a x) b)
             (Nx.zeros_like lo)
         in
@@ -644,13 +657,11 @@ let box_tests =
            cost 0.25. From either start, the minimum in the box. *)
         let a = Nx.create f64 [| 2; 2 |] [| 1.; 1.; 0.; 1. |] in
         let b = vec [| 2.; 1. |] in
-        let within =
-          (Nx.full f64 [| 2 |] Float.neg_infinity, vec [| 0.; Float.infinity |])
-        in
+        let hi = vec [| 0.; Float.infinity |] in
         List.iter
           (fun x0 ->
             let s =
-              Minimize.solve one lm ~within ~tol:tight ~budget:200
+              Minimize.solve one lm ~hi ~tol:tight ~budget:200
                 (fun x -> Nx.sub (Nx.matmul a x) b)
                 (vec x0)
             in
@@ -666,7 +677,8 @@ let box_tests =
           (vec [| 1.; -0.25 |])
           (Solution.get
              (Minimize.solve one Minimize.nelder_mead
-                ~within:(Nx.full f64 [| 2 |] (-1.), Nx.ones f64 [| 2 |])
+                ~lo:(Nx.full f64 [| 2 |] (-1.))
+                ~hi:(Nx.ones f64 [| 2 |])
                 ~tol:(Tol.v ~rel:1e-9 ~abs:1e-10)
                 ~budget:2000
                 (fun x -> Nx.sum (bowl c x))
@@ -679,7 +691,7 @@ let box_tests =
         let f (a, b) = Nx.add (Nx.sum (Nx.square a)) (Nx.sum (Nx.square b)) in
         let hi = (Nx.ones f64 [| 2 |], Nx.ones f64 [| 1 |]) in
         let solve m lo =
-          Minimize.solve x m ~within:(lo, hi) ~tol:tight ~budget:20 f start
+          Minimize.solve x m ~lo ~hi ~tol:tight ~budget:20 f start
         in
         List.iter
           (fun m ->
@@ -696,33 +708,147 @@ let box_tests =
           (fun () ->
             Minimize.solve x
               (Minimize.levenberg_marquardt x ~linear:Linear.dense)
-              ~within:((Nx.zeros f64 [| 1 |], Nx.zeros f64 [| 2 |]), hi)
-              ~tol:tight ~budget:20 Fun.id start);
+              ~lo:(Nx.zeros f64 [| 1 |], Nx.zeros f64 [| 2 |])
+              ~hi ~tol:tight ~budget:20 Fun.id start);
         invalid_with
           "Jera.Minimize.solve: the root: length 2 in lo, length 1 in the start"
           (fun () ->
             let x = Nx.Ptree.(list tensor) and one = Nx.ones f64 [| 2 |] in
-            Minimize.solve x Minimize.nelder_mead
-              ~within:([ one; one ], [ one ])
-              ~tol:tight ~budget:20
+            Minimize.solve x Minimize.nelder_mead ~lo:[ one; one ] ~tol:tight
+              ~budget:20
               (fun l -> Nx.sum (Nx.stack l))
               [ one ]));
     test "an empty box stalls" (fun () ->
         let s =
           Minimize.solve one
             (Minimize.lbfgs ~memory:3 ~linear:Linear.dense)
-            ~within:(vec [| 1.; 0. |], vec [| 0.; 1. |])
+            ~lo:(vec [| 1.; 0. |])
+            ~hi:(vec [| 0.; 1. |])
             ~tol:tight ~budget:20 rosenbrock
             (vec [| 0.; 0. |])
         in
         equal bool true (is Stalled s));
+    test "an infinite lo or hi of the wrong sign is an empty box" (fun () ->
+        (* lo = +∞ or hi = −∞ admits no float, as lo > hi does. *)
+        let c = vec [| 1.; -0.25 |] in
+        let f x = Nx.sum (bowl c x) in
+        let inf = vec [| 0.; Float.infinity |] in
+        let solvers =
+          (fun (lo, hi) ->
+            Minimize.solve one lm ?lo ?hi ~tol:tight ~budget:20
+              (fun x -> Nx.sub x c)
+              (Nx.zeros_like c))
+          :: (fun (lo, hi) ->
+            Minimize.solve one Minimize.nelder_mead ?lo ?hi ~tol:tight
+              ~budget:200 f (Nx.zeros_like c))
+          :: List.map
+               (fun (_, m) (lo, hi) ->
+                 Minimize.solve one m ?lo ?hi ~tol:tight ~budget:20 f
+                   (Nx.zeros_like c))
+               methods
+        in
+        List.iter
+          (fun solve ->
+            List.iter
+              (fun s ->
+                raises_match (Exn.failure ~sub:"the box holds no point")
+                  (fun () -> Solution.get s))
+              [ solve (Some inf, None); solve (None, Some (Nx.neg inf)) ])
+          solvers);
+    prop "one side bounds alone" normal_centers (fun c ->
+        (* The bowl is a sum of one bowl per coordinate, so its minimum in a box
+           is its center clipped to the box. lbfgs takes L-BFGS-B's Cauchy step
+           and newton Bertsekas's projected step, the two ways a gradient method
+           steps in a box. *)
+        cover "a coordinate held at its bound"
+          (Nx.item [] (Nx.any (Nx.less_s c 0.)));
+        cover "a free coordinate" (Nx.item [] (Nx.any (Nx.greater_s c 0.)));
+        let zero = Nx.zeros_like c in
+        let f x = Nx.sum (bowl c x) in
+        List.iter
+          (fun m ->
+            let solve ?lo ?hi () =
+              Solution.get
+                (Minimize.solve one m ?lo ?hi ~tol:tight ~budget:200 f zero)
+            in
+            equal (near ()) (Nx.maximum c zero) (solve ~lo:zero ());
+            equal (near ()) (Nx.minimum c zero) (solve ~hi:zero ()))
+          [
+            Minimize.lbfgs ~memory:3 ~linear:Linear.dense;
+            Minimize.newton ~linear:Linear.dense;
+          ]);
+    test "an absent side is an infinite one" (fun () ->
+        (* The answers and their derivatives in [c] agree to the bit. *)
+        let zero = vec [| 0.; 0.; 0. |] in
+        let inf = Nx.full_like zero Float.infinity in
+        let solvers =
+          (fun c (lo, hi) ->
+            Minimize.solve one lm ?lo ?hi ~tol:tight ~budget:200
+              (fun x -> Nx.sub x c)
+              zero)
+          :: (fun c (lo, hi) ->
+            Minimize.solve one Minimize.nelder_mead ?lo ?hi ~tol:tight
+              ~budget:2000
+              (fun x -> Nx.sum (bowl c x))
+              zero)
+          :: List.map
+               (fun (_, m) c (lo, hi) ->
+                 Minimize.solve one m ?lo ?hi ~tol:tight ~budget:200
+                   (fun x -> Nx.sum (bowl c x))
+                   zero)
+               derivative_methods
+        in
+        let c = vec [| 1.; -0.25; 2. |] in
+        List.iter
+          (fun solve ->
+            let answer box c = Solution.best (solve c box) in
+            let grad box = Rune.grad' (fun c -> Nx.sum (answer box c)) c in
+            List.iter
+              (fun (absent, infinite) ->
+                equal (Oracle.tensor ()) (answer infinite c) (answer absent c);
+                equal (Oracle.tensor ()) (grad infinite) (grad absent))
+              [
+                ((Some zero, None), (Some zero, Some inf));
+                ((None, Some zero), (Some (Nx.neg inf), Some zero));
+              ])
+          solvers);
+    test "a held coordinate of a one-sided box follows its bound" (fun () ->
+        (* ½ |x − c|² with x ≥ lo, c = (−1, 0.5) and lo = 0: the minimum is (0,
+           0.5). *)
+        let c = vec [| -1.; 0.5 |] and lo = vec [| 0.; 0. |] in
+        let half_square c x = Nx.mul_s (Nx.sum (Nx.square (Nx.sub x c))) 0.5 in
+        List.iter
+          (fun solve ->
+            equal
+              (Oracle.tensor ~abs:1e-12 ())
+              (vec [| 0.; 0.5 |])
+              (solve (c, lo));
+            let dc, dlo =
+              Rune.grad
+                Nx.Ptree.(pair tensor tensor)
+                (fun cl -> Nx.sum (solve cl))
+                (c, lo)
+            in
+            equal (Oracle.tensor ~abs:1e-12 ()) (vec [| 0.; 1. |]) dc;
+            equal (Oracle.tensor ~abs:1e-12 ()) (vec [| 1.; 0. |]) dlo)
+          ((fun (c, lo) ->
+             Solution.get
+               (Minimize.solve one lm ~lo ~tol:tight ~budget:100
+                  (fun x -> Nx.sub x c)
+                  (Nx.zeros_like c)))
+          :: List.map
+               (fun (_, m) (c, lo) ->
+                 Solution.get
+                   (Minimize.solve one m ~lo ~tol:tight ~budget:100
+                      (half_square c) (Nx.zeros_like c)))
+               derivative_methods));
     test "compiled equals eager in a box (law 3)" (fun () ->
         List.iter
           (fun (_, m) ->
             let f c =
+              let lo, hi = unit_box c in
               Solution.get
-                (Minimize.solve one m ~within:(unit_box c) ~tol:tight
-                   ~budget:200
+                (Minimize.solve one m ~lo ~hi ~tol:tight ~budget:200
                    (fun x ->
                      Nx.add
                        (Nx.sum (Nx.square (Nx.sub x c)))
@@ -882,17 +1008,19 @@ let termination_tests =
             v (Nx.full_like v Float.nan)
         in
         List.iter
-          (fun within ->
+          (fun (lo, hi) ->
             List.iter
               (fun (_, m) ->
                 let s =
-                  Minimize.solve one m ?within ~tol:tight ~budget:8 f
+                  Minimize.solve one m ?lo ?hi ~tol:tight ~budget:8 f
                     (Nx.zeros_like c)
                 in
                 at_most int32 ~than:(evaluation_bound 8)
                   (Nx.item [] (Solution.evaluations s)))
               gradient_methods)
-          [ None; Some (Nx.full_like c (-2.), Nx.full_like c 2.) ]);
+          [
+            (None, None); (Some (Nx.full_like c (-2.)), Some (Nx.full_like c 2.));
+          ]);
     prop ~count:10
       "a kink that collapses the bracket ends every search within its bound"
       centers (fun c ->
@@ -900,17 +1028,19 @@ let termination_tests =
            shrinks onto the kink without the curvature condition holding. *)
         let f x = Nx.sum (Nx.abs (Nx.sub x c)) in
         List.iter
-          (fun within ->
+          (fun (lo, hi) ->
             List.iter
               (fun (_, m) ->
                 let s =
-                  Minimize.solve one m ?within ~tol:tight ~budget:8 f
+                  Minimize.solve one m ?lo ?hi ~tol:tight ~budget:8 f
                     (Nx.zeros_like c)
                 in
                 at_most int32 ~than:(evaluation_bound 8)
                   (Nx.item [] (Solution.evaluations s)))
               gradient_methods)
-          [ None; Some (Nx.full_like c (-1.), Nx.full_like c 1.) ]);
+          [
+            (None, None); (Some (Nx.full_like c (-1.)), Some (Nx.full_like c 1.));
+          ]);
   ]
 
 let () =

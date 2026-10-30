@@ -11,7 +11,7 @@ dune exec packages/jera/examples/03-minimization/main.exe
 ## What You'll Learn
 
 - BFGS, L-BFGS, Newton and Nelder–Mead through `Minimize.solve`
-- Box constraints with `~within`
+- Box constraints with `~lo` and `~hi`
 - Least squares with `Minimize.levenberg_marquardt`
 - Elementwise minima in brackets with `Minimize.bracket`
 
@@ -19,7 +19,7 @@ dune exec packages/jera/examples/03-minimization/main.exe
 
 | Function                                       | Purpose                      |
 | ---------------------------------------------- | ---------------------------- |
-| `Minimize.solve x m ?within ~tol ~budget f x0` | A local minimum from `x0`    |
+| `Minimize.solve x m ?lo ?hi ~tol ~budget f x0` | A local minimum from `x0`    |
 | `Minimize.bfgs`, `lbfgs`, `newton`             | Gradient methods             |
 | `Minimize.levenberg_marquardt r`               | Least squares from residuals |
 | `Minimize.nelder_mead`                         | No gradient                  |

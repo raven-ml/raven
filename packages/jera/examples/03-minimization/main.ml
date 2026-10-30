@@ -1,7 +1,7 @@
 (* Minima.
 
    A gradient method searches with rune's gradient of the objective, so an
-   objective is a plain function. Any method takes a box with [~within].
+   objective is a plain function. Any method takes a box with [~lo] and [~hi].
    [levenberg_marquardt] minimises a sum of squares given its residuals, and
    [nelder_mead] needs no gradient at all. *)
 
@@ -20,8 +20,8 @@ let rosenbrock v =
 
 let start = Nx.create f64 [| 2 |] [| -1.2; 1. |]
 
-let minimize name m ?within f =
-  let s = Minimize.solve Nx.Ptree.tensor m ?within ~tol ~budget:500 f start in
+let minimize name m ?lo ?hi f =
+  let s = Minimize.solve Nx.Ptree.tensor m ?lo ?hi ~tol ~budget:500 f start in
   show name (Solution.get s)
 
 let () =
@@ -33,12 +33,12 @@ let () =
     rosenbrock;
   minimize "nelder_mead" Minimize.nelder_mead rosenbrock;
 
-  (* The same in the box x <= 0.5: the minimum moves onto the bound. *)
-  let lo = Nx.full f64 [| 2 |] Float.neg_infinity in
+  (* The same with x <= 0.5, an upper bound alone: the minimum moves onto it. An
+     infinite bound, y's here, is none. *)
   let hi = Nx.create f64 [| 2 |] [| 0.5; Float.infinity |] in
-  minimize "bfgs within x <= 0.5"
+  minimize "bfgs with x <= 0.5"
     (Minimize.bfgs ~linear:Linear.dense)
-    ~within:(lo, hi) rosenbrock;
+    ~hi rosenbrock;
 
   (* Least squares: fit y = a exp(b t) to five samples. *)
   let t = Nx.create f64 [| 5 |] [| 0.; 1.; 2.; 3.; 4. |] in

@@ -32,7 +32,7 @@
       {tr {td  } {td smooth, ill-conditioned } {td {!Minimize.newton} } }
       {tr {td  } {td sum of squares } {td {!Minimize.levenberg_marquardt} } }
       {tr {td  } {td no useful gradient } {td {!Minimize.nelder_mead} } }
-      {tr {td  } {td bounds } {td [~within] on any of them } }
+      {tr {td  } {td bounds } {td [~lo] and [~hi] on any of them } }
       {tr {td  } {td one variable, a bracket } {td {!Minimize.bracket} } }
       {tr
         {td Integral, one dimension }
@@ -706,16 +706,20 @@ module Minimize : sig
   val solve :
     ('x, 'd) Nx.Ptree.t ->
     ('x, 'f, 'd) t ->
-    ?within:'x * 'x ->
+    ?lo:'x ->
+    ?hi:'x ->
     tol:Tol.t ->
     budget:int ->
     'f ->
     'x ->
     ('x, 'd) Solution.t
-  (** [solve x m ~within:(lo, hi) ~tol ~budget f x0] is a local minimum of [f]
-      from [x0] by [m], in the box [[lo, hi]] when given: values of [x0]'s
-      structure whose float tensors bound each coordinate, infinite for no
-      bound.
+  (** [solve x m ~lo ~hi ~tol ~budget f x0] is a local minimum of [f] from [x0]
+      by [m], in the box [[lo, hi]] when either side is given: values of [x0]'s
+      structure whose float tensors bound each coordinate from below and from
+      above. [−∞] in [lo] or [+∞] in [hi] is no bound, and an absent side is
+      none in any coordinate:
+      [~lo:(Nx.Ptree.map x (fun _ a -> Nx.zeros_like a) x0)] alone keeps every
+      coordinate nonnegative.
 
       {b Box.} {!bfgs} and {!lbfgs} take the generalised Cauchy point and
       subspace step of L-BFGS-B (Byrd, Lu, Nocedal and Zhu, 1995): the projected
@@ -739,8 +743,9 @@ module Minimize : sig
       undamped step is the projected one, [P (x + δ) − x]. The answer is stated
       as the zero of [x − P (x − ∇f x)], so its derivative is zero in a
       coordinate held at a constant bound and follows a bound that moves; that
-      system is not symmetric, so its [linear] must not be {!Linear.cg}. A lane
-      whose [lo] exceeds its [hi] somewhere ends [Stalled].
+      system is not symmetric, so its [linear] must not be {!Linear.cg}. A box
+      that holds no point, where a coordinate's [lo] exceeds its [hi] or is [+∞]
+      or its [hi] is [−∞], ends the lane [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,

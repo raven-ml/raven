@@ -602,7 +602,7 @@ let nnls =
         Solution.get
           (Minimize.solve Nx.Ptree.tensor
              (Minimize.lbfgs ~memory:10 ~linear:Linear.dense)
-             ~within:(Nx.zeros f64 [| n |], Nx.full f64 [| n |] Float.infinity)
+             ~lo:(Nx.zeros f64 [| n |])
              ~tol:(Tol.v ~rel:1e-8 ~abs:1e-10)
              ~budget:2000 f (Nx.zeros f64 [| n |])));
     x =

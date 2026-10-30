@@ -45,7 +45,7 @@ The [examples](examples/) cover each family on small problems.
 | Linear systems | `Linear.dense`, `banded`, `cg`, `gmres`, given the operator as a function |
 | Zeros | `Root.bracket`, `Root.newton`, elementwise |
 | Systems | `System.newton`, `broyden`, `anderson`; `System.lanes` for many small systems |
-| Minima | `Minimize.bfgs`, `lbfgs`, `newton`, `levenberg_marquardt`, `nelder_mead`, with boxes through `~within`; `Minimize.bracket` in one variable |
+| Minima | `Minimize.bfgs`, `lbfgs`, `newton`, `levenberg_marquardt`, `nelder_mead`, with boxes through `~lo` and `~hi`; `Minimize.bracket` in one variable |
 | Integrals | `Quad.fixed`, `cumulative`, `adaptive`, `tanh_sinh` for endpoint singularities and infinite ranges; `cubature` and `qmc` over boxes |
 | Approximation | `Piecewise` splines, Steffen and Hermite interpolants, Chebyshev fits to a tolerance, derivatives and integrals; `Grid` over several axes |
 | ODEs | `Ode.march` with fixed steps; `solve`, `sample`, `path`, `event`, `delay` with adaptive steps, from `euler` to `tsit5` and `dopri5` |

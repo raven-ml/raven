@@ -22,7 +22,8 @@ val nelder_mead : ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
 val solve :
   ('x, 'd) Nx.Ptree.t ->
   ('x, 'f, 'd) t ->
-  ?within:'x * 'x ->
+  ?lo:'x ->
+  ?hi:'x ->
   tol:Tol.t ->
   budget:int ->
   'f ->
