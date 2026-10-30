@@ -201,3 +201,32 @@ val threads : int -> int option array
 (** [threads id] is what the agent stated when it loaded the program [id]
     ({!Wire.type-request}), until {!unload} unloads it, or [[||]] for none.
     It fills the [threads] of {!Rig_remote_abi.type-host}. *)
+
+(* For rig's tests: holds a {!Link}'s transfer or abort at a point of its
+   protocol, a sender whose send failed once it released the link ([Cut]),
+   or the thread that begins a job's failure before it sends the aborts
+   ([Failing]). Each observation waits at most five seconds, and so does the
+   hold. [resume] releases it, including after a failed assertion. Only one
+   scenario may run at once. *)
+module Probe : sig
+  type point = Sending | Sent | Arrived | Aborting | Cut | Failing
+
+  (* [arm p] holds the next link to reach [p] there, and starts counting
+     release entrants. *)
+  val arm : point -> unit
+
+  (* [held ()] observes the held transfer, or [false] on timeout. *)
+  val held : unit -> bool
+
+  (* [releases ()] observes two release entrants, or times out. Its result
+     is their number and the number waiting for an active transfer. *)
+  val releases : unit -> int * int
+
+  (* [resume ()] releases the hold and disarms the probe. *)
+  val resume : unit -> unit
+
+  (* [bound s] makes every link from then on bear a silent peer, a send its
+     peer takes no byte of, and a failing link's drain for [s] seconds, in
+     place of the 10 {!Link} states. *)
+  val bound : int -> unit
+end

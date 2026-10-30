@@ -666,11 +666,11 @@ let make_on_closed () =
    runs. *)
 let failed_before_abort () =
   with_raw @@ fun j _ p ->
-  Rig_link_probe.arm Aborting;
+  Rig_remote_proxy.Probe.arm Aborting;
   let failed = spawn (fun () -> Link.fail j "the test fails it") in
-  let held = Rig_link_probe.held () in
+  let held = Rig_remote_proxy.Probe.held () in
   let s = Link.wait j ~ms:0 in
-  Rig_link_probe.resume ();
+  Rig_remote_proxy.Probe.resume ();
   failed ();
   equal bool ~msg:"the abort is held" true held;
   equal ~msg:"the job while its abort is held" state

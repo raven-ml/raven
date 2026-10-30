@@ -13,7 +13,7 @@
 open Windtrap
 module Wire = Rig_remote_proxy.Wire
 module Link = Rig_remote_proxy.Link
-module Probe = Rig_link_probe
+module Probe = Rig_remote_proxy.Probe
 
 (* wire.mli's frame kinds *)
 let k_request = 1

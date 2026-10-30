@@ -3,9 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Holds a link's transfers and counts its release entrants, through the
-   hook the link calls at each point of its protocol, and shortens a link's
-   bounds. */
+/* For rig's tests: Rig_remote_proxy.Probe, which holds a link's transfers
+   and counts its release entrants through the hook the link calls at each
+   point of its protocol, and shortens a link's bounds. */
 
 #include <caml/alloc.h>
 #include <caml/memory.h>
@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#include "../../../lib/remote/proxy/rig_remote_proxy_stubs.h"
+#include "rig_remote_proxy_stubs.h"
 
 static int64_t now_ns(void) {
   struct timespec t;
@@ -50,7 +50,7 @@ static void hook(enum rig_remote_link_point at, int waiting) {
   pthread_mutex_unlock(&hook_mu);
 }
 
-value rig_link_probe_arm(value point) {
+value caml_rig_remote_probe_arm(value point) {
   CAMLparam1(point);
   pthread_once(&hook_once, hook_init);
   pthread_mutex_lock(&hook_mu);
@@ -61,7 +61,7 @@ value rig_link_probe_arm(value point) {
   CAMLreturn(Val_unit);
 }
 
-value rig_link_probe_held(value unit) {
+value caml_rig_remote_probe_held(value unit) {
   CAMLparam1(unit);
   pthread_once(&hook_once, hook_init);
   caml_release_runtime_system();
@@ -75,7 +75,7 @@ value rig_link_probe_held(value unit) {
   CAMLreturn(Val_bool(observed));
 }
 
-value rig_link_probe_releases(value unit) {
+value caml_rig_remote_probe_releases(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(result);
   pthread_once(&hook_once, hook_init);
@@ -93,7 +93,7 @@ value rig_link_probe_releases(value unit) {
   CAMLreturn(result);
 }
 
-value rig_link_probe_resume(value unit) {
+value caml_rig_remote_probe_resume(value unit) {
   CAMLparam1(unit);
   pthread_once(&hook_once, hook_init);
   pthread_mutex_lock(&hook_mu);
@@ -103,7 +103,7 @@ value rig_link_probe_resume(value unit) {
   CAMLreturn(Val_unit);
 }
 
-value rig_link_probe_bound(value s) {
+value caml_rig_remote_probe_bound(value s) {
   CAMLparam1(s);
   atomic_store(&rig_remote_link_bound_s, Int_val(s));
   CAMLreturn(Val_unit);

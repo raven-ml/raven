@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module Probe = Rig_link_probe
+module Probe = Rig_remote_proxy.Probe
 module Link = Rig_remote_proxy.Link
 module Wire = Rig_remote_proxy.Wire
 

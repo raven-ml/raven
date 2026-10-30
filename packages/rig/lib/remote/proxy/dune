@@ -4,4 +4,4 @@
  (libraries rig_remote_abi rig_edge unix)
  (foreign_stubs
   (language c)
-  (names rig_remote_wire rig_remote_link rig_remote_proxy)))
+  (names rig_remote_wire rig_remote_link rig_remote_proxy rig_remote_probe)))
