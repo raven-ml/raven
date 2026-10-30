@@ -164,6 +164,10 @@ module P = Nx_kernel.Prog
 
 let pp_shape = Prim.pp_shape
 
+(* A float in a message as Dtype prints it: printf's %g writes the C
+   library's exponent, of three digits on Windows. *)
+let pp_float = D.pp_value D.Float64
+
 (* [v] as an expression of [dt], naming [by] where [dt] does not hold it. *)
 let const ~by dt v =
   Prim.check_value ~by dt v;
@@ -288,7 +292,8 @@ let arange_f_by ~by p dt start stop step =
   if step = 0. then invalid_argf "%s: step 0" by;
   let length = Float.ceil ((stop -. start) /. step) in
   if (not (Float.is_finite length)) || length >= Float.of_int max_int then
-    invalid_argf "%s: [%g, %g) by %g has no finite length" by start stop step;
+    invalid_argf "%s: [%a, %a) by %a has no finite length" by pp_float start
+      pp_float stop pp_float step;
   let n = if length > 0. then Float.to_int length else 0 in
   leaf ~by p dt [| n |] (E.cast dt (ramp ~start ~step))
 
@@ -336,7 +341,8 @@ let logspace_at p dt ?(endpoint = true) ?(base = 10.) start stop n =
 let geomspace_by ~by p dt ~endpoint start stop n =
   let usable x = x > 0. && Float.is_finite x in
   if not (usable start && usable stop) then
-    invalid_argf "%s: %g and %g are not both positive and finite" by start stop;
+    invalid_argf "%s: %a and %a are not both positive and finite" by pp_float
+      start pp_float stop;
   let e = spaced ~by ~endpoint 0. 1. n in
   let f64 = E.const D.Float64 in
   let ratio = stop /. start in
@@ -2488,7 +2494,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
 let ewma ?axis ~alpha x =
   let by = "Nx.ewma" in
   if not (alpha > 0. && alpha <= 1.) then
-    invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
+    invalid_argf "%s: alpha %a is outside (0, 1]" by pp_float alpha;
   let y, a = along ~by axis x in
   Eval.reshape ~by (shape x) (average ~by ~alpha a y)
 
@@ -2561,7 +2567,7 @@ let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x (Some axes) in
   if Float.is_nan eps || eps < 0. then
-    invalid_argf "%s: eps %g is negative or NaN" by eps;
+    invalid_argf "%s: eps %a is negative or NaN" by pp_float eps;
   if numel x = 0 then x
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
@@ -3298,7 +3304,7 @@ let cutoff ~by rtol a =
   match rtol with
   | Some rtol ->
       if not (rtol >= 0.) then
-        invalid_argf "%s: rtol %g is negative or NaN" by rtol;
+        invalid_argf "%s: rtol %a is negative or NaN" by pp_float rtol;
       rtol
   | None ->
       let k = Stdlib.max (dim (-2) a) (dim (-1) a) in
@@ -3457,8 +3463,8 @@ let vector_norm dt ?(ord = 2.) ?axes:l ?(keepdims = false) x =
     && List.exists (fun a -> s.(a) = 0) along
     && Array.for_all Fun.id (Array.mapi kept s)
   then
-    invalid_argf "%s: an order of %g over %a has no element" by ord pp_value
-      x;
+    invalid_argf "%s: an order of %a over %a has no element" by pp_float ord
+      pp_value x;
   let y =
     widened ~by dt x (fun _ x ->
         magnitudes ~by x (fun m -> cast_by ~by dt (vector ~by ord along m)))
@@ -5908,7 +5914,8 @@ let idst ?type_ ?axes ?norm x =
    [i / (d n)] for bin [i], or [i - n] from the middle on where [wrap]. *)
 let frequencies ~by ~wrap p dt ~d n count =
   if n < 1 then invalid_argf "%s: %d points" by n;
-  if not (Float.is_finite d && d <> 0.) then invalid_argf "%s: spacing %g" by d;
+  if not (Float.is_finite d && d <> 0.) then
+    invalid_argf "%s: spacing %a" by pp_float d;
   let i = E.coord 0 in
   let middle = i64 ((n + 1) / 2) and n' = i64 n in
   let i = if wrap then E.(where (i < middle) i (i - n')) else i in

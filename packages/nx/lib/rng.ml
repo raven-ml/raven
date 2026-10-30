@@ -671,7 +671,8 @@ let refuse (type v s) ~by name text ~show (p : (v, s, 'd) Value.t)
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =
   let (Carrier { c; _ }) = carrier (Prim.dtype p) in
-  refuse ~by name d.text ~show:(Printf.sprintf "%g") p (fun x ->
+  let show = Format.asprintf "%a" (D.pp_value (Prim.dtype p)) in
+  refuse ~by name d.text ~show p (fun x ->
       d.inside c (rounded c x))
 
 (* Checks that the counts [n] are not negative. *)
@@ -1424,7 +1425,8 @@ let categorical ?key ?(axis = -1) logits =
   in
   (* The noise is finite, so a row's largest sum is finite exactly where its
      largest logit is, and is that logit where it is not. *)
-  refuse ~by "the largest logit" "(-inf, inf)" ~show:(Printf.sprintf "%g")
+  refuse ~by "the largest logit" "(-inf, inf)"
+    ~show:(Format.asprintf "%a" (D.pp_value (Prim.dtype largest)))
     largest (finite c);
   at
 

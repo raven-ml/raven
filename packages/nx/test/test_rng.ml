@@ -1483,7 +1483,7 @@ let rejection =
       test "poisson refuses a rate whose counts int32 cannot hold" (fun () ->
           let rate = host_of Nx.float64 [| 2 |] [| 1.; 2147483648. |] in
           equal string
-            "Nx.Rng.poisson: rate at [1] is 2.14748e+09, not in [0, 2^31)"
+            "Nx.Rng.poisson: rate at [1] is 2147483648, not in [0, 2^31)"
             (message (fun () -> Rng.poisson rate)));
       test "binomial refuses a negative n" (fun () ->
           let count = host_of Nx.int32 [| 2 |] [| 3l; -2l |] in

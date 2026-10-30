@@ -137,7 +137,8 @@ let with_pixels ~by ~channels ~side x f =
 let pixels_per_metre ~by dpi =
   let ppm = Float.round (dpi /. 0.0254) in
   if not (1. <= ppm && ppm <= Float.of_int Image.png_max) then
-    Fail.invalid_argf "%s: the dpi %g" by dpi;
+    Fail.invalid_argf "%s: the dpi %s" by
+      (Format.asprintf "%a" (Nx_array.Dtype.pp_value Float64) dpi);
   int_of_float ppm
 
 (* [png ~by ?dpi ?srgb x write] is [write encode] once [x] is checked and its
