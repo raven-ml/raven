@@ -35,7 +35,6 @@
  (libraries nx_array nx_kernel nx_cpu rig rig.pool)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/cpu ../../../lib/array ../../../lib/kernel)
   (names nx_kernels_support_stubs)))
 
 ; What nx.kernel's suites and nx.cpu's share: elements as their bits, and

@@ -21,16 +21,6 @@ type backend = {
   around : 'a. (unit -> 'a) -> 'a;
 }
 
-(* nx.cpu's target tables: the host's, and the one its kernels run. *)
-external targets : unit -> string list = "nx_kernels_support_targets"
-external current : unit -> string = "nx_kernels_support_current"
-external use : string -> unit = "nx_kernels_support_use"
-
-let with_target t f =
-  let before = current () in
-  use t;
-  Fun.protect ~finally:(fun () -> use before) f
-
 (* nx_cpu.mli's promise: every kind at every dtype of its domain. *)
 let cpu_computes _ _ = true
 
@@ -40,12 +30,13 @@ let under target =
     kernels = (module Nx_cpu);
     device = Rig.host;
     computes = cpu_computes;
-    around = (fun f -> with_target target f);
+    around = (fun f -> Nx_cpu.with_target target f);
   }
 
-let cpus = List.map under (targets ())
+let cpus = List.map under Nx_cpu.targets
 
-let cpu = under (current ())
+(* The best table, which nx.cpu runs from the start: the last. *)
+let cpu = under (List.nth Nx_cpu.targets (List.length Nx_cpu.targets - 1))
 
 let backends = [ cpu ]
 

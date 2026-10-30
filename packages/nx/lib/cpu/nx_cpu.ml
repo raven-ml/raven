@@ -515,3 +515,14 @@ external swap_one : bool -> bool = "nx_cpu_one_thread" [@@noalloc]
 let one_thread f =
   let was = swap_one true in
   Fun.protect ~finally:(fun () -> ignore (swap_one was : bool)) f
+
+(* Target tables (target.c) *)
+
+external targets_c : unit -> string list = "nx_cpu_targets"
+external swap_target : string -> string = "nx_cpu_swap_target"
+
+let targets = targets_c ()
+
+let with_target t f =
+  let was = swap_target t in
+  Fun.protect ~finally:(fun () -> ignore (swap_target was : string)) f

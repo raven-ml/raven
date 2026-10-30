@@ -18,7 +18,11 @@
    initialises: the constructor runs before the OCaml runtime, and cannot
    raise. */
 
+#include <string.h>
+
+#include <caml/alloc.h>
 #include <caml/fail.h>
+#include <caml/memory.h>
 #include <caml/mlvalues.h>
 
 #include "cpu.h"
@@ -28,7 +32,6 @@
 #elif defined(__linux__)
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #endif
 
@@ -210,4 +213,49 @@ value nx_cpu_require(value unit) {
                   "host lacks it");
 #endif
   return Val_unit;
+}
+
+/* Tables for tests */
+
+#define MAX_TABLES 2
+
+/* Fills [t] with the tables the host runs, base first and the best last,
+   and answers how many. */
+static int host_tables(const nx_cpu_target **t) {
+  int n = 0;
+  t[n++] = &nx_cpu_base;
+#if defined(__APPLE__) && defined(__aarch64__)
+  if (nx_cpu_amx.name != NULL) t[n++] = &nx_cpu_amx;
+#endif
+  return n;
+}
+
+value nx_cpu_targets(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal2(l, cell);
+  const nx_cpu_target *t[MAX_TABLES];
+  int n = host_tables(t);
+  l = Val_emptylist;
+  for (int i = n - 1; i >= 0; i--) {
+    cell = caml_alloc(2, Tag_cons);
+    Store_field(cell, 0, caml_copy_string(t[i]->name));
+    Store_field(cell, 1, l);
+    l = cell;
+  }
+  CAMLreturn(l);
+}
+
+/* Makes the host's table named [name] the one the kernels run, and answers
+   the name of the one they ran before. */
+value nx_cpu_swap_target(value name) {
+  CAMLparam1(name);
+  const nx_cpu_target *t[MAX_TABLES];
+  int n = host_tables(t);
+  for (int i = 0; i < n; i++) {
+    if (strcmp(t[i]->name, String_val(name)) != 0) continue;
+    const char *was = nx_cpu_table->name;
+    nx_cpu_table = t[i];
+    CAMLreturn(caml_copy_string(was));
+  }
+  caml_invalid_argument("Nx_cpu.with_target: not a table the host runs");
 }

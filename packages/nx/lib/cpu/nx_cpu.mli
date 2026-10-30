@@ -363,4 +363,16 @@ val one_thread : (unit -> 'a) -> 'a
     work on that thread alone while [f] runs, nested calls included. The
     bits are those of any threads. For tests. *)
 
+val targets : string list
+(** [targets] is the names of the target tables the host runs, each one's
+    instructions a superset of the one's before: ["base"] first, and last
+    the best, which nx.cpu runs from the start. Only the contractions' and
+    linear algebra's kernels differ by table. For tests. *)
+
+val with_target : string -> (unit -> 'a) -> 'a
+(** [with_target t f] is [f ()], every call running target table [t]'s
+    kernels while [f] runs, on every thread. Raises [Invalid_argument] where
+    [t] is not in {!targets}. For tests, while no other domain calls
+    nx.cpu. *)
+
 (**/**)
