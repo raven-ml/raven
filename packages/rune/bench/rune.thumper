@@ -80,7 +80,7 @@ Jit/sin-float32-64K	wall_time	batch=128	n=20	7.054e-05	6.933e-05 6.952e-05 6.953
 Jit/solve-float64-32	alloc_words	exact	852
 Jit/solve-float64-32	wall_time	batch=256	n=20	3.043e-05	3.011e-05 3.022e-05 3.025e-05 3.027e-05 3.029e-05 3.030e-05 3.031e-05 3.041e-05 3.042e-05 3.043e-05 3.043e-05 3.046e-05 3.047e-05 3.052e-05 3.059e-05 3.062e-05 3.066e-05 3.070e-05 3.080e-05 3.124e-05
 Jit/sort-with-positions-4096	alloc_words	exact	889
-Jit/sort-with-positions-4096	wall_time	batch=64	n=20	1.056e-04	9.336e-05 9.885e-05 9.903e-05 9.910e-05 9.915e-05 9.918e-05 9.929e-05 9.937e-05 1.001e-04 1.041e-04 1.071e-04 1.073e-04 1.075e-04 1.077e-04 1.078e-04 1.080e-04 1.083e-04 1.085e-04 1.099e-04 1.103e-04
+Jit/sort-with-positions-4096	wall_time	batch=64	n=20	1.019e-04	9.273e-05 9.799e-05 9.807e-05 9.816e-05 9.817e-05 9.821e-05 9.825e-05 9.837e-05 9.850e-05 9.915e-05 1.046e-04 1.059e-04 1.062e-04 1.064e-04 1.064e-04 1.067e-04 1.067e-04 1.068e-04 1.074e-04 1.091e-04
 Jit/take-grad-1024-of-4096x64	alloc_words	exact	852
 Jit/take-grad-1024-of-4096x64	wall_time	batch=128	n=20	7.117e-05	6.834e-05 6.953e-05 6.982e-05 7.004e-05 7.021e-05 7.026e-05 7.037e-05 7.060e-05 7.098e-05 7.111e-05 7.122e-05 7.134e-05 7.187e-05 7.226e-05 7.228e-05 7.248e-05 7.281e-05 7.357e-05 7.682e-05 7.707e-05
 Jit/tanh-float32-64K	alloc_words	exact	721
@@ -128,7 +128,7 @@ Remat/chain-grad	wall_time	batch=32	n=20	2.468e-04	2.404e-04 2.412e-04 2.420e-04
 Roots/grad-root-in-scan-16-eager	alloc_words	exact	205134
 Roots/grad-root-in-scan-16-eager	wall_time	batch=16	n=20	6.008e-04	5.904e-04 5.918e-04 5.929e-04 5.930e-04 5.932e-04 5.956e-04 5.963e-04 5.985e-04 5.993e-04 6.005e-04 6.011e-04 6.012e-04 6.015e-04 6.015e-04 6.017e-04 6.018e-04 6.026e-04 6.028e-04 6.032e-04 6.036e-04
 Roots/grad-root-in-scan-16-replay	alloc_words	exact	902
-Roots/grad-root-in-scan-16-replay	wall_time	batch=256	n=20	2.937e-05	2.873e-05 2.887e-05 2.901e-05 2.908e-05 2.918e-05 2.921e-05 2.928e-05 2.928e-05 2.928e-05 2.934e-05 2.940e-05 2.940e-05 2.942e-05 2.946e-05 2.947e-05 2.955e-05 2.963e-05 2.970e-05 3.006e-05 3.029e-05
+Roots/grad-root-in-scan-16-replay	wall_time	batch=256	n=20	2.818e-05	2.758e-05 2.758e-05 2.772e-05 2.798e-05 2.804e-05 2.810e-05 2.812e-05 2.815e-05 2.816e-05 2.818e-05 2.818e-05 2.822e-05 2.825e-05 2.826e-05 2.835e-05 2.839e-05 2.840e-05 2.858e-05 2.882e-05 2.888e-05
 Totals/vmap-scan-64-lanes-eager	alloc_words	exact	330059
 Totals/vmap-scan-64-lanes-eager	wall_time	batch=8	n=20	7.235e-04	7.131e-04 7.134e-04 7.139e-04 7.142e-04 7.146e-04 7.154e-04 7.157e-04 7.165e-04 7.206e-04 7.232e-04 7.239e-04 7.267e-04 7.267e-04 7.273e-04 7.278e-04 7.280e-04 7.299e-04 7.303e-04 7.308e-04 7.321e-04
 Totals/vmap-scan-64-lanes-replay	alloc_words	exact	1469
