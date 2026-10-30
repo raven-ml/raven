@@ -49,7 +49,9 @@
  (libraries rig_pool_probe rig_pool_thread_probe unix windtrap))
 
 ; Listing test_pool's tests in bytecode checks that the pool's stubs resolve
-; when ocamlrun loads them from CAML_LD_LIBRARY_PATH.
+; when ocamlrun loads them from CAML_LD_LIBRARY_PATH, as rig installs them:
+; dune's CAML_LD_LIBRARY_PATH names the stublibs directory its packages
+; install into.
 
 (rule
  (alias runtest)
@@ -58,11 +60,13 @@
    (<> %{os_type} Win32)
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
- (deps ../../lib/pool/dllrig_pool_stubs.so support/dllrig_pool_probe_stubs.so)
+ (deps
+  (package rig)
+  support/dllrig_pool_probe_stubs.so)
  (action
   (setenv
    CAML_LD_LIBRARY_PATH
-   "../../lib/pool:support:%{lib:windtrap:../stublibs}"
+   "support:%{env:CAML_LD_LIBRARY_PATH=}"
    (with-stdout-to
     %{null}
     (run %{dep:test_pool.bc} --list)))))

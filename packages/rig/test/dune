@@ -61,7 +61,9 @@
   (run %{dep:test_readers.exe})))
 
 ; The bytecode run checks that rig's stubs resolve when ocamlrun loads them
-; from CAML_LD_LIBRARY_PATH.
+; from CAML_LD_LIBRARY_PATH, as rig installs them: dune's
+; CAML_LD_LIBRARY_PATH names the stublibs directory its packages install
+; into.
 
 (rule
  (alias runtest)
@@ -71,13 +73,12 @@
    (<> %{profile} sanitize)
    (<> %{profile} tsan)))
  (deps
-  ../lib/dllrig_stubs.so
-  ../lib/pool/dllrig_pool_stubs.so
+  (package rig)
   support/dllrig_support_stubs.so)
  (action
   (setenv
    CAML_LD_LIBRARY_PATH
-   "../lib:../lib/edge:../lib/pool:support:%{lib:windtrap:../stublibs}"
+   "support:%{env:CAML_LD_LIBRARY_PATH=}"
    (run %{dep:test_readers.bc}))))
 
 (tests
