@@ -132,6 +132,103 @@ let tridiagonal () =
   in
   compile solve (input ~n 3. 4.)
 
+(* A sampler's start and first steps on a model of 8 groups (eight schools): a
+   location, a log scale and 8 effects, under normal and half-Cauchy priors.
+   Each of 8 chains starts at the first of 100 uniform candidates whose log
+   density is finite, which a check requires of one, with the last candidate's
+   terms as its data, then takes 10 gradient steps, each checking each term
+   finite. The checks' first failures are read by their data and the failed
+   flag, and carried by the loop with their data, as a sampler's first call
+   compiles them. *)
+let schools () =
+  let y = Nx.create f64 [| 8 |] [| 28.; 8.; -3.; 7.; -1.; 1.; 18.; 12. |] in
+  let sigma =
+    Nx.create f64 [| 8 |] [| 15.; 10.; 16.; 11.; 9.; 11.; 10.; 18. |]
+  in
+  let normal x m s =
+    Nx.add_s (Nx.mul_s (Nx.square (Nx.div_s (Nx.sub_s x m) s)) (-0.5))
+      (-.Float.log s)
+  in
+  (* Of rows [mu; log tau; eta_1 .. eta_8], one density each. *)
+  let log_density q =
+    let mu = Nx.slice [ Nx.A; Nx.R (0, 1) ] q in
+    let log_tau = Nx.slice [ Nx.A; Nx.R (1, 2) ] q in
+    let eta = Nx.slice [ Nx.A; Nx.R (2, 10) ] q in
+    let tau = Nx.exp log_tau in
+    let theta = Nx.add mu (Nx.mul tau eta) in
+    let z = Nx.div (Nx.sub y theta) sigma in
+    let cauchy = Nx.neg (Nx.log (Nx.add_s (Nx.square (Nx.div_s tau 5.)) 1.)) in
+    let terms =
+      [
+        normal mu 0. 5.;
+        Nx.add cauchy log_tau;
+        normal eta 0. 1.;
+        Nx.sub (Nx.mul_s (Nx.square z) (-0.5)) (Nx.log sigma);
+      ]
+    in
+    List.map (Nx.sum ~axes:[ 1 ]) terms
+  in
+  let sum ts = List.fold_left Nx.add (List.hd ts) (List.tl ts) in
+  let start k =
+    let u = Nx.Rng.uniform_at Nx.Host.on ~key:k f64 [| 100; 10 |] in
+    let cands = Nx.mul_s (Nx.sub_s u 0.5) 4. in
+    let finite = Nx.isfinite (sum (log_density cands)) in
+    let last = List.map (Nx.slice [ Nx.I 99 ]) (log_density cands) in
+    Nx.check
+      Nx.Ptree.(list tensor)
+      (Nx.any finite) last
+      (fun _ _ -> Failure "no finite start");
+    Nx.take ~axis:0 (Nx.argmax (Nx.cast Nx.int32 finite)) cands
+  in
+  let step q _ =
+    let terms = log_density q in
+    let lp = sum terms in
+    List.iter
+      (fun t ->
+        Nx.check
+          Nx.Ptree.(pair tensor tensor)
+          (Nx.isfinite t) (t, lp)
+          (fun _ _ -> Failure "a step left the support"))
+      terms;
+    let g = Rune.grad' (fun q -> Nx.sum (sum (log_density q))) q in
+    (Nx.add q (Nx.mul_s g 0.01), lp)
+  in
+  let sample k =
+    let k = Nx.Rng.of_tensor k in
+    let q =
+      Rune.vmap
+        Nx.Ptree.(v Nx.Rng.walk @-> returns tensor)
+        start
+        (Nx.Rng.split_batch ~n:8 k)
+    in
+    let q, lps = Rune.scan' ~f:step ~init:q (Nx.zeros f64 [| 10; 1 |]) in
+    Nx.add (Nx.sum q) (Nx.sum lps)
+  in
+  compile sample (Nx.Rng.to_tensor (Nx.Rng.key 0))
+
+(* A scan of 20 steps whose step checks each of its 48 values finite, with the
+   value and the step's sum as data: a loop that carries each check's first
+   failure and data, as a sampler's step carries its sites' checks. *)
+let checked_scan () =
+  let n = 48 in
+  let step x _ =
+    let y = Nx.add (Nx.mul_s x 0.5) (Nx.recip (Nx.add_s (Nx.square x) 1.)) in
+    let total = Nx.sum y in
+    for i = 0 to n - 1 do
+      let v = Nx.slice [ Nx.I i ] y in
+      Nx.check
+        Nx.Ptree.(pair tensor tensor)
+        (Nx.isfinite v) (v, total)
+        (fun _ _ -> Failure "a value left the reals")
+    done;
+    (y, total)
+  in
+  let run x =
+    let y, totals = Rune.scan' ~f:step ~init:x (Nx.zeros f64 [| 20; 1 |]) in
+    Nx.add (Nx.sum y) (Nx.sum totals)
+  in
+  compile run (input ~n 0. 1.)
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -140,6 +237,8 @@ let cases =
        its exponent: its lowering's size. *)
     ("trig/sin", fun () -> compile Nx.sin (input (-10.) 10.));
     ("scan/tridiagonal-100", tridiagonal);
+    ("model/schools-start", schools);
+    ("scan/checks-48", checked_scan);
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
   ]
