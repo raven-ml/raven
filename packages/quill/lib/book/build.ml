@@ -79,6 +79,10 @@ let relative_root_path (nb : Quill_project.notebook) =
 
 let ( let* ) = Result.bind
 
+(* A prelude is code in the kernel's language, run before the notebook. *)
+let prelude_cell k code =
+  Quill.Cell.code ~id:"__prelude__" ~language:(Quill.Kernel.language k) code
+
 let build_notebook ~create_kernel ~skip_eval ~output_dir ~live_reload_script
     (project : Quill_project.t) (nb : Quill_project.notebook) =
   let nb_path = Filename.concat project.root nb.path in
@@ -92,7 +96,7 @@ let build_notebook ~create_kernel ~skip_eval ~output_dir ~live_reload_script
         (match prelude_path project nb with
         | Some p ->
             let code = read_file p in
-            k.Quill.Kernel.execute ~cell_id:"__prelude__" ~code
+            Quill.Kernel.execute k (prelude_cell k code)
         | None -> ());
         k
       in
@@ -269,7 +273,7 @@ let build_file ~create_kernel ?(skip_eval = false) ?output
         let prelude = Filename.concat nb_dir "prelude.ml" in
         (if Sys.file_exists prelude then
            let code = read_file prelude in
-           k.Quill.Kernel.execute ~cell_id:"__prelude__" ~code);
+           Quill.Kernel.execute k (prelude_cell k code));
         k
       in
       let prev_cwd = Sys.getcwd () in

@@ -197,11 +197,11 @@ export class WsClient {
   undo() { this.send({ type: 'undo' }); }
   redo() { this.send({ type: 'redo' }); }
 
-  complete(code, pos) {
+  complete(cellId, code, pos) {
     const requestId = `req_${++this._requestCounter}`;
     return new Promise((resolve) => {
       this._pendingCompletions.set(requestId, resolve);
-      this.send({ type: 'complete', request_id: requestId, code, pos });
+      this.send({ type: 'complete', request_id: requestId, cell_id: cellId, code, pos });
       setTimeout(() => {
         if (this._pendingCompletions.has(requestId)) {
           this._pendingCompletions.delete(requestId);
@@ -211,11 +211,11 @@ export class WsClient {
     });
   }
 
-  typeAt(code, pos) {
+  typeAt(cellId, code, pos) {
     const requestId = `req_${++this._requestCounter}`;
     return new Promise((resolve) => {
       this._pendingTypeAt.set(requestId, resolve);
-      this.send({ type: 'type_at', request_id: requestId, code, pos });
+      this.send({ type: 'type_at', request_id: requestId, cell_id: cellId, code, pos });
       setTimeout(() => {
         if (this._pendingTypeAt.has(requestId)) {
           this._pendingTypeAt.delete(requestId);
@@ -225,11 +225,11 @@ export class WsClient {
     });
   }
 
-  diagnostics(code) {
+  diagnostics(cellId, code) {
     const requestId = `req_${++this._requestCounter}`;
     return new Promise((resolve) => {
       this._pendingDiagnostics.set(requestId, resolve);
-      this.send({ type: 'diagnostics', request_id: requestId, code });
+      this.send({ type: 'diagnostics', request_id: requestId, cell_id: cellId, code });
       setTimeout(() => {
         if (this._pendingDiagnostics.has(requestId)) {
           this._pendingDiagnostics.delete(requestId);

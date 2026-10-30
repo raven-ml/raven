@@ -74,9 +74,19 @@ type client_msg =
   | Save
   | Undo
   | Redo
-  | Complete of { request_id : string; code : string; pos : int }
-  | Type_at of { request_id : string; code : string; pos : int }
-  | Diagnostics of { request_id : string; code : string }
+  | Complete of {
+      request_id : string;
+      cell_id : string;
+      code : string;
+      pos : int;
+    }
+  | Type_at of {
+      request_id : string;
+      cell_id : string;
+      code : string;
+      pos : int;
+    }
+  | Diagnostics of { request_id : string; cell_id : string; code : string }
 
 let parse_kind json =
   match get_string "kind" json with
@@ -133,18 +143,21 @@ let client_msg_of_json s =
       | Ok "redo" -> Ok Redo
       | Ok "complete" ->
           let* request_id = get_string "request_id" json in
+          let* cell_id = get_string "cell_id" json in
           let* code = get_string "code" json in
           let* pos = get_int "pos" json in
-          Ok (Complete { request_id; code; pos })
+          Ok (Complete { request_id; cell_id; code; pos })
       | Ok "type_at" ->
           let* request_id = get_string "request_id" json in
+          let* cell_id = get_string "cell_id" json in
           let* code = get_string "code" json in
           let* pos = get_int "pos" json in
-          Ok (Type_at { request_id; code; pos })
+          Ok (Type_at { request_id; cell_id; code; pos })
       | Ok "diagnostics" ->
           let* request_id = get_string "request_id" json in
+          let* cell_id = get_string "cell_id" json in
           let* code = get_string "code" json in
-          Ok (Diagnostics { request_id; code })
+          Ok (Diagnostics { request_id; cell_id; code })
       | Ok t -> Error (Printf.sprintf "unknown message type '%s'" t)
       | Error e -> Error e)
 

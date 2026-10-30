@@ -53,7 +53,7 @@ let file_loader base_dir rel_path =
 
 type state = {
   mutable session : Session.t;
-  mutable kernel : Kernel.t;
+  kernel : Kernel.t;
   path : string;
   mutable figures : Quill_markdown.figures;
       (* How [path] stores its images, kept by a save. *)
@@ -144,20 +144,18 @@ let exec_worker st =
     end
     else begin
       Mutex.unlock st.exec_mutex;
-      let source =
+      let cell =
         locked st (fun () ->
             match Doc.find cell_id (Session.doc st.session) with
-            | Some (Cell.Code { source; _ }) ->
+            | Some (Cell.Code _ as cell) ->
                 st.session <- Session.clear_outputs cell_id st.session;
                 st.session <- Session.mark_running cell_id st.session;
                 send st (Protocol.cell_status_to_json ~cell_id Session.Running);
                 log "[exec] %s running\n%!" cell_id;
-                Some source
+                Some cell
             | _ -> None)
       in
-      (match source with
-      | Some code -> st.kernel.execute ~cell_id ~code
-      | None -> ());
+      Option.iter (Kernel.execute st.kernel) cell;
       loop ()
     end
   in
@@ -207,9 +205,7 @@ let handle_client_msg st = function
       let cell_ids =
         List.filter_map
           (fun c ->
-            match c with
-            | Cell.Code { id; _ } when Cell.is_ocaml c -> Some id
-            | Code _ | Text _ -> None)
+            match c with Cell.Code { id; _ } -> Some id | Text _ -> None)
           (Doc.cells (Session.doc st.session))
       in
       enqueue_execution st cell_ids
@@ -218,7 +214,9 @@ let handle_client_msg st = function
       assert false (* dispatched by [handle_msg] before reaching here *)
   | Protocol.Insert_cell { pos; kind } ->
       let cell =
-        match kind with `Code -> Cell.code "" | `Text -> Cell.text ""
+        match kind with
+        | `Code -> Cell.code ~language:(Kernel.language st.kernel) ""
+        | `Text -> Cell.text ""
       in
       st.session <- Session.insert_cell ~pos cell st.session;
       let status = Session.cell_status (Cell.id cell) st.session in
@@ -239,6 +237,11 @@ let handle_client_msg st = function
   | Protocol.Set_cell_kind { cell_id; kind } ->
       let kind_s = match kind with `Code -> "code" | `Text -> "text" in
       log "[cell] set %s to %s\n%!" cell_id kind_s;
+      let kind =
+        match kind with
+        | `Code -> `Code (Kernel.language st.kernel)
+        | `Text -> `Text
+      in
       st.session <- Session.set_cell_kind cell_id kind st.session;
       (match Doc.find cell_id (Session.doc st.session) with
       | Some cell ->
@@ -295,25 +298,40 @@ let handle_client_msg st = function
 
 (* ───── WebSocket handler ───── *)
 
+(* [edited_cell st cell_id code] is the cell [cell_id] with the source [code]
+   its editor holds, which the session gets only after a delay. *)
+let edited_cell st cell_id code =
+  locked st (fun () ->
+      Option.map (Cell.set_source code)
+        (Doc.find cell_id (Session.doc st.session)))
+
 let handle_msg st = function
   | Protocol.Interrupt ->
       log "[exec] interrupt\n%!";
       Mutex.lock st.exec_mutex;
       st.exec_cancelled <- true;
       Mutex.unlock st.exec_mutex;
-      st.kernel.interrupt ()
-  | Protocol.Complete { request_id; code; pos } ->
-      let items = st.kernel.complete ~code ~pos in
+      Kernel.interrupt st.kernel
+  | Protocol.Complete { request_id; cell_id; code; pos } ->
+      let items =
+        match edited_cell st cell_id code with
+        | Some cell -> Kernel.complete st.kernel cell ~pos
+        | None -> []
+      in
       locked st (fun () ->
           send st (Protocol.completions_to_json ~request_id items))
-  | Protocol.Type_at { request_id; code; pos } ->
+  | Protocol.Type_at { request_id; cell_id; code; pos } ->
       let info =
-        match st.kernel.type_at with Some f -> f ~code ~pos | None -> None
+        match edited_cell st cell_id code with
+        | Some cell -> Kernel.type_at st.kernel cell ~pos
+        | None -> None
       in
       locked st (fun () -> send st (Protocol.type_at_to_json ~request_id info))
-  | Protocol.Diagnostics { request_id; code } ->
+  | Protocol.Diagnostics { request_id; cell_id; code } ->
       let items =
-        match st.kernel.diagnostics with Some f -> f ~code | None -> []
+        match edited_cell st cell_id code with
+        | Some cell -> Kernel.diagnostics st.kernel cell
+        | None -> []
       in
       locked st (fun () ->
           send st (Protocol.diagnostics_to_json ~request_id items))
@@ -359,26 +377,24 @@ let ws_handler st _req ws =
 
 (* ───── Entry point ───── *)
 
-let make_state ~create_kernel path =
+(* A prelude is code in the kernel's language, run before the notebook. *)
+let prelude_cell k code =
+  Cell.code ~id:"__prelude__" ~language:(Kernel.language k) code
+
+let make_state ~create_kernel ?prelude path =
   let stamp = Quill_markdown.stamp path in
   match Quill_markdown.load path with
   | Error _ as e -> e
   | Ok (doc, figures) ->
-      let session = Session.create doc in
+      (* The kernel reports its events to the state, which holds the kernel:
+         [state] is set once both exist, before the kernel runs anything. *)
+      let state = ref None in
+      let on_event ev = Option.iter (fun st -> on_kernel_event st ev) !state in
+      let kernel = create_kernel ~on_event in
       let st =
         {
-          session;
-          kernel =
-            {
-              execute = (fun ~cell_id:_ ~code:_ -> ());
-              interrupt = ignore;
-              complete = (fun ~code:_ ~pos:_ -> []);
-              type_at = None;
-              diagnostics = None;
-              is_complete = None;
-              status = (fun () -> Kernel.Starting);
-              shutdown = ignore;
-            };
+          session = Session.create doc;
+          kernel;
           path;
           figures;
           mutex = Mutex.create ();
@@ -390,8 +406,10 @@ let make_state ~create_kernel path =
           exec_cancelled = false;
         }
       in
-      let on_event ev = on_kernel_event st ev in
-      st.kernel <- create_kernel ~on_event;
+      state := Some st;
+      Option.iter
+        (fun code -> Kernel.execute kernel (prelude_cell kernel code))
+        prelude;
       ignore (Thread.create exec_worker st : Thread.t);
       Ok st
 
@@ -426,7 +444,7 @@ let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
     match on_ready with Some f -> f () | None -> ()
   in
   Httpd.run ~after_start server;
-  st.kernel.shutdown ()
+  Kernel.shutdown st.kernel
 
 (* ───── Directory mode ───── *)
 
@@ -485,19 +503,12 @@ let serve_dir ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready
     | Some st -> Ok st
     | None ->
         let abs_path = Filename.concat root nb_path in
-        let create_kernel ~on_event =
-          let k = create_kernel ~on_event in
-          (match prelude nb_path with
-          | Some code -> k.Kernel.execute ~cell_id:"__prelude__" ~code
-          | None -> ());
-          k
-        in
         Result.map
           (fun st ->
             Hashtbl.replace states nb_path st;
             log "[dir] created state for %s\n%!" nb_path;
             st)
-          (make_state ~create_kernel abs_path)
+          (make_state ~create_kernel ?prelude:(prelude nb_path) abs_path)
   in
   let server = Httpd.create ~addr ~port () in
   let serve_html _req =
@@ -540,4 +551,4 @@ let serve_dir ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready
     match on_ready with Some f -> f () | None -> ()
   in
   Httpd.run ~after_start server;
-  Hashtbl.iter (fun _ st -> st.kernel.shutdown ()) states
+  Hashtbl.iter (fun _ st -> Kernel.shutdown st.kernel) states

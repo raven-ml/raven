@@ -213,12 +213,52 @@ let highlight_ocaml buf source =
     end
   done
 
+(* Code blocks *)
+
+let copy_button =
+  {|<button class="copy-btn" aria-label="Copy code">|}
+  ^ {|<svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>|}
+  ^ {|<svg class="check-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>|}
+  ^ "</button>\n"
+
+(* The source of a code block and its copy button, which copies the [pre] beside
+   it. [language] is the block's, empty for none; OCaml is highlighted. *)
+let render_code buf ~language source =
+  Buffer.add_string buf "<pre><code";
+  if language <> "" then (
+    Buffer.add_string buf " class=\"language-";
+    buf_add_escaped buf language;
+    Buffer.add_char buf '"');
+  Buffer.add_char buf '>';
+  if language = "ocaml" || language = "ml" then highlight_ocaml buf source
+  else buf_add_escaped buf source;
+  Buffer.add_string buf "</code></pre>\n";
+  Buffer.add_string buf copy_button
+
 (* ───── Markdown to HTML with heading anchors ───── *)
+
+(* A code block in text, framed as a code cell's source is. *)
+let code_block_html (cb : Cmarkit.Block.Code_block.t) =
+  let language =
+    match Cmarkit.Block.Code_block.info_string cb with
+    | None -> ""
+    | Some (info, _) -> (
+        match Cmarkit.Block.Code_block.language_of_info_string info with
+        | Some (lang, _) -> lang
+        | None -> "")
+  in
+  let lines = List.map fst (Cmarkit.Block.Code_block.code cb) in
+  let buf = Buffer.create 256 in
+  Buffer.add_string buf {|<div class="code-cell">|};
+  Buffer.add_string buf "\n";
+  render_code buf ~language (String.concat "\n" lines);
+  Buffer.add_string buf "</div>\n";
+  Buffer.contents buf
 
 let markdown_to_html source =
   let doc = Cmarkit.Doc.of_string ~strict:false ~heading_auto_ids:true source in
   let module C = Cmarkit_renderer.Context in
-  let heading_block c = function
+  let block c = function
     | Cmarkit.Block.Heading (h, _) ->
         let level = string_of_int (Cmarkit.Block.Heading.level h) in
         C.string c "<h";
@@ -240,9 +280,12 @@ let markdown_to_html source =
         C.string c level;
         C.string c ">\n";
         true
+    | Cmarkit.Block.Code_block (cb, _) ->
+        C.string c (code_block_html cb);
+        true
     | _ -> false
   in
-  let custom = Cmarkit_renderer.make ~block:heading_block () in
+  let custom = Cmarkit_renderer.make ~block () in
   let default = Cmarkit_html.renderer ~safe:true () in
   let r = Cmarkit_renderer.compose default custom in
   Cmarkit_renderer.doc_to_string r doc
@@ -289,20 +332,7 @@ let render_code_cell buf ~language ~source ~outputs ~(attrs : Quill.Cell.attrs)
     Buffer.add_string buf "\n");
   Buffer.add_string buf {|<div class="code-cell">|};
   Buffer.add_string buf "\n";
-  if not hide_source then (
-    Buffer.add_string buf "<pre><code class=\"language-";
-    Buffer.add_string buf (escape_html language);
-    Buffer.add_string buf "\">";
-    if language = "ocaml" || language = "ml" then highlight_ocaml buf source
-    else buf_add_escaped buf source;
-    Buffer.add_string buf "</code></pre>\n";
-    (* Copy button *)
-    Buffer.add_string buf {|<button class="copy-btn" aria-label="Copy code">|};
-    Buffer.add_string buf
-      {|<svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>|};
-    Buffer.add_string buf
-      {|<svg class="check-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>|};
-    Buffer.add_string buf "</button>\n");
+  if not hide_source then render_code buf ~language source;
   List.iter (render_output buf) outputs;
   Buffer.add_string buf "</div>\n";
   if collapsed then Buffer.add_string buf "</details>\n"

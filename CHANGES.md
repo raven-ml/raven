@@ -4087,6 +4087,25 @@ thread.
 
 ### Quill
 
+- **Breaking:** A notebook's cells are its top-level code blocks marked to run,
+  as in ```` ```ocaml {.run} ````. Every other block, plain ```` ```ocaml ````
+  included, is text and never runs. A notebook from older Quill fails to load
+  until migrated with
+  `` sed -E -i.bak 's/^( {0,3})(`{3,}|~{3,})[[:blank:]]*ocaml[[:blank:]]*$/\1\2ocaml {.run}/' notebook.md ``.
+- **Breaking:** `Quill_markdown.of_string` returns a `result`, an error where it
+  raised for a notebook that stores figures as files. It and
+  `Quill_markdown.load` fail on a block that asks to run in another shape, such
+  as ```` ```{.ocaml .run} ````, or inside a list or quote, naming its line.
+- **Breaking:** `Quill.Kernel.t` is abstract and runs one language. Kernels are
+  built with `Kernel.make ~language`, and run cells with `Kernel.execute`, which
+  gives a cell in another language an `Error` output and a failed `Finished`.
+- **Breaking:** `Quill.Cell.code` takes a required `~language`, checked by the
+  new `Quill.Cell.is_language`, `Quill.Cell.is_ocaml` is removed, and
+  `Quill.Session.set_cell_kind` takes `` `Code language ``.
+- Saving a notebook that stores figures as files keeps a figure its text still
+  names, where it deleted the file under an output left in text.
+- `quill build` frames a code block in text like a code cell, with a copy
+  button. The terminal and web notebooks highlight only OCaml cells.
 - **Breaking:** `Quill_book.Build.build`, `Quill_book.Build.build_file` and
   `Quill_tui.run` return `(unit, string) result`, an error for a notebook that
   cannot be loaded.
@@ -4103,9 +4122,6 @@ thread.
   ids saved before March 2026 now show as literal lines in the terminal UI.
 - Saving a code cell with a line of three or more backticks fences it with more,
   where the line cut the cell on the next load.
-- `quill run`, `quill build` and running all cells in the terminal and web
-  notebooks run only OCaml code cells, where they ran a block in another
-  language, such as ```` ```bash ````, as OCaml and stored the error under it.
 - In the terminal notebook, Ctrl+C interrupts the running cell without
   quitting quill, Shift+Enter runs a cell in terminals that report it through
   the kitty keyboard protocol, and F1 opens help while editing, where `?` is

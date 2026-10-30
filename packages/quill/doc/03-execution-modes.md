@@ -182,7 +182,7 @@ quill run --inplace notebook.md
 
 Same as above, but writes outputs back into the file. After running,
 the file contains `<!-- quill:output -->` sections below each code
-block.
+cell.
 
 Images are stored in the file as data URIs. With `--figures`, each is
 written as a file in `figures/<stem>/` beside the notebook instead, and

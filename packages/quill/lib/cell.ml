@@ -97,7 +97,24 @@ type t =
     }
   | Text of { id : id; source : string; attrs : attrs }
 
-let code ?id ?(language = "ocaml") ?(attrs = default_attrs) source =
+(* A language is the first word of an info string that reads back as written:
+   CommonMark ends the word at whitespace, refuses a backtick in a backtick
+   fence's info string, and resolves backslash escapes and entity references,
+   and a word starting with ['{'] is an attribute block. *)
+let is_language s =
+  s <> ""
+  && s.[0] <> '{'
+  && String.for_all
+       (function
+         | ' ' | '\t' | '\n' | '\r' | '\011' | '\012' | '`' | '\\' | '&' ->
+             false
+         | _ -> true)
+       s
+
+let code ?id ~language ?(attrs = default_attrs) source =
+  if not (is_language language) then
+    invalid_arg
+      (Printf.sprintf "Quill.Cell.code: %S is not a language" language);
   let id = match id with Some id -> id | None -> fresh_id () in
   Code { id; source; language; outputs = []; execution_count = 0; attrs }
 
@@ -108,10 +125,6 @@ let text ?id ?(attrs = default_attrs) source =
 let id = function Code c -> c.id | Text t -> t.id
 let source = function Code c -> c.source | Text t -> t.source
 let attrs = function Code c -> c.attrs | Text t -> t.attrs
-
-let is_ocaml = function
-  | Code { language = "ocaml"; _ } -> true
-  | Code _ | Text _ -> false
 
 let set_source s = function
   | Code c -> Code { c with source = s }

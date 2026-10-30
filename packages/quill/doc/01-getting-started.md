@@ -74,14 +74,15 @@ quill note notebook.md
 
 ## Creating a Notebook
 
-Any `.md` file with fenced OCaml code blocks is a Quill notebook. Create
-a file `notebook.md`:
+A Quill notebook is a `.md` file. Its cells are the code blocks marked
+`{.run}` after their language, as in ```` ```ocaml {.run} ````. Create a
+file `notebook.md`:
 
     # Statistics
 
     We'll compute some basic statistics.
 
-    ```ocaml
+    ```ocaml {.run}
     open Nx
 
     let data = of_list float32 [| 1.0; 2.0; 3.0; 4.0; 5.0 |] [| 5 |]
@@ -90,17 +91,18 @@ a file `notebook.md`:
 
     Now the mean:
 
-    ```ocaml
+    ```ocaml {.run}
     let m = mean data
     let () = Printf.printf "Mean: %s\n" (to_string m)
     ```
 
-Code blocks share state: variables defined in one block are available in
-all subsequent blocks.
+Cells share state: variables defined in one cell are available in all
+subsequent cells. A code block without the mark, such as an install
+command in ```` ```bash ````, stays text and never runs.
 
 ## Running with `quill run`
 
-Batch-execute all code blocks:
+Run every cell:
 
 <!-- $MDX skip -->
 ```bash
@@ -117,9 +119,9 @@ file is not modified. Useful for quick checks and CI.
 quill run --inplace notebook.md
 ```
 
-Executes all code blocks and writes outputs back into the file as HTML
-comments. The file now contains `<!-- quill:output -->` sections below
-each code block. The notebook remains valid, readable markdown.
+Runs every cell and writes outputs back into the file as HTML comments.
+The file now contains `<!-- quill:output -->` sections below each cell.
+The notebook remains valid, readable markdown.
 
 ## Watch Mode
 
@@ -221,11 +223,11 @@ before re-execution.
 Code cells execute sequentially in a shared OCaml toplevel. Variables
 and functions defined in one cell are available in all subsequent cells:
 
-    ```ocaml
+    ```ocaml {.run}
     let greet name = Printf.printf "Hello, %s!\n" name
     ```
 
-    ```ocaml
+    ```ocaml {.run}
     let () = greet "world"
     (* prints: Hello, world! *)
     ```

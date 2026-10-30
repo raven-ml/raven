@@ -77,7 +77,7 @@ Interactive OCaml notebooks — run each cell with **Enter** to see results.
 
 Nx provides n-dimensional arrays, like NumPy for OCaml.
 
-```ocaml
+```ocaml {.run}
 let x = Nx.linspace Nx.float32 0. 5. 6
 let y = Nx.sin x
 ```
@@ -86,7 +86,7 @@ let y = Nx.sin x
 
 Hugin draws figures directly in the notebook.
 
-```ocaml
+```ocaml {.run}
 let x = Nx.linspace Nx.float32 0. 6.28 200
 let y = Nx.sin x
 
@@ -97,7 +97,7 @@ let _fig = Hugin.(line ~x:(num x) ~y:(num y) () |> title "A sine wave")
 
 Rune computes gradients automatically — define any function and differentiate it.
 
-```ocaml
+```ocaml {.run}
 let f x = Nx.pow_s x 3.                      (* f(x) = x³ *)
 
 let x = Nx.scalar Nx.float32 2.0
@@ -109,7 +109,7 @@ let gradient = Rune.grad' f x                  (* f'(2) = 3·2² = 12 *)
 
 Plot a function alongside its derivative.
 
-```ocaml
+```ocaml {.run}
 let f x = Nx.pow_s x 3.
 
 let xs = Nx.linspace Nx.float32 (-2.) 3. 200
@@ -269,7 +269,9 @@ let run_file ?prelude ~figures inplace path =
     (match abs_prelude with
     | Some p ->
         let code = read_file p in
-        k.Quill.Kernel.execute ~cell_id:"__prelude__" ~code
+        Quill.Kernel.execute k
+          (Quill.Cell.code ~id:"__prelude__" ~language:(Quill.Kernel.language k)
+             code)
     | None -> ());
     k
   in
@@ -456,7 +458,7 @@ let serve_term =
 
 (* run: batch execution *)
 let run_term =
-  let doc = "Execute all code blocks in a notebook or project." in
+  let doc = "Execute all cells in a notebook or project." in
   Cmd.v (Cmd.info "run" ~doc)
     Term.(
       const run_cmd $ watch_flag $ inplace_flag $ prelude_flag $ figures_flag

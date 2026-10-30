@@ -8,7 +8,7 @@ open Quill
 
 (* A notebook of one code cell, running or idle. *)
 let session ~running =
-  let c = Cell.code "1" in
+  let c = Cell.code ~language:"ocaml" "1" in
   let s = Session.create (Doc.of_cells [ c ]) in
   if running then Session.mark_running (Cell.id c) s else s
 
@@ -51,7 +51,7 @@ let footer_tests =
 
 let write path s = Out_channel.with_open_bin path (fun oc -> output_string oc s)
 let read path = In_channel.with_open_bin path In_channel.input_all
-let doc = Doc.of_cells [ Cell.code ~id:"c_x" "1" ]
+let doc = Doc.of_cells [ Cell.code ~id:"c_x" ~language:"ocaml" "1" ]
 
 (* A notebook saved by the terminal notebook, then replaced on disk by [edit],
    which the terminal notebook has not reloaded. *)

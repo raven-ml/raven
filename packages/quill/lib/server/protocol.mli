@@ -42,13 +42,25 @@ type client_msg =
   | Save  (** Save the notebook to disk. *)
   | Undo  (** Undo the last checkpoint. *)
   | Redo  (** Redo the last undone checkpoint. *)
-  | Complete of { request_id : string; code : string; pos : int }
-      (** Request completions for [code] at cursor position [pos]. [request_id]
-          correlates the response. *)
-  | Type_at of { request_id : string; code : string; pos : int }
-      (** Request type information at cursor position [pos] in [code]. *)
-  | Diagnostics of { request_id : string; code : string }
-      (** Request parse and type diagnostics for [code]. *)
+  | Complete of {
+      request_id : string;
+      cell_id : string;
+      code : string;
+      pos : int;
+    }
+      (** Request completions at cursor position [pos] in [code], the source of
+          cell [cell_id] being edited. [request_id] correlates the response. *)
+  | Type_at of {
+      request_id : string;
+      cell_id : string;
+      code : string;
+      pos : int;
+    }
+      (** Request type information at cursor position [pos] in [code], the
+          source of cell [cell_id] being edited. *)
+  | Diagnostics of { request_id : string; cell_id : string; code : string }
+      (** Request parse and type diagnostics for [code], the source of cell
+          [cell_id] being edited. *)
 
 val client_msg_of_json : string -> (client_msg, string) result
 (** [client_msg_of_json s] parses a JSON string into a client message. Returns

@@ -74,8 +74,10 @@ val clear_outputs : Cell.id -> t -> t
 val clear_all_outputs : t -> t
 (** [clear_all_outputs s] clears outputs from all code cells. *)
 
-val set_cell_kind : Cell.id -> [ `Code | `Text ] -> t -> t
-(** [set_cell_kind id kind s] changes cell [id] to the given [kind]. *)
+val set_cell_kind : Cell.id -> [ `Code of string | `Text ] -> t -> t
+(** [set_cell_kind id kind s] changes cell [id] to a code cell in the language
+    [l] for [`Code l], or to a text cell for [`Text]. The cell keeps its id,
+    source and attributes. *)
 
 val set_cell_attrs : Cell.id -> Cell.attrs -> t -> t
 (** [set_cell_attrs id attrs s] sets the display attributes of cell [id]. *)

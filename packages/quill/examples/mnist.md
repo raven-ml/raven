@@ -17,7 +17,7 @@ We use three raven packages:
 It returns `(x_train, y_train, x_test, y_test)` — images as float32
 in [0, 1] with shape `[N; 1; 28; 28]`, labels as int64 with shape `[N]`.
 
-```ocaml
+```ocaml {.run}
 open Kaun
 
 let () = Printf.printf "Loading MNIST...\n%!"
@@ -34,7 +34,7 @@ let () =
 Let's look at the first 10 training images and their labels.
 
 <!-- quill:cell id="c_mnist_viz_code" -->
-```ocaml
+```ocaml {.run}
 let _fig =
   let images = Nx.reshape [|10; 28; 28; 1|] (Nx.slice [Nx.R (0, 10)] x_train) in
   let labels = Array.init 10 (fun i -> Int64.to_string (Nx.item [i] y_train)) in
@@ -51,7 +51,7 @@ In Kaun, a model is a plain record of layers with a traversal over its tensor
 leaves — no special layer type:
 
 <!-- quill:cell id="c_mnist_model_code" -->
-```ocaml
+```ocaml {.run}
 module Model = struct
   type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
@@ -75,7 +75,7 @@ The parameters are just a value we construct; the optimizer state (Adam's
 moments) is a record shaped like the parameters themselves.
 
 <!-- quill:cell id="c_mnist_trainer_code" -->
-```ocaml
+```ocaml {.run}
 let batch_size = 64
 
 let params =
@@ -93,7 +93,7 @@ The training step is three lines you own: differentiate the loss with
 fold over shuffled minibatches.
 
 <!-- quill:cell id="c_mnist_train_code" -->
-```ocaml
+```ocaml {.run}
 let epochs = 1
 
 let () =
@@ -126,7 +126,7 @@ Let's look at the model's predictions on some test images. For each image we
 show the true label and the predicted label.
 
 <!-- quill:cell id="c_mnist_eval_code" -->
-```ocaml
+```ocaml {.run}
 let _fig =
   let images = Nx.reshape [|10; 28; 28; 1|] (Nx.slice [Nx.R (0, 10)] x_test) in
   let logits = Model.apply (fst !st) (Nx.slice [Nx.R (0, 10)] x_test) in

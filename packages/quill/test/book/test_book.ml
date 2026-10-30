@@ -33,7 +33,8 @@ let skip_eval_tests =
         let doc =
           Doc.of_cells
             [
-              Cell.code ~id:"c_x" "plot ()" |> Cell.set_outputs [ figure data ];
+              Cell.code ~language:"ocaml" ~id:"c_x" "plot ()"
+              |> Cell.set_outputs [ figure data ];
             ]
         in
         save path doc;
@@ -46,7 +47,7 @@ let skip_eval_tests =
         let doc =
           Doc.of_cells
             [
-              Cell.code ~id:"c_x" "plot ()"
+              Cell.code ~language:"ocaml" ~id:"c_x" "plot ()"
               |> Cell.set_outputs [ figure "PHN2Zy8+" ];
             ]
         in

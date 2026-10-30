@@ -4,7 +4,7 @@ first line.
 
   $ cat > nb.md <<'NB'
   > <!-- quill:cell id="c_fig" -->
-  > ```ocaml
+  > ```ocaml {.run}
   > let () =
   >   Format.pp_open_stag Format.std_formatter
   >     (Format.String_tag "quill.display\nimage/svg+xml\n\n<svg/>");
@@ -18,7 +18,7 @@ first line.
   <!-- quill:figures files -->
   
   <!-- quill:cell id="c_fig" -->
-  ```ocaml
+  ```ocaml {.run}
   let () =
     Format.pp_open_stag Format.std_formatter
       (Format.String_tag "quill.display\nimage/svg+xml\n\n<svg/>");

@@ -42,7 +42,8 @@ val create :
   on_event:(Quill.Kernel.event -> unit) ->
   unit ->
   Quill.Kernel.t
-(** [create ?setup ~on_event ()] creates a new OCaml toplevel kernel. Kernel
-    events are delivered by calling [on_event]. [setup] is called once before
-    the first cell execution, after toplevel initialization -- use it to call
-    {!add_packages} and {!install_printer}. *)
+(** [create ?setup ~on_event ()] creates a new OCaml toplevel kernel, whose
+    {!Quill.Kernel.language} is ["ocaml"]. Kernel events are delivered by
+    calling [on_event]. [setup] is called once before the first cell execution,
+    after toplevel initialization -- use it to call {!add_packages} and
+    {!install_printer}. *)

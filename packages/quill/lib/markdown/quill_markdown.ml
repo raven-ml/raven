@@ -28,26 +28,89 @@ let trim_blank_lines s =
     done;
     if !i > !j then "" else String.sub s !i (!j - !i + 1)
 
-let code_block_range b =
+(* A top-level fenced block whose info string is a language then [run_marker] is
+   a cell; any other block is part of the text around it. *)
+let run_marker = "{.run}"
+
+(* [is_run_token t] is [true] for [.run], [{.run], [.run}] and [{.run}]. *)
+let is_run_token t =
+  let n = String.length t in
+  let first = if n > 0 && t.[0] = '{' then 1 else 0 in
+  let last = if n > first && t.[n - 1] = '}' then n - 1 else n in
+  String.equal (String.sub t first (last - first)) ".run"
+
+(* [classify cb] is [`Cell language] if [cb] is marked to run, [`Malformed info]
+   if its info string [info] asks to run in another shape, such as [{.ocaml
+   .run}] or [ocaml {.run .numberLines}], and [`Text] otherwise. *)
+let classify cb =
+  match Cmarkit.Block.Code_block.info_string cb with
+  | None -> `Text
+  | Some (info, _) -> (
+      match Cmarkit.Block.Code_block.language_of_info_string info with
+      | Some (language, rest) when String.equal rest run_marker ->
+          if Quill.Cell.is_language language then `Cell language
+          else `Malformed info
+      | _ ->
+          let tokens =
+            String.split_on_char ' '
+              (String.map (function '\t' -> ' ' | c -> c) info)
+          in
+          if List.exists is_run_token tokens then `Malformed info else `Text)
+
+let line ~lines_before meta =
+  lines_before + fst (Cmarkit.Textloc.first_line (Cmarkit.Meta.textloc meta))
+
+let malformed ~line info =
+  Printf.sprintf
+    "line %d: the info string %S marks a block to run; write a language then \
+     {.run}, as in \"ocaml {.run}\""
+    line info
+
+let nested ~line =
+  Printf.sprintf
+    "line %d: a block marked {.run} must be at the top level, outside lists \
+     and quotes"
+    line
+
+(* [nested_mark ~lines_before b] is the error for the first block below [b] that
+   is marked to run, if any. *)
+let nested_mark ~lines_before b =
+  let block _ acc = function
+    | Cmarkit.Block.Code_block (cb, meta) when Option.is_none acc -> (
+        let line = line ~lines_before meta in
+        match classify cb with
+        | `Text -> Cmarkit.Folder.ret acc
+        | `Cell _ -> Cmarkit.Folder.ret (Some (nested ~line))
+        | `Malformed info -> Cmarkit.Folder.ret (Some (malformed ~line info)))
+    | _ -> Cmarkit.Folder.default
+  in
+  Cmarkit.Folder.fold_block (Cmarkit.Folder.make ~block ()) None b
+
+(* [code_cell ~lines_before b] is [Ok (Some (first, last, language, code))] for
+   a top-level block [b] that is a cell spanning bytes [first] to [last], [Ok
+   None] for text, and [Error msg] for a block that asks to run in another shape
+   or holds one. [lines_before] is the number of lines before the text
+   parsed. *)
+let code_cell ~lines_before b =
   match b with
-  | Cmarkit.Block.Code_block (cb, meta) ->
-      let language =
-        match Cmarkit.Block.Code_block.info_string cb with
-        | Some (info, _) -> (
-            match Cmarkit.Block.Code_block.language_of_info_string info with
-            | Some (lang, _) -> lang
-            | None -> "")
-        | None -> ""
-      in
-      let code_lines = Cmarkit.Block.Code_block.code cb in
-      let code =
-        String.concat "\n" (List.map (fun (line, _) -> line) code_lines)
-      in
-      let loc = Cmarkit.Meta.textloc meta in
-      let first = Cmarkit.Textloc.first_byte loc in
-      let last = Cmarkit.Textloc.last_byte loc in
-      Some (first, last, language, code)
-  | _ -> None
+  | Cmarkit.Block.Code_block (cb, meta) -> (
+      match classify cb with
+      | `Text -> Ok None
+      | `Malformed info ->
+          Error (malformed ~line:(line ~lines_before meta) info)
+      | `Cell language ->
+          let code_lines = Cmarkit.Block.Code_block.code cb in
+          let code =
+            String.concat "\n" (List.map (fun (line, _) -> line) code_lines)
+          in
+          let loc = Cmarkit.Meta.textloc meta in
+          let first = Cmarkit.Textloc.first_byte loc in
+          let last = Cmarkit.Textloc.last_byte loc in
+          Ok (Some (first, last, language, code)))
+  | b -> (
+      match nested_mark ~lines_before b with
+      | Some msg -> Error msg
+      | None -> Ok None)
 
 let cell_id_open = "<!-- quill:cell id=\""
 let comment_close = "-->"
@@ -356,16 +419,8 @@ let parse_outputs ~resolve ~cell_id md ~after =
       | None -> None)
   | _ -> None
 
-let parse ~resolve md =
-  let doc = Cmarkit.Doc.of_string ~locs:true md in
-  let top_blocks =
-    match Cmarkit.Doc.block doc with
-    | Cmarkit.Block.Blocks (bs, _) -> bs
-    | b -> [ b ]
-  in
-  (* Collect code block byte ranges *)
-  let code_ranges = List.filter_map code_block_range top_blocks in
-  (* Build cells by slicing the original text at code block boundaries *)
+(* Build cells by slicing the original text at code block boundaries *)
+let cells_of ~resolve md code_ranges =
   let cells = ref [] in
   let cursor = ref 0 in
   List.iter
@@ -410,6 +465,89 @@ let parse ~resolve md =
      if not (is_blank remaining) then
        cells := Quill.Cell.text remaining :: !cells);
   Quill.Doc.of_cells (List.rev !cells)
+
+(* The command that marks the cells of a notebook older than the run mark, which
+   ran every block fenced with [ocaml]. *)
+let migration =
+  {|sed -E -i.bak 's/^( {0,3})(`{3,}|~{3,})[[:blank:]]*ocaml[[:blank:]]*$/\1\2ocaml {.run}/' notebook.md|}
+
+(* An OCaml block is a cell [migration] marks; a block in another language needs
+   the user's choice, as [migration] leaves it unmarked. *)
+let unmarked ~line language =
+  if String.equal language "ocaml" then
+    Printf.sprintf
+      "line %d: a quill:cell comment stands above a block without {.run}, so \
+       this notebook predates the run mark. Migrate it with %s, and delete the \
+       comment above a block that should stay text."
+      line migration
+  else
+    Printf.sprintf
+      "line %d: a quill:cell comment stands above this %s block without \
+       {.run}; delete the comment to keep the block as text, or mark it {.run} \
+       to run it."
+      line language
+
+(* [comment_above md first] is [true] if the last line before byte [first] of
+   [md] that is not blank is a cell id comment. *)
+let comment_above md first =
+  let blank c = c = '\n' || c = '\r' || c = ' ' || c = '\t' in
+  let j = ref (first - 1) in
+  while !j >= 0 && blank md.[!j] do
+    decr j
+  done;
+  !j >= 0
+  &&
+  let i = ref !j in
+  while !i > 0 && md.[!i - 1] <> '\n' do
+    decr i
+  done;
+  let line = String.trim (String.sub md !i (!j - !i + 1)) in
+  match try_parse_cell_id line 0 with
+  | Some (_, _, 0, comment_end) -> comment_end = String.length line
+  | _ -> false
+
+(* [predates_mark md b] is [Some language] for a block in the shape older Quill
+   wrote its cells in: a cell id comment, then a fence whose info string is
+   [language] alone. *)
+let predates_mark md = function
+  | Cmarkit.Block.Code_block (cb, meta) -> (
+      match Cmarkit.Block.Code_block.info_string cb with
+      | None -> None
+      | Some (info, _) -> (
+          match Cmarkit.Block.Code_block.language_of_info_string info with
+          | Some (language, "")
+            when comment_above md
+                   (Cmarkit.Textloc.first_byte (Cmarkit.Meta.textloc meta)) ->
+              Some language
+          | _ -> None))
+  | _ -> None
+
+let code_cells ~lines_before md blocks =
+  let rec loop acc = function
+    | [] -> Ok (List.rev acc)
+    | b :: rest -> (
+        match code_cell ~lines_before b with
+        | Ok (Some c) -> loop (c :: acc) rest
+        | Ok None -> (
+            match predates_mark md b with
+            | Some language ->
+                let line = line ~lines_before (Cmarkit.Block.meta b) in
+                Error (unmarked ~line language)
+            | None -> loop acc rest)
+        | Error _ as e -> e)
+  in
+  loop [] blocks
+
+let parse ?(lines_before = 0) ~resolve md =
+  let doc = Cmarkit.Doc.of_string ~locs:true md in
+  let top_blocks =
+    match Cmarkit.Doc.block doc with
+    | Cmarkit.Block.Blocks (bs, _) -> bs
+    | b -> [ b ]
+  in
+  match code_cells ~lines_before md top_blocks with
+  | Error _ as e -> e
+  | Ok code_ranges -> Ok (cells_of ~resolve md code_ranges)
 
 (* ───── Rendering ───── *)
 
@@ -477,6 +615,8 @@ let render_cell ~image ~with_outputs buf = function
       render_cell_id buf id attrs;
       Buffer.add_string buf fence;
       Buffer.add_string buf language;
+      Buffer.add_char buf ' ';
+      Buffer.add_string buf run_marker;
       Buffer.add_char buf '\n';
       Buffer.add_string buf source;
       Buffer.add_char buf '\n';
@@ -680,29 +820,33 @@ let catch f =
 let load ?(outputs = true) path =
   catch @@ fun () ->
   let md = read_file path in
-  let figures, md =
-    match split_marker md with Some md -> (Files, md) | None -> (Inline, md)
+  let figures, lines_before, md =
+    match split_marker md with
+    | Some md -> (Files, 1, md)
+    | None -> (Inline, 0, md)
   in
   let resolve ~cell_id src =
     if outputs then read_figure path ~cell_id src else ""
   in
-  let doc = parse ~resolve md in
-  let doc = if outputs then doc else Quill.Doc.clear_all_outputs doc in
-  (doc, figures)
+  match parse ~lines_before ~resolve md with
+  | Error msg -> error "%s: %s" path msg
+  | Ok doc ->
+      let doc = if outputs then doc else Quill.Doc.clear_all_outputs doc in
+      (doc, figures)
 
 let of_string md =
+  catch @@ fun () ->
   if split_marker md <> None then
-    invalid_arg
+    error
       "Quill_markdown.of_string: the notebook stores its figures as files, \
        which Quill_markdown.load reads";
   let resolve ~cell_id src =
-    invalid_arg
-      (Printf.sprintf
-         "Quill_markdown.of_string: cell %s: figure %s is a file, which \
-          Quill_markdown.load reads"
-         cell_id src)
+    error
+      "Quill_markdown.of_string: cell %s: figure %s is a file, which \
+       Quill_markdown.load reads"
+      cell_id src
   in
-  parse ~resolve md
+  match parse ~resolve md with Error msg -> error "%s" msg | Ok doc -> doc
 
 let figure_ext mime =
   let ext = extension_of_mime mime in
@@ -725,8 +869,9 @@ let rmdir_empty dir =
   | _ -> ()
 
 (* The figures are written before the notebook that references them, and the
-   files it no longer references are removed after, so that a failure leaves no
-   reference to a missing file. *)
+   files it no longer names anywhere are removed after, so that a failure leaves
+   no reference to a missing file. A file that text still names, such as an
+   output of a block that lost its run mark, stays. *)
 let save_files path doc =
   let real = real path in
   let stem = stem real in
@@ -764,8 +909,9 @@ let save_files path doc =
     Array.iter
       (fun name ->
         let file = Filename.concat stem_dir name in
-        if (not (List.mem_assoc name !stored)) && kind file <> Some Unix.S_DIR
-        then Sys.remove file)
+        let src = figures_root ^ "/" ^ stem ^ "/" ^ name in
+        if find_substring md src 0 = None && kind file <> Some Unix.S_DIR then
+          Sys.remove file)
       (Sys.readdir stem_dir);
     rmdir_empty stem_dir;
     rmdir_empty dir);

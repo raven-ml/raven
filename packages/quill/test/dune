@@ -1,5 +1,5 @@
 (tests
- (names test_cell test_doc test_eval test_session)
- (modules test_cell test_doc test_eval test_session)
+ (names test_cell test_doc test_eval test_kernel test_session)
+ (modules test_cell test_doc test_eval test_kernel test_session)
  (package quill)
  (libraries quill windtrap))

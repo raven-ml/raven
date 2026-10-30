@@ -642,6 +642,7 @@ let is_complete_phrase code =
 (* ───── Kernel interface ───── *)
 
 let status_ref = ref Quill.Kernel.Idle
+let language = "ocaml"
 
 let create ?setup ~on_event () =
   let setup_done = ref false in
@@ -689,37 +690,29 @@ let create ?setup ~on_event () =
     status_ref := Quill.Kernel.Shutting_down;
     on_event (Quill.Kernel.Status_changed Shutting_down)
   in
-  {
-    Quill.Kernel.execute;
-    interrupt;
-    complete;
-    type_at =
-      Some
-        (fun ~code ~pos ->
-          try
-            ensure_setup ();
-            type_at_pos ~code ~pos
-          with exn ->
-            Printf.eprintf "[quill-top] type_at error: %s\n%!"
-              (Printexc.to_string exn);
-            None);
-    diagnostics =
-      Some
-        (fun ~code ->
-          try
-            ensure_setup ();
-            compute_diagnostics ~code
-          with exn ->
-            Printf.eprintf "[quill-top] diagnostics error: %s\n%!"
-              (Printexc.to_string exn);
-            []);
-    is_complete =
-      Some
-        (fun code ->
-          try
-            ensure_setup ();
-            is_complete_phrase code
-          with _ -> false);
-    status;
-    shutdown;
-  }
+  let type_at ~code ~pos =
+    try
+      ensure_setup ();
+      type_at_pos ~code ~pos
+    with exn ->
+      Printf.eprintf "[quill-top] type_at error: %s\n%!"
+        (Printexc.to_string exn);
+      None
+  in
+  let diagnostics ~code =
+    try
+      ensure_setup ();
+      compute_diagnostics ~code
+    with exn ->
+      Printf.eprintf "[quill-top] diagnostics error: %s\n%!"
+        (Printexc.to_string exn);
+      []
+  in
+  let is_complete code =
+    try
+      ensure_setup ();
+      is_complete_phrase code
+    with _ -> false
+  in
+  Quill.Kernel.make ~language ~on_event ~execute ~interrupt ~complete ~type_at
+    ~diagnostics ~is_complete ~status ~shutdown ()

@@ -111,6 +111,8 @@ function createCodeCell(cell, wsClient, store) {
       editorContainer.querySelector('.cm-content')?.blur();
     },
     wsClient,
+    cellId: cell.id,
+    language: cell.language,
   });
   editors.set(cell.id, view);
 

@@ -14,7 +14,7 @@ let accessor_tests =
         equal int 0 (List.length (Doc.cells d)));
     test "of_cells" (fun () ->
         let c1 = Cell.text "a" in
-        let c2 = Cell.code "b" in
+        let c2 = Cell.code ~language:"ocaml" "b" in
         let d = Doc.of_cells [ c1; c2 ] in
         equal int 2 (Doc.length d));
     test "nth" (fun () ->
@@ -90,7 +90,10 @@ let modification_tests =
         | Some c -> equal string "new" (Cell.source c)
         | None -> fail "expected Some");
     test "clear_all_outputs" (fun () ->
-        let c = Cell.code "x" |> Cell.set_outputs [ Cell.Stdout "out" ] in
+        let c =
+          Cell.code ~language:"ocaml" "x"
+          |> Cell.set_outputs [ Cell.Stdout "out" ]
+        in
         let d = Doc.of_cells [ c ] |> Doc.clear_all_outputs in
         match Doc.nth 0 d with
         | Some (Cell.Code { outputs; _ }) -> equal int 0 (List.length outputs)

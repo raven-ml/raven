@@ -4,7 +4,7 @@ A sample notebook to test the TUI.
 
 
 <!-- quill:cell id="c_nt02ejs0jlrx" -->
-```ocaml
+```ocaml {.run}
 let greeting = "Hello from Quill!"
 let () = print_endline greeting
 ```
@@ -14,7 +14,7 @@ then **Escape** to exit, or **Ctrl-Enter** to run.
 
 
 <!-- quill:cell id="c_1l7dzrlbekw8" -->
-```ocaml
+```ocaml {.run}
 let square x = x * x
 
 let () =
@@ -24,7 +24,7 @@ let () =
 ```
 
 <!-- quill:cell id="c_q446fmuel0h4" -->
-```ocaml
+```ocaml {.run}
 let rec fib n =
   if n <= 1 then n
   else fib (n - 1) + fib (n - 2)
@@ -44,7 +44,7 @@ $$\int_0^\infty e^{-x^2}\, dx = \frac{\sqrt{\pi}}{2}$$
 $$\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}$$
 
 <!-- quill:cell id="c_m4thc0d3c3ll" -->
-```ocaml
+```ocaml {.run}
 (* The Euler identity: e^(i*pi) + 1 = 0 *)
 let () =
   let open Complex in

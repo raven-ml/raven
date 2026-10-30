@@ -96,7 +96,7 @@ let info_fg = Ansi.Color.of_rgb 150 160 175
 let overlay_bg = Ansi.Color.of_rgb 12 12 16
 let cell_bg_focused = Ansi.Color.of_rgb 30 30 38
 let reload_interval = 1.0
-let template = "# Untitled\n\n```ocaml\n\n```\n"
+let template = "# Untitled\n\n```ocaml {.run}\n\n```\n"
 let lp n = Toffee.Style.Length_percentage.length (Float.of_int n)
 
 let padding_lrtb ~l ~r ~t ~b =
@@ -331,11 +331,15 @@ let should_clear_error_msg m msg =
     | _ -> true
 
 let current_code_cell m =
-  match focused_cell m with
-  | Some (Cell.Code { id; source; _ }) -> Some (id, source)
-  | _ -> None
+  match focused_cell m with Some (Cell.Code _ as c) -> Some c | _ -> None
 
-let build_completion ?(force = false) m code ~cursor ~selection =
+(* The terminal highlights OCaml and shows other languages as plain text. *)
+let is_ocaml = function
+  | Cell.Code { language = "ocaml"; _ } -> true
+  | Cell.Code _ | Cell.Text _ -> false
+
+let build_completion ?(force = false) m cell ~cursor ~selection =
+  let code = Cell.source cell in
   match find_prefix_at_cursor code ~cursor ~selection with
   | None -> None
   | Some (_, cursor_byte, replace_start_byte, prefix) -> (
@@ -345,12 +349,12 @@ let build_completion ?(force = false) m code ~cursor ~selection =
           try
             List.map
               (fun (c : Kernel.completion_item) -> c.label)
-              (m.kernel.complete ~code ~pos:cursor_byte)
+              (Kernel.complete m.kernel cell ~pos:cursor_byte)
           with _ -> []
         in
+        let keywords = if is_ocaml cell then ocaml_keywords else [] in
         let items =
-          unique_sorted
-            (kernel_items @ collect_identifiers code @ ocaml_keywords)
+          unique_sorted (kernel_items @ collect_identifiers code @ keywords)
           |> List.filter (fun item ->
               (String.length prefix = 0 || starts_with ~prefix item)
               && not (String.equal item prefix))
@@ -376,10 +380,10 @@ let preserve_selection prev next =
 let recompute_completion m =
   match current_code_cell m with
   | None -> { m with completion = None; completion_popup_open = false }
-  | Some (_, source) ->
+  | Some cell ->
       let force = m.completion_popup_open in
       let next =
-        build_completion ~force m source ~cursor:(Editor.cursor m.editor)
+        build_completion ~force m cell ~cursor:(Editor.cursor m.editor)
           ~selection:(Editor.selection m.editor)
       in
       { m with completion = preserve_selection m.completion next }
@@ -402,7 +406,9 @@ let ghost_text m =
 let apply_completion m c choice =
   match current_code_cell m with
   | None -> m
-  | Some (cell_id, source) ->
+  | Some cell ->
+      let cell_id = Cell.id cell in
+      let source = Cell.source cell in
       let editor =
         m.editor
         |> Editor.select
@@ -577,11 +583,15 @@ let check_reload m =
 
 (* ───── Execute helpers ───── *)
 
-let execute_cell m id source =
+(* A new code cell is in the language the kernel runs. *)
+let new_code_cell m = Cell.code ~language:(Kernel.language m.kernel) ""
+
+let execute_cell m cell =
+  let id = Cell.id cell in
   let session = Session.checkpoint m.session in
   let session = Session.clear_outputs id session in
   let session = Session.mark_running id session in
-  m.kernel.execute ~cell_id:id ~code:source;
+  Kernel.execute m.kernel cell;
   let session = drain_events m.event_queue session in
   clear_footer_message { m with session; dirty = true }
 
@@ -591,11 +601,11 @@ let execute_all_cells m =
   List.iter
     (fun cell ->
       match cell with
-      | Cell.Code { id; source; _ } when Cell.is_ocaml cell ->
+      | Cell.Code { id; _ } ->
           session := Session.mark_running id !session;
-          m.kernel.execute ~cell_id:id ~code:source;
+          Kernel.execute m.kernel cell;
           session := drain_events m.event_queue !session
-      | Cell.Code _ | Cell.Text _ -> ())
+      | Cell.Text _ -> ())
     (Doc.cells (Session.doc !session));
   clear_footer_message { m with session = !session; dirty = true }
 
@@ -605,11 +615,11 @@ let execute_all_cells m =
     mode on it. This gives the REPL-like "type, run, type more" flow. *)
 let execute_and_advance m =
   match focused_cell m with
-  | Some (Cell.Code { id; source; _ }) ->
-      let m = execute_cell m id source in
+  | Some (Cell.Code _ as cell) ->
+      let m = execute_cell m cell in
       (* Insert new code cell below *)
       let pos = m.focus + 1 in
-      let cell = Cell.code "" in
+      let cell = new_code_cell m in
       let session = Session.insert_cell ~pos cell m.session in
       let n = Doc.length (Session.doc session) in
       let focus = min pos (n - 1) in
@@ -649,7 +659,7 @@ let execute_and_advance m =
         (m, Cmd.none)
       else
         (* No next cell — create a new code cell *)
-        let cell = Cell.code "" in
+        let cell = new_code_cell m in
         let session = Session.insert_cell ~pos cell m.session in
         let n = Doc.length (Session.doc session) in
         let focus = min pos (n - 1) in
@@ -704,7 +714,7 @@ let update_quit m =
         Confirm "Unsaved changes. Press q again to quit, s to save.",
       Cmd.none )
   else (
-    m.kernel.shutdown ();
+    Kernel.shutdown m.kernel;
     (m, Cmd.quit))
 
 let update_editing msg m =
@@ -787,9 +797,7 @@ let update_editing msg m =
   | Execute_focused -> (
       (* Ctrl+Enter in edit mode: execute and stay *)
       match focused_cell m with
-      | Some (Cell.Code { id; source; _ }) ->
-          let m = execute_cell m id source in
-          (m, Cmd.none)
+      | Some (Cell.Code _ as cell) -> (execute_cell m cell, Cmd.none)
       | _ -> (m, Cmd.none))
   | Execute_and_advance -> execute_and_advance m
   | Save -> update_save m
@@ -804,7 +812,7 @@ let update_editing msg m =
           completion = None;
         }
   | Interrupt ->
-      m.kernel.interrupt ();
+      Kernel.interrupt m.kernel;
       (m, Cmd.none)
   | Tick dt ->
       let m = tick_model m dt in
@@ -825,19 +833,18 @@ let update_normal msg m =
   | Focus_prev -> ({ m with focus = max (m.focus - 1) 0 }, Cmd.none)
   | Execute_focused -> (
       match focused_cell m with
-      | Some (Cell.Code { id; source; _ }) ->
-          (execute_cell m id source, Cmd.none)
+      | Some (Cell.Code _ as cell) -> (execute_cell m cell, Cmd.none)
       | Some (Cell.Text _) ->
           (with_footer_message m Error "Cannot execute a text cell", Cmd.none)
       | None -> (with_footer_message m Warning "No cell to execute", Cmd.none))
   | Execute_and_advance -> execute_and_advance m
   | Execute_all -> (execute_all_cells m, Cmd.none)
   | Interrupt ->
-      m.kernel.interrupt ();
+      Kernel.interrupt m.kernel;
       (m, Cmd.none)
   | Insert_code_below ->
       let pos = m.focus + 1 in
-      let cell = Cell.code "" in
+      let cell = new_code_cell m in
       let session = Session.insert_cell ~pos cell m.session in
       let n = Doc.length (Session.doc session) in
       let focus = min pos (n - 1) in
@@ -874,7 +881,9 @@ let update_normal msg m =
       | Some cell ->
           let cell_id = Cell.id cell in
           let kind =
-            match cell with Cell.Code _ -> `Text | Cell.Text _ -> `Code
+            match cell with
+            | Cell.Code _ -> `Text
+            | Cell.Text _ -> `Code (Kernel.language m.kernel)
           in
           let session = Session.set_cell_kind cell_id kind m.session in
           ({ m with session; dirty = true }, Cmd.none)
@@ -1062,7 +1071,8 @@ let completion_panel ~is_editing m =
                     (prefix ^ item)));
           ]
 
-let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
+let view_code_cell m ~index ~is_focused ~is_editing ~status ~syntax source
+    outputs =
   let border_color = if is_focused then border_focused else border_unfocused in
   let num = index + 1 in
   let title =
@@ -1085,8 +1095,8 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
         [
           line_number ~flex_grow:1.
             ~line_colors:(active_line_colors source (Editor.cursor m.editor))
-            (textarea ~focused:(not m.show_help) ~state:m.editor
-               ~syntax:ocaml_syntax ?ghost_text
+            (textarea ~focused:(not m.show_help) ~state:m.editor ?syntax
+               ?ghost_text
                ~ghost_text_color:(Ansi.Color.grayscale ~level:10)
                ~text_color:output_fg ~background_color:cell_bg_focused
                ~focused_text_color:output_fg
@@ -1102,7 +1112,7 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
-        [ code ~syntax:ocaml_syntax source ]
+        [ code ?syntax source ]
   in
   let status_row =
     match status with
@@ -1173,7 +1183,9 @@ let view_cell ~index ~focus ~mode m cell =
   | Cell.Code { id; source; outputs; _ } ->
       let status = Session.cell_status id m.session in
       let is_editing = is_focused && mode = Editing in
-      view_code_cell m ~index ~is_focused ~is_editing ~status source outputs
+      let syntax = if is_ocaml cell then Some ocaml_syntax else None in
+      view_code_cell m ~index ~is_focused ~is_editing ~status ~syntax source
+        outputs
   | Cell.Text { source; _ } ->
       let is_editing = is_focused && mode = Editing in
       view_text_cell ~is_focused ~is_editing m source

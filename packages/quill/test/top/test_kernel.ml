@@ -28,10 +28,12 @@ let pp_fig ppf (Fig tag) =
   Format.pp_close_stag ppf ();;
 #install_printer pp_fig|}
 
+let cell code = Cell.code ~id:"c" ~language:"ocaml" code
+
 (* [outputs cells] is the outputs a notebook shows for the last of [cells], each
    run in turn by one kernel. *)
 let outputs cells =
-  let last = ref (Cell.code "") in
+  let last = ref (Cell.code ~language:"ocaml" "") in
   let on_event = function
     | Kernel.Output { output; _ } -> last := Cell.append_output output !last
     | _ -> ()
@@ -39,10 +41,10 @@ let outputs cells =
   let kernel = Quill_top.create ~on_event () in
   List.iter
     (fun code ->
-      last := Cell.code "";
-      kernel.execute ~cell_id:"c" ~code)
+      last := Cell.code ~language:"ocaml" "";
+      Kernel.execute kernel (cell code))
     cells;
-  kernel.shutdown ();
+  Kernel.shutdown kernel;
   match !last with Cell.Code { outputs; _ } -> outputs | Cell.Text _ -> []
 
 let svg data = Cell.Display { mime = "image/svg+xml"; id = None; data }
@@ -210,20 +212,20 @@ let kernel_tests =
 
 (* Printers *)
 
-(* [installed name cell] is the outcome of installing the printer [name] after
-   running [cell] in a kernel, and the outputs of the cell [T] then. *)
-let installed name cell =
+(* [installed name code] is the outcome of installing the printer [name] after
+   running [code] in a kernel, and the outputs of the cell [T] then. *)
+let installed name code =
   let outputs = ref [] in
   let on_event = function
     | Kernel.Output { output; _ } -> outputs := output :: !outputs
     | _ -> ()
   in
   let kernel = Quill_top.create ~on_event () in
-  kernel.execute ~cell_id:"c" ~code:cell;
+  Kernel.execute kernel (cell code);
   let r = Quill_top.install_printer name in
   outputs := [];
-  kernel.execute ~cell_id:"c" ~code:"T";
-  kernel.shutdown ();
+  Kernel.execute kernel (cell "T");
+  Kernel.shutdown kernel;
   (r, List.rev !outputs)
 
 let tee =
@@ -266,10 +268,67 @@ let exception_tests =
           (outputs [ Printf.sprintf "%s %S" raise message ]));
   ]
 
+(* Languages *)
+
+let pp_event ppf = function
+  | Kernel.Output { cell_id; output } ->
+      Format.fprintf ppf "Output (%S, %a)" cell_id pp_output output
+  | Kernel.Finished { cell_id; success } ->
+      Format.fprintf ppf "Finished (%S, %b)" cell_id success
+  | Kernel.Status_changed _ -> Format.fprintf ppf "Status_changed"
+
+let event = Testable.make ~pp:pp_event ~equal:( = )
+
+let language_tests =
+  [
+    test "the toplevel runs OCaml" (fun () ->
+        let kernel = Quill_top.create ~on_event:ignore () in
+        equal string "ocaml" (Kernel.language kernel));
+    test "a python cell is refused and leaves the toplevel as it was" (fun () ->
+        let events = ref [] in
+        let on_event = function
+          | Kernel.Status_changed _ -> ()
+          | e -> events := e :: !events
+        in
+        let kernel = Quill_top.create ~on_event () in
+        Kernel.execute kernel
+          (Cell.code ~id:"a" ~language:"ocaml" "let kept = 41");
+        events := [];
+        Kernel.execute kernel (Cell.code ~id:"p" ~language:"python" "kept = 0");
+        Kernel.execute kernel
+          (Cell.code ~id:"b" ~language:"ocaml" "let () = print_int (kept + 1)");
+        Kernel.shutdown kernel;
+        equal (list event)
+          [
+            Output
+              {
+                cell_id = "p";
+                output =
+                  Error
+                    "no kernel runs python code: this notebook's kernel runs \
+                     ocaml";
+              };
+            Finished { cell_id = "p"; success = false };
+            Output { cell_id = "b"; output = Stdout "42" };
+            Finished { cell_id = "b"; success = true };
+          ]
+          (List.rev !events));
+    test "a python cell has no completions" (fun () ->
+        let kernel = Quill_top.create ~on_event:ignore () in
+        equal (list string) []
+          (List.map
+             (fun (i : Kernel.completion_item) -> i.label)
+             (Kernel.complete kernel
+                (Cell.code ~language:"python" "List.ma")
+                ~pos:7));
+        Kernel.shutdown kernel);
+  ]
+
 let () =
   exit
     (run "Kernel"
        [
+         group "Languages" language_tests;
          group "Display tags" kernel_tests;
          group "Printers" printer_tests;
          group "Exceptions" exception_tests;

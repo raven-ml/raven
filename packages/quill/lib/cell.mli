@@ -118,9 +118,10 @@ type t = private
   | Text of { id : id; source : string; attrs : attrs }
       (** The type for notebook cells.
 
-          - [Code] is an executable code cell. [language] identifies the kernel
-            (e.g. ["ocaml"]). [execution_count] tracks how many times this cell
-            has been executed (starts at [0]).
+          - [Code] is an executable code cell. [language] is the language its
+            source is in, such as ["ocaml"], which selects the kernel that runs
+            it ({!Kernel.execute}). [execution_count] tracks how many times this
+            cell has been executed (starts at [0]).
           - [Text] is a text cell whose [source] is markdown.
 
           The type is private: pattern matching is allowed, but cells must be
@@ -128,10 +129,19 @@ type t = private
 
 (** {1:constructors Constructors} *)
 
-val code : ?id:id -> ?language:string -> ?attrs:attrs -> string -> t
-(** [code ?id ?language ?attrs source] is a code cell with the given [source].
-    [language] defaults to ["ocaml"]. [attrs] defaults to {!default_attrs}. A
-    fresh identifier is generated when [id] is not provided. *)
+val is_language : string -> bool
+(** [is_language s] is [true] iff [s] names a language. A language is non-empty,
+    does not start with ['{'], and holds no whitespace, backtick, backslash or
+    ['&']. Such a name is written and read back unchanged as the first word of a
+    Markdown code block's info string. *)
+
+val code : ?id:id -> language:string -> ?attrs:attrs -> string -> t
+(** [code ?id ~language ?attrs source] is a code cell in [language] with the
+    given [source]. [attrs] defaults to {!default_attrs}. A fresh identifier is
+    generated when [id] is not provided.
+
+    Raises [Invalid_argument] if [language] is not a language ({!is_language}).
+*)
 
 val text : ?id:id -> ?attrs:attrs -> string -> t
 (** [text ?id ?attrs source] is a text cell with the given [source]. [attrs]
@@ -148,11 +158,6 @@ val source : t -> string
 
 val attrs : t -> attrs
 (** [attrs c] is the display attributes of cell [c]. *)
-
-val is_ocaml : t -> bool
-(** [is_ocaml c] is [true] iff [c] is a code cell in OCaml, the language the
-    kernel runs. A fenced block in another language (["bash"], ["json"],
-    ["python"], or none) is a code cell that is shown and never executed. *)
 
 (** {1:transformations Transformations} *)
 

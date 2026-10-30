@@ -111,7 +111,7 @@ function mapCompletionKind(kind) {
   }
 }
 
-function makeCompletionSource(wsClient) {
+function makeCompletionSource(wsClient, cellId) {
   return async (context) => {
     const trigger = context.matchBefore(/[\w.]+$/);
     if (!trigger && !context.explicit) return null;
@@ -120,7 +120,7 @@ function makeCompletionSource(wsClient) {
     const pos = context.pos;
 
     try {
-      const items = await wsClient.complete(code, pos);
+      const items = await wsClient.complete(cellId, code, pos);
       if (!items || items.length === 0) return null;
       return {
         from: trigger ? trigger.from : context.pos,
@@ -138,11 +138,11 @@ function makeCompletionSource(wsClient) {
 
 // --- Hover tooltip source ---
 
-function makeHoverSource(wsClient) {
+function makeHoverSource(wsClient, cellId) {
   return hoverTooltip(async (view, pos) => {
     const code = view.state.doc.toString();
     try {
-      const result = await wsClient.typeAt(code, pos);
+      const result = await wsClient.typeAt(cellId, code, pos);
       if (!result || !result.info) return null;
       return {
         pos: result.info.from,
@@ -171,12 +171,12 @@ function makeHoverSource(wsClient) {
 
 // --- Lint source ---
 
-function makeLintSource(wsClient) {
+function makeLintSource(wsClient, cellId) {
   return linter(async (view) => {
     const code = view.state.doc.toString();
     if (!code.trim()) return [];
     try {
-      const result = await wsClient.diagnostics(code);
+      const result = await wsClient.diagnostics(cellId, code);
       if (!result || !result.items) return [];
       return result.items.map(d => ({
         from: d.from,
@@ -193,10 +193,9 @@ function makeLintSource(wsClient) {
 // --- Editor creation ---
 
 export function createEditor(container, source, options) {
-  const { onChange, onExecute, onExecuteAndMoveNext, onEscape, wsClient } = options;
+  const { onChange, onExecute, onExecuteAndMoveNext, onEscape, wsClient, cellId, language } = options;
 
   const extensions = [
-    StreamLanguage.define(oCaml).extension,
     lineNumbers(),
     highlightActiveLine(),
     highlightActiveLineGutter(),
@@ -226,14 +225,19 @@ export function createEditor(container, source, options) {
     ]),
   ];
 
+  // OCaml is highlighted; another language shows as plain text.
+  if (language === 'ocaml') {
+    extensions.push(StreamLanguage.define(oCaml).extension);
+  }
+
   if (wsClient) {
     extensions.push(
       autocompletion({
-        override: [makeCompletionSource(wsClient)],
+        override: [makeCompletionSource(wsClient, cellId)],
         activateOnTyping: true,
       }),
-      makeHoverSource(wsClient),
-      makeLintSource(wsClient),
+      makeHoverSource(wsClient, cellId),
+      makeLintSource(wsClient, cellId),
     );
   }
 

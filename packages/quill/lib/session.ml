@@ -102,7 +102,7 @@ let set_cell_kind cell_id kind s =
           let attrs = Cell.attrs c in
           let c' =
             match kind with
-            | `Code -> Cell.code ~id ~attrs src
+            | `Code language -> Cell.code ~id ~language ~attrs src
             | `Text -> Cell.text ~id ~attrs src
           in
           Doc.replace cell_id c' doc)

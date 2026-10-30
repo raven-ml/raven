@@ -10,14 +10,14 @@ let run ~create_kernel doc =
         doc := Doc.add_output cell_id output !doc
     | _ -> ()
   in
-  let (kernel : Kernel.t) = create_kernel ~on_event in
+  let kernel = create_kernel ~on_event in
   List.iter
     (fun cell ->
       match cell with
-      | Cell.Code { id; source; _ } when Cell.is_ocaml cell ->
-          kernel.execute ~cell_id:id ~code:source;
+      | Cell.Code { id; _ } ->
+          Kernel.execute kernel cell;
           doc := Doc.update id Cell.increment_execution_count !doc
-      | Cell.Code _ | Cell.Text _ -> ())
+      | Cell.Text _ -> ())
     (Doc.cells !doc);
-  kernel.shutdown ();
+  Kernel.shutdown kernel;
   !doc

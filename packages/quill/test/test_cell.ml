@@ -9,43 +9,50 @@ open Quill
 let constructor_tests =
   [
     test "code cell defaults" (fun () ->
-        let c = Cell.code "let x = 1" in
+        let c = Cell.code ~language:"ocaml" "let x = 1" in
         equal string "let x = 1" (Cell.source c);
         match c with
-        | Cell.Code { language; outputs; _ } ->
-            equal string "ocaml" language;
-            equal int 0 (List.length outputs)
+        | Cell.Code { outputs; execution_count; attrs; _ } ->
+            equal int 0 (List.length outputs);
+            equal int 0 execution_count;
+            equal bool false attrs.collapsed;
+            equal bool false attrs.hide_source
         | _ -> fail "expected Code cell");
-    test "code cell with language" (fun () ->
+    cases "a code cell's language is a word" ~id:String.escaped
+      [ ""; "a b"; "a\tb"; "a\nb"; "a`b"; "{.ocaml}"; "a\\b"; "a&b" ]
+      (fun language ->
+        raises
+          (Invalid_argument
+             (Printf.sprintf "Quill.Cell.code: %S is not a language" language))
+          (fun () -> Cell.code ~language "x"));
+    test "a code cell keeps its language" (fun () ->
         let c = Cell.code ~language:"python" "print(1)" in
         match c with
         | Cell.Code { language; _ } -> equal string "python" language
         | _ -> fail "expected Code cell");
-    test "is_ocaml" (fun () ->
-        is_true (Cell.is_ocaml (Cell.code "let x = 1"));
-        is_false (Cell.is_ocaml (Cell.code ~language:"bash" "ls"));
-        is_false (Cell.is_ocaml (Cell.code ~language:"" "plain"));
-        is_false (Cell.is_ocaml (Cell.text "let x = 1")));
     test "text cell" (fun () ->
         let c = Cell.text "# Hello" in
         equal string "# Hello" (Cell.source c);
         match c with Cell.Text _ -> () | _ -> fail "expected Text cell");
     test "unique ids" (fun () ->
-        let a = Cell.code "a" in
-        let b = Cell.code "b" in
+        let a = Cell.code ~language:"ocaml" "a" in
+        let b = Cell.code ~language:"ocaml" "b" in
         is_true ~msg:"distinct ids" (not (String.equal (Cell.id a) (Cell.id b))));
   ]
 
 let transformation_tests =
   [
     test "set_source on code" (fun () ->
-        let c = Cell.code "old" |> Cell.set_source "new" in
+        let c = Cell.code ~language:"ocaml" "old" |> Cell.set_source "new" in
         equal string "new" (Cell.source c));
     test "set_source on text" (fun () ->
         let c = Cell.text "old" |> Cell.set_source "new" in
         equal string "new" (Cell.source c));
     test "set_outputs" (fun () ->
-        let c = Cell.code "x" |> Cell.set_outputs [ Cell.Stdout "hello" ] in
+        let c =
+          Cell.code ~language:"ocaml" "x"
+          |> Cell.set_outputs [ Cell.Stdout "hello" ]
+        in
         match c with
         | Cell.Code { outputs; _ } -> equal int 1 (List.length outputs)
         | _ -> fail "expected Code cell");
@@ -54,7 +61,7 @@ let transformation_tests =
         match c with Cell.Text _ -> () | _ -> fail "expected Text cell");
     test "append_output" (fun () ->
         let c =
-          Cell.code "x"
+          Cell.code ~language:"ocaml" "x"
           |> Cell.append_output (Cell.Stdout "a")
           |> Cell.append_output (Cell.Stderr "b")
         in
@@ -63,7 +70,7 @@ let transformation_tests =
         | _ -> fail "expected Code cell");
     test "clear_outputs" (fun () ->
         let c =
-          Cell.code "x"
+          Cell.code ~language:"ocaml" "x"
           |> Cell.set_outputs [ Cell.Stdout "hello" ]
           |> Cell.clear_outputs
         in
@@ -75,7 +82,7 @@ let transformation_tests =
 let attrs_tests =
   [
     test "default attrs" (fun () ->
-        let c = Cell.code "x" in
+        let c = Cell.code ~language:"ocaml" "x" in
         let a = Cell.attrs c in
         is_false ~msg:"not collapsed" a.collapsed;
         is_false ~msg:"not hide_source" a.hide_source);
@@ -86,12 +93,12 @@ let attrs_tests =
         is_false ~msg:"not hide_source" a.hide_source);
     test "code with attrs" (fun () ->
         let a = { Cell.collapsed = true; hide_source = false } in
-        let c = Cell.code ~attrs:a "x" in
+        let c = Cell.code ~language:"ocaml" ~attrs:a "x" in
         let a' = Cell.attrs c in
         is_true ~msg:"collapsed" a'.collapsed;
         is_false ~msg:"not hide_source" a'.hide_source);
     test "set_attrs on code" (fun () ->
-        let c = Cell.code "x" in
+        let c = Cell.code ~language:"ocaml" "x" in
         let c = Cell.set_attrs { collapsed = false; hide_source = true } c in
         let a = Cell.attrs c in
         is_false ~msg:"not collapsed" a.collapsed;
@@ -102,7 +109,9 @@ let attrs_tests =
         is_true ~msg:"collapsed" (Cell.attrs c).collapsed);
     test "set_source preserves attrs" (fun () ->
         let a = { Cell.collapsed = true; hide_source = true } in
-        let c = Cell.code ~attrs:a "old" |> Cell.set_source "new" in
+        let c =
+          Cell.code ~language:"ocaml" ~attrs:a "old" |> Cell.set_source "new"
+        in
         let a' = Cell.attrs c in
         is_true ~msg:"collapsed preserved" a'.collapsed;
         is_true ~msg:"hide_source preserved" a'.hide_source);
@@ -226,7 +235,7 @@ let append_tests =
   [
     test "a display with an id replaces the cell's display in place" (fun () ->
         let c =
-          Cell.code "x"
+          Cell.code ~language:"ocaml" "x"
           |> Cell.append_output (svg ~id:"a" "1")
           |> Cell.append_output (Cell.Stderr "e")
           |> Cell.append_output (svg ~id:"a" "2")
@@ -234,14 +243,14 @@ let append_tests =
         equal (list output) [ svg ~id:"a" "2"; Cell.Stderr "e" ] (outputs c));
     test "a display with another id appends" (fun () ->
         let c =
-          Cell.code "x"
+          Cell.code ~language:"ocaml" "x"
           |> Cell.append_output (svg ~id:"a" "1")
           |> Cell.append_output (svg ~id:"b" "2")
         in
         equal (list output) [ svg ~id:"a" "1"; svg ~id:"b" "2" ] (outputs c));
     test "a display without an id appends" (fun () ->
         let c =
-          Cell.code "x"
+          Cell.code ~language:"ocaml" "x"
           |> Cell.append_output (svg "1")
           |> Cell.append_output (svg "1")
         in

@@ -43,16 +43,24 @@ let basic_tests =
         match Doc.nth 0 (Session.doc s) with
         | Some c -> equal string "c" (Cell.source c)
         | None -> fail "expected Some");
-    test "set cell kind" (fun () ->
-        let c = Cell.text "code here" in
-        let doc = Doc.of_cells [ c ] in
-        let s = Session.create doc in
-        let s = Session.set_cell_kind (Cell.id c) `Code s in
+    test "set cell kind keeps the id, source and attributes" (fun () ->
+        let attrs = { Cell.collapsed = true; hide_source = false } in
+        let c = Cell.text ~id:"t_1" ~attrs "code here" in
+        let s = Session.create (Doc.of_cells [ c ]) in
+        let s = Session.set_cell_kind "t_1" (`Code "ocaml") s in
         match Doc.nth 0 (Session.doc s) with
-        | Some (Cell.Code _) -> ()
+        | Some (Cell.Code { id; language; source; attrs = a; _ }) ->
+            equal string "t_1" id;
+            equal string "ocaml" language;
+            equal string "code here" source;
+            equal bool true a.collapsed;
+            equal bool false a.hide_source
         | _ -> fail "expected Code cell");
     test "clear outputs" (fun () ->
-        let c = Cell.code "x" |> Cell.set_outputs [ Cell.Stdout "out" ] in
+        let c =
+          Cell.code ~language:"ocaml" "x"
+          |> Cell.set_outputs [ Cell.Stdout "out" ]
+        in
         let doc = Doc.of_cells [ c ] in
         let s = Session.create doc in
         let s = Session.clear_outputs (Cell.id c) s in
@@ -60,8 +68,14 @@ let basic_tests =
         | Some (Cell.Code { outputs; _ }) -> equal int 0 (List.length outputs)
         | _ -> fail "expected Code cell");
     test "clear all outputs" (fun () ->
-        let c1 = Cell.code "x" |> Cell.set_outputs [ Cell.Stdout "out1" ] in
-        let c2 = Cell.code "y" |> Cell.set_outputs [ Cell.Stdout "out2" ] in
+        let c1 =
+          Cell.code ~language:"ocaml" "x"
+          |> Cell.set_outputs [ Cell.Stdout "out1" ]
+        in
+        let c2 =
+          Cell.code ~language:"ocaml" "y"
+          |> Cell.set_outputs [ Cell.Stdout "out2" ]
+        in
         let doc = Doc.of_cells [ c1; c2 ] in
         let s = Session.create doc in
         let s = Session.clear_all_outputs s in
@@ -76,7 +90,7 @@ let basic_tests =
 let execution_state_tests =
   [
     test "mark running" (fun () ->
-        let c = Cell.code "let x = 1" in
+        let c = Cell.code ~language:"ocaml" "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let s = Session.create doc in
         let s = Session.mark_running (Cell.id c) s in
@@ -84,7 +98,7 @@ let execution_state_tests =
         | Session.Running -> ()
         | _ -> fail "expected Running");
     test "mark queued" (fun () ->
-        let c = Cell.code "let x = 1" in
+        let c = Cell.code ~language:"ocaml" "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let s = Session.create doc in
         let s = Session.mark_queued (Cell.id c) s in
@@ -92,7 +106,7 @@ let execution_state_tests =
         | Session.Queued -> ()
         | _ -> fail "expected Queued");
     test "apply output and finish" (fun () ->
-        let c = Cell.code "let x = 1" in
+        let c = Cell.code ~language:"ocaml" "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let s = Session.create doc in
         let s = Session.mark_running (Cell.id c) s in
@@ -110,7 +124,7 @@ let execution_state_tests =
             equal int 1 execution_count
         | _ -> fail "expected Code cell with outputs");
     test "default status is idle" (fun () ->
-        let c = Cell.code "x" in
+        let c = Cell.code ~language:"ocaml" "x" in
         let doc = Doc.of_cells [ c ] in
         let s = Session.create doc in
         match Session.cell_status (Cell.id c) s with
@@ -206,7 +220,9 @@ let outputs s =
 
 (* [session n] is a session over [n] empty code cells, and their ids. *)
 let session n =
-  let cells = List.init n (fun i -> Cell.code (string_of_int i)) in
+  let cells =
+    List.init n (fun i -> Cell.code ~language:"ocaml" (string_of_int i))
+  in
   (Session.create (Doc.of_cells cells), List.map Cell.id cells)
 
 let apply outs s ids =

@@ -34,20 +34,25 @@ let view = function
   | Cell.Code { language; source; _ } -> Code (language, source)
 
 let cells doc = List.map view (Doc.cells doc)
+let lines ls = String.concat "\n" ls
+
+(* [parse md] is the notebook [md], which must load. *)
+let parse md =
+  require_ok ~pp:Format.pp_print_string (Quill_markdown.of_string md)
 
 let parsing_tests =
   [
     test "empty document" (fun () ->
-        let doc = Quill_markdown.of_string "" in
+        let doc = parse "" in
         equal int 0 (Doc.length doc));
     test "text only" (fun () ->
-        let doc = Quill_markdown.of_string "# Hello\n\nSome text." in
+        let doc = parse "# Hello\n\nSome text." in
         equal int 1 (Doc.length doc);
         match Doc.nth 0 doc with
         | Some (Cell.Text _) -> ()
         | _ -> fail "expected Text cell");
     test "code only" (fun () ->
-        let doc = Quill_markdown.of_string "```ocaml\nlet x = 1\n```\n" in
+        let doc = parse "```ocaml {.run}\nlet x = 1\n```\n" in
         equal int 1 (Doc.length doc);
         match Doc.nth 0 doc with
         | Some (Cell.Code { language; source; _ }) ->
@@ -57,15 +62,15 @@ let parsing_tests =
     test "mixed content" (fun () ->
         let md =
           "# Title\n\n\
-           ```ocaml\n\
+           ```ocaml {.run}\n\
            let x = 1\n\
            ```\n\n\
            Some text.\n\n\
-           ```ocaml\n\
+           ```ocaml {.run}\n\
            let y = 2\n\
            ```\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         equal int 4 (Doc.length doc);
         (match Doc.nth 0 doc with
         | Some (Cell.Text _) -> ()
@@ -79,22 +84,81 @@ let parsing_tests =
         match Doc.nth 3 doc with
         | Some (Cell.Code { source; _ }) -> equal string "let y = 2" source
         | _ -> fail "expected Code cell at 3");
-    test "code without language" (fun () ->
-        let doc = Quill_markdown.of_string "```\nsome code\n```\n" in
-        equal int 1 (Doc.length doc);
-        match Doc.nth 0 doc with
-        | Some (Cell.Code { language; _ }) -> equal string "" language
-        | _ -> fail "expected Code cell");
+    cases "a block marked {.run} is a cell in its language" ~id:fst
+      [
+        ("ocaml {.run}", ("```ocaml {.run}\nlet x = 1\n```", "ocaml"));
+        ("bash {.run}", ("```bash {.run}\nls\n```", "bash"));
+        ("a tilde fence", ("~~~ocaml {.run}\nlet x = 1\n~~~", "ocaml"));
+        ("spaces before the mark", ("```ocaml   {.run}\nx\n```", "ocaml"));
+        ("a tab before the mark", ("```ocaml\t{.run}\nx\n```", "ocaml"));
+      ]
+      (fun (_, (md, language)) ->
+        match cells (parse md) with
+        | [ Code (l, _) ] -> equal string language l
+        | views ->
+            failf "expected one code cell, got %d cells" (List.length views));
+    cases "any other block is text, byte for byte" ~id:Fun.id
+      [
+        "```ocaml\nlet x = 1\n```";
+        "```ocaml run\nlet x = 1\n```";
+        "```ocaml {run}\nlet x = 1\n```";
+        "```ocaml{.run}\nlet x = 1\n```";
+        "```js run=false\n1\n```";
+        "```bash\nls\n```";
+        "```\nunlabelled\n```";
+        "~~~\ntilde\n~~~";
+        "    indented code";
+        "- a list\n\n  ```ocaml\n  let x = 1\n  ```";
+      ] (fun md -> equal (list cell) [ Txt md ] (cells (parse md)));
+    (* Each fence, and its info string as CommonMark reads it. *)
+    cases "a block that asks to run in another shape does not load" ~id:fst
+      [
+        ("pandoc classes", ("```{.ocaml .run}", "{.ocaml .run}"));
+        ( "another class",
+          ("```ocaml {.run .numberLines}", "ocaml {.run .numberLines}") );
+        ("an identifier", ("```ocaml {#x .run}", "ocaml {#x .run}"));
+        ("no language", ("``` {.run}", "{.run}"));
+        ("a bare class", ("```ocaml .run", "ocaml .run"));
+        ("a backtick in the language", ("~~~a`b {.run}", "a`b {.run}"));
+        ("an entity in the language", ("~~~a&amp;b {.run}", "a&b {.run}"));
+      ]
+      (fun (_, (fence, info)) ->
+        let md = lines [ "# Title"; ""; fence; "let x = 1"; "```"; "" ] in
+        equal (result pass string)
+          (Error
+             (Printf.sprintf
+                "line 3: the info string %S marks a block to run; write a \
+                 language then {.run}, as in \"ocaml {.run}\""
+                info))
+          (Quill_markdown.of_string md));
+    cases "a marked block inside a list or a quote does not load" ~id:fst
+      [
+        ( "a list item",
+          ( lines
+              [ "Steps:"; ""; "- run"; ""; "  ```ocaml {.run}"; "  1"; "  ```" ],
+            "line 5: a block marked {.run} must be at the top level, outside \
+             lists and quotes" ) );
+        ( "a block quote",
+          ( lines [ "> ```ocaml {.run}"; "> 1"; "> ```" ],
+            "line 1: a block marked {.run} must be at the top level, outside \
+             lists and quotes" ) );
+        ( "a list item, in another shape",
+          ( lines [ "- ```{.ocaml .run}"; "  1"; "  ```" ],
+            "line 1: the info string \"{.ocaml .run}\" marks a block to run; \
+             write a language then {.run}, as in \"ocaml {.run}\"" ) );
+      ]
+      (fun (_, (md, msg)) ->
+        equal (result pass string) (Error msg) (Quill_markdown.of_string md));
     test "parse output markers" (fun () ->
         let md =
-          "```ocaml\n\
+          "```ocaml {.run}\n\
            let x = 1\n\
            ```\n\
            <!-- quill:output -->\n\
            val x : int = 1\n\
            <!-- /quill:output -->\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         equal int 1 (Doc.length doc);
         match Doc.nth 0 doc with
         | Some (Cell.Code { outputs; _ }) -> (
@@ -106,7 +170,7 @@ let parsing_tests =
     test "parse strips output markers as text" (fun () ->
         let md =
           "# Title\n\n\
-           ```ocaml\n\
+           ```ocaml {.run}\n\
            let x = 1\n\
            ```\n\
            <!-- quill:output -->\n\
@@ -114,7 +178,7 @@ let parsing_tests =
            <!-- /quill:output -->\n\n\
            Some text.\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         equal int 3 (Doc.length doc);
         (match Doc.nth 0 doc with
         | Some (Cell.Text _) -> ()
@@ -129,24 +193,24 @@ let parsing_tests =
         | _ -> fail "expected Text cell at 2");
     test "roundtrip with outputs" (fun () ->
         let c =
-          Cell.code "let x = 1"
+          Cell.code ~language:"ocaml" "let x = 1"
           |> Cell.set_outputs [ Cell.Stdout "val x : int = 1\n" ]
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         let md2 = Quill_markdown.to_string_with_outputs doc2 in
         equal string md md2);
     test "fmt strips outputs" (fun () ->
         let md =
-          "```ocaml\n\
+          "```ocaml {.run}\n\
            let x = 1\n\
            ```\n\
            <!-- quill:output -->\n\
            val x : int = 1\n\
            <!-- /quill:output -->\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         let doc = Doc.clear_all_outputs doc in
         let result = Quill_markdown.to_string doc in
         let has_marker =
@@ -162,11 +226,28 @@ let fragments =
   [
     txt "Some prose.";
     txt "<!-- quill:cell id=\"t_stale\" -->\nText after a stale id.";
-    ("```ocaml\nlet x = 1\n```", Code ("ocaml", "let x = 1"));
-    ("```bash\nls\n```", Code ("bash", "ls"));
-    ("```\nplain\n```", Code ("", "plain"));
-    ("~~~ocaml\nlet z = 3\n~~~", Code ("ocaml", "let z = 3"));
-    ( "````ocaml\nlet s = {|\n```\n|}\n````",
+    txt "```ocaml\nlet shown = 1\n```";
+    txt "```bash\nquill run notebook.md\n```";
+    txt "```ocaml run\nlet x = 1\n```";
+    txt "```ocaml {run}\nlet x = 1\n```";
+    txt "```js run=false\n1\n```";
+    txt "```\nunlabelled\n```";
+    txt "~~~json\n{ \"a\": 1 }\n~~~";
+    txt "    indented code";
+    txt
+      (lines
+         [
+           "Old outputs:";
+           "";
+           "<!-- quill:output -->";
+           "<!-- out:stdout -->";
+           "val x : int = 1";
+           "<!-- /quill:output -->";
+         ]);
+    ("```ocaml {.run}\nlet x = 1\n```", Code ("ocaml", "let x = 1"));
+    ("```bash {.run}\nls\n```", Code ("bash", "ls"));
+    ("~~~ocaml {.run}\nlet z = 3\n~~~", Code ("ocaml", "let z = 3"));
+    ( "````ocaml {.run}\nlet s = {|\n```\n|}\n````",
       Code ("ocaml", "let s = {|\n```\n|}") );
   ]
 
@@ -179,20 +260,208 @@ let rec expected = function
   | Txt a :: Txt b :: rest -> expected (Txt (a ^ "\n\n" ^ b) :: rest)
   | v :: rest -> v :: expected rest
 
-let render md = Quill_markdown.to_string (Quill_markdown.of_string md)
+let is_code = function Code _ -> true | Txt _ -> false
+
+let is_fence = function
+  | Txt s -> String.contains s '`' || String.contains s '~'
+  | Code _ -> false
+
+let rec beside = function
+  | a :: (b :: _ as rest) ->
+      (is_code a && is_fence b) || (is_fence a && is_code b) || beside rest
+  | _ -> false
+
+let render md = Quill_markdown.to_string (parse md)
+
+(* A cell with what a save stores of it: a text cell's id is not stored. *)
+type stored = { view : view; id : Cell.id option; outputs : Cell.output list }
+
+let stored c =
+  match c with
+  | Cell.Code { id; outputs; _ } -> { view = view c; id = Some id; outputs }
+  | Cell.Text _ -> { view = view c; id = None; outputs = [] }
+
+let stored_t =
+  Testable.make
+    ~pp:(fun ppf s ->
+      Format.fprintf ppf "@[<hv 2>{%a;@ id = %s;@ outputs = [%a]}@]" pp_view
+        s.view
+        (Option.value s.id ~default:"-")
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
+           pp_output)
+        s.outputs)
+    ~equal:( = )
+
+let gen_outputs =
+  Gen.list ~size:(Gen.int_range 0 2)
+    (Gen.of_list ~pp:pp_output
+       [
+         Cell.Stdout "val x : int = 1";
+         Cell.Stderr "Warning 26: unused variable x";
+         Cell.Error "Exception: Failure \"boom\"";
+         Cell.Display { mime = "text/html"; id = None; data = "<b>hi</b>" };
+       ])
+
+(* A notebook of [frags], each code cell with an id and outputs. *)
+let notebook_of frags =
+  let cell i ((_, v), outputs) =
+    match v with
+    | Txt s -> Cell.text s
+    | Code (language, source) ->
+        Cell.code ~id:(Printf.sprintf "c_%d" i) ~language source
+        |> Cell.set_outputs outputs
+  in
+  let rec merge = function
+    | Cell.Text { source = a; _ } :: Cell.Text { source = b; _ } :: rest ->
+        merge (Cell.text (a ^ "\n\n" ^ b) :: rest)
+    | c :: rest -> c :: merge rest
+    | [] -> []
+  in
+  Doc.of_cells (merge (List.mapi cell frags))
+
+(* A language as [Cell.code] accepts it. *)
+let gen_language =
+  let ok c = c <> '`' && c <> '\\' && c <> '&' in
+  Gen.string_of ~size:(Gen.int_range 1 8)
+    (Gen.such_that ok (Gen.char_range '!' '~'))
+  |> Gen.such_that (fun l -> l.[0] <> '{')
 
 let round_trip_tests =
   [
-    prop "saving keeps every cell"
+    prop "a saved cell loads back in its language" gen_language (fun language ->
+        cover "a language with braces" (String.contains language '}');
+        cover "a language with a tilde" (String.contains language '~');
+        let doc = Doc.of_cells [ Cell.code ~id:"c_0" ~language "x" ] in
+        equal (list cell)
+          [ Code (language, "x") ]
+          (cells (parse (Quill_markdown.to_string doc))));
+    prop "marked blocks are the cells, the rest is text byte for byte"
       (Gen.list ~size:(Gen.int_range 0 8) fragment)
       (fun frags ->
         let md = String.concat "\n\n" (List.map fst frags) ^ "\n" in
-        let doc = Quill_markdown.of_string md in
         let views = expected (List.map snd frags) in
+        cover "no cell" (not (List.exists is_code views));
+        cover "an unmarked fence beside a cell" (beside (List.map snd frags));
+        let doc = parse md in
         equal (list cell) views (cells doc);
-        equal (list cell) views
-          (cells (Quill_markdown.of_string (Quill_markdown.to_string doc)));
+        equal (list cell) views (cells (parse (Quill_markdown.to_string doc)));
         Law.idempotent text render md);
+    prop "a saved notebook loads its cells, ids and outputs"
+      (Gen.list ~size:(Gen.int_range 0 6) (Gen.pair fragment gen_outputs))
+      (fun frags ->
+        let doc = notebook_of frags in
+        let cells d = List.map stored (Doc.cells d) in
+        cover "a source with a line of backticks"
+          (List.exists
+             (fun c -> String.contains (Cell.source c) '`' && is_code (view c))
+             (Doc.cells doc));
+        cover "an unmarked fence beside a cell"
+          (beside (List.map view (Doc.cells doc)));
+        cover "a cell with outputs"
+          (List.exists (fun c -> (stored c).outputs <> []) (Doc.cells doc));
+        equal (list stored_t) (cells doc)
+          (cells (parse (Quill_markdown.to_string_with_outputs doc))));
+  ]
+
+(* A notebook saved before cells were marked, and the same file migrated as the
+   documented sed command does. *)
+let unmarked =
+  lines
+    [
+      "# Old";
+      "";
+      "<!-- quill:cell id=\"c_a\" -->";
+      "```ocaml";
+      "let x = 1";
+      "```";
+      "<!-- quill:output -->";
+      "<!-- out:stdout -->";
+      "val x : int = 1";
+      "<!-- /quill:output -->";
+      "";
+      "<!-- quill:cell id=\"c_b\" collapsed -->";
+      "```ocaml";
+      "let y = x + 1";
+      "```";
+      "";
+    ]
+
+let migration =
+  {|sed -E -i.bak 's/^( {0,3})(`{3,}|~{3,})[[:blank:]]*ocaml[[:blank:]]*$/\1\2ocaml {.run}/' notebook.md|}
+
+let migrate md =
+  String.split_on_char '\n' md
+  |> List.map (fun l -> if l = "```ocaml" then "```ocaml {.run}" else l)
+  |> String.concat "\n"
+
+let migration_tests =
+  [
+    cases "a notebook older than the run mark does not load" ~id:fst
+      [
+        ("an OCaml cell", (unmarked, 4));
+        ( "a blank line between",
+          ( lines
+              [ "<!-- quill:cell id=\"c_a\" -->"; ""; "~~~ocaml"; "1"; "~~~" ],
+            3 ) );
+      ]
+      (fun (_, (md, line)) ->
+        equal (result pass string)
+          (Error
+             (Printf.sprintf
+                "line %d: a quill:cell comment stands above a block without \
+                 {.run}, so this notebook predates the run mark. Migrate it \
+                 with %s, and delete the comment above a block that should \
+                 stay text."
+                line migration))
+          (Quill_markdown.of_string md));
+    test "a cell comment above a block in another language does not load"
+      (fun () ->
+        let md =
+          lines [ "<!-- quill:cell id=\"c_sh\" -->"; "```bash"; "ls"; "```" ]
+        in
+        equal (result pass string)
+          (Error
+             "line 2: a quill:cell comment stands above this bash block \
+              without {.run}; delete the comment to keep the block as text, or \
+              mark it {.run} to run it.")
+          (Quill_markdown.of_string md));
+    cases "a block without the mark and without a cell comment is text"
+      ~id:Fun.id
+      [
+        lines
+          [
+            "<!-- quill:cell id=\"c_a\" -->";
+            "Prose.";
+            "";
+            "```ocaml";
+            "1";
+            "```";
+          ];
+        lines [ "<!-- quill:cell id=\"c_a\" -->"; "```ocaml run"; "1"; "```" ];
+        lines [ "<!-- quill:cell id=\"c_a\" -->"; "    indented" ];
+      ]
+      (fun md -> equal (list cell) [ Txt md ] (cells (parse md)));
+    test "a migrated notebook gets its ids and outputs back" (fun () ->
+        let doc = parse (migrate unmarked) in
+        equal (list stored_t)
+          [
+            { view = Txt "# Old"; id = None; outputs = [] };
+            {
+              view = Code ("ocaml", "let x = 1");
+              id = Some "c_a";
+              outputs = [ Cell.Stdout "val x : int = 1" ];
+            };
+            {
+              view = Code ("ocaml", "let y = x + 1");
+              id = Some "c_b";
+              outputs = [];
+            };
+          ]
+          (List.map stored (Doc.cells doc));
+        match Doc.find "c_b" doc with
+        | Some c -> equal bool true (Cell.attrs c).collapsed
+        | None -> fail "expected the cell c_b");
   ]
 
 let rendering_tests =
@@ -203,29 +472,24 @@ let rendering_tests =
         let lines = String.split_on_char '\n' md in
         is_true ~msg:"contains heading"
           (List.exists (fun l -> String.trim l = "# Hello") lines));
-    test "render code cell" (fun () ->
-        let doc = Doc.of_cells [ Cell.code ~language:"ocaml" "let x = 1" ] in
-        let md = Quill_markdown.to_string doc in
-        let lines = String.split_on_char '\n' md in
-        is_true ~msg:"has fence"
-          (List.exists (fun l -> String.trim l = "```ocaml") lines);
-        is_true ~msg:"has source"
-          (List.exists (fun l -> String.trim l = "let x = 1") lines));
+    test "a code cell is saved marked to run in its language" (fun () ->
+        let doc = Doc.of_cells [ Cell.code ~id:"c_1" ~language:"bash" "ls" ] in
+        equal text "<!-- quill:cell id=\"c_1\" -->\n```bash {.run}\nls\n```\n"
+          (Quill_markdown.to_string doc));
     test "a fence outlasts the backticks in its source" (fun () ->
         let source = "let s = {|\n```\n  ``````\n|}" in
         let md =
-          Quill_markdown.to_string (Doc.of_cells [ Cell.code ~id:"c_1" source ])
+          Quill_markdown.to_string
+            (Doc.of_cells [ Cell.code ~language:"ocaml" ~id:"c_1" source ])
         in
         equal text
-          ("<!-- quill:cell id=\"c_1\" -->\n```````ocaml\n" ^ source
+          ("<!-- quill:cell id=\"c_1\" -->\n```````ocaml {.run}\n" ^ source
          ^ "\n```````\n")
           md;
-        equal (list cell)
-          [ Code ("ocaml", source) ]
-          (cells (Quill_markdown.of_string md)));
+        equal (list cell) [ Code ("ocaml", source) ] (cells (parse md)));
     test "render with outputs" (fun () ->
         let c =
-          Cell.code "let x = 1"
+          Cell.code ~language:"ocaml" "let x = 1"
           |> Cell.set_outputs [ Cell.Stdout "val x : int = 1\n" ]
         in
         let doc = Doc.of_cells [ c ] in
@@ -237,7 +501,7 @@ let rendering_tests =
         is_true ~msg:"has output marker" has_marker);
     test "render without outputs omits markers" (fun () ->
         let c =
-          Cell.code "let x = 1"
+          Cell.code ~language:"ocaml" "let x = 1"
           |> Cell.set_outputs [ Cell.Stdout "val x : int = 1\n" ]
         in
         let doc = Doc.of_cells [ c ] in
@@ -253,10 +517,10 @@ let id_persistence_tests =
   [
     test "code cell IDs survive roundtrip" (fun () ->
         let c1 = Cell.text ~id:"t_1" "# Hello" in
-        let c2 = Cell.code ~id:"c_2" "let x = 1" in
+        let c2 = Cell.code ~language:"ocaml" ~id:"c_2" "let x = 1" in
         let doc = Doc.of_cells [ c1; c2 ] in
         let md = Quill_markdown.to_string doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         (match Doc.nth 0 doc2 with
         | Some (Cell.Text _) -> ()
         | _ -> fail "expected Text cell");
@@ -264,8 +528,8 @@ let id_persistence_tests =
         | Some (Cell.Code { id; _ }) -> equal string "c_2" id
         | _ -> fail "expected Code cell");
     test "fresh IDs for unmarked cells" (fun () ->
-        let md = "# Hello\n\n```ocaml\nlet x = 1\n```\n" in
-        let doc = Quill_markdown.of_string md in
+        let md = "# Hello\n\n```ocaml {.run}\nlet x = 1\n```\n" in
+        let doc = parse md in
         (match Doc.nth 0 doc with
         | Some c -> is_true ~msg:"text cell has id" (Cell.id c <> "")
         | None -> fail "expected cell");
@@ -274,12 +538,12 @@ let id_persistence_tests =
         | None -> fail "expected cell");
     test "IDs preserved with outputs" (fun () ->
         let c =
-          Cell.code ~id:"c_99" "let x = 1"
+          Cell.code ~language:"ocaml" ~id:"c_99" "let x = 1"
           |> Cell.set_outputs [ Cell.Stdout "val x : int = 1\n" ]
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { id; outputs; _ }) ->
             equal string "c_99" id;
@@ -291,12 +555,12 @@ let structured_output_tests =
   [
     test "roundtrip stderr" (fun () ->
         let c =
-          Cell.code "let x = 1"
+          Cell.code ~language:"ocaml" "let x = 1"
           |> Cell.set_outputs [ Cell.Stderr "Warning 26: unused variable x" ]
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 1 (List.length outputs);
@@ -306,11 +570,12 @@ let structured_output_tests =
         | _ -> fail "expected Code cell");
     test "roundtrip error" (fun () ->
         let c =
-          Cell.code "let x = " |> Cell.set_outputs [ Cell.Error "Syntax error" ]
+          Cell.code ~language:"ocaml" "let x = "
+          |> Cell.set_outputs [ Cell.Error "Syntax error" ]
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 1 (List.length outputs);
@@ -320,7 +585,7 @@ let structured_output_tests =
         | _ -> fail "expected Code cell");
     test "roundtrip display" (fun () ->
         let c =
-          Cell.code "plot ()"
+          Cell.code ~language:"ocaml" "plot ()"
           |> Cell.set_outputs
                [
                  Cell.Display
@@ -329,7 +594,7 @@ let structured_output_tests =
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 1 (List.length outputs);
@@ -347,18 +612,19 @@ let structured_output_tests =
           ]
         in
         let save outputs =
-          Cell.code ~id:"c" "plot ()" |> Cell.set_outputs outputs |> fun c ->
-          Quill_markdown.to_string_with_outputs (Doc.of_cells [ c ])
+          Cell.code ~language:"ocaml" ~id:"c" "plot ()"
+          |> Cell.set_outputs outputs
+          |> fun c -> Quill_markdown.to_string_with_outputs (Doc.of_cells [ c ])
         in
         let md = save (displays (Some "fig")) in
         equal text (save (displays None)) md;
-        match Doc.nth 0 (Quill_markdown.of_string md) with
+        match Doc.nth 0 (parse md) with
         | Some (Cell.Code { outputs; _ }) ->
             equal (list output) (displays None) outputs
         | _ -> fail "expected Code cell");
     test "roundtrip mixed outputs" (fun () ->
         let c =
-          Cell.code "let x = 1"
+          Cell.code ~language:"ocaml" "let x = 1"
           |> Cell.set_outputs
                [
                  Cell.Stdout "val x : int = 1";
@@ -369,7 +635,7 @@ let structured_output_tests =
         in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string_with_outputs doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 3 (List.length outputs);
@@ -384,14 +650,14 @@ let structured_output_tests =
         | _ -> fail "expected Code cell");
     test "backward compat: untagged output parsed as stdout" (fun () ->
         let md =
-          "```ocaml\n\
+          "```ocaml {.run}\n\
            let x = 1\n\
            ```\n\
            <!-- quill:output -->\n\
            val x : int = 1\n\
            <!-- /quill:output -->\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         match Doc.nth 0 doc with
         | Some (Cell.Code { outputs; _ }) -> (
             equal int 1 (List.length outputs);
@@ -405,9 +671,12 @@ let attrs_tests =
   [
     test "parse collapsed attr" (fun () ->
         let md =
-          "<!-- quill:cell id=\"c_1\" collapsed -->\n```ocaml\nlet x = 1\n```\n"
+          "<!-- quill:cell id=\"c_1\" collapsed -->\n\
+           ```ocaml {.run}\n\
+           let x = 1\n\
+           ```\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         match Doc.nth 0 doc with
         | Some (Cell.Code { attrs; _ }) ->
             is_true ~msg:"collapsed" attrs.collapsed;
@@ -416,11 +685,11 @@ let attrs_tests =
     test "parse hide-source attr" (fun () ->
         let md =
           "<!-- quill:cell id=\"c_1\" hide-source -->\n\
-           ```ocaml\n\
+           ```ocaml {.run}\n\
            let x = 1\n\
            ```\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         match Doc.nth 0 doc with
         | Some (Cell.Code { attrs; _ }) ->
             is_false ~msg:"not collapsed" attrs.collapsed;
@@ -429,11 +698,11 @@ let attrs_tests =
     test "parse multiple attrs" (fun () ->
         let md =
           "<!-- quill:cell id=\"c_1\" collapsed hide-source -->\n\
-           ```ocaml\n\
+           ```ocaml {.run}\n\
            let x = 1\n\
            ```\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         match Doc.nth 0 doc with
         | Some (Cell.Code { attrs; _ }) ->
             is_true ~msg:"collapsed" attrs.collapsed;
@@ -442,19 +711,21 @@ let attrs_tests =
     test "unknown attrs are ignored" (fun () ->
         let md =
           "<!-- quill:cell id=\"c_1\" collapsed future-flag -->\n\
-           ```ocaml\n\
+           ```ocaml {.run}\n\
            let x = 1\n\
            ```\n"
         in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         match Doc.nth 0 doc with
         | Some (Cell.Code { attrs; id; _ }) ->
             equal string "c_1" id;
             is_true ~msg:"collapsed" attrs.collapsed
         | _ -> fail "expected Code cell");
     test "no attrs is backward compatible" (fun () ->
-        let md = "<!-- quill:cell id=\"c_1\" -->\n```ocaml\nlet x = 1\n```\n" in
-        let doc = Quill_markdown.of_string md in
+        let md =
+          "<!-- quill:cell id=\"c_1\" -->\n```ocaml {.run}\nlet x = 1\n```\n"
+        in
+        let doc = parse md in
         match Doc.nth 0 doc with
         | Some (Cell.Code { attrs; id; _ }) ->
             equal string "c_1" id;
@@ -464,15 +735,15 @@ let attrs_tests =
     test "an id comment before text is text" (fun () ->
         let comment = "<!-- quill:cell id=\"t_1\" collapsed -->" in
         let md = comment ^ "\n# Hidden section\n" in
-        let doc = Quill_markdown.of_string md in
+        let doc = parse md in
         equal (list cell) [ Txt (comment ^ "\n# Hidden section") ] (cells doc);
         equal text md (Quill_markdown.to_string doc));
     test "roundtrip collapsed" (fun () ->
         let a = { Cell.collapsed = true; hide_source = false } in
-        let c = Cell.code ~id:"c_1" ~attrs:a "let x = 1" in
+        let c = Cell.code ~language:"ocaml" ~id:"c_1" ~attrs:a "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { id; attrs; _ }) ->
             equal string "c_1" id;
@@ -481,10 +752,10 @@ let attrs_tests =
         | _ -> fail "expected Code cell");
     test "roundtrip hide-source" (fun () ->
         let a = { Cell.collapsed = false; hide_source = true } in
-        let c = Cell.code ~id:"c_2" ~attrs:a "let x = 1" in
+        let c = Cell.code ~language:"ocaml" ~id:"c_2" ~attrs:a "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { id; attrs; _ }) ->
             equal string "c_2" id;
@@ -493,17 +764,17 @@ let attrs_tests =
         | _ -> fail "expected Code cell");
     test "roundtrip both attrs" (fun () ->
         let a = { Cell.collapsed = true; hide_source = true } in
-        let c = Cell.code ~id:"c_3" ~attrs:a "let x = 1" in
+        let c = Cell.code ~language:"ocaml" ~id:"c_3" ~attrs:a "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string doc in
-        let doc2 = Quill_markdown.of_string md in
+        let doc2 = parse md in
         match Doc.nth 0 doc2 with
         | Some (Cell.Code { attrs; _ }) ->
             is_true ~msg:"collapsed survives" attrs.collapsed;
             is_true ~msg:"hide_source survives" attrs.hide_source
         | _ -> fail "expected Code cell");
     test "default attrs produce no tokens" (fun () ->
-        let c = Cell.code ~id:"c_4" "let x = 1" in
+        let c = Cell.code ~language:"ocaml" ~id:"c_4" "let x = 1" in
         let doc = Doc.of_cells [ c ] in
         let md = Quill_markdown.to_string doc in
         is_true ~msg:"no collapsed token"
@@ -604,7 +875,7 @@ let gen_doc =
   Doc.of_cells
     (List.mapi
        (fun i os ->
-         Cell.code ~id:(Printf.sprintf "c_%d" i) "plot ()"
+         Cell.code ~language:"ocaml" ~id:(Printf.sprintf "c_%d" i) "plot ()"
          |> Cell.set_outputs os)
        outputs)
 
@@ -655,7 +926,7 @@ let load = Quill_markdown.load
 let notebook src =
   "<!-- quill:figures files -->\n\n\
    <!-- quill:cell id=\"c_x\" -->\n\
-   ```ocaml\n\
+   ```ocaml {.run}\n\
    plot ()\n\
    ```\n\
    <!-- quill:output -->\n\
@@ -665,7 +936,7 @@ let notebook src =
 let one_figure =
   Doc.of_cells
     [
-      Cell.code ~id:"c_x" "plot ()"
+      Cell.code ~language:"ocaml" ~id:"c_x" "plot ()"
       |> Cell.set_outputs [ image "image/svg+xml" "<svg/>" ];
     ]
 
@@ -682,8 +953,48 @@ let mkdir_p path =
   in
   loop path
 
+let read path = In_channel.with_open_bin path In_channel.input_all
+
 let file_tests =
   [
+    test "save Files keeps a figure that the saved text names" (fun () ->
+        let dir = temp_dir () in
+        let path = Filename.concat dir "nb.md" in
+        save Files path one_figure;
+        let old =
+          lines
+            [
+              "<!-- quill:cell id=\"c_x\" -->";
+              "```ocaml";
+              "plot ()";
+              "```";
+              "<!-- quill:output -->";
+              "<!-- out:display image/svg+xml -->";
+              "<img src=\"figures/nb/c_x.svg\">";
+              "<!-- /quill:output -->";
+            ]
+        in
+        save Files path (Doc.of_cells [ Cell.text old ]);
+        equal (list string) [ "c_x.svg" ]
+          (Array.to_list (Sys.readdir (Filename.concat dir "figures/nb")));
+        write path (migrate (read path));
+        equal loaded (Ok (one_figure, Files)) (load path));
+    cases "load names the line of a block that asks to run in another shape"
+      ~id:fst
+      [
+        ("an inline notebook", ("", 3));
+        ("a notebook of figure files", ("<!-- quill:figures files -->\n", 4));
+      ]
+      (fun (_, (first, line)) ->
+        let path = Filename.concat (temp_dir ()) "nb.md" in
+        write path (first ^ "# T\n\n```{.ocaml .run}\nlet x = 1\n```\n");
+        equal loaded
+          (Error
+             (Printf.sprintf
+                "%s: line %d: the info string \"{.ocaml .run}\" marks a block \
+                 to run; write a language then {.run}, as in \"ocaml {.run}\""
+                path line))
+          (load path));
     prop "load reads what save Inline wrote" gen_doc (fun d ->
         cover_images d;
         let path = Filename.concat (temp_dir ()) "nb.md" in
@@ -725,7 +1036,7 @@ let file_tests =
         let d =
           Doc.of_cells
             [
-              Cell.code ~id:"c_x" "plot ()"
+              Cell.code ~language:"ocaml" ~id:"c_x" "plot ()"
               |> Cell.set_outputs
                    [ image "image/svg+xml" "<svg/>"; image "image/png" "png" ];
             ]
@@ -793,13 +1104,15 @@ let file_tests =
         let path = Filename.concat (temp_dir ()) "nb.md" in
         write path (notebook "figures/nb/c_x.svg");
         equal loaded
-          (Ok (Doc.of_cells [ Cell.code ~id:"c_x" "plot ()" ], Files))
+          (Ok
+             ( Doc.of_cells [ Cell.code ~language:"ocaml" ~id:"c_x" "plot ()" ],
+               Files ))
           (load ~outputs:false path));
     cases "of_string refuses a notebook that stores figures as files" ~id:fst
       [
         ( "a figure reference",
           ( "<!-- quill:cell id=\"c_x\" -->\n\
-             ```ocaml\n\
+             ```ocaml {.run}\n\
              plot ()\n\
              ```\n\
              <!-- quill:output -->\n\
@@ -814,7 +1127,7 @@ let file_tests =
              files, which Quill_markdown.load reads" ) );
       ]
       (fun (_, (md, msg)) ->
-        raises (Invalid_argument msg) (fun () -> Quill_markdown.of_string md));
+        equal (result pass string) (Error msg) (Quill_markdown.of_string md));
     test "save writes through a notebook that is a link" (fun () ->
         if Sys.win32 then skip ~reason:"symbolic links need privileges" ();
         let dir = temp_dir () in
@@ -827,7 +1140,7 @@ let file_tests =
         let d =
           Doc.of_cells
             [
-              Cell.code ~id:"c_x" "1"
+              Cell.code ~id:"c_x" ~language:"ocaml" "1"
               |> Cell.set_outputs [ Cell.Stdout "- : int = 1" ];
             ]
         in
@@ -868,16 +1181,16 @@ let file_tests =
       [
         ( "a cell id holding /",
           ( [
-              Cell.code ~id:"a/b" "plot ()"
+              Cell.code ~language:"ocaml" ~id:"a/b" "plot ()"
               |> Cell.set_outputs [ image "image/png" "" ];
             ],
             "cell a/b: figure figures/nb/a/b.png: the cell id makes no file \
              name" ) );
         ( "two images of one name",
           ( [
-              Cell.code ~id:"a" "plot ()"
+              Cell.code ~language:"ocaml" ~id:"a" "plot ()"
               |> Cell.set_outputs [ image "image/png" ""; image "image/png" "" ];
-              Cell.code ~id:"a-2" "plot ()"
+              Cell.code ~language:"ocaml" ~id:"a-2" "plot ()"
               |> Cell.set_outputs [ image "image/png" "" ];
             ],
             "cell a-2: figure figures/nb/a-2.png: also stored by cell a" ) );
@@ -897,6 +1210,7 @@ let () =
        [
          group "Parsing" parsing_tests;
          group "Round trip" round_trip_tests;
+         group "Migration" migration_tests;
          group "Rendering" rendering_tests;
          group "ID persistence" id_persistence_tests;
          group "Structured outputs" structured_output_tests;

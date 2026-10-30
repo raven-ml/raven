@@ -1,33 +1,35 @@
 # Notebook Format
 
-A Quill notebook is a CommonMark markdown file. Fenced code blocks with
-a language tag become executable code cells. Everything else becomes text
-cells. This page explains the mapping and the output serialization
+A Quill notebook is a CommonMark markdown file. Fenced code blocks marked
+`{.run}` after their language become code cells. Everything else becomes
+text cells. This page explains the mapping and the output serialization
 format.
 
 ## Cell Types
 
 A notebook contains two kinds of cells:
 
-- **Code cells**: fenced code blocks with a language info string (e.g.,
-  ` ```ocaml `). The language tag identifies the execution kernel.
-- **Text cells**: all other markdown content between code blocks.
-  Adjacent paragraphs, headings, lists, and other block elements form a
-  single text cell.
+- **Code cells**: fenced code blocks at the top level of the notebook
+  whose info string is a language, then `{.run}`, as in the opening
+  fence ```` ```ocaml {.run} ````. The language selects the kernel that
+  runs the cell.
+- **Text cells**: all other markdown content between code cells.
+  Adjacent paragraphs, headings, lists, code blocks without the mark and
+  other block elements form a single text cell.
 
-For example, this notebook has three cells:
+For example, this notebook has four cells:
 
     # My Notebook          ← text cell
 
     Some explanation.
 
-    ```ocaml               ← code cell
+    ```ocaml {.run}        ← code cell
     let x = 42
     ```
 
     More text here.        ← text cell
 
-    ```ocaml               ← code cell
+    ```ocaml {.run}        ← code cell
     let y = x + 1
     ```
 
@@ -37,7 +39,7 @@ Quill assigns each cell a stable identifier stored as an HTML comment
 before the cell:
 
     <!-- quill:cell id="c_a1b2c3d4e5f6" -->
-    ```ocaml
+    ```ocaml {.run}
     let x = 42
     ```
 
@@ -52,7 +54,7 @@ assigned on the next load.
 
 After executing a code cell, outputs are stored between marker comments:
 
-    ```ocaml
+    ```ocaml {.run}
     let x = 42
     let () = Printf.printf "x = %d\n" x
     ```
@@ -75,7 +77,7 @@ Each output section is tagged with its type:
 A single code cell can produce multiple output sections. For example, a
 cell that prints to both stdout and stderr:
 
-    ```ocaml
+    ```ocaml {.run}
     let () = Printf.printf "result: 42\n"
     let () = Printf.eprintf "warning: something\n"
     ```
@@ -138,22 +140,54 @@ The output format uses HTML comments for several reasons:
    pass. `quill run --inplace` regenerates them. This makes it easy to
    commit clean notebooks and regenerate outputs in CI.
 
-## Non-OCaml Code Blocks
+## Code Blocks That Do Not Run
 
-Code blocks without a language tag, or with a language other than
-`ocaml`, are not executed. They pass through unchanged as code cells:
+A code block without the `{.run}` mark is part of the text and never
+runs, whatever its language:
 
     ```bash
     # This is not executed — it's documentation
     quill run notebook.md
     ```
 
-    ```json
-    { "this": "is also not executed" }
+    ```ocaml
+    (* Shown, and not executed *)
+    let wrong = 1 + "one"
     ```
 
-This lets you include shell commands, JSON examples, and other snippets
-in your notebook as documentation without affecting execution.
+This lets you include shell commands, JSON examples, and code you only
+want to show without affecting execution.
+
+The mark has one spelling. A block that asks to run in another shape, such
+as ```` ```{.ocaml .run} ```` or ```` ```ocaml {.run .numberLines} ````, is
+an error that names its line, and so is a marked block inside a list or a
+quote. The rules are in
+[`quill_markdown.mli`](../lib/markdown/quill_markdown.mli).
+
+A cell in a language that no kernel runs, such as ```` ```bash {.run} ````
+in a notebook whose kernel runs OCaml, gets an error output when it is
+run, and the cells after it still run.
+
+## Migrating Older Notebooks
+
+Notebooks written before the `{.run}` mark ran every ```` ```ocaml ````
+block, and older Quill wrote a `<!-- quill:cell -->` comment above each
+cell. Such a notebook does not load. The error names the line of the
+first block in that shape and prints the command that marks the
+notebook's OCaml cells:
+
+<!-- $MDX skip -->
+```bash
+sed -E -i.bak 's/^( {0,3})(`{3,}|~{3,})[[:blank:]]*ocaml[[:blank:]]*$/\1\2ocaml {.run}/' notebook.md
+```
+
+It marks a fence of backticks or tildes of any length, indented up to
+three spaces, with blanks around `ocaml`, and keeps the old file as
+`notebook.md.bak`. It also rewrites such a line inside another code
+block, and a fence with more words after `ocaml` must be edited by hand.
+A block in another language that older Quill ran as a cell, such as a
+`bash` block under a cell comment, is left as it is. Delete its comment
+to keep it as text. The migrated cells keep their ids and outputs.
 
 ## Roundtrip Guarantees
 
