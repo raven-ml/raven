@@ -1,10 +1,11 @@
 #!/bin/sh
 # bench/README.md's table: lz (vendor_table.exe, built by dune) and the
-# vendors (vendor_table.c, built here against ~/wt/lz-vendors/: libdeflate
+# vendors (vendor_table.c, built here against $VENDORS: libdeflate
 # 1.26, lz4 1.10.0 and snappy 1.2.2 as built there, zstd 1.5.7 compiled
 # from its sources with its Makefile's -O3, and the system's zlib). Each
 # row runs lz then the vendors, so the two sides of a row are timed
-# minutes apart at most. Run from the tree's root:
+# minutes apart at most. VENDORS defaults to ~/wt/lz-vendors. Run from
+# the tree's root:
 #
 #   dune build packages/lz/bench/compare/vendor_table.exe
 #   packages/lz/bench/compare/vendor_table.sh OUT [CORPUS...]
@@ -25,7 +26,7 @@ corpora=${*:-silesia}
 mkdir -p "$out/zstd"
 here=packages/lz/bench/compare
 lz=_build/default/$here/vendor_table.exe
-v=$HOME/wt/lz-vendors
+v=${VENDORS:-$HOME/wt/lz-vendors}
 z=$v/zstd-1.5.7/lib
 
 # zstd's library: its lib/ sources with libzstd.mk's flags, single-threaded.

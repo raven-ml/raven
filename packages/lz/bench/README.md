@@ -47,9 +47,10 @@ snappy.
 `text`, `columns` and `random` are lz / vendor on the bench's corpora,
 from the same runs.
 
-Re-run, from the tree's root, with the vendors built under
-`~/wt/lz-vendors/`. Fetch Silesia once into the output directory; the
-script writes the other corpora and every encoding there:
+Re-run, from the tree's root, with the vendors built under the directory
+`VENDORS` names (default `~/wt/lz-vendors`). Fetch Silesia once into the
+output directory; the script writes the other corpora and every encoding
+there:
 
     mkdir -p OUT
     curl -fLo OUT/silesia.zip https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip
