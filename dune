@@ -6,14 +6,14 @@
 ; on a warning a future compiler adds.
 ;
 ; The sanitize profile, which --profile sanitize selects, runs on Linux and
-; builds the C under AddressSanitizer and UndefinedBehaviorSanitizer. rig's
-; env adds the debug runtime and a stressed collector, which check a heap so
-; often that suites holding large heaps, such as lz's, outran their time. A
-; domain's thread exits on the signal stack the OCaml runtime allocated, which
-; AddressSanitizer would unmap as its own (use_sigaltstack=0). A refused
-; allocation returns NULL as libc's does (allocator_may_return_null=1). CUDA
-; and NV map GPU addresses below 2^40, in the shadow gap
-; (protect_shadow_gap=0).
+; builds the C under AddressSanitizer and UndefinedBehaviorSanitizer. The
+; debug runtime and a stressed collector check a heap so often that a suite
+; holding a large heap can outrun its time, so a package adds them in its own
+; env, as rig's and lz's do. A domain's thread exits on the signal stack the
+; OCaml runtime allocated, which AddressSanitizer would unmap as its own
+; (use_sigaltstack=0). A refused allocation returns NULL as libc's does
+; (allocator_may_return_null=1). CUDA and NV map GPU addresses below 2^40, in
+; the shadow gap (protect_shadow_gap=0).
 ;
 ; The tsan profile, which dune-workspace.tsan sets with a compiler built for
 ; ThreadSanitizer, compiles the C with the flags that compiler builds its own
