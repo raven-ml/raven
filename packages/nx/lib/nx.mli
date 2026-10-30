@@ -4054,7 +4054,8 @@ module Ptree : sig
     'acc ->
     'acc
   (** [fold s f x acc] is [f pn an (… (f p1 a1 acc))], [a1], …, [an] [x]'s
-      arrays and [p1], …, [pn] their paths. *)
+      arrays and [p1], …, [pn] their paths. [f] takes the accumulator last,
+      as [Map.fold]'s does. *)
 
   (** {1:payloads Sets, dtypes and payloads}
 
