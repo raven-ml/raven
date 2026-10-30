@@ -857,16 +857,25 @@ let test_blocked_domain () =
   equal bool true returned
 
 (* Dropped buffers of many budgets never force a collection: the collector is
-   paced by the device's memory and finds them before the budget runs out. *)
+   paced by the device's memory and finds them before the budget runs out.
+   The pace holds once the collector runs. A fresh process's heap is small,
+   and OCaml's runtime starts marking only after [small_heap_limit] words of
+   work since its last sweep, while a buffer brings at most one cycle's work
+   of that heap: the first budget may fill before the first cycle marks, and
+   a ladder's round collects. One uncounted run takes that start. *)
 let test_paced () =
   let budget = 4 * kib * kib in
   let d, _ = P.open_ "memory:paced" in
   Rig.set_budget d budget;
+  let run () =
+    for _ = 1 to 20 * 16 do
+      ignore (Sys.opaque_identity (B.create d (budget / 16)))
+    done
+  in
+  run ();
   let forced () = (Gc.quick_stat ()).forced_major_collections in
   let before = forced () in
-  for _ = 1 to 20 * 16 do
-    ignore (Sys.opaque_identity (B.create d (budget / 16)))
-  done;
+  run ();
   equal int 0 (forced () - before)
 
 (* Major cycles per dropped host buffer of a MiB, over [k] of them. *)
