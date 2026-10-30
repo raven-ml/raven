@@ -64,6 +64,29 @@
   (compression deflate gzip zlib snappy lz4 zstd)))
 
 (package
+ (name lz)
+ (dir packages/lz)
+ (synopsis "Deflate, zlib, gzip, Zstandard, LZ4 and Snappy between bigarrays")
+ (description
+  "Compression codecs with no dependencies, written in C and held to the reference implementations' speed: whole-buffer decode and encode between bigarrays, streaming steps that lend their output from the codec's own memory, errors as values with an offset, and CRC-32.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  ; tests
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (ppx_windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (thumper :with-test))
+ (tags
+  (compression deflate gzip zlib zstd lz4 snappy crc32)))
+
+(package
  (name nx)
  (dir packages/nx)
  (license "ISC AND MIT")

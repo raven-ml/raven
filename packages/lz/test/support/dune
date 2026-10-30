@@ -1,0 +1,10 @@
+; lz_support_paths.c, lz_support_zstd.c and lz_support_deflate.c reach the
+; private checksum, Zstandard and deflate paths of lib/ for the tests alone.
+
+(library
+ (name lz_support)
+ (libraries lz windtrap)
+ (foreign_stubs
+  (language c)
+  (include_dirs ../../lib)
+  (names lz_support_paths lz_support_zstd lz_support_deflate)))

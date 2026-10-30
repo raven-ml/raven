@@ -42,6 +42,7 @@ Breaking one causes real damage.
 | `packages/vega` | optimizers as values |
 | `packages/jera` | numerical methods: quadrature, interpolation, differential equations, splittings |
 | `packages/norn` | probabilistic inference over structures: distributions, bijectors, samplers, diagnostics; the model language is `norn.model` |
+| `packages/lz` | compression between bigarrays: deflate, zlib, gzip, Zstandard, LZ4, Snappy and CRC-32, in raven's own C kernels |
 | `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
 | `packages/ppx_ptree` | derives a structure's `walk` from its type, for users; no raven library depends on it |
 | `contrib/` | fehu, sowilo, ymir: own `dune-project`, own `CHANGES.md`, public core libraries only |

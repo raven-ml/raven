@@ -1,0 +1,67 @@
+; The programs behind bench/measurements.md, for the design record. None is
+; attached to runtest or to the bench alias: build one by name, then run it
+; under the timing lock, as measurements.md says for each.
+
+; §7.1: the runtime lock's release around a call that does nothing.
+
+(executable
+ (name lock_cost)
+ (modules lock_cost)
+ (foreign_stubs
+  (language c)
+  (names lock_stubs)))
+
+; §7.4 and §7.5: bigarray to bytes, by C blit, by the per-byte loops of
+; raven's readers and by bytesrw. lz itself never depends on bytesrw.
+
+(executable
+ (name staging)
+ (modules staging)
+ (libraries bytesrw)
+ (foreign_stubs
+  (language c)
+  (names staging_stubs)))
+
+; §7.7: CRC-32 kernels, a C program built for x86-64 only.
+
+(rule
+ (enabled_if
+  (= %{architecture} amd64))
+ (targets crc32_bench.exe)
+ (deps crc32_bench.c)
+ (action
+  (run
+   %{cc}
+   -std=c11
+   -O3
+   -Wall
+   -Wextra
+   -Werror
+   -mpclmul
+   -msse4.2
+   -mavx2
+   -mvpclmulqdq
+   -o
+   %{targets}
+   %{deps})))
+
+; §7.12: the size lz adds to an executable that links it whole.
+
+(executable
+ (name size_base)
+ (modules size_base)
+ (link_flags (-linkall)))
+
+(executable
+ (name size_lz)
+ (modules size_lz)
+ (libraries lz)
+ (link_flags (-linkall)))
+
+; bench/README.md's table: lz's side, beside vendor_table.c, which times
+; the vendors; vendor_table.sh runs both.
+
+(executable
+ (name vendor_table)
+ (modules vendor_table)
+ (libraries lz unix))

@@ -1,0 +1,18 @@
+; lz's suites, through Lz's interface. Each reads the goldens of golden/,
+; which gen/generate.py writes with the vendors.
+
+(tests
+ (package lz)
+ (names
+  test_deflate
+  test_deflate_enc
+  test_zstd
+  test_zstd_enc
+  test_lz4
+  test_snappy
+  test_checksum
+  test_step
+  test_hostile)
+ (libraries lz lz_support windtrap)
+ (deps
+  (glob_files golden/*)))

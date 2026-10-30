@@ -4040,6 +4040,16 @@ thread.
   such as a page of a mapped Parquet file, decompresses directly between byte
   arrays with `decompress_into`.
 
+### Lz (new)
+
+- Add `lz`, compression between bigarrays by raven's own C kernels, held to
+  the reference implementations' single-threaded speed: deflate, zlib and
+  gzip (levels 1-9), Zstandard (levels 1-12), LZ4 blocks and frames, Snappy,
+  and `Lz.Crc32`. `decode` writes into a destination the caller sizes and
+  `encode` into one `bound` sizes; `Lz.Decoder.step` and `Lz.Encoder.step`
+  stream, lending each run out of the codec's own memory. Errors are
+  `Lz.error` values with a kind and the input offset.
+
 ### Nx
 
 - `Nx_io.load_npy`, `load_npz`, `load_npz_entry` and `load_safetensors` refuse

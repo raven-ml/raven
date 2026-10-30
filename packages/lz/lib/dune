@@ -1,0 +1,136 @@
+; lz: the codecs' C kernels behind one OCaml module. lz.h states the
+; contract between the kernels and stubs.c.
+
+(library
+ (name lz)
+ (public_name lz)
+ (foreign_stubs
+  (language c)
+  (names
+   stubs
+   checksum
+   deflate_decode
+   deflate_encode
+   zstd_decode
+   zstd_encode
+   lz4
+   snappy
+   zstd_dec_fse
+   zstd_dec_lit
+   zstd_dec_seq
+   zstd_enc_match
+   zstd_enc_entropy))
+ ; The checksums' paths for an instruction set extension, each compiled
+ ; with that extension alone, and empty off its architecture or where the
+ ; C compiler lacks the extension (probe/isa.ml asks it): checksum.c calls
+ ; one only on a host whose CPU has it.
+ (foreign_stubs
+  (language c)
+  (flags :standard (:include pclmul_flags.sexp))
+  (names checksum_pclmul))
+ (foreign_stubs
+  (language c)
+  (flags :standard (:include vpclmul_flags.sexp))
+  (names checksum_vpclmul))
+ (foreign_stubs
+  (language c)
+  (flags :standard (:include avx2_flags.sexp))
+  (names checksum_avx2))
+ (foreign_stubs
+  (language c)
+  (flags :standard (:include vnni_flags.sexp))
+  (names checksum_vnni))
+ (foreign_stubs
+  (language c)
+  (flags :standard (:include arm_flags.sexp))
+  (names checksum_arm)))
+
+(rule
+ (target pclmul_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/isa.ml} pclmul %{cc}))))
+
+(rule
+ (target pclmul_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target vpclmul_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/isa.ml} vpclmul %{cc}))))
+
+(rule
+ (target vpclmul_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target avx2_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/isa.ml} avx2 %{cc}))))
+
+(rule
+ (target avx2_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target vnni_flags.sexp)
+ (enabled_if
+  (= %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/isa.ml} vnni %{cc}))))
+
+(rule
+ (target vnni_flags.sexp)
+ (enabled_if
+  (<> %{architecture} amd64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
+
+(rule
+ (target arm_flags.sexp)
+ (enabled_if
+  (= %{architecture} arm64))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{ocaml} %{dep:probe/isa.ml} arm %{cc}))))
+
+(rule
+ (target arm_flags.sexp)
+ (enabled_if
+  (<> %{architecture} arm64))
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "()"))))
