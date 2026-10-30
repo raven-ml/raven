@@ -941,17 +941,17 @@ val scan :
   ('c, 'd) Nx.Ptree.t ->
   ('x, 'd) Nx.Ptree.t ->
   ('y, 'd) Nx.Ptree.t ->
-  f:('c -> 'x -> 'c * 'y) ->
+  ('c -> 'x -> 'c * 'y) ->
   init:'c ->
   'x ->
   'c * 'y
-(** [scan c x y ~f ~init xs] folds the step [f] over the rows of [xs], a value
-    of structure [x] whose arrays share a leading length [n]: step [i] passes
-    [f] row [i] of every array. [f carry row] returns the next carry and the
-    step's outputs, of structure [y]. The result is the final carry and the
-    outputs, each array stacked along a new axis 0 and lying where [f] returns
-    it. With [n = 0] it is [init] and outputs of leading length [0]. Under
-    reverse mode a row's cotangent is stacked as the outputs are.
+(** [scan c x y f ~init xs] folds the step [f] over the rows of [xs], a value of
+    structure [x] whose arrays share a leading length [n]: step [i] passes [f]
+    row [i] of every array. [f carry row] returns the next carry and the step's
+    outputs, of structure [y]. The result is the final carry and the outputs,
+    each array stacked along a new axis 0 and lying where [f] returns it. With
+    [n = 0] it is [init] and outputs of leading length [0]. Under reverse mode a
+    row's cotangent is stacked as the outputs are.
 
     Raises [Invalid_argument] if [xs] has no array
     (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
@@ -965,10 +965,10 @@ val iterate :
   ('c, 'd) Nx.Ptree.t ->
   max:int ->
   until:('c -> 'd Nx.bool_t) ->
-  f:('c -> 'c) ->
+  ('c -> 'c) ->
   'c ->
   'c
-(** [iterate c ~max ~until ~f init] applies the step [f] to the carry, from
+(** [iterate c ~max ~until f init] applies the step [f] to the carry, from
     [init], until [until carry] holds, and returns that carry. [until] returns
     one boolean and is tested before each step, so an [init] that satisfies it
     is returned unchanged. [until] is traced as [f] is.
@@ -1087,7 +1087,7 @@ val root :
       Rune.root Nx.Ptree.tensor ~residual (fun () ->
           Rune.iterate' ~max:50
             ~until:(fun x -> Nx.all (Nx.less_s (Nx.abs (residual x)) 1e-12))
-            ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
+            (fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
             a)
     ]}
 
@@ -1671,14 +1671,13 @@ val jacrev' :
     complex, whose Jacobian [x]'s dtype cannot hold. *)
 
 val scan' :
-  f:
-    (('a, 'b, 'd) Nx.t ->
-    ('c, 'e, 'd) Nx.t ->
-    ('a, 'b, 'd) Nx.t * ('g, 'h, 'd) Nx.t) ->
+  (('a, 'b, 'd) Nx.t ->
+  ('c, 'e, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('g, 'h, 'd) Nx.t) ->
   init:('a, 'b, 'd) Nx.t ->
   ('c, 'e, 'd) Nx.t ->
   ('a, 'b, 'd) Nx.t * ('g, 'h, 'd) Nx.t
-(** [scan' ~f ~init xs] is {!scan} of one array each for the carry, the rows and
+(** [scan' f ~init xs] is {!scan} of one array each for the carry, the rows and
     the outputs. *)
 
 val cond' :
@@ -1691,10 +1690,10 @@ val cond' :
 val iterate' :
   max:int ->
   until:(('v, 's, 'd) Nx.t -> 'd Nx.bool_t) ->
-  f:(('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t) ->
+  (('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t) ->
   ('v, 's, 'd) Nx.t ->
   ('v, 's, 'd) Nx.t
-(** [iterate' ~max ~until ~f x] is {!iterate} of one array. *)
+(** [iterate' ~max ~until f x] is {!iterate} of one array. *)
 
 val vmap' :
   ?axis:axis ->

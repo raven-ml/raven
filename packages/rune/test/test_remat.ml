@@ -176,7 +176,7 @@ let test_scan_residuals () =
   let scan step x =
     fst
       (Rune.scan T.tensor T.tensor T.unit
-         ~f:(fun c r -> (Nx.add (step c) r, ()))
+         (fun c r -> (Nx.add (step c) r, ()))
          ~init:x xs)
   in
   let keep step () = kept := Rune.vjp' (scan step) x :: !kept in

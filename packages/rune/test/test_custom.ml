@@ -718,7 +718,7 @@ let read_tests =
           (counted "a loop step over captures" (fun () ->
                snd
                  (Rune.scan Nx.Ptree.unit tensor tensor
-                    ~f:(fun () c -> ((), Nx.mul c (newton_jvp x)))
+                    (fun () c -> ((), Nx.mul c (newton_jvp x)))
                     ~init:() cs))));
     test "a read in the rule raises where the rule is traced" (fun () ->
         let traced = "Nx.item: the value is traced by Rune.custom_jvp" in
@@ -727,7 +727,7 @@ let read_tests =
         invalid ~sub:traced (fun () -> Rune.vmap' newton_jvp rows);
         invalid ~sub:traced (fun () ->
             Rune.scan Nx.Ptree.unit tensor tensor
-              ~f:(fun () r -> ((), newton_jvp r))
+              (fun () r -> ((), newton_jvp r))
               ~init:() rows);
         invalid ~sub:traced (fun () ->
             Rune.grad' (fun x -> Nx.sum (Rune.grad' (sum newton_jvp) x)) x);
@@ -755,7 +755,7 @@ let read_tests =
                 Nx.sum
                   (snd
                      (Rune.scan Nx.Ptree.unit tensor tensor
-                        ~f:(fun () c -> ((), Nx.mul c (newton_jvp x)))
+                        (fun () c -> ((), Nx.mul c (newton_jvp x)))
                         ~init:() (vec [| 1. |]))))
               x);
         (* A differentiation between the call and the one tracking the
@@ -981,7 +981,7 @@ let error_tests =
           nonlinear
             (Rune.iterate' ~max:4
                ~until:(fun d -> Nx.less (Nx.max d) (Nx.scalar f64 1.))
-               ~f:(fun d -> Nx.mul_s d 0.5))
+               (fun d -> Nx.mul_s d 0.5))
         in
         invalid
           ~sub:
@@ -1059,7 +1059,7 @@ let compiled_tests =
         let step c x = (Nx.add c (fake_jvp_sin x), ()) in
         let scan xs =
           fst
-            (Rune.scan tensor tensor Nx.Ptree.unit ~f:step
+            (Rune.scan tensor tensor Nx.Ptree.unit step
                ~init:(Nx.zeros f64 [| 3 |]) xs)
         in
         let run xs = Nx.sum (scan xs) in
@@ -1078,7 +1078,7 @@ let compiled_tests =
         let total ~f xs =
           Nx.sum
             (fst
-               (Rune.scan tensor tensor Nx.Ptree.unit ~f
+               (Rune.scan tensor tensor Nx.Ptree.unit f
                   ~init:(Nx.zeros f64 [| 3 |]) xs))
         in
         let rows c x = (Nx.add c (fake_grad_sin x), ()) in
@@ -1158,7 +1158,7 @@ let nested_tests =
           let step c x = (Nx.add c (Rune.grad' g x), ()) in
           near ~msg:"grad in a scan step" d1
             (fst
-               (Rune.scan tensor tensor Nx.Ptree.unit ~f:step ~init:(scalar 0.)
+               (Rune.scan tensor tensor Nx.Ptree.unit step ~init:(scalar 0.)
                   (vec [| x |])));
           near ~msg:"grad ∘ grad" d2
             (Rune.grad' (fun x -> Nx.sum (Rune.grad' g x)) (scalar x));
@@ -1699,7 +1699,7 @@ let in_step f x =
   let n = Nx.numel x in
   let _, ys =
     Rune.scan Nx.Ptree.unit tensor tensor
-      ~f:(fun () r -> ((), f r))
+      (fun () r -> ((), f r))
       ~init:()
       (Nx.reshape [| 1; n |] x)
   in

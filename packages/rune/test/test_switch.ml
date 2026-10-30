@@ -46,7 +46,7 @@ let modes : (string * ((_ -> _) -> _ -> _)) list =
       fun f x ->
         fst
           (Rune.scan' ~init:(Nx.zeros_like x)
-             ~f:(fun _ r -> (f r, r))
+             (fun _ r -> (f r, r))
              (Nx.reshape [| 1 |] x)) );
   ]
 
@@ -167,7 +167,7 @@ let test_refusals () =
       Rune.vmap'
         (Rune.iterate' ~max:3
            ~until:(fun x -> Nx.greater_equal_s x 1.)
-           ~f:(fun x ->
+           (fun x ->
              Rune.switch T.tensor
                (Nx.cast Nx.int32 (Nx.add_s x 2.))
                [ (fun () -> Nx.add_s x 1.); (fun () -> Nx.add_s x 1.) ]))
@@ -315,7 +315,7 @@ let test_traced_lanes () =
   let stepped =
     fst
       (Rune.scan' ~init:(Nx.zeros_like lanes)
-         ~f:(fun _ r -> (Rune.vmap' f (Nx.add lanes r), r))
+         (fun _ r -> (Rune.vmap' f (Nx.add lanes r), r))
          (Nx.zeros f64 [| 1 |]))
   in
   equal ~msg:"in a step" close (per_lane written lanes) stepped;
@@ -336,7 +336,7 @@ let test_out_of_range () =
       Rune.jit' (fun x -> Nx.add x (pick (Nx.cast Nx.int32 x))) (scalar 2.));
   invalid ~sub:"Rune.switch: index 2 outside 0 .. 1" (fun () ->
       Rune.scan' ~init:(scalar 0.)
-        ~f:(fun c r -> (Nx.add c (pick (Nx.cast Nx.int32 r)), c))
+        (fun c r -> (Nx.add c (pick (Nx.cast Nx.int32 r)), c))
         (vec [| 1.; 2. |]))
 
 (* A switch per lane inside an iterate whose lanes stop apart, and an iterate
@@ -345,7 +345,7 @@ let test_nested_masks () =
   let collatz x =
     Rune.iterate' ~max:200
       ~until:(fun x -> Nx.less_equal_s x 1.)
-      ~f:(fun x ->
+      (fun x ->
         Rune.cond'
           (Nx.equal_s (Nx.mod_s x 2.) 0.)
           (fun () -> Nx.div_s x 2.)
@@ -367,7 +367,7 @@ let test_nested_masks () =
       (fun () ->
         Rune.iterate' ~max:100
           ~until:(fun y -> Nx.less_equal_s y 1.)
-          ~f:(fun y -> Nx.div_s y 2.)
+          (fun y -> Nx.div_s y 2.)
           x)
       (fun () -> x)
   in
@@ -474,7 +474,7 @@ let test_compiled () =
   let collatz x =
     Rune.iterate' ~max:200
       ~until:(fun x -> Nx.less_equal_s x 1.)
-      ~f:(fun x ->
+      (fun x ->
         Rune.cond'
           (Nx.equal_s (Nx.mod_s x 2.) 0.)
           (fun () -> Nx.div_s x 2.)
@@ -486,7 +486,7 @@ let test_compiled () =
       (fun () ->
         Rune.iterate' ~max:100
           ~until:(fun y -> Nx.less_equal_s y 1.)
-          ~f:(fun y -> Nx.div_s y 2.)
+          (fun y -> Nx.div_s y 2.)
           x)
       (fun () -> x)
   in
@@ -506,7 +506,7 @@ let test_compiled () =
               Nx.add x
                 (fst
                    (Rune.scan' ~init:(Nx.scalar f64 0.5)
-                      ~f:(fun c r -> (Nx.add (Nx.mul_s c 2.) r, c))
+                      (fun c r -> (Nx.add (Nx.mul_s c 2.) r, c))
                       (vec [| 1.; 2.; 3. |]))))
             (fun () -> Nx.neg x)),
         [ -1.; 2. ] );
@@ -577,7 +577,7 @@ let test_compiled () =
         ignore
           (Rune.iterate' ~max:3
              ~until:(fun y -> Nx.less_equal_s y 0.)
-             ~f:(fun y -> Nx.add_s y 1.)
+             (fun y -> Nx.add_s y 1.)
              x);
         x)
       (fun () -> Nx.neg x)
@@ -601,7 +601,7 @@ let test_compiled () =
       (fun () ->
         fst
           (Rune.scan' ~init:x
-             ~f:(fun c _ -> (Nx.sum (Nx.mul w c), c))
+             (fun c _ -> (Nx.sum (Nx.mul w c), c))
              (Nx.zeros f64 [| trips; 0 |])))
       (fun () -> Nx.neg x)
   in
@@ -612,7 +612,7 @@ let test_compiled () =
         Nx.add x
           (fst
              (Rune.scan' ~init:(Nx.scalar f64 0.)
-                ~f:(fun c _ -> (Nx.sum (Nx.mul w (Nx.add_s c 1.)), c))
+                (fun c _ -> (Nx.sum (Nx.mul w (Nx.add_s c 1.)), c))
                 (Nx.zeros f64 [| trips; 0 |]))))
       (fun () -> Nx.neg x)
   in

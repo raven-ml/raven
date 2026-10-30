@@ -212,8 +212,7 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
         Nx.Ptree.(pair tensor (pair tensor tensor))
         ~max:1
         ~until:(fun (_, (_, settled)) -> settled)
-        ~f:(fun _ ->
-          (g0, (residual g0, Nx.scalar_at (Nx.beside g0) Nx.bool true)))
+        (fun _ -> (g0, (residual g0, Nx.scalar_at (Nx.beside g0) Nx.bool true)))
         (x, (fx, Nx.logical_or better (Nx.logical_not run)))
     in
     let picard = Nx.logical_and run (Nx.logical_not better) in

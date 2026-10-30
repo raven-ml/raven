@@ -693,7 +693,7 @@ let test_reads () =
       (fun x ->
         fst
           (Rune.scan' ~init:x
-             ~f:(fun c r -> (Nx.add c (Nx.mul r (index a r)), r))
+             (fun c r -> (Nx.add c (Nx.mul r (index a r)), r))
              (v [| 1.; 10. |])))
       xs
   in
@@ -994,7 +994,7 @@ let test_scan () =
   let f x =
     let c, ys =
       Rune.scan' ~init:(Nx.zeros f64 [| 2 |])
-        ~f:(fun c r -> (Nx.add (Nx.mul c x) r, Nx.sin c))
+        (fun c r -> (Nx.add (Nx.mul c x) r, Nx.sin c))
         rows
     in
     Nx.concatenate ~axis:0 [ c; Nx.reshape [| -1 |] ys ]
@@ -1008,7 +1008,7 @@ let test_scan () =
     snd
       (Rune.iterate c ~max:5
          ~until:(fun (k, _) -> Nx.greater_equal_s k 3.)
-         ~f:(fun (k, y) -> (Nx.add_s k 1., Nx.mul (Nx.sin y) x))
+         (fun (k, y) -> (Nx.add_s k 1., Nx.mul (Nx.sin y) x))
          (Nx.scalar f64 0., x))
   in
   equal ~msg:"iterate" codes_t
@@ -1017,7 +1017,7 @@ let test_scan () =
   let h =
     Rune.iterate' ~max:5
       ~until:(fun y -> Nx.greater_s (Nx.sum y) 1.)
-      ~f:(fun y -> Nx.add_s (Nx.mul_s y 2.) 0.5)
+      (fun y -> Nx.add_s (Nx.mul_s y 2.) 0.5)
   in
   equal ~msg:"lanes stopping apart" codes_t
     (codes (one_by_one h xs))
@@ -1028,7 +1028,7 @@ let test_scan () =
       Rune.vmap'
         (Rune.iterate' ~max:5
            ~until:(fun y -> Nx.greater_s (Nx.sum y) 10.)
-           ~f:(fun y -> Nx.mul_s y 2.))
+           (fun y -> Nx.mul_s y 2.))
         xs)
 
 (* Placements *)

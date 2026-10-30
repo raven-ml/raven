@@ -632,7 +632,7 @@ end
 (* Loops *)
 
 
-let scan_named name c x y ~f ~init xs =
+let scan_named name c x y f ~init xs =
   let init_v = values c init and xs_v = values x xs in
   if Array.length xs_v = 0 then invalid_argf "%s: xs has no leaf" name;
   let lengths =
@@ -683,9 +683,9 @@ let scan_named name c x y ~f ~init xs =
   ( rebuild c ~like:init (slice r 0 nc),
     rebuild y ~like:ys_like (slice r nc (nc + ny)) )
 
-let scan c x y ~f ~init xs = scan_named "Rune.scan" c x y ~f ~init xs
+let scan c x y f ~init xs = scan_named "Rune.scan" c x y f ~init xs
 
-let iterate_named name c ~max ~until ~f init =
+let iterate_named name c ~max ~until f init =
   if max < 0 then invalid_argf "%s: max = %d is negative" name max;
   let init_v = values c init in
   let nc = Array.length init_v in
@@ -727,8 +727,8 @@ let iterate_named name c ~max ~until ~f init =
   in
   rebuild c ~like:init (slice r 0 nc)
 
-let iterate c ~max ~until ~f init =
-  iterate_named "Rune.iterate" c ~max ~until ~f init
+let iterate c ~max ~until f init =
+  iterate_named "Rune.iterate" c ~max ~until f init
 
 (* Branches *)
 
@@ -1287,11 +1287,11 @@ let eval_shape a r f args = snd (staged "Rune.eval_shape" a r f args)
 
 (* Functions of one array *)
 
-let scan' ~f ~init xs =
-  scan_named "Rune.scan'" Ptree.tensor Ptree.tensor Ptree.tensor ~f ~init xs
+let scan' f ~init xs =
+  scan_named "Rune.scan'" Ptree.tensor Ptree.tensor Ptree.tensor f ~init xs
 
-let iterate' ~max ~until ~f x =
-  iterate_named "Rune.iterate'" Ptree.tensor ~max ~until ~f x
+let iterate' ~max ~until f x =
+  iterate_named "Rune.iterate'" Ptree.tensor ~max ~until f x
 
 let jit' ?beam ?parallel f =
   jit_named ?beam ?parallel "Rune.jit'" Ptree.(tensor @-> returns tensor) f

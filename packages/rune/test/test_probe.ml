@@ -130,7 +130,7 @@ let step p c r =
 let scanned p xs =
   let row = Array.sub (Nx.shape xs) 1 (Nx.ndim xs - 1) in
   let c, ys =
-    Rune.scan T.tensor T.tensor T.tensor ~f:(step p)
+    Rune.scan T.tensor T.tensor T.tensor (step p)
       ~init:(Nx.zeros (Nx.dtype xs) row)
       xs
   in
@@ -220,7 +220,7 @@ let test_scan_raise () =
     (Nx.add c r, r)
   in
   let scan xs =
-    snd (Rune.scan T.tensor T.tensor T.tensor ~f ~init:(Nx.scalar f64 0.) xs)
+    snd (Rune.scan T.tensor T.tensor T.tensor f ~init:(Nx.scalar f64 0.) xs)
   in
   let row k = Nx.get [ k ] xs in
   List.iter
@@ -242,12 +242,11 @@ let test_nested_scan () =
   in
   let outer c row =
     Probe.emit p (tag 0, c);
-    let c', _ = Rune.scan T.tensor T.tensor T.tensor ~f:inner ~init:c row in
+    let c', _ = Rune.scan T.tensor T.tensor T.tensor inner ~init:c row in
     (c', c')
   in
   let scan xs =
-    fst
-      (Rune.scan T.tensor T.tensor T.tensor ~f:outer ~init:(Nx.scalar f64 0.) xs)
+    fst (Rune.scan T.tensor T.tensor T.tensor outer ~init:(Nx.scalar f64 0.) xs)
   in
   let e k = Nx.scalar f64 k in
   let expected =
@@ -357,7 +356,7 @@ let iterated s ~max p z =
       T.(pair tensor tensor)
       ~max
       ~until:(fun (_, k) -> Nx.greater_equal k t)
-      ~f:(fun (x, k) ->
+      (fun (x, k) ->
         Probe.emit p (tag 0, x);
         let x2 = Nx.add x x in
         Probe.emit p (tag 1, x2);
@@ -455,7 +454,7 @@ let test_map_in_scan () =
   in
   let got =
     offers p (fun () ->
-        Rune.scan T.tensor T.tensor T.tensor ~f:step ~init:(Nx.scalar f64 0.) xs)
+        Rune.scan T.tensor T.tensor T.tensor step ~init:(Nx.scalar f64 0.) xs)
   in
   equal offers_t
     [ offer 0 (List.init 6 (fun k -> Nx.scalar f64 (float_of_int k))) ]
@@ -484,7 +483,7 @@ let test_until () =
       ~until:(fun x ->
         Probe.emit p (tag 0, x);
         Nx.greater_s x 2.)
-      ~f:(fun x -> Nx.add_s x 1.)
+      (fun x -> Nx.add_s x 1.)
       (Nx.scalar f64 0.)
   in
   equal ~msg:"no collect open" bits_t
@@ -498,13 +497,13 @@ let test_until () =
       ~until:(fun x ->
         let c, _ =
           Rune.scan' ~init:x
-            ~f:(fun c r ->
+            (fun c r ->
               Probe.emit p (tag 0, c);
               (Nx.add c r, r))
             (Nx.reshape [| 1 |] x)
         in
         Nx.greater_s c 2.)
-      ~f:(fun x -> Nx.add_s x 1.)
+      (fun x -> Nx.add_s x 1.)
       (Nx.scalar f64 0.)
   in
   match collected p in_scan with
@@ -541,7 +540,7 @@ let test_tangent () =
   let stepped x =
     let c, _ =
       Rune.scan' ~init:x
-        ~f:(fun c r -> (Nx.add (square p c) r, r))
+        (fun c r -> (Nx.add (square p c) r, r))
         (Nx.reshape [| 1; 1 |] x)
     in
     Nx.sum c
@@ -662,7 +661,7 @@ let test_inside () =
   refused "jvp" (fun () -> Rune.jvp' inner x x);
   refused "grad" (fun () -> Rune.grad' (fun x -> Nx.sum (inner x)) x);
   refused "a scan's step" (fun () ->
-      Rune.scan' ~init:x ~f:(fun c r -> (inner c, r)) (Nx.reshape [| 1; 1 |] x))
+      Rune.scan' ~init:x (fun c r -> (inner c, r)) (Nx.reshape [| 1; 1 |] x))
 
 let test_domain () =
   let p = Probe.make (tagged ()) in
@@ -678,7 +677,7 @@ let test_total () =
   let f xs =
     let c, _ =
       Rune.scan' ~init:(Nx.zeros f64 [| 1 |])
-        ~f:(fun c r ->
+        (fun c r ->
           Rune.Total.add total r;
           Probe.emit p (tag 0, c);
           (Nx.add c r, r))

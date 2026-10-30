@@ -937,11 +937,7 @@ let test_fresh () =
           Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () -> x)
         in
         let s =
-          fst
-            (Rune.scan'
-               ~f:(fun _ r -> (c, r))
-               ~init:x
-               (Nx.reshape [| 2; 1 |] x))
+          fst (Rune.scan' (fun _ r -> (c, r)) ~init:x (Nx.reshape [| 2; 1 |] x))
         in
         let b =
           Rune.cond' (Nx.greater_s (Nx.sum x) 0.) (fun () -> c) (fun () -> x)
@@ -1533,7 +1529,7 @@ let test_readers () =
     let w' = Nx.add_s w 1. in
     let c, _ =
       Rune.scan T.tensor T.tensor T.unit
-        ~f:(fun c r -> (Nx.mul c r, ()))
+        (fun c r -> (Nx.mul c r, ()))
         ~init:w' rows
     in
     (w', (Nx.add a c, c))
@@ -1575,7 +1571,7 @@ let test_readers () =
     let v' = Nx.add_s v 1. in
     let w' = Nx.mul w v' in
     let until c = Nx.less (Nx.max c) (Nx.scalar f32 1e30) in
-    ignore (Rune.iterate' ~max:3 ~until ~f:Nx.neg (Nx.add w' v));
+    ignore (Rune.iterate' ~max:3 ~until Nx.neg (Nx.add w' v));
     (w', v')
   in
   let k = Rune.jit T.(two @-> returns two) step in
@@ -1872,7 +1868,7 @@ let test_loop_checks () =
     fst
       (Rune.scan'
          ~init:(Nx.zeros_like (Nx.get [ 0 ] xs))
-         ~f:(fun c r -> (Nx.add c (checked r), Nx.neg c))
+         (fun c r -> (Nx.add c (checked r), Nx.neg c))
          xs)
   in
   let g = Rune.jit' scan in
@@ -1901,7 +1897,7 @@ let test_loop_checks () =
   let iterate x =
     Rune.iterate' ~max:4
       ~until:(fun x -> Nx.greater (Nx.sum x) (Nx.scalar f32 4.))
-      ~f:(fun x -> Nx.add (Nx.neg (checked x)) (Nx.scalar_like x 1.))
+      (fun x -> Nx.add (Nx.neg (checked x)) (Nx.scalar_like x 1.))
       x
   in
   let h = Rune.jit' iterate in
@@ -1923,12 +1919,12 @@ let test_loop_checks () =
     Rig.Buffer.overlaps b (Nx_array.buffer a)
   in
   let scan_with f xs =
-    fst (Rune.scan' ~init:(Nx.zeros f32 [| 2 |]) ~f:(fun c r -> (f c r, c)) xs)
+    fst (Rune.scan' ~init:(Nx.zeros f32 [| 2 |]) (fun c r -> (f c r, c)) xs)
   in
   let until_with f xs =
     Rune.iterate' ~max:0
       ~until:(fun c -> Nx.all (Nx.less (f c) (Nx.scalar f32 9.)))
-      ~f:Fun.id xs
+      Fun.id xs
   in
   equal ~msg:"an unchecked step lends" bool true
     (lends (scan_with (fun c r -> Nx.add c r)));
@@ -1948,7 +1944,7 @@ let test_loop_stops () =
   let long ~f x =
     Rune.iterate' ~max:1_000_000_000
       ~until:(fun x -> Nx.less (Nx.sum x) (Nx.scalar f32 (-1.)))
-      ~f x
+      f x
   in
   let step x = Nx.add x (Nx.scalar_like x 1.) in
   let failing x = long ~f:step (checked x) in
@@ -1956,7 +1952,7 @@ let test_loop_stops () =
   let in_scan xs =
     fst
       (Rune.scan' ~init:(Nx.zeros f32 [| 2 |])
-         ~f:(fun c r -> (Nx.add c (long ~f:step (checked r)), Nx.neg c))
+         (fun c r -> (Nx.add c (long ~f:step (checked r)), Nx.neg c))
          xs)
   in
   let both msg f x =
@@ -2000,7 +1996,7 @@ let law_checked_loop c =
     Nx.check T.tensor (Nx.less none none) none (fun i _ -> Small (i, 0.));
     (Nx.add c (checked r), Nx.neg c)
   in
-  let scan xs = fst (Rune.scan' ~init:(Nx.zeros f32 [| 2 |]) ~f:step xs) in
+  let scan xs = fst (Rune.scan' ~init:(Nx.zeros f32 [| 2 |]) step xs) in
   let iterate x =
     Rune.iterate' ~max:c.max
       ~until:(fun x ->
@@ -2010,7 +2006,7 @@ let law_checked_loop c =
           s
           (fun i d -> Small (i, Nx.item [] d));
         Nx.greater s (Nx.scalar f32 c.stop))
-      ~f:(fun x -> Nx.add (checked x) (Nx.scalar_like x 1.5))
+      (fun x -> Nx.add (checked x) (Nx.scalar_like x 1.5))
       x
   in
   let eager = raised (fun () -> scan xs) in
@@ -2450,7 +2446,7 @@ let test_inlined_in_step () =
   let run f x =
     fst
       (Rune.scan'
-         ~f:(fun c r -> (Nx.mul (f c) r, Nx.neg c))
+         (fun c r -> (Nx.mul (f c) r, Nx.neg c))
          ~init:x
          (Nx.reshape [| 3; 1 |] x))
   in
@@ -2643,8 +2639,7 @@ let test_calls_stay () =
   equal ~msg:"remat" bits_t expected (bits (r x));
   let rows = Nx.reshape [| 1; 1024 |] x in
   let scanned =
-    fst
-      (Rune.scan' ~f:(fun _ r -> (f r, Nx.neg r)) ~init:(Nx.zeros_like x) rows)
+    fst (Rune.scan' (fun _ r -> (f r, Nx.neg r)) ~init:(Nx.zeros_like x) rows)
   in
   equal ~msg:"a scan's step" bits_t expected (bits scanned);
   let rule = Rune.custom_jvp T.tensor T.tensor (fun x -> (f x, fun dx -> dx)) in
@@ -2662,12 +2657,12 @@ let test_loop_totals () =
   let scan xs =
     fst
       (Rune.scan' ~init:(Nx.zeros f64 [| 3 |])
-         ~f:(fun c r ->
+         (fun c r ->
            Rune.Total.add t (Nx.sum (Nx.mul r r));
            Rune.Total.add u (Nx.mul_s r 0.1);
            let inner, _ =
              Rune.scan' ~init:c
-               ~f:(fun d s ->
+               (fun d s ->
                  Rune.Total.add t (Nx.sum (Nx.abs s));
                  (Nx.add d s, Nx.neg d))
                (Nx.reshape [| 3; 1 |] r)
@@ -2680,7 +2675,7 @@ let test_loop_totals () =
       ~until:(fun x ->
         Rune.Total.add t (Nx.sum x);
         Nx.less (Nx.sum (Nx.abs x)) (Nx.scalar f64 0.1))
-      ~f:(fun x ->
+      (fun x ->
         Rune.Total.add u (Nx.neg x);
         Nx.mul_s x 0.5)
       x
@@ -2715,8 +2710,8 @@ let test_nested_iterate () =
   let scan xs =
     fst
       (Rune.scan' ~init:(Nx.zeros f64 [| 3 |])
-         ~f:(fun c r ->
-           let d = Rune.iterate' ~max:12 ~until:small ~f:halve (Nx.add r c) in
+         (fun c r ->
+           let d = Rune.iterate' ~max:12 ~until:small halve (Nx.add r c) in
            (Nx.add c d, d))
          xs)
   in
@@ -2737,7 +2732,7 @@ let test_nested_iterate () =
 let test_derived_iterates () =
   let double x = Nx.mul_s x 2. in
   let large x = Nx.greater_s (Nx.sum x) 50. in
-  let iterate x = Rune.iterate' ~max:8 ~until:large ~f:double x in
+  let iterate x = Rune.iterate' ~max:8 ~until:large double x in
   let jvp x = Rune.jvp' iterate x (Nx.ones_like x) in
   let x = Nx.place Nx.Host.on (v64 [| 1.; 0.5 |]) in
   let compiled msg f x =
@@ -2759,7 +2754,7 @@ let test_derived_iterates () =
          T.(pair tensor tensor)
          ~max:8
          ~until:(fun (_, k) -> Nx.greater_equal_s k 3.)
-         ~f:(fun (x, k) -> (double x, Nx.add_s k 1.))
+         (fun (x, k) -> (double x, Nx.add_s k 1.))
          (x, Nx.place Nx.Host.on (Nx.scalar f64 0.)))
   in
   let xs =
@@ -2772,7 +2767,7 @@ let test_derived_iterates () =
   let checked x =
     Rune.iterate' ~max:6
       ~until:(fun x -> Nx.greater_s (Nx.sum x) 1e9)
-      ~f:(fun x ->
+      (fun x ->
         Nx.check T.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
         double x)
       x

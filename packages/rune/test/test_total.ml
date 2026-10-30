@@ -192,7 +192,7 @@ let test_set_refused () =
         fun () ->
           ignore
             (Rune.scan'
-               ~f:(fun c r ->
+               (fun c r ->
                  add r;
                  (c, r))
                ~init:(x2 ())
@@ -246,7 +246,7 @@ let test_delivery_raises () =
         refused (fun () ->
             Total.collect t2 ~init:(z 2) (fun () ->
                 Rune.scan' ~init:(Nx.zeros f32 [||])
-                  ~f:(fun c r ->
+                  (fun c r ->
                     Total.add t1 (Nx.add (z 2) r);
                     Total.add t2 (Nx.add (z 3) r);
                     (c, c))
@@ -262,7 +262,7 @@ let test_delivery_raises () =
                   (fun x ->
                     fst
                     @@ Rune.scan' ~init:(Nx.zeros f32 [||])
-                         ~f:(fun c r ->
+                         (fun c r ->
                            Total.add t1 (Nx.add (z 2) r);
                            Total.add t2 (Nx.add (z 3) r);
                            (c, c))
@@ -277,7 +277,7 @@ let test_delivery_raises () =
                 Rune.vmap'
                   (Rune.iterate' ~max:4
                      ~until:(fun x -> Nx.greater_equal_s x 3.)
-                     ~f:(fun x ->
+                     (fun x ->
                        Total.add t1 (Nx.add (z 2) x);
                        Total.add t2 (Nx.add (z 3) x);
                        Nx.add_s x 1.))
@@ -474,7 +474,7 @@ let law_chained c =
     | Scan_in ->
         ignore
           (Rune.scan' ~init:carry
-             ~f:(fun x _ ->
+             (fun x _ ->
                add 1 x;
                add 2 x;
                (x, x))
@@ -486,7 +486,7 @@ let law_chained c =
              ~max:c.trips
              ~until:(fun (_, k) ->
                Nx.greater_equal k (Nx.scalar f32 (Float.of_int c.trips)))
-             ~f:(fun (x, k) ->
+             (fun (x, k) ->
                add 1 x;
                add 2 x;
                (x, Nx.add k (Nx.scalar f32 1.)))
@@ -549,7 +549,7 @@ let law_chained c =
     collected (fun init ->
         fst
           (Rune.scan' ~init
-             ~f:(fun x _ ->
+             (fun x _ ->
                add 0 x;
                inner_ops x;
                add 3 x;
@@ -860,7 +860,7 @@ let law_in_turn c =
     | Scan_lane ->
         fst
           (Rune.scan' ~init:x
-             ~f:(fun y k ->
+             (fun y k ->
                pair (Nx.mul x k);
                (y, y))
              (v [| 1.; 2. |]))
@@ -891,7 +891,7 @@ let law_in_turn c =
              ~until:(fun (_, k) ->
                Total.add t (Nx.div_s x 2.);
                Nx.greater_equal k trips)
-             ~f:(fun (y, k) ->
+             (fun (y, k) ->
                pair x;
                (y, Nx.add k (s 1.)))
              (x, s 0.))
@@ -907,7 +907,7 @@ let law_in_turn c =
              Nx.Ptree.(pair tensor tensor)
              ~max:2
              ~until:(fun (_, k) -> Nx.greater_equal k trips)
-             ~f:(fun (y, k) ->
+             (fun (y, k) ->
                ignore
                  (Rune.vmap'
                     (fun r ->
@@ -922,7 +922,7 @@ let law_in_turn c =
              Nx.Ptree.(pair tensor tensor)
              ~max:2
              ~until:(fun (_, k) -> Nx.greater_equal k (s 2.))
-             ~f:(fun (y, k) ->
+             (fun (y, k) ->
                pair x;
                (y, Nx.add k (s 1.)))
              (x, s 0.))
@@ -947,7 +947,7 @@ let law_in_turn c =
         in
         fst
           (Rune.scan' ~init:x
-             ~f:(fun y k ->
+             (fun y k ->
                ignore (g k);
                pair x;
                (y, y))

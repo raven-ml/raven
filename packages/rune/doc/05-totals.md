@@ -21,7 +21,7 @@ let xs = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |]
 let run xs =
   fst
     (Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-       ~f:(fun acc row ->
+       (fun acc row ->
          let next = Nx.Infix.(acc + row) in
          Rune.Total.add penalty Nx.Infix.(next * next);
          (next, next))

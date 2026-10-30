@@ -259,7 +259,7 @@ let rec apply : type v s.
       let w = coefficient dt 20 [| n |] in
       fst
         (Rune.scan T.tensor T.tensor T.unit
-           ~f:(fun c r -> (Nx.add (sub e c) (Nx.mul w r), ()))
+           (fun c r -> (Nx.add (sub e c) (Nx.mul w r), ()))
            ~init:v
            (Nx.zeros dt [| 2; n |]))
   | Map e ->

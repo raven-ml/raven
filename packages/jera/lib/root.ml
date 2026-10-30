@@ -130,7 +130,7 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
         Nx.logical_or
           (Nx.logical_not (Nx.any (searching st)))
           (Nx.greater_equal_s k (Int32.of_int limit)))
-      ~f:step initial
+      step initial
   in
   let st =
     settle st (Nx.ones_at (Nx.placement st) Nx.bool (Nx.shape st)) Stalled

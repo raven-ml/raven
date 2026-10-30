@@ -235,7 +235,7 @@ let warmup u lp k ~steps (s : (_, _, 'd) state) =
   else
     fst
       (Rune.scan (ptree u) P.tensor P.unit
-         ~f:(fun (s : (_, _, 'd) state) _ ->
+         (fun (s : (_, _, 'd) state) _ ->
            (step u lp (Nx.Rng.fold_in_tensor k s.draw) s, ()))
          ~init:s
          (Nx.zeros_at (Nx.beside s.lp) Nx.int32 [| steps |]))
@@ -248,7 +248,7 @@ let sample u lp k ~draws (s : (_, _, 'd) state) =
   let s, (xs, ss) =
     Rune.scan (ptree u) P.tensor
       P.(pair u st)
-      ~f:(fun (s : (_, _, 'd) state) _ ->
+      (fun (s : (_, _, 'd) state) _ ->
         let s = step u lp (Nx.Rng.fold_in_tensor k s.draw) s in
         (s, (s.position, s.stats)))
       ~init:s

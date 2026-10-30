@@ -30,7 +30,7 @@ let tick k = Nx.add k (Nx.scalar Nx.int32 1l)
 (* The loop written out: the step applied while [until] is false, as many times
    as [max] allows, the step traced once even where it takes none, as iterate's
    is. *)
-let looped ~max ~until ~f init =
+let looped ~max ~until f init =
   ignore (f init);
   let rec go j c =
     if Nx.item [] (until c) then c
@@ -86,16 +86,16 @@ let test_iterate () =
   let x = v [| 20.; 3. |] in
   equal bits_t
     (bits (reference x))
-    (bits (Rune.iterate' ~max:10 ~until:below_one ~f:halve x));
+    (bits (Rune.iterate' ~max:10 ~until:below_one halve x));
   (* An init that holds is returned unchanged. *)
   let small = v [| 0.25; -0. |] in
   equal bits_t (bits small)
-    (bits (Rune.iterate' ~max:0 ~until:below_one ~f:halve small));
+    (bits (Rune.iterate' ~max:0 ~until:below_one halve small));
   (* Steps counted in the carry. *)
   let x, k =
     Rune.iterate (p2 ()) ~max:10
       ~until:(fun (x, _) -> below_one x)
-      ~f:(fun (x, k) -> (halve x, tick k))
+      (fun (x, k) -> (halve x, tick k))
       (v [| 20.; 3. |], k0 ())
   in
   equal int32 5l (Nx.item [] k);
@@ -135,10 +135,10 @@ let law_any (Any_case (dt, s, trips, max, co, g)) =
     outcome (fun () ->
         if max < 0 then
           invalid_arg (Printf.sprintf "Rune.iterate: max = %d is negative" max);
-        codes (fst (looped ~max ~until ~f:(step g) (init, k0 ()))))
+        codes (fst (looped ~max ~until (step g) (init, k0 ()))))
   in
   let iterate g (init, k) =
-    fst (Rune.iterate (p2 ()) ~max ~until ~f:(step g) (init, k))
+    fst (Rune.iterate (p2 ()) ~max ~until (step g) (init, k))
   in
   equal (outcome_t codes_t) (expected g)
     (outcome (fun () -> codes (iterate g (init, k0 ()))));
@@ -152,7 +152,7 @@ let law_any (Any_case (dt, s, trips, max, co, g)) =
     (compiled (fun () -> outcome (fun () -> codes (jitted init (k0 ())))))
 
 let test_refused () =
-  let halving ~max ~until x = Rune.iterate t ~max ~until ~f:halve x in
+  let halving ~max ~until x = Rune.iterate t ~max ~until halve x in
   invalid ~sub:"Rune.iterate: until is still false after max = 2 steps"
     (fun () -> halving ~max:2 ~until:below_one (v [| 20. |]));
   invalid ~sub:"Rune.iterate: max = -1 is negative" (fun () ->
@@ -162,11 +162,11 @@ let test_refused () =
   invalid
     ~sub:"Rune.iterate: the root: shape [1] in the carry the step returned"
     (fun () ->
-      Rune.iterate t ~max:2 ~until:below_one ~f:(Nx.sum ~keepdims:true)
+      Rune.iterate t ~max:2 ~until:below_one (Nx.sum ~keepdims:true)
         (v [| 20.; 1. |]));
   (* A message names the entry point applied. *)
   invalid ~sub:"Rune.iterate': max = -1 is negative" (fun () ->
-      Rune.iterate' ~max:(-1) ~until:below_one ~f:halve (v [| 20. |]))
+      Rune.iterate' ~max:(-1) ~until:below_one halve (v [| 20. |]))
 
 exception Until
 exception Step
@@ -182,7 +182,7 @@ let test_until_first () =
   let loop x =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.greater_s (Nx.max (checked Until x)) 100.)
-      ~f:(fun x -> Nx.add_s (checked Step x) 2.)
+      (fun x -> Nx.add_s (checked Step x) 2.)
       x
   in
   let x = Nx.place Nx.Host.on (v [| 0. |]) in
@@ -191,7 +191,7 @@ let test_until_first () =
   let stopped x =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.greater_s (Nx.max x) 1.)
-      ~f:(checked Step) x
+      (checked Step) x
   in
   equal bits_t (bits (v [| 9. |])) (bits (stopped (v [| 9. |])));
   equal ~msg:"compiled" bits_t
@@ -213,7 +213,7 @@ let test_constant_carry () =
   let c =
     Rune.iterate t ~max:10
       ~until:(fun c -> Nx.greater_equal c three)
-      ~f:(fun c -> Nx.add c one)
+      (fun c -> Nx.add c one)
       (Nx.scalar f32 0.)
   in
   equal bits_t (bits three) (bits c);
@@ -225,7 +225,7 @@ let test_crossing_carry () =
   let a, b =
     Rune.iterate (p2 ()) ~max:10
       ~until:(fun (a, _) -> Nx.greater_equal a three)
-      ~f:(fun (a, _) -> (Nx.add a one, Nx.zeros f32 [||]))
+      (fun (a, _) -> (Nx.add a one, Nx.zeros f32 [||]))
       (Nx.scalar f32 0., host (Nx.scalar f32 5.))
   in
   equal bits_t (bits three) (bits a);
@@ -241,7 +241,7 @@ let test_chain () =
   let a, b =
     Rune.iterate (p2 ()) ~max:10
       ~until:(fun (a, _) -> Nx.greater_equal a three)
-      ~f:(fun (a, _) ->
+      (fun (a, _) ->
         incr traces;
         (Nx.add a one, a))
       (Nx.scalar f32 0., Nx.scalar f32 0.)
@@ -257,7 +257,7 @@ let test_placed_init () =
   let loop a =
     Rune.iterate' ~max:5
       ~until:(fun c -> Nx.greater_equal c zero)
-      ~f:(fun _ -> Nx.zeros f32 [||])
+      (fun _ -> Nx.zeros f32 [||])
       a
   in
   equal ~msg:"no step" bits_t
@@ -266,7 +266,7 @@ let test_placed_init () =
   equal ~msg:"one step" bits_t (bits zero)
     (bits (Rune.jit' loop (host (Nx.scalar f32 (-1.)))));
   let _, ys =
-    Rune.scan' ~f:(fun c x -> (c, loop x)) ~init:zero (host (v [| 1.; -1. |]))
+    Rune.scan' (fun c x -> (c, loop x)) ~init:zero (host (v [| 1.; -1. |]))
   in
   equal ~msg:"in a scan" bits_t (bits (v [| 1.; 0. |])) (bits ys)
 
@@ -277,7 +277,7 @@ let test_captured_argument () =
       (fun a ->
         Rune.iterate' ~max:10
           ~until:(fun c -> Nx.greater_equal c three)
-          ~f:(fun c -> Nx.add c a)
+          (fun c -> Nx.add c a)
           (Nx.scalar f32 0.))
       (host (Nx.scalar f32 1.))
   in
@@ -296,7 +296,7 @@ let test_staged () =
     Nx.less s (Nx.scalar_like s 0.01)
   in
   let halve x = Nx.mul_s x 0.5 in
-  let g = Rune.jit' (fun x -> Rune.iterate' ~max:50 ~until ~f:halve x) in
+  let g = Rune.jit' (fun x -> Rune.iterate' ~max:50 ~until halve x) in
   let x = Nx.place Count.on (v [| 1.; 2.; 3. |]) in
   ignore (g x);
   equal ~msg:"one trace" int 1 !traces;
@@ -305,9 +305,9 @@ let test_staged () =
   let y = g x in
   equal ~msg:"no retrace" int 0 !traces;
   equal ~msg:"no eager kernel" int 0 (C.calls ());
-  equal bits_t (bits (Rune.iterate' ~max:50 ~until ~f:halve x)) (bits y);
+  equal bits_t (bits (Rune.iterate' ~max:50 ~until halve x)) (bits y);
   invalid ~sub:"Rune.iterate': until is still false after max = 3 steps"
-    (fun () -> Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until ~f:halve x) x)
+    (fun () -> Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until halve x) x)
 
 (* A compiled call in a step stays a call, which computes at each step the bits
    it computes outside the loop, over carries in every view and a capture. *)
@@ -344,13 +344,13 @@ let law_call (Call c) =
   (* Each call reads the carry, so that it computes in the step. *)
   let step sine (x, k) = (Nx.add (sine x) (sine (Nx.maximum w x)), tick k) in
   let until (_, k) = Nx.greater_equal_s k (Int32.of_int c.trips) in
-  let written sine = fst (looped ~max:3 ~until ~f:(step sine) (init, k0 ())) in
+  let written sine = fst (looped ~max:3 ~until (step sine) (init, k0 ())) in
   cover "a step the call computes apart from eager"
     (bits (written c.sine) <> bits (written Nx.sin));
   equal bits_t
     (bits (written c.sine))
     (bits
-       (fst (Rune.iterate (p2 ()) ~max:3 ~until ~f:(step c.sine) (init, k0 ()))))
+       (fst (Rune.iterate (p2 ()) ~max:3 ~until (step c.sine) (init, k0 ()))))
 
 (* Derivatives *)
 
@@ -401,11 +401,9 @@ let law_derivatives (Case c, compiled_too) =
     Nx.greater_equal k (Nx.scalar Nx.int32 (Int32.of_int c.trips))
   in
   let iterated g (x, w) =
-    fst (Rune.iterate (p2 ()) ~max:c.max ~until ~f:(step g w) (x, k0 ()))
+    fst (Rune.iterate (p2 ()) ~max:c.max ~until (step g w) (x, k0 ()))
   in
-  let written g (x, w) =
-    fst (looped ~max:c.max ~until ~f:(step g w) (x, k0 ()))
-  in
+  let written g (x, w) = fst (looped ~max:c.max ~until (step g w) (x, k0 ())) in
   (* A carry whose step reads nothing keeps a zero tangent and cotangent where
      the loop written out has none. *)
   let l = if constant c.g then lenient ~nan:true else bits_t in
@@ -527,7 +525,7 @@ let test_trips_taken () =
   let f x =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.less (Nx.max x) (Nx.scalar f64 1.))
-      ~f:(fun x -> Nx.mul_s x 0.5)
+      (fun x -> Nx.mul_s x 0.5)
       x
   in
   (* Two halvings: 3, 1.5, 0.75. *)
@@ -542,7 +540,7 @@ let test_trips_taken () =
   let g tol =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.less (Nx.max x) (Nx.max tol))
-      ~f:(fun x -> Nx.mul_s x 0.5)
+      (fun x -> Nx.mul_s x 0.5)
       x
   in
   equal ~msg:"a stop's tracked value" bits_t
@@ -556,7 +554,7 @@ let test_transpose () =
     fst
       (Rune.iterate (p2 ()) ~max:3
          ~until:(fun (_, k) -> Nx.greater_equal_s k 2l)
-         ~f:(fun (x, k) -> (Nx.mul_s x 2., tick k))
+         (fun (x, k) -> (Nx.mul_s x 2., tick k))
          (x, k0 ()))
   in
   let scaled x = Nx.mul x (doubled (vec [| 1.; -1. |])) in
@@ -570,7 +568,7 @@ let test_transpose () =
     fst
       (Rune.iterate (p2 ()) ~max:3
          ~until:(fun (_, k) -> Nx.greater_equal_s k 2l)
-         ~f:(fun (x, k) -> (Nx.mul_s x 2., tick k))
+         (fun (x, k) -> (Nx.mul_s x 2., tick k))
          (x, k0 ()))
   in
   equal bits_t
@@ -584,7 +582,7 @@ let test_transpose () =
   let stopped x =
     Rune.iterate' ~max:3
       ~until:(fun x -> Nx.less (Nx.max x) (Nx.scalar f64 1.))
-      ~f:(fun x -> Nx.mul_s x 0.5)
+      (fun x -> Nx.mul_s x 0.5)
       x
   in
   let refused f =
@@ -601,13 +599,13 @@ let test_transpose () =
   refused (fun x ->
       Rune.iterate' ~max:3
         ~until:(fun c -> Nx.less (Nx.max (Nx.add c x)) (Nx.scalar f64 1.))
-        ~f:(fun c -> Nx.mul_s c 0.5)
+        (fun c -> Nx.mul_s c 0.5)
         (vec [| 4.; 4. |]));
   refused (fun x ->
       fst
         (Rune.iterate (p2 ()) ~max:3
            ~until:(fun (_, s) -> Nx.greater (Nx.max s) (Nx.scalar f64 1.))
-           ~f:(fun (y, s) -> (Nx.mul_s y 2., Nx.add s x))
+           (fun (y, s) -> (Nx.mul_s y 2., Nx.add s x))
            (x, vec [| 0.; 0. |])))
 
 (* Maps *)
@@ -781,11 +779,11 @@ let law_lanes (Lanes c, compiled_too) =
   let until t (_, k) = Nx.greater_equal k t in
   let iterated ?g ?y w (x, t) =
     fst
-      (Rune.iterate (p2 ()) ~max:c.max ~until:(until t) ~f:(step ?g ?y w)
+      (Rune.iterate (p2 ()) ~max:c.max ~until:(until t) (step ?g ?y w)
          (x, k0 ()))
   in
   let written ?g ?y w (x, t) =
-    fst (looped ~max:c.max ~until:(until t) ~f:(step ?g ?y w) (x, k0 ()))
+    fst (looped ~max:c.max ~until:(until t) (step ?g ?y w) (x, k0 ()))
   in
   (* Compiled, the step's functions are exact: a complex product is not, so the
      step's operand is a sum there. *)
@@ -900,7 +898,7 @@ let law_lanes (Lanes c, compiled_too) =
         fst
           (looped ~max:c.max
              ~until:(until (Nx.get [ k ] t))
-             ~f:(at ws)
+             (at ws)
              (Nx.get [ k ] x, k0 ()))
       in
       let g = grad_at c.dt lane (Nx.copy rows) in
@@ -1077,7 +1075,7 @@ let law_apart (Apart (dt, s, lanes, trips, max, g, co)) =
     fst
       (Rune.iterate (p2 ()) ~max
          ~until:(fun (_, k) -> Nx.greater_equal k t)
-         ~f:step
+         step
          (x, k0 ()))
   in
   let sg = T.(p2 () @-> returns tensor) in
@@ -1118,9 +1116,9 @@ let keyed_iterate =
   keyed ~loop:(fun ~until ->
       Rune.iterate
         T.(pair tensor (pair tensor tensor))
-        ~max:keyed_max ~until ~f:keyed_step)
+        ~max:keyed_max ~until keyed_step)
 
-let keyed_written = keyed ~loop:(looped ~max:keyed_max ~f:keyed_step)
+let keyed_written = keyed ~loop:(looped ~max:keyed_max keyed_step)
 let keyed_s = T.(tensor @-> p2 () @-> returns tensor)
 let keyed_jit = Rune.jit keyed_s keyed_iterate
 
@@ -1153,7 +1151,7 @@ let test_donors () =
   let f =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.greater_equal (Nx.max x) (Nx.scalar f64 10.))
-      ~f:(fun x ->
+      (fun x ->
         Nx.check T.unit (Nx.less x (Nx.scalar f64 55.)) () (fun _ () -> Exit);
         Nx.mul_s x 2.)
   in
@@ -1163,8 +1161,7 @@ let test_donors () =
   let g =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.greater_equal (Nx.max x) (Nx.scalar f64 10.))
-      ~f:(fun x ->
-        Nx.add (Nx.log (Nx.sub (Nx.scalar f64 15.) x)) (Nx.mul_s x 2.))
+      (fun x -> Nx.add (Nx.log (Nx.sub (Nx.scalar f64 15.) x)) (Nx.mul_s x 2.))
   in
   let grad x = Rune.grad' (fun x -> Nx.sum (g x)) x in
   let per_lane = Nx.stack [ grad (vec [| 1. |]); vec [| 1. |] ] in
@@ -1177,7 +1174,7 @@ let test_constant_init () =
   let f t =
     Rune.iterate' ~max:10
       ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.max t))
-      ~f:(fun y -> Nx.add_s y 1.)
+      (fun y -> Nx.add_s y 1.)
       (Nx.zeros f64 [| 1 |])
   in
   equal bits_t
@@ -1187,7 +1184,7 @@ let test_constant_init () =
   let g x =
     Rune.iterate' ~max:10
       ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.scalar f64 3.))
-      ~f:(fun y -> Nx.add y x)
+      (fun y -> Nx.add y x)
       (Nx.zeros f64 [| 1 |])
   in
   let x = Nx.create f64 [| 2; 1 |] [| 1.; 3. |] in
@@ -1200,7 +1197,7 @@ let test_nonfinite () =
   let f =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.logical_not (Nx.less (Nx.max x) (Nx.scalar f64 10.)))
-      ~f:(fun x -> Nx.add_s x 3.)
+      (fun x -> Nx.add_s x 3.)
   in
   let nan = Int64.float_of_bits 0x7ff8_0000_0000_0123L in
   let x = Nx.reshape [| 4; 1 |] (vec [| nan; Float.infinity; 2.; -0. |]) in
@@ -1218,7 +1215,7 @@ let test_lanes_in_step () =
       Rune.vmap' ~axis:a
         (Rune.iterate' ~max:10
            ~until:(fun x -> Nx.greater_s (Nx.sum x) 5.)
-           ~f:(fun x -> Nx.add x (Nx.sum (Rune.lanes a x))))
+           (fun x -> Nx.add x (Nx.sum (Rune.lanes a x))))
         (Nx.reshape [| 2; 1 |] x));
   let y =
     Rune.vmap' ~axis:a
@@ -1226,8 +1223,7 @@ let test_lanes_in_step () =
         fst
           (Rune.iterate (p2 ()) ~max:10
              ~until:(fun (_, k) -> Nx.greater_equal_s k 2.)
-             ~f:(fun (x, k) ->
-               (Nx.add x (Nx.sum (Rune.lanes a x)), Nx.add_s k 1.))
+             (fun (x, k) -> (Nx.add x (Nx.sum (Rune.lanes a x)), Nx.add_s k 1.))
              (x, Nx.scalar f64 0.)))
       (Nx.reshape [| 2; 1 |] x)
   in
@@ -1240,7 +1236,7 @@ let test_lanes_in_step () =
       Rune.vmap' ~axis:a
         (Rune.iterate' ~max:10
            ~until:(fun x -> Nx.greater_s (Nx.sum x) 5.)
-           ~f:(Rune.jit' (fun x -> Nx.add x (Nx.sum (Rune.lanes a x)))))
+           (Rune.jit' (fun x -> Nx.add x (Nx.sum (Rune.lanes a x)))))
         (Nx.reshape [| 2; 1 |] x));
   let by_index x =
     Rune.switch t (Rune.lane_index a x)
@@ -1250,7 +1246,7 @@ let test_lanes_in_step () =
     Rune.vmap' ~axis:a
       (Rune.iterate' ~max:10
          ~until:(fun x -> Nx.greater_equal_s (Nx.sum x) 3.)
-         ~f)
+         f)
       (Nx.reshape [| 3; 1 |] (vec [| 0.; 0.; 5. |]))
   in
   equal ~msg:"eager" bits_t
@@ -1273,7 +1269,7 @@ let test_lanes_in_step () =
      from 0.5, 2 and 4 take two, one and no steps. *)
   let affine = Rune.jit' (fun x -> Nx.add_s (Nx.mul_s x 1.5) 1.) in
   let f x =
-    Rune.iterate' ~max:10 ~until:(fun x -> Nx.greater_equal_s x 3.) ~f:affine x
+    Rune.iterate' ~max:10 ~until:(fun x -> Nx.greater_equal_s x 3.) affine x
   in
   equal ~msg:"a call's gradient" bits_t
     (bits (vec [| 2.25; 1.5; 1. |]))
@@ -1285,13 +1281,13 @@ let test_nested () =
   let inner x =
     Rune.iterate' ~max:10
       ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.max x))
-      ~f:(fun y -> Nx.add_s y 1.)
+      (fun y -> Nx.add_s y 1.)
       (Nx.zeros_like x)
   in
   let outer x =
     Rune.iterate' ~max:10
       ~until:(fun y -> Nx.greater_equal (Nx.max y) (Nx.scalar f64 6.))
-      ~f:(fun y -> Nx.add (Nx.add_s y 1.) (inner y))
+      (fun y -> Nx.add (Nx.add_s y 1.) (inner y))
       x
   in
   let x = Nx.create f64 [| 3; 1 |] [| 0.5; 2.; 7. |] in
@@ -1311,11 +1307,11 @@ let test_nested_derivative () =
   let halve c =
     Rune.iterate' ~max:50
       ~until:(fun y -> Nx.less_s (Nx.abs y) 0.1)
-      ~f:(fun y -> Nx.mul_s y 0.5)
+      (fun y -> Nx.mul_s y 0.5)
       c
   in
   let f x =
-    fst (Rune.scan' ~init:x ~f:(fun c _ -> (halve c, c)) (Nx.zeros f64 [| 2 |]))
+    fst (Rune.scan' ~init:x (fun c _ -> (halve c, c)) (Nx.zeros f64 [| 2 |]))
   in
   (* Each row halves [x] [k] times, the [k] that brings it below 0.1: a power of
      two, exact. *)
@@ -1335,7 +1331,7 @@ let test_totals () =
       ~until:(fun x ->
         Total.add u (Nx.scalar f64 100.);
         Nx.greater_equal (Nx.max x) (Nx.scalar f64 3.))
-      ~f:(fun x ->
+      (fun x ->
         Total.add u (Nx.scalar f64 1.);
         Nx.add_s x 1.)
       x
@@ -1369,7 +1365,7 @@ let test_totals () =
   let called x =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.greater_equal (Nx.max x) (Nx.scalar f64 3.))
-      ~f:g x
+      g x
   in
   equal ~msg:"a call's, around the map" bits_t
     (bits (Nx.scalar f64 4.))
@@ -1385,7 +1381,7 @@ let test_totals () =
   ignore (Rune.jit' (Rune.vmap' f) x);
   ignore
     (Rune.scan' ~init:(Nx.scalar f64 0.)
-       ~f:(fun c r ->
+       (fun c r ->
          Total.add u (Nx.scalar f64 1.);
          (Nx.add c (Nx.sum (Rune.vmap' f (Nx.add_s r 0.))), c))
        (Nx.reshape [| 1; 3; 1 |] x));
@@ -1402,7 +1398,7 @@ let test_integer_carry () =
   let f (x, n) =
     Rune.iterate (p2 ()) ~max:10
       ~until:(fun (_, n) -> Nx.greater_equal_s n 3l)
-      ~f:(fun (x, n) -> (Nx.mul x (Nx.cast f64 n), Nx.add_s n 1l))
+      (fun (x, n) -> (Nx.mul x (Nx.cast f64 n), Nx.add_s n 1l))
       (x, n)
   in
   let x = vec [| 2. |] and n = Nx.create Nx.int32 [| 1 |] [| 1l |] in
@@ -1420,7 +1416,7 @@ let test_complex_carry () =
   let g z =
     Rune.iterate' ~max:10
       ~until:(fun z -> Nx.greater_equal_s (Nx.max (Nx.real f64 z)) 2.)
-      ~f:(fun z ->
+      (fun z ->
         Nx.mul z
           (Nx.complex Nx.complex128 ~re:(Nx.scalar f64 1.5)
              ~im:(Nx.scalar f64 0.)))
@@ -1445,7 +1441,7 @@ let test_one_lane () =
   let h x =
     Rune.iterate' ~max:10
       ~until:(fun x -> Nx.greater_s (Nx.max x) 4.)
-      ~f:(fun x -> Nx.mul_s x 3.)
+      (fun x -> Nx.mul_s x 3.)
       x
   in
   equal ~msg:"one lane" bits_t
@@ -1479,7 +1475,7 @@ let test_memory () =
                   (Rune.iterate (p2 ()) ~max:50
                      ~until:(fun (_, k) ->
                        Nx.greater_equal_s k (Int32.of_int trips))
-                     ~f:(fun (x, k) -> (Nx.sin x, Nx.add_s k 1l))
+                     (fun (x, k) -> (Nx.sin x, Nx.add_s k 1l))
                      ( x,
                        Nx.scalar_at
                          (Nx.Placement.uncut Memory.On.on)

@@ -17,7 +17,7 @@ let f =
       incr runs;
       let _, sums =
         Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-          ~f:(fun acc row ->
+          (fun acc row ->
             let next = Nx.Infix.(acc + row) in
             (next, next))
           xs
@@ -68,7 +68,7 @@ program, as `Rune.program` shows it, the host printed as `CPU`:
 let body xs =
   let _, sums =
     Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-      ~f:(fun acc row ->
+      (fun acc row ->
         let next = Nx.Infix.(acc + row) in
         (next, next))
       xs

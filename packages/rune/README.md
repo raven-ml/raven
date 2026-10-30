@@ -117,7 +117,7 @@ A loop's step is traced once per call, eagerly too: it branches with
 let walk, () =
   Rune.scan Nx.Ptree.tensor (Nx.Ptree.v Nx.Rng.walk) Nx.Ptree.unit
     ~init:(Nx.zeros Nx.float32 [| 2 |])
-    ~f:(fun x key -> (Nx.add x (Nx.Rng.normal ~key Nx.float32 [| 2 |]), ()))
+    (fun x key -> (Nx.add x (Nx.Rng.normal ~key Nx.float32 [| 2 |]), ()))
     (Nx.Rng.split_batch ~n:100 (Nx.Rng.key 0))
 ```
 

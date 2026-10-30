@@ -60,7 +60,7 @@ let cclose () = Oracle.complex ~rel:1e-7 ~abs:1e-9 ()
 let newton a =
   Rune.iterate' ~max:100
     ~until:(fun x -> Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-13)
-    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
     (Nx.add_s a 1.)
 
 let sqrt_root a =
@@ -177,7 +177,7 @@ let reading_tests =
                 (Nx.abs
                    (Nx.sub_s (Nx.add (Nx.mul (Nx.mul x x) x) (Nx.mul c x)) 1.))
                 1e-14)
-            ~f:(fun x ->
+            (fun x ->
               let r =
                 Nx.sub_s (Nx.add (Nx.mul (Nx.mul x x) x) (Nx.mul c x)) 1.
               in
@@ -249,7 +249,7 @@ let cg ?(max = 50) op b =
       Nx.Ptree.(pair tensor (pair tensor tensor))
       ~max
       ~until:(fun (_, (r, _)) -> Nx.less_s (dot r r) 1e-28)
-      ~f:(fun (x, (r, p)) ->
+      (fun (x, (r, p)) ->
         let ap = op p in
         let alpha = Nx.div (dot r r) (dot p ap) in
         let x = Nx.add x (Nx.mul alpha p) in
@@ -373,7 +373,7 @@ let mapped_twice op b =
 let richardson op b =
   Rune.iterate' ~max:400
     ~until:(fun v -> Nx.less_s (Nx.max (Nx.abs (Nx.sub b (op v)))) 1e-13)
-    ~f:(fun v -> Nx.add v (Nx.mul_s (Nx.sub b (op v)) 0.3))
+    (fun v -> Nx.add v (Nx.mul_s (Nx.sub b (op v)) 0.3))
     (Nx.zeros_like b)
 
 (* Richardson's iterations for [b] and [8 b] under a map the solve opens: the
@@ -884,7 +884,7 @@ let stated_tests =
         let halved =
           Rune.iterate' ~max:4
             ~until:(fun d -> Nx.less (Nx.max d) (scalar 1.))
-            ~f:(fun d -> Nx.mul_s d 0.5)
+            (fun d -> Nx.mul_s d 0.5)
         in
         equal ~msg:"outside every transformation" (exact ()) a (root Nx.exp a);
         (* The tangent [u] solves [J u = 1], [J] the tangent map at [1]. *)
@@ -1071,7 +1071,7 @@ let implicit w x =
   Rune.root one ~residual:r (fun () ->
       Rune.iterate' ~max:200
         ~until:(fun y -> Nx.less_s (Nx.max (Nx.abs (r y))) 1e-13)
-        ~f:(fun y -> Nx.sub x (Nx.mul_s (Nx.mul w y) h))
+        (fun y -> Nx.sub x (Nx.mul_s (Nx.mul w y) h))
         x)
 
 let explicit w x = Nx.div x (Nx.add_s (Nx.mul_s w h) 1.)
@@ -1079,7 +1079,7 @@ let settled x = Nx.less_s (Nx.max (Nx.abs x)) 0.05
 
 (* The implicit march until the state is small, and the same march with the
    step's closed form, written out as an OCaml loop. *)
-let march w x = Rune.iterate' ~max:80 ~until:settled ~f:(implicit w) x
+let march w x = Rune.iterate' ~max:80 ~until:settled (implicit w) x
 
 let written_march w x =
   let rec go k x =
@@ -1093,7 +1093,7 @@ let written_march w x =
 let scan_newton a =
   fst
     (Rune.scan'
-       ~f:(fun x _ -> (Nx.mul_s (Nx.add x (Nx.div a x)) 0.5, x))
+       (fun x _ -> (Nx.mul_s (Nx.add x (Nx.div a x)) 0.5, x))
        ~init:(Nx.add_s a 1.) (Nx.zeros f64 [| 60 |]))
 
 let scan_rows = vec [| 0.5; -1.2; 0.8 |]
@@ -1103,7 +1103,7 @@ let root_in_scan root a =
     let c = root (Nx.add c (Nx.mul r r)) in
     (c, c)
   in
-  let c, ys = Rune.scan' ~f:step ~init:a scan_rows in
+  let c, ys = Rune.scan' step ~init:a scan_rows in
   Nx.add (Nx.sum c) (Nx.sum (Nx.sin ys))
 
 let scanned_root a =
@@ -1171,7 +1171,7 @@ let loop_tests =
         let two a =
           fst
             (Rune.scan'
-               ~f:(fun x _ -> (Nx.mul_s (Nx.add x (Nx.div a x)) 0.5, x))
+               (fun x _ -> (Nx.mul_s (Nx.add x (Nx.div a x)) 0.5, x))
                ~init:(Nx.add_s a 1.) (Nx.zeros f64 [| 2 |]))
         in
         let r a =
@@ -1212,7 +1212,7 @@ let newton_from ~max start a =
       Rune.iterate' ~max
         ~until:(fun x ->
           Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-13)
-        ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+        (fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
         (start a))
 
 let raised f =

@@ -176,7 +176,7 @@ let slice_moves context u ~prior ~likelihood keys g ~m moves tempered x0 pl0 ll0
       P.(pair u (pair tensor (pair tensor tensor)))
       P.tensor
       P.(pair u (pair tensor tensor))
-      ~f:move
+      move
       ~init:(x0, (tempered pl0 ll0, (pl0, ll0)))
       moves
   in
@@ -228,7 +228,7 @@ let hamiltonian_moves context u ~prior ~likelihood keys g moves tempered x0
       P.(pair (pair u (pair tensor u)) (Hamiltonian.chees_ptree ()))
       P.tensor
       P.(pair u tensor)
-      ~f:move
+      move
       ~init:((x0, (lp0, grad0)), chees)
       moves
   in
@@ -372,8 +372,7 @@ let run u ?move ?resampled ~budget ~prior ~likelihood k start =
       ~until:(fun s ->
         Nx.logical_or (finished s)
           (Nx.greater_equal_s s.steps (Int32.of_int budget)))
-      ~f:(fun s ->
-        step u ~prior ~likelihood (Nx.Rng.fold_in_tensor k s.steps) s)
+      (fun s -> step u ~prior ~likelihood (Nx.Rng.fold_in_tensor k s.steps) s)
       s
   in
   evidence s

@@ -481,7 +481,7 @@ let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
     Rune.iterate (tree_ptree ())
       ~max:((1 lsl max_depth) - 1)
       ~until:(fun t -> Nx.logical_not (Nx.any t.running))
-      ~f:trip init
+      trip init
   in
   let s = t.sample in
   let x, gx = H.leave u f position s in
@@ -595,7 +595,7 @@ let sample u lp k ~draws (s : (_, _, 'd) state) =
   let s, (xs, ss) =
     Rune.scan sp P.tensor
       P.(pair u st)
-      ~f:(fun (s : (_, _, 'd) state) _ ->
+      (fun (s : (_, _, 'd) state) _ ->
         let s = step u lp (Nx.Rng.fold_in_tensor k s.draw) s in
         (s, (s.position, s.stats)))
       ~init:s
@@ -680,7 +680,7 @@ let warmup u lp k ~steps (s : (_, _, 'd) state) =
       let a =
         Rune.iterate (adapt_ptree u) ~max:longest
           ~until:(fun a -> Nx.greater_equal a.window.n length)
-          ~f:one a
+          one a
       in
       (* At a slow window's end: refit the geometry, find a step size for it and
          restart the averaging there. *)
@@ -708,7 +708,7 @@ let warmup u lp k ~steps (s : (_, _, 'd) state) =
     let a, () =
       Rune.scan (adapt_ptree u)
         P.(pair tensor tensor)
-        P.unit ~f:window ~init:a0
+        P.unit window ~init:a0
         (Adapt.windows (Nx.beside s0.step_size) schedule)
     in
     { a.st with step_size = Adapt.final a.averaging }

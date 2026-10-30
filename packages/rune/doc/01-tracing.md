@@ -38,7 +38,7 @@ let under_scan =
   counted (fun () ->
       ignore
         (Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-           ~f:(fun acc row ->
+           (fun acc row ->
              incr runs;
              (Nx.Infix.(acc + row), acc))
            x))
@@ -72,7 +72,7 @@ one, raises, naming the construct:
 ```ocaml
 let read_in_step () =
   Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-    ~f:(fun acc row ->
+    (fun acc row ->
       let next = if Nx.item [] row > 2. then acc else Nx.Infix.(acc + row) in
       (next, next))
     x
@@ -93,7 +93,7 @@ or with `switch` or `cond`, which compute one branch (the Branches section of
 ```ocaml
 let summed =
   Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-    ~f:(fun acc row ->
+    (fun acc row ->
       let kept = Nx.where (Nx.less_s row 2.5) row (Nx.zeros_like row) in
       let next = Nx.Infix.(acc + kept) in
       (next, next))
@@ -149,7 +149,7 @@ computing it, and `pp_program` prints it (the Inspecting a trace section of
 let cumulative x =
   snd
     (Rune.scan' ~init:(Nx.scalar Nx.float64 0.)
-       ~f:(fun acc row ->
+       (fun acc row ->
          let next = Nx.Infix.(acc + (row * row)) in
          (next, next))
        x)

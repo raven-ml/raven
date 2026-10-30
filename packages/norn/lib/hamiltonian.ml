@@ -89,7 +89,7 @@ let search (type f) context u lp_z ~reduce keys start (eps : (float, f, 'd) Nx.t
   let eps, _ =
     Rune.iterate carry ~max:200
       ~until:(fun (_, (_, running)) -> Nx.logical_not (Nx.any running))
-      ~f:(fun (eps, (i, running)) ->
+      (fun (eps, (i, running)) ->
         let i = Nx.add_s i 1l in
         let d = log_ratio eps i in
         let crossed =
@@ -211,7 +211,7 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
         Nx.logical_or
           (Nx.greater_equal t.trip n)
           (Nx.logical_not (Nx.any t.running)))
-      ~f:step
+      step
       {
         at = start;
         running = Nx.ones_at on Nx.bool [| c |];

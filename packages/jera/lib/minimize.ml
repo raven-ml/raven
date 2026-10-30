@@ -184,7 +184,7 @@ let bracket ~tol f ~lo ~hi =
         Nx.logical_or
           (Nx.logical_not (Nx.any (searching st)))
           (Nx.greater_equal_s k (Int32.of_int limit)))
-      ~f:step
+      step
       ( fields initial,
         ( finish initial st0,
           ( Nx.ones_at (Nx.beside a0) Nx.int32 (Nx.shape a0),
@@ -800,7 +800,7 @@ let path ~steps (Method m) (p : _ point) =
     Rune.scan
       Nx.Ptree.(pair (point_ptree ()) (pair m.memory tensor))
       Nx.Ptree.tensor Nx.Ptree.tensor
-      ~f:(fun (p, rest) _ ->
+      (fun (p, rest) _ ->
         let (q, rest), x = trip (unpack p, rest) () in
         ((pack q, rest), x))
       ~init:(pack p, (m.init, Nx.zeros_at (Nx.beside p.x) Nx.bool lanes))
@@ -1166,7 +1166,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
         Nx.Ptree.(pair tensor tensor)
         ~max:1
         ~until:(fun (_, settled) -> settled)
-        ~f:(fun _ ->
+        (fun _ ->
           let gn, gn_failed = p.solve j (Nx.zeros_like d) (Nx.neg g) in
           ( Nx.where gn_failed delta (toward gn),
             Nx.scalar_at (Nx.beside g) Nx.bool true ))
@@ -1250,7 +1250,7 @@ let lm_path fn x r linear ~steps f start =
         pair
           (pair tensor (pair tensor tensor))
           (pair tensor (pair tensor (pair tensor tensor))))
-      Nx.Ptree.tensor Nx.Ptree.tensor ~f:trip
+      Nx.Ptree.tensor Nx.Ptree.tensor trip
       ~init:
         ( (p.start, (p.residual p.start, p.jacobian p.start)),
           ( Nx.zeros_at (Nx.beside p.start) p.dtype [| p.size |],
@@ -1352,7 +1352,7 @@ let reflect ?(project = Fun.id) values n (v, fv) =
       Nx.Ptree.(pair tensor tensor)
       ~max:1
       ~until:(fun (_, settled) -> settled)
-      ~f:(fun _ -> (one second, Nx.scalar_at (Nx.beside second) Nx.bool true))
+      (fun _ -> (one second, Nx.scalar_at (Nx.beside second) Nx.bool true))
       (fr, accept)
   in
   let take_second =
@@ -1385,7 +1385,7 @@ let reflect ?(project = Fun.id) values n (v, fv) =
       Nx.Ptree.(pair (pair tensor tensor) tensor)
       ~max:1
       ~until:(fun (_, settled) -> settled)
-      ~f:(fun _ ->
+      (fun _ ->
         ((shrunk, values shrunk), Nx.scalar_at (Nx.beside shrunk) Nx.bool true))
       (replaced, Nx.logical_not shrink)
   in
@@ -1447,8 +1447,7 @@ let simplex_solve fn x ?within ~tol ~budget f start =
         Nx.Ptree.(pair tensor tensor)
         ~max:1
         ~until:(fun (_, settled) -> settled)
-        ~f:(fun _ ->
-          (p.values fresh, Nx.scalar_at (Nx.beside fresh) Nx.bool true))
+        (fun _ -> (p.values fresh, Nx.scalar_at (Nx.beside fresh) Nx.bool true))
         (fv, Nx.logical_not met)
     in
     let fbest = Nx.min fv in
@@ -1488,7 +1487,7 @@ let simplex_solve fn x ?within ~tol ~budget f start =
         Nx.Ptree.(pair (pair tensor tensor) (pair tensor (pair tensor tensor)))
         ~max:budget
         ~until:(fun (_, (st, _)) -> Nx.logical_not (searching st))
-        ~f:step
+        step
         ( (v0, fv0),
           ( st0,
             ( Nx.full_at (Nx.beside p.start) p.dtype [| n |] Float.infinity,
@@ -1526,7 +1525,7 @@ let simplex_path fn x ~steps f start =
     let _, xs =
       Rune.scan
         Nx.Ptree.(pair tensor tensor)
-        Nx.Ptree.tensor Nx.Ptree.tensor ~f:trip
+        Nx.Ptree.tensor Nx.Ptree.tensor trip
         ~init:(v0, p.values v0)
         (Nx.arange_at (Nx.beside p.start) Nx.int32 0 (steps - 1) 1)
     in

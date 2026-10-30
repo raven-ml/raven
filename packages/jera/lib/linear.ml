@@ -320,7 +320,7 @@ let factor (type d) (b : (float, d, 'd) Nx.t) n w =
   let _, (u, (l, p)) =
     Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      ~f:step ~init:first incoming
+      step ~init:first incoming
   in
   (u, l, p)
 
@@ -360,7 +360,7 @@ let substitute (type d) (u, l, p) n w (r : (float, d, 'd) Nx.t) =
   let _, z =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      Nx.Ptree.tensor ~f:forward ~init:first
+      Nx.Ptree.tensor forward ~init:first
       (l, (p, incoming))
   in
   let backward later (u, z) =
@@ -376,7 +376,7 @@ let substitute (type d) (u, l, p) n w (r : (float, d, 'd) Nx.t) =
   let _, x =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor tensor)
-      Nx.Ptree.tensor ~f:backward
+      Nx.Ptree.tensor backward
       ~init:(Nx.zeros_at (Nx.beside r) (Nx.dtype r) [| 2 * w |])
       (Nx.flip ~axes:[ 0 ] u, Nx.flip ~axes:[ 0 ] z)
   in
@@ -443,7 +443,7 @@ let conjugate (type d) (dtype : (float, d) Nx.dtype) ~rel ~budget apply
       Nx.Ptree.(
         pair tensor
           (pair tensor (pair tensor (pair tensor (pair tensor tensor)))))
-      ~max:budget ~until:stops ~f:step
+      ~max:budget ~until:stops step
       ( Nx.zeros_like r,
         ( r,
           ( z,
@@ -531,7 +531,7 @@ let arnoldi (type d) (dtype : (float, d) Nx.dtype) ~restart apply precondition
     Rune.scan
       Nx.Ptree.(pair tensor (pair tensor tensor))
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      Nx.Ptree.unit ~f:step
+      Nx.Ptree.unit step
       ~init:
         ( outer (Nx.get [ 0 ] basis) (normalise res beta),
           (Nx.zeros_at at dtype [| rows; restart |], basis) )
@@ -566,7 +566,7 @@ let generalised (type d) (dtype : (float, d) Nx.dtype) ~restart ~rel ~budget
   let u, (res, k) =
     Rune.iterate
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      ~max:cycles ~until:stops ~f:cycle
+      ~max:cycles ~until:stops cycle
       (Nx.zeros_like r, (r, Nx.scalar_at (Nx.beside r) Nx.int32 0l))
   in
   {

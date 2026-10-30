@@ -1502,7 +1502,7 @@ let rune =
                  {|case "m" in the carry the step returned, case "1e3 m" in the carry it received|})
             (fun () ->
               Rune.scan q32 Nx.Ptree.tensor Nx.Ptree.tensor
-                ~f:(fun c x -> (Quantity.convert Unit.metre c, x))
+                (fun c x -> (Quantity.convert Unit.metre c, x))
                 ~init:(Quantity.v km (Nx.scalar Nx.float32 1.))
                 (f32 [| 1.; 2. |])));
       test "scan accepts a carry converted back to the initial unit" (fun () ->
@@ -1516,7 +1516,7 @@ let rune =
             (Quantity.convert (Quantity.unit init) c, x)
           in
           let c, _ =
-            Rune.scan q32 Nx.Ptree.tensor Nx.Ptree.tensor ~f:step ~init
+            Rune.scan q32 Nx.Ptree.tensor Nx.Ptree.tensor step ~init
               (f32 [| 500.; 500. |])
           in
           equal unit km (Quantity.unit c);
@@ -1677,7 +1677,7 @@ let scan_step c x =
       (Quantity.add (Quantity.convert Unit.metre c) x),
     Quantity.mul c x )
 
-let scan init xs = Rune.scan q64 q64 q64 ~f:scan_step ~init xs
+let scan init xs = Rune.scan q64 q64 q64 scan_step ~init xs
 
 let scan_jitted =
   Rune.jit Nx.Ptree.(q64 @-> q64 @-> returns (pair q64 q64)) scan

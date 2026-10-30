@@ -520,7 +520,7 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t) h
         ~max:newton_iterations
         ~until:(fun (_, (_, (_, (converged, broken)))) ->
           Nx.logical_or converged broken)
-        ~f:step
+        step
         ( start,
           ( Nx.full_at (Nx.beside t) tdtype [||] Float.infinity,
             ( Nx.scalar_at (Nx.beside t) Nx.int32 0l,
@@ -1092,7 +1092,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
   let s =
     Rune.iterate (search_ptree y mem.tree) ~max:budget
       ~until:(fun s -> Nx.logical_not (Elementwise.searching s.status))
-      ~f:attempt initial
+      attempt initial
   in
   (s, disorder)
 
@@ -1177,7 +1177,7 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
         Nx.Ptree.(pair c tensor)
         ~max:budget
         ~until:(fun (_, i) -> Nx.greater_equal i count)
-        ~f:inner
+        inner
         ((v, (k, mm)), Nx.scalar_at (Nx.beside at) Nx.int32 0l)
     in
     (carry, fst carry)
@@ -1201,7 +1201,7 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
   let _, ys =
     Rune.scan c
       Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
-      y ~f:replay
+      y replay
       ~init:(y0, (k_start, m0))
       ( Nx.slice [ Nx.R (0, n_int) ] at,
         (Nx.slice [ Nx.R (1, n) ] at, (offsets, s.counts)) )
@@ -1395,7 +1395,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
     Rune.scan c
       Nx.Ptree.(pair tensor tensor)
       Nx.Ptree.(pair y y)
-      ~f:slot
+      slot
       ~init:(y0, (k0, (zeros, Nx.zeros_at (Nx.beside t0) dtype [||])))
       (Nx.arange_at (Nx.beside t0) Nx.int32 0 budget 1, s.ends)
   in
@@ -1547,7 +1547,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       Nx.Ptree.(pair y (pair y tensor))
       ~max:budget
       ~until:(fun (_, (_, i)) -> Nx.greater_equal i last)
-      ~f:replay
+      replay
       (y0, (eval fn y f t0 y0, int32 0l))
   in
   (* The last accepted step, of zero length when there is none: the step that

@@ -17,7 +17,7 @@ let xs = Nx.create Nx.float64 [| 4 |] [| 1.; 2.; 3.; 4. |]
 
 let running_product xs =
   Rune.scan' ~init:(Nx.scalar Nx.float64 1.)
-    ~f:(fun acc row ->
+    (fun acc row ->
       let next = Nx.Infix.(acc * row) in
       (next, next))
     xs
@@ -48,7 +48,7 @@ tolerance, at most `max` times:
 let newton a =
   Rune.iterate' ~max:50
     ~until:(fun x -> Nx.all (Nx.less_s (Nx.abs Nx.Infix.((x * x) - a)) 1e-12))
-    ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
+    (fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
     a
 
 let roots = newton (Nx.create Nx.float64 [| 2 |] [| 4.; 9. |])
@@ -85,7 +85,7 @@ let too_few () =
       Rune.iterate' ~max:3
         ~until:(fun x ->
           Nx.all (Nx.less_s (Nx.abs Nx.Infix.((x * x) - a)) 1e-12))
-        ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
+        (fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
         a)
     (Nx.create Nx.float64 [| 3 |] [| 1.; 16.; 1e6 |])
 ```
@@ -145,7 +145,7 @@ let layer =
 let deep xs =
   fst
     (Rune.scan' ~init:(Nx.scalar Nx.float64 0.5)
-       ~f:(fun acc row ->
+       (fun acc row ->
          let next = layer Nx.Infix.(acc + row) in
          (next, next))
        xs)
@@ -153,7 +153,7 @@ let deep xs =
 let plain xs =
   fst
     (Rune.scan' ~init:(Nx.scalar Nx.float64 0.5)
-       ~f:(fun acc row ->
+       (fun acc row ->
          let next = Nx.tanh (Nx.sin Nx.Infix.(acc + row)) in
          (next, next))
        xs)

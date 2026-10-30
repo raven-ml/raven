@@ -69,7 +69,7 @@ The loss sums the states of four parameters with a scan:
 let loss thetas =
   fst
     (Rune.scan' ~init:(Nx.scalar f64 0.)
-       ~f:(fun acc theta -> (Nx.add acc (state theta), theta))
+       (fun acc theta -> (Nx.add acc (state theta), theta))
        thetas)
 
 let thetas = Nx.create f64 [| 4 |] [| -1.; 0.; 0.5; 2. |]

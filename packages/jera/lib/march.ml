@@ -54,7 +54,7 @@ let run c y ~at ~interval ~state init =
       Rune.scan c
         Nx.Ptree.(pair tensor tensor)
         y
-        ~f:(fun carry (t0, t1) ->
+        (fun carry (t0, t1) ->
           let carry = interval t0 t1 carry in
           (carry, state carry))
         ~init (starts, ends)
@@ -67,6 +67,6 @@ let steps c at dtype n f init =
   else
     fst
       (Rune.scan c Nx.Ptree.tensor Nx.Ptree.unit
-         ~f:(fun carry j -> (f j carry, ()))
+         (fun carry j -> (f j carry, ()))
          ~init
          (Nx.arange_f_at at dtype 0. (float n) 1.))

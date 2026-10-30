@@ -206,7 +206,7 @@ let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
   in
   Rune.iterate (tree ()) ~max:budget
     ~until:(fun p -> Nx.logical_not (Nx.any (Elementwise.searching p.status)))
-    ~f:step initial
+    step initial
 
 let integrate p f =
   let budget = Nx.dim 0 p.error in
@@ -233,7 +233,7 @@ let integrate p f =
   let total, () =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor (pair tensor tensor))
-      Nx.Ptree.unit ~f:sum_chunk
+      Nx.Ptree.unit sum_chunk
       ~init:(Nx.zeros_at (Nx.placement p.used) dtype (Nx.shape p.used))
       ( chunks (unused p.level),
         (chunks (unused p.index), chunks (Nx.cast dtype used)) )

@@ -201,7 +201,7 @@ let schools () =
         start
         (Nx.Rng.split_batch ~n:8 k)
     in
-    let q, lps = Rune.scan' ~f:step ~init:q (Nx.zeros f64 [| 10; 1 |]) in
+    let q, lps = Rune.scan' step ~init:q (Nx.zeros f64 [| 10; 1 |]) in
     Nx.add (Nx.sum q) (Nx.sum lps)
   in
   compile sample (Nx.Rng.to_tensor (Nx.Rng.key 0))
@@ -224,7 +224,7 @@ let checked_scan () =
     (y, total)
   in
   let run x =
-    let y, totals = Rune.scan' ~f:step ~init:x (Nx.zeros f64 [| 20; 1 |]) in
+    let y, totals = Rune.scan' step ~init:x (Nx.zeros f64 [| 20; 1 |]) in
     Nx.add (Nx.sum y) (Nx.sum totals)
   in
   compile run (input ~n 0. 1.)

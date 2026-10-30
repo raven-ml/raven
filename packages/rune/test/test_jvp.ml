@@ -548,7 +548,7 @@ let test_zero_primal () =
   equal ~msg:"tangent" (array float_exact) [| 1.; 2. |] (Nx.to_array dy);
   let xs = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let f c =
-    fst (Rune.scan' ~f:(fun c x -> (Nx.add c (Nx.mul c x), c)) ~init:c xs)
+    fst (Rune.scan' (fun c x -> (Nx.add c (Nx.mul c x), c)) ~init:c xs)
   in
   (* c_3 = c_0 (1 + x_0) (1 + x_1) (1 + x_2), linear in c_0. *)
   equal ~msg:"through a scan" (array float_exact)

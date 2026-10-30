@@ -313,7 +313,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
   let w =
     Rune.iterate (walk_ptree u a) ~max:(bound dt)
       ~until:(fun w -> Nx.logical_not (Nx.any (Nx.less w.phase finished')))
-      ~f:trip
+      trip
       {
         last = x0;
         x = x0;

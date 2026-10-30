@@ -32,7 +32,11 @@ let test_jvp_fused () =
 (* A scan carries its step's program. *)
 let test_scan () =
   let f x =
-    fst (Rune.scan' ~f:(fun c r -> (Nx.add c r, r)) ~init:x (Nx.reshape [| 2; 1 |] x))
+    fst
+      (Rune.scan'
+         (fun c r -> (Nx.add c r, r))
+         ~init:x
+         (Nx.reshape [| 2; 1 |] x))
   in
   print_string (print (Rune.program T.tensor T.tensor f (v [| 1.; 2. |])));
   expect (output ()) @@ __POS_OF__ {|
@@ -94,7 +98,7 @@ let test_iterate () =
   let f x =
     Rune.iterate' ~max:4
       ~until:(fun c -> Nx.greater_s (Nx.sum c) 10.)
-      ~f:(fun c -> Nx.mul c (Nx.scalar_like c 2.))
+      (fun c -> Nx.mul c (Nx.scalar_like c 2.))
       x
   in
   print_string (print (Rune.program T.tensor T.tensor f (v [| 1.; 2. |])));

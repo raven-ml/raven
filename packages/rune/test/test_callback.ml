@@ -51,7 +51,7 @@ let law_scan xs =
     (Nx.add c y, y)
   in
   let c, ys =
-    Rune.scan T.tensor T.tensor T.tensor ~f ~init:(scalar 0.)
+    Rune.scan T.tensor T.tensor T.tensor f ~init:(scalar 0.)
       (vec (Array.of_list xs))
   in
   let rows = List.map (fun x -> [ x ]) xs in
@@ -67,7 +67,7 @@ let law_iterate k =
   let steps, slog = logged (fun v -> Nx.add_s v 1.) in
   let tests, ulog = logged Fun.id in
   let until c = Nx.greater_equal (tests c) (scalar (float_of_int k)) in
-  let r = Rune.iterate T.tensor ~max:10 ~until ~f:steps (scalar 0.) in
+  let r = Rune.iterate T.tensor ~max:10 ~until steps (scalar 0.) in
   equal ~msg:"result" Testable.float_exact (float_of_int k) (Nx.item [] r);
   let upto n = List.init n (fun i -> [ float_of_int i ]) in
   equal ~msg:"steps" fl (upto k) (slog ());
@@ -131,8 +131,8 @@ let test_outlined () =
   let s = T.(tensor @-> returns (pair tensor tensor)) in
   let g =
     Rune.jit s (fun xs ->
-        Rune.scan T.tensor T.tensor T.tensor ~f:step
-          ~init:(Nx.zeros f64 [| 2 |]) xs)
+        Rune.scan T.tensor T.tensor T.tensor step ~init:(Nx.zeros f64 [| 2 |])
+          xs)
   in
   let xs = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let before = calls () in
@@ -260,10 +260,10 @@ let test_outlined_bare () =
   let carry xs =
     fst
       (Rune.scan T.tensor T.tensor T.unit
-         ~f:(fun c r -> (fst (step c r), ()))
+         (fun c r -> (fst (step c r), ()))
          ~init xs)
   in
-  let rows xs = snd (Rune.scan T.tensor T.tensor T.tensor ~f:step ~init xs) in
+  let rows xs = snd (Rune.scan T.tensor T.tensor T.tensor step ~init xs) in
   let xs = Nx.place at (Nx.create f64 [| 2; 2 |] [| 0.5; 1.; 0.; 0.25 |]) in
   equal ~msg:"a loop's carry"
     Testable.(list (float 1e-12))
@@ -305,7 +305,7 @@ let law_outlined_iterate k =
     Rune.jit tt (fun n ->
         let until c = Nx.greater_equal (tests (Nx.mul_s c 1.)) n in
         let f c = Nx.sub_s (steps (Nx.add_s c 1.)) 1. in
-        Nx.mul_s (Rune.iterate T.tensor ~max:10 ~until ~f (scalar 0.)) 2.)
+        Nx.mul_s (Rune.iterate T.tensor ~max:10 ~until f (scalar 0.)) 2.)
   in
   let r = split (fun () -> g (scalar (float_of_int k))) in
   equal ~msg:"result" Testable.float_exact (2. *. float_of_int k) (Nx.item [] r);
@@ -481,7 +481,7 @@ let test_lanes_more () =
   let loop k =
     Rune.iterate T.tensor ~max:5
       ~until:(fun c -> Nx.greater_equal c k)
-      ~f:(step (vec [| 1.; 2. |]))
+      (step (vec [| 1.; 2. |]))
       (Nx.zeros_like k)
   in
   let r = Rune.vmap tt loop (vec [| 1.; 2. |]) in
@@ -501,8 +501,9 @@ let test_map_loops () =
       (fun x ->
         fst
           (Rune.scan T.tensor T.tensor T.tensor
-             ~f:(fun c r -> (cb (Nx.add c r), r))
-             ~init:x (vec [| 10.; 20. |])))
+             (fun c r -> (cb (Nx.add c r), r))
+             ~init:x
+             (vec [| 10.; 20. |])))
       xs
   in
   equal ~msg:"a scan" fl [ [ 11. ]; [ 12. ]; [ 32. ]; [ 33. ] ] (log ());
@@ -513,7 +514,7 @@ let test_map_loops () =
         Nx.add x
           (Rune.iterate T.tensor ~max:5
              ~until:(fun c -> Nx.greater_equal c (scalar 2.))
-             ~f:cb (scalar 0.)))
+             cb (scalar 0.)))
       xs
   in
   equal ~msg:"an iterate" Testable.(list float_exact) [ 3.; 4. ] (floats r);
@@ -526,7 +527,7 @@ let law_held ks =
   let loop k =
     Rune.iterate T.tensor ~max:5
       ~until:(fun c -> Nx.greater_equal c k)
-      ~f:cb (Nx.zeros_like k)
+      cb (Nx.zeros_like k)
   in
   let k = vec (Array.of_list (List.map float_of_int ks)) in
   let r = Rune.vmap tt loop k in
@@ -572,7 +573,7 @@ let test_refusals () =
         (fun x ->
           fst
             (Rune.scan T.tensor T.tensor T.tensor
-               ~f:(fun c r -> (Nx.add c (cb r), r))
+               (fun c r -> (Nx.add c (cb r), r))
                ~init:x (Nx.reshape [| 1 |] x)))
         x);
   (* An untracked argument computes a constant, once. *)
@@ -649,7 +650,7 @@ let law_rule_scan xs =
   let loss xs =
     fst
       (Rune.scan T.tensor T.tensor T.tensor
-         ~f:(fun c r -> (Nx.add c (f r), r))
+         (fun c r -> (Nx.add c (f r), r))
          ~init:(scalar 0.) xs)
   in
   let g = Rune.grad' loss (vec (Array.of_list xs)) in
@@ -833,8 +834,9 @@ let test_remat_memory () =
   let loop x =
     fst
       (Rune.scan T.tensor T.tensor T.tensor
-         ~f:(fun c r -> (Nx.add c (body ~host:true r), r))
-         ~init:(Nx.zeros_like x) (Nx.reshape [| 1; n |] x))
+         (fun c r -> (Nx.add c (body ~host:true r), r))
+         ~init:(Nx.zeros_like x)
+         (Nx.reshape [| 1; n |] x))
   in
   let g = Rune.grad' (fun x -> Nx.sum (Rune.remat tt loop x)) x in
   let g0 = Rune.grad' (fun x -> Nx.sum (body ~host:false x)) x in
@@ -859,14 +861,14 @@ let test_unread () =
   let rule x =
     let _, r =
       Rune.scan T.tensor T.tensor T.tensor
-        ~f:(fun c r -> (c, cb r))
+        (fun c r -> (c, cb r))
         ~init:x (Nx.reshape [| 1 |] x)
     in
     (Nx.mul_s x 2., fun ct -> Nx.mul ct (Nx.sum r))
   in
   let step c x = (c, Rune.custom_vjp T.tensor T.tensor rule x) in
   let _ =
-    Rune.scan T.tensor T.tensor T.tensor ~f:step ~init:(scalar 0.)
+    Rune.scan T.tensor T.tensor T.tensor step ~init:(scalar 0.)
       (vec [| 1.; 2.; 3. |])
   in
   equal ~msg:"calls" fl [ [ 1. ]; [ 2. ]; [ 3. ] ] (log ())
@@ -882,8 +884,9 @@ let test_outside () =
   let x = scalar 5. in
   let _, ys =
     Rune.scan T.tensor T.tensor T.tensor
-      ~f:(fun c _ -> (c, Rune.callback tt ~like:x count x))
-      ~init:x (vec [| 1.; 2. |])
+      (fun c _ -> (c, Rune.callback tt ~like:x count x))
+      ~init:x
+      (vec [| 1.; 2. |])
   in
   equal ~msg:"offers" Testable.(list float_exact) [ 1.; 1. ] (floats ys)
 
@@ -898,8 +901,9 @@ let test_raise () =
   raises ~msg:"in a scan" (Mine 3) (fun () ->
       ignore
         (Rune.scan T.tensor T.tensor T.tensor
-           ~f:(fun c r -> (c, Rune.callback tt ~like:r boom r))
-           ~init:x (vec [| 1.; 2. |])));
+           (fun c r -> (c, Rune.callback tt ~like:r boom r))
+           ~init:x
+           (vec [| 1.; 2. |])));
   let t = Rune.Total.make () in
   raises (Invalid_argument "Rune.callback: the function adds to a total collected around the call")
     (fun () ->

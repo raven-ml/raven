@@ -51,7 +51,7 @@ let trace_rows () =
   let step c _ = (chain c, ()) in
   [
     Thumper.bench "chain-100" (fun () ->
-        synced (fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init none)));
+        synced (fst (Rune.scan t t Nx.Ptree.unit step ~init none)));
   ]
 
 (* Loops: a step of [ops] sines over [rows] rows, eagerly and under forward
@@ -62,7 +62,7 @@ let rows = 100
 let loop_rows () =
   let init = one () and xs = host (Nx.zeros f32 [| rows; 1 |]) in
   let step c _ = (chain c, ()) in
-  let scan c = fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init:c xs) in
+  let scan c = fst (Rune.scan t t Nx.Ptree.unit step ~init:c xs) in
   let id = Printf.sprintf "%dx%d" ops rows in
   [
     Thumper.bench ("scan-" ^ id) (fun () -> synced (scan init));
@@ -97,7 +97,7 @@ let declined_rows () =
         synced
           (fst
              (Rune.scan t t Nx.Ptree.unit
-                ~f:(fun c _ ->
+                (fun c _ ->
                   adds a b;
                   (c, ()))
                 ~init:a xs)));
@@ -548,7 +548,7 @@ let lanes = 256
 let lane_newton a =
   Rune.iterate' ~max:64
     ~until:(fun x -> Nx.less (Nx.abs (Nx.sub (Nx.mul x x) a)) (Nx.mul_s a 1e-5))
-    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
     (Nx.add_s a 1.)
 
 let lane_values () =
@@ -573,7 +573,7 @@ let scanned_rule =
       let y =
         fst
           (Rune.scan'
-             ~f:(fun c xi ->
+             (fun c xi ->
                Rune.Total.add added (Nx.sum xi);
                (Nx.add c (Nx.sin xi), c))
              ~init:(Nx.zeros_like (Nx.get [ 0 ] x))
@@ -608,7 +608,7 @@ let lane_sums r =
   Rune.Total.add summed (Nx.sum r);
   fst
     (Rune.scan'
-       ~f:(fun c xi ->
+       (fun c xi ->
          Rune.Total.add summed xi;
          (Nx.add c xi, c))
        ~init:(Nx.zeros_like (Nx.get [ 0 ] r))
@@ -642,13 +642,13 @@ let root_rows () =
         Rune.iterate' ~max:32
           ~until:(fun x ->
             Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-5)
-          ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+          (fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
           (Nx.add_s a 1.))
   in
   let f a =
     let c, _ =
       Rune.scan' ~init:a
-        ~f:(fun c r -> (sqrt_root (Nx.add c (Nx.reshape [| 1 |] r)), c))
+        (fun c r -> (sqrt_root (Nx.add c (Nx.reshape [| 1 |] r)), c))
         rs
     in
     Nx.sum c
@@ -741,7 +741,7 @@ let lorenz_scan n s =
   let rows = Nx.zeros f32 [| n; 1 |] in
   let s, () =
     Rune.scan lorenz_t Nx.Ptree.tensor Nx.Ptree.unit
-      ~f:(fun s _ -> (lorenz_step s, ()))
+      (fun s _ -> (lorenz_step s, ()))
       ~init:s rows
   in
   lorenz_sum s
@@ -818,7 +818,7 @@ let footprint_rows () =
 let newton a =
   Rune.iterate' ~max:64
     ~until:(fun x -> Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-3)
-    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
     (Nx.add_s a 1.)
 
 let jit_loop_rows () =

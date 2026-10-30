@@ -326,8 +326,9 @@ All notable changes to this project will be documented in this file.
 - Add Jacobians `jacfwd'` and `jacrev'`.
 - Add `custom_transpose`, a linear function with a given transpose, and
   `check_transpose`, which tests that transpose numerically.
-- Add loops `scan` and `iterate` (and `scan'`, `iterate'`), branches `switch`
-  and `cond` (and `cond'`), where only the taken branch computes.
+- Add loops `scan c x y f ~init xs` and `iterate c ~max ~until f init` (and
+  `scan'`, `iterate'`), branches `switch` and `cond` (and `cond'`), where only
+  the taken branch computes.
 - Add `root`, a solution differentiated through its residual by the implicit
   function theorem.
 - A transformation of a loop or branch is a loop or branch of its function's

@@ -668,7 +668,7 @@ let tanh_sinh ~tol f range =
     Rune.iterate carry ~max:n_chunks
       ~until:(fun (_, (_, (_, (_, (_, (_, (st, _))))))) ->
         Nx.logical_not (Nx.any (Elementwise.searching st)))
-      ~f:step
+      step
       ( Nx.scalar_at at Nx.int32 0l,
         ( zeros,
           ( zeros,
@@ -689,7 +689,7 @@ let tanh_sinh ~tol f range =
   let total, () =
     Rune.scan Nx.Ptree.tensor
       Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
-      Nx.Ptree.unit ~f:chunk_sum ~init:zeros
+      Nx.Ptree.unit chunk_sum ~init:zeros
       (levels, (side, (offset, weight)))
   in
   let answer = Nx.mul total (Nx.exp2 (Nx.neg (Nx.cast dtype final))) in
@@ -1062,7 +1062,7 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
     Rune.iterate carry ~max:budget
       ~until:(fun (_, (_, (_, (_, (_, st))))) ->
         Nx.logical_not (Nx.any (Elementwise.searching st)))
-      ~f:step
+      step
       ( Nx.scalar_at at Nx.int32 0l,
         ( Nx.zeros_at at dtype (Array.append [| shifts |] lanes),
           ( Nx.zeros_at at Nx.int32 lanes,
@@ -1078,7 +1078,7 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
     (Nx.add total (Nx.sum ~axes:[ 0 ] (Nx.where keep s (Nx.zeros_like s))), ())
   in
   let total, () =
-    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:sum_chunk
+    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit sum_chunk
       ~init:zeros
       (Nx.arange_at at Nx.int32 0 budget 1)
   in

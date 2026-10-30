@@ -90,7 +90,7 @@ let backtrack p dtype ~trials ~running ~shrink trial last =
         Nx.logical_or
           (Nx.logical_not (Nx.any searching))
           (Nx.greater_equal_s j (Int32.of_int trials)))
-      ~f:step
+      step
       ( Nx.ones_at at dtype lanes,
         ( last,
           ( running,
@@ -285,7 +285,7 @@ let wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin =
         Nx.logical_or
           (Nx.logical_not (Nx.any s.searching))
           (Nx.greater_equal_s s.trip (Int32.of_int trials)))
-      ~f:(fun c -> pack (step (unpack c)))
+      (fun c -> pack (step (unpack c)))
       (pack
          {
            alpha = Nx.ones_at at dtype lanes;
@@ -494,7 +494,7 @@ let iterations ~budget extra step (s, aux) =
       ~max:budget
       ~until:(fun ((_, (_, (st, _))), _) ->
         Nx.logical_not (Nx.any (searching st)))
-      ~f:step
+      step
       (pack s, aux)
   in
   (unpack c, aux)

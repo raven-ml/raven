@@ -221,7 +221,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
   let (x, (lp_new, (l_new, r_new))), () =
     Rune.scan
       P.(pair u (pair tensor (pair tensor tensor)))
-      P.tensor P.unit ~f:walk
+      P.tensor P.unit walk
       ~init:(x0, (lp0, aux0))
       (Nx.arange_at on Nx.int32 0 d 1)
   in
@@ -368,7 +368,7 @@ let run u ?batch ?tolerance ~budget ~prior ~likelihood k live =
       ~until:(fun s ->
         Nx.logical_or (converged s)
           (Nx.greater_equal_s s.steps (Int32.of_int budget)))
-      ~f:(fun s ->
+      (fun s ->
         step u ~prior ~likelihood
           (Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 0) s.steps)
           s)

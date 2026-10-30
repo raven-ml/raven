@@ -102,7 +102,7 @@ let loops (type s d) (dt : (float, s) Nx.dtype) s n g h =
     let rows = Array.append [| n |] s in
     (c, if n = 0 then Nx.zeros_at (Nx.placement c) dt rows else Nx.stack ys)
   in
-  (folded, fun (c, xs) -> Rune.scan' ~f:step ~init:c xs)
+  (folded, fun (c, xs) -> Rune.scan' step ~init:c xs)
 
 let pair_bits (a, b) = (bits a, bits b)
 let pp2 = Testable.pair bits_t bits_t
@@ -238,7 +238,7 @@ let law_any (Any_case (dt, s, n, co, xso, g, h)) =
   in
   let scanned =
     outcome (fun () ->
-        let c, ys = Rune.scan' ~f:step ~init xs in
+        let c, ys = Rune.scan' step ~init xs in
         equal ~msg:"outputs' shape" (array int) rows (Nx.shape ys);
         (codes c, List.init n (fun i -> codes (Nx.get [ i ] ys))))
   in
@@ -258,29 +258,27 @@ let test_runs_once () =
         incr calls;
         (Nx.add c x, Nx.mul c x)
       in
-      ignore
-        (Rune.scan' ~f:step ~init:(v [| 0.; 0. |]) (Nx.zeros f32 [| n; 2 |]));
+      ignore (Rune.scan' step ~init:(v [| 0.; 0. |]) (Nx.zeros f32 [| n; 2 |]));
       equal ~msg:(Printf.sprintf "%d rows" n) int 1 !calls)
     [ 0; 1; 7 ]
 
 let test_read () =
   invalid ~sub:"Nx.item: the value is traced by Rune.scan" (fun () ->
       Rune.scan t t Nx.Ptree.unit
-        ~f:(fun c x ->
-          if Nx.item [ 0 ] x > 0. then (Nx.add c x, ()) else (c, ()))
+        (fun c x -> if Nx.item [ 0 ] x > 0. then (Nx.add c x, ()) else (c, ()))
         ~init:(v [| 0.; 0. |])
         (xs3 ()));
   invalid ~sub:"Nx.item: the value is traced by Rune.iterate" (fun () ->
       Rune.iterate' ~max:3
         ~until:(fun x -> Nx.less x (Nx.scalar f32 (Nx.item [ 0 ] x)))
-        ~f:Nx.neg (v [| 1. |]));
+        Nx.neg (v [| 1. |]));
   (* A captured value a differentiation tracks reads its primal in a step, the
      same at every step, and raises in remat, which stages the read. *)
   let step a c r =
     if Nx.item [] a > 1. then (Nx.add c (Nx.mul r a), c) else (c, c)
   in
   let sum a =
-    fst (Rune.scan' ~f:(step a) ~init:(Nx.scalar f32 0.) (Nx.ones f32 [| 3 |]))
+    fst (Rune.scan' (step a) ~init:(Nx.scalar f32 0.) (Nx.ones f32 [| 3 |]))
   in
   let two = Nx.scalar f32 2. and one = Nx.scalar f32 1. in
   equal ~msg:"jvp" float_exact 3. (Nx.item [] (snd (Rune.jvp' sum two one)));
@@ -288,7 +286,7 @@ let test_read () =
   let count a =
     Rune.iterate' ~max:4
       ~until:(fun c -> Nx.greater c (Nx.scalar f32 (Nx.item [] a)))
-      ~f:(fun c -> if Nx.item [] a > 1. then Nx.add c a else c)
+      (fun c -> if Nx.item [] a > 1. then Nx.add c a else c)
       (Nx.scalar f32 0.)
   in
   equal ~msg:"iterate" float_exact 2.
@@ -305,19 +303,19 @@ let test_read () =
 let test_keyless () =
   invalid ~sub:"no key inside Rune.scan" (fun () ->
       Rune.scan'
-        ~f:(fun c x -> (Nx.add c (Nx.Rng.uniform f32 [| 2 |]), x))
+        (fun c x -> (Nx.add c (Nx.Rng.uniform f32 [| 2 |]), x))
         ~init:(v [| 0.; 0. |])
         (xs3 ()));
   (* Even with no row, the step is traced. *)
   invalid ~sub:"no key inside Rune.scan" (fun () ->
       Rune.scan'
-        ~f:(fun c x -> (Nx.add c (Nx.Rng.uniform f32 [| 2 |]), x))
+        (fun c x -> (Nx.add c (Nx.Rng.uniform f32 [| 2 |]), x))
         ~init:(v [| 0.; 0. |])
         (Nx.zeros f32 [| 0; 2 |]));
   invalid ~sub:"no key inside Rune.iterate" (fun () ->
       Rune.iterate' ~max:3
         ~until:(fun x -> Nx.less (Nx.Rng.uniform f32 [||]) x)
-        ~f:Nx.neg (v [| 1. |]))
+        Nx.neg (v [| 1. |]))
 
 (* A step draws from a key in its rows: the draws are the fold's. *)
 let test_keyed () =
@@ -327,7 +325,7 @@ let test_keyed () =
     (Nx.add c d, d)
   in
   let init = v [| 0.; 0. |] in
-  let c, ys = Rune.scan' ~f:step ~init (Nx.Rng.to_tensor keys) in
+  let c, ys = Rune.scan' step ~init (Nx.Rng.to_tensor keys) in
   let c', ys' = fold step ~init (Nx.Rng.to_tensor keys) in
   equal bits_t (bits c') (bits c);
   equal bits_t (bits (Nx.stack ys')) (bits ys)
@@ -338,7 +336,7 @@ let test_carry_refused () =
       "Rune.scan': the root: shape [1] in the carry the step returned, [2] in \
        the carry it received" (fun () ->
       Rune.scan'
-        ~f:(fun c x -> (Nx.sum ~keepdims:true c, x))
+        (fun c x -> (Nx.sum ~keepdims:true c, x))
         ~init:(v [| 0.; 0. |])
         (xs3 ()));
   invalid
@@ -346,22 +344,22 @@ let test_carry_refused () =
       "Rune.scan: the root: length 2 in the carry the step returned, length 1 \
        in the carry it received" (fun () ->
       Rune.scan (Nx.Ptree.list t) t Nx.Ptree.unit
-        ~f:(fun c x -> (x :: c, ()))
+        (fun c x -> (x :: c, ()))
         ~init:[ v [| 0.; 0. |] ]
         (xs3 ()))
 
 let test_xs_refused () =
   invalid ~sub:"Rune.scan: xs has no leaf" (fun () ->
       Rune.scan t Nx.Ptree.unit Nx.Ptree.unit
-        ~f:(fun c () -> (c, ()))
+        (fun c () -> (c, ()))
         ~init:(v [| 0. |]) ());
   invalid ~sub:"Rune.scan': xs: the root is 0-d" (fun () ->
-      Rune.scan' ~f:(fun c x -> (c, x)) ~init:(v [| 0. |]) (Nx.scalar f32 1.));
+      Rune.scan' (fun c x -> (c, x)) ~init:(v [| 0. |]) (Nx.scalar f32 1.));
   invalid ~sub:"Rune.scan: xs: 1: 3 rows, 0: 2" (fun () ->
       Rune.scan t
         Nx.Ptree.(pair tensor tensor)
         Nx.Ptree.unit
-        ~f:(fun c _ -> (c, ()))
+        (fun c _ -> (c, ()))
         ~init:(v [| 0. |])
         (Nx.zeros f32 [| 2 |], Nx.zeros f32 [| 3 |]))
 
@@ -372,10 +370,7 @@ let test_nested () =
   let inner c x = (Nx.add (Nx.mul c w) x, c) in
   let outer c x =
     let c', ys =
-      Rune.scan'
-        ~f:(fun d y -> inner (Nx.add d c) y)
-        ~init:c
-        (Nx.stack [ x; x ])
+      Rune.scan' (fun d y -> inner (Nx.add d c) y) ~init:c (Nx.stack [ x; x ])
     in
     (Nx.sub c' (Nx.sum ~axes:[ 0 ] ys), c')
   in
@@ -386,7 +381,7 @@ let test_nested () =
     (Nx.sub c' (Nx.sum ~axes:[ 0 ] (Nx.stack ys)), c')
   in
   let init = v [| 1.; -0. |] in
-  let c, ys = Rune.scan' ~f:outer ~init (xs3 ()) in
+  let c, ys = Rune.scan' outer ~init (xs3 ()) in
   let c', ys' = fold outer_fold ~init (xs3 ()) in
   equal bits_t (bits c') (bits c);
   equal bits_t (bits (Nx.stack ys')) (bits ys)
@@ -396,7 +391,7 @@ let test_nested () =
 let test_detach () =
   let x = v [| 1.; -0. |] in
   let c, _ =
-    Rune.scan' ~f:(fun c x -> (Nx.add (Rune.detach c) x, c)) ~init:x (xs3 ())
+    Rune.scan' (fun c x -> (Nx.add (Rune.detach c) x, c)) ~init:x (xs3 ())
   in
   equal bits_t (bits (v [| 10.; 12. |])) (bits c)
 
@@ -412,12 +407,12 @@ let test_no_map () =
     (fun n ->
       invalid ~sub:no_lanes (fun () ->
           Rune.scan'
-            ~f:(fun c x -> (c, Rune.lanes a x))
+            (fun c x -> (c, Rune.lanes a x))
             ~init:(v [| 0.; 0. |])
             (Nx.zeros f32 [| n; 2 |]));
       invalid ~sub:no_index (fun () ->
           Rune.scan'
-            ~f:(fun c x -> (Nx.add c (Nx.cast f32 (Rune.lane_index a c)), x))
+            (fun c x -> (Nx.add c (Nx.cast f32 (Rune.lane_index a c)), x))
             ~init:(v [| 0.; 0. |])
             (Nx.zeros f32 [| n; 2 |])))
     [ 0; 2 ]
@@ -435,7 +430,7 @@ let test_in_loops () =
     (Nx.add c x, ())
   in
   let scanned () =
-    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:step
+    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit step
       ~init:(v [| 0.; 0. |])
   in
   let folded xs () = ignore (fold step ~init:(v [| 0.; 0. |]) xs) in
@@ -459,7 +454,7 @@ let test_in_loops () =
     (bits (Nx.scalar f32 300000064.))
     (bits
        (total (fun () ->
-            Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:big
+            Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit big
               ~init:(v [| 0. |]) three)));
   (* The chain starts from the collect's running total: after 1e8, three 12s are
      added in turn, each rounded, as the fold adds them. *)
@@ -467,7 +462,7 @@ let test_in_loops () =
     total (fun () ->
         Total.add t (Nx.scalar f32 1e8);
         Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit
-          ~f:(fun c _ ->
+          (fun c _ ->
             Total.add t (Nx.scalar f32 12.);
             (c, ()))
           ~init:(v [| 0. |]) three)
@@ -485,7 +480,7 @@ let test_in_loops () =
           ~until:(fun x ->
             Total.add t (Nx.scalar f32 100.);
             Nx.less (Nx.max x) (Nx.scalar f32 1.))
-          ~f:(fun x ->
+          (fun x ->
             Total.add t (Nx.scalar f32 1.);
             Nx.mul x (Nx.scalar f32 0.5))
           (v [| 5. |]))
@@ -549,8 +544,7 @@ let law_totals (n, z, adds) =
     totals (fun () ->
         before ();
         ignore
-          (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:step ~init
-             xs))
+          (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit step ~init xs))
   in
   equal (pair bits_t bits_t) eager scanned
 
@@ -565,7 +559,7 @@ let test_scopes_inside () =
     (Nx.add c s, s)
   in
   let c, ys =
-    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor ~f:step
+    Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor step
       ~init:(Nx.scalar f32 0.) (xs3 ())
   in
   equal bits_t (bits (Nx.scalar f32 21.)) (bits c);
@@ -686,7 +680,7 @@ let functions (type s) ?(nested = false) ~free (dt : (float, s) Nx.dtype) s n g
     else
       let two = Nx.stack [ x; x ] in
       let c, ys =
-        if scan then Rune.scan cs T.tensor T.tensor ~f:(step w) ~init:c two
+        if scan then Rune.scan cs T.tensor T.tensor (step w) ~init:c two
         else
           (* A copy of [w] per step, whose cotangent sums the inner steps'
              before the outer loop adds it, in the order rune.mli states for
@@ -699,7 +693,7 @@ let functions (type s) ?(nested = false) ~free (dt : (float, s) Nx.dtype) s n g
   in
   let scanned (c0, (xs, w)) =
     let (c0, c1), ys =
-      Rune.scan cs T.tensor T.tensor ~f:(inner ~scan:true w) ~init:(c0, c1) xs
+      Rune.scan cs T.tensor T.tensor (inner ~scan:true w) ~init:(c0, c1) xs
     in
     (c0, (c1, ys))
   in
@@ -1312,11 +1306,11 @@ let compiles ~msg f x =
 let nested xs =
   let outer c r =
     let inner d q = (Nx.add (Nx.add d (Nx.mul_s c 0.5)) q, Nx.neg d) in
-    let c', ys = Rune.scan' ~f:inner ~init:c r in
+    let c', ys = Rune.scan' inner ~init:c r in
     (c', Nx.sum ~axes:[ 0 ] ys)
   in
   let init = Nx.mul_s (Nx.get [ 0; 0 ] xs) 0.5 in
-  let c, ys = Rune.scan' ~f:outer ~init xs in
+  let c, ys = Rune.scan' outer ~init xs in
   Nx.concatenate ~axis:0 [ c; Nx.reshape [| -1 |] ys ]
 
 let test_nested_compiled () =
@@ -1347,7 +1341,7 @@ let test_cycle () =
     let a, (b, c) =
       fst
         (Rune.scan ts T.tensor T.unit
-           ~f:(fun (a, (b, c)) r -> ((b, (c, Nx.add a r)), ()))
+           (fun (a, (b, c)) r -> ((b, (c, Nx.add a r)), ()))
            ~init:(Nx.get [ 0 ] xs, (Nx.get [ 1 ] xs, Nx.get [ 2 ] xs))
            xs)
     in
@@ -1365,7 +1359,7 @@ let test_constant_rows () =
     in
     let c, _ =
       Rune.scan'
-        ~f:(fun c r -> (Nx.add c (Nx.sum r), c))
+        (fun c r -> (Nx.add c (Nx.sum r), c))
         ~init:x (Nx.reshape shape rows)
     in
     c
@@ -1380,7 +1374,7 @@ let test_constant_outputs () =
   let xs = on0 (Nx.create f32 [| 300; 2 |] (Array.init 600 Float.of_int)) in
   let scan_with out xs =
     let c, ys =
-      Rune.scan' ~f:(fun c r -> (Nx.add c r, out c)) ~init:(Nx.get [ 0 ] xs) xs
+      Rune.scan' (fun c r -> (Nx.add c r, out c)) ~init:(Nx.get [ 0 ] xs) xs
     in
     Nx.concatenate ~axis:0 [ c; Nx.reshape [| -1 |] ys ]
   in
@@ -1396,7 +1390,7 @@ let test_constant_take () =
   let f xs =
     fst
       (Rune.scan'
-         ~f:(fun c r ->
+         (fun c r ->
            let i =
              Nx.place (Nx.placement c)
                (Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 1L |])
@@ -1413,7 +1407,7 @@ let test_empty_carry () =
   let f xs =
     let c, ys =
       Rune.scan'
-        ~f:(fun c r -> (Nx.neg c, Nx.add r r))
+        (fun c r -> (Nx.neg c, Nx.add r r))
         ~init:(Nx.zeros_at (Nx.placement xs) f32 [| 0 |])
         xs
     in
@@ -1455,7 +1449,7 @@ let test_staged () =
   in
   let xs = rows 100 in
   let init = count (v [| 0.5; -0. |]) in
-  let f init xs = Rune.scan' ~f:step ~init xs in
+  let f init xs = Rune.scan' step ~init xs in
   let printed xs =
     Format.asprintf "%a" Rune.pp_program
       (Rune.program
@@ -1525,7 +1519,7 @@ let law_call (Call c) =
     (List.exists (fun r -> bits (c.sine r) <> bits (Nx.sin r)) rows);
   let init = Nx.zeros c.dt c.s in
   let folded, ys = fold step ~init xs in
-  let scanned, ys' = Rune.scan' ~f:step ~init xs in
+  let scanned, ys' = Rune.scan' step ~init xs in
   equal ~msg:"carry" bits_t (bits folded) (bits scanned);
   equal ~msg:"outputs" bits_t (bits (Nx.stack ys)) (bits ys')
 
@@ -1537,7 +1531,7 @@ let host x = Nx.place Nx.Host.on x
 let test_constant_row () =
   let c, ys =
     Rune.scan t t t
-      ~f:(fun c x -> (Nx.add c x, c))
+      (fun c x -> (Nx.add c x, c))
       ~init:(Nx.scalar f32 0.)
       (host (v [| 1.; 2.; 3. |]))
   in
@@ -1551,7 +1545,7 @@ let test_constant_addition () =
     Total.collect u ~init:(Nx.scalar f32 0.) (fun () ->
         ignore
           (Rune.scan t t Nx.Ptree.unit
-             ~f:(fun c x ->
+             (fun c x ->
                Total.add u (Nx.scalar f32 1.);
                Total.add u (Nx.sum x);
                (c, ()))
@@ -1566,7 +1560,7 @@ let test_swap () =
   let traces = ref 0 in
   let (a, b), _ =
     Rune.scan (Nx.Ptree.pair t t) t t
-      ~f:(fun (a, b) x ->
+      (fun (a, b) x ->
         incr traces;
         ((b, a), x))
       ~init:(on 0 (Nx.scalar f32 1.), on 1 (Nx.scalar f32 2.))
@@ -1586,7 +1580,7 @@ let pair = T.(pair tensor tensor)
 let doubling x =
   let (_, b), () =
     Rune.scan pair T.tensor T.unit
-      ~f:(fun (a, _) _ -> ((Nx.mul_s a 2., a), ()))
+      (fun (a, _) _ -> ((Nx.mul_s a 2., a), ()))
       ~init:(x, Nx.zeros f64 [| 2 |])
       (Nx.zeros f64 [| 3; 1 |])
   in
@@ -1614,7 +1608,7 @@ let test_totals () =
   in
   let scanned c =
     Total.add t (Nx.scalar f64 1.);
-    Nx.sum (fst (Rune.scan T.tensor T.tensor T.unit ~f:step ~init:c xs))
+    Nx.sum (fst (Rune.scan T.tensor T.tensor T.unit step ~init:c xs))
   in
   let folded c =
     Total.add t (Nx.scalar f64 1.);
@@ -1659,7 +1653,7 @@ let test_totals_inside () =
            Total.add t (Nx.sum (Nx.sin x));
            ignore (loop x)))
   in
-  let scanned x = Rune.scan T.tensor T.tensor T.unit ~f:(step x) ~init:x xs in
+  let scanned x = Rune.scan T.tensor T.tensor T.unit (step x) ~init:x xs in
   let folded x = fold (step x) ~init:x xs in
   let x = vec [| 0.5; -1. |] and v = vec [| 1.; 2. |] in
   equal ~msg:"grad" bits_t
@@ -1688,7 +1682,7 @@ let test_totals_inside () =
   let iterated x =
     Rune.iterate' ~max:5
       ~until:(fun c -> Nx.greater (Nx.max c) (Nx.scalar f64 4.))
-      ~f:(fun c ->
+      (fun c ->
         Total.add t (Nx.sum c);
         Nx.mul_s c 2.)
       x
@@ -1709,12 +1703,12 @@ let test_iterate_in_step () =
     let c =
       Rune.iterate' ~max:10
         ~until:(fun c -> Nx.less (Nx.max c) (Nx.scalar f64 1.))
-        ~f:(fun c -> Nx.mul_s c 0.5)
+        (fun c -> Nx.mul_s c 0.5)
         (Nx.add c r)
     in
     (c, ())
   in
-  let scanned x = fst (Rune.scan T.tensor T.tensor T.unit ~f:step ~init:x xs) in
+  let scanned x = fst (Rune.scan T.tensor T.tensor T.unit step ~init:x xs) in
   let folded x = fst (fold step ~init:x xs) in
   let x = vec [| 0.5 |] in
   equal ~msg:"jvp" bits_t
@@ -1730,12 +1724,12 @@ let test_iterate_in_step () =
         T.(pair tensor tensor)
         ~max:10
         ~until:(fun (_, k) -> Nx.greater_equal k (Nx.scalar f64 3.))
-        ~f:(fun (c, k) -> (Nx.mul_s c 0.5, Nx.add_s k 1.))
+        (fun (c, k) -> (Nx.mul_s c 0.5, Nx.add_s k 1.))
         (Nx.add c r, Nx.scalar f64 0.)
     in
     (c, ())
   in
-  let scanned x = fst (Rune.scan T.tensor T.tensor T.unit ~f:step ~init:x xs) in
+  let scanned x = fst (Rune.scan T.tensor T.tensor T.unit step ~init:x xs) in
   let folded x = fst (fold step ~init:x xs) in
   let lanes = Nx.create f64 [| 2; 1 |] [| 0.5; 2. |] in
   equal ~msg:"vmap" bits_t
@@ -1766,8 +1760,7 @@ let test_residuals () =
     held_after kept (fun () ->
         kept :=
           Rune.vjp'
-            (fun c ->
-              fst (Rune.scan T.tensor T.tensor T.unit ~f:step ~init:c xs))
+            (fun c -> fst (Rune.scan T.tensor T.tensor T.unit step ~init:c xs))
             x
           :: !kept)
   in
@@ -1790,7 +1783,7 @@ let test_signs () =
         Nx.sum
           (fst
              (Rune.scan T.tensor T.tensor T.unit
-                ~f:(fun c r -> (Nx.mul c (Nx.mul w r), ()))
+                (fun c r -> (Nx.mul c (Nx.mul w r), ()))
                 ~init:w
                 (Nx.create f64 [| 1; 2 |] [| 1.; -0. |]))))
       w

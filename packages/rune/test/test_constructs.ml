@@ -119,7 +119,7 @@ let constructs =
   [
     {
       (at "Rune.scan'" (fun body x ->
-           fst (Rune.scan' ~init:x ~f:(fun c r -> (body (Nx.add c r), r)) rows)))
+           fst (Rune.scan' ~init:x (fun c r -> (body (Nx.add c r), r)) rows)))
       with
       eager = fold;
     };
@@ -127,8 +127,7 @@ let constructs =
       (at "Rune.iterate" (fun body x ->
            let until (k, _) = Nx.greater_equal_s k 3. in
            let step (k, y) = (Nx.add_s k 1., body y) in
-           snd
-             (Rune.iterate counted ~max:4 ~until ~f:step (Nx.scalar f32 0., x))))
+           snd (Rune.iterate counted ~max:4 ~until step (Nx.scalar f32 0., x))))
       with
       eager = thrice;
     };
