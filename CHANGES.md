@@ -386,10 +386,11 @@ All notable changes to this project will be documented in this file.
   bound of that step meets `tol`. A zero with an unknown at 0 ended `Stalled`:
   at `f`'s evaluation level a step moves that unknown by more than its ulps.
 - `Minimize.solve` takes `?within:(lo, hi)`, a box: gradient methods take
-  Bertsekas's projected steps, `levenberg_marquardt` projects its steps and
-  `nelder_mead` clips its vertices; a coordinate held at a bound has the
-  bound's derivative. A side unlike the start in structure or a float
-  tensor's shape raises, naming the path.
+  Bertsekas's projected steps, `levenberg_marquardt` solves its damped system
+  on the free coordinates and rejects a projected step its model predicts no
+  decrease for, and `nelder_mead` clips its vertices; a coordinate held at a
+  bound has the bound's derivative. A side unlike the start in structure or a
+  float tensor's shape raises, naming the path.
 - Add `System.lanes`, Newton's method over the leading axes of a tensor:
   each lane is a system of the last axis's unknowns with its own status, a
   `k × k` direct solve of the caller's Jacobian per step, and its own implicit

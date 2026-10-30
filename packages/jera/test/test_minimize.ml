@@ -454,6 +454,45 @@ let nelder_mead_tests =
 
 let unit_box b = (Nx.full_like b (-0.5), Nx.full_like b 0.5)
 
+(* A linear least-squares problem [½ |a x − b|²] of [n] unknowns in a box: [a]
+   stacks the identity on two rows of entries in [-2, 2], so [aᵀ a] is
+   positive-definite with its unknowns coupled and the minimum is unique. A
+   coordinate's box is unbounded, bounded on one side, closed to a point, or an
+   interval. A number below [10⁻³⁰⁰] is zero: in [a] or a bound it puts the
+   minimum, or the decrease toward it, among subnormals, where the search stalls
+   as it states, as in [convex]. *)
+let least_squares =
+  let open Gen in
+  let number lo hi =
+    map (fun v -> if Float.abs v < 1e-300 then 0. else v) (float_range lo hi)
+  in
+  let side =
+    let+ lo = number (-2.) 1.
+    and+ width = number 0. 2.
+    and+ kind = int_range 0 4 in
+    match kind with
+    | 0 -> (Float.neg_infinity, Float.infinity)
+    | 1 -> (Float.neg_infinity, lo +. width)
+    | 2 -> (lo, Float.infinity)
+    | 3 -> (lo, lo)
+    | _ -> (lo, lo +. width)
+  in
+  (let* n = int_range 1 5 in
+   let+ rows = list ~size:(constant (2 * n)) (number (-2.) 2.)
+   and+ b = list ~size:(constant (n + 2)) (number (-5.) 5.)
+   and+ sides = list ~size:(constant n) side in
+   let a =
+     Nx.concatenate ~axis:0
+       [ Nx.eye f64 n; Nx.create f64 [| 2; n |] (Array.of_list rows) ]
+   in
+   ( a,
+     Nx.create f64 [| n + 2 |] (Array.of_list b),
+     ( vec (Array.of_list (List.map fst sides)),
+       vec (Array.of_list (List.map snd sides)) ) ))
+  |> with_pp (fun ppf (a, b, (lo, hi)) ->
+      Format.fprintf ppf "a = %a@ b = %a@ lo = %a@ hi = %a" Nx.pp a Nx.pp b
+        Nx.pp lo Nx.pp hi)
+
 let box_tests =
   [
     prop "the answer is its projected gradient's fixed point (law 10)" convex
@@ -575,6 +614,51 @@ let box_tests =
                (vec [| 1.; -2. |]))
         in
         equal (Oracle.tensor ~abs:0. ()) (scalar_of (-1.5)) (Nx.get [ 1 ] p));
+    prop "levenberg_marquardt's answer is its projected gradient's fixed point"
+      least_squares (fun (a, b, (lo, hi)) ->
+        let n = Nx.dim 0 lo in
+        let gradient x =
+          Nx.matmul (Nx.transpose a) (Nx.sub (Nx.matmul a x) b)
+        in
+        let s =
+          Minimize.solve one lm ~within:(lo, hi) ~tol:tight ~budget:200
+            (fun x -> Nx.sub (Nx.matmul a x) b)
+            (Nx.zeros_like lo)
+        in
+        let x = Solution.get s in
+        let clipped = Nx.minimum hi (Nx.maximum lo (Nx.sub x (gradient x))) in
+        let held =
+          Nx.logical_and
+            (Nx.not_equal clipped (Nx.sub x (gradient x)))
+            (Nx.less lo hi)
+        in
+        cover "a coordinate held at a bound, with another free"
+          (n > 1 && Nx.item [] (Nx.any held) && not (Nx.item [] (Nx.all held)));
+        cover "a coordinate closed to a point"
+          (Nx.item [] (Nx.any (Nx.equal lo hi)));
+        equal (Oracle.tensor ~abs:(1e-8 *. Float.of_int (n + 2)) ()) clipped x);
+    test "levenberg_marquardt finds a minimum on a bound that couples"
+      (fun () ->
+        (* ½ |a x − b|² with x₀ ≤ 0: the unconstrained minimum (1, 1) projects
+           to (0, 1), of cost 0.5, but the minimum in the box is (0, 1.5), of
+           cost 0.25. From either start, the minimum in the box. *)
+        let a = Nx.create f64 [| 2; 2 |] [| 1.; 1.; 0.; 1. |] in
+        let b = vec [| 2.; 1. |] in
+        let within =
+          (Nx.full f64 [| 2 |] Float.neg_infinity, vec [| 0.; Float.infinity |])
+        in
+        List.iter
+          (fun x0 ->
+            let s =
+              Minimize.solve one lm ~within ~tol:tight ~budget:200
+                (fun x -> Nx.sub (Nx.matmul a x) b)
+                (vec x0)
+            in
+            equal
+              (Oracle.tensor ~abs:1e-10 ())
+              (vec [| 0.; 1.5 |])
+              (Solution.get s))
+          [ [| -1.; 0. |]; [| 0.; 1.5 |] ]);
     test "nelder_mead clips its vertices into the box" (fun () ->
         let c = vec [| 2.; -0.25 |] in
         equal

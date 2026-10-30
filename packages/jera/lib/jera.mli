@@ -731,13 +731,16 @@ module Minimize : sig
       the norm of [x − P (x − ∇f x)], its Hessian solve acts on the others and
       [−∇f] on the held ones, and the search backtracks by halving along the
       projection arc [P (x + α d)] to the sufficient decrease
-      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)]. {!levenberg_marquardt} projects
-      its steps and {!nelder_mead} clips its vertices. The undamped step is the
-      projected one, [P (x + δ) − x]. The answer is stated as the zero of
-      [x − P (x − ∇f x)], so its derivative is zero in a coordinate held at a
-      constant bound and follows a bound that moves; that system is not
-      symmetric, so its [linear] must not be {!Linear.cg}. A lane whose [lo]
-      exceeds its [hi] somewhere ends [Stalled].
+      [f ≤ f x + 10⁻⁴ ∇fᵀ (P (x + α d) − x)]. {!levenberg_marquardt} holds the
+      same coordinates and solves its damped system on the others, with the
+      diagonal of [JᵀJ + λ D] on the held ones, so every step tends to zero as
+      [λ] grows; its trial point is [P (x + δ)], rejected where the linear model
+      predicts no decrease there. {!nelder_mead} clips its vertices. The
+      undamped step is the projected one, [P (x + δ) − x]. The answer is stated
+      as the zero of [x − P (x − ∇f x)], so its derivative is zero in a
+      coordinate held at a constant bound and follows a bound that moves; that
+      system is not symmetric, so its [linear] must not be {!Linear.cg}. A lane
+      whose [lo] exceeds its [hi] somewhere ends [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,

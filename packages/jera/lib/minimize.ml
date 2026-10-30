@@ -641,6 +641,14 @@ let free box (x : _ vector) g =
   in
   Nx.cast (Nx.dtype x) (Nx.logical_not active)
 
+(* The scaling of Bertsekas's projected step: the operator [a] on the
+   coordinates [free] marks and the diagonal [held] on the others, so that it is
+   diagonal on the held coordinates. *)
+let restricted ~free ~held a v =
+  Nx.add
+    (Nx.mul free (a (Nx.mul free v)))
+    (Nx.mul (Nx.mul (Nx.rsub_s 1. free) held) v)
+
 (* The generalised Cauchy point and subspace step of Byrd, Lu, Nocedal and Zhu
    (1995) for the model [B] at [x] with gradient [g] in [box]. The projected
    gradient path [P (x − t g)] is piecewise linear: coordinate [i] reaches its
@@ -893,8 +901,7 @@ let problem fn x kind linear f start =
             in
             match free with
             | None -> hv v
-            | Some f ->
-                Nx.add (Nx.mul f (hv (Nx.mul f v))) (Nx.mul (Nx.rsub_s 1. f) v)
+            | Some free -> restricted ~free ~held:(Nx.ones_like free) hv v
           in
           let r = Linear.run linear dtype size hessian precondition rhs in
           (Rune.detach r.u, Rune.detach (Linear.failed r))
@@ -1027,7 +1034,15 @@ let rows x like xs =
    estimated from the gradients at the step's ends; [λ] then shrinks by [max
    (1/3, 1 − (2ρ − 1)³)], and on a rejection grows by a factor that doubles with
    each rejection in a row (Nielsen, 1999), so it falls on accepted steps and
-   near a small-residual minimum the steps are Gauss–Newton's. *)
+   near a small-residual minimum the steps are Gauss–Newton's.
+
+   In a box the step is Bertsekas's projected one, with [JᵀJ + λ D] as its
+   scaling: the matrix keeps only its diagonal on the held coordinates, so a
+   held coordinate's step is [−g / (JᵀJ + λ D)ᵢᵢ], which [λ] shrinks as it does
+   the others. A step solved on every coordinate and then projected can rise for
+   every [λ]: at [x₀ ≤ 0] with [g = (−½, 0)], the solve couples [x₁] to the [x₀]
+   the projection removes, and [x₁] alone moves uphill (Bertsekas, 1982, §2, his
+   Fig. 1). *)
 
 let accept_ratio = 1e-4
 let lambda0 = 1e-3
@@ -1042,6 +1057,7 @@ type ('x, 'd) lm =
       jacobian : ('q, 'd) vector -> ('q, 'd) vector;
       solve :
         ('q, 'd) vector ->
+        free:('q, 'd) vector option ->
         ('q, 'd) vector ->
         ('q, 'd) vector ->
         ('q, 'd) vector * 'd Nx.bool_t;
@@ -1068,9 +1084,18 @@ let lm_problem fn x r linear f start =
   let precondition =
     Linear.preconditioner fn x linear (fun v -> Rune.detach (ravel v)) unravel
   in
-  let solve j damping rhs =
-    let apply v =
+  (* [JᵀJ + Λ], with [Λ] the diagonal [damping]; in a box, its diagonal on the
+     held coordinates. *)
+  let solve j ~free damping rhs =
+    let damped v =
       Nx.add (Nx.matmul (Nx.transpose j) (Nx.matmul j v)) (Nx.mul damping v)
+    in
+    let apply =
+      match free with
+      | None -> damped
+      | Some free ->
+          let held = Nx.add (Nx.sum ~axes:[ 0 ] (Nx.square j)) damping in
+          restricted ~free ~held damped
     in
     let run = Linear.run linear dtype size apply precondition rhs in
     (Rune.detach run.u, Rune.detach (Linear.failed run))
@@ -1093,7 +1118,9 @@ let lm_problem fn x r linear f start =
     }
 
 (* One trial of the damped step [delta] from [x] with residual [r]: the point,
-   its residual, and whether the step is accepted, with its ratio [ρ]. *)
+   its residual, and whether the step is accepted, with its ratio [ρ]. A step
+   projected on a box can leave the linear model no decrease to predict, and
+   then [ρ] is no measure: it is rejected. *)
 let lm_trial residual ~jacobian ~project ~running j x r g delta =
   let half_square v = Nx.mul_s (Search.dot v v) 0.5 in
   let xt = project (Nx.add x delta) in
@@ -1117,7 +1144,10 @@ let lm_trial residual ~jacobian ~project ~running j x r g delta =
   let rho = Nx.div decrease predicted in
   let ok =
     Nx.logical_and running
-      (Nx.logical_and (Search.finite rt) (Nx.greater_s rho accept_ratio))
+      (Nx.logical_and (Search.finite rt)
+         (Nx.logical_and
+            (Nx.greater_s predicted 0.)
+            (Nx.greater_s rho accept_ratio)))
   in
   (xt, rt, jt, gt, ok, rho)
 
@@ -1150,7 +1180,8 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
   let step (s : _ Search.state) (d, (lambda, (nu, (j, g)))) =
     let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
     let toward v = Nx.sub (project (Nx.add s.x v)) s.x in
-    let delta, failed = p.solve j (Nx.mul lambda d) (Nx.neg g) in
+    let free = Option.map (fun b -> free b s.x g) box in
+    let delta, failed = p.solve j ~free (Nx.mul lambda d) (Nx.neg g) in
     let delta = toward delta in
     let s = { s with st = settle s.st failed Stalled } in
     let q = Search.secant s (Nx.add s.x delta) in
@@ -1167,7 +1198,7 @@ let lm_solve fn x r linear ?within ~tol ~budget f start =
         ~max:1
         ~until:(fun (_, settled) -> settled)
         (fun _ ->
-          let gn, gn_failed = p.solve j (Nx.zeros_like d) (Nx.neg g) in
+          let gn, gn_failed = p.solve j ~free (Nx.zeros_like d) (Nx.neg g) in
           ( Nx.where gn_failed delta (toward gn),
             Nx.scalar_at (Nx.beside g) Nx.bool true ))
         (delta, Nx.logical_not gate)
@@ -1227,7 +1258,7 @@ let lm_path fn x r linear ~steps f start =
   let trip ((x, (r, j)), (d, (lambda, (nu, stopped)))) _ =
     let g = Nx.matmul (Nx.transpose j) r in
     let d = Nx.maximum d (Nx.sum ~axes:[ 0 ] (Nx.square j)) in
-    let delta, failed = p.solve j (Nx.mul lambda d) (Nx.neg g) in
+    let delta, failed = p.solve j ~free:None (Nx.mul lambda d) (Nx.neg g) in
     let still =
       Nx.logical_or
         (Nx.all (Nx.equal_s g 0.))
