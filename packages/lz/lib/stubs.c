@@ -22,12 +22,14 @@
 #include <string.h>
 
 #include "checksum.h"
+#include "checksum_paths.h"
 #include "deflate.h"
 #include "deflate_enc.h"
 #include "lz.h"
 #include "lz4.h"
 #include "snappy.h"
 #include "zstd.h"
+#include "zstd_dec_paths.h"
 #include "zstd_enc.h"
 
 /* Input bytes from which each kernel releases the runtime lock: the
@@ -806,4 +808,120 @@ CAMLprim value lz_xxh64_ba_long(value seed, value b, value first,
   c = lz_xxh64(c, p, n);
   caml_leave_blocking_section();
   CAMLreturn(caml_copy_int64((int64_t)c));
+}
+
+/* Paths, for the tests that hold every path of a kernel to the same bits.
+   Each entry runs path [i] of a kernel through the same driver as the
+   modules' own entries, which take the last path. */
+
+static void check_path(value i, size_t n) {
+  if (Long_val(i) < 0 || (size_t)Long_val(i) >= n)
+    caml_invalid_argument("Lz: no such path");
+}
+
+static value names_of(const char *const *names, size_t n) {
+  CAMLparam0();
+  CAMLlocal2(a, s);
+  a = caml_alloc(n, 0);
+  for (size_t i = 0; i < n; i++) {
+    s = caml_copy_string(names[i]);
+    Store_field(a, i, s);
+  }
+  CAMLreturn(a);
+}
+
+/* [kind] is 0 for CRC-32, 1 for Adler-32. */
+static size_t checksum_paths(value kind, const struct lz_checksum_path **p) {
+  return Int_val(kind) == 0 ? lz_crc32_paths(p) : lz_adler32_paths(p);
+}
+
+CAMLprim value lz_checksum_path_names(value kind) {
+  CAMLparam1(kind);
+  CAMLlocal2(a, s);
+  const struct lz_checksum_path *p;
+  size_t n = checksum_paths(kind, &p);
+  a = caml_alloc(n, 0);
+  for (size_t i = 0; i < n; i++) {
+    s = caml_copy_string(p[i].name);
+    Store_field(a, i, s);
+  }
+  CAMLreturn(a);
+}
+
+/* Path [i] of [kind] over all of [b], from the running value [c]. */
+CAMLprim value lz_checksum_path(value kind, value i, value c, value b) {
+  const struct lz_checksum_path *p;
+  check_path(i, checksum_paths(kind, &p));
+  uint32_t r = p[Long_val(i)].fn((uint32_t)Int32_val(c), ba_data(b),
+                                 ba_len(b));
+  return caml_copy_int32((int32_t)r);
+}
+
+CAMLprim value lz_zstd_dec_path_names(value unit) {
+  (void)unit;
+  const char *const *names;
+  size_t n = lz_zstd_dec_paths(&names);
+  return names_of(names, n);
+}
+
+CAMLprim value lz_zstd_decode_path(value i, value src, value dst) {
+  const char *const *names;
+  check_path(i, lz_zstd_dec_paths(&names));
+  struct lz_zstd_dec st;
+  lz_zstd_dec_init(&st, UINT64_MAX, false);
+  lz_zstd_dec_path(&st, (size_t)Long_val(i));
+  return decode_whole(&zstd_dec, &st, src, dst);
+}
+
+CAMLprim value lz_zstd_enc_path_names(value unit) {
+  (void)unit;
+  const char *const *names;
+  size_t n = lz_zstd_enc_paths(&names);
+  return names_of(names, n);
+}
+
+CAMLprim value lz_zstd_encode_path(value i, value level, value src,
+                                   value dst) {
+  const char *const *names;
+  check_path(i, lz_zstd_enc_paths(&names));
+  struct lz_zstd_enc st;
+  lz_zstd_enc_init(&st, Int_val(level), false);
+  lz_zstd_enc_path(&st, (size_t)Long_val(i));
+  return encode_whole(&zstd_enc, &st, src, dst);
+}
+
+CAMLprim value lz_deflate_enc_path_names(value unit) {
+  (void)unit;
+  const char *const *names;
+  size_t n = lz_deflate_enc_paths(&names);
+  return names_of(names, n);
+}
+
+CAMLprim value lz_deflate_encode_path(value i, value level, value src,
+                                      value dst) {
+  const char *const *names;
+  check_path(i, lz_deflate_enc_paths(&names));
+  struct lz_deflate_enc st;
+  lz_deflate_enc_init(&st, LZ_RAW, Int_val(level), false);
+  lz_deflate_enc_path(&st, (size_t)Long_val(i));
+  return encode_whole(&deflate_enc, &st, src, dst);
+}
+
+/* Zstandard's encoders with the match finders' index limit lowered to
+   [limit] (zstd_enc.h), for the tests that hold the bytes equal across
+   limits. */
+
+CAMLprim value lz_zstd_encode_limit(value limit, value level, value src,
+                                    value dst) {
+  struct lz_zstd_enc st;
+  lz_zstd_enc_init(&st, Int_val(level), false);
+  lz_zstd_enc_limit(&st, (uint32_t)Long_val(limit));
+  return encode_whole(&zstd_enc, &st, src, dst);
+}
+
+CAMLprim value lz_zstd_encoder_limit(value limit, value level) {
+  struct lz_zstd_enc *st = caml_stat_alloc(sizeof *st);
+  lz_zstd_enc_init(st, Int_val(level), true);
+  lz_zstd_enc_limit(st, (uint32_t)Long_val(limit));
+  return box(&zstd_enc, st, sizeof *st + lz_zstd_enc_mem(Int_val(level)));
 }

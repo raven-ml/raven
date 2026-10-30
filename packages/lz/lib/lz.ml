@@ -442,3 +442,63 @@ module Xxh64 = struct
   let string ?(seed = 0L) ?(first = 0) ?length s =
     str seed s first (range "Xxh64" s first length)
 end
+
+(* Paths *)
+
+external checksum_path_names : int -> string array = "lz_checksum_path_names"
+
+external checksum_path : int -> int -> int32 -> bigbytes -> int32
+  = "lz_checksum_path"
+
+external zstd_dec_path_names : unit -> string array = "lz_zstd_dec_path_names"
+
+external zstd_decode_path :
+  int -> bigbytes -> bigbytes -> (progress, error) result
+  = "lz_zstd_decode_path"
+
+external zstd_enc_path_names : unit -> string array = "lz_zstd_enc_path_names"
+
+external zstd_encode_path : int -> int -> bigbytes -> bigbytes -> int option
+  = "lz_zstd_encode_path"
+
+external deflate_enc_path_names : unit -> string array
+  = "lz_deflate_enc_path_names"
+
+external deflate_encode_path : int -> int -> bigbytes -> bigbytes -> int option
+  = "lz_deflate_encode_path"
+
+module Paths = struct
+  (* [named names f] pairs path [i]'s name with [f i]. *)
+  let named names f = Array.to_list (Array.mapi (fun i n -> (n, f i)) names)
+
+  (* The kind of checksum, as stubs.c numbers it. *)
+  let crc32 = named (checksum_path_names 0) (checksum_path 0)
+  let adler32 = named (checksum_path_names 1) (checksum_path 1)
+  let zstd_decode = named (zstd_dec_path_names ()) zstd_decode_path
+
+  let zstd_encode =
+    named (zstd_enc_path_names ()) (fun i ~level ->
+        zstd_encode_path i (Zstd.level_of ~level ()))
+
+  let deflate_encode =
+    named (deflate_enc_path_names ()) (fun i ~level ->
+        deflate_encode_path i (Deflate.level_of ~level ()))
+end
+
+external zstd_encode_limit : int -> int -> bigbytes -> bigbytes -> int option
+  = "lz_zstd_encode_limit"
+
+external zstd_encoder_limit : int -> int -> state = "lz_zstd_encoder_limit"
+
+let check_limit name limit =
+  if limit < 0 || limit > 0xffff_ffff then
+    invalid_arg
+      (Printf.sprintf "Lz.%s: limit %d is not in [0, 2^32)" name limit)
+
+let zstd_encode_limit ~limit ~level src dst =
+  check_limit "zstd_encode_limit" limit;
+  zstd_encode_limit limit (Zstd.level_of ~level ()) src dst
+
+let zstd_encoder_limit ~limit ~level =
+  check_limit "zstd_encoder_limit" limit;
+  stream (zstd_encoder_limit limit (Zstd.level_of ~level ()))

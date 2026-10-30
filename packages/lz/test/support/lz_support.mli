@@ -144,7 +144,7 @@ val capacity : int -> short -> int
 (** {1 Checksum paths}
 
     The CRC-32 and Adler-32 paths this host can run, each with the
-    instructions of its name (lib/checksum_paths.h). {!Lz} reaches only the
+    instructions of its name ([Lz.Paths]). {!Lz} reaches only the
     fastest. *)
 
 type path = {
@@ -164,7 +164,7 @@ val adler32_paths : path list
 (** {1 Zstandard paths}
 
     The builds of the Zstandard decoder's hot loops this host can run
-    (lib/zstd_dec_paths.h): generic, and BMI2 where the CPU has it.
+    ([Lz.Paths]): generic, and BMI2 where the CPU has it.
     {!Lz.Zstd} reaches only the last. *)
 
 type zstd_path = {
@@ -195,15 +195,14 @@ val zstd_encode_limit :
 (** [zstd_encode_limit ~limit ~level src dst] is {!Lz.Zstd.encode}
     [~level src dst] by an encoder whose match finders rebase their indices
     once a block that starts past the window would end past index [limit],
-    rather than past 3 GiB (lib/zstd_enc.h): with [~limit:0], every such
-    block. With [~step], it is the frame a {!Lz.Zstd.encoder} writes when
-    given at most [step] bytes a step. *)
+    rather than past 3 GiB: with [~limit:0], every such block. With
+    [~step], it is the frame a {!Lz.Zstd.encoder} writes when given at most
+    [step] bytes a step. *)
 
 (** {1 Deflate paths}
 
     The builds of the deflate encoder's matchfinder rebase this host can
-    run (lib/deflate_enc.h): generic, and SSE2 where the compiler targets
-    it. {!Lz.Deflate} reaches only the last. *)
+    run ([Lz.Paths]): generic, and SSE2 where the compiler targets it. {!Lz.Deflate} reaches only the last. *)
 
 type deflate_enc_path = {
   label : string;

@@ -465,8 +465,7 @@ end
 
 (**/**)
 
-(* For the tests: the checksums the formats carry, and the generic and
-   vector paths of each. *)
+(* For the tests: the checksums the formats carry. *)
 
 module Adler32 : sig
   val bigbytes : ?adler:int32 -> bigbytes -> int32
@@ -482,3 +481,35 @@ module Xxh64 : sig
   val bigbytes : ?seed:int64 -> bigbytes -> int64
   val string : ?seed:int64 -> ?first:int -> ?length:int -> string -> int64
 end
+
+(* For the tests, which hold every path of a kernel to the same bits: the
+   paths this host can run, each by its name and run through the same
+   driver as the modules above, the generic path first and the one the
+   modules above take last. A checksum path takes the running value and
+   checksums all of its buffer; a Zstandard path is [Zstd.decode] or
+   [Zstd.encode], a deflate path [Deflate.encode]. *)
+
+module Paths : sig
+  val crc32 : (string * (int32 -> bigbytes -> int32)) list
+  val adler32 : (string * (int32 -> bigbytes -> int32)) list
+
+  val zstd_decode :
+    (string * (bigbytes -> bigbytes -> (progress, error) result)) list
+
+  val zstd_encode :
+    (string * (level:int -> bigbytes -> bigbytes -> int option)) list
+
+  val deflate_encode :
+    (string * (level:int -> bigbytes -> bigbytes -> int option)) list
+end
+
+(* For the tests, which hold Zstandard's bytes equal across index limits:
+   [Zstd.encode] and [Zstd.encoder] with match finders that rebase their
+   indices once a block that starts past the window would end past index
+   [limit], in [0, 2^32), rather than past 3 GiB. With a limit of 0, every
+   such block rebases. *)
+
+val zstd_encode_limit :
+  limit:int -> level:int -> bigbytes -> bigbytes -> int option
+
+val zstd_encoder_limit : limit:int -> level:int -> Encoder.t

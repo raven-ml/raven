@@ -316,18 +316,9 @@ let capacity k = function Short d -> max 0 (k - d) | Part p -> k * p / 1000
 
 type path = { name : string; run : int32 -> Lz.bigbytes -> int32 }
 
-external path_names : int -> string array = "lz_support_paths"
-external run_path : int -> int -> int32 -> Lz.bigbytes -> int32
-  = "lz_support_path"
-
-let paths kind =
-  Array.to_list
-    (Array.mapi
-       (fun i name -> { name; run = run_path kind i })
-       (path_names kind))
-
-let crc32_paths = paths 0
-let adler32_paths = paths 1
+let paths = List.map (fun (name, run) -> { name; run })
+let crc32_paths = paths Lz.Paths.crc32
+let adler32_paths = paths Lz.Paths.adler32
 
 (* Zstandard paths *)
 
@@ -336,60 +327,47 @@ type zstd_path = {
   decode : Lz.bigbytes -> Lz.bigbytes -> (Lz.progress, Lz.error) result;
 }
 
-external zstd_names : unit -> string array = "lz_support_zstd_paths"
-external zstd_run : int -> Lz.bigbytes -> Lz.bigbytes -> int * int * int * string
-  = "lz_support_zstd_decode"
-
-let zstd_decode i src dst =
-  match zstd_run i src dst with
-  | -1, consumed, produced, _ -> Ok { Lz.consumed; produced }
-  | kind, at, _, msg ->
-      let why =
-        match kind with
-        | 0 -> Lz.Truncated
-        | 1 -> Malformed msg
-        | 2 -> Too_long
-        | _ -> Unsupported msg
-      in
-      Error { Lz.at; why }
-
 let zstd_paths =
-  Array.to_list
-    (Array.mapi (fun i label -> { label; decode = zstd_decode i }) (zstd_names ()))
+  List.map (fun (label, decode) -> { label; decode }) Lz.Paths.zstd_decode
 
 type zstd_enc_path = {
   label : string;
   encode : level:int -> Lz.bigbytes -> Lz.bigbytes -> int option;
 }
 
-external zstd_enc_names : unit -> string array = "lz_support_zstd_enc_paths"
-
-external zstd_enc_run : int -> int -> Lz.bigbytes -> Lz.bigbytes -> int
-  = "lz_support_zstd_encode"
-
 let zstd_enc_paths =
-  Array.to_list
-    (Array.mapi
-       (fun i label ->
-         let encode ~level src dst =
-           match zstd_enc_run i level src dst with -1 -> None | n -> Some n
-         in
-         { label; encode })
-       (zstd_enc_names ()))
+  List.map
+    (fun (label, encode) : zstd_enc_path -> { label; encode })
+    Lz.Paths.zstd_encode
 
-external zstd_limit_run :
-  int -> int -> int -> Lz.bigbytes -> Lz.bigbytes -> int
-  = "lz_support_zstd_encode_limit"
-
-(* A step of 0 bytes asks the stub for the whole-buffer encode. *)
-let zstd_encode_limit ~limit ?step ~level src dst =
-  let step =
-    match step with
-    | None -> 0
-    | Some s when s > 0 -> s
-    | Some _ -> invalid_arg "Lz_support.zstd_encode_limit: step"
+(* [limited_steps e ~step src dst] steps [e] over [src], at most [step]
+   bytes a step, and writes the runs to [dst]: the stream's length, or
+   [None] when it does not fit. *)
+let limited_steps e ~step src dst =
+  let n = Array1.dim src in
+  let out = ref 0 in
+  let add run =
+    let k = Array1.dim run in
+    if !out + k <= Array1.dim dst then
+      Array1.blit run (Array1.sub dst !out k);
+    out := !out + k
   in
-  match zstd_limit_run limit step level src dst with -1 -> None | n -> Some n
+  let rec go at =
+    let len = min step (n - at) in
+    let last = at + len = n in
+    match Lz.Encoder.step e ~last (Array1.sub src at len) add with
+    | Lz.Done _ -> ()
+    | More taken -> go (at + taken)
+  in
+  go 0;
+  if !out <= Array1.dim dst then Some !out else None
+
+let zstd_encode_limit ~limit ?step ~level src dst =
+  match step with
+  | None -> Lz.zstd_encode_limit ~limit ~level src dst
+  | Some s when s > 0 ->
+      limited_steps (Lz.zstd_encoder_limit ~limit ~level) ~step:s src dst
+  | Some _ -> invalid_arg "Lz_support.zstd_encode_limit: step"
 
 (* Deflate paths *)
 
@@ -398,23 +376,10 @@ type deflate_enc_path = {
   encode : level:int -> Lz.bigbytes -> Lz.bigbytes -> int option;
 }
 
-external deflate_enc_names : unit -> string array
-  = "lz_support_deflate_enc_paths"
-
-external deflate_enc_run : int -> int -> Lz.bigbytes -> Lz.bigbytes -> int
-  = "lz_support_deflate_encode"
-
 let deflate_enc_paths =
-  Array.to_list
-    (Array.mapi
-       (fun i label ->
-         let encode ~level src dst =
-           match deflate_enc_run i level src dst with
-           | -1 -> None
-           | n -> Some n
-         in
-         { label; encode })
-       (deflate_enc_names ()))
+  List.map
+    (fun (label, encode) : deflate_enc_path -> { label; encode })
+    Lz.Paths.deflate_encode
 
 (* Testables *)
 
