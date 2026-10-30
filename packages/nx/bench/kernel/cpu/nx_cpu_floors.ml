@@ -19,22 +19,6 @@ type bytes =
 external floor_move : int -> int -> int -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_move_byte" "nx_cpu_bench_floor_move"
 
-(* Conversions whose own operations can cost more than their bytes' move: those
-   no instruction does, and float32 to float16 and int8, whose instructions cost
-   more than an integer narrowing on the M1. *)
-type codec =
-  | F32_bf16
-  | F32_e4m3
-  | E4m3_f32
-  | I64_f32
-  | U64_f32
-  | F64_f16
-  | F32_f16
-  | F32_i8
-
-external floor_codec : int -> codec -> bytes -> bytes -> int -> unit
-  = "nx_cpu_bench_floor_codec"
-
 external floor_stream :
   int -> int -> int -> int -> bytes -> bytes -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_stream_byte" "nx_cpu_bench_floor_stream"
@@ -56,62 +40,20 @@ let count n =
   else if n mod kib = 0 then strf "%dK" (n / kib)
   else string_of_int n
 
-let short (type v s) (dt : (v, s) D.t) =
-  match dt with
-  | D.Float64 -> "f64"
-  | D.Float32 -> "f32"
-  | D.Float16 -> "f16"
-  | D.Bfloat16 -> "bf16"
-  | D.Float8_e4m3fn -> "e4m3"
-  | D.Float8_e5m2 -> "e5m2"
-  | D.Float4_e2m1fn -> "e2m1"
-  | D.Int64 -> "i64"
-  | D.Uint64 -> "u64"
-  | D.Int32 -> "i32"
-  | D.Uint32 -> "u32"
-  | D.Int16 -> "i16"
-  | D.Uint16 -> "u16"
-  | D.Int8 -> "i8"
-  | D.Uint8 -> "u8"
-  | D.Int4 -> "i4"
-  | D.Uint4 -> "u4"
-  | D.Complex128 -> "c128"
-  | D.Complex64 -> "c64"
-  | D.Bool -> "bool"
-  | D.Bit -> "bit"
-
 (* Floors: memcpy of [n] bytes, [n] elements of [inb] bytes moved into [outb],
-   [n] elements through a codec, [n] flops of fused multiply-adds, float64
-   ones if [f64], or a read of [n] bytes. *)
+   [n] flops of fused multiply-adds, float64 ones if [f64], or a read of [n]
+   bytes. *)
 type floor =
   | Memcpy of int
   | Move of { inb : int; outb : int; n : int }
-  | Codec of codec * int
   | Peak of { f64 : bool; n : int }
   | Bytes_read of int
   | Streamed of { ins : int; inb : int; outb : int; n : int }
   | Selected of { inb : int; n : int }
 
-(* A codec's source and destination, and their bytes per element. *)
-let codec_pair = function
-  | F32_bf16 -> ("f32", 4, "bf16", 2)
-  | F32_e4m3 -> ("f32", 4, "e4m3", 1)
-  | E4m3_f32 -> ("e4m3", 1, "f32", 4)
-  | I64_f32 -> ("i64", 8, "f32", 4)
-  | U64_f32 -> ("u64", 8, "f32", 4)
-  | F64_f16 -> ("f64", 8, "f16", 2)
-  | F32_f16 -> ("f32", 4, "f16", 2)
-  | F32_i8 -> ("f32", 4, "i8", 1)
-
-let codecs =
-  [ F32_bf16; F32_e4m3; E4m3_f32; I64_f32; U64_f32; F64_f16; F32_f16; F32_i8 ]
-
 let floor_name = function
   | Memcpy n -> strf "copy-%s" (count n)
   | Move f -> strf "move-%d-%d-%s" f.inb f.outb (count f.n)
-  | Codec (c, n) ->
-      let s, _, d, _ = codec_pair c in
-      strf "codec-%s-%s-%s" s d (count n)
   | Peak { f64; n } -> strf "fma-%s-%s" (if f64 then "f64" else "f32") (count n)
   | Bytes_read n -> strf "read-%s" (count n)
   | Streamed s -> strf "stream-%dx%d-%d-%s" s.ins s.inb s.outb (count s.n)
@@ -122,22 +64,14 @@ let floor_name = function
 let peak_flops = 1024 * mib
 
 (* A copy's floor is its memcpy. A cast's moves its elements' bytes, a sub-byte
-   side's pairs of elements as bytes, and a codec's loop where one converts its
-   pair. *)
+   side's pairs of elements as bytes. *)
 let floors = function
   | Copy n -> [ Memcpy n ]
   | Cast (D.Any s, D.Any d, n) ->
       let w dt = D.bits dt / 8 in
-      let move =
-        if D.bits s < 8 then Move { inb = 1; outb = 2 * w d; n = n / 2 }
-        else if D.bits d < 8 then Move { inb = 2 * w s; outb = 1; n = n / 2 }
-        else Move { inb = w s; outb = w d; n }
-      in
-      let codec c =
-        let cs, _, cd, _ = codec_pair c in
-        if (cs, cd) = (short s, short d) then Some (Codec (c, n)) else None
-      in
-      move :: List.filter_map codec codecs
+      if D.bits s < 8 then [ Move { inb = 1; outb = 2 * w d; n = n / 2 } ]
+      else if D.bits d < 8 then [ Move { inb = 2 * w s; outb = 1; n = n / 2 } ]
+      else [ Move { inb = w s; outb = w d; n } ]
   | Fma (dt, _) -> [ Peak { f64 = dt = D.Any D.Float64; n = peak_flops } ]
   | Read n -> [ Bytes_read n ]
   | Stream { ins; inb; outb; n } -> [ Streamed { ins; inb; outb; n } ]
@@ -175,11 +109,6 @@ let rows ws =
         pair
           (fun () -> (buffer (outb * n), buffer (inb * n)))
           (fun (d, s) -> floor_move threads inb outb d s n)
-    | Codec (c, n) ->
-        let _, inb, _, outb = codec_pair c in
-        pair
-          (fun () -> (buffer (outb * n), buffer (inb * n)))
-          (fun (d, s) -> floor_codec threads c d s n)
     | Peak { f64; n } -> pair (fun () -> ()) (fun () -> floor_fma threads f64 n)
     | Bytes_read n -> pair (fun () -> buffer n) (fun s -> floor_read threads s)
     | Streamed { ins; inb; outb; n } ->

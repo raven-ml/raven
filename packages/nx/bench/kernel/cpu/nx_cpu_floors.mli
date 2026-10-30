@@ -6,20 +6,20 @@
 (** nx.cpu's floors for the kernel bench: what the host does with a row's bytes,
     running no nx.cpu code, on one thread, on the performance cores and on every
     core. A copy's floor is memcpy of its bytes; a cast's moves its elements'
-    bytes in and out with an integer truncation or extension per element. A cast
-    whose conversion can cost more than that has a second floor, a loop of its
-    scalar codec from [nx_dtype.h]. floor-move-4-2-1M-all moves 1 Mi elements
-    of 4 bytes into 2 on every core, floor-copy-4M-1t copies 4 MiB on one
-    thread, floor-codec-f32-bf16-1M-1t encodes 1 Mi bfloat16 on one thread. A
-    contraction's floor is the host's peak of fused multiply-adds, measured
-    over 1024 Mi flops, floor-fma-f32-1024M-performance on the performance
-    cores, at which its flops would run; one that streams its operands, as a
-    product of few rows does, also reads their bytes, floor-read-64M-all on
-    every core. An elementwise kind's floor streams its operands' bytes with
-    one integer operation per element, floor-stream-2x4-4-1M-all reading two
-    arrays of 1 Mi 4-byte elements and writing one on every core; a fill's,
-    floor-stream-0x4-4-1M-all, stores its bytes with memset; a where's
-    floor-select-4-1M also reads its condition's bytes. *)
+    bytes in and out with an integer truncation or extension per element.
+    floor-move-4-2-1M-all moves 1 Mi elements of 4 bytes into 2 on every core,
+    floor-copy-4M-1t copies 4 MiB on one thread. A contraction's floor is the
+    host's peak of fused multiply-adds, measured over 1024 Mi flops,
+    floor-fma-f32-1024M-performance on the performance cores, at which its flops
+    would run; on the M1, float32 contractions run on the matrix unit, faster
+    than the cores' peak, so floor-fma does not bound them there. A contraction
+    that streams its operands, as a product of few rows does, also reads their
+    bytes, floor-read-64M-all on every core. An elementwise kind's floor streams
+    its operands' bytes with one integer operation per element,
+    floor-stream-2x4-4-1M-all reading two arrays of 1 Mi 4-byte elements and
+    writing one on every core; a fill's, floor-stream-0x4-4-1M-all, stores its
+    bytes with memset; a where's floor-select-4-1M also reads its condition's
+    bytes. *)
 
 (** The type for the work of a kernel row. *)
 type work =
