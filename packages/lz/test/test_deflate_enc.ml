@@ -1,8 +1,7 @@
 (* The deflate, zlib and gzip encoders: their streams decode to their input
-   at every level (RFC 0039 law 3), fit [bound] (law 4), and do not depend
-   on how the input was cut into steps, which write encode's bytes exactly
-   (law 6). The wrappers' fields are read as RFC 1950 section 2.2 and RFC
-   1952 section 2.3 lay them out. *)
+   at every level, fit [bound], and do not depend on how the input was cut
+   into steps, which write encode's bytes exactly. The wrappers' fields are
+   read as RFC 1950 section 2.2 and RFC 1952 section 2.3 lay them out. *)
 
 open Windtrap
 
@@ -149,7 +148,7 @@ let cuts =
          (2, Gen.int_range 100_000 300_000);
        ])
 
-(* Law 3 *)
+(* Round trips *)
 
 let round_trip =
   prop ~examples:large "decode (encode x) = x, whole and stepped" placed
@@ -172,7 +171,7 @@ let strings =
       equal Lz_support.decoded (Ok s)
         (decode f (f.encode_string ~level s) (String.length s)))
 
-(* Law 4 *)
+(* The bound *)
 
 let bound =
   prop ~examples:large "a destination of bound n holds the stream" placed
@@ -224,7 +223,7 @@ let noise_bound =
             (decode f (Lz_support.to_string ~length:k (snd g)) n))
         formats)
 
-(* Law 6 *)
+(* Cuts into steps *)
 
 let cut_free =
   prop
@@ -290,7 +289,7 @@ let streams =
         (steps f ~level ~cuts:[] b)
         (steps ~e f ~level ~cuts:[] b))
 
-(* Law 6: the bytes do not depend on the instruction set. *)
+(* The bytes do not depend on the instruction set. *)
 
 let paths =
   prop "every path writes the bytes of Lz.Deflate.encode"

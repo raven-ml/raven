@@ -1,8 +1,8 @@
-(* The Zstandard encoder: its frames decode to their input at every level
-   (RFC 0039 law 3), fit [bound] (law 4), and do not depend on how the
-   input was cut into steps, the whole-buffer frame of an input of at
-   least the level's window differing only in its header (law 6). Header
-   fields are read as RFC 8878 section 3.1.1.1 lays them out. *)
+(* The Zstandard encoder: its frames decode to their input at every level,
+   fit [bound], and do not depend on how the input was cut into steps, the
+   whole-buffer frame of an input of at least the level's window differing
+   only in its header. Header fields are read as RFC 8878 section 3.1.1.1
+   lays them out. *)
 
 open Windtrap
 
@@ -207,7 +207,7 @@ let cuts =
          (2, Gen.int_range 100_000 300_000);
        ])
 
-(* Law 3 *)
+(* Round trips *)
 
 let round_trip =
   prop ~examples:large "decode (encode x) = x, whole and stepped" placed
@@ -241,7 +241,7 @@ let stepped_round_trip =
       equal Lz_support.decoded (Ok s) (decode z (String.length s));
       equal Lz_support.decoded (Ok s) (decode_stepped z))
 
-(* Law 4 *)
+(* The bound *)
 
 let bound =
   prop ~examples:large "a destination of bound n holds the frame" edged
@@ -274,7 +274,7 @@ let short =
       equal (option int) ~msg:"exactly its length" (Some k)
         (Lz.Zstd.encode ~level src (Lz_support.create k)))
 
-(* Law 6 *)
+(* Cuts into steps *)
 
 let cut_free =
   prop "any cut into steps writes one frame"
@@ -419,7 +419,7 @@ let frames =
       equal Lz_support.decoded (Ok (a ^ b))
         (decode (za ^ zb) (String.length a + String.length b)))
 
-(* Law 6: the bytes do not depend on the instruction set. *)
+(* The bytes do not depend on the instruction set. *)
 
 let paths =
   prop "every path writes the bytes of Lz.Zstd.encode"
@@ -437,7 +437,7 @@ let paths =
           | None -> failf "%s: the frame exceeds its bound" p.label)
         Lz_support.zstd_enc_paths)
 
-(* Law 6: the bytes do not depend on where the match finders rebase their
+(* The bytes do not depend on where the match finders rebase their
    indices, which the default limit reaches only 3 GiB into a frame. The
    wide input's recurring columns and text make matches reach across
    rebases. A limit of 0 rebases every block past the window; 1.5 MiB

@@ -111,7 +111,7 @@ let walk ?(lend = fun _ _ -> ()) ?(after = fun _ -> ()) fmt d data ~sizes
         if !runs <> [] then broke "f applied on Error";
         if e.why = Too_long then broke "Too_long from a step";
         if e.why = Truncated && not last then broke "Truncated without ~last";
-        (* Law 8: an error kills the decoder. *)
+        (* An error kills the decoder. *)
         raises_match ~msg:"an empty step after Error" invalid (fun () ->
             Lz.Decoder.step d ~last:true empty ignore);
         raises_match ~msg:"a step on the input after Error" invalid (fun () ->
@@ -357,7 +357,8 @@ let case fmt =
   in
   with_pp pp_case (map make (quad (goldens_gen fmt) change sizes ends))
 
-(* Law 5, with laws 7, 8 and 9 on the way *)
+(* Steps equal the whole-buffer decode, and on the way Truncated, errors
+   and a stream's end come as a step's doc states *)
 
 let whole_equals_steps fmt =
   prop fmt.name (case fmt) (fun c ->
@@ -380,12 +381,12 @@ let whole_equals_steps fmt =
         match (w, got) with
         | Ok (_, consumed), Ok (_, taken) -> equal int ~msg:"bytes taken" consumed taken
         | _ -> ());
-      (* Law 9: a deflate or zlib stream is Done at its last byte. *)
+      (* A deflate or zlib stream is Done at its last byte. *)
       (match (c.change, t.ended) with
       | (Same | Append _ | Then _), Ok taken when not fmt.members ->
           equal int ~msg:"Done at the stream's end" (String.length (data c.golden)) taken
       | _ -> ());
-      (* Law 7: a prefix of a valid input fails only once its end is said. *)
+      (* A prefix of a valid input fails only once its end is said. *)
       (match t.ended with
       | Error f when valid_prefix fmt c.change ->
           equal bool
@@ -413,7 +414,7 @@ let whole_equals_steps fmt =
           | Append _, Ok (_, taken) -> taken < String.length input
           | _ -> false))
 
-(* Law 5 where the buffer moves *)
+(* Steps equal the whole-buffer decode where the buffer moves *)
 
 (* The output offsets at which a deflate-family decoder goes back to its
    buffer's start: at each step that begins with more than the window and
@@ -541,7 +542,7 @@ let ends_of fmt =
             (walk fmt d input ~sizes:[ max_int ] ~ends))
         [ Within; After ])
 
-(* Law 8: a raise in f *)
+(* A raise in f *)
 
 let raising fmt =
   let gen =
@@ -570,7 +571,7 @@ let raising fmt =
       raises_match ~msg:"an empty step after f raised" invalid (fun () ->
           Lz.Decoder.step d ~last:true empty ignore))
 
-(* Law 10: lent runs *)
+(* Lent runs *)
 
 (* Steps a fresh decoder over [input], keeping every run past [f] with a
    copy taken in [f], and leaves the decoder only in [gone]. *)
@@ -621,7 +622,7 @@ let kept_runs fmt =
       equal Lz_support.decoded (Ok (raw g)) (Ok (String.concat "" (List.map snd kept)));
       cover "several runs" (List.length kept > 2))
 
-(* Law 11: one value, one user *)
+(* One value, one user *)
 
 (* A small stream of each format. *)
 let small fmt =
