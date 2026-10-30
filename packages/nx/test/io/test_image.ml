@@ -610,6 +610,16 @@ let files =
           let path = file png in
           fails ~path ~naming:"PNG image data too short for its dimensions"
             (fun () -> Nx_io.load_image path));
+      test
+        "a JPEG whose frame states more blocks than its data can code fails"
+        (fun () ->
+          (* The frame's sides, at bytes 163 to 166, set to 65535: 2^26
+             luma blocks from 644 bytes. *)
+          let jpeg = Bytes.of_string (read (fixture "jpeg_baseline.jpg")) in
+          Bytes.fill jpeg 163 4 '\xff';
+          let path = file (Bytes.to_string jpeg) in
+          fails ~path ~naming:"JPEG data too short for its dimensions"
+            (fun () -> Nx_io.load_image path));
       test "a file that is neither PNG nor JPEG fails" (fun () ->
           let path = file "GIF89a" in
           fails ~path (fun () -> Nx_io.load_image path));

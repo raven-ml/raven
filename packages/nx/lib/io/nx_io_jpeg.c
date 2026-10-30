@@ -34,7 +34,8 @@ typedef enum {
   JPEG_HUFFMAN,
   JPEG_RESTART,
   JPEG_SIZE,
-  JPEG_NOMEM
+  JPEG_NOMEM,
+  JPEG_SHORT
 } jpeg_status;
 
 typedef struct {
@@ -142,6 +143,8 @@ static const char *jpeg_message(jpeg_status status) {
     return "JPEG dimensions are too large";
   case JPEG_NOMEM:
     return "JPEG codec allocation failed";
+  case JPEG_SHORT:
+    return "JPEG data too short for its dimensions";
   }
   return "unknown JPEG error";
 }
@@ -294,9 +297,15 @@ static jpeg_status frame_precision(unsigned marker, unsigned precision) {
   return marker != 0xc0 && precision == 12 ? JPEG_UNSUPPORTED : JPEG_FRAME;
 }
 
-static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
-                               size_t len, unsigned marker) {
-  if (decoder->component_count != 0 || len < 6)
+/* Checks the frame header [data] of [len] bytes, of the [marker] SOF0 to
+   SOF2, in a file of [file_len] bytes, before anything is allocated for its
+   image. Each block of a component a scan codes costs at least one bit of
+   entropy-coded data, its DC coefficient's Huffman code (T.81, F.1.2.1 and
+   G.1.2.1), so a component of more blocks than eight a byte of the file is
+   refused: no scan of the file can code it. */
+static jpeg_status check_frame(const uint8_t *data, size_t len,
+                               unsigned marker, size_t file_len) {
+  if (len < 6)
     return JPEG_FRAME;
   jpeg_status status = frame_precision(marker, data[0]);
   if (status != JPEG_OK)
@@ -307,6 +316,38 @@ static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
   if (width == 0 || height == 0 || (count != 1 && count != 3 && count != 4) ||
       len != 6 + count * 3)
     return JPEG_FRAME;
+  size_t max_h = 0, max_v = 0;
+  for (unsigned i = 0; i < count; i++) {
+    const uint8_t *c = data + 6 + i * 3;
+    size_t h = c[1] >> 4, v = c[1] & 15u;
+    if (h == 0 || v == 0 || h > 4 || v > 4 || c[2] >= JPEG_MAX_TABLES)
+      return JPEG_FRAME;
+    for (unsigned previous = 0; previous < i; previous++)
+      if (data[6 + previous * 3] == c[0])
+        return JPEG_FRAME;
+    max_h = h > max_h ? h : max_h;
+    max_v = v > max_v ? v : max_v;
+  }
+  for (unsigned i = 0; i < count; i++) {
+    size_t h = data[7 + i * 3] >> 4, v = data[7 + i * 3] & 15u;
+    size_t x = (width * h + max_h * 8 - 1) / (max_h * 8);
+    size_t y = (height * v + max_v * 8 - 1) / (max_v * 8);
+    if (file_len < SIZE_MAX / 8 && x * y > file_len * 8)
+      return JPEG_SHORT;
+  }
+  return JPEG_OK;
+}
+
+static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
+                               size_t len, unsigned marker) {
+  if (decoder->component_count != 0)
+    return JPEG_FRAME;
+  jpeg_status status = check_frame(data, len, marker, decoder->len);
+  if (status != JPEG_OK)
+    return status;
+  size_t height = be16(data + 1);
+  size_t width = be16(data + 3);
+  unsigned count = data[5];
   decoder->width = width;
   decoder->height = height;
   decoder->component_count = count;
@@ -317,12 +358,6 @@ static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
     component->h = data[7 + i * 3] >> 4;
     component->v = data[7 + i * 3] & 15u;
     component->quant = data[8 + i * 3];
-    if (component->h == 0 || component->v == 0 || component->h > 4 ||
-        component->v > 4 || component->quant >= JPEG_MAX_TABLES)
-      return JPEG_FRAME;
-    for (unsigned previous = 0; previous < i; previous++)
-      if (decoder->components[previous].id == component->id)
-        return JPEG_FRAME;
     memset(component->coef_bits, -1, sizeof(component->coef_bits));
     if (component->h > decoder->max_h)
       decoder->max_h = component->h;
@@ -1076,13 +1111,9 @@ static jpeg_status probe_jpeg(const uint8_t *src, size_t len, size_t *width,
     if (status != JPEG_OK)
       return status;
     if (marker == 0xc0 || marker == 0xc1 || marker == 0xc2) {
-      if (data_len < 6)
-        return JPEG_FRAME;
-      status = frame_precision(marker, data[0]);
+      status = check_frame(data, data_len, marker, len);
       if (status != JPEG_OK)
         return status;
-      if (be16(data + 1) == 0 || be16(data + 3) == 0)
-        return JPEG_FRAME;
       *height = be16(data + 1);
       *width = be16(data + 3);
       *channels = output_channels(data[5]);

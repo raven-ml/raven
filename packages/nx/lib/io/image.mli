@@ -23,7 +23,7 @@ val probe : bytes -> int * int * int
     Raises [Failure] if [src] is neither a PNG nor a JPEG stream, if its header
     is malformed, if the image has no pixel or more than [max_int] samples, or
     if a PNG's image data is too short to inflate to the scanlines its header
-    states. *)
+    states, or a JPEG file too short to code the blocks its frame states. *)
 
 val decode : bytes -> bytes -> unit
 (** [decode src dst] writes the pixels of [src] into [dst], row by row from the
