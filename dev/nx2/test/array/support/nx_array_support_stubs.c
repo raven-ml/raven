@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
+
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/fail.h>
@@ -220,6 +224,25 @@ struct late {
   struct late_fill queue[LATE_QUEUE];
 };
 
+/* A fill's argument copy, on 16 bytes as rig places arguments. Windows'
+   C library has no aligned_alloc, and its _aligned_malloc's memory goes
+   back only through _aligned_free. */
+static void *arg_alloc(size_t n) {
+#if defined(_WIN32)
+  return _aligned_malloc(n, 16);
+#else
+  return aligned_alloc(16, n);
+#endif
+}
+
+static void arg_free(void *p) {
+#if defined(_WIN32)
+  _aligned_free(p);
+#else
+  free(p);
+#endif
+}
+
 static void late_lock(struct late *l) {
   while (atomic_flag_test_and_set_explicit(&l->busy, memory_order_acquire))
     ;
@@ -273,7 +296,7 @@ value nx_array_support_late_publish(value self) {
   int n = atomic_load_explicit(&l->queued, memory_order_relaxed);
   for (int i = 0; i < n; i++) {
     l->queue[i].fill(NULL, l->queue[i].arg, l->queue[i].v);
-    free(l->queue[i].arg);
+    arg_free(l->queue[i].arg);
   }
   atomic_store_explicit(&l->queued, 0, memory_order_relaxed);
   late_show(l, atomic_load_explicit(&l->last, memory_order_acquire));
@@ -320,9 +343,9 @@ static int late_submit(void *self, uint64_t v, const struct rig_wait *waits,
   uint8_t *arg[LATE_QUEUE];
   for (int i = 0; i < nparts; i++) {
     size_t n = rig_round16(parts[i].fill.args.params);
-    arg[i] = aligned_alloc(16, n > 0 ? n : 16);
+    arg[i] = arg_alloc(n > 0 ? n : 16);
     if (arg[i] == NULL) {
-      for (int j = 0; j < i; j++) free(arg[j]);
+      for (int j = 0; j < i; j++) arg_free(arg[j]);
       *failure = "late: no memory for a fill's argument";
       return RIG_FAILED;
     }

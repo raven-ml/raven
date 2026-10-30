@@ -22,7 +22,12 @@
 #define NX_CPU_H
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
 
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -637,6 +642,29 @@ static inline __attribute__((always_inline)) void nx_stream32(void *d,
 static inline void nx_stream_drain(void) {
 #if defined(__x86_64__)
   _mm_sfence();
+#endif
+}
+
+/* Aligned memory */
+
+/* [bytes] on [align], a power of two that divides [bytes]; NULL if they
+   cannot be allocated. Windows' C library has no aligned_alloc, and its
+   _aligned_malloc's memory goes back only through _aligned_free: memory
+   from nx_cpu_aligned goes back through nx_cpu_aligned_free alone, which
+   takes NULL. */
+static inline void *nx_cpu_aligned(size_t align, size_t bytes) {
+#if defined(_WIN32)
+  return _aligned_malloc(bytes, align);
+#else
+  return aligned_alloc(align, bytes);
+#endif
+}
+
+static inline void nx_cpu_aligned_free(void *p) {
+#if defined(_WIN32)
+  _aligned_free(p);
+#else
+  free(p);
 #endif
 }
 

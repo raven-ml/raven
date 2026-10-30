@@ -333,7 +333,7 @@ __attribute__((noinline)) value nx_gemm_contract_segmented(
     }
   if (done) done = groups_on(&j, &a[ao]);
   for (int o = A; o <= B; o++)
-    if (j.sc[o]) free(j.d[o].mem);
+    if (j.sc[o]) nx_cpu_aligned_free(j.d[o].mem);
   nx_cpu_reacquire(released);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();

@@ -146,16 +146,16 @@ typedef struct PLAN {
 static void F(plan_free)(PLAN *p) {
   if (p == NULL) return;
   for (int k = 0; k < p->passes; k++) {
-    free(p->tw[k]);
-    free(p->cs[k]);
+    nx_cpu_aligned_free(p->tw[k]);
+    nx_cpu_aligned_free(p->cs[k]);
   }
   F(plan_free)(p->p1);
   F(plan_free)(p->p2);
-  free(p->tw4);
+  nx_cpu_aligned_free(p->tw4);
   F(plan_free)(p->pm);
-  free(p->chirp);
-  free(p->kernel);
-  free(p->w);
+  nx_cpu_aligned_free(p->chirp);
+  nx_cpu_aligned_free(p->kernel);
+  nx_cpu_aligned_free(p->w);
   free(p);
 }
 
@@ -164,7 +164,7 @@ static void F(plan_free)(PLAN *p) {
 static void *F(hold)(PLAN *p, int64_t bytes) {
   int64_t v = sizeof(CV), size = (bytes + v - 1) / v * v;
   p->bytes += size;
-  return aligned_alloc(v, (size_t)(size > 0 ? size : v));
+  return nx_cpu_aligned((size_t)v, (size_t)(size > 0 ? size : v));
 }
 
 /* Fills [w] with the n complex values unit(m, n) at m = k j, k < count. */

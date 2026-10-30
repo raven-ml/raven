@@ -96,8 +96,8 @@ static int64_t pitch_of(int64_t words) {
 /* Operand [o] of [v] as [u]'s operand [y] of words of [acc]: in place, or
    under [copy] copied into memory of its own, a's rows of words and b's as
    quads_job lays them out, rows pitch_of apart, one batch element where
-   [o] steps 0 along the batch. Answers the copy, NULL in place or if
-   allocation fails. */
+   [o] steps 0 along the batch. Answers the copy, for nx_cpu_aligned_free,
+   NULL in place or if allocation fails. */
 static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
                          int o, int acc, int copy, nx_contract_view *u,
                          nx_array *y) {
@@ -486,7 +486,7 @@ int nx_gemm_quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
   } else
     done = nx_gemm_contract_with(g, acc, NX_CPU_CHAIN, &u, ops, NULL, NULL);
 out:
-  free(ab);
-  free(bb);
+  nx_cpu_aligned_free(ab);
+  nx_cpu_aligned_free(bb);
   return done;
 }

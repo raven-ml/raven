@@ -170,7 +170,8 @@ __attribute__((noinline)) void nx_gemm_axes_of(value vs, value vx,
 }
 
 /* The scales [sc] of an operand of rank [r] and extents [x], its axes
-   [g], decoded into [d]: 0 if its memory could not be allocated. */
+   [g], decoded into [d], whose d->mem nx_cpu_aligned_free gives back: 0
+   if its memory could not be allocated. */
 int nx_gemm_decoded_of(int acc, int r, const int64_t *x, const nx_array *sc,
                        const scale_axes *g, decoded *d) {
   int64_t count = 1, positions = 0;
@@ -217,8 +218,8 @@ void nx_gemm_scale_at(const decoded *d, const scale_axes *g, int o,
 static const int64_t no_start[NX_MAX_RANK];
 
 /* The scales [sc] of operand [x], side [o], its axes [g], into [s], its
-   memory, to free, at [*mem]: 0 if it could not be allocated. Out of
-   line, as nx_gemm_scales_fit. */
+   memory, for nx_cpu_aligned_free, at [*mem]: 0 if it could not be
+   allocated. Out of line, as nx_gemm_scales_fit. */
 __attribute__((noinline)) int nx_gemm_scale_of(int acc, const nx_array *x,
                                                const nx_array *sc,
                                                const scale_axes *g, int o,

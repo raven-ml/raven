@@ -137,9 +137,10 @@ static inline int64_t pos(const problem *p, int o, int64_t e, int64_t i,
 /* Packed operands start on 128 bytes: the matrix unit loads 128 at once. */
 #define ALIGN 128
 
+/* [bytes] on ALIGN, given back by nx_cpu_aligned_free. */
 static inline void *alloc(int64_t bytes) {
-  return aligned_alloc(ALIGN,
-                       (size_t)ceil_div(bytes > 0 ? bytes : 1, ALIGN) * ALIGN);
+  return nx_cpu_aligned(ALIGN,
+                        (size_t)ceil_div(bytes > 0 ? bytes : 1, ALIGN) * ALIGN);
 }
 
 /* The calling worker's scratch of [bytes], given back by nx_cpu_give. */

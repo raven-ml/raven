@@ -118,7 +118,7 @@ static _Thread_local kept *kept_here;
 
 static void kept_drop(void *v) {
   kept *k = v;
-  for (int i = 0; i < KEPT; i++) free(k->b[i].p);
+  for (int i = 0; i < KEPT; i++) nx_cpu_aligned_free(k->b[i].p);
   free(k);
   kept_here = NULL;
 }
@@ -139,7 +139,7 @@ static kept *mine(void) {
 
 static void *fresh(int64_t bytes) {
   int64_t n = bytes > 0 ? (bytes + ALIGN - 1) / ALIGN * ALIGN : ALIGN;
-  return aligned_alloc(ALIGN, (size_t)n);
+  return nx_cpu_aligned(ALIGN, (size_t)n);
 }
 
 /* The first free buffer that fits, else the smallest free one grown, so
@@ -158,7 +158,7 @@ void *nx_cpu_take(int64_t bytes) {
     if (grow == NULL || b->n < grow->n) grow = b;
   }
   if (grow == NULL) return fresh(bytes);
-  free(grow->p);
+  nx_cpu_aligned_free(grow->p);
   grow->p = fresh(bytes);
   grow->n = grow->p ? bytes : 0;
   grow->held = grow->p != NULL;
@@ -172,5 +172,5 @@ void nx_cpu_give(void *p) {
       k->b[i].held = 0;
       return;
     }
-  free(p);
+  nx_cpu_aligned_free(p);
 }

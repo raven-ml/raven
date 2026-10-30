@@ -1206,8 +1206,8 @@ static void dots(problem *p, int64_t bytes, double cost) {
     nx_cpu_job(batch, outputs * f.blocks * w,
                nx_gemm_work_cost(LANE_SPEED, batch, m, n, f.blocks, w),
                dots_finish, &f);
-  free(f.sums);
-  free(staged);
+  nx_cpu_aligned_free(f.sums);
+  nx_cpu_aligned_free(staged);
 }
 
 /* Rows */
@@ -1400,7 +1400,7 @@ static void rows(problem *p, int64_t bytes, double cost) {
                nx_gemm_work_cost(LANE_SPEED, batch, m, n,
                                  NX_CPU_LANES * f.blocks, w),
                rows_finish, &f);
-  free(f.lanes);
+  nx_cpu_aligned_free(f.lanes);
 }
 
 /* [p]'s cost in lane order (nx_gemm_cost), its operands' [bytes] set. */
@@ -1794,8 +1794,8 @@ static inline __attribute__((always_inline)) value contract_body(
   if (done)
     done = computed(acc, order, out, dts, runs, &v, &r, op, scaled ? s : NULL);
   if (scaled) {
-    free(mem[A]);
-    free(mem[B]);
+    nx_cpu_aligned_free(mem[A]);
+    nx_cpu_aligned_free(mem[B]);
   }
   nx_cpu_reacquire(released);
   nx_done(n, a);
