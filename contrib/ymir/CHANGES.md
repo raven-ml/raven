@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- Gzip tiles decode and encode through `lz`. `Fits.Image.raw` and
+  `Fits.Image.values` inflate a tile without copying it first, and a broken
+  tile's `Error` ends as `lz` prints it (`malformed at byte 25: ...`).
+  `Fits.Image.hdu ~tiles` writes other gzip bytes, which read the same.
 - `Region.weights` weighs a region at a float narrower than float32
   (float16, bfloat16, float8) at float32 and rounds the weights once. The
   kernel ran at the narrow float, which cannot hold a cell's offsets or their

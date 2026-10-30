@@ -32,7 +32,7 @@
   dune
   (nx
    (>= 1.0.0~alpha3))
-  (compress
+  (lz
    (>= 1.0.0~alpha3))
   (rune
    (and

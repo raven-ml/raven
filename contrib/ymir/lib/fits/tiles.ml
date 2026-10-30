@@ -245,39 +245,15 @@ type values =
 let ints n = A.create Bigarray.int Bigarray.c_layout n
 let floats n = A.create Bigarray.float64 Bigarray.c_layout n
 
-(* [gunzip t n src] is the data of the gzip stream [src], at most [8 n]
-   bytes. *)
+(* [gunzip place n src] is the data of the gzip members [src] and its
+   length, at most [8 n] bytes. *)
 let gunzip place n (src : Checksum.bigbytes) =
-  let cap = 8 * n in
-  let out = Bytes.create cap in
-  let len = ref 0 in
-  let d = Compress_deflate.Gzip.decoder () in
-  let input = Bytes.create (A.dim src) in
-  for i = 0 to A.dim src - 1 do
-    Bytes.unsafe_set input i (Char.unsafe_chr (A.unsafe_get src i))
-  done;
-  Compress_deflate.Decoder.src d input 0 (Bytes.length input);
-  let fed = ref false in
-  let rec loop () =
-    match Compress_deflate.Decoder.decode d with
-    | `Await ->
-        if !fed then fail_at place "the gzip stream ends early"
-        else begin
-          fed := true;
-          Compress_deflate.Decoder.src d input 0 0;
-          loop ()
-        end
-    | `Data (b, first, l) ->
-        if !len + l > cap then
-          fail_at place "the gzip stream holds more than 8 bytes per pixel";
-        Bytes.blit b first out !len l;
-        len := !len + l;
-        loop ()
-    | `End -> ()
-    | `Error e -> fail_at place "%s" e
-  in
-  loop ();
-  (out, !len)
+  let out = A.create Bigarray.int8_unsigned Bigarray.c_layout (8 * n) in
+  match Lz.Gzip.decode src out with
+  | Ok { produced; _ } -> (out, produced)
+  | Error { why = Too_long; _ } ->
+      fail_at place "the gzip stream holds more than 8 bytes per pixel"
+  | Error e -> fail_at place "%s" (Format.asprintf "%a" Lz.pp_error e)
 
 (* [of_bytes t place ~quantized_ints bytes len n] reads [n] big-endian values
    whose width the length decides (FITS 4.0 §10.4.2). *)
@@ -393,7 +369,6 @@ let decode_tile t n npix budget =
   let raw c = match fetch c with _, None -> None | _, Some b -> Some b in
   match raw t.compressed with
   | Some b -> (
-      let get i = A.unsafe_get b i in
       match t.codec with
       | Rice { block; bytepix } ->
           if t.zbitpix < 0 && not t.quantized then
@@ -405,17 +380,14 @@ let decode_tile t n npix budget =
           if t.quantized then dequantize out else Ints out
       | Gzip_1 | Gzip_2 | Nocompress -> (
           let data, len =
-            if t.codec = Nocompress then
-              (Bytes.init (A.dim b) (fun i -> Char.unsafe_chr (get i)), A.dim b)
-            else gunzip place npix b
+            if t.codec = Nocompress then (b, A.dim b) else gunzip place npix b
           in
           let w = if npix = 0 then 1 else len / npix in
           let get =
             if t.codec = Gzip_2 && w > 1 && w * npix = len then
               (* byte j of pixel k is at j * npix + k *)
-              fun i ->
-              Char.code (Bytes.unsafe_get data ((i mod w * npix) + (i / w)))
-            else fun i -> Char.code (Bytes.unsafe_get data i)
+              fun i -> A.unsafe_get data ((i mod w * npix) + (i / w))
+            else fun i -> A.unsafe_get data i
           in
           match of_bytes t place ~as_ints:t.quantized get len npix with
           | Ints i when t.quantized -> dequantize i
@@ -429,7 +401,7 @@ let decode_tile t n npix budget =
             lossless c (fun b ->
                 let data, len = gunzip place npix b in
                 of_bytes t place ~as_ints:false
-                  (fun i -> Char.code (Bytes.unsafe_get data i))
+                  (fun i -> A.unsafe_get data i)
                   len npix))
       in
       match from_gzip with
@@ -833,12 +805,12 @@ let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
                    0.,
                    0. )
              | Lossless Gzip_1 ->
-                 ( add (Compress_deflate.Gzip.compress (bytes ~shuffle:false)),
+                 ( add (Lz.Gzip.encode_string (bytes ~shuffle:false)),
                    (0, 0),
                    0.,
                    0. )
              | Lossless Gzip_2 ->
-                 ( add (Compress_deflate.Gzip.compress (bytes ~shuffle:(w > 1))),
+                 ( add (Lz.Gzip.encode_string (bytes ~shuffle:(w > 1))),
                    (0, 0),
                    0.,
                    0. )
@@ -880,8 +852,7 @@ let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
                  | None ->
                      (* no noise or a range past int32: the tile stays lossless *)
                      ( (0, 0),
-                       add
-                         (Compress_deflate.Gzip.compress (bytes ~shuffle:false)),
+                       add (Lz.Gzip.encode_string (bytes ~shuffle:false)),
                        0.,
                        0. ))
            in

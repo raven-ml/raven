@@ -122,6 +122,36 @@ let no_zdither0 () =
     (Nx.to_array (require_ok (I.values Nx.float32 h)))
     (Nx.to_array (require_ok (I.values Nx.float32 bare)))
 
+(* Broken gzip tiles *)
+
+(* [gzip_tile ()] is a float32 image of 4 pixels in one GZIP_2 tile: its heap
+   is the tile's gzip member, which ends the data unit. *)
+let gzip_tile () =
+  I.hdu ~tiles:[| 4 |] H.empty
+    (Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
+
+let tile_error h =
+  match I.values Nx.float32 h with
+  | Ok _ -> fail "a broken tile read"
+  | Error e -> contains ~sub:"tile 1" e
+
+let wrong_isize () =
+  (* The member's last byte is the high byte of ISIZE, 0 for 16 bytes. *)
+  let x = gzip_tile () in
+  let d = Nx.to_array (Fits.data x) in
+  let last = Array.length d - 1 in
+  equal int 0 d.(last);
+  d.(last) <- 1;
+  tile_error (Fits.v (Fits.header x) (Nx.create Nx.uint8 [| last + 1 |] d))
+
+let past_bound () =
+  (* The 16 bytes of 4 pixels, read as one pixel, pass 8 bytes per pixel. *)
+  let x = gzip_tile () in
+  let h =
+    Fits.header x |> H.set V.int "ZNAXIS1" 1 |> H.set V.int "ZTILE1" 1
+  in
+  tile_error (Fits.v h (Fits.data x))
+
 (* Windows *)
 
 let window_gen shape =
@@ -356,6 +386,8 @@ let () =
          test "descriptions" described;
          test "validity" validity;
          test "ZDITHER0 absent" no_zdither0;
+         test "a gzip tile whose ISIZE disagrees is an Error" wrong_isize;
+         test "a gzip tile past 8 bytes per pixel is an Error" past_bound;
          group "windows" windows;
          group "writing"
            ([
