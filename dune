@@ -8,7 +8,7 @@
 ; The sanitize profile, run on Linux, builds the C under AddressSanitizer and
 ; UndefinedBehaviorSanitizer. rig's env adds the debug runtime and a stressed
 ; collector, which check a heap so often that suites holding large heaps, such
-; as compress's, outran their time. A domain's thread
+; as lz's, outran their time. A domain's thread
 ; exits on the signal stack the OCaml runtime allocated, which
 ; AddressSanitizer would unmap as its own (use_sigaltstack=0). A refused
 ; allocation returns NULL as libc's does (allocator_may_return_null=1). CUDA

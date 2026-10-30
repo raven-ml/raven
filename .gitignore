@@ -36,5 +36,3 @@ runs/
 # Agents
 .agents/
 .claude/
-# Benchmark corpora written by otherlibs/compress/bench/reference.py
-otherlibs/compress/bench/data/

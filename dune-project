@@ -41,29 +41,6 @@
   (name ppx_windtrap)))
 
 (package
- (name compress)
- (dir otherlibs/compress)
- (synopsis "Deflate, gzip, zlib, Snappy, LZ4 and Zstandard codecs")
- (description
-  "Compression codecs with no dependencies: deflate and its zlib and gzip framings, Snappy blocks, and LZ4 and Zstandard decompression. Strings compress and decompress whole; streams go through incremental encoders and decoders in bounded memory; data held in memory, such as a page of a mapped Parquet file, decompresses directly between byte arrays.")
- (depends
-  (ocaml
-   (>= 5.5.0))
-  dune
-  ; tests
-  (windtrap
-   (and
-    :with-test
-    (>= 0.2.0)))
-  (ppx_windtrap
-   (and
-    :with-test
-    (>= 0.2.0)))
-  (thumper :with-test))
- (tags
-  (compression deflate gzip zlib snappy lz4 zstd)))
-
-(package
  (name lz)
  (dir packages/lz)
  (synopsis "Deflate, zlib, gzip, Zstandard, LZ4 and Snappy between bigarrays")

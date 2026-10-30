@@ -4033,18 +4033,6 @@ thread.
 - Runtimes: CPU (via Clang) and Metal. Renderers additionally target CUDA,
   AMD/HIP, and OpenCL for GPU code generation.
 
-### Compress (new)
-
-- Add the `compress` package: deflate with its zlib and gzip framings
-  (`Compress_deflate`, moved out of `nx.io`), Snappy blocks
-  (`Compress_snappy`), and LZ4 and Zstandard decompression (`Compress_lz4`,
-  `Compress_zstd`), with no dependencies. A string compresses whole with
-  `Compress_deflate.Zlib.compress ?level` and back with `decompress`; streams
-  go through `Compress_deflate.Encoder` and `Decoder`, state machines that are
-  given input and return output in bounded memory; and data held in memory,
-  such as a page of a mapped Parquet file, decompresses directly between byte
-  arrays with `decompress_into`.
-
 ### Lz (new)
 
 - Add `lz`, compression between bigarrays by raven's own C kernels, held to
@@ -4054,7 +4042,7 @@ thread.
   `encode` into one `bound` sizes; `Lz.Decoder.step` and `Lz.Encoder.step`
   stream, lending each run out of the codec's own memory. Errors are
   `Lz.error` values with a kind and the input offset. `lz.bytesrw` adds
-  bytesrw filters.
+  bytesrw filters. It replaces the unreleased `compress` package.
 
 ### Nx
 

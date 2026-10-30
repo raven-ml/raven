@@ -390,9 +390,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## repo
 
-- compress stays: decide its home, in nx or its own library, through a
-  design campaign that audits its references (formats' specs, zlib, zstd,
-  lz4, snappy) and holds it to rig's bar; `Nx_io.gunzip` moves with it
 - private modules: each gets an .mli per doc/dev/documentation.md, rig as
   the reference. Left, in rig's lib/: amd/amdgpu/request.ml,
   nv/pci/gsp_defs.ml and the `defs.ml` of amd/abi, amd/pci, bnxt, mlx5,
