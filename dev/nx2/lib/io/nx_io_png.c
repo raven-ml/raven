@@ -4,8 +4,8 @@
 
   Static PNG decoding and encoding following the W3C PNG specification: the
   chunk stream, scanline filters and pixel formats. The caller checks chunk
-  CRC-32s, and compresses and decompresses image data with compress.deflate's
-  zlib streams. The decoder unfilters the decompressed scanlines in place and
+  CRC-32s, and compresses and decompresses image data with lz's zlib
+  streams. The decoder unfilters the decompressed scanlines in place and
   writes pixels directly into the Nx-owned destination Bigarray. The encoder
   filters one row at a time, which the caller compresses.
   --------------------------------------------------------------------------*/
@@ -586,10 +586,10 @@ CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst) {
    and keeps the runtime lock. The caller makes [vy] a row of [vsrc]. */
 CAMLprim value caml_nx_io_png_filter_row(value vsrc, value vrow, value vy,
                                          value vchannels) {
-  size_t stride = caml_string_length(vrow) - 1;
+  size_t stride = Caml_ba_array_val(vrow)->dim[0] - 1;
   size_t y = (size_t)Long_val(vy);
   const uint8_t *row = (const uint8_t *)Caml_ba_data_val(vsrc) + y * stride;
   filter_row(row, y == 0 ? NULL : row - stride, stride,
-             (unsigned)Long_val(vchannels), Bytes_val(vrow));
+             (unsigned)Long_val(vchannels), Caml_ba_data_val(vrow));
   return Val_unit;
 }

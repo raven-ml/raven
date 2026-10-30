@@ -122,7 +122,7 @@ let signature = "\137PNG\r\n\026\n"
 let chunk ty data =
   be32 (String.length data)
   ^ ty ^ data
-  ^ be32 (Compress_deflate.Crc32.string (ty ^ data))
+  ^ be32 (Lz.Crc32.string (ty ^ data))
 
 let ihdr ~width ~height =
   chunk "IHDR" (be32 width ^ be32 height ^ "\008\000\000\000\000")
@@ -130,7 +130,7 @@ let ihdr ~width ~height =
 (* An 8-bit grey PNG of [width] by [height] pixels whose image data is empty. *)
 let header_png ~width ~height =
   signature ^ ihdr ~width ~height
-  ^ chunk "IDAT" (Compress_deflate.Zlib.compress "")
+  ^ chunk "IDAT" (Lz.Zlib.encode_string "")
   ^ chunk "IEND" ""
 
 (* A byte changed in a PNG file: in the type or data of a chunk, at an index
@@ -152,11 +152,33 @@ let pngs =
     "png_rgb16_trns.png";
   ]
 
+(* The data of the zlib stream [s], decoded into a destination doubled until it
+   holds them. *)
+let inflate s =
+  let open Bigarray in
+  let src = Array1.create int8_unsigned c_layout (String.length s) in
+  String.iteri (fun i c -> src.{i} <- Char.code c) s;
+  let rec decode n =
+    let dst = Array1.create int8_unsigned c_layout n in
+    match Lz.Zlib.decode src dst with
+    | Ok { Lz.produced; _ } -> String.init produced (fun i -> Char.chr dst.{i})
+    | Error { Lz.why = Too_long; _ } -> decode (2 * n)
+    | Error e -> Format.kasprintf failwith "%a" Lz.pp_error e
+  in
+  decode (4 * String.length s)
+
 (* The scanlines the image data of [png] decompresses to. *)
-let scanlines png =
-  Result.get_ok
-    (Compress_deflate.Zlib.decompress
-       (String.concat "" (chunk_data "IDAT" png)))
+let scanlines png = inflate (String.concat "" (chunk_data "IDAT" png))
+
+(* [png] with its IDAT chunks replaced by one holding [idat]. *)
+let with_idat png idat =
+  let rec loop placed = function
+    | [] -> []
+    | ("IDAT", _) :: rest when placed -> loop placed rest
+    | ("IDAT", _) :: rest -> chunk "IDAT" idat :: loop true rest
+    | (ty, data) :: rest -> chunk ty data :: loop placed rest
+  in
+  signature ^ String.concat "" (loop false (chunks png))
 
 (* [s] with its byte [i] xored by [mask]. *)
 let xor_byte s i mask =
@@ -177,7 +199,7 @@ let flipped png flip mask =
         Some (String.sub s 0 4, String.sub s 4 (String.length data))
     | Scanline i when Some k = first_idat ->
         let scanlines = xor_byte (scanlines png) i mask in
-        Some ("IDAT", Compress_deflate.Zlib.compress scanlines)
+        Some ("IDAT", Lz.Zlib.encode_string scanlines)
     | Scanline _ when ty = "IDAT" -> None
     | Chunk _ | Scanline _ -> Some (ty, data)
   in
@@ -551,6 +573,31 @@ let files =
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->
+              Nx_io.load_image path));
+      prop
+        "bytes after the zlib stream in a PNG's image data are ignored: the \
+         image loads as without them"
+        (Gen.pair (Gen.of_list ~pp:Format.pp_print_string pngs) Gen.string)
+        (fun (name, tail) ->
+          cover "bytes after the stream" (tail <> "");
+          let png = read (fixture name) in
+          let idat = Lz.Zlib.encode_string (scanlines png) ^ tail in
+          equal packed
+            (Nx.P (Nx_io.load_image (fixture name)))
+            (Nx.P (Nx_io.load_image (file (with_idat png idat)))));
+      cases ~name:fst
+        "PNG image data that decompresses to other than the image's \
+         scanlines fails"
+        [
+          ("one byte short", fun s -> String.sub s 0 (String.length s - 1));
+          ("one byte over", fun s -> s ^ "\000");
+          ("none", fun _ -> "");
+        ]
+        (fun (_, change) ->
+          let png = read (fixture "png_filters.png") in
+          let idat = Lz.Zlib.encode_string (change (scanlines png)) in
+          let path = file (with_idat png idat) in
+          fails ~path ~naming:"invalid PNG zlib stream" (fun () ->
               Nx_io.load_image path));
       test "a file that is neither PNG nor JPEG fails" (fun () ->
           let path = file "GIF89a" in

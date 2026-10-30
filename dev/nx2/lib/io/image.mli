@@ -45,7 +45,7 @@ val png_encode :
     signature, then each chunk. A [ppm] other than [0] is a pHYs chunk of [ppm]
     pixels per metre, and [srgb] an sRGB chunk. [channels] must be 1 to 4, and
     each side must be 1 to {!png_max}. Beyond [pixels], it holds a row, the zlib
-    encoder's state of about 1 MiB, a buffer of 1 MiB of image data and the
+    encoder's state of about 1.5 MiB, a buffer of 1 MiB of image data and the
     chunk [emit] takes.
 
     Raises [Invalid_argument] if [pixels] does not hold

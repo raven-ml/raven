@@ -10,8 +10,7 @@
   ---------------------------------------------------------------------------*)
 
 open Bigarray
-module Crc32 = Compress_deflate.Crc32
-module Encoder = Compress_deflate.Encoder
+module Crc32 = Lz.Crc32
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 
@@ -52,7 +51,7 @@ type entry = {
   name : string;
   method_ : int;
   flags : int;
-  crc32 : Crc32.t;
+  crc32 : int;
   compressed_size : int;
   uncompressed_size : int;
   local_offset : int;
@@ -412,13 +411,23 @@ let read_npy (archive : in_file) (entry, off) =
       if entry.uncompressed_size / 1032 > len then
         Fail.failf "ZIP entry %S declares more data than its DEFLATE data holds"
           entry.name;
-      let inflated =
-        Array1.create int8_unsigned c_layout entry.uncompressed_size
-      in
-      (match Compress_deflate.Deflate.decompress_into src inflated with
-      | Ok () -> ()
+      let size = entry.uncompressed_size in
+      let inflated = Array1.create int8_unsigned c_layout size in
+      (* The DEFLATE data decodes into the declared size and ends at the
+         declared compressed size. *)
+      (match Lz.Deflate.decode src inflated with
+      | Ok { Lz.produced; _ } when produced <> size ->
+          Fail.failf
+            "invalid DEFLATE data in ZIP entry %S: %d bytes, %d declared"
+            entry.name produced size
+      | Ok { Lz.consumed; _ } when consumed <> len ->
+          Fail.failf
+            "invalid DEFLATE data in ZIP entry %S: %d bytes after its end"
+            entry.name (len - consumed)
+      | Ok _ -> ()
       | Error e ->
-          Fail.failf "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
+          Fail.failf "invalid DEFLATE data in ZIP entry %S: %s" entry.name
+            (Format.asprintf "%a" Lz.pp_error e));
       if Crc32.bigbytes inflated <> entry.crc32 then
         Fail.failf "CRC-32 mismatch in ZIP entry %S" entry.name;
       Inflated inflated)
@@ -463,31 +472,43 @@ let write_string archive s =
 let open_out fd = { fd; offset = 0; entries_rev = [] }
 let sample_size = 64 * 1024
 
+(* Copies the first [n] bytes of [s], an npy header, to [b]. *)
+let blit_header s b n =
+  for i = 0 to n - 1 do
+    Array1.unsafe_set b i (Char.code (String.unsafe_get s i))
+  done
+
+let bytes_of_string s =
+  let b = Array1.create int8_unsigned c_layout (String.length s) in
+  blit_header s b (String.length s);
+  b
+
 (* The first [n] bytes of [header] followed by [data]. *)
 let prefix header (data : bytes) n =
-  let b = Bytes.create n in
   let from_header = Int.min n (String.length header) in
-  Bytes.blit_string header 0 b 0 from_header;
-  for i = from_header to n - 1 do
-    Bytes.unsafe_set b i
-      (Char.unsafe_chr (Array1.unsafe_get data (i - String.length header)))
-  done;
-  Bytes.unsafe_to_string b
+  let from_data = n - from_header in
+  let b = Array1.create int8_unsigned c_layout n in
+  blit_header header b from_header;
+  Array1.blit
+    (Array1.sub data 0 from_data)
+    (Array1.sub b from_header from_data);
+  b
 
 (* How an entry's bytes are written: as they are, as the DEFLATE data already
    made of them, or deflated while they are written. *)
-type writing = Stored | Deflated of string | Deflating
+type writing = Stored | Deflated of bytes | Deflating
 
-(* An entry is deflated when deflate shrinks its first 64 KiB. Where those are
-   the whole entry, their DEFLATE data is the entry's, which spares an encoder,
-   whose state takes about 1 MiB. *)
+(* An entry is deflated when deflate shrinks its first 64 KiB: when their
+   stream fits a destination one byte shorter. Where those are the whole entry,
+   their stream is the entry's, which spares encoding them again. *)
 let writing header (data : bytes) =
   let size = String.length header + Array1.dim data in
-  let sample = prefix header data (Int.min sample_size size) in
-  let compressed = Compress_deflate.Deflate.compress sample in
-  if String.length compressed >= String.length sample then Stored
-  else if String.length sample = size then Deflated compressed
-  else Deflating
+  let n = Int.min sample_size size in
+  let shorter = Array1.create int8_unsigned c_layout (Int.max 0 (n - 1)) in
+  match Lz.Deflate.encode (prefix header data n) shorter with
+  | None -> Stored
+  | Some k when n = size -> Deflated (Array1.sub shorter 0 k)
+  | Some _ -> Deflating
 
 (* Writes [header] and [data] to the archive as [w] says. Returns their CRC-32
    and their size as written. *)
@@ -500,33 +521,26 @@ let write_entry archive w header (data : bytes) =
       Save.bytes archive.fd data;
       (crc, String.length header + size)
   | Deflated deflated ->
-      Save.string archive.fd deflated;
-      (crc, String.length deflated)
+      Save.bytes archive.fd deflated;
+      (crc, Array1.dim deflated)
   | Deflating ->
-      let e = Compress_deflate.Deflate.encoder () in
-      let chunk = Bytes.create sample_size in
-      (* Gives [e] the data from [first], at most a chunk, and the end of the
-         input once the data is given. *)
-      let give first =
-        let n = Int.min sample_size (size - first) in
-        for i = 0 to n - 1 do
-          Bytes.unsafe_set chunk i
-            (Char.unsafe_chr (Array1.unsafe_get data (first + i)))
-        done;
-        Encoder.src e chunk 0 n;
-        first + n
+      (* The header and the data are two steps of one stream, whose runs are
+         written as they come. *)
+      let e = Lz.Deflate.encoder () in
+      let written = ref 0 in
+      let out run =
+        Save.bytes archive.fd run;
+        written := !written + Array1.dim run
       in
-      let rec loop first written =
-        match Encoder.encode e with
-        | `Await -> loop (give first) written
-        | `Data (b, off, len) ->
-            ignore (Unix.write archive.fd b off len);
-            loop first (written + len)
-        | `End -> (crc, written)
+      let rec push ~last src pos =
+        let n = Array1.dim src - pos in
+        match Lz.Encoder.step e ~last (Array1.sub src pos n) out with
+        | Lz.More k when k < n -> push ~last src (pos + k)
+        | Lz.More _ | Lz.Done _ -> ()
       in
-      let header = Bytes.of_string header in
-      Encoder.src e header 0 (Bytes.length header);
-      loop 0 0
+      push ~last:false (bytes_of_string header) 0;
+      push ~last:true data 0;
+      (crc, !written)
 
 let valid_name name = safe_name name && String.is_valid_utf_8 name
 

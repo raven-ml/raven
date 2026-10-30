@@ -16,7 +16,7 @@ external png_unfilter : bytes -> bytes -> bytes -> unit
 (* [png_filter_row pixels row y channels] writes row [y] of [pixels], filtered,
    into [row], whose length is one more than the row's. [y] must be a row of
    [pixels]: the stub reads it unchecked. *)
-external png_filter_row : bytes -> Stdlib.Bytes.t -> int -> int -> unit
+external png_filter_row : bytes -> bytes -> int -> int -> unit
   = "caml_nx_io_png_filter_row"
 [@@noalloc]
 
@@ -26,9 +26,7 @@ external jpeg_decode : bytes -> bytes -> unit = "caml_nx_io_jpeg_decode"
 external jpeg_encode : bytes -> width:int -> height:int -> channels:int -> bytes
   = "caml_nx_io_jpeg_encode"
 
-module Crc32 = Compress_deflate.Crc32
-module Zlib = Compress_deflate.Zlib
-module Encoder = Compress_deflate.Encoder
+module Crc32 = Lz.Crc32
 
 (* PNG image data is a zlib stream of filtered scanlines, cut into IDAT
    chunks. *)
@@ -72,9 +70,16 @@ let png_probe src =
 let png_decode src dst =
   let idat, length = png_idat src in
   let filtered = Array1.create int8_unsigned c_layout length in
-  (match Zlib.decompress_into idat filtered with
-  | Ok () -> ()
-  | Error e -> failwith ("invalid PNG zlib stream: " ^ e));
+  (* Bytes after the zlib stream are the container's, and are ignored. *)
+  (match Lz.Zlib.decode idat filtered with
+  | Ok { Lz.produced; _ } when produced = length -> ()
+  | Ok { Lz.produced; _ } ->
+      Fail.failf
+        "invalid PNG zlib stream: %d bytes of scanlines, the image has %d"
+        produced length
+  | Error e ->
+      Fail.failf "invalid PNG zlib stream: %s"
+        (Format.asprintf "%a" Lz.pp_error e));
   png_unfilter src filtered dst
 
 (* [png_chunk kind data length] is the chunk [kind] of the first [length] bytes
@@ -90,8 +95,8 @@ let png_chunk kind data length =
 
 let idat_length = 1 lsl 20
 
-(* Each row is filtered into [row], then given to the zlib encoder, whose output
-   fills [idat]. A full [idat] is emitted as an IDAT chunk, and what remains at
+(* Each row is filtered into [row], then given to the zlib encoder, whose runs
+   fill [idat]. A full [idat] is emitted as an IDAT chunk, and what remains at
    the end as a last, shorter one. The bytes do not depend on how the encoder's
    input is sliced, so they are the whole stream's cut every [idat_length]
    bytes. A [ppm] other than 0 is written as a pHYs chunk of [ppm] pixels per
@@ -123,31 +128,31 @@ let png_encode ~ppm ~srgb data ~width ~height ~channels emit =
     emit (png_chunk "IDAT" (Bytes.unsafe_to_string idat) !fill);
     fill := 0
   in
-  let rec add b first length =
-    if length > 0 then begin
-      let n = Int.min length (idat_length - !fill) in
-      Bytes.blit b first idat !fill n;
-      fill := !fill + n;
-      if !fill = idat_length then flush ();
-      add b (first + n) (length - n)
-    end
+  (* Copies [run] from [first] to [idat], emitting each IDAT chunk it fills. *)
+  let rec copy run first =
+    let n = Int.min (Array1.dim run - first) (idat_length - !fill) in
+    for i = 0 to n - 1 do
+      Bytes.unsafe_set idat (!fill + i)
+        (Char.unsafe_chr (Array1.unsafe_get run (first + i)))
+    done;
+    fill := !fill + n;
+    if !fill = idat_length then flush ();
+    if first + n < Array1.dim run then copy run (first + n)
   in
-  let encoder = Zlib.encoder () in
-  let rec drain () =
-    match Encoder.encode encoder with
-    | `Data (b, first, length) ->
-        add b first length;
-        drain ()
-    | `Await | `End -> ()
+  let add run = copy run 0 in
+  let encoder = Lz.Zlib.encoder () in
+  let rec give ~last src pos =
+    let n = Array1.dim src - pos in
+    match Lz.Encoder.step encoder ~last (Array1.sub src pos n) add with
+    | Lz.More k when k < n -> give ~last src (pos + k)
+    | Lz.More _ | Lz.Done _ -> ()
   in
-  let row = Bytes.create ((width * channels) + 1) in
+  let row = Array1.create int8_unsigned c_layout ((width * channels) + 1) in
   for y = 0 to height - 1 do
     png_filter_row data row y channels;
-    Encoder.src encoder row 0 (Bytes.length row);
-    drain ()
+    give ~last:false row 0
   done;
-  Encoder.src encoder row 0 0;
-  drain ();
+  give ~last:true (Array1.sub row 0 0) 0;
   if !fill > 0 then flush ();
   emit (png_chunk "IEND" "" 0)
 
