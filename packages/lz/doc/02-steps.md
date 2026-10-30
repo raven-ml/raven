@@ -216,8 +216,11 @@ with `decode_channel`:
 An encoder's bytes depend only on the input and the level. They never
 depend on how the input was cut into steps, so a program that reads
 4 KiB at a time writes the same file as one that reads 64 KiB.
-A Zstandard frame written by steps differs from `Lz.Zstd.encode`'s only
-in its header, which lacks the content size that `encode` knows.
+A Zstandard frame written by steps lacks the content size that
+`Lz.Zstd.encode` writes. `encode` knows its input's size and sizes its
+tables to it, so for an input smaller than the level's window its blocks
+may differ from a stream's too (the `Zstd` module of
+[`lz.mli`](../lib/lz.mli)).
 
 ## Many streams on one decoder
 

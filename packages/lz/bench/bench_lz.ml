@@ -142,9 +142,12 @@ let flushed_steps corpus raw =
 (* Encoders: a label, the bytes of the corpus they encode ([None] for all
    of it) and the encode, each into a destination of its format's bound.
    The deepest levels encode the first 2 MiB, so that a call of each fits
-   the deadline's calibration, warmup and samples: their speed per byte
-   there is within a tenth of the whole corpus's, and level 12's 40 MiB of
-   fresh tables take at most a fifth of the call. *)
+   the deadline's calibration, warmup and samples. Level 12 sizes its
+   tables to an input below its 4 MiB window, 20 MiB for 2 MiB and 10 MiB
+   for 1 MiB; at the level's 40 MiB, fresh on each call, 1 MiB of random
+   takes ten times as long. Level 1 sizes its window to an input of
+   256 KiB, and its fast finder has a faster loop for windows below its
+   512 KiB. *)
 let deep = Some (2 lsl 20)
 
 let encoders =
@@ -153,8 +156,16 @@ let encoders =
     ("deflate 6", None, Lz.Deflate.bound, Lz.Deflate.encode ~level:6);
     ("deflate 9 of 2 MiB", deep, Lz.Deflate.bound, Lz.Deflate.encode ~level:9);
     ("zstd 1", None, Lz.Zstd.bound, Lz.Zstd.encode ~level:1);
+    ( "zstd 1 of 256 KiB",
+      Some (256 lsl 10),
+      Lz.Zstd.bound,
+      Lz.Zstd.encode ~level:1 );
     ("zstd 3", None, Lz.Zstd.bound, Lz.Zstd.encode ~level:3);
     ("zstd 12 of 2 MiB", deep, Lz.Zstd.bound, Lz.Zstd.encode ~level:12);
+    ( "zstd 12 of 1 MiB",
+      Some (1 lsl 20),
+      Lz.Zstd.bound,
+      Lz.Zstd.encode ~level:12 );
     ("lz4", None, Lz.Lz4.Block.bound, Lz.Lz4.Block.encode);
     ("snappy", None, Lz.Snappy.bound, Lz.Snappy.encode);
   ]

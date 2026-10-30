@@ -1,14 +1,18 @@
 /* The Zstandard encoder's frames (RFC 8878 section 3.1.1): the header,
    the blocks and the XXH64 content checksum, every frame carrying it.
 
-   Both drivers run the same block loop, so their bytes agree but for the
-   header: the whole-buffer encode reads the input in place and writes
-   Frame_Content_Size; a stream copies its input into a window and never
-   does. A block is cut only from bytes both drivers hold alike: a stream
-   holds back up to 128 KiB of input until another byte or [last] arrives,
-   so a block is chosen from at least 128 KiB, or from the input's end.
-   When the input's end is known before the first block, the frame is
-   that size and the level's parameters shrink to it, in both drivers.
+   Both drivers run the same block loop: the whole-buffer encode reads
+   the input in place and writes Frame_Content_Size; a stream copies its
+   input into a window and never does. A block is cut only from bytes
+   both drivers hold alike: a stream holds back up to 128 KiB of input
+   until another byte or [last] arrives, so a block is chosen from at
+   least 128 KiB, or from the input's end. When the input's end is known
+   before the first block, the level's parameters shrink to its size
+   (params_of): always in the whole-buffer encode, and in a stream that
+   ends within its first block. So the two drivers' bytes agree but for
+   the header on an input of at most a block or at least the level's
+   window. Between the two, the whole-buffer encode may search smaller
+   hash tables, at levels 7 to 12.
 
    A block is compressed (zstd_enc_match.c, zstd_enc_entropy.c), then
    written as such if that saves a minimum gain, as one repeated byte if
@@ -155,15 +159,23 @@ struct ze_work {
 
 /* Parameters */
 
-/* [params_of p level sized n] is the level's parameters; for a frame known
-   to hold [n] bytes, at most a block, those of the reference's tables for
-   small inputs, shrunk to [n] as the reference shrinks them. A row needs
-   two at least. */
+/* [params_of p level sized n] is the level's parameters. For a frame
+   known to hold [n] bytes they are the reference's row for [n], the first
+   row above a block, shrunk as the reference shrinks a known size: with
+   [s] the log of the smallest power of two, 64 or more, that holds [n],
+   the window log falls to [s], the hash log to [s + 1] and the chain log
+   to [s]; the window log then rises to the format's least. An input of at
+   least the row's window keeps the row's logs, so its frame finds the
+   matches of a frame of unknown size. Above a block only the whole-buffer
+   encode knows [n], and there 1 MiB at level 12 takes 10 MiB of tables
+   where a stream takes 40. A row needs two at least. */
 static void params_of(struct ze_params *p, int level, bool sized, uint64_t n) {
-  int row = !sized ? 0 : n <= 16 * 1024 ? 2 : 1;
+  int row = !sized || n > ZE_BLOCK ? 0 : n <= 16 * 1024 ? 2 : 1;
   *p = levels[row][level - 1];
   if (sized) {
-    unsigned s = n < 64 ? 6 : ze_highbit((uint32_t)(n - 1)) + 1;
+    unsigned s = p->wlog;
+    if (n < ((uint64_t)1 << p->wlog))
+      s = n < 64 ? 6 : ze_highbit((uint32_t)(n - 1)) + 1;
     if (p->wlog > s) p->wlog = (uint8_t)s;
     if (p->hlog > p->wlog + 1) p->hlog = (uint8_t)(p->wlog + 1);
     if (p->clog > p->wlog) p->clog = p->wlog;
@@ -551,7 +563,8 @@ static void begin(struct ze_work *w) {
    tables. */
 static bool fix(struct ze_work *w, int level, bool sized, uint64_t n) {
   params_of(&w->p, level, sized, n);
-  if (!prepare(w, sized ? (size_t)n + 1 : ZE_BLOCK)) return false;
+  if (!prepare(w, sized && n <= ZE_BLOCK ? (size_t)n + 1 : ZE_BLOCK))
+    return false;
   w->fixed = true;
   return true;
 }
@@ -575,7 +588,7 @@ static enum lz_status whole(struct lz_zstd_enc *st, struct ze_work *w,
 
   lz_did(io->work, n);
   begin(w);
-  if (!fix(w, st->level, n <= ZE_BLOCK, n)) return nomem(err);
+  if (!fix(w, st->level, true, n)) return nomem(err);
   put_header(&o, &w->p, true, n);
   w->ms.base = src - 1;
 

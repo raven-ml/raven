@@ -457,11 +457,17 @@ end
     field, and may declare its content size, the length of its decoded
     bytes, in its Frame_Content_Size field. A frame without a
     Window_Descriptor has its content size as its window size.
-    Levels are 1 to 12, default 3. The encoder always writes the frame's
-    Content_Checksum, an XXH64. It writes Frame_Content_Size only in a frame
-    from [encode], so a frame from an encoder differs from [encode]'s only
-    in its header. Every frame lz writes, from [encode] or an encoder,
-    declares a window size of at most 4 MiB.
+    Levels are 1 to 12, default 3. A level's window size is 512 KiB at
+    level 1, 1 MiB at level 2, 2 MiB at levels 3 to 8 and 4 MiB at levels
+    9 to 12. The encoder always writes the frame's Content_Checksum, an
+    XXH64. It writes Frame_Content_Size only in a frame from [encode],
+    which sizes its window and match finder to an input smaller than the
+    level's window size. An encoder's frame of more than 128 KiB of input
+    declares its level's window size. For an input of at least the
+    level's window size, [encode]'s frame differs from an encoder's only
+    in its header, and for a smaller one their blocks may differ too.
+    Every frame lz writes, from [encode] or an encoder, declares a window
+    size of at most 4 MiB.
 
     A decode refuses:
     {ul

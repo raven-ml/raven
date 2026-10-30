@@ -1,8 +1,8 @@
 (* The Zstandard encoder: its frames decode to their input at every level
    (RFC 0039 law 3), fit [bound] (law 4), and do not depend on how the
-   input was cut into steps, the whole-buffer frame differing only in its
-   header (law 6). Header fields are read as RFC 8878 section 3.1.1.1
-   lays them out. *)
+   input was cut into steps, the whole-buffer frame of an input of at
+   least the level's window differing only in its header (law 6). Header
+   fields are read as RFC 8878 section 3.1.1.1 lays them out. *)
 
 open Windtrap
 
@@ -112,6 +112,23 @@ let content_size z =
 let body z =
   let h = header_length z in
   String.sub z h (String.length z - h)
+
+(* The window size a frame's Window_Descriptor declares, [None] in a
+   frame without one: an exponent in its high 5 bits and a mantissa in
+   its low 3, the size 2^(10 + exponent) plus mantissa eighths of it. *)
+let window_size z =
+  if single z then None
+  else
+    let d = Char.code z.[5] in
+    let base = 1 lsl (10 + (d lsr 3)) in
+    Some (base + (base / 8 * (d land 7)))
+
+(* A level's window size, as lz.mli states it. *)
+let window level =
+  if level = 1 then 512 * kib
+  else if level = 2 then mib
+  else if level <= 8 then 2 * mib
+  else 4 * mib
 
 (* Drawn inputs *)
 
@@ -260,18 +277,70 @@ let short =
 (* Law 6 *)
 
 let cut_free =
-  prop "any cut into steps writes one frame, encode's but for its header"
+  prop "any cut into steps writes one frame"
     (Gen.pair (Gen.triple Lz_support.recipe level cuts) cuts)
     (fun ((r, level, a), b) ->
       let s = Lz_support.build r in
       cover_input r s level;
       cover "a step of no bytes" (List.mem 0 a);
       cover "a step past the quota" (List.exists (fun c -> c > 128 * kib) a);
-      let za = steps ~level ~cuts:a s in
-      equal string ~msg:"two cuts" za (steps ~level ~cuts:b s);
-      equal string ~msg:"the blocks and the checksum"
-        (body (encode ~level s))
-        (body za))
+      equal string ~msg:"two cuts" (steps ~level ~cuts:a s)
+        (steps ~level ~cuts:b s))
+
+(* An input of 5 MiB, 8 blocks past the largest window, 4 MiB, and
+   encode's frame and a stream's of it at every level, each written once
+   for [wide] and [rebased]. Its columns and text recur 3 MiB back, so
+   matches reach across the window. *)
+let wide_input =
+  lazy
+    (Lz_support.build
+       (Concat
+          [
+            Corpus (Columns, mib);
+            Corpus (Text, 2 * mib);
+            Corpus (Columns, mib);
+            Corpus (Text, mib);
+          ]))
+
+let wide_frames =
+  Array.init 12 (fun i ->
+      lazy
+        (let s = Lazy.force wide_input in
+         (encode ~level:(i + 1) s, steps ~level:(i + 1) ~cuts:[] s)))
+
+let wide =
+  cases "past the window, encode's frame is a stream's but for its header"
+    ~id:(fun level -> Printf.sprintf "level %d" level)
+    levels
+    (fun level ->
+      let z, zs = Lazy.force wide_frames.(level - 1) in
+      equal string ~msg:"the blocks and the checksum" (body z) (body zs))
+
+(* Inputs of the level's window size and a byte either side, at a level of
+   each strategy and of each window size, and of a block and a byte, the
+   least whose stream declares its level's window, at every level. Each
+   is a prefix of the wide input. *)
+let window_edges =
+  List.concat_map
+    (fun level ->
+      let w = window level in
+      [ (level, w - 1); (level, w); (level, w + 1) ])
+    [ 1; 2; 3; 5; 6; 8; 9; 12 ]
+  @ List.map (fun level -> (level, (128 * kib) + 1)) levels
+
+let edges =
+  cases "from the window on, encode's frame is a stream's but for its header"
+    ~id:(fun (level, n) -> Printf.sprintf "level %d, %d bytes" level n)
+    window_edges
+    (fun (level, n) ->
+      let s = String.sub (Lazy.force wide_input) 0 n in
+      let z = encode ~level s and zs = steps ~level ~cuts:[] s in
+      equal Lz_support.decoded ~msg:"encode's frame" (Ok s) (decode z n);
+      equal Lz_support.decoded ~msg:"the stream's" (Ok s) (decode zs n);
+      equal (option int) ~msg:"the stream's Window_Descriptor"
+        (Some (window level)) (window_size zs);
+      if n >= window level then
+        equal string ~msg:"the blocks and the checksum" (body z) (body zs))
 
 (* What the writer writes *)
 
@@ -285,6 +354,10 @@ let headers =
         (content_size z);
       equal (option int) ~msg:"the stream's" None (content_size zs);
       equal bool ~msg:"the stream's Single_Segment_Flag" false (single zs);
+      cover "more than a block" (n > 128 * kib);
+      if n > 128 * kib then
+        equal (option int) ~msg:"the stream's Window_Descriptor"
+          (Some (window level)) (window_size zs);
       let digest = Int64.logand (Lz.Xxh64.string s) 0xFFFFFFFFL in
       List.iter
         (fun z ->
@@ -303,10 +376,7 @@ let empty =
     test "a fresh encoder stepped with ~last:true and nothing writes a frame"
       (fun () ->
         let z = steps ~level:3 ~cuts:[] "" in
-        equal Lz_support.decoded (Ok "") (decode z 0);
-        equal string ~msg:"encode's but for its header"
-          (body (encode ~level:3 ""))
-          (body z));
+        equal Lz_support.decoded (Ok "") (decode z 0));
   ]
 
 (* [quota_steps e s] steps [e] over [s] with [~last:true], each step given
@@ -369,29 +439,18 @@ let paths =
 
 (* Law 6: the bytes do not depend on where the match finders rebase their
    indices, which the default limit reaches only 3 GiB into a frame. The
-   input runs 8 blocks past the largest window, 4 MiB, and its columns
-   and text recur 3 MiB back, so matches reach across rebases. A limit of
-   0 rebases every block past the window; 1.5 MiB rebases every few blocks
-   at levels 1 and 2, whose windows of 512 KiB and 1 MiB are below it, and
-   at the other levels acts as 0. *)
+   wide input's recurring columns and text make matches reach across
+   rebases. A limit of 0 rebases every block past the window; 1.5 MiB
+   rebases every few blocks at levels 1 and 2, whose windows of 512 KiB
+   and 1 MiB are below it, and at the other levels acts as 0. *)
 let rebased =
-  let s =
-    lazy
-      (Lz_support.build
-         (Concat
-            [
-              Corpus (Columns, mib);
-              Corpus (Text, 2 * mib);
-              Corpus (Columns, mib);
-              Corpus (Text, mib);
-            ]))
-  in
   cases "the index limit changes no byte"
     ~id:(fun (level, limit) -> Printf.sprintf "level %d, limit %d" level limit)
     (List.map (fun level -> (level, 0)) levels
     @ [ (1, 3 * mib / 2); (2, 3 * mib / 2) ])
     (fun (level, limit) ->
-      let s = Lazy.force s in
+      let s = Lazy.force wide_input in
+      let z, zs = Lazy.force wide_frames.(level - 1) in
       let src = Lz_support.of_string s in
       let limited ?step () =
         let dst = Lz_support.create (Lz.Zstd.bound (String.length s)) in
@@ -401,10 +460,8 @@ let rebased =
         in
         Lz_support.to_string ~length:k dst
       in
-      equal string ~msg:"encode's" (encode ~level s) (limited ());
-      equal string ~msg:"a stream's"
-        (steps ~level ~cuts:[] s)
-        (limited ~step:100_000 ()))
+      equal string ~msg:"encode's" z (limited ());
+      equal string ~msg:"a stream's" zs (limited ~step:100_000 ()))
 
 let () =
   exit
@@ -416,7 +473,7 @@ let () =
                  Lz.Zstd.encode_string ~level "abc"));
          group "round trip" [ round_trip; strings; stepped_round_trip ];
          group "bound" [ bound; short ];
-         group "steps" [ cut_free; quota; frames ];
+         group "steps" [ cut_free; wide; edges; quota; frames ];
          group "paths" [ paths; rebased ];
          group "frames" (headers :: empty);
        ])
