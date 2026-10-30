@@ -32,8 +32,8 @@ measured without linking them.
   window and its state on the C stack (at most 64 KiB: musl's thread
   stack is 128 KiB). It allocates nothing. Steps decode into the
   decoder's own bigarray, window plus a run; the stepped kernel costs up
-  to 5-7 % more on some inputs, so one loop does not serve both
-  (bench/measurements.md, the lent buffer section).
+  to 5-7 % more on some inputs, from matches that reach back past its
+  buffer's wrap, so one loop does not serve both.
 - A decoder is dead after an error, an exception from `f` or
   Out_of_memory. There is no reset.
 - Encoded bytes depend on the input, the level, the positions of

@@ -4,13 +4,17 @@
    buffers and protocol; vendor_table.sh runs both.
 
      vendor_table.exe [-r ROW] DATA DECODE_RUNS ENCODE_RUNS CORPUS...
+     vendor_table.exe raw DATA
 
    Prints one line per row: corpus, row, implementation, MB/s of raw
    bytes, encoded size (0 for a decoder), runs. A row's time is the
    fastest of its runs, after one untimed run that faults the
    destination in and checks the output: a decode must give the raw
    corpus back, an encode must decode to it. [-r ROW] keeps the row named
-   ROW. *)
+   ROW.
+
+   [raw] writes DATA/text.raw, DATA/columns.raw and DATA/random.raw, the
+   bench's 8 MiB corpora (Lz_support.corpus). *)
 
 open Bigarray
 
@@ -44,8 +48,8 @@ let decoded name raw dst = function
   | Ok { produced; _ } -> failwith (Printf.sprintf "%s: %d bytes" name produced)
   | Error { Lz.at; _ } -> failwith (Printf.sprintf "%s: an error at %d" name at)
 
-(* Decoders: the file suffix bench/reference.py writes, the row and the
-   decode. *)
+(* Decoders: the file suffix vendor_table.c's [encode] writes, the row and
+   the decode. *)
 let decoders =
   [
     ("deflate6", "decode deflate", Lz.Deflate.decode);
@@ -133,9 +137,18 @@ let corpus ~keep data drun erun name =
     report name "crc32" n 0 crc_runs t
   end
 
+let raw data =
+  List.iter
+    (fun (name, kind) ->
+      Out_channel.with_open_bin
+        (Filename.concat data (name ^ ".raw"))
+        (fun oc -> output_string oc (Lz_support.corpus kind (8 lsl 20))))
+    [ ("text", Lz_support.Text); ("columns", Columns); ("random", Random) ]
+
 let usage () =
   prerr_endline
-    "usage: vendor_table.exe [-r ROW] DATA DECODE_RUNS ENCODE_RUNS CORPUS...";
+    "usage: vendor_table.exe [-r ROW] DATA DECODE_RUNS ENCODE_RUNS CORPUS...\n\
+    \       vendor_table.exe raw DATA";
   exit 2
 
 let () =
@@ -146,6 +159,7 @@ let () =
     | _ -> ((fun _ -> true), args)
   in
   match args with
+  | [ "raw"; data ] -> raw data
   | data :: drun :: erun :: (_ :: _ as corpora) -> (
       match (int_of_string_opt drun, int_of_string_opt erun) with
       | Some drun, Some erun when drun > 0 && erun > 0 ->

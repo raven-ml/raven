@@ -3,15 +3,18 @@
 Whole-buffer encode and decode of Silesia (its twelve files concatenated,
 211,938,580 bytes) by lz and by the vendors, one thread each. MB/s counts
 uncompressed bytes. Each row is the faster of two runs of
-`measure/vendor_table.sh`, each the fastest of 10 calls for a decoder, 3
+`compare/vendor_table.sh`, each the fastest of 10 calls for a decoder, 3
 for an encoder and 50 for CRC-32, after an untimed call that faults the
 destination in and checks the output. Both sides write into one
-destination allocated for the run, sized to the format's bound. Decoders
-read the files `reference.py` writes to `data/`.
+destination allocated for the run, sized to the format's bound. Both
+sides' decoders read the same files, the vendors' encodings of each
+corpus: libdeflate level 6 for deflate, zlib levels 6 and 9 for zlib and
+gzip, zstd levels 1, 3, 12 and 19, lz4's block and default frame, and
+snappy.
 
 - lz: `Lz.<Format>.encode` and `decode` called from OCaml
-  (`measure/vendor_table.ml`).
-- Vendors, through their C APIs (`measure/vendor_table.c`): libdeflate
+  (`compare/vendor_table.ml`).
+- Vendors, through their C APIs (`compare/vendor_table.c`): libdeflate
   1.26 (CMake Release) for deflate, zlib and gzip; zstd 1.5.7 (its `lib/`
   at the Makefile's `-O3`, single-threaded); lz4 1.10.0 (its Makefile,
   `-O3`); Google's snappy 1.2.2 (CMake Release, `-DSNAPPY_REQUIRE_AVX2=ON`);
@@ -21,16 +24,21 @@ read the files `reference.py` writes to `data/`.
   lz's do.
 - fudge: Intel Core Ultra 5 235, Debian 13, gcc 14.2, OCaml 5.5.2, cores
   0-5, 2026-10-29. Load 1.33 before and 1.28 after the first run, 1.32
-  and 1.15 the second.
+  and 1.15 the second. The decoders then read files written through
+  the vendors' Python bindings (cramjam's Rust codec for snappy), from
+  the same raw corpora.
 
 `text`, `columns` and `random` are lz / vendor on the 8 MiB corpora of
-`data/`, from the same runs.
+the bench, from the same runs.
 
 Re-run, from the tree's root, with the vendors built under
-`~/wt/lz-vendors/` and `data/` written:
+`~/wt/lz-vendors/`. Fetch Silesia once into the output directory; the
+script writes the other corpora and every encoding there:
 
-    dune build packages/lz/bench/measure/vendor_table.exe
-    packages/lz/bench/measure/vendor_table.sh OUT silesia text columns random
+    mkdir -p OUT
+    curl -fLo OUT/silesia.zip https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip
+    dune build packages/lz/bench/compare/vendor_table.exe
+    packages/lz/bench/compare/vendor_table.sh OUT silesia text columns random
 
 | row | lz MB/s | vendor MB/s | lz / vendor | lz bytes | vendor bytes | zlib MB/s | text | columns | random |
 |---|---|---|---|---|---|---|---|---|---|
@@ -96,15 +104,17 @@ Where lz is under its vendor on Silesia:
 
 - decode deflate, 5.6 %; zlib, 1.3 %; gzip, 1.9 %: about half of the
   raw stream's gap is building the decode tables, the rest the fast
-  loop (`measurements.md`, Deflate decode).
+  loop, which follows libdeflate's structure; no change tried to its
+  copies or refills closed it.
 - decode zstd 1, 1.2 %; 12, 0.4 %; 19, 1.5 %: cause not known.
 - decode lz4 block, 12.5 %; frame, 12.3 %: Silesia's short matches.
-  lz4's 8+8+2-byte copy for short matches gained 3 % here and lost 22 %
-  on `columns`, where lz is at parity (`measurements.md`, LZ4).
+  lz4's 8+8+2-byte copy for matches under 19 bytes gained 3 % here and
+  lost 22 % on `columns`, where lz is at parity; 32-byte copies for long
+  matches and literals lost on every corpus.
 - decode snappy, 8.9 % under the AVX2 build, 7 % over the portable one:
-  the AVX2 build's 32-byte copies, pattern shuffles and deferred copies;
-  compiling lz with `-mavx2 -mbmi2` changes nothing (`measurements.md`,
-  Snappy).
+  the AVX2 build's 32-byte copies, pattern shuffles and deferred copies.
+  Compiling lz with `-mavx2 -mbmi2` changes nothing, so the lead is in
+  that code, not the instruction set.
 - encode deflate, zlib and gzip 1, 5.0-5.2 %: cause not known.
 - encode deflate, zlib and gzip 2-4, 1.3-2.1 %: cause not known.
 - encode zstd 3, 1.2 %; 4, 3.1 %: double fast keeps its hash and chain
@@ -112,9 +122,10 @@ Where lz is under its vendor on Silesia:
 - encode zstd 5, 6.9 %: the row search's candidate loop.
 - encode zstd 6, 4.4 %; 7, 2.9 %; 8, 1.9 %; 9, 1.0 %: cause not known;
   they search rows as level 5 does.
-- encode lz4 block, 13.5 %; frame, 3.7 %: code generation; clang 19
-  compiles the same kernel 12 % faster than gcc 14 (`measurements.md`,
-  LZ4). lz writes 4.0 % fewer bytes.
+- encode lz4 block, 13.5 %; frame, 3.7 %: code generation. Both encoders
+  find the same matches, and clang 19 compiles the same kernel 12 %
+  faster than gcc 14; writing the literals before counting the match,
+  branch hints and gcc's loop options changed nothing. lz writes 4.0 % fewer bytes.
 - encode snappy, 7.4 % (7.8 % under the portable build, same bytes):
   cause not known.
 

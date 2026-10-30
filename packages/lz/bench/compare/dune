@@ -1,0 +1,7 @@
+; README.md's table: lz's side, beside vendor_table.c, which times the
+; vendors and is never built by dune; vendor_table.sh builds it and runs
+; both.
+
+(executable
+ (name vendor_table)
+ (libraries lz lz_support unix))

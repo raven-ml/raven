@@ -24,7 +24,10 @@ enum lz_wrap { LZ_RAW, LZ_ZLIB, LZ_GZIP };
    match, 258, and 48 bytes past it), a run, and the bytes a wide copy
    reads past the window's earlier segment. A step wraps once fewer than
    a run and the slack remain, which leaves at least the window and the
-   slack behind it. */
+   slack behind it. A step costs the matches that reach back past the
+   wrap, which halve as the run doubles: 256 KiB costs 5 % on text against
+   the whole-buffer loop, 1 % on Silesia, and the buffer fits a 512 KiB
+   L2. */
 #define LZ_INFLATE_RUN (256 * 1024)
 #define LZ_INFLATE_SLACK 320
 #define LZ_INFLATE_BUFFER                                                     \

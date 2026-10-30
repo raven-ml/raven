@@ -130,7 +130,10 @@ INLINE unsigned dist_slot(uint32_t d) {
   return 2 * top + ((x >> (top - 1)) & 1);
 }
 
-/* Levels: libdeflate's parser, search depth and nice length per level. */
+/* Levels: libdeflate's parser, search depth and nice length per level.
+   zlib's depths and nice lengths gained 0.5 to 3.4 % of ratio on text,
+   columns and Silesia for 1.2 to 5.9 times the time, and still missed
+   zlib's ratio on columns at 6 and 9, which is its parser's. */
 
 enum parser { FASTEST, GREEDY, LAZY, LAZY2 };
 

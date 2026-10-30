@@ -5,13 +5,23 @@
    against the vendor builds under ~/wt/lz-vendors/ and runs it.
 
      vendor_table [-r ROW] DATA DECODE_RUNS ENCODE_RUNS CORPUS...
+     vendor_table encode DATA CORPUS...
 
    Output as vendor_table.ml's, the implementation column naming the
    vendor. Every row runs single-threaded into a destination allocated
-   and faulted in once. [-r ROW] keeps the row named ROW. Zstandard frames carry the XXH64 content checksum
-   and the content size, as lz's do; LZ4 frames have independent blocks of
-   the smallest maximum size that holds the input, the content size and
-   the content checksum, as lz's do. */
+   and faulted in once. [-r ROW] keeps the row named ROW. Zstandard
+   frames carry the XXH64 content checksum and the content size, as lz's
+   do; LZ4 frames have independent blocks of the smallest maximum size
+   that holds the input, the content size and the content checksum, as
+   lz's do.
+
+   [encode] writes the files the decode rows of both sides read,
+   DATA/CORPUS.SUFFIX, each encoded by a vendor from DATA/CORPUS.raw:
+   deflate6 by libdeflate at level 6; zlib6 and gz9 by zlib at levels 6
+   and 9; zst1, zst3, zst12 and zst19 by zstd at those levels with the
+   content checksum and size; lz4b by lz4's block encoder; lz4f by lz4's
+   frame encoder with its default linked 64 KiB blocks and the content
+   size; snappy by snappy. */
 
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -357,14 +367,92 @@ static void corpus(struct ctx *c) {
   free(c->back);
 }
 
+/* [encode] */
+
+/* lz4's frame with its default preferences, linked 64 KiB blocks and no
+   checksum, and the content size. */
+static size_t lz4f_default_enc(struct task *t) {
+  LZ4F_preferences_t p = {0};
+  p.frameInfo.contentSize = t->src_len;
+  size_t r = LZ4F_compressFrame(t->dst, t->dst_cap, t->src, t->src_len, &p);
+  return LZ4F_isError(r) ? 0 : r;
+}
+
+static void put(struct task *t, const char *data, const char *corpus,
+                const char *suffix) {
+  size_t size = t->run(t);
+  if (size == 0) die("encode failed", suffix);
+  char path[4096];
+  snprintf(path, sizeof path, "%s/%s.%s", data, corpus, suffix);
+  FILE *f = fopen(path, "wb");
+  if (f == NULL || fwrite(t->dst, 1, size, f) != size || fclose(f) != 0)
+    die("cannot write", path);
+}
+
+static void encodings(const char *data, const char *corpus) {
+  char path[4096], suffix[16];
+  snprintf(path, sizeof path, "%s/%s.raw", data, corpus);
+  size_t n;
+  unsigned char *raw = slurp(path, &n);
+  size_t cap = n + n / 4 + (1 << 20); /* above every bound, snappy's n/6 */
+  unsigned char *buf = malloc(cap);
+  void *lz4_state = malloc((size_t)LZ4_sizeofState());
+  ZSTD_CCtx *zc = ZSTD_createCCtx();
+  struct libdeflate_compressor *ld = libdeflate_alloc_compressor(6);
+  if (buf == NULL || lz4_state == NULL || zc == NULL || ld == NULL)
+    die("out of memory", corpus);
+  struct task t = {ld_raw_enc, raw, n, buf, cap, 6, ld};
+  put(&t, data, corpus, "deflate6");
+
+  const struct {
+    const char *suffix;
+    int level, bits;
+  } z[] = {{"zlib6", 6, 15}, {"gz9", 9, 31}};
+  for (int i = 0; i < 2; i++) {
+    z_stream s = {0};
+    if (deflateInit2(&s, z[i].level, Z_DEFLATED, z[i].bits, 8,
+                     Z_DEFAULT_STRATEGY) != Z_OK)
+      die("deflateInit2", z[i].suffix);
+    t = (struct task){z_enc, raw, n, buf, cap, z[i].level, &s};
+    put(&t, data, corpus, z[i].suffix);
+    deflateEnd(&s);
+  }
+
+  const int zst[] = {1, 3, 12, 19};
+  for (int i = 0; i < 4; i++) {
+    snprintf(suffix, sizeof suffix, "zst%d", zst[i]);
+    t = (struct task){zstd_enc, raw, n, buf, cap, zst[i], zc};
+    put(&t, data, corpus, suffix);
+  }
+
+  t = (struct task){lz4b_enc, raw, n, buf, cap, 0, lz4_state};
+  put(&t, data, corpus, "lz4b");
+  t = (struct task){lz4f_default_enc, raw, n, buf, cap, 0, NULL};
+  put(&t, data, corpus, "lz4f");
+  t = (struct task){snappy_enc, raw, n, buf, cap, 0, NULL};
+  put(&t, data, corpus, "snappy");
+
+  libdeflate_free_compressor(ld);
+  ZSTD_freeCCtx(zc);
+  free(lz4_state);
+  free(buf);
+  free(raw);
+}
+
 static void usage(void) {
   fprintf(stderr,
           "usage: vendor_table [-r ROW] DATA DECODE_RUNS ENCODE_RUNS "
-          "CORPUS...\n");
+          "CORPUS...\n"
+          "       vendor_table encode DATA CORPUS...\n");
   exit(2);
 }
 
 int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "encode") == 0) {
+    if (argc < 4) usage();
+    for (int i = 3; i < argc; i++) encodings(argv[2], argv[i]);
+    return 0;
+  }
   int a = 1;
   if (argc > 2 && strcmp(argv[1], "-r") == 0) {
     only = argv[2];
