@@ -351,27 +351,29 @@ let test_hang_unwatched () =
   at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
 
 (* A word that moves within the bound loses nothing, however long the work runs
-   in all: here 45 values reached 20 ms apart, three times the bound of 300 ms,
-   which leaves a mover the scheduler keeps waiting on a busy machine its
-   slack. *)
+   in all. Each of the wait's sleeps, which the stall makes last up to the
+   bound, moves the word to the next of five values, so each look finds a
+   later value whatever the scheduler does, and the wait lasts over three
+   bounds. *)
 let test_hang_moving () =
-  let d, p = P.open_ ~hang_ms:300 "submit:hang-moving" in
+  let d, p = P.open_ ~hang_ms "submit:hang-moving" in
   let s = empty d in
   let run = Sub.Run.make s in
-  let points = List.init 45 (fun _ -> submit ~run s ~buffers:[||]) in
-  let last_point = List.nth points 44 in
-  let last = Rig.Point.value last_point in
+  let points = List.init 5 (fun _ -> submit ~run s ~buffers:[||]) in
   P.stall p max_int;
-  let move () =
-    for v = 1 to last do
-      Thread.delay 0.02;
-      P.set_word p v
-    done
+  let rec move = function
+    | [] -> ()
+    | pt :: rest ->
+        P.before p "sleep" (fun () ->
+            P.set_word p (Rig.Point.value pt);
+            move rest)
   in
-  let mover = Thread.create move () in
-  Rig.Point.wait last_point;
-  Thread.join mover;
-  equal (option string) None (Rig.lost d)
+  move points;
+  let t0 = Rig.Profile.now () in
+  Rig.Point.wait (List.nth points 4);
+  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
+  equal (option string) None (Rig.lost d);
+  at_least ~msg:"the wait, in ms" int ~than:(3 * hang_ms) waited
 
 (* A device idle for longer than its bound loses nothing by it: the clock counts
    only while a committed value stays above the word. *)
