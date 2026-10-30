@@ -372,12 +372,14 @@ static void check(const uint8_t *buf) {
 #define ROUNDS 11
 #define ROUND_SECONDS 0.02
 
+/* The bytes the kernels read, on a cache line: static, as Windows' C
+   library has no aligned_alloc. */
+#define CAP ((8u << 20) + 64)
+static _Alignas(64) uint8_t buf[CAP];
+
 int main(void) {
   init();
-  size_t cap = (8u << 20) + 64;
-  uint8_t *buf = aligned_alloc(64, cap);
-  if (!buf) return 1;
-  for (size_t i = 0; i < cap; i++) buf[i] = (uint8_t)next();
+  for (size_t i = 0; i < CAP; i++) buf[i] = (uint8_t)next();
   check(buf);
   printf("| kernel | 4 KiB GB/s | 64 KiB GB/s | 8 MiB GB/s |\n");
   printf("|---|---|---|---|\n");
@@ -404,6 +406,5 @@ int main(void) {
     }
     printf("\n");
   }
-  free(buf);
   return 0;
 }
