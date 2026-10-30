@@ -98,13 +98,13 @@ val performance_cores : unit -> int
 val cgroup_cpus : string -> int
 (** [cgroup_cpus root] is the cgroup bound of [rig_pool_cores ()], ceil q, read
     from the tree of files under the directory [root] as the pool reads the
-    host's under [/]: [-1] without a quota (rig_pool_host.h). *)
+    host's under [/]: [-1] without a quota (rig_pool.h). *)
 
 val performance_cpus : string -> int array -> int
 (** [performance_cpus root cpus] is the number of [cpus] that are performance
     cores, read from the tree of files under the directory [root] as the pool
     reads the host's under [/]: [-1] if one of them has neither a capacity nor
-    a CPPC highest performance (rig_pool_host.h). *)
+    a CPPC highest performance (rig_pool.h). *)
 
 val sysctl : string -> int
 (** [sysctl name] is the integer the sysctl [name] reads (macOS). *)

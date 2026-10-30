@@ -34,7 +34,6 @@
 #endif
 
 #include "rig_pool.h"
-#include "rig_pool_host.h"
 #include "rig_pool_probe.h"
 
 /* Runs a job, a blocking one where [blocking] (rig_pool.h). */

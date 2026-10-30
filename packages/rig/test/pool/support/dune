@@ -1,5 +1,4 @@
-; What the pool's suites share. The stubs include the pool's private
-; rig_pool_host.h, copied here.
+; What the pool's suites share.
 
 (library
  (name rig_pool_probe)
@@ -8,6 +7,3 @@
  (foreign_stubs
   (language c)
   (names rig_pool_probe_stubs)))
-
-(copy_files
- (files ../../../lib/pool/rig_pool_host.h))

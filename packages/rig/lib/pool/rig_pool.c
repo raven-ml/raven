@@ -39,7 +39,6 @@
 #define _GNU_SOURCE
 
 #include "rig_pool.h"
-#include "rig_pool_host.h"
 
 #include <pthread.h>
 #include <sched.h>

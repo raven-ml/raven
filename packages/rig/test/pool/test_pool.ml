@@ -377,7 +377,7 @@ let test_cgroup tree =
 
 (* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)] and
    ACPI CPPC highest performance [perfs.(i)], none where it is negative, and
-   the other files [others]. [fast] is what rig_pool_host.h counts. *)
+   the other files [others]. [fast] is what rig_pool_performance_cpus counts. *)
 type cpu_tree = {
   name : string;
   capacities : int array;
