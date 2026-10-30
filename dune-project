@@ -59,6 +59,7 @@
    (and
     :with-test
     (>= 0.2.0)))
+  (mdx :with-test)
   (thumper :with-test))
  (depopts bytesrw)
  (tags
