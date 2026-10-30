@@ -1,47 +1,77 @@
 (** Lossless compression between byte bigarrays: deflate with its zlib and
     gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32.
 
-    Every call works on {!bigbytes}, byte bigarrays, which the collector
-    never moves, so a long call runs with the runtime lock released while
-    other domains run. A {e stream} is one encoded datum: a raw deflate or
-    zlib stream, a sequence of gzip {e members}, a sequence of Zstandard
-    or LZ4 {e frames}, an LZ4 or Snappy block.
+    Every buffer is a {!bigbytes}, a byte bigarray, whose bytes the
+    collector never moves. A {e stream} is one encoded datum of a format: a
+    raw deflate or zlib stream, a gzip stream of one or more {e members}, a
+    Zstandard or LZ4 stream of one or more frames, or an LZ4 or Snappy
+    block. A frame is a member of its stream. A match in a stream copies
+    bytes decoded before it, from the {e window} of the latest decoded
+    bytes.
 
-    A {e whole-buffer} call takes all of its input at once. [decode src dst]
-    decodes into [dst], whose size the caller's container states, and the
-    destination is the window: a match reads [dst] itself. [encode src dst]
-    writes into [dst] and returns where the output ended, or [None] when it
-    did not fit; [bound n] is a size that always fits.
+    A {e whole-buffer} call is given all of its input
+    ({!section-whole}). [decode src dst] decodes the stream at the start of
+    [src] into the {e destination} [dst], whose size the program learns
+    from the container that holds the stream. The destination is the
+    decode's window. [encode src dst] writes the stream of [src] into [dst]
+    and returns its length, or [None] when it does not fit, and [bound n]
+    is a destination size that the stream of any [n] bytes fits.
 
-    A {e step} eats some input and hands the {e run} it produced, a
-    possibly empty byte bigarray, to a function the caller passes. The run
-    is lent out of the codec's own memory: it is valid until the function
-    returns, and a later step overwrites it. A step returns how much input
-    it {e took}, which is all of it unless the run filled. The life cycle
-    of a {!Decoder.t} or an {!Encoder.t}:
+    A {e decoder} ({!Decoder.t}) or an {e encoder} ({!Encoder.t}) keeps one
+    stream's state across calls, for input that arrives in pieces or whose
+    size is not known ({!section-streams}). Each of these calls is a
+    {e step}. A step reads from the start of the input it is given and
+    {e takes} a prefix of it, all of it unless a decoder's output or an
+    encoder's input reached what one step holds. It applies a function [f]
+    that the program passes, once, to the output it produced, its {e run},
+    which may be empty. The run is lent from the decoder's or encoder's own
+    memory. It is valid until [f] returns, and a later step writes over it,
+    so [f] copies or writes out what the program keeps. A step with
+    [~last:true] says that the input ends with the bytes it is given.
 
+    A decode that fails returns [Error { at; why }], where [why] says what
+    is wrong and [at] is the offset of the input byte where it begins
+    ({!section-errors}).
+
+    The life cycle of a decoder or an encoder:
     + make it with its format's [decoder] or [encoder];
-    + step it on the input in order, each step from the first byte the
-      last one did not take;
+    + step it on the input in order, each step from the first byte the last
+      one did not take;
     + step it with [~last:true] on the input's end, and with an empty input
       again while it returns [More] of the whole input, until [Done];
     + after [Done], step it on a new stream, or drop it.
 
-    A decoder that returns [Error] is dead, and so is one whose function
-    raised: a further step raises [Invalid_argument]. A stream given up
-    midway gets a new value.
+    A decoder that returns [Error] is {e dead}, and so is a decoder or an
+    encoder whose step raised, from [f] or with [Out_of_memory]. A stream
+    given up midway gets a new decoder or encoder.
 
-    Unless a function's doc says otherwise: every checksum and declared
-    size a format carries is verified before a call returns [Ok]; a size
-    the input declares bounds nothing it allocates; an argument outside a
-    stated range raises [Invalid_argument]; and a [Decoder.t] or
-    [Encoder.t] is used by one caller at a time, which the step checks.
-    The one declared size that sizes an allocation is a Zstandard frame's
-    window: a {!Zstd.decoder} allocates it when the frame's header
-    arrives, before any output, up to its [?window] (default 128 MiB). A
-    caller stepping Zstandard streams it does not trust sets [?window].
+    A whole-buffer call, a step and a checksum of a {!bigbytes} release the
+    runtime lock while they work on a long input, so that other domains and
+    threads run. {!Crc32.string} holds the lock. A decoder or encoder is
+    {e busy} while a step on it runs, [f] included, and takes one step at a
+    time. Other calls may run in parallel from any domains.
 
-    Decoding a Zstandard page whose header states its size:
+    Encoded bytes depend on the input, the level, where a stream written by
+    steps had [~last:true], and whether [encode] wrote it. They never depend
+    on the machine or on how the input was cut into steps, and they may
+    change in a later version of this library. Decoded bytes are the
+    format's.
+
+    Unless a function's doc says otherwise:
+    {ul
+    {- a whole-buffer decode verifies every checksum and declared size its
+       format carries before it returns [Ok], and a step before it returns
+       [Done];}
+    {- a size the input declares bounds nothing lz allocates, except a
+       Zstandard frame's window ({!Zstd.decoder});}
+    {- an argument outside a stated range raises [Invalid_argument];}
+    {- a program must not write a buffer from another domain or thread while
+       a call reads or writes it.}}
+
+    This decodes a Zstandard page whose header states its decoded size [n].
+    A destination of [n] bytes makes a stream that decodes to more
+    [Too_long], and [produced] below [n] means the stream held less than
+    the header said.
     {[
       let page src n =
         let dst = Bigarray.(Array1.create int8_unsigned c_layout n) in
@@ -51,180 +81,198 @@
         | Error e -> Error (`Lz e)
     ]} *)
 
-(** {1:types Buffers and errors} *)
+(** {1:buffers Buffers} *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 (** The type for byte buffers. *)
 
+(** {1:errors Errors}
+
+    A decode that fails returns an {!error}. Its [at] is an offset into the
+    input. For a whole-buffer decode it counts from the start of [src], and
+    for a step from the first byte the decoder took after it was made or
+    last returned [Done]. It is the first byte of what is wrong: the byte a
+    bad code begins at, the first byte of a checksum or size that does not
+    match, the first byte of a declined field, or the input's length when
+    the input ends inside a stream. A [Too_long] is at the byte that begins
+    the code asking for the output. Each format's module lists what its
+    decoders refuse and at which byte. *)
+
 type why =
   | Truncated
-      (** The input ends inside a stream. A caller that can read more
-          bytes does. *)
+      (** The input ends inside a stream, or holds none. A program that can
+          read more bytes does. *)
   | Malformed of string
-      (** The bytes at the offset are not the format, and no bytes
-          appended to the input make it valid. A checksum or declared size
-          that does not match is [Malformed]. *)
+      (** The bytes at the offset are not the format, and no bytes appended
+          to the input make it valid. A checksum or declared size that does
+          not match is [Malformed]. *)
   | Too_long
-      (** The output would pass the destination's end. Only [decode]
-          returns it. *)
+      (** The output would pass the destination's end. Only a whole-buffer
+          decode returns it. *)
   | Unsupported of string
-      (** A well-formed stream this library declines: a preset
-          dictionary, LZ4's legacy frame, or a Zstandard window above the
-          decoder's bound. *)
+      (** A well-formed stream this library declines: a preset dictionary,
+          LZ4's legacy frame, or a Zstandard window above the decoder's
+          bound. *)
 (** The type for the reasons a decode fails. The strings come from a fixed
     set per format, zlib's messages for the deflate family and RFC 8878's
-    field names for Zstandard; they carry numbers at most, never input
-    bytes, and are for printing, not parsing. *)
+    field names for Zstandard. They hold no byte of the input, and numbers
+    at most. They are for printing, and a program must not parse them. *)
 
 type error = { at : int; why : why }
-(** The type for decode errors. [at] is an offset into the input: for
-    [decode], into [src]; for a step, into the bytes the decoder took since
-    it was made or last returned [Done]. It is the first byte of what is
-    wrong: the byte a bad code begins at, the first byte of a checksum or
-    size that does not match, the first byte of a declined field, the
-    input's length when the input ends inside a stream. A [Too_long] is at
-    the byte that begins the code asking for the output. *)
+(** The type for decode errors: the offset [at] and the reason [why]. *)
 
 val pp_error : Format.formatter -> error -> unit
 (** [pp_error] formats an error as its kind, offset and message:
     [malformed at byte 1024: invalid distance too far back]. *)
 
-type progress = { consumed : int; produced : int }
-(** The type for whole-buffer results: the input bytes read, the output
-    bytes written. *)
+(** {1:whole Whole-buffer calls} *)
 
-type step =
-  | Done of int  (** The stream ended after this many bytes of the input. *)
-  | More of int  (** This many bytes were taken and the stream goes on. *)
-(** The type for step results. *)
-
-(** {1:whole Whole-buffer calls}
+(** {2:decoding Decoding}
 
     [decode src dst] decodes [src] from its start into [dst] from its
-    start. A raw deflate or zlib stream ends at an exact byte: [consumed]
-    counts up to it, the byte that holds the stream's last bit included,
-    and the bytes after it are the caller's. Every other format is read to
-    the input's end, and [consumed] is [src]'s length. Among gzip members,
-    Zstandard frames and LZ4 frames, a byte that begins no member, at the
-    start or after one, is [Malformed] at its offset. An LZ4 or Snappy
-    block has no end mark: bytes after it are read as more of the block. An
-    input with no stream, the empty one included, is [Truncated] at 0; one
-    that ends inside a stream is [Truncated] at its length. A match
+    start, and allocates nothing. A raw deflate or zlib stream ends at an
+    exact byte. [consumed] counts up to it, the byte that holds the
+    stream's last bit included, and whatever follows the stream in [src]
+    begins at [consumed]. Every other format is read to the input's end,
+    and [consumed] is [src]'s length. Among gzip members and Zstandard and
+    LZ4 frames, a byte that begins no member, at the start or after one, is
+    [Malformed] at its offset. An LZ4 or Snappy block has no end mark, and
+    bytes after it are read as more of the block.
+
+    An input with no stream, the empty one included, is [Truncated] at 0,
+    and one that ends inside a stream is [Truncated] at its length. A match
     reaching before the first byte of its member, frame or independent
-    block is [Malformed]. Output that would pass [dst]'s end is [Too_long].
-    [produced] counts the bytes written; [dst]'s contents past them, and
-    all of them after an error, are unspecified.
+    block is [Malformed]. Output that would pass [dst]'s end is
+    [Too_long]. [produced] counts the bytes written. [dst]'s contents past
+    them, and all of them after an error, are unspecified.
+
+    [decode] raises [Invalid_argument] if [src] and [dst] overlap. *)
+
+type progress = { consumed : int; produced : int }
+(** The type for whole-buffer decode results: the input bytes read and the
+    output bytes written. *)
+
+(** {2:encoding Encoding}
 
     [encode ?level src dst] writes one stream holding all of [src] to the
     start of [dst] and returns [Some] of its length, or [None] when it does
     not fit, with [dst]'s contents unspecified. A destination of
     [bound (Bigarray.Array1.dim src)] bytes always fits, at every level and
     for the empty input. [encode_string ?level s] is the stream of [s] as a
-    string; the empty string encodes to the format's empty stream. An
+    string, and the empty string encodes to the format's empty stream. An
     encode allocates its tables outside the OCaml heap for the call.
 
-    Encoded bytes are a function of the input, the level, where a stream
-    written by steps had [~last:true], and whether it was written by
-    [encode]: never of the machine. They may change in a later version of
-    this library. Decoded bytes are the format's.
+    [encode] raises [Invalid_argument] if [src] and [dst] overlap, and
+    [bound] on a negative size or one whose bound would pass [max_int]. *)
 
-    [decode] and [encode] raise [Invalid_argument] if [src] and [dst]
-    overlap, and [bound] on a negative size or one whose bound would pass
-    [max_int]. *)
+(** {1:streams Streams}
 
-(** {1:streams Streams} *)
+    A step on a decoder or an encoder reads [src] from its start, takes a
+    prefix of it, applies [f] once to the run it produced, and returns a
+    {!type-step}. [More k] says that it took [k] bytes and the stream goes
+    on. [k] short of [src]'s length means that a decoder's run filled, or
+    that an encoder took its {e quota}, the most input one step takes. The
+    next step then continues from byte [k]. [Done k] says that the stream
+    ended after [k] bytes. The run is a sub-array of the decoder's or
+    encoder's own bigarray. A view of it kept after [f] returns reads the
+    bytes a later step wrote there.
 
-(** Streaming decoders, for an input whose size is not known or which
-    arrives in pieces. *)
+    A step raises [Invalid_argument] if its decoder or encoder is busy, from
+    another domain, another thread or [f], or dead. If [f] raises, the
+    exception propagates and the decoder or encoder is dead. *)
+
+type step =
+  | Done of int  (** The stream ended after this many bytes of the input. *)
+  | More of int  (** This many bytes were taken and the stream goes on. *)
+(** The type for step results. *)
+
+(** Streaming decoders.
+
+    A decoder holds its format's tables and one bigarray of its window plus
+    a run. It allocates the bigarray when a header fixes the window, and
+    grows it to the largest window seen. After [Done] the next step begins
+    a new stream of the format, and each member begins with an empty
+    window.
+
+    A deflate or zlib stream ends at its exact end, with or without
+    [~last]. The step returns [Done k] and has not read the bytes from [k]
+    on. A gzip or Zstandard stream ends only on a step with [~last:true],
+    with [k] the length of [src]. [More k] with [k] the length of [src]
+    means the input is used up. With [~last:false] the decoder may then
+    hold a cut header, or a member that ended on the last byte. With
+    [~last:true] output is still due, and the program steps again with an
+    empty input.
+
+    With [~last:true] the input ends with [src]. A stream still open is
+    then [Truncated] at the input's length, and a decoder that has seen no
+    stream is [Truncated] at 0. A step returns [Truncated] only then, and
+    never [Too_long]. Every error a step returns is the one [decode]
+    returns on the bytes taken, at the same offset, except a Zstandard
+    window above the decoder's [?window], which [decode] accepts. *)
 module Decoder : sig
   type t
-  (** The type for decoders. A decoder holds its format's tables and one
-      bigarray of its window plus a run, allocated when a header fixes the
-      window and grown to the largest window seen. *)
+  (** The type for decoders. *)
 
   val step :
     t -> last:bool -> bigbytes -> (bigbytes -> unit) -> (step, error) result
-  (** [step d ~last src f] decodes [src] from its start, applies [f] once
-      to the run it produced, and returns where it got to.
+  (** [step d ~last src f] decodes [src] from its start, applies [f] once to
+      the run it produced, and returns where it got to. [Ok] means every
+      byte decoded has been handed to [f]. On [Error], [f] is not
+      applied.
 
-      - [More k]: [k] bytes were taken and the stream goes on. Short of
-        [src]'s length, the run filled, and the next step continues from
-        [k]. At the length, the input is used up: with [~last:false] the
-        decoder may hold a cut header or a member that ended on the last
-        byte; with [~last:true] output is still due, and the caller steps
-        again with an empty input.
-      - [Done k]: the stream ended after [k] bytes. A deflate or zlib
-        stream ends at its exact end, with or without [~last], and the
-        bytes from [k] on were not read. A gzip or Zstandard stream ends
-        only with [~last:true], with [k] the length.
-
-      With [~last:true], the input ends with [src]: a stream still open is
-      [Truncated] at the input's length, and a decoder that has seen no
-      stream is [Truncated] at 0. A step returns [Truncated] only then, and
-      never [Too_long]. A byte that begins no member is [Malformed] at its
-      offset, as in [decode]. Every error is the one [decode] returns on
-      the bytes taken, at the same offset, except a Zstandard window above
-      the decoder's [?window], which [decode] accepts.
-
-      [Ok] means every byte decoded has been handed to [f]. On [Error], [f]
-      is not applied. The run is a sub-array of the decoder's bigarray: a
-      view kept past [f] reads bytes a later step replaced. After [Done],
-      the next step begins a new stream of the format; each member of a
-      stream begins with an empty window.
-
-      Raises [Invalid_argument] if [d] is in use by another step, from
-      another domain, another thread or [f], or is dead. If [f] raises, the
-      exception propagates and [d] is dead. *)
+      Raises [Invalid_argument] if [d] is busy or dead. *)
 end
 
-(** Streaming encoders. *)
+(** Streaming encoders.
+
+    An encoder holds its match finder, a window of its input and its output
+    buffer. Its quota is a constant of the format, and a step's run holds
+    all that the quota produces. A step's cost is linear in [src]. A step
+    with [~last:true] that takes the last byte of [src] writes the stream's
+    end and returns [Done], and only such a step returns [Done]. The next
+    step after [Done] begins a new stream, and a fresh encoder stepped with
+    [~last:true] and no input writes the empty stream. *)
 module Encoder : sig
   type t
-  (** The type for encoders. An encoder holds its match finder, a window
-      of its input and its output buffer. *)
+  (** The type for encoders. *)
 
   val step : t -> last:bool -> bigbytes -> (bigbytes -> unit) -> step
   (** [step e ~last src f] encodes [src] from its start into the stream,
-      applies [f] once to the run it produced, and returns where it got
-      to. A step takes at most a quota of input, a constant of the format,
-      and its run holds all that quota produces.
+      applies [f] once to the run it produced, and returns where it got to.
 
-      - [More k]: [k] bytes were taken and the stream is open. Short of
-        [src]'s length, the quota filled, and the next step continues from
-        [k].
-      - [Done k]: with [~last:true], every byte was taken and the stream's
-        end written. A step with [~last:true] that takes the last byte
-        returns [Done], never [More].
-
-      The next step after [Done] begins a new stream, and a fresh encoder
-      stepped with [~last:true] and no input writes the empty stream. The
-      bytes do not depend on how the input was cut into steps. A step's
-      cost is linear in [src].
-
-      Raises [Invalid_argument] as {!Decoder.step} does; if [f] raises, the
-      exception propagates and [e] is dead. *)
+      Raises [Invalid_argument] if [e] is busy or dead. *)
 end
 
-(** {1:formats Formats} *)
+(** {1:formats Formats}
 
-(** Raw deflate streams (RFC 1951). Levels are 1 to 9, default 6: a higher
-    level searches longer for matches.
+    Each format's module has the whole-buffer calls and the decoders and
+    encoders its format supports. [decode src dst] is its whole-buffer
+    decode ({!section-decoding}), and [bound n] the size of a destination
+    that the stream of any [n] bytes fits. [encode ?level src dst] and
+    [encode_string ?level s] encode at [level] ({!section-encoding}).
+    [decoder ()] makes a decoder of the format's streams, and
+    [encoder ?level ()] an encoder at [level] ({!section-streams}). Each
+    module's preamble lists what its decoders refuse, [Malformed] at the
+    byte it names unless it says otherwise. *)
 
-    A stream is refused, with zlib's message, at the byte holding the
-    first bit of what is wrong, for: a block type of 3, at BTYPE; a stored
-    block whose NLEN is not the complement of its LEN, at NLEN; a dynamic
-    block declaring more than 286 literal/length or 30 distance codes, at
-    HLIT or HDIST; code lengths that over-subscribe the code length,
-    literal/length or distance code or leave it incomplete, at the length
-    that proves it, except a literal/length or distance code of one 1-bit
-    code, and an empty distance or code length code; a repeat of code
-    lengths with no length before it or past their count, at the repeat;
-    an end-of-block symbol with no code, at the length that leaves it
-    none; a code that names no symbol, a literal/length symbol 286 or 287,
-    or a distance symbol 30 or 31, at the code; a distance before the
-    stream's first byte, at its code. An empty code length code reads
-    every length as 0. *)
+(** Raw deflate streams (RFC 1951). Levels are 1 to 9, default 6, and a
+    higher level searches longer for matches.
+
+    A stream is refused, with zlib's message, at the byte holding the first
+    bit of what is wrong, for: a block type of 3, at BTYPE; a stored block
+    whose NLEN is not the complement of its LEN, at NLEN; a dynamic block
+    declaring more than 286 literal/length or 30 distance codes, at HLIT or
+    HDIST; code lengths that over-subscribe the code length, literal/length
+    or distance code or leave it incomplete, at the length that proves it,
+    except a literal/length or distance code of one 1-bit code, and an
+    empty distance or code length code; a repeat of code lengths with no
+    length before it or past their count, at the repeat; an end-of-block
+    symbol with no code, at the length that leaves it none; a code that
+    names no symbol, a literal/length symbol 286 or 287, or a distance
+    symbol 30 or 31, at the code; a distance before the stream's first
+    byte, at its code. An empty code length code reads every length as
+    0. *)
 module Deflate : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes the stream at [src]'s start. *)
@@ -250,8 +298,8 @@ end
 
     Refused besides {!Deflate}'s, at the header's first byte: a header
     whose check bits fail, a compression method other than 8, a window
-    above 32 KiB; and at its first byte, an Adler-32 that does not match.
-    A preset dictionary is [Unsupported] at the header's second byte. *)
+    above 32 KiB; and at its first byte, an Adler-32 that does not match. A
+    preset dictionary is [Unsupported] at the header's second byte. *)
 module Zlib : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes the stream at [src]'s start. *)
@@ -281,9 +329,9 @@ end
     magic 1f 8b, at its first byte; a compression method other than 8, at
     CM; a reserved flag bit, at FLG; a header CRC (FHCRC), CRC-32 or length
     (ISIZE) that does not match, at its first byte. ID1, ID2 and CM are
-    checked as each arrives, so an input that ends after a wrong one is
-    refused, not [Truncated]. Zero padding after the last member begins
-    no member: it is [Malformed] at its first byte. *)
+    checked as each arrives, so an input that ends just after a wrong one
+    is [Malformed]. Zero padding after the last member begins no member,
+    and is [Malformed] at its first byte. *)
 module Gzip : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes every member of [src]. *)
@@ -307,10 +355,10 @@ end
 
 (** Zstandard (RFC 8878): one or more frames, skippable frames among them,
     which produce nothing. Levels are 1 to 12, default 3. The encoder
-    always writes the frame's XXH64 checksum, and the content size when
-    the frame comes from [encode], never from a step: a frame written by
-    steps differs from [encode]'s only in its header. Its windows are at
-    most 4 MiB.
+    always writes the frame's XXH64 checksum. It writes the content size
+    only in a frame from [encode], so a frame written by steps differs from
+    [encode]'s only in its header. The encoder's windows are at most
+    4 MiB.
 
     Refused, [Malformed] at the first byte of the field named: a
     Magic_Number of neither a frame nor a skippable frame, at the first
@@ -337,8 +385,8 @@ end
     at the block's header. *)
 module Zstd : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
-  (** [decode src dst] decodes every frame of [src], whatever window
-      they declare: the destination holds it. *)
+  (** [decode src dst] decodes every frame of [src], whatever window it
+      declares, since its window is [dst]. *)
 
   val bound : int -> int
   (** [bound n] holds the frame of any [n] bytes. *)
@@ -350,11 +398,13 @@ module Zstd : sig
   (** [encode_string ~level s] is the frame of [s]. *)
 
   val decoder : ?window:int -> unit -> Decoder.t
-  (** [decoder ~window ()] decodes a sequence of frames, ending in [Done]
-      on the step with [~last:true]. A frame whose window passes [window]
-      bytes (default 128 MiB) is [Unsupported] at its Window_Descriptor
-      or, for a single-segment frame, whose window is its content size, at
-      its Frame_Content_Size.
+  (** [decoder ~window ()] decodes a sequence of frames, ending in [Done] on
+      the step with [~last:true]. It allocates a frame's window when the
+      frame's header arrives, before any output. A frame whose window
+      passes [window] bytes (default 128 MiB) is [Unsupported] at its
+      Window_Descriptor or, for a single-segment frame, whose window is its
+      content size, at its Frame_Content_Size. A program stepping Zstandard
+      streams it does not trust sets [window].
 
       Raises [Invalid_argument] if [window] is below 1 KiB. *)
 
@@ -362,14 +412,14 @@ module Zstd : sig
   (** [encoder ~level ()] writes a frame per [~last:true]. *)
 end
 
-(** LZ4, whole-buffer only. *)
+(** LZ4 blocks and frames, with whole-buffer calls only. *)
 module Lz4 : sig
-  (** LZ4 blocks without a size prefix: the caller keeps the decoded size.
-      A block is refused for a match offset of 0 or before the block's
-      start, at the offset field, and for last literals that break the
-      format's end-of-block rules (fewer than 5, or under 12 bytes from the
-      last match's start to the block's end), at their token. A block whose
-      input ends inside a sequence, or after a match, is [Truncated].
+  (** LZ4 blocks without a size prefix, whose decoded size the program
+      keeps. A block is refused for a match offset of 0 or before the
+      block's start, at the offset field, and for last literals that break
+      the format's end-of-block rules (fewer than 5, or under 12 bytes from
+      the last match's start to the block's end), at their token. A block
+      whose input ends inside a sequence, or after a match, is [Truncated].
       Output past [dst] is [Too_long] at the token of the literals, or the
       offset field of the match, that asks for it. *)
   module Block : sig
@@ -416,14 +466,14 @@ module Lz4 : sig
 end
 
 (** Snappy blocks, whose preamble states the length of their content, at
-    most 2{^32} - 1 bytes. The preamble is checked against [dst], [Too_long]
-    at its first byte, and against what the data produces, and bounds
-    nothing else. A block is refused for a preamble longer than 5 bytes or
-    above 2{^32} - 1, at its first byte; and, at the element's tag, for a
-    copy offset of 0 or before the block's start, or an element whose
-    output passes the preamble's length. A block whose input ends inside an
-    element, or before its output reaches the preamble's length, is
-    [Truncated]. *)
+    most 2{^32} - 1 bytes. The preamble is checked against [dst],
+    [Too_long] at its first byte, and against what the data produces, and
+    bounds nothing else. A block is refused for a preamble longer than 5
+    bytes or above 2{^32} - 1, at its first byte; and, at the element's
+    tag, for a copy offset of 0 or before the block's start, or an element
+    whose output passes the preamble's length. A block whose input ends
+    inside an element, or before its output reaches the preamble's length,
+    is [Truncated]. *)
 module Snappy : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes the block at [src]'s start. *)
@@ -456,11 +506,11 @@ module Crc32 : sig
       (default 0). *)
 
   val string : ?crc:int -> ?first:int -> ?length:int -> string -> int
-  (** [string ~crc ~first ~length s] is the CRC-32 of the [length] bytes
-      of [s] from [first] (default: all of [s]), continued from [crc].
+  (** [string ~crc ~first ~length s] is the CRC-32 of the [length] bytes of
+      [s] from [first] (default: all of [s]), continued from [crc].
 
-      Raises [Invalid_argument] if [first] and [length] do not name bytes
-      of [s]. *)
+      Raises [Invalid_argument] if [first] and [length] do not name bytes of
+      [s]. *)
 end
 
 (**/**)
