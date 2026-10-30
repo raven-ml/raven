@@ -3054,6 +3054,10 @@ thread.
 
 ### Nx
 
+- `#require "nx.top"` no longer loads `compiler-libs.toplevel`, which the
+  toplevel already holds: loading it printed an `Invalid_argument`
+  exception on OCaml 5.5. When it cannot install `Nx.pp`, `nx.top` raises
+  `Failure` naming the printer, where it printed an error and loaded.
 - Other packages' C compiles as nx.cpu's does by including
   `%{lib:nx.cpu:vector_flags.sexp}` and `%{lib:nx.cpu:v3_flags.sexp}`.
 - **Breaking:** a value is `('v, 's, 'd) Nx.t` on the device set `'d` that

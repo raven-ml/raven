@@ -3,12 +3,28 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let install_printer name =
-  let phrase =
-    Printf.sprintf "#install_printer %s;;" name
-    |> Lexing.from_string
-    |> !Toploop.parse_toplevel_phrase
+(* The toplevel lets loaded code call Toploop and Topprinters but not Longident
+   or Location, so the identifier is built as data. *)
+let noloc txt =
+  let loc =
+    {
+      Location.loc_start = Lexing.dummy_pos;
+      loc_end = Lexing.dummy_pos;
+      loc_ghost = true;
+    }
   in
-  Toploop.execute_phrase false Format.err_formatter phrase |> ignore
+  { Location.txt; loc }
 
-let () = install_printer "Nx.pp"
+(* What [#install_printer M.f] does, with its error as a result: the directive
+   prints the error and reports success. *)
+let install_printer m f =
+  let lid = Longident.Ldot (noloc (Longident.Lident m), noloc f) in
+  let env = !Toploop.toplevel_env in
+  match Topprinters.install Toploop.eval_value_path env lid with
+  | Ok () -> ()
+  | Error e ->
+      let why = Format.asprintf "%a" Topprinters.report_error e in
+      Printf.ksprintf failwith "nx.top: cannot install the printer %s.%s: %s" m
+        f (String.trim why)
+
+let () = install_printer "Nx" "pp"
