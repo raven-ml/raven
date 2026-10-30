@@ -560,6 +560,135 @@ let test_captures () =
     (bits (v [| 6.; 5.; 5. |]))
     (bits (g (v [| 1.; -0.; 0. |])))
 
+(* Two views of one capture: a scatter's positions are a slice of a captured
+   array, and another slice of it, overlapping or not, is a second result. The
+   call compiles and gives eager's values, the capture int64 or int32 cast to
+   int64, the second slice as captured or cast. *)
+type sliced_case =
+  | Sliced : {
+      dt : (float, 's) Nx.dtype;
+      combine : Nx.combine;
+      pos : int64 array; (* The capture. *)
+      width : int; (* The target is [k; width]. *)
+      scattered : int * int; (* The positions' range of [pos]. *)
+      other : int * int; (* The second result's range of [pos]. *)
+      updates : float array; (* [k] of them, at [k; 1]. *)
+      int32 : bool; (* Captured as int32. *)
+      cast : bool; (* The second result cast to [dt]. *)
+    }
+      -> sliced_case
+
+let combine_name : Nx.combine -> string = function
+  | Set -> "set"
+  | Add -> "add"
+  | Max -> "max"
+  | Min -> "min"
+
+let pp_sliced ppf (Sliced c) =
+  let range ppf (a, b) = Format.fprintf ppf "%d..%d" a b in
+  Format.fprintf ppf
+    "%s %a width %d, pos%s [%s] at %a, other %a%s, updates [%s]"
+    (combine_name c.combine) Nx.pp_dtype c.dt c.width
+    (if c.int32 then " int32" else "")
+    (String.concat ";" (Array.to_list (Array.map Int64.to_string c.pos)))
+    range c.scattered range c.other
+    (if c.cast then " cast" else "")
+    (String.concat ";" (Array.to_list (Array.map string_of_float c.updates)))
+
+(* The issue's program: an add of ones into [6; 4] at [pos.(1..7)], with
+   [pos.(1..7)] cast to the dtype as the second result. *)
+let sliced_examples =
+  let issue = [| 0L; 1L; 2L; 3L; 0L; 1L; 2L |] in
+  [
+    Sliced
+      {
+        dt = f32;
+        combine = Add;
+        pos = issue;
+        width = 4;
+        scattered = (1, 7);
+        other = (1, 7);
+        updates = Array.make 6 1.;
+        int32 = true;
+        cast = true;
+      };
+    Sliced
+      {
+        dt = f64;
+        combine = Set;
+        pos = [| 3L; -1L; 0L; 2L; 2L |];
+        width = 2;
+        scattered = (0, 4);
+        other = (2, 5);
+        updates = [| 0.5; -0.; -2.; 4. |];
+        int32 = false;
+        cast = false;
+      };
+  ]
+
+let sliced_cases =
+  let open Gen in
+  let range n =
+    let* a = int_range 0 n in
+    let+ b = int_range a n in
+    (a, b)
+  in
+  let half = map (fun i -> Float.of_int i /. 2.) (int_range (-8) 8) in
+  let update = frequency [ (1, constant (-0.)); (6, half) ] in
+  (let* n = int_range 1 8 and+ width = int_range 1 4 in
+   let* pos = array ~size:(constant n) (map Int64.of_int (int_range (-1) width))
+   and+ scattered = range n
+   and+ other = range n in
+   let k = snd scattered - fst scattered in
+   let* updates = array ~size:(constant k) update in
+   let+ (Nx.Dtype.Any dt) = of_list [ Nx.Dtype.Any f32; Any f64 ]
+   and+ combine = of_list [ Nx.Set; Add; Max; Min ]
+   and+ int32 = bool
+   and+ cast = bool in
+   match Nx.Dtype.kind dt with
+   | Float ->
+       Sliced
+         { dt; combine; pos; width; scattered; other; updates; int32; cast }
+   | _ -> assert false)
+  |> with_pp pp_sliced
+
+let law_sliced (Sliced c) =
+  let n = Array.length c.pos and k = snd c.scattered - fst c.scattered in
+  let overlap =
+    max (fst c.scattered) (fst c.other) < min (snd c.scattered) (snd c.other)
+  in
+  cover "the same slice twice" (c.scattered = c.other && k > 0);
+  cover "overlapping slices" overlap;
+  cover "an int32 capture" c.int32;
+  cover "a position outside the axis"
+    (Array.exists (fun p -> p < 0L || p >= Int64.of_int c.width) c.pos);
+  let cap64 = Nx.create Nx.int64 [| n |] c.pos in
+  let cap32 = Nx.create Nx.int32 [| n |] (Array.map Int64.to_int32 c.pos) in
+  let slice (a, b) x = Nx.slice [ R (a, b) ] x in
+  let positions () =
+    if c.int32 then Nx.cast Nx.int64 (slice c.scattered cap32)
+    else slice c.scattered cap64
+  in
+  let u = Nx.create c.dt [| k; 1 |] c.updates in
+  let scatter () =
+    let p = Nx.unsqueeze ~axes:[ 1 ] (positions ()) in
+    Nx.scatter ~combine:c.combine ~axis:1 p u (Nx.zeros c.dt [| k; c.width |])
+  in
+  let check (type v s) (other : unit -> (v, s, Nx.host) Nx.t) =
+    let f () = (scatter (), other ()) in
+    let s, o = f () in
+    let calls = Rune.evaluations () in
+    let s', o' = Rune.jit T.(unit @-> returns (pair tensor tensor)) f () in
+    equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
+    equal ~msg:"the scatter" bits_t (bits s) (bits s');
+    equal ~msg:"the other slice" codes_t (codes o) (codes o')
+  in
+  match (c.int32, c.cast) with
+  | false, false -> check (fun () -> slice c.other cap64)
+  | true, false -> check (fun () -> slice c.other cap32)
+  | false, true -> check (fun () -> Nx.cast c.dt (slice c.other cap64))
+  | true, true -> check (fun () -> Nx.cast c.dt (slice c.other cap32))
+
 (* Arguments rebuild their structure; a result of several arrays. *)
 let test_structures () =
   let s =
@@ -3063,6 +3192,10 @@ let () =
              test "a keyless draw raises naming Rune.jit" test_keyless;
              test "a constant key draws the same each call" test_constant_key;
              test "captures are read as they were traced" test_captures;
+             prop ~count:24 ~examples:sliced_examples
+               "a scatter at a slice of a capture sliced again gives eager's \
+                values"
+               sliced_cases law_sliced;
              test "structures in and out" test_structures;
              test "a result lies where eager puts it" test_placements;
              prop "a function searched at a width" searched_cases law_searched;
