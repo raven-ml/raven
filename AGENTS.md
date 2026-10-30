@@ -29,6 +29,9 @@ Breaking one causes real damage.
   (`doc/dev/design.md`).
 - NEVER cite an RFC or a ledger from code or an `.mli`. The `.mli` and the code
   are the source of truth.
+- NEVER copy sources between directories (`copy_files`, copy rules, an
+  `#include` of another directory's `.c`), and never reach into another
+  library's private files from a test. Share code through a library.
 
 ## Packages
 
@@ -144,9 +147,11 @@ of it from references, and how to review it.
 
 Tests use windtrap, whose `.mli` (under `_build/_private/default/.pkg/`) is
 the contract, and cram tests for executables. A test states what the `.mli`
-promises, through the public interface, never what the code does today. No
-test reads META, dune files or source text: dune files and review hold the
-structure.
+promises, through the public interface, never what the code does today.
+When a test needs what the interface hides, the library exposes the minimum
+behind a `(**/**)` stop (in C, a section marked for its tests at the end of
+the installed header). No test reads META, dune files or source text: dune
+files and review hold the structure.
 
 A failing test is diagnosed from the failure, the code it runs and that
 code's recent diffs, never by bisecting.
