@@ -744,7 +744,9 @@ module Minimize : sig
       or its evaluations for {!nelder_mead}.
 
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
-      differ in dtype, or if [f] returns other than a scalar. *)
+      differ in dtype, if [lo] or [hi] differs from [x0] in its structure or the
+      shape of a float tensor, naming the path, or if [f] returns other than a
+      scalar. *)
 
   val iterates :
     ('x, 'd) Nx.Ptree.t -> ('x, 'f, 'd) t -> steps:int -> 'f -> 'x -> 'x

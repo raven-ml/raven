@@ -1531,11 +1531,43 @@ let simplex_path fn x ~steps f start =
     in
     rows x start (Nx.concatenate ~axis:0 [ first; xs ])
 
+(* A side of the box has the start's skeleton and, in each float tensor, its
+   shape: the search ravels both alike, so another shape would bound other
+   coordinates, or one bound would broadcast over several. *)
+let check_side fn x start name side =
+  let _, skeleton = Nx.Ptree.flatten x side
+  and _, skeleton0 = Nx.Ptree.flatten x start in
+  Option.iter
+    (fun m -> invalid_arg (fn ^ ": " ^ m))
+    (Nx.Ptree.Skeleton.diff ~this:("in " ^ name) skeleton ~that:"in the start"
+       skeleton0);
+  let shapes v =
+    Nx.Ptree.fold x
+      (fun path a acc -> (path, Linear.is_float (Nx.P a), Nx.shape a) :: acc)
+      v []
+    |> List.rev
+  in
+  List.iter2
+    (fun (path, float, shape0) (_, _, shape) ->
+      if float && shape <> shape0 then
+        invalid_arg
+          (Printf.sprintf "%s: %s: shape %s in %s, %s in the start" fn
+             (match Nx.Ptree.Path.to_string path with
+             | "" -> "the root"
+             | p -> p)
+             (Num.shape shape) name (Num.shape shape0)))
+    (shapes start) (shapes side)
+
 let solve (type x f d) (x : (x, d) Nx.Ptree.t) (m : (x, f, d) t) ?within ~tol
     ~budget (f : f) (start : x) : (x, d) Solution.t =
   let fn = "Jera.Minimize.solve" in
   if budget < 1 then
     invalid_arg (Printf.sprintf "%s: budget = %d is below 1" fn budget);
+  Option.iter
+    (fun (lo, hi) ->
+      check_side fn x start "lo" lo;
+      check_side fn x start "hi" hi)
+    within;
   match m with
   | Gradient (kind, linear) ->
       gradient_solve fn x m kind linear ?within ~tol ~budget f start

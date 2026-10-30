@@ -587,6 +587,42 @@ let box_tests =
                 ~budget:2000
                 (fun x -> Nx.sum (bowl c x))
                 (Nx.zeros f64 [| 2 |]))));
+    test "a side of the box not of the start's shapes raises" (fun () ->
+        (* Swapped shapes keep the size: without the check they bound other
+           coordinates. *)
+        let x = Nx.Ptree.(pair tensor tensor) in
+        let start = (Nx.zeros f64 [| 2 |], Nx.zeros f64 [| 1 |]) in
+        let f (a, b) = Nx.add (Nx.sum (Nx.square a)) (Nx.sum (Nx.square b)) in
+        let hi = (Nx.ones f64 [| 2 |], Nx.ones f64 [| 1 |]) in
+        let solve m lo =
+          Minimize.solve x m ~within:(lo, hi) ~tol:tight ~budget:20 f start
+        in
+        List.iter
+          (fun m ->
+            invalid_with
+              "Jera.Minimize.solve: 0: shape [1] in lo, [2] in the start"
+              (fun () -> solve m (Nx.zeros f64 [| 1 |], Nx.zeros f64 [| 2 |]));
+            invalid_with
+              "Jera.Minimize.solve: 0: shape [] in lo, [2] in the start"
+              (fun () -> solve m (Nx.scalar f64 0., Nx.zeros f64 [| 1 |])))
+          [
+            Minimize.lbfgs ~memory:3 ~linear:Linear.dense; Minimize.nelder_mead;
+          ];
+        invalid_with "Jera.Minimize.solve: 0: shape [1] in lo, [2] in the start"
+          (fun () ->
+            Minimize.solve x
+              (Minimize.levenberg_marquardt x ~linear:Linear.dense)
+              ~within:((Nx.zeros f64 [| 1 |], Nx.zeros f64 [| 2 |]), hi)
+              ~tol:tight ~budget:20 Fun.id start);
+        invalid_with
+          "Jera.Minimize.solve: the root: length 2 in lo, length 1 in the start"
+          (fun () ->
+            let x = Nx.Ptree.(list tensor) and one = Nx.ones f64 [| 2 |] in
+            Minimize.solve x Minimize.nelder_mead
+              ~within:([ one; one ], [ one ])
+              ~tol:tight ~budget:20
+              (fun l -> Nx.sum (Nx.stack l))
+              [ one ]));
     test "an empty box stalls" (fun () ->
         let s =
           Minimize.solve one
