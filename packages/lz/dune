@@ -1,62 +1,22 @@
-; The flags of every library, test and bench under packages/lz. A stanza names no
-; flag of its own, except a unit compiled for an instruction set extension.
-;
-; Since dune language 3.21 the dev profile compiles with the compiler's
-; default warnings, which leave unused values, opens and fields unreported:
-; keep dune's stricter development set. A C warning is an error in every
-; profile but release: a release build must not break on a warning a future
-; compiler adds.
+; What lz adds to the root's env. A stanza names no flag of its own, except a
+; unit compiled for an instruction set extension.
 ;
 ; Every profile but sanitize compiles the C at -O3, so that the benches and
 ; tests run the code a release build ships. The sanitize profile keeps
 ; :standard's level: it runs tests, never benches, and less inlining keeps
 ; its reports' stack traces closer to the source.
 ;
-; The sanitize profile compiles the C with AddressSanitizer and
-; UndefinedBehaviorSanitizer and links their runtimes and the debug runtime
-; into every executable: a report ends the process, and the collector runs
-; often enough that a value a stub holds unrooted fails at once. The
-; decoders parse untrusted bytes, and these runs are the proof that no
-; kernel reads or writes outside its buffers.
-;
-; Benches are not attached to runtest: run them with `dune build
-; @packages/lz/bench/bench`, or run the built exe from its directory under
-; _build/default. Every bench rule takes the workspace lock
-; %{workspace_root}/bench.
+; Under sanitize lz's executables also link the debug runtime and stress the
+; collector as rig's do (packages/rig/dune), so that a value a stub holds
+; unrooted fails at once. The decoders parse untrusted bytes, and these runs are the proof
+; that no kernel reads or writes outside its buffers.
 
 (env
- (release
-  (c_flags
-   (:standard -std=c11 -O3 -Wall -Wextra))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60)))
  (sanitize
-  (c_flags
-   (:standard
-    -std=c11
-    -Wall
-    -Wextra
-    -Werror
-    -g
-    -fno-omit-frame-pointer
-    -fsanitize=address,undefined))
   (link_flags
-   (:standard -runtime-variant d -cclib -fsanitize=address,undefined))
+   (:standard -runtime-variant d))
   (env-vars
-   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1)
-   (ASAN_OPTIONS
-    halt_on_error=1:detect_leaks=0:use_sigaltstack=0:allocator_may_return_null=1)
-   (UBSAN_OPTIONS halt_on_error=1:print_stacktrace=1)
-   (WINDTRAP_TIMEOUT 60)))
- (dev
-  (flags
-   (:standard %{dune-warnings}))
-  (c_flags
-   (:standard -std=c11 -O3 -Wall -Wextra -Werror))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60)))
+   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1)))
  (_
   (c_flags
-   (:standard -std=c11 -O3 -Wall -Wextra -Werror))
-  (env-vars
-   (WINDTRAP_TIMEOUT 60))))
+   (:standard -O3))))
