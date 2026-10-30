@@ -574,15 +574,20 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
       let src = A1.sub src pos len in
       let r =
         match cm.codec with
-        | Snappy -> Compress_snappy.decompress_into src dst
-        | Gzip -> Compress_deflate.Gzip.decompress_into src dst
-        | Zstd -> Compress_zstd.decompress_into src dst
-        | Lz4_raw -> Compress_lz4.Block.decompress_into src dst
+        | Snappy -> Lz.Snappy.decode src dst
+        | Gzip -> Lz.Gzip.decode src dst
+        | Zstd -> Lz.Zstd.decode src dst
+        | Lz4_raw -> Lz.Lz4.Block.decode src dst
         | _ -> invalid_arg "Chunk.read: a chunk that did not pass Chunk.check"
       in
       match r with
-      | Ok () -> (dst, 0, n)
-      | Error e -> fail "the page does not decompress: %s" e
+      | Error e ->
+          fail "the page does not decompress: %s"
+            (Format.asprintf "%a" Lz.pp_error e)
+      | Ok { produced; _ } when produced <> n ->
+          fail "the page decompresses to %d bytes, not its header's %d" produced
+            n
+      | Ok _ -> (dst, 0, n)
     end
   in
   let levels src pos len values =
@@ -715,10 +720,8 @@ let read b (m : Meta.file) ~row_group i (l : Leaf.t) (Type.Any ty) =
       here := Some (pos, page_end - 1);
       Option.iter
         (fun crc ->
-          if
-            Compress_deflate.Crc32.bigbytes (A1.sub b data h.compressed_size)
-            <> crc
-          then fail "the page fails its CRC-32 checksum")
+          if Lz.Crc32.bigbytes (A1.sub b data h.compressed_size) <> crc then
+            fail "the page fails its CRC-32 checksum")
         h.crc;
       (match h.page with
       | Dictionary { values; encoding } ->

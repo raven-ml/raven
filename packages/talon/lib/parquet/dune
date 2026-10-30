@@ -1,17 +1,7 @@
 (library
  (name talon_parquet)
  (public_name talon.parquet)
- (libraries
-  talon
-  nx
-  nx.dtype
-  nx.array
-  rig
-  rig.disk
-  compress.deflate
-  compress.snappy
-  compress.zstd
-  compress.lz4)
+ (libraries talon nx nx.dtype nx.array rig rig.disk lz)
  (private_modules thrift meta leaf chunk)
  (foreign_stubs
   (language c)

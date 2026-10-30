@@ -158,7 +158,7 @@
   dune
   (nx
    (= :version))
-  (compress
+  (lz
    (= :version))
   bytesrw
   (windtrap

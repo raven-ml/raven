@@ -852,6 +852,63 @@ let synthesized =
             a chunk at max_int: row group 0: byte 4611686018427387903: column "x": its pages overrun the file, whose footer starts at byte 27
             2^40 rows of i32_max bytes: row group 0: bytes 4-26: the chunk's 1099511627776 values do not fit in memory
             |});
+      test "compressed pages decode, and one that does not says where"
+        (fun () ->
+          (* Eight int32s, compressed with the codec [codec] (Parquet's
+             CompressionCodec) into [data], in a page whose header states [size]
+             bytes once decompressed. *)
+          let raw = int32s [ 1; 2; 3; 4; 5; 6; 7; 8 ] in
+          let show ?(size = String.length raw) what codec data =
+            let b =
+              parquet ~rows:8
+                ~chunk:[ (4, I32 codec); (6, I64 1000) ]
+                (page ~header:[ (2, I32 size) ] 8 data)
+            in
+            Printf.printf "%s (%d bytes): %s\n" what (String.length data)
+              (match read_x b with
+              | Ok c -> String.concat " " (Array.to_list (render "int32" c))
+              | Error e -> error_text e)
+          in
+          let snappy = Lz.Snappy.encode_string raw
+          and zstd = Lz.Zstd.encode_string raw
+          and gzip = Lz.Gzip.encode_string raw
+          and lz4 = Lz.Lz4.Block.encode_string raw in
+          let cut s = String.sub s 0 (String.length s - 1) in
+          let flip_last s =
+            let b = Bytes.of_string s in
+            let i = Bytes.length b - 1 in
+            Bytes.set_uint8 b i (Bytes.get_uint8 b i lxor 1);
+            Bytes.to_string b
+          in
+          show "snappy" 1 snappy;
+          show "gzip of two members" 2
+            (Lz.Gzip.encode_string (String.sub raw 0 12)
+            ^ Lz.Gzip.encode_string (String.sub raw 12 20));
+          show "zstd" 6 zstd;
+          show "lz4_raw" 7 lz4;
+          show "zstd with a wrong checksum" 6 (flip_last zstd);
+          show "gzip cut short" 2 (cut gzip);
+          show "lz4_raw cut short" 7 (cut lz4);
+          show "snappy of fewer bytes than its header" 1
+            (Lz.Snappy.encode_string (String.sub raw 0 16));
+          show "snappy of more bytes than its header" ~size:16 1 snappy;
+          show "snappy followed by a byte" 1 (snappy ^ "\x00");
+          show "lz4_raw followed by a byte" 7 (lz4 ^ "\x00");
+          expect (output ())
+          @@ __POS_OF__
+               {|
+            snappy (34 bytes): 1 2 3 4 5 6 7 8
+            gzip of two members (69 bytes): 1 2 3 4 5 6 7 8
+            zstd (30 bytes): 1 2 3 4 5 6 7 8
+            lz4_raw (34 bytes): 1 2 3 4 5 6 7 8
+            zstd with a wrong checksum (30 bytes): row group 0: bytes 4-48: the page does not decompress: malformed at byte 26: Content_Checksum mismatch
+            gzip cut short (41 bytes): row group 0: bytes 4-59: the page does not decompress: truncated at byte 41
+            lz4_raw cut short (33 bytes): row group 0: bytes 4-51: the page does not decompress: truncated at byte 33
+            snappy of fewer bytes than its header (18 bytes): row group 0: bytes 4-36: the page decompresses to 16 bytes, not its header's 32
+            snappy of more bytes than its header (34 bytes): row group 0: bytes 4-52: the page does not decompress: output too long at byte 0
+            snappy followed by a byte (35 bytes): row group 0: bytes 4-53: the page does not decompress: malformed at byte 34: output longer than the preamble
+            lz4_raw followed by a byte (35 bytes): row group 0: bytes 4-53: the page does not decompress: truncated at byte 35
+            |});
     ]
 
 (* Sources *)

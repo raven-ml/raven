@@ -7246,6 +7246,11 @@ thread.
 
 ### Talon
 
+- `Talon_parquet` reads compressed pages with `lz`. A page that fails to
+  decompress reports the kind of error (malformed, truncated, output too
+  long, unsupported) and the byte of the page's compressed data where it
+  happened; a page that decodes short of its header's size says how many
+  bytes it produced.
 - On Windows, `Column.parse`, `Expr.Str.parse` and `talon.csv` read a float as
   the nearest value of its type, as elsewhere. msvcrt's strtod misread some
   float64 texts near a power of two, and texts close to halfway between two

@@ -18,14 +18,14 @@
     bit-packed in the file, decode straight into bits: the validity and the
     values of a [bool] column.
 
-    Pages decompress with the [compress] libraries' [decompress], straight from
-    the mapped file into a buffer reused across the chunk's pages, and a page
-    with a CRC is checked against it first. The RLE and bit-packing hybrid,
-    [PLAIN] booleans, the delta encodings, [PLAIN] byte arrays, the gather of
-    dictionary-encoded byte strings and the spread run in C
-    ([talon_parquet_stubs.c]). Fixed-width gathers and dtype changes are nx
-    operations; [BYTE_STREAM_SPLIT], the conversions of [int96] and of decimals
-    and categorical lookups are OCaml loops.
+    Pages decompress with [Lz]'s [decode], straight from the mapped file into a
+    buffer reused across the chunk's pages, and a page with a CRC is checked
+    against it first. The RLE and bit-packing hybrid, [PLAIN] booleans, the
+    delta encodings, [PLAIN] byte arrays, the gather of dictionary-encoded byte
+    strings and the spread run in C ([talon_parquet_stubs.c]). Fixed-width
+    gathers and dtype changes are nx operations; [BYTE_STREAM_SPLIT], the
+    conversions of [int96] and of decimals and categorical lookups are OCaml
+    loops.
 
     Encodings read: [PLAIN], [PLAIN_DICTIONARY] and [RLE_DICTIONARY], [RLE] for
     booleans, [DELTA_BINARY_PACKED], [DELTA_LENGTH_BYTE_ARRAY],
