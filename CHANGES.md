@@ -3053,6 +3053,8 @@ thread.
 
 ### Nx
 
+- Other packages' C compiles as nx.cpu's does by including
+  `%{lib:nx.cpu:vector_flags.sexp}` and `%{lib:nx.cpu:v3_flags.sexp}`.
 - **Breaking:** a value is `('v, 's, 'd) Nx.t` on the device set `'d` that
   `Nx.devices` mints over `Rig.t` devices, and `Nx.place` moves it. A value
   made from numbers is on `Nx.host`; the `_at` forms make it at a placement.
