@@ -8,10 +8,7 @@
  (name test_compiler_cuda)
  (modules test_compiler_cuda)
  (package tolk)
- (libraries windtrap tolk unix)
- (foreign_stubs
-  (language c)
-  (names forbid_spawn_stubs))
+ (libraries windtrap tolk tolk_spawn unix)
  (deps
   (sandbox always)
   not_a_library)
@@ -55,8 +52,6 @@
       NVRTC_PATH
       ./not_a_library
       (run %{test})))))))
-
-(copy_files# ../compiler_amd/forbid_spawn_stubs.c)
 
 (rule
  (target not_a_library)

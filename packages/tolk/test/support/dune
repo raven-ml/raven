@@ -14,6 +14,16 @@
  (wrapped false)
  (libraries tolk tolk.engine tolk_test rig unix))
 
+; Forbidding a process to start another, for the compilers' suites.
+
+(library
+ (name tolk_spawn)
+ (modules spawn)
+ (wrapped false)
+ (foreign_stubs
+  (language c)
+  (names spawn_stubs)))
+
 (tests
  (names test_golden test_graph test_interpreter test_kernel_graphs test_tensors)
  (modules test_golden test_graph test_interpreter test_kernel_graphs test_tensors)

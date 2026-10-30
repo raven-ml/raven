@@ -6,10 +6,7 @@
 (test
  (name test_compiler_amd)
  (package tolk)
- (libraries windtrap tolk)
- (foreign_stubs
-  (language c)
-  (names forbid_spawn_stubs))
+ (libraries windtrap tolk tolk_spawn)
  (deps
   (sandbox always)
   not_a_library)
