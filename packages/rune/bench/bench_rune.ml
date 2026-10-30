@@ -935,7 +935,7 @@ let config = Thumper.Config.(default |> deadline 60.)
 
 let () =
   exit
-    (Thumper.run "rune2" ~config
+    (Thumper.run "rune" ~config
        [
          Thumper.group "Trace" (trace_rows ());
          Thumper.group "Loops" (loop_rows () @ lane_rows ());

@@ -72,6 +72,6 @@ else takes nx functions.
 
 ## Benches
 
-`bench/bench_rune2.ml` times what a user calls (traces, loops, compiled
+`bench/bench_rune.ml` times what a user calls (traces, loops, compiled
 steps, gradients), `bench/compile/` a process's cold first call. Baselines
-are `rune2.thumper` and `compile/compile.thumper`, recorded on fudge.
+are `rune.thumper` and `compile/compile.thumper`, recorded on fudge.

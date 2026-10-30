@@ -152,7 +152,7 @@ def arith_points(fn, fmt, rng):
 
 
 def points(fn, fmt):
-    rng = random.Random(f"rune2:lower_complex:{fn}:{fmt}")
+    rng = random.Random(f"rune:lower_complex:{fn}:{fmt}")
     if fn in ARITH:
         pts = arith_points(fn, fmt, rng)
     elif fn == "pow":

@@ -809,7 +809,7 @@ stamps nothing (D146).
   or fused, meets its class against eager nx, whose integer arithmetic is
   modular and whose floats follow IEEE. rune's `check_wrapping_comparisons`,
   `check_float_identities`, `check_signed_zeros` and `check_pow` run compiled
-  graphs of each kind against eager nx; rune2's `jit › an integer maximum of a
+  graphs of each kind against eager nx; rune's `jit › an integer maximum of a
   running sum wraps` checks a compiled maximum of a wrapping sum against the
   value nx states.
 - **Pinned by:** each facet by value tests, which evaluate a graph with the
@@ -3711,7 +3711,7 @@ driver signals its own (D146).
   compiled call computes eager's values › a uint4 sort along the last axis
   of every other row and column, flipped`, and
   `stated values › a window set into bits at an odd offset keeps the bits
-  around it`; rune2's compile bench: `shaped-4k-3-lanes`; rune's Rune.quant
+  around it`; rune's compile bench: `shaped-4k-3-lanes`; rune's Rune.quant
   suite:
   `decoding` (every law); rune's lower_index suite: `quantised products › a
   product decodes a checkpoint's codes 16 at once on the host` (with D143)
@@ -4136,7 +4136,7 @@ submission, and a range a loop of rig's program (D146).
   all zero. A `-0.` fill takes the selection off the padded mask, so the
   padding holds `-0.` where tinygrad's holds `+0.`.
 - **Reason:** (b). nx's `pad` fills with the value given, `-0.` included, and
-  rune lowers a padded load (`dev/rune2/lib/lower.ml`, `padded`) through
+  rune lowers a padded load (`packages/rune/lib/lower.ml`, `padded`) through
   `Shape.pad` with that fill, so its compiled pad must compute eager nx's
   bits.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
@@ -4163,7 +4163,7 @@ submission, and a range a loop of rig's program (D146).
   and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
   before.
 - **Reason:** (b). nx's values are their bits, and rune lowers every float
-  constant from those bits (`dev/rune2/lib/lower.ml`, `padded`, fills a
+  constant from those bits (`packages/rune/lib/lower.ml`, `padded`, fills a
   padded load with its fill's bits through `Shape.pad`), so a compiled kernel
   must store the bits eager nx stores.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
@@ -4188,7 +4188,7 @@ submission, and a range a loop of rig's program (D146).
   parentheses of associative chains instead, which a chain of `<<` and `%`
   cannot use. No golden nests past 24 levels, so none changes and
   `gen/tinygrad.patch` keeps tinygrad's rule.
-- **Reason:** (b). rune's float64 `fmod` (`dev/rune2/lib/lower_real.ml`,
+- **Reason:** (b). rune's float64 `fmod` (`packages/rune/lib/lower_real.ml`,
   `fmod`) computes `r := (r << left) % my` 187 times, which written as one
   expression nests about 374 levels, so its kernel did not compile on the
   host: rune's `binary kinds, comparisons, where and fma give eager's bits`
@@ -4212,11 +4212,11 @@ submission, and a range a loop of rig's program (D146).
   so a value that a gate around the read does not fold away leaves a free
   range in the kernel graph, which its specification refuses: "UOp
   verification failed … RANGE … AxisType.WEAK".
-- **Reason:** (b). rune's compiled Fold (`dev/rune2/lib/lower_index.ml`,
+- **Reason:** (b). rune's compiled Fold (`packages/rune/lib/lower_index.ml`,
   `fold`) of a complex128 `[2; 3; 1]` by `lo [0; 1; 2]`, `interior [0; 1;
   0]` and a window of size 2 and step 2 on its last axis, whose every term
   the crop drops, stages its operand to read its two parts and raised
-  there: rune2's `a fold wraps integers and holds its float bound` failed.
+  there: rune's `a fold wraps integers and holds its float bound` failed.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › dead reads › a staged value read only in padding reads
   0 there`.
@@ -4239,7 +4239,7 @@ submission, and a range a loop of rig's program (D146).
   setting that shapes compilation (`Setting.shaping`), so they keyed on
   `JITBEAM` after the lowering had read it; unset, they key on the width
   alone.
-- **Reason:** (b). rune2's `Rune.jit ~beam` (`dev/rune2/lib/compile.ml`,
+- **Reason:** (b). rune's `Rune.jit ~beam` (`packages/rune/lib/compile.ml`,
   `shaping`) keys a compiled function's variants on the settings that shape
   its programs, and with an explicit width neither `BEAM` nor `JITBEAM`
   does; it read the lowering's rule by repeating it.
@@ -4271,10 +4271,10 @@ submission, and a range a loop of rig's program (D146).
   kernel and the state's size in storage. A state on several devices is
   refused with `Invalid_argument`.
 - **Reason:** none of (a) to (c): no raven call site is known to reach it,
-  since rune2 orders its own lent stores (`assign`) and gives up a lending
+  since rune orders its own lent stores (`assign`) and gives up a lending
   where they have no order. The lead ruled the entry admitted on principle:
   the skipped edge gives a wrong answer with no error, and a refusal would
-  make rune2's `Rune.jit` (`dev/rune2/lib/compile.ml`, `declined`) evaluate
+  make rune's `Rune.jit` (`packages/rune/lib/compile.ml`, `declined`) evaluate
   the program, which raises on a set of GPUs, which has no eager kernels;
   copying, as XLA does for an aliasing hazard, keeps the program compiled.
 - **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › rules › a
@@ -4313,9 +4313,9 @@ submission, and a range a loop of rig's program (D146).
   remainder reads it in the operand's type, before it becomes a shift or a
   mask: no shift reaches the width, and on int32 a division by `2^31`, the
   least int32, is no shift.
-- **Reason:** (b). rune2's compiled `Nx.square (Nx.mul c y)` at int32 and
+- **Reason:** (b). rune's compiled `Nx.square (Nx.mul c y)` at int32 and
   uint32, with `c` 65536 or the least int32, gave values that varied by run
-  where eager gives 0: rune2's `jit gives eager's bits for exact functions at
+  where eager gives 0: rune's `jit gives eager's bits for exact functions at
   every dtype` left such functions out.
 - **Pinned by:** the `Symbolic` suite: `integers wrap › a square of a
   product folds its constants at their width`; the `Decomp_op` suite:
@@ -4417,7 +4417,7 @@ submission, and a range a loop of rig's program (D146).
   thousand operations an element against one store and `c` loads. XLA's
   fusion bounds the same duplication by the copies alone, at 15
   (`FusionNodeIndexingEvaluation::kAllowedCodeDuplication`).
-- **Reason:** (b). rune2's compiled `Nx.associative_scan`, whose prefix
+- **Reason:** (b). rune's compiled `Nx.associative_scan`, whose prefix
   circuit reads each level's pairs and results at two or three positions:
   jera's tridiagonal solve of 100 equations, three scans one of them over
   4-tuples, compiled cold in 62 s and compiles in 2.4 s (fudge, under load),
@@ -4450,7 +4450,7 @@ submission, and a range a loop of rig's program (D146).
   reductions`, `› a value reduced through padding counts the padding's
   trips`, `› a value inlined into a windowed stage counts in its copies`, `› a
   value broadcast through a reshape is inlined` and `› a value read through
-  padding is inlined`; rune2's `classes › an associative scan over a tuple
+  padding is inlined`; rune's `classes › an associative scan over a tuple
   gives eager's bits`, the `scan/tridiagonal-100` row of its compile bench
   and the `Jit/cumsum-neg-log-uniform-8x1024` row of its bench.
 
@@ -4472,10 +4472,10 @@ submission, and a range a loop of rig's program (D146).
   `ef6ec5f15` (#18858) keeps a folded store's sources as an AFTER on its
   `NOOP` instead, which its specification at the pinned commit rejects; the
   entry goes when the pin passes it.
-- **Reason:** (b). rune's compiled Fold (`dev/rune2/lib/lower_index.ml`,
+- **Reason:** (b). rune's compiled Fold (`packages/rune/lib/lower_index.ml`,
   `fold`) of an int16 `[3; 3]` by `lo [0; -1]`, `interior [0; 1]` and two
   windows of step 2 sums no term into some elements, and it read uninitialized
-  registers there, where nx2's Fold contract gives 0: rune2's `a fold wraps
+  registers there, where nx's Fold contract gives 0: rune's `a fold wraps
   integers and holds its float bound` failed.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `an
   accumulator no lane adds to › is stored before it is read` and `› sums to
@@ -4495,11 +4495,11 @@ submission, and a range a loop of rig's program (D146).
   selection's width (`cast_weak_srcs`, `commit_int`) raises "does not fit any
   int". A weak maximum arises where a pad's bare fill is all that remains of a
   committed maximum's operand.
-- **Reason:** (b). rune's compiled Fold (`dev/rune2/lib/lower_index.ml`,
+- **Reason:** (b). rune's compiled Fold (`packages/rune/lib/lower_index.ml`,
   `fold`) of a float64 `[2; 2; 2]` by `lo [2; 2; 0]`, `hi [0; -1; -1]`,
   `interior [1; 0; 0]` and three windows maximises the uint8 marks of each
   element's terms; where no term reaches an element, the mark is the pad's
-  fill, a weak `0`, and compiling raised: rune2's `a fold wraps integers and
+  fill, a weak `0`, and compiling raised: rune's `a fold wraps integers and
   holds its float bound` failed.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a maximum of
   weak integers › is the greatest value it reduces`; `Tolk.Ops › data types ›
@@ -4529,7 +4529,7 @@ submission, and a range a loop of rig's program (D146).
   main of 2026-10 keeps it; tinygrad on x86_64 computes these `-0.0` and NaN.
   Under `Rune.jit`, `Nx.where (Nx.less m c) m c` of `m = Nx.minimum c x` gave
   `-0.` where eager gives `0.`, NaN where eager gives `c`, and a reciprocal
-  of it `-inf` for `inf`: rune2's `a step over donated leaves keeps the
+  of it `-inf` for `inf`: rune's `a step over donated leaves keeps the
   values` failed. Made one selection before rendering, no such nest reaches
   any compiler, and a single selection keeps its lowering to one instruction:
   hiding the constant from LLVM in every comparison instead cost a maximum
@@ -4539,7 +4539,7 @@ submission, and a range a loop of rig's program (D146).
   known to.
 - **Pinned by:** the `Decomp_op` suite (`test/codegen/decomp/decomp_op`):
   `late_patterns › late_nests_cmplt.golden` and `› a nest of extremes against
-  one value keeps its values › *`; rune2's Jit suite: `classes › a
+  one value keeps its values › *`; rune's Jit suite: `classes › a
   selection of a minimum against its constant is exact`.
 
 ## D167. Clang of LLVM 18 compiles without its straight-line vectorizer
