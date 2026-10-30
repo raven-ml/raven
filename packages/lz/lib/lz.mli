@@ -286,9 +286,21 @@ end
     6, 7.2, 7.7, 7.7, 10, 10, 19, 29, 29 and 49 MiB. A deflate, zlib or
     gzip encoder allocates them at its first step. A Zstandard encoder
     allocates its window at its first step, and its match finder at its
-    first step that writes output. Its quota is 65,536 bytes for deflate,
-    zlib and gzip, and 131,072 for Zstandard. A step's run always has room
-    for the output the step owes.
+    first step that writes output. After [Done], an encoder's next step
+    begins a new stream with the same window and match finder, emptied,
+    and allocates only when that stream needs larger ones. A Zstandard
+    encoder empties and searches its level's whole match finder for each
+    stream of more than 128 KiB, and [Zstd.encode] sizes its tables to an
+    input smaller than the level's window size ({!Zstd}). So a program
+    that encodes many Zstandard buffers gives those smaller than the
+    level's window size to [encode], and steps one encoder over each of
+    the others with [~last:true]. The encoder keeps its window and match
+    finder, 49 MiB at level 12, where each [encode] of such a buffer
+    allocates its tables for the call.
+
+    An encoder's quota is 65,536 bytes for deflate, zlib and gzip, and
+    131,072 for Zstandard. A step's run always has room for the output the
+    step owes.
 
     An encoder may keep input it has taken, at most about 300 KiB for
     deflate, zlib and gzip and 128 KiB for Zstandard, until more arrives
