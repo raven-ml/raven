@@ -16,7 +16,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
-#include "cpu.h"
+#include "rig_pool.h"
 
 /* Slices of a job per thread: as many as nx.cpu's jobs make. */
 #define SLICES 8
@@ -89,8 +89,8 @@ value nx_cpu_bench_floor_move(value threads, value in, value out, value dst,
    of an elementwise kind's loop. The inputs are [inb] bytes each, or, for
    where's, a byte then two of [inb] bytes, of which a mask from the byte
    picks one: where-f32-1M ran under an xor's floor on kimchi, and a
-   branching select ran scalar on the M1. With no array read it stores a
-   constant through nx.cpu's fill row, as a fill does. */
+   branching select ran scalar on the M1. With no array read it stores the
+   bytes, as a fill does. */
 typedef struct {
   uint8_t *d;
   const uint8_t *s[3];
@@ -119,12 +119,11 @@ static void stream_slice(int64_t lo, int64_t hi, int worker, void *ctx) {
   const uint8_t *s[3];
   for (int k = 0; k < 3; k++) s[k] = f->s[k] + first * f->inb;
   if (f->ins == 0) {
-    /* A fill's floor is nx.cpu's own fill row on the slice, nothing around
-       it: a loop of stores written here ran slower than fill-f32-1M on the
-       M1, which no floor may. */
-    static const uint8_t one[8] = {1};
-    int i = f->outb == 1 ? 0 : f->outb == 2 ? 1 : f->outb == 4 ? 2 : 3;
-    nx_cpu_rows.fill[i](n, d, 1, one);
+    /* A fill's floor is memset of the slice's bytes, the C library's store
+       tuned for the host: a store costs the same whatever the value. A loop
+       of stores written here ran slower than fill-f32-1M on the M1, which
+       no floor may. */
+    memset(d, 1, (size_t)(n * f->outb));
     return;
   }
   if (f->cond) {
@@ -187,18 +186,6 @@ value nx_cpu_bench_floor_move_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_bench_floor_move(argv[0], argv[1], argv[2], argv[3], argv[4],
                                  argv[5]);
-}
-
-/* [block_transposed dst src n bits] copies the transpose of [src], [n] x
-   [n] elements of [bits] bits, into [dst] with nx_copy_box, on
-   the calling thread: the copy kernel the walk runs, without the walk. */
-value nx_cpu_bench_block_transposed(value dst, value src, value n,
-                                    value bits) {
-  int64_t k = Long_val(n);
-  nx_copy_box(Caml_ba_data_val(dst), Caml_ba_data_val(src),
-              &(nx_box){{1, k, k}, {0, 0}, {{0, k, 1}, {0, 1, k}}},
-              Int_val(bits));
-  return Val_unit;
 }
 
 value nx_cpu_bench_cores(value unit) {

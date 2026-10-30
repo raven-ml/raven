@@ -6,10 +6,12 @@
 (library
  (name nx_cpu_floors)
  (modules nx_cpu_floors)
- (libraries nx_array nx_cpu rig rig.pool thumper)
+ (libraries nx_array rig rig.pool thumper)
  (foreign_stubs
   (language c)
-  (include_dirs ../../../lib/array ../../../lib/kernel ../../../lib/cpu)
+  (include_dirs
+   (lib nx.array)
+   (lib rig.pool))
   (flags
    :standard
    (:include ../../../lib/cpu/vector_flags.sexp)

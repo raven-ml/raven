@@ -8,12 +8,13 @@
    independent chains of vector fused multiply-adds, as many as the pipes
    hold in flight: 16 vectors on arm64 (four pipes, four cycles), 12 on
    x86-64, whose 16 registers spill at 16: 95.5 against 155 GFLOP/s on
-   kimchi. The read sums the bytes into eight vector accumulators. On a
-   host with Apple's matrix unit, its peak too.
-   They slice the work on the pool's threads as the other floors do. */
+   kimchi. The read sums the bytes into eight vector accumulators. They
+   slice the work on the pool's threads as the other floors do. */
 
 #include <stdint.h>
-#if defined(__x86_64__)
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#elif defined(__x86_64__)
 #include <immintrin.h>
 #endif
 
@@ -21,13 +22,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
-#include "nx_array.h"
 #include "rig_pool.h"
-
-#if defined(__APPLE__) && defined(__aarch64__)
-#include "amx.h"
-#include "cpu.h"
-#endif
 
 /* Slices of a job per thread, as nx_cpu_bench_stubs.c's. */
 #define SLICES 8
@@ -149,52 +144,4 @@ value nx_cpu_bench_floor_read(value threads, value src) {
                 .n = (int64_t)Caml_ba_array_val(src)->dim[0]};
   run(Int_val(threads), &f, read_slice);
   return Val_unit;
-}
-
-/* The matrix unit's peak where the host has one (gemm_amx.c): outer
-   products into Z's four accumulators, no loads, fma32's of 16 × 16
-   float32 or fma64's of 8 × 8 float64, which four keep at one a cycle. A
-   thread drives its cluster's unit, so one thread per unit gives the
-   host's. */
-#if defined(__APPLE__) && defined(__aarch64__)
-static void amx_slice(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  peak_job *f = ctx;
-  int64_t steps = f->steps * hi / f->total - f->steps * lo / f->total;
-  NX_AMX_SET();
-  for (int64_t p = 0; p < steps; p++)
-    for (int q = 0; q < 4; q++)
-      if (f->f64) NX_AMX_FMA64(0, 0, q);
-      else NX_AMX_FMA32(0, 0, q);
-  NX_AMX_CLR();
-}
-
-static int64_t amx_units(void) {
-  int64_t shared = nx_cpu_table->gemm[NX_FLOAT32].kernel.shared;
-  return nx_cpu_has_amx() ? rig_pool_performance_cores() / shared : 0;
-}
-#endif
-
-/* [floor_amx threads f64 flops] runs [flops] floating-point operations of
-   the matrix unit's outer products, float64 if [f64], on [threads]
-   threads. */
-value nx_cpu_bench_floor_amx(value threads, value f64, value flops) {
-#if defined(__APPLE__) && defined(__aarch64__)
-  peak_job f = {.f64 = Bool_val(f64)};
-  f.steps = Long_val(flops) / (Bool_val(f64) ? 4 * 2 * 64 : 4 * 2 * 256);
-  run(Int_val(threads), &f, amx_slice);
-#else
-  (void)threads, (void)f64, (void)flops;
-#endif
-  return Val_unit;
-}
-
-/* The host's matrix units: 0 without any. */
-value nx_cpu_bench_amx_units(value unit) {
-  (void)unit;
-#if defined(__APPLE__) && defined(__aarch64__)
-  return Val_int(amx_units());
-#else
-  return Val_int(0);
-#endif
 }
