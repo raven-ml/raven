@@ -1053,13 +1053,16 @@ let loops_around_calls ?(devices = devices) d (limit, max) =
 
 (* A loop's limit and trips. Limits -1 and 0 run no trip: 2 of 42 values, which
    a uniform draw of 30 misses a quarter of the time, so they are drawn half the
-   time. *)
+   time. A draw stops on its flag a fifth of the time, which 30 draws miss in
+   about one run in 600: an example of each ending holds the covers on every
+   run. *)
 let loop_bounds =
   Gen.(pair (one_of [ int_range (-1) 0; int_range 1 40 ]) (int_range 1 6))
 
 let loops_around_calls_on_the_host =
-  prop ~count:30 "a loop runs its calls in order each trip while its flag holds"
-    loop_bounds (fun bounds -> loops_around_calls "CPU" bounds)
+  prop ~count:30 ~examples:[ (0, 3); (10, 6); (40, 2) ]
+    "a loop runs its calls in order each trip while its flag holds" loop_bounds
+    (fun bounds -> loops_around_calls "CPU" bounds)
 
 (* A loop's flag is storage of one boolean: a view of one element of wider
    storage is refused, since the engine reads the storage it names. *)
