@@ -74,16 +74,15 @@ other processes use. A timing needs the GPU to itself and a quiet machine
 
 ## Sanitizers
 
-Each sanitizer is a workspace file at the repository's root, run the same
-way:
+AddressSanitizer is a profile of the root `dune`, ThreadSanitizer a
+workspace file at the repository's root:
 
 ```sh
-dune build @packages/rig/runtest --workspace dune-workspace.asan
+dune build @packages/rig/runtest --profile sanitize
 dune build @packages/rig/runtest --workspace dune-workspace.tsan
 ```
 
-`dune-workspace.asan` builds with the sanitize profile of the root `dune`,
-which holds its options: the C under AddressSanitizer and
+The sanitize profile holds its options: the C under AddressSanitizer and
 UndefinedBehaviorSanitizer, and the debug runtime with a stressed collector.
 `dune-workspace.tsan` builds the OCaml and the C under ThreadSanitizer, with
 a compiler from its own lock, made once:
@@ -111,7 +110,7 @@ allocator's locks across fork. OCaml compiles and links C with the `gcc` on
 
 ```sh
 mkdir -p /tmp/rig-clang && ln -sf "$(command -v clang-19)" /tmp/rig-clang/gcc
-PATH=/tmp/rig-clang:$PATH dune build @packages/rig/runtest --workspace dune-workspace.asan
+PATH=/tmp/rig-clang:$PATH dune build @packages/rig/runtest --profile sanitize
 ```
 
 Under GCC's AddressSanitizer, which holds no allocator lock across fork, a

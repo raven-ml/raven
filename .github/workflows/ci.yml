@@ -78,7 +78,7 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --workspace dune-workspace.asan @packages/lz/runtest
+        run: opam exec -- dune build --profile sanitize @packages/lz/runtest
 
       # rig's GPU suites skip on runners without the GPU they drive.
       - name: Build and test rig
@@ -104,9 +104,9 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/io/runtest
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/array/runtest
-          opam exec -- dune build --workspace dune-workspace.asan @packages/nx/test/runtest
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
+          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/array/runtest
+          opam exec -- dune build --profile sanitize @packages/nx/test/runtest
 
       - name: Build and test brot
         env:
@@ -131,7 +131,7 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --workspace dune-workspace.asan @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
+        run: opam exec -- dune build --profile sanitize @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
 
       # Talon's benchmark questions at the CI size (H2O at 1e6 rows, the
       # decision-support queries at scale factor 0.1) must answer as DuckDB's committed answers do. The

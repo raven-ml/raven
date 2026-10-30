@@ -7,7 +7,7 @@
 ; the compiler relative to _build. A tree then restored another tree's
 ; executables with their path, and they failed once that tree was removed.
 ; Every link passes the path the linker would record as an argument, which the
-; cache key holds. dune-workspace.asan and dune-workspace.tsan repeat it.
+; cache key holds. dune-workspace.tsan repeats it.
 
 (env
  (_
