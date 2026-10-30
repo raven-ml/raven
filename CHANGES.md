@@ -97,6 +97,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- PDF streams are compressed by `lz`'s zlib encoder: `Hugin` PDFs have
+  other, slightly smaller stream bytes and `/Length` values, and read the
+  same.
 - Raster PNGs and the PNGs embedded in SVGs, written through `Nx_io`, have
   other bytes and decode to the same pixels.
 - `Hugin_vg_raster` inks where a stroke's subpaths overlap a dot, the round caps
@@ -119,7 +122,7 @@ All notable changes to this project will be documented in this file.
   channels (`num`, `cat`, `dim`) to roles over named `Scale.t`s, composed with
   `layer`, `grid` and facets. `imshow`, `hstack`, `Cmap` and decorations go.
 - `hugin` no longer depends on `bytesrw`: the PDF writers deflate their
-  streams with `Compress_deflate.Zlib.compress`.
+  streams with `Lz.Zlib.encode_string`.
 - Hugin no longer depends on cairo or SDL2. Figures render through
   `hugin.vg` with the bundled Inter font, so `opam install hugin` needs no
   system libraries and a figure produces the same bytes on every machine.

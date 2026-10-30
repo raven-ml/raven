@@ -5,7 +5,7 @@
 3 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 160 100] /Resources 5 0 R /Contents 4 0 R >>
 4 0 obj
-<< /Length 660 /Filter /FlateDecode >>
+<< /Length 633 /Filter /FlateDecode >>
 stream
 1 0 0 -1 0 100 cm
 q
@@ -187,7 +187,7 @@ endstream
 5 0 obj
 << /Font << /F1 10 0 R /F2 11 0 R >> /XObject << /X1 6 0 R /X2 7 0 R /X3 8 0 R /X4 9 0 R /X5 13 0 R >> /ExtGState << /G1 << /Type /ExtGState /ca 0.7 /CA 0.7 >> >> >>
 6 0 obj
-<< /Length 92 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R >>
+<< /Length 91 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R >>
 stream
 q
 2.5 0 m
@@ -214,7 +214,7 @@ Q
 
 endstream
 7 0 obj
-<< /Length 80 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-3 -3 3 3] /Resources 5 0 R >>
+<< /Length 79 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-3 -3 3 3] /Resources 5 0 R >>
 stream
 q
 0.2 0.3 0.6 RG
@@ -231,7 +231,7 @@ Q
 
 endstream
 8 0 obj
-<< /Length 91 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R /Group << /S /Transparency /I true >> >>
+<< /Length 90 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [-4.25 -4.25 4.25 4.25] /Resources 5 0 R /Group << /S /Transparency /I true >> >>
 stream
 q
 0 0 0 rg
@@ -271,7 +271,7 @@ endstream
 11 0 obj
 << /Type /Font /Subtype /Type0 /BaseFont /FEOQPM+Inter-Bold /Encoding /Identity-H /DescendantFonts [20 0 R] /ToUnicode 21 0 R >>
 12 0 obj
-<< /Length 16 /Filter /FlateDecode /Type /XObject /Subtype /Image /Width 4 /Height 3 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate false >>
+<< /Length 21 /Filter /FlateDecode /Type /XObject /Subtype /Image /Width 4 /Height 3 /ColorSpace /DeviceGray /BitsPerComponent 8 /Interpolate false >>
 stream
 ffffffffd7d7d7d7afafafaf
 endstream
@@ -282,14 +282,14 @@ stream
 40365472
 endstream
 14 0 obj
-<< /Length 2244 /Filter /FlateDecode /Length1 7060 >>
+<< /Length 2222 /Filter /FlateDecode /Length1 7060 >>
 stream <7060 bytes>
 15 0 obj
 << /Type /FontDescriptor /FontName /OIZLTU+Inter-Regular /Flags 4 /FontBBox [-738.77 -322.266 2583.008 1107.91] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 96 /FontFile2 14 0 R >>
 16 0 obj
 << /Type /Font /Subtype /CIDFontType2 /BaseFont /OIZLTU+Inter-Regular /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 15 0 R /DW 1000 /W [2 [689.941] 46 [743.164] 130 [689.941] 131 [985.352] 147 [561.523] 167 [612.305] 184 [613.281] 192 [242.188] 216 [590.82] 237 [376.465] 241 [527.832] 251 [591.309] 265 [818.359] 420 [288.086] 421 [288.086] 424 [288.086] 560 [281.25] 720 [648.438] 722 [648.438] 725 [648.438]] /CIDToGIDMap /Identity >>
 17 0 obj
-<< /Length 326 /Filter /FlateDecode >>
+<< /Length 319 /Filter /FlateDecode >>
 stream
 /CIDInit /ProcSet findresource begin
 12 dict begin
@@ -328,14 +328,14 @@ end
 end
 endstream
 18 0 obj
-<< /Length 887 /Filter /FlateDecode /Length1 2544 >>
+<< /Length 865 /Filter /FlateDecode /Length1 2544 >>
 stream <2544 bytes>
 19 0 obj
 << /Type /FontDescriptor /FontName /FEOQPM+Inter-Bold /Flags 4 /FontBBox [-787.598 -334.473 2583.008 1112.793] /ItalicAngle 0 /Ascent 968.75 /Descent -241.211 /CapHeight 727.539 /StemV 169 /FontFile2 18 0 R >>
 20 0 obj
 << /Type /Font /Subtype /CIDFontType2 /BaseFont /FEOQPM+Inter-Bold /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 19 0 R /DW 1000 /W [16 [661.621] 167 [630.371] 209 [270.996] 222 [613.281]] /CIDToGIDMap /Identity >>
 21 0 obj
-<< /Length 241 /Filter /FlateDecode >>
+<< /Length 242 /Filter /FlateDecode >>
 stream
 /CIDInit /ProcSet findresource begin
 12 dict begin

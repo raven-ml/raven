@@ -45,7 +45,7 @@ let add doc body =
 let set doc n body = Dynarray.set doc.bodies (n - 1) body
 
 let stream ?(dict = "") data =
-  let data = Compress_deflate.Zlib.compress data in
+  let data = Lz.Zlib.encode_string data in
   Printf.sprintf
     "<< /Length %d /Filter /FlateDecode%s >>\nstream\n%s\nendstream"
     (String.length data) dict data

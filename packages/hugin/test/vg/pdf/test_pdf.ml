@@ -30,6 +30,27 @@ let count s sub =
   in
   loop 0 0
 
+(* [inflate n s] is the data of the zlib stream [s], object [n]'s, which ends at
+   [s]'s end. *)
+let inflate n s =
+  let open Bigarray in
+  let src = Array1.create int8_unsigned c_layout (String.length s) in
+  String.iteri (fun i c -> Array1.unsafe_set src i (Char.code c)) s;
+  (* A destination that is too small is doubled. *)
+  let rec go size =
+    let dst = Array1.create int8_unsigned c_layout size in
+    match Lz.Zlib.decode src dst with
+    | Ok { consumed; produced } ->
+        if consumed <> String.length s then
+          failf "object %d: %d bytes after its stream" n
+            (String.length s - consumed);
+        String.init produced (fun i ->
+            Char.unsafe_chr (Array1.unsafe_get dst i))
+    | Error { why = Too_long; _ } -> go (2 * size)
+    | Error e -> failf "object %d: %a" n Lz.pp_error e
+  in
+  go (4 * (String.length s + 64))
+
 (* [objects doc] is the objects that the cross-reference table of [doc] lists,
    in order: each object's number, its text up to its stream if it has one, and
    its stream inflated. It fails on a table that does not point at the object it
@@ -51,7 +72,7 @@ let objects doc =
       let body = String.sub doc start (find "\nendobj\n" start - start) in
       match find_from body 0 "\nstream\n" with
       | None -> (n, body, None)
-      | Some i -> (
+      | Some i ->
           let dict = String.sub body 0 i in
           let length =
             let j = Option.get (find_from dict 0 "/Length ") + 8 in
@@ -61,10 +82,7 @@ let objects doc =
             done;
             int_of_string (String.sub dict j (!k - j))
           in
-          let data = String.sub body (i + 8) length in
-          match Compress_deflate.Zlib.decompress data with
-          | Ok data -> (n, dict, Some data)
-          | Error e -> failf "object %d: %s" n e))
+          (n, dict, Some (inflate n (String.sub body (i + 8) length))))
 
 (* [content doc] is the page's content stream, object 4. *)
 let content doc =

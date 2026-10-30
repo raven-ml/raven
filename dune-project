@@ -421,7 +421,7 @@
   dune
   (nx
    (= :version))
-  (compress
+  (lz
    (= :version))
   (windtrap
    (and

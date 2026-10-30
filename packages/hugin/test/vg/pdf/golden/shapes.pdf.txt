@@ -106,7 +106,7 @@ endstream
 5 0 obj
 << /XObject << /X1 6 0 R >> /ExtGState << /G1 << /Type /ExtGState /ca 0.6 >> /G2 << /Type /ExtGState /ca 0.5 /CA 0.5 >> >> >>
 6 0 obj
-<< /Length 138 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [87 67 125 93] /Resources 5 0 R /Group << /S /Transparency /I true >> >>
+<< /Length 137 /Filter /FlateDecode /Type /XObject /Subtype /Form /BBox [87 67 125 93] /Resources 5 0 R /Group << /S /Transparency /I true >> >>
 stream
 q
 1 0 0 rg

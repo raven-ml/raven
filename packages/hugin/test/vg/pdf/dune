@@ -10,7 +10,7 @@
   hugin.vg.svg
   vg_corpus
   nx
-  compress.deflate
+  lz
   windtrap)
  (deps
   (glob_files golden/*.pdf.txt))
