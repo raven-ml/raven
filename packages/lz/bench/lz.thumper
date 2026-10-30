@@ -65,8 +65,12 @@ columns/encode-snappy	alloc_words	exact	2
 columns/encode-snappy	wall_time	batch=1	n=20	7.531e-03	7.514e-03 7.517e-03 7.522e-03 7.523e-03 7.524e-03 7.524e-03 7.528e-03 7.529e-03 7.530e-03 7.531e-03 7.531e-03 7.531e-03 7.532e-03 7.535e-03 7.538e-03 7.538e-03 7.543e-03 7.551e-03 7.560e-03 7.568e-03
 columns/encode-zstd-1	alloc_words	exact	2
 columns/encode-zstd-1	wall_time	batch=1	n=20	1.306e-02	1.297e-02 1.299e-02 1.300e-02 1.301e-02 1.301e-02 1.301e-02 1.301e-02 1.302e-02 1.304e-02 1.306e-02 1.306e-02 1.306e-02 1.315e-02 1.321e-02 1.324e-02 1.325e-02 1.326e-02 1.330e-02 1.335e-02 1.335e-02
+columns/encode-zstd-1-of-256-KiB	alloc_words	exact	2
+columns/encode-zstd-1-of-256-KiB	wall_time	batch=16	n=20	4.042e-04	4.022e-04 4.023e-04 4.025e-04 4.034e-04 4.035e-04 4.036e-04 4.039e-04 4.042e-04 4.042e-04 4.042e-04 4.043e-04 4.044e-04 4.047e-04 4.059e-04 4.062e-04 4.063e-04 4.065e-04 4.077e-04 4.159e-04 4.213e-04
+columns/encode-zstd-12-of-1-MiB	alloc_words	exact	2
+columns/encode-zstd-12-of-1-MiB	wall_time	batch=1	n=20	1.823e-02	1.811e-02 1.814e-02 1.816e-02 1.821e-02 1.821e-02 1.821e-02 1.822e-02 1.822e-02 1.823e-02 1.823e-02 1.823e-02 1.825e-02 1.826e-02 1.826e-02 1.830e-02 1.830e-02 1.831e-02 1.834e-02 1.837e-02 1.840e-02
 columns/encode-zstd-12-of-2-MiB	alloc_words	exact	2
-columns/encode-zstd-12-of-2-MiB	wall_time	batch=1	n=20	6.275e-02	6.242e-02 6.244e-02 6.251e-02 6.256e-02 6.260e-02 6.264e-02 6.269e-02 6.270e-02 6.274e-02 6.275e-02 6.275e-02 6.280e-02 6.281e-02 6.282e-02 6.283e-02 6.288e-02 6.290e-02 6.310e-02 6.326e-02 6.371e-02
+columns/encode-zstd-12-of-2-MiB	wall_time	batch=1	n=20	3.865e-02	3.827e-02 3.838e-02 3.840e-02 3.843e-02 3.847e-02 3.849e-02 3.855e-02 3.860e-02 3.861e-02 3.865e-02 3.865e-02 3.870e-02 3.882e-02 3.884e-02 3.886e-02 3.897e-02 3.904e-02 3.913e-02 3.916e-02 4.053e-02
 columns/encode-zstd-3	alloc_words	exact	2
 columns/encode-zstd-3	wall_time	batch=1	n=20	2.104e-02	2.096e-02 2.097e-02 2.100e-02 2.100e-02 2.100e-02 2.101e-02 2.101e-02 2.101e-02 2.102e-02 2.102e-02 2.106e-02 2.106e-02 2.107e-02 2.109e-02 2.112e-02 2.113e-02 2.116e-02 2.119e-02 2.122e-02 2.139e-02
 columns/encode-zstd-3-in-1-MiB-steps	alloc_words	exact	1373
@@ -113,8 +117,12 @@ random/encode-snappy	alloc_words	exact	2
 random/encode-snappy	wall_time	batch=16	n=20	4.281e-04	4.277e-04 4.277e-04 4.277e-04 4.278e-04 4.278e-04 4.279e-04 4.279e-04 4.279e-04 4.280e-04 4.280e-04 4.281e-04 4.281e-04 4.282e-04 4.284e-04 4.285e-04 4.289e-04 4.291e-04 4.292e-04 4.307e-04 4.331e-04
 random/encode-zstd-1	alloc_words	exact	2
 random/encode-zstd-1	wall_time	batch=8	n=20	1.194e-03	1.184e-03 1.186e-03 1.187e-03 1.188e-03 1.188e-03 1.188e-03 1.190e-03 1.191e-03 1.193e-03 1.193e-03 1.194e-03 1.194e-03 1.195e-03 1.196e-03 1.198e-03 1.200e-03 1.202e-03 1.204e-03 1.210e-03 1.210e-03
+random/encode-zstd-1-of-256-KiB	alloc_words	exact	2
+random/encode-zstd-1-of-256-KiB	wall_time	batch=256	n=20	2.896e-05	2.872e-05 2.874e-05 2.882e-05 2.884e-05 2.884e-05 2.886e-05 2.891e-05 2.892e-05 2.895e-05 2.896e-05 2.896e-05 2.897e-05 2.901e-05 2.902e-05 2.904e-05 2.905e-05 2.908e-05 2.919e-05 2.930e-05 2.932e-05
+random/encode-zstd-12-of-1-MiB	alloc_words	exact	2
+random/encode-zstd-12-of-1-MiB	wall_time	batch=16	n=20	4.460e-04	4.420e-04 4.423e-04 4.423e-04 4.425e-04 4.429e-04 4.429e-04 4.434e-04 4.446e-04 4.455e-04 4.460e-04 4.460e-04 4.462e-04 4.467e-04 4.473e-04 4.486e-04 4.492e-04 4.510e-04 4.517e-04 4.520e-04 4.521e-04
 random/encode-zstd-12-of-2-MiB	alloc_words	exact	2
-random/encode-zstd-12-of-2-MiB	wall_time	batch=1	n=20	1.401e-02	1.382e-02 1.386e-02 1.386e-02 1.390e-02 1.392e-02 1.395e-02 1.398e-02 1.398e-02 1.401e-02 1.401e-02 1.402e-02 1.403e-02 1.403e-02 1.406e-02 1.410e-02 1.416e-02 1.425e-02 1.429e-02 1.446e-02 1.502e-02
+random/encode-zstd-12-of-2-MiB	wall_time	batch=8	n=20	9.763e-04	9.670e-04 9.683e-04 9.702e-04 9.702e-04 9.721e-04 9.725e-04 9.725e-04 9.732e-04 9.734e-04 9.750e-04 9.777e-04 9.781e-04 9.783e-04 9.794e-04 9.807e-04 9.817e-04 9.826e-04 9.850e-04 9.882e-04 9.926e-04
 random/encode-zstd-3	alloc_words	exact	2
 random/encode-zstd-3	wall_time	batch=4	n=20	1.472e-03	1.460e-03 1.460e-03 1.461e-03 1.462e-03 1.462e-03 1.465e-03 1.467e-03 1.468e-03 1.470e-03 1.471e-03 1.472e-03 1.473e-03 1.477e-03 1.478e-03 1.478e-03 1.479e-03 1.484e-03 1.494e-03 1.496e-03 1.511e-03
 random/encode-zstd-3-in-1-MiB-steps	alloc_words	exact	1373
@@ -161,8 +169,12 @@ text/encode-snappy	alloc_words	exact	2
 text/encode-snappy	wall_time	batch=1	n=20	1.249e-02	1.247e-02 1.248e-02 1.248e-02 1.248e-02 1.249e-02 1.249e-02 1.249e-02 1.249e-02 1.249e-02 1.249e-02 1.250e-02 1.250e-02 1.250e-02 1.250e-02 1.250e-02 1.250e-02 1.250e-02 1.252e-02 1.252e-02 1.252e-02
 text/encode-zstd-1	alloc_words	exact	2
 text/encode-zstd-1	wall_time	batch=1	n=20	2.035e-02	2.025e-02 2.026e-02 2.026e-02 2.028e-02 2.032e-02 2.032e-02 2.034e-02 2.034e-02 2.035e-02 2.035e-02 2.036e-02 2.036e-02 2.037e-02 2.038e-02 2.039e-02 2.041e-02 2.041e-02 2.044e-02 2.044e-02 2.070e-02
+text/encode-zstd-1-of-256-KiB	alloc_words	exact	2
+text/encode-zstd-1-of-256-KiB	wall_time	batch=8	n=20	6.347e-04	6.282e-04 6.308e-04 6.318e-04 6.326e-04 6.331e-04 6.331e-04 6.336e-04 6.337e-04 6.337e-04 6.343e-04 6.350e-04 6.363e-04 6.364e-04 6.368e-04 6.368e-04 6.381e-04 6.385e-04 6.388e-04 6.407e-04 6.469e-04
+text/encode-zstd-12-of-1-MiB	alloc_words	exact	2
+text/encode-zstd-12-of-1-MiB	wall_time	batch=1	n=20	2.825e-02	2.806e-02 2.811e-02 2.813e-02 2.819e-02 2.820e-02 2.820e-02 2.823e-02 2.823e-02 2.823e-02 2.824e-02 2.826e-02 2.829e-02 2.829e-02 2.832e-02 2.833e-02 2.835e-02 2.839e-02 2.845e-02 2.855e-02 2.856e-02
 text/encode-zstd-12-of-2-MiB	alloc_words	exact	2
-text/encode-zstd-12-of-2-MiB	wall_time	batch=1	n=20	7.625e-02	7.549e-02 7.564e-02 7.583e-02 7.593e-02 7.594e-02 7.604e-02 7.605e-02 7.608e-02 7.615e-02 7.621e-02 7.628e-02 7.632e-02 7.632e-02 7.633e-02 7.637e-02 7.638e-02 7.641e-02 7.656e-02 7.662e-02 7.723e-02
+text/encode-zstd-12-of-2-MiB	wall_time	batch=1	n=20	5.973e-02	5.956e-02 5.959e-02 5.960e-02 5.964e-02 5.964e-02 5.965e-02 5.968e-02 5.969e-02 5.969e-02 5.973e-02 5.973e-02 5.973e-02 5.974e-02 5.976e-02 5.982e-02 5.984e-02 5.985e-02 5.990e-02 6.008e-02 6.047e-02
 text/encode-zstd-3	alloc_words	exact	2
 text/encode-zstd-3	wall_time	batch=1	n=20	2.195e-02	2.182e-02 2.187e-02 2.188e-02 2.191e-02 2.191e-02 2.192e-02 2.193e-02 2.193e-02 2.194e-02 2.194e-02 2.196e-02 2.200e-02 2.200e-02 2.201e-02 2.202e-02 2.220e-02 2.225e-02 2.227e-02 2.273e-02 2.348e-02
 text/encode-zstd-3-in-1-MiB-steps	alloc_words	exact	1373
