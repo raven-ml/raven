@@ -34,13 +34,17 @@
    No C file of nx contracts a product into an fma it does not name
    (packages/nx/dune), so every target's results have the same bits. */
 
+/* clock_gettime and CLOCK_MONOTONIC, which strict C11 leaves out. */
+#define _POSIX_C_SOURCE 200809L
+
 #include <complex.h>
 #include <float.h>
 #include <limits.h>
 #include <math.h>
-#include <sched.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <caml/fail.h>
 #include <caml/memory.h>
@@ -619,34 +623,98 @@ static void nans(void *p, int64_t n, int dt) {
     for (int64_t i = 0; i < n; i++) ((double *)p)[i] = NAN;
 }
 
-/* The spins of wait_for before it yields the core. On the M1 at load
-   23-32, the chases of eigvalsh-f64-1024 and eigh-c128-1024 took 28.3
-   and 25.6 ms at least in two runs of 100 spins, 7.2-12.0 in four of
-   1000, 10.1 and 13.4 in two of 10000: a sweep's next task is a few
-   microseconds of the sweep before away. */
-#define SPINS 1000
+/* How long wait_for spins before it parks, as rig.pool's workers do
+   (rig_pool.c's spin_ns): a sweep's next task is a few microseconds of
+   the sweep before away, and waking a parked thread takes a system call
+   and tens of microseconds. On fudge, parking after 1000 spins and 64
+   yields made eigh-f64-256 take 5.8 ms against 3.1. */
+#define SPIN_NS 100000
 
 /* The rows and columns of a tile of an in-place transpose. On the M1 at
    load 23-32, eigh-c128-1024's two transposes took 4.9 ms in tiles of
    16, 6.2 of 32 and 8.3 of 64 (minima of two runs). */
 #define TILE 16
 
-/* Waits until [*x] reaches [v], which another thread's release store
-   sets: by spinning, then by yielding the core, as the thread waited on
-   may have lost its own to another program on a busy host. */
-static void wait_for(const int64_t *x, int64_t v) {
-  for (int i = 0; __atomic_load_n(x, __ATOMIC_ACQUIRE) < v;) {
-    if (i == SPINS) {
-      sched_yield();
-      continue;
-    }
-    i++;
+/* Progress words that a job's threads wait on: a sweep's tasks done, a
+   bidiagonalisation's open phase. A waiter spins, then parks on [cond]
+   until a publish or an advance brings the word to its value: on a host
+   with fewer free cores than the job's threads, a waiter that kept
+   spinning, or yielding, which gives the core only to a thread queued on
+   it, would hold a core the thread it waits for needs. A publisher takes
+   the lock only when a waiter has parked. The word's store and
+   [sleepers]' load are sequentially consistent, as are the parking
+   waiter's increment and its load of the word, so one of the two sees the
+   other: no wake is lost. */
+typedef struct {
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  int sleepers;
+} waiters;
+
+/* Makes [w]; 0 if the system refuses, and the caller then runs its job on
+   one thread, which waits on nothing. */
+static int waiters_init(waiters *w) {
+  w->sleepers = 0;
+  if (pthread_mutex_init(&w->mutex, NULL) != 0) return 0;
+  if (pthread_cond_init(&w->cond, NULL) == 0) return 1;
+  pthread_mutex_destroy(&w->mutex);
+  return 0;
+}
+
+static void waiters_free(waiters *w) {
+  pthread_cond_destroy(&w->cond);
+  pthread_mutex_destroy(&w->mutex);
+}
+
+/* [w] is NULL where one thread runs the job in order: its waits are met
+   when they begin. */
+static void wake(waiters *w) {
+  if (w == NULL || __atomic_load_n(&w->sleepers, __ATOMIC_SEQ_CST) == 0)
+    return;
+  pthread_mutex_lock(&w->mutex);
+  pthread_cond_broadcast(&w->cond);
+  pthread_mutex_unlock(&w->mutex);
+}
+
+/* Sets [*x] to [v] and wakes [w]'s parked waiters. */
+static void publish(waiters *w, int64_t *x, int64_t v) {
+  __atomic_store_n(x, v, __ATOMIC_SEQ_CST);
+  wake(w);
+}
+
+/* Adds [d] to [*x] and wakes [w]'s parked waiters. */
+static void advance(waiters *w, int64_t *x, int64_t d) {
+  __atomic_add_fetch(x, d, __ATOMIC_SEQ_CST);
+  wake(w);
+}
+
+static uint64_t now_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
+
+/* Waits until [*x], which publish or advance moves, reaches [v]: spins
+   for SPIN_NS, reading the clock every 64 loads, then parks. */
+static void wait_for(waiters *w, const int64_t *x, int64_t v) {
+  if (__atomic_load_n(x, __ATOMIC_ACQUIRE) >= v) return;
+  uint64_t deadline = now_ns() + SPIN_NS;
+  do {
+    for (int i = 0; i < 64; i++) {
+      if (__atomic_load_n(x, __ATOMIC_ACQUIRE) >= v) return;
 #if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
+      __builtin_ia32_pause();
 #elif defined(__aarch64__)
-    __asm__ __volatile__("yield");
+      __asm__ __volatile__("yield");
 #endif
-  }
+    }
+  } while (now_ns() < deadline);
+  pthread_mutex_lock(&w->mutex);
+  __atomic_add_fetch(&w->sleepers, 1, __ATOMIC_SEQ_CST);
+  while (__atomic_load_n(x, __ATOMIC_SEQ_CST) < v)
+    pthread_cond_wait(&w->cond, &w->mutex);
+  __atomic_sub_fetch(&w->sleepers, 1, __ATOMIC_SEQ_CST);
+  pthread_mutex_unlock(&w->mutex);
 }
 
 /* The routines, per dtype */

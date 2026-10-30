@@ -1619,6 +1619,7 @@ typedef struct {
   T *b, *v;
   int64_t n, kd, next;
   int64_t *done;
+  waiters *w; /* NULL where one thread runs the sweeps */
 } F(chase);
 
 /* Sweep [s], which makes column s tridiagonal by tasks (xHB2ST_KERNELS):
@@ -1638,7 +1639,7 @@ static void F(sweep)(F(chase) *ch, int64_t s) {
   T v[KD], u[KD], tau = 0;
   for (int64_t j = 0; j < tasks; j++) {
     int64_t wait = j + 3 < before ? j + 3 : before;
-    if (s > 0) wait_for(&ch->done[(s - 1) * LINE], wait);
+    if (s > 0) wait_for(ch->w, &ch->done[(s - 1) * LINE], wait);
     int64_t st = s + 1 + j * kd, len = n - st < kd ? n - st : kd;
     int64_t col = j == 0 ? s : st - kd;
     if (j > 0 && tau != 0) {
@@ -1669,7 +1670,7 @@ static void F(sweep)(F(chase) *ch, int64_t s) {
       slot[j * KD] = tau;
       memcpy(slot + j * KD + 1, v + 1, sizeof(T) * (len - 1));
     }
-    __atomic_store_n(&ch->done[s * LINE], j + 1, __ATOMIC_RELEASE);
+    publish(ch->w, &ch->done[s * LINE], j + 1);
   }
 }
 
@@ -1705,8 +1706,13 @@ static void F(hb2st)(const T *a, int64_t n, int64_t ld, T *b, T *slots,
                  .done = done};
   int64_t bytes = 2 * kd * n * (int64_t)sizeof(T);
   double cost = threaded(s, n - 1, bytes, 6.0 * kd * n * n, CPLX);
-  if (cost == 0) F(chase_unit)(0, 1, 0, &ch);
-  else nx_cpu_job(n - 1, bytes, cost, F(chase_unit), &ch);
+  waiters w;
+  if (cost == 0 || !waiters_init(&w)) F(chase_unit)(0, 1, 0, &ch);
+  else {
+    ch.w = &w;
+    nx_cpu_job(n - 1, bytes, cost, F(chase_unit), &ch);
+    waiters_free(&w);
+  }
   for (int64_t j = 0; j < n; j++) {
     d[j] = REAL(b[j * 2 * kd]);
     if (j < n - 1) e[j] = REAL(b[j * 2 * kd + 1]);
@@ -3990,6 +3996,7 @@ typedef struct {
   /* Chunks claimed and done, the open phase and B's first two chunks
      done, a line apart. */
   int64_t sync[4 * LINE];
+  waiters *w; /* NULL where one thread runs the chunks */
 } F(brd);
 
 /* The chunks of phase [p]: A, B and D of column p / 3 by p mod 3, A of
@@ -4064,7 +4071,7 @@ static void F(brd_chunk)(F(brd) *b, int64_t p, int64_t k) {
     T *z = k == 0 ? yv : yx;
     memset(z, 0, sizeof(T) * i);
     F(mvh)(m - i, i, k == 0 ? a + i : x + i, k == 0 ? lda : ldx, ai + i, z, 1);
-    __atomic_add_fetch(&b->sync[3 * LINE], 1, __ATOMIC_RELEASE);
+    advance(b->w, &b->sync[3 * LINE], 1);
     return;
   }
   int64_t width = p % 3 == 1 ? MV_COLUMNS : BRD_COLUMNS;
@@ -4076,7 +4083,7 @@ static void F(brd_chunk)(F(brd) *b, int64_t p, int64_t k) {
        row i, conjugated, less Y's and Uᴴ X's parts. */
     memset(yr + c0, 0, sizeof(T) * cols);
     F(mvh)(m - i, cols, ac + i, lda, ai + i, yr + c0, 1);
-    wait_for(&b->sync[3 * LINE], 2 * (i + 1));
+    wait_for(b->w, &b->sync[3 * LINE], 2 * (i + 1));
     F(mvn)(cols, i, yc, ldy, yv, yr + c0, -1);
     F(mvh)(i, cols, ac, lda, yx, yr + c0, -1);
     for (int64_t c = c0; c < c0 + cols; c++) {
@@ -4159,11 +4166,11 @@ static void F(brd_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
   for (int64_t g; (g = __atomic_fetch_add(&b->sync[0], 1, __ATOMIC_RELAXED)) <
                   total;) {
     while (b->end[p] <= g) p++;
-    wait_for(&b->sync[2 * LINE], p);
+    wait_for(b->w, &b->sync[2 * LINE], p);
     F(brd_chunk)(b, p, p == 0 ? g : g - b->end[p - 1]);
     if (__atomic_add_fetch(&b->sync[LINE], 1, __ATOMIC_ACQ_REL) == b->end[p]) {
       F(brd_step)(b, p);
-      __atomic_store_n(&b->sync[2 * LINE], p + 1, __ATOMIC_RELEASE);
+      publish(b->w, &b->sync[2 * LINE], p + 1);
     }
   }
 }
@@ -4201,8 +4208,11 @@ static int F(labrd)(T *a, int64_t m, int64_t n, int64_t nb, int64_t lda,
      claims. */
   int64_t bytes = m * n * (int64_t)sizeof(T);
   double cost = threaded(s, units, bytes, 4.0 * m * n, CPLX);
-  if (cost > 0) {
+  waiters w;
+  if (cost > 0 && waiters_init(&w)) {
+    b.w = &w;
     nx_cpu_job(units, bytes, cost, F(brd_unit), &b);
+    waiters_free(&w);
     return 1;
   }
   for (int64_t p = 0, g = 0; p < b.phases; p++) {
@@ -4370,6 +4380,7 @@ typedef struct {
   T *b, *q, *p;
   int64_t n, kd, next;
   int64_t *done;
+  waiters *w; /* NULL where one thread runs the sweeps */
 } F(bchase);
 
 /* Sweep [s], which makes row s bidiagonal by tasks: task j's right
@@ -4391,7 +4402,7 @@ static void F(bsweep)(F(bchase) *ch, int64_t s) {
   T vh[KD], vg[KD], u[2 * KD], th = 0;
   for (int64_t j = 0; j < tasks; j++) {
     int64_t wait = j + 2 < before ? j + 2 : before;
-    if (s > 0) wait_for(&ch->done[(s - 1) * LINE], wait);
+    if (s > 0) wait_for(ch->w, &ch->done[(s - 1) * LINE], wait);
     int64_t c0 = s + 1 + j * kd, len = n - c0 < kd ? n - c0 : kd;
     int64_t r0 = j == 0 ? s : c0 - kd, h = c0 + len - r0 - 1;
     for (int64_t c = c0; j > 0 && th != 0 && c < c0 + len; c++) {
@@ -4431,7 +4442,7 @@ static void F(bsweep)(F(bchase) *ch, int64_t s) {
       p[j * KD] = tg;
       memcpy(p + j * KD + 1, vg + 1, sizeof(T) * (len - 1));
     }
-    __atomic_store_n(&ch->done[s * LINE], j + 1, __ATOMIC_RELEASE);
+    publish(ch->w, &ch->done[s * LINE], j + 1);
   }
 }
 
@@ -4464,8 +4475,13 @@ static void F(gb2bd)(const T *a, int64_t n, int64_t ld, T *b, T *q, T *p,
                   .done = done};
   int64_t bytes = 3 * kd * n * (int64_t)sizeof(T);
   double cost = threaded(s, n - 1, bytes, 8.0 * kd * n * n, CPLX);
-  if (cost == 0) F(bchase_unit)(0, 1, 0, &ch);
-  else nx_cpu_job(n - 1, bytes, cost, F(bchase_unit), &ch);
+  waiters w;
+  if (cost == 0 || !waiters_init(&w)) F(bchase_unit)(0, 1, 0, &ch);
+  else {
+    ch.w = &w;
+    nx_cpu_job(n - 1, bytes, cost, F(bchase_unit), &ch);
+    waiters_free(&w);
+  }
   for (int64_t j = 0; j < n; j++) {
     d[j] = REAL(b0[j * cs + j]);
     if (j < n - 1) e[j] = REAL(b0[(j + 1) * cs + j]);
