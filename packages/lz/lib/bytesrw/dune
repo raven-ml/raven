@@ -1,0 +1,11 @@
+; lz_bytesrw: bytesrw filters over lz's steps, built only where bytesrw is
+; installed, so that a program linking lz alone carries no bytesrw.
+
+(library
+ (name lz_bytesrw)
+ (public_name lz.bytesrw)
+ (optional)
+ (libraries lz bytesrw)
+ (foreign_stubs
+  (language c)
+  (names lz_bytesrw_stubs)))

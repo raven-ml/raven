@@ -68,7 +68,7 @@
  (dir packages/lz)
  (synopsis "Deflate, zlib, gzip, Zstandard, LZ4 and Snappy between bigarrays")
  (description
-  "Compression codecs with no dependencies, written in C and held to the reference implementations' speed: whole-buffer decode and encode between bigarrays, streaming steps that lend their output from the codec's own memory, errors as values with an offset, and CRC-32.")
+  "Compression codecs with no dependencies, written in C and held to the reference implementations' speed: whole-buffer decode and encode between bigarrays, streaming steps that lend their output from the codec's own memory, errors as values with an offset, and CRC-32. lz.bytesrw adds bytesrw filters when bytesrw is installed.")
  (depends
   (ocaml
    (>= 5.5.0))
@@ -83,6 +83,7 @@
     :with-test
     (>= 0.2.0)))
   (thumper :with-test))
+ (depopts bytesrw)
  (tags
   (compression deflate gzip zlib zstd lz4 snappy crc32)))
 

@@ -1,0 +1,13 @@
+; Lz_bytesrw's suite, run from the directory above, whose golden/ it reads.
+
+(test
+ (name test_lz_bytesrw)
+ (package lz)
+ (build_if %{lib-available:bytesrw})
+ (libraries lz lz_bytesrw lz_support bytesrw windtrap)
+ (deps
+  (glob_files ../golden/*))
+ (action
+  (chdir
+   ..
+   (run %{test}))))

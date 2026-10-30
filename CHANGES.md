@@ -4048,7 +4048,8 @@ thread.
   and `Lz.Crc32`. `decode` writes into a destination the caller sizes and
   `encode` into one `bound` sizes; `Lz.Decoder.step` and `Lz.Encoder.step`
   stream, lending each run out of the codec's own memory. Errors are
-  `Lz.error` values with a kind and the input offset.
+  `Lz.error` values with a kind and the input offset. `lz.bytesrw` adds
+  bytesrw filters.
 
 ### Nx
 

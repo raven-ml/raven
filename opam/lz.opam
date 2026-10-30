@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Deflate, zlib, gzip, Zstandard, LZ4 and Snappy between bigarrays"
 description:
-  "Compression codecs with no dependencies, written in C and held to the reference implementations' speed: whole-buffer decode and encode between bigarrays, streaming steps that lend their output from the codec's own memory, errors as values with an offset, and CRC-32."
+  "Compression codecs with no dependencies, written in C and held to the reference implementations' speed: whole-buffer decode and encode between bigarrays, streaming steps that lend their output from the codec's own memory, errors as values with an offset, and CRC-32. lz.bytesrw adds bytesrw filters when bytesrw is installed."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
@@ -19,6 +19,7 @@ depends: [
   "thumper" {with-test}
   "odoc" {with-doc}
 ]
+depopts: ["bytesrw"]
 build: [
   ["dune" "subst"] {dev}
   [
