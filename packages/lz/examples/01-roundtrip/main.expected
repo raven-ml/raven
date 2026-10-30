@@ -1,0 +1,15 @@
+The table: 37922 bytes
+
+deflate   10738 bytes (bound 37962), consumed 10738, same: true
+zlib      10744 bytes (bound 37968), consumed 10744, same: true
+gzip      10756 bytes (bound 37980), consumed 10756, same: true
+zstd       8587 bytes (bound 37955), consumed  8587, same: true
+lz4 block 18656 bytes (bound 38086), consumed 18656, same: true
+lz4 frame 18683 bytes (bound 37949), consumed 18683, same: true
+snappy    18558 bytes (bound 44274), consumed 18558, same: true
+
+deflate level 1: 12569 bytes
+deflate level 6: 10738 bytes
+deflate level 9: 10845 bytes
+
+deflate stream 10738 bytes, consumed 10738, then "TRAILER"

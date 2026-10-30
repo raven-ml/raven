@@ -1,0 +1,3 @@
+13890 bytes written, 1525 bytes of gzip
+13890 bytes read back, same: true
+error at byte 762: gzip reader:762: truncated at byte 762

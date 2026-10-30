@@ -1,0 +1,12 @@
+a gzip member of 2501 bytes, holding 10427
+
+whole              ok, consumed 2501, produced 10427
+cut at 100         truncated at byte 100
+empty              truncated at byte 0
+CRC-32 flipped     malformed at byte 2493: incorrect data check
+zeros after        malformed at byte 2501: incorrect header check
+destination short  output too long at byte 2490
+
+1 KiB window: unsupported at byte 5: Window_Size above the decoder's limit
+Invalid_argument: Lz.Decoder.step: dead after an error or a raise
+Invalid_argument: Lz.Decoder.step: in use by another step

@@ -20,3 +20,15 @@
  (_
   (c_flags
    (:standard -O3))))
+
+; README.md's program runs under mdx, off under sanitize and tsan as the root
+; dune says.
+
+(mdx
+ (files README.md)
+ (package lz)
+ (enabled_if
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
+ (libraries lz))
