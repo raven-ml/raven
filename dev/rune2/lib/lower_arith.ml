@@ -318,18 +318,25 @@ let int_pow d x e =
 
 (* Integer division. A zero divisor gives 0, and the remainder the dividend; -1
    gives the negation and a remainder of 0. Both sides of a selection compute,
-   so the divisor is made safe before it divides. *)
+   so the divisor is made safe before it divides, unless its bounds hold
+   neither: then the bounds of the result are the quotient's, as a later
+   reduction reads them. *)
 let int_div d ~rem x y =
   let vx = value d x and vy = value d y in
-  let zero = vy = num vy 0 in
-  let minus = if is_signed d then vy = num vy (-1) else truth vy false in
-  let safe = where (zero || minus) (num vy 1) vy in
   let back v = store d (if is_wide d then bits v else Ops.bitcast v Uint32) in
-  if rem then
-    where zero x (where minus (num x 0) (back (Ops.alu vx Op.Cmod [ safe ])))
+  let divide v = Ops.alu vx (if rem then Op.Cmod else Op.Cdiv) [ v ] in
+  let lo = Ops.vmin vy and hi = Ops.vmax vy in
+  let below = Dtype.Value.( < ) in
+  if Stdlib.(below (`Int Bigint.zero) lo || below hi (`Int Bigint.minus_one))
+  then back (divide vy)
   else
-    let neg = store d (num (lift d x) 0 - lift d x) in
-    where zero (num x 0) (where minus neg (back (Ops.alu vx Op.Cdiv [ safe ])))
+    let zero = vy = num vy 0 in
+    let minus = if is_signed d then vy = num vy (-1) else truth vy false in
+    let safe = where (zero || minus) (num vy 1) vy in
+    if rem then where zero x (where minus (num x 0) (back (divide safe)))
+    else
+      let neg = store d (num (lift d x) 0 - lift d x) in
+      where zero (num x 0) (where minus neg (back (divide safe)))
 
 (* Threefry-2x32 with 20 rounds: the counter and the key are word pairs, the low
    word first, and so is the result. Each group of four rounds gives its
@@ -441,11 +448,19 @@ let source (D.Any dt as d) xs =
 
 let node_of = function Single x | Double x | Integer (_, x) -> x
 
-(* An integer's float64, rounded to odd past 2^53, exact below. *)
+(* An integer's float64, rounded to odd past 2^53, exact below: a conversion
+   alone where the bounds of [x] hold no integer past 2^53. *)
 let int_double (D.Any dt) x =
+  let exact =
+    let limit = Bigint.shift_left Bigint.one 53 in
+    let within = Dtype.Value.( <= ) in
+    Stdlib.(
+      within (`Int (Bigint.neg limit)) (Ops.vmin x)
+      && within (Ops.vmax x) (`Int limit))
+  in
   match dt with
-  | D.Int64 -> odd64 ~signed:true x
-  | D.Uint64 -> odd64 ~signed:false x
+  | D.Int64 when not exact -> odd64 ~signed:true x
+  | D.Uint64 when not exact -> odd64 ~signed:false x
   | _ -> Ops.cast x Float64
 
 (* The bounds of an integer dtype: its least value and the power of two past its

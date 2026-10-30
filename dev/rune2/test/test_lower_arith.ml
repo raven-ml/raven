@@ -658,6 +658,47 @@ let binary =
   family "exact binary kinds, comparisons, where and fma give eager's bits"
     dtypes binary_rows ~arity:2
 
+let integers =
+  List.filter (fun d -> not (is_float d || is_complex d || is_bool d)) dtypes
+
+(* The element [v] of the integer dtype [d] as a constant node's bits. *)
+let constant d v =
+  let w = bits d in
+  let v =
+    if w < 8 then Int64.logand v (Int64.pred (Int64.shift_left 1L w)) else v
+  in
+  K.Const (d, le (bytes d) v)
+
+(* Divisions by constants: a divisor whose bounds hold neither 0 nor -1 divides
+   unguarded, and 0 and -1 keep their rules. *)
+let divisors (D.Any dt as d) =
+  let w = bits d in
+  let ends =
+    if D.is D.Signed dt then
+      [
+        -1L;
+        -3L;
+        Int64.shift_left (-1L) (w - 1);
+        Int64.pred (Int64.shift_left 1L (w - 1));
+      ]
+    else [ (if w = 64 then -1L else Int64.pred (Int64.shift_left 1L w)) ]
+  in
+  [ 0L; 1L; 2L; 3L; 7L ] @ ends
+
+let by_constants d =
+  List.concat_map
+    (fun c ->
+      List.map
+        (fun (k, label) ->
+          ( Printf.sprintf "%s by %Ld" label c,
+            fun add -> add (K.Op2 (Binary k, 0, add (constant d c))) ))
+        K.[ (Idiv, "idiv"); (Mod, "mod") ])
+    (divisors d)
+
+let constant_divisors =
+  family "divisions by constants give eager's bits" integers by_constants
+    ~arity:1
+
 (* A narrow float's transcendental kind computes at float32 and rounds once, so
    it is within one ulp of the correctly rounded result: float64's function of
    the operands, rounded once by nx's cast, and exact where C99 Annex F gives a
@@ -855,6 +896,42 @@ let cast =
   conversion "casts give eager's values" K.Cast ~nan:true dtypes (fun _ ->
       dtypes)
 
+(* A 64-bit integer's low 53 bits, which its bounds hold within 2^53, cast into
+   float32 and the narrow floats: float64 holds them exactly, so the cast rounds
+   once, as eager's does. Its low 54 bits, past 2^53, round to odd first:
+   2^53 + 2^29 + 1, whose float32 is 2^53 + 2^30, would round twice through
+   float64 to 2^53. *)
+let bounded_casts =
+  let wide = [ D.Any D.Int64; D.Any D.Uint64 ] in
+  let floats = D.[ Any Float32; Any Float16; Any Bfloat16; Any Float8_e5m2 ] in
+  let past = Int64.(add (shift_left 1L 53) (add (shift_left 1L 29) 1L)) in
+  prop "casts of 64-bit integers within 2^53 give eager's values" ~count:2
+    ~examples:(List.map (fun d -> (d, 17)) wide)
+    (by_dtype wide)
+    (fun (d, seed) ->
+      cover (name d) true;
+      let x, _ = operands d seed in
+      let x = le 8 past :: x in
+      let low n = Int64.pred (Int64.shift_left 1L n) in
+      let rows =
+        List.concat_map
+          (fun bits ->
+            List.map
+              (fun t ->
+                {
+                  label = Printf.sprintf "low %d bits into %s" bits (name t);
+                  node =
+                    (fun add ->
+                      let c = add (constant d (low bits)) in
+                      let b = add (K.Op2 (Binary And, 0, c)) in
+                      raw64 add t (add (K.Op1 (Cast, t, b))));
+                })
+              floats)
+          [ 53; 54 ]
+      in
+      no_difference
+        (run_rows (D.Any D.Uint64) ~ins:[| d |] rows (values d [ x ]) [ x ]))
+
 let bitcast =
   conversion "bitcasts give eager's bits" K.Bitcast ~nan:false
     (List.filter (fun d -> name d <> "complex128") dtypes)
@@ -955,4 +1032,14 @@ let shapes =
 let () =
   exit
     (run "Lower_arith"
-       [ unary; binary; rounded; cast; into_complex128; bitcast; shapes ])
+       [
+         unary;
+         binary;
+         constant_divisors;
+         rounded;
+         cast;
+         bounded_casts;
+         into_complex128;
+         bitcast;
+         shapes;
+       ])

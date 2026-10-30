@@ -549,10 +549,52 @@ let transcendental =
       accurate "atan2" (Op2 (Binary Atan2, 0, 1)) (6, 8) annex_atan2;
     ]
 
+(* Bounded arguments
+
+   An argument whose bounds lie below the switch-over to Payne and Hanek is
+   reduced by Cody and Waite's alone. The program bounds its operand within
+   [-29.9, 29.9], selecting 0 outside, and cos and tan hold their bounds at
+   their golden points inside. *)
+let bounded (name, kind, (b32, b64)) =
+  let at (type s) (dt : (float, s) D.t) wide tol =
+    let limit = 29.9 in
+    let rows =
+      List.filter (fun (e, _) -> Float.abs e.(0) < limit) (golden name wide)
+    in
+    let es = Array.of_list (List.map fst rows) in
+    let prog =
+      let open K.E in
+      let x = input 0 dt and c = const dt limit and zero = const dt 0. in
+      let inside = where (x < c) (where (neg c < x) x zero) zero in
+      K.of_exprs ~ins:[| D.Any dt |] [| any (op1 (Unary kind) dt inside) |]
+    in
+    let got = Nx.to_array (snd (staged dt prog (operands dt es))) in
+    List.concat
+      (List.mapi
+         (fun i (e, r) ->
+           if meets wide name tol e r got.(i) then []
+           else
+             [
+               Printf.sprintf "%s(%s) = %s at %s, reference %s" name
+                 (show e.(0))
+                 (show got.(i))
+                 (D.name dt) (show r);
+             ])
+         rows)
+  in
+  test (Printf.sprintf "%s of an argument bounded below the switch-over" name)
+    (fun () ->
+      equal (list string) []
+        (at D.Float32 false (Float.of_int b32)
+        @ at D.Float64 true (Float.of_int b64)))
+
 let () =
   exit
     (run "Lower_real"
        [
          group "exact" (List.map law (unary @ binary @ compare @ [ fma ]));
          group "transcendental" transcendental;
+         group "bounded arguments"
+           (List.map bounded
+              [ ("cos", K.Cos, (2, 9)); ("tan", K.Tan, (19, 19)) ]);
        ])

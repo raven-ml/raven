@@ -328,19 +328,37 @@ let log1p x =
 (* Trigonometric kinds *)
 
 (* |x| = q pi/2 + r, |r| <= pi/4, by tolk's reductions, each fed 1 on the lanes
-   it does not take; r is NaN for an infinite or NaN x. *)
+   it does not take; r is NaN for an infinite or NaN x. Where x's bounds lie
+   below the switch-over, every lane takes Cody and Waite's, which is then the
+   whole reduction. *)
 let reduce x =
   let a = magnitude x in
-  let near = lt a (num x trig_switch) and finite = lt a (inf x) in
-  let rn, qn = Transcendental.cody_waite_reduction (where near a (one x)) in
-  let far = Ops.logical_not near &&: finite in
-  let rf, qf = Transcendental.payne_hanek_reduction (where far a (one x)) in
-  (where finite (where near rn rf) (nan x), where near qn qf)
+  let below =
+    Dtype.Value.(
+      `Float (-.trig_switch) < Ops.vmin x && Ops.vmax x < `Float trig_switch)
+  in
+  if below then Transcendental.cody_waite_reduction a
+  else
+    let near = lt a (num x trig_switch) and finite = lt a (inf x) in
+    let rn, qn = Transcendental.cody_waite_reduction (where near a (one x)) in
+    let far = Ops.logical_not near &&: finite in
+    let rf, qf = Transcendental.payne_hanek_reduction (where far a (one x)) in
+    (where finite (where near rn rf) (nan x), where near qn qf)
 
-(* sin r and cos r = 1 - 2 sin^2(r/2), which cancels nowhere. *)
+(* [r] held to [-1, 1], where tolk's sine needs no reduction of its own: the
+   bounds of a reduced argument, which no node of the reduction states. A NaN
+   becomes 1. *)
+let reduced r =
+  let r = where (lt r (one r)) r (one r) in
+  where (lt (num r (-1.)) r) r (num r (-1.))
+
+(* sin r and cos r = 1 - 2 sin^2(r/2), which cancels nowhere, NaN where r is. *)
 let sin_cos r =
-  let s = sin_ (r *: half r) in
-  (sin_ r, mulacc (negated (s +: s)) s (one r))
+  let b = reduced r in
+  let s = sin_ (b *: half b) in
+  let s, c = (sin_ b, mulacc (negated (s +: s)) s (one b)) in
+  let undefined = ne r r in
+  (where undefined r s, where undefined r c)
 
 let odd q = set (band q (int q 1))
 
