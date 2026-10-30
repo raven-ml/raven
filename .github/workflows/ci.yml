@@ -74,14 +74,19 @@ jobs:
 
       # lz's decoders parse untrusted bytes: their suites run with the C built
       # under AddressSanitizer and UndefinedBehaviorSanitizer, each property
-      # over 1000 inputs.
+      # over 1000 inputs. The suites run one at a time: a law on two domains
+      # needs a processor for each domain and the test's, and beside another
+      # suite on a 3-core runner every stop-the-world collection of the
+      # stressed collector waits for a domain the scheduler took off.
       - name: Test lz under the sanitizers
         if: runner.os != 'Windows'
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @packages/lz/runtest
+        run: |
+          opam exec -- dune build --profile sanitize @packages/lz/all
+          opam exec -- dune build --profile sanitize -j 1 @packages/lz/runtest
 
       # rig's GPU suites skip on runners without the GPU they drive.
       - name: Build and test rig
