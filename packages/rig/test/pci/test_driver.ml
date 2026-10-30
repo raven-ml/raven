@@ -817,6 +817,11 @@ let starts =
   Gen.of_list ~pp:pp_start
     [ Starts; Fails; Raises; Fails_started; Raises_started ]
 
+(* Starts that make a hold four times in five: two domains' stops meet only on
+   a hold, and a stop's answer loses the GPU two times in three. *)
+let holding =
+  Gen.frequency [ (4, Gen.constant ~pp:pp_start Starts); (1, starts) ]
+
 let answer_gen = Gen.of_list ~pp:pp_answer answers
 let indices l = Gen.of_list ~pp:Format.pp_print_int l
 
@@ -828,10 +833,16 @@ let two_buses = [| "0000:03:00.0"; "0000:43:00.0" |]
 let held_buses v =
   List.filteri (fun i _ -> v.states.(i) = Held) (Array.to_list two_buses)
 
+(* The vendors of the program that runs. A program makes one, which every call
+   shares: a vendor's tree costs most of a program's time, and a second
+   vendor's calls reach no state the first's do not. *)
+let vendors = Atomic.make 0
+
 (* A program's GPUs are stopped when it ends, so that no take outlives it. *)
 let vendor_t =
   abstract "v"
     ~release:(fun s ->
+      Atomic.decr vendors;
       List.iter stop (Atomic.get s.holds);
       Array.iter Unix.close s.configs)
     ~invariant:(fun v s ->
@@ -857,14 +868,18 @@ let vendor_sys () =
       (Filename.concat root ("sys/bus/pci/devices/" ^ bus ^ "/config"))
       [ O_RDONLY; O_CLOEXEC ] 0
   in
-  {
-    g = gpus ~reset ();
-    m = Machine.at root;
-    resets;
-    stops;
-    holds = Atomic.make [];
-    configs = Array.map config two_buses;
-  }
+  let s =
+    {
+      g = gpus ~reset ();
+      m = Machine.at root;
+      resets;
+      stops;
+      holds = Atomic.make [];
+      configs = Array.map config two_buses;
+    }
+  in
+  Atomic.incr vendors;
+  s
 
 let check_index i = if i < 0 then invalid_arg "a negative GPU number"
 
@@ -967,9 +982,12 @@ let reset_ref v i =
 let reset_sys s i = Result.is_ok (Driver.reset s.g s.m i)
 
 (* Two domains contend for GPU 0 alone, so that they meet. *)
-let commands index =
+let commands ?(starts = starts) index =
   [
-    command "vendor" (Gen.unit @-> makes vendor_t) vendor_ref vendor_sys;
+    command "vendor"
+      ~pre:(fun () -> Atomic.get vendors = 0)
+      (Gen.unit @-> makes vendor_t)
+      vendor_ref vendor_sys;
     command "open_"
       (vendor_t ^-> starts @-> answer_gen @-> index @-> makes hold_t)
       open_ref open_sys;
@@ -1004,18 +1022,19 @@ let two_domains_name =
 let serialized =
   group ~timeout:patience "opens and changes"
     [
-      (* Each vendor a program makes is a tree of its own, which the file
-         system clones, so a program's cost grows with its length twice: in
-         its vendors and in the checks of each after every call. Programs of
-         20 calls reach every cover in all but about 1 run in 10^7. *)
+      (* A program's vendor is a tree of its own, which the file system
+         clones, and most of the program's cost. Its rarest covers, a lost
+         GPU reset and a hold stopped again, mark about 9% of programs, which
+         300 miss with odds near 10^-13. *)
       flocking model_name
         (stateful model_name ~count:300 ~steps:20
            (commands (indices [ 0; 1; 2; -1 ])));
-      (* 60 programs of 50 runs each, each run a new tree, with a limit of three
-         patiences: a run hands off between domains, which waits for a time
-         slice when the processors are busy. On the Mac the hand-offs, in
-         windtrap's workers, take most of the run and pass the limit, so it
-         runs on Linux. *)
+      (* 120 programs of 50 runs each, each run a new tree, with a limit of
+         three patiences: a run hands off between domains, which waits for a
+         time slice when the processors are busy. Its rarest cover, a lost GPU
+         reset, marks about 12% of programs, which 120 miss with odds near
+         2 10^-7. On the Mac the hand-offs, in windtrap's workers, take most of
+         the run and pass the limit, so it runs on Linux. *)
       (if on_linux then Fun.id
        else fun _ ->
          test two_domains_name (fun () ->
@@ -1023,8 +1042,8 @@ let serialized =
                ()))
       @@ flocking two_domains_name
       @@ stateful two_domains_name ~timeout:(3. *. patience) ~domains:2
-           ~count:60
-           (commands (indices [ 0 ]));
+           ~count:120
+           (commands ~starts:holding (indices [ 0 ]));
       cases "opens and resets run their drivers one at a time (sampled)"
         ~name:fst others test_one_at_a_time;
       cases "a stop waits for no driver's start"
