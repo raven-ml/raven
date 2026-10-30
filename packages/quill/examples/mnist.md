@@ -1,4 +1,3 @@
-<!-- quill:cell id="c_mnist_title" -->
 # MNIST Digit Classification
 
 In this notebook we train a neural network to recognize handwritten digits from
@@ -12,7 +11,6 @@ We use three raven packages:
 - **Hugin** -- plotting and visualization
 
 
-<!-- quill:cell id="c_mnist_load" -->
 ## 1. Loading the dataset
 
 `Kaun_datasets.mnist` downloads MNIST the first time and caches it locally.
@@ -31,7 +29,6 @@ let () =
   Printf.printf "test:  %d images\n" (Nx.shape x_test).(0)
 ```
 
-<!-- quill:cell id="c_mnist_viz_text" -->
 ## 2. Visualizing the data
 
 Let's look at the first 10 training images and their labels.
@@ -44,7 +41,6 @@ let _fig =
   Hugin.(image ~fx:(dim ~scale:(Scale.band ~wrap:5 ()) ~labels 0) images)
 ```
 
-<!-- quill:cell id="c_mnist_model_text" -->
 ## 3. Defining the model
 
 We use a simple multi-layer perceptron (MLP): flatten the 1x28x28 image into a
@@ -73,7 +69,6 @@ end
 let model = Nx.Ptree.instantiate (module Model)
 ```
 
-<!-- quill:cell id="c_mnist_trainer_text" -->
 ## 4. Initializing parameters and optimizer
 
 The parameters are just a value we construct; the optimizer state (Adam's
@@ -91,7 +86,6 @@ let params =
 let st = ref (params, Vega.adam_init model params)
 ```
 
-<!-- quill:cell id="c_mnist_train_text" -->
 ## 5. Training
 
 The training step is three lines you own: differentiate the loss with
@@ -126,7 +120,6 @@ let () =
   done
 ```
 
-<!-- quill:cell id="c_mnist_eval_text" -->
 ## 6. Evaluating predictions
 
 Let's look at the model's predictions on some test images. For each image we

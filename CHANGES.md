@@ -4086,6 +4086,9 @@ thread.
 
 ### Quill
 
+- A `<!-- quill:cell -->` comment at the start of text stays in the notebook,
+  where loading took it as the text cell's id and saving dropped it. Text cell
+  ids saved before March 2026 now show as literal lines in the terminal UI.
 - Saving a code cell with a line of three or more backticks fences it with more,
   where the line cut the cell on the next load.
 - `quill run`, `quill build` and running all cells in the terminal and web

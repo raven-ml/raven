@@ -98,19 +98,6 @@ let try_parse_cell_id s start =
       | None -> None)
   | None -> None
 
-let strip_leading_cell_id s =
-  let s_trimmed = trim_blank_lines s in
-  match try_parse_cell_id s_trimmed 0 with
-  | Some (id, attrs, 0, comment_end) ->
-      let rest =
-        if comment_end < String.length s_trimmed then
-          String.sub s_trimmed comment_end
-            (String.length s_trimmed - comment_end)
-        else ""
-      in
-      Some (id, attrs, trim_blank_lines rest)
-  | _ -> None
-
 let strip_trailing_cell_id s =
   let s_trimmed = trim_blank_lines s in
   let len = String.length s_trimmed in
@@ -429,15 +416,8 @@ let of_string ?base_dir md =
                rest
            | None -> gap
          in
-         (* Extract leading cell ID for the text cell *)
-         let text_id, text_attrs, gap =
-           match strip_leading_cell_id gap with
-           | Some (id, attrs, rest) -> (Some id, Some attrs, rest)
-           | None -> (None, None, gap)
-         in
          let gap = trim_blank_lines gap in
-         if not (is_blank gap) then
-           cells := Quill.Cell.text ?id:text_id ?attrs:text_attrs gap :: !cells);
+         if not (is_blank gap) then cells := Quill.Cell.text gap :: !cells);
       (* The code block itself *)
       let cell =
         Quill.Cell.code ?id:!code_id ~attrs:!code_attrs ~language:lang code
@@ -455,15 +435,9 @@ let of_string ?base_dir md =
   (* Remaining text after last code block *)
   (if !cursor < String.length md then
      let remaining = String.sub md !cursor (String.length md - !cursor) in
-     let text_id, text_attrs, remaining =
-       match strip_leading_cell_id remaining with
-       | Some (id, attrs, rest) -> (Some id, Some attrs, rest)
-       | None -> (None, None, remaining)
-     in
      let remaining = trim_blank_lines remaining in
      if not (is_blank remaining) then
-       cells :=
-         Quill.Cell.text ?id:text_id ?attrs:text_attrs remaining :: !cells);
+       cells := Quill.Cell.text remaining :: !cells);
   Quill.Doc.of_cells (List.rev !cells)
 
 (* ───── Rendering ───── *)

@@ -1,4 +1,3 @@
-<!-- quill:cell id="c_21swpr9nmlzh" -->
 # Hello Quill
 
 A sample notebook to test the TUI.
@@ -10,7 +9,6 @@ let greeting = "Hello from Quill!"
 let () = print_endline greeting
 ```
 
-<!-- quill:cell id="c_vwh224nbgzms" -->
 Some markdown text between cells. Try pressing **e** to edit the code above,
 then **Escape** to exit, or **Ctrl-Enter** to run.
 
@@ -35,7 +33,6 @@ let () =
   Printf.printf "fib(10) = %d\n" (fib 10)
 ```
 
-<!-- quill:cell id="c_m4thd3m0t3xt" -->
 ## Math Equations
 
 Text cells support LaTeX math. Inline math uses single dollars: the quadratic formula is $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$.

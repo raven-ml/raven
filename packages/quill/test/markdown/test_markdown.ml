@@ -161,6 +161,7 @@ let fragments =
   let txt md = (md, Txt md) in
   [
     txt "Some prose.";
+    txt "<!-- quill:cell id=\"t_stale\" -->\nText after a stale id.";
     ("```ocaml\nlet x = 1\n```", Code ("ocaml", "let x = 1"));
     ("```bash\nls\n```", Code ("bash", "ls"));
     ("```\nplain\n```", Code ("", "plain"));
@@ -460,15 +461,12 @@ let attrs_tests =
             is_false ~msg:"not collapsed" attrs.collapsed;
             is_false ~msg:"not hide_source" attrs.hide_source
         | _ -> fail "expected Code cell");
-    test "collapsed text cell" (fun () ->
-        let md =
-          "<!-- quill:cell id=\"t_1\" collapsed -->\n# Hidden section\n"
-        in
+    test "an id comment before text is text" (fun () ->
+        let comment = "<!-- quill:cell id=\"t_1\" collapsed -->" in
+        let md = comment ^ "\n# Hidden section\n" in
         let doc = Quill_markdown.of_string md in
-        match Doc.nth 0 doc with
-        | Some (Cell.Text { attrs; _ }) ->
-            is_true ~msg:"collapsed" attrs.collapsed
-        | _ -> fail "expected Text cell");
+        equal (list cell) [ Txt (comment ^ "\n# Hidden section") ] (cells doc);
+        equal text md (Quill_markdown.to_string doc));
     test "roundtrip collapsed" (fun () ->
         let a = { Cell.collapsed = true; hide_source = false } in
         let c = Cell.code ~id:"c_1" ~attrs:a "let x = 1" in
