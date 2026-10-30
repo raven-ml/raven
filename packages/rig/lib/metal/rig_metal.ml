@@ -655,3 +655,24 @@ let gpu i : t Rig_edge.opener =
     driver = (module Driver);
     make = (fun ~word -> open_ ~word i);
   }
+
+(* For rig's tests *)
+
+external pipelines : unit -> int = "caml_rig_metal_pipelines"
+external buffers : unit -> int = "caml_rig_metal_buffers"
+
+module Ring = struct
+  type t
+
+  external make : int -> t = "caml_rig_metal_ring_make"
+  external commit : t -> last:bool -> int = "caml_rig_metal_ring_commit"
+
+  external complete : t -> int -> failed:bool -> unit
+    = "caml_rig_metal_ring_complete"
+
+  external word : t -> int = "caml_rig_metal_ring_word"
+  external times : t -> int -> int * int = "caml_rig_metal_ring_times"
+  external failure : t -> string option = "caml_rig_metal_ring_failure"
+  external sleep : t -> string option = "caml_rig_metal_ring_sleep"
+  external stop : t -> bool = "caml_rig_metal_ring_stop"
+end

@@ -102,13 +102,15 @@ module Ring = struct
     if List.mem k m.completed then ((10 * k) + 1, (10 * k) + 2) else (0, 0)
 end
 
+module R = Rig_metal.Ring
+
 let ring_invariant (m : Ring.t) r =
-  equal int ~msg:"word" m.word (S.word r);
-  equal (option string) ~msg:"failure" m.failure (S.failure r);
+  equal int ~msg:"word" m.word (R.word r);
+  equal (option string) ~msg:"failure" m.failure (R.failure r);
   for k = 0 to m.commits - 1 do
     equal (pair int int)
       ~msg:(strf "times of commit %d" k)
-      (Ring.times m k) (S.times r k)
+      (Ring.times m k) (R.times r k)
   done
 
 let ring = abstract "r" ~invariant:ring_invariant
@@ -117,21 +119,21 @@ let open_ (m : Ring.t) = not m.over
 
 let ring_commands =
   [
-    command "ring" (Gen.int_range 1 6 @-> makes ring) Ring.make S.ring;
+    command "ring" (Gen.int_range 1 6 @-> makes ring) Ring.make R.make;
     command "commit"
       ~pre:(fun (m : Ring.t) _ -> open_ m && List.length m.taken < m.n)
       (ring ^-> Gen.bool @-> returns int)
       (fun m last -> Ring.commit m ~last)
-      (fun r last -> S.commit r ~last);
+      (fun r last -> R.commit r ~last);
     command "complete"
       (ring ^-> slot ^-> Gen.bool @-> returns unit)
       (fun m i failed -> Ring.complete m i ~failed)
-      (fun r i failed -> S.complete r i ~failed);
+      (fun r i failed -> R.complete r i ~failed);
     command "sleep" ~pre:open_
       (ring ^-> returns (option string))
       (fun (m : Ring.t) -> m.failure)
-      S.sleep;
-    command "stop" ~pre:open_ (ring ^-> returns bool) Ring.stop S.stop;
+      R.sleep;
+    command "stop" ~pre:open_ (ring ^-> returns bool) Ring.stop R.stop;
   ]
 
 let ring_tests =

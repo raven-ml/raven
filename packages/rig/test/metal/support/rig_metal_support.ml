@@ -30,22 +30,6 @@ include Rig_gpu_support.Make (struct
   let open_ ~word = (Rig_metal.gpu 0).make ~word
 end)
 
-(* A device's ring, by hand *)
-
-type ring
-
-external ring : int -> ring = "rig_metal_test_ring"
-external commit : ring -> last:bool -> int = "rig_metal_test_commit"
-
-external complete : ring -> int -> failed:bool -> unit
-  = "rig_metal_test_complete"
-
-external word : ring -> int = "rig_metal_test_word"
-external times : ring -> int -> int * int = "rig_metal_test_times"
-external failure : ring -> string option = "rig_metal_test_failure"
-external sleep : ring -> string option = "rig_metal_test_sleep"
-external stop : ring -> bool = "rig_metal_test_stop"
-
 (* Fills *)
 
 type arg =
@@ -123,8 +107,6 @@ let fixture ~dir f =
 external weak : nativeint -> nativeint = "rig_metal_test_weak"
 external alive : nativeint -> bool = "rig_metal_test_alive"
 external uptime : unit -> int = "rig_metal_test_uptime"
-external buffers : unit -> int = "rig_metal_test_buffers"
-external pipelines : unit -> int = "rig_metal_test_pipelines"
 
 (* Conformance *)
 

@@ -398,3 +398,54 @@ val capability : t -> Rig_metal_abi.t
        feature set tables}: GPU families, minimum constant buffer offset
       alignment, the 4 KB of inlined buffer contents [setBytes] takes, and
       buffer contents limited only by the buffer's length. *)
+
+(**/**)
+
+(* For rig's tests. *)
+
+(* [pipelines ()] is the number of pipelines that the entries of the
+   process's devices hold. *)
+val pipelines : unit -> int
+
+(* [buffers ()] is the number of buffers that the regions of the process's
+   devices hold, their allocations and mappings. *)
+val buffers : unit -> int
+
+(* A device's ring of command buffers, driven by hand without Metal: a test
+   plays the submitter, which commits command buffers, and Metal's handler,
+   which completes them in any order. Commit [k] (from [0]) takes the value
+   after the last one taken when it ends a submission, [0] otherwise, and
+   completes with the times [10k + 1] and [10k + 2]. *)
+module Ring : sig
+  type t
+
+  (* [make n] is a ring of [n] slots, [1 <= n <= 8], whose word reads [0]. *)
+  val make : int -> t
+
+  (* [commit r ~last] takes a slot of [r] and commits its command buffer,
+     which ends a submission iff [last]. It is the slot's index. The ring
+     has a free slot. *)
+  val commit : t -> last:bool -> int
+
+  (* [complete r i ~failed] completes the command buffer of slot [i], which
+     failed with the message ["command buffer k failed"] iff [failed]. *)
+  val complete : t -> int -> failed:bool -> unit
+
+  (* [word r] is the value in [r]'s word. *)
+  val word : t -> int
+
+  (* [times r k] is the start and end times written for commit [k],
+     [(0, 0)] until written. *)
+  val times : t -> int -> int * int
+
+  (* [failure r] is the first failure the ring recorded. *)
+  val failure : t -> string option
+
+  (* [sleep r] is what the ring's sleep answers when the word changes at
+     once. *)
+  val sleep : t -> string option
+
+  (* [stop r] is [true] after writing the last value taken into the word,
+     iff no slot is taken. *)
+  val stop : t -> bool
+end

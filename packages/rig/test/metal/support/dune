@@ -1,18 +1,28 @@
-; What the Metal suite and bench share: the GPU through rig, a device's ring
-; driven by hand, and fills over Metal with probes of its objects. The fills
-; are Objective-C on macOS, as the driver's stubs are.
+; What the Metal suite and bench share: the GPU through rig, and fills over
+; Metal with probes of its objects. The fills are Objective-C on macOS.
 
 (library
  (name rig_metal_support)
  (libraries rig rig_edge rig_gpu_support rig_metal rig_metal_abi)
  (foreign_stubs
   (language c)
-  (names rig_metal_support_ring)
-  (include_dirs ../../../lib/metal))
- (foreign_stubs
-  (language c)
   (names rig_metal_support_stubs)
-  (include_dirs ../../../lib/metal ../../../lib/edge)
   (flags
    (:standard
-    (:include ../../../lib/metal/objc_flags.sexp)))))
+    (:include objc_flags.sexp)))))
+
+(rule
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (with-stdout-to
+   objc_flags.sexp
+   (echo "(-x objective-c -fblocks)"))))
+
+(rule
+ (enabled_if
+  (<> %{system} macosx))
+ (action
+  (with-stdout-to
+   objc_flags.sexp
+   (echo "()"))))

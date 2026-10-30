@@ -1,5 +1,6 @@
-; The Mac's GPU, driven through Metal. The ring is plain C; the other stubs
-; are Objective-C over Metal on macOS, and plain C elsewhere.
+; The Mac's GPU, driven through Metal. The ring and the stubs that drive it
+; for rig's tests are plain C; the other stubs are Objective-C over Metal on
+; macOS, and plain C elsewhere.
 
 (library
  (name rig_metal)
@@ -7,7 +8,7 @@
  (libraries rig_edge rig_metal_abi)
  (foreign_stubs
   (language c)
-  (names rig_metal_ring))
+  (names rig_metal_ring rig_metal_test))
  (foreign_stubs
   (language c)
   (names rig_metal_queue rig_metal_stubs)

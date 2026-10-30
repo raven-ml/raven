@@ -543,6 +543,18 @@ value caml_rig_metal_stop(value v_d) {
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = rig_metal_split;
 
+/* The pipelines and the buffers the process's devices hold, for rig's
+   tests. */
+value caml_rig_metal_pipelines(value unit) {
+  (void)unit;
+  return Val_long((intnat)atomic_load(&rig_metal_pipelines));
+}
+
+value caml_rig_metal_buffers(value unit) {
+  (void)unit;
+  return Val_long((intnat)atomic_load(&rig_metal_buffers));
+}
+
 #else
 
 value caml_rig_metal_count(value unit) {
@@ -590,6 +602,17 @@ value caml_rig_metal_icb(value a, value b, value c, value d) {
 intnat caml_rig_metal_signaled(intnat a) { (void)a, no_metal(); }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = NULL;
+
+/* No device opens, so none holds a pipeline or a buffer. */
+value caml_rig_metal_pipelines(value unit) {
+  (void)unit;
+  return Val_long(0);
+}
+
+value caml_rig_metal_buffers(value unit) {
+  (void)unit;
+  return Val_long(0);
+}
 
 #endif
 

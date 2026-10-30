@@ -97,8 +97,6 @@ value rig_metal_test_failing_fill(value unit) {
 #import <Metal/Metal.h>
 #import <objc/runtime.h>
 
-#include "rig_metal_stubs.h"
-
 #define Object_val(v) ((id)(intptr_t)Nativeint_val(v))
 
 /* A dispatch of [pipeline] over [groups] threadgroups of [threads] threads,
@@ -252,16 +250,6 @@ value rig_metal_test_alive(value v_weak) {
   return Val_bool(alive);
 }
 
-value rig_metal_test_buffers(value unit) {
-  (void)unit;
-  return Val_long((intnat)atomic_load(&rig_metal_buffers));
-}
-
-value rig_metal_test_pipelines(value unit) {
-  (void)unit;
-  return Val_long((intnat)atomic_load(&rig_metal_pipelines));
-}
-
 /* The host clock of Metal's times, in nanoseconds. */
 value rig_metal_test_uptime(value unit) {
   (void)unit;
@@ -293,8 +281,6 @@ value rig_metal_test_resize(value a, value b, value c) {
 value rig_metal_test_weak(value a) { (void)a, no_metal(); }
 value rig_metal_test_alive(value a) { (void)a, no_metal(); }
 value rig_metal_test_uptime(value a) { (void)a, no_metal(); }
-value rig_metal_test_buffers(value a) { (void)a, no_metal(); }
-value rig_metal_test_pipelines(value a) { (void)a, no_metal(); }
 
 #endif
 

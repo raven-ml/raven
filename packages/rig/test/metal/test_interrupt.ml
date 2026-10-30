@@ -88,7 +88,7 @@ let pipelines = 32
    pipelines, the 33rd's included, whether the entry returned or raised. *)
 let test_entries () =
   walk @@ fun g n ->
-  let held = S.pipelines () in
+  let held = M.pipelines () in
   let args = alloc g args_bytes in
   let made = List.init pipelines (fun _ -> image g) and last = image g in
   let codes = List.map (fun i -> (found (M.entry i "step")).code) made in
@@ -99,7 +99,7 @@ let test_entries () =
   List.iteri (fun k p -> records g (what k) args p) codes;
   List.iter (M.unload g) (last :: made);
   equal ~msg:(strf "from allocation %d, pipelines held" n) int held
-    (S.pipelines ());
+    (M.pipelines ());
   M.free g args;
   reached
 
@@ -115,14 +115,14 @@ let test_regions () =
   let step = (found (M.entry i "step")).code in
   let made = List.init regions (fun _ -> alloc g args_bytes) in
   let last = ref None in
-  let held = S.buffers () in
+  let held = M.buffers () in
   let reached =
     Rig_support.interrupted n (fun () ->
         last := M.alloc g Rig_edge.Device args_bytes)
   in
   if Option.is_none !last then
     equal ~msg:(strf "from allocation %d, buffers held" n) int held
-      (S.buffers ());
+      (M.buffers ());
   let what k = strf "from allocation %d, region %d" n k in
   List.iteri (fun k r -> records g (what k) r step) made;
   Option.iter (fun r -> records g (what regions) r step) !last;
@@ -142,7 +142,7 @@ let reentry call () =
       let i = image g in
       let step = (found (M.entry i "step")).code in
       let args = alloc g args_bytes and other = alloc g args_bytes in
-      let held = S.buffers () in
+      let held = M.buffers () in
       let landing, landed =
         Rig_support.landing seen retaken (fun () -> M.free g other)
       in
@@ -152,7 +152,7 @@ let reentry call () =
       let what = strf "from allocation %d" n in
       let freed = Rig_support.answered what landed = Some false in
       let gone = if freed then 1 else 0 in
-      equal ~msg:(what ^ ", buffers held") int (held - gone) (S.buffers ());
+      equal ~msg:(what ^ ", buffers held") int (held - gone) (M.buffers ());
       if not freed then M.free g other;
       M.free g args;
       M.unload g i;
@@ -297,13 +297,13 @@ let unload_in_icb =
    device's pipelines are [fill]'s and, once made, [step]'s. *)
 let entry_in_entry =
   reentered
-    ~ready:(fun d -> (loaded d, S.pipelines ()))
+    ~ready:(fun d -> (loaded d, M.pipelines ()))
     ~during:(fun _ (i, _) -> ignore (Rig.Image.resolve i "fill"))
     ~refusal:"Rig.Image.resolve: "
     ~call:(fun _ (i, _) ->
       if Option.is_none (Rig.Image.resolve i "step") then
         fail "no function step")
-    ~did:(fun _ (_, before) -> S.pipelines () = before + 2)
+    ~did:(fun _ (_, before) -> M.pipelines () = before + 2)
     ~after:(fun _ (i, _) n ->
       equal ~msg:(strf "from allocation %d, the function" n) bool true
         (Option.is_some (Rig.Image.resolve i "step")))
