@@ -398,14 +398,20 @@ let systhreads () =
         match side.wait Sync with () -> lost + 1 | exception Failed _ -> lost)
       0 sets
   in
-  let previous = Sys.signal Sys.sigvtalrm yield in
-  ignore (Unix.setitimer Unix.ITIMER_VIRTUAL tick);
+  let rounds () = List.init 5 (fun _ -> round ()) in
+  (* Windows has neither the virtual timer nor its signal: there the
+     systhreads interleave at the runtime's own ticks. *)
   let lost =
-    Fun.protect
-      ~finally:(fun () ->
-        ignore (Unix.setitimer Unix.ITIMER_VIRTUAL still);
-        Sys.set_signal Sys.sigvtalrm previous)
-      (fun () -> List.init 5 (fun _ -> round ()))
+    if Sys.win32 then rounds ()
+    else begin
+      let previous = Sys.signal Sys.sigvtalrm yield in
+      ignore (Unix.setitimer Unix.ITIMER_VIRTUAL tick);
+      Fun.protect
+        ~finally:(fun () ->
+          ignore (Unix.setitimer Unix.ITIMER_VIRTUAL still);
+          Sys.set_signal Sys.sigvtalrm previous)
+        rounds
+    end
   in
   equal (list int) [ 0; 0; 0; 0; 0 ] lost
 
