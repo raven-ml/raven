@@ -1630,7 +1630,7 @@ let system_memory =
         "a take reads the memory a dead process left as left while its file \
          is open elsewhere, and a live process's as its own"
         test_left_while_swept;
-      stateful ~count:10 ~steps:4
+      stateful ~count:30 ~steps:4
         "a dead process's file goes once the resets of every function it \
          lists ran"
         dead_file_commands;
@@ -1813,6 +1813,8 @@ type dma_sys = {
   blocks : int list Atomic.t;  (** The blocks it took. *)
   kept : Window.t list Atomic.t;  (** Memory alloc_dma gave, unnamed. *)
   made : Window.t list Atomic.t;  (** Memory alloc_dma gave, named. *)
+  mutable spare : Window.t option;
+      (** A page of [made] that only pins twice and unpins once reach. *)
 }
 
 type dma_ref = { mutable dmas : int }
@@ -1865,7 +1867,7 @@ let release_dma s =
 let dma_t = abstract "f" ~release:release_dma
 let win_t = abstract "w"
 
-(* The first GPU of the tree no take holds. *)
+(* The first GPU of the tree no take holds, with its spare page. *)
 let take_dma () =
   let m, buses = Lazy.force dma_tree in
   let f =
@@ -1875,7 +1877,19 @@ let take_dma () =
     | Some f -> f
     | None -> failf "every one of the %d GPUs is taken" dma_steps
   in
-  { f; blocks = Atomic.make []; kept = Atomic.make []; made = Atomic.make [] }
+  let s =
+    {
+      f;
+      blocks = Atomic.make [];
+      kept = Atomic.make [];
+      made = Atomic.make [];
+      spare = None;
+    }
+  in
+  let w = alloc_block s in
+  push s.made w;
+  s.spare <- Some w;
+  s
 
 let pin_ref w =
   if w.freed then false
@@ -1889,10 +1903,30 @@ let pin_sys (s, w) =
   | Ok (Some _) -> true
   | Ok None | Error _ -> false
 
+let twice = "a page pinned twice, unpinned once"
+
 let unpin_ref w =
   if w.pins = 0 then invalid_arg "not pinned";
-  cover "a page pinned twice, unpinned once" (w.pins > 1);
+  cover twice (w.pins > 1);
   w.pins <- w.pins - 1
+
+(* The function's spare page pinned twice, then unpinned once, which leaves it
+   pinned once more: pins and unpins of a named page reach the unpin of a page
+   pinned twice in about one program in five, and this in nearly every one,
+   from either domain. Only these calls reach the spare page, and each unpins
+   after its own two pins, so whatever the other domain's calls do between
+   them, each acts as one pin. *)
+let pin_twice_ref _ =
+  cover twice true;
+  true
+
+let pin_twice_sys s =
+  let w = Option.get s.spare in
+  pin_sys (s, w)
+  && pin_sys (s, w)
+  &&
+  (Function.unpin s.f (Window.address w) (Window.length w);
+   true)
 
 let dma_commands =
   [
@@ -1917,6 +1951,9 @@ let dma_commands =
       (win_t ^-> returns unit)
       unpin_ref
       (fun (s, w) -> Function.unpin s.f (Window.address w) (Window.length w));
+    Windtrap.command "pin the spare page twice, unpin it once"
+      (dma_t ^-> returns bool)
+      pin_twice_ref pin_twice_sys;
     Windtrap.command "alloc_dma"
       (dma_t ^-> returns unit)
       (fun r -> r.dmas <- r.dmas + 1)
@@ -2090,7 +2127,7 @@ let dma_domains =
          test dma_law (fun () ->
              skip ~reason:"system memory for a function needs Linux" ()));
       (if on_linux then
-         stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:25
+         stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:100
            ~steps:release_steps release_commands
        else
          test release_law (fun () ->
