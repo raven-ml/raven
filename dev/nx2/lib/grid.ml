@@ -275,18 +275,24 @@ let union g g' =
             else None)
 
 (* Two grids are equal when every device holds the same window under both,
-   whatever the shape: the same tile of the same count along every cut axis. *)
+   whatever the shape: the same tile of the same count along every cut axis.
+   A [Grid] has at least two devices, so it never equals a [One], and grids
+   of one device, the common case, compare without allocating. *)
 let equal g g' =
-  let d = devices g and d' = devices g' in
-  let tiles g i = List.sort compare (tile_index g i) in
-  Array.length d = Array.length d'
-  && Array.for_all Fun.id
-       (Array.mapi
-          (fun i k ->
-            match Array.find_index (( = ) k) d' with
-            | Some i' -> tiles g i = tiles g' i'
-            | None -> false)
-          d)
+  match (g, g') with
+  | One k, One k' -> k = k'
+  | One _, Grid _ | Grid _, One _ -> false
+  | Grid _, Grid _ ->
+      let d = devices g and d' = devices g' in
+      let tiles g i = List.sort compare (tile_index g i) in
+      Array.length d = Array.length d'
+      && Array.for_all Fun.id
+           (Array.mapi
+              (fun i k ->
+                match Array.find_index (( = ) k) d' with
+                | Some i' -> tiles g i = tiles g' i'
+                | None -> false)
+              d)
 
 let pp pp_device ppf g =
   let list ppf ds =
