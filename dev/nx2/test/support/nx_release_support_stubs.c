@@ -14,6 +14,10 @@
 #include <string.h>
 #include <time.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
@@ -46,8 +50,21 @@ static int64_t clock_ns(clockid_t clock) {
   return (int64_t)t.tv_sec * 1000000000 + t.tv_nsec;
 }
 
+/* The calling thread's CPU time. Windows advances a thread's times every
+   15.6 ms, longer than any stretch the tests bound, and counts the cycles
+   it ran exactly: there the time is in cycles. */
+#if defined(_WIN32)
+static int64_t thread_cpu(void) {
+  ULONG64 cycles = 0;
+  QueryThreadCycleTime(GetCurrentThread(), &cycles);
+  return (int64_t)cycles;
+}
+#else
+static int64_t thread_cpu(void) { return clock_ns(CLOCK_THREAD_CPUTIME_ID); }
+#endif
+
 static void held_until_now(void) {
-  int64_t d = clock_ns(CLOCK_THREAD_CPUTIME_ID) - since;
+  int64_t d = thread_cpu() - since;
   if (d > longest) longest = d;
 }
 
@@ -67,7 +84,7 @@ static void leave(void) {
   leave_before();
   if (watching && !holding) {
     holding = 1;
-    since = clock_ns(CLOCK_THREAD_CPUTIME_ID);
+    since = thread_cpu();
   }
 }
 
@@ -89,7 +106,7 @@ value nx_release_support_start(value unit) {
   watching = 1;
   holding = 1;
   start = clock_ns(CLOCK_PROCESS_CPUTIME_ID);
-  since = clock_ns(CLOCK_THREAD_CPUTIME_ID);
+  since = thread_cpu();
   return Val_unit;
 }
 
@@ -175,10 +192,10 @@ value nx_release_support_copy(value unit) {
   if (from == NULL || to == NULL) caml_failwith("Nx_release_support.copy");
   int64_t least = INT64_MAX;
   for (int i = 0; i < 5; i++) {
-    int64_t t0 = clock_ns(CLOCK_THREAD_CPUTIME_ID);
+    int64_t t0 = thread_cpu();
     memcpy(to, from, COPY_BYTES);
     __asm__ volatile("" : : "r"(to) : "memory");
-    int64_t t = clock_ns(CLOCK_THREAD_CPUTIME_ID) - t0;
+    int64_t t = thread_cpu() - t0;
     if (t < least) least = t;
   }
   return Val_long(least);

@@ -52,7 +52,7 @@ let holds_within f =
       max_int (List.init runs Fun.id)
   in
   less int
-    ~msg:"the least of the runs' longest stretches held, in ns of CPU time"
+    ~msg:"the least of the runs' longest stretches held, in ticks of CPU time"
     ~than:(Nx_release_support.bound ()) least
 
 let done_ = function

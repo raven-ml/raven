@@ -9,19 +9,20 @@ val watch : (unit -> unit) -> (releases:int * held:int * cpu:int)
 (** [watch f] runs [f ()] on the calling thread. [releases] is the count of
     times the thread released the domain lock within it. [held] is the
     longest stretch for which it held the lock, from [f]'s start or a
-    reacquisition to the next release or [f]'s end, in nanoseconds of the
-    thread's CPU time. [cpu] is [f]'s, in nanoseconds of the process's CPU
-    time: the work of all its threads. A loaded host's scheduler lengthens
-    neither. *)
+    reacquisition to the next release or [f]'s end, in ticks of the
+    thread's CPU time: nanoseconds, or on Windows, whose thread times
+    advance every 15.6 ms, the cycles the thread ran. [cpu] is [f]'s, in
+    nanoseconds of the process's CPU time: the work of all its threads. A
+    loaded host's scheduler lengthens neither. *)
 
 val copy : unit -> int
 (** [copy ()] is the least of five copies of 1 MiB by memcpy on the calling
-    thread, in nanoseconds of its CPU time: what nx's lock bound allows a
+    thread, in ticks of its CPU time as [held]: what nx's lock bound allows a
     held stretch, on an unloaded core. *)
 
 val bound : unit -> int
 (** [bound ()] is what a held stretch may take on a loaded host, in
-    nanoseconds of CPU time: four times {!copy}, as an efficiency core runs
+    ticks of CPU time as [held]: four times {!copy}, as an efficiency core runs
     it up to about three times as long as the performance core [copy] may
     have run on. *)
 

@@ -228,7 +228,7 @@ let test_ocaml_door_holds () =
     done;
     equal ~msg answer A.Done !e;
     less int
-      ~msg:(msg ^ ": the longest stretch held, in ns of CPU time")
+      ~msg:(msg ^ ": the longest stretch held, in ticks of CPU time")
       ~than:(Nx_release_support.bound ()) !least;
     released (Array.append written read)
   in
