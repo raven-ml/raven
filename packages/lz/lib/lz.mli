@@ -6,34 +6,37 @@
     its {e decoded bytes}, in one format. A gzip stream holds one or more
     {e members}, and a Zstandard or LZ4 stream one or more {e frames},
     which below are members too. An LZ4 or Snappy {e block} is a stream of
-    its own. A {e match} copies decoded bytes out of its member's
-    {e window}, the decoded bytes a match may reach, whose length is the
-    {e window size}. An encoder's {e level} sets how long it searches for
-    matches.
+    its own. A {e match} encodes decoded bytes as a copy of earlier decoded
+    bytes of its member, at most the {e window size} back, and those
+    earlier bytes are the member's {e window}. An encoder's {e level} sets
+    how long it searches for matches.
 
     A {e whole-buffer} call is given all of its input
     ({!section-whole}). A format's [decode src dst] decodes the stream at
     the start of [src] into the {e destination} [dst], which is also the
-    decode's window. The program sizes [dst], usually from the container
-    that holds the stream, such as a file's header. [encode src dst] writes
-    the stream of [src] into [dst] and returns its length, or [None] when
-    it does not fit, and [bound n] is a destination size large enough for
-    the stream of any [n] bytes.
+    decode's window. It returns [Ok] of the bytes it read and wrote, or
+    [Error] of where and why it refused the input ({!section-errors}). The
+    program sizes [dst], usually from a header of the container that holds
+    the stream. [encode src dst] writes the stream of [src] into [dst] and
+    returns its length, or [None] when it does not fit, and [bound n] is a
+    destination size large enough for the stream of any [n] bytes.
 
     A {e decoder} ({!Decoder.t}) or an {e encoder} ({!Encoder.t}) keeps one
     stream's state across calls, for input that arrives in pieces or whose
     size is not known ({!section-steps}). Each call is a {e step}. A step
     reads its input [src] from the start, {e takes} a prefix of it, and
-    applies the program's [f] once to its {e run}, the bytes it produced,
-    which may be empty. It returns [More k] when it took [k] bytes and the
-    stream goes on, and [Done k] when the stream ended after [k] bytes. A
-    step with [~last:true] says that the input ends with [src].
+    applies the program's [f] to its {e run}, the bytes it produced, which
+    may be empty ({!Decoder.step}, {!Encoder.step}). It returns [More k]
+    when it took [k] bytes and the stream goes on, and [Done k] when the
+    stream ended after [k] bytes. A step with [~last:true] says that the
+    input ends with [src].
 
     The run is lent from the decoder's or encoder's own buffer, and is
     valid until [f] returns. A later step writes over it, so [f] must copy
     or write out the bytes the program keeps. A decoder's run is part of
     its window, which later output copies from, so [f] must not write it.
-    A write there changes later output, and only a checksum detects it.
+    A write there changes later output, and only a checksum detects it. An
+    encoder never reads its run back, and [f] may write it.
 
     The life cycle of a decoder or an encoder:
     + make it with its format's [decoder] or [encoder];
@@ -45,14 +48,9 @@
     + after [Done], step it on a new stream, or drop it.
 
     A decoder that returns [Error] is {e dead}, and so is a decoder or an
-    encoder whose step raised, from [f] or with [Out_of_memory]. A program
-    that abandons a stream midway makes a new decoder or encoder for the
-    next.
-
-    A whole-buffer call or a step releases the runtime lock while it works
-    on an input of 16 KiB or more, so that other domains and threads run,
-    and holds it under 4 KiB. Between the two, the threshold depends on the
-    format and on whether the call decodes or encodes.
+    encoder whose step raised, from [f] or with [Out_of_memory] when it
+    could not allocate. A program that abandons a stream midway makes a
+    new decoder or encoder for the next.
 
     Unless a function's doc says otherwise:
     {ul
@@ -68,9 +66,8 @@
        read or write a buffer a call writes, or write one a call reads.}}
 
     This decodes a Zstandard page whose header states its decoded size
-    [n]. A stream that decodes to more than [n] bytes is [Too_long], and a
-    [produced] below [n] means the stream held less than the header
-    said.
+    [n]. A stream that decodes to more than [n] bytes is an error, and a
+    [produced] below [n] means the stream held less than the header said.
     {[
       let page src n =
         let dst = Bigarray.(Array1.create int8_unsigned c_layout n) in
@@ -80,7 +77,17 @@
         | Error e -> Error (`Lz e)
     ]} *)
 
-(** {1:buffers Buffers} *)
+(** {1:buffers Buffers and the domain lock}
+
+    A thread runs OCaml code while it holds its domain's lock, the
+    {e domain lock}. Since the collector never moves a buffer's bytes, a
+    whole-buffer call or a step releases the domain lock while it works on
+    an input of 16 KiB or more, and holds it under 4 KiB. Between the two,
+    the threshold depends on the format and on whether the call decodes or
+    encodes. The input is [src], and for a step the bytes of [src] it may
+    take ({!section-steps}). The release lets the domain's other threads
+    run, and lets a stop-the-world collection proceed without waiting for
+    the call. Other domains run whether or not the call holds the lock. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -114,9 +121,9 @@ type why =
           whole-buffer decode returns it. *)
   | Unsupported of string
       (** The stream is well formed and uses a feature that lz
-          {e declines}: a dictionary, LZ4's legacy frame, or a Zstandard
-          window size above a decoder's bound. It is at the field that names
-          the feature. *)
+          {e declines}: a dictionary, LZ4's legacy frame ({!Lz4.Frame}), or
+          a Zstandard window size above a decoder's bound. It is at the
+          field that names the feature. *)
 (** The type for the reasons a decode refuses an input. A message comes
     from a fixed set per format, which is zlib's messages and
     ["preset dictionary"] for deflate, zlib and gzip, RFC 8878's field
@@ -172,13 +179,13 @@ type progress = { consumed : int; produced : int }
     reaches the decoder's {e run capacity}, or the encoder takes its
     {e quota}, the most input one step takes ({!Decoder}, {!Encoder}).
     The next step begins at the first byte not taken. A step applies [f]
-    with the runtime lock held.
+    with the domain lock held.
 
     A decoder or encoder is {e busy} while a step on it runs, [f]
-    included. A step on a busy or dead decoder or encoder raises
-    [Invalid_argument] and leaves it as it was. If [f] raises, this
-    exception included, the exception propagates and the decoder or
-    encoder is dead. *)
+    included. A step on a busy or dead decoder or encoder, from any domain
+    or thread, raises [Invalid_argument] and leaves it as it was. If [f]
+    raises, this exception included, the exception propagates and the
+    decoder or encoder is dead. *)
 
 type step =
   | Done of int  (** The stream ended after this many bytes of the input. *)
@@ -187,17 +194,20 @@ type step =
 
 (** Decoders.
 
-    A decoder holds its format's tables and one bigarray, its {e buffer},
-    which holds its window and its run. A deflate, zlib or gzip decoder
-    allocates its buffer at its first step, before it reads a byte, with
-    room for a 32 KiB window and a run capacity of 256 KiB. A Zstandard
-    decoder allocates its buffer when a frame's header arrives, before any
-    output, with room for the frame's window size, or its
-    Frame_Content_Size when smaller, and a run capacity of 256 KiB. At its
-    first frame it also allocates about 256 KiB outside the OCaml heap. It
-    replaces its buffer when a frame needs a larger one. A view of a run
-    kept after [f] returns may read bytes a later step wrote. Each member
-    begins with an empty window.
+    A decoder holds its format's tables, about 12 KiB for deflate's and
+    24 KiB for Zstandard's, outside the OCaml heap from when it is made,
+    and one bigarray, its {e buffer}, which holds its window and its run.
+    A deflate, zlib or gzip decoder allocates its buffer at its first
+    step, before it reads a byte, with room for a 32 KiB window and a run
+    capacity of 256 KiB. A Zstandard decoder allocates its buffer when a
+    frame's header arrives, before any output, with room for the frame's
+    window size, or the content size the frame declares when smaller, and
+    a run capacity of 256 KiB. At its first frame it also allocates about
+    256 KiB outside the OCaml heap. It replaces its buffer when a frame
+    needs a larger one. A view of a run kept after [f] returns keeps its
+    buffer alive, and may read bytes a later step wrote. Each member
+    begins with an empty window, and a run may hold the end of one member
+    and the start of the next.
 
     A deflate or zlib decoder returns [Done k] once its stream ends, with
     or without [~last], and has not taken the bytes of [src] from [k] on.
@@ -211,10 +221,12 @@ type step =
     returns [Truncated] only then. Every error a step returns is the one
     [decode] returns, into a large enough destination, on the input taken
     since the decoder was made or last returned [Done], at the same
-    offset, except a Zstandard window size above the decoder's [?window],
-    which [decode] accepts. The output that a step returning [Error]
-    decoded is not handed to [f], so how much output precedes an error
-    depends on how the input was cut.
+    offset, except a Zstandard window size above the bound that
+    {!Zstd.decoder} sets, which [decode] accepts. How much output [f]
+    receives before an error depends on how the input was cut
+    ({!Decoder.step}). Until a step returns [Done], the bytes [f] has
+    received are unverified, since a later step may find that a checksum
+    or declared size covering them does not match.
 
     lz bounds a decoder's memory and leaves its output unbounded. A
     program that decodes a stream it does not trust must count the bytes
@@ -225,27 +237,32 @@ module Decoder : sig
 
   val step :
     t -> last:bool -> bigbytes -> (bigbytes -> unit) -> (step, error) result
-  (** [step d ~last src f] decodes a prefix of [src], applies [f] once to
-      its run, and returns how much of [src] it took. [Ok] means every byte
-      the step decoded has been handed to [f]. On [Error], [f] is not
-      applied. *)
+  (** [step d ~last src f] decodes a prefix of [src] and returns how much
+      of [src] it took. On [Ok] it has applied [f] once to its run, every
+      byte the step decoded. On [Error] it has not applied [f], and the
+      bytes the step decoded are lost. *)
 end
 
 (** Encoders.
 
-    An encoder holds its run's buffer, which it allocates when made, and
-    its match finder and a window of its input, which it allocates at its
-    first step. Its quota is 64 KiB for deflate, zlib and gzip, and
-    128 KiB for Zstandard. A step's run always has room for the output the
-    step owes, and a step's cost is linear in the input it takes. An
-    encoder may keep input it has taken until more arrives or a step has
-    [~last:true], so a run may be shorter than its input's encoding, or
-    empty.
+    An encoder holds its run's buffer, 384 KiB for deflate, zlib and gzip
+    and about 256 KiB for Zstandard, which it allocates when made. Outside
+    the OCaml heap it holds its match finder and a window of its input,
+    which it allocates by its first step that writes output. They take up
+    to about 1.2 MiB for deflate, zlib and gzip, and for Zstandard about
+    2.3 MiB at level 1, 6 MiB at level 3 and 50 MiB at level 12. Its quota
+    is 64 KiB for deflate, zlib and gzip, and 128 KiB for Zstandard. A
+    step's run always has room for the output the step owes.
 
-    A step with [~last:true] that takes all of [src], an empty [src]
-    included, writes the stream's end and returns [Done], and only such a
-    step returns [Done]. A fresh encoder so stepped on no input writes the
-    format's empty stream. *)
+    An encoder may keep input it has taken until more arrives or a step
+    has [~last:true], at most about 300 KiB for deflate, zlib and gzip and
+    128 KiB for Zstandard. So a run may be shorter than its input's
+    encoding, or empty, and a step's work grows with its input and with
+    the kept input it writes out. A step with [~last:true] that takes all
+    of [src], an empty [src] included, writes the kept input and the
+    stream's end and returns [Done], and only such a step returns [Done].
+    On an empty [src] it holds the domain lock while it writes. A fresh
+    encoder so stepped on no input writes the format's empty stream. *)
 module Encoder : sig
   type t
   (** The type for encoders. *)
@@ -282,8 +299,9 @@ end
        distance codes, at HLIT or HDIST;}
     {- code lengths that over-subscribe the code length, literal/length or
        distance code or leave it incomplete, at the length that proves it,
-       except a literal/length or distance code of one 1-bit code, and an
-       empty distance or code length code;}
+       except a literal/length or distance code that holds a single code
+       of length 1, and a distance or code length code whose lengths are
+       all 0;}
     {- a repeat of code lengths with no length before it or past their
        count, at the repeat;}
     {- an end-of-block symbol with no code, at the length that leaves it
@@ -291,9 +309,10 @@ end
     {- a code that names no symbol, a literal/length symbol 286 or 287, or
        a distance symbol 30 or 31;}
     {- a distance before the stream's first byte, at its code.}}
-    An empty code length code reads every length as 0. Output past [dst]'s
-    end is [Too_long] at the literal/length code that asks for it, or at
-    a stored block's first byte that has no room. *)
+    A code length code whose lengths are all 0 reads every length as 0.
+    Output past [dst]'s end is [Too_long] at the literal/length code that
+    asks for it, or in a stored block at the first stored byte that has no
+    room. *)
 module Deflate : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes the raw deflate stream at [src]'s start
@@ -391,8 +410,9 @@ end
     which produce nothing. Levels are 1 to 12, default 3. The encoder
     always writes the frame's Content_Checksum, an XXH64. It writes
     Frame_Content_Size only in a frame from [encode], so a frame from an
-    encoder differs from [encode]'s only in its header. The encoder's
-    window sizes are at most 4 MiB.
+    encoder differs from [encode]'s only in its header. Every frame lz
+    writes, from [encode] or an encoder, declares a window size of at most
+    4 MiB.
 
     A decode refuses:
     {ul
@@ -441,10 +461,12 @@ module Zstd : sig
   val decoder : ?window:int -> unit -> Decoder.t
   (** [decoder ~window ()] is a new decoder of Zstandard streams whose
       frames' window sizes are at most [window] bytes (default 128 MiB). A
-      frame whose window size passes [window] is [Unsupported] at its
-      Window_Descriptor, or at its Frame_Content_Size for a single-segment
-      frame, whose window size is its content size. A program that steps
-      Zstandard streams it does not trust sets [window].
+      frame whose Window_Descriptor declares more than [window] is
+      [Unsupported] there, even when its Frame_Content_Size is smaller. A
+      frame without a Window_Descriptor declares its Frame_Content_Size as
+      its window size, and is [Unsupported] at that field when it passes
+      [window]. A program that steps Zstandard streams it does not trust
+      sets [window].
 
       Raises [Invalid_argument] if [window] is below 1 KiB. *)
 
@@ -456,7 +478,9 @@ end
 (** LZ4 blocks and frames, with whole-buffer calls only. *)
 module Lz4 : sig
   (** LZ4 blocks without a size prefix, whose decoded size the program
-      stores beside the block.
+      stores beside the block. A block is a series of sequences, each a
+      one-byte {e token}, literals and a match, and its last sequence holds
+      literals only.
 
       A decode refuses:
       {ul
@@ -467,7 +491,8 @@ module Lz4 : sig
          block's end), at their token.}}
       A block whose input ends inside a sequence, or after a match, is
       [Truncated]. Output past [dst] is [Too_long] at the token of the
-      literals, or the offset field of the match, that asks for it. *)
+      sequence whose literals ask for it, or at the offset field of the
+      match that does. *)
   module Block : sig
     val decode : bigbytes -> bigbytes -> (progress, error) result
     (** [decode src dst] decodes the block at [src]'s start
@@ -492,10 +517,11 @@ module Lz4 : sig
 
       A decode refuses:
       {ul
-      {- a magic number of neither a frame, a skippable frame nor the
-         legacy format, at the first byte where no frame begins;}
-      {- a version other than 01, a set reserved bit, or a block size code
-         below 4;}
+      {- a magic number of neither a frame, a skippable frame nor a
+         {e legacy frame}, the format's older form with magic number
+         0x184C2102, at the first byte where no frame begins;}
+      {- a version other than 01, a set reserved bit, or a Block Maximum
+         Size value below 4;}
       {- a header checksum that does not match;}
       {- a block size above the declared maximum;}
       {- a block checksum, content checksum or content size that does not
@@ -506,8 +532,8 @@ module Lz4 : sig
          of its last sequence;}
       {- {!Block}'s refusals, where a linked block's start is its
          frame's.}}
-      A frame naming a dictionary is [Unsupported] at its Dict_ID, and the
-      legacy format at its magic number. *)
+      A frame naming a dictionary is [Unsupported] at its Dict_ID, and a
+      legacy frame at its magic number. *)
   module Frame : sig
     val decode : bigbytes -> bigbytes -> (progress, error) result
     (** [decode src dst] decodes every frame of [src]
@@ -526,9 +552,11 @@ module Lz4 : sig
 end
 
 (** Snappy blocks, whose preamble states the length of their decoded
-    bytes, at most 2{^32} - 1. A decode compares the preamble with [dst]'s
-    size before any output, and is [Too_long] at the preamble's first byte
-    when [dst] is smaller. It compares it again with the output.
+    bytes, at most 2{^32} - 1. After the preamble come {e elements}, each a
+    literal or a copy, whose first byte is its {e tag}. A decode compares
+    the preamble with [dst]'s size before any output, and is [Too_long] at
+    the preamble's first byte when [dst] is smaller. It compares it again
+    with the output.
 
     A decode refuses:
     {ul
@@ -565,7 +593,7 @@ end
 (** CRC-32 as gzip, PNG and ZIP compute it (RFC 1952, section 8), as an
     integer in \[0, 2{^32}). [~crc] continues a running value:
     [string (a ^ b)] is [string ~crc:(string a) b]. {!Crc32.bigbytes}
-    releases the runtime lock on 1 MiB or more, and {!Crc32.string} holds
+    releases the domain lock on 1 MiB or more, and {!Crc32.string} holds
     it. *)
 module Crc32 : sig
   val bigbytes : ?crc:int -> bigbytes -> int

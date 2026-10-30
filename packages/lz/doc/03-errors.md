@@ -209,5 +209,5 @@ Both decoders refuse the header at its Window_Descriptor, byte 5, and
 allocate nothing for it. The whole-buffer decode reads past the header,
 since its window is the destination, and finds the input cut short. A
 program that steps through Zstandard streams it does not trust sets
-`~window` to the most memory it will give one decoder. The frames lz's
-own encoder writes declare at most 4 MiB.
+`~window` to the most memory it will give one decoder. The frames lz
+writes, from `Lz.Zstd.encode` or an encoder, declare at most 4 MiB.

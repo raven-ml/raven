@@ -30,8 +30,9 @@
        writes slices of at most [w]'s slice length on [w]. It writes
        [Bytesrw.Bytes.Slice.eod] on [w] after the stream's end if and only
        if [~eod:true].}
-    {- Applying a filter raises [Invalid_argument] if [level] or [window] is
-       outside the range its format's [encoder] or [decoder] accepts.}}
+    {- A filter applied to a reader or a writer raises
+       [Invalid_argument] if [level] or [window] is outside the range its
+       format's [encoder] or [decoder] accepts.}}
 
     This reads the decoded bytes of a [.jsonl.zst] shard, as a reader that
     a JSON parser takes. The filter decodes each frame as the parser reads,

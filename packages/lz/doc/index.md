@@ -4,8 +4,8 @@ lz compresses and decompresses bytes from OCaml: deflate with its zlib and
 gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its formats are
 written in C inside the library, so a program needs no system zlib or
 libzstd. Its calls read and write byte bigarrays, whose bytes the
-collector never moves. A long call therefore releases the runtime lock,
-and the program's other domains and threads run during it.
+collector never moves. A long call therefore releases the domain lock,
+so that the domain's other threads run during it.
 
 A program uses lz in one of two ways. A *whole-buffer* call is given all
 of its input and writes into a *destination* the program allocated.

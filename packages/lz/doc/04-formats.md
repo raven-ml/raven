@@ -67,5 +67,5 @@ whole 3b98f369, in pieces 3b98f369
 ```
 
 `Lz.Crc32.bigbytes` computes the same over a bigarray, and releases the
-runtime lock on 1 MiB or more (the `Crc32` module in
+domain lock on 1 MiB or more (the `Crc32` module in
 [`lz.mli`](../lib/lz.mli)).

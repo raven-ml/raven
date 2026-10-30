@@ -141,7 +141,7 @@ let decode_channel d ic f =
   let rec go start len last =
     match Lz.Decoder.step d ~last (Bigarray.Array1.sub buf start len) f with
     | Error e -> Error e
-    | Ok (Done k) -> Ok (start + k)
+    | Ok (Done k) -> Ok (Bigarray.Array1.sub buf (start + k) (len - k))
     | Ok (More k) when k < len || last -> go (start + k) (len - k) last
     | Ok (More _) ->
         let n = In_channel.input_bigarray ic buf 0 (dim buf) in
@@ -153,7 +153,10 @@ let decode_channel d ic f =
 `decode_channel` is correct for every format. When a step takes less than
 it was given, or the input has ended, it steps again on the rest. When a
 step has taken every byte, it reads more. At the channel's end it steps
-with `~last:true` until `Done`.
+with `~last:true` until `Done`. A gzip or Zstandard decoder reads to the
+channel's end. A deflate or zlib decoder returns `Done` at its stream's
+end, and `decode_channel` then returns the bytes it read past the stream,
+which come before the rest of the channel.
 
 ## An encoder writing to a channel
 
@@ -161,8 +164,9 @@ Each encoder step takes at most a quota of input, 64 KiB for deflate,
 zlib and gzip and 128 KiB for Zstandard, and its run always has room for
 the output the step owes. The encoder may keep input until more arrives,
 so a run may be empty. A step with `~last:true` that takes all of its
-input writes the stream's end and returns `Done`. `encode_channel` reads
-from one channel and writes the stream to another:
+input writes the input kept and the stream's end, and returns `Done`.
+`encode_channel` reads from one channel and writes the stream to
+another:
 
 ```ocaml
 let encode_channel e ic oc =

@@ -200,13 +200,15 @@ level against the reference implementations.
 
 ## Domains
 
-A whole-buffer call on an input of 16 KiB or more releases the runtime
-lock while it works, so other domains run during it. Calls may run in
-parallel from any domains. A program must not run two in parallel when
-one writes a buffer the other reads or writes, and must not touch a
-buffer a call writes, or write one a call reads, from another domain
-(the preamble of [`lz.mli`](../lib/lz.mli)). This program decodes four
-pages on four domains:
+Calls may run in parallel from any domains. A program must not run two
+in parallel when one writes a buffer the other reads or writes, and must
+not touch a buffer a call writes, or write one a call reads, from another
+domain (the preamble of [`lz.mli`](../lib/lz.mli)). A whole-buffer call
+on an input of 16 KiB or more also releases the domain lock while it
+works, so that its domain's other threads run and a stop-the-world
+collection need not wait for it (the Buffers and the domain lock section
+of [`lz.mli`](../lib/lz.mli)). This program decodes four pages on four
+domains:
 
 ```ocaml
 # let () =
