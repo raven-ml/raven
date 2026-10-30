@@ -226,6 +226,17 @@ let sizes =
 
 let ends = Gen.(map (fun b -> if b then Within else After) bool)
 
+(* [spread n sizes] adds [n / most_steps] bytes to each slice above 0, so
+   that a walk over [n] bytes takes at most [most_steps] slices that take
+   bytes, and drawn sizes stay distinct. Slices are unchanged on inputs
+   below 1000 bytes, two goldens in three; over the longest inputs, slices
+   of a few bytes took thousands of steps a case and outran the
+   sanitizers' time. *)
+let most_steps = 1000
+
+let spread n sizes =
+  List.map (fun s -> if s = 0 then 0 else s + (n / most_steps)) sizes
+
 (* [long fmt] is a stream in the format's wrapper (RFC 1950, RFC 1952)
    of 40,000 bytes of text in a stored block (RFC 1951, 3.2.4), then a
    block of fixed codes (3.2.6) of 1100 matches of 258 bytes at 32 KiB,
@@ -341,7 +352,8 @@ let case fmt =
       | `Append s -> Append s
       | `Then i -> Then others.(i)
     in
-    { golden; change; sizes; ends }
+    let c = { golden; change; sizes; ends } in
+    { c with sizes = spread (String.length (apply c)) sizes }
   in
   with_pp pp_case (map make (quad (goldens_gen fmt) change sizes ends))
 
@@ -473,7 +485,9 @@ let across_buffer fmt =
       with_pp
         (fun ppf (sizes, ends) ->
           pp_case ppf { golden = g; change = Same; sizes; ends })
-        (pair sizes ends))
+        (map
+           (fun (sizes, ends) -> (spread (String.length (data g)) sizes, ends))
+           (pair sizes ends)))
   in
   prop fmt.name gen (fun (sizes, ends) ->
       let input = data g in
@@ -535,7 +549,9 @@ let raising fmt =
           Format.fprintf ppf "%a, f raising at step %d" pp_case
             { golden = g; change = Same; sizes; ends = Within }
             r)
-        (triple (goldens_gen fmt) sizes nat))
+        (map
+           (fun (g, sizes, r) -> (g, spread (String.length (data g)) sizes, r))
+           (triple (goldens_gen fmt) sizes nat)))
   in
   prop fmt.name gen (fun (g, sizes, r) ->
       let input = data g in
@@ -577,7 +593,10 @@ let kept_runs fmt =
       with_pp
         (fun ppf (g, sizes, ends) ->
           pp_case ppf { golden = g; change = Same; sizes; ends })
-        (triple (goldens_gen fmt) sizes ends))
+        (map
+           (fun (g, sizes, ends) ->
+             (g, spread (String.length (data g)) sizes, ends))
+           (triple (goldens_gen fmt) sizes ends)))
   in
   prop fmt.name gen (fun (g, sizes, ends) ->
       let gone = Weak.create 1 in

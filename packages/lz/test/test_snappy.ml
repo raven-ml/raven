@@ -106,7 +106,9 @@ let elements =
           (1, int_range 257 5000);
         ]
     in
-    map (fun s -> Literal s) (string_of ~size:(constant n) char)
+    (* Bytes from a drawn seed: a literal's bytes change no law, and
+       drawing each byte as an element costs more than the decode. *)
+    map (fun seed -> Literal (build (Noise (seed, n)))) small_int
   in
   let copy produced =
     let* kind = of_list [ 1; 2; 4 ] in

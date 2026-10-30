@@ -7,7 +7,18 @@ let create n =
   Array1.fill b 0xa5;
   b
 
-let blit s b = String.iteri (fun i c -> Array1.unsafe_set b i (Char.code c)) s
+(* [blit_raw s b] copies [s] to the start of [b], [unblit_raw b d] the
+   start of [b] to [d], unchecked: [blit] and [to_string] check the
+   lengths. *)
+external blit_raw : string -> Lz.bigbytes -> unit = "lz_support_blit"
+[@@noalloc]
+
+external unblit_raw : Lz.bigbytes -> bytes -> unit = "lz_support_unblit"
+[@@noalloc]
+
+let blit s b =
+  if String.length s > Array1.dim b then invalid_arg "Lz_support.blit";
+  blit_raw s b
 
 let of_string s =
   let b = Array1.create int8_unsigned c_layout (String.length s) in
@@ -16,7 +27,10 @@ let of_string s =
 
 let to_string ?length b =
   let n = match length with Some n -> n | None -> Array1.dim b in
-  String.init n (fun i -> Char.unsafe_chr (Array1.get b i))
+  if n < 0 || n > Array1.dim b then invalid_arg "Lz_support.to_string";
+  let d = Bytes.create n in
+  unblit_raw b d;
+  Bytes.unsafe_to_string d
 
 let room ~offset n = Array1.sub (create (offset + n)) offset n
 
@@ -150,6 +164,13 @@ let rec build = function
       Bytes.blit_string (noise (seed + 1) 8) 0 b (distance + length) 8;
       Bytes.unsafe_to_string b
   | Concat rs -> String.concat "" (List.map build rs)
+
+let rec length = function
+  | Empty -> 0
+  | Byte _ -> 1
+  | Run (_, n) | Noise (_, n) | Corpus (_, n) -> n
+  | Match { distance; length; seed = _ } -> distance + length + 8
+  | Concat rs -> List.fold_left (fun n r -> n + length r) 0 rs
 
 let kind_name = function
   | Text -> "Text"

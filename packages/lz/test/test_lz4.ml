@@ -234,7 +234,11 @@ let output seqs =
    end-of-block rules. *)
 let sequences =
   let open Gen in
-  let lits n = string_of ~size:(constant n) char in
+  (* Literals from a drawn seed: their bytes change no law, and drawing
+     each byte as an element costs more than the decode. *)
+  let lits n =
+    map (fun seed -> Lz_support.(build (Noise (seed, n)))) small_int
+  in
   let one produced =
     let* n = frequency [ (6, int_range 0 14); (1, int_range 15 300) ] in
     let n = if produced = 0 then max n 1 else n in

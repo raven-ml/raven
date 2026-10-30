@@ -477,9 +477,34 @@ let encoded fmt ~level s =
   go (Lz_support.of_string s);
   Buffer.contents b
 
+(* [spread n k] adds [n / most_slices] bytes to a slice length [k], so that
+   a filter over [n] bytes takes at most [most_slices] slices, and drawn
+   lengths stay distinct. Slices are unchanged on inputs below 4 KiB, more
+   than half the drawn ones; over the longest, slices of a few bytes took
+   up to a million a case and outran the sanitizers' time. *)
+let most_slices = 4096
+let spread n k = k + (n / most_slices)
+
+(* The input's slice length, one byte drawn more often than [length] draws
+   it: [spread] keeps it only below 4 KiB. *)
+let cut_length =
+  Gen.(frequency [ (1, constant ~pp:Format.pp_print_int 1); (5, length) ])
+
 let round_trip fmt =
   let lo, hi = fmt.levels in
-  let gen = Gen.(quad Lz_support.recipe (int_range lo hi) length length) in
+  let pp ppf (recipe, level, cut, most) =
+    Format.fprintf ppf "%a, level %d, slices of %d, slice length %d"
+      Lz_support.pp_recipe recipe level cut most
+  in
+  let gen =
+    Gen.(
+      with_pp pp
+        (map
+           (fun (recipe, level, cut, most) ->
+             let n = Lz_support.length recipe in
+             (recipe, level, spread n cut, spread n most))
+           (quad Lz_support.recipe (int_range lo hi) cut_length length)))
+  in
   prop fmt.name gen (fun (recipe, level, cut, most) ->
       let s = Lz_support.build recipe in
       let stream = encoded fmt ~level s in

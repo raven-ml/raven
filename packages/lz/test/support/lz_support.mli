@@ -68,6 +68,9 @@ type recipe =
 val build : recipe -> string
 (** [build r] is the input [r] describes. *)
 
+val length : recipe -> int
+(** [length r] is the length of [build r], without building it. *)
+
 val pp_recipe : Format.formatter -> recipe -> unit
 
 val distances : int list

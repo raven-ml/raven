@@ -256,20 +256,39 @@ let bytes_of_seed seed n =
 let short_lengths = 300
 let alignments = 16
 
+(* Each view, and each prefix's reference value, is made once a case and
+   read by every run: the paths of a checksum share its reference, found
+   by its function. Made per run, they cost more than the runs. *)
 let every_length (seed, c) =
   let s = bytes_of_seed seed short_lengths in
-  let views = Array.init alignments (fun offset -> Lz_support.placed ~offset s) in
+  let views =
+    Array.init alignments (fun offset ->
+        let v = Lz_support.placed ~offset s in
+        Array.init (short_lengths + 1) (fun n -> Array1.sub v 0 n))
+  in
+  let made = ref [] in
+  let references expect c =
+    let same (e, c', _) = e == expect && Int64.equal c c' in
+    match List.find_opt same !made with
+    | Some (_, _, values) -> values
+    | None ->
+        let values =
+          Array.init (short_lengths + 1) (fun n -> expect c (String.sub s 0 n))
+        in
+        made := (expect, c, values) :: !made;
+        values
+  in
   List.iter
     (fun r ->
       let c = r.draw c in
+      let expected = references r.expect c in
       for n = 0 to short_lengths do
-        let expected = r.expect c (String.sub s 0 n) in
         Array.iteri
           (fun a v ->
-            let got = r.run c (Array1.sub v 0 n) in
-            if not (Int64.equal got expected) then
+            let got = r.run c v.(n) in
+            if not (Int64.equal got expected.(n)) then
               failf "%s: length %d at alignment %d: 0x%Lx, expected 0x%Lx"
-                r.label n a got expected)
+                r.label n a got expected.(n))
           views
       done)
     runs

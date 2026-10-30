@@ -1,3 +1,9 @@
+; lz_support_buffers.c copies between strings and buffers, through OCaml's
+; headers alone.
+
 (library
  (name lz_support)
- (libraries lz windtrap))
+ (libraries lz windtrap)
+ (foreign_stubs
+  (language c)
+  (names lz_support_buffers)))

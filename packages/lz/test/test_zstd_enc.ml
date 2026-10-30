@@ -166,11 +166,18 @@ let edged =
     (Gen.frequency [ (3, Lz_support.recipe); (1, block_edge) ])
     level (Gen.int_range 0 7)
 
-(* Every level over every large input, so that each run reaches all. *)
+(* The large inputs, so that each run reaches every level past its window
+   (lib/zstd_encode.c): 128 KiB + 1, a block and a byte, and 4 MiB + 1,
+   past every window and by one byte past the 4 MiB of levels 9 to 12, at
+   every level; the longest, 6 MiB with a match 1 MiB back, at levels 9 to
+   12, whose windows it passes by most. Every input at every level cost 30 %
+   more under the sanitizers. *)
 let large =
-  List.concat_map
-    (fun r -> List.map (fun l -> (r, l, 1)) levels)
-    Lz_support.large
+  match Lz_support.large with
+  | [ block; frame; longest ] ->
+      let at r levels = List.map (fun l -> (r, l, 1)) levels in
+      at block levels @ at frame levels @ at longest [ 9; 10; 11; 12 ]
+  | _ -> invalid_arg "test_zstd_enc: Lz_support.large"
 
 (* Step sizes: below a byte's worth, short, and around the block and the
    quota. *)
