@@ -219,11 +219,13 @@ __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
     unsigned token = *ip++;
     uint64_t lit = token >> 4;
     if (lit == 15) {
+      /* A length past the room leaves the rest of its bytes unread: the
+         exact loop refuses it. */
       do {
         if (ip == iend) goto exact;
         s = *ip++;
         lit += s;
-      } while (s == 255);
+      } while (s == 255 && lit <= (uint64_t)(oend - op));
       if ((uint64_t)(iend - ip) < lit + IN_SLACK ||
           (uint64_t)(oend - op) < lit + OUT_SLACK)
         goto exact;
@@ -247,7 +249,7 @@ __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
         if (ip == iend) goto exact;
         s = *ip++;
         len += s;
-      } while (s == 255);
+      } while (s == 255 && len + MIN_MATCH <= (uint64_t)(oend - op));
     }
     len += MIN_MATCH;
     if ((uint64_t)(oend - op) < len + 16) goto exact;
@@ -328,15 +330,17 @@ static enum outcome block_decode(struct block *b) {
                   "invalid end of block");
     unsigned token = *ip++;
     uint64_t lit = token >> 4;
+    /* The room before the input: a length only grows with its bytes, so
+       one that passes the room overflows however many of its bytes, or
+       of its literals, follow. Its scan stops there, which bounds a
+       hostile length's to the room over 255 bytes. */
     if (lit == 15) {
       do {
         if (ip == iend) return fail(b, ENDS_EARLY, seq, NULL);
         s = *ip++;
         lit += s;
-      } while (s == 255);
+      } while (s == 255 && lit <= (uint64_t)(oend - op));
     }
-    /* The room before the input: a stated run that passes the room
-       overflows however many of its bytes follow. */
     if (lit > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, seq, NULL);
     if (lit > (uint64_t)(iend - ip)) return fail(b, ENDS_EARLY, seq, NULL);
     if (lit >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, 2 * lit);
@@ -371,7 +375,7 @@ static enum outcome block_decode(struct block *b) {
         if (ip == iend) return fail(b, ENDS_EARLY, seq, NULL);
         s = *ip++;
         len += s;
-      } while (s == 255);
+      } while (s == 255 && len + MIN_MATCH <= (uint64_t)(oend - op));
     }
     len += MIN_MATCH;
     if (len > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, at_offset, NULL);

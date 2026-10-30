@@ -576,6 +576,25 @@ let hostile_blocks =
           equal string "too long at 2"
             (seen (Lz.Lz4.Block.decode (Lz_support.of_string b) (snd g)));
           untouched g);
+      cases ~name:fst "a length is too long once it passes the destination"
+        (* 16 MiB of length bytes into 100 bytes of room: the length passes
+           the room at the first, and no byte after makes it fit, even if
+           the input ends inside the length. The decode stops there, so
+           its work stays under the threshold and it holds the lock. *)
+        (let ff = String.make (16 * mib) '\xff' in
+         [
+           ("literals, cut", ("too long at 0", "\xf0" ^ ff));
+           ("literals", ("too long at 0", "\xf0" ^ ff ^ "\x00"));
+           ("a match, cut", ("too long at 2", "\x1fa" ^ le16 1 ^ ff));
+           ("a match", ("too long at 2", "\x1fa" ^ le16 1 ^ ff ^ "\x00"));
+         ])
+        (fun (_, (expected, b)) ->
+          let src = Lz_support.of_string b and dst = Lz_support.create 100 in
+          let before = Lz.releases () in
+          let r = Lz.Lz4.Block.decode src dst in
+          let k = Lz.releases () - before in
+          equal string expected (seen r);
+          equal int ~msg:"releases" 0 k);
     ]
 
 let hostile_frames =
@@ -674,10 +693,11 @@ let hostile_frames =
             (decode_seen frame (f ^ le32 (xxh32 "hello" lxor 1))));
       test "a block ending inside a sequence is malformed at its token" (fun () ->
           (* The block's token is at 11. *)
-          let ends b = decode_seen frame (header () ^ compressed b ^ end_mark) in
+          let ends ?cap b = decode_seen frame ?cap (header () ^ compressed b ^ end_mark) in
           equal string (malformed_at 11) (ends "\x50ab");
           equal string (malformed_at 11) (ends "\x40abcd\x04");
-          equal string (malformed_at 11) (ends "\x4fabcd\x04\x00\xff");
+          (* A match of 274 bytes or more, given room for it. *)
+          equal string (malformed_at 11) (ends ~cap:kib "\x4fabcd\x04\x00\xff");
           equal string (malformed_at 18) (ends (sequence "abcd" ~offset:4 ~length:8 ^ "\x50a")));
       test "a block ending after a match is malformed at its last token" (fun () ->
           let ends ?cap b = decode_seen frame ?cap (header () ^ compressed b ^ end_mark) in
@@ -695,10 +715,13 @@ let hostile_frames =
       test "a cut block is decoded as far as the input goes" (fun () ->
           (* A block of 100 bytes cut after 6: malformed if a byte before
              the cut proves it, truncated otherwise. *)
-          let cut b = decode_seen frame (header () ^ le32 100 ^ b) in
+          let cut ?cap b = decode_seen frame ?cap (header () ^ le32 100 ^ b) in
           equal string (malformed_at 13) (cut "\x1fa\x00\x00\xff\xff");
-          equal string "too long at 11" (decode_seen frame ~cap:3 (header () ^ le32 100 ^ "\x50ab"));
-          equal string "truncated at 17" (cut "\x1fa\x01\x00\xff\xff");
+          equal string "too long at 11" (cut ~cap:3 "\x50ab");
+          (* A match of 529 bytes or more: truncated given room for it, too
+             long at its offset without. *)
+          equal string "truncated at 17" (cut ~cap:kib "\x1fa\x01\x00\xff\xff");
+          equal string "too long at 13" (cut ~cap:100 "\x1fa\x01\x00\xff\xff");
           equal string "truncated at 13" (cut "\x50a");
           equal string "truncated at 14"
             (decode_seen frame (header () ^ le32 (5 lor 0x80000000) ^ "hel")));
