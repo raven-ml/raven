@@ -93,8 +93,8 @@ stream makes a new decoder.
 ## Messages
 
 `Malformed` and `Unsupported` carry a message from a fixed set for each
-format, such as zlib's messages for deflate, zlib and gzip and the field
-names of RFC 8878 for Zstandard (the type `why` in
+format, such as zlib's messages for deflate, zlib and gzip, and for
+Zstandard phrases that name the RFC 8878 field at fault (the type `why` in
 [`lz.mli`](../lib/lz.mli)). A message is a constant string and holds no
 byte of the input, so a program can log the error of a hostile input as
 it is. A program decides what to do from the constructor and `at`, since
@@ -106,9 +106,9 @@ Formats carry sizes, such as gzip's `ISIZE`, Zstandard's
 `Frame_Content_Size`, an LZ4 frame's content size and a Snappy block's
 preamble. A hostile input can declare any of them. lz checks each against
 the decoded bytes, and allocates nothing by one, except a Zstandard
-frame's window (the last section). A whole-buffer decode allocates no
-memory but its result, so the program bounds its memory by the
-destination it chooses.
+frame's window size and content size, which size a decoder's buffer (the
+last section). A whole-buffer decode allocates no memory but its result,
+so the program bounds its memory by the destination it chooses.
 
 This Snappy block declares 2<sup>32</sup> - 1 decoded bytes in its
 preamble and holds none:

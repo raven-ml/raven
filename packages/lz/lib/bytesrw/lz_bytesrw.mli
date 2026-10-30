@@ -22,14 +22,16 @@
     conventions for filters ({!Bytesrw.Bytes.Reader.filter},
     {!Bytesrw.Bytes.Writer.filter}):
     {ul
-    {- The filtering reader's or writer's position starts at [pos]
-       (default 0).}
+    {- The filtering reader's or writer's position, the count of bytes
+       read from or written on it ({!Bytesrw.Bytes.Reader.pos}), starts at
+       [pos] (default 0).}
     {- A filtering reader returns slices of at most its [slice_length],
-       which defaults to [r]'s.}
+       the hint on its slices' length
+       ({!Bytesrw.Bytes.Reader.slice_length}), which defaults to [r]'s.}
     {- A filtering writer's [slice_length] hint defaults to [w]'s, and it
        writes slices of at most [w]'s slice length on [w]. It writes
-       [Bytesrw.Bytes.Slice.eod] on [w] after the stream's end if and only
-       if [~eod:true].}
+       {!Bytesrw.Bytes.Slice.eod}, the slice that ends the data, on [w]
+       after the stream's end if and only if [~eod:true].}
     {- A filter applied to a reader or a writer raises
        [Invalid_argument] if [level] or [window] is outside the range its
        format's [encoder] or [decoder] accepts.}}
@@ -48,11 +50,13 @@
 
     A decompressing filter's read or write raises
     [Bytesrw.Bytes.Stream.Error] with [Error e] when its decoder's step
-    returns [Error e] ({!Lz.Decoder}). The error's position is that of
-    [e]'s byte in the compressed stream, counted in [r]'s positions for a
-    reader and in the filtering writer's for a writer. The message prints
-    [e] with {!Lz.pp_error}. The filter delivers the decoded bytes of every
-    step before the failing one, and none of that step's.
+    returns [Error e] ({!Lz.Decoder}), and a decompressing writer when bytes
+    follow its deflate or zlib stream ({!section-formats}). The error's
+    position is that of [e]'s byte in the compressed stream, counted in
+    [r]'s positions for a reader and in the filtering writer's for a writer.
+    The message prints [e] with {!Lz.pp_error}. The filter delivers the
+    decoded bytes of every step before the failing one, and none of that
+    step's.
 
     An exception raised while the filter steps its decoder or encoder,
     such as one from a write on [w] or [Out_of_memory], propagates. After
@@ -66,15 +70,20 @@ type Bytesrw.Bytes.Stream.error +=
 
 (** {1:formats Formats}
 
-    A decompressing filter reads the streams its format's [decode] reads.
-    A deflate or zlib [decompress_reads] decodes one stream. Once it has
-    returned [Bytesrw.Bytes.Slice.eod], [r]'s next read begins at the first
-    byte after the stream. A gzip or Zstandard [decompress_reads] decodes
-    every member up to [r]'s end.
+    A decompressing filter reads the streams its format's [decode] reads,
+    and a decompressing reader that has returned [eod] returns it on every
+    later read. A deflate or zlib [decompress_reads] decodes one stream. It
+    reads a slice of [r] only once its decoder has taken all of the last
+    one, so before its [eod], [r] is at most one slice past the last byte
+    the decoder took. Once it has returned [eod], [r]'s next read begins
+    at the first byte after the stream, with the rest of the last slice
+    the filter read when any is left. A gzip or Zstandard
+    [decompress_reads] decodes every member up to [r]'s end.
     [decompress_writes] decodes up to the [eod] written on it. A writer
     cannot hand back bytes written after a deflate or zlib stream, so they
     are [Malformed] at their first byte, with the message
-    ["bytes after the stream"].
+    ["bytes after the stream"], the filter's own and outside the format's
+    set ({!Lz.type-why}).
 
     [compress_reads] and [compress_writes] write one stream holding every
     byte read from [r] or written on the filter, ended at [r]'s end or at

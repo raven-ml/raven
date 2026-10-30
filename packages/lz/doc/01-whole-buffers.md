@@ -157,6 +157,32 @@ sees one whole stream at its start. An LZ4 or Snappy block has no end
 mark, and bytes after it are read as more of the block. A container of
 blocks must state each block's length.
 
+Some programs pad a gzip file with zeros after its last member. No
+member begins at the padding, so `decode` returns `Malformed` at its
+first byte, and leaves the destination unspecified. The bytes before
+that offset hold the members, and decode on their own:
+
+```ocaml
+# let () =
+    let gz = Lz.Gzip.encode_string "padded" in
+    let src = of_string (gz ^ String.make 512 '\000') in
+    let dst = bytes 64 in
+    match Lz.Gzip.decode src dst with
+    | Ok _ -> print_endline "ok"
+    | Error e -> (
+        Format.printf "%a@." Lz.pp_error e;
+        match Lz.Gzip.decode (Bigarray.Array1.sub src 0 e.at) dst with
+        | Ok { produced; _ } ->
+            Printf.printf "%S\n" (to_string ~len:produced dst)
+        | Error e -> Format.printf "%a@." Lz.pp_error e);;
+malformed at byte 26: incorrect header check
+"padded"
+```
+
+The second decode is correct because the padding begins at `e.at`, so
+the bytes before it end where the last member ends (the `Gzip` module in
+[`lz.mli`](../lib/lz.mli)).
+
 ## Levels
 
 Deflate, zlib and gzip take a level from 1 to 9, default 6, and Zstandard
@@ -203,11 +229,12 @@ level against the reference implementations.
 Calls may run in parallel from any domains. A program must not run two
 in parallel when one writes a buffer the other reads or writes, and must
 not touch a buffer a call writes, or write one a call reads, from another
-domain (the preamble of [`lz.mli`](../lib/lz.mli)). A whole-buffer call
-on an input of 16 KiB or more also releases the domain lock while it
-works, so that its domain's other threads run and a stop-the-world
-collection need not wait for it (the Buffers and the domain lock section
-of [`lz.mli`](../lib/lz.mli)). This program decodes four pages on four
+domain (the preamble of [`lz.mli`](../lib/lz.mli)). A decode whose
+source or destination holds 16 KiB or more, and an encode of 16 KiB or
+more, also release the domain lock while they work. The domain's other
+threads then run, and a minor collection, which stops every domain, need
+not wait for the call (the Buffers and the domain lock section of
+[`lz.mli`](../lib/lz.mli)). This program decodes four pages on four
 domains:
 
 ```ocaml

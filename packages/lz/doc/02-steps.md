@@ -212,7 +212,7 @@ with `decode_channel`:
 488890 bytes, same: true
 ```
 
-The stream's bytes depend only on the input and the level. They never
+An encoder's bytes depend only on the input and the level. They never
 depend on how the input was cut into steps, so a program that reads
 4 KiB at a time writes the same file as one that reads 64 KiB.
 A Zstandard frame written by steps differs from `Lz.Zstd.encode`'s only

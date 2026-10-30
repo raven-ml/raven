@@ -58,7 +58,8 @@
        format carries before it returns [Ok], and a step before it returns
        [Done];}
     {- a size the input declares bounds nothing lz allocates, except a
-       Zstandard frame's window size ({!Zstd.decoder});}
+       Zstandard frame's window size and content size, which size a
+       decoder's buffer ({!Decoder});}
     {- an argument outside a stated range raises [Invalid_argument];}
     {- calls may run in parallel from any domains and threads, but a
        program must not run two in parallel when one writes a buffer the
@@ -80,14 +81,19 @@
 (** {1:buffers Buffers and the domain lock}
 
     A thread runs OCaml code while it holds its domain's lock, the
-    {e domain lock}. Since the collector never moves a buffer's bytes, a
-    whole-buffer call or a step releases the domain lock while it works on
-    an input of 16 KiB or more, and holds it under 4 KiB. Between the two,
-    the threshold depends on the format and on whether the call decodes or
-    encodes. The input is [src], and for a step the bytes of [src] it may
-    take ({!section-steps}). The release lets the domain's other threads
-    run, and lets a stop-the-world collection proceed without waiting for
-    the call. Other domains run whether or not the call holds the lock. *)
+    {e domain lock}. A call that holds it keeps the domain's other threads
+    waiting. Other domains run, but every minor collection stops all
+    domains, so it waits for the call to end.
+
+    Since the collector never moves a buffer's bytes, a call releases the
+    domain lock while it works when the bytes it may work on reach a
+    threshold. The threshold is 8 KiB, except 4 KiB when deflate, zlib or
+    gzip encodes and 16 KiB when LZ4 or Snappy decodes. A whole-buffer
+    decode may work on the larger of [src] and [dst], since a short input
+    may fill all of [dst]. An encode may work on [src], and an encoder step
+    on its input and the input its encoder keeps ({!Encoder}). A decoder
+    step, which may fill a run from a few bytes, and an encoder step with
+    [~last:true] always release the lock. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -121,16 +127,17 @@ type why =
           whole-buffer decode returns it. *)
   | Unsupported of string
       (** The stream is well formed and uses a feature that lz
-          {e declines}: a dictionary, LZ4's legacy frame ({!Lz4.Frame}), or
-          a Zstandard window size above a decoder's bound. It is at the
-          field that names the feature. *)
+          {e declines}: a dictionary, LZ4's {e legacy frame}, the format's
+          older form ({!Lz4.Frame}), or a Zstandard window size above a
+          decoder's bound. It is at the field that names the feature. *)
 (** The type for the reasons a decode refuses an input. A message comes
-    from a fixed set per format, which is zlib's messages and
-    ["preset dictionary"] for deflate, zlib and gzip, RFC 8878's field
-    names for Zstandard, and lz's own for LZ4 and Snappy. A message is a
-    constant string and holds no byte of the input. Messages are for
-    printing and may change in a later version, so a program must not parse
-    them. *)
+    from a fixed set per format: zlib's messages and ["preset dictionary"]
+    for deflate, zlib and gzip; for Zstandard, phrases that name the
+    RFC 8878 field at fault, such as
+    ["Window_Size above the decoder's limit"]; and lz's own for LZ4 and
+    Snappy, such as ["incorrect block checksum"]. A message is a constant
+    string and holds no byte of the input. Messages are for printing and
+    may change in a later version, so a program must not parse them. *)
 
 type error = { at : int; why : why }
 (** The type for decode errors: the offset [at] and the reason [why]. *)
@@ -144,7 +151,8 @@ val pp_error : Format.formatter -> error -> unit
 (** {2:decoding Decoding}
 
     [decode src dst] decodes the stream at the start of [src] into [dst]
-    from its start, and allocates no memory but its result. [dst]'s
+    from its start, and allocates no memory but its result. It keeps its
+    state in at most 64 KiB of the calling thread's C stack. [dst]'s
     contents past the bytes it wrote, and all of them after an error, are
     unspecified.
 
@@ -176,16 +184,18 @@ type progress = { consumed : int; produced : int }
 (** {1:steps Decoders and encoders}
 
     A step takes all of [src] unless the stream ends inside it, the run
-    reaches the decoder's {e run capacity}, or the encoder takes its
-    {e quota}, the most input one step takes ({!Decoder}, {!Encoder}).
-    The next step begins at the first byte not taken. A step applies [f]
-    with the domain lock held.
+    reaches the decoder's {e run capacity}, the most bytes one run holds,
+    or the encoder takes its {e quota}, the most input one step takes
+    ({!Decoder}, {!Encoder}). The next step begins at the first byte not
+    taken.
 
     A decoder or encoder is {e busy} while a step on it runs, [f]
-    included. A step on a busy or dead decoder or encoder, from any domain
-    or thread, raises [Invalid_argument] and leaves it as it was. If [f]
-    raises, this exception included, the exception propagates and the
-    decoder or encoder is dead. *)
+    included. A step applies [f] with the domain lock held, and [f] may
+    block or release the lock, as a write to a channel does. A step on a
+    busy or dead decoder or encoder, from any domain or thread, raises
+    [Invalid_argument] and leaves it as it was. If [f] raises, this
+    exception included, the exception propagates and the decoder or
+    encoder is dead. *)
 
 type step =
   | Done of int  (** The stream ended after this many bytes of the input. *)
@@ -194,28 +204,30 @@ type step =
 
 (** Decoders.
 
-    A decoder holds its format's tables, about 12 KiB for deflate's and
-    24 KiB for Zstandard's, outside the OCaml heap from when it is made,
-    and one bigarray, its {e buffer}, which holds its window and its run.
-    A deflate, zlib or gzip decoder allocates its buffer at its first
-    step, before it reads a byte, with room for a 32 KiB window and a run
-    capacity of 256 KiB. A Zstandard decoder allocates its buffer when a
-    frame's header arrives, before any output, with room for the frame's
-    window size, or the content size the frame declares when smaller, and
-    a run capacity of 256 KiB. At its first frame it also allocates about
-    256 KiB outside the OCaml heap. It replaces its buffer when a frame
-    needs a larger one. A view of a run kept after [f] returns keeps its
-    buffer alive, and may read bytes a later step wrote. Each member
-    begins with an empty window, and a run may hold the end of one member
-    and the start of the next.
+    A decoder holds its format's tables, about 12 KiB for deflate's and 24
+    KiB for Zstandard's, outside the OCaml heap from when it is made, and
+    one bigarray, its buffer, which holds its window and its run. A deflate,
+    zlib or gzip decoder allocates its buffer at its first step, before it
+    reads a byte, with room for a 32 KiB window and a run capacity of 256
+    KiB. A Zstandard decoder allocates its buffer when a frame's header
+    arrives, before any output, with room for the frame's window size, or
+    the content size the frame declares in its Frame_Content_Size when
+    smaller, and a run capacity of 256 KiB. At its first frame it also
+    allocates about 256 KiB outside the OCaml heap. It replaces its buffer
+    when a frame needs a larger one. A view of a run kept after [f] returns
+    keeps its buffer alive, and may read bytes a later step wrote. Each
+    member begins with an empty window, and a run may hold the end of one
+    member and the start of the next.
 
     A deflate or zlib decoder returns [Done k] once its stream ends, with
-    or without [~last], and has not taken the bytes of [src] from [k] on.
+    or without [~last], and has not taken the bytes of [src] from [k] on,
+    whatever they hold.
     A gzip or Zstandard decoder returns [Done] only on a step with
     [~last:true], with [k] the length of [src], since without it the
     decoder cannot tell the last member from one that more input would
     follow. A step that returns [More k] with [k] the length of [src] has
-    taken all of it, and with [~last:true] has output still due.
+    taken all of it, and with [~last:true] has filled its run before the
+    output ended. The program then steps again on an empty [src].
 
     With [~last:true] a stream still open is [Truncated], and a step
     returns [Truncated] only then. Every error a step returns is the one
@@ -240,19 +252,23 @@ module Decoder : sig
   (** [step d ~last src f] decodes a prefix of [src] and returns how much
       of [src] it took. On [Ok] it has applied [f] once to its run, every
       byte the step decoded. On [Error] it has not applied [f], and the
-      bytes the step decoded are lost. *)
+      bytes the step decoded are lost, those of a member it verified
+      before the error included. *)
 end
 
 (** Encoders.
 
-    An encoder holds its run's buffer, 384 KiB for deflate, zlib and gzip
-    and about 256 KiB for Zstandard, which it allocates when made. Outside
-    the OCaml heap it holds its match finder and a window of its input,
-    which it allocates by its first step that writes output. They take up
-    to about 1.2 MiB for deflate, zlib and gzip, and for Zstandard about
-    2.3 MiB at level 1, 6 MiB at level 3 and 50 MiB at level 12. Its quota
-    is 64 KiB for deflate, zlib and gzip, and 128 KiB for Zstandard. A
-    step's run always has room for the output the step owes.
+    An encoder holds one bigarray, its buffer, which its runs are lent
+    from, of 384 KiB for deflate, zlib and gzip and about 256 KiB for
+    Zstandard, allocated when the encoder is made. Outside the OCaml heap
+    it holds a window of its input and its match finder, up to about
+    1.2 MiB for deflate, zlib and gzip, and for Zstandard about 2.3 MiB at
+    level 1, 6 MiB at level 3 and 50 MiB at level 12. A deflate, zlib or
+    gzip encoder allocates them at its first step. A Zstandard encoder
+    allocates its window at its first step, and its match finder at its
+    first step that writes output. Its quota is 65,536 bytes for deflate,
+    zlib and gzip, and 131,072 for Zstandard. A step's run always has room
+    for the output the step owes.
 
     An encoder may keep input it has taken until more arrives or a step
     has [~last:true], at most about 300 KiB for deflate, zlib and gzip and
@@ -261,8 +277,13 @@ end
     the kept input it writes out. A step with [~last:true] that takes all
     of [src], an empty [src] included, writes the kept input and the
     stream's end and returns [Done], and only such a step returns [Done].
-    On an empty [src] it holds the domain lock while it writes. A fresh
-    encoder so stepped on no input writes the format's empty stream. *)
+    A fresh encoder so stepped on no input writes the format's empty
+    stream.
+
+    A step that returns [More k] has taken the first [k] bytes of [src],
+    and the program must pass the rest to the next step. Nothing detects
+    their loss, and a stream written without them decodes without error to
+    an input that lacks them. *)
 module Encoder : sig
   type t
   (** The type for encoders. *)
@@ -383,7 +404,9 @@ end
     It checks ID1, ID2 and CM as each arrives, so an input that ends just
     after a wrong one is [Malformed]. A member begins where the last one
     ended, so zero padding after the last member is [Malformed] at its
-    first byte. *)
+    first byte, and [decode] returns that error with all of [dst]
+    unspecified. Given [Bigarray.Array1.sub src 0 at], with [at] the
+    error's offset, [decode] decodes the members before the padding. *)
 module Gzip : sig
   val decode : bigbytes -> bigbytes -> (progress, error) result
   (** [decode src dst] decodes every member of [src]
@@ -406,13 +429,13 @@ module Gzip : sig
   (** [encoder ~level ()] is a new encoder of gzip members at [level]. *)
 end
 
-(** Zstandard (RFC 8878): one or more frames, skippable frames among them,
-    which produce nothing. Levels are 1 to 12, default 3. The encoder
-    always writes the frame's Content_Checksum, an XXH64. It writes
-    Frame_Content_Size only in a frame from [encode], so a frame from an
-    encoder differs from [encode]'s only in its header. Every frame lz
-    writes, from [encode] or an encoder, declares a window size of at most
-    4 MiB.
+(** Zstandard (RFC 8878): one or more frames, among them {e skippable
+    frames}, which hold data for other programs and decode to nothing.
+    Levels are 1 to 12, default 3. The encoder always writes the frame's
+    Content_Checksum, an XXH64. It writes Frame_Content_Size only in a frame
+    from [encode], so a frame from an encoder differs from [encode]'s only
+    in its header. Every frame lz writes, from [encode] or an encoder,
+    declares a window size of at most 4 MiB.
 
     A decode refuses:
     {ul
@@ -509,17 +532,17 @@ module Lz4 : sig
     (** [encode_string s] is the block of [s]. *)
   end
 
-  (** LZ4 frames: one or more, skippable frames among them, read to the
-      input's end. A frame's blocks are independent or linked, and a match
-      in a linked block may reach back into the earlier blocks of its
-      frame. The encoder writes one frame of independent blocks with the
-      content size and the content checksum.
+  (** LZ4 frames: one or more, skippable frames among them as in
+      {!Zstd}, read to the input's end. A frame's blocks are independent or
+      linked, and a match in a linked block may reach back into the earlier
+      blocks of its frame. The encoder writes one frame of independent
+      blocks with the content size and the content checksum.
 
       A decode refuses:
       {ul
-      {- a magic number of neither a frame, a skippable frame nor a
-         {e legacy frame}, the format's older form with magic number
-         0x184C2102, at the first byte where no frame begins;}
+      {- a magic number of neither a frame, a skippable frame nor a legacy
+         frame, whose magic number is 0x184C2102, at the first byte where
+         no frame begins;}
       {- a version other than 01, a set reserved bit, or a Block Maximum
          Size value below 4;}
       {- a header checksum that does not match;}

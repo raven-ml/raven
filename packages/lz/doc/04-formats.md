@@ -12,7 +12,7 @@ chooses. Each format's rules are in its module in
 | Zlib (RFC 1950) | `Lz.Zlib` | yes | 1 to 9, default 6 | Adler-32 | at an exact byte |
 | Gzip (RFC 1952) | `Lz.Gzip` | yes | 1 to 9, default 6 | CRC-32 and length of each member | at the input's end |
 | Zstandard (RFC 8878) | `Lz.Zstd` | yes | 1 to 12, default 3 | XXH64, which lz writes, and content size, which `encode` writes | at the input's end |
-| LZ4 frames | `Lz.Lz4.Frame` | no | none | content checksum and size, which lz writes | at the input's end |
+| LZ4 frames | `Lz.Lz4.Frame` | no | none | header checksum; block checksums, content checksum and content size where present, the last two of which lz writes | at the input's end |
 | LZ4 blocks | `Lz.Lz4.Block` | no | none | nothing | at the input's end |
 | Snappy blocks | `Lz.Snappy` | no | none | the decoded length | at the input's end |
 
