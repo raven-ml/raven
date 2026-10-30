@@ -10,7 +10,8 @@
    function: tracing, lowering, tolk's passes and the kernel compiler, and the
    process's start. A warm process cannot hold this cost: tolk's disk cache
    serves a program after its first compile. A case takes three samples. The
-   cases are those whose compile time rune2's lowering decides.
+   cases are those whose compile time rune2's lowering or tolk's vectors
+   decide.
 
    [--cold ID] runs one case's first call and prints its milliseconds: run it
    with [CACHEDB] at an empty path and [PARALLEL=1]. *)
@@ -229,6 +230,14 @@ let checked_scan () =
   in
   compile run (input ~n 0. 1.)
 
+(* [shaped 4096] of a 2-element state padded to 3: the pad masks the state's
+   axis, which the host upcasts whole, so each operation is of 3 lanes, a
+   vector of the state's loads and the pad. *)
+let shaped_padded () =
+  compile
+    (fun x -> shaped 4096 (Nx.scalar f64 0.5) (Nx.pad [| (0, 1) |] 0.5 x))
+    (input ~n:2 0. 1.)
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -241,6 +250,7 @@ let cases =
     ("scan/checks-48", checked_scan);
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
+    ("shaped-4k-3-lanes", shaped_padded);
   ]
 
 let rec remove path =
