@@ -255,7 +255,8 @@ static int F(four_make)(PLAN *p) {
   if (ok) {
     p->bytes += p->p1->bytes + p->p2->bytes;
     for (int64_t i = 0; i < half; i++) unit(i, n, &lo[2 * i], &lo[2 * i + 1]);
-    for (int64_t i = 0; i <= n / half; i++)
+    /* The high parts of m < n, unit's domain: m / half <= (n - 1) / half. */
+    for (int64_t i = 0; i * half < n; i++)
       unit(i * half, n, &hi[2 * i], &hi[2 * i + 1]);
     for (int64_t g = 0; g < groups; g++)
       for (int64_t k1 = 0; k1 < n1; k1++) {
