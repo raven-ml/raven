@@ -301,7 +301,7 @@ let fma32 a b c =
 (* nx_kinds.h's complex Mul: each part one fma over the other product. *)
 let zmul narrow a b =
   let rd = if narrow then round32 else Fun.id in
-  let fma = if narrow then fma32 else Float.fma in
+  let fma = if narrow then fma32 else Exact.fma in
   let ii = rd (a.im *. b.im) and ir = rd (a.im *. b.re) in
   zof narrow (fma a.re b.re (-.ii)) (fma a.re b.im ir)
 

@@ -351,10 +351,12 @@ let test_atan2_ends () =
 
 (* Composites *)
 
-(* lerp's two forms at float64, as nx.mli states them. *)
+(* lerp's two forms at float64, as nx.mli states them, each fma rounded
+   once (Exact.fma: Float.fma rounds some subnormal results twice under
+   MinGW). *)
 let lerp_reference a b w =
   let d = b -. a in
-  if w < 0.5 then Float.fma w d a else Float.fma (w -. 1.) d b
+  if w < 0.5 then Exact.fma w d a else Exact.fma (w -. 1.) d b
 
 let same_bits a b =
   (Float.is_nan a && Float.is_nan b)
@@ -375,6 +377,12 @@ let ends =
       (1, Gen.of_list [ 0.; -0. ]);
       (1, Gen.any_float);
     ]
+
+(* lerp's ends and weight, printed in hexadecimal. *)
+let lerp_operands =
+  Gen.with_pp
+    (fun ppf ((a, b), w) -> Format.fprintf ppf "a %h, b %h, w %h" a b w)
+    (Gen.pair (Gen.pair ends ends) weight)
 
 (* Equal as numbers: [-0.] and [+0.] alike, as nx.mli states the ends. *)
 let number =
@@ -458,8 +466,7 @@ let elementwise =
       prop "a bitcast to its own dtype is the value itself" unary_operands
         law_bitcast_same;
       test "atan2 reaches its range's ends, rounded" test_atan2_ends;
-      prop "lerp is one fma, from a below w = 1/2" (Gen.pair (Gen.pair ends ends) weight)
-        law_lerp;
+      prop "lerp is one fma, from a below w = 1/2" lerp_operands law_lerp;
       prop "lerp of a narrow float is lerp at float32, rounded once"
         (Gen.pair narrows (Gen.pair (Gen.pair ends ends) weight))
         law_lerp_narrow;

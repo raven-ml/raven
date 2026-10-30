@@ -84,6 +84,7 @@
   nx_array
   nx_array_support
   nx_kernel
+  nx_kernel_cases
   nx_cpu
   nx_kernels_support
   nx_stack_support
