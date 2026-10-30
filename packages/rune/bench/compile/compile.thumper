@@ -3,15 +3,15 @@
 
 # machine: 83e4f30ba5340e6b
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
+# ocaml: 5.5.2 · 64-bit · release
 
-linalg/eigh-8x8	wall_time	batch=1	n=3	5.436e-01	5.412e-01 5.436e-01 5.491e-01
-linalg/solve-32	wall_time	batch=1	n=3	7.896e-01	7.860e-01 7.896e-01 7.916e-01
-model/schools-start	wall_time	batch=1	n=3	1.501e+00	1.499e+00 1.501e+00 1.510e+00
-rng/normal-f32	wall_time	batch=1	n=3	2.811e-01	2.801e-01 2.811e-01 2.813e-01
-rng/normal-f64	wall_time	batch=1	n=3	4.322e-01	4.321e-01 4.322e-01 4.359e-01
-scan/checks-48	wall_time	batch=1	n=3	2.445e+00	2.442e+00 2.445e+00 2.458e+00
-scan/tridiagonal-100	wall_time	batch=1	n=3	2.430e+00	2.427e+00 2.430e+00 2.443e+00
-shaped-4k	wall_time	batch=1	n=3	5.397e-01	5.387e-01 5.397e-01 5.409e-01
-shaped-4k-3-lanes	wall_time	batch=1	n=3	3.877e-01	3.872e-01 3.877e-01 3.887e-01
-trig/sin	wall_time	batch=1	n=3	9.250e-02	9.242e-02 9.250e-02 9.443e-02
+linalg/eigh-8x8	wall_time	batch=1	n=3	5.417e-01	5.364e-01 5.417e-01 5.417e-01
+linalg/solve-32	wall_time	batch=1	n=3	7.805e-01	7.769e-01 7.805e-01 7.834e-01
+model/schools-start	wall_time	batch=1	n=3	1.513e+00	1.502e+00 1.513e+00 1.513e+00
+rng/normal-f32	wall_time	batch=1	n=3	2.820e-01	2.813e-01 2.820e-01 2.825e-01
+rng/normal-f64	wall_time	batch=1	n=3	4.297e-01	4.282e-01 4.297e-01 4.298e-01
+scan/checks-48	wall_time	batch=1	n=3	2.472e+00	2.470e+00 2.472e+00 2.496e+00
+scan/tridiagonal-100	wall_time	batch=1	n=3	2.394e+00	2.392e+00 2.394e+00 2.419e+00
+shaped-4k	wall_time	batch=1	n=3	5.320e-01	5.304e-01 5.320e-01 5.328e-01
+shaped-4k-3-lanes	wall_time	batch=1	n=3	3.889e-01	3.883e-01 3.889e-01 3.891e-01
+trig/sin	wall_time	batch=1	n=3	9.471e-02	9.408e-02 9.471e-02 9.692e-02
