@@ -238,6 +238,12 @@ let shaped_padded () =
     (fun x -> shaped 4096 (Nx.scalar f64 0.5) (Nx.pad [| (0, 1) |] 0.5 x))
     (input ~n:2 0. 1.)
 
+(* A normal draw of 1024 values of [dt] from a key argument: a Box-Muller
+   transform, whose cosine and sine read an angle its bits bound below 2 pi. *)
+let normal dt () =
+  let draw k = Nx.Rng.normal ~key:(Nx.Rng.of_tensor k) dt [| 1024 |] in
+  compile draw (Nx.Rng.to_tensor (Nx.Rng.key 0))
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -248,6 +254,8 @@ let cases =
     ("scan/tridiagonal-100", tridiagonal);
     ("model/schools-start", schools);
     ("scan/checks-48", checked_scan);
+    ("rng/normal-f64", normal f64);
+    ("rng/normal-f32", normal Nx.float32);
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
     ("shaped-4k-3-lanes", shaped_padded);

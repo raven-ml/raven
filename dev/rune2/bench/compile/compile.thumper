@@ -7,7 +7,9 @@
 
 linalg/eigh-8x8	wall_time	batch=1	n=3	5.436e-01	5.412e-01 5.436e-01 5.491e-01
 linalg/solve-32	wall_time	batch=1	n=3	7.896e-01	7.860e-01 7.896e-01 7.916e-01
-model/schools-start	wall_time	batch=1	n=3	1.861e+00	1.854e+00 1.861e+00 1.862e+00
+model/schools-start	wall_time	batch=1	n=3	1.501e+00	1.499e+00 1.501e+00 1.510e+00
+rng/normal-f32	wall_time	batch=1	n=3	2.811e-01	2.801e-01 2.811e-01 2.813e-01
+rng/normal-f64	wall_time	batch=1	n=3	4.322e-01	4.321e-01 4.322e-01 4.359e-01
 scan/checks-48	wall_time	batch=1	n=3	2.445e+00	2.442e+00 2.445e+00 2.458e+00
 scan/tridiagonal-100	wall_time	batch=1	n=3	2.430e+00	2.427e+00 2.430e+00 2.443e+00
 shaped-4k	wall_time	batch=1	n=3	5.397e-01	5.387e-01 5.397e-01 5.409e-01
