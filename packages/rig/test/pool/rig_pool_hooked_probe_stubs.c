@@ -154,7 +154,7 @@ typedef enum {
 static _Atomic int current = none;
 static _Atomic int published; /* narrow_sleep's job was published */
 static _Atomic int slept;     /* bit w: worker w parked after it */
-static int target; /* the worker a scenario holds */
+static _Atomic int target; /* the worker a scenario holds */
 static _Atomic int go;      /* the caller's hooks act only once set */
 static _Atomic int entered; /* the target entered a job it must not */
 static uint64_t inside_at_close;

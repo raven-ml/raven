@@ -228,9 +228,10 @@ long rig_pool_performance_cpus(const char *root, const int *cpus, long n);
    the default, a point costs a load and a branch.
 
    rig_pool_set_hook and rig_pool_set_calloc store a pointer that the
-   pool's threads read without ordering. Set each before the first job on
-   several threads, which makes the workers, and never change it after: a
-   thread in a job may run a point with the pointer it read before. */
+   pool's threads read without ordering. Set each before the pool is made,
+   by the first job on several threads or the first rig_pool_threads (),
+   and never change it after: a thread in a job may run a point with the
+   pointer it read before. */
 
 /* The bit of rig_pool_inside () set while the job is closed. */
 #define RIG_POOL_CLOSED ((uint64_t)1 << 63)
@@ -272,9 +273,10 @@ void rig_pool_set_hook(rig_pool_hook hook);
 
 /* rig_pool_set_calloc (f) makes the pool take the memory of each pool it
    makes from f (n, size) in place of calloc (n, size), one call at a time,
-   on the thread whose job makes it. f may answer NULL, as calloc does on a
-   host out of memory: that pool is then not made, and the job runs on the
-   calling thread alone. NULL, the default, restores calloc. */
+   on the thread whose job, or whose rig_pool_threads (), makes it. f may
+   answer NULL, as calloc does on a host out of memory: that pool is then
+   not made, and the job runs on the calling thread alone. NULL, the
+   default, restores calloc. */
 void rig_pool_set_calloc(void *(*f)(size_t n, size_t size));
 
 /* rig_pool_threads () is the number of threads of the compute pool, its
