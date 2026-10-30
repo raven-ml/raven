@@ -4,8 +4,8 @@ lz compresses and decompresses bytes from OCaml: deflate with its zlib and
 gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its formats are
 written in C inside the library, so a program needs no system zlib or
 libzstd. Its calls read and write byte bigarrays, whose bytes the
-collector never moves. A call that has worked through a few KiB
-therefore releases the domain lock, so that the domain's other threads
+collector never moves, so a decode or an encode that has done its
+format's threshold of work, 4 to 16 KiB, lets the domain's other threads
 run during the rest of it (the Buffers and the domain lock section of
 [`lz.mli`](../lib/lz.mli)).
 
@@ -83,8 +83,9 @@ Each call, in order:
 - `Ok { consumed; produced }` holds the number of bytes read from `src`
   and written to `dst`. The bytes of `dst` past `produced` are
   unspecified.
-- `Error e` holds the offset of the input byte where the problem begins,
-  `e.at`, and the reason, `e.why`. `Lz.pp_error` prints both, as in
+- `Error e` holds the reason, `e.why`, and `e.at`, the offset of the
+  first input byte of what is wrong, or the input's length when the input
+  ends too soon. `Lz.pp_error` prints both, as in
   `truncated at byte 173` (the Errors section of
   [`lz.mli`](../lib/lz.mli)).
 

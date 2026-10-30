@@ -7,7 +7,8 @@ distribution, so a program needs no system zlib or libzstd. Its calls
 work on byte bigarrays. A program decodes a whole buffer into a
 destination it sizes, or decodes and encodes in steps that lend each
 step's output from the decoder's or encoder's memory. A failed decode
-returns an error with the offset of the byte where the problem begins.
+returns the reason and the offset of the first input byte of what is
+wrong, or the input's length when the input ends too soon.
 
 ## A first program
 

@@ -160,11 +160,12 @@ which come before the rest of the channel.
 
 ## An encoder writing to a channel
 
-Each encoder step takes at most a quota of input, 64 KiB for deflate,
-zlib and gzip and 128 KiB for Zstandard, and its run always has room for
-the output the step owes. The encoder may keep input until more arrives,
-so a run may be empty. A step with `~last:true` that takes all of its
-input writes the input kept and the stream's end, and returns `Done`.
+Each encoder step takes all of its input up to a quota, 64 KiB for
+deflate, zlib and gzip and 128 KiB for Zstandard, and its run always has
+room for the output the step owes. The encoder may keep input until more
+arrives, so a run may be empty. A step with `~last:true` that takes all
+of its input writes the input kept and the stream's end, and returns
+`Done`.
 `encode_channel` reads from one channel and writes the stream to
 another:
 

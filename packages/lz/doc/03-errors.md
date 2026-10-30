@@ -33,8 +33,9 @@ may complete it. `Malformed` says the bytes break the format, and no
 bytes appended would make them valid. `Too_long` says the output would
 pass the destination's end. `Unsupported` says the stream is well formed
 and uses a feature lz declines, such as a preset dictionary. `at` is the
-offset of the first byte of what is wrong. A decode reads its input in
-order and returns the first error it meets.
+offset of the first byte of what is wrong, and for `Truncated` the
+input's length. A decode reads its input in order and returns the first
+error it meets.
 
 This program damages a zlib stream that holds 1,000 bytes in four ways:
 

@@ -14,9 +14,13 @@
     stream and its slices, it holds the decoder or encoder, the staged
     input and a copy of one run. Zstandard's window is the only part that
     grows with the input, up to [?window] as for {!Lz.Zstd.decoder}. A
-    filter bounds no stream's decoded bytes, so a program that reads a
-    stream it does not trust must count the bytes the filter delivers, and
-    stop once they pass its limit.
+    writer filter writes each run on [w] from the [f] of the step that
+    lends it, and writes nothing for an empty run. An encoder keeps input
+    ({!Lz.Encoder}), so a write on a compressing filter's writer may write
+    nothing on [w], and a later write on it many slices. A filter bounds
+    no stream's decoded bytes, so a program that reads a stream it does
+    not trust must count the bytes the filter delivers, and stop once
+    they pass its limit.
 
     Unless a value's doc says otherwise, a filter follows bytesrw's
     conventions for filters ({!Bytesrw.Bytes.Reader.filter},
