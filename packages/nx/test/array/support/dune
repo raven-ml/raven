@@ -9,7 +9,7 @@
  (foreign_stubs
   (language c)
   (include_dirs
-   ../../../lib/array
+   (lib nx.array)
    (lib rig.edge))
   (names nx_array_support_stubs)))
 
