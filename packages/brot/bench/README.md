@@ -26,7 +26,7 @@ Benchmark inputs live in `./data/`:
   DeepSeek-V3, gpt-oss (the o200k pattern) and Phi-4
 
 The last three are read by the HuggingFace parity test rather than by the
-benchmarks; `test/scripts/gen_parity_expected.py` documents the whole set.
+benchmarks; `test/gen/gen_parity_expected.py` documents the whole set.
 
 Download the tokenizer model files:
 
@@ -51,7 +51,7 @@ cd brot/bench/bench_rust && cargo run --release
 ### tokenizers — Python (Rust FFI)
 
 ```bash
-uv run --with tokenizers brot/bench/bench_tokenizers.py
+uv run packages/brot/bench/bench_tokenizers.py
 ```
 
 ## Comparison

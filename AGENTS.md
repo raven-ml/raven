@@ -201,7 +201,8 @@ code's recent diffs, never by bisecting.
   row that needs more is shrunk to the smallest size that still shows its
   regression, never moved out of the suite. Only a run that a suite cannot
   hold, such as gpt-oss's decode step on real weights, lives outside it, and
-  it says why. Benches never run in `dune build`.
+  it says why. A bench runs only through the `bench` alias, never in
+  `dune build` or `dune runtest`.
 - Time only on a quiet machine. Correctness runs need no quiet.
 
 ## Reviewing

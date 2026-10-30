@@ -27,7 +27,7 @@ dune exec sowilo/bench/bench_sowilo.exe
 ### OpenCV (Python)
 
 ```bash
-uv run sowilo/bench/bench_sowilo.py
+uv run contrib/sowilo/bench/bench_sowilo.py
 ```
 
 ## Results Sowilo (OCaml)

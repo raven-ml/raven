@@ -1,30 +1,56 @@
-"""The pandas side of talon's bench, over the fixtures write_fixtures.exe writes.
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pandas==3.1.0"]
+# ///
+"""The pandas side of talon's bench, over the fixtures write_fixtures.exe
+writes: each row's time per call.
 
-usage: uv run --with pandas bench_talon.py DIR
+usage: uv run packages/talon/bench/bench_talon.py DIR
 """
 
 from __future__ import annotations
 
+import gc
 import sys
+import timeit
 from pathlib import Path
-from typing import Any, List
+from typing import Callable, List, Sequence, Tuple
 
 import pandas as pd
 
-_SCRIPTS_DIR = Path(__file__).resolve().parent
-while not (_SCRIPTS_DIR / "dune-project").exists():
-    _SCRIPTS_DIR = _SCRIPTS_DIR.parent
-_SCRIPTS_DIR = _SCRIPTS_DIR / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+REPEATS = 5
 
-import ubench  # type: ignore
+Row = Tuple[str, Callable[[], object]]
 
 
-def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    if len(sys.argv) != 2:
-        raise SystemExit(__doc__)
-    data = Path(sys.argv[1])
+# Timing
+
+
+def time_per_call(fn: Callable[[], object]) -> float:
+    """Seconds per call of fn: the fastest of REPEATS batches, each of as many
+    calls as take 0.2 s. The collector stays on, as in a program."""
+    timer = timeit.Timer(fn, setup=gc.enable)
+    number, _ = timer.autorange()
+    return min(timer.repeat(repeat=REPEATS, number=number)) / number
+
+
+def format_time(seconds: float) -> str:
+    for scale, unit in ((1.0, "s"), (1e-3, "ms"), (1e-6, "µs")):
+        if seconds >= scale:
+            return f"{seconds / scale:.2f}{unit}"
+    return f"{seconds * 1e9:.2f}ns"
+
+
+def run(rows: Sequence[Row]) -> None:
+    width = max(len(name) for name, _ in rows)
+    for name, fn in rows:
+        print(f"{name:<{width}}  {format_time(time_per_call(fn))}", flush=True)
+
+
+# Rows
+
+
+def load_data(data: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     transactions = pd.read_csv(
         data / "transactions.csv",
         dtype={
@@ -54,54 +80,36 @@ def _load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return transactions, customers
 
 
-TRANSACTIONS, CUSTOMERS = _load_data()
-
-
-def build_benchmarks() -> List[Any]:
-    benches: List[Any] = []
-
+def build_rows(transactions: pd.DataFrame, customers: pd.DataFrame) -> List[Row]:
     def bench_filter() -> None:
-        filtered = TRANSACTIONS[
-            (TRANSACTIONS["amount"] > 120.0)
-            & (TRANSACTIONS["quantity"] >= 3)
-            & (TRANSACTIONS["region"] == "EMEA")
+        filtered = transactions[
+            (transactions["amount"] > 120.0)
+            & (transactions["quantity"] >= 3)
+            & (transactions["region"] == "EMEA")
         ]
         float(filtered["amount"].sum())
 
-    benches.append(ubench.bench("Filter/high_value (pandas)", bench_filter))
-
     def bench_group() -> None:
-        grouped = (
-            TRANSACTIONS.groupby(["category", "region"])["amount"].sum()
-        )
+        grouped = transactions.groupby(["category", "region"])["amount"].sum()
         float(grouped.sum())
 
-    benches.append(ubench.bench("Group/category_region (pandas)", bench_group))
-
     def bench_join() -> None:
-        joined = TRANSACTIONS.merge(CUSTOMERS, on="customer_id", how="left")
+        joined = transactions.merge(customers, on="customer_id", how="left")
         float(joined["amount"].sum())
 
-    benches.append(ubench.bench("Join/customer_lookup (pandas)", bench_join))
-
     def bench_sort() -> None:
-        sorted_df = TRANSACTIONS.sort_values("amount", ascending=False)
+        sorted_df = transactions.sort_values("amount", ascending=False)
         float(sorted_df["amount"].iloc[0])
 
-    benches.append(ubench.bench("Sort/amount_desc (pandas)", bench_sort))
-
-    return benches
-
-
-def default_config() -> ubench.Config:
-    return ubench.Config.default().build()
-
-
-def main() -> None:
-    benchmarks = build_benchmarks()
-    config = default_config()
-    ubench.run(benchmarks, config=config, output_format="pretty", verbose=False)
+    return [
+        ("Filter/high_value (pandas)", bench_filter),
+        ("Group/category_region (pandas)", bench_group),
+        ("Join/customer_lookup (pandas)", bench_join),
+        ("Sort/amount_desc (pandas)", bench_sort),
+    ]
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 2:
+        raise SystemExit(__doc__)
+    run(build_rows(*load_data(Path(sys.argv[1]))))

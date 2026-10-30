@@ -50,7 +50,7 @@ computes, then measures. `talon.thumper` holds the per-machine baselines.
 ### Pandas (Python)
 
 ```bash
-uv run --with pandas packages/talon/bench/bench_talon.py DIR
+uv run packages/talon/bench/bench_talon.py DIR
 ```
 
 Compare the two by alternating runs of each under the same load.
