@@ -17,12 +17,21 @@ let stop_name = function
    three of its errors of the truth, and over [runs] runs the spread of [ln Z]
    is within a factor of two of the mean error. Over 20 runs the spread of a
    correct error falls in [0.5, 2] with probability 0.995. A run on the Gaussian
-   in ten dimensions takes seven seconds, so it is held to the first claim. *)
+   in ten dimensions takes five seconds, so it is held to the first claim.
+
+   Both claims are on multiples of the errors, which grow as the live points
+   fall, so their odds of a miss hold at any count whose errors stay
+   calibrated. The mixture takes 100 live points, at two thirds of 200's
+   time: over 40 runs at 100 its [ln Z] lay 0.00 errors from the truth on
+   average and spread 1.10 of the mean error (-0.03 and 1.03 at 200). The
+   Gaussian keeps 200: over 10 runs at 100 its [ln Z] lay 0.32 ± 0.25
+   errors above the truth (0.12 at 200), and a shift of 0.32 would raise
+   the first claim's odds of a miss from 0.27% to 0.41%. *)
 
 let live = 200
 let budget = 200
 
-let nest m i =
+let nest ?(live = live) m i =
   let k = Nx.Rng.fold_in (Nx.Rng.key 70) i in
   Norn.Nested.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
     (Nx.Rng.fold_in k 0)
@@ -31,17 +40,17 @@ let nest m i =
 (* The runs of Law 13, shared with the calibration law. *)
 let runs = Hashtbl.create 3
 
-let runs_of m n =
+let runs_of ?live m n =
   match Hashtbl.find_opt runs (m.name, n) with
   | Some zs -> zs
   | None ->
-      let zs = List.init n (nest m) in
+      let zs = List.init n (nest ?live m) in
       Hashtbl.replace runs (m.name, n) zs;
       zs
 
-let law_13 ~runs m =
+let law_13 ?live ~runs m =
   slow m.name (fun () ->
-      let zs = runs_of m runs in
+      let zs = runs_of ?live m runs in
       let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
       let err z = Nx.item [] (Norn.Evidence.error z) in
       let z0 = List.hd zs in
@@ -234,7 +243,7 @@ let () =
            [
              law_13 ~runs:20 conjugate;
              law_13 ~runs:1 gaussian;
-             law_13 ~runs:20 mixture;
+             law_13 ~live:100 ~runs:20 mixture;
            ];
          law_14;
        ])
