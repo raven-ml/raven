@@ -689,6 +689,32 @@ let law_sliced (Sliced c) =
   | false, true -> check (fun () -> Nx.cast c.dt (slice c.other cap64))
   | true, true -> check (fun () -> Nx.cast c.dt (slice c.other cap32))
 
+(* A gather's gradient scatters at its positions: positions sliced from a
+   capture that the step's second result reads again give eager's gradient. *)
+let test_sliced_grad () =
+  let sin i = Float.sin (Float.of_int ((i * 7) + 1)) /. 3. in
+  let logits = Nx.create f32 [| 6; 4 |] (Array.init 24 sin) in
+  let tokens = Nx.create Nx.int32 [| 7 |] [| 0l; 1l; 2l; 3l; 0l; 1l; 2l |] in
+  let loss l =
+    let p = Nx.cast Nx.int64 (Nx.slice [ R (1, 7) ] tokens) in
+    let picked =
+      Nx.take_along_axis ~axis:1
+        (Nx.unsqueeze ~axes:[ 1 ] p)
+        (Nx.log_softmax ~axes:[ 1 ] l)
+    in
+    Nx.neg (Nx.sum picked)
+  in
+  let step l = (Rune.grad' loss l, loss l) in
+  let g = Rune.jit T.(tensor @-> returns (pair tensor tensor)) step in
+  let expected = Rune.grad' loss logits in
+  let calls = Rune.evaluations () in
+  let got, _ = g logits in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
+  equal
+    (array (float_rel ~rel:1e-5 ~abs:1e-6))
+    (Nx.to_array (Nx.flatten expected))
+    (Nx.to_array (Nx.flatten got))
+
 (* Arguments rebuild their structure; a result of several arrays. *)
 let test_structures () =
   let s =
@@ -3196,6 +3222,8 @@ let () =
                "a scatter at a slice of a capture sliced again gives eager's \
                 values"
                sliced_cases law_sliced;
+             test "a gather's gradient at a slice of a capture sliced again"
+               test_sliced_grad;
              test "structures in and out" test_structures;
              test "a result lies where eager puts it" test_placements;
              prop "a function searched at a width" searched_cases law_searched;
