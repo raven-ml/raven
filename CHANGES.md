@@ -99,6 +99,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `dune pkg lock` and `dune build` in a project that depends on raven's
+  packages from source build them: `lz`, `rig` and the other packages
+  failed with "Module Marks doesn't exist" in a hugin test library.
 - **Breaking:** the tensors a figure keeps are host values: `num`, `cat`, the
   `?valid` masks, `image` and `Picture.image` take `Nx.host` tensors, which
   `resolve` and `draw` compute on with nx. A tensor on another set is given

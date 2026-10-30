@@ -5,6 +5,8 @@
 - A fix in one mark for clipping, layout or scaling: does it belong in the
   scale, the panel or the layout, where every mark would get it?
 - A per-backend branch (PNG, SVG, PDF) for what the scene should state.
+- A built-in mark in `lib/marks.ml` that names a module of the library other
+  than `Api`: a user could not write it against `Hugin`.
 
 ## Semantics
 

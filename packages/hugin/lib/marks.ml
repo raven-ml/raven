@@ -4,8 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* The built-in marks name nothing of the library but [Api], the public names
-   they use, so that a user can write each of them. The test suite compiles a
-   copy of this file against the public interface. *)
+   they use, so that a user can write each of them. *)
 
 open Api
 module Field2 = Hugin_gg_kit.Field2

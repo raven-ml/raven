@@ -48,7 +48,6 @@
   hugin.vg.raster
   hugin.vg.svg
   hugin_test_figures
-  hugin_test_marks
   nx
   nx.io
   windtrap)
