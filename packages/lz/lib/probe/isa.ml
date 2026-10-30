@@ -2,7 +2,15 @@
    an S-expression for dune's :include, when the C compiler CC accepts
    them on a use of every intrinsic the path's unit calls; else no flags,
    and the unit compiles empty (lib/checksum_paths.h). The flags and
-   intrinsics postdate GCC 4.4 (PCLMULQDQ) to GCC 11 (AVX-VNNI). *)
+   intrinsics postdate GCC 4.4 (PCLMULQDQ) to GCC 11 (AVX-VNNI).
+
+   gcc for Windows or Cygwin compiles an AVX2 path with
+   -Wa,-muse-unaligned-vector-move too, or not at all. It keeps 32-byte
+   vectors on the stack at addresses it assumes 32-byte aligned, where the
+   Windows x64 ABI aligns the stack to 16 bytes only (gcc bug 54412), and
+   an aligned move to such an address faults. The assembler's option
+   (binutils 2.38) writes each aligned vector move as an unaligned one,
+   which runs as fast on aligned data. *)
 
 let isas =
   [
@@ -45,14 +53,21 @@ let isas =
        }\n" );
   ]
 
-let () =
-  let isa = Sys.argv.(1) in
-  let cc = Array.to_list (Array.sub Sys.argv 2 (Array.length Sys.argv - 2)) in
-  let _, flags, source =
-    List.find (fun (name, _, _) -> name = isa) isas
-  in
-  let c = Filename.temp_file isa ".c" in
-  let o = Filename.temp_file isa ".o" in
+let unaligned = "-Wa,-muse-unaligned-vector-move"
+
+let windows_gcc =
+  "#if defined(__clang__) || !defined(__GNUC__)\n\
+   #error not gcc\n\
+   #endif\n\
+   #if !defined(_WIN32) && !defined(__CYGWIN__)\n\
+   #error not for Windows\n\
+   #endif\n\
+   int f(void);\n"
+
+(* Whether [cc] compiles [source] with [flags]. *)
+let compiles name cc flags source =
+  let c = Filename.temp_file name ".c" in
+  let o = Filename.temp_file name ".o" in
   Out_channel.with_open_text c (fun oc -> output_string oc source);
   let cmd =
     Filename.quote_command (List.hd cc) ~stdout:Filename.null
@@ -62,4 +77,18 @@ let () =
   let ok = Sys.command cmd = 0 in
   Sys.remove c;
   if Sys.file_exists o then Sys.remove o;
+  ok
+
+let () =
+  let isa = Sys.argv.(1) in
+  let cc = Array.to_list (Array.sub Sys.argv 2 (Array.length Sys.argv - 2)) in
+  let _, flags, source =
+    List.find (fun (name, _, _) -> name = isa) isas
+  in
+  let flags =
+    if List.mem "-mavx2" flags && compiles isa cc [] windows_gcc then
+      flags @ [ unaligned ]
+    else flags
+  in
+  let ok = compiles isa cc flags source in
   print_string (if ok then "(" ^ String.concat " " flags ^ ")" else "()")
