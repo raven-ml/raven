@@ -41,7 +41,7 @@ let tag_style =
 
 let view ~run_id ~run_name ~tags ~latest_epoch ~total_epochs ~latest_step
     ~elapsed_secs ~status =
-  let color = Theme.status_color status in
+  let color = Munin_theme.status_color status in
   let epoch_items =
     match (latest_epoch, total_epochs) with
     | None, _ -> []
@@ -65,7 +65,7 @@ let view ~run_id ~run_name ~tags ~latest_epoch ~total_epochs ~latest_step
           text ~style:value_style (format_step s);
         ]
   in
-  let sep () = text ~style:Theme.muted_style " \u{00B7} " in
+  let sep () = text ~style:Munin_theme.muted_style " \u{00B7} " in
   let stats =
     [ epoch_items; step_items ]
     |> List.filter (fun l -> l <> [])
@@ -75,22 +75,26 @@ let view ~run_id ~run_name ~tags ~latest_epoch ~total_epochs ~latest_step
   let stats =
     if stats <> [] then
       stats
-      @ [ sep (); text ~style:Theme.muted_style (format_elapsed elapsed_secs) ]
-    else [ text ~style:Theme.muted_style (format_elapsed elapsed_secs) ]
+      @ [
+          sep ();
+          text ~style:Munin_theme.muted_style (format_elapsed elapsed_secs);
+        ]
+    else [ text ~style:Munin_theme.muted_style (format_elapsed elapsed_secs) ]
   in
   box ~padding:(padding_xy 2 0) ~flex_direction:Row ~gap:(gap 2)
-    ~align_items:Center ~background:Theme.header_bg
+    ~align_items:Center ~background:Munin_theme.header_bg
     ~size:{ width = pct 100; height = auto }
     ([
-       text ~style:value_style "Munin"; text ~style:Theme.muted_style "\u{2502}";
+       text ~style:value_style "Munin";
+       text ~style:Munin_theme.muted_style "\u{2502}";
      ]
     @ (match run_name with
       | Some name ->
           [
             text ~style:value_style name;
-            text ~style:Theme.muted_style (Printf.sprintf " (%s)" run_id);
+            text ~style:Munin_theme.muted_style (Printf.sprintf " (%s)" run_id);
           ]
-      | None -> [ text ~style:Theme.muted_style run_id ])
+      | None -> [ text ~style:Munin_theme.muted_style run_id ])
     @ List.map (fun t -> text ~style:tag_style (Printf.sprintf " %s " t)) tags
     @ stats
     @ [
@@ -98,5 +102,5 @@ let view ~run_id ~run_name ~tags ~latest_epoch ~total_epochs ~latest_step
         text ~style:(Ansi.Style.make ~fg:color ()) "\u{25CF}";
         text
           ~style:(Ansi.Style.make ~bold:true ~fg:color ())
-          (Theme.status_label status);
+          (Munin_theme.status_label status);
       ])

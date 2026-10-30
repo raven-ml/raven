@@ -66,37 +66,41 @@ let last_value history =
 
 (* Chart drawing *)
 
-let draw_metric_chart ~compact history grid ~width ~height =
+let chart_theme =
+  { Charts.Theme.dark with axis = axis_style; grid = grid_style }
+
+let to_points history =
+  Array.of_list
+    (List.map (fun (step, value) -> (float_of_int step, value)) history)
+
+let metric_line color history =
+  Charts.line ~color:(Charts.const color) ~x:fst ~y:snd (to_points history)
+
+(* An axis spaces its ticks by cells: [width / x_ticks] cells apart gives about
+   [x_ticks] ticks across the chart. *)
+let draw_metric_chart ~compact ?smoothed history grid ~width ~height =
   if history = [] then ()
   else
-    let data =
-      Array.of_list
-        (List.map (fun (step, value) -> (float_of_int step, value)) history)
+    let x_ticks, y_ticks, y_format =
+      if compact then (4, 2, fun _ v -> Printf.sprintf "%.1f" v)
+      else (6, 4, fun _ v -> Printf.sprintf "%.4g" v)
     in
-    let margins, x_ticks, y_ticks, y_format =
-      if compact then ((1, 0, 0, 2), 4, 2, fun _ v -> Printf.sprintf "%.1f" v)
-      else ((1, 1, 1, 4), 6, 4, fun _ v -> Printf.sprintf "%.4g" v)
+    let lines =
+      match smoothed with
+      | None -> [ metric_line Ansi.Color.cyan history ]
+      | Some smoothed ->
+          [
+            metric_line (Ansi.Color.grayscale ~level:8) history;
+            metric_line Ansi.Color.cyan smoothed;
+          ]
     in
-    let chart =
-      Charts.empty ()
-      |> Charts.with_frame (Charts.manual_frame ~margins ())
-      |> Charts.with_axes
-           ~x:
-             (Charts.Axis.default
-             |> Charts.Axis.with_ticks x_ticks
-             |> Charts.Axis.with_style axis_style)
-           ~y:
-             (Charts.Axis.default
-             |> Charts.Axis.with_ticks y_ticks
-             |> Charts.Axis.with_style axis_style
-             |> Charts.Axis.with_format y_format)
-      |> Charts.with_grid
-           (Charts.Gridlines.default
-           |> Charts.Gridlines.with_style grid_style
-           |> Charts.Gridlines.with_x true
-           |> Charts.Gridlines.with_y true)
-      |> Charts.line ~id:"metric" ~resolution:`Braille2x4
-           ~style:(Ansi.Style.make ~fg:Ansi.Color.cyan ())
-           ~x:fst ~y:snd data
+    let axes =
+      [
+        Charts.axis ~grid:`Ticks ~spacing:(width / x_ticks) "x";
+        Charts.axis ~grid:`Ticks ~spacing:(height / y_ticks) ~format:y_format
+          "y";
+      ]
     in
-    ignore (Charts.draw chart grid ~width ~height)
+    let fig = Charts.layer (lines @ axes) in
+    let layout = Charts.layout ~theme:chart_theme ~width ~height fig in
+    Charts.draw layout grid ~x:0 ~y:0

@@ -9,10 +9,10 @@ open Mosaic
 
 type model = {
   run : Munin.Run.t;
-  run_status : Theme.run_status;
+  run_status : Munin_theme.run_status;
   metrics_state : Metrics.state;
   mode : mode;
-  smooth : Theme.smooth;
+  smooth : Munin_theme.smooth;
   show_system : bool;
   screen_width : int;
   was_live : bool;
@@ -41,9 +41,9 @@ let stale_after = 5.0
 
 let live_status run =
   match Munin.Run.status run with
-  | `Finished -> Theme.Done
-  | `Failed -> Theme.Failed
-  | `Killed -> Theme.Killed
+  | `Finished -> Munin_theme.Done
+  | `Failed -> Munin_theme.Failed
+  | `Killed -> Munin_theme.Killed
   | `Running ->
       (* A run that just started has yet to log anything, so its start time is
          the last sign of life we have. *)
@@ -52,8 +52,8 @@ let live_status run =
           (Munin.Run.last_event_at run)
           ~default:(Munin.Run.started_at run)
       in
-      if Unix.gettimeofday () -. last > stale_after then Theme.Stopped
-      else Theme.Live
+      if Unix.gettimeofday () -. last > stale_after then Munin_theme.Stopped
+      else Munin_theme.Live
 
 let history_for_tag run tag =
   List.map
@@ -82,7 +82,7 @@ let total_epochs run =
 let elapsed_secs m =
   let end_time =
     match m.run_status with
-    | Theme.Live -> Unix.gettimeofday ()
+    | Munin_theme.Live -> Unix.gettimeofday ()
     | Stopped | Done | Failed | Killed -> (
         match Munin.Run.ended_at m.run with
         | Some t -> t
@@ -168,8 +168,8 @@ let view_summary_banner m =
   let mi = int_of_float elapsed mod 3600 / 60 in
   let s = int_of_float elapsed mod 60 in
   let duration = Printf.sprintf "%02d:%02d:%02d" h mi s in
-  let status_color = Theme.status_color m.run_status in
-  let status_label = Theme.status_label m.run_status in
+  let status_color = Munin_theme.status_color m.run_status in
+  let status_label = Munin_theme.status_label m.run_status in
   let metric_tags = user_metric_tags m.run in
   let capped =
     if List.length metric_tags > 8 then
@@ -185,14 +185,14 @@ let view_summary_banner m =
           match best_value m.run tag with
           | Some v -> Printf.sprintf "%.4g" v
           | None -> (
-              match Theme.last_value history with
+              match Munin_theme.last_value history with
               | Some v -> Printf.sprintf "%.4g" v
               | None -> "-")
         in
         box ~flex_direction:Row ~gap:(gap 1)
           ~size:{ width = pct 50; height = auto }
           [
-            text ~style:Theme.muted_style tag;
+            text ~style:Munin_theme.muted_style tag;
             text ~style:spark_style spark;
             text ~style:bold_white value;
           ])
@@ -298,7 +298,7 @@ let view_dashboard m =
       ])
 
 let view_detail m tag =
-  let smooth_param = Theme.smooth_alpha m.smooth in
+  let smooth_param = Munin_theme.smooth_alpha m.smooth in
   let history_for_tag tag = history_for_tag m.run tag in
   let metric_def = List.assoc_opt tag (Munin.Run.metric_defs m.run) in
   box ~flex_direction:Column
@@ -352,10 +352,10 @@ let init ~run =
       run_status;
       metrics_state;
       mode = Dashboard;
-      smooth = Theme.Off;
+      smooth = Munin_theme.Off;
       show_system = true;
       screen_width = 80;
-      was_live = run_status = Theme.Live;
+      was_live = run_status = Munin_theme.Live;
       run_completed = false;
     },
     Cmd.none )
@@ -367,8 +367,9 @@ let update msg m =
       let run_status = live_status run in
       let run_completed =
         m.run_completed
-        || m.was_live && run_status <> Theme.Live
-           && run_status <> Theme.Stopped
+        || m.was_live
+           && run_status <> Munin_theme.Live
+           && run_status <> Munin_theme.Stopped
       in
       ({ m with run; run_status; run_completed }, Cmd.none)
   | Terminal_resize (width, height) ->
@@ -398,7 +399,8 @@ let update msg m =
   | Close_info -> ({ m with mode = Dashboard }, Cmd.none)
   | Toggle_smooth -> (
       match m.mode with
-      | Detail _ -> ({ m with smooth = Theme.next_smooth m.smooth }, Cmd.none)
+      | Detail _ ->
+          ({ m with smooth = Munin_theme.next_smooth m.smooth }, Cmd.none)
       | Dashboard | Info -> (m, Cmd.none))
   | Toggle_system ->
       let m = { m with show_system = not m.show_system } in
@@ -415,7 +417,7 @@ let update msg m =
 let subscriptions m =
   Sub.batch
     [
-      Sub.on_tick (fun ~dt -> Tick dt);
+      Sub.on_tick ~id:"tick" (fun ~dt -> Tick dt);
       Sub.on_resize (fun ~width ~height -> Terminal_resize (width, height));
       Sub.on_key (fun ev ->
           let is c ch =

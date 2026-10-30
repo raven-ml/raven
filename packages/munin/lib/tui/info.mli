@@ -7,7 +7,7 @@
 
 val view :
   run:Munin.Run.t ->
-  status:Theme.run_status ->
+  status:Munin_theme.run_status ->
   elapsed_secs:float ->
   metric_defs:(string * Munin.Metric.def) list ->
   latest_metrics:(string * Munin.Metric.sample) list ->

@@ -23,12 +23,12 @@ let short_hash s = if String.length s > 7 then String.sub s 0 7 else s
 
 (* View *)
 
-let view ~(run : Munin.Run.t) ~(status : Theme.run_status) ~elapsed_secs
+let view ~(run : Munin.Run.t) ~(status : Munin_theme.run_status) ~elapsed_secs
     ~(metric_defs : (string * Munin.Metric.def) list)
     ~(latest_metrics : (string * Munin.Metric.sample) list)
     ~(step_metrics : string list) ~(best_for_tag : string -> float option) =
   let prov = Munin.Run.provenance run in
-  let status_color = Theme.status_color status in
+  let status_color = Munin_theme.status_color status in
   let run_section =
     [ Overview.section_header "Run" ]
     @ (match Munin.Run.name run with
@@ -48,7 +48,7 @@ let view ~(run : Munin.Run.t) ~(status : Theme.run_status) ~elapsed_secs
             text ~style:(Ansi.Style.make ~fg:status_color ()) "\u{25CF} ";
             text
               ~style:(Ansi.Style.make ~bold:true ~fg:status_color ())
-              (Theme.status_label status);
+              (Munin_theme.status_label status);
           ];
         Overview.kv_row "Started" (format_timestamp (Munin.Run.started_at run));
         Overview.kv_row "Duration" (format_elapsed elapsed_secs);

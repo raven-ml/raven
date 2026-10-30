@@ -178,7 +178,7 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
   in
   canvas
     ~size:{ width = pct 100; height = px 7 }
-    (fun c ~delta:_ ->
+    (fun c ~dt:_ ->
       Canvas.clear c;
       let w = Canvas.width c in
       draw_cpu_bar c ~y:0 ~width:w ~label:"CPU  " ~cpu_user:v.cpu_user

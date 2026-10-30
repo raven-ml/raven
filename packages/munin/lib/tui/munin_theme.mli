@@ -48,13 +48,14 @@ val last_value : ('a * 'b) list -> 'b option
 
 val draw_metric_chart :
   compact:bool ->
+  ?smoothed:(int * float) list ->
   (int * float) list ->
-  Grid.t ->
+  Matrix_grid.t ->
   width:int ->
   height:int ->
   unit
 (** [draw_metric_chart ~compact history grid ~width ~height] draws
     [history], pairs of step and value, as a line chart on the [width] by
-    [height] cells of [grid]. A [compact] chart has narrower margins, fewer
-    ticks and one decimal on the y axis. An empty [history] draws
-    nothing. *)
+    [height] cells of [grid]. A [compact] chart has fewer ticks and one
+    decimal on the y axis. With [smoothed], [history] is drawn in grey
+    under [smoothed]. An empty [history] draws nothing. *)

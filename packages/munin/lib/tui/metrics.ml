@@ -178,7 +178,7 @@ let view_metric_chart ~history_for_tag ~(best_for_tag : string -> float option)
     | None -> ""
   in
   let title =
-    match (Theme.last_value history, best) with
+    match (Munin_theme.last_value history, best) with
     | Some value, Some best_val ->
         Printf.sprintf "%s [%.4f] best: %.4f%s" tag value best_val goal_arrow
     | Some value, None -> Printf.sprintf "%s [%.4f]" tag value
@@ -190,8 +190,9 @@ let view_metric_chart ~history_for_tag ~(best_for_tag : string -> float option)
     [
       canvas
         ~size:{ width = pct 100; height = pct 100 }
-        (fun c ~delta:_ ->
-          Theme.draw_metric_chart ~compact:true history (Canvas.grid c)
+        (fun c ~dt:_ ->
+          Canvas.clear c;
+          Munin_theme.draw_metric_chart ~compact:true history (Canvas.grid c)
             ~width:(Canvas.width c) ~height:(Canvas.height c));
     ]
 
@@ -213,7 +214,7 @@ let view (s : state) ~metric_tags ~history_for_tag ~best_for_tag ~goal_for_tag =
   if metric_tags = [] then
     box ~padding:(padding 1)
       ~size:{ width = pct 100; height = auto }
-      [ text ~style:Theme.muted_style "  Waiting for metrics..." ]
+      [ text ~style:Munin_theme.muted_style "  Waiting for metrics..." ]
   else
     let columns = calculate_columns s.screen_width in
     let total_metrics = List.length metric_tags in
@@ -233,7 +234,7 @@ let view (s : state) ~metric_tags ~history_for_tag ~best_for_tag ~goal_for_tag =
           box ~flex_direction:Row ~justify_content:Flex_end ~align_items:Center
             ~size:{ width = pct 100; height = auto }
             [
-              text ~style:Theme.muted_style
+              text ~style:Munin_theme.muted_style
                 (Printf.sprintf "Batch %d/%d" (w.current_batch + 1)
                    w.total_batches);
             ];

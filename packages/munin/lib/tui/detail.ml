@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
-module Charts = Matrix_charts
 
 (* Exponential moving average: alpha in (0,1]. *)
 let ema alpha history =
@@ -84,7 +83,7 @@ let view_stats_row stats =
   in
   box ~justify_content:Center ~align_items:Center
     ~size:{ width = pct 100; height = auto }
-    [ text ~style:Theme.muted_style (String.concat "  \u{00B7}  " parts) ]
+    [ text ~style:Munin_theme.muted_style (String.concat "  \u{00B7}  " parts) ]
 
 let meta_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ()
 
@@ -116,11 +115,9 @@ let view_metric_def_row (metric_def : Munin.Metric.def) =
 
 let view ~tag ~history_for_tag ~best ~size ~smooth ~metric_def =
   let history = history_for_tag tag in
-  let display_history =
-    match smooth with None -> history | Some alpha -> ema alpha history
-  in
+  let smoothed = Option.map (fun alpha -> ema alpha history) smooth in
   let title =
-    match Theme.last_value history with
+    match Munin_theme.last_value history with
     | None -> tag
     | Some v -> Printf.sprintf "%s [%.4f]" tag v
   in
@@ -142,54 +139,11 @@ let view ~tag ~history_for_tag ~best ~size ~smooth ~metric_def =
          [
            canvas
              ~size:{ width = pct 100; height = pct 100 }
-             (fun c ~delta:_ ->
-               let width = Canvas.width c in
-               let height = Canvas.height c in
-               let grid = Canvas.grid c in
-               match smooth with
-               | None ->
-                   Theme.draw_metric_chart ~compact:false history grid ~width
-                     ~height
-               | Some _ ->
-                   if history = [] then ()
-                   else
-                     let to_arr h =
-                       Array.of_list
-                         (List.map
-                            (fun (step, value) -> (float_of_int step, value))
-                            h)
-                     in
-                     let raw_data = to_arr history in
-                     let smooth_data = to_arr display_history in
-                     let chart =
-                       Charts.empty ()
-                       |> Charts.with_frame
-                            (Charts.manual_frame ~margins:(1, 1, 1, 4) ())
-                       |> Charts.with_axes
-                            ~x:
-                              (Charts.Axis.default |> Charts.Axis.with_ticks 6
-                              |> Charts.Axis.with_style Theme.axis_style)
-                            ~y:
-                              (Charts.Axis.default |> Charts.Axis.with_ticks 4
-                              |> Charts.Axis.with_style Theme.axis_style
-                              |> Charts.Axis.with_format (fun _ v ->
-                                  Printf.sprintf "%.4g" v))
-                       |> Charts.with_grid
-                            (Charts.Gridlines.default
-                            |> Charts.Gridlines.with_style Theme.grid_style
-                            |> Charts.Gridlines.with_x true
-                            |> Charts.Gridlines.with_y true)
-                       |> Charts.line ~id:"raw" ~resolution:`Braille2x4
-                            ~style:
-                              (Ansi.Style.make
-                                 ~fg:(Ansi.Color.grayscale ~level:8)
-                                 ())
-                            ~x:fst ~y:snd raw_data
-                       |> Charts.line ~id:"smooth" ~resolution:`Braille2x4
-                            ~style:(Ansi.Style.make ~fg:Ansi.Color.cyan ())
-                            ~x:fst ~y:snd smooth_data
-                     in
-                     ignore (Charts.draw chart grid ~width ~height));
+             (fun c ~dt:_ ->
+               Canvas.clear c;
+               Munin_theme.draw_metric_chart ~compact:false ?smoothed history
+                 (Canvas.grid c) ~width:(Canvas.width c)
+                 ~height:(Canvas.height c));
          ];
      ]
     @ stats_rows)

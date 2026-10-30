@@ -34,6 +34,16 @@
 
 (pin
  (url
+  "git+https://github.com/tmattio/mosaic.git#6834ce001c7028cdb2a6be4f5a1f3fb84f68d758")
+ (package
+  (name mosaic))
+ (package
+  (name matrix))
+ (package
+  (name toffee)))
+
+(pin
+ (url
   "git+https://github.com/invariant-hq/windtrap.git#7be03df651610949a87ed3bb797984015e9691b9")
  (package
   (name windtrap))

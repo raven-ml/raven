@@ -36,9 +36,9 @@ type model = {
   clock : float;
   viewport_width : int;
   viewport_height : int;
-  edit_cursor : int;
-  edit_cursor_override : int option;
-  edit_selection : (int * int) option;
+  editor : Editor.t;
+  scroll : Scroll.t;
+  help_scroll : Scroll.t;
   completion_popup_open : bool;
   completion : completion option;
 }
@@ -66,15 +66,15 @@ type msg =
   | Resize of int * int
   | Enter_edit
   | Exit_edit
-  | Edit_source of string
+  | Edit of Editor.t
   | Submit_edit of string
-  | Edit_cursor_changed of int * (int * int) option
+  | Scrolled of Scroll.t
+  | Help_scrolled of Scroll.t
   | Trigger_completion
   | Next_completion
   | Prev_completion
   | Accept_completion
   | Dismiss_completion
-  | Deferred_focus_editor
 
 (* ───── Palette ───── *)
 
@@ -95,9 +95,6 @@ let overlay_bg = Ansi.Color.of_rgb 12 12 16
 let cell_bg_focused = Ansi.Color.of_rgb 30 30 38
 let reload_interval = 1.0
 let template = "# Untitled\n\n```ocaml\n\n```\n"
-let scroll_box_id = "notebook-scroll"
-let textarea_id = "cell-editor"
-let help_scroll_id = "footer-help-scroll"
 let lp n = Toffee.Style.Length_percentage.length (Float.of_int n)
 
 let padding_lrtb ~l ~r ~t ~b =
@@ -235,26 +232,14 @@ let take_first n xs =
   in
   loop [] n xs
 
-let utf8_codepoint_offsets s =
-  let len = String.length s in
-  let rec prev_start i =
-    if i <= 0 then 0
-    else if Char.code s.[i] land 0xC0 = 0x80 then prev_start (i - 1)
-    else i
-  in
-  let rec loop acc i =
-    if i <= 0 then Array.of_list (0 :: acc)
-    else
-      let j = prev_start (i - 1) in
-      loop (i :: acc) j
-  in
-  loop [] len
-
-let grapheme_byte_offsets s = utf8_codepoint_offsets s
-
-let grapheme_count s =
-  let offsets = grapheme_byte_offsets s in
-  Array.length offsets - 1
+(* The byte offset of each grapheme boundary of [s], the units of
+   [Editor.cursor]: [0], then the end of each cluster. *)
+let grapheme_byte_offsets s =
+  let ends = ref [] in
+  Matrix_text.iter_graphemes
+    (fun ~offset ~len -> ends := (offset + len) :: !ends)
+    s;
+  Array.of_list (0 :: List.rev !ends)
 
 let cursor_byte_of code cursor =
   let offsets = grapheme_byte_offsets code in
@@ -343,11 +328,13 @@ let is_navigation_msg msg =
   | Focus_next | Focus_prev | Move_up | Move_down -> true
   | _ -> false
 
-let should_clear_error_msg msg =
+let should_clear_error_msg m msg =
   if is_navigation_msg msg then false
   else
     match msg with
-    | Tick _ | Dismiss_message | Toggle_help | Edit_cursor_changed _ -> false
+    | Tick _ | Dismiss_message | Toggle_help | Scrolled _ | Help_scrolled _ ->
+        false
+    | Edit e -> not (String.equal (Editor.text e) (Editor.text m.editor))
     | _ -> true
 
 let current_code_cell m =
@@ -399,8 +386,8 @@ let recompute_completion m =
   | Some (_, source) ->
       let force = m.completion_popup_open in
       let next =
-        build_completion ~force m source ~cursor:m.edit_cursor
-          ~selection:m.edit_selection
+        build_completion ~force m source ~cursor:(Editor.cursor m.editor)
+          ~selection:(Editor.selection m.editor)
       in
       { m with completion = preserve_selection m.completion next }
 
@@ -419,31 +406,25 @@ let ghost_text m =
           if String.length suffix = 0 then None else Some suffix
       | Some _ -> None)
 
-let replace_range_at_byte s ~start_byte ~end_byte text =
-  let len = String.length s in
-  let start_byte = clamp 0 len start_byte in
-  let end_byte = clamp start_byte len end_byte in
-  String.sub s 0 start_byte ^ text ^ String.sub s end_byte (len - end_byte)
-
 let apply_completion m c choice =
   match current_code_cell m with
   | None -> m
   | Some (cell_id, source) ->
-      let code =
-        replace_range_at_byte source ~start_byte:c.replace_start_byte
-          ~end_byte:c.cursor_byte choice
+      let editor =
+        m.editor
+        |> Editor.select
+             ~anchor:(cursor_of_byte source c.replace_start_byte)
+             ~cursor:(cursor_of_byte source c.cursor_byte)
+        |> Editor.insert choice
       in
-      let cursor =
-        cursor_of_byte code (c.replace_start_byte + String.length choice)
+      let session =
+        Session.update_source cell_id (Editor.text editor) m.session
       in
-      let session = Session.update_source cell_id code m.session in
       {
         m with
         session;
         dirty = true;
-        edit_cursor = cursor;
-        edit_cursor_override = Some cursor;
-        edit_selection = None;
+        editor;
         completion_popup_open = false;
         completion = None;
       }
@@ -467,17 +448,35 @@ let active_line_colors code cursor =
       } );
   ]
 
-let highlight_source source =
-  try
-    Tree_sitter_ocaml.highlight_ocaml source
-    |> Syntax_theme.apply Syntax_theme.default ~content:source
-  with _ -> []
+let ocaml_syntax =
+  let highlight ~language:_ ~content =
+    Tree_sitter_ocaml.highlight_ocaml content
+    |> Syntax_highlight.of_triples ~content
+  in
+  Code.with_highlighter ~language:"ocaml" ~style:Syntax_style.default
+    (Code.Highlighter.sync highlight)
+
+(* Shift+Enter runs a cell. The kitty keyboard protocol reports it as Enter with
+   Shift; legacy terminals send a line feed, which decodes as Ctrl+J. *)
+let is_run_key ev =
+  let data = Event.Key.data ev in
+  let md = data.mods in
+  match data.key with
+  | Enter -> md.shift && not (md.ctrl || md.alt || md.super)
+  | Char c ->
+      Uchar.equal c (Uchar.of_char 'j') && md.ctrl && not (md.alt || md.super)
+  | _ -> false
+
+let editor_of_source source =
+  Editor.of_string source |> Editor.with_viewport ~x:0 ~y:0 ~follow:true
 
 let editor_on_key m ev =
   let data = Event.Key.data ev in
-  if data.event_type = Release then None
+  let md = data.mods in
+  if is_run_key ev then (
+    Event.Key.prevent_default ev;
+    Some Execute_and_advance)
   else
-    let md = data.modifier in
     match data.key with
     | Escape when m.completion_popup_open ->
         Event.Key.prevent_default ev;
@@ -493,7 +492,7 @@ let editor_on_key m ev =
     | Tab when m.completion_popup_open ->
         Event.Key.prevent_default ev;
         Some Accept_completion
-    | Tab when Option.is_none m.edit_selection ->
+    | Tab when Option.is_none (Editor.selection m.editor) ->
         Event.Key.prevent_default ev;
         Some Trigger_completion
     | Char c
@@ -509,10 +508,6 @@ let editor_on_key m ev =
     | Char c when md.ctrl && Uchar.to_int c = Char.code ' ' ->
         Event.Key.prevent_default ev;
         Some Trigger_completion
-    | Line_feed when not (md.ctrl || md.alt || md.super) ->
-        (* Shift+Enter arrives as Line_feed (0x0a) without shift flag *)
-        Event.Key.prevent_default ev;
-        Some Execute_and_advance
     | _ -> None
 
 (* ───── Init ───── *)
@@ -534,18 +529,14 @@ let init ~create_kernel ~path () =
   let is_code_cell =
     match Doc.nth focus doc with Some (Cell.Code _) -> true | _ -> false
   in
-  let edit_cursor =
+  let editor =
     match Doc.nth focus doc with
-    | Some (Cell.Code { source; _ }) -> grapheme_count source
-    | _ -> 0
+    | Some (Cell.Code { source; _ }) -> editor_of_source source
+    | _ -> Editor.empty
   in
   let initial_mode = if is_code_cell then Editing else Normal in
-  let title_cmd =
-    Cmd.set_title (Printf.sprintf "Quill - %s" (Filename.basename path))
-  in
   let initial_cmd =
-    if is_code_cell then Cmd.batch [ title_cmd; Cmd.focus textarea_id ]
-    else title_cmd
+    Cmd.set_title (Printf.sprintf "Quill - %s" (Filename.basename path))
   in
   ( {
       session;
@@ -563,9 +554,9 @@ let init ~create_kernel ~path () =
       clock = 0.;
       viewport_width = 120;
       viewport_height = 32;
-      edit_cursor;
-      edit_cursor_override = (if is_code_cell then Some edit_cursor else None);
-      edit_selection = None;
+      editor;
+      scroll = Scroll.at 0;
+      help_scroll = Scroll.at 0;
       completion_popup_open = false;
       completion = None;
     },
@@ -589,8 +580,6 @@ let check_reload m =
       dirty = false;
       completion_popup_open = false;
       completion = None;
-      edit_cursor_override = None;
-      edit_selection = None;
     }
   else m
 
@@ -638,17 +627,12 @@ let execute_and_advance m =
           session;
           focus;
           mode = Editing;
-          edit_cursor = 0;
-          edit_cursor_override = Some 0;
-          edit_selection = None;
+          editor = Editor.empty;
           completion_popup_open = false;
           completion = None;
         }
       in
-      (* Defer focus: the new textarea doesn't exist yet in the render tree.
-         Dispatch a message that will issue Cmd.focus on the next update cycle,
-         after the view has re-rendered with the new cell. *)
-      (m, Cmd.perform (fun dispatch -> dispatch Deferred_focus_editor))
+      (m, Cmd.none)
   | Some (Cell.Text _) ->
       (* Text cell: just advance to the next cell (or create one) *)
       let n = cell_count m in
@@ -660,20 +644,17 @@ let execute_and_advance m =
           | Some (Cell.Code { source; _ } | Cell.Text { source; _ }) -> source
           | None -> ""
         in
-        let edit_cursor = grapheme_count source in
         let m =
           {
             m with
             focus = pos;
             mode = Editing;
-            edit_cursor;
-            edit_cursor_override = Some edit_cursor;
-            edit_selection = None;
+            editor = editor_of_source source;
             completion_popup_open = false;
             completion = None;
           }
         in
-        (m, Cmd.perform (fun dispatch -> dispatch Deferred_focus_editor))
+        (m, Cmd.none)
       else
         (* No next cell — create a new code cell *)
         let cell = Cell.code "" in
@@ -687,14 +668,12 @@ let execute_and_advance m =
             focus;
             dirty = true;
             mode = Editing;
-            edit_cursor = 0;
-            edit_cursor_override = Some 0;
-            edit_selection = None;
+            editor = Editor.empty;
             completion_popup_open = false;
             completion = None;
           }
         in
-        (m, Cmd.perform (fun dispatch -> dispatch Deferred_focus_editor))
+        (m, Cmd.none)
   | None -> (with_footer_message m Warning "No cell to advance from", Cmd.none)
 
 (* ───── Update ───── *)
@@ -704,16 +683,7 @@ let tick_model m dt =
   let m = { m with session; clock = m.clock +. dt } in
   expire_footer_message m
 
-let update_toggle_help m =
-  let show_help = not m.show_help in
-  let cmd =
-    if show_help then Cmd.focus help_scroll_id
-    else
-      match m.mode with
-      | Editing -> Cmd.focus textarea_id
-      | Normal -> Cmd.focus scroll_box_id
-  in
-  ({ m with show_help }, cmd)
+let update_toggle_help m = ({ m with show_help = not m.show_help }, Cmd.none)
 
 let update_save m =
   let session = Session.checkpoint m.session in
@@ -737,7 +707,6 @@ let update_quit m =
 
 let update_editing msg m =
   match msg with
-  | Deferred_focus_editor -> (m, Cmd.focus textarea_id)
   | Toggle_help -> update_toggle_help m
   | Dismiss_message ->
       ({ m with confirm_quit = false; footer_msg = None }, Cmd.none)
@@ -749,41 +718,29 @@ let update_editing msg m =
           m with
           mode = Normal;
           session;
-          edit_cursor_override = None;
           completion_popup_open = false;
           completion = None;
-          edit_selection = None;
         },
-        Cmd.focus scroll_box_id )
-  | Edit_source source -> (
+        Cmd.none )
+  | Edit editor -> (
       match focused_cell m with
       | Some cell ->
-          let cell_id = Cell.id cell in
-          let session = Session.update_source cell_id source m.session in
-          let m = { m with session; dirty = true } in
+          let source = Editor.text editor in
           let m =
-            if Option.is_some m.edit_selection then
-              { m with completion_popup_open = false }
-            else m
+            if String.equal source (Editor.text m.editor) then m
+            else
+              let cell_id = Cell.id cell in
+              let session = Session.update_source cell_id source m.session in
+              { m with session; dirty = true }
           in
-          (recompute_completion m, Cmd.none)
+          let completion_popup_open =
+            m.completion_popup_open && Option.is_none (Editor.selection editor)
+          in
+          ( recompute_completion { m with editor; completion_popup_open },
+            Cmd.none )
       | None -> (m, Cmd.none))
-  | Edit_cursor_changed (cursor, selection) ->
-      let m =
-        {
-          m with
-          edit_cursor = cursor;
-          edit_cursor_override = None;
-          edit_selection = selection;
-          completion_popup_open =
-            (match selection with
-            | Some _ -> false
-            | None -> m.completion_popup_open);
-        }
-      in
-      (recompute_completion m, Cmd.none)
   | Trigger_completion ->
-      if Option.is_some m.edit_selection then
+      if Option.is_some (Editor.selection m.editor) then
         ( with_footer_message m Warning
             "Dismiss selection before triggering completion.",
           Cmd.none )
@@ -843,8 +800,6 @@ let update_editing msg m =
           mode = Normal;
           completion_popup_open = false;
           completion = None;
-          edit_cursor_override = None;
-          edit_selection = None;
         }
   | Interrupt ->
       m.kernel.interrupt ();
@@ -892,14 +847,12 @@ let update_normal msg m =
           focus;
           dirty = true;
           mode = Editing;
-          edit_cursor = 0;
-          edit_cursor_override = Some 0;
-          edit_selection = None;
+          editor = Editor.empty;
           completion_popup_open = false;
           completion = None;
         }
       in
-      (m, Cmd.focus textarea_id)
+      (m, Cmd.none)
   | Insert_text_below ->
       let pos = m.focus + 1 in
       let cell = Cell.text "" in
@@ -961,25 +914,22 @@ let update_normal msg m =
   | Enter_edit -> (
       match focused_cell m with
       | Some (Cell.Code { source; _ } | Cell.Text { source; _ }) ->
-          let edit_cursor = grapheme_count source in
           let m =
             {
               m with
               mode = Editing;
-              edit_cursor;
-              edit_cursor_override = Some edit_cursor;
-              edit_selection = None;
+              editor = editor_of_source source;
               completion_popup_open = false;
               completion = None;
             }
           in
-          (recompute_completion m, Cmd.focus textarea_id)
+          (recompute_completion m, Cmd.none)
       | None -> (m, Cmd.none))
   | _ -> (m, Cmd.none)
 
 let update msg m =
   let m =
-    if should_clear_error_msg msg then
+    if should_clear_error_msg m msg then
       match m.footer_msg with
       | Some { kind = Error; _ } -> clear_footer_message m
       | _ -> m
@@ -987,12 +937,14 @@ let update msg m =
   in
   let m =
     match msg with
-    | Quit | Tick _ | Toggle_help | Resize _ -> m
+    | Quit | Tick _ | Toggle_help | Resize _ | Scrolled _ | Help_scrolled _ -> m
     | _ -> clear_confirm_message { m with confirm_quit = false }
   in
-  match m.mode with
-  | Editing -> update_editing msg m
-  | Normal -> update_normal msg m
+  match (msg, m.mode) with
+  | Scrolled scroll, _ -> ({ m with scroll }, Cmd.none)
+  | Help_scrolled help_scroll, _ -> ({ m with help_scroll }, Cmd.none)
+  | _, Editing -> update_editing msg m
+  | _, Normal -> update_normal msg m
 
 (* ───── View Components ───── *)
 
@@ -1124,16 +1076,15 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
   in
   let source_view =
     if is_editing then
-      let highlights = highlight_source source in
       let ghost_text = ghost_text m in
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
         [
           line_number ~flex_grow:1.
-            ~line_colors:(active_line_colors source m.edit_cursor)
-            (textarea ~id:textarea_id ~value:source
-               ?cursor:m.edit_cursor_override ~spans:highlights ?ghost_text
+            ~line_colors:(active_line_colors source (Editor.cursor m.editor))
+            (textarea ~focused:(not m.show_help) ~state:m.editor
+               ~syntax:ocaml_syntax ?ghost_text
                ~ghost_text_color:(Ansi.Color.grayscale ~level:10)
                ~text_color:output_fg ~background_color:cell_bg_focused
                ~focused_text_color:output_fg
@@ -1141,18 +1092,15 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
                ~cursor_color:accent ~wrap:`None
                ~size:{ width = pct 100; height = auto }
                ~on_key:(fun ev -> editor_on_key m ev)
-               ~on_input:(fun s -> Some (Edit_source s))
-               ~on_submit:(fun s -> Some (Submit_edit s))
-               ~on_cursor:(fun ~cursor ~selection ->
-                 Some (Edit_cursor_changed (cursor, selection)))
+               ~on_change:(fun e -> Edit e)
+               ~on_submit:(fun s -> Submit_edit s)
                ());
         ]
     else
-      let highlights = highlight_source source in
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
-        [ code ~spans:highlights source ]
+        [ code ~syntax:ocaml_syntax source ]
   in
   let status_row =
     match status with
@@ -1194,28 +1142,19 @@ let view_text_cell ~is_focused ~is_editing m source =
           ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
           ~size:{ width = pct 100; height = auto }
           [
-            textarea ~id:textarea_id ~value:source
-              ?cursor:m.edit_cursor_override ~text_color:output_fg
-              ~background_color:cell_bg_focused ~focused_text_color:output_fg
+            textarea ~focused:(not m.show_help) ~state:m.editor
+              ~text_color:output_fg ~background_color:cell_bg_focused
+              ~focused_text_color:output_fg
               ~focused_background_color:cell_bg_focused ~cursor_style:`Line
               ~cursor_color:accent ~wrap:`Word
               ~size:{ width = pct 100; height = auto }
               ~on_key:(fun ev ->
-                let data = Event.Key.data ev in
-                if data.event_type = Release then None
-                else
-                  match data.key with
-                  | Line_feed
-                    when not
-                           (data.modifier.ctrl || data.modifier.alt
-                          || data.modifier.super) ->
-                      Event.Key.prevent_default ev;
-                      Some Execute_and_advance
-                  | _ -> None)
-              ~on_input:(fun s -> Some (Edit_source s))
-              ~on_submit:(fun _s -> Some Execute_and_advance)
-              ~on_cursor:(fun ~cursor ~selection ->
-                Some (Edit_cursor_changed (cursor, selection)))
+                if is_run_key ev then (
+                  Event.Key.prevent_default ev;
+                  Some Execute_and_advance)
+                else None)
+              ~on_change:(fun e -> Edit e)
+              ~on_submit:(fun _ -> Execute_and_advance)
               ();
           ];
       ]
@@ -1306,7 +1245,7 @@ let footer_actions mode session =
         (if running then interrupt else { key = "Shift-Enter"; label = "Run" });
         { key = "Tab"; label = "Complete" };
         { key = "Esc"; label = "Exit" };
-        { key = "?"; label = "Help" };
+        { key = "F1"; label = "Help" };
       ]
   | Normal ->
       [
@@ -1465,8 +1404,9 @@ let view_footer_help_overlay m =
                   "Keybindings";
                 text ~style:(Ansi.Style.make ~fg:hint_fg ()) "Esc or ? to close";
               ];
-            scroll_box ~id:help_scroll_id ~scroll_y:true ~scroll_x:false
-              ~flex_grow:1.
+            scroll_box ~focused:true ~scroll:m.help_scroll
+              ~on_scroll:(fun s -> Help_scrolled s)
+              ~scroll_y:true ~scroll_x:false ~flex_grow:1.
               ~size:{ width = pct 100; height = auto }
               ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
               ~flex_direction:Column ~gap:(gap 1)
@@ -1474,6 +1414,7 @@ let view_footer_help_overlay m =
                 box ~flex_direction:Column ~gap:(gap 1)
                   [
                     section_title "Normal mode";
+                    item "?" "Toggle this help panel";
                     item "Enter" "Enter edit mode";
                     item "x" "Execute focused cell";
                     item "j / k" "Focus next / previous cell";
@@ -1503,7 +1444,7 @@ let view_footer_help_overlay m =
                     item "Ctrl-A" "Execute all cells";
                     item "Ctrl-C" "Interrupt execution";
                     item "Ctrl-L" "Clear all outputs";
-                    item "?" "Toggle this help panel";
+                    item "F1" "Toggle this help panel";
                   ];
               ];
           ];
@@ -1514,8 +1455,11 @@ let view m =
     ~size:{ width = pct 100; height = pct 100 }
     [
       view_header m;
-      scroll_box ~id:scroll_box_id ~scroll_y:true ~scroll_x:false ~flex_grow:1.
-        ~autofocus:true
+      scroll_box
+        ~focused:(m.mode = Normal && not m.show_help)
+        ~scroll:m.scroll
+        ~on_scroll:(fun s -> Scrolled s)
+        ~scroll_y:true ~scroll_x:false ~flex_grow:1.
         ~size:{ width = pct 100; height = auto }
         ~flex_direction:Column ~gap:(gap 1)
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:1)
@@ -1526,63 +1470,56 @@ let view m =
 
 (* ───── Subscriptions ───── *)
 
+let app_key_msg model ev =
+  let data = Event.Key.data ev in
+  if model.show_help then
+    match data.key with
+    | Escape | F 1 -> Some Toggle_help
+    | Char c when char_eq '?' c -> Some Toggle_help
+    | _ -> None
+  else if data.mods.ctrl then
+    match data.key with
+    | Char c when char_eq 'a' c -> Some Execute_all
+    | Char c when char_eq 's' c -> Some Save
+    | Char c when char_eq 'c' c -> Some Interrupt
+    | Char c when char_eq 'l' c -> Some Clear_all
+    | _ -> None
+  else
+    match (data.key, model.mode) with
+    | F 1, _ -> Some Toggle_help
+    | _, Editing -> None
+    | Char c, Normal when char_eq 'j' c -> Some Focus_next
+    | Char c, Normal when char_eq 'k' c -> Some Focus_prev
+    | Char c, Normal when char_eq 'J' c -> Some Move_down
+    | Char c, Normal when char_eq 'K' c -> Some Move_up
+    | Char c, Normal when char_eq 'x' c -> Some Execute_focused
+    | Char c, Normal when char_eq 'a' c -> Some Insert_code_below
+    | Char c, Normal when char_eq 't' c -> Some Insert_text_below
+    | Char c, Normal when char_eq 'd' c -> Some Delete_focused
+    | Char c, Normal when char_eq 'm' c -> Some Toggle_cell_kind
+    | Char c, Normal when char_eq 'c' c -> Some Clear_focused
+    | Char c, Normal when char_eq 's' c -> Some Save
+    | Char c, Normal when char_eq 'q' c -> Some Quit
+    | Char c, Normal when char_eq '?' c -> Some Toggle_help
+    | Down, Normal -> Some Focus_next
+    | Up, Normal -> Some Focus_prev
+    | Enter, Normal -> Some Enter_edit
+    | Escape, Normal -> Some Dismiss_message
+    | _, Normal -> None
+
 let subscriptions model =
   Sub.batch
     [
-      Sub.on_tick (fun ~dt -> Tick dt);
+      Sub.on_tick ~id:"tick" (fun ~dt -> Tick dt);
       Sub.on_resize (fun ~width ~height -> Resize (width, height));
-      (* Use on_key_all for all bindings because the scroll_box consumes
-         j/k/Up/Down via its scroll bar before on_key sees them. *)
-      Sub.on_key_all (fun ev ->
-          let data = Event.Key.data ev in
-          if model.show_help then
-            match data.key with
-            | Escape -> Some Toggle_help
-            | Char c when char_eq '?' c -> Some Toggle_help
-            | _ -> None
-          else
-            match model.mode with
-            | Editing -> (
-                if data.modifier.ctrl then
-                  match data.key with
-                  | Char c when char_eq 'a' c -> Some Execute_all
-                  | Char c when char_eq 's' c -> Some Save
-                  | Char c when char_eq 'c' c -> Some Interrupt
-                  | Char c when char_eq 'l' c -> Some Clear_all
-                  | _ -> None
-                else
-                  match data.key with
-                  | Char c when char_eq '?' c -> Some Toggle_help
-                  | _ -> None)
-            | Normal -> (
-                if data.modifier.ctrl then
-                  match data.key with
-                  | Char c when char_eq 'a' c -> Some Execute_all
-                  | Char c when char_eq 's' c -> Some Save
-                  | Char c when char_eq 'c' c -> Some Interrupt
-                  | Char c when char_eq 'l' c -> Some Clear_all
-                  | _ -> None
-                else
-                  match data.key with
-                  | Char c when char_eq 'j' c -> Some Focus_next
-                  | Char c when char_eq 'k' c -> Some Focus_prev
-                  | Char c when char_eq 'J' c -> Some Move_down
-                  | Char c when char_eq 'K' c -> Some Move_up
-                  | Char c when char_eq 'x' c -> Some Execute_focused
-                  | Char c when char_eq 'a' c -> Some Insert_code_below
-                  | Char c when char_eq 't' c -> Some Insert_text_below
-                  | Char c when char_eq 'd' c -> Some Delete_focused
-                  | Char c when char_eq 'm' c -> Some Toggle_cell_kind
-                  | Char c when char_eq 'c' c -> Some Clear_focused
-                  | Char c when char_eq 's' c -> Some Save
-                  | Char c when char_eq 'q' c -> Some Quit
-                  | Char c when char_eq '?' c -> Some Toggle_help
-                  | Down -> Some Focus_next
-                  | Up -> Some Focus_prev
-                  | Enter ->
-                      Some Enter_edit (* Enter = edit mode, not execute *)
-                  | Escape -> Some Dismiss_message
-                  | _ -> None));
+      (* Capture, because the scroll box consumes j/k/Up/Down for its scroll bar
+         before a bubbling listener would see them. A key bound here is
+         prevented: the focused element would also act on it, and a binding that
+         moves focus to an editor would type its key into it. *)
+      Sub.on_key ~phase:Capture (fun ev ->
+          let msg = app_key_msg model ev in
+          if Option.is_some msg then Event.Key.prevent_default ev;
+          msg);
       (* Escape in editing mode: textarea does not consume it, so on_key
          works. *)
       Sub.on_key (fun ev ->

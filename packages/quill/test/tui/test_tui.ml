@@ -42,7 +42,7 @@ let footer_tests =
             ("Ctrl-C", "Interrupt");
             ("Tab", "Complete");
             ("Esc", "Exit");
-            ("?", "Help");
+            ("F1", "Help");
           ]
           (footer Quill_tui.Editing ~running:true));
   ]

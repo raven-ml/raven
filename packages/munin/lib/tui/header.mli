@@ -13,7 +13,7 @@ val view :
   total_epochs:int option ->
   latest_step:int option ->
   elapsed_secs:float ->
-  status:Theme.run_status ->
+  status:Munin_theme.run_status ->
   'a Mosaic.t
 (** [view ~run_id ~run_name ~tags ~latest_epoch ~total_epochs ~latest_step
     ~elapsed_secs ~status] is the bar naming the run, by [run_name] with

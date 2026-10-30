@@ -8,5 +8,6 @@
   mosaic.ui
   toffee
   matrix.grid
+  matrix.text
   tree-sitter.ocaml
   unix))

@@ -4084,6 +4084,10 @@ thread.
 
 ### Quill
 
+- In the terminal notebook, Ctrl+C interrupts the running cell without
+  quitting quill, Shift+Enter runs a cell in terminals that report it through
+  the kitty keyboard protocol, and F1 opens help while editing, where `?` is
+  now typed into the cell.
 - A cell that raises `Failure` or `Invalid_argument` shows its message as
   written, as in `Exception: Failure: msg`, where the toplevel printed it as
   a string literal with escaped newlines and quotes.
