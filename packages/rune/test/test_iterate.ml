@@ -67,6 +67,13 @@ let compiled f =
     && Rune.evaluations () = before);
   r
 
+(* Whether a law also compiles its case: one case in three. A compiled
+   case compiles a program or more, most of a law's time without a warm
+   cache, and at 100 cases a third of them reach "compiled" with
+   negligible odds of missing it. *)
+let compiled_too =
+  Gen.frequency [ (2, Gen.constant false); (1, Gen.constant true) ]
+
 (* Eagerly *)
 
 let halve x = Nx.mul x (Nx.scalar f32 0.5)
@@ -378,7 +385,7 @@ let cases =
         Nx.pp_dtype c.dt Operand.pp_shape c.s c.trips c.max Operand.pp_view
         c.o.(0).view Operand.pp_view c.o.(1).view pp c.g)
 
-let law_derivatives (Case c) =
+let law_derivatives (Case c, compiled_too) =
   cover "no step" (c.trips = 0);
   cover "several steps" (c.trips > 1);
   cover "max reached" (c.max < c.trips);
@@ -437,41 +444,8 @@ let law_derivatives (Case c) =
   let expected = grad (written c.g) in
   let lp = outcome_t (Testable.pair l l) in
   equal ~msg:"grad" lp expected (grad (iterated c.g));
-  (* Compiled, reverse mode keeps room for [max] steps, and where the loop takes
-     fewer the capture receives a zero cotangent, NaN where it meets an infinite
-     partial derivative. Its bits are the written loop's where the step's
-     functions are exact and sum no terms along an axis. *)
   let capture = if c.max > c.trips then lenient ~nan:true else l in
   let room = outcome_t (Testable.pair l capture) in
-  let ge = unsummed (exact c.g) in
-  let le = if constant ge then lenient ~nan:true else bits_t in
-  let le_capture = if c.max > c.trips then lenient ~nan:true else le in
-  let calls = Rune.evaluations () in
-  equal ~msg:"jit of grad"
-    (outcome_t (Testable.pair le le_capture))
-    (grad (written ge))
-    (compiled (fun () ->
-         outcome (fun () ->
-             let gx, gw =
-               Rune.jit
-                 T.(p2 () @-> returns (p2 ()))
-                 (Rune.grad (p2 ()) (fun xw -> Nx.sum (iterated ge xw)))
-                 xw
-             in
-             (bits gx, bits gw))));
-  equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
-  (* A linearization's record compiles as forward mode's steps. *)
-  let tangent = function Value (_, t) -> Value t | Raised m -> Raised m in
-  let calls = Rune.evaluations () in
-  equal ~msg:"jit of a linearization" (outcome_t le)
-    (tangent (jvp (written ge)))
-    (compiled (fun () ->
-         outcome (fun () ->
-             let at xw txw =
-               snd (Rune.linearize (p2 ()) t (iterated ge) xw) txw
-             in
-             bits (Rune.jit T.(p2 () @-> p2 () @-> returns tensor) at xw txw))));
-  equal ~msg:"linearization compiled" int 0 (Rune.evaluations () - calls);
   (* Inside a remat reverse mode keeps room for [max] steps, as compiled. *)
   let remat f = Rune.remat T.(p2 () @-> returns tensor) f in
   equal ~msg:"grad of a remat" room expected
@@ -493,22 +467,59 @@ let law_derivatives (Case c) =
     (outcome_t (Testable.pair (lenient ~nan:true) (lenient ~nan:true)))
     (jvp_grad (written c.g))
     (jvp_grad (iterated c.g));
-  (* Forward mode compiles, where the step's functions are exact and sum no
-     terms along an axis. *)
-  let g = unsummed (exact c.g) in
-  let staged =
-    Rune.jit
-      T.(p2 () @-> p2 () @-> returns (p2 ()))
-      (fun xw txw -> Rune.jvp (p2 ()) t (iterated g) xw txw)
-  in
-  equal ~msg:"jit of jvp"
-    (outcome_t
-       (Testable.pair bits_t (if constant g then lenient ~nan:true else bits_t)))
-    (jvp (written g))
-    (compiled (fun () ->
-         outcome (fun () ->
-             let y, t = staged xw txw in
-             (bits y, bits t))))
+  if compiled_too then begin
+    (* Compiled, reverse mode keeps room for [max] steps, and where the loop
+       takes fewer the capture receives a zero cotangent, NaN where it meets
+       an infinite partial derivative. Its bits are the written loop's where
+       the step's functions are exact and sum no terms along an axis. *)
+    let ge = unsummed (exact c.g) in
+    let le = if constant ge then lenient ~nan:true else bits_t in
+    let le_capture = if c.max > c.trips then lenient ~nan:true else le in
+    let calls = Rune.evaluations () in
+    equal ~msg:"jit of grad"
+      (outcome_t (Testable.pair le le_capture))
+      (grad (written ge))
+      (compiled (fun () ->
+           outcome (fun () ->
+               let gx, gw =
+                 Rune.jit
+                   T.(p2 () @-> returns (p2 ()))
+                   (Rune.grad (p2 ()) (fun xw -> Nx.sum (iterated ge xw)))
+                   xw
+               in
+               (bits gx, bits gw))));
+    equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
+    (* A linearization's record compiles as forward mode's steps. *)
+    let tangent = function Value (_, t) -> Value t | Raised m -> Raised m in
+    let calls = Rune.evaluations () in
+    equal ~msg:"jit of a linearization" (outcome_t le)
+      (tangent (jvp (written ge)))
+      (compiled (fun () ->
+           outcome (fun () ->
+               let at xw txw =
+                 snd (Rune.linearize (p2 ()) t (iterated ge) xw) txw
+               in
+               bits
+                 (Rune.jit T.(p2 () @-> p2 () @-> returns tensor) at xw txw))));
+    equal ~msg:"linearization compiled" int 0 (Rune.evaluations () - calls);
+    (* Forward mode compiles, where the step's functions are exact and sum no
+       terms along an axis. *)
+    let g = unsummed (exact c.g) in
+    let staged =
+      Rune.jit
+        T.(p2 () @-> p2 () @-> returns (p2 ()))
+        (fun xw txw -> Rune.jvp (p2 ()) t (iterated g) xw txw)
+    in
+    equal ~msg:"jit of jvp"
+      (outcome_t
+         (Testable.pair bits_t
+            (if constant g then lenient ~nan:true else bits_t)))
+      (jvp (written g))
+      (compiled (fun () ->
+           outcome (fun () ->
+               let y, t = staged xw txw in
+               (bits y, bits t))))
+  end
 
 (* An iterate's derivative is the steps taken, a stop with none. *)
 let test_trips_taken () =
@@ -747,7 +758,7 @@ let summed_at (type v s d) (dt : (v, s) Nx.dtype) (terms : (v, s, d) Nx.t list)
       if D.equal dt c64 then parts f32 else parts f64
   | _ -> assert false
 
-let law_lanes (Lanes c) =
+let law_lanes (Lanes c, compiled_too) =
   let n = Array.length c.trips in
   cover "lanes stopping apart"
     (n > 1 && Array.exists (fun t -> t <> c.trips.(0)) c.trips);
@@ -805,12 +816,14 @@ let law_lanes (Lanes c) =
   let map f = outcome (fun () -> codes (Rune.vmap s f (x, t))) in
   let ct = outcome_t codes_t in
   equal ~msg:"vmap" ct (expected c.g) (map (iterated w));
-  let expected = expected ~y exact in
-  equal ~msg:"vmap of jit" ct expected
-    (map (Rune.jit s (iterated ~g:exact ~y w)));
-  equal ~msg:"jit of vmap" ct expected
-    (outcome (fun () ->
-         codes (Rune.jit s (Rune.vmap s (iterated ~g:exact ~y w)) (x, t))));
+  if compiled_too then begin
+    let expected = expected ~y exact in
+    equal ~msg:"vmap of jit" ct expected
+      (map (Rune.jit s (iterated ~g:exact ~y w)));
+    equal ~msg:"jit of vmap" ct expected
+      (outcome (fun () ->
+           codes (Rune.jit s (Rune.vmap s (iterated ~g:exact ~y w)) (x, t))))
+  end;
   (* Each lane's gradient is its own loop's; a stopped lane's is finite where
      its own steps are. *)
   if Option.is_none first_short then begin
@@ -1513,15 +1526,20 @@ let () =
            ];
          group "derivatives"
            [
-             prop "iterate's derivatives are its loop's" cases law_derivatives;
+             prop "iterate's derivatives are its loop's"
+               (Gen.pair cases compiled_too)
+               law_derivatives;
              test "the steps taken" test_trips_taken;
              test "linear_transpose over an iterate" test_transpose;
              test "an integer carry has none" test_integer_carry;
            ];
          group "maps"
            [
-             prop ~examples:lane_examples ~count:40 "each lane stops on its own"
-               lane_cases law_lanes;
+             prop
+               ~examples:(List.map (fun c -> (c, true)) lane_examples)
+               ~count:40 "each lane stops on its own"
+               (Gen.pair lane_cases compiled_too)
+               law_lanes;
              prop ~examples:apart_examples ~count:30
                "compiled, lanes stop apart at every dtype" apart_cases law_apart;
              prop "a key in the carry draws as the loop" keyed_cases law_keyed;

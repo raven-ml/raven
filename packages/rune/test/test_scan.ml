@@ -768,7 +768,13 @@ let rule_covers (Case c) =
 
 (* A compiled loop gives the fold's bits where its step's functions are exact
    (Rune.jit's classes): the laws compare compiled calls on the case's functions
-   made exact. *)
+   made exact, in one case of three. A compiled case builds and compiles two
+   programs, most of a law's time without a warm cache. About two thirds of
+   them compile whole, so at 100 cases a law reaches "compiled" in about 23 of
+   them, and misses it with odds of (1 - 2/9)^100, below 1e-10. *)
+let compiled_too =
+  Gen.frequency [ (2, Gen.constant false); (1, Gen.constant true) ]
+
 let exactly (Case c) =
   let x e = unsummed (exact e) in
   Case { c with g = x c.g; k = x c.k; h = x c.h; at = Array.make 7 (Dev 0) }
@@ -843,9 +849,9 @@ let law_jvp' ~jit (Case c as case) =
                     t))))
   end
 
-let law_jvp case =
+let law_jvp (case, compiled) =
   law_jvp' ~jit:false case;
-  law_jvp' ~jit:true (exactly case)
+  if compiled then law_jvp' ~jit:true (exactly case)
 
 let law_grad' ~jit (Case c as case) =
   rule_covers case;
@@ -888,9 +894,9 @@ let law_grad' ~jit (Case c as case) =
       (compiled ~rows:c.n (fun () -> grad (fun (a, (b, c)) -> jitted a b c)))
   end
 
-let law_grad case =
+let law_grad (case, compiled) =
   law_grad' ~jit:false case;
-  law_grad' ~jit:true (exactly case)
+  if compiled then law_grad' ~jit:true (exactly case)
 
 (* A case whose compiled transpose tolk declines to link, so that the call
    evaluates over its arguments, a cotangent of every set among them. *)
@@ -984,9 +990,9 @@ let law_vmap' ~jit ((Case c as case), (m, lanes)) =
            outcome (fun () -> bits (Rune.vmap' (Rune.jit' (at scanned)) batch))))
   end
 
-let law_vmap (case, m) =
+let law_vmap ((case, m), compiled) =
   law_vmap' ~jit:false (case, m);
-  law_vmap' ~jit:true (exactly case, m)
+  if compiled then law_vmap' ~jit:true (exactly case, m)
 
 (* Compositions: a scan whose step scans, under jvp, grad and a map, and second
    orders through a scan. Their zeros are a loop's wherever a step reads no
@@ -1820,10 +1826,17 @@ let () =
            [
              prop "derivatives and maps over views are the fold's" cases
                law_derived;
-             prop "jvp of scan is jvp of its fold" rule_cases law_jvp;
-             prop ~examples:grad_examples "grad of scan is grad of its fold"
-               rule_cases law_grad;
-             prop "vmap of scan is the fold per lane" map_cases law_vmap;
+             prop "jvp of scan is jvp of its fold"
+               (Gen.pair rule_cases compiled_too)
+               law_jvp;
+             prop
+               ~examples:(List.map (fun c -> (c, true)) grad_examples)
+               "grad of scan is grad of its fold"
+               (Gen.pair rule_cases compiled_too)
+               law_grad;
+             prop "vmap of scan is the fold per lane"
+               (Gen.pair map_cases compiled_too)
+               law_vmap;
              prop "compositions are the fold's" rule_cases law_compose;
              test "a carry that gains a tangent and lanes" test_gains;
              test "additions under transformations" test_totals;
