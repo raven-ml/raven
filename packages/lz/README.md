@@ -1,13 +1,13 @@
 # lz
 
 lz compresses and decompresses bytes from OCaml: deflate with its zlib and
-gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its codecs are
+gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its formats are
 written in C inside the library and depend on nothing outside the OCaml
-distribution, so a program needs no system zlib or libzstd. They work on
-byte bigarrays, decode a whole buffer into a destination the program
-sizes, or decode and encode in steps that lend their output from the
-codec's own memory. A failed decode returns an error with the offset of
-the byte where the problem begins.
+distribution, so a program needs no system zlib or libzstd. Its calls
+work on byte bigarrays. A program decodes a whole buffer into a
+destination it sizes, or decodes and encodes in steps that lend each
+step's output from the decoder's or encoder's memory. A failed decode
+returns an error with the offset of the byte where the problem begins.
 
 ## A first program
 
@@ -36,7 +36,7 @@ them into a destination of the rows' length:
 
 The destination holds exactly the decoded size, which a real program
 learns from the container that holds the stream. A stream that decodes to
-more is an error, `Too_long`, and the decode allocates nothing of its own
+more is an error, `Too_long`, and the decode allocates no buffer of its own
 (the Decoding section of [`lz.mli`](lib/lz.mli)).
 
 ## Formats
@@ -55,17 +55,18 @@ Deflate, zlib, gzip and Zstandard also have decoders and encoders that
 take their input in steps. `lz.bytesrw`, built where bytesrw is
 installed, wraps them as bytesrw filters.
 
-lz declines preset dictionaries, Zstandard and LZ4 dictionaries, LZ4's
-legacy frame and Snappy's framing format. It has no xz, bzip2 or Brotli.
+lz declines dictionaries, zlib's preset ones and Zstandard's and LZ4's,
+and LZ4's legacy frame. It has no Snappy framing format, xz, bzip2 or
+Brotli.
 
 ## Where next
 
 - [The guide](doc/index.md) installs lz and explains each call of a first
-  program. Its pages work through whole buffers, streams, errors and
-  untrusted input, and the choice of a format.
+  program. Its pages work through whole buffers, decoding and encoding in
+  steps, errors and untrusted input, and the choice of a format.
 - The interfaces state every rule: [`lz.mli`](lib/lz.mli), then
   [`lz_bytesrw.mli`](lib/bytesrw/lz_bytesrw.mli).
 - [The examples](examples/README.md) teach one idea each.
 - [The benches](bench/README.md) time lz on three corpora of their own, and
   [lz against the vendors](bench/README.md#lz-against-the-vendors) compares
-  each codec with libdeflate, zstd, lz4 and snappy.
+  each format's decode and encode with libdeflate, zstd, lz4 and snappy.

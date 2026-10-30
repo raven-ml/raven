@@ -39,8 +39,8 @@ let () =
   Printf.printf "a gzip member of %d bytes, holding %d\n\n" n size;
   gunzip "whole" gz ~size;
 
-  (* The input ends inside the member, or holds none: Truncated, at the
-     input's length. A program that can read more bytes does. *)
+  (* The input ends inside the member, or is empty. It is Truncated, at the
+     input's length, and more input may complete it. *)
   gunzip "cut at 100" (String.sub gz 0 100) ~size;
   gunzip "empty" "" ~size;
 
@@ -50,8 +50,8 @@ let () =
   Bytes.set_uint8 b (n - 8) (Bytes.get_uint8 b (n - 8) lxor 1);
   gunzip "CRC-32 flipped" (Bytes.to_string b) ~size;
 
-  (* Gzip reads to the input's end, and a byte that begins no member is
-     Malformed at its offset. *)
+  (* Gzip reads members to the input's end, and a byte where no member
+     begins is Malformed at its offset. *)
   gunzip "zeros after" (gz ^ "\000\000") ~size;
 
   (* A destination one byte short: Too_long. *)

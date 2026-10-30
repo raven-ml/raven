@@ -1,11 +1,11 @@
 # lz
 
 lz compresses and decompresses bytes from OCaml: deflate with its zlib and
-gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its codecs are
+gzip wrappers, Zstandard, LZ4 and Snappy, and CRC-32. Its formats are
 written in C inside the library, so a program needs no system zlib or
-libzstd. They read and write byte bigarrays, whose bytes the collector
-never moves, so a long call runs while the program's other domains and
-threads go on.
+libzstd. Its calls read and write byte bigarrays, whose bytes the
+collector never moves. A long call therefore releases the runtime lock,
+and the program's other domains and threads run during it.
 
 A program uses lz in one of two ways. A *whole-buffer* call is given all
 of its input and writes into a *destination* the program allocated.
@@ -32,7 +32,7 @@ $ opam install lz
 
 The library `lz.bytesrw` holds filters for bytesrw's readers and writers.
 It is built where bytesrw is installed, and a program adds it beside `lz`
-([Streams](02-streams.md#through-bytesrw)).
+([Decoding and encoding in steps](02-steps.md#through-bytesrw)).
 
 ## A first program
 
@@ -77,7 +77,7 @@ Each call, in order:
   a header, and a program that does not know it decodes in steps instead.
 - `Lz.Gzip.decode src dst` decodes every member of `src` into `dst` from
   its start. A gzip input is read to its end, so `consumed` is the
-  length of `src` (the Decoding section of [`lz.mli`](../lib/lz.mli)).
+  length of `src` (the type `progress` in [`lz.mli`](../lib/lz.mli)).
 - `Ok { consumed; produced }` holds the number of bytes read from `src`
   and written to `dst`. The bytes of `dst` past `produced` are
   unspecified.
@@ -103,9 +103,9 @@ These pages show the rules at work, with programs:
 
 1. [Whole buffers](01-whole-buffers.md): sizing a destination, `bound`,
    `consumed` and `produced`, bytes after a stream, and levels.
-2. [Streams](02-streams.md): steps and `~last`, runs and how long they
-   live, a decoder fed from a channel, an encoder writing to one, and
-   `lz.bytesrw`.
+2. [Decoding and encoding in steps](02-steps.md): steps and `~last`, runs
+   and how long they live, a decoder fed from a channel, an encoder
+   writing to one, and `lz.bytesrw`.
 3. [Errors and untrusted input](03-errors.md): what `at` and `why` mean,
    sizes an input declares, and a Zstandard decoder's `~window`.
 4. [Choosing a format](04-formats.md): what each format is for.

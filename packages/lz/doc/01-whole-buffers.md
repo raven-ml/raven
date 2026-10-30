@@ -25,7 +25,8 @@ let bytes n =
 
 `decode src dst` writes the decoded bytes into `dst` from its start, and
 reads earlier bytes of `dst` back when a match copies them. The decode
-allocates nothing, so `dst` must be large enough for all of the output. A
+allocates no memory but its result, so `dst` must be large enough for all
+of the output. A
 program learns the decoded size from the container that holds the
 stream. A Parquet page header and a ZIP entry each state it.
 
@@ -70,17 +71,19 @@ short: 2000 of 3000
 ```
 
 The program is correct because the destination holds exactly the size the
-header states. A stream that decodes to more is `Too_long` at the block
-that asks for the extra output, and `produced` below the size means the
-stream held less than the header said. A Zstandard frame from `encode`
+header states. A stream that decodes to more is `Too_long` at the header
+of the Zstandard block that asks for the extra output, byte 7 here, and
+`produced` below the size means the stream held less than the header
+said. A Zstandard frame from `encode`
 also states its own content size, which the decode checks against what
 the frame produced (the `Zstd` module in [`lz.mli`](../lib/lz.mli)).
 
 ## `bound`
 
 `encode src dst` writes the stream of `src` into `dst` and returns
-`Some len`, or `None` when the stream does not fit. `bound n` is a size
-that the stream of any `n` bytes fits, at every level. Bytes that do not
+`Some len`, or `None` when the stream does not fit. `bound n` is a
+destination size large enough for the stream of any `n` bytes, at every
+level. Bytes that do not
 compress, such as these from a generator, come out a little longer than
 they went in, and `bound` leaves room for that:
 
@@ -106,10 +109,11 @@ into 1000 bytes: does not fit
 into 1021 bytes: 1014 written
 ```
 
-A destination of `bound n` bytes never returns `None`, so a program that
-allocates one can take the result with `Option.get`. A program that
-stores a stream only when it is shorter than its input can pass a
-destination of `n` bytes, and keep the input when `encode` returns `None`.
+`encode` into `bound n` bytes never returns `None`, so a program that
+allocates such a destination can take the result with `Option.get`. A
+program that stores a stream only when it is shorter than its input can
+pass a destination of `n` bytes, and keep the input when `encode`
+returns `None`.
 
 `encode_string ?level s` is the stream of `s` as a string, for a program
 that holds strings. It needs no destination.
@@ -118,8 +122,9 @@ that holds strings. It needs no destination.
 
 `Ok { consumed; produced }` counts the bytes the decode read and wrote.
 Most formats are read to the input's end, so `consumed` is the input's
-length, and a byte after the last member that begins no member is an
-error. A raw deflate or zlib stream ends at an exact byte instead.
+length. Each member begins where the last one ended, and a byte after
+the last member where no member begins is an error. A raw deflate or
+zlib stream ends at an exact byte instead.
 `consumed` stops there, and the program finds whatever follows the stream
 at `consumed`.
 
@@ -186,20 +191,22 @@ gzip level  6: 13644 bytes
 gzip level  9: 12304 bytes
 ```
 
-The encoded bytes depend on the input and the level alone, and never on
+An `encode`'s bytes depend only on the input and the level, and never on
 the machine, so a program that writes the same data at the same level
-writes the same file. A later version of lz may write different bytes.
+writes the same file. A later version of lz may write different bytes
+(the Formats section of [`lz.mli`](../lib/lz.mli)).
 [The bench README](../bench/README.md#lz-against-the-vendors) times each
 level against the reference implementations.
 
 ## Domains
 
-A whole-buffer call on a long input releases the runtime lock while it
-works, so other domains run during it. Calls on different buffers may run
-in parallel from any domains, and a program must not write a buffer that
-a call is reading or writing (the preamble of
-[`lz.mli`](../lib/lz.mli)). This program decodes four pages on four
-domains:
+A whole-buffer call on an input of 16 KiB or more releases the runtime
+lock while it works, so other domains run during it. Calls may run in
+parallel from any domains. A program must not run two in parallel when
+one writes a buffer the other reads or writes, and must not touch a
+buffer a call writes, or write one a call reads, from another domain
+(the preamble of [`lz.mli`](../lib/lz.mli)). This program decodes four
+pages on four domains:
 
 ```ocaml
 # let () =

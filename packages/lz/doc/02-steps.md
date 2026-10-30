@@ -1,11 +1,11 @@
-# Streams
+# Decoding and encoding in steps
 
 A decoder or an encoder takes its input in pieces, for input that arrives
 over time or whose size the program does not know. Each call is a step.
 This page follows steps through a decoder and an encoder, then feeds them
 from channels and through bytesrw. The rules are in the preamble and the
-Streams section of [`lz.mli`](../lib/lz.mli), and in its `Decoder` and
-`Encoder` modules.
+Decoders and encoders section of [`lz.mli`](../lib/lz.mli), and in its
+`Decoder` and `Encoder` modules.
 
 The programs on this page share these helpers:
 
@@ -30,9 +30,9 @@ let show = function
 ## A step
 
 `Lz.Decoder.step d ~last src f` decodes from the start of `src`, applies
-`f` once to the bytes it produced, and returns how many bytes of `src` it
-took. Those bytes are the step's run. This program gives a gzip decoder
-one member in three pieces:
+`f` once to the bytes it produced, its run, and returns how many bytes of
+`src` it took. This program gives a gzip decoder one member in three
+pieces:
 
 ```ocaml
 # let () =
@@ -60,18 +60,18 @@ step 2, 26 bytes, run "decoded in steps\n"
   Done 26
 ```
 
-Each step took every byte it was given, since no run filled. A step that
-returns `More k` with `k` short of its input's length has filled its run,
-and the next step begins at byte `k`. A program that steps from the first
-byte the last step did not take never loses or repeats a byte, whatever
-the runs' sizes.
+Each step took every byte it was given, since no run filled. A decoder
+step that returns `More k` with `k` short of its input's length has
+filled its run, 256 KiB, and the next step begins at byte `k`. A program
+that steps from the first byte the last step did not take never loses or
+repeats a byte, whatever the runs' sizes.
 
 ## The end of the input
 
 `~last:true` says that the input ends with the bytes this step is given.
-A gzip or Zstandard decoder needs it: gzip members and Zstandard frames
-follow one another to the input's end, so the decoder cannot tell the last
-member from one that more input would follow. A raw deflate or zlib
+A gzip or Zstandard decoder needs it. Members follow one another to the
+input's end, so without it the decoder cannot tell the last member from
+one that more input would follow. A raw deflate or zlib
 stream ends at an exact byte, and its decoder returns `Done` there with or
 without `~last`. A program that does not know where its input ends steps
 with `~last:false`, and with `~last:true` on an empty input once it does:
@@ -103,9 +103,11 @@ until `Done`.
 
 ## A run's lifetime
 
-The run is a view of the decoder's own memory. It is valid while `f`
-runs, and the next step writes over it. `f` therefore copies the bytes it
-keeps, or writes them out, before it returns:
+The run is a view of the decoder's own buffer. It is valid while `f`
+runs, and the next step writes over it, so `f` must copy the bytes the
+program keeps, or write them out, before it returns. The run is also part
+of the decoder's window, which later matches copy from, so `f` must not
+write it:
 
 ```ocaml
 let decode_string d s =
@@ -121,9 +123,9 @@ let decode_string d s =
 ```
 
 `decode_string` is correct because `keep` copies each run into `out`
-before the step returns, and each step begins at the first byte the last
-one did not take. With `~last:true` on every step, `go` ends at `Done` or
-at an error.
+before the step returns and leaves the run as it was, and each step
+begins at the first byte the last one did not take. With `~last:true` on
+every step, `go` ends at `Done` or at an error.
 
 ## A decoder fed from a channel
 
@@ -155,11 +157,12 @@ with `~last:true` until `Done`.
 
 ## An encoder writing to a channel
 
-An encoder's steps mirror a decoder's. Each takes at most a quota of
-input, a constant of the format, and its run holds all that the quota
-produced. A step with `~last:true` that takes the last byte of its input
-writes the stream's end and returns `Done`. `encode_channel` reads from
-one channel and writes the stream to another:
+Each encoder step takes at most a quota of input, 64 KiB for deflate,
+zlib and gzip and 128 KiB for Zstandard, and its run always has room for
+the output the step owes. The encoder may keep input until more arrives,
+so a run may be empty. A step with `~last:true` that takes all of its
+input writes the stream's end and returns `Done`. `encode_channel` reads
+from one channel and writes the stream to another:
 
 ```ocaml
 let encode_channel e ic oc =
@@ -205,9 +208,9 @@ with `decode_channel`:
 488890 bytes, same: true
 ```
 
-The stream's bytes depend on the input, the level and where `~last:true`
-fell. They never depend on how the input was cut into steps, so a program
-that reads 4 KiB at a time writes the same file as one that reads 64 KiB.
+The stream's bytes depend only on the input and the level. They never
+depend on how the input was cut into steps, so a program that reads
+4 KiB at a time writes the same file as one that reads 64 KiB.
 A Zstandard frame written by steps differs from `Lz.Zstd.encode`'s only
 in its header, which lacks the content size that `encode` knows.
 

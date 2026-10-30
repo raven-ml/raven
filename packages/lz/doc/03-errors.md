@@ -1,10 +1,10 @@
 # Errors and untrusted input
 
-A decode reads bytes that came from elsewhere: a file, a network peer, a
-page of someone else's dataset. This page shows what a failed decode
-returns and how a program reads untrusted input with bounded memory. The
-rules are in the Errors section of [`lz.mli`](../lib/lz.mli), in each
-format module's list of refusals, and at `Lz.Zstd.decoder`.
+A decode often reads bytes the program did not write, such as a
+downloaded file. This page shows what a failed decode returns and how a
+program reads untrusted input with bounded memory. The rules are in the
+Errors section of [`lz.mli`](../lib/lz.mli), in each format module's
+list of refusals, and in its `Decoder` module.
 
 ```ocaml
 let of_string s =
@@ -29,11 +29,12 @@ let flip s i =
 
 A decode that fails returns `Error { at; why }`. `why` is one of four
 reasons. `Truncated` says the input ends inside a stream, so more bytes
-may complete it. `Malformed` says the bytes are not the format, and no
-bytes appended would make them so. `Too_long` says the output would pass
-the destination's end. `Unsupported` says the stream is well formed and
-uses a feature lz declines, such as a preset dictionary. `at` is the
-offset of the first byte of what is wrong.
+may complete it. `Malformed` says the bytes break the format, and no
+bytes appended would make them valid. `Too_long` says the output would
+pass the destination's end. `Unsupported` says the stream is well formed
+and uses a feature lz declines, such as a preset dictionary. `at` is the
+offset of the first byte of what is wrong. A decode reads its input in
+order and returns the first error it meets.
 
 This program damages a zlib stream that holds 1,000 bytes in four ways:
 
@@ -92,22 +93,24 @@ stream makes a new decoder.
 ## Messages
 
 `Malformed` and `Unsupported` carry a message from a fixed set for each
-format: zlib's messages for deflate, zlib and gzip, and the field names of
-RFC 8878 for Zstandard. A message holds no byte of the input, and numbers
-at most, so a program can log the error of a hostile input as it is. A
-program decides what to do from the constructor and `at`, since the
-messages are for printing and may change.
+format, such as zlib's messages for deflate, zlib and gzip and the field
+names of RFC 8878 for Zstandard (the type `why` in
+[`lz.mli`](../lib/lz.mli)). A message is a constant string and holds no
+byte of the input, so a program can log the error of a hostile input as
+it is. A program decides what to do from the constructor and `at`, since
+the messages are for printing and may change.
 
 ## Sizes an input declares
 
-Formats carry sizes: gzip's `ISIZE`, Zstandard's `Frame_Content_Size`, an
-LZ4 frame's content size, a Snappy block's preamble. A hostile input can
-declare any of them. lz checks each against what the stream produced, and
-sizes nothing it allocates by one, except a Zstandard frame's window,
-below. A whole-buffer decode allocates nothing at all, so the program
-bounds its memory by the destination it chooses.
+Formats carry sizes, such as gzip's `ISIZE`, Zstandard's
+`Frame_Content_Size`, an LZ4 frame's content size and a Snappy block's
+preamble. A hostile input can declare any of them. lz checks each against
+the decoded bytes, and allocates nothing by one, except a Zstandard
+frame's window (the last section). A whole-buffer decode allocates no
+memory but its result, so the program bounds its memory by the
+destination it chooses.
 
-This Snappy block declares 2<sup>32</sup> - 1 bytes of content in its
+This Snappy block declares 2<sup>32</sup> - 1 decoded bytes in its
 preamble and holds none:
 
 ```ocaml
@@ -121,6 +124,59 @@ The decode compares the preamble with the destination's 1,024 bytes
 before it writes any output, and refuses at the preamble's first byte. A
 program that takes a destination size from an untrusted header caps it
 with a limit of its own first.
+
+## Bounding the output of a decoder
+
+A decoder bounds its memory, and nothing bounds the bytes it decodes. A
+megabyte of one repeated byte compresses to about a kilobyte, so a small
+input can decode to far more than a program wants to hold. A program
+that steps a decoder over a stream it does not trust counts the bytes `f`
+receives and stops past a limit of its own (the `Decoder` module of
+[`lz.mli`](../lib/lz.mli)). `gunzip_capped` raises from `f` once the
+output would pass `limit`, which leaves the decoder dead, and drops it:
+
+```ocaml
+exception Over_limit
+
+let gunzip_capped ~limit s =
+  let d = Lz.Gzip.decoder () in
+  let out = Buffer.create 4096 in
+  let keep run =
+    let n = Bigarray.Array1.dim run in
+    if Buffer.length out + n > limit then raise Over_limit;
+    for i = 0 to n - 1 do
+      Buffer.add_char out (Char.chr run.{i})
+    done
+  in
+  let rec go src =
+    let rest k = Bigarray.Array1.sub src k (Bigarray.Array1.dim src - k) in
+    match Lz.Decoder.step d ~last:true src keep with
+    | Ok (Lz.Done _) -> Ok (Buffer.contents out)
+    | Ok (More k) -> go (rest k)
+    | Error e -> Error (Format.asprintf "%a" Lz.pp_error e)
+  in
+  match go (of_string s) with
+  | r -> r
+  | exception Over_limit -> Error "over the limit"
+```
+
+```ocaml
+# let () =
+    let gz = Lz.Gzip.encode_string (String.make 1_000_000 'a') in
+    let try_ limit =
+      Printf.printf "limit %d: " limit;
+      match gunzip_capped ~limit gz with
+      | Ok s -> Printf.printf "ok, %d bytes\n" (String.length s)
+      | Error m -> print_endline m
+    in
+    try_ 65536;
+    try_ 2_000_000;;
+limit 65536: over the limit
+limit 2000000: ok, 1000000 bytes
+```
+
+`gunzip_capped` is correct because every byte the decoder hands over
+passes through `keep`, which counts it before it keeps it.
 
 ## A Zstandard decoder's window
 

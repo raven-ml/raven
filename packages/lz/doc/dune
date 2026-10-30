@@ -1,9 +1,9 @@
 ; The guide's pages run under mdx, off under sanitize and tsan as the root
-; dune says. The streams page uses lz.bytesrw, and one directory holds one
+; dune says. The steps page uses lz.bytesrw, and one directory holds one
 ; mdx stanza, so the pages run only where bytesrw is installed.
 
 (mdx
- (files index.md 01-whole-buffers.md 02-streams.md 03-errors.md 04-formats.md)
+ (files index.md 01-whole-buffers.md 02-steps.md 03-errors.md 04-formats.md)
  (package lz)
  (enabled_if
   (and
