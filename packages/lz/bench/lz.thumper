@@ -173,3 +173,5 @@ text/encode-zstd-3	alloc_words	exact	2
 text/encode-zstd-3	wall_time	batch=1	n=20	2.284e-02	2.276e-02 2.280e-02 2.281e-02 2.281e-02 2.282e-02 2.282e-02 2.283e-02 2.284e-02 2.284e-02 2.284e-02 2.284e-02 2.288e-02 2.289e-02 2.292e-02 2.293e-02 2.293e-02 2.298e-02 2.299e-02 2.301e-02 2.314e-02
 text/encode-zstd-3-in-1-MiB-steps	alloc_words	exact	1373
 text/encode-zstd-3-in-1-MiB-steps	wall_time	batch=1	n=20	2.388e-02	2.361e-02 2.370e-02 2.375e-02 2.375e-02 2.376e-02 2.377e-02 2.383e-02 2.384e-02 2.384e-02 2.387e-02 2.390e-02 2.391e-02 2.394e-02 2.395e-02 2.396e-02 2.396e-02 2.396e-02 2.401e-02 2.415e-02 2.427e-02
+zeros/decode-lz4b-exact-destination	alloc_words	exact	5
+zeros/decode-lz4b-exact-destination	wall_time	batch=32	n=20	3.079e-04	3.074e-04 3.074e-04 3.075e-04 3.075e-04 3.076e-04 3.076e-04 3.077e-04 3.077e-04 3.078e-04 3.079e-04 3.079e-04 3.079e-04 3.079e-04 3.080e-04 3.080e-04 3.080e-04 3.080e-04 3.081e-04 3.082e-04 3.084e-04

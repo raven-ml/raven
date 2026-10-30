@@ -7,7 +7,9 @@ long-range repeats; `columns`, int64 keys with small gaps and float64
 prices of two decimals, as a Parquet page holds them; and `random`,
 incompressible bytes. Its decode rows read lz's own encodings of each
 corpus, encoded before the row runs; its encode and checksum rows read the
-raw bytes. Run it from the tree's root on a quiet machine:
+raw bytes. A last decode row reads lz's LZ4 block of 8 MiB of zeros, one
+long match, into a destination of exactly its size. Run it from the
+tree's root on a quiet machine:
 
     dune build @packages/lz/bench/bench
 

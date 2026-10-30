@@ -376,13 +376,18 @@ static enum outcome block_decode(struct block *b) {
     len += MIN_MATCH;
     if (len > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, at_offset, NULL);
     if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
+    /* A match longer than its offset repeats its first [off] bytes. Each
+       copy is of the bytes from [m] to [d], which end where it begins, so
+       copies never overlap and each doubles the bytes written. */
     const uint8_t *m = op - off;
-    if (off >= len) {
-      memcpy(op, m, len);
-    } else {
-      for (uint64_t i = 0; i < len; i++) op[i] = m[i];
+    uint8_t *const end = op + len;
+    for (uint8_t *d = op; d < end;) {
+      size_t n = (size_t)(d - m) < (size_t)(end - d) ? (size_t)(d - m)
+                                                     : (size_t)(end - d);
+      memcpy(d, m, n);
+      d += n;
     }
-    op += len;
+    op = end;
     last_match = len;
     prev = seq;
   }

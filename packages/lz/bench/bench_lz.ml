@@ -231,8 +231,33 @@ let checksums =
            ])
        sizes)
 
+(* lz's LZ4 block of 8 MiB of zeros, one match at offset 1, decoded into
+   a destination of exactly its size: the match ends too near the
+   destination's end for the fast loop, and the exact loop copies it. *)
+let zeros =
+  let raw =
+    lazy
+      (let b = create size in
+       Array1.fill b 0;
+       b)
+  in
+  let src =
+    lazy (encoded Lz.Lz4.Block.bound Lz.Lz4.Block.encode (Lazy.force raw))
+  in
+  let dst = lazy (create size) in
+  Thumper.group "zeros"
+    [
+      Thumper.bench_with_setup "decode lz4b, exact destination"
+        ~setup:(fun () ->
+          let src = Lazy.force src and dst = Lazy.force dst in
+          check "zeros.lz4b" (Lazy.force raw) dst
+            (Lz.Lz4.Block.decode src dst);
+          (src, dst))
+        (fun (src, dst) -> Lz.Lz4.Block.decode src dst);
+    ]
+
 let () =
   exit
     (Thumper.run "lz"
        ~budgets:[ Thumper.Budget.no_slower_than 0.10 ]
-       (List.map corpus corpora @ [ checksums ]))
+       (List.map corpus corpora @ [ zeros; checksums ]))
