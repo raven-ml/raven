@@ -557,18 +557,39 @@ let render_cell_id buf id (attrs : Quill.Cell.attrs) =
   if attrs.hide_source then Buffer.add_string buf " hide-source";
   Buffer.add_string buf " -->\n"
 
+(* A backtick fence longer than the longest run of backticks that begins a line
+   of [source] after its leading spaces or tabs, and at least three, so no line
+   closes it, indented ones included (CommonMark 0.31.2, 4.5). *)
+let fence source =
+  let longest = ref 2 in
+  List.iter
+    (fun line ->
+      let n = String.length line in
+      let i = ref 0 in
+      while !i < n && (line.[!i] = ' ' || line.[!i] = '\t') do
+        incr i
+      done;
+      let start = !i in
+      while !i < n && line.[!i] = '`' do
+        incr i
+      done;
+      longest := max !longest (!i - start))
+    (String.split_on_char '\n' source);
+  String.make (!longest + 1) '`'
+
 let render_cell ?figures_dir ~with_outputs buf = function
   | Quill.Cell.Text { source; _ } ->
       Buffer.add_string buf source;
       Buffer.add_char buf '\n'
   | Quill.Cell.Code { id; source; language; outputs; attrs; _ } ->
+      let fence = fence source in
       render_cell_id buf id attrs;
-      Buffer.add_string buf "```";
+      Buffer.add_string buf fence;
       Buffer.add_string buf language;
       Buffer.add_char buf '\n';
       Buffer.add_string buf source;
       Buffer.add_char buf '\n';
-      Buffer.add_string buf "```";
+      Buffer.add_string buf fence;
       if with_outputs && outputs <> [] then (
         Buffer.add_char buf '\n';
         Buffer.add_string buf "<!-- quill:output -->\n";

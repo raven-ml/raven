@@ -4086,6 +4086,8 @@ thread.
 
 ### Quill
 
+- Saving a code cell with a line of three or more backticks fences it with more,
+  where the line cut the cell on the next load.
 - `quill run`, `quill build` and running all cells in the terminal and web
   notebooks run only OCaml code cells, where they ran a block in another
   language, such as ```` ```bash ````, as OCaml and stored the error under it.

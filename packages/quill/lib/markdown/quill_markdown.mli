@@ -23,8 +23,10 @@ val of_string : ?base_dir:string -> string -> Quill.Doc.t
 val to_string : Quill.Doc.t -> string
 (** [to_string doc] renders [doc] as a markdown string.
 
-    Text cells are emitted verbatim. Code cells are rendered as fenced code
-    blocks. Cell outputs are not included. *)
+    Text cells are emitted verbatim. Code cells are rendered as code blocks
+    fenced with one more backtick than the longest run of backticks that begins
+    a line of the source after its leading spaces or tabs, and at least three.
+    Cell outputs are not included. *)
 
 val to_string_with_outputs : ?figures_dir:string -> Quill.Doc.t -> string
 (** [to_string_with_outputs ?figures_dir doc] renders [doc] as markdown with

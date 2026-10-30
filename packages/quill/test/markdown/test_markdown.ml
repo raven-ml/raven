@@ -19,6 +19,22 @@ let pp_output ppf = function
 
 let output = Testable.make ~pp:pp_output ~equal:( = )
 
+(* A cell as the parser promises it: a text cell's source, or the language and
+   source of a code cell. *)
+type view = Txt of string | Code of string * string
+
+let pp_view ppf = function
+  | Txt s -> Format.fprintf ppf "Txt %S" s
+  | Code (lang, s) -> Format.fprintf ppf "Code (%S, %S)" lang s
+
+let cell = Testable.make ~pp:pp_view ~equal:( = )
+
+let view = function
+  | Cell.Text { source; _ } -> Txt source
+  | Cell.Code { language; source; _ } -> Code (language, source)
+
+let cells doc = List.map view (Doc.cells doc)
+
 let parsing_tests =
   [
     test "empty document" (fun () ->
@@ -140,6 +156,44 @@ let parsing_tests =
         is_false ~msg:"no output marker after fmt" has_marker);
   ]
 
+(* A top-level block of a notebook and the cell it is part of. *)
+let fragments =
+  let txt md = (md, Txt md) in
+  [
+    txt "Some prose.";
+    ("```ocaml\nlet x = 1\n```", Code ("ocaml", "let x = 1"));
+    ("```bash\nls\n```", Code ("bash", "ls"));
+    ("```\nplain\n```", Code ("", "plain"));
+    ("~~~ocaml\nlet z = 3\n~~~", Code ("ocaml", "let z = 3"));
+    ( "````ocaml\nlet s = {|\n```\n|}\n````",
+      Code ("ocaml", "let s = {|\n```\n|}") );
+  ]
+
+let fragment =
+  Gen.of_list ~pp:(fun ppf (md, _) -> Format.fprintf ppf "%S" md) fragments
+
+(* Adjacent text blocks form one text cell, byte for byte. *)
+let rec expected = function
+  | [] -> []
+  | Txt a :: Txt b :: rest -> expected (Txt (a ^ "\n\n" ^ b) :: rest)
+  | v :: rest -> v :: expected rest
+
+let render md = Quill_markdown.to_string (Quill_markdown.of_string md)
+
+let round_trip_tests =
+  [
+    prop "saving keeps every cell"
+      (Gen.list ~size:(Gen.int_range 0 8) fragment)
+      (fun frags ->
+        let md = String.concat "\n\n" (List.map fst frags) ^ "\n" in
+        let doc = Quill_markdown.of_string md in
+        let views = expected (List.map snd frags) in
+        equal (list cell) views (cells doc);
+        equal (list cell) views
+          (cells (Quill_markdown.of_string (Quill_markdown.to_string doc)));
+        Law.idempotent text render md);
+  ]
+
 let rendering_tests =
   [
     test "render text cell" (fun () ->
@@ -156,6 +210,18 @@ let rendering_tests =
           (List.exists (fun l -> String.trim l = "```ocaml") lines);
         is_true ~msg:"has source"
           (List.exists (fun l -> String.trim l = "let x = 1") lines));
+    test "a fence outlasts the backticks in its source" (fun () ->
+        let source = "let s = {|\n```\n  ``````\n|}" in
+        let md =
+          Quill_markdown.to_string (Doc.of_cells [ Cell.code ~id:"c_1" source ])
+        in
+        equal text
+          ("<!-- quill:cell id=\"c_1\" -->\n```````ocaml\n" ^ source
+         ^ "\n```````\n")
+          md;
+        equal (list cell)
+          [ Code ("ocaml", source) ]
+          (cells (Quill_markdown.of_string md)));
     test "render with outputs" (fun () ->
         let c =
           Cell.code "let x = 1"
@@ -453,6 +519,7 @@ let () =
     (run "Markdown"
        [
          group "Parsing" parsing_tests;
+         group "Round trip" round_trip_tests;
          group "Rendering" rendering_tests;
          group "ID persistence" id_persistence_tests;
          group "Structured outputs" structured_output_tests;
