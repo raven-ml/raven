@@ -17,7 +17,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
-#include "rig_amd.h"
+#include "rig_edge.h"
 
 /* The C entries. The representation matches Rig_amd_support.Edge. */
 

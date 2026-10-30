@@ -14,5 +14,4 @@
   unix)
  (foreign_stubs
   (language c)
-  (names rig_amd_support_stubs)
-  (include_dirs ../../../lib/amd)))
+  (names rig_amd_support_stubs)))

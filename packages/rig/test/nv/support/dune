@@ -16,5 +16,4 @@
   windtrap)
  (foreign_stubs
   (language c)
-  (names rig_nv_support_stubs)
-  (include_dirs ../../../lib/nv)))
+  (names rig_nv_support_stubs)))
