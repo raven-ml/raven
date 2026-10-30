@@ -626,12 +626,15 @@ type ('q, 'd) box = { lo : ('q, 'd) vector; hi : ('q, 'd) vector }
 
 let project box x = Nx.minimum box.hi (Nx.maximum box.lo x)
 
-(* A box holds no point where a coordinate's [lo] exceeds its [hi], or is [+∞],
-   or its [hi] is [−∞]: no float lies within. A lane in it stalls, whatever its
-   start gave. *)
+(* A box holds no point where a coordinate's [lo] exceeds its [hi], or is [+∞]
+   or NaN, or its [hi] is [−∞] or NaN: no float lies within, since every
+   comparison with NaN is false. A lane in it stalls, whatever its start
+   gave. *)
 let empty box =
   Nx.any
-    (Nx.logical_or (Nx.greater box.lo box.hi)
+    (Nx.logical_or
+       (Nx.logical_or (Nx.greater box.lo box.hi)
+          (Nx.logical_or (Nx.isnan box.lo) (Nx.isnan box.hi)))
        (Nx.logical_or
           (Nx.equal_s box.lo Float.infinity)
           (Nx.equal_s box.hi Float.neg_infinity)))
@@ -642,8 +645,8 @@ let emptied box st =
   | Some b -> Nx.where (empty b) (Nx.full_like st (Solution.code Stalled)) st
 
 let empty_box =
-  "lo exceeds hi, or lo is +∞ or hi −∞, in some coordinate: the box holds no \
-   point."
+  "lo exceeds hi, lo is +∞ or hi −∞, or one is NaN, in some coordinate: the \
+   box holds no point."
 
 let free box (x : _ vector) g =
   let w = Search.norm (Nx.sub x (project box (Nx.sub x g))) in

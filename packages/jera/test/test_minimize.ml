@@ -728,11 +728,13 @@ let box_tests =
             (vec [| 0.; 0. |])
         in
         equal bool true (is Stalled s));
-    test "an infinite lo or hi of the wrong sign is an empty box" (fun () ->
-        (* lo = +∞ or hi = −∞ admits no float, as lo > hi does. *)
+    test "a bound no float meets is an empty box" (fun () ->
+        (* lo = +∞, hi = −∞ or a NaN side admits no float, as lo > hi does:
+           every comparison with NaN is false. *)
         let c = vec [| 1.; -0.25 |] in
         let f x = Nx.sum (bowl c x) in
         let inf = vec [| 0.; Float.infinity |] in
+        let nan = vec [| 0.; Float.nan |] in
         let solvers =
           (fun (lo, hi) ->
             Minimize.solve one lm ?lo ?hi ~tol:tight ~budget:20
@@ -753,7 +755,12 @@ let box_tests =
               (fun s ->
                 raises_match (Exn.failure ~sub:"the box holds no point")
                   (fun () -> Solution.get s))
-              [ solve (Some inf, None); solve (None, Some (Nx.neg inf)) ])
+              [
+                solve (Some inf, None);
+                solve (None, Some (Nx.neg inf));
+                solve (Some nan, None);
+                solve (None, Some nan);
+              ])
           solvers);
     prop "one side bounds alone" normal_centers (fun c ->
         (* The bowl is a sum of one bowl per coordinate, so its minimum in a box

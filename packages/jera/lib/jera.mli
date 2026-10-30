@@ -745,7 +745,7 @@ module Minimize : sig
       coordinate held at a constant bound and follows a bound that moves; that
       system is not symmetric, so its [linear] must not be {!Linear.cg}. A box
       that holds no point, where a coordinate's [lo] exceeds its [hi] or is [+∞]
-      or its [hi] is [−∞], ends the lane [Stalled].
+      or its [hi] is [−∞], or either is NaN, ends the lane [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,
