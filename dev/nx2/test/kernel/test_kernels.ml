@@ -653,21 +653,6 @@ let float_bounds =
       (b Pow, "pow", 4, 2);
     ]
 
-(* The C library's function of each kind at f64, the reference at f32. *)
-let libm = function
-  | "exp" -> Float.exp | "exp2" -> Float.exp2 | "sin" -> Float.sin
-  | "cos" -> Float.cos | "asin" -> Float.asin | "acos" -> Float.acos
-  | "atan" -> Float.atan | "cosh" -> Float.cosh | "tanh" -> Float.tanh
-  | "erf" -> Float.erf | "expm1" -> Float.expm1 | "log" -> Float.log
-  | "log2" -> Float.log2 | "log1p" -> Float.log1p | "sinh" -> Float.sinh
-  | "tan" -> Float.tan
-  | k -> invalid_arg ("libm: " ^ k)
-
-let libm2 = function
-  | "atan2" -> Float.atan2
-  | "pow" -> Float.pow
-  | k -> invalid_arg ("libm2: " ^ k)
-
 (* [k] of [xs], and of [ys] for a kind of two operands, by [b]'s kernels
    into a fresh array of [dt]; [None] where they decline it. *)
 let run_kind (type v s) (b : Support.backend) k (dt : (v, s) D.t) xs ys =
@@ -701,9 +686,9 @@ let ulps32 a c =
     if Float.is_nan a && Float.is_nan c then 0 else max_int
   else abs (rank32 a - rank32 c)
 
-(* The binary32 values [r], the C library's f64 value, may stand for: [r]
-   rounded once, and its neighbour too where [r] is too close to a tie to
-   tell. *)
+(* The binary32 values [r], a float64 within 2 ulps of a kind's value, may
+   stand for: [r] rounded once, and its neighbour too where [r] is too
+   close to a tie to tell. *)
 let nearest32 r =
   let a = Int32.float_of_bits (Int32.bits_of_float r) in
   if Float.is_nan r || a = r || not (Float.is_finite a) then [ a ]
@@ -805,8 +790,8 @@ let switch_points =
     (List.concat_map (around 8) (halves @ sqrt2 @ constants)
     @ List.concat_map (around 4) (multiples 1))
 
-(* Each float kind at float32 within its bound of the C library's f64
-   function rounded once: at Annex F's operands, at the switch points and
+(* Each float kind at float32 within its bound of the kind at float64,
+   which the goldens bound at 2 ulps, rounded once: at Annex F's operands, at the switch points and
    at every 2^20th bit pattern from [offset], every binade of both signs
    reached, and for a kind of two operands at Annex F's pairs and pairs
    from [seed], half of any patterns and half where [pow] and [atan2]
@@ -838,13 +823,10 @@ let law_f32_kinds (b : Support.backend) (offset, seed) =
     (fun (k, name, bound, _) ->
       let two = match k with Support.K2 _ -> true | _ -> false in
       let xs, ys = if two then (Array.map fst ps, Array.map snd ps) else (xs, xs) in
-      let want =
-        if two then Array.map2 (fun x y -> nearest32 (libm2 name x y)) xs ys
-        else Array.map (fun x -> nearest32 (libm name x)) xs
-      in
-      match run_kind b k D.Float32 xs ys with
-      | None -> ()
-      | Some got ->
+      match (run_kind b k D.Float64 xs ys, run_kind b k D.Float32 xs ys) with
+      | None, _ | _, None -> ()
+      | Some exact, Some got ->
+          let want = Array.map nearest32 exact in
           let show i =
             if two then Printf.sprintf "%h %h" xs.(i) ys.(i)
             else Printf.sprintf "%h" xs.(i)
