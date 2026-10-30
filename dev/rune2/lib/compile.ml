@@ -616,7 +616,53 @@ type env = {
   nodes : Ops.t option array;
   reaches : reach array;
   scattered : bool array;
+  shared : bool array;
+  drawn : bool array;
 }
+
+let slot (p : Program.t) x =
+  match Nx.Prim.payload p.owner x with Some (Var n) -> n | _ -> -1
+
+(* Each operand's variable and whether [op] may read one of its elements more
+   than once: a map's load that broadcasts it, a broadcast or a window, and,
+   taken as so, every operand of an operation other than a map or a movement. *)
+let repeated (type r) (p : Program.t) (op : r Nx.Prim.t) =
+  let at x repeats = (slot p x, repeats) in
+  match op with
+  | Map { layout; loads; _ } ->
+      let n = Iarray.fold_left ( * ) 1 (L.shape layout) in
+      List.map
+        (fun (l : _ Nx.Prim.load) ->
+          match l with
+          | Plain x -> at x (Array.fold_left ( * ) 1 (Nx.shape x) < n)
+          | Padded { x; _ } -> at x true)
+        (Iarray.to_list loads)
+  | Move ((Broadcast _ | Window _), x) -> [ at x true ]
+  | Move (_, x) -> [ at x false ]
+  | Copy x -> [ at x false ]
+  | Bitcast (_, x) -> [ at x false ]
+  | Place (_, x) -> [ at x false ]
+  | _ ->
+      let (Operands l) = Nx.Prim.operands op in
+      List.map (fun (Nx.Prim.Any x) -> at x true) l
+
+(* Whether each variable of [p] is read more than once: by two operations, or
+   by one that reads an element more than once or a construct. *)
+let shared (p : Program.t) =
+  let reads = Array.make p.slots 0 in
+  let read n repeats =
+    if n >= 0 then reads.(n) <- (reads.(n) + if repeats then 2 else 1)
+  in
+  Array.iter
+    (function
+      | Program.Op { op; _ } ->
+          List.iter (fun (n, repeats) -> read n repeats) (repeated p op)
+      | Do { c; _ } ->
+          List.iter
+            (fun (Program.V x) -> read (slot p x) true)
+            (Program.operands c))
+    p.eqns;
+  Array.map (fun k -> k > 1) reads
 
 let env_of (p : Program.t) =
   {
@@ -624,10 +670,11 @@ let env_of (p : Program.t) =
     nodes = Array.make p.slots None;
     reaches = Array.make p.slots nothing;
     scattered = Array.make p.slots false;
+    shared = shared p;
+    drawn = Array.make p.slots false;
   }
 
-let var env x =
-  match Nx.Prim.payload env.p.owner x with Some (Var n) -> n | _ -> -1
+let var env x = slot env.p x
 
 let node st env x =
   match var env x with
@@ -761,6 +808,35 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         match Lower.op ?dst ~device:st.device ~host read op with
         | ys -> ys
         | exception Invalid_argument why -> decline "%s" why
+      in
+      (* A value that computes Threefry blocks, a draw or a key split or a map
+         or view of one, is stored where it is read more than once: each
+         reader would compute its blocks again, twenty rounds each. *)
+      let drawn_at x =
+        match var env x with n when n >= 0 -> env.drawn.(n) | _ -> false
+      in
+      let drawn =
+        match op with
+        | Map { prog; loads; _ } ->
+            Lower.draws prog
+            || Iarray.exists
+                 (fun (l : _ Nx.Prim.load) ->
+                   match l with
+                   | Plain x -> drawn_at x
+                   | Padded { x; _ } -> drawn_at x)
+                 loads
+        | Move (_, x) -> drawn_at x
+        | Copy x -> drawn_at x
+        | Bitcast (_, x) -> drawn_at x
+        | _ -> false
+      in
+      let ys =
+        Array.mapi
+          (fun k y ->
+            let shared = env.shared.(base + k) in
+            env.drawn.(base + k) <- drawn && not shared;
+            if drawn && shared then Ops.contiguous y else y)
+          ys
       in
       (match (op, !given) with
       | Scatter { into; _ }, Some (buf, filled) ->

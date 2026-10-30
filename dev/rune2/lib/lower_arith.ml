@@ -740,16 +740,16 @@ let bitcast ~src:(D.Any s as src) (D.Any t as d) shape x =
         let c = raw src [ x ] in
         if bs > bt then code (split bt (bs / bt) c) else code (join bs c)
       else
-        let bytes =
-          if bs >= 8 then
-            Ops.bitcast
-              (Shape.reshape x (ints (front @ [ per / size src ])))
-              Uint8
-          else
-            let c = raw src [ x ] in
-            join bs (Shape.reshape c (ints (front @ [ per / 8; 8 / bs ])))
-        in
-        if bt >= 8 then Ops.bitcast bytes (dtype d)
-        else code (split bt (8 / bt) bytes)
+        let words () = Shape.reshape x (ints (front @ [ per / size src ])) in
+        if bs >= 8 && bt >= 8 then Ops.bitcast (words ()) (dtype d)
+        else
+          let bytes =
+            if bs >= 8 then Ops.bitcast (words ()) Uint8
+            else
+              let c = raw src [ x ] in
+              join bs (Shape.reshape c (ints (front @ [ per / 8; 8 / bs ])))
+          in
+          if bt >= 8 then Ops.bitcast bytes (dtype d)
+          else code (split bt (8 / bt) bytes)
     in
     Shape.reshape node (dims d (Array.of_list out))

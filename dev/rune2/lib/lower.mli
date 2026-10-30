@@ -28,6 +28,10 @@
 
 open Tolk
 
+val draws : Nx_kernel.Prog.t -> bool
+(** [draws prog] is whether [prog] computes Threefry blocks, as a draw and a key
+    split do. *)
+
 val op :
   ?dst:(Ops.t -> Ops.t) ->
   device:Ops.device ->

@@ -229,6 +229,11 @@ let fft (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
 
 (* Operations *)
 
+let draws (prog : Nx_kernel.Prog.t) =
+  Iarray.exists
+    (function Nx_kernel.Prog.Op2 (Binary Threefry, _, _) -> true | _ -> false)
+    prog.nodes
+
 let op ?dst ~device ~host (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
     (o : r P.t) =
   match o with
