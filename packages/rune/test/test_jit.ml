@@ -2651,8 +2651,12 @@ let test_forwarded () =
     in
     (plain, pullback)
   in
+  (* What a buffer of the result's size holds: its bytes and, on Windows,
+     whose C library gives no page-aligned memory that [free] releases, the
+     padding that aligns it. *)
+  let result = held (fun () -> Obj.repr (Rig.Buffer.create host (4 * n))) in
   let plain, pullback = both f in
-  equal ~msg:"the result" int (4 * n) plain;
+  equal ~msg:"the result" int result plain;
   equal ~msg:"the result and the pullback" int plain pullback;
   equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
   ignore (Sys.opaque_identity (x, w))
