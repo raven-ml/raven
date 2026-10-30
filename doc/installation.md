@@ -89,6 +89,23 @@ dune exec ./main.exe
 
 You should see five evenly-spaced values printed.
 
+## Using Raven in a Toplevel
+
+In the `ocaml` toplevel, findlib loads a library with its dependencies, and
+`nx.top` makes the toplevel print arrays:
+
+```ocaml
+#use "topfind";;
+#require "rune";;
+#require "nx.top";;
+```
+
+Inside a dune project, `#use_output "dune ocaml top";;` loads the project's
+libraries instead, and arrays print only if the project depends on `nx.top`.
+Load the libraries one way or the other, never both: the second load fails
+with `rig is already loaded in this process`, and the toplevel must then be
+restarted.
+
 ## Editor Setup
 
 For the best development experience, use an editor with OCaml LSP support:
@@ -102,7 +119,5 @@ For the best development experience, use an editor with OCaml LSP support:
 **Opam switch issues**: Run `eval $(opam env)` after creating or switching opam switches.
 
 **Build failures**: Check your OCaml version with `ocaml --version`. Raven requires 5.5.0 or later.
-
-**Toplevel**: Load Raven's libraries into a toplevel once, either with `#require` or with `#use_output "dune ocaml top"`, never both: a second load fails with `rig is already loaded in this process`.
 
 **Getting help**: Report issues at [github.com/raven-ml/raven/issues](https://github.com/raven-ml/raven/issues).
