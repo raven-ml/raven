@@ -1591,6 +1591,23 @@ let order_law c =
     ~msg:"each part's queue and after" expected (P.layout p);
   ignore (Sys.opaque_identity allocs)
 
+(* A copy on the copy engine after a fill, which drawn cases give in about one
+   in 40: a fill of no slot, then a copy that shares no memory with it, so on
+   the copy engine, then a copy after both, which writes the fixed memory the
+   fill reads. *)
+let order_examples =
+  let v alloc : view = { alloc; first = 0; length = 8 } in
+  [
+    ({
+      host_visible = true;
+      kinds = [| Unordered; Unordered; Unordered |];
+      parts =
+        [ Fill []; Copy (View (v 0), View (v 1)); Copy (View (v 1), View (v 2)) ];
+      fixed = [ (v 2, Rig.Read) ];
+    }
+      : order_case);
+  ]
+
 (* A value's work starts once the previous value's completed, on every queue: a
    copy on COPY:0, then a fill on COMPUTE:0 that reads what the copy wrote with
    unordered slots, sees the copy, and the other way round. Only the device's
@@ -1955,7 +1972,7 @@ let tests =
       [
         test "empty allocations name no device memory" (fun () ->
             test_copy_memory (0, 0, 0));
-        prop ~count:300
+        prop ~count:300 ~examples:order_examples
           "a part follows the earlier parts that may share memory with it, \
            on its queue or by its after"
           (Gen.with_pp pp_order_case gen_order_case)
