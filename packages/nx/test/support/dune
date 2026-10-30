@@ -15,3 +15,12 @@
  (foreign_stubs
   (language c)
   (names nx_release_support_stubs)))
+
+; A C frame of a chosen depth, under which OCaml's calls to C run.
+
+(library
+ (name nx_stack_support)
+ (modules nx_stack_support)
+ (foreign_stubs
+  (language c)
+  (names nx_stack_support_stubs)))

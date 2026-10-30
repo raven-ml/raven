@@ -38,7 +38,8 @@
   test_check
   test_scan
   test_partial
-  test_windows)
+  test_windows
+  test_stack)
  (modules
   test_devices
   test_values
@@ -76,7 +77,8 @@
   test_check
   test_scan
   test_partial
-  test_windows)
+  test_windows
+  test_stack)
  (libraries
   nx
   nx_array
@@ -84,6 +86,7 @@
   nx_kernel
   nx_cpu
   nx_kernels_support
+  nx_stack_support
   nx_support
   rig
   threads.posix
