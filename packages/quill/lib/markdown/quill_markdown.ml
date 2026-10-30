@@ -207,77 +207,44 @@ let extract_data_uri_base64 src =
     | None -> None
   else None
 
-(* Parse image Display data from <img> tag content *)
-let parse_image_display ?base_dir mime content =
-  match extract_img_src content with
-  | Some src ->
-      begin match extract_data_uri_base64 src with
-      | Some base64 ->
-          (* Inline data URI: extract base64 directly *)
-          Quill.Cell.Display { mime; id = None; data = base64 }
-      | None ->
-          (* File reference: read and base64-encode *)
-          begin match base_dir with
-          | Some dir ->
-              let path = Filename.concat dir src in
-              let ic = open_in_bin path in
-              let raw =
-                Fun.protect
-                  ~finally:(fun () -> close_in ic)
-                  (fun () -> really_input_string ic (in_channel_length ic))
-              in
-              let data =
-                (* Base64, as an inline data URI carries it. *)
-                let alphabet =
-                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-                in
-                let len = String.length raw in
-                let out_len = (len + 2) / 3 * 4 in
-                let out = Bytes.create out_len in
-                let rec loop i j =
-                  if i < len then begin
-                    let b0 = Char.code (String.unsafe_get raw i) in
-                    let b1 =
-                      if i + 1 < len then
-                        Char.code (String.unsafe_get raw (i + 1))
-                      else 0
-                    in
-                    let b2 =
-                      if i + 2 < len then
-                        Char.code (String.unsafe_get raw (i + 2))
-                      else 0
-                    in
-                    Bytes.unsafe_set out j
-                      (String.unsafe_get alphabet (b0 lsr 2));
-                    Bytes.unsafe_set out (j + 1)
-                      (String.unsafe_get alphabet
-                         (((b0 land 3) lsl 4) lor (b1 lsr 4)));
-                    Bytes.unsafe_set out (j + 2)
-                      (if i + 1 < len then
-                         String.unsafe_get alphabet
-                           (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
-                       else '=');
-                    Bytes.unsafe_set out (j + 3)
-                      (if i + 2 < len then
-                         String.unsafe_get alphabet (b2 land 0x3f)
-                       else '=');
-                    loop (i + 3) (j + 4)
-                  end
-                in
-                loop 0 0;
-                Bytes.unsafe_to_string out
-              in
-              Quill.Cell.Display { mime; id = None; data }
-          | None ->
-              (* No base_dir, store src as placeholder *)
-              Quill.Cell.Display { mime; id = None; data = "" }
-          end
-      end
-  | None ->
-      (* No <img> tag — treat as raw data *)
-      Quill.Cell.Display { mime; id = None; data = content }
+let base64_alphabet =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
-let parse_output_sections ?base_dir content =
+let base64_encode raw =
+  let len = String.length raw in
+  let out = Bytes.create ((len + 2) / 3 * 4) in
+  let byte i = if i < len then Char.code (String.unsafe_get raw i) else 0 in
+  let digit k = String.unsafe_get base64_alphabet k in
+  let i = ref 0 and j = ref 0 in
+  while !i < len do
+    let b0 = byte !i and b1 = byte (!i + 1) and b2 = byte (!i + 2) in
+    Bytes.unsafe_set out !j (digit (b0 lsr 2));
+    Bytes.unsafe_set out (!j + 1) (digit (((b0 land 3) lsl 4) lor (b1 lsr 4)));
+    Bytes.unsafe_set out (!j + 2)
+      (if !i + 1 < len then digit (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
+       else '=');
+    Bytes.unsafe_set out (!j + 3)
+      (if !i + 2 < len then digit (b2 land 0x3f) else '=');
+    i := !i + 3;
+    j := !j + 4
+  done;
+  Bytes.unsafe_to_string out
+
+(* An image output's <img> tag holds a data URI or, for an image stored as a
+   file, a reference that [resolve ~cell_id src] turns into the base64 of the
+   image. *)
+let parse_image_display ~resolve ~cell_id mime content =
+  match extract_img_src content with
+  | None -> Quill.Cell.Display { mime; id = None; data = content }
+  | Some src ->
+      let data =
+        match extract_data_uri_base64 src with
+        | Some base64 -> base64
+        | None -> resolve ~cell_id src
+      in
+      Quill.Cell.Display { mime; id = None; data }
+
+let parse_output_sections ~resolve ~cell_id content =
   let lines = String.split_on_char '\n' content in
   let flush_section tag buf acc =
     let text = Buffer.contents buf in
@@ -308,7 +275,8 @@ let parse_output_sections ?base_dir content =
               let mime =
                 String.sub display_tag plen (String.length display_tag - plen)
               in
-              if is_image mime then parse_image_display ?base_dir mime trimmed
+              if is_image mime then
+                parse_image_display ~resolve ~cell_id mime trimmed
               else Quill.Cell.Display { mime; id = None; data = trimmed }
             else (* Unknown tag, treat as stdout *)
               Quill.Cell.Stdout trimmed
@@ -363,7 +331,7 @@ let parse_output_sections ?base_dir content =
     if !tag <> "" then acc := flush_section !tag buf !acc;
     List.rev !acc
 
-let parse_outputs ?base_dir md ~after =
+let parse_outputs ~resolve ~cell_id md ~after =
   let len = String.length md in
   let pos = ref after in
   while !pos < len && (md.[!pos] = '\n' || md.[!pos] = '\r') do
@@ -382,13 +350,13 @@ let parse_outputs ?base_dir md ~after =
           let content =
             String.sub md content_start (close_pos - content_start)
           in
-          let outputs = parse_output_sections ?base_dir content in
+          let outputs = parse_output_sections ~resolve ~cell_id content in
           let end_pos = close_pos + String.length output_close in
           Some (outputs, end_pos)
       | None -> None)
   | _ -> None
 
-let of_string ?base_dir md =
+let parse ~resolve md =
   let doc = Cmarkit.Doc.of_string ~locs:true md in
   let top_blocks =
     match Cmarkit.Doc.block doc with
@@ -424,7 +392,10 @@ let of_string ?base_dir md =
       in
       (* Check for output markers immediately after the code block *)
       let cell, end_pos =
-        match parse_outputs ?base_dir md ~after:(last + 1) with
+        match
+          parse_outputs ~resolve ~cell_id:(Quill.Cell.id cell) md
+            ~after:(last + 1)
+        with
         | Some (outputs, end_pos) ->
             (Quill.Cell.set_outputs outputs cell, end_pos)
         | None -> (cell, last + 1)
@@ -446,44 +417,9 @@ let add_content buf s =
   Buffer.add_string buf s;
   if s <> "" && s.[String.length s - 1] <> '\n' then Buffer.add_char buf '\n'
 
-let rec mkdir_p dir =
-  if Sys.file_exists dir then ()
-  else (
-    mkdir_p (Filename.dirname dir);
-    try Unix.mkdir dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
-
-let write_figure_file ~path ~data =
-  mkdir_p (Filename.dirname path);
-  let raw = base64_decode data in
-  let oc = open_out_bin path in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc raw)
-
-(* Extract cell ID prefix from a figure filename like "c_abc123.png" or
-   "c_abc123-2.png" *)
-let cell_id_of_figure_name name =
-  let base = Filename.remove_extension name in
-  (* Strip trailing -N suffix *)
-  match String.rindex_opt base '-' with
-  | Some i ->
-      let suffix = String.sub base (i + 1) (String.length base - i - 1) in
-      let all_digits =
-        String.length suffix > 0
-        && String.to_seq suffix |> Seq.for_all (fun c -> c >= '0' && c <= '9')
-      in
-      if all_digits then String.sub base 0 i else base
-  | None -> base
-
-let clean_orphan_figures ~figures_dir ~cell_ids =
-  if Sys.file_exists figures_dir && Sys.is_directory figures_dir then
-    let entries = Sys.readdir figures_dir in
-    Array.iter
-      (fun name ->
-        let cid = cell_id_of_figure_name name in
-        if not (List.mem cid cell_ids) then
-          Sys.remove (Filename.concat figures_dir name))
-      entries
-
-let render_output ?figures_dir ~cell_id ~img_counter buf = function
+(* [image ~cell_id ~n ~mime ~data] is the [src] of the [<img>] tag that stores
+   the [n]th image of the cell [cell_id]. *)
+let render_output ~image ~cell_id ~img_counter buf = function
   | Quill.Cell.Stdout s ->
       Buffer.add_string buf "<!-- out:stdout -->\n";
       add_content buf s
@@ -497,30 +433,11 @@ let render_output ?figures_dir ~cell_id ~img_counter buf = function
       Buffer.add_string buf "<!-- out:display ";
       Buffer.add_string buf mime;
       Buffer.add_string buf " -->\n";
-      if is_image mime then begin
-        let ext = extension_of_mime mime in
-        match figures_dir with
-        | Some dir ->
-            (* Disk mode: write file, reference by path *)
-            incr img_counter;
-            let basename =
-              if !img_counter = 1 then cell_id ^ "." ^ ext
-              else cell_id ^ "-" ^ string_of_int !img_counter ^ "." ^ ext
-            in
-            let path = Filename.concat dir basename in
-            write_figure_file ~path ~data;
-            Buffer.add_string buf "<img src=\"figures/";
-            Buffer.add_string buf basename;
-            Buffer.add_string buf "\">\n"
-        | None ->
-            (* Inline mode (default): data URI in <img> tag *)
-            Buffer.add_string buf "<img src=\"data:";
-            Buffer.add_string buf mime;
-            Buffer.add_string buf ";base64,";
-            Buffer.add_string buf data;
-            Buffer.add_string buf "\">\n"
-      end
-      else if mime = "text/html" then add_content buf data
+      if is_image mime then (
+        incr img_counter;
+        Buffer.add_string buf "<img src=\"";
+        Buffer.add_string buf (image ~cell_id ~n:!img_counter ~mime ~data);
+        Buffer.add_string buf "\">\n")
       else add_content buf data
 
 let render_cell_id buf id (attrs : Quill.Cell.attrs) =
@@ -551,7 +468,7 @@ let fence source =
     (String.split_on_char '\n' source);
   String.make (!longest + 1) '`'
 
-let render_cell ?figures_dir ~with_outputs buf = function
+let render_cell ~image ~with_outputs buf = function
   | Quill.Cell.Text { source; _ } ->
       Buffer.add_string buf source;
       Buffer.add_char buf '\n'
@@ -568,42 +485,296 @@ let render_cell ?figures_dir ~with_outputs buf = function
         Buffer.add_char buf '\n';
         Buffer.add_string buf "<!-- quill:output -->\n";
         let img_counter = ref 0 in
-        List.iter
-          (render_output ?figures_dir ~cell_id:id ~img_counter buf)
-          outputs;
+        List.iter (render_output ~image ~cell_id:id ~img_counter buf) outputs;
         Buffer.add_string buf "<!-- /quill:output -->")
 
-let render ?figures_dir ~with_outputs doc =
+let render ~image ~with_outputs doc =
   let buf = Buffer.create 4096 in
-  let cells = Quill.Doc.cells doc in
-  (* Clean orphaned figures before writing new ones *)
-  (match figures_dir with
-  | Some dir ->
-      let cell_ids =
-        List.filter_map
-          (function
-            | Quill.Cell.Code { id; _ } -> Some id | Quill.Cell.Text _ -> None)
-          cells
-      in
-      clean_orphan_figures ~figures_dir:dir ~cell_ids
-  | None -> ());
   let rec loop = function
     | [] -> ()
-    | [ c ] -> render_cell ?figures_dir ~with_outputs buf c
+    | [ c ] -> render_cell ~image ~with_outputs buf c
     | c :: rest ->
-        render_cell ?figures_dir ~with_outputs buf c;
+        render_cell ~image ~with_outputs buf c;
         Buffer.add_char buf '\n';
         Buffer.add_char buf '\n';
         loop rest
   in
-  loop cells;
+  loop (Quill.Doc.cells doc);
   let s = Buffer.contents buf in
   (* Ensure file ends with a newline *)
   if s <> "" && s.[String.length s - 1] <> '\n' then s ^ "\n" else s
 
-let to_string doc = render ~with_outputs:false doc
+let data_uri ~cell_id:_ ~n:_ ~mime ~data = "data:" ^ mime ^ ";base64," ^ data
+let to_string doc = render ~image:data_uri ~with_outputs:false doc
+let to_string_with_outputs doc = render ~image:data_uri ~with_outputs:true doc
 
-let to_string_with_outputs ?figures_dir doc =
-  render ?figures_dir ~with_outputs:true doc
+(* Files *)
+
+type figures = Inline | Files
+
+(* The first line of a notebook that stores its images as files. *)
+let figures_marker = "<!-- quill:figures files -->"
+let figures_root = "figures"
+
+(* An error of [load] or [save], which they return. *)
+exception Storage_error of string
+
+let error fmt = Printf.ksprintf (fun s -> raise (Storage_error s)) fmt
+
+let read_file ?(bin = false) path =
+  let ic = if bin then open_in_bin path else open_in path in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
+(* A file's device, inode, size and modification time. *)
+type stamp = int * int * int * float
+
+let stamp_of (st : Unix.stats) = (st.st_dev, st.st_ino, st.st_size, st.st_mtime)
+
+(* [sync_dir dir] puts on disk the entries made or renamed in [dir], so that
+   they survive a power loss in the order they were made. Windows has no
+   directory sync. *)
+let sync_dir dir =
+  if not Sys.win32 then
+    let fd = Unix.openfile dir [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
+    Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> Unix.fsync fd)
+
+let mkdir dir =
+  Unix.mkdir dir 0o777;
+  sync_dir (Filename.dirname dir)
+
+(* [write_file path content] replaces the file [path] names, through a link too,
+   by one holding [content], and is the stamp of the new file. The content goes
+   to a fresh temporary file beside it, created exclusively under a name no
+   other file has, written and synced through the descriptor that made it, then
+   renamed over the file and its directory synced: a crash leaves the old file
+   or the new one, and may leave the temporary file. A new file has the
+   permissions the umask allows; a replaced one keeps its own. *)
+let write_file path content =
+  let target, existing =
+    match Unix.realpath path with
+    | target -> (target, true)
+    | exception Unix.Unix_error (Unix.ENOENT, _, _) -> (path, false)
+  in
+  let perm =
+    if not existing then None
+    else (
+      (try Unix.access target [ Unix.W_OK ]
+       with Unix.Unix_error _ -> error "%s is read-only" path);
+      Some (Unix.stat target).Unix.st_perm)
+  in
+  let dir = Filename.dirname target in
+  let tmp, oc =
+    Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o666 ~temp_dir:dir
+      ("." ^ Filename.basename target ^ ".")
+      ".tmp"
+  in
+  match
+    Fun.protect
+      ~finally:(fun () -> close_out_noerr oc)
+      (fun () ->
+        output_string oc content;
+        flush oc;
+        let fd = Unix.descr_of_out_channel oc in
+        Option.iter (Unix.chmod tmp) perm;
+        Unix.fsync fd;
+        stamp_of (Unix.fstat fd))
+  with
+  | stamp ->
+      Unix.rename tmp target;
+      sync_dir dir;
+      stamp
+  | exception e ->
+      (try Sys.remove tmp with Sys_error _ -> ());
+      raise e
+
+(* [real path] is the file [path] names, through links. A notebook's figures
+   live beside that file, where a viewer of it looks for them. *)
+let real path =
+  match Unix.realpath path with
+  | real -> real
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> path
+
+let stamp path =
+  match Unix.stat path with
+  | st -> Some (stamp_of st)
+  | exception Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) -> None
+
+(* [kind path] follows links: a link is what it points to. *)
+let kind path =
+  match Unix.stat path with
+  | st -> Some st.Unix.st_kind
+  | exception Unix.Unix_error ((Unix.ENOENT | Unix.ENOTDIR), _, _) -> None
+
+let is_file_name s =
+  s <> "" && s <> "." && s <> ".."
+  && (not (String.contains s '/'))
+  && not (String.contains s '\\')
+
+(* The images of [nb/x.md] live in [nb/figures/x/]. The stem names a directory,
+   so a notebook named [..md], whose stem is [.], has none. *)
+let stem path =
+  let stem = Filename.remove_extension (Filename.basename path) in
+  if is_file_name stem then stem
+  else error "%s: no figures directory for this name" path
+
+let figure_error path ~cell_id ~src reason =
+  error "%s: cell %s: figure %s: %s" path cell_id src reason
+
+(* [split_marker md] is [Some rest] if the first line of [md] is
+   [figures_marker], where [rest] is [md] after that line. *)
+let split_marker md =
+  let first, rest =
+    match String.index_opt md '\n' with
+    | Some i ->
+        (String.sub md 0 i, String.sub md (i + 1) (String.length md - i - 1))
+    | None -> (md, "")
+  in
+  let first =
+    if String.ends_with ~suffix:"\r" first then
+      String.sub first 0 (String.length first - 1)
+    else first
+  in
+  if first = figures_marker then Some rest else None
+
+(* A reference is accepted only in the shape [save] writes it, so that a
+   notebook cannot make [load] read, and a book publish, a path of its choice: a
+   file name in [figures/<stem>/]. The file must be a regular file, so that a
+   read cannot block on a FIFO or a device. *)
+let read_figure path ~cell_id src =
+  let real = real path in
+  let stem = stem real in
+  let prefix = figures_root ^ "/" ^ stem ^ "/" in
+  let name =
+    if String.starts_with ~prefix src then
+      String.sub src (String.length prefix)
+        (String.length src - String.length prefix)
+    else ""
+  in
+  if not (is_file_name name) then
+    figure_error path ~cell_id ~src ("not in " ^ prefix);
+  let file =
+    Filename.concat
+      (Filename.concat
+         (Filename.concat (Filename.dirname real) figures_root)
+         stem)
+      name
+  in
+  match kind file with
+  | None -> figure_error path ~cell_id ~src "no such file"
+  | Some Unix.S_REG -> (
+      try base64_encode (read_file ~bin:true file)
+      with Sys_error e -> figure_error path ~cell_id ~src e)
+  | Some _ -> figure_error path ~cell_id ~src "not a regular file"
+
+(* [catch f] is [Ok (f ())], or the error [f] raised as [Error]. *)
+let catch f =
+  match f () with
+  | v -> Ok v
+  | exception Storage_error e -> Error e
+  | exception Sys_error e -> Error e
+  | exception Unix.Unix_error (e, _, arg) ->
+      Error (arg ^ ": " ^ Unix.error_message e)
+
+let load ?(outputs = true) path =
+  catch @@ fun () ->
+  let md = read_file path in
+  let figures, md =
+    match split_marker md with Some md -> (Files, md) | None -> (Inline, md)
+  in
+  let resolve ~cell_id src =
+    if outputs then read_figure path ~cell_id src else ""
+  in
+  let doc = parse ~resolve md in
+  let doc = if outputs then doc else Quill.Doc.clear_all_outputs doc in
+  (doc, figures)
+
+let of_string md =
+  if split_marker md <> None then
+    invalid_arg
+      "Quill_markdown.of_string: the notebook stores its figures as files, \
+       which Quill_markdown.load reads";
+  let resolve ~cell_id src =
+    invalid_arg
+      (Printf.sprintf
+         "Quill_markdown.of_string: cell %s: figure %s is a file, which \
+          Quill_markdown.load reads"
+         cell_id src)
+  in
+  parse ~resolve md
+
+let figure_ext mime =
+  let ext = extension_of_mime mime in
+  let safe = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '+' | '-' | '.' | '_' -> true
+    | _ -> false
+  in
+  if String.for_all safe ext then ext else "bin"
+
+let real_dir path dir =
+  match kind dir with
+  | None | Some Unix.S_DIR -> ()
+  | Some _ -> error "%s: %s is not a directory" path dir
+
+(* [rmdir_empty dir] removes [dir] if it is an empty directory and no link. *)
+let rmdir_empty dir =
+  match Unix.lstat dir with
+  | { Unix.st_kind = Unix.S_DIR; _ } when Sys.readdir dir = [||] ->
+      Sys.rmdir dir
+  | _ -> ()
+
+(* The figures are written before the notebook that references them, and the
+   files it no longer references are removed after, so that a failure leaves no
+   reference to a missing file. *)
+let save_files path doc =
+  let real = real path in
+  let stem = stem real in
+  let dir = Filename.concat (Filename.dirname real) figures_root in
+  let stem_dir = Filename.concat dir stem in
+  real_dir path dir;
+  real_dir path stem_dir;
+  let stored = ref [] in
+  let image ~cell_id ~n ~mime ~data =
+    let ext = figure_ext mime in
+    let name =
+      if n = 1 then cell_id ^ "." ^ ext
+      else cell_id ^ "-" ^ string_of_int n ^ "." ^ ext
+    in
+    let src = figures_root ^ "/" ^ stem ^ "/" ^ name in
+    if not (is_file_name name) then
+      figure_error path ~cell_id ~src "the cell id makes no file name";
+    (match List.assoc_opt name !stored with
+    | Some (other, _) ->
+        figure_error path ~cell_id ~src ("also stored by cell " ^ other)
+    | None -> ());
+    stored := (name, (cell_id, data)) :: !stored;
+    src
+  in
+  let md = figures_marker ^ "\n\n" ^ render ~image ~with_outputs:true doc in
+  if !stored <> [] then (
+    if kind dir = None then mkdir dir;
+    if kind stem_dir = None then mkdir stem_dir);
+  List.iter
+    (fun (name, (_, data)) ->
+      ignore (write_file (Filename.concat stem_dir name) (base64_decode data)))
+    !stored;
+  let stamp = write_file path md in
+  if kind stem_dir = Some Unix.S_DIR then (
+    Array.iter
+      (fun name ->
+        let file = Filename.concat stem_dir name in
+        if (not (List.mem_assoc name !stored)) && kind file <> Some Unix.S_DIR
+        then Sys.remove file)
+      (Sys.readdir stem_dir);
+    rmdir_empty stem_dir;
+    rmdir_empty dir);
+  stamp
+
+let save figures path doc =
+  catch @@ fun () ->
+  match figures with
+  | Inline -> write_file path (to_string_with_outputs doc)
+  | Files -> save_files path doc
 
 module Edit = Edit

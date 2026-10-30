@@ -141,6 +141,14 @@ let resolve_path path =
   if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
   else path
 
+(* A notebook or figure that cannot be read or written ends the command with the
+   message, which names the notebook. *)
+let or_exit = function
+  | Ok v -> v
+  | Error msg ->
+      Printf.eprintf "Error: %s\n%!" msg;
+      exit 1
+
 let ensure_file path =
   if not (Sys.file_exists path) then (
     write_file path default_template;
@@ -217,7 +225,7 @@ let default_cmd path =
   in
   let abs_path = resolve_path path in
   Sys.chdir (Filename.dirname abs_path);
-  Quill_tui.run ~create_kernel abs_path
+  or_exit (Quill_tui.run ~create_kernel abs_path)
 
 (* ───── Serve: web notebook ───── *)
 
@@ -249,17 +257,13 @@ let serve_cmd port path =
 
 (* ───── Run: batch execution ───── *)
 
-let run_file ?prelude ?figures_dir inplace path =
+(* With [figures], images are stored as files; without, the notebook keeps the
+   storage it has. *)
+let run_file ?prelude ~figures inplace path =
   let abs_path = resolve_path path in
   let abs_prelude = Option.map resolve_path prelude in
   let nb_dir = Filename.dirname abs_path in
-  let figures_dir =
-    Option.map
-      (fun d -> if Filename.is_relative d then Filename.concat nb_dir d else d)
-      figures_dir
-  in
-  let md = read_file abs_path in
-  let doc = Quill_markdown.of_string md in
+  let doc, stored = or_exit (Quill_markdown.load ~outputs:false abs_path) in
   let create_kernel ~on_event =
     let k = create_kernel ~on_event in
     (match abs_prelude with
@@ -269,7 +273,6 @@ let run_file ?prelude ?figures_dir inplace path =
     | None -> ());
     k
   in
-  let doc = Quill.Doc.clear_all_outputs doc in
   let prev_cwd = Sys.getcwd () in
   Sys.chdir nb_dir;
   let doc =
@@ -277,16 +280,18 @@ let run_file ?prelude ?figures_dir inplace path =
       ~finally:(fun () -> Sys.chdir prev_cwd)
       (fun () -> Quill.Eval.run ~create_kernel doc)
   in
-  let result = Quill_markdown.to_string_with_outputs ?figures_dir doc in
-  if inplace then (
-    write_file abs_path result;
-    Printf.printf "Updated %s\n%!" abs_path)
-  else print_string result
+  if inplace then
+    let stored = if figures then Quill_markdown.Files else stored in
+    let (_ : Quill_markdown.stamp) =
+      or_exit (Quill_markdown.save stored abs_path doc)
+    in
+    Printf.printf "Updated %s\n%!" abs_path
+  else print_string (Quill_markdown.to_string_with_outputs doc)
 
 let get_mtime path =
   try Some (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> None
 
-let rec watch_loop ?prelude ?figures_dir path last_mtime =
+let rec watch_loop ?prelude ~figures path last_mtime =
   Unix.sleepf 1.0;
   match get_mtime path with
   | None ->
@@ -296,36 +301,39 @@ let rec watch_loop ?prelude ?figures_dir path last_mtime =
       let tm = Unix.localtime (Unix.gettimeofday ()) in
       Printf.printf "\n[%02d:%02d:%02d] File changed, re-evaluating...\n%!"
         tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec;
-      run_file ?prelude ?figures_dir true path;
+      run_file ?prelude ~figures true path;
       let new_mtime = Option.value ~default:mtime (get_mtime path) in
-      watch_loop ?prelude ?figures_dir path new_mtime
-  | Some _ -> watch_loop ?prelude ?figures_dir path last_mtime
+      watch_loop ?prelude ~figures path new_mtime
+  | Some _ -> watch_loop ?prelude ~figures path last_mtime
 
-let run_project ?prelude ?figures_dir project =
+let run_project ?prelude ~figures project =
   List.iter
     (fun (nb : Quill_project.notebook) ->
       let path = Filename.concat project.Quill_project.root nb.path in
       if Sys.file_exists path then (
         Printf.printf "  Running %s...\n%!" nb.title;
-        run_file ?prelude ?figures_dir true path))
+        run_file ?prelude ~figures true path))
     (Quill_project.notebooks project)
 
-let run_cmd watch inplace prelude figures_dir path =
+let run_cmd watch inplace prelude figures path =
   if not (Sys.file_exists path) then (
     Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  if is_dir path then run_project ?prelude ?figures_dir (load_project path)
+  if figures && not (inplace || watch || is_dir path) then (
+    Printf.eprintf "Error: --figures writes files and needs --inplace\n%!";
+    exit 1);
+  if is_dir path then run_project ?prelude ~figures (load_project path)
   else if watch then begin
-    run_file ?prelude ?figures_dir true path;
+    run_file ?prelude ~figures true path;
     match get_mtime path with
     | None ->
         Printf.eprintf "Error: Cannot watch %s\n%!" path;
         exit 1
     | Some mtime ->
         Printf.printf "\nWatching %s for changes... (Ctrl-C to stop)\n%!" path;
-        watch_loop ?prelude ?figures_dir path mtime
+        watch_loop ?prelude ~figures path mtime
   end
-  else run_file ?prelude ?figures_dir inplace path
+  else run_file ?prelude ~figures inplace path
 
 (* ───── Build: static HTML ───── *)
 
@@ -335,23 +343,17 @@ let build_cmd skip_eval output path =
     exit 1);
   if is_dir path then
     let project = load_project path in
-    Quill_book.Build.build ~create_kernel ~skip_eval ?output project
-  else Quill_book.Build.build_file ~create_kernel ~skip_eval ?output path
+    or_exit (Quill_book.Build.build ~create_kernel ~skip_eval ?output project)
+  else
+    or_exit (Quill_book.Build.build_file ~create_kernel ~skip_eval ?output path)
 
 (* ───── Clean: strip outputs ───── *)
 
-let rec rm_rf path =
-  if Sys.file_exists path then
-    if Sys.is_directory path then (
-      Array.iter
-        (fun name -> rm_rf (Filename.concat path name))
-        (Sys.readdir path);
-      Unix.rmdir path)
-    else Sys.remove path
-
-let clean_figures_dir dir =
-  let figures = Filename.concat dir "figures" in
-  if Sys.file_exists figures && Sys.is_directory figures then rm_rf figures
+(* Saved without outputs, a notebook that stores its images as files keeps none
+   in its figures directory. *)
+let clean_file path =
+  let doc, figures = or_exit (Quill_markdown.load ~outputs:false path) in
+  ignore (or_exit (Quill_markdown.save figures path doc) : Quill_markdown.stamp)
 
 let clean_cmd path =
   if not (Sys.file_exists path) then (
@@ -363,25 +365,13 @@ let clean_cmd path =
       (fun (nb : Quill_project.notebook) ->
         let path = Filename.concat project.root nb.path in
         if Sys.file_exists path then (
-          let md = read_file path in
-          let doc = Quill_markdown.of_string md in
-          let doc = Quill.Doc.clear_all_outputs doc in
-          let result = Quill_markdown.to_string doc in
-          write_file path result;
-          let nb_dir = Filename.dirname path in
-          clean_figures_dir nb_dir;
+          clean_file path;
           Printf.printf "  Cleaned %s\n%!" nb.title))
       (Quill_project.notebooks project);
     Printf.printf "Done.\n%!"
   end
   else begin
-    let md = read_file path in
-    let doc = Quill_markdown.of_string md in
-    let doc = Quill.Doc.clear_all_outputs doc in
-    let result = Quill_markdown.to_string doc in
-    write_file path result;
-    let nb_dir = Filename.dirname path in
-    clean_figures_dir nb_dir;
+    clean_file path;
     Printf.printf "Stripped outputs from %s\n%!" path
   end
 
@@ -432,13 +422,15 @@ let prelude_flag =
     & info [ "prelude" ] ~docv:"FILE"
         ~doc:"Execute OCaml code from $(docv) before the notebook cells.")
 
-let figures_dir_flag =
+let figures_flag =
   Arg.(
-    value
-    & opt (some string) None
-    & info [ "figures-dir" ] ~docv:"DIR"
+    value & flag
+    & info [ "figures" ]
         ~doc:
-          "Write images to $(docv) and reference by path instead of inlining.")
+          "Store images as files in figures/$(i,STEM)/ beside the notebook, \
+           where $(i,STEM) is its file name without the extension, instead of \
+           in the notebook. Without it, a notebook keeps the storage it has. \
+           Needs $(b,--inplace) for a single notebook.")
 
 let skip_eval_flag =
   Arg.(
@@ -467,8 +459,8 @@ let run_term =
   let doc = "Execute all code blocks in a notebook or project." in
   Cmd.v (Cmd.info "run" ~doc)
     Term.(
-      const run_cmd $ watch_flag $ inplace_flag $ prelude_flag
-      $ figures_dir_flag $ required_path_arg)
+      const run_cmd $ watch_flag $ inplace_flag $ prelude_flag $ figures_flag
+      $ required_path_arg)
 
 (* build: static HTML *)
 let build_term =

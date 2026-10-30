@@ -25,11 +25,13 @@ type model = {
   kernel : Kernel.t;
   event_queue : Kernel.event Queue.t;
   path : string;
+  figures : Quill_markdown.figures;
+      (* How [path] stores its images, kept by a save. *)
   focus : int;
   mode : mode;
   dirty : bool;
   footer_msg : footer_msg option;
-  last_mtime : float;
+  stamp : Quill_markdown.stamp option; (* The file as last loaded or saved. *)
   reload_acc : float;
   confirm_quit : bool;
   show_help : bool;
@@ -103,20 +105,11 @@ let padding_lrtb ~l ~r ~t ~b =
 
 (* ───── Helpers ───── *)
 
-let read_file path =
-  let ic = open_in path in
-  Fun.protect
-    ~finally:(fun () -> close_in ic)
-    (fun () -> really_input_string ic (in_channel_length ic))
-
 let write_file path content =
   let oc = open_out path in
   Fun.protect
     ~finally:(fun () -> close_out oc)
     (fun () -> output_string oc content)
-
-let get_mtime path =
-  try (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> 0.
 
 let drain_events event_queue session =
   let rec loop session =
@@ -512,19 +505,11 @@ let editor_on_key m ev =
 
 (* ───── Init ───── *)
 
-let init ~create_kernel ~path () =
+let init ~create_kernel ~path ~stamp ~doc ~figures () =
   let event_queue = Queue.create () in
   let on_event ev = Queue.push ev event_queue in
   let kernel = create_kernel ~on_event in
-  let md =
-    if Sys.file_exists path then read_file path
-    else (
-      write_file path template;
-      template)
-  in
-  let doc = Quill_markdown.of_string md in
   let session = Session.create doc in
-  let last_mtime = get_mtime path in
   let focus = 0 in
   let is_code_cell =
     match Doc.nth focus doc with Some (Cell.Code _) -> true | _ -> false
@@ -543,11 +528,12 @@ let init ~create_kernel ~path () =
       kernel;
       event_queue;
       path;
+      figures;
       focus;
       mode = initial_mode;
       dirty = false;
       footer_msg = None;
-      last_mtime;
+      stamp;
       reload_acc = 0.;
       confirm_quit = false;
       show_help = false;
@@ -564,24 +550,30 @@ let init ~create_kernel ~path () =
 
 (* ───── File reload ───── *)
 
+(* The stamp is taken before the file is read: a change between the two makes
+   the next poll read it again. A failed reload keeps the stamp, so that the
+   next poll retries and a save does not write the stale document over the
+   file. *)
 let check_reload m =
-  let mtime = get_mtime m.path in
-  if mtime > m.last_mtime then
-    let md = read_file m.path in
-    let doc = Quill_markdown.of_string md in
-    let session = Session.reload doc m.session in
-    let n = Doc.length (Session.doc session) in
-    let focus = if n > 0 then min m.focus (n - 1) else 0 in
-    {
-      m with
-      session;
-      focus;
-      last_mtime = mtime;
-      dirty = false;
-      completion_popup_open = false;
-      completion = None;
-    }
-  else m
+  let stamp = Quill_markdown.stamp m.path in
+  if stamp = m.stamp then m
+  else
+    match Quill_markdown.load m.path with
+    | Error msg -> with_footer_message m Error msg
+    | Ok (doc, figures) ->
+        let session = Session.reload doc m.session in
+        let n = Doc.length (Session.doc session) in
+        let focus = if n > 0 then min m.focus (n - 1) else 0 in
+        {
+          m with
+          session;
+          figures;
+          focus;
+          stamp;
+          dirty = false;
+          completion_popup_open = false;
+          completion = None;
+        }
 
 (* ───── Execute helpers ───── *)
 
@@ -685,15 +677,25 @@ let tick_model m dt =
 
 let update_toggle_help m = ({ m with show_help = not m.show_help }, Cmd.none)
 
+(* A file changed on disk since it was loaded or saved is not written over: the
+   session does not hold the change. *)
+let save ~stamp figures path doc =
+  if Quill_markdown.stamp path <> stamp then
+    Result.Error
+      (Filename.basename path ^ " changed on disk and is not reloaded yet")
+  else Quill_markdown.save figures path doc
+
 let update_save m =
   let session = Session.checkpoint m.session in
   let m = { m with session } in
   let doc = Session.doc m.session in
-  let content = Quill_markdown.to_string_with_outputs doc in
-  write_file m.path content;
-  let last_mtime = get_mtime m.path in
-  ( with_footer_message { m with dirty = false; last_mtime } Info "Saved",
-    Cmd.none )
+  match save ~stamp:m.stamp m.figures m.path doc with
+  | Ok stamp ->
+      ( with_footer_message
+          { m with dirty = false; stamp = Some stamp }
+          Info "Saved",
+        Cmd.none )
+  | Error msg -> (with_footer_message m Error msg, Cmd.none)
 
 let update_quit m =
   if m.dirty && not m.confirm_quit then
@@ -1534,5 +1536,11 @@ let subscriptions model =
 (* ───── Run ───── *)
 
 let run ~create_kernel path =
-  let init () = init ~create_kernel ~path () in
-  run { init; update; view; subscriptions }
+  if not (Sys.file_exists path) then write_file path template;
+  let stamp = Quill_markdown.stamp path in
+  match Quill_markdown.load path with
+  | Error _ as e -> e
+  | Ok (doc, figures) ->
+      let init () = init ~create_kernel ~path ~stamp ~doc ~figures () in
+      run { init; update; view; subscriptions };
+      Ok ()

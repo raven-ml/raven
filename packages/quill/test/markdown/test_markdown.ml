@@ -512,6 +512,385 @@ let attrs_tests =
              |> List.exists (fun w -> w = "collapsed"))));
   ]
 
+(* Files *)
+
+(* The base64 of [s], as an image output's [data] holds it. *)
+let base64 s =
+  let alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  in
+  let buf = Buffer.create (String.length s * 2) in
+  let byte i = if i < String.length s then Char.code s.[i] else 0 in
+  let rec loop i =
+    if i < String.length s then (
+      let n = (byte i lsl 16) lor (byte (i + 1) lsl 8) lor byte (i + 2) in
+      for k = 0 to 3 do
+        if i + k - 1 < String.length s then
+          Buffer.add_char buf alphabet.[(n lsr (18 - (6 * k))) land 63]
+        else Buffer.add_char buf '='
+      done;
+      loop (i + 3))
+  in
+  loop 0;
+  Buffer.contents buf
+
+let all_bytes = String.init 256 Char.chr
+let image mime raw = Cell.Display { mime; id = None; data = base64 raw }
+
+let pp_cell ppf = function
+  | Cell.Code { id; source; outputs; _ } ->
+      Format.fprintf ppf
+        "@[<hv 2>Code {id = %S; source = %S;@ outputs = [%a]}@]" id source
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
+           pp_output)
+        outputs
+  | Cell.Text { source; _ } -> Format.fprintf ppf "Text %S" source
+
+let doc =
+  Testable.make
+    ~pp:(fun ppf d -> Format.pp_print_list pp_cell ppf (Doc.cells d))
+    ~equal:(fun a b -> Doc.cells a = Doc.cells b)
+
+let figures =
+  Testable.make
+    ~pp:(fun ppf f ->
+      Format.pp_print_string ppf
+        (match f with Quill_markdown.Inline -> "Inline" | Files -> "Files"))
+    ~equal:( = )
+
+let raws d =
+  List.concat_map
+    (function
+      | Cell.Code { outputs; _ } ->
+          List.filter_map
+            (function
+              | Cell.Display { mime; data; _ }
+                when String.starts_with ~prefix:"image/" mime ->
+                  Some data
+              | _ -> None)
+            outputs
+      | Cell.Text _ -> [])
+    (Doc.cells d)
+
+let gen_image_bytes =
+  let open Gen in
+  one_of
+    [
+      constant ~pp:Format.pp_print_string "";
+      string_of ~size:(constant 1) char;
+      constant
+        ~pp:(fun ppf _ -> Format.pp_print_string ppf "all_bytes")
+        all_bytes;
+      string;
+    ]
+
+let gen_output =
+  let open Gen in
+  one_of
+    [
+      constant ~pp:pp_output (Cell.Stdout "val x : int = 1");
+      constant ~pp:pp_output
+        (Cell.Display { mime = "text/html"; id = None; data = "<b>hi</b>" });
+      (let+ mime =
+         of_list ~pp:Format.pp_print_string [ "image/png"; "image/svg+xml" ]
+       and+ raw = gen_image_bytes in
+       image mime raw);
+    ]
+
+let gen_doc =
+  let open Gen in
+  let+ outputs = list (list gen_output) in
+  Doc.of_cells
+    (List.mapi
+       (fun i os ->
+         Cell.code ~id:(Printf.sprintf "c_%d" i) "plot ()"
+         |> Cell.set_outputs os)
+       outputs)
+
+let cover_images d =
+  let images os =
+    List.filter
+      (function
+        | Cell.Display { mime; _ } -> String.starts_with ~prefix:"image/" mime
+        | _ -> false)
+      os
+  in
+  let cells =
+    List.filter_map
+      (function
+        | Cell.Code { outputs; _ } -> Some outputs | Cell.Text _ -> None)
+      (Doc.cells d)
+  in
+  let raws = raws d in
+  cover "an empty image" (List.mem "" raws);
+  (* The base64 of one byte is two digits and two pads. *)
+  cover "a one-byte image"
+    (List.exists
+       (fun r -> String.length r = 4 && String.ends_with ~suffix:"==" r)
+       raws);
+  cover "an image of all 256 bytes" (List.mem (base64 all_bytes) raws);
+  cover "several images in one cell"
+    (List.exists (fun os -> List.length (images os) >= 2) cells);
+  cover "an image beside another output"
+    (List.exists
+       (fun os -> images os <> [] && List.length (images os) < List.length os)
+       cells);
+  cover "no image" (raws = [])
+
+let files_in dir =
+  if Sys.file_exists dir then Array.length (Sys.readdir dir) else 0
+
+let loaded = result (pair doc figures) string
+let saved = result unit string
+
+(* [save_result f path d] is [Quill_markdown.save f path d] without its
+   stamp. *)
+let save_result f path d = Result.map ignore (Quill_markdown.save f path d)
+let save f path d = equal saved (Ok ()) (save_result f path d)
+let load = Quill_markdown.load
+
+(* A notebook of one cell, [c_x], that stores its images as files and shows the
+   image [src]. *)
+let notebook src =
+  "<!-- quill:figures files -->\n\n\
+   <!-- quill:cell id=\"c_x\" -->\n\
+   ```ocaml\n\
+   plot ()\n\
+   ```\n\
+   <!-- quill:output -->\n\
+   <!-- out:display image/svg+xml -->\n\
+   <img src=\"" ^ src ^ "\">\n<!-- /quill:output -->\n"
+
+let one_figure =
+  Doc.of_cells
+    [
+      Cell.code ~id:"c_x" "plot ()"
+      |> Cell.set_outputs [ image "image/svg+xml" "<svg/>" ];
+    ]
+
+let write path s =
+  let oc = open_out_bin path in
+  output_string oc s;
+  close_out oc
+
+let mkdir_p path =
+  let rec loop p =
+    if not (Sys.file_exists p) then (
+      loop (Filename.dirname p);
+      Sys.mkdir p 0o755)
+  in
+  loop path
+
+let file_tests =
+  [
+    prop "load reads what save Inline wrote" gen_doc (fun d ->
+        cover_images d;
+        let path = Filename.concat (temp_dir ()) "nb.md" in
+        save Inline path d;
+        equal loaded (Ok (d, Inline)) (load path));
+    prop "load reads what save Files wrote, over an earlier save"
+      (Gen.pair gen_doc gen_doc) (fun (before, d) ->
+        cover_images d;
+        let dir = temp_dir () in
+        let path = Filename.concat dir "nb.md" in
+        save Files path before;
+        save Files path d;
+        equal loaded (Ok (d, Files)) (load path);
+        equal int
+          ~msg:"figures/nb/ holds the images of the notebook and nothing else"
+          (List.length (raws d))
+          (files_in (Filename.concat dir "figures/nb")));
+    prop "notebooks in one directory keep each other's figures"
+      (Gen.triple gen_doc gen_doc gen_doc) (fun (a, b, a') ->
+        let dir = temp_dir () in
+        let a_md = Filename.concat dir "a.md"
+        and b_md = Filename.concat dir "b.md" in
+        (* An image a text cell shows, named as a figure of cell c_0 was in
+           earlier versions. *)
+        mkdir_p (Filename.concat dir "figures");
+        let user_image = Filename.concat dir "figures/c_0.png" in
+        write user_image "user image";
+        save Files a_md a;
+        save Files b_md b;
+        save Files a_md a';
+        equal loaded (Ok (b, Files)) (load b_md);
+        equal loaded (Ok (a', Files)) (load a_md);
+        equal string "user image"
+          (In_channel.with_open_bin user_image In_channel.input_all));
+    test "save Files stores an image at figures/<stem>/<cell id>.<ext>"
+      (fun () ->
+        let dir = temp_dir () in
+        let path = Filename.concat dir "nb.md" in
+        let d =
+          Doc.of_cells
+            [
+              Cell.code ~id:"c_x" "plot ()"
+              |> Cell.set_outputs
+                   [ image "image/svg+xml" "<svg/>"; image "image/png" "png" ];
+            ]
+        in
+        save Files path d;
+        let md = In_channel.with_open_bin path In_channel.input_all in
+        starts_with ~prefix:"<!-- quill:figures files -->\n" md;
+        contains ~sub:"<img src=\"figures/nb/c_x.svg\">" md;
+        contains ~sub:"<img src=\"figures/nb/c_x-2.png\">" md;
+        equal string "<svg/>"
+          (In_channel.with_open_bin
+             (Filename.concat dir "figures/nb/c_x.svg")
+             In_channel.input_all));
+    test "save Files through a figures directory that is a link" (fun () ->
+        if Sys.win32 then skip ~reason:"symbolic links need privileges" ();
+        let dir = temp_dir () in
+        let shared = temp_dir () in
+        Unix.symlink shared (Filename.concat dir "figures");
+        let path = Filename.concat dir "nb.md" in
+        save Files path one_figure;
+        equal loaded (Ok (one_figure, Files)) (load path);
+        equal int ~msg:"the figure is in the linked directory" 1
+          (files_in (Filename.concat shared "nb")));
+    cases "load refuses a reference save never writes" ~id:fst
+      [
+        ("figures/nb/c_x.svg", "no such file");
+        ("figures/nb/sub", "not a regular file");
+        ("../c_x.svg", "not in figures/nb/");
+        ("/etc/passwd", "not in figures/nb/");
+        ("figures/other/c_x.svg", "not in figures/nb/");
+        ("figures/nb/../other/c_x.svg", "not in figures/nb/");
+        ("figures/nb/sub/c_x.svg", "not in figures/nb/");
+        ("figures/nb/..", "not in figures/nb/");
+        ("figures/nb/", "not in figures/nb/");
+        ("https://example.com/c_x.svg", "not in figures/nb/");
+      ]
+      (fun (src, reason) ->
+        let dir = temp_dir () in
+        List.iter
+          (fun d -> mkdir_p (Filename.concat dir d))
+          [ "figures/nb/sub"; "figures/other" ];
+        List.iter
+          (fun f -> write (Filename.concat dir f) "<svg/>")
+          [ "c_x.svg"; "figures/other/c_x.svg"; "figures/nb/sub/c_x.svg" ];
+        let path = Filename.concat dir "nb.md" in
+        write path (notebook src);
+        equal loaded
+          (Error (Printf.sprintf "%s: cell c_x: figure %s: %s" path src reason))
+          (load path));
+    test "load refuses a figure that is a FIFO, without reading it" (fun () ->
+        if Sys.win32 then skip ~reason:"no FIFOs" ();
+        let dir = temp_dir () in
+        mkdir_p (Filename.concat dir "figures/nb");
+        Unix.mkfifo (Filename.concat dir "figures/nb/c_x.svg") 0o600;
+        let path = Filename.concat dir "nb.md" in
+        write path (notebook "figures/nb/c_x.svg");
+        equal loaded
+          (Error
+             (path ^ ": cell c_x: figure figures/nb/c_x.svg: not a regular file"))
+          (load path));
+    test "load reports a notebook it cannot read" (fun () ->
+        let path = Filename.concat (temp_dir ()) "nb.md" in
+        contains ~sub:path (require_error (load path)));
+    test "load ~outputs:false reads no figure" (fun () ->
+        let path = Filename.concat (temp_dir ()) "nb.md" in
+        write path (notebook "figures/nb/c_x.svg");
+        equal loaded
+          (Ok (Doc.of_cells [ Cell.code ~id:"c_x" "plot ()" ], Files))
+          (load ~outputs:false path));
+    cases "of_string refuses a notebook that stores figures as files" ~id:fst
+      [
+        ( "a figure reference",
+          ( "<!-- quill:cell id=\"c_x\" -->\n\
+             ```ocaml\n\
+             plot ()\n\
+             ```\n\
+             <!-- quill:output -->\n\
+             <!-- out:display image/svg+xml -->\n\
+             <img src=\"figures/nb/c_x.svg\">\n\
+             <!-- /quill:output -->\n",
+            "Quill_markdown.of_string: cell c_x: figure figures/nb/c_x.svg is \
+             a file, which Quill_markdown.load reads" ) );
+        ( "the figures line",
+          ( "<!-- quill:figures files -->\n\n# Title\n",
+            "Quill_markdown.of_string: the notebook stores its figures as \
+             files, which Quill_markdown.load reads" ) );
+      ]
+      (fun (_, (md, msg)) ->
+        raises (Invalid_argument msg) (fun () -> Quill_markdown.of_string md));
+    test "save writes through a notebook that is a link" (fun () ->
+        if Sys.win32 then skip ~reason:"symbolic links need privileges" ();
+        let dir = temp_dir () in
+        mkdir_p (Filename.concat dir "real");
+        mkdir_p (Filename.concat dir "book");
+        let target = Filename.concat dir "real/nb.md" in
+        let link = Filename.concat dir "book/nb.md" in
+        write target "";
+        Unix.symlink "../real/nb.md" link;
+        let d =
+          Doc.of_cells
+            [
+              Cell.code ~id:"c_x" "1"
+              |> Cell.set_outputs [ Cell.Stdout "- : int = 1" ];
+            ]
+        in
+        save Inline link d;
+        equal string ~msg:"the link stays" "../real/nb.md" (Unix.readlink link);
+        equal loaded (Ok (d, Inline)) (load target));
+    test "save refuses a read-only notebook" (fun () ->
+        if Sys.win32 then skip ~reason:"no POSIX permissions" ();
+        let path = Filename.concat (temp_dir ()) "nb.md" in
+        write path "# Read-only\n";
+        Unix.chmod path 0o444;
+        equal saved
+          (Error (path ^ " is read-only"))
+          (save_result Inline path one_figure);
+        equal string "# Read-only\n"
+          (In_channel.with_open_bin path In_channel.input_all));
+    test "a notebook without the files line reads its figures as Inline"
+      (fun () ->
+        let dir = temp_dir () in
+        let path = Filename.concat dir "nb.md" in
+        save Files path one_figure;
+        let md = In_channel.with_open_bin path In_channel.input_all in
+        let line = "<!-- quill:figures files -->\n\n" in
+        starts_with ~prefix:line md;
+        let n = String.length line in
+        write path (String.sub md n (String.length md - n));
+        equal loaded (Ok (one_figure, Inline)) (load path));
+    test "save Files refuses a figures path that is no directory" (fun () ->
+        let dir = temp_dir () in
+        let figures = Filename.concat dir "figures" in
+        write figures "not a directory";
+        let path = Filename.concat dir "nb.md" in
+        equal saved
+          (Error (path ^ ": " ^ figures ^ " is not a directory"))
+          (save_result Files path one_figure);
+        equal bool ~msg:"nothing is written" false (Sys.file_exists path));
+    cases "save Files refuses images it cannot name" ~id:fst
+      [
+        ( "a cell id holding /",
+          ( [
+              Cell.code ~id:"a/b" "plot ()"
+              |> Cell.set_outputs [ image "image/png" "" ];
+            ],
+            "cell a/b: figure figures/nb/a/b.png: the cell id makes no file \
+             name" ) );
+        ( "two images of one name",
+          ( [
+              Cell.code ~id:"a" "plot ()"
+              |> Cell.set_outputs [ image "image/png" ""; image "image/png" "" ];
+              Cell.code ~id:"a-2" "plot ()"
+              |> Cell.set_outputs [ image "image/png" "" ];
+            ],
+            "cell a-2: figure figures/nb/a-2.png: also stored by cell a" ) );
+      ]
+      (fun (_, (cells, msg)) ->
+        let dir = temp_dir () in
+        let path = Filename.concat dir "nb.md" in
+        equal saved
+          (Error (path ^ ": " ^ msg))
+          (save_result Files path (Doc.of_cells cells));
+        equal bool ~msg:"nothing is written" false (Sys.file_exists path));
+  ]
+
 let () =
   exit
     (run "Markdown"
@@ -522,4 +901,5 @@ let () =
          group "ID persistence" id_persistence_tests;
          group "Structured outputs" structured_output_tests;
          group "Attributes" attrs_tests;
+         group "Files" file_tests;
        ])

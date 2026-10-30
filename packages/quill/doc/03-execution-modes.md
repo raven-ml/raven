@@ -184,6 +184,15 @@ Same as above, but writes outputs back into the file. After running,
 the file contains `<!-- quill:output -->` sections below each code
 block.
 
+Images are stored in the file as data URIs. With `--figures`, each is
+written as a file in `figures/<stem>/` beside the notebook instead, and
+later runs keep it there (see [Images](02-notebook-format.md#images)):
+
+<!-- $MDX skip -->
+```bash
+quill run --inplace --figures notebook.md
+```
+
 ## Watch Mode
 
 <!-- $MDX skip -->
@@ -220,12 +229,11 @@ Strip all outputs from a notebook:
 
 <!-- $MDX skip -->
 ```bash
-quill clean notebook.md            # print clean markdown to stdout
-quill clean --inplace notebook.md  # strip outputs from the file
+quill clean notebook.md
 ```
 
 Cell IDs are preserved. Only `<!-- quill:output -->` sections are
-removed.
+removed from the file, and the notebook's `figures/<stem>/` with them.
 
 Use cases:
 - **Clean diffs**: strip outputs before committing, regenerate with

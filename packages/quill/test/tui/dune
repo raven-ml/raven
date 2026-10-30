@@ -1,4 +1,4 @@
 (test
  (name test_tui)
  (package quill)
- (libraries quill quill.tui windtrap))
+ (libraries quill quill.markdown quill.tui unix windtrap))

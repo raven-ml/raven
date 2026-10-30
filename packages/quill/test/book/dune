@@ -1,0 +1,4 @@
+(test
+ (name test_book)
+ (package quill)
+ (libraries quill quill.markdown quill.book windtrap))

@@ -14,14 +14,17 @@ val build :
   ?output:string ->
   ?live_reload_script:string ->
   Quill_project.t ->
-  unit
+  (unit, string) result
 (** [build ~create_kernel project] builds the project. For each notebook: reads
     the markdown, executes code cells via {!Quill.Eval.run} (unless [skip_eval]
     is [true]), renders to HTML, and copies assets to the output directory.
     Source files are never modified.
 
     [output] defaults to [build/] inside the project root. [live_reload_script]
-    defaults to [""] (empty). *)
+    defaults to [""] (empty).
+
+    The result is [Error msg] if a notebook cannot be loaded, as by
+    {!Quill_markdown.load}, and no further notebook is built. *)
 
 val build_file :
   create_kernel:(on_event:(Quill.Kernel.event -> unit) -> Quill.Kernel.t) ->
@@ -29,8 +32,11 @@ val build_file :
   ?output:string ->
   ?live_reload_script:string ->
   string ->
-  unit
+  (unit, string) result
 (** [build_file ~create_kernel path] builds a single notebook file to a
     self-contained HTML page. [output] is the output directory (defaults to the
     directory containing the source file). [live_reload_script] defaults to [""]
-    (empty). *)
+    (empty).
+
+    The result is [Error msg] if the notebook cannot be loaded, as by
+    {!Quill_markdown.load}. *)

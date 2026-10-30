@@ -86,6 +86,42 @@ cell that prints to both stdout and stderr:
     warning: something
     <!-- /quill:output -->
 
+## Images
+
+An image output is an `<img>` tag. By default its source is a data URI,
+so the notebook stays a single file:
+
+    <!-- out:display image/svg+xml -->
+    <img src="data:image/svg+xml;base64,PHN2Zy8+">
+
+`quill run --inplace --figures` stores each image as a file instead, in
+`figures/<stem>/` beside the notebook, where `<stem>` is the notebook's
+file name without `.md`. The notebook's first line records the choice,
+and each image references its file by path:
+
+    <!-- quill:figures files -->
+
+    ...
+    <!-- out:display image/svg+xml -->
+    <img src="figures/notebook/c_a1b2c3d4e5f6.svg">
+
+A notebook keeps the storage its first line records: `quill run` without
+`--figures`, `quill clean`, `quill serve` and the terminal notebook save
+its images the way they found them. `figures/<stem>/` belongs to a
+notebook that stores its images as files. Saving it removes the files of
+images it no longer has, so `quill clean` empties and removes the
+directory. Other files, such as images that text cells show from
+`figures/`, are left alone.
+
+To store images inline again, delete the first line, then delete
+`figures/<stem>/`: a notebook that stores its images inline never
+touches that directory, and `quill build` would keep copying it.
+
+Quill reads image files only from the notebook's own `figures/<stem>/`.
+A reference to another path, or to a missing file, is an error that names
+the notebook and the cell. The rules are in the Files section of
+[`quill_markdown.mli`](../lib/markdown/quill_markdown.mli).
+
 ## Why HTML Comments?
 
 The output format uses HTML comments for several reasons:
@@ -95,8 +131,9 @@ The output format uses HTML comments for several reasons:
    document reads cleanly whether outputs are present or not.
 2. **Valid markdown.** HTML comments are part of the CommonMark
    specification. No custom syntax, no extensions, no preprocessing.
-3. **Single file.** Outputs live in the notebook itself. No sidecar
-   files, no `.ipynb_checkpoints`, no separate output directories.
+3. **Single file.** Outputs live in the notebook itself, images too
+   unless stored as files. No `.ipynb_checkpoints`, no separate output
+   directories.
 4. **Clean stripping.** `quill clean` removes all output sections in one
    pass. `quill run --inplace` regenerates them. This makes it easy to
    commit clean notebooks and regenerate outputs in CI.
@@ -120,13 +157,12 @@ in your notebook as documentation without affecting execution.
 
 ## Roundtrip Guarantees
 
-Parsing a markdown file with `Quill_markdown.of_string` and rendering it
-back with `Quill_markdown.to_string` or `to_string_with_outputs`
-preserves:
+Loading a notebook with `Quill_markdown.load` and saving it back with
+`Quill_markdown.save`, in the storage `load` reports, preserves:
 
 - Cell content and ordering
 - Cell IDs
-- Output content and types
+- Output content and types, images included
 - Text cell markdown (headings, lists, links, etc.)
 
 The rendering normalizes some whitespace (consistent blank lines between

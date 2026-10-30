@@ -1,4 +1,4 @@
 (test
  (name test_markdown)
  (package quill)
- (libraries quill quill.markdown windtrap))
+ (libraries quill quill.markdown unix windtrap))

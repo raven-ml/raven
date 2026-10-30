@@ -4086,6 +4086,14 @@ thread.
 
 ### Quill
 
+- **Breaking:** `Quill_book.Build.build`, `Quill_book.Build.build_file` and
+  `Quill_tui.run` return `(unit, string) result`, an error for a notebook that
+  cannot be loaded.
+- `quill serve` and the terminal notebook refuse to save a notebook changed on
+  disk since they loaded or saved it, where they wrote over the change. Every
+  save replaces the file whole, so a crash leaves the old file or the new one.
+- Add `Quill_markdown.load` and `Quill_markdown.save`, which read and write a
+  notebook with the image files it stores beside it.
 - The web notebook starts sections at headings of the rendered text, never at
   a `#` line in a code block, and no longer splits a text cell whose edits it
   lost.
@@ -4134,8 +4142,9 @@ thread.
   The CLI now detects file arguments and routes them to the default TUI command.
 - Fix image Display outputs showing raw base64 text in markdown files. Images now
   render as inline `<img>` tags with data URIs, visible in any markdown viewer.
-- Add `--figures-dir` flag to `quill run` for writing images to disk and
-  referencing them by path instead of inlining base64 data.
+- Add `--figures` to `quill run --inplace`, which stores images as files in
+  `figures/<stem>/` beside the notebook. The notebook's first line records it,
+  so later runs, `quill clean`, `quill serve` and the terminal notebook keep it.
 - Improve table styling in the web notebook and book build with clean borders,
   monospace font, and proper header treatment.
 - Resolve relative notebook paths to absolute and change into the notebook

@@ -20,7 +20,13 @@ val serve :
     defaults to ["127.0.0.1"], [port] to [8888]. [on_ready] is called after the
     server socket is bound and listening, before the accept loop starts. Blocks
     until the server is stopped. Exits the process with status [1] if [path]
-    does not exist. *)
+    does not exist or cannot be loaded by {!Quill_markdown.load}, printing why.
+
+    The notebook is saved with {!Quill_markdown.save}, storing its images as it
+    found them. A save is refused, with an error to the client, while the file
+    has changed on disk since it was last loaded or saved. Reloading the page
+    loads the file again in a new session, which discards the edits the page had
+    not saved. *)
 
 (** {1:dir Directory mode} *)
 
@@ -38,4 +44,6 @@ val serve_dir :
     structure shown in the sidebar. Each notebook gets its own kernel, created
     lazily on first access. [prelude] is called with the notebook's relative
     path and may return OCaml code to execute before the notebook's cells.
-    [addr] defaults to ["127.0.0.1"], [port] to [8888]. *)
+    [addr] defaults to ["127.0.0.1"], [port] to [8888]. A notebook that cannot
+    be loaded sends the client an error and closes its connection. Notebooks are
+    saved as {!serve} saves them. *)

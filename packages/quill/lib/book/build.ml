@@ -77,12 +77,13 @@ let relative_root_path (nb : Quill_project.notebook) =
 
 (* ───── Build ───── *)
 
+let ( let* ) = Result.bind
+
 let build_notebook ~create_kernel ~skip_eval ~output_dir ~live_reload_script
     (project : Quill_project.t) (nb : Quill_project.notebook) =
   let nb_path = Filename.concat project.root nb.path in
   let nb_dir = notebook_dir project nb in
-  let md = read_file nb_path in
-  let doc = Quill_markdown.of_string md in
+  let* doc, _ = Quill_markdown.load ~outputs:skip_eval nb_path in
   let doc =
     if skip_eval then doc
     else
@@ -99,9 +100,7 @@ let build_notebook ~create_kernel ~skip_eval ~output_dir ~live_reload_script
       Sys.chdir nb_dir;
       Fun.protect
         ~finally:(fun () -> Sys.chdir prev_cwd)
-        (fun () ->
-          let doc = Quill.Doc.clear_all_outputs doc in
-          Quill.Eval.run ~create_kernel doc)
+        (fun () -> Quill.Eval.run ~create_kernel doc)
   in
   let content = Render.chapter_html doc in
   let root_path = relative_root_path nb in
@@ -142,7 +141,7 @@ let build_notebook ~create_kernel ~skip_eval ~output_dir ~live_reload_script
       copy_dir_contents ~src_dir:src ~dst_dir:dst)
     asset_dirs;
   Printf.printf "  %s\n%!" nb.title;
-  content
+  Ok content
 
 (* ───── Search index ───── *)
 
@@ -236,20 +235,21 @@ let build ~create_kernel ?(skip_eval = false) ?output ?(live_reload_script = "")
   write_file (Filename.concat output_dir "style.css") Theme.style_css;
   let nbs = Quill_project.notebooks project in
   Printf.printf "Building %s (%d notebooks)\n%!" project.title (List.length nbs);
-  let notebook_contents =
-    List.map
-      (fun nb ->
-        let content =
+  let rec build_all acc = function
+    | [] -> Ok (List.rev acc)
+    | nb :: nbs ->
+        let* content =
           build_notebook ~create_kernel ~skip_eval ~output_dir
             ~live_reload_script project nb
         in
-        (nb, content))
-      nbs
+        build_all ((nb, content) :: acc) nbs
   in
+  let* notebook_contents = build_all [] nbs in
   build_search_index ~output_dir ~toc:project.toc notebook_contents;
   build_print_page ~output_dir ~toc:project.toc project notebook_contents;
   build_index ~output_dir project ~live_reload_script;
-  Printf.printf "Done → %s\n%!" output_dir
+  Printf.printf "Done → %s\n%!" output_dir;
+  Ok ()
 
 let build_file ~create_kernel ?(skip_eval = false) ?output
     ?(live_reload_script = "") path =
@@ -260,8 +260,7 @@ let build_file ~create_kernel ?(skip_eval = false) ?output
   let nb_dir = Filename.dirname abs_path in
   let basename = Filename.basename abs_path in
   let title = Quill_project.title_of_filename basename in
-  let md = read_file abs_path in
-  let doc = Quill_markdown.of_string md in
+  let* doc, _ = Quill_markdown.load ~outputs:skip_eval abs_path in
   let doc =
     if skip_eval then doc
     else
@@ -277,9 +276,7 @@ let build_file ~create_kernel ?(skip_eval = false) ?output
       Sys.chdir nb_dir;
       Fun.protect
         ~finally:(fun () -> Sys.chdir prev_cwd)
-        (fun () ->
-          let doc = Quill.Doc.clear_all_outputs doc in
-          Quill.Eval.run ~create_kernel doc)
+        (fun () -> Quill.Eval.run ~create_kernel doc)
   in
   let content = Render.chapter_html doc in
   let html = Render.standalone_page_html ~title ~content ~live_reload_script in
@@ -297,4 +294,5 @@ let build_file ~create_kernel ?(skip_eval = false) ?output
         copy_dir_contents ~src_dir:src ~dst_dir:dst)
       asset_dirs
   end;
-  Printf.printf "Built %s → %s\n%!" title output_path
+  Printf.printf "Built %s → %s\n%!" title output_path;
+  Ok ()

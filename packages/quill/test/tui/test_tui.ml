@@ -47,4 +47,52 @@ let footer_tests =
           (footer Quill_tui.Editing ~running:true));
   ]
 
-let () = exit (run "Quill_tui" [ group "footer" footer_tests ])
+(* Saving *)
+
+let write path s = Out_channel.with_open_bin path (fun oc -> output_string oc s)
+let read path = In_channel.with_open_bin path In_channel.input_all
+let doc = Doc.of_cells [ Cell.code ~id:"c_x" "1" ]
+
+(* A notebook saved by the terminal notebook, then replaced on disk by [edit],
+   which the terminal notebook has not reloaded. *)
+let changed edit =
+  let path = Filename.concat (temp_dir ()) "nb.md" in
+  let stamp = require_ok (Quill_markdown.save Inline path doc) in
+  edit path;
+  (path, Some stamp)
+
+let save_tests =
+  [
+    test "a save follows the save before it" (fun () ->
+        let path, stamp = changed ignore in
+        let stamp =
+          require_ok (Quill_tui.save ~stamp Quill_markdown.Inline path doc)
+        in
+        equal (result unit string) (Ok ())
+          (Result.map ignore
+             (Quill_tui.save ~stamp:(Some stamp) Quill_markdown.Inline path doc)));
+    cases "a save refuses a file changed on disk" ~id:fst
+      [
+        ( "by a copy that kept an older time",
+          fun path ->
+            let t = (Unix.stat path).st_mtime in
+            write path "# Theirs\n";
+            Unix.utimes path (t -. 60.) (t -. 60.) );
+        ( "at the same time",
+          fun path ->
+            let t = (Unix.stat path).st_mtime in
+            write path "# Theirs\n";
+            Unix.utimes path t t );
+      ]
+      (fun (_, edit) ->
+        let path, stamp = changed edit in
+        equal (result unit string)
+          (Error "nb.md changed on disk and is not reloaded yet")
+          (Result.map ignore
+             (Quill_tui.save ~stamp Quill_markdown.Inline path doc));
+        equal string "# Theirs\n" (read path));
+  ]
+
+let () =
+  exit
+    (run "Quill_tui" [ group "footer" footer_tests; group "save" save_tests ])

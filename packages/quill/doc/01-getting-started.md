@@ -208,9 +208,10 @@ Remove all outputs from a notebook:
 
 <!-- $MDX skip -->
 ```bash
-quill clean notebook.md            # print clean markdown to stdout
-quill clean --inplace notebook.md  # strip outputs from the file
+quill clean notebook.md
 ```
+
+This strips the outputs from the file itself.
 
 Useful before committing to git for clean diffs, or to get a fresh start
 before re-execution.

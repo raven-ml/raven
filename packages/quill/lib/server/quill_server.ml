@@ -28,15 +28,6 @@ let read_file path =
     ~finally:(fun () -> close_in ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
-let write_file path content =
-  let oc = open_out path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc content)
-
-let get_mtime path =
-  try (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> 0.
-
 (* Serve files from the notebook's directory (for images, figures, etc.).
    Security: rejects ".." segments, resolves symlinks with Unix.realpath, and
    verifies the canonical path is strictly under base_dir. *)
@@ -64,9 +55,12 @@ type state = {
   mutable session : Session.t;
   mutable kernel : Kernel.t;
   path : string;
+  mutable figures : Quill_markdown.figures;
+      (* How [path] stores its images, kept by a save. *)
   mutex : Mutex.t;
   mutable ws_clients : Httpd.ws list;
-  mutable last_mtime : float;
+  mutable stamp : Quill_markdown.stamp option;
+  (* The file as last loaded or saved. *)
   (* Execution queue: serializes all kernel.execute calls through a single
      worker thread. [exec_mutex] protects [exec_queue] and [exec_cancelled];
      [exec_cond] is signaled when new work is enqueued. Lock ordering: [mutex] >
@@ -271,15 +265,27 @@ let handle_client_msg st = function
   | Protocol.Clear_all_outputs ->
       st.session <- Session.clear_all_outputs st.session;
       send_notebook st
-  | Protocol.Save ->
+  | Protocol.Save -> (
       st.session <- Session.checkpoint st.session;
-      let content =
-        Quill_markdown.to_string_with_outputs (Session.doc st.session)
+      (* A file changed since it was loaded or saved is not overwritten: the
+         session would not hold the change. Reloading the page loads the file in
+         a new session, so the user is told it drops their edits. *)
+      let saved =
+        if Quill_markdown.stamp st.path <> st.stamp then
+          Error
+            (Filename.basename st.path
+           ^ " changed on disk and was not saved. Reloading the page loads it \
+              and discards the changes made here, so copy them first.")
+        else Quill_markdown.save st.figures st.path (Session.doc st.session)
       in
-      write_file st.path content;
-      st.last_mtime <- get_mtime st.path;
-      log "[save] %s\n%!" st.path;
-      send st (Protocol.saved_to_json ())
+      match saved with
+      | Ok stamp ->
+          st.stamp <- Some stamp;
+          log "[save] %s\n%!" st.path;
+          send st (Protocol.saved_to_json ())
+      | Error msg ->
+          log "[save] failed: %s\n%!" msg;
+          send st (Protocol.error_to_json msg))
   | Protocol.Undo ->
       st.session <- Session.undo st.session;
       send_notebook st
@@ -320,15 +326,17 @@ let ws_handler st _req ws =
       (* Reload document from disk only if the file changed since we last loaded
          or saved it. Re-parsing a file without cell ID markers generates new
          random IDs, which would invalidate the session. *)
-      let mtime = get_mtime st.path in
-      (if mtime > st.last_mtime then
-         try
-           let md = read_file st.path in
-           let doc = Quill_markdown.of_string md in
-           st.session <- Session.create doc;
-           st.last_mtime <- mtime;
-           log "[ws] reloaded %s\n%!" st.path
-         with exn -> log "[ws] reload failed: %s\n%!" (Printexc.to_string exn));
+      let stamp = Quill_markdown.stamp st.path in
+      (if stamp <> st.stamp then
+         match Quill_markdown.load st.path with
+         | Ok (doc, figures) ->
+             st.session <- Session.create doc;
+             st.figures <- figures;
+             st.stamp <- stamp;
+             log "[ws] reloaded %s\n%!" st.path
+         | Error msg ->
+             log "[ws] reload failed: %s\n%!" msg;
+             send st (Protocol.error_to_json msg));
       send_notebook st);
   let rec loop () =
     match Httpd.ws_recv ws with
@@ -352,43 +360,52 @@ let ws_handler st _req ws =
 (* ───── Entry point ───── *)
 
 let make_state ~create_kernel path =
-  let md = read_file path in
-  let doc = Quill_markdown.of_string md in
-  let session = Session.create doc in
-  let st =
-    {
-      session;
-      kernel =
+  let stamp = Quill_markdown.stamp path in
+  match Quill_markdown.load path with
+  | Error _ as e -> e
+  | Ok (doc, figures) ->
+      let session = Session.create doc in
+      let st =
         {
-          execute = (fun ~cell_id:_ ~code:_ -> ());
-          interrupt = ignore;
-          complete = (fun ~code:_ ~pos:_ -> []);
-          type_at = None;
-          diagnostics = None;
-          is_complete = None;
-          status = (fun () -> Kernel.Starting);
-          shutdown = ignore;
-        };
-      path;
-      mutex = Mutex.create ();
-      ws_clients = [];
-      last_mtime = get_mtime path;
-      exec_queue = Queue.create ();
-      exec_mutex = Mutex.create ();
-      exec_cond = Condition.create ();
-      exec_cancelled = false;
-    }
-  in
-  let on_event ev = on_kernel_event st ev in
-  st.kernel <- create_kernel ~on_event;
-  ignore (Thread.create exec_worker st : Thread.t);
-  st
+          session;
+          kernel =
+            {
+              execute = (fun ~cell_id:_ ~code:_ -> ());
+              interrupt = ignore;
+              complete = (fun ~code:_ ~pos:_ -> []);
+              type_at = None;
+              diagnostics = None;
+              is_complete = None;
+              status = (fun () -> Kernel.Starting);
+              shutdown = ignore;
+            };
+          path;
+          figures;
+          mutex = Mutex.create ();
+          ws_clients = [];
+          stamp;
+          exec_queue = Queue.create ();
+          exec_mutex = Mutex.create ();
+          exec_cond = Condition.create ();
+          exec_cancelled = false;
+        }
+      in
+      let on_event ev = on_kernel_event st ev in
+      st.kernel <- create_kernel ~on_event;
+      ignore (Thread.create exec_worker st : Thread.t);
+      Ok st
 
 let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
   if not (Sys.file_exists path) then (
     Printf.eprintf err_file_not_found path;
     exit 1);
-  let st = make_state ~create_kernel path in
+  let st =
+    match make_state ~create_kernel path with
+    | Ok st -> st
+    | Error msg ->
+        Printf.eprintf "Error: %s\n%!" msg;
+        exit 1
+  in
   let server = Httpd.create ~addr ~port () in
   Httpd.route server GET "/" (fun _req ->
       Httpd.response
@@ -460,27 +477,27 @@ let serve_dir ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready
   let notebooks = toc_notebooks toc in
   let states : (string, state) Hashtbl.t = Hashtbl.create 16 in
   let states_mutex = Mutex.create () in
+  (* A notebook that fails to load, such as one missing a figure, gets no state,
+     so the next connection to it loads it again. *)
   let get_or_create_state nb_path =
-    Mutex.lock states_mutex;
-    let st =
-      match Hashtbl.find_opt states nb_path with
-      | Some st -> st
-      | None ->
-          let abs_path = Filename.concat root nb_path in
-          let create_kernel ~on_event =
-            let k = create_kernel ~on_event in
-            (match prelude nb_path with
-            | Some code -> k.Kernel.execute ~cell_id:"__prelude__" ~code
-            | None -> ());
-            k
-          in
-          let st = make_state ~create_kernel abs_path in
-          Hashtbl.replace states nb_path st;
-          log "[dir] created state for %s\n%!" nb_path;
-          st
-    in
-    Mutex.unlock states_mutex;
-    st
+    Mutex.protect states_mutex @@ fun () ->
+    match Hashtbl.find_opt states nb_path with
+    | Some st -> Ok st
+    | None ->
+        let abs_path = Filename.concat root nb_path in
+        let create_kernel ~on_event =
+          let k = create_kernel ~on_event in
+          (match prelude nb_path with
+          | Some code -> k.Kernel.execute ~cell_id:"__prelude__" ~code
+          | None -> ());
+          k
+        in
+        Result.map
+          (fun st ->
+            Hashtbl.replace states nb_path st;
+            log "[dir] created state for %s\n%!" nb_path;
+            st)
+          (make_state ~create_kernel abs_path)
   in
   let server = Httpd.create ~addr ~port () in
   let serve_html _req =
@@ -511,8 +528,12 @@ let serve_dir ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready
                 Httpd.ws_close ws;
                 failwith "no notebooks")
       in
-      let st = get_or_create_state nb_path in
-      ws_handler st req ws);
+      match get_or_create_state nb_path with
+      | Ok st -> ws_handler st req ws
+      | Error msg ->
+          log "[ws] %s\n%!" msg;
+          (try Httpd.ws_send ws (Protocol.error_to_json msg) with _ -> ());
+          Httpd.ws_close ws);
   Httpd.static server ~prefix:"/" ~loader:(file_loader root) ();
   let after_start () =
     Printf.printf "Quill: http://%s:%d (Ctrl-C to stop)\n%!" addr port;
