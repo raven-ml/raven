@@ -803,10 +803,13 @@ let one_user fmt =
       (judge fmt bytes ~raising)
       (shared_step bytes ~raising)
   in
-  (* Each case runs 50 programs on two domains: 50 cases see thousands of
-     refusals, and more only slow the sanitizers' debug runtime, whose
-     every minor collection stops both domains. *)
-  stateful ~domains:2 ~count:50 fmt.name
+  (* Every step of a program goes to one decoder from the two domains: the
+     prefix makes the decoder alone (~steps:1) and the branches step it.
+     Steps on one domain and spare decoders are the laws above's, and cost
+     the most under the sanitizers' collector, as each decoder's first step
+     allocates its buffer. A case runs its program 50 times; 50 cases make
+     some 12,000 steps, of which 3,000 to 6,000 are refused. *)
+  stateful ~domains:2 ~steps:1 ~count:50 fmt.name
     [
       command "decoder" (Gen.unit @-> makes dec)
         (fun () -> { steps = []; dead = false })
