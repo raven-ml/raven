@@ -41,7 +41,7 @@ let wrong_key () =
   | Ok j ->
       Rig_remote.close j;
       fail "a job with another key"
-  | Error why -> starts_with ~affix:": " (snd (split (machine a) why)));
+  | Error why -> starts_with ~prefix:": " (snd (split (machine a) why)));
   let j = connect agents in
   Rig_remote.close j;
   equal exit_w (0, [ "closed" ]) (finish a)
@@ -61,7 +61,7 @@ let unreachable () =
       Rig_remote.close j;
       fail "a job with no agent"
   | Error why ->
-      starts_with ~affix:": "
+      starts_with ~prefix:": "
         (snd (split (Printf.sprintf "127.0.0.1:%d" port) why))
 
 (* A second controller proves the key to an agent in a job. *)
@@ -545,9 +545,9 @@ let device_errors () =
   with_job @@ fun j agents ->
   let h = List.hd (Rig_remote.hosts j) and a = List.hd agents in
   let none = require_error (Rig_remote.devices h "GPU") in
-  starts_with ~msg:"a kind the agent serves not" ~affix:(machine a) none;
+  starts_with ~msg:"a kind the agent serves not" ~prefix:(machine a) none;
   let failed = require_error (Rig_remote.devices h "NONE") in
-  starts_with ~msg:"an opener's failure" ~affix:(machine a) failed;
+  starts_with ~msg:"an opener's failure" ~prefix:(machine a) failed;
   contains ~msg:"the opener's reason" ~sub:"no such hardware" failed;
   raises_match ~msg:"this process's host" Exn.invalid_arg (fun () ->
       Rig_remote.devices Rig.host "MEM");
@@ -562,11 +562,10 @@ let machines =
         io_alignment;
       test "devices are the agent's, named after it, the same at each call"
         devices;
-      cases
-        ~name:(fun kinds ->
+      cases "opening order"
+        ~id:(fun kinds ->
           "reachability agrees with local devices opened "
           ^ String.concat " then " kinds)
-        "opening order"
         [ [ "MEM"; "POLLED" ]; [ "POLLED"; "MEM" ] ]
         reaches;
       test "devices answers Error naming the machine, raises for no host"
@@ -1113,10 +1112,10 @@ let failed_start (vars, affix) =
   let code, report, said = ended (launch vars "close") in
   equal ~msg:"exit code" int 1 code;
   (match report with
-  | [ l ] -> starts_with ~msg:"the report" ~affix:("failed " ^ affix) l
+  | [ l ] -> starts_with ~msg:"the report" ~prefix:("failed " ^ affix) l
   | ls -> failf "reported [%s]" (String.concat "; " ls));
   match said with
-  | [ l ] -> starts_with ~msg:"launched's error" ~affix:("error: " ^ affix) l
+  | [ l ] -> starts_with ~msg:"launched's error" ~prefix:("error: " ^ affix) l
   | ls -> failf "said [%s]" (String.concat "; " ls)
 
 let bad_starts =
@@ -1200,7 +1199,7 @@ let newline_reason () =
     ]
   in
   match ended (launch vars "close") with
-  | 1, [ l ], _ -> starts_with ~affix:"failed m 1: " l
+  | 1, [ l ], _ -> starts_with ~prefix:"failed m 1: " l
   | code, report, _ ->
       failf "exited %d, reporting [%s]" code (String.concat "; " report)
 
@@ -1247,7 +1246,7 @@ let serve_failed () =
       kill c;
       match finish a with
       | 2, [ report; said ] ->
-          ends_with ~msg:"the report" ~affix:"closed its connection" report;
+          ends_with ~msg:"the report" ~suffix:"closed its connection" report;
           equal ~msg:"the report's reason" string said
             ("failed: " ^ String.sub report 7 (String.length report - 7))
       | code, lines ->
@@ -1264,7 +1263,7 @@ let launching =
       test "a program that exits without close reports closed" exits_unclosed;
       test "a program whose report's reader is gone goes on" reader_gone;
       test "an agent killed: the job's failure is reported" agent_killed;
-      cases ~name:fst "a start that fails reports failed" bad_starts
+      cases "a start that fails reports failed" ~id:fst bad_starts
         (fun (_, c) -> failed_start c);
       test "a report descriptor past 32 bits is no descriptor" wide_descriptor;
       test "with a job of the process open it raises, reporting nothing"
@@ -1294,7 +1293,7 @@ let read_ok contents =
 
 let refused file =
   let why = require_error (Rig_remote.read_key file) in
-  starts_with ~msg:"names the file" ~affix:file why
+  starts_with ~msg:"names the file" ~prefix:file why
 
 let refused_perm perm =
   if Sys.win32 then skip ~reason:"Windows has no POSIX file modes" ();
@@ -1345,16 +1344,15 @@ let keys =
           is_ok
             (Rig_remote.key
                (String.init 4096 (fun i -> Char.chr (i land 0xff)))));
-      cases
-        ~name:(Printf.sprintf "%d bytes are no key, said by length")
-        "key length" [ 0; 15; 4097; 65536 ] key_refused;
+      cases "key length"
+        ~id:(Printf.sprintf "%d bytes are no key, said by length")
+        [ 0; 15; 4097; 65536 ] key_refused;
       test "a file of 16 bytes and one of 4096, of this user alone, are keys"
         (fun () ->
           read_ok (String.make 16 'a');
           read_ok (String.init 4096 (fun i -> Char.chr (i land 0xff))));
-      cases
-        ~name:(Printf.sprintf "a file of mode %o is refused, naming it")
-        "granting others access"
+      cases "granting others access"
+        ~id:(Printf.sprintf "a file of mode %o is refused, naming it")
         [ 0o640; 0o604; 0o620; 0o602; 0o644; 0o666; 0o710; 0o701; 0o711 ]
         refused_perm;
       test "a file of mode 700 is a key" (fun () ->
@@ -1362,9 +1360,9 @@ let keys =
           Fun.protect
             ~finally:(fun () -> Sys.remove file)
             (fun () -> is_ok (Rig_remote.read_key file)));
-      cases
-        ~name:(Printf.sprintf "a file of %d bytes is refused, naming it")
-        "size" [ 0; 15; 4097 ] refused_size;
+      cases "size"
+        ~id:(Printf.sprintf "a file of %d bytes is refused, naming it")
+        [ 0; 15; 4097 ] refused_size;
       test "another user's file is refused, naming it" (fun () ->
           refused "/etc/hosts");
       test "a missing file, a directory and a device are refused" (fun () ->
@@ -1415,7 +1413,7 @@ let controller_killed () =
   kill c;
   List.iter
     (function
-      | 2, [ why ] -> ends_with ~affix:"closed its connection" why
+      | 2, [ why ] -> ends_with ~suffix:"closed its connection" why
       | code, lines ->
           failf "an agent exited %d, printing [%s]" code
             (String.concat "; " lines))

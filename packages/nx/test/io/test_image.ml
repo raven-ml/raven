@@ -247,7 +247,7 @@ let png_chunks =
           let png = Nx_io.encode_png tiny in
           equal (list string) [] (chunk_data "pHYs" png);
           equal (list string) [] (chunk_data "sRGB" png));
-      cases ~name:fst "~dpi writes the pixels per metre on both axes"
+      cases "~dpi writes the pixels per metre on both axes" ~id:fst
         [
           ("72 dpi is 2835 pixels per metre", (72., 2835));
           ("144 dpi is 5669 pixels per metre", (144., 5669));
@@ -281,7 +281,7 @@ let png_chunks =
           equal packed
             (Nx.P (Nx_io.load_image (file ~suffix:".png" plain)))
             (Nx.P (Nx_io.load_image (file ~suffix:".png" png))));
-      cases ~name:fst "~dpi outside the range of a PNG integer is refused"
+      cases "~dpi outside the range of a PNG integer is refused" ~id:fst
         [
           ("zero", 0.);
           ("a negative", -72.);
@@ -400,9 +400,10 @@ let ended =
 let files =
   group "files"
     [
-      cases ~name:fst
+      cases
         "files other encoders wrote load with the file's channels: alpha and \
          transparency kept, grey as one channel, CMYK as colour"
+        ~id:fst
         (List.map
            (fun n -> ("png_" ^ n ^ ".png", 0))
            [
@@ -436,10 +437,10 @@ let files =
           equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape x);
           at_most ~msg:"largest error" int ~than:tolerance
             (Array.fold_left Int.max 0 (errors expected x)));
-      cases ~name:Fun.id
+      cases
         "each save writes its format and load_image reads the contents, \
-         whatever the extension" [ ".png"; ".jpg"; ".JPEG"; ".bmp"; "" ]
-        (fun ext ->
+         whatever the extension"
+        ~id:Fun.id [ ".png"; ".jpg"; ".JPEG"; ".bmp"; "" ] (fun ext ->
           let x = Nx.full Nx.uint8 [| 4; 4; 3 |] 7 in
           let png = temp_file ~suffix:ext () in
           let jpeg = temp_file ~suffix:ext () in
@@ -448,14 +449,15 @@ let files =
           Nx_io.save_jpeg jpeg x;
           Nx_io.save_jpeg reference x;
           equal string (Nx_io.encode_png x) (read png);
-          starts_with ~affix:"\xff\xd8" (read jpeg);
+          starts_with ~prefix:"\xff\xd8" (read jpeg);
           equal string (read reference) (read jpeg);
           equal packed (Nx.P x) (Nx.P (Nx_io.load_image png));
           equal packed
             (Nx.P (Nx_io.load_image reference))
             (Nx.P (Nx_io.load_image jpeg)));
-      cases ~name:fst
+      cases
         "a shape the format does not hold is refused, and nothing is written"
+        ~id:fst
         [
           ("a vector in PNG", (Png, [| 4 |]));
           ("no channel axis in PNG", (Png, [| 2; 2 |]));
@@ -482,8 +484,9 @@ let files =
           | Jpeg ->
               invalid ~by:"Nx_io.save_jpeg" (fun () -> Nx_io.save_jpeg path x));
           equal (array string) [||] (Sys.readdir dir));
-      cases ~name:fst
+      cases
         "a side past the largest PNG integer is refused, before a pixel is read"
+        ~id:fst
         [
           ("rows", [| 2147483648; 1; 1 |]); ("columns", [| 1; 2147483648; 1 |]);
         ]
@@ -494,7 +497,7 @@ let files =
           let path = Filename.concat dir "x.png" in
           let side by =
             Exn.invalid_arg
-              ~substring:
+              ~sub:
                 (by ^ ": "
                 ^ String.concat " by "
                     (List.map string_of_int [ shape.(0); shape.(1) ]))
@@ -503,20 +506,21 @@ let files =
           raises_match (side "Nx_io.encode_png") (fun () ->
               ignore (Nx_io.encode_png x));
           equal (array string) [||] (Sys.readdir dir));
-      cases ~name:fst "a JPEG of 65535 rows or columns, its largest, loads back"
+      cases "a JPEG of 65535 rows or columns, its largest, loads back" ~id:fst
         [ ("rows", [| 65535; 1; 1 |]); ("columns", [| 1; 65535; 1 |]) ]
         (fun (_, shape) ->
           let path = temp_file ~suffix:".jpg" () in
           Nx_io.save_jpeg path (Nx.full Nx.uint8 shape 7);
           equal (array int) shape (Nx.shape (Nx_io.load_image path)));
-      cases ~name:Fun.id "a JPEG whose DC values outgrow 16 bits loads or fails"
+      cases "a JPEG whose DC values outgrow 16 bits loads or fails" ~id:Fun.id
         [ "jpeg_dc_overflow.jpg"; "jpeg_dc_overflow_progressive.jpg" ]
         (fun name ->
           let path = fixture name in
           loads_or_fails ~path (fun () -> Nx_io.load_image path));
-      cases ~name:fst
+      cases
         "a JPEG whose 16-bit table scales its DC past a byte loads as its \
          inverse DCT's values, clamped"
+        ~id:fst
         [ ("jpeg_table16.jpg", 32); ("jpeg_table16_large.jpg", 512) ]
         (fun (name, side) ->
           equal packed
@@ -528,9 +532,10 @@ let files =
           equal packed
             (Nx.P (Nx_io.load_image (fixture "jpeg_zrl_baseline.jpg")))
             (Nx.P (Nx_io.load_image (fixture "jpeg_zrl_progressive.jpg"))));
-      cases ~name:fst
+      cases
         "a progressive JPEG that sends a coefficient's bit twice or out of \
          order fails"
+        ~id:fst
         [
           ("a scan repeated", "jpeg_repeated_scan.jpg");
           ("a refinement of bits never sent", "jpeg_unsent_refinement.jpg");
@@ -547,14 +552,14 @@ let files =
           equal packed
             (Nx.P (Nx_io.load_image (fixture name)))
             (Nx.P (Nx_io.load_image path)));
-      cases ~name:Fun.id "a file followed by a copy of itself loads as the file"
+      cases "a file followed by a copy of itself loads as the file" ~id:Fun.id
         ended (fun name ->
           let whole = read (fixture name) in
           equal packed
             (Nx.P (Nx_io.load_image (fixture name)))
             (Nx.P (Nx_io.load_image (file (whole ^ whole)))));
-      cases ~name:fst
-        "a PNG side or chunk length past the largest PNG integer fails"
+      cases "a PNG side or chunk length past the largest PNG integer fails"
+        ~id:fst
         [
           ( "a width of 2^31",
             (header_png ~width:0x80000000 ~height:1, "invalid PNG image header")
@@ -585,9 +590,10 @@ let files =
           equal packed
             (Nx.P (Nx_io.load_image (fixture name)))
             (Nx.P (Nx_io.load_image (file (with_idat png idat)))));
-      cases ~name:fst
-        "PNG image data that decompresses to other than the image's \
-         scanlines fails"
+      cases
+        "PNG image data that decompresses to other than the image's scanlines \
+         fails"
+        ~id:fst
         [
           ("one byte short", fun s -> String.sub s 0 (String.length s - 1));
           ("one byte over", fun s -> s ^ "\000");
@@ -623,8 +629,8 @@ let files =
       test "a file that is neither PNG nor JPEG fails" (fun () ->
           let path = file "GIF89a" in
           fails ~path (fun () -> Nx_io.load_image path));
-      cases ~name:Fun.id
-        "every proper prefix fails, and any byte flipped loads or fails"
+      cases "every proper prefix fails, and any byte flipped loads or fails"
+        ~id:Fun.id
         [
           "png_filters.png";
           "png_palette_adam7.png";

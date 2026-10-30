@@ -16,6 +16,7 @@
  (action
   (progn
    (run %{test} --corrected)
-   (diff? golden/shapes.png golden/shapes.png.corrected)
-   (diff? golden/strokes.png golden/strokes.png.corrected)
-   (diff? golden/marks.png golden/marks.png.corrected))))
+   (concurrent
+    (diff? golden/shapes.png golden/shapes.png.corrected)
+    (diff? golden/strokes.png golden/strokes.png.corrected)
+    (diff? golden/marks.png golden/marks.png.corrected)))))

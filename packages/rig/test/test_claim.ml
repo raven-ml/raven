@@ -260,7 +260,7 @@ let test_exclusive_writes () =
     Bytes.to_string s
   in
   let refused msg f =
-    raises_match ~msg (Exn.invalid_arg ~substring:"held exclusive") f
+    raises_match ~msg (Exn.invalid_arg ~sub:"held exclusive") f
   in
   let unconsumed b =
     refused "a read" (fun () -> B.read b Bigarray.char ignore);
@@ -302,7 +302,7 @@ let test_borrow_exclusive () =
   let b = B.create Rig.host (1 lsl 16) in
   Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       equal ~msg:"exclusive" bool true (Claim.exclusive c b);
-      raises_match (Exn.invalid_arg ~substring:"held exclusive") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"held exclusive") (fun () ->
           B.borrow d b));
   is_some ~msg:"once the donation returned" (B.borrow d b)
 
@@ -375,7 +375,7 @@ let test_shards () =
 
 (* Consumption *)
 
-let dead why = Exn.invalid_arg ~substring:why
+let dead why = Exn.invalid_arg ~sub:why
 
 (* Memory consumed twice lives while the last buffer over it is reachable, and
    every earlier buffer is dead. *)
@@ -412,7 +412,7 @@ let test_consume_read () =
       ~equal:( = )
   in
   let reads msg f =
-    raises_match ~msg (Exn.invalid_arg ~substring:"admits only reads") f
+    raises_match ~msg (Exn.invalid_arg ~sub:"admits only reads") f
   in
   let b = B.create Rig.host 8 in
   B.fill b 'a';
@@ -713,8 +713,8 @@ let test_hold () =
         (Claim.exclusive c a, Claim.exclusive c b);
       equal ~msg:"consumable" (pair bool bool) (false, false)
         (Claim.consumable c a, Claim.consumable c b);
-      raises_match ~msg:"a consumption" (Exn.invalid_arg ~substring:"held")
-        (fun () -> Claim.consume c ~why:"donated" a));
+      raises_match ~msg:"a consumption" (Exn.invalid_arg ~sub:"held") (fun () ->
+          Claim.consume c ~why:"donated" a));
   equal ~msg:"live" (option string) None (B.dead a);
   B.fill a 'h';
   equal ~msg:"written under the hold" char 'h'
@@ -865,8 +865,7 @@ let test_submission_holds () =
 let test_hold_refusals () =
   let a = B.create Rig.host 8 and b = B.create Rig.host 8 in
   Claim.with_ ~read:[] ~donate:[ b ] (fun _ ->
-      raises_match ~msg:"held exclusive"
-        (Exn.invalid_arg ~substring:"held exclusive")
+      raises_match ~msg:"held exclusive" (Exn.invalid_arg ~sub:"held exclusive")
         (fun () -> Claim.hold [ a; b ]));
   ignore (require_some (Rig_support.donated b));
   raises_match ~msg:"dead" (dead "donated") (fun () -> Claim.hold [ a; b ]);
@@ -1404,8 +1403,8 @@ let test_run_claim_refusals () =
   Array.iter
     (fun b ->
       Claim.with_ ~read:[] ~donate:[ b ] (fun _ ->
-          raises_match (Exn.invalid_arg ~substring:"held exclusive")
-            (fun () -> submit s ~buffers:(slots bs)));
+          raises_match (Exn.invalid_arg ~sub:"held exclusive") (fun () ->
+              submit s ~buffers:(slots bs)));
       check bs)
     bs;
   ignore (submit s ~buffers:(slots bs));
@@ -1416,7 +1415,7 @@ let test_run_claim_refusals () =
       Claim.with_ ~read:[] ~donate:[ bs.(i) ] (fun c ->
           Claim.consume c ~why:"replaced" bs.(i))
     in
-    raises_match (Exn.invalid_arg ~substring:"replaced") (fun () ->
+    raises_match (Exn.invalid_arg ~sub:"replaced") (fun () ->
         submit s ~buffers:(slots bs));
     bs.(i) <- replacement;
     check bs
@@ -1889,10 +1888,10 @@ let tests =
           test_export_exclusive;
         test "a donor submits work on the consumed buffer inside with_"
           test_donor_submits;
-        cases ~name:consumed_name
+        cases
           "exclusive holds until the consumption, and the consumed buffer is \
            used as any other"
-          consumed_cases consumed_law;
+          ~id:consumed_name consumed_cases consumed_law;
       ];
     group ~timeout "consumption"
       [

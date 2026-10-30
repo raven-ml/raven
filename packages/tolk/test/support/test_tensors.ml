@@ -16,7 +16,7 @@ let iota n = Array.init n (fun j -> z j)
 let values = list (array Dtypes.const)
 let one = function [ v ] -> Array.to_list v | _ -> fail "one device"
 let eval ?(buffers = [ (1, iota 6) ]) u = one (Tensors.eval ~buffers u)
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let consts = list Dtypes.const
 
 let storage =

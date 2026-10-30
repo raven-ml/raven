@@ -1737,7 +1737,7 @@ let test_one_storage_behind_two_caches () =
         o.keys)
     out;
   raises_match ~msg:"the donated tensor is dead"
-    (Exn.invalid_arg ~substring:"Nx.to_array") (fun () ->
+    (Exn.invalid_arg ~sub:"Nx.to_array") (fun () ->
       ignore (Nx.to_array c.Attention.Cache.keys))
 
 (* Eager and compiled runs agree on what addresses nothing: neither raises and

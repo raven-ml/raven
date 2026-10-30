@@ -7,7 +7,7 @@ open Windtrap
 open Hugin_kit
 
 let ascii = Locale.v ~minus:"-" ()
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 
 let write ?locale ?trim ?group n p x =
   Number.to_string ?locale (Number.v ?trim ?group n p) x
@@ -22,9 +22,9 @@ let unsigned x = if x = 0. then 0. else x
 (* Rows [(x, expected)] written in one format; each row names its input with
    every digit. *)
 let table name ?locale ?trim ?group n p rows =
-  cases
-    ~name:(fun (x, e) -> Printf.sprintf "%.17g is %s" x e)
-    name rows
+  cases name
+    ~id:(fun (x, e) -> Printf.sprintf "%.17g is %s" x e)
+    rows
     (fun (x, e) -> equal string e (write ?locale ?trim ?group n p x))
 
 (* Notations. Most rows are d3-format's tests (format-type-*-test.js,
@@ -97,9 +97,8 @@ let prefixes =
 let si =
   group "si"
     [
-      cases
-        ~name:(fun (k, p) -> Printf.sprintf "1e%d is 1%s" (3 * k) p)
-        "names each power of 1000"
+      cases "names each power of 1000"
+        ~id:(fun (k, p) -> Printf.sprintf "1e%d is 1%s" (3 * k) p)
         (List.mapi (fun i p -> (i - 10, p)) prefixes)
         (fun (k, p) ->
           let x = float_of_string (Printf.sprintf "1e%d" (3 * k)) in
@@ -164,13 +163,13 @@ let rounding =
       test "the least subnormal is written in full" (fun () ->
           let s = write Plain (Decimals 1074) 5e-324 in
           starts_with
-            ~affix:
+            ~prefix:
               ("0." ^ String.make 323 '0'
              ^ "494065645841246544176568792868221372365059802")
             s;
           equal int 1076 (String.length s);
-          ends_with ~affix:"3447265625" s);
-      cases ~name:fst "non-finite numbers in"
+          ends_with ~suffix:"3447265625" s);
+      cases "non-finite numbers in" ~id:fst
         [
           ("plain", Number.v Plain (Decimals 2));
           ("exponent", Number.v Exponent (Significant 3));
@@ -239,7 +238,7 @@ let laws =
       prop "trimming removes the zeros that end the decimals, and the separator"
         (Gen.pair gen_decimals gen_moderate) (fun (d, x) ->
           let trimmed = write ~trim:true Plain (Decimals d) x in
-          starts_with ~affix:trimmed (write Plain (Decimals d) x);
+          starts_with ~prefix:trimmed (write Plain (Decimals d) x);
           equal float_exact (value d x) (value ~trim:true d x);
           if String.contains trimmed '.' then
             not_equal char '0' trimmed.[String.length trimmed - 1]);
@@ -268,7 +267,7 @@ let gen_format = Gen.with_pp Number.pp gen_format
 let formats =
   group "formats"
     [
-      cases ~name:fst "v raises on"
+      cases "v raises on" ~id:fst
         [
           ("negative decimals", fun () -> Number.v Plain (Decimals (-1)));
           ("no significant digit", fun () -> Number.v Si (Significant 0));
@@ -369,9 +368,8 @@ let decimals =
           equal int 1 (Number.decimals Nx.float64 0.1));
       test "is 4 for the float32 nearest 0.9234" (fun () ->
           equal int 4 (Number.decimals Nx.float32 (to_dtype Nx.float32 0.9234)));
-      cases
-        ~name:(fun x -> Printf.sprintf "%h" x)
-        "is 0 for integers and non-finite values"
+      cases "is 0 for integers and non-finite values"
+        ~id:(fun x -> Printf.sprintf "%h" x)
         [ 0.; 3.; -1e300; Float.nan; Float.infinity; Float.neg_infinity ]
         (fun x ->
           equal int 0 (Number.decimals Nx.float64 x);

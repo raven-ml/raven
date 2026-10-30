@@ -237,9 +237,9 @@ let accepted =
 let construction =
   group "construction"
     [
-      cases ~name:fst "refuses" refused (fun (_, f) ->
-          raises_match (Exn.invalid_arg ?substring:None) f);
-      cases ~name:fst "accepts" accepted (fun (_, f) -> f ());
+      cases "refuses" ~id:fst refused (fun (_, f) ->
+          raises_match (Exn.invalid_arg ?sub:None) f);
+      cases "accepts" ~id:fst accepted (fun (_, f) -> f ());
     ]
 
 (* Lifts *)
@@ -287,10 +287,10 @@ let kinds =
 let lifts =
   group "lifts"
     [
-      cases ~name:fst "a lift copies its array" copies (fun (_, f) -> f ());
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "kind is the kind of the scale a lift reads" kinds
+      cases "a lift copies its array" ~id:fst copies (fun (_, f) -> f ());
+      cases "kind is the kind of the scale a lift reads"
+        ~id:(fun (n, _, _) -> n)
+        kinds
         (fun (_, expected, got) -> equal string expected got);
     ]
 
@@ -620,9 +620,8 @@ let equality =
           cover "recipes that differ in one argument"
             (List.exists (fun v -> compare v r' = 0) (variants r));
           equal bool same (Hugin.equal (build r) (build r')));
-      cases
-        ~name:(Format.asprintf "%a" pp_recipe)
-        "a figure differs from each of its near misses"
+      cases "a figure differs from each of its near misses"
+        ~id:(Format.asprintf "%a" pp_recipe)
         [
           R_dot (0, 1, None);
           R_dot (0, 1, Some 0);
@@ -654,13 +653,13 @@ let equality =
                 bool false
                 (Hugin.equal (build r) (build r')))
             (variants r));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "equal on pairs the recipes cannot state" pairs
+      cases "equal on pairs the recipes cannot state"
+        ~id:(fun (n, _, _) -> n)
+        pairs
         (fun (_, same, f) ->
           let f, f' = f () in
           equal bool same (Hugin.equal f f'));
-      cases ~name:fst "a built-in mark rebuilt is equal" builtins (fun (_, f) ->
+      cases "a built-in mark rebuilt is equal" ~id:fst builtins (fun (_, f) ->
           equal bool true (Hugin.equal (f ()) (f ())));
       prop "a title is its rich text" Gen.string (fun s ->
           equal bool true (Hugin.equal (title s a) (title' (Text.v s) a));

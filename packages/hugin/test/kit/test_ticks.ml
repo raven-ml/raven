@@ -6,7 +6,7 @@
 open Windtrap
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* An extent per UTF-8 character with a clearance, as a 10 pt sans face with 2
    pt either side would measure. *)
@@ -430,9 +430,9 @@ let d3_formats =
   ]
 
 let d3_labels =
-  cases
-    ~name:(fun (n, _, _, _, _, _, _) -> n)
-    "d3" d3_formats
+  cases "d3"
+    ~id:(fun (n, _, _, _, _, _, _) -> n)
+    d3_formats
     (fun (_, notation, (a, b), (m, k), (i0, i1), x, expected) ->
       let vs =
         Array.init
@@ -858,9 +858,8 @@ let choice =
             (labels (Ticks.choose ~length:150. ~measure s));
           equal (list string) [ "the"; "sat"; "the" ]
             (labels (Ticks.choose ~length:75. ~measure s)));
-      cases
-        ~name:(fun (n, k) -> Printf.sprintf "%d categories, a stride of %d" n k)
-        "a band shows at most a hundred ticks on any axis"
+      cases "a band shows at most a hundred ticks on any axis"
+        ~id:(fun (n, k) -> Printf.sprintf "%d categories, a stride of %d" n k)
         [ (100, 1); (101, 2); (400, 5); (1001, 20) ]
         (fun (n, k) ->
           let names = Array.init n (fun i -> "c" ^ string_of_int i) in
@@ -1068,7 +1067,7 @@ let minor_ticks =
   group "minor"
     [
       cases "each step cuts into its parts"
-        ~name:(fun (q, _, _, _, _) -> "q = " ^ q)
+        ~id:(fun (q, _, _, _, _) -> "q = " ^ q)
         q_minors q_minor;
       test "a step of one cuts into fifths" (fun () ->
           let t =

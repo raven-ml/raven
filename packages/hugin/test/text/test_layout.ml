@@ -274,9 +274,9 @@ let faces =
       test "italic text without an italic face is set upright" (fun () ->
           equal (list font_w) [ regular ]
             (fonts_of (Text.italic (Text.v "x")) ~fonts:inter));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "faces rank by slant, weight and position" rankings
+      cases "faces rank by slant, weight and position"
+        ~id:(fun (name, _, _) -> name)
+        rankings
         (fun (_, style, specs) -> ranked ~style specs);
       test "each style of one text asks for its own face" (fun () ->
           let plain = face [ 0x61 ] and bold = face ~weight:700 [ 0x61 ] in
@@ -400,10 +400,10 @@ let rec hide = function
 let ignorables =
   group "default ignorables"
     [
-      cases
-        ~name:(fun (c, hidden) ->
+      cases "the property's edges, mapped by the face"
+        ~id:(fun (c, hidden) ->
           Printf.sprintf "U+%04X is %s" c (if hidden then "hidden" else "drawn"))
-        "the property's edges, mapped by the face" ignorable_edges
+        ignorable_edges
         (fun (c, hidden) ->
           let l =
             lay
@@ -564,7 +564,7 @@ let carry_law (t, w) =
 let lines =
   group "lines"
     [
-      cases ~name:(Printf.sprintf "U+%04X ends a line") "newlines" newlines
+      cases "newlines" ~id:(Printf.sprintf "U+%04X ends a line") newlines
         (fun c ->
           equal layout_w
             (lay (Text.v "a\nb"))
@@ -573,9 +573,9 @@ let lines =
           equal int 2 (line_count (lay (Text.v "a\r\nb")));
           equal int 3 (line_count (lay (Text.v "a\n\rb")));
           equal int 3 (line_count (lay (Text.v "a\r\r\nb"))));
-      cases
-        ~name:(fun n -> Printf.sprintf "%d newlines make %d lines" n (n + 1))
-        "line counts" [ 0; 1; 2; 5 ]
+      cases "line counts"
+        ~id:(fun n -> Printf.sprintf "%d newlines make %d lines" n (n + 1))
+        [ 0; 1; 2; 5 ]
         (fun n ->
           equal int (n + 1) (line_count (lay (Text.v (String.make n '\n')))));
       test "the empty text is one empty line of the plain face's height"
@@ -740,9 +740,8 @@ let placing =
             (list (pair close close))
             [ (5., 0.) ]
             (sized (Text.scale 0.5 (Text.v "x"))));
-      cases
-        ~name:(fun (name, _, _, _) -> name)
-        "runs are maximal sequences of one face, size, shift and colour"
+      cases "runs are maximal sequences of one face, size, shift and colour"
+        ~id:(fun (name, _, _, _) -> name)
         [
           ("one style", Text.v "ab", inter, [ "ab" ]);
           ( "a colour change",
@@ -904,9 +903,8 @@ let halign_law t =
 let alignment =
   group "alignment"
     [
-      cases
-        ~name:(fun (v, _) -> valign_name v ^ " on one line")
-        "vertical alignments put their line at y = 0"
+      cases "vertical alignments put their line at y = 0"
+        ~id:(fun (v, _) -> valign_name v ^ " on one line")
         [
           (`Top, 10. *. ascent);
           (`Cap, 10. *. cap);
@@ -916,9 +914,8 @@ let alignment =
         ]
         (fun (valign, y) ->
           equal (list close) [ y ] (ys (lay ~valign (Text.v "x"))));
-      cases
-        ~name:(fun (v, _) -> valign_name v ^ " on two lines")
-        "vertical alignments of two lines"
+      cases "vertical alignments of two lines"
+        ~id:(fun (v, _) -> valign_name v ^ " on two lines")
         [
           (`Top, [ 10. *. ascent; (10. *. ascent) +. pitch ]);
           (`Cap, [ 10. *. cap; (10. *. cap) +. pitch ]);
@@ -1040,9 +1037,8 @@ let measuring =
           not_equal layout_w
             (lay ~valign:`Top (Text.v "x"))
             (lay ~valign:`Top (Text.v "x\n")));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "layouts with different runs are unequal"
+      cases "layouts with different runs are unequal"
+        ~id:(fun (name, _, _) -> name)
         [
           ("characters", lay (Text.v "a"), lay (Text.v "b"));
           ("colours", lay (Text.v "a"), lay (Text.color Color.red (Text.v "a")));
@@ -1103,19 +1099,18 @@ let errors =
     [
       test "an empty face list" (fun () ->
           rejects (fun () -> Text.Layout.v ~fonts:[] ~size:10. (Text.v "a")));
-      cases ~name:(Printf.sprintf "size %h")
-        "sizes that are not finite and positive"
+      cases "sizes that are not finite and positive"
+        ~id:(Printf.sprintf "size %h")
         [ 0.; -0.; -1.; Float.nan; Float.infinity; Float.neg_infinity ]
         (fun size -> rejects (fun () -> lay ~size (Text.v "a")));
-      cases ~name:(Printf.sprintf "width %h") "widths that are negative or nan"
+      cases "widths that are negative or nan" ~id:(Printf.sprintf "width %h")
         [ -1.; Float.nan; Float.neg_infinity; -.Float.min_float ] (fun width ->
           rejects (fun () -> lay ~width (Text.v "a")));
       test "widths 0 and -0 are accepted" (fun () ->
           ignore (lay ~width:0. (Text.v "a b"));
           ignore (lay ~width:(-0.) (Text.v "a b")));
-      cases
-        ~name:(fun (name, _) -> name)
-        "characters whose size is not finite and positive"
+      cases "characters whose size is not finite and positive"
+        ~id:(fun (name, _) -> name)
         [
           ("a size that underflows", Text.(scale 1e-200 (scale 1e-200 (v "x"))));
           ("a size that overflows", Text.(scale 1e200 (scale 1e200 (v "x"))));
@@ -1126,9 +1121,8 @@ let errors =
           equal layout_w
             (lay (Text.v ""))
             (lay Text.(scale 1e-200 (scale 1e-200 (v "\u{200B}")))));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "coordinates that are not finite"
+      cases "coordinates that are not finite"
+        ~id:(fun (name, _, _) -> name)
         [
           ("advances past max_float", 1e308, Text.v "xxxx");
           ( "a shift past max_float",

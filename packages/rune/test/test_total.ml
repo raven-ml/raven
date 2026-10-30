@@ -10,7 +10,7 @@ open Windtrap
 open Compose
 module Total = Rune.Total
 
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let v xs = Nx.create f32 [| Array.length xs |] xs
 let zero () = Nx.scalar f32 (-0.)
@@ -220,7 +220,7 @@ let test_set_refused () =
       let outer = Nx.scalar_at M2.on f32 (-0.) in
       let (), sum =
         Total.collect top ~init:outer (fun () ->
-            raises_match ~msg (Exn.invalid_arg ~substring:sub) (fun () ->
+            raises_match ~msg (Exn.invalid_arg ~sub) (fun () ->
                 Total.collect top ~init:(Nx.scalar_at M1.on f32 0.) f))
       in
       equal ~msg bits_t (bits outer) (bits sum))

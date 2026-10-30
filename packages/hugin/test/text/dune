@@ -40,6 +40,7 @@
  (action
   (progn
    (run %{test} --corrected)
-   (diff? golden/axis_title.svg golden/axis_title.svg.corrected)
-   (diff? golden/fallback.svg golden/fallback.svg.corrected)
-   (diff? golden/notdef.svg golden/notdef.svg.corrected))))
+   (concurrent
+    (diff? golden/axis_title.svg golden/axis_title.svg.corrected)
+    (diff? golden/fallback.svg golden/fallback.svg.corrected)
+    (diff? golden/notdef.svg golden/notdef.svg.corrected)))))

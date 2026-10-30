@@ -236,7 +236,7 @@ let cycle = Int64.of_int (146_097 * day)
 let offset_s =
   group "offset_s"
     [
-      cases ~name:Fun.id "changes at each transition"
+      cases "changes at each transition" ~id:Fun.id
         (List.filter (fun name -> transitions name <> []) zones)
         sweep;
       test "is the first time type's before the first transition" (fun () ->
@@ -268,7 +268,7 @@ let offset_s =
           let z = zone "hand/Rules" in
           equal int 7200 (Tz.offset_s z (posix 1000 1 15 0 0));
           equal int 3600 (Tz.offset_s z (posix 1000 7 15 0 0)));
-      cases ~name:Fun.id "persists the last offset without a rule"
+      cases "persists the last offset without a rule" ~id:Fun.id
         [ "hand/Version1"; "hand/StdDisagrees" ] (fun name ->
           let z = zone name in
           equal int 7200 (Tz.offset_s z Int64.max_int);
@@ -415,7 +415,7 @@ let walls =
 let local_times =
   group "local"
     [
-      cases ~name:fst "reads the wall clock" walls (fun (_, f) -> f ());
+      cases "reads the wall clock" ~id:fst walls (fun (_, f) -> f ());
       prop ~count:400 "names exactly the offsets at which the clock reads t"
         ~examples:close_calls zone_instant completeness;
       prop ~count:400 "reads every instant's wall-clock time back" zone_instant

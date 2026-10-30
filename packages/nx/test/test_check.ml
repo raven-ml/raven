@@ -31,7 +31,7 @@ exception Failed of int
 
 type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let numel s = Array.fold_left ( * ) 1 s
 let pass _ _ = Failure "the check passed its data"
 
@@ -142,9 +142,9 @@ let first_false =
 let host =
   group "on the host"
     [
-      cases
-        ~name:(fun (D.Any dt) -> D.name dt)
-        "the data's elements reach the exception at every dtype" D.all
+      cases "the data's elements reach the exception at every dtype"
+        ~id:(fun (D.Any dt) -> D.name dt)
+        D.all
         (fun (D.Any dt) ->
           let vs = [| D.zero dt; D.one dt; D.of_float dt 3. |] in
           let data = Nx.create dt [| 3 |] vs in
@@ -352,9 +352,8 @@ let pending_checks =
 
 let at_call =
   let ok = [| true; false; true |] in
-  cases
-    ~name:(fun (name, _) -> name)
-    "a check raises at the call"
+  cases "a check raises at the call"
+    ~id:(fun (name, _) -> name)
     [
       ( "on the host",
         fun () -> check (Nx.create Nx.bool [| 3 |] ok) [] (fun _ () -> Failed 0)
@@ -523,8 +522,7 @@ let others =
       test "sync refuses a dead value" (fun () ->
           let x = Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
           ignore (Nx.neg (Nx.donate x));
-          raises_match (Exn.invalid_arg ~substring:"Nx.sync: ") (fun () ->
-              Nx.sync x));
+          raises_match (Exn.invalid_arg ~sub:"Nx.sync: ") (fun () -> Nx.sync x));
       test "sync refuses a traced value" (fun () ->
           let traced i ~by op =
             Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op

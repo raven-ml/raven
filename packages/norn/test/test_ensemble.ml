@@ -178,7 +178,8 @@ let normal_cdf sd x = Nx.item [] (Nx.ndtr (Nx.scalar Nx.float64 (x /. sd)))
 
 (* The banana's exact draws: [a] standard normal and [b = 0.3 a² + z / 2]. *)
 let law_11 =
-  slow "five transitions leave the banana invariant" (fun () ->
+  slow
+  @@ test "five transitions leave the banana invariant" (fun () ->
       let k = Nx.Rng.key 31 in
       let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
       let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in

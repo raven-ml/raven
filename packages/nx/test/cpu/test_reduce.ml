@@ -4026,9 +4026,12 @@ let refusals (b : Support.backend) =
       prop
         "computes what Nx_kernel.Shape fits and refuses the rest with \
          Shape_mismatch, writing nothing"
-        misfits (run (law_refusals b));
-      cases ~name:(fun (n, _, _) -> n) "answers as its contract names"
-        (answered b) (fun (_, want, f) ->
+        misfits
+        (run (law_refusals b));
+      cases "answers as its contract names"
+        ~id:(fun (n, _, _) -> n)
+        (answered b)
+        (fun (_, want, f) ->
           b.around (fun () -> equal Elements.answer want (f ())));
       test
         "refuses a padded load past max_numel or its destinations before \

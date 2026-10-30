@@ -9,7 +9,7 @@ let floats =
   ]
 
 let dtype_named name = List.assoc name floats
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* [x ~slot dt] is the scalar parameter [slot], an input nothing folds. *)
 let x ?(slot = 0) dt = Call.param slot dt
@@ -87,9 +87,9 @@ let graphs =
               [
                 T.shl i 3; T.shr i 3; T.shl i 0; T.shr i 0; T.shl f 2; T.shr f 2;
               ]);
-        cases ~name:fst
+        cases
           "a sine of an angle bounded below the switch-over is its fast form"
-          wide (fun (_, dt) ->
+          ~id:fst wide (fun (_, dt) ->
             let angle lo hi =
               Ops.variable ~dtype:dt "a" (`Float lo) (`Float hi)
             in
@@ -130,7 +130,7 @@ let precision = function
 
 let rewritten_values =
   let references = [ Float.exp2; Float.log2; Float.sin; Float.sqrt ] in
-  cases ~name:fst "a rewritten operation computes it, rounded to its type"
+  cases "a rewritten operation computes it, rounded to its type" ~id:fst
     every_float (fun (_, dt) ->
       let results = Ops.src (rewrite [] dt) in
       List.iter
@@ -165,7 +165,7 @@ let patterns =
         test "a target with every operation keeps the graph" (fun () ->
             let sink = transcendentals Dtype.Float32 in
             is_true (Ops.equal sink (rewrite all_ops Dtype.Float32)));
-        cases ~name:fst "a target without the operations is left none of them"
+        cases "a target without the operations is left none of them" ~id:fst
           every_float (fun (_, dt) ->
             let left =
               List.filter
@@ -221,9 +221,8 @@ let bits =
           | s when String.starts_with ~prefix:"raises" s ->
               rejects (fun () -> T.exponent_bias dt)
           | s -> equal int (int_of_string s) (T.exponent_bias dt));
-      cases
-        ~name:(fun (v, n, _, _) -> Printf.sprintf "%d by %d" v n)
-        "shl multiplies and shr floors a division by a power of two"
+      cases "shl multiplies and shr floors a division by a power of two"
+        ~id:(fun (v, n, _, _) -> Printf.sprintf "%d by %d" v n)
         [
           (5, 0, 5, 5);
           (5, 1, 10, 2);
@@ -243,7 +242,7 @@ let bits =
       test "shl and shr refuse a negative count" (fun () ->
           rejects (fun () -> T.shl (x Dtype.Int32) (-1));
           rejects (fun () -> T.shr (x Dtype.Int32) (-1)));
-      cases ~name:string_of_float "rintk rounds halves away from zero"
+      cases "rintk rounds halves away from zero" ~id:string_of_float
         [ 0.; 5.; 5.5; 5.999; -5.; -5.5; -5.999; 0.49; -0.5 ] (fun v ->
           let expected = Float.to_int (Float.round v) in
           equal int expected (as_int (at Dtype.Float32 T.rintk v)));
@@ -251,7 +250,7 @@ let bits =
           List.iter
             (fun (f, i) -> equal dtype i (Ops.dtype (T.rintk (x f))))
             Dtype.[ (Float16, Int16); (Float32, Int32); (Float64, Int64) ]);
-      cases ~name:string_of_int "pow2if is two to an integer"
+      cases "pow2if is two to an integer" ~id:string_of_int
         [ 0; 1; 2; 10; 63; -1; -2; -10; -63 ] (fun q ->
           let v =
             Interpreter.eval
@@ -269,9 +268,8 @@ let bits =
 (* frexp's cases are tinygrad's, on doubles: the sign of the mantissa is dropped
    there, since the mask of a double's fraction leaves out its sign. *)
 let frexp_cases =
-  cases
-    ~name:(fun (v, _, _) -> string_of_float v)
-    "frexp splits a double into a mantissa in [0.5, 1) and an exponent"
+  cases "frexp splits a double into a mantissa in [0.5, 1) and an exponent"
+    ~id:(fun (v, _, _) -> string_of_float v)
     [
       (1., 0.5, 1);
       (-1., 0.5, 1);
@@ -294,9 +292,8 @@ let reductions =
           let mantissa, _ = T.frexp (x Dtype.Float32) in
           equal float_exact (-0.625)
             (as_float (Interpreter.eval ~params:[ (0, `Float (-5.)) ] mantissa)));
-      cases
-        ~name:(fun (v, _, _) -> Printf.sprintf "%.17g" v)
-        "payne_hanek_reduction removes quarter turns"
+      cases "payne_hanek_reduction removes quarter turns"
+        ~id:(fun (v, _, _) -> Printf.sprintf "%.17g" v)
         [
           ((12. *. Float.pi) +. 0.1, 0.1, 0);
           (12. *. Float.pi, 0., 4);
@@ -459,7 +456,7 @@ let pow_specials =
   in
   group "xpow"
     [
-      cases ~name:string_of_float "anything to the power 0 is 1"
+      cases "anything to the power 0 is 1" ~id:string_of_float
         [ 0.; -0.; 1.; -2.; 0.5; Float.infinity; Float.neg_infinity; Float.nan ]
         (fun b -> equal float_exact 1. (pow b 0.));
       test "a negative base to a non-integer power is NaN" (fun () ->
@@ -478,8 +475,8 @@ let pow_specials =
 let refused_types =
   let refuse ?(also = []) name f =
     cases
-      ~name:(Format.asprintf "%a" Dtype.pp)
       (name ^ " refuses a node of another type")
+      ~id:(Format.asprintf "%a" Dtype.pp)
       (also @ Dtype.[ Int32; Bfloat16; Fp8e4m3; Bool ])
       (fun dt -> rejects (fun () -> f (x dt)))
   in
@@ -494,9 +491,8 @@ let refused_types =
       refuse "rintk" T.rintk;
       refuse "payne_hanek_reduction" T.payne_hanek_reduction;
       refuse "cody_waite_reduction" T.cody_waite_reduction;
-      cases
-        ~name:(Format.asprintf "%a" Dtype.pp)
-        "pow2if refuses an integer of another width"
+      cases "pow2if refuses an integer of another width"
+        ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Int8; Uint32; Float32; Bool ]
         (fun dt -> rejects (fun () -> T.pow2if (x dt) Dtype.Float32));
       test "xpow takes the other floats" (fun () ->

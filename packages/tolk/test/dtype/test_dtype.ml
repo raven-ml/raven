@@ -4,7 +4,7 @@ open Dtypes
 
 let lub2 a b = Dtype.least_upper [ a; b ]
 let promotes a b = Dtype.equal (lub2 a b) b
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let with_setting setting name f = Setting.context [ B (setting, name) ] f
 
 let bool_cell = function
@@ -105,7 +105,7 @@ let space = Testable.make ~pp:Dtype.pp_addr_space ~equal:( = )
 let address_spaces =
   group "address spaces"
     [
-      cases "an address space prints as its enum member" ~name:snd
+      cases "an address space prints as its enum member" ~id:snd
         Dtype.
           [
             (Global, "AddrSpace.GLOBAL");
@@ -121,7 +121,7 @@ let address_spaces =
            (fun s ->
              require_ok (Dtype.addr_space_of_string (after "AddrSpace." s))));
       cases "the error names what is not an address space"
-        ~name:(Printf.sprintf "%S")
+        ~id:(Printf.sprintf "%S")
         [ "global"; "Global"; "AddrSpace.GLOBAL"; " GLOBAL"; "SHARED" ]
         (fun s ->
           contains ~sub:s (require_error (Dtype.addr_space_of_string s)));
@@ -202,7 +202,7 @@ let data_types =
             (int_of_string (cell "exponent"), int_of_string (cell "mantissa"))
             (Dtype.finfo (dtype_of_cell (cell "dtype"))));
       cases "finfo rejects every data type but the floats of known width"
-        ~name:alias
+        ~id:alias
         (List.filter (fun dt -> not (List.mem dt Dtype.floats)) declared)
         (fun dt -> rejects (fun () -> Dtype.finfo dt));
     ]
@@ -223,8 +223,7 @@ let names =
             (Dtype.of_string "Float32");
           equal (result dtype string) (Ok Dtype.Uint64)
             (Dtype.of_string "ULong"));
-      cases "the error names what is not a data type"
-        ~name:(Printf.sprintf "%S")
+      cases "the error names what is not a data type" ~id:(Printf.sprintf "%S")
         [
           "nonexistdtype";
           "f32";
@@ -247,25 +246,23 @@ let names =
 let defaults =
   group "defaults"
     [
-      cases "default_float is the float DEFAULT_FLOAT names" ~name:alias
+      cases "default_float is the float DEFAULT_FLOAT names" ~id:alias
         Dtype.floats (fun dt ->
           equal dtype dt
             (with_setting Setting.default_float (alias dt) Dtype.default_float));
       test "DEFAULT_FLOAT is read in any case" (fun () ->
           equal dtype Dtype.Float16
             (with_setting Setting.default_float "HALF" Dtype.default_float));
-      cases "default_int is the integer DEFAULT_INT names" ~name:alias
-        Dtype.ints (fun dt ->
+      cases "default_int is the integer DEFAULT_INT names" ~id:alias Dtype.ints
+        (fun dt ->
           equal dtype dt
             (with_setting Setting.default_int (alias dt) Dtype.default_int));
       cases "default_float rejects what is not a float of known width"
-        ~name:Fun.id [ "int32"; "weakfloat"; "bool"; "void"; "typo" ]
-        (fun name ->
+        ~id:Fun.id [ "int32"; "weakfloat"; "bool"; "void"; "typo" ] (fun name ->
           rejects (fun () ->
               with_setting Setting.default_float name Dtype.default_float));
       cases "default_int rejects what is not an integer of known width"
-        ~name:Fun.id [ "float32"; "weakint"; "bool"; "void"; "typo" ]
-        (fun name ->
+        ~id:Fun.id [ "float32"; "weakint"; "bool"; "void"; "typo" ] (fun name ->
           rejects (fun () ->
               with_setting Setting.default_int name Dtype.default_int));
       test "strong commits the weak data types at the current defaults"
@@ -337,7 +334,7 @@ let literals =
           expect dtype dtype_of_cell (cell "dtype") (fun () ->
               Dtype.commit_int ?default_int lo hi));
       cases "commit_int takes only an integer of known width as default"
-        ~name:alias
+        ~id:alias
         Dtype.[ Weak_int; Bool; Float32; Weak_float; Void ]
         (fun default_int ->
           rejects (fun () ->
@@ -414,14 +411,14 @@ let promotion =
           rejects (fun () -> Dtype.least_upper (dts @ [ Dtype.Void ])));
       prop "least_upper_float is a float" promotable (fun dt ->
           is_true (Dtype.is_float (Dtype.least_upper_float dt)));
-      cases "least_upper_float keeps a float whatever the default" ~name:alias
+      cases "least_upper_float keeps a float whatever the default" ~id:alias
         Dtype.floats (fun default ->
           with_setting Setting.default_float (alias default) (fun () ->
               List.iter
                 (fun dt -> equal dtype dt (Dtype.least_upper_float dt))
                 Dtype.floats));
-      cases "least_upper_float takes an integer to the default float"
-        ~name:alias Dtype.floats (fun default ->
+      cases "least_upper_float takes an integer to the default float" ~id:alias
+        Dtype.floats (fun default ->
           with_setting Setting.default_float (alias default) (fun () ->
               List.iter
                 (fun dt -> equal dtype default (Dtype.least_upper_float dt))
@@ -628,8 +625,7 @@ let truncation =
           equal value
             (`Float (Float.ldexp 1. 60 +. Float.ldexp 1. 37))
             (Dtype.truncate Float32 (`Int z)));
-      cases "an infinity is NaN in an 8-bit float without infinities"
-        ~name:alias
+      cases "an infinity is NaN in an 8-bit float without infinities" ~id:alias
         Dtype.[ Fp8e4m3; Fp8e4m3fnuz; Fp8e5m2fnuz ]
         (fun dt ->
           let signed = Dtype.equal dt Dtype.Fp8e4m3 in
@@ -639,7 +635,7 @@ let truncation =
               is_true (Float.is_nan f);
               equal ~msg:"sign" bool (signed && inf < 0.) (Float.sign_bit f))
             [ Float.infinity; Float.neg_infinity ]);
-      cases "truncate quiets a signalling NaN and keeps its sign" ~name:alias
+      cases "truncate quiets a signalling NaN and keeps its sign" ~id:alias
         Dtype.floats (fun dt ->
           let w = word_of dt in
           List.iter
@@ -719,7 +715,7 @@ let storage =
             (Dtype.from_storage_scalar dt)
             v);
       cases "a bitcast through a float gives back every 8- and 16-bit word"
-        ~name:alias
+        ~id:alias
         Dtype.
           [
             Fp8e4m3;
@@ -781,7 +777,7 @@ let storage =
                 (Bfloat16, 0x7FC0, false);
                 (Bfloat16, 0xFFC0, true);
               ]);
-      cases "an encoded float decodes only from an integer" ~name:alias
+      cases "an encoded float decodes only from an integer" ~id:alias
         Dtype.(Bfloat16 :: fp8s)
         (fun dt ->
           rejects (fun () -> Dtype.from_storage_scalar dt (`Float 1.));
@@ -817,7 +813,7 @@ let bitcasts =
       test "a bitcast keeps the item size" (fun () ->
           rejects (fun () ->
               Dtype.bitcast Dtype.Int8 Dtype.Float16 (`Int Bigint.one)));
-      cases "a bitcast needs data types with storage" ~name:alias
+      cases "a bitcast needs data types with storage" ~id:alias
         Dtype.[ Void; Weak_int; Weak_float ]
         (fun dt ->
           rejects (fun () -> Dtype.bitcast dt dt (`Int Bigint.one));
@@ -847,7 +843,7 @@ let consts =
           | `Invalid -> equal const `Invalid (Dtype.const dt c));
       prop "const is idempotent" constable (fun (dt, c) ->
           Law.idempotent const (Dtype.const dt) c);
-      cases "const keeps the bits of every 8- and 16-bit float word" ~name:alias
+      cases "const keeps the bits of every 8- and 16-bit float word" ~id:alias
         Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
         (fun dt ->
           let w = word_of dt in
@@ -1039,7 +1035,7 @@ let values =
           equal ~msg:"sign" bool (Float.sign_bit y) (Float.sign_bit r);
           is_true ~msg:"size" (Stdlib.( <= ) (Float.abs r) (Float.abs y)));
       cases "a zero divisor raises Division_by_zero"
-        ~name:(Format.asprintf "%a" (Testable.pp value))
+        ~id:(Format.asprintf "%a" (Testable.pp value))
         [ `Int Bigint.zero; `Bool false; `Float 0.; `Float (-0.) ]
         (fun zero ->
           raises Division_by_zero (fun () -> `Int (Bigint.of_int 7) // zero);
@@ -1089,7 +1085,7 @@ let conversions =
           if Bigint.fits_int n then
             equal ~msg:"to_int" int (Bigint.to_int n) (to_int (`Int n))
           else rejects (fun () -> to_int (`Int n)));
-      cases "to_int takes exactly the integers of int" ~name:Bigint.to_string
+      cases "to_int takes exactly the integers of int" ~id:Bigint.to_string
         Bigint.
           [
             of_int Stdlib.min_int;

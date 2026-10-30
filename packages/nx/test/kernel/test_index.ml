@@ -462,7 +462,7 @@ let laws (b : Support.backend) =
         "a float Add is within γ(n + 1) (|x| + Σ|ui|) of the exact sum"
         finite_adds
         (run (law_add_bound b));
-      cases ~name:fst "a scatter's stated values" (stated b) (fun (_, f) ->
+      cases "a scatter's stated values" ~id:fst (stated b) (fun (_, f) ->
           b.around f);
       prop "a scatter promised distinct targets gives the bits of one not"
         unique_scatters (run (law_unique b));

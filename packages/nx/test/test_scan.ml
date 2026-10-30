@@ -12,7 +12,7 @@ open Windtrap
 open Nx_support
 module P = Nx.Ptree
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let numel s = Array.fold_left ( * ) 1 s
 
 let ceil_log2 n =

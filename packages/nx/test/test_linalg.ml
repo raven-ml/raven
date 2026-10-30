@@ -191,7 +191,7 @@ let test_forms () =
        })
 
 let test_rules () =
-  let raises f = raises_match (Exn.invalid_arg ~substring:"t: ") f in
+  let raises f = raises_match (Exn.invalid_arg ~sub:"t: ") f in
   Filling.seen := [];
   raises (fun () ->
       linalg (Cholesky { triangle = Lower; a = zeros D.Float32 [| 2; 3 |] }));
@@ -201,9 +201,7 @@ let test_rules () =
   raises (fun () ->
       linalg (Svd_values { dtype = Float64; a = zeros D.Float64 [| 3 |] }));
   (* A real result of another precision than [a]'s. *)
-  let into sub f =
-    raises_match (Exn.invalid_arg ~substring:("t: " ^ sub)) f
-  in
+  let into sub f = raises_match (Exn.invalid_arg ~sub:("t: " ^ sub)) f in
   into "Svd of complex64 into float64" (fun () ->
       linalg
         (Svd_values { dtype = Float64; a = zeros D.Complex64 [| 3; 3 |] }));
@@ -1151,7 +1149,7 @@ let law_cond =
       near ~msg:"inf" (f64 (Nx.cond r ~p:`Inf x)) (Nx.mul (norm `Inf x) (norm `Inf (Nx.inv x))))
 
 let test_rank_cond_cases () =
-  let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f in
+  let invalid_by ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f in
   let f64 sh a = Nx.create Nx.float64 sh a in
   let ranks ?rtol x = Array.map Int64.to_int (Nx.to_array (Nx.matrix_rank ?rtol x)) in
   let batch =
@@ -1338,7 +1336,7 @@ let test_precision =
   prop "a norm is its value at the wider precision, rounded once"
     precise_case law_precision
 
-let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid_by ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 let test_refusals () =
   let h = Nx.ones Nx.float16 [| 2; 2 |] and r = Nx.ones Nx.float64 [| 2; 3 |] in

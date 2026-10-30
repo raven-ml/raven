@@ -34,9 +34,8 @@ let precedence =
   let open Expr in
   group "Expr.pp precedence"
     [
-      cases
-        ~name:(fun (_, printed) -> Printf.sprintf "prints %s" printed)
-        "fewest parentheses"
+      cases "fewest parentheses"
+        ~id:(fun (_, printed) -> Printf.sprintf "prints %s" printed)
         [
           ((fun () -> p (n + (m * int 2))), "n + m * 2");
           ((fun () -> p ((n + m) * int 2)), "(n + m) * 2");
@@ -63,9 +62,8 @@ let literals =
   let open Expr in
   group "Expr.pp literals"
     [
-      cases
-        ~name:(fun (_, printed) -> Printf.sprintf "prints %s" printed)
-        "values"
+      cases "values"
+        ~id:(fun (_, printed) -> Printf.sprintf "prints %s" printed)
         [
           ((fun () -> p (float 15.)), "15.");
           ((fun () -> p (float 0.1)), "0.1");
@@ -78,9 +76,8 @@ let literals =
           ((fun () -> p (float 0.30000000000000004)), "0.30000000000000004");
         ]
         (fun (print, expected) -> equal Windtrap.string expected (print ()));
-      cases
-        ~name:(fun (_, printed) -> Printf.sprintf "prints %s" printed)
-        "other kinds"
+      cases "other kinds"
+        ~id:(fun (_, printed) -> Printf.sprintf "prints %s" printed)
         [
           ((fun () -> p (is_null (string "a \"b\""))), {|is_null "a \"b\""|});
           ((fun () -> p (if_ (bool true) n (int 0))), "if_ true n 0");
@@ -100,9 +97,8 @@ let literals =
 let names =
   group "Expr.pp column names"
     [
-      cases
-        ~name:(fun (name, _) -> Printf.sprintf "prints the column %S" name)
-        "quoting"
+      cases "quoting"
+        ~id:(fun (name, _) -> Printf.sprintf "prints the column %S" name)
         [
           ("dep_delay", "dep_delay");
           ("x1", "x1");
@@ -212,13 +208,12 @@ let construction =
   let open Expr in
   group "construction"
     [
-      cases
-        ~name:(fun p -> Printf.sprintf "quantile accepts %g" p)
-        "quantile bounds" [ 0.; 0.5; 1. ]
+      cases "quantile bounds"
+        ~id:(fun p -> Printf.sprintf "quantile accepts %g" p)
+        [ 0.; 0.5; 1. ]
         (fun p -> ignore (quantile p x));
-      cases
-        ~name:(fun p -> Printf.sprintf "quantile rejects %g" p)
-        "quantile outside"
+      cases "quantile outside"
+        ~id:(fun p -> Printf.sprintf "quantile rejects %g" p)
         [ -0.1; 1.1; Float.nan; Float.infinity ]
         (fun p -> rejects (fun () -> quantile p x));
       test "Str.slice accepts a zero length and rejects a negative one"

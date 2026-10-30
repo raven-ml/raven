@@ -255,9 +255,9 @@ let test_export () =
   equal ~msg:"the work ran" int 0 (P.queued p);
   equal ~msg:"its bytes" char 'x' a.{n - 1};
   is_none ~msg:"never donated" (Support.donated h);
-  raises_match (Exn.invalid_arg ~substring:"not the host's") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"not the host's") (fun () ->
       ignore (B.export src Bigarray.char));
-  raises_match (Exn.invalid_arg ~substring:"not the host's") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"not the host's") (fun () ->
       ignore (B.export (require_some (B.borrow Rig.host src)) Bigarray.char))
 
 (* Each [(name, f)] raises an exception [pred] accepts. *)
@@ -268,10 +268,8 @@ let test_dead () =
   let b = B.create Rig.host 8 in
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       ignore (Rig.Claim.consume c ~why:"donated" b));
-  raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
-      B.wait b Rig.Read);
-  raises_match (Exn.invalid_arg ~substring:"donated") (fun () ->
-      B.reached b Rig.Read)
+  raises_match (Exn.invalid_arg ~sub:"donated") (fun () -> B.wait b Rig.Read);
+  raises_match (Exn.invalid_arg ~sub:"donated") (fun () -> B.reached b Rig.Read)
 
 (* Every function that reaches a dead buffer's bytes refuses it with the
    consumption's reason; [release] accepts it (claim suite). *)
@@ -284,7 +282,7 @@ let test_dead_refused () =
   let h = B.create Rig.host (1 lsl 16) and m = B.create d 64 in
   consumed h;
   consumed m;
-  let dead = Exn.invalid_arg ~substring:"donated" in
+  let dead = Exn.invalid_arg ~sub:"donated" in
   let other = B.create Rig.host (1 lsl 16) in
   cases_of dead
     [
@@ -2110,16 +2108,16 @@ let tests =
         test "a staged blit holds its buffer against a donation"
           test_staged_blit_claimed;
       ];
-    cases ~timeout ~name:fst
-      "a borrow back on its memory's device lies where that memory does" owners
-      test_borrow_back;
     cases ~timeout
-      ~name:(fun (n, _, _) -> n)
+      "a borrow back on its memory's device lies where that memory does" ~id:fst
+      owners test_borrow_back;
+    cases ~timeout
       "polymorphic comparison ends, and equality refuses one device's buffers"
+      ~id:(fun (n, _, _) -> n)
       distinct test_polymorphic;
-    cases ~timeout
-      ~name:(fun (Kind (n, _, _)) -> n)
-      "a bigarray's buffer is its bytes" kinds test_kind;
+    cases ~timeout "a bigarray's buffer is its bytes"
+      ~id:(fun (Kind (n, _, _)) -> n)
+      kinds test_kind;
     group ~timeout "strings"
       [
         prop "a blit from a string writes its range of the buffer and no other"
@@ -2177,7 +2175,7 @@ let tests =
         test "memory a lost device wrote raises Lost" test_lost_memory;
         test "reached says whether a wait would return at once" test_reached;
         test "reached raises Lost where a wait does" test_reached_lost;
-        cases ~name:fst "a host access keeps its buffer through its wait"
+        cases "a host access keeps its buffer through its wait" ~id:fst
           host_accesses test_wait_keeps;
       ];
     group ~timeout "another function's DMA"
@@ -2189,7 +2187,7 @@ let tests =
         test "a borrow's answer is its memory's owner's" test_dma_borrow;
         test "memory dma described goes back to its driver, never the cache"
           test_dma_uncached;
-        cases ~name:fst "dma refuses memory no driver gives" dma_refusals
+        cases "dma refuses memory no driver gives" ~id:fst dma_refusals
           test_dma_refused;
         test "dma refuses memory held exclusive" test_dma_exclusive;
         test "dma of a lost device's memory raises Lost" test_dma_lost;

@@ -16,7 +16,8 @@
  (action
   (progn
    (run %{test} --corrected)
-   (diff? test_svg.ml test_svg.ml.corrected)
-   (diff? golden/shapes.svg golden/shapes.svg.corrected)
-   (diff? golden/strokes.svg golden/strokes.svg.corrected)
-   (diff? golden/marks.svg golden/marks.svg.corrected))))
+   (concurrent
+    (diff? test_svg.ml test_svg.ml.corrected)
+    (diff? golden/shapes.svg golden/shapes.svg.corrected)
+    (diff? golden/strokes.svg golden/strokes.svg.corrected)
+    (diff? golden/marks.svg golden/marks.svg.corrected)))))

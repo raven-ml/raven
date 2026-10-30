@@ -323,8 +323,7 @@ let papers =
     ]
   in
   cases
-    ~name:(fun (n, _, _) -> n)
-    "papers" realisations
+    "papers" ~id:(fun (n, _, _) -> n) realisations
     (fun (_, realise, values) ->
       let c = realise ~codata:Codata.v2022 Nx.float64 in
       let z = f64 0. in

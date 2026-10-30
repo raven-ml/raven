@@ -91,9 +91,7 @@ let with_gradient =
           let _, dy = Rune.jvp pos Nx.Ptree.tensor reads x0 dx in
           equal (array (float 1e-15)) (floats (gradient x0).a) (floats dy));
       test "a read under jit raises" (fun () ->
-          raises_match
-            (Exn.invalid_arg ~substring:"traced")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"traced") (fun () ->
               Rune.jit Nx.Ptree.(pos @-> returns tensor) reads x0));
     ]
 

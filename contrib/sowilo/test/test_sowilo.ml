@@ -197,13 +197,13 @@ let grayscale_extra_channels c =
    to weigh. *)
 let grayscale_few_channels c =
   let img = Nx.zeros Nx.float32 [| 2; 2; c |] in
-  raises_match (Exn.invalid_arg ~substring:"channels") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"channels") (fun () ->
       to_grayscale img)
 
 (* A rank-2 array has no channel axis, whatever its last dimension. *)
 let test_grayscale_rank_2 () =
   let img = Nx.zeros Nx.float32 [| 2; 3 |] in
-  raises_match (Exn.invalid_arg ~substring:"rank") (fun () -> to_grayscale img)
+  raises_match (Exn.invalid_arg ~sub:"rank") (fun () -> to_grayscale img)
 
 (* ───── Data Type Conversion Tests ───── *)
 
@@ -287,7 +287,7 @@ let gaussian_default_ksize (sigma, ksize) =
 
 let gaussian_bad_ksize ksize =
   let img = create_gray_f 5 5 0.5 in
-  raises_match (Exn.invalid_arg ~substring:"ksize") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"ksize") (fun () ->
       gaussian_blur ~sigma:1.0 ~ksize img)
 
 (* A sigma of 0 or less takes a fixed kernel for a ksize of 1 to 9, the
@@ -329,21 +329,21 @@ let gaussian_derived_sigma (sigma, ksize) =
 
 let gaussian_no_sigma sigma =
   let img = create_gray_f 5 5 0.5 in
-  raises_match (Exn.invalid_arg ~substring:"sigma") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"sigma") (fun () ->
       gaussian_blur ~sigma img)
 
 (* A NaN sigma is neither positive nor 0 or less: nothing derives a kernel
    from it. *)
 let gaussian_nan_sigma ksize =
   let img = create_gray_f 5 5 0.5 in
-  raises_match (Exn.invalid_arg ~substring:"sigma") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"sigma") (fun () ->
       gaussian_blur ~sigma:Float.nan ~ksize img)
 
 (* A sigma whose default ksize [2 * ceil(3 * sigma) + 1] exceeds [max_int]
    has no kernel to blur with. *)
 let gaussian_huge_sigma sigma =
   let img = create_gray_f 5 5 0.5 in
-  raises_match (Exn.invalid_arg ~substring:"sigma") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"sigma") (fun () ->
       gaussian_blur ~sigma img)
 
 let test_median_blur () =
@@ -544,11 +544,11 @@ let laplacian_square k =
 
 let sobel_bad_ksize ksize =
   let img = create_gray_f 5 5 0.5 in
-  raises_match (Exn.invalid_arg ~substring:"ksize") (fun () -> sobel ~ksize img)
+  raises_match (Exn.invalid_arg ~sub:"ksize") (fun () -> sobel ~ksize img)
 
 let laplacian_bad_ksize ksize =
   let img = create_gray_f 5 5 0.5 in
-  raises_match (Exn.invalid_arg ~substring:"ksize") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"ksize") (fun () ->
       laplacian ~ksize img)
 
 let test_canny () =
@@ -688,10 +688,10 @@ let () =
         [
           test "to_grayscale" test_to_grayscale;
           cases "to_grayscale_channels"
-            ~name:(Printf.sprintf "C = %d")
+            ~id:(Printf.sprintf "C = %d")
             [ 3; 4; 5 ] grayscale_extra_channels;
           cases "to_grayscale_few_channels"
-            ~name:(Printf.sprintf "C = %d")
+            ~id:(Printf.sprintf "C = %d")
             [ 1; 2 ] grayscale_few_channels;
           test "to_grayscale_rank_2" test_grayscale_rank_2;
         ];
@@ -706,25 +706,25 @@ let () =
           test "unsharp_mask_larger_kernel"
             test_unsharp_mask_kernel_larger_than_image;
           cases "gaussian_blur_default_ksize"
-            ~name:(fun (sigma, k) -> Printf.sprintf "sigma %g: %d taps" sigma k)
+            ~id:(fun (sigma, k) -> Printf.sprintf "sigma %g: %d taps" sigma k)
             [ (0.4, 5); (1.0, 7); (1.1, 9); (2.0, 13) ]
             gaussian_default_ksize;
-          cases "gaussian_blur_bad_ksize" ~name:string_of_int [ 0; -3; 2; 4 ]
+          cases "gaussian_blur_bad_ksize" ~id:string_of_int [ 0; -3; 2; 4 ]
             gaussian_bad_ksize;
           cases "gaussian_blur_table"
-            ~name:(fun (sigma, taps, _) ->
+            ~id:(fun (sigma, taps, _) ->
               Printf.sprintf "sigma %g, ksize %d" sigma (Array.length taps))
             gaussian_tables gaussian_table;
           cases "gaussian_blur_derived_sigma"
-            ~name:(fun (sigma, k) ->
+            ~id:(fun (sigma, k) ->
               Printf.sprintf "sigma %g, ksize %d" sigma k)
             [ (0.0, 11); (-1.0, 13); (-0.0, 15) ]
             gaussian_derived_sigma;
-          cases "gaussian_blur_no_sigma" ~name:string_of_float
+          cases "gaussian_blur_no_sigma" ~id:string_of_float
             [ 0.0; -0.0; -2.5; Float.nan ] gaussian_no_sigma;
-          cases "gaussian_blur_nan_sigma" ~name:string_of_int [ 1; 3; 11 ]
+          cases "gaussian_blur_nan_sigma" ~id:string_of_int [ 1; 3; 11 ]
             gaussian_nan_sigma;
-          cases "gaussian_blur_huge_sigma" ~name:string_of_float
+          cases "gaussian_blur_huge_sigma" ~id:string_of_float
             [ infinity; 1e300; Float.of_int max_int ]
             gaussian_huge_sigma;
           test "median_blur" test_median_blur;
@@ -736,9 +736,9 @@ let () =
           test "structuring_elements" test_structuring_elements;
           test "erosion" test_erosion;
           test "dilation" test_dilation;
-          cases "constant_int8" ~name:string_of_int [ -128; -5; 0; 127 ]
+          cases "constant_int8" ~id:string_of_int [ -128; -5; 0; 127 ]
             (constant_morphology Nx.int8 int);
-          cases "constant_float32" ~name:string_of_float
+          cases "constant_float32" ~id:string_of_float
             [ Float.neg_infinity; -0.5; -0.; 1.; Float.infinity ]
             (constant_morphology Nx.float32 float_exact);
           test "dilation_kernel_shape" test_dilation_kernel_shape;
@@ -746,25 +746,25 @@ let () =
       group "edge_detection"
         [
           test "sobel" test_sobel;
-          cases "kernels" ~name:(fun (n, _, _) -> n) edge_kernels edge_kernel;
-          cases "sobel_ramp" ~name:(Printf.sprintf "ksize %d") [ 1; 3; 5; 7 ]
+          cases "kernels" ~id:(fun (n, _, _) -> n) edge_kernels edge_kernel;
+          cases "sobel_ramp" ~id:(Printf.sprintf "ksize %d") [ 1; 3; 5; 7 ]
             sobel_ramp;
-          cases "laplacian_square" ~name:(Printf.sprintf "ksize %d")
+          cases "laplacian_square" ~id:(Printf.sprintf "ksize %d")
             [ 1; 3; 5; 7; 9; 11 ] laplacian_square;
-          cases "sobel_bad_ksize" ~name:string_of_int [ -1; 0; 2; 9 ]
+          cases "sobel_bad_ksize" ~id:string_of_int [ -1; 0; 2; 9 ]
             sobel_bad_ksize;
-          cases "laplacian_bad_ksize" ~name:string_of_int [ -1; 0; 2; 10 ]
+          cases "laplacian_bad_ksize" ~id:string_of_int [ -1; 0; 2; 10 ]
             laplacian_bad_ksize;
-          slow "canny" test_canny;
+          slow @@ test "canny" test_canny;
         ];
       group "integration" [ test "pipeline" test_pipeline ];
       group "device_sets"
         [
           cases "an operation computes on its image's set"
-            ~name:(fun (n, _) -> n)
+            ~id:(fun (n, _) -> n)
             set_ops on_another_set;
           cases "an operation computes on a batch cut over two devices"
-            ~name:(fun (n, _) -> n)
+            ~id:(fun (n, _) -> n)
             set_ops cut_over_two;
         ];
     ])

@@ -36,9 +36,10 @@ let gfx12_queue =
 let queues =
   group ~timeout:10. "compute queues"
     [
-      cases ~name:fst
+      cases
         "a shader array selection and a broadcast hold the bits GRBM_GFX_INDEX \
          states"
+        ~id:fst
         (* The SE index at bit 16, the SH (GC 9) or SA index at bit 8, and the
            SH or SA, instance and SE broadcasts at bits 29, 30 and 31
            (gc_9_4_3_sh_mask.h, gc_11_0_0_sh_mask.h, gc_12_0_0_sh_mask.h). *)
@@ -121,10 +122,10 @@ let queues =
             ]
             (words d
                (List.map (fun w -> 4 * w) [ 23; 24; 26; 27; 39; 41; 226; 181 ])));
-      cases ~name:S.version "a GC of no queue descriptor layout is refused"
+      cases "a GC of no queue descriptor layout is refused" ~id:S.version
         [ (10, 3, 0); (8, 0, 0); (13, 0, 0) ]
         (fun gc ->
-          raises_match (Exn.invalid_arg ~substring:"Gfx.mqd") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Gfx.mqd") (fun () ->
               Gfx.mqd (S.gpu gc) gfx12_queue ~base:0 `Pm4 ~xcc:0));
     ]
 

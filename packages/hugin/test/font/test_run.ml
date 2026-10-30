@@ -224,19 +224,19 @@ let runs =
     [
       test "v keeps what it is given" fields;
       test "v copies its arrays" copies;
-      cases ~name:(fun (n, _, _) -> n) "v accepts" clusters_accepted accepts;
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "v raises on" rejected
-        (fun (_, f, sub) -> raises_match (Exn.invalid_arg ~substring:sub) f);
-      cases ~name:fst "raises on an index out of range in" index_cases
+      cases "v accepts" ~id:(fun (n, _, _) -> n) clusters_accepted accepts;
+      cases "v raises on"
+        ~id:(fun (n, _, _) -> n)
+        rejected
+        (fun (_, f, sub) -> raises_match (Exn.invalid_arg ~sub) f);
+      cases "raises on an index out of range in" ~id:fst index_cases
         (fun (_, f) ->
           let glyphs, xs = set "Ho" in
           let r = Run.v ~font ~size:10. ~text:"Ho" ~glyphs ~xs () in
-          raises_match (Exn.invalid_arg ~substring:"index -1 not in [0, 1]")
+          raises_match (Exn.invalid_arg ~sub:"index -1 not in [0, 1]")
             (fun () -> f r (-1));
-          raises_match (Exn.invalid_arg ~substring:"index 2 not in [0, 1]")
-            (fun () -> f r 2));
+          raises_match (Exn.invalid_arg ~sub:"index 2 not in [0, 1]") (fun () ->
+              f r 2));
       test "bounds is the union of the glyphs' ink, placed and scaled"
         bounds_of_ink;
       prop "bounds is the union of the placed and scaled ink boxes"
@@ -254,7 +254,7 @@ let runs =
           let r =
             Run.v ~font ~size:max_float ~text:"H" ~glyphs ~xs:[| max_float |] ()
           in
-          raises_match (Exn.invalid_arg ~substring:"not finite") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"not finite") (fun () ->
               ignore (Run.bounds r)));
       test "pp escapes only quotes, backslashes and controls in the text"
         (fun () ->

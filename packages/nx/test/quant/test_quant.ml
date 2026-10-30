@@ -615,7 +615,7 @@ let known =
   let zeros n = List.init n (fun _ -> 0.) in
   let code c = (if c < 8 then 1. else -1.) *. e2m1.(c land 7) in
   cases "a known block's values"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ("a zero Q8_0 block", q8_0_of 0 (repeat 32 [ 0 ]), zeros 32);
       ("a zero Q4_K block", block Q4_K (repeat 144 [ 0 ]), zeros 256);
@@ -662,7 +662,7 @@ let known =
    them. *)
 let ggml =
   let read name = In_channel.with_open_bin name In_channel.input_all in
-  cases "values are ggml's" ~name:format_name [ Mxfp4_blocks; Q8_0; Q4_K; Q6_K ]
+  cases "values are ggml's" ~id:format_name [ Mxfp4_blocks; Q8_0; Q4_K; Q6_K ]
     (fun f ->
       let name = match f with Mxfp4_blocks -> "mxfp4" | f -> format_name f in
       let b = read ("golden/" ^ name ^ ".blocks") in
@@ -775,9 +775,8 @@ let values_and_products =
             (Nx.to_array (Nx_quant.apply w x)));
       prop "take is the gather of the dequantised weight at positions in range"
         takes take_law;
-      cases ~name:format_name
-        "a position out of range gathers zero bytes, which decode to zeros"
-        formats (fun format ->
+      cases "a position out of range gathers zero bytes, which decode to zeros"
+        ~id:format_name formats (fun format ->
           let w = random_weight ~format [| 3; 4; 256 |] in
           let taken = Nx_quant.take ~axis:0 (positions [ -1; 1; 3 ]) w in
           let zero = if format = Q6_K then -0. else 0. in
@@ -860,7 +859,7 @@ let errors =
     ignore (Nx_quant.apply_experts ~ids:(Nx.zeros Nx.int64 ids) w (x xs))
   in
   cases "refuse, naming what is wrong"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ("mxfp4 codes of one axis", "codes", mxfp4 [| 2 |] [| 32 |]);
       ("mxfp4 k not a multiple of 32", "codes", mxfp4 [| 4; 1 |] [| 4; 8 |]);
@@ -912,7 +911,7 @@ let errors =
       ("take along the last axis, counted from the end", "last axis", take (-1));
       ("take along an axis past the weight's", "out of bounds", take 3);
     ]
-    (fun (_, part, f) -> raises_match (Exn.invalid_arg ~substring:part) f)
+    (fun (_, part, f) -> raises_match (Exn.invalid_arg ~sub:part) f)
 
 (* Placement *)
 
@@ -973,7 +972,7 @@ let decoded w = function
 (* A call that reads a weight's parts whole where they lie cut: its raise
    names the placement to write, [Nx.place (Placement.on s)]. *)
 let read_whole f =
-  raises_match (Exn.invalid_arg ~substring:"; Nx.place (Placement.on s) ") f
+  raises_match (Exn.invalid_arg ~sub:"; Nx.place (Placement.on s) ") f
 
 (* Where [apply] puts its product of a weight lying at [c] with an input of
    [[| m; k |]] whole on each device: cut as the weight is along a leading
@@ -1027,7 +1026,7 @@ let placement_law ((_, w), c) =
       read_whole run;
       if in_place then
         raises_match
-          (Exn.invalid_arg ~substring:"Nx_quant.apply: operand 2 lies at ")
+          (Exn.invalid_arg ~sub:"Nx_quant.apply: operand 2 lies at ")
           run
   | (Lies _ | Unstated) as d ->
       let got = Nx_quant.dequant Nx.float32 wp in
@@ -1564,10 +1563,10 @@ let placements =
            cut_experts)
         cut_experts_law;
       cases
-        ~name:(fun (f, e, t) ->
+        "experts split along their experts give the whole weight's bits, whole \
+         on each device"
+        ~id:(fun (f, e, t) ->
           Printf.sprintf "%s, %d experts over %d" (format_name f) e t)
-        "experts split along their experts give the whole weight's bits, \
-         whole on each device"
         (List.concat_map
            (fun f -> [ (f, 4, 4); (f, 5, 4); (f, 3, 4); (f, 3, 2) ])
            formats)
@@ -1588,9 +1587,9 @@ let placements =
       (* The experts over the mesh's axis [a] and [n] over its axis [b]: each
          device sums its own experts' rows at its own columns. *)
       cases
-        ~name:(fun (f, e) -> Printf.sprintf "%s, %d experts" (format_name f) e)
         "experts cut along their experts and n over a mesh give the bits and \
          placement they give cut along n alone"
+        ~id:(fun (f, e) -> Printf.sprintf "%s, %d experts" (format_name f) e)
         (List.concat_map (fun f -> [ (f, 4); (f, 3) ]) formats)
         (fun (format, e) ->
           let w, ids, x = experts_of ~e format in
@@ -1605,10 +1604,10 @@ let placements =
             (product_bits y);
           equal ~msg:"where the result lies" bool true
             (Nx.Placement.equal (Nx.placement whole) (Nx.placement y)));
-      cases ~name:format_name
+      cases
         "experts whole on each device give rows within their bound, the same \
          on every run"
-        formats (placed_experts Mem.on);
+        ~id:format_name formats (placed_experts Mem.on);
     ]
 
 (* Structure *)
@@ -1622,7 +1621,7 @@ let structure =
             (List.map
                (Format.asprintf "%a" Nx.Ptree.pp_visit)
                (Nx.Ptree.visits description (random_weight [| 3; 4; 64 |]))));
-      cases ~name:format_name "visits a block format's case, then its blocks"
+      cases "visits a block format's case, then its blocks" ~id:format_name
         [ Mxfp4_blocks; Q8_0; Q4_K; Q6_K ] (fun format ->
           equal (list string)
             [

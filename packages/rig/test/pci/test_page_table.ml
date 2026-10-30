@@ -165,13 +165,12 @@ let test_create () =
    memory: the tables' pool is [memory / 512] rounded up to 1 MiB. A fresh
    pool's first block is its start. *)
 let test_main_pool =
-  cases
-    ~name:(fun (memory, boot, kind, _) ->
+  cases "the main pool"
+    ~id:(fun (memory, boot, kind, _) ->
       strf "%d KiB, a boot pool of %d KiB, %s" (memory / kib) (boot / kib)
         (match kind with
         | Page_table.Pool -> "a tables' pool"
         | Main -> "no tables' pool"))
-    "the main pool"
     [
       (66 * mib, mib, Page_table.Pool, 64 * mib);
       (66 * mib, mib, Main, 65 * mib);
@@ -189,9 +188,8 @@ let test_main_pool =
         (Page_table.palloc ~zero:false t page))
 
 let test_create_refusals =
-  cases
-    ~name:(fun (why, _, _, _) -> why)
-    "refuses"
+  cases "refuses"
+    ~id:(fun (why, _, _, _) -> why)
     [
       ("a boot pool of no bytes", 66 * mib, 0, Page_table.Main);
       ("a boot pool smaller than the root table", 66 * mib, page - 1, Main);
@@ -199,14 +197,13 @@ let test_create_refusals =
       ("a tables' pool past memory", mib + page, mib, Pool);
     ]
     (fun (_, memory, boot, kind) ->
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           tables ~memory ~boot ~tables:kind ()))
 
 (* Levels rise from bit 12, the leaf's, to below [bits]. *)
 let test_level_refusals =
-  cases
-    ~name:(fun (why, _, _) -> why)
-    "refuses levels"
+  cases "refuses levels"
+    ~id:(fun (why, _, _) -> why)
     [
       ("a leaf level of 8 KiB pages", [ 13; 21; 30; 39 ], 48);
       ("levels that do not rise", [ 12; 30; 21; 39 ], 48);
@@ -216,7 +213,7 @@ let test_level_refusals =
     (fun (_, levels, bits) ->
       let g = Tables.memory () in
       let s = Space.create ~base (1 lsl 40) in
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Page_table.create ~base:(Space.base s)
             { (format g) with levels; bits }
             s ~memory:(66 * mib) ~boot:mib ~tables:Main
@@ -225,14 +222,13 @@ let test_level_refusals =
 (* The largest page the fake format maps is 1 GiB: the tables' base must be a
    multiple of it. *)
 let test_base_refusals =
-  cases
-    ~name:(fun base -> strf "base 0x%x" base)
-    "refuses a base off the largest page"
+  cases "refuses a base off the largest page"
+    ~id:(fun base -> strf "base 0x%x" base)
     [ page; 2 * mib; gib + (2 * mib); -gib ]
     (fun b ->
       let g = Tables.memory () in
       let s = Space.create ~base (1 lsl 40) in
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Page_table.create ~base:b (format g) s ~memory:(66 * mib) ~boot:mib
             ~tables:Main
             ~pages:[ (page, page) ]))
@@ -402,9 +398,8 @@ let test_fragments =
 (* Fragments the rule gives, at the space's base: ranges that follow each other
    are one run, and a block must be aligned in both address spaces. *)
 let test_fragment_cases =
-  cases
-    ~name:(fun (what, _, _, _) -> what)
-    "fragments"
+  cases "fragments"
+    ~id:(fun (what, _, _, _) -> what)
     [
       ("three pages", 0, [ (0, 0x3000) ], [ 1; 1; 0 ]);
       ("two ranges, one run", 0, [ (0, page); (page, page) ], [ 1; 1 ]);
@@ -470,9 +465,8 @@ let test_gib_pages () =
    refused call leaves the tables as they were. *)
 let test_map_refusals =
   let va = base + (2 * mib) and large = base + (4 * mib) in
-  cases
-    ~name:(fun (what, _) -> what)
-    "refuses"
+  cases "refuses"
+    ~id:(fun (what, _) -> what)
     [
       ( "a map whose first address is mapped",
         fun t ->
@@ -524,16 +518,15 @@ let test_map_refusals =
         (require_some
            (Page_table.map t ~va:large System [ (0x80_0000, 2 * mib) ]));
       let before = pages g t in
-      raises_match (Exn.invalid_arg ~substring:"") (fun () -> f t);
+      raises_match (Exn.invalid_arg ~sub:"") (fun () -> f t);
       equal ~msg:"the tables as they were" (list entry) before (pages g t))
 
 (* Physical addresses *)
 
 (* An entry holds from 12 bits of a physical address, a page's, to 61. *)
 let test_pa_bits_create =
-  cases
-    ~name:(fun (b, _) -> strf "pa_bits %d" b)
-    "create takes pa_bits from 12 to 61"
+  cases "create takes pa_bits from 12 to 61"
+    ~id:(fun (b, _) -> strf "pa_bits %d" b)
     [
       (min_int, false);
       (0, false);
@@ -554,13 +547,13 @@ let test_pa_bits_create =
           ~pages:[ (page, page) ]
       in
       if takes then equal int pa_bits (Page_table.pa_bits (create ()))
-      else raises_match (Exn.invalid_arg ~substring:"") create)
+      else raises_match (Exn.invalid_arg ~sub:"") create)
 
 (* Entries of 32 bits of address hold memory up to 4 GiB. A refused map writes
    nothing, and the tables stay as they were. *)
 let test_pa_bits_map =
   let top = 1 lsl 32 in
-  cases ~name:fst "map holds memory below 2^pa_bits"
+  cases "map holds memory below 2^pa_bits" ~id:fst
     [
       ("a range that ends at the bound", ([ (top - page, page) ], true));
       ("a range that ends a page past it", ([ (top - page, 2 * page) ], false));
@@ -589,7 +582,7 @@ let test_pa_bits_map =
              (before @ expect_mapping ~base m))
           (pages g t)
       else begin
-        raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"") (fun () ->
             Page_table.map t ~va Gpu ranges);
         equal ~msg:"entries, zeroes and flushes" int touches g.touches;
         equal ~msg:"the tables as they were" (list entry) before (pages g t)
@@ -598,9 +591,9 @@ let test_pa_bits_map =
 (* A map flushes whatever the GPU answers; an unmap answers it, its entries gone
    either way. *)
 let test_unmap_confirms =
-  cases
-    ~name:(fun c -> if c then "confirmed" else "not confirmed")
-    "unmap answers whether the GPU confirmed its flush" [ true; false ]
+  cases "unmap answers whether the GPU confirmed its flush"
+    ~id:(fun c -> if c then "confirmed" else "not confirmed")
+    [ true; false ]
     (fun confirms ->
       let t, g = tables () in
       g.confirms <- confirms;
@@ -721,7 +714,7 @@ let test_pfree_tables () =
   let mapped = pages g t in
   List.iter
     (fun table ->
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Page_table.pfree t table))
     (snd (walk g t));
   equal ~msg:"the tables as they were" (list entry) mapped (pages g t)
@@ -829,9 +822,8 @@ let test_last_entry =
 (* The tables of an address *)
 
 let test_tables_path =
-  cases
-    ~name:(fun (what, _, _, _) -> what)
-    "tables"
+  cases "tables"
+    ~id:(fun (what, _, _, _) -> what)
     [
       ("1 GiB at 1 GiB", gib, gib, 2);
       ("2 MiB at 2 MiB", 2 * mib, 2 * mib, 3);
@@ -1100,10 +1092,10 @@ let test_failed_machine () =
   break f;
   let va = base + (2 * mib) in
   ignore (require_some (Page_table.map t ~va Gpu [ (0, 3 * page) ]));
-  raises_match ~msg:"a map over it" (Exn.invalid_arg ~substring:"") (fun () ->
+  raises_match ~msg:"a map over it" (Exn.invalid_arg ~sub:"") (fun () ->
       Page_table.map t ~va:(va + page) Gpu [ (0, page) ]);
-  raises_match ~msg:"an unmap past it" (Exn.invalid_arg ~substring:"")
-    (fun () -> ignore (Page_table.unmap t ~va (4 * page)));
+  raises_match ~msg:"an unmap past it" (Exn.invalid_arg ~sub:"") (fun () ->
+      ignore (Page_table.unmap t ~va (4 * page)));
   unmap t ~va (3 * page);
   is_some ~msg:"mapped again" (Page_table.map t ~va Gpu [ (0, page) ])
 
@@ -1131,9 +1123,9 @@ let real_formats =
 (* A map of the last page the tables reach writes the last entry of each level,
    numbered as the format numbers them; the address past it is refused. *)
 let test_real_formats =
-  cases
-    ~name:(fun (name, _, _, _, _) -> name)
-    "real formats" real_formats
+  cases "real formats"
+    ~id:(fun (name, _, _, _, _) -> name)
+    real_formats
     (fun (_, first, levels, bits, counts) ->
       let mem = Hashtbl.create 16 and writes = ref [] in
       let bottom = first + List.length levels - 1 in
@@ -1175,7 +1167,7 @@ let test_real_formats =
         (list (pair int int))
         (List.mapi (fun d n -> (first + d, n - 1)) counts)
         (List.rev !writes);
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Page_table.map t ~va:(last + page) Gpu [ (0, page) ]))
 
 (* Booting *)
@@ -1204,9 +1196,8 @@ let sizes ranges = List.map snd ranges
 let sum = List.fold_left ( + ) 0
 
 let test_contiguous =
-  cases
-    ~name:(fun (n, _) -> strf "%d bytes" n)
-    "a contiguous allocation"
+  cases "a contiguous allocation"
+    ~id:(fun (n, _) -> strf "%d bytes" n)
     [
       (1, page); (3 * mib, 2 * mib); (100 * kib, 64 * kib); (64 * kib, 64 * kib);
     ]

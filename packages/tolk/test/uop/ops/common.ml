@@ -31,9 +31,7 @@ let sint = Testable.make ~pp:pp_sint ~equal:equal_sint
 let shape = list sint
 let device = Testable.make ~pp:Ops.pp_device ~equal:Ops.equal_device
 let addr_space = Testable.make ~pp:Dtype.pp_addr_space ~equal:( = )
-
-let rejects ?__POS__ f =
-  raises_match ?__POS__ (Exn.invalid_arg ?substring:None) f
+let rejects ?__POS__ f = raises_match ?__POS__ (Exn.invalid_arg ?sub:None) f
 
 (* Integers and values, as tests write them *)
 

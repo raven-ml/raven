@@ -84,10 +84,10 @@ let descriptors =
             (field
                (Template.fill (fun _ -> 0x1_ffff_ffff_ff00L) t)
                (1649, 1641)));
-      cases ~name:S.class_name
+      cases
         "dynamic shared memory adds to the block's own, in the largest \
          configuration"
-        S.classes (fun cls ->
+        ~id:S.class_name S.classes (fun cls ->
           let l = launch cls in
           let own = 0x19000 - Launch.dynamic_shared l in
           let size, shift, configs =
@@ -123,25 +123,24 @@ let limits =
       test "a block takes 1024 threads along X and Y, 64 along Z" (fun () ->
           equal (list int) [ 1024; 1024; 64 ]
             (List.map Qmd.max_size [ Block X; Block Y; Block Z ]));
-      cases ~name:S.class_name "more than two releases are refused" S.classes
+      cases "more than two releases are refused" ~id:S.class_name S.classes
         (fun cls ->
           let r = Qmd.Release (Template.Int 0x1000, Int 1) in
           ignore (qmd cls { base with releases = [ r; r ] } : string);
-          raises_match (Exn.invalid_arg ~substring:"Qmd.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qmd.make") (fun () ->
               qmd cls { base with releases = [ r; r; r ] }));
-      cases ~name:fst "a negative known value is refused"
+      cases "a negative known value is refused" ~id:fst
         [
           ("a program address", { base with program = Int (-1) });
           ("a size", { base with grid = (Int (-1), zero, zero) });
         ]
         (fun (_, d) ->
-          raises_match (Exn.invalid_arg ~substring:"unsigned") (fun () ->
-              qmd S.ada d));
-      cases ~name:string_of_int "a bank the launch lacks is refused"
+          raises_match (Exn.invalid_arg ~sub:"unsigned") (fun () -> qmd S.ada d));
+      cases "a bank the launch lacks is refused" ~id:string_of_int
         [ -1; 1; 7; 8 ] (fun i ->
-          raises_match (Exn.invalid_arg ~substring:"Qmd.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qmd.make") (fun () ->
               qmd S.ada { base with banks = [ (i, Template.Int 0x1000) ] }));
-      cases ~name:fst "a kernel at Launch.make's bounds has a descriptor"
+      cases "a kernel at Launch.make's bounds has a descriptor" ~id:fst
         [
           ("255 registers", S.kernel ~registers:255 ());
           ( "a bank of 64 KiB",
@@ -228,9 +227,8 @@ let dump cls =
 let slots =
   group ~timeout:10. "slots"
     [
-      cases ~name:S.class_name
-        "a value left to its slot, filled, is the value known" S.classes
-        (fun cls ->
+      cases "a value left to its slot, filled, is the value known"
+        ~id:S.class_name S.classes (fun cls ->
           equal string (named cls known).bytes
             (Template.fill
                (fun i -> Int64.of_int (snd values.(i)))

@@ -724,7 +724,7 @@ let swap () =
   (* each kernel overwrites what the other reads as it was given *)
   let a = copies ~into:x ~from:y and b = copies ~into:y ~from:x in
   let kg = Ops.sink [ Ops.after x [ a ]; Ops.after y [ b ] ] in
-  raises_match (Exn.invalid_arg ~substring:"cycle") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"cycle") (fun () ->
       Schedule.create_schedule kg)
 
 (* Running the schedule of [kg] writes what [kg] does. *)
@@ -850,19 +850,19 @@ let refuses_several_devices () =
   in
   let a = copies ~into:x ~from:y in
   let b = reads ~into:z ~from:x [ Ops.after x [ a ] ] in
-  raises_match (Exn.invalid_arg ~substring:"several devices") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"several devices") (fun () ->
       Schedule.create_schedule
         (Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ]))
 
 let not_an_effect () =
   let kg = Ops.sink [ Ops.after x [ Ops.float 2.0 ] ] in
   let const = Format.asprintf "%a" Op.pp Const in
-  raises_match (Exn.invalid_arg ~substring:const) (fun () ->
+  raises_match (Exn.invalid_arg ~sub:const) (fun () ->
       Schedule.create_schedule kg)
 
 let not_storage () =
   let kg = Ops.sink [ Ops.after x [ copies ~into:x ~from:(Ops.float 2.0) ] ] in
-  raises_match (Exn.invalid_arg ~substring:"buffer state") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"buffer state") (fun () ->
       Schedule.create_schedule kg)
 
 let loop = Ops.range ~axis_type:Loop (Int 4) [ 0 ]
@@ -903,7 +903,7 @@ let ended_store () =
   let kg =
     Ops.sink [ Ops.after x [ Ops.end_ (Ops.store x (Ops.float 2.0)) [ loop ] ] ]
   in
-  raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+  raises_match (Exn.invalid_arg ?sub:None) (fun () ->
       Schedule.create_schedule kg)
 
 let bound_argument () =
@@ -1271,7 +1271,7 @@ let several_devices () =
   in
   let input = require_some (List.find_map moved (buffers_of big)) in
   let across = Ops.substitute ~calls:Skip ~pass:Fixed_point big [ input ] in
-  raises_match (Exn.invalid_arg ~substring:"same device") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"same device") (fun () ->
       Schedule.create_linear_with_vars across)
 
 let variables =
@@ -1280,8 +1280,8 @@ let variables =
       test "two variables of one name bound to two values are refused"
         (fun () ->
           let big = rebound 7 in
-          raises_match (Exn.invalid_arg ~substring:"bind mismatch on v")
-            (fun () -> Schedule.create_linear_with_vars big));
+          raises_match (Exn.invalid_arg ~sub:"bind mismatch on v") (fun () ->
+              Schedule.create_linear_with_vars big));
       test "two variables of one name bound to one value are one" (fun () ->
           equal
             (list (pair string int))

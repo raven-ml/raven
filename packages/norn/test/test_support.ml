@@ -26,7 +26,7 @@ let all =
     ]
 
 let printing =
-  cases ~name:fst "pp"
+  cases "pp" ~id:fst
     [
       ("(-inf, inf)", S.Real);
       ("(0, inf)", S.Greater 0.);

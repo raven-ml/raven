@@ -591,47 +591,49 @@ let allow_half8 =
     Golden.graph (name ^ "_allow_half8.golden") (fun () ->
         coalesce (kernel name))
   in
-  group ~tags:[ "allow_half8" ] "ALLOW_HALF8"
-    [
-      test "the suite runs this group with ALLOW_HALF8=1" (fun () ->
-          equal (option string) (Some "1") (Sys.getenv_opt "ALLOW_HALF8"));
-      half8 "half";
-      half8 "half8";
-      hand_built "accesses_allow_half8.golden" vector;
-      prop "coalescing preserves the kernel's writes" kernels_of_runs
-        (preserves_writes vector);
-      test "eight halves are one load of eight" (fun () ->
-          let half = Call.param ~shape:[ Int 64 ] 2 Float16 in
-          equal runs
-            [ (0, 8) ]
-            (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));
-      test "eight floats are still two loads of four" (fun () ->
-          equal runs
-            [ (0, 4); (4, 4) ]
-            (accesses Op.Load (coalesce (loads buf (List.init 8 Fun.id)))));
-    ]
+  tag "allow_half8"
+  @@ group "ALLOW_HALF8"
+       [
+         test "the suite runs this group with ALLOW_HALF8=1" (fun () ->
+             equal (option string) (Some "1") (Sys.getenv_opt "ALLOW_HALF8"));
+         half8 "half";
+         half8 "half8";
+         hand_built "accesses_allow_half8.golden" vector;
+         prop "coalescing preserves the kernel's writes" kernels_of_runs
+           (preserves_writes vector);
+         test "eight halves are one load of eight" (fun () ->
+             let half = Call.param ~shape:[ Int 64 ] 2 Float16 in
+             equal runs
+               [ (0, 8) ]
+               (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));
+         test "eight floats are still two loads of four" (fun () ->
+             equal runs
+               [ (0, 4); (4, 4) ]
+               (accesses Op.Load (coalesce (loads buf (List.init 8 Fun.id)))));
+       ]
 
 let dmc =
   let same name sink =
     test name (fun () -> equal Uops.uop sink (coalesce sink))
   in
-  group ~tags:[ "dmc" ] "DMC"
-    ([
-       test "the suite runs this group with DMC=1" (fun () ->
-           equal (option string) (Some "1") (Sys.getenv_opt "DMC"));
-       same "the hand-built accesses are left alone"
-         (Golden.sink "accesses_input.golden");
-       same "a gated load is left alone, and not rejected"
-         (Ops.sink
-            [
-              Ops.load
-                (at buf (Ops.int 0))
-                [ Ops.float ~dtype:Float32 0.; Ops.bool true ];
-            ]);
-     ]
-    @ List.map
-        (fun name -> same (name ^ " is left alone") (kernel name))
-        kernels)
+  tag "dmc"
+  @@ group "DMC"
+       ([
+          test "the suite runs this group with DMC=1" (fun () ->
+              equal (option string) (Some "1") (Sys.getenv_opt "DMC"));
+          same "the hand-built accesses are left alone"
+            (Golden.sink "accesses_input.golden");
+          same "a gated load is left alone, and not rejected"
+            (Ops.sink
+               [
+                 Ops.load
+                   (at buf (Ops.int 0))
+                   [ Ops.float ~dtype:Float32 0.; Ops.bool true ];
+               ]);
+        ]
+       @ List.map
+           (fun name -> same (name ^ " is left alone") (kernel name))
+           kernels)
 
 let () =
   exit

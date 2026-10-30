@@ -57,14 +57,12 @@ let photutils =
   group "photutils"
     [
       cases
-        ~name:(fun (row, col, r, _) ->
-          Printf.sprintf "circle (%g, %g) r=%g" row col r)
-        "exact circles" Reference.pixel_circles
+        "exact circles" ~id:(fun (row, col, r, _) ->
+          Printf.sprintf "circle (%g, %g) r=%g" row col r) Reference.pixel_circles
         (fun (row, col, r, s) -> near (sum (circle (row, col) r)) s);
       cases
-        ~name:(fun (row, col, i, o, _) ->
-          Printf.sprintf "annulus (%g, %g) %g-%g" row col i o)
-        "exact annuli" Reference.pixel_annuli
+        "exact annuli" ~id:(fun (row, col, i, o, _) ->
+          Printf.sprintf "annulus (%g, %g) %g-%g" row col i o) Reference.pixel_annuli
         (fun (row, col, i, o, s) -> near (sum (annulus (row, col) i o)) s);
     ]
 
@@ -93,15 +91,13 @@ let shapes =
   group "photutils and regions"
     [
       cases
-        ~name:(fun (row, col, a, b, angle, _) ->
-          Printf.sprintf "ellipse (%g, %g) %g×%g at %g" row col a b angle)
-        "exact ellipses" Reference.pixel_ellipses
+        "exact ellipses" ~id:(fun (row, col, a, b, angle, _) ->
+          Printf.sprintf "ellipse (%g, %g) %g×%g at %g" row col a b angle) Reference.pixel_ellipses
         (fun (row, col, a, b, angle, s) ->
           near (sum (ellipse_at (row, col) a b angle)) s);
       cases
-        ~name:(fun (vs, _) -> Printf.sprintf "%d vertices from (%g, %g)"
-                                (Array.length vs / 2) vs.(0) vs.(1))
-        "exact polygons" Reference.pixel_polygons
+        "exact polygons" ~id:(fun (vs, _) -> Printf.sprintf "%d vertices from (%g, %g)"
+                                (Array.length vs / 2) vs.(0) vs.(1)) Reference.pixel_polygons
         (fun (vs, s) -> near (sum (polygon_of vs)) s);
     ]
 
@@ -569,7 +565,7 @@ let errors =
                "Region.weights: the radius at [2] is -3, not a size") (fun () ->
               Region.weights r (plane [| 40; 40 |])));
       test "a NaN radius raises" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"the radius is nan")
+          raises_match (Exn.invalid_arg ~sub:"the radius is nan")
             (fun () ->
               Region.weights (circle (20., 20.) Float.nan) (plane [| 40; 40 |])));
       test "an inner radius above the outer raises" (fun () ->
@@ -587,7 +583,7 @@ let errors =
           in
           let raises_fold f =
             raises_match
-              (Exn.invalid_arg ~substring:"the transforms fold the grid")
+              (Exn.invalid_arg ~sub:"the transforms fold the grid")
               f
           in
           raises_fold (fun () ->

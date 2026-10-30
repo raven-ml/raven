@@ -32,14 +32,12 @@ let fails ?(naming = "") ~path f =
     (function
       | Failure m ->
           String.starts_with ~prefix:(path ^ ": ") m
-          && (naming = "" || Exn.failure ~substring:naming (Failure m))
+          && (naming = "" || Exn.failure ~sub:naming (Failure m))
       | _ -> false)
     (fun () -> ignore (f ()))
 
 let invalid ~by f =
-  raises_match
-    (Exn.invalid_arg ~substring:(by ^ ": "))
-    (fun () -> ignore (f ()))
+  raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) (fun () -> ignore (f ()))
 
 (* [loads_or_fails ~path f] asserts that [f ()] returns or raises [Failure]
    naming [path]: a corrupted file never raises anything else. *)

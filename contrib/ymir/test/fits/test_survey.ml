@@ -58,7 +58,6 @@ let check = function
 
 let agree =
   cases
-    ~name:(fun l -> String.concat " " (List.filteri (fun i _ -> i < 4) l))
-    "real files read as astropy reads them" expected check
+    "real files read as astropy reads them" ~id:(fun l -> String.concat " " (List.filteri (fun i _ -> i < 4) l)) expected check
 
 let () = exit @@ run "Fits survey files" [ agree ]

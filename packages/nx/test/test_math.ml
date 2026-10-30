@@ -13,7 +13,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* A host value of [dt] and shape [[n]] over drawn bytes. *)
 let drawn (type s) (dt : (float, s) D.t) n : (float, s, Nx.host) Nx.t Gen.t =
@@ -101,7 +101,7 @@ let law_narrow (f : 's. (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t)
 
 let narrow name (f : 's. (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t) =
   cases (name ^ " at a narrow float is float32's, rounded once")
-    ~name:(fun (D.Any dt) -> D.name dt)
+    ~id:(fun (D.Any dt) -> D.name dt)
     narrow_dtypes
     (law_narrow (fun x -> f x))
 
@@ -247,7 +247,7 @@ let math =
         test "a format without infinities or NaN stores as a cast"
           no_infinities;
         cases "a function of floats refuses another dtype"
-          ~name:(fun (n, _) -> n)
+          ~id:(fun (n, _) -> n)
           [
             ("Nx.rsqrt", fun () -> ignore (Nx.rsqrt (Nx.zeros Nx.int32 [| 1 |])));
             ("Nx.hypot", fun () ->

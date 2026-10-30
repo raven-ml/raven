@@ -154,7 +154,7 @@ let operations =
           equal (list int)
             (List.init (List.length declared) Fun.id)
             (List.map Op.to_int declared));
-      cases ~name:show "pp is Ops. followed by the name" declared (fun o ->
+      cases "pp is Ops. followed by the name" ~id:show declared (fun o ->
           equal string ("Ops." ^ Op.name o) (show o));
       test "names words in upper case separated by underscores" (fun () ->
           equal string "ADD" (Op.name Op.Add);
@@ -162,7 +162,7 @@ let operations =
       prop "of_string reads back name" gen_op (fun o ->
           equal (result op string) (Ok o) (Op.of_string (Op.name o)));
       cases "of_string reads only an operation's bare name"
-        ~name:(Printf.sprintf "%S")
+        ~id:(Printf.sprintf "%S")
         [ "Ops.ADD"; "add"; "Add"; " ADD"; ""; "PYLITERAL"; "REWRITE_ERROR" ]
         (fun s -> contains ~sub:s (require_error (Op.of_string s)));
     ]
@@ -340,7 +340,7 @@ let named_sets =
           equal set_w
             (Op.Set.union Op.Set.alu (Op.Set.of_list [ Op.Cast; Op.Bitcast ]))
             Op.Set.elementwise);
-      cases ~name:fst "is binary"
+      cases "is binary" ~id:fst
         [
           ("commutative", Op.Set.commutative);
           ("associative", Op.Set.associative);

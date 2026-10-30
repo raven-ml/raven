@@ -105,9 +105,9 @@ let test_rules () =
     Nx.place Count.on (value (A.of_array D.Int32 [| 2; 3 |] (Array.make 6 0l)))
   in
   C.reset ();
-  raises_match (Exn.invalid_arg ~substring:"t: ") (fun () -> sort ~k:4 1 x);
-  raises_match (Exn.invalid_arg ~substring:"t: ") (fun () -> sort 2 x);
-  raises_match (Exn.invalid_arg ~substring:"t: ") (fun () -> sort ~k:(-1) 0 x);
+  raises_match (Exn.invalid_arg ~sub:"t: ") (fun () -> sort ~k:4 1 x);
+  raises_match (Exn.invalid_arg ~sub:"t: ") (fun () -> sort 2 x);
+  raises_match (Exn.invalid_arg ~sub:"t: ") (fun () -> sort ~k:(-1) 0 x);
   equal ~msg:"kernel calls" int 0 (C.calls ())
 
 let test_split () =

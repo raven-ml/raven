@@ -15,7 +15,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let value dt s xs : (float, _, Nx.host) Nx.t =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
 let float_pp ppf v = Format.fprintf ppf "%h" v
@@ -661,7 +661,7 @@ let narrow_dtypes =
 let narrow name
     (f : 's. (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t) =
   cases (name ^ " at a narrow float is float32's, rounded once")
-    ~name:(fun (D.Any dt) -> D.name dt)
+    ~id:(fun (D.Any dt) -> D.name dt)
     narrow_dtypes
     (fun (D.Any dt) ->
       match D.kind dt with

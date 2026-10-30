@@ -222,13 +222,13 @@ let gguf_group =
           equal ~msg:"version" int 3 (Gguf.version g);
           equal (list (pair string gguf_value)) metadata (Gguf.metadata g));
       cases
-        ~name:(fun (v, a, s) ->
-          Printf.sprintf "version %d, alignment %s, shift %d" v
-            (Option.fold ~none:"default" ~some:string_of_int a)
-            s)
         "a tensor loads its bytes as stored, at any offset of the file, over \
          the file's pages where the offset is a multiple of its element's size \
          and into memory of its own elsewhere"
+        ~id:(fun (v, a, s) ->
+          Printf.sprintf "version %d, alignment %s, shift %d" v
+            (Option.fold ~none:"default" ~some:string_of_int a)
+            s)
         [
           (3, None, 0);
           (2, None, 0);
@@ -258,10 +258,9 @@ let gguf_group =
                   (if position mod size = 0 then Over_file else Own_memory)
                   (memory_of t))
             gguf_tensors positions);
-      cases
-        ~name:(fun (_, tag, ty, _) ->
+      cases "a scalar type loads at its dtype"
+        ~id:(fun (_, tag, ty, _) ->
           Printf.sprintf "%s, tag %d" (List.assoc ty gguf_dtypes) tag)
-        "a scalar type loads at its dtype"
         [
           ("f32", 0, Gguf.F32, D.Any D.Float32);
           ("f16", 1, Gguf.F16, D.Any D.Float16);
@@ -286,10 +285,10 @@ let gguf_group =
          ggml-common.h lays out its block structures, under its ggml_type
          tag. *)
       cases
-        ~name:(fun (tag, ty, _, _) ->
-          Printf.sprintf "%s, tag %d" (List.assoc ty gguf_dtypes) tag)
         "a block format loads as its rows' bytes, at uint8, and refuses a row \
          of no whole number of blocks"
+        ~id:(fun (tag, ty, _, _) ->
+          Printf.sprintf "%s, tag %d" (List.assoc ty gguf_dtypes) tag)
         [
           (2, Gguf.Q4_0, 32, 18);
           (3, Gguf.Q4_1, 32, 20);
@@ -364,14 +363,14 @@ let gguf_group =
           flips_load_or_fail Nx_io.load_gguf ~upto:600 (gguf_file ()));
       test "an absent tensor's info fails" (fun () ->
           let g = Nx_io.load_gguf (file (gguf_file ())) in
-          raises_match (Exn.failure ~substring:"absent") (fun () ->
+          raises_match (Exn.failure ~sub:"absent") (fun () ->
               Gguf.info "absent" g));
       (let one = [ ("w", 0, [ 1 ], "abcd") ] in
        let raw ?magic ?version ?alignment ?shift kvs tensors () =
          file (gguf ?magic ?version ?alignment ?shift kvs tensors)
        in
        let count n = "GGUF" ^ le 3 4 ^ u64 n ^ u64 0 in
-       cases ~name:fst "a malformed file fails, naming it"
+       cases "a malformed file fails, naming it" ~id:fst
          [
            ("an empty file", fun () -> file "");
            ("a bad magic", raw ~magic:"GGUG" [] one);

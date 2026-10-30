@@ -180,7 +180,7 @@ let elf_machine = function
 let objects =
   group "objects"
     [
-      cases ~name:Fun.id "compiles to a relocatable ELF object for"
+      cases "compiles to a relocatable ELF object for" ~id:Fun.id
         [ "x86_64,x86-64"; "arm64,generic"; "riscv64,rv64g" ] (fun arch ->
           let machine = List.hd (String.split_on_char ',' arch) in
           is_relocatable_elf64 ~machine:(elf_machine machine)
@@ -195,7 +195,7 @@ let objects =
       test "one source compiles to the same bytes" (fun () ->
           let arch = host_machine ^ ",native" in
           equal string (compile arch add) (compile arch add));
-      cases ~name:fst "a square root is one instruction on"
+      cases "a square root is one instruction on" ~id:fst
         [ ("x86_64,x86-64", "sqrtss"); ("arm64,generic", "fsqrt") ]
         (fun (arch, instruction) ->
           let text = disassembly arch square_root in
@@ -208,7 +208,7 @@ let objects =
 let tinygrad =
   group "as tinygrad"
     [
-      cases ~name:fst "the add kernel moves vectors with vmov iff AVX is on:"
+      cases "the add kernel moves vectors with vmov iff AVX is on:" ~id:fst
         [ ("x86_64,x86-64,avx", true); ("x86_64,x86-64,-avx", false) ]
         (fun (arch, vmov) ->
           let text = disassembly arch (rendered arch "add") in
@@ -260,7 +260,7 @@ let execution =
 let features =
   group "features"
     [
-      cases ~name:fst "a half addition on arm64 converts iff fp16 is off:"
+      cases "a half addition on arm64 converts iff fp16 is off:" ~id:fst
         [ ("arm64,generic", true); ("arm64,generic,fp16", false) ]
         (fun (arch, fcvt) ->
           let text = disassembly arch (rendered arch "half_add") in
@@ -277,9 +277,8 @@ let features =
       (* Clang 18 crashed splitting a vector of more than 16 halves that it
          negates, takes the absolute value of or copies a sign to, for these
          processors, which prefer 256-bit vectors. *)
-      cases
-        ~name:(fun (arch, name) -> arch ^ " " ^ name)
-        "a kernel over more than 16 halves compiles for AVX-512"
+      cases "a kernel over more than 16 halves compiles for AVX-512"
+        ~id:(fun (arch, name) -> arch ^ " " ^ name)
         (List.concat_map
            (fun arch ->
              List.map
@@ -295,7 +294,7 @@ let features =
             (compile arch (rendered arch name)));
       (* LLVM 18's straight-line vectorizer narrowed the four indices into
          invalid IR for these processors, and Clang 18 crashed on it. *)
-      cases ~name:Fun.id "four clamped gathers compile for AVX-512 on"
+      cases "four clamped gathers compile for AVX-512 on" ~id:Fun.id
         [ "x86_64,x86-64-v4"; "x86_64,skylake-avx512"; "x86_64,znver4" ]
         (fun arch ->
           is_relocatable_elf64 ~machine:(elf_machine "x86_64")
@@ -311,20 +310,19 @@ let features =
 let architectures =
   group "architectures"
     [
-      cases ~name:(Printf.sprintf "%S")
-        "an architecture of fewer than two fields is refused, named:"
-        [ ""; "x86_64"; "arm64" ] (fun arch ->
+      cases "an architecture of fewer than two fields is refused, named:"
+        ~id:(Printf.sprintf "%S") [ ""; "x86_64"; "arm64" ] (fun arch ->
           raises_match
-            (Exn.invalid_arg ~substring:("'" ^ arch ^ "'"))
+            (Exn.invalid_arg ~sub:("'" ^ arch ^ "'"))
             (fun () -> Compiler_cpu.clang arch));
-      cases ~name:fst "another machine is refused, named:"
+      cases "another machine is refused, named:" ~id:fst
         [
           ("mips,native", "mips");
           ("aarch64,native", "aarch64");
           ("X86_64,native", "X86_64");
         ]
         (fun (arch, machine) ->
-          raises_match (Exn.invalid_arg ~substring:machine) (fun () ->
+          raises_match (Exn.invalid_arg ~sub:machine) (fun () ->
               Compiler_cpu.clang arch));
     ]
 
@@ -352,42 +350,46 @@ let errors =
 let missing_clang = "/nonexistent/clang"
 
 let without_clang =
-  group ~tags:[ "no-clang" ] "without Clang"
-    [
-      test "a compile raises Compile_error naming the program CC names"
-        (fun () ->
-          raises_match
-            (function
-              | Compiler.Compile_error msg -> has_infix ~affix:missing_clang msg
-              | _ -> false)
-            (fun () ->
-              Compiler.compile
-                (Compiler_cpu.clang (host_machine ^ ",native"))
-                increment));
-      test "a cached object is served without a Clang that runs" (fun () ->
-          let clang = Compiler_cpu.clang (host_machine ^ ",native") in
-          let table = Option.get (Compiler.cachekey clang) in
-          Helpers.Diskcache.put ~table increment "cached object";
-          equal string "cached object" (Compiler.compile_cached clang increment));
-      test "an object cached by the default compiler is not served under CC"
-        (fun () ->
-          let cachedb = Helpers.cachedb in
-          let table =
-            match
-              Disk_cache.child ~env:[ ("CC", "clang") ] ~cachedb "table"
-            with
-            | Ok table -> table
-            | Error err -> failf "the default compiler named no table: %s" err
-          in
-          let src = increment ^ "\n/* compiled by clang */\n" in
-          Helpers.Diskcache.put ~table src "clang's object";
-          raises_match
-            (function Compiler.Compile_error _ -> true | _ -> false)
-            (fun () ->
-              Compiler.compile_cached
-                (Compiler_cpu.clang (host_machine ^ ",native"))
-                src));
-    ]
+  tag "no-clang"
+  @@ group "without Clang"
+       [
+         test "a compile raises Compile_error naming the program CC names"
+           (fun () ->
+             raises_match
+               (function
+                 | Compiler.Compile_error msg ->
+                     has_infix ~affix:missing_clang msg
+                 | _ -> false)
+               (fun () ->
+                 Compiler.compile
+                   (Compiler_cpu.clang (host_machine ^ ",native"))
+                   increment));
+         test "a cached object is served without a Clang that runs" (fun () ->
+             let clang = Compiler_cpu.clang (host_machine ^ ",native") in
+             let table = Option.get (Compiler.cachekey clang) in
+             Helpers.Diskcache.put ~table increment "cached object";
+             equal string "cached object"
+               (Compiler.compile_cached clang increment));
+         test "an object cached by the default compiler is not served under CC"
+           (fun () ->
+             let cachedb = Helpers.cachedb in
+             let table =
+               match
+                 Disk_cache.child ~env:[ ("CC", "clang") ] ~cachedb "table"
+               with
+               | Ok table -> table
+               | Error err ->
+                   failf "the default compiler named no table: %s" err
+             in
+             let src = increment ^ "\n/* compiled by clang */\n" in
+             Helpers.Diskcache.put ~table src "clang's object";
+             raises_match
+               (function Compiler.Compile_error _ -> true | _ -> false)
+               (fun () ->
+                 Compiler.compile_cached
+                   (Compiler_cpu.clang (host_machine ^ ",native"))
+                   src));
+       ]
 
 (* Disassembly *)
 
@@ -431,8 +433,8 @@ let named ~prefix table =
 let cache =
   group "cache"
     [
-      cases ~name:fst
-        "objects are cached in the table of the architecture and a digest"
+      cases "objects are cached in the table of the architecture and a digest"
+        ~id:fst
         [
           ("x86_64,znver2", "compile_clang_obj_x86_64_znver2_");
           ( "x86_64,znver2,avx,-avx512f",

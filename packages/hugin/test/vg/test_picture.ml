@@ -8,7 +8,7 @@ open Hugin_gg
 open Hugin_font
 open Hugin_vg
 
-let invalid substring f = raises_match (Exn.invalid_arg ~substring) f
+let invalid substring f = raises_match (Exn.invalid_arg ~sub:substring) f
 let pp_float ppf x = Format.fprintf ppf "%.17g" x
 
 let pp_box ppf b =
@@ -225,11 +225,11 @@ let opacity_zero () =
 let constructors =
   group "constructors"
     [
-      cases ~name:fst "are empty:" empties (fun (_, p) ->
+      cases "are empty:" ~id:fst empties (fun (_, p) ->
           equal picture Picture.empty (p ()));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "raise Invalid_argument on" raises
+      cases "raise Invalid_argument on"
+        ~id:(fun (n, _, _) -> n)
+        raises
         (fun (_, substring, f) -> invalid substring f);
       test "image keeps its tensor, physically" (fun () ->
           match Picture.image (Box2.v 0. 0. 3. 2.) pixels with
@@ -309,9 +309,9 @@ let bounds_group =
       test "a transparent fill has bounds" (fun () ->
           equal (option box2) (bounds dot)
             (bounds (Picture.fill Color.transparent square)));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a stroke's path is grown by its pen:" pen_reaches
+      cases "a stroke's path is grown by its pen:"
+        ~id:(fun (n, _, _) -> n)
+        pen_reaches
         (fun (_, s, r) ->
           equal (option box2_near)
             (Some (Box2.v (-.r) (-.r) (10. +. (2. *. r)) (2. *. r)))
@@ -328,7 +328,7 @@ let bounds_group =
       test "a path of no area has a flat box" (fun () ->
           let p = Picture.fill red (Path.polyline [| 5.; 5. |] [| 0.; 10. |]) in
           equal (option box2) (Some (Box2.v 5. 0. 0. 10.)) (bounds p));
-      cases ~name:fst "has no extent:"
+      cases "has no extent:" ~id:fst
         [
           ("empty", Picture.empty);
           ( "a path of gaps",
@@ -370,7 +370,7 @@ let bounds_group =
               satisfies ~claim:"within the path's bounds" box2
                 (fun _ -> within (Path.bounds q))
                 b);
-      cases ~name:fst "a clip of a leaf bounds the meet of their boxes:"
+      cases "a clip of a leaf bounds the meet of their boxes:" ~id:fst
         [
           ("overlapping", (rect 5. (-5.) 20. 10., Box2.v 5. 0. 5. 5.));
           ( "touching along a vertical edge",
@@ -475,9 +475,9 @@ let comparing =
       prop "equal is an equivalence"
         (Gen.pair Vg_corpus.gen_picture Vg_corpus.gen_picture)
         (Law.equivalence ~respell:Vg_corpus.respell picture);
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "equal tells apart" differ
+      cases "equal tells apart"
+        ~id:(fun (n, _, _) -> n)
+        differ
         (fun (_, a, b) -> not_equal picture a b);
       test "equal compares images by elements and fonts by bytes" (fun () ->
           let px () = Nx.full Nx.uint8 [| 1; 2; 3 |] 7 in
@@ -526,9 +526,8 @@ let renderable = Testable.make ~pp:Renderable.pp ~equal:Renderable.equal
 let renderables =
   group "renderables"
     [
-      cases
-        ~name:(fun (w, h) -> Printf.sprintf "%g by %g" w h)
-        "v raises on a page of"
+      cases "v raises on a page of"
+        ~id:(fun (w, h) -> Printf.sprintf "%g by %g" w h)
         [ (0., 1.); (1., -1.); (Float.nan, 1.); (1., infinity) ]
         (fun (w, h) -> invalid "Renderable.v" (fun () -> Renderable.v w h dot));
       test "v keeps its page and picture" (fun () ->

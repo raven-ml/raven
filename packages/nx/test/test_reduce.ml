@@ -21,9 +21,7 @@ type host = Nx.host
 
 let value a : (_, _, host) Nx.t = Nx.Repr.of_array Nx.Host.v a
 let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))
-
-let names name f =
-  raises_match (Exn.invalid_arg ~substring:("Nx." ^ name ^ ": ")) f
+let names name f = raises_match (Exn.invalid_arg ~sub:("Nx." ^ name ^ ": ")) f
 
 (* Shapes and axes *)
 
@@ -376,7 +374,7 @@ let test_errors () =
 (* A refused axis is printed as the caller passed it. *)
 let test_axis_printed () =
   let x = value (A.of_array D.Float32 [| 2; 3; 4 |] (Array.make 24 1.)) in
-  let says sub f = raises_match (Exn.invalid_arg ~substring:sub) f in
+  let says sub f = raises_match (Exn.invalid_arg ~sub) f in
   says "Nx.sum: -5 is not an axis of float32 [2; 3; 4]" (fun () ->
       Nx.sum ~axes:[ -5 ] x);
   says "Nx.sum: axis -1 of float32 [2; 3; 4] repeats" (fun () ->
@@ -1689,8 +1687,7 @@ let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
     if (axis = None || axis = Some c) && Array.length xs > 0 then begin
       raises_match
         (Exn.invalid_arg
-           ~substring:
-             "and is read at on [m0; m1; m3]; Nx.place (Placement.on s) x")
+           ~sub:"and is read at on [m0; m1; m3]; Nx.place (Placement.on s) x")
         (fun () -> Nx.logcumsumexp ?axis placed);
       Nx.place Cpu3.on placed
     end

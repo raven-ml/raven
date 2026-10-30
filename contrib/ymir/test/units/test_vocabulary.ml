@@ -190,13 +190,12 @@ let lookup =
   group "Vocabulary.lookup"
     [
       cases
-        ~name:(fun (k, p) -> strf "%s is 1e%d" p k)
-        "an SI prefix on a prefixable symbol" prefixes
+        "an SI prefix on a prefixable symbol" ~id:(fun (k, p) -> strf "%s is 1e%d" p k) prefixes
         (fun (k, p) ->
           equal (option unit)
             (Some Unit.(ten k * metre))
             (Vocabulary.lookup metres (p ^ "m")));
-      cases ~name:Fun.id "micro reads as" [ "u"; "\xc2\xb5"; "\xce\xbc" ]
+      cases "micro reads as" ~id:Fun.id [ "u"; "\xc2\xb5"; "\xce\xbc" ]
         (fun p ->
           equal (option unit)
             (Some Unit.(micro metre))
@@ -212,8 +211,7 @@ let lookup =
           in
           equal (option unit) (Some x) (Vocabulary.lookup voc "mm"));
       cases
-        ~name:(fun s -> strf "%S" s)
-        "reads as nothing"
+        "reads as nothing" ~id:(fun s -> strf "%S" s)
         [ ""; "k"; "da"; "x"; "mx"; "kmin"; "kh"; "M m"; "mm "; "Km" ]
         (fun s ->
           let voc =
@@ -233,11 +231,10 @@ let si =
   group "Vocabulary.si"
     [
       cases
-        ~name:(fun (s, _, _) -> s)
-        "reads each of its symbols" si_entries
+        "reads each of its symbols" ~id:(fun (s, _, _) -> s) si_entries
         (fun (s, _, u) ->
           equal (option unit) (Some u) (Vocabulary.lookup Vocabulary.si s));
-      cases ~name:fst "reads a prefixed symbol"
+      cases "reads a prefixed symbol" ~id:fst
         Unit.
           [
             ("km", kilo metre);
@@ -250,9 +247,9 @@ let si =
           ]
         (fun (s, u) ->
           equal (option unit) (Some u) (Vocabulary.lookup Vocabulary.si s));
-      cases ~name:Fun.id "omits" [ "Bq"; "Gy"; "Sv"; "kat" ] (fun s ->
+      cases "omits" ~id:Fun.id [ "Bq"; "Gy"; "Sv"; "kat" ] (fun s ->
           equal (option unit) None (Vocabulary.lookup Vocabulary.si s));
-      cases ~name:Fun.id "takes no prefix"
+      cases "takes no prefix" ~id:Fun.id
         [
           "kg";
           "min";
@@ -347,8 +344,7 @@ let table =
   group "Vocabulary.spell on common units"
     [
       cases
-        ~name:(fun (name, v, _, _) -> strf "%s in %s" name v)
-        "spells" rows
+        "spells" ~id:(fun (name, v, _, _) -> strf "%s in %s" name v) rows
         (fun (_, v, u, expected) ->
           let voc = voc v in
           match expected with
@@ -467,7 +463,7 @@ let spell =
       test "words: positive exponents first, then entry order" (fun () ->
           equal string "rad s^-1" (text Vocabulary.si Unit.(radian / second));
           equal string "A m^2" (text Vocabulary.si Unit.(ampere * (metre ** 2))));
-      cases ~name:fst "words: integer exponents give integer words"
+      cases "words: integer exponents give integer words" ~id:fst
         Unit.
           [
             ("N s", kilogram * metre / second);
@@ -542,8 +538,8 @@ let micros = [ "u"; "\xc2\xb5"; "\xce\xbc" ]
 let prefix_rule =
   group "Vocabulary.spell's prefix"
     [
-      cases ~name:Fun.id
-        "a micro that spells a symbol in any of its spellings is the decade"
+      cases
+        "a micro that spells a symbol in any of its spellings is the decade" ~id:Fun.id
         micros (fun p ->
           let voc =
             Vocabulary.v

@@ -60,12 +60,12 @@ let error m n =
 
 let order_tests =
   [
-    cases ~name "each scheme reaches its order on the pendulum" schemes
+    cases "each scheme reaches its order on the pendulum" ~id:name schemes
       (fun (_, m, p, n) ->
         let order = Oracle.slope (error m n) (error m (2 * n)) in
         at_least (float 1e-9) ~than:(Float.of_int p -. 0.3) order;
         at_most (float 1e-9) ~than:(Float.of_int p +. 0.6) order);
-    cases ~name "each scheme steps back to where it started" schemes
+    cases "each scheme steps back to where it started" ~id:name schemes
       (fun (_, m, _, _) ->
         let s = (vec [| 1.; -0.3; 2.5 |], vec [| 0.; 0.7; -1.1 |]) in
         let h = scalar 0.37 in
@@ -209,7 +209,7 @@ let transformation_tests =
   ]
 
 let error_tests =
-  let raises_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f in
+  let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f in
   let march ?(steps = 2) at () =
     Split.march state Split.leapfrog ~steps ~kick ~drift ~at
       (scalar 1., scalar 0.)

@@ -8,7 +8,7 @@ open Hugin_kit
 
 let dash = Testable.make ~pp:Dash.pp ~equal:Dash.equal
 let lengths = list float_exact
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 
 let pp_lengths =
   Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_float
@@ -27,7 +27,7 @@ let patterns =
   group "patterns"
     [
       cases "v refuses lengths that make no pattern"
-        ~name:(fun (n, _) -> n)
+        ~id:(fun (n, _) -> n)
         [
           ("a negative length", [ 4.; -1. ]);
           ("nan", [ Float.nan ]);
@@ -37,7 +37,7 @@ let patterns =
         ]
         (fun (_, l) -> invalid (fun () -> Dash.v l));
       cases "v takes every pattern with a positive length"
-        ~name:(fun (n, _) -> n)
+        ~id:(fun (n, _) -> n)
         [
           ("dots", [ 0.; 2. ]);
           ("an odd pattern", [ 3. ]);

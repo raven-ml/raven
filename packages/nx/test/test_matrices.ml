@@ -13,7 +13,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 let drawn (type v s) (dt : (v, s) D.t) s : (v, s, Nx.host) Nx.t Gen.t =
   let open Gen in
@@ -371,7 +371,7 @@ let test_cross () =
     (Nx.shape (Nx.cross (Nx.zeros Nx.float32 [| 2; 0; 3 |]) (Nx.zeros Nx.float32 [| 3 |])))
 
 let cross_refusals =
-  cases "cross refusals" ~name:fst
+  cases "cross refusals" ~id:fst
     [
       ("2 elements", fun () -> ignore (Nx.cross (Nx.zeros Nx.float32 [| 2 |]) (Nx.zeros Nx.float32 [| 2 |])));
       ("one operand broadcast along the axis",
@@ -384,21 +384,35 @@ let cross_refusals =
 let products =
   group "products"
     ([
-      prop "dot sums a's last axis against b's"
-        (Gen.with_pp (fun ppf (a, b) -> Format.fprintf ppf "%a . %a" pp_ints a pp_ints b) dot_shapes)
-        law_dot;
-      test "vdot conjugates a and flattens both" test_vdot;
-      law_cross_float64;
-      test "cross at the values its definition gives" test_cross;
-      cross_refusals;
-      cases "dot refusals" ~name:fst
-        [
-          ("a 0-d operand", fun () -> ignore (Nx.dot (Nx.scalar Nx.int32 1l) (Nx.zeros Nx.int32 [| 2 |])));
-          ("summed extents differ", fun () -> ignore (Nx.dot (Nx.zeros Nx.int32 [| 2 |]) (Nx.zeros Nx.int32 [| 3; 2 |])));
-          ("booleans", fun () -> ignore (Nx.dot (Nx.zeros Nx.bool [| 2 |]) (Nx.zeros Nx.bool [| 2 |])));
-        ]
-        (fun (_, f) -> invalid ~by:"Nx.dot" f);
-    ]
+       prop "dot sums a's last axis against b's"
+         (Gen.with_pp
+            (fun ppf (a, b) -> Format.fprintf ppf "%a . %a" pp_ints a pp_ints b)
+            dot_shapes)
+         law_dot;
+       test "vdot conjugates a and flattens both" test_vdot;
+       law_cross_float64;
+       test "cross at the values its definition gives" test_cross;
+       cross_refusals;
+       cases "dot refusals" ~id:fst
+         [
+           ( "a 0-d operand",
+             fun () ->
+               ignore
+                 (Nx.dot (Nx.scalar Nx.int32 1l) (Nx.zeros Nx.int32 [| 2 |])) );
+           ( "summed extents differ",
+             fun () ->
+               ignore
+                 (Nx.dot
+                    (Nx.zeros Nx.int32 [| 2 |])
+                    (Nx.zeros Nx.int32 [| 3; 2 |])) );
+           ( "booleans",
+             fun () ->
+               ignore
+                 (Nx.dot (Nx.zeros Nx.bool [| 2 |]) (Nx.zeros Nx.bool [| 2 |]))
+           );
+         ]
+         (fun (_, f) -> invalid ~by:"Nx.dot" f);
+     ]
     @ laws_cross_narrow)
 
 (* Named products *)
@@ -881,7 +895,8 @@ let test_products_cases () =
 
 let product_refusals =
   let z s = Nx.zeros Nx.int32 s and b s = Nx.zeros Nx.bool s in
-  cases "named product refusals" ~name:(fun (by, what, _) -> by ^ ", " ^ what)
+  cases "named product refusals"
+    ~id:(fun (by, what, _) -> by ^ ", " ^ what)
     [
       ("Nx.tensordot", "default axes of a vector", fun () -> ignore (Nx.tensordot (z [| 2 |]) (z [| 2; 2 |])));
       ("Nx.tensordot", "lists of two lengths", fun () -> ignore (Nx.tensordot ~axes:([ 0 ], []) (z [| 2 |]) (z [| 2 |])));

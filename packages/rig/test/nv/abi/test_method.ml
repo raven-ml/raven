@@ -210,9 +210,8 @@ let calls =
 let operations =
   group ~timeout:10. "operations"
     [
-      cases ~name:(Format.asprintf "%a" pp_call)
-        "an operation's slots, filled, are its words with its operands" calls
-        (fun c ->
+      cases "an operation's slots, filled, are its words with its operands"
+        ~id:(Format.asprintf "%a" pp_call) calls (fun c ->
           equal string (packet c).bytes
             (Template.fill (List.nth (args c)) (encode ~slots:true c)));
       test "a copy's row and a fill take at most 2^31 bytes" (fun () ->

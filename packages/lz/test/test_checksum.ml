@@ -389,7 +389,7 @@ let () =
   exit
     (run "Checksum"
        [
-         cases ~name:check_name "check values" checks check;
+         cases "check values" ~id:check_name checks check;
          test "the generic paths come first" (fun () ->
              equal string "generic"
                (List.hd (path_names Lz_support.crc32_paths));
@@ -399,24 +399,25 @@ let () =
            Gen.(pair int int64)
            every_length;
          prop "long inputs agree with the reference" long_input long_agrees;
-         cases ~name:(Printf.sprintf "%d bytes of 255") "bytes of 255 agree with the reference"
+         cases "bytes of 255 agree with the reference"
+           ~id:(Printf.sprintf "%d bytes of 255")
            saturated saturating;
          test "8 MiB agrees with the reference" large;
          prop "a running value continues the checksum" pair running;
          prop "string ~first ~length is bigbytes of the substring" range_input
            substring;
-         cases ~name "a range outside the string raises" ranges
+         cases "a range outside the string raises" ~id:name ranges
            (fun (first, length) ->
              let s = "abc" in
-             let bad f = raises_match (Exn.invalid_arg ~substring:"range") f in
+             let bad f = raises_match (Exn.invalid_arg ~sub:"range") f in
              bad (fun () -> Lz.Crc32.string ~first ?length s);
              bad (fun () -> Lz.Adler32.string ~first ?length s);
              bad (fun () -> Lz.Xxh32.string ~first ?length s);
              bad (fun () -> Lz.Xxh64.string ~first ?length s));
-         cases ~name:string_of_int "a CRC-32 outside [0, 2^32) raises"
+         cases "a CRC-32 outside [0, 2^32) raises" ~id:string_of_int
            [ -1; 1 lsl 32; min_int; max_int ]
            (fun crc ->
-             let bad f = raises_match (Exn.invalid_arg ~substring:"crc") f in
+             let bad f = raises_match (Exn.invalid_arg ~sub:"crc") f in
              bad (fun () -> Lz.Crc32.string ~crc "abc");
              bad (fun () -> Lz.Crc32.bigbytes ~crc (Lz_support.of_string "abc")));
        ])

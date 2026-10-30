@@ -258,48 +258,43 @@ let recording =
                 ( List.filteri (fun i _ -> i < n) ws,
                   List.filteri (fun i _ -> i >= k - n) ws ))
             [ start ~size:page; stop ]);
-      cases ~name:string_of_int "a size of no whole pages is refused"
+      cases "a size of no whole pages is refused" ~id:string_of_int
         [ min_int; -4096; 0; 1; 4095; 4097 ] (fun size ->
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> start (gpu (11, 0, 0)) ~size));
-      cases ~name:string_of_int "a buffer address of no whole pages is refused"
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.start") (fun () ->
+              start (gpu (11, 0, 0)) ~size));
+      cases "a buffer address of no whole pages is refused" ~id:string_of_int
         [ min_int; -4096; -1; 1; 4095; 4097 ] (fun address ->
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.start") (fun () ->
               let g = gpu (11, 0, 0) in
               Thread_trace.start g ~wgps:(S.harvest_none g) ~size:page ~address));
-      cases ~name:string_of_int "an end address of no whole words is refused"
+      cases "an end address of no whole words is refused" ~id:string_of_int
         [ min_int; -4; -1; 1; 2; 3; 4097 ] (fun address ->
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.stop")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.stop") (fun () ->
               let g = gpu (11, 0, 0) in
               Thread_trace.stop g ~wgps:(S.harvest_none g) ~address));
-      cases ~name:string_of_int
-        "a harvest of another number of engines than the GPU's is refused"
-        [ 3; 5 ] (fun n ->
+      cases "a harvest of another number of engines than the GPU's is refused"
+        ~id:string_of_int [ 3; 5 ] (fun n ->
           let g = gpu (11, 0, 0) and wgps = Array.make n [| 1 |] in
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> Thread_trace.start g ~wgps ~size:page ~address:buffers);
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.stop")
-            (fun () -> Thread_trace.stop g ~wgps ~address:ends));
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.start") (fun () ->
+              Thread_trace.start g ~wgps ~size:page ~address:buffers);
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.stop") (fun () ->
+              Thread_trace.stop g ~wgps ~address:ends));
       test "a GC without the programs' registers is refused" (fun () ->
           let g = gpu (10, 3, 0) in
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> start g ~size:page);
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.stop")
-            (fun () -> stop g));
-      cases
-        ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
-        "a size past 2^22 - 1 pages is refused"
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.start") (fun () ->
+              start g ~size:page);
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.stop") (fun () ->
+              stop g));
+      cases "a size past 2^22 - 1 pages is refused"
+        ~id:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
         (List.concat_map
            (fun gc -> List.map (fun s -> (gpu gc, s)) [ 1 lsl 34; max_pages ])
            trace_families)
         (fun (g, size) ->
-          raises_match (Exn.invalid_arg ~substring:"Thread_trace.start")
-            (fun () -> start g ~size));
-      cases
-        ~name:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
-        "a size up to 2^22 - 1 pages is the size field's pages"
+          raises_match (Exn.invalid_arg ~sub:"Thread_trace.start") (fun () ->
+              start g ~size));
+      cases "a size up to 2^22 - 1 pages is the size field's pages"
+        ~id:(fun (g, size) -> strf "GC %s, %d" (S.version g.Gpu.gc) size)
         (List.concat_map
            (fun gc ->
              List.map (fun s -> (gpu gc, s)) [ 4096; (1 lsl 34) - 4096 ])
@@ -311,7 +306,7 @@ let recording =
                (gpu (11, 0, 0))
                ~buffer:0x10_0000
                ((0x10_0000 + 0x100) / 32)));
-      cases ~name:S.version "a write pointer counts from the buffer"
+      cases "a write pointer counts from the buffer" ~id:S.version
         [ (9, 4, 3); (11, 5, 0); (12, 0, 1) ]
         (fun v ->
           equal int 0x100
@@ -600,11 +595,10 @@ let gfx11_trace () =
 let decoding =
   group ~timeout "decoding"
     [
-      cases
-        ~name:(fun (name, _, _, _, _) -> name)
-        "an instruction packet preserves the following wave end" packet_cases
-        packet_framing;
-      cases ~name:fst "an extended start records its wave"
+      cases "an instruction packet preserves the following wave end"
+        ~id:(fun (name, _, _, _, _) -> name)
+        packet_cases packet_framing;
+      cases "an extended start records its wave" ~id:fst
         [
           ("workgroup", []);
           ("VGPR/LDS", [ 0xf5; 0x3f ]);
@@ -614,12 +608,14 @@ let decoding =
           List.iter
             (fun offset -> extended_start ~offset continuations)
             [ 0; 1 ]);
-      cases ~name:(fun (n, _, _) -> n) "a trace's waves" pairings
+      cases "a trace's waves"
+        ~id:(fun (n, _, _) -> n)
+        pairings
         (fun (_, evs, expected) ->
           equal (list decoded) expected (Thread_trace.waves gfx12 (trace evs)));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a trace cut short yields a prefix of its waves" pairings
+      cases "a trace cut short yields a prefix of its waves"
+        ~id:(fun (n, _, _) -> n)
+        pairings
         (fun (_, evs, expected) ->
           let t = trace evs in
           for n = 0 to String.length t - 1 do
@@ -639,7 +635,7 @@ let decoding =
       test "a trace of one marker has no clock" (fun () ->
           let t = trace [ Gap 5; Mark 1000 ] in
           is_none (Thread_trace.clock gfx12 (t ^ padding)));
-      cases ~name:S.version "an empty trace has no waves and no clock"
+      cases "an empty trace has no waves and no clock" ~id:S.version
         [ (9, 4, 3); (11, 0, 0); (12, 0, 1) ]
         (fun v ->
           equal (pair int bool) (0, true)

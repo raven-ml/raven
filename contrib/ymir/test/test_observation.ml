@@ -70,8 +70,7 @@ let photutils =
   group "photutils"
     [
       cases
-        ~name:(fun (e, n, r, _) -> Printf.sprintf "circle (%g, %g) r=%g" e n r)
-        "sky circles" Reference.sky_circles
+        "sky circles" ~id:(fun (e, n, r, _) -> Printf.sprintf "circle (%g, %g) r=%g" e n r) Reference.sky_circles
         (fun (e, n, r, s) ->
           let c =
             Region.circle
@@ -83,9 +82,8 @@ let photutils =
             (s *. pixar)
             (jansky (Observation.integrate c obs)));
       cases
-        ~name:(fun (e, n, i, o, _) ->
-          Printf.sprintf "annulus (%g, %g) %g-%g" e n i o)
-        "sky annuli" Reference.sky_annuli
+        "sky annuli" ~id:(fun (e, n, i, o, _) ->
+          Printf.sprintf "annulus (%g, %g) %g-%g" e n i o) Reference.sky_annuli
         (fun (e, n, i, o, s) ->
           let a =
             Region.annulus
@@ -156,7 +154,7 @@ let windows =
           let stamp = Observation.around t ~shape:[| 20; 20 |] obs in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  "Observation.integrate: the region reaches the border of its \
                   20x20 window at sample (0, ") (fun () ->
               Observation.integrate (circle t) stamp));
@@ -269,7 +267,7 @@ let unit_rule =
             (jansky (Observation.integrate circle stamp)));
       test "an area of another dimension raises" (fun () ->
           raises_match
-            (Exn.invalid_arg ~substring:"not a measure of the grid's cells")
+            (Exn.invalid_arg ~sub:"not a measure of the grid's cells")
             (fun () -> sky ~area:(Quantity.v Unit.metre (scalar 1.)) f64));
     ]
 
@@ -473,7 +471,7 @@ let arithmetic =
                "Observation.sub: the grids do not agree at transform.0.offset: \
                 element (1) is 0.5 in the first and 0.25 in the second")
             (fun () -> Observation.sub shifted other);
-          raises_match (Exn.invalid_arg ~substring:"Observation.add: the grids do not agree at base: int 3 in the first, int 2 in the second")
+          raises_match (Exn.invalid_arg ~sub:"Observation.add: the grids do not agree at base: int 3 in the first, int 2 in the second")
             (fun () ->
               Observation.add (obs 1)
                 (Observation.v (Grid.pixels ~at:Nx.Host.on ~shape:[| 4; 2 |] f64 Transform.id)

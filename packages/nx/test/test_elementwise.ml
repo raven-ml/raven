@@ -127,8 +127,7 @@ let reference3 k s c a b =
   | A.Done -> Some (bits_of dst)
   | _ | (exception Invalid_argument _) -> None
 
-let names name f =
-  raises_match (Exn.invalid_arg ~substring:("Nx." ^ name ^ ": ")) f
+let names name f = raises_match (Exn.invalid_arg ~sub:("Nx." ^ name ^ ": ")) f
 
 (* The law: where its kind takes the dtype, [f] computes, giving the reference's
    bits; elsewhere it raises naming itself. *)
@@ -445,9 +444,8 @@ let test_lerp_shapes () =
   let y = Nx.lerp a b (Nx.scalar Nx.float32 0.25) in
   equal (array int) [| 2; 3 |] (Nx.shape y);
   equal (array float_exact) (Array.make 6 0.25) (Nx.to_array y);
-  raises_match
-    (Exn.invalid_arg ~substring:"Nx.lerp: ")
-    (fun () -> ignore (Nx.lerp b (Nx.ones Nx.float32 [| 4 |]) b))
+  raises_match (Exn.invalid_arg ~sub:"Nx.lerp: ") (fun () ->
+      ignore (Nx.lerp b (Nx.ones Nx.float32 [| 4 |]) b))
 
 let elementwise =
   group "elementwise"

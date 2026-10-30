@@ -9,7 +9,7 @@
 
 open Windtrap
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* Dtypes *)
 
@@ -122,9 +122,8 @@ let worst b (D (_, dt, u) as d) =
   (fst !worst /. (u *. u), snd !worst)
 
 let bounds =
-  cases
-    ~name:(fun (b, d) -> Printf.sprintf "%s at %s" b.op (name d))
-    "each operation is within its bound of the exact result"
+  cases "each operation is within its bound of the exact result"
+    ~id:(fun (b, d) -> Printf.sprintf "%s at %s" b.op (name d))
     (List.concat_map (fun b -> List.map (fun d -> (b, d)) dtypes) binaries)
     (fun (b, (D (_, _, u) as d)) ->
       let rel, row = worst b d in
@@ -135,7 +134,7 @@ let bounds =
         rel)
 
 let floors =
-  cases ~name "floor is the exact floor" dtypes (fun (D (_, dt, _) as d) ->
+  cases "floor is the exact floor" ~id:name dtypes (fun (D (_, dt, _) as d) ->
       let rows = rows "floor" d in
       let zh, zl = words (Nx_wide.floor (operand dt rows 0 1)) in
       (* mpmath's zero has no sign; the sign of a zero floor is an edge. *)
@@ -144,7 +143,7 @@ let floors =
         (Array.map2 (fun h l -> ((if h = 0. then 0. else h), l)) zh zl))
 
 let comparisons =
-  cases ~name "comparisons are exact" dtypes (fun (D (_, dt, _) as d) ->
+  cases "comparisons are exact" ~id:name dtypes (fun (D (_, dt, _) as d) ->
       let rows = rows "compare" d in
       let x = operand dt rows 0 1 and y = operand dt rows 2 3 in
       let flags i = Array.map (fun v -> v = 1.) (column rows i) in
@@ -191,7 +190,7 @@ let sum_rows (D (_, dt, u) as d) =
     counts
 
 let sums =
-  cases ~name "a sum is within its bound of the exact sum" dtypes sum_rows
+  cases "a sum is within its bound of the exact sum" ~id:name dtypes sum_rows
 
 (* Layouts: views and copies that read the same numbers from other strides. *)
 
@@ -568,7 +567,7 @@ let edges =
           let zh, zl = words (Nx_wide.sum ~axes:[ 1 ] w) in
           equal (array float_exact) [| 0.; 0. |] zh;
           equal (array float_exact) [| 0.; 0. |] zl);
-      cases ~name:string_of_int "a sum of -0 terms is +0" [ 1; 2; 3; 4; 5 ]
+      cases "a sum of -0 terms is +0" ~id:string_of_int [ 1; 2; 3; 4; 5 ]
         (fun n ->
           let w = Nx_wide.v (Nx.full Nx.float64 [| n |] (-0.)) in
           equal same (0., 0.) (scalar (Nx_wide.sum w)));
@@ -591,7 +590,7 @@ let edges =
               Nx_wide.v
                 ~lo:(Nx.zeros Nx.float64 [| 3 |])
                 (Nx.zeros Nx.float64 [| 2 |])));
-      cases ~name:fst "a sum refuses axes it cannot sum"
+      cases "a sum refuses axes it cannot sum" ~id:fst
         [ ("an axis out of bounds", [ 2 ]); ("a repeated axis", [ 0; -2 ]) ]
         (fun (_, axes) ->
           invalid ~by:"Nx_wide.sum" (fun () ->

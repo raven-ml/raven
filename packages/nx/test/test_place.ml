@@ -20,7 +20,7 @@ module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 module One = (val Nx.devices [ m 2 ])
 
 let mesh = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ]
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 type value = V : (float, A.Dtype.float32_elt, 'd) Nx.t -> value
 
@@ -573,9 +573,7 @@ let law_reshape c =
           "Nx.reshape: operand 0 lies at %a and is read at %a; Nx.place ("
           Nx.Placement.pp (on_mem c.w) Nx.Placement.pp (on_mem r)
       in
-      raises_match
-        (Exn.invalid_arg ~substring:prefix)
-        (fun () -> Nx.reshape c.s' x);
+      raises_match (Exn.invalid_arg ~sub:prefix) (fun () -> Nx.reshape c.s' x);
       Nx.place (on_mem r) x
     end
   in
@@ -614,7 +612,7 @@ let reshapes =
          tile holds none of its rows, so the reshape raises, and read where
          it names, the result keeps the paired axes' cuts. *)
       cases "unit axes cut by a mesh pair with the result's in order"
-        ~name:(fun (s, w, s', _, _) ->
+        ~id:(fun (s, w, s', _, _) ->
           Format.asprintf "%a at %a to %a" pp_ints s pp_where w pp_ints s')
         [
           ([| 1; 1 |], Cuts (0, 1), [| 1 |], Major 0, Major 0);
@@ -631,7 +629,7 @@ let reshapes =
           if r <> w then
             raises_match
               (Exn.invalid_arg
-                 ~substring:
+                 ~sub:
                    (Format.asprintf "is read at %a;" Nx.Placement.pp
                       (on_mem r)))
               (fun () -> Nx.reshape s' x);

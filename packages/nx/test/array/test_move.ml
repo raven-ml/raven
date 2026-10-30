@@ -277,19 +277,19 @@ let messages =
   ]
 
 let test_message (_, f, text) =
-  raises_match (Exn.invalid_arg ~substring:text) (fun () -> ignore (f ()))
+  raises_match (Exn.invalid_arg ~sub:text) (fun () -> ignore (f ()))
 
 let tests =
   [
-    cases
-      ~name:(fun (n, _, _) -> n)
-      "refusals name the axis at fault" messages test_message;
+    cases "refusals name the axis at fault"
+      ~id:(fun (n, _, _) -> n)
+      messages test_message;
     group "shape"
       [
         prop ~count:1000
           "is the result's shape, and raises iff a precondition fails"
           shape_and_move law_shape;
-        cases ~name:(fun c -> c.name) "states the bounds" bounds test_bound;
+        cases "states the bounds" ~id:(fun c -> c.name) bounds test_bound;
       ];
   ]
 

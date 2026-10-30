@@ -8,7 +8,7 @@ open Dtypes
 module PM = Ops.Pattern_matcher
 
 let target = Result.get_ok (Helpers.Target.of_string "")
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* Targets and the pass *)
 
@@ -215,7 +215,7 @@ let narrows_as_dtype_folds dt () =
 (* [exhaustive name law] is the slow tests of [law] for each narrow float, named
    [name] of its name. *)
 let exhaustive name law =
-  List.map (fun dt -> slow (name (alias dt)) (law dt)) narrows
+  List.map (fun dt -> slow @@ test (name (alias dt)) (law dt)) narrows
 
 let f2f =
   group "f2f"
@@ -278,22 +278,23 @@ let overflows_at_the_edge ?sat dt =
 let f2f_clamp =
   group "f2f_clamp"
     [
-      cases ~name:alias
+      cases
         "a 16-bit float's clamp is an infinity from its greatest value plus \
          half an ulp"
+        ~id:alias
         Dtype.[ Float16; Bfloat16 ]
         (fun dt ->
           overflows_at_the_edge dt;
           overflows_at_the_edge ~sat:true dt);
-      cases ~name:alias
+      cases
         "without saturation, an 8-bit float's clamp is an infinity from its \
          greatest value plus half an ulp"
-        Dtype.fp8s
+        ~id:alias Dtype.fp8s
         (overflows_at_the_edge ~sat:false);
-      cases ~name:alias
+      cases
         "with saturation, an 8-bit float's clamp is its greatest value and \
          keeps infinities"
-        Dtype.fp8s (fun dt ->
+        ~id:alias Dtype.fp8s (fun dt ->
           List.iter
             (fun s ->
               let m = s *. top dt in
@@ -649,8 +650,9 @@ let emulated_floats =
     @ List.map
         (fun p ->
           slow
-            ("an emulated cast of every " ^ pair_name p ^ " rounds once")
-            (casts_between (fst p) (snd p)))
+          @@ test
+               ("an emulated cast of every " ^ pair_name p ^ " rounds once")
+               (casts_between (fst p) (snd p)))
         pairs)
 
 (* NaNs *)
@@ -715,25 +717,23 @@ let nans =
                     (is_nan_of dt ~negative:(b lsr 31 = 1) c))
                 (both_signs signalling_nans))
             narrows);
-      cases ~name:alias
-        "an emulated copy keeps every NaN code, a signalling one's included"
-        narrows (fun dt -> copies (nan_codes dt) dt);
-      cases ~name:alias
+      cases "an emulated copy keeps every NaN code, a signalling one's included"
+        ~id:alias narrows (fun dt -> copies (nan_codes dt) dt);
+      cases
         "an emulated selection keeps every NaN code, a signalling one's \
          included"
-        narrows (fun dt -> selects_codes (nan_codes dt) dt ());
-      cases ~name:alias
+        ~id:alias narrows (fun dt -> selects_codes (nan_codes dt) dt ());
+      cases
         "an emulated cast of a float32 or a double NaN is the NaN code Dtype \
          folds"
-        narrows (fun dt ->
+        ~id:alias narrows (fun dt ->
           let values =
             List.map (fun b -> `Float (f32 b)) (both_signs quiet_nans)
           in
           converts ~from:Float32 ~to_:dt values (encode dt);
           converts ~from:Float64 ~to_:dt values (encode dt));
-      cases ~name:alias
-        "an emulated cast of a NaN code to a float32 is a NaN of its sign"
-        narrows (fun dt ->
+      cases "an emulated cast of a NaN code to a float32 is a NaN of its sign"
+        ~id:alias narrows (fun dt ->
           let cs = nan_codes dt in
           let k = kernel [ dt ] Float32 (List.length cs) (cast_to Float32) in
           List.iter2
@@ -764,9 +764,8 @@ let rounded dt v =
 let rounding =
   group "rounding in the kernel"
     [
-      cases ~name:alias
-        "a cast to an emulated float and back is the value rounded once" narrows
-        (fun dt ->
+      cases "a cast to an emulated float and back is the value rounded once"
+        ~id:alias narrows (fun dt ->
           let k =
             kernel [ Float32 ] Float32 (List.length in_range) (fun xs ->
                 Ops.cast (Ops.cast (List.hd xs) dt) Float32)
@@ -774,9 +773,8 @@ let rounding =
           equal (list value)
             (List.map (rounded dt) in_range)
             (written ~on:on_narrows k [ in_range ]));
-      cases ~name:alias
-        "an operation on an emulated float rounds its result to it" narrows
-        (fun dt ->
+      cases "an operation on an emulated float rounds its result to it"
+        ~id:alias narrows (fun dt ->
           let xs = List.map (fun x -> code (encode dt x)) in_range in
           let ys = List.rev xs in
           let k =
@@ -842,21 +840,21 @@ let shift_count = Gen.map (fun n -> `Int (Bigint.of_int n)) (Gen.int_range 0 63)
 
 (* [law name ins out f args oracle] is the property that the emulated [f]
    computes [oracle] on the arguments that [args] draws. *)
-let law ?tags ?(count = 100) ?examples name ins out f args oracle =
+let law ?(count = 100) ?examples name ins out f args oracle =
   let run = computes ins out f in
   let pp =
     Format.pp_print_list ~pp_sep:Format.pp_print_space (Testable.pp value)
   in
-  prop ?tags ~count ?examples name (Gen.with_pp pp args) (fun args ->
+  prop ~count ?examples name (Gen.with_pp pp args) (fun args ->
       equal value (oracle args) (run args))
 
-let binary ?tags ?count dt ?(b = value_of dt) ?examples name op oracle =
+let binary ?count dt ?(b = value_of dt) ?examples name op oracle =
   let examples =
     Option.map
       (List.map (fun (a, b) -> [ wrap dt a; `Int (Bigint.of_int b) ]))
       examples
   in
-  law ?tags ?count ?examples
+  law ?count ?examples
     (alias dt ^ " " ^ name)
     [ dt; dt ] dt
     (fun xs -> Ops.alu (List.nth xs 0) op [ List.nth xs 1 ])
@@ -940,10 +938,12 @@ let long_laws dt =
     binary dt "or" Or Bigint.logor;
     binary dt "xor" Xor Bigint.logxor;
     binary dt "max" Max Bigint.max;
-    binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)
-      "truncating division, over 2000 cases" Cdiv Bigint.div;
-    binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)
-      "truncating remainder, over 2000 cases" Cmod Bigint.rem;
+    slow
+    @@ binary ~count:2000 dt ~b:(nonzero dt)
+         "truncating division, over 2000 cases" Cdiv Bigint.div;
+    slow
+    @@ binary ~count:2000 dt ~b:(nonzero dt)
+         "truncating remainder, over 2000 cases" Cmod Bigint.rem;
     binary dt ~b:shift_count ~examples:(shl_examples dt) "shl" Shl (fun a n ->
         Bigint.shift_left a (Bigint.to_int n));
     binary dt ~b:shift_count ~examples:(shr_examples dt) "shr" Shr (fun a n ->
@@ -1003,10 +1003,10 @@ let long_arithmetic =
   group "emulated 64-bit integers"
     (List.concat_map long_laws longs
     @ [
-        cases ~name:alias
+        cases
           "an emulated cast of a float32 to a 64-bit integer converts no float \
            to a word that cannot hold it"
-          longs (fun dt ->
+          ~id:alias longs (fun dt ->
             let values = wide_floats dt in
             let k = kernel [ Float32 ] dt (List.length values) (cast_to dt) in
             equal (list value) []
@@ -1043,9 +1043,8 @@ let least_subnormals =
 let ieee_narrow_floats =
   group "narrow float conversions are IEEE conversions"
     [
-      cases
-        ~name:(fun (dt, _) -> alias dt)
-        "an emulated narrow float keeps its subnormals, both ways"
+      cases "an emulated narrow float keeps its subnormals, both ways"
+        ~id:(fun (dt, _) -> alias dt)
         least_subnormals
         (fun (dt, least) ->
           casts dt
@@ -1076,9 +1075,9 @@ let ieee_narrow_floats =
               (`Float (-.(0x1p128 -. 0x1p119)), 0xff80);
             ]);
       cases
-        ~name:(fun (dt, _) -> alias dt)
         "an infinity stays one in e5m2 and is the NaN of e4m3 and the fnuz \
          formats, and a finite overflow saturates"
+        ~id:(fun (dt, _) -> alias dt)
         Dtype.
           [
             (Fp8e4m3, [ 0x7f; 0xff; 0x7e; 0xfe ]);
@@ -1122,9 +1121,9 @@ let ieee_narrow_floats =
             ];
           casts ~from:Uint32 Float16 [ (integer "4294967295", 0x7c00) ];
           casts ~from:Int32 Fp8e4m3 [ (integer "2147483647", 0x7e) ]);
-      cases ~name:alias
+      cases
         "an fnuz format stores an underflow to negative zero as positive zero"
-        Dtype.fp8_fnuz (fun dt ->
+        ~id:alias Dtype.fp8_fnuz (fun dt ->
           let least = List.assoc dt least_subnormals in
           casts dt
             [
@@ -1288,8 +1287,8 @@ let emulates_as_tinygrad (name, _, lacks) =
         (with_conversions (Ops.nth g 1))
         (emulate (lacking lacks) (Ops.nth g 0)))
 
-let told_as_lacking ?tags (name, named, lacks) =
-  test ?tags (name ^ ".golden, told to emulate") (fun () ->
+let told_as_lacking (name, named, lacks) =
+  test (name ^ ".golden, told to emulate") (fun () ->
       let k = Ops.nth (golden name) 0 in
       same_graph
         (emulate (lacking lacks) k)
@@ -1387,8 +1386,8 @@ let draw rng name ~last dt =
   | Bool -> same (`Bool (Random.State.bool rng))
   | dt -> same (Dtype.truncate dt (`Int (random_z rng (Dtype.bitsize dt))))
 
-let emulated_writes_natively ?tags (name, named, lacks) =
-  test ?tags (name ^ ".golden computes what it computes natively") (fun () ->
+let emulated_writes_natively (name, named, lacks) =
+  test (name ^ ".golden computes what it computes natively") (fun () ->
       let k = Ops.nth (golden name) 0 in
       let rng = Random.State.make [| Hashtbl.hash name |] in
       let slots = params k in
@@ -1445,14 +1444,14 @@ let graphs =
     @ List.map
         (fun g ->
           if by_default "add" g then told_as_lacking g
-          else told_as_lacking ~tags:[ "slow" ] g)
+          else slow @@ told_as_lacking g)
         goldens
     @ List.filter_map
         (fun ((name, _, _) as g) ->
           if not (List.mem name natively_comparable) then None
           else if by_default "flip" g || by_default "add" g then
             Some (emulated_writes_natively g)
-          else Some (emulated_writes_natively ~tags:[ "slow" ] g))
+          else Some (slow @@ emulated_writes_natively g))
         goldens
     @ [
         test "every golden is checked" (fun () ->

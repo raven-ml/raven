@@ -67,7 +67,8 @@ let too_wide =
       less (float 1e-12) ~than:alpha (Nx.item [] u))
 
 let nuts =
-  slow "ranks among NUTS draws are uniform" (fun () ->
+  slow
+  @@ test "ranks among NUTS draws are uniform" (fun () ->
       let u = M.coords model in
       let fit =
         Rune.jit

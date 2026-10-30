@@ -457,9 +457,9 @@ let work =
         gen_fills bumps_counted;
       test "a kernel writes an allocation in the submission after it"
         fresh_allocation;
-      cases
-        ~name:(strf "a split's times lie in the work's span (%d splits)")
-        "times" [ 1; 5; 64 ] times_between;
+      cases "times"
+        ~id:(strf "a split's times lie in the work's span (%d splits)")
+        [ 1; 5; 64 ] times_between;
       test "a fill splitting more often than the queue holds completes"
         many_splits;
       test "a submission's command buffer is released once it completed"
@@ -644,14 +644,13 @@ let lost_open () =
 let commits =
   group ~timeout:60. "commits"
     [
-      cases
-        ~name:
+      cases "uncommitted"
+        ~id:
           (strf
              "%d values behind three running command buffers run with no commit")
-        "uncommitted" [ 2; 257 ] uncommitted;
-      cases
-        ~name:(strf "%d values reach the word with no later submission")
-        "progress"
+        [ 2; 257 ] uncommitted;
+      cases "progress"
+        ~id:(strf "%d values reach the word with no later submission")
         [ 1; 2; 3; 4; 255; 256; 257; 1024 ]
         progress;
       test
@@ -938,9 +937,9 @@ let icb_inside_lock () =
 let icbs =
   group ~timeout:60. "indirect command buffers"
     [
-      cases
-        ~name:(strf "a chain of %d dispatches runs each after the one before")
-        "chain" [ 0; 1; 2; 17; 64 ] chain;
+      cases "chain"
+        ~id:(strf "a chain of %d dispatches runs each after the one before")
+        [ 0; 1; 2; 17; 64 ] chain;
       test "a command runs with the sizes set before its run" resized;
       test "refuses what it cannot record" icb_refusals;
       test "an icb call inside a lock of its thread's raises naming it"
@@ -1408,9 +1407,9 @@ let launches =
         "geometry beyond a function's limits is refused, and the device runs on"
         refused_geometry;
       test "a warm launch submit allocates nothing" no_allocation;
-      cases
-        ~name:(strf "a profile holds %d submissions' spans, in order")
-        "spans" [ 1; 3; 300 ] spans_in_order;
+      cases "spans"
+        ~id:(strf "a profile holds %d submissions' spans, in order")
+        [ 1; 3; 300 ] spans_in_order;
     ]
 
 (* Memory *)
@@ -1655,7 +1654,7 @@ let beyond_limits () =
   let refused () =
     raises_match
       (Exn.invalid_arg
-         ~substring:"Rig_metal.entry: Metal makes no pipeline of \"wide\": ")
+         ~sub:"Rig_metal.entry: Metal makes no pipeline of \"wide\": ")
       (fun () -> Rig_metal.entry i "wide")
   in
   refused ();

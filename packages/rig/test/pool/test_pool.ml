@@ -502,22 +502,22 @@ let cores_tests =
          a later change is not seen"
         test_affinity;
       cases
-        ~name:(fun (t : tree) -> t.name)
         "Linux's cgroup bound is the least ceil (quota / period) up the \
          process's cgroup v2, read from any tree"
+        ~id:(fun (t : tree) -> t.name)
         trees test_cgroup;
-      cases
-        ~name:(fun (t : tree) -> t.name)
-        "Linux's cgroup paths preserve their names" path_trees
+      cases "Linux's cgroup paths preserve their names"
+        ~id:(fun (t : tree) -> t.name)
+        path_trees
         (fun tree ->
           if Sys.win32 then
             skip ~reason:"Windows cannot represent these Linux path names" ();
           test_cgroup tree);
       cases
-        ~name:(fun (t : cpu_tree) -> t.name)
         "Linux's performance cores are the CPUs of capacity more than half the \
          largest of theirs, or without capacities of CPPC highest performance \
          more than half the largest of theirs, read from any tree"
+        ~id:(fun (t : cpu_tree) -> t.name)
         cpu_trees test_cpu_tree;
     ]
 
@@ -677,18 +677,18 @@ let chunk_tests =
            job_gen (test_bounds kind))
     @ for_kinds (fun kind name ->
         cases
-          ~name:(fun (total, chunks, _) ->
-            strf "total %Ld, chunks %Ld" total chunks)
           (name
          ^ "a job whose total times its chunks passes 64 bits, or of more \
             chunks than units, calls ranges of the stated chunks")
+          ~id:(fun (total, chunks, _) ->
+            strf "total %Ld, chunks %Ld" total chunks)
           wide_jobs (test_wide_job kind))
     @ [
-      cases ~name:(strf "%d chunks")
-        "a thread that finishes early runs the chunks a slower one would have, \
-         one at a time or in runs"
-        [ 16; 4096 ] test_balance;
-    ])
+        cases
+          "a thread that finishes early runs the chunks a slower one would \
+           have, one at a time or in runs"
+          ~id:(strf "%d chunks") [ 16; 4096 ] test_balance;
+      ])
 
 (* Workers *)
 
@@ -732,10 +732,10 @@ let worker_tests =
              per thread, and its calls never overlap")
            job_gen (test_workers kind))
     @ [
-        cases ~name:kind_name
+        cases
           "bodies see the caller's writes made before the job, and the caller \
            the bodies' once it returns"
-          kinds test_visibility;
+          ~id:kind_name kinds test_visibility;
       ])
 
 (* Scheduling *)
@@ -832,25 +832,25 @@ let job_commands =
 let scheduling_tests =
   group ~timeout:P.timeout "scheduling"
     [
-      cases ~name:kind_name
+      cases
         "a job of one thread runs at once while another thread's job of its \
          kind runs"
-        kinds test_one_thread_at_once;
+        ~id:kind_name kinds test_one_thread_at_once;
       test
         "a blocking job of more than one thread runs at once on the calling \
          thread alone, in one call, while another thread's blocking job runs"
         test_blocking_alone;
       cases
-        ~name:(fun (held, kind) ->
-          strf "%s beside %s" (kind_name kind) (kind_name held))
         "a job of either kind runs on two threads while another thread's job \
          of the other kind runs"
+        ~id:(fun (held, kind) ->
+          strf "%s beside %s" (kind_name kind) (kind_name held))
         [ (P.Compute, P.Blocking); (P.Blocking, P.Compute) ]
         test_beside;
       cases
-        ~name:(fun (o, i) -> strf "%s in %s" (kind_name i) (kind_name o))
         "a job begun from a body of a job of more than one thread runs at once \
          on the body's thread as worker 0, in one call"
+        ~id:(fun (o, i) -> strf "%s in %s" (kind_name i) (kind_name o))
         (List.concat_map (fun o -> List.map (fun i -> (o, i)) kinds) kinds)
         test_nested;
       test

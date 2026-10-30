@@ -130,7 +130,7 @@ let exec_alu =
           List.iter
             (fun o ->
               raises_match
-                (Exn.invalid_arg ~substring:"a shift by a negative count, -1")
+                (Exn.invalid_arg ~sub:"a shift by a negative count, -1")
                 (fun () -> ignore (alu Int32 o [ i 8; i (-1) ])))
             Op.[ Shl; Shr ]);
       test "an overflowing power is an infinity of the base's sign" (fun () ->
@@ -1137,14 +1137,12 @@ let compilation =
       compiles_as_inferred ~bound:50;
       compiles_as_inferred ~bound:(1 lsl 31);
       compiles_at_the_extremes;
-      cases
-        ~name:(fun (name, _, _, _, _) -> name)
-        "computes exactly where int arithmetic overflows" exactly
-        computes_exactly;
-      cases
-        ~name:(fun (name, _, _, _) -> name)
-        "raises as sym_infer does where a value fits no int" unfit
-        raises_as_inferred;
+      cases "computes exactly where int arithmetic overflows"
+        ~id:(fun (name, _, _, _, _) -> name)
+        exactly computes_exactly;
+      cases "raises as sym_infer does where a value fits no int"
+        ~id:(fun (name, _, _, _) -> name)
+        unfit raises_as_inferred;
       test "an integer is itself" (fun () ->
           equal int 5 (Shape.sym_compile (Int 5) (fun _ () -> 0) ()));
       test "a variable is what var reads" (fun () ->
@@ -1240,7 +1238,7 @@ let programs =
           let info =
             Call.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])
           in
-          raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"extent") (fun () ->
               Ops.vals info []));
       test "program_info_of_sink reads symbolic launch sizes" (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
@@ -1313,7 +1311,7 @@ let programs =
             Call.program_info_of_sink
               (Ops.sink [ Ops.special (Sym extent) "gidx0" ])
           in
-          raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"extent") (fun () ->
               Ops.vals info []);
           rejects (fun () -> Call.launch_dims info []));
       test "program_info_of_sink records its target" (fun () ->

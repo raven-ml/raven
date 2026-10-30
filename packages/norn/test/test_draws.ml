@@ -36,14 +36,14 @@ let validation =
   group "v"
     [
       test "a tensor needs a chain and a draw axis" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"a: shape [3]") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"a: shape [3]") (fun () ->
               D.v pos
                 {
                   a = Nx.zeros Nx.float64 [| 3 |];
                   b = Nx.zeros Nx.float64 [| 2; 3; 2 |];
                 }));
       test "every tensor has the same chains and draws" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"b: 2 chains of 4 draws")
+          raises_match (Exn.invalid_arg ~sub:"b: 2 chains of 4 draws")
             (fun () ->
               D.v pos
                 {
@@ -112,7 +112,7 @@ let joins =
             (floats !!draws.a)
             (floats !!(D.thin pos ~every:1 draws).a));
       test "thin refuses a step below one" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"every = 0") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"every = 0") (fun () ->
               D.thin pos ~every:0 draws));
     ]
 

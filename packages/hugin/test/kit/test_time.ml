@@ -13,7 +13,7 @@ let instant =
 let interval = Testable.make ~pp:Time.pp_interval ~equal:Time.equal_interval
 let date = triple int int int
 let date_time = pair date date
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let ns k = Time.nanoseconds k
 let at ?tz_offset_s d tm = Time.of_date_time ?tz_offset_s (d, tm)
 let utc s = Time.v S (Int64.of_int s)
@@ -173,10 +173,10 @@ let known =
 let civil =
   group "civil"
     [
-      cases
-        ~name:(fun ((y, m, d), _, s) ->
+      cases "known instants"
+        ~id:(fun ((y, m, d), _, s) ->
           Printf.sprintf "%d-%02d-%02d is %d s" y m d s)
-        "known instants" known
+        known
         (fun (d, tm, s) ->
           equal instant (utc s) (at d tm);
           equal date_time (d, tm) (Time.to_date_time (utc s)));
@@ -202,9 +202,8 @@ let civil =
           check (Time.v S Int64.min_int);
           let (y, _, _), _ = Time.to_date_time (Time.v S Int64.max_int) in
           equal int 292_277_026_596 y);
-      cases
-        ~name:(fun (n, _) -> n)
-        "of_date_time raises on"
+      cases "of_date_time raises on"
+        ~id:(fun (n, _) -> n)
         [
           ("month 0", fun () -> Time.of_date (2026, 0, 1));
           ("month 13", fun () -> Time.of_date (2026, 13, 1));
@@ -285,14 +284,14 @@ let boundaries ?tz_offset_s i t t' =
 let intervals =
   group "intervals"
     [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "equal_interval" equalities
+      cases "equal_interval"
+        ~id:(fun (n, _, _, _) -> n)
+        equalities
         (fun (_, i, i', eq) -> equal bool eq (Time.equal_interval i i'));
       prop "equal_interval is an equivalence"
         (Gen.pair gen_interval gen_interval)
         (Law.equivalence interval);
-      cases ~name:fst "constructors raise on"
+      cases "constructors raise on" ~id:fst
         [
           ("a stride of 0", fun () -> ignore (Time.seconds 0));
           ("a negative stride", fun () -> ignore (Time.months (-1)));
@@ -402,7 +401,7 @@ let intervals =
       test "add of zero strides is the identity" (fun () ->
           equal instant (Time.v Ns 7L)
             (Time.add (Time.years 1_000_000_000_000) 0 (Time.v Ns 7L)));
-      cases ~name:fst "raise when the result is not representable"
+      cases "raise when the result is not representable" ~id:fst
         [
           ( "add past int64 seconds",
             fun () ->
@@ -525,7 +524,7 @@ let interval_laws =
 let printing =
   group "pp"
     [
-      cases ~name:snd "writes RFC 3339 at UTC"
+      cases "writes RFC 3339 at UTC" ~id:snd
         [
           ( with_ns (at (2026, 10, 1) (12, 30, 0)) 250_000_000,
             "2026-10-01T12:30:00.25Z" );

@@ -13,7 +13,7 @@ let timeout = S.timeout
 let gpu target = S.gpu target
 
 let processor =
-  cases ~timeout ~name:snd "a processor's name"
+  cases ~timeout "a processor's name" ~id:snd
     [
       ((12, 0, 1), "gfx1201");
       ((11, 0, 0), "gfx1100");

@@ -148,9 +148,9 @@ let edges =
     ]
 
 let edge_cases =
-  cases
-    ~name:(fun (Edge (n, _, _)) -> n)
-    "Edges" edges
+  cases "Edges"
+    ~id:(fun (Edge (n, _, _)) -> n)
+    edges
     (fun (Edge (_, ty, vs)) ->
       let c = Column.of_options ty vs in
       equal int (nulls vs) (Column.null_count c);
@@ -476,9 +476,9 @@ let refusals =
   ]
 
 let refusal_cases =
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "Refusals" refusals
+  cases "Refusals"
+    ~id:(fun (n, _, _) -> n)
+    refusals
     (fun (_, f, expected) -> expect (message f) expected)
 
 (* Layouts *)
@@ -642,9 +642,9 @@ let unheld =
   ]
 
 let unheld_cases =
-  cases
-    ~name:(fun (n, _, _, _) -> n)
-    "Values a type does not hold" unheld
+  cases "Values a type does not hold"
+    ~id:(fun (n, _, _, _) -> n)
+    unheld
     (fun (_, ty, l, expected) ->
       let got =
         match Column.of_layout ty l with Ok _ -> None | Error e -> Some e
@@ -815,9 +815,9 @@ let layout_refusals =
   ]
 
 let layout_refusal_cases =
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "Layout refusals" layout_refusals
+  cases "Layout refusals"
+    ~id:(fun (n, _, _) -> n)
+    layout_refusals
     (fun (_, f, expected) -> expect (message f) expected)
 
 (* Ragged arrays *)

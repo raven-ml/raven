@@ -60,8 +60,8 @@ jobs:
       - name: Install dependencies
         run: |
           opam pin add thumper git+https://github.com/invariant-hq/thumper.git --no-action
-          opam pin add windtrap git+https://github.com/invariant-hq/windtrap.git#7be03df651610949a87ed3bb797984015e9691b9 --no-action
-          opam pin add ppx_windtrap git+https://github.com/invariant-hq/windtrap.git#7be03df651610949a87ed3bb797984015e9691b9 --no-action
+          opam pin add windtrap git+https://github.com/invariant-hq/windtrap.git#4f2b11f2f5e70b3ffcf9bf972a037d12dd8031ba --no-action
+          opam pin add ppx_windtrap git+https://github.com/invariant-hq/windtrap.git#4f2b11f2f5e70b3ffcf9bf972a037d12dd8031ba --no-action
           opam install . --deps-only --with-test
 
       - name: Build and test lz

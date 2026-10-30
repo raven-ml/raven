@@ -99,7 +99,7 @@ let memory =
             (List.hd (words (Pm4.set_reg 0xc000 ws))));
       test "a run of 16384 registers, past the count's 14 bits, is refused"
         (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.set_reg") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.set_reg") (fun () ->
               Pm4.set_reg 0xc000 (List.init 16384 (fun _ -> Packet.Dword 0))));
       test "a counter copied to memory through the L2" (fun () ->
           equal (list int)
@@ -130,9 +130,8 @@ let waits =
           equal (list int)
             [ packet3 0x3c 5; (1 lsl 4) lor 5; 0x8; 0; 1; 0xffff_ffff; 4 ]
             (words (Pm4.wait gfx11 (Memory 8) Greater_equal 1 ())));
-      cases
-        ~name:(fun (g, _) -> name g)
-        "a wait on a UCONFIG register, from UCONFIG's start on GFX9"
+      cases "a wait on a UCONFIG register, from UCONFIG's start on GFX9"
+        ~id:(fun (g, _) -> name g)
         [ (gfx9, 0x8e8); (gfx11, 0xc8e8); (gpu (12, 0, 0), 0xc8e8) ]
         (fun (g, reg) ->
           equal int reg
@@ -164,22 +163,21 @@ let waits =
             (List.nth
                (words (Pm4.wait gfx11 (Memory 8) Equal 0 ~interval:0xffff ()))
                6));
-      cases ~name:string_of_int "a poll interval outside 16 bits is refused"
+      cases "a poll interval outside 16 bits is refused" ~id:string_of_int
         [ -1; 0x10000 ] (fun interval ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.wait") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.wait") (fun () ->
               Pm4.wait gfx11 (Memory 8) Equal 0 ~interval ()));
       test "a 64-bit wait every 65535 clocks" (fun () ->
           equal int 0xffff
             (List.nth
                (words (Pm4.wait_64 gfx11 8 Equal 0 ~interval:0xffff ()))
                8));
-      cases ~name:string_of_int
-        "a 64-bit poll interval outside 16 bits is refused" [ -1; 0x10000 ]
-        (fun interval ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.wait_64") (fun () ->
+      cases "a 64-bit poll interval outside 16 bits is refused"
+        ~id:string_of_int [ -1; 0x10000 ] (fun interval ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.wait_64") (fun () ->
               Pm4.wait_64 gfx11 8 Equal 0 ~interval ()));
       test "GFX9 has no 64-bit wait" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.wait_64") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.wait_64") (fun () ->
               Pm4.wait_64 gfx9 0 Equal 0 ()));
     ]
 
@@ -257,19 +255,17 @@ let caches =
           equal (list int)
             [ packet3 0x49 6; release_event; 1 lsl 29; 0x40; 0; 9; 0; 0 ]
             (words (Pm4.release_mem gfx11 Agent 0x40 (Low_32 9))));
-      cases
-        ~name:(function Packet.Agent, _ -> "agent" | System, _ -> "system")
-        "an acquire on GFX11 invalidates the L2 only for the system"
+      cases "an acquire on GFX11 invalidates the L2 only for the system"
+        ~id:(function Packet.Agent, _ -> "agent" | System, _ -> "system")
         [ (Packet.Agent, 0x3f0); (System, 0xc3f1) ]
         (fun (scope, cntl) ->
           equal (list int)
             [ packet3 0x58 6; 0; 0xffff_ffff; 0xffff_ffff; 0; 0; 0; cntl ]
             (words (Pm4.acquire_mem gfx11 scope)));
-      cases
-        ~name:(fun ((g : Gpu.t), s) ->
+      cases "an acquire invalidates the caches its scope names"
+        ~id:(fun ((g : Gpu.t), s) ->
           strf "%s, %s" (name g)
             (match s with Packet.Agent -> "agent" | System -> "system"))
-        "an acquire invalidates the caches its scope names"
         (List.concat_map
            (fun g -> [ (g, Packet.Agent); (g, System) ])
            generations)
@@ -278,15 +274,15 @@ let caches =
           equal caches_w
             (true, true, true, all, all, all)
             (acquired g (words (Pm4.acquire_mem g scope))));
-      cases
-        ~name:(fun (((g : Gpu.t), s), _) ->
+      cases "a release places its scope's cache operations"
+        ~id:(fun (((g : Gpu.t), s), _) ->
           strf "%s, %s" (name g)
             (match s with Packet.Agent -> "agent" | System -> "system"))
-        "a release places its scope's cache operations" release_caches
+        release_caches
         (fun ((g, scope), bits) ->
           equal int (release_event lor bits)
             (List.nth (words (Pm4.release_mem g scope 0 (Low_32 0))) 1));
-      cases ~name "an interrupt carries its id's low 32 bits" generations
+      cases "an interrupt carries its id's low 32 bits" ~id:name generations
         (fun g ->
           let ws =
             words
@@ -294,7 +290,7 @@ let caches =
           in
           equal (pair int int) (2, 0x77)
             ((List.nth ws 2 lsr 24) land 7, List.nth ws 7));
-      cases ~name "a release without an interrupt raises none" generations
+      cases "a release without an interrupt raises none" ~id:name generations
         (fun g ->
           let ws = words (Pm4.release_mem g System 0 (Data_64 0)) in
           equal int 0 ((List.nth ws 2 lsr 24) land 7));
@@ -343,12 +339,12 @@ let control =
             (Packet.size
                (Pm4.pred_exec ~xcc_mask:0xff
                   (List.init 16383 (fun _ -> Packet.Dword 0)))));
-      cases ~name:string_of_int "a die mask past 8 bits is refused"
-        [ -1; 0x100 ] (fun xcc_mask ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.pred_exec") (fun () ->
+      cases "a die mask past 8 bits is refused" ~id:string_of_int [ -1; 0x100 ]
+        (fun xcc_mask ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.pred_exec") (fun () ->
               Pm4.pred_exec ~xcc_mask []));
       test "a predicated block past 16383 words is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.pred_exec") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.pred_exec") (fun () ->
               Pm4.pred_exec ~xcc_mask:1
                 (List.init 16384 (fun _ -> Packet.Dword 0))));
       test "an indirect buffer" (fun () ->
@@ -573,9 +569,8 @@ let runs =
                 (fun (op, _) -> equal ~msg:"SET_SH_REG before it" int 0x76 op)
                 rest
           | [] -> fail "no packet");
-      cases
-        ~name:(fun (t, g) -> strf "%s, %d bytes" (S.version t) g)
-        "a GFX9 or GFX11 workgroup's LDS, in 512-byte units"
+      cases "a GFX9 or GFX11 workgroup's LDS, in 512-byte units"
+        ~id:(fun (t, g) -> strf "%s, %d bytes" (S.version t) g)
         [
           ((9, 4, 2), 0);
           ((9, 4, 2), 1);
@@ -593,9 +588,8 @@ let runs =
           equal int 1 (lds (S.gpu ~target:(9, 5, 0) (9, 5, 0)) 1280));
       (* LDS_SIZE holds 511 units: of 1280 bytes on GFX950, 512 on the
          others. *)
-      cases
-        ~name:(fun (g, n, _) -> strf "GC %s, %d bytes" (S.version g.Gpu.gc) n)
-        "a workgroup's LDS is set up to 511 units and refused past them"
+      cases "a workgroup's LDS is set up to 511 units and refused past them"
+        ~id:(fun (g, n, _) -> strf "GC %s, %d bytes" (S.version g.Gpu.gc) n)
         [
           (gfx11, 511 * 512, true);
           (gfx11, (511 * 512) + 1, false);
@@ -606,21 +600,21 @@ let runs =
         (fun (g, n, taken) ->
           if taken then equal int 511 (lds g n)
           else
-            raises_match (Exn.invalid_arg ~substring:"Pm4.dispatch") (fun () ->
+            raises_match (Exn.invalid_arg ~sub:"Pm4.dispatch") (fun () ->
                 lds g n));
       test "a kernel's scratch past what WAVESIZE holds is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Scratch.tmpring") (fun () ->
               Pm4.dispatch gfx11
                 { kernel with private_segment = (32767 * 256 / 64) + 1 }
                 ~program:0 ~scratch:0 ~args:0 ~packet:0 ~threads:(1, 1, 1)
                 ~groups:(1, 1, 1) ()));
-      cases ~name:string_of_int "a wave limit outside 10 bits is refused"
+      cases "a wave limit outside 10 bits is refused" ~id:string_of_int
         [ 0; 1024 ] (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"waves_per_array") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"waves_per_array") (fun () ->
               Pm4.dispatch gfx11 kernel ~program:0 ~scratch:0 ~args:0 ~packet:0
                 ~threads:(1, 1, 1) ~groups:(1, 1, 1) ~waves_per_array:n ()));
       test "a GC with no dispatch registers is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Pm4.dispatch") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Pm4.dispatch") (fun () ->
               dispatch (gpu (10, 3, 0))));
       prop "a run is an agent acquire, its words, then a partial flush"
         (Gen.pair (Gen.of_list generations) packets)

@@ -159,8 +159,8 @@ let image_data content =
 
 let display_tests =
   [
-    cases ~name:(Printf.sprintf "%S")
-      "a string without the display line is no display"
+    cases "a string without the display line is no display"
+      ~id:(Printf.sprintf "%S")
       [
         ""; "quill.display"; "quill.displayx\nimage/png\n\n"; " quill.display\n";
       ] (fun s -> equal (option output) None (Cell.output_of_tag s));
@@ -183,9 +183,8 @@ let display_tests =
     test "an empty content is a display" (fun () ->
         equal (option output) (display "text/plain" "")
           (Cell.output_of_tag (tag "text/plain" "")));
-    cases
-      ~name:(fun (c, _) -> Printf.sprintf "%S" c)
-      "base64 follows RFC 4648"
+    cases "base64 follows RFC 4648"
+      ~id:(fun (c, _) -> Printf.sprintf "%S" c)
       [
         ("", "");
         ("f", "Zg==");
@@ -202,9 +201,8 @@ let display_tests =
           (Cell.output_of_tag (tag "text/plain" content)));
     prop "an image display keeps any bytes" Gen.string (fun content ->
         Law.round_trip string string image_data base64_decode content);
-    cases
-      ~name:(fun (s, _) -> Printf.sprintf "%S" s)
-      "a malformed display tag is an error"
+    cases "a malformed display tag is an error"
+      ~id:(fun (s, _) -> Printf.sprintf "%S" s)
       [
         ("quill.display\n", "no line ends the MIME type");
         ("quill.display\nimage/png", "no line ends the MIME type");

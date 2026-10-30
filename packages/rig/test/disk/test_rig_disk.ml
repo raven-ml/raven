@@ -383,8 +383,7 @@ let the_disk =
          reaches the host's memory"
         device_facts;
       test "Buffer.create on DISK is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"") (fun () ->
-              B.create disk 16));
+          raises_match (Exn.invalid_arg ~sub:"") (fun () -> B.create disk 16));
       test "a file's buffer is DISK's" (fun () ->
           let path = make_file "abc" in
           removing [ path ] @@ fun () ->
@@ -523,11 +522,10 @@ let test_copy_into_opened () =
   let dst = of_file path in
   equal ~msg:"opened, created" (pair bool bool) (true, false)
     (B.access dst = Rig.Read, B.access (create made 1) = Rig.Read);
-  raises_match (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"Rig.Buffer.copy: ") (fun () ->
       B.copy ~src:(host_of_string "y") ~dst);
-  raises_match ~msg:"an empty file"
-    (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ") (fun () ->
-      B.copy ~src:(host_of_string "") ~dst:(of_file empty));
+  raises_match ~msg:"an empty file" (Exn.invalid_arg ~sub:"Rig.Buffer.copy: ")
+    (fun () -> B.copy ~src:(host_of_string "") ~dst:(of_file empty));
   equal octets ~msg:"the file" "x" (contents path)
 
 (* A copy between a file and a borrow of its own pages is refused, both ways and
@@ -545,7 +543,7 @@ let test_copy_own_pages () =
       List.iter
         (fun (dir, src, dst) ->
           raises_match ~msg:(on ^ ", " ^ dir)
-            (Exn.invalid_arg ~substring:"Rig.Buffer.copy: ")
+            (Exn.invalid_arg ~sub:"Rig.Buffer.copy: ")
             (fun () -> B.copy ~src ~dst))
         [
           ("into the file", half pages 0, half file 1);
@@ -660,7 +658,7 @@ let test_borrow_retried () =
   let file = of_file path in
   use_all_others ();
   Sys.rename path aside;
-  raises_match (Exn.sys_error ~substring:path) (fun () -> B.borrow host file);
+  raises_match (Exn.sys_error ~sub:path) (fun () -> B.borrow host file);
   Sys.rename aside path;
   equal (option octets) (Some s) (borrowed host file)
 
@@ -803,7 +801,7 @@ let test_create_refused t =
 
 let test_negative_size n =
   let path = new_path () in
-  raises_match (Exn.invalid_arg ~substring:"Rig_disk.create_file: ") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"Rig_disk.create_file: ") (fun () ->
       Rig_disk.create_file path n);
   equal bool ~msg:"a file at the path" false (Sys.file_exists path)
 
@@ -852,30 +850,28 @@ let opening =
          grows to"
         test_length_at_open;
       cases
-        ~name:(fun u -> Format.asprintf "%a" pp_unopenable u)
         "of_file refuses a path that names no regular file, naming it, without \
          waiting"
+        ~id:(fun u -> Format.asprintf "%a" pp_unopenable u)
         [ Missing; Directory; Fifo ]
         test_of_file_refused;
       test "a path holding a NUL byte is refused, naming it" test_nul_path;
       cases
-        ~name:(fun t -> Format.asprintf "%a" pp_taken t)
         "create_file refuses a path that names something or cannot hold a \
          file, naming it and changing nothing"
+        ~id:(fun t -> Format.asprintf "%a" pp_taken t)
         [ File; Link_to_file; Dangling_link; A_directory; No_directory ]
         test_create_refused;
-      cases ~name:string_of_int
-        "create_file refuses a negative size, creating nothing" [ -1; min_int ]
-        test_negative_size;
-      cases ~name:(strf "0o%03o")
-        "a created file's permissions are 0o666 less the umask"
-        [ 0o022; 0o077; 0o002 ] test_umask;
+      cases "create_file refuses a negative size, creating nothing"
+        ~id:string_of_int [ -1; min_int ] test_negative_size;
+      cases "a created file's permissions are 0o666 less the umask"
+        ~id:(strf "0o%03o") [ 0o022; 0o077; 0o002 ] test_umask;
       test "a created file of no bytes is an empty file at its path"
         test_create_empty;
       cases
-        ~name:(fun (n, _, _) -> n)
         "a call refused under a limit of the process answers as rig_disk.mli \
          states, and closes what it opened"
+        ~id:(fun (n, _, _) -> n)
         limited test_limited;
     ]
 
@@ -1068,7 +1064,7 @@ let test_truncated kind =
      exclusively on Windows, which the disk's descriptor refuses. *)
   let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
   Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> Unix.ftruncate fd 4);
-  raises_match (Exn.sys_error ~substring:path) (fun () ->
+  raises_match (Exn.sys_error ~sub:path) (fun () ->
       read (B.view file ~first:2 ~length:5));
   equal (option string) ~msg:"the disk lost" None (Rig.lost disk);
   let other = make_file "other" in
@@ -1089,10 +1085,8 @@ let test_truncated_long () =
       Fun.protect
         ~finally:(fun () -> Unix.close fd)
         (fun () -> Unix.ftruncate fd cut);
-      raises_match
-        ~msg:(Printf.sprintf "cut at %d" cut)
-        (Exn.sys_error ~substring:path)
-        (fun () -> read file))
+      raises_match ~msg:(Printf.sprintf "cut at %d" cut)
+        (Exn.sys_error ~sub:path) (fun () -> read file))
     [ (12 * segment) + 7; segment + 3 ];
   equal (option string) ~msg:"the disk lost" None (Rig.lost disk)
 
@@ -1162,23 +1156,23 @@ let descriptors =
         test_too_many;
       test "a forked child reads and writes files with the disk" test_forked;
       cases
-        ~name:(fun k -> Format.asprintf "%a" pp_kind k)
         "a copy past the end of a file truncated since raises Sys_error naming \
          it, and the disk goes on"
+        ~id:(fun k -> Format.asprintf "%a" pp_kind k)
         [ Opened; Created ] test_truncated;
       test
         "a long copy past the end of a file truncated since raises Sys_error \
          naming it, the cut in any segment of the read"
         test_truncated_long;
       cases
-        ~name:(fun k -> Format.asprintf "%a" pp_kind k)
-        "a copy from a host borrow of a file truncated since raises \
-         Sys_error naming it"
+        "a copy from a host borrow of a file truncated since raises Sys_error \
+         naming it"
+        ~id:(fun k -> Format.asprintf "%a" pp_kind k)
         [ Opened; Created ] test_truncated_borrow;
       cases
-        ~name:(fun k -> Format.asprintf "%a" pp_kind k)
         "a read of a host borrow's page that a truncation cut off ends the \
          process or reads the bytes it held, as the system does"
+        ~id:(fun k -> Format.asprintf "%a" pp_kind k)
         [ Opened; Created ] test_truncated_pages;
     ]
 
@@ -1192,7 +1186,7 @@ let test_barrier_dead () =
     (Rig.Claim.with_ ~read:[ file ] ~donate:[] (fun c ->
          Rig.Claim.consume c ~why:"gone" file));
   raises_match
-    (Exn.invalid_arg ~substring:"Rig_disk.barrier: the buffer is dead: gone")
+    (Exn.invalid_arg ~sub:"Rig_disk.barrier: the buffer is dead: gone")
     (fun () -> Rig_disk.barrier file)
 
 (* A barrier first waits for the work that writes the file through a borrow:
@@ -1357,8 +1351,7 @@ let failing_file d =
   (path, file)
 
 let barrier_fails ~msg path file =
-  raises_match ~msg (Exn.sys_error ~substring:path) (fun () ->
-      Rig_disk.barrier file)
+  raises_match ~msg (Exn.sys_error ~sub:path) (fun () -> Rig_disk.barrier file)
 
 (* The device fails a barrier's write. The barriers after it raise too, once the
    device is healed and through a reopened descriptor, while another file's
@@ -1396,15 +1389,15 @@ let barriers =
       test "barrier returns on a file opened for reading" (fun () ->
           let path = make_file "abc" in
           removing [ path ] @@ fun () -> Rig_disk.barrier (of_file path));
-      cases ~name:fst "barrier refuses a buffer of another device"
+      cases "barrier refuses a buffer of another device" ~id:fst
         [
           ("the host", fun () -> B.create host 4);
           ("a memory device", fun () -> B.create (Lazy.force memory_device) 4);
         ]
         (fun (_, b) ->
           let b = b () in
-          raises_match (Exn.invalid_arg ~substring:"Rig_disk.barrier: ")
-            (fun () -> Rig_disk.barrier b));
+          raises_match (Exn.invalid_arg ~sub:"Rig_disk.barrier: ") (fun () ->
+              Rig_disk.barrier b));
       test "barrier refuses a dead buffer" test_barrier_dead;
       test "barrier raises the loss of a device whose work writes the file"
         test_barrier_lost;

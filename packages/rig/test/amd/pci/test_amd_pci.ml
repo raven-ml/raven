@@ -105,7 +105,7 @@ let temp_dir () =
 let reports =
   group ~timeout:10. "boot reports"
     [
-      cases ~name:Fun.id "the R9700's report names its blocks and images"
+      cases "the R9700's report names its blocks and images" ~id:Fun.id
         [ "r9700.bin"; "r9700_wide.bin" ] (fun name ->
           let r = require_ok (Rig_amd_pci.report ~firmware:[] (fixture name)) in
           equal (list block) listed_blocks r.blocks;
@@ -210,11 +210,11 @@ let refused =
   group ~timeout:10. "refusals"
     [
       cases
-        ~name:(fun (b, v, _) ->
+        "a block of a version this library does not boot is refused, naming it"
+        ~id:(fun (b, v, _) ->
           strf "block %d at %s" b
             (let a, b, c = v in
              strf "%d.%d.%d" a b c))
-        "a block of a version this library does not boot is refused, naming it"
         [
           (34, (1, 7, 0), "MMHUB 1.7.0 is a version this library does not boot");
           (34, (2, 0, 0), "MMHUB 2.0.0 is a version this library does not boot");
@@ -232,7 +232,7 @@ let refused =
           equal (result pass string) (Error "the GPU has no OSSSYS block")
             (Result.map ignore
                (Rig_amd_pci.report ~firmware:[] (patched [ (40, None) ]))));
-      cases ~name:fst "a GPU of each generation this library boots is reported"
+      cases "a GPU of each generation this library boots is reported" ~id:fst
         [ ("Navi 31", navi31); ("MI300", mi300); ("MI350", mi350) ]
         (fun (_, blocks) ->
           let r = require_ok (report_of blocks) in
@@ -297,7 +297,7 @@ let numbering =
               (Rig_gpu_support.opened (Rig_amd_pci.gpu ~machine 0))
           in
           equal string ("AMD-PCI: " ^ Rig_pci_support.unlisted_why) why);
-      cases ~name:fst "GPUs are named by number"
+      cases "GPUs are named by number" ~id:fst
         [
           ("0", (0, "AMD-PCI"));
           ("1", (1, "AMD-PCI:1"));
@@ -316,7 +316,7 @@ let numbering =
           equal (result pass string)
             (Error "AMD-PCI:3: no such function; AMD-PCI drives 3 here")
             (Rig_amd_pci.reset ~machine 3));
-      cases ~name:fst "a negative GPU number raises"
+      cases "a negative GPU number raises" ~id:fst
         [
           ("gpu", fun () -> ignore (Rig_amd_pci.gpu (-1)));
           ("detach", fun () -> ignore (Rig_amd_pci.detach (-1)));
@@ -324,9 +324,10 @@ let numbering =
           ("reset", fun () -> ignore (Rig_amd_pci.reset (-1)));
         ]
         (fun (_, f) -> raises_match Exn.invalid_arg f);
-      cases ~name:fst
+      cases
         "a call inside a lock of its thread's raises naming it, changing \
          nothing"
+        ~id:fst
         (let on () = Rig_pci.Machine.at (machine ()) in
          let past () = require_ok (Rig_amd_pci.count ()) in
          [

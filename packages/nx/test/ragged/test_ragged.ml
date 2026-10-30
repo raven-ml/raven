@@ -10,7 +10,7 @@
 open Windtrap
 open Nx_support
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 let pp_int64s ppf a =
   Format.fprintf ppf "[%s]"
@@ -115,7 +115,7 @@ let making =
                (Nx_ragged.v
                   ~offsets:(int64s [| 0L; 0L; 3L |])
                   (Nx.zeros Nx.int32 [| 3 |]))));
-      cases "v refuses offsets that do not cut the values" ~name:fst
+      cases "v refuses offsets that do not cut the values" ~id:fst
         [
           ("offsets of two axes", (Nx.zeros Nx.int64 [| 1; 2 |], [| 3 |]));
           ("no offset", (Nx.zeros Nx.int64 [| 0 |], [| 3 |]));
@@ -142,7 +142,7 @@ let making =
               (values d)
           in
           equal same_rows (model d) (rows r));
-      cases "of_lengths refuses lengths that do not cut the values" ~name:fst
+      cases "of_lengths refuses lengths that do not cut the values" ~id:fst
         [
           ("lengths of two axes", (Nx.zeros Nx.int64 [| 1; 1 |], [| 3 |]));
           ("a negative length", (int64s [| 2L; -1L; 1L |], [| 3 |]));
@@ -287,7 +287,7 @@ let by_ids =
             (List.init
                (Array.length tail / w)
                (fun j -> Int32.to_int tail.(j * w) / w)));
-      cases "of_ids refuses ids that do not match the rows" ~name:fst
+      cases "of_ids refuses ids that do not match the rows" ~id:fst
         [
           ( "negative segments",
             fun () ->
@@ -356,7 +356,7 @@ let transforming =
           let r = ragged d in
           let s = Nx_ragged.sub r ~offset:o ~length:n in
           equal bool true (Nx_ragged.values s == Nx_ragged.values r));
-      cases "sub refuses a range outside the rows" ~name:fst
+      cases "sub refuses a range outside the rows" ~id:fst
         [
           ("a negative offset", (-1, 1));
           ("a negative length", (0, -1));
@@ -391,7 +391,7 @@ let transforming =
           let r = Nx_ragged.take ~indices:(int64s i) (ragged d) in
           equal same_rows expected (rows r);
           exactly_rows r);
-      cases "take refuses what it cannot take" ~name:fst
+      cases "take refuses what it cannot take" ~id:fst
         [
           ( "indices of two axes",
             fun () ->
@@ -429,7 +429,7 @@ let transforming =
             Nx_ragged.of_lengths (int64s [| 1L |]) (Nx.zeros Nx.int32 [| 2 |])
           in
           equal bool true (Nx_ragged.concat [ r ] == r));
-      cases "concat refuses what has no rows in common" ~name:fst
+      cases "concat refuses what has no rows in common" ~id:fst
         [
           ("no ragged array", fun () -> Nx_ragged.concat []);
           ( "cells of different shapes",
@@ -450,8 +450,7 @@ let transforming =
           equal (array float_exact)
             (Nx.to_array (Nx.cast Nx.float64 (Nx.neg (values d))))
             (Nx.to_array (Nx_ragged.values m)));
-      cases "map refuses a function that changes the rows of the values"
-        ~name:fst
+      cases "map refuses a function that changes the rows of the values" ~id:fst
         [
           ("one row fewer", fun v -> Nx.slice [ R (1, Nx.dim 0 v) ] v);
           ("a 0-D result", fun v -> Nx.sum v);
@@ -559,7 +558,7 @@ let row_quantiles =
       cases
         "a fraction that rounds to zero beside an infinity gives the lower \
          statistic"
-        ~name:fst
+        ~id:fst
         [
           ("float32 [1; inf]", (Nx.float32, [| 1.; Float.infinity |], 1.));
           ( "float32 [-inf; 1]",
@@ -576,7 +575,7 @@ let row_quantiles =
             (Nx.to_array (Nx_ragged.quantile [| q |] r));
           equal ~msg:"Nx.quantile" (array float_exact) [| expected |]
             (Nx.to_array (Nx.quantile [| q |] (Nx.create dt [| 2 |] xs))));
-      cases "quantile refuses a probability outside [0, 1]" ~name:fst
+      cases "quantile refuses a probability outside [0, 1]" ~id:fst
         [ ("1.5", 1.5); ("-0.5", -0.5); ("NaN", Float.nan) ]
         (fun (_, q) ->
           invalid ~by:"Nx_ragged.quantile" (fun () ->
@@ -905,7 +904,7 @@ let traced f =
 let reads =
   let r = Nx_ragged.of_strings [| "ab"; "c"; "ab" |] in
   let o = Nx_ragged.offsets r and values = Nx_ragged.values r in
-  cases ~name:fst "a read of a traced value raises naming its function"
+  cases "a read of a traced value raises naming its function" ~id:fst
     [
       ( "Nx_ragged.take",
         fun { trace } ->

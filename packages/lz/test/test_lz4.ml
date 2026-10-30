@@ -448,8 +448,9 @@ let choices =
   let flg f = Char.code f.[4] in
   group "the frame encoder"
     [
-      cases ~name:string_of_int
+      cases
         "writes independent blocks, the content size and the content checksum"
+        ~id:string_of_int
         [ 0; 100; 5 * mib ]
         (fun n ->
           let s = Lz_support.corpus Columns n in
@@ -576,7 +577,7 @@ let hostile_blocks =
           equal string "too long at 2"
             (seen (Lz.Lz4.Block.decode (Lz_support.of_string b) (snd g)));
           untouched g);
-      cases ~name:fst "a length is too long once it passes the destination"
+      cases "a length is too long once it passes the destination" ~id:fst
         (* 16 MiB of length bytes into 100 bytes of room: the length passes
            the room at the first, and no byte after makes it fit, even if
            the input ends inside the length. The decode stops there, so
@@ -619,13 +620,13 @@ let hostile_frames =
           equal string "truncated at 1" (decode_seen frame "\x5a");
           equal string "truncated at 13"
             (decode_seen frame (header () ^ end_mark ^ "\x04\x22")));
-      cases ~name:fst "the version is 01"
+      cases "the version is 01" ~id:fst
         [ ("00", 0x00); ("10", 0x80); ("11", 0xc0) ]
         (fun (_, flg) ->
-          equal string (malformed_at 4) (decode_seen frame (header ~flg () ^ end_mark)));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "reserved bits are 0"
+          equal string (malformed_at 4)
+            (decode_seen frame (header ~flg () ^ end_mark)));
+      cases "reserved bits are 0"
+        ~id:(fun (n, _, _, _) -> n)
         [
           ("FLG bit 1", version lor 0x02, max64k, 4);
           ("BD bit 7", version, max64k lor 0x80, 5);
@@ -635,7 +636,7 @@ let hostile_frames =
         (fun (_, flg, bd, at) ->
           equal string (malformed_at at)
             (decode_seen frame (header ~flg ~bd () ^ end_mark)));
-      cases ~name:string_of_int "block maximum sizes 0 to 3 are undefined"
+      cases "block maximum sizes 0 to 3 are undefined" ~id:string_of_int
         [ 0; 1; 2; 3 ]
         (fun id ->
           equal string (malformed_at 5)
@@ -666,9 +667,8 @@ let hostile_frames =
             (decode_seen frame ~cap:mib
                (header () ^ compressed ("\xf0" ^ length_bytes ((64 * kib) + 1) ^ "xyz")
                ^ end_mark)));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a content size that differs is malformed at the size field"
+      cases "a content size that differs is malformed at the size field"
+        ~id:(fun (n, _, _) -> n)
         [
           ("above, in a stored block", 6, stored "hello");
           ("below, in a stored block", 4, stored "hello");
@@ -765,9 +765,9 @@ let allocation =
     ignore (Sys.opaque_identity (f ()));
     int_of_float (Gc.minor_words () -. before)
   in
-  cases
-    ~name:(fun c -> c.name)
-    "decode allocates only its result" [ block; frame ]
+  cases "decode allocates only its result"
+    ~id:(fun c -> c.name)
+    [ block; frame ]
     (fun c ->
       let s = Lz_support.corpus Text (256 * kib) in
       let src = Lz_support.of_string (encode c s) in
@@ -783,9 +783,9 @@ let () =
          group "arguments"
            [
              test "a negative size has no bound" (fun () ->
-                 raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
                      Lz.Lz4.Block.bound (-1));
-                 raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
                      Lz.Lz4.Frame.bound (-1)));
              group "block" [ Lz_support.largest_bound Lz.Lz4.Block.bound ];
              group "frame" [ Lz_support.largest_bound Lz.Lz4.Frame.bound ];

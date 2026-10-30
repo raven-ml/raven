@@ -169,7 +169,7 @@ let test_signed_zeros () =
 
 let test_rules () =
   let x = Nx.place Count.on (host (f32 [| 1.; 2.; 3. |])) in
-  let raises f = raises_match (Exn.invalid_arg ~substring:"t: ") f in
+  let raises f = raises_match (Exn.invalid_arg ~sub:"t: ") f in
   C.reset ();
   raises (fun () ->
       Nx.Prim.eval ~by:"t"

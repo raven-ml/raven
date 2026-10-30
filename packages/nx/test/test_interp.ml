@@ -18,7 +18,7 @@ module P = Nx_kernel.Prog
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let f64 = Nx.float64
 let host_array x = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x))

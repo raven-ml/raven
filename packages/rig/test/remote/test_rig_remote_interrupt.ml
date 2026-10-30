@@ -293,7 +293,7 @@ let connect_inside_lock () =
       fail "a connect inside a lock answered Ok"
   | Error why -> failf "a connect inside a lock answered Error %S" why
   | exception Invalid_argument why ->
-      starts_with ~msg:"the refusal" ~affix:"Rig.open_: called from" why);
+      starts_with ~msg:"the refusal" ~prefix:"Rig.open_: called from" why);
   connects_after "after a connect inside a lock"
 
 (* Rails *)

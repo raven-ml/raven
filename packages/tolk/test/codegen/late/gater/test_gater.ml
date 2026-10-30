@@ -168,9 +168,8 @@ let converted =
       (1, Array.make 64 (`Float 3.)); (2, Array.make 64 (`Int (Bigint.of_int 3)));
     ]
   in
-  cases
-    ~name:(fun (buf, a) -> Format.asprintf "%a %h" Dtype.pp (Ops.dtype buf) a)
-    "a selection of a converted gated load keeps its value"
+  cases "a selection of a converted gated load keeps its value"
+    ~id:(fun (buf, a) -> Format.asprintf "%a %h" Dtype.pp (Ops.dtype buf) a)
     [
       (narrow, 2.);
       (narrow, 0x1p-149);

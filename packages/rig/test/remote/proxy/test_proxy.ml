@@ -143,11 +143,10 @@ let facts =
       test
         "a proxy's facts are the agent's account's and the ones its .mli lists"
         driver_facts;
-      cases
-        ~name:(fun (forward, backward) ->
+      cases "directed reachability"
+        ~id:(fun (forward, backward) ->
           Printf.sprintf "older reaches newer: %b; newer reaches older: %b"
             forward backward)
-        "directed reachability"
         [ (false, false); (true, false); (false, true); (true, true) ]
         reaches;
       test "proxies of two links never map each other; a word maps at its id"
@@ -496,7 +495,7 @@ let images () =
   is_none (Rig.Image.resolve i "walk");
   let why = require_error (Rig.Image.load m.host "bad code") in
   starts_with ~msg:"the reason starts with the host's name"
-    ~affix:(Rig.name m.host) why;
+    ~prefix:(Rig.name m.host) why;
   contains ~msg:"the agent's reason" ~sub:"the agent refuses it" why;
   let why = require_error (Rig.Image.load m.devices.(0) "run") in
   contains ~msg:"says it loads no code" ~sub:"loads no code" why
@@ -735,10 +734,10 @@ let failures =
     [
       test "a wait for a value handed over when the job fails raises Lost"
         in_flight_fails;
-      cases
-        ~name:(fun (n, _) ->
+      cases "counted"
+        ~id:(fun (n, _) ->
           n ^ " raises Fault with the root cause once the job failed")
-        "counted" counted counted_after_failure;
+        counted counted_after_failure;
       test "free, unload and signaled raise nothing once the job failed"
         quiet_after_failure;
       test "closing a device ends it alone" close_device;

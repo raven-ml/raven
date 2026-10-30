@@ -70,7 +70,7 @@ let test_inside_lock () =
   List.iter
     (fun (what, f) ->
       starts_with ~msg:what
-        ~affix:(Printf.sprintf "Rig_bnxt.%s: called from" what)
+        ~prefix:(Printf.sprintf "Rig_bnxt.%s: called from" what)
         (inside_lock f))
     [
       ("open_", fun () -> ignore (B.open_ (require_ok (B.count ()))));
@@ -99,11 +99,11 @@ let refusals =
                 (String.sub e 0 (min (String.length e) (String.length name)));
               contains ~sub:"no such function" e);
       test "a negative index raises" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
               ignore (B.open_ (-1)));
-          raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
               ignore (B.detach (-1)));
-          raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
               ignore (B.attach (-1))));
     ]
 
@@ -191,7 +191,7 @@ let transfers =
             B.Qp.receive b r ~at:0 1
           done;
           equal int 0 (B.Qp.room b Receive);
-          raises_match (Exn.invalid_arg ~substring:"full") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"full") (fun () ->
               B.Qp.receive b r ~at:0 1));
       test "a destroyed queue pair refuses every call" (fun () ->
           with_nic @@ fun nic ->
@@ -199,7 +199,7 @@ let transfers =
           let r = region nic 4096 in
           ok "destroying" (B.Qp.destroy a);
           ok "a second destroy" (B.Qp.destroy a);
-          raises_match (Exn.invalid_arg ~substring:"destroyed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"destroyed") (fun () ->
               B.Qp.send a r ~at:0 1));
     ]
 
@@ -267,10 +267,10 @@ let loopback =
           let a, _ = pair nic in
           let r = region nic 4096 in
           let n = B.Region.length r in
-          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"bytes") (fun () ->
               B.Qp.read a ~src:(r, 1) ~dst:(r, 0) n);
           let qp = ok "a queue pair" (B.Qp.make nic) in
-          raises_match (Exn.invalid_arg ~substring:"not connected") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"not connected") (fun () ->
               B.Qp.read qp ~src:(r, 0) ~dst:(r, 8) 1));
       test "a read on a queue pair whose peer is on another NIC raises"
         (fun () ->
@@ -283,7 +283,7 @@ let loopback =
             (B.Qp.connect qp
                { own with gid = flip own.gid; mac = flip own.mac });
           let r = region nic 4096 in
-          raises_match (Exn.invalid_arg ~substring:"another NIC") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"another NIC") (fun () ->
               B.Qp.read qp ~src:(r, 0) ~dst:(r, 8) 1));
     ]
 
@@ -351,9 +351,9 @@ let pages =
           with_nic @@ fun nic ->
           let at = H.pages H.page in
           Fun.protect ~finally:(fun () -> H.free_pages at H.page) @@ fun () ->
-          raises_match (Exn.invalid_arg ~substring:"page") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"page") (fun () ->
               ignore (B.Region.pages nic (at + 8) 8));
-          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"bytes") (fun () ->
               ignore (B.Region.pages nic at 0)));
     ]
 
@@ -399,22 +399,22 @@ let misuse =
           let a, _ = pair nic in
           let r = region nic 1 in
           let n = B.Region.length r in
-          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"bytes") (fun () ->
               B.Qp.send a r ~at:1 n);
-          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"bytes") (fun () ->
               B.Qp.send a r ~at:(-1) 1);
-          raises_match (Exn.invalid_arg ~substring:"bytes") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"bytes") (fun () ->
               ignore (B.Region.read r 1 n)));
       test "a post on an unconnected queue pair raises" (fun () ->
           with_nic @@ fun nic ->
           let qp = ok "a queue pair" (B.Qp.make nic) in
           let r = region nic 4096 in
-          raises_match (Exn.invalid_arg ~substring:"not connected") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"not connected") (fun () ->
               B.Qp.send qp r ~at:0 1));
       test "a second connect raises" (fun () ->
           with_nic @@ fun nic ->
           let a, b = pair nic in
-          raises_match (Exn.invalid_arg ~substring:"connected") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"connected") (fun () ->
               ignore (B.Qp.connect a (B.Qp.endpoint b))));
       test "a deregistered region refuses posts, reads and writes" (fun () ->
           with_nic @@ fun nic ->
@@ -422,17 +422,17 @@ let misuse =
           let r = region nic 4096 in
           ok "deregistering" (B.Region.deregister r);
           ok "a second deregister" (B.Region.deregister r);
-          raises_match (Exn.invalid_arg ~substring:"deregistered") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"deregistered") (fun () ->
               B.Qp.send a r ~at:0 1);
-          raises_match (Exn.invalid_arg ~substring:"deregistered") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"deregistered") (fun () ->
               ignore (B.Region.read r 0 1));
-          raises_match (Exn.invalid_arg ~substring:"deregistered") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"deregistered") (fun () ->
               B.Region.write r 0 "x"));
       test "a wait with nothing due raises" (fun () ->
           with_nic @@ fun nic ->
           let a, _ = pair nic in
           equal (option (result int string)) None (B.Qp.poll a Send);
-          raises_match (Exn.invalid_arg ~substring:"due") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"due") (fun () ->
               ignore (B.Qp.wait a Send ~us:0)));
       test "a closed NIC refuses every call" (fun () ->
           with_nic @@ fun nic ->
@@ -440,13 +440,13 @@ let misuse =
           let r = region nic 4096 in
           B.close nic;
           B.close nic;
-          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"closed") (fun () ->
               ignore (B.Qp.make nic));
-          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"closed") (fun () ->
               B.Qp.send a r ~at:0 1);
-          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"closed") (fun () ->
               ignore (B.Region.read r 0 1));
-          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"closed") (fun () ->
               ignore (B.Region.deregister r)));
     ]
 

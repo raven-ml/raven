@@ -375,7 +375,7 @@ let tests =
   [
     group ~timeout "images"
       [
-        cases ~name:placement_name "code placement"
+        cases "code placement" ~id:placement_name
           [ (true, true); (true, false); (false, true); (false, false) ]
           test_load;
         test "a lost device's image names no function" test_entry_lost;

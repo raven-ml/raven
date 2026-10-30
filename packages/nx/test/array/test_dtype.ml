@@ -1156,7 +1156,7 @@ let tests =
   [
     group "bigarray kinds"
       [
-        cases ~name:any_name "to_bigarray_kind's kind is the dtype's" D.all
+        cases "to_bigarray_kind's kind is the dtype's" ~id:any_name D.all
           test_kind;
         test "the dtypes and kinds with no counterpart" test_kindless;
       ];
@@ -1164,10 +1164,10 @@ let tests =
       [
         test "all holds every dtype once" test_all;
         test "a dtype's code is its index in all" test_codes;
-        cases ~name:row_name "name, pp, bits and kind state each format" table
+        cases "name, pp, bits and kind state each format" ~id:row_name table
           test_row;
         test "is k holds of the dtypes of kind k" test_is;
-        cases ~name:row_name "nx_dtype.h states each row" table test_header;
+        cases "nx_dtype.h states each row" ~id:row_name table test_header;
         test "nx_dtype.h has no row past the last code"
           test_no_row_past_the_last;
         test "equal and equal_witness hold of a dtype and itself only"
@@ -1175,13 +1175,13 @@ let tests =
       ];
     group "names"
       [
-        cases ~name:row_name "of_name finds each name" table test_of_name;
-        cases ~name:(strf "%S") "of_name refuses other names" names_refused
+        cases "of_name finds each name" ~id:row_name table test_of_name;
+        cases "of_name refuses other names" ~id:(strf "%S") names_refused
           test_of_other_name;
       ];
     group "codes"
       [
-        cases ~name:any_name "of_code finds each code" D.all test_of_code;
+        cases "of_code finds each code" ~id:any_name D.all test_of_code;
         prop ~examples:codes_refused "of_code refuses every other code"
           Gen.int law_of_other_code;
         test "of_code allocates nothing" test_of_code_allocates_nothing;
@@ -1189,45 +1189,41 @@ let tests =
     group "bytes is the bytes n elements fill" (List.map law_bytes D.all);
     group "values"
       [
-        cases ~name:values_name "zero and one are 0 and 1" values
-          test_identities;
-        cases ~name:values_name "min_value and max_value are the range" values
+        cases "zero and one are 0 and 1" ~id:values_name values test_identities;
+        cases "min_value and max_value are the range" ~id:values_name values
           test_limits;
-        cases ~name:values_name "holds its zero, one and limits" values
-          test_holds;
-        cases ~name:format_name "float_format states each format" formats
+        cases "holds its zero, one and limits" ~id:values_name values test_holds;
+        cases "float_format states each format" ~id:format_name formats
           test_float_format;
       ];
     group "stores"
       [
-        cases ~name:store_name "the conversion table" conversion_table
-          test_store;
-        cases ~name:format_name
-          "every value, tie and neighbour rounds once to even" narrow
-          test_every_tie;
+        cases "the conversion table" ~id:store_name conversion_table test_store;
+        cases "every value, tie and neighbour rounds once to even"
+          ~id:format_name narrow test_every_tie;
         group "ties round once to even" (List.map law_ties wide);
-        cases ~name:format_name
+        cases
           "every float32 about a rounding bit and its float64 neighbours store \
            as the exact reference says"
+          ~id:format_name
           (List.filter (fun (F (dt, _)) -> D.bits dt < 64) formats)
           test_sweep;
-        cases ~name:format_name "a NaN keeps its sign"
+        cases "a NaN keeps its sign" ~id:format_name
           (List.filter (fun (F (_, f)) -> f.top <> Finite) formats)
           test_nan_sign;
-        cases ~name:payloads_name
-          "a NaN is quieted, keeping its sign and the top of its payload"
-          nan_payloads test_nan_payloads;
-        cases ~name:format_name
+        cases "a NaN is quieted, keeping its sign and the top of its payload"
+          ~id:payloads_name nan_payloads test_nan_payloads;
+        cases
           "a decoder quiets a NaN and keeps its sign, and the payload of the \
            formats with infinities"
+          ~id:format_name
           (List.filter (fun (F (_, f)) -> f.top <> Finite) narrow)
           test_decoded_nans;
-        cases ~name:format_name "every code reads as its definition's value"
+        cases "every code reads as its definition's value" ~id:format_name
           narrow test_every_code;
         law_float64;
-        cases ~name:format_name
-          "an int64 or uint64 stores as the exact reference rounds it once"
-          narrow test_integers;
+        cases "an int64 or uint64 stores as the exact reference rounds it once"
+          ~id:format_name narrow test_integers;
         group "integers truncate toward zero and saturate" integer_laws;
         group "complex numbers store a real part in their component's format"
           [
@@ -1238,17 +1234,17 @@ let tests =
       ];
     group "printing"
       [
-        cases ~name:printed_name "values print in their dtype's reading" printed
+        cases "values print in their dtype's reading" ~id:printed_name printed
           test_printed;
         group "integers print in their dtype's reading" printing_integers;
-        cases ~name:golden_name
+        cases
           "ties of the narrow formats and powers of two of the wide print as \
            numpy's shortest repr"
-          golden test_golden;
-        cases ~name:format_name
+          ~id:golden_name golden test_golden;
+        cases
           "every value prints as the shortest decimal that reads back, the \
            nearest of those"
-          narrow test_every_value_printed;
+          ~id:format_name narrow test_every_value_printed;
         group
           "a wider float prints as the shortest decimal that reads back, the \
            nearest of those"

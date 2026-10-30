@@ -129,9 +129,9 @@ let encode =
             (words
                (Packet.encode id
                   [ W64 { (Packet.value 0x100L) with set = Int64.min_int } ])));
-      cases ~name:string_of_int "a shift outside [0;63] is refused"
+      cases "a shift outside [0;63] is refused" ~id:string_of_int
         [ min_int; -1; 64; max_int ] (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Packet.encode") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Packet.encode") (fun () ->
               Packet.encode id
                 [ Dword 0; W32 { (Packet.value 1L) with shift = n } ]));
     ]
@@ -186,9 +186,9 @@ let template =
               [ W32 { (Packet.value (Later 0L)) with shift = 64 } ]
           in
           equal int 1 (List.length holes));
-      cases ~name:string_of_int "a known word's shift outside [0;63] is refused"
+      cases "a known word's shift outside [0;63] is refused" ~id:string_of_int
         [ -1; 64 ] (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Packet.template") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Packet.template") (fun () ->
               Packet.template known
                 [ W32 { (Packet.value (Known 1L)) with shift = n } ]));
     ]

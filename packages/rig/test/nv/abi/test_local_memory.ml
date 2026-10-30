@@ -67,18 +67,18 @@ let tests =
           equal local
             { per_thread; per_tpc; bytes = per_tpc * 66 }
             (Local_memory.make (S.gpu ()) per_thread));
-      cases ~name:string_of_int
-        "a need whose allocation would pass max_int is refused"
+      cases "a need whose allocation would pass max_int is refused"
+        ~id:string_of_int
         (* Each step wraps first for one of them: the thread's rounding, the
            warp's share, the TPC's, the allocation. *)
         [ max_int; max_int - 30; (max_int / 32) + 1; 1 lsl 52; 1 lsl 45 ]
         (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Local_memory.make")
-            (fun () -> Local_memory.make (S.gpu ()) n));
-      cases ~name:string_of_int "a negative need is refused" [ min_int; -1 ]
+          raises_match (Exn.invalid_arg ~sub:"Local_memory.make") (fun () ->
+              Local_memory.make (S.gpu ()) n));
+      cases "a negative need is refused" ~id:string_of_int [ min_int; -1 ]
         (fun n ->
-          raises_match (Exn.invalid_arg ~substring:"Local_memory.make")
-            (fun () -> Local_memory.make (S.gpu ()) n));
+          raises_match (Exn.invalid_arg ~sub:"Local_memory.make") (fun () ->
+              Local_memory.make (S.gpu ()) n));
     ]
 
 let () = exit (run "rig_nv_abi.local_memory" [ tests ])

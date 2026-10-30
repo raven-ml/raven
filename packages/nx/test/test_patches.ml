@@ -14,7 +14,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* Indices *)
 

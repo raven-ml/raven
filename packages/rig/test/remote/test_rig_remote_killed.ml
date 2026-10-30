@@ -18,8 +18,8 @@ open Remote_job
 (* The process's report of [cause], its own or relayed. *)
 let reports ~msg cause = function
   | 2, [ line ] ->
-      starts_with ~msg ~affix:"failed: " line;
-      ends_with ~msg ~affix:cause line
+      starts_with ~msg ~prefix:"failed: " line;
+      ends_with ~msg ~suffix:cause line
   | code, lines ->
       failf "%s exited %d, printing [%s]" msg code (String.concat "; " lines)
 
@@ -39,7 +39,7 @@ let controller_first () =
       kill victim;
       until ~what:"the job's failure" (fun () -> Rig_remote.failed j <> None));
   let root = Option.get (Rig_remote.failed j) in
-  starts_with ~msg:"names the killed agent's machine" ~affix:(machine victim)
+  starts_with ~msg:"names the killed agent's machine" ~prefix:(machine victim)
     root;
   List.iter
     (fun h ->
@@ -70,7 +70,7 @@ let agent_first () =
                   (String.concat "; " lines))
       in
       starts_with ~msg:"names the killed agent's machine"
-        ~affix:("failed: " ^ machine victim)
+        ~prefix:("failed: " ^ machine victim)
         why;
       let cause = String.sub why 8 (String.length why - 8) in
       reports ~msg:"the controller" cause (finish c))

@@ -17,7 +17,7 @@ module S2 = (val Nx.devices [ m 0; m 1 ])
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ m 2 ])
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* The value an int64 [i] stores as in [dt], by the cast rule. *)
 let of_int64 (type v s) (dt : (v, s) D.t) i : v =
@@ -63,7 +63,7 @@ let named ~by f =
 (* Each refusal raises naming its function; cases are numbered to name them. *)
 let refusals l =
   cases "refusals"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     (List.mapi (fun i (by, f) -> (Printf.sprintf "%d %s" i by, by, f)) l)
     (fun (_, by, f) -> named ~by f)
 
@@ -154,7 +154,7 @@ let test_e5m2_store (_, store) =
 let fills =
   group "fills"
     [
-      cases ~name:fst "float8_e5m2 overflows to infinity" e5m2_stores
+      cases "float8_e5m2 overflows to infinity" ~id:fst e5m2_stores
         test_e5m2_store;
       prop "ones is one at every element" (Gen.pair dtype shape) law_ones;
       prop "full is its value at every element" filled law_full;
@@ -603,7 +603,7 @@ let placements =
     [
       test "what host creations compute lies on the host" test_host_computed;
       cases "each creation's host form and _at form"
-        ~name:(fun (Pair { name; _ }) -> name)
+        ~id:(fun (Pair { name; _ }) -> name)
         pairs test_pair;
       prop "full_at lies at its placement"
         (Gen.pair placement_gen (Gen.pair shape (Gen.float_range (-4.) 4.)))
@@ -789,9 +789,8 @@ let staged f =
 
 let test_bare_computes () =
   let x = Nx.zeros_at Bare.on Nx.float32 [| 2 |] in
-  raises_match
-    (Exn.invalid_arg ~substring:"has no kernels to compute Map")
-    (fun () -> Nx.add x x);
+  raises_match (Exn.invalid_arg ~sub:"has no kernels to compute Map") (fun () ->
+      Nx.add x x);
   named ~by:"Nx.add" (fun () -> ignore (Nx.add x x))
 
 (* On [Bare], an extent that stages eye_at stages no operation that reads an
@@ -879,9 +878,8 @@ let shortcuts =
    with kernels is its host result placed there. *)
 let test_shortcut (Shortcut { name; dtype; f }) =
   let by = "Nx." ^ List.hd (String.split_on_char ' ' name) in
-  raises_match
-    (Exn.invalid_arg ~substring:"has no kernels to compute")
-    (fun () -> f Bare.on);
+  raises_match (Exn.invalid_arg ~sub:"has no kernels to compute") (fun () ->
+      f Bare.on);
   named ~by (fun () -> ignore (f Bare.on));
   same_as ~msg:"with kernels" dtype (Nx.place S2.on (f Nx.Host.on)) (f S2.on)
 
@@ -972,7 +970,7 @@ let bare =
   group "without kernels"
     [
       cases "each _at form is its host form placed"
-        ~name:(fun (Pair { name; _ }) -> name)
+        ~id:(fun (Pair { name; _ }) -> name)
         pairs test_bare;
       prop "fills and forms beside a reference are host values placed"
         ~examples:
@@ -986,7 +984,7 @@ let bare =
         (Gen.pair bare_gen (Gen.pair dtype shape))
         law_bare;
       cases "an operation needing no element raises"
-        ~name:(fun (Shortcut { name; _ }) -> name)
+        ~id:(fun (Shortcut { name; _ }) -> name)
         shortcuts test_shortcut;
       test "a shortcut over cut and strided operands holds its elements"
         test_shortcut_views;
@@ -1000,7 +998,7 @@ let bare =
       test "under an extent, eye_at stages no operation reading an operand"
         test_bare_staged;
       cases "each _at form under an interpretation is its host form placed"
-        ~name:(fun (Pair { name; _ }) -> name)
+        ~id:(fun (Pair { name; _ }) -> name)
         pairs test_bare_interpreted;
     ]
 

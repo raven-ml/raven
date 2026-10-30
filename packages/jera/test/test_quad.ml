@@ -45,14 +45,14 @@ let nodes_match (x, w) (gx, gw) =
 
 let rule_tests =
   [
-    cases
-      ~name:(fun (n, _, _) -> Printf.sprintf "%d points" n)
-      "gauss n is mpmath's rule to the last bit or so" gauss_goldens
+    cases "gauss n is mpmath's rule to the last bit or so"
+      ~id:(fun (n, _, _) -> Printf.sprintf "%d points" n)
+      gauss_goldens
       (fun (n, gx, gw) ->
         nodes_match (Quad.Rule.nodes (Quad.Rule.gauss n) f64) (gx, gw));
-    cases
-      ~name:(fun (n, _, _) -> Printf.sprintf "%d points" ((2 * n) + 1))
-      "kronrod n is QUADPACK's rule as scipy tabulates it" kronrod_goldens
+    cases "kronrod n is QUADPACK's rule as scipy tabulates it"
+      ~id:(fun (n, _, _) -> Printf.sprintf "%d points" ((2 * n) + 1))
+      kronrod_goldens
       (fun (n, gx, gw) ->
         let x, w = Quad.Rule.nodes (Quad.Rule.kronrod n) f64 in
         equal ~msg:"nodes" (exact ()) (vec gx) x;
@@ -62,7 +62,7 @@ let rule_tests =
         let x32, _ = Quad.Rule.nodes (Quad.Rule.gauss 7) Nx.float32 in
         equal (exact ()) (Nx.cast Nx.float32 x64) x32);
     test "gauss rejects no point" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"n = 0 is below 1") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"n = 0 is below 1") (fun () ->
             Quad.Rule.gauss 0));
     test "a Kronrod rule serves as a formula" (fun () ->
         let rules =
@@ -78,7 +78,7 @@ let rule_tests =
               (Quad.fixed r Nx.exp (Quad.Range.v (scalar 0.) (scalar 1.))))
           rules);
     test "kronrod rejects a size it has no table for" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"n = 8 is neither 7 nor 10")
+        raises_match (Exn.invalid_arg ~sub:"n = 8 is neither 7 nor 10")
           (fun () -> Quad.Rule.kronrod 8));
   ]
 
@@ -218,7 +218,7 @@ let cumulative_tests =
           (Nx.sub (Nx.sin knots) (Nx.sin (Nx.get [ 0 ] knots)))
           c);
     test "no knot raises" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"at least one knot") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"at least one knot") (fun () ->
             Quad.cumulative r Nx.exp (vec [||])));
   ]
 
@@ -262,8 +262,7 @@ let transformation_tests =
           (Rune.vmap' integral theta));
     test "an integrand that changes the shape raises" (fun () ->
         raises_match
-          (Exn.invalid_arg
-             ~substring:"returned shape [3] for points of shape [3,2]")
+          (Exn.invalid_arg ~sub:"returned shape [3] for points of shape [3,2]")
           (fun () ->
             Quad.fixed (Quad.Rule.gauss 3)
               (fun x -> Nx.sum ~axes:[ 1 ] x)
@@ -395,8 +394,7 @@ let adaptive_tests =
         in
         equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.vmap' f theta));
     test "adaptive rejects a budget below 1" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"budget = 0 is below 1")
-          (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"budget = 0 is below 1") (fun () ->
             Quad.adaptive k7 ~tol:(Tol.rel 1e-6) ~budget:0 Nx.exp
               (unit_range (vec [| 0. |]))));
   ]
@@ -589,10 +587,10 @@ let cubature_tests =
            + 1/2) = −1. *)
         equal (Oracle.tensor ~rel:1e-13 ()) (vec [| 2.; -1. |]) (Solution.get s));
     test "one dimension raises" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"d = 1 is not in [2, 10]")
-          (fun () -> cube (fun x -> product x) (unit_box [||] 1)));
+        raises_match (Exn.invalid_arg ~sub:"d = 1 is not in [2, 10]") (fun () ->
+            cube (fun x -> product x) (unit_box [||] 1)));
     test "eleven dimensions raise" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"d = 11 is not in [2, 10]")
+        raises_match (Exn.invalid_arg ~sub:"d = 11 is not in [2, 10]")
           (fun () -> cube (fun x -> product x) (unit_box [||] 11)));
   ]
 
@@ -602,9 +600,8 @@ let key = Nx.Rng.key 2026
 
 let qmc_tests =
   [
-    cases
-      ~name:(fun j -> Printf.sprintf "dimension %d" j)
-      "each dimension's prefix of 2^k points is balanced"
+    cases "each dimension's prefix of 2^k points is balanced"
+      ~id:(fun j -> Printf.sprintf "dimension %d" j)
       [ 0; 1; 2; 7; 100; 555; 1110 ]
       (fun j ->
         (* 1024 points put one point in each 1/1024 of [0, 1] along any axis, so
@@ -669,8 +666,7 @@ let qmc_tests =
         in
         equal (Oracle.tensor ~rel:1e-12 ()) (integral key) (compiled key));
     test "dimensions past the table raise" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"d = 1112 is above 1111")
-          (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"d = 1112 is above 1111") (fun () ->
             Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 product
               (unit_box [||] 1112)));
   ]

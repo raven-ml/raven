@@ -21,9 +21,8 @@ let pp =
           equal string "f: bad" (to_string (Error.v ~file:"f" "bad"));
           equal string "byte 0: bad" (to_string (Error.v ~bytes:(0, 0) "bad"));
           equal string "bad" (to_string (Error.v "bad")));
-      cases
-        ~name:(fun (_, expected) -> Printf.sprintf "prints %s" expected)
-        "places, coarsest first"
+      cases "places, coarsest first"
+        ~id:(fun (_, expected) -> Printf.sprintf "prints %s" expected)
         [
           (Error.v ~file:"f.csv" ~line:3 "bad", "f.csv:3: bad");
           (Error.v ~file:"f.csv" ~line:3 ~column:7 "bad", "f.csv:3:7: bad");
@@ -46,9 +45,8 @@ let a n = String.make n 'a'
 let text =
   group "pp of the raw text"
     [
-      cases
-        ~name:(fun (_, expected) -> Printf.sprintf "quotes as %s" expected)
-        "escapes"
+      cases "escapes"
+        ~id:(fun (_, expected) -> Printf.sprintf "quotes as %s" expected)
         [
           ("", {|""|});
           ({|say "hi"|}, {|"say \"hi\""|});
@@ -66,9 +64,8 @@ let text =
         ]
         (fun (t, expected) ->
           equal string (expected ^ ": m") (to_string (Error.v ~text:t "m")));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "cut at 64 bytes"
+      cases "cut at 64 bytes"
+        ~id:(fun (name, _, _) -> name)
         [
           ("keeps 64 bytes", a 64, Printf.sprintf "%S" (a 64));
           ("cuts the 65th byte", a 65, Printf.sprintf "%S…" (a 64));
@@ -93,13 +90,12 @@ let text =
     ]
 
 let v =
-  let rejects f = raises_match (Exn.invalid_arg ~substring:"Error.v") f in
+  let rejects f = raises_match (Exn.invalid_arg ~sub:"Error.v") f in
   group "v"
     [
-      cases
-        ~name:(fun (first, last) ->
+      cases "range"
+        ~id:(fun (first, last) ->
           Printf.sprintf "rejects the bytes (%d, %d)" first last)
-        "range"
         [ (-1, 0); (-1, -1); (5, 4); (min_int, max_int) ]
         (fun bytes -> rejects (fun () -> Error.v ~bytes "bad"));
       test "rejects a line or a column below 1" (fun () ->

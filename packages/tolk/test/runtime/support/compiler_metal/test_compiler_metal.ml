@@ -33,8 +33,8 @@ let with_metal f =
   | exception Compiler.Compile_error msg when absent msg -> skip ~reason:msg ()
 
 let is_metal_library lib =
-  starts_with ~affix:"MTLB" lib;
-  ends_with ~affix:"ENDT" lib
+  starts_with ~prefix:"MTLB" lib;
+  ends_with ~suffix:"ENDT" lib
 
 (* The version of Metal the running macOS compiles kernels of, as
    [__METAL_VERSION__] writes it. *)
@@ -103,30 +103,34 @@ let load_failure () =
       Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))
 
 let not_a_library =
-  group ~tags:[ "no-library" ] "a library that does not load"
-    [
-      test "making a compiler loads nothing, and a compile raises Compile_error"
-        (fun () ->
-          let msg = require_some (load_failure ()) in
-          contains ~sub:"MTLCompiler" msg;
-          (* Elsewhere than on macOS, no file is loaded. *)
-          if Platform.system = "macosx" then contains ~sub:"not_a_library" msg);
-      test "every compile raises the same Compile_error" (fun () ->
-          let first = load_failure () in
-          equal (option string) first (load_failure ());
-          is_some first);
-      test "compiles from several domains at once raise it" (fun () ->
-          let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
-          let msgs = List.map Domain.join domains in
-          is_some (List.hd msgs);
-          List.iter (equal (option string) (List.hd msgs)) msgs);
-      test "a cached library is served without loading MTLCompiler" (fun () ->
-          let metal = Compiler_metal.compiler () in
-          let table = Option.get (Compiler.cachekey metal) in
-          Helpers.Diskcache.put ~table (kernel "add") "cached library";
-          equal string "cached library"
-            (Compiler.compile_cached metal (kernel "add")));
-    ]
+  tag "no-library"
+  @@ group "a library that does not load"
+       [
+         test
+           "making a compiler loads nothing, and a compile raises Compile_error"
+           (fun () ->
+             let msg = require_some (load_failure ()) in
+             contains ~sub:"MTLCompiler" msg;
+             (* Elsewhere than on macOS, no file is loaded. *)
+             if Platform.system = "macosx" then
+               contains ~sub:"not_a_library" msg);
+         test "every compile raises the same Compile_error" (fun () ->
+             let first = load_failure () in
+             equal (option string) first (load_failure ());
+             is_some first);
+         test "compiles from several domains at once raise it" (fun () ->
+             let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
+             let msgs = List.map Domain.join domains in
+             is_some (List.hd msgs);
+             List.iter (equal (option string) (List.hd msgs)) msgs);
+         test "a cached library is served without loading MTLCompiler"
+           (fun () ->
+             let metal = Compiler_metal.compiler () in
+             let table = Option.get (Compiler.cachekey metal) in
+             Helpers.Diskcache.put ~table (kernel "add") "cached library";
+             equal string "cached library"
+               (Compiler.compile_cached metal (kernel "add")));
+       ]
 
 (* MTLCompiler *)
 

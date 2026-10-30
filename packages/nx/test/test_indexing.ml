@@ -21,7 +21,7 @@ let position s idx =
   Array.iteri (fun a i -> k := (!k * s.(a)) + i) idx;
   !k
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 let host dt s data =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) data)
@@ -683,8 +683,8 @@ let views =
             Nx.set Nx.[ I 0; A ] (Nx.zeros Nx.int32 [| 3 |]) (Nx.donate x)
           in
           equal (array int32) [| 0l; 0l; 0l; 4l; 5l; 6l |] (elements y);
-          raises_match (Exn.invalid_arg ~substring:"was donated to Nx.set")
-            (fun () -> Nx.copy x));
+          raises_match (Exn.invalid_arg ~sub:"was donated to Nx.set") (fun () ->
+              Nx.copy x));
       test "a decode step writes one row of a cache" (fun () ->
           let cache = Nx.zeros Nx.float32 [| 1; 2; 4; 3 |] in
           let row =
@@ -742,9 +742,9 @@ let test_many_held n k () =
 
 (* A gather and a scatter of every dtype. *)
 let dtypes =
-  cases
-    ~name:(fun (D.Any dt) -> D.name dt)
-    "every dtype" D.all
+  cases "every dtype"
+    ~id:(fun (D.Any dt) -> D.name dt)
+    D.all
     (fun (D.Any dt) ->
       let data =
         Array.init 6 (fun k -> D.of_float dt (Float.of_int (k mod 7)))
@@ -823,7 +823,7 @@ let many =
     [
       test "an update at a donated window start" test_donated_start;
       cases "an update reads positions cut over devices at their union"
-        ~name:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _) -> n)
         [
           ( "the second cut beside the first",
             (Two.split ~axis:0, Two.on),
@@ -836,7 +836,7 @@ let many =
         ]
         (fun (_, cuts, message) ->
           raises (Invalid_argument message) (fun () -> set_cut cuts));
-      cases "an update through positions held in data" ~name:fst
+      cases "an update through positions held in data" ~id:fst
         [
           ("15", (15, 15));
           ("16", (16, 16));
@@ -850,7 +850,7 @@ let many =
          from being written whichever entry holds it, and a window's start
          is clamped. *)
       cases "set mixes written, held and window positions"
-        ~name:(Format.asprintf "%a" pp_case)
+        ~id:(Format.asprintf "%a" pp_case)
         [
           {
             s = [| 3; 4; 5 |];

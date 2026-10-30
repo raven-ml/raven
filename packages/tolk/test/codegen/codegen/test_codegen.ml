@@ -3,7 +3,7 @@ open Tolk
 
 (* The host's target, as the engine gives it. *)
 let host_target = Tolk_engine.target Rig.host
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* Two graphs are the same when their texts are, and a failure is the diff of
    the texts. *)
@@ -129,8 +129,8 @@ let per_row ?(only = fun _ -> true) ?(default = by_default) check =
     (fun row ->
       if not (only row) then None
       else
-        let make = if default row then test else slow in
-        Some (make (row "name") (fun () -> check row)))
+        let mark = if default row then Fun.id else slow in
+        Some (mark @@ test (row "name") (fun () -> check row)))
     rows
 
 (* A law that lowers a kernel again runs by default on a few kernels only: an
@@ -189,9 +189,7 @@ let sources =
               (fun () -> source (program row))
           else test (row "name") (fun () -> writes_as_tinygrad row)
         in
-        Some
-          (if by_default row then t
-           else group ~tags:[ "slow" ] (row "name") [ t ]))
+        Some (if by_default row then t else slow @@ group (row "name") [ t ]))
     rows
 
 let refuses_as_tinygrad row =
@@ -514,8 +512,8 @@ let values =
       group "on the host, a program writes what its kernel writes"
         (List.map
            (fun name ->
-             (if List.mem name run_by_default then test else slow)
-               name (runs_as_interpreted name))
+             (if List.mem name run_by_default then Fun.id else slow)
+             @@ test name (runs_as_interpreted name))
            run_on_host);
     ]
 
@@ -1608,7 +1606,7 @@ let divisions =
     lacks Cdiv uops
   in
   let dtype_cases name dts f =
-    cases ~name:(Format.asprintf "%a" Dtype.pp) name dts f
+    cases name ~id:(Format.asprintf "%a" Dtype.pp) dts f
   in
   group "divisions"
     [
@@ -1648,9 +1646,8 @@ let divisions =
           lacks Cdiv uops;
           lacks Cmod uops;
           lacks Floordiv uops);
-      cases ~name:(Format.asprintf "%a" Op.pp)
-        "an unsigned floor division is a truncating one"
-        [ Op.Floordiv; Floormod ] (fun o ->
+      cases "an unsigned floor division is a truncating one"
+        ~id:(Format.asprintf "%a" Op.pp) [ Op.Floordiv; Floormod ] (fun o ->
           let uops =
             instructions_of
               [
@@ -1675,9 +1672,8 @@ let divisions =
               in
               has Shr rem;
               lacks Cmod rem));
-      cases
-        ~name:(fun (o, d) -> Format.asprintf "%a by %d" Op.pp o d)
-        "a division by a divisor that is not positive is no shift"
+      cases "a division by a divisor that is not positive is no shift"
+        ~id:(fun (o, d) -> Format.asprintf "%a by %d" Op.pp o d)
         [ (Op.Cdiv, -3); (Cdiv, 0); (Cmod, -3); (Cmod, 0) ]
         (fun (o, d) ->
           Setting.context fast_idiv (fun () ->
@@ -1830,8 +1826,7 @@ let checks_what_it_lowers () =
   Setting.context
     [ B (Setting.spec, 1) ]
     (fun () ->
-      raises_match (Exn.invalid_arg ~substring:"UOp verification failed")
-        (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"UOp verification failed") (fun () ->
           Codegen.full_rewrite_to_sink ~optimize:false
             (Lazy.force marker_kernel) breaking))
 
@@ -1947,7 +1942,7 @@ let replaces_a_zero c =
 let accumulators =
   group "tensor-core accumulators"
     [
-      cases ~name:string_of_float "the running sum replaces a zero accumulator"
+      cases "the running sum replaces a zero accumulator" ~id:string_of_float
         [ 0.; -0. ] replaces_a_zero;
       test
         "the running sum is added to an accumulator that is not zero, which \
@@ -2044,7 +2039,8 @@ let variable_sizes =
   in
   group "reductions over a variable size"
     [
-      cases ~name "are their identity where the size is 0, and reduce elsewhere"
+      cases "are their identity where the size is 0, and reduce elsewhere"
+        ~id:name
         (List.concat_map
            (fun rop ->
              List.concat_map
@@ -2052,9 +2048,8 @@ let variable_sizes =
                [ Each; Halved ])
            [ Op.Add; Op.Max ])
         reduces_by_size;
-      cases ~name:(Printf.sprintf "n <= %d")
-        "a maximum of a product is the identity where the size is 0" [ 1; 3 ]
-        maximum_of_a_product;
+      cases "a maximum of a product is the identity where the size is 0"
+        ~id:(Printf.sprintf "n <= %d") [ 1; 3 ] maximum_of_a_product;
     ]
 
 (* Multiply-adds
@@ -2119,9 +2114,8 @@ let occurrences sub s =
 let multiply_adds =
   group "multiply-adds"
     [
-      cases ~name:string_of_int
-        "a sum of products adds each into its running sum rounded once, of"
-        [ 2; 64 ] (fun n ->
+      cases "a sum of products adds each into its running sum rounded once, of"
+        ~id:string_of_int [ 2; 64 ] (fun n ->
           let prg = Codegen.to_program (dot n) (Lazy.force host) in
           is_true ~msg:"__builtin_fmaf"
             (mentions "__builtin_fmaf(" (source prg));
@@ -2555,7 +2549,7 @@ let refused_on_a_cast kernel renderer () =
   Setting.context
     [ B (Setting.spec, 1) ]
     (fun () ->
-      raises_match (Exn.invalid_arg ~substring:"on Ops.CAST") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"on Ops.CAST") (fun () ->
           Codegen.to_program kernel renderer))
 
 let vectors =
@@ -2599,25 +2593,22 @@ let vectors =
       test "a host program of 48 lanes computes one vector" (selects_rows 3 16);
       test "a host program of 24 lanes computes one vector" (selects_rows 3 8);
       cases "a host program of n lanes computes one vector"
-        ~name:(Printf.sprintf "%d lanes")
-        [ 3; 5; 7; 9; 12; 15 ]
-        (fun n -> selects_lanes n ());
-      cases
-        "a host sum of a product's unrolled lanes multiplies no vectors"
-        ~name:(Printf.sprintf "%d lanes")
-        [ 3; 4; 9 ]
-        (fun n -> sums_products n ());
+        ~id:(Printf.sprintf "%d lanes") [ 3; 5; 7; 9; 12; 15 ] (fun n ->
+          selects_lanes n ());
+      cases "a host sum of a product's unrolled lanes multiplies no vectors"
+        ~id:(Printf.sprintf "%d lanes") [ 3; 4; 9 ] (fun n ->
+          sums_products n ());
       cases
         "a host selection of 8, 16 or 32 lanes by a comparison of integers \
          takes each lane's arm"
-        ~name:(fun (cmp, dt, n) ->
+        ~id:(fun (cmp, dt, n) ->
           Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
         (comparisons widths widths [ 8; 16; 32 ])
         selects_by_comparison;
       cases
         "a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of \
          integers takes each lane's arm"
-        ~name:(fun (cmp, dt, n) ->
+        ~id:(fun (cmp, dt, n) ->
           Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
         (comparisons signed unsigned [ 3; 6; 12; 24; 48 ])
         selects_by_comparison;
@@ -2762,9 +2753,8 @@ let keeps_nan_bits (dt, words) =
     (stored_nans dt words)
 
 let nan_constants =
-  cases
-    ~name:(fun (dt, _) -> Dtype.name dt)
-    "a NaN constant is stored with its sign and payload"
+  cases "a NaN constant is stored with its sign and payload"
+    ~id:(fun (dt, _) -> Dtype.name dt)
     [
       (Dtype.Float16, [ 0x7e00L; 0xfe05L; 0x7d01L; 0xfc01L ]);
       (Float32, [ 0x7fc00000L; 0xffc00005L; 0x7f800001L; 0xff800003L ]);
@@ -2815,7 +2805,7 @@ let bfloat16_casts =
   group "casts to bfloat16"
     [
       cases "an integer or a double rounds once on the host"
-        ~name:(fun (dt, _) -> Dtype.name dt)
+        ~id:(fun (dt, _) -> Dtype.name dt)
         [
           ( Dtype.Int64,
             integers
@@ -3265,8 +3255,7 @@ let errors =
           Setting.context
             [ B (Setting.spec, 1) ]
             (fun () ->
-              raises_match
-                (Exn.invalid_arg ~substring:"UOp verification failed")
+              raises_match (Exn.invalid_arg ~sub:"UOp verification failed")
                 (fun () -> Codegen.full_rewrite_to_sink spec_breaking clang)));
       test "a compiler that rejects the source raises Compile_error" (fun () ->
           let compiler =
@@ -3340,9 +3329,8 @@ let disassembles () =
 let diagnostics =
   group "diagnostics"
     [
-      cases
-        ~name:(fun opts -> string_of_int (List.length opts) ^ " optimisations")
-        "DEBUG=3 prints the optimisations applied"
+      cases "DEBUG=3 prints the optimisations applied"
+        ~id:(fun opts -> string_of_int (List.length opts) ^ " optimisations")
         [
           [ upcast4 ];
           [
@@ -3457,7 +3445,7 @@ let cleanups =
           made_conditional at);
       test "so does a gated store through a cast of its index" (fun () ->
           made_conditional (pointer_cast Float32));
-      cases ~name:fst "leaves alone a store it does not match"
+      cases "leaves alone a store it does not match" ~id:fst
         [
           ( "through a bitcast of its index",
             store (Ops.v Bitcast ~src:[ at ] ~arg:(Dtype Float32)) gate );
@@ -3469,7 +3457,7 @@ let cleanups =
           ("without a gate", Ops.v Store ~src:[ at; one ]);
         ]
         (fun (_, st) -> equal (list Uops.uop) [ st ] (cleaned [ st ]));
-      cases ~name:fst "raises Invalid_argument on an if already in the list"
+      cases "raises Invalid_argument on an if already in the list" ~id:fst
         [
           ("if", Ops.v If ~src:[ gate; at ]);
           ("endif", Ops.v Endif ~src:[ Ops.v If ~src:[ gate; at ] ]);

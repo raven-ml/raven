@@ -118,8 +118,8 @@ let law =
           ]
         Gen.(triple parallels fn (list small_int))
         is_list_map;
-      cases ~name:(Printf.sprintf "PARALLEL=%d")
-        "applies f once to each element under" [ 0; 1; 4 ] (fun p ->
+      cases "applies f once to each element under"
+        ~id:(Printf.sprintf "PARALLEL=%d") [ 0; 1; 4 ] (fun p ->
           applies_each_element_once p ());
       test "keeps the order of l when later elements finish first"
         keeps_order_of_late_finishers;
@@ -238,12 +238,11 @@ let domains =
     [
       test "applies f on PARALLEL domains at once, the caller's among them"
         (fun () -> spreads 3);
-      cases
-        ~name:(Printf.sprintf "PARALLEL=%d")
-        "applies every element on the calling domain under" [ -1; 0; 1 ]
-        stays_on_caller;
-      cases ~name:(Printf.sprintf "PARALLEL=%d")
-        "runs at most PARALLEL applications at once under" [ 1; 2; 4 ] (fun p ->
+      cases "applies every element on the calling domain under"
+        ~id:(Printf.sprintf "PARALLEL=%d")
+        [ -1; 0; 1 ] stays_on_caller;
+      cases "runs at most PARALLEL applications at once under"
+        ~id:(Printf.sprintf "PARALLEL=%d") [ 1; 2; 4 ] (fun p ->
           runs_at_most p ());
       test "shares PARALLEL - 1 domains between concurrent calls" shares_budget;
       test "works on the calling domain alone when no domain is free" (fun () ->
@@ -372,8 +371,8 @@ let failure =
         (keeps_backtrace ~on_caller:false);
       test "raises with the backtrace of an application on the calling domain"
         (keeps_backtrace ~on_caller:true);
-      cases ~name:(Printf.sprintf "PARALLEL=%d")
-        "stops applying f once an element raised, under" [ 0; 4 ] (fun p ->
+      cases "stops applying f once an element raised, under"
+        ~id:(Printf.sprintf "PARALLEL=%d") [ 0; 4 ] (fun p ->
           stops_after_failure p ());
       test "raises only after the applications it started have ended"
         joins_before_raising;
@@ -620,15 +619,15 @@ let streaming =
         is_list_iter;
       test "applies g in the order of l when later elements finish first"
         streams_late_finishers_in_order;
-      cases ~name:(Printf.sprintf "PARALLEL=%d")
-        "applies g to an element while f applies to later ones, under"
-        [ 0; 1; 2; 4 ] (fun p -> consumes_while_computing p ());
-      cases
-        ~name:(Printf.sprintf "PARALLEL=%d")
-        "applies g on the calling domain under" [ 0; 1; 4 ] consumes_on_caller;
-      cases ~name:(Printf.sprintf "PARALLEL=%d")
-        "runs at most PARALLEL applications of f at once under" [ 1; 2; 4 ]
-        (fun p -> computes_at_most p ());
+      cases "applies g to an element while f applies to later ones, under"
+        ~id:(Printf.sprintf "PARALLEL=%d") [ 0; 1; 2; 4 ] (fun p ->
+          consumes_while_computing p ());
+      cases "applies g on the calling domain under"
+        ~id:(Printf.sprintf "PARALLEL=%d")
+        [ 0; 1; 4 ] consumes_on_caller;
+      cases "runs at most PARALLEL applications of f at once under"
+        ~id:(Printf.sprintf "PARALLEL=%d") [ 1; 2; 4 ] (fun p ->
+          computes_at_most p ());
       prop
         "raises the first exception of f or g, and applies g to the elements \
          before it"

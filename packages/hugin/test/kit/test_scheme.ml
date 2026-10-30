@@ -7,7 +7,7 @@ open Windtrap
 open Hugin_gg
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* [Color.pp] rounds to 8 bits, so the witness prints every digit. *)
 let pp_color ppf c =
@@ -292,7 +292,7 @@ let readings =
             (rev (Scheme.colors n s))
             (Scheme.colors n (Scheme.reverse s)));
       cases "Brewer below three classes"
-        ~name:(Format.asprintf "%a" Scheme.pp)
+        ~id:(Format.asprintf "%a" Scheme.pp)
         brewer brewer_below_three;
       prop "Brewer past its largest table"
         (Gen.pair gen_brewer (Gen.int_range 0 20))
@@ -419,21 +419,21 @@ let catalogue =
   group "catalogue"
     [
       cases "tables are the published ones, rounded"
-        ~name:(fun (s, _) -> name s)
+        ~id:(fun (s, _) -> name s)
         anchors published;
       cases "designed tables and palettes"
-        ~name:(fun (s, h) ->
+        ~id:(fun (s, h) ->
           Printf.sprintf "%s, %d" (name s) (String.length h / 6))
         designed
         (fun (s, h) ->
           let cs = of_hex h in
           equal colors cs (Scheme.colors (Array.length cs) s));
-      cases "perceptually uniform lightness rises, up to rounding" ~name uniform
-        (fun s ->
+      cases "perceptually uniform lightness rises, up to rounding" ~id:name
+        uniform (fun s ->
           monotone ~slack:rounding ~msg:"table" ~rising:true (Scheme.table s));
-      cases "Brewer sequential schemes darken" ~name brewer_sequential
+      cases "Brewer sequential schemes darken" ~id:name brewer_sequential
         sequential_darkens;
-      cases "Brewer diverging tables are lightest at their middle" ~name
+      cases "Brewer diverging tables are lightest at their middle" ~id:name
         brewer_diverging diverging_lightest_in_middle;
     ]
 
@@ -482,7 +482,7 @@ let comparing =
           equal scheme (Scheme.ramp rbw) (Scheme.ramp (Array.copy rbw));
           equal scheme (Scheme.palette rbw) (Scheme.palette (Array.copy rbw)));
       cases "unequal schemes"
-        ~name:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _) -> n)
         unequal
         (fun (_, s, s') -> not_equal scheme s s');
       test "pp names named schemes and shows made ones" printing;

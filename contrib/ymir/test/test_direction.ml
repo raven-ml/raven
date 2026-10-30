@@ -159,7 +159,7 @@ let constructors =
           raises (Invalid_argument "Direction.of_xyz: the vector is infinite")
             (fun () -> Direction.of_xyz Frame.icrs (vector 1. infinity 0.)));
       test "of_xyz raises on a last axis without 3 elements" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Direction.of_xyz")
+          raises_match (Exn.invalid_arg ~sub:"Direction.of_xyz")
             (fun () ->
               Direction.of_xyz Frame.icrs (Nx.ones Nx.float64 [| 2; 4 |])));
     ]
@@ -177,8 +177,7 @@ let round_trips =
           equal (ulps 4) l l';
           equal (ulps 4) b b');
       cases
-        ~name:(fun (n, _, _, _) -> n)
-        "stated angles"
+        "stated angles" ~id:(fun (n, _, _, _) -> n)
         [
           ("the north pole", 1., pi /. 2., (1., pi /. 2.));
           ("the south pole", 1., -.pi /. 2., (1., -.pi /. 2.));
@@ -253,8 +252,7 @@ let stated =
               one (position_angle b d);
             |]);
       cases
-        ~name:(fun (n, _) -> n)
-        "an infinite component raises"
+        "an infinite component raises" ~id:(fun (n, _) -> n)
         [
           ("lon", fun d -> ignore (Direction.lon d));
           ("lat", fun d -> ignore (Direction.lat d));
@@ -264,7 +262,7 @@ let stated =
         ]
         (fun (n, f) ->
           raises_match
-            (Exn.invalid_arg ~substring:("Direction." ^ n))
+            (Exn.invalid_arg ~sub:("Direction." ^ n))
             (fun () -> f (icrs (vector 1. neg_infinity 0.))));
     ]
 
@@ -294,8 +292,7 @@ let reads_the_ray =
           reads c (fun d -> position_angle d other);
           reads c (fun d -> position_angle other d));
       cases
-        ~name:(fun r -> Format.asprintf "%a" pp_row r)
-        "a row of subnormal components reads as its normal multiple"
+        "a row of subnormal components reads as its normal multiple" ~id:(fun r -> Format.asprintf "%a" pp_row r)
         [
           (0., -0x1p-1074, 0.);
           (0x1p-1074, 0x1p-1074, -0x1p-1074);
@@ -329,8 +326,7 @@ let measures =
   group "Separation and position angle"
     [
       cases
-        ~name:(fun (n, _, _, _, _) -> n)
-        "against a 60-digit reference" Reference.pairs
+        "against a 60-digit reference" ~id:(fun (n, _, _, _, _) -> n) Reference.pairs
         (fun (_, a, b, sep, pa) ->
           let a = icrs (Nx.create Nx.float64 [| 3 |] a)
           and b = icrs (Nx.create Nx.float64 [| 3 |] b) in
@@ -340,8 +336,7 @@ let measures =
             (one (separation a b));
           equal (float position_accuracy) pa (one (position_angle a b)));
       cases
-        ~name:(fun (n, _, _, _, _) -> n)
-        "rows of unequal norms, against a 60-digit reference"
+        "rows of unequal norms, against a 60-digit reference" ~id:(fun (n, _, _, _, _) -> n)
         Ymir_test.Unequal_norms_reference.pairs
         (fun (_, a, b, sep, pa) ->
           let a = icrs (Nx.create Nx.float64 [| 3 |] a)
@@ -352,8 +347,7 @@ let measures =
             (one (separation a b));
           equal (float position_accuracy) pa (one (position_angle a b)));
       cases
-        ~name:(fun t -> Printf.sprintf "%g" t)
-        "a separation far below float64's rounding keeps its accuracy"
+        "a separation far below float64's rounding keeps its accuracy" ~id:(fun t -> Printf.sprintf "%g" t)
         [ 1e-160; 1e-300 ]
         (fun t ->
           (* From (1, 0, 0) to (1, t, 0) the separation is atan t, which is t
@@ -518,8 +512,7 @@ let gradients =
               (fun v -> Direction.position_angle other (icrs v));
             ]);
       cases
-        ~name:(fun (n, _, _) -> n)
-        "exact 0 and no NaN on the singular sets"
+        "exact 0 and no NaN on the singular sets" ~id:(fun (n, _, _) -> n)
         (let a = Direction.xyz (lonlat 1. 0.5) in
          let pole = vector 0. 0. 1. and zero = vector 0. 0. 0. in
          [

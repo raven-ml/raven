@@ -1415,7 +1415,7 @@ let init =
           let c = c () in
           let y = Nx.contract ~init:(Nx.donate c) Nx.float32 p (a ()) (b ()) in
           equal (array float_exact) expected (read y);
-          raises_match (Exn.invalid_arg ~substring:"was donated to Nx.contract")
+          raises_match (Exn.invalid_arg ~sub:"was donated to Nx.contract")
             (fun () -> Nx.copy c));
     ]
 
@@ -2224,12 +2224,12 @@ module Scaled = struct
     group "no products"
       [
         cases "an output of no products is its init's bits"
-          ~name:(fun (n, _) -> n)
+          ~id:(fun (n, _) -> n)
           cases_ (half_or_not on_host);
         cases
           "an output of no products keeps its init's bits with b split \
            along its groups"
-          ~name:(fun (n, _) -> n)
+          ~id:(fun (n, _) -> n)
           (List.filter rows cases_) grouped;
       ]
 
@@ -2789,7 +2789,7 @@ module Conv = struct
         let stride = c.stride and padding = c.padding and dilation = c.dilation in
         let groups = c.groups in
         if Array.exists Option.is_none least then
-          raises_match (Exn.invalid_arg ~substring:"Nx.conv_transpose: ") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Nx.conv_transpose: ") (fun () ->
               Nx.conv_transpose ~stride ~padding ~dilation ~groups g w)
         else
           let d = Array.map Option.get least in
@@ -2813,7 +2813,7 @@ module Conv = struct
           let rhs = Nx.item [] (Nx.sum (Nx.mul z y)) in
           equal ~msg:"adjoint" float_exact lhs rhs)
 
-  let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.conv") f
+  let invalid f = raises_match (Exn.invalid_arg ~sub:"Nx.conv") f
 
   let test_refusals () =
     let x = Nx.zeros Nx.float32 [| 1; 5; 4 |] and w = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
@@ -2856,11 +2856,11 @@ module Conv = struct
       x
     in
     let live s = Nx.ones Nx.float32 s in
-    let names by f =
-      raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-    in
-    names "Nx.conv" (fun () -> Nx.conv (dead [| 1; 4; 2 |]) (live [| 2; 2; 2 |]));
-    names "Nx.conv" (fun () -> Nx.conv (live [| 1; 4; 2 |]) (dead [| 2; 2; 2 |]));
+    let names by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f in
+    names "Nx.conv" (fun () ->
+        Nx.conv (dead [| 1; 4; 2 |]) (live [| 2; 2; 2 |]));
+    names "Nx.conv" (fun () ->
+        Nx.conv (live [| 1; 4; 2 |]) (dead [| 2; 2; 2 |]));
     names "Nx.conv_transpose" (fun () ->
         Nx.conv_transpose (dead [| 1; 3; 2 |]) (live [| 2; 2; 2 |]));
     names "Nx.conv_transpose" (fun () ->

@@ -14,8 +14,8 @@ let f64 = Nx.float64
 let scalar x = Nx.scalar f64 x
 let vec a = Nx.create f64 [| Array.length a |] a
 let one = Nx.Ptree.tensor
-let failure_with sub f = raises_match (Exn.failure ~substring:sub) f
-let invalid_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let failure_with sub f = raises_match (Exn.failure ~sub) f
+let invalid_with sub f = raises_match (Exn.invalid_arg ~sub) f
 let is st s = Nx.item [] (Solution.is st s)
 
 (* A system of [n] unknowns, diagonally dominant so well conditioned: a matrix

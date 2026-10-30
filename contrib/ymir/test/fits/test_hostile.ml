@@ -274,8 +274,7 @@ let cuts =
 
 let truncated =
   cases
-    ~name:(fun (path, p) -> Printf.sprintf "%s cut at %d" path p)
-    "a cut file gives values or an Error" cuts
+    "a cut file gives values or an Error" ~id:(fun (path, p) -> Printf.sprintf "%s cut at %d" path p) cuts
     (fun (path, p) -> read_all path (String.sub (List.assoc path contents) 0 p))
 
 let () = exit @@ run "Fits hostile bytes" [ mutated; truncated ]

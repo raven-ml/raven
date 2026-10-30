@@ -49,7 +49,8 @@ let runs_of ?live m n =
       zs
 
 let law_13 ?live ~runs m =
-  slow m.name (fun () ->
+  slow
+  @@ test m.name (fun () ->
       let zs = runs_of ?live m runs in
       let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
       let err z = Nx.item [] (Norn.Evidence.error z) in
@@ -131,7 +132,8 @@ let law_14 =
                   (Printf.sprintf "moment %d's multiple of its error" (j + 1))
                 (Float.abs m))
             (multiples z));
-      slow "the errors' multiples have a root mean square near 1" (fun () ->
+      slow
+      @@ test "the errors' multiples have a root mean square near 1" (fun () ->
           let ms =
             List.concat_map
               (fun z -> Array.to_list (multiples z))

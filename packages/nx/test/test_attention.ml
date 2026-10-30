@@ -21,7 +21,7 @@ let same_bits =
          (Float.is_nan a && Float.is_nan b)
          || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)))
 
-let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.attention") f
+let invalid f = raises_match (Exn.invalid_arg ~sub:"Nx.attention") f
 let numel s = Array.fold_left ( * ) 1 s
 let u32 = 0x1p-23
 

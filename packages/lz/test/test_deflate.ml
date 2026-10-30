@@ -22,15 +22,14 @@ let dst = Lz_support.create 64
 let levels (name, encode, create, bound) =
   group name
     [
-      cases ~name:string_of_int "a level outside 1 to 9 raises" [ 0; 10; -1 ]
+      cases "a level outside 1 to 9 raises" ~id:string_of_int [ 0; 10; -1 ]
         (fun level ->
-          raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
               encode ~level src dst);
-          raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
               create ~level ()));
       test "a negative size has no bound" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
-              bound (-1)));
+          raises_match (Exn.invalid_arg ~sub:"negative") (fun () -> bound (-1)));
       Lz_support.largest_bound bound;
     ]
 
@@ -405,7 +404,7 @@ let zlib =
   group "zlib"
     [
       test "a stream" (fun () -> ok (zlib_member body "hello") "hello");
-      cases ~name:string_of_int "every window size up to 32 KiB" [ 0; 1; 6; 7 ]
+      cases "every window size up to 32 KiB" ~id:string_of_int [ 0; 1; 6; 7 ]
         (fun cinfo ->
           ok (zlib_member ~header:(zlib_header ((cinfo lsl 4) lor 8) 0) body "hello")
             "hello");
@@ -465,7 +464,7 @@ let gzip =
       test "a method other than 8" (fun () ->
           bad (gzip_member ~header:(gzip_header ~cm:7 ()) body "hello")
             (malformed 2 "unknown compression method"));
-      cases ~name:string_of_int "a reserved flag" [ 0x20; 0x40; 0x80 ] (fun flg ->
+      cases "a reserved flag" ~id:string_of_int [ 0x20; 0x40; 0x80 ] (fun flg ->
           bad (gzip_member ~header:(gzip_header ~flg ()) body "hello")
             (malformed 3 "unknown header flags set"));
       test "a wrong CRC-32" (fun () ->
@@ -509,8 +508,9 @@ let gzip =
     ]
 
 let empty =
-  cases ~name:Fun.id "an empty input is Truncated at 0" [ "deflate"; "zlib"; "gzip" ]
-    (fun c -> refuses c "" { Lz.at = 0; why = Truncated })
+  cases "an empty input is Truncated at 0" ~id:Fun.id
+    [ "deflate"; "zlib"; "gzip" ] (fun c ->
+      refuses c "" { Lz.at = 0; why = Truncated })
 
 (* Bounds *)
 
@@ -816,9 +816,8 @@ let window_stream =
        Buffer.contents out ))
 
 let window =
-  cases
-    ~name:(fun l -> String.concat "," (List.map string_of_int l))
-    "a stepped decode reads matches from its window"
+  cases "a stepped decode reads matches from its window"
+    ~id:(fun l -> String.concat "," (List.map string_of_int l))
     [ [ 1 ]; [ 7; 300 ]; [ 4096 ]; [ 33; 1 ]; [ 1 lsl 20 ] ]
     (fun slices ->
       let data, raw = Lazy.force window_stream in
@@ -834,8 +833,8 @@ let allocated f =
   (r, int_of_float (after -. before))
 
 let allocation =
-  cases ~name:(fun g -> g.Lz_support.file)
-    "a whole-buffer decode allocates only its result"
+  cases "a whole-buffer decode allocates only its result"
+    ~id:(fun g -> g.Lz_support.file)
     (List.filter_map
        (fun f -> List.find_opt (fun g -> g.Lz_support.file = f) (Lz_support.goldens ()))
        [ "text_65536.zlib6"; "columns_65536.gz9"; "members.gz"; "random_65536.ld6.deflate" ])

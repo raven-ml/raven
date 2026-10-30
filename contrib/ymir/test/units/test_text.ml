@@ -272,12 +272,10 @@ let texts =
   group "canonical text"
     [
       cases
-        ~name:(fun (n, _, _) -> n)
-        "to_string" canonical
+        "to_string" ~id:(fun (n, _, _) -> n) canonical
         (fun (_, u, t) -> equal string t (text u));
       cases
-        ~name:(fun (n, _, _) -> n)
-        "of_string" canonical
+        "of_string" ~id:(fun (n, _, _) -> n) canonical
         (fun (_, u, t) -> equal result_w (Ok u) (of_string t));
     ]
 
@@ -394,15 +392,13 @@ let strictness =
   group "of_string"
     [
       cases
-        ~name:(fun (s, _) -> short s)
-        "names the canonical text" denoting
+        "names the canonical text" ~id:(fun (s, _) -> short s) denoting
         (fun (s, t) -> equal result_w (not_canonical s t) (of_string s));
       cases
-        ~name:(fun s -> Printf.sprintf "refuses %S" (short s))
-        "refuses" refused
+        "refuses" ~id:(fun s -> Printf.sprintf "refuses %S" (short s)) refused
         (fun s ->
-          starts_with ~affix:(not_a_unit s) (require_error (of_string s)));
-      cases ~name:short "accepts" accepted (fun s ->
+          starts_with ~prefix:(not_a_unit s) (require_error (of_string s)));
+      cases "accepts" ~id:short accepted (fun s ->
           equal string s (text (require_ok (of_string s))));
       test "states the byte of a syntax error" (fun () ->
           equal result_w

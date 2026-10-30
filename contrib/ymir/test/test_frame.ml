@@ -65,7 +65,7 @@ let erfa_galactic =
 let orientations =
   group "Each orientation is its definition, rounded once"
     [
-      cases ~name "the orientation from ICRS is the 60-digit value's float"
+      cases "the orientation from ICRS is the 60-digit value's float" ~id:name
         fixed (fun f ->
           equal bits (Array.map fst (orientation f)) (entries (F Frame.icrs) f));
       test "Galactic is ERFA's 30-digit table, bit for bit" (fun () ->
@@ -174,8 +174,7 @@ let astropy =
   group "Conversions against astropy"
     [
       cases
-        ~name:(fun (ra, dec, _) -> Printf.sprintf "ecliptic at (%g, %g)" ra dec)
-        "the barycentric mean ecliptic agrees within 1e-11 rad"
+        "the barycentric mean ecliptic agrees within 1e-11 rad" ~id:(fun (ra, dec, _) -> Printf.sprintf "ecliptic at (%g, %g)" ra dec)
         Reference.astropy_ecliptic
         (fun row ->
           let icrs, v = astropy_ray row in

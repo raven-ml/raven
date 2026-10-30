@@ -12,7 +12,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 let bits_equal a b =
   (Float.is_nan a && Float.is_nan b)
@@ -181,9 +181,9 @@ let polar =
           (Nx.to_array (Nx.angle Nx.float64 z));
         equal_floats [| 1.; 1.; 0.; 5.; 0.; 0.; 0. |]
           (Nx.to_array (Nx.magnitude Nx.float64 z)));
-    cases ~name:(fun (F w) -> D.name w)
-      "a narrow witness stores the parts' hypot and atan2" narrow_witnesses
-      test_polar_narrow;
+    cases "a narrow witness stores the parts' hypot and atan2"
+      ~id:(fun (F w) -> D.name w)
+      narrow_witnesses test_polar_narrow;
     test "a large modulus does not overflow" (fun () ->
         let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3e38; im = 3e38 } |] in
         equal_floats [| D.of_float D.Float32 (Float.hypot 3e38 3e38) |]
@@ -215,9 +215,7 @@ let law_rsqrt (Z (_, z)) =
 (* The modulus of a complex number has one name: magnitude. *)
 let test_abs_declines () =
   let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3.; im = 4. } |] in
-  raises_match
-    (Exn.invalid_arg ~substring:"Nx.magnitude")
-    (fun () -> Nx.abs z)
+  raises_match (Exn.invalid_arg ~sub:"Nx.magnitude") (fun () -> Nx.abs z)
 
 (* Each function the elementwise suite holds to its kind takes complex
    values; spot values from C99's definitions. *)

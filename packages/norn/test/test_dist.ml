@@ -170,7 +170,8 @@ let fit =
   group "sample fits the density"
     (List.mapi
        (fun i (name, c) ->
-         slow name (fun () ->
+         slow
+         @@ test name (fun () ->
              let k = Nx.Rng.key (100 + i) in
              let values =
                match c with
@@ -255,8 +256,7 @@ let combinators =
           equal float_exact Float.neg_infinity
             (item (D.log_density d (vec [| 1.; 0.; 2. |]))));
       test "sorted refuses a vector distribution" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"not over scalars")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"not over scalars") (fun () ->
               D.sorted 2
                 (D.iid [| 2 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))));
       test "the exp of a normal is a lognormal" (fun () ->
@@ -335,7 +335,7 @@ let bijectors =
           let x, _ = Norn.Bij.forward (D.standardize mvn) (vec [| 1.; 1. |]) in
           equal (array close) [| 3.; 0.5 |] (Nx.to_array x));
       test "a gamma has no standard form" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"gamma has no standard form")
+          raises_match (Exn.invalid_arg ~sub:"gamma has no standard form")
             (fun () ->
               D.standardize (D.gamma ~concentration:(f64 1.) ~rate:(f64 1.))));
       test "a sorted vector's coordinates keep its order and support" (fun () ->
@@ -421,11 +421,10 @@ let validation =
                "site tau: half_normal: scale is 0, not in (0, inf)") (fun () ->
               D.check "site tau" (D.half_normal ~scale:(f64 0.))));
       test "parameters must broadcast" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"do not broadcast")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"do not broadcast") (fun () ->
               D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(vec [| 1.; 1.; 1. |])));
       test "a dirichlet needs two components" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"fewer than two components")
+          raises_match (Exn.invalid_arg ~sub:"fewer than two components")
             (fun () -> D.dirichlet ~concentration:(vec [| 1. |])));
       test "the uniform's bounds are ordered" (fun () ->
           raises
@@ -473,7 +472,7 @@ let infinite_positive =
 let valid =
   group "valid"
     [
-      Windtrap.cases ~name:fst "a parameter of +inf is outside (0, inf)"
+      Windtrap.cases "a parameter of +inf is outside (0, inf)" ~id:fst
         infinite_positive (fun (_, v) -> equal bool false (Nx.item [] v));
       test "parameters inside their domains are valid" (fun () ->
           equal bool true

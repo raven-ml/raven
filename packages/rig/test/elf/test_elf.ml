@@ -1281,15 +1281,14 @@ let test_messages () =
 
 (* [held] is the caller's code: what it raises escapes [of_string]. *)
 let test_held_raises () =
-  raises_match (Exn.invalid_arg ~substring:"held") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"held") (fun () ->
       Elf.of_string ~held:(fun _ -> invalid_arg "held") well_formed)
 
 let test_bad_align () =
   List.iter
     (fun align ->
-      raises_match ~msg:(strf "align %d" align)
-        (Exn.invalid_arg ?substring:None) (fun () ->
-          Elf.of_string ~align well_formed))
+      raises_match ~msg:(strf "align %d" align) (Exn.invalid_arg ?sub:None)
+        (fun () -> Elf.of_string ~align well_formed))
     [ 0; -1; -4; 3; 6; 96; min_int; max_int ]
 
 let test_largest_align () =
@@ -1794,7 +1793,7 @@ let () =
            ];
          group ~timeout "refusals"
            [
-             cases ~name:fst "a malformed object is an error" refusals
+             cases "a malformed object is an error" ~id:fst refusals
                (fun (_, obj) ->
                  ignore (require_error ~pp:pp_t (in_linear_memory obj)));
              test "a text is not an ELF object" test_not_elf;
@@ -1822,9 +1821,8 @@ let () =
              test "an AMD code object" test_hsaco;
              test "an AMD code object without its symbol table" test_stripped;
              test "a relocatable AMD object" test_relocatable_amd;
-             cases
-               ~name:(fun (t, _, _, _) -> "a host object for " ^ t)
-               "host objects"
+             cases "host objects"
+               ~id:(fun (t, _, _, _) -> "a host object for " ^ t)
                [ ("x86_64", 4, -4, 0x80); ("aarch64", 283, 0, 0) ]
                test_host;
              test "an x86_64 object's unwind tables" test_unwind;

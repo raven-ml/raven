@@ -191,9 +191,10 @@ let floats_read =
           equal (elements D.Float64)
             [| (if even then x else up); up; x |]
             (Nx.to_array (Nx_io.load_txt Nx.float64 path)));
-      cases ~name:fst
+      cases
         "a float field reads as the float64 nearest its value, a tie as the \
          even one"
+        ~id:fst
         [
           ("2^53 + 1, a tie", ("9007199254740993", Float.ldexp 1. 53));
           ("2^53 + 3, a tie", ("9007199254740995", Float.ldexp 1. 53 +. 4.));
@@ -253,9 +254,8 @@ let txt =
           Law.round_trip (as_text dt) string commented
             (Nx_io.load_txt ~sep ~comments:prefix dt)
             (Nx.unpack dt (value c)));
-      cases
-        ~name:(fun s -> Format.asprintf "%a" Nx.pp_shape s)
-        "a value with no element writes no row, and its file does not load"
+      cases "a value with no element writes no row, and its file does not load"
+        ~id:(fun s -> Format.asprintf "%a" Nx.pp_shape s)
         [ [| 0 |]; [| 0; 3 |]; [| 3; 0 |] ]
         (fun shape ->
           let path = temp_file () in
@@ -275,9 +275,10 @@ let txt =
             |> List.map (fun l -> String.sub l 0 (String.length l - 1) ^ "\n")
           in
           equal string (String.concat "" rows) (read path));
-      cases ~name:fst
+      cases
         "integers are written in decimal, unsigned ones as unsigned, and a \
          bool or bit as 1 or 0"
+        ~id:fst
         [
           ( "bool",
             ( "1 0",
@@ -341,9 +342,10 @@ let txt =
           let path = file "1::2::3\n" in
           equal (array int) [| 1; 2; 3 |]
             (Nx.to_array (Nx_io.load_txt ~sep:"::" Nx.int16 path)));
-      cases ~name:fst
+      cases
         "an empty field between separators other than the default fails, \
          naming its line"
+        ~id:fst
         [
           ("between two", ("1,,2\n", ",", "line 1:"));
           ("at a line's start", ("# a header\n1,2\n,3\n", ",", "line 3:"));
@@ -360,9 +362,10 @@ let txt =
           equal (array int32) [| 1l; 2l; 3l; 4l |]
             (Nx.to_array
                (Nx_io.load_txt ~sep:"," Nx.int32 (file " 1, 2\n3 ,\t4 \r\n"))));
-      cases ~name:fst
+      cases
         "a row of another length or a field out of range names its line, \
          skipped and comment lines counted"
+        ~id:fst
         [
           ("a short row", ("skipped\n# a comment\n1 2\n\n3\n", "line 5 "));
           ( "a field out of range",
@@ -372,9 +375,8 @@ let txt =
           let path = file text in
           fails ~naming:line ~path (fun () ->
               Nx_io.load_txt ~skiprows:1 Nx.uint8 path));
-      cases
-        ~name:(fun (D.Any dt) -> D.name dt)
-        "-0 is 0 in every unsigned dtype"
+      cases "-0 is 0 in every unsigned dtype"
+        ~id:(fun (D.Any dt) -> D.name dt)
         D.[ Any Uint4; Any Uint8; Any Uint16; Any Uint32; Any Uint64 ]
         (fun (D.Any dt) ->
           equal (elements dt)
@@ -385,7 +387,7 @@ let txt =
           equal (array bool)
             [| true; false; false; true; false |]
             (Nx.to_array (Nx_io.load_txt Nx.bool path)));
-      cases ~name:fst "a field outside its dtype or no literal of it fails"
+      cases "a field outside its dtype or no literal of it fails" ~id:fst
         [
           ("256 in uint8", ("1 256\n", D.Any D.Uint8));
           ("-1 in uint32", ("-1\n", D.Any D.Uint32));

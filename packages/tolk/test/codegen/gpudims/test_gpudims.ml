@@ -19,7 +19,7 @@ let renderer ?global_max ?local_max ?global_prod_max () =
 let grouped ?reverse ?(prefix = "gidx") dims max_sizes =
   Gpudims.grouped_dims ?reverse prefix dims max_sizes
 
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* The hardware indices under [idxs], with their sizes, by name. *)
 let specials idxs =

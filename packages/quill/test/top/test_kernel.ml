@@ -159,7 +159,7 @@ let raised_mid_print () =
       equal (list output)
         [ Cell.Stdout "Epoch 1: "; svg "PGEvPg==" ]
         [ text; display ];
-      starts_with ~affix:"a figure" rest;
+      starts_with ~prefix:"a figure" rest;
       contains ~sub:"Exception: Failure: boom" rest
   | outs -> failf "%a" (Format.pp_print_list pp_output) outs
 
@@ -253,7 +253,7 @@ let message = "2 problems:\n  no column \"carier\"\n  no column \"x\""
 
 let exception_tests =
   [
-    cases ~name:fst "a raised message shows as written"
+    cases "a raised message shows as written" ~id:fst
       [ ("Failure", "failwith"); ("Invalid_argument", "invalid_arg") ]
       (fun (name, raise) ->
         (* A recorded backtrace would follow the report. *)

@@ -115,7 +115,7 @@ let test_unloadable () =
   equal ~msg:"the child's exit code" int 0 code;
   match String.split_on_char '\n' out with
   | [ count; why ] ->
-      starts_with ~msg:"count" ~affix:"Error " count;
+      starts_with ~msg:"count" ~prefix:"Error " count;
       contains ~msg:"count's error" ~sub:(List.hd names) count;
       contains ~msg:"make's error" ~sub:(List.hd names) why
   | _ -> failf "the child printed %S" out
@@ -173,9 +173,10 @@ let opening =
           let e = require_error (Rig_gpu_support.opened (C.gpu n)) in
           contains ~sub:(if n = 0 then "CUDA" else strf "CUDA sees %d" n) e);
       test "a GPU has one device until it is closed" gpu_once;
-      cases ~name:fst
+      cases
         "a call inside a lock of its thread's raises naming it, changing \
          nothing"
+        ~id:fst
         [
           ("count", fun () () -> ignore (C.count () : (int, string) result));
           ( "buses",
@@ -206,7 +207,7 @@ let facts () =
   S.with_ @@ fun { g; _ } ->
   let f = C.facts g in
   equal int ~msg:"length of the arch" 5 (String.length f.arch);
-  starts_with ~affix:"sm_" f.arch;
+  starts_with ~prefix:"sm_" f.arch;
   greater int ~than:0 f.budget;
   let runs (q : Rig_edge.queue) =
     let kind : Rig_edge.kind -> string = function
@@ -404,7 +405,7 @@ let failed_fill () =
     |]
   in
   let why = lost (fun () -> S.submit_work t (Array.to_list parts)) in
-  starts_with ~affix:"running a fill: CUDA_ERROR_INVALID_VALUE: " why;
+  starts_with ~prefix:"running a fill: CUDA_ERROR_INVALID_VALUE: " why;
   S.close t;
   drained t 1;
   equal string ~msg:"copied before the word" data
@@ -440,7 +441,7 @@ let images () =
   let first = entry () in
   equal (pair int nativeint) ~msg:"a second entry" first (entry ());
   let e = require_error (C.image g "not a module") in
-  starts_with ~affix:"loading the image: CUDA_ERROR_" e;
+  starts_with ~prefix:"loading the image: CUDA_ERROR_" e;
   let arch = (C.facts g).arch in
   (match C.image g (S.fixture "kernels.cubin") with
   | Ok i ->
@@ -448,7 +449,7 @@ let images () =
       C.unload g (S.loaded i)
   | Error e ->
       not_equal string ~msg:"the cubin's GPU" "sm_89" arch;
-      starts_with ~affix:"loading the image: CUDA_ERROR_" e);
+      starts_with ~prefix:"loading the image: CUDA_ERROR_" e);
   C.unload g m
 
 (* Loading places every function's code, whatever CUDA_MODULE_LOADING says: a
@@ -513,15 +514,14 @@ let refused_launches () =
   let refuses msg ?kernel ?params ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
       ?(shared = 0) () =
     let run = launching ?kernel ?params d ~groups ~threads ~shared in
-    raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
+    raises_match ~msg (Exn.invalid_arg ~sub:"never fit") (fun () ->
         submitted run [| out |])
   in
   (* More threads than the function has, which the setter refuses. *)
   List.iter
     (fun threads ->
-      raises_match
-        (Exn.invalid_arg ~substring:"threads per group")
-        (fun () -> launching d ~groups:(1, 1, 1) ~threads ~shared:0))
+      raises_match (Exn.invalid_arg ~sub:"threads per group") (fun () ->
+          launching d ~groups:(1, 1, 1) ~threads ~shared:0))
     [ (1025, 1, 1); (1024, 2, 1) ];
   refuses "no groups along x" ~groups:(0, 1, 1) ();
   refuses "no threads along z" ~threads:(1, 1, 0) ();
@@ -1149,7 +1149,7 @@ let refusals () =
   invalid [| { k with shared = 1 lsl 32 } |];
   invalid [| k; { k with func = step + 1 } |];
   let e = require_error (graph g [| { k with shared = (1 lsl 32) - 1 } |]) in
-  starts_with ~affix:"making the graph: CUDA_ERROR_" e;
+  starts_with ~prefix:"making the graph: CUDA_ERROR_" e;
   let empty = require_ok (graph g [||]) in
   equal int ~msg:"an empty graph's nodes" 0 (Array.length empty.nodes);
   C.unload g m;
@@ -1247,9 +1247,9 @@ let graph_inside_lock () =
 let graphs =
   group ~timeout:60. "graphs"
     [
-      cases
-        ~name:(strf "a chain of %d kernels runs each after the one before")
-        "chain" [ 0; 1; 17; 64 ] chain;
+      cases "chain"
+        ~id:(strf "a chain of %d kernels runs each after the one before")
+        [ 0; 1; 17; 64 ] chain;
       test "a prepared fill keeps its graph" prepared_graph;
       test "a graph keeps a collected image's code" collected_image;
       test "a graph and its image can be collected together" collected_together;
@@ -1291,7 +1291,7 @@ module Registry = struct
 
   let make () = { entries = []; regions = [] }
 
-  let map ?(cover = cover) m (area, a, n) =
+  let map ?(cover = fun label cond -> cover label cond) m (area, a, n) =
     match area with
     | Split ->
         let inside lo = lo <= a && a + n <= lo + H.page in

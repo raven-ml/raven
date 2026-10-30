@@ -6,7 +6,7 @@
 open Windtrap
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let floats = array float_exact
 let near = float 1e-9
 

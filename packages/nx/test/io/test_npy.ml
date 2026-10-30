@@ -59,7 +59,7 @@ let npy =
           Law.round_trip packed string
             (fun x -> saved ".npy" save_npy x)
             Nx_io.load_npy (value c));
-      cases ~name:fst "files numpy wrote load"
+      cases "files numpy wrote load" ~id:fst
         [
           ( "fortran.npy",
             loads "fortran.npy"
@@ -75,9 +75,10 @@ let npy =
               (Nx.P (Nx.create Nx.bool [| 3 |] [| true; false; true |])) );
         ]
         (fun (_, check) -> check ());
-      cases ~name:fst
+      cases
         "an aligned little-endian file loads over its pages, and a big-endian \
          one into memory of its own"
+        ~id:fst
         [
           ("C order", ("version2.npy", Over_file));
           ("Fortran order", ("fortran.npy", Over_file));
@@ -98,7 +99,7 @@ let npy =
           equal packed
             (Nx.P (Nx.create Nx.complex128 [| 1 |] [| { re = 1.; im = -2. } |]))
             (Nx_io.load_npy path));
-      cases ~name:fst "a file that is no npy file fails, naming it"
+      cases "a file that is no npy file fails, naming it" ~id:fst
         [
           ("a text file", fun () -> "hello, nx\n");
           ("an npz file", fun () -> read (fixture "savez.npz"));
@@ -121,7 +122,7 @@ let npy =
             read (saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1)))
           in
           flips_load_or_fail Nx_io.load_npy ~upto:128 whole);
-      cases ~name:fst "a malformed header fails, naming the file"
+      cases "a malformed header fails, naming the file" ~id:fst
         [
           ( "a field twice",
             "{'descr': '<i2', 'descr': '<i2', 'fortran_order': False, 'shape': \
@@ -145,9 +146,8 @@ let npy =
         (fun (_, dict) ->
           let path = file (npy_file dict "\000\000") in
           fails ~path (fun () -> Nx_io.load_npy path));
-      cases
-        ~name:(fun (D.Any dt) -> D.name dt)
-        "a dtype npy lacks is refused, naming the save"
+      cases "a dtype npy lacks is refused, naming the save"
+        ~id:(fun (D.Any dt) -> D.name dt)
         D.
           [
             Any Bfloat16;
@@ -162,7 +162,7 @@ let npy =
           invalid ~by:"Nx_io.save_npy" (fun () ->
               Nx_io.save_npy (temp_file ()) (Nx.zeros dt [| 2 |])));
       test "a bit value's refusal names the cast to bool" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Nx.cast Nx.bool") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Nx.cast Nx.bool") (fun () ->
               Nx_io.save_npy (temp_file ()) (Nx.zeros Nx.bit [| 8 |])));
     ]
 
@@ -203,7 +203,7 @@ let npz =
           Law.round_trip archive string
             (saved ".npz" Nx_io.save_npz)
             Nx_io.load_npz (archive_of entries));
-      cases ~name:fst "archives numpy wrote load, deflated or stored"
+      cases "archives numpy wrote load, deflated or stored" ~id:fst
         [
           ( "archive.npz",
             [
@@ -228,9 +228,10 @@ let npz =
           let whole = read (saved ".npz" Nx_io.save_npz a) in
           equal archive a (Nx_io.load_npz (file whole));
           equal archive a (Nx_io.load_npz (file (without_zip64_end whole))));
-      cases ~name:fst
+      cases
         "entries of other names than an npy file's are ignored, whatever they \
          hold"
+        ~id:fst
         [
           ( "a text file",
             ( "other_names.npz",
@@ -247,7 +248,7 @@ let npz =
         (fun () ->
           let path = fixture "suffix_only.npz" in
           fails ~path ~naming:{|".npy"|} (fun () -> Nx_io.load_npz path));
-      cases ~name:fst "a file that is no npz file fails, naming it"
+      cases "a file that is no npz file fails, naming it" ~id:fst
         [
           ("a text file", fun () -> "hello, nx\n");
           ("an npy file", fun () -> read (fixture "version2.npy"));
@@ -287,21 +288,22 @@ let npz =
           equal packed
             (Nx.P (Nx.create Nx.float64 [| 5 |] [| 0.; 1.5; 3.; 4.5; 6. |]))
             (find (Nx_io.load_npz (fixture "unaligned.npz")) "w"));
-      cases ~name:Fun.id "an invalid name is refused"
+      cases "an invalid name is refused" ~id:Fun.id
         [ "/w"; "a//b"; "./w"; "a/../b"; "\xff"; "a\\b"; "c:w" ] (fun name ->
           invalid ~by:"Nx_io.save_npz" (fun () ->
               save_npz (temp_file ()) [ (name, one) ]));
       test "a dtype npy lacks is refused, naming the entry" (fun () ->
           raises_match
-            (Exn.invalid_arg ~substring:"Nx_io.save_npz: w: npy has no bfloat16")
+            (Exn.invalid_arg ~sub:"Nx_io.save_npz: w: npy has no bfloat16")
             (fun () ->
               save_npz (temp_file ())
                 [ ("w", Nx.P (Nx.zeros Nx.bfloat16 [| 1 |])) ]));
       (let s = Random.State.make [| 0x4e58 |] in
        let random _ = Random.State.int s 256 in
-       cases ~name:fst
+       cases
          "an incompressible entry is stored, over the file, and a compressible \
           one deflated, into memory of its own"
+         ~id:fst
          [
            ("stored", (Nx.init Nx.uint8 [| 70_000 |] random, 0, Over_file));
            ("deflated", (Nx.zeros Nx.uint8 [| 70_000 |], 8, Own_memory));

@@ -320,7 +320,7 @@ let damage_law (gpu, path, d) =
   cover "refused" (Result.is_error r);
   cover "read" (Result.is_ok r);
   match r with
-  | Error why -> starts_with ~affix:(path ^ ": ") why
+  | Error why -> starts_with ~prefix:(path ^ ": ") why
   | Ok fw ->
       let inside (piece : Firmware.piece) =
         at_least int ~msg:"a piece's offset" ~than:0 piece.off;
@@ -557,7 +557,7 @@ let firmware =
                   (finder
                      (List.remove_assoc "amdgpu/smu_13_0_6.bin" mi300_images))
                   mi300)));
-      cases ~name:fst "a damaged image is refused, naming it"
+      cases "a damaged image is refused, naming it" ~id:fst
         [
           ( "a header of another version",
             ("amdgpu/sdma_4_4_2.bin", image ~major:4 ~minor:0 [] []) );
@@ -574,7 +574,7 @@ let firmware =
               mi300
           with
           | Ok _ -> failf "%s was read" path
-          | Error why -> starts_with ~affix:(path ^ ": ") why);
+          | Error why -> starts_with ~prefix:(path ^ ": ") why);
     ]
 
 let () = exit (run "rig_amd_pci.firmware" [ firmware ])

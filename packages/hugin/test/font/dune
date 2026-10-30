@@ -11,9 +11,10 @@
  (action
   (progn
    (run %{test} --corrected)
-   (diff? test_font.ml test_font.ml.corrected)
-   (diff? golden/cmap.expected golden/cmap.expected.corrected)
-   (diff? golden/kerning.expected golden/kerning.expected.corrected))))
+   (concurrent
+    (diff? test_font.ml test_font.ml.corrected)
+    (diff? golden/cmap.expected golden/cmap.expected.corrected)
+    (diff? golden/kerning.expected golden/kerning.expected.corrected)))))
 
 (test
  (name test_run)

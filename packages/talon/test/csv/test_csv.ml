@@ -106,7 +106,7 @@ let failure f s = match read f s with Ok _ -> "ok" | Error e -> error_text e
 
 let formats =
   let raises_invalid name f =
-    test name (fun () -> raises_match (Exn.invalid_arg ?substring:None) f)
+    test name (fun () -> raises_match (Exn.invalid_arg ?sub:None) f)
   in
   let two = [ ("a", any Type.int64); ("b", any Type.string) ] in
   group "format"
@@ -135,7 +135,7 @@ let formats =
       raises_invalid "refuses two columns of one name" (fun () ->
           Csv.format [ ("a", any Type.int64); ("a", any Type.string) ]);
       test "names a control byte in a refused name as hexadecimal" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:{|"a\x0a"|}) (fun () ->
+          raises_match (Exn.invalid_arg ~sub:{|"a\x0a"|}) (fun () ->
               Csv.format [ ("a\n", any Type.int64); ("a\n", any Type.int64) ]));
       raises_invalid "refuses a name that is not UTF-8" (fun () ->
           Csv.format [ ("\xff", any Type.int64) ]);
@@ -151,12 +151,11 @@ let formats =
           Csv.format ~sep:'\xc3' two);
       raises_invalid "refuses a separator equal to the quote" (fun () ->
           Csv.format ~sep:'"' two);
-      cases
-        ~name:(fun t -> Printf.sprintf "refuses the null token %S" t)
-        "null tokens"
+      cases "null tokens"
+        ~id:(fun t -> Printf.sprintf "refuses the null token %S" t)
         [ "a,b"; "\"x"; "a\nb"; "\r" ]
         (fun t ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               Csv.format ~nulls:[ t ] two));
       test "accepts an empty name and a name in UTF-8" (fun () ->
           ignore
@@ -185,10 +184,10 @@ let with_types =
               b string
             |});
       test "raises on a column the format does not have" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"\"c\"") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"\"c\"") (fun () ->
               Csv.with_type "c" (any Type.int64) f));
       test "raises on a type CSV does not read" (fun () ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               Csv.with_type "a" (any (Type.duration Ms)) f));
     ]
 
@@ -235,9 +234,8 @@ let sniff_errors () =
 let sniffing =
   group "sniff"
     [
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "separators"
+      cases "separators"
+        ~id:(fun (name, _, _) -> name)
         [
           ( "a comma",
             "a,b\n1,2\n",
@@ -277,9 +275,8 @@ let sniffing =
              from 1 row" );
         ]
         (fun (_, s, expected) -> equal string expected (dialect s));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "types"
+      cases "types"
+        ~id:(fun (name, _, _) -> name)
         [
           ("bool from true and false", "x\ntrue\nfalse\n", [ "x bool" ]);
           ("string from True and FALSE", "x\nTrue\nFALSE\n", [ "x string" ]);
@@ -340,9 +337,8 @@ let sniffing =
           ("int64 from a quoted integer", "x\n\"12\"\n", [ "x int64" ]);
         ]
         (fun (_, s, expected) -> equal (list string) expected (column_types s));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "header"
+      cases "header"
+        ~id:(fun (name, _, _) -> name)
         [
           ( "a header over typed columns",
             "a,b\n1,x\n",
@@ -432,21 +428,19 @@ let sniffing =
       test "infers a type from fields that are not null tokens" (fun () ->
           let f = sniffed ~nulls:[ "NA"; "-" ] "x\nNA\n1\n-\n" in
           equal text "int64 [∅; 1; ∅]" (decode f "x\nNA\n1\n-\n"));
-      cases
-        ~name:(fun t -> Printf.sprintf "raises on the null token %S" t)
-        "null tokens"
+      cases "null tokens"
+        ~id:(fun t -> Printf.sprintf "raises on the null token %S" t)
         [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n" ]
         (fun t ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               Csv.sniff ~nulls:[ t ] (Reader.of_string "a\n")));
       test "raises on rows below 1" (fun () ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               Csv.sniff ~rows:0 (Reader.of_string "a\n")));
-      cases
-        ~name:(fun (n, rows) ->
+      cases "peeking"
+        ~id:(fun (n, rows) ->
           Printf.sprintf "leaves the reader whole, %d-byte slices, rows %d" n
             rows)
-        "peeking"
         [ (1, 1); (3, 1); (3, 5); (64, 2); (65536, 16384) ]
         (fun (slice_length, rows) ->
           let s = "a,\"b\nc\"\r\n1,2\n3,\"x\"\"y\"\n4,5" in
@@ -509,9 +503,8 @@ let syntax_errors () =
 let syntax =
   group "syntax"
     [
-      cases
-        ~name:(fun (name, _, _, _) -> name)
-        "records"
+      cases "records"
+        ~id:(fun (name, _, _, _) -> name)
         [
           ( "a line feed ends a record",
             2,
@@ -592,11 +585,10 @@ let syntax =
 (* Values *)
 
 let values =
-  cases
-    ~name:(fun (ty, s, _) ->
+  cases "values"
+    ~id:(fun (ty, s, _) ->
       Printf.sprintf "reads %s as %s" (String.escaped s)
         (Format.asprintf "%a" (fun ppf (Type.Any t) -> Type.pp ppf t) ty))
-    "values"
     [
       (any Type.bool, "true\nfalse\n", "bit [true; false]");
       (any Type.int8, "-128\n127\n+5\n-0\n", "int8 [-128; 127; 5; 0]");
@@ -783,8 +775,8 @@ let batches =
           equal (array int)
             (Array.init big_rows Fun.id)
             (Column.values Kind.int (column t "c2")));
-      cases ~name:(Printf.sprintf "are the same in slices of %d bytes")
-        "slicing" [ 7; 4096; 100_000 ] (fun slice_length ->
+      cases "slicing" ~id:(Printf.sprintf "are the same in slices of %d bytes")
+        [ 7; 4096; 100_000 ] (fun slice_length ->
           equal (list int)
             (sizes (decoded big))
             (sizes (decoded ~slice_length big)));
@@ -1350,7 +1342,7 @@ let files =
             |});
       test "raises on null tokens given with a format" (fun () ->
           let f = Csv.format ~nulls:[ "NA" ] [ ("x", any Type.int64) ] in
-          raises_match (Exn.invalid_arg ~substring:"~nulls") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"~nulls") (fun () ->
               Csv.file ~format:f ~nulls:[ "NA" ] "data.csv"));
       test "opens its file again for each read" (fun () ->
           with_file "x\n1\n" @@ fun path ->

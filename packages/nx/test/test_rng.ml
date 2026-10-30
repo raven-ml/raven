@@ -109,9 +109,8 @@ let at (type s) (dt : (float, s) A.Dtype.t) = function
 (* Threefry-2x32-20, Random123's known answers: [fold_in k d] encrypts the
    counter [(d asr 32, d)] under [k]'s words [(seed asr 32, seed)]. *)
 let known =
-  cases
-    ~name:(fun (s, d, _) -> Printf.sprintf "seed %x data %x" s d)
-    "known answers"
+  cases "known answers"
+    ~id:(fun (s, d, _) -> Printf.sprintf "seed %x data %x" s d)
     [
       (0, 0, [| 0x6b200159; 0x99ba4efe |]);
       (-1, -1, [| 0x1cb996fc; 0xbb002be7 |]);
@@ -179,9 +178,8 @@ let keys_group =
           let k' = Nx.Ptree.map ptree (fun _ a -> a) k in
           equal ~msg:"map" (array int32) (words k) (words k');
           let word = Nx.P (host_of Nx.int32 [| 3 |] [| 1l; 2l; 3l |]) in
-          raises_match
-            (Exn.invalid_arg ~substring:"Nx.Rng.of_tensor: ")
-            (fun () -> Nx.Ptree.rebuild ptree ~like:k [ word ]));
+          raises_match (Exn.invalid_arg ~sub:"Nx.Rng.of_tensor: ") (fun () ->
+              Nx.Ptree.rebuild ptree ~like:k [ word ]));
       prop "split's keys are split_batch's rows"
         (Gen.pair keys (Gen.int_range 1 6))
         (fun (k, n) ->
@@ -788,10 +786,10 @@ let placed_draws =
         (fun () ->
           let key = Rng.place Bare.on (Rng.key 1) in
           let computes by f =
-            raises_match (Exn.invalid_arg ~substring:(by ^ ": set ")) f;
+            raises_match (Exn.invalid_arg ~sub:(by ^ ": set ")) f;
             raises_match
               (Exn.invalid_arg
-                 ~substring:"has no kernels to compute Map; place the value")
+                 ~sub:"has no kernels to compute Map; place the value")
               f
           in
           computes "Nx.Rng.uniform_at" (fun () ->
@@ -865,12 +863,10 @@ let placed_draws =
       test "an _at draw raises where its placement cuts an axis it lacks"
         (fun () ->
           let p = S2.split ~axis:1 and key = Rng.place S2.on (Rng.key 1) in
-          raises_match
-            (Exn.invalid_arg ~substring:"Nx.Rng.bits_at: ")
-            (fun () -> Rng.bits_at p [| 4 |]);
-          raises_match
-            (Exn.invalid_arg ~substring:"Nx.Rng.bits_at: ")
-            (fun () -> Rng.bits_at p ~key [| 4 |]));
+          raises_match (Exn.invalid_arg ~sub:"Nx.Rng.bits_at: ") (fun () ->
+              Rng.bits_at p [| 4 |]);
+          raises_match (Exn.invalid_arg ~sub:"Nx.Rng.bits_at: ") (fun () ->
+              Rng.bits_at p ~key [| 4 |]));
     ]
 
 (* Distributions. Each moment of [n] draws is checked within 6 standard errors
@@ -1250,11 +1246,10 @@ let few = 25
 let rejection =
   group "rejection samplers"
     [
-      (* The CDF the gamma law checks against, to 10^-8 of mpmath's values
-         at 40 digits. *)
-      cases
-        ~name:(fun (a, x, _) -> Printf.sprintf "P(%g, %g)" a x)
-        "gamma's CDF is the regularized lower incomplete gamma"
+      (* The CDF the gamma law checks against, to 10^-8 of mpmath's values at 40
+         digits. *)
+      cases "gamma's CDF is the regularized lower incomplete gamma"
+        ~id:(fun (a, x, _) -> Printf.sprintf "P(%g, %g)" a x)
         [
           (0.01, 1e-30, 0.50404727285999545286);
           (0.01, 0.5, 0.99437324380603281585);
@@ -1466,9 +1461,8 @@ let rejection =
             xs);
       (* A narrow float's largest finite value is a rate like any other: the
          domain is checked at the compute dtype, where 2^31 is a value. *)
-      cases
-        ~name:(fun (n, _) -> "poisson accepts " ^ n ^ "'s largest rate")
-        "narrow rates"
+      cases "narrow rates"
+        ~id:(fun (n, _) -> "poisson accepts " ^ n ^ "'s largest rate")
         [
           ( "float4_e2m1fn",
             fun () -> Rng.poisson (host_of Nx.float4_e2m1fn [| 1 |] [| 6. |]) );
@@ -1950,9 +1944,8 @@ let others =
               let f = Float.of_int c /. Float.of_int n in
               near ~var:(5. /. 36.) (1. /. 6.) f)
             counts);
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "refusals at the call"
+      cases "refusals at the call"
+        ~id:(fun (name, _, _) -> name)
         [
           ( "truncated_normal of a NaN bound",
             (fun () ->
@@ -1977,9 +1970,8 @@ let others =
         ]
         (fun (_, f, want) ->
           equal string want (message (fun () -> ignore (f ()))));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "categorical refusals at the call"
+      cases "categorical refusals at the call"
+        ~id:(fun (name, _, _) -> name)
         [
           ( "an axis it lacks",
             (fun () ->
@@ -2090,9 +2082,8 @@ let checks =
        (* The draw returns; the wait on its set raises. *)
        let waits x () = Nx.sync x in
        let good = on [| 0.5; 0.5 |] in
-       cases
-         ~name:(fun (name, _, _) -> name)
-         "a draw on another set checks its parameters at the next wait"
+       cases "a draw on another set checks its parameters at the next wait"
+         ~id:(fun (name, _, _) -> name)
          [
            ( "bernoulli",
              (fun () -> waits (Rng.bernoulli (on [| 0.5; 2. |]))),
@@ -2350,8 +2341,8 @@ let names =
                 let draw = make ~dead:true in
                 let after () =
                   raises_match ~msg:name
-                    (Exn.invalid_arg ~substring:"donated to Nx.copy")
-                    (fun () -> draw None);
+                    (Exn.invalid_arg ~sub:"donated to Nx.copy") (fun () ->
+                      draw None);
                   next ()
                 in
                 equal ~msg:name (array int32)

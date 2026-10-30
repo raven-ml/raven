@@ -50,7 +50,7 @@ let ptes =
 
 let test_pte =
   cases "a page's entry has the header's bits"
-    ~name:(fun (name, _, _, _, _) -> name)
+    ~id:(fun (name, _, _, _, _) -> name)
     ptes
     (fun (_, v, target, uncached, e) ->
       equal int64 e (Page_entry.pte v ~pa target ~uncached))
@@ -59,7 +59,7 @@ let test_pte =
    APERTURE 2:1, PCF 5:3 (2 valid, cached, no ATS), ADDRESS 51:12. *)
 let test_pde =
   cases "a directory entry points to its table in the GPU's memory"
-    ~name:(fun (name, _, _) -> name)
+    ~id:(fun (name, _, _) -> name)
     [ ("V2", Page_entry.V2, 0x500_0522L); ("V3", V3, 0x5000_5012L) ]
     (fun (_, v, e) -> equal int64 e (Page_entry.pde v ~child:0x5000_5000))
 
@@ -68,7 +68,7 @@ let test_pde =
    PCF_SMALL 69:67, ADDRESS_SMALL 115:76. *)
 let test_dual =
   cases "a dual entry holds a table in its high half or a page in its low half"
-    ~name:(fun (name, _, _, _) -> name)
+    ~id:(fun (name, _, _, _) -> name)
     [
       ("V2 table", Page_entry.V2, `Table 0x5000_5000, (0x20L, 0x5000_502L));
       ("V3 table", V3, `Table 0x5000_5000, (0L, 0x5000_5012L));
@@ -84,7 +84,7 @@ let test_dual =
    are 512 MiB, 2 MiB and 4 KiB on both. *)
 let test_levels =
   cases "a version's levels, addresses and pages"
-    ~name:(fun (name, _, _, _) -> name)
+    ~id:(fun (name, _, _, _) -> name)
     [ ("V2", Page_entry.V2, 4, 58); ("V3", V3, 2, 52) ]
     (fun (_, v, entries, pa_bits) ->
       let levels = Page_entry.levels v in

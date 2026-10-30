@@ -197,7 +197,7 @@ let held_bytes root =
 let lend x n = given (Function.alloc_dma ~va:lend_base x.t_fn n)
 
 let unpinned ~msg x (a, n) =
-  raises_match ~msg (Exn.invalid_arg ~substring:"") (fun () ->
+  raises_match ~msg (Exn.invalid_arg ~sub:"") (fun () ->
       Function.unpin x.t_fn a n)
 
 (* The regions of each source on GPU [x]: [Gpu], [Bar] and [Host] memory, the
@@ -254,8 +254,8 @@ let test_round_trip from =
   equal ~msg:"the system memory held" int bytes (held_bytes root);
   Option.iter (unpinned ~msg:"its pin" x) pinned;
   if from = Of_kind Host then
-    raises_match ~msg:"its system memory" (Exn.invalid_arg ~substring:"")
-      (fun () -> Function.free_dma x.t_fn (require_some host));
+    raises_match ~msg:"its system memory" (Exn.invalid_arg ~sub:"") (fun () ->
+        Function.free_dma x.t_fn (require_some host));
   Function.free_dma x.t_fn lent
 
 (* Bytes that start past a page's first byte and end inside the next page. *)
@@ -600,7 +600,7 @@ let test_peer_unrecorded () =
    release. *)
 let test_released_refused =
   cases "a released GPU refuses requests, writing nothing"
-    ~name:(fun (what, _) -> what)
+    ~id:(fun (what, _) -> what)
     [
       ("alloc Gpu", fun x _ _ _ -> ignore (Memory.alloc x.t_memory Gpu page));
       ("alloc Host", fun x _ _ _ -> ignore (Memory.alloc x.t_memory Host page));
@@ -616,7 +616,7 @@ let test_released_refused =
       let theirs = given (Memory.alloc o.t_memory Gpu page) in
       Function.release x.t_fn;
       let before = tree_capacity x and touches = x.t_g.touches in
-      raises_match (Exn.invalid_arg ~substring:"released") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"released") (fun () ->
           request x o mine theirs);
       equal ~msg:"entries, zeroes and flushes" int touches x.t_g.touches;
       equal ~msg:"nothing taken" (pair int int) before (tree_capacity x);
@@ -1048,7 +1048,7 @@ let test_map_host_past_end () =
 
 let test_host_unreserved () =
   with_far_gpu ~reserved:false @@ fun x ->
-  raises_match (Exn.invalid_arg ~substring:"Machine.reserve") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"Machine.reserve") (fun () ->
       Memory.alloc x.t_memory Host page)
 
 (* The process's own pages go back to the system when it dies: a GPU taken
@@ -1064,7 +1064,7 @@ let test_not_mine () =
   let x = List.nth gpus 0 and y = List.nth gpus 1 in
   let mem = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
   let theirs = given (Memory.alloc y.t_memory Gpu (64 * kib)) in
-  let refused msg f = raises_match ~msg (Exn.invalid_arg ~substring:"") f in
+  let refused msg f = raises_match ~msg (Exn.invalid_arg ~sub:"") f in
   refused "free of another GPU's region" (fun () -> Memory.free y.t_memory mem);
   let p = mapped (Memory.map_peer x.t_memory theirs) in
   Memory.free x.t_memory p;
@@ -1095,7 +1095,7 @@ let test_two_spaces () =
 (* BAR 1 is the upper half of the fixture's 64-bit BAR 0. *)
 let test_no_bar () =
   with_gpu @@ fun _ _ x ->
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"") (fun () ->
       Memory.create x.t_fn x.t_tables ~bar:1)
 
 let bindings g =
@@ -1130,8 +1130,8 @@ let test_reopened () =
   equal ~msg:"the new instance's entries unchanged"
     (list (pair hex int64))
     before (bindings x.t_g);
-  raises_match ~msg:"its system memory given back"
-    (Exn.invalid_arg ~substring:"") (fun () -> Function.free_dma x.t_fn host);
+  raises_match ~msg:"its system memory given back" (Exn.invalid_arg ~sub:"")
+    (fun () -> Function.free_dma x.t_fn host);
   equal ~msg:"the new instance's free" bool true
     (Page_table.free reopened fresh);
   Memory.free o.t_memory shared
@@ -1140,12 +1140,12 @@ let placement =
   group ~timeout:patience "placement and refusals"
     [
       cases "each kind is placed by its rule"
-        ~name:(Format.asprintf "%a" pp_kind)
+        ~id:(Format.asprintf "%a" pp_kind)
         [ Memory.Gpu; Bar; Host ] test_kind;
       test_sizes;
       cases
         "the GPU bypasses its caches when asked, and always for system memory"
-        ~name:(fun (k, u, _) -> Format.asprintf "%a, uncached %b" pp_kind k u)
+        ~id:(fun (k, u, _) -> Format.asprintf "%a, uncached %b" pp_kind k u)
         [
           (Memory.Gpu, false, false);
           (Gpu, true, true);
@@ -1156,7 +1156,7 @@ let placement =
         ]
         test_uncached;
       cases "Bar memory's window maps as the driver's windows on its BAR"
-        ~name:(function
+        ~id:(function
           | None -> "no window"
           | Some true -> "combining"
           | Some false -> "uncached")
@@ -1177,7 +1177,7 @@ let placement =
         test_map_host_mapped;
       test "map_host preserves the machine's transport" test_map_host_transport;
       cases "a size no memory holds is Ok None"
-        ~name:(Format.asprintf "%a" pp_kind)
+        ~id:(Format.asprintf "%a" pp_kind)
         [ Memory.Gpu; Bar; Host ] test_too_large;
       test "map_host of bytes past the last address is an Error"
         test_map_host_past_end;
@@ -1197,7 +1197,7 @@ let test_no_bytes (_, n, request) =
   with_gpu @@ fun root _ x ->
   let lent, _ = lend x page in
   let before = tree_capacity x and bytes = held_bytes root in
-  raises_match (Exn.invalid_arg ~substring:"Memory.") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"Memory.") (fun () ->
       request x (Window.address lent) n);
   equal ~msg:"nothing taken" (pair int int) before (tree_capacity x);
   equal ~msg:"no system memory taken" int bytes (held_bytes root);
@@ -1345,7 +1345,7 @@ let test_freed_peer () =
   let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
   let p = mapped (Memory.map_peer x.t_memory r) in
   Memory.free x.t_memory p;
-  raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"") (fun () ->
       Memory.map_peer y.t_memory p);
   Memory.free o.t_memory r
 
@@ -1978,7 +1978,7 @@ let on_files =
       cases
         "a request that writes the tables is a use: a release meanwhile \
          leaves the function to it"
-        ~name:fst writes test_write_used;
+        ~id:fst writes test_write_used;
       test "a finish of the releases from inside a free raises"
         test_use_holds;
       test
@@ -1993,16 +1993,16 @@ let on_files =
          the releases"
         test_cut_give_back;
       cases "a free gives back what its region took"
-        ~name:(Format.asprintf "%a" pp_from)
+        ~id:(Format.asprintf "%a" pp_from)
         froms test_round_trip;
       test
         "map_host of bytes off a page maps the pages that hold them, its \
          address byte a's and its window the bytes'"
         test_unaligned;
-      cases "reaches is whether map_peer maps the GPU's memory" ~name:fst
-        pairings test_reaches;
+      cases "reaches is whether map_peer maps the GPU's memory" ~id:fst pairings
+        test_reaches;
       cases "reaches holds where the bus carries requests between the GPUs"
-        ~name:(fun (n, _, _, _) -> n)
+        ~id:(fun (n, _, _, _) -> n)
         routes test_route;
       test "map_peer of a peer's region maps the region its owner gave"
         test_peer_of_peer;
@@ -2020,18 +2020,18 @@ let on_files =
          naming it"
         test_released_peer;
       cases "after the release, a free writes no table"
-        ~name:(Format.asprintf "%a" pp_from)
+        ~id:(Format.asprintf "%a" pp_from)
         froms test_free_released;
       cases "no bytes, or fewer, are refused"
-        ~name:(fun (what, n, _) -> strf "%s %d" what n)
+        ~id:(fun (what, n, _) -> strf "%s %d" what n)
         no_bytes test_no_bytes;
       cases
         "system memory past the entries' address bits is None, and a peer's \
          BAR past them is refused, naming them"
-        ~name:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _) -> n)
         pa_bits_requests test_pa_bits;
       cases "a peer's window is its origin's"
-        ~name:(Format.asprintf "%a" pp_kind)
+        ~id:(Format.asprintf "%a" pp_kind)
         [ Memory.Gpu; Bar; Host ] test_peer_host;
       test "map_host and map_peer without room for a table are Ok None"
         test_no_room;
@@ -2039,7 +2039,7 @@ let on_files =
       cases
         "a map_peer of memory the GPU maps already shares its mapping until \
          the last free"
-        ~name:(fun (k, again) ->
+        ~id:(fun (k, again) ->
           Format.asprintf "%a%s" pp_kind k
             (match again with
             | Peers -> ""
@@ -2124,7 +2124,7 @@ let test_bus_reserved () =
   let given_pages = snd (Memory.pages r) in
   ignore (require_ok (Memory.bus x.t_memory r ~client:nic_bus));
   Memory.free x.t_memory r;
-  raises_match ~msg:"freed once" (Exn.invalid_arg ~substring:"") (fun () ->
+  raises_match ~msg:"freed once" (Exn.invalid_arg ~sub:"") (fun () ->
       Memory.free x.t_memory r);
   let rec fill acc =
     match Memory.alloc x.t_memory Gpu (64 * kib) with
@@ -2220,7 +2220,7 @@ let test_bus_misuse () =
   Memory.free x.t_memory freed;
   List.iter
     (fun (msg, r) ->
-      raises_match ~msg (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match ~msg (Exn.invalid_arg ~sub:"") (fun () ->
           Memory.bus x.t_memory r ~client:nic_bus))
     [
       ("borrowed", borrowed);
@@ -2276,19 +2276,19 @@ let others =
   group ~timeout:patience "memory given to another function"
     [
       cases "bus gives the memory's bus addresses"
-        ~name:(Format.asprintf "%a" pp_kind)
+        ~id:(Format.asprintf "%a" pp_kind)
         [ Memory.Gpu; Bar; Host ] test_bus_runs;
       test
         "given memory never returns, and the GPU stays taken until the \
          process exits"
         test_bus_reserved;
       cases "a refusal names its cause and reserves nothing"
-        ~name:(fun (n, _, _, _, _) -> n)
+        ~id:(fun (n, _, _, _, _) -> n)
         refusals test_bus_refused;
       cases
         "a GPU whose bus mastering a release could not turn off keeps its \
          memory through every free"
-        ~name:fst stops test_refused_stop;
+        ~id:fst stops test_refused_stop;
       test "system memory needs no BAR and no route" test_bus_host_small;
       test "a GPU a transport reaches gives no memory" test_bus_far;
       test "bus of memory alloc did not give raises" test_bus_misuse;

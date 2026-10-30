@@ -74,9 +74,12 @@ let in_process environment tests =
             | _ -> failf "no variable %s" pair)
           (String.split_on_char ' ' environment)
       in
-      group ~tags:[ tag ] environment
-        (test ("the suite runs this group with " ^ environment) has_environment
-        :: tests in_environment)
+      Windtrap.tag tag
+      @@ group environment
+           (test
+              ("the suite runs this group with " ^ environment)
+              has_environment
+           :: tests in_environment)
 
 (* The goldens were recorded without colours. *)
 let optimize c =
@@ -111,9 +114,8 @@ let leaves_its_argument =
   let kernels =
     List.sort_uniq String.compare (List.map (fun c -> c.kernel) recorded_cases)
   in
-  cases ~name:Fun.id
-    "hand_coded_optimizations leaves the scheduler it is given as it was"
-    kernels (fun name ->
+  cases "hand_coded_optimizations leaves the scheduler it is given as it was"
+    ~id:Fun.id kernels (fun name ->
       (* Metal's case, or the host's for a kernel only the host optimises. *)
       let plain =
         List.filter
@@ -165,12 +167,12 @@ let keeps_kernel_writes =
   in
   group "the hand-coded optimisations keep a kernel's writes"
     [
-      cases ~name:(fun c -> c.name) "small kernels" (within 0 (1 lsl 12)) keeps;
-      cases ~tags:[ "slow" ]
-        ~name:(fun c -> c.name)
-        "large kernels"
-        (within (1 lsl 12) (1 lsl 18))
-        keeps;
+      cases "small kernels" ~id:(fun c -> c.name) (within 0 (1 lsl 12)) keeps;
+      slow
+      @@ cases "large kernels"
+           ~id:(fun c -> c.name)
+           (within (1 lsl 12) (1 lsl 18))
+           keeps;
     ]
 
 let () =

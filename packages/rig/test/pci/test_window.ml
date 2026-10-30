@@ -546,16 +546,16 @@ let transports =
          test_blocking;
        prop "a flush loads its window's first word after the stores before it"
          flushes test_flush_order;
-       cases ~name:fst "a read through a failed transport gives all ones"
+       cases "a read through a failed transport gives all ones" ~id:fst
          failed_reads (fun (_, read) ->
            let got, want = read (snd (broken ())) in
            equal string want got);
-       cases ~name:fst "a write through a failed transport is dropped"
+       cases "a write through a failed transport is dropped" ~id:fst
          failed_writes (fun (_, write) ->
            let f, w = broken () in
            write w;
            equal (list access) [] (log f));
-       cases ~name:fst "a flush through a failed transport reaches nothing"
+       cases "a flush through a failed transport reaches nothing" ~id:fst
          [ ("flush", Window.flush); ("rig_pci_flush", c_flush) ]
          (fun (_, flush) ->
            let f, w = broken () in

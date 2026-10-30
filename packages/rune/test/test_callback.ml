@@ -246,10 +246,10 @@ let test_outlined_bare () =
         Rune.callback s ~like:x Fun.id x)
   in
   raises_match ~msg:"a check off the host"
-    (Exn.invalid_arg ~substring:"has no kernels") (fun () -> ignore (g x));
+    (Exn.invalid_arg ~sub:"has no kernels") (fun () -> ignore (g x));
   let g = Rune.jit s (fun x -> Nx.add_s (Rune.callback s ~like:x host x) 1.) in
-  raises_match ~msg:"donated" (Exn.invalid_arg ~substring:"has no kernels")
-    (fun () -> ignore (g (Nx.donate (Nx.place at (vec [| 0.5; 1. |])))));
+  raises_match ~msg:"donated" (Exn.invalid_arg ~sub:"has no kernels") (fun () ->
+      ignore (g (Nx.donate (Nx.place at (vec [| 0.5; 1. |])))));
   (* A loop's step runs its stretches compiled, and nx stacks the rows of its
      outputs, which raises there. *)
   let step c r =
@@ -269,8 +269,7 @@ let test_outlined_bare () =
     Testable.(list (float 1e-12))
     [ exp 1. +. 1.; exp 2. +. exp 0.5 ]
     (floats (Nx.place Nx.Host.on (Rune.jit s carry xs)));
-  raises_match ~msg:"a loop's rows"
-    (Exn.invalid_arg ~substring:"has no kernels")
+  raises_match ~msg:"a loop's rows" (Exn.invalid_arg ~sub:"has no kernels")
     (fun () -> ignore (Rune.jit s rows xs))
 
 (* Compiled, a switch's taken branch, an iterate's steps and tests and a remat's
@@ -365,7 +364,7 @@ let test_outlined_effects () =
     [ exp 1. +. 1.; exp 2. +. 1. ]
     (floats y);
   equal ~msg:"donated: calls" fl [ [ 1.; 2. ] ] (log ());
-  raises_match ~msg:"donated: consumed" (Exn.invalid_arg ~substring:"donated")
+  raises_match ~msg:"donated: consumed" (Exn.invalid_arg ~sub:"donated")
     (fun () -> ignore (Nx.to_array x))
 
 (* Compiled, a result that a callback also received is in memory of its own,

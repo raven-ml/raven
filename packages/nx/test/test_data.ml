@@ -16,7 +16,7 @@ let m = Nx_support.memory
 
 module S2 = (val Nx.devices [ m 0; m 1 ])
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* Elements *)
 
@@ -146,7 +146,7 @@ let ocaml =
       test "init calls f once per index, in C order" test_init_order;
       test "init gives f a fresh index each call" test_init_fresh_index;
       test "unpack fixes the dtype or names both" test_unpack;
-      cases "refusals name the function" ~name:fst refusals (fun (label, f) ->
+      cases "refusals name the function" ~id:fst refusals (fun (label, f) ->
           invalid ~by:(name_of label) f);
     ]
 
@@ -223,11 +223,10 @@ let test_read_traced () =
   Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
       let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.to_array: the value is traced by test.reads")
+        (Exn.invalid_arg ~sub:"Nx.to_array: the value is traced by test.reads")
         (fun () -> Nx.to_array t);
       raises_match
-        (Exn.invalid_arg ~substring:"Nx.item: the value is traced by test.reads")
+        (Exn.invalid_arg ~sub:"Nx.item: the value is traced by test.reads")
         (fun () -> Nx.item [ 0 ] t))
 
 (* An extent reaches every operation on its fiber; a read is none. *)
@@ -310,8 +309,7 @@ let test_map_traced () =
   Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
       let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.map_item: the value is traced by test.reads")
+        (Exn.invalid_arg ~sub:"Nx.map_item: the value is traced by test.reads")
         (fun () -> Nx.map_item Fun.id t))
 
 let maps =

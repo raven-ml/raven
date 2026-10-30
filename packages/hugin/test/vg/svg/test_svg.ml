@@ -196,7 +196,7 @@ let leaves =
                 (float 1e-9) (Float.rem o 12.)
                 (Float.rem (float_of_string (attr "stroke-dashoffset" s)) 12.))
             [ 0.5; 7.; 13. ]);
-      cases ~name:fst "a subpath of zero length"
+      cases "a subpath of zero length" ~id:fst
         [
           ("is left out with square caps", (`Square, 0));
           ("is kept with round caps", (`Round, 1));
@@ -263,7 +263,7 @@ let leaves =
           equal int 0 (count s "<text");
           equal string "a" (attr "aria-label" s);
           equal int 1 (count s "<path"));
-      cases ~name:fst "a run is outlines when a glyph renders"
+      cases "a run is outlines when a glyph renders" ~id:fst
         [
           ("two characters", ("fi", [| 0 |]));
           ( "a character beyond the Basic Multilingual Plane",
@@ -553,8 +553,8 @@ let accuracy =
              the line, 3 into the pattern of period 4. *)
           equal string "M-100.5 50L200.5 50" (attr "d" s);
           equal string "3" (attr "stroke-dashoffset" s));
-      cases ~name:fst
-        "a closed subpath cut at the margin keeps its join at its start"
+      cases "a closed subpath cut at the margin keeps its join at its start"
+        ~id:fst
         [
           ( "on the right",
             ( [| 50.; 1e5; 1e5; 50. |],
@@ -593,8 +593,7 @@ let accuracy =
               at_most ~msg:"x" float_exact ~than:0.00051 (Float.abs (x -. x'));
               at_most ~msg:"y" float_exact ~than:0.00051 (Float.abs (y -. y')))
             pts got);
-      cases ~name:fst
-        "a stroked curve crossing the margin keeps its part within"
+      cases "a stroked curve crossing the margin keeps its part within" ~id:fst
         [
           ("bending once", ((-300., 50.), (10., -60.), (90., 170.), (400., 40.)));
           (* Curves whose second differences, [p0 - 2 p1 + p2] and [p1 - 2 p2 +
@@ -909,7 +908,7 @@ let accuracy =
           equal (array int) [| 2; 1; 3 |] (Nx.shape (png_of s));
           equal string "-2000" (attr "y" s);
           equal string "4000" (attr "height" s));
-      cases ~name:fst "an image beyond the margin on one side is cropped there"
+      cases "an image beyond the margin on one side is cropped there" ~id:fst
         [
           ("left", (1, 1000, Box2.v (-999900.) 0. 1e6 10.));
           ("right", (1, 1000, Box2.v (-100.) 0. 1e6 10.));
@@ -1190,7 +1189,7 @@ let stamps =
           equal (list string) [ "none"; "#ff0000" ]
             (attrs "stroke"
                (svg (Picture.stamp ~strokes:[| red |] [| 10. |] [| 5. |] p))));
-      cases ~name:fst "an instance changes nothing"
+      cases "an instance changes nothing" ~id:fst
         [
           ("at x = NaN", (Float.nan, 5., 1000.));
           ("at y = NaN", (20., Float.nan, 1000.));
@@ -1311,8 +1310,8 @@ let numbers_finite s =
 let limits =
   group "limits"
     [
-      cases ~name:fst
-        "transforms whose composition overflows or underflows paint nothing"
+      cases "transforms whose composition overflows or underflows paint nothing"
+        ~id:fst
         [ ("overflows", 1e200); ("underflows", 1e-200) ]
         (fun (_, k) ->
           let twice p =
@@ -1324,8 +1323,8 @@ let limits =
           equal string "1000000000000000" (attr "stroke-width" (stroked 1e300)));
       prop ~examples:Vg_corpus.extremes "numbers are finite whatever the scales"
         Vg_corpus.gen_extreme (fun p -> numbers_finite (svg p));
-      cases ~name:(Printf.sprintf "under a scale of %g")
-        "a pen keeps its width" [ 1e-170; 1e170 ] (fun k ->
+      cases "a pen keeps its width" ~id:(Printf.sprintf "under a scale of %g")
+        [ 1e-170; 1e170 ] (fun k ->
           let p =
             Picture.transform (Affine.scale k k)
               (Picture.stroke
@@ -1391,8 +1390,8 @@ let goldens =
        (fun (name, r) ->
          test (name ^ " writes its golden document") (fun () ->
              expect_file
-               (masked (Hugin_vg_svg.render r))
-               ("packages/hugin/test/vg/svg/golden/" ^ name ^ ".svg")))
+               ~file:("packages/hugin/test/vg/svg/golden/" ^ name ^ ".svg")
+               (masked (Hugin_vg_svg.render r))))
        Vg_corpus.pages)
 
 let () =

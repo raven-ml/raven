@@ -12,7 +12,7 @@ open Compose
 module Total = Rune.Total
 module T = Nx.Ptree
 
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let v xs = Nx.create f32 [| Array.length xs |] xs
 
@@ -363,21 +363,20 @@ let () =
        [
          test "detach is its operand" test_detach;
          test "lanes and lane_index raise with no map" test_no_map;
-         cases ~name:construct_name "traced once per trace" constructs
-           test_traces;
-         cases ~name:construct_name "a read of a traced value raises" constructs
+         cases "traced once per trace" ~id:construct_name constructs test_traces;
+         cases "a read of a traced value raises" ~id:construct_name constructs
            test_reads;
-         cases ~name:construct_name "a read of captures alone raises if staged"
+         cases "a read of captures alone raises if staged" ~id:construct_name
            constructs test_staged;
-         cases ~name:construct_name "a keyless draw raises" constructs
+         cases "a keyless draw raises" ~id:construct_name constructs
            test_keyless;
-         cases ~name:construct_name "an exception reaches the call" constructs
+         cases "an exception reaches the call" ~id:construct_name constructs
            test_exceptions;
-         cases ~name:construct_name "a try inside a transformation sees it"
+         cases "a try inside a transformation sees it" ~id:construct_name
            constructs test_caught;
          test "detach keeps no argument once it returns" test_kept_detach;
-         cases ~name:construct_name "keeps no argument once it returns"
-           outside test_kept;
+         cases "keeps no argument once it returns" ~id:construct_name outside
+           test_kept;
          group "extents"
            [
              test "a fiber resumed on the domain" test_fiber;

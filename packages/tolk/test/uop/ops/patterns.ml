@@ -385,9 +385,9 @@ let operand dt name =
 let elementwise_patterns =
   group "elementwise patterns"
     [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "a binary pattern matches the node its operation builds" alu_pairs
+      cases "a binary pattern matches the node its operation builds"
+        ~id:(fun (n, _, _, _) -> n)
+        alu_pairs
         (fun (_, pattern, node, dt) ->
           let x = operand dt "x" and y = operand dt "y" in
           is_true
@@ -395,9 +395,9 @@ let elementwise_patterns =
                (P.match_
                   (pattern (P.var ~dtype:[ dt ] "x") (P.var ~dtype:[ dt ] "y"))
                   (node x y))));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "a unary pattern matches the node its operation builds" alu_unary
+      cases "a unary pattern matches the node its operation builds"
+        ~id:(fun (n, _, _, _) -> n)
+        alu_unary
         (fun (_, pattern, node, dt) ->
           let x = operand dt "x" in
           is_true

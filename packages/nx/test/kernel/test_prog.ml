@@ -1327,7 +1327,8 @@ let tests =
         prop ~examples:[ identity ]
           "is_identity is one operand, one output, that operand's In" drawn
           law_identity;
-        cases ~name:(fun (n, _, _) -> n) "is_identity at named programs"
+        cases "is_identity at named programs"
+          ~id:(fun (n, _, _) -> n)
           identities test_identity;
         test "dtype refuses a node past the program" test_dtype_refuses;
       ];
@@ -1341,9 +1342,9 @@ let tests =
           test_of_exprs_two_builds;
         test "each kind function makes its kind's node"
           test_exprs_kind_functions;
-        cases ~name:(fun (n, _, _, _) -> n)
-          "each operator makes the node of the function it names" operators
-          test_operator;
+        cases "each operator makes the node of the function it names"
+          ~id:(fun (n, _, _, _) -> n)
+          operators test_operator;
         test "constructors and of_exprs refuse as v does" test_exprs_refuse;
         test "programs take any number of operands and outputs"
           test_many_operands;

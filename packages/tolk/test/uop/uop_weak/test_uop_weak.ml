@@ -123,7 +123,7 @@ let pm_lower_weak =
       lower "lower_an_int_beyond_int32_to_int64" Ops.O.(int (pow2 32) + int 1);
       lower "lower_an_int_beyond_int64_to_uint64" (Ops.const (`Int max_uint64));
       test "an int no 64-bit integer holds cannot be lowered" (fun () ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               rewrite Uop_weak.pm_lower_weak
                 (Ops.sink [ Ops.const (`Int (Bigint.succ max_uint64)) ])));
       lower ~default_float:"half" "lower_a_float_to_the_default_float"

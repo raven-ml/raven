@@ -6,7 +6,7 @@ let x ?(slot = 0) dt = Call.param slot dt
 let int n = `Int (Bigint.of_int n)
 let eval ?vars ?params ?buffers u = Interpreter.eval ?vars ?params ?buffers u
 let var name = Ops.variable ~dtype:Dtype.Int32 name (int 0) (int 10)
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 let interpreter =
   group "eval"
@@ -49,9 +49,8 @@ let interpreter =
               (Ops.int ~dtype:Dtype.Int32 2)
           in
           equal const (int 2) (eval ~params:[ (0, `Bool false) ] u));
-      cases ~name:(Printf.sprintf "0x%08x")
-        "a selection keeps the bits of the NaN it selects"
-        [ 0xffc12345; 0x7f800001 ] (fun bits ->
+      cases "a selection keeps the bits of the NaN it selects"
+        ~id:(Printf.sprintf "0x%08x") [ 0xffc12345; 0x7f800001 ] (fun bits ->
           let f = Ops.bitcast (x Dtype.Uint32) Dtype.Float32 in
           let u =
             Ops.where (Ops.ne f f) f (Ops.float ~dtype:Dtype.Float32 1.)

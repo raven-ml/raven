@@ -405,10 +405,10 @@ let test_narrow_zeros =
           narrow_floats)
       Support.backends
   in
-  cases
-    ~name:(fun ((b : Support.backend), Narrow dt, name, _, (a, c)) ->
+  cases "signed zeros at the narrow floats"
+    ~id:(fun ((b : Support.backend), Narrow dt, name, _, (a, c)) ->
       strf "%s %s %s %h %h" b.name (D.name dt) name a c)
-    "signed zeros at the narrow floats" rows
+    rows
     (fun (b, Narrow dt, name, k, (a, c)) ->
       let module K' = (val b.kernels) in
       let want = D.of_float dt (f (K.f32 name [| bits32 a; bits32 c |])) in
@@ -631,9 +631,8 @@ let test_ints =
    first. *)
 let test_threefry =
   let pair lo hi = Int64.(logor (shift_left (of_int hi) 32) (of_int lo)) in
-  cases
-    ~name:(fun (c, k, _) -> strf "counter %016Lx key %016Lx" c k)
-    "threefry"
+  cases "threefry"
+    ~id:(fun (c, k, _) -> strf "counter %016Lx key %016Lx" c k)
     [
       (pair 0 0, pair 0 0, pair 0x6b200159 0x99ba4efe);
       ( pair 0xffffffff 0xffffffff,
@@ -957,9 +956,9 @@ let special_values =
   ]
 
 let test_complex_special =
-  cases
-    ~name:(fun (k, (x, y), _) -> strf "%s %h %h" k x y)
-    "Annex G's special values" special_values
+  cases "Annex G's special values"
+    ~id:(fun (k, (x, y), _) -> strf "%s %h %h" k x y)
+    special_values
     (fun (kind, z, (re, im)) ->
       let t = pair value64 value64 in
       equal t (re, im) (c128_call kind [ z ]);
@@ -1001,10 +1000,10 @@ let signalling32 x =
   else bits32 (round_f32 x)
 
 let test_complex_signalling =
-  cases
-    ~name:(fun (k, (x, y), _) ->
+  cases "signalling NaN parts"
+    ~id:(fun (k, (x, y), _) ->
       strf "%s 0x%016Lx 0x%016Lx" k (bits64 x) (bits64 y))
-    "signalling NaN parts" signalling_values
+    signalling_values
     (fun (kind, ((x, y) as z), (re, im)) ->
       let t = pair value64 value64 in
       equal t (re, im) (c128_call kind [ z ]);
@@ -1358,7 +1357,8 @@ let test_annex_f =
     equal (list value64) (List.init 37 (fun _ -> want))
       (lanes Bigarray.float32 kind args)
   in
-  cases ~name "Annex F's special values" annex_f (fun (w, kind, args, want) ->
+  cases "Annex F's special values" ~id:name annex_f
+    (fun (w, kind, args, want) ->
       match w with
       | F64 -> at64 kind args want
       | F32 -> at32 kind args want

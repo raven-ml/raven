@@ -29,14 +29,13 @@ let messages =
 let power =
   group ~timeout:10. "power manager"
     [
-      cases
-        ~name:(fun ((a, b, c), n, _) -> strf "%s of MP1 %d.%d.%d" n a b c)
-        "a message has its header's ID" messages
+      cases "a message has its header's ID"
+        ~id:(fun ((a, b, c), n, _) -> strf "%s of MP1 %d.%d.%d" n a b c)
+        messages
         (fun (mp1, name, id) -> equal (option int) id (Smu.message mp1 name));
-      cases
-        ~name:(fun ((a, b, c), clock, features, _) ->
+      cases "a clock's DPM runs iff its feature bit is enabled"
+        ~id:(fun ((a, b, c), clock, features, _) ->
           strf "%s of MP1 %d.%d.%d, features 0x%x" clock a b c features)
-        "a clock's DPM runs iff its feature bit is enabled"
         (* The DPM feature bits of smu14_driver_if_v14_0.h (UCLK 3, FCLK 4,
            SOCCLK 5, GFXCLK 1) and smu_v13_0_6_pmfw.h (UCLK 6, GFXCLK 3). *)
         [
@@ -50,12 +49,12 @@ let power =
         ]
         (fun (mp1, clock, features, on) ->
           equal bool on (Smu.dpm mp1 ~features clock));
-      cases ~name:Fun.id "a clock's name must start with PPCLK_"
+      cases "a clock's name must start with PPCLK_" ~id:Fun.id
         (* UCLK is shorter than the prefix, and XXXXXXUCLK is as long as UCLK
            with it. *)
         [ ""; "UCLK"; "XXXXXXUCLK"; "ppclk_UCLK" ]
         (fun clock ->
-          raises_match (Exn.invalid_arg ~substring:"Smu.dpm") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Smu.dpm") (fun () ->
               Smu.dpm (14, 0, 3) ~features:(-1) clock));
       test "a clock's request holds the clock above the value" (fun () ->
           equal int 0x2_0010 (Smu.clock_request ~clock:2 0x10));

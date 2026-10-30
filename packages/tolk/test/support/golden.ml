@@ -69,4 +69,4 @@ let cases ?key file check =
     String.concat " "
       (List.map (fun column -> column ^ "=" ^ cell file columns row column) key)
   in
-  Windtrap.cases ~name file rows (fun row -> check (cell file columns row))
+  Windtrap.cases file ~id:name rows (fun row -> check (cell file columns row))

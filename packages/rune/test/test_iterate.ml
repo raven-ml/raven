@@ -15,7 +15,7 @@ module T = Nx.Ptree
 module D = Nx.Dtype
 module Total = Rune.Total
 
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let f32 = Nx.float32
 let f64 = Nx.float64
 let c64 = Nx.complex64

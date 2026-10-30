@@ -439,7 +439,7 @@ let casts =
          them, where tinygrad converts it first and a NaN loses its bits. *)
       cases
         "a bitcast round trip of every 8- and 16-bit word folds to its value"
-        ~name:(Format.asprintf "%a" Dtype.pp)
+        ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
         (fun mid ->
           let w = if Dtype.itemsize mid = 1 then Dtype.Uint8 else Uint16 in

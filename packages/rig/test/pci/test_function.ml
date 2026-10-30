@@ -715,7 +715,7 @@ let tree_files =
   group ~timeout:patience "a machine's files"
     [
       cases "a take is refused, naming the function and the cause"
-        ~name:(fun (n, _, _, _, _) -> n)
+        ~id:(fun (n, _, _, _, _) -> n)
         refusals test_refusal;
       test
         "a function alone and enabled, under no translating IOMMU, is taken \
@@ -725,7 +725,7 @@ let tree_files =
       cases
         "a function sharing its device is taken physically unless Linux \
          resets it through its bus"
-        ~name:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _) -> n)
         shared_resets test_shared_reset;
       test
         "a function the lock's holder binds to vfio-pci is refused as taken"
@@ -737,7 +737,7 @@ let tree_files =
       cases
         "a function bound to vfio-pci is taken through VFIO, whatever shares \
          its device or whether it is enabled"
-        ~name:(fun (n, _, _, _, _) -> n)
+        ~id:(fun (n, _, _, _, _) -> n)
         through_vfio test_through_vfio;
       test
         "a prefetchable BAR of a function taken physically combines where \
@@ -753,12 +753,12 @@ let tree_files =
       cases
         "a function taken physically has its INTx off while taken, as found \
          after"
-        ~name:fst intx_states test_intx;
+        ~id:fst intx_states test_intx;
       cases
         "a function taken physically stops mastering the bus and has its INTx \
          as found when its process exits, and a child that process forked \
          exits without stopping it"
-        ~name:fst intx_states test_exit;
+        ~id:fst intx_states test_exit;
     ]
 
 (* Locked system memory
@@ -1559,7 +1559,7 @@ let test_block_reserved () =
   let base = free_base + (16 * mib) + page in
   granted (Machine.reserve (Function.machine f) ~base (4 * mib));
   ignore (frames root base page);
-  raises_match (Exn.invalid_arg ~substring:"2 MiB") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"2 MiB") (fun () ->
       Function.alloc_dma ~va:base f page)
 
 let system_memory =
@@ -1636,7 +1636,7 @@ let system_memory =
         dead_file_commands;
       cases
         "memory on a mount that is no hugetlbfs of 2 MiB pages is refused"
-        ~name:fst other_mounts test_other_mount;
+        ~id:fst other_mounts test_other_mount;
       test "memory whose frames read without the privilege is refused"
         test_unprivileged;
       test "memory in one 2 MiB block shares a huge page, gone once both are"
@@ -1669,7 +1669,7 @@ let test_released () =
   Function.release f;
   List.iter
     (fun (name, use) ->
-      raises_match ~msg:name (Exn.invalid_arg ~substring:"released") use)
+      raises_match ~msg:name (Exn.invalid_arg ~sub:"released") use)
     [
       ("failed", fun () -> ignore (Function.failed f : string option));
       ("config16", fun () -> ignore (Function.config16 f 0 : int));
@@ -1709,7 +1709,7 @@ let test_other_machine () =
   with_fixture @@ fun _ f ->
   with_fixture @@ fun _ g ->
   let w = map g 2 in
-  raises_match (Exn.invalid_arg ~substring:"") (fun () -> Function.unmap f w);
+  raises_match (Exn.invalid_arg ~sub:"") (fun () -> Function.unmap f w);
   Function.unmap g w
 
 (* A function whose vendor ID reads all ones left the bus. *)
@@ -2143,9 +2143,8 @@ let test_release_closed () =
   with_fixture @@ fun root f ->
   let config = config_file root (Function.bus f) in
   equal ~msg:"the take's lock found" bool true (Tree.close_lock config);
-  raises_match
-    (Exn.failure ~substring:"Bad file descriptor")
-    (fun () -> Function.release f);
+  raises_match (Exn.failure ~sub:"Bad file descriptor") (fun () ->
+      Function.release f);
   Function.finish_releases ();
   equal ~msg:"descriptors left on the configuration space" int 0
     (Tree.opened config)
@@ -2240,7 +2239,7 @@ let misuse name use =
   test name (fun () ->
       with_fixture @@ fun _ f ->
       reserved f;
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           use f (Machine.page Machine.this)))
 
 let misuse_refused =
@@ -2315,7 +2314,7 @@ let test_times_out () =
     require_error
       (Function.wait (waiter ()) ~us:30_000 "the fence" (cond max_int))
   in
-  starts_with ~msg:"names what it waited for" ~affix:"the fence" why;
+  starts_with ~msg:"names what it waited for" ~prefix:"the fence" why;
   contains ~msg:"and its bound" ~sub:"30" why;
   at_least ~msg:"calls" int ~than:1 !n
 
@@ -2359,7 +2358,7 @@ let test_wait_left_bus () =
   let why =
     require_error (Function.wait f ~us:10_000 "the fence" (fun () -> false))
   in
-  starts_with ~msg:"names what it waited for" ~affix:"the fence" why;
+  starts_with ~msg:"names what it waited for" ~prefix:"the fence" why;
   contains ~msg:"names the cause" ~sub:"left the bus" why
 
 let test_wait_released () =
@@ -2371,7 +2370,7 @@ let test_wait_released () =
   let why =
     require_error (Function.wait f ~us:10_000 "the fence" (fun () -> false))
   in
-  starts_with ~msg:"names what it waited for" ~affix:"the fence" why;
+  starts_with ~msg:"names what it waited for" ~prefix:"the fence" why;
   not_contains ~msg:"reads no configuration space" ~sub:"left the bus" why
 
 let waits =
@@ -2806,7 +2805,7 @@ let interrupts =
          with signals blocked"
         test_finish_interrupted;
       cases "a free_dma or an unpin gives no memory back under a give-back"
-        ~name:fst under_give_back test_under_give_back;
+        ~id:fst under_give_back test_under_give_back;
     ]
 
 let this_machine =

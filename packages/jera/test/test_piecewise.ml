@@ -20,7 +20,7 @@ let knots = vec G.knots
 let samples = vec G.samples
 let samples2 = Nx.create f64 [| Array.length G.knots; 2 |] G.samples2
 let points = vec G.points
-let raises_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f
 
 (* Goldens *)
 
@@ -49,9 +49,8 @@ let golden_tests =
       spline "clamped" clamped G.cubic_clamped G.cubic_clamped_derivative
         G.cubic_clamped_integral;
       [
-        cases
-          ~name:(fun (n, _, _) -> Printf.sprintf "%d knots" n)
-          "not-a-knot through few knots is scipy's"
+        cases "not-a-knot through few knots is scipy's"
+          ~id:(fun (n, _, _) -> Printf.sprintf "%d knots" n)
           [
             (2, G.not_a_knot2_points, G.not_a_knot2);
             (3, G.not_a_knot3_points, G.not_a_knot3);
@@ -64,9 +63,8 @@ let golden_tests =
                 (Nx.slice [ Nx.R (0, n) ] samples)
             in
             equal (close ()) (vec values) (Piecewise.eval p (vec pts)));
-        cases
-          ~name:(fun (n, _, _) -> n)
-          "samples with a value axis give scipy's splines"
+        cases "samples with a value axis give scipy's splines"
+          ~id:(fun (n, _, _) -> n)
           [
             ("natural", `Natural, G.cubic_natural2);
             ("not-a-knot", `Not_a_knot, G.cubic_not_a_knot2);
@@ -431,9 +429,8 @@ let domain_tests =
     test "an infinite point raises" (fun () ->
         raises_with "is -inf, which no piece holds" (fun () ->
             Piecewise.eval p (vec [| neg_infinity |])));
-    cases
-      ~name:(fun (n, _) -> n)
-      "an infinite point raises under every extension"
+    cases "an infinite point raises under every extension"
+      ~id:(fun (n, _) -> n)
       [ ("hold", `Hold); ("polynomial", `Polynomial) ]
       (fun (_, e) ->
         let q = Piecewise.extend e p in

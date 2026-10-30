@@ -369,16 +369,17 @@ let keys_group =
   group "keys"
     [
       test "keys of min_key and max_key bytes connect" key_bounds;
-      cases ~name:(Printf.sprintf "dial refuses a %d-byte key at once")
-        "dial's key size" bad_sizes dial_bad_key;
-      cases
-        ~name:(Printf.sprintf "accept refuses a %d-byte key before it speaks")
-        "accept's key size" bad_sizes accept_bad_key;
-      cases
-        ~name:(fun (s, p) ->
+      cases "dial's key size"
+        ~id:(Printf.sprintf "dial refuses a %d-byte key at once")
+        bad_sizes dial_bad_key;
+      cases "accept's key size"
+        ~id:(Printf.sprintf "accept refuses a %d-byte key before it speaks")
+        bad_sizes accept_bad_key;
+      cases "dial's peer"
+        ~id:(fun (s, p) ->
           Format.asprintf "dial refuses %a dialing %a at once" pp_process s
             pp_process p)
-        "dial's peer" bad_peers dial_bad_peer;
+        bad_peers dial_bad_peer;
       prop ~count:60
         "ends connect, naming both processes, iff their keys are equal"
         (Gen.with_pp pp_case (Gen.pair keys processes))
@@ -497,14 +498,13 @@ let malformed_greetings =
 let greetings =
   group "greeting"
     [
-      cases
-        ~name:(Printf.sprintf "dial refuses version %d, naming both")
-        "another version"
+      cases "another version"
+        ~id:(Printf.sprintf "dial refuses version %d, naming both")
         [ 0; version - 1; version + 1; 0xffff_ffff ]
         other_version;
-      cases
-        ~name:(fun (n, _) -> "dial refuses " ^ n)
-        "malformed" malformed_greetings
+      cases "malformed"
+        ~id:(fun (n, _) -> "dial refuses " ^ n)
+        malformed_greetings
         (fun (_, g) -> is_error (greet_with g (fun _ _ -> ())));
     ]
 
@@ -519,7 +519,7 @@ let transcript_layout () =
   equal accepted (Ok (Wire.Agent 2, Wire.Agent 5)) o.accepted;
   let t = o.transcript in
   equal int transcript_size (String.length t);
-  starts_with ~affix:("rig-job\n" ^ u32 version ^ "\000") t;
+  starts_with ~prefix:("rig-job\n" ^ u32 version ^ "\000") t;
   equal ~msg:"the dialing end's processes" string
     (u32 2 ^ u32 5)
     (String.sub t (greeting_size + 32) 8);
@@ -739,8 +739,9 @@ let peers =
 let silence =
   group "silence"
     [
-      slow "an end gives up after 10 s on a silent peer or one that trickles"
-        (gives_up peers);
+      slow
+      @@ test "an end gives up after 10 s on a silent peer or one that trickles"
+           (gives_up peers);
     ]
 
 let () =

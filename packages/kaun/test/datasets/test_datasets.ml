@@ -42,16 +42,15 @@ let seed_cifar10 ~entries =
 
 let test_cifar10_batch_count entries =
   seed_cifar10 ~entries;
-  raises_match (Exn.failure ~substring:"data_batch_1.bin") (fun () ->
+  raises_match (Exn.failure ~sub:"data_batch_1.bin") (fun () ->
       Kaun_datasets.cifar10 ())
 
 let tests =
   [
     group "cifar10"
       [
-        cases
-          ~name:(Printf.sprintf "refuses a batch of %d entries")
-          "batch of another size"
+        cases "batch of another size"
+          ~id:(Printf.sprintf "refuses a batch of %d entries")
           [ 0; 1; cifar10_batch - 1; cifar10_batch + 1 ]
           test_cifar10_batch_count;
       ];

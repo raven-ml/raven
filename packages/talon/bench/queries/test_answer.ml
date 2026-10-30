@@ -90,8 +90,8 @@ let checking =
 (* The stride is the smallest that keeps at most [limit] rows. *)
 let stride =
   let kept rows s = (rows + s - 1) / s in
-  cases ~name:string_of_int "stride"
-    [ 0; 1; 199; 200; 201; 400; 401; 1_000_000 ] (fun rows ->
+  cases "stride" ~id:string_of_int [ 0; 1; 199; 200; 201; 400; 401; 1_000_000 ]
+    (fun rows ->
       let s = Answer.stride rows in
       at_most ~msg:"kept" int ~than:Answer.limit (kept rows s);
       if s > 1 then

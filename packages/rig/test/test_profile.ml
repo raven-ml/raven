@@ -958,7 +958,7 @@ let tests =
           test_close_interrupted;
         test "a settle that fails loses the device and raises in the take"
           test_settle_fails;
-        cases ~name:fst "failed histories release their image binaries"
+        cases "failed histories release their image binaries" ~id:fst
           [ ("body", `Body); ("loss", `Lost); ("pending read", `Read) ]
           (fun (_, failure) -> test_failed_history failure);
         test "a failed recipient preserves another profile's device timing"

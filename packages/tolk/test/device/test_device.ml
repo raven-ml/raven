@@ -2,7 +2,7 @@ open Windtrap
 open Tolk
 module Elf = Device.Tiny_elf
 
-let refuses ?substring f = raises_match (Exn.invalid_arg ?substring) f
+let refuses ?substring f = raises_match (Exn.invalid_arg ?sub:substring) f
 
 (* Targets *)
 

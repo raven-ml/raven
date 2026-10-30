@@ -2292,7 +2292,9 @@ let dtype_name = Format.asprintf "%a" pp_dtype
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   let test name f = test name (fun () -> b.around (f b)) in
-  let cases name f = cases ~name:dtype_name name dtypes (fun dt -> b.around (fun () -> f b dt)) in
+  let cases name f =
+    cases name ~id:dtype_name dtypes (fun dt -> b.around (fun () -> f b dt))
+  in
   group b.name
     [
       group "each result meets its relation within its bound"

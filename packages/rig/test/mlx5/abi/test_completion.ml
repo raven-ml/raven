@@ -102,23 +102,23 @@ let ownership =
           completion b 0 ~qp:1 ~index:0 ~op:0 ~owner:1 ();
           equal bool true (Completion.owned b 0 ~count:7 ~entries:4));
       test "entries that are not a power of two are refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"power of two") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"power of two") (fun () ->
               Completion.owned (buffer ()) 0 ~count:0 ~entries:3));
       test "a negative count is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
               Completion.owned (buffer ()) 0 ~count:(-1) ~entries:4));
       test "a completion past the buffer is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"outside") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"outside") (fun () ->
               Completion.owned (buffer ()) (size + 1) ~count:0 ~entries:4));
-      cases ~name:(Printf.sprintf "byte %d")
-        "a read or an invalidation past the buffer is refused"
+      cases "a read or an invalidation past the buffer is refused"
+        ~id:(Printf.sprintf "byte %d")
         [ -1; size + 1; max_int - 8 ]
         (fun at ->
           let b = buffer () in
-          raises_match ~msg:"read" (Exn.invalid_arg ~substring:"") (fun () ->
+          raises_match ~msg:"read" (Exn.invalid_arg ~sub:"") (fun () ->
               Completion.read b at);
-          raises_match ~msg:"invalidate" (Exn.invalid_arg ~substring:"")
-            (fun () -> Completion.invalidate b at));
+          raises_match ~msg:"invalidate" (Exn.invalid_arg ~sub:"") (fun () ->
+              Completion.invalidate b at));
     ]
 
 (* The syndromes of mlx5dv.h, each with its error. *)
@@ -151,9 +151,9 @@ let reading =
           let b = buffer () in
           completion b 0 ~qp ~index ~op:0 ~owner:1 ();
           equal completion_t { qp; index; status = Done } (Completion.read b 0));
-      cases
-        ~name:(fun (s, _) -> strf "syndrome 0x%02x" s)
-        "a requester's error reads its syndrome" syndromes
+      cases "a requester's error reads its syndrome"
+        ~id:(fun (s, _) -> strf "syndrome 0x%02x" s)
+        syndromes
         (fun (syndrome, error) ->
           let b = buffer () in
           completion b size ~qp:0x1c3 ~index:7 ~op:13 ~owner:0 ~syndrome
@@ -195,7 +195,7 @@ let reading =
           equal completion_t
             { qp; index = 3; status = Received bytes }
             (Completion.read b 0));
-      cases ~name:(strf "opcode %d") "another opcode is unexpected"
+      cases "another opcode is unexpected" ~id:(strf "opcode %d")
         [ 1; 3; 4; 12; 15 ] (fun op ->
           let b = buffer () in
           completion b 0 ~qp:2 ~index:1 ~op ~owner:0 ();

@@ -634,7 +634,7 @@ let () =
        (List.map
           (fun (model, corpora) ->
             group model
-              (slow "load" (with_tokenizer model ignore)
+              ((slow @@ test "load" (with_tokenizer model ignore))
               :: test "walker" (with_tokenizer model (check_walker model))
               :: List.map
                    (fun corpus ->

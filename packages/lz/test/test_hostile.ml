@@ -66,14 +66,16 @@ let views () =
     ] )
 
 let overlap =
-  cases ~name:(fun w -> w.name) "decode and encode refuse overlapping buffers"
-    wholes (fun w ->
+  cases "decode and encode refuse overlapping buffers"
+    ~id:(fun w -> w.name)
+    wholes
+    (fun w ->
       let shared, apart = views () in
       List.iter
         (fun (name, src, dst) ->
           let raise_on call f =
             raises_match ~msg:(name ^ ", " ^ call)
-              (Exn.invalid_arg ~substring:"overlap")
+              (Exn.invalid_arg ~sub:"overlap")
               (fun () -> f src dst)
           in
           raise_on "decode" w.decode;

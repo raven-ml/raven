@@ -242,9 +242,9 @@ let canonical_columns =
   group "Canonical columns"
     [
       cases
-        ~name:(fun (n, _, _) -> n)
         "column's layout of rows cut from the front of packed storage is their \
          own bytes"
+        ~id:(fun (n, _, _) -> n)
         front_cuts
         (fun (_, cut, own) ->
           equal (list string)
@@ -335,9 +335,9 @@ let refusals =
   ]
 
 let refusal_cases =
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "Refusals" refusals
+  cases "Refusals"
+    ~id:(fun (n, _, _) -> n)
+    refusals
     (fun (_, f, expected) -> expect (message f) expected)
 
 let () =

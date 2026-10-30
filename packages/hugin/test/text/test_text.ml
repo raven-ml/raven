@@ -63,9 +63,9 @@ let decoded s =
 let strings =
   group "v"
     [
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "replaces each maximal invalid subpart with U+FFFD" repairs
+      cases "replaces each maximal invalid subpart with U+FFFD"
+        ~id:(fun (name, _, _) -> name)
+        repairs
         (fun (_, s, repaired) -> equal text_w (Text.v repaired) (Text.v s));
       prop "agrees with String.get_utf_8_uchar on any bytes" Gen.string
         (fun s ->
@@ -150,7 +150,7 @@ let styles =
             (Text.sup (Text.sub (Text.v "i"))));
       test "a superscript is not a reduced text" (fun () ->
           not_equal text_w (Text.scale 0.7 (Text.v "2")) (Text.sup (Text.v "2")));
-      cases ~name:(Printf.sprintf "scale %h raises") "scale rejects"
+      cases "scale rejects" ~id:(Printf.sprintf "scale %h raises")
         [ 0.; -0.; -1.; Float.nan; Float.infinity; Float.neg_infinity ]
         (fun s ->
           raises_match Exn.invalid_arg (fun () -> Text.scale s (Text.v "a")));
@@ -239,9 +239,8 @@ let comparing =
           equal text_w
             (Text.color Color.red (Text.v "a"))
             (Text.color (Color.v 1. 0. 0.) (Text.v "a")));
-      cases
-        ~name:(fun (name, _, _) -> name)
-        "texts differing in one style are unequal"
+      cases "texts differing in one style are unequal"
+        ~id:(fun (name, _, _) -> name)
         [
           ("bold", Text.v "a", Text.bold (Text.v "a"));
           ("italic", Text.v "a", Text.italic (Text.v "a"));
@@ -283,9 +282,9 @@ let comparing =
           equal string {|(text "a\"b\\c\td\194\133é中" ("\"" bold))|}
             (Format.asprintf "%a" Text.pp
                Text.(concat [ v "a\"b\\c\td\u{85}é中"; bold (v "\"") ])));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "formats at the ends of the controls" literal_ends
+      cases "formats at the ends of the controls"
+        ~id:(fun (n, _, _) -> n)
+        literal_ends
         (fun (_, s, lit) ->
           equal string
             ("(text " ^ lit ^ ")")

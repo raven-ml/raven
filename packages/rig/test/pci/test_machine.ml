@@ -15,7 +15,7 @@ let strf = Printf.sprintf
    device and function. *)
 let spelled =
   cases "a bus address is spelled as Linux names the function"
-    ~name:(fun (_, s) -> s)
+    ~id:(fun (_, s) -> s)
     [
       ((0, 3, 0, 0), "0000:03:00.0");
       ((0, 0xff, 0x1f, 7), "0000:ff:1f.7");
@@ -53,13 +53,13 @@ let bus_order =
 
 let not_addresses =
   cases "a string that is no bus address is refused on either side"
-    ~name:(strf "%S")
+    ~id:(strf "%S")
     [ ""; "0000:03:00"; "0000:03:00."; "0000:03:00.0.1"; "0000:3g:00.0"; "x" ]
     (fun s ->
       let ok = "0000:00:00.0" in
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Machine.compare_address s ok);
-      raises_match (Exn.invalid_arg ~substring:"") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Machine.compare_address ok s))
 
 let addresses =
@@ -333,7 +333,7 @@ let asked r =
   r.calls := [];
   calls
 
-let misuse msg f = raises_match ~msg (Exn.invalid_arg ~substring:"") f
+let misuse msg f = raises_match ~msg (Exn.invalid_arg ~sub:"") f
 
 let test_far_machine () =
   let r = recorder () in
@@ -581,10 +581,10 @@ let routes =
   group ~timeout:patience "routes"
     [
       cases "forwards and distance follow Linux's p2pdma and the bridges"
-        ~name:(fun (n, _, _, _, _) -> n)
+        ~id:(fun (n, _, _, _, _) -> n)
         placements test_placement;
-      cases "an unread function is carried nowhere and has no distance"
-        ~name:fst unread test_unread;
+      cases "an unread function is carried nowhere and has no distance" ~id:fst
+        unread test_unread;
     ]
 
 let () =

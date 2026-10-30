@@ -85,7 +85,7 @@ let copy =
 let fills =
   group ~timeout "fills"
     [
-      cases ~name:version "a fill sets as many bytes as a linear copy moves"
+      cases "a fill sets as many bytes as a linear copy moves" ~id:version
         versions (fun v ->
           equal int (largest v) (Sdma.max_fill (gpu v)));
       test "a fill of dwords" (fun () ->

@@ -121,7 +121,8 @@ let laws =
           equal (array close)
             (floats (Nx.diagonal cov))
             (floats (to_vec (G.variance pos g))));
-      slow "draws have the Gaussian's moments" (fun () ->
+      slow
+      @@ test "draws have the Gaussian's moments" (fun () ->
           let n = 200000 in
           let x = G.sample pos (Nx.Rng.key 4) ~n g in
           let x = Nx.concatenate ~axis:1 [ x.a; x.b ] in
@@ -162,8 +163,7 @@ let errors =
               G.of_precision pos Nx.float64 ~mean
                 (of_vec (vec [| 1.; 1.; -1.; 1. |]))));
       test "a variance that is not positive raises" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"variances at [1] is 0")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"variances at [1] is 0") (fun () ->
               G.low_rank pos ~mean ~scale
                 ~directions:(stacked [ u1; u2 ])
                 ~variances:(vec [| 1.; 0. |])));

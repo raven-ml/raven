@@ -286,7 +286,7 @@ let law_placed (Case (k, s, data, w, op)) =
           "Nx.slice: operand 0 lies at %a and is read at %a; Nx.place ("
           Nx.Placement.pp p Nx.Placement.pp q
       in
-      raises_match (Exn.invalid_arg ~substring:prefix) (fun () -> apply k op y);
+      raises_match (Exn.invalid_arg ~sub:prefix) (fun () -> apply k op y);
       shown ~parts k (apply k op (Nx.place q y))
     end
   in
@@ -3274,10 +3274,9 @@ let test_summed_moves_sums () =
 let traffic =
   group "traffic"
     [
-      cases
-        ~name:(fun c -> c.name)
-        "a fold over a cut axis moves partials, not its operands" moved
-        law_moved;
+      cases "a fold over a cut axis moves partials, not its operands"
+        ~id:(fun c -> c.name)
+        moved law_moved;
       test "a scatter into a cut target writes each tile where it lies"
         test_scatter_in_place;
       test "a take of positions no order reads moves the positions alone"
@@ -3312,9 +3311,8 @@ let placed =
         test_positions_moved;
       test "positions cut finer than their value are read where they lie"
         test_positions_finer;
-      cases ~name:ranked_name
-        "a gather past the greatest rank reads its axis whole" ranked
-        test_gather_rank;
+      cases "a gather past the greatest rank reads its axis whole"
+        ~id:ranked_name ranked test_gather_rank;
       prop ~count:1000
         "a scatter into a target at any placement, of positions and updates \
          whole on each of its devices or cut alike off the scattered axis, \

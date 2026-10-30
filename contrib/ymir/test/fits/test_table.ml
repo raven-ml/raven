@@ -66,7 +66,7 @@ let texts_col name h col =
     (Nx_ragged.to_strings (require_ok (T.ragged Nx.uint8 col h)))
 
 let columns =
-  cases ~name:fst "columns read as astropy reads them"
+  cases "columns read as astropy reads them" ~id:fst
     [
       ("source_id", fun () -> ints "CAT.source_id" Nx.int64 (cat ()) "source_id");
       ("ra", fun () -> reals "CAT.ra" Nx.float64 (cat ()) "ra");

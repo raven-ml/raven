@@ -1912,9 +1912,8 @@ let keyed_right =
 
 let join_order =
   let s x = Some x in
-  cases
-    ~name:(fun (name, _, _) -> name ^ ": left's order, matches in right's")
-    "Row order"
+  cases "Row order"
+    ~id:(fun (name, _, _) -> name ^ ": left's order, matches in right's")
     [
       ( "Inner",
         Join.Inner,
@@ -1953,9 +1952,8 @@ let shapes =
   let l2 = v [ ("x", i64 [| 0; 1 |]) ]
   and r3 = v [ ("y", i64 [| 10; 11; 12 |]) ] in
   let l0 = v [ ("x", i64 [||]) ] and r0 = v [ ("y", i64 [||]) ] in
-  cases
-    ~name:(fun (name, _, _, _, _, _) -> name)
-    "Position and all"
+  cases "Position and all"
+    ~id:(fun (name, _, _, _, _, _) -> name)
     [
       ( "position Inner keeps min(n, m) rows",
         Join.position,
@@ -2246,9 +2244,8 @@ let constructors =
     in
     equal int 1 (rows (run_ok q))
   in
-  cases
-    ~name:(function Row (n, _) | Agg (n, _) -> n)
-    "constructors run"
+  cases "constructors run"
+    ~id:(function Row (n, _) | Agg (n, _) -> n)
     Expr.
       [
         Row ("int", int 1);
@@ -2446,9 +2443,8 @@ let splitting =
             (over_text Kind.string
                Expr.(Str.replace sub ~by (Col.string "s"))
                (Array.map Option.some ss)));
-      cases
-        ~name:(fun (what, _, _, _) -> what)
-        "split"
+      cases "split"
+        ~id:(fun (what, _, _, _) -> what)
         [
           ( "leading, trailing and adjacent separators",
             ",",
@@ -2466,9 +2462,8 @@ let splitting =
         ]
         (fun (_, sep, s, expected) ->
           equal pieces [| Some expected |] (split sep [| Some s |]));
-      cases
-        ~name:(fun (what, _, _, _, _) -> what)
-        "replace"
+      cases "replace"
+        ~id:(fun (what, _, _, _, _) -> what)
         [
           ("occurrences do not overlap", "aa", "b", "aaa", "ba");
           ("every occurrence", ",", ";", ",a,,b,", ";a;;b;");

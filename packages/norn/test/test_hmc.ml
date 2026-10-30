@@ -134,7 +134,8 @@ let warmed =
 let warmup =
   group "warmup"
     [
-      slow "the geometry's scale reaches the target's" (fun () ->
+      slow
+      @@ test "the geometry's scale reaches the target's" (fun () ->
           let s = Lazy.force warmed in
           let sd = Nx.sqrt (Norn.Gaussian.variance t s.geometry) in
           let ratio =
@@ -147,7 +148,8 @@ let warmup =
                 (fun r -> r > 0.5 && r < 2.)
                 r)
             ratio);
-      slow "the step size gives about the target acceptance" (fun () ->
+      slow
+      @@ test "the step size gives about the target acceptance" (fun () ->
           let s = Lazy.force warmed in
           let _, _, st = H.sample t scaled (Nx.Rng.key 5) ~draws:100 s in
           let acc =
@@ -162,7 +164,8 @@ let warmup =
          [4T = tan 4T], [T = 1.1234]. Rounding the step count up lengthens a
          trajectory by half a step on average, so the length plus half a step is
          near the optimum when the step is small. *)
-      slow "the length reaches the expected jump's optimum" (fun () ->
+      slow
+      @@ test "the length reaches the expected jump's optimum" (fun () ->
           let d = 10 in
           let normal x = Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5) in
           let start = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 64; d |] in
@@ -200,8 +203,7 @@ let refusals =
             Nx.add (banana x) (Nx.slice [ Nx.L [ 0; 0; 0; 0 ]; Nx.I 0 ] x)
           in
           raises_match
-            (Exn.invalid_arg
-               ~substring:"row 0 changes when the chains are reversed")
+            (Exn.invalid_arg ~sub:"row 0 changes when the chains are reversed")
             (fun () -> H.init t coupled (start 4)));
       test "an acceptance outside (0, 1) is refused" (fun () ->
           raises (Invalid_argument "Norn.Hmc.init: accept = 1 is not in (0, 1)")
@@ -237,7 +239,8 @@ let max_deviation xs sd =
   !worst
 
 let invariance name geometry =
-  slow (name ^ " geometry leaves the banana invariant") (fun () ->
+  slow
+  @@ test (name ^ " geometry leaves the banana invariant") (fun () ->
       let k = Nx.Rng.key 31 in
       let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
       let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in

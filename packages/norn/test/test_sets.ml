@@ -64,8 +64,7 @@ let whole =
   ]
 
 let cut by why =
-  Exn.invalid_arg
-    ~substring:(by ^ ": the position is cut across devices; " ^ why)
+  Exn.invalid_arg ~sub:(by ^ ": the position is cut across devices; " ^ why)
 
 let refusals =
   let split = start (Pair.split ~axis:0) 8 in

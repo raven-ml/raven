@@ -49,8 +49,7 @@ let case = Gen.with_pp pp_case case
 let test_bounds () =
   let b = B.create Rig.host 16 in
   let fails dt l =
-    raises_match (Exn.invalid_arg ~substring:"reaches past") (fun () ->
-        A.v dt l b)
+    raises_match (Exn.invalid_arg ~sub:"reaches past") (fun () -> A.v dt l b)
   in
   ignore (A.v f32 (L.contiguous [| 4 |]) b);
   ignore (A.v f32 (L.v ~offset:3 ~strides:[| -1 |] [| 4 |]) b);
@@ -67,7 +66,7 @@ let test_alignment () =
   let b = B.create Rig.host 64 in
   let at first = B.view b ~first ~length:32 in
   let fails dt l b =
-    raises_match (Exn.invalid_arg ~substring:"not on a multiple") (fun () ->
+    raises_match (Exn.invalid_arg ~sub:"not on a multiple") (fun () ->
         A.v dt l b)
   in
   fails f32 (L.contiguous [| 1 |]) (at 1);
@@ -84,7 +83,7 @@ let test_alignment () =
 let test_dead () =
   let b = B.create Rig.host 16 in
   kill b;
-  raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
       A.v f32 (L.contiguous [| 4 |]) b)
 
 (* The alignment [v] asks of a dtype's first element, in bytes: its width, one
@@ -369,7 +368,7 @@ let law_bitcast (D.Any src, (D.Any dst as d), l, first) =
 let test_expect () =
   let a = floats32 [| 1 |] [| 3. |] in
   equal (values f32) [| 3. |] (A.to_array (A.expect f32 (A.Any a)));
-  raises_match (Exn.invalid_arg ~substring:"float32") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"float32") (fun () ->
       A.expect D.Float64 (A.Any a))
 
 let test_refused () =
@@ -378,15 +377,15 @@ let test_refused () =
   (match A.refused "add" A.Wrong_dtype [ A.Any a; A.Any b ] with
   | () -> fail "refused returned"
   | exception Invalid_argument m ->
-      starts_with ~affix:"add: " m;
+      starts_with ~prefix:"add: " m;
       contains ~sub:"dtype" m;
       contains ~sub:"float32 [2; 3]" m;
       contains ~sub:"int8 [4]" m);
-  raises_match (Exn.invalid_arg ~substring:"shapes") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"shapes") (fun () ->
       A.refused "add" A.Shape_mismatch [ A.Any a ]);
-  raises_match (Exn.invalid_arg ~substring:"not a refusal") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"not a refusal") (fun () ->
       A.refused "add" A.Done [ A.Any a ]);
-  raises_match (Exn.invalid_arg ~substring:"not a refusal") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"not a refusal") (fun () ->
       A.refused "add" A.Declined [ A.Any a ])
 
 (* A dead operand's reason is its consumer's, given before the operands, each
@@ -414,7 +413,7 @@ let test_refused_codes () =
     match A.refused "Nx.f" r [ A.Any a ] with
     | () -> failf "refused returned on %s" name
     | exception Invalid_argument m ->
-        starts_with ~msg:name ~affix:"Nx.f: " m;
+        starts_with ~msg:name ~prefix:"Nx.f: " m;
         contains ~msg:name ~sub:"float32 [2; 3]" m;
         m
   in
@@ -503,11 +502,9 @@ let test_index () =
 let test_set_refuses () =
   let a = floats32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Option.get (A.move (M.Broadcast [| 2; 3 |]) a) in
-  raises_match (Exn.invalid_arg ~substring:"twice") (fun () ->
-      A.set b [| 0; 0 |] 5.);
+  raises_match (Exn.invalid_arg ~sub:"twice") (fun () -> A.set b [| 0; 0 |] 5.);
   let u = A.create Rig.host D.Uint8 [| 1 |] in
-  raises_match (Exn.invalid_arg ~substring:"256") (fun () ->
-      A.set u [| 0 |] 256);
+  raises_match (Exn.invalid_arg ~sub:"256") (fun () -> A.set u [| 0 |] 256);
   raises_match Exn.invalid_arg (fun () -> A.set u [| 0 |] (-1));
   let i = A.create Rig.host D.Int4 [| 1 |] in
   raises_match Exn.invalid_arg (fun () -> A.set i [| 0 |] 8);
@@ -520,11 +517,11 @@ let test_set_refuses () =
 let test_io_refuses () =
   let d = S.io_device () in
   let a = A.to_device d (floats32 [| 2 |] [| 1.; 2. |]) in
-  let fails f = raises_match (Exn.invalid_arg ~substring:"host") f in
+  let fails f = raises_match (Exn.invalid_arg ~sub:"host") f in
   fails (fun () -> A.get a [| 0 |]);
   fails (fun () -> A.set a [| 0 |] 0.);
   fails (fun () -> A.to_array a);
-  raises_match (Exn.invalid_arg ~substring:"Nx_array.bigarray") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
       A.bigarray Bigarray.float32 a)
 
 let test_dead_access () =
@@ -533,13 +530,12 @@ let test_dead_access () =
   let fails f =
     raises_match
       (fun e ->
-        Exn.invalid_arg ~substring:"dead" e
-        || Exn.invalid_arg ~substring:"consumed by the test" e)
+        Exn.invalid_arg ~sub:"dead" e
+        || Exn.invalid_arg ~sub:"consumed by the test" e)
       f
   in
   fails (fun () -> A.get a [| 0 |]);
-  raises_match ~msg:"get names itself"
-    (Exn.invalid_arg ~substring:"Nx_array.get")
+  raises_match ~msg:"get names itself" (Exn.invalid_arg ~sub:"Nx_array.get")
     (fun () -> A.get a [| 0 |]);
   fails (fun () -> A.to_array a);
   fails (fun () -> A.bitcast D.Uint32 a);
@@ -554,7 +550,7 @@ let test_exclusive () =
     (fun c ->
       equal bool true (Rig.Claim.exclusive c (A.buffer a));
       let fails what f =
-        raises_match ~msg:what (Exn.invalid_arg ~substring:"exclusive") f
+        raises_match ~msg:what (Exn.invalid_arg ~sub:"exclusive") f
       in
       fails "get" (fun () -> A.get a [| 0 |]);
       fails "set" (fun () -> A.set a [| 0 |] 0.);
@@ -566,16 +562,15 @@ let test_exclusive () =
 let test_dead_bigarray () =
   let a = A.to_device (S.io_device ()) (floats32 [| 2 |] [| 1.; 2. |]) in
   kill (A.buffer a);
-  raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
       A.bigarray Bigarray.float32 a)
 
 let test_dead_empty () =
   let b = B.create Rig.host 16 in
   let a = A.v f32 (L.contiguous [| 0 |]) b in
   kill b;
-  raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
-      A.to_device Rig.host a);
-  raises_match (Exn.invalid_arg ~substring:"consumed by the test") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"dead") (fun () -> A.to_device Rig.host a);
+  raises_match (Exn.invalid_arg ~sub:"consumed by the test") (fun () ->
       A.to_array a)
 
 (* A copy of memory the host does not address is a fresh array on its device:
@@ -1210,7 +1205,7 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
     cover "from an io device" io_src;
     cover "into an io device" io_dst;
     if D.bits dt < 8 && io_dst then
-      raises_match (Exn.invalid_arg ~substring:"host") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"host") (fun () ->
           A.transfer ~src ~dst)
     else begin
       A.transfer ~src ~dst;
@@ -1244,8 +1239,8 @@ let test_transfer_refusals () =
   let fails what substring f =
     raises_match ~msg:what
       (fun e ->
-        Exn.invalid_arg ~substring:"Nx_array.transfer" e
-        && Exn.invalid_arg ~substring e)
+        Exn.invalid_arg ~sub:"Nx_array.transfer" e
+        && Exn.invalid_arg ~sub:substring e)
       f
   in
   List.iter
@@ -1302,7 +1297,7 @@ let test_borrow_cases () =
   equal ~msg:"writes show" float_exact 5. (A.get a [| 1 |]);
   let dead = floats32 [| 2 |] [| 1.; 2. |] in
   kill (A.buffer dead);
-  raises_match ~msg:"dead" (Exn.invalid_arg ~substring:"dead") (fun () ->
+  raises_match ~msg:"dead" (Exn.invalid_arg ~sub:"dead") (fun () ->
       A.borrow (Lazy.force memory) dead);
   let closed = Result.get_ok (Rig.memory_device "nx-test-borrow-closed") in
   let on_closed = A.to_device closed a in
@@ -1379,7 +1374,7 @@ let test_bigarray () =
   Bigarray.Genarray.set g [| 1; 2 |] 9.;
   equal (values f32) [| 9. |] [| A.get a [| 1; 2 |] |];
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) a) in
-  raises_match (Exn.invalid_arg ~substring:"not C-contiguous") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"not C-contiguous") (fun () ->
       A.bigarray Bigarray.float32 t);
   let row =
     Option.get
@@ -1420,7 +1415,7 @@ let law_bigarray (Case (a, m)) =
     | None -> ()
     | Some k when not (L.is_contiguous l && L.rank l <= 16) ->
         cover "raises" true;
-        raises_match (Exn.invalid_arg ~substring:"Nx_array.bigarray") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
             A.bigarray k a)
     | Some k ->
         cover "a bigarray" true;
@@ -1447,7 +1442,7 @@ let test_bigarray_rank () =
   equal ints (Array.make 16 1)
     (Bigarray.Genarray.dims (A.bigarray Bigarray.int8_unsigned a));
   let a = A.create Rig.host D.Uint8 (Iarray.init 17 (Fun.const 1)) in
-  raises_match (Exn.invalid_arg ~substring:"at most 16") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"at most 16") (fun () ->
       A.bigarray Bigarray.int8_unsigned a)
 
 (* [bigarray] waits for the work on its array's memory: a Late device's store
@@ -1479,8 +1474,7 @@ let test_of_bigarray () =
 let read_fails ?msg substring f =
   raises_match ?msg
     (fun e ->
-      Exn.invalid_arg ~substring:"Nx_array.read" e
-      && Exn.invalid_arg ~substring e)
+      Exn.invalid_arg ~sub:"Nx_array.read" e && Exn.invalid_arg ~sub:substring e)
     f
 
 (* [read] passes a bigarray of a C-contiguous array's shape holding its

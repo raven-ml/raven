@@ -351,7 +351,7 @@ let relocations =
               (152, address (Int64.of_int max_int));
             ]
             (Cubin.patches c ~base));
-      cases ~name:fst "a relocation the image cannot take is refused"
+      cases "a relocation the image cannot take is refused" ~id:fst
         [
           ("of another type", (0, 1, 0x1, 0));
           ("to an undefined symbol", (0, 2, r_cuda_64, 0));
@@ -441,8 +441,8 @@ let spanning at =
 let image =
   group ~timeout:10. "image"
     [
-      cases ~name:fst
-        "the image is the ELF image, then zeros to a page and a page more"
+      cases "the image is the ELF image, then zeros to a page and a page more"
+        ~id:fst
         [
           ("simple_add_sm89", simple_add);
           ("many_sm89", fun () -> read (many ()));
@@ -513,7 +513,7 @@ let image =
           at_least ~msg:"the image holds the field" int ~than:(code + 20) o.size;
           contains ~sub:"past the end of its section"
             (require_error ~pp:pp_cubin (Cubin.of_string obj)));
-      cases ~name:string_of_int "an object for another machine is refused"
+      cases "an object for another machine is refused" ~id:string_of_int
         (* EM_X86_64, EM_AARCH64, EM_AMDGPU. *)
         [ 62; 183; 224 ] (fun machine ->
           contains ~sub:"EM_CUDA"
@@ -628,9 +628,9 @@ let kernels =
           equal ~msg:"a code section outside the image" (option kernel) None
             (Cubin.kernel c "dead"));
       cases
-        ~name:(fun (n, _, _, _) -> n)
         "a truncated .nv.info attribute, or one the reader reads cut short, is \
          refused"
+        ~id:(fun (n, _, _, _) -> n)
         [
           ("a header cut short", ".nv.info", fillers ^ "\x04\x2f", "truncated");
           ( "data cut short",

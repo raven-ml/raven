@@ -252,9 +252,8 @@ let header =
           equal string
             (Printf.sprintf "malformed at %d" (n - 4))
             (decode (Bytes.to_string b)));
-      cases
-        ~name:(fun (field, _) -> field)
-        "a refusal's message names the field at its offset"
+      cases "a refusal's message names the field at its offset"
+        ~id:(fun (field, _) -> field)
         [
           ("Magic_Number", "\x28\xB5\x2E\xFD");
           ("Frame_Header_Descriptor", magic ^ "\x08\x00" ^ raw "abc");
@@ -299,9 +298,10 @@ let destinations =
         | Too_long -> "too long"
         | Unsupported _ -> "unsupported")
   in
-  cases ~name:(fun g -> g.Lz_support.file)
-    "a destination of the decoded size holds it, one byte less is too long"
-    nonempty (fun g ->
+  cases "a destination of the decoded size holds it, one byte less is too long"
+    ~id:(fun g -> g.Lz_support.file)
+    nonempty
+    (fun g ->
       let raw = Lazy.force g.Lz_support.raw in
       let src = Lz_support.of_string (Lazy.force g.data) in
       let n = String.length raw in
@@ -374,9 +374,9 @@ let literals =
   group "literals"
     [
       cases
-        ~name:(fun (n, _) -> n)
         "huffman weights that build no prefix code are malformed at the \
          description's first byte"
+        ~id:(fun (n, _) -> n)
         [
           ("weights that complete to no power of 2", [ 3; 1 ]);
           ("codes longer than 11 bits", [ 11; 11 ]);
@@ -401,7 +401,7 @@ let literals =
          2. Section 3.1.1.3.1.6: each stream regenerates (n + 3) / 4
          literals, the last up to 3 fewer, none when n is 3. A stream
          holds its codes, then its end mark. *)
-      cases ~name:string_of_int "four streams regenerate as few as 3 literals"
+      cases "four streams regenerate as few as 3 literals" ~id:string_of_int
         [ 3; 4 ] (fun n ->
           let streams = [ "\x03"; "\x04"; "\x05"; (if n = 4 then "\x03" else "\x01") ] in
           let jump = le 2 1 ^ le 2 1 ^ le 2 1 in
@@ -502,9 +502,8 @@ let sequences =
           (* Literals lengths, at 16, accuracy log 6: the first probability
              needs bits past the block. *)
           equal string "malformed at 16" (decode (frame "\x01\x80\x01")));
-      cases
-        ~name:(fun (n, _) -> n)
-        "an accuracy log above the limit is malformed"
+      cases "an accuracy log above the limit is malformed"
+        ~id:(fun (n, _) -> n)
         [
           ("literals lengths, 10 above 9", "\x01\x80\x05");
           ("offsets, 9 above 8", "\x01\x20\x04");
@@ -715,7 +714,7 @@ let short_steps data slice =
   (Buffer.contents out, List.rev !broke)
 
 let small_blocks =
-  cases ~name:string_of_int "a step of small blocks fills its run"
+  cases "a step of small blocks fills its run" ~id:string_of_int
     [ max_int; 1 lsl 20; 300_000 ]
     (fun slice ->
       let data, raw = Lazy.force flushed in
@@ -748,7 +747,7 @@ let growing =
        a ^ b ^ out_c ))
 
 let grow_then_shrink =
-  cases ~name:string_of_int "frames whose windows grow then shrink"
+  cases "frames whose windows grow then shrink" ~id:string_of_int
     [ max_int; 1 lsl 20; 4100; 97 ]
     (fun slice ->
       let data, expected = Lazy.force growing in
@@ -788,7 +787,7 @@ let stream =
           let d = Lz.Zstd.decoder () in
           let src = Lz_support.of_string "\x00" in
           is_error (Lz.Decoder.step d ~last:false src ignore);
-          raises_match (Exn.invalid_arg ~substring:"dead") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
               Lz.Decoder.step d ~last:false src ignore));
     ]
 
@@ -852,7 +851,7 @@ let allocation =
     ignore (Sys.opaque_identity (f ()));
     Gc.minor_words () -. before
   in
-  cases ~name:Fun.id "decode allocates only its result"
+  cases "decode allocates only its result" ~id:Fun.id
     [ "text_100.zst3"; "text_200000.zst19"; "window1m.zst"; "frames.zst" ]
     (fun name ->
       let src = Lz_support.of_string (data name) in
@@ -877,20 +876,20 @@ let () =
          allocation;
          group "arguments"
            [
-             cases ~name:string_of_int "a level outside 1 to 12 raises"
+             cases "a level outside 1 to 12 raises" ~id:string_of_int
                [ 0; 13; -1 ] (fun level ->
                  let src = Lz_support.of_string "abc" in
                  let dst = Lz_support.create 64 in
-                 raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
                      Lz.Zstd.encode ~level src dst);
-                 raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
                      Lz.Zstd.encoder ~level ()));
-             cases ~name:string_of_int "a window below 1 KiB raises"
+             cases "a window below 1 KiB raises" ~id:string_of_int
                [ -1; 0; 1023 ] (fun window ->
-                 raises_match (Exn.invalid_arg ~substring:"window") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"window") (fun () ->
                      Lz.Zstd.decoder ~window ()));
              test "a negative size has no bound" (fun () ->
-                 raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
                      Lz.Zstd.bound (-1)));
              Lz_support.largest_bound Lz.Zstd.bound;
            ];

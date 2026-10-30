@@ -309,15 +309,14 @@ let unparented =
           in
           equal uop u (unparent u));
       test "a source that is not a range is refused" (fun () ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               unparent
                 (Ops.v
                    ~src:[ x; Ops.O.(r0 + Ops.int 1) ]
                    ~arg:(Reduce { op = Add; num_axes = 0 })
                    Reduce)));
-      cases ~name:pp_reduction
-        "a reduction keeps its value over a range that may run no time"
-        reductions_by_size reduces_by_size;
+      cases "a reduction keeps its value over a range that may run no time"
+        ~id:pp_reduction reductions_by_size reduces_by_size;
     ]
 
 (* [sums_to v u] is the claim that [u] has no range left and is worth [v]. *)
@@ -447,7 +446,7 @@ let reduce_simplifying =
       test "a sum over a range of size 1 is refused, the range folding to 0"
         (fun () ->
           let one = reduce_range 1 2 in
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               reduce_simplify
                 (sum (Ops.where Ops.O.(one < Ops.int 0) two zero) [ one ])));
       test "a maximum is left" (fun () ->

@@ -358,9 +358,8 @@ let integers =
         (fun l -> equal (list int) (stable_argsort l) (argsort l));
       prop "argsort inverts a permutation" gen_permutation
         (Law.involutive (list int) argsort);
-      cases
-        ~name:(fun (l, _) -> Format.asprintf "%a" (Testable.pp (list int)) l)
-        "all_same is true iff every element equals the first"
+      cases "all_same is true iff every element equals the first"
+        ~id:(fun (l, _) -> Format.asprintf "%a" (Testable.pp (list int)) l)
         [
           ([], true);
           ([ 1 ], true);
@@ -567,9 +566,8 @@ let terminal_text =
         (fun parts ->
           let s = String.concat "" parts in
           equal string s (strip_parens ("(" ^ s ^ ")")));
-      cases
-        ~name:(fun (st, cnt, _) -> Printf.sprintf "%d %s" cnt st)
-        "pluralize counts"
+      cases "pluralize counts"
+        ~id:(fun (st, cnt, _) -> Printf.sprintf "%d %s" cnt st)
         [
           ("kernel", 1, "1 kernel");
           ("kernel", 0, "0 kernels");
@@ -1097,8 +1095,8 @@ let diskcache =
             (fun () -> clear_orders_calls `Process);
           test "clear keeps another process's write in progress"
             clear_keeps_writes_in_progress;
-          cases ~name:(Printf.sprintf "cachelevel=%d")
-            "a disabled cache neither reads nor writes" [ 0; -1 ] (fun level ->
+          cases "a disabled cache neither reads nor writes"
+            ~id:(Printf.sprintf "cachelevel=%d") [ 0; -1 ] (fun level ->
               let table = fresh_table () in
               Diskcache.put ~table "kept" "v";
               Setting.context

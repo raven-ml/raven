@@ -89,7 +89,7 @@ let unjoined () =
           Rig_remote.close j;
           fail "a job whose agents cannot join"
       | Error why ->
-          starts_with ~affix:"127.0.0.1:" why;
+          starts_with ~prefix:"127.0.0.1:" why;
           contains ~msg:"names the first agent" ~sub:(machine a1) why;
           contains ~msg:"names the second agent" ~sub:(machine a2) why;
           equal ~msg:"the first agent, told the job failed" int 2

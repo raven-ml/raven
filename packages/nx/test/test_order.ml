@@ -13,7 +13,7 @@ open Windtrap
 open Nx_support
 module D = Nx_array.Dtype
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* The sort order *)
 
@@ -467,12 +467,10 @@ let test_unique_cases () =
   Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
       let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.unique: the value is traced by test.order") (fun () ->
-          Nx.unique t);
+        (Exn.invalid_arg ~sub:"Nx.unique: the value is traced by test.order")
+        (fun () -> Nx.unique t);
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.positions: the value is traced by test.order")
+        (Exn.invalid_arg ~sub:"Nx.positions: the value is traced by test.order")
         (fun () -> Nx.positions t);
       ignore (Nx.unique ~size:2 t);
       ignore (Nx.positions ~size:4 t))
@@ -634,8 +632,7 @@ let test_argwhere_cases () =
   Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
       let x = Nx.Prim.traced i (Nx.Prim.form t) Mark in
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.argwhere: the value is traced by test.order")
+        (Exn.invalid_arg ~sub:"Nx.argwhere: the value is traced by test.order")
         (fun () -> Nx.argwhere x);
       ignore (Nx.argwhere ~size:2 x))
 
@@ -676,8 +673,7 @@ let test_nonzero_cases () =
   Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
       let x = Nx.Prim.traced i (Nx.Prim.form t) Mark in
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.nonzero: the value is traced by test.order")
+        (Exn.invalid_arg ~sub:"Nx.nonzero: the value is traced by test.order")
         (fun () -> Nx.nonzero x);
       ignore (Nx.nonzero ~size:2 x))
 
@@ -758,8 +754,7 @@ let test_extract_cases () =
   Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
       let c = Nx.Prim.traced i (Nx.Prim.form (Nx.zeros Nx.bool [| 6 |])) Mark in
       raises_match
-        (Exn.invalid_arg
-           ~substring:"Nx.extract: the value is traced by test.order")
+        (Exn.invalid_arg ~sub:"Nx.extract: the value is traced by test.order")
         (fun () -> Nx.extract c x);
       ignore (Nx.extract ~size:2 c x))
 

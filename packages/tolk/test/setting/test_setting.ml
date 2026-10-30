@@ -147,8 +147,8 @@ let environment =
            float_of_string "float");
       (* Python accepts these, but tolk does not port CPython's Unicode leniency
          in int() and float() (README, Exclusions). *)
-      cases ~name:(Printf.sprintf "%S")
-        "int and float settings refuse non-ASCII digits and white space"
+      cases "int and float settings refuse non-ASCII digits and white space"
+        ~id:(Printf.sprintf "%S")
         [
           "\u{0665}";
           "1\u{0665}";
@@ -177,9 +177,8 @@ let environment =
           equal float_exact 0.5
             (declared_with None (fun key ->
                  Setting.float ~reach:Process key 0.5)));
-      cases
-        ~name:(fun (value, _) -> Printf.sprintf "%S" value)
-        "a switch is on iff its variable holds a nonzero integer"
+      cases "a switch is on iff its variable holds a nonzero integer"
+        ~id:(fun (value, _) -> Printf.sprintf "%S" value)
         [
           ("0", false);
           ("1", true);
@@ -725,9 +724,8 @@ let cache_keys =
           let library k = not (String.starts_with ~prefix:"TOLK_TEST_" k) in
           equal (list string) output_settings
             (List.filter library (List.map fst (shaping ()))));
-      cases
-        ~name:(fun (Setting.B (v, _)) -> Setting.key v)
-        "changes a library setting's entry when the setting changes"
+      cases "changes a library setting's entry when the setting changes"
+        ~id:(fun (Setting.B (v, _)) -> Setting.key v)
         other_outputs
         (fun (B (v, x)) ->
           let before = keyed (Setting.key v) in
@@ -787,14 +785,14 @@ let library_settings =
             (List.filter_map
                (fun s -> if ported s then None else Some (key s))
                settings));
-      cases ~name:key
-        "hold tinygrad's default when their variable is unset, but SCACHE"
+      cases "hold tinygrad's default when their variable is unset, but SCACHE"
+        ~id:key
         (List.filter ported settings)
         holds_tinygrad_default;
-      cases ~name:fst
+      cases
         "read by tinygrad where it uses them hold the default Setting states \
          when their variable is unset"
-        getenv_defaults (fun (k, default) ->
+        ~id:fst getenv_defaults (fun (k, default) ->
           unless_set k;
           equal string default
             (shown (List.find (fun s -> String.equal (key s) k) settings)));

@@ -24,7 +24,7 @@ let named_cores =
 let any_core = Gen.of_list ~pp:Tc.pp (List.map snd named_cores)
 let core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
 let bit = Testable.make ~pp:Tc.pp_bit ~equal:Tc.equal_bit
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* Cells: bits separated by spaces, [m0 k1]; a fragment as its lanes and its
    elements separated by a slash, [m0 k1/k0]. *)
@@ -84,7 +84,7 @@ let per_core column check =
 let bits =
   group "bits"
     [
-      cases ~name:fst "pp_bit writes the dimension in lower case and the index"
+      cases "pp_bit writes the dimension in lower case and the index" ~id:fst
         [ ("m0", Tc.M 0); ("n2", Tc.N 2); ("k6", Tc.K 6); ("m12", Tc.M 12) ]
         (fun (text, b) -> equal string text (Format.asprintf "%a" Tc.pp_bit b));
       test "bits of different dimensions differ" (fun () ->
@@ -117,7 +117,7 @@ let names_of_rows target =
 let listed =
   group "targets"
     [
-      cases ~name:fst "a target lists tinygrad's cores, in order" targets
+      cases "a target lists tinygrad's cores, in order" ~id:fst targets
         (fun (target, cores) ->
           equal (list string) (names_of_rows target)
             (List.map (Format.asprintf "%a" Tc.pp) cores));
@@ -189,8 +189,7 @@ let described =
 
 (* Laws *)
 
-let each_core name law =
-  cases ~name:fst name named_cores (fun (_, tc) -> law tc)
+let each_core name law = cases name ~id:fst named_cores (fun (_, tc) -> law tc)
 
 (* [count rows cols coords] is how many times each cell of a [rows] by [cols]
    tile appears in [coords]. *)

@@ -22,7 +22,7 @@ let c128 = Nx.complex128
 type f64_t = (float, D.float64_elt, Nx.host) Nx.t
 type c128_t = (Complex.t, D.complex64_elt, Nx.host) Nx.t
 
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let v xs = Nx.create f64 [| Array.length xs |] xs
 
 (* Operands *)

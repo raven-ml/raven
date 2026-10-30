@@ -221,7 +221,7 @@ let test_copy_engine () =
     [ "COMPUTE:0"; "COMPUTE:0" ] lanes;
   let c = open_as (module Copyless) "open:copyless" (P.make ()) in
   let src = Rig.Buffer.create c 8 and dst = Rig.Buffer.create c 8 in
-  raises_match (Exn.invalid_arg ~substring:"runs no copies") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"runs no copies") (fun () ->
       Rig.Submission.(make c [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
 
 (* A copy engine that names no queue, or a queue that runs no copy, refuses
@@ -229,7 +229,7 @@ let test_copy_engine () =
 let test_copy_engine_refused () =
   let refuses name driver =
     let p = P.make () in
-    raises_match ~msg:name (Exn.invalid_arg ~substring:"copy engine") (fun () ->
+    raises_match ~msg:name (Exn.invalid_arg ~sub:"copy engine") (fun () ->
         Rig.open_ { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
     equal ~msg:(name ^ ": stopped") bool true (List.mem "stop" (P.log p))
   in
@@ -255,7 +255,7 @@ let test_hang_refused () =
       let p = P.make ~hang_ms:n () in
       let name = Printf.sprintf "open:hang-%d" i in
       raises_match ~msg:(Printf.sprintf "hang_ms %d" n)
-        (Exn.invalid_arg ~substring:"hang bound") (fun () ->
+        (Exn.invalid_arg ~sub:"hang bound") (fun () ->
           Rig.open_ (P.opener name p));
       equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
     [ 0; -1; min_int ]
@@ -289,10 +289,8 @@ let test_edge_refused () =
   List.iter
     (fun (name, driver) ->
       let p = P.make () in
-      raises_match ~msg:name (Exn.invalid_arg ~substring:"rig_driver")
-        (fun () ->
-          Rig.open_
-            { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
+      raises_match ~msg:name (Exn.invalid_arg ~sub:"rig_driver") (fun () ->
+          Rig.open_ { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
       equal ~msg:("stopped, " ^ name) bool true (List.mem "stop" (P.log p));
       ignore (open_as (module P) name (P.make ())))
     [
@@ -342,7 +340,7 @@ let test_alignment_refused () =
       let p = P.make ~alignment:n () in
       let name = Printf.sprintf "open:alignment-%d" n in
       raises_match ~msg:(Printf.sprintf "alignment %d" n)
-        (Exn.invalid_arg ~substring:"power of two") (fun () ->
+        (Exn.invalid_arg ~sub:"power of two") (fun () ->
           Rig.open_ (P.opener name p));
       equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
     [ 0; -16; 24; 48 ]
@@ -391,7 +389,7 @@ let test_of_io () =
   let dead = Rig.Buffer.of_io io Store.region_key r ~access:Read_write 16 in
   Rig.Claim.with_ ~read:[ dead ] ~donate:[] (fun c ->
       ignore (Rig.Claim.consume c ~why:"consumed" dead));
-  raises_match (Exn.invalid_arg ~substring:"consumed") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"consumed") (fun () ->
       Rig.Buffer.io dead Store.region_key);
   let h = require_some (Rig.Buffer.borrow Rig.host b) in
   equal string (String.make 16 'p')

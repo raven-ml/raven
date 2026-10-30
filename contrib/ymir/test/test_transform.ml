@@ -66,8 +66,7 @@ let lonlat_deg xs =
 
 let wcslib =
   cases
-    ~name:(fun (c : Reference.wcs) -> c.code)
-    "WCSLIB" Reference.wcs
+    "WCSLIB" ~id:(fun (c : Reference.wcs) -> c.code) Reference.wcs
     (fun c ->
       let t = fits c in
       let world = Transform.apply t (pixels c.pixels) in
@@ -102,14 +101,14 @@ let projections =
     [
       (* WCSLIB solves ZPN's and AIR's deprojections to 1e-13 and 1e-12 in
          the radial function, which moves a direction by a few 1e-12. *)
-      cases ~name "map pixels as WCSLIB does" Reference.projections (fun p ->
+      cases "map pixels as WCSLIB does" ~id:name Reference.projections (fun p ->
           let world = Transform.apply (projection p) (pixels p.pixels) in
           let off =
             Array.fold_left max 0. (separation world (lonlat_deg p.world))
           in
           let tol = if p.code = "ZPN" || p.code = "AIR" then 5e-12 else 2e-13 in
           less float_exact ~than:tol off);
-      cases ~name "map directions as WCSLIB does" Reference.projections
+      cases "map directions as WCSLIB does" ~id:name Reference.projections
         (fun p ->
           let t = Transform.inverse (projection p) in
           let back = values (Transform.apply t (lonlat_deg p.sky)) Unit.one in
@@ -120,7 +119,7 @@ let projections =
                  back p.sky_pixels)
           in
           less float_exact ~than:1e-12 worst);
-      cases ~name "cover what WCSLIB maps" Reference.projections (fun p ->
+      cases "cover what WCSLIB maps" ~id:name Reference.projections (fun p ->
           let t = projection p in
           equal bool true (all_equal true (covers t (pixels p.pixels)));
           equal bool true
@@ -148,7 +147,7 @@ let projections =
             let scale = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 1. px in
             less float_exact ~than:(1e-12 *. scale) (max_abs back px)
           end);
-      cases ~name "do not cover what WCSLIB leaves out" Reference.projections
+      cases "do not cover what WCSLIB leaves out" ~id:name Reference.projections
         (fun p ->
           let t = projection p in
           if Array.length p.outside > 0 then
@@ -197,11 +196,11 @@ let distortions =
   let name (d : Reference.distorted) = d.name in
   group "Distortions"
     [
-      cases ~name "map pixels as astropy does" Reference.distorted (fun d ->
+      cases "map pixels as astropy does" ~id:name Reference.distorted (fun d ->
           let world = Transform.apply (distorted d) (pixels d.pixels) in
           less float_exact ~than:2e-13
             (Array.fold_left max 0. (separation world (lonlat_deg d.world))));
-      cases ~name "map directions as astropy does" Reference.distorted
+      cases "map directions as astropy does" ~id:name Reference.distorted
         (fun d ->
           let t = Transform.inverse (distorted d) in
           let back = Transform.apply t (lonlat_deg d.sky) in
@@ -209,7 +208,7 @@ let distortions =
              these 0.05″ pixels. *)
           less float_exact ~than:1e-8
             (max_abs (values back Unit.one) d.sky_pixels));
-      cases ~name "cover the image both ways" Reference.distorted (fun d ->
+      cases "cover the image both ways" ~id:name Reference.distorted (fun d ->
           let t = distorted d in
           equal bool true (all_equal true (covers t (pixels d.pixels)));
           equal bool true
@@ -224,7 +223,7 @@ let distortions =
           let t = distorted (List.nth Reference.distorted k) in
           let back = Transform.(apply (inverse t) (apply t (pixels [| r; c |]))) in
           less float_exact ~than:1e-9 (max_abs (values back Unit.one) [| r; c |]));
-      cases ~name "the inverse SIP differentiates in the direction"
+      cases "the inverse SIP differentiates in the direction" ~id:name
         (List.filter
            (fun (d : Reference.distorted) -> d.kind = "SIP")
            Reference.distorted)
@@ -251,7 +250,7 @@ let distortions =
           equal (array bool) [| true; false |]
             (Nx.to_array (covers t p));
           raises_match
-            (Exn.invalid_arg ~substring:"point 1 is where the SIP distortion folds")
+            (Exn.invalid_arg ~sub:"point 1 is where the SIP distortion folds")
             (fun () -> Transform.apply t p));
     ]
 
@@ -420,7 +419,7 @@ let domains =
           let a = at (1.9344, -1.282) in
           let pts = lonlat_deg [| 110.; -73.; 10.; 50. |] in
           raises_match
-            (Exn.invalid_arg ~substring:"Transform.apply: point 1 is")
+            (Exn.invalid_arg ~sub:"Transform.apply: point 1 is")
             (fun () -> Transform.apply (Transform.gnomonic a) pts));
       test "covers masks TAN's projection" (fun () ->
           let a = at (0., 0.) in
@@ -447,7 +446,7 @@ let domains =
             (Nx.to_array (covers t p));
           raises_match
             (Exn.invalid_arg
-               ~substring:"point 1 is 212.132 deg from the ARC plane's origin")
+               ~sub:"point 1 is 212.132 deg from the ARC plane's origin")
             (fun () -> Transform.apply t p));
       test "a transform with no stage covers everything" (fun () ->
           equal bool true
@@ -473,10 +472,10 @@ let constructors =
       test "a misordered list raises where a stage reads the wrong unit"
         (fun () ->
           let cd = deg (tensor [| 2; 2 |] [| 1.; 0.; 0.; 1. |]) in
-          raises_match (Exn.invalid_arg ~substring:"Quantity.value") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Quantity.value") (fun () ->
               Transform.(apply (linear cd >> linear cd) (pixels [| 1.; 2. |]))));
       test "celestial refuses pv of the wrong size" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"TAN takes 0 parameters")
+          raises_match (Exn.invalid_arg ~sub:"TAN takes 0 parameters")
             (fun () ->
               Transform.celestial Transform.Tan Frame.icrs
                 ~pv:(Nx.zeros f64 [| 3 |])
@@ -496,7 +495,7 @@ let constructors =
           let p = Quantity.v Unit.degree (tensor [| 2 |] [| 0.; 0. |]) in
           equal (array bool) [| false |]
             (Nx.to_array (Nx.reshape [| 1 |] (covers t p)));
-          raises_match (Exn.invalid_arg ~substring:"place no celestial pole")
+          raises_match (Exn.invalid_arg ~sub:"place no celestial pole")
             (fun () -> Transform.apply t p));
       test "a LATPOLE as near both poles takes eq. (8)'s minus sign"
         (fun () ->

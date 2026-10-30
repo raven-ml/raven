@@ -249,7 +249,7 @@ let system =
         (fun () ->
           on "linux";
           let file = require_some (C.findlib "m" [ "m" ]) in
-          starts_with ~affix:"libm.so" (Filename.basename file));
+          starts_with ~prefix:"libm.so" (Filename.basename file));
     ]
 
 (* multiarch *)

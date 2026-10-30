@@ -807,7 +807,7 @@ let test_error (_, message, f) =
   | exception Invalid_argument m -> (
       match message with
       | Is e -> equal string e m
-      | Starts p -> starts_with ~affix:p m)
+      | Starts p -> starts_with ~prefix:p m)
 
 (* jvp of a compiled function *)
 
@@ -936,8 +936,8 @@ let () =
        [
          group "tangents" tangent_props;
          group "second derivatives" second_props;
-         cases ~name:(fun r -> r.name) "kinks" kinks check_row;
-         cases ~name:(fun r -> r.name) "edges" edges check_row;
+         cases "kinks" ~id:(fun r -> r.name) kinks check_row;
+         cases "edges" ~id:(fun r -> r.name) edges check_row;
          group "conventions"
            [
              test "complex tangents are directional derivatives" test_complex;
@@ -962,7 +962,7 @@ let () =
                law_jacobian;
              test "totals" test_total;
            ];
-         cases ~name:(fun (n, _, _) -> n) "errors" errors test_error;
+         cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;
          group "jit"
            [
              prop "jvp of jit and jit of jvp of exact functions" jit_cases

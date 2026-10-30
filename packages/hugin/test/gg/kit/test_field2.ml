@@ -588,9 +588,9 @@ let d3_cases =
   ]
 
 let d3_agreement =
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "agreement with d3-contour" d3_cases
+  cases "agreement with d3-contour"
+    ~id:(fun (n, _, _) -> n)
+    d3_cases
     (fun (_, rows, rings) ->
       let f = grid10 rows in
       same_rings (List.map d3_ring rings)
@@ -1204,10 +1204,9 @@ let near_level_cases =
       xfail ~reason:"crossings on a diagonal cannot lie on it exactly"
         (test "bands of near levels do not overlap at a cut cell's diagonal"
            near_levels_apart);
-      cases
-        ~name:(fun (xs, _, _, _, _) -> Printf.sprintf "xs.(0) = %g" xs.(0))
-        "the diagonal's step keeps bands of near levels apart" step_cases
-        step_keeps_bands_apart;
+      cases "the diagonal's step keeps bands of near levels apart"
+        ~id:(fun (xs, _, _, _, _) -> Printf.sprintf "xs.(0) = %g" xs.(0))
+        step_cases step_keeps_bands_apart;
     ]
 
 (* The diagonal of the [far_ys] cell runs one unit left from its top right

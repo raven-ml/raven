@@ -126,7 +126,7 @@ let units = 2039
 let apertures =
   group ~timeout:10. "apertures"
     [
-      cases ~name:fst "a window holds the GPU's memory, or is refused"
+      cases "a window holds the GPU's memory, or is refused" ~id:fst
         [
           ("exactly", ((0x8000, 0x8000 + units - 1, 0), true));
           ("one unit short", ((0x8000, 0x8000 + units - 2, 0), false));
@@ -147,13 +147,13 @@ let apertures =
 let page_tables =
   group ~timeout:10. "page tables"
     [
-      cases
-        ~name:(fun (n, _, _, _, _, _, _, _, _) -> n)
-        "an entry holds the bits amdgpu_vm.h states" entries
+      cases "an entry holds the bits amdgpu_vm.h states"
+        ~id:(fun (n, _, _, _, _, _, _, _, _) -> n)
+        entries
         (fun (_, gc, level, pa, target, uncached, snooped, fragment, e) ->
           equal int64 e
             (Gmc.entry ~gc ~level ~pa target ~uncached ~snooped ~fragment));
-      cases ~name:(strf "0x%x") "an address that is no page below 2^48 raises"
+      cases "an address that is no page below 2^48 raises" ~id:(strf "0x%x")
         [ 0x1234; 1 lsl 48 ]
         (fun pa ->
           raises_match Exn.invalid_arg (fun () ->

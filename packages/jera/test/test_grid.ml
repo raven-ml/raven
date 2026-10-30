@@ -22,16 +22,15 @@ and n1 = Array.length G.axis1
 
 let values = Nx.create f64 [| n0; n1 |] G.values
 let points = Nx.create f64 [| Array.length G.points / 2; 2 |] G.points
-let raises_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f
 
 let golden_tests =
   [
     test "linear is scipy's regular-grid interpolant" (fun () ->
         equal (close ()) (vec G.linear)
           (Grid.eval (Grid.linear ~axes values) points));
-    cases
-      ~name:(fun (n, _, _, _, _) -> n)
-      "cubic is scipy's spline along each axis"
+    cases "cubic is scipy's spline along each axis"
+      ~id:(fun (n, _, _, _, _) -> n)
       [
         ( "natural",
           `Natural,

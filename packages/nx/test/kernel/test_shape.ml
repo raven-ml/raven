@@ -953,10 +953,12 @@ let tests =
         test "refuses axes that do not fit and extremes of no term"
           test_reduce_refuses;
         test "accepts states each reduction's dtypes" test_accepts;
-        cases ~name:(fun (D.Any dt) -> D.name dt)
-          "carrier holds every element of the dtype" D.all test_carrier;
-        cases ~name:(fun (Nx_kernel.Any_float dt) -> D.name dt)
-          "float_carrier is the carrier of a float" floats test_float_carrier;
+        cases "carrier holds every element of the dtype"
+          ~id:(fun (D.Any dt) -> D.name dt)
+          D.all test_carrier;
+        cases "float_carrier is the carrier of a float"
+          ~id:(fun (Nx_kernel.Any_float dt) -> D.name dt)
+          floats test_float_carrier;
       ];
     group "gathers, scatters and sorts"
       [
@@ -988,9 +990,9 @@ let tests =
       [
         test "name names the kernels" (fun () ->
             equal string "nx.cpu" Nx_cpu.name);
-        cases ~name:(fun (n, _, _) -> n)
-          "computes_on is whether the host reaches the device" devices
-          test_computes_on;
+        cases "computes_on is whether the host reaches the device"
+          ~id:(fun (n, _, _) -> n)
+          devices test_computes_on;
       ];
   ]
 

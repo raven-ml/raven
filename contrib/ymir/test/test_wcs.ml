@@ -76,8 +76,7 @@ let nircam = header (List.hd Wcs_reference.cases).header
 
 let wcslib =
   cases
-    ~name:(fun (c : Wcs_reference.case) -> c.name)
-    "WCSLIB" Wcs_reference.cases
+    "WCSLIB" ~id:(fun (c : Wcs_reference.case) -> c.name) Wcs_reference.cases
     (fun c ->
       let (F f) = frame c.frame in
       let t = read ~alt:c.alt f (header c.header) in
@@ -103,20 +102,17 @@ let round_trips =
   group "Law 1"
     [
       cases
-        ~name:(fun (c : Wcs_reference.case) -> c.name)
-        "a header read at float64 needs no edit"
+        "a header read at float64 needs no edit" ~id:(fun (c : Wcs_reference.case) -> c.name)
         (List.filter (fun c -> not (crota c || tan_pv c)) Wcs_reference.cases)
         (fun c ->
           let (F f) = frame c.frame in
           let h = header c.header in
           equal edits [] (write ~alt:c.alt (read ~alt:c.alt f h) h));
       cases
-        ~name:(fun (c : Wcs_reference.case) -> c.name)
-        "edits to an empty header read back as equal stages" Wcs_reference.cases
+        "edits to an empty header read back as equal stages" ~id:(fun (c : Wcs_reference.case) -> c.name) Wcs_reference.cases
         (fun c -> reads_back c Fits.Header.empty);
       cases
-        ~name:(fun (c : Wcs_reference.case) -> c.name)
-        "edits to the header read back as equal stages" Wcs_reference.cases
+        "edits to the header read back as equal stages" ~id:(fun (c : Wcs_reference.case) -> c.name) Wcs_reference.cases
         (fun c -> reads_back c (header c.header));
       prop "a real reads back bit for bit"
         Gen.(
@@ -199,7 +195,7 @@ let errors =
             (require_error
                (Wcs.read ~at:Nx.Host.on Frame.galactic
                   (keywords (edit [ set_s "EXTNAME" "SCI" ])))));
-      cases ~name:fst "unread descriptions"
+      cases "unread descriptions" ~id:fst
         [
           ( "FK5 at equinox 1950 needs the time stage, not read yet",
             [ set_s "RADESYS" "FK5"; set_f "EQUINOX" 1950. ] );
@@ -259,8 +255,7 @@ let errors =
         ]
         (fun (message, fs) -> equal string message (read_error (edit fs)));
       cases
-        ~name:(fun (k, _, _) -> k)
-        "a value that does not decode is the view's error"
+        "a value that does not decode is the view's error" ~id:(fun (k, _, _) -> k)
         [
           ( "CRPIX1",
             (fun h -> Result.map ignore ((keywords h).float "CRPIX1")),

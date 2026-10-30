@@ -57,11 +57,11 @@ let photutils =
   in
   group "photutils"
     [
-      cases ~name "float64 sums meet the goal post" indexed (fun t ->
+      cases "float64 sums meet the goal post" ~id:name indexed (fun t ->
           ignore (sums f64 t));
-      cases ~name "float32 sums meet the goal post" indexed (fun t ->
+      cases "float32 sums meet the goal post" ~id:name indexed (fun t ->
           ignore (sums Nx.float32 t));
-      cases ~name "variances are the sums of w² PIXAR_SR² ERR²" indexed
+      cases "variances are the sums of w² PIXAR_SR² ERR²" ~id:name indexed
         (fun ((_, (a : Nircam.aperture)) as t) ->
           let c, s = sums f64 t in
           let var (i : (_, Nx.host) Observation.integral) =
@@ -116,8 +116,7 @@ let flux (type e) (a : Nircam.aperture)
 
 let gradients =
   cases
-    ~name:(fun (k, _) -> Printf.sprintf "target %d" k)
-    "float32 gradients match float64 central differences"
+    "float32 gradients match float64 central differences" ~id:(fun (k, _) -> Printf.sprintf "target %d" k)
     (List.filteri (fun i _ -> i = 1 || i = 4) indexed)
     (fun (k, a) ->
       let p = [| 0.02; -0.03; Nircam.radius |] in

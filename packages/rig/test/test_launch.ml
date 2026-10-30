@@ -398,7 +398,7 @@ let test_constructor_refusals () =
   let main = fn image "main" and fill = fn image "fill" in
   let refused name f =
     raises_match ~msg:name
-      (Exn.invalid_arg ~substring:("Rig.Submission." ^ name ^ ": "))
+      (Exn.invalid_arg ~sub:("Rig.Submission." ^ name ^ ": "))
       f
   in
   let w at = Sub.write 0 ~at and r at = Sub.read 1 ~at in
@@ -544,9 +544,8 @@ let test_resolve_failures () =
   P.fail_at p 1 (`Refuse 0);
   let image = functions d in
   P.before p "entry" (fun () -> invalid_arg "main needs more than 1 TiB");
-  raises_match
-    (Exn.invalid_arg ~substring:"main needs more than 1 TiB")
-    (fun () -> Rig.Image.resolve image "main");
+  raises_match (Exn.invalid_arg ~sub:"main needs more than 1 TiB") (fun () ->
+      Rig.Image.resolve image "main");
   equal (option string) None (Rig.lost d);
   let main = fn (functions d) "main" and image = functions d in
   P.fail_at p 1 (`Fault "the engine hung");
@@ -620,7 +619,7 @@ let test_block_owner () =
   equal ~msg:"its own stores" int 41 (fill run);
   take run;
   raises_match ~msg:"another's block"
-    (Exn.invalid_arg ~substring:"another submission's") (fun () ->
+    (Exn.invalid_arg ~sub:"another submission's") (fun () ->
       Run.int64 run b2 8 42L);
   Run.release run;
   equal ~msg:"its last store, kept across submits" int 41 (fill run);

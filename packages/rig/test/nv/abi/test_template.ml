@@ -51,13 +51,13 @@ let words =
           equal (list int) [ 1; 0 ]
             (S.words
                (Template.fill (fun _ -> 2L) (Template.u64 (-1L) (Slot 0)))));
-      cases ~name:fst "a negative known value is refused"
+      cases "a negative known value is refused" ~id:fst
         [
           ("u32", fun () -> Template.u32 0 (Int (-1)));
           ("u64", fun () -> Template.u64 0L (Int min_int));
         ]
         (fun (_, f) ->
-          raises_match (Exn.invalid_arg ~substring:"unsigned") (fun () -> f ()));
+          raises_match (Exn.invalid_arg ~sub:"unsigned") (fun () -> f ()));
       test "a fill shifts the sum in with zeros" (fun () ->
           equal (list int) [ 0x3000_0000 ]
             (S.words
@@ -171,9 +171,9 @@ let descriptor cls =
 let patches =
   group ~timeout:10. "patches"
     [
-      cases ~name:S.class_name
+      cases
         "patches are by increasing offset, their words in the bytes and apart"
-        S.classes (fun cls ->
+        ~id:S.class_name S.classes (fun cls ->
           let t = descriptor cls in
           let _ =
             List.fold_left
@@ -188,7 +188,7 @@ let patches =
               0 t.patches
           in
           ());
-      cases ~name:S.class_name "a patch's field is zero in the bytes" S.classes
+      cases "a patch's field is zero in the bytes" ~id:S.class_name S.classes
         (fun cls ->
           let t = descriptor cls in
           let b = Bytes.of_string t.bytes in

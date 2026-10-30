@@ -299,11 +299,10 @@ let finite_cases =
   [
     test "pinv of a singular matrix" (pinv_law false);
     test "pinv of a singular Hermitian matrix" (pinv_law true);
-    cases "float64" ~name:fname composed (finite_law (f64, f64_format));
-    cases "float32" ~name:fname composed (finite_law (Nx.float32, f32_format));
-    cases "float16" ~name:fname composed (finite_law (Nx.float16, f16_format));
-    cases "bfloat16" ~name:fname composed
-      (finite_law (Nx.bfloat16, bf16_format));
+    cases "float64" ~id:fname composed (finite_law (f64, f64_format));
+    cases "float32" ~id:fname composed (finite_law (Nx.float32, f32_format));
+    cases "float16" ~id:fname composed (finite_law (Nx.float16, f16_format));
+    cases "bfloat16" ~id:fname composed (finite_law (Nx.bfloat16, bf16_format));
   ]
 
 (* Values the conventions state *)
@@ -885,7 +884,7 @@ let test_error (_, message, f) =
   | exception Invalid_argument m -> (
       match message with
       | Is e -> equal string e m
-      | Starts p -> starts_with ~affix:p m)
+      | Starts p -> starts_with ~prefix:p m)
 
 (* Two domains
 
@@ -1034,7 +1033,7 @@ let () =
              test "jacrev'" test_jacrev;
              test "check_grads" test_check_grads;
            ];
-         cases ~name:(fun (n, _, _) -> n) "errors" errors test_error;
+         cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;
          stateful ~domains:2 ~count:10 ~steps:8
            "results on two domains are one domain's" domain_commands;
          group "jit"

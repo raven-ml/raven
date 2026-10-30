@@ -141,7 +141,7 @@ let test_overlaps () =
   equal ~msg:"adjacent bytes" (pair bool bool) (false, false)
     (B.overlaps disjoint wrapped, B.overlaps wrapped disjoint);
   raises_match ~msg:"claims reject the same overlap"
-    (Exn.invalid_arg ~substring:"a donated buffer overlaps another") (fun () ->
+    (Exn.invalid_arg ~sub:"a donated buffer overlaps another") (fun () ->
       Rig.Claim.with_ ~read:[ wrapped ] ~donate:[ shared ] (fun _ -> ()));
   Rig.Claim.with_ ~read:[ wrapped ] ~donate:[ disjoint ] (fun _ -> ());
   equal ~msg:"inspection reuses the mapping" int 1 (count "pages" t)
@@ -333,7 +333,7 @@ let test_sorted_overlaps () =
   let wrapped first = B.of_bigarray (Bigarray.Array1.sub ba first 8) in
   let donate = List.map (fun m -> B.view m ~first:8 ~length:16) memories in
   raises_match ~msg:"sorted claims reject an aliased host range"
-    (Exn.invalid_arg ~substring:"a donated buffer overlaps another") (fun () ->
+    (Exn.invalid_arg ~sub:"a donated buffer overlaps another") (fun () ->
       Rig.Claim.with_ ~read:[ wrapped 12 ] ~donate (fun _ -> ()));
   Rig.Claim.with_ ~read:[ wrapped 24 ] ~donate (fun _ -> ());
   equal ~msg:"the sorted check maps no other memory" int 1 (count "pages" t)

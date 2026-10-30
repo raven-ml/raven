@@ -66,8 +66,10 @@ let forms =
   ]
 
 let form_cases =
-  cases "forms" ~name:(fun (n, _, _) -> n) forms (fun (_, f, expected) ->
-      equal string expected (f ()))
+  cases "forms"
+    ~id:(fun (n, _, _) -> n)
+    forms
+    (fun (_, f, expected) -> equal string expected (f ()))
 
 (* Layouts: a row per line from two axes on, a long row wrapped. *)
 

@@ -13,7 +13,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* A host value of [dt] and shape [s] over drawn bytes: NaNs, signed zeros,
    infinities and extremes among its elements, and bool bytes other than 0 and
@@ -203,7 +203,7 @@ let bits =
       prop "rshift divides by 2^n toward negative infinity" integer_shift
         law_rshift;
       cases "refusals"
-        ~name:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _) -> n)
         [
           ("bitwise_not of a float", "Nx.bitwise_not",
             fun () -> ignore (Nx.bitwise_not (Nx.zeros Nx.float32 [| 1 |])));

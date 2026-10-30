@@ -519,7 +519,9 @@ let after_stream = "\x00after"
    then Done on an empty step with ~last:true. The next step begins a new
    stream. *)
 let ends_of fmt =
-  cases ~name:(fun g -> g.Lz_support.file) fmt.name (Lz_support.goldens_of fmt.name)
+  cases fmt.name
+    ~id:(fun g -> g.Lz_support.file)
+    (Lz_support.goldens_of fmt.name)
     (fun g ->
       let n = String.length (data g) in
       let expect ~msg t =
@@ -756,7 +758,7 @@ let predict =
 
 (* A refusal for being in use, told from one for being dead by its
    message. *)
-let in_use e = Exn.invalid_arg ~substring:"in use" e
+let in_use e = Exn.invalid_arg ~sub:"in use" e
 
 (* A step on the shared decoder; [raising] makes [f] raise Exit. *)
 let shared_step bytes ~raising last p d : outcome =
@@ -963,7 +965,9 @@ let encoder_other_domain enc =
 (* Spec values *)
 
 let no_input =
-  cases ~name:(fun f -> f.name) "no input and ~last:true is Truncated at 0" formats
+  cases "no input and ~last:true is Truncated at 0"
+    ~id:(fun f -> f.name)
+    formats
     (fun fmt ->
       equal stepped
         (Error { Lz.at = 0; why = Truncated })

@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk
 
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let uop = Uops.uop
 let uops = list Uops.uop
 

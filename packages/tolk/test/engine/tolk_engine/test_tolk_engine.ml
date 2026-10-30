@@ -190,7 +190,7 @@ let phased_call () =
 let phased_axpy () = Engine.link_call ~devices (phased_call ())
 
 (* What a refusal of a buffer off its phase says. *)
-let off_its_phase = Exn.invalid_arg ~substring:"bytes past a multiple of 16"
+let off_its_phase = Exn.invalid_arg ~sub:"bytes past a multiple of 16"
 
 (* out[i] = a[i + 3] * n + b[i] for four elements, a eight floats 4 bytes past a
    16-byte boundary: a[3] to a[6] lie on 16 bytes, which the kernel reads as one
@@ -325,7 +325,7 @@ let on_the_host =
           let bufs = buffers () in
           bufs.(1) <- [ off_phase (List.hd bufs.(1)) ];
           raises_match
-            (Exn.invalid_arg ~substring:"slot 1's buffer of CPU starts 4 bytes")
+            (Exn.invalid_arg ~sub:"slot 1's buffer of CPU starts 4 bytes")
             (fun () -> Engine.run ~vars:[ ("n", 1) ] s bufs);
           equal values
             (floats [| 0.; 0.; 0.; 0. |])
@@ -340,13 +340,12 @@ let on_the_host =
           let bufs = buffers () in
           bufs.(1) <- [ at_phase ~bytes:(List.hd bufs.(1)) host 0 16 ];
           raises_match
-            (Exn.invalid_arg ~substring:"slot 1's buffer of CPU starts 0 bytes")
+            (Exn.invalid_arg ~sub:"slot 1's buffer of CPU starts 0 bytes")
             (fun () -> Engine.run ~vars:[ ("n", 1) ] s bufs));
       test "link refuses a parameter that two calls access at two phases"
         (fun () ->
           let axpy = call_on "CPU" ~size:4 ~slots:3 (Lazy.force axpy) in
-          raises_match (Exn.invalid_arg ~substring:"slot 1 is accessed")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"slot 1 is accessed") (fun () ->
               Engine.link ~devices
                 (compile (Ops.v Op.Linear ~src:[ axpy; phased_call () ]))));
       test "run takes the slots of a phase-4 parameter" (fun () ->
@@ -605,8 +604,8 @@ let by_default =
   [ "add"; "copy"; "shard_add"; "precompiled_scalar"; "disk_store" ]
 
 let writes_what_it_computes name =
-  (if List.mem name by_default then test else slow)
-    (name ^ " writes what its tensors compute") (fun () ->
+  (if List.mem name by_default then Fun.id else slow)
+  @@ test (name ^ " writes what its tensors compute") (fun () ->
       let big = program name in
       let s, vars, storage = linked big in
       Engine.run ~vars s (slots storage);
@@ -1217,9 +1216,8 @@ let reads_a_bound_flag () =
   equal values [| `Bool false |] (Run.values Bool flag)
 
 let reads_trips_on ?devices d =
-  cases
-    ~name:(fun (name, _, _) -> name)
-    "a loop's call reads its trip as a scalar argument on each trip"
+  cases "a loop's call reads its trip as a scalar argument on each trip"
+    ~id:(fun (name, _, _) -> name)
     (trip_arguments 5)
     (reads_its_trip ?devices d 5)
 
@@ -1591,16 +1589,15 @@ let valid_slot_store =
   test
     "a store through a shrink whose bounds carry a validity is refused, its \
      size holding Invalid" (fun () ->
-      raises_match (Exn.invalid_arg ~substring:"Invalid, which is no number")
+      raises_match (Exn.invalid_arg ~sub:"Invalid, which is no number")
         (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
 
 let gathered_stores =
   group "a store through a gather"
     [
-      cases
-        ~name:(fun t ->
+      cases "writes each row at its loaded index and drops an invalid one"
+        ~id:(fun t ->
           String.concat ", " (Array.to_list (Array.map string_of_int t)))
-        "writes each row at its loaded index and drops an invalid one"
         [ [| 0; 3; 7; 5 |]; [| 6; -1; 8; 2 |] ]
         (fun targets -> stores_through_a_gather "CPU" targets ());
     ]
@@ -1609,18 +1606,18 @@ let schedules =
   group "link and run"
     [
       group "recorded" (List.map writes_what_it_computes recorded);
-      slow "custom_kernel runs its custom kernel" runs_a_custom_kernel;
-      slow "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
+      slow @@ test "custom_kernel runs its custom kernel" runs_a_custom_kernel;
+      slow
+      @@ test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
       test "a copy runs on a buffer off its parameter's phase" copies_off_phase;
-      cases ~name:Fun.id
-        "a pad of integer divisions writes what its tensors compute"
+      cases "a pad of integer divisions writes what its tensors compute"
+        ~id:Fun.id
         [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
         (fun name -> divides_on_padding name ());
-      cases ~name:Fun.id
-        "a schedule runs on the buffers each run binds to its parameters"
-        [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->
+      cases "a schedule runs on the buffers each run binds to its parameters"
+        ~id:Fun.id [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->
           runs_on_its_slots name ());
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
@@ -1661,8 +1658,8 @@ let link_refuses what f =
   test ("link refuses " ^ what) (fun () -> raises_match Exn.invalid_arg f)
 
 (* A refusal names the slot. *)
-let run_refuses ?(devices = devices) ?(says = Exn.invalid_arg ~substring:"slot")
-    what name slots_of =
+let run_refuses ?(devices = devices) ?(says = Exn.invalid_arg ~sub:"slot") what
+    name slots_of =
   test ("run refuses " ^ what) (fun () ->
       let s, vars, big = parameterized ~devices name in
       let storage = storage_of ~devices big in
@@ -1755,7 +1752,7 @@ let refusals =
           let slots = slots (storage_of big) in
           let last = Array.length slots - 1 in
           raises_match
-            (Exn.invalid_arg ~substring:(Printf.sprintf "slot %d" last))
+            (Exn.invalid_arg ~sub:(Printf.sprintf "slot %d" last))
             (fun () -> Engine.run ~vars s (Array.sub slots 0 last)));
       run_refuses "a parameter bound to buffers of another device" "add"
         (fun storage ->
@@ -1774,8 +1771,7 @@ let refusals =
       run_refuses "a sharded parameter whose second lane is off its phase"
         "shard_add"
         ~says:(fun e ->
-          off_its_phase e
-          && Exn.invalid_arg ~substring:"buffer of CPU:1 starts 4" e)
+          off_its_phase e && Exn.invalid_arg ~sub:"buffer of CPU:1 starts 4" e)
         (fun storage ->
           let k =
             (List.find (fun s -> List.length s.buffers = 2) storage).arg.slot
@@ -2249,10 +2245,10 @@ let slots_fit name =
   Engine.run ~vars s fresh
 
 let timing =
-  let on f = cases ~name:fst "on" timed_on (fun (_, name) -> f name) in
+  let on f = cases "on" ~id:fst timed_on (fun (_, name) -> f name) in
   group "timing"
     [
-      cases ~name:Fun.id "run takes the slots of a linked schedule"
+      cases "run takes the slots of a linked schedule" ~id:Fun.id
         [ "add"; "shard_add" ] slots_fit;
       test "link_call refuses a name the map does not hold" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
@@ -2415,7 +2411,8 @@ let on_gpu kind name = match name with "CPU:1" -> gpu kind | n -> device n
 let gpu_names = [ "CPU"; "CPU:1" ]
 
 let computes_on devices name =
-  slow (name ^ " writes what its tensors compute") (fun () ->
+  slow
+  @@ test (name ^ " writes what its tensors compute") (fun () ->
       let big = program name in
       let s, vars, storage = linked ~devices big in
       Engine.run ~vars s (slots storage);
@@ -2436,26 +2433,32 @@ let on_a_gpu (kind, _) =
              "variable_shrink";
              "variable_reduce";
            ]);
-      cases ~tags:[ "slow" ] ~name:Fun.id
-        "a schedule runs on the buffers each run binds to its parameters"
-        [ "copy"; "copy_view" ] (fun name -> runs_on_its_slots ~devices name ());
-      slow "runs of one schedule from two domains each compute their own"
-        (serialized ~devices "copy");
-      slow "a run allocates and loads nothing"
-        (allocates_nothing ~devices ~names:gpu_names "copy");
-      slow "a run of one kernel allocates at most 400 minor words" (fun () ->
+      slow
+      @@ cases "a schedule runs on the buffers each run binds to its parameters"
+           ~id:Fun.id [ "copy"; "copy_view" ] (fun name ->
+             runs_on_its_slots ~devices name ());
+      slow
+      @@ test "runs of one schedule from two domains each compute their own"
+           (serialized ~devices "copy");
+      slow
+      @@ test "a run allocates and loads nothing"
+           (allocates_nothing ~devices ~names:gpu_names "copy");
+      slow
+      @@ test "a run of one kernel allocates at most 400 minor words" (fun () ->
           at_most int ~than:400 (run_words ~devices "CPU:1" ()));
       slow
-        "a store through a gather writes each row at its loaded index and \
-         drops an invalid one"
-        (stores_through_a_gather ~devices "CPU:1" [| 6; -1; 8; 2 |]);
-      prop ~tags:[ "slow" ]
-        "a loop runs its call while its flag holds, at most its trips"
-        Gen.(pair (int_range (-1) 6) (int_range 1 5))
-        (fun bounds -> loops_while_a_flag_holds ~devices "CPU:1" bounds);
-      prop ~tags:[ "slow" ]
-        "a loop runs its calls in order each trip while its flag holds"
-        loop_bounds (fun bounds -> loops_around_calls ~devices "CPU:1" bounds);
+      @@ test
+           "a store through a gather writes each row at its loaded index and \
+            drops an invalid one"
+           (stores_through_a_gather ~devices "CPU:1" [| 6; -1; 8; 2 |]);
+      slow
+      @@ prop "a loop runs its call while its flag holds, at most its trips"
+           Gen.(pair (int_range (-1) 6) (int_range 1 5))
+           (fun bounds -> loops_while_a_flag_holds ~devices "CPU:1" bounds);
+      slow
+      @@ prop "a loop runs its calls in order each trip while its flag holds"
+           loop_bounds (fun bounds ->
+             loops_around_calls ~devices "CPU:1" bounds);
       reads_trips_on ~devices "CPU:1";
       reads_trips_under_a_back_edge ~devices "CPU:1";
       test "a loop's move copies the rows its trips name"
@@ -2465,8 +2468,9 @@ let on_a_gpu (kind, _) =
       run_refuses ~devices ~says:off_its_phase
         "a buffer its kernel writes off its phase" "copy"
         (rebound 2 (List.map off_phase));
-      slow "at DEBUG=2, a run prints a line per kernel"
-        (reports_each_kernel ~devices "CPU:1");
+      slow
+      @@ test "at DEBUG=2, a run prints a line per kernel"
+           (reports_each_kernel ~devices "CPU:1");
     ]
 
 let () =

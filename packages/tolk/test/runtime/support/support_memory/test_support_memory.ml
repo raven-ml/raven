@@ -40,7 +40,7 @@ let traces =
     List.sort_uniq compare
       (List.map (fun cell -> int_of_string (cell "trial")) rows)
   in
-  cases ~name:(Printf.sprintf "trial %d") "traces.golden" trials (fun trial ->
+  cases "traces.golden" ~id:(Printf.sprintf "trial %d") trials (fun trial ->
       replay
         (List.filter_map
            (fun cell ->
@@ -101,7 +101,7 @@ let examples =
     ]
 
 let errors =
-  let rejects ?substring f = raises_match (Exn.invalid_arg ?substring) f in
+  let rejects ?substring f = raises_match (Exn.invalid_arg ?sub:substring) f in
   group "Tlsf_allocator › errors"
     [
       test "a negative size is refused" (fun () ->

@@ -9,7 +9,7 @@ let header = "# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6\n"
 let cells column file = List.map (fun cell -> cell column) (Golden.rows file)
 
 let rejects substring contents =
-  raises_match (Exn.failure ~substring) (fun () ->
+  raises_match (Exn.failure ~sub:substring) (fun () ->
       Golden.rows (golden contents))
 
 let texts =
@@ -44,23 +44,22 @@ let tables =
       test "a row needs a cell per column" (fun () ->
           rejects "line 3: 1 cells for 2 columns" (header ^ "a\tb\nx\n"));
       test "cell rejects an unknown column" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"no column \"c\"") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"no column \"c\"") (fun () ->
               cells "c" "lattice.golden"));
     ]
 
-let path_ends_with name = equal (list string) [ "lattice.golden"; name ]
-
+(* A golden's table is one test, named by its file, that checks each row. *)
 let cases =
   group "cases"
     [
-      Golden.cases "lattice.golden" (fun cell ->
-          path_ends_with ("a=" ^ cell "a") (List.tl (current_test ())));
+      Golden.cases "lattice.golden" (fun _ ->
+          equal (list string) [ "cases"; "lattice.golden" ] (current_test ()));
       group "keyed"
         [
-          Golden.cases ~key:[ "b"; "a" ] "lattice.golden" (fun cell ->
-              path_ends_with
-                ("b=" ^ cell "b" ^ " a=" ^ cell "a")
-                (List.tl (List.tl (current_test ()))));
+          Golden.cases ~key:[ "b"; "a" ] "lattice.golden" (fun _ ->
+              equal (list string)
+                [ "cases"; "keyed"; "lattice.golden" ]
+                (current_test ()));
         ];
     ]
 

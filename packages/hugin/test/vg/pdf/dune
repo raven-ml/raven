@@ -17,7 +17,8 @@
  (action
   (progn
    (run %{test} --corrected)
-   (diff? test_pdf.ml test_pdf.ml.corrected)
-   (diff? golden/shapes.pdf.txt golden/shapes.pdf.txt.corrected)
-   (diff? golden/strokes.pdf.txt golden/strokes.pdf.txt.corrected)
-   (diff? golden/marks.pdf.txt golden/marks.pdf.txt.corrected))))
+   (concurrent
+    (diff? test_pdf.ml test_pdf.ml.corrected)
+    (diff? golden/shapes.pdf.txt golden/shapes.pdf.txt.corrected)
+    (diff? golden/strokes.pdf.txt golden/strokes.pdf.txt.corrected)
+    (diff? golden/marks.pdf.txt golden/marks.pdf.txt.corrected)))))

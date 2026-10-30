@@ -199,7 +199,7 @@ let kinds =
   ]
 
 let round_trip =
-  cases ~name:fst "a graph reads back as itself" kinds (fun (_, u) ->
+  cases "a graph reads back as itself" ~id:fst kinds (fun (_, u) ->
       equal node u (Graph.of_string (Graph.to_string u)))
 
 (* The text *)
@@ -235,7 +235,7 @@ let text =
 (* The errors *)
 
 let rejects substring text =
-  raises_match (Exn.failure ~substring) (fun () -> Graph.of_string text)
+  raises_match (Exn.failure ~sub:substring) (fun () -> Graph.of_string text)
 
 (* A graph whose slot and range axes lie past every number handed out so far, at
    the drawn distances: reading it back takes them all. *)

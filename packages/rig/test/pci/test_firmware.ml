@@ -17,7 +17,7 @@ let pinned = "ce1c62cec35ab52e7ceef75a48b8cf0743b671f581f066288ec274636805997a"
 (* BLAKE2b with 32 bytes of output, as Python's hashlib computes it. *)
 let test_digest =
   cases "digest is the hexadecimal BLAKE2b-256 digest"
-    ~name:(fun (name, _, _) -> name)
+    ~id:(fun (name, _, _) -> name)
     [
       ( "empty",
         "",
@@ -211,7 +211,7 @@ let in_home h = Filename.concat h ".local/share/rig/firmware"
 
 let test_directory =
   cases "the directory is XDG_DATA_HOME's, else HOME's"
-    ~name:(fun (name, _, _, _) -> name)
+    ~id:(fun (name, _, _, _) -> name)
     [
       ("XDG_DATA_HOME", "/data", "/home/u", Some (in_data "/data"));
       ( "XDG_DATA_HOME with a final slash",

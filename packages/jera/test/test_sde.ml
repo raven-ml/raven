@@ -17,7 +17,7 @@ let f64 = Nx.float64
 let scalar x = Nx.scalar f64 x
 let vec a = Nx.create f64 [| Array.length a |] a
 let one = Nx.Ptree.tensor
-let raises_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f
 
 let path ?(depth = 10) ?(n = 4000) seed =
   Sde.Brownian.v (Nx.Rng.key seed) f64 ~shape:[| n |] ~t0:0. ~t1:1. ~depth
@@ -64,9 +64,8 @@ let brownian_tests =
         let dw, h = Sde.Brownian.increment w (scalar 0.3) (scalar 0.3) in
         equal (Oracle.tensor ()) (Nx.zeros f64 [| 8 |]) dw;
         equal (Oracle.tensor ()) (Nx.zeros f64 [| 8 |]) h);
-    cases
-      ~name:(fun (s, t) -> Printf.sprintf "[%g, %g]" s t)
-      "increments and areas have their Gaussian law"
+    cases "increments and areas have their Gaussian law"
+      ~id:(fun (s, t) -> Printf.sprintf "[%g, %g]" s t)
       [ (0., 1.); (0.25, 0.75); (0.1, 0.43); (0.6001, 0.6123) ]
       (fun (s, t) ->
         (* 4000 components: a mean's standard error is σ / 63, a variance's
@@ -174,19 +173,21 @@ let steps = [ 4; 8; 16; 32 ]
 
 let order_tests =
   [
-    slow "euler_maruyama has strong order 1/2 on Itô's geometric motion"
-      (fun () ->
-        let w = path 21 in
-        let exact = gbm_exact ~ito:true w in
-        let e =
-          List.map
-            (strong Sde.euler_maruyama ~drift:gbm_drift ~diffusion:gbm_diffusion
-               ~exact w)
-            steps
-        in
-        at_least (float 1e-9) ~than:0.35 (order e);
-        at_most (float 1e-9) ~than:0.75 (order e));
-    slow "milstein has strong order 1 on Itô's geometric motion" (fun () ->
+    slow
+    @@ test "euler_maruyama has strong order 1/2 on Itô's geometric motion"
+         (fun () ->
+           let w = path 21 in
+           let exact = gbm_exact ~ito:true w in
+           let e =
+             List.map
+               (strong Sde.euler_maruyama ~drift:gbm_drift
+                  ~diffusion:gbm_diffusion ~exact w)
+               steps
+           in
+           at_least (float 1e-9) ~than:0.35 (order e);
+           at_most (float 1e-9) ~than:0.75 (order e));
+    slow
+    @@ test "milstein has strong order 1 on Itô's geometric motion" (fun () ->
         let w = path 22 in
         let exact = gbm_exact ~ito:true w in
         let e =
@@ -196,7 +197,8 @@ let order_tests =
             steps
         in
         at_least (float 1e-9) ~than:0.85 (order e));
-    slow "sra1 has strong order 3/2 on additive noise" (fun () ->
+    slow
+    @@ test "sra1 has strong order 3/2 on additive noise" (fun () ->
         let w = path ~depth:9 23 in
         let exact = ou_exact w ~depth:9 in
         let e =
@@ -205,7 +207,8 @@ let order_tests =
             steps
         in
         at_least (float 1e-9) ~than:1.3 (order e));
-    slow "reversible_heun has strong order 1 on additive noise" (fun () ->
+    slow
+    @@ test "reversible_heun has strong order 1 on additive noise" (fun () ->
         let w = path ~depth:9 24 in
         let exact = ou_exact w ~depth:9 in
         let e =
@@ -215,17 +218,18 @@ let order_tests =
             steps
         in
         at_least (float 1e-9) ~than:0.85 (order e));
-    slow "reversible_heun converges on Stratonovich's geometric motion"
-      (fun () ->
-        let w = path 25 in
-        let exact = gbm_exact ~ito:false w in
-        let e =
-          List.map
-            (strong Sde.reversible_heun ~drift:gbm_drift
-               ~diffusion:gbm_diffusion ~exact w)
-            steps
-        in
-        at_least (float 1e-9) ~than:0.4 (order e));
+    slow
+    @@ test "reversible_heun converges on Stratonovich's geometric motion"
+         (fun () ->
+           let w = path 25 in
+           let exact = gbm_exact ~ito:false w in
+           let e =
+             List.map
+               (strong Sde.reversible_heun ~drift:gbm_drift
+                  ~diffusion:gbm_diffusion ~exact w)
+               steps
+           in
+           at_least (float 1e-9) ~than:0.4 (order e));
   ]
 
 (* Marches *)

@@ -223,9 +223,8 @@ let reading_tests =
         in
         equal (close ()) (Nx.sqrt a) (branching a);
         raises_match
-          (Exn.invalid_arg
-             ~substring:"Nx.item: the value is traced by Rune.grad'") (fun () ->
-            Rune.grad' branching a));
+          (Exn.invalid_arg ~sub:"Nx.item: the value is traced by Rune.grad'")
+          (fun () -> Rune.grad' branching a));
   ]
 
 (* Structures and linear solves *)
@@ -626,7 +625,7 @@ let refusal_cases =
                linear solve's trace holds. *)
             raises_match
               (Exn.invalid_arg
-                 ~substring:"captures a value another transformation traces")
+                 ~sub:"captures a value another transformation traces")
               (fun () -> run (fun op b -> mapped_dense (Rune.jit' op) b)) );
       ])
     contexts
@@ -648,8 +647,7 @@ let refusal_cases =
       ( "a read of the residual's argument",
         fun () ->
           raises_match
-            (Exn.invalid_arg
-               ~substring:"Nx.item: the value is traced by Rune.root")
+            (Exn.invalid_arg ~sub:"Nx.item: the value is traced by Rune.root")
             (fun () ->
               Rune.root one
                 ~residual:(fun x ->
@@ -658,8 +656,7 @@ let refusal_cases =
       ( "a read of the linear solve's argument",
         fun () ->
           raises_match
-            (Exn.invalid_arg
-               ~substring:"Nx.item: the value is traced by Rune.root")
+            (Exn.invalid_arg ~sub:"Nx.item: the value is traced by Rune.root")
             (fun () ->
               Rune.root one
                 ~linear_solve:(fun op b ->
@@ -914,7 +911,7 @@ let stated_tests =
         raises ~msg:"a linear solve by reverse mode" (refused "Rune.root" "Exp")
           (fun () -> root ~linear_solve:by_jacrev Nx.exp a));
     test "the default solve refuses leaves of two dtypes" (fun () ->
-        raises_match (Exn.invalid_arg ~substring:"Rune.root") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Rune.root") (fun () ->
             Rune.grad'
               (fun a ->
                 let x, y =

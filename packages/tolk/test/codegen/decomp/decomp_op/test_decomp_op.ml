@@ -93,7 +93,7 @@ let grid_divides =
   in
   let key cell = cell "dtype" ^ " " ^ cell "renderer" in
   let keys = List.sort_uniq compare (List.map key rows) in
-  cases ~name:Fun.id "fast_idiv is division on the grid's dividends" keys
+  cases "fast_idiv is division on the grid's dividends" ~id:Fun.id keys
     (fun k ->
       List.iter
         (fun cell ->
@@ -260,15 +260,15 @@ let threefry =
       Golden.graph "threefry.golden" (fun () ->
           Ops.sink
             [ Decomp_op.threefry2x32 (param Uint64) (param ~slot:1 Uint64) ]);
-      cases
-        ~name:(fun ((c0, c1), (k0, k1), _) ->
+      cases "Random123's known answers"
+        ~id:(fun ((c0, c1), (k0, k1), _) ->
           Printf.sprintf "counter %08x %08x key %08x %08x" c0 c1 k0 k1)
-        "Random123's known answers" random123
+        random123
         (fun (counter, key, expected) ->
           equal words expected (hash ~counter ~key));
-      cases
-        ~name:(fun (n, _) -> Printf.sprintf "counter %d %d" n (n + 10))
-        "JAX's values under the key (0, 1337)" jax
+      cases "JAX's values under the key (0, 1337)"
+        ~id:(fun (n, _) -> Printf.sprintf "counter %d %d" n (n + 10))
+        jax
         (fun (n, expected) ->
           equal words expected (hash ~counter:(n, n + 10) ~key:(0, 1337)));
       test "the hash of constants is a Uint64" (fun () ->
@@ -748,10 +748,10 @@ let nests_keep_values =
       [ Float_c 0.; Float_c (-0.); Float_c 1.; Float_c Float.nan; Float_p;
         Int_c 0; Int_p ]
   in
-  cases
-    ~name:(fun (a, (i, o)) ->
+  cases "a nest of extremes against one value keeps its values"
+    ~id:(fun (a, (i, o)) ->
       Printf.sprintf "%s of %s against %s" (n o) (n i) (against_name a))
-    "a nest of extremes against one value keeps its values" all
+    all
     (fun (a, (i, o)) ->
       let dt, values = match a with
         | Float_c _ | Float_p -> (Dtype.Float32, floats)
@@ -796,8 +796,8 @@ let lowered_divisions =
       (simplify_with (ops [ Shr; And ]) e)
   in
   cases
-    ~name:(fun (dt, _) -> Format.asprintf "%a" Dtype.pp dt)
     "lowered divisions compute truncating and floor quotients and remainders"
+    ~id:(fun (dt, _) -> Format.asprintf "%a" Dtype.pp dt)
     [
       ( Dtype.Uint32,
         [

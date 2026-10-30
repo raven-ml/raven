@@ -36,13 +36,13 @@ let records =
           equal (pair int int)
             (((sequence land 3) lsl 28) lor (count land 0xff_ffff), cq)
             (Doorbell.arm ~sequence ~count ~cq));
-      cases ~name:fst "a negative sequence or count is refused"
+      cases "a negative sequence or count is refused" ~id:fst
         [ ("sequence", (-1, 0)); ("count", (0, -1)) ]
         (fun (_, (sequence, count)) ->
-          raises_match (Exn.invalid_arg ~substring:"Doorbell.arm") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Doorbell.arm") (fun () ->
               Doorbell.arm ~sequence ~count ~cq:0));
       test "a queue past 24 bits is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Doorbell.arm") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Doorbell.arm") (fun () ->
               Doorbell.arm ~sequence:0 ~count:0 ~cq:0x100_0000));
     ]
 
@@ -51,9 +51,8 @@ let regions =
     [
       test "an access region has 4 registers" (fun () ->
           equal int 4 Uar.per_region);
-      cases
-        ~name:(fun (page, i, _) -> Printf.sprintf "page %d of %d bytes" i page)
-        "a system page maps uncached at its index after the command"
+      cases "a system page maps uncached at its index after the command"
+        ~id:(fun (page, i, _) -> Printf.sprintf "page %d of %d bytes" i page)
         [
           (4096, 0, 0x30_0000);
           (4096, 1, 0x30_1000);
@@ -72,27 +71,27 @@ let regions =
           equal (pair int int)
             (i, (j * 4096) + 0x800 + (k * size))
             (Uar.register ~per_page ~size r));
-      cases ~name:(Printf.sprintf "register %d")
-        "registers 2 and 3 are never rung" [ 2; 3; 6; 7 ] (fun r ->
-          raises_match (Exn.invalid_arg ~substring:"never rung") (fun () ->
+      cases "registers 2 and 3 are never rung"
+        ~id:(Printf.sprintf "register %d") [ 2; 3; 6; 7 ] (fun r ->
+          raises_match (Exn.invalid_arg ~sub:"never rung") (fun () ->
               Uar.register ~per_page:1 ~size:512 r));
-      cases ~name:(Printf.sprintf "%d bytes")
-        "a page size that is no positive power of two is refused"
-        [ 0; -4096; 3000 ] (fun page ->
-          raises_match (Exn.invalid_arg ~substring:"Uar.mapping") (fun () ->
+      cases "a page size that is no positive power of two is refused"
+        ~id:(Printf.sprintf "%d bytes") [ 0; -4096; 3000 ] (fun page ->
+          raises_match (Exn.invalid_arg ~sub:"Uar.mapping") (fun () ->
               Uar.mapping ~page 0));
-      cases ~name:fst
+      cases
         "a negative register, no region per page or a negative size is refused"
+        ~id:fst
         [
           ("register -4", (-4, 1, 512));
           ("0 regions per page", (0, 0, 512));
           ("size -1", (0, 1, -1));
         ]
         (fun (_, (r, per_page, size)) ->
-          raises_match (Exn.invalid_arg ~substring:"Uar.register") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Uar.register") (fun () ->
               Uar.register ~per_page ~size r));
       test "page 256 is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Uar.mapping") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Uar.mapping") (fun () ->
               Uar.mapping ~page:4096 256));
       test "a completion queue's register is at 0x20" (fun () ->
           equal int 0x20 Uar.cq_doorbell);

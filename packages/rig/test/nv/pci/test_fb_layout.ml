@@ -18,7 +18,7 @@ let u64 s o = Int64.to_int (String.get_int64_le s o)
 (* Radix-3: three levels of 64-bit addresses, 512 to a 4 KiB page. *)
 let test_radix3 =
   cases "the radix-3 table has a page per 512 of the level below"
-    ~name:(fun (name, _, _) -> name)
+    ~id:(fun (name, _, _) -> name)
     [
       ("one byte", 1, [| 1; 1; 1; 1 |]);
       ("one page", 4096, [| 1; 1; 1; 1 |]);
@@ -184,7 +184,7 @@ let test_top =
    2.125 MiB on Blackwell (the FMC's non-WPR heap). *)
 let test_check =
   cases "the managed memory must end below the GSP's heap"
-    ~name:(fun (name, _, _, _) -> name)
+    ~id:(fun (name, _, _, _) -> name)
     [
       ("below", 0x7_0000_0000, 0x6_ffc0_0000, true);
       ("at the heap's start", 0x7_0000_0000, 0x6_ffd0_0000, true);

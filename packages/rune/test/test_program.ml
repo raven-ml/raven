@@ -11,7 +11,7 @@ module T = Nx.Ptree
 
 let f32 = Nx.float32
 let v xs = Nx.create f32 [| Array.length xs |] xs
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let print p = Format.asprintf "%a" Rune.pp_program p
 
 (* The tangent of each map is computed with its primal in one map of two

@@ -41,9 +41,8 @@ let binary =
       test "keeps the bytes it is made of" (fun () ->
           let s = "\x00\xff\n" in
           equal string s (Binary.of_string s :> string));
-      cases
-        ~name:(fun (s, _) -> Printf.sprintf "formats %S in hexadecimal" s)
-        "pp"
+      cases "pp"
+        ~id:(fun (s, _) -> Printf.sprintf "formats %S in hexadecimal" s)
         [ ("Hi\n", "0x48690a"); ("", "0x"); ("\x00\xff", "0x00ff") ]
         (fun (s, expected) ->
           equal string expected (str Binary.pp (Binary.of_string s)));
@@ -81,10 +80,10 @@ let instant_conversions =
     [
       test "of_ns is the identity on nanoseconds" (fun () ->
           equal int64 Int64.min_int (Time.to_ns (Time.of_ns Int64.min_int)));
-      cases
-        ~name:(fun (n, _, _, _) ->
+      cases "floor"
+        ~id:(fun (n, _, _, _) ->
           Printf.sprintf "to_%s rounds toward negative infinity" n)
-        "floor" units
+        units
         (fun (_, u, _, to_u) ->
           equal int64 (-1L) (to_u (Time.of_ns (-1L)));
           let t = Time.of_ns (Int64.add (Int64.mul 5L u) (Int64.pred u)) in
@@ -103,10 +102,10 @@ let instant_conversions =
               let t = Time.of_ns whole in
               equal ~msg:name (option instant_w) (Some t) (of_u (to_u t)))
             units);
-      cases
-        ~name:(fun (n, _, _, _) ->
+      cases "overflow"
+        ~id:(fun (n, _, _, _) ->
           Printf.sprintf "of_%s is None exactly past the range" n)
-        "overflow" units
+        units
         (fun (_, u, of_u, _) ->
           let hi = Int64.div Int64.max_int u
           and lo = Int64.div Int64.min_int u in
@@ -137,9 +136,8 @@ let gmtime_string s =
 let instant_pp =
   group "Time.pp"
     [
-      cases
-        ~name:(fun (_, s) -> Printf.sprintf "formats %s" s)
-        "spec"
+      cases "spec"
+        ~id:(fun (_, s) -> Printf.sprintf "formats %s" s)
         [
           (Time.of_ns 1710495000_000_000_000L, "2024-03-15T09:30:00");
           (Time.of_ns (-1L), "1969-12-31T23:59:59.999999999");
@@ -180,10 +178,10 @@ let span_constructors =
   in
   group "Span constructors"
     [
-      cases
-        ~name:(fun (n, _, _) ->
+      cases "units"
+        ~id:(fun (n, _, _) ->
           Printf.sprintf "%s scales to nanoseconds and raises past the range" n)
-        "units" ns_per
+        ns_per
         (fun (_, make, u) ->
           equal span_w (Time.Span.of_ns (Int64.mul 3L u)) (make 3);
           equal span_w (Time.Span.of_ns (Int64.mul (-3L) u)) (make (-3));
@@ -230,9 +228,8 @@ let span_constructors =
     ]
 
 let span_pp =
-  cases
-    ~name:(fun (_, s) -> Printf.sprintf "Span.pp formats %s" s)
-    "Span.pp"
+  cases "Span.pp"
+    ~id:(fun (_, s) -> Printf.sprintf "Span.pp formats %s" s)
     [
       (Time.Span.days 7, "168h");
       (Time.Span.minutes 90, "1h30m");
@@ -247,9 +244,8 @@ let span_pp =
     (fun (d, expected) -> equal string expected (str Time.Span.pp d))
 
 let step_pp =
-  cases
-    ~name:(fun (_, s) -> Printf.sprintf "pp_step formats %s" s)
-    "pp_step"
+  cases "pp_step"
+    ~id:(fun (_, s) -> Printf.sprintf "pp_step formats %s" s)
     [
       (Time.Months 1, "1mo");
       (Time.Weeks 2, "2w");
@@ -290,11 +286,10 @@ let date n = Option.get (Time.Date.of_days n)
 let dates =
   group "Time.Date"
     [
-      cases
-        ~name:(fun (c, _) ->
+      cases "anchors"
+        ~id:(fun (c, _) ->
           let y, m, d = c in
           Printf.sprintf "places %d-%d-%d" y m d)
-        "anchors"
         [
           ((1970, 1, 1), 0);
           ((1969, 12, 31), -1);
@@ -308,9 +303,8 @@ let dates =
           equal (option int) (Some days)
             (Option.map Time.Date.to_days (Time.Date.of_civil civil));
           equal civil_w civil (Time.Date.to_civil (date days)));
-      cases
-        ~name:(fun (y, m, d) -> Printf.sprintf "refuses %d-%d-%d" y m d)
-        "invalid"
+      cases "invalid"
+        ~id:(fun (y, m, d) -> Printf.sprintf "refuses %d-%d-%d" y m d)
         [
           (2023, 2, 29);
           (1900, 2, 29);
@@ -360,9 +354,8 @@ let dates =
         (fun (a, b, c) ->
           Law.order date_w (date a, date b, date c);
           equal int (Int.compare a b) (Time.Date.compare (date a) (date b)));
-      cases
-        ~name:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
-        "pp"
+      cases "pp"
+        ~id:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
         [
           ((1970, 1, 1), "1970-01-01");
           ((-44, 3, 15), "-0044-03-15");
@@ -411,9 +404,8 @@ let kinds =
           let k = Type.kind ext_type in
           is_none (Kind.provably_equal k k);
           is_none (Kind.provably_equal (Kind.list k) (Kind.list k)));
-      cases
-        ~name:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
-        "pp"
+      cases "pp"
+        ~id:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
         [
           (str Kind.pp Kind.bool, "bool");
           (str Kind.pp Kind.int, "int");
@@ -543,9 +535,8 @@ let type_constructors =
 let kind_of (Type.Any t) = str Kind.pp (Type.kind t)
 
 let type_kind =
-  cases
-    ~name:(fun (t, k) -> Printf.sprintf "kind of %s is %s" (str pp_any t) k)
-    "Type.kind"
+  cases "Type.kind"
+    ~id:(fun (t, k) -> Printf.sprintf "kind of %s is %s" (str pp_any t) k)
     [
       (Any Type.bool, "bool");
       (Any Type.int8, "int");
@@ -582,10 +573,9 @@ let int_bounds : (string * int Type.t * int * int) list =
 let holds_scalars =
   group "Type.holds scalars"
     [
-      cases
-        ~name:(fun (n, _, _, _) ->
-          Printf.sprintf "%s holds exactly its range" n)
-        "integers" int_bounds
+      cases "integers"
+        ~id:(fun (n, _, _, _) -> Printf.sprintf "%s holds exactly its range" n)
+        int_bounds
         (fun (_, t, lo, hi) ->
           is_true (Type.holds t lo);
           is_true (Type.holds t hi);
@@ -597,10 +587,9 @@ let holds_scalars =
           is_true (Type.holds Type.uint64 max_int);
           is_true (Type.holds Type.uint64 0);
           is_false (Type.holds Type.uint64 (-1)));
-      cases
-        ~name:(fun (n, _, v, b) ->
+      cases "floats"
+        ~id:(fun (n, _, v, b) ->
           Printf.sprintf "%s %s %h" n (if b then "holds" else "does not hold") v)
-        "floats"
         [
           ("float16", Type.float16, 65504., true);
           ("float16", Type.float16, 65519.99, true);
@@ -888,9 +877,8 @@ let compare_values =
           less int ~than:0
             (Type.compare_value (Type.datetime Type.Ns) (Time.of_ns (-1L))
                (Time.of_ns 0L)));
-      cases
-        ~name:(fun (n, _) -> Printf.sprintf "tensors of %s order by value" n)
-        "tensor dtypes"
+      cases "tensor dtypes"
+        ~id:(fun (n, _) -> Printf.sprintf "tensors of %s order by value" n)
         [
           ( "int64",
             fun () ->
@@ -1143,9 +1131,8 @@ let type_equal =
 
 let type_pp =
   let alphabet = Array.init 26 (fun i -> String.make 1 (Char.chr (97 + i))) in
-  cases
-    ~name:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
-    "Type.pp"
+  cases "Type.pp"
+    ~id:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
     [
       (Type.Any Type.bool, "bool");
       (Any Type.int8, "int8");
@@ -1262,9 +1249,8 @@ let schemas =
                  ("delay", Any Type.float32);
                  ("dest", Any Type.string);
                ]));
-      cases
-        ~name:(fun (_, s) -> Printf.sprintf "pp formats %S" s)
-        "pp"
+      cases "pp"
+        ~id:(fun (_, s) -> Printf.sprintf "pp formats %S" s)
         [
           (columns, "carrier string, delay float64");
           ([], "");

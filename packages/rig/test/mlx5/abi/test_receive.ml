@@ -83,7 +83,7 @@ let refusals =
   let refused name ?(at = 0) l =
     test name (fun () ->
         let b = buffer ring in
-        raises_match (Exn.invalid_arg ~substring:"Receive.write") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Receive.write") (fun () ->
             Receive.write b at l);
         for i = 0 to ring - 1 do
           equal ~msg:(strf "byte %d is untouched" i) int 0xa5 (byte b i)

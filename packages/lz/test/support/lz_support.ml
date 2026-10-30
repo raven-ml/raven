@@ -241,8 +241,7 @@ let largest_bound bound =
   Windtrap.test "a bound past max_int raises" (fun () ->
       let open Windtrap in
       let past n =
-        raises_match ~msg:(string_of_int n)
-          (Exn.invalid_arg ~substring:"max_int")
+        raises_match ~msg:(string_of_int n) (Exn.invalid_arg ~sub:"max_int")
           (fun () -> bound n)
       in
       past max_int;
@@ -458,7 +457,9 @@ let decode_string codec data n =
   | Error e -> Error e
 
 let agreement codec =
-  Windtrap.cases ~name:(fun g -> g.file) "vendor goldens" (goldens_of codec)
+  Windtrap.cases "vendor goldens"
+    ~id:(fun g -> g.file)
+    (goldens_of codec)
     (fun g ->
       let raw = Lazy.force g.raw in
       Windtrap.equal decoded (Ok raw)
@@ -471,7 +472,9 @@ let truncations codec =
       (fun g -> g.members = 1 && String.length (Lazy.force g.data) <= 1024)
       (goldens_of codec)
   in
-  Windtrap.cases ~name:(fun g -> g.file) "every prefix is Truncated" files
+  Windtrap.cases "every prefix is Truncated"
+    ~id:(fun g -> g.file)
+    files
     (fun g ->
       let data = Lazy.force g.data in
       let n = String.length (Lazy.force g.raw) in
@@ -503,7 +506,9 @@ let mutations codec =
     decoder codec (of_string data) (create (String.length (Lazy.force g.raw)))
   in
   let flips =
-    Windtrap.cases ~name:(fun g -> g.file) "every bit flipped" (files 512)
+    Windtrap.cases "every bit flipped"
+      ~id:(fun g -> g.file)
+      (files 512)
       (fun g ->
         let data = Lazy.force g.data in
         for bit = 0 to (8 * String.length data) - 1 do

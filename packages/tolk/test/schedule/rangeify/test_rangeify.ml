@@ -270,8 +270,8 @@ let given u =
 let heavy = [ "long_cumsum"; "preserve_multistage_reduce" ]
 
 let keeps_writes name =
-  (if List.mem name heavy then slow else test)
-    (name ^ " writes what its tensors write") (fun () ->
+  (if List.mem name heavy then slow else Fun.id)
+  @@ test (name ^ " writes what its tensors write") (fun () ->
       let sink = program name in
       let buffers = filled sink in
       let into_given = List.filter (fun (s, _, _) -> List.mem s (given sink)) in
@@ -493,7 +493,7 @@ let stores value =
 
 let schedule sink = Rangeify.get_kernel_graph (Prepare.prepare_rangeify sink)
 let kernels_of sink = kernels (schedule sink)
-let rejects ~because f = raises_match (Exn.invalid_arg ~substring:because) f
+let rejects ~because f = raises_match (Exn.invalid_arg ~sub:because) f
 
 let sum_of us =
   List.fold_left (fun acc u -> Ops.O.(acc + u)) (List.hd us) (List.tl us)
@@ -956,9 +956,8 @@ let laws =
     [
       prop "a scheduled function writes what its tensors compute" program
         (writes_what_it_computes ~cover);
-      cases
-        ~name:(Format.asprintf "%a" pp_program)
-        "a scheduled function writes what its tensors compute, for"
+      cases "a scheduled function writes what its tensors compute, for"
+        ~id:(Format.asprintf "%a" pp_program)
         counterexamples writes_what_it_computes;
     ]
 

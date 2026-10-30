@@ -18,7 +18,7 @@ let parse s = P.parse s
 let same =
   let m2 = Unit.(metre ** 2) and m_3 = Unit.(one / (metre ** 3)) in
   let m32 = Unit.(root 2 (metre ** 3)) in
-  cases ~name:fst "§4.3's spellings of one unit"
+  cases "§4.3's spellings of one unit" ~id:fst
     (List.map
        (fun s -> (s, m2))
        [ "m**(2)"; "m**+2"; "m+2"; "m2"; "m^2"; "m^(+2)" ]
@@ -30,7 +30,7 @@ let same =
 
 let values =
   let jy = Unit.(decimal "1e-26" * watt / (metre ** 2) / hertz) in
-  cases ~name:fst "units at the standard's values"
+  cases "units at the standard's values" ~id:fst
     [
       ("pc", Unit.(decimal "3.0857e16" * metre));
       ("kpc", Unit.(decimal "3.0857e19" * metre));
@@ -69,7 +69,7 @@ let values =
     (fun (s, u) -> equal parsed (Ok u) (parse s))
 
 let errors =
-  cases ~name:Fun.id "strings FITS does not read"
+  cases "strings FITS does not read" ~id:Fun.id
     [
       "ms/2";
       "m1.5";

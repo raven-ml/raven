@@ -400,9 +400,8 @@ let rows =
         "a dropped row is at nan in points and extent, and keeps its own \
          values in get and normalized"
         dropped_rows;
-      cases ~name:fst "a missing value drops its row" missing_kinds
-        missing_drops;
-      cases ~name:(fun (n, _, _) -> n) "extent" extents extent_case;
+      cases "a missing value drops its row" ~id:fst missing_kinds missing_drops;
+      cases "extent" ~id:(fun (n, _, _) -> n) extents extent_case;
       prop "series split rows by leading axes and categories" gen_series
         series_law;
       prop "positions, points and extents agree" gen_positions positions_law;
@@ -454,7 +453,7 @@ let rows =
             (list (triple (array int) (array int) id))
             (List.init 3 (fun k -> ([| 3 |], [| k |], legend)))
             (List.rev !swatches));
-      cases ~name:fst "a mark's shape broadcasts the shape given"
+      cases "a mark's shape broadcasts the shape given" ~id:fst
         [
           ("constants", ([| 2; 3 |], [], [| 2; 3 |]));
           ( "with a channel",
@@ -881,7 +880,7 @@ let facets =
 let drawings =
   group "Drawing"
     [
-      cases ~name:Float.to_string "draw raises on the density"
+      cases "draw raises on the density" ~id:Float.to_string
         [ 0.; -1.; nan; Float.infinity ] (fun density ->
           raises_match Exn.invalid_arg (fun () ->
               draw ~density (layout (Size.panels 10. 10.) (resolve (other ())))));
@@ -902,7 +901,7 @@ let drawings =
           not_equal drawing
             (drawn (other ()))
             (drawn (line ~y:(num (f64 [| 1.; 2. |])) ())));
-      cases ~name:fst "draw ~prev is the drawing drawn afresh" reuse
+      cases "draw ~prev is the drawing drawn afresh" ~id:fst reuse
         (fun (_, f) ->
           let reused, fresh = f () in
           equal drawing fresh reused);
@@ -931,9 +930,9 @@ let drawings =
           | [ (Picture.Rows rows, Picture.Stamp _) ] ->
               equal (array int) [| 0; 1; 2 |] rows
           | _ -> fail "no tagged stamp");
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "facets" facets
+      cases "facets"
+        ~id:(fun (n, _, _) -> n)
+        facets
         (fun (_, f, expected) ->
           equal (slist (array int) compare) expected (f ()));
       test "titles take the ink, labels and axes a part of its opacity" inked;
@@ -980,7 +979,7 @@ let output =
           let file = Filename.concat dir "f.jpg" in
           raises_match Exn.invalid_arg (fun () -> save file (other ()));
           equal bool false (Sys.file_exists file));
-      cases ~name:fst "save writes the format its extension names"
+      cases "save writes the format its extension names" ~id:fst
         [ ("f.png", "\x89PNG"); ("f.SVG", "<svg"); ("f.pdf", "%PDF") ]
         (fun (name, magic) ->
           let file = Filename.concat (temp_dir ()) name in
@@ -1209,74 +1208,76 @@ let line_at ?fx ~pen ~curve ~whole x y =
   line ?fx ~x ~y:(num y) ~stroke ~width:(const pen) ~curve ()
 
 let m4_inks_alike =
-  prop ~tags:[ "slow" ] "m4 inks what the whole line inks, within a pixel"
-    ~count:40 gen_trace (fun t ->
-      cover "a line thinner than a column" (t.pen *. t.density < 1.);
-      cover "a line wider than four device pixels" (t.pen *. t.density > 4.);
-      cover "dropped rows" t.gaps;
-      cover "x going back and forth" (t.along = `Waving);
-      cover "x beyond the domain" t.zoom;
-      cover "facet panels" t.facets;
-      let y =
-        match t.signal with
-        | `Noise -> ys t.n
-        | `Walk -> Nx.cumsum (ys t.n)
-        | `Sine -> Nx.sin (Nx.linspace Nx.float64 0. 6. t.n)
-      in
-      let y = if t.gaps then with_gaps y else y in
-      let x =
-        let at f = Nx.init Nx.float64 [| t.n |] (fun i -> f i.(0)) in
-        match t.along with
-        | `Rising -> xs t.n
-        | `Turning -> at (fun i -> Float.of_int (Int.min i (t.n - i)))
-        | `Waving ->
-            let period = t.n / 7 in
-            at (fun i ->
-                let k = i mod period in
-                Float.of_int (Int.min k (period - k)))
-      in
-      let hi = Nx.item [] (Nx.max x) in
-      let x, y, fx =
-        if not t.facets then (x, y, None)
-        else
-          let shape = [| 2; 2; t.n |] in
-          let ys = [ y; Nx.neg y; Nx.mul_s y 0.5; Nx.add_s y 1. ] in
-          ( Nx.broadcast_to shape x,
-            Nx.reshape shape (Nx.stack ~axis:0 ys),
-            Some (dim 0) )
-      in
-      let x =
-        if t.zoom then
-          num ~scale:(Scale.linear ~domain:(0.1 *. hi, 0.9 *. hi) ()) x
-        else num x
-      in
-      let page ~whole =
-        let f =
-          layer
-            [
-              line_at ?fx ~pen:t.pen ~curve:t.curve ~whole x y;
-              axis ~show:false "x";
-              axis ~show:false "y";
-            ]
-        in
-        let theme = Theme.v ~paper:Color.transparent () in
-        let r =
-          Drawing.renderable
-            (drawn ~theme ~density:t.density ~size:(Size.panels t.width 50.) f)
-        in
-        (* Two device pixels of margin on every side, so that no ink is cut by
-           the page's edge. *)
-        let m = 2. /. t.density in
-        Raster.render ~density:t.density
-          (Renderable.v
-             (Renderable.w r +. (2. *. m))
-             (Renderable.h r +. (2. *. m))
-             (Picture.transform (Affine.translate m m) (Renderable.picture r)))
-      in
-      equal
-        (list (pair int int))
-        []
-        (stray (page ~whole:true) (page ~whole:false)))
+  slow
+  @@ prop "m4 inks what the whole line inks, within a pixel" ~count:40 gen_trace
+       (fun t ->
+         cover "a line thinner than a column" (t.pen *. t.density < 1.);
+         cover "a line wider than four device pixels" (t.pen *. t.density > 4.);
+         cover "dropped rows" t.gaps;
+         cover "x going back and forth" (t.along = `Waving);
+         cover "x beyond the domain" t.zoom;
+         cover "facet panels" t.facets;
+         let y =
+           match t.signal with
+           | `Noise -> ys t.n
+           | `Walk -> Nx.cumsum (ys t.n)
+           | `Sine -> Nx.sin (Nx.linspace Nx.float64 0. 6. t.n)
+         in
+         let y = if t.gaps then with_gaps y else y in
+         let x =
+           let at f = Nx.init Nx.float64 [| t.n |] (fun i -> f i.(0)) in
+           match t.along with
+           | `Rising -> xs t.n
+           | `Turning -> at (fun i -> Float.of_int (Int.min i (t.n - i)))
+           | `Waving ->
+               let period = t.n / 7 in
+               at (fun i ->
+                   let k = i mod period in
+                   Float.of_int (Int.min k (period - k)))
+         in
+         let hi = Nx.item [] (Nx.max x) in
+         let x, y, fx =
+           if not t.facets then (x, y, None)
+           else
+             let shape = [| 2; 2; t.n |] in
+             let ys = [ y; Nx.neg y; Nx.mul_s y 0.5; Nx.add_s y 1. ] in
+             ( Nx.broadcast_to shape x,
+               Nx.reshape shape (Nx.stack ~axis:0 ys),
+               Some (dim 0) )
+         in
+         let x =
+           if t.zoom then
+             num ~scale:(Scale.linear ~domain:(0.1 *. hi, 0.9 *. hi) ()) x
+           else num x
+         in
+         let page ~whole =
+           let f =
+             layer
+               [
+                 line_at ?fx ~pen:t.pen ~curve:t.curve ~whole x y;
+                 axis ~show:false "x";
+                 axis ~show:false "y";
+               ]
+           in
+           let theme = Theme.v ~paper:Color.transparent () in
+           let r =
+             Drawing.renderable
+               (drawn ~theme ~density:t.density ~size:(Size.panels t.width 50.)
+                  f)
+           in
+           (* Two device pixels of margin on every side, so that no ink is cut
+              by the page's edge. *)
+           let m = 2. /. t.density in
+           Raster.render ~density:t.density
+             (Renderable.v
+                (Renderable.w r +. (2. *. m))
+                (Renderable.h r +. (2. *. m))
+                (Picture.transform (Affine.translate m m) (Renderable.picture r)))
+         in
+         equal
+           (list (pair int int))
+           []
+           (stray (page ~whole:true) (page ~whole:false)))
 
 (* [line_rows f] is the number of rows the line [f] draws. *)
 let line_rows f =
@@ -1288,9 +1289,8 @@ let line_rows f =
 
 let m4_lines =
   let y = ys 2000 in
-  cases
-    ~name:(fun (name, _, _) -> name)
-    "a line is reduced only if each piece depends on its two points alone"
+  cases "a line is reduced only if each piece depends on its two points alone"
+    ~id:(fun (name, _, _) -> name)
     [
       ("linear", line ~y:(num y) (), true);
       ("monotone_x", line ~curve:Curve.monotone_x ~y:(num y) (), false);
@@ -1461,7 +1461,7 @@ let reducers =
       test "m4 keeps every row at four rows per column" (fun () ->
           let _, kept = m4_kept (xs 200) (ys 200) in
           equal (list int) [ 200 ] (List.map Array.length kept));
-      cases ~name:(fun (n, _, _) -> n) "m4 keeps" m4_cases m4_series;
+      cases "m4 keeps" ~id:(fun (n, _, _) -> n) m4_cases m4_series;
       test "m4 keeps every row when x is in no order" (fun () ->
           let n = 1001 in
           let x = Nx.Rng.uniform ~key:(Nx.Rng.key 7) Nx.float64 [| n |] in
@@ -1475,9 +1475,8 @@ let reducers =
       m4_inks_alike;
       m4_lines;
       raster_as_drawn;
-      cases
-        ~name:(fun (n, _, _) -> Printf.sprintf "%d dots in %s" n "a panel")
-        "raster draws dots as one image past its thresholds"
+      cases "raster draws dots as one image past its thresholds"
+        ~id:(fun (n, _, _) -> Printf.sprintf "%d dots in %s" n "a panel")
         [
           (20_000, Size.panels 400. 400., false);
           (20_001, Size.panels 400. 400., true);
@@ -1660,8 +1659,8 @@ let reducers =
               same_raster (Layout.size l) (Picture.image box px)
                 (Picture.image window gathered)
           | l -> failf "%d images" (List.length l));
-      cases ~name:fst
-        "the large image of any mark is gathered, drawing what it draws"
+      cases "the large image of any mark is gathered, drawing what it draws"
+        ~id:fst
         [ ("grey", 1); ("RGB", 3); ("RGBA", 4) ]
         (fun (_, c) ->
           let px =
@@ -1690,9 +1689,10 @@ let reducers =
                 (Picture.image (Option.get !box) px)
                 (Picture.image window gathered)
           | l -> failf "%d images" (List.length l));
-      cases ~name:fst
+      cases
         "an image under a clip, an opacity or a tag is gathered, under a \
          transform or a stamp left whole"
+        ~id:fst
         [
           ("clip", (true, fun box p -> Picture.clip (Path.rect box) p));
           ("opacity", (true, fun _ p -> Picture.opacity 0.5 p));
@@ -2018,7 +2018,7 @@ let dashes =
         (Gen.pair dashed_marks gen_column)
         solid_law;
       cases "a stroke's dash is the pattern's lengths times its width"
-        ~name:(fun (d, w) -> Format.asprintf "%a at %g" Dash.pp d w)
+        ~id:(fun (d, w) -> Format.asprintf "%a at %g" Dash.pp d w)
         pattern_cases pattern_case;
       test "category i takes pattern i modulo their number" (fun () ->
           let ds = [| Dash.dashed; Dash.dotted |] in
@@ -2200,13 +2200,13 @@ let unchanged_law (m, c) =
 let ablines =
   group "Ablines"
     [
-      cases "the points of an abline satisfy its equation" ~name:fst transforms
+      cases "the points of an abline satisfy its equation" ~id:fst transforms
         equation_case;
       prop "an abline leaves every fitted scale as it was"
         (Gen.pair gen_coefficient gen_coefficient)
         unchanged_law;
       cases "an abline of slope 0 draws the rule at its intercept"
-        ~name:string_of_float [ 1.5; 2.; 3.25 ] (fun c ->
+        ~id:string_of_float [ 1.5; 2.; 3.25 ] (fun c ->
           let dots =
             dot ~x:(num (f64 [| 1.; 4. |])) ~y:(num (f64 [| 1.; 4. |])) ()
           in
@@ -2267,7 +2267,7 @@ let framed_dots = dot ~x:(num (f64 [| 1.; 4. |])) ~y:(num (f64 [| 2.; 3. |])) ()
 let frames =
   group "Frames"
     [
-      cases "a frame draws what a rect stroked in the ink draws" ~name:fst
+      cases "a frame draws what a rect stroked in the ink draws" ~id:fst
         [ ("default", Theme.default); ("dark", Theme.dark) ]
         (fun (_, theme) ->
           equal drawing
@@ -2423,9 +2423,8 @@ let neutral =
 let legend_swatches =
   group "Swatches"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a size legend's swatches show their fill neutral or as bound"
+      cases "a size legend's swatches show their fill neutral or as bound"
+        ~id:(fun (n, _, _) -> n)
         [
           ( "data the legend does not show",
             Some (strings [| "a"; "b"; "a"; "b" |]),
@@ -2455,9 +2454,9 @@ let same_text name expected actual =
 
 let goldens =
   let open Hugin_test_figures in
-  cases
-    ~name:(fun (n, _, _, _) -> n)
-    "the benchmark figures draw their goldens" Figures.goldens
+  cases "the benchmark figures draw their goldens"
+    ~id:(fun (n, _, _, _) -> n)
+    Figures.goldens
     (fun ((name, _, _, _) as g) ->
       let r = Drawing.renderable (Figures.drawing g) in
       same_text name (read_file (golden (name ^ ".svg"))) (Svg.render r);

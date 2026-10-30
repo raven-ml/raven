@@ -94,14 +94,13 @@ let taylor k z =
 
 let order_tests =
   [
-    cases ~name "each method reaches its order on a forced pendulum" methods
+    cases "each method reaches its order on a forced pendulum" ~id:name methods
       (fun (_, m, p, n) ->
         let order = Oracle.slope (error m n) (error m (2 * n)) in
         at_least (float 1e-9) ~than:(Float.of_int p -. 0.25) order;
         at_most (float 1e-9) ~than:(Float.of_int p +. 1.25) order);
-    cases
-      ~name:(fun (n, _, _) -> n)
-      "each method's step on y' = λy is its stability polynomial"
+    cases "each method's step on y' = λy is its stability polynomial"
+      ~id:(fun (n, _, _) -> n)
       [
         ("euler", (fun z -> growth Ode.euler z), taylor 1);
         ("ssprk3", (fun z -> growth Ode.ssprk3 z), taylor 3);
@@ -264,7 +263,7 @@ let transformation_tests =
   ]
 
 let error_tests =
-  let raises_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f in
+  let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f in
   let tableau ?(a = [| [||]; [| 1. |] |]) ?(b = [| 0.5; 0.5 |])
       ?(c = [| 0.; 1. |]) () =
     ignore (Ode.tableau ~a ~b ~c)
@@ -317,9 +316,8 @@ let forced2 t y = Nx.add (Nx.mul (Nx.cos t) y) (Nx.sin (Nx.mul_s t 3.))
 let solve_tests =
   let embedded m = (m :> ([ `Embedded ], _, _, _) Ode.t) in
   [
-    cases
-      ~name:(fun (n, _, _) -> n)
-      "each embedded method meets its tolerance on a forced pendulum"
+    cases "each embedded method meets its tolerance on a forced pendulum"
+      ~id:(fun (n, _, _) -> n)
       [
         ("bs3", embedded Ode.bs3, 1e-7);
         ("tsit5", embedded Ode.tsit5, 1e-9);
@@ -374,8 +372,7 @@ let solve_tests =
         let s = solve ~budget:3 forced2 ~t0:0. ~t1:10. (scalar 1.) in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
           (Solution.is Budget_spent s);
-        raises_match
-          (Exn.failure ~substring:"Jera.Ode.solve: the budget is spent")
+        raises_match (Exn.failure ~sub:"Jera.Ode.solve: the budget is spent")
           (fun () -> Solution.get s);
         let report = Format.asprintf "%a" Solution.pp s in
         contains ~sub:"method tsit5, tol rel 1e-10 abs 1e-12, budget 3" report;
@@ -406,7 +403,7 @@ let solve_tests =
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
           (Solution.is Stalled s);
         raises_match
-          (Exn.failure ~substring:"The times are not strictly monotone at [2].")
+          (Exn.failure ~sub:"The times are not strictly monotone at [2].")
           (fun () -> Solution.get s));
     test "times out of order in one lane leave the others converged" (fun () ->
         let at =
@@ -431,8 +428,8 @@ let solve_tests =
         equal (Oracle.tensor ()) (scalar 0.) (Solution.error s));
     test "solve rejects a time that is not a scalar" (fun () ->
         raises_match
-          (Exn.invalid_arg
-             ~substring:"Jera.Ode.solve: t0 and t1 must be scalars") (fun () ->
+          (Exn.invalid_arg ~sub:"Jera.Ode.solve: t0 and t1 must be scalars")
+          (fun () ->
             Ode.solve one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:10
               (decay (scalar 1.))
               ~t0:(vec [| 0. |]) ~t1:(scalar 1.) (scalar 1.)));
@@ -579,9 +576,8 @@ let path_tests =
           (Oracle.tensor ~rel:1e-14 ())
           (vec [| 1.; Nx.item [] y |])
           (Piecewise.eval p (vec [| 0.; 2. |])));
-    cases
-      ~name:(fun (n, _, _, _) -> n)
-      "between steps a path carries its extension's error"
+    cases "between steps a path carries its extension's error"
+      ~id:(fun (n, _, _, _) -> n)
       [
         ("bs3", embedded Ode.bs3, 1e-8, 1e-6);
         ("tsit5", embedded Ode.tsit5, 1e-10, 1e-8);
@@ -618,7 +614,7 @@ let path_tests =
         let s = path (decay (scalar 1.)) ~t0:1. ~t1:1. (scalar 1.) in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
           (Solution.is Stalled s);
-        raises_match (Exn.failure ~substring:"A path needs t1 ≠ t0.") (fun () ->
+        raises_match (Exn.failure ~sub:"A path needs t1 ≠ t0.") (fun () ->
             Solution.get s));
     test "its error is the accumulated estimate, as sample's" (fun () ->
         let tol = Tol.v ~rel:1e-6 ~abs:1e-8 in
@@ -876,8 +872,7 @@ let event_tests =
         let s = drop event (scalar 10.) in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
           (Solution.is Stalled s);
-        raises_match
-          (Exn.failure ~substring:"The crossing of component [1] near t")
+        raises_match (Exn.failure ~sub:"The crossing of component [1] near t")
           (fun () -> Solution.get s));
     test "a compiled function returns the answer as a triple" (fun () ->
         let s = pair in
@@ -904,8 +899,8 @@ let event_tests =
           fall t y
         in
         raises_match
-          (Exn.invalid_arg
-             ~substring:"Jera.Ode.event: the event has no component") (fun () ->
+          (Exn.invalid_arg ~sub:"Jera.Ode.event: the event has no component")
+          (fun () ->
             Ode.event pair Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:200 counted
               ~event:(fun _ _ -> Nx.zeros f64 [| 0 |])
               ~t0:(scalar 0.) ~t1:(scalar 5.)
@@ -1010,7 +1005,7 @@ let delay_tests =
     test "a history of another shape than the state raises" (fun () ->
         raises_match
           (Exn.invalid_arg
-             ~substring:"Jera.Ode.delay: history returned a value of another")
+             ~sub:"Jera.Ode.delay: history returned a value of another")
           (fun () ->
             Ode.delay one Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:10 ~pieces:4
               lagged ~lags:(vec [| 1. |])
@@ -1020,8 +1015,8 @@ let delay_tests =
         let s = delayed ~lags:(vec [| 0. |]) times in
         equal (Oracle.tensor ()) (Nx.scalar Nx.bool true)
           (Solution.is Stalled s);
-        raises_match (Exn.failure ~substring:"Every lag must be positive.")
-          (fun () -> Solution.get s));
+        raises_match (Exn.failure ~sub:"Every lag must be positive.") (fun () ->
+            Solution.get s));
     test "a lag past the pieces kept ends the lane with the count it needs"
       (fun () ->
         (* A forcing keeps the steps below the lag, so one piece cannot hold the

@@ -236,13 +236,13 @@ let shapes =
           equal (array int) [| 3 |]
             (B.shape (B.compose B.simplex B.exp) [| 4 |]));
       test "a scalar has no vector" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"simplex") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"simplex") (fun () ->
               B.shape B.simplex [||]));
       test "an empty vector has no simplex" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"simplex") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"simplex") (fun () ->
               B.shape B.simplex [| 0 |]));
       test "a rectangle is no Cholesky factor" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"cholesky_corr") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"cholesky_corr") (fun () ->
               B.shape B.cholesky_corr [| 3; 4 |]));
     ]
 

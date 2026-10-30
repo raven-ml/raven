@@ -411,32 +411,35 @@ let leaves =
           equal int 2 (count c " Tm");
           is_true ~msg:"a at its y" (contains c "1 0 0 -1 5 50 Tm");
           is_true ~msg:"b at its y" (contains c "1 0 0 -1 11 52.5 Tm"));
-      prop ~tags:[ "slow" ]
-        ~examples:
-          [ (1.0000185299292945, [ 18.918466897345255; 26.100956639689798 ]) ]
-        "glyphs are shown within 0.001 of where the run puts them"
-        (Gen.pair (Gen.float_range 1. 40.)
-           (Gen.list ~size:(Gen.int_range 1 40) (Gen.float_range (-3.) 30.)))
-        (fun (size, steps) ->
-          let n = List.length steps in
-          let xs = Array.of_list steps in
-          for i = 1 to n - 1 do
-            xs.(i) <- xs.(i - 1) +. xs.(i)
-          done;
-          let r =
-            Run.v ~font:Font.regular ~size ~text:(String.make n 'a')
-              ~glyphs:(Array.make n (glyph 'a'))
-              ~xs ()
-          in
-          let got =
-            glyph_xs (pdf ~w:500. (Picture.glyphs red (P2.v 7. 50.) r))
-          in
-          equal int n (List.length got);
-          List.iteri
-            (fun i x ->
-              at_most ~msg:(string_of_int i) float_exact ~than:0.001
-                (Float.abs (x -. (7. +. xs.(i)))))
-            got);
+      slow
+      @@ prop
+           ~examples:
+             [
+               (1.0000185299292945, [ 18.918466897345255; 26.100956639689798 ]);
+             ]
+           "glyphs are shown within 0.001 of where the run puts them"
+           (Gen.pair (Gen.float_range 1. 40.)
+              (Gen.list ~size:(Gen.int_range 1 40) (Gen.float_range (-3.) 30.)))
+           (fun (size, steps) ->
+             let n = List.length steps in
+             let xs = Array.of_list steps in
+             for i = 1 to n - 1 do
+               xs.(i) <- xs.(i - 1) +. xs.(i)
+             done;
+             let r =
+               Run.v ~font:Font.regular ~size ~text:(String.make n 'a')
+                 ~glyphs:(Array.make n (glyph 'a'))
+                 ~xs ()
+             in
+             let got =
+               glyph_xs (pdf ~w:500. (Picture.glyphs red (P2.v 7. 50.) r))
+             in
+             equal int n (List.length got);
+             List.iteri
+               (fun i x ->
+                 at_most ~msg:(string_of_int i) float_exact ~than:0.001
+                   (Float.abs (x -. (7. +. xs.(i)))))
+               got);
       test "a font is embedded once for runs of equal fonts" (fun () ->
           let copy = Result.get_ok (Font.of_string (Font.bytes Font.regular)) in
           let doc =
@@ -499,7 +502,7 @@ let leaves =
             (list (list float_exact))
             [ [ 100. ]; [ Float.of_int (distinct - 100) ] ]
             (operands "beginbfchar" (Option.get map)));
-      cases ~name:fst "a run carries its text when"
+      cases "a run carries its text when" ~id:fst
         [
           ("a glyph renders two characters", `Ligature);
           ("a glyph is .notdef", `Notdef);
@@ -781,7 +784,7 @@ let accuracy =
           is_true ~msg:"two rows" (contains (dicts doc) "/Width 1 /Height 2");
           is_true ~msg:"placed"
             (contains (content doc) "10 0 0 -4000 0 2000 cm"));
-      cases ~name:fst "an image beyond the margin on one side is cropped there"
+      cases "an image beyond the margin on one side is cropped there" ~id:fst
         [
           ("left", (1, 1000, Box2.v (-999900.) 0. 1e6 10.));
           ("right", (1, 1000, Box2.v (-100.) 0. 1e6 10.));
@@ -1212,7 +1215,7 @@ let stamps =
           let all = String.concat "" forms in
           equal int ~msg:"instances" 1 (count all " Do\n");
           equal int ~msg:"numbers" 0 (count all "nan"));
-      cases ~name:fst "an instance changes nothing"
+      cases "an instance changes nothing" ~id:fst
         [
           ("at x = NaN", (Float.nan, 5., 1000.));
           ("at y = NaN", (20., Float.nan, 1000.));
@@ -1264,8 +1267,8 @@ let numbers_finite doc =
 let limits =
   group "limits"
     [
-      cases ~name:fst
-        "transforms whose composition overflows or underflows paint nothing"
+      cases "transforms whose composition overflows or underflows paint nothing"
+        ~id:fst
         [ ("overflows", 1e200); ("underflows", 1e-200) ]
         (fun (_, k) ->
           let twice p =
@@ -1278,8 +1281,8 @@ let limits =
             (points (content (pdf (twice (Picture.fill red square))))));
       prop ~examples:Vg_corpus.extremes "numbers are finite whatever the scales"
         Vg_corpus.gen_extreme (fun p -> numbers_finite (pdf p));
-      cases ~name:(Printf.sprintf "under a scale of %g")
-        "a pen keeps its width" [ 1e-170; 1e170 ] (fun k ->
+      cases "a pen keeps its width" ~id:(Printf.sprintf "under a scale of %g")
+        [ 1e-170; 1e170 ] (fun k ->
           let p =
             Picture.transform (Affine.scale k k)
               (Picture.stroke
@@ -1355,8 +1358,8 @@ let goldens =
        (fun (name, r) ->
          test (name ^ " writes its golden document") (fun () ->
              expect_file
-               (dump (Hugin_vg_pdf.render r))
-               ("packages/hugin/test/vg/pdf/golden/" ^ name ^ ".pdf.txt")))
+               ~file:("packages/hugin/test/vg/pdf/golden/" ^ name ^ ".pdf.txt")
+               (dump (Hugin_vg_pdf.render r))))
        Vg_corpus.pages)
 
 let () =

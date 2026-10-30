@@ -98,12 +98,11 @@ let notation =
   group "Constant.v reads the published notation"
     [
       cases
-        ~name:(fun (t, _, _) -> t)
-        "value and uncertainty" texts
+        "value and uncertainty" ~id:(fun (t, _, _) -> t) texts
         (fun (t, value, uncertainty) ->
           equal float_exact (float_of_string value) (f64 (k t));
           equal float_exact (float_of_string uncertainty) (u64 (k t)));
-      cases ~name:fst "rejected text" invalid (fun (t, why) ->
+      cases "rejected text" ~id:fst invalid (fun (t, why) ->
           raises
             (Invalid_argument (strf "Constant.v: %S %s" t why))
             (fun () -> k t));
@@ -284,8 +283,8 @@ let rounding =
             (Invalid_argument
                "Constant.quantity: k: -5 is negative, which uint64 does not \
                 hold") (fun () -> Constant.quantity Nx.uint64 (k "-5")));
-      cases ~name:Fun.id
-        "a negative constant in an unsigned dtype is refused before rounding"
+      cases
+        "a negative constant in an unsigned dtype is refused before rounding" ~id:Fun.id
         [ "-1.5"; "-300"; "-1e-400"; "-1.5(1)" ] (fun t ->
           raises
             (Invalid_argument
@@ -358,14 +357,14 @@ let each_release f =
   List.concat_map
     (fun (y, r) -> List.map (fun a -> (y, r, a)) accessors)
     releases
-  |> fun rows -> cases ~name:(fun (y, _, (n, _, _)) -> strf "%s %s" y n) f rows
+  |> fun rows -> cases f ~id:(fun (y, _, (n, _, _)) -> strf "%s %s" y n) rows
 
 let every_constant f =
   List.concat_map
     (fun (y, r) -> List.map (fun c -> (y, c)) (Codata.constants r))
     releases
   |> fun rows ->
-  cases ~name:(fun (y, c) -> strf "%s %s" y (Constant.name c)) f rows
+  cases f ~id:(fun (y, c) -> strf "%s %s" y (Constant.name c)) rows
 
 (* [named r name] is the constant NIST names [name] in [r]. *)
 let named r name =
@@ -428,8 +427,7 @@ let codata =
           equal int 2018 (Codata.year Codata.v2018);
           equal int 2022 (Codata.year Codata.v2022));
       cases
-        ~name:(fun (y, _, _, t) -> strf "%s %s" y t)
-        "values are NIST's" published
+        "values are NIST's" ~id:(fun (y, _, _, t) -> strf "%s %s" y t) published
         (fun (_, r, f, t) -> equal string t (pp_text (f r)));
       each_release
         "an accessor's constant is in the release, in the stated unit"
@@ -441,10 +439,10 @@ let codata =
       (* NIST's 2018 table has 354 rows, 81 exact and 79 restating another; its
          2022 table 355, 81 exact and 79 restating another, as gen/codata.py
          tallies them. *)
-      cases ~name:fst "a release holds every other row of NIST's table"
+      cases "a release holds every other row of NIST's table" ~id:fst
         [ ("2018", (Codata.v2018, 194)); ("2022", (Codata.v2022, 195)) ]
         (fun (_, (r, n)) -> equal int n (List.length (Codata.constants r)));
-      cases ~name:fst "names are distinct" releases (fun (_, r) ->
+      cases "names are distinct" ~id:fst releases (fun (_, r) ->
           let names = List.map Constant.name (Codata.constants r) in
           equal (list string)
             (List.sort_uniq String.compare names)
@@ -479,7 +477,7 @@ let codata =
             && String.ends_with ~suffix:"Compton wavelength" name
           then equal unit Unit.(metre / radian) (Constant.unit c)
           else equal ~msg:name bool false has_radian);
-      cases ~name:fst "the Fermi coupling constant is in GeV^-2" releases
+      cases "the Fermi coupling constant is in GeV^-2" ~id:fst releases
         (fun (_, r) ->
           equal unit
             Unit.(giga electronvolt ** -2)
@@ -499,7 +497,7 @@ let agree c rhs =
 
 let relations =
   let open Quantity in
-  let relation name f = cases ~name:fst name releases (fun (_, r) -> f r) in
+  let relation name f = cases name ~id:fst releases (fun (_, r) -> f r) in
   group "CODATA's constants satisfy the SI's relations"
     [
       relation "mu0 = 2 alpha h / (e^2 c)" (fun r ->
@@ -740,10 +738,9 @@ let test_complex_edge (name, value, (digits, e, outcome)) =
 let float_edges =
   group "A constant rounds once at each float dtype's edges"
     [
-      cases ~name:edge_name "quantity and uncertainty" edge_rows test_edge;
+      cases "quantity and uncertainty" ~id:edge_name edge_rows test_edge;
       cases
-        ~name:(fun (n, _, (digits, e, _)) -> strf "%s %se%d" n digits e)
-        "a complex dtype rounds as its component" complex_edges
+        "a complex dtype rounds as its component" ~id:(fun (n, _, (digits, e, _)) -> strf "%s %se%d" n digits e) complex_edges
         test_complex_edge;
       test "the uncertainty of an exact constant is a positive zero" (fun () ->
           List.iter
@@ -852,7 +849,7 @@ let integer_cases =
 let integers =
   group "A constant in an integer dtype"
     [
-      cases ~name:fst "holds its magnitude or raises" integer_cases
+      cases "holds its magnitude or raises" ~id:fst integer_cases
         (fun (_, f) -> f ());
     ]
 
@@ -909,7 +906,7 @@ let hostile =
 let notation_hostile =
   group "Constant.v on hostile text"
     [
-      cases ~name:(strf "%S") "is not a constant's value" hostile (fun t ->
+      cases "is not a constant's value" ~id:(strf "%S") hostile (fun t ->
           raises
             (Invalid_argument
                (strf "Constant.v: %S is not a constant's value" t))
@@ -919,7 +916,7 @@ let notation_hostile =
             (Invalid_argument
                {|Constant.v: "6.67430(15" is not a constant's value|})
             (fun () -> k "6.67430(15"));
-      cases ~name:(strf "%S") "a zero value is zero, whatever its uncertainty"
+      cases "a zero value is zero, whatever its uncertainty" ~id:(strf "%S")
         [ "0.0(5)"; "-0e5"; "000" ] (fun t ->
           raises
             (Invalid_argument (strf "Constant.v: %S is zero" t))
@@ -929,7 +926,7 @@ let notation_hostile =
           equal float_exact 1e-25 (f64 (k "0.0000000000000000000000001"));
           equal float_exact 1. (u64 (k "1(0000000000000000000000001)"));
           equal float_exact 1e-5 (f64 (k "1e-0000000000000000000000005")));
-      cases ~name:fst "an exponent past the coefficient's bound raises"
+      cases "an exponent past the coefficient's bound raises" ~id:fst
         [
           ("1e99999999999999999999", "numerator");
           ("1e-99999999999999999999", "denominator");
@@ -1052,8 +1049,7 @@ let membership =
   group "A release holds NIST's measured rows"
     [
       cases
-        ~name:(fun (y, n, _, _) -> strf "%s %s" y n)
-        "kept, with NIST's value and unit" kept
+        "kept, with NIST's value and unit" ~id:(fun (y, n, _, _) -> strf "%s %s" y n) kept
         (fun (y, n, text, u) ->
           match find (release_of y) n with
           | None -> failf "CODATA %s has no %S" y n
@@ -1061,8 +1057,7 @@ let membership =
               equal string text (pp_text c);
               equal unit u (Constant.unit c));
       cases
-        ~name:(fun (y, n, why) -> strf "%s %s (%s)" y n why)
-        "left out" left_out
+        "left out" ~id:(fun (y, n, why) -> strf "%s %s (%s)" y n why) left_out
         (fun (y, n, _) ->
           equal (option string) None
             (Option.map Constant.name (find (release_of y) n)));

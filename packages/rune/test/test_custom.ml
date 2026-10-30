@@ -28,7 +28,7 @@ let near ?(tol = 1e-12) ?msg expected actual =
 let exact ?msg expected actual =
   equal ?msg (array float_exact) (values expected) (values actual)
 
-let invalid ?msg ~sub f = raises_match ?msg (Exn.invalid_arg ~substring:sub) f
+let invalid ?msg ~sub f = raises_match ?msg (Exn.invalid_arg ~sub) f
 
 (* sin with its true pullback, and with a pullback of 100 to show it is used. *)
 let my_sin =

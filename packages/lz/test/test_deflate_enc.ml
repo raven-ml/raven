@@ -205,9 +205,8 @@ let short =
 (* Bound on incompressible input: stored blocks, the bound's worst case,
    written one byte at a time to the destination's end. *)
 let noise_bound =
-  cases
-    ~name:(fun (n, l) -> Printf.sprintf "%d bytes, level %d" n l)
-    "noise fits its bound at every level"
+  cases "noise fits its bound at every level"
+    ~id:(fun (n, l) -> Printf.sprintf "%d bytes, level %d" n l)
     (List.concat_map
        (fun n -> List.map (fun l -> (n, l)) levels)
        [ 0; 1; 4999; 5000; 5001; 65535; 65536; 70_000; 300_001 ])
@@ -354,7 +353,10 @@ let zlib_stream =
         (both zlib ~level s))
 
 let empty =
-  cases ~name:(fun f -> f.name) "the empty input" formats (fun f ->
+  cases "the empty input"
+    ~id:(fun f -> f.name)
+    formats
+    (fun f ->
       List.iter
         (fun level ->
           let z = f.encode_string ~level "" in
@@ -367,11 +369,11 @@ let () =
   exit
     (run "Deflate_enc"
        [
-         cases ~name:string_of_int "a level outside 1 to 9 raises" [ 0; 10 ]
+         cases "a level outside 1 to 9 raises" ~id:string_of_int [ 0; 10 ]
            (fun level ->
              List.iter
                (fun f ->
-                 raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
                      f.encode_string ~level "abc"))
                formats);
          group "round trip" [ round_trip; strings; stepped_round_trip ];

@@ -7,7 +7,7 @@ open Windtrap
 open Hugin_gg
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let pp_float ppf x = Format.fprintf ppf "%.17g" x
 
 (* What [Path.fold] visits *)
@@ -233,19 +233,19 @@ let runs_group =
     [
       test "path draws every curve as d3 does" goldens;
       prop "each run is drawn alone" (Gen.pair gen_curve gen_gappy) runs_alone;
-      cases "a run of one point draws nothing" ~name curves (fun c ->
+      cases "a run of one point draws nothing" ~id:name curves (fun c ->
           equal path Path.empty (Curve.path c [| 1. |] [| 2. |]);
           equal path Path.empty
             (Curve.path c [| nan; 1.; 2.; 3. |] [| 0.; 1.; infinity; 3. |]));
-      cases "no points draw nothing" ~name curves (fun c ->
+      cases "no points draw nothing" ~id:name curves (fun c ->
           equal path Path.empty (Curve.path c [||] [||]));
-      cases "two points" ~name curves two_points;
+      cases "two points" ~id:name curves two_points;
       prop "every curve but basis passes through its points"
         (Gen.pair (Gen.of_list ~pp:Curve.pp through) gen_finite)
         passes_through;
       prop "basis starts at the first point and ends at the last" gen_finite
         basis_ends;
-      cases "path raises on lengths that differ" ~name curves (fun c ->
+      cases "path raises on lengths that differ" ~id:name curves (fun c ->
           invalid (fun () -> Curve.path c [| 1.; 2. |] [| 1. |]);
           invalid (fun () -> Curve.path c [| 1. |] [| 1.; 2. |]));
     ]
@@ -343,7 +343,7 @@ let monotone =
   group "monotone"
     [
       cases "Steffen's slopes"
-        ~name:(fun (n, _, _, _) -> n)
+        ~id:(fun (n, _, _, _) -> n)
         steffen_cases steffen_case;
       prop "monotone_x never overshoots" gen_finite never_overshoots;
       prop "monotone_y is monotone_x with x and y exchanged" gen_finite
@@ -516,7 +516,7 @@ let affine =
 let comparing =
   group "comparing and formatting"
     [
-      cases "a curve equals itself" ~name curves (fun c -> equal curve c c);
+      cases "a curve equals itself" ~id:name curves (fun c -> equal curve c c);
       test "distinct curves are unequal" (fun () ->
           List.iteri
             (fun i c ->
@@ -729,11 +729,11 @@ let areas =
       prop "each run of an area is drawn alone"
         (Gen.pair gen_curve gen_gappy_area)
         area_runs_alone;
-      cases "a run of one point draws nothing" ~name curves (fun c ->
+      cases "a run of one point draws nothing" ~id:name curves (fun c ->
           equal path Path.empty
             (Curve.area c ~x0:[| 0.; 1. |] ~y0:[| 0.; nan |] [| 0.; 1. |]
                [| 1.; 1. |]));
-      cases "area raises on lengths that differ" ~name curves area_lengths;
+      cases "area raises on lengths that differ" ~id:name curves area_lengths;
     ]
 
 let () =

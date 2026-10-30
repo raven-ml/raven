@@ -559,7 +559,7 @@ let whole = storage 3 [ 4; 8 ]
 (* [refused ~because u] checks that multi_pm refuses [u], which is built before,
    for a reason that mentions [because]. *)
 let refused ~because u =
-  raises_match (Exn.invalid_arg ~substring:because) (fun () -> multi u)
+  raises_match (Exn.invalid_arg ~sub:because) (fun () -> multi u)
 
 let has op u =
   List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)

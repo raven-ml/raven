@@ -165,11 +165,11 @@ let malformed ~at msg s = fails ~at (Lz.Malformed msg) s
 (* Format *)
 
 let xababab =
-  (* Section 2.2's example: "xababab" is a literal "xab" and a copy of 4
-     bytes from 2 back. *)
-  cases
-    ~name:(fun k -> Printf.sprintf "copy with %d-byte offset" k)
-    "xababab" [ 1; 2; 4 ]
+  (* Section 2.2's example: "xababab" is a literal "xab" and a copy of 4 bytes
+     from 2 back. *)
+  cases "xababab"
+    ~id:(fun k -> Printf.sprintf "copy with %d-byte offset" k)
+    [ 1; 2; 4 ]
     (fun kind ->
       let s = block [ Literal "xab"; Copy { kind; offset = 2; length = 4 } ] in
       equal decoded (Ok "xababab") (decode ~cap:7 s))
@@ -194,18 +194,17 @@ let preambles =
 let literal_lengths =
   (* Section 2.1: lengths up to 60 in the tag, longer ones in 1 to 4 bytes
      after it, at the edge of each count. *)
-  cases ~name:string_of_int "literal lengths"
+  cases "literal lengths" ~id:string_of_int
     [ 1; 59; 60; 61; 256; 257; 65536; 65537; 70000 ]
     (fun n ->
       let s = noise n in
       equal decoded (Ok s) (decode ~cap:n (block [ Literal s ])))
 
 let far_offsets =
-  (* Section 2.2: a 1-byte offset reaches 2047 back, a 2-byte one 65535,
-     a 4-byte one any distance the output holds. *)
-  cases
-    ~name:(fun (kind, offset) -> Printf.sprintf "%d-byte offset %d" kind offset)
-    "far offsets"
+  (* Section 2.2: a 1-byte offset reaches 2047 back, a 2-byte one 65535, a
+     4-byte one any distance the output holds. *)
+  cases "far offsets"
+    ~id:(fun (kind, offset) -> Printf.sprintf "%d-byte offset %d" kind offset)
     [ (1, 2047); (2, 2048); (2, 65535); (4, 65536); (4, 70000) ]
     (fun (kind, offset) ->
       let es = [ Literal (noise 70000); Copy { kind; offset; length = 11 } ] in
@@ -302,13 +301,12 @@ let preamble_lies =
   ]
 
 let long_literals =
-  (* A long literal's length follows its tag, low byte first, so each byte
-     only adds to it: once the bytes so far take it past the preamble's
-     room, the element is Malformed at its tag, at 1, even when the input
-     ends inside its length. *)
-  cases
-    ~name:(fun (name, _) -> name)
-    "a long literal past the preamble"
+  (* A long literal's length follows its tag, low byte first, so each byte only
+     adds to it: once the bytes so far take it past the preamble's room, the
+     element is Malformed at its tag, at 1, even when the input ends inside its
+     length. *)
+  cases "a long literal past the preamble"
+    ~id:(fun (name, _) -> name)
     [
       ("its 1-byte length", "\x03\xf0\x63");
       ("the first of 2 length bytes", "\x03\xf4\x63\x00");
@@ -345,7 +343,7 @@ let after_block =
 let preambles_malformed =
   (* Section 1: a length is at most 2^32 - 1, so its varint at most 5
      bytes, the last holding 4 bits. *)
-  cases ~name:String.escaped "preambles past 32 bits"
+  cases "preambles past 32 bits" ~id:String.escaped
     [ "\x80\x80\x80\x80\x80\x00"; "\xff\xff\xff\xff\x10"; "\x80\x80\x80\x80\x80" ]
     (fun s -> malformed ~at:0 "invalid preamble" s)
 
@@ -354,10 +352,11 @@ let preamble_largest =
       fails ~cap:16 ~at:0 Too_long "\xff\xff\xff\xff\x0f\x00a")
 
 let truncated =
-  let copy4 = block [ Literal "abcd"; Copy { kind = 4; offset = 4; length = 4 } ] in
-  cases
-    ~name:(fun (name, _) -> name)
-    "the input ends inside an element"
+  let copy4 =
+    block [ Literal "abcd"; Copy { kind = 4; offset = 4; length = 4 } ]
+  in
+  cases "the input ends inside an element"
+    ~id:(fun (name, _) -> name)
     [
       ("empty", "");
       ("inside the preamble", "\x80");
@@ -369,9 +368,9 @@ let truncated =
     (fun (_, s) -> fails ~cap:1024 ~at:(String.length s) Truncated s)
 
 let offsets =
-  cases
-    ~name:(fun kind -> Printf.sprintf "zero in the %d-byte form" kind)
-    "a copy offset of zero" [ 1; 2; 4 ]
+  cases "a copy offset of zero"
+    ~id:(fun kind -> Printf.sprintf "zero in the %d-byte form" kind)
+    [ 1; 2; 4 ]
     (fun kind ->
       (* The copy's tag is at 6. *)
       malformed ~at:6 "invalid copy offset"
@@ -386,9 +385,8 @@ let before_start =
   let far4 =
     block [ Literal "abcd"; Copy { kind = 4; offset = 0x7fffffff; length = 4 } ]
   in
-  cases
-    ~name:(fun (name, _, _) -> name)
-    "a copy offset past the output"
+  cases "a copy offset past the output"
+    ~id:(fun (name, _, _) -> name)
     [
       ( "in its 1-byte offset",
         block [ Literal "ab"; Copy { kind = 1; offset = 3; length = 4 } ],
@@ -482,13 +480,13 @@ let () =
          group "arguments"
            [
              test "a negative size has no bound" (fun () ->
-                 raises_match (Exn.invalid_arg ~substring:"negative") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"negative") (fun () ->
                      Lz.Snappy.bound (-1)));
              test "a block holds at most 2^32 - 1 bytes" (fun () ->
                  (* Section 1: the preamble states at most 2^32 - 1. *)
                  equal int (32 + 0xffff_ffff + (0xffff_ffff / 6))
                    (Lz.Snappy.bound 0xffff_ffff);
-                 raises_match (Exn.invalid_arg ~substring:"exceed") (fun () ->
+                 raises_match (Exn.invalid_arg ~sub:"exceed") (fun () ->
                      Lz.Snappy.bound (1 lsl 32)));
            ];
          group "format"

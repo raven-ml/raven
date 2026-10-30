@@ -203,9 +203,8 @@ let test_run_bound () =
   let wide = require_some (Rig.Image.resolve (load "wide") "wide") in
   let make n = Sub.make Rig.host [| Sub.launch wide ~params:n |] in
   ignore (make ((1 lsl 31) - 32));
-  raises_match
-    (Exn.invalid_arg ~substring:"Rig.Submission.launch: ")
-    (fun () -> make ((1 lsl 31) - 31))
+  raises_match (Exn.invalid_arg ~sub:"Rig.Submission.launch: ") (fun () ->
+      make ((1 lsl 31) - 31))
 
 let program_tests =
   group ~timeout "launches"
@@ -314,11 +313,11 @@ let test_other_parts () =
 let split_tests =
   group ~timeout "splits"
     [
-      prop "a launch runs every thread once, in calls of whole groups"
-        grid_case test_split;
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a launch never runs with" refusals test_refused;
+      prop "a launch runs every thread once, in calls of whole groups" grid_case
+        test_split;
+      cases "a launch never runs with"
+        ~id:(fun (n, _, _) -> n)
+        refusals test_refused;
       test "the host runs no copy, fill or words" test_other_parts;
     ]
 
@@ -767,7 +766,7 @@ let test_rel () =
 let test_got () =
   let kind = if S.machine = "x86_64" then 42 else 311 in
   starts_with
-    ~affix:(refused (strf "relocation of type %d at 0x" kind))
+    ~prefix:(refused (strf "relocation of type %d at 0x" kind))
     (load_error (obj "got"))
 
 (* [obj] with the header of its section [name], at [h], set by [set b h]. The
@@ -821,7 +820,7 @@ let test_unmappable () =
   let why =
     load_error (patch_named (obj "aligned") ".rodata" (set_align align))
   in
-  starts_with ~affix:"CPU: mapping " why;
+  starts_with ~prefix:"CPU: mapping " why;
   contains ~sub:(strf "at a multiple of %d bytes" align) why
 
 let test_refusal (_, o, msg) = equal string (refused msg) (load_error o)
@@ -832,16 +831,15 @@ let refusal_tests =
       test "an image's functions are the symbols of its code" test_functions;
       test "a load of what is not ELF is refused" (fun () ->
           ignore (load_error "not an object"));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a load is refused for" refusals test_refusal;
+      cases "a load is refused for"
+        ~id:(fun (n, _, _) -> n)
+        refusals test_refusal;
       test "a load of relocations whose addends are in their fields is refused"
         test_rel;
       test "a load of a relocation through a global offset table is refused"
         test_got;
-      cases
-        ~name:(strf "%d bytes")
-        "a function reads data aligned to" alignments test_aligned;
+      cases "a function reads data aligned to" ~id:(strf "%d bytes") alignments
+        test_aligned;
       test "a load of an alignment no address space holds is refused"
         test_unmappable;
     ]

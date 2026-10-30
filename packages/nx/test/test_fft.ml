@@ -195,7 +195,7 @@ let test_rules () =
   let x = on (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]) in
   let c = on (A.of_array D.Complex64 [| 3 |] (Array.make 3 Complex.zero)) in
   Atomic.set Dft.calls 0;
-  let raises f = raises_match (Exn.invalid_arg ~substring:"t: ") f in
+  let raises f = raises_match (Exn.invalid_arg ~sub:"t: ") f in
   raises (fun () -> fft (R2c { dtype = Nx.complex128; axes = [| 0 |]; x }));
   raises (fun () ->
       fft
@@ -626,7 +626,7 @@ module Laws = struct
         let y = Nx.fftshift ~axes x in
         equal ~msg:"round trip" (array int32) (Nx.to_array x) (Nx.to_array (Nx.ifftshift ~axes y)))
 
-  let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+  let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
   let test_refusals () =
     let z = Nx.zeros Nx.complex64 [| 4 |] and x = Nx.zeros Nx.float32 [| 4 |] in

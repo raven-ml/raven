@@ -76,7 +76,7 @@ let numbering =
             require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
           in
           equal string ("NV-PCI: " ^ Rig_pci_support.unlisted_why) why);
-      cases ~name:fst "GPUs are named by number"
+      cases "GPUs are named by number" ~id:fst
         [
           ("0", (0, "NV-PCI")); ("1", (1, "NV-PCI:1")); ("12", (12, "NV-PCI:12"));
         ]
@@ -102,7 +102,7 @@ let opening =
           is_error ~msg:"attach" (Rig_nv_pci.attach n);
           let machine = Rig_pci.Machine.at (machine ()) in
           is_error ~msg:"reset" (Rig_nv_pci.reset ~machine 2));
-      cases ~name:fst "a negative GPU number raises"
+      cases "a negative GPU number raises" ~id:fst
         [
           ("gpu", fun () -> ignore (Rig_nv_pci.gpu (-1)));
           ("detach", fun () -> ignore (Rig_nv_pci.detach (-1)));
@@ -110,9 +110,10 @@ let opening =
           ("reset", fun () -> ignore (Rig_nv_pci.reset (-1)));
         ]
         (fun (_, f) -> raises_match Exn.invalid_arg f);
-      cases ~name:fst
+      cases
         "a call inside a lock of its thread's raises naming it, changing \
          nothing"
+        ~id:fst
         (let on () = Rig_pci.Machine.at (machine ()) in
          let past () = require_ok (Rig_nv_pci.count ()) in
          [
@@ -196,7 +197,7 @@ let reports =
   group "boot reports"
     [
       cases "a listed chip is named, with its family's files, none found"
-        ~name:(fun (name, _, _, _) -> name)
+        ~id:(fun (name, _, _, _) -> name)
         [
           ("GA102", 0x17, 2, `Ampere);
           ("GA107", 0x17, 7, `Ampere);
@@ -214,7 +215,7 @@ let reports =
                (files family))
             r.images);
       cases "an unlisted chip is an error naming it"
-        ~name:(fun (name, _, _, _) -> name)
+        ~id:(fun (name, _, _, _) -> name)
         [
           ("GA100", 0x17, 0, "GA100");
           ("GA105", 0x17, 5, "GA105");
@@ -233,7 +234,7 @@ let reports =
           in
           equal string "AD103" r.chip);
       cases "a VBIOS without what FWSEC needs is an error naming it"
-        ~name:(fun (name, _) -> name)
+        ~id:(fun (name, _) -> name)
         [
           ("vbios_no_bit.rom", "no BIT table");
           ("vbios_debug.rom", "no production FWSEC");

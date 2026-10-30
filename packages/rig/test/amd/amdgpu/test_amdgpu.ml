@@ -279,12 +279,11 @@ let numbering =
           equal (list string)
             [ "ffff:00:00.0"; "10000:00:01.0" ]
             (listed ~root ()));
-      cases
-        ~name:(fun f ->
+      cases "unreadable files"
+        ~id:(fun f ->
           if Filename.basename f = "vendor" then
             "an unreadable vendor file leaves its function out"
           else "an unreadable functions' directory is an Error naming it")
-        "unreadable files"
         [ "sys/bus/pci/devices"; "sys/bus/pci/devices/0000:05:00.0/vendor" ]
         unreadable;
       test "a machine without PCI files has no GPU" (fun () ->
@@ -366,9 +365,8 @@ let held =
 let inside_lock =
   group ~timeout:10. "inside a lock"
     [
-      cases
-        ~name:(fun (fn, _, _) -> fn)
-        "a call raises naming it, changing nothing"
+      cases "a call raises naming it, changing nothing"
+        ~id:(fun (fn, _, _) -> fn)
         [
           ( "gpu",
             "error",
@@ -524,7 +522,7 @@ let names =
             [ "AMD"; "AMD:1"; "AMD:12" ]
             (List.map (fun i -> (P.gpu i).name) [ 0; 1; 12 ]));
       test "a negative GPU is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"gpu") (fun () -> P.gpu (-1)));
+          raises_match (Exn.invalid_arg ~sub:"gpu") (fun () -> P.gpu (-1)));
       test "constructing an opener reads no machine files" (fun () ->
           let o = P.gpu_under ~root:"no-such-directory" max_int in
           equal string ("AMD:" ^ string_of_int max_int) o.name;

@@ -252,18 +252,15 @@ let bounds =
   group "bounds"
     [
       cases
-        ~name:(fun (n, _, _) -> n)
-        "within" fits
+        "within" ~id:(fun (n, _, _) -> n) fits
         (fun (_, f, text) -> equal string text (Unit.to_string (f ())));
       cases
-        ~name:(fun (n, _, _) -> n)
-        "exponent leaves int" leaves
+        "exponent leaves int" ~id:(fun (n, _, _) -> n) leaves
         (fun (_, f, msg) -> raises (Invalid_argument msg) f);
-      cases ~name:fst "coefficient within 4096 bits" coefficient_fits
+      cases "coefficient within 4096 bits" ~id:fst coefficient_fits
         (fun (_, f) -> ignore (f ()));
       cases
-        ~name:(fun (n, _, _) -> n)
-        "coefficient past 4096 bits" coefficient_past
+        "coefficient past 4096 bits" ~id:(fun (n, _, _) -> n) coefficient_past
         (fun (_, f, msg) -> raises (Invalid_argument msg) f);
     ]
 
@@ -438,7 +435,7 @@ let constructors =
       test "decimal refuses a long mantissa at its first digit past 2^62"
         (fun () ->
           raises_match
-            (Exn.invalid_arg ~substring:"has a mantissa of 2^62 or more")
+            (Exn.invalid_arg ~sub:"has a mantissa of 2^62 or more")
             (fun () -> Unit.decimal (String.make 10_000_000 '9')));
       test "a decimal exponent past int is past the coefficient's bound"
         (fun () ->
@@ -463,7 +460,7 @@ let constructors =
             Unit.((int 2 ** 61) / int 10)
             (Unit.decimal "230584300921369395.2");
           equal unit (Unit.int max_int) (Unit.decimal "4611686018427387903"));
-      cases ~name:Fun.id "a mantissa of 2^62 is refused"
+      cases "a mantissa of 2^62 is refused" ~id:Fun.id
         [ "4611686018427387904"; "461168601842738790.4" ] (fun s ->
           raises
             (Invalid_argument
@@ -477,7 +474,7 @@ let constructors =
           List.iter
             (fun name -> equal string name (Unit.to_string (Unit.symbol name)))
             [ "_"; "A"; "Pi"; "pi2"; "_1"; "a_B9" ]);
-      cases ~name:fst "raise Invalid_argument"
+      cases "raise Invalid_argument" ~id:fst
         [
           invalid "int 0" (fun () -> Unit.int 0);
           invalid "int -1" (fun () -> Unit.int (-1));
@@ -610,12 +607,10 @@ let si_units =
   group "SI"
     [
       cases
-        ~name:(fun (n, _, _) -> n)
-        "definitions" si
+        "definitions" ~id:(fun (n, _, _) -> n) si
         (fun (_, u, w) -> equal unit w u);
       cases
-        ~name:(fun (n, _, _) -> n)
-        "prefixes" prefixes
+        "prefixes" ~id:(fun (n, _, _) -> n) prefixes
         (fun (_, p, k) ->
           equal unit Unit.((int 10 ** k) * metre) (p Unit.metre));
     ]

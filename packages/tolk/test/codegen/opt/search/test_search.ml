@@ -203,10 +203,11 @@ let searches =
   let quick cell = cell "target" = "clang" in
   group "a search chooses what tinygrad's chooses"
     [
-      cases ~name "on the host" (List.filter quick rows) searched;
-      cases ~tags:[ "slow" ] ~name "on GPUs"
-        (List.filter (fun c -> not (quick c)) rows)
-        searched;
+      cases "on the host" ~id:name (List.filter quick rows) searched;
+      slow
+      @@ cases "on GPUs" ~id:name
+           (List.filter (fun c -> not (quick c)) rows)
+           searched;
     ]
 
 (* Laws of the candidates *)
@@ -224,14 +225,14 @@ let name_of (kernel, target) = kernel ^ " on " ^ target
 let candidate_laws =
   group "get_kernel_actions"
     [
-      cases ~name:name_of "leaves its scheduler as it was" small
+      cases "leaves its scheduler as it was" ~id:name_of small
         (fun (kernel, target) ->
           let k = scheduled kernel target in
           let ast = K.ast k in
           ignore (Search.get_kernel_actions k);
           equal Uops.uop ast (K.ast k);
           equal opts [] (K.applied_opts k));
-      cases ~name:name_of "makes each candidate by applying its action" small
+      cases "makes each candidate by applying its action" ~id:name_of small
         (fun (kernel, target) ->
           let k = scheduled kernel target in
           let applied (a, k') =
@@ -240,7 +241,7 @@ let candidate_laws =
               opts [ a ] (K.applied_opts k')
           in
           List.iter applied (Search.get_kernel_actions k));
-      cases ~name:name_of "leaves out more candidates under a smaller max_up"
+      cases "leaves out more candidates under a smaller max_up" ~id:name_of
         small (fun (kernel, target) ->
           let k = scheduled kernel target in
           let fewer = List.map fst (Search.get_kernel_actions ~max_up:2 k) in
@@ -300,22 +301,22 @@ let keeps_writes_exhaustively =
       [ "add_small"; "sum_rows"; "symbolic"; "pad_7x7" ]
   in
   let candidates k = List.filter evaluable (Search.get_kernel_actions k) in
-  cases ~tags:[ "slow" ] ~name:name_of
-    "every kernel two actions make writes what its kernel writes" pairs
-    (fun (kernel_name, target) ->
-      let expected = Kernel_opts.writes (kernel kernel_name) in
-      let keeps (_, k) =
-        equal
-          ~msg:
-            (Format.asprintf "%a"
-               (Format.pp_print_list Opt.pp)
-               (K.applied_opts k))
-          (list Kernel_opts.write) expected
-          (Kernel_opts.writes (quietly (fun () -> K.get_optimized_ast k)))
-      in
-      List.iter
-        (fun c -> List.iter keeps (candidates (snd c)))
-        (candidates (scheduled kernel_name target)))
+  slow
+  @@ cases "every kernel two actions make writes what its kernel writes"
+       ~id:name_of pairs (fun (kernel_name, target) ->
+         let expected = Kernel_opts.writes (kernel kernel_name) in
+         let keeps (_, k) =
+           equal
+             ~msg:
+               (Format.asprintf "%a"
+                  (Format.pp_print_list Opt.pp)
+                  (K.applied_opts k))
+             (list Kernel_opts.write) expected
+             (Kernel_opts.writes (quietly (fun () -> K.get_optimized_ast k)))
+         in
+         List.iter
+           (fun c -> List.iter keeps (candidates (snd c)))
+           (candidates (scheduled kernel_name target)))
 
 (* Laws of the search *)
 
@@ -386,24 +387,24 @@ let chooses_the_fastest =
   let pp ppf (kernel, amt, seed) =
     Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
   in
-  prop ~tags:[ "slow" ] ~count:20
-    "a search chooses the fastest program it measured"
-    Gen.(
-      with_pp pp
-        (triple
-           (of_list [ "add_small"; "sum_rows"; "variable_rows" ])
-           (int_range 1 3) nat))
-    (fun (kernel, amt, seed) ->
-      let timing, calls = recording (drawn_time seed) in
-      let k = scheduled kernel "clang" in
-      let chosen = search ~timing amt k in
-      match calls () with
-      | [] -> equal Uops.uop (K.ast k) (K.ast chosen)
-      | calls ->
-          let fastest =
-            List.fold_left (fun t c -> Float.min t c.time) infinity calls
-          in
-          equal float_exact fastest (drawn seed (K.applied_opts chosen)))
+  slow
+  @@ prop ~count:20 "a search chooses the fastest program it measured"
+       Gen.(
+         with_pp pp
+           (triple
+              (of_list [ "add_small"; "sum_rows"; "variable_rows" ])
+              (int_range 1 3) nat))
+       (fun (kernel, amt, seed) ->
+         let timing, calls = recording (drawn_time seed) in
+         let k = scheduled kernel "clang" in
+         let chosen = search ~timing amt k in
+         match calls () with
+         | [] -> equal Uops.uop (K.ast k) (K.ast chosen)
+         | calls ->
+             let fastest =
+               List.fold_left (fun t c -> Float.min t c.time) infinity calls
+             in
+             equal float_exact fastest (drawn seed (K.applied_opts chosen)))
 
 let binaries calls = List.map (fun c -> binary c.prg) calls
 
@@ -435,9 +436,8 @@ let midpoints =
         calls)
 
 let positional =
-  cases ~name:string_of_bool
-    "a search binds a positional size in its call and launch" [ false; true ]
-    (fun allow_test_size ->
+  cases "a search binds a positional size in its call and launch"
+    ~id:string_of_bool [ false; true ] (fun allow_test_size ->
       let ast = kernel "symbolic" in
       let v = List.hd (Call.variables ast) in
       let p = Call.param_like v 4 in
@@ -576,15 +576,15 @@ let stages = [ ("a link", `Link); ("a sample", `Time) ]
 let exceptions =
   group "a timing that raises"
     [
-      cases ~name:fst "Exit is raised by the search, from" stages
+      cases "Exit is raised by the search, from" ~id:fst stages
         (fun (_, stage) ->
           raises Exit (fun () ->
               search ~timing:(raising_at stage Exit) 1
                 (scheduled "sum_rows" "clang")));
-      cases ~name:fst
+      cases
         "Failure drops its program, and a search of no timed candidate keeps \
          its kernel, from"
-        stages (fun (_, stage) ->
+        ~id:fst stages (fun (_, stage) ->
           let k = scheduled "sum_rows" "clang" in
           let chosen =
             search ~timing:(raising_at stage (Failure "no device")) 1 k
@@ -764,20 +764,21 @@ let test_size =
             (List.exists
                (fun c -> workgroups ~vars:c.vars c.prg > 65536)
                (calls ())));
-      slow "chooses as measuring them all does, for a time per workgroup"
-        (fun () ->
-          let choose allow_test_size =
-            let timing, _ = recording per_workgroup in
-            K.applied_opts
-              (search ~allow_test_size ~timing 1
-                 (scheduled "add_large" "metal"))
-          in
-          equal opts (choose false) (choose true));
+      slow
+      @@ test "chooses as measuring them all does, for a time per workgroup"
+           (fun () ->
+             let choose allow_test_size =
+               let timing, _ = recording per_workgroup in
+               K.applied_opts
+                 (search ~allow_test_size ~timing 1
+                    (scheduled "add_large" "metal"))
+             in
+             equal opts (choose false) (choose true));
     ]
 
 let width =
   test "a search of no width is refused" (fun () ->
-      raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+      raises_match (Exn.invalid_arg ?sub:None) (fun () ->
           search ~timing:constant 0 (scheduled "sum_rows" "clang")))
 
 (* Compilation *)
@@ -1148,7 +1149,7 @@ let cache_declared =
 (* The settings that pick candidates and how a search measures and stops shape
    compilation, at their defaults here. *)
 let cache_variables =
-  cases ~name:fst "the search's settings shape compilation"
+  cases "the search's settings shape compilation" ~id:fst
     [
       ("BEAM_PADTO", "false");
       ("BEAM_UOPS_MAX", "3000");
@@ -1170,7 +1171,8 @@ let kinds_time ~vars:_ prg =
   List.fold_left (fun t o -> t *. weight o) (1e-3 *. Float.of_int depth) opts
 
 let cache_kinds =
-  slow "the cache keeps tensor cores and swaps" (fun () ->
+  slow
+  @@ test "the cache keeps tensor cores and swaps" (fun () ->
       let cached timing =
         K.applied_opts
           (search
@@ -1299,105 +1301,116 @@ let instructions prg = List.length (Ops.src (Ops.nth prg 1))
 (* The environment is read once per process: the suite runs this group in a
    process of its own (see dune). *)
 let under_environment =
-  group ~tags:[ "environment" ]
-    (String.concat " " (List.map (fun (n, v) -> n ^ "=" ^ v) environment))
-    [
-      test "the suite runs this group with them" (fun () ->
-          List.iter
-            (fun (name, value) ->
-              equal ~msg:name (option string) (Some value) (Sys.getenv_opt name))
-            environment);
-      test "the actions are tinygrad's, pads included" (fun () ->
-          equal opts
-            (recorded_actions "actions_padto.golden")
-            (Search.actions ()));
-      test "a candidate of BEAM_UOPS_MAX instructions or more is dropped"
-        (fun () ->
-          ignore (output ());
-          let timing, calls = recording (golden_time ~failing:false) in
-          ignore (search ~timing 1 (scheduled "sum_rows" "clang"));
-          List.iter
-            (fun c ->
-              satisfies ~claim:"fewer than 43" int
-                (fun n -> n < 43)
-                (instructions c.prg))
-            (calls ());
-          contains ~sub:"too many uops" (output ()));
-      test "a candidate of BEAM_UOPS_MAX instructions or more is not compiled"
-        (fun () ->
-          let ren, _, compiled = counting "Apple8" in
-          let timing, record =
-            sampling (fun ~vars prg _ -> golden_time ~failing:false ~vars prg)
-          in
-          ignore (search ~timing 1 (scheduled_for ren "sum_rows"));
-          let linked = List.map binary (record ()).linked in
-          is_true ~msg:"linked" (linked <> []);
-          List.iter
-            (fun (src, _) ->
-              satisfies ~claim:"a linked program's" string
-                (fun src -> List.mem src linked)
-                src)
-            (to_list compiled));
-      test "a compilation that raises is raised under BEAM_STRICT_MODE"
-        (fun () ->
-          let ren, _ = rejecting ~every:1 rejected_by_compiler in
-          raises_match
-            (function Renderer.Compiler.Compile_error _ -> true | _ -> false)
-            (fun () -> search ~timing:constant 1 (scheduled_for ren "sum_rows")));
-      test
-        "a search prints the kernel, failures and its choice under BEAM_DEBUG"
-        (fun () ->
-          ignore (output ());
-          let timing, _ = recording (golden_time ~failing:true) in
-          ignore (search ~timing 2 (scheduled "add_small" "clang"));
-          in_order
-            ~subs:
-              [
-                "BEAM_SEARCH:"; "BEAM failed for opts"; "BEAM_SEARCH: final tm=";
-              ]
-            (output ()));
-      Golden.cases ~key:[ "kernel"; "target"; "amt" ]
-        "searches_environment.golden" (fun cell ->
-          let timing, calls = recording (golden_time ~failing:false) in
-          let k =
-            search ~timing
-              (int_of_string (cell "amt"))
-              (scheduled (cell "kernel") (cell "target"))
-          in
-          equal opts (Kernel_opts.opts_of_cell (cell "opts")) (K.applied_opts k);
-          equal ~msg:"measurements" int
-            (int_of_string (cell "measurements"))
-            (List.length (calls ())));
-      test
-        "a candidate of more than 1000 times the fewest operations is not \
-         measured" (fun () ->
-          let is_pad = function Opt.Padto _ -> true | _ -> false in
-          let k = scheduled "transpose_33" "metal" in
-          let pads =
-            List.filter
-              (fun (_, k') -> List.exists is_pad (K.applied_opts k'))
-              (quietly (fun () -> Search.get_kernel_actions k))
-          in
-          is_true ~msg:"a pad is a candidate" (pads <> []);
-          ignore (output ());
-          let timing, calls = recording (golden_time ~failing:false) in
-          ignore (search ~timing 1 k);
-          contains ~sub:"too much compute" (output ());
-          is_true ~msg:"measured" (calls () <> []);
-          List.iter
-            (fun c ->
-              is_true ~msg:"a pad was measured"
-                (not (List.exists is_pad (kernel_info c.prg).applied_opts)))
-            (calls ()));
-      test "kernels of too many lanes are reported under BEAM_LOG_SURPASS_MAX"
-        (fun () ->
-          ignore (output ());
-          ignore
-            (quietly (fun () ->
-                 Search.get_kernel_actions ~max_up:1
-                   (scheduled "sum_rows" "metal")));
-          contains ~sub:"too many upcast/local" (output ()));
-    ]
+  tag "environment"
+  @@ group
+       (String.concat " " (List.map (fun (n, v) -> n ^ "=" ^ v) environment))
+       [
+         test "the suite runs this group with them" (fun () ->
+             List.iter
+               (fun (name, value) ->
+                 equal ~msg:name (option string) (Some value)
+                   (Sys.getenv_opt name))
+               environment);
+         test "the actions are tinygrad's, pads included" (fun () ->
+             equal opts
+               (recorded_actions "actions_padto.golden")
+               (Search.actions ()));
+         test "a candidate of BEAM_UOPS_MAX instructions or more is dropped"
+           (fun () ->
+             ignore (output ());
+             let timing, calls = recording (golden_time ~failing:false) in
+             ignore (search ~timing 1 (scheduled "sum_rows" "clang"));
+             List.iter
+               (fun c ->
+                 satisfies ~claim:"fewer than 43" int
+                   (fun n -> n < 43)
+                   (instructions c.prg))
+               (calls ());
+             contains ~sub:"too many uops" (output ()));
+         test
+           "a candidate of BEAM_UOPS_MAX instructions or more is not compiled"
+           (fun () ->
+             let ren, _, compiled = counting "Apple8" in
+             let timing, record =
+               sampling (fun ~vars prg _ ->
+                   golden_time ~failing:false ~vars prg)
+             in
+             ignore (search ~timing 1 (scheduled_for ren "sum_rows"));
+             let linked = List.map binary (record ()).linked in
+             is_true ~msg:"linked" (linked <> []);
+             List.iter
+               (fun (src, _) ->
+                 satisfies ~claim:"a linked program's" string
+                   (fun src -> List.mem src linked)
+                   src)
+               (to_list compiled));
+         test "a compilation that raises is raised under BEAM_STRICT_MODE"
+           (fun () ->
+             let ren, _ = rejecting ~every:1 rejected_by_compiler in
+             raises_match
+               (function
+                 | Renderer.Compiler.Compile_error _ -> true | _ -> false)
+               (fun () ->
+                 search ~timing:constant 1 (scheduled_for ren "sum_rows")));
+         test
+           "a search prints the kernel, failures and its choice under \
+            BEAM_DEBUG" (fun () ->
+             ignore (output ());
+             let timing, _ = recording (golden_time ~failing:true) in
+             ignore (search ~timing 2 (scheduled "add_small" "clang"));
+             in_order
+               ~subs:
+                 [
+                   "BEAM_SEARCH:";
+                   "BEAM failed for opts";
+                   "BEAM_SEARCH: final tm=";
+                 ]
+               (output ()));
+         Golden.cases ~key:[ "kernel"; "target"; "amt" ]
+           "searches_environment.golden" (fun cell ->
+             let timing, calls = recording (golden_time ~failing:false) in
+             let k =
+               search ~timing
+                 (int_of_string (cell "amt"))
+                 (scheduled (cell "kernel") (cell "target"))
+             in
+             equal opts
+               (Kernel_opts.opts_of_cell (cell "opts"))
+               (K.applied_opts k);
+             equal ~msg:"measurements" int
+               (int_of_string (cell "measurements"))
+               (List.length (calls ())));
+         test
+           "a candidate of more than 1000 times the fewest operations is not \
+            measured" (fun () ->
+             let is_pad = function Opt.Padto _ -> true | _ -> false in
+             let k = scheduled "transpose_33" "metal" in
+             let pads =
+               List.filter
+                 (fun (_, k') -> List.exists is_pad (K.applied_opts k'))
+                 (quietly (fun () -> Search.get_kernel_actions k))
+             in
+             is_true ~msg:"a pad is a candidate" (pads <> []);
+             ignore (output ());
+             let timing, calls = recording (golden_time ~failing:false) in
+             ignore (search ~timing 1 k);
+             contains ~sub:"too much compute" (output ());
+             is_true ~msg:"measured" (calls () <> []);
+             List.iter
+               (fun c ->
+                 is_true ~msg:"a pad was measured"
+                   (not (List.exists is_pad (kernel_info c.prg).applied_opts)))
+               (calls ()));
+         test
+           "kernels of too many lanes are reported under BEAM_LOG_SURPASS_MAX"
+           (fun () ->
+             ignore (output ());
+             ignore
+               (quietly (fun () ->
+                    Search.get_kernel_actions ~max_up:1
+                      (scheduled "sum_rows" "metal")));
+             contains ~sub:"too many upcast/local" (output ()));
+       ]
 
 (* The tensor cores' actions *)
 

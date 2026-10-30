@@ -180,24 +180,24 @@ let stroke_tests =
     [
       test "v defaults to round caps and joins, miter limit 4, solid" defaults;
       test "v keeps the given cap, join, miter limit and pattern" fields;
-      cases
-        ~name:(fun (p, o, _) -> Format.asprintf "%a at %g" pp_pattern p o)
-        "dash_offset is reduced into the even pattern" offsets
+      cases "dash_offset is reduced into the even pattern"
+        ~id:(fun (p, o, _) -> Format.asprintf "%a at %g" pp_pattern p o)
+        offsets
         (fun (dash, dash_offset, expected) ->
           equal float_exact expected
             (Stroke.dash_offset (Stroke.v ~dash ~dash_offset 1.)));
       prop "dash_offset lies in [0, period[ for any finite offset"
         (Gen.pair gen_pattern Gen.float)
         offset_in_period;
-      cases ~name:fst "v raises on" invalid (fun (_, f) ->
+      cases "v raises on" ~id:fst invalid (fun (_, f) ->
           raises_match Exn.invalid_arg f);
       prop "offsets one period apart give equal strokes" gen_stroke (fun s ->
           equal stroke s (respell s));
-      cases
-        ~name:(fun (c, j, l, _) ->
+      cases "reach is"
+        ~id:(fun (c, j, l, _) ->
           Format.asprintf "%a caps, %a joins, miter limit %g" (Testable.pp cap)
             c (Testable.pp join) j l)
-        "reach is" reaches
+        reaches
         (fun (cap, join, miter_limit, r) ->
           equal (float 1e-15) r
             (Stroke.reach (Stroke.v ~cap ~join ~miter_limit 2.)));

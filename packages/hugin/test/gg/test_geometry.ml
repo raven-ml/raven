@@ -212,7 +212,7 @@ let affine_tests =
       prop "invert gives the inverse map" gen_invertible
         (Law.invertible affine_near Affine.( * ) Affine.id (fun m ->
              require_some (Affine.invert m)));
-      cases ~name:fst "invert is None for" singular_maps (fun (_, m) ->
+      cases "invert is None for" ~id:fst singular_maps (fun (_, m) ->
           is_none ~pp:pp_affine (Affine.invert m));
       test "invert neither overflows nor underflows on extreme scales"
         invert_extreme_scales;
@@ -224,12 +224,12 @@ let affine_tests =
             { Affine.xx = 2.; yx = 3.; xy = 5.; yy = 7.; x0 = 1.; y0 = 1. }
           in
           equal affine { m with x0 = 0.; y0 = 0. } (Affine.linear m));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "stretch of" stretch_cases
+      cases "stretch of"
+        ~id:(fun (n, _, _) -> n)
+        stretch_cases
         (fun (_, m, s) ->
           equal (float_rel ~rel:1e-15 ~abs:0.) s (Affine.stretch m));
-      cases ~name:fst "stretch is NaN for"
+      cases "stretch is NaN for" ~id:fst
         [
           ("the zero map", Affine.scale 0. 0.);
           ("an infinite coefficient", Affine.scale infinity 1.);
@@ -390,7 +390,7 @@ let box_tests =
   group "Box2"
     [
       test "v spans from the corner by the size" box_corners;
-      cases ~name:fst "v raises on" invalid_boxes (fun (_, (x, y, w, h)) ->
+      cases "v raises on" ~id:fst invalid_boxes (fun (_, (x, y, w, h)) ->
           raises_match Exn.invalid_arg (fun () -> Box2.v x y w h));
       test "v accepts a zero size of either sign" (fun () ->
           equal float_exact 0. (Box2.w (Box2.v 1. 1. (-0.) 0.)));
@@ -399,7 +399,7 @@ let box_tests =
           equal box2 (Box2.of_pts p q) (Box2.of_pts q p);
           equal box2 (Box2.of_pts p q)
             (Box2.of_pts (P2.v (P2.x p) (P2.y q)) (P2.v (P2.x q) (P2.y p))));
-      cases ~name:fst "of_pts raises on a corner with"
+      cases "of_pts raises on a corner with" ~id:fst
         [ ("NaN", P2.v Float.nan 0.); ("infinity", P2.v 0. neg_infinity) ]
         (fun (_, p) ->
           raises_match Exn.invalid_arg (fun () -> Box2.of_pts p (P2.v 1. 1.)));
@@ -432,9 +432,9 @@ let box_tests =
             (Box2.grow d b));
       test "grow down to a zero size is allowed" (fun () ->
           equal box2 (Box2.v 1. 1. 0. 2.) (Box2.grow (-1.) (Box2.v 0. 0. 2. 4.)));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "grow raises on" invalid_grows
+      cases "grow raises on"
+        ~id:(fun (n, _, _) -> n)
+        invalid_grows
         (fun (_, d, b) ->
           raises_match Exn.invalid_arg (fun () -> Box2.grow d b));
       prop "transform is the bounding box of the corners' images"

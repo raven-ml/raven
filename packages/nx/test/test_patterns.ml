@@ -457,7 +457,7 @@ let parsing =
           ignore (Nx.Pattern.v "i j -> i | j");
           ignore (Nx.Pattern.v "i k, j -> i j | k");
           ignore (Nx.Pattern.v "(a b) a, b -> a b"));
-      cases ~name:fst "a pattern outside the grammar raises"
+      cases "a pattern outside the grammar raises" ~id:fst
         [
           ("b h -> h b c", "c is not on the left");
           ("b h t d -> b t (h e)", "e is not on the left");
@@ -607,7 +607,7 @@ let calls =
           equal (array int32)
             [| 1l; 4l; 2l; 5l; 3l; 6l |]
             (elements (Nx.copy y));
-          raises_match (Exn.invalid_arg ~substring:"was donated to Nx.copy")
+          raises_match (Exn.invalid_arg ~sub:"was donated to Nx.copy")
             (fun () -> Nx.copy x));
     ]
 

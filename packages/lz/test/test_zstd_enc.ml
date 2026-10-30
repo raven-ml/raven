@@ -386,9 +386,8 @@ let rebased =
               Corpus (Text, mib);
             ]))
   in
-  cases
-    ~name:(fun (level, limit) -> Printf.sprintf "level %d, limit %d" level limit)
-    "the index limit changes no byte"
+  cases "the index limit changes no byte"
+    ~id:(fun (level, limit) -> Printf.sprintf "level %d, limit %d" level limit)
     (List.map (fun level -> (level, 0)) levels
     @ [ (1, 3 * mib / 2); (2, 3 * mib / 2) ])
     (fun (level, limit) ->
@@ -411,9 +410,9 @@ let () =
   exit
     (run "Zstd_enc"
        [
-         cases ~name:string_of_int "a level outside 1 to 12 raises" [ 0; 13 ]
+         cases "a level outside 1 to 12 raises" ~id:string_of_int [ 0; 13 ]
            (fun level ->
-             raises_match (Exn.invalid_arg ~substring:"level") (fun () ->
+             raises_match (Exn.invalid_arg ~sub:"level") (fun () ->
                  Lz.Zstd.encode_string ~level "abc"));
          group "round trip" [ round_trip; strings; stepped_round_trip ];
          group "bound" [ bound; short ];

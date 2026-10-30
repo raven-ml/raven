@@ -77,7 +77,7 @@ module Factor2 = (val Nx.devices ~kernels:(module Factoring) [ m 2; m 3 ])
 module Refuse = (val Nx.devices ~kernels:(module Refusing) [ m 2 ])
 module Refuse2 = (val Nx.devices ~kernels:(module Refusing) [ m 2; m 3 ])
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 (* Operands: a shape, and arrays of it laid out C-contiguous, transposed, offset
@@ -540,7 +540,7 @@ let declines =
             invalid ~by (fun () -> ignore (f (Nx.donate x)));
             raises_match
               (Exn.invalid_arg
-                 ~substring:("Nx.copy: float32 [2; 2] was donated to " ^ by))
+                 ~sub:("Nx.copy: float32 [2; 2] was donated to " ^ by))
               (fun () -> Nx.copy x)
           in
           dead "Nx.sort" (fun h -> fst (Nx.sort h));
@@ -1204,8 +1204,7 @@ let creations =
           invalid ~by:"Nx.zeros" (fun () -> Nx.zeros D.Float32 [| -1 |]));
       test "a decline in a creation raises at the call, naming it" (fun () ->
           raises_match
-            (Exn.invalid_arg
-               ~substring:"Nx.zeros_at: nx.test does not compute Fill")
+            (Exn.invalid_arg ~sub:"Nx.zeros_at: nx.test does not compute Fill")
             (fun () -> Nx.zeros_at Dec.on D.Float32 [| 2 |]));
     ]
 

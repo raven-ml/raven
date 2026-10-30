@@ -6,7 +6,7 @@
 open Windtrap
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let floats = array float_exact
 
 (* Floats compared as numbers: [-0.] equals [0.], and [nan] equals [nan]. *)
@@ -437,9 +437,8 @@ let narrow =
     ]
 
 let sturges =
-  cases
-    ~name:(fun (len, n) -> Printf.sprintf "%d values make %d bins" len n)
-    "default bins"
+  cases "default bins"
+    ~id:(fun (len, n) -> Printf.sprintf "%d values make %d bins" len n)
     [
       (0, 1);
       (1, 1);

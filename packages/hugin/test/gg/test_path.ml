@@ -402,9 +402,9 @@ let building =
         quad_after_gap;
       test "arc starts a subpath or joins the current point with a line"
         arc_start_and_join;
-      cases
-        ~name:(fun (s, n) -> Printf.sprintf "a sweep of %g takes %d cubics" s n)
-        "arc uses one cubic per quarter turn or less" arc_counts
+      cases "arc uses one cubic per quarter turn or less"
+        ~id:(fun (s, n) -> Printf.sprintf "a sweep of %g takes %d cubics" s n)
+        arc_counts
         (fun (sweep, n) ->
           equal int n
             (List.length
@@ -426,13 +426,12 @@ let building =
             (Path.is_empty
                (Path.arc (pt 0. 0.) 1. ~start:0. ~sweep:(-2000. *. Float.pi)
                   Path.empty)));
-      cases ~name:fst "arc raises on" invalid_arcs
-        (fun (_, (r, start, sweep)) ->
+      cases "arc raises on" ~id:fst invalid_arcs (fun (_, (r, start, sweep)) ->
           raises_match Exn.invalid_arg (fun () ->
               Path.arc (pt 0. 0.) r ~start ~sweep Path.empty));
       test "close closes the last subpath and drops the current point"
         close_closes;
-      cases ~name:fst "close is the identity on" close_cases (fun (_, p) ->
+      cases "close is the identity on" ~id:fst close_cases (fun (_, p) ->
           equal segs_exact (segs p) (segs (Path.close p)));
       prop "close is idempotent" gen_program (fun prog ->
           Law.idempotent path_t Path.close (build prog));
@@ -481,9 +480,9 @@ let shapes =
           | M (1., 0.) :: C (_, _, _, _, x, y) :: _ ->
               equal (pair (float 1e-12) (float 1e-12)) (0., 1.) (x, y)
           | s -> failf "circle is %a" (Format.pp_print_list pp_seg) s);
-      cases ~name:(Printf.sprintf "circle raises on radius %g") "circle raises"
+      cases "circle raises" ~id:(Printf.sprintf "circle raises on radius %g")
         [ -1.; Float.nan; infinity ] (fun r ->
-          raises_match (Exn.invalid_arg ~substring:"Path.circle") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Path.circle") (fun () ->
               Path.circle (pt 0. 0.) r));
       test "circle of radius 0 is a point" (fun () ->
           equal
@@ -562,9 +561,9 @@ let all_finite s =
 let gaps =
   group "gaps"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "fold applies the gap rule" gap_cases
+      cases "fold applies the gap rule"
+        ~id:(fun (n, _, _) -> n)
+        gap_cases
         (fun (_, p, expected) -> equal segs_exact expected (segs p));
       prop "fold gives only finite numbers" gen_gappy_program (fun prog ->
           List.iter
@@ -680,8 +679,8 @@ let flattening =
         (fun () ->
           let p = Path.circle (pt 0. 0.) 10. in
           equal int 6 (List.length (flat ~tolerance:infinity Affine.id p)));
-      cases ~name:(Printf.sprintf "tolerance %g")
-        "flatten raises on" [ 0.; -1.; Float.nan ] (fun tolerance ->
+      cases "flatten raises on" ~id:(Printf.sprintf "tolerance %g")
+        [ 0.; -1.; Float.nan ] (fun tolerance ->
           raises_match Exn.invalid_arg (fun () ->
               flat ~tolerance Affine.id (Path.circle (pt 0. 0.) 1.)));
       test "flatten cuts a cubic into at most 65536 chords" huge_cubic;
@@ -1037,7 +1036,7 @@ let cropping =
           equal (float 1e-12) 1. (area (polygons s)));
       (* The circle's cubics depart from it, so its share of the disc they bound
          is the reference. *)
-      cases ~name:fst "crop of a circle fills its part within the box"
+      cases "crop of a circle fills its part within the box" ~id:fst
         [
           ("on an edge, half its disc", (Box2.v 0. (-5.) 5. 10., `Share 0.5));
           ("at a corner, a quarter", (Box2.v 0. 0. 5. 5., `Share 0.25));

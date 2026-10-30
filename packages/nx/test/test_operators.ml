@@ -17,7 +17,7 @@ let m = Nx_support.memory
 
 module S2 = (val Nx.devices [ m 0; m 1 ])
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 (* [f ()]'s elements, or the refusal's message without the function's name. *)
 type 'v outcome = Elements of 'v list | Refused of string
@@ -318,7 +318,7 @@ let cases_group =
       test "a scalar form computes where its operand lies" test_placement;
       test ".%{} is get and .${} is slice" test_index_operators;
       test "open Nx keeps OCaml's operators" test_stdlib;
-      cases "refusals name the scalar form" ~name:fst refusals (fun (by, f) ->
+      cases "refusals name the scalar form" ~id:fst refusals (fun (by, f) ->
           invalid ~by f);
     ]
 

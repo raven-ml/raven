@@ -251,8 +251,9 @@ let tests =
           test_state_advances_across_compiled_calls;
         test "a batch split over two devices matches one"
           test_split_batch_matches_jit;
-        slow "jit lbfgs at a fixed rate matches the eager trajectory"
-          test_lbfgs_jit_matches_eager;
+        slow
+        @@ test "jit lbfgs at a fixed rate matches the eager trajectory"
+             test_lbfgs_jit_matches_eager;
       ];
   ]
 

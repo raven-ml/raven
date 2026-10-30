@@ -1368,7 +1368,7 @@ let test_refusal (_, t, ds) =
     ~msg:"load answers Error"
     (G.load (t d) (Iarray.of_list (ds d)))
 
-let broken = Exn.invalid_arg ~substring:"Rig_program.load: "
+let broken = Exn.invalid_arg ~sub:"Rig_program.load: "
 
 let test_break (_, t, ds) =
   let d = fst (polled "broken") in
@@ -2428,8 +2428,8 @@ let test_rail () =
     (word (read (B.of_bigarray e.counts)) 0)
 
 let test_no_rail () =
-  raises_match ~msg:"names the rail" (Exn.invalid_arg ~substring:"rail 7")
-    (fun () -> G.load rail_program [| Rig.host |])
+  raises_match ~msg:"names the rail" (Exn.invalid_arg ~sub:"rail 7") (fun () ->
+      G.load rail_program [| Rig.host |])
 
 (* Constants beside holes *)
 
@@ -3525,8 +3525,7 @@ let test_far_rails () =
   raises_match Exn.invalid_arg (fun () ->
       G.load ~rails:(fun _ -> None) t [| far |]);
   raises_match ~msg:"without rails: no agent's device"
-    (Exn.invalid_arg ~substring:"of an agent") (fun () ->
-      G.load t [| far |])
+    (Exn.invalid_arg ~sub:"of an agent") (fun () -> G.load t [| far |])
 
 (* run checks its frame before its first step: with its last input too small, it
    raises having submitted nothing. *)
@@ -3853,16 +3852,15 @@ let tests =
       [
         test "every address and handle names memory kept by its step"
           memory_hole_refusals;
-        cases
-          ~name:(Format.asprintf "%a" pp_extreme)
-          "load raises for integers whose sums would wrap" extremes extreme_law;
-        cases
-          ~name:(fun (n, _, _) -> n)
-          "load raises for a description that breaks a rule"
+        cases "load raises for integers whose sums would wrap"
+          ~id:(Format.asprintf "%a" pp_extreme)
+          extremes extreme_law;
+        cases "load raises for a description that breaks a rule"
+          ~id:(fun (n, _, _) -> n)
           (breaks @ host_breaks) test_break;
-        cases
-          ~name:(fun (n, _, _) -> n)
-          "load answers Error for" (refusals @ host_refusals) test_refusal;
+        cases "load answers Error for"
+          ~id:(fun (n, _, _) -> n)
+          (refusals @ host_refusals) test_refusal;
         test "load answers Error for memory a device cannot borrow"
           test_unborrowable;
         test
@@ -3894,8 +3892,8 @@ let tests =
       ];
     group ~timeout "failures"
       [
-        cases ~name:fst "load raises Out_of_memory for memory refused by"
-          refusers test_load_refused;
+        cases "load raises Out_of_memory for memory refused by" ~id:fst refusers
+          test_load_refused;
         test "load raises Lost for a device that faults" test_load_lost;
         test "run raises Lost for a hand-over that fails, and every run after"
           test_run_lost;
@@ -3916,9 +3914,8 @@ let tests =
           test_host_claim_call;
         test "a host launch claims its buffers before it waits"
           test_host_claim_wait;
-        cases
-          ~name:(Printf.sprintf "input %d")
-          "a host launch releases earlier claims after a claim refusal"
+        cases "a host launch releases earlier claims after a claim refusal"
+          ~id:(Printf.sprintf "input %d")
           [ 0; 1; 2 ] test_host_claim_refusal;
         test "a host launch of no group releases its claims"
           test_host_claim_grid_refusal;

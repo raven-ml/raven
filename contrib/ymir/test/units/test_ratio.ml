@@ -168,8 +168,7 @@ let goldens =
 
 let golden =
   cases
-    ~name:(fun (line, _, _, _) -> line)
-    "mpmath goldens" goldens
+    "mpmath goldens" ~id:(fun (line, _, _, _) -> line) goldens
     (fun (_, f, factors, expected) ->
       equal outcome_w expected (ratio f (product factors) Unit.one))
 
@@ -542,8 +541,8 @@ let integers =
       prop ~count:500 "an integer dtype holds exactly the integers in its range"
         (Gen.pair (Gen.of_list ~pp:pp_int_dtype int_dtypes) int_values)
         (fun (d, n) -> test_int_dtype d n);
-      cases ~name:fst "64-bit bounds" wide_ints (fun (_, f) -> f ());
-      cases ~name:fst "not an integer" non_integers (fun (_, u) ->
+      cases "64-bit bounds" ~id:fst wide_ints (fun (_, f) -> f ());
+      cases "not an integer" ~id:fst non_integers (fun (_, u) ->
           List.iter
             (fun (I (d, name, _), _) ->
               raises ~msg:name
@@ -562,8 +561,7 @@ let electron = Unit.symbol "electron"
 
 let values =
   cases
-    ~name:(fun (n, _, _, _) -> n)
-    "correctly rounded values"
+    "correctly rounded values" ~id:(fun (n, _, _, _) -> n)
     [
       ("pi in float64", Unit.pi, Unit.one, Float.pi);
       ("sqrt 2 in float64", Unit.(root 2 (int 2)), Unit.one, Float.sqrt 2.);
@@ -640,7 +638,7 @@ let errors =
              bits. *)
           let u = Unit.(root 10000007 (int 3) ** 10000006) in
           raises_match
-            (Exn.invalid_arg ~substring:"needs a natural wider than 65536 bits")
+            (Exn.invalid_arg ~sub:"needs a natural wider than 65536 bits")
             (fun () -> Unit.ratio Nx.float64 u Unit.one));
       test "bool holds no factor" (fun () ->
           raises (Invalid_argument "Unit.ratio: bool holds no factor")

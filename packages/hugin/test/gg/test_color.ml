@@ -90,16 +90,16 @@ let constructors =
           equal color
             (Color.v ~alpha:0.5 0.3 0.3 0.3)
             (Color.gray ~alpha:0.5 0.3));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "constant" constants
+      cases "constant"
+        ~id:(fun (n, _, _) -> n)
+        constants
         (fun (_, c, (r, g, b, a)) -> equal color (Color.v ~alpha:a r g b) c);
       prop "with_alpha replaces the opacity only" (Gen.pair gen_color unit)
         (fun (c, a) ->
           equal color
             (Color.v ~alpha:a (Color.r c) (Color.g c) (Color.b c))
             (Color.with_alpha a c));
-      cases ~name:fst "raises on" out_of_range (fun (_, f) ->
+      cases "raises on" ~id:fst out_of_range (fun (_, f) ->
           raises_match Exn.invalid_arg f);
     ]
 
@@ -222,15 +222,15 @@ let invalid_oklab =
 let oklab =
   group "Oklab"
     [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "to_oklab and to_oklch of the primary" primaries
+      cases "to_oklab and to_oklch of the primary"
+        ~id:(fun (n, _, _, _) -> n)
+        primaries
         (fun (_, c, lab, lch) ->
           equal (triple_near 1e-5) lab (Color.to_oklab c);
           equal (triple_near 1e-5) lch (Color.to_oklch c));
       test "to_oklab of white is lightness 1 without chroma" (fun () ->
           equal (triple_near 1e-7) (1., 0., 0.) (Color.to_oklab Color.white));
-      cases ~name:Fun.id "to_oklch gives a powerless hue for the grey" greys
+      cases "to_oklch gives a powerless hue for the grey" ~id:Fun.id greys
         powerless_hue;
       test "to_oklch gives a hue to the least chromatic 8-bit colour" (fun () ->
           let _, c, h = Color.to_oklch (hex "#808081") in
@@ -269,9 +269,9 @@ let oklab =
           equal color
             (Color.of_oklch 0.6 0.1 0.)
             (Color.of_oklch 0.6 0.1 Float.nan));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "gamut mapping" gamut_cases
+      cases "gamut mapping"
+        ~id:(fun (n, _, _) -> n)
+        gamut_cases
         (fun (_, (l, a, b), c) ->
           equal color c (Color.of_oklab l a b);
           equal color (Color.with_alpha 0.25 c)
@@ -291,11 +291,10 @@ let oklab =
       test "of_oklch maps a huge chroma into the gamut" (fun () ->
           in_gamut (Color.of_oklch 0.5 1e120 1.);
           in_gamut (Color.of_oklch 0.5 1e120 0.));
-      cases
-        ~name:(fun ((l, c, h), _) -> Printf.sprintf "oklch(%g %g %gdeg)" l c h)
-        "gamut mapping agrees with CSS Color 4 on" css_gamut_cases
-        css_gamut_example;
-      cases ~name:fst "raises on" invalid_oklab (fun (_, f) ->
+      cases "gamut mapping agrees with CSS Color 4 on"
+        ~id:(fun ((l, c, h), _) -> Printf.sprintf "oklch(%g %g %gdeg)" l c h)
+        css_gamut_cases css_gamut_example;
+      cases "raises on" ~id:fst invalid_oklab (fun (_, f) ->
           raises_match Exn.invalid_arg f);
     ]
 
@@ -323,9 +322,8 @@ let mix_tests =
           equal (float 1e-12)
             (((1. -. t) *. Color.alpha c) +. (t *. Color.alpha c'))
             (Color.alpha (Color.mix t c c')));
-      cases ~name:(Printf.sprintf "t = %g")
-        "mix of white and blue stays within a JND of blue's hue"
-        [ 0.1; 0.25; 0.5; 0.75; 1. ] (fun t ->
+      cases "mix of white and blue stays within a JND of blue's hue"
+        ~id:(Printf.sprintf "t = %g") [ 0.1; 0.25; 0.5; 0.75; 1. ] (fun t ->
           let l, a, b = Color.to_oklab Color.white in
           let l', a', b' = Color.to_oklab Color.blue in
           let at x x' = ((1. -. t) *. x) +. (t *. x') in
@@ -343,11 +341,11 @@ let mix_tests =
             (Color.mix 0.3
                (Color.with_alpha 0. Color.red)
                (Color.with_alpha 0. Color.blue)));
-      cases ~name:(Printf.sprintf "t = %g") "mix raises on"
+      cases "mix raises on" ~id:(Printf.sprintf "t = %g")
         [ -0.1; 1.1; Float.nan ] (fun t ->
           raises_match Exn.invalid_arg (fun () ->
               Color.mix t Color.red Color.blue));
-      cases ~name:fst "contrast is black on"
+      cases "contrast is black on" ~id:fst
         [
           ("white", Color.white);
           ("yellow", hex "#ffff00");
@@ -355,7 +353,7 @@ let mix_tests =
           ("a transparent white", Color.with_alpha 0. Color.white);
         ]
         (fun (_, c) -> equal color Color.black (Color.contrast c));
-      cases ~name:fst "contrast is white on"
+      cases "contrast is white on" ~id:fst
         [
           ("black", Color.black);
           ("blue", Color.blue);
@@ -408,11 +406,11 @@ let gen_canonical_hex =
 let hex_tests =
   group "hex"
     [
-      cases ~name:fst "of_hex reads" parsed (fun (s, c) ->
+      cases "of_hex reads" ~id:fst parsed (fun (s, c) ->
           equal (result color string) (Ok c) (Color.of_hex s));
-      cases
-        ~name:(fun (s, _) -> Printf.sprintf "%S" s)
-        "of_hex rejects" rejected
+      cases "of_hex rejects"
+        ~id:(fun (s, _) -> Printf.sprintf "%S" s)
+        rejected
         (fun (s, why) ->
           contains ~sub:why (require_error ~pp:pp_color (Color.of_hex s)));
       test "to_hex writes lowercase and omits an opaque alpha" (fun () ->

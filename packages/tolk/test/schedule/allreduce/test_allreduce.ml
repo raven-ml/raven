@@ -197,19 +197,21 @@ let concrete name =
 let case name =
   match Shape.numel (allreduce name) with
   | Int n when n > 100_000 -> slow
-  | _ -> test
+  | _ -> Fun.id
 
 let recorded_values =
   let concrete = List.filter (fun (name, _) -> concrete name) cases in
   group "handle_allreduce › values"
     (List.map
        (fun (name, settings) ->
-         case name (name ^ " reduces its shards") (fun () ->
+         case name
+         @@ test (name ^ " reduces its shards") (fun () ->
              reduces ~settings (allreduce name)))
        concrete
     @ List.map
         (fun (name, settings) ->
-          case name (name ^ "'s function reduces its shards") (fun () ->
+          case name
+          @@ test (name ^ "'s function reduces its shards") (fun () ->
               computes ~settings (allreduce name)))
         concrete)
 
@@ -400,11 +402,11 @@ let rules =
       test "a value on one device is left as it is" (fun () ->
           is_none (Allreduce.handle_allreduce red));
       test "a function of a value on one device is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"several devices") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"several devices") (fun () ->
               Allreduce.create_allreduce_function red));
       test "a function of a node that is not an allreduce is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"not an allreduce")
-            (fun () -> Allreduce.create_allreduce_function on_one_device));
+          raises_match (Exn.invalid_arg ~sub:"not an allreduce") (fun () ->
+              Allreduce.create_allreduce_function on_one_device));
       test "a function is named allreduce and compiled on its own" (fun () ->
           let calls =
             List.filter

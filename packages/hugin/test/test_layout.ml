@@ -913,10 +913,10 @@ let least_sizes =
   group "least sizes"
     [
       named;
-      cases ~name:fst "a figure too small names a size that lays it out:"
+      cases "a figure too small names a size that lays it out:" ~id:fst
         near_least (fun (_, c) -> names_law c);
-      cases ~name:(Printf.sprintf "%g pt")
-        "a long y title lays out or names a size that does at"
+      cases "a long y title lays out or names a size that does at"
+        ~id:(Printf.sprintf "%g pt")
         [ 120.; 155.; 160.; 181.; 182.; 182.2; 182.29; 182.3 ] (fun w ->
           match tried (Size.figure w 200.) long_title with
           | Ok l -> apart l
@@ -954,7 +954,7 @@ let titles =
           in
           equal int 1 (List.length (text_lines l {|"group"|}));
           equal int 0 (List.length (text_lines l {|"kind"|})));
-      cases ~name:fst "an empty title is no title"
+      cases "an empty title is no title" ~id:fst
         [
           ("on a figure", (title "" (plain ramp), plain ramp));
           ( "on an axis",
@@ -1144,7 +1144,7 @@ let titles =
           equal (float 1e-3) (bottom {|(text "head")|})
             (bottom {|(text "layer")|});
           apart l);
-      cases ~name:Fun.id "titles sharing a line stand a gap apart, with"
+      cases "titles sharing a line stand a gap apart, with" ~id:Fun.id
         (List.init 12 (fun k -> "a head" ^ String.make k 'W'))
         (fun head ->
           let f =
@@ -1305,9 +1305,9 @@ let legends =
         sizes_law;
       prop "a size legend's entries are the ticks of a guide nine labels long"
         gen_sizes size_ticks_law;
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a categorical legend a shown axis names is left out" named_by_axis
+      cases "a categorical legend a shown axis names is left out"
+        ~id:(fun (n, _, _) -> n)
+        named_by_axis
         (fun (_, f, kept) -> equal bool kept (legend_ids f <> []));
       test "a scale on x in one cell and a colour in another has both guides"
         (fun () ->
@@ -1736,12 +1736,12 @@ let facet_case (_, c) =
 let inside_legends =
   group "inside legends"
     [
-      cases "an inside legend of facets lies in its corner panel" ~name:fst
+      cases "an inside legend of facets lies in its corner panel" ~id:fst
         corners facet_case;
       prop "an inside legend leaves the data areas as a hidden one does"
         gen_inside unmoved_law;
-      cases "an inside legend lies in its corner, a pad from both edges"
-        ~name:fst corners corner_case;
+      cases "an inside legend lies in its corner, a pad from both edges" ~id:fst
+        corners corner_case;
       test "an inside legend keeps the id of a legend" (fun () ->
           equal (list string) [ "legend.color.cat" ]
             (legend_ids
@@ -1834,7 +1834,7 @@ let homogeneity ((name, f), (k, (w, h))) =
 let themes =
   group "themes"
     [
-      cases "ink, axes and the scheme's low end read on paper" ~name:fst
+      cases "ink, axes and the scheme's low end read on paper" ~id:fst
         [ ("default", Theme.default); ("dark", Theme.dark) ]
         readable;
       test "the presets are the themes of v they state" (fun () ->
@@ -1922,9 +1922,9 @@ let reuse =
           | exception (Invalid_argument m as e) ->
               if not (contains m "needs") then raise e;
               assume false);
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "a previous layout reuses to the fresh one" cases_
+      cases "a previous layout reuses to the fresh one"
+        ~id:(fun (n, _, _, _) -> n)
+        cases_
         (fun (_, f, f', theme) ->
           let size = Size.panels 80. 60. in
           let prev = lay size f in
@@ -1991,9 +1991,8 @@ let baselines =
         Format.asprintf "%s@\n%a@\n" name Layout.pp
           (layout ~theme size (resolve (f ())))
       in
-      expect_file
-        (String.concat "\n" (List.map one Figures.goldens))
-        "packages/hugin/test/golden/layout.expected")
+      expect_file ~file:"packages/hugin/test/golden/layout.expected"
+        (String.concat "\n" (List.map one Figures.goldens)))
 
 let () =
   exit

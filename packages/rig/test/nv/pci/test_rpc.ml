@@ -134,7 +134,7 @@ let test_rc_unknown () =
 
 let test_no_fault =
   cases "other messages carry no fault"
-    ~name:(fun (n, _) -> n)
+    ~id:(fun (n, _) -> n)
     [
       ("an error log", os_error_log);
       ("a CPU sequence", run_cpu_sequencer);
@@ -170,7 +170,7 @@ let report = option (pair string string)
 
 let test_reports =
   cases "an error log and a journal record are reports of their subject"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ( "an error log's text, to its first zero byte",
         event os_error_log (error_log ~xid:13 "Graphics Exception\000junk"),
@@ -196,7 +196,7 @@ let test_reports =
 
 let test_short_reports =
   cases "a report shorter than its structure says so"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ("an error log", os_error_log, "abc");
       ( "an error log cut in its text",
@@ -213,7 +213,7 @@ let test_short_reports =
 
 let test_no_report =
   cases "other messages report nothing"
-    ~name:(fun (n, _) -> n)
+    ~id:(fun (n, _) -> n)
     [
       ("a stopped channel", rc_triggered);
       ("a queued MMU fault", mmu_fault_queued);
@@ -303,7 +303,7 @@ let test_page_directory () =
    2. *)
 let test_reserved_pdes =
   cases "the GSP's range hands over its tables down to 2 MiB"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ( "version 2",
         Page_entry.V2,
@@ -518,7 +518,7 @@ let test_channel_flags =
 
 let test_channel_id =
   cases "flags that fix no page name no id"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ("no flags", 0, None);
       ("an index without its page", 0x0b00, None);
@@ -559,7 +559,7 @@ let test_no_channel_id () =
    _GB202). *)
 let test_token =
   cases "a work submit token is its channel's runlist and id"
-    ~name:(fun (n, _, _, _, _) -> n)
+    ~id:(fun (n, _, _, _, _) -> n)
     [
       ("Ada's", false, 2, 5, 0x2_0005);
       ("the last runlist and id", false, 127, 4095, 0x7f_0fff);
@@ -649,7 +649,7 @@ let core_reset =
 
 let test_sequence =
   cases "each opcode is its register accesses, its payload read in order"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ("a write", [ 0; 0x1000; 0x5 ], [ Falcon.Write (0x1000, 0x5) ]);
       ( "a modify sets the value's bits outside its mask",
@@ -690,7 +690,7 @@ let test_resume () =
 
 let test_sequence_refused =
   cases "a sequence it cannot run is refused"
-    ~name:(fun (n, _, _) -> n)
+    ~id:(fun (n, _, _) -> n)
     [
       ("an unknown opcode", sequencer [ 9 ], "unknown opcode 9");
       ("a command cut short", sequencer [ 0; 0x1000 ], "ending inside");

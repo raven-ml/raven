@@ -12,7 +12,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 
 let f32 = Nx.float32
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 
 (* [x] as messages name it: [float32 [2; 3]]. *)
 let text x =
@@ -301,9 +301,9 @@ let refusals =
   ]
 
 let test_refusals =
-  cases
-    ~name:(fun (name, _, _) -> name)
-    "a refused call kills nothing" refusals
+  cases "a refused call kills nothing"
+    ~id:(fun (name, _, _) -> name)
+    refusals
     (fun (_, sub, call) ->
       let checks = ref [] in
       let d : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t =
@@ -1490,10 +1490,10 @@ let test_dies_at_the_call () =
     let d = Nx.donate x in
     ignore (f d);
     let sub = dead_in "Nx.copy" x name in
-    raises_match ~msg:(name ^ "'s donor") (Exn.invalid_arg ~substring:sub)
-      (fun () -> Nx.copy x);
-    raises_match ~msg:(name ^ "'s handle") (Exn.invalid_arg ~substring:sub)
-      (fun () -> Nx.copy d)
+    raises_match ~msg:(name ^ "'s donor") (Exn.invalid_arg ~sub) (fun () ->
+        Nx.copy x);
+    raises_match ~msg:(name ^ "'s handle") (Exn.invalid_arg ~sub) (fun () ->
+        Nx.copy d)
   in
   dies "Nx.trace" (fun d -> Nx.trace d);
   dies "Nx.qr" (fun d -> fst (Nx.qr d));
@@ -2625,9 +2625,9 @@ let test_dead_names =
       (fun (name, c) -> List.init c.operands (fun i -> (name, c, i)))
       named_cases
   in
-  cases
-    ~name:(fun (name, _, i) -> Printf.sprintf "%s, operand %d" name (i + 1))
-    "a dead operand names the function called" each
+  cases "a dead operand names the function called"
+    ~id:(fun (name, _, i) -> Printf.sprintf "%s, operand %d" name (i + 1))
+    each
     (fun (name, c, i) ->
       let killed = ref "" in
       let dead x =
@@ -2778,9 +2778,9 @@ let test_consumer_no_bytes =
   let each =
     List.concat_map (fun r -> List.map (fun o -> (r, o)) operands) readers
   in
-  cases
-    ~name:(fun ((r, _), (o, _)) -> r ^ " of " ^ o)
-    "a consumer refuses an operand without bytes" each
+  cases "a consumer refuses an operand without bytes"
+    ~id:(fun ((r, _), (o, _)) -> r ^ " of " ^ o)
+    each
     (fun ((_, read), (_, given)) ->
       given (fun x ->
           invalid ~sub:"test.call: operand 0" (fun () ->
@@ -2876,10 +2876,10 @@ let test_consumer_memory () =
 let test_consumer_frees_every_handle =
   let k = 256 in
   let bytes = 4 * k * k in
-  cases
-    ~name:(function
+  cases "a consumer frees the memory of every handle it claimed"
+    ~id:(function
       | true -> "a copy, then a view" | false -> "a view, then a copy")
-    "a consumer frees the memory of every handle it claimed" [ true; false ]
+    [ true; false ]
     (fun copy_first ->
       let x = on_mem [| k; k |] (Array.init (k * k) Float.of_int) in
       let view = Nx.reshape [| k * k |] (Nx.donate x) in

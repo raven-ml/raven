@@ -530,7 +530,7 @@ let test_overlapping_copy () =
   ignore (Sub.make d [| copy 0 8 |]);
   List.iter
     (fun (msg, src, dst) ->
-      raises_match ~msg (Exn.invalid_arg ~substring:"overlap") (fun () ->
+      raises_match ~msg (Exn.invalid_arg ~sub:"overlap") (fun () ->
           Sub.make d [| copy src dst |]))
     [ ("into itself", 0, 0); ("forwards", 0, 4); ("backwards", 4, 0) ]
 
@@ -833,7 +833,7 @@ let test_never_fits () =
   Rig.Point.wait (submit four);
   let five = Sub.make d (Array.make 5 idle) in
   raises_match ~msg:"more than the queue holds"
-    (Exn.invalid_arg ~substring:"never fit") (fun () -> submit five)
+    (Exn.invalid_arg ~sub:"never fit") (fun () -> submit five)
 
 (* A full queue answers Later: the submit waits for one more value. *)
 let test_room () =
@@ -1127,7 +1127,7 @@ let test_claims () =
       Rig.Claim.with_ ~read:[] ~donate:[ m ] (fun c ->
           equal ~msg:"held exclusive" bool true (Rig.Claim.exclusive c m);
           raises_match ~msg:"a submit of it"
-            (Exn.invalid_arg ~substring:"held exclusive") (fun () ->
+            (Exn.invalid_arg ~sub:"held exclusive") (fun () ->
               submit s ~buffers));
       equal
         ~msg:(Printf.sprintf "after refusal at buffer %d" i)
@@ -1196,7 +1196,7 @@ let test_part_word () =
     (fun n ->
       raises_match
         ~msg:(Printf.sprintf "%d bytes" n)
-        (Exn.invalid_arg ~substring:(Printf.sprintf "of %d bytes" n))
+        (Exn.invalid_arg ~sub:(Printf.sprintf "of %d bytes" n))
         (fun () -> Sub.words (B.create Rig.host n)))
     [ 1; 6; 7 ]
 
@@ -1209,9 +1209,8 @@ let test_blocks_bound () =
   let most = ((1 lsl 31) - 1) / (16 + params) in
   let fills n = Array.make n (Sub.fill Support.noop ~params) in
   ignore (Sub.make d (fills most));
-  raises_match
-    (Exn.invalid_arg ~substring:"take more than a run holds")
-    (fun () -> Sub.make d (fills (most + 1)))
+  raises_match (Exn.invalid_arg ~sub:"take more than a run holds") (fun () ->
+      Sub.make d (fills (most + 1)))
 
 (* [make]'s stack does not grow with its parts: 2^20 fills make within a stack
    of 2^16 words, whatever the parts' count. *)
@@ -2058,8 +2057,7 @@ let tests =
           test_unordered_keeps;
         test "cached Unordered work cannot change a new buffer's host write"
           test_cached_unordered_host;
-        cases "cached work cannot change a new buffer's Unordered write"
-          ~name:fst
+        cases "cached work cannot change a new buffer's Unordered write" ~id:fst
           [
             ("after ordered work", Sub.write);
             ("after Unordered work", Sub.unordered);
@@ -2081,9 +2079,9 @@ let tests =
       ];
     group ~timeout "growth"
       [
-        cases ~name:(Printf.sprintf "%d parts on a queue of 4 that grows")
-          "a submission runs once its queue grew to hold it" [ 1; 4; 5; 9; 300 ]
-          test_grows;
+        cases "a submission runs once its queue grew to hold it"
+          ~id:(Printf.sprintf "%d parts on a queue of 4 that grows")
+          [ 1; 4; 5; 9; 300 ] test_grows;
         test "a growth without memory raises Out_of_memory after reclamation"
           test_grow_no_memory;
         test "a growth short at first is made after a round of reclamation"

@@ -244,15 +244,14 @@ let result_rule =
       test "a sample missing from the result is refused" (fun () ->
           raises_match
             (Exn.invalid_arg
-               ~substring:
-                 "the 3rd sample, a normal of shape [], is not in the result")
+               ~sub:"the 3rd sample, a normal of shape [], is not in the result")
             (fun () ->
               model (fun () ->
                   let a = M.sample std and b = M.sample std in
                   let _ = M.sample std in
                   ({ a; b }, M.sample std))));
       test "a value returned twice is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"appears twice") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"appears twice") (fun () ->
               model (fun () ->
                   let a = M.sample std in
                   ({ a; b = a }, M.sample std))));
@@ -386,7 +385,7 @@ let refusals =
           in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  "no finite log density in 100 candidates; at the last, site y \
                   has log density -inf: element [1; 1] is outside the support \
                   of poisson, {0, 1, 2, ...}; the terms are p ") (fun () ->
@@ -400,7 +399,7 @@ let refusals =
           let p = Nx.scalar Nx.float64 1e-320 in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  "site p has log density -inf: its coordinates saturate: the \
                   log-determinant is -inf") (fun () ->
               M.init ~from:(M.Init.near p) m (f64 0.) ~chains:1 (Nx.Rng.key 0)));
@@ -419,7 +418,7 @@ let refusals =
           in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  "site y has log density -inf: it is outside the support of \
                   uniform, (2, 3)") (fun () ->
               start (Nx.Rng.key 0) (f64 2.) (f64 3.) (f64 5.)));
@@ -596,7 +595,7 @@ let domains =
           in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  "Norn_model.init: no finite log density in 100 candidates; at \
                   the last, site b: normal: scale is -") (fun () ->
               M.init m (f64 0.) ~chains:2 (Nx.Rng.key 0)));
@@ -646,7 +645,7 @@ let inits =
           in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  "Norn_model.init: no finite log density in 100 candidates; at \
                   the last, site y has log density -inf: it is outside the \
                   support of uniform, (0, 1); the terms are a ") (fun () ->

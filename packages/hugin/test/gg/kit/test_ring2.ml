@@ -92,9 +92,9 @@ let constructing =
     [
       test "v copies its arrays" copies_its_arrays;
       test "v rejects arrays of different lengths" rejects_length_mismatch;
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "v rejects a coordinate that is not finite" non_finite
+      cases "v rejects a coordinate that is not finite"
+        ~id:(fun (n, _, _) -> n)
+        non_finite
         (fun (_, xs, ys) ->
           raises_match Exn.invalid_arg (fun () -> Ring2.v xs ys));
       test "v accepts no point" (fun () ->
@@ -115,9 +115,9 @@ let accessors =
   group "accessors"
     [
       test "x and y read the points in order" reads_points;
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "an index out of range raises" index_errors
+      cases "an index out of range raises"
+        ~id:(fun (n, _, _) -> n)
+        index_errors
         (fun (_, n, i) ->
           let r = Ring2.v (Array.make n 0.) (Array.make n 0.) in
           raises_match Exn.invalid_arg (fun () -> Ring2.x r i);
@@ -157,9 +157,9 @@ let known_areas =
 let area =
   group "area"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "known areas" known_areas
+      cases "known areas"
+        ~id:(fun (n, _, _) -> n)
+        known_areas
         (fun (_, r, a) -> equal float_exact a (Ring2.area r));
       prop "reversing negates the area" gen_int_ring (fun r ->
           equal number (-.Ring2.area r) (Ring2.area (Ring2.reverse r)));
@@ -312,16 +312,15 @@ let windings_add (r, pt) =
 let oracle =
   group "the winding oracle"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "on the unit square" unit_square_points mem_unit_square;
+      cases "on the unit square"
+        ~id:(fun (n, _, _) -> n)
+        unit_square_points mem_unit_square;
       test "a ring of fewer than three points holds nothing" mem_degenerate;
       test "a point the ring winds around twice is in it" mem_winding_two;
       test "a point within rounding error of a slanted edge is decided exactly"
         slanted_edge_decided_exactly;
-      cases
-        ~name:(fun (n, _, _, _, _) -> n)
-        "a point the rounded cross product misplaces is decided exactly"
+      cases "a point the rounded cross product misplaces is decided exactly"
+        ~id:(fun (n, _, _, _, _) -> n)
         near_shared_edges near_shared_edge;
       prop "unit squares partition the plane they tile" gen_tile_pt
         tiling_partitions;

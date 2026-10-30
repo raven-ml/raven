@@ -16,21 +16,21 @@ let pp_error = Format.pp_print_string
 let classes =
   group ~timeout:10. "classes"
     [
-      cases ~name:S.class_name "a class the GPU names takes a launch" S.classes
+      cases "a class the GPU names takes a launch" ~id:S.class_name S.classes
         (fun cls ->
           is_ok ~pp:pp_error
             (Launch.make (S.gpu ~compute_class:cls ()) (S.kernel ())));
-      cases ~name:S.class_name "another class is refused"
+      cases "another class is refused" ~id:S.class_name
         [ 0; -1; 0xc6c0; 0xc8c0; 0xcbc0; 0xcdc0; 0xcfc0; 0xc7b5 ] (fun cls ->
-          raises_match (Exn.invalid_arg ~substring:"Launch.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Launch.make") (fun () ->
               Launch.make (S.gpu ~compute_class:cls ()) (S.kernel ())));
-      cases ~name:string_of_int "a SASS version of a byte takes a launch"
+      cases "a SASS version of a byte takes a launch" ~id:string_of_int
         [ 0; 0x89; 0xff ] (fun v ->
           is_ok ~pp:pp_error
             (Launch.make (S.gpu ~sass_version:v ()) (S.kernel ())));
-      cases ~name:string_of_int "a SASS version past a byte is refused"
+      cases "a SASS version past a byte is refused" ~id:string_of_int
         [ min_int; -1; 0x100; max_int ] (fun v ->
-          raises_match (Exn.invalid_arg ~substring:"Launch.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Launch.make") (fun () ->
               Launch.make (S.gpu ~sass_version:v ()) (S.kernel ())));
     ]
 
@@ -287,9 +287,8 @@ let driver =
           equal ~msg:"an address filled" int64
             (Int64.of_int (address + bias))
             (read (Template.fill (fun _ -> Int64.of_int address) t)));
-      cases ~name:S.class_name
-        "a size left to a slot is a patch of the parameters" S.classes
-        (fun cls ->
+      cases "a size left to a slot is a patch of the parameters"
+        ~id:S.class_name S.classes (fun cls ->
           let d =
             {
               base with
@@ -346,9 +345,8 @@ let driver =
 let threads =
   group ~timeout:10. "threads"
     [
-      cases
-        ~name:(fun (r, _) -> strf "%d registers" r)
-        "a block takes 1024 threads, fewer for many registers"
+      cases "a block takes 1024 threads, fewer for many registers"
+        ~id:(fun (r, _) -> strf "%d registers" r)
         [
           (0, 1024);
           (16, 1024);
@@ -376,9 +374,8 @@ let threads =
 let dynamic =
   group ~timeout:10. "dynamic shared memory"
     [
-      cases
-        ~name:(fun (n, _) -> strf "%d bytes of the kernel's" n)
-        "a block takes what its own leaves of 100 KiB"
+      cases "a block takes what its own leaves of 100 KiB"
+        ~id:(fun (n, _) -> strf "%d bytes of the kernel's" n)
         [
           (0, 0x19000 - 0x400);
           (1, 0x19000 - 0x480);

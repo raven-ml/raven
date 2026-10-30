@@ -206,8 +206,8 @@ let override f column = function
 let agreement =
   group "Columns read as pyarrow reads them"
     [
-      cases ~name:Fun.id "defaults" (files values) (agree values);
-      cases ~name:Fun.id "with_type" (files overrides)
+      cases "defaults" ~id:Fun.id (files values) (agree values);
+      cases "with_type" ~id:Fun.id (files overrides)
         (agree ~retype:override overrides);
     ]
 
@@ -230,7 +230,7 @@ let cut_footer s k =
 let sniffing =
   group "sniff"
     [
-      cases ~name:Fun.id "reads a file and its bytes alike"
+      cases "reads a file and its bytes alike" ~id:Fun.id
         [
           "alltypes_plain.parquet";
           "types.parquet";
@@ -465,7 +465,7 @@ let formats =
             Talon_parquet.source: column "d9_2" (optional fixed_len_byte_array(4) (DECIMAL(9,2))) is a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.
             Talon_parquet.file: column "d9_0" (optional fixed_len_byte_array(4) (DECIMAL(9,0))) is a decimal, which reads as float64, or as its unscaled int64 integers up to 18 digits. Declare one with with_type.
             |});
-      cases ~name:fst "pp_format"
+      cases "pp_format" ~id:fst
         [
           ( "alltypes_plain.parquet",
             __POS_OF__
@@ -977,9 +977,8 @@ let filled n v =
 (* A fresh buffer holds any bits: here, ones. 731 rows end at bit 3 of byte
    91. *)
 let spread_tail =
-  cases
-    ~name:(fun (name, _, _) -> name)
-    "spread writes the bits past a bit destination's last row as 0"
+  cases "spread writes the bits past a bit destination's last row as 0"
+    ~id:(fun (name, _, _) -> name)
     [ ("every row valid", 0xff, 731); ("every other row valid", 0x55, 366) ]
     (fun (_, valid, taken) ->
       let rows = 731 in

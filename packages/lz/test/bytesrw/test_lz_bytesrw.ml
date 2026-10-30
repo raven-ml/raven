@@ -177,9 +177,8 @@ let write_of data = function
 (* Decompression *)
 
 let goldens fmt =
-  cases
-    ~name:(fun g -> g.Lz_support.file)
-    fmt.name
+  cases fmt.name
+    ~id:(fun g -> g.Lz_support.file)
     (Lz_support.goldens_of fmt.name)
     (fun g ->
       let data = data g and raw = raw g in
@@ -199,9 +198,8 @@ let junk = "after the stream"
    reader; a writer has nowhere to leave it. Gzip and Zstandard refuse the first
    byte that begins no member. *)
 let after fmt =
-  cases
-    ~name:(fun g -> g.Lz_support.file)
-    fmt.name
+  cases fmt.name
+    ~id:(fun g -> g.Lz_support.file)
     (Lz_support.goldens_of fmt.name)
     (fun g ->
       let data = data g and raw = raw g in
@@ -236,9 +234,9 @@ let cut fmt =
       (Lz_support.goldens_of fmt.name)
   in
   let lengths = Array.of_list lengths in
-  cases
-    ~name:(fun g -> g.Lz_support.file)
-    fmt.name files
+  cases fmt.name
+    ~id:(fun g -> g.Lz_support.file)
+    files
     (fun g ->
       let data = data g in
       for k = 0 to String.length data - 1 do
@@ -529,7 +527,7 @@ let round_trip fmt =
 
 let levels fmt =
   let lo, hi = fmt.levels in
-  cases ~name:string_of_int fmt.name
+  cases fmt.name ~id:string_of_int
     [ lo - 1; hi + 1 ]
     (fun level ->
       raises_match Exn.invalid_arg (fun () ->
@@ -551,9 +549,10 @@ let () =
          each "a raise from the writer, raised again" raised_again;
          each "a writer with ~eod:false leaves its writer open" open_writer;
          window;
-         group ~tags:[ "compress" ] "compression"
-           [
-             each "a stream decodes to its input" round_trip;
-             each "a level out of range raises when applied" levels;
-           ];
+         tag "compress"
+         @@ group "compression"
+              [
+                each "a stream decodes to its input" round_trip;
+                each "a level out of range raises when applied" levels;
+              ];
        ])

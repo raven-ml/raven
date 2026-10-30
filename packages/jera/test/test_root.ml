@@ -14,8 +14,8 @@ open Jera
 let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a
 let tight = Tol.v ~rel:1e-13 ~abs:1e-15
-let raises_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
-let failure_with sub f = raises_match (Exn.failure ~substring:sub) f
+let raises_with sub f = raises_match (Exn.invalid_arg ~sub) f
+let failure_with sub f = raises_match (Exn.failure ~sub) f
 let statuses s = Oracle.floats (Nx.cast f64 (Nx.cast Nx.int32 (Solution.ok s)))
 
 let positive =

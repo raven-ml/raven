@@ -1240,7 +1240,7 @@ let test_free_refused () =
     (B.of_bigarray (Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8));
   let freed = B.create d 64 in
   equal ~msg:"a live buffer" bool true (B.free freed);
-  raises_match (Exn.invalid_arg ~substring:"freed") (fun () -> B.free freed)
+  raises_match (Exn.invalid_arg ~sub:"freed") (fun () -> B.free freed)
 
 let tests =
   [

@@ -23,7 +23,8 @@ let temper ?move m i =
     (m.draw (Nx.Rng.fold_in k 1) particles)
 
 let law_13 m =
-  slow m.name (fun () ->
+  slow
+  @@ test m.name (fun () ->
       let zs = List.init runs (temper m) in
       let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
       let err z = Nx.item [] (Norn.Evidence.error z) in
@@ -66,9 +67,8 @@ let slice =
 
 (* The default chains: the largest divisor of N not above sqrt N. *)
 let chains =
-  cases
-    ~name:(fun (n, m) -> Printf.sprintf "%d particles, %d chains" n m)
-    "the default chains"
+  cases "the default chains"
+    ~id:(fun (n, m) -> Printf.sprintf "%d particles, %d chains" n m)
     [ (1000, 25); (12, 3); (16, 4); (13, 1); (2, 1) ]
     (fun (n, m) ->
       let s =

@@ -293,12 +293,11 @@ let () =
                numbering;
              test "a machine without PCI functions has no GPU" (fun () ->
                  equal (list string) [] (listed ~root:"no-such-directory" ()));
-             cases
-               ~name:(fun f ->
+             cases "unreadable files"
+               ~id:(fun f ->
                  if Filename.basename f = "vendor" then
                    "an unreadable vendor file leaves its function out"
                  else "an unreadable functions' directory is an Error naming it")
-               "unreadable files"
                [
                  "sys/bus/pci/devices";
                  "sys/bus/pci/devices/0000:01:00.0/vendor";

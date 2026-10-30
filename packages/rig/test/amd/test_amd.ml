@@ -117,12 +117,12 @@ let counts =
 let gpus =
   group ~timeout:10. "GPUs"
     [
-      cases
-        ~name:(fun (field, _) -> strf "make refuses a GPU of %s below 1" field)
-        "counts" counts
+      cases "counts"
+        ~id:(fun (field, _) -> strf "make refuses a GPU of %s below 1" field)
+        counts
         (fun (field, gpu) ->
           raises_match
-            (Exn.invalid_arg ~substring:("Rig_amd.make: the GPU's " ^ field))
+            (Exn.invalid_arg ~sub:("Rig_amd.make: the GPU's " ^ field))
             (fun () -> A.make ~word:(H.word ()) (path_of gpu)));
       test "AMD's display controllers and accelerators are GPUs" (fun () ->
           equal bool ~msg:"display" true
@@ -188,7 +188,7 @@ let placed g bin =
 let misuse () =
   S.with_ @@ fun { g; _ } ->
   let raises fn f =
-    raises_match ~msg:fn (Exn.invalid_arg ~substring:("Rig_amd." ^ fn ^ ":")) f
+    raises_match ~msg:fn (Exn.invalid_arg ~sub:("Rig_amd." ^ fn ^ ":")) f
   in
   let page = H.pages 4096 in
   raises "alloc" (fun () -> A.alloc g Pinned 0);
@@ -312,19 +312,17 @@ let entries () =
   not_equal nativeint ~msg:"a PM4 queue's launch" 0n e.launch;
   equal nativeint ~msg:"made once" e.launch (found (A.entry m "ids")).launch;
   raises_match ~msg:"a kernel with scratch that reads its dispatch packet"
-    (Exn.invalid_arg ~substring:"dispatch packet") (fun () ->
+    (Exn.invalid_arg ~sub:"dispatch packet") (fun () ->
       A.entry m "packet_scratch");
   not_equal nativeint ~msg:"a kernel with scratch" 0n
     (found (A.entry m "scratch")).launch;
   raises_match ~msg:"a kernel that reads its dispatch packet"
-    (Exn.invalid_arg ~substring:"dispatch packet") (fun () ->
-      A.entry m "packet");
+    (Exn.invalid_arg ~sub:"dispatch packet") (fun () -> A.entry m "packet");
   A.unload g m;
   A.free g r;
   let m, r, _ = load g (read_fixture "hidden_gfx1201.hsaco") in
   raises_match ~msg:"a kernel that reads a runtime's service"
-    (Exn.invalid_arg ~substring:"hidden_printf_buffer") (fun () ->
-      A.entry m "every");
+    (Exn.invalid_arg ~sub:"hidden_printf_buffer") (fun () -> A.entry m "every");
   A.unload g m;
   A.free g r
 
@@ -1124,16 +1122,14 @@ let launching =
         launch_segments_hw;
       test "a launch of a kernel that takes scratch computes" scratch_launch;
       test "an AQL compute ring grows, its scratch kept" aql_growth;
-      cases ~name:string_of_int
-        "a submission of launches of 8 KiB of arguments each runs whole"
-        [ 1; 128; 300; 1000 ] wide_launches;
+      cases "a submission of launches of 8 KiB of arguments each runs whole"
+        ~id:string_of_int [ 1; 128; 300; 1000 ] wide_launches;
       stateful ~count:18 ~steps:8 ~domains:2
         "submissions from two domains run whole while the segment and rings \
          grow"
         growth_commands;
-      cases ~name:string_of_int
-        "a launch's dynamic LDS follows the kernel's own" [ 64; 4096; 16320 ]
-        (fun n -> lds_launch n ());
+      cases "a launch's dynamic LDS follows the kernel's own" ~id:string_of_int
+        [ 64; 4096; 16320 ] (fun n -> lds_launch n ());
     ]
 
 (* rig finds the record the device's facts declare, and none on the host. *)
@@ -1673,9 +1669,9 @@ let queue_order =
   group ~timeout:120. "in order"
     [
       cases
-        ~name:(Format.asprintf "%a" Chain.pp)
         "compute parts run in array order, each reading its predecessor's \
          writes"
+        ~id:(Format.asprintf "%a" Chain.pp)
         Chain.examples Chain.law;
     ]
 
@@ -1973,9 +1969,9 @@ let many_waits () =
 let waits =
   group ~timeout:120. "waits"
     [
-      cases ~name:crossing_name
+      cases
         "a wait holds the work until the word reaches it, across 2^32 (sampled)"
-        crossing held;
+        ~id:crossing_name crossing held;
       test "a submission waits in its queue on 300 producers" many_waits;
     ]
 
@@ -2267,9 +2263,8 @@ let rings =
 let timeline =
   group ~timeout:300. "timeline"
     [
-      cases
-        ~name:(fun (q, _) -> "the value at 2^32 ending on " ^ q)
-        "values across 2^32 complete in order, ending on either queue"
+      cases "values across 2^32 complete in order, ending on either queue"
+        ~id:(fun (q, _) -> "the value at 2^32 ending on " ^ q)
         Wrap.carried
         (fun (_, c) -> Wrap.across_carry c);
     ]

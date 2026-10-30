@@ -4,7 +4,7 @@ open Tolk
 (* The tag of the tests that run with ASSERT_COMPILE set, in a run of their own,
    since a process reads the variable once. *)
 let assert_compile = "assert-compile"
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let sint = Testable.make ~pp:Shape.Sint.pp ~equal:Shape.Sint.equal
 
 let estimates =
@@ -805,35 +805,37 @@ let under_assert_compile f () =
   else f ()
 
 let asserted =
-  group ~tags:[ assert_compile ] "ASSERT_COMPILE"
-    [
-      test "compile_cached refuses to compile, naming the source"
-        (under_assert_compile (fun () ->
-             let c, table, t = cached () in
-             raises_match (Exn.invalid_arg ~substring:"kernel_source")
-               (fun () -> Renderer.Compiler.compile_cached c "kernel_source");
-             equal int ~msg:"runs of the toolchain" 0 t.runs;
-             equal (option string) None (get table "kernel_source")));
-      test "compile_cached refuses without a cachekey"
-        (under_assert_compile (fun () ->
-             rejects (fun () ->
-                 Renderer.Compiler.compile_cached
-                   (Renderer.Compiler.v Fun.id)
-                   "a")));
-      test "compile_cached returns a binary the table holds"
-        (under_assert_compile a_cached_binary_wins);
-      test
-        "compile_cached refuses a held binary while the disk cache is disabled"
-        (under_assert_compile (fun () ->
-             let c, table, _ = cached () in
-             Helpers.Diskcache.put ~table "a" "held";
-             cache_off (fun () ->
-                 rejects (fun () -> Renderer.Compiler.compile_cached c "a"))));
-      test "compile still compiles"
-        (under_assert_compile (fun () ->
-             equal string "a"
-               (Renderer.Compiler.compile (Renderer.Compiler.v Fun.id) "a")));
-    ]
+  tag assert_compile
+  @@ group "ASSERT_COMPILE"
+       [
+         test "compile_cached refuses to compile, naming the source"
+           (under_assert_compile (fun () ->
+                let c, table, t = cached () in
+                raises_match (Exn.invalid_arg ~sub:"kernel_source") (fun () ->
+                    Renderer.Compiler.compile_cached c "kernel_source");
+                equal int ~msg:"runs of the toolchain" 0 t.runs;
+                equal (option string) None (get table "kernel_source")));
+         test "compile_cached refuses without a cachekey"
+           (under_assert_compile (fun () ->
+                rejects (fun () ->
+                    Renderer.Compiler.compile_cached
+                      (Renderer.Compiler.v Fun.id)
+                      "a")));
+         test "compile_cached returns a binary the table holds"
+           (under_assert_compile a_cached_binary_wins);
+         test
+           "compile_cached refuses a held binary while the disk cache is \
+            disabled"
+           (under_assert_compile (fun () ->
+                let c, table, _ = cached () in
+                Helpers.Diskcache.put ~table "a" "held";
+                cache_off (fun () ->
+                    rejects (fun () -> Renderer.Compiler.compile_cached c "a"))));
+         test "compile still compiles"
+           (under_assert_compile (fun () ->
+                equal string "a"
+                  (Renderer.Compiler.compile (Renderer.Compiler.v Fun.id) "a")));
+       ]
 
 (* Renderers *)
 

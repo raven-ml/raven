@@ -456,7 +456,7 @@ let () =
              test "an affine term is dropped" test_affine;
              test "an integer's cotangent is zero" test_integer;
              test "a transpose is fresh" test_transpose_fresh;
-             cases ~name:(fun (n, _, _, _) -> n) "signs of zero" signs test_sign;
+             cases "signs of zero" ~id:(fun (n, _, _, _) -> n) signs test_sign;
            ];
-         cases ~name:(fun (n, _, _) -> n) "errors" errors test_error;
+         cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;
        ])

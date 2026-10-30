@@ -257,7 +257,8 @@ let warmed =
 let warmup =
   group "warmup"
     [
-      slow "the geometry's scale reaches the target's" (fun () ->
+      slow
+      @@ test "the geometry's scale reaches the target's" (fun () ->
           let s = Lazy.force warmed in
           let sd =
             Rune.vmap
@@ -275,7 +276,8 @@ let warmup =
                 (fun r -> r > 0.5 && r < 2.)
                 r)
             ratio);
-      slow "the step size gives about the target acceptance" (fun () ->
+      slow
+      @@ test "the step size gives about the target acceptance" (fun () ->
           let s = Lazy.force warmed in
           let _, _, st = N.sample t scaled (Nx.Rng.key 5) ~draws:200 s in
           let acc =
@@ -284,26 +286,31 @@ let warmup =
           satisfies ~claim:"in (0.65, 0.95)" (float 1e-12)
             (fun a -> a > 0.65 && a < 0.95)
             acc);
-      slow "a low-rank warmup keeps its rank and finite step sizes" (fun () ->
-          let start = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 2 |] in
-          let s =
-            N.warmup t scaled (Nx.Rng.key 4) ~steps:150
-              (N.init t ~rank:1 scaled start)
-          in
-          let rank =
-            Nx.Ptree.fold (Norn.Gaussian.ptree t)
-              (fun p x r ->
-                if Nx.Ptree.Path.to_string p = "variances" then (Nx.shape x).(1)
-                else r)
-              s.geometry (-1)
-          in
-          equal int 1 rank;
-          Array.iter
-            (fun e ->
-              satisfies ~claim:"finite and positive" (float 1e-12)
-                (fun e -> Float.is_finite e && e > 0.)
-                e)
-            (Nx.to_array s.step_size));
+      slow
+      @@ test "a low-rank warmup keeps its rank and finite step sizes"
+           (fun () ->
+             let start =
+               Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 2 |]
+             in
+             let s =
+               N.warmup t scaled (Nx.Rng.key 4) ~steps:150
+                 (N.init t ~rank:1 scaled start)
+             in
+             let rank =
+               Nx.Ptree.fold (Norn.Gaussian.ptree t)
+                 (fun p x r ->
+                   if Nx.Ptree.Path.to_string p = "variances" then
+                     (Nx.shape x).(1)
+                   else r)
+                 s.geometry (-1)
+             in
+             equal int 1 rank;
+             Array.iter
+               (fun e ->
+                 satisfies ~claim:"finite and positive" (float 1e-12)
+                   (fun e -> Float.is_finite e && e > 0.)
+                   e)
+               (Nx.to_array s.step_size));
       test "a warmup fits more directions than the dimension has" (fun () ->
           let s = N.init t ~rank:2 normal (Nx.zeros Nx.float64 [| 2; 1 |]) in
           let s = N.warmup t normal (Nx.Rng.key 3) ~steps:30 s in
@@ -401,8 +408,7 @@ let refusals =
             Nx.add (banana x) (Nx.slice [ Nx.L [ 0; 0; 0; 0 ]; Nx.I 0 ] x)
           in
           raises_match
-            (Exn.invalid_arg
-               ~substring:"row 0 changes when the chains are reversed")
+            (Exn.invalid_arg ~sub:"row 0 changes when the chains are reversed")
             (fun () -> N.init t coupled (start 4)));
       test "NaN at a finite position names the chain" (fun () ->
           let nan_at_two x =
@@ -447,7 +453,8 @@ let max_deviation xs sd =
   !worst
 
 let invariance name geometry =
-  slow (name ^ " geometry leaves the banana invariant") (fun () ->
+  slow
+  @@ test (name ^ " geometry leaves the banana invariant") (fun () ->
       let k = Nx.Rng.key 31 in
       let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
       let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in

@@ -45,7 +45,7 @@ let decoded = option report
 let interrupts =
   group ~timeout:10. "interrupts"
     [
-      cases ~name:fst "a release reports nothing"
+      cases "a release reports nothing" ~id:fst
         [
           ("GFX12 end of pipe", (gfx12, sdma7, entry grbm_cp 0xb5));
           ("GFX12 copy trap", (gfx12, sdma7, entry soc21_gfx 0x31));
@@ -53,7 +53,7 @@ let interrupts =
           ("GFX9 copy trap", (gfx9, sdma4, entry soc15_sdma0 0xe0));
         ]
         (fun (_, (gc, sdma, e)) -> equal decoded None (Ih.decode ~gc ~sdma e));
-      cases ~name:fst "a page walker's fault is a page fault"
+      cases "a page walker's fault is a page fault" ~id:fst
         [
           ("GFX12", (gfx12, sdma7, entry soc21_gfx 0));
           ("GFX9", (gfx9, sdma4, entry soc15_utcl2 0));
@@ -68,7 +68,7 @@ let interrupts =
                    vmid=3(0) pasid=7 node=0 ctx=[0x1, 0x2, 0x3, 0x4]"))
             (Ih.decode ~gc:gfx11 ~sdma:(6, 0, 0)
                (entry ~vmid:3 ~pasid:7 ~ctx:[| 1; 2; 3; 4 |] grbm_cp 0xb8)));
-      cases ~name:fst "a shader error names its kind"
+      cases "a shader error names its kind" ~id:fst
         [
           ( "GFX12 illegal instruction",
             (gfx12, [| 1 lsl 21; 2 lsl 6; 0; 0 |], "ILLEGAL_INST") );
@@ -77,9 +77,9 @@ let interrupts =
         ]
         (fun (_, (gc, ctx, kind)) ->
           match Ih.decode ~gc ~sdma:sdma7 (entry ~ctx grbm_cp 0xef) with
-          | Some (Ih.Fault s) -> ends_with ~affix:("shader error " ^ kind) s
+          | Some (Ih.Fault s) -> ends_with ~suffix:("shader error " ^ kind) s
           | r -> failf "%a" (Testable.pp decoded) r);
-      cases ~name:fst "an interrupt that reports no error is none"
+      cases "an interrupt that reports no error is none" ~id:fst
         [
           ( "a shader's other interrupt",
             (gfx12, entry ~ctx:[| 0; 1 lsl 6; 0; 0 |] grbm_cp 0xef) );

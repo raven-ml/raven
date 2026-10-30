@@ -75,59 +75,67 @@ let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_amd.hip "gfx1100") kernel)
 
 let not_a_library =
-  group ~tags:[ "no-library" ] "a library that does not load"
-    [
-      test "making a compiler loads nothing, and a compile raises Compile_error"
-        (fun () ->
-          let msg = require_some (load_failure ()) in
-          in_order ~subs:[ "comgr"; "not_a_library" ] msg);
-      test "every compile raises the same Compile_error" (fun () ->
-          let first = load_failure () in
-          equal (option string) first (load_failure ());
-          is_some first);
-      test "compiles from several domains at once raise it" (fun () ->
-          let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
-          let msgs = List.map Domain.join domains in
-          is_some (List.hd msgs);
-          List.iter (equal (option string) (List.hd msgs)) msgs);
-      test "a cached code object is served without loading comgr" (fun () ->
-          let hip = Compiler_amd.hip "gfx1100" in
-          let table = Option.get (Compiler.cachekey hip) in
-          Helpers.Diskcache.put ~table kernel "cached code object";
-          equal string "cached code object" (Compiler.compile_cached hip kernel));
-    ]
+  tag "no-library"
+  @@ group "a library that does not load"
+       [
+         test
+           "making a compiler loads nothing, and a compile raises Compile_error"
+           (fun () ->
+             let msg = require_some (load_failure ()) in
+             in_order ~subs:[ "comgr"; "not_a_library" ] msg);
+         test "every compile raises the same Compile_error" (fun () ->
+             let first = load_failure () in
+             equal (option string) first (load_failure ());
+             is_some first);
+         test "compiles from several domains at once raise it" (fun () ->
+             let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
+             let msgs = List.map Domain.join domains in
+             is_some (List.hd msgs);
+             List.iter (equal (option string) (List.hd msgs)) msgs);
+         test "a cached code object is served without loading comgr" (fun () ->
+             let hip = Compiler_amd.hip "gfx1100" in
+             let table = Option.get (Compiler.cachekey hip) in
+             Helpers.Diskcache.put ~table kernel "cached code object";
+             equal string "cached code object"
+               (Compiler.compile_cached hip kernel));
+       ]
 
 (* comgr *)
 
 let smoke =
   group "comgr"
     [
-      slow "compiles a kernel to a code object" (fun () ->
+      slow
+      @@ test "compiles a kernel to a code object" (fun () ->
           let lib =
             with_comgr (fun () ->
                 Compiler.compile (Compiler_amd.hip "gfx1100") kernel)
           in
-          starts_with ~affix:"\x7fELF" lib;
+          starts_with ~prefix:"\x7fELF" lib;
           contains ~sub:"add" lib);
-      slow "assembles a source whose first line is .text" (fun () ->
+      slow
+      @@ test "assembles a source whose first line is .text" (fun () ->
           let lib =
             with_comgr (fun () ->
                 Compiler.compile (Compiler_amd.hip "gfx1100") assembly)
           in
-          starts_with ~affix:"\x7fELF" lib);
-      slow "a rejected source raises Compile_error with comgr's log" (fun () ->
-          match
-            Compiler.compile
-              (Compiler_amd.hip "gfx1100")
-              "extern \"C\" __attribute__((global)) void f() { undeclared_name \
-               = 1; }"
-          with
-          | _ -> fail "comgr accepted an undeclared name"
-          | exception Compiler.Compile_error msg when absent msg ->
-              skip ~reason:msg ()
-          | exception Compiler.Compile_error msg ->
-              contains ~sub:"undeclared_name" msg);
-      slow "compiles from several domains at once" (fun () ->
+          starts_with ~prefix:"\x7fELF" lib);
+      slow
+      @@ test "a rejected source raises Compile_error with comgr's log"
+           (fun () ->
+             match
+               Compiler.compile
+                 (Compiler_amd.hip "gfx1100")
+                 "extern \"C\" __attribute__((global)) void f() { \
+                  undeclared_name = 1; }"
+             with
+             | _ -> fail "comgr accepted an undeclared name"
+             | exception Compiler.Compile_error msg when absent msg ->
+                 skip ~reason:msg ()
+             | exception Compiler.Compile_error msg ->
+                 contains ~sub:"undeclared_name" msg);
+      slow
+      @@ test "compiles from several domains at once" (fun () ->
           let archs = [ "gfx90a"; "gfx942"; "gfx1100"; "gfx1201" ] in
           let compile arch () =
             Compiler.compile (Compiler_amd.hip arch) kernel
@@ -137,9 +145,10 @@ let smoke =
             List.map (fun arch -> Domain.spawn (compile arch)) archs
           in
           List.iter
-            (fun lib -> starts_with ~affix:"\x7fELF" lib)
+            (fun lib -> starts_with ~prefix:"\x7fELF" lib)
             (List.map Domain.join domains));
-      slow "disassembles a code object" (fun () ->
+      slow
+      @@ test "disassembles a code object" (fun () ->
           let hip = Compiler_amd.hip "gfx1100" in
           let lib = with_comgr (fun () -> Compiler.compile hip kernel) in
           ignore (output ());
@@ -167,40 +176,46 @@ let with_signal s behavior f =
 let process =
   group "a compile in a process of its own"
     [
-      slow "compiles of one kernel are equal, in turn and from several domains"
-        (fun () ->
-          let lib = with_comgr (fun () -> compile kernel) in
-          equal string lib (compile kernel);
-          let domains =
-            List.init 4 (fun _ -> Domain.spawn (fun () -> compile kernel))
-          in
-          List.iter (equal string lib) (List.map Domain.join domains));
-      cases ~tags:[ "slow" ] ~name:(Printf.sprintf "%S")
-        "a source that is no HIP raises Compile_error"
-        [
-          "";
-          "\xff\xfe\x7fELF\000\001";
-          "}{";
-          String.sub kernel 0 40;
-          ".text\n  not_an_instruction v0\n";
-        ]
-        (fun src ->
-          ignore (with_comgr (fun () -> compile kernel));
-          raises_match
-            (function Compiler.Compile_error _ -> true | _ -> false)
-            (fun () -> compile src));
       slow
-        "a source that ends its process raises Compile_error with LLVM's error"
-        (fun () ->
-          ignore (with_comgr (fun () -> compile kernel));
-          match compile unselectable with
-          | _ -> fail "code generation selected a CDNA intrinsic for RDNA"
-          | exception Compiler.Compile_error msg ->
-              in_order ~subs:[ "without a reply"; "LLVM ERROR" ] msg);
-      slow "a compile with SIGCHLD ignored returns its code object" (fun () ->
-          let lib = with_comgr (fun () -> compile kernel) in
-          equal string lib
-            (with_signal Sys.sigchld Signal_ignore (fun () -> compile kernel)));
+      @@ test
+           "compiles of one kernel are equal, in turn and from several domains"
+           (fun () ->
+             let lib = with_comgr (fun () -> compile kernel) in
+             equal string lib (compile kernel);
+             let domains =
+               List.init 4 (fun _ -> Domain.spawn (fun () -> compile kernel))
+             in
+             List.iter (equal string lib) (List.map Domain.join domains));
+      slow
+      @@ cases "a source that is no HIP raises Compile_error"
+           ~id:(Printf.sprintf "%S")
+           [
+             "";
+             "\xff\xfe\x7fELF\000\001";
+             "}{";
+             String.sub kernel 0 40;
+             ".text\n  not_an_instruction v0\n";
+           ]
+           (fun src ->
+             ignore (with_comgr (fun () -> compile kernel));
+             raises_match
+               (function Compiler.Compile_error _ -> true | _ -> false)
+               (fun () -> compile src));
+      slow
+      @@ test
+           "a source that ends its process raises Compile_error with LLVM's \
+            error" (fun () ->
+             ignore (with_comgr (fun () -> compile kernel));
+             match compile unselectable with
+             | _ -> fail "code generation selected a CDNA intrinsic for RDNA"
+             | exception Compiler.Compile_error msg ->
+                 in_order ~subs:[ "without a reply"; "LLVM ERROR" ] msg);
+      slow
+      @@ test "a compile with SIGCHLD ignored returns its code object"
+           (fun () ->
+             let lib = with_comgr (fun () -> compile kernel) in
+             equal string lib
+               (with_signal Sys.sigchld Signal_ignore (fun () -> compile kernel)));
     ]
 
 (* A process that cannot start: these tests run in a process of their own, where
@@ -208,13 +223,14 @@ let process =
    life. *)
 
 let no_spawn =
-  group ~tags:[ "no-spawn" ] "a process that cannot start"
-    [
-      test "a compile raises Failure naming the worker" (fun () ->
-          Spawn.forbid ();
-          raises_match (Exn.failure ~substring:"comgr worker") (fun () ->
-              compile kernel));
-    ]
+  tag "no-spawn"
+  @@ group "a process that cannot start"
+       [
+         test "a compile raises Failure naming the worker" (fun () ->
+             Spawn.forbid ();
+             raises_match (Exn.failure ~sub:"comgr worker") (fun () ->
+                 compile kernel));
+       ]
 
 let () =
   exit

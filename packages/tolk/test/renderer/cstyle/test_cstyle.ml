@@ -3,7 +3,7 @@ open Tolk
 
 (* The host's target, as the engine gives it. *)
 let host_target = Tolk_engine.target Rig.host
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let tensor_core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
 
 let contains s sub =
@@ -67,9 +67,9 @@ let sources =
   group "sources"
     [
       group "by default" (sources_under "-");
-      group ~tags:[ "expand-ssa" ] "with EXPAND_SSA=1"
-        (sources_under "EXPAND_SSA=1");
-      group ~tags:[ "unaligned" ] "with ALIGNED=0" (sources_under "ALIGNED=0");
+      tag "expand-ssa"
+      @@ group "with EXPAND_SSA=1" (sources_under "EXPAND_SSA=1");
+      tag "unaligned" @@ group "with ALIGNED=0" (sources_under "ALIGNED=0");
     ]
 
 (* C computes an operation on a char, a short or Clang's __fp16 in a wider type,
@@ -308,7 +308,7 @@ let parentheses =
     [
       prop "a chain of any length nests a bounded number of brackets"
         renderers_and_lengths nests_a_bounded_depth;
-      cases ~name:fst "an associative chain is written flat"
+      cases "an associative chain is written flat" ~id:fst
         [
           ("add", true);
           ("mul", true);
@@ -375,15 +375,14 @@ let fp8_infinities =
     [
       test "declares the guard exactly when it converts a value to a float8"
         guard_only_where_converted;
-      cases
-        ~name:(fun (_, t, _) -> t)
-        "converts with the byte of the infinity's image"
+      cases "converts with the byte of the infinity's image"
+        ~id:(fun (_, t, _) -> t)
         [
           ("cuda_dtype_float8_e4m3", "__nv_fp8_e4m3", Dtype.Fp8e4m3);
           ("cuda_dtype_float8_e5m2", "__nv_fp8_e5m2", Fp8e5m2);
         ]
         converts_with_the_infinity_byte;
-      cases ~name:Fun.id "writes an infinite e5m2 constant as its bits"
+      cases "writes an infinite e5m2 constant as its bits" ~id:Fun.id
         [ "0x7c"; "0xfc" ] (fun byte ->
           let bits = "tg_bitcast<__nv_fp8_e5m2>((unsigned char)" ^ byte ^ ")" in
           satisfies
@@ -522,7 +521,7 @@ let rendering =
         (Gen.pair named_cases named_cases)
         keeps_no_state;
       test "keeps no reference to the kernel it rendered" keeps_no_reference;
-      cases ~name:fst "formats custom code as str.format does"
+      cases "formats custom code as str.format does" ~id:fst
         [
           ("{0}+{1}", "val0+val1");
           ("{1}-{0}", "val1-val0");
@@ -531,17 +530,17 @@ let rendering =
           ("f({0}) }}", "f(val0) }");
         ]
         formats_custom_code;
-      cases ~name:Fun.id "refuses custom code str.format refuses, naming it"
+      cases "refuses custom code str.format refuses, naming it" ~id:Fun.id
         [ "f({0"; "{0}}"; "{0} } {1}"; "{2}"; "{x}" ] (fun code ->
-          raises_match (Exn.invalid_arg ~substring:code) (fun () -> custom code));
+          raises_match (Exn.invalid_arg ~sub:code) (fun () -> custom code));
       test "writes the same CUDA source for the CUDA and NV devices" cuda_on_nv;
-      cases
-        ~name:(fun (name, _) -> name)
-        "raises Invalid_argument on an operation the target lacks"
+      cases "raises Invalid_argument on an operation the target lacks"
+        ~id:(fun (name, _) -> name)
         [ ("clang", clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
         (fun (_, r) -> rejects (fun () -> render r (one_operation Max Float32)));
-      cases ~name:fst
+      cases
         "raises Invalid_argument on a kernel of another target it cannot write"
+        ~id:fst
         [
           ( "HIP gfx1100 converts to a float8 it lacks",
             (hip, "hip_cdna4_dtype_float8_e4m3") );
@@ -591,20 +590,24 @@ let gpu_rows =
     case_rows
 
 let compilation =
-  group ~tags:[ "slow" ] "every GPU kernel compiles with its target's toolchain"
-    (List.map compiles_with_its_toolchain gpu_rows)
+  slow
+  @@ group "every GPU kernel compiles with its target's toolchain"
+       (List.map compiles_with_its_toolchain gpu_rows)
 
 (* CUDA's binaries *)
 
 let compiles_to_a_cubin () =
   match Renderer.Compiler.compile cuda.compiler (source_of_case "cuda_add") with
-  | binary -> starts_with ~affix:"\x7fELF" binary
+  | binary -> starts_with ~prefix:"\x7fELF" binary
   | exception Renderer.Compiler.Compile_error why when lacks_toolchain why ->
       skip ~reason:why ()
 
 let cuda_binaries =
   group "CUDA's binaries"
-    [ slow "the CUDA device's kernels compile to a cubin" compiles_to_a_cubin ]
+    [
+      slow
+      @@ test "the CUDA device's kernels compile to a cubin" compiles_to_a_cubin;
+    ]
 
 (* bfloat16 truncation on Metal *)
 
@@ -664,7 +667,9 @@ let bf16_truncation =
           in
           equal (list Dtypes.dtype) [ Dtype.Bfloat16 ]
             (List.map Ops.dtype rewritten));
-      slow "compiles a kernel that truncates a bfloat16" compiles_its_truncation;
+      slow
+      @@ test "compiles a kernel that truncates a bfloat16"
+           compiles_its_truncation;
     ]
 
 (* Execution *)
@@ -1217,9 +1222,8 @@ let execution =
         stores_each_constant_as_its_type_holds_it;
       prop ~count:30 "stores each integer constant as its type holds it"
         constants_of_ints stores_ints_as_their_type_holds_them;
-      cases
-        ~name:(fun (dt, x) -> Format.asprintf "%a %h" Dtype.pp dt x)
-        "converts an infinity or a NaN to an integer type"
+      cases "converts an infinity or a NaN to an integer type"
+        ~id:(fun (dt, x) -> Format.asprintf "%a %h" Dtype.pp dt x)
         (List.concat_map
            (fun dt ->
              List.map (fun x -> (dt, x)) [ infinity; neg_infinity; nan ])
@@ -1237,14 +1241,15 @@ let execution =
         rounds_each_operation_on_halves;
       test "wraps each operation on unsigned chars"
         wraps_each_operation_on_chars;
-      group ~tags:[ "slow" ] "every kernel compiles and loads"
-        (List.map compiles_and_loads clang_rows);
-      group ~tags:[ "slow" ]
-        "every kernel the interpreter runs writes what it computes"
-        (List.map agrees_with_the_interpreter interpreted_rows);
-      group ~tags:[ "slow" ]
-        "a kernel over a narrow type wraps and rounds as the interpreter"
-        (List.map wraps_and_rounds_as_the_interpreter narrow_rows);
+      slow
+      @@ group "every kernel compiles and loads"
+           (List.map compiles_and_loads clang_rows);
+      slow
+      @@ group "every kernel the interpreter runs writes what it computes"
+           (List.map agrees_with_the_interpreter interpreted_rows);
+      slow
+      @@ group "a kernel over a narrow type wraps and rounds as the interpreter"
+           (List.map wraps_and_rounds_as_the_interpreter narrow_rows);
     ]
 
 (* Division
@@ -1310,7 +1315,7 @@ let division_group =
             (List.exists
                (fun i -> quotient i <> product_by_reciprocal i)
                (List.init (Array.length dividends) Fun.id)));
-      slow "Metal divides as IEEE does, rounding once" divides_on_metal;
+      slow @@ test "Metal divides as IEEE does, rounding once" divides_on_metal;
     ]
 
 (* Negation *)
@@ -1332,9 +1337,8 @@ let negated x = Ops.alu x Neg []
 let negation =
   group "negation"
     [
-      cases
-        ~name:(fun (r : Renderer.t) -> r.name)
-        "a minus before a minus is apart"
+      cases "a minus before a minus is apart"
+        ~id:(fun (r : Renderer.t) -> r.name)
         [ clang; metal; cuda; hip ]
         (fun r ->
           let neg = List.assoc Op.Neg r.code_for_op
@@ -1454,11 +1458,10 @@ let target_name (name, _, _, dt, _) = name ^ ", " ^ Dtype.name dt
 let zeros_compared =
   group "zeros a comparison reads"
     [
-      cases ~name:target_name
+      cases
         "a float zero a comparison reads is opaque to a backend that lowers it \
          to an extreme, and a literal elsewhere"
-        per_target
-        (fun (_, r, reg, dt, zeros) ->
+        ~id:target_name per_target (fun (_, r, reg, dt, zeros) ->
           (* a failure prints the source *)
           let says msg want uops =
             let src = render r uops in
@@ -1469,8 +1472,8 @@ let zeros_compared =
           says "-0" zeros (const_select dt (-0.));
           says "1.5" false (const_select dt 1.5);
           says "a mask" false (zero_masked dt));
-      cases ~name:Dtype.name
-        "a select of a value and a zero picks the zero at -0., on the host"
+      cases "a select of a value and a zero picks the zero at -0., on the host"
+        ~id:Dtype.name
         Dtype.[ Float16; Float32; Float64 ]
         (fun dt ->
           let k = Run.program (Lazy.force host) (const_select dt 0.) in

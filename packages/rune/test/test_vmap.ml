@@ -21,7 +21,7 @@ module Two = (val Nx.devices [ Nx_support.memory 1; Nx_support.memory 2 ])
 
 let f64 = Nx.float64
 let c128 = Nx.complex128
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 let v xs = Nx.create f64 [| Array.length xs |] xs
 let floats = array float_exact
 

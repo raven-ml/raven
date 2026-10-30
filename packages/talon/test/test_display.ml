@@ -214,9 +214,8 @@ let float_cell x =
    more than six decimals, and one of 10^16 or more has integer digits that are
    not all its own: either shows its column in scientific notation. *)
 let float_cuts =
-  cases
-    ~name:(fun (x, _) -> Printf.sprintf "%.17g" x)
-    "Scientific cut"
+  cases "Scientific cut"
+    ~id:(fun (x, _) -> Printf.sprintf "%.17g" x)
     [
       (0.1, "0.100000");
       (0.099, "9.90000e-02");

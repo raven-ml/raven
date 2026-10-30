@@ -89,7 +89,7 @@ let listing =
           let dir = Filename.concat root "sys/class/infiniband" in
           write dir "";
           let why = require_error (M.names_under ~root ()) in
-          starts_with ~affix:(dir ^ ": ") why);
+          starts_with ~prefix:(dir ^ ": ") why);
     ]
 
 let opening =
@@ -111,10 +111,7 @@ let opening =
           let root = machine () in
           match M.open_under ~root "mlx5_0" with
           | Ok _ -> fail "opened"
-          | Error e ->
-              starts_with
-                ~affix:(verbs_file root ^ ": ")
-                e);
+          | Error e -> starts_with ~prefix:(verbs_file root ^ ": ") e);
     ]
 
 let paths =

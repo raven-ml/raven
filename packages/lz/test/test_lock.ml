@@ -54,9 +54,8 @@ let zstd_unit = (4 * kib) + (2 * 128 * kib) + 3 + 18 + 4
 (* [neighbours name t work] states that the call [work w] prepares, whose
    work is [w], holds the lock at [t - 1] and releases it once at [t]. *)
 let neighbours name t work =
-  cases
-    ~name:(fun (w, _) -> string_of_int w)
-    name
+  cases name
+    ~id:(fun (w, _) -> string_of_int w)
     [ (t - 1, 0); (t, 1) ]
     (fun (w, n) ->
       let call = work w in
@@ -234,9 +233,8 @@ let one_block name t work decode =
     let src = Lz_support.of_string s and dst = Lz_support.create n in
     count (fun () -> ok_produced n (decode src dst))
   in
-  cases
-    ~name:(fun (label, _, _) -> label)
-    name
+  cases name
+    ~id:(fun (label, _, _) -> label)
     [
       ("work under the threshold", work (t - 1), 0);
       ("work at the threshold, in one unit", work t, 0);
@@ -368,9 +366,8 @@ let repeat n s = String.concat "" (List.init n (fun _ -> s))
 let frames name t f decode =
   let z = String.length f in
   let n = (t + z - 1) / z in
-  cases
-    ~name:(fun (k, _) -> string_of_int k ^ " frames")
-    name
+  cases name
+    ~id:(fun (k, _) -> string_of_int k ^ " frames")
     [ (n, 0); (n + 1, 1) ]
     (fun (k, r) ->
       let src = Lz_support.of_string (repeat k f) in
@@ -447,9 +444,8 @@ let snappy_literal =
    into an exact destination, the exact loop copies the last ones. *)
 let long_copy =
   let lz4 = (lz4_decode, Lz.Lz4.Block.decode) in
-  cases
-    ~name:(fun (label, _, _, _) -> label)
-    "a decode releases before a long copy"
+  cases "a decode releases before a long copy"
+    ~id:(fun (label, _, _, _) -> label)
     [
       ("LZ4, a literal run of 64 KiB", lz4, kib, lz4_literals (64 * kib));
       ("LZ4, a match of about 1 MiB", lz4, kib, lz4_zeros);

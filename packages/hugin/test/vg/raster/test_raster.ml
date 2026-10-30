@@ -151,9 +151,8 @@ let cut_by_the_page =
 let pages =
   group "pages"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "the pixel grid of"
+      cases "the pixel grid of"
+        ~id:(fun (n, _, _) -> n)
         [
           ("whole points", (10., 5., 1.), [| 5; 10; 4 |]);
           ("fractions rounded to the nearest", (10.4, 5.6, 1.), [| 6; 10; 4 |]);
@@ -186,18 +185,18 @@ let pages =
           let dashed = Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] 2. in
           equal (float 0.05) 40.
             (coverage (render 40. 10. (Picture.stroke dashed red far))));
-      cases ~name:(Format.asprintf "%g") "render raises on the density"
+      cases "render raises on the density" ~id:(Format.asprintf "%g")
         [ 0.; -1.; Float.nan; infinity ] (fun density ->
-          raises_match (Exn.invalid_arg ~substring:"density") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"density") (fun () ->
               render ~density 10. 10. Picture.empty));
-      cases ~name:fst "render raises on a page of"
+      cases "render raises on a page of" ~id:fst
         [
           ("no pixel wide", (0.4, 10.));
           ("no pixel high", (10., 0.4));
           ("more than 2^31 - 1 pixels", (3e9, 1.));
         ]
         (fun (_, (w, h)) ->
-          raises_match (Exn.invalid_arg ~substring:"pixels") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"pixels") (fun () ->
               render w h Picture.empty));
     ]
 
@@ -345,7 +344,7 @@ let clips =
               (Picture.clip (rect 3. 0. 7. 10.) (solid 10. 10.))
           in
           equal (float 1e-9) 30. (coverage (render 10. 10. p)));
-      cases ~name:fst "a box beside a curved clip shows nothing"
+      cases "a box beside a curved clip shows nothing" ~id:fst
         [ ("next to its pixels", 6.); ("apart from its pixels", 8.) ]
         (fun (_, x) ->
           let circle = Path.circle (P2.v 3. 5.) 2. in
@@ -518,13 +517,13 @@ let tiny_polygons join =
 let strokes =
   group "strokes"
     [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "a line 4 wide:" caps
+      cases "a line 4 wide:"
+        ~id:(fun (n, _, _, _) -> n)
+        caps
         (fun (_, cap, a, arc) -> curved ~arc a (stroked (Stroke.v ~cap 4.)));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "at a right-angle corner," joins
+      cases "at a right-angle corner,"
+        ~id:(fun (n, _, _, _) -> n)
+        joins
         (fun (_, (join, miter_limit), a, arc) ->
           let s = Stroke.v ~cap:`Butt ~join ~miter_limit 4. in
           let p = Picture.stroke s red corner in
@@ -537,9 +536,9 @@ let strokes =
             Picture.stroke (Stroke.v ~join:`Miter 2.) red (rect 4. 4. 8. 8.)
           in
           equal (float 0.05) 64. (coverage (render 20. 20. p)));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a dashed line 20 long and 2 wide, with" dashes
+      cases "a dashed line 20 long and 2 wide, with"
+        ~id:(fun (n, _, _) -> n)
+        dashes
         (fun (_, d, a) -> equal (float 0.05) a (dashed d));
       test "a dashed closed subpath dashes its closing side" (fun () ->
           (* Each side of 10 holds two dashes of 3; the half pixels along its
@@ -550,9 +549,8 @@ let strokes =
                (render 20. 20. (Picture.stroke s red (rect 5. 5. 10. 10.)))));
       test "a dash pattern longer than a thousandth of a pixel is dashed"
         fine_dashes;
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a subpath of zero length"
+      cases "a subpath of zero length"
+        ~id:(fun (n, _, _) -> n)
         [
           ("is a disc with round caps", `Round, Float.pi *. 4.);
           ("is nothing with butt caps", `Butt, 0.);
@@ -586,14 +584,14 @@ let strokes =
           in
           curved ~arc:(4. *. Float.pi) (4. *. Float.pi)
             (coverage (render 20. 20. p)));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "dashes of zero length are" zero_dashes
+      cases "dashes of zero length are"
+        ~id:(fun (n, _, _, _) -> n)
+        zero_dashes
         (fun (_, cap, q, (a, arc)) ->
           let p = Picture.stroke (Stroke.v ~cap ~dash:[ 0.; 4. ] 2.) red q in
           curved ~arc a (coverage (render 20. 20. p)));
       test "a dash of zero length takes the direction of its line" turned_dash;
-      cases ~name:fst "a line too short to see is a square with square caps"
+      cases "a line too short to see is a square with square caps" ~id:fst
         [ ("vertical", (0., 0.01)); ("horizontal", (0.01, 0.)) ]
         (fun (_, (dx, dy)) ->
           let p =
@@ -601,7 +599,7 @@ let strokes =
               (segment 10. 10. (10. +. dx) (10. +. dy))
           in
           equal (float 0.05) 4. (coverage (render 20. 20. p)));
-      cases ~name:fst "a repeated point leaves a dashed line as it is"
+      cases "a repeated point leaves a dashed line as it is" ~id:fst
         [
           ( "within it",
             (Stroke.v ~cap:`Butt ~dash:[ 4.; 2. ] 2., [| 0.; 10.; 20. |], 10.)
@@ -618,7 +616,7 @@ let strokes =
           let s = Stroke.v ~cap:`Butt ~join:`Miter 8. in
           let p = Picture.stroke s red (rect 9.998 9.998 0.004 0.004) in
           equal (float 0.1) (8.004 *. 8.004) (coverage (render 20. 20. p)));
-      cases ~name:fst "a closed subpath smaller than a pixel, with"
+      cases "a closed subpath smaller than a pixel, with" ~id:fst
         [ ("miter joins", `Miter); ("round joins", `Round); ("bevels", `Bevel) ]
         (fun (_, join) ->
           subtest "ignores a repeated vertex" (fun () -> tiny_polygons join);
@@ -632,9 +630,8 @@ let strokes =
                        float_exact ~than:before after;
                      after)
                    (shrunk join 0.005) [ 0.01; 0.03; 0.06; 0.12 ])));
-      cases ~name:(Printf.sprintf "radius %g")
-        "a mitred circle smaller than a pixel covers at least its pen"
-        [ 0.001; 0.01; 0.03; 0.06 ] (fun r ->
+      cases "a mitred circle smaller than a pixel covers at least its pen"
+        ~id:(Printf.sprintf "radius %g") [ 0.001; 0.01; 0.03; 0.06 ] (fun r ->
           at_least float_exact ~than:(4. *. Float.pi) (shrunk `Miter r));
       test "a transform maps the pen" (fun () ->
           let p =
@@ -823,9 +820,9 @@ let compositing =
         over_formula;
       prop "many translucent fills composite to within a level" gen_dense
         dense_within_a_level;
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "pixels:" stated
+      cases "pixels:"
+        ~id:(fun (n, _, _, _) -> n)
+        stated
         (fun (_, p, x, c) -> equal color c (rgba (render 3. 1. p) 0 x));
       prop "a tag changes no pixel" Vg_corpus.gen_picture (fun p ->
           let cells =
@@ -1209,8 +1206,8 @@ let limits =
             image ~box:(Box2.v 0. 0. 1e308 1e308) [| 1; 1; 1 |] [| 255 |]
           in
           equal float_exact 400. (coverage (render ~density:2. 10. 10. p)));
-      cases ~name:(Printf.sprintf "under a scale of %g")
-        "a pen keeps its width" [ 1e-170; 1e170 ] (fun k ->
+      cases "a pen keeps its width" ~id:(Printf.sprintf "under a scale of %g")
+        [ 1e-170; 1e170 ] (fun k ->
           (* A line 10 wide across the page, drawn in units of [1 /. k]. *)
           let line u =
             Picture.stroke
@@ -1222,8 +1219,8 @@ let limits =
             (render 20. 20. (line 1.))
             (render 20. 20.
                (Picture.transform (Affine.scale k k) (line (1. /. k)))));
-      cases ~name:fst
-        "transforms whose composition overflows or underflows paint nothing"
+      cases "transforms whose composition overflows or underflows paint nothing"
+        ~id:fst
         [ ("overflows", 1e200); ("underflows", 1e-200) ]
         (fun (_, k) ->
           let twice p =
@@ -1234,9 +1231,10 @@ let limits =
             (coverage
                (render 20. 20.
                   (twice (Picture.fill red (rect 0. 0. 1e300 1e300))))));
-      prop ~tags:[ "slow" ] ~examples:Vg_corpus.extremes
-        "any scale draws without failing" Vg_corpus.gen_extreme (fun p ->
-          equal (array int) [| 20; 20; 4 |] (Nx.shape (render 20. 20. p)));
+      slow
+      @@ prop ~examples:Vg_corpus.extremes "any scale draws without failing"
+           Vg_corpus.gen_extreme (fun p ->
+             equal (array int) [| 20; 20; 4 |] (Nx.shape (render 20. 20. p)));
       test "a rotated stroke near max_float draws without failing" (fun () ->
           let far = segment (-1e308) (-1e308) 1e308 1e308 in
           let p =
@@ -1279,16 +1277,15 @@ let png_group =
           same_image
             (Hugin_vg_raster.render ~density:2. page)
             (Vg_corpus.load_png (Hugin_vg_raster.png ~density:2. page)));
-      cases ~name:(Format.asprintf "%g")
-        "png raises on a density beyond a PNG's resolution, unrendered"
-        [ 1e6; 1e-4 ] (fun density ->
+      cases "png raises on a density beyond a PNG's resolution, unrendered"
+        ~id:(Format.asprintf "%g") [ 1e6; 1e-4 ] (fun density ->
           (* A page of 1e10 by 1e10 pixels at either density, which render would
              refuse for its size. *)
           let side = 1e10 /. density in
-          raises_match (Exn.invalid_arg ~substring:"resolution") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"resolution") (fun () ->
               Hugin_vg_raster.png ~density
                 (Renderable.v side side Picture.empty)));
-      cases ~name:fst "png accepts the ends of a PNG's resolution"
+      cases "png accepts the ends of a PNG's resolution" ~id:fst
         [
           ("1 pixel per metre", (0.0254 /. 72., 3000.));
           ("2^31 - 1 pixels per metre", (2147483647. *. 0.0254 /. 72., 1e-6));

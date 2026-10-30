@@ -13,7 +13,7 @@ let m = Nx_support.memory
 module S4 = (val Nx.devices [ m 0; m 1; m 2; m 3 ])
 module S2 = (val Nx.devices [ m 0; m 1 ])
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let pp p = Format.asprintf "%a" Nx.Placement.pp p
 let names s = List.map Rig.name (Nx.rigs s)
 
@@ -30,7 +30,7 @@ let sets =
           equal (list string) [ Rig.name Rig.host ] (names Nx.Host.v));
       test "a set keeps its devices in order" (fun () ->
           equal (list string) [ "m0"; "m1"; "m2"; "m3" ] (names S4.v));
-      cases "a mint refuses" ~name:fst
+      cases "a mint refuses" ~id:fst
         [
           ("no device", fun () -> ignore (Nx.devices []));
           ("a repeated device", fun () -> ignore (Nx.devices [ m 0; m 1; m 0 ]));
@@ -77,7 +77,7 @@ let placements =
               Nx.Placement.device S2.v (m 2)));
       test "a split is not the whole on every device" (fun () ->
           not_equal (placement ()) S4.on (S4.split ~axis:0));
-      cases "split refuses the axis" ~name:string_of_int
+      cases "split refuses the axis" ~id:string_of_int
         [ -1; Nx_array.Layout.max_rank ] (fun axis ->
           invalid ~by:"Nx.Placement.split" (fun () -> S2.split ~axis));
     ]
@@ -99,7 +99,7 @@ let meshes =
           let mesh = Nx.Mesh.v S4.v [ ("a", 2); ("b", 2) ] in
           equal string "mesh 2x2 [m0; m1; m2; m3] ~axis:0/1 ~axis:1/0"
             (pp (Nx.Placement.mesh mesh [ (0, [ "b" ]); (1, [ "a" ]) ])));
-      cases "Mesh.v refuses" ~name:fst
+      cases "Mesh.v refuses" ~id:fst
         [
           ("extents that miss the set's devices", [ ("a", 3) ]);
           ("a name twice", [ ("a", 2); ("a", 2) ]);
@@ -107,7 +107,7 @@ let meshes =
         ]
         (fun (_, axes) ->
           invalid ~by:"Nx.Mesh.v" (fun () -> Nx.Mesh.v S4.v axes));
-      cases "Placement.mesh refuses" ~name:fst
+      cases "Placement.mesh refuses" ~id:fst
         [
           ("a name the mesh lacks", [ (0, [ "z" ]) ]);
           ("an axis cut twice", [ (0, [ "a" ]); (0, [ "b" ]) ]);

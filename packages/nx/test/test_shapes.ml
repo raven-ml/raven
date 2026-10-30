@@ -14,7 +14,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module M = Nx_array.Move
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 (* The reference: a shape and its elements in C order. *)
@@ -339,8 +339,7 @@ let laws =
           cover "offsets out of order" (not ordered);
           let axis = spell o neg a in
           if not ordered then
-            raises_match
-              (Exn.invalid_arg ~substring:"Nx.split_at: offset ")
+            raises_match (Exn.invalid_arg ~sub:"Nx.split_at: offset ")
               (fun () -> Nx.split_at ~axis offsets o.x)
           else begin
             cover "no offset" (offsets = []);
@@ -665,9 +664,9 @@ let views =
           each "repeat of a unit axis"
             (Nx.repeat ~axis:0 3 (Nx.reshape [| 1; 24 |] x)));
       cases
-        ~name:(fun l -> Format.asprintf "%a" pp_layout l)
         "a permutation, flip, broadcast or window of a strided operand is a \
          view"
+        ~id:(fun l -> Format.asprintf "%a" pp_layout l)
         [ Reversed; Transposed ]
         (fun l ->
           let x = (operand_of [| 2; 3; 4 |] l).x in
@@ -691,9 +690,9 @@ let views =
 
 (* A movement of every dtype, against the reference over the dtype's values. *)
 let dtypes =
-  cases
-    ~name:(fun (D.Any dt) -> D.name dt)
-    "every dtype" D.all
+  cases "every dtype"
+    ~id:(fun (D.Any dt) -> D.name dt)
+    D.all
     (fun (D.Any dt) ->
       let s = [| 2; 3; 2 |] in
       let data =
@@ -790,7 +789,7 @@ let refusals =
             (Invalid_argument
                "Nx.tile: reps [2] has fewer entries than int32 [2; 3] has axes")
             (fun () -> Nx.tile [| 2 |] x));
-      cases ~name:fst "each refusal raises"
+      cases "each refusal raises" ~id:fst
         [
           r "reshape, two unknown extents" (fun () -> Nx.reshape [| -1; -1 |] x);
           r "reshape, an extent below -1" (fun () -> Nx.reshape [| -2; -3 |] x);

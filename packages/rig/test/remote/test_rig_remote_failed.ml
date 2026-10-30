@@ -25,8 +25,8 @@ let process_failed () =
   (match Rig_remote.connect ~key:(as_key key) (List.map address fresh) with
   | Ok _ -> fail "a job of a failed process"
   | Error e ->
-      starts_with ~msg:"names the first machine" ~affix:(machine first) e;
-      ends_with ~msg:"the process's failure" ~affix:(": " ^ why) e);
+      starts_with ~msg:"names the first machine" ~prefix:(machine first) e;
+      ends_with ~msg:"the process's failure" ~suffix:(": " ^ why) e);
   let cause = Option.get (Rig_remote.failed j) in
   let lost d = Printf.sprintf "%s lost: %s" (Rig.name d) why in
   (match List.find_opt (fun d -> cause = lost d) [ host; far ] with

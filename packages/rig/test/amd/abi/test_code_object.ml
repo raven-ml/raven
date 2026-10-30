@@ -181,11 +181,11 @@ let kernel =
 let reading =
   group ~timeout "reading"
     [
-      cases ~name:fst "an object keeps the bytes it was read from" both
+      cases "an object keeps the bytes it was read from" ~id:fst both
         (fun (_, obj) ->
           let obj = obj () in
           equal string obj (Code_object.elf (read obj)).file);
-      cases ~name:fst "the image is the ELF image in whole 32-bit words" both
+      cases "the image is the ELF image in whole 32-bit words" ~id:fst both
         (fun (_, obj) ->
           let co = read (obj ()) in
           equal int
@@ -195,16 +195,15 @@ let reading =
           let co = read (linked ()) in
           equal (pair int int) (0x327b, 0x327c)
             ((Code_object.elf co).size, Code_object.size co));
-      cases ~name:fst "every patch lies in the image" both (fun (_, obj) ->
+      cases "every patch lies in the image" ~id:fst both (fun (_, obj) ->
           let co = read (obj ()) in
           List.iter
             (fun (off, p) ->
               at_least int ~than:0 off;
               at_most int ~than:(Code_object.size co) (off + String.length p))
             (Code_object.patches co));
-      cases ~name:fst
-        "each image byte is its last patch's, else its section's, else 0" both
-        (fun (_, obj) ->
+      cases "each image byte is its last patch's, else its section's, else 0"
+        ~id:fst both (fun (_, obj) ->
           let co = read (obj ()) in
           let o = Code_object.elf co in
           let last_some f l =
@@ -284,10 +283,10 @@ let reading =
             (list (pair int string))
             []
             (Code_object.patches (read (linked ()))));
-      cases ~name:fst "kernels are the .kd symbols, in increasing order" both
+      cases "kernels are the .kd symbols, in increasing order" ~id:fst both
         (fun (_, obj) ->
           equal (list string) [ "a"; "b" ] (Code_object.kernels (read (obj ()))));
-      cases ~name:fst "a kernel is its descriptor in the image" both
+      cases "a kernel is its descriptor in the image" ~id:fst both
         (fun (_, obj) ->
           let co = read (obj ()) in
           let img = Code_object.image co in
@@ -299,7 +298,7 @@ let reading =
                 (Rig_elf.symbol (Code_object.elf co) (name ^ ".kd"))
                 (Some k.descriptor))
             (Code_object.kernels co));
-      cases ~name:fst "a kernel's entry is its symbol" both (fun (_, obj) ->
+      cases "a kernel's entry is its symbol" ~id:fst both (fun (_, obj) ->
           let co = read (obj ()) in
           List.iter
             (fun name ->
@@ -386,7 +385,7 @@ let reading =
               (Group_size X, 44);
             ]
             (List.filteri (fun i _ -> i < 4) k.hidden));
-      cases ~name:fst "an unspecified descriptor size uses the metadata"
+      cases "an unspecified descriptor size uses the metadata" ~id:fst
         [ ("every", 288); ("plain", 8) ]
         (fun (name, size) ->
           let obj = hidden () in
@@ -394,9 +393,8 @@ let reading =
           let k = require_some (Code_object.kernel co name) in
           equal int size k.kernarg_size;
           equal int 8 k.explicit_size);
-      cases
-        ~name:(fun (name, _) -> name)
-        "a metadata size retains padding and the uint32 range"
+      cases "a metadata size retains padding and the uint32 range"
+        ~id:(fun (name, _) -> name)
         [
           ("padding", "\x10");
           ("uint32 max", "\xce\xff\xff\xff\xff");
@@ -419,7 +417,7 @@ let reading =
           let co = read (kernarg_descriptor (relocatable ()) "a" 0) in
           let k = require_some (Code_object.kernel co "a") in
           equal (pair int int) (0, 0) (k.kernarg_size, k.explicit_size));
-      cases ~name:(strf "%S") "a name that is no kernel's is none"
+      cases "a name that is no kernel's is none" ~id:(strf "%S")
         [ ""; "c"; "a.kd"; "A"; "ext" ] (fun name ->
           is_none (Code_object.kernel (read (relocatable ())) name));
     ]
@@ -450,9 +448,8 @@ let with_flags ?(abi = v6) f =
   patch (patch (relocatable ()) flags (set_u32 f)) abi_version (set_u8 abi)
 
 let processors =
-  cases
-    ~name:(fun (name, f, _) -> strf "%s (0x%x)" name f)
-    "the processor of a code object and the GPUs that run it"
+  cases "the processor of a code object and the GPUs that run it"
+    ~id:(fun (name, f, _) -> strf "%s (0x%x)" name f)
     [
       ("gfx1030", 0x36, [ "gfx1030" ]);
       ("gfx90a", 0x3f, [ "gfx90a" ]);
@@ -514,7 +511,7 @@ let refusals =
           refused ~sub:"62"
             (patch (relocatable ()) machine (fun b at ->
                  Bytes.set_uint16_le b at 62)));
-      cases ~name:(strf "0x%x") "a machine LLVM names no processor of"
+      cases "a machine LLVM names no processor of" ~id:(strf "0x%x")
         [ 0x0; 0x27; 0x60; 0xff ] (fun mach ->
           refused ~sub:(strf "0x%x" mach) (with_flags ~abi:v5 mach));
       test "a generic code object before version 6" (fun () ->
@@ -557,7 +554,7 @@ let refusals =
           let obj = relocatable () in
           refused ~sub:"a"
             (patch obj (entry obj ".symtab" 3 + st_value) (set_u64 0x60)));
-      cases ~name:fst "an entry outside the image"
+      cases "an entry outside the image" ~id:fst
         [
           ("before it", fun k _ -> -k - 1);
           ("at its end", fun k size -> size - k);
@@ -591,7 +588,7 @@ let refusals =
                (fun (k : Code_object.kernel) -> k.entry)
                (Code_object.kernel co' "a")));
       (* 511 units of 512 bytes, what LDS_SIZE holds on every GPU. *)
-      cases ~name:string_of_int "a kernel's LDS past 511 * 512 bytes is refused"
+      cases "a kernel's LDS past 511 * 512 bytes is refused" ~id:string_of_int
         [ 511 * 512; (511 * 512) + 1; 0xffff_ffff ]
         (fun n ->
           let obj = descriptor_field (linked ()) 0 n in
@@ -603,9 +600,8 @@ let refusals =
           else refused ~sub:"LDS" obj);
       (* What WAVESIZE holds for a lane of a 64-lane wave, by the processor's
          generation (LLVM's GCNSubtarget.h, getMaxWaveScratchSize). *)
-      cases
-        ~name:(fun (p, _, n, _) -> strf "%s, %d bytes" p n)
-        "a kernel's scratch past what its processor's waves hold is refused"
+      cases "a kernel's scratch past what its processor's waves hold is refused"
+        ~id:(fun (p, _, n, _) -> strf "%s, %d bytes" p n)
         (List.concat_map
            (fun (p, obj, most) ->
              [ (p, obj, most, true); (p, obj, most + 1, false) ])
@@ -626,9 +622,8 @@ let refusals =
                  (fun (k : Code_object.kernel) -> k.private_segment)
                  (Code_object.kernel (read obj) "a"))
           else refused ~sub:"scratch" obj);
-      cases ~name:string_of_int
-        "a kernel's workgroups bounded outside [1;1024] are refused"
-        [ 0; 1; 1024; 1025; 0xffff ] (fun n ->
+      cases "a kernel's workgroups bounded outside [1;1024] are refused"
+        ~id:string_of_int [ 0; 1; 1024; 1025; 0xffff ] (fun n ->
           let obj = with_max_flat (many ()) n in
           if n < 1 || n > 1024 then refused ~sub:"work-items" obj
           else
@@ -665,7 +660,7 @@ let refusals =
             (patch obj
                (s.at + k.descriptor - Option.get s.offset + 8)
                (set_u32 7)));
-      cases ~name:fst "a metadata kernarg size outside uint32 is refused"
+      cases "a metadata kernarg size outside uint32 is refused" ~id:fst
         [
           ("negative", "\xff");
           ("uint32 overflow", "\xcf\000\000\000\001\000\000\000\000");
@@ -675,7 +670,7 @@ let refusals =
           ("truncated uint64", "\xcf\000");
         ]
         (fun (_, value) -> refused ~sub:"metadata" (metadata_size value));
-      cases ~name:fst "an unspecified size still bounds explicit arguments"
+      cases "an unspecified size still bounds explicit arguments" ~id:fst
         [ ("zero", 0); ("one byte short", 7) ]
         (fun (_, size) ->
           let obj =
@@ -703,9 +698,8 @@ let refusals =
           refused ~sub:"note"
             (patch obj ((section obj ".note").at + 4) (set_u32 0x7fff_ffff)));
       (* The image starts at 0x300 and ends with .data's 3 bytes. *)
-      cases
-        ~name:(fun (n, _) -> strf "an image of 2^48%+d bytes" n)
-        "an image longer than 2^48 bytes is refused"
+      cases "an image longer than 2^48 bytes is refused"
+        ~id:(fun (n, _) -> strf "an image of 2^48%+d bytes" n)
         [ (0, false); (1, true) ]
         (fun (extra, refuse) ->
           let obj = linked () in

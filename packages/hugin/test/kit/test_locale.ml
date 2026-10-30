@@ -7,7 +7,7 @@ open Windtrap
 open Hugin_kit
 
 let locale = Testable.make ~pp:Locale.pp ~equal:Locale.equal
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let months l = List.init 12 (fun i -> Locale.month l (i + 1))
 let names s = Array.of_list (String.split_on_char ' ' s)
 let english = names "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"
@@ -59,9 +59,8 @@ let given =
           let l = Locale.v ~months:m () in
           m.(0) <- "x";
           equal string "janv." (Locale.month l 1));
-      cases
-        ~name:(fun (g, _) -> String.concat ";" (List.map string_of_int g))
-        "grouping drops the repeats of its last size"
+      cases "grouping drops the repeats of its last size"
+        ~id:(fun (g, _) -> String.concat ";" (List.map string_of_int g))
         [
           ([ 3; 3 ], [ 3 ]); ([ 3; 2; 2; 2 ], [ 3; 2 ]); ([ 2; 3; 3 ], [ 2; 3 ]);
         ]
@@ -73,7 +72,7 @@ let errors =
   let bad = "\xff" in
   group "errors"
     [
-      cases ~name:fst "v raises Invalid_argument on"
+      cases "v raises Invalid_argument on" ~id:fst
         [
           ("an empty grouping", fun () -> Locale.v ~grouping:[] ());
           ("a group size of 0", fun () -> Locale.v ~grouping:[ 3; 0 ] ());
@@ -97,7 +96,7 @@ let errors =
             fun () -> Locale.v ~months:(with_month french 11 bad) () );
         ]
         (fun (_, f) -> invalid f);
-      cases ~name:string_of_int "month raises outside [1;12]" [ 0; 13; -1 ]
+      cases "month raises outside [1;12]" ~id:string_of_int [ 0; 13; -1 ]
         (fun m -> invalid (fun () -> Locale.month Locale.default m));
     ]
 

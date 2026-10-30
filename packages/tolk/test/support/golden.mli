@@ -8,8 +8,8 @@
     working directory.
 
     Each function here reads its golden when the test runs, except {!cases},
-    which reads it when the suite is declared, to make a test per row. A file
-    that cannot be read raises [Sys_error], and one that is not a golden raises
+    which reads it when the suite is declared, to make its rows. A file that
+    cannot be read raises [Sys_error], and one that is not a golden raises
     [Failure]. *)
 
 val body : string -> string
@@ -43,10 +43,10 @@ val sink : string -> Tolk.Ops.t
 
 val cases :
   ?key:string list -> string -> ((string -> string) -> unit) -> Windtrap.test
-(** [cases file check] is the group, named [file], of one test per row of the
-    table golden [file], each running [check cell] on its row. A test is named
-    by the row's cells in [key], as [a=dtypes.half b=dtypes.char]; [key]
-    defaults to the first column. *)
+(** [cases file check] is the table, named [file], that runs [check cell] on
+    each row of the table golden [file]. A row is identified by its cells in
+    [key], as [a=dtypes.half b=dtypes.char]; [key] defaults to the first column.
+*)
 
 val columns : string -> string list
 (** [columns file] is the column names of the table golden [file], in order. *)

@@ -262,7 +262,7 @@ let one_line_per_node positions =
   List.iteri
     (fun i line ->
       if positions <> [] then
-        starts_with ~msg:line ~affix:(Printf.sprintf "%4d " i) line)
+        starts_with ~msg:line ~prefix:(Printf.sprintf "%4d " i) line)
     lines
 
 let pp_uops =

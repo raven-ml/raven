@@ -405,7 +405,7 @@ let test_dropout_keyed_eval_identity () =
 let test_dropout_keyless_jit_raises () =
   let f = Rune.jit' (fun x -> Dropout.apply ~rate:0.5 ~training:true x) in
   raises_match ~msg:"keyless dropout raises inside jit"
-    (Exn.invalid_arg ~substring:"Rune.jit") (fun () ->
+    (Exn.invalid_arg ~sub:"Rune.jit") (fun () ->
       ignore (f (vec [| 1.0; 2.0; 3.0 |])))
 
 module Keyed_x = struct

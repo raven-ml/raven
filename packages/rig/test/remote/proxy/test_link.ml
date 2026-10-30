@@ -561,33 +561,29 @@ let why_layout () =
 let causes =
   group "cause"
     [
-      cases
-        ~name:(fun (n, _) ->
-          n ^ " from an agent fails the job as malformed, and the agent is sent \
-               the abort")
-        "malformed, at the controller" malformed_from_agent
-        malformed_at_controller;
-      cases
-        ~name:(fun (n, _) ->
+      cases "malformed, at the controller"
+        ~id:(fun (n, _) ->
+          n
+          ^ " from an agent fails the job as malformed, and the agent is sent \
+             the abort")
+        malformed_from_agent malformed_at_controller;
+      cases "malformed, at an agent"
+        ~id:(fun (n, _) ->
           n ^ " from the controller fails the job as malformed")
-        "malformed, at an agent" malformed_from_controller malformed_at_agent;
-      cases
-        ~name:(fun n -> Printf.sprintf "a frame of %Lu bytes fails the job" n)
-        "too long"
+        malformed_from_controller malformed_at_agent;
+      cases "too long"
+        ~id:(fun n -> Printf.sprintf "a frame of %Lu bytes fails the job" n)
         [ -1L; Int64.min_int; Int64.max_int; 0x10000000000L ]
         too_long;
-      cases
-        ~name:(fun (n, _) -> n ^ " fails the job")
-        "no object"
-        [
-          ("a word of a device with no proxy", frame k_word (u64 7 ^ u64 1));
-        ]
+      cases "no object"
+        ~id:(fun (n, _) -> n ^ " fails the job")
+        [ ("a word of a device with no proxy", frame k_word (u64 7 ^ u64 1)) ]
         no_object;
-      cases
-        ~name:(fun s ->
+      cases "reason"
+        ~id:(fun s ->
           Format.asprintf "a root cause reaches the peer's process as %a"
             pp_bytes s)
-        "reason" reasons reaches_process;
+        reasons reaches_process;
       test "a root cause with a NUL reaches the peer's process whole" (fun () ->
           reaches_process "nul\000byte");
       test "a root cause of 70000 bytes reaches the peer's process cut to 4096"

@@ -1959,7 +1959,7 @@ let int_scaled () =
          })
   in
   raises_match
-    (Exn.invalid_arg ~substring:"a contraction scaled in int32 is not lowered")
+    (Exn.invalid_arg ~sub:"a contraction scaled in int32 is not lowered")
     (fun () -> Lowered.run op)
 
 (* A complex product, and a complex128 extreme's scan, are not lowered. *)

@@ -585,8 +585,7 @@ let test_local_inside () =
   let g = Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0)) in
   Fun.protect ~finally:(fun () -> N.stop g ~fault:None) @@ fun () ->
   let local = (N.capability g).local in
-  raises_match
-    (Exn.invalid_arg ~substring:"Rig_nv_abi.Gpu.local: called from")
+  raises_match (Exn.invalid_arg ~sub:"Rig_nv_abi.Gpu.local: called from")
     (fun () -> Rig_support.inside_lock (fun () -> ignore (local local_bytes)));
   equal (result unit string) ~msg:"the growth after" (Ok ())
     (local local_bytes)

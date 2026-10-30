@@ -683,43 +683,56 @@ let () =
            [
              test "a severed link fails the job, and the others abort"
                severed_idle;
-             slow "a silent peer fails the job, and is sent the abort"
-               stalled_idle;
-             slow "a link's thread that sees the failure first sends its abort"
-               seen_first;
              slow
-               "a signal handler that runs as a next's wait ends calls rig \
-                outside every lock"
-               handled_in_next;
+             @@ test "a silent peer fails the job, and is sent the abort"
+                  stalled_idle;
+             slow
+             @@ test
+                  "a link's thread that sees the failure first sends its abort"
+                  seen_first;
+             slow
+             @@ test
+                  "a signal handler that runs as a next's wait ends calls rig \
+                   outside every lock"
+                  handled_in_next;
            ];
          group ~timeout:30. "mid-frame"
            [
              test "a severed link fails the job, and every writer returns"
                severed_mid_frame;
-             slow "a peer that reads nothing fails the job, cut"
-               stalled_mid_frame;
+             slow
+             @@ test "a peer that reads nothing fails the job, cut"
+                  stalled_mid_frame;
            ];
          group ~timeout:30. "rail transfer"
            [
              test "a severed link fails the job, and every waiter wakes"
                severed_rail;
-             slow "a peer that reads nothing fails the job, cut" stalled_rail;
-             slow "a release of the cut rail waits for its transfer alone"
-               stalled_release;
+             slow
+             @@ test "a peer that reads nothing fails the job, cut" stalled_rail;
+             slow
+             @@ test "a release of the cut rail waits for its transfer alone"
+                  stalled_release;
            ];
          group ~timeout:30. "abort"
            [
              test "a severed link keeps the root cause, and fail returns"
                severed_abort;
-             slow "a peer that reads nothing keeps the cause; fail returns"
-               stalled_abort;
-             slow "a link reads its peer's bytes until the bound, then closes"
-               drained_until_bound;
-             slow "a link reads a silent peer's bytes until its silence"
-               drained_until_silent;
-             slow "a link reads a peer that beats after the failure"
-               drained_while_beating;
-             slow "a link reads its peer for the bound after a late abort"
-               drained_after_late_abort;
+             slow
+             @@ test "a peer that reads nothing keeps the cause; fail returns"
+                  stalled_abort;
+             slow
+             @@ test
+                  "a link reads its peer's bytes until the bound, then closes"
+                  drained_until_bound;
+             slow
+             @@ test "a link reads a silent peer's bytes until its silence"
+                  drained_until_silent;
+             slow
+             @@ test "a link reads a peer that beats after the failure"
+                  drained_while_beating;
+             slow
+             @@ test "a link reads its peer for the bound after a late abort"
+                  drained_after_late_abort;
            ];
        ])

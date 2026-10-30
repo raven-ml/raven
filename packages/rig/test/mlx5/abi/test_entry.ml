@@ -314,7 +314,7 @@ let refusals =
   let refused name ?(at = 0) ?(qp = 1) ?(index = 0) e =
     test name (fun () ->
         let b = buffer ring in
-        raises_match (Exn.invalid_arg ~substring:"Entry.write") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Entry.write") (fun () ->
             Entry.write b at ~qp ~index e);
         for i = 0 to ring - 1 do
           equal ~msg:(strf "byte %d is untouched" i) int 0xa5 (byte b i)

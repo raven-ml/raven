@@ -61,7 +61,7 @@ let check_raw (type a b) name (dtype : (a, b) Nx.dtype) =
 (* Elements *)
 
 let stored =
-  cases ~name:fst "raw reads the stored numbers in their element"
+  cases "raw reads the stored numbers in their element" ~id:fst
     [
       ("PRIMARY", fun n -> check_raw n Nx.int16);
       ("U8", fun n -> check_raw n Nx.uint8);
@@ -169,7 +169,7 @@ let real =
   ]
 
 let exactness =
-  cases ~name:fst "raw succeeds exactly in the dtypes that hold the element"
+  cases "raw succeeds exactly in the dtypes that hold the element" ~id:fst
     table (fun (name, holds) ->
       let h = if name = "PRIMARY" then primary () else hdu name in
       List.iter
@@ -384,11 +384,11 @@ let dtypes_round_trip =
   ]
 
 let unwritable () =
-  raises_match (Exn.invalid_arg ~substring:"uint8") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"uint8") (fun () ->
       I.hdu H.empty (Nx.zeros Nx.bool [| 2 |]));
-  raises_match (Exn.invalid_arg ~substring:"float32") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"float32") (fun () ->
       I.hdu H.empty (Nx.zeros Nx.float16 [| 2 |]));
-  raises_match (Exn.invalid_arg ~substring:"int8") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"int8") (fun () ->
       I.hdu H.empty (Nx.zeros Nx.int4 [| 2 |]));
   raises_match Exn.invalid_arg (fun () ->
       I.hdu H.empty (Nx.zeros Nx.complex64 [| 2 |]));

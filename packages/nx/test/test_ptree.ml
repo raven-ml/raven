@@ -21,7 +21,7 @@ module S2 = (val Nx.devices [ m 0; m 1 ])
 type host = Nx.host
 type f32 = host Nx.float32_t
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
 let message f =
   match f () with _ -> "no exception" | exception Invalid_argument m -> m
@@ -344,9 +344,9 @@ let laws =
                   equal string (Nx.to_string (Nx.add a a)) (Nx.to_string c))
             (fst (P.flatten block x))
             (fst (P.flatten block z)));
-      cases
-        ~name:(fun (D.Any dt) -> D.name dt)
-        "every dtype walks as an array" D.all
+      cases "every dtype walks as an array"
+        ~id:(fun (D.Any dt) -> D.name dt)
+        D.all
         (fun (D.Any dt) ->
           let a : (_, _, host) Nx.t = Nx.full dt [| 2 |] (D.one dt) in
           let s = P.(pair tensor (list tensor)) in
@@ -445,20 +445,20 @@ let messages =
           let n = List.length leaves in
           let fewer = List.filteri (fun i _ -> i < 2) leaves in
           let m = message (fun () -> P.rebuild block ~like:example fewer) in
-          starts_with ~msg:"fewer" ~affix:"Nx.Ptree.rebuild: " m;
+          starts_with ~msg:"fewer" ~prefix:"Nx.Ptree.rebuild: " m;
           contains ~msg:"fewer" ~sub:"layers.1.w" m;
           let m =
             message (fun () ->
                 P.rebuild block ~like:example (leaves @ [ Nx.P x ]))
           in
-          starts_with ~msg:"more" ~affix:"Nx.Ptree.rebuild: " m;
+          starts_with ~msg:"more" ~prefix:"Nx.Ptree.rebuild: " m;
           contains ~msg:"more" ~sub:(string_of_int n) m;
           contains ~msg:"more" ~sub:(string_of_int (n + 1)) m;
           let swapped =
             List.mapi (fun i l -> if i = 3 then Nx.P x else l) leaves
           in
           let m = message (fun () -> P.rebuild block ~like:example swapped) in
-          starts_with ~msg:"dtype" ~affix:"Nx.Ptree.rebuild: steps: " m;
+          starts_with ~msg:"dtype" ~prefix:"Nx.Ptree.rebuild: steps: " m;
           contains ~msg:"dtype" ~sub:"int32" m;
           contains ~msg:"dtype" ~sub:"float32" m);
     ]
@@ -980,9 +980,8 @@ let arithmetic =
           equal ~msg:"nan" float_exact Float.nan
             (Nx.item []
                (P.norm s32 Nx.float32 [ f32 [| Float.infinity; Float.nan |] ])));
-      cases
-        ~name:(fun (D.Any dt) -> D.name dt)
-        "complex arrays are the vector's real and imaginary coordinates"
+      cases "complex arrays are the vector's real and imaginary coordinates"
+        ~id:(fun (D.Any dt) -> D.name dt)
         [ D.Any Nx.complex64; D.Any Nx.complex128 ]
         (fun (D.Any dt) ->
           match D.kind dt with

@@ -68,9 +68,8 @@ let searched name =
   equal values (run k unoptimised) (run k prg)
 
 let scalar_arguments =
-  cases ~name:string_of_int
-    "a search runs candidates with named and positional scalars" [ 1; 4 ]
-    (fun slot ->
+  cases "a search runs candidates with named and positional scalars"
+    ~id:string_of_int [ 1; 4 ] (fun slot ->
       let z n = `Int (Bigint.of_int n) in
       let named = Ops.variable ~dtype:Int32 "n" (z 3) (z 9) in
       let positional =
@@ -126,8 +125,12 @@ let () =
     (Windtrap.run "Tolk.Search on the host"
        [
          scalar_arguments;
-         cases ~tags:[ "slow" ] ~name:Fun.id
-           "a searched kernel computes what its unoptimised kernel computes"
-           [ "symbolic"; "add_small"; "sum_rows"; "variable_rows"; "pad_7x7" ]
-           searched;
+         slow
+         @@ cases
+              "a searched kernel computes what its unoptimised kernel computes"
+              ~id:Fun.id
+              [
+                "symbolic"; "add_small"; "sum_rows"; "variable_rows"; "pad_7x7";
+              ]
+              searched;
        ])

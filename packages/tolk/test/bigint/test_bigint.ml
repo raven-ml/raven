@@ -256,7 +256,7 @@ let conversions =
 
 let boundaries =
   let m = B.of_int min_int and x = B.of_int max_int in
-  cases ~name:fst "results past int"
+  cases "results past int" ~id:fst
     [
       ("succ max_int", (B.succ x, "4611686018427387904"));
       ("pred min_int", (B.pred m, "-4611686018427387905"));

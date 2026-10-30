@@ -45,7 +45,7 @@ let collected p f =
   (r, List.map seen offers)
 
 let offers p f = snd (collected p f)
-let invalid ~msg ~sub f = raises_match ~msg (Exn.invalid_arg ~substring:sub) f
+let invalid ~msg ~sub f = raises_match ~msg (Exn.invalid_arg ~sub) f
 
 (* Eager emits *)
 

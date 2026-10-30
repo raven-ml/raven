@@ -201,9 +201,9 @@ let composite_components () =
 let loading =
   group "loading"
     [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "of_string rejects" rejected
+      cases "of_string rejects"
+        ~id:(fun (n, _, _, _) -> n)
+        rejected
         (fun (_, kind, data, sub) -> is_error kind ~sub (Font.of_string data));
       test "a composite expands to at most 65535 points" composite_points;
       test "a composite expands to at most 65535 components"
@@ -497,9 +497,8 @@ let identity =
           Law.order
             (Testable.with_compare Font.compare font_t)
             (Font.regular, Font.bold, decoded regular_ttf));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "names and style of"
+      cases "names and style of"
+        ~id:(fun (n, _, _, _) -> n)
         [
           ("regular", regular (), "Inter-Regular", 400);
           ("bold", bold (), "Inter-Bold", 700);
@@ -584,9 +583,9 @@ let fallbacks () =
 let metrics =
   group "metrics"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "metric" metric_cases
+      cases "metric"
+        ~id:(fun (n, _, _) -> n)
+        metric_cases
         (fun (_, m, v) ->
           equal ~msg:"regular" float_exact v (m (regular ()));
           equal ~msg:"bold" float_exact v (m (bold ())));
@@ -803,18 +802,17 @@ let character_maps =
           in
           maps f ranges (format_12_glyph groups);
           maps (subset f all_glyphs) ranges (format_12_glyph groups));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "character map selection" selection
+      cases "character map selection"
+        ~id:(fun (n, _, _) -> n)
+        selection
         (fun (_, subtables, g) ->
           equal int g (glyph_of_a_in (cmap_table subtables)));
       test "glyph is 0 for a glyph the font does not have" (fun () ->
           equal int 0
             (glyph (tiny ~cmap:(cmap_12 [ (0x41, 0x41, 2) ]) [ ""; "" ]) 0x41));
       test "the bundled character map holds fontTools' mappings" (fun () ->
-          expect_file
-            (cmap_listing (regular ()))
-            "packages/hugin/test/font/golden/cmap.expected");
+          expect_file ~file:"packages/hugin/test/font/golden/cmap.expected"
+            (cmap_listing (regular ())));
     ]
 
 (* Kerning *)
@@ -1053,18 +1051,18 @@ let kerning =
               List.fold_left
                 (fun acc (_, pairs) -> acc + pair_value pairs g g')
                 0 counted));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "kerning takes" lookup_rules
+      cases "kerning takes"
+        ~id:(fun (n, _, _, _) -> n)
+        lookup_rules
         (fun (_, features, lookups, expected) ->
           let f = kerning_font [ ("GPOS", gpos_table features lookups) ] in
           List.iter
             (fun (g, g', k) ->
               equal ~msg:(Printf.sprintf "%d %d" g g') int k (units f g g'))
             expected);
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "a GPOS table beside a kern table when" kern_fallback
+      cases "a GPOS table beside a kern table when"
+        ~id:(fun (n, _, _) -> n)
+        kern_fallback
         (fun (_, features, k) ->
           let gpos =
             gpos_table features
@@ -1081,16 +1079,15 @@ let kerning =
             "\000\001" ^ String.sub table 2 (String.length table - 2)
           in
           equal int 0 (units (kerning_font [ ("kern", table) ]) 1 2));
-      cases
-        ~name:(fun (s, _, _) -> s)
-        "kerning of the bundled faces is HarfBuzz's for" kerned
+      cases "kerning of the bundled faces is HarfBuzz's for"
+        ~id:(fun (s, _, _) -> s)
+        kerned
         (fun (s, r, b) ->
           equal ~msg:"regular" float_exact (em r) (kern_of (regular ()) s);
           equal ~msg:"bold" float_exact (em b) (kern_of (bold ()) s));
       test "kerning of printable ASCII is HarfBuzz's" (fun () ->
-          expect_file
-            (kerning_listing (regular ()))
-            "packages/hugin/test/font/golden/kerning.expected");
+          expect_file ~file:"packages/hugin/test/font/golden/kerning.expected"
+            (kerning_listing (regular ())));
     ]
 
 (* Outlines *)
@@ -1326,9 +1323,9 @@ let outlines =
             L 0.5625 -0.413086 L 0.5625 -0.727539 L 0.655273 -0.727539 L 0.655273 0
             L 0.5625 0 L 0.5625 -0.331055 L 0.180664 -0.331055 L 0.180664 0 Z
             |});
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "ink and the outline's bounds are fontTools' box of" inks
+      cases "ink and the outline's bounds are fontTools' box of"
+        ~id:(fun (n, _, _) -> n)
+        inks
         (fun (_, c, (x0, y0, x1, y1)) ->
           let f = regular () in
           let box =
@@ -1347,7 +1344,7 @@ let outlines =
               is_true (Path.is_empty (Font.outline f g));
               is_none ~pp:pp_box (Font.ink f g))
             [ 0; glyph f 0x20 ]);
-      cases ~name:fst "every glyph lies within the bounds of"
+      cases "every glyph lies within the bounds of" ~id:fst
         [ ("regular", regular_ttf); ("bold", bold_ttf) ]
         (fun (_, data) ->
           let f = decoded data in
@@ -1376,17 +1373,17 @@ let outlines =
             (Font.advance (regular ()) (glyph Font.regular 0x48));
           equal float_exact (em 1530)
             (Font.advance (bold ()) (glyph Font.bold 0x48)));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "raises on a glyph out of range in" glyph_range
+      cases "raises on a glyph out of range in"
+        ~id:(fun (n, _, _) -> n)
+        glyph_range
         (fun (_, fn, f) ->
           let last = Font.glyph_count Font.regular - 1 in
           let msg g = Printf.sprintf "%s: glyph %d not in [0, %d]" fn g last in
           raises_match
-            (Exn.invalid_arg ~substring:(msg (-1)))
+            (Exn.invalid_arg ~sub:(msg (-1)))
             (fun () -> f Font.regular (-1));
           raises_match
-            (Exn.invalid_arg ~substring:(msg (last + 1)))
+            (Exn.invalid_arg ~sub:(msg (last + 1)))
             (fun () -> f Font.regular (last + 1)));
     ]
 

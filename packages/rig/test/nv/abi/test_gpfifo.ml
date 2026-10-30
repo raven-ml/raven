@@ -66,16 +66,16 @@ let entries =
             (entry a ~offset:0x40 ~words));
       test "a segment holds at most 2^21 - 1 words" (fun () ->
           equal int ((1 lsl 21) - 1) Gpfifo.max_words);
-      cases ~name:string_of_int
-        "a count of words outside [0;max_words] is refused"
+      cases "a count of words outside [0;max_words] is refused"
+        ~id:string_of_int
         [ min_int; -1; Gpfifo.max_words + 1; max_int ]
         (fun words ->
-          raises_match (Exn.invalid_arg ~substring:"Gpfifo.entry") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Gpfifo.entry") (fun () ->
               Gpfifo.entry (Int 0) ~offset:0 ~words));
-      cases ~name:string_of_int "an offset outside [0;2^40-1] is refused"
+      cases "an offset outside [0;2^40-1] is refused" ~id:string_of_int
         [ min_int; -4; 1 lsl 40; max_int ]
         (fun offset ->
-          raises_match (Exn.invalid_arg ~substring:"Gpfifo.entry") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Gpfifo.entry") (fun () ->
               Gpfifo.entry (Int 0) ~offset ~words:1));
     ]
 

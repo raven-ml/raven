@@ -83,7 +83,7 @@ let dispatch =
             (words
                (Aql.dispatch k ~descriptor ~args ~threads:(x, y, z)
                   ~grid:(gx, gy, gz))));
-      cases ~name:string_of_int "a workgroup side of 16 bits is taken"
+      cases "a workgroup side of 16 bits is taken" ~id:string_of_int
         [ 1; 0xffff ] (fun t ->
           equal int
             (t lor (t lsl 16))
@@ -92,9 +92,9 @@ let dispatch =
                   (Aql.dispatch kernel ~descriptor:0 ~args:0 ~threads:(t, t, t)
                      ~grid:(1, 1, 1)))
                1));
-      cases ~name:string_of_int "a workgroup side outside 16 bits is refused"
+      cases "a workgroup side outside 16 bits is refused" ~id:string_of_int
         [ 0; 0x10000 ] (fun t ->
-          raises_match (Exn.invalid_arg ~substring:"Aql.dispatch") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Aql.dispatch") (fun () ->
               Aql.dispatch kernel ~descriptor:0 ~args:0 ~threads:(1, t, 1)
                 ~grid:(1, 1, 1)));
     ]

@@ -38,9 +38,8 @@ let failure_of_cell = function "None" -> None | msg -> Some msg
 let each_node table check =
   let base = Filename.remove_extension table in
   let nodes = Ops.src (Golden.sink (base ^ "_nodes.golden")) in
-  cases
-    ~name:(fun (cell, _) -> cell "case")
-    table
+  cases table
+    ~id:(fun (cell, _) -> cell "case")
     (List.combine (Golden.rows table) nodes)
     (fun (cell, u) -> check cell u)
 
@@ -272,7 +271,7 @@ let vectors =
   group "vectors in programs"
     [
       cases "a program has no elementwise operation on a vector"
-        ~name:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
+        ~id:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
         [ `Add; `Cast; `Where ]
         (fun op ->
           let vector, scalar = lanes op in
@@ -281,7 +280,7 @@ let vectors =
       cases
         "a program of a renderer that computes on vectors takes an operation \
          on one axis of lanes"
-        ~name:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
+        ~id:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
         [ `Add; `Cast; `Where ]
         (fun op ->
           let vector, _ = lanes op in
@@ -306,10 +305,8 @@ let vectors =
             (judge Spec.vector_program (Ops.add quad quad)));
       cases
         "a program of a renderer that computes on vectors takes an operation \
-         on any number of lanes"
-        ~name:(Printf.sprintf "%d lanes")
-        [ 2; 3; 5; 6; 12 ]
-        (fun n ->
+         on any number of lanes" ~id:(Printf.sprintf "%d lanes")
+        [ 2; 3; 5; 6; 12 ] (fun n ->
           let lanes =
             Shape.stack (List.init n (fun i -> fvar (string_of_int i)))
           in

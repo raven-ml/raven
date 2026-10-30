@@ -98,8 +98,8 @@ let safetensors =
           Law.round_trip archive string
             (saved ".safetensors" Nx_io.save_safetensors)
             Nx_io.load_safetensors (archive_of entries));
-      cases ~name:fst
-        "files numpy and torch wrote load, and save again as they are"
+      cases "files numpy and torch wrote load, and save again as they are"
+        ~id:fst
         [
           ("f16", [| 0x0000; 0x0001; 0x3C00; 0x7C00; 0x7E01 |]);
           ("bf16", [| 0x0000; 0x0001; 0x3F80; 0x7F80; 0x7FC1 |]);
@@ -164,9 +164,10 @@ let safetensors =
                     (stored (find a name)))
                 typed_entries)
             [ 0; 1 ]);
-      cases ~name:fst
+      cases
         "an aligned entry loads over the file's pages, and a misaligned one \
          into memory of its own"
+        ~id:fst
         [ ("aligned", (0, Over_file)); ("one byte past", (1, Own_memory)) ]
         (fun (_, (pad, expected)) ->
           let u32 =
@@ -195,7 +196,7 @@ let safetensors =
           less ~msg:"misaligned: no memory of the result's size" int
             ~than:(4 * n) (negated 1);
           at_least ~msg:"aligned: a fresh result" int ~than:(4 * n) (negated 0));
-      cases ~name:fst "a header's JSON string escapes are decoded"
+      cases "a header's JSON string escapes are decoded" ~id:fst
         [
           ("short escapes", ({|aé🚀\"\\\/\b\f\r\n\t|}, "aé🚀\"\\/\b\012\r\n\t"));
           ("\\u escapes", ({|\u0061\u00e9\u00E9|}, "aéé"));
@@ -204,9 +205,10 @@ let safetensors =
         (fun (_, (json, name)) ->
           equal (list string) [ name ]
             (Archive.names (Nx_io.load_safetensors (file (u8_entry json)))));
-      cases ~name:fst
+      cases
         "a name that is no JSON string or no Unicode text fails, naming the \
          file"
+        ~id:fst
         [
           ("a lone high surrogate", {|\ud800|});
           ("a lone low surrogate", {|\udc00|});
@@ -259,18 +261,17 @@ let safetensors =
           equal string
             "\002\000\000\000\000\000\000\000\000\000\000\000\000\000\240\063\000\000\000\064\000\000\000\063\000\000\064\064\000"
             (payload path));
-      cases
-        ~name:(fun (D.Any dt) -> D.name dt)
-        "a dtype SafeTensors lacks is refused, naming the entry"
+      cases "a dtype SafeTensors lacks is refused, naming the entry"
+        ~id:(fun (D.Any dt) -> D.name dt)
         D.[ Any Complex128; Any Int4; Any Uint4; Any Bit; Any Float4_e2m1fn ]
         (fun (D.Any dt) ->
-          raises_match
-            (Exn.invalid_arg ~substring:"Nx_io.save_safetensors: w: ")
+          raises_match (Exn.invalid_arg ~sub:"Nx_io.save_safetensors: w: ")
             (fun () ->
               save_safetensors (temp_file ())
                 [ ("w", Nx.P (Nx.zeros dt [| 2 |])) ]));
-      cases ~name:fst
+      cases
         "a name the format's reader refuses is refused, and nothing is written"
+        ~id:fst
         [
           ("a name that is not UTF-8", "a\xffb");
           ("the metadata's name", "__metadata__");
@@ -280,7 +281,7 @@ let safetensors =
           let path = Filename.concat dir "x.safetensors" in
           raises_match
             (Exn.invalid_arg
-               ~substring:(Printf.sprintf "Nx_io.save_safetensors: %S" name))
+               ~sub:(Printf.sprintf "Nx_io.save_safetensors: %S" name))
             (fun () ->
               save_safetensors path [ (name, Nx.P (Nx.zeros Nx.uint8 [| 1 |])) ]);
           equal (array string) [||] (Sys.readdir dir));
@@ -298,7 +299,7 @@ let safetensors =
          Bytes.to_string b
        in
        let twice = [ ("w", "U8", [ 1 ], "a"); ("w", "U8", [ 1 ], "b") ] in
-       cases ~name:fst "a malformed file fails, naming it"
+       cases "a malformed file fails, naming it" ~id:fst
          [
            ("a byte past the data", fun () -> file (whole ^ "\000"));
            ("a header past the end", fun () -> file (with_length 8_000L));

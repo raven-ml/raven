@@ -51,14 +51,12 @@ let test_faults kind =
 let worker_tests =
   group ~timeout:P.timeout "workers"
     [
-      cases ~name:kind_name "a body on a worker has 8 MiB of stack" kinds
+      cases "a body on a worker has 8 MiB of stack" ~id:kind_name kinds
         test_stack;
-      cases ~name:kind_name
-        "workers block every signal but those a body raises itself" kinds
-        test_worker_mask;
-      cases ~name:kind_name
-        "a fault signal a body raises on a worker runs its handler there" kinds
-        test_faults;
+      cases "workers block every signal but those a body raises itself"
+        ~id:kind_name kinds test_worker_mask;
+      cases "a fault signal a body raises on a worker runs its handler there"
+        ~id:kind_name kinds test_faults;
     ]
 
 (* Threads *)
@@ -139,17 +137,16 @@ let test_unmade () =
 let thread_tests =
   group ~timeout:P.timeout "threads"
     [
-      cases ~name:kind_name
+      cases
         "a kind's workers are made at its first job of more than one thread \
          and live until the process exits"
-        kinds test_made_once;
-      cases ~name:kind_name
-        "the pool's threads park when idle, and a job wakes them" kinds
-        test_parks;
-      cases ~name:kind_name
+        ~id:kind_name kinds test_made_once;
+      cases "the pool's threads park when idle, and a job wakes them"
+        ~id:kind_name kinds test_parks;
+      cases
         "a child made by fork runs its jobs on workers of its own, and the \
          parent on its own"
-        kinds test_fork_child;
+        ~id:kind_name kinds test_fork_child;
       test
         "fork returns while another thread's blocking job runs, and the child \
          runs its blocking jobs on workers of its own"

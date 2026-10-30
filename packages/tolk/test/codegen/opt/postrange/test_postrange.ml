@@ -162,9 +162,9 @@ let refusals =
       (fun c -> Option.map (fun n -> (c, n)) c.refused)
       recorded_cases
   in
-  cases
-    ~name:(fun (c, _) -> c.name)
-    "a refused optimisation leaves the scheduler as it was" refused
+  cases "a refused optimisation leaves the scheduler as it was"
+    ~id:(fun (c, _) -> c.name)
+    refused
     (fun (c, n) -> leaves_as_it_was c n)
 
 let axes =
@@ -345,7 +345,7 @@ let shifts =
           raises_invalid_arg (fun () -> shifted 0 1 Upcast));
       test "raises Invalid_argument on an amount that does not divide the axis"
         (fun () -> raises_invalid_arg (fun () -> shifted 0 3 Upcast));
-      cases ~name "keeps the kernel's writes, once flattened" splits
+      cases "keeps the kernel's writes, once flattened" ~id:name splits
         (fun (n, target, amount, top) ->
           let k, _ = shifted ~top n amount target in
           keeps_writes (kernel "sum_rows_64") (K.get_optimized_ast k));
@@ -503,12 +503,12 @@ let keeps_kernel_writes =
   let keeps c = keeps_writes (kernel c.kernel) (optimize c) in
   group "optimising keeps a kernel's writes"
     [
-      cases ~name:(fun c -> c.name) "small kernels" (within 0 (1 lsl 12)) keeps;
-      cases ~tags:[ "slow" ]
-        ~name:(fun c -> c.name)
-        "large kernels"
-        (within (1 lsl 12) (1 lsl 18))
-        keeps;
+      cases "small kernels" ~id:(fun c -> c.name) (within 0 (1 lsl 12)) keeps;
+      slow
+      @@ cases "large kernels"
+           ~id:(fun c -> c.name)
+           (within (1 lsl 12) (1 lsl 18))
+           keeps;
     ]
 
 (* The optimisation fuzzer: random optimisations of small kernels, each either
@@ -582,10 +582,11 @@ let fuzz (name, ren, opts) =
   keeps_writes (kernel name) (K.get_optimized_ast k)
 
 let fuzzer =
-  prop ~tags:[ "slow" ] ~count:400
-    "each random optimisation is refused as a whole or keeps the kernel's \
-     writes"
-    fuzzed_program fuzz
+  slow
+  @@ prop ~count:400
+       "each random optimisation is refused as a whole or keeps the kernel's \
+        writes"
+       fuzzed_program fuzz
 
 let () =
   exit

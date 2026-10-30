@@ -14,7 +14,7 @@ let m = Nx_support.memory
 module S2 = (val Nx.devices [ m 0; m 1 ])
 module Other = (val Nx.devices [ m 2 ])
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
 
 let on d shape =
@@ -179,7 +179,7 @@ let repr =
       test "an array on another set's device is refused" (fun () ->
           invalid ~by:"Nx.Repr.of_array" (fun () ->
               Nx.Repr.of_array Other.v (on (m 0) [| 2 |])));
-      cases "of_shards refuses" ~name:fst
+      cases "of_shards refuses" ~id:fst
         [
           ( "one array for two devices",
             fun () ->
@@ -240,7 +240,7 @@ let repr =
 (* The one message format: every refusal of the interface, called wrongly. *)
 let errors =
   let mesh = Nx.Mesh.v S2.v [ ("a", 2) ] in
-  cases "every refusal names the function called, then a reason" ~name:fst
+  cases "every refusal names the function called, then a reason" ~id:fst
     [
       ("Nx.devices", fun () -> ignore (Nx.devices []));
       ("Nx.Mesh.v", fun () -> ignore (Nx.Mesh.v S2.v [ ("a", 3) ]));
@@ -263,7 +263,7 @@ let errors =
       match f () with
       | () -> fail (name ^ " raised nothing")
       | exception Invalid_argument msg ->
-          starts_with ~affix:(name ^ ": ") msg;
+          starts_with ~prefix:(name ^ ": ") msg;
           greater int ~than:(String.length name + 2) (String.length msg))
 
 (* Values on sets: two over the host meet, and Repr reads a creation's bytes. *)

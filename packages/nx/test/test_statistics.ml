@@ -14,7 +14,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let float_pp ppf v = Format.fprintf ppf "%h" v
 
 let same_bits =
@@ -340,7 +340,7 @@ let test_lse_cases () =
 let narrow name
     (f : 's. (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t) =
   cases (name ^ " at a narrow float is float32's, rounded once")
-    ~name:(fun (D.Any dt) -> D.name dt)
+    ~id:(fun (D.Any dt) -> D.name dt)
     (List.filter (fun (D.Any dt) -> D.is D.Float dt && D.bits dt < 32) D.all)
     (fun (D.Any dt) ->
       match D.kind dt with

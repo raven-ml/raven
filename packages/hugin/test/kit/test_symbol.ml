@@ -7,7 +7,7 @@ open Windtrap
 open Hugin_gg
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let symbol = Testable.make ~pp:Symbol.pp ~equal:Symbol.equal
 let name s = Format.asprintf "%a" Symbol.pp s
 let path = Testable.make ~pp:Path.pp ~equal:Path.equal
@@ -203,7 +203,8 @@ let sizing =
           equal path
             (Symbol.path `Fill 7. Symbol.circle)
             (Symbol.path `Stroke 7. Symbol.circle));
-      cases "sizes 0. and -0. put every point at the origin" ~name all (fun s ->
+      cases "sizes 0. and -0. put every point at the origin" ~id:name all
+        (fun s ->
           List.iter
             (fun (paint, a) ->
               List.iter
@@ -211,7 +212,7 @@ let sizing =
                 (numbers (Symbol.path paint a s)))
             [ (`Fill, 0.); (`Fill, -0.); (`Stroke, 0.); (`Stroke, -0.) ]);
       cases "path raises on a negative or non-finite size"
-        ~name:(fun a -> Printf.sprintf "%h" a)
+        ~id:(fun a -> Printf.sprintf "%h" a)
         [ -1.; -.Float.min_float; nan; infinity; neg_infinity ]
         (fun a ->
           List.iter (fun s -> invalid (fun () -> Symbol.path `Fill a s)) all);
@@ -330,10 +331,10 @@ let wye_shape () =
 let shapes =
   group "shapes"
     [
-      cases "closed outlines turn clockwise on screen" ~name closed clockwise;
-      cases "open symbols are one segment per stroke" ~name open_
+      cases "closed outlines turn clockwise on screen" ~id:name closed clockwise;
+      cases "open symbols are one segment per stroke" ~id:name open_
         one_segment_strokes;
-      cases "strokes cross at their middles" ~name open_ stroke_middles;
+      cases "strokes cross at their middles" ~id:name open_ stroke_middles;
       test "plus is parallel to the axes" (fun () ->
           equal (list (float 1e-9)) [ 0.; 90. ] (directions Symbol.plus));
       test "times is plus turned by an eighth of a turn" (fun () ->

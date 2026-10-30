@@ -73,9 +73,8 @@ let regions =
     | In_order -> "in order"
     | Any_order -> "in any order"
   in
-  cases
-    ~name:(fun (a, o) -> access_name a ^ ", " ^ order_name o)
-    "memory registers for each access and order, with distinct keys"
+  cases "memory registers for each access and order, with distinct keys"
+    ~id:(fun (a, o) -> access_name a ^ ", " ^ order_name o)
     (List.concat_map
        (fun a -> [ (a, M.Region.In_order); (a, Any_order) ])
        [ M.Region.Local; Remote_write; Remote ])
@@ -177,7 +176,7 @@ let make =
           ~pp:(fun ppf _ -> Format.pp_print_string ppf "a NIC")
           (M.make p)
       in
-      starts_with ~msg:"its name" ~affix:(name ^ ": ") e;
+      starts_with ~msg:"its name" ~prefix:(name ^ ": ") e;
       equal ~msg:"verbs files once make failed" int before (verbs_files ()))
 
 let () =

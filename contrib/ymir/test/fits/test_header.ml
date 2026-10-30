@@ -28,8 +28,7 @@ let starts_error ~sub = function
 
 let ints =
   cases
-    ~name:(fun (field, _) -> field)
-    "int reads FITS integers"
+    "int reads FITS integers" ~id:(fun (field, _) -> field)
     [
       ("42", Some 42);
       ("+7", Some 7);
@@ -49,8 +48,7 @@ let ints =
 
 let floats =
   cases
-    ~name:(fun (field, _) -> field)
-    "float reads integer and real text, correctly rounded"
+    "float reads integer and real text, correctly rounded" ~id:(fun (field, _) -> field)
     [
       ("1.5", Some 1.5);
       ("1288.4", Some 1288.4);
@@ -86,8 +84,7 @@ let floats =
 
 let printed_floats =
   cases
-    ~name:(fun (_, text) -> text)
-    "float prints the fewest digits that read back, the nearest of them"
+    "float prints the fewest digits that read back, the nearest of them" ~id:(fun (_, text) -> text)
     [
       (1288.4, "1288.4");
       (0.001, "0.001");
@@ -120,8 +117,7 @@ let nan_names_card () =
 
 let strings =
   cases
-    ~name:(fun (field, _) -> field)
-    "string reads quoted text, trailing spaces dropped"
+    "string reads quoted text, trailing spaces dropped" ~id:(fun (field, _) -> field)
     [
       ("'NGC 346 '", Some "NGC 346");
       ("'O''Hara'", Some "O'Hara");
@@ -140,8 +136,7 @@ let strings =
 
 let bools =
   cases
-    ~name:(fun (field, _) -> field)
-    "bool reads T and F"
+    "bool reads T and F" ~id:(fun (field, _) -> field)
     [
       ("T", Some true);
       ("                   F", Some false);
@@ -241,11 +236,11 @@ let duplicates () =
 
 let keywords () =
   let h = H.empty in
-  raises_match (Exn.invalid_arg ~substring:"naxis") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"naxis") (fun () ->
       H.get V.int "naxis" h);
-  raises_match (Exn.invalid_arg ~substring:"COMMENT") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"COMMENT") (fun () ->
       H.set V.int "COMMENT" 1 h);
-  raises_match (Exn.invalid_arg ~substring:"naxis1") (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"naxis1") (fun () ->
       H.find V.int "naxis1" h |> ignore);
   equal (result_w (option int)) (Ok None) (H.find V.int "NINECHARS" h);
   raises_match Exn.invalid_arg (fun () -> H.remove "A B=" h);

@@ -93,7 +93,7 @@ let cells =
           equal (array int) [| 3; 4; 2 |]
             (Nx.shape (Quantity.value Unit.one (Grid.measure g))));
       test "pixels refuses a shape of another rank" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Grid.pixels") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Grid.pixels") (fun () ->
               Grid.pixels ~at:Nx.Host.on ~shape:[| 3 |] f64 Transform.id));
       prop "a window's centres are its base's at the same cells, bit for bit"
         Gen.(pair (int_range (-20) 120) (int_range (-20) 120))

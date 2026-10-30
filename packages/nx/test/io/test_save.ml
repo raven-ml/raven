@@ -112,18 +112,18 @@ let loaders =
 let saving =
   group "saving"
     [
-      cases ~name "a save leaves the file alone in its directory" saves
+      cases "a save leaves the file alone in its directory" ~id:name saves
         (fun s ->
           let dir = temp_dir () in
           let path = Filename.concat dir "x" in
           s.save path (host s);
           s.save path (host s);
           equal (array string) [| "x" |] (Sys.readdir dir));
-      cases ~name "a save replaces the file its path names" saves (fun s ->
+      cases "a save replaces the file its path names" ~id:name saves (fun s ->
           let path = file "old" in
           s.save path (host s);
           equal string (written s (host s)) (read path));
-      cases ~name "a value of another set or a host creation saves" saves
+      cases "a value of another set or a host creation saves" ~id:name saves
         (fun s ->
           let module M = (val Nx.devices [ Nx_support.memory 0 ]) in
           let expected = written s (host s) in
@@ -138,9 +138,10 @@ let saving =
        in
        let second save s path = save path (entries (host s) (dead s)) in
        let npz = List.nth saves 1 and safetensors = List.nth saves 2 in
-       cases ~name:fst
+       cases
          "a failed save leaves the file it was to replace as it was, and \
           nothing beside it"
+         ~id:fst
          (List.map (fun s -> (s.name, (s.by, fun p -> s.save p (dead s)))) saves
          @ [
              ("npz, its second entry dead", (npz.by, second Nx_io.save_npz npz));
@@ -155,9 +156,8 @@ let saving =
            equal ~msg:"the file" string "old" (read path);
            equal ~msg:"the directory" (array string) [| "old" |]
              (Sys.readdir dir)));
-      cases ~name
-        "a refused rename keeps the new file, and the Failure names it" saves
-        (fun s ->
+      cases "a refused rename keeps the new file, and the Failure names it"
+        ~id:name saves (fun s ->
           let dir = temp_dir () in
           let path = Filename.concat dir "x" in
           (* A directory that is not empty, which no rename replaces. *)
@@ -173,13 +173,13 @@ let saving =
           in
           equal ~msg:"files beside the path" int 1 (List.length kept);
           let kept = Filename.concat dir (List.hd kept) in
-          starts_with ~affix:(path ^ ": ") message;
+          starts_with ~prefix:(path ^ ": ") message;
           contains ~sub:kept message;
           equal ~msg:"the kept file" string (written s (host s)) (read kept));
-      cases ~name
+      cases
         "a new file has the permissions 0o666 less the umask, whatever the \
          file it replaces had"
-        saves (fun s ->
+        ~id:name saves (fun s ->
           if Sys.win32 then skip ~reason:"no umask on Windows" ();
           let dir = temp_dir () in
           let fresh = Filename.concat dir "fresh"
@@ -225,8 +225,8 @@ let saving =
          Nx_io.save_safetensors (temp_file ())
            (Archive.of_list [ ("x", Nx.P x) ])
        in
-       cases ~name:fst
-         "a save leaves its value's memory to the value's next donation"
+       cases "a save leaves its value's memory to the value's next donation"
+         ~id:fst
          [
            ("npy on the host", fun () -> donated Rig.host on_host npy);
            ("npz on the host", fun () -> donated Rig.host on_host npz);
@@ -405,14 +405,14 @@ let in_child ~seconds f =
 let errors =
   group "errors"
     [
-      cases ~name:fst "a file that cannot be opened fails, naming it" loaders
+      cases "a file that cannot be opened fails, naming it" ~id:fst loaders
         (fun (_, load) ->
           let path = Filename.concat (temp_dir ()) "absent" in
           fails ~path (fun () -> load path));
-      cases ~name:fst
+      cases
         "a path that names no regular file, a directory or a FIFO, fails, \
          naming it"
-        loaders (fun (_, load) ->
+        ~id:fst loaders (fun (_, load) ->
           let dir = temp_dir () in
           fails ~path:dir (fun () -> load dir);
           if Sys.win32 then skip ~reason:"no FIFO on Windows" ();
@@ -422,12 +422,13 @@ let errors =
           Unix.mkfifo fifo 0o600;
           fails ~path:fifo (fun () ->
               in_child ~seconds:10. (fun () -> load fifo)));
-      cases ~name "a save into a missing directory fails, naming the path" saves
-        (fun s ->
+      cases "a save into a missing directory fails, naming the path" ~id:name
+        saves (fun s ->
           let path = Filename.concat (temp_dir ()) "missing/x" in
           fails ~path (fun () -> s.save path (host s)));
-      cases ~name:fst
+      cases
         "a traced value, which has no bytes, is refused, naming the function"
+        ~id:fst
         (List.map (fun s -> (s.name, (s.by, s.shape, s.save))) saves
         @ [
             ( "encode_png",

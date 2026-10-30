@@ -13,7 +13,7 @@ module Total = Rune.Total
 let f64 = Nx.float64
 let vec xs = Nx.create f64 [| Array.length xs |] xs
 let scalar x = Nx.scalar f64 x
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ~sub f = raises_match (Exn.invalid_arg ~sub) f
 
 (* Floats equal within a relative [1e-12], NaN equal to NaN. *)
 let close =

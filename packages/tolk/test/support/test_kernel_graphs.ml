@@ -55,7 +55,7 @@ let writes =
                ~buffers:[ (1, iota) ]
                (Ops.sink [ called incr (param 0) staged ])));
       test "an argument that is not storage is refused" (fun () ->
-          raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
               Kernel_graphs.writes
                 (Ops.sink
                    [
@@ -103,7 +103,7 @@ let linear_writes =
                ~buffers:[ (1, iota) ]
                (linear [ Ops.call shifted [ param 0; param 1 ] ])));
       test "a call of something other than a kernel is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"not a kernel") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"not a kernel") (fun () ->
               Kernel_graphs.linear_writes
                 (linear
                    [

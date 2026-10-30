@@ -66,7 +66,7 @@ let listed name =
 let discovery =
   group ~timeout:10. "discovery"
     [
-      cases ~name:Fun.id "place" [ "offset"; "bytes" ] (function
+      cases "place" ~id:Fun.id [ "offset"; "bytes" ] (function
         | "offset" -> equal int (64 * 1024) Discovery.offset
         | _ -> equal int (10 * 1024) Discovery.bytes);
       listed "r9700.bin";
@@ -83,9 +83,8 @@ let discovery =
             (List.map fst (Discovery.live d umc)));
       test "a table without fused instances has none" (fun () ->
           equal (list (pair int (list int))) [] (table "r9700.bin").harvested);
-      cases
-        ~name:(fun (b, _) -> strf "block %d" b)
-        "names"
+      cases "names"
+        ~id:(fun (b, _) -> strf "block %d" b)
         [
           (gc, "GC"); (sdma0, "SDMA0"); (mp0, "MP0"); (mp1, "MP1"); (0x7fff, "");
         ]
@@ -177,9 +176,8 @@ let refusals =
       =
     (label, (fun () -> edited ?binary ?after name edits), field, at)
   in
-  cases
-    ~name:(fun (label, _, _, _) -> label)
-    "a defect is refused, naming its field and its byte offset"
+  cases "a defect is refused, naming its field and its byte offset"
+    ~id:(fun (label, _, _, _) -> label)
     [
       case "the binary's signature"
         [ (binary 0, 0) ]

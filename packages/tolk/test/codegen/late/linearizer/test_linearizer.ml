@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk
 
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* The passes, as the codegen pipeline applies them. *)
 let split u =
@@ -348,8 +348,8 @@ let printed () =
   output ()
 
 let debug_linearize =
-  group ~tags:[ "debug_linearize" ] "DEBUG_LINEARIZE"
-    [ Golden.text "debug_linearize.golden" printed ]
+  tag "debug_linearize"
+  @@ group "DEBUG_LINEARIZE" [ Golden.text "debug_linearize.golden" printed ]
 
 (* The README's CPython row on do_split_ends: tinygrad's sort of range arguments
    raises when two identities tie up to an axis type, or when one is a prefix of

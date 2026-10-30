@@ -419,14 +419,14 @@ let refusals =
           let cq = Result.get_ok (M.Cq.make nic 16) in
           ignore (Result.get_ok (M.Qp.make cq ~receives:0 8) : M.Qp.t);
           ignore (Result.get_ok (M.Qp.make cq ~receives:0 8) : M.Qp.t);
-          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qp.make") (fun () ->
               M.Qp.make cq ~receives:0 1);
           M.close nic);
       test "receives count against their queue too" (fun () ->
           let nic = nic () in
           let cq = Result.get_ok (M.Cq.make nic 16) in
           ignore (Result.get_ok (M.Qp.make cq ~receives:8 8) : M.Qp.t);
-          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qp.make") (fun () ->
               M.Qp.make cq ~receives:0 1);
           M.close nic);
       test "a receive needs a connected queue pair with a receive ring"
@@ -436,10 +436,10 @@ let refusals =
           let d = register nic Local In_order (memory 64) in
           let none = Result.get_ok (M.Qp.make cq ~receives:0 4) in
           connect none Local none;
-          raises_match (Exn.invalid_arg ~substring:"no receive ring") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"no receive ring") (fun () ->
               M.Qp.receive none (M.Region.local d 0 8));
           let unconnected = Result.get_ok (M.Qp.make cq ~receives:4 4) in
-          raises_match (Exn.invalid_arg ~substring:"not connected") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"not connected") (fun () ->
               M.Qp.receive unconnected (M.Region.local d 0 8));
           M.close nic);
       test "a full receive ring refuses a receive until a completion frees one"
@@ -453,7 +453,7 @@ let refusals =
             M.Qp.receive b (M.Region.local d 0 8)
           done;
           equal int ~msg:"posted" 0 (M.Qp.room b Receive);
-          raises_match (Exn.invalid_arg ~substring:"full") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"full") (fun () ->
               M.Qp.receive b (M.Region.local d 0 8));
           M.Qp.post a
             { op = Send { src = M.Region.local s 0 8 }; signal = true };
@@ -466,7 +466,7 @@ let refusals =
           let nic = nic () in
           let _, qp = pair nic in
           let n = M.max_message nic + 1 in
-          raises_match (Exn.invalid_arg ~substring:"Qp.post") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qp.post") (fun () ->
               M.Qp.post qp
                 {
                   op = Send { src = { address = 0; bytes = n; key = 0 } };
@@ -477,9 +477,9 @@ let refusals =
       test "a piece whose end overflows is refused" (fun () ->
           let nic = nic () in
           let r = register nic Remote In_order (memory 64) in
-          raises_match (Exn.invalid_arg ~substring:"Region") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Region") (fun () ->
               M.Region.local r max_int 1);
-          raises_match (Exn.invalid_arg ~substring:"Region") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Region") (fun () ->
               M.Region.local r 1 max_int);
           M.close nic);
       test
@@ -491,7 +491,7 @@ let refusals =
             | () -> failf "%s ran inside a lock" fn
             | exception Invalid_argument why ->
                 starts_with ~msg:fn
-                  ~affix:("Rig_mlx5." ^ fn ^ ": called from")
+                  ~prefix:("Rig_mlx5." ^ fn ^ ": called from")
                   why
           in
           refused "Cq.make" (fun () -> ignore (M.Cq.make nic 4));
@@ -504,8 +504,7 @@ let refusals =
           let cq = Result.get_ok (M.Cq.make nic 4) in
           M.close nic;
           M.close nic;
-          raises_match (Exn.invalid_arg ~substring:"closed") (fun () ->
-              M.Cq.poll cq));
+          raises_match (Exn.invalid_arg ~sub:"closed") (fun () -> M.Cq.poll cq));
     ]
 
 (* Where the mlx5 driver's answer to the context holds the most entries a
@@ -553,7 +552,7 @@ let bounds =
           let most = min !cqes most_completions in
           let why = require_error (M.Cq.make nic (most + 1)) in
           contains ~sub:(Printf.sprintf "at most %d" most) why;
-          raises_match (Exn.invalid_arg ~substring:"Cq.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Cq.make") (fun () ->
               M.Cq.make nic 0);
           M.close nic);
       test "a queue's bound is the one the NIC's context reads" (fun () ->
@@ -580,7 +579,7 @@ let bounds =
           ignore (require_ok (M.Qp.make cq ~receives:0 most) : M.Qp.t);
           let why = require_error (M.Qp.make cq ~receives:0 (most + 1)) in
           contains ~sub:(Printf.sprintf "at most %d" most) why;
-          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qp.make") (fun () ->
               M.Qp.make cq ~receives:0 0);
           M.close nic);
       test "a queue pair's bound is the one the driver's answer states"
@@ -611,7 +610,7 @@ let bounds =
           ignore (require_ok (M.Qp.make cq ~receives:most 1) : M.Qp.t);
           let why = require_error (M.Qp.make cq ~receives:(most + 1) 1) in
           contains ~sub:(Printf.sprintf "at most %d receives" most) why;
-          raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Qp.make") (fun () ->
               M.Qp.make cq ~receives:(-1) 1);
           M.close nic);
       test "a receive ring's bound is the one the driver's answer states"
@@ -679,13 +678,11 @@ let kept =
       let qp = require_ok (M.Qp.make cq ~receives:0 16) in
       is_error ~msg:"the queue pair" (M.Qp.destroy qp);
       is_error ~msg:"a second destroy" (M.Qp.destroy qp);
-      raises_match (Exn.invalid_arg ~substring:"destroyed") (fun () ->
-          M.Qp.ring qp);
-      raises_match (Exn.invalid_arg ~substring:"Qp.make") (fun () ->
+      raises_match (Exn.invalid_arg ~sub:"destroyed") (fun () -> M.Qp.ring qp);
+      raises_match (Exn.invalid_arg ~sub:"Qp.make") (fun () ->
           M.Qp.make cq ~receives:0 1);
       is_error ~msg:"its queue" (M.Cq.destroy cq);
-      raises_match (Exn.invalid_arg ~substring:"destroyed") (fun () ->
-          M.Cq.poll cq);
+      raises_match (Exn.invalid_arg ~sub:"destroyed") (fun () -> M.Cq.poll cq);
       let r = register nic Remote In_order (memory 64) in
       is_error ~msg:"a region" (M.Region.deregister r);
       is_error ~msg:"a second deregister" (M.Region.deregister r);

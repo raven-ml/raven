@@ -153,12 +153,12 @@ let values =
     ]
 
 let value_cases =
-  cases
-    ~name:(fun (Case (ty, xs, _)) ->
+  cases "values"
+    ~id:(fun (Case (ty, xs, _)) ->
       Format.asprintf "reads %s as %a"
         (String.escaped (String.concat " " xs))
         Type.pp ty)
-    "values" values
+    values
     (fun (Case (ty, xs, expected)) -> reads ty xs expected)
 
 (* [stored ty xs] is the storage of the texts [xs] read as [ty], as int64
@@ -300,10 +300,10 @@ let refusals =
     ]
 
 let refusal_cases =
-  cases
-    ~name:(fun (ty, s, _) ->
+  cases "refusals"
+    ~id:(fun (ty, s, _) ->
       Format.asprintf "refuses %s as %a" (String.escaped s) pp_any ty)
-    "refusals" refusals
+    refusals
     (fun (Type.Any ty, s, why) ->
       equal (pair int string) (1, why) (refused ty [ None; Some s ]))
 
@@ -336,13 +336,13 @@ let errors =
             (Column.options Kind.int
                (Result.get_ok (Column.parse (Any Type.uint8) c))));
       test "raises on a column that is not text" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Column.parse") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Column.parse") (fun () ->
               Column.parse (Any Type.int8) (Column.v Type.int8 [| 1 |])));
       test "raises on a type without a text form" (fun () ->
           List.iter
             (fun ty ->
-              raises_match (Exn.invalid_arg ~substring:"Column.parse")
-                (fun () -> Column.parse ty (bytes [ Some "1" ])))
+              raises_match (Exn.invalid_arg ~sub:"Column.parse") (fun () ->
+                  Column.parse ty (bytes [ Some "1" ])))
             Type.
               [
                 Any (clock S);

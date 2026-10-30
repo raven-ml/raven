@@ -55,7 +55,7 @@ let fails_naming subs f =
     (function Invalid_argument m -> List.for_all (occurs m) subs | _ -> false)
     f
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let draw_nothing (_ : Mark.rows) = Picture.empty
 
 let dot1 ?fill ?fx x y =
@@ -382,9 +382,9 @@ let errors =
         [ "k" ] );
     ]
   in
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "resolve raises, naming the nodes at fault" cases_
+  cases "resolve raises, naming the nodes at fault"
+    ~id:(fun (n, _, _) -> n)
+    cases_
     (fun (_, f, subs) -> fails_naming subs f)
 
 (* A traced tensor whose interpretation has returned: any operation on it
@@ -403,9 +403,8 @@ let dead () =
   x
 
 let reads =
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "a tensor that cannot be read raises naming its mark"
+  cases "a tensor that cannot be read raises naming its mark"
+    ~id:(fun (n, _, _) -> n)
     [ ("traced", traced, "Test.trace"); ("dead", dead, "Nx.neg") ]
     (fun (_, x, sub) ->
       let t = dot ~x:(num (x ())) ~y:(const 0.5) () |> name "t" in
@@ -468,9 +467,9 @@ let resolved_scale =
   in
   group "Resolved.scale"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "raises on" raises
+      cases "raises on"
+        ~id:(fun (n, _, _) -> n)
+        raises
         (fun (_, subs, f) -> fails_naming subs f);
       test "finds a scale through a named node" (fun () ->
           equal floats (1., 1.) (hull ~at:(path [ field "a" ]) r "x"));
@@ -841,9 +840,9 @@ let scopes =
               (grid [ [ share [ ("x", `Shared) ] (grid [ [ leaf ] ]) ] ])
           in
           equal floats (1., 1.) (hull (resolve f) "x"));
-      cases
-        ~name:(fun (n, _, _, _, _, _) -> n)
-        "fits" hulls
+      cases "fits"
+        ~id:(fun (n, _, _, _, _, _) -> n)
+        hulls
         (fun (_, f, view, at, n, expected) ->
           equal floats expected (hull ~at (resolve ?view f) n));
       prop "facets share one scale" (gen_values 6) (fun ys ->
@@ -1030,13 +1029,13 @@ let merging =
   in
   group "merging"
     [
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "fits" hulls
+      cases "fits"
+        ~id:(fun (n, _, _, _) -> n)
+        hulls
         (fun (_, f, n, h) -> equal floats h (hull (resolve f) n));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "bands" bands
+      cases "bands"
+        ~id:(fun (n, _, _, _) -> n)
+        bands
         (fun (_, f, n, w) ->
           equal (float 1e-12) w (Scale.bandwidth (categ (resolve f) n)));
       test "a band scale is reversed iff y reads it" (fun () ->
@@ -1155,9 +1154,9 @@ let categories_ =
   in
   group "categories"
     [
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "fit" domains
+      cases "fit"
+        ~id:(fun (n, _, _) -> n)
+        domains
         (fun (_, f, expected) ->
           equal
             (list (pair int string))
@@ -1169,9 +1168,9 @@ let categories_ =
               [| 2.; Float.nan; Float.infinity; -1.; Float.neg_infinity |]
           in
           equal floats (-1., 2.) (hull (resolve (dot ~x ~y:(num at0) ())) "x"));
-      cases
-        ~name:(fun (n, _, _) -> n)
-        "an explicit domain drops the rows outside it: " kept
+      cases "an explicit domain drops the rows outside it: "
+        ~id:(fun (n, _, _) -> n)
+        kept
         (fun (_, f, expected) -> equal floats expected (hull (resolve f) "x"));
     ]
 
@@ -1212,9 +1211,9 @@ let facet_panels =
         ] );
     ]
   in
-  cases
-    ~name:(fun (n, _, _) -> n)
-    "facet channels select their panels: " panels
+  cases "facet channels select their panels: "
+    ~id:(fun (n, _, _) -> n)
+    panels
     (fun (_, f, expected) ->
       let r = resolve f in
       List.iter
@@ -1433,18 +1432,18 @@ let warning_cases =
 let views =
   group "views"
     [
-      cases
-        ~name:(fun (n, _, _, _, _) -> n)
-        "zooms" zoom_cases
+      cases "zooms"
+        ~id:(fun (n, _, _, _, _) -> n)
+        zoom_cases
         (fun (_, f, view, hulls, ws) ->
           let r = resolve ~view f in
           List.iter
             (fun (at, n, h) -> equal ~msg:n floats h (hull ~at r n))
             hulls;
           equal (list id) ws (List.map fst (Resolved.warnings r)));
-      cases
-        ~name:(fun (n, _, _, _) -> n)
-        "warnings" warning_cases
+      cases "warnings"
+        ~id:(fun (n, _, _, _) -> n)
+        warning_cases
         (fun (_, f, view, ws) ->
           equal (list warning) ws (Resolved.warnings (resolve ~view f)));
       test "a bind reads the view once per resolve" (fun () ->
@@ -1522,7 +1521,7 @@ let reuse =
           let f x = layer [ dot ~x:(num (f64 x)) ~y:(num (f64 x)) (); a ] in
           let f' = f xs' in
           equal resolved (resolve f') (resolve ~prev:(resolve (f xs)) f'));
-      cases ~name:fst "a reused resolution equals a fresh one" again
+      cases "a reused resolution equals a fresh one" ~id:fst again
         (fun (_, f) ->
           let first, f, view = f () in
           equal resolved (resolve ~view f)
@@ -1537,9 +1536,8 @@ let baselines =
       let one (name, f, _, _) =
         Format.asprintf "%s@\n%a@\n" name Resolved.pp (resolve (f ()))
       in
-      expect_file
-        (String.concat "\n" (List.map one Figures.goldens))
-        "packages/hugin/test/golden/resolved.expected")
+      expect_file ~file:"packages/hugin/test/golden/resolved.expected"
+        (String.concat "\n" (List.map one Figures.goldens)))
 
 let () =
   exit

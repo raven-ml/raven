@@ -108,8 +108,8 @@ let laws =
           cover "a base past 48 bits" (base >= address);
           cover "a negative base" (base < 0);
           if n < 0 || n / g.xccs >= share || base < 0 || base >= address then
-            raises_match (Exn.invalid_arg ~substring:"Scratch.descriptor")
-              (fun () -> Scratch.descriptor g ~base n)
+            raises_match (Exn.invalid_arg ~sub:"Scratch.descriptor") (fun () ->
+                Scratch.descriptor g ~base n)
           else
             match words (Scratch.descriptor g ~base n) with
             | [ w0; w1; w2; _ ] ->
@@ -166,11 +166,10 @@ let sizes =
   group ~timeout "sizes"
     [
       test "a GC with no scratch ring register is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Scratch.tmpring") (fun () ->
               Scratch.tmpring { gfx11 with gc = (10, 3, 0) } 0));
-      cases
-        ~name:(fun (gc, n, _) -> strf "GC %s, %d bytes" (S.version gc) n)
-        "a lane's scratch is taken up to what WAVESIZE holds"
+      cases "a lane's scratch is taken up to what WAVESIZE holds"
+        ~id:(fun (gc, n, _) -> strf "GC %s, %d bytes" (S.version gc) n)
         (List.concat_map
            (fun (gc, most) -> [ (gc, most, true); (gc, most + 1, false) ])
            most_per_lane)
@@ -181,8 +180,8 @@ let sizes =
               (n * 64 / match gc with 9, _, _ -> 1024 | _ -> 256)
               (wavesize g (Scratch.tmpring g n))
           else
-            raises_match (Exn.invalid_arg ~substring:"Scratch.tmpring")
-              (fun () -> Scratch.tmpring g n));
+            raises_match (Exn.invalid_arg ~sub:"Scratch.tmpring") (fun () ->
+                Scratch.tmpring g n));
     ]
 
 (* Words 3's selects of x, y, z and w, and its added thread id. *)
@@ -210,8 +209,7 @@ let descriptor =
             ]
             (words (Scratch.descriptor gfx9 ~base:0x12_3456_7800 0x10_0000)));
       test "a GC with no layout is refused" (fun () ->
-          raises_match (Exn.invalid_arg ~substring:"Scratch.descriptor")
-            (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Scratch.descriptor") (fun () ->
               Scratch.descriptor { gfx11 with gc = (10, 3, 0) } ~base:0 0));
     ]
 

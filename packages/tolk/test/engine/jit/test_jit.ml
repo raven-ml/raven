@@ -288,9 +288,8 @@ let per_case name tests =
   group name
     (List.map
        (fun case ->
-         group
-           ~tags:(if List.mem case by_default then [] else [ "slow" ])
-           case (tests case))
+         (if List.mem case by_default then Fun.id else slow)
+         @@ group case (tests case))
        cases)
 
 (* A capture binds the variables its calls read. *)

@@ -635,14 +635,13 @@ let test_pp () =
 (* A refusal names the axis at fault. *)
 let test_messages () =
   raises_match
-    (Exn.invalid_arg ~substring:"Layout.v: axis 1 of [2; -1] is -1, below 0")
+    (Exn.invalid_arg ~sub:"Layout.v: axis 1 of [2; -1] is -1, below 0")
     (fun () -> L.v ~strides:[| 1; 1 |] [| 2; -1 |]);
   raises_match
     (Exn.invalid_arg
-       ~substring:"Layout.v: axis 1 has extent 3 and stride 2305843009213693952")
+       ~sub:"Layout.v: axis 1 has extent 3 and stride 2305843009213693952")
     (fun () -> L.v ~strides:[| 1; (max_int / 2) + 1 |] [| 2; 3 |]);
-  raises_match
-    (Exn.invalid_arg ~substring:"Layout.contiguous: axis 0 of [-4] is -4")
+  raises_match (Exn.invalid_arg ~sub:"Layout.contiguous: axis 0 of [-4] is -4")
     (fun () -> L.contiguous [| -4 |])
 
 let tests =
@@ -664,7 +663,7 @@ let tests =
         prop ~count:1000 "fits is its test, and contiguous takes what it fits"
           v_args law_fits;
         test "fits takes max_rank axes and refuses one more" test_fits_rank;
-        cases ~name:fst "refuses" refusals test_refuses;
+        cases "refuses" ~id:fst refusals test_refuses;
         test "a shape with no element takes other extents up to max_numel"
           test_no_element;
         test "dim and stride refuse an axis out of range" test_axis_refuses;

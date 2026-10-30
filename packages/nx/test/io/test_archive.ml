@@ -170,9 +170,10 @@ let ownership =
   let w = Nx.P (vec Nx.float32 [| 1. |]) in
   group "ownership"
     [
-      cases ~name:fst
+      cases
         "an entry the value owns and none of its arrays names is refused, \
          naming it"
+        ~id:fst
         [
           ( "an entry at the prefix itself",
             ( "model",
@@ -248,9 +249,8 @@ let ownership =
             Archive.to_value (model_on ()) ~like
               (entries b0 b1 (Nx.full Nx.float64 [||] 0.5))
           in
-          raises_match
-            (Exn.invalid_arg ~substring:"was donated to")
-            (fun () -> Nx.to_array b0);
+          raises_match (Exn.invalid_arg ~sub:"was donated to") (fun () ->
+              Nx.to_array b0);
           equal (array float_exact) [| 1.; 1. |]
             (Nx.to_array (List.nth (fst x) 1)));
     ]
@@ -353,9 +353,10 @@ let values =
           fails_with
             "Nx_io.Archive.to_value: blocks.0.w: float64 in the archive, \
              float32 in the value" (fun () -> Archive.to_value s ~like:x typed));
-      cases ~name:fst
+      cases
         "two arrays of one name, or one at the root without a prefix, are \
          refused"
+        ~id:fst
         [
           ( "of_value, two arrays of one name",
             ( "Nx_io.Archive.of_value: a.b: two arrays have this name",
@@ -465,7 +466,7 @@ let entries =
             (fun () -> Archive.tensor ~shape:[| 2 |] Nx.float32 "w" a);
           fails_with "Nx_io.Archive.tensor: x: no entry in the archive"
             (fun () -> Archive.tensor ~shape:[| 2 |] Nx.float16 "x" a));
-      cases ~name:fst "float refuses what it does not convert, naming it"
+      cases "float refuses what it does not convert, naming it" ~id:fst
         [
           ( "an integer entry",
             ( Failure

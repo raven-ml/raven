@@ -14,7 +14,7 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let m = Nx_support.memory
 
 module S2 = (val Nx.devices [ m 0; m 1 ])
@@ -599,16 +599,16 @@ let test_map_callback () =
   in
   ignore (Nx.map_segments ~segments:2 ids f x);
   raises_match
-    (Exn.invalid_arg ~substring:"Nx.copy: float32 [2] was donated to Nx.neg")
+    (Exn.invalid_arg ~sub:"Nx.copy: float32 [2] was donated to Nx.neg")
     (fun () -> Nx.copy t)
 
 let maps =
   group "map_segments"
     [
       prop "the per-position map, f called once" routed law_map;
-      cases
-        ~name:(fun (n, k) -> Printf.sprintf "%d positions, %d segments" n k)
-        "split ids and rows give the whole result" [ (8, 2); (16, 1) ]
+      cases "split ids and rows give the whole result"
+        ~id:(fun (n, k) -> Printf.sprintf "%d positions, %d segments" n k)
+        [ (8, 2); (16, 1) ]
         test_map_split;
       test "the doc's scaled rows" test_map_doc;
       test "segments far above the positions" test_map_sparse;

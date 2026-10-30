@@ -306,7 +306,7 @@ let conversion =
           equal bits [| 2000. |] (floats (Quantity.value Unit.metre q));
           raises_match
             (Exn.invalid_arg
-               ~substring:"Quantity.convert: m does not convert to s")
+               ~sub:"Quantity.convert: m does not convert to s")
             (fun () -> Quantity.convert Unit.second q));
     ]
 
@@ -477,8 +477,7 @@ let golden_complex (type b) (d : (Complex.t, b) Nx.dtype) u outcome =
 
 let goldens =
   cases
-    ~name:(fun (line, _, _, _) -> line)
-    "Conversion by the mpmath goldens' factors" golden_lines
+    "Conversion by the mpmath goldens' factors" ~id:(fun (line, _, _, _) -> line) golden_lines
     (fun (_, name, factors, outcome) ->
       let u = product factors in
       let F d, complex = golden_dtype name in
@@ -932,9 +931,9 @@ let int_case (Case c) =
 let integers =
   group "Integer payloads"
     [
-      cases ~name:int_name "the range divided by the factor converts" int_cases
+      cases "the range divided by the factor converts" ~id:int_name int_cases
         int_case;
-      cases ~name:unheld_name "a factor past the dtype raises" unheld
+      cases "a factor past the dtype raises" ~id:unheld_name unheld
         unheld_case;
       test "add converts an int4 operand into the first's unit" (fun () ->
           equal (array int) [| 7; -8 |]
@@ -1085,7 +1084,7 @@ let maps =
                 an integer") (fun () -> Quantity.add b a));
       test "map2 names itself in its errors" (fun () ->
           raises_match
-            (Exn.invalid_arg ~substring:"Quantity.map2: s does not convert to m")
+            (Exn.invalid_arg ~sub:"Quantity.map2: s does not convert to m")
             (fun () ->
               Quantity.map2 Nx.add
                 (Quantity.v Unit.metre (f32 [| 1. |]))
@@ -1499,7 +1498,7 @@ let rune =
       test "scan refuses a carry whose unit changes" (fun () ->
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  {|case "m" in the carry the step returned, case "1e3 m" in the carry it received|})
             (fun () ->
               Rune.scan q32 Nx.Ptree.tensor Nx.Ptree.tensor
@@ -1537,7 +1536,7 @@ let rune =
           let x = Quantity.v km (f64 [| 3. |]) in
           raises_match
             (Exn.invalid_arg
-               ~substring:
+               ~sub:
                  {|case "1e3 m" in the parameters, case "m" in the tangents|})
             (fun () ->
               Rune.jvp q64 q64 (Quantity.pow 2) x

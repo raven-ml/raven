@@ -147,7 +147,7 @@ let arguments =
           equal int 2 (Ops.param_arg ~slot:0 ~phase:2 Dtype.Float16).phase;
           List.iter
             (fun (phase, dt) ->
-              raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+              raises_match (Exn.invalid_arg ?sub:None) (fun () ->
                   ignore (Ops.param_arg ~slot:0 ~phase dt)))
             [ (2, Dtype.Float32); (16, Dtype.Uint8); (-4, Dtype.Float32) ]);
       test
@@ -159,7 +159,7 @@ let arguments =
           equal int 4 (Ops.param_arg ~slot:0 ~align:4 Dtype.Float64).align;
           List.iter
             (fun (phase, align, dt) ->
-              raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+              raises_match (Exn.invalid_arg ?sub:None) (fun () ->
                   ignore (Ops.param_arg ~slot:0 ~phase ~align dt)))
             [
               (0, 3, Dtype.Float32);

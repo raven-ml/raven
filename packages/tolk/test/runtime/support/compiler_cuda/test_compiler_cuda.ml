@@ -116,39 +116,42 @@ let load_failure () =
   rejection (fun () -> Compiler.compile (Compiler_cuda.nvrtc "sm_89") kernel)
 
 let not_a_library =
-  group ~tags:[ "no-library" ] "a library that does not load"
-    [
-      test "making a compiler loads nothing, and a compile raises Compile_error"
-        (fun () ->
-          let msg = require_some (load_failure ()) in
-          in_order ~subs:[ "nvrtc"; "not_a_library" ] msg);
-      test "every compile raises the same Compile_error" (fun () ->
-          let first = load_failure () in
-          equal (option string) first (load_failure ());
-          is_some first);
-      test "compiles from several domains at once raise it" (fun () ->
-          let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
-          let msgs = List.map Domain.join domains in
-          is_some (List.hd msgs);
-          List.iter (equal (option string) (List.hd msgs)) msgs);
-      test "a compile in turn is served by an idle worker" (fun () ->
-          ignore (load_failure ());
-          let workers = children () in
-          not_equal (list int) [] workers;
-          ignore (load_failure ());
-          equal (list int) workers (children ()));
-      test "a compile after its idle workers are killed raises the same error"
-        (fun () ->
-          let first = load_failure () in
-          kill_children ();
-          equal (list int) [] (children ());
-          equal (option string) first (sigpipe_kills load_failure));
-      test "a cached binary is served without loading NVRTC" (fun () ->
-          let nvrtc = Compiler_cuda.nvrtc "sm_89" in
-          let table = Option.get (Compiler.cachekey nvrtc) in
-          Helpers.Diskcache.put ~table kernel "cached binary";
-          equal string "cached binary" (Compiler.compile_cached nvrtc kernel));
-    ]
+  tag "no-library"
+  @@ group "a library that does not load"
+       [
+         test
+           "making a compiler loads nothing, and a compile raises Compile_error"
+           (fun () ->
+             let msg = require_some (load_failure ()) in
+             in_order ~subs:[ "nvrtc"; "not_a_library" ] msg);
+         test "every compile raises the same Compile_error" (fun () ->
+             let first = load_failure () in
+             equal (option string) first (load_failure ());
+             is_some first);
+         test "compiles from several domains at once raise it" (fun () ->
+             let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
+             let msgs = List.map Domain.join domains in
+             is_some (List.hd msgs);
+             List.iter (equal (option string) (List.hd msgs)) msgs);
+         test "a compile in turn is served by an idle worker" (fun () ->
+             ignore (load_failure ());
+             let workers = children () in
+             not_equal (list int) [] workers;
+             ignore (load_failure ());
+             equal (list int) workers (children ()));
+         test
+           "a compile after its idle workers are killed raises the same error"
+           (fun () ->
+             let first = load_failure () in
+             kill_children ();
+             equal (list int) [] (children ());
+             equal (option string) first (sigpipe_kills load_failure));
+         test "a cached binary is served without loading NVRTC" (fun () ->
+             let nvrtc = Compiler_cuda.nvrtc "sm_89" in
+             let table = Option.get (Compiler.cachekey nvrtc) in
+             Helpers.Diskcache.put ~table kernel "cached binary";
+             equal string "cached binary" (Compiler.compile_cached nvrtc kernel));
+       ]
 
 (* Disassembly *)
 
@@ -174,32 +177,37 @@ let disassembly =
 let smoke =
   group "NVRTC"
     [
-      slow "compiles a kernel to PTX" (fun () ->
+      slow
+      @@ test "compiles a kernel to PTX" (fun () ->
           let ptx =
             with_nvrtc (fun () ->
                 Compiler.compile (Compiler_cuda.nvrtc "sm_89") kernel)
           in
           in_order ~subs:[ ".target sm_89"; ".entry add" ] ptx);
-      slow "compiles a kernel to a cubin" (fun () ->
+      slow
+      @@ test "compiles a kernel to a cubin" (fun () ->
           let cubin =
             with_nvrtc (fun () ->
                 Compiler.compile (Compiler_cuda.nvrtc ~ptx:false "sm_89") kernel)
           in
-          starts_with ~affix:"\x7fELF" cubin);
-      slow "a rejected source raises Compile_error with NVRTC's log" (fun () ->
-          match
-            Compiler.compile
-              (Compiler_cuda.nvrtc "sm_89")
-              "extern \"C\" __global__ void f() { undeclared_name = 1; }"
-          with
-          | _ -> fail "NVRTC accepted an undeclared name"
-          | exception Compiler.Compile_error msg when absent msg ->
-              skip ~reason:msg ()
-          | exception Compiler.Compile_error msg ->
-              in_order
-                ~subs:[ "NVRTC_ERROR_COMPILATION"; "undeclared_name" ]
-                msg);
-      slow "compiles from several domains at once" (fun () ->
+          starts_with ~prefix:"\x7fELF" cubin);
+      slow
+      @@ test "a rejected source raises Compile_error with NVRTC's log"
+           (fun () ->
+             match
+               Compiler.compile
+                 (Compiler_cuda.nvrtc "sm_89")
+                 "extern \"C\" __global__ void f() { undeclared_name = 1; }"
+             with
+             | _ -> fail "NVRTC accepted an undeclared name"
+             | exception Compiler.Compile_error msg when absent msg ->
+                 skip ~reason:msg ()
+             | exception Compiler.Compile_error msg ->
+                 in_order
+                   ~subs:[ "NVRTC_ERROR_COMPILATION"; "undeclared_name" ]
+                   msg);
+      slow
+      @@ test "compiles from several domains at once" (fun () ->
           let compile arch () =
             Compiler.compile (Compiler_cuda.nvrtc arch) kernel
           in
@@ -271,39 +279,47 @@ let process =
   group "compiles in processes of their own"
     [
       slow
-        "a source that crashes NVRTC's assembler compiles, or raises \
-         Compile_error naming the signal"
-        (fun () ->
-          match cubin crashes_assembler with
-          | lib -> starts_with ~affix:"\x7fELF" lib
-          | exception Compiler.Compile_error msg when absent msg ->
-              skip ~reason:msg ()
-          | exception Compiler.Compile_error msg ->
-              in_order ~subs:[ "nvrtc worker was killed by SIG"; "without a reply" ]
-                msg);
-      slow "compiles of one kernel are equal, in turn and from several domains"
-        (fun () ->
-          let lib = with_nvrtc (fun () -> cubin kernel) in
-          equal string lib (cubin kernel);
-          let domains =
-            List.init 4 (fun _ -> Domain.spawn (fun () -> cubin kernel))
-          in
-          List.iter (equal string lib) (List.map Domain.join domains));
-      slow "a compile after a crash returns its binary" (fun () ->
+      @@ test
+           "a source that crashes NVRTC's assembler compiles, or raises \
+            Compile_error naming the signal" (fun () ->
+             match cubin crashes_assembler with
+             | lib -> starts_with ~prefix:"\x7fELF" lib
+             | exception Compiler.Compile_error msg when absent msg ->
+                 skip ~reason:msg ()
+             | exception Compiler.Compile_error msg ->
+                 in_order
+                   ~subs:[ "nvrtc worker was killed by SIG"; "without a reply" ]
+                   msg);
+      slow
+      @@ test
+           "compiles of one kernel are equal, in turn and from several domains"
+           (fun () ->
+             let lib = with_nvrtc (fun () -> cubin kernel) in
+             equal string lib (cubin kernel);
+             let domains =
+               List.init 4 (fun _ -> Domain.spawn (fun () -> cubin kernel))
+             in
+             List.iter (equal string lib) (List.map Domain.join domains));
+      slow
+      @@ test "a compile after a crash returns its binary" (fun () ->
           let lib = with_nvrtc (fun () -> cubin kernel) in
           ignore (rejection (fun () -> cubin crashes_assembler));
           equal string lib (cubin kernel));
-      slow "a compile after its idle workers are killed returns its binary"
-        (fun () ->
-          let lib = with_nvrtc (fun () -> cubin kernel) in
-          kill_children ();
-          equal string lib (sigpipe_kills (fun () -> cubin kernel)));
-      slow "a worker started with SIGCHLD ignored returns its binary" (fun () ->
-          let lib = with_nvrtc (fun () -> cubin kernel) in
-          kill_children ();
-          equal string lib
-            (with_signal Sys.sigchld Signal_ignore (fun () -> cubin kernel)));
-      slow "compiles leave NVRTC's cache of binaries empty" (fun () ->
+      slow
+      @@ test "a compile after its idle workers are killed returns its binary"
+           (fun () ->
+             let lib = with_nvrtc (fun () -> cubin kernel) in
+             kill_children ();
+             equal string lib (sigpipe_kills (fun () -> cubin kernel)));
+      slow
+      @@ test "a worker started with SIGCHLD ignored returns its binary"
+           (fun () ->
+             let lib = with_nvrtc (fun () -> cubin kernel) in
+             kill_children ();
+             equal string lib
+               (with_signal Sys.sigchld Signal_ignore (fun () -> cubin kernel)));
+      slow
+      @@ test "compiles leave NVRTC's cache of binaries empty" (fun () ->
           ignore (with_nvrtc (fun () -> cubin kernel));
           ignore (Compiler.compile (Compiler_cuda.nvrtc "sm_89") kernel);
           equal (list string) [] (nvrtc_cache ()));
@@ -314,13 +330,14 @@ let process =
    life. *)
 
 let no_spawn =
-  group ~tags:[ "no-spawn" ] "a process that cannot start"
-    [
-      test "a compile raises Failure naming the worker" (fun () ->
-          Spawn.forbid ();
-          raises_match (Exn.failure ~substring:"nvrtc worker") (fun () ->
-              cubin kernel));
-    ]
+  tag "no-spawn"
+  @@ group "a process that cannot start"
+       [
+         test "a compile raises Failure naming the worker" (fun () ->
+             Spawn.forbid ();
+             raises_match (Exn.failure ~sub:"nvrtc worker") (fun () ->
+                 cubin kernel));
+       ]
 
 let () =
   exit

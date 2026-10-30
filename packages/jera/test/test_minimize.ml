@@ -111,7 +111,7 @@ let derivative_tests =
 (* Gradient methods *)
 
 let one = Nx.Ptree.tensor
-let invalid_with sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid_with sub f = raises_match (Exn.invalid_arg ~sub) f
 let is st s = Nx.item [] (Solution.is st s)
 
 (* A convex problem [½ xᵀ a x + Σ log cosh x − bᵀ x] of [n] unknowns: [a] has
@@ -226,7 +226,7 @@ let gradient_tests =
             (vec [| -1.2; 1. |])
         in
         equal bool true (is Budget_spent s);
-        raises_match (Exn.failure ~substring:"Jera.Minimize.solve") (fun () ->
+        raises_match (Exn.failure ~sub:"Jera.Minimize.solve") (fun () ->
             Solution.get s));
     test "an unbounded objective stalls or spends its budget" (fun () ->
         let s =

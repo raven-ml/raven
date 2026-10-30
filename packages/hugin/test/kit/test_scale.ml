@@ -25,7 +25,7 @@ module Inert =
 
 let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
-let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
+let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* Floats ordered as IEEE 754 orders them, [-0.] equal to [0.]. *)
 let ieee = float Float.min_float
@@ -696,17 +696,17 @@ let threshold_bands =
 let nice =
   group "nice"
     [
-      cases
-        ~name:(fun (a, b, _, _) -> Printf.sprintf "linear [%g;%g]" a b)
-        "d3 linear" d3_nice
+      cases "d3 linear"
+        ~id:(fun (a, b, _, _) -> Printf.sprintf "linear [%g;%g]" a b)
+        d3_nice
         (fun (a, b, a', b') ->
           equal ends_w (a', b') (ends (fit_floats a b (Scale.linear ()))));
-      cases
-        ~name:(fun (a, b, _, _) -> Printf.sprintf "log [%g;%g]" a b)
-        "d3 log" d3_log_nice
+      cases "d3 log"
+        ~id:(fun (a, b, _, _) -> Printf.sprintf "log [%g;%g]" a b)
+        d3_log_nice
         (fun (a, b, a', b') ->
           equal ends_w (a', b') (ends (fit_floats a b (Scale.log ()))));
-      cases ~name:fst "the bands of the step thresholds" threshold_bands
+      cases "the bands of the step thresholds" ~id:fst threshold_bands
         (fun (_, (a, b, a', b')) ->
           equal ends_w (a', b') (ends (fit_floats a b (Scale.linear ()))));
       test "d3's time domains" (fun () ->
@@ -770,7 +770,7 @@ let nice =
       (* The lexer gives the float nearest a decimal literal, ties to even:
          [1e23] lies halfway between two floats. *)
       cases "a multiple is the float nearest it"
-        ~name:(fun (a, b, _, _) -> Printf.sprintf "[%g;%g]" a b)
+        ~id:(fun (a, b, _, _) -> Printf.sprintf "[%g;%g]" a b)
         [
           (0., 7.3e30, 0., 8e30);
           (0., 7.3e-30, 0., 8e-30);
@@ -781,7 +781,7 @@ let nice =
       (* A tenth of each domain is [√10] times a power of ten, where the step
          [5] begins: its ends round to multiples of [5], not of [2]. *)
       cases "a tenth at the √10 threshold takes the step 5"
-        ~name:(fun (a, b, _, _, _) -> Printf.sprintf "[%g;%.17g]" a b)
+        ~id:(fun (a, b, _, _, _) -> Printf.sprintf "[%g;%.17g]" a b)
         [
           (5., 36.622776601683796, Float.sqrt 10., 5., 40.);
           (0.3, 3.4622776601683793, Float.sqrt 10. /. 10., 0., 3.5);
@@ -989,7 +989,7 @@ let merging =
             (Scale.merge
                (Scale.time ~tz_offset_s:0 ())
                (Scale.time ~tz_offset_s:60 ())));
-      cases ~name:conflict_name "a conflict on each property" conflicts
+      cases "a conflict on each property" ~id:conflict_name conflicts
         (fun (Conflict (p, s, s')) ->
           equal (option property) (Some p)
             (match Scale.merge s s' with Ok _ -> None | Error p -> Some p));
@@ -1102,7 +1102,7 @@ let comparing =
       prop "equal is an equivalence"
         (Gen.pair gen_spec gen_spec)
         (Law.equivalence fscale);
-      cases ~name:conflict_name "a property set to different values differs"
+      cases "a property set to different values differs" ~id:conflict_name
         conflicts (fun (Conflict (_, s, s')) ->
           not_equal (Testable.make ~pp:Scale.pp ~equal:Scale.equal) s s');
       test "an unset property differs from its default set" (fun () ->
@@ -1280,7 +1280,7 @@ let observers =
   group "observers"
     [
       cases "transform names the constructor's"
-        ~name:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _) -> n)
         [
           ("linear", Scale.linear (), Scale.Linear);
           ("log", Scale.log (), Scale.Log 10.);
@@ -1327,7 +1327,7 @@ let observers =
             (Scale.tz_offset_s (Scale.time ~tz_offset_s:(-3600) ())));
       test "a constructor without properties sets the transform alone"
         (fun () -> sets_only Scale.Transform (Scale.linear ()));
-      cases "a constructor sets the properties it is given" ~name:conflict_name
+      cases "a constructor sets the properties it is given" ~id:conflict_name
         conflicts (fun (Conflict (p, s, s')) ->
           sets_only p s;
           sets_only p s');

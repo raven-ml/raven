@@ -760,7 +760,7 @@ let () =
                test_block_place;
              test "cast casts the payload and keeps fixed arrays"
                test_block_cast;
-             cases ~name:fst "variants" weights test_weight;
+             cases "variants" ~id:fst weights test_weight;
              prop "a recursive type nested at another argument" trees law_tree;
              test "a state nested over a model with Walk.under" test_train;
              test "the guide's block" test_guide;

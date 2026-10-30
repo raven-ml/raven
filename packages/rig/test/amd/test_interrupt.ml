@@ -284,7 +284,7 @@ let test_capability_held () =
     in
     match r with
     | None -> failf "%s ran inside a lock" what
-    | Some why -> starts_with ~msg:what ~affix:(what ^ ": called from") why
+    | Some why -> starts_with ~msg:what ~prefix:(what ^ ": called from") why
   in
   refused "Rig_amd_abi.Capability.trace" (fun () -> ignore (c.trace ()));
   match c.compute with

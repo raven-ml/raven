@@ -51,7 +51,7 @@ let check (type a b) name (dtype : (a, b) Nx.dtype) =
   | _ -> equal (array string) (expected name) (texts flat)
 
 let decoded =
-  cases ~name:fst "tiles decode as astropy decodes them"
+  cases "tiles decode as astropy decodes them" ~id:fst
     [
       ("RICE_I16", fun n -> check n Nx.int16);
       ("RICE_U16", fun n -> check n Nx.uint16);
@@ -306,7 +306,7 @@ let lossless =
 let tiled_64 () =
   (* cfitsio decompresses no 64-bit integer tiles, so ymir writes none. *)
   let refused (type a b) (dtype : (a, b) Nx.dtype) =
-    raises_match (Exn.invalid_arg ~substring:"cfitsio") (fun () ->
+    raises_match (Exn.invalid_arg ~sub:"cfitsio") (fun () ->
         I.hdu ~tiles:[| 2 |] H.empty (Nx.zeros dtype [| 4 |]))
   in
   refused Nx.int64;

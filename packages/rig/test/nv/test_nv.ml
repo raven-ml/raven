@@ -172,18 +172,17 @@ let refused msg f = raises_match ~msg Exn.invalid_arg f
 let parameters =
   group ~timeout:10. "parameters"
     [
-      cases ~name:string_of_int "params n is n zero bytes" [ 0; 1; 17 ]
-        (fun n ->
+      cases "params n is n zero bytes" ~id:string_of_int [ 0; 1; 17 ] (fun n ->
           equal (list int) (List.init n (fun _ -> 0)) (bytes_of (N.params n)));
       prop "a field reads back the low bytes written to it, little-endian"
         field field_law;
-      cases ~name:string_of_int "a field of another width is refused"
+      cases "a field of another width is refused" ~id:string_of_int
         [ 0; 3; 5; 16; -1 ]
         (fun n ->
           let p = N.params 32 in
           refused "get" (fun () -> N.get p (0, n));
           refused "set" (fun () -> N.set p (0, n) 0));
-      cases ~name:string_of_int "a field past the parameters is refused" widths
+      cases "a field past the parameters is refused" ~id:string_of_int widths
         (fun n ->
           let p = N.params 8 in
           List.iter
@@ -200,7 +199,7 @@ let digits s = String.for_all (function '0' .. '9' -> true | _ -> false) s
 let facts () =
   S.with_driver @@ fun g ->
   let f = N.facts g in
-  starts_with ~affix:"sm_" f.arch;
+  starts_with ~prefix:"sm_" f.arch;
   equal bool
     ~msg:(strf "%s ends in digits" f.arch)
     true
@@ -650,8 +649,7 @@ let many_waits () =
 let refused () =
   S.with_ @@ fun t ->
   let base = Rig.submitted t.d in
-  raises_match ~msg:"one ring word"
-    (Exn.invalid_arg ~substring:"never fit")
+  raises_match ~msg:"one ring word" (Exn.invalid_arg ~sub:"never fit")
     (fun () -> S.submit t [| S.words [| 0 |] |]);
   equal int ~msg:"values assigned" base (Rig.submitted t.d)
 
@@ -742,15 +740,14 @@ let refused_launches () =
   let refuses msg ?kernel ?params ?(groups = (1, 1, 1)) ?(threads = (1, 1, 1))
       ?(shared = 0) () =
     let run = launching ?kernel ?params d ~groups ~threads ~shared in
-    raises_match ~msg (Exn.invalid_arg ~substring:"never fit") (fun () ->
+    raises_match ~msg (Exn.invalid_arg ~sub:"never fit") (fun () ->
         submitted run ~buffers:[| out |])
   in
   (* More threads than the function has, which the setter refuses. *)
   List.iter
     (fun threads ->
-      raises_match
-        (Exn.invalid_arg ~substring:"threads per group")
-        (fun () -> launching d ~groups:(1, 1, 1) ~threads ~shared:0))
+      raises_match (Exn.invalid_arg ~sub:"threads per group") (fun () ->
+          launching d ~groups:(1, 1, 1) ~threads ~shared:0))
     [ (1025, 1, 1); (1024, 2, 1) ];
   refuses "65536 groups along y" ~groups:(1, 65536, 1) ();
   refuses "65536 groups along z" ~groups:(1, 1, 65536) ();
@@ -1205,16 +1202,16 @@ let launches =
       test "a launch after a copy after a launch reads the copy"
         launch_copy_launch;
       test "4,000 launches pass the launch ring's end" launches_wrap;
-      cases ~name:(strf "%d launches")
-        "a submission of launches runs whatever their number"
-        [ 1; 1_000; 4_096; 16_384 ] many_launches;
+      cases "a submission of launches runs whatever their number"
+        ~id:(strf "%d launches")
+        [ 1; 1_000; 4_096; 16_384 ]
+        many_launches;
       test "a submission of another domain runs while a growth runs"
         growth_interleaved;
       test "rings a growth replaced go back" rings_given_back;
       test "a function with local memory runs as a launch" local_launch;
-      cases
-        ~name:(fun (g, t) -> strf "%d groups of %d" g t)
-        "a kernel addresses its own parameters"
+      cases "a kernel addresses its own parameters"
+        ~id:(fun (g, t) -> strf "%d groups of %d" g t)
         [ (1, 1); (3, 32); (5, 256) ]
         grid_parameters;
     ]
@@ -1802,7 +1799,7 @@ let channels =
       test "a growth of the channels waits for the work in flight"
         drained_growth;
       test "32,768 values stay in flight, and the next waits" in_flight;
-      cases "a channel the RM refuses gives back its instance block" ~name:fst
+      cases "a channel the RM refuses gives back its instance block" ~id:fst
         channel_refusals refused_channel;
     ]
 

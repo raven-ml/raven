@@ -660,9 +660,9 @@ let conditions =
           not_equal query_w
             (semi_on (Join.keys [ "a"; "b" ]))
             (semi_on (Join.keys [ "b"; "a" ])));
-      cases
-        ~name:(fun (what, _, _) -> Printf.sprintf "tells apart %s" what)
-        "Join.equal" atom_variants
+      cases "Join.equal"
+        ~id:(fun (what, _, _) -> Printf.sprintf "tells apart %s" what)
+        atom_variants
         (fun (_, c0, c1) ->
           equal query_w (semi_on c0) (semi_on c0);
           not_equal query_w (semi_on c0) (semi_on c1));
@@ -969,15 +969,15 @@ let equality =
           not_equal query_w
             (Query.slice ~offset:0 ~length:1 q)
             (Query.sort [] q));
-      cases
-        ~name:(fun (what, _, _) -> Printf.sprintf "tells apart %s" what)
-        "each argument" variants
+      cases "each argument"
+        ~id:(fun (what, _, _) -> Printf.sprintf "tells apart %s" what)
+        variants
         (fun (_, q0, q1) ->
           equal query_w (q0 ()) (q0 ());
           not_equal query_w (q0 ()) (q1 ()));
-      cases
-        ~name:(fun (what, _, _) -> Printf.sprintf "tells apart %s" what)
-        "each expression attribute" expression_variants
+      cases "each expression attribute"
+        ~id:(fun (what, _, _) -> Printf.sprintf "tells apart %s" what)
+        expression_variants
         (fun (_, q0, q1) ->
           equal query_w (q0 ()) (q0 ());
           equal query_w (q1 ()) (q1 ());
@@ -1232,9 +1232,8 @@ let suggestion key columns =
 let suggestions =
   group "suggestions"
     [
-      cases
-        ~name:(fun (what, _, _, _) -> what)
-        "missing names"
+      cases "missing names"
+        ~id:(fun (what, _, _, _) -> what)
         [
           ( "suggests a column at distance 2",
             "ab",

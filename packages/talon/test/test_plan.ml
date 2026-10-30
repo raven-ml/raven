@@ -1118,7 +1118,7 @@ let printed =
       test "a conjunct passes the steps that keep its rows" passes;
       test "a conjunct stops where its rows would change" stops;
       test "a conjunct that can fail meets only the rows it met" failing;
-      cases ~name:fst "a conjunct that can fail stays above a filter and a join"
+      cases "a conjunct that can fail stays above a filter and a join" ~id:fst
         can_fail (fun (_, p) -> stays_above p);
       test "a conjunct renamed through a select reads the input's name" renamed;
       test "slices move toward the sources" slices;
@@ -1126,9 +1126,9 @@ let printed =
       test "constants fold inside frames, calendar operations and lifts"
         folds_inside;
       test "steps keep the columns read above them" projections;
-      cases
-        ~name:(fun (what, _, _) -> what)
-        "constants fold to what evaluation gives" folds
+      cases "constants fold to what evaluation gives"
+        ~id:(fun (what, _, _) -> what)
+        folds
         (fun (_, e, expected) -> equal string expected (folded e));
       test "equal steps are shared, and each place reads a source of its own"
         sharing;

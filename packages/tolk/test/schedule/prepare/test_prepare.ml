@@ -651,7 +651,7 @@ let stores value = Ops.sink [ Ops.after out [ Ops.store out value ] ]
 let has op u =
   List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
 
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 let calls u =
   List.filter_map
