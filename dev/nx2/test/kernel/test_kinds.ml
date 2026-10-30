@@ -344,7 +344,7 @@ let test_f64_exact =
               (1, tiny ~emin:(-1022) ~p:53 Fun.id);
             ])
         (fun (a, b, c) ->
-          let r = Float.fma a b c in
+          let r = Exact.fma a b c in
           cover "subnormal result" (r <> 0. && Float.abs r < Float.min_float);
           cover "signed zero result" (r = 0. && Float.sign_bit r);
           equal value64 r (K.f64 "fma" [| a; b; c |]));

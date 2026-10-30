@@ -73,7 +73,7 @@ let add32 x y = round32 (x +. y)
 let ordered ~chain acc o =
   let fma, add =
     if part_of acc = D.Any D.Float32 then (fma32, add32)
-    else (Float.fma, ( +. ))
+    else (Exact.fma, ( +. ))
   in
   let k = Array.length o.av in
   if chain then begin
