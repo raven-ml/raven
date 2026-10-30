@@ -53,6 +53,7 @@
 #ifndef RIG_POOL_H
 #define RIG_POOL_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* A cache line on Apple silicon, and the pair of lines x86 fetches
@@ -217,5 +218,78 @@ long rig_pool_cgroup_cpus(const char *root);
    those of highest performance more than half the largest of theirs.
    Otherwise it is -1. */
 long rig_pool_performance_cpus(const char *root, const int *cpus, long n);
+
+/* For the pool's suite: hook points and reads of the compute pool's state,
+   with which the suite holds an interleaving of the protocol of rig_pool.c.
+
+   A hook point is a named place in that protocol. The thread that reaches
+   it calls the hook set with rig_pool_set_hook, with its point, on any job
+   of either kind, holding whatever the pool holds there. Without a hook,
+   the default, a point costs a load and a branch.
+
+   rig_pool_set_hook and rig_pool_set_calloc store a pointer that the
+   pool's threads read without ordering. Set each before the first job on
+   several threads, which makes the workers, and never change it after: a
+   thread in a job may run a point with the pointer it read before. */
+
+/* The bit of rig_pool_inside () set while the job is closed. */
+#define RIG_POOL_CLOSED ((uint64_t)1 << 63)
+
+/* The hook points of rig_pool.c. A worker is a thread of the pool, never
+   the caller. */
+typedef enum {
+  RIG_POOL_AT_ENTER_OPEN,    /* a worker read the job open, before it adds
+                                itself to the threads inside */
+  RIG_POOL_AT_ENTER_REFUSED, /* that add found the job closed, before its
+                                undo */
+  RIG_POOL_AT_LEFT,          /* a worker's leave, or that undo, landed */
+  RIG_POOL_AT_ENTERED,       /* a worker entered a job, before it claims */
+  RIG_POOL_AT_CHUNK,         /* a thread claimed a run of chunks, before it
+                                calls the body on it */
+  RIG_POOL_AT_PARK,          /* a worker decided to park, before it takes
+                                the parking mutex */
+  RIG_POOL_AT_PARKING,       /* a worker set its parked bit, holding the
+                                parking mutex, before it reads the job's
+                                generation and waits */
+  RIG_POOL_AT_OPENED,        /* the caller opened a job, before it stores
+                                the job's generation */
+  RIG_POOL_AT_PUBLISHED,     /* the caller stored the generation, before it
+                                wakes the parked workers */
+  RIG_POOL_AT_CLAIMED,       /* the caller's claims found no chunk left,
+                                before it closes the job */
+  RIG_POOL_AT_CLOSED,        /* the caller closed the job, before it waits
+                                for the workers inside */
+  RIG_POOL_AT_WAITING,       /* the caller set waiting, holding the parking
+                                mutex, before it reads the workers inside
+                                and sleeps */
+} rig_pool_point;
+
+typedef void (*rig_pool_hook)(rig_pool_point at);
+
+/* rig_pool_set_hook (hook) makes every hook point call hook (at); NULL, the
+   default, calls nothing. */
+void rig_pool_set_hook(rig_pool_hook hook);
+
+/* rig_pool_set_calloc (f) makes the pool take the memory of each pool it
+   makes from f (n, size) in place of calloc (n, size), one call at a time,
+   on the thread whose job makes it. f may answer NULL, as calloc does on a
+   host out of memory: that pool is then not made, and the job runs on the
+   calling thread alone. NULL, the default, restores calloc. */
+void rig_pool_set_calloc(void *(*f)(size_t n, size_t size));
+
+/* rig_pool_threads () is the number of threads of the compute pool, its
+   workers and the caller, making the pool if it was not; 1 if it cannot be
+   made. */
+int rig_pool_threads(void);
+
+/* rig_pool_inside () is the number of the compute pool's workers inside its
+   job, plus RIG_POOL_CLOSED while the job is closed; 0 without a pool. */
+uint64_t rig_pool_inside(void);
+
+/* rig_pool_parked () has bit w set, 1 <= w < 64, while the compute pool's
+   worker w has its parked bit, read under the parking mutex: a worker
+   whose bit it reads waits for a job, or was woken and has not run since;
+   0 without a pool. */
+uint64_t rig_pool_parked(void);
 
 #endif

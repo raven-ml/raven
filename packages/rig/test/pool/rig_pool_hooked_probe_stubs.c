@@ -3,21 +3,32 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* Interleavings of the pool's protocol, held. This file compiles rig_pool.c
-   again with its hook points defined: a scenario arms hooks that make the
-   caller and chosen workers wait for each other's events, so the timeline in
-   the scenario's comment is the one that runs. Every wait gives up after
-   [patience] (rig_pool_probe.h); a scenario then answers which event it
-   waited for. The copy's public names carry rig_pool_hooked_, so it links
-   beside the pool itself. Its callocs go through [refusing_calloc], which
-   refuses one on request, as a host out of memory does. POSIX only:
-   scenarios fork, and workers are told apart by their pthread_t. */
+/* Interleavings of the pool's protocol, held. The pool's hook points
+   (rig_pool.h) call [hook], set when this library loads, before any job: a
+   scenario makes it hold the caller and chosen workers until each other's
+   events, so the timeline in the scenario's comment is the one that runs.
+   Every wait gives up after [patience] (rig_pool_probe.h); a scenario then
+   answers which event it waited for. The pool's callocs go through
+   [refusing_calloc], which refuses one on request, as a host out of memory
+   does. POSIX only: scenarios fork, and workers are told apart by their
+   pthread_t. */
 
 #define _GNU_SOURCE
 
+#include <caml/alloc.h>
+#include <caml/memory.h>
+#include <caml/mlvalues.h>
+#include <caml/signals.h>
+
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "rig_pool.h"
+#include "rig_pool_probe.h"
 
 /* The calloc that answers NULL [refused] calls from now, once. The pool's
    callocs run on one thread, the one making the pool under its init mutex,
@@ -29,48 +40,6 @@ static void *refusing_calloc(size_t n, size_t size) {
     return NULL;
   return calloc(n, size);
 }
-
-typedef enum {
-  point_enter_open,
-  point_enter_refused,
-  point_left,
-  point_entered,
-  point_chunk,
-  point_parking,
-  point_park,
-  point_opened,
-  point_published,
-  point_claimed,
-  point_closed,
-  point_waiting,
-} point;
-
-static void hook(point at);
-
-#define RIG_POOL_HOOK(at) hook(point_##at)
-#define rig_pool_cores rig_pool_hooked_cores
-#define rig_pool_performance_cores rig_pool_hooked_performance_cores
-#define rig_pool_run rig_pool_hooked_run
-#define rig_pool_run_blocking rig_pool_hooked_run_blocking
-#define rig_pool_cgroup_cpus rig_pool_hooked_cgroup_cpus
-#define rig_pool_performance_cpus rig_pool_hooked_performance_cpus
-/* rig_pool.c's clock is static; renamed, it leaves now_ns to the probes'. */
-#define now_ns rig_pool_now_ns
-#define calloc refusing_calloc
-#include "../../lib/pool/rig_pool.c"
-#undef calloc
-#undef now_ns
-
-#include <caml/alloc.h>
-#include <caml/memory.h>
-#include <caml/mlvalues.h>
-#include <caml/signals.h>
-
-#include <sched.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-#include "rig_pool_probe.h"
 
 /* Workers by thread: a mapping job has each worker record its thread. A
    thread not among them is a caller, worker 0. */
@@ -199,7 +168,7 @@ static int take_arm(void) { return atomic_exchange(&armed, 0) == 1; }
 static _Atomic int once_flags[events];
 static int once(event e) { return atomic_exchange(&once_flags[e], 1) == 0; }
 
-static void hook(point at) {
+static void hook(rig_pool_point at) {
   int ph = atomic_load(&current);
   if (ph == none) return;
   int id = who();
@@ -208,93 +177,99 @@ static void hook(point at) {
   int mine = id == target;
   switch (ph) {
   case stale_first:
-    if (at == point_enter_open && mine && once(w_loaded)) {
+    if (at == RIG_POOL_AT_ENTER_OPEN && mine && once(w_loaded)) {
       sig(w_loaded);
       await(n_returned);
-    } else if (at == point_claimed && caller)
+    } else if (at == RIG_POOL_AT_CLAIMED && caller)
       await(w_loaded);
-    else if (at == point_enter_refused && mine && once(w_added)) {
+    else if (at == RIG_POOL_AT_ENTER_REFUSED && mine && once(w_added)) {
       sig(w_added);
       await(n1_closed);
       sig(w_undoing);
-    } else if (at == point_entered && mine)
+    } else if (at == RIG_POOL_AT_ENTERED && mine)
       atomic_store(&entered, 1);
     break;
   case stale_next:
-    if (at == point_closed && caller) {
-      inside_at_close = atomic_load(&g_pools[COMPUTE]->inside);
+    if (at == RIG_POOL_AT_CLOSED && caller) {
+      inside_at_close = rig_pool_inside();
       sig(n1_closed);
-    } else if (at == point_entered && mine)
+    } else if (at == RIG_POOL_AT_ENTERED && mine)
       atomic_store(&entered, 1);
     break;
   case late_first:
-    if (at == point_enter_open && mine && once(w_loaded)) {
+    if (at == RIG_POOL_AT_ENTER_OPEN && mine && once(w_loaded)) {
       sig(w_loaded);
       await(n1_opened);
-    } else if (at == point_claimed && caller)
+    } else if (at == RIG_POOL_AT_CLAIMED && caller)
       await(w_loaded);
     break;
   case late_next:
-    if (at == point_opened && caller) {
+    if (at == RIG_POOL_AT_OPENED && caller) {
       sig(n1_opened);
       await(w_left);
-    } else if (at == point_entered && mine)
+    } else if (at == RIG_POOL_AT_ENTERED && mine)
       sig(w_entered);
-    else if (at == point_left && mine && once(w_left))
+    else if (at == RIG_POOL_AT_LEFT && mine && once(w_left))
       sig(w_left);
     break;
   case caller_sleep:
   case caller_held:
-    if (at == point_chunk && id == 1 && once(w_claimed))
+    if (at == RIG_POOL_AT_CHUNK && id == 1 && once(w_claimed))
       sig(w_claimed);
-    else if (at == point_waiting && caller && once(caller_waiting)) {
+    else if (at == RIG_POOL_AT_WAITING && caller && once(caller_waiting)) {
       sig(caller_waiting);
       if (ph == caller_held) await(w_subbed);
-    } else if (at == point_left && id == 1 &&
+    } else if (at == RIG_POOL_AT_LEFT && id == 1 &&
                atomic_load(&signalled[w_claimed]) && once(w_subbed))
       sig(w_subbed);
     break;
   case wake_bit:
-    if (at == point_parking && mine && take_arm()) {
+    if (at == RIG_POOL_AT_PARKING && mine && take_arm()) {
       sig(w_bit);
       await(gen_stored);
-    } else if (at == point_published && caller)
+    } else if (at == RIG_POOL_AT_PUBLISHED && caller)
       sig(gen_stored);
     break;
   case wake_decided:
-    if (at == point_park && mine && take_arm()) {
+    if (at == RIG_POOL_AT_PARK && mine && take_arm()) {
       sig(w_decided);
       await(gen_stored);
-    } else if (at == point_published && caller && once(gen_stored)) {
+    } else if (at == RIG_POOL_AT_PUBLISHED && caller && once(gen_stored)) {
       sig(gen_stored);
       await(w_bit);
-    } else if (at == point_parking && mine &&
+    } else if (at == RIG_POOL_AT_PARKING && mine &&
                atomic_load(&signalled[w_decided]) && once(w_bit))
       sig(w_bit);
     break;
   case wake_slept:
-    if (at == point_parking && mine && take_arm()) sig(w_bit);
+    if (at == RIG_POOL_AT_PARKING && mine && take_arm()) sig(w_bit);
     break;
   case narrow:
-    if (at == point_parking && mine && once(w_bit)) sig(w_bit);
+    if (at == RIG_POOL_AT_PARKING && mine && once(w_bit)) sig(w_bit);
     break;
   case narrow_sleep:
-    if (at == point_published && caller)
+    if (at == RIG_POOL_AT_PUBLISHED && caller)
       atomic_store(&published, 1);
-    else if (at == point_parking && (id == 1 || id == 2) &&
+    else if (at == RIG_POOL_AT_PARKING && (id == 1 || id == 2) &&
              atomic_load(&published))
       atomic_fetch_or(&slept, 1 << id);
     break;
   case narrow_wake:
-    if (at == point_parking && id == 2) sig(w2_parking);
+    if (at == RIG_POOL_AT_PARKING && id == 2) sig(w2_parking);
     break;
   case fork_parked:
-    if (at == point_parking && mine && take_arm()) {
+    if (at == RIG_POOL_AT_PARKING && mine && take_arm()) {
       sig(w_bit);
       await(forked);
     }
     break;
   }
+}
+
+/* Set as the library loads, before any job, as rig_pool.h asks. */
+__attribute__((constructor)) static void install(void) {
+  rig_pool_set_hook(hook);
+  rig_pool_set_calloc(refusing_calloc);
 }
 
 static void begin(phase ph) {
@@ -394,8 +369,7 @@ static void map_body(int64_t lo, int64_t hi, int w, void *ctx) {
 
 static void map_workers(void) {
   if (atomic_load(&mapped) > 0) return;
-  pool *p = get(COMPUTE);
-  int threads = p ? p->threads : 1;
+  int threads = rig_pool_threads();
   rig_pool_run(threads, threads, threads, map_body, &threads);
   atomic_store(&mapped, threads < max_mapped ? threads : max_mapped);
 }
@@ -442,13 +416,8 @@ static void await_asleep(void) {
   kick();
   int64_t deadline = now_ns() + patience;
   for (;;) {
-    if (atomic_load(&slept) == both) {
-      pthread_mutex_lock(&g_pools[COMPUTE]->mtx);
-      int asleep_now =
-          (atomic_load(&g_pools[COMPUTE]->parked[0]) & bits) == bits;
-      pthread_mutex_unlock(&g_pools[COMPUTE]->mtx);
-      if (asleep_now) return;
-    }
+    if (atomic_load(&slept) == both && (rig_pool_parked() & bits) == bits)
+      return;
     if (now_ns() > deadline) {
       int none = -1;
       atomic_compare_exchange_strong(&timed_out, &none, (int)asleep);
@@ -507,10 +476,10 @@ value rig_pool_test_stale_add(value unit) {
   atomic_store(&current, stale_next);
   run_tally(2, &n1);
   sig(n1_returned);
-  v[0] = (int)(inside_at_close & ~closed);
-  v[1] = (inside_at_close & closed) != 0;
+  v[0] = (int)(inside_at_close & ~RIG_POOL_CLOSED);
+  v[1] = (inside_at_close & RIG_POOL_CLOSED) != 0;
   v[2] = order[w_undoing] > 0 && order[w_undoing] < order[n1_returned];
-  v[3] = atomic_load(&g_pools[COMPUTE]->inside) == closed;
+  v[3] = rig_pool_inside() == RIG_POOL_CLOSED;
   v[4] = not_once(&n);
   v[5] = not_once(&n1);
   v[6] = off(&n1, 1);
@@ -783,9 +752,4 @@ value rig_pool_test_unmade(value unit) {
   v[0] = child_status(pid);
   caml_leave_blocking_section();
   return answer(v, 1);
-}
-
-value rig_pool_test_hooked_cores(value unit) {
-  (void)unit;
-  return Val_int(rig_pool_cores());
 }

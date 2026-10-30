@@ -94,12 +94,26 @@ static const size_t stack_bytes = 8 << 20;
    A strip of fewer than 2 * claim_split chunks is claimed one at a time. */
 enum { claim_split = 8 };
 
-/* Hook points: the suite compiles this file again with RIG_POOL_HOOK defined
-   (test/rig_pool_hooked_probe_stubs.c), to stop threads at the named points
-   and hold an interleaving of the protocol below. Here they are empty. */
-#ifndef RIG_POOL_HOOK
-#define RIG_POOL_HOOK(point) ((void)0)
-#endif
+/* Hook points (rig_pool.h): the suite sets a hook that stops threads at the
+   named points, to hold an interleaving of the protocol below. Without one,
+   a point is a load and a branch, predicted not taken. The pointers are
+   read relaxed: rig_pool.h has them set before any worker runs. */
+static _Atomic(rig_pool_hook) g_hook;
+static _Atomic(void *(*)(size_t, size_t)) g_calloc;
+
+#define RIG_POOL_HOOK(point)                                                   \
+  do {                                                                         \
+    rig_pool_hook hook_ = atomic_load_explicit(&g_hook, memory_order_relaxed); \
+    if (__builtin_expect(hook_ != NULL, 0)) hook_(RIG_POOL_AT_##point);        \
+  } while (0)
+
+void rig_pool_set_hook(rig_pool_hook hook) {
+  atomic_store_explicit(&g_hook, hook, memory_order_relaxed);
+}
+
+void rig_pool_set_calloc(void *(*f)(size_t n, size_t size)) {
+  atomic_store_explicit(&g_calloc, f, memory_order_relaxed);
+}
 
 /* Clock */
 
@@ -491,7 +505,7 @@ static void claim_strip(pool *p, const job *j, int k, int id, uint64_t past) {
     uint64_t i = atomic_fetch_add_explicit(next, run, memory_order_relaxed);
     if (i >= end) return;
     past = end - i > run ? i + run : end;
-    RIG_POOL_HOOK(chunk);
+    RIG_POOL_HOOK(CHUNK);
     j->body(bound(j, (int64_t)i), bound(j, (int64_t)past), id, j->ctx);
   }
 }
@@ -520,11 +534,11 @@ static void claim(pool *p, const job *j, int id) {
    waits for that undo too. Such an add can even land after the caller's
    wait has ended; the next job therefore opens by clearing [closed] alone,
    and counts the add until its undo. */
-static const uint64_t closed = (uint64_t)1 << 63;
+static const uint64_t closed = RIG_POOL_CLOSED;
 
 static void leave(pool *p) {
   uint64_t was = atomic_fetch_sub(&p->inside, 1);
-  RIG_POOL_HOOK(left);
+  RIG_POOL_HOOK(LEFT);
   if (was == (closed | 1) && atomic_load(&p->waiting)) {
     pthread_mutex_lock(&p->mtx);
     pthread_cond_signal(&p->done);
@@ -535,11 +549,11 @@ static void leave(pool *p) {
 static int enter(pool *p) {
   if (atomic_load_explicit(&p->inside, memory_order_relaxed) & closed)
     return 0;
-  RIG_POOL_HOOK(enter_open);
+  RIG_POOL_HOOK(ENTER_OPEN);
   if (!(atomic_fetch_add_explicit(&p->inside, 1, memory_order_acquire) &
         closed))
     return 1;
-  RIG_POOL_HOOK(enter_refused);
+  RIG_POOL_HOOK(ENTER_REFUSED);
   leave(p);
   return 0;
 }
@@ -558,7 +572,7 @@ static uint64_t park_worker(pool *p, int id, uint64_t seen) {
   uint64_t bit = (uint64_t)1 << (id % 64);
   pthread_mutex_lock(&p->mtx);
   atomic_fetch_or(word, bit);
-  RIG_POOL_HOOK(parking);
+  RIG_POOL_HOOK(PARKING);
   uint64_t g;
   while ((g = atomic_load(&p->generation)) == seen)
     pthread_cond_wait(&p->workers[id].wake, &p->mtx);
@@ -598,7 +612,7 @@ static uint64_t next_job(pool *p, int id, uint64_t g, uint64_t deadline) {
   for (;;) {
     uint64_t v = spin(&p->generation, g, LEAVE, deadline);
     if (v == g || (id >= (int)(uint32_t)v && now_ns() >= deadline)) {
-      RIG_POOL_HOOK(park);
+      RIG_POOL_HOOK(PARK);
       v = park_worker(p, id, v);
     }
     if (id < (int)(uint32_t)v) return v;
@@ -621,7 +635,7 @@ static void *work(void *arg) {
     /* The job open by now may be a later one than [seen], whose threads
        the worker learns inside. */
     if (enter(p)) {
-      RIG_POOL_HOOK(entered);
+      RIG_POOL_HOOK(ENTERED);
       if (w->id < p->job.threads) claim(p, &p->job, w->id);
       leave(p);
     }
@@ -668,14 +682,20 @@ static void start_workers(pool *p, int wanted) {
 
 /* A new pool, or NULL if its memory or locks cannot be had. calloc's zeros
    are each atomic field's initial value. */
+static void *pool_calloc(size_t n, size_t size) {
+  void *(*f)(size_t, size_t) =
+      atomic_load_explicit(&g_calloc, memory_order_relaxed);
+  return f ? f(n, size) : calloc(n, size);
+}
+
 static pool *create(void) {
   int cores = rig_pool_cores();
   size_t words = ((size_t)cores + 63) / 64;
-  pool *p = calloc(1, sizeof *p + words * sizeof(_Atomic uint64_t));
+  pool *p = pool_calloc(1, sizeof *p + words * sizeof(_Atomic uint64_t));
   if (p == NULL) return NULL;
-  p->workers = calloc((size_t)cores, sizeof *p->workers);
+  p->workers = pool_calloc((size_t)cores, sizeof *p->workers);
   if (p->workers == NULL) goto fail_pool;
-  p->strips = calloc((size_t)cores, sizeof *p->strips);
+  p->strips = pool_calloc((size_t)cores, sizeof *p->strips);
   if (p->strips == NULL) goto fail_workers;
   if (pthread_mutex_init(&p->drive, NULL) != 0) goto fail_strips;
   if (pthread_mutex_init(&p->mtx, NULL) != 0) goto fail_drive;
@@ -809,24 +829,24 @@ __attribute__((noinline)) static void run(kind k, int t, int64_t total,
   p->job = j;
   open_strips(p, (uint64_t)c, t);
   atomic_fetch_and_explicit(&p->inside, ~closed, memory_order_release);
-  RIG_POOL_HOOK(opened);
+  RIG_POOL_HOOK(OPENED);
   uint64_t g = atomic_load_explicit(&p->generation, memory_order_relaxed);
   atomic_store(&p->generation, ((g >> 32) + 1) << 32 | (uint32_t)t);
-  RIG_POOL_HOOK(published);
+  RIG_POOL_HOOK(PUBLISHED);
   wake_parked(p, t);
 
   in_body = 1;
   claim(p, &j, 0);
   in_body = 0;
 
-  RIG_POOL_HOOK(claimed);
+  RIG_POOL_HOOK(CLAIMED);
   uint64_t was = atomic_fetch_or(&p->inside, closed);
-  RIG_POOL_HOOK(closed);
+  RIG_POOL_HOOK(CLOSED);
   if (was != 0 &&
       spin(&p->inside, closed, REACH, now_ns() + spin_ns) != closed) {
     pthread_mutex_lock(&p->mtx);
     atomic_store(&p->waiting, 1);
-    RIG_POOL_HOOK(waiting);
+    RIG_POOL_HOOK(WAITING);
     while (atomic_load(&p->inside) != closed)
       pthread_cond_wait(&p->done, &p->mtx);
     atomic_store(&p->waiting, 0);
@@ -855,4 +875,25 @@ void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body
 void rig_pool_run_blocking(int threads, int64_t total, int64_t chunks,
                            rig_pool_body body, void *ctx) {
   start(BLOCKING, threads, total, chunks, body, ctx);
+}
+
+/* The suite's reads (rig_pool.h) */
+
+int rig_pool_threads(void) {
+  pool *p = get(COMPUTE);
+  return p ? p->threads : 1;
+}
+
+uint64_t rig_pool_inside(void) {
+  pool *p = atomic_load_explicit(&g_pools[COMPUTE], memory_order_acquire);
+  return p ? atomic_load(&p->inside) : 0;
+}
+
+uint64_t rig_pool_parked(void) {
+  pool *p = atomic_load_explicit(&g_pools[COMPUTE], memory_order_acquire);
+  if (p == NULL) return 0;
+  pthread_mutex_lock(&p->mtx);
+  uint64_t bits = atomic_load(&p->parked[0]);
+  pthread_mutex_unlock(&p->mtx);
+  return bits;
 }

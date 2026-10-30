@@ -6,9 +6,10 @@
 (** Interleavings of [rig_pool.h]'s protocol, held
     (rig_pool_hooked_probe_stubs.c).
 
-    A second copy of the pool, compiled with its hook points defined, stops the
-    caller and chosen workers at named points until the others reach theirs, so
-    each scenario runs one timeline, given in its stub's comment. POSIX only.
+    A hook on the pool's hook points ([rig_pool.h]), set as this library
+    loads, stops the caller and chosen workers at named points until the others
+    reach theirs, so each scenario runs one timeline, given in its stub's
+    comment. POSIX only.
 
     Each scenario is [(timed_out, values)]: [timed_out] names the event a hold
     waited for in vain, [""] when the timeline held, and [values] are what the
@@ -16,9 +17,6 @@
 
 type answer = string * int array
 (** The type for a scenario's answer. *)
-
-val cores : unit -> int
-(** [cores ()] is the copy's [rig_pool_cores ()]. The scenarios need 3. *)
 
 (** {1:entering Entering and closing} *)
 

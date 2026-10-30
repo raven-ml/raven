@@ -5,8 +5,6 @@
 
 type answer = string * int array
 
-external cores : unit -> int = "rig_pool_test_hooked_cores"
-
 (* Entering and closing *)
 
 external stale_add : unit -> answer = "rig_pool_test_stale_add"

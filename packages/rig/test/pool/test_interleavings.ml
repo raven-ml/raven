@@ -14,7 +14,7 @@ module H = Rig_pool_hooked_probe
    at least [cores] cores, and checks that its timeline held and that each
    named value is [expected]'s. *)
 let held cores names expected run () =
-  if H.cores () < cores then
+  if P.cores () < cores then
     skip ~reason:(Printf.sprintf "the host has fewer than %d cores" cores) ();
   let timed_out, values = P.finishes "the scenario" run in
   equal ~msg:"the hold that gave up" string "" timed_out;

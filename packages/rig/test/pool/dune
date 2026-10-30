@@ -1,6 +1,7 @@
 ; test_threads and test_interleavings fork and read POSIX thread state.
-; rig_pool_hooked_probe compiles rig_pool.c again with its hook points
-; defined, so that test_interleavings holds the schedule each case names.
+; rig_pool_hooked_probe sets a hook on the pool's hook points as it loads, so
+; that test_interleavings holds the schedule each case names; test_threads
+; runs without it.
 
 (library
  (name rig_pool_thread_probe)
@@ -17,11 +18,10 @@
  (modules rig_pool_hooked_probe)
  (enabled_if
   (<> %{os_type} Win32))
- (libraries rig_pool_probe)
+ (libraries rig_pool rig_pool_probe)
  (foreign_stubs
   (language c)
-  (names rig_pool_hooked_probe_stubs)
-  (extra_deps ../../lib/pool/rig_pool.c ../../lib/pool/rig_pool.h)))
+  (names rig_pool_hooked_probe_stubs)))
 
 (executable
  (name test_pool)
@@ -34,13 +34,19 @@
  (action
   (run %{dep:test_pool.exe})))
 
-(tests
- (names test_interleavings test_threads)
- (modules test_interleavings test_threads)
+(test
+ (name test_interleavings)
+ (modules test_interleavings)
  (build_if
   (<> %{os_type} Win32))
- (libraries rig_pool_hooked_probe rig_pool_probe rig_pool_thread_probe unix
-  windtrap))
+ (libraries rig_pool_hooked_probe rig_pool_probe windtrap))
+
+(test
+ (name test_threads)
+ (modules test_threads)
+ (build_if
+  (<> %{os_type} Win32))
+ (libraries rig_pool_probe rig_pool_thread_probe unix windtrap))
 
 ; Listing test_pool's tests in bytecode checks that the pool's stubs resolve
 ; when ocamlrun loads them from CAML_LD_LIBRARY_PATH.
