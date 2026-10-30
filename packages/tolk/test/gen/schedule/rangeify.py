@@ -111,6 +111,14 @@ def read_around_assign():
     return before, v * v + a
 
 
+def crossed_pairs():
+    # two pairs of outputs that each share a computation, each pair reading an output of the other
+    x, y = empty(4, 4), empty(4, 4)
+    p, q = x * y, x - y
+    a, c = p.contiguous(), q.contiguous()
+    return a, p * p + c, c, q * q + a
+
+
 def assigned_contiguous():
     # assigned storage materialised again, and returned too
     a = empty(8).contiguous()
@@ -362,6 +370,7 @@ PROGRAMS = {
     "assigned_read_twice": assigned_read_twice,
     "assigned_contiguous": assigned_contiguous,
     "read_around_assign": read_around_assign,
+    "crossed_pairs": crossed_pairs,
     "sum_kept_broadcast": lambda: (lambda s: s + s.permute(1, 0))(empty(4, 4).sum(1, keepdim=True).expand(4, 4)),
     "mean_kept_broadcast": lambda: (lambda x: x - x.mean((0, 2), keepdim=True))(empty(2, 3, 4)),
     "unit_axis_staged": lambda: (lambda x: x + x.flip(1))(empty(1, 4).exp2()),

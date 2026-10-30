@@ -3437,8 +3437,8 @@ driver signals its own (D146).
   not supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
   multioutput implementation #3607". Codegen already compiles a kernel of
   one end over a group of stores (`test/runtime/test_custom_kernel.py:139`).
-- **tolk:** `lib/schedule/indexing.ml:503` (`region`), `:521`
-  (`waits_over`), `:548` (`share_loops`), `:602` (`loops_of`) and `:156`
+- **tolk:** `lib/schedule/indexing.ml:507` (`region`), `:525`
+  (`waits_over`), `:552` (`share_loops`), `:639` (`loops_of`) and `:156`
   (`end_shared`, which `bufferize_and_index` returns for each store of a
   group); `test/gen/tinygrad.patch`, which gives tinygrad the same before the
   goldens are recorded.
@@ -3448,7 +3448,10 @@ driver signals its own (D146).
   storage the other writes, through anything, neither waits for a write over
   storage that the other reads in a state before it, which one kernel of both
   could run neither before nor after, and the computed nodes each reaches
-  before storage or another stored value share one. Neither may reach
+  before storage or another stored value share one. Two groups join only
+  when neither reads the other through the stores of a third: where `b`
+  reads `c` and `d` reads `a`, a kernel of `a` and `b` and one of `c` and
+  `d` would each run before and after the other. Neither may reach
   a reduction the other does not: a kernel of two reductions can lose the
   optimisations each would take. A group's stores take one set of loops, so
   their shared nodes are indexed alike and computed once, and they end as one
@@ -3460,7 +3463,8 @@ driver signals its own (D146).
   kernels and runs one, and `compile/wide/sum-1e6` compiled 17 kernels.
 - **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test); its
-  recorded `shard_of_computed_kernels`, `read_around_assign_kernels` and
+  recorded `shard_of_computed_kernels`, `read_around_assign_kernels`,
+  `crossed_pairs_kernels` and
   `kernel_counts`, and the Postrange suite's `where_max_multioutput` cases,
   recorded from the equally patched tinygrad; rune's `Rune nx.wide ›
   kernels`.

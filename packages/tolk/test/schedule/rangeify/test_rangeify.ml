@@ -62,6 +62,7 @@ let programs =
     "contiguous_add";
     "conv";
     "copy";
+    "crossed_pairs";
     "cumsum";
     "custom_kernel";
     "custom_kernel_in_place";
@@ -679,6 +680,28 @@ let shared =
                 written;
                 store out Ops.O.(v + at a);
                 store out2 Ops.O.((v * v) + at written);
+              ]
+          in
+          equal int 3 (kernels_of sink);
+          writes sink);
+      test "two pairs of outputs that each read the other pair run as three"
+        (fun () ->
+          (* [a] and [b] share [p], [c] and [d] share [q], [b] reads [c] and
+             [d] reads [a]: one kernel of each pair would run both before and
+             after the other. *)
+          let at u = Shape.reshape u (ints [ 4; 4 ]) in
+          let store o v = Ops.after o [ Ops.store (at o) v ] in
+          let out3 = Call.param ~device:cpu ~shape:[ Int 16 ] 6 Float32 in
+          let out4 = Call.param ~device:cpu ~shape:[ Int 16 ] 7 Float32 in
+          let p = Ops.O.(input 1 * input 2) and q = Ops.O.(input 1 - input 2) in
+          let a = store out p and c = store out3 q in
+          let sink =
+            Ops.sink
+              [
+                a;
+                store out2 Ops.O.((p * p) + at c);
+                c;
+                store out4 Ops.O.((q * q) + at a);
               ]
           in
           equal int 3 (kernels_of sink);

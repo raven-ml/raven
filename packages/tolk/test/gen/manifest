@@ -3340,6 +3340,8 @@ schedule/rangeify/conv.golden
 schedule/rangeify/conv_kernels.golden
 schedule/rangeify/copy.golden
 schedule/rangeify/copy_kernels.golden
+schedule/rangeify/crossed_pairs.golden
+schedule/rangeify/crossed_pairs_kernels.golden
 schedule/rangeify/cumsum.golden
 schedule/rangeify/cumsum_kernels.golden
 schedule/rangeify/custom_kernel.golden

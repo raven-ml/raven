@@ -494,7 +494,11 @@ let merge_consumer_rngs rctx x consumer_rngs =
    alike, which are computed once, and the stores end as one kernel that writes
    them all: a double word's high and low parts, the two ends of one chain, are
    one kernel. A reduction of one of them alone keeps them apart, since a
-   kernel of two reductions can lose the optimisations each would take. *)
+   kernel of two reductions can lose the optimisations each would take.
+
+   Two groups join only when neither reads the other through the stores of a
+   third: where [b] reads [c] and [d] reads [a], the groups {a, b} and {c, d}
+   would each run before and after the other. *)
 
 let computed u =
   Op.Set.mem (op u) (Op.Set.union Op.Set.elementwise (ops [ Op.Reduce ]))
@@ -564,6 +568,17 @@ let share_loops rctx topo =
           if not (List.memq s ss) then Tbl.replace by_node u (s :: ss))
         r)
     stores;
+  (* The stores each store reads through anything. *)
+  let reads_of = Tbl.create 16 in
+  let read s =
+    match Tbl.find_opt reads_of s with
+    | Some r -> r
+    | None ->
+        let slice = backward_slice ~calls:Skip s in
+        let r = List.filter (fun t -> Nodes.mem t slice) stores in
+        Tbl.replace reads_of s r;
+        r
+  in
   (* Groups by their first store, each store's group by its first store. *)
   let groups = Tbl.create 16 and first = Tbl.create 16 in
   List.iter
@@ -571,11 +586,33 @@ let share_loops rctx topo =
       Tbl.replace groups s [ s ];
       Tbl.replace first s s)
     stores;
+  (* Whether a store of the group of [fa] reads one of the group of [fb],
+     through anything and the stores of other groups. *)
+  let reaches fa fb =
+    let seen = Tbl.create 8 in
+    let rec go = function
+      | [] -> false
+      | f :: _ when f == fb -> true
+      | f :: rest when Tbl.mem seen f -> go rest
+      | f :: rest ->
+          Tbl.replace seen f ();
+          let next =
+            List.concat_map
+              (fun s -> List.map (Tbl.find first) (read s))
+              (Tbl.find groups f)
+          in
+          go (List.rev_append next rest)
+    in
+    go [ fa ]
+  in
   let join a b =
     let fa = Tbl.find first a and fb = Tbl.find first b in
     if fa != fb then
       let ga = Tbl.find groups fa and gb = Tbl.find groups fb in
-      if List.for_all (fun s -> List.for_all (joinable regions s) gb) ga then begin
+      if
+        List.for_all (fun s -> List.for_all (joinable regions s) gb) ga
+        && not (reaches fa fb || reaches fb fa)
+      then begin
         let members =
           List.filter (fun s -> List.memq s ga || List.memq s gb) stores
         in

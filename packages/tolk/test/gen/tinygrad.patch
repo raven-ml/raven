@@ -2269,7 +2269,7 @@ index 757360e..ea7c2bf 100644
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 228ec4e..1d2d93e 100644
+index 228ec4e..64eb263 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -7,11 +7,29 @@ from tinygrad.uop.ops import gate_kernel_sink
@@ -2441,7 +2441,7 @@ index 228ec4e..1d2d93e 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -186,6 +251,73 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -186,6 +251,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -2476,11 +2476,23 @@ index 228ec4e..1d2d93e 100644
 +      if not any(x is s for x in ss): ss.insert(0, s)
 +  groups: dict[UOp, list[UOp]] = {s:[s] for s in stores}
 +  first: dict[UOp, UOp] = {s:s for s in stores}
++  # the stores each store reads through anything
++  read = {s:[t for t in stores if t is not s and t in s.toposort(enter_calls=False)] for s in stores}
++  # whether the group of fa reads the group of fb through the stores of any group: where b reads c and d reads a, one kernel of
++  # {a, b} and one of {c, d} would each run before and after the other
++  def reaches(fa:UOp, fb:UOp) -> bool:
++    seen, todo = set(), [fa]
++    while todo:
++      if (f:=todo.pop()) is fb: return True
++      if f in seen: continue
++      seen.add(f)
++      todo += [first[t] for s in groups[f] for t in read[s]]
++    return False
 +  def join(a:UOp, b:UOp):
 +    fa, fb = first[a], first[b]
 +    if fa is fb: return
 +    ga, gb = groups[fa], groups[fb]
-+    if not all(joinable(s, t) for s in ga for t in gb): return
++    if not all(joinable(s, t) for s in ga for t in gb) or reaches(fa, fb) or reaches(fb, fa): return
 +    members = [s for s in stores if any(s is x for x in ga+gb)]
 +    del groups[fa], groups[fb]
 +    groups[members[0]] = members
@@ -2515,7 +2527,7 @@ index 228ec4e..1d2d93e 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -197,6 +329,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -197,6 +341,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -2523,7 +2535,7 @@ index 228ec4e..1d2d93e 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -227,10 +360,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -227,10 +372,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -2540,7 +2552,7 @@ index 228ec4e..1d2d93e 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -265,14 +401,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -265,14 +413,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -2564,7 +2576,7 @@ index 228ec4e..1d2d93e 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -298,7 +439,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -298,7 +451,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
      if x.op is Ops.REDUCE and x.arg[1]:

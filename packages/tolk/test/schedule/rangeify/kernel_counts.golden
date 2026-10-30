@@ -110,6 +110,7 @@ stage_of_assigned	2
 assigned_read_twice	2
 assigned_contiguous	2
 read_around_assign	3
+crossed_pairs	3
 sum_kept_broadcast	2
 mean_kept_broadcast	2
 unit_axis_staged	1

@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- `Rangeify.get_kernel_graph` schedules two pairs of outputs that each share a
+  computation and each read an output of the other pair, where it raised
+  "graph_rewrite does not terminate" and rune evaluated the program uncompiled.
 - A host sum of an unrolled product multiplies no vector for its first term
   alone (`Codegen.to_program`): rune2's compiled 64 by 64 matmul replays in
   8.9 us where it took 12.4 us, and tolk lowers a matmul kernel 25% faster.
