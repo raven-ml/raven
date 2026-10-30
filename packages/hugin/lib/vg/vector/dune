@@ -1,0 +1,14 @@
+(library
+ (name hugin_vg_vector)
+ (package hugin)
+ (libraries
+  hugin_float_text
+  hugin_vg_instances
+  hugin.gg
+  hugin.font
+  hugin.vg
+  nx)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

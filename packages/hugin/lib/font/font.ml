@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Hugin_gg
+open Hugin_literal
 
 type glyph = int
 type slant = [ `Normal | `Italic | `Oblique ]

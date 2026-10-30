@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
 module Scale = Hugin_kit.Scale
 module Time = Hugin_kit.Time
 open Common

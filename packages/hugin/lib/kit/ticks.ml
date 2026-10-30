@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 type tick = { position : float; label : string; context : string option }
 type t = { major : tick list; minor : float list; note : string option }
 

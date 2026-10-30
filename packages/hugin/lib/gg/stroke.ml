@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 type cap = [ `Butt | `Round | `Square ]
 type join = [ `Miter | `Round | `Bevel ]
 

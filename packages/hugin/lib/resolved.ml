@@ -15,6 +15,7 @@
    mark in one cell: a mark that a layer broadcasts over a grid occurs once per
    cell, and reads the scales of each. *)
 
+open Hugin_float_text
 module Scale = Hugin_kit.Scale
 module Text = Hugin_text.Text
 open Common

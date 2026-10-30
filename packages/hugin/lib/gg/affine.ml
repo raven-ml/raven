@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 type t = {
   xx : float;
   yx : float;

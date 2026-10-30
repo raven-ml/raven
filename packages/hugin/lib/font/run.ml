@@ -4,6 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 open Hugin_gg
+open Hugin_literal
+open Hugin_float_text
 
 type t = {
   font : Font.t;

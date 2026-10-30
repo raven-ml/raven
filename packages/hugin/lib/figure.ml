@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
 module Text = Hugin_text.Text
 module Picture = Hugin_vg.Picture
 module Scale = Hugin_kit.Scale

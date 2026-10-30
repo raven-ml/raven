@@ -5,6 +5,8 @@
 
 open Hugin_gg
 open Hugin_font
+open Hugin_literal
+open Hugin_float_text
 
 (* Styles *)
 

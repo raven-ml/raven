@@ -10,8 +10,7 @@
 
     A {e frame} is the coordinate system a renderer writes numbers in: the page
     (y-down, in points), or the definition of a stamp, which its instances
-    place. Both renderers compile this module from this directory with
-    [copy_files]. *)
+    place. *)
 
 open Hugin_gg
 open Hugin_font

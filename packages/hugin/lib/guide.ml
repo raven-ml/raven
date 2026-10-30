@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
 module P2 = Hugin_gg.P2
 module Box2 = Hugin_gg.Box2
 module Text = Hugin_text.Text

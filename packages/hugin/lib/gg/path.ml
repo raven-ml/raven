@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 type op =
   | Move of float * float
   | Line of float * float

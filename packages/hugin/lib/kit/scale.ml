@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Hugin_gg
+open Hugin_float_text
 
 type _ kind =
   | Quantitative : float kind

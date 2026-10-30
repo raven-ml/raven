@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 type t = { minx : float; miny : float; maxx : float; maxy : float }
 
 let finite4 a b c d =

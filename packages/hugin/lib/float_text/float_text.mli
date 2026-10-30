@@ -12,9 +12,7 @@
     round it once, to nearest, ties to even, as C's printf does where it is
     correctly rounded: [135.5625] to six digits is [135.562]. A NaN is [nan]
     whatever its sign, and the infinities [inf] and [-inf]; a negative zero
-    keeps its sign.
-
-    hugin's libraries each compile this module from [gg/], privately. *)
+    keeps its sign. *)
 
 val g : ?precision:int -> float -> string
 (** [g ~precision x] is [x] as C's [%.*g] writes it, with [precision]

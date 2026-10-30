@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Hugin_gg
+open Hugin_float_text
 
 (* The sample of row [i] and column [j] is [z.(i * nx + j)]. *)
 type t = {

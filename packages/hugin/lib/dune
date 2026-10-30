@@ -2,6 +2,7 @@
  (name hugin)
  (public_name hugin)
  (libraries
+  hugin_float_text
   hugin.gg
   hugin.gg.kit
   hugin.font
@@ -34,11 +35,8 @@
   guide
   layout
   read
-  draw
-  float_text)
+  draw)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
-
-(copy_files# gg/float_text.{ml,mli})

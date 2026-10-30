@@ -6,6 +6,8 @@
 open Hugin_gg
 open Hugin_font
 open Hugin_vg
+open Hugin_float_text
+open Hugin_vg_instances
 
 (* Numbers *)
 

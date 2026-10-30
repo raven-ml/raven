@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 type t = { w : float; h : float; picture : Picture.t }
 
 let v w h picture =

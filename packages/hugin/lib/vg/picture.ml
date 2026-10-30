@@ -5,6 +5,7 @@
 
 open Hugin_gg
 open Hugin_font
+open Hugin_float_text
 
 type rule = [ `Nonzero | `Even_odd ]
 

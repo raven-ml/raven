@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Common
+open Hugin_float_text
 
 type t = Figure of float * float | Panels of float * float
 

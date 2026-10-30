@@ -13,6 +13,7 @@
    in its stead, reading only what it draws; its draw function draws the others,
    and the large images of what it draws are gathered. *)
 
+open Hugin_float_text
 module P2 = Hugin_gg.P2
 module Box2 = Hugin_gg.Box2
 module Affine = Hugin_gg.Affine

@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
 module Color = Hugin_gg.Color
 module Font = Hugin_font.Font
 module Scheme = Hugin_kit.Scheme

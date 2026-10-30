@@ -1,11 +1,8 @@
 (library
  (name hugin_vg)
  (public_name hugin.vg)
- (private_modules float_text)
- (libraries hugin.gg hugin.font nx)
+ (libraries hugin_float_text hugin.gg hugin.font nx)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
-
-(copy_files# ../gg/float_text.{ml,mli})

@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Hugin_float_text
+
 (* Encoded sRGB components and straight alpha, all in [0;1]. *)
 type t = { r : float; g : float; b : float; alpha : float }
 

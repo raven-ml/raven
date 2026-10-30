@@ -41,6 +41,7 @@
    rows wrap and bands are shared; and a last one, whose sides are no shorter,
    so guides laid out at them fit what it reserved. *)
 
+open Hugin_float_text
 module P2 = Hugin_gg.P2
 module Box2 = Hugin_gg.Box2
 module Text = Hugin_text.Text

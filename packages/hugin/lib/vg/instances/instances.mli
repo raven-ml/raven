@@ -9,8 +9,7 @@
 
     An instance of a stamp paints the stamp's picture scaled and moved to its
     position, with the picture's pens: whatever its scale, its strokes reach as
-    far beyond their paths as the picture's do. The raster, SVG and PDF
-    renderers compile this module from this directory with [copy_files]. *)
+    far beyond their paths as the picture's do. *)
 
 open Hugin_gg
 open Hugin_vg
