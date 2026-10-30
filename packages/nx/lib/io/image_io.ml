@@ -25,7 +25,7 @@ external jpeg_encode : Unix.file_descr -> bytes -> int -> int -> int -> unit
 (* PNG image data is a zlib stream of filtered scanlines, cut into IDAT
    chunks. *)
 
-module Crc32 = Compress_deflate.Crc32
+module Crc32 = Lz.Crc32
 
 let be32 src at =
   (Array1.get src at lsl 24)
@@ -51,12 +51,19 @@ let png_probe src =
   check 8;
   png_parse src
 
+(* The image data decodes into the scanlines' size, which the header fixes.
+   Bytes after the zlib stream are the container's, and are ignored. *)
 let png_decode src dst grayscale =
   let idat, length = png_idat src in
   let filtered = Array1.create int8_unsigned c_layout length in
-  (match Compress_deflate.Zlib.decompress_into idat filtered with
-  | Ok () -> ()
-  | Error e -> failwith ("invalid PNG zlib stream: " ^ e));
+  (match Lz.Zlib.decode idat filtered with
+  | Ok { Lz.produced; _ } when produced = length -> ()
+  | Ok { Lz.produced; _ } ->
+      Printf.ksprintf failwith
+        "invalid PNG zlib stream: %d bytes of scanlines, the image has %d"
+        produced length
+  | Error e ->
+      Format.kasprintf failwith "invalid PNG zlib stream: %a" Lz.pp_error e);
   png_unfilter src filtered dst grayscale
 
 (* [png_chunk b kind data first length] adds the chunk [kind] of the [length]
@@ -75,9 +82,7 @@ let idat_length = 1 lsl 20
    a pHYs chunk of [ppm] pixels per metre on both axes, and [srgb] as an sRGB
    chunk with the perceptual rendering intent. *)
 let png_encode ~ppm ~srgb b data width height channels =
-  let z =
-    Compress_deflate.Zlib.compress (png_filter data width height channels)
-  in
+  let z = Lz.Zlib.encode_string (png_filter data width height channels) in
   Buffer.add_string b "\137PNG\r\n\026\n";
   let header = Bytes.make 13 '\000' in
   Bytes.set_int32_be header 0 (Int32.of_int width);

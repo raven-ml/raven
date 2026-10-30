@@ -97,6 +97,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- Raster PNGs and the PNGs embedded in SVGs, written through `Nx_io`, have
+  other bytes and decode to the same pixels.
 - `Hugin_vg_raster` inks where a stroke's subpaths overlap a dot, the round caps
   of a subpath shorter than a twentieth of a pixel. The dot wound the other way,
   so the overlap cancelled to a hole, as at a line's piece cut short by its
@@ -4053,6 +4055,13 @@ thread.
 
 ### Nx
 
+- `Nx_io.save_image`, `encode_png` and the deflated entries of `save_npz`
+  compress with `lz`: they write other bytes, which load as the same images
+  and arrays.
+- `Nx_io.load_image` loads a PNG whose image data has bytes after its zlib
+  stream, which the PNG specification says to ignore; they were refused.
+- Decode errors from `Nx_io.gunzip`, PNG loading and the NPZ loaders give
+  the failing byte's offset and the format's message.
 - `Nx_io.load_npy`, `load_npz`, `load_npz_entry` and `load_safetensors` refuse
   a bool element whose byte is other than 0 or 1, raising `Failure` naming the
   file and the entry, as `load_gguf` does. Such a byte gave bool operations an
@@ -4765,7 +4774,7 @@ thread.
   by an `int64` index, which a mixture of experts stored at 8 bytes per code
   byte between gathering the experts and multiplying.
 - `nx` no longer depends on `bytesrw`. `Nx_io.gunzip` still decompresses in
-  bounded memory, through a `Compress_deflate.Decoder`.
+  bounded memory, through an `Lz.Gzip.decoder`.
 - Add `Nx.check ok msg`, which raises `Invalid_argument (msg i)` at the index
   of `ok`'s first false element. Inside a compiled function it reads nothing:
   the call raises when it returns, also from a staged scan or under `vmap`.
@@ -4812,7 +4821,7 @@ thread.
 - An NV device whose memory runs out while mapping a new allocation raises
   `Nx_device.Out_of_memory` and gives the memory back. It raised a driver
   fault, which lost the device.
-- `nx.io` takes deflate from the `compress` package. Loading a deflated NPZ
+- `nx.io` takes deflate from the `lz` package. Loading a deflated NPZ
   entry is about 3x faster, and the tensor uses the decompressed memory
   without a copy when its data is aligned; loading a PNG is about 2x faster.
   `Nx_io.gunzip` decompresses as it reads, in constant memory, where it

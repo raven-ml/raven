@@ -8,8 +8,7 @@
   --------------------------------------------------------------------------*)
 
 open Bigarray
-module Crc32 = Compress_deflate.Crc32
-module Encoder = Compress_deflate.Encoder
+module Crc32 = Lz.Crc32
 
 type method_ = Store | Deflate
 
@@ -17,7 +16,7 @@ type entry = {
   name : string;
   method_ : method_;
   flags : int;
-  crc32 : Crc32.t;
+  crc32 : int;
   compressed_size : int;
   uncompressed_size : int;
   local_offset : int;
@@ -489,16 +488,21 @@ let read_npy (archive : in_file) name =
       if entry.uncompressed_size / 1032 > src_len then
         error "ZIP entry %S declares more data than its DEFLATE data holds"
           entry.name;
-      let inflated =
-        Array1.create int8_unsigned c_layout entry.uncompressed_size
-      in
-      (match
-         Compress_deflate.Deflate.decompress_into
-           (Array1.sub data src_off src_len)
-           inflated
-       with
-      | Ok () -> ()
-      | Error e -> error "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
+      let size = entry.uncompressed_size in
+      let inflated = Array1.create int8_unsigned c_layout size in
+      (* The DEFLATE data decodes into the declared size and ends at the
+         declared compressed size. *)
+      (match Lz.Deflate.decode (Array1.sub data src_off src_len) inflated with
+      | Ok { Lz.produced; _ } when produced <> size ->
+          error "invalid DEFLATE data in ZIP entry %S: %d bytes, %d declared"
+            entry.name produced size
+      | Ok { Lz.consumed; _ } when consumed <> src_len ->
+          error "invalid DEFLATE data in ZIP entry %S: %d bytes after its end"
+            entry.name (src_len - consumed)
+      | Ok _ -> ()
+      | Error e ->
+          error "invalid DEFLATE data in ZIP entry %S: %s" entry.name
+            (Format.asprintf "%a" Lz.pp_error e));
       if Crc32.bigbytes inflated <> entry.crc32 then
         error "CRC-32 mismatch in ZIP entry %S" entry.name;
       let header =
@@ -551,30 +555,39 @@ let open_out fd =
     closed = false;
   }
 
-let worst_deflate_size size =
-  checked_add "DEFLATE output" size (((size / 65535) + 1) * 5)
-
 let sample_size = 64 * 1024
+
+(* Copies the first [n] bytes of [s], an NPY header, to [b]. *)
+let blit_header s b n =
+  for i = 0 to n - 1 do
+    Array1.unsafe_set b i (Char.code (String.unsafe_get s i))
+  done
+
+let bigbytes_of_string s =
+  let b = Array1.create int8_unsigned c_layout (String.length s) in
+  blit_header s b (String.length s);
+  b
 
 (* The first [n] bytes of [header] followed by [data]. *)
 let prefix (encoded : Npy.encoded) n =
-  let header = encoded.header in
-  let b = Bytes.create n in
-  let from_header = Int.min n (String.length header) in
-  Bytes.blit_string header 0 b 0 from_header;
-  for i = from_header to n - 1 do
-    Bytes.unsafe_set b i
-      (Char.unsafe_chr
-         (Array1.unsafe_get encoded.data (i - String.length header)))
-  done;
-  Bytes.unsafe_to_string b
+  let from_header = Int.min n (String.length encoded.header) in
+  let from_data = n - from_header in
+  let b = Array1.create int8_unsigned c_layout n in
+  blit_header encoded.header b from_header;
+  Array1.blit
+    (Array1.sub encoded.data 0 from_data)
+    (Array1.sub b from_header from_data);
+  b
 
-(* An entry is deflated when deflate shrinks its first 64 KiB. *)
+(* An entry is deflated when deflate shrinks its first 64 KiB: when the stream
+   fits a destination of the sample's size less one byte. *)
 let choose_method (encoded : Npy.encoded) =
   let size = String.length encoded.header + Array1.dim encoded.data in
-  let sample = prefix encoded (Int.min sample_size size) in
-  let compressed = Compress_deflate.Deflate.compress sample in
-  if String.length compressed < String.length sample then Deflate else Store
+  let n = Int.min sample_size size in
+  let shorter = Array1.create int8_unsigned c_layout (Int.max 0 (n - 1)) in
+  match Lz.Deflate.encode (prefix encoded n) shorter with
+  | Some _ -> Deflate
+  | None -> Store
 
 (* Writes [encoded] to the archive with [method_]. Returns its CRC-32 and its
    size as written. *)
@@ -587,30 +600,24 @@ let write_entry archive method_ (encoded : Npy.encoded) =
       Nx_io_codec.write_all archive.fd encoded.data ~off:0 ~len:size;
       (crc, String.length encoded.header + size)
   | Deflate ->
-      let e = Compress_deflate.Deflate.encoder () in
-      let chunk = Bytes.create sample_size in
-      (* Gives [e] the data from [first], at most a chunk, and the end of the
-         input once the data is given. *)
-      let give first =
-        let n = Int.min sample_size (size - first) in
-        for i = 0 to n - 1 do
-          Bytes.unsafe_set chunk i
-            (Char.unsafe_chr (Array1.unsafe_get encoded.data (first + i)))
-        done;
-        Encoder.src e chunk 0 n;
-        first + n
+      (* The header and the data are two steps of one stream, whose runs are
+         written as they come. *)
+      let e = Lz.Deflate.encoder () in
+      let written = ref 0 in
+      let out run =
+        let n = Array1.dim run in
+        Nx_io_codec.write_all archive.fd run ~off:0 ~len:n;
+        written := !written + n
       in
-      let rec loop first written =
-        match Encoder.encode e with
-        | `Await -> loop (give first) written
-        | `Data (b, off, len) ->
-            ignore (Unix.write archive.fd b off len);
-            loop first (written + len)
-        | `End -> (crc, written)
+      let rec push ~last src pos =
+        let n = Array1.dim src - pos in
+        match Lz.Encoder.step e ~last (Array1.sub src pos n) out with
+        | Lz.More k when k < n -> push ~last src (pos + k)
+        | Lz.More _ | Lz.Done _ -> ()
       in
-      let header = Bytes.of_string encoded.header in
-      Encoder.src e header 0 (Bytes.length header);
-      loop 0 0
+      push ~last:false (bigbytes_of_string encoded.header) 0;
+      push ~last:true encoded.data 0;
+      (crc, !written)
 
 let add_npy archive name packed =
   if archive.closed then invalid_arg "Zip_archive.add_npy: archive is closed";
@@ -630,7 +637,7 @@ let add_npy archive name packed =
   let maximum_size =
     match method_ with
     | Store -> uncompressed_size
-    | Deflate -> worst_deflate_size uncompressed_size
+    | Deflate -> Lz.Deflate.bound uncompressed_size
   in
   let zip64_sizes = maximum_size > 0xffffffff in
   let local_offset = archive.offset in

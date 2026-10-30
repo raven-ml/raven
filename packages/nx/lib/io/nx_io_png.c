@@ -4,8 +4,8 @@
 
   Static PNG decoding and encoding following the W3C PNG specification: the
   chunk stream, scanline filters and pixel formats. The caller checks chunk
-  CRC-32s, and compresses and decompresses image data with compress.deflate's
-  zlib streams: the decoder unfilters the decompressed scanlines in place and writes pixels
+  CRC-32s, and compresses and decompresses image data with lz's zlib streams:
+  the decoder unfilters the decompressed scanlines in place and writes pixels
   directly into the Nx-owned destination Bigarray, and the encoder returns the
   filtered scanlines.
   --------------------------------------------------------------------------*/

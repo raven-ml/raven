@@ -23,8 +23,7 @@ sublibrary.
 
 ## Implemented formats
 
-DEFLATE, zlib and gzip streams come from `compress.deflate`
-(`otherlibs/compress`).
+DEFLATE, zlib and gzip streams and CRC-32 come from `lz` (`packages/lz`).
 
 - PNG static images with all specified color types and bit depths, all five
   filters, palettes, transparency metadata, and Adam7 interlacing. Encoding is

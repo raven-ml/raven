@@ -98,7 +98,7 @@
   (ocaml
    (>= 5.5.0))
   dune
-  (compress
+  (lz
    (= :version))
   (rig
    (= :version))

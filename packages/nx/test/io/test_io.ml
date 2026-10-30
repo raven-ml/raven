@@ -106,13 +106,13 @@ let npy_flags byte =
   cut (read (saved "" save_npy flags)) 1 ^ String.make 1 (Char.chr byte)
 
 (* [zip entries] is a ZIP archive of [entries], each a name, a compression
-   method, 0 for stored or 8 for deflated, and the entry's bytes. *)
-let zip entries =
+   method, 0 for stored or 8 for deflated by [deflate], and the entry's
+   bytes. *)
+let zip ?(deflate = fun s -> Lz.Deflate.encode_string s) entries =
   let le16 n = String.init 2 (fun i -> Char.chr ((n lsr (8 * i)) land 0xff)) in
   let add (locals, centrals) (name, method_, contents) =
     let data =
-      if method_ = 8 then Compress_deflate.Deflate.compress contents
-      else contents
+      if method_ = 8 then deflate contents else contents
     in
     (* Flags, method, time, date, CRC-32, sizes, name and extra lengths. *)
     let common =
@@ -122,7 +122,7 @@ let zip entries =
           le16 method_;
           le16 0;
           le16 0;
-          le32 (Compress_deflate.Crc32.string contents);
+          le32 (Lz.Crc32.string contents);
           le32 (String.length data);
           le32 (String.length contents);
           le16 (String.length name);
@@ -263,6 +263,21 @@ let npz =
           in
           let path = file "" (flip_byte s (crc 0)) in
           fails (fun () -> Nx_io.load_npz_entry ~name:"w" path));
+      cases ~name:fst
+        "a deflated entry whose DEFLATE data does not end at its compressed \
+         size or decodes to other than its uncompressed size fails"
+        [
+          ( "a byte after the stream",
+            fun s -> Lz.Deflate.encode_string s ^ "\000" );
+          ("one byte short", fun s -> Lz.Deflate.encode_string (cut s 1));
+          ("one byte over", fun s -> Lz.Deflate.encode_string (s ^ "\000"));
+        ]
+        (fun (_, deflate) ->
+          let path =
+            file "" (zip ~deflate [ ("flags.npy", 8, npy_flags 1) ])
+          in
+          fails ~naming:"invalid DEFLATE data" (fun () ->
+              Nx_io.load_npz_entry ~name:"flags" path));
       test
         "a deflated entry that declares more data than deflate can expand to \
          fails" (fun () ->
@@ -281,7 +296,7 @@ let npz =
 
 (* Compression *)
 
-let gzip s = Compress_deflate.Gzip.compress s
+let gzip s = Lz.Gzip.encode_string s
 
 let gunzipped src =
   let dst = temp_file () in
@@ -1112,6 +1127,24 @@ let without ty png =
 let be32 n = String.init 4 (fun i -> Char.chr ((n lsr (8 * (3 - i))) land 0xff))
 let tiny = Nx.full Nx.uint8 [| 2; 3; 3 |] 9
 
+(* The scanlines of [tiny]: each row is filter type 0 and its 9 samples. *)
+let tiny_scanlines =
+  String.concat "" (List.init 2 (fun _ -> "\000" ^ String.make 9 '\009'))
+
+(* The chunk of type [ty] and [data], with its CRC-32. *)
+let chunk ty data =
+  be32 (String.length data) ^ ty ^ data ^ be32 (Lz.Crc32.string (ty ^ data))
+
+(* [png] with its IDAT chunks replaced by one holding [idat]. *)
+let with_idat png idat =
+  let rec loop placed = function
+    | [] -> []
+    | ("IDAT", _) :: rest when placed -> loop placed rest
+    | ("IDAT", _) :: rest -> chunk "IDAT" idat :: loop true rest
+    | (ty, data) :: rest -> chunk ty data :: loop placed rest
+  in
+  String.sub png 0 8 ^ String.concat "" (loop false (chunks png))
+
 let png_chunks_group =
   group "PNG chunks"
     [
@@ -1154,6 +1187,26 @@ let png_chunks_group =
           equal (tensor int)
             (Nx_io.load_image (file ".png" plain))
             (Nx_io.load_image (file ".png" png)));
+      test
+        "bytes after the zlib stream in the image data are ignored: the image \
+         loads as without them" (fun () ->
+          let png = Nx_io.encode_png tiny in
+          let idat = Lz.Zlib.encode_string tiny_scanlines ^ "\000\001\002" in
+          equal (tensor int) tiny
+            (Nx_io.load_image (file ".png" (with_idat png idat))));
+      cases ~name:fst
+        "image data that decompresses to other than the image's scanlines \
+         fails"
+        [
+          ("one byte short", cut tiny_scanlines 1);
+          ("one byte over", tiny_scanlines ^ "\000");
+          ("none", "");
+        ]
+        (fun (_, scanlines) ->
+          let png = Nx_io.encode_png tiny in
+          let idat = Lz.Zlib.encode_string scanlines in
+          fails ~naming:"zlib" (fun () ->
+              Nx_io.load_image (file ".png" (with_idat png idat))));
       cases ~name:fst "~dpi outside the range of a PNG integer is refused"
         [
           ("zero", 0.);

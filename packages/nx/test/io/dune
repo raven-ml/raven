@@ -11,6 +11,6 @@
   nx_test
   unix
   windtrap
-  compress.deflate)
+  lz)
  (deps
   (glob_files support/*)))
