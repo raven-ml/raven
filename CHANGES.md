@@ -4086,6 +4086,9 @@ thread.
 
 ### Quill
 
+- The web notebook starts sections at headings of the rendered text, never at
+  a `#` line in a code block, and no longer splits a text cell whose edits it
+  lost.
 - A `<!-- quill:cell -->` comment at the start of text stays in the notebook,
   where loading took it as the text cell's id and saving dropped it. Text cell
   ids saved before March 2026 now show as literal lines in the terminal UI.
