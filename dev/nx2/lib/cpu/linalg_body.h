@@ -5375,9 +5375,13 @@ static int F(eig)(const call *c, int64_t b, T *x, arena *s) {
   /* The balancing undone (xGEBAK): rows scaled, then swapped back. */
   for (int64_t i = lo; i <= hi && lo < hi; i++)
     for (int64_t j = 0; j < n; j++) v[i * n + j] *= scale[i];
+  /* Outside lo..hi a scale holds the row swapped in, inside a factor
+     that may exceed any index. */
   for (int64_t p = 0; p < n; p++) {
-    int64_t i = p < lo ? lo - 1 - p : p, k = (int64_t)scale[i];
-    if ((i < lo || i > hi) && k != i) F(swap)(v + i * n, v + k * n, n);
+    int64_t i = p < lo ? lo - 1 - p : p;
+    if (i >= lo && i <= hi) continue;
+    int64_t k = (int64_t)scale[i];
+    if (k != i) F(swap)(v + i * n, v + k * n, n);
   }
   /* Each column of unit norm, its element of largest magnitude real. */
   for (int64_t j = 0; j < n; j++) {
