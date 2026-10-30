@@ -1,5 +1,5 @@
 (** What lz's suites share: buffers, the corpora that the golden
-    generator and the benches also build, drawn inputs that break codecs,
+    generator and the benches also use, drawn inputs that break codecs,
     testables, and the vendor-written goldens. *)
 
 (** {1 Buffers} *)
@@ -33,9 +33,9 @@ val stepped :
 
 (** {1 Corpora}
 
-    The corpora of [gen/generate.py], byte for byte, which the benches
-    also time: [corpus kind n] is the first [n] bytes of the stream drawn
-    for [kind]. *)
+    The inputs of the goldens, which [gen/raw.exe] writes for
+    [gen/generate.py], and of the benches: [corpus kind n] is the first
+    [n] bytes of the stream drawn for [kind]. *)
 
 type kind = Text | Columns | Random
 

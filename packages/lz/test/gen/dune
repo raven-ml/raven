@@ -1,7 +1,8 @@
 ; encode.exe CODEC LEVEL RAW writes lz's encoding of the raw input RAW, as
-; golden/manifest.txt names one, to standard output. generate.py --check decodes
-; it with the vendor.
+; golden/manifest.txt names one, to standard output; raw.exe RAW writes RAW
+; itself, so that generate.py builds its inputs with Lz_support's corpora.
+; generate.py --check decodes encode.exe's output with the vendor.
 
-(executable
- (name encode)
+(executables
+ (names encode raw)
  (libraries lz lz_support))

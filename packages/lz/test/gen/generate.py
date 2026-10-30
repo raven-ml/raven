@@ -4,18 +4,21 @@
 Every golden is a compressed file a vendor wrote, listed in golden/manifest.txt
 as `file codec vendor members raw`: `codec` is the lz decoder that reads
 it, `members` the members or frames it holds, `raw` the input, as `kind:n`
-parts joined by `+`, each the first n bytes of a corpus that
-test/support/lz_support.ml builds byte for byte. The raw inputs are not
-checked in.
+parts joined by `+`, each the first n bytes of a corpus of
+test/support/lz_support.ml, which test/gen/raw.exe writes. The raw inputs
+are not checked in. Build the executables first:
 
-    uv run --no-project --with deflate --with zstandard --with lz4 \
-        --with python-snappy python -I packages/lz/test/gen/generate.py
+    dune build packages/lz/test/gen/raw.exe packages/lz/test/gen/encode.exe
+    uv run --python 3.13 --no-project --with deflate --with zstandard \
+        --with lz4 --with python-snappy python -I \
+        packages/lz/test/gen/generate.py
+
+Python 3.13 wrote the goldens: gzip.compress's header byte for the
+operating system differs between Python versions.
 
 With --check, it encodes every raw input at every level with lz's encoders,
-through test/gen/encode.exe, and decodes each result with the vendor.
-Build the executable first:
+through test/gen/encode.exe, and decodes each result with the vendor:
 
-    dune build packages/lz/test/gen/encode.exe
     uv run ... python -I packages/lz/test/gen/generate.py --check
 
 The check is run before each push; it is not part of runtest.
@@ -37,78 +40,27 @@ import zstandard
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOLDEN = os.path.join(HERE, "..", "golden")
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
-ENCODE = os.path.join(ROOT, "_build", "default", "packages", "lz", "test",
-                      "gen", "encode.exe")
+BUILD = os.path.join(ROOT, "_build", "default", "packages", "lz", "test", "gen")
+ENCODE = os.path.join(BUILD, "encode.exe")
+RAW = os.path.join(BUILD, "raw.exe")
 
-MASK = (1 << 64) - 1
 KIB = 1024
 MIB = 1024 * KIB
 
 
-# Corpora: the generators of test/support/lz_support.ml, as prefixes.
+# Raw inputs, which test/gen/raw.exe builds with Lz_support's corpora.
 
-def xorshift(seed):
-    x = seed
-    while True:
-        x ^= (x << 13) & MASK
-        x ^= x >> 7
-        x ^= (x << 17) & MASK
-        yield x
-
-
-SYLLABLES = ["ka", "lo", "mi", "ne", "su", "ta", "ri", "po", "an", "el",
-             "or", "is", "um", "ve", "da", "go"]
-
-
-def text(n):
-    gen = xorshift(0x51F15EED)
-    words = []
-    for _ in range(512):
-        k = next(gen) % 3 + 1
-        words.append("".join(SYLLABLES[next(gen) % 16] for _ in range(k)))
-    out, size = [], 0
-    while size < n:
-        w = words[next(gen) % 512] + ("\n" if next(gen) % 12 == 0 else " ")
-        out.append(w)
-        size += len(w)
-    return "".join(out).encode()[:n]
-
-
-def columns(n):
-    gen = xorshift(0x9E3779B97F4A7C15)
-    key, out = 0, bytearray()
-    while len(out) < n:
-        key += next(gen) % 16 + 1
-        out += struct.pack("<qd", key, (next(gen) % 100000) / 100)
-    return bytes(out[:n])
-
-
-def random_bytes(n):
-    gen = xorshift(0x2545F4914F6CDD1D)
-    out = bytearray()
-    while len(out) < n:
-        out += struct.pack("<Q", next(gen))
-    return bytes(out[:n])
-
-
-KINDS = {"text": text, "columns": columns, "random": random_bytes}
 CACHE = {}
 
 
-def corpus(kind, n):
-    s = CACHE.get(kind)
-    if s is None or len(s) < n:
-        s = KINDS[kind](n)
-        CACHE[kind] = s
-    return s[:n]
-
-
 def raw(spec):
-    out = b""
-    for part in spec.split("+"):
-        kind, n = part.split(":")
-        out += corpus(kind, int(n))
-    return out
+    s = CACHE.get(spec)
+    if s is None:
+        if not os.path.exists(RAW):
+            sys.exit("missing %s: dune build packages/lz/test/gen/raw.exe" % RAW)
+        s = subprocess.run([RAW, spec], capture_output=True, check=True).stdout
+        CACHE[spec] = s
+    return s
 
 
 # Framing the specifications define, for the files no vendor call writes.
