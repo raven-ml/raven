@@ -181,6 +181,49 @@ static inline void wide_match(uint8_t *op, size_t off, size_t len) {
   }
 }
 
+/* Writes [d, end) by copying from [m] on, where [m, d) holds whole
+   periods of the match. Each copy is of the bytes from [m] to [d], which
+   end where it begins, so copies never overlap, read only bytes written
+   before them, and each doubles the bytes written. */
+static inline void repeat(const uint8_t *m, uint8_t *d, uint8_t *const end) {
+  while (d < end) {
+    size_t n = (size_t)(d - m) < (size_t)(end - d) ? (size_t)(d - m)
+                                                   : (size_t)(end - d);
+    memcpy(d, m, n);
+    d += n;
+  }
+}
+
+/* A match of LONG_MATCH or more is copied by doubling ([repeat]) once its
+   first SEED bytes are written. In an overlapping match, [wide_match]
+   reads each load from the store just before it, or across two of them
+   when [off] is neither 8 nor a multiple of 16, which stalls every load:
+   0.5 ns a byte at offset 3, where doubling copies at memcpy's speed,
+   0.04. Under LONG_MATCH, doubling's calls to memcpy cost more than they
+   save at offsets 1, 2 and 4. For 8 and the multiples of 16, whose loads
+   only wait on the store before, doubling gains from LONG_ALIGNED.
+   Measured decoding on an Intel Core Ultra 5 235. */
+#define LONG_MATCH 320
+#define LONG_ALIGNED 1024
+#define SEED 32
+
+/* Copies the match of [len] bytes, LONG_MATCH or more, at [off] back,
+   writing past its end as [wide_match] does. */
+__attribute__((noinline)) static void long_match(uint8_t *op, size_t off,
+                                                 size_t len) {
+  bool aligned = off % 16 == 0 || off == 8;
+  if (aligned && len < LONG_ALIGNED) {
+    wide_match(op, off, len);
+    return;
+  }
+  uint8_t *d = op;
+  if (off < SEED) {
+    wide_match(op, off, SEED);
+    d += SEED / off * off;
+  }
+  repeat(op - off, d, op + len);
+}
+
 static enum outcome fail(struct block *b, enum outcome o, const uint8_t *at,
                          const char *msg) {
   b->at = (size_t)(at - b->src);
@@ -254,7 +297,10 @@ __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
     len += MIN_MATCH;
     if ((uint64_t)(oend - op) < len + 16) goto exact;
     if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
-    wide_match(op, off, len);
+    if (len >= LONG_MATCH)
+      long_match(op, off, len);
+    else
+      wide_match(op, off, len);
     op += len;
     last_match = len;
     continue;
@@ -380,18 +426,9 @@ static enum outcome block_decode(struct block *b) {
     len += MIN_MATCH;
     if (len > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, at_offset, NULL);
     if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
-    /* A match longer than its offset repeats its first [off] bytes. Each
-       copy is of the bytes from [m] to [d], which end where it begins, so
-       copies never overlap and each doubles the bytes written. */
-    const uint8_t *m = op - off;
-    uint8_t *const end = op + len;
-    for (uint8_t *d = op; d < end;) {
-      size_t n = (size_t)(d - m) < (size_t)(end - d) ? (size_t)(d - m)
-                                                     : (size_t)(end - d);
-      memcpy(d, m, n);
-      d += n;
-    }
-    op = end;
+    /* A match longer than its offset repeats its first [off] bytes. */
+    repeat(op - off, op, op + len);
+    op += len;
     last_match = len;
     prev = seq;
   }

@@ -232,8 +232,9 @@ let checksums =
        sizes)
 
 (* lz's LZ4 block of 8 MiB of zeros, one match at offset 1, decoded into
-   a destination of exactly its size: the match ends too near the
-   destination's end for the fast loop, and the exact loop copies it. *)
+   a destination of exactly its size, where the match ends too near the
+   destination's end for the fast loop and the exact loop copies it, and
+   into one with room past its output, where the fast loop does. *)
 let zeros =
   let raw =
     lazy
@@ -244,17 +245,17 @@ let zeros =
   let src =
     lazy (encoded Lz.Lz4.Block.bound Lz.Lz4.Block.encode (Lazy.force raw))
   in
-  let dst = lazy (create size) in
+  let row name room =
+    let dst = lazy (create (size + room)) in
+    Thumper.bench_with_setup name
+      ~setup:(fun () ->
+        let src = Lazy.force src and dst = Lazy.force dst in
+        check "zeros.lz4b" (Lazy.force raw) dst (Lz.Lz4.Block.decode src dst);
+        (src, dst))
+      (fun (src, dst) -> Lz.Lz4.Block.decode src dst)
+  in
   Thumper.group "zeros"
-    [
-      Thumper.bench_with_setup "decode lz4b, exact destination"
-        ~setup:(fun () ->
-          let src = Lazy.force src and dst = Lazy.force dst in
-          check "zeros.lz4b" (Lazy.force raw) dst
-            (Lz.Lz4.Block.decode src dst);
-          (src, dst))
-        (fun (src, dst) -> Lz.Lz4.Block.decode src dst);
-    ]
+    [ row "decode lz4b, exact destination" 0; row "decode lz4b" 64 ]
 
 let () =
   exit
