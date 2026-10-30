@@ -69,10 +69,13 @@
    - a decoder counts the bytes it has taken and written. It reports
      those since its last report before each block it begins (Zstandard
      once they reach 4 KiB, which spares a stream of small blocks a
-     report each) and each time its fast loop has written LZ_WORK_SPAN
-     bytes since; an LZ4 or Snappy decoder also before it copies a
-     literal run, a match or a stored block of LZ_WORK_SPAN bytes or
-     more outside its fast loop, counting the copy;
+     report each), before each LZ4 frame after its call's first, and each
+     time its fast loop has written LZ_WORK_SPAN bytes since. Before it
+     copies a literal run, a match or a stored block of LZ_WORK_SPAN
+     bytes or more, an LZ4 or Snappy decoder also reports them and calls
+     [lz_ahead] with the copy's work, so that it releases before a copy
+     that brings its work to the threshold; the copy counts at its next
+     report;
    - an encoder counts the input it compresses, and reports it before it
      compresses it: a whole-buffer encode all of its input at its start,
      a step the input each parse or each run of blocks covers. A
@@ -80,16 +83,19 @@
      4 MiB at levels 9 to 12.
 
    The stubs add a decoder's work after its last report, such as its last
-   block, without a release: it counts at the call's next report, if any.
-   Between two reports a kernel does at most one unit whose size the
-   format or the kernel bounds: a Zstandard block, of at most 128 KiB of
-   output; a deflate stored block or gzip header field, of at most
-   64 KiB; LZ_WORK_SPAN bytes of output and the code or sequence they end
-   in; a deflate encoder's block write and window slide, each of at most
-   a few hundred KiB; a step's copy of its input into its window. So a
-   call holds the lock for at most its threshold's work and one such
-   unit, and a call whose last unit brings its work to the threshold
-   holds it to its end.
+   block, without a release, and check the total before each gzip member
+   or Zstandard frame after their call's first. So a member that makes no
+   report, such as a Zstandard frame of one block or an empty frame,
+   counts before the next. Between two checks a kernel does at most one
+   unit whose size the format or the kernel bounds: a Zstandard block, of
+   at most 128 KiB of output, after under 4 KiB of smaller ones; a
+   deflate stored block or gzip header field, of at most 64 KiB;
+   LZ_WORK_SPAN bytes of output and the code or sequence they end in; a
+   deflate encoder's block write and window slide, each of at most a few
+   hundred KiB; a step's copy of its input into its window. So a call
+   holds the lock for at most its threshold's work and one such unit,
+   and a call whose last unit brings its work to the threshold holds it
+   to its end.
 
    A streaming decoder's buffer
 
@@ -146,6 +152,12 @@ struct lz_work {
 static inline void lz_did(struct lz_work *w, size_t n) {
   w->done += n;
   if (w->done >= w->limit) w->reach(w);
+}
+
+/* [lz_ahead w n], before [n] bytes of work that a later report counts,
+   reaches the limit now if they would. */
+static inline void lz_ahead(struct lz_work *w, size_t n) {
+  if (w->done + n >= w->limit) w->reach(w);
 }
 
 /* [work] is never NULL. */

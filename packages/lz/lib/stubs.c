@@ -78,8 +78,10 @@ struct call {
   bool released;
 };
 
-/* The releases the calling thread has made, for the tests (lz.mli). */
+/* The releases the calling thread has made, and the work its call had
+   counted at the last, for the tests (lz.mli). */
 static _Thread_local intnat releases;
+static _Thread_local size_t released_at;
 
 /* Every release goes through here. It runs no signal handler: a handler
    may raise, and a raise from inside a kernel would skip what its stub
@@ -89,6 +91,7 @@ static _Thread_local intnat releases;
 static void release(struct call *c) {
   caml_enter_blocking_section_no_pending();
   releases++;
+  released_at = c->w.done;
   c->released = true;
   c->w.limit = SIZE_MAX;
 }
@@ -119,6 +122,11 @@ static void tally(struct lz_work *w, size_t before, size_t did) {
 CAMLprim value lz_releases(value unit) {
   (void)unit;
   return Val_long(releases);
+}
+
+CAMLprim value lz_released_at(value unit) {
+  (void)unit;
+  return Val_long(released_at);
 }
 
 /* Buffers */
@@ -312,6 +320,8 @@ static enum lz_status whole(const struct codec *c, void *st, struct lz_io *io,
     }
     if (!c->members || io->consumed == io->src_len || m.consumed == 0)
       return LZ_DONE;
+    /* Another member follows: check the work tallied (lz.h). */
+    lz_did(io->work, 0);
   }
 }
 
@@ -412,6 +422,8 @@ static enum lz_status dec_run(struct box *k, struct lz_io *io, bool last,
       *fin = true;
       return LZ_DONE;
     }
+    /* A member follows the last one: check the work tallied (lz.h). */
+    if (k->boundary) lz_did(io->work, 0);
     struct lz_io m = {
         .src = io->src + io->consumed,
         .src_len = io->src_len - io->consumed,

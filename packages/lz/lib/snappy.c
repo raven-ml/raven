@@ -235,7 +235,10 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
       if (len == 0) len = (size_t)trailer + 1;
       if (len > (size_t)(ip_end - ip))
         return lz_fail(err, LZ_TRUNCATED, io->src_len, NULL);
-      if (len >= LZ_WORK_SPAN) TELL(ip + len, op + len);
+      if (len >= LZ_WORK_SPAN) {
+        TELL(ip, op);
+        lz_ahead(io->work, 2 * len);
+      }
       memcpy(op, ip, len);
       ip += len;
       op += len;

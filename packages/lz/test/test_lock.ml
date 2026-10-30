@@ -1,11 +1,15 @@
 (* The domain lock. A call releases it at the first report of its work
    that reaches its kernel's threshold, and holds it otherwise (lib/lz.h,
    lib/stubs.c): a decoder reports the bytes it has taken and written
-   before each block it begins and after each 32 KiB of output, an
-   encoder the input it is about to compress, a checksum its input.
-   [Lz.releases] counts the calling thread's releases, so that each law
-   is exact: at a threshold's neighbours, on calls that do little work
-   whatever their input, and on calls that do much from a short input. *)
+   before each block and each member it begins and after each 32 KiB of
+   output, and releases before a long copy that would reach its
+   threshold; an encoder reports the input it is about to compress, a
+   checksum its input. [Lz.releases] counts the calling thread's
+   releases, so that each law is exact: at a threshold's neighbours, on
+   calls that do little work whatever their input, and on calls that do
+   much from a short input. [Lz.released_at] is the work a call had
+   counted at its release, which a call holding the lock for at most its
+   threshold and one unit keeps under their sum. *)
 
 open Windtrap
 
@@ -30,6 +34,22 @@ let releases f =
   (r, Lz.releases () - before)
 
 let count f = snd (releases f)
+
+(* [released f] is [f ()], the times it released the lock and the work it
+   had counted when it did. *)
+let released f =
+  let r, k = releases f in
+  (r, k, Lz.released_at ())
+
+(* The most output a decoder writes inside a block between two reports
+   (lib/lz.h). *)
+let span = 32 * kib
+
+(* The most work a Zstandard decode does between two reports: under
+   4 KiB of small blocks, then a block of at most 128 KiB of output from
+   at most 128 KiB of input, its 3-byte header, and a frame's header and
+   checksum, at most 18 and 4 bytes. *)
+let zstd_unit = (4 * kib) + (2 * 128 * kib) + 3 + 18 + 4
 
 (* [neighbours name t work] states that the call [work w] prepares, whose
    work is [w], holds the lock at [t - 1] and releases it once at [t]. *)
@@ -253,16 +273,68 @@ let rle_frame =
   in
   (windowed ^ body ^ rle ~last:true size, blocks * size)
 
+(* Deflate's fixed Huffman codes (RFC 1951, 3.2.6): a final block of a
+   literal 'a' then [matches] matches of 258 bytes at distance 1, and the
+   bytes it decodes to. Bits are packed from each byte's least significant
+   bit, a Huffman code from its most significant. *)
+let fixed_block ~matches =
+  let b = Buffer.create 16 and acc = ref 0 and used = ref 0 in
+  let bits v k =
+    acc := !acc lor (v lsl !used);
+    used := !used + k;
+    while !used >= 8 do
+      Buffer.add_char b (Char.chr (!acc land 0xff));
+      acc := !acc lsr 8;
+      used := !used - 8
+    done
+  in
+  let code v k =
+    for i = k - 1 downto 0 do
+      bits ((v lsr i) land 1) 1
+    done
+  in
+  (* BFINAL, then BTYPE 01. *)
+  bits 1 1;
+  bits 1 2;
+  (* Literals 0 to 143 are 8-bit codes from 0x30; length 258 is symbol
+     285, an 8-bit code from 0xC0 for 280; distance 1 is the 5-bit code
+     0; the end of block is the 7-bit code 0. *)
+  code (0x30 + Char.code 'a') 8;
+  for _ = 1 to matches do
+    code (0xC0 + 285 - 280) 8;
+    code 0 5
+  done;
+  code 0 7;
+  if !used > 0 then Buffer.add_char b (Char.chr !acc);
+  (Buffer.contents b, 1 + (258 * matches))
+
 let short_input =
   group "a short input decoding long"
     [
-      test "a Zstandard frame of 2 KiB decoding to 64 MiB releases" (fun () ->
+      test "a Zstandard frame of 2 KiB decoding to 64 MiB releases within \
+            a block of the threshold" (fun () ->
           let s, n = rle_frame in
           less int ~msg:"input bytes" ~than:zstd_decode (String.length s);
           let src = Lz_support.of_string s and dst = Lz_support.create n in
-          let r, k = releases (fun () -> Lz.Zstd.decode src dst) in
+          let r, k, at = released (fun () -> Lz.Zstd.decode src dst) in
           ok_produced n r;
-          equal int ~msg:"releases" 1 k);
+          equal int ~msg:"releases" 1 k;
+          less int ~msg:"work at the release" ~than:(zstd_decode + zstd_unit)
+            at);
+      test "a deflate block decoding 1 MiB releases within a span of output"
+        (fun () ->
+          (* One block: only the reports inside it can release. *)
+          let s, n = fixed_block ~matches:4096 in
+          less int ~msg:"input bytes" ~than:deflate_decode (String.length s);
+          let src = Lz_support.of_string s and dst = Lz_support.create n in
+          let r, k, at = released (fun () -> Lz.Deflate.decode src dst) in
+          ok_produced n r;
+          equal int ~msg:"releases" 1 k;
+          (* The threshold, a span of output, the match it ends in, and at
+             most all of the input. *)
+          less int ~msg:"work at the release"
+            ~than:(deflate_decode + span + 258 + String.length s)
+            at);
       test "deflate of a few KiB decoding to 4 MiB releases" (fun () ->
           let raw = String.make (4 * mib) 'a' in
           let s = Lz.Deflate.encode_string ~level:9 raw in
@@ -273,6 +345,99 @@ let short_input =
           ok_produced (String.length raw) r;
           equal int ~msg:"releases" 1 k);
     ]
+
+(* Frames *)
+
+(* A frame that makes no report of its own: a Zstandard frame of one
+   block, or an empty or skippable frame. A call checks its work as each
+   member after the first begins, so frames whose work reaches the
+   threshold release before the next. *)
+
+(* Zstandard (RFC 8878, 3.1.1): an empty frame, single segment with a
+   one-byte content size of 0 and an empty last raw block, 9 bytes. *)
+let zstd_empty = "\x28\xB5\x2F\xFD\x20\x00" ^ le 3 1
+
+(* A skippable frame with no data, 8 bytes, in Zstandard and LZ4. *)
+let skippable = "\x50\x2A\x4D\x18" ^ le 4 0
+
+let repeat n s = String.concat "" (List.init n (fun _ -> s))
+
+(* [frames name t f decode] states that a decode of copies of [f], whose
+   bytes are its work, holds the lock while the copies before the last
+   make less than [t], and releases once when they make [t]. *)
+let frames name t f decode =
+  let z = String.length f in
+  let n = (t + z - 1) / z in
+  cases
+    ~name:(fun (k, _) -> string_of_int k ^ " frames")
+    name
+    [ (n, 0); (n + 1, 1) ]
+    (fun (k, r) ->
+      let src = Lz_support.of_string (repeat k f) in
+      let dst = Lz_support.create 0 in
+      equal int ~msg:"releases" r
+        (count (fun () -> ok_produced 0 (decode src dst))))
+
+let concatenated =
+  group "concatenated frames"
+    [
+      frames "empty Zstandard frames" zstd_decode zstd_empty Lz.Zstd.decode;
+      frames "skippable Zstandard frames" zstd_decode skippable Lz.Zstd.decode;
+      frames "empty LZ4 frames" lz4_decode (lz4_frame []) Lz.Lz4.Frame.decode;
+      frames "skippable LZ4 frames" lz4_decode skippable Lz.Lz4.Frame.decode;
+      test "1024 Zstandard frames of 64 KiB release once, within a block of \
+            the threshold" (fun () ->
+          let f = Lz.Zstd.encode_string ~level:1 (text (64 * kib)) in
+          let src = Lz_support.of_string (repeat 1024 f) in
+          let dst = Lz_support.create (64 * mib) in
+          let r, k, at = released (fun () -> Lz.Zstd.decode src dst) in
+          ok_produced (64 * mib) r;
+          equal int ~msg:"releases" 1 k;
+          less int ~msg:"work at the release" ~than:(zstd_decode + zstd_unit)
+            at);
+    ]
+
+(* Long copies *)
+
+(* An LZ4 block whose first sequence is [n] literals and a match of 4,
+   then 40 last literals, with the bytes it decodes to and those of its
+   codes before the literals: the fast loop copies the [n] literals,
+   since more than 32 bytes of input and output follow them. *)
+let lz4_literals n =
+  let ext k = String.make ((k - 15) / 255) '\xff' ^ byte ((k - 15) mod 255) in
+  let s =
+    "\xf0" ^ ext n ^ String.make n 'a' ^ le 2 1 ^ "\xf0" ^ ext 40
+    ^ String.make 40 'b'
+  in
+  (s, n + 4 + 40, 1 + String.length (ext n))
+
+(* lz's block of 1 MiB of zeros, whose matches past its first literal
+   decode to all but its last bytes, and at most all of its input before
+   them. *)
+let lz4_zeros =
+  let s = Lz.Lz4.Block.encode_string (String.make mib '\x00') in
+  (s, mib, String.length s)
+
+(* An LZ4 block decoded into a destination with room past its output,
+   where the fast loop copies each sequence whole. The call releases
+   before a copy that would take its work past the threshold: the work it
+   has counted then is under the threshold and the codes it read since
+   its last report, at most [codes], whatever the copy's length. *)
+let lz4_copy =
+  cases
+    ~name:(fun (label, _) -> label)
+    "an LZ4 block releases before a long copy"
+    [
+      ("a literal run of 64 KiB", lz4_literals (64 * kib));
+      ("a match of about 1 MiB", lz4_zeros);
+    ]
+    (fun (_, (s, n, codes)) ->
+      let src = Lz_support.of_string s in
+      let dst = Lz_support.create (n + kib) in
+      let r, k, at = released (fun () -> Lz.Lz4.Block.decode src dst) in
+      ok_produced n r;
+      equal int ~msg:"releases" 1 k;
+      less int ~msg:"work at the release" ~than:(lz4_decode + codes) at)
 
 (* Steps *)
 
@@ -321,6 +486,11 @@ let steps =
           decode_step (Lz.Deflate.decoder ()) (fst (deflate_work w)));
       neighbours "a Zstandard decoder step" zstd_decode (fun w ->
           decode_step (Lz.Zstd.decoder ()) (fst (zstd_work w)));
+      test "a Zstandard decoder step over two frames of 64 KiB releases"
+        (fun () ->
+          let f = Lz.Zstd.encode_string ~level:1 (text (64 * kib)) in
+          equal int ~msg:"releases" 1
+            (count (decode_step (Lz.Zstd.decoder ()) (f ^ f))));
       neighbours "a deflate flush writing out kept input" deflate_encode
         (fun w ->
           (* Under its 8 KiB lookahead, the encoder parses nothing until
@@ -372,4 +542,7 @@ let steps =
           equal int ~msg:"releases" 0 total);
     ]
 
-let () = exit (run "Lock" [ whole; blocks; short_input; steps ])
+let () =
+  exit
+    (run "Lock"
+       [ whole; blocks; short_input; concatenated; lz4_copy; steps ])

@@ -87,23 +87,27 @@
 
     Since the collector never moves a buffer's bytes, a call releases the
     domain lock once it has done a threshold of work, and takes it back
-    when it returns. A decode's work is the bytes it has read and written,
-    an encode's the input it has compressed, which for an encoder step
-    includes input that earlier steps took ({!Encoder}). The threshold is
+    when it returns. A decode's work is the bytes it has read and written.
+    An encode's work is the input it has compressed, which for an encoder
+    step includes input that earlier steps took ({!Encoder}), and for a
+    Zstandard encoder step also the bytes of its window it moves to make
+    room for new input, over 4 MiB at levels 9 to 12. The threshold is
     8 KiB, except 4 KiB when deflate, zlib or gzip encodes and 16 KiB when
     LZ4 or Snappy decodes. So a short call holds the lock whatever the
     size of its input and destination, and a long one releases it
     whatever the size of its input: a decode of a few KiB that writes
     megabytes releases it, and a step on a few bytes that writes a few
-    hundred holds it. While the lock is released, another thread of the
-    domain may take it, and the call then waits on return until that
-    thread yields it.
+    hundred holds it, unless it moves a Zstandard window. While the lock
+    is released, another thread of the domain may take it, and the call
+    then waits on return until that thread yields it.
 
-    A call checks its work between the units it works in, such as a
-    format's blocks and each 32 KiB of a decode's output. It may thus go
-    on for one unit past its threshold before it releases the lock, and a
-    call whose last unit takes it past the threshold holds the lock to its
-    end. *)
+    A call checks its work between the units it works in: a format's
+    blocks and members, and each 32 KiB of a decode's output. An LZ4 or
+    Snappy decode also checks before it copies 32 KiB or more, and
+    releases the lock before the copy when the copy would bring its work
+    to the threshold. A call may thus go on for one unit past its
+    threshold before it releases the lock, and a call whose last unit
+    takes it past the threshold holds the lock to its end. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -694,6 +698,8 @@ val zstd_encode_limit :
 val zstd_encoder_limit : limit:int -> level:int -> Encoder.t
 
 (* For the tests, which hold the lock rule exact: the times the calling
-   thread has released the domain lock in lz's calls. *)
+   thread has released the domain lock in lz's calls, and the bytes of
+   work the call had counted when it last released it. *)
 
 val releases : unit -> int
+val released_at : unit -> int

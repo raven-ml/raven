@@ -134,6 +134,15 @@ static void tell(struct told *t, const uint8_t *ip, uint8_t *op) {
   t->out = op;
 }
 
+/* [tell_ahead t ip op n] reports the work up to [ip] and [op] before a
+   copy whose work is [n] bytes, and releases first if the copy would
+   reach the threshold (lz.h). */
+static void tell_ahead(struct told *t, const uint8_t *ip, uint8_t *op,
+                       size_t n) {
+  tell(t, ip, op);
+  lz_ahead(t->work, n);
+}
+
 /* For an offset under 8, the smallest multiple of it that is 8 or more:
    once 8 bytes of the match are written, copying 8 bytes from that far
    back continues the pattern. */
@@ -190,7 +199,8 @@ struct cursor {
 /* Decodes whole sequences while both buffers have their slack, and stops
    before the first sequence that may not fit: the exact loop decodes it.
    It also stops once the output reaches [span], before [oend], so that
-   its work is reported (lz.h); a sequence may run past [span]. Kept out
+   its work is reported (lz.h); a sequence may run past [span], and
+   reports before a copy of LZ_WORK_SPAN or more. Kept out
    of line, so that the exact loop's calls do not take its registers. */
 __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
                                                              struct cursor *c,
@@ -217,6 +227,7 @@ __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
       if ((uint64_t)(iend - ip) < lit + IN_SLACK ||
           (uint64_t)(oend - op) < lit + OUT_SLACK)
         goto exact;
+      if (lit >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, 2 * lit);
       for (uint64_t i = 0; i < lit; i += 16) copy16(op + i, ip + i);
     } else {
       copy16(op, ip);
@@ -240,6 +251,7 @@ __attribute__((noinline)) static enum outcome fast_sequences(struct block *b,
     }
     len += MIN_MATCH;
     if ((uint64_t)(oend - op) < len + 16) goto exact;
+    if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
     wide_match(op, off, len);
     op += len;
     last_match = len;
@@ -327,7 +339,7 @@ static enum outcome block_decode(struct block *b) {
        overflows however many of its bytes follow. */
     if (lit > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, seq, NULL);
     if (lit > (uint64_t)(iend - ip)) return fail(b, ENDS_EARLY, seq, NULL);
-    if (lit >= LZ_WORK_SPAN) tell(b->told, ip + lit, op + lit);
+    if (lit >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, 2 * lit);
     memcpy(op, ip, lit);
     op += lit;
     ip += lit;
@@ -363,7 +375,7 @@ static enum outcome block_decode(struct block *b) {
     }
     len += MIN_MATCH;
     if (len > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, at_offset, NULL);
-    if (len >= LZ_WORK_SPAN) tell(b->told, ip, op + len);
+    if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
     const uint8_t *m = op - off;
     if (off >= len) {
       memcpy(op, m, len);
@@ -712,7 +724,7 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
         return lz_fail(err, why, content_limit ? size_at : (int64_t)at_size,
                        msg);
       if (cut) return lz_fail(err, LZ_TRUNCATED, (int64_t)n, NULL);
-      if (len >= LZ_WORK_SPAN) tell(t, src + q + len, op + len);
+      if (len >= LZ_WORK_SPAN) tell_ahead(t, src + q, op, 2 * len);
       memcpy(op, src + q, len);
       produced = len;
     } else {
@@ -770,6 +782,8 @@ enum lz_status lz_lz4_frame_decode(struct lz_io *io, struct lz_error *err) {
   size_t n = io->src_len, pos = 0, out = 0;
   struct told t = {io->work, src, io->dst};
   do {
+    /* An empty or skippable frame makes no report of its own. */
+    tell(&t, src + pos, io->dst + out);
     const uint8_t *p = src + pos;
     size_t rest = n - pos;
     if (rest < 4) {
