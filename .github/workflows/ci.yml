@@ -67,10 +67,12 @@ jobs:
           opam pin add mosaic git+https://github.com/tmattio/mosaic.git#6834ce001c7028cdb2a6be4f5a1f3fb84f68d758 --no-action
           opam install . --deps-only --with-test
 
+      # Every runtest runs under .github/memcap.sh, which caps its memory so
+      # that a test that leaks is killed before the runner runs out.
       - name: Build and test lz
         run: |
           opam exec -- dune build --release packages/lz
-          opam exec -- dune build --release @packages/lz/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/lz/runtest
 
       # lz's decoders parse untrusted bytes: their suites run with the C built
       # under AddressSanitizer and UndefinedBehaviorSanitizer, each property
@@ -86,18 +88,18 @@ jobs:
           WINDTRAP_PROP_COUNT: 1000
         run: |
           opam exec -- dune build --profile sanitize @packages/lz/all
-          opam exec -- dune build --profile sanitize -j 1 @packages/lz/runtest
+          bash .github/memcap.sh opam exec -- dune build --profile sanitize -j 1 @packages/lz/runtest
 
       # rig's GPU suites skip on runners without the GPU they drive.
       - name: Build and test rig
         run: |
           opam exec -- dune build --release packages/rig
-          opam exec -- dune build --release @packages/rig/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/rig/runtest
 
       - name: Build and test nx
         run: |
           opam exec -- dune build --release packages/nx
-          opam exec -- dune build --release @packages/nx/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/nx/runtest
 
       # Every nx suite runs with the C of nx built under AddressSanitizer and
       # UndefinedBehaviorSanitizer. The codecs parse untrusted bytes, and the
@@ -112,9 +114,9 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0:use_sigaltstack=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
-          WINDTRAP_PROP_COUNT=1000 opam exec -- dune build --profile sanitize @packages/nx/test/array/runtest
-          opam exec -- dune build --profile sanitize @packages/nx/test/runtest
+          WINDTRAP_PROP_COUNT=1000 bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/io/runtest
+          WINDTRAP_PROP_COUNT=1000 bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/array/runtest
+          bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/nx/test/runtest
 
       - name: Build and test brot
         env:
@@ -123,12 +125,12 @@ jobs:
           packages/brot/bench/download_data.sh
           python3 packages/brot/test/gen/download_hf_tokenizers.py
           opam exec -- dune build --release packages/brot
-          opam exec -- dune build --release @packages/brot/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/brot/runtest
 
       - name: Build and test talon
         run: |
           opam exec -- dune build --release packages/talon
-          opam exec -- dune build --release @packages/talon/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/talon/runtest
 
       # The CSV and Parquet decoders parse untrusted bytes: their suites, the
       # fuzz suites included, run with the C built under AddressSanitizer and
@@ -139,7 +141,7 @@ jobs:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           WINDTRAP_PROP_COUNT: 1000
-        run: opam exec -- dune build --profile sanitize @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
+        run: bash .github/memcap.sh opam exec -- dune build --profile sanitize @packages/talon/test/csv/runtest @packages/talon/test/parquet/runtest
 
       # Talon's benchmark questions at the CI size (H2O at 1e6 rows, the
       # decision-support queries at scale factor 0.1) must answer as DuckDB's committed answers do. The
@@ -160,62 +162,62 @@ jobs:
       - name: Build and test rune
         run: |
           opam exec -- dune build --release packages/rune
-          opam exec -- dune build --release @packages/rune/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/rune/runtest
 
       - name: Build and test ppx_ptree
         run: |
           opam exec -- dune build --release packages/ppx_ptree
-          opam exec -- dune build --release @packages/ppx_ptree/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/ppx_ptree/runtest
 
       - name: Build and test kaun
         run: |
           opam exec -- dune build --release packages/kaun
-          opam exec -- dune build --release @packages/kaun/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/kaun/runtest
 
       - name: Build and test vega
         run: |
           opam exec -- dune build --release packages/vega
-          opam exec -- dune build --release @packages/vega/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/vega/runtest
 
       - name: Build and test fehu
         run: |
           opam exec -- dune build --release contrib/fehu
-          opam exec -- dune build --release @contrib/fehu/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @contrib/fehu/runtest
 
       - name: Build and test sowilo
         run: |
           opam exec -- dune build --release contrib/sowilo
-          opam exec -- dune build --release @contrib/sowilo/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @contrib/sowilo/runtest
 
       - name: Build and test munin
         run: |
           opam exec -- dune build --release packages/munin
-          opam exec -- dune build --release @packages/munin/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/munin/runtest
 
       - name: Build and test norn
         run: |
           opam exec -- dune build --release packages/norn
-          opam exec -- dune build --release @packages/norn/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/norn/runtest
 
       - name: Build and test ymir
         run: |
           opam exec -- dune build --release contrib/ymir
-          opam exec -- dune build --release @contrib/ymir/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @contrib/ymir/runtest
 
       - name: Build and test tolk
         run: |
           opam exec -- dune build --release packages/tolk
-          opam exec -- dune build --release @packages/tolk/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/tolk/runtest
 
       - name: Build and test hugin
         run: |
           opam exec -- dune build --release packages/hugin
-          opam exec -- dune build --release @packages/hugin/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/hugin/runtest
 
       - name: Build and test quill
         run: |
           opam exec -- dune build --release packages/quill
-          opam exec -- dune build --release @packages/quill/runtest
+          bash .github/memcap.sh opam exec -- dune build --release @packages/quill/runtest
 
       # windtrap captures a test's output, so a sanitizer's report, written to
       # standard error as the process aborts, lands in the test's capture

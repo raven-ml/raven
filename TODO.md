@@ -401,4 +401,3 @@ raven / llama.cpp (Vulkan; ROCm):
   nv/pci/gsp_defs.ml): have documentation.md exempt a generated
   vendor-constant table whose header names its source and generator, or
   have gen.py emit the .mli
-- tests: CI runtest under a memory cap
