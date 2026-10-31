@@ -637,6 +637,47 @@ let lane_tests =
             (Nx.create f64 [| 1; 1 |] [| 2. |])
         in
         equal (array bool) [| false |] (Nx.to_array (Solution.ok s)));
+    test "a lane of tiny unknowns far from its zero stalls" (fun () ->
+        (* The lane above in its first unknown, scaled by [s], with a second
+           unknown at its zero. Every step of the first is a multiple of [s],
+           and the square of the one from 1 s, 10⁻³ s, is below the floats'
+           range: the search must still measure the map's contraction over
+           it. *)
+        let s = Float.ldexp 1. (-530) in
+        let jacobian x =
+          let u = Nx.div_s (Nx.slice [ Nx.A; Nx.I 0 ] x) s in
+          let slope =
+            Nx.where (Nx.greater_s u 1.5) (Nx.full_like u 2.)
+              (Nx.where (Nx.greater_s u 0.9995) (Nx.full_like u 1000.)
+                 (Nx.full_like u (-999.)))
+          in
+          Nx.reshape [| 1; 2; 2 |]
+            (Nx.stack ~axis:(-1)
+               [ slope; Nx.zeros_like u; Nx.zeros_like u; Nx.ones_like u ])
+        in
+        let st =
+          System.lanes
+            ~tol:(Tol.v ~rel:0. ~abs:(1e-2 *. s))
+            ~budget:20 ~jacobian Fun.id
+            (Nx.create f64 [| 1; 2 |] [| 2. *. s; 0. |])
+        in
+        equal (array bool) [| false |] (Nx.to_array (Solution.ok st)));
+    prop "lanes of unknowns near the underflow reach their zero" lane_systems
+      (fun (a, z) ->
+        (* [lane_field] scaled by a power of two [s]: its evaluations are the
+           unscaled ones times [s], exactly, and its zero is [s z]. Every step
+           is below 10⁻¹⁶², whose square is below the floats' range. *)
+        cover "several unknowns" (Nx.dim 1 z > 1);
+        let s = Float.ldexp 1. (-540) in
+        let b = Nx.add (apply a z) (Nx.sin z) in
+        let f x = Nx.mul_s (lane_field a b (Nx.div_s x s)) s
+        and jacobian x = lane_jacobian a (Nx.div_s x s) in
+        let st =
+          System.lanes
+            ~tol:(Tol.v ~rel:1e-12 ~abs:(1e-12 *. s))
+            ~budget:50 ~jacobian f (Nx.zeros_like z)
+        in
+        equal near z (Nx.div_s (Solution.get st) s));
     test "compiled lanes equal eager" (fun () ->
         let a =
           Nx.broadcast_to [| 3; 2; 2 |]

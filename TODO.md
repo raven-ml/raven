@@ -300,12 +300,24 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - jera: Newton stops at the floats' limit by three rules (`Search.still`,
   System.newton's merit-rounding branch, `at_limit`), because `still`
-  floors each component at |x|·ε, which is 0 at 0. One test in norm in
-  `Search.judge` (MINPACK's `hybrd`: a step within xtol·‖x‖) would cover
-  Root, System, Broyden, Anderson and Minimize.
-  Wrong today: `at_limit` reads a step that did not move (q = r = ∞) as at
-  the limit; the unscaled `Search.norm` underflows, so a lane of small
-  unknowns converges 100 times off its tolerance.
+  floors each component at |x|·ε, which is 0 at 0. MINPACK `hybrd`'s test
+  in norm (a step within ε‖x‖ replacing all three) does not fit the
+  componentwise `Tol`: it ends a lane at its largest components'
+  resolution. Picard (`System.anderson ~memory:0`) on (z − x) / 2,
+  z = (1, 1e-3), from (1, 0) then stalls 1000 ulps off z₂ under
+  `Tol.rel 1e-13` or `Tol.ulps 256`, where the three rules converge it
+  within 2 ulps, and `anderson ~memory:2` in test_system "compiled equals
+  eager" stalls before the exact zero it reaches. A test in the
+  tolerance's own scaling might hold both
+- jera: three sums of squares still underflow for unknowns or residuals
+  below about 1e-154: Newton's merit `half_square` (system.ml), where φ0,
+  φ and the slope all read 0 and Armijo accepts every full step
+  (f x = s atan(x / s), two unknowns from (3s, 0), s = 2^-540, ends not
+  ok); Broyden's `ss = dot dx dx` (system.ml), which never updates B; and
+  Levenberg–Marquardt's cost and predicted decrease (minimize.ml,
+  `lm_problem`'s `cost` and `lm_trial`), where ρ = 0/0. A merit scaled by a
+  per-step constant 1 / max |f x_k| leaves Armijo and the rounding test
+  invariant
 - jera: the contraction is measured on the whole vector's norm and
   multiplies each component's |δᵢ|, which understates a small component
   coupled to a large one. `Minimize.lbfgs ~memory:3` on

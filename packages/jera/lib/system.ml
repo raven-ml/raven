@@ -38,8 +38,7 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
   let step (s : _ Search.state) () =
     let delta, jd, failed = direction s.x s.fx in
     let s = { s with st = settle s.st failed Stalled } in
-    let at_limit = Search.at_limit s delta in
-    let s = Search.test tol s delta in
+    let s, at_limit = Search.test_at tol s delta in
     let run = searching s.st in
     let accept, shrink =
       Search.armijo ~phi0:(half_square s.fx) ~slope0:(Search.dot s.fx jd)

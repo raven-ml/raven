@@ -417,6 +417,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `System.solve`, `System.lanes` and `Minimize.solve` measure the steps of
+  unknowns below about `1e-140` without underflow in their convergence test.
+  Such a lane could stall at its zero, or converge farther from it than `tol`
+  allows.
 - `Root.newton`, `System.solve`, `System.lanes` and `Minimize.solve` end a lane
   whose step cannot move its estimate `Stalled` unless its error meets `tol`.
   It used to converge with its error past `tol` under a tolerance near an ulp

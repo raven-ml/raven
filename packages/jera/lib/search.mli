@@ -15,7 +15,11 @@ val dot : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [dot u v] is each lane's inner product, of the lanes' shape. *)
 
 val norm : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
-(** [norm v] is each lane's Euclidean norm, of the lanes' shape. *)
+(** [norm v] is each lane's Euclidean norm, of the lanes' shape. Its sum of
+    squares is taken on the vector scaled to a largest magnitude of one, so the
+    sum neither underflows nor overflows; the norm itself overflows past the
+    largest float. A lane with an infinite component and no NaN has an infinite
+    norm, and one with a NaN a NaN norm. *)
 
 val descends : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> 'd Nx.bool_t
 (** [descends g d] is [true] in each lane where [gᵀ d < 0], decided on the
@@ -138,6 +142,13 @@ val test : Tol.t -> ('q, 'd) state -> (float, 'q, 'd) Nx.t -> ('q, 'd) state
     [x + delta], and one whose step no longer moves its estimate ends as
     {!resolved} says. *)
 
+val test_at :
+  Tol.t -> ('q, 'd) state -> (float, 'q, 'd) Nx.t -> ('q, 'd) state * 'd Nx.bool_t
+(** [test_at tol s delta] is [test tol s delta] and, per lane, whether the
+    undamped map moves over the step [delta] from [s.x] by no more than the
+    rounding of its two values, [q ≤ 2 r] with [q] and [r] as {!secant}
+    measures them: the step is at the floats' limit. *)
+
 val secant : ('q, 'd) state -> (float, 'q, 'd) Nx.t -> (float, 'q, 'd) Nx.t
 (** [secant s next] is the contraction [|next − N x'| / |x − x'| + r] of a map
     that sends [s.x] to [next], per lane: the upper end of what the rounding of
@@ -155,12 +166,6 @@ val resolved :
     the step it could not take and the ones after it: the lane ends [Converged]
     if that error meets [tol] at [s.x], and [Stalled] otherwise. Any other
     stuck lane ends [Stalled] with its error unchanged. *)
-
-val at_limit : ('q, 'd) state -> (float, 'q, 'd) Nx.t -> 'd Nx.bool_t
-(** [at_limit s delta] is, per lane, whether the undamped map moves over the
-    step [delta] from [s.x] by no more than the rounding of its two values,
-    [q ≤ 2 r] with [q] and [r] as {!secant} measures them: the step is at the
-    floats' limit. It reads the state before {!test} takes the step. *)
 
 val decide :
   Tol.t ->

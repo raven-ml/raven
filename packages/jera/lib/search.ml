@@ -25,8 +25,22 @@ let dot u v =
 let every b =
   if width b = 1 then Nx.reshape (lanes b) b else Nx.all ~axes:[ -1 ] b
 
+(* The squares are summed on the vector divided by its largest magnitude,
+   clamped to the normal floats so that a vector of zeros or with an infinite
+   component divides by a finite, positive number: the squares of components of
+   10⁻¹⁷⁰ are below the floats' range. *)
 let norm v =
-  if width v = 1 then Nx.reshape (lanes v) (Nx.abs v) else Nx.sqrt (dot v v)
+  match width v with
+  | 0 -> Nx.zeros_at (Nx.beside v) (Nx.dtype v) (lanes v)
+  | 1 -> Nx.reshape (lanes v) (Nx.abs v)
+  | _ ->
+      let dtype = Nx.dtype v in
+      let m =
+        Nx.clamp ~min:(Num.tiny dtype) ~max:(Num.huge dtype)
+          (Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v))
+      in
+      let u = Nx.div v m in
+      Nx.mul (Nx.reshape (lanes v) m) (Nx.sqrt (dot u u))
 
 (* Each vector scaled by its largest magnitude, so a product neither underflows
    nor overflows. *)
@@ -376,7 +390,9 @@ let measure s next =
   let half = Num.eps (Nx.dtype next) /. 2. in
   let inf = Nx.full_like moved Float.infinity in
   let r =
-    Nx.div (norm (Nx.mul_s (Nx.add (Nx.abs next) (Nx.abs s.mapped)) half)) moved
+    Nx.div
+      (Nx.mul_s (norm (Nx.add (Nx.abs next) (Nx.abs s.mapped))) half)
+      moved
   in
   let q = Nx.add (Nx.div (norm (Nx.sub next s.mapped)) moved) r in
   (Nx.where still inf q, Nx.where still inf r)
@@ -423,15 +439,6 @@ let resolved tol s ~delta ~stuck =
     e = hold measured (remaining s delta) s.e;
   }
 
-(* A step over which the undamped map moves by no more than the rounding of its
-   two values, [q ≤ 2 r]: the contraction it measures, [q − r], is within that
-   rounding, as at the floats' limit. A step over which the map moves by the
-   step's own length, [q] near 1 with [r] small, is not one, whatever
-   contraction the state holds from earlier steps. *)
-let at_limit s delta =
-  let q, r = measure s (Nx.add s.x delta) in
-  Nx.less_equal q (Nx.mul_s r 2.)
-
 let judge tol s ~map ~q ~r delta =
   let run = searching s.st in
   let next = Nx.add s.x delta and mapped = Nx.add s.x map in
@@ -468,6 +475,15 @@ let decide tol s ~map ~q delta =
 let test tol s delta =
   let q, r = measure s (Nx.add s.x delta) in
   judge tol s ~map:delta ~q ~r delta
+
+(* A step over which the undamped map moves by no more than the rounding of its
+   two values, [q ≤ 2 r]: the contraction it measures, [q − r], is within that
+   rounding, as at the floats' limit. A step over which the map moves by the
+   step's own length, [q] near 1 with [r] small, is not one, whatever
+   contraction the state holds from earlier steps. *)
+let test_at tol s delta =
+  let q, r = measure s (Nx.add s.x delta) in
+  (judge tol s ~map:delta ~q ~r delta, Nx.less_equal q (Nx.mul_s r 2.))
 
 let iterations ~budget extra step (s, aux) =
   let carry =
