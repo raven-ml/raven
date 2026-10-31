@@ -25,6 +25,15 @@ let positive =
       (list ~size:(int_range 1 6) (float_range 0.01 100.)))
   |> Gen.with_pp Nx.pp
 
+(* [positive], a factor by which a slope is too steep, and a tolerance in
+   ulps. *)
+let slowed =
+  Gen.(
+    with_pp
+      (fun ppf (a, (factor, k)) ->
+        Format.fprintf ppf "a = %a@ factor = %g@ k = %g" Nx.pp a factor k)
+      (pair positive (pair (float_range 1. 12.) (float_range 0.25 8.))))
+
 (* Tol *)
 
 let tol_tests =
@@ -209,24 +218,57 @@ let newton_tests =
   let m = vec [| 0.; 0.3; 1.; 2.5; 3.1 |] in
   let e = Nx.full f64 [| 5 |] 0.6 in
   [
-    prop "from a good seed, a zero reached to rounding converges" positive
+    prop "from a good seed, an element ends at its zero to rounding" positive
       (fun a ->
         (* √a seeded within 1e-7: Newton reaches the floats' resolution in two
-           steps. *)
+           steps, where an element converges if [|δ| / (1 − q)] meets [tol].
+           Over a step of a few ulps the contraction [q] is the upper end of
+           its rounding, up to 0.93 where the steps before measured 10⁻⁸, so a
+           few elements in a thousand estimate more than 4 ulps and stall at a
+           zero they hold to one. *)
         let seed =
           Nx.mul (Nx.sqrt a) (Nx.add_s (Nx.mul_s (Nx.cos a) 1e-7) 1.)
         in
-        equal
-          (Oracle.tensor ~rel:1e-13 ())
-          (Nx.sqrt a)
-          (Solution.get
-             (Root.newton ~tol:(Tol.ulps 4.) ~budget:20
-                ~slope:(fun x -> Nx.mul_s x 2.)
-                (fun x -> Nx.sub (Nx.square x) a)
-                seed)));
+        let s =
+          Root.newton ~tol:(Tol.ulps 4.) ~budget:20
+            ~slope:(fun x -> Nx.mul_s x 2.)
+            (fun x -> Nx.sub (Nx.square x) a)
+            seed
+        in
+        cover "an element converges" (Nx.item [] (Nx.any (Solution.ok s)));
+        equal (Oracle.tensor ())
+          (Nx.ones Nx.bool (Nx.shape a))
+          (Nx.logical_or (Solution.ok s) (Solution.is Stalled s));
+        equal (Oracle.tensor ~rel:1e-13 ()) (Nx.sqrt a) (Solution.best s));
+    prop "a converged element's error meets tol at its value" slowed
+      (fun (a, (factor, k)) ->
+        (* A slope [factor] times too steep contracts by [1 − 1 / factor]: the
+           estimate reaches the floats' resolution about [factor] steps from
+           its zero, which a tolerance of [k] ulps may not admit. *)
+        let s =
+          Root.newton ~tol:(Tol.ulps k) ~budget:400
+            ~slope:(fun x -> Nx.mul_s x (2. *. factor))
+            (fun x -> Nx.sub (Nx.square x) a)
+            (Nx.mul_s (Nx.sqrt a) (1. +. 1e-6))
+        in
+        let ok = statuses s
+        and stalled =
+          Oracle.floats
+            (Nx.cast f64 (Nx.cast Nx.int32 (Solution.is Stalled s)))
+        in
+        cover "an element converges" (Array.mem 1. ok);
+        cover "an element stalls" (Array.mem 1. stalled);
+        let x = Solution.best s and e = Solution.error s in
+        Array.iteri
+          (fun i ok ->
+            if ok = 1. then
+              at_most float_exact ~than:1.
+                (Oracle.ulps ~k ~y:(Nx.get [ i ] x) (Nx.get [ i ] e)))
+          ok);
     test "a slope 1000 times too steep never understates the error" (fun () ->
         (* Steps 1000 times too short contract by 0.999 and fall within an ulp
-           of √2 while the estimate is still about 1000 ulps from it. *)
+           of √2 while the estimate is still about 1000 ulps from it, past
+           [tight]: the element stalls. *)
         let z = Float.sqrt 2. in
         let s =
           Root.newton ~tol:tight ~budget:20000
@@ -234,7 +276,8 @@ let newton_tests =
             (fun x -> Nx.sub_s (Nx.square x) 2.)
             (vec [| z +. 1e-8 |])
         in
-        let x = Nx.item [ 0 ] (Solution.get s) in
+        equal bool true (Nx.item [ 0 ] (Solution.is Stalled s));
+        let x = Nx.item [ 0 ] (Solution.best s) in
         at_least float_exact
           ~than:(Float.abs (x -. z))
           (Nx.item [ 0 ] (Solution.error s)));

@@ -296,15 +296,25 @@ raven / llama.cpp (Vulkan; ROCm):
 ## norn, jera
 
 - jera: Newton stops at the floats' limit by three rules (`Search.still`,
-  System.newton's merit-rounding branch, `at_limit` with `bounded`),
-  because `still` floors each component at |x|·ε, which is 0 at 0. One
-  test in norm in `Search.judge` (MINPACK's `hybrd`: a step within
-  xtol·‖x‖) would cover Root, System, Broyden, Anderson and Minimize.
+  System.newton's merit-rounding branch, `at_limit`), because `still`
+  floors each component at |x|·ε, which is 0 at 0. One test in norm in
+  `Search.judge` (MINPACK's `hybrd`: a step within xtol·‖x‖) would cover
+  Root, System, Broyden, Anderson and Minimize.
   Wrong today: `at_limit` reads a step that did not move (q = r = ∞) as at
   the limit; the unscaled `Search.norm` underflows, so a lane of small
-  unknowns converges 100 times off its tolerance; `resolved` converges
-  without meeting `tol`, against `Converged`'s doc. `jera.mli` states the
-  limit rule for Root and System.newton only; state it for every method
+  unknowns converges 100 times off its tolerance.
+- jera: the contraction is measured on the whole vector's norm and
+  multiplies each component's |δᵢ|, which understates a small component
+  coupled to a large one. `Minimize.lbfgs ~memory:3` on
+  0.25 Σ(x² − a)² from √a(1 + 1e-6) converges up to 17 times off
+  `Tol.ulps 0.5` (30 of 300); `System.anderson` with memory 0 and 3 on
+  M (a − x²) / (2√a), M = [[1, .5], [−.5, 1]], up to 220 and 6.5 times.
+  At the floats' limit the error |δ| / (1 − q) takes the last settled q,
+  whose upper end over a step of a few ulps can read 0.93 where the step
+  before measured 1e-8: Newton on √a at `Tol.ulps 4` stalls 2 elements
+  in 1000 held to an ulp. A limit step's bound on q cannot be told from
+  f's evaluation error growing, so lowering q on it converged a lane 120
+  ulps off
 - norn NUTS: ~3.3 ms per eager transition, ~475 µs per leapfrog against
   HMC's ~110 µs on the same density (machine unstated). Only compiled
   rows exist (nuts/schools/64 3.44 ms, M1 Max). Add an eager row, measure

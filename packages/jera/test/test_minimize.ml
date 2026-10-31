@@ -910,8 +910,52 @@ let iterate_tests =
 
 (* Laws *)
 
+(* [convex], a tolerance in ulps, and a fit with residuals left: [noisy] and the
+   amplitude of its sine. *)
+let limited =
+  Gen.(
+    pair convex (pair (float_range 0.25 1.) (pair noisy (float_range 0.1 1.))))
+  |> Gen.with_pp (fun ppf ((a, b), (k, ((p, noise), amp))) ->
+      Format.fprintf ppf "a = %a@ b = %a@ k = %g@ p = %a@ noise %g, %g" Nx.pp a
+        Nx.pp b k Nx.pp p noise amp)
+
 let law_tests =
   [
+    prop "a converged solve's error meets tol at its estimate" limited
+      (fun ((a, b), (k, ((p, noise), amp))) ->
+        (* Under a tolerance below an ulp, a search whose last steps contract
+           slowly, as L-BFGS's and a fit's with large residuals do, reaches the
+           floats' resolution short of it. *)
+        let tol = Tol.ulps k in
+        let y =
+          Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) amp)
+        in
+        let solves =
+          List.map
+            (fun (name, m) ->
+              ( name,
+                Minimize.solve one m ~tol ~budget:200 (objective a b)
+                  (Nx.zeros_like b) ))
+            methods
+          @ [
+              ( "levenberg_marquardt",
+                Minimize.solve one lm ~tol ~budget:200
+                  (fun p -> Nx.sub (model p) y)
+                  (vec [| 1.; 0. |]) );
+            ]
+        in
+        List.iter
+          (fun (name, s) ->
+            let ok = Nx.item [] (Solution.ok s) in
+            cover (name ^ " converges") ok;
+            if List.mem name [ "lbfgs"; "levenberg_marquardt" ] then
+              cover (name ^ " stalls") (Nx.item [] (Solution.is Stalled s));
+            (* The solve adds pairwise, [Oracle.ulps] in order: they differ by
+               rounding. *)
+            if ok then
+              at_most float_exact ~msg:name ~than:(1. +. 1e-12)
+                (Oracle.ulps ~k ~y:(Solution.best s) (Solution.error s)))
+          solves);
     prop "grad is the implicit derivative H⁻¹ 1 (law 1)" convex (fun (a, b) ->
         List.iter
           (fun (_, m) ->

@@ -86,6 +86,16 @@ let dot u v =
   Array.iteri (fun i x -> s := !s +. (x *. b.(i))) a;
   !s
 
+let ulps ~k ~y e =
+  let y = floats y and e = floats e in
+  let n = Array.length e in
+  let square i e =
+    let s = Float.abs y.(i) *. (k *. Float.epsilon) in
+    if e = 0. then 0. else (e /. s) *. (e /. s)
+  in
+  let sum = Array.fold_left ( +. ) 0. (Array.mapi square e) in
+  if n = 0 then 0. else sqrt (sum /. Float.of_int n)
+
 (* Finite differences *)
 
 let central ~eps f x v =

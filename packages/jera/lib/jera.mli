@@ -408,13 +408,14 @@ module Root : sig
       simple zero. {b Error.} As {!System}'s, each element a system of one
       unknown: [e = |δ| q / (1 − q)], with [q] the larger of the last two
       contractions, unbounded while [q ≥ 1] or before three steps; [y] is the
-      estimate. A zero step is a zero, and a step within a unit in the last
-      place after a contracting step converges with [e = |δ|]. A zero or
-      non-finite slope, or a step that cannot move the estimate after one that
-      did not contract, ends the element [Stalled]; a non-finite [f] ends it
+      estimate. A zero step is a zero. A step within a unit in the last place
+      leaves [e = |δ| / (1 − q)] with [q] the last settled contraction, as in
+      {!System}, and converges if [q < 1] and that [e] meets [tol]. A zero or
+      non-finite slope, or a step that cannot move the estimate without
+      converging, ends the element [Stalled]; a non-finite [f] ends it
       [Not_finite]; [budget] iterations end it [Budget_spent], so a budget of 1
-      converges only on a zero step. {b Cost.} One call of [f] and one of
-      [slope] per iteration.
+      converges only on a zero step. {b Cost.} One call of [f] and
+      one of [slope] per iteration.
 
       Raises [Invalid_argument] if [budget < 1]. *)
 end
@@ -455,18 +456,17 @@ module System : sig
       zero. A step that cannot move the estimate, one within a unit in the last
       place of every component, or one whose line search finds no decrease while
       the full step changes [|f|² / 2] by less than its rounding, marks the
-      arithmetic's limit. A lane whose last settled contraction is below 1, [q]
-      over the last step whose rounding does not leave open whether the map
-      contracts, has reached its zero to the floats' precision and converges
-      with [e = |δ| / (1 − q)], the step it could not take and the ones after
-      it; any other ends [Stalled]. A line search that finds no decrease above
-      the rounding converges the same way when that [e] meets [tol] over a step
-      at the floats' limit, one over which [N] moves by no more than the
-      rounding of its two values: there a step moves an unknown at 0 by more
-      than its ulps, and the merit it reaches can rise. Any other ends
-      [Stalled], as does a failed linear solve. A non-finite [f] at the guess or
-      at an estimate ends it [Not_finite]; [budget] iterations end it
-      [Budget_spent].
+      arithmetic's limit, as does a line search that finds no decrease above
+      the rounding over a step at the floats' limit, one over which [N] moves
+      by no more than the rounding of its two values: there a step moves an
+      unknown at 0 by more than its ulps, and the merit it reaches can rise. A
+      lane at the limit whose last settled contraction is below 1, [q] over the
+      last step whose rounding does not leave open whether the map contracts,
+      has [e = |δ| / (1 − q)], the step it could not take and the ones after
+      it, and converges if that meets [tol]. Any other ends [Stalled], as does
+      a line search that finds no decrease otherwise or a failed linear solve.
+      A non-finite [f] at the guess or at an estimate ends it [Not_finite];
+      [budget] iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of [f] through
       {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through
@@ -607,9 +607,12 @@ module Minimize : sig
       does: [e = |δ| q / (1 − q)] per component, with [q] the larger of the
       contractions of the undamped map [x + δ] over the last two steps, and [y]
       the estimate; a lane that meets [tol] takes its last step in full. A step
-      that is not downhill, a line search that finds no decrease, or a failed
-      linear solve ends the lane [Stalled]; a non-finite [f] or gradient at the
-      start ends it [Not_finite]; [budget] iterations end it [Budget_spent].
+      that cannot move the estimate converges as in {!System}, if
+      [e = |δ| / (1 − q)] with [q] the last settled contraction below 1 meets
+      [tol], and otherwise ends the lane [Stalled], as do a step that is not
+      downhill, a line search that finds no decrease and a failed linear
+      solve; a non-finite [f] or gradient at the start ends it [Not_finite];
+      [budget] iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of rune's gradient of [f]
       through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every

@@ -401,18 +401,27 @@ let remaining s delta =
   let gap = Nx.rsub_s 1. s.q in
   Nx.div (Nx.abs delta) (Nx.reshape (Array.append (Nx.shape gap) [| 1 |]) gap)
 
-(* A running lane whose step cannot move its estimate has reached the floats'
-   resolution. If the last step that settled its contraction contracted, [q <
-   1], its estimate is its zero to the arithmetic's precision: it converges. Its
+(* A step the search cannot take leaves the estimate [|δ| / (1 − q)] from its
+   zero when the last step that settled its contraction contracted: its
    estimate stays where it is, so its error counts the step it could not take
-   and the ones after it, [|δ| / (1 − q)]: with a slope 1000 times too steep, [q
-   = 0.999], and the estimate is still 1000 such steps from its zero. Otherwise
-   it stalls. *)
-let resolved s ~delta ~stuck =
+   and the ones after it. With a slope 1000 times too steep, [q = 0.999], and
+   the estimate is still 1000 such steps from its zero. *)
+let bounded tol s delta =
+  Nx.logical_and (contracting s) (accepted tol ~e:(remaining s delta) ~y:s.x)
+
+(* A running lane whose step cannot move its estimate has reached the floats'
+   resolution: it converges where the error [bounded] counts meets [tol], and
+   stalls otherwise, as under a tolerance finer than the floats resolve. A
+   stalled lane that contracted still reports that error. *)
+let resolved tol s ~delta ~stuck =
   let stuck = Nx.logical_and (searching s.st) stuck in
-  let root = Nx.logical_and stuck (contracting s) in
-  let st = settle s.st root Converged in
-  { s with st = settle st stuck Stalled; e = hold root (remaining s delta) s.e }
+  let st = settle s.st (Nx.logical_and stuck (bounded tol s delta)) Converged in
+  let measured = Nx.logical_and stuck (contracting s) in
+  {
+    s with
+    st = settle st stuck Stalled;
+    e = hold measured (remaining s delta) s.e;
+  }
 
 (* A step over which the undamped map moves by no more than the rounding of its
    two values, [q ≤ 2 r]: the contraction it measures, [q − r], is within that
@@ -422,11 +431,6 @@ let resolved s ~delta ~stuck =
 let at_limit s delta =
   let q, r = measure s (Nx.add s.x delta) in
   Nx.less_equal q (Nx.mul_s r 2.)
-
-(* A step the search cannot take leaves the estimate [|δ| / (1 − q)] from its
-   zero, as [resolved] counts. *)
-let bounded tol s delta =
-  Nx.logical_and (contracting s) (accepted tol ~e:(remaining s delta) ~y:s.x)
 
 let judge tol s ~map ~q ~r delta =
   let run = searching s.st in
@@ -456,7 +460,7 @@ let judge tol s ~map ~q ~r delta =
       st;
     }
   in
-  resolved s ~delta ~stuck:(still s.x map)
+  resolved tol s ~delta ~stuck:(still s.x map)
 
 let decide tol s ~map ~q delta =
   judge tol s ~map ~q ~r:(snd (measure s (Nx.add s.x map))) delta

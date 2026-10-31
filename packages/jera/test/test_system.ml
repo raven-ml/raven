@@ -209,6 +209,38 @@ let anderson_tests =
           (Oracle.tensor ~rel:1e-6 ())
           (Oracle.central ~eps:1e-5 (fun t -> Nx.sum (solve t)) theta v)
           (Nx.sum (Nx.mul (Rune.grad' (fun t -> Nx.sum (solve t)) theta) v)));
+    test "a lane 120 ulps off its zero at the floats' limit does not converge"
+      (fun () ->
+        (* f's evaluation error in the large component, coupled into the
+           small one, leaves the small one's computed zero about 120 ulps from
+           √a₀ while Picard's steps shrink to nothing. A contraction of 0.79
+           read over the last steps within rounding puts it past [tol]; the
+           0.56 measured just before them would not. *)
+        let a =
+          vec
+            [|
+              Float.of_string "0x1.07217b2039223p-3";
+              Float.of_string "0x1.4cfba9b2565bep+6";
+            |]
+        and factor = Float.of_string "0x1.a9d9b3b586687p+0" in
+        let m = Nx.create f64 [| 2; 2 |] [| 1.; 0.5; -0.5; 1. |] in
+        let root = Nx.sqrt a in
+        let f x =
+          Nx.div_s
+            (Nx.div
+               (Nx.reshape [| 2 |]
+                  (Nx.matmul m
+                     (Nx.reshape [| 2; 1 |] (Nx.sub a (Nx.square x)))))
+               (Nx.mul_s root 2.))
+            factor
+        in
+        let s =
+          System.solve one
+            (System.anderson ~memory:0)
+            ~linear:Linear.dense ~tol:(Tol.ulps 2.) ~budget:400 f
+            (Nx.mul_s root (1. +. 1e-6))
+        in
+        equal bool false (is Converged s));
     test "a negative memory raises" (fun () ->
         invalid_with "Jera.System.anderson: memory = -1 is negative" (fun () ->
             System.anderson ~memory:(-1)));
@@ -216,8 +248,55 @@ let anderson_tests =
 
 (* Laws *)
 
+(* [system], a factor by which a step is too short, a tolerance in ulps, and a
+   method: Newton's with a derivative [factor] times too steep, Broyden's, or
+   Anderson's without memory on the fixed point of [z] with its residual
+   [factor] times too small. *)
+let limited =
+  let open Gen in
+  (let+ az = system
+   and+ factor = float_range 1. 8.
+   and+ k = float_range 0.25 8.
+   and+ m = one_of (List.map constant [ "newton"; "broyden"; "anderson" ]) in
+   (az, (factor, (k, m))))
+  |> with_pp (fun ppf ((a, z), (factor, (k, m))) ->
+      Format.fprintf ppf "a = %a@ z = %a@ factor = %g@ k = %g@ %s" Nx.pp a
+        Nx.pp z factor k m)
+
 let law_tests =
   [
+    prop "a converged solve's error meets tol at its estimate" limited
+      (fun ((a, z), (factor, (k, m))) ->
+        (* Seeded near the zero, the methods reach the floats' resolution,
+           some short of a tolerance of [k] ulps. *)
+        let tol = Tol.ulps k and f = field a (rhs a z) in
+        let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
+        let s =
+          match m with
+          | "newton" ->
+              let derivative x dx = Nx.mul_s (derivative f x dx) factor in
+              System.solve one
+                (System.newton ~derivative)
+                ~linear:Linear.dense ~tol ~budget:300 f seed
+          | "broyden" ->
+              System.solve one System.broyden ~linear:Linear.dense ~tol
+                ~budget:100 f seed
+          | _ ->
+              System.solve one
+                (System.anderson ~memory:0)
+                ~linear:Linear.dense ~tol ~budget:300
+                (fun x -> Nx.div_s (fixed z x) factor)
+                seed
+        in
+        cover (m ^ " converges") (is Converged s);
+        (* Broyden's differences estimate the Jacobian well enough that its
+           steps contract fast to the end. *)
+        if m <> "broyden" then cover (m ^ " stalls") (is Stalled s);
+        (* The solve adds pairwise, [Oracle.ulps] in order: they differ by
+           rounding. *)
+        if is Converged s then
+          at_most float_exact ~than:(1. +. 1e-12)
+            (Oracle.ulps ~k ~y:(Solution.best s) (Solution.error s)));
     prop "grad is the implicit derivative J⁻ᵀ 1 (law 1)" system (fun (a, z) ->
         let b = rhs a z in
         let solve b = Solution.get (newton (field a b) (Nx.zeros_like z)) in

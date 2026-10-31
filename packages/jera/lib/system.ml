@@ -59,8 +59,7 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
        resolution, or when no trial decreases the merit and either the full step
        changes the merit by less than its rounding, or the step is at the
        floats' limit, the undamped map moving over it by no more than the
-       rounding of its two values, and [|δ| / (1 − q)] with the last settled
-       contraction meets [tol]. At [f]'s evaluation level a step moves an
+       rounding of its two values. At [f]'s evaluation level a step moves an
        unknown at 0 by more than its ulps, and the merit it reaches can rise. *)
     let phi0 = half_square s.fx in
     let unmoved = Nx.all ~axes:[ -1 ] (Nx.equal x s.x) in
@@ -70,13 +69,13 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
            (Nx.less_equal
               (Nx.abs (Nx.sub full phi0))
               (Nx.mul_s phi0 (sqrt (Num.eps dtype))))
-           (Nx.logical_and at_limit (Search.bounded tol s delta)))
+           at_limit)
     in
     let s = { s with n = Nx.add s.n tries } in
     let stuck =
       Nx.logical_and run (Nx.logical_or rounded (Nx.logical_and found unmoved))
     in
-    let s = Search.resolved s ~delta ~stuck in
+    let s = Search.resolved tol s ~delta ~stuck in
     let found = Nx.logical_and found (Nx.logical_not unmoved) in
     let st = settle s.Search.st (Nx.logical_not found) Stalled in
     ( { s with x = Search.hold found x s.x; fx = Search.hold found fx s.fx; st },

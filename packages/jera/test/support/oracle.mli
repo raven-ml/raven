@@ -27,6 +27,12 @@ val floats : ('a, 'b, 'd) Nx.t -> float array
 val dot : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> float
 (** [dot u v] is [Σ u v] over two real tensors of one shape, in OCaml floats. *)
 
+val ulps : k:float -> y:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> float
+(** [ulps ~k ~y e] is the measure [Tol.ulps k] takes of an error [e] at [y] of
+    float64 components, in OCaml floats: the root mean square of
+    [e_i / (k ε |y_i|)], a component with [e_i = 0] counting [0], and [0] for
+    no components. A solve meets the tolerance where it is at most [1]. *)
+
 (** {1:differences Finite differences} *)
 
 val central :

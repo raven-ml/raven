@@ -379,6 +379,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Root.newton`, `System.solve`, `System.lanes` and `Minimize.solve` end a lane
+  whose step cannot move its estimate `Stalled` unless its error meets `tol`.
+  It used to converge with its error past `tol` under a tolerance near an ulp
+  or a slowly contracting search.
 - Every function is polymorphic in its data's device set, which its types
   carry: `('a, 'd) Solution.t`, `('x, 'f, 'd) Minimize.t`, `('b, 'd) Grid.t`
   and the like. Constants are placed whole on each device the data lies on.
