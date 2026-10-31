@@ -715,6 +715,49 @@ let eigh_fails () =
   equal (array bool) [| true; true; false; false |] (Array.map Float.is_nan w);
   equal (array float_exact) [| 2.; 3. |] (Array.sub w 2 2)
 
+(* Matrices of a norm past the dtype's range or of subnormal elements, alone
+   and in one batch, whose matrices each take their own scale: [[a, b],
+   [b, -a]] has eigenvalues [±hypot a b] and norm [√2 hypot a b]. Each computed
+   eigenvalue is within the stated [γ(16 (R + n))] of the norm, and a
+   subnormal's spacing, of the exact one, and [‖vᵀ v - I‖_F] is within the
+   stated [g]. *)
+let eigh_extremes () =
+  let check (type s) name (dt : (float, s) D.t) u pairs =
+    let k = List.length pairs in
+    let m =
+      Nx.create dt [| k; 2; 2 |]
+        (Array.concat (List.map (fun (a, b) -> [| a; b; b; -.a |]) pairs))
+    in
+    let x = Nx.to_array m in
+    let l = Array.init k (fun i -> Float.hypot x.(4 * i) x.((4 * i) + 1)) in
+    let exact =
+      Array.init (2 * k) (fun e ->
+          if e mod 2 = 0 then -.l.(e / 2) else l.(e / 2))
+    in
+    let rf = float_of_int (rounds 2 u) in
+    let tol b =
+      (gamma u (16. *. (rf +. 2.)) *. l.(b) *. Float.sqrt 2.) +. eta u
+    in
+    let g = gamma u (16. *. (rf +. 2.) *. (1. +. Float.sqrt 2.)) in
+    let values () = linalg (Eigh_values { dtype = dt; a = m }) in
+    values_near ~msg:name ~tol 2 (Lowered.run values) exact;
+    let eigh () = linalg (Eigh { dtype = dt; a = m }) in
+    let w = Lowered.run (fun () -> fst (eigh ())) in
+    values_near ~msg:(name ^ ", with vectors") ~tol 2 w exact;
+    let v = mat k 2 2 (Lowered.run (fun () -> snd (eigh ()))) in
+    frobenius_near ~msg:(name ^ ": vᵀ v = I")
+      ~tol:(fun _ -> g +. gamma u64 4.)
+      (gram v)
+  in
+  let big32 = (2.5e38, 1e38) and small32 = (1e-39, 4e-40) in
+  let big64 = (1.2e308, 5e307) and small64 = (1e-309, 4e-310) in
+  check "float32 norm past 3.4e38" D.Float32 0x1p-24 [ big32 ];
+  check "float32 subnormal" D.Float32 0x1p-24 [ small32 ];
+  check "float32 both in one batch" D.Float32 0x1p-24 [ big32; small32 ];
+  check "float64 norm past 1.8e308" D.Float64 0x1p-53 [ big64 ];
+  check "float64 subnormal" D.Float64 0x1p-53 [ small64 ];
+  check "float64 both in one batch" D.Float64 0x1p-53 [ big64; small64 ]
+
 (* Refusals *)
 
 let refuses f =
@@ -789,6 +832,7 @@ let () =
            [
              law "v diag w vᵀ reconstructs a" ~count:4 square eigh_law;
              test "NaN in the lower triangle is NaN" eigh_fails;
+             test "norms past the dtype's range, and subnormals" eigh_extremes;
            ];
          test "complex operands and eig are refused" refused;
        ])

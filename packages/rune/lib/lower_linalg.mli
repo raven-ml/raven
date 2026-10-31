@@ -39,8 +39,8 @@
       [a_j] has [‖a_j - q r_j‖₂ <= g ‖a_j‖₂], and each element of [qᵀ q - I]
       is at most [g]. [r]'s diagonal has either sign.
     - [Eigh] and [Eigh_values]: by two-sided Jacobi rotations of the symmetric
-      matrix of [a]'s lower triangle. Each eigenvalue is within
-      [γ(16 (R + n)) ‖a‖_F] of the exact one and, with
+      matrix of [a]'s lower triangle, scaled by a power of two. Each
+      eigenvalue is within [γ(16 (R + n)) ‖a‖_F] of the exact one and, with
       [g = γ(16 (R + n) (1 + √n))], [‖a - v diag w vᵀ‖_F <= g ‖a‖_F] and
       [‖vᵀ v - I‖_F <= g]. A matrix fails where its read triangle holds NaN or
       an infinity, or where its rotated elements off the diagonal have a norm

@@ -200,11 +200,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
-- compiled `eigh`'s floor overflows: `norm_roundoff` (lower_linalg.ml)
-  multiplies the norm by its scale before the roundoff, so a float32
-  matrix whose Frobenius norm passes 3.4e38 skips every rotation and fails
-  to NaN, e.g. [[2.5e38, 1e38], [1e38, -2.5e38]] (eigenvalues ±2.7e38).
-  Multiply by the roundoff first, test that matrix
 - compiled `eigh` skips a pair below u·‖A‖_F (`norm_roundoff`), svd below
   u·‖a‖‖b‖ per pair: two rules for one cause. One relative floor in
   `tangents`, |γ| ≤ u·√(|α||β|) (Demmel and Veselić, LAPACK Working Note

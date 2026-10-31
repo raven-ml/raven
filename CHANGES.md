@@ -273,6 +273,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx.eigh` of a matrix whose norm passes its dtype's range, such
+  as `float32` `[[2.5e38, 1e38], [1e38, -2.5e38]]`, returns its eigenvalues
+  and eigenvectors instead of NaN: the rotations run on the matrix scaled by
+  a power of two, as a compiled `Nx.svd`'s do. An eigenvalue past the range
+  is an infinity.
 - **Breaking:** transformations take a structure (`Nx.Ptree.t`) for each value
   whose arrays they read, of mixed dtypes in one pass: `grad p f params`,
   `value_and_grad p f`, `jvp p q f params tangents` and `vjp p q f params`.

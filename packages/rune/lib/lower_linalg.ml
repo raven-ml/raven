@@ -226,20 +226,15 @@ let roundoff dt = Float.ldexp 1. (-(snd (Dtype.finfo dt) + 1))
 
 (* [norm_roundoff l] is the unit roundoff times the Frobenius norm of each
    symmetric matrix whose lower triangle [l] holds, zeros above it: an element
-   below the diagonal counts twice. [l] is divided by its largest magnitude
-   first, so that no square overflows. *)
+   below the diagonal counts twice. [l]'s magnitudes are below 2, so that no
+   square overflows. *)
 let norm_roundoff l =
   let _, m, n = matrix l in
-  let largest = over_matrix Op.Max (abs l) in
-  let scale =
-    Ops.where (Ops.gt largest (zero largest)) largest (float largest 1.)
-  in
-  let l = fdiv l scale in
   let twice =
     Ops.where (Ops.eq (row_index m) (column_index n)) (float l 1.) (float l 2.)
   in
   let squares = over_matrix Op.Add (Ops.mul twice (Ops.mul l l)) in
-  Ops.mul (Ops.mul (Ops.sqrt squares) scale) (float scale (roundoff (dtype l)))
+  Ops.mul (Ops.sqrt squares) (float squares (roundoff (dtype l)))
 
 (* Loops
 
@@ -653,12 +648,19 @@ let eigh device ~vectors a =
   let dt = dtype a in
   let batch, n, _ = matrix a in
   let r = Shape.ndim a in
-  (* The lower triangle, mirrored: the upper one is never read. *)
+  (* The lower triangle, mirrored: the upper one is never read. The rotations
+     run on it divided by the power of two of its largest magnitude, and the
+     eigenvalues take it back: no difference of two diagonal elements, rotated
+     element or square then overflows. The division rounds only an element
+     whose quotient is subnormal, and only a square far below the floor
+     underflows. *)
   let lower = Ops.ge (row_index n) (column_index n) in
-  let floor =
-    Shape.squeeze ~axis:(-1) (norm_roundoff (Ops.where lower a (zero a)))
-  in
   let x = Ops.where lower a (transpose a) in
+  let e = exponent x in
+  let x = Lower_real.scale x (Shape.expand (negate e) (Shape.shape x)) in
+  let floor =
+    Shape.squeeze ~axis:(-1) (norm_roundoff (Ops.where lower x (zero x)))
+  in
   let rows u = Shape.unsqueeze u (-1) and columns u = Shape.unsqueeze u (-2) in
   let round _ = function
     | x :: v ->
@@ -692,7 +694,12 @@ let eigh device ~vectors a =
   in
   let w = diagonal (List.hd rotated) in
   let order = order ~descending:false w in
-  let w = defined ok (take w (r - 2) order) in
+  let w = take w (r - 2) order in
+  let w =
+    defined ok
+      (Lower_real.scale w
+         (Shape.expand (Shape.squeeze ~axis:(-1) e) (Shape.shape w)))
+  in
   match List.tl rotated with
   | [] -> [| w |]
   | v :: _ -> [| w; defined ok (by_order order v) |]
