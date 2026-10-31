@@ -122,7 +122,7 @@ let memory_coalescing sink (r : Renderer.t) =
               end
           | _ -> invalid_arg "an index of memory needs a buffer and one index"
         end)
-      (toposort ~calls:Enter sink);
+      (toposort ~calls:Skip sink);
     (* Build the replacements. *)
     let replacements = ref [] in
     List.iter

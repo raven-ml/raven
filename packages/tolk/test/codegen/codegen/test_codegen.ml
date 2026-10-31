@@ -3663,15 +3663,122 @@ let blocks =
 (* Calls in a kernel
 
    A call of an external function calls the symbol the program is linked
-   against. *)
+   against. A call of a sink runs its body as a function of the kernel's
+   program, whose parameters, by slot, are the call's arguments. The kernels
+   are written as a front end writes them, a body's parameters taking their
+   argument's address space and one element for an index. *)
 
-let int_param ~name slot n = Shape.param ~shape:[ Int n ] ~name slot Int32
+let int_param ?(addrspace = Dtype.Global) ?volatile ~name slot n =
+  Shape.param ~shape:[ Int n ] ~name ~addrspace:(Some addrspace) ?volatile slot
+    Int32
+
+let loop n axis = Ops.range ~axis_type:Loop ~dtype:Int32 (Int n) [ axis ]
 let at u i = Ops.index u [ i ]
 let first u = at u (Ops.int 0)
 let i32 n = Ops.int ~dtype:Int32 n
 
 let kernel name l =
   Ops.sink ~kernel:(Ops.kernel_info ~name ~opts_to_apply:[] ()) l
+
+(* [out[i] = a[i] + 1] over [n] elements, [out] in [addrspace]. *)
+let incr ?(addrspace = Dtype.Global) n =
+  let out = int_param ~addrspace ~name:"out" 0 n
+  and a = int_param ~name:"A" 1 n in
+  let i = loop n 0 in
+  Ops.sink [ Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ] ]
+
+(* [c[i] = (a[i] + 1)^2 + 10]: the kernel calls [square], which calls [incr]
+   twice into registers, the second after the first. *)
+let nested_calls () =
+  let n = 4 in
+  let square =
+    let out = int_param ~addrspace:Reg ~name:"out" 0 n
+    and a = int_param ~name:"A" 1 n in
+    let tmp0 = Shape.alloc_like ~addrspace:Reg a
+    and tmp1 = Shape.alloc_like ~addrspace:Reg a in
+    let call0 = Ops.call ~name:"incr" (incr ~addrspace:Reg n) [ tmp0; a ] in
+    let call1 =
+      Ops.call ~name:"incr" (incr ~addrspace:Reg n)
+        [ tmp1; Ops.after a [ call0 ] ]
+    in
+    let i = loop n 1 in
+    let v = at (Ops.after tmp1 [ call1 ]) i in
+    Ops.sink [ Ops.end_ (Ops.store (at out i) Ops.O.(v * v)) [ i ] ]
+  in
+  let c = int_param ~name:"C" 0 n and a = int_param ~name:"A" 1 n in
+  let tmp = Shape.alloc_like ~addrspace:Reg a in
+  let call = Ops.call ~name:"square" square [ tmp; a ] in
+  let i = loop n 2 in
+  kernel "nested_calls"
+    [
+      Ops.end_
+        (Ops.store (at c i) Ops.O.(at (Ops.after tmp [ call ]) i + i32 10))
+        [ i ];
+    ]
+
+(* [c[i] = a[i] * 3], each element by a call of [mul] on one element of each. *)
+let call_loop () =
+  let mul =
+    let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
+    Ops.sink [ Ops.store (first p) Ops.O.(first q * i32 3) ]
+  in
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let i = loop 4 0 in
+  kernel "call_loop_mini"
+    [ Ops.end_ (Ops.call ~name:"mul" mul [ at c i; at a i ]) [ i ] ]
+
+(* [out[idx[0]] = 7] where [idx[0]] is in bounds, called on a register that
+   holds zeros; then [c[j] = tmp[j] + 1]. *)
+let gated_call () =
+  let n = 4 in
+  let gated_store =
+    let out = int_param ~addrspace:Reg ~name:"out" 0 n
+    and idx = int_param ~name:"idx" 1 1 in
+    let i = first idx in
+    let valid = Ops.O.(i >= i32 0 land (i < i32 n)) in
+    Ops.sink [ Ops.store (at out (Shape.valid i valid)) (i32 7) ]
+  in
+  let c = int_param ~name:"C" 0 n and a = int_param ~name:"A" 1 1 in
+  let tmp = Shape.alloc_like ~addrspace:Reg c in
+  let i = loop n 0 in
+  let init = Ops.end_ (Ops.store (at tmp i) (i32 0)) [ i ] in
+  let call =
+    Ops.call ~name:"gated_store" gated_store [ Ops.after tmp [ init ]; a ]
+  in
+  let j = loop n 1 in
+  kernel "call_with_gated_store"
+    [
+      Ops.end_
+        (Ops.store (at c j) Ops.O.(at (Ops.after tmp [ call ]) j + i32 1))
+        [ j ];
+    ]
+
+(* [out[i] += x[i] * k]: [k] is a constant of the body, so two calls with two
+   constants call two bodies of one name. *)
+let axpy k =
+  let out = int_param ~name:"out" 0 4 and x = int_param ~name:"x" 1 4 in
+  let i = loop 4 0 in
+  Ops.sink
+    [
+      Ops.end_ (Ops.store (at out i) Ops.O.(at out i + (at x i * i32 k))) [ i ];
+    ]
+
+let two_bodies () =
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let c2 = Ops.after c [ Ops.call ~name:"axpy" (axpy 2) [ c; a ] ] in
+  let c3 = Ops.after c [ Ops.call ~name:"axpy" (axpy 3) [ c2; a ] ] in
+  let i = loop 4 1 in
+  kernel "uopfunc"
+    [ Ops.end_ (Ops.store (at c3 i) Ops.O.(at c3 i + i32 1)) [ i ] ]
+
+(* A body's volatile parameter stays volatile in its function. *)
+let volatile_call () =
+  let fence =
+    let p = int_param ~volatile:true ~name:"p" 0 1 in
+    Ops.sink [ Ops.store (first p) (i32 1) ]
+  in
+  let c = int_param ~volatile:true ~name:"C" 0 1 in
+  kernel "volatile_call" [ Ops.call ~name:"fence" fence [ first c ] ]
 
 (* [frexp] writes the exponent of 8, 4, through its pointer into [c[0]]; then
    [c[1] = c[0] + 1]. *)
@@ -3703,6 +3810,41 @@ let calls =
         (runs_on_host call_out [] [ 4; 5 ]);
       test "an external function returns its value"
         (runs_on_host call_ret [] [ 8 ]);
+      test "a nested call runs its body twice through registers"
+        (runs_on_host nested_calls
+           [ (1, int_values [ 0; 1; 2; 3 ]) ]
+           [ 11; 14; 19; 26 ]);
+      test "a call in a loop runs once per element"
+        (runs_on_host call_loop
+           [ (1, int_values [ 1; 2; 3; 4 ]) ]
+           [ 3; 6; 9; 12 ]);
+      test "a call's gated store writes where its gate holds"
+        (runs_on_host gated_call [ (1, int_values [ 2 ]) ] [ 1; 1; 8; 1 ]);
+      test "bodies of one name traced apart are two functions" (fun () ->
+          let prg = Codegen.to_program (two_bodies ()) (Lazy.force host) in
+          let src = source prg in
+          equal int 1 (occurrences "static inline void axpy(" src);
+          equal int 1 (occurrences "static inline void axpy_1(" src);
+          equal (array Dtypes.value)
+            (int_values [ 6; 11; 16; 21 ])
+            (List.assoc 0 (Run.on_host prg [ (1, int_values [ 1; 2; 3; 4 ]) ])));
+      test "one body called twice is one function" (fun () ->
+          let prg = Codegen.to_program (nested_calls ()) (Lazy.force host) in
+          equal int 1 (occurrences "static inline void incr(" (source prg));
+          equal int 2 (occurrences "  incr(" (source prg)));
+      test "a call of a sink without a name is refused" (fun () ->
+          let p = int_param ~name:"p" 0 1 in
+          let body = Ops.sink [ Ops.store (first p) (i32 1) ] in
+          let c = int_param ~name:"C" 0 1 in
+          let k = kernel "unnamed" [ Ops.call body [ first c ] ] in
+          raises_match
+            (Exn.invalid_arg ~sub:"needs a name")
+            (fun () -> Codegen.to_program k (Lazy.force host)));
+      test "a volatile parameter of a body is volatile in its function"
+        (fun () ->
+          let prg = Codegen.to_program (volatile_call ()) (Lazy.force host) in
+          let src = source prg in
+          equal int 1 (occurrences "fence(volatile int* " src));
     ]
 
 let () =

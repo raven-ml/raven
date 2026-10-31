@@ -19,8 +19,9 @@
 (** {1:order Linearizing} *)
 
 val linearize : Ops.t -> Ops.t list
-(** [linearize sink] is the nodes [sink] reaches ({!Ops.toposort}), each after
-    its sources, [sink] last.
+(** [linearize sink] is the nodes [sink] reaches outside the bodies of its
+    calls ({!Ops.toposort}[ ~calls:Skip]), each after its sources, [sink]
+    last.
 
     Among the topological orders, it takes the one closest to the ideal order,
     which sorts nodes by, in turn:

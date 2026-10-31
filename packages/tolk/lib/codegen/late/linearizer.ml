@@ -39,12 +39,14 @@ let pp_priority ppf (run_count, priority, extra) =
   Format.fprintf ppf "(%d, %d, %a)" run_count priority pp_extra extra
 
 let linearize sink =
-  let lst = toposort ~calls:Enter sink in
+  let lst = toposort ~calls:Skip sink in
   let out_degree = Tbl.create 256 and priorities = Tbl.create 256 in
   let degree u = Option.value ~default:0 (Tbl.find_opt out_degree u) in
   List.iter
     (fun u ->
-      List.iter (fun s -> Tbl.replace out_degree s (degree s + 1)) (src u);
+      List.iter
+        (fun s -> Tbl.replace out_degree s (degree s + 1))
+        (src_without_body u);
       Tbl.replace priorities u (priority u))
     lst;
   (* Number the nodes in the ideal order. *)
@@ -69,7 +71,7 @@ let linearize sink =
           if d = 0 then Ready.add (Tbl.find nkey v) ready else ready
         in
         place
-          (List.fold_left release (Ready.remove k ready) (src u))
+          (List.fold_left release (Ready.remove k ready) (src_without_body u))
           (u :: placed)
   in
   let lst = place (Ready.singleton (Tbl.find nkey sink)) [] in

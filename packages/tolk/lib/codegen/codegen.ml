@@ -1184,7 +1184,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
      weak result CAST into a gated WHERE, remaking the weak node, and it
      cycles *)
   let sink =
-    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() sink
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
       (After_sources (Uop_weak.pm_lower_weak ++ Coalesce.indexing_simplify))
   in
   (* final symbolic before decomp *)
@@ -1282,6 +1282,20 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       raise e);
   sink
 
+(* A call of a sink inside a kernel runs its body as code of the kernel's
+   program: the body is lowered alone, unoptimised, before the kernel. *)
+let pm_lower_calls =
+  pm (fun () ->
+      [
+        rule_ctx
+          (Upat.op Op.Call ~name:"call" ~allow_any_len:true
+             ~src:[ Upat.op Op.Sink ])
+          (fun ren m ->
+            let call = m "call" in
+            let body = full_rewrite_to_sink ~optimize:false (body call) ren in
+            Some (replace call ~src:(body :: src_without_body call)));
+      ])
+
 (* Linearizing *)
 
 (* inject IF/ENDIF. only needed if device doesn't support gated stores *)
@@ -1330,6 +1344,31 @@ let line_rewrite lst m ctx =
       lines)
     lst
 
+(* A lowered call body becomes the list of its lines, named as its call: the
+   renderer writes it as a function of the kernel's program. *)
+let pm_call_fixup =
+  pm (fun () ->
+      [
+        rule
+          (Upat.op Op.Call ~name:"call" ~allow_any_len:true
+             ~src:[ Upat.op Op.Sink ~name:"sink" ])
+          (fun m ->
+            let call = m "call" in
+            let name =
+              match arg call with
+              | Call { name = Some n; _ } -> Helpers.to_function_name n
+              | _ -> invalid_arg "a call inside a kernel needs a name"
+            in
+            let lines =
+              line_rewrite
+                (Linearizer.linearize (m "sink"))
+                (pm_linearize_cleanups ++ pm_alloc_to_buf)
+                ()
+            in
+            let body = v Op.Linear ~src:lines ~arg:(String name) in
+            Some (replace call ~src:(body :: src_without_body call)));
+      ])
+
 (* Programs *)
 
 let pp_opts ppf = function
@@ -1345,6 +1384,10 @@ let do_linearize prg sink =
   let k = kernel_info sink in
   if setting Setting.debug >= 3 && k.applied_opts <> [] then
     Format.printf "%-25s opts: %a@." (function_name k) pp_opts k.applied_opts;
+  let sink =
+    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() sink
+      (After_sources pm_call_fixup)
+  in
   let lst =
     line_rewrite
       (Linearizer.linearize sink)
@@ -1527,6 +1570,10 @@ let kernel_of ast =
 let linearized ?beam ast (ren : Renderer.t) =
   let (_ : kernel_info) = kernel_of ast in
   let optimize = Option.is_none (tag ast) in
+  let ast =
+    graph_rewrite ~calls:Enter ~pass:Once ~ctx:ren ast
+      (After_sources pm_lower_calls)
+  in
   let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
   let info = program_info_of_sink ~target:ren.target full_sink in
   graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()

@@ -107,6 +107,7 @@ is scope, not a divergence: the part left out is listed here, and
 | Pickling in `uop/ops.py` and `renderer/__init__.py`: `Renderer.__reduce__`, `UOp.__reduce__`, `CallInfo.__reduce__`, `UPat.__reduce__`, `PatternMatcher.__reduce__`, `deconstruct_function`, `TEST_PICKLE` | raven has no persistent jit cache. |
 | `CallInfo.grad_fxn`, `CallInfo.precompile_backward`, and the `grad_fxn` of `UOp.call` and `call_with_outputs` | rune owns differentiation. |
 | `UOp.metadata` and `all_metadata` | they carry `Metadata`, excluded above. |
+| `uopfunc` and `pm_renumber_slots` in `uop/ops.py` | a decorator that traces a Python function into a call body, its arguments made parameters, and renumbers the body's ranges and registers; a front end builds a body's parameters itself. |
 | `UOp.__getitem__` | Python's subscript syntax; its buffer path is `shrink`, `permute` and `index`, which callers compose. |
 | `consumer_map_from_toposort` and `UOp.on_creation_device` | their readers, `pyrender` and the `NPY` and `PYTHON` devices, are not ported. |
 | Nodes as tags (`uop/ops.py:546`) | only `function.py`'s callify, excluded above, tags nodes with nodes; tags are literals. |

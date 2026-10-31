@@ -91,6 +91,14 @@ val to_program :
     + an {!Op.Binary} of that source compiled by [ren]'s compiler
       ({!Renderer.Compiler.compile_cached}).
 
+    A call of a sink inside [ast] runs its body as part of the program: before
+    [ast] is lowered, each such body, innermost first, is lowered alone without
+    optimisation ({!full_rewrite_to_sink}[ ~optimize:false]), and when the
+    sink is linearized each lowered body becomes the {!Op.Linear} of its
+    instructions, made as the program's are, named after its call
+    ({!Helpers.to_function_name}). The renderer writes such a body as a
+    function ({!Cstyle}).
+
     [ast] is a kernel's sink. [to_program ast ren] and
     [compile (linearize ast ren) ren] are equal programs: [to_program] is the
     pipeline that keeps what it makes, {!linearize} and {!compile} the one that
@@ -122,7 +130,8 @@ val to_program :
     read back from disk too.
 
     Raises [Invalid_argument] if [ast] is not an {!Op.Sink} with kernel
-    information, or as {!full_rewrite_to_sink} does. Raises
+    information, if a call of a sink inside it has no name, or as
+    {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
 
 val made : Ops.t -> Renderer.t -> Ops.t option

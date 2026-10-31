@@ -816,6 +816,9 @@ thread.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.
+- A kernel can call a sink: `Codegen.to_program` lowers its body alone,
+  unoptimised, and `Cstyle.clang` writes it as a function of the program, each
+  body once, before the kernel.
 - A call of an external function calls its symbol, which `Cstyle.clang`
   declares and the host links against, where it called a pointer the
   function's body held: a kernel can call `sqrt` or `frexp` of the C library.

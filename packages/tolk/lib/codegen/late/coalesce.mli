@@ -32,8 +32,8 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     is no wider than that alignment, so that every vector access is aligned to
     its width. A merged load is a {!Op.Shrink} of the buffer, whose
     elements each former load reads by index; a merged store stores the stack of
-    the former values. Register memory and volatile parameters are left as they
-    are, and so is everything under {!Setting.dmc}.
+    the former values. Register memory, volatile parameters and the bodies of
+    calls are left as they are, and so is everything under {!Setting.dmc}.
 
     Raises [Invalid_argument] if a load or store is gated, is not through an
     {!Op.Index} of one index, or two stores write one element. *)
