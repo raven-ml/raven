@@ -55,6 +55,8 @@ All notable changes to this project will be documented in this file.
   float16 and bfloat16 compute them at float32. They stay exact at logits
   whose sigmoid underflows, and their scores finite at means down to the
   least subnormal.
+- `Dist.quantile` of `Dist.laplace` has the derivative `2 scale` in `p` at
+  the median, where it was `0.`.
 - The gradient of `Dist.binomial` and `Dist.bernoulli` in a logit of
   exactly `0.` is the score, where it was `0.`.
 - Add `Diag.psis`, Pareto smoothed importance weights with each set's `k̂`,

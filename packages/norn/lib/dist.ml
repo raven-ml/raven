@@ -610,9 +610,16 @@ let cauchy ~loc ~scale =
     ~draw:(fun k dt s -> cauchy_quantile (open_unit k dt s))
     ~quantile:cauchy_quantile ()
 
+(* [log1p (2d)] below the median and [-log1p (-2d)] from it, [d = p - 1/2]:
+   each arm reads [d] only where it is taken, so the arm at the median has
+   its derivative [2] there, where [sign d |...|] would have [0]. *)
 let laplace_quantile p =
   let d = Nx.sub_s p 0.5 in
-  Nx.neg (Nx.mul (Nx.sign d) (Nx.log1p (Nx.mul_s (Nx.abs d) (-2.))))
+  let below = Nx.less d (const d 0.) in
+  let lo = inside below d 0. and hi = Nx.where below (const d 0.) d in
+  Nx.where below
+    (Nx.log1p (Nx.mul_s lo 2.))
+    (Nx.neg (Nx.log1p (Nx.mul_s hi (-2.))))
 
 let laplace ~loc ~scale =
   location_scale "laplace" ~loc ~scale

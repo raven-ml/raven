@@ -1369,6 +1369,21 @@ let count_masses =
             (Nx.to_array (Rune.jit' (fun p -> D.factors (d p) counts) p)));
     ]
 
+let laplace =
+  group "laplace"
+    [
+      prop "the laplace quantile's derivative is 2 scale / (1 - |2p - 1|)"
+        ~examples:[ 0.5 ]
+        Gen.(float_range 0.01 0.99)
+        (fun p ->
+          cover "at the median" (p = 0.5);
+          let d = D.laplace ~loc:(f64 0.3) ~scale:(f64 1.3) in
+          equal
+            (float_rel ~rel:1e-12 ~abs:0.)
+            (2.6 /. (1. -. Float.abs ((2. *. p) -. 1.)))
+            (item (Rune.grad' (D.quantile d) (f64 p))));
+    ]
+
 let validation =
   group "parameter checks"
     [
@@ -1571,4 +1586,5 @@ let () =
          transforms;
          binomial;
          count_masses;
+         laplace;
        ])
