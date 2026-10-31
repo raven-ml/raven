@@ -1154,8 +1154,14 @@ let export_law n =
   ignore (Sys.opaque_identity other)
 
 (* The host keeps a collected buffer of 64 KiB or more for the next buffer of
-   its size, unless a bigarray of it lives, which keeps its bytes. *)
+   its size, unless a bigarray of it lives, which keeps its bytes. The test
+   starts from an empty cache, with the buffers of earlier tests collected:
+   one collected during it would enter the cache after its buffer, and at a
+   cycle's end could push it out as the least recently kept. *)
 let test_host_cache () =
+  Gc.full_major ();
+  Gc.full_major ();
+  Rig.free_cache Rig.host;
   let n = (64 * kib) + 4093 in
   let first = dropped Rig.host n in
   Gc.full_major ();
