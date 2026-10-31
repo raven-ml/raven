@@ -441,6 +441,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Ode.march`, `Split.march` and `Sde.march` accept monotone times a tiny gap
+  apart. Their check multiplied each gap by the first, which underflowed to
+  zero, and raised, for gaps of `1e-162` in float64.
 - `System.solve`, `System.lanes` and `Minimize.solve` measure the steps of
   unknowns below about `1e-140` without underflow in their convergence test.
   Such a lane could stall at its zero, or converge farther from it than `tol`

@@ -15,8 +15,10 @@ let check fn ~steps at =
     let prev = Nx.slice [ Nx.R (0, n - 1) ] at
     and next = Nx.slice [ Nx.R (1, n) ] at in
     let d = Nx.sub next prev in
-    let first = Nx.slice [ Nx.R (0, 1) ] d in
-    let same_sign = Nx.greater (Nx.mul d first) (Nx.zeros_like d) in
+    (* Signs compared, not multiplied: the product of two gaps of 1e-162
+       underflows to zero. A zero first gap fails at [1]. *)
+    let up = Nx.greater_s (Nx.slice [ Nx.R (0, 1) ] d) 0. in
+    let same_sign = Nx.where up (Nx.greater_s d 0.) (Nx.less_s d 0.) in
     Nx.check
       Nx.Ptree.(pair tensor tensor)
       same_sign (prev, next)

@@ -161,6 +161,15 @@ let march_tests =
             (Nx.get [ 1 ] q, Nx.get [ 1 ] p)
         in
         equal (Oracle.tensor ~rel:1e-13 ()) (scalar 1.) (Nx.get [ 1 ] q'));
+    cases "times whose gaps multiply to below the floats are monotone"
+      ~id:(fun a -> Printf.sprintf "[%g; %g; %g]" a.(0) a.(1) a.(2))
+      [ [| 0.; 1e-162; 3e-162 |]; [| 3e-162; 1e-162; 0. |] ]
+      (fun at ->
+        let q, _ =
+          Split.march state Split.leapfrog ~steps:2 ~kick ~drift ~at:(vec at)
+            (scalar 1., scalar 0.)
+        in
+        equal (array int) [| 3 |] (Nx.shape q));
   ]
 
 (* The position at t = 1 as a function of the initial position and the end time,
