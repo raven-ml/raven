@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
 2 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU, val=3)
@@ -162,58 +162,111 @@
 160 Ops.RESHAPE dtypes.f32 [157, 159]
 161 Ops.PERMUTE dtypes.f32 [160] (2, 0, 1)
 162 Ops.PERMUTE dtypes.f32 [13] (0,)
-163 Ops.FLIP dtypes.f32 [145] (False, True)
-164 Ops.FLIP dtypes.f32 [145] (True, True)
-165 Ops.FLIP dtypes.f32 [145] (False, False)
-166 Ops.STACK dtypes.weakint [50, 45]
-167 Ops.CONST dtypes.weakint [] 6
-168 Ops.CONST dtypes.weakint [] 12
-169 Ops.STACK dtypes.weakint [167, 168]
-170 Ops.PAD dtypes.f32 [145, 166, 169]
-171 Ops.CONST dtypes.weakint [] 34
-172 Ops.PAD dtypes.f32 [13, 45, 171]
-173 Ops.STACK dtypes.weakint [158, 158]
-174 Ops.SHRINK dtypes.f32 [145, 166, 173]
-175 Ops.CONST dtypes.weakint [] 28
-176 Ops.SHRINK dtypes.f32 [13, 158, 175]
-177 Ops.RESHAPE dtypes.f32 [155, 12]
-178 Ops.CONST dtypes.weakint [] 16
-179 Ops.SHRINK dtypes.f32 [177, 50, 178]
-180 Ops.MUL dtypes.weakint [14, 143]
-181 Ops.RANGE dtypes.weakint [143] (AxisType.WEAK, 1)
-182 Ops.ADD dtypes.weakint [180, 181]
-183 Ops.INDEX dtypes.f32 [13, 182]
-184 Ops.INDEX dtypes.f32 [145, 14, 181]
-185 Ops.INDEX dtypes.f32 [13, 76]
-186 Ops.INDEX dtypes.f32 [13, 53]
-187 Ops.INDEX dtypes.f32 [13, 65]
-188 Ops.INDEX dtypes.f32 [13, 69]
-189 Ops.INDEX dtypes.f32 [13, 77]
-190 Ops.STACK dtypes.weakint [1, 62]
-191 Ops.INDEX dtypes.f32 [13, 190]
-192 Ops.ADD dtypes.f32 [57, 139]
-193 Ops.ADD dtypes.weakint [181, 45]
-194 Ops.STAGE dtypes.f32 [192, 14, 193]
-195 Ops.LOAD dtypes.f32 [15]
-196 Ops.ADD dtypes.weakint [14, 181]
-197 Ops.INDEX dtypes.f32 [13, 196]
-198 Ops.LOAD dtypes.f32 [197]
-199 Ops.LOAD dtypes.f32 [184]
-200 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
-201 Ops.AFTER dtypes.f32 [200, 18]
-202 Ops.INDEX dtypes.f32 [201, 181]
-203 Ops.LOAD dtypes.f32 [202]
-204 Ops.CONST dtypes.weakfloat [] 0.0
-205 Ops.CAST dtypes.f32 [204] dtypes.f32
-206 Ops.CMPLT dtypes.bool [14, 1]
-207 Ops.LOAD dtypes.f32 [15, 205, 206]
-208 Ops.ADD dtypes.f32 [195, 199]
-209 Ops.STACK dtypes.weakint [50, 50, 50]
-210 Ops.STACK dtypes.weakint [50, 45, 158]
-211 Ops.STACK dtypes.weakint [63, 102]
-212 Ops.MUL dtypes.weakint [63, 63]
-213 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU) tag=1
-214 Ops.CONST dtypes.weakint [] 2 tag="t"
-215 Ops.ADD dtypes.weakint [213, 214] tag=True
-216 Ops.SINK dtypes.void [1, 2, 3, 4, 6, 7, 8, 9, 10, 19, 20, 14, 21, 22, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 48, 49, 51, 52, 53, 54, 55, 56, 58, 59, 60, 61, 64, 65, 66, 67, 68, 69, 72, 73, 74, 76, 79, 80, 81, 63, 82, 83, 84, 85, 86, 87, 88, 89, 90, 77, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 117, 118, 120, 122, 126, 127, 128, 130, 131, 132, 133, 134, 136, 141, 145, 146, 148, 154, 155, 161, 162, 163, 164, 165, 170, 172, 174, 176, 179, 15, 183, 184, 185, 186, 187, 188, 189, 191, 194, 195, 198, 199, 203, 207, 208, 190, 0, 209, 210, 211, 212, 215]
+163 Ops.STACK dtypes.weakint [50, 50]
+164 Ops.STACK dtypes.weakint [143, 5]
+165 Ops.PAD dtypes.f32 [155, 163, 164]
+166 Ops.STACK dtypes.weakint [143, 45, 5]
+167 Ops.RESHAPE dtypes.f32 [165, 166]
+168 Ops.STACK dtypes.weakint [50, 50, 50]
+169 Ops.CONST dtypes.weakint [] 7
+170 Ops.STACK dtypes.weakint [143, 169, 5]
+171 Ops.PAD dtypes.f32 [167, 168, 170]
+172 Ops.CONST dtypes.weakint [] 56
+173 Ops.STACK dtypes.weakint [172, 5]
+174 Ops.RESHAPE dtypes.f32 [171, 173]
+175 Ops.STACK dtypes.weakint [169, 50]
+176 Ops.CONST dtypes.weakint [] 64
+177 Ops.STACK dtypes.weakint [176, 5]
+178 Ops.PAD dtypes.f32 [174, 175, 177]
+179 Ops.STACK dtypes.weakint [143, 143, 5]
+180 Ops.RESHAPE dtypes.f32 [178, 179]
+181 Ops.PERMUTE dtypes.f32 [180] (1, 0, 2)
+182 Ops.RESHAPE dtypes.f32 [181, 177]
+183 Ops.SHRINK dtypes.f32 [182, 175, 173]
+184 Ops.RESHAPE dtypes.f32 [183, 170]
+185 Ops.SHRINK dtypes.f32 [184, 168, 166]
+186 Ops.RESHAPE dtypes.f32 [185, 164]
+187 Ops.PERMUTE dtypes.f32 [186] (1, 0)
+188 Ops.PAD dtypes.f32 [145, 163, 144]
+189 Ops.STACK dtypes.weakint [5, 45, 143]
+190 Ops.RESHAPE dtypes.f32 [188, 189]
+191 Ops.STACK dtypes.weakint [5, 28, 143]
+192 Ops.PAD dtypes.f32 [190, 168, 191]
+193 Ops.CONST dtypes.weakint [] 12
+194 Ops.STACK dtypes.weakint [193, 143]
+195 Ops.RESHAPE dtypes.f32 [192, 194]
+196 Ops.STACK dtypes.weakint [28, 50]
+197 Ops.CONST dtypes.weakint [] 16
+198 Ops.STACK dtypes.weakint [197, 143]
+199 Ops.PAD dtypes.f32 [195, 196, 198]
+200 Ops.STACK dtypes.weakint [5, 5, 143]
+201 Ops.RESHAPE dtypes.f32 [199, 200]
+202 Ops.PERMUTE dtypes.f32 [201] (1, 0, 2)
+203 Ops.RESHAPE dtypes.f32 [202, 198]
+204 Ops.SHRINK dtypes.f32 [203, 196, 194]
+205 Ops.RESHAPE dtypes.f32 [204, 191]
+206 Ops.SHRINK dtypes.f32 [205, 168, 189]
+207 Ops.RESHAPE dtypes.f32 [206, 144]
+208 Ops.PERMUTE dtypes.f32 [207] (1, 0)
+209 Ops.PAD dtypes.f32 [208, 163, 164]
+210 Ops.RESHAPE dtypes.f32 [209, 166]
+211 Ops.PAD dtypes.f32 [210, 168, 170]
+212 Ops.RESHAPE dtypes.f32 [211, 173]
+213 Ops.PAD dtypes.f32 [212, 175, 177]
+214 Ops.RESHAPE dtypes.f32 [213, 179]
+215 Ops.PERMUTE dtypes.f32 [214] (1, 0, 2)
+216 Ops.RESHAPE dtypes.f32 [215, 177]
+217 Ops.SHRINK dtypes.f32 [216, 175, 173]
+218 Ops.RESHAPE dtypes.f32 [217, 170]
+219 Ops.SHRINK dtypes.f32 [218, 168, 166]
+220 Ops.RESHAPE dtypes.f32 [219, 164]
+221 Ops.PERMUTE dtypes.f32 [220] (1, 0)
+222 Ops.STACK dtypes.weakint [50, 45]
+223 Ops.CONST dtypes.weakint [] 6
+224 Ops.STACK dtypes.weakint [223, 193]
+225 Ops.PAD dtypes.f32 [145, 222, 224]
+226 Ops.CONST dtypes.weakint [] 34
+227 Ops.PAD dtypes.f32 [13, 45, 226]
+228 Ops.STACK dtypes.weakint [158, 158]
+229 Ops.SHRINK dtypes.f32 [145, 222, 228]
+230 Ops.CONST dtypes.weakint [] 28
+231 Ops.SHRINK dtypes.f32 [13, 158, 230]
+232 Ops.RESHAPE dtypes.f32 [155, 12]
+233 Ops.SHRINK dtypes.f32 [232, 50, 197]
+234 Ops.MUL dtypes.weakint [14, 143]
+235 Ops.RANGE dtypes.weakint [143] (AxisType.WEAK, 1)
+236 Ops.ADD dtypes.weakint [234, 235]
+237 Ops.INDEX dtypes.f32 [13, 236]
+238 Ops.INDEX dtypes.f32 [145, 14, 235]
+239 Ops.INDEX dtypes.f32 [13, 76]
+240 Ops.INDEX dtypes.f32 [13, 53]
+241 Ops.INDEX dtypes.f32 [13, 65]
+242 Ops.INDEX dtypes.f32 [13, 69]
+243 Ops.INDEX dtypes.f32 [13, 77]
+244 Ops.STACK dtypes.weakint [1, 62]
+245 Ops.INDEX dtypes.f32 [13, 244]
+246 Ops.ADD dtypes.f32 [57, 139]
+247 Ops.ADD dtypes.weakint [235, 45]
+248 Ops.STAGE dtypes.f32 [246, 14, 247]
+249 Ops.LOAD dtypes.f32 [15]
+250 Ops.ADD dtypes.weakint [14, 235]
+251 Ops.INDEX dtypes.f32 [13, 250]
+252 Ops.LOAD dtypes.f32 [251]
+253 Ops.LOAD dtypes.f32 [238]
+254 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+255 Ops.AFTER dtypes.f32 [254, 18]
+256 Ops.INDEX dtypes.f32 [255, 235]
+257 Ops.LOAD dtypes.f32 [256]
+258 Ops.CONST dtypes.weakfloat [] 0.0
+259 Ops.CAST dtypes.f32 [258] dtypes.f32
+260 Ops.CMPLT dtypes.bool [14, 1]
+261 Ops.LOAD dtypes.f32 [15, 259, 260]
+262 Ops.ADD dtypes.f32 [249, 253]
+263 Ops.STACK dtypes.weakint [50, 45, 158]
+264 Ops.STACK dtypes.weakint [63, 102]
+265 Ops.MUL dtypes.weakint [63, 63]
+266 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU) tag=1
+267 Ops.CONST dtypes.weakint [] 2 tag="t"
+268 Ops.ADD dtypes.weakint [266, 267] tag=True
+269 Ops.SINK dtypes.void [1, 2, 3, 4, 6, 7, 8, 9, 10, 19, 20, 14, 21, 22, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 48, 49, 51, 52, 53, 54, 55, 56, 58, 59, 60, 61, 64, 65, 66, 67, 68, 69, 72, 73, 74, 76, 79, 80, 81, 63, 82, 83, 84, 85, 86, 87, 88, 89, 90, 77, 91, 92, 93, 94, 95, 96, 98, 99, 100, 101, 103, 104, 105, 107, 108, 109, 110, 111, 112, 113, 114, 115, 117, 118, 120, 122, 126, 127, 128, 130, 131, 132, 133, 134, 136, 141, 145, 146, 148, 154, 155, 161, 162, 187, 221, 225, 227, 229, 231, 233, 15, 237, 238, 239, 240, 241, 242, 243, 245, 248, 249, 252, 253, 257, 261, 262, 244, 0, 168, 263, 264, 265, 268]
 

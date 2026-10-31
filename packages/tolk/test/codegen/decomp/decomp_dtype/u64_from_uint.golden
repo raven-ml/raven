@@ -1,36 +1,36 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.u64 [1] ParamArg(slot=0, dtype=dtypes.u64, device="CPU")
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
-6 Ops.CONST dtypes.weakint [] 4
-7 Ops.MUL dtypes.i32 [5, 6]
-8 Ops.INDEX dtypes.u64 [2, 7]
-9 Ops.PARAM dtypes.u32 [1] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
-10 Ops.CAST dtypes.i32 [6] dtypes.i32
-11 Ops.SHRINK dtypes.u32 [9, 7, 10]
+6 Ops.SHL dtypes.i32 [5, 3]
+7 Ops.INDEX dtypes.u64 [2, 6]
+8 Ops.PARAM dtypes.u32 [1] ParamArg(slot=1, dtype=dtypes.u32, device="CPU")
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.SHRINK dtypes.u32 [8, 6, 10]
 12 Ops.LOAD dtypes.u32 [11]
 13 Ops.CONST dtypes.weakint [] 0
 14 Ops.CAST dtypes.i32 [13] dtypes.i32
 15 Ops.INDEX dtypes.u32 [12, 14]
 16 Ops.CAST dtypes.u64 [15] dtypes.u64
-17 Ops.STORE dtypes.void [8, 16]
+17 Ops.STORE dtypes.void [7, 16]
 18 Ops.CONST dtypes.weakint [] 1
-19 Ops.ADD dtypes.i32 [7, 18]
+19 Ops.ADD dtypes.i32 [6, 18]
 20 Ops.INDEX dtypes.u64 [2, 19]
 21 Ops.CAST dtypes.i32 [18] dtypes.i32
 22 Ops.INDEX dtypes.u32 [12, 21]
 23 Ops.CAST dtypes.u64 [22] dtypes.u64
 24 Ops.STORE dtypes.void [20, 23]
-25 Ops.ADD dtypes.i32 [7, 3]
+25 Ops.ADD dtypes.i32 [6, 3]
 26 Ops.INDEX dtypes.u64 [2, 25]
 27 Ops.INDEX dtypes.u32 [12, 4]
 28 Ops.CAST dtypes.u64 [27] dtypes.u64
 29 Ops.STORE dtypes.void [26, 28]
 30 Ops.CONST dtypes.weakint [] 3
-31 Ops.ADD dtypes.i32 [7, 30]
+31 Ops.ADD dtypes.i32 [6, 30]
 32 Ops.INDEX dtypes.u64 [2, 31]
 33 Ops.CAST dtypes.i32 [30] dtypes.i32
 34 Ops.INDEX dtypes.u32 [12, 33]
@@ -41,7 +41,7 @@
 39 Ops.SINK dtypes.void [38] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
 40 Ops.CONST dtypes.weakint [] 16
 41 Ops.PARAM dtypes.u32 [40] ParamArg(slot=0, dtype=dtypes.u32, device="CPU")
-42 Ops.MUL dtypes.i32 [7, 3]
+42 Ops.MUL dtypes.i32 [6, 3]
 43 Ops.ADD dtypes.i32 [42, 13]
 44 Ops.INDEX dtypes.u32 [41, 43]
 45 Ops.STORE dtypes.void [44, 15]

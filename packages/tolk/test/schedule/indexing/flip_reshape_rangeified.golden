@@ -1,27 +1,35 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.CONST dtypes.weakint [] 12
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
 3 Ops.INDEX dtypes.f32 [1, 2]
-4 Ops.CONST dtypes.weakint [] 24
-5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
-6 Ops.CONST dtypes.weakint [] 2
-7 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 1)
-8 Ops.MUL dtypes.weakint [7, 6]
-9 Ops.CONST dtypes.weakint [] 6
-10 Ops.FLOORDIV dtypes.weakint [2, 9]
-11 Ops.ADD dtypes.weakint [8, 10]
-12 Ops.MUL dtypes.weakint [11, 9]
-13 Ops.FLOORMOD dtypes.weakint [2, 9]
-14 Ops.CONST dtypes.weakint [] -1
-15 Ops.MUL dtypes.weakint [13, 14]
-16 Ops.ADD dtypes.weakint [12, 15]
-17 Ops.CONST dtypes.weakint [] 5
-18 Ops.ADD dtypes.weakint [16, 17]
-19 Ops.INDEX dtypes.f32 [5, 18]
-20 Ops.REDUCE dtypes.f32 [19, 7] (Ops.ADD, 0)
-21 Ops.STORE dtypes.void [3, 20]
-22 Ops.END dtypes.void [21, 2]
-23 Ops.AFTER dtypes.f32 [1, 22]
-24 Ops.SINK dtypes.void [23]
+4 Ops.CONST dtypes.bool [] True
+5 Ops.AND dtypes.bool [4, 4]
+6 Ops.AND dtypes.bool [5, 4]
+7 Ops.AND dtypes.bool [6, 4]
+8 Ops.CONST dtypes.weakint [] 24
+9 Ops.PARAM dtypes.f32 [8] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+10 Ops.CONST dtypes.weakint [] 2
+11 Ops.RANGE dtypes.weakint [10] (AxisType.WEAK, 1)
+12 Ops.MUL dtypes.weakint [11, 10]
+13 Ops.CONST dtypes.weakint [] 6
+14 Ops.FLOORDIV dtypes.weakint [2, 13]
+15 Ops.ADD dtypes.weakint [12, 14]
+16 Ops.MUL dtypes.weakint [15, 13]
+17 Ops.FLOORMOD dtypes.weakint [2, 13]
+18 Ops.CONST dtypes.weakint [] -1
+19 Ops.MUL dtypes.weakint [17, 18]
+20 Ops.ADD dtypes.weakint [16, 19]
+21 Ops.CONST dtypes.weakint [] 5
+22 Ops.ADD dtypes.weakint [20, 21]
+23 Ops.INDEX dtypes.f32 [9, 22]
+24 Ops.CONST dtypes.weakfloat [] 0.0
+25 Ops.WHERE dtypes.f32 [6, 23, 24]
+26 Ops.WHERE dtypes.f32 [7, 25, 24]
+27 Ops.WHERE dtypes.f32 [6, 26, 24]
+28 Ops.REDUCE dtypes.f32 [27, 11] (Ops.ADD, 0)
+29 Ops.STORE dtypes.void [3, 28]
+30 Ops.END dtypes.void [29, 2]
+31 Ops.AFTER dtypes.f32 [1, 30]
+32 Ops.SINK dtypes.void [31]
 

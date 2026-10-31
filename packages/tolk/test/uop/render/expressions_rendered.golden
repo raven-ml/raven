@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 case	src	render	simplified
 variable	0	a	a
 bound_variable	1	a	a
@@ -114,34 +114,33 @@ expand	110	p4.reshape((4,1)).reshape((4,)).expand((8,)).permute((1, 0))	p4.expan
 permute	111	p0.reshape((4,8)).permute((1, 0))	p0.reshape((4,8)).permute((1, 0))
 permute_three	112	p5.reshape((2,3,4)).permute((2, 0, 1))	p5.reshape((2,3,4)).permute((2, 0, 1))
 permute_one	113	p1.permute((0,))	p1
-flip	114	p0.reshape((4,8)).flip((1,))	p0.reshape((4,8)).flip((1,))
-flip_all	115	p0.reshape((4,8)).flip((0, 1))	p0.reshape((4,8)).flip((0, 1))
-flip_none	116	p0.reshape((4,8)).flip(())	p0.reshape((4,8)).flip(())
-pad	117	p0.reshape((4,8)).pad(((0, 6),(1, 12)))	p0.reshape((4,8)).pad(((0, 6),(1, 12)))
-pad_one	118	p1.pad(((1, 34),))	p1.pad(((1, 34),))
-shrink	119	p0.reshape((4,8)).shrink(((0, 2),(1, 2)))	p0.reshape((4,8)).shrink(((0, 2),(1, 2)))
-shrink_one	120	p1.shrink(((2, 28),))	p1.shrink(((2, 28),))
-movements_chained	121	p0.reshape((4,8)).permute((1, 0)).reshape((32,)).shrink(((0, 16),))	p0.reshape((4,8)).permute((1, 0)).reshape((32,)).shrink(((0, 16),))
-index	122	[r0]	[r0]
-index_of_sum	123	[r0*8+r1]	[r0*8+r1]
-index_twice	124	[r0][r1]	[r0][r1]
-index_of_where	125	[a if g else b]	[a if g else b]
-index_of_cast	126	[(i32)(a)]	[(i32)(a)]
-index_of_neg	127	[-a]	[-a]
-index_of_max	128	[max(a, b)]	[max(b, a)]
-index_of_comparison	129	[a<b]	[a<b]
-index_of_stack	130	[{a,b}]	[{a,b}]
-stage	131	[r0][r1+1]	[r0][r1+1]
-load	132	p1[r0]	p1[r0]
-load_of_sum	133	p1[r0+r1]	p1[r0+r1]
-load_of_movement	134	p0.reshape((4,8))[r0][r1]	p0.reshape((4,8))[r0][r1]
-load_after	135	b0[r1]	b0[r1]
-gated_load	136	(p1[r0] if (r0<a) else 0.0)	(p1[r0] if (r0<a) else 0.0)
-add_of_loads	137	(p1[r0]+p0.reshape((4,8))[r0][r1])	(p1[r0]+p0.reshape((4,8))[r0][r1])
-stack	138	{a,b}	{a,b}
-stack_empty	139	{}	{}
-stack_same	140	{0,0,0}	{0,0,0}
-stack_different	141	{0,1,2}	{0,1,2}
-stack_of_sums	142	{(a+b),(b*c)}	{(b+a),(b*c)}
-shared	143	((a+b)*(a+b))	((b+a)*(b+a))
-tagged	144	(a+2)	(a+2)
+flip	114	p0.reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))	p0.reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))
+flip_all	115	p0.reshape((4,8)).pad(((0, 4),(0, 8))).reshape((4,1,8)).pad(((0, 4),(0, 3),(0, 8))).reshape((12,8)).pad(((3, 16),(0, 8))).reshape((4,4,8)).permute((1, 0, 2)).reshape((16,8)).shrink(((3, 12),(0, 8))).reshape((4,3,8)).shrink(((0, 4),(0, 1),(0, 8))).reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))	p0.reshape((4,8)).pad(((0, 4),(0, 8))).reshape((4,1,8)).pad(((0, 4),(0, 3),(0, 8))).reshape((12,8)).pad(((3, 16),(0, 8))).reshape((4,4,8)).permute((1, 0, 2)).reshape((16,8)).shrink(((3, 12),(0, 8))).reshape((4,3,8)).shrink(((0, 4),(0, 1),(0, 8))).reshape((4,8)).permute((1, 0)).pad(((0, 8),(0, 4))).reshape((8,1,4)).pad(((0, 8),(0, 7),(0, 4))).reshape((56,4)).pad(((7, 64),(0, 4))).reshape((8,8,4)).permute((1, 0, 2)).reshape((64,4)).shrink(((7, 56),(0, 4))).reshape((8,7,4)).shrink(((0, 8),(0, 1),(0, 4))).reshape((8,4)).permute((1, 0))
+pad	116	p0.reshape((4,8)).pad(((0, 6),(1, 12)))	p0.reshape((4,8)).pad(((0, 6),(1, 12)))
+pad_one	117	p1.pad(((1, 34),))	p1.pad(((1, 34),))
+shrink	118	p0.reshape((4,8)).shrink(((0, 2),(1, 2)))	p0.reshape((4,8)).shrink(((0, 2),(1, 2)))
+shrink_one	119	p1.shrink(((2, 28),))	p1.shrink(((2, 28),))
+movements_chained	120	p0.reshape((4,8)).permute((1, 0)).reshape((32,)).shrink(((0, 16),))	p0.reshape((4,8)).permute((1, 0)).reshape((32,)).shrink(((0, 16),))
+index	121	[r0]	[r0]
+index_of_sum	122	[r0*8+r1]	[r0*8+r1]
+index_twice	123	[r0][r1]	[r0][r1]
+index_of_where	124	[a if g else b]	[a if g else b]
+index_of_cast	125	[(i32)(a)]	[(i32)(a)]
+index_of_neg	126	[-a]	[-a]
+index_of_max	127	[max(a, b)]	[max(b, a)]
+index_of_comparison	128	[a<b]	[a<b]
+index_of_stack	129	[{a,b}]	[{a,b}]
+stage	130	[r0][r1+1]	[r0][r1+1]
+load	131	p1[r0]	p1[r0]
+load_of_sum	132	p1[r0+r1]	p1[r0+r1]
+load_of_movement	133	p0.reshape((4,8))[r0][r1]	p0.reshape((4,8))[r0][r1]
+load_after	134	b0[r1]	b0[r1]
+gated_load	135	(p1[r0] if (r0<a) else 0.0)	(p1[r0] if (r0<a) else 0.0)
+add_of_loads	136	(p1[r0]+p0.reshape((4,8))[r0][r1])	(p1[r0]+p0.reshape((4,8))[r0][r1])
+stack	137	{a,b}	{a,b}
+stack_empty	138	{}	{}
+stack_same	139	{0,0,0}	{0,0,0}
+stack_different	140	{0,1,2}	{0,1,2}
+stack_of_sums	141	{(a+b),(b*c)}	{(b+a),(b*c)}
+shared	142	((a+b)*(a+b))	((b+a)*(b+a))
+tagged	143	(a+2)	(a+2)

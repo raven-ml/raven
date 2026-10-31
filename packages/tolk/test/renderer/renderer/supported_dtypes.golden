@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 emulated	supported
 ''	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.f16 dtypes.bf16 dtypes.f32 dtypes.f64 dtypes.u8 dtypes.u16 dtypes.u32 dtypes.u64 dtypes.i8 dtypes.i16 dtypes.i32 dtypes.i64 dtypes.bool
 'long'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.f16 dtypes.bf16 dtypes.f32 dtypes.u8 dtypes.u16 dtypes.u32 dtypes.u64 dtypes.i8 dtypes.i16 dtypes.i32 dtypes.i64 dtypes.bool

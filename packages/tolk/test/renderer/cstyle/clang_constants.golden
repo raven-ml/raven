@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 
 __attribute__((min_vector_width(512))) void constants(_Bool* restrict data0_1, _Bool* restrict data1_1, signed char* restrict data2_1, unsigned char* restrict data3_1, short* restrict data4_1, unsigned short* restrict data5_1, int* restrict data6_1, unsigned int* restrict data7_1, unsigned int* restrict data8_1, long* restrict data9_1, unsigned long* restrict data10_1, unsigned long* restrict data11_1, __fp16* restrict data12_1, unsigned short* restrict data13_1, float* restrict data14_1, double* restrict data15_1) {
   *(data0_1+0) = 1;

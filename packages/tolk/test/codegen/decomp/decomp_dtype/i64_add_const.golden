@@ -1,128 +1,127 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64, device="CPU")
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
-6 Ops.CONST dtypes.weakint [] 4
-7 Ops.MUL dtypes.i32 [5, 6]
-8 Ops.INDEX dtypes.i64 [2, 7]
-9 Ops.PARAM dtypes.i64 [1] ParamArg(slot=1, dtype=dtypes.i64, device="CPU")
-10 Ops.INDEX dtypes.i64 [9, 7]
-11 Ops.LOAD dtypes.i64 [10]
-12 Ops.CONST dtypes.weakint [] 1099511627781
-13 Ops.ADD dtypes.i64 [11, 12]
-14 Ops.STORE dtypes.void [8, 13]
-15 Ops.CONST dtypes.weakint [] 1
-16 Ops.ADD dtypes.i32 [7, 15]
-17 Ops.INDEX dtypes.i64 [2, 16]
-18 Ops.INDEX dtypes.i64 [9, 16]
-19 Ops.LOAD dtypes.i64 [18]
-20 Ops.ADD dtypes.i64 [19, 12]
-21 Ops.STORE dtypes.void [17, 20]
-22 Ops.ADD dtypes.i32 [7, 3]
-23 Ops.INDEX dtypes.i64 [2, 22]
-24 Ops.INDEX dtypes.i64 [9, 22]
-25 Ops.LOAD dtypes.i64 [24]
-26 Ops.ADD dtypes.i64 [25, 12]
-27 Ops.STORE dtypes.void [23, 26]
-28 Ops.CONST dtypes.weakint [] 3
-29 Ops.ADD dtypes.i32 [7, 28]
-30 Ops.INDEX dtypes.i64 [2, 29]
-31 Ops.INDEX dtypes.i64 [9, 29]
-32 Ops.LOAD dtypes.i64 [31]
-33 Ops.ADD dtypes.i64 [32, 12]
-34 Ops.STORE dtypes.void [30, 33]
-35 Ops.AFTER dtypes.void [0, 14, 21, 27, 34]
-36 Ops.END dtypes.void [35, 5]
-37 Ops.SINK dtypes.void [36] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-38 Ops.CONST dtypes.weakint [] 16
-39 Ops.PARAM dtypes.i32 [38] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
-40 Ops.MUL dtypes.i32 [7, 3]
-41 Ops.CONST dtypes.weakint [] 0
-42 Ops.ADD dtypes.i32 [40, 41]
-43 Ops.INDEX dtypes.i32 [39, 42]
-44 Ops.PARAM dtypes.i32 [38] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
-45 Ops.INDEX dtypes.i32 [44, 42]
-46 Ops.LOAD dtypes.i32 [45]
-47 Ops.CONST dtypes.weakint [] 5
-48 Ops.CAST dtypes.i32 [47] dtypes.i32
-49 Ops.ADD dtypes.i32 [46, 48]
-50 Ops.STORE dtypes.void [43, 49]
-51 Ops.ADD dtypes.i32 [40, 15]
-52 Ops.INDEX dtypes.i32 [39, 51]
-53 Ops.INDEX dtypes.i32 [44, 51]
-54 Ops.LOAD dtypes.i32 [53]
-55 Ops.CONST dtypes.weakint [] 256
-56 Ops.CAST dtypes.i32 [55] dtypes.i32
-57 Ops.ADD dtypes.i32 [54, 56]
-58 Ops.BITCAST dtypes.u32 [49] dtypes.u32
-59 Ops.BITCAST dtypes.u32 [46] dtypes.u32
-60 Ops.CMPLT dtypes.bool [58, 59]
-61 Ops.CAST dtypes.i32 [60] dtypes.i32
-62 Ops.ADD dtypes.i32 [57, 61]
-63 Ops.STORE dtypes.void [52, 62]
-64 Ops.AFTER dtypes.void [0, 50, 63]
-65 Ops.MUL dtypes.i32 [16, 3]
-66 Ops.ADD dtypes.i32 [65, 41]
-67 Ops.INDEX dtypes.i32 [39, 66]
-68 Ops.INDEX dtypes.i32 [44, 66]
-69 Ops.LOAD dtypes.i32 [68]
-70 Ops.ADD dtypes.i32 [69, 48]
-71 Ops.STORE dtypes.void [67, 70]
-72 Ops.ADD dtypes.i32 [65, 15]
-73 Ops.INDEX dtypes.i32 [39, 72]
-74 Ops.INDEX dtypes.i32 [44, 72]
-75 Ops.LOAD dtypes.i32 [74]
-76 Ops.ADD dtypes.i32 [75, 56]
-77 Ops.BITCAST dtypes.u32 [70] dtypes.u32
-78 Ops.BITCAST dtypes.u32 [69] dtypes.u32
-79 Ops.CMPLT dtypes.bool [77, 78]
-80 Ops.CAST dtypes.i32 [79] dtypes.i32
-81 Ops.ADD dtypes.i32 [76, 80]
-82 Ops.STORE dtypes.void [73, 81]
-83 Ops.AFTER dtypes.void [0, 71, 82]
-84 Ops.MUL dtypes.i32 [22, 3]
-85 Ops.ADD dtypes.i32 [84, 41]
-86 Ops.INDEX dtypes.i32 [39, 85]
-87 Ops.INDEX dtypes.i32 [44, 85]
-88 Ops.LOAD dtypes.i32 [87]
-89 Ops.ADD dtypes.i32 [88, 48]
-90 Ops.STORE dtypes.void [86, 89]
-91 Ops.ADD dtypes.i32 [84, 15]
-92 Ops.INDEX dtypes.i32 [39, 91]
-93 Ops.INDEX dtypes.i32 [44, 91]
-94 Ops.LOAD dtypes.i32 [93]
-95 Ops.ADD dtypes.i32 [94, 56]
-96 Ops.BITCAST dtypes.u32 [89] dtypes.u32
-97 Ops.BITCAST dtypes.u32 [88] dtypes.u32
-98 Ops.CMPLT dtypes.bool [96, 97]
-99 Ops.CAST dtypes.i32 [98] dtypes.i32
-100 Ops.ADD dtypes.i32 [95, 99]
-101 Ops.STORE dtypes.void [92, 100]
-102 Ops.AFTER dtypes.void [0, 90, 101]
-103 Ops.MUL dtypes.i32 [29, 3]
-104 Ops.ADD dtypes.i32 [103, 41]
-105 Ops.INDEX dtypes.i32 [39, 104]
-106 Ops.INDEX dtypes.i32 [44, 104]
-107 Ops.LOAD dtypes.i32 [106]
-108 Ops.ADD dtypes.i32 [107, 48]
-109 Ops.STORE dtypes.void [105, 108]
-110 Ops.ADD dtypes.i32 [103, 15]
-111 Ops.INDEX dtypes.i32 [39, 110]
-112 Ops.INDEX dtypes.i32 [44, 110]
-113 Ops.LOAD dtypes.i32 [112]
-114 Ops.ADD dtypes.i32 [113, 56]
-115 Ops.BITCAST dtypes.u32 [108] dtypes.u32
-116 Ops.BITCAST dtypes.u32 [107] dtypes.u32
-117 Ops.CMPLT dtypes.bool [115, 116]
-118 Ops.CAST dtypes.i32 [117] dtypes.i32
-119 Ops.ADD dtypes.i32 [114, 118]
-120 Ops.STORE dtypes.void [111, 119]
-121 Ops.AFTER dtypes.void [0, 109, 120]
-122 Ops.AFTER dtypes.void [0, 64, 83, 102, 121]
-123 Ops.END dtypes.void [122, 5]
-124 Ops.SINK dtypes.void [123] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-125 Ops.SINK dtypes.void [37, 124]
+6 Ops.SHL dtypes.i32 [5, 3]
+7 Ops.INDEX dtypes.i64 [2, 6]
+8 Ops.PARAM dtypes.i64 [1] ParamArg(slot=1, dtype=dtypes.i64, device="CPU")
+9 Ops.INDEX dtypes.i64 [8, 6]
+10 Ops.LOAD dtypes.i64 [9]
+11 Ops.CONST dtypes.weakint [] 1099511627781
+12 Ops.ADD dtypes.i64 [10, 11]
+13 Ops.STORE dtypes.void [7, 12]
+14 Ops.CONST dtypes.weakint [] 1
+15 Ops.ADD dtypes.i32 [6, 14]
+16 Ops.INDEX dtypes.i64 [2, 15]
+17 Ops.INDEX dtypes.i64 [8, 15]
+18 Ops.LOAD dtypes.i64 [17]
+19 Ops.ADD dtypes.i64 [18, 11]
+20 Ops.STORE dtypes.void [16, 19]
+21 Ops.ADD dtypes.i32 [6, 3]
+22 Ops.INDEX dtypes.i64 [2, 21]
+23 Ops.INDEX dtypes.i64 [8, 21]
+24 Ops.LOAD dtypes.i64 [23]
+25 Ops.ADD dtypes.i64 [24, 11]
+26 Ops.STORE dtypes.void [22, 25]
+27 Ops.CONST dtypes.weakint [] 3
+28 Ops.ADD dtypes.i32 [6, 27]
+29 Ops.INDEX dtypes.i64 [2, 28]
+30 Ops.INDEX dtypes.i64 [8, 28]
+31 Ops.LOAD dtypes.i64 [30]
+32 Ops.ADD dtypes.i64 [31, 11]
+33 Ops.STORE dtypes.void [29, 32]
+34 Ops.AFTER dtypes.void [0, 13, 20, 26, 33]
+35 Ops.END dtypes.void [34, 5]
+36 Ops.SINK dtypes.void [35] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+37 Ops.CONST dtypes.weakint [] 16
+38 Ops.PARAM dtypes.i32 [37] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+39 Ops.MUL dtypes.i32 [6, 3]
+40 Ops.CONST dtypes.weakint [] 0
+41 Ops.ADD dtypes.i32 [39, 40]
+42 Ops.INDEX dtypes.i32 [38, 41]
+43 Ops.PARAM dtypes.i32 [37] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+44 Ops.INDEX dtypes.i32 [43, 41]
+45 Ops.LOAD dtypes.i32 [44]
+46 Ops.CONST dtypes.weakint [] 5
+47 Ops.CAST dtypes.i32 [46] dtypes.i32
+48 Ops.ADD dtypes.i32 [45, 47]
+49 Ops.STORE dtypes.void [42, 48]
+50 Ops.ADD dtypes.i32 [39, 14]
+51 Ops.INDEX dtypes.i32 [38, 50]
+52 Ops.INDEX dtypes.i32 [43, 50]
+53 Ops.LOAD dtypes.i32 [52]
+54 Ops.CONST dtypes.weakint [] 256
+55 Ops.CAST dtypes.i32 [54] dtypes.i32
+56 Ops.ADD dtypes.i32 [53, 55]
+57 Ops.BITCAST dtypes.u32 [48] dtypes.u32
+58 Ops.BITCAST dtypes.u32 [45] dtypes.u32
+59 Ops.CMPLT dtypes.bool [57, 58]
+60 Ops.CAST dtypes.i32 [59] dtypes.i32
+61 Ops.ADD dtypes.i32 [56, 60]
+62 Ops.STORE dtypes.void [51, 61]
+63 Ops.AFTER dtypes.void [0, 49, 62]
+64 Ops.MUL dtypes.i32 [15, 3]
+65 Ops.ADD dtypes.i32 [64, 40]
+66 Ops.INDEX dtypes.i32 [38, 65]
+67 Ops.INDEX dtypes.i32 [43, 65]
+68 Ops.LOAD dtypes.i32 [67]
+69 Ops.ADD dtypes.i32 [68, 47]
+70 Ops.STORE dtypes.void [66, 69]
+71 Ops.ADD dtypes.i32 [64, 14]
+72 Ops.INDEX dtypes.i32 [38, 71]
+73 Ops.INDEX dtypes.i32 [43, 71]
+74 Ops.LOAD dtypes.i32 [73]
+75 Ops.ADD dtypes.i32 [74, 55]
+76 Ops.BITCAST dtypes.u32 [69] dtypes.u32
+77 Ops.BITCAST dtypes.u32 [68] dtypes.u32
+78 Ops.CMPLT dtypes.bool [76, 77]
+79 Ops.CAST dtypes.i32 [78] dtypes.i32
+80 Ops.ADD dtypes.i32 [75, 79]
+81 Ops.STORE dtypes.void [72, 80]
+82 Ops.AFTER dtypes.void [0, 70, 81]
+83 Ops.MUL dtypes.i32 [21, 3]
+84 Ops.ADD dtypes.i32 [83, 40]
+85 Ops.INDEX dtypes.i32 [38, 84]
+86 Ops.INDEX dtypes.i32 [43, 84]
+87 Ops.LOAD dtypes.i32 [86]
+88 Ops.ADD dtypes.i32 [87, 47]
+89 Ops.STORE dtypes.void [85, 88]
+90 Ops.ADD dtypes.i32 [83, 14]
+91 Ops.INDEX dtypes.i32 [38, 90]
+92 Ops.INDEX dtypes.i32 [43, 90]
+93 Ops.LOAD dtypes.i32 [92]
+94 Ops.ADD dtypes.i32 [93, 55]
+95 Ops.BITCAST dtypes.u32 [88] dtypes.u32
+96 Ops.BITCAST dtypes.u32 [87] dtypes.u32
+97 Ops.CMPLT dtypes.bool [95, 96]
+98 Ops.CAST dtypes.i32 [97] dtypes.i32
+99 Ops.ADD dtypes.i32 [94, 98]
+100 Ops.STORE dtypes.void [91, 99]
+101 Ops.AFTER dtypes.void [0, 89, 100]
+102 Ops.MUL dtypes.i32 [28, 3]
+103 Ops.ADD dtypes.i32 [102, 40]
+104 Ops.INDEX dtypes.i32 [38, 103]
+105 Ops.INDEX dtypes.i32 [43, 103]
+106 Ops.LOAD dtypes.i32 [105]
+107 Ops.ADD dtypes.i32 [106, 47]
+108 Ops.STORE dtypes.void [104, 107]
+109 Ops.ADD dtypes.i32 [102, 14]
+110 Ops.INDEX dtypes.i32 [38, 109]
+111 Ops.INDEX dtypes.i32 [43, 109]
+112 Ops.LOAD dtypes.i32 [111]
+113 Ops.ADD dtypes.i32 [112, 55]
+114 Ops.BITCAST dtypes.u32 [107] dtypes.u32
+115 Ops.BITCAST dtypes.u32 [106] dtypes.u32
+116 Ops.CMPLT dtypes.bool [114, 115]
+117 Ops.CAST dtypes.i32 [116] dtypes.i32
+118 Ops.ADD dtypes.i32 [113, 117]
+119 Ops.STORE dtypes.void [110, 118]
+120 Ops.AFTER dtypes.void [0, 108, 119]
+121 Ops.AFTER dtypes.void [0, 63, 82, 101, 120]
+122 Ops.END dtypes.void [121, 5]
+123 Ops.SINK dtypes.void [122] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+124 Ops.SINK dtypes.void [36, 123]
 

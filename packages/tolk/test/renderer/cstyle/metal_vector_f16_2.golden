@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 #include <metal_stdlib>
 using namespace metal;
 struct args_t { device half* data0_2; device half* data1_2; };

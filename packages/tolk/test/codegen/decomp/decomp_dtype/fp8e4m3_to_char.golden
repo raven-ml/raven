@@ -1,36 +1,36 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.i8 [1] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
-6 Ops.CONST dtypes.weakint [] 4
-7 Ops.MUL dtypes.i32 [5, 6]
-8 Ops.INDEX dtypes.i8 [2, 7]
-9 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3, device="CPU")
-10 Ops.CAST dtypes.i32 [6] dtypes.i32
-11 Ops.SHRINK dtypes.fp8e4m3 [9, 7, 10]
+6 Ops.SHL dtypes.i32 [5, 3]
+7 Ops.INDEX dtypes.i8 [2, 6]
+8 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3, device="CPU")
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.SHRINK dtypes.fp8e4m3 [8, 6, 10]
 12 Ops.LOAD dtypes.fp8e4m3 [11]
 13 Ops.CONST dtypes.weakint [] 0
 14 Ops.CAST dtypes.i32 [13] dtypes.i32
 15 Ops.INDEX dtypes.fp8e4m3 [12, 14]
 16 Ops.CAST dtypes.i8 [15] dtypes.i8
-17 Ops.STORE dtypes.void [8, 16]
+17 Ops.STORE dtypes.void [7, 16]
 18 Ops.CONST dtypes.weakint [] 1
-19 Ops.ADD dtypes.i32 [7, 18]
+19 Ops.ADD dtypes.i32 [6, 18]
 20 Ops.INDEX dtypes.i8 [2, 19]
 21 Ops.CAST dtypes.i32 [18] dtypes.i32
 22 Ops.INDEX dtypes.fp8e4m3 [12, 21]
 23 Ops.CAST dtypes.i8 [22] dtypes.i8
 24 Ops.STORE dtypes.void [20, 23]
-25 Ops.ADD dtypes.i32 [7, 3]
+25 Ops.ADD dtypes.i32 [6, 3]
 26 Ops.INDEX dtypes.i8 [2, 25]
 27 Ops.INDEX dtypes.fp8e4m3 [12, 4]
 28 Ops.CAST dtypes.i8 [27] dtypes.i8
 29 Ops.STORE dtypes.void [26, 28]
 30 Ops.CONST dtypes.weakint [] 3
-31 Ops.ADD dtypes.i32 [7, 30]
+31 Ops.ADD dtypes.i32 [6, 30]
 32 Ops.INDEX dtypes.i8 [2, 31]
 33 Ops.CAST dtypes.i32 [30] dtypes.i32
 34 Ops.INDEX dtypes.fp8e4m3 [12, 33]
@@ -40,7 +40,7 @@
 38 Ops.END dtypes.void [37, 5]
 39 Ops.SINK dtypes.void [38] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
 40 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3
-41 Ops.ADD dtypes.i32 [7, 13]
+41 Ops.ADD dtypes.i32 [6, 13]
 42 Ops.INDEX dtypes.u8 [40, 41] tag=dtypes.fp8e4m3
 43 Ops.LOAD dtypes.u8 [42]
 44 Ops.CUSTOM dtypes.f32 [43] ("f2f fp8e4m3 f32 True", dtypes.f32)
@@ -57,7 +57,7 @@
 55 Ops.CAST dtypes.f32 [54] dtypes.f32
 56 Ops.INDEX dtypes.f32 [55, 14]
 57 Ops.CAST dtypes.i8 [56] dtypes.i8
-58 Ops.STORE dtypes.void [8, 57]
+58 Ops.STORE dtypes.void [7, 57]
 59 Ops.INDEX dtypes.f32 [55, 21]
 60 Ops.CAST dtypes.i8 [59] dtypes.i8
 61 Ops.STORE dtypes.void [20, 60]

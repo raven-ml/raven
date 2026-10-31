@@ -14,7 +14,7 @@ index 9281070..309cf7a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index 44f656b..ab01b12 100644
+index 4c70087..7f9e7fa 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace
@@ -367,7 +367,7 @@ index 44f656b..ab01b12 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -359,11 +563,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -360,11 +564,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -381,7 +381,7 @@ index 44f656b..ab01b12 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -374,9 +579,11 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -375,9 +580,11 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    # this was the linearizer
    sink = graph_rewrite(sink, pm_add_control_flow, ctx=CFGContext(sink), name="add control flow", bottom_up=True)
  
@@ -395,7 +395,7 @@ index 44f656b..ab01b12 100644
  
    if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Output AST")
    if SPEC:
-@@ -441,9 +648,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -440,9 +647,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -421,7 +421,7 @@ index 44f656b..ab01b12 100644
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp:
    src = "\n".join(str(u.arg[0]) for u in lin.src)
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
-index 20644ea..595e8d6 100644
+index 548a969..c04998c 100644
 --- a/tinygrad/codegen/decomp/dtype.py
 +++ b/tinygrad/codegen/decomp/dtype.py
 @@ -1,5 +1,6 @@
@@ -431,8 +431,8 @@ index 20644ea..595e8d6 100644
 +from tinygrad.dtype import dtypes, DType, AddrSpace, truncate, exact_bitcast
  from tinygrad.helpers import flatten, DEBUG, EMULATED_DTYPES
  from tinygrad.uop import GroupOp
- from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite
-@@ -144,6 +145,29 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
+ from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite, shape_to_shape_arg
+@@ -145,6 +146,29 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
  
  def f2f_rewrite(ctx:tuple, x:UOp) -> UOp: return graph_rewrite(x, pm_float_decomp, ctx=ctx, bottom_up=True)
  
@@ -462,7 +462,7 @@ index 20644ea..595e8d6 100644
  # tag is the 32-bit word this node becomes - (0 for the low word, 1 for the high, the dtype the consumer wants)
  pm_long_decomp: PatternMatcher = PatternMatcher([
    # the decomp's own bottom-up rewrite can mint bare consts mid-flight: word splitting commits them at the long sibling's dtype
-@@ -196,18 +220,27 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
+@@ -197,18 +221,27 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
    (UPat(Ops.BITCAST, src=(UPat.var("x"),), name="bc"), lambda ctx,bc,x:
     f2f(x.bitcast(f2f_dt[ctx[0]]), ctx[0], ctx[1]) if bc.dtype == ctx[0] else None),
    (UPat(Ops.CAST, dtypes.floats, src=(UPat.var("val"),), name="x"), lambda ctx,x,val:
@@ -619,7 +619,7 @@ index 36907bf..6c48849 100644
 -    pat += [(UPat.var("a") * UPat(Ops.FDIV, dtypes.floats, src=(UPat.const(1), UPat.var("b"))), lambda a,b: a.alu(Ops.FDIV, b))]
    return PatternMatcher(pat)
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
-index 0cf4c61..1bfe375 100644
+index 70841c5..b6e75fb 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
 +++ b/tinygrad/codegen/decomp/transcendental.py
 @@ -1,10 +1,12 @@
@@ -949,7 +949,7 @@ index 0cf4c61..1bfe375 100644
    # Replace x >= upper with +inf
    u = (d >= upper).where(d.const_like(math.inf), u)
    # Replace x < lower with zero.
-@@ -222,37 +273,41 @@ def xlog2(d:UOp) -> UOp:
+@@ -222,35 +273,39 @@ def xlog2(d:UOp) -> UOp:
    Paper: https://arxiv.org/pdf/2001.09258 5.5
    """
    assert d.dtype in TRANSCENDENTAL_DTYPES
@@ -1000,21 +1000,18 @@ index 0cf4c61..1bfe375 100644
    r = d.ne(math.inf).where(r, r.const_like(math.inf))
    # log2(0) = -Inf (handle both +0.0 and -0.0)
    r = d.ne(0.0).where(r, r.const_like(-math.inf))
-+  # log2(-0.0) = -Inf. In certain devices like PTX, x == -0.0 won't be true. so making reciprocal.
+-  # log2(x) = NaN for x < 0
+-  r = (d<-0.0).where(r.const_like(math.nan), r)
+   # log2(-0.0) = -Inf. In certain devices like PTX, x == -0.0 won't be true. so making reciprocal.
 +  # a negative number too small for its reciprocal to be finite has one of -inf too: the NaN select comes after
-+  r = d.reciprocal().ne(-math.inf).where(r, r.const_like(-math.inf))
-   # log2(x) = NaN for x < 0
-   r = (d<-0.0).where(r.const_like(math.nan), r)
-   # log2(NaN) = NaN
--  r = d.ne(d).where(r.const_like(math.nan), r)
--  # log2(-0.0) = -Inf. In certain devices like PTX, x == -0.0 won't be true. so making reciprocal.
--  return d.reciprocal().ne(-math.inf).where(r, r.const_like(-math.inf))
-+  return d.ne(d).where(r.const_like(math.nan), r)
+   r = d.reciprocal().ne(-math.inf).where(r, r.const_like(-math.inf))
++  # log2(x) = NaN for x < 0
++  r = (d<-0.0).where(r.const_like(math.nan), r)
+   # Check NaN last: comparisons of its reciprocal are not reliable on every backend.
+   return d.ne(d).where(r.const_like(math.nan), r)
  
- def xpow(base:UOp, exponent:UOp) -> UOp:
-   # start with b ** e = exp2(e * log2(b))
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index ec57edd..580d0b0 100644
+index 7ec5fa2..e1dfb26 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1066,7 +1063,7 @@ index 319a60c..c185a41 100644
  pm_move_gates_from_index = PatternMatcher([
    # for image idx (must be first)
 diff --git a/tinygrad/codegen/late/linearizer.py b/tinygrad/codegen/late/linearizer.py
-index a9c786c..15767eb 100644
+index 0838d70..dadd54a 100644
 --- a/tinygrad/codegen/late/linearizer.py
 +++ b/tinygrad/codegen/late/linearizer.py
 @@ -17,7 +17,8 @@ def linearize(sink:UOp) -> list[UOp]:
@@ -1074,8 +1071,8 @@ index a9c786c..15767eb 100644
  
      # we place UOps with higher run_counts later
 -    run_count = prod([int(r.vmax)+1 for r in u.ranges])
-+    # a range counts at least two runs, so that its body is placed after what runs outside it
-+    run_count = prod([max(2, int(r.vmax)+1) for r in u.ranges])
++    # a range counts at least one run, so that a range that may run no time is placed as one that runs once
++    run_count = prod([max(1, int(r.vmax)+1) for r in u.ranges])
  
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
@@ -1708,7 +1705,7 @@ index 27a67a9..4e47d6e 100644
  
  def _to_np_dtype(dtype:DType) -> type|None:
 diff --git a/tinygrad/engine/realize.py b/tinygrad/engine/realize.py
-index 1183d7a..aa6a462 100644
+index ce25457..dbb27f8 100644
 --- a/tinygrad/engine/realize.py
 +++ b/tinygrad/engine/realize.py
 @@ -16,8 +16,20 @@ def get_call_arg_uops(call:UOp) -> tuple[UOp, ...]: return tuple(s for s in call
@@ -1732,7 +1729,7 @@ index 1183d7a..aa6a462 100644
  def get_call_outs_ins(call:UOp) -> tuple[tuple[int, ...], tuple[int, ...]]:
    ast = call.body
    if isinstance(call.arg.aux, HCQInfo): return (), ()
-@@ -155,7 +167,8 @@ def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|
+@@ -157,7 +169,8 @@ def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|
      prg_bufs = [b.ensure_allocated() for b in bufs]
      rt = get_runtime(device, ast, cache=ctx.cache)
      global_sz, local_sz = ast.arg.launch_dims(var_vals)
@@ -1742,7 +1739,7 @@ index 1183d7a..aa6a462 100644
      except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
      ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_sz, local_size=local_sz, vals=vals, wait=ctx.wait, timeout=ctx.timeout))
    return ets
-@@ -170,7 +183,7 @@ def exec_validate(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
+@@ -172,7 +185,7 @@ def exec_validate(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
      var_vals = {**ctx.var_vals, **device_vars}
      cpu_rt = get_runtime("CPU", prg:=to_program(ast.src[0], Device["CPU"].renderer))
      global_size, local_size = prg.arg.launch_dims(var_vals)
@@ -1752,7 +1749,7 @@ index 1183d7a..aa6a462 100644
        dt = _to_np_dtype(resolved[i].dtype)
        assert dt is not None, f"no np dtype for {resolved[i].dtype}"
 diff --git a/tinygrad/helpers.py b/tinygrad/helpers.py
-index 7dea207..f8e8674 100644
+index 3b4d38e..6ff1a17 100644
 --- a/tinygrad/helpers.py
 +++ b/tinygrad/helpers.py
 @@ -154,7 +154,7 @@ def select_first_inited(candidates:Sequence[Callable[...,T]], err_msg:str, cache
@@ -1778,7 +1775,7 @@ index aaab09f..d4711eb 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 6ce9667..94f51e2 100644
+index 67ebc3d..ae08df4 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -2203,7 +2200,7 @@ index 4730e14..b7ea28a 100644
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 3a705e6..3afd690 100644
+index 2d50c5f..f80cf35 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -1,17 +1,35 @@
@@ -2245,7 +2242,7 @@ index 3a705e6..3afd690 100644
    range_idx: Iterator[int] = field(default_factory=itertools.count)
 @@ -35,6 +53,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
    # you don't usually have to do this for assign unless there's a WAR hazard like TestAssign.test_assign_double_diamond_reduce
-   if dest.base in src.toposort(enter_calls=False): ctx.realize_map[src] = None
+   if dest.base in src.toposort(): ctx.realize_map[src] = None
  
 +# a gather is an INDEX by an integer value with axes: its source is read at loaded positions, so it is stored unless it is
 +# storage. a view of storage is stored too, and its stage, which reads one buffer, is inlined back
@@ -2355,7 +2352,7 @@ index 3a705e6..3afd690 100644
  
 +def constant(u:UOp) -> bool:
 +  # whether u is a constant through casts and movements
-+  while u.op in {Ops.CAST, Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK, Ops.FLIP}: u = u.src[0]
++  while u.op in {Ops.CAST, Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK}: u = u.src[0]
 +  return u.op is Ops.CONST
 +
 +# an integer division computed where its ranges are invalid, on a pad's padding, divides by 1 there, unless its divisor
@@ -2383,7 +2380,7 @@ index 3a705e6..3afd690 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All-{Ops.STAGE, Ops.INDEX}, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -185,6 +253,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -184,6 +252,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -2469,7 +2466,7 @@ index 3a705e6..3afd690 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -196,6 +343,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -195,6 +342,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -2477,7 +2474,7 @@ index 3a705e6..3afd690 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -226,10 +374,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -225,10 +373,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -2494,7 +2491,7 @@ index 3a705e6..3afd690 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -264,14 +415,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -263,14 +414,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -2518,7 +2515,7 @@ index 3a705e6..3afd690 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -297,7 +453,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -296,7 +452,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
      if x.op is Ops.REDUCE:
@@ -2528,15 +2525,15 @@ index 3a705e6..3afd690 100644
      if debug:
        realized_ranges = rctx.realize_map.get(x, None)
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index 4db6c5d..c1daa35 100644
+index 82c5146..bb7be9d 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
 @@ -1,10 +1,10 @@
  from dataclasses import replace
 -from tinygrad.dtype import dtypes, to_dtype
--from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, GroupOp, ParamArg
+-from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, GroupOp
 +from tinygrad.dtype import dtypes, to_dtype, AddrSpace
-+from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, GroupOp, ParamArg, sint
++from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, GroupOp, sint
  from tinygrad.uop.ops import graph_rewrite, rewrite_group, identity_element, resolve_returned_after
  from tinygrad.uop.movement import mop_cleanup
  from tinygrad.helpers import prod, getenv, all_int, DEBUG, SPLIT_REDUCEOP, OPENPILOT_HACKS, FLOAT16, argsort
@@ -2575,7 +2572,7 @@ index 4db6c5d..c1daa35 100644
        return ret if ret.shape == idx.shape else None
  
  pm_mops = PatternMatcher([
-@@ -82,6 +93,13 @@ pm_mops = PatternMatcher([
+@@ -87,6 +98,13 @@ pm_mops = PatternMatcher([
    (UPat(GroupOp.Movement, name="r").end(name="a", allow_any_len=True), lambda r,a: a.replace(src=(r.src[0],)+a.src[1:])),
  ])
  
@@ -2589,7 +2586,7 @@ index 4db6c5d..c1daa35 100644
  # *****************
  # 0. do some cleanup rewrites, mostly copied from the old stuff
  
-@@ -98,7 +116,9 @@ def fix_store_hazard(target:UOp, src:UOp):
+@@ -103,7 +121,9 @@ def fix_store_hazard(target:UOp, src:UOp):
    reaches_base: dict[UOp, bool] = {}
    for s in src.toposort(gate=store_hazard_boundary):
      reaches_base[s] = s is base or any(reaches_base.get(c) for c in s.src)
@@ -2600,23 +2597,23 @@ index 4db6c5d..c1daa35 100644
  
  def split_reduceop(reduce:UOp, x:UOp):
    if prod(reduce.shape) == 0: return None
-@@ -166,13 +186,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
+@@ -170,13 +190,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
+   # copies are always cross device: pad to the max shape so the copy reads a whole buffer (SDMA can't do offset copies)
    x = x.pad_to(x.max_shape)
    # the buffer takes the DEVICE range from the copy (no-op for single device copies)
-   buf = UOp(Ops.ALLOC, src=(UOp.const(prod(x.max_shape)),)+copy.src[1:],
--            arg=ParamArg(next(UOp.unique_num), copy.dtype, device=copy.device)).reshape(x.max_shape)
-+            arg=ParamArg(next(UOp.unique_num), copy.dtype, vmin_vmax=x.stored_bounds(copy.dtype), device=copy.device)).reshape(x.max_shape)
+-  buf = UOp.alloc((x.max_numel(),), copy.dtype, device=copy.device)
++  buf = UOp.alloc((x.max_numel(),), copy.dtype, device=copy.device, vmin_vmax=x.stored_bounds(copy.dtype))
+   buf = buf.replace(src=buf.src[:1]+copy.src[1:]).reshape(x.max_shape)
    return buf.after(buf.store(x)).shrink_to(copy.shape)
  
  def stage_to_anon_store(x:UOp, stg:UOp):
    # the buffer created here is inside the call and is not persisted, like the buffers created for copies
-   buf = UOp(Ops.ALLOC, src=(UOp.const(prod(x.max_shape)),)+UOp.device_range_src(x.device),
--            arg=ParamArg(next(UOp.unique_num), stg.dtype, device=x.device)).reshape(x.max_shape)
-+            arg=ParamArg(next(UOp.unique_num), stg.dtype, vmin_vmax=x.stored_bounds(stg.dtype), device=x.device)).reshape(x.max_shape)
+-  buf = UOp.alloc(x.max_shape, stg.dtype, device=x.device)
++  buf = UOp.alloc(x.max_shape, stg.dtype, device=x.device, vmin_vmax=x.stored_bounds(stg.dtype))
    view = buf.shrink_to(stg.shape)
    return view.after(view.store(x))
  
-@@ -272,7 +292,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
+@@ -276,7 +296,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
  def prepare_rangeify(sink:UOp) -> UOp:
    # prepare for rangeify
    tsink = graph_rewrite(forward_call_outputs(sink), multi_pm, name="multi_pm")
@@ -2627,18 +2624,20 @@ index 4db6c5d..c1daa35 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 26e28fa..84805b7 100644
+index bb4d830..629b32a 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
-@@ -1,7 +1,7 @@
+@@ -1,8 +1,8 @@
  from dataclasses import dataclass, field, replace
  from typing import cast
  import itertools
 -from tinygrad.dtype import dtypes, AddrSpace, Invalid
+-from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo
 +from tinygrad.dtype import dtypes, AddrSpace, Invalid, can_lossless_cast
- from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo, ParamArg
++from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo, ParamArg
  from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrite_group
  from tinygrad.uop.symbolic import symbolic
+ from tinygrad.helpers import prod, dedup, DEBUG_RANGEIFY, VIZ, MAX_KERNEL_BUFFERS, SPEC
 @@ -45,7 +45,49 @@ def gate_substitute(ctx, b:UOp) -> None:
  pm_gate_substitute = PatternMatcher([(UPat(GroupOp.All, name="b"), gate_substitute)], compiled=False)
  # if a buffer is being stored just for permutes or something, remove it
@@ -2740,18 +2739,17 @@ index 26e28fa..84805b7 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -222,10 +288,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -222,10 +288,19 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
--    buf = UOp(Ops.ALLOC, src=(UOp.const(size),)+UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, device=x.arg.device))
+-    buf = UOp.alloc((size,), dtype, slot=next(ctx), device=x.arg.device)
 -    do_store = buf.index(idx).store(x.src[0].cast(dtype)).end(*rngs)
 +    # a value its kernels read widened from a narrower type that holds every value is stored narrow, and each read widens it; a value
 +    # stored whole keeps its type
 +    value = x.src[0]
 +    if x.arg.removable and widens(value): value, dtype = value.src[0], value.src[0].commit_dtype()
-+    buf = UOp(Ops.ALLOC, src=(UOp.const(size),)+UOp.device_range_src(x.arg.device),
-+              arg=ParamArg(next(ctx), dtype, vmin_vmax=value.stored_bounds(dtype), device=x.arg.device))
++    buf = UOp.alloc((size,), dtype, slot=next(ctx), device=x.arg.device, vmin_vmax=value.stored_bounds(dtype))
 +    do_store = buf.index(idx).store(value.cast(dtype)).end(*rngs)
      return buf.after(do_store).cast(x.dtype)
  
@@ -2763,7 +2761,7 @@ index 26e28fa..84805b7 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -253,6 +329,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -253,6 +328,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -2773,19 +2771,18 @@ index 26e28fa..84805b7 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -276,7 +355,10 @@ class LocalAddBufferContext:
+@@ -276,7 +354,9 @@ class LocalAddBufferContext:
    range:int = 0
  
  def debuf(ctx:LocalAddBufferContext, buf:UOp):
--  param = UOp(Ops.PARAM, src=(UOp.const(prod(buf.max_shape)),), arg=ParamArg(ctx.dg, buf.dtype, addrspace=buf.addrspace, device=buf.device))
+-  param = UOp.param(ctx.dg, buf.dtype, buf.max_numel(), addrspace=buf.addrspace, device=buf.device)
 +  # the kernel reads the storage's values within their bounds
 +  bounds = buf.arg.vmin_vmax if isinstance(buf.arg, ParamArg) else None
-+  param = UOp(Ops.PARAM, src=(UOp.const(prod(buf.max_shape)),),
-+              arg=ParamArg(ctx.dg, buf.dtype, vmin_vmax=bounds, addrspace=buf.addrspace, device=buf.device))
++  param = UOp.param(ctx.dg, buf.dtype, buf.max_numel(), vmin_vmax=bounds, addrspace=buf.addrspace, device=buf.device)
    ret = param.reshape(buf.max_shape)
    # if the buffer has symbolic shape, shrink the max-sized view to the actual shape
    if buf.max_shape != buf.shape: ret = ret.shrink(tuple((0, s) for s in buf.shape))
-@@ -285,7 +367,8 @@ def debuf(ctx:LocalAddBufferContext, buf:UOp):
+@@ -285,7 +365,8 @@ def debuf(ctx:LocalAddBufferContext, buf:UOp):
    return ret
  
  def handle_after(ctx:LocalAddBufferContext, after:UOp):
@@ -2795,7 +2792,7 @@ index 26e28fa..84805b7 100644
    buf = after.buf_uop
    # NOTE: this is bottom up, so we only add it once
    if buf not in ctx.map: ctx.map[buf] = after
-@@ -349,7 +432,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -349,7 +430,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,
@@ -2826,7 +2823,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index de6cb2f..fe5fc74 100644
+index 46c8715..5881f52 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -2966,7 +2963,19 @@ index de6cb2f..fe5fc74 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1327,6 +1394,8 @@ class KernelInfo:
+@@ -1180,9 +1247,9 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+ 
+   @staticmethod
+   def alloc(shape:tuple[sint, ...], dtype:DType, slot:int|None=None, addrspace=AddrSpace.GLOBAL, device=None, axis:int|None=None,
+-            spec:BufferSpec|None=None, bind_on_realize:bool=False):
++            spec:BufferSpec|None=None, bind_on_realize:bool=False, vmin_vmax:tuple[PyConst, PyConst]|None=None):
+     ret = UOp(Ops.ALLOC, src=(shape_to_shape_arg((prod(to_max_shape(shape)),)),)+UOp.device_range_src(device),
+-              arg=ParamArg(next(UOp.unique_num) if slot is None else slot, strong_dtype(dtype),
++              arg=ParamArg(next(UOp.unique_num) if slot is None else slot, strong_dtype(dtype), vmin_vmax=vmin_vmax,
+                            addrspace=addrspace, device=device, spec=spec, bind_on_realize=bind_on_realize))
+     return ret.reshape(()) if not shape else ret.view_as(shape, axis)
+   def alloc_like(self, slot:int|None=None, addrspace=AddrSpace.GLOBAL): return UOp.alloc(self.max_shard_shape, self.dtype, slot, addrspace)
+@@ -1326,6 +1393,8 @@ class KernelInfo:
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
@@ -2975,15 +2984,15 @@ index de6cb2f..fe5fc74 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1357,6 +1426,7 @@ class ProgramInfo:
+@@ -1356,6 +1425,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
 +    if isinstance(sink.arg, KernelInfo) and sink.arg.split is not None: global_size[0] = sink.arg.split[0]
-     for u in sink.toposort(enter_calls=False):
+     for u in sink.toposort():
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1393,22 +1463,103 @@ class CallInfo:
+@@ -1392,22 +1462,103 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3093,7 +3102,7 @@ index de6cb2f..fe5fc74 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1419,6 +1570,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1418,6 +1569,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3103,7 +3112,7 @@ index de6cb2f..fe5fc74 100644
    return alu
  
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index cb2d347..2b68399 100644
+index 667e98f..8c5a0b1 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
 @@ -224,13 +224,6 @@ spec_program = PatternMatcher([
@@ -3162,7 +3171,7 @@ index cb2d347..2b68399 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 9c6d130..072011d 100644
+index 9c6d130..fd224ee 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -3256,7 +3265,7 @@ index 9c6d130..072011d 100644
  
 +def broadcast_const(u:UOp) -> UOp|None:
 +  # the constant u is through movements that keep each element's value
-+  while u.op in {Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK, Ops.FLIP}: u = u.src[0]
++  while u.op in {Ops.RESHAPE, Ops.EXPAND, Ops.PERMUTE, Ops.SHRINK}: u = u.src[0]
 +  return u if u.op is Ops.CONST else None
 +
  symbolic_simple = pm_data_invalid + PatternMatcher([

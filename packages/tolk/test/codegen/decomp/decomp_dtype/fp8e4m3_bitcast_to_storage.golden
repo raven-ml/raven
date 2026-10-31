@@ -1,50 +1,50 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
 3 Ops.CONST dtypes.weakint [] 4
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
-6 Ops.MUL dtypes.i32 [5, 3]
-7 Ops.INDEX dtypes.u8 [2, 6]
-8 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3, device="CPU")
-9 Ops.SHRINK dtypes.fp8e4m3 [8, 6, 4]
-10 Ops.LOAD dtypes.fp8e4m3 [9]
-11 Ops.CONST dtypes.weakint [] 0
-12 Ops.CAST dtypes.i32 [11] dtypes.i32
-13 Ops.INDEX dtypes.fp8e4m3 [10, 12]
-14 Ops.BITCAST dtypes.u8 [13] dtypes.u8
-15 Ops.STORE dtypes.void [7, 14]
-16 Ops.CONST dtypes.weakint [] 1
-17 Ops.ADD dtypes.i32 [6, 16]
-18 Ops.INDEX dtypes.u8 [2, 17]
-19 Ops.CAST dtypes.i32 [16] dtypes.i32
-20 Ops.INDEX dtypes.fp8e4m3 [10, 19]
-21 Ops.BITCAST dtypes.u8 [20] dtypes.u8
-22 Ops.STORE dtypes.void [18, 21]
-23 Ops.CONST dtypes.weakint [] 2
-24 Ops.ADD dtypes.i32 [6, 23]
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.SHL dtypes.i32 [5, 6]
+8 Ops.INDEX dtypes.u8 [2, 7]
+9 Ops.PARAM dtypes.fp8e4m3 [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3, device="CPU")
+10 Ops.SHRINK dtypes.fp8e4m3 [9, 7, 4]
+11 Ops.LOAD dtypes.fp8e4m3 [10]
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.INDEX dtypes.fp8e4m3 [11, 13]
+15 Ops.BITCAST dtypes.u8 [14] dtypes.u8
+16 Ops.STORE dtypes.void [8, 15]
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.ADD dtypes.i32 [7, 17]
+19 Ops.INDEX dtypes.u8 [2, 18]
+20 Ops.CAST dtypes.i32 [17] dtypes.i32
+21 Ops.INDEX dtypes.fp8e4m3 [11, 20]
+22 Ops.BITCAST dtypes.u8 [21] dtypes.u8
+23 Ops.STORE dtypes.void [19, 22]
+24 Ops.ADD dtypes.i32 [7, 6]
 25 Ops.INDEX dtypes.u8 [2, 24]
-26 Ops.CAST dtypes.i32 [23] dtypes.i32
-27 Ops.INDEX dtypes.fp8e4m3 [10, 26]
+26 Ops.CAST dtypes.i32 [6] dtypes.i32
+27 Ops.INDEX dtypes.fp8e4m3 [11, 26]
 28 Ops.BITCAST dtypes.u8 [27] dtypes.u8
 29 Ops.STORE dtypes.void [25, 28]
 30 Ops.CONST dtypes.weakint [] 3
-31 Ops.ADD dtypes.i32 [6, 30]
+31 Ops.ADD dtypes.i32 [7, 30]
 32 Ops.INDEX dtypes.u8 [2, 31]
 33 Ops.CAST dtypes.i32 [30] dtypes.i32
-34 Ops.INDEX dtypes.fp8e4m3 [10, 33]
+34 Ops.INDEX dtypes.fp8e4m3 [11, 33]
 35 Ops.BITCAST dtypes.u8 [34] dtypes.u8
 36 Ops.STORE dtypes.void [32, 35]
-37 Ops.AFTER dtypes.void [0, 15, 22, 29, 36]
+37 Ops.AFTER dtypes.void [0, 16, 23, 29, 36]
 38 Ops.END dtypes.void [37, 5]
 39 Ops.SINK dtypes.void [38] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
 40 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3
-41 Ops.ADD dtypes.i32 [6, 11]
+41 Ops.ADD dtypes.i32 [7, 12]
 42 Ops.INDEX dtypes.u8 [40, 41] tag=dtypes.fp8e4m3
 43 Ops.LOAD dtypes.u8 [42]
 44 Ops.CUSTOM dtypes.f32 [43] ("f2f fp8e4m3 f32 True", dtypes.f32)
-45 Ops.INDEX dtypes.u8 [40, 17] tag=dtypes.fp8e4m3
+45 Ops.INDEX dtypes.u8 [40, 18] tag=dtypes.fp8e4m3
 46 Ops.LOAD dtypes.u8 [45]
 47 Ops.CUSTOM dtypes.f32 [46] ("f2f fp8e4m3 f32 True", dtypes.f32)
 48 Ops.INDEX dtypes.u8 [40, 24] tag=dtypes.fp8e4m3
@@ -55,16 +55,16 @@
 53 Ops.CUSTOM dtypes.f32 [52] ("f2f fp8e4m3 f32 True", dtypes.f32)
 54 Ops.STACK dtypes.f32 [44, 47, 50, 53]
 55 Ops.CAST dtypes.f32 [54] dtypes.f32
-56 Ops.INDEX dtypes.f32 [55, 12]
+56 Ops.INDEX dtypes.f32 [55, 13]
 57 Ops.BITCAST dtypes.u32 [56] dtypes.u32
 58 Ops.CUSTOM dtypes.u8 [57] ("f2f f32 fp8e4m3 True", dtypes.u8)
 59 Ops.BITCAST dtypes.u8 [58] dtypes.u8
-60 Ops.STORE dtypes.void [7, 59]
-61 Ops.INDEX dtypes.f32 [55, 19]
+60 Ops.STORE dtypes.void [8, 59]
+61 Ops.INDEX dtypes.f32 [55, 20]
 62 Ops.BITCAST dtypes.u32 [61] dtypes.u32
 63 Ops.CUSTOM dtypes.u8 [62] ("f2f f32 fp8e4m3 True", dtypes.u8)
 64 Ops.BITCAST dtypes.u8 [63] dtypes.u8
-65 Ops.STORE dtypes.void [18, 64]
+65 Ops.STORE dtypes.void [19, 64]
 66 Ops.INDEX dtypes.f32 [55, 26]
 67 Ops.BITCAST dtypes.u32 [66] dtypes.u32
 68 Ops.CUSTOM dtypes.u8 [67] ("f2f f32 fp8e4m3 True", dtypes.u8)

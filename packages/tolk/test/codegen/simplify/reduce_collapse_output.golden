@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.CONST dtypes.weakfloat [] 6.0
 1 Ops.CAST dtypes.f32 [0] dtypes.f32
 2 Ops.CONST dtypes.weakfloat [] 14.0

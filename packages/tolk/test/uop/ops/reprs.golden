@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 name	arg	tag
 none	None	None
 int	42	None
@@ -17,7 +17,7 @@ negative range	(AxisType.LOOP, -1)	None
 reduce	(Ops.ADD, 1)	None
 special	'gidx0'	None
 permute	(1, 0)	None
-flip	(False, True)	None
+flip	(1, 0)	None
 device	'CUDA'	None
 custom	('barrier();', dtypes.void)	None
 ins	('s_endpgm', dtypes.void)	None

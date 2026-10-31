@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 program	position	name	slot	dtype	shape
 elementwise	0	None	0	dtypes.f32	(16,)
 elementwise	1	None	1	dtypes.f32	(16,)

@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.CONST dtypes.weakint [] 12
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 4
@@ -15,14 +15,77 @@
 13 Ops.RANGE dtypes.weakint [2] (AxisType.LOOP, 7)
 14 Ops.STAGE dtypes.f32 [12, 13, 10] BufferizeOpts(device="CPU")
 15 Ops.INDEX dtypes.f32 [14, 3, 6]
-16 Ops.CONST dtypes.weakint [] 2
-17 Ops.CONST dtypes.weakint [] -1
-18 Ops.MUL dtypes.weakint [6, 17]
-19 Ops.ADD dtypes.weakint [16, 18]
-20 Ops.INDEX dtypes.f32 [14, 3, 19]
-21 Ops.ADD dtypes.f32 [15, 20]
-22 Ops.STORE dtypes.void [8, 21]
-23 Ops.END dtypes.void [22, 3, 6]
-24 Ops.AFTER dtypes.f32 [1, 23]
-25 Ops.SINK dtypes.void [24]
+16 Ops.CONST dtypes.bool [] True
+17 Ops.MUL dtypes.weakint [13, 4]
+18 Ops.ADD dtypes.weakint [17, 4]
+19 Ops.CONST dtypes.weakint [] 2
+20 Ops.MUL dtypes.weakint [13, 19]
+21 Ops.ADD dtypes.weakint [20, 19]
+22 Ops.CONST dtypes.weakint [] 1
+23 Ops.ADD dtypes.weakint [13, 22]
+24 Ops.FLOORDIV dtypes.weakint [3, 23]
+25 Ops.ADD dtypes.weakint [24, 6]
+26 Ops.FLOORMOD dtypes.weakint [25, 4]
+27 Ops.MUL dtypes.weakint [21, 26]
+28 Ops.FLOORMOD dtypes.weakint [3, 23]
+29 Ops.ADD dtypes.weakint [27, 28]
+30 Ops.FLOORDIV dtypes.weakint [29, 23]
+31 Ops.FLOORMOD dtypes.weakint [29, 23]
+32 Ops.FLOORDIV dtypes.weakint [31, 23]
+33 Ops.ADD dtypes.weakint [30, 32]
+34 Ops.ADD dtypes.weakint [33, 19]
+35 Ops.FLOORMOD dtypes.weakint [34, 4]
+36 Ops.MUL dtypes.weakint [18, 35]
+37 Ops.ADD dtypes.weakint [36, 31]
+38 Ops.FLOORDIV dtypes.weakint [37, 23]
+39 Ops.CONST dtypes.weakint [] 6
+40 Ops.FLOORMOD dtypes.weakint [30, 39]
+41 Ops.ADD dtypes.weakint [32, 40]
+42 Ops.ADD dtypes.weakint [41, 19]
+43 Ops.FLOORDIV dtypes.weakint [42, 4]
+44 Ops.FLOORMOD dtypes.weakint [43, 4]
+45 Ops.ADD dtypes.weakint [38, 44]
+46 Ops.CONST dtypes.weakint [] 9
+47 Ops.FLOORMOD dtypes.weakint [45, 46]
+48 Ops.CMPLT dtypes.bool [47, 19]
+49 Ops.CMPNE dtypes.bool [48, 16]
+50 Ops.CONST dtypes.weakint [] 8
+51 Ops.CMPLT dtypes.bool [47, 50]
+52 Ops.AND dtypes.bool [49, 51]
+53 Ops.AND dtypes.bool [16, 52]
+54 Ops.AND dtypes.bool [53, 16]
+55 Ops.FLOORMOD dtypes.weakint [37, 23]
+56 Ops.FLOORDIV dtypes.weakint [55, 23]
+57 Ops.ADD dtypes.weakint [56, 47]
+58 Ops.FLOORMOD dtypes.weakint [57, 19]
+59 Ops.CMPLT dtypes.bool [58, 22]
+60 Ops.CONST dtypes.bool [] Invalid
+61 Ops.WHERE dtypes.bool [52, 59, 60]
+62 Ops.AND dtypes.bool [53, 61]
+63 Ops.AND dtypes.bool [62, 52]
+64 Ops.CMPLT dtypes.bool [55, 13]
+65 Ops.WHERE dtypes.bool [52, 64, 60]
+66 Ops.AND dtypes.bool [53, 65]
+67 Ops.FLOORMOD dtypes.weakint [55, 23]
+68 Ops.WHERE dtypes.weakint [52, 67, 60]
+69 Ops.CONST dtypes.weakint [] 0
+70 Ops.CONST dtypes.weakint [] -1
+71 Ops.MUL dtypes.weakint [69, 70]
+72 Ops.ADD dtypes.weakint [68, 71]
+73 Ops.WHERE dtypes.weakint [65, 72, 60]
+74 Ops.FLOORDIV dtypes.weakint [57, 19]
+75 Ops.ADD dtypes.weakint [74, 56]
+76 Ops.ADD dtypes.weakint [75, 19]
+77 Ops.FLOORMOD dtypes.weakint [76, 4]
+78 Ops.WHERE dtypes.weakint [52, 77, 60]
+79 Ops.INDEX dtypes.f32 [14, 73, 78]
+80 Ops.CONST dtypes.weakfloat [] 0.0
+81 Ops.WHERE dtypes.f32 [66, 79, 80]
+82 Ops.WHERE dtypes.f32 [63, 81, 80]
+83 Ops.WHERE dtypes.f32 [54, 82, 80]
+84 Ops.ADD dtypes.f32 [15, 83]
+85 Ops.STORE dtypes.void [8, 84]
+86 Ops.END dtypes.void [85, 3, 6]
+87 Ops.AFTER dtypes.f32 [1, 86]
+88 Ops.SINK dtypes.void [87]
 

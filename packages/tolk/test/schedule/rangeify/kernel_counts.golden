@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 program	kernels
 add	1
 sum	1
@@ -93,6 +93,7 @@ variable_two	2
 variable_same	2
 variable_offset	1
 variable_staged	2
+variable_flipped_store	1
 symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1

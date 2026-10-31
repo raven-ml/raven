@@ -1,4 +1,4 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 op	value	Unary	Binary	Ternary	ALU	Broadcastable	Elementwise	Defines	Irreducible	Movement	Commutative	Associative	Idempotent	Reduce	Comparison	All
 Ops.SPECIAL	1	False	False	False	False	False	False	False	True	False	False	False	False	False	False	True
 Ops.BUFFER	2	False	False	False	False	False	False	True	False	False	False	False	False	False	False	True
@@ -71,8 +71,7 @@ Ops.RESHAPE	68	False	False	False	False	False	False	False	False	True	False	False	
 Ops.PERMUTE	69	False	False	False	False	False	False	False	False	True	False	False	False	False	False	True
 Ops.EXPAND	70	False	False	False	False	False	False	False	False	True	False	False	False	False	False	True
 Ops.PAD	71	False	False	False	False	False	False	False	False	True	False	False	False	False	False	True
-Ops.FLIP	72	False	False	False	False	False	False	False	False	True	False	False	False	False	False	True
-Ops.UNSHARD	73	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
-Ops.REDUCE	74	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
-Ops.ALLREDUCE	75	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
-Ops.PYLITERAL	76	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
+Ops.UNSHARD	72	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
+Ops.REDUCE	73	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
+Ops.ALLREDUCE	74	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True
+Ops.PYLITERAL	75	False	False	False	False	False	False	False	False	False	False	False	False	False	False	True

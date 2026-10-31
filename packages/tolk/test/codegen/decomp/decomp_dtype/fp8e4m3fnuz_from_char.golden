@@ -1,29 +1,29 @@
-# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+# tinygrad 37132d7553a831fdaf900e2334d80380702c5564
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 8
 2 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3fnuz, device="CPU")
 3 Ops.CONST dtypes.weakint [] 2
 4 Ops.CAST dtypes.i32 [3] dtypes.i32
 5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
-6 Ops.CONST dtypes.weakint [] 4
-7 Ops.MUL dtypes.i32 [5, 6]
-8 Ops.CAST dtypes.i32 [6] dtypes.i32
-9 Ops.SHRINK dtypes.fp8e4m3fnuz [2, 7, 8]
+6 Ops.SHL dtypes.i32 [5, 3]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.CAST dtypes.i32 [7] dtypes.i32
+9 Ops.SHRINK dtypes.fp8e4m3fnuz [2, 6, 8]
 10 Ops.PARAM dtypes.i8 [1] ParamArg(slot=1, dtype=dtypes.i8, device="CPU")
-11 Ops.INDEX dtypes.i8 [10, 7]
+11 Ops.INDEX dtypes.i8 [10, 6]
 12 Ops.LOAD dtypes.i8 [11]
 13 Ops.CAST dtypes.fp8e4m3fnuz [12] dtypes.fp8e4m3fnuz
 14 Ops.CONST dtypes.weakint [] 1
-15 Ops.ADD dtypes.i32 [7, 14]
+15 Ops.ADD dtypes.i32 [6, 14]
 16 Ops.INDEX dtypes.i8 [10, 15]
 17 Ops.LOAD dtypes.i8 [16]
 18 Ops.CAST dtypes.fp8e4m3fnuz [17] dtypes.fp8e4m3fnuz
-19 Ops.ADD dtypes.i32 [7, 3]
+19 Ops.ADD dtypes.i32 [6, 3]
 20 Ops.INDEX dtypes.i8 [10, 19]
 21 Ops.LOAD dtypes.i8 [20]
 22 Ops.CAST dtypes.fp8e4m3fnuz [21] dtypes.fp8e4m3fnuz
 23 Ops.CONST dtypes.weakint [] 3
-24 Ops.ADD dtypes.i32 [7, 23]
+24 Ops.ADD dtypes.i32 [6, 23]
 25 Ops.INDEX dtypes.i8 [10, 24]
 26 Ops.LOAD dtypes.i8 [25]
 27 Ops.CAST dtypes.fp8e4m3fnuz [26] dtypes.fp8e4m3fnuz
@@ -34,7 +34,7 @@
 32 Ops.SINK dtypes.void [31] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
 33 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3fnuz
 34 Ops.CONST dtypes.weakint [] 0
-35 Ops.ADD dtypes.i32 [7, 34]
+35 Ops.ADD dtypes.i32 [6, 34]
 36 Ops.INDEX dtypes.u8 [33, 35] tag=dtypes.fp8e4m3fnuz
 37 Ops.CAST dtypes.f32 [12] dtypes.f32
 38 Ops.CUSTOM dtypes.f32 [37] ("f2f_clamp fp8e4m3fnuz True", dtypes.f32)
