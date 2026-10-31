@@ -89,10 +89,12 @@ val read_through : ('v, 's, 'd) t -> ('v, 's, 'd) t
     ({!interpret}'s handler). *)
 
 val payload : interpretation -> ('v, 's, 'd) t -> ('v, 's, 'd) payload option
-(** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. *)
+(** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. It
+    allocates nothing. *)
 
 val owner : ('v, 's, 'd) t -> interpretation option
-(** [owner x] is the interpretation that owns [x], if [x] is traced. *)
+(** [owner x] is the interpretation that owns [x], if [x] is traced. It
+    allocates nothing. *)
 
 val quiet : unit -> bool
 (** [quiet ()] is [true] iff the count of live [Extent] interpretations is

@@ -5390,7 +5390,8 @@ module Prim : sig
 
   val payload : interpretation -> ('v, 's, 'd) nx -> ('v, 's, 'd) payload option
   (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps: [None]
-      for a value [i] adopts ([Adopting]), whose owner keeps its payload. *)
+      for a value [i] adopts ([Adopting]), whose owner keeps its payload. It
+      allocates nothing. *)
 
   val quiet : unit -> bool
   (** [quiet ()] is [true] only if no [Extent] interpretation is live, on any
@@ -5400,7 +5401,8 @@ module Prim : sig
       the process. It reads one atomic. *)
 
   val owner : ('v, 's, 'd) nx -> interpretation option
-  (** [owner x] is the interpretation that owns [x], if [x] is traced. *)
+  (** [owner x] is the interpretation that owns [x], if [x] is traced. It
+      allocates nothing. *)
 
   val donated : ('v, 's, 'd) nx -> bool
   (** [donated x] is [true] iff [x] is a handle {!Nx.donate} made, live or

@@ -63,6 +63,9 @@ type ('v, 's, 'd) t =
       form : ('v, 's, 'd) form;
       owner : interpretation;
       payload : ('v, 's, 'd) payload;
+      held : ('v, 's, 'd) payload option;
+          (** [Some payload], made with the value, so that asking for the
+              payload allocates nothing. *)
       twin : ('v, 's, 'd) t option;
           (** A value of [form] that a read reads while [owner] is around
               it. *)
@@ -86,6 +89,9 @@ and interpretation = {
   rule : 'r. interpretation -> by:string -> 'r prim -> 'r;
       (** What it makes of the operations it receives. *)
   live : bool Atomic.t;  (** Cleared when its extent ends. *)
+  self : interpretation option;
+      (** [Some] of itself, so that asking for a value's owner allocates
+          nothing. *)
 }
 (** An interpretation. Only {!Eval} makes one and writes [live]. *)
 

@@ -350,7 +350,7 @@ let interpret ~name reach
   | Adopting p -> adoptable ~name p
   | Values | Extent -> ());
   let live = Atomic.make true in
-  let i = { name; reach; rule; live } in
+  let rec i = { name; reach; rule; live; self = Some i } in
   let run () = Effect.Deep.match_with f i (handler i) in
   match reach with
   | Values | Adopting _ ->
@@ -363,10 +363,18 @@ let interpret ~name reach
           Atomic.decr extents)
         run
 
-let traced i form payload = Traced { form; owner = i; payload; twin = None }
+let traced i form payload =
+  Traced { form; owner = i; payload; held = Some payload; twin = None }
 
 let twinned i c payload =
-  Traced { form = Prim.form c; owner = i; payload; twin = Some c }
+  Traced
+    {
+      form = Prim.form c;
+      owner = i;
+      payload;
+      held = Some payload;
+      twin = Some c;
+    }
 
 (* Whether [o]'s handler is around the caller with no [Extent] handler
    between them. *)
@@ -381,12 +389,12 @@ let read_through (type v s d) (x : (v, s, d) t) : (v, s, d) t =
 
 let payload (type v s d) i (x : (v, s, d) t) =
   match x with
-  | Traced { owner; payload; _ } when owner == i -> Some payload
+  | Traced { owner; held; _ } when owner == i -> held
   | Traced _ | Array _ | Shards _ | Handle _ -> None
 
 let owner (type v s d) (x : (v, s, d) t) =
   match x with
-  | Traced { owner; _ } -> Some owner
+  | Traced { owner; _ } -> owner.self
   | Array _ | Shards _ | Handle _ -> None
 
 (* An operation no handler answered computes, unless an operand is traced. *)

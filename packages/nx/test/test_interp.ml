@@ -2011,6 +2011,19 @@ let test_adopting_words () =
             (words_per (copy own))
             (words_per (copy t))))
 
+(* Asking a value for its owner and its payload allocates nothing, as their
+   interpretations ask for every operand of every operation. *)
+let test_queries_words () =
+  let x = x3 () in
+  logged ~name:"test.p" Values (ref []) (fun p ->
+      let t = tag p x in
+      let ask y () =
+        ignore (Sys.opaque_identity (Nx.Prim.owner y));
+        ignore (Sys.opaque_identity (Nx.Prim.payload p y))
+      in
+      equal ~msg:"a traced value's" float_exact 0. (words_per (ask t));
+      equal ~msg:"an array's" float_exact 0. (words_per (ask x)))
+
 let nesting =
   group "nesting"
     [
@@ -2028,6 +2041,7 @@ let nesting =
       test "an adopting interpretation migrated with its parent receives"
         test_adopting_migrated_whole;
       test "a parent's value costs what an own value does" test_adopting_words;
+      test "owner and payload allocate nothing" test_queries_words;
     ]
 
 (* Memory
