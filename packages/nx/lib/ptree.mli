@@ -29,7 +29,8 @@ type ('d, 'e) visitor = {
 }
 (** What a walk does at an array of a fixed type and at a report. *)
 
-type ('s, 'd) t
+type ('s, 'd) t = ('d, 'd) visitor -> Path.t -> 's -> 's
+(** A description is its walk: [w v p x] walks [x] at [p] with [v]. *)
 
 module Walk : sig
   type ('a, 'b, 'd, 'e) cursor

@@ -329,6 +329,10 @@ let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 
 let walk c k = of_tensor (Ptree.Walk.tensor c k)
 
+(* A function, so OCaml generalises its set: [Ptree.v walk] is an
+   application, whose set the first use would fix. *)
+let ptree visitor path k = Ptree.v walk visitor path k
+
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch: one map over [k], where [k] lies. The broadcast is dispatched;
    where [shape] is [k]'s batch, as for {!subkey}, it moves nothing. *)

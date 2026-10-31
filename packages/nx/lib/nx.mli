@@ -3721,11 +3721,11 @@ val map_segments :
     structure's module: {!Ptree.place} and {!Ptree.cast} take one.
 
     A description is made where it is used. Every description but
-    {!Ptree.tensor} and {!Ptree.unit} is a function's result, so OCaml fixes
-    its dtype and its set at its first use, and a set minted in a local scope
-    has no description outside it. A library therefore exports a structure's
-    module, or a walk such as {!Rng.walk}, and its users describe the
-    structure at their dtype and set.
+    {!Ptree.tensor}, {!Ptree.unit} and {!Rng.ptree} is a function's result, so
+    OCaml fixes its dtype and its set at its first use, and a set minted in a
+    local scope has no description outside it. A library therefore exports a
+    structure's module, or a walk such as {!Rng.walk}, and its users describe
+    the structure at their dtype and set.
 
     {[
     type 'a linear = { w : 'a; b : 'a option }
@@ -4380,8 +4380,13 @@ module Rng : sig
   (** [walk c k] walks [k], a key or a batch of keys, at [c]'s path as one
       fixed array ({!Ptree.Walk.tensor}), and rebuilds it as {!of_tensor}
       does. A structure holding a key walks it with
-      [field c "key" Nx.Rng.walk k]; [Nx.Ptree.v Nx.Rng.walk] describes a key
-      alone. *)
+      [field c "key" Nx.Rng.walk k]; {!ptree} describes a key alone. *)
+
+  val ptree : ('d key, 'd) Ptree.t
+  (** [ptree] is a key, or a batch of keys, as a description: one fixed array
+      at the root, walked by {!walk}, which rebuilds it as {!of_tensor} does.
+      It is at every set, as {!Ptree.tensor} is, so one binding describes keys
+      on the host and on any other set. *)
 
   val split : ?n:int -> 'd key -> 'd key array
   (** [split ~n k] is [n] keys derived from [k] ([n] defaults to [2]),

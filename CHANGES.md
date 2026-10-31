@@ -3138,6 +3138,9 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.ptree` describes a key at every set, for signatures such as
+  `Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)`. A binding of
+  `Nx.Ptree.v Nx.Rng.walk` had its set fixed by its first use.
 - Add `Nx_io.encode_txt`, the text `save_txt` writes, as a string, so rows can
   be appended to a file opened with `Out_channel.open_gen [ Open_append; … ]`.
 - `Nx.attention` states its error bound for each element of `o` and for `lse`.

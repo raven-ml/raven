@@ -547,6 +547,27 @@ let test_constant_key () =
   equal bits_t (bits (f x)) a;
   equal bits_t a b
 
+(* A key argument, described by [Nx.Rng.ptree], draws eager's values: keys of
+   one shape share a program whatever their words, and a batch of keys has its
+   own. *)
+let law_key_argument (s, s') =
+  let traces = ref 0 in
+  let draw k = Nx.Rng.uniform ~key:k f32 [| 3 |] in
+  let g =
+    Rune.jit
+      T.(Nx.Rng.ptree @-> returns tensor)
+      (fun k ->
+        incr traces;
+        draw k)
+  in
+  let k = Nx.Rng.key s and k' = Nx.Rng.key s' in
+  let batch = Nx.Rng.split_batch ~n:2 k in
+  equal ~msg:"a key" bits_t (bits (draw k)) (bits (g k));
+  equal ~msg:"another key" bits_t (bits (draw k')) (bits (g k'));
+  equal ~msg:"one program for one shape" int 1 !traces;
+  equal ~msg:"a batch" bits_t (bits (draw batch)) (bits (g batch));
+  equal ~msg:"a batch's own program" int 2 !traces
+
 (* Captured values are read as they are when the program is traced: a later call
    of the same key does not see what the closure would read now. *)
 let test_captures () =
@@ -3221,6 +3242,8 @@ let () =
              test "a read raises naming Rune.jit" test_read;
              test "a keyless draw raises naming Rune.jit" test_keyless;
              test "a constant key draws the same each call" test_constant_key;
+             prop "a key argument draws eager's values, one program per shape"
+               (Gen.pair Gen.int Gen.int) law_key_argument;
              test "captures are read as they were traced" test_captures;
              prop ~count:24 ~examples:sliced_examples
                "a scatter at a slice of a capture sliced again gives eager's \

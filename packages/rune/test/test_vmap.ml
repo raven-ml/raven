@@ -1129,6 +1129,23 @@ let test_draws () =
       (Nx.to_array (Nx.get [ i ] y))
   done
 
+(* A map over a batch of keys, described by [Nx.Rng.ptree], draws each row's
+   key's draw. *)
+let law_key_lanes (s, n) =
+  let k = Nx.Rng.key s in
+  let draw k = Nx.Rng.uniform ~key:k f64 [| 2 |] in
+  let y =
+    Rune.vmap T.(Nx.Rng.ptree @-> returns tensor) draw (Nx.Rng.split_batch ~n k)
+  in
+  Array.iteri
+    (fun i k ->
+      equal
+        ~msg:(Printf.sprintf "lane %d" i)
+        floats
+        (Nx.to_array (draw k))
+        (Nx.to_array (Nx.get [ i ] y)))
+    (Nx.Rng.split ~n k)
+
 let () =
   exit
   @@ run "rune vmap"
@@ -1174,5 +1191,8 @@ let () =
              test "creations on a set without kernels" test_bare;
              test "checks" test_check;
              test "draws" test_draws;
+             prop "a batch of keys, one per lane"
+               (Gen.pair Gen.int (Gen.of_list [ 1; 3 ]))
+               law_key_lanes;
            ];
        ]

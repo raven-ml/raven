@@ -186,6 +186,14 @@ The combinators are descriptions at one type: `Nx.Ptree.tensor` and `unit`, and 
 - : string list = ["1.0"; "0"]
 ```
 
+A key, or a batch of keys, is `Nx.Rng.ptree`: one array at the root, rebuilt through `Nx.Rng.of_tensor`, which checks that its last axis holds a key's two words. As `tensor` and `unit` are, it is at every set, so one binding describes keys on the host and on any other set. A key is one visit, at the root:
+
+```ocaml
+# Nx.Ptree.visits Nx.Rng.ptree (Nx.Rng.key 7)
+  |> List.map (Format.asprintf "%a" Nx.Ptree.pp_visit);;
+- : string list = ["the root: a leaf"]
+```
+
 ## Records of Structures
 
 A record of a fixed type, such as a training state saved as one file or the result of a compiled function, has no parameter. Its parts often have a structure at one type and no module of their own: an optimizer state over a model, a cache index, or a list of models. `structure` walks such a part at the cursor's path, and `Nx.Ptree.v` makes the record's description from its walk:

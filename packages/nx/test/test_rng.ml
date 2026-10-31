@@ -383,6 +383,107 @@ let keys_group =
             (message (fun () -> Rng.split b)));
     ]
 
+(* Keys as a description *)
+
+(* A key's words, int32's extremes among them. *)
+let key_words =
+  Gen.frequency
+    [
+      (1, Gen.of_list [ Int32.min_int; Int32.max_int; 0l; -1l ]); (3, Gen.int32);
+    ]
+
+(* One key, an empty batch, a batch of one key, of [n] keys and of [a; b]
+   keys. *)
+let key_shapes =
+  Gen.one_of
+    [
+      Gen.constant [| 2 |];
+      Gen.constant [| 0; 2 |];
+      Gen.constant [| 1; 2 |];
+      Gen.map (fun n -> [| n; 2 |]) (Gen.int_range 2 5);
+      Gen.map
+        (fun (a, b) -> [| a; b; 2 |])
+        (Gen.pair (Gen.int_range 0 3) (Gen.int_range 1 3));
+    ]
+
+let batches =
+  (let open Gen in
+   let* s = key_shapes in
+   let+ ws = array ~size:(constant (numel s)) key_words in
+   Rng.of_tensor (host_of Nx.int32 s ws))
+  |> Gen.with_pp (fun ppf k ->
+      Format.fprintf ppf "%a [%s]" pp_shape
+        (Nx.shape (Rng.to_tensor k))
+        (String.concat "; "
+           (Array.to_list (Array.map Int32.to_string (words k)))))
+
+let pp_visits s k =
+  List.map (Format.asprintf "%a" Nx.Ptree.pp_visit) (Nx.Ptree.visits s k)
+
+(* [Rng.ptree] walks what [Nx.Ptree.v Rng.walk] walks. *)
+let ptree_law k =
+  let s = Nx.shape (Rng.to_tensor k) in
+  let extreme w = Int32.equal w Int32.min_int || Int32.equal w Int32.max_int in
+  cover "one key" (Array.length s = 1);
+  cover "an empty batch" (numel s = 0);
+  cover "a batch of one key" (s = [| 1; 2 |]);
+  cover "a batch of rank 3" (Array.length s = 3);
+  cover "an int32 extreme word" (Array.exists extreme (words k));
+  equal ~msg:"visits" (list string) [ "the root: a leaf" ]
+    (pp_visits Rng.ptree k);
+  equal ~msg:"Nx.Ptree.v Rng.walk's visits" (list string)
+    (pp_visits (Nx.Ptree.v Rng.walk) k)
+    (pp_visits Rng.ptree k);
+  let leaves, _ = Nx.Ptree.flatten Rng.ptree k in
+  equal ~msg:"rebuild of flatten" (array int32) (words k)
+    (words (Nx.Ptree.rebuild Rng.ptree ~like:k leaves))
+
+(* Bound once, as a user binds it: a description of keys at every set. *)
+let described = Rng.ptree
+
+(* [k]'s words, mapped by [described] at [D]'s set, a brand that exists only
+   where [D] is unpacked. *)
+let mapped_on (module D : Nx.Devices) k =
+  words (Nx.Ptree.map described (fun _ a -> a) (Rng.place D.on k))
+
+let ptree_group =
+  group "ptree"
+    [
+      prop "Rng.ptree walks a key as Nx.Ptree.v Rng.walk does" batches ptree_law;
+      test "Rng.ptree rebuilds through of_tensor's checks" (fun () ->
+          let batch = Rng.split_batch ~n:3 (Rng.key 1) in
+          equal ~msg:"a reshape" string
+            "Nx.Rng.of_tensor: a key has shape [...; 2], not [6]"
+            (message (fun () ->
+                 Nx.Ptree.map Rng.ptree (fun _ a -> Nx.reshape [| 6 |] a) batch));
+          let p = S2.split ~axis:0 in
+          equal ~msg:"a placement" string
+            (Format.asprintf
+               "Nx.Rng.of_tensor: %a cuts a key's words, which lie whole on \
+                one device"
+               Nx.Placement.pp p)
+            (message (fun () ->
+                 Nx.Ptree.map Rng.ptree
+                   (fun _ a -> Nx.place p a)
+                   (Rng.place S2.on (Rng.key 1))));
+          let m =
+            message (fun () ->
+                Nx.Ptree.rebuild Rng.ptree ~like:(Rng.key 1)
+                  [ Nx.P (Nx.zeros Nx.float32 [| 2 |]) ])
+          in
+          starts_with ~msg:"a dtype" ~prefix:"Nx.Ptree.rebuild: " m;
+          contains ~msg:"a dtype" ~sub:"int32" m;
+          contains ~msg:"a dtype" ~sub:"float32" m);
+      test "a binding of Rng.ptree describes keys at every set" (fun () ->
+          let k = Rng.split_batch ~n:2 (Rng.key 3) in
+          let same k = Nx.Ptree.map described (fun _ a -> a) k in
+          equal ~msg:"the host" (array int32) (words k) (words (same k));
+          equal ~msg:"another set" (array int32) (words k)
+            (words (same (Rng.place S2.on k)));
+          equal ~msg:"a set unpacked in a function" (array int32) (words k)
+            (mapped_on (Nx.devices [ m 2 ]) k));
+    ]
+
 (* Draws *)
 
 (* Each sampler at fixed parameters, its draw of a shape read as floats. *)
@@ -2503,6 +2604,7 @@ let () =
        [
          known;
          keys_group;
+         ptree_group;
          draws;
          placed_draws;
          distributions;
