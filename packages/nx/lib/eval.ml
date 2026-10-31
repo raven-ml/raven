@@ -49,12 +49,21 @@ let taken c (r : Prim.routed) op =
       Option.map (fun (b, a) -> (b, A.Any a)) (Donate.reuse c ~own dt layout)
   | Some _, None | None, _ -> None
 
+(* Whether [checked] raises for [x]. *)
+let unusable (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Traced _ -> true
+  | Array _ | Shards _ | Handle _ -> (
+      match Prim.death x with Live -> false | Died _ -> true)
+
 let rec run : type r. by:string -> r prim -> r =
  fun ~by op -> if Exec.is_local op then Exec.local ~by op else general ~by op
 
+(* The raising walk, a closure over [by], is built only for an operand that
+   fails. *)
 and general : type r. by:string -> r prim -> r =
  fun ~by op ->
-  Prim.iteri (fun _ x -> checked ~by x) op;
+  if Prim.exists unusable op then Prim.iteri (fun _ x -> checked ~by x) op;
   if Prim.exists Donate.is_handle op then donated ~by op else plain ~by op
 
 (* [op] over donated operands: a movement that maps elements one to one passes

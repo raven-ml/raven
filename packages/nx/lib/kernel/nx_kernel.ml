@@ -168,42 +168,61 @@ module Shape = struct
             | y -> Ok (Iarray.to_array y)
             | exception Invalid_argument e -> errorf "windows: %s" e)
 
-  (* [axes] strictly increasing axes of a rank [r]. *)
+  (* Whether [axes] from the [i]th on are not strictly increasing axes of a
+     rank [r]. *)
+  let rec bad_axes axes r i =
+    i < Iarray.length axes
+    && (let a = Iarray.get axes i in
+        a < 0 || a >= r
+        || (i > 0 && a <= Iarray.get axes (i - 1))
+        || bad_axes axes r (i + 1))
+
   let check_axes axes r =
-    let rec bad i =
-      i < Iarray.length axes
-      && (let a = Iarray.get axes i in
-          a < 0 || a >= r
-          || (i > 0 && a <= Iarray.get axes (i - 1))
-          || bad (i + 1))
-    in
-    if bad 0 then
+    if bad_axes axes r 0 then
       errorf "axes %a are not strictly increasing axes of a rank %d" pp
         (Iarray.to_array axes) r
     else Ok ()
 
+  let extreme = function Monoid (Max | Min) | Arg _ -> true | _ -> false
+
   let reduce ~axes rs y =
-    let* () = check_axes axes (Array.length y) in
-    let kept =
-      Array.of_list
-        (List.filteri (fun i _ -> not (Iarray.mem i axes)) (Array.to_list y))
-    in
-    let total = Array.fold_left ( * ) 1 kept in
-    let extreme = function Monoid (Max | Min) | Arg _ -> true | _ -> false in
-    match Iarray.find_opt (fun a -> y.(a) = 0) axes with
-    | Some a when total > 0 && Array.exists extreme rs ->
-        errorf "an extreme of no term: no element along axis %d of %a" a pp y
-    | Some _ | None -> Ok kept
+    match check_axes axes (Array.length y) with
+    | Error e -> Error e
+    | Ok () ->
+        (* One pass: the kept extents, their product, and the first reduced
+           axis of no element. *)
+        let n = Iarray.length axes in
+        let kept = Array.make (Array.length y - n) 0 in
+        let total = ref 1 and j = ref 0 and empty = ref (-1) in
+        for i = 0 to Array.length y - 1 do
+          if !j < n && Iarray.get axes !j = i then begin
+            if y.(i) = 0 && !empty < 0 then empty := i;
+            incr j
+          end
+          else begin
+            kept.(i - !j) <- y.(i);
+            total := !total * y.(i)
+          end
+        done;
+        if !empty >= 0 && !total > 0 && Array.exists extreme rs then
+          errorf "an extreme of no term: no element along axis %d of %a" !empty
+            pp y
+        else Ok kept
 
   let scan ~axis y =
-    let* () = check_axes [| axis |] (Array.length y) in
-    Ok y
+    let r = Array.length y in
+    if axis < 0 || axis >= r then
+      errorf "axes %a are not strictly increasing axes of a rank %d" pp
+        [| axis |] r
+    else Ok y
+
+  let rec same_off axis x y i =
+    i = Array.length x
+    || ((i = axis || x.(i) = y.(i)) && same_off axis x y (i + 1))
 
   (* Whether [x] and [y] have one rank and one extent along every axis but
      [axis]. *)
-  let off_axis axis x y =
-    Array.length x = Array.length y
-    && Array.for_all Fun.id (Array.mapi (fun i d -> i = axis || d = y.(i)) x)
+  let off_axis axis x y = Array.length x = Array.length y && same_off axis x y 0
 
   let gather ~axis idx x =
     if axis < 0 || axis >= Array.length x then

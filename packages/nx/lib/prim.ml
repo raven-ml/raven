@@ -101,9 +101,10 @@ let rec layout_shape : type v s d. (v, s, d) t -> int iarray =
 let scale_shape (type d) (sc : d scale) =
   match sc with Exponent x -> shape x | Value x -> shape x
 
-let has_shape x s =
-  let rec go i = i = Array.length s || (dim x i = s.(i) && go (i + 1)) in
-  rank x = Array.length s && go 0
+let rec has_dims : type v s d. (v, s, d) t -> int array -> int -> bool =
+ fun x s i -> i = Array.length s || (dim x i = s.(i) && has_dims x s (i + 1))
+
+let has_shape x s = rank x = Array.length s && has_dims x s 0
 
 let rec layouts_equal la lb i =
   i = L.rank la || (L.dim la i = L.dim lb i && layouts_equal la lb (i + 1))
@@ -488,8 +489,10 @@ let rec fold_loads : type e a d.
  fun f e acc loads i ->
   if i = Iarray.length loads then acc
   else
-    let (Any x) = load_any (Iarray.get loads i) in
-    fold_loads f e (f e acc x) loads (i + 1)
+    (* Matched in place: [load_any] would box each operand. *)
+    match Iarray.get loads i with
+    | Plain x -> fold_loads f e (f e acc x) loads (i + 1)
+    | Padded { x; _ } -> fold_loads f e (f e acc x) loads (i + 1)
 
 (* [f e] folded over [pieces]' values. *)
 let rec fold_pieces : type e a r w q b.

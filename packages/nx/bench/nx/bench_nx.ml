@@ -157,8 +157,8 @@ let dispatch_rows =
 
 (* Calls on 16 elements, where a call's own cost outweighs its arithmetic,
    as a sampler's steps over a small state make them: elementwise kinds,
-   a scalar form, a sum, and a leapfrog step x + dt (v + dt/2 g) of three
-   such calls and two scalar forms. *)
+   a scalar form, a sum, a cumsum, and a leapfrog step x + dt (v + dt/2 g)
+   of three such calls and two scalar forms. *)
 let small_rows =
   let f32 () = filled D.Float32 [| 16 |] 1.5 in
   let f64 () = filled D.Float64 [| 16 |] 1.5 in
@@ -183,6 +183,8 @@ let small_rows =
           Nx.mul_s x 0.5);
       Thumper.bench_with_setup "sum-f32-16" ~setup:f32 (fun x -> Nx.sum x);
       Thumper.bench_with_setup "sum-f64-16" ~setup:f64 (fun x -> Nx.sum x);
+      Thumper.bench_with_setup "cumsum-f32-16" ~setup:f32 (fun x ->
+          Nx.cumsum x);
       Thumper.bench_with_setup "leapfrog-step-f32-16"
         ~setup:(fun () -> (f32 (), f32 (), f32 ()))
         step;
