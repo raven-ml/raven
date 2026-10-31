@@ -8,6 +8,9 @@ open Hugin
 let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
+(* A boolean mask drawn as an image, [true] white. *)
+let mask s m = panel s (Nx.cast Nx.float32 m)
+
 let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
@@ -18,9 +21,9 @@ let () =
   grid
     [
       [
-        panel "Thresholded" thresh;
-        panel "Eroded (5x5)" eroded;
-        panel "Dilated (5x5)" dilated;
+        mask "Thresholded" thresh;
+        mask "Eroded (5x5)" eroded;
+        mask "Dilated (5x5)" dilated;
       ];
     ]
   |> save ~size:(Size.panels 240. 190.) "morphology.png"

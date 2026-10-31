@@ -37,14 +37,14 @@ let create_centered_square h w square_size =
 let check_shape msg expected_shape tensor =
   equal ~msg (array int) expected_shape (Nx.shape tensor)
 
+let check_pixel_i msg expected tensor indices =
+  let actual = Nx.item indices tensor in
+  equal ~msg int expected actual
+
 let check_pixel_f msg expected tensor indices =
   let actual = Nx.item indices tensor in
   let diff = Float.abs (expected -. actual) in
   if diff > 0.01 then failf "%s: expected ~%.3f, got %.3f" msg expected actual
-
-let check_pixel_i msg expected tensor indices =
-  let actual = Nx.item indices tensor in
-  equal ~msg int expected actual
 
 (* ───── Geometric Transform Tests ───── *)
 
@@ -359,25 +359,102 @@ let test_median_blur_preserves_median () =
 
 (* ───── Thresholding Tests ───── *)
 
-let test_threshold () =
-  let img =
-    Nx.create Nx.float32 [| 2; 3; 1 |] [| 0.2; 0.4; 0.6; 0.8; 0.99; 0.1 |]
+(* [f32 x] is the float32 nearest [x]. [f32_step x n] is the float32 whose bit
+   pattern is [n] above the float32 [x]'s: [n] float32s away from zero, toward
+   it for a negative [n]. *)
+let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
+let f32_step x n = Int32.float_of_bits (Int32.add (Int32.bits_of_float x) n)
+
+(* [f32_below x] is the float32 next below the float32 [x], for [x] other
+   than [0.]. *)
+let f32_below x = f32_step x (if x > 0. then -1l else 1l)
+let row xs = Nx.create Nx.float32 [| 1; Array.length xs; 1 |] xs
+
+(* Each element is [true] iff it is greater than [t] stored in float32: an
+   element equal to that is not, nor a NaN element, nor any element for a NaN
+   [t]. *)
+let threshold_cases =
+  let half = 0.5 and tenth = f32 0.1 in
+  [
+    ( "at 0.5 and its neighbours",
+      0.5,
+      [| f32_step half (-1l); half; f32_step half 1l |],
+      [| false; false; true |] );
+    ( "at 0.1, stored as the float32 nearest it",
+      0.1,
+      [| f32_step tenth (-1l); tenth; f32_step tenth 1l |],
+      [| false; false; true |] );
+    ( "at 0., with signed zeros and the least subnormal",
+      0.,
+      [| -0.; 0.; f32_step 0. 1l |],
+      [| false; false; true |] );
+    ( "infinities and NaN",
+      0.5,
+      [| Float.nan; Float.infinity; Float.neg_infinity |],
+      [| false; true; false |] );
+    ("a NaN threshold", Float.nan, [| 0.; Float.infinity |], [| false; false |]);
+    ( "an infinite threshold",
+      Float.neg_infinity,
+      [| Float.neg_infinity; -1e38; Float.nan |],
+      [| false; true; false |] );
+  ]
+
+let threshold_case (_, t, xs, expected) =
+  equal (array bool) expected (Nx.to_array (threshold t (row xs)))
+
+(* A threshold and a row of float32 elements: some next to the float32 nearest
+   the threshold, some drawn over every float32 bit pattern. The threshold is a
+   float32 half the time and any float otherwise, NaN and infinities among
+   them. *)
+let threshold_draw =
+  let open Gen in
+  let* t = frequency [ (1, map f32 any_float); (1, any_float) ] in
+  let near = map (f32_step (f32 t)) (int32_range (-2l) 2l) in
+  let anywhere = map Int32.float_of_bits int32 in
+  let special =
+    of_list ~pp:Format.pp_print_float
+      [ Float.nan; Float.infinity; Float.neg_infinity; 0.; -0. ]
   in
-  let binary = threshold 0.5 img in
-  check_pixel_f "below threshold" 0.0 binary [ 0; 0; 0 ];
-  check_pixel_f "above threshold" 1.0 binary [ 1; 0; 0 ]
+  let+ xs =
+    array ~size:(int_range 1 12)
+      (frequency [ (3, near); (1, anywhere); (1, special) ])
+  in
+  (t, xs)
+
+let threshold_draw =
+  let pp ppf (t, xs) =
+    Format.fprintf ppf "threshold %h, elements [|%a|]" t
+      (Format.pp_print_seq
+         ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+         (fun ppf x -> Format.fprintf ppf "%h" x))
+      (Array.to_seq xs)
+  in
+  Gen.with_pp pp threshold_draw
+
+let law_threshold (t, xs) =
+  let t32 = f32 t in
+  cover "an element equal to the stored threshold"
+    (Array.exists (fun x -> x = t32) xs);
+  cover "an element next above the stored threshold"
+    (Array.exists (fun x -> x > t32 && x <> 0. && f32_below x <= t32) xs);
+  cover "an element equal to a stored threshold above t"
+    (t32 > t && Array.exists (fun x -> x = t32) xs);
+  cover "a NaN element" (Array.exists Float.is_nan xs);
+  let xs = Nx.to_array (row xs) in
+  equal (array bool)
+    (Array.map (fun x -> x > t32) xs)
+    (Nx.to_array (threshold t (row xs)))
 
 (* ───── Morphological Operations Tests ───── *)
 
 let test_structuring_elements () =
   let rect = structuring_element Rect (3, 5) in
   check_shape "rect shape" [| 3; 5 |] rect;
-  check_pixel_i "rect filled" 1 rect [ 1; 2 ];
-  let cross = structuring_element Cross (5, 5) in
-  check_shape "cross shape" [| 5; 5 |] cross;
-  check_pixel_i "cross center" 1 cross [ 2; 2 ];
-  check_pixel_i "cross arm" 1 cross [ 2; 0 ];
-  check_pixel_i "cross corner" 0 cross [ 0; 0 ]
+  equal ~msg:"rect" (array bool) (Array.make 15 true) (Nx.to_array rect);
+  let cross = structuring_element Cross (3, 5) in
+  let on_cross i = i / 5 = 1 || i mod 5 = 2 in
+  equal ~msg:"cross: the centre row and column" (array bool)
+    (Array.init 15 on_cross) (Nx.to_array cross)
 
 let test_erosion () =
   let img = create_centered_square 10 10 4 in
@@ -436,6 +513,225 @@ let test_dilation_kernel_shape () =
   equal ~msg:"rect kernel produces 3x3 block" int 9 (count_white dilated_rect);
   equal ~msg:"cross kernel preserves cross shape" int 5
     (count_white dilated_cross)
+
+(* An image of rank 3 or 4 of up to 6 by 6 pixels, its elements drawn from
+   [elt]. *)
+let image dt elt =
+  let open Gen in
+  let* n = int_range 0 2
+  and+ h = int_range 1 6
+  and+ w = int_range 1 6
+  and+ c = int_range 1 2 in
+  let shape = if n = 0 then [| h; w; c |] else [| n; h; w; c |] in
+  let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 shape)) elt in
+  Nx.create dt shape xs
+
+(* A structuring element of up to 5 by 5 entries, even extents included, with
+   a [true] entry. [centred] makes its centre [true]. *)
+let element ?(centred = false) () =
+  let open Gen in
+  let* kh = int_range 1 5 and+ kw = int_range 1 5 in
+  let size = kh * kw and centre = (kh / 2 * kw) + (kw / 2) in
+  let+ taps = array ~size:(constant size) bool in
+  let taps = Array.mapi (fun i b -> (centred && i = centre) || b) taps in
+  let taps =
+    if Array.exists Fun.id taps then taps
+    else Array.init size (fun i -> i = centre)
+  in
+  Nx.create Nx.bool [| kh; kw |] taps
+
+(* The extreme of each pixel's neighbourhood, read from the section preamble:
+   entry [(i, j)] selects the pixel [i - kh / 2] rows below and [j - kw / 2]
+   columns right, and a pixel outside the image is [outside]. *)
+let neighbourhood_extreme pick outside kernel img =
+  let s = Nx.shape img in
+  let r = Array.length s in
+  let h = s.(r - 3) and w = s.(r - 2) and c = s.(r - 1) in
+  let kh = (Nx.shape kernel).(0) and kw = (Nx.shape kernel).(1) in
+  let k = Nx.to_array kernel and x = Nx.to_array img in
+  Array.init (Array.length x) (fun idx ->
+      let ch = idx mod c and q = idx / c mod w and p = idx / c / w mod h in
+      let base = idx - (((p * w) + q) * c) - ch in
+      let acc = ref outside in
+      for i = 0 to kh - 1 do
+        for j = 0 to kw - 1 do
+          let y = p + i - (kh / 2) and z = q + j - (kw / 2) in
+          if k.((i * kw) + j) && y >= 0 && y < h && z >= 0 && z < w then
+            acc := pick !acc x.(base + (((y * w) + z) * c) + ch)
+        done
+      done;
+      !acc)
+
+let law_extreme (type a b) (dt : (a, b) Nx.dtype) (t : a testable) (kernel, img)
+    =
+  let kh = (Nx.shape kernel).(0) and kw = (Nx.shape kernel).(1) in
+  let s = Nx.shape img in
+  let r = Array.length s in
+  cover "an even extent" (kh mod 2 = 0 || kw mod 2 = 0);
+  cover "an element wider than the image" (kh > s.(r - 3) || kw > s.(r - 2));
+  cover "a batch" (r = 4);
+  let lo = Nx.Dtype.min_value dt and hi = Nx.Dtype.max_value dt in
+  equal ~msg:"erode" (array t)
+    (neighbourhood_extreme min hi kernel img)
+    (Nx.to_array (erode ~kernel img));
+  equal ~msg:"dilate" (array t)
+    (neighbourhood_extreme max lo kernel img)
+    (Nx.to_array (dilate ~kernel img))
+
+let int8_elt =
+  Gen.frequency
+    [
+      (3, Gen.int_range (-128) 127);
+      (1, Gen.of_list ~pp:Format.pp_print_int [ -128; 127 ]);
+    ]
+
+let bools img = Nx.to_array img
+
+(* An element holding its centre erodes to a subset of the image and dilates
+   to a superset. *)
+let law_inclusion (kernel, img) =
+  equal ~msg:"erode img is within img" (array bool) (bools img)
+    (bools (Nx.logical_or (erode ~kernel img) img));
+  equal ~msg:"img is within dilate img" (array bool)
+    (bools (dilate ~kernel img))
+    (bools (Nx.logical_or img (dilate ~kernel img)))
+
+(* Erosion is dilation of the complement, complemented, borders included. *)
+let law_duality (kernel, img) =
+  let ( ~! ) = Nx.logical_not in
+  equal ~msg:"erode" (array bool)
+    (bools ~!(dilate ~kernel ~!img))
+    (bools (erode ~kernel img));
+  equal ~msg:"dilate" (array bool)
+    (bools ~!(erode ~kernel ~!img))
+    (bools (dilate ~kernel img))
+
+(* An element whose entries are symmetric about its centre, which needs odd
+   extents. *)
+let symmetric kernel =
+  let s = Nx.shape kernel and k = bools kernel in
+  let n = Array.length k in
+  s.(0) mod 2 = 1
+  && s.(1) mod 2 = 1
+  && Array.for_all Fun.id (Array.init n (fun i -> k.(i) = k.(n - 1 - i)))
+
+(* Opening and closing are idempotent; the opening is at most the image and
+   the closing at least, whatever the element. *)
+let law_opening (kernel, img) =
+  cover "an element not symmetric about its centre" (not (symmetric kernel));
+  cover "an element without its centre"
+    (not
+       (Nx.item [ (Nx.shape kernel).(0) / 2; (Nx.shape kernel).(1) / 2 ] kernel));
+  let shape = Nx.shape img in
+  let on f xs = bools (f ~kernel (Nx.create Nx.bool shape xs)) in
+  Law.idempotent ~msg:"opening" (array bool) (on opening) (bools img);
+  Law.idempotent ~msg:"closing" (array bool) (on closing) (bools img);
+  let opened = opening ~kernel img and closed = closing ~kernel img in
+  equal ~msg:"opening img is within img" (array bool) (bools img)
+    (bools (Nx.logical_or opened img));
+  equal ~msg:"img is within closing img" (array bool) (bools closed)
+    (bools (Nx.logical_or img closed))
+
+(* With the element [. X X], whose neighbourhood is the pixel and the one to
+   its right, the opening keeps a row [. X X], which the element fits, and the
+   closing keeps its complement. *)
+let test_opening_asymmetric () =
+  let kernel = Nx.create Nx.bool [| 1; 3 |] [| false; true; true |] in
+  let row xs = Nx.create Nx.bool [| 1; 3; 1 |] xs in
+  equal ~msg:"opening" (array bool) [| false; true; true |]
+    (bools (opening ~kernel (row [| false; true; true |])));
+  equal ~msg:"closing" (array bool) [| true; false; false |]
+    (bools (closing ~kernel (row [| true; false; false |])))
+
+(* Each shape, at each odd size up to 9 by 9, is [true] at its centre and
+   symmetric about it. *)
+let law_shape (shape, (h, w)) =
+  let k = structuring_element shape (h, w) in
+  equal ~msg:"shape" (array int) [| h; w |] (Nx.shape k);
+  equal ~msg:"centre" bool true (Nx.item [ h / 2; w / 2 ] k);
+  let xs = bools k in
+  let n = Array.length xs in
+  equal ~msg:"symmetric" (array bool) xs
+    (Array.init n (fun i -> xs.(n - 1 - i)))
+
+let shape_draw =
+  let open Gen in
+  let odd = map (fun k -> (2 * k) + 1) (int_range 0 4) in
+  pair
+    (of_list
+       ~pp:(fun ppf s ->
+         Format.pp_print_string ppf
+           (match s with
+           | Rect -> "Rect"
+           | Cross -> "Cross"
+           | Ellipse -> "Ellipse"))
+       [ Rect; Cross; Ellipse ])
+    (pair odd odd)
+
+(* With the element [. . X] on a one-pixel row, the neighbourhood lies wholly
+   outside the image: the gradient is the dtype's least value minus its
+   greatest. *)
+let test_gradient_outside () =
+  let kernel = Nx.create Nx.bool [| 1; 3 |] [| false; false; true |] in
+  let grad dt v =
+    Nx.to_array (morphological_gradient ~kernel (Nx.full dt [| 1; 1; 1 |] v))
+  in
+  equal ~msg:"uint8" (array int) [| 1 |] (grad Nx.uint8 7);
+  equal ~msg:"float32" (array float_exact) [| Float.neg_infinity |]
+    (grad Nx.float32 0.5);
+  equal ~msg:"bool" (array bool) [| false |] (grad Nx.bool true)
+
+let img3 = Nx.zeros Nx.float32 [| 3; 3; 1 |]
+
+let kernel_refusals =
+  [
+    ("a kernel of rank 1", Nx.full Nx.bool [| 3 |] true);
+    ("a kernel of rank 3", Nx.full Nx.bool [| 1; 1; 1 |] true);
+  ]
+
+let kernel_refusal (_, kernel) =
+  raises_match (Exn.invalid_arg ~sub:"rank 2") (fun () -> erode ~kernel img3)
+
+let test_complex_image () =
+  let kernel = structuring_element Rect (3, 3) in
+  raises_match Exn.invalid_arg (fun () ->
+      dilate ~kernel (Nx.zeros Nx.complex64 [| 3; 3; 1 |]))
+
+(* Where each neighbourhood holds a pixel of the image, the gradient of a
+   boolean image is its uint8 gradient, [true] read as 1. *)
+let law_gradient_cast (kernel, img) =
+  let as_uint8 = Nx.cast Nx.uint8 in
+  equal (array int)
+    (Nx.to_array (morphological_gradient ~kernel (as_uint8 img)))
+    (Nx.to_array (as_uint8 (morphological_gradient ~kernel img)))
+
+let morphology_laws =
+  let bool_image = image Nx.bool Gen.bool in
+  let with_element ?centred img = Gen.pair (element ?centred ()) img in
+  [
+    prop "erode and dilate take each neighbourhood's extreme, of booleans"
+      (with_element bool_image) (law_extreme Nx.bool bool);
+    prop "erode and dilate take each neighbourhood's extreme, of int8"
+      (with_element (image Nx.int8 int8_elt))
+      (law_extreme Nx.int8 int);
+    prop "erode img <= img <= dilate img for an element holding its centre"
+      (with_element ~centred:true bool_image)
+      law_inclusion;
+    prop "erode is the complement's dilation complemented"
+      (with_element bool_image) law_duality;
+    prop "opening <= img <= closing, both idempotent" (with_element bool_image)
+      law_opening;
+    test "opening and closing by an asymmetric element" test_opening_asymmetric;
+    prop "structuring_element is true at its centre and symmetric" shape_draw
+      law_shape;
+    cases "a kernel not of rank 2 raises" ~id:fst kernel_refusals kernel_refusal;
+    test "a complex image raises" test_complex_image;
+    test "morphological_gradient of a neighbourhood outside the image"
+      test_gradient_outside;
+    prop "morphological_gradient of booleans is their uint8 gradient"
+      (with_element ~centred:true bool_image)
+      law_gradient_cast;
+  ]
 
 (* ───── Edge Detection Tests ───── *)
 
@@ -551,19 +847,21 @@ let laplacian_bad_ksize ksize =
   raises_match (Exn.invalid_arg ~sub:"ksize") (fun () ->
       laplacian ~ksize img)
 
+(* A bright vertical bar whose two sides each step through 0.5 at one column,
+   8 and 23: the gradient magnitude across each side peaks there alone, so on
+   the rows far from the image's top and bottom those two columns are the
+   edges. *)
 let test_canny () =
-  let img = create_centered_square 20 20 10 in
-  let edges = canny ~low:0.2 ~high:0.6 img in
+  let h = 32 and w = 32 in
+  let level j =
+    if j = 8 || j = 23 then 0.5 else if j > 8 && j < 23 then 1. else 0.
+  in
+  let img = Nx.init Nx.float32 [| h; w; 1 |] (fun idx -> level idx.(1)) in
+  let edges = canny ~low:0.1 ~high:0.3 img in
   check_shape "canny shape" (Nx.shape img) edges;
-  let edge_count = ref 0 in
-  for i = 0 to 19 do
-    for j = 0 to 19 do
-      if Nx.item [ i; j; 0 ] edges > 0.5 then incr edge_count
-    done
-  done;
-  if !edge_count = 0 then fail "Canny detected no edges";
-  if !edge_count > 100 then
-    failf "Canny detected too many edges: %d" !edge_count
+  let rows = Nx.slice [ Nx.R (10, 22); Nx.A; Nx.A ] edges in
+  let expected = Array.init (12 * w) (fun i -> i mod w = 8 || i mod w = 23) in
+  equal (array bool) expected (Nx.to_array rows)
 
 (* ───── Integration Tests ───── *)
 
@@ -575,13 +873,8 @@ let test_pipeline () =
   let cleaned = erode ~kernel binary in
   let final = dilate ~kernel cleaned in
   check_shape "pipeline preserves shape" (Nx.shape img) final;
-  let white_count = ref 0 in
-  for i = 0 to 19 do
-    for j = 0 to 19 do
-      if Nx.item [ i; j; 0 ] final > 0.5 then incr white_count
-    done
-  done;
-  if !white_count = 0 then fail "Pipeline eliminated all features"
+  if not (Array.exists Fun.id (Nx.to_array final)) then
+    fail "Pipeline eliminated all features"
 
 (* ───── Device Sets ───── *)
 
@@ -598,7 +891,10 @@ module Two = (val Nx.devices [ memory "m1"; memory "m2" ])
 
 let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
-type op = { op : 'd. 'd Nx.float32_t -> 'd Nx.float32_t }
+(* An operation giving float32 elements, [F], or boolean ones, [B]. *)
+type op =
+  | F of { op : 'd. 'd Nx.float32_t -> 'd Nx.float32_t }
+  | B of { mask : 'd. 'd Nx.float32_t -> 'd Nx.bool_t }
 
 let gray x = to_grayscale x
 let at_image x k = Nx.place (Nx.beside x) k
@@ -609,63 +905,70 @@ let sharpen =
 
 let set_ops =
   [
-    ("to_float of to_uint8", { op = (fun x -> to_float (to_uint8 x)) });
+    ("to_float of to_uint8", F { op = (fun x -> to_float (to_uint8 x)) });
     ( "normalize",
-      {
-        op =
-          (fun x -> normalize ~mean:[ 0.5; 0.4; 0.3 ] ~std:[ 0.2; 0.3; 0.4 ] x);
-      } );
-    ("threshold", { op = (fun x -> threshold 0.5 x) });
-    ("to_grayscale", { op = gray });
-    ("hsv_to_rgb of rgb_to_hsv", { op = (fun x -> hsv_to_rgb (rgb_to_hsv x)) });
-    ("adjust_contrast", { op = (fun x -> adjust_contrast 0.5 x) });
-    ("gaussian_blur", { op = (fun x -> gaussian_blur ~sigma:1.2 x) });
+      F
+        {
+          op =
+            (fun x ->
+              normalize ~mean:[ 0.5; 0.4; 0.3 ] ~std:[ 0.2; 0.3; 0.4 ] x);
+        } );
+    ("threshold", B { mask = (fun x -> threshold 0.5 x) });
+    ("to_grayscale", F { op = gray });
+    ("hsv_to_rgb of rgb_to_hsv", F { op = (fun x -> hsv_to_rgb (rgb_to_hsv x)) });
+    ("adjust_contrast", F { op = (fun x -> adjust_contrast 0.5 x) });
+    ("gaussian_blur", F { op = (fun x -> gaussian_blur ~sigma:1.2 x) });
     ( "gaussian_blur of a fixed table",
-      { op = (fun x -> gaussian_blur ~sigma:0. ~ksize:5 x) } );
+      F { op = (fun x -> gaussian_blur ~sigma:0. ~ksize:5 x) } );
     ( "gaussian_blur of a derived sigma",
-      { op = (fun x -> gaussian_blur ~sigma:0. ~ksize:11 x) } );
-    ("box_blur", { op = (fun x -> box_blur ~ksize:3 x) });
-    ("median_blur", { op = (fun x -> median_blur ~ksize:3 x) });
-    ("filter2d", { op = (fun x -> filter2d (at_image x sharpen) x) });
-    ("unsharp_mask", { op = (fun x -> unsharp_mask ~sigma:1. x) });
+      F { op = (fun x -> gaussian_blur ~sigma:0. ~ksize:11 x) } );
+    ("box_blur", F { op = (fun x -> box_blur ~ksize:3 x) });
+    ("median_blur", F { op = (fun x -> median_blur ~ksize:3 x) });
+    ("filter2d", F { op = (fun x -> filter2d (at_image x sharpen) x) });
+    ("unsharp_mask", F { op = (fun x -> unsharp_mask ~sigma:1. x) });
     ( "resize nearest",
-      { op = (fun x -> resize ~interpolation:Nearest ~height:3 ~width:9 x) } );
-    ("resize bilinear", { op = (fun x -> resize ~height:3 ~width:9 x) });
-    ("resize to one row", { op = (fun x -> resize ~height:1 ~width:4 x) });
-    ("pad", { op = (fun x -> pad ~value:0.5 (1, 0, 2, 1) x) });
-    ("erode", { op = (fun x -> erode ~kernel:disk x) });
-    ( "dilate by a kernel of another set",
-      { op = (fun x -> dilate ~kernel:(Nx.place Memory.on disk) x) } );
-    ("opening", { op = (fun x -> opening ~kernel:disk x) });
-    ("closing", { op = (fun x -> closing ~kernel:disk x) });
+      F { op = (fun x -> resize ~interpolation:Nearest ~height:3 ~width:9 x) }
+    );
+    ("resize bilinear", F { op = (fun x -> resize ~height:3 ~width:9 x) });
+    ("resize to one row", F { op = (fun x -> resize ~height:1 ~width:4 x) });
+    ("pad", F { op = (fun x -> pad ~value:0.5 (1, 0, 2, 1) x) });
+    ("erode", F { op = (fun x -> erode ~kernel:disk x) });
+    ("dilate", F { op = (fun x -> dilate ~kernel:disk x) });
+    ("opening", F { op = (fun x -> opening ~kernel:disk x) });
+    ("closing", F { op = (fun x -> closing ~kernel:disk x) });
     ( "morphological_gradient",
-      { op = (fun x -> morphological_gradient ~kernel:disk x) } );
-    ("sobel x", { op = (fun x -> fst (sobel (gray x))) });
-    ("sobel y", { op = (fun x -> snd (sobel ~ksize:5 (gray x))) });
-    ("scharr x", { op = (fun x -> fst (scharr (gray x))) });
-    ("laplacian", { op = (fun x -> laplacian ~ksize:3 (gray x)) });
-    ("canny", { op = (fun x -> canny ~low:0.1 ~high:0.3 (gray x)) });
+      F { op = (fun x -> morphological_gradient ~kernel:disk x) } );
+    ("sobel x", F { op = (fun x -> fst (sobel (gray x))) });
+    ("sobel y", F { op = (fun x -> snd (sobel ~ksize:5 (gray x))) });
+    ("scharr x", F { op = (fun x -> fst (scharr (gray x))) });
+    ("laplacian", F { op = (fun x -> laplacian ~ksize:3 (gray x)) });
+    ("canny", B { mask = (fun x -> canny ~low:0.1 ~high:0.3 (gray x)) });
   ]
 
 let batch () = Nx.Rng.uniform ~key:(Nx.Rng.key 3) Nx.float32 [| 2; 5; 6; 3 |]
 
-let on_another_set (_, { op }) =
-  let img = batch () in
-  let host = op img and there = op (Nx.place Memory.on img) in
-  equal (placement ()) Memory.on (Nx.placement there);
+let same_on_set t set host there =
+  equal (placement ()) set (Nx.placement there);
   equal (array int) (Nx.shape host) (Nx.shape there);
-  equal (array float_exact) (Nx.to_array host) (Nx.to_array there)
+  equal (array t) (Nx.to_array host) (Nx.to_array there)
+
+let on_another_set (_, op) =
+  let img = batch () in
+  let img' = Nx.place Memory.on img in
+  match op with
+  | F { op } -> same_on_set float_exact Memory.on (op img) (op img')
+  | B { mask } -> same_on_set bool Memory.on (mask img) (mask img')
 
 (* A batch cut along its images over two devices stays cut so, each device
    filtering its own images. A reduction over the cut axis sums by partials,
    in another order than the host's: elements agree within rounding. *)
-let cut_over_two (_, { op }) =
+let cut_over_two (_, op) =
   let img = batch () in
   let cut = Two.split ~axis:0 in
-  let host = op img and there = op (Nx.place cut img) in
-  equal (placement ()) cut (Nx.placement there);
-  equal (array int) (Nx.shape host) (Nx.shape there);
-  equal (array (float 1e-6)) (Nx.to_array host) (Nx.to_array there)
+  let img' = Nx.place cut img in
+  match op with
+  | F { op } -> same_on_set (float 1e-6) cut (op img) (op img')
+  | B { mask } -> same_on_set bool cut (mask img) (mask img')
 
 (* ───── Test Suite ───── *)
 
@@ -730,9 +1033,15 @@ let () =
           test "median_blur" test_median_blur;
           test "median_blur_median" test_median_blur_preserves_median;
         ];
-      group "thresholding" [ test "threshold" test_threshold ];
-      group "morphology"
+      group "thresholding"
         [
+          cases "threshold" ~id:(fun (n, _, _, _) -> n) threshold_cases
+            threshold_case;
+          prop "threshold is each element's comparison with t" threshold_draw
+            law_threshold;
+        ];
+      group "morphology"
+        ([
           test "structuring_elements" test_structuring_elements;
           test "erosion" test_erosion;
           test "dilation" test_dilation;
@@ -742,7 +1051,8 @@ let () =
             [ Float.neg_infinity; -0.5; -0.; 1.; Float.infinity ]
             (constant_morphology Nx.float32 float_exact);
           test "dilation_kernel_shape" test_dilation_kernel_shape;
-        ];
+        ]
+        @ morphology_laws);
       group "edge_detection"
         [
           test "sobel" test_sobel;
@@ -755,7 +1065,7 @@ let () =
             sobel_bad_ksize;
           cases "laplacian_bad_ksize" ~id:string_of_int [ -1; 0; 2; 10 ]
             laplacian_bad_ksize;
-          slow @@ test "canny" test_canny;
+          test "canny" test_canny;
         ];
       group "integration" [ test "pipeline" test_pipeline ];
       group "device_sets"

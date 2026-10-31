@@ -19,7 +19,7 @@ If you already use OpenCV, this should be enough to become productive in Sowilo 
 | Channel order    | BGR by default                                       | RGB, channels-last `[H; W; C]`                                |
 | Pixel range      | uint8 `[0, 255]` or float32/64                       | float32 `[0, 1]` (convert with `to_float` / `to_uint8`)       |
 | Color conversion | `cv2.cvtColor` with 200+ codes                       | Named functions: `to_grayscale`, `rgb_to_hsv`, `hsv_to_rgb`   |
-| Autodiff         | Not available                                        | All ops (except `median_blur`, `canny`) work with `Rune.grad'` |
+| Autodiff         | Not available                                        | All ops (except `median_blur`, `canny`, `threshold`) work with `Rune.grad'` |
 | Batching         | Manual loops or `np.stack`                           | Native batch dimension `[N; H; W; C]` + `Rune.vmap'`           |
 | Backend          | Optimized C++/CUDA                                   | Nx C backend (CPU)                                            |
 | Mutability       | Arrays mutated in-place by convention                | Immutable tensors; operations return new `Nx.t`               |
@@ -29,7 +29,7 @@ If you already use OpenCV, this should be enough to become productive in Sowilo 
 - Images are plain `Nx.t` tensors, not a separate type. Any Nx operation works on them.
 - All operations expect float32 in `[0, 1]`. Use `to_float` to convert from uint8.
 - Channel layout is always channels-last: `[H; W; C]` or `[N; H; W; C]` for batches.
-- Every operation (except `median_blur` and `canny`) is differentiable through `Rune.grad'`.
+- Every operation (except `median_blur`, and `canny` and `threshold`, which return boolean masks) is differentiable through `Rune.grad'`.
 
 ---
 
@@ -121,7 +121,7 @@ _, binary = cv2.threshold(gray, 0.5, 1.0, cv2.THRESH_BINARY)
 let binary = Sowilo.threshold 0.5 gray
 ```
 
-Sowilo's `threshold` returns `1.0` where `img > t`, `0.0` elsewhere. OpenCV's `cv2.threshold` has many modes (binary, truncate, adaptive, Otsu); Sowilo provides only the simple binary variant.
+Sowilo's `threshold` returns a boolean mask, `true` where `img > t`. OpenCV's `cv2.threshold` has many modes (binary, truncate, adaptive, Otsu); Sowilo provides only the simple binary variant.
 
 ---
 
@@ -482,7 +482,7 @@ let kernel_cross   = Sowilo.structuring_element Cross (5, 5)
 let kernel_ellipse = Sowilo.structuring_element Ellipse (5, 5)
 ```
 
-Both produce a binary mask. Dimensions must be positive odd integers.
+Both produce a binary mask; Sowilo's is a boolean tensor. Dimensions must be positive odd integers.
 
 ### 8.2 Erode and dilate
 
@@ -522,8 +522,8 @@ let closed   = Sowilo.closing ~kernel img
 let gradient = Sowilo.morphological_gradient ~kernel img
 ```
 
-* `opening` = erode then dilate (removes small bright regions).
-* `closing` = dilate then erode (fills small dark regions).
+* `opening` = erode, then dilate by the reflected element (removes small bright regions).
+* `closing` = dilate, then erode by the reflected element (fills small dark regions).
 * `morphological_gradient` = dilate - erode (highlights edges).
 
 OpenCV also has `MORPH_TOPHAT`, `MORPH_BLACKHAT`, and `MORPH_HITMISS`. Sowilo does not provide these.
@@ -605,7 +605,7 @@ Differences:
 
 * OpenCV takes integer thresholds on uint8 pixel values. Sowilo takes float thresholds on `[0, 1]` values.
 * Sowilo includes a built-in Gaussian blur controlled by `~sigma` (defaults to `1.4`). OpenCV expects you to blur beforehand.
-* `canny` returns `1.0` for edge pixels, `0.0` for non-edges.
+* `canny` returns a boolean mask, `true` at edge pixels.
 * **Not differentiable**: uses non-maximum suppression and hysteresis thresholding.
 
 ---
@@ -662,7 +662,8 @@ let blurred_batch = blur_batch batch   (* batch shape: [N; H; W; C] *)
 | Operation                                                         | Differentiable                                |
 | ----------------------------------------------------------------- | --------------------------------------------- |
 | `to_float`, `to_uint8`                                            | Yes                                           |
-| `normalize`, `threshold`                                          | Yes                                           |
+| `normalize`                                                       | Yes                                           |
+| `threshold`                                                       | **No** (returns a boolean mask)               |
 | `to_grayscale`                                                    | Yes                                           |
 | `rgb_to_hsv`, `hsv_to_rgb`                                        | Yes                                           |
 | `adjust_brightness/contrast/saturation/hue/gamma`                 | Yes                                           |
@@ -673,7 +674,7 @@ let blurred_batch = blur_batch batch   (* batch shape: [N; H; W; C] *)
 | `pad`                                                             | Yes                                           |
 | `gaussian_blur`, `box_blur`                                       | Yes                                           |
 | `filter2d`, `unsharp_mask`                                        | Yes                                           |
-| `erode`, `dilate`, `opening`, `closing`, `morphological_gradient` | Yes                                           |
+| `erode`, `dilate`, `opening`, `closing`, `morphological_gradient` | Yes, on float images                          |
 | `sobel`, `scharr`, `laplacian`                                    | Yes                                           |
 | `median_blur`                                                     | **No** (sort-based, gradient is zero)         |
 | `canny`                                                           | **No** (non-maximum suppression + hysteresis) |

@@ -4,21 +4,19 @@
   ---------------------------------------------------------------------------*)
 
 (** Morphological operations, the implementation of {!Sowilo}'s morphology
-    functions.
-
-    A structuring element is a [[kH; kW]] tensor whose non-zero entries
-    select the neighbourhood, centred at row [kH / 2] and column [kW / 2].
-    Erosion counts pixels outside the image as the dtype's largest value,
-    and dilation counts them as its least. The operations raise [Invalid_argument]
-    for a structuring element with no non-zero entry, or an image whose
-    rank is neither 3 nor 4. *)
+    functions, whose section states their rules. *)
 
 type kernel_shape = Rect | Cross | Ellipse
 
-val structuring_element : kernel_shape -> int * int -> Nx.host Nx.uint8_t
-val erode : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-val dilate : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-val opening : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-val closing : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val structuring_element : kernel_shape -> int * int -> Nx.host Nx.bool_t
+val erode :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val dilate :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val opening :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val closing :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+
 val morphological_gradient :
-  kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t

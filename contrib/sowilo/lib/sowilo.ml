@@ -29,9 +29,7 @@ let normalize ~mean ~std img =
   let mean_t = per_channel mean and std_t = per_channel std in
   Nx.div (Nx.sub img mean_t) std_t
 
-let threshold t img =
-  Nx.where (Nx.greater_s img t) (Nx.scalar_like img 1.0)
-    (Nx.scalar_like img 0.0)
+let threshold t img = Nx.greater_s img t
 
 (* Re-export private modules *)
 

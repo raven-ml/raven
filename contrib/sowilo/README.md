@@ -16,7 +16,7 @@ let () =
   let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
-  Nx_io.save_png "edges.png" (to_uint8 edges)
+  Nx_io.save_png "edges.png" (to_uint8 (Nx.cast Nx.float32 edges))
 ```
 
 ## Features
@@ -27,7 +27,7 @@ let () =
 - **Spatial filters**: `gaussian_blur`, `box_blur`, `median_blur`, `filter2d`, `unsharp_mask`
 - **Morphology**: `structuring_element` (Rect, Cross, Ellipse), `erode`, `dilate`, `opening`, `closing`, `morphological_gradient`
 - **Edge detection**: `sobel` (returns gx, gy), `scharr`, `laplacian`, `canny`
-- **Differentiable**: most operations support `Rune.grad'` (exceptions: `canny`, `median_blur`)
+- **Differentiable**: most operations support `Rune.grad'` (exceptions: `canny` and `threshold`, which return boolean masks, and `median_blur`)
 - **Batch ready**: all operations handle `[H; W; C]` and `[N; H; W; C]` tensors
 
 ## Image Conventions

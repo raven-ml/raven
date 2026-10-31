@@ -76,12 +76,13 @@ let () =
     |> canny ~low:0.2 ~high:0.6     (* detect edges *)
   in
 
-  (* Save: convert back to uint8, then to Nx for I/O *)
-  Nx_io.save_png "edges.png" (to_uint8 edges)
+  (* Save: the boolean mask as float32, then as uint8 *)
+  Nx_io.save_png "edges.png" (to_uint8 (Nx.cast Nx.float32 edges))
 ```
 
 Operations compose naturally with `|>`. Each takes a tensor and returns a
-tensor, so you can chain as many as you need.
+tensor, so you can chain as many as you need. `canny` and `threshold` return
+boolean masks, which `Nx.cast` turns into float32 images.
 
 ## Color Adjustments
 
@@ -156,9 +157,10 @@ let () =
   ignore (eroded, dilated, opened, closed, grad)
 ```
 
-Three kernel shapes are available: `Rect` (full rectangle), `Cross`
-(cross-shaped), and `Ellipse` (elliptical). The size must be a pair of
-positive odd integers.
+`threshold` gives a boolean mask, and the morphological operations keep the
+dtype of their image: here each result is a mask. Three kernel shapes are
+available: `Rect` (full rectangle), `Cross` (cross-shaped), and `Ellipse`
+(elliptical). The size must be a pair of positive odd integers.
 
 ## Edge Detection
 
@@ -181,7 +183,7 @@ let () =
   (* Laplacian: sum of second derivatives *)
   let lap = laplacian gray in
 
-  (* Canny: binary edge map with hysteresis thresholding *)
+  (* Canny: boolean edge mask with hysteresis thresholding *)
   let edges = canny ~low:0.2 ~high:0.6 gray in
 
   ignore (gx, gy, sx, sy, lap, edges)
@@ -210,7 +212,7 @@ Hugin's `image` mark draws a tensor of shape `[H; W; C]` with values in
 let () =
   let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
-  let edges = canny ~low:0.2 ~high:0.6 gray in
+  let edges = Nx.cast Nx.float32 (canny ~low:0.2 ~high:0.6 gray) in
   let panel label px = Hugin.(image px |> title label) in
   Hugin.grid [ [ panel "Original" img; panel "Canny Edges" edges ] ]
   |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "edges.png"

@@ -8,9 +8,12 @@ open Hugin
 let image_path = "sowilo/examples/chelsea.png"
 let panel s px = image px |> title s
 
+(* A boolean mask drawn as an image, [true] white. *)
+let mask s m = panel s (Nx.cast Nx.float32 m)
+
 let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
   let edges = Sowilo.canny ~low:0.1 ~high:0.3 gray in
-  grid [ [ panel "Grayscale" gray; panel "Canny Edges (0.1, 0.3)" edges ] ]
+  grid [ [ panel "Grayscale" gray; mask "Canny Edges (0.1, 0.3)" edges ] ]
   |> save ~size:(Size.panels 240. 190.) "canny.png"

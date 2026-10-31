@@ -14,4 +14,4 @@ val scharr : 'd Nx.float32_t -> 'd Nx.float32_t * 'd Nx.float32_t
 val laplacian : ?ksize:int -> 'd Nx.float32_t -> 'd Nx.float32_t
 
 val canny :
-  low:float -> high:float -> ?sigma:float -> 'd Nx.float32_t -> 'd Nx.float32_t
+  low:float -> high:float -> ?sigma:float -> 'd Nx.float32_t -> 'd Nx.bool_t

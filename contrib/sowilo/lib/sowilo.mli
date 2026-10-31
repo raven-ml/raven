@@ -26,9 +26,8 @@
     operation needs are made beside the image, whole on each device of its
     placement: those it computes, as a Gaussian of a given sigma, are computed
     there, and those written as numbers, as {!sobel}'s taps or {!normalize}'s
-    [mean], are made on the host and placed there. {!structuring_element}
-    makes a host value. The morphological operations take a kernel of any
-    set and read it to OCaml once per call. *)
+    [mean], are made on the host and placed there. A structuring element
+    ({!section-morphology}) is a host value: it shapes the computation. *)
 
 (** {1:converting Type conversion and preprocessing} *)
 
@@ -49,8 +48,11 @@ val normalize :
     Raises [Invalid_argument] if [mean] or [std] length does not match the
     number of channels. *)
 
-val threshold : float -> 'd Nx.float32_t -> 'd Nx.float32_t
-(** [threshold t img] is [1.0] where [img > t], [0.0] elsewhere. *)
+val threshold : float -> 'd Nx.float32_t -> 'd Nx.bool_t
+(** [threshold t img] is [true] where [img]'s element is greater than [t],
+    and [false] elsewhere, NaN elements included. [t] is stored in float32 as
+    {!Nx.greater_s} stores it: for [t = 0.1], an element equal to the float32
+    nearest [0.1] is [false]. *)
 
 (** {1:color Color space conversion and adjustment} *)
 
@@ -200,7 +202,25 @@ val unsharp_mask :
 
     Raises [Invalid_argument] if [sigma] is not positive. *)
 
-(** {1:morphology Morphological operations} *)
+(** {1:morphology Morphological operations}
+
+    A {e structuring element} is a boolean host [[kH; kW]] tensor whose [true]
+    entries select each pixel's {e neighbourhood}: the entry at row [i] and
+    column [j] selects the pixel [i - kH / 2] rows below and [j - kW / 2]
+    columns right of it, so the entry at row [kH / 2] and column [kW / 2]
+    selects the pixel itself. {!erode} takes the least value over each
+    pixel's neighbourhood and {!dilate} the greatest, by the dtype's order
+    ({!Nx.maximum}). Erosion counts a pixel outside the image as the dtype's
+    greatest value and dilation as its least. On a boolean image, where
+    [false] orders below [true], they are the binary erosion and dilation: a
+    pixel erodes to [true] iff its whole neighbourhood is [true], and dilates
+    to [true] iff some pixel of it is.
+
+    An operation reads the element once per call, for all its erosions and
+    dilations. The image must not be complex; the result has its dtype and
+    shape. The operations raise [Invalid_argument] if [kernel]'s rank is not
+    2, if it has no [true] entry, if the image's rank is neither 3 nor 4, or
+    if its dtype is complex. *)
 
 (** The type for structuring element shapes. *)
 type kernel_shape =
@@ -208,35 +228,48 @@ type kernel_shape =
   | Cross  (** Cross-shaped element. *)
   | Ellipse  (** Elliptical element. *)
 
-val structuring_element : kernel_shape -> int * int -> Nx.host Nx.uint8_t
+val structuring_element : kernel_shape -> int * int -> Nx.host Nx.bool_t
 (** [structuring_element shape (h, w)] is a host structuring element of the
-    given [shape] and size. [h] and [w] must be positive odd integers.
+    given [shape] and size. It is [true] at its centre and symmetric about
+    it. [h] and [w] must be positive odd integers.
 
     Raises [Invalid_argument] if [h] or [w] is not positive or not odd. *)
 
-val erode : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-(** [erode ~kernel img] replaces each pixel with the minimum over the
-    kernel-shaped neighborhood. [kernel], of any set, is read to OCaml once:
-    it shapes the neighborhood, which the operation unrolls. The other
-    morphological operations read it once too, for all their erosions and
-    dilations. *)
+val erode :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+(** [erode ~kernel img] is [img] with each pixel replaced by the least value
+    over its neighbourhood. *)
 
-val dilate : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-(** [dilate ~kernel img] replaces each pixel with the maximum over the
-    kernel-shaped neighborhood. *)
+val dilate :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+(** [dilate ~kernel img] is [img] with each pixel replaced by the greatest
+    value over its neighbourhood. *)
 
-val opening : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-(** [opening ~kernel img] is [dilate ~kernel (erode ~kernel img)]. Removes small
-    bright regions. *)
+val opening :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+(** [opening ~kernel img] is the erosion of [img] followed by the dilation by
+    the element reflected about its centre, whose neighbourhood holds the
+    pixel [dy] rows above and [dx] columns left where [kernel]'s holds the
+    pixel [dy] rows below and [dx] columns right. It is at most [img] and
+    idempotent, and removes bright regions [kernel] does not fit in. For an
+    element symmetric about its centre it is
+    [dilate ~kernel (erode ~kernel img)]. *)
 
-val closing : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
-(** [closing ~kernel img] is [erode ~kernel (dilate ~kernel img)]. Fills small
-    dark regions. *)
+val closing :
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+(** [closing ~kernel img] is the dilation of [img] followed by the erosion by
+    the reflected element, as {!opening}. It is at least [img] and idempotent,
+    and fills dark regions [kernel] does not fit in. *)
 
 val morphological_gradient :
-  kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+  kernel:Nx.host Nx.bool_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 (** [morphological_gradient ~kernel img] is
-    [dilate ~kernel img - erode ~kernel img]. Highlights edges. *)
+    [dilate ~kernel img - erode ~kernel img], as {!Nx.sub} computes it, and on
+    a boolean image [true] where the dilation is [true] and the erosion
+    [false]. Highlights edges. Where a pixel's neighbourhood lies wholly
+    outside the image, which needs a [kernel] [false] at its centre, it is
+    the dtype's least value minus its greatest: it wraps on integers, is
+    [neg_infinity] on floats with infinities and [false] on booleans. *)
 
 (** {1:edge Edge detection} *)
 
@@ -285,11 +318,15 @@ val laplacian : ?ksize:int -> 'd Nx.float32_t -> 'd Nx.float32_t
     Raises [Invalid_argument] if [ksize] is not a positive odd integer. *)
 
 val canny :
-  low:float -> high:float -> ?sigma:float -> 'd Nx.float32_t -> 'd Nx.float32_t
-(** [canny ~low ~high img] applies the Canny edge detector. Returns [1.0] for
-    edge pixels, [0.0] otherwise. [low] and [high] are the hysteresis
-    thresholds. [sigma] controls the initial Gaussian blur and defaults to
-    [1.4]. Input must have [C = 1].
+  low:float -> high:float -> ?sigma:float -> 'd Nx.float32_t -> 'd Nx.bool_t
+(** [canny ~low ~high img] applies the Canny edge detector. Returns [true] for
+    edge pixels, [false] otherwise. After non-maximum suppression a pixel is
+    strong where its gradient magnitude is greater than [high], and a
+    candidate where it is strong or at least [low], [low] and [high] stored
+    in float32 as {!Nx.greater_s} stores them. The edge pixels are the
+    candidates within two pixels, along each axis, of a strong pixel.
+    [sigma] controls the initial Gaussian blur and defaults to [1.4]. Input
+    must have [C = 1].
 
     {b Note.} Not differentiable: uses non-maximum suppression and hysteresis
     thresholding.

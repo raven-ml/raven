@@ -46,12 +46,12 @@ number of channels.
 
 ### threshold
 
-Binary thresholding: returns 1.0 where the image exceeds the threshold, 0.0
-elsewhere.
+Binary thresholding: returns a boolean mask, `true` where the image exceeds
+the threshold.
 
 <!-- $MDX skip -->
 ```ocaml
-(* Pixels > 0.5 become 1.0, rest become 0.0 *)
+(* Pixels > 0.5 become true, the rest false *)
 let binary = Sowilo.threshold 0.5 gray_img
 ```
 
@@ -282,8 +282,9 @@ let very_sharp = Sowilo.unsharp_mask ~sigma:1.0 ~amount:2.0 img
 
 ### structuring_element
 
-Creates a structuring element of the given shape and size. The size is a
-pair of positive odd integers (height, width).
+Creates a boolean structuring element of the given shape and size: its
+`true` entries select each pixel's neighbourhood. The size is a pair of
+positive odd integers (height, width).
 
 Three shapes are available:
 - `Rect` -- full rectangle
@@ -301,8 +302,9 @@ Raises `Invalid_argument` if height or width is not positive or not odd.
 
 ### erode / dilate
 
-Erosion replaces each pixel with the minimum over the kernel-shaped
-neighborhood. Dilation replaces with the maximum.
+Erosion replaces each pixel with the minimum over its neighbourhood.
+Dilation replaces it with the maximum. Images of any dtype but complex are
+accepted; on a boolean mask they are the binary erosion and dilation.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -313,8 +315,11 @@ let dilated = Sowilo.dilate ~kernel img
 
 ### opening / closing
 
-Opening (erode then dilate) removes small bright regions. Closing (dilate
-then erode) fills small dark regions.
+Opening (erode, then dilate by the element reflected about its centre)
+removes bright regions the element does not fit in. Closing (dilate, then
+erode by the reflected element) fills dark regions the element does not fit
+in. For the symmetric elements `structuring_element` makes, the reflection
+is the element itself.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -325,7 +330,8 @@ let closed = Sowilo.closing ~kernel binary_img
 
 ### morphological_gradient
 
-The difference between dilation and erosion: `dilate - erode`. Highlights
+The difference between dilation and erosion: `dilate - erode`, and on a
+boolean mask the pixels the dilation sets and the erosion clears. Highlights
 edges.
 
 <!-- $MDX skip -->
@@ -377,7 +383,7 @@ let lap5 = Sowilo.laplacian ~ksize:5 gray
 
 ### canny
 
-Canny edge detector. Returns 1.0 for edge pixels, 0.0 otherwise. `low` and
+Canny edge detector. Returns a boolean mask, `true` at edge pixels. `low` and
 `high` are hysteresis thresholds (in [0, 1] since images are float32 in
 [0, 1]). `sigma` controls the initial Gaussian blur and defaults to 1.4.
 
@@ -393,12 +399,13 @@ let tight = Sowilo.canny ~low:0.3 ~high:0.7 ~sigma:1.0 gray
 ## Differentiability Summary
 
 Most operations are differentiable because they are built from standard
-Nx tensor operations. The two exceptions are:
+Nx tensor operations. The exceptions are:
 
 | Operation | Differentiable | Reason |
 |-----------|---------------|--------|
 | `median_blur` | No | Uses sort; gradient is zero almost everywhere |
-| `canny` | No | Uses non-maximum suppression and hysteresis thresholding |
+| `threshold` | No | Returns a boolean mask |
+| `canny` | No | Returns a boolean mask, after non-maximum suppression and hysteresis thresholding |
 
 All other operations (filters, color transforms, geometric transforms,
-morphology, threshold, sobel, scharr, laplacian) support `Rune.grad'`.
+morphology on float images, sobel, scharr, laplacian) support `Rune.grad'`.

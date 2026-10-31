@@ -9,57 +9,55 @@ let structuring_element shape (kh, kw) =
   if kh <= 0 || kw <= 0 || kh mod 2 = 0 || kw mod 2 = 0 then
     invalid_arg "structuring_element: dimensions must be positive odd integers";
   match shape with
-  | Rect -> Nx.ones Nx.uint8 [| kh; kw |]
+  | Rect -> Nx.full Nx.bool [| kh; kw |] true
   | Cross ->
-      let center_h = kh / 2 and center_w = kw / 2 in
-      let h_line = Nx.ones Nx.uint8 [| 1; kw |] in
-      let h_padded =
-        Nx.pad [| (center_h, kh - center_h - 1); (0, 0) |] 0 h_line
-      in
-      let v_line = Nx.ones Nx.uint8 [| kh; 1 |] in
-      let v_padded =
-        Nx.pad [| (0, 0); (center_w, kw - center_w - 1) |] 0 v_line
-      in
-      Nx.maximum h_padded v_padded
+      let ch = kh / 2 and cw = kw / 2 in
+      Nx.init Nx.bool [| kh; kw |] (fun idx -> idx.(0) = ch || idx.(1) = cw)
   | Ellipse ->
       let cx = float (kw / 2) and cy = float (kh / 2) in
       let rx = cx +. 0.5 and ry = cy +. 0.5 in
-      let data =
-        Array.init (kh * kw) (fun idx ->
-            let y = float (idx / kw) -. cy in
-            let x = float (idx mod kw) -. cx in
-            if (x *. x /. (rx *. rx)) +. (y *. y /. (ry *. ry)) <= 1.0 then 1
-            else 0)
-      in
-      Nx.create Nx.uint8 [| kh; kw |] data
+      Nx.init Nx.bool [| kh; kw |] (fun idx ->
+          let y = float idx.(0) -. cy and x = float idx.(1) -. cx in
+          (x *. x /. (rx *. rx)) +. (y *. y /. (ry *. ry)) <= 1.0)
 
-(* A kernel's extents and active (non-zero) positions, read once to OCaml: a
-   composite operation reads them once for all its erosions and dilations. *)
-type neighborhood = { kh : int; kw : int; positions : (int * int) list }
+(* A kernel's [true] entries as offsets from its centre, row [kh / 2] and
+   column [kw / 2], read once to OCaml: a composite operation reads them once
+   for all its erosions and dilations. The image is padded by [kh / 2] rows
+   and [kw / 2] columns on each side, which holds the offsets, from
+   [-(kh / 2)] to [kh - 1 - kh / 2], and their reflections. *)
+type neighborhood = { pad_h : int; pad_w : int; offsets : (int * int) list }
 
 let neighborhood kernel =
   let kshape = Nx.shape kernel in
+  let rank = Array.length kshape in
+  if rank <> 2 then
+    invalid_arg
+      (Printf.sprintf "structuring element must have rank 2, got rank %d" rank);
   let kh = kshape.(0) and kw = kshape.(1) in
   let k = Nx.to_array kernel in
-  let positions = ref [] in
-  for i = 0 to kh - 1 do
-    for j = 0 to kw - 1 do
-      if k.((i * kw) + j) <> 0 then positions := (i, j) :: !positions
+  let offsets = ref [] in
+  for i = kh - 1 downto 0 do
+    for j = kw - 1 downto 0 do
+      if k.((i * kw) + j) then
+        offsets := (i - (kh / 2), j - (kw / 2)) :: !offsets
     done
   done;
-  match !positions with
-  | [] ->
-      invalid_arg "structuring element must have at least one non-zero element"
-  | ps -> { kh; kw; positions = List.rev ps }
+  if !offsets = [] then
+    invalid_arg "structuring element must have at least one true element";
+  { pad_h = kh / 2; pad_w = kw / 2; offsets = !offsets }
+
+(* The neighbourhood reflected about its centre: the pixel [dy] rows below
+   becomes the one [dy] rows above, and likewise for columns. *)
+let reflect n =
+  { n with offsets = List.map (fun (dy, dx) -> (-dy, -dx)) n.offsets }
 
 let morph_reduce op slices =
   match slices with
   | [] -> failwith "empty slice list"
   | first :: rest -> List.fold_left (fun acc s -> op acc s) first rest
 
-let morph_op (type a b d) ~op { kh; kw; positions } (img : (a, b, d) Nx.t) :
+let morph_op (type a b d) ~op { pad_h; pad_w; offsets } (img : (a, b, d) Nx.t) :
     (a, b, d) Nx.t =
-  let pad_h = kh / 2 and pad_w = kw / 2 in
   let reduce =
     match op with
     | `Min -> morph_reduce Nx.minimum
@@ -80,26 +78,34 @@ let morph_op (type a b d) ~op { kh; kw; positions } (img : (a, b, d) Nx.t) :
       let h = shape.(1) and w = shape.(2) in
       let padding = [| (0, 0); (pad_h, pad_h); (pad_w, pad_w); (0, 0) |] in
       let padded = Nx.pad padding pad_val img in
-      let slices =
-        List.map
-          (fun (dy, dx) ->
-            Nx.slice [ Nx.A; Nx.R (dy, dy + h); Nx.R (dx, dx + w); Nx.A ] padded)
-          positions
+      let slice (dy, dx) =
+        let y = pad_h + dy and x = pad_w + dx in
+        Nx.slice [ Nx.A; Nx.R (y, y + h); Nx.R (x, x + w); Nx.A ] padded
       in
-      reduce slices)
+      reduce (List.map slice offsets))
     img
 
 let erode ~kernel img = morph_op ~op:`Min (neighborhood kernel) img
 let dilate ~kernel img = morph_op ~op:`Max (neighborhood kernel) img
 
+(* The dilation by the reflected element is the adjoint of the erosion, which
+   makes the opening at most the image and idempotent; for a symmetric
+   element it is the plain dilation. Closing is dual. *)
 let opening ~kernel img =
   let n = neighborhood kernel in
-  morph_op ~op:`Max n (morph_op ~op:`Min n img)
+  morph_op ~op:`Max (reflect n) (morph_op ~op:`Min n img)
 
 let closing ~kernel img =
   let n = neighborhood kernel in
-  morph_op ~op:`Min n (morph_op ~op:`Max n img)
+  morph_op ~op:`Min (reflect n) (morph_op ~op:`Max n img)
 
-let morphological_gradient ~kernel img =
+(* Where a neighbourhood holds a pixel of the image, the erosion is at most
+   the dilation, so the difference does not wrap; on booleans it is the
+   dilation without the erosion. *)
+let morphological_gradient (type a b d) ~kernel (img : (a, b, d) Nx.t) :
+    (a, b, d) Nx.t =
   let n = neighborhood kernel in
-  Nx.sub (morph_op ~op:`Max n img) (morph_op ~op:`Min n img)
+  let dilated = morph_op ~op:`Max n img and eroded = morph_op ~op:`Min n img in
+  match Nx.Dtype.kind (Nx.dtype img) with
+  | Nx.Dtype.Boolean -> Nx.logical_and dilated (Nx.logical_not eroded)
+  | _ -> Nx.sub dilated eroded

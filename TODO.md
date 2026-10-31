@@ -403,9 +403,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - ymir: HEALPix and spherical harmonics (RFC 0027 slice 3)
 - ymir: time scales (UTC, TAI, TT, TDB), then time-dependent frames
   (precession, nutation, aberration) and ephemerides
-- sowilo: `threshold` and `canny` return `Nx.bool_t` and morphology takes a
-  bool kernel; today they return `Nx.float32_t` and morphology treats any
-  nonzero `uint8` as a member, which sowilo.mli does not say
 
 ## repo
 

@@ -5,6 +5,17 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- **Breaking:** `threshold` and `canny` return `'d Nx.bool_t` masks, and
+  `structuring_element` and the morphological operations' `~kernel` are
+  host booleans whose `true` entries select the neighbourhood. They returned
+  float32 `0.`/`1.` and took a `uint8` kernel whose nonzero entries counted.
+  Morphology takes boolean images as binary erosion and dilation, and
+  `morphological_gradient` of a mask is the dilation without the erosion.
+- `opening` and `closing` dilate, and erode, by the element reflected about
+  its centre, so the opening is at most the image and both are idempotent
+  for any element. For an element not symmetric about its centre they used
+  the element itself, and `opening` of the row `[. X X]` by `[. X X]` was
+  `[X X X]`. A `~kernel` not of rank 2 raises `Invalid_argument`.
 - `dilate`, and `opening`, `closing` and `morphological_gradient` through it,
   count pixels outside the image as the dtype's least value. They counted them
   as zero, so a border pixel of an image with negative values, as
@@ -13,7 +24,7 @@ All notable changes to Sowilo are documented in this file. Releases up to
   `'d Nx.float32_t`. Each operation computes where its image lies and makes
   its kernels and constants beside it, so it runs on any set and its result
   lies on the image's. `structuring_element` gives a host value, and the
-  morphological operations take a `~kernel` of any set, read once per call.
+  morphological operations take a host `~kernel`, read once per call.
 - `gaussian_blur` with a `sigma` of 0 or less takes a fixed kernel for a
   `ksize` up to 9 (`[1 2 1] / 4` for 3) and the Gaussian of sigma
   `0.3 * ((ksize - 1) / 2 - 1) + 0.8` beyond. It raises `Invalid_argument`

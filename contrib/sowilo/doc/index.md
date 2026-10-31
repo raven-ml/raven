@@ -50,8 +50,8 @@ let () =
     |> canny ~low:0.2 ~high:0.6
   in
 
-  (* Save result *)
-  Nx_io.save_png "edges.png" (to_uint8 edges)
+  (* Save the boolean edge mask as an image *)
+  Nx_io.save_png "edges.png" (to_uint8 (Nx.cast Nx.float32 edges))
 ```
 
 ## Learn More

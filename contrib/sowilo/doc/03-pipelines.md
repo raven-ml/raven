@@ -26,7 +26,8 @@ let edges img =
 ```
 
 Since every operation takes a tensor and returns a tensor, you can define
-reusable pipeline functions and combine them:
+reusable pipeline functions and combine them. Both pipelines above end in a
+boolean mask:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -119,10 +120,10 @@ let loss params img label =
 (* Rune.grad' differentiates through augment + preprocess + model *)
 ```
 
-Operations that break the gradient (`canny`, `median_blur`) should not be
-used inside differentiable pipelines. All other operations -- blurs, color
-adjustments, geometric transforms, morphology, threshold, sobel, scharr,
-laplacian -- support `Rune.grad'`.
+Operations that break the gradient (`canny`, `threshold`, `median_blur`)
+should not be used inside differentiable pipelines. All other operations --
+blurs, color adjustments, geometric transforms, morphology on float images,
+sobel, scharr, laplacian -- support `Rune.grad'`.
 
 ## Integration with Kaun
 
@@ -182,7 +183,7 @@ open Sowilo
 let visualize_pipeline img =
   let gray = to_grayscale img in
   let blurred = gaussian_blur ~sigma:2.0 gray in
-  let edges = canny ~low:0.2 ~high:0.6 gray in
+  let edges = Nx.cast Nx.float32 (canny ~low:0.2 ~high:0.6 gray) in
   let labels = [| "Grayscale"; "Gaussian Blur"; "Canny Edges" |] in
   Hugin.(image ~fx:(dim ~labels 0) (Nx.stack [ gray; blurred; edges ]))
   |> Hugin.save ~size:(Hugin.Size.panels 240. 240.) "pipeline.png"

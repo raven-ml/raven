@@ -153,24 +153,14 @@ let canny ~low ~high ?(sigma = 1.4) img =
       let nms = Nx.where is_max mag3 (Nx.scalar_like mag3 0.0) in
       (* 4. Double thresholding *)
       let strong = Nx.greater nms (Nx.scalar_like nms high) in
-      let weak =
-        Nx.logical_and
-          (Nx.greater_equal nms (Nx.scalar_like nms low))
-          (Nx.logical_not strong)
+      let candidate =
+        Nx.logical_or strong (Nx.greater_equal nms (Nx.scalar_like nms low))
       in
       (* 5. Hysteresis via dilation *)
-      let one = Nx.scalar_like nms 1.0 in
-      let zero = Nx.scalar_like nms 0.0 in
-      let strong_map = Nx.where strong one zero in
-      let strong_4d = Nx.reshape [| n; h; w; 1 |] strong_map in
       let k3 = Morphology.structuring_element Rect (3, 3) in
-      let dilated =
+      let strong_4d = Nx.reshape [| n; h; w; 1 |] strong in
+      let connected =
         Morphology.dilate ~kernel:k3 (Morphology.dilate ~kernel:k3 strong_4d)
       in
-      let dilated3 = Nx.reshape [| n; h; w |] dilated in
-      let connected = Nx.greater_s dilated3 0.0 in
-      let final =
-        Nx.where (Nx.logical_and connected (Nx.logical_or strong weak)) one zero
-      in
-      Nx.reshape [| n; h; w; 1 |] final)
+      Nx.logical_and connected (Nx.reshape [| n; h; w; 1 |] candidate))
     img
