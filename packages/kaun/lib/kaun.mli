@@ -28,7 +28,8 @@
     their parameters lie. Shuffling ({!Data}) and keyless dropout draw from the
     ambient {!Nx.Rng} scope; open one with {!Nx.Rng.with_key} for
     reproducibility. A traced function, as [Rune.jit]'s, refuses a draw without
-    a key: a compiled step passes its dropout key as an input. *)
+    a key from a scope around it: a compiled step passes its dropout key as an
+    input, as [~key] or as a scope it opens at that key. *)
 
 (** {1:layers Layers}
 

@@ -348,7 +348,10 @@ All notable changes to this project will be documented in this file.
   positional argument, `scan c x y f ~init xs`, where they took `~f`.
 - **Breaking:** a `scan` or `iterate` step is traced once, eagerly too: an
   OCaml `if` on `Nx.item` in it raises, so branch with `switch` or `Nx.where`,
-  and a draw without `~key` raises, so draw from a key in the carry or rows.
+  and a draw without `~key` raises. A step no longer draws from a key of its
+  own taken from the scope around the loop, which shifted every draw after
+  the loop by one key: it draws from a key in the carry or rows, or in a
+  scope it opens at one with `Nx.Rng.with_key`.
 - **Breaking:** a `custom_jvp` or `custom_vjp` rule and its derivative are
   traced at each call under `grad` of `grad`, a Hessian-vector product, a
   loop's step or a map capturing an argument, so `Nx.item` of one raises.
@@ -3148,6 +3151,11 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.with_key` takes any key, traced included, so code that draws
+  without `~key` runs inside `Rune.jit` and a loop's step in a scope at a key
+  the function receives. Such a scope draws only on its key's set, as `~key`
+  does. `Nx.Rng.next_key` raises in a scope at a traced key or one off the
+  host.
 - `Nx.Rng.ptree` describes a key at every set, for signatures such as
   `Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)`. A binding of
   `Nx.Ptree.v Nx.Rng.walk` had its set fixed by its first use.

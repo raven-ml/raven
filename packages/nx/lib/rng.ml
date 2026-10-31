@@ -243,6 +243,13 @@ let holds ~by q p x =
   in
   Array.for_all Fun.id (Array.mapi held (Grid.devices (Devices.grid p)))
 
+(* Raises naming [by]: a key at [q] is read at [p], which does not hold it. *)
+let misplaced ~by q p =
+  invalid_argf "%s: the key lies at %a and is read at %a; Nx.Rng.place (%a) key"
+    by Devices.pp_placement q Devices.pp_placement p
+    (Route.pp_call ~by (Devices.set p))
+    (Devices.grid (Devices.uncut p))
+
 (* The key [w], stretched to a draw's shape, read at the draw's placement
    [p]: a view of each device's window of it ({!Place}), so no bytes move.
    Raises naming [by] where a device of [p] does not hold its window, as the
@@ -251,12 +258,7 @@ let read_at ~by p w =
   let q = Prim.placement w in
   if Devices.equal q p then w
   else if holds ~by q p w then Eval.place ~by p w
-  else
-    invalid_argf
-      "%s: the key lies at %a and is read at %a; Nx.Rng.place (%a) key" by
-      Devices.pp_placement q Devices.pp_placement p
-      (Route.pp_call ~by (Devices.set p))
-      (Devices.grid (Devices.uncut p))
+  else misplaced ~by q p
 
 (* A draw of [dt] and shape [s] per key of [source], by the sampler program
    [prog]: one map over the key's batch then [s], each element reading its
@@ -411,8 +413,9 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
 (* The scope *)
 
 (* A scope answers [Next] with its root and the next index, or, where it
-   refuses keyless draws, with the name it refuses them for. *)
-type scope = Root of Devices.host key * int | Refused of string
+   refuses keyless draws, with the name it refuses them for. A root lies on
+   any set, and may be traced. *)
+type scope = Root : 'd key * int -> scope | Refused of string
 
 type _ Effect.t += Next : scope Effect.t
 
@@ -423,9 +426,12 @@ let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 let with_key k f =
   let by = "Nx.Rng.with_key" in
   let root = Donate.read ~by k in
-  (* The scope computes its keys from [root] by {!subkey}, outside any
-     interpretation, which a traced root cannot reach. *)
-  Option.iter (Check.traced ~by) (Eval.owner root);
+  (* A traced root's keys are computed by its interpretation, which must
+     still run. *)
+  (match Eval.owner root with
+  | Some owner when not (Atomic.get owner.Value.live) -> Check.traced ~by owner
+  | Some _ | None -> ());
+  one ~by root;
   let count = ref 0 in
   let effc (type a) (e : a Effect.t) =
     match e with
@@ -459,34 +465,73 @@ let unscoped =
       let seed = Random.State.bits64 (Random.State.make_self_init ()) in
       (Int64.to_int seed, ref 0))
 
-(* The subkey [c] of the host key [root], {!fold_in}'s, computed now on the
-   host: the scope's own bookkeeping, which no interpretation receives. *)
-let subkey ~by (root : Devices.host key) c = fold_in_by eager ~by root c
+(* The next key of a scope: its root and the key's index. *)
+type next = Next_of : 'd key * int -> next
 
-let next_key_by ~by : Devices.host key =
+(* The scope's next key; outside every scope, the domain's. *)
+let next ~by =
   match Effect.perform Next with
-  | Root (root, c) -> subkey ~by root c
+  | Root (root, c) -> Next_of (root, c)
   | Refused name ->
       invalid_argf "%s: no key inside %s, which refuses keyless draws" by name
   | exception Effect.Unhandled Next ->
       let seed, count = Domain.DLS.get unscoped in
       let c = !count in
       incr count;
-      subkey ~by (key_by eager ~by seed) c
+      Next_of (key_by eager ~by seed, c)
 
-let next_key () = next_key_by ~by:"Nx.Rng.next_key"
+(* Whether a scope at [root] computes its keys now on the host, by {!subkey}:
+   [root] is a host key that no interpretation traces. A scope at another
+   root computes [fold_in root c] where [root] lies, by the interpretations
+   around the draw. *)
+let on_host root =
+  Option.is_none (Eval.owner root) && Devices.on_host_set (Prim.placement root)
 
-(* The key a sampler [by] draws from: [key], lent so that the draw kills no
-   donation of it ({!Donate.read}), or the words of the scope's next key,
-   read on the host. *)
-let resolve ~by = function
+(* The subkey [c] of [root], {!fold_in}'s, computed now: the scope's own
+   bookkeeping, which no interpretation receives. *)
+let subkey ~by (root : 'd key) c = fold_in_by eager ~by root c
+
+(* [k] at the brand of [p]'s set. Raises naming [by] where [k] lies on
+   another set. *)
+let beside (type d e) ~by (p : d Devices.placement) (k : e key) : d key =
+  let q = Prim.placement k in
+  match
+    Devices.same (Devices.set q : e Devices.t) (Devices.set p : d Devices.t)
+  with
+  | Some Equal -> k
+  | None -> misplaced ~by q p
+
+let next_key () : Devices.host key =
+  let by = "Nx.Rng.next_key" in
+  match next ~by with
+  | Next_of (root, c) when on_host root -> beside ~by host (subkey ~by root c)
+  | Next_of (root, _) -> (
+      match Eval.owner root with
+      | Some owner ->
+          invalid_argf
+            "%s: the scope's key is traced by %s; its keys are not host keys" by
+            owner.Value.name
+      | None ->
+          invalid_argf
+            "%s: the scope's key lies at %a; its keys are not host keys" by
+            Devices.pp_placement (Prim.placement root))
+
+(* The key a sampler [by] draws at [p] from: [key], lent so that the draw
+   kills no donation of it ({!Donate.read}), or the scope's next key: its
+   words, read on the host, where {!on_host} holds, and otherwise the key
+   itself, which lies on [p]'s set. *)
+let resolve ~by p = function
   | Some k -> Key (Donate.read ~by k)
-  | None ->
-      let a = Check.on_host ~by (next_key_by ~by) in
-      let half i =
-        Int64.logand (Int64.of_int32 (Nx_array.get a [| i |])) 0xFFFF_FFFFL
-      in
-      Words (Int64.logor (half 0) (Int64.shift_left (half 1) 32))
+  | None -> (
+      match next ~by with
+      | Next_of (root, c) when on_host root ->
+          let a = Check.on_host ~by (subkey ~by root c) in
+          let half i =
+            Int64.logand (Int64.of_int32 (Nx_array.get a [| i |])) 0xFFFF_FFFFL
+          in
+          Words (Int64.logor (half 0) (Int64.shift_left (half 1) 32))
+      | Next_of (root, c) ->
+          Key (fold_in_by dispatched ~by (beside ~by p root) c))
 
 let place p k =
   let by = "Nx.Rng.place" in
@@ -505,7 +550,7 @@ let bits_by ~by p key s =
     lowered bits_programs D.Int32 [||] (fun ~key ~j ->
         E.cast D.Int32 (word ~key j))
   in
-  draw ~by ~at:p (resolve ~by key) D.Int32 s prog
+  draw ~by ~at:p (resolve ~by p key) D.Int32 s prog
 
 let bits ?key s = bits_by ~by:"Nx.Rng.bits" host key s
 let bits_at p ?key s = bits_by ~by:"Nx.Rng.bits_at" p key s
@@ -518,7 +563,7 @@ let uniform_by ~by p key dt s =
         (* [dt]'s bits, at most the carrier's: every draw is a value of [dt]. *)
         rounded dt (unit ~key ~p:(precision dt) c j))
   in
-  draw ~by ~at:p (resolve ~by key) dt s prog
+  draw ~by ~at:p (resolve ~by p key) dt s prog
 
 let uniform ?key dt s = uniform_by ~by:"Nx.Rng.uniform" host key dt s
 let uniform_at p ?key dt s = uniform_by ~by:"Nx.Rng.uniform_at" p key dt s
@@ -547,7 +592,7 @@ let normal_by ~by p key dt s =
         let x, y = box_muller ~p c u.(0) u.(1) in
         rounded dt E.(where (j land u64 1L = u64 0L) x y))
   in
-  draw ~by ~at:p (resolve ~by key) dt s prog
+  draw ~by ~at:p (resolve ~by p key) dt s prog
 
 let normal ?key dt s = normal_by ~by:"Nx.Rng.normal" host key dt s
 let normal_at p ?key dt s = normal_by ~by:"Nx.Rng.normal_at" p key dt s
@@ -563,7 +608,7 @@ let exponential_by ~by p key dt s =
         let u = unit ~key ~p c j in
         rounded dt E.(lit 0. - log (lit 1. - u)))
   in
-  draw ~by ~at:p (resolve ~by key) dt s prog
+  draw ~by ~at:p (resolve ~by p key) dt s prog
 
 let exponential ?key dt s =
   exponential_by ~by:"Nx.Rng.exponential" host key dt s
@@ -613,7 +658,7 @@ let randint_by ~by p key low high s =
   in
   let ins = Iarray.sub prog.ins ~pos:0 ~len:first_param in
   let prog = P.subst ~ins bound prog in
-  draw ~by ~at:p (resolve ~by key) D.Int32 s prog
+  draw ~by ~at:p (resolve ~by p key) D.Int32 s prog
 
 let randint ?key ?(low = 0) ~high s =
   randint_by ~by:"Nx.Rng.randint" host key low high s
@@ -699,7 +744,7 @@ let bernoulli ?key p =
         let scaled = E.(param c 0 dt * lit (Float.ldexp 1. 53)) in
         E.(bits53 (block ~key j) < cast D.Uint64 (ceil scaled)))
   in
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement p) key in
   draw ~by ~params:[| Value.Any p |] key D.Bool (Prim.shape p) prog
 
 (* Rejection *)
@@ -795,7 +840,7 @@ let gamma ?key a =
         let shift = E.(boost ** recip a) in
         rounded dt E.(where below (acc * shift) acc))
   in
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement a) key in
   draw ~by ~params:[| Value.Any a |] key dt (Prim.shape a) prog
 
 (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas, element [j]'s
@@ -831,7 +876,7 @@ let beta ?key a b =
         let d = E.(lb - la + shift) in
         rounded dt E.(lit 1. / (lit 1. + exp d)))
   in
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement a) key in
   draw ~by ~params:[| Value.Any a; Value.Any b |] key dt s prog
 
 (* Von Mises *)
@@ -915,7 +960,7 @@ let von_mises ?key kappa =
         rounded dt theta)
   in
   let params = [| Value.Any kappa |] in
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement kappa) key in
   draw ~by ~params key dt (Prim.shape kappa) prog
 
 (* Counts *)
@@ -1057,7 +1102,7 @@ let poisson ?key rate =
         E.(cast D.Int32 (where small inversion rejection)))
   in
   let params = [| Value.Any rate |] in
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement rate) key in
   draw ~by ~params key D.Int32 (Prim.shape rate) prog
 
 (* Binomial(n, p) counts the failures of [1 - p] where [p] exceeds one half, so
@@ -1152,7 +1197,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
         E.(where flip (count - y) y))
   in
   let params = [| Value.Any count; Value.Any prob |] in
-  draw ~by ~params (resolve ~by key) D.Int32 s prog
+  draw ~by ~params (resolve ~by (Prim.placement count) key) D.Int32 s prog
 
 (* Truncated normal *)
 
@@ -1267,7 +1312,7 @@ let truncated_normal ?key lower upper =
         masses ~by upper;
       ]
   in
-  draw ~by ~params (resolve ~by key) dt s prog
+  draw ~by ~params (resolve ~by (Prim.placement lower) key) dt s prog
 
 (* Reductions along a draw's last axis *)
 
@@ -1311,7 +1356,7 @@ let dirichlet ?key a =
   let r = Array.length s in
   if r = 0 then invalid_argf "%s: concentrations of shape [] have no axis" by;
   require ~by "a" positive a;
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement a) key in
   let dt = Prim.dtype a in
   let (Carrier { c; p; lit }) = carrier dt in
   let shape = Array.append (source_batch key) s in
@@ -1388,7 +1433,7 @@ let gumbel_by ~by p key dt s =
         let (Carrier { c; _ }) = carrier dt in
         rounded dt (gumbel_noise ~key c j))
   in
-  draw ~by ~at:p (resolve ~by key) dt s prog
+  draw ~by ~at:p (resolve ~by p key) dt s prog
 
 let gumbel ?key dt s = gumbel_by ~by:"Nx.Rng.gumbel" host key dt s
 let gumbel_at p ?key dt s = gumbel_by ~by:"Nx.Rng.gumbel_at" p key dt s
@@ -1408,7 +1453,7 @@ let categorical ?key ?(axis = -1) logits =
       pp_shape s;
   (* Before the key, which may be the next of the stream. *)
   Prim.alive ~by logits;
-  let key = resolve ~by key in
+  let key = resolve ~by (Prim.placement logits) key in
   let (Carrier { c; _ }) = carrier dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
@@ -1443,11 +1488,9 @@ let categorical ?key ?(axis = -1) logits =
 let permutation_programs = programs ()
 
 let permutation_made ~by p key n =
-  if n < 0 then invalid_argf "%s: n is %d, not at least 0" by n;
   let prog =
     lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
   in
-  let key = resolve ~by key in
   let axis = Array.length (source_batch key) in
   let sorted = Devices.uncut ~axis p in
   let words = draw ~by ~at:sorted key D.Uint64 [| n |] prog in
@@ -1457,14 +1500,16 @@ let permutation_made ~by p key n =
   in
   if Devices.equal sorted p then positions else Eval.place ~by p positions
 
-(* On a set without kernels the sort would compute there, so a keyless draw,
-   whose words are numbers, is made on the host and placed at [p], under
-   every interpretation: its bits are the host draw's. *)
+(* On a set without kernels the sort would compute there, so a draw from a
+   scope's words, which are numbers, is made on the host and placed at [p],
+   under every interpretation: its bits are the host draw's. A draw from a
+   key, given or the scope's, reads it where it lies. *)
 let permutation_by ~by p key n =
-  match key with
-  | None when Devices.bare p ->
-      Eval.place ~by p (permutation_made ~by host None n)
-  | None | Some _ -> permutation_made ~by p key n
+  if n < 0 then invalid_argf "%s: n is %d, not at least 0" by n;
+  match resolve ~by p key with
+  | Words w when Devices.bare p ->
+      Eval.place ~by p (permutation_made ~by host (Words w) n)
+  | key -> permutation_made ~by p key n
 
 let permutation ?key n = permutation_by ~by:"Nx.Rng.permutation" host key n
 

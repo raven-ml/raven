@@ -4364,9 +4364,12 @@ val associative_scan :
     words' axis holds no key. {!Rng.val-key} makes a host key, which
     {!Rng.place} moves to a placement that keeps the words whole.
     {!Rng.split} and {!Rng.fold_in} compute where their key lies, and
-    {!Rng.fold_in_tensor} where its key and index lie together. A scope's
-    keys are host keys, computed on the host when a draw takes one; no
-    interpretation receives that computation. *)
+    {!Rng.fold_in_tensor} where its key and index lie together. A scope at a
+    host key that no interpretation traces computes its keys on the host
+    when a draw takes one, and no interpretation receives that computation,
+    so its draws lie at any placement. A scope at any other key computes
+    them where that key lies, as {!Rng.fold_in} does, and draws only on that
+    key's set. *)
 module Rng : sig
   type +'d key = private 'd int32_t
   (** The type for keys, of shape [[|2|]], and batches of keys, of shape
@@ -4436,9 +4439,12 @@ module Rng : sig
 
   (** {1:samplers Samplers}
 
-      A sampler draws from [~key], or without it from the scope's next key,
-      whose two words it writes into its program as {!full} writes its
-      value, so that no bytes move. A sampler without an array parameter
+      A sampler draws from [~key], or without it from the scope's next key
+      ({!with_key}). The next key of a scope at a host key that no
+      interpretation traces is written into the sampler's program, its two
+      words as {!full} writes its value, so that no bytes move, at any
+      placement; that of a scope at another key is read as [~key] is, and
+      raises as it does. A sampler without an array parameter
       draws on the host, and its [_at] form at the placement it is given,
       each device computing its window: [placement (uniform_at p dt s)] is
       [p]. On a set without kernels, a draw without [~key] is a creation,
@@ -4718,15 +4724,24 @@ module Rng : sig
 
   (** {1:scope Scope} *)
 
-  val with_key : host key -> (unit -> 'a) -> 'a
-  (** [with_key k f] runs [f] in a scope rooted at [k]: the samplers called in
-      [f] without [~key] take successive keys of [k], [fold_in k 0],
-      [fold_in k 1], …. Scopes nest, the inner replacing the outer. A scope is
-      per fiber and per domain. What [f] raises passes on with the backtrace
-      of its raise.
+  val with_key : 'd key -> (unit -> 'a) -> 'a
+  (** [with_key k f] runs [f] in a scope rooted at [k]: the sampler called
+      [n]th in [f] without [~key], counting from [0], draws as it does with
+      [~key:(fold_in k n)]. Scopes nest, the inner replacing the outer. A
+      scope is per fiber and per domain. What [f] raises passes on with the
+      backtrace of its raise.
 
-      Raises [Invalid_argument] if [k] is dead or traced: a scope's keys are
-      host values computed outside any interpretation. *)
+      [k] may be traced, as an interpretation's argument is: the scope's
+      keys are then computed from it by the interpretations around each
+      draw, so a function that receives a key draws what the same function
+      draws eagerly in a scope at that key's value. A scope at a host key
+      that no interpretation traces draws at any placement. A scope at any
+      other key, traced or on another set, draws only where a draw from
+      [~key] at [k] would: a draw elsewhere raises as that draw does, naming
+      the {!place} to write. A traced host key whose draws lie on a device
+      set is placed there first, as [with_key (place p k) f].
+
+      Raises [Invalid_argument] if [k] is dead or a batch. *)
 
   val refusing : string -> (unit -> 'a) -> 'a
   (** [refusing name f] runs [f] in a scope that gives no keys. Scopes nest
@@ -4742,7 +4757,9 @@ module Rng : sig
       Outside every scope, it is the next key of the domain's own, seeded from
       the system's entropy.
 
-      Raises [Invalid_argument] inside {!refusing}. *)
+      Raises [Invalid_argument] inside {!refusing}, and inside a scope at a
+      key that is traced or lies off the host, whose keys are not host
+      keys. *)
 end
 
 (** {1:printing Printing} *)

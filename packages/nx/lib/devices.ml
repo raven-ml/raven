@@ -83,6 +83,11 @@ let mint ~by ?kernels ds =
 let number s = s.number
 let count s = Array.length s.rigs
 
+(* The brands of one set name one set: the cast holds there. *)
+let same (type d e) (s : d t) (s' : e t) : (d, e) Type.eq option =
+  if s.number = s'.number then Some (Obj.magic Type.Equal : (d, e) Type.eq)
+  else None
+
 let rig s k =
   if k < 0 || k >= count s then
     invalid_arg

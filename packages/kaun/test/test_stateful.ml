@@ -432,6 +432,26 @@ let test_dropout_keyed_jit_matches_eager () =
     (Nx.to_array (f { Keyed_x.x; key = k })
     <> Nx.to_array (f { Keyed_x.x; key = k' }))
 
+(* A compiled step that opens a scope at its key: keyless dropout there is
+   keyed dropout at [fold_in key 0], the scope's first key. *)
+let test_dropout_scoped_jit_is_keyed () =
+  let x = vec (Array.init 64 (fun i -> float_of_int (i + 1))) in
+  let scoped { Keyed_x.x; key } =
+    Nx.Rng.with_key key (fun () -> Dropout.apply ~rate:0.5 ~training:true x)
+  in
+  let f = Rune.jit Nx.Ptree.(v Keyed_x.walk @-> returns tensor) scoped in
+  List.iter
+    (fun seed ->
+      let key = Nx.Rng.key seed in
+      let keyed =
+        Dropout.apply ~rate:0.5 ~training:true ~key:(Nx.Rng.fold_in key 0) x
+      in
+      check_arr ~eps:0.0
+        ~msg:(Printf.sprintf "seed %d" seed)
+        (Nx.to_array keyed)
+        (f { Keyed_x.x; key }))
+    [ 23; 24 ]
+
 (* Jitted training steps: a tiny MLP with dropout between its layers, the
    per-step key an input leaf derived by [fold_in] from a root seed. *)
 
@@ -581,6 +601,8 @@ let tests =
         test "keyless dropout raises inside jit" test_dropout_keyless_jit_raises;
         test "keyed dropout compiles and matches eager"
           test_dropout_keyed_jit_matches_eager;
+        test "keyless dropout in a scope at the step's key is keyed dropout"
+          test_dropout_scoped_jit_is_keyed;
         test "jitted train steps with fold_in keys reproduce from the seed"
           test_dropout_jitted_training_steps;
         test "keyed dropout composes with the bfloat16 astype sandwich"

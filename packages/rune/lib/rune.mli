@@ -84,8 +84,10 @@
     {!Nx.item} of a stand-in, or of a value computed from one, raises, naming
     the construct, as [Nx.item: the value is traced by Rune.scan] in a {!scan}'s
     step, so a branch on a value is a {!switch}, {!Nx.where} or a nested
-    {!iterate}. A draw without [~key] raises, naming the construct, so a step
-    draws from a key in its carry or its rows.
+    {!iterate}. A draw without [~key] raises, naming the construct: a function
+    traced once would take one key of a scope around it for every step and
+    every call. It draws from a key it receives, captures or computes, with
+    [~key] or inside a scope it opens at that key ({!Nx.Rng.with_key}).
 
     An operation that reads no stand-in computes once, at the call, except in
     {!switch}, {!remat}, a {!root}'s [solve] and {!jit}. These {e stage} every
@@ -723,8 +725,10 @@ val check_transpose :
     a leading length [n], and lane [k] receives row [k] of each. The function
     runs once, over values that stand for all [n] lanes, and the lanes' results
     are stacked along a new axis 0. A value it captures is the same in every
-    lane, and so is a draw without [~key]. A lane's values have no elements to
-    read: {!Nx.item} of one raises
+    lane, and so is a draw without [~key]. Lanes draw apart from a key that
+    differs per lane: a row of [Nx.Rng.split_batch], or
+    [Nx.Rng.fold_in_tensor k (lane_index a x)]. A lane's values have no
+    elements to read: {!Nx.item} of one raises
     ([Nx.item: the value is traced by Rune.vmap]), so an OCaml [if] cannot take
     one branch per lane: {!switch} does, and {!Nx.where} selects per lane.
 
@@ -941,6 +945,31 @@ end
     its operands) and none of the rows' or captures' own, then runs the step's
     transpose in reverse. A captured array's cotangent is the sum over the steps
     of each step's, added in reverse order of the steps.
+
+    {b Draws.} A key the step captures is the same at every step, and so are
+    its draws. Fresh draws come from a key that differs per step: a row of
+    [Nx.Rng.split_batch ~n k] among the rows, or [Nx.Rng.fold_in_tensor k i]
+    for a step index [i], a row of [Nx.arange] in a {!scan} and a count in
+    an {!iterate}'s carry. A key kept with its row goes with it, so a scan
+    of rows in reverse draws each row's values in reverse. Code that draws
+    without [~key] runs in a scope the step opens:
+
+    {[
+    let walk k x0 n =
+      Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
+        (fun x i ->
+          Nx.Rng.with_key (Nx.Rng.fold_in_tensor k i) (fun () ->
+              let x = Nx.add x (Nx.Rng.normal Nx.float32 [| 3 |]) in
+              (x, x)))
+        ~init:x0
+        (Nx.arange Nx.int32 0 n 1)
+    ]}
+
+    Step [i] of [walk k] draws what the step's code draws in
+    [Nx.Rng.with_key (Nx.Rng.fold_in k i)], eagerly, compiled, mapped and
+    differentiated. A step's scope is at a traced key, so its draws lie on
+    that key's set: a step that draws on a device set takes [k] placed
+    there ({!Nx.Rng.place}).
 
     {b Iterates.} The derivative of an {!iterate} is that of the steps taken;
     its test has none. Where the loop runs at the call and reads no value of

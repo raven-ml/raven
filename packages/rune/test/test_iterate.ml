@@ -1144,6 +1144,64 @@ let law_keyed (seed, trips) =
   equal ~msg:"vmap of grad" bits_t expected
     (bits (Rune.vmap keyed_s (keyed_grad keyed_iterate) tr (xs, keys)))
 
+(* A keyless draw in a scope the step opens at [fold_in_tensor key k], [k]
+   the count in the carry: eagerly, compiled and per lane, with lanes that
+   stop together and apart, the draws are the written loop's with the step
+   in a scope at [fold_in key k]. *)
+let scoped_cases =
+  let open Gen in
+  (let* n = int_range 2 3 in
+   let* together = bool in
+   let* trips = array ~size:(constant n) (int_range 0 keyed_max) in
+   let trips = if together then Array.make n trips.(0) else trips in
+   let+ seed = int_range 0 1000 in
+   (seed, trips))
+  |> with_pp (fun ppf (seed, trips) ->
+      Format.fprintf ppf "seed %d, trips [%s]" seed
+        (String.concat "; " (Array.to_list (Array.map string_of_int trips))))
+
+let scoped_step (x, (key, k)) =
+  let key' = Nx.Rng.fold_in_tensor (Nx.Rng.of_tensor key) k in
+  Nx.Rng.with_key key' (fun () ->
+      (Nx.mul x (Nx.Rng.uniform f64 [| 2 |]), (key, tick k)))
+
+(* The written loop: a while loop of OCaml, step [k] in a scope at
+   [fold_in key k]. *)
+let scoped_written trips (x, key) =
+  let stop = Int32.to_int (Nx.item [] trips) in
+  let key = Nx.Rng.of_tensor key in
+  let rec go k x =
+    if k >= stop then x
+    else
+      go (k + 1)
+        (Nx.Rng.with_key (Nx.Rng.fold_in key k) (fun () ->
+             Nx.mul x (Nx.Rng.uniform f64 [| 2 |])))
+  in
+  go 0 x
+
+let scoped_iterate =
+  keyed ~loop:(fun ~until ->
+      Rune.iterate
+        T.(pair tensor (pair tensor tensor))
+        ~max:keyed_max ~until scoped_step)
+
+let scoped_jit = Rune.jit keyed_s scoped_iterate
+
+let law_scoped (seed, trips) =
+  let n = Array.length trips in
+  cover "lanes together" (Array.for_all (( = ) trips.(0)) trips);
+  cover "lanes apart" (Array.exists (( <> ) trips.(0)) trips);
+  let keys = Nx.Rng.to_tensor (Nx.Rng.split_batch ~n (Nx.Rng.key seed)) in
+  let xs = Nx.full f64 [| n; 2 |] 1.5 in
+  let tr = Nx.create Nx.int32 [| n |] (Array.map Int32.of_int trips) in
+  let lane f k = f (Nx.get [ k ] tr) (Nx.get [ k ] xs, Nx.get [ k ] keys) in
+  let per_lane f = bits (Nx.stack (List.init n (lane f))) in
+  let expected = per_lane scoped_written in
+  equal ~msg:"eagerly" bits_t expected (per_lane scoped_iterate);
+  equal ~msg:"compiled" bits_t expected (per_lane scoped_jit);
+  equal ~msg:"vmap" bits_t expected
+    (bits (Rune.vmap keyed_s scoped_iterate tr (xs, keys)))
+
 (* A stopped lane never computes at a point no lane reached: it computes its
    donor's step, so a check the step makes there passes. *)
 let test_donors () =
@@ -1539,6 +1597,8 @@ let () =
              prop ~examples:apart_examples ~count:30
                "compiled, lanes stop apart at every dtype" apart_cases law_apart;
              prop "a key in the carry draws as the loop" keyed_cases law_keyed;
+             prop "a scope at a key in the carry draws as the loop" scoped_cases
+               law_scoped;
              test "a stopped lane computes its donor's step" test_donors;
              test "a stopped lane keeps a non-finite carry" test_nonfinite;
              test "a constant init" test_constant_init;

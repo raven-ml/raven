@@ -21,7 +21,8 @@
     — the mask is a pure function of the key and [x]'s shape — and from the
     ambient {!Nx.Rng} scope otherwise; open one with {!Nx.Rng.with_key} for
     reproducibility. A traced function, as [Rune.jit]'s, refuses a draw without
-    a key, so a compiled step passes [~key]. *)
+    a key from a scope around it, so a compiled step passes its dropout key as
+    an input, as [~key] or as a scope it opens at that key. *)
 
 val apply :
   rate:float ->
@@ -43,10 +44,13 @@ val apply :
 
     With [training = false] (or [rate = 0.]), the result is [x], unchanged.
 
-    {b Under jit.} A key leaf of the step's input structure, or one
-    {!Nx.Rng.fold_in}-derived from such a leaf, gives a fresh mask per call. A
-    key the compiled function closes over draws the same mask on every call, and
-    a draw without a key raises [Invalid_argument], as every traced function's
+    {b Under jit.} A compiled step passes its dropout key as an input, as
+    [~key] or as a scope it opens at that key ({!Nx.Rng.with_key}), and the
+    key lies on [x]'s set, as [~key] must. A key leaf of the step's input
+    structure, or one {!Nx.Rng.fold_in}-derived from such a leaf, gives a
+    fresh mask per call. A key the compiled function closes over draws the
+    same mask on every call, and a draw without a key outside a scope the
+    function opens raises [Invalid_argument], as every traced function's
     does.
 
     {b Under vmap.} A key the mapped function closes over is a constant of the

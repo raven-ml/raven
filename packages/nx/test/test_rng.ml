@@ -2233,6 +2233,119 @@ type ('v, 's, 'd) Nx.Prim.payload += Traced : ('v, 's, 'd) Nx.Prim.payload
 let tracing i ~by op =
   Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Traced) op
 
+(* [f i] under [i], an interpretation of the values it owns that computes
+   each operation it receives on their values, and the count it received. A
+   key it owns ({!traced_key}) is traced, and the operations on it give
+   values. *)
+type ('v, 's, 'd) Nx.Prim.payload +=
+  | Value : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.Prim.payload
+
+let evaluating f =
+  let received = ref 0 in
+  let rule i ~by op =
+    incr received;
+    let value x =
+      match Nx.Prim.payload i x with Some (Value v) -> v | _ -> x
+    in
+    Nx.Prim.eval ~by (Nx.Prim.map value op)
+  in
+  let x = Nx.Prim.interpret ~name:"test.eval" Values rule f in
+  (x, !received)
+
+let traced_key i k =
+  let t = Rng.to_tensor k in
+  Rng.of_tensor (Nx.Prim.traced i (Nx.Prim.form t) (Value t))
+
+(* A sampler that draws at [p], from [~key] or keyless: one without a
+   parameter by its [_at] form, one with parameters from parameters made at
+   [p]. Its draws are read on the host as floats. *)
+type scoped_sampler = {
+  draw : 'd. 'd Nx.Placement.t -> ?key:'d Rng.key -> int array -> float array;
+}
+
+let scoped_samplers =
+  let of_ints xs = Array.map Int32.to_float xs in
+  let of_int64s xs = Array.map Int64.to_float xs in
+  let of_bools xs = Array.map Bool.to_float xs in
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [
+      ( "bits",
+        { draw = (fun p ?key s -> of_ints (read (Rng.bits_at p ?key s))) } );
+      ( "normal",
+        { draw = (fun p ?key s -> read (Rng.normal_at p ?key Nx.float32 s)) } );
+      ( "randint",
+        {
+          draw =
+            (fun p ?key s -> of_ints (read (Rng.randint_at p ?key ~high:9 s)));
+        } );
+      ( "permutation",
+        {
+          draw =
+            (fun p ?key s ->
+              of_int64s (read (Rng.permutation_at p ?key (numel s))));
+        } );
+      ( "bernoulli",
+        {
+          draw =
+            (fun p ?key s ->
+              of_bools
+                (read (Rng.bernoulli ?key (Nx.full_at p Nx.float32 s 0.3))));
+        } );
+      ( "gamma",
+        {
+          draw =
+            (fun p ?key s ->
+              read (Rng.gamma ?key (Nx.full_at p Nx.float64 s 0.7)));
+        } );
+      ( "categorical",
+        {
+          draw =
+            (fun p ?key s ->
+              let logits =
+                Nx.full_at p Nx.float32 (Array.append s [| 4 |]) 0.
+              in
+              of_int64s (read (Rng.categorical ?key logits)));
+        } );
+    ]
+
+(* Where a scope's root lies: a host key, one traced by {!evaluating}, or a
+   key on [S2]. *)
+type root = Host_root | Traced_root | Device_root
+
+let roots =
+  Gen.of_list
+    ~pp:(fun ppf r ->
+      Format.pp_print_string ppf
+        (match r with
+        | Host_root -> "host"
+        | Traced_root -> "traced"
+        | Device_root -> "device"))
+    [ Host_root; Traced_root; Device_root ]
+
+let scope_shapes =
+  Gen.of_list ~pp:pp_shape [ [||]; [| 3 |]; [| 0 |]; [| 2; 0 |]; [| 2; 3 |] ]
+
+(* The draws [ss] of shape [s] at [p], keyless in a scope at [k], traced by
+   {!evaluating} where [traced], against each draw from [fold_in k n]. *)
+let scoped_as_folded (type d) (p : d Nx.Placement.t) (k : d Rng.key) ~traced ss
+    s =
+  let want =
+    List.mapi (fun n (_, sm) -> sm.draw p ~key:(Rng.fold_in k n) s) ss
+  in
+  let got, received =
+    evaluating (fun i ->
+        let root = if traced then traced_key i k else k in
+        Rng.with_key root (fun () -> List.map (fun (_, sm) -> sm.draw p s) ss))
+  in
+  equal (list (array float_exact)) want got;
+  if traced then
+    equal ~msg:"the scope's keys reached the interpretation" bool (ss <> [])
+      (received > 0)
+
+let scope_draws = Gen.list ~size:(Gen.int_range 0 3) scoped_samplers
+let draw_count = Gen.int_range 0 2
+
 let scope =
   group "scope"
     [
@@ -2245,6 +2358,52 @@ let scope =
           in
           equal (array int32) (read (Rng.bits ~key:(Rng.fold_in k 0) [| 3 |])) a;
           equal (array int32) (read (Rng.bits ~key:(Rng.fold_in k 1) [| 3 |])) b);
+      prop "a scope at a key draws as fold_in k n"
+        (Gen.quad seeds roots scope_draws scope_shapes)
+        (fun (seed, root, ss, s) ->
+          cover "a host root" (root = Host_root);
+          cover "a traced root" (root = Traced_root);
+          cover "a device root" (root = Device_root);
+          cover "no draw" (ss = []);
+          cover "one draw" (List.length ss = 1);
+          cover "several draws" (List.length ss > 1);
+          cover "a zero-size draw" (ss <> [] && numel s = 0);
+          let k = Rng.key seed in
+          match root with
+          | Host_root -> scoped_as_folded Nx.Host.on k ~traced:false ss s
+          | Traced_root -> scoped_as_folded Nx.Host.on k ~traced:true ss s
+          | Device_root ->
+              scoped_as_folded S2.on (Rng.place S2.on k) ~traced:false ss s);
+      prop
+        "nested scopes: the inner replaces the outer, the outer resumes its \
+         count"
+        (Gen.quad seeds
+           (Gen.pair Gen.bool Gen.bool)
+           (Gen.pair draw_count draw_count)
+           draw_count)
+        (fun (seed, (traced_outer, traced_inner), (a, m), b) ->
+          cover "a traced scope in a host one" (traced_inner && not traced_outer);
+          cover "a host scope in a traced one" (traced_outer && not traced_inner);
+          cover "the outer draws after the inner" (m > 0 && b > 0);
+          let ko = Rng.key seed and ki = Rng.key (seed + 1) in
+          let draw ?key () = read (Rng.normal ?key Nx.float32 [| 3 |]) in
+          let draws n = List.init n (fun _ -> draw ()) in
+          let folded k first n =
+            List.init n (fun j -> draw ~key:(Rng.fold_in k (first + j)) ())
+          in
+          let want = (folded ko 0 a, folded ki 0 m, folded ko a b) in
+          let got, _ =
+            evaluating (fun i ->
+                let root traced k = if traced then traced_key i k else k in
+                Rng.with_key (root traced_outer ko) (fun () ->
+                    let before = draws a in
+                    let inner =
+                      Rng.with_key (root traced_inner ki) (fun () -> draws m)
+                    in
+                    (before, inner, draws b)))
+          in
+          let l = list (array float_exact) in
+          equal (triple l l l) want got);
       test "an inner scope replaces the outer for its extent" (fun () ->
           let k = Rng.key 201 and k' = Rng.key 202 in
           let inner, after =
@@ -2271,22 +2430,49 @@ let scope =
       test "unscoped draws differ" (fun () ->
           let a = read (Rng.bits [| 4 |]) and b = read (Rng.bits [| 4 |]) in
           not_equal (array int32) a b);
-      test "with_key refuses a key traced by an interpretation" (fun () ->
-          Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
+      test
+        "a scope at a key on a set without kernels draws as fold_in k n, traced"
+        (fun () ->
+          let p = Bare.on in
+          let k = Rng.place p (Rng.key 212) in
+          Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
+              let summary x =
+                ( Nx.shape x,
+                  Nx.Placement.equal p (Nx.placement x),
+                  Option.is_some (Nx.Prim.payload i x) )
+              in
+              let draws =
+                [
+                  (fun key -> summary (Rng.bits_at p ?key [| 3 |]));
+                  (fun key ->
+                    summary (Rng.normal_at p ?key Nx.float32 [| 2; 2 |]));
+                  (fun key -> summary (Rng.permutation_at p ?key 4));
+                  (fun key ->
+                    summary
+                      (Rng.gamma ?key (Nx.full_at p Nx.float32 [| 3 |] 0.7)));
+                ]
+              in
+              let scoped =
+                Rng.with_key k (fun () -> List.map (fun d -> d None) draws)
+              in
+              let keyed =
+                List.mapi (fun n d -> d (Some (Rng.fold_in k n))) draws
+              in
+              let t = list (triple (array int) bool bool) in
+              equal ~msg:"as fold_in k n" t keyed scoped;
+              equal ~msg:"traced, at the placement" t
+                [
+                  ([| 3 |], true, true);
+                  ([| 2; 2 |], true, true);
+                  ([| 4 |], true, true);
+                  ([| 3 |], true, true);
+                ]
+                scoped));
+      test "a scope at a traced key is traced" (fun () ->
+          Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
               let k = Rng.key 206 in
-              equal string "Nx.Rng.with_key: the value is traced by test.trace"
-                (message (fun () ->
-                     Rng.with_key k (fun () -> ignore (Rng.bits [| 2 |]))))));
-      test "with_key refuses a key whose interpretation returned" (fun () ->
-          let k =
-            Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
-                Rng.key 207)
-          in
-          equal string
-            "Nx.Rng.with_key: a value of test.trace, used after test.trace \
-             returned"
-            (message (fun () ->
-                 Rng.with_key k (fun () -> ignore (Rng.bits [| 2 |])))));
+              Rng.with_key k (fun () ->
+                  is_some (Nx.Prim.payload i (Rng.bits [| 2 |])))));
       test "a scoped keyless draw under a tracing extent is traced" (fun () ->
           let k = Rng.key 205 in
           Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
@@ -2303,6 +2489,74 @@ let scope =
             (traced, Array.length (read (Rng.bits [| 2 |])))
           in
           equal (pair bool int) (true, 2) (Domain.join (Domain.spawn run)));
+      cases "scope errors" ~id:fst
+        [
+          ( "a batch root",
+            fun () ->
+              let k = Rng.split_batch ~n:3 (Rng.key 207) in
+              ( "Nx.Rng.with_key: a batch of keys of shape [3; 2]; draw from \
+                 one key",
+                message (fun () -> Rng.with_key k ignore) ) );
+          ( "a root whose interpretation returned",
+            fun () ->
+              let k =
+                Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
+                    Rng.key 207)
+              in
+              ( "Nx.Rng.with_key: a value of test.trace, used after test.trace \
+                 returned",
+                message (fun () -> Rng.with_key k ignore) ) );
+          ( "next_key in a traced scope",
+            fun () ->
+              ( "Nx.Rng.next_key: the scope's key is traced by test.trace; its \
+                 keys are not host keys",
+                Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
+                    Rng.with_key (Rng.key 208) (fun () ->
+                        message (fun () -> Rng.next_key ()))) ) );
+          ( "next_key in a scope at a device key",
+            fun () ->
+              let k = Rng.place S2.on (Rng.key 209) in
+              ( Format.asprintf
+                  "Nx.Rng.next_key: the scope's key lies at %a; its keys are \
+                   not host keys"
+                  Nx.Placement.pp S2.on,
+                message (fun () -> Rng.with_key k (fun () -> Rng.next_key ()))
+              ) );
+          ( "a host draw beside a device key",
+            fun () ->
+              let k = Rng.place S2.on (Rng.key 210) in
+              ( Format.asprintf
+                  "Nx.Rng.uniform: the key lies at %a and is read at %a; \
+                   Nx.Rng.place (Placement.on s) key"
+                  Nx.Placement.pp S2.on Nx.Placement.pp Nx.Host.on,
+                message (fun () ->
+                    Rng.with_key k (fun () -> Rng.uniform Nx.float32 [| 2 |]))
+              ) );
+          ( "a draw on another set from a traced host key",
+            fun () ->
+              let k = Rng.key 213 in
+              ( Format.asprintf
+                  "Nx.Rng.uniform_at: the key lies at %a and is read at %a; \
+                   Nx.Rng.place (Placement.on s) key"
+                  Nx.Placement.pp Nx.Host.on Nx.Placement.pp S2.on,
+                fst
+                  (evaluating (fun i ->
+                       Rng.with_key (traced_key i k) (fun () ->
+                           message (fun () ->
+                               Rng.uniform_at S2.on Nx.float32 [| 2 |])))) ) );
+          ( "a draw beside host parameters from a device key",
+            fun () ->
+              let k = Rng.place S2.on (Rng.key 211) in
+              let a = host_of Nx.float32 [| 2 |] [| 1.; 2. |] in
+              ( Format.asprintf
+                  "Nx.Rng.gamma: the key lies at %a and is read at %a; \
+                   Nx.Rng.place (Placement.on s) key"
+                  Nx.Placement.pp S2.on Nx.Placement.pp Nx.Host.on,
+                message (fun () -> Rng.with_key k (fun () -> Rng.gamma a)) ) );
+        ]
+        (fun (_, check) ->
+          let want, got = check () in
+          equal string want got);
     ]
 
 (* Names *)

@@ -1146,6 +1146,41 @@ let law_key_lanes (s, n) =
         (Nx.to_array (Nx.get [ i ] y)))
     (Nx.Rng.split ~n k)
 
+(* A scope at each lane's key draws as the scope at that key alone; one at a
+   captured key draws one value, which every lane shares. *)
+let law_scoped (seed, n) =
+  cover "one lane" (n = 1);
+  cover "several lanes" (n > 1);
+  let k = Nx.Rng.key seed in
+  let draw () =
+    Nx.add (Nx.Rng.normal f64 [| 3 |]) (Nx.Rng.uniform f64 [| 3 |])
+  in
+  let y =
+    Rune.vmap'
+      (fun k -> Nx.Rng.with_key (Nx.Rng.of_tensor k) draw)
+      (Nx.Rng.to_tensor (Nx.Rng.split_batch ~n k))
+  in
+  let keys = Nx.Rng.split ~n k in
+  for i = 0 to n - 1 do
+    equal
+      ~msg:(Printf.sprintf "lane %d" i)
+      bits_t
+      (bits (Nx.Rng.with_key keys.(i) draw))
+      (bits (Nx.get [ i ] y))
+  done;
+  let y =
+    Rune.vmap'
+      (fun x -> Nx.add x (Nx.Rng.with_key k draw))
+      (Nx.zeros f64 [| n; 3 |])
+  in
+  let shared = bits (Nx.Rng.with_key k draw) in
+  for i = 0 to n - 1 do
+    equal
+      ~msg:(Printf.sprintf "captured, lane %d" i)
+      bits_t shared
+      (bits (Nx.get [ i ] y))
+  done
+
 let () =
   exit
   @@ run "rune vmap"
@@ -1194,5 +1229,8 @@ let () =
              prop "a batch of keys, one per lane"
                (Gen.pair Gen.int (Gen.of_list [ 1; 3 ]))
                law_key_lanes;
+             prop "a scope at each lane's key draws as that key's scope"
+               (Gen.pair Gen.int (Gen.int_range 1 4))
+               law_scoped;
            ];
        ]

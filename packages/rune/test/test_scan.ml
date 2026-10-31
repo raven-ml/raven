@@ -315,7 +315,26 @@ let test_keyless () =
   invalid ~sub:"no key inside Rune.iterate" (fun () ->
       Rune.iterate' ~max:3
         ~until:(fun x -> Nx.less (Nx.Rng.uniform f32 [||]) x)
-        Nx.neg (v [| 1. |]))
+        Nx.neg (v [| 1. |]));
+  (* A scope around the loop does not reach its step, eagerly or compiled. *)
+  let k = Nx.Rng.key 4 in
+  invalid ~sub:"no key inside Rune.scan" (fun () ->
+      Nx.Rng.with_key k (fun () ->
+          Rune.scan'
+            (fun c x -> (Nx.add c (Nx.Rng.uniform f32 [| 2 |]), x))
+            ~init:(v [| 0.; 0. |])
+            (xs3 ())));
+  invalid ~sub:"no key inside Rune.scan" (fun () ->
+      Rune.jit
+        T.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+        (fun k xs ->
+          Nx.Rng.with_key k (fun () ->
+              fst
+                (Rune.scan'
+                   (fun c x -> (Nx.add c (Nx.Rng.uniform f32 [| 2 |]), x))
+                   ~init:(v [| 0.; 0. |])
+                   xs)))
+        k (xs3 ()))
 
 (* A step draws from a key in its rows: the draws are the fold's. *)
 let test_keyed () =
@@ -329,6 +348,85 @@ let test_keyed () =
   let c', ys' = fold step ~init (Nx.Rng.to_tensor keys) in
   equal bits_t (bits c') (bits c);
   equal bits_t (bits (Nx.stack ys')) (bits ys)
+
+(* Scopes in steps *)
+
+(* A step's keyless draws, exact so that a compiled step draws eager's bits:
+   [Scaled] scales the carry by a uniform draw and adds another, [Counted]
+   adds an integer draw. *)
+type step_draw = Scaled | Counted
+
+let step_draws =
+  Gen.list ~size:(Gen.int_range 0 3)
+    (Gen.of_list
+       ~pp:(fun ppf d ->
+         Format.pp_print_string ppf
+           (match d with Scaled -> "scaled" | Counted -> "counted"))
+       [ Scaled; Counted ])
+
+let drawn draws c =
+  List.fold_left
+    (fun c -> function
+      | Scaled ->
+          Nx.add
+            (Nx.mul c (Nx.Rng.uniform f32 [| 2 |]))
+            (Nx.Rng.uniform f32 [| 2 |])
+      | Counted -> Nx.add c (Nx.cast f32 (Nx.Rng.randint ~high:5 [| 2 |])))
+    c draws
+
+(* [n] steps of [draws], step [i] in a scope at [fold_in_tensor k i], [i] a
+   row of [arange]. *)
+let scoped_scan k draws c0 n =
+  Rune.scan T.tensor T.tensor T.tensor
+    (fun c i ->
+      Nx.Rng.with_key (Nx.Rng.fold_in_tensor k i) (fun () ->
+          let c = drawn draws c in
+          (c, c)))
+    ~init:c0 (Nx.arange Nx.int32 0 n 1)
+
+(* The fold written out: step [i] in a scope at [fold_in k i]. *)
+let scoped_fold k draws c0 n =
+  let rec go i c ys =
+    if i = n then (c, List.rev ys)
+    else
+      let c = Nx.Rng.with_key (Nx.Rng.fold_in k i) (fun () -> drawn draws c) in
+      go (i + 1) c (c :: ys)
+  in
+  go 0 c0 []
+
+let scope_cases = Gen.quad Gen.int step_draws (Gen.int_range 0 3) Gen.bool
+
+let law_scoped (seed, draws, n, jit) =
+  cover "no step" (n = 0);
+  cover "several steps" (n > 1);
+  cover "several draws a step" (List.length draws > 1);
+  cover "compiled" jit;
+  let k = Nx.Rng.key seed and c0 = v [| 0.5; -2. |] in
+  let c, ys =
+    if jit then
+      Rune.jit
+        T.(Nx.Rng.ptree @-> tensor @-> returns (pair tensor tensor))
+        (fun k c0 -> scoped_scan k draws c0 n)
+        k c0
+    else scoped_scan k draws c0 n
+  in
+  let c', ys' = scoped_fold k draws c0 n in
+  equal ~msg:"carry" bits_t (bits c') (bits c);
+  equal ~msg:"outputs" (list bits_t) (List.map bits ys')
+    (List.init n (fun i -> bits (Nx.get [ i ] ys)));
+  let loss run c0 = Nx.sum (fst (run k draws c0 n)) in
+  let g =
+    if jit then
+      Rune.jit
+        T.(Nx.Rng.ptree @-> tensor @-> returns tensor)
+        (fun k c0 ->
+          Rune.grad' (fun c0 -> Nx.sum (fst (scoped_scan k draws c0 n))) c0)
+        k c0
+    else Rune.grad' (loss scoped_scan) c0
+  in
+  equal ~msg:"gradient" (lenient ~nan:false)
+    (bits (Rune.grad' (loss scoped_fold) c0))
+    (bits g)
 
 let test_carry_refused () =
   invalid
@@ -1803,6 +1901,10 @@ let () =
              test "a read raises naming the loop" test_read;
              test "a keyless draw raises naming the loop" test_keyless;
              test "a keyed draw is the fold's" test_keyed;
+             prop
+               "a step's scope at fold_in_tensor k i is the fold with with_key \
+                (fold_in k i)"
+               scope_cases law_scoped;
              test "a carry that changes raises" test_carry_refused;
              test "rows without a leading axis raise" test_xs_refused;
              test "captures and nested scans" test_nested;

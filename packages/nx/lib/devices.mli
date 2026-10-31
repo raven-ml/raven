@@ -21,8 +21,8 @@
     at [unit] in routes and reads them at an operation's brand, without a
     conversion. {!set} then gives a placement's set at whatever brand its
     caller names. [Nx] keeps its placements' brand abstract, which ties a
-    program's placement to its set's brand, and [Nx.Placement.same], nx's one
-    brand cast, relates two brands only where they name one set.
+    program's placement to its set's brand, and {!same}, nx's one brand cast,
+    relates two brands only where they name one set.
 
     This module lies above {!Grid} alone, and is nx's one site that names
     nx.cpu.
@@ -60,6 +60,12 @@ val mint : by:string -> ?kernels:(module Nx_kernel.S) -> Rig.t list -> 'd t
 
 val number : 'd t -> int
 val count : 'd t -> int
+
+val same : 'd t -> 'e t -> ('d, 'e) Type.eq option
+(** [same s s'] is [Some Equal] iff [s] and [s'] are one set. The cast holds
+    only where each argument's brand is the public brand of the value its set
+    came from: inside nx, {!set} gives a set at whatever brand its caller
+    names. *)
 
 val rig : 'd t -> int -> Rig.t
 (** Raises [Invalid_argument] if the position is not below {!count}. *)

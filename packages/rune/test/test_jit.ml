@@ -535,7 +535,54 @@ let test_keyless () =
   invalid ~sub:"no key inside Rune.jit" (fun () ->
       Rune.jit'
         (fun x -> Nx.add x (Nx.Rng.uniform f32 [| 2 |]))
-        (v [| 1.; 2. |]))
+        (v [| 1.; 2. |]));
+  (* A scope around the call does not reach the compiled function. *)
+  invalid ~sub:"no key inside Rune.jit" (fun () ->
+      Nx.Rng.with_key (Nx.Rng.key 5) (fun () ->
+          Rune.jit'
+            (fun x -> Nx.add x (Nx.Rng.uniform f32 [| 2 |]))
+            (v [| 3.; 4. |])))
+
+(* A scope at the compiled function's key argument: random compositions of
+   exact keyless draws, a uniform added or scaling, an integer added, a
+   bernoulli selection, draw the bits the same function draws eagerly in a
+   scope at the key's value. *)
+type scope_draw = Added | Scaling | Integer | Selected
+
+let scope_draws =
+  Gen.list ~size:(Gen.int_range 0 3)
+    (Gen.of_list
+       ~pp:(fun ppf d ->
+         Format.pp_print_string ppf
+           (match d with
+           | Added -> "added"
+           | Scaling -> "scaling"
+           | Integer -> "integer"
+           | Selected -> "selected"))
+       [ Added; Scaling; Integer; Selected ])
+
+let scope_shapes = Gen.of_list ~pp:pp_shape [ [||]; [| 0 |]; [| 2; 3 |] ]
+
+let scoped_draws draws x =
+  let s = Nx.shape x in
+  List.fold_left
+    (fun x -> function
+      | Added -> Nx.add x (Nx.Rng.uniform f32 s)
+      | Scaling -> Nx.mul x (Nx.Rng.uniform f32 s)
+      | Integer -> Nx.add x (Nx.cast f32 (Nx.Rng.randint ~low:(-3) ~high:4 s))
+      | Selected -> Nx.where (Nx.Rng.bernoulli (Nx.full f32 s 0.5)) x (Nx.neg x))
+    x draws
+
+let law_scoped (seed, draws, s) =
+  cover "no draw" (draws = []);
+  cover "several draws" (List.length draws > 1);
+  cover "a zero-size draw" (draws <> [] && Array.mem 0 s);
+  let k = Nx.Rng.key seed and x = Nx.full f32 s 1.5 in
+  let f k x = Nx.Rng.with_key k (fun () -> scoped_draws draws x) in
+  let g = Rune.jit T.(Nx.Rng.ptree @-> tensor @-> returns tensor) f in
+  equal (outcome_t bits_t)
+    (outcome (fun () -> bits (f k x)))
+    (compiled (fun () -> bits (g k x)))
 
 (* A key that depends on no argument draws the same values on every call, the
    eager draw's: a uniform draw is exact. *)
@@ -3538,6 +3585,10 @@ let () =
            [
              test "a read raises naming Rune.jit" test_read;
              test "a keyless draw raises naming Rune.jit" test_keyless;
+             prop ~count:40
+               "jit of a scope at its argument key is the scope eagerly"
+               (Gen.triple Gen.int scope_draws scope_shapes)
+               law_scoped;
              test "a constant key draws the same each call" test_constant_key;
              prop "a key argument draws eager's values, one program per shape"
                (Gen.pair Gen.int Gen.int) law_key_argument;

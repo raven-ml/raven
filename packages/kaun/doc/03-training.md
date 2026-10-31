@@ -188,7 +188,7 @@ let () =
 
 There is no `model.train()`/`model.eval()`; mode is an explicit `~training` argument on the functions that care:
 
-- `Dropout.apply ?key ~rate ~training` — training draws a fresh mask, from `key` or the RNG scope, and rescales; eval is the identity. A jitted step passes `~key`, since a keyless draw cannot be traced.
+- `Dropout.apply ?key ~rate ~training` — training draws a fresh mask, from `key` or the RNG scope, and rescales; eval is the identity. A jitted step passes its dropout key as an input, as `~key` or as a scope it opens at that key with `Nx.Rng.with_key`, since a scope around the step does not reach inside it.
 - `Batch_norm.apply p stats ~training` — training normalizes with batch statistics and returns updated running statistics; eval uses the running statistics. Return the statistics from the objective with `Rune.value_and_grad_aux`, which takes their structure — see [Layers and Models](02-layers-and-models.md) for the full pattern.
 
 A model forward that takes `~training` serves both phases; evaluation is the same function with `~training:false`.

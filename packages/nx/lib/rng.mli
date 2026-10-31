@@ -6,10 +6,13 @@
 (** [Nx.Rng]: keys, samplers and the scope, as [Nx.Rng] states them. Each
     draw is one map whose elements compute their Threefry blocks from their
     positions. A keyed draw reads its key as the map's first operand. A
-    keyless draw reads the scope's next key on the host, where no
-    interpretation receives it, and binds its two words into the map's
-    program, so the map reads its parameters alone. Without parameters it
-    is a creation at its placement. This module lies above {!Eval},
+    keyless draw in a scope at a host key that no interpretation traces
+    reads the scope's next key on the host, where no interpretation
+    receives it, and binds its two words into the map's program, so the map
+    reads its parameters alone; without parameters it is a creation at its
+    placement. In a scope at another key it computes that key's
+    [fold_in] where the key lies, by the interpretations around it, and
+    reads the result as a keyed draw does. This module lies above {!Eval},
     {!Check}, {!Ptree} and {!Special}. *)
 
 type +'d key = private (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
@@ -158,6 +161,6 @@ val permutation_at :
   int ->
   (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
 
-val with_key : Devices.host key -> (unit -> 'a) -> 'a
+val with_key : 'd key -> (unit -> 'a) -> 'a
 val refusing : string -> (unit -> 'a) -> 'a
 val next_key : unit -> Devices.host key
