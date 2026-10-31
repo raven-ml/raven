@@ -128,9 +128,9 @@ buffer/blit-from-string-4K	alloc_words	exact	0
 buffer/blit-from-string-4K	wall_time	batch=262144	n=20	3.413e-08	3.371e-08 3.374e-08 3.383e-08 3.389e-08 3.389e-08 3.390e-08 3.391e-08 3.399e-08 3.404e-08 3.409e-08 3.416e-08 3.416e-08 3.416e-08 3.427e-08 3.427e-08 3.430e-08 3.432e-08 3.448e-08 3.450e-08 3.455e-08
 buffer/blit-to-bytes-4M	alloc_words	exact	0
 buffer/blit-to-bytes-4M	wall_time	batch=32	n=20	1.835e-04	1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.835e-04 1.836e-04 1.836e-04 1.836e-04 1.836e-04 1.836e-04 1.836e-04 1.837e-04 1.837e-04
-buffer/host-create-16	alloc_words	exact	31
+buffer/host-create-16	alloc_words	exact	30
 buffer/host-create-16	wall_time	batch=262144	n=20	3.627e-08	3.549e-08 3.568e-08 3.571e-08 3.576e-08 3.589e-08 3.607e-08 3.611e-08 3.613e-08 3.621e-08 3.627e-08 3.628e-08 3.635e-08 3.641e-08 3.648e-08 3.650e-08 3.653e-08 3.661e-08 3.668e-08 3.683e-08 3.701e-08
-buffer/host-create-1M	alloc_words	exact	31
+buffer/host-create-1M	alloc_words	exact	30
 buffer/host-create-1M	wall_time	batch=4096	n=20	1.263e-06	1.253e-06 1.254e-06 1.254e-06 1.255e-06 1.259e-06 1.259e-06 1.259e-06 1.261e-06 1.262e-06 1.263e-06 1.263e-06 1.267e-06 1.267e-06 1.268e-06 1.269e-06 1.270e-06 1.272e-06 1.272e-06 1.278e-06 1.290e-06
 buffer/memory-create-cached-4K	alloc_words	exact	42
 buffer/memory-create-cached-4K	wall_time	batch=16384	n=20	3.416e-07	3.335e-07 3.337e-07 3.358e-07 3.360e-07 3.366e-07 3.370e-07 3.380e-07 3.385e-07 3.387e-07 3.410e-07 3.423e-07 3.435e-07 3.438e-07 3.443e-07 3.452e-07 3.463e-07 3.463e-07 3.476e-07 3.489e-07 3.489e-07
@@ -217,15 +217,15 @@ floor/word-load	alloc_words	exact	0
 floor/word-load	wall_time	batch=4194304	n=20	1.909e-09	1.897e-09 1.900e-09 1.903e-09 1.906e-09 1.908e-09 1.908e-09 1.908e-09 1.908e-09 1.909e-09 1.909e-09 1.910e-09 1.911e-09 1.912e-09 1.912e-09 1.918e-09 1.918e-09 1.919e-09 1.925e-09 1.929e-09 1.929e-09
 floor/word-load-24	alloc_words	exact	0
 floor/word-load-24	wall_time	batch=262144	n=20	3.536e-08	3.514e-08 3.524e-08 3.525e-08 3.526e-08 3.526e-08 3.526e-08 3.527e-08 3.528e-08 3.533e-08 3.536e-08 3.537e-08 3.537e-08 3.537e-08 3.537e-08 3.542e-08 3.558e-08 3.559e-08 3.569e-08 3.586e-08 3.601e-08
-heap/fill-4M-dropped	alloc_words	exact	31
+heap/fill-4M-dropped	alloc_words	exact	30
 heap/fill-4M-dropped	wall_time	batch=64	n=20	1.259e-04	1.229e-04 1.238e-04 1.244e-04 1.244e-04 1.246e-04 1.248e-04 1.250e-04 1.250e-04 1.252e-04 1.257e-04 1.262e-04 1.264e-04 1.270e-04 1.272e-04 1.277e-04 1.285e-04 1.300e-04 1.300e-04 1.329e-04 1.335e-04
-heap/reuse-8M-x8	alloc_words	exact	257
+heap/reuse-8M-x8	alloc_words	exact	249
 heap/reuse-8M-x8	wall_time	batch=1	n=20	5.162e-04	4.511e-04 4.614e-04 4.637e-04 4.637e-04 4.678e-04 4.762e-04 4.933e-04 4.980e-04 5.086e-04 5.129e-04 5.194e-04 5.200e-04 5.207e-04 5.984e-04 1.347e-03 1.409e-03 1.423e-03 1.448e-03 1.465e-03 3.587e-03
-heap/take-64K	alloc_words	exact	31
+heap/take-64K	alloc_words	exact	30
 heap/take-64K	wall_time	batch=32768	n=20	2.877e-07	2.856e-07 2.860e-07 2.865e-07 2.866e-07 2.867e-07 2.870e-07 2.874e-07 2.874e-07 2.875e-07 2.876e-07 2.877e-07 2.880e-07 2.881e-07 2.882e-07 2.894e-07 2.896e-07 2.906e-07 2.907e-07 2.933e-07 2.960e-07
-heap/take-64K-cached-100	alloc_words	exact	31
+heap/take-64K-cached-100	alloc_words	exact	30
 heap/take-64K-cached-100	wall_time	batch=32768	n=20	2.936e-07	2.913e-07 2.917e-07 2.918e-07 2.920e-07 2.922e-07 2.926e-07 2.927e-07 2.930e-07 2.931e-07 2.936e-07 2.937e-07 2.945e-07 2.949e-07 2.954e-07 2.961e-07 2.962e-07 2.965e-07 2.973e-07 2.984e-07 3.009e-07
-heap/trim-64M	alloc_words	exact	31
+heap/trim-64M	alloc_words	exact	30
 heap/trim-64M	wall_time	batch=128	n=20	6.946e-05	6.880e-05 6.893e-05 6.918e-05 6.918e-05 6.919e-05 6.919e-05 6.920e-05 6.935e-05 6.937e-05 6.941e-05 6.952e-05 6.965e-05 6.969e-05 6.976e-05 7.002e-05 7.005e-05 7.036e-05 7.056e-05 7.081e-05 7.084e-05
 replay/polled/params-24	alloc_words	exact	0
 replay/polled/params-24	wall_time	batch=16384	n=20	4.475e-07	4.464e-07 4.465e-07 4.465e-07 4.469e-07 4.469e-07 4.470e-07 4.470e-07 4.470e-07 4.471e-07 4.472e-07 4.479e-07 4.479e-07 4.485e-07 4.487e-07 4.502e-07 4.502e-07 4.504e-07 4.508e-07 4.509e-07 4.553e-07
