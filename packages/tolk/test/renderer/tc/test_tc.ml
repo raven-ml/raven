@@ -135,7 +135,7 @@ let listed =
             [ Dtype.Fp8e4m3; Dtype.Fp8e5m2 ]
             (List.filteri (fun i _ -> i >= n) Tc.cuda_sm89
             |> List.map (fun (tc : Tc.t) -> tc.dtype_in)));
-      test "amd_rdna4 ends in two cores of 8-bit floats into floats"
+      test "amd_rdna4 has two cores of 8-bit floats into floats"
         (fun () ->
           let fp8 =
             List.filter

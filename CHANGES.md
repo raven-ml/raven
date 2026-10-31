@@ -810,6 +810,10 @@ thread.
 - `Linearizer.linearize` places a node in more loops after one in fewer that
   runs as often.
 - `Shape.alloc` takes `?vmin_vmax`, the bounds of the values it holds.
+  `Shape.view_as` reshapes a flat node to a 1-d shape too, and refuses a size
+  other than the shape's greatest.
+- `Shape.repeat` refuses a negative repeat, and `Shape.flip` an axis of a
+  scalar, with `Invalid_argument`.
 - A kernel that calls a sink no longer runs its loops nested wrongly where the
   body has a loop of the size and identity of one of its own
   (`Codegen.to_program`).

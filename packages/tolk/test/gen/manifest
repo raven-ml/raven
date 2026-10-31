@@ -3092,6 +3092,8 @@ schedule/rangeify/expand_staged.golden
 schedule/rangeify/expand_staged_kernels.golden
 schedule/rangeify/finite_checks.golden
 schedule/rangeify/finite_checks_kernels.golden
+schedule/rangeify/flipped_store.golden
+schedule/rangeify/flipped_store_kernels.golden
 schedule/rangeify/full_invalid.golden
 schedule/rangeify/full_invalid_kernels.golden
 schedule/rangeify/gather_broadcast.golden
@@ -3251,6 +3253,8 @@ schedule/rangeify/stage_of_assigned.golden
 schedule/rangeify/stage_of_assigned_kernels.golden
 schedule/rangeify/std.golden
 schedule/rangeify/std_kernels.golden
+schedule/rangeify/store_into_flipped.golden
+schedule/rangeify/store_into_flipped_kernels.golden
 schedule/rangeify/sum.golden
 schedule/rangeify/sum_all.golden
 schedule/rangeify/sum_all_broadcast.golden

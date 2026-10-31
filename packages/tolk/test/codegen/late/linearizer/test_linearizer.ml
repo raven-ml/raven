@@ -247,8 +247,9 @@ let kernels_gen =
 
 let compiled sink = Linearizer.linearize (chain (to_special (split sink)))
 
-(* The ranges whose run count the linearizer raises to two: a variable size of
-   at most 1, and a constant size of 0 or 1. *)
+(* The ranges that run once or no time, whose bodies only the depth or the floor
+   of one run places after the nodes around them: a variable size of at most 1,
+   and a constant size of 0 or 1. *)
 let cover_small_ranges k =
   let sizes =
     List.filter_map

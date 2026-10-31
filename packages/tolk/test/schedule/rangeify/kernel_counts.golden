@@ -93,6 +93,8 @@ variable_two	2
 variable_same	2
 variable_offset	1
 variable_staged	2
+flipped_store	1
+store_into_flipped	1
 variable_flipped_store	1
 symbolic_kept	2
 symbolic_contiguous	2

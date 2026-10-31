@@ -1351,8 +1351,8 @@ driver sizes local memory as it loads a function (D146).
 - **Differs:** the reciprocal of a negative number of magnitude below
   `2^-128` in float32 (`2^-1024` in float64, about `2^-16` in float16)
   overflows to `-inf` too, so
-  tinygrad's last select turned the NaN of such a number's logarithm into
-  `-inf`. The `-inf` select now comes first and the NaN select after it:
+  tinygrad's select of `-inf`, after the NaN select of a negative number,
+  turns the NaN of such a number's logarithm into `-inf`. The `-inf` select now comes first and the NaN select after it:
   `-0.0` still gives `-inf`, and every negative number gives NaN.
 - **Reason:** (b). rune lowers `Nx.log2` to tolk's `Log2` (rune's
   `Lower_real.unary`), which the Clang renderer leaves out

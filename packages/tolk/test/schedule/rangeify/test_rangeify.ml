@@ -167,6 +167,8 @@ let programs =
     "variable_same";
     "variable_shrink";
     "variable_staged";
+    "flipped_store";
+    "store_into_flipped";
     "variable_flipped_store";
     "variable_two";
     "where";

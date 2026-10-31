@@ -21,6 +21,10 @@ val pm_mops : (unit, Ops.t) Ops.Pattern_matcher.t
       indices the movement maps to it ({!Indexing.apply_movement_op}). An index
       with fewer indices than a reshape has axes indexes its source when the
       reshape leaves the trailing axes alone;
+    - a store through a selection of an index and of [0], as a padded view
+      makes, stores through the index made valid ({!Shape.valid}) only where
+      the selection's conditions hold: a selection of such a selection and of
+      [`Invalid] gates on both conditions;
     - a movement or an index ordered after effects ({!Op.After}) is the movement
       or index of its source ordered after them;
     - an {!Op.End} of a movement is the end of the movement's source. *)

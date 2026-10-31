@@ -290,6 +290,15 @@ let pm_mops_rules =
                (Ops.index (flat 32) [ Shape.valid r0 (Ops.bitwise_and a b) ])
                value)
             (mops (Ops.store padded value)));
+      test "a store through a selection of something but Invalid stays" (fun () ->
+          let a = Ops.lt r0 (Ops.int 6) and b = Ops.lt r1 (Ops.int 3) in
+          let dst = Ops.load (Ops.index (flat 32) [ r0 ]) [] in
+          let st =
+            Ops.store
+              (Ops.where a (Ops.where b dst (Ops.int 0)) (Ops.float ~dtype:Float32 1.))
+              (Ops.float ~dtype:Float32 2.)
+          in
+          equal uop st (mops st));
       test "a store through a selection of an index gates the index" (fun () ->
           let c = Ops.lt r0 (Ops.int 6) in
           let value = Ops.float ~dtype:Float32 1. in

@@ -138,8 +138,9 @@ val amd_rdna3 : t list
 (** [amd_rdna3] is RDNA 3's [16 x 16 x 16] tensor cores. *)
 
 val amd_rdna4 : t list
-(** [amd_rdna4] is RDNA 4's [16 x 16 x 16] tensor cores, of the 16-bit floats
-    and of {!Dtype.fp8_ocp} into {!Dtype.Float32}. *)
+(** [amd_rdna4] is RDNA 4's [16 x 16 x 16] tensor cores, of the 16-bit floats,
+    of {!Dtype.fp8_ocp} into {!Dtype.Float32} and of {!Dtype.Int8} into
+    {!Dtype.Int32}. *)
 
 val amd_cdna3 : t list
 (** [amd_cdna3] is CDNA 3's tensor cores, of [K] 32 for the 8-bit floats without

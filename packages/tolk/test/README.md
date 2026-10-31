@@ -215,7 +215,6 @@ about 330,000 graphs, and refused none.
 | `CONST` | an integer, a boolean, a float or `Invalid`; its dtype follows from the kind: `dtypes.weakint`, `dtypes.bool`, `dtypes.weakfloat` and `dtypes.bool` |
 | `CAST`, `BITCAST` | the target data type |
 | `PERMUTE` | a tuple of integers, the order of the axes |
-| `FLIP` | a tuple of booleans, one per axis |
 | `REDUCE` | `(<op>, <count>)`: the reducing operation and how many leading axes it reduces, as `(Ops.ADD, 1)` |
 | `RANGE` | its `AxisType`, then the axis id, one or more integers: `(AxisType.LOOP, 0)`, `(AxisType.WEAK, 1, 0)` |
 | `SPECIAL` | a string, the name of the launch dimension: `"gidx0"` |

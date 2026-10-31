@@ -334,6 +334,9 @@ PROGRAMS = {
     "variable_offset": lambda: (lambda v: empty(10)[v:v + 3] * 2)(Variable("i", 0, 7).bind(2)),
     "variable_staged": lambda: (lambda x: x + x.flip(0))(
         (empty(10)[:Variable("v", 1, 10).bind(3)] + 1).contiguous()),
+    # stores through flipped views, of a shrink and shrunk
+    "flipped_store": lambda: (lambda x: x[:3].flip(0).assign(empty(3)))(empty(4).contiguous()),
+    "store_into_flipped": lambda: (lambda x: x.flip(0)[:2].assign(empty(2)))(empty(4).contiguous()),
     # a store through a flip of a view whose size may be 0
     "variable_flipped_store": lambda: (lambda x, v: x[:v].flip(0).assign(empty(4)[:v]))(
         empty(4).contiguous(), Variable("v", 0, 4).bind(2)),
