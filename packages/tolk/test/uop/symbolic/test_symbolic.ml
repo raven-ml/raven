@@ -1714,6 +1714,12 @@ let other_tests =
             (Shape.sym_infer
                (Sym (Ops.bitcast (Ops.cast (Ops.float 1.5) Float32) Uint32))
                []));
+      test "sym_infer evaluates a tagged expression" (fun () ->
+          let a = var "a" 0 10 in
+          equal int 7
+            (Shape.sym_infer
+               (Sym (Ops.rtag ~tag:(String "t") Ops.O.((a * int 3) + int 1)))
+               [ ("a", 2) ]));
       test "sym_infer evaluates an expression nested 200 deep" (fun () ->
           let a = var "a" 1 8192 and b = var "b" 0 8191 in
           let step e =
