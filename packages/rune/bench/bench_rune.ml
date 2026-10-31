@@ -294,11 +294,10 @@ let grad_of_jit () =
     (fun g -> synced_all small_mlp (g p))
 
 (* [k] rows of 64 written into a donated table of 4096 rows, each call taking
-   the last one's result. A store of 16 rows alone over the donated memory
-   costs about the eager call's 2 us; a pass over the table costs 50 times
-   that. 1024 rows, a cache's prefill, are past the masked form's work bound,
-   and combine in the table's memory. Where [flat], the table is held flat
-   and reshaped to rows around the scatter, which keeps it in place. *)
+   the last one's result. The rows combine in the table's memory, a store of
+   16 rows costing about the eager call's 2 us, where a pass over the table
+   would cost 50 times that. Where [flat], the table is held flat and reshaped
+   to rows around the scatter, which keeps it in place. *)
 let donated_scatter ?(flat = false) k =
   let slots = 4096 and width = 64 in
   Thumper.bench_with_setup
@@ -847,12 +846,41 @@ let newton a =
     (fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
     (Nx.add_s a 1.)
 
+(* An iterate whose 64 steps each write a row of 64 into a carried table of
+   4096 rows, at the step's count: each step stores its row alone, where a pass
+   over the table would cost 64 times the loop's other work. *)
+let rows_loop x =
+  let slots = 4096 and width = 64 and steps = 64 in
+  let step (table, (row, i)) =
+    let at = Nx.reshape [| 1; 1 |] (Nx.cast Nx.int64 i) in
+    let table =
+      Nx.scatter ~axis:0
+        (Nx.broadcast_to [| 1; width |] at)
+        (Nx.unsqueeze ~axes:[ 0 ] row)
+        table
+    in
+    (table, (Nx.sin row, Nx.add_s i 1l))
+  in
+  let table, _ =
+    Rune.iterate
+      Nx.Ptree.(pair tensor (pair tensor tensor))
+      ~max:slots
+      ~until:(fun (_, (_, i)) -> Nx.greater_equal_s i (Int32.of_int steps))
+      step
+      (Nx.zeros f32 [| slots; width |], (x, Nx.scalar Nx.int32 0l))
+  in
+  table
+
 let jit_loop_rows () =
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
   let a = between f32 42 0.5 4.5 [| 1024 |] in
   let lanes_a = lane_values () in
+  let row = normal 16 [| 64 |] in
   [
+    warm "iterate-64-rows-into-4096x64-replay"
+      (fun () -> Rune.jit' rows_loop)
+      (fun g -> synced (g row));
     warm "lorenz-scan-n100-replay"
       (fun () ->
         Rune.jit Nx.Ptree.(lorenz_t @-> returns tensor) (lorenz_scan 100))

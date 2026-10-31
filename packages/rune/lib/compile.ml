@@ -236,7 +236,7 @@ type lowered = {
 
 (* The storage a scatter combines into ({!Lower_index.scatter}): its buffer,
    the node that holds the target there, and the target's node. *)
-type dst = { buf : Ops.t; filled : Ops.t; into : Ops.t }
+type dst = { buf : Ops.t; filled : Ops.t; into : Ops.t; reads : Ops.t list }
 
 (* The form on whose set a call issues its checks: its first argument's, or
    else its first result's. *)
@@ -622,6 +622,12 @@ let assign ~nodes ~checks ~store ~view ~buffer lent =
 
 type env = {
   p : Program.t;
+  carried : int;
+      (** The leading parameters a loop's step carries, each to the output at
+          its index: none outside a step. *)
+  donated : bool array;
+      (** Whether each parameter is a donated argument of the program:
+          none's but the program's own. *)
   nodes : Ops.t option array;
   reaches : reach array;
   scattered : bool array;
@@ -673,9 +679,12 @@ let shared (p : Program.t) =
     p.eqns;
   Array.map (fun k -> k > 1) reads
 
-let env_of (p : Program.t) =
+let env_of ?(carried = 0) ?donated (p : Program.t) =
   {
     p;
+    carried;
+    donated =
+      Option.value donated ~default:(Array.make (Array.length p.params) false);
     nodes = Array.make p.slots None;
     reaches = Array.make p.slots nothing;
     scattered = Array.make p.slots false;
@@ -791,13 +800,33 @@ let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
     note cs { shape; first; data; fail = (fun i a -> fail i (read a)) }
   end
 
+(* Whether a scatter's result, variable [base], may take its target [into]'s
+   own storage, where it writes only its updates: where [into] is a loop's
+   carry and the result its next value, or [into] a donated argument and the
+   result one of the program's. The scatter then combines into fresh storage
+   filled with [into], which the loop ({!repeat}) or lending ({!lend})
+   replaces by [into]'s own where their rules let the result take it. *)
+let may_take env base into =
+  let v = var env into in
+  let next j =
+    let (V y) = env.p.outputs.(j) in
+    env.p.params.(j) = v && var env y = base
+  in
+  let donated k = env.donated.(k) && env.p.params.(k) = v in
+  let output (Program.V y) = var env y = base in
+  v >= 0
+  && (List.exists next (List.init env.carried Fun.id)
+     || List.exists donated (List.init (Array.length env.donated) Fun.id)
+        && Array.exists output env.p.outputs)
+
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
   match op with
   | Check { ok; data; fail } -> check st cs env ok data fail
   | _ ->
       (* A scatter combines into fresh storage, which {!lower} replaces by a
-         donated argument's where the scatter's result takes it. *)
+         donated argument's where the scatter's result takes it, or into the
+         storage of the carry it updates ({!may_take}). *)
       let given = ref None in
       let dst v =
         let buf = Ops.new_buffer st.device (Shape.max_numel v) (Ops.dtype v) in
@@ -805,9 +834,16 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         given := Some (buf, filled);
         filled
       in
-      let dst =
+      let dst : Lower_index.dst option =
         match op with
-        | Scatter { into; _ } when not (packed (Nx.dtype into)) -> Some dst
+        | Scatter { into; combine; _ } when not (packed (Nx.dtype into)) ->
+            let dt = Nx.dtype into in
+            let narrow = combine = Add && D.is D.Float dt && D.bits dt < 32 in
+            if narrow || not (may_take env base into) then Some (Filled dst)
+            else
+              let u = node st env into in
+              let flat = Shape.reshape u (ints [ Shape.max_numel u ]) in
+              Some (Holding (dst flat))
         | _ -> None
       in
       let host =
@@ -851,9 +887,9 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
           ys
       in
       (match (op, !given) with
-      | Scatter { into; _ }, Some (buf, filled) ->
-          let into = read into in
-          Ops.Tbl.replace st.dsts (unshaped ys.(0)) { buf; filled; into }
+      | Scatter { into; idx; updates; _ }, Some (buf, filled) ->
+          let reads = [ read idx; read updates ] and into = read into in
+          Ops.Tbl.replace st.dsts (unshaped ys.(0)) { buf; filled; into; reads }
       | _ -> ());
       let r = combine (operand_reaches { get = (fun x -> reach env x) } op) in
       let scatter = match op with Scatter _ -> true | _ -> false in
@@ -1316,7 +1352,7 @@ and loop st cs env c =
               xs
           in
           let trip inner carried rows =
-            let sub = env_of step in
+            let sub = env_of ~carried:nc step in
             let caps = Array.map (fun (V x) -> node st env x) captures in
             let sums = Array.sub carried nc ns in
             (* The step's totals run from the sums they feed, which their
@@ -1424,7 +1460,7 @@ and loop st cs env c =
             let carry = Array.sub carried 0 nc in
             let sums = Array.sub carried nc ns in
             let out =
-              outputs st inner ~reach (env_of step)
+              outputs st inner ~reach (env_of ~carried:nc step)
                 (Array.concat
                    [ carry; scaps; Array.map (fun j -> sums.(j)) step_feeds ])
             in
@@ -1692,11 +1728,36 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
     if List.exists (fun j -> reaches j i) others then copied.(i) <- true
     else edges.(i) <- others
   done;
+  (* A carry whose next value is a scatter into it takes the carry's storage,
+     where the scatter's storage is a fill of the carry's ({!may_take}), its
+     positions and updates do not read the carry, and the carry is copied for
+     no cycle: the scatter then writes its updates there, and the trip stores
+     nothing more. *)
+  let taken = ref [] in
+  let takes i p v =
+    match Ops.Tbl.find_opt st.dsts (unshaped v) with
+    | Some d ->
+        let p = unshaped p in
+        let reads_it u = List.mem_assoc i (read u) in
+        if
+          unshaped d.into == p
+          && (not copied.(i))
+          && not (List.exists reads_it d.reads)
+        then begin
+          taken := (d.filled, p) :: !taken;
+          true
+        end
+        else false
+    | None -> false
+  in
   let finals =
     Array.mapi
       (fun i c ->
         match c with
         | None -> fun _ -> inits.(i)
+        | Some (b, _, p) when takes i p nexts.(i) ->
+            stores := Ops.base nexts.(i) :: !stores;
+            fun e -> Shape.reshape (Ops.after b [ e ]) (Shape.shape inits.(i))
         | Some (b, _, p) ->
             let u = inits.(i) and v = nexts.(i) in
             let v =
@@ -1751,9 +1812,14 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
         | _ -> (u, u))
       !held
   in
+  let sink = Ops.sink (List.rev !stores) in
+  let sink =
+    if !taken = [] then sink
+    else Ops.substitute ~calls:Skip ~pass:Once sink !taken
+  in
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point
-      (Loop.cut ~hoist ~own next args (Ops.sink (List.rev !stores)))
+      (Loop.cut ~hoist ~own next args sink)
       renumbered
   in
   let by_slot (a, _) (b, _) = Int.compare a b in
@@ -1847,7 +1913,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
       dsts = Ops.Tbl.create 4;
     }
   in
-  let env = env_of p in
+  let env = env_of ~donated p in
   let params =
     Array.mapi
       (fun k (F f) ->

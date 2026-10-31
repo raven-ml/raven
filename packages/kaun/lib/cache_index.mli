@@ -306,13 +306,14 @@ val extend :
     [pool'] is [pool]. Which case applies depends on how [index] was built and
     on no tensor's value, so it holds under [Rune.jit].
 
-    Costs are in the call's tokens and in [context], never in [slots], but for
-    one limit: compiled, the write stores each token's row on its own, up to 16
-    tokens a call, and a call of more, such as a long prefill, rewrites the
-    whole pool once per token. Compiled, the slot numbers and the zeroing fuse
-    into the gather: the read is one gated load per element. That holds while
-    the slot numbers stay an unevaluated expression of the index's tensors;
-    forcing them into storage, as {!Nx.copy} does, costs a buffer and a kernel
+    Costs are in the call's tokens and in [context], never in [slots], where
+    the write takes [pool]'s memory as above, or [pool] is the carry of a
+    [Rune] loop's step where [Rune]'s rules for loops let it: compiled, the
+    write then stores the tokens' rows alone into a pool of 8 bits or more per
+    element. Otherwise it copies the pool. Compiled, the slot numbers and the
+    zeroing fuse into the gather: the read is one gated load per element. That
+    holds while the slot numbers stay an unevaluated expression of the index's
+    tensors; forcing them into storage, as {!Nx.copy} does, costs a buffer and a kernel
     per pool per layer.
 
     Raises [Invalid_argument] if [values] does not have that shape. *)

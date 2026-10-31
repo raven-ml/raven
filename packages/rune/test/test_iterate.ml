@@ -1558,6 +1558,267 @@ let test_memory () =
   equal ~msg:"no step" int 0 (held 0);
   ignore (Sys.opaque_identity x)
 
+(* Rows written into a carry *)
+
+(* A loop whose step writes rows into a carried array of [n] rows, by a scatter
+   at positions that are the step count plus each of [offsets], one per update,
+   outside the array included, and whose other carries read that array: the
+   previous row, and the array as the step received it. *)
+type rows_case =
+  | Rows_case : {
+      dt : ('v, 's) Nx.dtype;
+      combine : Nx.combine;
+      n : int;
+      row : int array;
+      offsets : int list;
+      trips : int;
+      max : int;
+      scan : bool;  (** A scan over the steps' counts instead. *)
+      reads : bool;  (** The updates read the array's previous row. *)
+      table : Operand.t;
+      into : Operand.t;
+    }
+      -> rows_case
+
+let combine_name : Nx.combine -> string = function
+  | Set -> "set"
+  | Add -> "add"
+  | Max -> "max"
+  | Min -> "min"
+
+(* Halves of at most 8 in magnitude, which an Add sums exactly in any order at
+   every float dtype, over the few steps a case takes. *)
+let halves (o : Operand.t) complex =
+  let open Gen in
+  let half = map (fun h -> Float.of_int h /. 2.) (int_range (-16) 16) in
+  let value =
+    if complex then map (fun (re, im) -> Operand.C (re, im)) (pair half half)
+    else map (fun x -> Operand.F x) half
+  in
+  let+ values = array ~size:(constant (Array.length o.values)) value in
+  { o with values }
+
+let rows_cases =
+  let open Gen in
+  (let* (D.Any dt) = of_list D.all in
+   let boolean = match D.kind dt with Boolean -> true | _ -> false in
+   let floating = match D.kind dt with Float | Complex -> true | _ -> false in
+   let complex = match D.kind dt with Complex -> true | _ -> false in
+   let* combine =
+     of_list
+       (if boolean then [ Nx.Set; Max; Min ] else [ Nx.Set; Add; Max; Min ])
+   in
+   let* n = int_range 0 5 in
+   let* row =
+     of_list [ [||]; [| 1 |]; [| 3 |]; [| 2; 2 |]; [| 0 |]; [| 300 |] ]
+   in
+   let* k = int_range 1 3 in
+   let* offsets =
+     list ~size:(constant k)
+       (frequency
+          [
+            (6, constant 0);
+            (2, of_list [ 1; -1 ]);
+            (1, of_list [ n; -n - 1 ]);
+          ])
+   in
+   let* trips = int_range 0 (n + 1) in
+   let* max = of_list [ trips; trips + 2 ] in
+   let* scan = frequency [ (3, constant false); (1, constant true) ] in
+   let* reads = bool in
+   let* table = Operand.draw (Array.append [| k |] row) in
+   let* into = Operand.draw (Array.append [| n |] row) in
+   let exact = combine = Add && floating in
+   let* table = if exact then halves table complex else constant table in
+   let+ into = if exact then halves into complex else constant into in
+   Rows_case
+     { dt; combine; n; row; offsets; trips; max; scan; reads; table; into })
+  |> with_pp (fun ppf (Rows_case c) ->
+      Format.fprintf ppf
+        "%a %s into %d rows of %a at +[%s], %d trips, max %d%s%s"
+        Nx.pp_dtype c.dt (combine_name c.combine) c.n Operand.pp_shape c.row
+        (String.concat "; " (List.map string_of_int c.offsets))
+        c.trips c.max
+        (if c.scan then ", a scan" else "")
+        (if c.reads then ", reading the previous row" else ""))
+
+let law_rows (Rows_case c) =
+  List.iter
+    (fun k -> cover (combine_name k) (c.combine = k))
+    [ Set; Add; Max; Min ];
+  cover "no row" (c.n = 0);
+  cover "no step" (c.trips = 0);
+  cover "several updates a step" (List.length c.offsets > 1);
+  cover "a position outside the array"
+    (c.trips > 0
+    && List.exists (fun o -> o < 0 || o + c.trips - 1 >= c.n) c.offsets);
+  cover "updates that read the array" c.reads;
+  cover "a scan" c.scan;
+  let k = List.length c.offsets in
+  let table = Operand.make c.dt (Array.append [| k |] c.row) c.table in
+  let into = Operand.make c.dt (Array.append [| c.n |] c.row) c.into in
+  let wide = Array.append [| k |] c.row in
+  let along v =
+    Nx.broadcast_to wide
+      (Nx.reshape (Array.append [| k |] (Array.map (fun _ -> 1) c.row)) v)
+  in
+  let offsets =
+    Nx.create Nx.int64 [| k |] (Array.of_list (List.map Int64.of_int c.offsets))
+  in
+  (* The carry: the array, its previous row as the last step read it, the
+     array as the last step received it, and the step's count. *)
+  let step table (a, (prev, (_, i))) =
+    let at = Nx.cast Nx.int64 i in
+    let last = Nx.maximum (Nx.sub_s at 1L) (Nx.zeros_like at) in
+    let prev =
+      if c.n = 0 then prev else Nx.take ~axis:0 (Nx.reshape [| 1 |] last) a
+    in
+    let updates =
+      if c.reads && c.n > 0 then
+        Nx.where
+          (Nx.broadcast_to wide (Nx.equal_s (Nx.mod_s i 2l) 1l))
+          (Nx.broadcast_to wide prev) table
+      else table
+    in
+    let a' =
+      Nx.scatter ~combine:c.combine ~axis:0
+        (along (Nx.add offsets (Nx.broadcast_to [| k |] at)))
+        updates a
+    in
+    (a', (prev, (a, tick i)))
+  in
+  let first = Nx.zeros c.dt (Array.append [| 1 |] c.row) in
+  let init = (into, (first, (into, k0 ()))) in
+  let until (_, (_, (_, i))) =
+    Nx.greater_equal i (Nx.scalar Nx.int32 (Int32.of_int c.trips))
+  in
+  let carry = T.(pair tensor (pair tensor (pair tensor tensor))) in
+  let codes4 (a, (prev, (old, i))) =
+    (codes a, codes prev, codes old, codes i)
+  in
+  let loop table init =
+    if c.scan then
+      fst
+        (Rune.scan carry t T.unit
+           (fun s _ -> (step table s, ()))
+           ~init
+           (Nx.zeros Nx.int32 [| c.trips |]))
+    else Rune.iterate carry ~max:c.max ~until (step table) init
+  in
+  let expected =
+    outcome (fun () ->
+        let max = if c.scan then c.trips else c.max in
+        codes4 (looped ~max ~until (step table) init))
+  in
+  let quad = outcome_t (quad codes_t codes_t codes_t codes_t) in
+  equal ~msg:"eagerly" quad expected
+    (outcome (fun () -> codes4 (loop table init)));
+  let jitted =
+    Rune.jit T.(tensor @-> carry @-> returns carry) loop
+  in
+  let calls = Rune.evaluations () in
+  equal ~msg:"compiled" quad expected
+    (compiled (fun () -> outcome (fun () -> codes4 (jitted table init))));
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls)
+
+(* The gradient through rows written into a carry: each step writes [x] scaled
+   by the step's count at that row, then adds the row before it to the row
+   after; reverse mode reads each row's cotangent back, compiled too, and a map
+   over [x]'s lanes writes each lane's rows. *)
+let test_rows_grad () =
+  let n = 6 and trips = 4 in
+  let c = T.(pair tensor tensor) in
+  let rows ~loop x =
+    let step (a, i) =
+      let at = Nx.reshape [| 1; 1 |] (Nx.cast Nx.int64 i) in
+      let w = Nx.cast f64 (Nx.add_s i 1l) in
+      let a =
+        Nx.scatter ~axis:0
+          (Nx.broadcast_to [| 1; 3 |] at)
+          (Nx.unsqueeze ~axes:[ 0 ] (Nx.mul x (Nx.broadcast_to [| 3 |] w)))
+          a
+      in
+      let before =
+        Nx.take ~axis:0
+          (Nx.reshape [| 1 |] (Nx.sub_s (Nx.cast Nx.int64 i) 1L))
+          a
+      in
+      let a =
+        Nx.scatter ~combine:Add ~axis:0
+          (Nx.broadcast_to [| 1; 3 |] (Nx.add_s at 1L))
+          before a
+      in
+      (a, tick i)
+    in
+    let until (_, i) = Nx.greater_equal_s i (Int32.of_int trips) in
+    fst (loop ~until step (Nx.zeros f64 [| n; 3 |], k0 ()))
+  in
+  let iterated = rows ~loop:(Rune.iterate c ~max:n)
+  and written = rows ~loop:(looped ~max:n) in
+  let weights = Nx.reshape [| n; 3 |] (Nx.arange_f f64 1. 19. 1.) in
+  let loss f x = Nx.sum (Nx.mul weights (f x)) in
+  let x = vec [| 0.5; -2.; 3.25 |] in
+  let expected = Rune.grad' (loss written) x in
+  equal ~msg:"grad" bits_t (bits expected)
+    (bits (Rune.grad' (loss iterated) x));
+  let calls = Rune.evaluations () in
+  equal ~msg:"compiled" bits_t (bits expected)
+    (bits (Rune.jit' (Rune.grad' (loss iterated)) x));
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - calls);
+  let xs = Nx.stack [ x; Nx.neg x ] in
+  let per_lane = Nx.stack [ written x; written (Nx.neg x) ] in
+  equal ~msg:"lanes" bits_t (bits per_lane) (bits (Rune.vmap' iterated xs));
+  equal ~msg:"lanes compiled" bits_t (bits per_lane)
+    (bits (Rune.jit' (Rune.vmap' iterated) xs))
+
+(* A scatter that reads its target at other rows than it writes, into a
+   carry and into a donated argument, and a carry whose row is another carry
+   that reads the array in turn: compiled, each gives the loop's values and
+   no call is evaluated. *)
+let test_rows_read_carry () =
+  let perm = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
+  let swap a _ = (Nx.scatter ~axis:0 perm a a, ()) in
+  let a = v [| 10.; 20. |] in
+  let swapped a =
+    fst (Rune.scan t t T.unit swap ~init:a (Nx.zeros Nx.int32 [| 3 |]))
+  in
+  let expected = v [| 20.; 10. |] in
+  equal ~msg:"eagerly" bits_t (bits expected) (bits (swapped a));
+  let calls = Rune.evaluations () in
+  equal ~msg:"compiled" bits_t (bits expected) (bits (Rune.jit' swapped a));
+  equal ~msg:"swap compiled" int 0 (Rune.evaluations () - calls);
+  let calls = Rune.evaluations () in
+  equal ~msg:"a donated swap" bits_t (bits expected)
+    (bits (Rune.jit' (fun a -> fst (swap a ())) (Nx.donate (Nx.copy a))));
+  equal ~msg:"a donated swap compiled" int 0 (Rune.evaluations () - calls);
+  let c = T.(pair tensor (pair tensor tensor)) in
+  let step (x, (table, i)) =
+    let at = Nx.cast Nx.int64 i in
+    let table' =
+      Nx.scatter ~axis:0
+        (Nx.broadcast_to [| 1; 2 |] (Nx.reshape [| 1; 1 |] at))
+        (Nx.unsqueeze ~axes:[ 0 ] x)
+        table
+    in
+    let before =
+      Nx.reshape [| 2 |]
+        (Nx.take ~axis:0 (Nx.reshape [| 1 |] (Nx.sub_s at 1L)) table)
+    in
+    (Nx.add x before, (table', tick i))
+  in
+  let until (_, (_, i)) = Nx.greater_equal_s i 4l in
+  let init = (v [| 1.; -2. |], (Nx.full f32 [| 5; 2 |] 0.5, k0 ())) in
+  let codes3 (x, (table, i)) = (bits x, bits table, codes i) in
+  let expected = codes3 (looped ~max:5 ~until step init) in
+  let three = Testable.triple bits_t bits_t codes_t in
+  let loop init = Rune.iterate c ~max:5 ~until step init in
+  equal ~msg:"eagerly" three expected (codes3 (loop init));
+  let calls = Rune.evaluations () in
+  equal ~msg:"compiled" three expected
+    (codes3 (Rune.jit T.(c @-> returns c) loop init));
+  equal ~msg:"carries that read each other compiled" int 0
+    (Rune.evaluations () - calls)
+
 let () =
   exit
     (run "rune iterate"
@@ -1579,6 +1840,7 @@ let () =
              test "compiled, traced once, no eager kernel" test_staged;
              prop "a compiled call in a step gives its own bits" call_cases
                law_call;
+             prop "a step writes rows into its carry" rows_cases law_rows;
            ];
          group "derivatives"
            [
@@ -1588,6 +1850,8 @@ let () =
              test "the steps taken" test_trips_taken;
              test "linear_transpose over an iterate" test_transpose;
              test "an integer carry has none" test_integer_carry;
+             test "rows written into a carry" test_rows_grad;
+             test "a carry's scatter that reads carries" test_rows_read_carry;
            ];
          group "maps"
            [

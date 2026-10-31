@@ -33,7 +33,7 @@ val draws : Nx_kernel.Prog.t -> bool
     split do. *)
 
 val op :
-  ?dst:(Ops.t -> Ops.t) ->
+  ?dst:Lower_index.dst ->
   device:Ops.device ->
   host:bool ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->

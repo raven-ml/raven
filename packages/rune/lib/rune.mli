@@ -997,6 +997,14 @@ end
     that key's set: a step that draws on a device set takes [k] placed
     there ({!Nx.Rng.place}).
 
+    {b Rows.} A step that produces a row, as a {!scan}'s outputs are, but in
+    an {!iterate} or at a position known only in data, writes it into an array
+    of the carry: [Nx.scatter ~axis:0 p row a], with [p] the step's count held
+    in the carry, writes row [p] of [a], and a position outside [a] writes
+    nothing, so a step that writes no row passes such a position. The rows
+    past the steps taken keep [init]'s. Compiled, such a scatter writes only its
+    updates where {!section-rules} says.
+
     {b Iterates.} The derivative of an {!iterate} is that of the steps taken;
     its test has none. Where the loop runs at the call and reads no value of
     another transformation, reverse mode keeps the steps taken. Inside a traced
@@ -1369,7 +1377,9 @@ val jit :
     the arguments are lent again without the pair. A donated argument whose
     memory another value shares, or that is a view off 16 bytes or out of C
     order, lends nothing. Each donated argument lends to one result at most, the
-    results of a scatter first. A result's values are the same either way.
+    results of a scatter first, and a scatter whose result takes its target's
+    memory writes only its updates there. A result's values are the same
+    either way.
 
     A traced function reads a donated value it captures as its arrays and
     consumes nothing: the value is lent ({!Nx.section-moving}), its memory
@@ -1603,7 +1613,14 @@ val jit :
 
     A {!scan} or an {!iterate} compiles as one loop of the program, its step
     compiled once whatever its number of steps: each step reads its row, writes
-    its outputs' row, and updates the carry in its own storage. Where the rows
+    its outputs' row, and updates the carry in its own storage. A carry whose
+    next value is a scatter ({!Nx.scatter}, or {!Nx.set} by positions) into the
+    carry itself as the step received it, not a view or a reshape of it, is
+    updated there with the scatter's updates alone, whatever its number of
+    rows, where its dtype has 8 bits or more, the scatter is not an [Add] of a
+    float narrower than 32 bits, neither its positions nor its updates read the
+    carry, and the carry's next value reads no carry whose next value reads it
+    in turn. Otherwise each step writes the whole carry. Where the rows
     of an array do not lie a multiple of 16 bytes apart, the step reads them
     from a copy whose rows do. A check in a step fails as the call's check does
     ({!section-checks}), with the first failure of the first step that fails, as

@@ -323,6 +323,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled loop's step that writes rows into its carry with `Nx.scatter`,
+  or `Nx.set` by positions, stores those rows alone, and so does a compiled
+  scatter into a donated argument whose memory its result takes, where a
+  scatter of up to 16 updates along its axis rewrote every element of the
+  target. It holds for `Set`, `Max`, `Min` and an `Add` other than a float
+  narrower than 32 bits, at dtypes of 8 bits or more, into the carry itself
+  (`rune.mli`'s Loops and rules state when). `Rune.iterate`'s docs give the
+  pattern for a loop that writes a row per step.
 - `Rune.lane_count a` is `Some n` inside the map named `a` of `n` lanes and
   `None` outside it, where `lanes` raises. A `jit` keys its programs on each
   answer its trace got about the maps around it, `None` included, so a
@@ -3442,6 +3450,9 @@ thread.
 
 ### Kaun
 
+- A compiled step whose key-value pools are donated, or carried by a loop,
+  stores each call's tokens alone into a pool of 8 bits or more per element
+  (`Cache_index.extend`): up to 16 tokens a call rewrote the whole pool.
 - The gradients of `Fn.softplus` and `Loss.sigmoid_bce` at `0.` are `0.5`
   and `0.5 - y`, where they were `-0.5` and `-y`: both now compute through
   `Nx.softplus`. `Loss.sigmoid_bce` keeps its precision where the loss is

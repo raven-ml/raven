@@ -40,8 +40,20 @@ val gather : Nx_array.Dtype.any -> axis:int -> Ops.t -> Ops.t -> Ops.t
     and zero bits where a position lies outside the axis. Each element is one
     indexed load. *)
 
+(** The storage a scatter that combines in a kernel of its own combines into. *)
+type dst =
+  | Filled of (Ops.t -> Ops.t)
+      (** [Filled f]: [f v], where [v] is [into]'s parts flat in C order, is
+          storage of [v]'s dtype and element count that holds [v], such as a
+          buffer once [v] is stored into it, an {!Ops.after} over the store. *)
+  | Holding of Ops.t
+      (** [Holding s]: [s] is storage of [into]'s parts flat in C order that
+          holds them already, such as a loop's carry that [into] reads. The
+          caller guarantees that neither [idx] nor [updates] reads [s]: the
+          scatter's kernel reads them while it writes [s]. *)
+
 val scatter :
-  ?dst:(Ops.t -> Ops.t) ->
+  ?dst:dst ->
   host:bool ->
   Ops.device ->
   Nx_array.Dtype.any ->
@@ -59,23 +71,23 @@ val scatter :
     [updates] wins, whether or not the targets are promised distinct.
 
     For [n] positions and [k] updates along [axis], nx's kernel stores [n + k]
-    elements. Where [n k <= 16 (n + k)], the scatter compares each element of
+    elements. Where [n k <= 16 (n + k)], unless [dst] is [Holding] and the
+    scatter is not a narrow float's [Add], the scatter compares each element of
     [into] with each update along [axis], [n k] comparisons, in kernels it
     shares with its neighbours. Otherwise it combines the updates in a kernel of
     its own, into storage that holds [into], each element taking its updates in
     C order: [n + k] work at each index of the other axes where [host] holds,
-    and at most [n + 16 k] elsewhere. There, a narrow float's [Add] sums in a
-    [float32] copy of [into] and marks where updates land in a byte per element
-    of [into].
+    and at most [n + 16 k] elsewhere, of which [n] fill the storage, none where
+    [dst] is [Holding]. There, a narrow float's [Add] sums in a [float32] copy
+    of [into] and marks where updates land in a byte per element of [into].
 
-    Every other combine of that form combines into [dst v], where [v] is
-    [into]'s parts flat in C order: storage of [v]'s dtype and element count
-    that holds [v], such as a buffer once [v] is stored into it, an
-    {!Ops.after} over the store. The result is that storage once combined. The
-    scatter writes over it, so no value but the result may lie in it once the
-    scatter's kernel runs: it is fresh storage, or a donated argument's that
-    the result takes, which each value that reads the argument as it was reads
-    before. [dst] defaults to a fresh buffer that [v] is stored into.
+    Every other combine of that form combines into [dst]'s storage, and the
+    result is that storage once combined. The scatter writes over it, so no
+    value but the result may lie in it once the scatter's kernel runs: it is
+    fresh storage, a donated argument's that the result takes, or a carry's
+    that the result replaces, each value that reads the argument or carry as it
+    was reading it before. [dst] defaults to [Filled] by a fresh buffer that
+    [into] is stored into.
 
     Raises [Invalid_argument] for a boolean [Add]. *)
 

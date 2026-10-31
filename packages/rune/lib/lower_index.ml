@@ -137,8 +137,11 @@ let summed ca ~landed xs us =
    Past [work_bound], a scatter updates in place, in a kernel of its own,
    storage that holds [into]: its caller's [dst], such as a fresh buffer that a
    kernel stored [into] into, one element per thread, or a donated target's own
-   storage, which needs no copy. [into] is [p·n·q] elements, an axis of [n]
-   between [p] and [q], and the updates [p·k·q]. The axis is cut into runs of
+   storage, which needs no copy. Storage that holds [into] already, such as a
+   loop's carry, is updated so whatever the bound: a loop's trip then writes
+   only the updates, where a comparison would rewrite every element each trip.
+   [into] is [p·n·q] elements, an axis of [n] between [p] and [q], and the
+   updates [p·k·q]. The axis is cut into runs of
    positions. For each index of the axes before the axis and each run, a thread
    walks the [k] updates in C order and combines each that lands in its run
    with the element it lands on: every element meets its updates in eager's
@@ -240,6 +243,8 @@ let fresh device v =
   let b = Ops.new_buffer device (Shape.max_numel v) (Ops.dtype v) in
   Ops.after b [ Ops.store b v ]
 
+type dst = Filled of (Ops.t -> Ops.t) | Holding of Ops.t
+
 let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
     ~idx ~updates into =
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
@@ -288,8 +293,14 @@ let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
       let first i = if i > axis then Some (Ops.Int 0, Ops.Int 1) else None in
       Shape.reshape (Shape.shrink idx (List.init r first)) [ Ops.Int (p * k) ]
   in
-  (* The store that fills [y] computes [into]: a constant [into] is a fill. *)
-  let y = if narrow then fresh (flat into) else dst (flat into) in
+  (* The store that fills [y] computes [into]: a constant [into] is a fill.
+     Storage that holds [into] needs none. *)
+  let y =
+    match dst with
+    | _ when narrow -> fresh (flat into)
+    | Filled f -> f (flat into)
+    | Holding s -> s
+  in
   let hit = if not narrow then [] else [ fresh (zeros Uint8 [ numel s ]) ] in
   let outs =
     Shape.custom_kernel
@@ -307,9 +318,13 @@ let scatter ?dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
   let s = extents (List.hd (Arith.parts d into)) and t = extents idx in
   let r = List.length s in
   let n = List.nth s axis and k = List.nth t axis in
+  let narrow = c = Add && D.is D.Float dt && D.bits dt < 32 in
+  let holding =
+    match dst with Some (Holding _) -> not narrow | _ -> false
+  in
   if n = 0 || numel t = 0 then into
-  else if n * k > work_bound * (n + k) then
-    let dst = Option.value dst ~default:(fresh device) in
+  else if holding || n * k > work_bound * (n + k) then
+    let dst = Option.value dst ~default:(Filled (fresh device)) in
     looped ~dst ~host device d c ~axis ~idx ~updates into
   else
     let wide = s @ [ k ] in
