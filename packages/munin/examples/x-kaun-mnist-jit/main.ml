@@ -74,9 +74,9 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "mnist-jit [--device METAL|CPU|CUDA] [--epochs N] [--batch-size N]";
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
-  (* Model parameters and a one-time optimizer state (momentum is 0, so the zero
-     velocity is never read and the state needs no threading through the jitted
-     step). *)
+  (* Model parameters and the optimizer's step counter, both threaded through
+     the jitted step: the counter feeds schedules and the rounding of
+     half-precision parameters, so it must advance. *)
   let host =
     let key () = Nx.Rng.next_key () in
     {
@@ -97,7 +97,7 @@ let () =
   let cnn = Nx.Ptree.instantiate (module Cnn) in
   let on x = Nx.place Set.on x in
   let params = ref (Nx.Ptree.place (module Cnn) Set.on host) in
-  let state = Vega.sgd_init cnn !params in
+  let count = ref (Vega.sgd_init cnn !params).step in
   let n_params = Nx.Ptree.fold cnn (fun _ t n -> n + Nx.numel t) !params 0 in
 
   (* Start a tracked run. *)
@@ -139,22 +139,27 @@ let () =
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
   (* The whole training step (forward, backward, SGD update) compiles into one
-     program, which reads the batch and is given the parameters donated: it
-     returns the updated parameters and the loss beside them, so training never
-     round-trips them through the host. Values that change between calls are
-     arguments, never captures. *)
-  let train_step x y params =
+     program, which reads the batch and is given the parameters and the
+     counter donated: it returns the updated ones and the loss beside them, so
+     training never round-trips them through the host. Values that change
+     between calls are arguments, never captures. Momentum is 0, so the step
+     reads no velocity: its state is made afresh around the counter, and no
+     velocity, a copy of the gradient, stays alive between steps. *)
+  let train_step x y (params, step) =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
-    (loss, fst (Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads))
+    let st = { (Vega.sgd_init cnn params) with step } in
+    let params, st = Vega.sgd_step cnn ~lr:(Vega.lr !lr) st ~params ~grads in
+    (loss, (params, st.step))
   in
   let step =
+    let both = Nx.Ptree.(pair cnn tensor) in
     let step =
       Rune.jit
-        Nx.Ptree.(tensor @-> tensor @-> cnn @-> returns (pair tensor cnn))
+        Nx.Ptree.(tensor @-> tensor @-> both @-> returns (pair tensor both))
         train_step
     in
-    fun x y params -> step (on x) (on y) (Nx.Ptree.donate cnn params)
+    fun x y state -> step (on x) (on y) (Nx.Ptree.donate both state)
   in
   let forward =
     Rune.jit Nx.Ptree.(cnn @-> tensor @-> returns tensor) Cnn.apply
@@ -187,8 +192,9 @@ let () =
         incr global_step;
         let s = !global_step in
         let t0 = Unix.gettimeofday () in
-        let loss, next = step x y !params in
+        let loss, (next, c) = step x y (!params, !count) in
         params := next;
+        count := c;
         (* Reading the loss is the step's only device-to-host transfer and its
            synchronization point, so [dt] covers the full step. *)
         let loss = Nx.item [] loss in

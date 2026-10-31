@@ -14,11 +14,11 @@
    accumulates from both of its uses.
 
    The whole step (forward, backward, update) compiles as one [Rune.jit]
-   program, which reads the dropout key, is given the parameters, donated, and
-   returns the loss beside the updated parameters, so a step frees the previous
-   generation's storage. The loss recorded at step i is computed before update
-   i. The parameters are read from the file on the host and placed on the device
-   once, before the first step.
+   program, which reads the dropout key, is given the parameters and the
+   optimizer's step counter, donated, and returns the loss beside the updated
+   ones, so a step frees the previous generation's storage. The loss recorded
+   at step i is computed before update i. The parameters are read from the
+   file on the host and placed on the device once, before the first step.
 
    [--devices] runs the same [Rune.jit] step data-parallel, with the batch split
    on axis 0 across the devices: the parameters lie whole on each device, and
@@ -158,13 +158,23 @@ let loss_fn_half compute inputs targets ?dropout params =
   (* The loss upcasts inside itself; only the scalar is cast for the record. *)
   Nx.cast Nx.float32 (Loss.softmax_cross_entropy_sparse logits targets)
 
-(* A step returns the pre-update loss and the updated parameters. *)
-let train_step gpt2_tree objective params =
+(* [sgd gpt2_tree step ~params ~grads] is plain SGD, momentum 0, at the
+   counter [step]: the update is exactly [w - lr * g], and the new parameters
+   and counter. The step reads no velocity, so the state is made afresh around
+   the threaded counter, which a schedule reads and which keys the rounding of
+   half-precision parameters: a counter made afresh would repeat its draws.
+   Threading the whole state would keep its velocity, a copy of the gradient,
+   alive between steps. *)
+let sgd gpt2_tree step ~params ~grads =
+  let st = { (Vega.sgd_init gpt2_tree params) with step } in
+  let params, st = Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) st ~params ~grads in
+  (params, st.step)
+
+(* A step returns the pre-update loss and the updated parameters and
+   counter. *)
+let train_step gpt2_tree objective (params, step) =
   let loss, grads = Rune.value_and_grad gpt2_tree objective params in
-  (* Plain SGD: momentum is 0, so the zero velocity from [sgd_init] leaves the
-     update exactly [w - lr * g] and needs no threading across steps. *)
-  let state = Vega.sgd_init gpt2_tree params in
-  (loss, fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads))
+  (loss, sgd gpt2_tree step ~params ~grads)
 
 (* The step's dropout key is an optional argument: [Some key] when [--dropout]
    is positive, [None] otherwise. [None] holds no tensor, so dropout-free runs
@@ -174,18 +184,23 @@ let key () = Nx.Ptree.option Nx.Rng.ptree
 (* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
    The scale state is donated to and returned by the jitted step as tensor
    leaves, so the dynamic scale really updates across compiled calls. Overflowed
-   steps keep the previous parameters. *)
+   steps keep the previous parameters and counter. *)
 
-type 'd scaled = { params : 'd Gpt2.t; ls : 'd Vega.Loss_scale.t }
+type 'd scaled = {
+  params : 'd Gpt2.t;
+  step : 'd Nx.int32_t;
+  ls : 'd Vega.Loss_scale.t;
+}
 
 let scaled gpt2_tree =
   Nx.Ptree.v (fun c t ->
       let open Nx.Ptree.Walk in
       let params = field c "params" (structure gpt2_tree) t.params in
+      let step = field c "step" tensor t.step in
       let ls = field c "ls" Vega.Loss_scale.walk t.ls in
-      { params; ls })
+      { params; step; ls })
 
-let train_step_scaled gpt2_tree objective key { params; ls } =
+let train_step_scaled gpt2_tree objective key { params; step; ls } =
   (* The scale enters as the backward seed: the pullback of the scale cotangent
      is exactly [grad (fun p -> Loss_scale.scale ls (objective p))] — every
      float16 cotangent downstream carries the scale, which is the underflow
@@ -197,14 +212,13 @@ let train_step_scaled gpt2_tree objective key { params; ls } =
     Rune.vjp gpt2_tree Nx.Ptree.tensor (objective key) params
   in
   let grads = pullback ls.Vega.Loss_scale.scale in
-  let state = Vega.sgd_init gpt2_tree params in
-  let params, ls =
-    Vega.Loss_scale.step gpt2_tree gpt2_tree ls ~grads
-      (fun grads ->
-        fst (Vega.sgd_step gpt2_tree ~lr:(Vega.lr lr) state ~params ~grads))
-      params
+  let state = Nx.Ptree.(pair gpt2_tree tensor) in
+  let (params, step), ls =
+    Vega.Loss_scale.step gpt2_tree state ls ~grads
+      (fun grads -> sgd gpt2_tree step ~params ~grads)
+      (params, step)
   in
-  (loss, { params; ls })
+  (loss, { params; step; ls })
 
 (* The data-parallel step takes the batch as arguments, split on axis 0 across
    the devices, and the parameters as copies. The dropout key is a copy too, and
@@ -458,10 +472,12 @@ let () =
         Some
           (Nx.Rng.place (Nx.Placement.uncut params_at) (Nx.Rng.fold_in root i))
     in
-    (* [step i] maps parameters to updated parameters and the pre-update loss;
-       the float16 variant additionally threads its loss-scale state, hidden in
-       the closure. *)
+    (* [step i] maps parameters to updated parameters and the pre-update loss.
+       It threads the optimizer's counter, and the float16 variant its
+       loss-scale state too, hidden in the closure. *)
     let step : int -> d Gpt2.t -> d Gpt2.t * float =
+      let every = Nx.Placement.(on (devices params_at)) in
+      let count = ref (Nx.scalar_at every Nx.int32 0l) in
       if !compute_dtype = "float16" then begin
         let scaled = scaled gpt2_tree in
         let f =
@@ -472,24 +488,29 @@ let () =
         let ls = ref (Vega.Loss_scale.dynamic (Nx.Placement.uncut params_at)) in
         fun i params ->
           let loss, s =
-            f (key_at i) (Nx.Ptree.donate scaled { params; ls = !ls })
+            f (key_at i)
+              (Nx.Ptree.donate scaled { params; step = !count; ls = !ls })
           in
+          count := s.step;
           ls := s.ls;
           (s.params, Nx.item [] loss)
       end
       else
+        let state = Nx.Ptree.(pair gpt2_tree tensor) in
         let f =
           Rune.jit
             Nx.Ptree.(
-              tensor @-> tensor @-> key @-> gpt2_tree
-              @-> returns (pair tensor gpt2_tree))
-            (fun inputs targets key params ->
-              train_step gpt2_tree (obj key inputs targets) params)
+              tensor @-> tensor @-> key @-> state
+              @-> returns (pair tensor state))
+            (fun inputs targets key x ->
+              train_step gpt2_tree (obj key inputs targets) x)
         in
         fun i params ->
-          let loss, params =
-            f inputs targets (key_at i) (Nx.Ptree.donate gpt2_tree params)
+          let loss, (params, c) =
+            f inputs targets (key_at i)
+              (Nx.Ptree.donate state (params, !count))
           in
+          count := c;
           (params, Nx.item [] loss)
     in
     let params = ref params in
