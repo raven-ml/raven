@@ -219,8 +219,7 @@ let convert_gather ctx x =
 
 (* A group's stores are its own: each indexes its sources as any node does. *)
 let create_bufferize_and_index_based_on_ranges ctx x =
-  if op x = Op.Stage || op x = Op.Index || op x = Op.Group then None
-  else Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
+  Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
 
 (* The first source is taken from the list: rebuilding [x] on an indexed source
    would give it a shape its argument does not fit. *)
@@ -328,7 +327,9 @@ let pm_apply_rangeify =
         on
           (ops [ Op.Cdiv; Op.Cmod; Op.Floordiv; Op.Floormod ])
           guard_division_on_padding;
-        on Op.Set.all create_bufferize_and_index_based_on_ranges;
+        on
+          (Op.Set.diff Op.Set.all (ops [ Op.Stage; Op.Index; Op.Group ]))
+          create_bufferize_and_index_based_on_ranges;
         on Op.Set.movement remove_movement_op_after_rangeify;
       ])
 

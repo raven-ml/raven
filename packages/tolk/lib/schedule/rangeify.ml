@@ -746,7 +746,7 @@ let check_buf_states x =
   List.iter
     (fun idx ->
       let buf = buf_uop idx and state = nth idx 0 in
-      if List.mem (op buf) Op.[ Buffer; Alloc; Param ] then
+      if Op.Set.mem (op buf) Op.Set.defines then
         match Tbl.find_opt read_from buf with
         | Some s when s != state ->
             invalid_arg

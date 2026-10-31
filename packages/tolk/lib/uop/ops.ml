@@ -2118,7 +2118,7 @@ let rec has_buffer_identity ?(after_ok = false) u =
   | Op.Reshape | Op.Unshard | Op.Mselect ->
       has_buffer_identity ~after_ok (first u.op u.src)
   | Op.After when after_ok -> has_buffer_identity ~after_ok (first u.op u.src)
-  | op -> List.mem op Op.[ Buffer; Alloc; Param ]
+  | op -> Op.Set.mem op Op.Set.defines
 
 (* Movement *)
 

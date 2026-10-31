@@ -424,7 +424,6 @@ let do_stack_wmma u =
     Some (replace u ~src:(List.map unpack (src u)))
   end
 
-let storage = ops [ Op.Param; Op.Buffer; Op.Alloc ]
 
 (* The boolean a constant is, if it is one. *)
 let boolean u =
@@ -486,7 +485,7 @@ let devectorizer2 =
            (Upat.op Op.Index
               ~src:
                 [
-                  Upat.v ~op:storage ~name:"b" ();
+                  Upat.v ~op:Op.Set.defines ~name:"b" ();
                   Upat.v ~op:Op.Set.elementwise ~name:"i" ();
                 ])
            (fun m ->
@@ -500,7 +499,7 @@ let devectorizer2 =
              | _ -> None);
          rule_ctx
            (Upat.op Op.Index
-              ~src:[ Upat.v ~op:storage ~name:"b" (); Upat.var "i" ])
+              ~src:[ Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.var "i" ])
            (fun vectors m ->
              if vectors = [] || shape (m "i") <> [] then None
              else
@@ -515,7 +514,7 @@ let devectorizer2 =
          rule
            (Upat.op Op.Index ~name:"x"
               ~src:
-                [ Upat.v ~op:storage ~name:"b" (); Upat.op Op.Stack ~name:"s" ])
+                [ Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.op Op.Stack ~name:"s" ])
            (fun m ->
              Some
                (stack
@@ -527,7 +526,7 @@ let devectorizer2 =
            (Upat.op Op.Index
               ~src:
                 [
-                  Upat.v ~op:storage ~name:"b" (); Upat.op Op.Reshape ~name:"s";
+                  Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.op Op.Reshape ~name:"s";
                 ])
            (fun m ->
              Some (reshape (index (m "b") [ nth (m "s") 0 ]) (shape (m "s"))));
