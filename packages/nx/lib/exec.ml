@@ -66,17 +66,33 @@ let fresh ~by p dt shape =
           A.create (Devices.rig set devices.(j)) dt
             (Route.extents (Devices.window ~by p shape j)))
 
+(* A fresh array of [dt] on [d] laid out as [l], C-contiguous from offset 0.
+   A dtype narrower than a byte is created, whose spare bits in its last byte
+   are zero. *)
+let fresh_over (type w r) (dt : (w, r) D.t) l d : (w, r) A.t =
+  if D.bits dt >= 8 then A.v dt l (Rig.Buffer.create d (D.bytes dt (L.numel l)))
+  else A.create d dt (L.shape l)
+
 (* A maker of fresh results at their form's placement: the first into [into]
-   where it is given. *)
+   where it is given. The layout of a result it makes is C-contiguous from
+   offset 0, as {!Prim.val-layouts} states for every operation but a
+   movement, a bitcast and a placement, which make no fresh result, so on
+   one device it lays out the result as it is. *)
 let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
     (v, s, d) Value.t =
   let p = f.placement in
   match into with
   | Some a when k = 0 ->
       Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
-  | Some _ | None ->
-      let shape = L.shape f.layout in
-      make p ~shape:(Iarray.to_array shape) (fresh ~by p f.dtype shape)
+  | Some _ | None -> (
+      match Grid.one (Devices.grid p) with
+      | Some k ->
+          let d = Devices.rig (Devices.set p) k in
+          Value.Array
+            { at = p; a = fresh_over f.dtype f.layout d; dead = Value.Live }
+      | None ->
+          let shape = L.shape f.layout in
+          make p ~shape:(Iarray.to_array shape) (fresh ~by p f.dtype shape))
 
 (* Programs on one device *)
 
@@ -111,8 +127,13 @@ let as_view ~by set f m a =
       let kernels = kernels_of ~by ~op:"Copy" set in
       Option.get (f m (copy_array ~by kernels a))
 
-(* The one array of [x], a value on one device. *)
-let one (type v s d) (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) 0
+(* The one array of [x], a value on one device: an [Array]'s own, which
+   builds no [iarray]. *)
+let one (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array { a; _ } -> a
+  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
+      Iarray.get (Prim.arrays x) 0
 
 (* The load a kernel reads of [l], over a value on one device. *)
 let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
@@ -127,9 +148,27 @@ let kernel_loads loads =
    the kernel reads the result's dtype from its destination. *)
 let kernel (r, k, _) = (r, k)
 
-(* The arrays at position [j] of [x] and of the results [r] of [op]. *)
-let nth (type v s d) j (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) j
-let dsts_at op r j = Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
+(* The arrays at position [j] of [x] and of the results [r] of [op]. An
+   [Array] is read in place, and the results of a map of one output, a
+   reduction of one or a scan of one, which most calls are, without
+   gathering every result's arrays. *)
+let nth (type v s d) j (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array { a; _ } -> a
+  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
+      Iarray.get (Prim.arrays x) j
+
+let dsts_at : type r. r Value.prim -> r -> int -> A.any array =
+ fun op r j ->
+  match (op, r) with
+  | Value.Map { outs = [ _ ]; _ }, (y, ()) -> [| A.Any (nth j y) |]
+  | Value.Reduce { reductions = [ Monoid _ ]; _ }, (y, ()) ->
+      [| A.Any (nth j y) |]
+  | Value.Reduce { reductions = [ Logsumexp _ ]; _ }, (y, ()) ->
+      [| A.Any (nth j y) |]
+  | Value.Scan { reduction = Monoid _; _ }, y -> [| A.Any (nth j y) |]
+  | Value.Scan { reduction = Logsumexp _; _ }, y -> [| A.Any (nth j y) |]
+  | _ -> Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
 
 (* [op]'s kernel over its operands' arrays, into the results [r]'s arrays at
    position [j]: [false] where it declines. A refusal raises naming [by], the
@@ -259,13 +298,6 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
           refuses ~by ~kernels (Prim.kind node) d (out :: dts)
       | None -> refuses ~by ~kernels (Prim.name op) d dts)
   | _ -> refuses ~by ~kernels (Prim.name op) d dts
-
-(* A fresh array of [dt] on [d] laid out as [l], C-contiguous from offset 0.
-   A dtype narrower than a byte is created, whose spare bits in its last byte
-   are zero. *)
-let fresh_over (type w r) (dt : (w, r) D.t) l d : (w, r) A.t =
-  if D.bits dt >= 8 then A.v dt l (Rig.Buffer.create d (D.bytes dt (L.numel l)))
-  else A.create d dt (L.shape l)
 
 (* A destination for a result of [dt] beside [x]: over [x]'s layout where it is
    C-contiguous from offset 0 and of [dt], fresh otherwise. *)

@@ -216,7 +216,10 @@ val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
 (** [layouts ~by op] is the layouts of [op]'s results that eager execution
     gives them, after checking its operands against its rule: one per result
     of a [Linalg], one that every result of any other operation shares, none
-    for a [Check]. A [Place]'s is its result's at its own placement.
+    for a [Check]. A [Place]'s is its result's at its own placement. Every
+    layout but a [Move]'s, a [Bitcast]'s and a [Place]'s is C-contiguous
+    from offset 0: a loop's own layout, which its rule requires so, or the
+    contiguous layout of the result's shape.
 
     Raises [Invalid_argument] naming [by] where [op]'s operands break its
     rule, a map of no loads with no placement or one with loads that names
