@@ -1088,10 +1088,10 @@ let busy c subdevice =
   | 0, _ -> Ok None
   | n, total -> Ok (Some (float_of_int total /. float_of_int n /. 100.))
 
-let usage_under ~root i =
+let usage i =
   Rig_nv.Lock.guarded "Rig_nv_nvidia.usage" @@ fun () ->
   if i < 0 then invalid_argf "Rig_nv_nvidia.usage: GPU %d < 0" i;
-  let* g = nth_gpu ~root i in
+  let* g = nth_gpu ~root:"/" i in
   let* memory_total =
     fb_info g.c g.subdevice D.nv2080_ctrl_fb_info_index_total_ram_size
   in
@@ -1100,5 +1100,3 @@ let usage_under ~root i =
   in
   let* busy = busy g.c g.subdevice in
   Ok { memory_total; memory_free; busy }
-
-let usage i = usage_under ~root:"/" i

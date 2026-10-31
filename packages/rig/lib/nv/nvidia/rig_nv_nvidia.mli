@@ -142,8 +142,8 @@ val usage : int -> (usage, string) result
 
 (**/**)
 
-(* [buses_under ~root], [count_under ~root], [gpu_under ~root] and
-   [usage_under ~root] are {!buses}, {!count}, {!gpu} and {!usage} for the machine whose files are under the
+(* [buses_under ~root], [count_under ~root] and [gpu_under ~root] are
+   {!buses}, {!count} and {!gpu} for the machine whose files are under the
    directory [root] in place of ["/"], such as a container's view of its host
    or a test's tree. Every [root] a process uses must show the same kernel
    driver. The process's client of the kernel driver is made from the
@@ -152,7 +152,6 @@ val usage : int -> (usage, string) result
 val buses_under : root:string -> (string list, string) result
 val count_under : root:string -> (int, string) result
 val gpu_under : root:string -> int -> Rig_nv.t Rig_edge.opener
-val usage_under : root:string -> int -> (usage, string) result
 
 type mem
 (* The type for the memory of this library's paths. *)
