@@ -441,6 +441,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Sde.march` ends each interval's last step at its time of `at`. The steps'
+  sum could round past the path's end and raise, as over `[0, 0.3]` in 10
+  steps.
 - `Ode.march`, `Split.march` and `Sde.march` accept monotone times a tiny gap
   apart. Their check multiplied each gap by the first, which underflowed to
   zero, and raised, for gaps of `1e-162` in float64.

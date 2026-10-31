@@ -234,12 +234,77 @@ let order_tests =
 
 (* Marches *)
 
+(* A march of sra1 on dX = −X dt + σ dW drawn over a path of any depth and
+   lanes, along up to four times of [0, 1], the path's ends among them. *)
+let marches =
+  Gen.(
+    let+ seed = int_range 0 1000
+    and+ depth = int_range 0 12
+    and+ lanes = int_range 0 5
+    and+ steps = int_range 1 6
+    and+ ts =
+      list ~size:(int_range 1 4)
+        (frequency [ (1, constant 0.); (1, constant 1.); (3, float_range 0. 1.) ])
+    in
+    let ts = List.sort_uniq compare ts in
+    (seed, depth, lanes, steps, Array.of_list ts))
+  |> Gen.with_pp (fun ppf (seed, depth, lanes, steps, ts) ->
+      Format.fprintf ppf "key %d, depth %d, %d lanes, %d steps, at [%s]" seed
+        depth lanes steps
+        (String.concat "; " (Array.to_list (Array.map string_of_float ts))))
+
+(* sra1's step on dX = −X dt + σ dW from its statement (Rößler, 2010), with
+   the increment and area of [[s, t]] queried from the path. *)
+let sra1_ou w s t x =
+  let h = t -. s in
+  let dw, area = Sde.Brownian.increment w (scalar s) (scalar t) in
+  let i10 = Nx.add (Nx.div_s dw 2.) area in
+  let k1 = Nx.neg x in
+  let stage =
+    Nx.add (Nx.add x (Nx.mul_s k1 (0.75 *. h))) (Nx.mul_s i10 (1.5 *. sigma))
+  in
+  let k2 = Nx.neg stage in
+  Nx.add
+    (Nx.add x (Nx.mul_s (Nx.add (Nx.div_s k1 3.) (Nx.mul_s k2 (2. /. 3.))) h))
+    (Nx.mul_s dw sigma)
+
+let reference w ~steps at x =
+  let state = ref x in
+  let states = ref [ x ] in
+  for i = 0 to Array.length at - 2 do
+    let a = at.(i) and b = at.(i + 1) in
+    let h = (b -. a) /. Float.of_int steps in
+    for j = 0 to steps - 1 do
+      let s = a +. (Float.of_int j *. h) in
+      let t = if j = steps - 1 then b else a +. (Float.of_int (j + 1) *. h) in
+      state := sra1_ou w s t !state
+    done;
+    states := !state :: !states
+  done;
+  Nx.stack ~axis:0 (List.rev !states)
+
 let march_tests =
   let w = path ~n:3 31 in
   let run ?(steps = 4) ?(m = Sde.euler_maruyama) at x =
     Sde.march one m ~steps ~drift:gbm_drift ~diffusion:gbm_diffusion w ~at x
   in
   [
+    prop "a march composes its steps over the path's increments" marches
+      (fun (seed, depth, lanes, steps, ts) ->
+        cover "several intervals" (Array.length ts > 2);
+        cover "the path's whole interval"
+          (ts.(0) = 0. && ts.(Array.length ts - 1) = 1.);
+        cover "no lanes" (lanes = 0);
+        let w =
+          Sde.Brownian.v (Nx.Rng.key seed) f64 ~shape:[| lanes |] ~t0:0.
+            ~t1:1. ~depth
+        in
+        let x = Nx.linspace f64 0.5 2. lanes in
+        let y =
+          Sde.march one Sde.sra1 ~steps ~drift:ou_drift
+            ~diffusion:ou_diffusion w ~at:(vec ts) x
+        in
+        equal (Oracle.tensor ~abs:1e-12 ()) (reference w ~steps ts x) y);
     test "a march stacks the state at each time, the start first" (fun () ->
         let y = run (vec [| 0.; 0.5; 1. |]) (x0 3) in
         equal (array int) [| 3; 3 |] (Nx.shape y);
@@ -282,6 +347,21 @@ let march_tests =
         (* Another key replays the same program on another path. *)
         let w' = path ~n:3 32 in
         equal (Oracle.tensor ~rel:1e-12 ()) (f w' x) (compiled w' x));
+    cases "a march to the path's end takes any number of steps"
+      ~id:(fun (t1, steps) -> Printf.sprintf "[0, %g] in %d" t1 steps)
+      [ (0.3, 10); (0.9, 7); (5., 12) ]
+      (fun (t1, steps) ->
+        (* On these, t1 / steps added steps times rounds past t1. *)
+        let w =
+          Sde.Brownian.v (Nx.Rng.key 33) f64 ~shape:[| 3 |] ~t0:0. ~t1 ~depth:4
+        in
+        let y =
+          Sde.march one Sde.euler_maruyama ~steps ~drift:gbm_drift
+            ~diffusion:gbm_diffusion w
+            ~at:(vec [| 0.; t1 |])
+            (x0 3)
+        in
+        equal (array int) [| 2; 3 |] (Nx.shape y));
     test "times that are not increasing raise" (fun () ->
         raises_with "the times of at are not strictly increasing" (fun () ->
             run (vec [| 1.; 0.5 |]) (x0 3)));

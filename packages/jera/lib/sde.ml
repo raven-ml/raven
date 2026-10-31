@@ -124,17 +124,19 @@ module Brownian = struct
           (Printf.sprintf "%s: %s = %g is outside [%g, %g]" fn what
              (Nx.item [] t) (Nx.item [] t0) (Nx.item [] t1)))
 
-  let increment w s t =
-    let fn = "Jera.Sde.Brownian.increment" in
-    check_time fn w "s" s;
-    check_time fn w "t" t;
-    let ws, is = point w s and wt, it = point w t in
-    let h = Nx.sub t s in
+  (* The increment and area over [[s, t]] from W and I at its ends. *)
+  let between (ws, is) (wt, it) h =
     let zero = Nx.equal_s h 0. in
     let h' = Nx.where zero (Nx.ones_like h) h in
     let dw = Nx.sub wt ws in
     let area = Nx.sub (Nx.sub (Nx.div (Nx.sub it is) h') ws) (Nx.div_s dw 2.) in
     (dw, Nx.where zero (Nx.zeros_like area) area)
+
+  let increment w s t =
+    let fn = "Jera.Sde.Brownian.increment" in
+    check_time fn w "s" s;
+    check_time fn w "t" t;
+    between (point w s) (point w t) (Nx.sub t s)
 end
 
 (* A method is its name; [march] holds each one's step. *)
@@ -177,12 +179,21 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   (* [v + a x] and [v + x] over the float leaves. *)
   let axpy a x v = Nx.Ptree.axpy y a x v in
   let add x v = axpy one x v in
+  (* Step [j] spans [[t0 + j h, t0 + (j + 1) h]], the last one ending at [t1]
+     itself: [t0 + steps h] can round past [t1], and so past the path. The
+     times lie in the path's interval, as [at]'s ends were checked to. *)
   let interval c step t0 t1 carry =
     let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
+    let last = float (steps - 1) in
     March.steps c here dtype steps
       (fun j carry ->
         let t = Nx.add t0 (Nx.mul j h) in
-        let dw, area = Brownian.increment w t (Nx.add t h) in
+        let next = Nx.add t0 (Nx.mul (Nx.add_s j 1.) h) in
+        let t' = Nx.where (Nx.equal_s j last) t1 next in
+        let h = Nx.sub t' t in
+        let dw, area =
+          Brownian.between (Brownian.point w t) (Brownian.point w t') h
+        in
         step t h dw area carry)
       carry
   in
