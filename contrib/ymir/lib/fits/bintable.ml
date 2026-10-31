@@ -219,6 +219,14 @@ let elt_name = function
   | C -> "complex64"
   | M -> "complex128"
 
+(* [cell_place row t c] is the place of column [c], in the table's row [row]
+   when given. Reads check one descriptor a row in a heap column, one a tile in
+   a tiled image, so it is built only on a failure. *)
+let cell_place row t c =
+  match row with
+  | Some n -> Err.sub (column_place t c) (strf "row %d" n)
+  | None -> column_place t c
+
 (* [descriptor ?row t c rows r] is the descriptor of column [c] in row [r] of
    the host rows [rows]; [row] is the table's row, for errors. *)
 let descriptor ?row t c rows r =
@@ -235,14 +243,9 @@ let descriptor ?row t c rows r =
         else (Int64.to_int n, Int64.to_int o)
     | Row -> invalid_arg "Bintable.descriptor: not a heap column"
   in
-  let place =
-    match row with
-    | Some n -> Err.sub (column_place t c) (strf "row %d" n)
-    | None -> column_place t c
-  in
   if count < 0 || offset < 0 then
-    fail_at place "a descriptor's count %d or offset %d is negative" count
-      offset;
+    fail_at (cell_place row t c)
+      "a descriptor's count %d or offset %d is negative" count offset;
   if count = 0 then (0, 0)
   else
     let bytes =
@@ -252,7 +255,7 @@ let descriptor ?row t c rows r =
           match Err.mul count (size e) with Some b -> b | None -> max_int)
     in
     if bytes > t.heap_size || offset > t.heap_size - bytes then
-      fail_at place
+      fail_at (cell_place row t c)
         "the descriptor's %d %s at heap byte %d end past the heap's %d bytes"
         count (elt_name c.form.elt) offset t.heap_size;
     (count, offset)

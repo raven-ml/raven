@@ -377,9 +377,11 @@ raven / llama.cpp (Vulkan; ROCm):
 
 - ymir.fits: read HCOMPRESS_1 (Legacy Surveys ships maskbits and nexp in
   it) and PLIO_1; both raise today (tiles.ml)
-- ymir bench: fits-image-4096/raw-int16-rice allocated +4.9% over its
-  4435930-word baseline (2026-10-07). Rerun; suspects fe69dde74,
-  8d783356e, e7023356e
+- ymir bench: only the Mac has a section, recorded 2026-10-07 under OCaml
+  5.5.1 before rig. fits-image-4096/raw-int16-rice reads 4435930 words
+  there and 995245 on fudge; its +4.9% on the Mac did not show on fudge
+  from fe69dde74 to main. Record a fudge section; re-record or drop the
+  Mac's
 - ymir: HEALPix and spherical harmonics (RFC 0027 slice 3)
 - ymir: time scales (UTC, TAI, TT, TDB), then time-dependent frames
   (precession, nutation, aberration) and ephemerides

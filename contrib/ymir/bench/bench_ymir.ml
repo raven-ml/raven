@@ -213,6 +213,36 @@ let fits_table () =
           timed (fun () -> ok (Fits.Table.read h)));
     ]
 
+(* A heap column of 10^5 int16 lists of 0 to 3 elements, read as one ragged
+   tensor: each row's descriptor is checked. *)
+let fits_lists () =
+  let rows = 100_000 in
+  let table () =
+    let lengths =
+      Nx.init Nx.int64 [| rows |] (fun i -> Int64.of_int (i.(0) mod 4))
+    in
+    let total = Int64.to_int (Nx.item [] (Nx.sum lengths)) in
+    let values =
+      Nx_ragged.of_lengths lengths
+        (Nx.init Nx.int16 [| total |] (fun i -> i.(0) mod 1000))
+    in
+    let hdu =
+      ok
+        (Fits.Table.hdu Fits.Header.empty
+           [
+             ( "l",
+               Fits.Header.empty,
+               Fits.Table.Lists { values; validity = None } );
+           ])
+    in
+    List.nth (fits_file "lists" [ hdu ] ()) 1
+  in
+  Thumper.group "fits-lists-100k"
+    [
+      Thumper.bench_with_setup ~setup:table "ragged-int16" (fun h ->
+          timed (fun () -> ok (Fits.Table.ragged Nx.int16 "l" h)));
+    ]
+
 (* The units of every column of an HST drizzle file's 293-column header
    table, from opening the file: what a table browser reads first. *)
 let fits_units () =
@@ -513,6 +543,7 @@ let suite () =
     fits_observation ();
     fits_quantize ();
     fits_table ();
+    fits_lists ();
     fits_units ();
     supernovae ();
     ages ();

@@ -4,6 +4,10 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Fits.Image.raw` and `Fits.Image.values` allocate a third as many words
+  reading an image of 64x64 tiles, and `Fits.Table` reads of a heap column
+  120 fewer words a row. Reads built an error's place for each tile and row
+  before any error, and a closure for each row of a tile.
 - A gzip file's `Error` from `Fits.read` names `Lz.Gzip` to decompress it.
   It named `Nx_io.gunzip`, which nx no longer has.
 - **Breaking:** every type that holds tensors carries their device set:

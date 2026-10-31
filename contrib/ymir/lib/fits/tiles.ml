@@ -49,7 +49,7 @@ type t = {
   null_mask : Bintable.column option;
 }
 
-let tile_place t n = Err.sub t.table.place (strf "tile %d" (n + 1))
+let tile_place t n = Err.sub t.table.place ("tile " ^ Int.to_string (n + 1))
 
 (* Description *)
 
@@ -333,10 +333,9 @@ let param_value (type a) rows (p : a param) (of_float : float -> a)
       | K -> Some (of_int (Int64.to_int (Bintable.be_int64 rows c.start)))
       | _ -> None)
 
-(* [decode_tile t n npix budget] decodes tile [n] of [npix] pixels. [budget]
-   counts the heap bytes a read may still decode. *)
-let decode_tile t n npix budget =
-  let place = tile_place t n in
+(* [decode_tile t place n npix budget] decodes tile [n] of [npix] pixels, at
+   [place]. [budget] counts the heap bytes a read may still decode. *)
+let decode_tile t place n npix budget =
   let rows = Bintable.read_rows t.table n (n + 1) in
   let fetch c =
     let count, offset = Bintable.descriptor t.table c rows 0 in
@@ -443,24 +442,27 @@ type out =
 
 let out_of_range place x = fail_at place "%d is outside BITPIX's type" x
 
+(* A function of its own, so that a run allocates no closure over [place]. *)
+let check place lo hi x = if x < lo || x > hi then out_of_range place x else x
+
 (* [copy_run place out k v j run] copies [run] values of the tile from [j]
    to the window from [k]. *)
 let copy_run place out k (v : values) j run =
-  let check lo hi x = if x < lo || x > hi then out_of_range place x else x in
   match (out, v) with
   | U8 o, Ints a ->
       for r = 0 to run - 1 do
-        A.unsafe_set o (k + r) (check 0 255 (A.unsafe_get a (j + r)))
+        A.unsafe_set o (k + r) (check place 0 255 (A.unsafe_get a (j + r)))
       done
   | I16 o, Ints a ->
       for r = 0 to run - 1 do
-        A.unsafe_set o (k + r) (check (-32768) 32767 (A.unsafe_get a (j + r)))
+        A.unsafe_set o (k + r)
+          (check place (-32768) 32767 (A.unsafe_get a (j + r)))
       done
   | I32 o, Ints a ->
       for r = 0 to run - 1 do
         A.unsafe_set o (k + r)
           (Int32.of_int
-             (check (-2147483648) 2147483647 (A.unsafe_get a (j + r))))
+             (check place (-2147483648) 2147483647 (A.unsafe_get a (j + r))))
       done
   | I64 o, Ints a ->
       for r = 0 to run - 1 do
@@ -538,7 +540,7 @@ let read t bounds : Nx.host Nx.packed =
       done;
       let npix = Array.fold_left ( * ) 1 len in
       let place = tile_place t !number in
-      let v = decode_tile t !number npix budget in
+      let v = decode_tile t place !number npix budget in
       (* the intersection of the tile and the window *)
       let a = Array.mapi (fun i s -> Int.max s (fst fb.(i))) start in
       let b =
