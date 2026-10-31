@@ -9,16 +9,17 @@
     Reading raises {!Err.Fail} at the place that fails, the tile's when a
     tile does not decode. However its descriptors overlap, a read fetches
     at most the heap's size in tile bytes, and inflates a gzip tile to at
-    most 8 bytes per pixel. A PLIO tile whose descriptor, size and part of
-    the window are those of one of the last two such tiles a read decoded
-    shares its decoding, as IRAF's masks point every empty line at one
-    list, so the read fetches that list once.
+    most 8 bytes per pixel. A PLIO or HCOMPRESS tile whose descriptor,
+    size and part of the window are those of one of the last two such tiles
+    a read decoded shares its decoding, as IRAF's masks point every empty
+    line at one list, so the read fetches that list once.
 
     A read allocates its window and decodes one tile at a time. Decoding a
-    PLIO tile, whose few heap bytes may stand for a tile of any size, costs
-    memory and work in proportion to its list and its part of the window.
-    A Rice, gzip or uncompressed tile decodes whole, at most 1032 pixels
-    per heap byte. *)
+    PLIO or HCOMPRESS tile, whose few heap bytes may stand for a tile of
+    any size, costs memory and work in proportion to its stream and its
+    part of the window. A Rice, gzip or uncompressed tile decodes whole, at
+    most 1032 pixels per heap byte. A lossy H-compressed tile's pixels past
+    the stored type are clamped to it. *)
 
 (** {1:description Description} *)
 
@@ -33,6 +34,7 @@ type codec =
           stored pixels: 32768 for a 16-bit image of [BZERO = 32768] and
           [BSCALE = 1], whose lists hold the unsigned values as cfitsio
           writes them, else 0. *)
+  | Hcompress of { smooth : bool }  (** [SMOOTH] is nonzero *)
 
 val codec_name : codec -> string
 (** [codec_name c] is [c]'s [ZCMPTYPE], as ["RICE_1"]. *)
@@ -67,9 +69,8 @@ val describe : Header.t -> Hdu.store -> t
     unit [store]. A dithered image without [ZDITHER0] has seed 1, as
     cfitsio reads the files written before the keyword existed. Raises
     {!Err.Fail} if a keyword does not read or is out of range, a codec is
-    unknown or not read (HCOMPRESS_1), or the table does not hold the
-    tiles: a codec other than PLIO_1 decodes at most 1032 pixels per heap
-    byte. *)
+    unknown, or the table does not hold the tiles: a codec other than
+    PLIO_1 and HCOMPRESS_1 decodes at most 1032 pixels per heap byte. *)
 
 val read : t -> (int * int) array -> Nx.host Nx.packed
 (** [read t bounds] is the window [bounds], given in tensor axis order, in
@@ -133,4 +134,5 @@ val code :
     goes to [heap]. It is the table's rows and description. Memory beyond
     the image is one slab of whole tile rows, at most 4 MiB unless one tile
     row is larger. Raises [Invalid_argument] if [plan] is
-    [Lossless (Plio_1 _)], which is not written. *)
+    [Lossless (Plio_1 _)] or [Lossless (Hcompress _)], which are not
+    written. *)

@@ -20,6 +20,7 @@ type codec =
   | Gzip_2
   | Nocompress
   | Plio_1 of { offset : int }
+  | Hcompress of { smooth : bool }
 
 let codec_name = function
   | Rice _ -> "RICE_1"
@@ -27,6 +28,7 @@ let codec_name = function
   | Gzip_2 -> "GZIP_2"
   | Nocompress -> "NOCOMPRESS"
   | Plio_1 _ -> "PLIO_1"
+  | Hcompress _ -> "HCOMPRESS_1"
 
 (* A per-tile parameter: a column of the table, a keyword, or absent. *)
 type 'a param = Column of Bintable.column | Keyword of 'a | Absent
@@ -58,10 +60,11 @@ let tile_place t n = Err.sub t.table.place ("tile " ^ Int.to_string (n + 1))
 (* The most pixels a byte of the heap decodes to, if the codec bounds it: a
    gzip tile stores at least one byte per pixel and deflate expands at most
    1032-fold. A PLIO list zero-fills its tile past its end and many rows
-   may share it, so a few bytes stand for any number of pixels: it decodes
-   only the window's part of a tile. *)
+   may share it, and an H-compressed tile of equal pixels takes 26 bytes at
+   any size, so a few bytes stand for any number of pixels: those codecs
+   decode only the window's part of a tile. *)
 let max_pixels_per_byte = function
-  | Plio_1 _ -> None
+  | Plio_1 _ | Hcompress _ -> None
   | _ -> Some 1032
 
 (* cfitsio's fpack stores an unsigned 16-bit image (BZERO = 32768, BSCALE
@@ -164,9 +167,11 @@ let describe h (store : Hdu.store) =
     | "GZIP_2" -> Gzip_2
     | "NOCOMPRESS" -> Nocompress
     | "PLIO_1" -> Plio_1 { offset = plio_offset h zbitpix }
-    | "HCOMPRESS_1" as c ->
-        Hdu.card_fail h "ZCMPTYPE"
-          (strf "%s is not read; decompress the file with funpack" c)
+    | "HCOMPRESS_1" ->
+        (* cfitsio's decoder packs its 64-bit pixels into 32 bits *)
+        if zbitpix = 64 then
+          Hdu.card_fail h "ZCMPTYPE" "HCOMPRESS codes up to 32-bit integers";
+        Hcompress { smooth = zval "SMOOTH" 0 <> 0 }
     | c -> Hdu.card_fail h "ZCMPTYPE" (strf "%S is no tile compression" c)
   in
   (match max_pixels_per_byte codec with
@@ -425,13 +430,55 @@ let fill_box b (out : ints) p m v =
     m := !m - run
   done
 
+(* [rect place b (nx, ny)] is the rows [x0, x1) and columns [y0, y1) of
+   an H-compressed stream of [nx × ny] pixels that the box [b] covers, in
+   order. The stream's two axes are the tile's longer than 1, its rows the
+   slower, as cfitsio and astropy write them; a tile of one line may be one
+   row or one column. Raises {!Err.Fail} at [place] for another size. *)
+let rect place b (nx, ny) =
+  let axes =
+    List.filter (fun i -> b.ext.(i) > 1) (List.init (Array.length b.ext) Fun.id)
+  in
+  let span i = (b.start.(i), b.start.(i) + b.len.(i)) in
+  let bad () =
+    fail_at place "the stream holds %d x %d pixels, the tile [%s]" nx ny
+      (String.concat "; "
+         (List.rev_map string_of_int (Array.to_list b.ext)))
+  in
+  match axes with
+  | [] when nx = 1 && ny = 1 -> (0, 1, 0, 1)
+  | [ u ] when nx = 1 && ny = b.ext.(u) ->
+      let y0, y1 = span u in
+      (0, 1, y0, y1)
+  | [ u ] when ny = 1 && nx = b.ext.(u) ->
+      let x0, x1 = span u in
+      (x0, x1, 0, 1)
+  | [ u; v ] when ny = b.ext.(u) && nx = b.ext.(v) ->
+      let x0, x1 = span v and y0, y1 = span u in
+      (x0, x1, y0, y1)
+  | _ -> bad ()
+
 (* Decoding one tile's box *)
 
+(* [clip t out n] clamps the first [n] values of [out] to the stored type's
+   range. A lossy H-compressed tile can overshoot it, and the nearest value
+   it holds is the nearest to the image's. *)
+let clip t (out : ints) n =
+  let lo, hi =
+    match t.zbitpix with
+    | 8 -> (0, 255)
+    | 16 -> (-32768, 32767)
+    | _ -> (-2147483648, 2147483647)
+  in
+  for i = 0 to n - 1 do
+    A.unsafe_set out i (Int.max lo (Int.min hi (A.unsafe_get out i)))
+  done
+
 (* [boxed t] is [true] if [t]'s COMPRESSED_DATA tiles decode to the box a
-   read asks of them, as PLIO ones do: their few bytes may stand for a
-   tile of any size. The other codecs decode whole tiles, which
+   read asks of them, as PLIO and HCOMPRESS ones do: their few bytes may
+   stand for a tile of any size. The other codecs decode whole tiles, which
    the heap bounds. *)
-let boxed t = match t.codec with Plio_1 _ -> true | _ -> false
+let boxed t = match t.codec with Plio_1 _ | Hcompress _ -> true | _ -> false
 
 (* The box that tiles decoded whole ignore. *)
 let no_box = { ext = [||]; start = [||]; len = [||] }
@@ -500,6 +547,20 @@ let decode_tile t place n rows cd npix box budget =
             for i = 0 to k - 1 do
               A.unsafe_set out i (A.unsafe_get out i - offset)
             done;
+          if t.quantized then
+            dequantize ~starts:(starts box) ~line:box.len.(0) out
+          else Ints out
+      | Hcompress { smooth } ->
+          not_floats t place "HCOMPRESS";
+          let k = box_pixels box in
+          let out = ints k in
+          let scale =
+            try
+              let x0, x1, y0, y1 = rect place box (Hcompress.size b) in
+              Hcompress.decode ~smooth b ~x0 ~x1 ~y0 ~y1 out
+            with Fail e -> fail_at place "%s" e
+          in
+          if scale > 1 then clip t out k;
           if t.quantized then
             dequantize ~starts:(starts box) ~line:box.len.(0) out
           else Ints out
@@ -1052,6 +1113,8 @@ let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
              | Lossless Nocompress ->
                  (add (bytes ~shuffle:false), (0, 0), 0., 0.)
              | Lossless (Plio_1 _) -> invalid_arg "Tiles.code: PLIO_1"
+             | Lossless (Hcompress _) ->
+                 invalid_arg "Tiles.code: HCOMPRESS_1 tiles are not written"
              | Quantized { q } -> (
                  let f = floats n in
                  gather saxes w start len (fun i off ->

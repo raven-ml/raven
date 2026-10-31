@@ -4,6 +4,7 @@
   test_hdu
   test_image
   test_tiles
+  test_hcompress
   test_unit
   test_table
   test_domains

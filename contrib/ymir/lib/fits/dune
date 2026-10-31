@@ -15,6 +15,7 @@
   bintable
   rice
   plio
+  hcompress
   quantize
   tiles
   fits_unit

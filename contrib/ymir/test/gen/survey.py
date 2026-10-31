@@ -470,8 +470,7 @@ SOURCES = [
         "https://portal.nersc.gov/cfs/cosmo/data/legacysurvey/dr10/south/coadd/000/0001m002/legacysurvey-0001m002-maskbits.fits.fz",
         "NERSC Legacy Surveys DR10 (south coadd, brick 0001m002, maskbits)",
         "Public Legacy Surveys data; acknowledgement requested (legacysurvey.org).",
-        "fpack's HCOMPRESS_1 tiles of int32 and uint8, a codec ymir does "
-        "not decode",
+        "fpack's HCOMPRESS_1 tiles of int32 and uint8",
         "e6a82a9cce746df80e970ca3938f1af89d3382195d402018696f7b044608a464",
         3,
         lambda r, h: [
@@ -505,8 +504,7 @@ SOURCES = [
 
 
 # Values: astropy's reading of each cut file, as digests of float64. Images
-# and columns of int64, which float64 does not hold, and HCOMPRESS tiles,
-# which ymir does not decode, are left out.
+# and columns of int64, which float64 does not hold, are left out.
 
 def digest(values):
     """MD5 of [values] as little-endian float64, every NaN as one NaN."""
@@ -570,8 +568,7 @@ def values_lines(name, path):
             if isinstance(hdu, fits.GroupsHDU):
                 continue
             if isinstance(hdu, (fits.PrimaryHDU, fits.ImageHDU, fits.CompImageHDU)):
-                hcompress = getattr(hdu, "compression_type", "") == "HCOMPRESS_1"
-                if hdu.data is not None and h["BITPIX"] != 64 and not hcompress:
+                if hdu.data is not None and h["BITPIX"] != 64:
                     lines += image_lines(name, i, hdu)
             elif isinstance(hdu, fits.BinTableHDU):
                 lines += column_lines(name, i, hdu)

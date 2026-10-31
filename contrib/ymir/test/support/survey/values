@@ -367,6 +367,8 @@ ps1-mask-gzip 1 image 8x6279 04402fa0e094bd9f2f9e6e782d6890d1
 legacy-dr10-image hdus 2
 legacy-dr10-image 1 image 100x300 e39f078e9afa512f096f8f72621443b4
 legacy-dr10-maskbits hdus 3
+legacy-dr10-maskbits 1 image 100x200 c40750eadfdc3b3893f327e9fba08792
+legacy-dr10-maskbits 2 image 100x200 17654ea2aacd9e472094439442bd07a0
 nicer-rmf hdus 3
 nicer-rmf 1 verify
 nicer-rmf 1 column 1 1501 766b2dd3da2b201a35d46a918deec524

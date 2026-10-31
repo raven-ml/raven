@@ -112,7 +112,7 @@ numeric binary-table column, as MD5 digests of float64.
 - Archive: NERSC Legacy Surveys DR10 (south coadd, brick 0001m002, maskbits)
 - Terms: Public Legacy Surveys data; acknowledgement requested (legacysurvey.org).
 - SHA-256 of the fetched bytes: `e6a82a9cce746df80e970ca3938f1af89d3382195d402018696f7b044608a464`
-- Covers: fpack's HCOMPRESS_1 tiles of int32 and uint8, a codec ymir does not decode.
+- Covers: fpack's HCOMPRESS_1 tiles of int32 and uint8.
 - Cut:
   - HDU 0 (original HDU 0): as stored.
   - HDU 1 (original HDU 1): rows 55-56 of 1296 (0-based); heap bytes 11698-13230 kept, descriptors moved down by 11698; rewritten: CRPIX1 CRPIX2 NAXIS2 PCOUNT ZNAXIS1 ZNAXIS2.

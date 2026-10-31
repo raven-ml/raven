@@ -317,12 +317,12 @@ module Fits : sig
 
       {b Memory.} A read allocates its window, and decodes the tiles it
       meets one at a time: a Rice, gzip or uncompressed tile whole, in
-      memory for its pixels, which its heap bytes bound, and a PLIO tile
-      only where it meets the window, in memory for its list and that part.
-      A few bytes of a PLIO tile stand for any number of pixels, so the
-      file's size bounds neither the image nor such a tile: a whole read
-      allocates the declared {!Image.shape}, which a caller checks before
-      reading an untrusted image whole.
+      memory for its pixels, which its heap bytes bound, and a PLIO or
+      HCOMPRESS tile only where it meets the window, in memory for its
+      stream and that part. A few bytes of a PLIO or HCOMPRESS tile stand
+      for any number of pixels, so the file's size bounds neither the image
+      nor such a tile: a whole read allocates the declared {!Image.shape},
+      which a caller checks before reading an untrusted image whole.
 
       {b Byte order.} FITS stores big-endian. Every result is host memory
       independent of the file. *)

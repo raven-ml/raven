@@ -391,8 +391,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## ymir, sowilo
 
-- ymir.fits: read HCOMPRESS_1 (Legacy Surveys ships maskbits and nexp in
-  it) and PLIO_1; both raise today (tiles.ml)
 - ymir bench: only the Mac has a section, recorded 2026-10-07 under OCaml
   5.5.1 before rig. fits-image-4096/raw-int16-rice reads 4435930 words
   there and 995245 on fudge; its +4.9% on the Mac did not show on fudge

@@ -13,6 +13,8 @@ CHECKSUM. With --check, the files are written to a temporary directory and
 compared with the committed ones. It runs on x86-64 only.
 """
 
+import contextlib
+import ctypes
 import filecmp
 from fractions import Fraction
 import hashlib
@@ -23,7 +25,8 @@ import tempfile
 
 import numpy as np
 from astropy.io import fits
-from astropy.io.fits.hdu.compressed import _codecs
+from astropy.io.fits.hdu.compressed import _codecs, _compression, _tiled_compression, compressed
+from astropy.io.fits.hdu.compressed import header as compressed_header
 
 # gzip members carry their time of writing; pin it so the files are a
 # function of this script. From Python 3.13, gzip.compress writes the
@@ -250,6 +253,126 @@ def tiles(path):
             f.write(" ".join(["QREF/same"] + ["1" if x else "0" for x in same]) + "\n")
 
 
+@contextlib.contextmanager
+def thin_hcompress_tiles():
+    """Let astropy 7.1.0 write and read H-compressed tiles of one row or
+    column. cfitsio's writer and astropy's refuse tiles under 4 pixels a
+    side, which the stream holds and cfitsio's decoder reads. Inside,
+    astropy's own build of cfitsio's fits_hcompress64 codes such tiles, with
+    the size check that astropy's wrapper adds left out, and a tile's two
+    axes are its last two when fewer than two exceed 1. It patches
+    HCompress1.encode, _update_tile_settings and _validate_tile_shape as
+    astropy 7.1.0 names them."""
+    lib = ctypes.CDLL(_compression.__file__)
+    hcompress = lib.fits_hcompress64
+    hcompress.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                          ctypes.c_void_p, ctypes.POINTER(ctypes.c_long),
+                          ctypes.POINTER(ctypes.c_int)]
+
+    def encode(self, buf):
+        data = np.ascontiguousarray(np.asarray(buf), dtype=np.int64)
+        out = ctypes.create_string_buffer(16 * data.size + 1024)
+        size, status = ctypes.c_long(len(out)), ctypes.c_int(0)
+        hcompress(data.ctypes.data, self.ny, self.nx, self.scale, out, ctypes.byref(size),
+                  ctypes.byref(status))
+        assert status.value == 0, status.value
+        return out.raw[: size.value]
+
+    def settings(settings, compression_type, shape):
+        if compression_type == "HCOMPRESS_1":
+            two = tuple(n for n in shape if n != 1)
+            settings["nx"], settings["ny"] = two if len(two) == 2 else tuple(shape[-2:])
+            return settings
+        return update(settings, compression_type, shape)
+
+    def validate(*, tile_shape, compression_type, image_header):
+        if compression_type == "HCOMPRESS_1":
+            return tuple(tile_shape)
+        return check(tile_shape=tile_shape, compression_type=compression_type,
+                     image_header=image_header)
+
+    saved = (_codecs.HCompress1.encode, _tiled_compression._update_tile_settings,
+             compressed._validate_tile_shape, compressed_header._validate_tile_shape)
+    _, update, check, _ = saved
+    _codecs.HCompress1.encode = encode
+    _tiled_compression._update_tile_settings = settings
+    compressed._validate_tile_shape = validate
+    compressed_header._validate_tile_shape = validate
+    try:
+        yield
+    finally:
+        (_codecs.HCompress1.encode, _tiled_compression._update_tile_settings,
+         compressed._validate_tile_shape, compressed_header._validate_tile_shape) = saved
+
+
+def hcompress(path):
+    """H-compressed tiles: lossless int16, uint16, uint8 and int32 of odd
+    sizes with partial edges, lossy ones with and without SMOOTH, a quantized
+    float, a cube, edge tiles of one row and one column, and a lossy tile
+    that decodes past int16, whose values are cfitsio's clamped."""
+    shape = (10, 13)
+    n = shape[0] * shape[1]
+    rng = np.random.default_rng(13)
+    hdus = [fits.PrimaryHDU()]
+
+    def comp(name, data, tile_shape, **kw):
+        hdus.append(fits.CompImageHDU(data, name=name, compression_type="HCOMPRESS_1",
+                                      tile_shape=tile_shape, **kw))
+
+    comp("H_I16", pattern(n, np.int16).reshape(shape), (5, 7))
+    comp("H_U16", pattern(n, np.uint16).reshape(shape), (5, 7))
+    comp("H_U8", pattern(n, np.uint8).reshape(shape), (5, 7))
+    comp("H_I32", pattern(n, np.int32).reshape(shape), (5, 7))
+    # A sky: a gradient, a source and noise.
+    y, x = np.mgrid[0:24, 0:29]
+    sky = 1000 + 3 * x + 2 * y + 400 * np.exp(-((x - 17) ** 2 + (y - 9) ** 2) / 8)
+    sky = sky + rng.normal(0, 10, sky.shape)
+    comp("H_S4", sky.astype(np.int16), (12, 29), hcomp_scale=4)
+    comp("H_S8_SMOOTH", sky.astype(np.int16), (24, 29), hcomp_scale=8, hcomp_smooth=1)
+    comp("H_S32_SMOOTH", sky.astype(np.int16), (12, 29), hcomp_scale=32, hcomp_smooth=1)
+    comp("H_I32_S16", (1000 * sky).astype(np.int32), (24, 29), hcomp_scale=16000,
+         hcomp_smooth=1)
+    noisy = (100 + 5 * rng.standard_normal(n)).astype(np.float32)
+    noisy[[4, 50]] = np.nan
+    comp("H_Q", noisy.reshape(shape), (5, 13), quantize_level=4.0, quantize_method=1,
+         dither_seed=3)
+    comp("H_CUBE", pattern(2 * 5 * 7, np.int16).reshape((2, 5, 7)), (1, 5, 7))
+    comp("H_ROW", pattern(11 * 13, np.int16).reshape((11, 13)), (5, 13))
+    comp("H_COL", pattern(n, np.int16).reshape(shape), (10, 6))
+    saturated = np.full((8, 9), 32767, dtype=np.int16)
+    saturated[rng.random(saturated.shape) < 0.5] = 30000
+    comp("H_CLIP", saturated, (8, 9), hcomp_scale=256)
+    mask = np.full((8, 9), 255, dtype=np.uint8)
+    mask[rng.random(mask.shape) < 0.5] = 0
+    comp("H_CLIP_U8", mask, (8, 9), hcomp_scale=128)
+    high = np.full((8, 9), 2147483647, dtype=np.int32)
+    high[rng.random(high.shape) < 0.5] = 2147483647 - 300000
+    comp("H_CLIP_I32", high, (8, 9), hcomp_scale=65536)
+    write(path, hdus)
+    with fits.open(path) as hdul:
+        values(path.with_suffix(".values"), hdul, scaled=False)
+    # Lossy tiles that decode past their type. cfitsio's int16 reader
+    # clamps there; astropy casts the 32-bit pixels its decoder packs,
+    # wrapping those past the type, and its decoder packs each 64-bit
+    # pixel into 32 bits. The int32 tile's pixels lie within 2^30 of
+    # int32's top, so a negative one wrapped once.
+    lines = path.with_suffix(".values").read_text().splitlines()
+    with fits.open(path, disable_image_compression=True) as hdul:
+        for name, scale, lo, hi in [("H_CLIP", 256, -32768, 32767),
+                                    ("H_CLIP_U8", 128, 0, 255),
+                                    ("H_CLIP_I32", 65536, -2**31, 2**31 - 1)]:
+            tile = hdul[name].data["COMPRESSED_DATA"][0]
+            codec = _codecs.HCompress1(scale=scale, smooth=0, bytepix=8, nx=8, ny=9)
+            decoded = codec.decode(np.asarray(tile, dtype=np.uint8)).astype(np.int64)
+            if name == "H_CLIP_I32":
+                decoded = np.where(decoded < 0, decoded + 2**32, decoded)
+                assert (decoded > 2**30).all()
+            assert (decoded > hi).any() or (decoded < lo).any()
+            lines = [l for l in lines if not l.startswith(name + " ")]
+            lines.append(" ".join([name] + [text(v) for v in np.clip(decoded, lo, hi)]))
+    path.with_suffix(".values").write_text("\n".join(lines) + "\n")
+
+
 def tables(path):
     """A binary table of every TFORM code, offsets, TNULL, scaling, cell
     shapes, text grids and heap arrays, and an ASCII table. The values file
@@ -446,6 +569,8 @@ def write_all(directory):
     tiles(directory / "tiles.fits")
     tables(directory / "tables.fits")
     plio(directory / "plio.fits")
+    with thin_hcompress_tiles():
+        hcompress(directory / "hcompress.fits")
 
 
 def main():

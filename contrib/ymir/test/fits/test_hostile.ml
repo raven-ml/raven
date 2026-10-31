@@ -27,6 +27,7 @@ let files =
     "golden/tiles.fits";
     "golden/tables.fits";
     "golden/plio.fits";
+    "golden/hcompress.fits";
   ]
   @ (Sys.readdir "../support/survey" |> Array.to_list
     |> List.filter (fun f -> Filename.check_suffix f ".fits")
@@ -207,6 +208,7 @@ let regions =
                 "gzip"
               else if cmp = "NOCOMPRESS" then "uncompressed tiles"
               else if cmp = "PLIO_1" then "plio"
+              else if cmp = "HCOMPRESS_1" then "hcompress"
               else "unknown codec"
             in
             tag label [ sp.data ]
