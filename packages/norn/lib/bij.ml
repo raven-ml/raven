@@ -131,10 +131,6 @@ let greater ~low =
   let bounds = monotone (fun x -> Nx.add low (Nx.exp x)) in
   { name = "greater"; image; bounds; forward; inverse; shape = Fun.id }
 
-(* [softplus x] is [log (1 + exp x)], exact in both tails. *)
-let softplus x =
-  Nx.add (Nx.maximum x (const x 0.)) (Nx.log1p (Nx.exp (Nx.neg (Nx.abs x))))
-
 let interval ~low ~high =
   let forward u =
     let width = Nx.sub high low in
@@ -144,7 +140,7 @@ let interval ~low ~high =
     let x = Nx.where below x (down high) in
     (* log (high - low) + log sigmoid u + log sigmoid (-u) *)
     let ld =
-      Nx.sub (Nx.log width) (Nx.add (softplus u) (softplus (Nx.neg u)))
+      Nx.sub (Nx.log width) (Nx.add (Nx.softplus u) (Nx.softplus (Nx.neg u)))
     in
     (x, saturate (Nx.logical_and above below) ld)
   in

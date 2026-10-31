@@ -317,9 +317,6 @@ raven / llama.cpp (Vulkan; ROCm):
   `Evidence.expectation`, still a biased error)
 - norn: variational layer: `Gaussian.pathfinder`, `importance` (which
   `Weighted`'s doc already names as a source), `Vi`, each checked by k̂
-- norn: `poisson`, `neg_binomial` and `binomial`'s log mass cancels O(n)
-  terms, about 8.5e-3 nats off at float32 and n = 1e6: a saddle-point form
-  (Loader 2000, stirlerr and bd0) across the discrete families
 - distributions: `von_mises`, `lkj_cholesky`, `truncated`,
   `hmm` with `hmm_marginals`, and an example that sums an HMM's states out
 

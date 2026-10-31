@@ -161,20 +161,391 @@ let checked context d =
 let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi)
 let log_pi = Float.log Float.pi
 
-let softplus x =
-  Nx.add (Nx.maximum x (const x 0.)) (Nx.log1p (Nx.exp (Nx.neg (Nx.abs x))))
-
-let log_sigmoid x = Nx.neg (softplus (Nx.neg x))
-
-(* [xlogy x y] is [x log y], [0] where [x] is [0]. *)
-let xlogy x y =
-  Nx.where (Nx.equal x (const x 0.)) (const x 0.) (Nx.mul x (Nx.log y))
+let log_sigmoid x = Nx.neg (Nx.softplus (Nx.neg x))
 
 (* [inside ok x safe] is [x] where [ok] holds and [safe] elsewhere: a value
    outside the support enters the density's arithmetic as [safe], so neither its
    value nor its derivative is NaN, and the factor is then set to [-inf]. *)
 let inside ok x safe = Nx.where ok x (const x safe)
 let outside ok f = Nx.where ok f (neg_inf f)
+
+(* Count masses *)
+
+(* A count's log mass, [log (n! / (x! (n - x)!)) + x log p + ...], sums terms
+   near [n log n] that cancel to near [log n], losing about [log10 n] digits.
+   Loader's saddle-point form (Fast and Accurate Computation of Binomial
+   Probabilities, 2000) writes it as terms that keep their sign:
+
+     log p(x) = δ(n) - δ(a) - δ(b) - D(a, M_a) - D(b, M_b)
+                - log (2π a b / n) / 2
+
+   for [a + b = n] and means [M_a + M_b = n], with Stirling's error [δ] and
+   the deviance [D]. A Poisson mass is the limit [-δ(x) - D(x, rate)
+   - log (2π x) / 2].
+
+   Error, from nx's promises ([log] and [log1p] within 2 ulps, [sigmoid] and
+   [softplus] within 3) and half an ulp, [u = ε/2], per arithmetic step.
+   Counts of 1 or more have masses at most 0.4, so [|f| >= 0.9], or 0.69 for
+   a binomial's interior: an absolute error [k u] is at most [1.45 k u |f|].
+   The terms share a sign but for [δ(n)], below [δ(a)], so [f] is as exact,
+   relatively, as its worst term, plus the sum's roundings:
+   - [δ] of an integer reads a table to 15 (within [u]) and seven series
+     terms above (a few [u]). Of a real [n], it is [δ(n + 7)]'s series plus
+     seven steps [δ(m) - δ(m + 1) = (m + 1/2) log1p (1/m) - 1], each a
+     product within [7 u] of a value near 1 less an exact 1: [50 u]
+     absolutely, as is [δ(r) + log r / 2].
+   - [D]'s series, where [x / m] is in [(1/2, 2)], subtracts an exact
+     [x - m] (Sterbenz) and adds terms within [1/9] of each other: [4 u].
+     Its direct form [x L - (x - m)], [L = log (x / m)], loses [5 u x |L|]
+     to [L]'s 2 ulps and the product and [u (|x - m| + D)] to the
+     subtraction; at that interval's ends [x |L| <= 3.6 D] and
+     [|x - m| <= 6.5 D], so [26 u D]. Past the band of [2^32], [L] is
+     [log x - log m] with [log m = log n + log_sigmoid l] or the like:
+     [4 u (|log x| + |log n|) + 6 u |log m - log n|] and two roundings,
+     where [|L| >= 22] and [|log x|, |log n| <= 21.5]: [30 u D].
+   - [log (2π x) / 2] and the sum's roundings: [4 u].
+   Hence [c_f]: [24] for poisson and binomial ([D]'s [30 u] and the sum),
+   and [64] for the negative binomial, whose two real [δ] add [100 u]
+   absolutely, [145 u |f|].
+   The means add [ε |x - m|] times a family's count of their roundings, as
+   moving [M] by [η M] moves [D(a, M)] by [η |a - M|]:
+   - poisson: the rate is exact, but the direct form rounds [x / m],
+     [x u] in [D], where [x <= 2 |x - m|]: [c_m = 1].
+   - binomial: [M_a = n sigmoid l] is within [3.5 ε], as is [M_b], and
+     [|a - M_a| = |b - M_b| = |x - m|]; with both ratios' roundings: [9].
+   - negative binomial: [a - M_a] and [M_b] are within [2 ε], and
+     [|a - M_a| = |b - M_b| <= |x - m|]; with the ratios: [6]. *)
+
+(* The Stirling series [δ(n) ~ Σ_k c_k / n^(2k+1)], [c_k] the Bernoulli
+   numbers' [B_(2k+2) / ((2k+1) (2k+2))], signs alternating. *)
+let stirling =
+  [|
+    1. /. 12.;
+    1. /. 360.;
+    1. /. 1260.;
+    1. /. 1680.;
+    1. /. 1188.;
+    691. /. 360360.;
+    1. /. 156.;
+    3617. /. 122400.;
+    43867. /. 244188.;
+    174611. /. 125400.;
+    77683. /. 5796.;
+    236364091. /. 1506960.;
+    657931. /. 300.;
+    3392780147. /. 93960.;
+    1723168255201. /. 2492028.;
+    7709321041217. /. 505920.;
+    151628697551. /. 396.;
+  |]
+
+(* [δ(n)] at the integers [0, ..., 15], from Loader's table; [δ(0)] is a
+   placeholder. *)
+let stirling_table =
+  [|
+    0.;
+    0.081061466795327258219670264;
+    0.041340695955409294093822081;
+    0.0276779256849983391487892927;
+    0.020790672103765093111522771;
+    0.0166446911898211921631948653;
+    0.013876128823070747998745727;
+    0.0118967099458917700950557241;
+    0.010411265261972096497478567;
+    0.0092554621827127329177286366;
+    0.008330563433362871256469318;
+    0.0075736754879518407949720242;
+    0.006942840107209529865664152;
+    0.0064089941880042070684396310;
+    0.005951370112758847735624416;
+    0.0055547335519628013710386899;
+  |]
+
+(* The series' terms that matter at [dt] from [cut] up: those above [eps / 4]
+   of the first at [cut], where they are largest. The series is asymptotic:
+   at 5.25 no number of terms reaches float64's [eps / 4], at 7 thirteen do,
+   at 16 seven. *)
+let stirling_terms dt cut =
+  let eps = Prec.eps dt in
+  let rec go k =
+    if k = Array.length stirling then
+      invalid_argf "Norn.Dist: Stirling's series does not reach %g at %g" eps
+        cut
+    else
+      let rel = stirling.(k) /. stirling.(0) in
+      if rel /. (cut ** float_of_int (2 * k)) < eps /. 4. then k
+      else go (k + 1)
+  in
+  go 1
+
+(* [stirling_series n cut] is the series at [n >= cut], to the terms that
+   matter there. *)
+let stirling_series n cut =
+  let k = stirling_terms (Nx.dtype n) cut in
+  let r = Nx.recip n in
+  let r2 = Nx.square r in
+  let acc = ref (const n stirling.(k - 1)) in
+  for i = k - 2 downto 0 do
+    acc := Nx.sub (const n stirling.(i)) (Nx.mul r2 !acc)
+  done;
+  Nx.mul r !acc
+
+(* [delta_int n] is [δ(n) = log Γ(n + 1) - (n + 1/2) log n + n - log √(2π)]
+   at an integer [n >= 1]: Loader's table to 15, the series above. *)
+let delta_int n =
+  let small = Nx.less n (const n 15.5) in
+  let table =
+    Nx.place (Nx.beside n) (Nx.create (Nx.dtype n) [| 16 |] stirling_table)
+  in
+  let at = Nx.take (Nx.cast Nx.int64 (inside small n 0.)) table in
+  Nx.where small at (stirling_series (Nx.where small (const n 16.) n) 16.)
+
+(* A real [δ(n)] is [δ(n + shift)]'s series and [shift] steps down. *)
+let shift = 7
+
+(* [step m] is [δ(m) - δ(m + 1) = (m + 1/2) log1p (1/m) - 1] for [m >= 1]. *)
+let step m = Nx.sub_s (Nx.mul (Nx.add_s m 0.5) (Nx.log1p (Nx.recip m))) 1.
+
+(* [steps n first] is [δ(n + shift)] and the steps from [n + first] up. *)
+let steps n first =
+  let acc = ref (stirling_series (Nx.add_s n (float_of_int shift)) 7.) in
+  for j = shift - 1 downto first do
+    acc := Nx.add !acc (step (Nx.add_s n (float_of_int j)))
+  done;
+  !acc
+
+(* [delta_real n] is [δ(n)] at a real [n >= 1], without [lgamma]. R's
+   stirlerr.c takes [lgamma] below 5.25 and its series above, which at 5.25
+   reaches only [2e-14]; [lgamma]'s cancellation there costs some 100 [u]
+   absolutely. *)
+let delta_real n = steps n 0
+
+(* [delta_half r] is [δ(r) + log r / 2] at a real [r > 0]. Below 1 its first
+   step is [(r + 1/2) log1p r - r log r - 1], where [δ(r)]'s and [log r]'s
+   slopes, [∓1 / (2r)], cancel: its derivative stays finite as [r] nears 0,
+   where theirs overflow. *)
+let delta_half r =
+  let below = Nx.less r (const r 1.) in
+  let lo = inside below r 0.5 and hi = Nx.where below (const r 1.) r in
+  let first =
+    Nx.where below
+      (Nx.sub_s
+         (Nx.sub
+            (Nx.mul (Nx.add_s lo 0.5) (Nx.log1p lo))
+            (Nx.mul lo (Nx.log lo)))
+         1.)
+      (Nx.add (step hi) (Nx.mul_s (Nx.log hi) 0.5))
+  in
+  Nx.add (steps r 1) first
+
+(* The terms of [D]'s series that matter at [dt], for [|v| < 1/3]. *)
+let deviance_terms dt =
+  let eps = Prec.eps dt in
+  let rec go j =
+    let term = (1. /. 9.) ** float_of_int j in
+    let rel = 2. *. term /. float_of_int ((2 * j) + 1) in
+    if rel < eps /. 4. then j else go (j + 1)
+  in
+  go 1
+
+(* [deviance_of x ~d ~v ~log_ratio] is [D(x, m) = x log (x / m) + m - x] from
+   [d = x - m], [v = d / (x + m)] and [log (x / m)], which a caller computes
+   without losing digits. Where [|v| < 1/3], [x / m] is in [(1/2, 2)] and
+   Loader's series [d v + 2x Σ_j v^(2j+1) / (2j + 1)] keeps [D] to its
+   digits; elsewhere the direct form [x log (x / m) - d]. *)
+let deviance_of x ~d ~v ~log_ratio =
+  let near = Nx.less (Nx.mul_s (Nx.abs v) 3.) (const v 1.) in
+  let v2 = Nx.square v in
+  let j = deviance_terms (Nx.dtype x) in
+  let acc = ref (const x (1. /. float_of_int ((2 * j) + 1))) in
+  for i = j - 1 downto 1 do
+    acc := Nx.add (const x (1. /. float_of_int ((2 * i) + 1))) (Nx.mul v2 !acc)
+  done;
+  let series =
+    Nx.add (Nx.mul d v) (Nx.mul (Nx.mul_s x 2.) (Nx.mul (Nx.mul v v2) !acc))
+  in
+  Nx.where near series (Nx.sub (Nx.mul x log_ratio) d)
+
+(* Past this factor between [x] and [m], [D]'s direct form takes
+   [log x - log m]. *)
+let ratio_band = 0x1p32
+
+(* [deviance x m log_m] is [D(x, m)] for [x > 0] and [m >= 0], [log_m] being
+   [log m]: [inf] at [m = 0]. Within a factor [2^32] it takes
+   [log (x / m)]; past it [log x - log_m], where [log_m] keeps the digits that
+   an [m] near underflow has lost and its derivative stays finite where that
+   of [x / m], [x / m^2], overflows. One [log] serves both: of [x / m] or of
+   [x]. The ratio reads [x] and [m] only where it is taken. *)
+let deviance x m log_m =
+  let d = Nx.sub x m in
+  let r = Nx.div x m in
+  let band =
+    Nx.logical_and
+      (Nx.less_equal r (const r ratio_band))
+      (Nx.greater_equal r (const r (1. /. ratio_band)))
+  in
+  let ratio = Nx.div (inside band x 1.) (inside band m 1.) in
+  let log_ratio =
+    Nx.sub
+      (Nx.log (Nx.where band ratio x))
+      (Nx.where band (const log_m 0.) log_m)
+  in
+  deviance_of x ~d ~v:(Nx.div d (Nx.add x m)) ~log_ratio
+
+(* [half lo n] is [log (2π lo (n - lo) / n) / 2] for [0 < lo <= n / 2],
+   from [log lo + log1p (-lo / n)], exact for [lo ≪ n]. *)
+let half lo n =
+  Nx.add_s
+    (Nx.mul_s (Nx.add (Nx.log lo) (Nx.log1p (Nx.neg (Nx.div lo n)))) 0.5)
+    half_log_2pi
+
+(* [log_div p q] is [log (p / q)], as [log p - log q] where the quotient is
+   subnormal and has lost its digits. Each arm reads [p] and [q] only where
+   it is taken. *)
+let log_div p q =
+  let r = Nx.div p q in
+  let normal = Nx.greater_equal r (const r (Prec.tiny (Nx.dtype r))) in
+  let off = Nx.logical_not normal in
+  Nx.where normal
+    (Nx.log (inside normal r 1.))
+    (Nx.sub (Nx.log (inside off p 1.)) (Nx.log (inside off q 1.)))
+
+(* The masses below take parameters only where a count reads them: the mass
+   at [0] does not read the deviance's, whose derivative may be infinite
+   there, and the others do not read the mass at [0]'s. *)
+
+(* [poisson_mass rate x] is [-δ(x) - D(x, rate) - log (2π x) / 2] for
+   counts [x >= 0], and [-rate] at [0]. *)
+let poisson_mass rate x =
+  let some = Nx.greater x (const x 0.) in
+  let a = inside some x 1. and m = inside some rate 1. in
+  let f =
+    Nx.add
+      (Nx.add (delta_int a) (deviance a m (Nx.log m)))
+      (Nx.add_s (Nx.mul_s (Nx.log a) 0.5) half_log_2pi)
+  in
+  Nx.where some (Nx.neg f) (Nx.neg rate)
+
+(* [neg_binomial_mass mean r x] for counts [x >= 0]. [C(x + r - 1, x)] is
+   [r / n C(n, x)] for [n = x + r]: the binomial form of [r] and [x] out of
+   [n], at means [M_r = r n / (r + mean)] and [M_x = mean n / (r + mean)],
+   times [r / n]. Its [log (r / n)] is [log1p (-x / n)] where [x < r], and
+   [-δ(r) - log r / 2] is [delta_half], computed at [r]'s own shape.
+   [D(r, M_r)] is homogeneous, [r D(1, M_r / r)], and is taken from
+   [r - M_r = (mean - x) r / (r + mean)],
+   [v = (mean - x) / (2r + mean + x)] and [log ((r + mean) / n)], none of
+   which divides by [r]'s scale: a subnormal [r] stays exact. *)
+let neg_binomial_mass mean r x =
+  let some = Nx.greater x (const x 0.) in
+  let b = inside some x 1. in
+  let rs = inside some r 1. and ms = inside some mean 1. in
+  let n = Nx.add rs b and total = Nx.add rs ms in
+  let few = Nx.greater rs b in
+  let lead =
+    Nx.where few
+      (Nx.log1p (Nx.neg (Nx.div (inside few b 0.) n)))
+      (log_div (inside (Nx.logical_not few) rs 1.) n)
+  in
+  let log_x_n =
+    Nx.where few
+      (Nx.log (Nx.div (inside few b 1.) n))
+      (Nx.log1p (Nx.neg (Nx.div (inside (Nx.logical_not few) rs 0.) n)))
+  in
+  let gap = Nx.sub ms b in
+  let d_r =
+    deviance_of rs
+      ~d:(Nx.mul gap (Nx.div rs total))
+      ~v:(Nx.div gap (Nx.add (Nx.add rs total) b))
+      ~log_ratio:(Nx.log (Nx.div total n))
+  in
+  let mx = Nx.mul n (Nx.div ms total) in
+  let d_x =
+    deviance b mx (Nx.sub (Nx.add (Nx.log n) (Nx.log ms)) (Nx.log total))
+  in
+  let f =
+    Nx.sub
+      (Nx.add lead (Nx.sub (delta_real n) (delta_int b)))
+      (Nx.add
+         (Nx.add (delta_half r) (Nx.add d_r d_x))
+         (Nx.add_s (Nx.mul_s log_x_n 0.5) half_log_2pi))
+  in
+  (* At [0], [r log (r / (r + mean))]; where [mean <= r],
+     [-mean log1p t / t] for [t = mean / r], which keeps its digits where [t]
+     is subnormal: below [ε], [log1p t / t] is [1 - t / 2] to its precision,
+     whose derivative stays finite where [1 / t] overflows. *)
+  let r0 = Nx.where some (const r 1.) r in
+  let m0 = Nx.where some (const mean 1.) mean in
+  let wide = Nx.less r0 m0 in
+  let t = Nx.div (Nx.where wide (const m0 0.) m0) r0 in
+  let big_t = Nx.greater t (const t (Prec.eps (Nx.dtype t))) in
+  let ts = inside big_t t 1. in
+  let slope =
+    Nx.where big_t
+      (Nx.div (Nx.log1p ts) ts)
+      (Nx.sub (const t 1.) (Nx.mul_s t 0.5))
+  in
+  let zero =
+    Nx.where wide
+      (Nx.mul r0 (log_div r0 (Nx.add r0 m0)))
+      (Nx.neg (Nx.mul m0 slope))
+  in
+  Nx.where some f zero
+
+(* [times n y] is [n y], [0] where [n] is [0]: no successes at a probability
+   of [0] weigh nothing. *)
+let times n y = Nx.where (Nx.equal n (const n 0.)) (const n 0.) (Nx.mul n y)
+
+(* [all_of n l lp] is [n lp], [lp = log_sigmoid l], the log mass of [n]
+   trials that all come out as their logit [l] says. Below [log ε],
+   [softplus (-l)] is [exp (-l)] to its precision, taken as
+   [(exp (-l/2) n) exp (-l/2)]: the halves stay normal where [exp (-l)] is
+   subnormal, whose rounding [n] would scale, and the product rounds once. *)
+let all_of n l lp =
+  let y = Nx.neg l in
+  let edge = Float.log (Prec.eps (Nx.dtype l)) in
+  let small = Nx.less y (const y edge) in
+  let half = Nx.exp (Nx.mul_s (inside small y edge) 0.5) in
+  Nx.where small (Nx.neg (Nx.mul (Nx.mul half n) half)) (times n lp)
+
+(* [binomial_mass logits trials x rest] for [x] successes and [rest]
+   failures out of [trials]. [δ(trials)] and [log trials] are computed at
+   [trials]' own shape; the means' logs are [log trials + log_sigmoid
+   (±logits)], exact where [trials sigmoid logits] underflows. The interior's
+   arm reads the logits at [0] and [trials] too, harmless there: the
+   derivatives of [sigmoid] and [log_sigmoid] are bounded. *)
+let binomial_mass logits trials x rest =
+  let lp = log_sigmoid logits and lq = log_sigmoid (Nx.neg logits) in
+  (* At [0] or [trials], all trials fail or all succeed. *)
+  let edge =
+    Nx.add (all_of x logits lp) (all_of rest (Nx.neg logits) lq)
+  in
+  let inner =
+    Nx.logical_and (Nx.greater x (const x 0.)) (Nx.greater rest (const x 0.))
+  in
+  let a = inside inner x 1. and b = inside inner rest 1. in
+  let n = Nx.add a b in
+  let some = Nx.greater trials (const trials 0.) in
+  let t = inside some trials 1. in
+  let dn = Nx.where inner (delta_int t) (const n (stirling_table.(2))) in
+  let ln = Nx.where inner (Nx.log t) (const n (Float.log 2.)) in
+  let f =
+    Nx.sub
+      (Nx.sub (Nx.sub dn (delta_int a)) (delta_int b))
+      (Nx.add
+         (Nx.add
+            (deviance a (Nx.mul n (Nx.sigmoid logits)) (Nx.add ln lp))
+            (deviance b
+               (Nx.mul n (Nx.sigmoid (Nx.neg logits)))
+               (Nx.add ln lq)))
+         (half (Nx.minimum a b) n))
+  in
+  Nx.where inner f edge
+
+(* A format narrower than float32 computes a mass at float32 and rounds it
+   once, as nx computes its functions: its own range and precision would
+   lose the terms' digits and underflow their ratios. *)
+let narrow dt = (Nx.Dtype.float_format dt).fraction_bits < 23
+let widen x = Nx.cast Nx.float32 x
 
 (* [open_unit k dt s] is uniform on [(0, 1)]: a draw of [Noise.uniform], a
    multiple of [2^-p], moved by half a step, so neither end is reached. *)
@@ -253,7 +624,7 @@ let logistic_quantile p = Nx.sub (Nx.log p) (Nx.log1p (Nx.neg p))
 
 let logistic ~loc ~scale =
   location_scale "logistic" ~loc ~scale
-    ~density:(fun z -> Nx.sub (Nx.neg z) (Nx.mul_s (softplus (Nx.neg z)) 2.))
+    ~density:(fun z -> Nx.sub (Nx.neg z) (Nx.mul_s (Nx.softplus (Nx.neg z)) 2.))
     ~draw:(fun k dt s -> logistic_quantile (open_unit k dt s))
     ~quantile:logistic_quantile ()
 
@@ -662,9 +1033,14 @@ let poisson ~rate =
     ~bounds:(fixed rate (0., Float.infinity))
     ~factors:(fun x ->
       let ok = Nx.greater_equal x (Nx.scalar_like x 0l) in
-      let x = Nx.cast (Nx.dtype rate) (Nx.where ok x (Nx.scalar_like x 0l)) in
-      outside ok
-        (Nx.sub (Nx.sub (xlogy x rate) rate) (Nx.lgamma (Nx.add_s x 1.))))
+      let x = Nx.where ok x (Nx.scalar_like x 0l) in
+      let dt = Nx.dtype rate in
+      let f =
+        if narrow dt then
+          Nx.cast dt (poisson_mass (widen rate) (widen x))
+        else poisson_mass rate (Nx.cast dt x)
+      in
+      outside ok f)
     ~draw:(fun k s -> Nx.Rng.poisson ~key:k (broadcast_to s rate))
     rate
 
@@ -685,16 +1061,13 @@ let neg_binomial ~mean ~dispersion =
     ~bounds:(fixed mean (0., Float.infinity))
     ~factors:(fun x ->
       let ok = Nx.greater_equal x (Nx.scalar_like x 0l) in
-      let x = Nx.cast (Nx.dtype mean) (Nx.where ok x (Nx.scalar_like x 0l)) in
-      let total = Nx.log (Nx.add r mean) in
+      let x = Nx.where ok x (Nx.scalar_like x 0l) in
+      let dt = Nx.dtype mean in
       let f =
-        Nx.add
-          (Nx.sub
-             (Nx.sub (Nx.lgamma (Nx.add x r)) (Nx.lgamma r))
-             (Nx.lgamma (Nx.add_s x 1.)))
-          (Nx.sub
-             (Nx.add (Nx.mul r (Nx.sub (Nx.log r) total)) (xlogy x mean))
-             (Nx.mul x total))
+        if narrow dt then
+          Nx.cast dt
+            (neg_binomial_mass (widen mean) (widen r) (widen x))
+        else neg_binomial_mass mean r (Nx.cast dt x)
       in
       outside ok f)
     ~draw:(fun k s ->
@@ -705,33 +1078,26 @@ let neg_binomial ~mean ~dispersion =
       Nx.Rng.poisson ~key:k2 rate)
     mean
 
-(* [times n y] is [n y], [0] where [n] is [0]: no successes at a probability
-   of [0] weigh nothing. *)
-let times n y = Nx.where (Nx.equal n (const n 0.)) (const n 0.) (Nx.mul n y)
-
 let binomial ~trials ~logits =
   let family = "binomial" in
   let dt = Nx.dtype logits in
-  (* [log C(n, x) = -log (n + 1) - log B(x + 1, n - x + 1)], whose log-beta
-     keeps the digits that the factorials' three log-gammas lose to
-     cancellation. *)
   let factors x =
     let ok =
       Nx.logical_and
         (Nx.greater_equal x (Nx.scalar_like x 0l))
         (Nx.less_equal x trials)
     in
-    let x = Nx.cast dt (Nx.where ok x (Nx.scalar_like x 0l)) in
-    let n = Nx.cast dt trials in
-    let rest = Nx.sub n x in
-    let choose =
-      Nx.neg (Nx.add (Nx.log1p n) (Nx.lbeta (Nx.add_s x 1.) (Nx.add_s rest 1.)))
+    let x = Nx.where ok x (Nx.scalar_like x 0l) in
+    let rest = Nx.sub trials x in
+    let f =
+      if narrow dt then
+        Nx.cast dt
+          (binomial_mass (widen logits) (widen trials) (widen x) (widen rest))
+      else
+        binomial_mass logits (Nx.cast dt trials) (Nx.cast dt x)
+          (Nx.cast dt rest)
     in
-    outside ok
-      (Nx.add choose
-         (Nx.add
-            (times x (log_sigmoid logits))
-            (times rest (log_sigmoid (Nx.neg logits)))))
+    outside ok f
   in
   (* Drawn at the rarer outcome's probability [sigmoid (-|logits|)], then
      counted down from [trials] where success is the likelier: a probability

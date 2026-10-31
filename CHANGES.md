@@ -49,6 +49,14 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- The log masses of `Dist.poisson`, `Dist.binomial` and `Dist.neg_binomial`
+  use Loader's saddle-point form and state their bound: at float32 and
+  counts near 10^6 the old sums of log-gammas were off by up to 0.8 nats.
+  float16 and bfloat16 compute them at float32. They stay exact at logits
+  whose sigmoid underflows, and their scores finite at means down to the
+  least subnormal.
+- The gradient of `Dist.binomial` and `Dist.bernoulli` in a logit of
+  exactly `0.` is the score, where it was `0.`.
 - Add `Diag.psis`, Pareto smoothed importance weights with each set's `k̂`,
   and `Diag.loo`, leave-one-out cross-validation of pointwise log likelihoods
   (`Norn_model.pointwise` over draws) with each point's `elpd_i` and `k̂`.

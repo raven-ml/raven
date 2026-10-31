@@ -715,7 +715,12 @@ let bijectors =
 
 (* Binomial *)
 
-let sigmoid l = 1. /. (1. +. Float.exp (-.l))
+(* [sigmoid l], to its precision where [exp (-l)] overflows. *)
+let sigmoid l =
+  if l < 0. then
+    let e = Float.exp l in
+    e /. (1. +. e)
+  else 1. /. (1. +. Float.exp (-.l))
 
 (* Mostly finite logits, often infinite ones. *)
 let logit =
@@ -873,6 +878,495 @@ let binomial =
           equal (array int32)
             (Nx.to_array (D.sample k (d (f64 0.5))))
             (Nx.to_array (Rune.jit' (fun l -> D.sample k (d l)) (f64 0.5))));
+    ]
+
+(* Count masses *)
+
+type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
+
+(* [dt]'s epsilon and least subnormal. *)
+let eps_of (type b) (dt : (float, b) Nx.dtype) =
+  let format = Nx.Dtype.float_format dt in
+  (format.epsilon, format.min_normal *. format.epsilon)
+
+(* The largest count [dt] holds with every count below it. *)
+let top_of (type b) (dt : (float, b) Nx.dtype) =
+  Float.ldexp 1. ((Nx.Dtype.float_format dt).fraction_bits + 1)
+
+type count_family = Poisson | Binomial | Neg_binomial
+
+(* The bound norn.mli states on the log mass [f] of a count [x] of mean [m]:
+   [ε (c_f |f| + c_m |x - m|)], for [ε] the dtype's epsilon, and half the
+   least subnormal [s]; a whole [s] against a reference [f] itself rounded
+   to a float. *)
+let mass_bound family (eps, s) f x m =
+  let c_f, c_m =
+    match family with
+    | Poisson -> (24., 1.)
+    | Binomial -> (24., 9.)
+    | Neg_binomial -> (64., 6.)
+  in
+  (eps *. ((c_f *. Float.abs f) +. (c_m *. Float.abs (x -. m)))) +. s
+
+let count_family = function
+  | "poisson" -> Poisson
+  | "binomial" -> Binomial
+  | "neg_binomial" -> Neg_binomial
+  | f -> failwith ("dist.golden: no count family " ^ f)
+
+(* The log mass at [x] of [family] at its parameters [a] and [b] as
+   gen/dist.py's [mass] lines give them: rate; trials and logits; mean and
+   dispersion. *)
+let count_mass (type b) (dt : (float, b) Nx.dtype) family a b x =
+  let s v = Nx.scalar dt v in
+  let d =
+    match family with
+    | Poisson -> D.poisson ~rate:(s a)
+    | Binomial -> D.binomial ~trials:(i32 (int_of_float a)) ~logits:(s b)
+    | Neg_binomial -> D.neg_binomial ~mean:(s a) ~dispersion:(s b)
+  in
+  Nx.item [] (Nx.cast Nx.float64 (D.factors d (i32 (int_of_float x))))
+
+let count_mean family a b =
+  match family with Binomial -> a *. sigmoid b | Poisson | Neg_binomial -> a
+
+(* Against mpmath at float64 and float32, at the counts and trials each
+   holds. *)
+let exact_masses =
+  let check (type b) (dt : (float, b) Nx.dtype) family a b x v =
+    if x > top_of dt || (family = Binomial && a > top_of dt) then ()
+    else
+      let m = count_mean family a b in
+      equal ~msg:(Nx.Dtype.name dt)
+        (float (mass_bound family (eps_of dt) v x m))
+        v
+        (count_mass dt family a b x)
+  in
+  group "log masses against mpmath"
+    (List.map
+       (fun l ->
+         match l with
+         | [ _; name; a; b; x; v ] ->
+             let a = float_of_string a and b = float_of_string b in
+             let x = float_of_string x and v = float_of_string v in
+             let family = count_family name in
+             test (Printf.sprintf "%s %h %h at %.0f" name a b x) (fun () ->
+                 check Nx.float64 family a b x v;
+                 check Nx.float32 family a b x v)
+         | _ -> failwith "dist.golden: a malformed mass line")
+       (lines "mass"))
+
+(* The log mass from log-gamma sums at float64, and a bound on its error:
+   16 ulps on each log-gamma (nx's) and on each other term. Exact enough to
+   judge the narrower dtypes, whose counts stay below [2^24]. *)
+let lgamma v = item (Nx.lgamma (f64 v))
+let log_sigmoid l = -.Float.log1p (Float.exp (-.l))
+
+let classic family a b x =
+  let terms =
+    match family with
+    | Poisson -> [ x *. Float.log a; -.a; -.lgamma (x +. 1.) ]
+    | Binomial ->
+        let n = a in
+        [
+          lgamma (n +. 1.);
+          -.lgamma (x +. 1.);
+          -.lgamma (n -. x +. 1.);
+          (if x = 0. then 0. else x *. log_sigmoid b);
+          (if x = n then 0. else (n -. x) *. log_sigmoid (-.b));
+        ]
+    | Neg_binomial ->
+        let m = a and r = b in
+        [
+          lgamma (x +. r);
+          -.lgamma r;
+          -.lgamma (x +. 1.);
+          -.(r *. Float.log1p (m /. r));
+          (if x = 0. then 0. else x *. Float.log (m /. (r +. m)));
+        ]
+  in
+  let sum = List.fold_left ( +. ) 0. in
+  (sum terms, 16. *. epsilon_float *. sum (List.map Float.abs terms))
+
+(* Where a count lies against its mean [m]. *)
+type place = Near of float | Below of float | Above of float | Zero | Top
+
+let place =
+  Gen.(
+    frequency
+      [
+        (3, map (fun z -> Near z) (float_range (-3.) 3.));
+        (2, map (fun f -> Below f) (float_range 0.02 0.5));
+        (2, map (fun f -> Above f) (float_range 2. 12.));
+        (1, constant Zero);
+        (1, constant Top);
+      ])
+
+let smaller = [| Dtype Nx.float32; Dtype Nx.float16; Dtype Nx.bfloat16 |]
+
+(* [family]'s log mass at float32, float16 and bfloat16, against float64 at
+   parameters rounded to the dtype: [u] places the scale parameter between
+   [1e-3] and the largest the dtype holds with room, [w] the other one. The
+   narrower dtypes compute at float32 and round once, half an ulp more, and a
+   least subnormal's half where the mass is subnormal. *)
+let narrow_masses family name =
+  prop
+    (Printf.sprintf "%s's log mass at narrow dtypes is within its bound" name)
+    Gen.(quad (int_range 0 2) (float_range 0. 1.) (float_range 0. 1.) place)
+    (fun (i, u, w, at) ->
+      let (Dtype dt) = smaller.(i) in
+      let format = Nx.Dtype.float_format dt in
+      let top = top_of Nx.float32 in
+      let most = Float.min top (format.max_finite /. 64.) in
+      let round v = Nx.item [] (Nx.cast Nx.float64 (Nx.scalar dt v)) in
+      let span lo hi = lo *. ((hi /. lo) ** u) in
+      let a, b =
+        match family with
+        | Poisson -> (round (span 1e-3 most), 0.)
+        | Binomial -> (Float.round (span 1. top), round ((24. *. w) -. 12.))
+        | Neg_binomial ->
+            (round (span 1e-3 (most /. 16.)), round (1e-3 *. (1e7 ** w)))
+      in
+      let m = count_mean family a b in
+      let var =
+        match family with
+        | Poisson -> m
+        | Binomial -> m *. sigmoid (-.b)
+        | Neg_binomial -> m +. (m *. m /. b)
+      in
+      let last = if family = Binomial then a else top in
+      let x =
+        match at with
+        | Near z -> Float.round (m +. (z *. Float.sqrt var))
+        | Below f | Above f -> Float.round (f *. m)
+        | Zero -> 0.
+        | Top -> last
+      in
+      let x = Float.min last (Float.max 0. x) in
+      let f, err = classic family a b x in
+      (* A mass past the dtype's range rounds to [-inf]. *)
+      assume (Float.abs f < format.max_finite);
+      cover (Nx.Dtype.name dt) true;
+      cover "at zero" (x = 0.);
+      cover "near the mean" (x > m /. 2. && x < 2. *. m);
+      cover "far below the mean" (x > 0. && x <= m /. 2.);
+      cover "far above the mean" (x >= 2. *. m);
+      if family = Binomial then cover "at trials" (x = a && x > 0.);
+      if family = Neg_binomial then begin
+        cover "dispersion below 5.25" (b <= 5.25);
+        cover "dispersion above 5.25" (b > 5.25)
+      end;
+      let rounding =
+        if format.fraction_bits >= 23 then 0.
+        else
+          0.5 *. format.epsilon
+          *. (Float.abs f +. format.min_normal)
+      in
+      equal
+        (float (mass_bound family (eps_of Nx.float32) f x m +. rounding +. err))
+        f
+        (count_mass dt family a b x))
+
+(* Where the means' rounding weighs most: a binomial count 4 to 6 standard
+   deviations from its mean at up to [2^24] trials, at float32 against
+   float64's log-gamma sums. *)
+let binomial_tails =
+  prop "a binomial's log mass in its tails at many trials is within its bound"
+    Gen.(
+      triple (float_range 0. 1.) (float_range (-6.) 6.)
+        (pair bool (float_range 4. 6.)))
+    (fun (u, l, (above, k)) ->
+      let n = Float.round (1e4 *. ((0x1p24 /. 1e4) ** u)) in
+      let l = Nx.item [] (Nx.cast Nx.float64 (Nx.scalar Nx.float32 l)) in
+      let m = n *. sigmoid l in
+      let sd = Float.sqrt (m *. sigmoid (-.l)) in
+      let x = Float.round (if above then m +. (k *. sd) else m -. (k *. sd)) in
+      assume (x >= 0. && x <= n);
+      cover "above the mean" above;
+      cover "below the mean" (not above);
+      let f, err = classic Binomial n l x in
+      equal
+        (float (mass_bound Binomial (eps_of Nx.float32) f x m +. err))
+        f
+        (count_mass Nx.float32 Binomial n l x))
+
+(* At means down to the dtype's least subnormal, the log masses' scores
+   are finite wherever the exact ones are, at a count of [0] too, whose
+   mass does not read the deviance. [lm] is the log of the mean, or the
+   logit. *)
+let small_means =
+  let check (type b) (dt : (float, b) Nx.dtype) family lm x =
+    let format = Nx.Dtype.float_format dt in
+    let s v = Nx.scalar dt v in
+    let p = Nx.item [] (Nx.cast Nx.float64 (s (match family with
+      | Binomial -> lm | Poisson | Neg_binomial -> Float.exp lm)))
+    in
+    assume (p > 0. || family = Binomial);
+    let n = 10. and r = 2. in
+    let score, scale =
+      match family with
+      | Poisson -> ((x /. p) -. 1., (x /. p) +. 1.)
+      | Binomial -> (x -. (n *. sigmoid p), x +. (n *. sigmoid p))
+      | Neg_binomial ->
+          ( r *. (x -. p) /. (p *. (r +. p)),
+            (x /. p) +. ((x +. r) /. (r +. p)) )
+    in
+    let counts = i32 (int_of_float x) in
+    let mass p =
+      match family with
+      | Poisson -> D.factors (D.poisson ~rate:p) counts
+      | Binomial ->
+          D.factors (D.binomial ~trials:(i32 (int_of_float n)) ~logits:p) counts
+      | Neg_binomial ->
+          D.factors (D.neg_binomial ~mean:p ~dispersion:(s r)) counts
+    in
+    let g = Nx.item [] (Nx.cast Nx.float64 (Rune.grad' mass (s p))) in
+    if Float.abs score > format.max_finite then
+      equal ~msg:(Nx.Dtype.name dt) float_exact
+        (Float.copy_sign Float.infinity score) g
+    else
+      equal ~msg:(Nx.Dtype.name dt)
+        (float ((64. *. format.epsilon *. scale) +. format.min_normal))
+        score g
+  in
+  let lowest (type b) (dt : (float, b) Nx.dtype) =
+    let format = Nx.Dtype.float_format dt in
+    Float.log (format.min_normal *. format.epsilon)
+  in
+  List.map
+    (fun family ->
+      let name =
+        match family with
+        | Poisson -> "the poisson rate"
+        | Binomial -> "the binomial logits"
+        | Neg_binomial -> "the negative binomial mean"
+      in
+      prop
+        (Printf.sprintf "%s's score is finite at small means" name)
+        Gen.(triple bool (float_range 0. 1.) (int_range 0 3))
+        (fun (wide, u, x) ->
+          let x = float_of_int x in
+          cover "at zero" (x = 0.);
+          cover "above zero" (x > 0.);
+          cover "float64" wide;
+          cover "float32" (not wide);
+          (* Logits past where their sigmoid underflows; log means from the
+             least subnormal up to 0. *)
+          let at (type b) (dt : (float, b) Nx.dtype) =
+            let low = lowest dt in
+            let lm =
+              match family with
+              | Binomial ->
+                  let edge = Float.log (Nx.Dtype.float_format dt).min_normal in
+                  (u -. 0.5) *. 2.4 *. Float.abs edge
+              | Poisson | Neg_binomial -> low +. 0.5 -. (u *. (low +. 0.5))
+            in
+            check dt family lm x
+          in
+          if wide then at Nx.float64 else at Nx.float32))
+    [ Poisson; Binomial; Neg_binomial ]
+
+(* At dispersions down to the least subnormal, the negative binomial's
+   score in its dispersion [r] is
+   [Σ_(j < x) 1 / (r + j) + log (r / (r + mean)) + (mean - x) / (r + mean)],
+   finite at [0] and overflowing above it where [1 / r] does; its score in
+   the mean stays small. *)
+let small_dispersions =
+  prop "the negative binomial dispersion's score is finite at small dispersions"
+    Gen.(quad bool (float_range 0. 1.) (int_range 0 2) (int_range 0 3))
+    (fun (wide, u, k, x) ->
+      let mean = [| 0.5; 3.; 1000. |].(k) and x = float_of_int x in
+      cover "at zero" (x = 0.);
+      cover "above zero" (x > 0.);
+      cover "float64" wide;
+      cover "float32" (not wide);
+      let at (type b) (dt : (float, b) Nx.dtype) =
+        let format = Nx.Dtype.float_format dt in
+        let low = Float.log (format.min_normal *. format.epsilon) in
+        let r = Float.exp (low +. 0.5 -. (u *. (low +. 0.5))) in
+        let r = Nx.item [] (Nx.cast Nx.float64 (Nx.scalar dt r)) in
+        assume (r > 0.);
+        let terms =
+          List.init (int_of_float x) (fun j -> 1. /. (r +. float_of_int j))
+          @ [ Float.log r -. Float.log (r +. mean); (mean -. x) /. (r +. mean) ]
+        in
+        let score = List.fold_left ( +. ) 0. terms in
+        let scale = List.fold_left (fun a t -> a +. Float.abs t) 0. terms in
+        let mass r =
+          D.factors
+            (D.neg_binomial ~mean:(Nx.scalar dt mean) ~dispersion:r)
+            (i32 (int_of_float x))
+        in
+        let g =
+          Nx.item [] (Nx.cast Nx.float64 (Rune.grad' mass (Nx.scalar dt r)))
+        in
+        if Float.abs score > format.max_finite then
+          equal ~msg:(Nx.Dtype.name dt) float_exact Float.infinity g
+        else
+          equal ~msg:(Nx.Dtype.name dt)
+            (float ((64. *. format.epsilon *. scale) +. format.min_normal))
+            score g;
+        (* The mean's score, [r (x - mean) / (mean (r + mean))], is small. *)
+        let by_mean mean =
+          D.factors
+            (D.neg_binomial ~mean ~dispersion:(Nx.scalar dt r))
+            (i32 (int_of_float x))
+        in
+        let gm = Rune.grad' by_mean (Nx.scalar dt mean) in
+        let gm = Nx.item [] (Nx.cast Nx.float64 gm) in
+        let along = r *. (x -. mean) /. (mean *. (r +. mean)) in
+        let scale = r *. (x +. mean) /. (mean *. (r +. mean)) in
+        equal ~msg:(Nx.Dtype.name dt ^ " mean")
+          (float ((64. *. format.epsilon *. scale) +. format.min_normal))
+          along gm
+      in
+      if wide then at Nx.float64 else at Nx.float32)
+
+(* [rune]'s gradient of [f] at [p], against [score]. *)
+let grad_of f p = item (Rune.grad' (fun p -> f p) (f64 p))
+
+let scores =
+  let count = Gen.(pair (float_range 0. 1.) place) in
+  let x_of m sd = function
+    | Near z -> Float.max 0. (Float.round (m +. (z *. sd)))
+    | Below f | Above f -> Float.round (f *. m)
+    | Zero -> 0.
+    | Top -> Float.round (20. *. m)
+  in
+  group "scores"
+    [
+      prop "the poisson rate's score is x / rate - 1" count (fun (u, at) ->
+          let rate = 1e-3 *. (1e9 ** u) in
+          let x = x_of rate (Float.sqrt rate) at in
+          cover "near the mean" (x > rate /. 2. && x < 2. *. rate);
+          cover "far from the mean" (x <= rate /. 2. || x >= 2. *. rate);
+          let g =
+            grad_of
+              (fun rate -> D.factors (D.poisson ~rate) (i32 (int_of_float x)))
+              rate
+          in
+          equal
+            (float (16. *. epsilon_float *. ((x /. rate) +. 1.)))
+            ((x /. rate) -. 1.) g);
+      test "the bernoulli logit's score at 0 is x - 1/2" (fun () ->
+          let score x =
+            grad_of
+              (fun logits ->
+                D.factors (D.bernoulli ~logits) (Nx.scalar Nx.bool x))
+              0.
+          in
+          equal (pair float_exact float_exact) (-0.5, 0.5)
+            (score false, score true));
+      prop "the binomial logits' score is x - trials sigmoid logits"
+        ~examples:[ ((0., Zero), 0.) ]
+        Gen.(pair count (float_range (-12.) 12.))
+        (fun ((u, at), l) ->
+          let n = Float.round (1e7 ** u) in
+          let m = n *. sigmoid l in
+          let x = Float.min n (x_of m (Float.sqrt (m *. sigmoid (-.l))) at) in
+          cover "near the mean" (x > m /. 2. && x < 2. *. m);
+          cover "far from the mean" (x <= m /. 2. || x >= 2. *. m);
+          let trials = i32 (int_of_float n) in
+          let g =
+            grad_of
+              (fun logits ->
+                D.factors (D.binomial ~trials ~logits) (i32 (int_of_float x)))
+              l
+          in
+          equal (float (16. *. epsilon_float *. (x +. m))) (x -. m) g);
+      prop "the negative binomial mean's score is r (x - mean) / (mean (r + \
+            mean))"
+        Gen.(pair count (float_range 0. 1.))
+        (fun ((u, at), w) ->
+          let mean = 1e-3 *. (1e9 ** u) and r = 1e-3 *. (1e10 ** w) in
+          let x = x_of mean (Float.sqrt (mean +. (mean *. mean /. r))) at in
+          cover "dispersion below 5.25" (r <= 5.25);
+          cover "dispersion above 5.25" (r > 5.25);
+          let dispersion = f64 r in
+          let g =
+            grad_of
+              (fun mean ->
+                D.factors
+                  (D.neg_binomial ~mean ~dispersion)
+                  (i32 (int_of_float x)))
+              mean
+          in
+          let score = r *. (x -. mean) /. (mean *. (r +. mean)) in
+          let scale = (x /. mean) +. ((x +. r) /. (r +. mean)) in
+          equal (float (16. *. epsilon_float *. scale)) score g);
+      (* Central differences at a step [h = r 1e-5]: truncation near
+         [h² |f'''| / 6], about [3e-11 / r], and the masses' errors
+         over [h], each within its bound. *)
+      prop "the negative binomial dispersion's gradient is its slope"
+        Gen.(pair count (float_range 0. 1.))
+        (fun ((u, at), w) ->
+          let mean = 1e-3 *. (1e9 ** u) and r = 1e-3 *. (1e10 ** w) in
+          let x = x_of mean (Float.sqrt (mean +. (mean *. mean /. r))) at in
+          cover "dispersion below 5.25" (r <= 5.25);
+          cover "dispersion above 5.25" (r > 5.25);
+          let f r =
+            D.factors
+              (D.neg_binomial ~mean:(f64 mean) ~dispersion:r)
+              (i32 (int_of_float x))
+          in
+          let h = r *. 1e-5 in
+          let at r = item (f (f64 r)) in
+          let slope = (at (r +. h) -. at (r -. h)) /. (2. *. h) in
+          let noise =
+            mass_bound Neg_binomial (eps_of Nx.float64) (at r) x mean /. h
+          in
+          equal
+            (float ((1e-6 *. Float.abs slope) +. noise +. (1e-10 /. r)))
+            slope (grad_of f r));
+    ]
+
+let count_masses =
+  group "count masses"
+    [
+      exact_masses;
+      narrow_masses Poisson "poisson";
+      narrow_masses Binomial "binomial";
+      narrow_masses Neg_binomial "neg_binomial";
+      binomial_tails;
+      group "small means" small_means;
+      small_dispersions;
+      test "a negative binomial at a subnormal mean and dispersion" (fun () ->
+          (* At [x = 1], [log (r Γ(r) / Γ(r)) + r log (1/2) + log (1/2)]. *)
+          let r = 1e-310 in
+          let d = D.neg_binomial ~mean:(f64 r) ~dispersion:(f64 r) in
+          let exact = Float.log r +. ((1. +. r) *. Float.log 0.5) in
+          equal
+            (float (mass_bound Neg_binomial (eps_of Nx.float64) exact 1. r))
+            exact
+            (item (D.factors d (i32 1))));
+      scores;
+      Windtrap.cases "a zero mean puts all mass at zero"
+        ~id:(fun (name, _) -> name)
+        [
+          ("poisson", D.poisson ~rate:(f64 0.));
+          ("neg_binomial", D.neg_binomial ~mean:(f64 0.) ~dispersion:(f64 2.));
+        ]
+        (fun (_, d) ->
+          let counts = Nx.create Nx.int32 [| 4 |] [| -1l; 0l; 1l; 100l |] in
+          equal (array exact_inf)
+            [| Float.neg_infinity; 0.; Float.neg_infinity; Float.neg_infinity |]
+            (Nx.to_array (D.factors d counts)));
+      Windtrap.cases "a compiled log mass is the eager one"
+        ~id:(fun (name, _) -> name)
+        [
+          ("poisson", fun p -> D.poisson ~rate:(Nx.mul_s p 3e5));
+          ("binomial", fun p -> D.binomial ~trials:(i32 1_000_000) ~logits:p);
+          ( "neg_binomial",
+            fun p -> D.neg_binomial ~mean:(Nx.mul_s p 3e5) ~dispersion:p );
+        ]
+        (fun (_, d) ->
+          let xs = [| 0l; 1l; 3l; 100_000l; 268_000l; 300_000l; 1_000_000l |] in
+          let counts = Nx.create Nx.int32 [| 7 |] xs in
+          let p = f64 1.5 in
+          equal
+            (array (float_rel ~rel:1e-14 ~abs:1e-14))
+            (Nx.to_array (D.factors (d p) counts))
+            (Nx.to_array (Rune.jit' (fun p -> D.factors (d p) counts) p)));
     ]
 
 let validation =
@@ -1076,4 +1570,5 @@ let () =
          valid;
          transforms;
          binomial;
+         count_masses;
        ])

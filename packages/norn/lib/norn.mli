@@ -737,7 +737,21 @@ module Dist : sig
       Raises [Invalid_argument] if [scale_tril]'s last two axes are not square
       or not of [loc]'s length. *)
 
-  (** {1:discrete Discrete families} *)
+  (** {1:discrete Discrete families}
+
+      The log masses of {!poisson}, {!binomial} and {!neg_binomial} follow
+      Loader's saddle-point form (Fast and Accurate Computation of Binomial
+      Probabilities, 2000), whose terms do not cancel. At a count [x] of mean
+      [m], a log mass [f] is within [ε (c_f |f| + c_m |x - m|)] of the exact
+      one, and half the least subnormal where it underflows, [ε] the epsilon
+      of the parameters' dtype, for [x] and [trials] below [2{^24}] at
+      float32: [c_f = 24] and [c_m = 1] for {!poisson}, [24] and [9] for
+      {!binomial}, [64] and [6] for {!neg_binomial}. The second term is the
+      rounding of the means the family computes from its parameters, or of
+      [x / m]. A dtype narrower than float32 computes at float32 and rounds
+      once: within the float32 bound plus half its own ulp. The masses'
+      derivatives in the parameters are finite wherever the exact ones are,
+      at means and dispersions down to the least subnormal. *)
 
   val bernoulli : logits:(float, 'f, 'd) Nx.t -> ('d Nx.bool_t, 'f, 'd) t
   (** [bernoulli ~logits] is [true] with probability [sigmoid logits]. A logit

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy==2.3.4", "scipy==1.16.3"]
+# dependencies = ["mpmath==1.3.0", "numpy==2.3.4", "scipy==1.16.3"]
 # ///
 """Generate the goldens of norn's distributions.
 
@@ -21,14 +21,22 @@ Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
   MIN_BIN;
 - `threshold CASE V`: the chi-square statistic of DRAWS draws over the case's
   bins that its test rejects above, at a level that keeps the family-wise
-  false-alarm rate of every goodness-of-fit test at 1%.
+  false-alarm rate of every goodness-of-fit test at 1%;
+- `mass FAMILY A B X V`: the exact log mass of poisson (rate A, B unused),
+  binomial (trials A, logits B) or neg_binomial (mean A, dispersion B) at the
+  count X, from mpmath's log-gamma at 200 bits. The parameters are float32
+  values, so float32 and float64 read the same distribution; the counts reach
+  far into both tails and up to 2^31 - 1, the logits past where their
+  sigmoid underflows, and the means down to subnormal.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
+import mpmath
 import numpy as np
+from mpmath import mp, mpf
 from scipy import special, stats
 
 HERE = Path(__file__).resolve().parent
@@ -74,6 +82,90 @@ DISCRETE = {
 
 DRAWS = 20000
 MIN_BIN = 0.002
+
+
+INT32_MAX = 2**31 - 1
+
+POISSON_RATES = [1e-40, 2.0**-100, 1e-30, 1e-3, 0.375, 1.0, 3.5, 17.25, 1e3, 1e6,
+                 2.0**24, 1.5e9, 1e30]
+BINOMIAL_TRIALS = [1, 7, 50, 1000, 10**6, 2**24, INT32_MAX]
+BINOMIAL_LOGITS = [0.0, 0.25, -3.5, 12.0, -30.0]
+# Logits whose sigmoid underflows at float32 (past 87) and float64 (past 708).
+EXTREME_TRIALS = [1, 10, 1000, 10**6]
+EXTREME_LOGITS = [-100.0, -110.0, 110.0, -800.0, 800.0]
+# Counts 4 to 6 standard deviations from the mean at large trials and drawn
+# logits, where the means' rounding weighs most.
+TAIL_DRAWS = 120
+NB_MEANS = [1e-40, 1e-30, 1e-3, 4.0, 1e3, 1e6]
+NB_DISPERSIONS = [1e-6, 0.5, 2.5, 1e3, 1e9]
+
+
+def f32(v):
+    return float(np.float32(v))
+
+
+def counts(mean, sd, top):
+    """Counts at the edges, near the mean and far into both tails."""
+    xs = {0, 1, 2, top, top - 1}
+    for c in [mean, mean + 1, mean - sd, mean + sd, mean - 4 * sd, mean + 4 * sd,
+              mean / 10, 3 * mean + 3, 10 * mean + 10, mean + 30 * sd]:
+        xs.add(int(c))
+    return sorted(x for x in xs if 0 <= x <= top)
+
+
+def poisson_mass(x, rate):
+    x, rate = mpf(x), mpf(rate)
+    return x * mpmath.log(rate) - rate - mpmath.loggamma(x + 1)
+
+
+def binomial_mass(x, n, logits):
+    lp = -mpmath.log1p(mpmath.exp(-mpf(logits)))
+    lq = -mpmath.log1p(mpmath.exp(mpf(logits)))
+    x, n = mpf(x), mpf(n)
+    return (mpmath.loggamma(n + 1) - mpmath.loggamma(x + 1) - mpmath.loggamma(n - x + 1)
+            + x * lp + (n - x) * lq)
+
+
+def neg_binomial_mass(x, mean, r):
+    x, mean, r = mpf(x), mpf(mean), mpf(r)
+    return (mpmath.loggamma(x + r) - mpmath.loggamma(r) - mpmath.loggamma(x + 1)
+            - r * mpmath.log1p(mean / r) + x * mpmath.log(mean / (r + mean)))
+
+
+def masses():
+    mp.prec = 200
+    out = []
+    for rate in map(f32, POISSON_RATES):
+        for x in counts(rate, rate**0.5, INT32_MAX):
+            out.append(f"mass poisson {fmt(rate)} {fmt(0.0)} {fmt(x)} {fmt(poisson_mass(x, rate))}\n")
+    for n in BINOMIAL_TRIALS:
+        for logits in map(f32, BINOMIAL_LOGITS):
+            p = 1 / (1 + np.exp(-logits))
+            for x in counts(n * p, (n * p * (1 - p)) ** 0.5, n):
+                v = binomial_mass(x, n, logits)
+                out.append(f"mass binomial {fmt(n)} {fmt(logits)} {fmt(x)} {fmt(v)}\n")
+    for n in EXTREME_TRIALS:
+        for logits in map(f32, EXTREME_LOGITS):
+            for x in sorted({0, 1, n // 2, n - 1, n}):
+                v = binomial_mass(x, n, logits)
+                out.append(f"mass binomial {fmt(n)} {fmt(logits)} {fmt(x)} {fmt(v)}\n")
+    rng = np.random.default_rng(20001)
+    for _ in range(TAIL_DRAWS):
+        n = int(np.exp(rng.uniform(np.log(1e6), np.log(INT32_MAX))))
+        logits = f32(rng.uniform(-6.0, 6.0))
+        p = 1 / (1 + np.exp(-logits))
+        m, sd = n * p, (n * p * (1 - p)) ** 0.5
+        x = int(round(m + rng.choice([-1, 1]) * rng.uniform(4.0, 6.0) * sd))
+        if 0 <= x <= n:
+            v = binomial_mass(x, n, logits)
+            out.append(f"mass binomial {fmt(n)} {fmt(logits)} {fmt(x)} {fmt(v)}\n")
+    for mean in map(f32, NB_MEANS):
+        for r in map(f32, NB_DISPERSIONS):
+            sd = (mean + mean * mean / r) ** 0.5
+            for x in counts(mean, sd, INT32_MAX):
+                v = neg_binomial_mass(x, mean, r)
+                out.append(f"mass neg_binomial {fmt(mean)} {fmt(r)} {fmt(x)} {fmt(v)}\n")
+    return out
 
 
 def merge(bins):
@@ -139,6 +231,7 @@ def render():
         for lo, hi, p in bs:
             out.append(f"bin {name} {bound(lo)} {bound(hi)} {fmt(p)}\n")
         out.append(f"threshold {name} {fmt(stats.chi2.ppf(1 - alpha, len(bs) - 1))}\n")
+    out.extend(masses())
     return "".join(out)
 
 
