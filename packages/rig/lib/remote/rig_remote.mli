@@ -343,10 +343,11 @@ val serve :
     the work the controller submits from the calling domain
     ({!section-order}). That work, and the openers of [kinds], run as the
     program's own code: rig's calls they make block signals as {!Rig}'s
-    Errors section states, and a signal's handler may run between them, its
-    exception ending [serve] as an asynchronous one. [serve]'s own steps
-    block signals but in their waits, except on Windows, where nothing
-    blocks them ({!Rig}'s Errors section).
+    Errors section states, and a signal's handler may run between them.
+    [serve]'s own steps block signals but in their waits, except on Windows,
+    where nothing blocks them ({!Rig}'s Errors section). Its waits for a
+    controller and for the controller's next command return to OCaml at
+    least every 200 ms, where a pending [Sys.Break] from Ctrl-C raises.
 
     [Ok ()] once the controller has closed the job, as {!close} states.
     [Error why] once the job has failed, [why] its root cause
@@ -362,7 +363,9 @@ val serve :
     [RIG_REMOTE_REPORT] names no open descriptor.
 
     Raises [Invalid_argument] if [a] served already, or [kinds] names a kind
-    twice. Raises again an exception that ends one of [serve]'s own steps,
-    such as [Sys.Break] from a Ctrl-C in its wait for a controller, once [a]
-    has stopped listening. A job [a] serves then, if it has not ended, fails,
-    and as for [Error why], the process's devices are lost ({!Rig.fail}). *)
+    twice. Raises again, once [a] has stopped listening, an exception that
+    ends one of [serve]'s own steps, and [Sys.Break], such as a Ctrl-C's,
+    wherever it ends [serve]: in a wait, in the controller's work or in an
+    opener. A job [a] serves then, if it has not ended, fails, its root
+    cause [Sys.Break]'s text if [Sys.Break] ended [serve], and as for
+    [Error why], the process's devices are lost ({!Rig.fail}). *)

@@ -1590,9 +1590,9 @@ static void retire_kept(struct rig_remote_link *l) {
 }
 
 /* Waits until [vl]'s controller has sent a command or closed, or the job
-   failed, having lent the payload of the command before to later commands.
-   It takes no command, so that the wait holds none of [next]'s locks.
-   Releases the runtime. */
+   failed, or [RIG_REMOTE_STILL_NS] has passed, having lent the payload of
+   the command before to later commands. It takes no command, so that the
+   wait holds none of [next]'s locks. Releases the runtime. */
 value caml_rig_remote_link_wait(value vl) {
   CAMLparam1(vl);
   struct rig_remote_link *l = Link_val(vl);
@@ -1602,8 +1602,8 @@ value caml_rig_remote_link_wait(value vl) {
     pthread_mutex_unlock(&l->mu);
     caml_release_runtime_system();
     pthread_mutex_lock(&l->mu);
-    while (l->cmds == NULL && !l->got_close && !atomic_load(&l->failed))
-      pthread_cond_wait(&l->cv, &l->mu);
+    if (l->cmds == NULL && !l->got_close && !atomic_load(&l->failed))
+      rig_remote_wait_ns(&l->cv, &l->mu, RIG_REMOTE_STILL_NS);
     pthread_mutex_unlock(&l->mu);
     caml_acquire_runtime_system();
   }

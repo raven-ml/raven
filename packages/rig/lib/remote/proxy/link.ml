@@ -615,7 +615,8 @@ let take_next l () =
         reraise e
 
 (* The wait for a command holds no lock, so a callback that runs in it calls
-   rig as any code does. *)
+   rig as any code does. It returns to OCaml at least every 200 ms, where a
+   pending signal's handler runs, and waits again if no command came. *)
 let next l =
   guarded "next" @@ fun () ->
   let rec go () =

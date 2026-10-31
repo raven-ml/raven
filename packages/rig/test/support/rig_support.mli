@@ -559,12 +559,17 @@ val interrupt_join : unit -> unit
     if any, has ended, then runs the handlers of the signals pending, so its
     SIGINT lands here if no poll point took it before. *)
 
-val interrupt_in_wait : (unit -> 'a) -> 'a * bool
-(** [interrupt_in_wait f] is [f ()], run while a new thread that runs no OCaml
-    code raises SIGINT once the calling thread blocks in a condition wait, as a
-    signal from outside the process does: its handler runs on the next thread
-    that returns to OCaml. The boolean is whether the signal was raised. It
-    raises [Failure] where not {!sees_waits}. *)
+val interrupt_in_wait :
+  ?thread:thread -> ?timed:bool -> (unit -> 'a) -> 'a * bool
+(** [interrupt_in_wait ~thread ~timed f] is [f ()], run while a new thread
+    that runs no OCaml code raises SIGINT once [thread] (default: the calling
+    thread) blocks in a condition wait, as a signal from outside the process
+    does: its handler runs on the next thread that returns to OCaml and does
+    not block SIGINT. With [~timed:true] (default [false]) only a condition
+    wait with a timeout counts, on Linux one of a thread that does not block
+    SIGINT: a wait that returns to OCaml where the handler runs, which a
+    thread's untimed wait for the runtime is not. The boolean is whether the
+    signal was raised. It raises [Failure] where not {!sees_waits}. *)
 
 (** What lands at the allocation {!interrupted} counts to. *)
 type landing =

@@ -1419,11 +1419,16 @@ value rig_test_unpark(value unit) {
   return Val_unit;
 }
 
-/* Whether a thread of this process blocks in a condition wait, or with
-   [mutex] in a mutex's, from the system's view of it: the system call it
-   entered is the one such waits use, __psynch_cvwait or __psynch_mutexwait
-   on macOS, and with glibc a futex wait on a bitset, which no glibc mutex
-   uses, or a plain futex wait. */
+/* Whether a thread of this process blocks in a wait of [kind], from the
+   system's view of it: the system call it entered is the one such waits
+   use, __psynch_cvwait or __psynch_mutexwait on macOS, and with glibc a
+   futex wait on a bitset, which no glibc mutex uses, or a plain futex wait.
+   A timed condition wait passes the call a timeout, and on Linux the thread
+   must not block SIGINT: a wait that returns to OCaml where SIGINT's
+   handler runs, which the runtime's wait for its lock, untimed, is not.
+   macOS shows no other thread's mask. */
+
+enum wait_kind { WAIT_CONDITION, WAIT_LOCK, WAIT_TIMED };
 
 #if defined(__APPLE__)
 
@@ -1434,8 +1439,10 @@ static thread_id self(void) { return pthread_mach_thread_np(pthread_self()); }
 static int sees_waits(void) { return 1; }
 
 /* The system call a suspended thread entered: the number its stub put in x16
-   (arm64) or rax (x86_64). */
-static int in_wait(thread_id t, int mutex) {
+   (arm64) or rax (x86_64). __psynch_cvwait's seventh and eighth arguments
+   are its timeout's seconds and nanoseconds: x6 and x7 on arm64, past the
+   return address on the stack on x86_64. */
+static int in_wait(thread_id t, enum wait_kind kind) {
   if (thread_suspend(t) != KERN_SUCCESS) return 0;
   thread_basic_info_data_t info;
   mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT;
@@ -1443,21 +1450,29 @@ static int in_wait(thread_id t, int mutex) {
                     KERN_SUCCESS &&
                 info.run_state == TH_STATE_WAITING;
   long call = -1;
+  int timed = 0;
 #if defined(__arm64__)
   arm_thread_state64_t s;
   n = ARM_THREAD_STATE64_COUNT;
   if (thread_get_state(t, ARM_THREAD_STATE64, (thread_state_t)&s, &n) ==
-      KERN_SUCCESS)
+      KERN_SUCCESS) {
     call = (long)s.__x[16];
+    timed = s.__x[6] != 0 || s.__x[7] != 0;
+  }
 #elif defined(__x86_64__)
   x86_thread_state64_t s;
   n = x86_THREAD_STATE64_COUNT;
   if (thread_get_state(t, x86_THREAD_STATE64, (thread_state_t)&s, &n) ==
-      KERN_SUCCESS)
+      KERN_SUCCESS) {
     call = (long)(s.__rax & 0xffffff);
+    const uint64_t *sp = (const uint64_t *)s.__rsp;
+    timed = waiting && call == SYS_psynch_cvwait && (sp[1] != 0 || sp[2] != 0);
+  }
 #endif
   thread_resume(t);
-  return waiting && call == (mutex ? SYS_psynch_mutexwait : SYS_psynch_cvwait);
+  if (!waiting) return 0;
+  if (kind == WAIT_LOCK) return call == SYS_psynch_mutexwait;
+  return call == SYS_psynch_cvwait && (kind == WAIT_CONDITION || timed);
 }
 
 #elif defined(__linux__) && defined(__GLIBC__)
@@ -1481,37 +1496,66 @@ static int sees_waits(void) {
   return 1;
 }
 
-static int in_wait(thread_id t, int mutex) {
+/* Whether the thread's status shows SIGINT outside its blocked signals. */
+static int takes_sigint(thread_id t) {
+  char path[64];
+  snprintf(path, sizeof path, "/proc/self/task/%d/status", (int)t);
+  FILE *f = fopen(path, "r");
+  if (f == NULL) return 0;
+  char line[256];
+  unsigned long long blocked = ~0ULL;
+  while (fgets(line, sizeof line, f) != NULL)
+    if (sscanf(line, "SigBlk: %llx", &blocked) == 1) break;
+  fclose(f);
+  return (blocked & (1ULL << (SIGINT - 1))) == 0;
+}
+
+/* The futex call's arguments follow its number: the word, the operation,
+   the value and the timeout. The mask is read before and after the call, so
+   a thread that changed it meanwhile is not taken for one in a wait that
+   takes SIGINT. */
+static int in_wait(thread_id t, enum wait_kind kind) {
+  int takes = kind != WAIT_TIMED || takes_sigint(t);
   FILE *f = syscall_file(t);
   if (f == NULL) return 0;
   long call = -1;
-  unsigned long word, op;
-  int got = fscanf(f, "%ld %lx %lx", &call, &word, &op);
+  unsigned long word, op, val, timeout;
+  int got =
+      fscanf(f, "%ld %lx %lx %lx %lx", &call, &word, &op, &val, &timeout);
   fclose(f);
-  return got == 3 && call == SYS_futex &&
-         (op & FUTEX_CMD_MASK) == (mutex ? FUTEX_WAIT : FUTEX_WAIT_BITSET);
+  if (got < 3 || call != SYS_futex) return 0;
+  if (kind == WAIT_LOCK) return (op & FUTEX_CMD_MASK) == FUTEX_WAIT;
+  if ((op & FUTEX_CMD_MASK) != FUTEX_WAIT_BITSET) return 0;
+  if (kind == WAIT_CONDITION) return 1;
+  return got == 5 && timeout != 0 && takes && takes_sigint(t);
 }
 
 #endif
 
 /* The interrupter: a thread of no OCaml code that raises SIGINT once the
    thread it watches blocks in a condition wait, as a signal from outside the
-   process does, and stops when told. The handler runs on the next thread
-   that returns to OCaml. */
+   process does, and stops when told. It unblocks SIGINT first, so that it
+   takes the signal even when a thread that blocks it starts it. The handler
+   runs on the next thread that returns to OCaml and does not block it. */
 
 #if defined(__APPLE__) || (defined(__linux__) && defined(__GLIBC__))
 
 static struct {
   pthread_t thread;
   thread_id watched;
+  enum wait_kind kind;
   atomic_int stop;
   atomic_int raised;
 } interrupter;
 
 static void *interrupter_main(void *p) {
   (void)p;
+  sigset_t s;
+  sigemptyset(&s);
+  sigaddset(&s, SIGINT);
+  pthread_sigmask(SIG_UNBLOCK, &s, NULL);
   while (!atomic_load(&interrupter.stop)) {
-    if (in_wait(interrupter.watched, 0)) {
+    if (in_wait(interrupter.watched, interrupter.kind)) {
       atomic_store(&interrupter.raised, 1);
       raise(SIGINT);
       return NULL;
@@ -1532,16 +1576,16 @@ value rig_test_thread_self(value unit) {
 }
 
 value rig_test_waits_for_lock(value v_t) {
-  return Val_bool(in_wait((thread_id)Long_val(v_t), 1));
+  return Val_bool(in_wait((thread_id)Long_val(v_t), WAIT_LOCK));
 }
 
 value rig_test_waits_in_condition(value v_t) {
-  return Val_bool(in_wait((thread_id)Long_val(v_t), 0));
+  return Val_bool(in_wait((thread_id)Long_val(v_t), WAIT_CONDITION));
 }
 
-value rig_test_interrupter_start(value unit) {
-  (void)unit;
-  interrupter.watched = self();
+value rig_test_interrupter_start(value v_t, value v_timed) {
+  interrupter.watched = (thread_id)Long_val(v_t);
+  interrupter.kind = Bool_val(v_timed) ? WAIT_TIMED : WAIT_CONDITION;
   atomic_store(&interrupter.stop, 0);
   atomic_store(&interrupter.raised, 0);
   if (pthread_create(&interrupter.thread, NULL, interrupter_main, NULL) != 0)
@@ -1581,8 +1625,9 @@ value rig_test_waits_in_condition(value v_t) {
   caml_failwith("Rig_support.waits_in_condition: no view of waits");
 }
 
-value rig_test_interrupter_start(value unit) {
-  (void)unit;
+value rig_test_interrupter_start(value v_t, value v_timed) {
+  (void)v_t;
+  (void)v_timed;
   caml_failwith("Rig_support.interrupt_in_wait: no view of waits");
 }
 

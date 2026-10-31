@@ -183,7 +183,9 @@ val drop : t -> int -> unit
 val next : t -> (Wire.command, string) result
 (** [next l] is the next command [l]'s peer sent, waiting for it. [Error why]
     once the job has failed, [why] its root cause. A message that does not
-    decode as a command fails the job.
+    decode as a command fails the job. Its wait returns to OCaml at least
+    every 200 ms, where a pending signal's handler runs, and the handler's
+    exception ends [next] having taken no command.
 
     A [Handover]'s areas hold its bytes until the next call of [next] on [l],
     from any thread, so a thread must finish with a [Handover]'s areas before

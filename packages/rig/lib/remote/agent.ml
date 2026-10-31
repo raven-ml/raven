@@ -232,6 +232,20 @@ let dial_tcp ~s host port =
               Unix.close fd;
               Error (Unix.error_message e)))
 
+(* Changes
+
+   A count of an agent's changes, read and counted under its lock, whose wait
+   for the next one returns to OCaml at least every 200 ms, where a pending
+   signal's handler runs: OCaml's Condition has no timed wait. *)
+type changes
+
+external changes : unit -> changes = "caml_rig_remote_changes"
+external change : changes -> unit = "caml_rig_remote_change" [@@noalloc]
+external count : changes -> int = "caml_rig_remote_changes_count" [@@noalloc]
+
+(* [await c n] waits until [c] counts more than [n] changes, at most 200 ms. *)
+external await : changes -> int -> unit = "caml_rig_remote_changes_await"
+
 (* Agents *)
 
 (* The objects the controller names on this machine. *)
@@ -260,7 +274,7 @@ type t = {
           under [lock] run only once the agent is claimed, so a callback
           inside one that calls [serve] raises [Invalid_argument]. *)
   lock : Mutex.t;
-  changed : Condition.t;
+  changes : changes;
   mutable phase : phase;  (** Read once [claimed]. *)
   mutable accepted : Unix.file_descr Ids.t;
       (** Connections of the job's agents before this one, admitted, waiting for
@@ -312,7 +326,7 @@ let listen ~key host port =
                 port;
                 claimed = Atomic.make false;
                 lock = Mutex.create ();
-                changed = Condition.create ();
+                changes = changes ();
                 phase = Claimed;
                 accepted = Ids.empty;
                 peers = Ids.empty;
@@ -378,7 +392,7 @@ let shake a st fd =
           Link.make job fd ~name:"controller" ~peer:Wire.Controller
         in
         a.phase <- Serving { job; self; controller };
-        Condition.broadcast a.changed
+        change a.changes
     | Ok (Wire.Agent i, _), None ->
         if a.stopped || Ids.mem i a.accepted || Ids.mem i a.peers then give fd
         else begin
@@ -388,7 +402,7 @@ let shake a st fd =
     | _, Some job ->
         Link.close job;
         a.phase <- Claimed;
-        Condition.broadcast a.changed;
+        change a.changes;
         give fd
     | _, None -> give fd
   in
@@ -411,7 +425,7 @@ let handshake a st fd =
         match (st.mine, a.phase) with
         | Some j, Admitting j' when j == j' ->
             a.phase <- Claimed;
-            Condition.broadcast a.changed;
+            change a.changes;
             true
         | _ -> false
       in
@@ -461,7 +475,7 @@ let passes (e : Unix.error) =
 let break a broken =
   Mutex.lock a.lock;
   a.broken <- broken;
-  Condition.broadcast a.changed;
+  change a.changes;
   let phase = a.phase in
   Mutex.unlock a.lock;
   match (phase, broken) with
@@ -1002,26 +1016,27 @@ let rec apply s =
 
 (* The job [a] serves, once a controller's handshake made it. A job that a
    broken accept met fails with its reason; a serve that has no job yet ends
-   with it. *)
+   with it. The wait for a change starts from the count read with the phase,
+   so a change after the read ends it. *)
 let job a =
-  let r =
-    Mutex.protect a.lock @@ fun () ->
-    let rec serving () =
-      match (a.phase, a.broken) with
-      | Serving { job; self; controller }, broken ->
-          Ok ((job, self, controller), broken)
-      | Claimed, Some why -> Error why
-      | (Claimed | Admitting _), _ ->
-          unblocked (Condition.wait a.changed) a.lock;
-          serving ()
-    in
-    serving ()
+  let look () =
+    match (a.phase, a.broken) with
+    | Serving { job; self; controller }, broken ->
+        `Serving ((job, self, controller), broken)
+    | Claimed, Some why -> `Broken why
+    | (Claimed | Admitting _), _ -> `Waiting (count a.changes)
   in
-  match r with
-  | Error _ as e -> e
-  | Ok (((job, _, _) as serving), broken) ->
-      Option.iter (Link.fail job) broken;
-      Ok serving
+  let rec serving () =
+    match Mutex.protect a.lock look with
+    | `Waiting n ->
+        unblocked (await a.changes) n;
+        serving ()
+    | `Broken why -> Error why
+    | `Serving (((job, _, _) as serving), broken) ->
+        Option.iter (Link.fail job) broken;
+        Ok serving
+  in
+  serving ()
 
 (* [unmasked f x] is [f x] with the calling thread's signals as [serve]'s
    caller had them, for the program's code that serving runs. It ends
@@ -1040,11 +1055,16 @@ let unmasked f x =
 (* Why a job fails when an exception ends [serve] other than its commands'. *)
 let serve_raised = "the agent's serve raised an exception"
 
+(* Why a job fails when a [Sys.Break], a Ctrl-C's, ends [serve] wherever it
+   comes: its text, as for an exception of its commands. *)
+let interrupted = Printexc.to_string Sys.Break
+
 (* Serves [job], reporting its end on [h]'s report, and stops listening.
    From the job's watcher on, an exception, a thread the system does not give
    or one [apply] does not handle (a device's loss or a bug of the agent or an
    opener), leaves the job's objects in a state the controller cannot know:
-   it fails the job with its text, which ends the controller's wait. *)
+   it fails the job with its text, which ends the controller's wait. A
+   [Sys.Break] ends [serve] as it does in serve's own steps. *)
 let serve_job a h kinds job self link =
   let r =
     match
@@ -1066,6 +1086,7 @@ let serve_job a h kinds job self link =
       unmasked apply s
     with
     | r -> r
+    | exception (Sys.Break as e) -> reraise e
     | exception e ->
         let why =
           match e with
@@ -1094,25 +1115,26 @@ let serve_job a h kinds job self link =
       Link.close job);
   r
 
-(* Ends the job [a] serves, if any, after an exception that ends [serve]
-   elsewhere than in its commands: fails it, closes it, and reports its end,
-   failing the process if the job failed. A controller still in its
-   handshake finds [a] stopped and gives its job back. It allocates nothing
-   before the close. *)
-let abandon a report =
+(* Ends the job [a] serves, if any, after an exception [e] that ends [serve]
+   elsewhere than in its commands, or a [Sys.Break] anywhere: fails it,
+   closes it, and reports its end, failing the process if the job failed. A
+   controller still in its handshake finds [a] stopped and gives its job
+   back. It allocates nothing before the close. *)
+let abandon a report e =
+  let why = match e with Sys.Break -> interrupted | _ -> serve_raised in
   Mutex.lock a.lock;
   let phase = a.phase in
   Mutex.unlock a.lock;
   match phase with
   | Serving { job; _ } -> (
-      Link.fail job serve_raised;
+      Link.fail job why;
       Link.close job;
       match Link.failed job with
       | None -> ended report `Closed
       | Some why ->
           ended report (`Failed why);
           Rig.fail why)
-  | Claimed | Admitting _ -> ended report (`Failed serve_raised)
+  | Claimed | Admitting _ -> ended report (`Failed why)
 
 (* Serves one job. The pair and the acceptor are recorded in [h] as they are
    taken. *)
@@ -1134,8 +1156,8 @@ let run a h kinds =
 (* [serve] blocks signals but around the program's code it runs ([unmasked]),
    so that a Ctrl-C lands in its waits. From its claim the socket is
    [serve]'s, and an exception that ends it elsewhere than in its commands,
-   a Ctrl-C's in a wait among them, stops listening and ends the job [a]
-   took, which no serve would serve. *)
+   or a Ctrl-C's [Sys.Break] wherever it comes, stops listening and ends the
+   job [a] took, which no serve would serve. *)
 let serve a kinds =
   let names = List.map fst kinds in
   if List.length (List.sort_uniq String.compare names) <> List.length names then
@@ -1159,5 +1181,5 @@ let serve a kinds =
   | r -> r
   | exception e ->
       release a h;
-      abandon a h.report;
+      abandon a h.report e;
       reraise e

@@ -11,7 +11,8 @@
    connect cut leaves the process able to start another job, and a rail cut
    leaves its job going. An agent's serve, its acceptor and its handshakes,
    cut in a forked child, leave the agent serving or no longer listening,
-   and no controller waiting. *)
+   and no controller waiting. A Ctrl-C ends serve with [Sys.Break] in its
+   waits and in a command alike. *)
 
 open Windtrap
 open Remote_job
@@ -685,6 +686,167 @@ let serve_break () =
   let rec from n = if cut_serve "a Ctrl-C" Signal n then from (n + 1) in
   from 1
 
+(* A Ctrl-C in serve, in a forked child where it raises [Sys.Break] *)
+
+(* What [serve ()] did, as text. *)
+let outcome serve =
+  match serve () with
+  | Ok () -> "Ok ()"
+  | Error why -> "Error " ^ why
+  | exception e -> "raised " ^ Printexc.to_string e
+
+let raised_break = "raised " ^ Printexc.to_string Sys.Break
+
+(* [quiet f x] is a thread that runs [f x] with SIGINT blocked from its
+   start, so that a Ctrl-C's handler never runs there. *)
+let quiet f x =
+  let mask = Thread.sigmask Unix.SIG_BLOCK [ Sys.sigint ] in
+  let t = Thread.create f x in
+  ignore (Thread.sigmask Unix.SIG_SETMASK mask);
+  t
+
+(* [rescue act] starts a thread that runs [act ()] unless [ended ()] comes
+   within [patience]: [ended ()] waits for the thread and is whether [act]
+   ran. A wait that never ends otherwise thus fails the test in place of
+   hanging it. *)
+let rescue act =
+  let r, w = Unix.pipe ~cloexec:true () in
+  let ran = ref false in
+  let wait () =
+    match Unix.select [ r ] [] [] patience with
+    | [], _, _ ->
+        ran := true;
+        act ()
+    | _ -> ()
+  in
+  let t = quiet wait () in
+  fun () ->
+    ignore (Unix.write_substring w "x" 0 1);
+    Thread.join t;
+    Unix.close r;
+    Unix.close w;
+    !ran
+
+(* The frames [fd] receives until its stream ends: the first, then the rest
+   once this end has ended its own. *)
+let rest fd =
+  let first = next_frame fd in
+  (try Unix.shutdown fd Unix.SHUTDOWN_SEND with Unix.Unix_error _ -> ());
+  let rec frames acc =
+    match next_frame fd with Some f -> frames (f :: acc) | None -> List.rev acc
+  in
+  let fs = Option.to_list first @ frames [] in
+  Unix.close fd;
+  fs
+
+(* A Ctrl-C while serve waits for a controller ends serve with [Sys.Break]
+   without one: a controller comes only if serve has not ended within
+   [patience], and the agent then listens no more. SIGINT comes once serve
+   blocks in a timed wait that takes it: the wait for a controller. *)
+let break_idle () =
+  Rig_support.needs_fork ();
+  if not Rig_support.sees_waits then
+    skip ~reason:"the system does not show a thread's waits" ();
+  let served, controlled =
+    in_child ", a Ctrl-C in the wait for a controller" @@ fun () ->
+    child_start ();
+    Sys.catch_break true;
+    let a = agent_here () in
+    let port = Rig_remote.port a in
+    let ended = rescue (fun () -> Option.iter Unix.close (dial port)) in
+    let served, _ =
+      Rig_support.interrupt_in_wait ~timed:true (fun () ->
+          outcome (fun () -> Rig_remote.serve a []))
+    in
+    let controlled = ended () in
+    equal ~msg:"the port listens" bool false (listens port);
+    (served, controlled)
+  in
+  equal ~msg:"serve" string raised_break served;
+  equal ~msg:"a controller came" bool false controlled
+
+(* A Ctrl-C inside a command, an opener's, ends serve with [Sys.Break], and
+   the job fails with it: the controller receives its text as the abort's
+   reason. *)
+let break_in_command () =
+  let served, frames =
+    in_child ", a Ctrl-C in an opener" @@ fun () ->
+    child_start ();
+    Sys.catch_break true;
+    let a = agent_here () in
+    let port = Rig_remote.port a in
+    let frames = ref [] in
+    let controller () =
+      match dial port with
+      | Some fd when joins fd port ->
+          send fd (frame k_request (u8 2 ^ str "BREAK"));
+          frames := rest fd
+      | Some fd -> Unix.close fd
+      | None -> ()
+    in
+    let t = quiet controller () in
+    let interrupts () =
+      Rig_support.interrupt ();
+      Ok []
+    in
+    let served =
+      outcome (fun () -> Rig_remote.serve a [ ("BREAK", interrupts) ])
+    in
+    Thread.join t;
+    (served, !frames)
+  in
+  equal ~msg:"serve" string raised_break served;
+  equal ~msg:"the controller's frames"
+    (list (pair int string))
+    [ (k_abort, str (Printexc.to_string Sys.Break)) ]
+    frames
+
+(* A Ctrl-C while serve waits for its controller's next command ends serve
+   with [Sys.Break] without one: the controller sends its close only if
+   nothing came within [patience], and receives the abort. SIGINT comes once
+   serve blocks in a timed wait that takes it, after the join: the wait for
+   a command, never the wait for the runtime at the end of the join's
+   answer, whose SIGINT would land in serve's commands. *)
+let break_between_commands () =
+  Rig_support.needs_fork ();
+  if not Rig_support.sees_waits then
+    skip ~reason:"the system does not show a thread's waits" ();
+  let served, controlled, frames =
+    in_child ", a Ctrl-C in the wait for a command" @@ fun () ->
+    child_start ();
+    Sys.catch_break true;
+    let a = agent_here () in
+    let port = Rig_remote.port a in
+    let serving = Rig_support.self () in
+    let controlled = ref false and frames = ref [] in
+    let controller () =
+      match dial port with
+      | Some fd when joins fd port ->
+          let close () =
+            try send fd (frame k_close "") with Unix.Unix_error _ -> ()
+          in
+          let ended = rescue close in
+          let fs, _ =
+            Rig_support.interrupt_in_wait ~thread:serving ~timed:true
+              (fun () -> rest fd)
+          in
+          frames := fs;
+          controlled := ended ()
+      | Some fd -> Unix.close fd
+      | None -> ()
+    in
+    let t = quiet controller () in
+    let served = outcome (fun () -> Rig_remote.serve a []) in
+    Thread.join t;
+    (served, !controlled, !frames)
+  in
+  equal ~msg:"serve" string raised_break served;
+  equal ~msg:"a command came" bool false controlled;
+  equal ~msg:"the controller's frames"
+    (list (pair int string))
+    [ (k_abort, str (Printexc.to_string Sys.Break)) ]
+    frames
+
 (* Hosts of a start that raised *)
 
 (* An opener of no device, named [name]. *)
@@ -870,5 +1032,12 @@ let () =
              test "an acceptor cut by an exception ends serve" acceptor_cut;
              test "a serve cut by an exception stops listening" serve_cut;
              test "a serve cut by a Ctrl-C stops listening" serve_break;
+           ];
+         group ~timeout:60. "a Ctrl-C in serve"
+           [
+             test "in the wait for a controller raises Sys.Break" break_idle;
+             test "in a command raises Sys.Break" break_in_command;
+             test "in the wait for a command raises Sys.Break"
+               break_between_commands;
            ];
        ])

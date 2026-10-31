@@ -90,7 +90,8 @@ external park : unit -> unit = "rig_test_park"
 external parked : unit -> bool = "rig_test_parked"
 external unpark : unit -> unit = "rig_test_unpark"
 external sees_waits : unit -> bool = "rig_test_sees_waits"
-external interrupter_start : unit -> unit = "rig_test_interrupter_start"
+external interrupter_start : int -> bool -> unit
+  = "rig_test_interrupter_start"
 external interrupter_stop : unit -> bool = "rig_test_interrupter_stop"
 external thread_self : unit -> int = "rig_test_thread_self"
 external waits_for_lock : int -> bool = "rig_test_waits_for_lock"
@@ -867,8 +868,9 @@ let waits_for_lock = waits_for_lock
 let waits_in_condition = waits_in_condition
 let interrupt_after s = interrupt_after_ms (int_of_float (s *. 1000.))
 
-let interrupt_in_wait f =
-  interrupter_start ();
+let interrupt_in_wait ?thread ?(timed = false) f =
+  let t = match thread with Some t -> t | None -> thread_self () in
+  interrupter_start t timed;
   let raised = ref false in
   let r = Fun.protect ~finally:(fun () -> raised := interrupter_stop ()) f in
   (r, !raised)

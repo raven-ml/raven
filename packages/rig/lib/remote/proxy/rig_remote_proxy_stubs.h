@@ -218,6 +218,10 @@ struct rig_remote_dev {
    its own copy, taking no lock. */
 int rig_remote_forked(struct rig_remote_job *j);
 
+/* The longest a wait of an agent's serving thread blocks before it returns
+   to OCaml, where the handlers of pending signals run, as rig's waits do. */
+#define RIG_REMOTE_STILL_NS 200000000LL
+
 /* Inits [cv] for [rig_remote_wait_ns], whose waits a step of the wall clock
    does not move. */
 void rig_remote_cond_init(pthread_cond_t *cv);

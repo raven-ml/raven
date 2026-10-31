@@ -5,4 +5,5 @@
  (libraries rig rig_program rig_remote_proxy rig_remote_abi unix threads.posix)
  (foreign_stubs
   (language c)
-  (names rig_remote_report)))
+  (names rig_remote_report)
+  (include_dirs proxy)))

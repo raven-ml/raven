@@ -3,20 +3,27 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* What OCaml's Unix lacks for an agent: taking a launcher's report
-   descriptor by its number, writing a line on it with no poll point, and the
-   errors of accept it does not name. */
+/* What OCaml's Unix and threads lack for an agent: taking a launcher's
+   report descriptor by its number, writing a line on it with no poll point,
+   the errors of accept it does not name, and a wait for a change that
+   returns to OCaml after a bounded time. */
 
 #define _GNU_SOURCE
 
 #include <caml/alloc.h>
+#include <caml/custom.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
+#include <caml/threads.h>
 #include <errno.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "rig_remote_proxy_stubs.h"
 
 #ifdef _WIN32
 #include <caml/unixsupport.h>
@@ -25,7 +32,6 @@
 extern value caml_win32_alloc_handle(HANDLE);
 #else
 #include <fcntl.h>
-#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 #endif
@@ -167,4 +173,84 @@ value caml_rig_remote_enonet(value unit) {
 #else
   return Val_int(-1);
 #endif
+}
+
+/* Changes
+
+   A count of an agent's changes, which a wait for the next one bounds in
+   time: OCaml's Condition has no timed wait, and a wait that never returns
+   to OCaml runs no signal's handler. A caller reads the count with the
+   state it guards, under its own lock, and waits from that count: a change
+   after the read ends the wait. */
+
+struct changes {
+  pthread_mutex_t mu;
+  pthread_cond_t cv;
+  intnat count;
+};
+
+#define Changes_val(v) (*(struct changes **)Data_custom_val(v))
+
+static void changes_free(value v) {
+  struct changes *c = Changes_val(v);
+  if (c == NULL) return;
+  pthread_cond_destroy(&c->cv);
+  pthread_mutex_destroy(&c->mu);
+  free(c);
+}
+
+static struct custom_operations changes_ops = {
+    "rig.remote.changes",       changes_free,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+/* A new count of no change. Raises Out_of_memory if the C heap has no room
+   for it. */
+value caml_rig_remote_changes(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&changes_ops, sizeof(struct changes *), 0, 1);
+  Changes_val(v) = NULL;
+  struct changes *c = malloc(sizeof *c);
+  if (c == NULL) caml_raise_out_of_memory();
+  pthread_mutex_init(&c->mu, NULL);
+  rig_remote_cond_init(&c->cv);
+  c->count = 0;
+  Changes_val(v) = c;
+  CAMLreturn(v);
+}
+
+/* Counts one more change and wakes the waits. Holds the runtime. */
+value caml_rig_remote_change(value v) {
+  struct changes *c = Changes_val(v);
+  pthread_mutex_lock(&c->mu);
+  c->count++;
+  pthread_cond_broadcast(&c->cv);
+  pthread_mutex_unlock(&c->mu);
+  return Val_unit;
+}
+
+/* The changes counted so far. Holds the runtime. */
+value caml_rig_remote_changes_count(value v) {
+  struct changes *c = Changes_val(v);
+  pthread_mutex_lock(&c->mu);
+  intnat n = c->count;
+  pthread_mutex_unlock(&c->mu);
+  return Val_long(n);
+}
+
+/* Waits until more than [vn] changes are counted, or [RIG_REMOTE_STILL_NS]
+   has passed, or the condition wakes spuriously. Releases the runtime. */
+value caml_rig_remote_changes_await(value v, value vn) {
+  CAMLparam2(v, vn);
+  struct changes *c = Changes_val(v);
+  intnat n = Long_val(vn);
+  caml_release_runtime_system();
+  pthread_mutex_lock(&c->mu);
+  if (c->count == n)
+    rig_remote_wait_ns(&c->cv, &c->mu, RIG_REMOTE_STILL_NS);
+  pthread_mutex_unlock(&c->mu);
+  caml_acquire_runtime_system();
+  CAMLreturn(Val_unit);
 }

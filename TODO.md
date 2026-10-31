@@ -48,15 +48,16 @@ raven / llama.cpp (Vulkan; ROCm):
   no signal masks, so a Ctrl-C lands at any poll point below rig's core,
   rows worklist-m.md counts as unreached included (rig.cuda's page-lock
   registry under a contended lock): those rows need the same fix there
-- rig.remote: one Ctrl-C ends an agent's `serve` two ways: inside a
-  command it answers `Error "Stdlib.Sys.Break"`, against rig_remote.mli's
-  "a handler's exception ends `serve`"; in `serve`'s own waits it raises.
-  An agent idle in its wait for a controller sees the Ctrl-C only when a
-  controller arrives
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
   Needs an SDMA 4 GPU (Vega, MI100-MI300); nonnormal's gfx1201 runs SDMA 7
+- rig.remote: two waits of an agent's serving thread take signals but
+  never return to OCaml before they end, so a Ctrl-C lands only then: a
+  join's `unblocked Thread.join` of its dials (agent.ml, at most `join_s`,
+  10 s) and `Link.release_rail`'s untimed `pthread_cond_wait` for the
+  rail's active transfers (rig_remote_link.c). Bound them as the waits for
+  a controller and a command are (`RIG_REMOTE_STILL_NS`)
 
 ### limits and size
 
