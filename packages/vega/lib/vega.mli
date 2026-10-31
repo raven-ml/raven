@@ -63,7 +63,7 @@
 
 (** {1:structures Parameters and states}
 
-    A function over parameters walks its values with their structure [p]. Four
+    A function over parameters walks its values with their structure [p]. Six
     rules hold:
 
     - {b One skeleton.} The parameters, the gradients and each part of a state
