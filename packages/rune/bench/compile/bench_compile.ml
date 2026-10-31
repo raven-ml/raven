@@ -10,8 +10,9 @@
    function: tracing, lowering, tolk's passes and the kernel compiler, and the
    process's start. A warm process cannot hold this cost: tolk's disk cache
    serves a program after its first compile. A case takes three samples. The
-   cases are those whose compile time rune's lowering, tolk's vectors or a
-   library's stores of its intermediates decide.
+   cases are those whose compile time rune's lowering, tolk's vectors, a
+   library's stores of its intermediates or the number of devices a program
+   spans decide.
 
    [--cold ID] runs one case's first call and prints its milliseconds: run it
    with [CACHEDB] at an empty path and [PARALLEL=1]. *)
@@ -278,6 +279,40 @@ let wide_sum () =
           sum
           (input ~n:1_000_000 0. 1.)))
 
+(* A data-parallel step of a two-layer perceptron, its batch of 64 cut across
+   16 memory devices of one set and its weights whole on each: the loss's
+   gradient sums across the devices before the update. Each device computes
+   its own kernels, which compile once, for the first device: the first
+   call's cost past one device's is each device's share of the trace. *)
+let data_parallel () =
+  let devices =
+    List.init 16 (fun i ->
+        Result.get_ok (Rig.memory_device (Printf.sprintf "bench-dp-%d" i)))
+  in
+  let module S = (val Nx.devices devices) in
+  let make shape seed =
+    let n = Array.fold_left ( * ) 1 shape in
+    Nx.create Nx.float32 shape
+      (Array.init n (fun j -> sin (Float.of_int ((seed * 7919) + j)) *. 0.3))
+  in
+  let step (x, (w1, w2)) =
+    let loss (w1, w2) =
+      let y = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
+      Nx.mean (Nx.mul y y)
+    in
+    let g1, g2 = Rune.grad Nx.Ptree.(pair tensor tensor) loss (w1, w2) in
+    (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
+  in
+  let x = Nx.place (S.split ~axis:0) (make [| 64; 64 |] 3) in
+  let w1 = Nx.place S.on (make [| 64; 128 |] 1) in
+  let w = (w1, Nx.place S.on (make [| 128; 16 |] 2)) in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(
+            pair tensor (pair tensor tensor) @-> returns (pair tensor tensor))
+          step (x, w)))
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -295,6 +330,7 @@ let cases =
     ("shaped-4k-3-lanes", shaped_padded);
     ("special/betainc-chain-f32", betainc_chain);
     ("wide/sum-1e6", wide_sum);
+    ("devices/dp-step-16", data_parallel);
   ]
 
 let rec remove path =
