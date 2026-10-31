@@ -17,5 +17,7 @@
   observation
   cosmology
   cosmology_tables
+  time
+  time_tables
   wcs)
  (libraries nx nx.array nx.wide jera ymir.units))

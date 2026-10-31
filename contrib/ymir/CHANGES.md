@@ -4,6 +4,11 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Time` holds batches of instants on UTC, TAI, TT and TDB, the scale in the
+  type: UTC 23:59:60 and its 1961-1972 rates from the IERS's tables, and TDB at
+  the geocentre from SOFA's `iauDtdb` series. `Time.convert` converts them.
+- ymir's licence is `ISC AND BSD-3-Clause`: `Time`'s terms of TDB - TT are
+  ERFA's, under the notice in `LICENSE-erfa`.
 - `Fits.Image` reads HCOMPRESS_1 tiles, as Legacy Surveys ships maskbits
   and nexp images, as cfitsio decodes them, lossless, lossy (clamped to the
   stored type) and smoothed. A window decodes only its part.

@@ -361,7 +361,7 @@ raven / llama.cpp (Vulkan; ROCm):
   from fe69dde74 to main. Record a fudge section; re-record or drop the
   Mac's
 - ymir: HEALPix and spherical harmonics (RFC 0027 slice 3)
-- ymir: time scales (UTC, TAI, TT, TDB), then time-dependent frames
+- ymir: time-dependent frames
   (precession, nutation, aberration) and ephemerides
 
 ## repo

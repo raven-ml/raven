@@ -46,6 +46,10 @@ The [examples](examples/) teach each part on small synthetic data.
   exact constants are built in, `Codata.v2018` and `Codata.v2022` hold the
   measured constants, and `Vocabulary` spells units with symbols such as
   `MJy sr^-1`.
+- **Time scales**: `Time` holds batches of instants on UTC, TAI, TT and
+  TDB, the scale in the type, and converts between them: leap seconds and
+  UTC before 1972 from the IERS's tables, TDB at the geocentre from the
+  Fairhead & Bretagnon series.
 - **Frames and directions**: `Frame` names ICRS, FK5 J2000, Galactic, the
   J2000 ecliptic and supergalactic, and a frame mismatch is a type error.
   `Direction` holds batches of directions with their separations, position

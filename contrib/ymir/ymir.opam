@@ -6,7 +6,7 @@ description:
   "Astronomy over Nx tensors: exact units and quantities, celestial frames and directions, FITS files (headers, images, tile compression, tables, world coordinates), maps from pixels to the sky, aperture photometry with exact cell overlaps, and the background cosmology. Every function is a formula of nx operations, so it runs batched, compiled and differentiated."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
-license: "ISC"
+license: "ISC AND BSD-3-Clause"
 tags: ["astronomy" "units" "fits" "cosmology" "photometry" "science"]
 homepage: "https://github.com/raven-ml/raven"
 doc: "https://github.com/raven-ml/raven/tree/main/contrib/ymir"

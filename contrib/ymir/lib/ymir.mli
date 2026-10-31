@@ -12,9 +12,10 @@
 
     [open Ymir] brings the unit algebra of [ymir.units] ({!Unit}, {!Quantity},
     {!Constant}, {!Codata}, {!Vocabulary}) and astronomy's units ({!Units}) into
-    scope. {!Frame} names the celestial frames and {!Direction} holds directions
-    in them. {!Transform} maps pixels to the sky, {!Grid} is a shape of cells
-    seen through a transform, {!Region} is a shape placed on a grid's world, and
+    scope. {!Time} holds instants on astronomical time scales. {!Frame} names
+    the celestial frames and {!Direction} holds directions in them.
+    {!Transform} maps pixels to the sky, {!Grid} is a shape of cells seen
+    through a transform, {!Region} is a shape placed on a grid's world, and
     {!Observation} holds data on a grid and integrates them over a region.
     {!Cosmology} is the background of a homogeneous expanding universe: its
     expansion rate, distances, volumes and times. {!Wcs} reads and writes a
@@ -24,10 +25,10 @@
     function's results, and the constants it makes, lie where its operands
     lie, as {!Nx.beside} places them, and a cut operand gives a result cut
     alike. What a function makes from nothing lies on the host: FITS reads,
-    the cosmology presets, {!Constant.quantity} and {!Frame.matrix}; their
-    walks move them ({!Nx.Ptree.place}). {!Wcs.read} and {!Grid.pixels} take
-    the placement of what they make, since a {!Transform} cannot move between
-    sets. *)
+    the cosmology presets, {!Time.of_date}, {!Constant.quantity} and
+    {!Frame.matrix}; their walks move them ({!Nx.Ptree.place}). {!Wcs.read}
+    and {!Grid.pixels} take the placement of what they make, since a
+    {!Transform} cannot move between sets. *)
 
 (** {1:units Units} *)
 
@@ -57,6 +58,236 @@ module Units : sig
 
   val julian_year : Unit.t
   (** [julian_year] is 365.25 {!Unit.day}, 31557600 s. *)
+end
+
+(** {1:times Time scales} *)
+
+(** Instants on astronomical time scales.
+
+    A {e time scale} is a way of numbering instants with days and seconds.
+    {e TAI}, International Atomic Time, counts SI seconds on the geoid.
+    {e TT}, Terrestrial Time, is TAI + 32.184 s, the time of geocentric
+    ephemerides. {e TDB}, Barycentric Dynamical Time, is the time of the
+    solar system's barycentre, scaled to keep close to TT: TDB − TT is
+    quasi-periodic, under 2 ms. {e UTC}, Coordinated Universal Time, is TAI less
+    a whole number of seconds since 1972, changed by a {e leap second} at
+    the end of a day to keep near the Earth's rotation, so that a UTC day
+    lasts 86399, 86400 or 86401 SI seconds.
+
+    An {e instant} on a scale is a {e day}, the modified Julian date
+    (MJD, the Julian date less 2400000.5), and the seconds since that day's
+    0h, in \[0, the day's length). On TAI, TT and TDB, the {e uniform}
+    scales, every day lasts 86400 s. A UTC day lasts 86400 s plus its leap
+    second, so 23:59:60.5 on 2016-12-31 is second 86400.5 of MJD 57753.
+    The scale is in the instant's type, so mixing scales is a type error,
+    and the functions that read a time as a count of seconds, {!Time.diff},
+    {!Time.add} and {!Time.jd}, take uniform scales only.
+
+    {b Precision.} The seconds are float64, whose ulp is at most 2⁻³⁶ s,
+    1.5e-11 s, below 2¹⁷ s; a day is an int64, within 2⁵³ days of MJD 0,
+    about 2.5e13 years, so that float64 holds it. A rounding of the seconds
+    is within half an ulp, 7.3e-12 s, and each function states its bound.
+
+    {b UTC before 1972.} From 1961 to 1972, TAI − UTC was a linear
+    expression in the UTC date, [a + (MJD − m) r] seconds, replaced every
+    few months by one that jumped by a fraction of a second. A UTC second
+    then lasted [1 + r / 86400] SI seconds, and a jump lengthened or
+    shortened the day before it as a leap second does: 1961-07-31 lasted
+    86399.95 UTC seconds. The IAU SOFA library's UTC functions hold the same
+    convention, under which a day that ends in a jump ends, in TAI,
+    [jump × r / 86400] s after or before the next day's 0h, under 3.3e-9 s:
+    the day's last instants overlap the next day's first, or a gap of TAI
+    lies between them, which reads as the next day's 0h. SOFA's UTC begins on
+    1960-01-01, with 1961's expression less the 5 ms step the Explanatory
+    Supplement to the Astronomical Almanac (1992) gives; ymir's begins on
+    1961-01-01, where the IERS's history of TAI − UTC, its source, begins. An
+    earlier UTC instant raises [Invalid_argument].
+
+    {b Leap seconds.} TAI − UTC is the IERS's table of it, from its history
+    of UTC and Bulletin C, as of this release. A UTC instant from
+    {!Time.leap_seconds_known_until} on reads with the table's last value,
+    so a conversion past it is off by whole seconds if a leap second is
+    announced later.
+
+    {b TDB.} TDB − TT depends on where an event is, through the term
+    v⊕ · r / c² of the Earth's barycentric velocity v⊕ and the event's
+    geocentric position r, about 2 µs on the Earth's surface. {!Time}
+    converts the instants of events at the geocentre: its TDB − TT is the
+    series of Fairhead and Bretagnon (1990) in its full form, 787 terms, as
+    the IAU SOFA library's [iauDtdb] gives it. SOFA states it within 3 ns of
+    numerical integrations of the solar system (JPL's DE405) from 1950 to
+    2050; outside those years its error is not stated.
+
+    Times are tensors: a time holds a batch of instants on one scale, its
+    days and seconds broadcast together, and each function works on each
+    instant alone. The seconds carry their derivative through
+    {!Time.convert}, {!Time.diff} and {!Time.add}. A NaN second is a NaN
+    instant, which they keep NaN.
+
+    The TDB of a UTC timestamp:
+
+    {[
+    let t = Time.of_date Time.utc (2006, 1, 15) (21, 24, 37.5)
+    let tdb = Time.convert Time.tdb t
+    ]} *)
+module Time : sig
+  (** {1:scales Scales} *)
+
+  type 's scale
+  (** The type for time scales. Each scale type has exactly one value. *)
+
+  type !'a uniform
+  (** The type of a scale whose every day lasts 86400 of its seconds. *)
+
+  type utc
+  type tai = [ `Tai ] uniform
+  type tt = [ `Tt ] uniform
+  type tdb = [ `Tdb ] uniform
+
+  val utc : utc scale
+  (** [utc] is Coordinated Universal Time. *)
+
+  val tai : tai scale
+  (** [tai] is International Atomic Time. *)
+
+  val tt : tt scale
+  (** [tt] is Terrestrial Time, TAI + 32.184 s. *)
+
+  val tdb : tdb scale
+  (** [tdb] is Barycentric Dynamical Time at the geocentre. *)
+
+  val name : 's scale -> string
+  (** [name s] is [s]'s canonical name: ["utc"], ["tai"], ["tt"], ["tdb"]. *)
+
+  (** {1:instants Instants} *)
+
+  type ('s, 'd) t
+  (** The type for times: batches of instants on the scale ['s]. *)
+
+  val v :
+    's scale ->
+    day:(int64, Nx.int64_elt, 'd) Nx.t ->
+    second:(float, Nx.float64_elt, 'd) Nx.t Quantity.t ->
+    ('s, 'd) t
+  (** [v s ~day ~second] is the instants [second] after 0h of the modified
+      Julian dates [day] on [s], their shapes broadcast.
+
+      Raises [Invalid_argument] if [second] is not a time, or where it is
+      infinite or outside \[0, the day's length), as in
+      ["Time.v: second 86400.5 at [2] is outside [0, 86400) of utc day
+       57000"], or where a day is past 2⁵³ days from MJD 0 or a UTC day
+      precedes 1961-01-01. *)
+
+  val of_jd :
+    ('a uniform as 's) scale ->
+    (float, Nx.float64_elt, 'd) Nx.t ->
+    (float, Nx.float64_elt, 'd) Nx.t ->
+    ('s, 'd) t
+  (** [of_jd s j1 j2] is the instants of Julian date [j1 + j2] on [s], their
+      shapes broadcast. The sum may be split any way, as in
+      [(2400000.5, mjd)]: each part is read as whole days and a fraction, and
+      the instant is within 2e-11 s of the exact sum.
+
+      Raises [Invalid_argument] where a part is not finite or the day is past
+      2⁵³ days from MJD 0. *)
+
+  val of_date :
+    's scale -> int * int * int -> int * int * float -> ('s, Nx.host) t
+  (** [of_date s (y, m, d) (h, mi, sec)] is the instant at [h:mi:sec] of the
+      date [(y, m, d)] of the proleptic Gregorian calendar on [s], one instant
+      on the host. Years are astronomical: year 0 is 1 BC. [sec] is in \[0,
+      60), and in a UTC day's last minute up to the day's end: \[0, 61) on a
+      day with a leap second.
+
+      A time whose seconds since 0h round to the day's end is the next day's
+      0h.
+
+      Raises [Invalid_argument] if the date is not one, the time is not one
+      of that day, the date is past 2⁵³ days from MJD 0, or a UTC date
+      precedes 1961-01-01. *)
+
+  val scale : ('s, 'd) t -> 's scale
+  (** [scale t] is [t]'s scale. *)
+
+  val day : ('s, 'd) t -> (int64, Nx.int64_elt, 'd) Nx.t
+  (** [day t] is each instant's modified Julian date. *)
+
+  val second : ('s, 'd) t -> (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [second t] is each instant's seconds since its day's 0h, in \[0, the
+      day's length). *)
+
+  val jd :
+    ('a uniform, 'd) t ->
+    (float, Nx.float64_elt, 'd) Nx.t * (float, Nx.float64_elt, 'd) Nx.t
+  (** [jd t] is [(j1, j2)], each instant's Julian date [j1 + j2]: [j1] the
+      Julian date of its day's 0h, exact, and [j2] the fraction of the day,
+      in \[0, 1\], rounded once. *)
+
+  val date : ('s, Nx.host) t -> (int * int * int) * (int * int * float)
+  (** [date t] is [((y, m, d), (h, mi, sec))], the date and time of day of
+      [t]'s one instant, as {!of_date} reads them: [of_date s (date t)] is
+      [t]. A leap second is 23:59:60 and up.
+
+      Raises [Invalid_argument] if [t] holds other than one instant, or its
+      instant is NaN. *)
+
+  val leap_seconds_known_until : (utc, Nx.host) t
+  (** [leap_seconds_known_until] is 0h UTC of the day IERS Bulletin C says
+      the table of TAI − UTC that ymir carries expires. *)
+
+  (** {1:converting Converting} *)
+
+  val convert : 'b scale -> ('a, 'd) t -> ('b, 'd) t
+  (** [convert s t] is [t]'s instants on [s], converted along UTC, TAI, TT,
+      TDB one step at a time:
+      - UTC to TAI adds TAI − UTC, and TAI to UTC subtracts it. From 1972
+        that is whole seconds: each direction rounds at most once, a round
+        trip is within 7.3e-12 s, and seconds that are multiples of 2⁻³⁶ s
+        convert exactly. Before 1972 a round trip is within 4e-11 s, but
+        in the last 3.3e-9 s of a day that ends in a jump, whose instants come
+        back as the next day's first, within 3.3e-9 s of UTC.
+      - TAI to TT adds 32.184 s, and TT to TAI subtracts it, each within
+        7.3e-12 s.
+      - TT to TDB adds TDB − TT at the TDB it gives, the fixed point of
+        [tdb = tt + f(tdb)], which two steps reach; TDB to TT subtracts
+        [f(tdb)]. A round trip is within 1.5e-11 s.
+
+      A TAI within 4e-11 s before UTC's first instant, as a round trip from
+      it can give, is that instant.
+
+      Raises [Invalid_argument] where a UTC instant would precede
+      1961-01-01. *)
+
+  (** {1:arithmetic Arithmetic} *)
+
+  val diff :
+    ('a uniform as 's, 'd) t ->
+    ('s, 'd) t ->
+    (float, Nx.float64_elt, 'd) Nx.t Quantity.t
+  (** [diff a b] is [a − b] in seconds of their scale, their shapes
+      broadcast, within half an ulp of the result and 7.3e-12 s. *)
+
+  val add :
+    ('a uniform as 's, 'd) t ->
+    (float, Nx.float64_elt, 'd) Nx.t Quantity.t ->
+    ('s, 'd) t
+  (** [add t span] is [t] moved by [span], a time, their shapes broadcast.
+      The instant is within 7.3e-12 s of [span] after [t].
+
+      Raises [Invalid_argument] if [span] is not a time, or where it is not
+      finite or the day would pass 2⁵³ days from MJD 0. *)
+
+  (** {1:structure Structure} *)
+
+  val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('s, 'd) t -> ('s, 'e) t
+  (** [walk c t] walks [t]: the scale's {!name} as one case at [c]'s path, then
+      the days at field ["day"] and the seconds at field ["second"], as
+      tensors of a fixed type. {!Nx.Ptree.cast} keeps them, {!Nx.Ptree.place}
+      moves them, and {!Nx.Ptree.map} and rune's transformations treat them
+      as any tensor. *)
+
+  val ptree : unit -> (('s, 'd) t, 'd) Nx.Ptree.t
+  (** [ptree ()] is [Nx.Ptree.v walk], the structure of times. *)
 end
 
 (** {1:frames Frames and directions} *)
