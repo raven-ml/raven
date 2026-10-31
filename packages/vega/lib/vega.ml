@@ -497,7 +497,9 @@ let radam_step p ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) st ~params ~grads =
     counted (fun dt ->
         let t = Nx.cast dt step in
         let x = Nx.mul_s t (Float.log b2) in
-        let tail = Nx.div (Nx.mul (Nx.mul_s t 2.0) (Nx.exp x)) (one_minus_exp x) in
+        let tail =
+          Nx.div (Nx.mul (Nx.mul_s t 2.0) (Nx.exp x)) (one_minus_exp x)
+        in
         let rho = Nx.rsub_s rho_inf tail in
         let k = rho_inf /. ((rho_inf -. 4.0) *. (rho_inf -. 2.0)) in
         Nx.sqrt

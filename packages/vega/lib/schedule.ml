@@ -12,7 +12,8 @@ type 'd t = 'd Nx.int32_t -> 'd Nx.float32_t
 
 let f32 = Nx.float32
 let to_f32 step = Nx.cast f32 step
-let eval sched step = Nx.item [] (sched (Nx.scalar Nx.int32 (Int32.of_int step)))
+let eval sched step =
+  Nx.item [] (sched (Nx.scalar Nx.int32 (Int32.of_int step)))
 
 (* Cosine annealing factor: 1 -> 0 as ratio goes 0 -> 1. *)
 let cosine_factor ratio =

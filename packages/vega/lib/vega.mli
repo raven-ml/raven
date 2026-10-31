@@ -74,7 +74,8 @@
       parameters hold there, for example
       ["Vega.adam_step: the root: length 1 in the gradients, length 2 in the
        parameters"] or
-      ["Vega.adam_step: w: float32 in the gradients, float64 in the parameters"].
+      ["Vega.adam_step: w: float32 in the gradients, float64 in the
+       parameters"].
       A skeleton mismatch raises before any tensor is computed; a dtype mismatch
       raises at its leaf. The other functions that take two values raise as
       {!Nx.Ptree.map2} does.
@@ -103,13 +104,13 @@
       [step] for the counter, so a state is named in a compiled step's signature
       and saved with its paths as the names of its tensors.
     - {b Precision.} A step computes each leaf at float32, or at float64 for a
-      float64 or complex128 leaf, and returns the parameters and the state at their own
-      dtypes, so a float16 or bfloat16 leaf is rounded once, when stored.
-      Constants that depend only on hyperparameters are computed on the host in
-      float64; scalars of the step counter, once per step at the leaf's compute
-      dtype, [1 - b^t] without cancellation. A low-precision state still rounds
-      what it stores: a bfloat16 moving average whose decay is below half its
-      spacing does not decay.
+      float64 or complex128 leaf, and returns the parameters and the state at
+      their own dtypes, so a float16 or bfloat16 leaf is rounded once, when
+      stored. Constants that depend only on hyperparameters are computed on the
+      host in float64; scalars of the step counter, once per step at the leaf's
+      compute dtype, [1 - b^t] without cancellation. A low-precision state
+      still rounds what it stores: a bfloat16 moving average whose decay is
+      below half its spacing does not decay.
     - {b Placement.} A state lies with the parameters: its parts beside their
       leaves, its counter whole on each device of the parameters' set.
       Every [*_init] raises [Invalid_argument] naming itself if the parameters
@@ -305,10 +306,11 @@ val sgd_step :
     p' = p - lr * v'
     v}
 
-    [lr] gives the rate at the counter ({!section-lr}); [momentum] defaults to [0.], plain
-    gradient descent: the velocity is then the last gradient, and the input
-    velocity is not read at all. The counter advances by one. The whole step is
-    tensor arithmetic over [(params, st)], so it traces under [Rune.jit].
+    [lr] gives the rate at the counter ({!section-lr}); [momentum] defaults to
+    [0.], plain gradient descent: the velocity is then the last gradient, and
+    the input velocity is not read at all. The counter advances by one. The
+    whole step is tensor arithmetic over [(params, st)], so it traces under
+    [Rune.jit].
 
     Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), or as
     {!section-structures} states if [grads], or [st.velocity] when [momentum] is
@@ -401,11 +403,12 @@ val adam_step :
     p'  = p - lr * d
     v}
 
-    [lr] gives the rate at the counter ({!section-lr}). [b1] defaults to [0.9], [b2] to
-    [0.999], [eps] to [1e-8]; they are compile-time constants, safe captures
-    under [Rune.jit]. The bias corrections are derived from the state's counter
-    in tensor arithmetic (see {!section-structures} for their precision), so the
-    whole step traces and the returned state feeds the next call.
+    [lr] gives the rate at the counter ({!section-lr}). [b1] defaults to
+    [0.9], [b2] to [0.999], [eps] to [1e-8]; they are compile-time constants,
+    safe captures under [Rune.jit]. The bias corrections are derived from the
+    state's counter in tensor arithmetic (see {!section-structures} for their
+    precision), so the whole step traces and the returned state feeds the next
+    call.
 
     Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\) or [eps] is
     not positive, or as {!section-structures} states if [grads], [st.mu] or
@@ -523,7 +526,8 @@ module Rmsprop_state : Nx.Ptree.S with type ('p, 'd) t = ('p, 'd) rmsprop_state
     those fields as positions of the parameter, then [step] at ["step"] as a
     fixed [int32] tensor. Transformations take {!rmsprop_ptree}. *)
 
-val rmsprop_ptree : ('p, 'd) Nx.Ptree.t -> (('p, 'd) rmsprop_state, 'd) Nx.Ptree.t
+val rmsprop_ptree :
+  ('p, 'd) Nx.Ptree.t -> (('p, 'd) rmsprop_state, 'd) Nx.Ptree.t
 (** [rmsprop_ptree p] is [Nx.Ptree.nest (module Rmsprop_state) p]. *)
 
 val rmsprop_init : ('p, 'd) Nx.Ptree.t -> 'p -> ('p, 'd) rmsprop_state
@@ -568,7 +572,8 @@ module Adagrad_state : Nx.Ptree.S with type ('p, 'd) t = ('p, 'd) adagrad_state
     field as a position of the parameter, then [step] at ["step"] as a fixed
     [int32] tensor. Transformations take {!adagrad_ptree}. *)
 
-val adagrad_ptree : ('p, 'd) Nx.Ptree.t -> (('p, 'd) adagrad_state, 'd) Nx.Ptree.t
+val adagrad_ptree :
+  ('p, 'd) Nx.Ptree.t -> (('p, 'd) adagrad_state, 'd) Nx.Ptree.t
 (** [adagrad_ptree p] is [Nx.Ptree.nest (module Adagrad_state) p]. *)
 
 val adagrad_init : ('p, 'd) Nx.Ptree.t -> 'p -> ('p, 'd) adagrad_state
@@ -721,15 +726,18 @@ type ('p, 'd) adafactor_state = {
     numbers rather than [m * n]. {!adafactor_init} decides which leaves are
     factored, and the state records it. *)
 
-module Adafactor_state : Nx.Ptree.S with type ('p, 'd) t = ('p, 'd) adafactor_state
+module Adafactor_state :
+  Nx.Ptree.S with type ('p, 'd) t = ('p, 'd) adafactor_state
 (** The structure of Adafactor states. Its [walk] visits [nu_row], [nu_col] then
     [nu] at those fields as positions of the parameter, then [step] at ["step"]
     as a fixed [int32] tensor. Transformations take {!adafactor_ptree}. *)
 
-val adafactor_ptree : ('p, 'd) Nx.Ptree.t -> (('p, 'd) adafactor_state, 'd) Nx.Ptree.t
+val adafactor_ptree :
+  ('p, 'd) Nx.Ptree.t -> (('p, 'd) adafactor_state, 'd) Nx.Ptree.t
 (** [adafactor_ptree p] is [Nx.Ptree.nest (module Adafactor_state) p]. *)
 
-val adafactor_init : ('p, 'd) Nx.Ptree.t -> ?factored:bool -> 'p -> ('p, 'd) adafactor_state
+val adafactor_init :
+  ('p, 'd) Nx.Ptree.t -> ?factored:bool -> 'p -> ('p, 'd) adafactor_state
 (** [adafactor_init p params] is the initial state for optimizing [params]: zero
     statistics and [step = 0]. With [factored] (the default, [true]), leaves of
     two or more axes are factored; without, no leaf is. *)
@@ -776,8 +784,10 @@ val adafactor_step :
     [1e-3 / sqrt t]:
 
     {[
-    let lr step = Nx.mul_s (Nx.rsqrt (Nx.cast Nx.float32 (Nx.add_s step 1l))) 1e-3
-    let st' = Vega.adafactor_step p ~lr st ~params ~grads
+    let lr step =
+      Nx.mul_s (Nx.rsqrt (Nx.cast Nx.float32 (Nx.add_s step 1l))) 1e-3
+
+    let params', st' = Vega.adafactor_step p ~lr st ~params ~grads
     ]}
 
     Raises [Invalid_argument] if [decay_rate], [eps] or [clipping_threshold] is
@@ -832,14 +842,19 @@ val lbfgs_ptree : ('p, 'd) Nx.Ptree.t -> (('p, 'd) lbfgs_state, 'd) Nx.Ptree.t
     structure [p]. It visits [params.]{e path} for each of [p]'s visits, then
     [grads.]{e path}, [s.]{e path}, [y.]{e path} and [step]. *)
 
-val lbfgs_init : ('p, 'd) Nx.Ptree.t -> ?history:int -> 'p -> ('p, 'd) lbfgs_state
+val lbfgs_init :
+  ('p, 'd) Nx.Ptree.t -> ?history:int -> 'p -> ('p, 'd) lbfgs_state
 (** [lbfgs_init p params] is the initial state at [params], with an empty
     history of [history] pairs (default [10]).
 
     Raises [Invalid_argument] if [history < 1]. *)
 
 val lbfgs_step :
-  ('p, 'd) Nx.Ptree.t -> lr:('d Nx.int32_t -> (float, 'b, 'd) Nx.t) -> 'p -> ('p, 'd) lbfgs_state -> ('p, 'd) lbfgs_state
+  ('p, 'd) Nx.Ptree.t ->
+  lr:('d Nx.int32_t -> (float, 'b, 'd) Nx.t) ->
+  'p ->
+  ('p, 'd) lbfgs_state ->
+  ('p, 'd) lbfgs_state
 (** [lbfgs_step p ~lr grads st] is the state after one step from [st.params],
     where the objective's gradient is [grads]. It completes the newest pair with
     [grads - st.grads], computes the direction [d] by the two-loop recursion of
