@@ -1374,7 +1374,10 @@ val jit :
     it. Each value's placement is eager's, uneven windows included, and a device
     whose windows of an operation's results are all empty computes nothing for
     it. A program for one device serves every device of its target, so the
-    devices of a set compile each kernel once. Each argument's piece on a
+    devices of a set compile each kernel once, and a window moves between
+    devices from a start the program binds when it runs: where every window
+    of a cut has one shape, a program makes as many kernels whatever the
+    number of devices. Each argument's piece on a
     device is an argument of its own for the variant, and a donated argument
     lends no memory. With [RUNE_JIT_DEBUG] set, the first call prints each move
     between devices, the function that makes it and its bytes. The values of a

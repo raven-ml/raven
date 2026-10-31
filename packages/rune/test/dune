@@ -47,6 +47,7 @@
   rune
   rune_support
   threads.posix
+  tolk
   windtrap))
 
 ; Opens this machine's first GPU, so it holds the lock GPU tests share.

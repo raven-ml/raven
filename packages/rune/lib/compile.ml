@@ -624,6 +624,13 @@ type env = {
   scattered : bool array;
   shared : bool array;
   drawn : bool array;
+  windows : bool array;
+      (** Whether each variable is a window, [Move (Slice _)], that a placement
+          reads: in a split program, the window of a piece that a move reads.
+          Empty in a program that is not split. *)
+  local : bool array;
+      (** Whether each variable is the placement of a window onto the device
+          it lies on. Empty in a program that is not split. *)
 }
 
 let slot (p : Program.t) x =
@@ -670,7 +677,20 @@ let shared (p : Program.t) =
     p.eqns;
   Array.map (fun k -> k > 1) reads
 
-let env_of ?(carried = 0) ?donated (p : Program.t) =
+(* Whether each variable of [p] is a window that a placement reads. *)
+let windows (p : Program.t) =
+  let sliced = Array.make p.slots false and placed = Array.make p.slots false in
+  Array.iter
+    (function
+      | Program.Op { op = Move (Slice _, _); base; _ } -> sliced.(base) <- true
+      | Op { op = Place (_, x); _ } ->
+          let n = slot p x in
+          if n >= 0 then placed.(n) <- true
+      | Op _ | Do _ -> ())
+    p.eqns;
+  Array.map2 ( && ) sliced placed
+
+let env_of ~split ?(carried = 0) ?donated (p : Program.t) =
   {
     p;
     carried;
@@ -681,6 +701,8 @@ let env_of ?(carried = 0) ?donated (p : Program.t) =
     scattered = Array.make p.slots false;
     shared = shared p;
     drawn = Array.make p.slots false;
+    windows = (if split then windows p else [||]);
+    local = (if split then Array.make p.slots false else [||]);
   }
 
 let var env x = slot env.p x
@@ -821,11 +843,45 @@ let op_device st (type r) (op : r Nx.Prim.t) =
       | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> device_at st (Nx.placement x)
       | Nx.Prim.Operands [] -> st.device)
 
+(* [u], of [x]'s dtype, at the window [rs] of [x] that a move reads, each
+   start of an axis it does not keep whole a variable bound to that start: a
+   device's move of a window, and a kernel that reads it, is then the program
+   of every device's of its shape, wherever its window starts. *)
+let moving x (rs : A.Move.range array) u =
+  let s = Nx.shape x in
+  let axis i (r : A.Move.range) =
+    if r.count = s.(i) then None
+    else
+      let v =
+        Ops.variable
+          (Printf.sprintf "window%d" r.start)
+          (Tolk.Dtype.Value.of_int 0)
+          (Tolk.Dtype.Value.of_int (s.(i) - r.count))
+      in
+      let start = Shape.bind v (Tolk.Dtype.Value.of_int r.start) in
+      Some (Ops.Sym start, Ops.Sym Ops.O.(start + int r.count))
+  in
+  let bounds = Array.to_list (Array.mapi axis rs) in
+  let d = D.Any (Nx.dtype x) in
+  Arith.of_parts d (List.map (fun u -> Shape.shrink u bounds) (Arith.parts d u))
+
 (* [u] on [d]: a copy where it lies on another device. *)
 let moved u d =
   match Ops.device u with
   | Some d' when not (String.equal d' d) -> Ops.copy_to_device u d
   | Some _ | None -> u
+
+(* [ys], the nodes of [x] placed at [q] by the equation [base], each a copy
+   where it lies on another device. A window placed on the device it lies on is
+   noted local. *)
+let placed st env base q x ys =
+  let d = device_at st q and n = var env x in
+  let here u =
+    match Ops.device u with Some d' -> String.equal d' d | None -> true
+  in
+  if st.split && n >= 0 && env.windows.(n) && Array.for_all here ys then
+    env.local.(base) <- true;
+  Array.map (fun u -> moved u d) ys
 
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
@@ -860,14 +916,31 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         | t -> String.equal t.device "CPU"
         | exception Invalid_argument _ -> false
       in
-      let read x = node st env x in
+      (* An assembly in a split program reads each window moved onto its own
+         device from storage of its own, as it reads those copied from other
+         devices, so that each device's assembly is one program. *)
+      let assembly =
+        st.split && match op with Assemble _ -> true | _ -> false
+      in
+      let read x =
+        let u = node st env x in
+        match var env x with
+        | n when assembly && n >= 0 && env.local.(n) -> Ops.contiguous u
+        | _ -> u
+      in
+      let step1 (r : A.Move.range) = r.step = 1 in
       let ys =
-        match Lower.op ?dst ~device ~host read op with
-        | ys -> (
-            match op with
-            | Place (q, _) -> Array.map (fun u -> moved u (device_at st q)) ys
-            | _ -> ys)
-        | exception Invalid_argument why -> decline "%s" why
+        match op with
+        | Move (Slice rs, x)
+          when st.split && env.windows.(base) && Iarray.for_all step1 rs ->
+            [| moving x (Iarray.to_array rs) (read x) |]
+        | _ -> (
+            let ys =
+              match Lower.op ?dst ~device ~host read op with
+              | ys -> ys
+              | exception Invalid_argument why -> decline "%s" why
+            in
+            match op with Place (q, x) -> placed st env base q x ys | _ -> ys)
       in
       (* A value that computes Threefry blocks, a draw or a key split or a map
          or view of one, is stored where it is read more than once: each
@@ -1300,7 +1373,7 @@ and switch st cs env c (s : Program.switch) =
           caps
       in
       let out =
-        outputs st inner ~reach (env_of b)
+        outputs st inner ~reach (env_of ~split:st.split b)
           (Array.append caps (Array.map (fun j -> sums.(j)) fed))
       in
       let base = Array.length out - Array.length fed in
@@ -1364,7 +1437,7 @@ and loop st cs env c =
               xs
           in
           let trip inner carried rows =
-            let sub = env_of ~carried:nc step in
+            let sub = env_of ~split:st.split ~carried:nc step in
             let caps = Array.map (fun (V x) -> node st env x) captures in
             let sums = Array.sub carried nc ns in
             (* The step's totals run from the sums they feed, which their
@@ -1442,7 +1515,7 @@ and loop st cs env c =
       let reach = loop_reach env c in
       let test cs carry sums =
         let out =
-          outputs st cs ~reach (env_of until)
+          outputs st cs ~reach (env_of ~split:st.split until)
             (Array.concat
                [ carry; ucaps; Array.map (fun j -> sums.(j)) until_feeds ])
         in
@@ -1472,7 +1545,7 @@ and loop st cs env c =
             let carry = Array.sub carried 0 nc in
             let sums = Array.sub carried nc ns in
             let out =
-              outputs st inner ~reach (env_of ~carried:nc step)
+              outputs st inner ~reach (env_of ~split:st.split ~carried:nc step)
                 (Array.concat
                    [ carry; scaps; Array.map (fun j -> sums.(j)) step_feeds ])
             in
@@ -1864,7 +1937,7 @@ and threaded_over st cs env (q : Program.t) operands seeds =
   let _, sum_forms, feeds = Program.feeds q in
   let no = Array.length q.outputs - Array.length q.adds in
   let sums = starts st env sum_forms ~at:0 seeds in
-  let sub = env_of q in
+  let sub = env_of ~split:st.split q in
   Array.iteri
     (fun k (u, r, sc) ->
       let v = q.params.(k) in
@@ -1895,7 +1968,7 @@ and inline st cs env (q : Program.t) args =
   inline_over st cs q (Array.map (operand st env) args)
 
 and inline_over st cs (q : Program.t) operands =
-  let sub = env_of q in
+  let sub = env_of ~split:st.split q in
   Array.iteri
     (fun k (u, r, sc) ->
       let v = q.params.(k) in
@@ -1926,7 +1999,7 @@ let lower ~rig ~split ~uploads (p : Program.t) (forms : form array) ~layouts
       dsts = Ops.Tbl.create 4;
     }
   in
-  let env = env_of ~donated p in
+  let env = env_of ~split:st.split ~donated p in
   let params =
     Array.mapi
       (fun k (F f) ->

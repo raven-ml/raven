@@ -353,6 +353,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled program over the memory devices of one set compiles as many
+  kernels whatever the number of devices, where the cut is even: a move of a
+  window between devices reads it from a start bound when the program runs.
+  A data-parallel step over 16 devices made 73 programs and makes 13.
 - `Rune.jit` compiles programs over several devices of one set, values cut
   across them, whole on each or whole on one: each device computes its
   windows in kernels of its own, compiled once per target, with eager's

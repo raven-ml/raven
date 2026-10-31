@@ -303,6 +303,43 @@ let moves set =
   in
   equal ~msg:"bytes copied" int (3 * 8) copied
 
+(* Programs
+
+   A program for one device serves every device of its target, so a
+   data-parallel step over [n] memory devices makes as many programs whatever
+   [n]: each device's kernels, its moves of windows included, are another's.
+   The hidden width depends on [n], so no two counts share a program, and every
+   cut is even, so each device's windows have one shape. *)
+
+let sixteen =
+  Array.init 16 (fun k ->
+      Result.get_ok (Rig.memory_device (Printf.sprintf "programs-%d" k)))
+
+let programs n =
+  let module S = (val Nx.devices (Array.to_list (Array.sub sixteen 0 n))) in
+  let hidden = 16 + n in
+  let x = Nx.place (Nx.Placement.split ~axis:0 S.v) (value [| 4 * n; 32 |]) in
+  let on = Nx.Placement.on S.v in
+  let w1 = Nx.place on (value ~seed:1 [| 32; hidden |]) in
+  let w2 = Nx.place on (value ~seed:2 [| hidden; 4 |]) in
+  let step x (w1, w2) =
+    let loss (w1, w2) =
+      let y = Nx.matmul (Nx.tanh (Nx.matmul x w1)) w2 in
+      Nx.mean (Nx.mul y y)
+    in
+    let g1, g2 = Rune.grad T.(pair tensor tensor) loss (w1, w2) in
+    (Nx.sub w1 (Nx.mul_s g1 0.1), Nx.sub w2 (Nx.mul_s g2 0.1))
+  in
+  let f =
+    Rune.jit
+      T.(tensor @-> pair tensor tensor @-> returns (pair tensor tensor))
+      step
+  in
+  let before = Tolk.Codegen.programs () and evaluated = Rune.evaluations () in
+  ignore (f x (w1, w2));
+  equal ~msg:"calls evaluated" int evaluated (Rune.evaluations ());
+  Tolk.Codegen.programs () - before
+
 let examples =
   [
     { n = 2; shape = [| 4; 3 |]; x = Split 0; y = On };
@@ -340,6 +377,14 @@ let () =
            [
              test "positions repeated along an axis move one element along it"
                (fun () -> over 2 { law = moves });
+           ];
+         group "programs"
+           [
+             test "a data-parallel step makes as many over 2, 4, 8 and 16"
+               (fun () ->
+                 let counts = List.map programs [ 2; 4; 8; 16 ] in
+                 let first = List.hd counts in
+                 equal (list int) (List.map (fun _ -> first) counts) counts);
            ];
          group "each device runs its own kernels"
            [
