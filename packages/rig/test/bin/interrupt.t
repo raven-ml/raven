@@ -49,7 +49,7 @@ rig run killed by SIGKILL ends nothing itself. Each machine's session
 sees its input end, and the machine ends its agent; the program loses its
 agents, and its job fails.
 
-  $ rm attempts
+  $ rm -f attempts out
   $ rig run --on a,b,c -- sh -c './support/ctl.exe wait; echo "the program exited $?" >status' >out 2>err &
   $ run=$!
   $ ./support/await out joined
