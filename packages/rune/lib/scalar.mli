@@ -75,6 +75,12 @@ val finish : t -> outs:int array -> P.t
 val tangible : D.any -> bool
 (** [tangible dt] is [true] iff [dt] is a float or complex dtype. *)
 
+val identity : D.any -> P.t
+(** [identity dt] is the program whose one output is its one operand, of
+    [dt] ({!Nx_kernel.Prog.is_identity}), as nx's reductions of one array
+    take it. It is made once per dtype: a call that finds it allocates
+    nothing. *)
+
 (** {1:parts Parts of programs} *)
 
 val depends : P.t -> bool array -> bool array

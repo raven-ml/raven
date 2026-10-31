@@ -69,6 +69,37 @@ let load_dtype : 'd Prim.load -> D.any = function
   | Plain x -> D.Any (Nx.dtype x)
   | Padded { x; _ } -> D.Any (Nx.dtype x)
 
+let cut p = not (Nx.Placement.equal (Nx.Placement.uncut p) p)
+
+(* The placement of the first cut plain load of [ps] from [j]. *)
+let rec first_cut ps j =
+  if j = Iarray.length ps then None
+  else
+    match Iarray.get ps j with
+    | Prim.Plain x when cut (Nx.placement x) -> Some (Nx.placement x)
+    | _ -> first_cut ps (j + 1)
+
+(* A tangent load read at the cut [at] where it is whole on its set. *)
+let placed at : 'd Prim.load -> 'd Prim.load = function
+  | Prim.Plain t as l -> (
+      match at with
+      | Some p
+        when Nx.Placement.equal (Nx.Placement.uncut p) (Nx.placement t) ->
+          Prim.Plain (Nx.place p t)
+      | _ -> l)
+  | l -> l
+
+(* The tangent loads of [loads] up to [j], before [acc]. *)
+let rec tangent_loads i at loads j acc =
+  if j < 0 then acc
+  else
+    let acc =
+      match tangent_load i (Iarray.get loads j) with
+      | Some t -> placed at t :: acc
+      | None -> acc
+    in
+    tangent_loads i at loads (j - 1) acc
+
 (* The loads of a loop over primals, then tangents. A whole tangent beside a
    cut primal load is read at that load's cut, so that the loop's tangents lie
    where its primals do even where a trace computes them apart, as a tape
@@ -76,28 +107,11 @@ let load_dtype : 'd Prim.load -> D.any = function
    cotangent over the cut by partials, where a whole tangent would gather
    it. *)
 let jvp_loads i loads =
-  let ps = Iarray.to_list (Iarray.map (primal_load i) loads) in
-  let ts = List.filter_map (tangent_load i) (Iarray.to_list loads) in
-  let cut p = not (Nx.Placement.equal (Nx.Placement.uncut p) p) in
-  let rec first_cut = function
-    | Prim.Plain x :: _ when cut (Nx.placement x) -> Some (Nx.placement x)
-    | _ :: rest -> first_cut rest
-    | [] -> None
-  in
-  let ts =
-    match first_cut ps with
-    | None -> ts
-    | Some p ->
-        List.map
-          (function
-            | Prim.Plain t
-              when Nx.Placement.equal (Nx.Placement.uncut p) (Nx.placement t)
-              ->
-                Prim.Plain (Nx.place p t)
-            | l -> l)
-          ts
-  in
-  Iarray.of_list (ps @ ts)
+  let ps = Iarray.map (primal_load i) loads in
+  let at = first_cut ps 0 in
+  match tangent_loads i at loads (Iarray.length loads - 1) [] with
+  | [] -> ps
+  | ts -> Iarray.append ps (Iarray.of_list ts)
 
 (* Which loads have a tangent. *)
 let has i loads =
@@ -235,8 +249,6 @@ let rec split n l =
         let a, b = split (n - 1) l in
         (x :: a, b)
     | [] -> invalid_arg "Rune: split"
-
-let identity dt = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0))
 
 (* [x] moved [d] places along [axis], [d] elements of [fill] first and its last
    [d] dropped. *)
@@ -473,23 +485,23 @@ type ('d, 'r) jreds =
 
 let rec jreds : type d r.
     Prim.interpretation ->
-    Scalar.t ->
+    bool array ->
     (d, r) Prim.reductions ->
     int ref ->
     (d, r) jreds =
- fun i b rs next ->
+ fun i has_tangent rs next ->
   match rs with
   | [] -> JR ([], fun () -> ())
   | (Monoid (Sum, k, dt) as r) :: rest
-    when Scalar.tangent b k <> None && Scalar.tangible (D.Any dt) ->
+    when has_tangent.(k) && Scalar.tangible (D.Any dt) ->
       let o = !next in
       incr next;
-      let (JR (q, f)) = jreds i b rest next in
+      let (JR (q, f)) = jreds i has_tangent rest next in
       JR
         ( r :: Monoid (Sum, o, dt) :: q,
           fun (y, (t, z)) -> (dual i ~fresh:true y t, f z) )
   | r :: rest ->
-      let (JR (q, f)) = jreds i b rest next in
+      let (JR (q, f)) = jreds i has_tangent rest next in
       JR (r :: q, fun (y, z) -> (y, f z))
 
 (* The tangents [rs]'s sums reduce, in order. *)
@@ -516,53 +528,112 @@ let rec sums_only : type d r. Scalar.t -> (d, r) Prim.reductions -> bool =
   | Moments (k, _) :: rest -> plain k rest
   | Arg (_, k, _) :: rest -> plain k rest
 
-let reduce_rule (type d r) i ~by layout axes (prog : P.t)
-    (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) : r =
-  let tangents = has i loads in
-  let jl = jvp_loads i loads in
+(* A reduction's derivative where each of its reductions with a tangent is a
+   sum: its program's primal outputs then those sums' tangents, and which of
+   its outputs have a tangent. [fused] is [None] where another reduction has
+   one. *)
+type reduce_plan = { fused : P.t option; has_tangent : bool array }
+
+let reduce_plan prog tangents reductions =
   let b = Scalar.start prog ~tangents ~extra:[||] in
   let k = Scalar.outputs b in
-  let touts = sum_tangents b reductions in
-  if sums_only b reductions then
-    let (JR (rs, f)) = jreds i b reductions (ref k) in
-    let outs =
-      Array.append (Array.init k (Scalar.value b)) (Array.of_list touts)
-    in
-    let prog = Scalar.finish b ~outs in
-    f
-      (Prim.eval ~by
-         (Reduce { layout; axes; prog; reductions = rs; loads = jl }))
+  let has_tangent = Array.init k (fun o -> Scalar.tangent b o <> None) in
+  if not (sums_only b reductions) then { fused = None; has_tangent }
   else
-    let primal_op =
-      Prim.Reduce
-        {
-          layout;
-          axes;
-          prog;
-          reductions;
-          loads = Iarray.map (primal_load i) loads;
-        }
+    let outs =
+      Array.append
+        (Array.init k (Scalar.value b))
+        (Array.of_list (sum_tangents b reductions))
     in
-    let y = Prim.eval ~by primal_op in
-    let part = reduce_parts i ~by ~layout ~axes reductions y in
-    let extra = Array.of_list part.extra in
-    let b = Scalar.start prog ~tangents ~extra:(Array.map load_dtype extra) in
-    let base = Array.length (Scalar.ins b) - Array.length extra in
-    let es =
-      List.init (Array.length extra) (fun e -> Scalar.operand b (base + e))
-    in
-    let loads = Iarray.append jl (Iarray.of_array extra) in
-    match part.emit b loads es with
-    | [], finish -> finish []
-    | reds, finish ->
-        let nodes = Array.of_list (List.map fst reds) in
-        let makers = List.map snd reds in
-        let (Reds (rs, read)) = reds_of (List.mapi (fun o f -> f o) makers) in
-        let prog = Scalar.finish b ~outs:nodes in
-        finish
-          (read
-             (Prim.eval ~by
-                (Reduce { layout; axes; prog; reductions = rs; loads })))
+    { fused = Some (Scalar.finish b ~outs); has_tangent }
+
+(* What a reduction's plan reads of it: its output, whether it is a sum and
+   whether its dtype has a derivative. *)
+let reduction_code : type d a. (d, a) Prim.reduction -> int = function
+  | Monoid (Sum, k, dt) ->
+      (k lsl 2) lor 2 lor Bool.to_int (Scalar.tangible (D.Any dt))
+  | Monoid ((Prod | Max | Min), k, _)
+  | Logsumexp (k, _)
+  | Moments (k, _)
+  | Arg (_, k, _) ->
+      k lsl 2
+
+let rec codes_list : type d r. (d, r) Prim.reductions -> int list = function
+  | [] -> []
+  | r :: rest -> reduction_code r :: codes_list rest
+
+let reduction_codes rs = Array.of_list (codes_list rs)
+
+let rec same_from : type d r.
+    int array -> int -> (d, r) Prim.reductions -> bool =
+ fun codes j rs ->
+  match rs with
+  | [] -> j = Array.length codes
+  | r :: rest ->
+      j < Array.length codes
+      && codes.(j) = reduction_code r
+      && same_from codes (j + 1) rest
+
+(* Whether [codes] are those of [rs]. *)
+let same_codes codes rs = same_from codes 0 rs
+
+(* Reduction plans by their program, its loads' tangents and the codes of its
+   reductions. *)
+let reduce_plans = Memo.create ()
+
+let make_reduce_plan (k : Memo.key) rs =
+  reduce_plan k.prog (Memo.operands k) rs
+
+let reduce_plan_of i (prog : P.t) reductions loads =
+  if not (Memo.fits (Iarray.length loads)) then
+    reduce_plan prog (has i loads) reductions
+  else
+    Memo.find reduce_plans prog (mask i loads) ~same:same_codes
+      ~codes:reduction_codes ~make:make_reduce_plan reductions
+
+let reduce_rule (type d r) i ~by layout axes (prog : P.t)
+    (reductions : (d, r) Prim.reductions) (loads : d Prim.load iarray) : r =
+  let plan = reduce_plan_of i prog reductions loads in
+  let jl = jvp_loads i loads in
+  match plan.fused with
+  | Some fused ->
+      let k = Array.length plan.has_tangent in
+      let (JR (rs, f)) = jreds i plan.has_tangent reductions (ref k) in
+      f
+        (Prim.eval ~by
+           (Reduce { layout; axes; prog = fused; reductions = rs; loads = jl }))
+  | None ->
+      let tangents = has i loads in
+      let primal_op =
+        Prim.Reduce
+          {
+            layout;
+            axes;
+            prog;
+            reductions;
+            loads = Iarray.map (primal_load i) loads;
+          }
+      in
+      let y = Prim.eval ~by primal_op in
+      let part = reduce_parts i ~by ~layout ~axes reductions y in
+      let extra = Array.of_list part.extra in
+      let b = Scalar.start prog ~tangents ~extra:(Array.map load_dtype extra) in
+      let base = Array.length (Scalar.ins b) - Array.length extra in
+      let es =
+        List.init (Array.length extra) (fun e -> Scalar.operand b (base + e))
+      in
+      let loads = Iarray.append jl (Iarray.of_array extra) in
+      match part.emit b loads es with
+      | [], finish -> finish []
+      | reds, finish ->
+          let nodes = Array.of_list (List.map fst reds) in
+          let makers = List.map snd reds in
+          let (Reds (rs, read)) = reds_of (List.mapi (fun o f -> f o) makers) in
+          let prog = Scalar.finish b ~outs:nodes in
+          finish
+            (read
+               (Prim.eval ~by
+                  (Reduce { layout; axes; prog; reductions = rs; loads })))
 
 (* Scans *)
 
@@ -626,7 +697,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
   in
   let scan1 (type v s q) (x : (v, s, d) Nx.t)
       (reduction : (d, q) Prim.reduction) carry : q =
-    let prog = identity (D.Any (Nx.dtype x)) in
+    let prog = Scalar.identity (D.Any (Nx.dtype x)) in
     Prim.eval ~by
       (Scan { layout; axis; prog; reduction; loads = [| Plain x |]; carry })
   in

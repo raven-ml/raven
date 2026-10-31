@@ -266,6 +266,19 @@ let finish b ~outs =
   in
   P.subst ~ins (fun _ -> None) p
 
+(* The identities made so far, by dtype code. A slot two domains fill at once
+   keeps either's program, which are equal. *)
+let identities : P.t option array = Array.make (List.length D.all) None
+
+let identity (D.Any dt as d) =
+  let i = D.code dt in
+  match identities.(i) with
+  | Some p -> p
+  | None ->
+      let p = P.v ~ins:[| d |] [| In 0 |] ~outs:[| 0 |] in
+      identities.(i) <- Some p;
+      p
+
 (* Parts of programs *)
 
 let depends (p : P.t) reads =

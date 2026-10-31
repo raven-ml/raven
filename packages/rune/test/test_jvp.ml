@@ -1037,6 +1037,102 @@ let law_unary_placed ((name, { f }), m, n, k) =
         (array (float_rel ~rel:1e-12 ~abs:1e-12))
         (finite expected) (finite actual)
 
+(* Reductions over shared programs
+
+   nx builds a reduction's one-node program once per kind, so a sequence of
+   reductions applies one program under different reductions and with
+   different operands holding tangents. Each step reduces the operand without
+   a tangent, then [x + c], along the last axis, its tangent along [x] or [c]
+   against central differences. A case's tangents are taken on a domain of
+   their own, whose plans start from none, so that what a step finds was made
+   by the steps before it in the case. The values of a row lie 0.3 apart
+   before a jitter below 0.1, so no extreme is near a tie. *)
+
+let reducers = [ `Sum; `Max; `Mean; `Logsumexp; `Std; `Int_sum ]
+
+let reducer_name = function
+  | `Sum -> "sum"
+  | `Max -> "max"
+  | `Mean -> "mean"
+  | `Logsumexp -> "logsumexp"
+  | `Std -> "std"
+  | `Int_sum -> "int32 sum"
+
+let reduced r x =
+  match r with
+  | `Sum -> Nx.sum ~axes:[ -1 ] x
+  | `Max -> Nx.max ~axes:[ -1 ] x
+  | `Mean -> Nx.mean ~axes:[ -1 ] x
+  | `Logsumexp -> Nx.logsumexp ~axes:[ -1 ] x
+  | `Std -> Nx.std ~axes:[ -1 ] x
+  | `Int_sum -> Nx.cast f64 (Nx.sum ~axes:[ -1 ] (Nx.cast Nx.int32 x))
+
+let shared_shape = [| 3; 4 |]
+
+let shared_draws =
+  let open Gen in
+  let n = numel shared_shape in
+  let step = Gen.pair (of_list reducers) bool in
+  let jitter = array ~size:(constant n) (float_range 0. 0.1) in
+  (let+ steps = list ~size:(int_range 2 8) step
+   and+ ux = jitter
+   and+ uc = jitter
+   and+ t = array ~size:(constant n) (float_range (-1.) 1.) in
+   (steps, ux, uc, t))
+  |> with_pp (fun ppf (steps, _, _, _) ->
+      Format.pp_print_string ppf
+        (String.concat "; "
+           (List.map
+              (fun (r, on_c) ->
+                reducer_name r ^ if on_c then " along c" else " along x")
+              steps)))
+
+let shared_law (steps, ux, uc, ts) =
+  let spaced u =
+    Nx.create f64 shared_shape
+      (Array.mapi (fun k u -> (0.3 *. Float.of_int (k mod 4)) +. u) u)
+  in
+  let x = spaced ux and c = spaced uc and t = Nx.create f64 shared_shape ts in
+  let rec pairs = function
+    | (r, a) :: ((r', a') :: _ as rest) ->
+        cover "another reduction next" (r <> r');
+        cover "the other operand's tangent next" (a <> a');
+        pairs rest
+    | _ -> ()
+  in
+  pairs steps;
+  let sum_like (r, _) = r = `Sum || r = `Mean in
+  let rec fused_first = function
+    | step :: rest ->
+        (sum_like step
+        && List.exists
+             (fun (r, _) -> r = `Max || r = `Logsumexp || r = `Std)
+             rest)
+        || fused_first rest
+    | [] -> false
+  in
+  cover "a sum or mean before a max, logsumexp or std" (fused_first steps);
+  let step_fn (r, on_c) a =
+    let x, c, b = if on_c then (x, a, x) else (a, c, c) in
+    Nx.add (reduced r b) (reduced r (Nx.add x c))
+  in
+  let arg (_, on_c) = if on_c then c else x in
+  let tangents () =
+    List.map
+      (fun step -> Nx.to_array (snd (Rune.jvp' (step_fn step) (arg step) t)))
+      steps
+  in
+  let ds = Domain.join (Domain.spawn tangents) in
+  List.iteri
+    (fun k ((r, _) as step, d) ->
+      let msg = Printf.sprintf "step %d, %s" k (reducer_name r) in
+      match r with
+      | `Int_sum -> equal ~msg (array float_exact) (Array.make 3 0.) d
+      | _ ->
+          differences ~msg (step_fn step) (arg step) t
+            (Nx.create f64 [| 3 |] d))
+    (List.combine steps ds)
+
 let () =
   exit
     (run "rune jvp"
@@ -1055,6 +1151,8 @@ let () =
              prop "values alone's tangents lie at their primals' positions"
                factor_draws paired_law;
              test "vectors at repeated values are not finite" test_repeated;
+             prop "reductions over shared programs, one after another"
+               shared_draws shared_law;
            ];
          group "interface"
            [

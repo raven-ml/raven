@@ -224,7 +224,6 @@ let nonlinear env what =
   else refused ~name:env.name what
 
 let shape_of layout = Iarray.to_array (L.shape layout)
-let identity dt = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0))
 
 let load_lin env : 'd Prim.load -> bool = function
   | Plain x -> env.lin x
@@ -420,7 +419,7 @@ let from_each (type v s e) ~by ~axis (w : (v, s, e) Nx.t) : (v, s, e) Nx.t =
          {
            layout = L.contiguous (Iarray.of_array shape);
            axis;
-           prog = identity (D.Any dt);
+           prog = Scalar.identity (D.Any dt);
            reduction = Monoid (Sum, 0, dt);
            loads = [| Plain reversed |];
            carry = Some (Any carry);
@@ -612,6 +611,25 @@ let unbroadcast env x ~lead ~axes w =
   if axes = [] || not here then held (V (Nx.reshape s y))
   else fresh (V (Nx.reshape s y))
 
+(* [w] summed along [axes], which are distinct and in order. *)
+let summed (type v s d) ~by axes (w : (v, s, d) Nx.t) : (v, s, d) Nx.t =
+  let dt = Nx.dtype w in
+  let y, () =
+    Prim.eval ~by
+      (Reduce
+         {
+           layout = L.contiguous (Iarray.of_array (Nx.shape w));
+           axes = Iarray.of_list axes;
+           prog = Scalar.identity (D.Any dt);
+           reductions = [ Monoid (Sum, 0, dt) ];
+           loads = [| Plain w |];
+         })
+  in
+  y
+
+(* [y] at shape [s], itself where it has that shape. *)
+let reshaped s y = if Nx.shape y = s then y else Nx.reshape s y
+
 let move_rule env (mv : Move.t) x (V w) =
   let w = with_dtype (Nx.dtype x) w and s = Nx.shape x in
   let c =
@@ -631,8 +649,8 @@ let move_rule env (mv : Move.t) x (V w) =
         if (not (is_cut px)) && Nx.Placement.equal (Nx.placement w) px then
           (* Whole where the operand is whole, as on one device: so is the
              sum. *)
-          if axes = [] then held (V (Nx.reshape s w))
-          else fresh (V (Nx.reshape s (Nx.sum ~axes w)))
+          if axes = [] then held (V (reshaped s w))
+          else fresh (V (reshaped s (summed ~by:env.name axes w)))
         else unbroadcast env x ~lead ~axes w
     | Slice ranges -> fresh (V (unslice env x ranges w))
     | Window windows ->
@@ -749,23 +767,34 @@ let scale_at env r : 'd Prim.scale option -> 'e Prim.scale option = function
   | Some (Exponent e) -> Some (Exponent (rebrand r (env.const e)))
   | None -> None
 
+(* Whether [x] is the [side] axis of a pair of [l]. *)
+let rec paired side x = function
+  | [] -> false
+  | p :: l -> side p = x || paired side x l
+
+(* The axes below [rank] that [keep] holds, in order. *)
+let axes_where keep rank =
+  let rec go x acc =
+    if x < 0 then acc else go (x - 1) (if keep x then x :: acc else acc)
+  in
+  go (rank - 1) []
+
 let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
   let batch = Iarray.to_list batch and con = Iarray.to_list con in
   let nb = List.length batch in
-  let paired side x l = List.exists (fun p -> side p = x) l in
+  (* [b]'s axis of rows, which is no free axis; [-1] for none. *)
   let rows_b =
-    match segments with Some (Nx_kernel.Rows r) -> Some r.b_axis | _ -> None
+    match segments with Some (Nx_kernel.Rows r) -> r.b_axis | _ -> -1
   in
   let free side rank skip =
-    List.filter
-      (fun x ->
-        (not (paired side x batch || paired side x con)) && Some x <> skip)
-      (List.init rank Fun.id)
+    axes_where
+      (fun x -> (not (paired side x batch || paired side x con)) && x <> skip)
+      rank
   in
   let ra = Nx.ndim a and rb = Nx.ndim b in
-  let a_free = free fst ra None and b_free = free snd rb rows_b in
-  let a_con = List.filter (fun x -> paired fst x con) (List.init ra Fun.id) in
-  let b_con = List.filter (fun x -> paired snd x con) (List.init rb Fun.id) in
+  let a_free = free fst ra (-1) and b_free = free snd rb rows_b in
+  let a_con = axes_where (fun x -> paired fst x con) ra in
+  let b_con = axes_where (fun x -> paired snd x con) rb in
   let to_b x = snd (List.find (fun (y, _) -> y = x) con) in
   let to_a x = fst (List.find (fun (_, y) -> y = x) con) in
   let lead =
@@ -793,12 +822,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
   with
   | V r ->
       let by = env.name in
-      let offsets =
-        match segments with
-        | Some (Nx_kernel.Rows s) -> rebrand r (env.const s.offsets)
-        | Some (Contracting s) -> rebrand r (env.const s.offsets)
-        | None -> Nx.zeros_at (Nx.beside r) Nx.int64 [| 0 |]
-      in
+      let offsets o = rebrand r (env.const o) in
       let contract ~batch ~contracting ~segments x x_scale y y_scale out =
         Prim.eval ~by
           (Contract
@@ -819,12 +843,12 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
          a view of it. *)
       let give x scale order y =
         let order = Array.of_list order in
-        let fresh =
-          ref
-            (Array.for_all2 ( = ) order
-               (Array.init (Array.length order) Fun.id))
-        in
-        let y = reorder order y in
+        let in_order = ref true in
+        for r = 0 to Array.length order - 1 do
+          if order.(r) <> r then in_order := false
+        done;
+        let fresh = ref !in_order in
+        let y = if !in_order then y else reorder order y in
         let y =
           match scale_at env r scale with
           | None -> y
@@ -853,7 +877,7 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               Some
                 (Nx_kernel.Rows
                    {
-                     offsets;
+                     offsets = offsets s.offsets;
                      a_axis = ct_a (position s.a_axis a_free);
                      b_axis = s.b_axis;
                    })
@@ -868,7 +892,11 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
             let segments =
               Some
                 (Nx_kernel.Rows
-                   { offsets; a_axis = snd (List.nth con s.pair); b_axis = 0 })
+                   {
+                     offsets = offsets s.offsets;
+                     a_axis = snd (List.nth con s.pair);
+                     b_axis = 0;
+                   })
             in
             let flip l = List.map (fun (c, x) -> (x, c)) l in
             let y =
@@ -889,12 +917,19 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
               (* Each group's rows sum into its slice of [b]. *)
               ( Some
                   (Nx_kernel.Contracting
-                     { offsets; pair = position s.a_axis a_free }),
+                     {
+                       offsets = offsets s.offsets;
+                       pair = position s.a_axis a_free;
+                     }),
                 [ s.b_axis ] )
           | Some (Contracting s) ->
               ( Some
                   (Nx_kernel.Rows
-                     { offsets; a_axis = fst (List.nth con s.pair); b_axis = 0 }),
+                     {
+                       offsets = offsets s.offsets;
+                       a_axis = fst (List.nth con s.pair);
+                       b_axis = 0;
+                     }),
                 [] )
         in
         let y =
@@ -972,11 +1007,14 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
   match op with
   | Map { layout; prog; outs; loads; _ } ->
       let dts = Array.of_list (out_dtypes outs) in
-      let given =
-        List.filter_map
-          (fun k -> Option.map (fun c -> (k, dts.(k), c)) (cts k))
-          (List.init (Array.length dts) Fun.id)
+      let rec given k acc =
+        if k < 0 then acc
+        else
+          match cts k with
+          | Some c -> given (k - 1) ((k, dts.(k), c) :: acc)
+          | None -> given (k - 1) acc
       in
+      let given = given (Array.length dts - 1) [] in
       if given <> [] then sweep env layout prog loads (Array.of_list given)
   | Reduce { layout; axes; prog; reductions; loads } ->
       let given = reduce_cts env layout axes reductions cts in
@@ -1001,7 +1039,7 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
                 (Map
                    {
                      layout;
-                     prog = identity (D.Any dt);
+                     prog = Scalar.identity (D.Any dt);
                      outs = [ dt ];
                      loads = [| Padded { x = ct; fill = D.zero dt; pad } |];
                      at = None;
@@ -1194,8 +1232,11 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
   let acc_at base k = Option.map (fun c -> c.v) acc.(base + k) in
   let next = next_bases p in
   let reached base n =
-    let rec go k = k < n && (Option.is_some acc.(base + k) || go (k + 1)) in
-    go 0
+    let k = ref 0 in
+    while !k < n && Option.is_none acc.(base + !k) do
+      incr k
+    done;
+    !k < n
   in
   let cts_at base n k =
     if k < n then Option.map (fun c -> c.v) acc.(base + k) else None

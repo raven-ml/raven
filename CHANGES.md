@@ -289,6 +289,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Derivative rules allocate fewer words per operation: a reduction's
+  derivative keeps its fused program, and a broadcast's and a contraction's
+  transposes skip unused work. `Rune.value_and_grad` of a three-layer MLP
+  allocates 13,760 words where it allocated 16,024.
 - Derivatives taken on several systhreads of one domain no longer race on
   the domain's tables of derived plans: a thread that took over while another
   grew a table could miss plans and derive them again, or loop in a bucket
