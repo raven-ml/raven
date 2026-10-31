@@ -513,7 +513,7 @@ A test that renders after simplifying does so with Symbolic's rules.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `null/test_uops.py::TestUOpRender::test_render_ssimplified_marg_outside_toposort` | a movement's size, simplified to a node the graph never held, is still written, and a range after it is its name | `Tolk.Render › render after simplifying › symbolic_rendered.golden › case=shrink_of_simplified_offset`, `case=range_after_shrink` |
+| tinygrad: `null/test_uops.py::TestUOpRender::test_render_ssimplified_marg_outside_toposort` | a movement's size, simplified to a node the graph never held, is still written, and a range whose bound is ordered after it is its name | `Tolk.Render › render after simplifying › symbolic_rendered.golden › case=shrink_of_simplified_offset`, `case=range_after_shrink` |
 | tinygrad: `null/test_uops.py::TestUOpRender::test_render_vectorize_empty`, `test_render_vectorize_same`, `test_render_vectorize_different` | a stack is its sources between braces, `{}` when empty | `Tolk.Render › render › expressions_rendered.golden › case=stack_empty`, `case=stack_same`, `case=stack_different` |
 | tinygrad: `null/test_uops.py::TestUOpRender::test_render_vectorize_empty_simplified`, `test_render_vectorize_same_simplified`, `test_render_vectorize_different_simplified` | the same after simplifying | `Tolk.Render › render after simplifying › expressions_rendered.golden` (the `simplified` column) |
 | tinygrad: `null/test_helpers.py::TestProd::test_variable`, `test_variable_order` | the product of a variable and integers writes as `(a*12)`, whatever the order | `Tolk.Render › srender › writes a node as render does`; the product itself belongs to `Ops` |

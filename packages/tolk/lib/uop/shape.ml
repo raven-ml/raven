@@ -1168,6 +1168,8 @@ let sym_compile (s : sint) var =
         | Op.Param when addrspace n = Some Dtype.Alu ->
             let read = var n in
             fun env -> `Int (Bigint.of_int (read env))
+        (* an after is its first source: the rest only order it *)
+        | Op.After -> compute (first (op n) (src n))
         | Op.Cast ->
             let x = compute (first (op n) (src n)) in
             fun env -> sym_cast (dtype n) (x env)
@@ -1195,6 +1197,7 @@ let sym_compile (s : sint) var =
               | _ -> None)
           | Op.Param, _ when addrspace n = Some Dtype.Alu ->
               Some (var n)
+          | Op.After, x :: _ -> int x
           | Op.Neg, [ x ] ->
               Option.map
                 (fun x env ->

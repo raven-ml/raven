@@ -266,5 +266,5 @@ cases("chains", chains, chain)
 def cyclic():
     """A loop whose range runs after the loop it closes: no order runs it."""
     child = UOp.range(4, 1, AxisType.LOOP)
-    parent = UOp.range(4, 0, AxisType.LOOP).replace(src=(UOp.const(4), child))
+    parent = UOp.range(UOp.const(4).after(child), 0, AxisType.LOOP)
     return UOp.sink(fbuf(0).index(parent + child).store(1.0).end(child).end(parent))

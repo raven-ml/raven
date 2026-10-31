@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Ops.range` takes no `?src`: a range has one source, its bound,
+  and a loop ordered after effects has its bound ordered after them
+  (`Ops.after`).
 - **Breaking:** `Shape.placeholder` takes no `?tag` or `?volatile`: a named or
   volatile parameter is made with `Shape.param`.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.

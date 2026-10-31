@@ -269,9 +269,18 @@ let var_word b u =
       Hashtbl.add b.var_words name w;
       w
 
-(* Whether [u] reads a range: a value that moves with its loop's trips. *)
+(* Whether [u] reads a range: a value that moves with its loop's trips. An
+   after's value is its first source; the others only order it, as a loop's
+   bound is ordered after a sibling loop. *)
 let moves u =
-  List.exists (fun x -> Ops.op x = Op.Range) (Ops.toposort ~calls:Skip u)
+  let cache = Ops.Tbl.create 16 in
+  Ops.topovisit u
+    (fun n ->
+      match (Ops.op n, Ops.src n) with
+      | Range, _ -> true
+      | After, x :: _ -> Ops.Tbl.find cache x
+      | _, s -> List.exists (Ops.Tbl.find cache) s)
+    cache
 
 let reads_variable u = List.exists is_variable (Ops.toposort ~calls:Skip u)
 
@@ -317,6 +326,7 @@ let rec affine b lane u =
       | _, [] -> scale y.add x
       | _ -> computed b lane u)
   | Op.Cast, _ when Dtype.is_int (Ops.dtype u) -> affine b lane (Ops.nth u 0)
+  | Op.After, _ -> affine b lane (Ops.nth u 0)
   | _ -> computed b lane u
 
 and computed b lane u =

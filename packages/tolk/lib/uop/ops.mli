@@ -723,16 +723,11 @@ val ins : ?src:t list -> ?dtype:Dtype.t -> ?tag:Tag.t option -> t -> string -> t
 (** [ins u i] is the instruction [i] with [u]'s sources, type and tag, unless
     given. *)
 
-val range :
-  ?axis_type:Axis_type.t ->
-  ?dtype:Dtype.t ->
-  ?src:t list ->
-  sint ->
-  int list ->
-  t
-(** [range ~axis_type ~dtype ~src end_ axis_id] is the loop variable counting
-    from [0] to [end_], excluded, of type [dtype] (default {!Dtype.Weak_int})
-    and role [axis_type] (default {!Axis_type.Weak}), ordered after [src]. *)
+val range : ?axis_type:Axis_type.t -> ?dtype:Dtype.t -> sint -> int list -> t
+(** [range ~axis_type ~dtype end_ axis_id] is the loop variable counting from
+    [0] to [end_], excluded, of type [dtype] (default {!Dtype.Weak_int}) and
+    role [axis_type] (default {!Axis_type.Weak}). A loop ordered after effects
+    has its bound ordered after them ({!after}). *)
 
 val loop : int -> t
 (** [loop axis] is the unbounded loop of identity [[axis]]. *)

@@ -148,7 +148,7 @@ let pm_add_control_flow =
         rule_ctx (Upat.op Op.Range ~name:"x") (fun edges m ->
             let x = m "x" in
             Option.map
-              (fun y -> replace ~src:(src x @ [ y ]) x)
+              (fun y -> replace ~src:[ after (nth x 0) [ y ] ] x)
               (Tbl.find_opt edges x));
       ]))
 

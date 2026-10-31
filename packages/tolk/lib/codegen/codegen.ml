@@ -1039,7 +1039,7 @@ let split_blocks sink =
           ~multiple_of:1 ~name:(fresh name) ~addrspace:(Some Dtype.Alu) slot dt
       in
       let lo = bound slots "block_lo" and hi = bound (slots + 1) "block_hi" in
-      let r' = replace r ~src:(alu hi Op.Sub [ lo ] :: List.tl (src r)) in
+      let r' = replace r ~src:[ alu hi Op.Sub [ lo ] ] in
       let moved = alu lo Op.Add [ r' ] in
       let sink = substitute ~calls:Skip ~pass:Fixed_point sink [ (r, moved) ] in
       let ends =

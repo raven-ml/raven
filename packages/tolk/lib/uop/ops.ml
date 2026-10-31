@@ -2008,11 +2008,8 @@ let ins ?src ?dtype ?tag u i =
 
 let cconst dt c = v Op.Cast ~src:[ const c ] ~arg:(Dtype dt)
 
-let range ?(axis_type = Axis_type.Weak) ?(dtype = Dtype.Weak_int) ?(src = [])
-    end_ axis_id =
-  v Op.Range
-    ~src:(sint_to_uop ~dtype end_ :: src)
-    ~arg:(Range { axis_id; axis_type })
+let range ?(axis_type = Axis_type.Weak) ?(dtype = Dtype.Weak_int) end_ axis_id =
+  v Op.Range ~src:[ sint_to_uop ~dtype end_ ] ~arg:(Range { axis_id; axis_type })
 
 let loop axis =
   v Op.Range

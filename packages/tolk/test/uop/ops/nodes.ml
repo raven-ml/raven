@@ -1290,7 +1290,7 @@ let ranges =
           is_false (Ops.Nodes.mem r (Ops.ranges (Ops.after c [ e ]))));
       test "ranges lists the node first, then its sources' ranges" (fun () ->
           let r0 = Ops.range (Int 4) [ 0 ] in
-          let r1 = Ops.range ~src:[ r0 ] (Int 4) [ 1 ] in
+          let r1 = Ops.range (Sym (Ops.after (Ops.int 4) [ r0 ])) [ 1 ] in
           equal uops [ r1; r0 ] (list_ranges r1);
           equal int 2 (Ops.Nodes.cardinal (Ops.ranges r1));
           equal uops [ r0; r1 ]
@@ -1335,7 +1335,7 @@ let ranges =
       test "an end closes its range only, not the ranges it runs inside"
         (fun () ->
           let outer = Ops.range (Int 4) [ 0 ] in
-          let inner = Ops.range ~src:[ outer ] (Int 4) [ 1 ] in
+          let inner = Ops.range (Sym (Ops.after (Ops.int 4) [ outer ])) [ 1 ] in
           equal uops [ outer ]
             (list_ranges (Ops.end_ Ops.O.(outer + inner) [ inner ])));
       test "a linear program closes the ranges it lays out" (fun () ->

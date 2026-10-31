@@ -359,6 +359,8 @@ and value ~check p i =
       | Reduce -> reduction ~check p i
       | Index -> read ~check p i
       | Load when Array.length p.srcs.(i) = 3 -> gated_load ~check p i
+      (* An after is the value of its first source; the others only order it. *)
+      | After -> value ~check p p.srcs.(i).(0)
       | _ -> node ~check p i (operands ~check p i 0)
     in
     p.values.(i) <- v;

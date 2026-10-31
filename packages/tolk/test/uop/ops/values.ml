@@ -973,6 +973,13 @@ let inference =
             (Shape.sym_infer (Sym Ops.O.((n * int 2) + int 1)) [ ("n", 3) ]);
           equal int 9
             (Shape.sym_infer (Sym Ops.O.(Shape.bind n (i 7) + int 1)) [ ("n", 8) ]));
+      test "an ordered value is its first source" (fun () ->
+          let n = weak_var "n" 0 100 in
+          let loop = Ops.end_ (Ops.v Op.Noop) [ Ops.range (Int 4) [ 0 ] ] in
+          equal int 7
+            (Shape.sym_infer
+               (Sym (Ops.after Ops.O.((n * int 2) + int 1) [ loop ]))
+               [ ("n", 3) ]));
       test "divisions round as their operations say" (fun () ->
           let n = weak_var "n" (-10) 10 in
           equal int (-3) (Shape.sym_infer (Sym Ops.O.(n // int 3)) [ ("n", -7) ]);

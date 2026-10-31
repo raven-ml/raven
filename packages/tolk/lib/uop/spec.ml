@@ -185,9 +185,9 @@ let shared : t =
       check (Upat.v ~op:Op.Set.alu ~name:"x" ()) "x" (fun x ->
           List.for_all (fun y -> matches_dtype y (dtype x) || is_weak y) (src x));
       accept (pat [ Op.Bitcast; Op.Cast ] ~src:[ Upat.wild ]);
-      check
-        (pat [ Op.Range ] ~src:[ Upat.wild ] ~allow_any_len:true ~name:"rng")
-        "rng" (fun rng ->
+      (* A range's one source is its bound: an ordering dependency wraps the
+         bound in an after. *)
+      check (pat [ Op.Range ] ~src:[ Upat.wild ] ~name:"rng") "rng" (fun rng ->
           match arg rng with
           | Range { axis_id; _ } -> axis_id <> []
           | _ -> false);
@@ -269,9 +269,19 @@ let shared : t =
                              Unshard;
                              Bitcast;
                              Ins;
+                             Const;
+                             Cast;
+                             Noop;
                            ]))
                  ();
              ]);
+      (* An after of a scalar computation orders a range's computed bound after
+         effects. *)
+      check
+        (pat [ Op.After ] ~allow_any_len:true
+           ~src:[ Upat.v ~op:Op.Set.alu ~name:"x" () ])
+        "x"
+        (fun x -> shape_opt x = Some []);
       accept (pat [ Op.Customi; Op.Custom ]);
       check (pat [ Op.Custom_function ] ~allow_any_len:true ~name:"x") "x"
         (fun x -> match arg x with String _ -> true | _ -> false);
