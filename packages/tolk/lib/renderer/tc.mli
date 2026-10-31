@@ -138,7 +138,8 @@ val amd_rdna3 : t list
 (** [amd_rdna3] is RDNA 3's [16 x 16 x 16] tensor cores. *)
 
 val amd_rdna4 : t list
-(** [amd_rdna4] is RDNA 4's [16 x 16 x 16] tensor cores. *)
+(** [amd_rdna4] is RDNA 4's [16 x 16 x 16] tensor cores, of the 16-bit floats
+    and of {!Dtype.fp8_ocp} into {!Dtype.Float32}. *)
 
 val amd_cdna3 : t list
 (** [amd_cdna3] is CDNA 3's tensor cores, of [K] 32 for the 8-bit floats without
@@ -152,6 +153,11 @@ val amd : string -> t list
 (** [amd arch] is the tensor cores of the AMD architecture [arch]: {!amd_cdna3}
     for [gfx942], {!amd_cdna4} for [gfx950], {!amd_rdna4} for [gfx1200] and
     [gfx1201], and {!amd_rdna3} for any other. *)
+
+val pm_wmma_fp8 : Dtype.t -> ('ctx, Ops.t) Ops.Pattern_matcher.t
+(** [pm_wmma_fp8 dt] makes a tensor core product of 8 lanes of 8-bit floats into
+    {!Dtype.Float32} a product of its operands' bits as [dt]: the words in
+    which AMD's builtins take them. *)
 
 val metal : t list
 (** [metal] is Apple's [8 x 8 x 8] tensor cores. *)

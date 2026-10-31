@@ -1735,7 +1735,7 @@ let fp8_index dt =
 
 let amd_fp8s = function
   | "gfx942" -> Dtype.fp8_fnuz
-  | "gfx950" -> Dtype.fp8_ocp
+  | "gfx950" | "gfx1200" | "gfx1201" -> Dtype.fp8_ocp
   | _ -> []
 
 let ocml op =
@@ -1771,6 +1771,12 @@ let cdna_rewrite =
                ctx.%{nth x 0}
                ctx.%{nth x 1}
                ctx.%{nth x 2}));
+    ])
+
+(* the conversions of an architecture with 8-bit floats *)
+let fp8_rewrite =
+  Pattern_matcher.fold
+    (fun () -> [
       rule_ctx (cast_of ~dtype:Dtype.fp8s ~name:"x" c) (fun ctx m ->
           let l = ctx.lang in
           let v =
@@ -1817,6 +1823,10 @@ let hip_lang arch =
   let rewrite =
     if is_cdna arch then Pattern_matcher.append cdna_rewrite base_rewrite
     else base_rewrite
+  in
+  let rewrite =
+    if amd_fp8s arch = [] then rewrite
+    else Pattern_matcher.append fp8_rewrite rewrite
   in
   let rewrite = Pattern_matcher.append nontemporal_rewrite rewrite in
   {
@@ -1865,18 +1875,11 @@ let hip_extra_matcher arch =
   Pattern_matcher.concat
     ([
        create_non_native_float_pats (Dtype.Bfloat16 :: Dtype.fp8s);
-       Pattern_matcher.v
-         (fun () -> [
-           rule (Upat.op ~dtype:[ Dtype.Float32 ] ~name:"x" Op.Wmma) (fun m ->
-               match src (m "x") with
-               | [ a; b; acc ]
-                 when max_numel a = 8 && List.mem (dtype a) Dtype.fp8s ->
-                   let u64 u = bitcast u Dtype.Uint64 in
-                   Some (replace (m "x") ~src:[ u64 a; u64 b; acc ])
-               | _ -> None);
-         ]);
      ]
-    @ if is_cdna4 arch then [] else [ pm_manual_bf16_cast ])
+    @ (if is_cdna4 arch then [] else [ pm_manual_bf16_cast ])
+    @
+    if amd_fp8s arch = [] then []
+    else [ Tc.pm_wmma_fp8 (if is_cdna arch then Dtype.Uint64 else Dtype.Uint32) ])
 
 let hip_vector_prefix l (dt, count) =
   let vec = render_dtype l dt ~sz:count ~addrspace:(Some Dtype.Reg)
@@ -2021,7 +2024,10 @@ let hip_kernel arch tensor_cores l ~name kernel bufs uops =
       ((Dtype.Bfloat16, "bf16") :: (Dtype.Float32, "f32")
      :: (Dtype.Float16, "f16")
       :: List.map
-           (fun d -> (d, if fp8_index d = 0 then "_fp8_fp8" else "_bf8_bf8"))
+           (fun d ->
+             ( d,
+               (if is_cdna arch then "_" else "")
+               ^ if fp8_index d = 0 then "fp8_fp8" else "bf8_bf8" ))
            Dtype.fp8s)
   in
   let prefix =

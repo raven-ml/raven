@@ -135,6 +135,16 @@ let listed =
             [ Dtype.Fp8e4m3; Dtype.Fp8e5m2 ]
             (List.filteri (fun i _ -> i >= n) Tc.cuda_sm89
             |> List.map (fun (tc : Tc.t) -> tc.dtype_in)));
+      test "amd_rdna4 ends in two cores of 8-bit floats into floats"
+        (fun () ->
+          let fp8 =
+            List.filter
+              (fun (tc : Tc.t) -> List.mem tc.dtype_in Dtype.fp8s)
+              Tc.amd_rdna4
+          in
+          equal (list (pair dtype dtype))
+            Dtype.[ (Fp8e4m3, Float32); (Fp8e5m2, Float32) ]
+            (List.map (fun (tc : Tc.t) -> (tc.dtype_in, tc.dtype_out)) fp8));
       Golden.cases "cuda.golden" (fun cell ->
           let arch = Scanf.sscanf (cell "arch") "%S" Fun.id in
           match cell "cores" with

@@ -205,6 +205,8 @@ let amd_rdna4 =
         (Float16, Float16);
         (Bfloat16, Float32);
         (Bfloat16, Bfloat16);
+        (Fp8e4m3, Float32);
+        (Fp8e5m2, Float32);
       ]
 
 (* 16x16xK: A[i,k] is element k mod K_L of lane i + 16 * (k / K_L), with K_L =
@@ -240,6 +242,23 @@ let amd = function
   | "gfx950" -> amd_cdna4
   | "gfx1200" | "gfx1201" -> amd_rdna4
   | _ -> amd_rdna3
+
+(* A product of 8-bit floats into floats takes each operand's 8 lanes as the
+   words of [word]. *)
+let pm_wmma_fp8 word =
+  let open Ops in
+  Pattern_matcher.v (fun () ->
+      [
+        Pattern_matcher.rule
+          (Upat.op ~dtype:[ Dtype.Float32 ] ~name:"x" Op.Wmma)
+          (fun m ->
+            match src (m "x") with
+            | [ a; b; acc ]
+              when List.mem (Ops.dtype a) Dtype.fp8s && Shape.max_numel a = 8 ->
+                let words u = bitcast u word in
+                Some (replace (m "x") ~src:[ words a; words b; acc ])
+            | _ -> None);
+      ])
 
 (* Apple Metal *)
 

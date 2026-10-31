@@ -818,6 +818,9 @@ thread.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.
+- `Cstyle.hip` for RDNA 4 (`gfx1200`, `gfx1201`) has native 8-bit floats and
+  their tensor cores (`Tc.amd_rdna4`), whose operands it passes as 32-bit
+  words (`Tc.pm_wmma_fp8`).
 - **Breaking:** `Render.render_uir` replaces `Render.pp_uops`: it writes a
   graph one node a line, `%i = op srcs : arg`, constants inline, as the
   `DEBUG` and `BEAM_DEBUG` prints now do.
