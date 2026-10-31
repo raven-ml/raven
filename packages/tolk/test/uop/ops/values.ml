@@ -135,6 +135,26 @@ let exec_alu =
                 (Exn.invalid_arg ~sub:"a shift by a negative count, -1")
                 (fun () -> ignore (alu Int32 o [ i 8; i (-1) ])))
             Op.[ Shl; Shr ]);
+      test
+        "an integer power wraps at its type, and a negative power truncates \
+         toward 0" (fun () ->
+          equal const (i 19487171) (alu Int32 Op.Pow [ i 11; i 7 ]);
+          equal const (i 689956897) (alu Int32 Op.Pow [ i 3; i 40 ]);
+          equal const (i 243) (alu Uint8 Op.Pow [ i 3; i 5 ]);
+          equal const
+            (`Int (Bigint.shift_left Bigint.one 64))
+            (alu Weak_int Op.Pow [ i 2; i 64 ]);
+          equal const (i 0) (alu Int32 Op.Pow [ i 2; i (-2) ]);
+          equal const (i 0) (alu Int32 Op.Pow [ i 0; i (-1) ]);
+          equal const (i 1) (alu Int32 Op.Pow [ i 1; i (-5) ]);
+          equal const (i (-1)) (alu Int32 Op.Pow [ i (-1); i (-3) ]);
+          equal const (i 1) (alu Int32 Op.Pow [ i (-1); i (-4) ]);
+          (* exponents whose powers have billions of bits *)
+          equal const (i (-1431655765))
+            (alu Int32 Op.Pow [ i 3; i 2147483647 ]);
+          equal const (i 3)
+            (alu Int64 Op.Pow
+               [ i 3; `Int (Bigint.succ (Bigint.shift_left Bigint.one 62)) ]));
       test "an overflowing power is an infinity of the base's sign" (fun () ->
           equal const (f Float.infinity) (alu Float64 Op.Pow [ f 2.; f 10000. ]);
           equal const (f Float.neg_infinity)

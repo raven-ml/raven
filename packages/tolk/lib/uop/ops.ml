@@ -1233,20 +1233,15 @@ module Make_elementwise (B : Elementwise_base) = struct
 
   let pow x y =
     let base, exponent = broadcasted x y in
-    let non_negative_int =
+    let negative_int =
       match literal_value y with
-      | Some (`Int z) -> Bigint.geq z Bigint.zero
-      | Some (`Bool _) -> true
-      | Some _ -> false
-      | None -> true
+      | Some (`Int z) -> Bigint.lt z Bigint.zero
+      | _ -> false
     in
     if
       (not (Dtype.is_float (Dtype.least_upper [ dtype base; dtype exponent ])))
-      && not non_negative_int
-    then
-      invalid_arg
-        "the base of a power by a negative or non-integer constant must be a \
-         float";
+      && negative_int
+    then invalid_arg "integers to negative integer powers are not allowed";
     alu base Op.Pow [ exponent ]
 
   let bitwise_and x y = binop Op.And x y
@@ -2191,8 +2186,13 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
 
 let py_pow (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
-  | (`Bool _ | `Int _), (`Bool _ | `Int _) when Bigint.geq (Value.to_z y) Bigint.zero ->
-      `Int (Bigint.pow (Value.to_z x) (Value.to_int y))
+  | (`Bool _ | `Int _), (`Bool _ | `Int _) ->
+      let b = Value.to_z x and e = Value.to_z y in
+      if Bigint.geq e Bigint.zero then `Int (Bigint.pow b (Value.to_int y))
+      else if Bigint.equal (Bigint.abs b) Bigint.one then
+        (* a negative power truncates toward 0, which only 1 and -1 escape *)
+        `Int (if Bigint.divisible e (Bigint.of_int 2) then Bigint.one else b)
+      else `Int Bigint.zero
   | _ ->
       let fx = Value.to_float x and fy = Value.to_float y in
       (* C's pow is Python's, except that a zero to a negative power raises in
@@ -2384,6 +2384,20 @@ let mulacc ~truncated dt a b c =
     else if e > 0. then Float.succ r
     else Float.pred r
 
+(* [b] to the power [e], [e >= 0], modulo [2^bits]: the low bits repeated
+   products keep, without the power's full width. *)
+let pow_wrapped b e bits =
+  let m = Bigint.shift_left Bigint.one bits in
+  let rec go e =
+    if Bigint.equal e Bigint.zero then Bigint.one
+    else
+      let h = go (Bigint.shift_right e 1) in
+      let h = Bigint.rem (Bigint.mul h h) m in
+      if Bigint.divisible e (Bigint.of_int 2) then h
+      else Bigint.rem (Bigint.mul h b) m
+  in
+  go e
+
 let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
     Dtype.const =
   let truncate (x : Dtype.value) : Dtype.const =
@@ -2413,6 +2427,15 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
           | Op.Mulacc, [ a; b; c ] when Dtype.is_float dt ->
               let f = Value.to_float in
               `Float (mulacc ~truncated:truncate_output dt (f a) (f b) (f c))
+          (* a power truncated to a committed integer keeps its low bits alone,
+             so that a large exponent folds in its bits' count of steps *)
+          | Op.Pow, [ ((`Int _ | `Bool _) as b); ((`Int _ | `Bool _) as e) ]
+            when truncate_output
+                 && List.mem dt Dtype.ints
+                 && Bigint.geq (Value.to_z e) Bigint.zero ->
+              `Int
+                (pow_wrapped (Value.to_z b) (Value.to_z e)
+                   (8 * Dtype.itemsize dt))
           | _ -> python_alu op args
         in
         let v =

@@ -615,18 +615,19 @@ val exec_alu :
 (** [exec_alu ~truncate_output op dt args] computes the arithmetic operation
     [op] on the scalars [args], one lane of a vector operation, exactly, then
     truncates the result to [dt] ({!Dtype.truncate}) if [truncate_output]
-    (default [true]). Integers are unbounded before truncation. Out-of-domain
-    values follow IEEE: [log2 0.] is [-inf], [sqrt] of a negative is NaN,
-    [1. /. 0.] is an infinity of the operand's sign, [sin] of an infinity is
-    NaN, and an overflowing [exp2] or [pow] is the infinity IEEE gives. The NaN
-    of an operation none of whose operands is NaN is {!Dtype.nan}, whatever the
-    host gives. {!Op.Fdiv} is IEEE division: a zero divisor gives an infinity of
-    the quotient's sign, and [0. /. 0.] is NaN. {!Op.Trunc} of a float is
-    IEEE's, a float of its operand's sign: [trunc (-0.5)] is [-0.]. {!Op.Max} is
-    [y] if [x < y] and [x] otherwise, as compiled code computes it, so a NaN
-    wins only as the first operand. A binary operation on [`Invalid] is
-    [`Invalid]. {!Op.Where} is the branch it picks, [`Invalid] included; its
-    condition must not be [`Invalid].
+    (default [true]). Integers are unbounded before truncation, and an integer
+    to a negative integer power truncates toward [0]: it is [0] but for [1] and
+    [-1]. Out-of-domain values follow IEEE: [log2 0.] is [-inf], [sqrt] of a
+    negative is NaN, [1. /. 0.] is an infinity of the operand's sign, [sin] of
+    an infinity is NaN, and an overflowing [exp2] or [pow] is the infinity IEEE
+    gives. The NaN of an operation none of whose operands is NaN is
+    {!Dtype.nan}, whatever the host gives. {!Op.Fdiv} is IEEE division: a zero
+    divisor gives an infinity of the quotient's sign, and [0. /. 0.] is NaN.
+    {!Op.Trunc} of a float is IEEE's, a float of its operand's sign:
+    [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if [x < y] and [x] otherwise, as
+    compiled code computes it, so a NaN wins only as the first operand. A binary
+    operation on [`Invalid] is [`Invalid]. {!Op.Where} is the branch it picks,
+    [`Invalid] included; its condition must not be [`Invalid].
 
     Raises [Invalid_argument] if [op] is not an arithmetic operation or the
     arguments do not fit it, as for a shift by a negative count, which has no
@@ -967,7 +968,7 @@ module type Elementwise = sig
   (** [pow x y] is {!Op.Pow} of [x] and [y].
 
       Raises [Invalid_argument] if the promoted type is not a float and [y] is a
-      constant other than a non-negative integer. *)
+      negative integer constant. *)
 
   val gt : t -> t -> t
   (** [gt x y] is [lt y x]. *)

@@ -3966,6 +3966,36 @@ let calls =
           equal int 1 (occurrences "fence(volatile int* " src));
     ]
 
+(* Integer powers *)
+
+(* [c[i] = a[i] ** b[i]] over [n] int32 elements. *)
+let int_power n () =
+  let c = int_param ~name:"C" 0 n
+  and a = int_param ~name:"A" 1 n
+  and b = int_param ~name:"B" 2 n in
+  let i = loop n 0 in
+  kernel "int_power"
+    [ Ops.end_ (Ops.store (at c i) (Ops.alu (at a i) Op.Pow [ at b i ])) [ i ] ]
+
+let int_powers =
+  group "integer powers"
+    [
+      test "a power wraps at its type, as repeated products do"
+        (runs_on_host (int_power 5)
+           [
+             (1, int_values [ 11; 3; 2; -3; 7 ]);
+             (2, int_values [ 7; 40; 31; 21; 1 lsl 30 ]);
+           ]
+           [ 19487171; 689956897; -2147483648; -1870418611; 1 ]);
+      test "a negative power truncates toward 0, but for 1 and -1"
+        (runs_on_host (int_power 5)
+           [
+             (1, int_values [ 0; 1; -1; 1; -1 ]);
+             (2, int_values [ -1; -5; -5; -6; -6 ]);
+           ]
+           [ 0; 1; -1; 1; 1 ]);
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -4008,4 +4038,5 @@ let () =
          line_rewrites;
          cleanups;
          calls;
+         int_powers;
        ])

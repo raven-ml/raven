@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- An integer `Op.Pow` computes by wrapping products (`Transcendental.xpow_int`,
+  `Ops.exec_alu`), not float logarithms; a negative exponent gives 0, but `±1`
+  for a base of 1 or -1, and is the one `Ops.pow` refuses for an integer base.
 - **Breaking:** tolk compiles for one device. The multi-device rewrite is
   gone: `Multi`, `Allreduce`, their operations and settings, `Axis_type.Device`
   and the sharding functions of `Ops` and `Shape`; the type `Ops.device` is a

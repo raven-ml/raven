@@ -649,8 +649,8 @@ scope, see README.
   only where no value it computes wraps (`Ops.exact`). Index arithmetic is weak
   (`Weak_int`), never wraps, and keeps every fold tinygrad makes, so the
   restrictions touch float and committed-integer values only. The one rounding
-  that stays is that of powers, a constant one computed by products and square
-  roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
+  that stays is that of float powers, a constant one computed by products and
+  square roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
   - **Integer bounds wrap.** tinygrad: `uop/ops.py:1086-1145` (`_min_max`),
     `:1136-1146` (a cast), `:1129-1131` (a constant table). tolk:
     `Ops.min_max`, `Ops.cast_bounds`, and the constant table's case of

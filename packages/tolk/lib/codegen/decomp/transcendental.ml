@@ -599,6 +599,50 @@ let xpow base exponent =
     (int_like ret 1)
     (where O.(base < int 0) neg_base ret)
 
+(* Square and multiply over the exponent's bits, in the unsigned type of the
+   width of [dt], each product masked so that it wraps instead of growing. *)
+let xpow_int base exponent dt =
+  if not (List.mem dt Dtype.ints) then None
+  else
+    let udt =
+      match dt with
+      | Dtype.Int8 -> Dtype.Uint8
+      | Int16 -> Uint16
+      | Int32 -> Uint32
+      | Int64 -> Uint64
+      | dt -> dt
+    in
+    let b = bitcast (cast base dt) udt in
+    let mask = const_like b (Dtype.max udt :> Dtype.const) in
+    let wrap u = O.(u land mask) in
+    let edt = dtype exponent in
+    let lo, hi =
+      if List.mem edt Dtype.ints && overflows exponent edt then
+        (Dtype.min edt, Dtype.max edt)
+      else (vmin exponent, vmax exponent)
+    in
+    let nbits = Bigint.numbits (Bigint.max (Dtype.Value.to_z hi) Bigint.zero) in
+    let rec go i ret sq =
+      if i = nbits then ret
+      else
+        let bit = O.((exponent lsr int_like exponent i) land int_like exponent 1) in
+        let ret = where O.(bit <> int_like exponent 0) (wrap O.(ret * sq)) ret in
+        go (i + 1) ret (if i < nbits - 1 then wrap O.(sq * sq) else sq)
+    in
+    let ret = bitcast (go 0 (int_like b 1) b) dt in
+    if Dtype.Value.(lo >= of_int 0) then Some ret
+    else
+      (* a negative exponent truncates to 0, but for 1 and -1 *)
+      let one = int_like ret 1 and sb = bitcast b dt in
+      let odd = O.(exponent land int_like exponent 1 <> int_like exponent 0) in
+      let neg =
+        where
+          (eq sb (int_like sb (-1)))
+          (where odd (int_like ret (-1)) one)
+          (where (eq sb one) one (int_like ret 0))
+      in
+      Some (where O.(exponent < int_like exponent 0) neg ret)
+
 let patterns ~force ops =
   let other_floats =
     List.filter (fun dt -> not (List.mem dt transcendental_dtypes)) Dtype.floats

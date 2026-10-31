@@ -526,10 +526,11 @@ val launch_dims : Ops.program_info -> (string * int) list -> int list * int list
     infinities, NaN and subnormals included, and wraps integers at their type,
     as compiled code computes them. The exception is the rounding of powers: a
     constant power is computed by products and square roots, and [c ** x] for a
-    positive finite constant [c] as [exp2 (x * log2 c)]. So the rewrites that
-    reassociate or distribute arithmetic, or rely on it never overflowing, apply
-    to integers only, and to a committed integer only where no value it computes
-    wraps ({!Ops.exact}); a weak integer, such as an index, never wraps.
+    positive finite constant [c] and a float [x] as [exp2 (x * log2 c)]. So the
+    rewrites that reassociate or distribute arithmetic, or rely on it never
+    overflowing, apply to integers only, and to a committed integer only where
+    no value it computes wraps ({!Ops.exact}); a weak integer, such as an index,
+    never wraps.
 
     {b Invalid values.} An index that is {!Ops.invalid} where a condition fails,
     [where cond x invalid], is a {e gated} value ({!invalid_gate}). The rewrites

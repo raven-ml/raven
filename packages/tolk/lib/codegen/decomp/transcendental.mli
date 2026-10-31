@@ -109,6 +109,12 @@ val xpow : Ops.t -> Ops.t -> Ops.t
     exponent's parity otherwise. Any [base] to the power [0] is [1], NaN and
     infinities included. *)
 
+val xpow_int : Ops.t -> Ops.t -> Dtype.t -> Ops.t option
+(** [xpow_int base exponent dt] is [base] to the power [exponent] in the
+    integer type [dt], wrapping at its width as repeated products do. A negative
+    [exponent] gives [0], but [1] for a [base] of [1], and [-1] or [1] by the
+    exponent's parity for [-1]. It is [None] if [dt] is not in {!Dtype.ints}. *)
+
 (** {1:patterns Rewriting} *)
 
 val patterns : force:bool -> Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t

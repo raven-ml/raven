@@ -512,6 +512,24 @@ let powers =
           folds_to
             (Ops.pow (Ops.float 3.) n)
             (Ops.exp2 Ops.O.(Ops.cast n Weak_float * float (Float.log2 3.))));
+      test "an integer x ** c stays a power for a negative c" (fun () ->
+          let p = symbolic (Ops.alu x Op.Pow [ Ops.int ~dtype:Int32 (-2) ]) in
+          equal string "POW" (Op.name (Ops.op p));
+          equal uop x (Ops.nth p 0));
+      test "c ** x stays a power for an integer x" (fun () ->
+          let p = symbolic (Ops.alu (Ops.int ~dtype:Int32 3) Op.Pow [ x ]) in
+          equal string "POW" (Op.name (Ops.op p));
+          equal uop x (Ops.nth p 1));
+      test "sym computes an integer power by products, without exp2 or log2"
+        (fun () ->
+          let p = sym (Ops.alu x Op.Pow [ y ]) in
+          equal (list string) []
+            (List.filter_map
+               (fun u ->
+                 match Ops.op u with
+                 | (Pow | Exp2 | Log2) as o -> Some (Op.name o)
+                 | _ -> None)
+               (Ops.toposort ~calls:Skip p)));
       test "c ** x stays for c at most 0" (fun () ->
           by_symbolic
             (Ops.pow (Ops.float ~dtype:Float32 (-2.)) f)

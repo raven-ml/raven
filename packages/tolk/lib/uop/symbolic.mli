@@ -10,7 +10,7 @@
     {!sym} extends {!Shape.val-symbolic} with the rewrites of loads, stores and
     reductions that code generation relies on, and with reasoning on the
     conditions that gate values ({!pm_simplify_valid}). Its rewrites keep values
-    as {!Shape.val-symbolic}'s do, except that it computes every power as
+    as {!Shape.val-symbolic}'s do, except that it computes every float power as
     [exp2 (y * log2 x)] ({!Transcendental.xpow}). *)
 
 (** {1:valid Conditions} *)
@@ -57,8 +57,9 @@ val pm_clean_up_group_sink : (unit, Ops.t) Ops.Pattern_matcher.t
 val sym : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [sym] is {!Shape.val-symbolic} and {!pm_simplify_valid}, followed by:
 
-    - {b powers}: every {!Op.Pow} is computed from [exp2] and [log2]
-      ({!Transcendental.xpow});
+    - {b powers}: a float {!Op.Pow} is computed from [exp2] and [log2]
+      ({!Transcendental.xpow}), and an integer one by repeated squaring
+      ({!Transcendental.xpow_int});
     - {b stores}: storing to an index what a load from that index reads does
       nothing; storing [where g alt (load index)] stores [alt] where [g] holds;
       storing {!Ops.invalid} does nothing, and storing a gated value stores it

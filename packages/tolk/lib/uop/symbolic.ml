@@ -303,7 +303,9 @@ let sym =
           (* Pow *)
           rule (Upat.op Op.Pow ~name:"p") (fun m ->
               let p = m "p" in
-              Some (Transcendental.xpow (nth p 0) (nth p 1)));
+              if Dtype.is_int (dtype p) then
+                Transcendental.xpow_int (nth p 0) (nth p 1) (dtype p)
+              else Some (Transcendental.xpow (nth p 0) (nth p 1)));
           (* Load/store folding *)
           rule
             (Upat.store indexed [ Upat.load indexed [] ])

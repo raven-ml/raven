@@ -470,6 +470,88 @@ let pow_specials =
           equal float_exact (-0.5) (pow (-2.) (-1.)));
     ]
 
+(* Integer powers *)
+
+(* [int_power dt b e] is [b] to the power [e] in [dt]: [e] factors of [b],
+   wrapped at [dt]'s width, for [e >= 0]; [0] for a negative [e], but [1] for a
+   base of [1] and [-1] or [1] by the parity of [e] for [-1]. *)
+let int_power dt b e =
+  let modulus = Bigint.shift_left Bigint.one (8 * Dtype.itemsize dt) in
+  let rec power e =
+    if e = 0 then Bigint.one
+    else
+      let h = power (e / 2) in
+      let h = Bigint.rem (Bigint.mul h h) modulus in
+      if e mod 2 = 0 then h else Bigint.rem (Bigint.mul h b) modulus
+  in
+  let z =
+    if e >= 0 then power e
+    else if Bigint.equal b Bigint.one then Bigint.one
+    else if Bigint.equal b Bigint.minus_one then
+      if e mod 2 = 0 then Bigint.one else Bigint.minus_one
+    else Bigint.zero
+  in
+  (Dtype.truncate dt (`Int z) :> Dtype.const)
+
+let int_powers =
+  let integers =
+    Dtype.[ Int8; Uint8; Int16; Uint16; Int32; Uint32; Int64; Uint64 ]
+  in
+  let law dt (b, e) =
+    let width = 8 * Dtype.itemsize dt in
+    if not (Dtype.is_unsigned dt) then begin
+      cover "a negative exponent" (e < 0);
+      cover "1 or -1 to a negative power" (e < 0 && abs b = 1)
+    end;
+    cover "a power that wraps" (abs b >= 2 && e >= width);
+    let int n = `Int (Bigint.of_int n) in
+    let actual =
+      match T.xpow_int (x dt) (x ~slot:1 dt) dt with
+      | Some p -> Interpreter.eval ~params:[ (0, int b); (1, int e) ] p
+      | None -> failf "xpow_int refuses %a" Dtype.pp dt
+    in
+    equal const (int_power dt (Bigint.of_int b) e) actual
+  in
+  (* Bases of either sign, 1 and -1 among them, and exponents that are
+     negative, small, or past the width, within the range of OCaml's int. *)
+  let draws dt =
+    let width = 8 * Dtype.itemsize dt in
+    let unsigned = Dtype.is_unsigned dt in
+    let lo, hi =
+      if unsigned then (0, (1 lsl min 62 width) - 1)
+      else
+        let half = 1 lsl min 62 (width - 1) in
+        (-half, half - 1)
+    in
+    let small = if unsigned then [ 0; 1; 2 ] else [ -1; 0; 1 ] in
+    let negative = if unsigned then 0 else 2 in
+    Gen.pair
+      (Gen.frequency [ (1, Gen.of_list small); (3, Gen.int_range lo hi) ])
+      (Gen.frequency
+         [
+           (negative, Gen.int_range (-9) (-1));
+           (1, Gen.int_range 0 3);
+           (2, Gen.int_range width (width + 9));
+           (2, Gen.int_range 0 hi);
+         ])
+  in
+  group "xpow_int"
+    (List.map
+       (fun dt ->
+         prop ~count:300
+           (Format.asprintf "a power of %a wraps as repeated products do"
+              Dtype.pp dt)
+           (draws dt) (law dt))
+       integers
+    @ [
+        cases "refuses a type that is no committed integer"
+          ~id:(Format.asprintf "%a" Dtype.pp)
+          Dtype.[ Float32; Weak_int; Bool ]
+          (fun dt ->
+            equal bool true
+              (Option.is_none (T.xpow_int (Ops.int 2) (Ops.int 3) dt)));
+      ])
+
 (* Types *)
 
 let refused_types =
@@ -623,6 +705,7 @@ let () =
          reductions;
          specials;
          pow_specials;
+         int_powers;
          refused_types;
          accuracy;
        ])

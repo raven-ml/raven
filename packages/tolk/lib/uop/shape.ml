@@ -1708,6 +1708,7 @@ let simplify_pow x c =
   let h = V.(c - `Float 0.5) in
   match c with
   | `Float f when not (Float.is_finite f) -> None
+  | _ when V.(c < zero) && Dtype.is_int (dtype x) -> None
   | _ when V.(c <= `Float (-1.)) -> Some (pow (reciprocal x) V.(-c))
   | _ when V.(c < zero) -> None
   | _ when V.(c = zero) -> Some (const_v x one)
@@ -2260,7 +2261,10 @@ let symbolic_simple =
               let c = m "c" in
               let cv = num c in
               if V.(cv = one) then Some c
-              else if V.(cv > zero && cv < `Float Float.infinity) then
+              else if
+                V.(cv > zero && cv < `Float Float.infinity)
+                && Dtype.is_float (dtype (m "x"))
+              then
                 Some (exp2 O.(m "x" * float (Float.log2 (V.to_float cv))))
               else None);
           (* unpack a uint64 packed from two uint32 (threefry) *)
