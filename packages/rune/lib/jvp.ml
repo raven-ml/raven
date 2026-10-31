@@ -111,9 +111,6 @@ let mask i loads =
   done;
   !m
 
-let flags m n = Array.init n (fun j -> (m lsr j) land 1 = 1)
-let masked loads = Iarray.length loads < Sys.int_size - 1
-
 (* Outputs of dtypes known at run time *)
 
 type 'd outs = Outs : ('d, 'r) Prim.outs * ('r -> 'd Prim.any list) -> 'd outs
@@ -155,38 +152,12 @@ let plan prog tangents =
     any = Array.exists Fun.id flags;
   }
 
-(* Plans per domain, found by their program and its loads' tangents: the last
-   one found, which a chain of one kind finds again, then a table, emptied when
-   it holds [entries]. nx's functions build each kind's one-node program
-   once. *)
-type entry = { p : P.t; m : int; plan : plan }
-
-type cache = {
-  mutable last : entry option;
-  table : (P.t * int, plan) Hashtbl.t;
-}
-
-let entries = 4096
-
-let cache =
-  Domain.DLS.new_key (fun () -> { last = None; table = Hashtbl.create 64 })
-
-let plan_of (prog : P.t) m =
-  let c = Domain.DLS.get cache in
-  match c.last with
-  | Some e when e.p == prog && e.m = m -> e.plan
-  | _ ->
-      let plan =
-        match Hashtbl.find_opt c.table (prog, m) with
-        | Some plan -> plan
-        | None ->
-            if Hashtbl.length c.table >= entries then Hashtbl.reset c.table;
-            let plan = plan prog (flags m (Iarray.length prog.ins)) in
-            Hashtbl.add c.table (prog, m) plan;
-            plan
-      in
-      c.last <- Some { p = prog; m; plan };
-      plan
+(* Plans by their program and its loads' tangents. nx's functions build each
+   kind's one-node program once, so a chain of one kind finds its plan again
+   as the memo's last. *)
+let plans = Memo.create ()
+let make_plan (k : Memo.key) = plan k.prog (Memo.operands k)
+let plan_of (prog : P.t) m = Memo.plain plans prog m ~make:make_plan
 
 (* The outputs of a map's derivative and how its result gives the map's, each
    output with a tangent a dual. *)
@@ -207,7 +178,7 @@ let rec jouts : type d r.
 let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
     (loads : d Prim.load iarray) : r =
   let p =
-    if masked loads then plan_of prog (mask i loads)
+    if Memo.fits (Iarray.length loads) then plan_of prog (mask i loads)
     else plan prog (has i loads)
   in
   if not p.any then

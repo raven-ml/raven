@@ -247,68 +247,42 @@ let positions flags =
   Array.of_list
     (List.filter (fun j -> flags.(j)) (List.init (Array.length flags) Fun.id))
 
-let transpose_prog env prog linear cts =
-  let tp, received =
-    try Scalar.transpose prog ~linear ~cts
-    with Scalar.Nonlinear k -> nonlinear env k
-  in
+let transpose_plan prog linear cts =
+  let tp, received = Scalar.transpose prog ~linear ~cts in
   {
     tp;
     constants = positions (Array.map not linear);
     received = positions received;
   }
 
-(* Plans per domain, found as jvp's are: the last one, then a table emptied when
-   it holds [entries]. A key is the program, its linear loads as bits and each
-   cotangent's output and dtype as a number. *)
-type key = { p : P.t; mask : int; codes : int array }
-
-type cache = {
-  mutable last : (key * plan) option;
-  table : (key, plan) Hashtbl.t;
-}
-
-let entries = 4096
-
-let cache =
-  Domain.DLS.new_key (fun () -> { last = None; table = Hashtbl.create 64 })
-
+(* Plans by the program, its linear loads and each cotangent's output and
+   dtype as a code. *)
+let transposes = Memo.create ()
 let code (k, D.Any dt) = (k lsl 8) lor D.code dt
+let codes cts = Array.map code cts
+
+let rec same_from codes cts k =
+  k = Array.length codes
+  || (codes.(k) = code cts.(k) && same_from codes cts (k + 1))
 
 let same_codes codes cts =
-  let n = Array.length codes in
-  n = Array.length cts
-  &&
-  let rec go k = k = n || (codes.(k) = code cts.(k) && go (k + 1)) in
-  go 0
+  Array.length codes = Array.length cts && same_from codes cts 0
+
+let make_transpose (k : Memo.key) cts =
+  transpose_plan k.prog (Memo.operands k) cts
 
 let transposed env prog linear cts =
   let n = Array.length linear in
-  if n >= Sys.int_size - 1 then transpose_prog env prog linear cts
-  else
-    let mask = ref 0 in
-    for j = n - 1 downto 0 do
-      mask := (!mask lsl 1) lor Bool.to_int linear.(j)
-    done;
-    let mask = !mask in
-    let c = Domain.DLS.get cache in
-    match c.last with
-    | Some (k, plan) when k.p == prog && k.mask = mask && same_codes k.codes cts
-      ->
-        plan
-    | _ ->
-        let key = { p = prog; mask; codes = Array.map code cts } in
-        let plan =
-          match Hashtbl.find_opt c.table key with
-          | Some plan -> plan
-          | None ->
-              if Hashtbl.length c.table >= entries then Hashtbl.reset c.table;
-              let plan = transpose_prog env prog linear cts in
-              Hashtbl.add c.table key plan;
-              plan
-        in
-        c.last <- Some (key, plan);
-        plan
+  try
+    if not (Memo.fits n) then transpose_plan prog linear cts
+    else
+      let mask = ref 0 in
+      for j = n - 1 downto 0 do
+        mask := (!mask lsl 1) lor Bool.to_int linear.(j)
+      done;
+      Memo.find transposes prog !mask ~same:same_codes ~codes
+        ~make:make_transpose cts
+  with Scalar.Nonlinear k -> nonlinear env k
 
 (* Loops *)
 

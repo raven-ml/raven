@@ -129,45 +129,20 @@ let plan (p : P.t) owned =
   in
   { unknown; known = side false; recorded = side true }
 
-(* Plans per domain, found by their program and its owned loads, as jvp's are:
-   the last one found, then a table emptied when it holds [entries]. *)
-type entry = { p : P.t; m : int; plan : plan }
-
-type cache = {
-  mutable last : entry option;
-  table : (P.t * int, plan) Hashtbl.t;
-}
-
-let entries = 4096
-
-let cache =
-  Domain.DLS.new_key (fun () -> { last = None; table = Hashtbl.create 64 })
+(* Plans by their program and its owned loads. *)
+let plans = Memo.create ()
+let make_plan (k : Memo.key) = plan k.prog (Memo.operands k)
 
 let plan_of i (p : P.t) (loads : 'd Prim.load iarray) =
   let n = Iarray.length loads in
-  let owned () = Array.init n (fun j -> load_owned i (Iarray.get loads j)) in
-  if n >= Sys.int_size - 1 then plan p (owned ())
+  if not (Memo.fits n) then
+    plan p (Array.init n (fun j -> load_owned i (Iarray.get loads j)))
   else
     let m = ref 0 in
     for j = n - 1 downto 0 do
       m := (!m lsl 1) lor Bool.to_int (load_owned i (Iarray.get loads j))
     done;
-    let m = !m in
-    let c = Domain.DLS.get cache in
-    match c.last with
-    | Some e when e.p == p && e.m = m -> e.plan
-    | _ ->
-        let plan =
-          match Hashtbl.find_opt c.table (p, m) with
-          | Some plan -> plan
-          | None ->
-              if Hashtbl.length c.table >= entries then Hashtbl.reset c.table;
-              let plan = plan p (owned ()) in
-              Hashtbl.add c.table (p, m) plan;
-              plan
-        in
-        c.last <- Some { p; m; plan };
-        plan
+    Memo.plain plans p !m ~make:make_plan
 
 let kept part loads =
   Iarray.init (Array.length part.kept) (fun j -> Iarray.get loads part.kept.(j))

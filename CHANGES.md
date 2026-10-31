@@ -289,6 +289,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Derivatives taken on several systhreads of one domain no longer race on
+  the domain's tables of derived plans: a thread that took over while another
+  grew a table could miss plans and derive them again, or loop in a bucket
+  being relinked.
 - A function traced by `scan`, `remat`, `custom_jvp`, `custom_vjp` or
   `custom_transpose` that calls `Rune.lanes` or `Rune.lane_index` of a `vmap`
   no longer raises when a `vmap`, `grad` or `jvp` around that map holds its
