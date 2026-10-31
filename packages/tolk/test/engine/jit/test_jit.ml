@@ -305,16 +305,14 @@ let captures =
       equal (list string) names
         (List.map fst (variables (captured (cell "case")))))
 
-(* Profile keys are left out of the comparison. *)
 let lowers_as_recorded case =
   let file = case ^ "_lowered.golden" in
   test file (fun () ->
       let golden = Golden.sink file in
-      let recorded u = Graph.to_string (Uops.without_profile_keys u) in
-      equal text (recorded golden)
+      equal text (Graph.to_string golden)
         (lower case |> Uops.binaries_as_sources
         |> Uops.placeholders_like golden
-        |> Uops.numbered_like golden |> recorded))
+        |> Uops.numbered_like golden |> Graph.to_string))
 
 let recorded =
   per_case "jit_lower › recorded" (fun case ->

@@ -73,7 +73,7 @@ let kernels = lazy (Ops.src (Golden.sink "kernels.golden"))
 
 let kernel name =
   let named l =
-    match Ops.arg l with Ops.Region r -> r.name = name | _ -> false
+    match Ops.arg l with Ops.String s -> s = name | _ -> false
   in
   Ops.src (List.find named (Lazy.force kernels))
 

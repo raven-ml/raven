@@ -25,10 +25,10 @@ z3_unknown = types.ModuleType("tinygrad.uop.validate")
 z3_unknown.validate_index_with_z3 = lambda sz, idx, gate: False
 sys.modules["tinygrad.uop.validate"] = z3_unknown
 
-from tinygrad.uop.spec import spec_full, spec_hcq, spec_kernel_graph, spec_program, spec_shared, spec_tensor, type_verify  # noqa: E402
+from tinygrad.uop.spec import spec_full, spec_kernel_graph, spec_program, spec_shared, spec_tensor, type_verify  # noqa: E402
 
-SPECS = [("shared", spec_shared), ("tensor", spec_tensor), ("program", spec_program), ("hcq", spec_hcq),
-         ("full", spec_full), ("kernel_graph", spec_kernel_graph)]
+SPECS = [("shared", spec_shared), ("tensor", spec_tensor), ("program", spec_program), ("full", spec_full),
+         ("kernel_graph", spec_kernel_graph)]
 
 
 def verdict(spec, u):
@@ -375,13 +375,6 @@ def verdict_cases():
     case("an endif", UOp(Ops.ENDIF, src=(iff,)))
     case("an endif of a store", UOp(Ops.ENDIF, src=(st,)))
 
-    # command queues
-    case("an address of a global buffer", gb.getaddr())
-    case("an address of an allocation", alloc(device="CPU", slot=211).getaddr())
-    case("an address of a buffer after a store", UOp(Ops.GETADDR, src=(gb.after(st),), arg="CPU"))
-    case("an address of a stack of shards", UOp(Ops.GETADDR, src=(UOp(Ops.MSTACK, src=tuple(one)),), arg="CPU:0"))
-    case("an address of a load", UOp(Ops.GETADDR, src=(ld,), arg="CPU"))
-
     # kernel graphs
     case("a stack of parameters", UOp(Ops.STACK, src=(x, y)))
     case("a stack of a sum", UOp(Ops.STACK, src=(UOp.const(1) + cvar("a", dtypes.weakint),)))
@@ -399,7 +392,6 @@ def verdict_cases():
     case("a reduce without an argument", UOp(Ops.REDUCE, src=(x,)))
     case("a copy without a device", UOp(Ops.COPY, src=(x,)))
     case("an allreduce without an argument", UOp(Ops.ALLREDUCE, src=(sharded,)))
-    case("an address without a device", UOp(Ops.GETADDR, src=(gb,)))
     return case
 
 

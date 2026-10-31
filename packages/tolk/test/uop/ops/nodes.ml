@@ -294,16 +294,8 @@ let arguments =
             (Ops.equal_arg
                (Code { code = "a"; dtype = Void })
                (Code { code = "a"; dtype = Int32 }));
-          is_false
-            (Ops.equal_arg
-               (Queue { devices = [ "A" ]; queue = "q" })
-               (Queue { devices = [ "B" ]; queue = "q" }));
           is_false (Ops.equal_arg (Flips [ true ]) (Flips [ false ]));
-          is_false (Ops.equal_arg (Shard 0) (Axes [ 0 ]));
-          is_true
-            (Ops.equal_arg
-               (Queue { devices = [ "A" ]; queue = "q" })
-               (Queue { devices = [ "A" ]; queue = "q" })));
+          is_false (Ops.equal_arg (Shard 0) (Axes [ 0 ])));
       test "equal_arg compares constants by their bits and nodes physically"
         (fun () ->
           is_false
@@ -398,44 +390,6 @@ let tags =
                 (Tuple [], "()");
                 (Bytes "\x00a'", "b\"\\x00a'\"");
               ]);
-    ]
-
-(* Queue calls *)
-
-let hcq ?(nargs = 0) device : Ops.hcq_info =
-  let zero : Ops.estimates = { ops = Int 0; lds = Int 0; mem = Int 0 } in
-  {
-    device;
-    kernels = [];
-    estimates = zero;
-    nargs;
-    table = -1;
-    inputs = [];
-    slots = [];
-    written_bufs = [];
-    writes = [];
-    copies = [];
-  }
-
-let hcq_calls =
-  group "queue calls"
-    [
-      test "pp_hcq_info formats every field, as the record's repr" (fun () ->
-          equal string
-            "HCQInfo(device=('AMD',), kernels=(), estimates=Estimates(ops=0, \
-             lds=0, mem=0), nargs=0, table=-1, inputs=(), slots=(), \
-             written_bufs=())"
-            (Format.asprintf "%a"
-               (fun ppf ->
-                 Format.pp_set_margin ppf 10_000;
-                 Ops.pp_hcq_info ppf)
-               (hcq [ "AMD" ])));
-      test "a call's queue data is part of its identity" (fun () ->
-          let call aux = Ops.call ?aux (Ops.sink []) [] in
-          is_true (call (Some (hcq [ "AMD" ])) == call (Some (hcq [ "AMD" ])));
-          is_false
-            (call (Some (hcq [ "AMD" ])) == call (Some (hcq ~nargs:1 [ "AMD" ])));
-          is_false (call (Some (hcq [ "AMD" ])) == call None));
     ]
 
 (* Identity *)
@@ -695,11 +649,6 @@ let keys =
       test "ignores tags" (fun () ->
           let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
           equal string (Ops.key a) (Ops.key (Ops.rtag ~tag:(String "t") a)));
-      test "ignores a call's auxiliary data" (fun () ->
-          let call aux = Ops.call ?aux (Ops.sink []) [] in
-          equal string
-            (Ops.key (call None))
-            (Ops.key (call (Some (hcq [ "AMD" ])))));
       test "tells arguments apart" (fun () ->
           not_equal string
             (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ()) []))
@@ -1399,7 +1348,6 @@ let groups =
     arguments;
     printing;
     tags;
-    hcq_calls;
     identity;
     structure_order;
     keys;

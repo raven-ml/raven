@@ -671,13 +671,6 @@ def variables_and_binding():
 
 
 @graph
-def getaddrs():
-    p = UOp.param(0, dtypes.float, 4, device="CPU")
-    return UOp.sink(p.getaddr(), p.getaddr("CPU:1"), UOp(Ops.BINARY, arg=b"ab").getaddr("CPU"), UOp.const(1).getaddr(),
-                    p.after(UOp.sink()).getaddr())
-
-
-@graph
 def instructions():
     x = UOp.param(0, dtypes.float, 4).index(UOp.const(0))
     return UOp.sink(x.ins("v_mov"), x.ins("v_add", src=(x, x), dtype=dtypes.half), x.rtag(1).ins("nop", dtype=dtypes.void, tag=None))
@@ -695,16 +688,6 @@ def substitution():
     x = (a + 4) + (a + 5)
     return UOp.sink(x.substitute({a: b}), x.substitute({a: a}), (a + 4).replace(tag=1).substitute({a: c}),
                     fvar("x").sin().sin().substitute({fvar("x").sin(): fvar("x").sqrt()}))
-
-
-@graph
-def hcq_calls():
-    from tinygrad.runtime.support.hcq2 import HCQInfo
-    b = UOp.new_buffer("AMD", 4, dtypes.float, 3)
-    kernel = (("AMD",), "k", Estimates(1, 2, 3), (0, 1), b"key", (0,), ((0,), (0,)))
-    info = HCQInfo(("AMD",), kernels=(kernel,), estimates=Estimates(1, 2, 3), nargs=2, table=1, inputs=((b, 0, "GLOBAL"),),
-                   slots=(("AMD", 1),), written_bufs=(b,))
-    return UOp.sink(UOp.custom_function("f").call(b, aux=info), UOp.custom_function("f").call(b, aux=HCQInfo(("AMD",))))
 
 
 # Storage without a given slot takes the next number of a counter. These graphs

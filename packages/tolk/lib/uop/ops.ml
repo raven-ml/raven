@@ -256,139 +256,96 @@ type wmma = {
     option;
 }
 
-(* The payloads of calls name nodes, and nodes carry them: the two groups of
-   types are recursive modules, since one group of types cannot repeat a field
-   name. *)
-module rec Calls : sig
-  type hcq_kernel = {
-    devices : string list;
-    name : string;
-    estimates : Node.estimates;
-    stamps : int list;
-    profile_key : string option;
-    input_slots : int list;
-    outs : int list;
-    ins : int list;
-  }
+type call_info = { name : string option; precompile : bool; dtype : Dtype.t }
 
-  type hcq_info = {
-    device : string list;
-    kernels : hcq_kernel list;
-    estimates : Node.estimates;
-    nargs : int;
-    table : int;
-    inputs : (Node.t * int * string) list;
-    slots : (string * int) list;
-    written_bufs : Node.t list;
-    writes : Node.t list;
-    copies : (string * string * int) list;
-  }
+type t = {
+  op : Op.t;
+  src : t list;
+  arg : arg;
+  tag : Tag.t option;
+  dtype : Dtype.t;
+  id : int;
+  memos : memos;
+}
 
-  type call_info = {
-    name : string option;
-    precompile : bool;
-    aux : hcq_info option;
-    dtype : Dtype.t;
-  }
-end =
-  Calls
+(* Properties computed on first use. Each is a function of the node, so
+   domains racing to fill one write the same value; the fields are atomic so
+   that a reader that sees a value sees it whole. They are a record of their
+   own so that the probe a lookup builds ({!v}) shares one empty record. *)
+and memos = {
+  mutable shape_memo : sint list option option; [@atomic]
+  mutable ranges_memo : nodes option; [@atomic]
+  mutable ended_ranges_memo : t list option; [@atomic]
+  mutable min_max_memo : (Dtype.value * Dtype.value) option; [@atomic]
+  mutable device_memo : device option option; [@atomic]
+  mutable addrspace_memo : Dtype.addr_space option option; [@atomic]
+  mutable backward_slice_memo : nodes option; [@atomic]
+  mutable ops_reached_memo : Op.Set.t option; [@atomic]
+  mutable axis_memo : int option option; [@atomic]
+  mutable marg_memo : movement option; [@atomic]
+  mutable key_memo : string option; [@atomic]
+  mutable arg_repr_memo : string option; [@atomic]
+}
 
-and Node : sig
-  type t = {
-    op : Op.t;
-    src : t list;
-    arg : arg;
-    tag : Tag.t option;
-    dtype : Dtype.t;
-    id : int;
-    memos : memos;
-  }
+(* A set in the order its nodes joined it. Small sets are searched in order;
+   larger ones carry a table of their nodes' ids. *)
+and nodes = {
+  order : t list;
+  cardinal : int;
+  ids : (int, unit) Hashtbl.t option;
+}
 
-  (* Properties computed on first use. Each is a function of the node, so
-     domains racing to fill one write the same value; the fields are atomic so
-     that a reader that sees a value sees it whole. They are a record of their
-     own so that the probe a lookup builds ({!v}) shares one empty record. *)
-  and memos = {
-    mutable shape_memo : sint list option option; [@atomic]
-    mutable ranges_memo : nodes option; [@atomic]
-    mutable ended_ranges_memo : t list option; [@atomic]
-    mutable min_max_memo : (Dtype.value * Dtype.value) option; [@atomic]
-    mutable device_memo : device option option; [@atomic]
-    mutable addrspace_memo : Dtype.addr_space option option; [@atomic]
-    mutable backward_slice_memo : nodes option; [@atomic]
-    mutable ops_reached_memo : Op.Set.t option; [@atomic]
-    mutable axis_memo : int option option; [@atomic]
-    mutable marg_memo : movement option; [@atomic]
-    mutable key_memo : string option; [@atomic]
-    mutable arg_repr_memo : string option; [@atomic]
-  }
+and sint = Int of int | Sym of t
+and estimates = { ops : sint; lds : sint; mem : sint }
+and split = { iterations : sint; lo : int; hi : int }
 
-  (* A set in the order its nodes joined it. Small sets are searched in order;
-     larger ones carry a table of their nodes' ids. *)
-  and nodes = {
-    order : t list;
-    cardinal : int;
-    ids : (int, unit) Hashtbl.t option;
-  }
+and kernel_info = {
+  name : string;
+  applied_opts : Opt.t list;
+  opts_to_apply : Opt.t list option;
+  estimates : estimates option;
+  beam : int;
+  split : split option;
+}
 
-  and sint = Int of int | Sym of t
-  and estimates = { ops : sint; lds : sint; mem : sint }
-  and split = { iterations : sint; lo : int; hi : int }
+and program_info = {
+  global_size : sint list;
+  local_size : sint list;
+  vars : t list;
+  globals : int list;
+  outs : int list;
+  ins : int list;
+  target : Helpers.Target.t;
+}
 
-  and kernel_info = {
-    name : string;
-    applied_opts : Opt.t list;
-    opts_to_apply : Opt.t list option;
-    estimates : estimates option;
-    beam : int;
-    split : split option;
-  }
+and arg =
+  | No_arg
+  | Const of Dtype.const
+  | Dtype of Dtype.t
+  | Param of param_arg
+  | Range of { axis_id : int list; axis_type : Axis_type.t }
+  | Reduce of { op : Op.t; num_axes : int }
+  | Allreduce of { op : Op.t; device : device }
+  | Device of device
+  | Shard of int
+  | Axes of int list
+  | Flips of bool list
+  | String of string
+  | Bytes of string
+  | Code of { code : string; dtype : Dtype.t }
+  | Bufferize of bufferize_opts
+  | Kernel of kernel_info
+  | Program of program_info
+  | Call of call_info
+  | Wmma of wmma
 
-  and program_info = {
-    global_size : sint list;
-    local_size : sint list;
-    vars : t list;
-    globals : int list;
-    outs : int list;
-    ins : int list;
-    target : Helpers.Target.t;
-  }
-
-  and arg =
-    | No_arg
-    | Const of Dtype.const
-    | Dtype of Dtype.t
-    | Param of param_arg
-    | Range of { axis_id : int list; axis_type : Axis_type.t }
-    | Reduce of { op : Op.t; num_axes : int }
-    | Allreduce of { op : Op.t; device : device }
-    | Device of device
-    | Shard of int
-    | Axes of int list
-    | Flips of bool list
-    | String of string
-    | Bytes of string
-    | Queue of { devices : string list; queue : string }
-    | Region of { name : string; align : int }
-    | Code of { code : string; dtype : Dtype.t }
-    | Bufferize of bufferize_opts
-    | Kernel of kernel_info
-    | Program of program_info
-    | Call of Calls.call_info
-    | Wmma of wmma
-
-  and movement =
-    | Reshape of sint list
-    | Expand of sint list
-    | Pad of (sint * sint) list
-    | Shrink of (sint * sint) list
-    | Permute of int list
-    | Flip of bool list
-end =
-  Node
-
-include Calls
-include Node
+and movement =
+  | Reshape of sint list
+  | Expand of sint list
+  | Pad of (sint * sint) list
+  | Shrink of (sint * sint) list
+  | Permute of int list
+  | Flip of bool list
 
 (* Equality and hashing of arguments. Nodes inside them compare by [==]:
    polymorphic equality would walk whole graphs and their memo fields. *)
@@ -446,34 +403,9 @@ let equal_bufferize_opts (b0 : bufferize_opts) (b1 : bufferize_opts) =
   && b0.addrspace = b1.addrspace
   && b0.keep = b1.keep
 
-let equal_hcq_kernel (k0 : hcq_kernel) (k1 : hcq_kernel) =
-  k0.devices = k1.devices
-  && String.equal k0.name k1.name
-  && equal_estimates k0.estimates k1.estimates
-  && k0.stamps = k1.stamps
-  && Option.equal String.equal k0.profile_key k1.profile_key
-  && k0.input_slots = k1.input_slots
-  && k0.outs = k1.outs && k0.ins = k1.ins
-
-let equal_hcq_info (h0 : hcq_info) (h1 : hcq_info) =
-  h0.device = h1.device
-  && List.equal equal_hcq_kernel h0.kernels h1.kernels
-  && equal_estimates h0.estimates h1.estimates
-  && Int.equal h0.nargs h1.nargs
-  && Int.equal h0.table h1.table
-  && List.equal
-       (fun (u0, i0, a0) (u1, i1, a1) ->
-         u0 == u1 && Int.equal i0 i1 && String.equal a0 a1)
-       h0.inputs h1.inputs
-  && h0.slots = h1.slots
-  && List.equal ( == ) h0.written_bufs h1.written_bufs
-  && List.equal ( == ) h0.writes h1.writes
-  && h0.copies = h1.copies
-
 let equal_call_info (c0 : call_info) (c1 : call_info) =
   Option.equal String.equal c0.name c1.name
   && Bool.equal c0.precompile c1.precompile
-  && Option.equal equal_hcq_info c0.aux c1.aux
   && Dtype.equal c0.dtype c1.dtype
 
 let equal_arg (a0 : arg) (a1 : arg) =
@@ -493,10 +425,6 @@ let equal_arg (a0 : arg) (a1 : arg) =
   | Axes l0, Axes l1 -> l0 = l1
   | Flips l0, Flips l1 -> l0 = l1
   | String s0, String s1 | Bytes s0, Bytes s1 -> String.equal s0 s1
-  | Queue q0, Queue q1 ->
-      List.equal String.equal q0.devices q1.devices
-      && String.equal q0.queue q1.queue
-  | Region r0, Region r1 -> String.equal r0.name r1.name && r0.align = r1.align
   | Code c0, Code c1 ->
       String.equal c0.code c1.code && Dtype.equal c0.dtype c1.dtype
   | Bufferize b0, Bufferize b1 -> equal_bufferize_opts b0 b1
@@ -526,8 +454,6 @@ let hash_arg (a : arg) =
   | Flips l -> h (10, l)
   | String s -> h (11, s)
   | Bytes s -> h (12, s)
-  | Queue q -> h (13, q.devices, q.queue)
-  | Region r -> h (20, r.name, r.align)
   | Code c -> h (14, c.code, Dtype.hash c.dtype)
   | Bufferize b -> h (15, b.device, b.keep)
   | Kernel k -> h (16, k.name, k.beam)
@@ -921,36 +847,6 @@ and repr_program_info (p : program_info) =
     (ints p.globals) (ints p.outs) (ints p.ins)
     (Format.asprintf "%a" Helpers.Target.pp p.target)
 
-and repr_hcq_kernel (k : hcq_kernel) =
-  let ints l = repr_tuple (List.map string_of_int l) in
-  repr_tuple
-    [
-      repr_tuple (List.map repr_string k.devices);
-      repr_string k.name;
-      repr_estimates k.estimates;
-      ints k.stamps;
-      repr_option repr_bytes k.profile_key;
-      ints k.input_slots;
-      repr_tuple [ ints k.outs; ints k.ins ];
-    ]
-
-and repr_hcq_info (h : hcq_info) =
-  let pair f g (a, b) = repr_tuple [ f a; g b ] in
-  strf
-    "HCQInfo(device=%s, kernels=%s, estimates=%s, nargs=%d, table=%d, \
-     inputs=%s, slots=%s, written_bufs=%s)"
-    (repr_tuple (List.map repr_string h.device))
-    (repr_tuple (List.map repr_hcq_kernel h.kernels))
-    (repr_estimates h.estimates)
-    h.nargs h.table
-    (repr_tuple
-       (List.map
-          (fun (u, slot, space) ->
-            repr_tuple [ repr u; string_of_int slot; repr_string space ])
-          h.inputs))
-    (repr_tuple (List.map (pair repr_string string_of_int) h.slots))
-    (repr_tuple (List.map repr h.written_bufs))
-
 and repr_arg = function
   | No_arg -> "None"
   | Const (`Float x) -> strf "ConstFloat(%s)" (repr_const (`Float x))
@@ -970,11 +866,6 @@ and repr_arg = function
   | Flips l -> repr_tuple (List.map repr_bool l)
   | String s -> repr_string s
   | Bytes s -> repr_bytes s
-  | Queue q ->
-      repr_tuple
-        [ repr_tuple (List.map repr_string q.devices); repr_string q.queue ]
-  | Region { name; align = 128 } -> repr_string name
-  | Region r -> repr_tuple [ repr_string r.name; string_of_int r.align ]
   | Code c -> repr_tuple [ repr_string c.code; repr_dtype c.dtype ]
   | Bufferize b -> repr_bufferize_opts b
   | Kernel k -> repr_kernel_info k
@@ -986,7 +877,6 @@ let pp ppf u = Format.pp_print_string ppf (repr u)
 let pp_arg ppf a = Format.pp_print_string ppf (repr_arg a)
 let pp_estimates ppf e = Format.pp_print_string ppf (repr_estimates e)
 let pp_kernel_info ppf k = Format.pp_print_string ppf (repr_kernel_info k)
-let pp_hcq_info ppf h = Format.pp_print_string ppf (repr_hcq_info h)
 let pp_program_info ppf p = Format.pp_print_string ppf (repr_program_info p)
 
 (* Graphs *)
@@ -2323,32 +2213,6 @@ let allreduce u op d =
 let unique = Atomic.make 0
 let unique_num () = Atomic.fetch_and_add unique 1
 
-let getaddr ?device:dev u =
-  if
-    not
-      (List.mem (without_after u).op
-         Op.
-           [
-             Buffer;
-             Alloc;
-             Shrink;
-             Bitcast;
-             Binary;
-             Mstack;
-             Mselect;
-             Param;
-             Linear;
-           ])
-  then u
-  else
-    let d =
-      match (dev, device u) with
-      | Some d, _ -> d
-      | None, Some d -> List.hd (device_names d)
-      | None, None -> invalid_arg "an address needs a device"
-    in
-    v Op.Getaddr ~src:[ u ] ~arg:(Device (Single d))
-
 let param_arg ?size ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Some Dtype.Global) ?device ?(volatile = false)
     ?(bind_on_realize = false) ?bound ?(phase = 0) ?(align = 16) ~slot dtype =
@@ -3397,7 +3261,7 @@ let opaque_call_bodies =
 let custom_function name args =
   v Op.Custom_function ~src:args ~arg:(String name)
 
-let call ?(ret_dtype = Dtype.Void) ?name ?(precompile = false) ?aux body args =
+let call ?(ret_dtype = Dtype.Void) ?name ?(precompile = false) body args =
   if not (Op.Set.mem body.op opaque_call_bodies) then
     invalid_argf "a %s cannot be called" (Op.name body.op);
   if
@@ -3407,7 +3271,7 @@ let call ?(ret_dtype = Dtype.Void) ?name ?(precompile = false) ?aux body args =
          (Nodes.to_list (ranges body)))
   then invalid_arg "ranges leak out of the called body";
   v Op.Call ~src:(body :: args)
-    ~arg:(Call { name; precompile; aux; dtype = ret_dtype })
+    ~arg:(Call { name; precompile; dtype = ret_dtype })
 
 let is_inline_call u =
   u.op = Op.Call && (body u).op = Op.Sink

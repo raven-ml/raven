@@ -1168,31 +1168,6 @@ let sym_alu op dt xs =
     (exec_alu ~truncate_output:false op dt
        (List.map (fun x -> (x :> Dtype.const)) xs))
 
-let sym_infer (s : sint) vars =
-  match s with
-  | Int n -> n
-  | Sym u ->
-      let s = simplify u in
-      let cache = Tbl.create 16 in
-      let get n = Tbl.find cache n in
-      let eval n : Dtype.value =
-        match op n with
-        | Op.Const -> as_value (value n)
-        | Op.Param when addrspace n = Some Dtype.Alu || is_variable n -> (
-            let name = expr n in
-            match List.assoc_opt name vars with
-            | Some x -> `Int (Bigint.of_int x)
-            | None -> invalid_argf "the variable %s has no value" name)
-        | Op.Cast -> sym_cast (dtype n) (get (first (op n) (src n)))
-        | Op.Bitcast ->
-            Dtype.bitcast (dtype (first (op n) (src n))) (dtype n)
-              (get (first (op n) (src n)))
-        | op when Op.Set.mem op Op.Set.alu ->
-            sym_alu op (dtype n) (List.map get (src n))
-        | op -> invalid_argf "%s cannot be evaluated" (Op.name op)
-      in
-      Value.to_int (topovisit s eval cache)
-
 (* The integer operations [sym_compile] computes on [int]s. Each raises
    [Inexact] where the result may not be an [int], and the operation is then
    computed exactly. *)
@@ -1244,7 +1219,7 @@ let sym_compile (s : sint) var =
             Tbl.replace tbl n g;
             g
       in
-      (* Each node's value, as [sym_infer] computes it. *)
+      (* Each node's value, computed exactly. *)
       let values = Tbl.create 16 in
       let rec compute n = memo values exact n
       and exact n =
@@ -1299,6 +1274,15 @@ let sym_compile (s : sint) var =
       match int s with
       | None -> to_int
       | Some f -> fun env -> ( try f env with Inexact -> to_int env)
+
+let sym_infer s vars =
+  let var n vars =
+    let name = expr n in
+    match List.assoc_opt name vars with
+    | Some x -> x
+    | None -> invalid_argf "the variable %s has no value" name
+  in
+  sym_compile s var vars
 
 (* Graph construction that rewrites *)
 

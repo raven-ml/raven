@@ -621,8 +621,6 @@ let storage =
           in
           equal int (List.length all)
             (List.length (List.sort_uniq Int.compare all)));
-      test "getaddr rejects storage without a device" (fun () ->
-          rejects (fun () -> Ops.getaddr (param [ 4 ] 0 Float32)));
       test "placeholder rejects a scalar variable's address space" (fun () ->
           rejects (fun () ->
               Call.placeholder ~slot:0 ~addrspace:Alu [ 4 ] Float32));

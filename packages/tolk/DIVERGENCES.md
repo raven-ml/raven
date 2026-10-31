@@ -78,8 +78,8 @@ the Exclusions of `README.md`.
     `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
 - **tolk:** for `uop/ops.py`, `lib/uop/shape.ml:87` (`simplify_rules`) and
-  `:2861` (which sets them); `lib/uop/ops.ml:1190` (`Make_elementwise`), `:816`
-  (`repr`), `:244` (`bufferize_opts`), `:262` (`Calls`);
+  `:2861` (which sets them); `lib/uop/ops.ml:1217` (`Make_elementwise`), `:765`
+  (`repr`), `:244` (`bufferize_opts`);
   `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
   (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
@@ -101,9 +101,6 @@ the Exclusions of `README.md`.
     them through one reference that the module's last line sets, so a
     program that links `Shape` has them. `Symbolic` keeps `sym` and the rules
     on conditions, which call `simplify`;
-  - `CallInfo.aux`, `hcq2.py`'s `HCQInfo`, is the record `hcq_info` of
-    `Ops`, since call arguments hold it, though no call of tolk's carries
-    one (D146);
   - `render.py`'s `pretty_print` is `Ops.pp`: it prints arguments
     (`argstr`), and arguments print the nodes they hold, so the two recurse;
   - the kept methods of `mixin/*.py` are functions of `Ops`, or of `Shape`
@@ -147,8 +144,7 @@ the Exclusions of `README.md`.
   constants, alone`, and the `Tolk.Ops › resolve` tests that simplify with
   `Symbolic`'s rules; `Tolk.Ops › printing › pretty.golden`;
   `Tolk.Ops › elementwise patterns › the pattern operators are the named
-  pattern operations`; `Tolk.Ops › queue calls › pp_hcq_info formats
-  every field, as the record's repr`; for `Renderer`: `Tolk.Renderer ›
+  pattern operations`; for `Renderer`: `Tolk.Renderer ›
   Compiler › compile raises what the toolchain rejects`, its
   `Compile_error`; for `Prepare`: `Tolk.Prepare › contiguous_view › a
   reshape keeps the order`; for `Schedule`: `Tolk.Schedule ›
@@ -2335,7 +2331,8 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   substitutes a symbolic integer's variables and simplifies it on each
   evaluation.
 - **tolk:** `engine/tolk_engine.ml` (`affine`, `value`, `locate` and
-  `launch`); `lib/uop/shape.ml:1230` (`sym_compile`).
+  `launch`); `lib/uop/shape.ml:1209` (`sym_compile`, and `sym_infer`, which
+  is `sym_compile` applied once).
 - **Differs:** linking a schedule turns each call into a launch per lane of
   rig's program (D146), whose buffers, offsets, scalars and grid are words of
   the run's ints or constants: each variable of the run is a word, a value
@@ -2355,10 +2352,10 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   parameters`, `› a scan runs its body once per trip, carrying in place`, `› a
   schedule runs with each binding of its variables` and `runs › runs of one
   schedule from two domains each compute their own`; the Ops suite
-  (`test/uop/ops`): `sym_compile › computes what sym_infer does, variables
-  within 50`, `› within 2147483648`, `› at the int extremes`, `› computes
-  exactly where int arithmetic overflows` and `› raises as sym_infer does
-  where a value fits no int`.
+  (`test/uop/ops`): `sym_compile › computes what exact arithmetic does,
+  variables within 50`, `› within 2147483648`, `› at the int extremes`,
+  `› computes exactly where int arithmetic overflows` and `› raises as exact
+  arithmetic does where a value fits no int`.
 
 ## D91. The host's upcast lanes stay within 32
 
@@ -4485,7 +4482,7 @@ submission, and a range a loop of rig's program (D146).
 
 - **tinygrad:** `uop/ops.py:61` (`identity_element`), whose `Ops.MAX` identity
   is `dt.min`: for `weakint`, of bitsize 800 (`dtype.py:119`), `-2**799`.
-- **tolk:** `lib/uop/ops.ml:1212-1219` (`identity_element`);
+- **tolk:** `lib/uop/ops.ml:1102-1109` (`identity_element`);
   `test/gen/tinygrad.patch`, which makes tinygrad's the same before the
   goldens are generated.
 - **Differs:** a maximum over a weak type has as identity the least value of

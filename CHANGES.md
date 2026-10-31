@@ -587,6 +587,11 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Ops.hcq_info`, `Ops.hcq_kernel`, `Ops.pp_hcq_info`,
+  `Ops.getaddr`, `Spec.hcq`, `call_info.aux` with the `?aux` of `Ops.call` and
+  `Call.call_with_outputs`, and the `Queue` and `Region` arguments are gone:
+  rig encodes the queues they described. `Spec.full` no longer accepts a
+  program over a buffer. A `Linear`'s name is a `String` argument.
 - `Rangeify.get_kernel_graph` schedules two pairs of outputs that each share a
   computation and each read an output of the other pair, where it raised
   "graph_rewrite does not terminate" and rune evaluated the program uncompiled.

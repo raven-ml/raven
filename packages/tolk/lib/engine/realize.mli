@@ -31,15 +31,13 @@ val get_call_outs_ins : Ops.t -> int list * int list
 (** [get_call_outs_ins call] is the positions among {!get_call_arg_uops} of the
     buffers [call] writes and of those it reads: a program's
     ({!Ops.program_info.outs} and {!Ops.program_info.ins}), [([0], [1])] for a
-    copy, and [([], [])] for a call that submits command queues and for any
-    other call. *)
+    copy, and [([], [])] for any other call. *)
 
 val get_call_written_bufs : Ops.t -> Ops.t list
 (** [get_call_written_bufs call] is the storage ({!Op.Buffer}) [call] writes and
-    does not read, each once: for a call that submits command queues, its
-    {!Ops.hcq_info.written_bufs}; for another call, the storage of the outputs
-    that are not also inputs ({!get_call_outs_ins}), a shard selection standing
-    for the storage it selects from. *)
+    does not read, each once: the storage of the outputs that are not also
+    inputs ({!get_call_outs_ins}), a shard selection standing for the storage
+    it selects from. *)
 
 val get_call_name :
   ?var_vals:(string * int) list -> Ops.t -> Ops.t list -> string
@@ -54,9 +52,8 @@ val get_call_name :
 
 val estimate_uop : Ops.t -> Ops.estimates
 (** [estimate_uop call] is the cost of [call], seen through its {!Op.After}s: a
-    program's kernel estimates, the total of the kernels a call that submits
-    command queues enqueues, and, for a copy, its bytes as both memory touched
-    and bytes loaded and stored. Any other call costs nothing. *)
+    program's kernel estimates and, for a copy, its bytes as both memory
+    touched and bytes loaded and stored. Any other call costs nothing. *)
 
 (** {1:compiling Compiling} *)
 

@@ -502,36 +502,6 @@ let program_rules vectors : t =
 let program = program_rules false
 let vector_program = program_rules true
 
-let hcq : t =
-  Pattern_matcher.append
-    (Pattern_matcher.fold
-       (fun () -> [
-         check
-           (pat [ Op.Getaddr ] ~dtype:[ Dtype.Uint64 ] ~name:"x"
-              ~src:
-                [
-                  Upat.or_after
-                    (pat
-                       Op.
-                         [
-                           Buffer;
-                           Alloc;
-                           Param;
-                           Shrink;
-                           Bitcast;
-                           Mstack;
-                           Mselect;
-                           Linear;
-                         ]);
-                ])
-           "x"
-           (fun x -> match arg x with Device _ -> true | _ -> false);
-         accept
-           (pat [ Op.Program ] ~dtype:[ Dtype.Void ]
-              ~src:[ Upat.or_after (pat [ Op.Buffer; Op.Param ]) ]);
-       ]))
-    shared
-
 let full : t =
   Pattern_matcher.concat
     [
@@ -552,7 +522,6 @@ let full : t =
         ]);
       tensor;
       program;
-      hcq;
     ]
 
 let loop r = Axis_type.equal (axis_type r) Axis_type.Loop

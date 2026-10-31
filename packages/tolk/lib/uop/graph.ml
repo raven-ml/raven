@@ -620,79 +620,11 @@ let bufferize_opts : Ops.bufferize_opts codec =
   |> field "broadcast" ~default:false bool (get (fun b -> b.keep = Broadcast))
   |> finish
 
-(* A kernel that a command-queue call enqueues is written as a tuple: [(devices,
-   name, estimates, stamps, profile key, input slots, (outs, ins))]. *)
-let hcq_kernel : Ops.hcq_kernel codec =
-  let strs = list str and ints = list int and key = option bytes in
-  let write (k : Ops.hcq_kernel) =
-    Tuple
-      [
-        strs.write k.devices;
-        str.write k.name;
-        estimates.write k.estimates;
-        ints.write k.stamps;
-        key.write k.profile_key;
-        ints.write k.input_slots;
-        (pair ints ints).write (k.outs, k.ins);
-      ]
-  in
-  let read : value -> Ops.hcq_kernel = function
-    | Tuple [ devices; name; e; stamps; profile_key; input_slots; outs_ins ] ->
-        let outs, ins = (pair ints ints).read outs_ins in
-        {
-          devices = strs.read devices;
-          name = str.read name;
-          estimates = estimates.read e;
-          stamps = ints.read stamps;
-          profile_key = key.read profile_key;
-          input_slots = ints.read input_slots;
-          outs;
-          ins;
-        }
-    | v -> expected "a queue kernel" v
-  in
-  { write; read }
-
-(* tinygrad's queue data has no [writes]: it is read as [written_bufs], the
-   storage tinygrad says the call writes. It has no [copies] either: they are
-   read as none. *)
-let hcq_info : Ops.hcq_info codec =
-  let make device kernels estimates nargs table inputs slots written_bufs :
-      Ops.hcq_info =
-    {
-      device;
-      kernels;
-      estimates;
-      nargs;
-      table;
-      inputs;
-      slots;
-      written_bufs;
-      writes = written_bufs;
-      copies = [];
-    }
-  in
-  let get (f : Ops.hcq_info -> _) = f in
-  let no_cost = estimates.read (Record ("Estimates", [])) in
-  record "HCQInfo" make
-  |> field "device" (list str) (get (fun h -> h.device))
-  |> field "kernels" ~default:[] (list hcq_kernel) (get (fun h -> h.kernels))
-  |> field "estimates" ~default:no_cost estimates (get (fun h -> h.estimates))
-  |> field "nargs" ~default:0 int (get (fun h -> h.nargs))
-  |> field "table" ~default:(-1) int (get (fun h -> h.table))
-  |> field "inputs" ~default:[]
-       (list (triple node int str))
-       (get (fun h -> h.inputs))
-  |> field "slots" ~default:[] (list (pair str int)) (get (fun h -> h.slots))
-  |> field "written_bufs" ~default:[] (list node)
-       (get (fun h -> h.written_bufs))
-  |> finish
-
 (* A call that precompiles its backward pass differentiates, which tolk does
    not, so the field is written and read only as its default. *)
 let call_info : Ops.call_info codec =
-  let make name precompile () aux dtype : Ops.call_info =
-    { name; precompile; aux; dtype }
+  let make name precompile () dtype : Ops.call_info =
+    { name; precompile; dtype }
   in
   let get (f : Ops.call_info -> _) = f in
   let no_backward =
@@ -706,7 +638,6 @@ let call_info : Ops.call_info codec =
   |> field "name" ~default:None (option str) (get (fun c -> c.name))
   |> field "precompile" ~default:false bool (get (fun c -> c.precompile))
   |> field "precompile_backward" ~default:() no_backward (fun _ -> ())
-  |> field "aux" ~default:None (option hcq_info) (get (fun c -> c.aux))
   |> field "dtype" ~default:Dtype.Void dtype (get (fun c -> c.dtype))
   |> finish
 
@@ -750,9 +681,6 @@ let arg_value : Ops.arg -> value option = function
   | Flips l -> Some ((list bool).write l)
   | String s -> Some (str.write s)
   | Bytes s -> Some (bytes.write s)
-  | Queue q -> Some ((pair (list str) str).write (q.devices, q.queue))
-  | Region { name; align = 128 } -> Some (str.write name)
-  | Region r -> Some ((pair str int).write (r.name, r.align))
   | Code c -> Some ((pair str dtype).write (c.code, c.dtype))
   | Bufferize b -> Some (bufferize_opts.write b)
   | Kernel k -> Some (kernel_info.write k)
@@ -783,18 +711,12 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Allreduce ->
       let op, device = (pair op device).read v in
       Allreduce { op; device }
-  | Copy | Getaddr -> Device (device.read v)
+  | Copy -> Device (device.read v)
   | Mselect -> Shard (int.read v)
   | Permute | Unshard -> Axes ((list int).read v)
   | Flip -> Flips ((list bool).read v)
-  | Special | Custom_function | Source | Load | Store -> String (str.read v)
-  | Linear -> (
-      match v with
-      | Str name -> Region { name; align = 128 }
-      | Tuple [ Str name; align ] -> Region { name; align = int.read align }
-      | v ->
-          let devices, queue = (pair (list str) str).read v in
-          Queue { devices; queue })
+  | Special | Custom_function | Source | Load | Store | Linear ->
+      String (str.read v)
   | Binary -> Bytes (bytes.read v)
   | Custom | Customi | Ins ->
       let code, dtype = (pair str dtype).read v in

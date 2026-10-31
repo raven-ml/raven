@@ -638,7 +638,7 @@ let pm_resolve_params : (t option array, t) Pattern_matcher.t =
             if slot >= 0 then params.(slot) else None);
       ]))
 
-let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
+let call_with_outputs ?name ?(precompile = false) ?output_pos values args =
   let n = List.length args + List.length values in
   let default_dev = List.find_map device (values @ args) in
   let pos =
@@ -703,7 +703,7 @@ let call_with_outputs ?name ?(precompile = false) ?aux ?output_pos values args =
                 x
             | [] -> invalid_arg "too few arguments"))
   in
-  let c = call body call_args ?name ~precompile ?aux in
+  let c = call body call_args ?name ~precompile in
   List.map (fun (r, _) -> after r [ c ]) outputs
 
 let call_with_output ?name ?precompile value args =

@@ -222,8 +222,8 @@ about 330,000 graphs, and refused none.
 | `SPECIAL` | a string, the name of the launch dimension: `"gidx0"` |
 | `UNSHARD` | a tuple of one integer, the axis |
 | `MSELECT` | an integer, the device's position |
-| `COPY`, `GETADDR` | a device |
-| `LINEAR` | none, a string, or `(<devices>, <queue>)` |
+| `COPY` | a device |
+| `LINEAR` | none, or a string |
 | `CUSTOM`, `CUSTOMI` | `(<code>, <data type>)`, the code a string |
 | `INS` | `(<instruction>, <data type>)`, the instruction a string |
 | `CUSTOM_FUNCTION`, `SOURCE` | a string |
@@ -245,9 +245,8 @@ The records, with their fields in order:
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |
 | `ProgramInfo` | `global_size` and `local_size` tuples of integers, `vars` a tuple of nodes, `globals`, `outs` and `ins` tuples of integers, `target` `Target` |
 | `Target` | `device`, `renderer`, `arch`, `interface`, `indices`: strings |
-| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile` and `precompile_backward` booleans, `aux` none or `HCQInfo`, `dtype` data type |
+| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile` and `precompile_backward` booleans, `dtype` data type |
 | `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable` and `broadcast` booleans |
-| `HCQInfo` | `device` a tuple of strings, `kernels` a tuple of `(<devices>, <name>, <estimates>, <stamp slots>, <profile key>, <input slots>, (<outs>, <ins>))`, `estimates` `Estimates`, `nargs` and `table` integers, `inputs` a tuple of `(<node>, <integer>, <string>)`, `slots` a tuple of `(<string>, <integer>)`, `written_bufs` a tuple of nodes |
 
 A device is a string, or a tuple of strings for a sharded value. The
 enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a

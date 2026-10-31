@@ -277,52 +277,9 @@ val pp_bufferize_opts : Format.formatter -> bufferize_opts -> unit
      broadcast=False)]: [removable] is [false] for {!Whole} only, and
     [broadcast] [true] for {!Broadcast} only. *)
 
-type hcq_kernel = {
-  devices : string list;  (** The devices the kernel runs on. *)
-  name : string;  (** The kernel's name. *)
-  estimates : estimates;  (** Its cost. *)
-  stamps : int list;  (** The timestamp slots of its launches. *)
-  profile_key : string option;  (** The key its profile records carry. *)
-  input_slots : int list;  (** The argument slots of its buffers. *)
-  outs : int list;  (** The buffers it writes, among [input_slots]. *)
-  ins : int list;  (** The buffers it reads, among [input_slots]. *)
-}
-(** The type for the kernels a command-queue call enqueues. *)
-
-type hcq_info = {
-  device : string list;  (** The devices whose queues the call submits. *)
-  kernels : hcq_kernel list;  (** The kernels it enqueues. *)
-  estimates : estimates;  (** Their total cost. *)
-  nargs : int;  (** The number of arguments, once lowered; [0] before. *)
-  table : int;  (** The argument holding the address table, or [-1]. *)
-  inputs : (t * int * string) list;
-      (** Each address the table holds from the run's storage, in table order:
-          the storage, the byte offset and the device the address is taken on.
-      *)
-  slots : (string * int) list;
-      (** Each device's position of its batch slots among the arguments. *)
-  written_bufs : t list;  (** The arguments the call writes. *)
-  writes : t list;
-      (** The storage its kernels and copies write, those that also read it
-          included: the storage under each output of each of its calls, and
-          under every argument of a call whose outputs are not known. *)
-  copies : (string * string * int) list;
-      (** Each copy between two devices a run makes, once for each trip of the
-          ranges around it: the device it copies from, the device it copies
-          into and its bytes. *)
-}
-(** The type for the data of a call that submits command queues. [writes] and
-    [copies] have no counterpart in tinygrad and are not formatted. *)
-
-val pp_hcq_info : Format.formatter -> hcq_info -> unit
-(** [pp_hcq_info] formats
-    [HCQInfo(device=('AMD',), kernels=(), estimates=Estimates(ops=0, lds=0,
-     mem=0), nargs=0, table=-1, inputs=(), slots=(), written_bufs=())]. *)
-
 type call_info = {
   name : string option;  (** The name of the function called. *)
   precompile : bool;  (** Compile the body on its own. *)
-  aux : hcq_info option;  (** The queues it submits, for such a call. *)
   dtype : Dtype.t;  (** The type returned, {!Dtype.Void} for none. *)
 }
 (** The type for the arguments of {!Op.Call}. *)
@@ -357,22 +314,16 @@ type arg =
       (** {!Op.Reduce}: the operation, and how many leading axes it reduces ([0]
           for a kernel's reduction over range sources). *)
   | Allreduce of { op : Op.t; device : device }  (** {!Op.Allreduce}. *)
-  | Device of device  (** {!Op.Copy}: the target; {!Op.Getaddr}: the device. *)
+  | Device of device  (** {!Op.Copy}: the target. *)
   | Shard of int  (** {!Op.Mselect}: the shard selected. *)
   | Axes of int list
       (** {!Op.Permute}: the permutation; {!Op.Unshard}: the sharded axes,
           ascending. *)
   | Flips of bool list  (** {!Op.Flip}: which axes are reversed. *)
   | String of string
-      (** {!Op.Special}, {!Op.Custom_function}: a name; {!Op.Source}: the source
-          text. *)
+      (** {!Op.Special}, {!Op.Custom_function}, {!Op.Linear}: a name;
+          {!Op.Source}: the source text. *)
   | Bytes of string  (** {!Op.Binary}: the bytes. *)
-  | Queue of { devices : string list; queue : string }
-      (** {!Op.Linear}: the command queue of [devices] it is encoded for. *)
-  | Region of { name : string; align : int }
-      (** {!Op.Linear}: what its sources lay out, such as ["kernargs"], and the
-          alignment in bytes of its start in memory. It prints as its name alone
-          when [align] is [128]. *)
   | Code of { code : string; dtype : Dtype.t }
       (** {!Op.Custom}, {!Op.Customi}: source text; {!Op.Ins}: an instruction;
           with the type produced. *)
@@ -903,10 +854,6 @@ val has_buffer_identity : ?after_ok:bool -> t -> bool
 val needs_storage : t -> bool
 (** [needs_storage u] is [true] iff realizing [u] allocates. *)
 
-val getaddr : ?device:string -> t -> t
-(** [getaddr ~device u] is the address of the storage or command sequence [u] on
-    [device] (default [u]'s first), or [u] if it has none. *)
-
 val unique_num : unit -> int
 (** [unique_num ()] is a slot number no other call returns. *)
 
@@ -979,7 +926,6 @@ val call :
   ?ret_dtype:Dtype.t ->
   ?name:string ->
   ?precompile:bool ->
-  ?aux:hcq_info ->
   t ->
   t list ->
   t

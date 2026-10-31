@@ -62,30 +62,23 @@ let get_call_var_uops call prg =
       List.map (fun v -> Option.value (value v) ~default:v) p.vars
   | _ -> invalid_arg "get_call_var_uops takes a program"
 
-let aux call = match arg call with Call { aux; _ } -> aux | _ -> None
-
 let get_call_outs_ins call =
   let ast = body call in
-  match (aux call, op ast, arg ast) with
-  | Some _, _, _ -> ([], [])
-  | None, Op.Program, Program p -> (p.outs, p.ins)
-  | None, Op.Store, _ -> ([ 0 ], [ 1 ])
+  match (op ast, arg ast) with
+  | Op.Program, Program p -> (p.outs, p.ins)
+  | Op.Store, _ -> ([ 0 ], [ 1 ])
   | _ -> ([], [])
 
 let get_call_written_bufs call =
-  match aux call with
-  | Some info -> info.written_bufs
-  | None ->
-      let args = get_call_arg_uops call
-      and outs, ins = get_call_outs_ins call in
-      let storage k =
-        let b = storage_base (List.nth args k) in
-        if op b = Op.Mselect then storage_base (nth b 0) else b
-      in
-      List.filter (fun k -> not (List.mem k ins)) outs
-      |> List.map storage
-      |> List.filter (fun b -> op b = Op.Buffer)
-      |> Helpers.dedup (module Ops)
+  let args = get_call_arg_uops call and outs, ins = get_call_outs_ins call in
+  let storage k =
+    let b = storage_base (List.nth args k) in
+    if op b = Op.Mselect then storage_base (nth b 0) else b
+  in
+  List.filter (fun k -> not (List.mem k ins)) outs
+  |> List.map storage
+  |> List.filter (fun b -> op b = Op.Buffer)
+  |> Helpers.dedup (module Ops)
 
 let devices u =
   match device u with
@@ -117,16 +110,15 @@ let get_call_name ?(var_vals = []) call bufs =
 let estimate_uop call =
   let call = without_after call in
   let ast = body call in
-  match (aux call, op ast) with
-  | Some info, _ -> info.estimates
-  | None, Op.Program -> (
+  match op ast with
+  | Op.Program -> (
       match arg (nth ast 0) with
       | Kernel { estimates = Some e; _ } -> e
       | _ -> Renderer.Estimates.zero)
-  | None, Op.Store ->
+  | Op.Store ->
       let nbytes = bytes_of (nth call 1) in
       { Renderer.Estimates.zero with lds = nbytes; mem = nbytes }
-  | None, _ -> Renderer.Estimates.zero
+  | _ -> Renderer.Estimates.zero
 
 (* Parallel lowering and compilation *)
 

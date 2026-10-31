@@ -191,7 +191,6 @@ val variables : Ops.t -> Ops.t list
 val call_with_outputs :
   ?name:string ->
   ?precompile:bool ->
-  ?aux:Ops.hcq_info ->
   ?output_pos:int list ->
   Ops.t list ->
   Ops.t list ->

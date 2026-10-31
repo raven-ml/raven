@@ -532,17 +532,6 @@ let variables_and_binding () =
     @ variables e
     @ variables O.(range ~axis_type:Device (Int 4) [ -1 ] + n))
 
-let getaddrs () =
-  let p = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
-  sink
-    [
-      getaddr p;
-      getaddr ~device:"CPU:1" p;
-      getaddr ~device:"CPU" (v ~arg:(Bytes "ab") Op.Binary);
-      getaddr (int 1);
-      getaddr (after p [ sink [] ]);
-    ]
-
 let instructions () =
   let x = index (param [ 4 ] 0 Float32) [ int 0 ] in
   sink
@@ -638,56 +627,6 @@ let symbolic_outputs () =
         empty ~device:(Single "CPU") [ Int 2; Sym n ] Int32;
       ])
 
-let hcq_calls () =
-  let b = new_buffer ~slot:3 (Single "AMD") 4 Float32 in
-  let est : estimates = { ops = Int 1; lds = Int 2; mem = Int 3 } in
-  let kernel =
-    {
-      devices = [ "AMD" ];
-      name = "k";
-      estimates = est;
-      stamps = [ 0; 1 ];
-      profile_key = Some "key";
-      input_slots = [ 0 ];
-      outs = [ 0 ];
-      ins = [ 0 ];
-    }
-  in
-  let info =
-    {
-      device = [ "AMD" ];
-      kernels = [ kernel ];
-      estimates = est;
-      nargs = 2;
-      table = 1;
-      inputs = [ (b, 0, "GLOBAL") ];
-      slots = [ ("AMD", 1) ];
-      written_bufs = [ b ];
-      writes = [ b ];
-      copies = [];
-    }
-  in
-  let zero : estimates = { ops = Int 0; lds = Int 0; mem = Int 0 } in
-  let bare =
-    {
-      device = [ "AMD" ];
-      kernels = [];
-      estimates = zero;
-      nargs = 0;
-      table = -1;
-      inputs = [];
-      slots = [];
-      written_bufs = [];
-      writes = [];
-      copies = [];
-    }
-  in
-  sink
-    [
-      call ~aux:info (custom_function "f" []) [ b ];
-      call ~aux:bare (custom_function "f" []) [ b ];
-    ]
-
 (* Storage made without a slot takes a number no other storage has. [minted]
    renumbers those of [sink] from 1000, in the order the graph lists them, as
    gen/uop/ops.py numbers tinygrad's. *)
@@ -759,11 +698,9 @@ let all =
     ("calls", calls, false);
     ("custom_kernels", custom_kernels, false);
     ("variables_and_binding", variables_and_binding, false);
-    ("getaddrs", getaddrs, false);
     ("instructions", instructions, false);
     ("wmmas", wmmas, false);
     ("substitution", substitution, false);
-    ("hcq_calls", hcq_calls, false);
     ("clones", clones, true);
     ("outputs", outputs, true);
     ("symbolic_storage", symbolic_storage, false);

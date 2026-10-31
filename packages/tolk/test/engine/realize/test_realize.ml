@@ -68,23 +68,6 @@ let storage ?(device = "CPU") ?(dtype = Dtype.Float32) n =
 let linear calls = Ops.v Linear ~src:calls
 let custom_call args = Ops.call (Ops.custom_function "f" []) args
 
-let hcq_call ?(written_bufs = []) ?(estimates = counts 0 0 0) () =
-  let info : Ops.hcq_info =
-    {
-      device = [ "METAL" ];
-      kernels = [];
-      estimates;
-      nargs = 0;
-      table = -1;
-      inputs = [];
-      slots = [];
-      written_bufs;
-      writes = written_bufs;
-      copies = [];
-    }
-  in
-  Ops.call ~aux:info (Ops.sink []) []
-
 let program_info prg =
   match Ops.arg prg with
   | Program p -> p
@@ -216,7 +199,8 @@ let arguments =
           in
           equal uops [ a; b ] (Realize.get_call_arg_uops call));
       test "is empty for a call of no argument" (fun () ->
-          equal uops [] (Realize.get_call_arg_uops (hcq_call ())));
+          equal uops []
+            (Realize.get_call_arg_uops (Ops.call (Ops.sink []) [])));
     ]
 
 let variables =
@@ -269,11 +253,6 @@ let outs_ins =
             (pair (list int) (list int))
             ([ 0 ], [ 1 ])
             (Realize.get_call_outs_ins (Call.store_call (storage 4) (storage 4))));
-      test "is nothing for a call that submits command queues" (fun () ->
-          equal
-            (pair (list int) (list int))
-            ([], [])
-            (Realize.get_call_outs_ins (hcq_call ())));
       test "is nothing for any other call" (fun () ->
           equal
             (pair (list int) (list int))
@@ -314,10 +293,6 @@ let written =
           equal uops []
             (Realize.get_call_written_bufs
                (Call.store_call (buffer 0 4) (storage 4))));
-      test "is a call that submits command queues' own" (fun () ->
-          let a = storage 4 and b = storage 8 in
-          equal uops [ a; b ]
-            (Realize.get_call_written_bufs (hcq_call ~written_bufs:[ a; b ] ())));
       test "is nothing for any other call" (fun () ->
           equal uops []
             (Realize.get_call_written_bufs (custom_call [ storage 4 ])));
@@ -406,9 +381,6 @@ let costs =
             (Realize.estimate_uop
                (Call.store_call (storage ~dtype:Int16 12)
                   (storage ~dtype:Int16 12))));
-      test "is the total a call that submits command queues enqueues" (fun () ->
-          equal estimates (counts 7 8 9)
-            (Realize.estimate_uop (hcq_call ~estimates:(counts 7 8 9) ())));
       test "is nothing for any other call" (fun () ->
           equal estimates (counts 0 0 0)
             (Realize.estimate_uop (custom_call [ storage 4 ])));

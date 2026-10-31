@@ -7,7 +7,6 @@ let specs =
       ("shared", shared);
       ("tensor", tensor);
       ("program", program);
-      ("hcq", hcq);
       ("full", full);
       ("kernel_graph", kernel_graph);
     ]

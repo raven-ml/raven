@@ -347,7 +347,7 @@ unproved access fails.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `uop/spec.py` spec_shared, spec_tensor, spec_program, spec_hcq, spec_full, spec_kernel_graph (no test file targets the rules) | each rule's verdict on nodes it accepts, rejects and declines | `S › verdicts › verdicts.golden` (every row) |
+| tinygrad: `uop/spec.py` spec_shared, spec_tensor, spec_program, spec_full (without spec_hcq, see the README), spec_kernel_graph (no test file targets the rules) | each rule's verdict on nodes it accepts, rejects and declines | `S › verdicts › verdicts.golden` (every row) |
 | tinygrad: `uop/spec.py` type_verify | the message `UOp verification failed at {i} on {op} {dtype} {n} {srcs} {arg}`, the position in toposort order, `enter_calls` | `S › type_verify › failures.golden`; `S › type_verify › fails at the first node, sources first, that the specification does not accept` |
 | tinygrad: `uop/spec.py` type_verify (`DEBUG >= 3`) | the graph's listing prints before the failure | `S › type_verify › prints the graph when DEBUG is 3 or more, before failing › debug_listing.golden`; `S › type_verify › prints nothing when DEBUG is below 3` |
 | tinygrad: `uop/spec.py` type_verify (`SPEC > 1`: test_pyrender) | a checked graph round-trips through pyrender | dropped: pyrender is not ported (README exclusions) |
@@ -1671,6 +1671,7 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s (plan §1a); its execution is `EN › link and run` |
 | tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: excluded (ruling) |
 | tinygrad: engine/realize.py `get_call_name`'s `encdec` and `get_call_outs_ins`'s | | dropped: the video decoder queue is excluded |
+| tinygrad: engine/realize.py the `HCQInfo` branches of `get_call_outs_ins`, `get_call_written_bufs` and `estimate_uop` | | dropped: a call that submits queues is excluded (README) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_var_uops › is the constant a call binds each variable to, in the program's order` (a program's variables are read by name, whatever the call's slots) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_call_stack_pointer | a custom-function call's arguments in C | dropped here: Cstyle's rendering of `CALL` |
 | tinygrad: null/test_call.py (TestCall, TestCallShape, TestCallSchedule, TestArgOrder) | call construction and scheduling | dropped here: `Ops`' `call`/`call_with_outputs` and Schedule's sections |
@@ -1741,9 +1742,9 @@ holds, its inputs in slot order, and what `jit_lower` makes of them; each case
 records its variables with their bound values (`captures.golden`).
 
 For each case, `J › jit_lower › recorded` compares the lowering with
-tinygrad's, profile keys left out (D12), and checks that each input the
-schedule reaches is the parameter of its slot, of its type, device and size,
-and that no other parameter is bound; that the storage the lowering reaches is
+tinygrad's, and checks that each input the schedule reaches is the parameter
+of its slot, of its type, device and size, and that no other parameter is
+bound; that the storage the lowering reaches is
 the held storage of the capture that is no input, plus arenas the capture does
 not reach; and that lowering twice gives the same schedule up to the numbers
 of the storage and placeholders it makes. `J › replay › recorded` links the

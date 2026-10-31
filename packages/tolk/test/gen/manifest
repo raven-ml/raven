@@ -4076,8 +4076,6 @@ uop/ops/dtypes_of.golden
 uop/ops/exec_alu_values.golden
 uop/ops/expansion.golden
 uop/ops/extrema.golden
-uop/ops/getaddrs.golden
-uop/ops/hcq_calls.golden
 uop/ops/identities.golden
 uop/ops/instructions.golden
 uop/ops/kernel_nodes.golden

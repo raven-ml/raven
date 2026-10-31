@@ -14,9 +14,8 @@
     {!type_verify} judges a graph.
 
     {!shared} holds at every stage. {!tensor} and {!program} add the operations
-    of tensor graphs and of programs, and {!hcq} those of command-queue
-    programs. {!full} accepts the nodes of every stage and of the forms passes
-    produce in between.
+    of tensor graphs and of programs. {!full} accepts the nodes of every stage
+    and of the forms passes produce in between.
     {!kernel_graph} is the graph of kernel calls that scheduling produces. *)
 
 type t = (unit, bool) Ops.Pattern_matcher.t
@@ -75,15 +74,10 @@ val vector_program : t
     axis, its lanes, when each of its sources is a vector of those lanes or a
     scalar every lane reads. *)
 
-val hcq : t
-(** [hcq] is {!shared} with the operations of command-queue programs: the
-    address of storage on a device ({!Op.Getaddr}), and programs over a buffer
-    or parameter. *)
-
 val full : t
 (** [full] is the rules of the forms between stages (ends of loops over any
-    integers, any ordering, any load or store), then {!tensor}'s, {!program}'s
-    and {!hcq}'s rules, in that order. *)
+    integers, any ordering, any load or store), then {!tensor}'s and
+    {!program}'s rules, in that order. *)
 
 val kernel_graph : t
 (** [kernel_graph] accepts the graph of kernel calls: a sink of calls of opaque

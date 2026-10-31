@@ -998,9 +998,8 @@ let inference =
           rejects (fun () -> Shape.sym_infer (Sym (weak_var "n" 0 4)) []));
     ]
 
-(* sym_compile computes what sym_infer does, on expressions whose values fit
-   an [int] and on those whose products do not fit one, which it computes
-   exactly. *)
+(* sym_compile computes what exact arithmetic does, on expressions whose
+   values fit an [int] and on those whose products do not fit one. *)
 
 let small_constants = Gen.such_that (( <> ) 0) (Gen.int_range (-20) 20)
 
@@ -1036,11 +1035,27 @@ let exn =
     ~pp:(fun ppf e -> Format.pp_print_string ppf (Printexc.to_string e))
     ~equal:(fun e e' -> Printexc.to_string e = Printexc.to_string e')
 
-(* [e] at [a] = [va] and [b] = [vb], by sym_compile and by sym_infer. *)
+(* The reference: [e] simplified, then each node computed on unbounded
+   integers, each variable read from [env]. *)
+let exact e env =
+  let values = Ops.Tbl.create 16 in
+  let eval n : Dtype.const =
+    match Ops.op n with
+    | Const -> Ops.value n
+    | Param -> `Int (Bigint.of_int (List.assoc (Ops.expr n) env))
+    | op ->
+        Ops.exec_alu ~truncate_output:false op (Ops.dtype n)
+          (List.map (Ops.Tbl.find values) (Ops.src n))
+  in
+  match Ops.topovisit (Shape.simplify e) eval values with
+  | #Dtype.value as v -> Dtype.Value.to_int v
+  | `Invalid -> invalid_arg "Invalid is not a number"
+
+(* [e] at [a] = [va] and [b] = [vb], exactly and by sym_compile. *)
 let both e va vb =
   let env = [ ("a", va); ("b", vb) ] in
   let var u = List.assoc (Ops.expr u) in
-  ( outcome (fun () -> Shape.sym_infer (Sym e) env),
+  ( outcome (fun () -> exact e env),
     outcome (fun () -> Shape.sym_compile (Sym e) var env) )
 
 let agrees ?constants ~name a b value =
@@ -1048,13 +1063,14 @@ let agrees ?constants ~name a b value =
     Gen.triple (Gen.with_pp Ops.pp (expression ?constants a b 3)) value value
   in
   prop name draw (fun (e, va, vb) ->
-      let inferred, compiled = both e va vb in
-      equal (result int exn) inferred compiled)
+      let exact, compiled = both e va vb in
+      equal (result int exn) exact compiled)
 
-let compiles_as_inferred ~bound =
+let compiles_exactly ~bound =
   agrees
     ~name:
-      (Printf.sprintf "computes what sym_infer does, variables within %d" bound)
+      (Printf.sprintf "computes what exact arithmetic does, variables within %d"
+         bound)
     (weak_var "a" (-bound) bound)
     (weak_var "b" (-bound) bound)
     (Gen.int_range (-bound) bound)
@@ -1072,7 +1088,7 @@ let extremes =
 
 let compiles_at_the_extremes =
   let some = Gen.of_list ~pp:Format.pp_print_int extremes in
-  agrees ~name:"computes what sym_infer does, at the int extremes"
+  agrees ~name:"computes what exact arithmetic does, at the int extremes"
     ~constants:(Gen.such_that (( <> ) 0) some)
     (weak_var "a" min_int max_int)
     (weak_var "b" min_int max_int)
@@ -1108,12 +1124,12 @@ let exactly =
   ]
 
 let computes_exactly (_, e, va, vb, expected) =
-  let inferred, compiled = both e va vb in
-  equal ~msg:"sym_infer" (result int exn) (Ok expected) inferred;
+  let exact, compiled = both e va vb in
+  equal ~msg:"exact" (result int exn) (Ok expected) exact;
   equal ~msg:"sym_compile" (result int exn) (Ok expected) compiled
 
-(* Values that fit no [int], 2^62 each: sym_compile raises as sym_infer does,
-   where [int] arithmetic gives min_int. *)
+(* Values that fit no [int], 2^62 each: sym_compile raises as exact arithmetic
+   does, where [int] arithmetic gives min_int. *)
 let unfit =
   let a = weak_var "a" min_int max_int and b = weak_var "b" min_int max_int in
   let p31 = 1 lsl 31 in
@@ -1125,24 +1141,23 @@ let unfit =
     ("0 Sub min_int", Ops.alu b Op.Sub [ a ], min_int, 0);
   ]
 
-let raises_as_inferred (_, e, va, vb) =
-  let inferred, compiled = both e va vb in
-  ignore
-    (require_error ~msg:"sym_infer raises" ~pp:Format.pp_print_int inferred);
-  equal (result int exn) inferred compiled
+let raises_as_exact (_, e, va, vb) =
+  let exact, compiled = both e va vb in
+  ignore (require_error ~msg:"exact raises" ~pp:Format.pp_print_int exact);
+  equal (result int exn) exact compiled
 
 let compilation =
   group "sym_compile"
     [
-      compiles_as_inferred ~bound:50;
-      compiles_as_inferred ~bound:(1 lsl 31);
+      compiles_exactly ~bound:50;
+      compiles_exactly ~bound:(1 lsl 31);
       compiles_at_the_extremes;
       cases "computes exactly where int arithmetic overflows"
         ~id:(fun (name, _, _, _, _) -> name)
         exactly computes_exactly;
-      cases "raises as sym_infer does where a value fits no int"
+      cases "raises as exact arithmetic does where a value fits no int"
         ~id:(fun (name, _, _, _) -> name)
-        unfit raises_as_inferred;
+        unfit raises_as_exact;
       test "an integer is itself" (fun () ->
           equal int 5 (Shape.sym_compile (Int 5) (fun _ () -> 0) ()));
       test "a variable is what var reads" (fun () ->

@@ -82,8 +82,7 @@ let kinds =
     ( "a source with every escape",
       Ops.v ~arg:(String "a\"b\\c\nd\te\x00\xc3\xa9") Source );
     ("bytes", Ops.v ~arg:(Bytes "\x7fELF\x00") Binary);
-    ( "a queue",
-      Ops.v ~arg:(Queue { devices = [ "AMD" ]; queue = "compute" }) Linear );
+    ("a named linear", Ops.v ~src:[ x ] ~arg:(String "kernargs") Linear);
     ( "custom code",
       Ops.v ~src:[ x ] ~arg:(Code { code = "{0}+1"; dtype = Float32 }) Custom );
     ( "a stage",
@@ -137,45 +136,7 @@ let kinds =
         ~src:[ Ops.sink [ x ]; buffer ]
         ~arg:
           (Call
-             { name = Some "f"; precompile = true; aux = None; dtype = Float32 })
-        Call );
-    ( "a call that submits command queues",
-      let kernel : Ops.hcq_kernel =
-        {
-          devices = [ "AMD" ];
-          name = "E_4";
-          estimates = { ops = Int 4; lds = Int 32; mem = Int 32 };
-          stamps = [ 3; 4 ];
-          profile_key = Some "\x00\xff key";
-          input_slots = [ 0; 1 ];
-          outs = [ 0 ];
-          ins = [ 1 ];
-        }
-      in
-      let queues : Ops.hcq_info =
-        {
-          device = [ "AMD" ];
-          kernels = [ kernel ];
-          estimates = { ops = Sym n; lds = Int 0; mem = Int 0 };
-          nargs = 3;
-          table = 2;
-          inputs = [ (buffer, 0, "GLOBAL") ];
-          slots = [ ("AMD", 1) ];
-          written_bufs = [ buffer ];
-          writes = [ buffer ];
-          copies = [];
-        }
-      in
-      Ops.v
-        ~src:[ Ops.sink [ x ]; buffer ]
-        ~arg:
-          (Call
-             {
-               name = None;
-               precompile = false;
-               aux = Some queues;
-               dtype = Void;
-             })
+             { name = Some "f"; precompile = true; dtype = Float32 })
         Call );
     ( "a tensor core product",
       Ops.v ~src:[ half; half; x ]
@@ -288,9 +249,6 @@ let errors =
       test "rejects an unknown field" (fun () ->
           rejects "KernelInfo has no field size"
             "0 Ops.SINK dtypes.void [] KernelInfo(size=1)\n");
-      test "rejects aux data that is not a queue call's" (fun () ->
-          rejects "expected a HCQInfo, found an integer"
-            "0 Ops.CALL dtypes.void [] CallInfo(aux=1)\n");
       test "rejects text after the argument that is not a tag" (fun () ->
           rejects "expected \" tag=\" at column 32"
             "0 Ops.CONST dtypes.weakint [] 1 2\n");
