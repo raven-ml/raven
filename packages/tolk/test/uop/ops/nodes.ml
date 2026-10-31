@@ -439,6 +439,43 @@ let rec build vars = function
       Ops.cast (Ops.alu (build vars a) o [ build vars b ]) Dtype.Int32
   | Bin (o, a, b) -> Ops.alu (build vars a) o [ build vars b ]
 
+exception Interrupted
+
+(* [interrupted k f] is [f ()] with [Interrupted] raised at its [k]th
+   allocation, where Ctrl-C's [Sys.Break] or a test runner's timeout can land.
+   Is [None] when it was raised, else [Some n] with [n] the allocations [f]
+   made. *)
+let interrupted k f =
+  let armed = ref false and n = ref 0 in
+  let alloc _ =
+    if !armed then begin
+      incr n;
+      if !n = k then begin
+        armed := false;
+        raise Interrupted
+      end
+    end;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. ~callstack_size:0 tracker in
+  Fun.protect
+    ~finally:(fun () ->
+      armed := false;
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile)
+    (fun () ->
+      match
+        armed := true;
+        f ()
+      with
+      | _ ->
+          armed := false;
+          Some !n
+      | exception Interrupted -> None)
+
 let identity =
   group "identity"
     [
@@ -559,6 +596,28 @@ let identity =
                 (fun n u -> is_true ~msg:(string_of_int n) (u == first.(n)))
                 r)
             results);
+      test "an exception at any allocation of v keeps the nodes built"
+        (fun () ->
+          let node tag = Ops.v ~tag Op.Noop in
+          let tag name n = Ops.Tag.Tuple [ String name; Int n ] in
+          let built = ref [] in
+          let build tag = built := (tag, node tag) :: !built in
+          List.iter build (List.init 256 (tag "kept"));
+          (* Building a batch of new nodes raises at its [k]th allocation,
+             for each [k] up to the batch's last. The batches fill the
+             shards, so some raises land as a shard's buckets or table grow
+             and move the nodes held in [built]. *)
+          let rec from k =
+            if k > 10_000 then fail "a batch makes over 10000 allocations";
+            let batch =
+              List.init 32 (fun j -> tag "interrupted" ((k * 32) + j))
+            in
+            let made = interrupted k (fun () -> List.iter build batch) in
+            match made with Some n when n < k -> () | _ -> from (k + 1)
+          in
+          from 1;
+          let tags, nodes = List.split !built in
+          equal uops nodes (List.map node tags));
     ]
 
 let structure_order =

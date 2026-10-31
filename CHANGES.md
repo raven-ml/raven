@@ -716,6 +716,9 @@ thread.
 
 ### Tolk (new)
 
+- An exception raised inside `Ops.v`, as a test runner's timeout or Ctrl-C's
+  `Sys.Break` is at an allocation, no longer leaves a lock of its node table
+  held, after which every later node failed with "Resource deadlock avoided".
 - `Schedule.create_linear_with_vars` called from several domains at once
   schedules each body once, the others waiting for it, as `Codegen.to_program`
   compiles each program once.

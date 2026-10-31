@@ -600,27 +600,36 @@ let dtype_of op src arg =
 
 (* Nodes *)
 
+external reraise : exn -> 'a = "%reraise"
+
+(* The node [probe] stands for, found in [table] or added to it. *)
+let intern table probe =
+  match Table.find_opt table probe with
+  | Some u -> u
+  | None ->
+      let { op; src; arg; tag; _ } = probe in
+      let dtype = dtype_of op src arg in
+      let u = node op src arg tag dtype (Atomic.fetch_and_add next_id 1) in
+      Table.add table u;
+      u
+
 let v ?(src = []) ?(arg = No_arg) ?tag op =
   let probe =
     { op; src; arg; tag; dtype = Dtype.Void; id = -1; memos = probe_memos }
   in
   let table, lock = shards.(Hashtbl.hash (Interned.hash probe) land 63) in
+  (* Written as [Mutex.protect] is, without its closure: nothing runs between
+     the lock and the handler, so an exception raised in the section, as a
+     timeout's or Ctrl-C's is at a poll, releases the lock. The shard stays
+     whole: at each poll of [Weak.Make]'s add, every slot holds its hash. *)
   Mutex.lock lock;
-  match Table.find_opt table probe with
-  | Some u ->
+  match intern table probe with
+  | u ->
       Mutex.unlock lock;
       u
-  | None -> (
-      match dtype_of op src arg with
-      | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          Mutex.unlock lock;
-          Printexc.raise_with_backtrace e bt
-      | dtype ->
-          let u = node op src arg tag dtype (Atomic.fetch_and_add next_id 1) in
-          Table.add table u;
-          Mutex.unlock lock;
-          u)
+  | exception e ->
+      Mutex.unlock lock;
+      reraise e
 
 let op u = u.op
 let dtype u = u.dtype

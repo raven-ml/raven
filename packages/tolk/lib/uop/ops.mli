@@ -371,11 +371,14 @@ val v : ?src:t list -> ?arg:arg -> ?tag:Tag.t -> Op.t -> t
     operations whose type comes from their argument need its shape: {!Op.Const}
     a [Const], {!Op.Cast} and {!Op.Bitcast} a [Dtype], {!Op.Param}, {!Op.Buffer}
     and {!Op.Alloc} a [Param], {!Op.Custom}, {!Op.Customi} and {!Op.Ins} a
-    [Code]. When the setting {!Setting.spec} is 2 or more, the node is also
-    checked against the whole specification, the first time it is built.
+    [Code].
 
     Raises [Invalid_argument] if no type can be derived, as for a {!Op.Where}
-    whose condition is not boolean, or if the check fails. *)
+    whose condition is not boolean.
+
+    An exception raised asynchronously inside [v], as {!Sys.Break} on Ctrl-C or
+    a test runner's timeout is, passes through it: later calls on any domain
+    find each node built before. *)
 
 val op : t -> Op.t
 (** [op u] is [u]'s operation. *)
