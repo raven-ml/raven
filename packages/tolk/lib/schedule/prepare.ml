@@ -232,33 +232,21 @@ let split_reduceop reduce x =
       if
         out = 0
         || (not (Setting.value Setting.split_reduceop))
-        || Helpers.prod xs / out
+        || Helpers.prod (List.filteri (fun i _ -> i < num_axes) xs)
            < Setting.value Setting.reduceop_split_threshold
       then None
       else
-        (* The axes the input is broadcast along index no range once indexed. *)
-        let indexed =
-          index x
-            (List.mapi
-               (fun i s ->
-                 if
-                   (s > 1)
-                   [@mutate
-                     off "an axis of one element has no divisor from 8 to 256"]
-                 then range (Int s) [ i ]
-                 else int 0)
-               xs)
+        (* An axis is expanded if its range does not reach the index into the
+           base. *)
+        let rngs = List.mapi (fun i s -> range (Int s) [ i ]) xs in
+        let rec through idxs u =
+          if Op.Set.mem (op u) Op.Set.movement then
+            through
+              (Indexing.apply_movement_op (shape (nth u 0)) (marg u) idxs)
+              (nth u 0)
+          else idxs
         in
-        let unexpanded =
-          List.map
-            (fun r -> List.hd (axis_id r))
-            (Nodes.to_list
-               (ranges
-                  (substitute ~calls:Skip ~pass:Fixed_point
-                     ~extra_pm:(Pattern_matcher.with_ctx pm_tensor_mops)
-                     indexed
-                     [ (base x, v Op.Noop) ])))
-        in
+        let reached = ranges (sink (through rngs x)) in
         let size = Setting.value Setting.reduceop_split_size in
         let limit = min 256 ((1 lsl size) / out) in
         let divisors = List.init (max 0 (limit - 7)) (fun k -> limit - k) in
@@ -267,8 +255,10 @@ let split_reduceop reduce x =
             (fun i ->
               List.filter_map
                 (fun d ->
-                  if List.nth xs i mod d = 0 && List.mem i unexpanded then
-                    Some (i, d)
+                  if
+                    List.nth xs i mod d = 0
+                    && Nodes.mem (List.nth rngs i) reached
+                  then Some (i, d)
                   else None)
                 divisors)
             (List.init num_axes Fun.id)
@@ -276,17 +266,11 @@ let split_reduceop reduce x =
         match candidates with
         | [] -> None
         | (dim, divisor) :: _ ->
-            let splitted_shape =
-              List.concat
-                (List.mapi
-                   (fun i s ->
-                     if i = dim then [ divisor; s / divisor ] else [ s ])
-                   xs)
-            in
-            let order = List.init (List.length splitted_shape) Fun.id in
+            let order = List.init (List.length xs + 1) Fun.id in
             let splitted =
               permute
-                (reshape x (ints splitted_shape))
+                (unflatten x dim
+                   [ Int divisor; Int (List.nth xs dim / divisor) ])
                 (List.filter (( <> ) dim) order @ [ dim ])
             in
             if Setting.value Setting.debug >= 3 then
