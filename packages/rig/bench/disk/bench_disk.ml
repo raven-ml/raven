@@ -299,16 +299,34 @@ let borrow_rows =
       ])
 
 (* Opens: one file, and more files than the disk keeps descriptors for, each
-   open evicting the least recently used. *)
+   open evicting the least recently used.
+
+   [many-128] keeps every buffer it opens until its trial ends. The disk frees a
+   collected buffer at its next call, so a buffer of an earlier call that the
+   collector reached during a batch would add its free to the batch's count, at
+   a time the collector's pace decides: the count would move with
+   [OCAMLRUNPARAM] and with the rows run before. A trial makes under a thousand
+   calls on fudge, about 650 bytes a buffer; [kept] holds four times as many
+   calls, which bounds the memory they hold. *)
+
+let kept = 4096
+
+type opening = { paths : string array; held : B.t array array; mutable n : int }
+
+let open_many t =
+  if t.n = kept then failwith (strf "open/many-128: more than %d calls" kept);
+  t.held.(t.n) <- Array.map (fun p -> ok (Rig_disk.of_file p)) t.paths;
+  t.n <- t.n + 1
 
 let open_rows =
   let small i = data (strf "small-%d" i) (4 * kib) in
   let smalls () = Array.init many small in
+  let opening () = { paths = smalls (); held = Array.make kept [||]; n = 0 } in
   let open_floor p = close (opened p ~writable:false) in
   Thumper.group "open"
     [
       row "file" (fun () -> small 0) (fun p -> ok (Rig_disk.of_file p));
-      row "many-128" smalls (Array.map (fun p -> ok (Rig_disk.of_file p)));
+      row "many-128" opening open_many;
       row "floor-file" (fun () -> small 0) open_floor;
       row "floor-many-128" smalls (fun ps ->
           Array.iter close (Array.map (opened ~writable:false) ps));

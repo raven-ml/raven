@@ -106,17 +106,16 @@ raven / llama.cpp (Vulkan; ROCm):
   7.9-9.2 µs in 9 samples and 14.6-15.4 µs in 11 (rig-gpu.thumper),
   against fudge's 5.5 µs CUDA and 4.0 µs NV. The copy kernel starts at
   2 MiB, so this is SDMA and the wait: find what splits the modes
+- rig.disk's open/file counts the frees of earlier calls' buffers, as
+  open/many-128 did: thumper falls back to sampling it, 86-87 words by
+  default against an exact 82 with `s=4M` (fudge). Keep its buffers
+  through the trial as many-128 does
 - every call below rig's core pays about 270 ns for its signal mask
   (5493c9821): two sigmask calls and a runtime release, the release about
   14 ns (561a0b34c). fudge: rig.disk read/4K 246 to 481 ns, write/4K 315
   to 547; copy/staged-4K +51%, device/open-close-memory +41%,
   drain/free-cache-1000 +42%. Find a mask in rig.edge that a short call
   does not pay in full
-- rig.disk's open/many-128 counts the frees of earlier rounds' buffers,
-  which `of_io`'s drain runs when the GC has collected them, so its
-  `exact` word count moves with `OCAMLRUNPARAM` and the rows run beside
-  it (10,889 on fudge, 10,930-28,040 elsewhere): drain outside the
-  measured window
 
 ## tolk
 
