@@ -1075,7 +1075,7 @@ let clang_lang =
     if Dtype.equal dt Dtype.Float64 then strf "__builtin_%s(%s)" name x
     else strf "__builtin_%sf(%s)" name x
   in
-  let dropped = Op.[ Exp2; Sin; Log2; Trunc; Reciprocal ] in
+  let dropped = Op.[ Exp2; Sin; Log2; Reciprocal ] in
   {
     cstyle with
     float4 = (fun t -> "(" ^ t ^ ")");
@@ -1278,8 +1278,6 @@ let metal_lang =
     kernel_typedef = (fun _ -> "kernel void");
     buffer_prefix = "device ";
     smem_prefix = "threadgroup __attribute__((aligned(16))) ";
-    var_prefix = "constant ";
-    var_suffix = "&";
     barrier = "threadgroup_barrier(mem_flags::mem_threadgroup);";
     float4 = Fun.id;
     code_for_workitem = [ ('g', axis "gid"); ('l', axis "lid") ];

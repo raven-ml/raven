@@ -75,7 +75,7 @@ module Estimates = struct
         (if is Op.Load u || is Op.Store u then
            let rec storage b =
              match src b with
-             | s :: _ when not (is Op.Param b) -> storage s
+             | s :: _ when not (Op.Set.mem (op b) Op.Set.defines) -> storage s
              | _ -> b
            in
            let buf = storage u in
