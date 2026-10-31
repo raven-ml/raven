@@ -4732,3 +4732,28 @@ merged into D137, which holds the loops that consumers of one domain share.
   the last axis of every other row and column, flipped, gives eager's
   codes`, under Clang 18 on an x86 host with AVX-512.
 
+## D168. The renderer finds a program's callees by a scan of its instructions
+
+- **tinygrad:** `renderer/cstyle.py:268-277` (`CStyleLanguage.render`, which
+  lists the external functions and the call bodies by two toposorts of
+  `UOp.sink(*uops)`, then renders each body, then the program).
+- **tolk:** `Cstyle.callees`, which `Cstyle.render` asks.
+- **Differs:** a scan of the instructions replaces the two toposorts: each
+  call's callee is met at the call, and a body not met before is scanned
+  through its own instructions, then listed. The instructions are in order,
+  each after its sources, and hold every node but the bodies of calls, which
+  a toposort of their sink enters at their call: the externs and the bodies
+  come in the toposort's order, and the source is the same.
+- **Reason:** (d): compile time of every kernel, most of which call nothing.
+  The toposort of the whole program, call bodies entered, took 16 to 22% of
+  the tolk bench's `*/render` rows on fudge and 7 to 13% of their
+  allocation, `gpt_oss_decode/render` and `gpt_oss_prefill/render` among
+  them. On fudge, rendering `conv`'s kernels took 1.33M instructions with
+  it and 1.12M with the scan, against 1.06M before calls were rendered.
+- **Pinned by:** `Tolk.Codegen › calls in a kernel ›` `externs and functions
+  are declared as a toposort of the instructions meets them`, `a body calls
+  an external function the kernel declares once`, `bodies of one name traced
+  apart are two functions` and `one body called twice is one function`; the
+  tolk bench's `*/render` rows on fudge, whose time and exact allocation
+  would catch the toposort's return.
+

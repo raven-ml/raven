@@ -928,20 +928,30 @@ let render_uops ~fn_names l uops =
   List.iter visit uops;
   (!name, List.rev !kernel, List.rev !bufs)
 
+(* The external functions and the call bodies the instructions [uops] call,
+   in the order a walk of the program meets them: a body after the callees of
+   its own instructions. The instructions are in order, each after its
+   sources, and hold every node but the bodies of calls, which the walk enters
+   at their call. *)
+let callees uops =
+  let externs = ref [] and bodies = ref [] in
+  let rec scan us = List.iter (fun u -> if is Op.Call u then enter (nth u 0)) us
+  and enter callee =
+    match (op callee, arg callee) with
+    | Op.Custom_function, Custom_function f -> externs := f.name :: !externs
+    | Op.Linear, _ when not (List.memq callee !bodies) ->
+        scan (src callee);
+        bodies := callee :: !bodies
+    | _ -> ()
+  in
+  scan uops;
+  (dedup (List.rev !externs), List.rev !bodies)
+
 (* The program declares the external functions it calls, which it links
    against, and defines a function for each call body, after the bodies it
    calls; a body traced again with other arguments takes a numbered name. *)
 let render render_kernel l uops =
-  let all = toposort ~calls:Enter (sink uops) in
-  let externs =
-    List.filter_map
-      (fun u ->
-        match arg u with
-        | Custom_function f when is Op.Custom_function u ->
-            Some (strf "extern void %s();" f.name)
-        | _ -> None)
-      all
-  in
+  let externs, bodies = callees uops in
   let fn_names = Tbl.create 8 in
   let define (bodies, fns) body =
     let base =
@@ -964,13 +974,10 @@ let render render_kernel l uops =
     in
     (body :: bodies, fn :: fns)
   in
-  let bodies, fns =
-    List.fold_left define ([], []) (List.filter (is Op.Linear) all)
-  in
+  let bodies, fns = List.fold_left define ([], []) bodies in
   let name, kernel, bufs = render_uops ~fn_names l uops in
-  let prefix =
-    match dedup externs @ List.rev fns with [] -> None | p -> Some p
-  in
+  let externs = List.map (strf "extern void %s();") externs in
+  let prefix = match externs @ List.rev fns with [] -> None | p -> Some p in
   render_kernel ?prefix l ~name kernel bufs
     (List.concat_map src (List.rev bodies) @ uops)
 

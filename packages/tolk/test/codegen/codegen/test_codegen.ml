@@ -3822,6 +3822,84 @@ let call_ret () =
   let v = Ops.call sqrt [ Ops.float ~dtype:Float64 16. ] in
   kernel "call_ret" [ Ops.store (first c) Ops.O.(Ops.cast v Int32 * i32 2) ]
 
+(* [c[0] = int (sqrt 16) + int (sqrt 9)]: the kernel calls [sqrt], and so
+   does the body [root] it calls. *)
+let extern_in_body () =
+  let sqrt = Ops.custom_function ~dtype:Float64 "sqrt" [] in
+  let sqrt_int x =
+    Ops.cast (Ops.call sqrt [ Ops.float ~dtype:Float64 x ]) Int32
+  in
+  let root =
+    let p = int_param ~addrspace:Reg ~name:"p" 0 1 in
+    Ops.sink [ Ops.store (first p) (sqrt_int 9.) ]
+  in
+  let c = int_param ~name:"C" 0 1 in
+  let tmp = Shape.alloc_like ~addrspace:Reg c in
+  let call = Ops.call ~name:"root" root [ tmp ] in
+  let three = first (Ops.after tmp [ call ]) in
+  kernel "extern_in_body"
+    [ Ops.store (first c) Ops.O.(sqrt_int 16. + three) ]
+
+(* The kernel calls [h], which calls [axpy 2] and [cbrt], then [axpy 3] and
+   [sqrt]: two externs, one met first inside a body, and two bodies of one
+   name, one met first inside another body. *)
+let ordered_callees () =
+  let cbrt = Ops.custom_function ~dtype:Float64 "cbrt" []
+  and sqrt = Ops.custom_function ~dtype:Float64 "sqrt" [] in
+  let of_f f x = Ops.cast (Ops.call f [ Ops.float ~dtype:Float64 x ]) Int32 in
+  let h =
+    let out = int_param ~name:"out" 0 4 and x = int_param ~name:"x" 1 4 in
+    let out = Ops.after out [ Ops.call ~name:"axpy" (axpy 2) [ out; x ] ] in
+    Ops.sink [ Ops.store (first out) Ops.O.(first out + of_f cbrt 27.) ]
+  in
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let c2 = Ops.after c [ Ops.call ~name:"h" h [ c; a ] ] in
+  let c3 = Ops.after c [ Ops.call ~name:"axpy" (axpy 3) [ c2; a ] ] in
+  kernel "ordered_callees"
+    [ Ops.store (first c3) Ops.O.(first c3 + of_f sqrt 16.) ]
+
+(* The externs and the functions a program's instructions call, as a
+   toposort of their sink meets them, call bodies entered: the externs'
+   names once each, and each body's name, numbered among the bodies of its
+   name met before it. *)
+let toposort_callees instructions =
+  let all = Ops.toposort ~calls:Enter (Ops.sink instructions) in
+  let externs =
+    List.filter_map
+      (fun u ->
+        match Ops.arg u with
+        | Custom_function f when Ops.op u = Custom_function -> Some f.name
+        | _ -> None)
+      all
+  in
+  let name (met, names) b =
+    let same b' = Ops.equal_arg (Ops.arg b') (Ops.arg b) in
+    let base = match Ops.arg b with String s -> s | _ -> "" in
+    let n = List.length (List.filter same met) in
+    let name = if n = 0 then base else Printf.sprintf "%s_%d" base n in
+    (b :: met, name :: names)
+  in
+  let rec once seen = function
+    | [] -> List.rev seen
+    | x :: rest -> once (if List.mem x seen then seen else x :: seen) rest
+  in
+  let bodies = List.filter (fun u -> Ops.op u = Linear) all in
+  (once [] externs, List.rev (snd (List.fold_left name ([], []) bodies)))
+
+(* The names that follow [prefix] up to the first ['('] on [source]'s lines
+   that start with it, in order. *)
+let names_after prefix source =
+  List.filter_map
+    (fun line ->
+      if String.starts_with ~prefix line then
+        let rest =
+          String.sub line (String.length prefix)
+            (String.length line - String.length prefix)
+        in
+        Some (List.hd (String.split_on_char '(' rest))
+      else None)
+    (String.split_on_char '\n' source)
+
 let int_values l = Array.of_list (List.map (fun n -> `Int (Bigint.of_int n)) l)
 
 let runs_on_host k inputs expected () =
@@ -3836,6 +3914,25 @@ let calls =
         (runs_on_host call_out [] [ 4; 5 ]);
       test "an external function returns its value"
         (runs_on_host call_ret [] [ 8 ]);
+      test "a body calls an external function the kernel declares once"
+        (fun () ->
+          let prg = Codegen.to_program (extern_in_body ()) (Lazy.force host) in
+          equal int 1 (occurrences "extern void sqrt();" (source prg));
+          equal (array Dtypes.value) (int_values [ 7 ])
+            (List.assoc 0 (Run.on_host prg [])));
+      test
+        "externs and functions are declared as a toposort of the \
+         instructions meets them"
+        (fun () ->
+          let k = ordered_callees () and ren = Lazy.force host in
+          let instructions = Ops.src (Ops.nth (Codegen.linearize k ren) 1) in
+          let src = source (Codegen.to_program k ren) in
+          let externs, functions = toposort_callees instructions in
+          equal (list string) [ "cbrt"; "sqrt" ] externs;
+          equal (list string) [ "axpy"; "h"; "axpy_1" ] functions;
+          equal (list string) externs (names_after "extern void " src);
+          equal (list string) functions
+            (names_after "static inline void " src));
       test "a nested call runs its body twice through registers"
         (runs_on_host nested_calls
            [ (1, int_values [ 0; 1; 2; 3 ]) ]
