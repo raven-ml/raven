@@ -36,7 +36,35 @@ let corpus_path corpus = Filename.concat "support/parity" (corpus ^ ".txt")
 let ids_path corpus model =
   Filename.concat "support/parity" (corpus ^ "." ^ model ^ ".ids")
 
-let model_path model = Filename.concat "../bench/data" (model ^ ".json")
+(* The tokenizers whose licence allows a copy in the repository are read from
+   the trimmed ones test/gen/trim_parity_tokenizers.py writes, which encode the
+   corpora as the full files do. The others are downloaded, and their tests
+   skip without them. *)
+let downloaded =
+  [
+    ("llama", "its model card states no licence");
+    ( "llama3",
+      "the Llama 3.2 Community License binds whoever redistributes it" );
+  ]
+
+let model_path model =
+  if List.mem_assoc model downloaded then
+    Filename.concat "../bench/data" (model ^ ".json")
+  else Filename.concat "support/tokenizers" (model ^ ".json")
+
+let with_model model f =
+  let path = model_path model in
+  match List.assoc_opt model downloaded with
+  | None -> (
+      match Fixture.locate path with
+      | Some path -> f path
+      | None -> failf "missing fixture %s" path)
+  | Some licence ->
+      Fixture.with_download path
+        ~from:
+          (Printf.sprintf
+             "packages/brot/bench/download_data.sh (not committed: %s)" licence)
+        f
 
 (* Fixtures *)
 
@@ -632,8 +660,7 @@ let check_attention model corpus tokenizer =
 let loaded = Hashtbl.create 16
 
 let with_tokenizer model check () =
-  Fixture.with_download (model_path model)
-    ~from:"packages/brot/bench/download_data.sh" (fun path ->
+  with_model model (fun path ->
       let tokenizer =
         match Hashtbl.find_opt loaded model with
         | Some tokenizer -> tokenizer

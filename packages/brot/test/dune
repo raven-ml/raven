@@ -55,6 +55,7 @@
  (package brot)
  (deps
   (glob_files support/parity/*)
+  (glob_files support/tokenizers/*)
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (libraries brot fixture windtrap unix jsont jsont.bytesrw))
 
@@ -63,6 +64,7 @@
  (package brot)
  (deps
   (glob_files support/parity/*)
+  (glob_files support/tokenizers/*)
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (action
   ; Bytecode runs the whole suite ~8x slower; the default slow-test threshold

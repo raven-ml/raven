@@ -1,0 +1,79 @@
+Trimmed tokenizers for brot's parity tests
+
+Each file here is a copy of a tokenizer.json published on huggingface.co,
+cut down by packages/brot/test/gen/trim_parity_tokenizers.py to the
+vocabulary, merges and pieces that brot's parity corpora reach. Their
+pipelines, added tokens and identifiers are those of the original. Each is
+distributed under the licence of its source, as below.
+
+gpt2.json
+  Source:    https://huggingface.co/openai-community/gpt2
+  Licence:   MIT (the text follows)
+  Copyright (c) 2019 OpenAI
+
+roberta_base.json
+  Source:    https://huggingface.co/FacebookAI/roberta-base
+  Licence:   MIT (the text follows)
+  Copyright (c) Facebook, Inc. and its affiliates.
+
+deepseek_v3.json
+  Source:    https://huggingface.co/deepseek-ai/DeepSeek-V3-0324
+  Licence:   MIT (the text follows)
+  Copyright (c) 2023 DeepSeek
+
+phi4.json
+  Source:    https://huggingface.co/microsoft/phi-4
+  Licence:   MIT (the text follows)
+  Copyright (c) Microsoft Corporation.
+
+bert_base.json
+  Source:    https://huggingface.co/google-bert/bert-base-uncased
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by Google
+
+t5_base.json
+  Source:    https://huggingface.co/google-t5/t5-base
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by Google
+
+mistral.json
+  Source:    https://huggingface.co/mistralai/Mistral-7B-v0.1
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by Mistral AI
+
+qwen2_5.json
+  Source:    https://huggingface.co/Qwen/Qwen2.5-0.5B
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by Alibaba Cloud
+
+gpt_oss.json
+  Source:    https://huggingface.co/openai/gpt-oss-20b
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by OpenAI
+
+mistral_nemo.json
+  Source:    https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407
+  Licence:   Apache License 2.0 (LICENSE-Apache-2.0)
+  Published by Mistral AI
+
+The MIT licence, for the files above that name it, with the copyright line
+given for each:
+
+  Permission is hereby granted, free of charge, to any person obtaining a
+  copy of this software and associated documentation files (the
+  "Software"), to deal in the Software without restriction, including
+  without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to permit
+  persons to whom the Software is furnished to do so, subject to the
+  following conditions:
+
+  The above copyright notice and this permission notice shall be included
+  in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+  OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+  NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+  USE OR OTHER DEALINGS IN THE SOFTWARE.

@@ -41,8 +41,9 @@ curl -sL -o "$DATA_DIR/qwen2_5.json" \
   "https://huggingface.co/Qwen/Qwen2.5-0.5B/resolve/main/tokenizer.json"
 echo "  Qwen2.5 (byte-level BPE, 151K vocab, regular-expression Split, NFC)"
 
+# DeepSeek-V3-0324's tokenizer.json is DeepSeek-V3's, under the MIT licence.
 curl -sL -o "$DATA_DIR/deepseek_v3.json" \
-  "https://huggingface.co/deepseek-ai/DeepSeek-V3/resolve/main/tokenizer.json"
+  "https://huggingface.co/deepseek-ai/DeepSeek-V3-0324/resolve/main/tokenizer.json"
 echo "  DeepSeek-V3 (byte-level BPE, 128K vocab, three regular-expression Splits)"
 
 curl -sL -o "$DATA_DIR/gpt_oss.json" \

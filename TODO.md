@@ -352,9 +352,6 @@ raven / llama.cpp (Vulkan; ROCm):
   multi-thread; SentencePiece pipelines 40-58 MB/s (added-token scan 28%,
   normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken
   commit
-- brot: the parity tests skip in local runtest without downloaded
-  tokenizers (CI downloads them): commit trimmed ones with their
-  generator, each under a licence that allows it
 - munin.sys on Windows raises `Sys_error` for network and disk I/O
   counters, per-core CPU times, the process table and the load average:
   read them (GetIfTable2 needs iphlpapi, IOCTL_DISK_PERFORMANCE a handle
