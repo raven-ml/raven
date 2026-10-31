@@ -136,9 +136,97 @@ let axis_of o = Gen.int_range 0 (Array.length o.s - 1)
    where [neg]. *)
 let spell o neg a = if neg then a - Array.length o.s else a
 
+(* A movement of a drawn operand: a reshape to its axes reversed or to
+   one axis, a permutation, a reversing slice or a broadcast on a new
+   leading axis. *)
+let movement o =
+  let open Gen in
+  let r = Array.length o.s in
+  let ranges rev =
+    Array.map
+      (fun d : M.range ->
+        if rev then { start = max 0 (d - 1); count = d; step = -1 }
+        else { start = 0; count = d; step = 1 })
+      o.s
+  in
+  let+ k = int_range 0 4 and+ rev = bool and+ lead = int_range 0 3 in
+  match k with
+  | 0 -> M.Reshape (Iarray.of_array (Array.map (fun a -> o.s.(a)) (rev_axes r)))
+  | 1 -> M.Reshape [| numel o.s |]
+  | 2 -> M.Permute (Iarray.of_array (rev_axes r))
+  | 3 -> M.Slice (Iarray.of_array (ranges rev))
+  | _ -> M.Broadcast (Iarray.of_array (Array.append [| lead |] o.s))
+
+(* [mv] of [x] through the frontend that makes it. *)
+let moved mv x =
+  match (mv : M.t) with
+  | Reshape s -> Nx.reshape (Iarray.to_array s) x
+  | Permute p -> Nx.transpose ~axes:(Array.to_list (Iarray.to_array p)) x
+  | Slice rs ->
+      Nx.slice
+        (Array.to_list
+           (Array.map
+              (fun (r : M.range) ->
+                if r.step = 1 then Nx.A else Nx.Rs (-1, -r.count - 1, -1))
+              (Iarray.to_array rs)))
+        x
+  | Broadcast s -> Nx.broadcast_to (Iarray.to_array s) x
+  | Window _ -> invalid_arg "moved: a window"
+
 let laws =
   group "laws"
     [
+      prop "a bitcast of a live array is its operation's meaning" (operand ())
+        (fun o ->
+          covers o;
+          let held v = Option.get (Nx.Repr.array v) in
+          let shares v =
+            Rig.Buffer.overlaps (A.buffer (held o.x)) (A.buffer (held v))
+          in
+          let run f =
+            match f () with v -> Ok v | exception Invalid_argument m -> Error m
+          in
+          let agree (type w r) name (dt : (w, r) D.t) =
+            let y = run (fun () -> Nx.bitcast dt o.x) in
+            let z =
+              run (fun () ->
+                  Nx.Prim.eval ~by:"Nx.bitcast" (Bitcast (dt, o.x)))
+            in
+            match (y, z) with
+            | Ok y, Ok z ->
+                equal ~msg:(name ^ ": shape") (array int) (Nx.shape z)
+                  (Nx.shape y);
+                equal ~msg:(name ^ ": shares") bool (shares z) (shares y);
+                equal ~msg:(name ^ ": layout") bool true
+                  (A.Layout.equal (A.layout (held z)) (A.layout (held y)))
+            | Error a, Error b ->
+                equal ~msg:(name ^ ": message") string b a
+            | Ok _, Error m -> fail (name ^ ": only eval raised " ^ m)
+            | Error m, Ok _ -> fail (name ^ ": only the frontend raised " ^ m)
+          in
+          agree "same width" D.Float32;
+          agree "narrower" D.Uint8;
+          agree "wider" D.Int64);
+      prop "a movement of a live array is its operation's meaning"
+        Gen.(
+          let* o = operand () in
+          let+ mv = movement o in
+          (o, mv))
+        (fun (o, mv) ->
+          covers o;
+          let y = moved mv o.x in
+          let z = Nx.Prim.eval ~by:"test" (Move (mv, o.x)) in
+          let held v = Option.get (Nx.Repr.array v) in
+          let overlaps a b =
+            Rig.Buffer.overlaps (A.buffer (held a)) (A.buffer (held b))
+          in
+          cover "a view" (overlaps o.x z);
+          cover "a copy" (not (overlaps o.x z));
+          equal ~msg:"shape" (array int) (Nx.shape z) (Nx.shape y);
+          equal ~msg:"elements" (array int32) (elements z) (elements y);
+          equal ~msg:"shares" bool (overlaps o.x z) (overlaps o.x y);
+          equal ~msg:"layout" bool true
+            (A.Layout.equal (A.layout (held z)) (A.layout (held y))));
       prop "reshape keeps the elements in row-major order" (operand ())
         (fun o ->
           covers o;

@@ -172,7 +172,15 @@ val place :
     whose memory it marks shared ({!Rig.Claim.share}). *)
 
 val move : by:string -> Nx_array.Move.t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [move ~by mv x] is {!eval} of [Move (mv, x)]. *)
+(** [move ~by mv x] is {!eval} of [Move (mv, x)]. With no live [Extent], a
+    live array whose layout expresses the movement answers at once, a view
+    of its memory, which it marks shared ({!Exec.view_of}), as {!eval}
+    would. *)
+
+val bitcast :
+  by:string -> ('w, 'r) Value.dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
+(** [bitcast ~by dt x] is {!eval} of [Bitcast (dt, x)], with {!move}'s fast
+    path. *)
 
 val reshape : by:string -> int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [reshape ~by s x] is [x] itself where [x] has shape [s], and {!move} of

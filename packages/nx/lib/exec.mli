@@ -107,6 +107,11 @@ val beside : ('v, 's, 'd) Value.t -> ('w, 'r, 'd) Value.t -> bool
 (** [beside x y] is whether [x] and [y] are [Array]s at physically one
     placement and [y] is live. It allocates nothing. *)
 
+val view_of : ('v, 's) Nx_array.t -> unit
+(** [view_of a] marks [a]'s memory shared ({!Rig.Claim.share}), as a view
+    over it made outside any handle chain needs: no donation of [a]'s value
+    may then write what the view reads. *)
+
 val map :
   by:string ->
   (module Nx_kernel.S) ->

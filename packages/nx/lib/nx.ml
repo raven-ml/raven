@@ -668,7 +668,7 @@ let bitcast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
   | Some Type.Equal ->
       Prim.alive ~by:"Nx.bitcast" x;
       x
-  | None -> Eval.eval ~by:"Nx.bitcast" (Value.Bitcast (dt, x))
+  | None -> Eval.bitcast ~by:"Nx.bitcast" dt x
 
 let copy_by ~by x = Eval.eval ~by (Value.Copy x)
 let copy x = copy_by ~by:"Nx.copy" x
@@ -2019,7 +2019,7 @@ type ('s, 'd) parts =
 
 let parts (type s d) ~by (z : (Complex.t, s, d) t) : (s, d) parts =
   let split (type r) (f : (float, r) D.t) =
-    let pairs : (float, r, d) t = Eval.eval ~by (Value.Bitcast (f, z)) in
+    let pairs : (float, r, d) t = Eval.bitcast ~by f z in
     let r = Prim.rank z in
     let part i =
       let one = Array.init (r + 1) (fun a ->
@@ -2626,7 +2626,7 @@ let paired (type c a d) ~by (dt : (Complex.t, c) D.t) s
       Eval.reshape ~by unit (Eval.broadcast ~by s (cast_by ~by f x))
     in
     let pieces = [ (region unit r 0 1, part re); (region unit r 1 1, part im) ] in
-    Eval.eval ~by (Value.Bitcast (dt, assemble ~by f both 0. pieces))
+    Eval.bitcast ~by dt (assemble ~by f both 0. pieces)
   in
   match dt with D.Complex64 -> pairs D.Float32 | D.Complex128 -> pairs D.Float64
 
@@ -2644,8 +2644,8 @@ let complex_parts (type v s d) ~by
     (f : 'w 'r. ('w, 'r, d) t -> ('w, 'r, d) t) (x : (v, s, d) t) :
     (v, s, d) t =
   let parts (type p) (p : (float, p) D.t) =
-    let pairs = Eval.eval ~by (Value.Bitcast (p, x)) in
-    Eval.eval ~by (Value.Bitcast (dtype x, f pairs))
+    let pairs = Eval.bitcast ~by p x in
+    Eval.bitcast ~by (dtype x) (f pairs)
   in
   match dtype x with
   | D.Complex64 -> parts D.Float32

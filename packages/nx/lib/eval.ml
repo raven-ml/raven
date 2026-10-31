@@ -521,7 +521,33 @@ let place ~by p x =
 
 (* Movements *)
 
-let move ~by mv x = eval ~by (Move (mv, x))
+(* With no live [Extent], a live array moves where it lies, as
+   {!Exec.windows} moves it: a view of its memory, built without the
+   operation. A movement no layout expresses, one that does not apply, and
+   any other operand go through {!eval}, which copies or raises naming
+   [by]. A handle never takes this path, so donation is unchanged. *)
+let move ~by mv x =
+  match x with
+  | Array ({ at; a; _ } as r)
+    when r.dead == Live && quiet () && not (Grid.is_cut (Devices.grid at)) -> (
+      match A.move mv a with
+      | Some v ->
+          Exec.view_of a;
+          Array { at; a = v; dead = Live }
+      | None | (exception Invalid_argument _) -> eval ~by (Move (mv, x)))
+  | Array _ | Shards _ | Handle _ | Traced _ -> eval ~by (Move (mv, x))
+
+(* A bitcast, as {!move} is. *)
+let bitcast ~by dt x =
+  match x with
+  | Array ({ at; a; _ } as r)
+    when r.dead == Live && quiet () && not (Grid.is_cut (Devices.grid at)) -> (
+      match A.bitcast dt a with
+      | Some v ->
+          Exec.view_of a;
+          Array { at; a = v; dead = Live }
+      | None | (exception Invalid_argument _) -> eval ~by (Bitcast (dt, x)))
+  | Array _ | Shards _ | Handle _ | Traced _ -> eval ~by (Bitcast (dt, x))
 
 (* A movement to the shape [x] holds makes no view: [x]'s memory stays
    unshared, so a later donation of [x] may still write into it. *)

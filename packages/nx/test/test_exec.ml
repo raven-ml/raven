@@ -1482,12 +1482,12 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.slice Nx.[ R (1, 3); A ] a))
-          @@ __POS_OF__ {| 215 words |});
+          @@ __POS_OF__ {| 169 words |});
       test "a reshape of a one-element host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
           expect (allocated (fun () -> Nx.reshape [| 1; 1 |] a))
-          @@ __POS_OF__ {| 86 words |});
+          @@ __POS_OF__ {| 53 words |});
       test "a sum of 16 float32 host elements allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 16 |] (Array.make 16 1.) in
@@ -1503,13 +1503,13 @@ let allocation =
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let ids = on_host Plain D.Int64 [| 3 |] [| 0L; 2L; 3L |] in
           expect (allocated (fun () -> Nx.take ~axis:0 ids a))
-          @@ __POS_OF__ {| 289 words |});
+          @@ __POS_OF__ {| 226 words |});
       test "a set of a row of a 4x4 host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
           expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
-          @@ __POS_OF__ {| 452 words |});
+          @@ __POS_OF__ {| 419 words |});
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any
