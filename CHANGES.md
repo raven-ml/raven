@@ -803,6 +803,9 @@ thread.
   shrinks the copies to the value's shape.
 - Two variables of one name, such as one read under two bounds, take one
   parameter slot: a program lists the name once in its `vars`.
+- `Jit.jit_lower` tags each buffer it leaves out of `held_bufs` with
+  `String "scratch"`: the buffer holds only one run's values. tolk frees none
+  of them between runs.
 - **Breaking:** `Ops.Axis_type` loses `Reduce` and `Unroll` and orders `Device`,
   `Global`, `Local`, `Warp`, `Weak`, `Loop`, `Upcast`, `Placeholder`: a range is
   a reduce axis when a reduction closes it. Its argument prints the type first.

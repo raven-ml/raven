@@ -34,5 +34,16 @@ let jit_lower ?beam ?search ~targets ~held_bufs ~inputs linear =
     Ops.substitute ~calls:Skip ~pass:Once linear (List.mapi param inputs)
   in
   let linear = Memory.memory_plan_rewrite ~held_bufs linear in
+  (* The buffers left unheld hold only what one run computes: tagged, a caller
+     can tell them from those it keeps and free them between runs. *)
+  let scratch =
+    List.filter_map
+      (fun u ->
+        if Ops.op u = Op.Buffer && not (List.memq u held_bufs) then
+          Some (u, Ops.rtag ~tag:(String "scratch") u)
+        else None)
+      (Ops.toposort ~calls:Enter linear)
+  in
+  let linear = Ops.substitute ~calls:Skip ~pass:Once linear scratch in
   Setting.context (bindings ?beam ()) (fun () ->
       Realize.compile_linear ?search ~targets linear)
