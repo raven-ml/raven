@@ -73,8 +73,8 @@ val render_uir : Ops.t list -> string
       [addrspace=] (but global memory), [device=] (bare if a word of letters,
       digits, [_] and [:], else as {!Ops.pp_device} writes it) and
       [volatile=true], where they apply;
-    - for a range, its axis type and [r] followed by its identity, its parts
-      separated by [_]: [LOOP r1_2];
+    - for a range, its axis type and the parts of its identity, separated by
+      spaces: [LOOP 1 2];
     - for a kernel's sink, its name, and nothing for any other sink;
     - for a call, [name='f'] and [precompile=true], where they apply;
     - for a reduction, [op=add] and, unless [0], [pop=n];

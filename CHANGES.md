@@ -798,6 +798,8 @@ thread.
 
 ### Tolk (new)
 
+- `Render.render_uir` writes a range's identity as words, `LOOP 1 2`, where it
+  wrote `LOOP r1_2`.
 - An integer `Op.Pow` computes by wrapping products (`Transcendental.xpow_int`,
   `Ops.exec_alu`), not float logarithms; a negative exponent gives 0, but `±1`
   for a base of 1 or -1, and is the one `Ops.pow` refuses for an integer base.

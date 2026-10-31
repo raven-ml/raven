@@ -118,9 +118,8 @@ let render_arg u =
   | Op.Const, _ -> const_arg u
   | (Op.Param | Op.Buffer | Op.Alloc), Param p -> storage_arg u p
   | Op.Range, _ ->
-      strf "%s r%s"
-        (axis_name (axis_type u))
-        (String.concat "_" (List.map string_of_int (axis_id u)))
+      String.concat " "
+        (axis_name (axis_type u) :: List.map string_of_int (axis_id u))
   | Op.Sink, Kernel k -> k.name
   | Op.Sink, _ -> ""
   | Op.Call, Call c ->
@@ -245,6 +244,10 @@ let render_marg ctx x =
            (fun (a0, a1) -> strf "(%s, %s)" (marg_str ctx a0) (marg_str ctx a1))
            b)
 
+(* Each index of an access, in brackets: [[i][j + 1]]. *)
+let render_index srcs =
+  String.concat "" (List.map (fun s -> "[" ^ Helpers.strip_parens s ^ "]") srcs)
+
 let renderer =
   let open Pattern_matcher in
   let x o = Upat.op o ~name:"x" and xs os = Upat.v ~op:os ~name:"x" () in
@@ -302,8 +305,7 @@ let renderer =
       rule_ctx
         (xs (Op.Set.of_list [ Op.Index; Op.Stage ]))
         (fun ctx m ->
-          let bracket y = "[" ^ Helpers.strip_parens (r ctx y) ^ "]" in
-          Some (String.concat "" (List.map bracket (List.tl (Ops.src (m "x"))))));
+          Some (render_index (List.map (r ctx) (List.tl (Ops.src (m "x"))))));
       rule_ctx
         (Upat.load (Upat.op Op.Index ~name:"idx") [])
         (fun ctx m -> Some (r ctx (nth (m "idx") 0) ^ r ctx (m "idx")));
