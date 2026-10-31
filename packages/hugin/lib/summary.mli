@@ -27,11 +27,30 @@ type t = {
   notes : string list;  (** Problems with the data, for warnings. *)
 }
 
+(** A mark's stacked length, stacked over every row that is not dropped, so
+    that each panel's stacks are those it draws. *)
+type stacked = {
+  index : int;  (** The stacked input's binding index. *)
+  starts : Nx.host Nx.float64_t;  (** [nan] where dropped. *)
+  ends : Nx.host Nx.float64_t;
+  placed : Nx.host Nx.bool_t * Nx.host Nx.bool_t;
+      (** Where the starts and the ends are finite and not missing for the
+          scale. *)
+}
+
+val stack :
+  int array ->
+  input list ->
+  Stacked.t ->
+  missing:(Nx.host Nx.float64_t -> Nx.host Nx.bool_t) ->
+  stacked option
+(** [stack shape inputs st ~missing] is the stacked length [st] of a mark of
+    shape [shape], [missing] telling the values its scale cannot place. *)
+
 val summarise :
-  ?stack:Stacked.t -> int array -> input list -> Nx.host Nx.bool_t option -> t
-(** [summarise ~stack shape inputs filter] is the summary of the [inputs] of a
-    mark of shape [shape], keeping only the rows where [filter] holds, if given.
-    A row missing in an input that does not keep its row is dropped from every
-    other. With [stack], the hull of the stacked input is that of the intervals
-    its kept rows cover, stacked over every row that is not dropped, so that
-    each panel's stacks are those it draws. *)
+  ?stacked:stacked -> int array -> input list -> Nx.host Nx.bool_t option -> t
+(** [summarise ~stacked shape inputs filter] is the summary of the [inputs] of
+    a mark of shape [shape], keeping only the rows where [filter] holds, if
+    given. A row missing in an input that does not keep its row is dropped from
+    every other. With [stacked], the hull of the stacked input is that of the
+    placed ends of its kept rows and of their placed starts. *)

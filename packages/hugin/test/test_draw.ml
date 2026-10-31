@@ -14,6 +14,7 @@ let f64 a = Nx.create Nx.float64 [| Array.length a |] a
 let i32 a = Nx.create Nx.int32 [| Array.length a |] (Array.map Int32.of_int a)
 let bools a = Nx.create Nx.bool [| Array.length a |] a
 let nan = Float.nan
+let i64 a = Nx.create Nx.int64 [| Array.length a |] a
 let path segs = Nx.Ptree.Path.v segs
 
 (* Drawing *)
@@ -1844,19 +1845,37 @@ let gen_stacks =
       ]
   in
   let* n = int_range 1 9 in
-  let+ xs = array ~size:(constant n) (int_range 0 2)
+  (* A code of [-1] is missing: an x drops its row, a fill keeps it. *)
+  let code k = frequency [ (6, int_range 0 k); (1, constant (-1)) ] in
+  let opacity = frequency [ (6, float_range 0. 1.); (1, constant nan) ] in
+  let+ xs = array ~size:(constant n) (code 2)
   and+ panels = array ~size:(constant n) (int_range 0 1)
   and+ lengths = array ~size:(constant n) length
+  and+ opacities = array ~size:(constant n) opacity
+  and+ fills = array ~size:(constant n) (code 1)
   and+ offset = of_list ~pp:pp_offset [ `Zero; `Expand; `Center ] in
-  (xs, panels, lengths, offset)
+  (xs, panels, lengths, (opacities, fills), offset)
 
 (* Law: a stacked y gives each row the interval its column's stack gives it,
-   columns being told apart by x and by panel, and its scale is fitted to the
-   hull of the intervals. *)
-let stack_law (xs, panels, lengths, offset) =
+   columns being told apart by x and by panel, a row that another binding
+   drops stacking nothing and a missing colour dropping nothing, and its scale
+   is fitted to the hull of the intervals. *)
+let stack_law (xs, panels, lengths, (opacities, fills), offset) =
   let n = Array.length xs in
   let columns = Array.init n (fun r -> (3 * panels.(r)) + xs.(r)) in
-  let starts, ends = reference offset columns lengths in
+  let dropped r = xs.(r) < 0 || Float.is_nan opacities.(r) in
+  let stacked = Array.mapi (fun r l -> if dropped r then nan else l) lengths in
+  let starts, ends = reference offset columns stacked in
+  let finite r = Float.is_finite lengths.(r) in
+  cover "a row dropped by its opacity"
+    (Array.exists (fun r -> finite r && Float.is_nan opacities.(r))
+       (Array.init n Fun.id));
+  cover "a row dropped by its x"
+    (Array.exists (fun r -> finite r && xs.(r) < 0) (Array.init n Fun.id));
+  cover "a row kept with a missing colour"
+    (Array.exists
+       (fun r -> finite r && (not (dropped r)) && fills.(r) < 0)
+       (Array.init n Fun.id));
   cover "a negative length" (Array.exists (fun l -> l < 0.) lengths);
   cover "a dropped row" (Array.exists Float.is_nan starts);
   cover "a column of two rows"
@@ -1873,6 +1892,8 @@ let stack_law (xs, panels, lengths, offset) =
         Mark.bind ~stack:offset Role.y
           (num ~scale:(Scale.linear ~nice:false ()) (f64 lengths));
         Mark.bind Role.fx (cat ~labels:[| "p"; "q" |] (i32 panels));
+        Mark.bind Role.opacity (num (f64 opacities));
+        Mark.bind Role.fill (cat ~labels:[| "u"; "v" |] (i32 fills));
       ]
       (fun r ->
         let s = Option.get (Mark.scale r `Y Scale.Quantitative) in
@@ -1936,12 +1957,65 @@ let stacks =
             (page
                (area ~y:(num ~scale hi) ~y2:(num ~scale lo) ~fill:(dim 0) ()))
             (page (area ~y:(num ~scale v) ~fill:(dim 0) ~stack:`Zero ())));
+      test "a stack over time stacks the quantities at each instant"
+        (fun () ->
+          let t = Nx.create Nx.int64 [| 3 |] [| 0L; 0L; 60L |] in
+          let e =
+            rows_of
+              [
+                Mark.bind Role.x (time S t);
+                Mark.bind ~stack:`Zero Role.y
+                  (num ~scale:(Scale.linear ~domain:(0., 4.) ())
+                     (f64 [| 1.; 2.; 3. |]));
+              ]
+              (fun r -> Mark.extent r `Y)
+          in
+          equal (pair floats floats)
+            ([| 0.; 0.25; 0. |], [| 0.25; 0.75; 0.75 |])
+            e;
+          (* rect stacks the one length among a time and a quantity. *)
+          ignore
+            (render (Size.panels 50. 50.)
+               (rect ~x:(time S t) ~y:(num (f64 [| 1.; 2.; 3. |]))
+                  ~stack:`Zero ())));
+      test "a pile on a log scale starts at the domain's lower end" (fun () ->
+          let v = Nx.create Nx.float64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+          let (a, b), s =
+            rows_of
+              [
+                Mark.bind Role.x (dim 1);
+                Mark.bind ~stack:`Zero Role.y
+                  (num ~scale:(Scale.log ~nice:false ()) v);
+              ]
+              (fun r ->
+                ( Mark.extent r `Y,
+                  Option.get (Mark.scale r `Y Scale.Quantitative) ))
+          in
+          (* Piles of 1 then 3, and of 2 then 4: ends 1, 2, 4 and 6, and starts
+             1 and 2 that the scale places. *)
+          equal ~msg:"domain" (pair float_exact float_exact) (1., 6.)
+            (let (Scale.Floats (lo, hi)) = Scale.domain s in
+             (lo, hi));
+          let n = Scale.normalize s in
+          equal ~msg:"starts" floats [| 0.; 0.; n 1.; n 2. |] a;
+          equal ~msg:"ends" floats [| n 1.; n 2.; n 4.; n 6. |] b);
       test "a stack needs one length" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"exactly one") (fun () ->
               rect ~x:(dim 0) ~y:(dim 1) ~stack:`Zero ());
           raises_match (Exn.invalid_arg ~sub:"y2") (fun () ->
               area ~y:(num (f64 [| 1. |])) ~y2:(num (f64 [| 0. |]))
-                ~stack:`Zero ()));
+                ~stack:`Zero ());
+          raises_match (Exn.invalid_arg ~sub:"exactly one") (fun () ->
+              rect ~x:(dim 0) ~y:(time S (i64 [| 1L |])) ~stack:`Zero ());
+          List.iter
+            (fun y ->
+              raises_match (Exn.invalid_arg ~sub:"no quantities") (fun () ->
+                  y ()))
+            [
+              (fun () -> area ~y:(strings [| "a" |]) ~stack:`Zero ());
+              (fun () -> area ~y:(time S (i64 [| 1L |])) ~stack:`Zero ());
+              (fun () -> area ~y:(const 0.5) ~stack:`Zero ());
+            ]);
       test "only quantities on x or y stack" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"only x and y") (fun () ->
               Mark.bind ~stack:`Zero Role.opacity (num (f64 [| 1. |])));
@@ -1959,8 +2033,6 @@ let stacks =
 (* Time *)
 
 
-
-let i64 a = Nx.create Nx.int64 [| Array.length a |] a
 
 (* Law: a row of instants is at its instant normalised by the fitted temporal
    scale, and a masked row is dropped. *)

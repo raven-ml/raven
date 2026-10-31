@@ -524,7 +524,8 @@ val area :
     along it. A legend entry is its box filled. [area ~y:hi ~y2:lo ()] fills a
     band between two curves.
 
-    Raises [Invalid_argument] if [stack] and [y2] are both given. *)
+    Raises [Invalid_argument] if [stack] and [y2] are both given, or if [stack]
+    is given and [y] holds no quantities ({!Mark.bind}). *)
 
 val rect :
   ?x:('x, float) channel ->
@@ -1500,9 +1501,12 @@ module Mark : sig
         unbound, and the lengths of a column are laid end to end in the order of
         their rows by {!Stack.intervals} with the offset [stack]: those that are
         not negative upward from [0.], the negative ones downward. A dropped row
-        ({!Hugin.section-missing}) stacks nothing. The scale [c] reads is fitted
-        to the intervals of the rows, {!extent} gives each row its interval, and
-        {!get}, {!normalized} and {!positions} its end. Unset, [c] is not
+        ({!Hugin.section-missing}) stacks nothing, and a row whose end its
+        scale cannot place is dropped. A start it cannot place, such as the
+        zero a pile starts from on a log scale, is clamped into the domain, as
+        a length's zero is. The scale [c] reads is fitted to the ends of the
+        rows and the starts it places, {!extent} gives each row its interval,
+        and {!get}, {!normalized} and {!positions} its end. Unset, [c] is not
         stacked.
 
       Raises [Invalid_argument] if [stack] is given and [r] is neither [x] nor

@@ -903,11 +903,34 @@ let afresh view figure =
       (group readings)
   in
   let groups = Array.of_list unfitted in
+  (* A mark's stack is the same in each panel's summary: it is made once. *)
+  let stacks = ref [] in
   let summary occ pid mask =
     let reads = snd (List.hd (reads_in unfitted pid pid [ occ ])) in
     reading occ.mid (fun () ->
-        Summary.summarise ?stack:(Stacked.of_mark occ.mark) occ.mark.shape
-          (inputs_of groups reads occ) mask)
+        let inputs = inputs_of groups reads occ in
+        let same (mid, pid') =
+          Nx.Ptree.Path.equal mid occ.mid && Nx.Ptree.Path.equal pid pid'
+        in
+        let stacked =
+          match List.find_opt (fun (k, _) -> same k) !stacks with
+          | Some (_, s) -> s
+          | None ->
+              let s =
+                Option.bind (Stacked.of_mark occ.mark) (fun st ->
+                    let missing =
+                      let read = reads.(st.stacked) in
+                      match Option.map (fun i -> groups.(i)) read with
+                      | Some (F { kind = Quantities; spec; _ }) ->
+                          Scale.missing spec
+                      | _ -> Scale.missing (Scale.linear ())
+                    in
+                    Summary.stack occ.mark.shape inputs st ~missing)
+              in
+              stacks := ((occ.mid, pid), s) :: !stacks;
+              s
+        in
+        Summary.summarise ?stacked occ.mark.shape inputs mask)
   in
   let base =
     List.map (fun (pid, o) -> ((o.mid, pid), summary o pid None)) occs

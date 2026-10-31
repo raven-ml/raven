@@ -96,9 +96,10 @@ let box_path rows (x0, x1) (y0, y1) i =
 let bar_padding = 0.2 (* The fraction of a step between bars. *)
 let bar_band = Scale.band ~padding:bar_padding ()
 
-(* [length ~band role ch] binds [ch], a position without its other end, to
-   [role]. Quantities are a length, which implies [zero] on their scale, and
-   categories a band, which implies [band] if given. *)
+(* [length ~band ~stack role ch] binds [ch], a position without its other end,
+   to [role]. Quantities are a length, which implies [zero] on their scale, and
+   categories a band, which implies [band] if given. [stack] goes to every
+   binding, so that [Mark.bind] refuses it on what is not a quantity. *)
 let length : type d r.
     ?band:string Scale.t ->
     ?stack:Stack.offset ->
@@ -109,12 +110,20 @@ let length : type d r.
   match kind ch with
   | Some Scale.Quantitative ->
       on ~imply:(Scale.linear ~zero:true ()) ?stack role ch
-  | Some Scale.Categorical -> on ?imply:band role ch
-  | Some Scale.Temporal | None -> on role ch
+  | Some Scale.Categorical -> on ?imply:band ?stack role ch
+  | Some Scale.Temporal | None -> on ?stack role ch
 
 let position ?band ?stack role ~alone = function
   | None -> None
   | Some ch -> Some (if alone then length ?band ?stack role ch else on role ch)
+
+(* [quantitative ch] is [true] iff [ch] holds quantities. *)
+let quantitative : type d r. (d, r) channel option -> bool = function
+  | None -> false
+  | Some ch -> (
+      match kind ch with
+      | Some Scale.Quantitative -> true
+      | Some (Scale.Categorical | Scale.Temporal) | None -> false)
 
 (* [continuous ch] is [true] iff [ch] holds data read by a continuous scale. *)
 let continuous : type d r. (d, r) channel option -> bool = function
@@ -401,8 +410,8 @@ let draw_rect rows =
 let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?stack ?fx ?fy () =
   (* A band position across a continuous one is a bar. *)
   let bars other = if continuous other then Some bar_band else None in
-  (* A length is a continuous position without its other end. *)
-  let is_length p p2 = continuous p && Option.is_none p2 in
+  (* A length is a position of quantities without its other end. *)
+  let is_length p p2 = quantitative p && Option.is_none p2 in
   let sx, sy =
     match (stack, is_length x x2, is_length y y2) with
     | None, _, _ -> (None, None)

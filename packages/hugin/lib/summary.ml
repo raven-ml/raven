@@ -43,41 +43,59 @@ let key_values (In i) =
   | Instants t -> Stacked.Ints t.counts
   | Categories c -> Stacked.Ints c.codes
 
-(* [intervals shape stack keep inputs] is the index of the stacked input and
-   its starts and ends, [nan] where [keep] does not hold. *)
-let intervals shape (stack : Stacked.t) keep inputs =
+type stacked = {
+  index : int;
+  starts : Nx.host Nx.float64_t;
+  ends : Nx.host Nx.float64_t;
+  placed : Nx.host Nx.bool_t * Nx.host Nx.bool_t;
+}
+
+(* [keeps shape inputs] is the rows that no input drops. *)
+let keeps shape inputs =
+  List.fold_left
+    (fun keep (In i as input) ->
+      match rows input with
+      | Some m when not i.keeps_row ->
+          Nx.logical_and keep (Nx.logical_not (Nx.broadcast_to shape m))
+      | _ -> keep)
+    (Nx.full Nx.bool shape true)
+    inputs
+
+let stack shape inputs (stack : Stacked.t) ~missing =
   let find k = List.find_opt (fun (In i) -> i.index = k) inputs in
   match find stack.stacked with
-  | Some (In { lift = Quantities q; _ }) ->
-      let full t = Nx.broadcast_to shape t in
+  | Some (In { lift = Quantities q; _ }) when Array.fold_left ( * ) 1 shape > 0
+    ->
+      let keep = keeps shape inputs in
       let lengths =
-        Nx.where keep (full q.values) (Nx.full Nx.float64 shape Float.nan)
+        Nx.where keep
+          (Nx.broadcast_to shape q.values)
+          (Nx.full Nx.float64 shape Float.nan)
       in
       let keys = List.filter_map find stack.keys |> List.map key_values in
       let starts, ends =
         Stacked.intervals stack.offset shape ~lengths ~keys
       in
       let t = Nx.create Nx.float64 shape in
-      Some (stack.stacked, t starts, t ends)
-  | Some (In { lift = Instants _ | Categories _; _ }) | None -> None
+      let starts = t starts and ends = t ends in
+      (* An end is placed if finite and not missing for the scale. *)
+      let placed v =
+        Nx.logical_and (Nx.isfinite v) (Nx.logical_not (missing v))
+      in
+      Some
+        {
+          index = stack.stacked;
+          starts;
+          ends;
+          placed = (placed starts, placed ends);
+        }
+  | Some (In { lift = Quantities _ | Instants _ | Categories _; _ }) | None ->
+      None
 
-let summarise ?stack shape inputs filter =
+let summarise ?stacked shape inputs filter =
   let numel = Array.fold_left ( * ) 1 shape in
   let full t = Nx.broadcast_to shape t in
-  let keep =
-    List.fold_left
-      (fun keep (In i as input) ->
-        match rows input with
-        | Some m when not i.keeps_row ->
-            Nx.logical_and keep (Nx.logical_not (full m))
-        | _ -> keep)
-      (Nx.full Nx.bool shape true)
-      inputs
-  in
-  let stacked =
-    if numel = 0 then None
-    else Option.bind stack (fun st -> intervals shape st keep inputs)
-  in
+  let keep = keeps shape inputs in
   let keep =
     match filter with None -> keep | Some f -> Nx.logical_and keep (full f)
   in
@@ -101,13 +119,15 @@ let summarise ?stack shape inputs filter =
               let k = kept input in
               let lo, hi =
                 match stacked with
-                | Some (j, s, e) when j = i.index ->
-                    (* Piles past [max_float] have no finite hull. *)
-                    let k =
-                      Nx.logical_and k
-                        (Nx.logical_and (Nx.isfinite s) (Nx.isfinite e))
-                    in
-                    let lo, hi = hull k s and lo', hi' = hull k e in
+                | Some st when st.index = i.index ->
+                    (* A start the scale cannot place, the zero of a pile on
+                       a log scale, is clamped into the domain when drawn,
+                       and an end it cannot place drops its row. *)
+                    let ps, pe = st.placed in
+                    let ke = Nx.logical_and k pe in
+                    let ks = Nx.logical_and ke ps in
+                    let lo, hi = hull ks st.starts
+                    and lo', hi' = hull ke st.ends in
                     (Nx.minimum lo lo', Nx.maximum hi hi')
                 | _ -> hull k (full q.values)
               in

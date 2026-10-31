@@ -66,13 +66,22 @@ type source =
 type reader = {
   mark : mark;
   whole : bool;
+  stacks : (int option array * (float array * float array) option) list ref;
+      (* The stack of the mark per scales its bindings read. *)
   sources : ((int * int option) * source) list ref;
   floats : (Nx.host Nx.packed * float array) list ref;
   ints : (Nx.host Nx.packed * int64 array) list ref;
 }
 
 let reader ~whole mark =
-  { mark; whole; sources = ref []; floats = ref []; ints = ref [] }
+  {
+    mark;
+    whole;
+    stacks = ref [];
+    sources = ref [];
+    floats = ref [];
+    ints = ref [];
+  }
 
 let cached cache x read =
   match List.find_opt (fun (Nx.P y, _) -> equal_tensor x y) !cache with
@@ -356,7 +365,18 @@ let scaled ?(stack : (float array * float array) option) ctx ~stroked rd
             | Some (starts, ends) ->
                 let n = count rd.mark.shape sel in
                 let at a = Array.init n (fun k -> a.(row_of sel k)) in
-                (normalize (at ends), Some (normalize (at starts)))
+                (* A start the scale cannot place, such as a pile's zero on a
+                   log scale, is clamped into the domain, as a length's zero
+                   is. *)
+                let (Scale.Floats (a, b)) = Scale.domain f.scale in
+                let lo = Float.min a b and hi = Float.max a b in
+                let start v =
+                  let u = Scale.normalize f.scale v in
+                  if Float.is_nan u && Float.is_finite v then
+                    Scale.normalize f.scale (Float.max lo (Float.min hi v))
+                  else u
+                in
+                (normalize (at ends), Some (Array.map start (at starts)))
           in
           let zero = zero f.scale in
           let col =
@@ -516,7 +536,13 @@ let rows ?only ctx rd ~id projection ~axes ~warn reads sel =
   let dropped = Array.make n false in
   let stack = Stacked.of_mark m in
   let intervals =
-    lazy (Option.bind stack (fun st -> stacked ctx rd st reads))
+    lazy
+      (match List.assoc_opt reads !(rd.stacks) with
+      | Some s -> s
+      | None ->
+          let s = Option.bind stack (fun st -> stacked ctx rd st reads) in
+          rd.stacks := (reads, s) :: !(rd.stacks);
+          s)
   in
   let col index (B b as bd) =
     match Channel.constant b.ch with
