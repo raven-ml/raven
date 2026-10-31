@@ -334,8 +334,14 @@ raven / llama.cpp (Vulkan; ROCm):
 ## talon, hugin, brot, munin, quill
 
 - talon benches: record the query suite's DuckDB/Polars baselines on fudge
-  (H2O 1e7/1e8, decision support SF1/SF10; none committed) and add a CSV
-  read row to bench_talon.ml
+  (H2O 1e7/1e8, decision support SF1/SF10; none committed), and bless
+  `Talon_csv/read-mixed` on fudge and the Mac
+- talon.thumper's fudge section (4e89c1604) is behind main in words:
+  Filter/high_value 10,870 -> 22,152, Group/category_region 6,652 ->
+  14,883, Join/customer_lookup 23,250 -> 45,652, Nulls/take-random 695 ->
+  932, Nulls/group-sum 11,079 -> 12,953, parse-float64-17-digits 184 ->
+  334 (c24459897). Find the commit and explain or fix before the next
+  re-record
 - talon perf, machine and commit unrecorded: vs the faster of
   DuckDB/Polars, decision support SF1 13.2x, H2O group-by and join 2.8x;
   vs pandas 1.36x on filter, 2.05x on join. Re-measure on fudge once the

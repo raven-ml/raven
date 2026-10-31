@@ -36,6 +36,10 @@ uv run packages/talon/bench/queries/nulls_data.py --check
 The `Talon/Nulls/*` rows run over a table of 2^20 rows that the bench draws
 from a seeded key, with nulls in five of its seven columns.
 
+`Talon_csv/read-mixed` reads a CSV text of 2^16 records from memory, drawn from
+a seeded key: an int64 column, a float64 column with nulls, and a string column
+with quoted fields.
+
 ## Running the benchmarks
 
 ### Talon (OCaml)

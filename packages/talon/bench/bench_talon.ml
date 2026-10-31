@@ -5,8 +5,8 @@
 
 (* Filter, group, join and sort over the 40k-row fixture, the same work as
    bench_talon.py does in pandas; then the operations that read validities, over
-   a generated table with nulls, a read of float texts, and a read of a Parquet
-   file with nulls. *)
+   a generated table with nulls, a read of float texts, a read of a CSV text of
+   mixed columns, and a read of a Parquet file with nulls. *)
 
 open Talon
 
@@ -215,6 +215,47 @@ let parse_floats () = Result.get_ok (Column.parse float64 texts)
 let read_parquet () =
   run (Query.of_source (Error.get_ok (Talon_parquet.file parquet)))
 
+(* CSV *)
+
+(* The text of 2^16 records, about 1.7 MB, so that a read crosses one of the
+   reader's one-MiB batches: an int64 [id] in [[-10^6, 10^6)], a float64
+   [price] of two decimals with 5% nulls, and a string [label], 10% of it
+   quoted around a separator and doubled quotes. The bench reads it from
+   memory. *)
+let csv_text =
+  let n = 1 lsl 16 in
+  let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 24) in
+  let uniform k =
+    Nx.to_array (Nx.Rng.uniform ~key:keys.(k) Nx.float64 [| n |])
+  in
+  let id =
+    Nx.to_array
+      (Nx.Rng.randint ~key:keys.(0) ~low:(-1_000_000) ~high:1_000_000 [| n |])
+  in
+  let price = uniform 1 and null = uniform 2 and quoted = uniform 3 in
+  let b = Buffer.create (1 lsl 21) in
+  Buffer.add_string b "id,price,label\n";
+  for r = 0 to n - 1 do
+    Buffer.add_string b (Int32.to_string id.(r));
+    Buffer.add_char b ',';
+    if null.(r) >= 0.05 then
+      Buffer.add_string b (Printf.sprintf "%.2f" (1000. *. price.(r)));
+    Buffer.add_char b ',';
+    if quoted.(r) < 0.1 then
+      Buffer.add_string b (Printf.sprintf "\"item %d, \"\"boxed\"\"\"" r)
+    else Buffer.add_string b (Printf.sprintf "item-%d" r);
+    Buffer.add_char b '\n'
+  done;
+  Buffer.contents b
+
+let csv_format =
+  Talon_csv.format
+    [ ("id", Type.Any Type.int64); ("price", float64); ("label", string) ]
+
+let read_csv () =
+  Error.get_ok
+    (Talon_csv.decode csv_format (Bytesrw.Bytes.Reader.of_string csv_text))
+
 let () =
   Thumper.run "talon"
     [
@@ -244,6 +285,7 @@ let () =
         ];
       Thumper.group "Talon_text"
         [ Thumper.bench "parse-float64-17-digits" parse_floats ];
+      Thumper.group "Talon_csv" [ Thumper.bench "read-mixed" read_csv ];
       Thumper.group "Talon_parquet"
         [ Thumper.bench "read-nullable" read_parquet ];
     ]
