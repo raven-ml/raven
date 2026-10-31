@@ -85,10 +85,10 @@ let test_grad_relu_at_zero () =
     (grad_of Fn.relu (vec [| -1.; 0.; 2. |]))
 
 let test_grad_softplus () =
-  let x = vec [| 0.9; -1.7 |] in
-  (* softplus' = sigmoid. *)
+  let x = vec [| 0.9; -1.7; 0.; -0. |] in
+  (* softplus' = sigmoid, 1/2 at both zeros. *)
   check_arr ~msg:"softplus'"
-    [| 0.7109495026250039; 0.1544652650835347 |]
+    [| 0.7109495026250039; 0.1544652650835347; 0.5; 0.5 |]
     (grad_of Fn.softplus x)
 
 let test_grad_gelu_silu () =

@@ -3412,6 +3412,10 @@ thread.
 
 ### Kaun
 
+- The gradients of `Fn.softplus` and `Loss.sigmoid_bce` at `0.` are `0.5`
+  and `0.5 - y`, where they were `-0.5` and `-y`: both now compute through
+  `Nx.softplus`. `Loss.sigmoid_bce` keeps its precision where the loss is
+  small: at a logit of 14 and a target of 1 it was 0.35% off at float32.
 - **Breaking:** layers carry their arrays' device set, as `('a, 'd) Linear.t`.
   Drawn layers' `init` and `make` take `~key` and place the parameters where
   the key lies; `Init.t` draws from a key.

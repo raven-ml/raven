@@ -79,8 +79,11 @@ val sigmoid_bce :
     labels or soft targets. Shape compatibility follows Nx broadcasting
     semantics.
 
-    Evaluated as [max logits 0 - logits * y + log (1 + exp (-|logits|))], which
-    never forms [sigmoid logits] and stays finite at extreme logits. *)
+    Evaluated as [Nx.softplus (-logits) + logits (1 - y)] for non-negative
+    logits and [Nx.softplus logits - logits y] below, which never forms
+    [sigmoid logits], keeps the loss's precision where it is small and stays
+    finite at extreme logits; its gradient in the logits is
+    [sigmoid logits - y]. *)
 
 val softmax_cross_entropy :
   ?reduction:reduction ->

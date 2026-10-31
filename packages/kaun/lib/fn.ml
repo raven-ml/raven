@@ -42,10 +42,7 @@ let gelu_approx x =
 
 let silu x = Nx.mul x (Nx.sigmoid x)
 
-(* softplus(x) = max(x, 0) + log(1 + exp(-|x|)): [exp] sees a non-positive
-   argument on both sides of 0, so large inputs cannot overflow. *)
-let softplus x =
-  Nx.add (relu x) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) (const x 1.0)))
+let softplus x = Nx.softplus x
 
 (* Sampling masks *)
 

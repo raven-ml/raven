@@ -39,9 +39,9 @@ val silu : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [silu x] is [x * Nx.sigmoid x], also known as Swish. *)
 
 val softplus : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
-(** [softplus x] is [log(1 + exp(x))], a smooth approximation of {!relu}.
-    Computed as [max(x, 0) + log(1 + exp(-|x|))], which does not overflow for
-    large [x]. *)
+(** [softplus x] is [log(1 + exp(x))], a smooth approximation of {!relu}:
+    {!Nx.softplus}, which does not overflow for large [x] and whose
+    derivative is {!Nx.sigmoid}. *)
 
 (** {1:sampling Sampling masks}
 

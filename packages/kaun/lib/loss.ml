@@ -36,11 +36,17 @@ let huber ?(delta = 1.0) ?(reduction = `Mean) predictions targets =
 (* Classification *)
 
 let sigmoid_bce ?(reduction = `Mean) logits targets =
-  (* Numerically stable: max(z,0) - z*y + log(1 + exp(-|z|)). *)
+  (* [-log sigmoid z] is [softplus (-z)] and [-log (1 - sigmoid z)] is
+     [softplus z]: together [softplus z - z y], or [softplus (-z) + z (1 - y)].
+     The form whose softplus is the small one keeps the loss's digits: at
+     [y = 1] and [z = 14], [softplus z - z] cancels to [8e-7] in float32. *)
   let z = logits and y = targets in
-  let relu_z = Nx.maximum_s z 0.0 in
-  let softplus = Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs z))) 1.0) in
-  reduce reduction (Nx.add (Nx.sub relu_z (Nx.mul z y)) softplus)
+  let above = Nx.greater_equal z (Nx.scalar_like z 0.) in
+  let miss = Nx.sub (Nx.scalar_like y 1.) y in
+  reduce reduction
+    (Nx.where above
+       (Nx.add (Nx.softplus (Nx.neg z)) (Nx.mul z miss))
+       (Nx.sub (Nx.softplus z) (Nx.mul z y)))
 
 let check_logits ~fn logits =
   let shape = Nx.shape logits in

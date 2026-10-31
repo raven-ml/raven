@@ -232,6 +232,24 @@ let grad_tests =
         grads_ok
           (fun z -> Loss.sigmoid_bce z (vec [| 1.; 0.; 0.5 |]))
           (vec [| 0.3; -1.2; 2. |]));
+    test "sigmoid_bce keeps its precision where the loss is small" (fun () ->
+        (* [log1p (exp (-10))] at float32. *)
+        let l =
+          Loss.sigmoid_bce
+            (Nx.create Nx.float32 [| 1 |] [| 10. |])
+            (Nx.create Nx.float32 [| 1 |] [| 1. |])
+        in
+        equal
+          (float_rel ~rel:1e-6 ~abs:0.)
+          (Float.log1p (Float.exp (-10.)))
+          (Nx.item [] l));
+    test "sigmoid_bce gradient at a logit of 0 is 1/2 - y" (fun () ->
+        let g =
+          Rune.grad'
+            (fun z -> Loss.sigmoid_bce ~reduction:`Sum z (vec [| 1.; 0.; 0.25 |]))
+            (vec [| 0.; 0.; -0. |])
+        in
+        close_grad [| -0.5; 0.5; 0.25 |] g);
     test "sigmoid_bce gradient is finite at extreme logits" (fun () ->
         (* Analytically (sigmoid z - y) / n. *)
         let g =
