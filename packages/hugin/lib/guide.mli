@@ -91,9 +91,9 @@ val tier : kind -> tier
 
 type spec = { id : Common.id; side : Figure.side; kind : kind }
 
-val inside : spec -> Figure.corner option
-(** [inside g] is the corner of [g] if it is an inside legend, laid out as a
-    legend on the right and then moved into that corner of the data area of the
+val inside : spec -> Figure.inside option
+(** [inside g] is the place of [g] if it is an inside legend, laid out as a
+    legend on the right and then moved to that place in the data area of the
     panel it is on. *)
 
 (** {1:laid Laid-out guides} *)

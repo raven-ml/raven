@@ -40,6 +40,10 @@ type fitted =
     }
       -> fitted
 
+val colour_bar : fitted -> bool
+(** [colour_bar s] is [true] iff the legend of [s] is a colour bar: [s] is
+    continuous and a colour role reads it. *)
+
 val category_names : string Scale.t -> string list
 (** [category_names s] is the names of the categories of the domain of [s]. *)
 

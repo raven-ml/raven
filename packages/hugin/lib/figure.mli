@@ -65,7 +65,11 @@ type sharing = [ `Shared | `Independent ]
 type side = [ `Left | `Right | `Top | `Bottom ]
 type corner = [ `Top_left | `Top_right | `Bottom_left | `Bottom_right ]
 
-type place = [ side | `Inside of corner ]
+type inside = [ corner | side | `Center ]
+(** Where a legend stands inside a data area: in a corner, in the middle of a
+    side, or in the centre. *)
+
+type place = [ side | `Inside of inside ]
 (** Where a guide stands: on a side of what it serves, or inside a legend's
     corner of it. Only legends stand inside. *)
 
@@ -75,6 +79,7 @@ type guide = {
   kind : guide_kind;
   scale : string;
   side : place option;
+  ncol : int option;  (** The columns of a legend's entries. *)
   show : bool;
   title : Text.t option;
 }
@@ -122,4 +127,5 @@ val axis :
 val axis' :
   ?side:side -> ?grid:bool -> ?show:bool -> ?title:Text.t -> string -> t
 
-val legend : ?side:[< place ] -> ?show:bool -> ?title:string -> string -> t
+val legend :
+  ?side:[< place ] -> ?ncol:int -> ?show:bool -> ?title:string -> string -> t

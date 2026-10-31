@@ -39,13 +39,15 @@ type mark = {
 type sharing = [ `Shared | `Independent ]
 type side = [ `Left | `Right | `Top | `Bottom ]
 type corner = [ `Top_left | `Top_right | `Bottom_left | `Bottom_right ]
-type place = [ side | `Inside of corner ]
+type inside = [ corner | side | `Center ]
+type place = [ side | `Inside of inside ]
 type guide_kind = Axis of { grid : bool } | Legend
 
 type guide = {
   kind : guide_kind;
   scale : string;
   side : place option;
+  ncol : int option;
   show : bool;
   title : Text.t option;
 }
@@ -128,8 +130,10 @@ let equal_place (p : place) (p' : place) =
       | `Top_left, `Top_left
       | `Top_right, `Top_right
       | `Bottom_left, `Bottom_left
-      | `Bottom_right, `Bottom_right ->
+      | `Bottom_right, `Bottom_right
+      | `Center, `Center ->
           true
+      | (#side as s), (#side as s') -> equal_side s s'
       | _ -> false)
   | (#side | `Inside _), _ -> false
 
@@ -142,7 +146,12 @@ let pp_place ppf (p : place) =
         | `Top_left -> "top left"
         | `Top_right -> "top right"
         | `Bottom_left -> "bottom left"
-        | `Bottom_right -> "bottom right")
+        | `Bottom_right -> "bottom right"
+        | `Top -> "top"
+        | `Bottom -> "bottom"
+        | `Left -> "left"
+        | `Right -> "right"
+        | `Center -> "centre")
 
 let equal_guide g g' =
   (match (g.kind, g'.kind) with
@@ -151,17 +160,21 @@ let equal_guide g g' =
     | Axis _, Legend | Legend, Axis _ -> false)
   && String.equal g.scale g'.scale
   && Option.equal equal_place g.side g'.side
+  && Option.equal Int.equal g.ncol g'.ncol
   && Bool.equal g.show g'.show
   && Option.equal Text.equal g.title g'.title
 
 let is_axis g = match g.kind with Axis _ -> true | Legend -> false
 
 let pp_guide ppf g =
-  Format.fprintf ppf "%s %S%a%s%s%a"
+  Format.fprintf ppf "%s %S%a%a%s%s%a"
     (match g.kind with Axis _ -> "axis" | Legend -> "legend")
     g.scale
     (Format.pp_print_option (fun ppf s -> Format.fprintf ppf " %a" pp_place s))
     g.side
+    (Format.pp_print_option (fun ppf k ->
+         Format.fprintf ppf " in %d columns" k))
+    g.ncol
     (match g.kind with Axis { grid = true } -> " grid" | _ -> "")
     (if g.show then "" else " hidden")
     (Format.pp_print_option (fun ppf t ->
@@ -363,7 +376,7 @@ let bind k fn = Bind (k, fn)
 
 let axis' ?side ?(grid = false) ?(show = true) ?title scale =
   let side = Option.map (fun s -> (s : side :> place)) side in
-  Guide { kind = Axis { grid }; scale; side; show; title }
+  Guide { kind = Axis { grid }; scale; side; ncol = None; show; title }
 
 let axis ?side ?grid ?show ?title scale =
   axis' ?side ?grid ?show ?title:(Option.map Text.v title) scale
@@ -373,6 +386,10 @@ let place : [< place ] -> place = function
   | (`Left | `Right | `Top | `Bottom) as s -> s
   | `Inside c -> `Inside c
 
-let legend ?side ?(show = true) ?title scale =
+let legend ?side ?ncol ?(show = true) ?title scale =
+  (match ncol with
+  | Some k when k < 1 -> err "legend" "%d columns is less than 1" k
+  | _ -> ());
   let side = Option.map place side in
-  Guide { kind = Legend; scale; side; show; title = Option.map Text.v title }
+  let title = Option.map Text.v title in
+  Guide { kind = Legend; scale; side; ncol; show; title }

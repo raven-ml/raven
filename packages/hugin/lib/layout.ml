@@ -23,8 +23,8 @@
    v}
 
    An inside legend is in no tier: laid out as a legend on the right, it moves
-   into its corner of the data area of the panel in that corner of its node,
-   which must hold it.
+   to its place in the data area of the panel at that place of its node, which
+   must hold it.
 
    A guide serving several panels is on the smallest node holding them. A grid
    makes each gap the protrusions that meet it plus a gap, gives each track what
@@ -90,21 +90,46 @@ let rec holds node pid =
   | Panel p -> Nx.Ptree.Path.equal p.id pid
   | Grid g -> List.exists (fun c -> holds c.node pid) g.cells
 
-(* [corner_cell c g] is the cell of [g] in its corner [c]: of the cells in its
-   top or bottom row, the leftmost or rightmost. A wrapped grid's last row may
-   be short, and its cell farthest along that row stands in. *)
-let corner_cell (c : corner) g =
-  let bottom = match c with `Bottom_left | `Bottom_right -> true | _ -> false
-  and right = match c with `Top_right | `Bottom_right -> true | _ -> false in
-  let row k = if bottom then -(k.r0 + k.nr) else k.r0
-  and col k = if right then -(k.c0 + k.nc) else k.c0 in
-  let first k k' =
-    let o = Int.compare (row k) (row k') in
-    if o < 0 || (o = 0 && col k < col k') then k else k'
+(* [fractions c] is where the place [c] lies across and down a box, from [0.]
+   at its left or top edge to [1.] at its right or bottom edge. *)
+let fractions (c : inside) =
+  let across =
+    match c with
+    | `Top_left | `Left | `Bottom_left -> 0.
+    | `Top | `Center | `Bottom -> 0.5
+    | `Top_right | `Right | `Bottom_right -> 1.
+  and down =
+    match c with
+    | `Top_left | `Top | `Top_right -> 0.
+    | `Left | `Center | `Right -> 0.5
+    | `Bottom_left | `Bottom | `Bottom_right -> 1.
   in
+  (across, down)
+
+(* [corner_cell c g] is the cell of [g] at its place [c]: of the cells nearest
+   that fraction of its rows, the one nearest that fraction of its columns, the
+   earlier in reading order of two as near. A cell is at distance [0.] from
+   the lines it spans, its edges included, so a wrapped grid's short last row
+   stands in for the bottom, and its cell farthest along that row for a
+   bottom corner. *)
+let corner_cell (c : inside) g =
+  let across, down = fractions c in
+  let rows = List.fold_left (fun n k -> Int.max n (k.r0 + k.nr)) 0 g.cells
+  and cols = List.fold_left (fun n k -> Int.max n (k.c0 + k.nc)) 0 g.cells in
+  let off target a n =
+    let a = float a and b = float (a + n) in
+    if target < a then a -. target else if target > b then target -. b else 0.
+  in
+  let key k =
+    ( off (down *. float rows) k.r0 k.nr,
+      off (across *. float cols) k.c0 k.nc,
+      k.r0,
+      k.c0 )
+  in
+  let first k k' = if compare (key k') (key k) < 0 then k' else k in
   match g.cells with [] -> None | k :: ks -> Some (List.fold_left first k ks)
 
-(* [cornered c spec node] is [node] with [spec] on its panel in the corner
+(* [cornered c spec node] is [node] with [spec] on its panel at the place
    [c]. *)
 let rec cornered c spec node =
   match node with
@@ -120,7 +145,7 @@ let rec cornered c spec node =
 
 (* [attach ~corner pids spec node] is [node] with the guide [spec id] on the
    smallest node [id] of it that holds the panels [pids], or with [corner] on
-   that node's panel in that corner. *)
+   that node's panel at that place. *)
 let rec attach ?corner pids spec node =
   match node with
   | Panel p -> Panel { p with guides = p.guides @ [ spec p.id ] }
@@ -186,6 +211,7 @@ let panel scales (c : content) p =
                 kind = Axis { grid = false };
                 scale = f.name;
                 side = None;
+                ncol = None;
                 show;
                 title = None;
               }
@@ -377,7 +403,7 @@ let showing node =
 (* [build r scales] is the node of [r]: the title of an axis or of headers is on
    the smallest node holding the panels showing them, and a legend on the
    smallest node holding the panels its readers lie in, or an inside one on
-   that node's panel in its corner. A categorical legend
+   that node's panel at its place. A categorical legend
    whose readers each have the data of a position channel of their mark, whose
    axis is shown in their panels, is left out: the axis names its categories.
    An explicit legend, or a mark's, keeps it. *)
@@ -471,7 +497,14 @@ let build (r : Resolved.t) scales =
         | Some g -> g
         | None ->
             let show = Option.value f.guide ~default:f.legend in
-            { kind = Legend; scale = f.name; side = None; show; title = None }
+            {
+              kind = Legend;
+              scale = f.name;
+              side = None;
+              ncol = None;
+              show;
+              title = None;
+            }
       in
       let kind =
         match f.kind with
@@ -968,18 +1001,20 @@ let origin hull (side : side) o =
   | `Right -> P2.v (Box2.maxx hull +. o) (Box2.miny hull)
 
 (* [corner em hull c g] is the origin of the frame of the inside legend [g]
-   that puts its bounds in the corner [c] of [hull], a pad from both edges. *)
+   that puts its bounds at the place [c] of [hull], a pad from the edges it
+   meets and centred along those it does not. *)
 let corner em hull c (g : Guide.t) =
   let b = Option.get g.bounds and pad = em *. Guide.pad_em in
-  let left = Box2.minx hull +. pad -. Box2.minx b
-  and right = Box2.maxx hull -. pad -. Box2.maxx b
-  and top = Box2.miny hull +. pad -. Box2.miny b
-  and bottom = Box2.maxy hull -. pad -. Box2.maxy b in
-  match c with
-  | `Top_left -> P2.v left top
-  | `Top_right -> P2.v right top
-  | `Bottom_left -> P2.v left bottom
-  | `Bottom_right -> P2.v right bottom
+  let across, down = fractions c in
+  (* [at f lo hi blo bhi] moves [blo, bhi] to the fraction [f] of [lo, hi]
+     less the pads. *)
+  let at f lo hi blo bhi =
+    let free = hi -. lo -. (2. *. pad) -. (bhi -. blo) in
+    lo +. pad +. (f *. free) -. blo
+  in
+  P2.v
+    (at across (Box2.minx hull) (Box2.maxx hull) (Box2.minx b) (Box2.maxx b))
+    (at down (Box2.miny hull) (Box2.maxy hull) (Box2.miny b) (Box2.maxy b))
 
 (* [placed em node geo] is each laid guide of [node] with the origin of its
    frame on the page, those of its cells first. *)

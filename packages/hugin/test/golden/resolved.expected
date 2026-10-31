@@ -203,3 +203,32 @@ scales
     (time (domain 2026-02-10T00:00:00Z 2026-02-11T00:00:00Z))
   "y" quantitative, read by 1:y
     (linear (domain -1 1))
+
+legends
+figure
+  grid root, 1 × 2
+    cell (0, 0)
+      panel 0
+        line 0.0
+        legend "a" inside top in 3 columns
+    cell (0, 1)
+      panel 1
+        line 1.0
+        legend "b" bottom in 2 columns
+scales
+  "x" quantitative, read by 0.0:x
+    (linear (domain 0 6))
+  "y" quantitative, read by 0.0:y
+    (linear (domain -1 6))
+  "a" categorical, read by 0.0:stroke
+    (band (name "a")
+     (domain (indices (0 "series 1") (1 "series 2") (2 "series 3")
+              (3 "series 4") (4 "series 5") (5 "series 6"))))
+  "x" quantitative, read by 1.0:x
+    (linear (domain 0 6))
+  "y" quantitative, read by 1.0:y
+    (linear (domain -1 4))
+  "b" categorical, read by 1.0:stroke
+    (band (name "b")
+     (domain (indices (0 "series 1") (1 "series 2") (2 "series 3")
+              (3 "series 4"))))

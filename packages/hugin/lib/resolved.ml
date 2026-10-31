@@ -801,6 +801,15 @@ let unread view reads =
       | View.Zoom_of _ -> None)
     view
 
+let colour_bar (F f) =
+  (match f.kind with Categories -> false | Quantities | Instants -> true)
+  && List.exists
+       (fun m ->
+         match m.m_use with
+         | Role.Encoding { map = Color; _ } -> true
+         | _ -> false)
+       f.members
+
 let check_legends shaped scales =
   let legends = legends shaped in
   List.iter
@@ -811,6 +820,11 @@ let check_legends shaped scales =
       if not (List.exists stands scales) then
         err "resolve"
           "the legend %a names %S, no scale with a legend in its scope" pp_id id
+          l.scale;
+      let bars = List.filter (fun s -> stands s && colour_bar s) scales in
+      if Option.is_some l.ncol && bars <> [] then
+        err "resolve"
+          "the legend %a of %S is a colour bar, which has no columns" pp_id id
           l.scale;
       List.iter
         (fun (id', (l' : guide), key') ->

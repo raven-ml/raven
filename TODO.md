@@ -350,8 +350,8 @@ raven / llama.cpp (Vulkan; ROCm):
   round trips, partial aggregation, `Str.trim`/`concat`/regex, compressed
   and fixed-width CSV, Parquet nested columns, datasets and writer,
   talon.arrow, talon.jsont, complex and validity columns, HTML display
-- hugin: legends with `~ncol` and centred placements; CFF and CFF2
-  outlines; hugin_plot baselines on fudge (no hugin_plot.thumper exists)
+- hugin: CFF and CFF2 outlines; hugin_plot baselines on fudge (no
+  hugin_plot.thumper exists)
 - brot vs gigatoken (machine unrecorded): gpt2 2.5x one thread, 3x
   multi-thread; SentencePiece pipelines 40-58 MB/s (added-token scan 28%,
   normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken

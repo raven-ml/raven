@@ -2603,6 +2603,101 @@ let inside_legends =
           greater int ~than:m l);
     ]
 
+(* [swatch_boxes ?size side ?ncol f n] is the box on the page of each of the
+   [n] entries of the legend of the categorical colour scale that a probe mark
+   of [n] categories layered under [legend ~side ~ncol "color"] draws, in entry
+   order, and the panels' boxes. *)
+let swatch_boxes ?(size = Size.panels 150. 120.) ?(facets = []) ?ncol side n =
+  let boxes = Array.make n None in
+  let m =
+    Mark.v ~name:"probe"
+      ~swatch:(fun rows ->
+        let p = Mark.projection rows in
+        let a = Coord.point p 0. 1. and b = Coord.point p 1. 0. in
+        boxes.((Mark.index rows).(0)) <- Some (Box2.of_pts a b);
+        Picture.empty)
+      (Mark.bind Role.fill (strings (Array.init n string_of_int)) :: facets)
+      (fun _ -> Picture.empty)
+  in
+  let f = layer [ m; legend ~side ?ncol "color" ] in
+  ignore (drawn ~size f);
+  (Array.map Option.get boxes, panel_boxes size f)
+
+(* Law: [ncol] sets entries in rows of [ncol] filled from the left, on every
+   side and inside. *)
+let gen_columns =
+  let open Gen in
+  let side =
+    of_list
+      ~pp:(fun ppf _ -> Format.pp_print_string ppf "side")
+      [ `Right; `Left; `Bottom; `Top; `Inside `Center; `Inside `Bottom_left ]
+  in
+  triple (int_range 1 9) (int_range 1 4) side
+
+let columns_law (n, k, side) =
+  let boxes, _ = swatch_boxes ~ncol:k side n in
+  let per = Int.min n k in
+  cover "a short last row" (n mod k <> 0 && n > k);
+  cover "several rows" (n > k);
+  for e = 0 to n - 1 do
+    for e' = 0 to n - 1 do
+      let msg = Printf.sprintf "entries %d and %d" e e' in
+      let x = Box2.minx boxes.(e) and x' = Box2.minx boxes.(e') in
+      let y = Box2.miny boxes.(e) and y' = Box2.miny boxes.(e') in
+      equal ~msg int
+        (Int.compare (e mod per) (e' mod per))
+        (Float.compare x x');
+      equal ~msg int (Int.compare (e / per) (e' / per)) (Float.compare y y')
+    done
+  done
+
+let legend_places =
+  let place p = Box2.minx (fst (swatch_boxes (`Inside p) 3)).(0) in
+  let down p = Box2.miny (fst (swatch_boxes (`Inside p) 3)).(0) in
+  let near = float 1e-9 in
+  group "Legend places"
+    [
+      prop "ncol sets rows of ncol entries filled from the left" gen_columns
+        columns_law;
+      test "a centred legend lies midway between the edges' places" (fun () ->
+          equal near
+            ((place `Left +. place `Right) /. 2.)
+            (place `Center);
+          equal near ((place `Top_left +. place `Top_right) /. 2.) (place `Top);
+          equal near ((down `Top +. down `Bottom) /. 2.) (down `Center);
+          equal near
+            ((down `Top_left +. down `Bottom_left) /. 2.)
+            (down `Left));
+      test "a legend at a left place is a pad from the left edge" (fun () ->
+          let boxes, panels = swatch_boxes (`Inside `Left) 3 in
+          let pad = 0.25 *. Theme.size Theme.default in
+          equal near
+            (Box2.minx (List.hd panels) +. pad)
+            (Box2.minx boxes.(0)));
+      test "a top-centred legend of facets lies in the middle panel"
+        (fun () ->
+          let boxes, panels =
+            swatch_boxes (`Inside `Top) 3
+              ~facets:[ Mark.bind Role.fx (strings [| "a"; "b"; "c" |]) ]
+          in
+          let middle = List.nth panels 1 in
+          let x = P2.x (Box2.mid boxes.(0)) in
+          equal bool true (Box2.minx middle < x && x < Box2.maxx middle));
+      test "ncol is at least 1" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"less than 1") (fun () ->
+              legend ~ncol:0 "color"));
+      test "a colour bar takes no ncol" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"colour bar") (fun () ->
+              resolve
+                (layer
+                   [
+                     dot ~x:(const 0.5) ~y:(const 0.5)
+                       ~fill:(num (f64 [| 1.; 2. |]))
+                       ();
+                     legend ~ncol:2 "color";
+                   ])));
+    ]
+
 (* Explicit ticks *)
 
 let gen_ticks =
@@ -2733,6 +2828,7 @@ let () =
          ablines;
          frames;
          inside_legends;
+         legend_places;
          legend_swatches;
          goldens;
        ])

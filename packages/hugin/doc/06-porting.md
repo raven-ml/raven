@@ -98,6 +98,8 @@ scale gives its first colour and its legend lists.
 | `xtick_format f` | `~notation:Number.Percent`, `Number.Si`, `Number.Exponent` on the scale |
 | `grid_lines true` | `layer [ f; axis ~grid:true "x"; axis ~grid:true "y" ]` |
 | `legend ~loc:Upper_right` | `` layer [ f; legend ~side:(`Inside `Top_right) "color" ] ``, and likewise for the other corners |
+| `legend ~loc:Upper_center`, `Lower_center`, `Center` | `` legend ~side:(`Inside `Top) ``, `` `Inside `Bottom ``, `` `Inside `Center `` |
+| `legend ~ncol:k` | `legend ~ncol:k "color"` |
 | `legend ~loc:Right` | the default, `` legend ~side:`Right "color" `` |
 | `frame true` | `layer [ f; frame () ]` |
 | `no_axes` | `layer [ f; axis ~show:false "x"; axis ~show:false "y" ]`; `image` shows no axes already |
@@ -106,10 +108,9 @@ scale gives its first colour and its legend lists.
 Tick labels name their values. `xticks` with labels other than the values
 and `xtick_format` with a function of your own have no counterpart: a label
 that names something other than a value, such as a category, belongs to a
-band scale (`strings`, `cat ~labels`, `dim ~labels`). `legend ~ncol` and the
-legend locations `Center`, `Upper_center` and `Lower_center` have none either;
-a legend set below its panels with `` ~side:`Bottom `` wraps its entries into
-rows.
+band scale (`strings`, `cat ~labels`, `dim ~labels`). A legend set below its
+panels with `` ~side:`Bottom `` wraps its entries into rows unless `~ncol`
+fixes them.
 
 ## Layout and Output
 

@@ -252,15 +252,7 @@ let category_text (F f) k =
       Text.v (snd ix.(k))
   | (Channel.Quantities | Channel.Instants), _ -> Text.v (string_of_int k)
 
-(* [bar s] is [true] iff the legend of [s] is a colour bar. *)
-let bar (F f as s) =
-  (not (categorical s))
-  && List.exists
-       (fun m ->
-         match m.m_use with
-         | Role.Encoding { map = Color; _ } -> true
-         | _ -> false)
-       f.members
+let bar = Resolved.colour_bar
 
 (* [sized s] is [true] iff the legend of [s] shows an area. *)
 let sized (F f) =
@@ -451,12 +443,12 @@ let bar_body cx g ~length ~top s scale (t : Ticks.t) =
     thin cx (if vertical then `Left else `Top) labels,
     0. )
 
-(* [entries_body cx g ~wrap ~top s scale t] is the swatches of a legend, its
-   labels, and the length of its rows: stacked if vertical, else in rows of
-   columns as wide as the widest entry, as many as fit in [wrap]. A legend of
-   areas leaves out an entry of area 0, and its swatches hold the circle of the
-   largest. *)
-let entries_body cx g ~wrap ~top s scale (t : Ticks.t) =
+(* [entries_body cx g ~ncol ~wrap ~top s scale t] is the swatches of a legend,
+   its labels, and the length of its side it needs: in rows of columns as wide
+   as the widest entry, filled row by row, [ncol] of them if given, else one if
+   vertical and as many as fit in [wrap] if horizontal. A legend of areas leaves
+   out an entry of area 0, and its swatches hold the circle of the largest. *)
+let entries_body cx g ~ncol ~wrap ~top s scale (t : Ticks.t) =
   let area =
     Read.area
       { Read.theme = cx.theme; scales = cx.scales; frozen = cx.ticks }
@@ -481,8 +473,10 @@ let entries_body cx g ~wrap ~top s scale (t : Ticks.t) =
   let entry = sw +. pad +. longest width texts in
   let col = entry +. em cx clear_em in
   let per =
-    if not (horizontal g.side) then 1
-    else max 1 (min n (Float.to_int ((wrap +. em cx clear_em) /. col)))
+    match ncol with
+    | Some k -> max 1 (min n k)
+    | None when not (horizontal g.side) -> 1
+    | None -> max 1 (min n (Float.to_int ((wrap +. em cx clear_em) /. col)))
   in
   let one k (tk : Ticks.tick) =
     let x = float (k mod per) *. col and y = top +. (float (k / per) *. row) in
@@ -494,10 +488,15 @@ let entries_body cx g ~wrap ~top s scale (t : Ticks.t) =
   in
   let entries = List.mapi one major in
   let labels = List.map snd entries in
-  let least = if horizontal g.side then entry else float n *. row in
+  let rows = (n + per - 1) / per in
+  let least =
+    if not (horizontal g.side) then float rows *. row
+    else if Option.is_some ncol then (float per *. col) -. em cx clear_em
+    else entry
+  in
   (List.map fst entries, labels, labels, least)
 
-let legend cx g ~length ~wrap ~titles scale (t : Ticks.t) =
+let legend cx g ~length ~wrap ~ncol ~titles scale (t : Ticks.t) =
   let s = cx.scales.(scale) and vertical = not (horizontal g.side) in
   let pad = em cx pad_em in
   let reach =
@@ -521,7 +520,7 @@ let legend cx g ~length ~wrap ~titles scale (t : Ticks.t) =
   in
   let body, counted, shown, least =
     if bar s then bar_body cx g ~length ~top s scale t
-    else entries_body cx g ~wrap ~top s scale t
+    else entries_body cx g ~ncol ~wrap ~top s scale t
   in
   let title_w =
     Option.fold ~none:0. ~some:(fun p -> Box2.w (text_box p)) title
@@ -574,7 +573,8 @@ let lay cx g ~length ~across ~wrap ~span =
           title cx g ~length ~wrap ~span align 1. text)
   | Legend { guide; scale } ->
       let titles = Option.to_list guide.title in
-      legend cx g ~length ~wrap ~titles scale cx.ticks.(scale)
+      legend cx g ~length ~wrap ~ncol:guide.ncol ~titles scale
+        cx.ticks.(scale)
 
 let protrusion g =
   match g.bounds with

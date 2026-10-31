@@ -35,6 +35,7 @@ module View = View
 type sharing = Figure.sharing
 type side = Figure.side
 type corner = Figure.corner
+type inside = Figure.inside
 
 let layer = Figure.layer
 let grid = Figure.grid

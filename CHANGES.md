@@ -110,6 +110,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `legend ~ncol` sets a legend's entries in rows of that many columns, and
+  `` `Inside `` takes the middle of each edge and `` `Center `` besides the
+  corners (`Hugin.inside`), centring the legend along the edges it does not
+  meet.
 - `time r counts` lifts integer counts of a `Time.resolution` as instants,
   read by a temporal scale: axes tick at calendar boundaries and label them in
   the calendar, zooms take instants, the `text` role writes RFC 3339, and `m4`

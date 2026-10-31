@@ -1602,10 +1602,29 @@ let ticks =
 let corners =
   [
     ("top left", `Top_left);
+    ("top", `Top);
     ("top right", `Top_right);
+    ("left", `Left);
+    ("centre", `Center);
+    ("right", `Right);
     ("bottom left", `Bottom_left);
+    ("bottom", `Bottom);
     ("bottom right", `Bottom_right);
   ]
+
+(* [across c] and [down c] are where the place [c] lies along x and y: at the
+   start, the middle or the end. *)
+let across c =
+  match c with
+  | `Top_left | `Left | `Bottom_left -> `Start
+  | `Top | `Center | `Bottom -> `Middle
+  | `Top_right | `Right | `Bottom_right -> `End
+
+let down c =
+  match c with
+  | `Top_left | `Top | `Top_right -> `Start
+  | `Left | `Center | `Right -> `Middle
+  | `Bottom_left | `Bottom | `Bottom_right -> `End
 
 let kinds = [| "cat"; "dog"; "bird" |]
 
@@ -1662,20 +1681,19 @@ let corner_case (_, c) =
   (* Printed boxes have six significant digits. *)
   let near = float 1e-3 in
   let inset = 0.25 *. em in
-  (match c with
-  | `Top_left | `Bottom_left ->
-      equal ~msg:"left" near (Box2.minx box +. inset) x0;
-      at_most ~msg:"right" float_exact ~than:(Box2.maxx box -. inset) x1
-  | `Top_right | `Bottom_right ->
-      equal ~msg:"right" near (Box2.maxx box -. inset) x1;
-      at_least ~msg:"left" float_exact ~than:(Box2.minx box +. inset) x0);
-  match c with
-  | `Top_left | `Top_right ->
-      equal ~msg:"top" near (Box2.miny box +. inset) y0;
-      at_most ~msg:"bottom" float_exact ~than:(Box2.maxy box -. inset) y1
-  | `Bottom_left | `Bottom_right ->
-      equal ~msg:"bottom" near (Box2.maxy box -. inset) y1;
-      at_least ~msg:"top" float_exact ~than:(Box2.miny box +. inset) y0
+  (* A place at a start or end is a pad from that edge; one in the middle is
+     centred. *)
+  let check axis place lo hi a b =
+    (match place with
+    | `Start -> equal ~msg:(axis ^ " start") near (lo +. inset) a
+    | `Middle ->
+        equal ~msg:(axis ^ " middle") near ((lo +. hi) /. 2.) ((a +. b) /. 2.)
+    | `End -> equal ~msg:(axis ^ " end") near (hi -. inset) b);
+    at_least ~msg:(axis ^ " start") float_exact ~than:(lo +. inset -. 1e-3) a;
+    at_most ~msg:(axis ^ " end") float_exact ~than:(hi -. inset +. 1e-3) b
+  in
+  check "x" (across c) (Box2.minx box) (Box2.maxx box) x0 x1;
+  check "y" (down c) (Box2.miny box) (Box2.maxy box) y0 y1
 
 let many = Array.init 8 (Printf.sprintf "kind %d")
 
@@ -1711,20 +1729,14 @@ let facet_case (_, c) =
       (List.hd (boxes l))
       (boxes l)
   in
+  (* Of two rows or columns as near the middle, the earlier holds it. *)
+  let right = across c = `End and bottom = down c = `End in
   let box =
-    match c with
-    | `Top_left ->
-        pick (fun b b' ->
-            Box2.minx b < Box2.minx b' || Box2.miny b < Box2.miny b')
-    | `Top_right ->
-        pick (fun b b' ->
-            Box2.maxx b > Box2.maxx b' || Box2.miny b < Box2.miny b')
-    | `Bottom_left ->
-        pick (fun b b' ->
-            Box2.minx b < Box2.minx b' || Box2.maxy b > Box2.maxy b')
-    | `Bottom_right ->
-        pick (fun b b' ->
-            Box2.maxx b > Box2.maxx b' || Box2.maxy b > Box2.maxy b')
+    pick (fun b b' ->
+        (if right then Box2.maxx b > Box2.maxx b'
+         else Box2.minx b < Box2.minx b')
+        || if bottom then Box2.maxy b > Box2.maxy b'
+           else Box2.miny b < Box2.miny b')
   in
   let x0, y0, x1, y1 = legend_box l in
   let inset = (0.25 *. em) -. 1e-3 in
@@ -1736,11 +1748,12 @@ let facet_case (_, c) =
 let inside_legends =
   group "inside legends"
     [
-      cases "an inside legend of facets lies in its corner panel" ~id:fst
+      cases "an inside legend of facets lies in the panel at its place" ~id:fst
         corners facet_case;
       prop "an inside legend leaves the data areas as a hidden one does"
         gen_inside unmoved_law;
-      cases "an inside legend lies in its corner, a pad from both edges" ~id:fst
+      cases "an inside legend lies at its place, a pad from the edges it meets"
+        ~id:fst
         corners corner_case;
       test "an inside legend keeps the id of a legend" (fun () ->
           equal (list string) [ "legend.color.cat" ]

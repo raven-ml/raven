@@ -263,6 +263,27 @@ let timeline () =
       [ line ~x:(time S minutes) ~y:(num ~title:"load" load) () ];
     ]
 
+(* Legends: entries in columns, inside at the middle of the top edge and
+   below the panels. *)
+
+let legends () =
+  let t = Nx.linspace Nx.float64 0. 6. 40 in
+  let curves k =
+    Nx.init Nx.float64 [| k; 40 |] (fun i ->
+        float i.(0) +. sin (float i.(1) /. 6. +. float i.(0)))
+  in
+  let names k = Array.init k (fun i -> "series " ^ string_of_int (i + 1)) in
+  let panel name k side ncol =
+    layer
+      [
+        line ~x:(num t) ~y:(num (curves k))
+          ~stroke:(dim ~scale:(Scale.band ~name ()) ~labels:(names k) 0)
+          ();
+        legend ~side ~ncol name;
+      ]
+  in
+  grid [ [ panel "a" 6 (`Inside `Top) 3; panel "b" 4 `Bottom 2 ] ]
+
 let paper_theme = Theme.v ~size:8. ()
 let paper_size = Size.figure (Size.mm 180.) (Size.mm 110.)
 
@@ -282,6 +303,7 @@ let goldens =
     ("bands", bands, Theme.default, default);
     ("stacks", stacks, Theme.default, default);
     ("timeline", timeline, Theme.default, default);
+    ("legends", legends, Theme.default, default);
   ]
 
 (* Goldens are drawn at one device pixel per point. *)

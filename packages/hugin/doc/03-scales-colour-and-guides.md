@@ -214,9 +214,11 @@ hides a guide, `~side` moves it, and `~title` titles it in place of its
 channels' titles. `axis'` takes the title as a `Text.t`, for styles,
 colours, sub- and superscripts.
 
-A legend can also lie inside a corner of its panels, with
-`` ~side:(`Inside `Top_right) ``. It is drawn under the marks and no corner
-is chosen for being empty, so pick the one the data leaves empty:
+A legend can also lie inside its panels, in a corner with
+`` ~side:(`Inside `Top_right) ``, in the middle of an edge with
+`` `Inside `Top ``, or in the centre with `` `Inside `Center ``, and `~ncol`
+sets its entries in columns. It is drawn under the marks and no place is
+chosen for being empty, so pick one the data leaves empty:
 
 ```ocaml
 let () =
