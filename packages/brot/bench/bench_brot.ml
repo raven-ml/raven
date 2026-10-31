@@ -78,23 +78,45 @@ let split_cl100k =
       Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
     ]
 
+let o200k_pattern =
+  String.concat "|"
+    [
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|\p{N}{1,3}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
+
+(* Kimi K2's pattern, which no walker runs: its words leave the Han script out
+   by class intersection. *)
+let kimi_pattern =
+  String.concat "|"
+    [
+      {re|[\p{Han}]+|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|\p{N}{1,3}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
+
+let isolated pattern =
+  Pre_tokenizer.split_regex ~pattern ~behavior:`Isolated ()
+
+(* o200k's pattern in a group, which no walker recognises, so that it runs on
+   the regular expression. *)
+let o200k_automaton = "(?:" ^ o200k_pattern ^ ")"
+
 (* gpt-oss's pre-tokenizer: the o200k split, then the byte-level encoding. *)
 let split_o200k =
   Pre_tokenizer.sequence
     [
-      Pre_tokenizer.split_regex
-        ~pattern:
-          (String.concat "|"
-             [
-               {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
-               {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
-               {re|\p{N}{1,3}|re};
-               {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
-               {re|\s*[\r\n]+|re};
-               {re|\s+(?!\S)|re};
-               {re|\s+|re};
-             ])
-        ~behavior:`Isolated ();
+      isolated o200k_pattern;
       Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
     ]
 
@@ -134,6 +156,13 @@ let pre_tokenizer_suite =
       case "split_cl100k" split_cl100k;
       case "split_o200k" split_o200k;
       case "split_tekken" split_tekken;
+      (* The regular expression path: the automaton warm, the pattern compiled,
+         and its first match, which builds the automaton's states. *)
+      case "regex/kimi" (isolated kimi_pattern);
+      case "regex/o200k" (isolated o200k_automaton);
+      Thumper.bench "regex/o200k/compile" (fun () -> isolated o200k_automaton);
+      Thumper.bench "regex/o200k/cold" (fun () ->
+          Pre_tokenizer.pre_tokenize (isolated o200k_automaton) short_text);
       Thumper.bench "byte_level/short" (fun () ->
           Pre_tokenizer.pre_tokenize (Pre_tokenizer.byte_level ()) short_text);
     ]
