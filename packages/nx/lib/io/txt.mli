@@ -6,6 +6,7 @@
 (** Delimited text. {!Nx_io.save_txt} and {!Nx_io.load_txt} state the format. *)
 
 val save : sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
+val encode : sep:string -> ('v, 's, 'd) Nx.t -> string
 
 val load :
   sep:string ->

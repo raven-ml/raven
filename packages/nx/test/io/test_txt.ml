@@ -7,7 +7,9 @@
    over every dtype but the complex ones, a 0-d value and a matrix of one row or
    column as a vector; floats are written in %.18e notation from their exact
    value and integers in decimal; a field is read by the grammar the interface
-   states, and a file that breaks it raises [Failure] naming it. *)
+   states, and a file that breaks it raises [Failure] naming it. [encode_txt] is
+   the text a save writes, and the rows of values encoded one after another load
+   as one array. *)
 
 open Windtrap
 open Io_support
@@ -241,15 +243,14 @@ let txt =
             (saved "" (fun p x -> Nx_io.save_txt p x))
             (Nx_io.load_txt dt) x);
       prop
-        "a value saved with a separator loads with it, lines under a comment \
+        "a value encoded with a separator loads with it, lines under a comment \
          prefix skipped"
         (Gen.quad text_cases separators prefixes (Gen.pair comment comment))
         (fun ((Case (dt, _, _, _) as c), sep, prefix, (header, footer)) ->
           let commented x =
-            let path = saved "" (fun p x -> Nx_io.save_txt ~sep p x) x in
-            write path
-              (prefix ^ header ^ "\n" ^ read path ^ prefix ^ footer ^ "\n");
-            path
+            file
+              (prefix ^ header ^ "\n" ^ Nx_io.encode_txt ~sep x ^ prefix
+             ^ footer ^ "\n")
           in
           Law.round_trip (as_text dt) string commented
             (Nx_io.load_txt ~sep ~comments:prefix dt)
@@ -422,4 +423,142 @@ let txt =
               Nx_io.save_txt (temp_file ()) (Nx.zeros Nx.int8 [| 1; 1; 1 |])));
     ]
 
-let () = exit (run "nx.io text" [ txt; floats_read ])
+(* Encoded text *)
+
+(* The rows of [x] added to the end of the file [path], as [encode_txt]'s doc
+   writes them. *)
+let append_txt path x =
+  let text = Nx_io.encode_txt x in
+  Out_channel.with_open_gen
+    [ Open_wronly; Open_append; Open_creat; Open_binary ] 0o666 path (fun oc ->
+      Out_channel.output_string oc text;
+      Out_channel.flush oc)
+
+module Mem = (val Nx.devices [ Nx_support.memory 0 ])
+
+(* Values text holds, of no element too, laid out every way, on the host or on
+   another set. A broadcast view adds an axis, so its value has one at most. *)
+let encoded_cases =
+  let placed =
+    Gen.with_pp
+      (fun ppf b -> Format.pp_print_string ppf (if b then "placed" else "host"))
+      Gen.bool
+  in
+  Gen.pair
+    (Gen.one_of
+       [
+         case ~rank:2 ~views:[ Plain; Transposed; Flipped ] txt_dtypes;
+         case ~rank:1 ~views:[ Broadcast ] txt_dtypes;
+       ])
+    placed
+
+(* An element of [dt], one of its specials five times in six, so that each run
+   draws every special the law covers. *)
+let field dt =
+  let specials = Array.of_list (specials dt) in
+  let special =
+    Gen.map (Array.get specials) (Gen.int_range 0 (Array.length specials - 1))
+  in
+  Gen.frequency [ (5, special); (1, drawn dt) ]
+
+(* Two matrices of one dtype and one number of columns, as their elements in C
+   order, of up to four rows each and one at least between them. Half of them
+   are of a float dtype, so that each run draws NaN and the infinities. *)
+type rows = Rows : ('v, 's) D.t * int * 'v array * 'v array -> rows
+
+let rows =
+  let open Gen in
+  let pp ppf (D.Any dt) = D.pp ppf dt in
+  let floats = List.filter (fun (D.Any dt) -> D.is D.Float dt) txt_dtypes in
+  let* (D.Any dt) = one_of [ of_list ~pp floats; of_list ~pp txt_dtypes ] in
+  let* cols, ra, rb = triple (int_range 1 3) (int_range 0 4) (int_range 0 4) in
+  let rb = if ra + rb = 0 then 1 else rb in
+  let+ a = array ~size:(constant (ra * cols)) (field dt)
+  and+ b = array ~size:(constant (rb * cols)) (field dt) in
+  Rows (dt, cols, a, b)
+
+let pp_rows ppf (Rows (dt, cols, a, b)) =
+  Format.fprintf ppf "%a, %d by %d then %d by %d" D.pp dt
+    (Array.length a / cols)
+    cols
+    (Array.length b / cols)
+    cols
+
+let has_infinity (type v s) (dt : (v, s) D.t) (vs : v array) =
+  match D.kind dt with
+  | D.Float -> Array.exists (fun v -> Float.abs v = Float.infinity) vs
+  | D.Complex | D.Signed | D.Unsigned | D.Boolean -> false
+
+let has_bound (type v s) (dt : (v, s) D.t) (vs : v array) =
+  match D.kind dt with
+  | D.Signed | D.Unsigned ->
+      Array.mem (D.min_value dt) vs || Array.mem (D.max_value dt) vs
+  | D.Float | D.Complex | D.Boolean -> false
+
+let encoded =
+  group "encoded text"
+    [
+      prop "encode_txt is the text save_txt writes"
+        (Gen.pair encoded_cases separators)
+        (fun (((Case (dt, _, _, _) as c), placed), sep) ->
+          covers c;
+          cover "on another set" placed;
+          let x = Nx.unpack dt (value c) in
+          let save p x = Nx_io.save_txt ~sep p x in
+          if placed then
+            let y = Nx.place Mem.on x in
+            equal string (read (saved "" save y)) (Nx_io.encode_txt ~sep y)
+          else equal string (read (saved "" save x)) (Nx_io.encode_txt ~sep x));
+      prop
+        "the rows of values encoded one after another load as their \
+         concatenation"
+        (Gen.with_pp pp_rows rows) (fun (Rows (dt, cols, a, b)) ->
+          let matrix vs = Nx.create dt [| Array.length vs / cols; cols |] vs in
+          let all = matrix (Array.append a b) in
+          let stored = Nx.to_array all in
+          let n = Array.length stored / cols in
+          cover "one row" (n = 1);
+          cover "one column" (cols = 1);
+          cover "several rows and columns" (n > 1 && cols > 1);
+          cover "NaN" (has_nan dt stored);
+          cover "-0." (has_negative_zero dt stored);
+          cover "an infinity" (has_infinity dt stored);
+          cover "an integer type's bound" (has_bound dt stored);
+          let path = Filename.concat (temp_dir ()) "log" in
+          append_txt path (matrix a);
+          append_txt path (matrix b);
+          equal (as_text dt) all (Nx_io.load_txt dt path));
+      cases "a value encodes as its rows, each ended by a newline" ~id:fst
+        [
+          ( "a float64 0-d value",
+            ( "1.500000000000000000e+00\n",
+              fun () -> Nx_io.encode_txt (Nx.scalar Nx.float64 1.5) ) );
+          ( "no element",
+            ("", fun () -> Nx_io.encode_txt (Nx.zeros Nx.float32 [| 0 |])) );
+          ( "a float32 NaN",
+            ( "nan\n",
+              fun () -> Nx_io.encode_txt (Nx.scalar Nx.float32 Float.nan) ) );
+          ( "bools",
+            ( "1 0\n",
+              fun () ->
+                Nx_io.encode_txt (Nx.create Nx.bool [| 2 |] [| true; false |])
+            ) );
+          ( "the largest uint64",
+            ( "18446744073709551615\n",
+              fun () -> Nx_io.encode_txt (Nx.create Nx.uint64 [| 1 |] [| -1L |])
+            ) );
+          ( "an int32 matrix, by commas",
+            ( "1,2\n3,4\n",
+              fun () ->
+                Nx_io.encode_txt ~sep:","
+                  (Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |]) ) );
+        ]
+        (fun (_, (expected, encode)) -> equal string expected (encode ()));
+      test "a complex dtype or three axes are refused" (fun () ->
+          invalid ~by:"Nx_io.encode_txt" (fun () ->
+              Nx_io.encode_txt (Nx.zeros Nx.complex64 [| 2 |]));
+          invalid ~by:"Nx_io.encode_txt" (fun () ->
+              Nx_io.encode_txt (Nx.zeros Nx.int8 [| 1; 1; 1 |])));
+    ]
+
+let () = exit (run "nx.io text" [ txt; encoded; floats_read ])

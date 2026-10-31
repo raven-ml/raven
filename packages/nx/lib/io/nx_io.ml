@@ -96,6 +96,7 @@ let load_txt ?(sep = " ") ?(comments = "#") ?(skiprows = 0) dt path =
   Txt.load ~sep ~comments ~skiprows dt path
 
 let save_txt ?(sep = " ") path x = Txt.save ~sep path x
+let encode_txt ?(sep = " ") x = Txt.encode ~sep x
 
 (* Images *)
 

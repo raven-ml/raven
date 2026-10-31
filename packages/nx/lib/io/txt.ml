@@ -437,8 +437,10 @@ let fields sep line =
 (* The text is written to the file in chunks of about [chunk] bytes. *)
 let chunk = 65536
 
-let save ~sep path x =
-  let by = "Nx_io.save_txt" in
+(* [text ~by ~sep x write] is [write encode] once [x] is checked and its
+   elements are read, where [encode emit] gives [emit] the text of [x]'s rows in
+   pieces of about [chunk] bytes. *)
+let text ~by ~sep x write =
   let dt = Nx.dtype x in
   let print = match printer dt with Some p -> p | None -> refuse ~by dt in
   let shape = Nx.shape x in
@@ -447,10 +449,10 @@ let save ~sep path x =
       (Array.length shape);
   let values = Fail.renamed ~by Nx.to_array x in
   let cols = match shape with [| _; c |] -> c | [| c |] -> c | _ -> 1 in
-  Save.write path @@ fun fd ->
+  write @@ fun emit ->
   let b = Buffer.create chunk in
   let drain () =
-    Save.string fd (Buffer.contents b);
+    emit (Buffer.contents b);
     Buffer.clear b
   in
   Array.iteri
@@ -461,6 +463,16 @@ let save ~sep path x =
       if Buffer.length b >= chunk then drain ())
     values;
   drain ()
+
+let save ~sep path x =
+  text ~by:"Nx_io.save_txt" ~sep x @@ fun encode ->
+  Save.write path (fun fd -> encode (Save.string fd))
+
+let encode ~sep x =
+  text ~by:"Nx_io.encode_txt" ~sep x @@ fun encode ->
+  let pieces = ref [] in
+  encode (fun s -> pieces := s :: !pieces);
+  String.concat "" (List.rev !pieces)
 
 (* Loading *)
 

@@ -443,9 +443,36 @@ val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
     which defaults to [" "], separates its fields. The file loads back with
     [sep] only if [sep] is not empty, holds no newline and occurs in no field. A
     save of a value with no element writes an empty file, which {!load_txt}
-    rejects. A save also allocates [x]'s elements as an OCaml array.
+    rejects. A save also allocates [x]'s elements as an OCaml array. The file
+    holds the bytes [encode_txt ?sep x].
 
     Raises [Invalid_argument] if [x] is complex or has more than two axes. *)
+
+val encode_txt : ?sep:string -> ('v, 's, 'd) Nx.t -> string
+(** [encode_txt ?sep x] is the text [save_txt ?sep path x] writes to [path],
+    without touching the file system. It reads [x] as a save does, allocates
+    what {!save_txt} allocates, and holds the text twice, in pieces and as the
+    string it returns.
+
+    Each row ends with ["\n"], so the encodings of values written one after
+    another are the text of their rows in order, which {!load_txt} reads back as
+    one array when every row has the same number of fields. This appends the
+    rows of [x] to the file [path], creating it if needed:
+    {[
+    let append_txt path x =
+      let text = Nx_io.encode_txt x in
+      Out_channel.with_open_gen
+        [ Open_wronly; Open_append; Open_creat; Open_binary ] 0o666 path
+        (fun oc ->
+          Out_channel.output_string oc text;
+          Out_channel.flush oc)
+    ]}
+    The [flush] raises a failed write, which closing the channel would ignore.
+    An append writes in place and syncs nothing, outside a save's replacement
+    of its file: a failure or a crash may leave part of a row at the end of
+    [path], and a crash of the system may also lose rows written since.
+
+    Raises [Invalid_argument] as {!save_txt} does. *)
 
 (** {1:images Images}
 

@@ -3127,6 +3127,8 @@ thread.
 
 ### Nx
 
+- Add `Nx_io.encode_txt`, the text `save_txt` writes, as a string, so rows can
+  be appended to a file opened with `Out_channel.open_gen [ Open_append; … ]`.
 - `Nx.attention` states its error bound for each element of `o` and for `lse`.
 - A compiled `Nx_wide.sum` of 10^6 float64 numbers makes its first call in
   1.8 s, from 2.2 s: it stores its tree's partial sums every five levels, from
@@ -3218,7 +3220,8 @@ thread.
   `load_image` keeps the file's channels, without `?grayscale`.
 - **Breaking:** saves drop `?overwrite` and replace their path atomically.
   `load_npz_entry` goes. `load_txt` takes the dtype before the path and drops
-  `?max_rows`; `save_txt` takes `?sep` alone.
+  `?max_rows`; `save_txt` takes `?sep` alone. In place of `~append:true`,
+  write `encode_txt`'s text to a file opened with `Open_append`.
 - **Breaking:** removed, with their replacements:
   - `dims`, `size`: `shape`, `numel`. `itemsize`:
     `Nx.Dtype.bits (Nx.dtype x)`, in bits. `data`, `strides`, `stride`,
