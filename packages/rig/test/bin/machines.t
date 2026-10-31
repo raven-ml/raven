@@ -1,6 +1,8 @@
 Machines that fail under a running job. rig run's output goes to err, the
 program's to out; each test waits for the program to join its job before it
-breaks a machine.
+breaks a machine. A run in the background first removes the last run's
+out and err, which a wait could read before the new run's redirect empties
+them.
 
   $ . support/env.sh
   $ host a 127.0.0.1
@@ -31,7 +33,7 @@ half, and the job learns of it through its connections. The agent's
 machine does not answer until rig run reaches it again, and its new agent
 finds no other agent there.
 
-  $ rm attempts
+  $ rm attempts out err
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
@@ -51,7 +53,7 @@ finds no other agent there.
 The same, with the old agent stopped instead: the job learns of it from
 its silence, and b's new agent waits until the old one ends.
 
-  $ rm attempts
+  $ rm attempts out err
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
@@ -76,7 +78,7 @@ its silence, and b's new agent waits until the old one ends.
 A machine that stays down is tried again every 5 seconds until it
 answers; only its first try's errors come out.
 
-  $ rm attempts
+  $ rm attempts out err
   $ rig run --on a,b,c -- ./support/ctl.exe wait-first >out 2>err &
   $ run=$!
   $ ./support/await out joined
@@ -112,7 +114,7 @@ A program that reported the failure but does not exit is killed once the
 job's processes had their time to end, and its report is still the cause.
 Here b's agent is stopped, so the program alone reports b's silence.
 
-  $ rm -f attempts
+  $ rm -f attempts out err
   $ rig run --on a,b -- ./support/ctl.exe linger-first >out 2>err &
   $ run=$!
   $ ./support/await out joined

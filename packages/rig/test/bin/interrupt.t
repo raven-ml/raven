@@ -2,7 +2,9 @@ rig run, told to stop, ends the job and dies by the signal it got, so
 that a shell sees it stopped. rig run keeps a signal that was ignored when
 it started ignored, as a background job's SIGINT, so these tests start it
 through support/sig.exe, with the three signals at their defaults, as
-from a terminal. Each sends the signal once the program joined its job.
+from a terminal. Each sends the signal once the program joined its job,
+the last run's out and err removed first, which a wait could read before
+the new run's redirect empties them.
 A kill and its wait share one redirect: the shell reports a job that dies
 between them on its standard error.
 
@@ -12,7 +14,7 @@ between them on its standard error.
   $ host c ::1
   $ agent_of() { cat machines/$1/rig-agent-$(id -u).lock; }
   $ stop() {
-  >   rm -f attempts
+  >   rm -f attempts out err
   >   ./support/sig.exe default INT,TERM,HUP rig run --on a,b -- ./support/ctl.exe wait >out 2>err &
   >   run=$!
   >   ./support/await out joined
@@ -49,7 +51,7 @@ rig run killed by SIGKILL ends nothing itself. Each machine's session
 sees its input end, and the machine ends its agent; the program loses its
 agents, and its job fails.
 
-  $ rm -f attempts out
+  $ rm -f attempts out err
   $ rig run --on a,b,c -- sh -c './support/ctl.exe wait; echo "the program exited $?" >status' >out 2>err &
   $ run=$!
   $ ./support/await out joined
@@ -66,7 +68,7 @@ agents, and its job fails.
 The program gets the signal first, and its agents serve it while it ends:
 time to save its work.
 
-  $ rm -f attempts out
+  $ rm -f attempts out err
   $ rig run --on a,b -- ./support/ctl.exe save >out 2>err &
   $ run=$!
   $ ./support/await out joined
