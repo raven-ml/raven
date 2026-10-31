@@ -2111,7 +2111,7 @@ let kinds =
     ("\xC3\xA9", Lower); ("\xC3\x81", Upper); ("\xC7\x85", Upper);
     ("\xCA\xB0", Both); ("\xE6\x97\xA5", Both); ("\xCC\x81", Mark);
     ("\xE0\xA4\xBF", Mark);
-    ("1", Number); ("\xD9\xA3", Number); ("\xC2\xB2", Number);
+    ("1", Number); ("2", Number); ("\xD9\xA3", Number); ("\xC2\xB2", Number);
     ("\xE2\x85\xA7", Number);
     (" ", Space); ("\t", Space); ("\x0C", Space); ("\xC2\xA0", Space);
     ("\xE3\x80\x80", Space); ("\xE2\x80\xA8", Space); ("\xC2\x85", Space);
@@ -2134,7 +2134,7 @@ let stray =
    three, contractions, camel case and newlines after spaces. *)
 let split_alphabet =
   List.map fst kinds @ stray
-  @ [ " "; " "; "'"; "1234"; "'s"; "'re"; "'LL"; "XMLHttp"; "  "; " \r\n" ]
+  @ [ " "; " "; "'"; "1212"; "'s"; "'re"; "'LL"; "XMLHttp"; "  "; " \r\n" ]
 
 let split_text =
   Gen.map (String.concat "")
