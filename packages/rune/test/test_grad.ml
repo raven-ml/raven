@@ -411,6 +411,29 @@ let test_repeated_values () =
     (Nx.to_array
        (Rune.grad' (fun a -> Nx.sum (Nx.square (Nx.svdvals f64 a))) a))
 
+(* Softplus is smooth, of derivative sigmoid everywhere: at both zeros,
+   subnormals, the infinities and magnitudes where either arm of its form
+   saturates, each an example. *)
+let softplus_specials =
+  [
+    0.; -0.; 0x1p-1074; -0x1p-1074; 0x1p-1022; -0x1p-1022; Float.infinity;
+    Float.neg_infinity; 1e300; -1e300; 750.; -750.; 37.; -37.;
+  ]
+
+let softplus_points =
+  Gen.(
+    with_pp
+      (fun ppf x -> Format.fprintf ppf "%h" x)
+      (frequency
+         [ (4, float_range (-50.) 50.); (1, of_list softplus_specials) ]))
+
+let softplus_law x =
+  let at = v [| x |] in
+  equal
+    (array (float_rel ~rel:(8. *. epsilon_float) ~abs:0x1p-1074))
+    (Nx.to_array (Nx.sigmoid at))
+    (Nx.to_array (Rune.grad' (fun x -> Nx.sum (Nx.softplus x)) at))
+
 let test_kinks () =
   equal ~msg:"abs at both zeros" floats [| 1.; 1.; -1. |]
     (Nx.to_array
@@ -1394,6 +1417,8 @@ let () =
              test "complex gradients" test_complex;
              test "kinks" test_kinks;
              test "values alone at repeated values" test_repeated_values;
+             prop "softplus's gradient is sigmoid" ~examples:softplus_specials
+               softplus_points softplus_law;
              test "selections" test_selections;
              test "signs of zero" test_zeros;
              test "a truncated normal's bounds" test_draws;

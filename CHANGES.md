@@ -3209,6 +3209,7 @@ thread.
 
 ### Nx
 
+- `Nx.softplus`'s gradient at `0.` is `0.5`, where it was `0.`.
 - The second derivative of `Nx.hypot x y` and `Nx.magnitude` computed at
   float64 is right where `|x| = |y|`, where it was zero, and the tangent is
   right where both magnitudes are subnormal. The gradient at a NaN operand is

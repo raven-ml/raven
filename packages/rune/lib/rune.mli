@@ -223,8 +223,9 @@
     it share its tangent equally; a real [Nx.sign], [Nx.floor], [Nx.ceil],
     [Nx.round] and [Nx.trunc] have a zero tangent, and [Nx.pow x y] has a zero
     tangent along [x] where [y] is zero and along [y] where [x] is zero. A
-    function nx composes of others, as [Nx.softplus], takes these rules at its
-    parts' kinks.
+    function nx composes of others takes these rules at its parts' kinks;
+    [Nx.softplus], smooth, has its derivative [Nx.sigmoid] everywhere, [1/2]
+    at [0.].
 
     {b Factorisations.} The tangents of [Nx.cholesky], [Nx.lu], [Nx.qr],
     [Nx.svd], [Nx.eigh] and [Nx.eig] are the derivatives of the factors nx

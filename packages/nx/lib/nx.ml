@@ -2609,10 +2609,16 @@ let sigmoid x =
       let q = E.(t / (lit 1. + t)) in
       E.(where (x < lit 0.) q (lit 1. - q)))
 
+(* [softplus x] is [log1p (exp (-|x|)) + max x 0], so that [exp] never
+   overflows. [-|x|] and [max x 0] are selections that take [x]'s side from
+   [0.] in both, so their slopes at [0.], [-1] and [1], meet in the derivative
+   [1/2]; [abs]'s slope of [1] there and [maximum]'s split tie would sum to
+   [0]. *)
 let softplus x =
   float_map ~by:"Nx.softplus" [ x ] (fun w ins ->
-      let x = ins.(0) in
-      E.(maximum x (const w 0.) + log1p (exp (-abs x))))
+      let x = ins.(0) and zero = E.const w 0. in
+      let below = E.(x < zero) in
+      E.(log1p (exp (where below x (-x))) + where below zero x))
 
 (* [finish w shifted sum] of each [scale x - m] and its lane's sum of
    exponentials, [m] the lane's greatest [scale x], computed in [x]'s wide

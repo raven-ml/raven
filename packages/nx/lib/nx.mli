@@ -2184,10 +2184,9 @@ val sigmoid : (float, 's, 'd) t -> (float, 's, 'd) t
     3 ulps at float32 and float64. *)
 
 val softplus : (float, 's, 'd) t -> (float, 's, 'd) t
-(** [softplus x] is [log (1 + exp x)], computed as
-    [max x 0 + log1p (exp (-|x|))]: [exp x] to the format's precision far
-    below [0.], [x] far above it, never overflowing. Within 3
-    ulps at float32 and float64. *)
+(** [softplus x] is [log (1 + exp x)]: [exp x] to the format's precision far
+    below [0.], [x] far above it, never overflowing. Within 3 ulps at float32
+    and float64. *)
 
 val softmax :
   ?axes:int list -> ?scale:float -> (float, 's, 'd) t -> (float, 's, 'd) t
