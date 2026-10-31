@@ -63,6 +63,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite, and there is no DEV (D95) |
 | tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | dropped: `select_by_name` and its suggestion are not ported (README exclusions); the renderer lookup belongs to `Device`'s suite |
 | tinygrad: null/test_device.py::TestDevice::test_null_cast_all_dtypes | a cast to every data type and back renders on the NULL device | dropped: the NULL device and its renderer are excluded |
+| tinygrad: null/test_device.py::TestDevice::test_run_as_module | `python -m tinygrad.device` runs `device.py` again as a script | dropped: the device registry and `device.py`'s script are not ported (README exclusions) |
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache follows CCACHE | dropped: `Compiler` belongs to `Device`'s suite |
 | tinygrad: null/test_hashing.py::TestKeccak::test_shape_keeping | `Tensor.keccak` | dropped: the `Tensor` surface; the frontend is nx |
 | tinygrad: null/test_tqdm.py (all) | `tqdm` | dropped: not ported (plan, L0 scope) |

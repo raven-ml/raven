@@ -480,13 +480,13 @@ let not_ported =
       "TRACEMETA";
       "TRAINING";
       "LRU";
-      "HCQ2";
       "FUSE_OPTIM";
       "USE_ATOMICS";
       "CAPTURE_PROCESS_REPLAY";
       "NULL_ALLOW_COPYOUT";
       "VIZ";
       "PROFILE";
+      "HCQ_RUNTIME_DEV";
     ]
 
 (* The golden leaves out the settings whose default it cannot record, and
