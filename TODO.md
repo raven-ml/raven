@@ -228,10 +228,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - `Nx_ragged.take` writes an int64 position per output byte (fill,
   scatter, cumsum, gather): ~40 bytes moved per byte of text. It dominates
   talon's joins on text (join_run.ml, column.ml)
-- nx.wide's `chunk_levels` (3, nx_wide.ml) was timed on the old rune,
-  when each chunk compiled two kernels; tolk now compiles a double-word
-  add as one. Add `wide/sum-1e6` to rune's compile bench and time 2-5
-  levels
 - `Nx.betaincinv` and `betainccinv`, as the gamma's inverses are
   (0947081db left them out): norn's `quantile` raises for `beta` for want
   of them. First measure rune compiling a program of their size (~20-25k

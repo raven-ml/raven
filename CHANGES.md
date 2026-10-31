@@ -3090,6 +3090,10 @@ thread.
 
 ### Nx
 
+- A compiled `Nx_wide.sum` of 10^6 float64 numbers makes its first call in
+  1.8 s, from 2.2 s: it stores its tree's partial sums every five levels, from
+  three. The association changes with them, so a sum may differ in its last
+  bits, within the same bound.
 - `gammaincinv` and `gammainccinv` state their error bound at the smaller
   tail `min (p, 1 - p)`, the precision they keep as `p` nears `1`.
 - `#require "nx.top"` no longer loads `compiler-libs.toplevel`, which the

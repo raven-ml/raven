@@ -85,6 +85,8 @@ Jit/take-grad-1024-of-4096x64	alloc_words	exact	852
 Jit/take-grad-1024-of-4096x64	wall_time	batch=128	n=20	7.117e-05	6.834e-05 6.953e-05 6.982e-05 7.004e-05 7.021e-05 7.026e-05 7.037e-05 7.060e-05 7.098e-05 7.111e-05 7.122e-05 7.134e-05 7.187e-05 7.226e-05 7.228e-05 7.248e-05 7.281e-05 7.357e-05 7.682e-05 7.707e-05
 Jit/tanh-float32-64K	alloc_words	exact	721
 Jit/tanh-float32-64K	wall_time	batch=256	n=20	3.554e-05	3.435e-05 3.458e-05 3.478e-05 3.484e-05 3.485e-05 3.486e-05 3.487e-05 3.503e-05 3.550e-05 3.550e-05 3.559e-05 3.566e-05 3.576e-05 3.616e-05 3.628e-05 3.631e-05 3.641e-05 3.650e-05 3.676e-05 3.704e-05
+Jit/wide-sum-1e6	alloc_words	exact	889
+Jit/wide-sum-1e6	wall_time	batch=16	n=20	6.033e-04	5.491e-04 5.500e-04 5.562e-04 5.582e-04 5.677e-04 5.678e-04 5.705e-04 5.857e-04 5.941e-04 6.014e-04 6.051e-04 6.624e-04 6.827e-04 6.916e-04 7.022e-04 7.679e-04 8.673e-04 9.329e-04 9.473e-04 1.019e-03
 JitFootprint/lorenz-n10-replay	alloc_words	exact	970
 JitFootprint/lorenz-n10-replay	wall_time	batch=4096	n=20	2.060e-06	2.034e-06 2.043e-06 2.050e-06 2.050e-06 2.051e-06 2.052e-06 2.056e-06 2.056e-06 2.057e-06 2.059e-06 2.060e-06 2.067e-06 2.069e-06 2.077e-06 2.080e-06 2.082e-06 2.086e-06 2.093e-06 2.094e-06 2.105e-06
 JitFootprint/lorenz-n100-replay	alloc_words	exact	970

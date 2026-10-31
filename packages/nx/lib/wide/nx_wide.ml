@@ -182,13 +182,13 @@ let equal a b =
    grows with the count, and rune's did not compile one at a million numbers. So
    each [chunk_levels] levels run on rows of [2^chunk_levels] numbers, then
    their results are stored with [Nx.copy]: a compiled sum is then [⌈levels /
-   chunk_levels⌉] programs. Three levels compiled fastest there: a cold compile
-   of a sum of 10^6 float64 numbers took 5.1 s at one level a program, 2.3 to
-   3.4 s at two, 2.7 s at three, 5.5 s at four and 10 s at five, where each
-   program cost about 0.15 s and each fused double-word addition about 70 ms.
-   Computed eagerly, each store copies its three results once more: fewer than
-   [3n / 7] elements in all for [n] numbers. *)
-let chunk_levels = 3
+   chunk_levels⌉] programs. Five levels compile fastest: a fresh process's
+   first compiled call of a sum of 10^6 float64 numbers takes 2.4 s at two
+   levels a program, 2.2 s at three, 2.3 s at four and 1.8 s at five, and the
+   compiled sum then runs in the same time at three and five. Computed eagerly,
+   each store copies its three results once more: about [3n / 31] elements in
+   all for [n] numbers. *)
+let chunk_levels = 5
 
 let rec halve plain w levels =
   if levels = 0 then (plain, w)

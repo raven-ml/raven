@@ -15,3 +15,4 @@ scan/tridiagonal-100	wall_time	batch=1	n=3	2.394e+00	2.392e+00 2.394e+00 2.419e+
 shaped-4k	wall_time	batch=1	n=3	5.320e-01	5.304e-01 5.320e-01 5.328e-01
 shaped-4k-3-lanes	wall_time	batch=1	n=3	3.889e-01	3.883e-01 3.889e-01 3.891e-01
 trig/sin	wall_time	batch=1	n=3	9.471e-02	9.408e-02 9.471e-02 9.692e-02
+wide/sum-1e6	wall_time	batch=1	n=3	1.768e+00	1.762e+00 1.768e+00 1.777e+00
