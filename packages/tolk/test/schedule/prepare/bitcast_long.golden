@@ -1,10 +1,12 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=8, device="CPU")
-1 Ops.PARAM dtypes.long [] ParamArg(slot=1, dtype=dtypes.long, size=4, device="CPU")
-2 Ops.BITCAST dtypes.int [1] dtypes.int
-3 Ops.CONST dtypes.weakint [] 1
-4 Ops.ADD dtypes.int [2, 3]
-5 Ops.STORE dtypes.void [0, 4]
-6 Ops.AFTER dtypes.int [0, 5]
-7 Ops.SINK dtypes.void [6]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.PARAM dtypes.i64 [2] ParamArg(slot=1, dtype=dtypes.i64, device="CPU")
+4 Ops.BITCAST dtypes.i32 [3] dtypes.i32
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.ADD dtypes.i32 [4, 5]
+7 Ops.STORE dtypes.void [1, 6]
+8 Ops.AFTER dtypes.i32 [1, 7]
+9 Ops.SINK dtypes.void [8]
 

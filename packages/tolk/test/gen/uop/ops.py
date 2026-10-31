@@ -16,10 +16,16 @@ from tinygrad.dtype import AddrSpace, Invalid, dtypes
 from tinygrad.helpers import Target
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import (AxisType, BottomUpGate, CallInfo, KernelInfo, ParamArg, ProgramInfo, UOp, axis_colors,
-                              axis_letters, axis_to_pos, dtype_from_uop, exec_alu, identity_element)
+                              axis_letters, dtype_from_uop, exec_alu, identity_element)
 from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad.renderer import Estimates
 from tinygrad.schedule.indexing import BufferizeOpts
+import dataclasses
+
+
+def named(u, name):
+    """`u`, a define, with the name `name`."""
+    return u.replace(arg=dataclasses.replace(u.arg, name=name))
 
 
 def attempt(fn, *args, **kwargs):
@@ -309,9 +315,9 @@ def identities():
 
 @table
 def axis_types():
-    return ["axis_type", "letter", "color", "position"], [
+    return ["axis_type", "letter", "color", "nesting"], [
         (repr(a), axis_letters.get(a, "raises KeyError"), axis_colors.get(a, "raises KeyError"),
-         value(axis_to_pos.get(a, "raises KeyError"))) for a in AxisType]
+         value(sorted(AxisType).index(a))) for a in AxisType]
 
 
 # Argument reprs: the text of each argument, by the name the suite builds it under
@@ -330,8 +336,8 @@ def reprs_of():
         "bool": UOp.const(True),
         "invalid": UOp.invalid(),
         "dtype": UOp.const(1).cast(dtypes.half),
-        "range": UOp.range(4, 0, AxisType.REDUCE),
-        "range with sub-axes": UOp(Ops.RANGE, src=(UOp.const(4),), arg=(1, 0, AxisType.UPCAST)),
+        "range": UOp.range(4, 0, AxisType.WEAK),
+        "range with sub-axes": UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.UPCAST, 1, 0)),
         "negative range": UOp.range(4, -1, AxisType.DEVICE),
         "reduce": UOp(Ops.REDUCE, src=(UOp.const(1.0).expand((4,)),), arg=(Ops.ADD, 1)),
         "special": UOp.special(8, "gidx0"),
@@ -350,7 +356,7 @@ def reprs_of():
         "scalar param": UOp.param(1, dtypes.int),
         "variable": n,
         "bound variable": n.bind(3),
-        "named local buffer": UOp.placeholder((4,), dtypes.int, 2, addrspace=AddrSpace.LOCAL, tag="buf"),
+        "named local buffer": named(UOp.placeholder((4,), dtypes.int, 2, addrspace=AddrSpace.LOCAL), "buf"),
         "volatile param": UOp.param(0, dtypes.uint32, 4, volatile=True, device="CPU"),
         "alloc": UOp.alloc((4,), dtypes.float, slot=7, device="CPU"),
         "kernel": UOp.sink(arg=KernelInfo()),
@@ -361,7 +367,7 @@ def reprs_of():
         "bufferize": UOp.const(1.0).bufferize(arg=BufferizeOpts(device="CPU", addrspace=AddrSpace.LOCAL, removable=False)),
         "bufferize without device": UOp.const(1.0).bufferize(arg=BufferizeOpts(device=None)),
         "call": UOp.sink().call(name="f"),
-        "call returning": UOp.custom_function("f").call(ret_dtype=dtypes.int, precompile=True),
+        "call returning": UOp.custom_function("f", dtype=dtypes.int).call(precompile=True),
         "program": UOp(Ops.PROGRAM, src=(UOp.sink(arg=KernelInfo()),), arg=ProgramInfo(
             global_size=(4, 1, 1), local_size=(8, 1, 1), vars=(), globals=(0, 1), outs=(0,), ins=(1,), target=Target("CPU", "CLANG"))),
         "wmma": UOp.wmma(UOp.param(0, dtypes.half, (8,)), UOp.param(1, dtypes.half, (8,)), UOp.param(2, dtypes.float, (4,)),
@@ -381,7 +387,7 @@ def reprs():
 def printed_nodes():
     forty_two, one, n = UOp.const(42), UOp.const(1), UOp.variable("n", 1, 8)
     return [forty_two, forty_two + UOp.const(3), forty_two + forty_two, (one + one) * (one + one), forty_two.rtag("x"),
-            forty_two.rtag(("y", 1)), n, UOp.sink(n + 1, n * 2, arg=KernelInfo()), UOp.range(4, 0, AxisType.REDUCE),
+            forty_two.rtag(("y", 1)), n, UOp.sink(n + 1, n * 2, arg=KernelInfo()), UOp.range(4, 0, AxisType.WEAK),
             UOp.const(3, dtypes.int32), UOp.const(1.5), UOp.param(0, dtypes.float, (2, 3))]
 
 
@@ -618,7 +624,7 @@ def storage():
     return UOp.sink(UOp.param(2, dtypes.float, (2, 3, 4), device="CPU"),
                     UOp.param(3, dtypes.half), UOp.param(4, dtypes.float, (4,), vmin_vmax=(0.0, 1.0), name="w", volatile=True),
                     UOp.placeholder((2, 3), dtypes.weakint, 5), UOp.placeholder((8,), dtypes.float, 6, addrspace=AddrSpace.LOCAL),
-                    UOp.placeholder((4,), dtypes.half, 7, addrspace=AddrSpace.REG, tag="acc"),
+                    named(UOp.placeholder((4,), dtypes.half, 7, addrspace=AddrSpace.REG), "acc"),
                     UOp.alloc((), dtypes.int, slot=9),
                     UOp.alloc((4, 2), dtypes.float, slot=10, device=("CPU:0", "CPU:1"), axis=0),
                     UOp.new_buffer("CPU", 4, dtypes.float, 11).view_as((2, 2)))
@@ -654,7 +660,7 @@ def shards():
 def calls():
     body = UOp.param(0, dtypes.float, 4).index(UOp.range(4, 0)).store(1.0).end(UOp.range(4, 0)).sink()
     a = UOp.param(0, dtypes.float, 4, device="CPU")
-    return UOp.sink(body.call(a), body.call(a, name="fill", precompile=True), UOp.custom_function("f", UOp.const(0, dtypes.uint64)).call(ret_dtype=dtypes.int),
+    return UOp.sink(body.call(a), body.call(a, name="fill", precompile=True), UOp.custom_function("f", UOp.const(0, dtypes.uint64), dtype=dtypes.int).call(),
                     UOp.param(0, dtypes.float, 4, device="CPU").store_call(UOp.param(1, dtypes.float, 4, device="CPU")))
 
 

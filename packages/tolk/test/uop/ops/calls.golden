@@ -1,21 +1,21 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.INDEX dtypes.float [0, 2]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.f32 [1, 2]
 4 Ops.CONST dtypes.weakfloat [] 1.0
-5 Ops.CAST dtypes.float [4] dtypes.float
+5 Ops.CAST dtypes.f32 [4] dtypes.f32
 6 Ops.STORE dtypes.void [3, 5]
 7 Ops.END dtypes.void [6, 2]
 8 Ops.SINK dtypes.void [7]
-9 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 10 Ops.CALL dtypes.void [8, 9] CallInfo()
 11 Ops.CALL dtypes.void [8, 9] CallInfo(name="fill", precompile=True)
 12 Ops.CONST dtypes.weakint [] 0
-13 Ops.CAST dtypes.ulong [12] dtypes.ulong
-14 Ops.CUSTOM_FUNCTION dtypes.void [13] "f"
-15 Ops.CALL dtypes.int [14] CallInfo(dtype=dtypes.int)
-16 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+13 Ops.CAST dtypes.u64 [12] dtypes.u64
+14 Ops.CUSTOM_FUNCTION dtypes.i32 [13] CustomFunction(name="f", dtype=dtypes.i32)
+15 Ops.CALL dtypes.i32 [14] CallInfo()
+16 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 17 Ops.STORE dtypes.void [9, 16]
 18 Ops.CALL dtypes.void [17, 9, 16] CallInfo()
 19 Ops.SINK dtypes.void [10, 11, 15, 18]

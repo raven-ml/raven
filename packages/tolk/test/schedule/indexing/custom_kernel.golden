@@ -1,33 +1,33 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
-1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
-2 Ops.CONST dtypes.weakint [] 4
-3 Ops.STACK dtypes.weakint [2, 2]
-4 Ops.RESHAPE dtypes.float [1, 3]
-5 Ops.CONST dtypes.weakint [] 16
-6 Ops.RESHAPE dtypes.float [4, 5]
-7 Ops.RANGE dtypes.weakint [5] (0, AxisType.WEAK)
-8 Ops.INDEX dtypes.float [6, 7]
-9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
-10 Ops.INDEX dtypes.float [9, 7]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [3, 3]
+5 Ops.RESHAPE dtypes.f32 [2, 4]
+6 Ops.RESHAPE dtypes.f32 [5, 0]
+7 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+8 Ops.INDEX dtypes.f32 [6, 7]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+10 Ops.INDEX dtypes.f32 [9, 7]
 11 Ops.CONST dtypes.weakfloat [] 1.0
-12 Ops.ADD dtypes.float [10, 11]
+12 Ops.ADD dtypes.f32 [10, 11]
 13 Ops.STORE dtypes.void [8, 12]
 14 Ops.END dtypes.void [13, 7]
 15 Ops.SINK dtypes.void [14] KernelInfo(name="add_one_16")
-16 Ops.RESHAPE dtypes.float [0, 3]
-17 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
-18 Ops.RESHAPE dtypes.float [17, 3]
+16 Ops.RESHAPE dtypes.f32 [1, 4]
+17 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+18 Ops.RESHAPE dtypes.f32 [17, 4]
 19 Ops.CONST dtypes.weakfloat [] 2.0
-20 Ops.MUL dtypes.float [18, 19]
-21 Ops.RESHAPE dtypes.float [20, 5]
+20 Ops.MUL dtypes.f32 [18, 19]
+21 Ops.RESHAPE dtypes.f32 [20, 0]
 22 Ops.CALL dtypes.void [15, 16, 21] CallInfo()
-23 Ops.AFTER dtypes.float [0, 22]
-24 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device="CPU")
-25 Ops.RESHAPE dtypes.float [24, 3]
-26 Ops.RESHAPE dtypes.float [23, 3]
-27 Ops.ADD dtypes.float [26, 11]
+23 Ops.AFTER dtypes.f32 [1, 22]
+24 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+25 Ops.RESHAPE dtypes.f32 [24, 4]
+26 Ops.RESHAPE dtypes.f32 [23, 4]
+27 Ops.ADD dtypes.f32 [26, 11]
 28 Ops.STORE dtypes.void [25, 27]
-29 Ops.AFTER dtypes.float [24, 28]
+29 Ops.AFTER dtypes.f32 [24, 28]
 30 Ops.SINK dtypes.void [23, 29]
 

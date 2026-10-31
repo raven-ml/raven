@@ -1,21 +1,22 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=24)
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.CONST dtypes.weakint [] 6
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.CONST dtypes.weakint [] 0
-6 Ops.CONST dtypes.weakint [] 2
-7 Ops.RANGE dtypes.weakint [6] (-1, AxisType.DEVICE)
-8 Ops.CONST dtypes.weakint [] 3
-9 Ops.MUL dtypes.weakint [7, 8]
-10 Ops.STACK dtypes.weakint [5, 9]
-11 Ops.STACK dtypes.weakint [1, 8]
-12 Ops.SHRINK dtypes.float [4, 10, 11]
-13 Ops.RANGE dtypes.weakint [1] (0, AxisType.LOCAL)
-14 Ops.STACK dtypes.weakint [13, 5]
-15 Ops.CONST dtypes.weakint [] 1
-16 Ops.STACK dtypes.weakint [15, 2]
-17 Ops.SHRINK dtypes.float [4, 14, 16]
-18 Ops.SINK dtypes.void [12, 17]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 24
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CONST dtypes.weakint [] 6
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.CONST dtypes.weakint [] 2
+8 Ops.RANGE dtypes.weakint [7] (AxisType.DEVICE, -1)
+9 Ops.CONST dtypes.weakint [] 3
+10 Ops.MUL dtypes.weakint [8, 9]
+11 Ops.STACK dtypes.weakint [6, 10]
+12 Ops.STACK dtypes.weakint [2, 9]
+13 Ops.SHRINK dtypes.f32 [5, 11, 12]
+14 Ops.RANGE dtypes.weakint [2] (AxisType.LOCAL, 0)
+15 Ops.STACK dtypes.weakint [14, 6]
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.STACK dtypes.weakint [16, 3]
+18 Ops.SHRINK dtypes.f32 [5, 15, 17]
+19 Ops.SINK dtypes.void [13, 18]
 

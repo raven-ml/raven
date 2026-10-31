@@ -1,47 +1,49 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.fp8e4m3fnuz [] ParamArg(slot=0, dtype=dtypes.fp8e4m3fnuz, size=16, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
-4 Ops.MUL dtypes.int [3, 1]
-5 Ops.SHRINK dtypes.fp8e4m3fnuz [0, 4, 2]
-6 Ops.PARAM dtypes.fp8e4m3fnuz [] ParamArg(slot=1, dtype=dtypes.fp8e4m3fnuz, size=16, device="CPU")
-7 Ops.CONST dtypes.weakint [] -4
-8 Ops.MUL dtypes.int [3, 7]
-9 Ops.CONST dtypes.weakint [] 12
-10 Ops.ADD dtypes.int [8, 9]
-11 Ops.SHRINK dtypes.fp8e4m3fnuz [6, 10, 2]
-12 Ops.LOAD dtypes.fp8e4m3fnuz [11]
-13 Ops.CONST dtypes.weakint [] 3
-14 Ops.CAST dtypes.int [13] dtypes.int
-15 Ops.INDEX dtypes.fp8e4m3fnuz [12, 14]
-16 Ops.CONST dtypes.weakint [] 2
-17 Ops.CAST dtypes.int [16] dtypes.int
-18 Ops.INDEX dtypes.fp8e4m3fnuz [12, 17]
-19 Ops.CONST dtypes.weakint [] 1
-20 Ops.CAST dtypes.int [19] dtypes.int
-21 Ops.INDEX dtypes.fp8e4m3fnuz [12, 20]
-22 Ops.CONST dtypes.weakint [] 0
-23 Ops.CAST dtypes.int [22] dtypes.int
-24 Ops.INDEX dtypes.fp8e4m3fnuz [12, 23]
-25 Ops.STACK dtypes.fp8e4m3fnuz [15, 18, 21, 24]
-26 Ops.STORE dtypes.void [5, 25]
-27 Ops.GROUP dtypes.void [26, 26, 26, 26]
-28 Ops.END dtypes.void [27, 3]
-29 Ops.SINK dtypes.void [28] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-30 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=16, device="CPU") tag=dtypes.fp8e4m3fnuz
-31 Ops.SHRINK dtypes.uchar [30, 4, 2] tag=dtypes.fp8e4m3fnuz
-32 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=16, device="CPU") tag=dtypes.fp8e4m3fnuz
-33 Ops.SHRINK dtypes.uchar [32, 10, 2] tag=dtypes.fp8e4m3fnuz
-34 Ops.LOAD dtypes.uchar [33]
-35 Ops.INDEX dtypes.uchar [34, 14]
-36 Ops.INDEX dtypes.uchar [34, 17]
-37 Ops.INDEX dtypes.uchar [34, 20]
-38 Ops.INDEX dtypes.uchar [34, 23]
-39 Ops.STACK dtypes.uchar [35, 36, 37, 38]
-40 Ops.STORE dtypes.void [31, 39]
-41 Ops.GROUP dtypes.void [40, 40, 40, 40]
-42 Ops.END dtypes.void [41, 3]
-43 Ops.SINK dtypes.void [42] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-44 Ops.SINK dtypes.void [29, 43]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=0, dtype=dtypes.fp8e4m3fnuz, device="CPU")
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.MUL dtypes.i32 [5, 3]
+7 Ops.SHRINK dtypes.fp8e4m3fnuz [2, 6, 4]
+8 Ops.PARAM dtypes.fp8e4m3fnuz [1] ParamArg(slot=1, dtype=dtypes.fp8e4m3fnuz, device="CPU")
+9 Ops.CONST dtypes.weakint [] -4
+10 Ops.MUL dtypes.i32 [5, 9]
+11 Ops.CONST dtypes.weakint [] 12
+12 Ops.ADD dtypes.i32 [10, 11]
+13 Ops.SHRINK dtypes.fp8e4m3fnuz [8, 12, 4]
+14 Ops.LOAD dtypes.fp8e4m3fnuz [13]
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.CAST dtypes.i32 [15] dtypes.i32
+17 Ops.INDEX dtypes.fp8e4m3fnuz [14, 16]
+18 Ops.CONST dtypes.weakint [] 2
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.fp8e4m3fnuz [14, 19]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.fp8e4m3fnuz [14, 22]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.fp8e4m3fnuz [14, 25]
+27 Ops.STACK dtypes.fp8e4m3fnuz [17, 20, 23, 26]
+28 Ops.STORE dtypes.void [7, 27]
+29 Ops.AFTER dtypes.void [0, 28]
+30 Ops.END dtypes.void [29, 5]
+31 Ops.SINK dtypes.void [30] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+32 Ops.PARAM dtypes.u8 [1] ParamArg(slot=0, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3fnuz
+33 Ops.SHRINK dtypes.u8 [32, 6, 4] tag=dtypes.fp8e4m3fnuz
+34 Ops.PARAM dtypes.u8 [1] ParamArg(slot=1, dtype=dtypes.u8, device="CPU") tag=dtypes.fp8e4m3fnuz
+35 Ops.SHRINK dtypes.u8 [34, 12, 4] tag=dtypes.fp8e4m3fnuz
+36 Ops.LOAD dtypes.u8 [35]
+37 Ops.INDEX dtypes.u8 [36, 16]
+38 Ops.INDEX dtypes.u8 [36, 19]
+39 Ops.INDEX dtypes.u8 [36, 22]
+40 Ops.INDEX dtypes.u8 [36, 25]
+41 Ops.STACK dtypes.u8 [37, 38, 39, 40]
+42 Ops.STORE dtypes.void [33, 41]
+43 Ops.AFTER dtypes.void [0, 42]
+44 Ops.END dtypes.void [43, 5]
+45 Ops.SINK dtypes.void [44] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+46 Ops.SINK dtypes.void [31, 45]
 

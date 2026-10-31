@@ -1,22 +1,22 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 dtype	weak	strong	least_upper_float	storage_fmt
 dtypes.void	dtypes.void	dtypes.void	raises KeyError	None
-dtypes.bool	dtypes.bool	dtypes.bool	dtypes.float	?
-dtypes.weakint	dtypes.weakint	dtypes.int	dtypes.weakfloat	None
-dtypes.char	dtypes.weakint	dtypes.char	dtypes.float	b
-dtypes.uchar	dtypes.weakint	dtypes.uchar	dtypes.float	B
-dtypes.short	dtypes.weakint	dtypes.short	dtypes.float	h
-dtypes.ushort	dtypes.weakint	dtypes.ushort	dtypes.float	H
-dtypes.int	dtypes.weakint	dtypes.int	dtypes.float	i
-dtypes.uint	dtypes.weakint	dtypes.uint	dtypes.float	I
-dtypes.long	dtypes.weakint	dtypes.long	dtypes.float	q
-dtypes.ulong	dtypes.weakint	dtypes.ulong	dtypes.float	Q
-dtypes.weakfloat	dtypes.weakfloat	dtypes.float	dtypes.weakfloat	None
+dtypes.bool	dtypes.bool	dtypes.bool	dtypes.f32	?
+dtypes.weakint	dtypes.weakint	dtypes.i32	dtypes.weakfloat	None
+dtypes.i8	dtypes.weakint	dtypes.i8	dtypes.f32	b
+dtypes.u8	dtypes.weakint	dtypes.u8	dtypes.f32	B
+dtypes.i16	dtypes.weakint	dtypes.i16	dtypes.f32	h
+dtypes.u16	dtypes.weakint	dtypes.u16	dtypes.f32	H
+dtypes.i32	dtypes.weakint	dtypes.i32	dtypes.f32	i
+dtypes.u32	dtypes.weakint	dtypes.u32	dtypes.f32	I
+dtypes.i64	dtypes.weakint	dtypes.i64	dtypes.f32	q
+dtypes.u64	dtypes.weakint	dtypes.u64	dtypes.f32	Q
+dtypes.weakfloat	dtypes.weakfloat	dtypes.f32	dtypes.weakfloat	None
 dtypes.fp8e4m3	dtypes.weakfloat	dtypes.fp8e4m3	dtypes.fp8e4m3	B
 dtypes.fp8e4m3fnuz	dtypes.weakfloat	dtypes.fp8e4m3fnuz	dtypes.fp8e4m3fnuz	B
 dtypes.fp8e5m2	dtypes.weakfloat	dtypes.fp8e5m2	dtypes.fp8e5m2	B
 dtypes.fp8e5m2fnuz	dtypes.weakfloat	dtypes.fp8e5m2fnuz	dtypes.fp8e5m2fnuz	B
-dtypes.half	dtypes.weakfloat	dtypes.half	dtypes.half	e
-dtypes.bfloat16	dtypes.weakfloat	dtypes.bfloat16	dtypes.bfloat16	H
-dtypes.float	dtypes.weakfloat	dtypes.float	dtypes.float	f
-dtypes.double	dtypes.weakfloat	dtypes.double	dtypes.double	d
+dtypes.f16	dtypes.weakfloat	dtypes.f16	dtypes.f16	e
+dtypes.bf16	dtypes.weakfloat	dtypes.bf16	dtypes.bf16	H
+dtypes.f32	dtypes.weakfloat	dtypes.f32	dtypes.f32	f
+dtypes.f64	dtypes.weakfloat	dtypes.f64	dtypes.f64	d

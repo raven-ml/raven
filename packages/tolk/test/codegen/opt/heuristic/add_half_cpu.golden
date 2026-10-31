@@ -1,21 +1,22 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.half [] ParamArg(slot=0, dtype=dtypes.half, size=4096, device="CPU")
-1 Ops.CONST dtypes.weakint [] 128
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.CONST dtypes.weakint [] 2
-4 Ops.MUL dtypes.weakint [2, 3]
-5 Ops.RANGE dtypes.weakint [3] (2, AxisType.UPCAST)
-6 Ops.ADD dtypes.weakint [4, 5]
-7 Ops.CONST dtypes.weakint [] 16
-8 Ops.MUL dtypes.weakint [6, 7]
-9 Ops.RANGE dtypes.weakint [7] (1, AxisType.UPCAST)
-10 Ops.ADD dtypes.weakint [8, 9]
-11 Ops.INDEX dtypes.half [0, 10]
-12 Ops.PARAM dtypes.half [] ParamArg(slot=1, dtype=dtypes.half, size=4096, device="CPU")
-13 Ops.INDEX dtypes.half [12, 10]
-14 Ops.CONST dtypes.weakfloat [] 1.0
-15 Ops.ADD dtypes.half [13, 14]
-16 Ops.STORE dtypes.void [11, 15]
-17 Ops.END dtypes.void [16, 2, 5, 9]
-18 Ops.SINK dtypes.void [17] KernelInfo(name="E_128_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)))) tag=1
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4096
+1 Ops.PARAM dtypes.f16 [0] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+2 Ops.CONST dtypes.weakint [] 128
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 2)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 16
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.UPCAST, 1)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.INDEX dtypes.f16 [1, 11]
+13 Ops.PARAM dtypes.f16 [0] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+14 Ops.INDEX dtypes.f16 [13, 11]
+15 Ops.CONST dtypes.weakfloat [] 1.0
+16 Ops.ADD dtypes.f16 [14, 15]
+17 Ops.STORE dtypes.void [12, 16]
+18 Ops.END dtypes.void [17, 3, 6, 10]
+19 Ops.SINK dtypes.void [18] KernelInfo(name="E_128_16_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)))) tag=1
 

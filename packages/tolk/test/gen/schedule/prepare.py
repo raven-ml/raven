@@ -280,7 +280,7 @@ def param(slot, *shape, dtype=dtypes.float, device="CPU"):
 
 def scratch(n, device="CPU"):
     # call-local storage, in a slot apart from the parameters'
-    return UOp(Ops.ALLOC, arg=ParamArg(10, dtypes.float, n, device=device))
+    return UOp(Ops.ALLOC, src=(UOp.const(n),), arg=ParamArg(10, dtypes.float, device=device))
 
 
 def alias_of_placed():

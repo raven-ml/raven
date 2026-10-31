@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True
@@ -95,7 +95,7 @@ a cast of two sources	None	None	None	None	None
 a range	True	True	False	True	False
 a range with a nested axis	True	True	False	True	False
 a global int32 range	True	True	True	True	False
-a range with extra sources	True	True	False	True	True
+a range with extra sources	None	None	False	False	True
 a loop header	True	True	True	True	False
 a device range	True	True	False	True	True
 an index by a weak integer	True	True	False	True	None
@@ -130,17 +130,17 @@ a local buffer	True	True	True	True	True
 a register buffer	True	True	True	True	True
 a global buffer	False	True	False	True	True
 a global buffer without a device	False	False	False	False	True
-a global buffer without a size	False	False	False	False	True
-a buffer on two devices	None	True	False	True	True
+a global buffer without a size	None	None	None	None	None
+a buffer on two devices	None	True	None	True	True
 a buffer on two devices without its range	False	False	False	False	False
-a buffer on two devices over three	None	False	False	False	False
-a buffer on two devices over a loop range	None	False	False	False	False
-a buffer on one device with a range	None	False	False	False	False
+a buffer on two devices over three	None	False	None	False	False
+a buffer on two devices over a loop range	None	False	None	False	False
+a buffer on one device with a range	None	False	None	False	False
 an alu buffer	False	False	False	False	False
 a global allocation	None	True	False	True	True
 a global allocation on a device	None	True	False	True	True
-a global allocation without a size	None	True	False	True	True
-an allocation on two devices	None	True	False	True	True
+a global allocation without a size	None	None	None	None	None
+an allocation on two devices	None	True	None	True	True
 an allocation on two devices without its range	None	False	False	False	False
 a local allocation	None	True	True	True	False
 a register allocation	None	True	True	True	False
@@ -148,7 +148,7 @@ a local allocation on a device	None	False	True	False	False
 an alu allocation	None	False	False	False	False
 binary data	True	True	True	True	None
 a group of stores	True	True	True	True	None
-a group of a value	None	None	None	None	None
+a group of a value	True	True	True	True	None
 a parameter after a store	True	True	True	True	True
 an index after a store	True	True	True	True	None
 a reshape after a store	True	True	True	True	True
@@ -157,7 +157,7 @@ an allocation after a store	True	True	True	True	True
 a staged value after a store	True	True	True	True	None
 an instruction after a store	True	True	True	True	None
 an after after a store	True	True	True	True	True
-a constant after a store	None	None	False	True	None
+a constant after a store	True	True	False	True	None
 a load after a store	None	None	None	True	None
 custom code	True	True	True	True	None
 inline custom code	True	True	True	True	None
@@ -259,7 +259,6 @@ a stack of a sum	True	True	False	True	None
 a cast of a constant	True	True	True	True	True
 an after of a stack of shards	None	None	None	True	True
 binary data without bytes	False	False	False	False	None
-a custom function without a name	False	False	False	False	None
 a call without call info	False	False	False	False	True
 a wmma without an argument	False	False	False	False	None
 a special without a name	None	False	False	False	None

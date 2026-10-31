@@ -1,22 +1,23 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.INDEX dtypes.float [0, 2]
-4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1, device="CPU")
-5 Ops.INDEX dtypes.float [4, 2]
-6 Ops.LOAD dtypes.float [5]
-7 Ops.CONST dtypes.weakfloat [] 2.0
-8 Ops.CAST dtypes.float [7] dtypes.float
-9 Ops.MUL dtypes.float [6, 8]
-10 Ops.STORE dtypes.void [3, 9]
-11 Ops.SINK dtypes.void [10] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
-12 Ops.SINK dtypes.void [10] KernelInfo(name="E") tag=1
-13 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 7, 8, 9, 10, 12]
-14 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
-15 Ops.BINARY dtypes.uchar [] b"\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
-16 Ops.PROGRAM dtypes.void [11, 13, 14, 15] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
-17 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1, device="CPU")
-18 Ops.CALL dtypes.void [16, 17, 0] CallInfo()
-19 Ops.LINEAR dtypes.void [18]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.f32 [1, 3]
+5 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+6 Ops.INDEX dtypes.f32 [5, 3]
+7 Ops.LOAD dtypes.f32 [6]
+8 Ops.CONST dtypes.weakfloat [] 2.0
+9 Ops.CAST dtypes.f32 [8] dtypes.f32
+10 Ops.MUL dtypes.f32 [7, 9]
+11 Ops.STORE dtypes.void [4, 10]
+12 Ops.SINK dtypes.void [11] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
+13 Ops.SINK dtypes.void [11] KernelInfo(name="E") tag=1
+14 Ops.LINEAR dtypes.void [0, 1, 5, 2, 3, 6, 7, 4, 8, 9, 10, 11, 13]
+15 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+16 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+17 Ops.PROGRAM dtypes.void [12, 14, 15, 16] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+18 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+19 Ops.CALL dtypes.void [17, 18, 1] CallInfo()
+20 Ops.LINEAR dtypes.void [19]
 

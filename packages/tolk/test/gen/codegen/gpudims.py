@@ -263,7 +263,7 @@ def add_gpudims_masks_a_store_by_its_missing_locals():
 
 @graph
 def add_gpudims_keeps_a_reduce_range():
-    g, r = rng(16, 0, AxisType.GLOBAL), rng(8, 1, AxisType.REDUCE)
+    g, r = rng(16, 0, AxisType.GLOBAL), rng(8, 1, AxisType.WEAK)
     loaded = UOp.param(1, dtypes.float, 128).index(g * 8 + r).load()
     return rewritten(UOp.param(0, dtypes.float, 16).index(g).store(loaded).end(g, r).sink(arg=KernelInfo()))
 
@@ -297,7 +297,7 @@ def add_gpudims_device_range_without_kernel():
 
 @table
 def add_gpudims_declines():
-    r = rng(4, 0, AxisType.REDUCE)
+    r = rng(4, 0, AxisType.WEAK)
     g = rng(32, 0, AxisType.GLOBAL)
     s = UOp.special(32, "gidx0")
     cases = {

@@ -1,375 +1,376 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.INDEX dtypes.float [0, 1]
-3 Ops.LOAD dtypes.float [2]
-4 Ops.SINK dtypes.void [3]
-5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
-6 Ops.INDEX dtypes.float [5, 1]
-7 Ops.STORE dtypes.void [6, 3]
-8 Ops.SINK dtypes.void [7] KernelInfo(name="k")
-9 Ops.SINK dtypes.void []
-10 Ops.NOOP dtypes.void []
-11 Ops.CONST dtypes.weakint [] 3
-12 Ops.CONST dtypes.weakfloat [] 1.5
-13 Ops.CONST dtypes.bool [] True
-14 Ops.CONST dtypes.bool [] Invalid
-15 Ops.CONST dtypes.weakint [] 1
-16 Ops.CONST dtypes.weakint [15] 2
-17 Ops.STACK dtypes.void []
-18 Ops.CAST dtypes.int [15] dtypes.int
-19 Ops.CONST dtypes.weakint [] 2
-20 Ops.CAST dtypes.int [19] dtypes.int
-21 Ops.STACK dtypes.int [18, 20]
-22 Ops.STACK dtypes.int [18, 19]
-23 Ops.CONST dtypes.weakfloat [] 2.0
-24 Ops.CAST dtypes.float [23] dtypes.float
-25 Ops.STACK dtypes.float [18, 24]
-26 Ops.CONST dtypes.weakfloat [] 1.0
-27 Ops.CAST dtypes.float [26] dtypes.float
-28 Ops.STACK dtypes.float [27, 14]
-29 Ops.STACK dtypes.float [27, 0]
-30 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-31 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-32 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-33 Ops.WHERE dtypes.float [30, 31, 32]
-34 Ops.WHERE dtypes.float [30, 31, 23]
-35 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-36 Ops.WHERE dtypes.float [30, 35, 32]
-37 Ops.WHERE dtypes.float [30, 31, 14]
-38 Ops.WHERE dtypes.float [14, 31, 32]
-39 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-40 Ops.CMPLT dtypes.bool [35, 39]
-41 Ops.CMPLT dtypes.bool [35, 32]
-42 Ops.CMPNE dtypes.bool [35, 39]
-43 Ops.CMPNE dtypes.bool [35, 32]
-44 Ops.CMPEQ dtypes.bool [35, 39]
-45 Ops.CMPEQ dtypes.bool [35, 32]
-46 Ops.CMPLT dtypes.bool [35, 11]
-47 Ops.CONST dtypes.weakfloat [] 3.0
-48 Ops.PARAM dtypes.half [] ParamArg(slot=-1, dtype=dtypes.half, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="h", addrspace=AddrSpace.ALU)
-49 Ops.CMPLT dtypes.bool [47, 48]
-50 Ops.CMPLT dtypes.bool [14, 31]
-51 Ops.CMPLT dtypes.bool [31, 14]
-52 Ops.AND dtypes.float [31, 32]
-53 Ops.AND dtypes.int [35, 39]
-54 Ops.OR dtypes.float [31, 32]
-55 Ops.OR dtypes.int [35, 39]
-56 Ops.XOR dtypes.float [31, 32]
-57 Ops.XOR dtypes.int [35, 39]
-58 Ops.AND dtypes.weakfloat [26, 23]
-59 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-60 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-61 Ops.AND dtypes.bool [59, 60]
-62 Ops.PARAM dtypes.char [] ParamArg(slot=-1, dtype=dtypes.char, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-63 Ops.AND dtypes.int [35, 62]
-64 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-65 Ops.SHL dtypes.int [35, 64]
-66 Ops.PARAM dtypes.char [] ParamArg(slot=-1, dtype=dtypes.char, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-67 Ops.PARAM dtypes.uint [] ParamArg(slot=-1, dtype=dtypes.uint, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-68 Ops.SHL dtypes.char [66, 67]
-69 Ops.SHL dtypes.char [66, 64]
-70 Ops.SHR dtypes.int [35, 64]
-71 Ops.SHR dtypes.char [66, 67]
-72 Ops.SHR dtypes.char [66, 64]
-73 Ops.SHL dtypes.char [66, 19]
-74 Ops.PARAM dtypes.ulong [] ParamArg(slot=-1, dtype=dtypes.ulong, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-75 Ops.PARAM dtypes.ushort [] ParamArg(slot=-1, dtype=dtypes.ushort, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-76 Ops.SHL dtypes.ulong [74, 75]
-77 Ops.SHL dtypes.bool [14, 64]
-78 Ops.CDIV dtypes.int [35, 39]
-79 Ops.CDIV dtypes.float [31, 32]
-80 Ops.CMOD dtypes.int [35, 39]
-81 Ops.CMOD dtypes.float [31, 32]
-82 Ops.FLOORDIV dtypes.int [35, 39]
-83 Ops.FLOORDIV dtypes.float [31, 32]
-84 Ops.FLOORMOD dtypes.int [35, 39]
-85 Ops.FLOORMOD dtypes.float [31, 32]
-86 Ops.CDIV dtypes.float [31, 14]
-87 Ops.CMOD dtypes.int [14, 39]
-88 Ops.CDIV dtypes.float [35, 32]
-89 Ops.ADD dtypes.int [35, 39]
-90 Ops.ADD dtypes.float [35, 32]
-91 Ops.ADD dtypes.float [48, 32]
-92 Ops.ADD dtypes.float [31, 26]
-93 Ops.ADD dtypes.int [35, 15]
-94 Ops.ADD dtypes.float [31, 14]
-95 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-96 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-97 Ops.ADD dtypes.weakint [95, 96]
-98 Ops.PARAM dtypes.double [] ParamArg(slot=-1, dtype=dtypes.double, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="d", addrspace=AddrSpace.ALU)
-99 Ops.PARAM dtypes.double [] ParamArg(slot=-1, dtype=dtypes.double, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="e", addrspace=AddrSpace.ALU)
-100 Ops.MUL dtypes.double [98, 99]
-101 Ops.PARAM dtypes.uchar [] ParamArg(slot=-1, dtype=dtypes.uchar, vmin_vmax=(0, 10), multiple_of=1, name="u", addrspace=AddrSpace.ALU)
-102 Ops.PARAM dtypes.char [] ParamArg(slot=-1, dtype=dtypes.char, vmin_vmax=(0, 10), multiple_of=1, name="s", addrspace=AddrSpace.ALU)
-103 Ops.MAX dtypes.short [101, 102]
-104 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=-1, dtype=dtypes.bfloat16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-105 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=-1, dtype=dtypes.bfloat16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-106 Ops.SUB dtypes.bfloat16 [104, 105]
-107 Ops.FDIV dtypes.float [35, 39]
-108 Ops.FDIV dtypes.float [31, 32]
-109 Ops.POW dtypes.float [31, 32]
-110 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-111 Ops.MULACC dtypes.float [31, 32, 110]
-112 Ops.MULACC dtypes.float [31, 32, 48]
-113 Ops.PARAM dtypes.ulong [] ParamArg(slot=-1, dtype=dtypes.ulong, vmin_vmax=(0, 10), multiple_of=1, name="k", addrspace=AddrSpace.ALU)
-114 Ops.PARAM dtypes.ulong [] ParamArg(slot=-1, dtype=dtypes.ulong, vmin_vmax=(0, 10), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-115 Ops.THREEFRY dtypes.ulong [113, 114]
-116 Ops.NEG dtypes.int [35]
-117 Ops.TRUNC dtypes.float [31]
-118 Ops.SIN dtypes.float [31]
-119 Ops.SIN dtypes.float [35]
-120 Ops.LOG2 dtypes.float [31]
-121 Ops.LOG2 dtypes.float [35]
-122 Ops.EXP2 dtypes.float [31]
-123 Ops.EXP2 dtypes.float [35]
-124 Ops.SQRT dtypes.float [31]
-125 Ops.SQRT dtypes.float [35]
-126 Ops.RECIPROCAL dtypes.float [31]
-127 Ops.RECIPROCAL dtypes.float [35]
-128 Ops.SIN dtypes.bool [14]
-129 Ops.SIN dtypes.weakfloat [19]
-130 Ops.CAST dtypes.float [35] dtypes.float
-131 Ops.BITCAST dtypes.int [31] dtypes.int
-132 Ops.CAST dtypes.int [31, 32] dtypes.int
-133 Ops.CONST dtypes.weakint [] 16
-134 Ops.RANGE dtypes.weakint [133] (0, AxisType.WEAK)
-135 Ops.RANGE dtypes.weakint [133] (1, 0, AxisType.REDUCE)
-136 Ops.CAST dtypes.int [133] dtypes.int
-137 Ops.RANGE dtypes.int [136] (1, AxisType.GLOBAL)
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.LOAD dtypes.f32 [3]
+5 Ops.SINK dtypes.void [4]
+6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+7 Ops.INDEX dtypes.f32 [6, 2]
+8 Ops.STORE dtypes.void [7, 4]
+9 Ops.SINK dtypes.void [8] KernelInfo(name="k")
+10 Ops.SINK dtypes.void []
+11 Ops.NOOP dtypes.void []
+12 Ops.CONST dtypes.weakint [] 3
+13 Ops.CONST dtypes.weakfloat [] 1.5
+14 Ops.CONST dtypes.bool [] True
+15 Ops.CONST dtypes.bool [] Invalid
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.CONST dtypes.weakint [16] 2
+18 Ops.STACK dtypes.void []
+19 Ops.CAST dtypes.i32 [16] dtypes.i32
+20 Ops.CONST dtypes.weakint [] 2
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.STACK dtypes.i32 [19, 21]
+23 Ops.STACK dtypes.i32 [19, 20]
+24 Ops.CONST dtypes.weakfloat [] 2.0
+25 Ops.CAST dtypes.f32 [24] dtypes.f32
+26 Ops.STACK dtypes.f32 [19, 25]
+27 Ops.CONST dtypes.weakfloat [] 1.0
+28 Ops.CAST dtypes.f32 [27] dtypes.f32
+29 Ops.STACK dtypes.f32 [28, 15]
+30 Ops.STACK dtypes.f32 [28, 1]
+31 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+32 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+33 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+34 Ops.WHERE dtypes.f32 [31, 32, 33]
+35 Ops.WHERE dtypes.f32 [31, 32, 24]
+36 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+37 Ops.WHERE dtypes.f32 [31, 36, 33]
+38 Ops.WHERE dtypes.f32 [31, 32, 15]
+39 Ops.WHERE dtypes.f32 [15, 32, 33]
+40 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+41 Ops.CMPLT dtypes.bool [36, 40]
+42 Ops.CMPLT dtypes.bool [36, 33]
+43 Ops.CMPNE dtypes.bool [36, 40]
+44 Ops.CMPNE dtypes.bool [36, 33]
+45 Ops.CMPEQ dtypes.bool [36, 40]
+46 Ops.CMPEQ dtypes.bool [36, 33]
+47 Ops.CMPLT dtypes.bool [36, 12]
+48 Ops.CONST dtypes.weakfloat [] 3.0
+49 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="h", addrspace=AddrSpace.ALU)
+50 Ops.CMPLT dtypes.bool [48, 49]
+51 Ops.CMPLT dtypes.bool [15, 32]
+52 Ops.CMPLT dtypes.bool [32, 15]
+53 Ops.AND dtypes.f32 [32, 33]
+54 Ops.AND dtypes.i32 [36, 40]
+55 Ops.OR dtypes.f32 [32, 33]
+56 Ops.OR dtypes.i32 [36, 40]
+57 Ops.XOR dtypes.f32 [32, 33]
+58 Ops.XOR dtypes.i32 [36, 40]
+59 Ops.AND dtypes.weakfloat [27, 24]
+60 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+61 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+62 Ops.AND dtypes.bool [60, 61]
+63 Ops.PARAM dtypes.i8 [18] ParamArg(slot=-1, dtype=dtypes.i8, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+64 Ops.AND dtypes.i32 [36, 63]
+65 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+66 Ops.SHL dtypes.i32 [36, 65]
+67 Ops.PARAM dtypes.i8 [18] ParamArg(slot=-1, dtype=dtypes.i8, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+68 Ops.PARAM dtypes.u32 [18] ParamArg(slot=-1, dtype=dtypes.u32, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+69 Ops.SHL dtypes.i8 [67, 68]
+70 Ops.SHL dtypes.i8 [67, 65]
+71 Ops.SHR dtypes.i32 [36, 65]
+72 Ops.SHR dtypes.i8 [67, 68]
+73 Ops.SHR dtypes.i8 [67, 65]
+74 Ops.SHL dtypes.i8 [67, 20]
+75 Ops.PARAM dtypes.u64 [18] ParamArg(slot=-1, dtype=dtypes.u64, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+76 Ops.PARAM dtypes.u16 [18] ParamArg(slot=-1, dtype=dtypes.u16, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+77 Ops.SHL dtypes.u64 [75, 76]
+78 Ops.SHL dtypes.bool [15, 65]
+79 Ops.CDIV dtypes.i32 [36, 40]
+80 Ops.CDIV dtypes.f32 [32, 33]
+81 Ops.CMOD dtypes.i32 [36, 40]
+82 Ops.CMOD dtypes.f32 [32, 33]
+83 Ops.FLOORDIV dtypes.i32 [36, 40]
+84 Ops.FLOORDIV dtypes.f32 [32, 33]
+85 Ops.FLOORMOD dtypes.i32 [36, 40]
+86 Ops.FLOORMOD dtypes.f32 [32, 33]
+87 Ops.CDIV dtypes.f32 [32, 15]
+88 Ops.CMOD dtypes.i32 [15, 40]
+89 Ops.CDIV dtypes.f32 [36, 33]
+90 Ops.ADD dtypes.i32 [36, 40]
+91 Ops.ADD dtypes.f32 [36, 33]
+92 Ops.ADD dtypes.f32 [49, 33]
+93 Ops.ADD dtypes.f32 [32, 27]
+94 Ops.ADD dtypes.i32 [36, 16]
+95 Ops.ADD dtypes.f32 [32, 15]
+96 Ops.PARAM dtypes.weakint [18] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+97 Ops.PARAM dtypes.weakint [18] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+98 Ops.ADD dtypes.weakint [96, 97]
+99 Ops.PARAM dtypes.f64 [18] ParamArg(slot=-1, dtype=dtypes.f64, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="d", addrspace=AddrSpace.ALU)
+100 Ops.PARAM dtypes.f64 [18] ParamArg(slot=-1, dtype=dtypes.f64, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="e", addrspace=AddrSpace.ALU)
+101 Ops.MUL dtypes.f64 [99, 100]
+102 Ops.PARAM dtypes.u8 [18] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(0, 10), multiple_of=1, name="u", addrspace=AddrSpace.ALU)
+103 Ops.PARAM dtypes.i8 [18] ParamArg(slot=-1, dtype=dtypes.i8, vmin_vmax=(0, 10), multiple_of=1, name="s", addrspace=AddrSpace.ALU)
+104 Ops.MAX dtypes.i16 [102, 103]
+105 Ops.PARAM dtypes.bf16 [18] ParamArg(slot=-1, dtype=dtypes.bf16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+106 Ops.PARAM dtypes.bf16 [18] ParamArg(slot=-1, dtype=dtypes.bf16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+107 Ops.SUB dtypes.bf16 [105, 106]
+108 Ops.FDIV dtypes.f32 [36, 40]
+109 Ops.FDIV dtypes.f32 [32, 33]
+110 Ops.POW dtypes.f32 [32, 33]
+111 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+112 Ops.MULACC dtypes.f32 [32, 33, 111]
+113 Ops.MULACC dtypes.f32 [32, 33, 49]
+114 Ops.PARAM dtypes.u64 [18] ParamArg(slot=-1, dtype=dtypes.u64, vmin_vmax=(0, 10), multiple_of=1, name="k", addrspace=AddrSpace.ALU)
+115 Ops.PARAM dtypes.u64 [18] ParamArg(slot=-1, dtype=dtypes.u64, vmin_vmax=(0, 10), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+116 Ops.THREEFRY dtypes.u64 [114, 115]
+117 Ops.NEG dtypes.i32 [36]
+118 Ops.TRUNC dtypes.f32 [32]
+119 Ops.SIN dtypes.f32 [32]
+120 Ops.SIN dtypes.f32 [36]
+121 Ops.LOG2 dtypes.f32 [32]
+122 Ops.LOG2 dtypes.f32 [36]
+123 Ops.EXP2 dtypes.f32 [32]
+124 Ops.EXP2 dtypes.f32 [36]
+125 Ops.SQRT dtypes.f32 [32]
+126 Ops.SQRT dtypes.f32 [36]
+127 Ops.RECIPROCAL dtypes.f32 [32]
+128 Ops.RECIPROCAL dtypes.f32 [36]
+129 Ops.SIN dtypes.bool [15]
+130 Ops.SIN dtypes.weakfloat [20]
+131 Ops.CAST dtypes.f32 [36] dtypes.f32
+132 Ops.BITCAST dtypes.i32 [32] dtypes.i32
+133 Ops.CAST dtypes.i32 [32, 33] dtypes.i32
+134 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+135 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1, 0)
+136 Ops.CAST dtypes.i32 [0] dtypes.i32
+137 Ops.RANGE dtypes.i32 [136] (AxisType.GLOBAL, 1)
 138 Ops.CONST dtypes.weakint [] 4
-139 Ops.RANGE dtypes.weakint [138, 134] (2, AxisType.LOOP)
-140 Ops.RANGE dtypes.void [10] (3, AxisType.WEAK)
-141 Ops.RANGE dtypes.weakint [19] (-1, AxisType.DEVICE)
-142 Ops.INDEX dtypes.float [0, 11]
-143 Ops.CAST dtypes.int [11] dtypes.int
-144 Ops.INDEX dtypes.float [0, 143]
+139 Ops.RANGE dtypes.weakint [138, 134] (AxisType.LOOP, 2)
+140 Ops.RANGE dtypes.void [11] (AxisType.WEAK, 3)
+141 Ops.RANGE dtypes.weakint [20] (AxisType.DEVICE, -1)
+142 Ops.INDEX dtypes.f32 [1, 12]
+143 Ops.CAST dtypes.i32 [12] dtypes.i32
+144 Ops.INDEX dtypes.f32 [1, 143]
 145 Ops.STACK dtypes.weakint [138, 138]
-146 Ops.RESHAPE dtypes.float [0, 145]
-147 Ops.INDEX dtypes.float [146, 15, 19]
-148 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="f", addrspace=AddrSpace.ALU)
-149 Ops.INDEX dtypes.float [0, 148]
-150 Ops.INDEX dtypes.float [0, 60]
-151 Ops.INDEX dtypes.float [0, 14]
+146 Ops.RESHAPE dtypes.f32 [1, 145]
+147 Ops.INDEX dtypes.f32 [146, 16, 20]
+148 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="f", addrspace=AddrSpace.ALU)
+149 Ops.INDEX dtypes.f32 [1, 148]
+150 Ops.INDEX dtypes.f32 [1, 61]
+151 Ops.INDEX dtypes.f32 [1, 15]
 152 Ops.CONST dtypes.weakint [] 8
 153 Ops.CMPLT dtypes.bool [134, 152]
-154 Ops.WHERE dtypes.weakint [153, 134, 14]
-155 Ops.INDEX dtypes.float [0, 154]
-156 Ops.STACK dtypes.float [27, 24]
-157 Ops.INDEX dtypes.float [156, 15]
-158 Ops.INDEX dtypes.float [0, 134]
+154 Ops.WHERE dtypes.weakint [153, 134, 15]
+155 Ops.INDEX dtypes.f32 [1, 154]
+156 Ops.STACK dtypes.f32 [28, 25]
+157 Ops.INDEX dtypes.f32 [156, 16]
+158 Ops.INDEX dtypes.f32 [1, 134]
 159 Ops.CONST dtypes.weakfloat [] 0.0
-160 Ops.CAST dtypes.float [159] dtypes.float
+160 Ops.CAST dtypes.f32 [159] dtypes.f32
 161 Ops.STORE dtypes.void [158, 160]
 162 Ops.END dtypes.void [161, 134]
-163 Ops.RANGE dtypes.weakint [138] (1, AxisType.WEAK)
+163 Ops.RANGE dtypes.weakint [138] (AxisType.WEAK, 1)
 164 Ops.END dtypes.void [161, 134, 163]
-165 Ops.CAST dtypes.int [138] dtypes.int
-166 Ops.RANGE dtypes.int [165] (1, AxisType.LOOP)
+165 Ops.CAST dtypes.i32 [138] dtypes.i32
+166 Ops.RANGE dtypes.i32 [165] (AxisType.LOOP, 1)
 167 Ops.END dtypes.void [161, 166]
-168 Ops.END dtypes.void [7, 138]
+168 Ops.END dtypes.void [8, 138]
 169 Ops.SPECIAL dtypes.weakint [138] "gidx0"
-170 Ops.END dtypes.void [7, 169]
-171 Ops.END dtypes.void [7, 140]
-172 Ops.END dtypes.float [3, 134]
-173 Ops.END dtypes.void [7]
-174 Ops.RANGE dtypes.void [10] (5, AxisType.WEAK)
-175 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="go", addrspace=AddrSpace.ALU)
-176 Ops.BACKEDGE dtypes.void [7, 174, 175]
-177 Ops.BACKEDGE dtypes.void [7, 174, 14]
-178 Ops.PARAM dtypes.bool [] ParamArg(slot=2, dtype=dtypes.bool, size=4)
-179 Ops.BACKEDGE dtypes.void [7, 174, 178]
-180 Ops.BACKEDGE dtypes.void [7, 134, 175]
-181 Ops.BACKEDGE dtypes.void [3, 174, 175]
-182 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int)
-183 Ops.PARAM dtypes.half [] ParamArg(slot=4, dtype=dtypes.half, size=8, name="w", device="CPU")
-184 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-185 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), name="n", addrspace=AddrSpace.ALU, device="CPU")
-186 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU, val=3)
-187 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, addrspace=AddrSpace.LOCAL)
-188 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, addrspace=AddrSpace.REG)
-189 Ops.BUFFER dtypes.float [] ParamArg(slot=100, dtype=dtypes.float, size=16, device="CPU")
-190 Ops.BUFFER dtypes.float [] ParamArg(slot=100, dtype=dtypes.float, size=16)
-191 Ops.BUFFER dtypes.float [] ParamArg(slot=100, dtype=dtypes.float, device="CPU")
-192 Ops.BUFFER dtypes.float [141] ParamArg(slot=101, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-193 Ops.BUFFER dtypes.float [] ParamArg(slot=101, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-194 Ops.RANGE dtypes.weakint [11] (-1, AxisType.DEVICE)
-195 Ops.BUFFER dtypes.float [194] ParamArg(slot=101, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-196 Ops.RANGE dtypes.weakint [19] (-1, AxisType.LOOP)
-197 Ops.BUFFER dtypes.float [196] ParamArg(slot=101, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-198 Ops.RANGE dtypes.weakint [15] (-1, AxisType.DEVICE)
-199 Ops.BUFFER dtypes.float [198] ParamArg(slot=100, dtype=dtypes.float, size=16, device="CPU")
-200 Ops.BUFFER dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=4, addrspace=AddrSpace.ALU)
-201 Ops.ALLOC dtypes.float [] ParamArg(slot=200, dtype=dtypes.float, size=16)
-202 Ops.ALLOC dtypes.float [] ParamArg(slot=201, dtype=dtypes.float, size=16, device="CPU")
-203 Ops.ALLOC dtypes.float [] ParamArg(slot=202, dtype=dtypes.float)
-204 Ops.ALLOC dtypes.float [141] ParamArg(slot=203, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-205 Ops.ALLOC dtypes.float [] ParamArg(slot=204, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-206 Ops.ALLOC dtypes.float [] ParamArg(slot=205, dtype=dtypes.float, size=16, addrspace=AddrSpace.LOCAL)
-207 Ops.ALLOC dtypes.float [] ParamArg(slot=206, dtype=dtypes.float, size=16, addrspace=AddrSpace.REG)
-208 Ops.ALLOC dtypes.float [] ParamArg(slot=207, dtype=dtypes.float, size=16, addrspace=AddrSpace.LOCAL, device="CPU")
-209 Ops.ALLOC dtypes.float [] ParamArg(slot=208, dtype=dtypes.float, size=16, addrspace=AddrSpace.ALU)
-210 Ops.BINARY dtypes.uchar [] b"\x7fELF"
-211 Ops.INDEX dtypes.float [0, 15]
-212 Ops.STORE dtypes.void [211, 27]
-213 Ops.GROUP dtypes.void [7, 212]
-214 Ops.GROUP dtypes.void [7, 3]
-215 Ops.AFTER dtypes.float [0, 7]
-216 Ops.AFTER dtypes.float [2, 7]
-217 Ops.AFTER dtypes.float [146, 7]
-218 Ops.BITCAST dtypes.int [0] dtypes.int
-219 Ops.AFTER dtypes.int [218, 7]
-220 Ops.ALLOC dtypes.float [] ParamArg(slot=209, dtype=dtypes.float, size=16)
-221 Ops.AFTER dtypes.float [220, 7]
-222 Ops.STAGE dtypes.float [3]
-223 Ops.AFTER dtypes.float [222, 7]
-224 Ops.INS dtypes.void [] ("s_waitcnt", dtypes.void)
-225 Ops.AFTER dtypes.void [224, 7]
-226 Ops.AFTER dtypes.float [215, 7]
-227 Ops.AFTER dtypes.weakint [15, 7]
-228 Ops.AFTER dtypes.float [3, 7]
-229 Ops.CUSTOM dtypes.float [3] ("{0}+1", dtypes.float)
-230 Ops.CUSTOMI dtypes.float [3] ("({0}*2)", dtypes.float)
-231 Ops.CUSTOM dtypes.void [] ("__syncthreads();", dtypes.void)
-232 Ops.CUSTOM_FUNCTION dtypes.void [0] "fn"
-233 Ops.CUSTOM_FUNCTION dtypes.void [] "fn"
-234 Ops.SINK dtypes.void [7]
-235 Ops.CALL dtypes.void [234, 0, 5] CallInfo()
-236 Ops.CALL dtypes.void [7, 0, 5] CallInfo()
-237 Ops.CALL dtypes.int [232, 0] CallInfo(dtype=dtypes.int)
-238 Ops.CALL dtypes.void [15, 0] CallInfo()
-239 Ops.CALL dtypes.float [3] CallInfo(dtype=dtypes.float)
-240 Ops.BARRIER dtypes.void [7]
-241 Ops.INS dtypes.float [3] ("v_mov", dtypes.float)
-242 Ops.PARAM dtypes.half [] ParamArg(slot=-1, dtype=dtypes.half, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-243 Ops.PARAM dtypes.half [] ParamArg(slot=-1, dtype=dtypes.half, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-244 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="acc", addrspace=AddrSpace.ALU)
-245 Ops.WMMA dtypes.float [242, 243, 244] ((8, 8, 8), dtypes.half, 32, None)
-246 Ops.CAST dtypes.int [2] dtypes.int
-247 Ops.LOAD dtypes.int [246]
-248 Ops.CAST dtypes.long [246] dtypes.long
-249 Ops.LOAD dtypes.long [248]
-250 Ops.BITCAST dtypes.int [2] dtypes.int
-251 Ops.LOAD dtypes.int [250]
-252 Ops.SHRINK dtypes.float [0, 1, 138]
-253 Ops.LOAD dtypes.float [252]
-254 Ops.LOAD dtypes.float [0]
-255 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
-256 Ops.LOAD dtypes.float [2, 160, 255]
-257 Ops.LOAD dtypes.float [2, 159, 255]
-258 Ops.CAST dtypes.int [1] dtypes.int
-259 Ops.LOAD dtypes.float [2, 258, 255]
-260 Ops.LOAD dtypes.float [151, 14, 255]
-261 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
-262 Ops.LOAD dtypes.float [2, 160, 261]
-263 Ops.CAST dtypes.int [6] dtypes.int
-264 Ops.STORE dtypes.void [263, 18]
-265 Ops.SHRINK dtypes.float [5, 1, 138]
-266 Ops.STORE dtypes.void [265, 27]
-267 Ops.STORE dtypes.void [6, 3, 255]
-268 Ops.STORE dtypes.void [5, 3]
-269 Ops.ALLOC dtypes.float [] ParamArg(slot=210, dtype=dtypes.float, size=16)
-270 Ops.STORE dtypes.void [269, 3]
-271 Ops.STORE dtypes.void [189, 3]
-272 Ops.STORE dtypes.void [222, 3]
-273 Ops.RESHAPE dtypes.float [5, 145]
-274 Ops.STORE dtypes.void [273, 3]
-275 Ops.AFTER dtypes.float [5, 7]
-276 Ops.STORE dtypes.void [275, 3]
-277 Ops.AFTER dtypes.float [6, 7]
-278 Ops.STORE dtypes.void [277, 3]
-279 Ops.STORE dtypes.void [15, 3]
-280 Ops.STORE dtypes.void [3, 3]
-281 Ops.SPECIAL dtypes.weakint [152] "gidx0"
-282 Ops.CAST dtypes.int [152] dtypes.int
-283 Ops.SPECIAL dtypes.int [282] "lidx0"
-284 Ops.STACK dtypes.weakint [15, 133]
-285 Ops.RESHAPE dtypes.float [0, 284]
-286 Ops.STACK dtypes.weakint [138, 133]
-287 Ops.EXPAND dtypes.float [285, 286]
-288 Ops.STACK dtypes.weakint [15]
-289 Ops.PAD dtypes.float [0, 288, 288]
-290 Ops.STACK dtypes.weakint [15, 15]
-291 Ops.PAD dtypes.float [146, 290, 288]
-292 Ops.STACK dtypes.weakint [19]
-293 Ops.CONST dtypes.weakint [] 10
-294 Ops.STACK dtypes.weakint [293]
-295 Ops.SHRINK dtypes.float [0, 292, 294]
-296 Ops.PERMUTE dtypes.float [146] (1, 0)
-297 Ops.FLIP dtypes.float [146] (True, False)
-298 Ops.REDUCE dtypes.float [0] (Ops.ADD, 1)
-299 Ops.REDUCE dtypes.float [3, 134, 163] (Ops.MAX, 0)
-300 Ops.RANGE dtypes.int [165] (1, AxisType.REDUCE)
-301 Ops.REDUCE dtypes.float [3, 300] (Ops.ADD, 0)
-302 Ops.CAST dtypes.uint [138] dtypes.uint
-303 Ops.RANGE dtypes.uint [302] (1, AxisType.WEAK)
-304 Ops.REDUCE dtypes.float [3, 303] (Ops.ADD, 0)
-305 Ops.REDUCE dtypes.float [0] (Ops.SIN, 1)
-306 Ops.COPY dtypes.float [0] "CPU"
-307 Ops.COPY dtypes.float [0, 141] ("CPU:0", "CPU:1")
-308 Ops.COPY dtypes.float [0] ("CPU:0", "CPU:1")
-309 Ops.COPY dtypes.float [0] "DISK:/tmp/x"
-310 Ops.PARAM dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
-311 Ops.ALLREDUCE dtypes.float [310] (Ops.ADD, ("CPU:0", "CPU:1"))
-312 Ops.ALLREDUCE dtypes.float [310] (Ops.SIN, ("CPU:0", "CPU:1"))
-313 Ops.BITCAST dtypes.uint [310] dtypes.uint
-314 Ops.ALLREDUCE dtypes.uint [313] (Ops.OR, ("CPU:0", "CPU:1"))
-315 Ops.UNSHARD dtypes.float [310, 141] (0,)
-316 Ops.MUL dtypes.weakint [141, 19]
-317 Ops.UNSHARD dtypes.float [310, 316] (0,)
-318 Ops.UNSHARD dtypes.float [310] (0,)
-319 Ops.RANGE dtypes.int [20] (-1, AxisType.DEVICE)
-320 Ops.UNSHARD dtypes.float [310, 319] (0,)
-321 Ops.MSELECT dtypes.float [310] 1
-322 Ops.MSELECT dtypes.float [310] 2
-323 Ops.PARAM dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=16, device="CPU")
-324 Ops.MSELECT dtypes.float [323] 0
-325 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=16, device="CPU:0")
-326 Ops.PARAM dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=16, device="CPU:1")
-327 Ops.MSTACK dtypes.float [325, 326]
-328 Ops.MSTACK dtypes.float [310, 310]
-329 Ops.MSTACK dtypes.float [0, 0]
-330 Ops.MSTACK dtypes.float [0, 5]
-331 Ops.DETACH dtypes.float [0]
-332 Ops.CONTIGUOUS_BACKWARD dtypes.float [0]
-333 Ops.STAGE dtypes.float [3, 134]
-334 Ops.LINEAR dtypes.void [7]
-335 Ops.SOURCE dtypes.void [] "void k(){}"
-336 Ops.PROGRAM dtypes.void [234]
-337 Ops.PROGRAM dtypes.void [234, 334]
-338 Ops.PROGRAM dtypes.void [234, 334, 335]
-339 Ops.BINARY dtypes.uchar [] b"\x00"
-340 Ops.PROGRAM dtypes.void [234, 334, 335, 339]
-341 Ops.PROGRAM dtypes.void [334]
-342 Ops.PROGRAM dtypes.void [0]
-343 Ops.AFTER dtypes.float [189, 7]
-344 Ops.PROGRAM dtypes.void [343]
-345 Ops.SHRINK dtypes.float [0, 258, 165]
-346 Ops.SHRINK dtypes.int [218, 258, 165]
-347 Ops.SHRINK dtypes.float [0, 258, 64]
-348 Ops.SHRINK dtypes.float [3, 258, 165]
-349 Ops.IF dtypes.void [255, 2]
-350 Ops.CAST dtypes.int [3] dtypes.int
-351 Ops.IF dtypes.void [255, 350]
-352 Ops.IF dtypes.void [255, 345]
-353 Ops.IF dtypes.void [255, 3]
-354 Ops.IF dtypes.void [261, 2]
-355 Ops.ENDIF dtypes.void [349]
-356 Ops.ENDIF dtypes.void [7]
-357 Ops.STACK dtypes.float [0, 5]
-358 Ops.ADD dtypes.weakint [15, 95]
-359 Ops.STACK dtypes.weakint [358]
-360 Ops.CAST dtypes.long [15] dtypes.long
-361 Ops.AFTER dtypes.float [327, 7]
-362 Ops.BINARY dtypes.uchar []
-363 Ops.CUSTOM_FUNCTION dtypes.void [0]
-364 Ops.CALL dtypes.void [234, 0, 5]
-365 Ops.WMMA dtypes.float [242, 243, 244]
-366 Ops.SPECIAL dtypes.weakint [152]
-367 Ops.SPECIAL dtypes.int [282]
-368 Ops.PERMUTE dtypes.float [146]
-369 Ops.REDUCE dtypes.float [0]
-370 Ops.COPY dtypes.float [0]
-371 Ops.ALLREDUCE dtypes.float [310]
-372 Ops.SINK dtypes.void [4, 8, 9, 10, 11, 12, 13, 14, 16, 17, 21, 22, 25, 28, 29, 33, 34, 36, 37, 38, 40, 41, 42, 43, 44, 45, 46, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 63, 65, 68, 69, 70, 71, 72, 73, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 97, 100, 103, 106, 107, 108, 109, 111, 112, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 134, 135, 137, 139, 140, 141, 142, 144, 147, 149, 150, 151, 155, 157, 162, 164, 167, 168, 170, 171, 172, 173, 176, 177, 179, 180, 181, 0, 182, 183, 184, 64, 185, 186, 187, 188, 189, 190, 191, 192, 193, 195, 197, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 213, 214, 215, 216, 217, 219, 221, 223, 225, 226, 227, 228, 229, 230, 231, 232, 233, 235, 236, 237, 238, 239, 240, 241, 245, 3, 247, 249, 251, 253, 254, 256, 257, 259, 260, 262, 7, 264, 266, 267, 268, 270, 271, 272, 274, 276, 278, 279, 280, 281, 283, 146, 287, 289, 291, 295, 296, 297, 298, 299, 301, 304, 305, 306, 307, 308, 309, 311, 312, 314, 315, 317, 318, 320, 321, 322, 324, 327, 328, 329, 330, 331, 332, 222, 333, 334, 335, 336, 337, 338, 340, 341, 342, 344, 93, 18, 345, 346, 347, 348, 349, 351, 352, 353, 354, 355, 356, 357, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371]
+170 Ops.END dtypes.void [8, 169]
+171 Ops.END dtypes.void [8, 140]
+172 Ops.END dtypes.f32 [4, 134]
+173 Ops.END dtypes.void [8]
+174 Ops.RANGE dtypes.void [11] (AxisType.WEAK, 5)
+175 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="go", addrspace=AddrSpace.ALU)
+176 Ops.BACKEDGE dtypes.void [8, 174, 175]
+177 Ops.BACKEDGE dtypes.void [8, 174, 15]
+178 Ops.PARAM dtypes.bool [138] ParamArg(slot=2, dtype=dtypes.bool)
+179 Ops.BACKEDGE dtypes.void [8, 174, 178]
+180 Ops.BACKEDGE dtypes.void [8, 134, 175]
+181 Ops.BACKEDGE dtypes.void [4, 174, 175]
+182 Ops.PARAM dtypes.i32 [18] ParamArg(slot=3, dtype=dtypes.i32)
+183 Ops.PARAM dtypes.f16 [152] ParamArg(slot=4, dtype=dtypes.f16, name="w", device="CPU")
+184 Ops.PARAM dtypes.weakint [18] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+185 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), name="n", addrspace=AddrSpace.ALU, device="CPU")
+186 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="n", addrspace=AddrSpace.ALU, val=3)
+187 Ops.BUFFER dtypes.f32 [152] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+188 Ops.BUFFER dtypes.f32 [138] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+189 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=100, dtype=dtypes.f32, device="CPU")
+190 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=100, dtype=dtypes.f32)
+191 Ops.BUFFER dtypes.f32 [] ParamArg(slot=100, dtype=dtypes.f32, device="CPU")
+192 Ops.RANGE dtypes.weakint [20] (AxisType.DEVICE, 0)
+193 Ops.BUFFER dtypes.f32 [0, 192] ParamArg(slot=101, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+194 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=101, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+195 Ops.RANGE dtypes.weakint [12] (AxisType.DEVICE, -1)
+196 Ops.BUFFER dtypes.f32 [0, 195] ParamArg(slot=101, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+197 Ops.RANGE dtypes.weakint [20] (AxisType.LOOP, -1)
+198 Ops.BUFFER dtypes.f32 [0, 197] ParamArg(slot=101, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+199 Ops.RANGE dtypes.weakint [16] (AxisType.DEVICE, -1)
+200 Ops.BUFFER dtypes.f32 [0, 199] ParamArg(slot=100, dtype=dtypes.f32, device="CPU")
+201 Ops.BUFFER dtypes.f32 [138] ParamArg(slot=5, dtype=dtypes.f32, addrspace=AddrSpace.ALU)
+202 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=200, dtype=dtypes.f32)
+203 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=201, dtype=dtypes.f32, device="CPU")
+204 Ops.ALLOC dtypes.f32 [] ParamArg(slot=202, dtype=dtypes.f32)
+205 Ops.ALLOC dtypes.f32 [0, 192] ParamArg(slot=203, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+206 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=204, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+207 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=205, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+208 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=206, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+209 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=207, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL, device="CPU")
+210 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=208, dtype=dtypes.f32, addrspace=AddrSpace.ALU)
+211 Ops.BINARY dtypes.u8 [] b"\x7fELF"
+212 Ops.INDEX dtypes.f32 [1, 16]
+213 Ops.STORE dtypes.void [212, 28]
+214 Ops.AFTER dtypes.void [18, 8, 213]
+215 Ops.AFTER dtypes.void [18, 8, 4]
+216 Ops.AFTER dtypes.f32 [1, 8]
+217 Ops.AFTER dtypes.f32 [3, 8]
+218 Ops.AFTER dtypes.f32 [146, 8]
+219 Ops.BITCAST dtypes.i32 [1] dtypes.i32
+220 Ops.AFTER dtypes.i32 [219, 8]
+221 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=209, dtype=dtypes.f32)
+222 Ops.AFTER dtypes.f32 [221, 8]
+223 Ops.STAGE dtypes.f32 [4]
+224 Ops.AFTER dtypes.f32 [223, 8]
+225 Ops.INS dtypes.void [] ("s_waitcnt", dtypes.void)
+226 Ops.AFTER dtypes.void [225, 8]
+227 Ops.AFTER dtypes.f32 [216, 8]
+228 Ops.AFTER dtypes.weakint [16, 8]
+229 Ops.AFTER dtypes.f32 [4, 8]
+230 Ops.CUSTOM dtypes.f32 [4] ("{0}+1", dtypes.f32)
+231 Ops.CUSTOMI dtypes.f32 [4] ("({0}*2)", dtypes.f32)
+232 Ops.CUSTOM dtypes.void [] ("__syncthreads();", dtypes.void)
+233 Ops.CUSTOM_FUNCTION dtypes.void [1] CustomFunction(name="fn")
+234 Ops.CUSTOM_FUNCTION dtypes.void [] CustomFunction(name="fn")
+235 Ops.SINK dtypes.void [8]
+236 Ops.CALL dtypes.void [235, 1, 6] CallInfo()
+237 Ops.CALL dtypes.void [8, 1, 6] CallInfo()
+238 Ops.CUSTOM_FUNCTION dtypes.i32 [1] CustomFunction(name="fn", dtype=dtypes.i32)
+239 Ops.CALL dtypes.i32 [238, 1] CallInfo()
+240 Ops.CALL dtypes.weakint [16, 1] CallInfo()
+241 Ops.CALL dtypes.f32 [4] CallInfo()
+242 Ops.BARRIER dtypes.void [8]
+243 Ops.INS dtypes.f32 [4] ("v_mov", dtypes.f32)
+244 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+245 Ops.PARAM dtypes.f16 [18] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+246 Ops.PARAM dtypes.f32 [18] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="acc", addrspace=AddrSpace.ALU)
+247 Ops.WMMA dtypes.f32 [244, 245, 246] ((8, 8, 8), dtypes.f16, 32, None)
+248 Ops.CAST dtypes.i32 [3] dtypes.i32
+249 Ops.LOAD dtypes.i32 [248]
+250 Ops.CAST dtypes.i64 [248] dtypes.i64
+251 Ops.LOAD dtypes.i64 [250]
+252 Ops.BITCAST dtypes.i32 [3] dtypes.i32
+253 Ops.LOAD dtypes.i32 [252]
+254 Ops.SHRINK dtypes.f32 [1, 2, 138]
+255 Ops.LOAD dtypes.f32 [254]
+256 Ops.LOAD dtypes.f32 [1]
+257 Ops.PARAM dtypes.bool [18] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
+258 Ops.LOAD dtypes.f32 [3, 160, 257]
+259 Ops.LOAD dtypes.f32 [3, 159, 257]
+260 Ops.CAST dtypes.i32 [2] dtypes.i32
+261 Ops.LOAD dtypes.f32 [3, 260, 257]
+262 Ops.LOAD dtypes.f32 [151, 15, 257]
+263 Ops.PARAM dtypes.i32 [18] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
+264 Ops.LOAD dtypes.f32 [3, 160, 263]
+265 Ops.CAST dtypes.i32 [7] dtypes.i32
+266 Ops.STORE dtypes.void [265, 19]
+267 Ops.SHRINK dtypes.f32 [6, 2, 138]
+268 Ops.STORE dtypes.void [267, 28]
+269 Ops.STORE dtypes.void [7, 4, 257]
+270 Ops.STORE dtypes.void [6, 4]
+271 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=210, dtype=dtypes.f32)
+272 Ops.STORE dtypes.void [271, 4]
+273 Ops.STORE dtypes.void [189, 4]
+274 Ops.STORE dtypes.void [223, 4]
+275 Ops.RESHAPE dtypes.f32 [6, 145]
+276 Ops.STORE dtypes.void [275, 4]
+277 Ops.AFTER dtypes.f32 [6, 8]
+278 Ops.STORE dtypes.void [277, 4]
+279 Ops.AFTER dtypes.f32 [7, 8]
+280 Ops.STORE dtypes.void [279, 4]
+281 Ops.STORE dtypes.void [16, 4]
+282 Ops.STORE dtypes.void [4, 4]
+283 Ops.SPECIAL dtypes.weakint [152] "gidx0"
+284 Ops.CAST dtypes.i32 [152] dtypes.i32
+285 Ops.SPECIAL dtypes.i32 [284] "lidx0"
+286 Ops.STACK dtypes.weakint [16, 0]
+287 Ops.RESHAPE dtypes.f32 [1, 286]
+288 Ops.STACK dtypes.weakint [138, 0]
+289 Ops.EXPAND dtypes.f32 [287, 288]
+290 Ops.STACK dtypes.weakint [16]
+291 Ops.PAD dtypes.f32 [1, 290, 290]
+292 Ops.STACK dtypes.weakint [16, 16]
+293 Ops.PAD dtypes.f32 [146, 292, 290]
+294 Ops.STACK dtypes.weakint [20]
+295 Ops.CONST dtypes.weakint [] 10
+296 Ops.STACK dtypes.weakint [295]
+297 Ops.SHRINK dtypes.f32 [1, 294, 296]
+298 Ops.PERMUTE dtypes.f32 [146] (1, 0)
+299 Ops.FLIP dtypes.f32 [146] (True, False)
+300 Ops.REDUCE dtypes.f32 [1] (Ops.ADD, 1)
+301 Ops.REDUCE dtypes.f32 [4, 134, 163] (Ops.MAX, 0)
+302 Ops.RANGE dtypes.i32 [165] (AxisType.WEAK, 1)
+303 Ops.REDUCE dtypes.f32 [4, 302] (Ops.ADD, 0)
+304 Ops.CAST dtypes.u32 [138] dtypes.u32
+305 Ops.RANGE dtypes.u32 [304] (AxisType.WEAK, 1)
+306 Ops.REDUCE dtypes.f32 [4, 305] (Ops.ADD, 0)
+307 Ops.REDUCE dtypes.f32 [1] (Ops.SIN, 1)
+308 Ops.COPY dtypes.f32 [1] "CPU"
+309 Ops.COPY dtypes.f32 [1, 192] ("CPU:0", "CPU:1")
+310 Ops.COPY dtypes.f32 [1] ("CPU:0", "CPU:1")
+311 Ops.COPY dtypes.f32 [1] "DISK:/tmp/x"
+312 Ops.PARAM dtypes.f32 [0] ParamArg(slot=6, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+313 Ops.ALLREDUCE dtypes.f32 [312] (Ops.ADD, ("CPU:0", "CPU:1"))
+314 Ops.ALLREDUCE dtypes.f32 [312] (Ops.SIN, ("CPU:0", "CPU:1"))
+315 Ops.BITCAST dtypes.u32 [312] dtypes.u32
+316 Ops.ALLREDUCE dtypes.u32 [315] (Ops.OR, ("CPU:0", "CPU:1"))
+317 Ops.UNSHARD dtypes.f32 [312, 192] (0,)
+318 Ops.MUL dtypes.weakint [141, 20]
+319 Ops.UNSHARD dtypes.f32 [312, 318] (0,)
+320 Ops.UNSHARD dtypes.f32 [312] (0,)
+321 Ops.RANGE dtypes.i32 [21] (AxisType.DEVICE, -1)
+322 Ops.UNSHARD dtypes.f32 [312, 321] (0,)
+323 Ops.MSELECT dtypes.f32 [312] 1
+324 Ops.MSELECT dtypes.f32 [312] 2
+325 Ops.PARAM dtypes.f32 [0] ParamArg(slot=7, dtype=dtypes.f32, device="CPU")
+326 Ops.MSELECT dtypes.f32 [325] 0
+327 Ops.PARAM dtypes.f32 [0] ParamArg(slot=8, dtype=dtypes.f32, device="CPU:0")
+328 Ops.PARAM dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32, device="CPU:1")
+329 Ops.MSTACK dtypes.f32 [327, 328]
+330 Ops.MSTACK dtypes.f32 [312, 312]
+331 Ops.MSTACK dtypes.f32 [1, 1]
+332 Ops.MSTACK dtypes.f32 [1, 6]
+333 Ops.DETACH dtypes.f32 [1]
+334 Ops.CONTIGUOUS_BACKWARD dtypes.f32 [1]
+335 Ops.STAGE dtypes.f32 [4, 134]
+336 Ops.LINEAR dtypes.void [8]
+337 Ops.SOURCE dtypes.void [] "void k(){}"
+338 Ops.PROGRAM dtypes.void [235]
+339 Ops.PROGRAM dtypes.void [235, 336]
+340 Ops.PROGRAM dtypes.void [235, 336, 337]
+341 Ops.BINARY dtypes.u8 [] b"\x00"
+342 Ops.PROGRAM dtypes.void [235, 336, 337, 341]
+343 Ops.PROGRAM dtypes.void [336]
+344 Ops.PROGRAM dtypes.void [1]
+345 Ops.AFTER dtypes.f32 [189, 8]
+346 Ops.PROGRAM dtypes.void [345]
+347 Ops.SHRINK dtypes.f32 [1, 260, 165]
+348 Ops.SHRINK dtypes.i32 [219, 260, 165]
+349 Ops.SHRINK dtypes.f32 [1, 260, 65]
+350 Ops.SHRINK dtypes.f32 [4, 260, 165]
+351 Ops.IF dtypes.void [257, 3]
+352 Ops.CAST dtypes.i32 [4] dtypes.i32
+353 Ops.IF dtypes.void [257, 352]
+354 Ops.IF dtypes.void [257, 347]
+355 Ops.IF dtypes.void [257, 4]
+356 Ops.IF dtypes.void [263, 3]
+357 Ops.ENDIF dtypes.void [351]
+358 Ops.ENDIF dtypes.void [8]
+359 Ops.STACK dtypes.f32 [1, 6]
+360 Ops.ADD dtypes.weakint [16, 96]
+361 Ops.STACK dtypes.weakint [360]
+362 Ops.CAST dtypes.i64 [16] dtypes.i64
+363 Ops.AFTER dtypes.f32 [329, 8]
+364 Ops.BINARY dtypes.u8 []
+365 Ops.CALL dtypes.void [235, 1, 6]
+366 Ops.WMMA dtypes.f32 [244, 245, 246]
+367 Ops.SPECIAL dtypes.weakint [152]
+368 Ops.SPECIAL dtypes.i32 [284]
+369 Ops.PERMUTE dtypes.f32 [146]
+370 Ops.REDUCE dtypes.f32 [1]
+371 Ops.COPY dtypes.f32 [1]
+372 Ops.ALLREDUCE dtypes.f32 [312]
+373 Ops.SINK dtypes.void [5, 9, 10, 11, 12, 13, 14, 15, 17, 18, 22, 23, 26, 29, 30, 34, 35, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 62, 64, 66, 69, 70, 71, 72, 73, 74, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 98, 101, 104, 107, 108, 109, 110, 112, 113, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 137, 139, 140, 141, 142, 144, 147, 149, 150, 151, 155, 157, 162, 164, 167, 168, 170, 171, 172, 173, 176, 177, 179, 180, 181, 1, 182, 183, 184, 65, 185, 186, 187, 188, 189, 190, 191, 193, 194, 196, 198, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 214, 215, 216, 217, 218, 220, 222, 224, 226, 227, 228, 229, 230, 231, 232, 233, 234, 236, 237, 239, 240, 241, 242, 243, 247, 4, 249, 251, 253, 255, 256, 258, 259, 261, 262, 264, 8, 266, 268, 269, 270, 272, 273, 274, 276, 278, 280, 281, 282, 283, 285, 146, 289, 291, 293, 297, 298, 299, 300, 301, 303, 306, 307, 308, 309, 310, 311, 313, 314, 316, 317, 319, 320, 322, 323, 324, 326, 329, 330, 331, 332, 333, 334, 223, 335, 336, 337, 338, 339, 340, 342, 343, 344, 346, 94, 19, 347, 348, 349, 350, 351, 353, 354, 355, 356, 357, 358, 359, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372]
 

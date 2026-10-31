@@ -1,0 +1,67 @@
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=0, dtype=dtypes.bf16, device="CPU")
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.MUL dtypes.i32 [5, 3]
+7 Ops.INDEX dtypes.bf16 [2, 6]
+8 Ops.PARAM dtypes.bf16 [1] ParamArg(slot=1, dtype=dtypes.bf16, device="CPU")
+9 Ops.CONST dtypes.weakint [] -4
+10 Ops.MUL dtypes.i32 [5, 9]
+11 Ops.CONST dtypes.weakint [] 15
+12 Ops.ADD dtypes.i32 [10, 11]
+13 Ops.INDEX dtypes.bf16 [8, 12]
+14 Ops.LOAD dtypes.bf16 [13]
+15 Ops.STORE dtypes.void [7, 14]
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.ADD dtypes.i32 [6, 16]
+18 Ops.INDEX dtypes.bf16 [2, 17]
+19 Ops.CONST dtypes.weakint [] 14
+20 Ops.ADD dtypes.i32 [10, 19]
+21 Ops.INDEX dtypes.bf16 [8, 20]
+22 Ops.LOAD dtypes.bf16 [21]
+23 Ops.STORE dtypes.void [18, 22]
+24 Ops.CONST dtypes.weakint [] 2
+25 Ops.ADD dtypes.i32 [6, 24]
+26 Ops.INDEX dtypes.bf16 [2, 25]
+27 Ops.CONST dtypes.weakint [] 13
+28 Ops.ADD dtypes.i32 [10, 27]
+29 Ops.INDEX dtypes.bf16 [8, 28]
+30 Ops.LOAD dtypes.bf16 [29]
+31 Ops.STORE dtypes.void [26, 30]
+32 Ops.CONST dtypes.weakint [] 3
+33 Ops.ADD dtypes.i32 [6, 32]
+34 Ops.INDEX dtypes.bf16 [2, 33]
+35 Ops.CONST dtypes.weakint [] 12
+36 Ops.ADD dtypes.i32 [10, 35]
+37 Ops.INDEX dtypes.bf16 [8, 36]
+38 Ops.LOAD dtypes.bf16 [37]
+39 Ops.STORE dtypes.void [34, 38]
+40 Ops.AFTER dtypes.void [0, 15, 23, 31, 39]
+41 Ops.END dtypes.void [40, 5]
+42 Ops.SINK dtypes.void [41] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+43 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16, device="CPU") tag=dtypes.bf16
+44 Ops.INDEX dtypes.u16 [43, 6] tag=dtypes.bf16
+45 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16, device="CPU") tag=dtypes.bf16
+46 Ops.INDEX dtypes.u16 [45, 12] tag=dtypes.bf16
+47 Ops.LOAD dtypes.u16 [46]
+48 Ops.STORE dtypes.void [44, 47]
+49 Ops.INDEX dtypes.u16 [43, 17] tag=dtypes.bf16
+50 Ops.INDEX dtypes.u16 [45, 20] tag=dtypes.bf16
+51 Ops.LOAD dtypes.u16 [50]
+52 Ops.STORE dtypes.void [49, 51]
+53 Ops.INDEX dtypes.u16 [43, 25] tag=dtypes.bf16
+54 Ops.INDEX dtypes.u16 [45, 28] tag=dtypes.bf16
+55 Ops.LOAD dtypes.u16 [54]
+56 Ops.STORE dtypes.void [53, 55]
+57 Ops.INDEX dtypes.u16 [43, 33] tag=dtypes.bf16
+58 Ops.INDEX dtypes.u16 [45, 36] tag=dtypes.bf16
+59 Ops.LOAD dtypes.u16 [58]
+60 Ops.STORE dtypes.void [57, 59]
+61 Ops.AFTER dtypes.void [0, 48, 52, 56, 60]
+62 Ops.END dtypes.void [61, 5]
+63 Ops.SINK dtypes.void [62] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+64 Ops.SINK dtypes.void [42, 63]
+

@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
@@ -31,8 +31,8 @@ extern "C" __global__ void __launch_bounds__(16) r_4_4_4_4_4_4_64(float* data0_4
   *(buf0+7) = 0.0f;
   *(buf0+8) = 0.0f;
   *(buf0+9) = 0.0f;
-  for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {
-    int alu22 = (alu5+Ridx0);
+  for (int Lidx0 = 0; Lidx0 < 64; Lidx0++) {
+    int alu22 = (alu5+Lidx0);
     int alu23 = (alu22+128);
     float val0 = (*(data1_4096+alu23));
     int alu24 = (alu22+192);
@@ -40,7 +40,7 @@ extern "C" __global__ void __launch_bounds__(16) r_4_4_4_4_4_4_64(float* data0_4
     int alu25 = (alu22+64);
     float val2 = (*(data1_4096+alu25));
     float val3 = (*(data1_4096+alu22));
-    int alu26 = (Ridx0<<6);
+    int alu26 = (Lidx0<<6);
     int alu27 = (alu2+alu26);
     float4 val4 = (*((float4*)((data2_4096+alu27))));
     float alu28 = __fmaf_rn(val0,val4.x,(*(buf0+8)));

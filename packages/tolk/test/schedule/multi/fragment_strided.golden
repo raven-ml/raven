@@ -1,27 +1,28 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=512, device="CPU")
-1 Ops.CONST dtypes.weakint [] 64
-2 Ops.CONST dtypes.weakint [] 8
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.RANGE dtypes.weakint [2] (1, AxisType.LOOP)
-6 Ops.MUL dtypes.weakint [5, 2]
-7 Ops.RANGE dtypes.weakint [2] (0, AxisType.LOCAL)
-8 Ops.ADD dtypes.weakint [6, 7]
-9 Ops.RANGE dtypes.weakint [2] (2, AxisType.LOOP)
-10 Ops.STACK dtypes.weakint [8, 9]
-11 Ops.CONST dtypes.weakint [] 1
-12 Ops.STACK dtypes.weakint [11, 11]
-13 Ops.SHRINK dtypes.float [4, 10, 12]
-14 Ops.STACK dtypes.void []
-15 Ops.RESHAPE dtypes.float [13, 14]
-16 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, addrspace=AddrSpace.REG)
-17 Ops.STACK dtypes.weakint [2, 2]
-18 Ops.RESHAPE dtypes.float [16, 17]
-19 Ops.UNSHARD dtypes.float [18, 7] (0,)
-20 Ops.ADD dtypes.weakint [7, 6]
-21 Ops.INDEX dtypes.float [19, 20, 9]
-22 Ops.STORE dtypes.void [15, 21]
-23 Ops.END dtypes.void [22, 9, 5, 7]
-24 Ops.SINK dtypes.void [23] KernelInfo(name="strided_fragment")
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 512
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 64
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.RANGE dtypes.weakint [3] (AxisType.LOOP, 1)
+7 Ops.MUL dtypes.weakint [6, 3]
+8 Ops.RANGE dtypes.weakint [3] (AxisType.LOCAL, 0)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [3] (AxisType.LOOP, 2)
+11 Ops.STACK dtypes.weakint [9, 10]
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.STACK dtypes.weakint [12, 12]
+14 Ops.SHRINK dtypes.f32 [5, 11, 13]
+15 Ops.STACK dtypes.void []
+16 Ops.RESHAPE dtypes.f32 [14, 15]
+17 Ops.BUFFER dtypes.f32 [2] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
+18 Ops.STACK dtypes.weakint [3, 3]
+19 Ops.RESHAPE dtypes.f32 [17, 18]
+20 Ops.UNSHARD dtypes.f32 [19, 8] (0,)
+21 Ops.ADD dtypes.weakint [8, 7]
+22 Ops.INDEX dtypes.f32 [20, 21, 10]
+23 Ops.STORE dtypes.void [16, 22]
+24 Ops.END dtypes.void [23, 10, 6, 8]
+25 Ops.SINK dtypes.void [24] KernelInfo(name="strided_fragment")
 

@@ -1,9 +1,9 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 
-__attribute__((min_vector_width(512))) void call_out(unsigned long* restrict data0_1, int* restrict data1_2) {
-  unsigned long val0 = (*(data0_1+0));
-  (((void(*)(int, int*))(val0))((int)(3), (int*)((data1_2+0))));
-  int val1 = (*(data1_2+0));
-  *(data1_2+1) = (val1+1);
+extern void frexp();
+__attribute__((min_vector_width(512))) void call_out(int* restrict data0_2) {
+  double alu0 = ((double(*)(double, int*))(frexp))((double)(8.0), (int*)((data0_2+0)));
+  int val0 = (*(data0_2+0));
+  *(data0_2+1) = (val0+1);
 }
 

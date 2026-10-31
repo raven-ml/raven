@@ -1,35 +1,37 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=4)
-1 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16)
-2 Ops.CONST dtypes.weakint [] 4
-3 Ops.CAST dtypes.int [2] dtypes.int
-4 Ops.RANGE dtypes.int [3] (0, AxisType.LOOP)
-5 Ops.MUL dtypes.int [4, 3]
-6 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=4)
-7 Ops.INDEX dtypes.int [6, 4]
-8 Ops.LOAD dtypes.int [7]
-9 Ops.CONST dtypes.weakint [] 0
-10 Ops.CAST dtypes.int [9] dtypes.int
-11 Ops.MAX dtypes.int [8, 10]
-12 Ops.CONST dtypes.weakint [] -1
-13 Ops.CAST dtypes.int [12] dtypes.int
-14 Ops.XOR dtypes.int [11, 13]
-15 Ops.CONST dtypes.weakint [] -5
-16 Ops.CAST dtypes.int [15] dtypes.int
-17 Ops.MAX dtypes.int [14, 16]
-18 Ops.XOR dtypes.int [17, 13]
-19 Ops.RANGE dtypes.int [18, 4] (1, AxisType.WEAK)
-20 Ops.ADD dtypes.int [5, 19]
-21 Ops.INDEX dtypes.int [1, 20]
-22 Ops.CONST dtypes.weakint [] 1
-23 Ops.CAST dtypes.int [22] dtypes.int
-24 Ops.STORE dtypes.void [21, 23]
-25 Ops.END dtypes.void [24, 19]
-26 Ops.AFTER dtypes.int [0, 25]
-27 Ops.INDEX dtypes.int [26, 4]
-28 Ops.CONST dtypes.weakint [] 2
-29 Ops.CAST dtypes.int [28] dtypes.int
-30 Ops.STORE dtypes.void [27, 29]
-31 Ops.END dtypes.void [30, 4]
-32 Ops.SINK dtypes.void [31] KernelInfo(name="E_4_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))") tag=1
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=0, dtype=dtypes.i32)
+4 Ops.CAST dtypes.i32 [0] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.LOOP, 0)
+6 Ops.MUL dtypes.i32 [5, 4]
+7 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
+8 Ops.INDEX dtypes.i32 [7, 5]
+9 Ops.LOAD dtypes.i32 [8]
+10 Ops.CONST dtypes.weakint [] 0
+11 Ops.CAST dtypes.i32 [10] dtypes.i32
+12 Ops.MAX dtypes.i32 [9, 11]
+13 Ops.CONST dtypes.weakint [] -1
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.XOR dtypes.i32 [12, 14]
+16 Ops.CONST dtypes.weakint [] -5
+17 Ops.CAST dtypes.i32 [16] dtypes.i32
+18 Ops.MAX dtypes.i32 [15, 17]
+19 Ops.XOR dtypes.i32 [18, 14]
+20 Ops.AFTER dtypes.i32 [19, 5]
+21 Ops.RANGE dtypes.i32 [20] (AxisType.WEAK, 1)
+22 Ops.ADD dtypes.i32 [6, 21]
+23 Ops.INDEX dtypes.i32 [3, 22]
+24 Ops.CONST dtypes.weakint [] 1
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.STORE dtypes.void [23, 25]
+27 Ops.END dtypes.void [26, 21]
+28 Ops.AFTER dtypes.i32 [1, 27]
+29 Ops.INDEX dtypes.i32 [28, 5]
+30 Ops.CONST dtypes.weakint [] 2
+31 Ops.CAST dtypes.i32 [30] dtypes.i32
+32 Ops.STORE dtypes.void [29, 31]
+33 Ops.END dtypes.void [32, 5]
+34 Ops.SINK dtypes.void [33] KernelInfo(name="E_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))_4") tag=1
 

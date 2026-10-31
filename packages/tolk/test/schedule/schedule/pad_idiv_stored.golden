@@ -1,14 +1,15 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.BUFFER dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=12, device="CPU")
-1 Ops.BUFFER dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=10, device="CPU")
-2 Ops.BUFFER dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=10, device="CPU")
-3 Ops.CONST dtypes.weakint [] 1
-4 Ops.MAX dtypes.int [2, 3]
-5 Ops.STAGE dtypes.int [4]
-6 Ops.CDIV dtypes.int [1, 5]
-7 Ops.CONST dtypes.weakint [] 12
-8 Ops.PAD dtypes.int [6, 3, 7]
-9 Ops.STORE dtypes.void [0, 8]
-10 Ops.AFTER dtypes.int [0, 9]
-11 Ops.SINK dtypes.void [10]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 12
+1 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 10
+3 Ops.BUFFER dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+4 Ops.BUFFER dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.MAX dtypes.i32 [4, 5]
+7 Ops.STAGE dtypes.i32 [6]
+8 Ops.CDIV dtypes.i32 [3, 7]
+9 Ops.PAD dtypes.i32 [8, 5, 0]
+10 Ops.STORE dtypes.void [1, 9]
+11 Ops.AFTER dtypes.i32 [1, 10]
+12 Ops.SINK dtypes.void [11]
 

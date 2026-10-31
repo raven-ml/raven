@@ -1,27 +1,29 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=12, device="CPU")
-1 Ops.CONST dtypes.weakint [] 3
-2 Ops.CONST dtypes.weakint [] 4
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
-6 Ops.CONST dtypes.weakint [] 8
-7 Ops.STACK dtypes.weakint [6, 2]
-8 Ops.RESHAPE dtypes.float [5, 7]
-9 Ops.MUL dtypes.float [8, 8]
-10 Ops.ADD dtypes.float [9, 8]
-11 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=3, device="CPU")
-12 Ops.CONST dtypes.weakint [] 0
-13 Ops.MAX dtypes.int [11, 12]
-14 Ops.CONST dtypes.weakint [] -1
-15 Ops.XOR dtypes.int [13, 14]
-16 Ops.CONST dtypes.weakint [] 7
-17 Ops.XOR dtypes.weakint [16, 14]
-18 Ops.MAX dtypes.int [15, 17]
-19 Ops.XOR dtypes.int [18, 14]
-20 Ops.CAST dtypes.weakint [19] dtypes.weakint
-21 Ops.INDEX dtypes.float [10, 20]
-22 Ops.STORE dtypes.void [4, 21]
-23 Ops.AFTER dtypes.float [0, 22]
-24 Ops.SINK dtypes.void [23]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 12
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 3
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 32
+7 Ops.PARAM dtypes.f32 [6] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+8 Ops.CONST dtypes.weakint [] 8
+9 Ops.STACK dtypes.weakint [8, 3]
+10 Ops.RESHAPE dtypes.f32 [7, 9]
+11 Ops.MUL dtypes.f32 [10, 10]
+12 Ops.ADD dtypes.f32 [11, 10]
+13 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+14 Ops.CONST dtypes.weakint [] 0
+15 Ops.MAX dtypes.i32 [13, 14]
+16 Ops.CONST dtypes.weakint [] -1
+17 Ops.XOR dtypes.i32 [15, 16]
+18 Ops.CONST dtypes.weakint [] 7
+19 Ops.XOR dtypes.weakint [18, 16]
+20 Ops.MAX dtypes.i32 [17, 19]
+21 Ops.XOR dtypes.i32 [20, 16]
+22 Ops.CAST dtypes.weakint [21] dtypes.weakint
+23 Ops.INDEX dtypes.f32 [12, 22]
+24 Ops.STORE dtypes.void [5, 23]
+25 Ops.AFTER dtypes.f32 [1, 24]
+26 Ops.SINK dtypes.void [25]
 

@@ -1,398 +1,399 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-1 Ops.CONST dtypes.weakint [] -1
-2 Ops.MUL dtypes.weakint [0, 1]
-3 Ops.FLOORDIV dtypes.weakint [2, 0]
-4 Ops.SINK dtypes.void [3, 1] tag=("simplify", -1, -1)
-5 Ops.FLOORMOD dtypes.weakint [2, 0]
-6 Ops.CONST dtypes.weakint [] 0
-7 Ops.SINK dtypes.void [5, 6] tag=("simplify", 0, 0)
-8 Ops.MUL dtypes.weakint [2, 1]
-9 Ops.FLOORDIV dtypes.weakint [8, 2]
-10 Ops.SINK dtypes.void [9, 1] tag=("simplify", -1, -1)
-11 Ops.CONST dtypes.weakint [] 1
-12 Ops.MUL dtypes.weakint [11, 0]
-13 Ops.SINK dtypes.void [12, 0] tag=("simplify", 1, 8)
-14 Ops.CONST dtypes.weakint [] 2
-15 Ops.MUL dtypes.weakint [0, 14]
-16 Ops.FLOORDIV dtypes.weakint [15, 0]
-17 Ops.SINK dtypes.void [16, 14] tag=("simplify", 2, 2)
-18 Ops.FLOORMOD dtypes.weakint [15, 0]
-19 Ops.SINK dtypes.void [18, 6] tag=("simplify", 0, 0)
-20 Ops.MUL dtypes.weakint [2, 14]
-21 Ops.FLOORDIV dtypes.weakint [20, 2]
-22 Ops.SINK dtypes.void [21, 14] tag=("simplify", 2, 2)
-23 Ops.MUL dtypes.weakint [0, 11]
-24 Ops.FLOORDIV dtypes.weakint [23, 0]
-25 Ops.SINK dtypes.void [24, 11] tag=("simplify", 1, 1)
-26 Ops.FLOORMOD dtypes.weakint [23, 0]
-27 Ops.SINK dtypes.void [26, 6] tag=("simplify", 0, 0)
-28 Ops.MUL dtypes.weakint [2, 11]
-29 Ops.FLOORDIV dtypes.weakint [28, 2]
-30 Ops.SINK dtypes.void [29, 11] tag=("simplify", 1, 1)
-31 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU, val=2)
-32 Ops.MUL dtypes.weakint [31, 1]
-33 Ops.FLOORDIV dtypes.weakint [32, 31]
-34 Ops.SINK dtypes.void [33, 1] tag=("simplify", -1, -1)
-35 Ops.FLOORMOD dtypes.weakint [32, 31]
-36 Ops.SINK dtypes.void [35, 6] tag=("simplify", 0, 0)
-37 Ops.MUL dtypes.weakint [32, 1]
-38 Ops.FLOORDIV dtypes.weakint [37, 32]
-39 Ops.SINK dtypes.void [38, 1] tag=("simplify", -1, -1)
-40 Ops.MUL dtypes.weakint [11, 31]
-41 Ops.SINK dtypes.void [40, 31] tag=("simplify", 1, 8)
-42 Ops.MUL dtypes.weakint [31, 14]
-43 Ops.FLOORDIV dtypes.weakint [42, 31]
-44 Ops.SINK dtypes.void [43, 14] tag=("simplify", 2, 2)
-45 Ops.FLOORMOD dtypes.weakint [42, 31]
-46 Ops.SINK dtypes.void [45, 6] tag=("simplify", 0, 0)
-47 Ops.MUL dtypes.weakint [32, 14]
-48 Ops.FLOORDIV dtypes.weakint [47, 32]
-49 Ops.SINK dtypes.void [48, 14] tag=("simplify", 2, 2)
-50 Ops.MUL dtypes.weakint [31, 11]
-51 Ops.FLOORDIV dtypes.weakint [50, 31]
-52 Ops.SINK dtypes.void [51, 11] tag=("simplify", 1, 1)
-53 Ops.FLOORMOD dtypes.weakint [50, 31]
-54 Ops.SINK dtypes.void [53, 6] tag=("simplify", 0, 0)
-55 Ops.MUL dtypes.weakint [32, 11]
-56 Ops.FLOORDIV dtypes.weakint [55, 32]
-57 Ops.SINK dtypes.void [56, 11] tag=("simplify", 1, 1)
-58 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), multiple_of=2, name="n", addrspace=AddrSpace.ALU)
-59 Ops.CONST dtypes.weakint [] -2
-60 Ops.MUL dtypes.weakint [58, 59]
-61 Ops.FLOORDIV dtypes.weakint [60, 58]
-62 Ops.SINK dtypes.void [61, 59] tag=("simplify", -2, -2)
-63 Ops.FLOORMOD dtypes.weakint [60, 58]
-64 Ops.SINK dtypes.void [63, 6] tag=("simplify", 0, 0)
-65 Ops.MUL dtypes.weakint [58, 1]
-66 Ops.MUL dtypes.weakint [65, 59]
-67 Ops.FLOORDIV dtypes.weakint [66, 65]
-68 Ops.SINK dtypes.void [67, 59] tag=("simplify", -2, -2)
-69 Ops.MUL dtypes.weakint [11, 58]
-70 Ops.SINK dtypes.void [69, 58] tag=("simplify", 2, 16)
-71 Ops.FLOORDIV dtypes.weakint [65, 58]
-72 Ops.SINK dtypes.void [71, 1] tag=("simplify", -1, -1)
-73 Ops.FLOORMOD dtypes.weakint [65, 58]
-74 Ops.SINK dtypes.void [73, 6] tag=("simplify", 0, 0)
-75 Ops.MUL dtypes.weakint [65, 1]
-76 Ops.FLOORDIV dtypes.weakint [75, 65]
-77 Ops.SINK dtypes.void [76, 1] tag=("simplify", -1, -1)
-78 Ops.MUL dtypes.weakint [58, 14]
-79 Ops.FLOORDIV dtypes.weakint [78, 58]
-80 Ops.SINK dtypes.void [79, 14] tag=("simplify", 2, 2)
-81 Ops.FLOORMOD dtypes.weakint [78, 58]
-82 Ops.SINK dtypes.void [81, 6] tag=("simplify", 0, 0)
-83 Ops.MUL dtypes.weakint [65, 14]
-84 Ops.FLOORDIV dtypes.weakint [83, 65]
-85 Ops.SINK dtypes.void [84, 14] tag=("simplify", 2, 2)
-86 Ops.CONST dtypes.weakint [] 3
-87 Ops.MUL dtypes.weakint [58, 86]
-88 Ops.FLOORDIV dtypes.weakint [87, 58]
-89 Ops.SINK dtypes.void [88, 86] tag=("simplify", 3, 3)
-90 Ops.FLOORMOD dtypes.weakint [87, 58]
-91 Ops.SINK dtypes.void [90, 6] tag=("simplify", 0, 0)
-92 Ops.MUL dtypes.weakint [65, 86]
-93 Ops.FLOORDIV dtypes.weakint [92, 65]
-94 Ops.SINK dtypes.void [93, 86] tag=("simplify", 3, 3)
-95 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), multiple_of=2, name="n", addrspace=AddrSpace.ALU, val=4)
-96 Ops.MUL dtypes.weakint [95, 59]
-97 Ops.FLOORDIV dtypes.weakint [96, 95]
-98 Ops.SINK dtypes.void [97, 59] tag=("simplify", -2, -2)
-99 Ops.FLOORMOD dtypes.weakint [96, 95]
-100 Ops.SINK dtypes.void [99, 6] tag=("simplify", 0, 0)
-101 Ops.MUL dtypes.weakint [95, 1]
-102 Ops.MUL dtypes.weakint [101, 59]
-103 Ops.FLOORDIV dtypes.weakint [102, 101]
-104 Ops.SINK dtypes.void [103, 59] tag=("simplify", -2, -2)
-105 Ops.MUL dtypes.weakint [11, 95]
-106 Ops.SINK dtypes.void [105, 95] tag=("simplify", 2, 16)
-107 Ops.FLOORDIV dtypes.weakint [101, 95]
-108 Ops.SINK dtypes.void [107, 1] tag=("simplify", -1, -1)
-109 Ops.FLOORMOD dtypes.weakint [101, 95]
-110 Ops.SINK dtypes.void [109, 6] tag=("simplify", 0, 0)
-111 Ops.MUL dtypes.weakint [101, 1]
-112 Ops.FLOORDIV dtypes.weakint [111, 101]
-113 Ops.SINK dtypes.void [112, 1] tag=("simplify", -1, -1)
-114 Ops.MUL dtypes.weakint [95, 14]
-115 Ops.FLOORDIV dtypes.weakint [114, 95]
-116 Ops.SINK dtypes.void [115, 14] tag=("simplify", 2, 2)
-117 Ops.FLOORMOD dtypes.weakint [114, 95]
-118 Ops.SINK dtypes.void [117, 6] tag=("simplify", 0, 0)
-119 Ops.MUL dtypes.weakint [101, 14]
-120 Ops.FLOORDIV dtypes.weakint [119, 101]
-121 Ops.SINK dtypes.void [120, 14] tag=("simplify", 2, 2)
-122 Ops.MUL dtypes.weakint [95, 86]
-123 Ops.FLOORDIV dtypes.weakint [122, 95]
-124 Ops.SINK dtypes.void [123, 86] tag=("simplify", 3, 3)
-125 Ops.FLOORMOD dtypes.weakint [122, 95]
-126 Ops.SINK dtypes.void [125, 6] tag=("simplify", 0, 0)
-127 Ops.MUL dtypes.weakint [101, 86]
-128 Ops.FLOORDIV dtypes.weakint [127, 101]
-129 Ops.SINK dtypes.void [128, 86] tag=("simplify", 3, 3)
-130 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), multiple_of=3, name="n", addrspace=AddrSpace.ALU)
-131 Ops.CONST dtypes.weakint [] -3
-132 Ops.MUL dtypes.weakint [130, 131]
-133 Ops.FLOORDIV dtypes.weakint [132, 130]
-134 Ops.SINK dtypes.void [133, 131] tag=("simplify", -3, -3)
-135 Ops.FLOORMOD dtypes.weakint [132, 130]
-136 Ops.SINK dtypes.void [135, 6] tag=("simplify", 0, 0)
-137 Ops.MUL dtypes.weakint [130, 1]
-138 Ops.MUL dtypes.weakint [137, 131]
-139 Ops.FLOORDIV dtypes.weakint [138, 137]
-140 Ops.SINK dtypes.void [139, 131] tag=("simplify", -3, -3)
-141 Ops.MUL dtypes.weakint [11, 130]
-142 Ops.SINK dtypes.void [141, 130] tag=("simplify", 3, 24)
-143 Ops.FLOORDIV dtypes.weakint [137, 130]
-144 Ops.SINK dtypes.void [143, 1] tag=("simplify", -1, -1)
-145 Ops.FLOORMOD dtypes.weakint [137, 130]
-146 Ops.SINK dtypes.void [145, 6] tag=("simplify", 0, 0)
-147 Ops.MUL dtypes.weakint [137, 1]
-148 Ops.FLOORDIV dtypes.weakint [147, 137]
-149 Ops.SINK dtypes.void [148, 1] tag=("simplify", -1, -1)
-150 Ops.MUL dtypes.weakint [130, 14]
-151 Ops.FLOORDIV dtypes.weakint [150, 130]
-152 Ops.SINK dtypes.void [151, 14] tag=("simplify", 2, 2)
-153 Ops.FLOORMOD dtypes.weakint [150, 130]
-154 Ops.SINK dtypes.void [153, 6] tag=("simplify", 0, 0)
-155 Ops.MUL dtypes.weakint [137, 14]
-156 Ops.FLOORDIV dtypes.weakint [155, 137]
-157 Ops.SINK dtypes.void [156, 14] tag=("simplify", 2, 2)
-158 Ops.MUL dtypes.weakint [130, 86]
-159 Ops.FLOORDIV dtypes.weakint [158, 130]
-160 Ops.SINK dtypes.void [159, 86] tag=("simplify", 3, 3)
-161 Ops.FLOORMOD dtypes.weakint [158, 130]
-162 Ops.SINK dtypes.void [161, 6] tag=("simplify", 0, 0)
-163 Ops.MUL dtypes.weakint [137, 86]
-164 Ops.FLOORDIV dtypes.weakint [163, 137]
-165 Ops.SINK dtypes.void [164, 86] tag=("simplify", 3, 3)
-166 Ops.CONST dtypes.weakint [] 4
-167 Ops.MUL dtypes.weakint [130, 166]
-168 Ops.FLOORDIV dtypes.weakint [167, 130]
-169 Ops.SINK dtypes.void [168, 166] tag=("simplify", 4, 4)
-170 Ops.FLOORMOD dtypes.weakint [167, 130]
-171 Ops.SINK dtypes.void [170, 6] tag=("simplify", 0, 0)
-172 Ops.MUL dtypes.weakint [137, 166]
-173 Ops.FLOORDIV dtypes.weakint [172, 137]
-174 Ops.SINK dtypes.void [173, 166] tag=("simplify", 4, 4)
-175 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), multiple_of=3, name="n", addrspace=AddrSpace.ALU, val=6)
-176 Ops.MUL dtypes.weakint [175, 131]
-177 Ops.FLOORDIV dtypes.weakint [176, 175]
-178 Ops.SINK dtypes.void [177, 131] tag=("simplify", -3, -3)
-179 Ops.FLOORMOD dtypes.weakint [176, 175]
-180 Ops.SINK dtypes.void [179, 6] tag=("simplify", 0, 0)
-181 Ops.MUL dtypes.weakint [175, 1]
-182 Ops.MUL dtypes.weakint [181, 131]
-183 Ops.FLOORDIV dtypes.weakint [182, 181]
-184 Ops.SINK dtypes.void [183, 131] tag=("simplify", -3, -3)
-185 Ops.MUL dtypes.weakint [11, 175]
-186 Ops.SINK dtypes.void [185, 175] tag=("simplify", 3, 24)
-187 Ops.FLOORDIV dtypes.weakint [181, 175]
-188 Ops.SINK dtypes.void [187, 1] tag=("simplify", -1, -1)
-189 Ops.FLOORMOD dtypes.weakint [181, 175]
-190 Ops.SINK dtypes.void [189, 6] tag=("simplify", 0, 0)
-191 Ops.MUL dtypes.weakint [181, 1]
-192 Ops.FLOORDIV dtypes.weakint [191, 181]
-193 Ops.SINK dtypes.void [192, 1] tag=("simplify", -1, -1)
-194 Ops.MUL dtypes.weakint [175, 14]
-195 Ops.FLOORDIV dtypes.weakint [194, 175]
-196 Ops.SINK dtypes.void [195, 14] tag=("simplify", 2, 2)
-197 Ops.FLOORMOD dtypes.weakint [194, 175]
-198 Ops.SINK dtypes.void [197, 6] tag=("simplify", 0, 0)
-199 Ops.MUL dtypes.weakint [181, 14]
-200 Ops.FLOORDIV dtypes.weakint [199, 181]
-201 Ops.SINK dtypes.void [200, 14] tag=("simplify", 2, 2)
-202 Ops.MUL dtypes.weakint [175, 86]
-203 Ops.FLOORDIV dtypes.weakint [202, 175]
-204 Ops.SINK dtypes.void [203, 86] tag=("simplify", 3, 3)
-205 Ops.FLOORMOD dtypes.weakint [202, 175]
-206 Ops.SINK dtypes.void [205, 6] tag=("simplify", 0, 0)
-207 Ops.MUL dtypes.weakint [181, 86]
-208 Ops.FLOORDIV dtypes.weakint [207, 181]
-209 Ops.SINK dtypes.void [208, 86] tag=("simplify", 3, 3)
-210 Ops.MUL dtypes.weakint [175, 166]
-211 Ops.FLOORDIV dtypes.weakint [210, 175]
-212 Ops.SINK dtypes.void [211, 166] tag=("simplify", 4, 4)
-213 Ops.FLOORMOD dtypes.weakint [210, 175]
-214 Ops.SINK dtypes.void [213, 6] tag=("simplify", 0, 0)
-215 Ops.MUL dtypes.weakint [181, 166]
-216 Ops.FLOORDIV dtypes.weakint [215, 181]
-217 Ops.SINK dtypes.void [216, 166] tag=("simplify", 4, 4)
-218 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), multiple_of=4, name="n", addrspace=AddrSpace.ALU)
-219 Ops.CONST dtypes.weakint [] -4
-220 Ops.MUL dtypes.weakint [218, 219]
-221 Ops.FLOORDIV dtypes.weakint [220, 218]
-222 Ops.SINK dtypes.void [221, 219] tag=("simplify", -4, -4)
-223 Ops.FLOORMOD dtypes.weakint [220, 218]
-224 Ops.SINK dtypes.void [223, 6] tag=("simplify", 0, 0)
-225 Ops.MUL dtypes.weakint [218, 1]
-226 Ops.MUL dtypes.weakint [225, 219]
-227 Ops.FLOORDIV dtypes.weakint [226, 225]
-228 Ops.SINK dtypes.void [227, 219] tag=("simplify", -4, -4)
-229 Ops.MUL dtypes.weakint [11, 218]
-230 Ops.SINK dtypes.void [229, 218] tag=("simplify", 4, 32)
-231 Ops.FLOORDIV dtypes.weakint [225, 218]
-232 Ops.SINK dtypes.void [231, 1] tag=("simplify", -1, -1)
-233 Ops.FLOORMOD dtypes.weakint [225, 218]
-234 Ops.SINK dtypes.void [233, 6] tag=("simplify", 0, 0)
-235 Ops.MUL dtypes.weakint [225, 1]
-236 Ops.FLOORDIV dtypes.weakint [235, 225]
-237 Ops.SINK dtypes.void [236, 1] tag=("simplify", -1, -1)
-238 Ops.MUL dtypes.weakint [218, 14]
-239 Ops.FLOORDIV dtypes.weakint [238, 218]
-240 Ops.SINK dtypes.void [239, 14] tag=("simplify", 2, 2)
-241 Ops.FLOORMOD dtypes.weakint [238, 218]
-242 Ops.SINK dtypes.void [241, 6] tag=("simplify", 0, 0)
-243 Ops.MUL dtypes.weakint [225, 14]
-244 Ops.FLOORDIV dtypes.weakint [243, 225]
-245 Ops.SINK dtypes.void [244, 14] tag=("simplify", 2, 2)
-246 Ops.MUL dtypes.weakint [218, 166]
-247 Ops.FLOORDIV dtypes.weakint [246, 218]
-248 Ops.SINK dtypes.void [247, 166] tag=("simplify", 4, 4)
-249 Ops.FLOORMOD dtypes.weakint [246, 218]
-250 Ops.SINK dtypes.void [249, 6] tag=("simplify", 0, 0)
-251 Ops.MUL dtypes.weakint [225, 166]
-252 Ops.FLOORDIV dtypes.weakint [251, 225]
-253 Ops.SINK dtypes.void [252, 166] tag=("simplify", 4, 4)
-254 Ops.CONST dtypes.weakint [] 5
-255 Ops.MUL dtypes.weakint [218, 254]
-256 Ops.FLOORDIV dtypes.weakint [255, 218]
-257 Ops.SINK dtypes.void [256, 254] tag=("simplify", 5, 5)
-258 Ops.FLOORMOD dtypes.weakint [255, 218]
-259 Ops.SINK dtypes.void [258, 6] tag=("simplify", 0, 0)
-260 Ops.MUL dtypes.weakint [225, 254]
-261 Ops.FLOORDIV dtypes.weakint [260, 225]
-262 Ops.SINK dtypes.void [261, 254] tag=("simplify", 5, 5)
-263 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), multiple_of=4, name="n", addrspace=AddrSpace.ALU, val=8)
-264 Ops.MUL dtypes.weakint [263, 219]
-265 Ops.FLOORDIV dtypes.weakint [264, 263]
-266 Ops.SINK dtypes.void [265, 219] tag=("simplify", -4, -4)
-267 Ops.FLOORMOD dtypes.weakint [264, 263]
-268 Ops.SINK dtypes.void [267, 6] tag=("simplify", 0, 0)
-269 Ops.MUL dtypes.weakint [263, 1]
-270 Ops.MUL dtypes.weakint [269, 219]
-271 Ops.FLOORDIV dtypes.weakint [270, 269]
-272 Ops.SINK dtypes.void [271, 219] tag=("simplify", -4, -4)
-273 Ops.MUL dtypes.weakint [11, 263]
-274 Ops.SINK dtypes.void [273, 263] tag=("simplify", 4, 32)
-275 Ops.FLOORDIV dtypes.weakint [269, 263]
-276 Ops.SINK dtypes.void [275, 1] tag=("simplify", -1, -1)
-277 Ops.FLOORMOD dtypes.weakint [269, 263]
-278 Ops.SINK dtypes.void [277, 6] tag=("simplify", 0, 0)
-279 Ops.MUL dtypes.weakint [269, 1]
-280 Ops.FLOORDIV dtypes.weakint [279, 269]
-281 Ops.SINK dtypes.void [280, 1] tag=("simplify", -1, -1)
-282 Ops.MUL dtypes.weakint [263, 14]
-283 Ops.FLOORDIV dtypes.weakint [282, 263]
-284 Ops.SINK dtypes.void [283, 14] tag=("simplify", 2, 2)
-285 Ops.FLOORMOD dtypes.weakint [282, 263]
-286 Ops.SINK dtypes.void [285, 6] tag=("simplify", 0, 0)
-287 Ops.MUL dtypes.weakint [269, 14]
-288 Ops.FLOORDIV dtypes.weakint [287, 269]
-289 Ops.SINK dtypes.void [288, 14] tag=("simplify", 2, 2)
-290 Ops.MUL dtypes.weakint [263, 166]
-291 Ops.FLOORDIV dtypes.weakint [290, 263]
-292 Ops.SINK dtypes.void [291, 166] tag=("simplify", 4, 4)
-293 Ops.FLOORMOD dtypes.weakint [290, 263]
-294 Ops.SINK dtypes.void [293, 6] tag=("simplify", 0, 0)
-295 Ops.MUL dtypes.weakint [269, 166]
-296 Ops.FLOORDIV dtypes.weakint [295, 269]
-297 Ops.SINK dtypes.void [296, 166] tag=("simplify", 4, 4)
-298 Ops.MUL dtypes.weakint [263, 254]
-299 Ops.FLOORDIV dtypes.weakint [298, 263]
-300 Ops.SINK dtypes.void [299, 254] tag=("simplify", 5, 5)
-301 Ops.FLOORMOD dtypes.weakint [298, 263]
-302 Ops.SINK dtypes.void [301, 6] tag=("simplify", 0, 0)
-303 Ops.MUL dtypes.weakint [269, 254]
-304 Ops.FLOORDIV dtypes.weakint [303, 269]
-305 Ops.SINK dtypes.void [304, 254] tag=("simplify", 5, 5)
-306 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), multiple_of=8, name="n", addrspace=AddrSpace.ALU)
-307 Ops.CONST dtypes.weakint [] -8
-308 Ops.MUL dtypes.weakint [306, 307]
-309 Ops.FLOORDIV dtypes.weakint [308, 306]
-310 Ops.SINK dtypes.void [309, 307] tag=("simplify", -8, -8)
-311 Ops.FLOORMOD dtypes.weakint [308, 306]
-312 Ops.SINK dtypes.void [311, 6] tag=("simplify", 0, 0)
-313 Ops.MUL dtypes.weakint [306, 1]
-314 Ops.MUL dtypes.weakint [313, 307]
-315 Ops.FLOORDIV dtypes.weakint [314, 313]
-316 Ops.SINK dtypes.void [315, 307] tag=("simplify", -8, -8)
-317 Ops.MUL dtypes.weakint [11, 306]
-318 Ops.SINK dtypes.void [317, 306] tag=("simplify", 8, 64)
-319 Ops.FLOORDIV dtypes.weakint [313, 306]
-320 Ops.SINK dtypes.void [319, 1] tag=("simplify", -1, -1)
-321 Ops.FLOORMOD dtypes.weakint [313, 306]
-322 Ops.SINK dtypes.void [321, 6] tag=("simplify", 0, 0)
-323 Ops.MUL dtypes.weakint [313, 1]
-324 Ops.FLOORDIV dtypes.weakint [323, 313]
-325 Ops.SINK dtypes.void [324, 1] tag=("simplify", -1, -1)
-326 Ops.MUL dtypes.weakint [306, 14]
-327 Ops.FLOORDIV dtypes.weakint [326, 306]
-328 Ops.SINK dtypes.void [327, 14] tag=("simplify", 2, 2)
-329 Ops.FLOORMOD dtypes.weakint [326, 306]
-330 Ops.SINK dtypes.void [329, 6] tag=("simplify", 0, 0)
-331 Ops.MUL dtypes.weakint [313, 14]
-332 Ops.FLOORDIV dtypes.weakint [331, 313]
-333 Ops.SINK dtypes.void [332, 14] tag=("simplify", 2, 2)
-334 Ops.CONST dtypes.weakint [] 8
-335 Ops.MUL dtypes.weakint [306, 334]
-336 Ops.FLOORDIV dtypes.weakint [335, 306]
-337 Ops.SINK dtypes.void [336, 334] tag=("simplify", 8, 8)
-338 Ops.FLOORMOD dtypes.weakint [335, 306]
-339 Ops.SINK dtypes.void [338, 6] tag=("simplify", 0, 0)
-340 Ops.MUL dtypes.weakint [313, 334]
-341 Ops.FLOORDIV dtypes.weakint [340, 313]
-342 Ops.SINK dtypes.void [341, 334] tag=("simplify", 8, 8)
-343 Ops.CONST dtypes.weakint [] 9
-344 Ops.MUL dtypes.weakint [306, 343]
-345 Ops.FLOORDIV dtypes.weakint [344, 306]
-346 Ops.SINK dtypes.void [345, 343] tag=("simplify", 9, 9)
-347 Ops.FLOORMOD dtypes.weakint [344, 306]
-348 Ops.SINK dtypes.void [347, 6] tag=("simplify", 0, 0)
-349 Ops.MUL dtypes.weakint [313, 343]
-350 Ops.FLOORDIV dtypes.weakint [349, 313]
-351 Ops.SINK dtypes.void [350, 343] tag=("simplify", 9, 9)
-352 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), multiple_of=8, name="n", addrspace=AddrSpace.ALU, val=16)
-353 Ops.MUL dtypes.weakint [352, 307]
-354 Ops.FLOORDIV dtypes.weakint [353, 352]
-355 Ops.SINK dtypes.void [354, 307] tag=("simplify", -8, -8)
-356 Ops.FLOORMOD dtypes.weakint [353, 352]
-357 Ops.SINK dtypes.void [356, 6] tag=("simplify", 0, 0)
-358 Ops.MUL dtypes.weakint [352, 1]
-359 Ops.MUL dtypes.weakint [358, 307]
-360 Ops.FLOORDIV dtypes.weakint [359, 358]
-361 Ops.SINK dtypes.void [360, 307] tag=("simplify", -8, -8)
-362 Ops.MUL dtypes.weakint [11, 352]
-363 Ops.SINK dtypes.void [362, 352] tag=("simplify", 8, 64)
-364 Ops.FLOORDIV dtypes.weakint [358, 352]
-365 Ops.SINK dtypes.void [364, 1] tag=("simplify", -1, -1)
-366 Ops.FLOORMOD dtypes.weakint [358, 352]
-367 Ops.SINK dtypes.void [366, 6] tag=("simplify", 0, 0)
-368 Ops.MUL dtypes.weakint [358, 1]
-369 Ops.FLOORDIV dtypes.weakint [368, 358]
-370 Ops.SINK dtypes.void [369, 1] tag=("simplify", -1, -1)
-371 Ops.MUL dtypes.weakint [352, 14]
-372 Ops.FLOORDIV dtypes.weakint [371, 352]
-373 Ops.SINK dtypes.void [372, 14] tag=("simplify", 2, 2)
-374 Ops.FLOORMOD dtypes.weakint [371, 352]
-375 Ops.SINK dtypes.void [374, 6] tag=("simplify", 0, 0)
-376 Ops.MUL dtypes.weakint [358, 14]
-377 Ops.FLOORDIV dtypes.weakint [376, 358]
-378 Ops.SINK dtypes.void [377, 14] tag=("simplify", 2, 2)
-379 Ops.MUL dtypes.weakint [352, 334]
-380 Ops.FLOORDIV dtypes.weakint [379, 352]
-381 Ops.SINK dtypes.void [380, 334] tag=("simplify", 8, 8)
-382 Ops.FLOORMOD dtypes.weakint [379, 352]
-383 Ops.SINK dtypes.void [382, 6] tag=("simplify", 0, 0)
-384 Ops.MUL dtypes.weakint [358, 334]
-385 Ops.FLOORDIV dtypes.weakint [384, 358]
-386 Ops.SINK dtypes.void [385, 334] tag=("simplify", 8, 8)
-387 Ops.MUL dtypes.weakint [352, 343]
-388 Ops.FLOORDIV dtypes.weakint [387, 352]
-389 Ops.SINK dtypes.void [388, 343] tag=("simplify", 9, 9)
-390 Ops.FLOORMOD dtypes.weakint [387, 352]
-391 Ops.SINK dtypes.void [390, 6] tag=("simplify", 0, 0)
-392 Ops.MUL dtypes.weakint [358, 343]
-393 Ops.FLOORDIV dtypes.weakint [392, 358]
-394 Ops.SINK dtypes.void [393, 343] tag=("simplify", 9, 9)
-395 Ops.SINK dtypes.void [4, 7, 10, 13, 17, 19, 22, 25, 27, 30, 34, 36, 39, 41, 44, 46, 49, 52, 54, 57, 62, 64, 68, 70, 72, 74, 77, 80, 82, 85, 89, 91, 94, 98, 100, 104, 106, 108, 110, 113, 116, 118, 121, 124, 126, 129, 134, 136, 140, 142, 144, 146, 149, 152, 154, 157, 160, 162, 165, 169, 171, 174, 178, 180, 184, 186, 188, 190, 193, 196, 198, 201, 204, 206, 209, 212, 214, 217, 222, 224, 228, 230, 232, 234, 237, 240, 242, 245, 248, 250, 253, 257, 259, 262, 266, 268, 272, 274, 276, 278, 281, 284, 286, 289, 292, 294, 297, 300, 302, 305, 310, 312, 316, 318, 320, 322, 325, 328, 330, 333, 337, 339, 342, 346, 348, 351, 355, 357, 361, 363, 365, 367, 370, 373, 375, 378, 381, 383, 386, 389, 391, 394]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+2 Ops.CONST dtypes.weakint [] -1
+3 Ops.MUL dtypes.weakint [1, 2]
+4 Ops.FLOORDIV dtypes.weakint [3, 1]
+5 Ops.SINK dtypes.void [4, 2] tag=("simplify", -1, -1)
+6 Ops.FLOORMOD dtypes.weakint [3, 1]
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.SINK dtypes.void [6, 7] tag=("simplify", 0, 0)
+9 Ops.MUL dtypes.weakint [3, 2]
+10 Ops.FLOORDIV dtypes.weakint [9, 3]
+11 Ops.SINK dtypes.void [10, 2] tag=("simplify", -1, -1)
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.MUL dtypes.weakint [12, 1]
+14 Ops.SINK dtypes.void [13, 1] tag=("simplify", 1, 8)
+15 Ops.CONST dtypes.weakint [] 2
+16 Ops.MUL dtypes.weakint [1, 15]
+17 Ops.FLOORDIV dtypes.weakint [16, 1]
+18 Ops.SINK dtypes.void [17, 15] tag=("simplify", 2, 2)
+19 Ops.FLOORMOD dtypes.weakint [16, 1]
+20 Ops.SINK dtypes.void [19, 7] tag=("simplify", 0, 0)
+21 Ops.MUL dtypes.weakint [3, 15]
+22 Ops.FLOORDIV dtypes.weakint [21, 3]
+23 Ops.SINK dtypes.void [22, 15] tag=("simplify", 2, 2)
+24 Ops.MUL dtypes.weakint [1, 12]
+25 Ops.FLOORDIV dtypes.weakint [24, 1]
+26 Ops.SINK dtypes.void [25, 12] tag=("simplify", 1, 1)
+27 Ops.FLOORMOD dtypes.weakint [24, 1]
+28 Ops.SINK dtypes.void [27, 7] tag=("simplify", 0, 0)
+29 Ops.MUL dtypes.weakint [3, 12]
+30 Ops.FLOORDIV dtypes.weakint [29, 3]
+31 Ops.SINK dtypes.void [30, 12] tag=("simplify", 1, 1)
+32 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU, val=2)
+33 Ops.MUL dtypes.weakint [32, 2]
+34 Ops.FLOORDIV dtypes.weakint [33, 32]
+35 Ops.SINK dtypes.void [34, 2] tag=("simplify", -1, -1)
+36 Ops.FLOORMOD dtypes.weakint [33, 32]
+37 Ops.SINK dtypes.void [36, 7] tag=("simplify", 0, 0)
+38 Ops.MUL dtypes.weakint [33, 2]
+39 Ops.FLOORDIV dtypes.weakint [38, 33]
+40 Ops.SINK dtypes.void [39, 2] tag=("simplify", -1, -1)
+41 Ops.MUL dtypes.weakint [12, 32]
+42 Ops.SINK dtypes.void [41, 32] tag=("simplify", 1, 8)
+43 Ops.MUL dtypes.weakint [32, 15]
+44 Ops.FLOORDIV dtypes.weakint [43, 32]
+45 Ops.SINK dtypes.void [44, 15] tag=("simplify", 2, 2)
+46 Ops.FLOORMOD dtypes.weakint [43, 32]
+47 Ops.SINK dtypes.void [46, 7] tag=("simplify", 0, 0)
+48 Ops.MUL dtypes.weakint [33, 15]
+49 Ops.FLOORDIV dtypes.weakint [48, 33]
+50 Ops.SINK dtypes.void [49, 15] tag=("simplify", 2, 2)
+51 Ops.MUL dtypes.weakint [32, 12]
+52 Ops.FLOORDIV dtypes.weakint [51, 32]
+53 Ops.SINK dtypes.void [52, 12] tag=("simplify", 1, 1)
+54 Ops.FLOORMOD dtypes.weakint [51, 32]
+55 Ops.SINK dtypes.void [54, 7] tag=("simplify", 0, 0)
+56 Ops.MUL dtypes.weakint [33, 12]
+57 Ops.FLOORDIV dtypes.weakint [56, 33]
+58 Ops.SINK dtypes.void [57, 12] tag=("simplify", 1, 1)
+59 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), multiple_of=2, name="n", addrspace=AddrSpace.ALU)
+60 Ops.CONST dtypes.weakint [] -2
+61 Ops.MUL dtypes.weakint [59, 60]
+62 Ops.FLOORDIV dtypes.weakint [61, 59]
+63 Ops.SINK dtypes.void [62, 60] tag=("simplify", -2, -2)
+64 Ops.FLOORMOD dtypes.weakint [61, 59]
+65 Ops.SINK dtypes.void [64, 7] tag=("simplify", 0, 0)
+66 Ops.MUL dtypes.weakint [59, 2]
+67 Ops.MUL dtypes.weakint [66, 60]
+68 Ops.FLOORDIV dtypes.weakint [67, 66]
+69 Ops.SINK dtypes.void [68, 60] tag=("simplify", -2, -2)
+70 Ops.MUL dtypes.weakint [12, 59]
+71 Ops.SINK dtypes.void [70, 59] tag=("simplify", 2, 16)
+72 Ops.FLOORDIV dtypes.weakint [66, 59]
+73 Ops.SINK dtypes.void [72, 2] tag=("simplify", -1, -1)
+74 Ops.FLOORMOD dtypes.weakint [66, 59]
+75 Ops.SINK dtypes.void [74, 7] tag=("simplify", 0, 0)
+76 Ops.MUL dtypes.weakint [66, 2]
+77 Ops.FLOORDIV dtypes.weakint [76, 66]
+78 Ops.SINK dtypes.void [77, 2] tag=("simplify", -1, -1)
+79 Ops.MUL dtypes.weakint [59, 15]
+80 Ops.FLOORDIV dtypes.weakint [79, 59]
+81 Ops.SINK dtypes.void [80, 15] tag=("simplify", 2, 2)
+82 Ops.FLOORMOD dtypes.weakint [79, 59]
+83 Ops.SINK dtypes.void [82, 7] tag=("simplify", 0, 0)
+84 Ops.MUL dtypes.weakint [66, 15]
+85 Ops.FLOORDIV dtypes.weakint [84, 66]
+86 Ops.SINK dtypes.void [85, 15] tag=("simplify", 2, 2)
+87 Ops.CONST dtypes.weakint [] 3
+88 Ops.MUL dtypes.weakint [59, 87]
+89 Ops.FLOORDIV dtypes.weakint [88, 59]
+90 Ops.SINK dtypes.void [89, 87] tag=("simplify", 3, 3)
+91 Ops.FLOORMOD dtypes.weakint [88, 59]
+92 Ops.SINK dtypes.void [91, 7] tag=("simplify", 0, 0)
+93 Ops.MUL dtypes.weakint [66, 87]
+94 Ops.FLOORDIV dtypes.weakint [93, 66]
+95 Ops.SINK dtypes.void [94, 87] tag=("simplify", 3, 3)
+96 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(2, 16), multiple_of=2, name="n", addrspace=AddrSpace.ALU, val=4)
+97 Ops.MUL dtypes.weakint [96, 60]
+98 Ops.FLOORDIV dtypes.weakint [97, 96]
+99 Ops.SINK dtypes.void [98, 60] tag=("simplify", -2, -2)
+100 Ops.FLOORMOD dtypes.weakint [97, 96]
+101 Ops.SINK dtypes.void [100, 7] tag=("simplify", 0, 0)
+102 Ops.MUL dtypes.weakint [96, 2]
+103 Ops.MUL dtypes.weakint [102, 60]
+104 Ops.FLOORDIV dtypes.weakint [103, 102]
+105 Ops.SINK dtypes.void [104, 60] tag=("simplify", -2, -2)
+106 Ops.MUL dtypes.weakint [12, 96]
+107 Ops.SINK dtypes.void [106, 96] tag=("simplify", 2, 16)
+108 Ops.FLOORDIV dtypes.weakint [102, 96]
+109 Ops.SINK dtypes.void [108, 2] tag=("simplify", -1, -1)
+110 Ops.FLOORMOD dtypes.weakint [102, 96]
+111 Ops.SINK dtypes.void [110, 7] tag=("simplify", 0, 0)
+112 Ops.MUL dtypes.weakint [102, 2]
+113 Ops.FLOORDIV dtypes.weakint [112, 102]
+114 Ops.SINK dtypes.void [113, 2] tag=("simplify", -1, -1)
+115 Ops.MUL dtypes.weakint [96, 15]
+116 Ops.FLOORDIV dtypes.weakint [115, 96]
+117 Ops.SINK dtypes.void [116, 15] tag=("simplify", 2, 2)
+118 Ops.FLOORMOD dtypes.weakint [115, 96]
+119 Ops.SINK dtypes.void [118, 7] tag=("simplify", 0, 0)
+120 Ops.MUL dtypes.weakint [102, 15]
+121 Ops.FLOORDIV dtypes.weakint [120, 102]
+122 Ops.SINK dtypes.void [121, 15] tag=("simplify", 2, 2)
+123 Ops.MUL dtypes.weakint [96, 87]
+124 Ops.FLOORDIV dtypes.weakint [123, 96]
+125 Ops.SINK dtypes.void [124, 87] tag=("simplify", 3, 3)
+126 Ops.FLOORMOD dtypes.weakint [123, 96]
+127 Ops.SINK dtypes.void [126, 7] tag=("simplify", 0, 0)
+128 Ops.MUL dtypes.weakint [102, 87]
+129 Ops.FLOORDIV dtypes.weakint [128, 102]
+130 Ops.SINK dtypes.void [129, 87] tag=("simplify", 3, 3)
+131 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), multiple_of=3, name="n", addrspace=AddrSpace.ALU)
+132 Ops.CONST dtypes.weakint [] -3
+133 Ops.MUL dtypes.weakint [131, 132]
+134 Ops.FLOORDIV dtypes.weakint [133, 131]
+135 Ops.SINK dtypes.void [134, 132] tag=("simplify", -3, -3)
+136 Ops.FLOORMOD dtypes.weakint [133, 131]
+137 Ops.SINK dtypes.void [136, 7] tag=("simplify", 0, 0)
+138 Ops.MUL dtypes.weakint [131, 2]
+139 Ops.MUL dtypes.weakint [138, 132]
+140 Ops.FLOORDIV dtypes.weakint [139, 138]
+141 Ops.SINK dtypes.void [140, 132] tag=("simplify", -3, -3)
+142 Ops.MUL dtypes.weakint [12, 131]
+143 Ops.SINK dtypes.void [142, 131] tag=("simplify", 3, 24)
+144 Ops.FLOORDIV dtypes.weakint [138, 131]
+145 Ops.SINK dtypes.void [144, 2] tag=("simplify", -1, -1)
+146 Ops.FLOORMOD dtypes.weakint [138, 131]
+147 Ops.SINK dtypes.void [146, 7] tag=("simplify", 0, 0)
+148 Ops.MUL dtypes.weakint [138, 2]
+149 Ops.FLOORDIV dtypes.weakint [148, 138]
+150 Ops.SINK dtypes.void [149, 2] tag=("simplify", -1, -1)
+151 Ops.MUL dtypes.weakint [131, 15]
+152 Ops.FLOORDIV dtypes.weakint [151, 131]
+153 Ops.SINK dtypes.void [152, 15] tag=("simplify", 2, 2)
+154 Ops.FLOORMOD dtypes.weakint [151, 131]
+155 Ops.SINK dtypes.void [154, 7] tag=("simplify", 0, 0)
+156 Ops.MUL dtypes.weakint [138, 15]
+157 Ops.FLOORDIV dtypes.weakint [156, 138]
+158 Ops.SINK dtypes.void [157, 15] tag=("simplify", 2, 2)
+159 Ops.MUL dtypes.weakint [131, 87]
+160 Ops.FLOORDIV dtypes.weakint [159, 131]
+161 Ops.SINK dtypes.void [160, 87] tag=("simplify", 3, 3)
+162 Ops.FLOORMOD dtypes.weakint [159, 131]
+163 Ops.SINK dtypes.void [162, 7] tag=("simplify", 0, 0)
+164 Ops.MUL dtypes.weakint [138, 87]
+165 Ops.FLOORDIV dtypes.weakint [164, 138]
+166 Ops.SINK dtypes.void [165, 87] tag=("simplify", 3, 3)
+167 Ops.CONST dtypes.weakint [] 4
+168 Ops.MUL dtypes.weakint [131, 167]
+169 Ops.FLOORDIV dtypes.weakint [168, 131]
+170 Ops.SINK dtypes.void [169, 167] tag=("simplify", 4, 4)
+171 Ops.FLOORMOD dtypes.weakint [168, 131]
+172 Ops.SINK dtypes.void [171, 7] tag=("simplify", 0, 0)
+173 Ops.MUL dtypes.weakint [138, 167]
+174 Ops.FLOORDIV dtypes.weakint [173, 138]
+175 Ops.SINK dtypes.void [174, 167] tag=("simplify", 4, 4)
+176 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 24), multiple_of=3, name="n", addrspace=AddrSpace.ALU, val=6)
+177 Ops.MUL dtypes.weakint [176, 132]
+178 Ops.FLOORDIV dtypes.weakint [177, 176]
+179 Ops.SINK dtypes.void [178, 132] tag=("simplify", -3, -3)
+180 Ops.FLOORMOD dtypes.weakint [177, 176]
+181 Ops.SINK dtypes.void [180, 7] tag=("simplify", 0, 0)
+182 Ops.MUL dtypes.weakint [176, 2]
+183 Ops.MUL dtypes.weakint [182, 132]
+184 Ops.FLOORDIV dtypes.weakint [183, 182]
+185 Ops.SINK dtypes.void [184, 132] tag=("simplify", -3, -3)
+186 Ops.MUL dtypes.weakint [12, 176]
+187 Ops.SINK dtypes.void [186, 176] tag=("simplify", 3, 24)
+188 Ops.FLOORDIV dtypes.weakint [182, 176]
+189 Ops.SINK dtypes.void [188, 2] tag=("simplify", -1, -1)
+190 Ops.FLOORMOD dtypes.weakint [182, 176]
+191 Ops.SINK dtypes.void [190, 7] tag=("simplify", 0, 0)
+192 Ops.MUL dtypes.weakint [182, 2]
+193 Ops.FLOORDIV dtypes.weakint [192, 182]
+194 Ops.SINK dtypes.void [193, 2] tag=("simplify", -1, -1)
+195 Ops.MUL dtypes.weakint [176, 15]
+196 Ops.FLOORDIV dtypes.weakint [195, 176]
+197 Ops.SINK dtypes.void [196, 15] tag=("simplify", 2, 2)
+198 Ops.FLOORMOD dtypes.weakint [195, 176]
+199 Ops.SINK dtypes.void [198, 7] tag=("simplify", 0, 0)
+200 Ops.MUL dtypes.weakint [182, 15]
+201 Ops.FLOORDIV dtypes.weakint [200, 182]
+202 Ops.SINK dtypes.void [201, 15] tag=("simplify", 2, 2)
+203 Ops.MUL dtypes.weakint [176, 87]
+204 Ops.FLOORDIV dtypes.weakint [203, 176]
+205 Ops.SINK dtypes.void [204, 87] tag=("simplify", 3, 3)
+206 Ops.FLOORMOD dtypes.weakint [203, 176]
+207 Ops.SINK dtypes.void [206, 7] tag=("simplify", 0, 0)
+208 Ops.MUL dtypes.weakint [182, 87]
+209 Ops.FLOORDIV dtypes.weakint [208, 182]
+210 Ops.SINK dtypes.void [209, 87] tag=("simplify", 3, 3)
+211 Ops.MUL dtypes.weakint [176, 167]
+212 Ops.FLOORDIV dtypes.weakint [211, 176]
+213 Ops.SINK dtypes.void [212, 167] tag=("simplify", 4, 4)
+214 Ops.FLOORMOD dtypes.weakint [211, 176]
+215 Ops.SINK dtypes.void [214, 7] tag=("simplify", 0, 0)
+216 Ops.MUL dtypes.weakint [182, 167]
+217 Ops.FLOORDIV dtypes.weakint [216, 182]
+218 Ops.SINK dtypes.void [217, 167] tag=("simplify", 4, 4)
+219 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), multiple_of=4, name="n", addrspace=AddrSpace.ALU)
+220 Ops.CONST dtypes.weakint [] -4
+221 Ops.MUL dtypes.weakint [219, 220]
+222 Ops.FLOORDIV dtypes.weakint [221, 219]
+223 Ops.SINK dtypes.void [222, 220] tag=("simplify", -4, -4)
+224 Ops.FLOORMOD dtypes.weakint [221, 219]
+225 Ops.SINK dtypes.void [224, 7] tag=("simplify", 0, 0)
+226 Ops.MUL dtypes.weakint [219, 2]
+227 Ops.MUL dtypes.weakint [226, 220]
+228 Ops.FLOORDIV dtypes.weakint [227, 226]
+229 Ops.SINK dtypes.void [228, 220] tag=("simplify", -4, -4)
+230 Ops.MUL dtypes.weakint [12, 219]
+231 Ops.SINK dtypes.void [230, 219] tag=("simplify", 4, 32)
+232 Ops.FLOORDIV dtypes.weakint [226, 219]
+233 Ops.SINK dtypes.void [232, 2] tag=("simplify", -1, -1)
+234 Ops.FLOORMOD dtypes.weakint [226, 219]
+235 Ops.SINK dtypes.void [234, 7] tag=("simplify", 0, 0)
+236 Ops.MUL dtypes.weakint [226, 2]
+237 Ops.FLOORDIV dtypes.weakint [236, 226]
+238 Ops.SINK dtypes.void [237, 2] tag=("simplify", -1, -1)
+239 Ops.MUL dtypes.weakint [219, 15]
+240 Ops.FLOORDIV dtypes.weakint [239, 219]
+241 Ops.SINK dtypes.void [240, 15] tag=("simplify", 2, 2)
+242 Ops.FLOORMOD dtypes.weakint [239, 219]
+243 Ops.SINK dtypes.void [242, 7] tag=("simplify", 0, 0)
+244 Ops.MUL dtypes.weakint [226, 15]
+245 Ops.FLOORDIV dtypes.weakint [244, 226]
+246 Ops.SINK dtypes.void [245, 15] tag=("simplify", 2, 2)
+247 Ops.MUL dtypes.weakint [219, 167]
+248 Ops.FLOORDIV dtypes.weakint [247, 219]
+249 Ops.SINK dtypes.void [248, 167] tag=("simplify", 4, 4)
+250 Ops.FLOORMOD dtypes.weakint [247, 219]
+251 Ops.SINK dtypes.void [250, 7] tag=("simplify", 0, 0)
+252 Ops.MUL dtypes.weakint [226, 167]
+253 Ops.FLOORDIV dtypes.weakint [252, 226]
+254 Ops.SINK dtypes.void [253, 167] tag=("simplify", 4, 4)
+255 Ops.CONST dtypes.weakint [] 5
+256 Ops.MUL dtypes.weakint [219, 255]
+257 Ops.FLOORDIV dtypes.weakint [256, 219]
+258 Ops.SINK dtypes.void [257, 255] tag=("simplify", 5, 5)
+259 Ops.FLOORMOD dtypes.weakint [256, 219]
+260 Ops.SINK dtypes.void [259, 7] tag=("simplify", 0, 0)
+261 Ops.MUL dtypes.weakint [226, 255]
+262 Ops.FLOORDIV dtypes.weakint [261, 226]
+263 Ops.SINK dtypes.void [262, 255] tag=("simplify", 5, 5)
+264 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(4, 32), multiple_of=4, name="n", addrspace=AddrSpace.ALU, val=8)
+265 Ops.MUL dtypes.weakint [264, 220]
+266 Ops.FLOORDIV dtypes.weakint [265, 264]
+267 Ops.SINK dtypes.void [266, 220] tag=("simplify", -4, -4)
+268 Ops.FLOORMOD dtypes.weakint [265, 264]
+269 Ops.SINK dtypes.void [268, 7] tag=("simplify", 0, 0)
+270 Ops.MUL dtypes.weakint [264, 2]
+271 Ops.MUL dtypes.weakint [270, 220]
+272 Ops.FLOORDIV dtypes.weakint [271, 270]
+273 Ops.SINK dtypes.void [272, 220] tag=("simplify", -4, -4)
+274 Ops.MUL dtypes.weakint [12, 264]
+275 Ops.SINK dtypes.void [274, 264] tag=("simplify", 4, 32)
+276 Ops.FLOORDIV dtypes.weakint [270, 264]
+277 Ops.SINK dtypes.void [276, 2] tag=("simplify", -1, -1)
+278 Ops.FLOORMOD dtypes.weakint [270, 264]
+279 Ops.SINK dtypes.void [278, 7] tag=("simplify", 0, 0)
+280 Ops.MUL dtypes.weakint [270, 2]
+281 Ops.FLOORDIV dtypes.weakint [280, 270]
+282 Ops.SINK dtypes.void [281, 2] tag=("simplify", -1, -1)
+283 Ops.MUL dtypes.weakint [264, 15]
+284 Ops.FLOORDIV dtypes.weakint [283, 264]
+285 Ops.SINK dtypes.void [284, 15] tag=("simplify", 2, 2)
+286 Ops.FLOORMOD dtypes.weakint [283, 264]
+287 Ops.SINK dtypes.void [286, 7] tag=("simplify", 0, 0)
+288 Ops.MUL dtypes.weakint [270, 15]
+289 Ops.FLOORDIV dtypes.weakint [288, 270]
+290 Ops.SINK dtypes.void [289, 15] tag=("simplify", 2, 2)
+291 Ops.MUL dtypes.weakint [264, 167]
+292 Ops.FLOORDIV dtypes.weakint [291, 264]
+293 Ops.SINK dtypes.void [292, 167] tag=("simplify", 4, 4)
+294 Ops.FLOORMOD dtypes.weakint [291, 264]
+295 Ops.SINK dtypes.void [294, 7] tag=("simplify", 0, 0)
+296 Ops.MUL dtypes.weakint [270, 167]
+297 Ops.FLOORDIV dtypes.weakint [296, 270]
+298 Ops.SINK dtypes.void [297, 167] tag=("simplify", 4, 4)
+299 Ops.MUL dtypes.weakint [264, 255]
+300 Ops.FLOORDIV dtypes.weakint [299, 264]
+301 Ops.SINK dtypes.void [300, 255] tag=("simplify", 5, 5)
+302 Ops.FLOORMOD dtypes.weakint [299, 264]
+303 Ops.SINK dtypes.void [302, 7] tag=("simplify", 0, 0)
+304 Ops.MUL dtypes.weakint [270, 255]
+305 Ops.FLOORDIV dtypes.weakint [304, 270]
+306 Ops.SINK dtypes.void [305, 255] tag=("simplify", 5, 5)
+307 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), multiple_of=8, name="n", addrspace=AddrSpace.ALU)
+308 Ops.CONST dtypes.weakint [] -8
+309 Ops.MUL dtypes.weakint [307, 308]
+310 Ops.FLOORDIV dtypes.weakint [309, 307]
+311 Ops.SINK dtypes.void [310, 308] tag=("simplify", -8, -8)
+312 Ops.FLOORMOD dtypes.weakint [309, 307]
+313 Ops.SINK dtypes.void [312, 7] tag=("simplify", 0, 0)
+314 Ops.MUL dtypes.weakint [307, 2]
+315 Ops.MUL dtypes.weakint [314, 308]
+316 Ops.FLOORDIV dtypes.weakint [315, 314]
+317 Ops.SINK dtypes.void [316, 308] tag=("simplify", -8, -8)
+318 Ops.MUL dtypes.weakint [12, 307]
+319 Ops.SINK dtypes.void [318, 307] tag=("simplify", 8, 64)
+320 Ops.FLOORDIV dtypes.weakint [314, 307]
+321 Ops.SINK dtypes.void [320, 2] tag=("simplify", -1, -1)
+322 Ops.FLOORMOD dtypes.weakint [314, 307]
+323 Ops.SINK dtypes.void [322, 7] tag=("simplify", 0, 0)
+324 Ops.MUL dtypes.weakint [314, 2]
+325 Ops.FLOORDIV dtypes.weakint [324, 314]
+326 Ops.SINK dtypes.void [325, 2] tag=("simplify", -1, -1)
+327 Ops.MUL dtypes.weakint [307, 15]
+328 Ops.FLOORDIV dtypes.weakint [327, 307]
+329 Ops.SINK dtypes.void [328, 15] tag=("simplify", 2, 2)
+330 Ops.FLOORMOD dtypes.weakint [327, 307]
+331 Ops.SINK dtypes.void [330, 7] tag=("simplify", 0, 0)
+332 Ops.MUL dtypes.weakint [314, 15]
+333 Ops.FLOORDIV dtypes.weakint [332, 314]
+334 Ops.SINK dtypes.void [333, 15] tag=("simplify", 2, 2)
+335 Ops.CONST dtypes.weakint [] 8
+336 Ops.MUL dtypes.weakint [307, 335]
+337 Ops.FLOORDIV dtypes.weakint [336, 307]
+338 Ops.SINK dtypes.void [337, 335] tag=("simplify", 8, 8)
+339 Ops.FLOORMOD dtypes.weakint [336, 307]
+340 Ops.SINK dtypes.void [339, 7] tag=("simplify", 0, 0)
+341 Ops.MUL dtypes.weakint [314, 335]
+342 Ops.FLOORDIV dtypes.weakint [341, 314]
+343 Ops.SINK dtypes.void [342, 335] tag=("simplify", 8, 8)
+344 Ops.CONST dtypes.weakint [] 9
+345 Ops.MUL dtypes.weakint [307, 344]
+346 Ops.FLOORDIV dtypes.weakint [345, 307]
+347 Ops.SINK dtypes.void [346, 344] tag=("simplify", 9, 9)
+348 Ops.FLOORMOD dtypes.weakint [345, 307]
+349 Ops.SINK dtypes.void [348, 7] tag=("simplify", 0, 0)
+350 Ops.MUL dtypes.weakint [314, 344]
+351 Ops.FLOORDIV dtypes.weakint [350, 314]
+352 Ops.SINK dtypes.void [351, 344] tag=("simplify", 9, 9)
+353 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(8, 64), multiple_of=8, name="n", addrspace=AddrSpace.ALU, val=16)
+354 Ops.MUL dtypes.weakint [353, 308]
+355 Ops.FLOORDIV dtypes.weakint [354, 353]
+356 Ops.SINK dtypes.void [355, 308] tag=("simplify", -8, -8)
+357 Ops.FLOORMOD dtypes.weakint [354, 353]
+358 Ops.SINK dtypes.void [357, 7] tag=("simplify", 0, 0)
+359 Ops.MUL dtypes.weakint [353, 2]
+360 Ops.MUL dtypes.weakint [359, 308]
+361 Ops.FLOORDIV dtypes.weakint [360, 359]
+362 Ops.SINK dtypes.void [361, 308] tag=("simplify", -8, -8)
+363 Ops.MUL dtypes.weakint [12, 353]
+364 Ops.SINK dtypes.void [363, 353] tag=("simplify", 8, 64)
+365 Ops.FLOORDIV dtypes.weakint [359, 353]
+366 Ops.SINK dtypes.void [365, 2] tag=("simplify", -1, -1)
+367 Ops.FLOORMOD dtypes.weakint [359, 353]
+368 Ops.SINK dtypes.void [367, 7] tag=("simplify", 0, 0)
+369 Ops.MUL dtypes.weakint [359, 2]
+370 Ops.FLOORDIV dtypes.weakint [369, 359]
+371 Ops.SINK dtypes.void [370, 2] tag=("simplify", -1, -1)
+372 Ops.MUL dtypes.weakint [353, 15]
+373 Ops.FLOORDIV dtypes.weakint [372, 353]
+374 Ops.SINK dtypes.void [373, 15] tag=("simplify", 2, 2)
+375 Ops.FLOORMOD dtypes.weakint [372, 353]
+376 Ops.SINK dtypes.void [375, 7] tag=("simplify", 0, 0)
+377 Ops.MUL dtypes.weakint [359, 15]
+378 Ops.FLOORDIV dtypes.weakint [377, 359]
+379 Ops.SINK dtypes.void [378, 15] tag=("simplify", 2, 2)
+380 Ops.MUL dtypes.weakint [353, 335]
+381 Ops.FLOORDIV dtypes.weakint [380, 353]
+382 Ops.SINK dtypes.void [381, 335] tag=("simplify", 8, 8)
+383 Ops.FLOORMOD dtypes.weakint [380, 353]
+384 Ops.SINK dtypes.void [383, 7] tag=("simplify", 0, 0)
+385 Ops.MUL dtypes.weakint [359, 335]
+386 Ops.FLOORDIV dtypes.weakint [385, 359]
+387 Ops.SINK dtypes.void [386, 335] tag=("simplify", 8, 8)
+388 Ops.MUL dtypes.weakint [353, 344]
+389 Ops.FLOORDIV dtypes.weakint [388, 353]
+390 Ops.SINK dtypes.void [389, 344] tag=("simplify", 9, 9)
+391 Ops.FLOORMOD dtypes.weakint [388, 353]
+392 Ops.SINK dtypes.void [391, 7] tag=("simplify", 0, 0)
+393 Ops.MUL dtypes.weakint [359, 344]
+394 Ops.FLOORDIV dtypes.weakint [393, 359]
+395 Ops.SINK dtypes.void [394, 344] tag=("simplify", 9, 9)
+396 Ops.SINK dtypes.void [5, 8, 11, 14, 18, 20, 23, 26, 28, 31, 35, 37, 40, 42, 45, 47, 50, 53, 55, 58, 63, 65, 69, 71, 73, 75, 78, 81, 83, 86, 90, 92, 95, 99, 101, 105, 107, 109, 111, 114, 117, 119, 122, 125, 127, 130, 135, 137, 141, 143, 145, 147, 150, 153, 155, 158, 161, 163, 166, 170, 172, 175, 179, 181, 185, 187, 189, 191, 194, 197, 199, 202, 205, 207, 210, 213, 215, 218, 223, 225, 229, 231, 233, 235, 238, 241, 243, 246, 249, 251, 254, 258, 260, 263, 267, 269, 273, 275, 277, 279, 282, 285, 287, 290, 293, 295, 298, 301, 303, 306, 311, 313, 317, 319, 321, 323, 326, 329, 331, 334, 338, 340, 343, 347, 349, 352, 356, 358, 362, 364, 366, 368, 371, 374, 376, 379, 382, 384, 387, 390, 392, 395]
 

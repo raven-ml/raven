@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 case	src	render	simplified
 variable	0	a	a
 bound_variable	1	a	a
@@ -38,16 +38,16 @@ typed_bool_to_int	34	1	1
 forced_cast_of_float	35	3.7	3
 forced_cast_of_bool	36	True	1
 forced_cast_to_bool	37	0	False
-cast_of_typed_constant	38	(long)(3)	3
-cast_to_int	39	(int)(a)	(int)(a)
-cast_to_long	40	(long)(a)	(long)(a)
-cast_to_uchar	41	(uchar)(a)	(uchar)(a)
+cast_of_typed_constant	38	(i64)(3)	3
+cast_to_int	39	(i32)(a)	(i32)(a)
+cast_to_long	40	(i64)(a)	(i64)(a)
+cast_to_uchar	41	(u8)(a)	(u8)(a)
 cast_to_bool	42	(bool)(a)	True
-cast_to_half	43	(half)(x)	(half)(x)
-cast_to_bfloat16	44	(bfloat16)(x)	(bfloat16)(x)
+cast_to_half	43	(f16)(x)	(f16)(x)
+cast_to_bfloat16	44	(bf16)(x)	(bf16)(x)
 cast_to_fp8	45	(fp8e4m3)(x)	(fp8e4m3)(x)
 cast_to_weakint	46	(weakint)(x)	(weakint)(x)
-cast_of_sum	47	(int)((a+b))	(int)((b+a))
+cast_of_sum	47	(i32)((a+b))	(i32)((b+a))
 neg	48	(-a)	(-a)
 neg_of_negative	49	(--3)	3
 neg_of_sum	50	(-(a+b))	(-(b+a))
@@ -105,7 +105,7 @@ add_of_comparison	101	((a<b)+c)	(c+(a<b))
 comparison_of_comparison	102	((a<b)!=g)	((a<b)!=g)
 mul_of_max	103	(max(a, b)*c)	(c*max(b, a))
 mul_of_where	104	((a if g else b)*c)	(c*(a if g else b))
-add_of_cast	105	((int)(a)+(int)(b))	((int)(a)+(int)(b))
+add_of_cast	105	((i32)(a)+(i32)(b))	((i32)(a)+(i32)(b))
 float_arithmetic	106	(x*2.5+(1/y))	(x*2.5+(1/y))
 reshape	107	p0.reshape((4,8))	p0.reshape((4,8))
 reshape_flat	108	p0.reshape((4,8)).reshape((32,))	p0
@@ -126,7 +126,7 @@ index	122	[r0]	[r0]
 index_of_sum	123	[r0*8+r1]	[r0*8+r1]
 index_twice	124	[r0][r1]	[r0][r1]
 index_of_where	125	[a if g else b]	[a if g else b]
-index_of_cast	126	[(int)(a)]	[(int)(a)]
+index_of_cast	126	[(i32)(a)]	[(i32)(a)]
 index_of_neg	127	[-a]	[-a]
 index_of_max	128	[max(a, b)]	[max(b, a)]
 index_of_comparison	129	[a<b]	[a<b]

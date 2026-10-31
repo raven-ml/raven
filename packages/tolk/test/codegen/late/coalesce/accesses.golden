@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 case	src
 four_constants	0
 eight_constants	1
@@ -29,20 +29,20 @@ gate_on_some	25
 invalid_index	26
 nontemporal	27
 half_nontemporal	28
-four_half	29
-four_int	30
-four_uint	31
+four_f16	29
+four_i32	30
+four_u32	31
 four_fp8e4m3	32
 four_fp8e5m2	33
 four_fp8e4m3fnuz	34
 four_fp8e5m2fnuz	35
-four_bfloat16	36
-four_double	37
-four_char	38
-four_uchar	39
-four_short	40
-four_long	41
-four_ulong	42
+four_bf16	36
+four_f64	37
+four_i8	38
+four_u8	39
+four_i16	40
+four_i64	41
+four_u64	42
 four_bool	43
 eight_half	44
 sixteen_half	45

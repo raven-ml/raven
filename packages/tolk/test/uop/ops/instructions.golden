@@ -1,9 +1,10 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.INS dtypes.float [0, 1] ("v_mov", dtypes.float)
-3 Ops.INDEX dtypes.float [0, 1]
-4 Ops.INS dtypes.half [3, 3] ("v_add", dtypes.half)
-5 Ops.INS dtypes.void [0, 1] ("nop", dtypes.void)
-6 Ops.SINK dtypes.void [2, 4, 5]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.INS dtypes.f32 [1, 2] ("v_mov", dtypes.f32)
+4 Ops.INDEX dtypes.f32 [1, 2]
+5 Ops.INS dtypes.f16 [4, 4] ("v_add", dtypes.f16)
+6 Ops.INS dtypes.void [1, 2] ("nop", dtypes.void)
+7 Ops.SINK dtypes.void [3, 5, 6]
 

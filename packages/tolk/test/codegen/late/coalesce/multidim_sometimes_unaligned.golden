@@ -1,83 +1,83 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.INDEX dtypes.float [0, 1]
-3 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=7, device="CPU")
-4 Ops.INDEX dtypes.float [3, 1]
-5 Ops.LOAD dtypes.float [4]
-6 Ops.CONST dtypes.weakint [] 1
-7 Ops.INDEX dtypes.float [3, 6]
-8 Ops.LOAD dtypes.float [7]
-9 Ops.CONST dtypes.weakint [] 2
-10 Ops.INDEX dtypes.float [3, 9]
-11 Ops.LOAD dtypes.float [10]
-12 Ops.CONST dtypes.weakint [] 3
-13 Ops.INDEX dtypes.float [3, 12]
-14 Ops.LOAD dtypes.float [13]
-15 Ops.CONST dtypes.weakint [] 4
-16 Ops.INDEX dtypes.float [3, 15]
-17 Ops.LOAD dtypes.float [16]
-18 Ops.CONST dtypes.weakint [] 5
-19 Ops.INDEX dtypes.float [3, 18]
-20 Ops.LOAD dtypes.float [19]
-21 Ops.CONST dtypes.weakint [] 6
-22 Ops.INDEX dtypes.float [3, 21]
-23 Ops.LOAD dtypes.float [22]
-24 Ops.STACK dtypes.float [5, 8, 11, 14, 8, 11, 14, 17, 11, 14, 17, 20, 14, 17, 20, 23]
-25 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=5, device="CPU")
-26 Ops.INDEX dtypes.float [25, 6]
-27 Ops.LOAD dtypes.float [26]
-28 Ops.INDEX dtypes.float [25, 9]
-29 Ops.LOAD dtypes.float [28]
-30 Ops.INDEX dtypes.float [25, 12]
-31 Ops.LOAD dtypes.float [30]
-32 Ops.INDEX dtypes.float [25, 15]
-33 Ops.LOAD dtypes.float [32]
-34 Ops.STACK dtypes.float [27, 29, 31, 33, 27, 29, 31, 33, 27, 29, 31, 33, 27, 29, 31, 33]
-35 Ops.MUL dtypes.float [24, 34]
-36 Ops.INDEX dtypes.float [35, 1]
-37 Ops.INDEX dtypes.float [35, 6]
-38 Ops.ADD dtypes.float [36, 37] tag="fusable"
-39 Ops.INDEX dtypes.float [35, 9]
-40 Ops.ADD dtypes.float [38, 39] tag="fusable"
-41 Ops.INDEX dtypes.float [35, 12]
-42 Ops.ADD dtypes.float [40, 41] tag="fusable"
-43 Ops.STORE dtypes.void [2, 42]
-44 Ops.INDEX dtypes.float [0, 6]
-45 Ops.INDEX dtypes.float [35, 15]
-46 Ops.INDEX dtypes.float [35, 18]
-47 Ops.ADD dtypes.float [45, 46] tag="fusable"
-48 Ops.INDEX dtypes.float [35, 21]
-49 Ops.ADD dtypes.float [47, 48] tag="fusable"
-50 Ops.CONST dtypes.weakint [] 7
-51 Ops.INDEX dtypes.float [35, 50]
-52 Ops.ADD dtypes.float [49, 51] tag="fusable"
-53 Ops.STORE dtypes.void [44, 52]
-54 Ops.INDEX dtypes.float [0, 9]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 7
+5 Ops.PARAM dtypes.f32 [4] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+6 Ops.INDEX dtypes.f32 [5, 2]
+7 Ops.LOAD dtypes.f32 [6]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.INDEX dtypes.f32 [5, 8]
+10 Ops.LOAD dtypes.f32 [9]
+11 Ops.CONST dtypes.weakint [] 2
+12 Ops.INDEX dtypes.f32 [5, 11]
+13 Ops.LOAD dtypes.f32 [12]
+14 Ops.CONST dtypes.weakint [] 3
+15 Ops.INDEX dtypes.f32 [5, 14]
+16 Ops.LOAD dtypes.f32 [15]
+17 Ops.INDEX dtypes.f32 [5, 0]
+18 Ops.LOAD dtypes.f32 [17]
+19 Ops.CONST dtypes.weakint [] 5
+20 Ops.INDEX dtypes.f32 [5, 19]
+21 Ops.LOAD dtypes.f32 [20]
+22 Ops.CONST dtypes.weakint [] 6
+23 Ops.INDEX dtypes.f32 [5, 22]
+24 Ops.LOAD dtypes.f32 [23]
+25 Ops.STACK dtypes.f32 [7, 10, 13, 16, 10, 13, 16, 18, 13, 16, 18, 21, 16, 18, 21, 24]
+26 Ops.PARAM dtypes.f32 [19] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+27 Ops.INDEX dtypes.f32 [26, 8]
+28 Ops.LOAD dtypes.f32 [27]
+29 Ops.INDEX dtypes.f32 [26, 11]
+30 Ops.LOAD dtypes.f32 [29]
+31 Ops.INDEX dtypes.f32 [26, 14]
+32 Ops.LOAD dtypes.f32 [31]
+33 Ops.INDEX dtypes.f32 [26, 0]
+34 Ops.LOAD dtypes.f32 [33]
+35 Ops.STACK dtypes.f32 [28, 30, 32, 34, 28, 30, 32, 34, 28, 30, 32, 34, 28, 30, 32, 34]
+36 Ops.MUL dtypes.f32 [25, 35]
+37 Ops.INDEX dtypes.f32 [36, 2]
+38 Ops.INDEX dtypes.f32 [36, 8]
+39 Ops.ADD dtypes.f32 [37, 38] tag="fusable"
+40 Ops.INDEX dtypes.f32 [36, 11]
+41 Ops.ADD dtypes.f32 [39, 40] tag="fusable"
+42 Ops.INDEX dtypes.f32 [36, 14]
+43 Ops.ADD dtypes.f32 [41, 42] tag="fusable"
+44 Ops.STORE dtypes.void [3, 43]
+45 Ops.INDEX dtypes.f32 [1, 8]
+46 Ops.INDEX dtypes.f32 [36, 0]
+47 Ops.INDEX dtypes.f32 [36, 19]
+48 Ops.ADD dtypes.f32 [46, 47] tag="fusable"
+49 Ops.INDEX dtypes.f32 [36, 22]
+50 Ops.ADD dtypes.f32 [48, 49] tag="fusable"
+51 Ops.INDEX dtypes.f32 [36, 4]
+52 Ops.ADD dtypes.f32 [50, 51] tag="fusable"
+53 Ops.STORE dtypes.void [45, 52]
+54 Ops.INDEX dtypes.f32 [1, 11]
 55 Ops.CONST dtypes.weakint [] 8
-56 Ops.INDEX dtypes.float [35, 55]
+56 Ops.INDEX dtypes.f32 [36, 55]
 57 Ops.CONST dtypes.weakint [] 9
-58 Ops.INDEX dtypes.float [35, 57]
-59 Ops.ADD dtypes.float [56, 58] tag="fusable"
+58 Ops.INDEX dtypes.f32 [36, 57]
+59 Ops.ADD dtypes.f32 [56, 58] tag="fusable"
 60 Ops.CONST dtypes.weakint [] 10
-61 Ops.INDEX dtypes.float [35, 60]
-62 Ops.ADD dtypes.float [59, 61] tag="fusable"
+61 Ops.INDEX dtypes.f32 [36, 60]
+62 Ops.ADD dtypes.f32 [59, 61] tag="fusable"
 63 Ops.CONST dtypes.weakint [] 11
-64 Ops.INDEX dtypes.float [35, 63]
-65 Ops.ADD dtypes.float [62, 64] tag="fusable"
+64 Ops.INDEX dtypes.f32 [36, 63]
+65 Ops.ADD dtypes.f32 [62, 64] tag="fusable"
 66 Ops.STORE dtypes.void [54, 65]
-67 Ops.INDEX dtypes.float [0, 12]
+67 Ops.INDEX dtypes.f32 [1, 14]
 68 Ops.CONST dtypes.weakint [] 12
-69 Ops.INDEX dtypes.float [35, 68]
+69 Ops.INDEX dtypes.f32 [36, 68]
 70 Ops.CONST dtypes.weakint [] 13
-71 Ops.INDEX dtypes.float [35, 70]
-72 Ops.ADD dtypes.float [69, 71] tag="fusable"
+71 Ops.INDEX dtypes.f32 [36, 70]
+72 Ops.ADD dtypes.f32 [69, 71] tag="fusable"
 73 Ops.CONST dtypes.weakint [] 14
-74 Ops.INDEX dtypes.float [35, 73]
-75 Ops.ADD dtypes.float [72, 74] tag="fusable"
+74 Ops.INDEX dtypes.f32 [36, 73]
+75 Ops.ADD dtypes.f32 [72, 74] tag="fusable"
 76 Ops.CONST dtypes.weakint [] 15
-77 Ops.INDEX dtypes.float [35, 76]
-78 Ops.ADD dtypes.float [75, 77] tag="fusable"
+77 Ops.INDEX dtypes.f32 [36, 76]
+78 Ops.ADD dtypes.f32 [75, 77] tag="fusable"
 79 Ops.STORE dtypes.void [67, 78]
-80 Ops.SINK dtypes.void [43, 53, 66, 79] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL))))
+80 Ops.SINK dtypes.void [44, 53, 66, 79] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))))
 

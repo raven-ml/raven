@@ -35,7 +35,7 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 
 # Making a HIP renderer makes its compiler, which asserts that comgr is loaded;
 # comgr is absent where the goldens are generated, and no case compiles.
-compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
+compiler_amd.c.DLL._loaded_[compiler_amd.comgr.dll.nm] = compiler_amd.comgr.dll
 
 from golden import graph, table
 from graph import kernels, stage

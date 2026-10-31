@@ -1,34 +1,33 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.INDEX dtypes.float [0, 2]
-4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4)
-5 Ops.INDEX dtypes.float [4, 2]
-6 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
-7 Ops.AFTER dtypes.int [6, 2]
-8 Ops.CONST dtypes.weakint [] 0
-9 Ops.INDEX dtypes.int [7, 8]
-10 Ops.CAST dtypes.int [8] dtypes.int
-11 Ops.STORE dtypes.void [9, 10]
-12 Ops.AFTER dtypes.int [7, 11]
-13 Ops.INDEX dtypes.int [12, 8]
-14 Ops.NOOP dtypes.void []
-15 Ops.RANGE dtypes.void [14] (1, AxisType.WEAK)
-16 Ops.AFTER dtypes.int [12, 15]
-17 Ops.INDEX dtypes.int [16, 8]
-18 Ops.CONST dtypes.weakint [] 1
-19 Ops.ADD dtypes.int [17, 18]
-20 Ops.STORE dtypes.void [13, 19]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.f32 [1, 2]
+4 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+5 Ops.INDEX dtypes.f32 [4, 2]
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.BUFFER dtypes.i32 [6] ParamArg(slot=0, dtype=dtypes.i32, addrspace=AddrSpace.REG)
+8 Ops.AFTER dtypes.i32 [7, 2]
+9 Ops.CONST dtypes.weakint [] 0
+10 Ops.INDEX dtypes.i32 [8, 9]
+11 Ops.CAST dtypes.i32 [9] dtypes.i32
+12 Ops.STORE dtypes.void [10, 11]
+13 Ops.AFTER dtypes.i32 [8, 12]
+14 Ops.INDEX dtypes.i32 [13, 9]
+15 Ops.NOOP dtypes.void []
+16 Ops.RANGE dtypes.void [15] (AxisType.WEAK, 1)
+17 Ops.AFTER dtypes.i32 [13, 16]
+18 Ops.INDEX dtypes.i32 [17, 9]
+19 Ops.ADD dtypes.i32 [18, 6]
+20 Ops.STORE dtypes.void [14, 19]
 21 Ops.CONST dtypes.weakint [] 3
 22 Ops.CMPLT dtypes.bool [19, 21]
-23 Ops.BACKEDGE dtypes.void [20, 15, 22]
-24 Ops.AFTER dtypes.int [12, 23]
-25 Ops.INDEX dtypes.int [24, 8]
-26 Ops.CAST dtypes.float [25] dtypes.float
-27 Ops.ADD dtypes.float [5, 26]
+23 Ops.BACKEDGE dtypes.void [20, 16, 22]
+24 Ops.AFTER dtypes.i32 [13, 23]
+25 Ops.INDEX dtypes.i32 [24, 9]
+26 Ops.CAST dtypes.f32 [25] dtypes.f32
+27 Ops.ADD dtypes.f32 [5, 26]
 28 Ops.STORE dtypes.void [3, 27]
 29 Ops.END dtypes.void [28, 2]
-30 Ops.AFTER dtypes.float [0, 29]
-31 Ops.SINK dtypes.void [30] KernelInfo(opts_to_apply=())
+30 Ops.SINK dtypes.void [1, 29] KernelInfo(opts_to_apply=())
 

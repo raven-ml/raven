@@ -1,176 +1,176 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=400, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
-1 Ops.ALLOC dtypes.float [] ParamArg(slot=12, dtype=dtypes.float, size=112, device="CPU")
-2 Ops.ALLOC dtypes.float [] ParamArg(slot=13, dtype=dtypes.float, size=112, device="CPU:3")
-3 Ops.ALLOC dtypes.float [] ParamArg(slot=16, dtype=dtypes.float, size=112, device="CPU:3")
-4 Ops.ALLOC dtypes.float [] ParamArg(slot=17, dtype=dtypes.float, size=112, device="CPU:2")
-5 Ops.ALLOC dtypes.float [] ParamArg(slot=18, dtype=dtypes.float, size=112, device="CPU:2")
-6 Ops.ALLOC dtypes.float [] ParamArg(slot=19, dtype=dtypes.float, size=112, device="CPU:1")
-7 Ops.ALLOC dtypes.float [] ParamArg(slot=20, dtype=dtypes.float, size=112, device="CPU:1")
-8 Ops.ALLOC dtypes.float [] ParamArg(slot=21, dtype=dtypes.float, size=112, device="CPU")
-9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=400, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
-10 Ops.MSELECT dtypes.float [9] 0
-11 Ops.CONST dtypes.weakint [] 0
-12 Ops.CONST dtypes.weakint [] 112
-13 Ops.SHRINK dtypes.float [10, 11, 12]
-14 Ops.STORE dtypes.void [8, 13]
-15 Ops.AFTER dtypes.float [8, 14]
-16 Ops.STORE dtypes.void [7, 15]
-17 Ops.AFTER dtypes.float [7, 16]
-18 Ops.MSELECT dtypes.float [9] 1
-19 Ops.SHRINK dtypes.float [18, 11, 12]
-20 Ops.ADD dtypes.float [17, 19]
-21 Ops.STORE dtypes.void [6, 20]
-22 Ops.AFTER dtypes.float [6, 21]
-23 Ops.STORE dtypes.void [5, 22]
-24 Ops.AFTER dtypes.float [5, 23]
-25 Ops.MSELECT dtypes.float [9] 2
-26 Ops.SHRINK dtypes.float [25, 11, 12]
-27 Ops.ADD dtypes.float [24, 26]
-28 Ops.STORE dtypes.void [4, 27]
-29 Ops.AFTER dtypes.float [4, 28]
-30 Ops.STORE dtypes.void [3, 29]
-31 Ops.AFTER dtypes.float [3, 30]
-32 Ops.MSELECT dtypes.float [9] 3
-33 Ops.SHRINK dtypes.float [32, 11, 12]
-34 Ops.ADD dtypes.float [31, 33]
-35 Ops.STORE dtypes.void [2, 34]
-36 Ops.AFTER dtypes.float [2, 35]
-37 Ops.STORE dtypes.void [1, 36]
-38 Ops.AFTER dtypes.float [1, 37]
-39 Ops.ALLOC dtypes.float [] ParamArg(slot=14, dtype=dtypes.float, size=112, device="CPU:1")
-40 Ops.STORE dtypes.void [39, 38]
-41 Ops.AFTER dtypes.float [39, 40]
-42 Ops.ALLOC dtypes.float [] ParamArg(slot=15, dtype=dtypes.float, size=112, device="CPU:2")
-43 Ops.STORE dtypes.void [42, 41]
-44 Ops.AFTER dtypes.float [42, 43]
-45 Ops.MSTACK dtypes.float [38, 41, 44, 34]
-46 Ops.CONST dtypes.weakint [] 400
-47 Ops.PAD dtypes.float [45, 11, 46]
-48 Ops.ALLOC dtypes.float [] ParamArg(slot=22, dtype=dtypes.float, size=96, device="CPU")
-49 Ops.ALLOC dtypes.float [] ParamArg(slot=23, dtype=dtypes.float, size=96, device="CPU:3")
-50 Ops.ALLOC dtypes.float [] ParamArg(slot=24, dtype=dtypes.float, size=96, device="CPU:3")
-51 Ops.ALLOC dtypes.float [] ParamArg(slot=25, dtype=dtypes.float, size=96, device="CPU:2")
-52 Ops.ALLOC dtypes.float [] ParamArg(slot=26, dtype=dtypes.float, size=96, device="CPU:2")
-53 Ops.ALLOC dtypes.float [] ParamArg(slot=27, dtype=dtypes.float, size=96, device="CPU:1")
-54 Ops.CONST dtypes.weakint [] 96
-55 Ops.SHRINK dtypes.float [18, 12, 54]
-56 Ops.STORE dtypes.void [53, 55]
-57 Ops.AFTER dtypes.float [53, 56]
-58 Ops.STORE dtypes.void [52, 57]
-59 Ops.AFTER dtypes.float [52, 58]
-60 Ops.SHRINK dtypes.float [25, 12, 54]
-61 Ops.ADD dtypes.float [59, 60]
-62 Ops.STORE dtypes.void [51, 61]
-63 Ops.AFTER dtypes.float [51, 62]
-64 Ops.STORE dtypes.void [50, 63]
-65 Ops.AFTER dtypes.float [50, 64]
-66 Ops.SHRINK dtypes.float [32, 12, 54]
-67 Ops.ADD dtypes.float [65, 66]
-68 Ops.STORE dtypes.void [49, 67]
-69 Ops.AFTER dtypes.float [49, 68]
-70 Ops.STORE dtypes.void [48, 69]
-71 Ops.AFTER dtypes.float [48, 70]
-72 Ops.SHRINK dtypes.float [10, 12, 54]
-73 Ops.ADD dtypes.float [71, 72]
-74 Ops.ALLOC dtypes.float [] ParamArg(slot=28, dtype=dtypes.float, size=96, device="CPU:1")
-75 Ops.ALLOC dtypes.float [] ParamArg(slot=29, dtype=dtypes.float, size=96, device="CPU")
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 400
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
+2 Ops.CONST dtypes.weakint [] 112
+3 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=12, dtype=dtypes.f32, device="CPU")
+4 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=13, dtype=dtypes.f32, device="CPU:3")
+5 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=16, dtype=dtypes.f32, device="CPU:3")
+6 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=17, dtype=dtypes.f32, device="CPU:2")
+7 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=18, dtype=dtypes.f32, device="CPU:2")
+8 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=19, dtype=dtypes.f32, device="CPU:1")
+9 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=20, dtype=dtypes.f32, device="CPU:1")
+10 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=21, dtype=dtypes.f32, device="CPU")
+11 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
+12 Ops.MSELECT dtypes.f32 [11] 0
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.SHRINK dtypes.f32 [12, 13, 2]
+15 Ops.STORE dtypes.void [10, 14]
+16 Ops.AFTER dtypes.f32 [10, 15]
+17 Ops.STORE dtypes.void [9, 16]
+18 Ops.AFTER dtypes.f32 [9, 17]
+19 Ops.MSELECT dtypes.f32 [11] 1
+20 Ops.SHRINK dtypes.f32 [19, 13, 2]
+21 Ops.ADD dtypes.f32 [18, 20]
+22 Ops.STORE dtypes.void [8, 21]
+23 Ops.AFTER dtypes.f32 [8, 22]
+24 Ops.STORE dtypes.void [7, 23]
+25 Ops.AFTER dtypes.f32 [7, 24]
+26 Ops.MSELECT dtypes.f32 [11] 2
+27 Ops.SHRINK dtypes.f32 [26, 13, 2]
+28 Ops.ADD dtypes.f32 [25, 27]
+29 Ops.STORE dtypes.void [6, 28]
+30 Ops.AFTER dtypes.f32 [6, 29]
+31 Ops.STORE dtypes.void [5, 30]
+32 Ops.AFTER dtypes.f32 [5, 31]
+33 Ops.MSELECT dtypes.f32 [11] 3
+34 Ops.SHRINK dtypes.f32 [33, 13, 2]
+35 Ops.ADD dtypes.f32 [32, 34]
+36 Ops.STORE dtypes.void [4, 35]
+37 Ops.AFTER dtypes.f32 [4, 36]
+38 Ops.STORE dtypes.void [3, 37]
+39 Ops.AFTER dtypes.f32 [3, 38]
+40 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=14, dtype=dtypes.f32, device="CPU:1")
+41 Ops.STORE dtypes.void [40, 39]
+42 Ops.AFTER dtypes.f32 [40, 41]
+43 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=15, dtype=dtypes.f32, device="CPU:2")
+44 Ops.STORE dtypes.void [43, 42]
+45 Ops.AFTER dtypes.f32 [43, 44]
+46 Ops.MSTACK dtypes.f32 [39, 42, 45, 35]
+47 Ops.PAD dtypes.f32 [46, 13, 0]
+48 Ops.CONST dtypes.weakint [] 96
+49 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=22, dtype=dtypes.f32, device="CPU")
+50 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=23, dtype=dtypes.f32, device="CPU:3")
+51 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=24, dtype=dtypes.f32, device="CPU:3")
+52 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=25, dtype=dtypes.f32, device="CPU:2")
+53 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=26, dtype=dtypes.f32, device="CPU:2")
+54 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=27, dtype=dtypes.f32, device="CPU:1")
+55 Ops.SHRINK dtypes.f32 [19, 2, 48]
+56 Ops.STORE dtypes.void [54, 55]
+57 Ops.AFTER dtypes.f32 [54, 56]
+58 Ops.STORE dtypes.void [53, 57]
+59 Ops.AFTER dtypes.f32 [53, 58]
+60 Ops.SHRINK dtypes.f32 [26, 2, 48]
+61 Ops.ADD dtypes.f32 [59, 60]
+62 Ops.STORE dtypes.void [52, 61]
+63 Ops.AFTER dtypes.f32 [52, 62]
+64 Ops.STORE dtypes.void [51, 63]
+65 Ops.AFTER dtypes.f32 [51, 64]
+66 Ops.SHRINK dtypes.f32 [33, 2, 48]
+67 Ops.ADD dtypes.f32 [65, 66]
+68 Ops.STORE dtypes.void [50, 67]
+69 Ops.AFTER dtypes.f32 [50, 68]
+70 Ops.STORE dtypes.void [49, 69]
+71 Ops.AFTER dtypes.f32 [49, 70]
+72 Ops.SHRINK dtypes.f32 [12, 2, 48]
+73 Ops.ADD dtypes.f32 [71, 72]
+74 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=28, dtype=dtypes.f32, device="CPU:1")
+75 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=29, dtype=dtypes.f32, device="CPU")
 76 Ops.STORE dtypes.void [75, 73]
-77 Ops.AFTER dtypes.float [75, 76]
+77 Ops.AFTER dtypes.f32 [75, 76]
 78 Ops.STORE dtypes.void [74, 77]
-79 Ops.AFTER dtypes.float [74, 78]
-80 Ops.ALLOC dtypes.float [] ParamArg(slot=30, dtype=dtypes.float, size=96, device="CPU:2")
+79 Ops.AFTER dtypes.f32 [74, 78]
+80 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=30, dtype=dtypes.f32, device="CPU:2")
 81 Ops.STORE dtypes.void [80, 79]
-82 Ops.AFTER dtypes.float [80, 81]
-83 Ops.ALLOC dtypes.float [] ParamArg(slot=31, dtype=dtypes.float, size=96, device="CPU:3")
+82 Ops.AFTER dtypes.f32 [80, 81]
+83 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=31, dtype=dtypes.f32, device="CPU:3")
 84 Ops.STORE dtypes.void [83, 82]
-85 Ops.AFTER dtypes.float [83, 84]
-86 Ops.MSTACK dtypes.float [73, 79, 82, 85]
-87 Ops.PAD dtypes.float [86, 12, 46]
-88 Ops.ADD dtypes.float [47, 87]
-89 Ops.ALLOC dtypes.float [] ParamArg(slot=32, dtype=dtypes.float, size=96, device="CPU")
-90 Ops.ALLOC dtypes.float [] ParamArg(slot=33, dtype=dtypes.float, size=96, device="CPU:3")
-91 Ops.ALLOC dtypes.float [] ParamArg(slot=34, dtype=dtypes.float, size=96, device="CPU:2")
-92 Ops.ALLOC dtypes.float [] ParamArg(slot=35, dtype=dtypes.float, size=96, device="CPU:1")
-93 Ops.ALLOC dtypes.float [] ParamArg(slot=36, dtype=dtypes.float, size=96, device="CPU:1")
-94 Ops.ALLOC dtypes.float [] ParamArg(slot=37, dtype=dtypes.float, size=96, device="CPU")
-95 Ops.ALLOC dtypes.float [] ParamArg(slot=38, dtype=dtypes.float, size=96, device="CPU")
-96 Ops.ALLOC dtypes.float [] ParamArg(slot=39, dtype=dtypes.float, size=96, device="CPU:3")
-97 Ops.ALLOC dtypes.float [] ParamArg(slot=40, dtype=dtypes.float, size=96, device="CPU:3")
-98 Ops.ALLOC dtypes.float [] ParamArg(slot=41, dtype=dtypes.float, size=96, device="CPU:2")
+85 Ops.AFTER dtypes.f32 [83, 84]
+86 Ops.MSTACK dtypes.f32 [73, 79, 82, 85]
+87 Ops.PAD dtypes.f32 [86, 2, 0]
+88 Ops.ADD dtypes.f32 [47, 87]
+89 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=32, dtype=dtypes.f32, device="CPU")
+90 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=33, dtype=dtypes.f32, device="CPU:3")
+91 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=34, dtype=dtypes.f32, device="CPU:2")
+92 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=35, dtype=dtypes.f32, device="CPU:1")
+93 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=36, dtype=dtypes.f32, device="CPU:1")
+94 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=37, dtype=dtypes.f32, device="CPU")
+95 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=38, dtype=dtypes.f32, device="CPU")
+96 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=39, dtype=dtypes.f32, device="CPU:3")
+97 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=40, dtype=dtypes.f32, device="CPU:3")
+98 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=41, dtype=dtypes.f32, device="CPU:2")
 99 Ops.CONST dtypes.weakint [] 208
-100 Ops.SHRINK dtypes.float [25, 99, 54]
+100 Ops.SHRINK dtypes.f32 [26, 99, 48]
 101 Ops.STORE dtypes.void [98, 100]
-102 Ops.AFTER dtypes.float [98, 101]
+102 Ops.AFTER dtypes.f32 [98, 101]
 103 Ops.STORE dtypes.void [97, 102]
-104 Ops.AFTER dtypes.float [97, 103]
-105 Ops.SHRINK dtypes.float [32, 99, 54]
-106 Ops.ADD dtypes.float [104, 105]
+104 Ops.AFTER dtypes.f32 [97, 103]
+105 Ops.SHRINK dtypes.f32 [33, 99, 48]
+106 Ops.ADD dtypes.f32 [104, 105]
 107 Ops.STORE dtypes.void [96, 106]
-108 Ops.AFTER dtypes.float [96, 107]
+108 Ops.AFTER dtypes.f32 [96, 107]
 109 Ops.STORE dtypes.void [95, 108]
-110 Ops.AFTER dtypes.float [95, 109]
-111 Ops.SHRINK dtypes.float [10, 99, 54]
-112 Ops.ADD dtypes.float [110, 111]
+110 Ops.AFTER dtypes.f32 [95, 109]
+111 Ops.SHRINK dtypes.f32 [12, 99, 48]
+112 Ops.ADD dtypes.f32 [110, 111]
 113 Ops.STORE dtypes.void [94, 112]
-114 Ops.AFTER dtypes.float [94, 113]
+114 Ops.AFTER dtypes.f32 [94, 113]
 115 Ops.STORE dtypes.void [93, 114]
-116 Ops.AFTER dtypes.float [93, 115]
-117 Ops.SHRINK dtypes.float [18, 99, 54]
-118 Ops.ADD dtypes.float [116, 117]
+116 Ops.AFTER dtypes.f32 [93, 115]
+117 Ops.SHRINK dtypes.f32 [19, 99, 48]
+118 Ops.ADD dtypes.f32 [116, 117]
 119 Ops.STORE dtypes.void [92, 118]
-120 Ops.AFTER dtypes.float [92, 119]
+120 Ops.AFTER dtypes.f32 [92, 119]
 121 Ops.STORE dtypes.void [91, 120]
-122 Ops.AFTER dtypes.float [91, 121]
+122 Ops.AFTER dtypes.f32 [91, 121]
 123 Ops.STORE dtypes.void [90, 122]
-124 Ops.AFTER dtypes.float [90, 123]
+124 Ops.AFTER dtypes.f32 [90, 123]
 125 Ops.STORE dtypes.void [89, 124]
-126 Ops.AFTER dtypes.float [89, 125]
-127 Ops.MSTACK dtypes.float [126, 118, 122, 124]
-128 Ops.PAD dtypes.float [127, 99, 46]
-129 Ops.ADD dtypes.float [88, 128]
-130 Ops.ALLOC dtypes.float [] ParamArg(slot=42, dtype=dtypes.float, size=96, device="CPU")
-131 Ops.ALLOC dtypes.float [] ParamArg(slot=43, dtype=dtypes.float, size=96, device="CPU:3")
-132 Ops.ALLOC dtypes.float [] ParamArg(slot=44, dtype=dtypes.float, size=96, device="CPU:2")
-133 Ops.ALLOC dtypes.float [] ParamArg(slot=46, dtype=dtypes.float, size=96, device="CPU:2")
-134 Ops.ALLOC dtypes.float [] ParamArg(slot=47, dtype=dtypes.float, size=96, device="CPU:1")
-135 Ops.ALLOC dtypes.float [] ParamArg(slot=48, dtype=dtypes.float, size=96, device="CPU:1")
-136 Ops.ALLOC dtypes.float [] ParamArg(slot=49, dtype=dtypes.float, size=96, device="CPU")
-137 Ops.ALLOC dtypes.float [] ParamArg(slot=50, dtype=dtypes.float, size=96, device="CPU")
-138 Ops.ALLOC dtypes.float [] ParamArg(slot=51, dtype=dtypes.float, size=96, device="CPU:3")
+126 Ops.AFTER dtypes.f32 [89, 125]
+127 Ops.MSTACK dtypes.f32 [126, 118, 122, 124]
+128 Ops.PAD dtypes.f32 [127, 99, 0]
+129 Ops.ADD dtypes.f32 [88, 128]
+130 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=42, dtype=dtypes.f32, device="CPU")
+131 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=43, dtype=dtypes.f32, device="CPU:3")
+132 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=44, dtype=dtypes.f32, device="CPU:2")
+133 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=46, dtype=dtypes.f32, device="CPU:2")
+134 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=47, dtype=dtypes.f32, device="CPU:1")
+135 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=48, dtype=dtypes.f32, device="CPU:1")
+136 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=49, dtype=dtypes.f32, device="CPU")
+137 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=50, dtype=dtypes.f32, device="CPU")
+138 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=51, dtype=dtypes.f32, device="CPU:3")
 139 Ops.CONST dtypes.weakint [] 304
-140 Ops.SHRINK dtypes.float [32, 139, 54]
+140 Ops.SHRINK dtypes.f32 [33, 139, 48]
 141 Ops.STORE dtypes.void [138, 140]
-142 Ops.AFTER dtypes.float [138, 141]
+142 Ops.AFTER dtypes.f32 [138, 141]
 143 Ops.STORE dtypes.void [137, 142]
-144 Ops.AFTER dtypes.float [137, 143]
-145 Ops.SHRINK dtypes.float [10, 139, 54]
-146 Ops.ADD dtypes.float [144, 145]
+144 Ops.AFTER dtypes.f32 [137, 143]
+145 Ops.SHRINK dtypes.f32 [12, 139, 48]
+146 Ops.ADD dtypes.f32 [144, 145]
 147 Ops.STORE dtypes.void [136, 146]
-148 Ops.AFTER dtypes.float [136, 147]
+148 Ops.AFTER dtypes.f32 [136, 147]
 149 Ops.STORE dtypes.void [135, 148]
-150 Ops.AFTER dtypes.float [135, 149]
-151 Ops.SHRINK dtypes.float [18, 139, 54]
-152 Ops.ADD dtypes.float [150, 151]
+150 Ops.AFTER dtypes.f32 [135, 149]
+151 Ops.SHRINK dtypes.f32 [19, 139, 48]
+152 Ops.ADD dtypes.f32 [150, 151]
 153 Ops.STORE dtypes.void [134, 152]
-154 Ops.AFTER dtypes.float [134, 153]
+154 Ops.AFTER dtypes.f32 [134, 153]
 155 Ops.STORE dtypes.void [133, 154]
-156 Ops.AFTER dtypes.float [133, 155]
-157 Ops.SHRINK dtypes.float [25, 139, 54]
-158 Ops.ADD dtypes.float [156, 157]
+156 Ops.AFTER dtypes.f32 [133, 155]
+157 Ops.SHRINK dtypes.f32 [26, 139, 48]
+158 Ops.ADD dtypes.f32 [156, 157]
 159 Ops.STORE dtypes.void [132, 158]
-160 Ops.AFTER dtypes.float [132, 159]
+160 Ops.AFTER dtypes.f32 [132, 159]
 161 Ops.STORE dtypes.void [131, 160]
-162 Ops.AFTER dtypes.float [131, 161]
+162 Ops.AFTER dtypes.f32 [131, 161]
 163 Ops.STORE dtypes.void [130, 162]
-164 Ops.AFTER dtypes.float [130, 163]
-165 Ops.ALLOC dtypes.float [] ParamArg(slot=45, dtype=dtypes.float, size=96, device="CPU:1")
+164 Ops.AFTER dtypes.f32 [130, 163]
+165 Ops.ALLOC dtypes.f32 [48] ParamArg(slot=45, dtype=dtypes.f32, device="CPU:1")
 166 Ops.STORE dtypes.void [165, 164]
-167 Ops.AFTER dtypes.float [165, 166]
-168 Ops.MSTACK dtypes.float [164, 167, 158, 162]
-169 Ops.PAD dtypes.float [168, 139, 46]
-170 Ops.ADD dtypes.float [129, 169]
-171 Ops.STORE dtypes.void [0, 170]
-172 Ops.AFTER dtypes.float [0, 171]
+167 Ops.AFTER dtypes.f32 [165, 166]
+168 Ops.MSTACK dtypes.f32 [164, 167, 158, 162]
+169 Ops.PAD dtypes.f32 [168, 139, 0]
+170 Ops.ADD dtypes.f32 [129, 169]
+171 Ops.STORE dtypes.void [1, 170]
+172 Ops.AFTER dtypes.f32 [1, 171]
 173 Ops.SINK dtypes.void [172]
 

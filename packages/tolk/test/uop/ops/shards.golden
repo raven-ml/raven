@@ -1,24 +1,26 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=24, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.CONST dtypes.weakint [] 6
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.CONST dtypes.weakint [] 2
-6 Ops.RANGE dtypes.weakint [5] (-1, AxisType.DEVICE)
-7 Ops.COPY dtypes.float [4, 6] ("CPU:0", "CPU:1")
-8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=24, device=("CPU:0", "CPU:1"))
-9 Ops.RESHAPE dtypes.float [8, 3]
-10 Ops.UNSHARD dtypes.float [9, 6] (0,)
-11 Ops.CONST dtypes.weakint [] 3
-12 Ops.RANGE dtypes.weakint [11] (-2, AxisType.LOCAL)
-13 Ops.UNSHARD dtypes.float [9, 12, 6] (0, 1)
-14 Ops.MSELECT dtypes.float [9] 0
-15 Ops.MSELECT dtypes.float [9] 1
-16 Ops.MSTACK dtypes.float [14, 15]
-17 Ops.ALLREDUCE dtypes.float [9] (Ops.ADD, ("CPU:0", "CPU:1"))
-18 Ops.COPY dtypes.float [4] "CUDA"
-19 Ops.COPY dtypes.float [9, 6] ("CUDA:0", "CUDA:1")
-20 Ops.COPY dtypes.float [15] "CPU"
-21 Ops.SINK dtypes.void [7, 10, 13, 14, 16, 14, 17, 18, 19, 20]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 24
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CONST dtypes.weakint [] 6
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 2
+7 Ops.RANGE dtypes.weakint [6] (AxisType.DEVICE, 0)
+8 Ops.COPY dtypes.f32 [5, 7] ("CPU:0", "CPU:1")
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+10 Ops.RESHAPE dtypes.f32 [9, 4]
+11 Ops.UNSHARD dtypes.f32 [10, 7] (0,)
+12 Ops.CONST dtypes.weakint [] 3
+13 Ops.RANGE dtypes.weakint [12] (AxisType.LOCAL, -2)
+14 Ops.RANGE dtypes.weakint [6] (AxisType.DEVICE, -1)
+15 Ops.UNSHARD dtypes.f32 [10, 13, 14] (0, 1)
+16 Ops.MSELECT dtypes.f32 [10] 0
+17 Ops.MSELECT dtypes.f32 [10] 1
+18 Ops.MSTACK dtypes.f32 [16, 17]
+19 Ops.ALLREDUCE dtypes.f32 [10] (Ops.ADD, ("CPU:0", "CPU:1"))
+20 Ops.COPY dtypes.f32 [5] "CUDA"
+21 Ops.COPY dtypes.f32 [10, 7] ("CUDA:0", "CUDA:1")
+22 Ops.COPY dtypes.f32 [17] "CPU"
+23 Ops.SINK dtypes.void [8, 11, 15, 16, 18, 16, 19, 20, 21, 22]
 

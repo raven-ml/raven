@@ -106,6 +106,8 @@ def evaluate(root, inputs):
         if u.op is Ops.SINK: continue
         if u.op is Ops.CONST: values[u] = u.arg
         elif u.op is Ops.PARAM: values[u] = inputs[u.arg.slot]
+        # the empty size of a scalar parameter
+        elif u.op is Ops.STACK and not u.src: values[u] = ()
         elif u.op is Ops.CAST: values[u] = truncate.get(u.dtype, lambda v: v)(u.dtype.const(src[0]))
         elif u.op is Ops.BITCAST: values[u] = bitcast(src[0], u.src[0].dtype, u.dtype)
         elif u.op in GroupOp.ALU: values[u] = exec_alu(u.op, u.dtype, src)

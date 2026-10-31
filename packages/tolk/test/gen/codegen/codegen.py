@@ -30,7 +30,7 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 
 # Making a HIP renderer makes its compiler, which asserts that comgr is loaded;
 # comgr is absent where the goldens are generated, and no case compiles.
-compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
+compiler_amd.c.DLL._loaded_[compiler_amd.comgr.dll.nm] = compiler_amd.comgr.dll
 
 from golden import graph, table, text
 from graph import kernels as scheduled
@@ -64,7 +64,7 @@ def renderer(target):
 # Optimisations
 
 def upcast(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.UPCAST))
-def unroll(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.UNROLL))
+def unroll(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.UPCAST))
 def local(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.LOCAL))
 def group(axis, amount): return Opt(OptOps.SPLIT, axis, (amount, AxisType.LOCAL, True))
 def tensor_core(axis=0): return Opt(OptOps.TC, axis, (-1, 0, 1))
@@ -243,21 +243,21 @@ def elementwise(name, op, dt=dtypes.float, n=256):
 
 def reduced(name, op, n, value=lambda x: x):
     a, out = param(0, n), param(1, 1)
-    r = UOp.range(n, 0, AxisType.REDUCE)
+    r = UOp.range(n, 0, AxisType.WEAK)
     red = UOp(Ops.REDUCE, src=(value(a.index(r).load()), r), arg=(op, 0))
     return out.index(UOp.const(0, dtypes.int)).store(red).sink(arg=ki(name))
 
 
 def dot_product():
     a, b, out = param(0, 128), param(1, 128), param(2, 1)
-    r = UOp.range(128, 0, AxisType.REDUCE)
+    r = UOp.range(128, 0, AxisType.WEAK)
     red = UOp(Ops.REDUCE, src=(a.index(r).load() * b.index(r).load(), r), arg=(Ops.ADD, 0))
     return out.index(UOp.const(0, dtypes.int)).store(red).sink(arg=ki("dot_product"))
 
 
 def matmul_small():
     a, b, c = param(0, 16), param(1, 16), param(2, 16)
-    i, j, k = UOp.range(4, 0, AxisType.LOOP), UOp.range(4, 1, AxisType.LOOP), UOp.range(4, 2, AxisType.REDUCE)
+    i, j, k = UOp.range(4, 0, AxisType.LOOP), UOp.range(4, 1, AxisType.LOOP), UOp.range(4, 2, AxisType.WEAK)
     red = UOp(Ops.REDUCE, src=(a.index(i * 4 + k).load() * b.index(k * 4 + j).load(), k), arg=(Ops.ADD, 0))
     return c.index(i * 4 + j).store(red).end(i, j).sink(arg=ki("matmul_small"))
 
@@ -271,7 +271,7 @@ def elementwise_2d():
 
 def reduce_rows():
     a, out = param(0, 256), param(1, 8)
-    i, j = UOp.range(8, 0, AxisType.LOOP), UOp.range(32, 1, AxisType.REDUCE)
+    i, j = UOp.range(8, 0, AxisType.LOOP), UOp.range(32, 1, AxisType.WEAK)
     red = UOp(Ops.REDUCE, src=(a.index(i * 32 + j).load(), j), arg=(Ops.ADD, 0))
     return out.index(i).store(red).end(i).sink(arg=ki("reduce_rows"))
 
@@ -318,7 +318,7 @@ def mixed_cast():
 
 def two_reductions():
     a, b, c = param(0, 128), param(1, 1), param(2, 1)
-    r = UOp.range(128, 0, AxisType.REDUCE)
+    r = UOp.range(128, 0, AxisType.WEAK)
     x = a.index(r).load()
     zero = UOp.const(0, dtypes.int)
     return UOp.sink(b.index(zero).store(UOp(Ops.REDUCE, src=(x, r), arg=(Ops.ADD, 0))),
@@ -358,7 +358,7 @@ def linearizer_fail_1():
     c2 = UOp.range(UOp.const(32), 2, AxisType.WEAK)
     c3 = ((c1 * UOp.const(32)) + c2)
     c4 = UOp.param(1, dtypes.float, 163840)
-    c5 = UOp.range(UOp.const(2560), 0, AxisType.REDUCE)
+    c5 = UOp.range(UOp.const(2560), 0, AxisType.WEAK)
     c6 = c4.index(((((((c5 // UOp.const(8)) % UOp.const(8)) * UOp.const(8)) + (c5 % UOp.const(8))) +
                    (((c2 * UOp.const(40)) + (c5 // UOp.const(64))) * UOp.const(64))) + (c1 * UOp.const(81920))))
     c7 = UOp.param(2, dtypes.float, 64)
@@ -376,8 +376,8 @@ def failure_beam_mnist():
     c3 = UOp.range(UOp.const(10), 3, AxisType.GLOBAL)
     c4 = UOp.param(1, dtypes.int, 512)
     c5 = c4.index(c1.valid(UOp.const(True)))
-    c6 = UOp.range(UOp.const(6000), 1004, AxisType.REDUCE)
-    c7 = UOp.range(UOp.const(3750), 2006, AxisType.REDUCE)
+    c6 = UOp.range(UOp.const(6000), 1004, AxisType.WEAK)
+    c7 = UOp.range(UOp.const(3750), 2006, AxisType.WEAK)
     c8 = UOp.range(UOp.const(16), 2007, AxisType.LOCAL)
     c9 = UOp.param(2, dtypes.uchar, 47040000)
     c10 = c9.index((((c3 * UOp.const(4704000)) + c2) + (c6 * UOp.const(784))).valid(UOp.const(True)))
@@ -391,7 +391,7 @@ def failure_beam_mnist():
 def reduce_shapeless_const_unroll():
     # null/test_uop_graph.py::TestReduceCollapse::test_reduce_shapeless_const_unroll
     out = UOp.param(0, dtypes.float, 1)
-    red = UOp.const(3.0).cast(dtypes.float).reduce(UOp.range(4, 0, AxisType.UNROLL), arg=(Ops.ADD, 0))
+    red = UOp.const(3.0).cast(dtypes.float).reduce(UOp.range(4, 0, AxisType.UPCAST), arg=(Ops.ADD, 0))
     return UOp.sink(out.index(UOp.const(0)).store(red)).replace(arg=KernelInfo())
 
 
@@ -407,7 +407,7 @@ def invalid_lanes():
     padding [(0, 0); (1, 1)]: every window lies in the padding, so each lane of the unrolled reduce reads Invalid, and
     the lanes stay a stack whose loads each fold to 0."""
     out, x = UOp.param(0, dtypes.float, 1, device="CPU"), UOp.param(1, dtypes.float, 2, device="CPU")
-    r1, r0 = UOp.range(4, 1, AxisType.REDUCE), UOp.range(2, 0, AxisType.REDUCE)
+    r1, r0 = UOp.range(4, 1, AxisType.WEAK), UOp.range(2, 0, AxisType.WEAK)
     j = r1 * 3 + 1
     value = ((r1 < 3) & ((r0 < 1) & (j % 5 < 1))).where(x.index((r1 < 3).where(j // 5, UOp.const(Invalid))), 0.0)
     return out.index(UOp.const(0)).store(value.reduce(r0, r1, arg=Ops.ADD) + 0.0).sink(arg=KernelInfo())
@@ -419,7 +419,7 @@ def invalid_lanes_int8():
     uint: every window lies in the padding, so each lane of the unrolled sum reads Invalid, as the float32 fold's
     lanes do."""
     out, x = UOp.param(0, dtypes.char, 1, device="CPU"), UOp.param(1, dtypes.char, 2, device="CPU")
-    r = UOp.range(4, 0, AxisType.REDUCE)
+    r = UOp.range(4, 0, AxisType.WEAK)
     j = r * 3 + 1
     value = ((r < 3) & (j % 5 < 1)).where(x.index((r < 3).where(j // 5, UOp.const(Invalid))), UOp.const(0))
     return out.index(UOp.const(0)).store(value.cast(dtypes.uint).reduce(r, arg=Ops.ADD).cast(dtypes.char)).sink(arg=KernelInfo())
@@ -466,7 +466,7 @@ def shared_reduce_range():
     """Two sums over one reduce range, each inside a loop of its own."""
     a, b = UOp.param(0, dtypes.float, 32), UOp.param(1, dtypes.float, 32)
     o1, o2 = UOp.param(2, dtypes.float, 4), UOp.param(3, dtypes.float, 4)
-    i, j, k = UOp.range(4, 0, AxisType.LOOP), UOp.range(4, 1, AxisType.LOOP), UOp.range(8, 2, AxisType.REDUCE)
+    i, j, k = UOp.range(4, 0, AxisType.LOOP), UOp.range(4, 1, AxisType.LOOP), UOp.range(8, 2, AxisType.WEAK)
     s1 = a.index(i * 8 + k).load().reduce(k, arg=Ops.ADD)
     s2 = b.index(j * 8 + k).load().reduce(k, arg=Ops.ADD)
     return UOp.sink(o1.index(i).store(s1).end(i), o2.index(j).store(s2).end(j), arg=KernelInfo(opts_to_apply=()))
@@ -474,7 +474,7 @@ def shared_reduce_range():
 
 def shared_reduce_ranges():
     """Three sums over two reduce ranges, each inside a loop of its own."""
-    k, l = UOp.range(4, 3, AxisType.REDUCE), UOp.range(4, 4, AxisType.REDUCE)
+    k, l = UOp.range(4, 3, AxisType.WEAK), UOp.range(4, 4, AxisType.WEAK)
     stores = []
     for n in range(3):
         a, o, i = UOp.param(n, dtypes.float, 64), UOp.param(3 + n, dtypes.float, 4), UOp.range(4, n, AxisType.LOOP)
@@ -488,7 +488,7 @@ def explicit_local_slots():
     explicit = UOp.alloc((1,), dtypes.int, slot=17, addrspace=AddrSpace.LOCAL)
     initialized = explicit.after(explicit.index(zero).store(UOp.const(3, dtypes.int)))
     inp, out = UOp.param(0, dtypes.int, 4), UOp.param(1, dtypes.int, 1)
-    r = UOp.range(4, 0, AxisType.REDUCE)
+    r = UOp.range(4, 0, AxisType.WEAK)
     staged = inp.index(r).load().reduce(r, arg=Ops.ADD).bufferize(arg=BufferizeOpts(None, AddrSpace.LOCAL))
     return unoptimised_kernel(out.index(zero).store(staged + initialized.index(zero).load()))
 
@@ -537,14 +537,14 @@ def custom_eye(C):
 
 
 def custom_sum(B, A):
-    i = UOp.range(A.shape[0], 0, axis_type=AxisType.REDUCE)
+    i = UOp.range(A.shape[0], 0, axis_type=AxisType.WEAK)
     B = B[0].set(0.0)
     B = B[0].set(B.after(i)[0] + A[i], end=i)
     return B.sink(arg=KernelInfo(name=f"custom_sum_{A.shape[0]}", opts_to_apply=()))
 
 
 def custom_gemm(C, A, B):
-    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.REDUCE)
+    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.WEAK)
     C = C[i, j].set(0.0)
     prog = C[i, j].store(C.after(k)[i, j] + A[i, k] * B[k, j]).end(k).end(i, j)
     return prog.sink(arg=KernelInfo(name=f"custom_gemm_{C.shape[0]}_{C.shape[1]}_{A.shape[1]}", opts_to_apply=()))
@@ -567,7 +567,7 @@ def slice_sum(dest, src):
     G = UOp.range(src.shape[0], 0, dtype=dtypes.int)
     reg = UOp.placeholder((1,), dest.dtype, 0, addrspace=AddrSpace.REG)
     reg = reg.after(G)[0].set(0)
-    R = UOp.range(src.shape[1], 1, AxisType.REDUCE)
+    R = UOp.range(src.shape[1], 1, AxisType.WEAK)
     reg = reg[0].set(reg.after(R)[0] + src[G, :][R], end=R)
     return dest[G].set(reg[0], end=G).sink(arg=KernelInfo(name=f"slice_sum_{src.shape[0]}_{src.shape[1]}", opts_to_apply=()))
 
@@ -575,7 +575,7 @@ def slice_sum(dest, src):
 def simple_qkv(O, Q, K, V):
     N, d = Q.shape[0], Q.shape[1]
     i, d_out = UOp.range(N, 0), UOp.range(d, 1)
-    j, k_inner = UOp.range(N, 2, axis_type=AxisType.REDUCE), UOp.range(d, 3, axis_type=AxisType.REDUCE)
+    j, k_inner = UOp.range(N, 2, axis_type=AxisType.WEAK), UOp.range(d, 3, axis_type=AxisType.WEAK)
     qk_acc = UOp.placeholder((1,), Q.dtype, 0, addrspace=AddrSpace.REG)
     qk_acc = qk_acc.after(i, j)[0].set(0.0)
     qk_acc = qk_acc[0].set(qk_acc.after(k_inner)[0] + Q[i, k_inner] * K[j, k_inner], end=k_inner)
@@ -611,7 +611,7 @@ def stage_then_reduce(addrspace):
 
 
 def reg_placeholder_then_reduce(C, A):
-    i, j = UOp.range(4, 0), UOp.range(8, 1, AxisType.REDUCE)
+    i, j = UOp.range(4, 0), UOp.range(8, 1, AxisType.WEAK)
     reg = UOp.placeholder((1,), dtypes.float, 0, addrspace=AddrSpace.REG)
     reg = reg.after(i)[0].set(A[i, 0])
     return C[i].store(A[i, j].reduce(j, arg=Ops.ADD) + reg[0]).end(i).sink(arg=KernelInfo(opts_to_apply=()))

@@ -92,8 +92,8 @@ KERNELS = {
     "unaligned_load": (lambda: last(shifted(8) + shifted(8)), [split(0, 4)], CPU),
     "multidim_unaligned_load": (lambda: last(empty(2, 9).shrink(((0, 2), (1, 9))) + empty(2, 9).shrink(((0, 2), (1, 9)))),
                                 [split(1, 4), split(1, 2)], CPU),
-    "sometimes_unaligned": (lambda: conv(8), [split(1, 4, AxisType.UNROLL)], CPU),
-    "multidim_sometimes_unaligned": (lambda: conv(7), [split(0, 0), split(1, 0, AxisType.UNROLL)], CPU),
+    "sometimes_unaligned": (lambda: conv(8), [split(1, 4, AxisType.UPCAST)], CPU),
+    "multidim_sometimes_unaligned": (lambda: conv(7), [split(0, 0), split(1, 0, AxisType.UPCAST)], CPU),
     "expand": (lambda: last(shifted(8) + empty(2).reshape((2, 1)).expand((2, 4)).reshape((8,))), [split(0, 4)], CPU),
     "heterogeneous": (lambda: last(empty(8) + shifted(8)), [split(0, 4)], CPU),
     "aligned_variable": (lambda: last_with_vars(empty(4) + empty(12).shrink(((x4, x4 + 4),))), [split(0, 4)], CPU),
@@ -101,7 +101,7 @@ KERNELS = {
     "load_dedup": (lambda: (lambda a: last(a[:-1] + a[1:]))(empty(4)), [split(0, 0)], CPU),
     "grouped_store": (lambda: last(empty(64, 64) @ empty(64, 64)),
                       [split(0, 4, AxisType.LOCAL), Opt(OptOps.SPLIT, 3, (8, AxisType.LOCAL, True)),
-                       split(3, 4, AxisType.UNROLL), split(0, 4), split(1, 2)], CUDA),
+                       split(3, 4, AxisType.UPCAST), split(0, 4), split(1, 2)], CUDA),
     "half": (add((2, 8), dtypes.half), [split(0, 4)], CPU),
     "half8": (add((2, 16), dtypes.half), [split(0, 8)], CPU),
     "int": (add((2, 8), dtypes.int), [split(0, 4)], CPU),
@@ -113,7 +113,7 @@ KERNELS = {
     "double": (add((2, 8), dtypes.double), [split(0, 4)], CPU),
     "bfloat16": (add((2, 8), dtypes.bfloat16), [split(0, 4)], CPU),
     "pad": (lambda: last(empty(12).pad(((2, 2),)) + 1), [split(0, 4)], CPU),
-    "sum": (lambda: last(empty(4, 16).sum(1)), [split(1, 4, AxisType.UNROLL)], CPU),
+    "sum": (lambda: last(empty(4, 16).sum(1)), [split(1, 4, AxisType.UPCAST)], CPU),
     "cuda": (lambda: last(empty(64, 64) + empty(64, 64)), None, CUDA),
 }
 

@@ -1,14 +1,15 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=8, device="CPU")
-1 Ops.PARAM dtypes.long [] ParamArg(slot=1, dtype=dtypes.long, size=1, device="CPU")
-2 Ops.PARAM dtypes.long [] ParamArg(slot=2, dtype=dtypes.long, size=1, device="CPU")
-3 Ops.CONST dtypes.weakint [] 1
-4 Ops.ADD dtypes.long [2, 3]
-5 Ops.STORE dtypes.void [1, 4]
-6 Ops.AFTER dtypes.uchar [0, 5]
-7 Ops.PARAM dtypes.long [] ParamArg(slot=3, dtype=dtypes.long, size=1, device="CPU")
-8 Ops.BITCAST dtypes.long [6] dtypes.long
-9 Ops.STORE dtypes.void [7, 8]
-10 Ops.AFTER dtypes.long [7, 9]
-11 Ops.SINK dtypes.void [6, 10]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
+2 Ops.CONST dtypes.weakint [] 1
+3 Ops.PARAM dtypes.i64 [2] ParamArg(slot=1, dtype=dtypes.i64, device="CPU")
+4 Ops.PARAM dtypes.i64 [2] ParamArg(slot=2, dtype=dtypes.i64, device="CPU")
+5 Ops.ADD dtypes.i64 [4, 2]
+6 Ops.STORE dtypes.void [3, 5]
+7 Ops.AFTER dtypes.u8 [1, 6]
+8 Ops.PARAM dtypes.i64 [2] ParamArg(slot=3, dtype=dtypes.i64, device="CPU")
+9 Ops.BITCAST dtypes.i64 [7] dtypes.i64
+10 Ops.STORE dtypes.void [8, 9]
+11 Ops.AFTER dtypes.i64 [8, 10]
+12 Ops.SINK dtypes.void [7, 11]
 

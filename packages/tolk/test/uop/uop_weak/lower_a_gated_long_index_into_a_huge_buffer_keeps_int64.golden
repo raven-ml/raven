@@ -1,10 +1,12 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8589934592)
-1 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-2 Ops.PARAM dtypes.long [] ParamArg(slot=-1, dtype=dtypes.long, vmin_vmax=(0, 4294967296), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
-3 Ops.CONST dtypes.bool [] Invalid
-4 Ops.WHERE dtypes.long [1, 2, 3]
-5 Ops.INDEX dtypes.float [0, 4]
-6 Ops.SINK dtypes.void [5]
-7 Ops.SINK dtypes.void [6, 6]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 8589934592
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.STACK dtypes.void []
+3 Ops.PARAM dtypes.bool [2] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i64 [2] ParamArg(slot=-1, dtype=dtypes.i64, vmin_vmax=(0, 4294967296), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.bool [] Invalid
+6 Ops.WHERE dtypes.i64 [3, 4, 5]
+7 Ops.INDEX dtypes.f32 [1, 6]
+8 Ops.SINK dtypes.void [7]
+9 Ops.SINK dtypes.void [8, 8]
 

@@ -1,22 +1,23 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8192, device="CPU")
-1 Ops.CONST dtypes.weakint [] 128
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.CONST dtypes.weakint [] 64
-4 Ops.MUL dtypes.weakint [2, 3]
-5 Ops.CONST dtypes.weakint [] 4
-6 Ops.RANGE dtypes.weakint [5] (1, AxisType.WEAK)
-7 Ops.CONST dtypes.weakint [] 16
-8 Ops.MUL dtypes.weakint [6, 7]
-9 Ops.RANGE dtypes.weakint [7] (2, AxisType.UPCAST)
-10 Ops.ADD dtypes.weakint [8, 9]
-11 Ops.ADD dtypes.weakint [4, 10]
-12 Ops.INDEX dtypes.float [0, 11]
-13 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8192, device="CPU")
-14 Ops.MUL dtypes.weakint [10, 1]
-15 Ops.ADD dtypes.weakint [14, 2]
-16 Ops.INDEX dtypes.float [13, 15]
-17 Ops.STORE dtypes.void [12, 16]
-18 Ops.END dtypes.void [17, 2, 6, 9]
-19 Ops.SINK dtypes.void [18] KernelInfo(name="E_128_4_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)) tag=1
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 8192
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 128
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 64
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.CONST dtypes.weakint [] 4
+7 Ops.RANGE dtypes.weakint [6] (AxisType.WEAK, 1)
+8 Ops.CONST dtypes.weakint [] 16
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.UPCAST, 2)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.ADD dtypes.weakint [5, 11]
+13 Ops.INDEX dtypes.f32 [1, 12]
+14 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+15 Ops.MUL dtypes.weakint [11, 2]
+16 Ops.ADD dtypes.weakint [15, 3]
+17 Ops.INDEX dtypes.f32 [14, 16]
+18 Ops.STORE dtypes.void [13, 17]
+19 Ops.END dtypes.void [18, 3, 7, 10]
+20 Ops.SINK dtypes.void [19] KernelInfo(name="E_128_4_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.UPCAST)),)) tag=1
 

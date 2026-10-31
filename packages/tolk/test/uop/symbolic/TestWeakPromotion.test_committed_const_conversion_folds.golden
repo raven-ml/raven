@@ -1,13 +1,13 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 0 Ops.CONST dtypes.weakint [] 16256
-1 Ops.CAST dtypes.ushort [0] dtypes.ushort
-2 Ops.CAST dtypes.uint [1] dtypes.uint
-3 Ops.CAST dtypes.uint [0] dtypes.uint
+1 Ops.CAST dtypes.u16 [0] dtypes.u16
+2 Ops.CAST dtypes.u32 [1] dtypes.u32
+3 Ops.CAST dtypes.u32 [0] dtypes.u32
 4 Ops.SINK dtypes.void [2, 3] tag=("symbolic_simple", 16256, 16256)
 5 Ops.CONST dtypes.weakfloat [] 1.0
-6 Ops.CAST dtypes.float [5] dtypes.float
-7 Ops.CAST dtypes.bfloat16 [6] dtypes.bfloat16
-8 Ops.CAST dtypes.bfloat16 [5] dtypes.bfloat16
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
+7 Ops.CAST dtypes.bf16 [6] dtypes.bf16
+8 Ops.CAST dtypes.bf16 [5] dtypes.bf16
 9 Ops.SINK dtypes.void [7, 8] tag="symbolic_simple"
 10 Ops.SINK dtypes.void [4, 9]
 

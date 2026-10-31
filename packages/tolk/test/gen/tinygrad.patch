@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..320397b 100644
+index b6a04d5..5401257 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace
@@ -24,7 +24,7 @@ index efb2e82..320397b 100644
 -from tinygrad.uop.ops import PatternMatcher, graph_rewrite, UOp, Ops, UPat, rewrite_group, KernelInfo, ProgramInfo, GroupOp, AxisType
 +from tinygrad.uop.ops import PatternMatcher, graph_rewrite, UOp, Ops, UPat, rewrite_group, KernelInfo, ProgramInfo, GroupOp, AxisType, ParamArg
  from tinygrad.uop.weak import pm_lower_weak, pm_commit_weak, pm_cast_const
- from tinygrad.uop.render import pyrender
+ from tinygrad.uop.render import render_uir
  from tinygrad.uop.spec import type_verify, spec_tensor, spec_program
  from tinygrad.renderer import Renderer, Estimates
  from tinygrad.renderer.isa import ISARenderer, IselContext
@@ -32,7 +32,7 @@ index efb2e82..320397b 100644
 +from tinygrad.dtype import dtypes, AddrSpace, DType
  
  # import all pattern matchers here
- from tinygrad.codegen.gpudims import pm_add_gpudims
+ from tinygrad.codegen.gpudims import pm_group_gpudims, pm_range_to_special
  from tinygrad.uop.symbolic import sym, symbolic_simple, symbolic, pm_move_where_on_load, pm_clean_up_group_sink, pm_remove_invalid, invalid_gate
  from tinygrad.uop.movement import mop_cleanup
 -from tinygrad.codegen.decomp.dtype import pm_dtype_decomps
@@ -44,12 +44,12 @@ index efb2e82..320397b 100644
  from tinygrad.codegen.late.linearizer import CFGContext, pm_split_ends, pm_add_control_flow, linearize
  from tinygrad.codegen.late.regalloc import LinearScanRegallocContext, pm_regalloc_rewrite
  from tinygrad.codegen.late.coalesce import memory_coalescing, pm_simplify_add_image
--from tinygrad.helpers import all_same, all_int, argsort, partition
-+from tinygrad.helpers import all_same, all_int, argsort, partition, prod
+-from tinygrad.helpers import all_same, all_int, argsort, partition, to_function_name
++from tinygrad.helpers import all_same, all_int, argsort, partition, to_function_name, prod
  from tinygrad.uop.ops import _broadcast_shape, identity_element
  from tinygrad.schedule.rangeify import BufferizeOpts
  
-@@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
+@@ -97,9 +97,15 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
  
@@ -67,7 +67,7 @@ index efb2e82..320397b 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
-@@ -114,10 +120,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+@@ -112,10 +118,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -151,7 +151,7 @@ index efb2e82..320397b 100644
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-@@ -134,9 +212,59 @@ def do_stack_wmma(u:UOp):
+@@ -132,9 +210,59 @@ def do_stack_wmma(u:UOp):
        src.append(b)
    return u.replace(src=tuple(src))
  
@@ -211,7 +211,7 @@ index efb2e82..320397b 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -151,10 +279,10 @@ devectorizer2 = pm_mops+PatternMatcher([
+@@ -149,10 +277,10 @@ devectorizer2 = pm_mops+PatternMatcher([
    (UPat(Ops.RESHAPE, dtype=dtypes.void, name="x"), lambda x: x.src[0]),
    # reshape of a single element shaped value to scalar is an index
    (UPat(Ops.RESHAPE, name="x"), lambda x: x.src[0].index(0) if x.marg == () and x.src[0].shape == (1,) else None),
@@ -225,7 +225,7 @@ index efb2e82..320397b 100644
  ])
  
  def fix_group_for_reduce(x:UOp):
-@@ -194,19 +322,61 @@ def merge_reduce_ends(sink:UOp):
+@@ -192,19 +320,61 @@ def merge_reduce_ends(sink:UOp):
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -295,7 +295,7 @@ index efb2e82..320397b 100644
  
  # an Invalid in a REDUCE source is that reduce's identity
  pm_reduce_identity = PatternMatcher([
-@@ -272,6 +442,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -270,6 +440,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -322,7 +322,7 @@ index efb2e82..320397b 100644
 +  params = [u.arg for u in nodes if u.op is Ops.PARAM]
 +  slot, names = max([p.slot+1 for p in params if p.slot >= 0], default=0), {p.name for p in params}
 +  def fresh(base:str) -> str: return next(nm for i in itertools.count() if (nm:=base if i == 0 else f"{base}_{i}") not in names)
-+  lo, hi = [UOp(Ops.PARAM, arg=ParamArg(s, r.dtype, name=fresh(nm), vmin_vmax=(0, n.vmax), multiple_of=1, addrspace=AddrSpace.ALU))
++  lo, hi = [UOp(Ops.PARAM, src=(UOp(Ops.STACK),), arg=ParamArg(s, r.dtype, name=fresh(nm), vmin_vmax=(0, n.vmax), multiple_of=1, addrspace=AddrSpace.ALU))
 +            for s, nm in ((slot, "block_lo"), (slot+1, "block_hi"))]
 +  r2 = r.replace(src=(hi.alu(Ops.SUB, lo),)+r.src[1:])
 +  moved = lo.alu(Ops.ADD, r2)
@@ -332,9 +332,9 @@ index efb2e82..320397b 100644
 +  return sink.replace(arg=replace(sink.arg, split=(n.ssimplify(), slot, slot+1)))
 +
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
-   if VIZ: graph_rewrite(ast, PatternMatcher([]), name="View Base AST")
-   if DEBUG >= 5: print(pyrender(ast))
-@@ -310,7 +512,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+   if DEBUG >= 5: print(render_uir(list(ast.toposort())))
+   if SPEC: type_verify(ast, spec_tensor)
+@@ -307,7 +509,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -343,16 +343,16 @@ index efb2e82..320397b 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -323,7 +525,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -320,7 +522,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
--  sink = graph_rewrite(sink, symbolic_simple+devectorizer2+indexing_simplify, ctx=ren, name="devectorize2")
+-  sink = graph_rewrite(sink, symbolic_simple+devectorizer2+indexing_simplify, name="devectorize2")
 +  sink = graph_rewrite(sink, symbolic_simple+devectorizer2+indexing_simplify, ctx=vector_dtypes(ren), name="devectorize2")
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -346,11 +548,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -343,11 +545,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -367,7 +367,7 @@ index efb2e82..320397b 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -364,11 +568,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -361,11 +565,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -381,17 +381,21 @@ index efb2e82..320397b 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -377,7 +582,8 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -376,9 +581,11 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+   # this was the linearizer
    sink = graph_rewrite(sink, pm_add_control_flow, ctx=CFGContext(sink), name="add control flow", bottom_up=True)
  
-   # put unnumbered variable PARAMs in slots
--  num_params = len([x for x in sink.toposort() if x.op is Ops.PARAM and x.arg.slot != -1])
-+  # past every slot a PARAM takes: the slots can skip some, and a split's bounds take the first two past the others
-+  num_params = max([x.arg.slot+1 for x in sink.toposort() if x.op is Ops.PARAM and x.arg.slot != -1], default=0)
-   sink = graph_rewrite(sink, pm_number_params, ctx=[num_params], name="number params with -1", walk=True)
+-  # put the variables in slots
++  # put the variables in slots past every slot a PARAM takes, one per name: a split's bounds keep the first two, which it took
+   num_params = max([x.arg.slot + 1 for x in sink.toposort() if x.op is Ops.PARAM and not x.is_variable], default=0)
+-  sink = graph_rewrite(sink, pm_number_params, ctx=(num_params, {}), name="number variables", walk=True)
++  split = sink.arg.split[1:] if isinstance(sink.arg, KernelInfo) and sink.arg.split is not None else ()
++  bounds = {x.arg.name: x.arg.slot - num_params for x in sink.toposort() if x.op is Ops.PARAM and x.is_variable and x.arg.slot in split}
++  sink = graph_rewrite(sink, pm_number_params, ctx=(num_params, bounds), name="number variables", walk=True)
  
    if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Output AST")
-@@ -432,9 +638,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+   if SPEC:
+@@ -443,9 +650,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -417,7 +421,7 @@ index efb2e82..320397b 100644
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp:
    src = "\n".join(str(u.arg[0]) for u in lin.src)
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
-index e1d9579..0062a16 100644
+index 20644ea..595e8d6 100644
 --- a/tinygrad/codegen/decomp/dtype.py
 +++ b/tinygrad/codegen/decomp/dtype.py
 @@ -1,5 +1,6 @@
@@ -1010,7 +1014,7 @@ index 62c3191..5ea673f 100644
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
 diff --git a/tinygrad/codegen/late/coalesce.py b/tinygrad/codegen/late/coalesce.py
-index 7ec5fa2..e1dfb26 100644
+index ec57edd..580d0b0 100644
 --- a/tinygrad/codegen/late/coalesce.py
 +++ b/tinygrad/codegen/late/coalesce.py
 @@ -39,7 +39,9 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
@@ -1062,11 +1066,11 @@ index 319a60c..c185a41 100644
  pm_move_gates_from_index = PatternMatcher([
    # for image idx (must be first)
 diff --git a/tinygrad/codegen/late/linearizer.py b/tinygrad/codegen/late/linearizer.py
-index 79c63e6..af3a772 100644
+index cdff4a6..8055c93 100644
 --- a/tinygrad/codegen/late/linearizer.py
 +++ b/tinygrad/codegen/late/linearizer.py
 @@ -17,7 +17,8 @@ def linearize(sink:UOp) -> list[UOp]:
-     for s in u.src: out_degree[s] += 1
+     for s in u.src_without_body: out_degree[s] += 1
  
      # we place UOps with higher run_counts later
 -    run_count = prod([int(r.vmax)+1 for r in u.ranges])
@@ -1076,7 +1080,7 @@ index 79c63e6..af3a772 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index 712a2b7..2304534 100644
+index ec97cac..19dfad9 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
 @@ -1,9 +1,39 @@
@@ -1114,7 +1118,7 @@ index 712a2b7..2304534 100644
 +      n = pow2
 +      while n >= 2 and not (isinstance(s:=k.full_shape[axis], int) and s % n == 0): n //= 2
 +      return n
-+    if (choice:=next(((axis, n) for axis in k.upcastable_dims[::-1] if (n:=fits(axis)) >= 2), None)) is None: return
++    if (choice:=next(((axis, n) for axis in k.upcastable_dims()[::-1] if (n:=fits(axis)) >= 2), None)) is None: return
 +    k.apply_opt(Opt(OptOps.SPLIT, choice[0], (choice[1], AxisType.UPCAST)))
 +    room //= choice[1]
  
@@ -1135,14 +1139,14 @@ index 712a2b7..2304534 100644
 +    mul = k.reduceop.src[0] if k.reduceop.src[0].op is not Ops.CAST else k.reduceop.src[0].src[0]
 +    return mul.op is Ops.MUL and any(decoded(o) for o in mul.src)
    # NOTE: unless TC_OPT is > 0, we only trigger tensor cores if there's only one reduce axis
--  if USE_TC > 0 and (len(k.reduce_axes) == 1 or (TC_OPT.value >= 1)):
-+  if USE_TC > 0 and (len(k.reduce_axes) == 1 or (TC_OPT.value >= 1) or decoded_product()):
+-  if USE_TC > 0 and (len(k.axes_of(reduce=True)) == 1 or (TC_OPT.value >= 1)):
++  if USE_TC > 0 and (len(k.axes_of(reduce=True)) == 1 or (TC_OPT.value >= 1) or decoded_product()):
      for axis in range(3):
        tk = k.copy()
        # check TC first and apply hand-coded opts if successful
-@@ -58,25 +98,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
-           if (axis:=unit_stride_axes_mul_4[0]) in (upd:=k.upcastable_dims)+k.unrollable_dims:
-             k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST if axis in upd else AxisType.UNROLL)))
+@@ -57,25 +97,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+         if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
+           k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
 -  # should use matvec - TODO: adjust/tune based on the wide vs tall/large vs small mat
 -  MV_BLOCKSIZE, MV_THREADS_PER_ROW, MV_ROWS_PER_THREAD = getenv("MV_BLOCKSIZE", 4), getenv("MV_THREADS_PER_ROW", 8), getenv("MV_ROWS_PER_THREAD", 4)
@@ -1150,15 +1154,15 @@ index 712a2b7..2304534 100644
 -    k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and len(k.full_shape) >= 2 and k.ren.has_shared and \
 -    (mulop:=k.reduceop.src[0]).op is Ops.MUL and mulop.src[0].op is Ops.INDEX and mulop.src[1].op is Ops.INDEX:
 -    idx0, idx1 = mulop.src[0].src[1].get_idx(), mulop.src[1].src[1].get_idx()
--    if k.ranges_of(AxisType.REDUCE):
--      first_reduce_rng = k.ranges_of(AxisType.REDUCE)[0]
+-    if reduce_axes:=k.axes_of(AxisType.WEAK, reduce=True):
+-      first_reduce_rng = k.rngs[reduce_axes[0]]
 -      if any(u is first_reduce_rng for u in idx0.split_uop(Ops.ADD)) and all(r in idx1.ranges for r in idx0.ranges):
 -        for global_idx in k.axes_of(AxisType.GLOBAL):
 -          if first_reduce_rng.src[0].divides(MV_THREADS_PER_ROW) is not None and k.full_shape[global_idx]%(MV_BLOCKSIZE*MV_ROWS_PER_THREAD) == 0:
 -            if DEBUG >= 3:
 -              print(f"MATVEC: {k.full_shape=} {first_reduce_rng.render()} {MV_BLOCKSIZE=} {MV_THREADS_PER_ROW=} {MV_ROWS_PER_THREAD=}")
 -            try:
--              if MV_THREADS_PER_ROW > 1: k.apply_opt(Opt(OptOps.SPLIT, k.axes_of(AxisType.REDUCE)[0], (MV_THREADS_PER_ROW, AxisType.LOCAL)))
+-              if MV_THREADS_PER_ROW > 1: k.apply_opt(Opt(OptOps.SPLIT, reduce_axes[0], (MV_THREADS_PER_ROW, AxisType.LOCAL)))
 -            except KernelOptError: pass
 -            if MV_BLOCKSIZE > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_BLOCKSIZE, AxisType.LOCAL)))
 -            if MV_ROWS_PER_THREAD > 1: k.apply_opt(Opt(OptOps.SPLIT, global_idx, (MV_ROWS_PER_THREAD, AxisType.UPCAST)))
@@ -1172,7 +1176,7 @@ index 712a2b7..2304534 100644
 +    return divs[0] if divs and divs[0] is not None and all(d == divs[0] for d in divs) else 1
 +  if k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and k.reduceop.src[0].op is Ops.MUL:
 +    to_upcast = []
-+    for axis in k.upcastable_dims:
++    for axis in k.upcastable_dims():
 +      if not isinstance(n:=k.full_shape[axis], int): continue
 +      a = max([next((a for a in range(RUN_CAP, 1, -1) if run(o, k.rngs[axis]) % a == 0 and n % a == 0), 1) for o in k.reduceop.src[0].src
 +               if decoded(o)], default=1)
@@ -1195,8 +1199,8 @@ index 712a2b7..2304534 100644
 +  def divisible(r, n): return isinstance(s:=k.full_shape[axis(r)], int) and s % n == 0
 +  def matvec() -> Scheduler|None:
 +    if not (k.ren.has_local and k.ren.has_shared and getenv("MV",1) != 0 and k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and \
-+            (mulop:=k.reduceop.src[0]).op is Ops.MUL and k.ranges_of(AxisType.REDUCE)): return None
-+    first = k.ranges_of(AxisType.REDUCE)[0]
++            (mulop:=k.reduceop.src[0]).op is Ops.MUL and (reduce_axes:=k.axes_of(AxisType.WEAK, reduce=True))): return None
++    first = k.rngs[reduce_axes[0]]
 +    # the matrix and the vector are computations of accesses with no reduce; the vector runs in some of the matrix's ranges, the
 +    # matrix in more, and one of the vector's accesses reads along the first reduce range, alone or at a constant stride
 +    def is_vector(v, w):
@@ -1210,19 +1214,19 @@ index 712a2b7..2304534 100644
 +    if any(t is first for t in units):
 +      threads = pow2_dividing(first, LANES)
 +      # a workgroup's rows are the matrix's own, which the vector does not read, so its SIMD groups share the vector's loads
-+      if threads <= 1 or (g:=next((g for g in sorted(k.ranges_of(AxisType.GLOBAL), key=lambda g: g in v.ranges) if divisible(g, ROWS)), None)) is None:
++      if threads <= 1 or (g:=next((g for g in sorted([k.rngs[i] for i in k.axes_of(AxisType.GLOBAL)], key=lambda g: g in v.ranges) if divisible(g, ROWS)), None)) is None:
 +        return None
 +      try: k.apply_opt(Opt(OptOps.SPLIT, axis(first), (threads, AxisType.LOCAL)))
 +      except KernelOptError: return None
 +      k.apply_opt(Opt(OptOps.SPLIT, axis(g), (ROWS, AxisType.LOCAL)))
 +      # what the lanes leave of the row, if anything
 +      if (rest:=next((x for x in k.rngs if x.axis_id == first.axis_id), None)) is not None and (loads:=divisor_at_most(rest, IN_FLIGHT)) > 1:
-+        try: k.apply_opt(Opt(OptOps.SPLIT, axis(rest), (loads, AxisType.UNROLL)))
++        try: k.apply_opt(Opt(OptOps.SPLIT, axis(rest), (loads, AxisType.UPCAST)))
 +        except KernelOptError: pass
 +      return k
-+    if (g:=next((g for g in k.ranges_of(AxisType.GLOBAL) if any(t is g for t in units)), None)) is None: return None
++    if (g:=next((g for g in [k.rngs[i] for i in k.axes_of(AxisType.GLOBAL)] if any(t is g for t in units)), None)) is None: return None
 +    wanted = 1
-+    if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims), int):
++    if isinstance(outputs:=prod(k.full_shape[i] for i in k.upcastable_dims()), int):
 +      while wanted < BUSY*COLUMNS//max(outputs, 1): wanted *= 2
 +    # few outputs take fewer of a workgroup's threads each, down to SECTOR_LANES, so that more workgroups split them
 +    across = max(SECTOR_LANES, LANES*LANES//max(wanted, LANES))
@@ -1236,8 +1240,8 @@ index 712a2b7..2304534 100644
 +  if (mk:=matvec()) is not None: return mk
  
    # are we grouping? (requires local shape support)
-   if resolve(prod(k.full_shape[i] for i in k.upcastable_dims) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -111,25 +203,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+   if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
+@@ -110,25 +202,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1259,18 +1263,18 @@ index 712a2b7..2304534 100644
 +  host_elementwise = k.ren.target.device == "CPU" and not k.reduceops
 +  if host_elementwise: upcast_vectors(k)
    upcasted_axis: set[int] = set()
--  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims) >= 1024) and (k.upcast_size() < 32):
-+  while not host_elementwise and resolve(prod(k.full_shape[i] for i in k.upcastable_dims) >= 1024) and (k.upcast_size() < 32):
+-  while resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024) and (k.upcast_size() < 32):
++  while not host_elementwise and resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) >= 1024) and (k.upcast_size() < 32):
      xb_choices = []
      # consider all upcastable axes with 3 or 4 upcast (128 on the DSP)
-     for axis, upcast_amount in itertools.product(k.upcastable_dims, ([128] if not len(upcasted_axis) else []) if is_dsp else [3,4]):
+     for axis, upcast_amount in itertools.product(k.upcastable_dims(), ([128] if not len(upcasted_axis) else []) if is_dsp else [3,4]):
        # if we haven't upcasted it, it mods, and buffer has stride 0 on axis while having no stride 0 in the upcasted axis already
        if axis in upcasted_axis or k.full_shape[axis]%upcast_amount != 0: continue
 +      # on the host the upcast lanes stay within 32: each holds a value across the loops, and more spill
 +      if not host_fits(upcast_amount): continue
        rng = k.rngs[axis]
-       if any(rng not in b.src[1].get_idx().backward_slice and all(r2 in b.src[1].get_idx().backward_slice
-           for r2 in k.ranges_of(AxisType.UPCAST, AxisType.UNROLL)) for b in k.bufs):
+       if any(rng not in b.src[1].get_idx().backward_slice and all(k.rngs[a] in b.src[1].get_idx().backward_slice
+           for a in k.axes_of(AxisType.UPCAST)) for b in k.bufs):
 -        num_strides, sum_strides = 0, 0
 -        for b in k.bufs:
 -          idx = b.src[1].get_idx()
@@ -1284,97 +1288,92 @@ index 712a2b7..2304534 100644
 +    # on the host, when no upcast by 3 or 4 is left, an upcast by 2 within its lanes of an axis that a load a reduce reads does not
 +    # read, so that its lanes share the load in every iteration of the reduce
 +    if not xb_choices and k.ren.target.device == "CPU" and host_fits(2):
-+      for axis in k.upcastable_dims:
++      for axis in k.upcastable_dims():
 +        if axis in upcasted_axis or k.full_shape[axis]%2 != 0: continue
 +        rng = k.rngs[axis]
-+        if any(rng not in (s:=b.src[1].get_idx().toposort()) and any(r in s for r in k.ranges_of(AxisType.REDUCE)) for b in k.bufs):
++        if any(rng not in (s:=b.src[1].get_idx().toposort()) and any(k.rngs[a] in s for a in k.axes_of(AxisType.WEAK, reduce=True)) for b in k.bufs):
 +          xb_choices.append((*strides(rng), axis, 2))
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -141,21 +252,32 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -140,17 +251,28 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
-     if k.unrollable_dims and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UNROLL)) and (k.upcast_size() < 64):
+     if (axes:=k.upcastable_dims(reduce=True)) and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UPCAST, reduce=True)) and k.upcast_size() < 64:
 +      # on the host the unrolled lanes of a kernel of several reduces stay within 32 too
 +      def unroll_fits(n): return len(k.reduceops) < 2 or host_fits(n)
-       if (s:=k.full_shape[k.unrollable_dims[-1]]) <= 32:
--        k.apply_opt(Opt(OptOps.SPLIT, k.unrollable_dims[-1], (0, AxisType.UNROLL)))
+       if (s:=k.full_shape[axes[-1]]) <= 32:
+-        k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
 -        # if it's small, upcast a second reduce dimension too
--        if k.unrollable_dims and s <= 3 and k.full_shape[k.unrollable_dims[-1]] <= 3:
+-        if (axes:=k.upcastable_dims(reduce=True)) and s <= 3 and k.full_shape[axes[-1]] <= 3:
 +        if unroll_fits(s):
-           k.apply_opt(Opt(OptOps.SPLIT, k.unrollable_dims[-1], (0, AxisType.UNROLL)))
+           k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
+-      elif k.full_shape[axes[-1]] % 4 == 0:
 +          # if it's small, upcast a second reduce dimension too
-+          if k.unrollable_dims and s <= 3 and (s2:=k.full_shape[k.unrollable_dims[-1]]) <= 3:
-+            if unroll_fits(s2): k.apply_opt(Opt(OptOps.SPLIT, k.unrollable_dims[-1], (0, AxisType.UNROLL)))
++          if (axes:=k.upcastable_dims(reduce=True)) and s <= 3 and (s2:=k.full_shape[axes[-1]]) <= 3:
++            if unroll_fits(s2): k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (0, AxisType.UPCAST)))
 +          # on the host, the lanes of the next axis fill the rest of a vector of HOST_VECTOR_BYTES of the reduce's type, by the
 +          # largest power of two that divides it: the unrolled lanes compute as one vector, and one iteration's work outweighs its loop
 +          # and the loads its unrolled lanes share
-+          elif k.unrollable_dims and s <= 3 and k.ren.target.device == "CPU":
-+            room, n, axis = HOST_VECTOR_BYTES // k.reduceops[0].dtype.itemsize // s, 1, k.unrollable_dims[-1]
++          elif axes and s <= 3 and k.ren.target.device == "CPU":
++            room, n, axis = HOST_VECTOR_BYTES // k.reduceops[0].dtype.itemsize // s, 1, axes[-1]
 +            while 2 * n <= room: n *= 2
 +            while n >= 2 and not (isinstance(k.full_shape[axis], int) and k.full_shape[axis] % n == 0 and unroll_fits(n)): n //= 2
-+            if n >= 2: k.apply_opt(Opt(OptOps.SPLIT, axis, (n, AxisType.UNROLL)))
-       else:
-         for splits in [4]:
--          if k.full_shape[axis:=k.unrollable_dims[-1]]%splits == 0:
-+          if k.full_shape[axis:=k.unrollable_dims[-1]]%splits == 0 and unroll_fits(splits):
-             k.apply_opt(Opt(OptOps.SPLIT, axis, (splits, AxisType.UNROLL)))
-             break
++            if n >= 2: k.apply_opt(Opt(OptOps.SPLIT, axis, (n, AxisType.UPCAST)))
++      elif k.full_shape[axes[-1]] % 4 == 0 and unroll_fits(4):
+         k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
    except KernelOptError: pass
  
    # if nothing at all is upcasted and it's easy to, do an upcast
-   for splits in [4]:
--    if not k.upcasted and k.upcastable_dims and k.full_shape[k.upcastable_dims[-1]] % splits == 0:
-+    if not host_elementwise and not k.upcasted and k.upcastable_dims and k.full_shape[k.upcastable_dims[-1]] % splits == 0:
-       k.apply_opt(Opt(OptOps.SPLIT, k.upcastable_dims[-1], (splits, AxisType.UPCAST)))
+-  if not k.axes_of(AxisType.UPCAST) and (axes:=k.upcastable_dims()) and k.full_shape[axes[-1]] % 4 == 0:
++  if not host_elementwise and not k.axes_of(AxisType.UPCAST) and (axes:=k.upcastable_dims()) and k.full_shape[axes[-1]] % 4 == 0:
+     k.apply_opt(Opt(OptOps.SPLIT, axes[-1], (4, AxisType.UPCAST)))
  
    # **** local groups ****
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
-index f80c800..6aa4283 100644
+index 9384cd0..b654ac1 100644
 --- a/tinygrad/codegen/opt/postrange.py
 +++ b/tinygrad/codegen/opt/postrange.py
 @@ -14,6 +14,8 @@ from tinygrad.renderer import Renderer
- split_targets = {AxisType.UPCAST: (AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK), AxisType.UNROLL: (AxisType.REDUCE, AxisType.LOCAL),
-                  AxisType.LOCAL: (AxisType.GLOBAL, AxisType.WEAK, AxisType.REDUCE)}
+ split_targets = {AxisType.UPCAST: (AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK),
+                  AxisType.LOCAL: (AxisType.GLOBAL, AxisType.WEAK)}
  
 +def _union(us:list[UOp], vs:list[UOp]) -> list[UOp]: return us + [v for v in vs if v not in us]
 +
  class Scheduler:
    def __init__(self, ast:UOp, ren:Renderer):
-     self.ast, self.ren = ast, ren
-@@ -120,19 +122,21 @@ class Scheduler:
-       if amt == 0: amt = int(rng.vmax+1)
-       if new_type is AxisType.UNROLL: check(amt <= 32, "don't unroll more than 32")
-       if new_type is AxisType.UPCAST: check(self.ren.target.device == "DSP" or amt <= 16, "don't upcast more than 16")
-+      groups = new_type is AxisType.LOCAL and opt.axis in self.reduce_axes
+     self.ast, self.ren = graph_rewrite(ast, pm_flatten_range), ren
+@@ -103,17 +105,20 @@ class Scheduler:
+       if new_type is AxisType.UPCAST:
+         if is_reduce: check(amt <= 32, "don't unroll more than 32")
+         else: check(self.ren.target.device == "DSP" or amt <= 16, "don't upcast more than 16")
++      groups = new_type is AxisType.LOCAL and is_reduce
 +      grouped = _union(self._grouped_reduces(), self._closers(rng)) if groups else self._grouped_reduces()
        # prevents METAL compiler hangs
--      if self.reduceop is not None and ((new_type is AxisType.LOCAL and opt.axis in self.reduce_axes) or self.group_for_reduces):
--        upcast_local_sz = prod([self.full_shape[a] for a in self.axes_of(AxisType.UPCAST, AxisType.WARP, AxisType.LOCAL)])
+-      if self.reduceop is not None and ((new_type is AxisType.LOCAL and is_reduce) or self.group_for_reduces):
+-        upcast_local_sz = prod([self.full_shape[a] for a in self.axes_of(AxisType.UPCAST, reduce=False)+self.axes_of(AxisType.WARP, AxisType.LOCAL)])
 -        smem_sz = amt*upcast_local_sz*self.reduceop.dtype.itemsize
 -        check(smem_sz <= self.ren.shared_max, f"exceeds maximum shared memory size: needs {smem_sz}, max {self.ren.shared_max}")
 +      if groups or self.group_for_reduces:
 +        check((smem_sz:=self._smem(amt, grouped)) <= self.ren.shared_max, f"exceeds maximum shared memory size: needs {smem_sz}, max {self.ren.shared_max}")
-       if new_type is AxisType.UNROLL or rng.axis_type is AxisType.REDUCE:
-         reduces = [u for u in self.reduceops if rng in merge_dicts([r.ranges for r in u.src[1:]])]
-         check(len(reduces) > 0, f"cannot {new_type.name} an axis that's not in a REDUCE")
--        # We currently dont support a group within another rudece, TODO: fix if-contexts
+       if is_reduce and new_type is AxisType.LOCAL:
+         reduces = [u for u in self.reduceops if rng in u.src[1:]]
+-        # We currently don't support a group within another reduce, TODO: fix if-contexts
+-        check(not any(u in self.reduce_ranges and u.axis_type is AxisType.WEAK for u in reduces[0].ranges),
+-              "cannot have a group inside another reduce")
 +        # an enclosing reduce runs its iterations in turn, each storing and reading the shared buffer between barriers; an unrolled one
 +        # would need a buffer per lane
-         if new_type is AxisType.LOCAL:
--          check(not any(u.axis_type in (AxisType.REDUCE, AxisType.UNROLL) for u in reduces[0].ranges),
--            "cannot have a group inside another reduce")
-+          check(not any(u.axis_type is AxisType.UNROLL for u in reduces[0].ranges), "cannot have a group inside an unrolled reduce")
++        check(not any(u in self.reduce_ranges and u.axis_type is AxisType.UPCAST for u in reduces[0].ranges),
++              "cannot have a group inside an unrolled reduce")
 +      shared = self._siblings(rng, amt, grouped) if groups else []
        ret = self.shift_to(rng, amt, new_type, top=top)
 +      for r in shared: self.shift_to(r, amt, new_type, top=top, input_new_rng=ret[1])
      elif opt.op is OptOps.TC:
        check(len(self.applied_opts) == 0, "tensor core opts must be first") # TODO: remove the need for this by having warps
        check(opt.axis is not None and opt.axis >= 0, "tensor core opts must have an axis")
-@@ -158,6 +162,11 @@ class Scheduler:
+@@ -139,6 +144,11 @@ class Scheduler:
        for r in self.reduceops:
-         if any(rng in y.ranges for y in r.src[1:]):
+         if rng in r.src[1:]:
            replaces[r] = r.replace(src=(valid.where(r.src[0], UOp.const(identity_element(r.arg[0], r.dtype), r.dtype)),)+r.src[1:])
 +      # an integer division whose divisor reads the padded range divides by 1 on the padding: the padding loads zeros,
 +      # and a division by zero traps on x86 even in a lane no store keeps
@@ -1384,7 +1383,7 @@ index f80c800..6aa4283 100644
        self.ast = self.ast.substitute(replaces, f"padto {rng.axis_id} {opt.arg}")
        ret = replaced_rng
      elif opt.op is OptOps.SWAP:
-@@ -173,6 +182,39 @@ class Scheduler:
+@@ -154,6 +164,39 @@ class Scheduler:
      if append_opt: self.applied_opts.append(opt)
      return ret
  
@@ -1402,19 +1401,19 @@ index f80c800..6aa4283 100644
 +  def _grouped_reduces(self) -> list[UOp]:
 +    return [u for u in self.reduceops if any(r.axis_type in (AxisType.WARP, AxisType.LOCAL) for s in u.src[1:] for r in s.ranges)]
 +  def _smem(self, amt:int, grouped:list[UOp]):
-+    return amt*prod([self.full_shape[a] for a in self.axes_of(AxisType.UPCAST, AxisType.WARP, AxisType.LOCAL)])*sum(u.dtype.itemsize for u in grouped)
++    return amt*prod([self.full_shape[a] for a in self.axes_of(AxisType.UPCAST, reduce=False)+self.axes_of(AxisType.WARP, AxisType.LOCAL)])*sum(u.dtype.itemsize for u in grouped)
 +  def _siblings(self, rng:UOp, amt:int, grouped:list[UOp]) -> list[UOp]:
 +    # the axes a group of rng by amt splits besides rng, so that its threads share the kernel's independent outermost reductions, as a check
 +    # of many values combines many: without them each thread runs the others whole. rng's reductions must be outermost. each other outermost
 +    # reduction gives its first reduce axis that amt divides and that only outermost reductions close, while those reductions read no grouped
 +    # one nor are read by one, and the buffers fit in shared memory. a reduction that reads another stays out: the two final reductions of
 +    # the shared buffers would run one loop
-+    red = [self.rngs[i] for i in self.reduce_axes]
++    red = [self.rngs[i] for i in self.axes_of(reduce=True)]
 +    top = [u for u in self.reduceops if not any(r in u.ranges for r in red)]
 +    if not all(u in top for u in self._closers(rng)): return []
 +    axes: list[UOp] = []
 +    for u in top:
-+      r = next((r for r in self.rngs if r.axis_type is AxisType.REDUCE and any(r in s.ranges for s in u.src[1:])
++      r = next((r for r in self.rngs if r in self.reduce_ranges and r.axis_type is AxisType.WEAK and any(r in s.ranges for s in u.src[1:])
 +                and r.src[0].divides(amt) is not None and all(c in top for c in self._closers(r))), None)
 +      if r is None or u in grouped or r in axes: continue
 +      joined = _union(grouped, joining:=self._closers(r))
@@ -1424,49 +1423,48 @@ index f80c800..6aa4283 100644
    def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
      if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
      reduceop = reduceops[0]
-@@ -182,21 +224,28 @@ class Scheduler:
+@@ -163,21 +206,28 @@ class Scheduler:
        in0, in1 = mul.src
        for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
          if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
 -        if tc.dtype_in == in0.dtype and tc.dtype_in == in1.dtype and tc.dtype_out == reduceop.dtype:
 +        if self._tc_operand(tc, in0) is not None and self._tc_operand(tc, in1) is not None and tc.dtype_out == reduceop.dtype:
            # tensor cores have three ranges. X, Y, and REDUCE
--          in0_ranges = sorted([u for u in in0.ranges if u not in in1.ranges], key=lambda x: x.arg[0], reverse=True)
--          in1_ranges = sorted([u for u in in1.ranges if u not in in0.ranges], key=lambda x: x.arg[0], reverse=True)
+-          in0_ranges = sorted([u for u in in0.ranges if u not in in1.ranges], key=lambda x: x.arg, reverse=True)
+-          in1_ranges = sorted([u for u in in1.ranges if u not in in0.ranges], key=lambda x: x.arg, reverse=True)
 +          # a range the other operand reads only in whole tiles of the core's dim, as r // d for a multiple d of it, is the operand's own:
 +          # a tile of r's values reads one value of the other, as a block of rows reads its block's matrix
 +          def in_tiles(u, r, dim):
 +            readers = [x for x in u.toposort() if any(s is r for s in x.src)]
 +            return len(readers) > 0 and all(x.op is Ops.FLOORDIV and x.src[1].op is Ops.CONST and x.src[1].arg % dim == 0 for x in readers)
-+          def own(a, b, dim): return sorted([u for u in a.ranges if u not in b.ranges or in_tiles(b, u, dim)], key=lambda x: x.arg[0], reverse=True)
-           red_ranges = sorted(UOp.sink(*reduceop.src[1:]).ranges, key=lambda x: x.arg[0], reverse=True)
++          def own(a, b, dim): return sorted([u for u in a.ranges if u not in b.ranges or in_tiles(b, u, dim)], key=lambda x: x.arg, reverse=True)
+           red_ranges = sorted(reduceop.src[1:], key=lambda x: x.arg, reverse=True)
 -          if DEBUG >= 3:
--            print(f"TC({axis}): {[(x.arg[0],x.vmax+1) for x in in0_ranges]}",
--                              f"{[(x.arg[0],x.vmax+1) for x in in1_ranges]} {[(x.arg[0],x.vmax+1) for x in red_ranges]}")
+-            print(f"TC({axis}): {[(x.axis_id,x.vmax+1) for x in in0_ranges]}",
+-                              f"{[(x.axis_id,x.vmax+1) for x in in1_ranges]} {[(x.axis_id,x.vmax+1) for x in red_ranges]}")
 -          if not len(in0_ranges) or not len(in1_ranges) or not len(red_ranges): continue
--
+ 
 -          # pick ranges
 -          # NOTE: in1 and in0 are switched because tc.dims is (N, M, K)
 -          axis_choices = list(itertools.product(in1_ranges, in0_ranges, red_ranges))
-+
 +          # pick ranges: the core's A runs along M and its B along N, tc.dims being (N, M, K). Either operand may be A: in0 first, then in1,
 +          # whose ranges then run along M
 +          axis_choices = []
 +          for swapped, (a, b) in ((False, (in0, in1)), (True, (in1, in0))):
 +            a_ranges, b_ranges = own(a, b, tc.dims[1]), own(b, a, tc.dims[0])
 +            if DEBUG >= 3:
-+              print(f"TC({axis}): {[(x.arg[0],x.vmax+1) for x in a_ranges]}",
-+                                f"{[(x.arg[0],x.vmax+1) for x in b_ranges]} {[(x.arg[0],x.vmax+1) for x in red_ranges]}")
++              print(f"TC({axis}): {[(x.axis_id,x.vmax+1) for x in a_ranges]}",
++                                f"{[(x.axis_id,x.vmax+1) for x in b_ranges]} {[(x.axis_id,x.vmax+1) for x in red_ranges]}")
 +            axis_choices += [(swapped, c) for c in itertools.product(b_ranges, a_ranges, red_ranges)]
            if not (axis < len(axis_choices)): continue
 -          axes = list(axis_choices[axis])
 +          swapped, axes = axis_choices[axis]
 +          axes = list(axes)
-           check(not any(self.rngs[i] in axes[:2] for i in self.reduce_axes), "tensor core N and M can't be contracted")
+           check(not any(r in self.reduce_ranges for r in axes[:2]), "tensor core N and M can't be contracted")
  
            # do optimizations and save the ranges
-@@ -219,7 +268,11 @@ class Scheduler:
-             reduceop = get_single_element([x for x in self.reduceops if axes[2] in UOp.sink(*x.src[1:]).ranges])
+@@ -200,7 +250,11 @@ class Scheduler:
+             reduceop = get_single_element([x for x in self.reduceops if axes[2] in x.src[1:]])
              gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
              if mul.op is Ops.CAST: mul = mul.src[0]
 -            ins = mul.src if gate is None else tuple(gate.where(x, UOp.const(0, x.dtype)) for x in mul.src)
@@ -1479,7 +1477,7 @@ index f80c800..6aa4283 100644
  
              # get upcast axes for the tensor cores
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index 4136f84..ceab1d5 100644
+index c9878b8..4592c71 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -1505,7 +1503,7 @@ index 4136f84..ceab1d5 100644
 +  new_range = r0.replace(src=(s0*s1,))
 +  before = UOp.sink(*scope)
 +  after = graph_rewrite(before, _substitute+symbolic+pm_flatten_range, ctx={r0:new_range//s1, r1:new_range%s1},
-+                        name=f"check_merge_{r0.arg[0]}_{r1.arg[0]}")
++                        name=f"check_merge_{r0.axis_id}_{r1.axis_id}")
 +  # check if it simplifies
 +  return after.src if count_divmod(after) <= count_divmod(before) else None
 +
@@ -1527,7 +1525,7 @@ index 4136f84..ceab1d5 100644
 -        # do the merge
 -        new_range = r0.replace(src=(s0*s1,))
 -        nidx = graph_rewrite(u, _substitute+symbolic+pm_flatten_range, ctx={r0:new_range//s1, r1:new_range%s1},
--                             name=f"check_merge_{r0.arg[0]}_{r1.arg[0]}")
+-                             name=f"check_merge_{r0.axis_id}_{r1.axis_id}")
 -
 -        # check if it simplifies. return after one merge so the next rewrite uses the new ranges,
 -        # rather than continuing with stale pairs from the original ended_ranges.
@@ -1567,7 +1565,7 @@ index 4136f84..ceab1d5 100644
  def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
 @@ -78,16 +95,23 @@ pm_split_ranges = PatternMatcher([
  
- def no_range(u:UOp) -> bool: return not any(x.op is Ops.RANGE for x in u.backward_slice_with_self)
+ def no_range(u:UOp) -> bool: return not u.op_in_backward_slice_with_self(Ops.RANGE)
  
 +# a float sum of no terms is 0 whatever the value, where 0 times inf is nan
 +def sum_between(r:UOp, val:UOp, lower:UOp|None, upper:UOp|None) -> UOp|None:
@@ -1637,7 +1635,7 @@ index 4136f84..ceab1d5 100644
    ((UPat.var("idx")!=(UPat(Ops.RANGE, name="r").or_casted())).where(0, UPat.var("expr")).reduce(UPat.var("r"), arg=Ops.ADD),
     lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
 diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
-index 14add12..80e0ec5 100644
+index 27a67a9..4e47d6e 100644
 --- a/tinygrad/dtype.py
 +++ b/tinygrad/dtype.py
 @@ -6,7 +6,7 @@ from tinygrad.helpers import getenv, DEFAULT_FLOAT, DEFAULT_INT
@@ -1669,7 +1667,7 @@ index 14add12..80e0ec5 100644
      # int is the default. wrap floats in ConstFloat to distinguish -0.0 from 0.0 in cache
      return ConstFloat(truncate.get(self, float)(float(val))) if dtypes.is_float(self) else bool(val) if dtypes.is_bool(self) else int(val)
  
-@@ -299,12 +299,39 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
+@@ -298,12 +298,39 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
    **{getattr(dtypes, n): (lambda x, c=getattr(ctypes, f'c_{n}'): c(x).value)
       for n in ('float', 'double', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')}}
  
@@ -1710,7 +1708,7 @@ index 14add12..80e0ec5 100644
  
  def _to_np_dtype(dtype:DType) -> type|None:
 diff --git a/tinygrad/engine/realize.py b/tinygrad/engine/realize.py
-index 5461074..60e2add 100644
+index 2875874..941ce2b 100644
 --- a/tinygrad/engine/realize.py
 +++ b/tinygrad/engine/realize.py
 @@ -16,8 +16,20 @@ def get_call_arg_uops(call:UOp) -> tuple[UOp, ...]: return tuple(s for s in call
@@ -1734,16 +1732,17 @@ index 5461074..60e2add 100644
  def get_call_outs_ins(call:UOp) -> tuple[tuple[int, ...], tuple[int, ...]]:
    ast = call.body
    if isinstance(call.arg.aux, HCQInfo): return (), ()
-@@ -165,7 +177,7 @@ def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|
+@@ -159,7 +171,8 @@ def exec_kernel(ctx:ExecContext, call:UOp, ast:UOp, devices=None) -> list[float|
      prg_bufs = [b.ensure_allocated() for b in bufs]
      rt = get_runtime(device, ast, cache=ctx.cache)
-     global_size, local_size = ast.arg.launch_dims(var_vals)
--    ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_size, local_size=local_size, vals=ast.arg.vals(var_vals),
-+    ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_size, local_size=local_size, vals=ast.arg.vals(whole_loop(ast, var_vals)),
-                   wait=ctx.wait, timeout=ctx.timeout))
+     global_sz, local_sz = ast.arg.launch_dims(var_vals)
+-    try: vals = tuple(var_vals[v.expr] if v.is_variable else _resolve(call.src[1 + v.arg.slot], ctx.input_uops).val for v in ast.arg.vars)
++    whole = whole_loop(ast, var_vals)
++    try: vals = tuple(whole[v.expr] if v.is_variable else _resolve(call.src[1 + v.arg.slot], ctx.input_uops).val for v in ast.arg.vars)
+     except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
+     ets.append(rt(*[b.get_buf(device) for b in prg_bufs], global_size=global_sz, local_size=local_sz, vals=vals, wait=ctx.wait, timeout=ctx.timeout))
    return ets
- 
-@@ -176,7 +188,7 @@ def exec_validate(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
+@@ -171,7 +184,7 @@ def exec_validate(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
      var_vals = {**ctx.var_vals, **device_vars}
      cpu_rt = get_runtime("CPU", prg:=to_program(ast.src[0], Device["CPU"].renderer))
      global_size, local_size = prg.arg.launch_dims(var_vals)
@@ -1753,10 +1752,10 @@ index 5461074..60e2add 100644
    return []
  
 diff --git a/tinygrad/helpers.py b/tinygrad/helpers.py
-index deb9684..8bc2d81 100644
+index cf64604..662e4a0 100644
 --- a/tinygrad/helpers.py
 +++ b/tinygrad/helpers.py
-@@ -150,7 +150,7 @@ def select_first_inited(candidates:Sequence[Callable[...,T]], err_msg:str, cache
+@@ -154,7 +154,7 @@ def select_first_inited(candidates:Sequence[Callable[...,T]], err_msg:str, cache
  def pluralize(st:str, cnt:int): return f"{cnt} {st}"+('' if cnt == 1 else 's')
  
  # for length N coefficients `p`, returns p[0] * x**(N-1) + p[1] * x**(N-2) + ... + p[-2] * x + p[-1]
@@ -1766,7 +1765,7 @@ index deb9684..8bc2d81 100644
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
 diff --git a/tinygrad/renderer/__init__.py b/tinygrad/renderer/__init__.py
-index 0dfa777..629350f 100644
+index aaab09f..d4711eb 100644
 --- a/tinygrad/renderer/__init__.py
 +++ b/tinygrad/renderer/__init__.py
 @@ -65,6 +65,8 @@ class Renderer:
@@ -1779,7 +1778,7 @@ index 0dfa777..629350f 100644
    has_shared: bool = True
    # NOTE: these two should be in (x,y,z) order to match the max_sizes argument in get_grouped_dims
 diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
-index 0dd26d2..0b9d0f1 100644
+index 0829290..2e45ae3 100644
 --- a/tinygrad/renderer/cstyle.py
 +++ b/tinygrad/renderer/cstyle.py
 @@ -5,9 +5,28 @@ from tinygrad.renderer import tc
@@ -1831,7 +1830,7 @@ index 0dd26d2..0b9d0f1 100644
    # default const render
    (UPat.cvar("c").cast(), lambda ctx,c: str(c.val)),
  
-@@ -64,7 +79,9 @@ base_rewrite = PatternMatcher([
+@@ -62,7 +77,9 @@ base_rewrite = PatternMatcher([
    # alu/gep
    (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]})"),
    (UPat(GroupOp.ALU, name="x"), lambda ctx,x: ctx.code_for_op[x.op](
@@ -1840,9 +1839,9 @@ index 0dd26d2..0b9d0f1 100644
 +    *([strip_parens(ctx[v]) if i == 0 and v.op == x.op and x.op in {Ops.ADD, Ops.MUL, Ops.XOR, Ops.OR, Ops.AND} else ctx[v]
 +       for i,v in enumerate(x.src)]), x.dtype)),
  
-   # call an external function: the CUSTOM_FUNCTION body holds the callee (a function pointer), the other srcs are the args
-   (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, src=(UPat(name="fptr"),)),), allow_any_len=True, name="x"), lambda ctx,x,fptr:
-@@ -106,8 +123,9 @@ pm_manual_bf16_cast = PatternMatcher([
+   # call an external function by symbol: the CUSTOM_FUNCTION body names the callee, the srcs are the args and set the types
+   (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, name="f"),), allow_any_len=True, name="x"), lambda ctx,x,f:
+@@ -107,8 +124,9 @@ pm_manual_bf16_cast = PatternMatcher([
  # a bfloat16 stored as ushort renders its const as the bit pattern
  pm_bf16_ushort_const = PatternMatcher([(UPat.cvar("c").cast(dtypes.bfloat16), lambda ctx,c: f"{to_storage_scalar(c.val, dtypes.bfloat16)}u")])
  
@@ -1853,7 +1852,7 @@ index 0dd26d2..0b9d0f1 100644
 +def uops_to_dtypes(uops:list[UOp]) -> list[tuple[DType, int]]: return dedup((u.dtype, u.max_numel()) for u in uops if _shaped_value(u))
  
  def _wmma_name(u:UOp) -> str:
-   # sanitize spaces in DType.name (int8 = "signed char")
+   return f"WMMA_{'_'.join(map(str, u.arg[0]))}_{u.arg[1].name}_{u.dtype.name}"
 @@ -117,6 +135,24 @@ def _wmma_name(u:UOp) -> str:
  def wmma_args(uops:list[UOp]):
    return dedup((_wmma_name(uop), uop.arg[0], uop.arg[1], uop.dtype, tuple(x.shape[-1] for x in uop.src)) for uop in uops if uop.op is Ops.WMMA)
@@ -1879,7 +1878,7 @@ index 0dd26d2..0b9d0f1 100644
  class CStyleLanguage(Renderer):
    abi: str = ""
    kernel_typedef: str = "void"
-@@ -144,7 +180,8 @@ class CStyleLanguage(Renderer):
+@@ -148,7 +184,8 @@ class CStyleLanguage(Renderer):
      Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
      Ops.CMOD: lambda a,b,dtype: f"({a}%{b})", Ops.CDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
      Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
@@ -1889,7 +1888,7 @@ index 0dd26d2..0b9d0f1 100644
  
    string_rewrite = base_rewrite
  
-@@ -195,6 +232,7 @@ class CStyleLanguage(Renderer):
+@@ -199,6 +236,7 @@ class CStyleLanguage(Renderer):
      else: return f"{self[u]}"
    def render_access(self, u:UOp): return f"*{self.render_ptr(u)}"
    def render_cast(self, u:UOp, val:str) -> str: return f"({self.render_type(u)})({val})"
@@ -1897,7 +1896,7 @@ index 0dd26d2..0b9d0f1 100644
  
    # LEGACY
    def render_dtype(self, dt:DType, mutable=True) -> str:
-@@ -204,6 +242,7 @@ class CStyleLanguage(Renderer):
+@@ -208,6 +246,7 @@ class CStyleLanguage(Renderer):
    def _render(self, uops:list[UOp]) -> tuple[str, list[str], list[tuple[str,tuple[UOp,bool]]]]:
      r: dict[UOp, str] = {}
      self.r = r
@@ -1905,7 +1904,7 @@ index 0dd26d2..0b9d0f1 100644
  
      child_count = Counter(v for ru in uops for v in ru.src)
      # find which PARAMs are stored to with a single toposort
-@@ -250,18 +289,106 @@ class CStyleLanguage(Renderer):
+@@ -255,12 +294,13 @@ class CStyleLanguage(Renderer):
          r[u] = l
        else:
          if u.op not in {Ops.RANGE, Ops.BUFFER, Ops.BINARY} and u.dtype != dtypes.void:
@@ -1921,7 +1920,9 @@ index 0dd26d2..0b9d0f1 100644
  
      # NOTE: this relies on bufs dict preserving order
      return (name, kernel, list(bufs.values()))
-   def render(self, uops:list[UOp]) -> str: return self.render_kernel(*self._render(uops), uops)
+@@ -276,7 +316,94 @@ class CStyleLanguage(Renderer):
+       call_bodies.extend(body.src)
+     return self.render_kernel(*self._render(uops), call_bodies+list(uops), prefix or None)
  
 +# backends lower a select of a value and a float zero by their comparison to an instruction or a call that may return the
 +# zero of the value's sign: fminnm on arm64, fmin on riscv64, fminf for a half on x86. the lowering needs the select's operands
@@ -2014,8 +2015,8 @@ index 0dd26d2..0b9d0f1 100644
    float4 = "(float4)"
    float4_style = ('{', '}')
    gep_arr_threshold = 0
-@@ -277,7 +404,8 @@ class ClangRenderer(CStyleLanguage):
-   code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.TRUNC, Ops.RECIPROCAL]}),
+@@ -292,7 +419,8 @@ class ClangRenderer(CStyleLanguage):
+   code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.RECIPROCAL]}),
                   Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
                   Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
 -                 Ops.FDIV: lambda a,b,dtype: f"({a}/{b})"}
@@ -2024,7 +2025,7 @@ index 0dd26d2..0b9d0f1 100644
  
    # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
    extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
-@@ -292,7 +420,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -307,7 +435,15 @@ class ClangRenderer(CStyleLanguage):
      vec = self._render_dtype(dt, count, AddrSpace.REG)
      return f"typedef {self.render_dtype(dt)} {vec} __attribute__((aligned({alignment}),ext_vector_type({count})));"
  
@@ -2041,7 +2042,7 @@ index 0dd26d2..0b9d0f1 100644
    def _render_body(self, function_name, kernel, bufs, uops, pref=None) -> str: return super().render_kernel(function_name, kernel, bufs, uops, pref)
    def _render_entry(self, function_name:str, bufs:list[tuple[str,tuple[UOp,bool]]]) -> str: return ""
  
-@@ -307,6 +443,15 @@ class ClangRenderer(CStyleLanguage):
+@@ -322,6 +458,15 @@ class ClangRenderer(CStyleLanguage):
      super().__init__(target)
      from tinygrad.runtime.support.compiler_cpu import ClangCompiler
      self.compiler = ClangCompiler(target.arch.split(","))
@@ -2057,15 +2058,15 @@ index 0dd26d2..0b9d0f1 100644
  
  class OpenCLRenderer(CStyleLanguage):
    # language options
-@@ -316,6 +461,7 @@ class OpenCLRenderer(CStyleLanguage):
+@@ -331,6 +476,7 @@ class OpenCLRenderer(CStyleLanguage):
    smem_prefix = "__local "
    barrier = "barrier(CLK_LOCAL_MEM_FENCE);"
    float4 = "(float4)"
 +  def render_bitcast(self, t:str, s:str, val:str) -> str: return f"as_{t}(({s})({val}))"
    code_for_workitem = {"g": lambda x: f"get_group_id({x})", "l": lambda x: f"get_local_id({x})"}
-   type_map = { dtypes.int8: "char", dtypes.uint8: "uchar", dtypes.uint32: "uint", dtypes.uint16: "ushort", dtypes.uint64: "ulong",
-               dtypes.bfloat16: "ushort" }
-@@ -343,6 +489,7 @@ class OpenCLRenderer(CStyleLanguage):
+   type_map = {**CStyleLanguage.type_map, dtypes.i8: "char", dtypes.u8: "uchar", dtypes.u32: "uint", dtypes.u16: "ushort",
+               dtypes.u64: "ulong", dtypes.bf16: "ushort"}
+@@ -358,6 +504,7 @@ class OpenCLRenderer(CStyleLanguage):
                                        (d != dtypes.double or "cl_khr_fp64" in self.target.arch) and d not in dtypes.fp8s}
  
  class MetalRenderer(CStyleLanguage):
@@ -2073,7 +2074,7 @@ index 0dd26d2..0b9d0f1 100644
    def __init__(self, target:Target):
      super().__init__(target)
      from tinygrad.runtime.ops_metal import MetalCompiler
-@@ -398,6 +545,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
+@@ -411,6 +558,7 @@ f"""{dstr_out} __{name}({dstr_in} a, {dstr_in} b, {dstr_out} c){{
  _nms = list("xyzwabcdefghijkl") + [f'v{i}' for i in range(16, 32)]
  
  class CUDARenderer(CStyleLanguage):
@@ -2081,20 +2082,20 @@ index 0dd26d2..0b9d0f1 100644
    global_max = (2147483647, 65535, 65535)
    local_max = (1024, 1024, 64)
    shared_max = 49152
-@@ -424,7 +572,8 @@ class CUDARenderer(CStyleLanguage):
+@@ -437,7 +585,8 @@ class CUDARenderer(CStyleLanguage):
      Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
      Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
      Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
 -    Ops.RECIPROCAL: lambda x,dtype: f"hrcp({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"(1/{x})" }
 +    Ops.RECIPROCAL: lambda x,dtype: f"hrcp({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"(1/{x})",
 +    Ops.MULACC: lambda a,b,c,dtype: f"__fma_rn({a},{b},{c})" if dtype == dtypes.float64 else f"__fmaf_rn({a},{b},{c})" }
-   type_map = {dtypes.uint32: "uint", dtypes.bfloat16: "nv_bfloat16", dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
+   type_map = {**CStyleLanguage.type_map, dtypes.u32: "uint", dtypes.bf16: "nv_bfloat16",
+               dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
    extra_matcher = create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
-     (UPat(Ops.CAST, dtypes.fp8s, UPat.var("x", dtypes.fp8s), name='y'), lambda x,y: x.cast(dtypes.float).cast(y.dtype) if x.dtype!=y.dtype else None),
-@@ -501,8 +650,9 @@ class HIPRenderer(CStyleLanguage):
-         (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]},"
-           f" {fp8_index(x.src[0].dtype)}, {fp8_index(x.src[0].dtype)}, 0, 0, 0, 0)" if x.arg[0][2] == 128 else None),
-         (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]}, 0, 0, 0)"),
+@@ -519,8 +668,9 @@ class HIPRenderer(CStyleLanguage):
+     if amd_fp8s(target.arch):
+       self.extra_matcher += tc.pm_wmma_fp8(dtypes.uint64 if self.is_cdna(target.arch) else dtypes.uint32)
+       self.string_rewrite = PatternMatcher([
 -        (UPat.cvar("c").cast(dtypes.fp8s, name="x"), lambda ctx,x,c:
 -          f"f32_to_fp8({ctx.nan if math.isnan(v:=c.val) else ctx.infinity if v == math.inf else f'-{ctx.infinity}' if v == -math.inf else f'{v}f'},"
 +        # a NaN is written from its bits
@@ -2103,7 +2104,7 @@ index 0dd26d2..0b9d0f1 100644
            f" {fp8_index(x.dtype)})"),
          (UPat(Ops.CAST, dtypes.fp8s, (UPat(dtype=dtypes.float),), name="x",),
            lambda ctx,x: f"f32_to_fp8({ctx[x.src[0]]}, {fp8_index(x.dtype)})"),
-@@ -519,7 +669,8 @@ class HIPRenderer(CStyleLanguage):
+@@ -537,7 +687,8 @@ class HIPRenderer(CStyleLanguage):
    kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
    code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
    code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
@@ -2114,19 +2115,19 @@ index 0dd26d2..0b9d0f1 100644
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
-index 757360e..ea7c2bf 100644
+index 4730e14..b7ea28a 100644
 --- a/tinygrad/schedule/__init__.py
 +++ b/tinygrad/schedule/__init__.py
-@@ -3,7 +3,7 @@ from collections import deque
+@@ -2,7 +2,7 @@ import time, inspect
+ from collections import deque
  from dataclasses import dataclass, field, replace
  from tinygrad.dtype import AddrSpace
- from tinygrad.uop.ops import GroupOp, remove_all_tags
--from tinygrad.uop.ops import UOp, Ops, UOpMetaClass, rewrite_group, graph_rewrite, gate_kernel_sink, KernelInfo
-+from tinygrad.uop.ops import UOp, Ops, UOpMetaClass, rewrite_group, graph_rewrite, gate_kernel_sink, KernelInfo, ParamArg
+-from tinygrad.uop.ops import GroupOp, remove_all_tags, UOp, Ops, UOpMetaClass, graph_rewrite, gate_kernel_sink, KernelInfo
++from tinygrad.uop.ops import GroupOp, remove_all_tags, UOp, Ops, UOpMetaClass, graph_rewrite, gate_kernel_sink, KernelInfo, ParamArg
  from tinygrad.uop.spec import type_verify, spec_tensor
- from tinygrad.helpers import DEBUG, cpu_profile, TracingKey, SPEC, pluralize, SCACHE, BASEDIR, partition, dedup, all_int, VIZ
+ from tinygrad.helpers import DEBUG, cpu_profile, TracingKey, SPEC, SCACHE, BASEDIR, partition, dedup, all_int, VIZ
  from tinygrad.helpers import diskcache_get, diskcache_put, colored
-@@ -29,13 +29,44 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+@@ -28,13 +28,44 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
      raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
    return tuple(kernels), tuple(deps)
  
@@ -2136,7 +2137,7 @@ index 757360e..ea7c2bf 100644
 +def _copy_state(s:UOp, slot:int) -> UOp:
 +  buf = s.buf_uop
 +  if not isinstance(buf.device, str): raise RuntimeError("a kernel reads a buffer state that a kernel it waits for overwrites, off one device")
-+  dst = UOp(Ops.ALLOC, src=(), arg=ParamArg(slot, buf.dtype, buf.max_numel(), device=buf.device))
++  dst = UOp(Ops.ALLOC, src=(UOp.const(buf.max_numel()),), arg=ParamArg(slot, buf.dtype, device=buf.device))
 +  r = UOp.range(buf.max_numel(), 0)
 +  body = dst.param_like(0).index(r).store(buf.param_like(1).index(r)).end(r).sink(arg=KernelInfo())
 +  return dst.after(body.call(dst, s))
@@ -2172,7 +2173,7 @@ index 757360e..ea7c2bf 100644
      for u in sched_sink.toposort(gate_kernel_sink):
        if u.op is not Ops.AFTER: continue
        kernels, after_deps = _split_after(u)
-@@ -60,9 +91,16 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -59,9 +90,16 @@ def create_schedule(sched_sink:UOp) -> UOp:
        for a, write_kernels in writes.get(s, []):
          if a is u: continue
          for t in write_kernels:
@@ -2192,7 +2193,7 @@ index 757360e..ea7c2bf 100644
  
    with cpu_profile(TracingKey("linearize schedule")):
      queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
-@@ -79,6 +117,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
+@@ -78,6 +116,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
      if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
    return UOp(Ops.LINEAR, src=tuple(linearized))
  
@@ -2202,10 +2203,17 @@ index 757360e..ea7c2bf 100644
  from tinygrad.engine.realize import capturing, pm_flatten_linear
  from tinygrad.schedule.prepare import prepare_rangeify
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 228ec4e..64eb263 100644
+index 3a705e6..3afd690 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
-@@ -7,11 +7,29 @@ from tinygrad.uop.ops import gate_kernel_sink
+@@ -1,17 +1,35 @@
+ from typing import Iterator
+ import functools, itertools
+ from dataclasses import dataclass, field, replace
+-from tinygrad.dtype import AddrSpace
++from tinygrad.dtype import AddrSpace, dtypes
+ from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, graph_rewrite, sint, AxisType, rewrite_group, broadcast_axes
+ from tinygrad.uop.ops import gate_kernel_sink
  from tinygrad.uop.symbolic import symbolic, pm_simplify_valid, pm_drop_and_clauses
  from tinygrad.helpers import argsort, all_same, cpu_profile, colored, Context, SPEC
  
@@ -2266,11 +2274,13 @@ index 228ec4e..64eb263 100644
  
  def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if x.op not in GroupOp.Broadcastable: return rngs
-@@ -67,35 +95,52 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
+@@ -67,34 +95,54 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
  # TODO: srcs contain (real data srcs, something else, ranges) and the boundary is confusing. see range_start
  def data_srcs(op:Ops, src:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.RANGE, Ops.SPECIAL}: return ()
 +  if op is Ops.INDEX and is_gather(src): return src
++  # a group of stores, an AFTER of an empty STACK: every store is data, as every source of the GROUP it replaces was
++  if op is Ops.AFTER and src and src[0].op is Ops.STACK and not src[0].src: return src
    if op in GroupOp.Movement|{Ops.INDEX, Ops.STAGE, Ops.REDUCE, Ops.AFTER, Ops.END, Ops.BACKEDGE, Ops.COPY}: return src[:1]
    return src
  
@@ -2334,13 +2344,12 @@ index 228ec4e..64eb263 100644
 +  return bufferize_and_index(ctx, x.src[0], True, (l,)+tuple(rngs[n:]))
  
  def create_bufferize_and_index_based_on_ranges(ctx:IndexingContext, x:UOp):
--  if x.op in {Ops.STAGE, Ops.INDEX}: return None
 +  # a group's stores are its own: each indexes its sources as any node does
-+  if x.op in {Ops.STAGE, Ops.INDEX, Ops.GROUP}: return None
++  if x.op is Ops.AFTER and x.dtype is dtypes.void and x.src[0].op is Ops.STACK: return None
    return x.replace(src=tuple(create_bufferize_and_index_srcs(ctx, x)))
  
  def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
-@@ -104,6 +149,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
+@@ -103,6 +151,22 @@ def convert_pad_to_where_to_keep_behavior_local(ctx:IndexingContext, x:UOp):
    valid: UOp = UOp.const(True).uprod([r.get_valid() for r in ctx.range_map[x][0]])
    return valid.where(bx.src[0], UOp.const(x.dtype.const(0)))
  
@@ -2363,7 +2372,7 @@ index 228ec4e..64eb263 100644
  def convert_reduce_to_reduce_with_ranges(ctx:IndexingContext, x:UOp):
    if x.arg[1] == 0: return None
    if x not in ctx.range_map: raise RuntimeError("REDUCE has no ranges in rangeify, UOp verification failed")
-@@ -140,6 +201,10 @@ pm_apply_rangeify = PatternMatcher([
+@@ -139,6 +203,10 @@ pm_apply_rangeify = PatternMatcher([
    (UPat(Ops.PAD, name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
@@ -2372,9 +2381,9 @@ index 228ec4e..64eb263 100644
 +  # an integer division on padding divides by 1 there
 +  (UPat((Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD), name="x"), guard_division_on_padding),
    # finally, apply_rangeify
-   (UPat(GroupOp.All, name="x"), create_bufferize_and_index_based_on_ranges),
+   (UPat(GroupOp.All-{Ops.STAGE, Ops.INDEX}, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -186,6 +251,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -185,6 +253,85 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
@@ -2453,14 +2462,14 @@ index 228ec4e..64eb263 100644
 +    if x in g.reached: continue
 +    g.pending.append(x)
 +    return g.reduced
-+  reduced = tuple(rctx.new_range(s, axistype=AxisType.REDUCE) for s in sizes)
++  reduced = tuple(rctx.new_range(s) for s in sizes)
 +  rctx.siblings.insert(0, Siblings(sizes, outer, reduced, set(), [x]))
 +  return reduced
 +
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -197,6 +341,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -196,6 +343,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    # get the consumer map
    with cpu_profile("consumer map in rangeify", "TINY"):
      tsink_toposort = tsink.toposort(gate_kernel_sink)
@@ -2468,7 +2477,7 @@ index 228ec4e..64eb263 100644
      consumer_map: dict[UOp, dict[UOp, None]] = {x:{} for x in tsink_toposort}
      for c in tsink_toposort:
        for x in data_srcs(c.op, c.src):
-@@ -227,10 +372,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -226,10 +374,13 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
      #  2. from the single consumer if this op only has one consumer
      #  3. potentially new if this op has 2+ consumers
  
@@ -2485,7 +2494,7 @@ index 228ec4e..64eb263 100644
        # all ranges are ended now
        ending_ranges[x] = []
        # mark all ranges as ended
-@@ -265,14 +413,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -264,14 +415,19 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        out_rngs = tuple(_out_rngs)
  
        # we have to (partially) realize here if there's new ranges
@@ -2509,17 +2518,17 @@ index 228ec4e..64eb263 100644
          out_rngs = tuple(rctx.new_range(x.shape[i]) for i in range(len(out_rngs)))
      ending_ranges[x] += broadcast_ending_ranges
  
-@@ -298,7 +451,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -297,7 +453,7 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
  
      # REDUCE creates ranges for the axes it is reducing
-     if x.op is Ops.REDUCE and x.arg[1]:
--      rngs = tuple(rctx.new_range(s, axistype=AxisType.REDUCE) for s in x.src[0].shape[:x.arg[1]]) + out_rngs
+     if x.op is Ops.REDUCE:
+-      rngs = tuple(rctx.new_range(s) for s in x.src[0].shape[:x.arg[1]]) + out_rngs
 +      rngs = reduce_loops(rctx, x, x.src[0].shape[:x.arg[1]], out_rngs) + out_rngs
  
      if debug:
        realized_ranges = rctx.realize_map.get(x, None)
 diff --git a/tinygrad/schedule/multi.py b/tinygrad/schedule/multi.py
-index 099ac10..2e22d4b 100644
+index 618ccb6..e3ed484 100644
 --- a/tinygrad/schedule/multi.py
 +++ b/tinygrad/schedule/multi.py
 @@ -37,10 +37,10 @@ replace_allreduce = PatternMatcher([
@@ -2535,8 +2544,8 @@ index 099ac10..2e22d4b 100644
     a.replace(src=tuple(s.mselect(ms.arg) if isinstance(s.device, tuple) else s for s in a.src))),
  ])
  
-@@ -191,7 +191,8 @@ def stack_multi(root:UOp):
-   if not multis: return None
+@@ -189,7 +189,8 @@ def stack_multi(root:UOp):
+   multis = [m for m in root.src if m.op is Ops.UNSHARD]
    sharding = multis[0].sharding
    if all(m.sharding == sharding for m in multis):
 -    srcs = [m.src[0] if m.op is Ops.UNSHARD else m for m in root.src]
@@ -2545,7 +2554,7 @@ index 099ac10..2e22d4b 100644
      new_sharding = tuple((ax+1, rng) for ax, rng in sharding)
      return UOp(Ops.STACK, src=tuple(srcs)).unshard(tuple(a for a,_ in new_sharding), tuple(r for _,r in new_sharding))
    # resharding: single-axis fallback
-@@ -199,7 +200,37 @@ def stack_multi(root:UOp):
+@@ -197,7 +198,37 @@ def stack_multi(root:UOp):
    assert axis is not None
    return UOp(Ops.STACK, src=tuple(shard_srcs(root.src, axis-1))).unshard(axis, next(m.src[1] for m in root.src if m.op is Ops.UNSHARD))
  
@@ -2583,7 +2592,7 @@ index 099ac10..2e22d4b 100644
    # INDEX on UNSHARD: resolve each sharded axis into this range's own shard.
    # Two ownership patterns are supported:
    #   contiguous: idx = rng*shard_sz + local   (thread rng owns [rng*shard_sz, ...))
-@@ -225,6 +256,15 @@ def _shard_idx(rng:UOp, dev_idx:int) -> int:
+@@ -223,6 +254,15 @@ def _shard_idx(rng:UOp, dev_idx:int) -> int:
    drngs = [r for r in rng.ranges if r.axis_type is AxisType.DEVICE]
    return 0 if not drngs else int(rng.substitute({drngs[0]: drngs[0].const_like(dev_idx)}).ssimplify())
  
@@ -2599,7 +2608,7 @@ index 099ac10..2e22d4b 100644
  def copy_multi(multi:UOp, device:str | tuple[str, ...]):
    sharding = multi.sharding
    if isinstance(device, str):
-@@ -249,12 +289,15 @@ def copy_multi(multi:UOp, device:str | tuple[str, ...]):
+@@ -247,12 +287,15 @@ def copy_multi(multi:UOp, device:str | tuple[str, ...]):
    for ax, rng in sharding:
      bsz = val.shape[ax]
      val = val.pad(tuple((0,0) if a != ax else (bsz*rng, bsz*int(rng.vmax) - bsz*rng) for a in range(len(val.shape))))
@@ -2617,7 +2626,7 @@ index 099ac10..2e22d4b 100644
    return shard_subview(dest, multi).store(multi.src[0])
  
  def store_dest_multi(root:UOp, multi:UOp):
-@@ -289,6 +332,8 @@ multi_pm = PatternMatcher([
+@@ -287,6 +330,8 @@ multi_pm = PatternMatcher([
    (UPat(Ops.FLIP, src=(UPat(Ops.UNSHARD, name="multi"), ), name="root"), flip_multi),
    (UPat(Ops.STACK, name="root", custom_early_reject=set([Ops.UNSHARD])), stack_multi),
    (UPat(Ops.INDEX, src=(UPat(Ops.UNSHARD, name="multi"),), name="root", allow_any_len=True), index_multi),
@@ -2627,7 +2636,7 @@ index 099ac10..2e22d4b 100644
    # a COPY of a sharded value copies every shard to the target device
    (UPat(Ops.COPY, src=(UPat(Ops.UNSHARD, name="multi"),), allow_any_len=True, name="copy"), lambda multi,copy: copy_multi(multi, copy.arg)),
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index a5cf57d..dff4198 100644
+index e0f427c..789972a 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
 @@ -1,10 +1,10 @@
@@ -2703,24 +2712,24 @@ index a5cf57d..dff4198 100644
  
    # get expanded by rangeifying the UOp x
    indexed = x.index(*[UOp.range(s, i) if resolve(s>1) else 0 for i,s in enumerate(x.shape)])
--  range_nums = [y.arg[0] for y in indexed.substitute({x.base:UOp(Ops.NOOP)}, extra_pm=pm_mops).ranges]
-+  range_nums = [y.arg[0] for y in indexed.substitute({x.base:UOp(Ops.NOOP)}, extra_pm=pm_tensor_mops).ranges]
+-  range_nums = [y.axis_id[0] for y in indexed.substitute({x.base:UOp(Ops.NOOP)}, extra_pm=pm_mops).ranges]
++  range_nums = [y.axis_id[0] for y in indexed.substitute({x.base:UOp(Ops.NOOP)}, extra_pm=pm_tensor_mops).ranges]
    is_expanded = [i not in range_nums for i in range(len(x.shape))]
  
    if not (split_candidates:=[(i,d) for i in range(reduce.arg[1])
 @@ -166,13 +186,13 @@ def copy_to_anon_store(x:UOp, copy:UOp):
    x = x.pad_to(x.max_shape)
    # the buffer takes the DEVICE range from the copy (no-op for single device copies)
-   buf = UOp(Ops.ALLOC, src=copy.src[1:],
--            arg=ParamArg(next(UOp.unique_num), copy.dtype, prod(x.max_shape), device=copy.device)).reshape(x.max_shape)
-+            arg=ParamArg(next(UOp.unique_num), copy.dtype, prod(x.max_shape), vmin_vmax=x.stored_bounds(copy.dtype), device=copy.device)).reshape(x.max_shape)
+   buf = UOp(Ops.ALLOC, src=(UOp.const(prod(x.max_shape)),)+copy.src[1:],
+-            arg=ParamArg(next(UOp.unique_num), copy.dtype, device=copy.device)).reshape(x.max_shape)
++            arg=ParamArg(next(UOp.unique_num), copy.dtype, vmin_vmax=x.stored_bounds(copy.dtype), device=copy.device)).reshape(x.max_shape)
    return buf.after(buf.store(x)).shrink_to(copy.shape)
  
  def stage_to_anon_store(x:UOp, stg:UOp):
    # the buffer created here is inside the call and is not persisted, like the buffers created for copies
-   buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.device),
--            arg=ParamArg(next(UOp.unique_num), stg.dtype, prod(x.max_shape), device=x.device)).reshape(x.max_shape)
-+            arg=ParamArg(next(UOp.unique_num), stg.dtype, prod(x.max_shape), vmin_vmax=x.stored_bounds(stg.dtype), device=x.device)).reshape(x.max_shape)
+   buf = UOp(Ops.ALLOC, src=(UOp.const(prod(x.max_shape)),)+UOp.device_range_src(x.device),
+-            arg=ParamArg(next(UOp.unique_num), stg.dtype, device=x.device)).reshape(x.max_shape)
++            arg=ParamArg(next(UOp.unique_num), stg.dtype, vmin_vmax=x.stored_bounds(stg.dtype), device=x.device)).reshape(x.max_shape)
    view = buf.shrink_to(stg.shape)
    return view.after(view.store(x))
  
@@ -2735,7 +2744,7 @@ index a5cf57d..dff4198 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 0239aa4..7ce9853 100644
+index 26e28fa..1b98889 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,7 +1,7 @@
@@ -2747,7 +2756,7 @@ index 0239aa4..7ce9853 100644
  from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, KernelInfo, ParamArg
  from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrite_group
  from tinygrad.uop.symbolic import symbolic
-@@ -47,7 +47,41 @@ def gate_substitute(ctx, b:UOp) -> None:
+@@ -45,7 +45,49 @@ def gate_substitute(ctx, b:UOp) -> None:
  pm_gate_substitute = PatternMatcher([(UPat(GroupOp.All, name="b"), gate_substitute)], compiled=False)
  # if a buffer is being stored just for permutes or something, remove it
  # we want to reexpress the indexes of idx2 in terms of the implied b1
@@ -2762,36 +2771,44 @@ index 0239aa4..7ce9853 100644
 +# trips in padding count, since only the inlined value's loads are gated there. the coordinates the value does not vary
 +# along are dropped before it is inlined, so they count neither elements nor trips, and a symbolic size counts at its
 +# largest
-+def read_copies(buf:UOp, idx:UOp) -> float:
++def read_copies(buf:UOp, idx:UOp, reduced:set[tuple]) -> float:
 +  live = [(r, x) for r, x in zip(buf.src[1:], idx.src[1:]) if r.op is Ops.RANGE and r in buf.src[0].ranges]
 +  read = dedup(r for _, x in live for r in x.ranges)
 +  elements = extent([r for r, _ in live])
 +  if elements <= 0: return 1
-+  return max(1, min(extent([r for r in read if r.axis_type is AxisType.REDUCE]), extent(read) / elements))
++  return max(1, min(extent([r for r in read if r.axis_id in reduced]), extent(read) / elements))
 +
 +# the copies the reads of each stage make of its value once inlined, reads at several distinct indices copying it at
-+# each. keyed by the axes of the stage's ranges, which are its own and name it while the cleanups rebuild it.
++# each. keyed by the axes of the stage's ranges, which are its own and name it while the cleanups rebuild it, as are the
++# axes of the ranges a reduction closes.
 +# a read through a stack is not counted: by now every stage has a device, so the cleanups never turn it into a read of the
 +# stage
-+def stage_reads(sink:UOp) -> dict[tuple, float]:
++@dataclass
++class StageReads:
++  copies: dict[tuple, float]
++  reduced: set[tuple]
++
++def stage_reads(sink:UOp) -> StageReads:
++  nodes = sink.toposort(enter_calls=False)
++  reduced = {r.axis_id for u in nodes if u.op is Ops.REDUCE for r in u.src[1:] if r.op is Ops.RANGE}
 +  reads: dict[tuple, float] = {}
-+  for u in sink.toposort(enter_calls=False):
++  for u in nodes:
 +    if u.op is Ops.INDEX and u.src[0].op is Ops.STAGE:
-+      c = read_copies(u.src[0], u)
++      c = read_copies(u.src[0], u, reduced)
 +      for r in u.src[0].src[1:]:
-+        if r.op is Ops.RANGE: reads[r.arg[:-1]] = reads.get(r.arg[:-1], 0) + c
-+  return reads
++        if r.op is Ops.RANGE: reads[r.axis_id] = reads.get(r.axis_id, 0) + c
++  return StageReads(reads, reduced)
 +
 +# the nodes that inlining a stage may add to its readers: the nodes of its value that its ranges reach, which the inlining
 +# copies, times the copies its reads make
 +INLINE_BUDGET = 1024
 +
-+def remove_bufferize(ctx:dict[tuple, float], src:UOp, buf:UOp, idx:UOp):
++def remove_bufferize(ctx:StageReads, src:UOp, buf:UOp, idx:UOp):
    # see if we can't do it, should this ever hit?
    assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
    assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
-@@ -77,13 +111,34 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
-       indexes.append(x)
+@@ -72,13 +114,34 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+       accessed_buffers.append(x)
      if x.op is Ops.REDUCE: reduces.append(x)
      return True
 -  src.toposort(gate=red_gate)
@@ -2810,7 +2827,7 @@ index 0239aa4..7ce9853 100644
 +  # read by every output of a reduction, as a matrix-vector product reads its vector, the value would be computed again
 +  # for each output and each of its buffers loaded again: one that reads more than one buffer stays stored
 +  read = [r for x in idx.src[1:] for r in x.ranges]
-+  if buf.arg.broadcast and len(accessed_buffers) > 1 and read and all(r.axis_type is AxisType.REDUCE for r in read): return None
++  if buf.arg.broadcast and len(accessed_buffers) > 1 and read and all(r.axis_id in ctx.reduced for r in read): return None
 +
 +  # inlined, the value is copied to each position it is read at, and computed again at each trip of a reduction over a
 +  # window. its producers are inlined already, so the copies compound: k values each reading the one before at two
@@ -2819,14 +2836,14 @@ index 0239aa4..7ce9853 100644
 +  # each read counts at every axis of the stage's ranges, and other stages can share an axis, a device range or one a
 +  # symbolic size names, so the least count bounds the stage's copies from above
 +  rngs = [r for r in buf.src[1:] if r.op is Ops.RANGE]
-+  copies = max(min([ctx.get(r.arg[:-1], 0) for r in rngs], default=1), 1)
++  copies = max(min([ctx.copies.get(r.axis_id, 0) for r in rngs], default=1), 1)
 +  copied = len([x for x in computed if any(r in x.ranges for r in rngs)])
 +  if copies > 1 and copied * copies > INLINE_BUDGET: return None
 +
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -97,8 +152,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+@@ -92,8 +155,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
  
    # if it makes it here, the bufferize is removed
    # this is the ranges replaced
@@ -2840,18 +2857,18 @@ index 0239aa4..7ce9853 100644
    return src.substitute(replaced, extra_pm=pm_gate_substitute)
  
  def remove_noop_bufferize(idx,b2):
-@@ -227,10 +285,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -222,10 +288,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
--    buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, size, device=x.arg.device))
+-    buf = UOp(Ops.ALLOC, src=(UOp.const(size),)+UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, device=x.arg.device))
 -    do_store = buf.index(idx).store(x.src[0].cast(dtype)).end(*rngs)
 +    # a value its kernels read widened from a narrower type that holds every value is stored narrow, and each read widens it; a value
 +    # stored whole keeps its type
 +    value = x.src[0]
 +    if x.arg.removable and widens(value): value, dtype = value.src[0], value.src[0].commit_dtype()
-+    buf = UOp(Ops.ALLOC, src=UOp.device_range_src(x.arg.device), arg=ParamArg(next(ctx), dtype, size, vmin_vmax=value.stored_bounds(dtype),
-+                                                                        device=x.arg.device))
++    buf = UOp(Ops.ALLOC, src=(UOp.const(size),)+UOp.device_range_src(x.arg.device),
++              arg=ParamArg(next(ctx), dtype, vmin_vmax=value.stored_bounds(dtype), device=x.arg.device))
 +    do_store = buf.index(idx).store(value.cast(dtype)).end(*rngs)
      return buf.after(do_store).cast(x.dtype)
  
@@ -2863,7 +2880,7 @@ index 0239aa4..7ce9853 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -258,6 +326,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -253,6 +329,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -2873,25 +2890,36 @@ index 0239aa4..7ce9853 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -281,7 +352,9 @@ class LocalAddBufferContext:
+@@ -276,7 +355,10 @@ class LocalAddBufferContext:
    range:int = 0
  
  def debuf(ctx:LocalAddBufferContext, buf:UOp):
--  param = UOp(Ops.PARAM, arg=ParamArg(ctx.dg, buf.dtype, prod(buf.max_shape), addrspace=buf.addrspace, device=buf.device))
+-  param = UOp(Ops.PARAM, src=(UOp.const(prod(buf.max_shape)),), arg=ParamArg(ctx.dg, buf.dtype, addrspace=buf.addrspace, device=buf.device))
 +  # the kernel reads the storage's values within their bounds
 +  bounds = buf.arg.vmin_vmax if isinstance(buf.arg, ParamArg) else None
-+  param = UOp(Ops.PARAM, arg=ParamArg(ctx.dg, buf.dtype, prod(buf.max_shape), vmin_vmax=bounds, addrspace=buf.addrspace, device=buf.device))
++  param = UOp(Ops.PARAM, src=(UOp.const(prod(buf.max_shape)),),
++              arg=ParamArg(ctx.dg, buf.dtype, vmin_vmax=bounds, addrspace=buf.addrspace, device=buf.device))
    ret = param.reshape(buf.max_shape)
    # if the buffer has symbolic shape, shrink the max-sized view to the actual shape
    if buf.max_shape != buf.shape: ret = ret.shrink(tuple((0, s) for s in buf.shape))
-@@ -354,7 +427,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
+@@ -285,7 +367,8 @@ def debuf(ctx:LocalAddBufferContext, buf:UOp):
+   return ret
+ 
+ def handle_after(ctx:LocalAddBufferContext, after:UOp):
+-  if after.addrspace == AddrSpace.LOCAL: return None
++  # a group of stores, an AFTER of an empty STACK, is no state of a buffer
++  if after.addrspace == AddrSpace.LOCAL or (after.src[0].op is Ops.STACK and not after.src[0].src): return None
+   buf = after.buf_uop
+   # NOTE: this is bottom up, so we only add it once
+   if buf not in ctx.map: ctx.map[buf] = after
+@@ -349,7 +432,7 @@ def get_kernel_graph(tsink:UOp) -> UOp:
  
    # cleanups for speed and runability
    tsink = graph_rewrite(tsink,
 -                        symbolic+pm_reduce_simplify+pm_const_buffer_folding+pm_remove_bufferize,
 +                        symbolic+pm_reduce_simplify+pm_const_buffer_folding+pm_remove_bufferize, ctx=stage_reads(tsink),
                          name="symbolic+reduce_collapse+debuf")
-   next_range = max((x.arg[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
+   next_range = max((x.axis_id[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
    tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
@@ -2915,7 +2943,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..7a6d701 100644
+index 384c8f5..bab83bf 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -2926,7 +2954,7 @@ index 2842d7e..7a6d701 100644
  from dataclasses import dataclass, replace
  from enum import Enum, auto
  from tinygrad.uop import Ops, GroupOp
-@@ -58,7 +59,8 @@ axis_to_pos = {AxisType.DEVICE: -2, AxisType.WEAK: -1, AxisType.LOOP: -1, AxisTy
+@@ -55,7 +56,8 @@ axis_colors = {AxisType.DEVICE: "green", AxisType.GLOBAL: "blue", AxisType.LOCAL
  range_start = {Ops.STAGE: 1, Ops.REDUCE: 1, Ops.END: 1, Ops.CALL: 1, Ops.LINEAR: 0}
  
  # https://en.wikipedia.org/wiki/Identity_element
@@ -2936,7 +2964,7 @@ index 2842d7e..7a6d701 100644
  
  # With True as the default, this matches the old symbolic behavior
  def resolve(x:UOp|bool, default:bool=True):
-@@ -92,6 +94,21 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+@@ -89,6 +91,21 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -2958,7 +2986,7 @@ index 2842d7e..7a6d701 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1102,8 +1119,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1084,8 +1101,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -2991,7 +3019,7 @@ index 2842d7e..7a6d701 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,28 +1179,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1121,28 +1161,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -3055,7 +3083,7 @@ index 2842d7e..7a6d701 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1333,6 +1400,8 @@ class KernelInfo:
+@@ -1323,6 +1390,8 @@ class KernelInfo:
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
@@ -3064,15 +3092,15 @@ index 2842d7e..7a6d701 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1363,6 +1432,7 @@ class ProgramInfo:
+@@ -1353,6 +1422,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
 +    if isinstance(sink.arg, KernelInfo) and sink.arg.split is not None: global_size[0] = sink.arg.split[0]
-     for u in sink.toposort():
+     for u in sink.toposort(enter_calls=False):
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1395,21 +1465,102 @@ class CallInfo:
+@@ -1389,21 +1459,102 @@ class CallInfo:
  
  # ******** ops in python ********
  
@@ -3181,7 +3209,7 @@ index 2842d7e..7a6d701 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1571,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1414,6 +1565,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3191,10 +3219,10 @@ index 2842d7e..7a6d701 100644
    return alu
  
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index 72a08ff..d2dc7ca 100644
+index cb2d347..b9666fd 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
-@@ -177,7 +177,7 @@ spec_tensor = PatternMatcher([
+@@ -174,7 +174,7 @@ spec_tensor = PatternMatcher([
    (UPat(Ops.COPY, name="copy", src=(UPat(),), allow_any_len=True), lambda copy:
     is_device(copy.arg) and not is_disk_device(copy.arg) and valid_device_range(copy.arg, copy.src[1:])),
    (UPat(Ops.ALLREDUCE, name="red", src=(UPat(),)),
@@ -3203,7 +3231,7 @@ index 72a08ff..d2dc7ca 100644
  
    # UNSHARD/MSELECT/MSTACK
    # an UNSHARD carries the value and one sharding range per sharded axis (usually a DEVICE RANGE, but can be a derived expression)
-@@ -227,13 +227,6 @@ spec_program = PatternMatcher([
+@@ -224,13 +224,6 @@ spec_program = PatternMatcher([
    (UPat(Ops.SPECIAL, src=(UPat(dtype=dtypes.int32),), name="s"), lambda s: isinstance(s.arg, str)),
  ])+spec_shared
  
@@ -3217,7 +3245,7 @@ index 72a08ff..d2dc7ca 100644
  # these are intermediate ops. everything should be deleted from here
  spec_full = PatternMatcher([
    (UPat(Ops.REWRITE_ERROR, dtypes.void, name="x"), lambda x: isinstance(x.arg, str)),
-@@ -247,17 +240,22 @@ spec_full = PatternMatcher([
+@@ -244,17 +237,22 @@ spec_full = PatternMatcher([
  
    # all loads/stores
    (UPat((Ops.LOAD, Ops.STORE)), lambda: True),
@@ -3241,8 +3269,8 @@ index 72a08ff..d2dc7ca 100644
 +  (UPat(Ops.STACK, name="s"), lambda s: all(x.op is Ops.PARAM or _loop_bound(x) for x in s.src) or None),
    # linear for more kernels (TODO: we should enter non sink calls)
    #(UPat(Ops.LINEAR), lambda: True),
-   # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage; size is in the arg, no shape input
-@@ -270,8 +268,13 @@ spec_kernel_graph = PatternMatcher([
+   # PARAM is caller-provided storage (or a Variable in the ALU addrspace), ALLOC is call-local storage
+@@ -268,8 +266,13 @@ spec_kernel_graph = PatternMatcher([
    # mstack/mselect
    (UPat(Ops.MSTACK, name="x"), lambda x: all(isinstance(s.device, str) for s in x.src) or (all_same(x.src) and x.src[0].device is None)),
    (UPat(Ops.MSELECT, name="x"), lambda x: isinstance(x.src[0].device, tuple) and x.arg < len(x.src[0].device)),
@@ -3259,7 +3287,7 @@ index 72a08ff..d2dc7ca 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..ef73f97 100644
+index 3ca940a..ef85007 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -3466,7 +3494,7 @@ index 2eb2e96..ef73f97 100644
 +  (UPat.var("c").where(UPat.var("t", int_or_bool), 0) + UPat.var("c").where(0, UPat.var("f")), lambda c,t,f: c.where(t, f)),
    # ALU/variable min==max -> CONST
    (UPat({Ops.CMPLT, Ops.CMPNE, Ops.FLOORDIV, Ops.FLOORMOD, Ops.PARAM, Ops.AFTER, Ops.SPECIAL}, name="x"),
-    lambda x: x.const_like(x.vmin) if x.vmin == x.vmax else None),
+    lambda x: x.const_like(x.vmin) if x.dtype is not dtypes.void and x.vmin == x.vmax else None),
    (UPat(Ops.RANGE, src=(UPat.cvar().or_casted(),), name="x"), lambda x: x.const_like(x.vmin) if x.vmin == x.vmax else None),
 -  # max folding
 -  ((UPat.cvar("a") < UPat.var("b")).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a.val == c.val else None),
@@ -3562,7 +3590,7 @@ index 2eb2e96..ef73f97 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -460,16 +530,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -459,16 +529,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),
@@ -3581,7 +3609,7 @@ index 2eb2e96..ef73f97 100644
    ((UPat.var("x", dtypes.weakint) + UPat.var("y")) * UPat.cvar("c"), lambda x,y,c: x*c+y*c),
  ])+pm_clean_up_group_sink
 diff --git a/tinygrad/uop/upat.py b/tinygrad/uop/upat.py
-index f1b0a4b..e4c08a2 100644
+index 12ee404..c3ea4fd 100644
 --- a/tinygrad/uop/upat.py
 +++ b/tinygrad/uop/upat.py
 @@ -57,7 +57,8 @@ def _get_clause(self:UPat, base:UOp, depth=0) -> UOp:

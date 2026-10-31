@@ -1,36 +1,37 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device=("CPU", "CPU:1"))
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.STACK dtypes.weakint [1, 1]
-3 Ops.RESHAPE dtypes.float [0, 2]
-4 Ops.CONST dtypes.weakint [] 0
-5 Ops.STACK dtypes.weakint [4, 4]
-6 Ops.SHRINK dtypes.float [3, 5, 2]
-7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device=("CPU", "CPU:1"))
-8 Ops.RESHAPE dtypes.float [7, 2]
-9 Ops.PERMUTE dtypes.float [8] (1, 0)
-10 Ops.REDUCE dtypes.float [9] (Ops.MAX, 1)
-11 Ops.ALLREDUCE dtypes.float [10] (Ops.MAX, ("CPU", "CPU:1"))
-12 Ops.CONST dtypes.weakint [] 1
-13 Ops.STACK dtypes.weakint [1, 12]
-14 Ops.RESHAPE dtypes.float [11, 13]
-15 Ops.DETACH dtypes.float [14]
-16 Ops.CONST dtypes.weakfloat [] -1.0
-17 Ops.MUL dtypes.float [15, 16]
-18 Ops.ADD dtypes.float [8, 17]
-19 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
-20 Ops.MUL dtypes.float [18, 19]
-21 Ops.EXP2 dtypes.float [20]
-22 Ops.PERMUTE dtypes.float [21] (1, 0)
-23 Ops.REDUCE dtypes.float [22] (Ops.ADD, 1)
-24 Ops.ALLREDUCE dtypes.float [23] (Ops.ADD, ("CPU", "CPU:1"))
-25 Ops.RESHAPE dtypes.float [24, 13]
-26 Ops.RECIPROCAL dtypes.float [25]
-27 Ops.MUL dtypes.float [21, 26]
-28 Ops.STORE dtypes.void [6, 27]
-29 Ops.AFTER dtypes.float [3, 28]
-30 Ops.CONST dtypes.weakint [] 2
-31 Ops.RANGE dtypes.weakint [30] (-1, AxisType.DEVICE)
-32 Ops.UNSHARD dtypes.float [29, 31] (1,)
-33 Ops.SINK dtypes.void [32]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.STACK dtypes.weakint [2, 2]
+4 Ops.RESHAPE dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.STACK dtypes.weakint [5, 5]
+7 Ops.SHRINK dtypes.f32 [4, 6, 3]
+8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+9 Ops.RESHAPE dtypes.f32 [8, 3]
+10 Ops.PERMUTE dtypes.f32 [9] (1, 0)
+11 Ops.REDUCE dtypes.f32 [10] (Ops.MAX, 1)
+12 Ops.ALLREDUCE dtypes.f32 [11] (Ops.MAX, ("CPU", "CPU:1"))
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.STACK dtypes.weakint [2, 13]
+15 Ops.RESHAPE dtypes.f32 [12, 14]
+16 Ops.DETACH dtypes.f32 [15]
+17 Ops.CONST dtypes.weakfloat [] -1.0
+18 Ops.MUL dtypes.f32 [16, 17]
+19 Ops.ADD dtypes.f32 [9, 18]
+20 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+21 Ops.MUL dtypes.f32 [19, 20]
+22 Ops.EXP2 dtypes.f32 [21]
+23 Ops.PERMUTE dtypes.f32 [22] (1, 0)
+24 Ops.REDUCE dtypes.f32 [23] (Ops.ADD, 1)
+25 Ops.ALLREDUCE dtypes.f32 [24] (Ops.ADD, ("CPU", "CPU:1"))
+26 Ops.RESHAPE dtypes.f32 [25, 14]
+27 Ops.RECIPROCAL dtypes.f32 [26]
+28 Ops.MUL dtypes.f32 [22, 27]
+29 Ops.STORE dtypes.void [7, 28]
+30 Ops.AFTER dtypes.f32 [4, 29]
+31 Ops.CONST dtypes.weakint [] 2
+32 Ops.RANGE dtypes.weakint [31] (AxisType.DEVICE, 0)
+33 Ops.UNSHARD dtypes.f32 [30, 32] (1,)
+34 Ops.SINK dtypes.void [33]
 

@@ -1,36 +1,38 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.ALLOC dtypes.float [] ParamArg(slot=1000, dtype=dtypes.float, size=4, device="CPU")
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 4), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
-3 Ops.SHRINK dtypes.float [0, 1, 2]
-4 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
-5 Ops.SHRINK dtypes.float [4, 1, 2]
-6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
-7 Ops.SHRINK dtypes.float [6, 1, 2]
-8 Ops.CONST dtypes.weakfloat [] 1.0
-9 Ops.ADD dtypes.float [7, 8]
-10 Ops.STORE dtypes.void [5, 9]
-11 Ops.SINK dtypes.void [10]
-12 Ops.CALL dtypes.void [11, 3, 4, 7] CallInfo()
-13 Ops.AFTER dtypes.float [3, 12]
-14 Ops.ALLOC dtypes.float [] ParamArg(slot=1001, dtype=dtypes.float, size=5)
-15 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8)
-16 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, vmin_vmax=(1, 8), name="d", addrspace=AddrSpace.ALU)
-17 Ops.SHRINK dtypes.float [15, 1, 16]
-18 Ops.CAST dtypes.float [8] dtypes.float
-19 Ops.EXPAND dtypes.float [18, 16]
-20 Ops.STORE dtypes.void [17, 19]
-21 Ops.SINK dtypes.void [20]
-22 Ops.CONST dtypes.weakint [] 5
-23 Ops.CALL dtypes.void [21, 22, 14] CallInfo()
-24 Ops.AFTER dtypes.float [14, 23]
-25 Ops.ALLOC dtypes.int [] ParamArg(slot=1002, dtype=dtypes.int, size=8, device="CPU", bind_on_realize=True)
-26 Ops.CONST dtypes.weakint [] 2
-27 Ops.CONST dtypes.weakint [] 4
-28 Ops.STACK dtypes.weakint [26, 27]
-29 Ops.RESHAPE dtypes.int [25, 28]
-30 Ops.STACK dtypes.weakint [1, 1]
-31 Ops.STACK dtypes.weakint [26, 2]
-32 Ops.SHRINK dtypes.int [29, 30, 31]
-33 Ops.SINK dtypes.void [13, 24, 32]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=1000, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 4), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+5 Ops.SHRINK dtypes.f32 [1, 2, 4]
+6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+7 Ops.SHRINK dtypes.f32 [6, 2, 4]
+8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+9 Ops.SHRINK dtypes.f32 [8, 2, 4]
+10 Ops.CONST dtypes.weakfloat [] 1.0
+11 Ops.ADD dtypes.f32 [9, 10]
+12 Ops.STORE dtypes.void [7, 11]
+13 Ops.SINK dtypes.void [12]
+14 Ops.CALL dtypes.void [13, 5, 6, 9] CallInfo()
+15 Ops.AFTER dtypes.f32 [5, 14]
+16 Ops.CONST dtypes.weakint [] 5
+17 Ops.ALLOC dtypes.f32 [16] ParamArg(slot=1001, dtype=dtypes.f32)
+18 Ops.CONST dtypes.weakint [] 8
+19 Ops.PARAM dtypes.f32 [18] ParamArg(slot=1, dtype=dtypes.f32)
+20 Ops.PARAM dtypes.i32 [3] ParamArg(slot=0, dtype=dtypes.i32, vmin_vmax=(1, 8), name="d", addrspace=AddrSpace.ALU)
+21 Ops.SHRINK dtypes.f32 [19, 2, 20]
+22 Ops.CAST dtypes.f32 [10] dtypes.f32
+23 Ops.EXPAND dtypes.f32 [22, 20]
+24 Ops.STORE dtypes.void [21, 23]
+25 Ops.SINK dtypes.void [24]
+26 Ops.CALL dtypes.void [25, 16, 17] CallInfo()
+27 Ops.AFTER dtypes.f32 [17, 26]
+28 Ops.ALLOC dtypes.i32 [18] ParamArg(slot=1002, dtype=dtypes.i32, device="CPU", bind_on_realize=True)
+29 Ops.CONST dtypes.weakint [] 2
+30 Ops.STACK dtypes.weakint [29, 0]
+31 Ops.RESHAPE dtypes.i32 [28, 30]
+32 Ops.STACK dtypes.weakint [2, 2]
+33 Ops.STACK dtypes.weakint [29, 4]
+34 Ops.SHRINK dtypes.i32 [31, 32, 33]
+35 Ops.SINK dtypes.void [15, 27, 34]
 

@@ -1,16 +1,22 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.BUFFER dtypes.char [] ParamArg(slot=0, dtype=dtypes.char, size=1048576, device="CPU")
-1 Ops.SINK dtypes.void [0]
-2 Ops.CALL dtypes.void [1, 0] CallInfo()
-3 Ops.BUFFER dtypes.char [] ParamArg(slot=1, dtype=dtypes.char, size=1000, device="CPU")
-4 Ops.BUFFER dtypes.char [] ParamArg(slot=2, dtype=dtypes.char, size=1, device="CPU")
-5 Ops.BUFFER dtypes.char [] ParamArg(slot=3, dtype=dtypes.char, size=65536, device="CPU")
-6 Ops.SINK dtypes.void [3, 4, 5]
-7 Ops.CALL dtypes.void [6, 3, 4, 5] CallInfo()
-8 Ops.BUFFER dtypes.char [] ParamArg(slot=4, dtype=dtypes.char, size=4096, device="CPU")
-9 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=255, device="CPU")
-10 Ops.BUFFER dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=1000, device="CPU")
-11 Ops.SINK dtypes.void [8, 9, 10]
-12 Ops.CALL dtypes.void [11, 8, 9, 10] CallInfo()
-13 Ops.LINEAR dtypes.void [2, 7, 12]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 1048576
+1 Ops.BUFFER dtypes.i8 [0] ParamArg(slot=0, dtype=dtypes.i8, device="CPU")
+2 Ops.SINK dtypes.void [1]
+3 Ops.CALL dtypes.void [2, 1] CallInfo()
+4 Ops.CONST dtypes.weakint [] 1000
+5 Ops.BUFFER dtypes.i8 [4] ParamArg(slot=1, dtype=dtypes.i8, device="CPU")
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.BUFFER dtypes.i8 [6] ParamArg(slot=2, dtype=dtypes.i8, device="CPU")
+8 Ops.CONST dtypes.weakint [] 65536
+9 Ops.BUFFER dtypes.i8 [8] ParamArg(slot=3, dtype=dtypes.i8, device="CPU")
+10 Ops.SINK dtypes.void [5, 7, 9]
+11 Ops.CALL dtypes.void [10, 5, 7, 9] CallInfo()
+12 Ops.CONST dtypes.weakint [] 4096
+13 Ops.BUFFER dtypes.i8 [12] ParamArg(slot=4, dtype=dtypes.i8, device="CPU")
+14 Ops.CONST dtypes.weakint [] 255
+15 Ops.BUFFER dtypes.i8 [14] ParamArg(slot=5, dtype=dtypes.i8, device="CPU")
+16 Ops.BUFFER dtypes.f32 [4] ParamArg(slot=6, dtype=dtypes.f32, device="CPU")
+17 Ops.SINK dtypes.void [13, 15, 16]
+18 Ops.CALL dtypes.void [17, 13, 15, 16] CallInfo()
+19 Ops.LINEAR dtypes.void [3, 11, 18]
 

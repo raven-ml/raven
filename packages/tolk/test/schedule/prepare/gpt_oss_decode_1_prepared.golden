@@ -1,696 +1,688 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device="CPU")
-1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
-2 Ops.CONST dtypes.weakint [] 0
-3 Ops.INDEX dtypes.float [1, 2]
-4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device="CPU")
-5 Ops.CONST dtypes.weakint [] 64
-6 Ops.RANGE dtypes.weakint [5] (0, AxisType.REDUCE)
-7 Ops.INDEX dtypes.float [4, 6]
-8 Ops.MUL dtypes.float [7, 7]
-9 Ops.REDUCE dtypes.float [8, 6] (Ops.ADD, 0)
-10 Ops.CONST dtypes.weakfloat [] 0.015625
-11 Ops.MUL dtypes.float [9, 10]
-12 Ops.CONST dtypes.weakfloat [] 1e-05
-13 Ops.ADD dtypes.float [11, 12]
-14 Ops.SQRT dtypes.float [13]
-15 Ops.STORE dtypes.void [3, 14]
-16 Ops.SINK dtypes.void [15] KernelInfo()
-17 Ops.ALLOC dtypes.float [] ParamArg(slot=79, dtype=dtypes.float, size=1, device="CPU")
-18 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device="CPU") tag=()
-19 Ops.CALL dtypes.void [16, 17, 18] CallInfo()
-20 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
-21 Ops.PARAM dtypes.weakint [] ParamArg(slot=5, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, addrspace=AddrSpace.ALU)
-22 Ops.CONST dtypes.weakint [] 1
-23 Ops.ADD dtypes.weakint [21, 22]
-24 Ops.RANGE dtypes.weakint [23] (1, AxisType.WEAK)
-25 Ops.INDEX dtypes.float [20, 24]
-26 Ops.CONST dtypes.weakint [] 2
-27 Ops.MUL dtypes.weakint [21, 26]
-28 Ops.ADD dtypes.weakint [27, 22]
-29 Ops.CONST dtypes.weakint [] -2
-30 Ops.MUL dtypes.weakint [21, 29]
-31 Ops.CONST dtypes.weakint [] -1
-32 Ops.ADD dtypes.weakint [30, 31]
-33 Ops.FLOORDIV dtypes.weakint [21, 32]
-34 Ops.MUL dtypes.weakint [33, 31]
-35 Ops.MAX dtypes.weakint [34, 22]
-36 Ops.MUL dtypes.weakint [28, 35]
-37 Ops.ADD dtypes.weakint [36, 22]
-38 Ops.RANGE dtypes.weakint [23] (0, AxisType.REDUCE)
-39 Ops.MUL dtypes.weakint [37, 38]
-40 Ops.ADD dtypes.weakint [39, 24]
-41 Ops.MUL dtypes.weakint [23, 37]
-42 Ops.FLOORMOD dtypes.weakint [40, 41]
-43 Ops.FLOORMOD dtypes.weakint [42, 28]
-44 Ops.CMPLT dtypes.bool [43, 21]
-45 Ops.CONST dtypes.bool [] True
-46 Ops.CMPNE dtypes.bool [44, 45]
-47 Ops.CMPLT dtypes.bool [43, 28]
-48 Ops.AND dtypes.bool [46, 47]
-49 Ops.CAST dtypes.int [22] dtypes.int
-50 Ops.WHERE dtypes.int [48, 49, 2]
-51 Ops.REDUCE dtypes.int [50, 38] (Ops.ADD, 0)
-52 Ops.ADD dtypes.int [51, 31]
-53 Ops.CAST dtypes.int [21] dtypes.int
-54 Ops.ADD dtypes.int [53, 22]
-55 Ops.CMPLT dtypes.bool [52, 54]
-56 Ops.CONST dtypes.weakfloat [] 0.0
-57 Ops.CAST dtypes.float [56] dtypes.float
-58 Ops.CONST dtypes.weakfloat [] -inf
-59 Ops.CAST dtypes.float [58] dtypes.float
-60 Ops.WHERE dtypes.float [55, 57, 59]
-61 Ops.CONST dtypes.weakint [] -7
-62 Ops.ADD dtypes.int [53, 61]
-63 Ops.CMPLT dtypes.bool [52, 62]
-64 Ops.WHERE dtypes.float [63, 59, 57]
-65 Ops.ADD dtypes.float [60, 64]
-66 Ops.STORE dtypes.void [25, 65]
-67 Ops.END dtypes.void [66, 24]
-68 Ops.SINK dtypes.void [67] KernelInfo()
-69 Ops.ALLOC dtypes.float [] ParamArg(slot=81, dtype=dtypes.float, size=16, device="CPU")
-70 Ops.CALL dtypes.void [68, 69] CallInfo()
-71 Ops.RANGE dtypes.weakint [5] (0, AxisType.WEAK)
-72 Ops.INDEX dtypes.float [0, 71]
-73 Ops.INDEX dtypes.float [4, 71]
-74 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1, device="CPU")
-75 Ops.INDEX dtypes.float [74, 2]
-76 Ops.RECIPROCAL dtypes.float [75]
-77 Ops.MUL dtypes.float [73, 76]
-78 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
-79 Ops.INDEX dtypes.float [78, 71]
-80 Ops.MUL dtypes.float [77, 79]
-81 Ops.STORE dtypes.void [72, 80]
-82 Ops.END dtypes.void [81, 71]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 64
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 1
+3 Ops.PARAM dtypes.f32 [2] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.INDEX dtypes.f32 [3, 4]
+6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+7 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+8 Ops.INDEX dtypes.f32 [6, 7]
+9 Ops.MUL dtypes.f32 [8, 8]
+10 Ops.REDUCE dtypes.f32 [9, 7] (Ops.ADD, 0)
+11 Ops.CONST dtypes.weakfloat [] 0.015625
+12 Ops.MUL dtypes.f32 [10, 11]
+13 Ops.CONST dtypes.weakfloat [] 1e-05
+14 Ops.ADD dtypes.f32 [12, 13]
+15 Ops.SQRT dtypes.f32 [14]
+16 Ops.STORE dtypes.void [5, 15]
+17 Ops.SINK dtypes.void [16] KernelInfo()
+18 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=79, dtype=dtypes.f32, device="CPU")
+19 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU") tag=()
+20 Ops.CALL dtypes.void [17, 18, 19] CallInfo()
+21 Ops.CONST dtypes.weakint [] 16
+22 Ops.PARAM dtypes.f32 [21] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+23 Ops.STACK dtypes.void []
+24 Ops.PARAM dtypes.weakint [23] ParamArg(slot=5, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, addrspace=AddrSpace.ALU)
+25 Ops.ADD dtypes.weakint [24, 2]
+26 Ops.RANGE dtypes.weakint [25] (AxisType.WEAK, 1)
+27 Ops.INDEX dtypes.f32 [22, 26]
+28 Ops.CONST dtypes.weakint [] 2
+29 Ops.MUL dtypes.weakint [24, 28]
+30 Ops.ADD dtypes.weakint [29, 2]
+31 Ops.CONST dtypes.weakint [] -2
+32 Ops.MUL dtypes.weakint [24, 31]
+33 Ops.CONST dtypes.weakint [] -1
+34 Ops.ADD dtypes.weakint [32, 33]
+35 Ops.FLOORDIV dtypes.weakint [24, 34]
+36 Ops.MUL dtypes.weakint [35, 33]
+37 Ops.MAX dtypes.weakint [36, 2]
+38 Ops.MUL dtypes.weakint [30, 37]
+39 Ops.ADD dtypes.weakint [38, 2]
+40 Ops.RANGE dtypes.weakint [25] (AxisType.WEAK, 0)
+41 Ops.MUL dtypes.weakint [39, 40]
+42 Ops.ADD dtypes.weakint [41, 26]
+43 Ops.MUL dtypes.weakint [25, 39]
+44 Ops.FLOORMOD dtypes.weakint [42, 43]
+45 Ops.FLOORMOD dtypes.weakint [44, 30]
+46 Ops.CMPLT dtypes.bool [45, 24]
+47 Ops.CONST dtypes.bool [] True
+48 Ops.CMPNE dtypes.bool [46, 47]
+49 Ops.CMPLT dtypes.bool [45, 30]
+50 Ops.AND dtypes.bool [48, 49]
+51 Ops.CAST dtypes.i32 [2] dtypes.i32
+52 Ops.WHERE dtypes.i32 [50, 51, 4]
+53 Ops.REDUCE dtypes.i32 [52, 40] (Ops.ADD, 0)
+54 Ops.ADD dtypes.i32 [53, 33]
+55 Ops.CAST dtypes.i32 [24] dtypes.i32
+56 Ops.ADD dtypes.i32 [55, 2]
+57 Ops.CMPLT dtypes.bool [54, 56]
+58 Ops.CONST dtypes.weakfloat [] 0.0
+59 Ops.CAST dtypes.f32 [58] dtypes.f32
+60 Ops.CONST dtypes.weakfloat [] -inf
+61 Ops.CAST dtypes.f32 [60] dtypes.f32
+62 Ops.WHERE dtypes.f32 [57, 59, 61]
+63 Ops.CONST dtypes.weakint [] -7
+64 Ops.ADD dtypes.i32 [55, 63]
+65 Ops.CMPLT dtypes.bool [54, 64]
+66 Ops.WHERE dtypes.f32 [65, 61, 59]
+67 Ops.ADD dtypes.f32 [62, 66]
+68 Ops.STORE dtypes.void [27, 67]
+69 Ops.END dtypes.void [68, 26]
+70 Ops.SINK dtypes.void [69] KernelInfo()
+71 Ops.ALLOC dtypes.f32 [21] ParamArg(slot=81, dtype=dtypes.f32, device="CPU")
+72 Ops.CALL dtypes.void [70, 71] CallInfo()
+73 Ops.INDEX dtypes.f32 [1, 7]
+74 Ops.PARAM dtypes.f32 [2] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+75 Ops.INDEX dtypes.f32 [74, 4]
+76 Ops.RECIPROCAL dtypes.f32 [75]
+77 Ops.MUL dtypes.f32 [8, 76]
+78 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+79 Ops.INDEX dtypes.f32 [78, 7]
+80 Ops.MUL dtypes.f32 [77, 79]
+81 Ops.STORE dtypes.void [73, 80]
+82 Ops.END dtypes.void [81, 7]
 83 Ops.SINK dtypes.void [82] KernelInfo()
-84 Ops.ALLOC dtypes.float [] ParamArg(slot=78, dtype=dtypes.float, size=64, device="CPU")
-85 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device="CPU") tag=()
-86 Ops.CALL dtypes.void [83, 84, 18, 17, 85] CallInfo()
+84 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=78, dtype=dtypes.f32, device="CPU")
+85 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU") tag=()
+86 Ops.CALL dtypes.void [83, 84, 19, 18, 85] CallInfo()
 87 Ops.CONST dtypes.weakint [] 4
-88 Ops.RANGE dtypes.weakint [87] (1, AxisType.WEAK)
-89 Ops.CONST dtypes.weakint [] 16
-90 Ops.MUL dtypes.weakint [88, 89]
-91 Ops.RANGE dtypes.weakint [89] (2, AxisType.WEAK)
-92 Ops.ADD dtypes.weakint [90, 91]
-93 Ops.INDEX dtypes.float [0, 92]
-94 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4096, device="CPU")
-95 Ops.MUL dtypes.weakint [92, 5]
-96 Ops.ADD dtypes.weakint [95, 6]
-97 Ops.INDEX dtypes.float [94, 96]
-98 Ops.MUL dtypes.float [7, 97]
-99 Ops.REDUCE dtypes.float [98, 6] (Ops.ADD, 0)
-100 Ops.INDEX dtypes.float [78, 92]
-101 Ops.ADD dtypes.float [99, 100]
-102 Ops.STORE dtypes.void [93, 101]
-103 Ops.END dtypes.void [102, 88, 91]
+88 Ops.RANGE dtypes.weakint [87] (AxisType.WEAK, 1)
+89 Ops.MUL dtypes.weakint [88, 21]
+90 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 2)
+91 Ops.ADD dtypes.weakint [89, 90]
+92 Ops.INDEX dtypes.f32 [1, 91]
+93 Ops.CONST dtypes.weakint [] 4096
+94 Ops.PARAM dtypes.f32 [93] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+95 Ops.MUL dtypes.weakint [91, 0]
+96 Ops.ADD dtypes.weakint [95, 7]
+97 Ops.INDEX dtypes.f32 [94, 96]
+98 Ops.MUL dtypes.f32 [8, 97]
+99 Ops.REDUCE dtypes.f32 [98, 7] (Ops.ADD, 0)
+100 Ops.INDEX dtypes.f32 [78, 91]
+101 Ops.ADD dtypes.f32 [99, 100]
+102 Ops.STORE dtypes.void [92, 101]
+103 Ops.END dtypes.void [102, 88, 90]
 104 Ops.SINK dtypes.void [103] KernelInfo()
-105 Ops.ALLOC dtypes.float [] ParamArg(slot=77, dtype=dtypes.float, size=64, device="CPU")
-106 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4096, device="CPU") tag=()
-107 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU") tag=()
+105 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=77, dtype=dtypes.f32, device="CPU")
+106 Ops.PARAM dtypes.f32 [93] ParamArg(slot=2, dtype=dtypes.f32, device="CPU") tag=()
+107 Ops.PARAM dtypes.f32 [0] ParamArg(slot=3, dtype=dtypes.f32, device="CPU") tag=()
 108 Ops.CALL dtypes.void [104, 105, 84, 106, 107] CallInfo()
-109 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU")
-110 Ops.RANGE dtypes.weakint [26] (1, AxisType.WEAK)
-111 Ops.MUL dtypes.weakint [110, 89]
-112 Ops.ADD dtypes.weakint [111, 91]
-113 Ops.INDEX dtypes.float [109, 112]
-114 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=2048, device="CPU")
-115 Ops.MUL dtypes.weakint [112, 5]
-116 Ops.ADD dtypes.weakint [115, 6]
-117 Ops.INDEX dtypes.float [114, 116]
-118 Ops.MUL dtypes.float [7, 117]
-119 Ops.REDUCE dtypes.float [118, 6] (Ops.ADD, 0)
-120 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=32, device="CPU")
-121 Ops.INDEX dtypes.float [120, 112]
-122 Ops.ADD dtypes.float [119, 121]
-123 Ops.STORE dtypes.void [113, 122]
-124 Ops.END dtypes.void [123, 110, 91]
-125 Ops.SINK dtypes.void [124] KernelInfo()
-126 Ops.ALLOC dtypes.float [] ParamArg(slot=80, dtype=dtypes.float, size=32, device="CPU")
-127 Ops.PARAM dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=2048, device="CPU") tag=()
-128 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=32, device="CPU") tag=()
-129 Ops.CALL dtypes.void [125, 126, 84, 127, 128] CallInfo()
-130 Ops.PARAM dtypes.half [] ParamArg(slot=0, dtype=dtypes.half, size=1024, device="CPU")
-131 Ops.MUL dtypes.weakint [21, 89]
-132 Ops.RANGE dtypes.weakint [89] (3, AxisType.WEAK)
-133 Ops.ADD dtypes.weakint [131, 132]
-134 Ops.RANGE dtypes.weakint [26] (2, AxisType.WEAK)
-135 Ops.CONST dtypes.weakint [] 256
-136 Ops.MUL dtypes.weakint [134, 135]
-137 Ops.ADD dtypes.weakint [133, 136]
-138 Ops.CONST dtypes.weakint [] 512
-139 Ops.MUL dtypes.weakint [110, 138]
-140 Ops.ADD dtypes.weakint [137, 139]
-141 Ops.INDEX dtypes.half [130, 140]
-142 Ops.CMPNE dtypes.bool [110, 2]
-143 Ops.MUL dtypes.weakint [134, 89]
-144 Ops.ADD dtypes.weakint [143, 132]
-145 Ops.MUL dtypes.weakint [144, 5]
-146 Ops.ADD dtypes.weakint [145, 6]
-147 Ops.INDEX dtypes.float [114, 146]
-148 Ops.MUL dtypes.float [7, 147]
-149 Ops.REDUCE dtypes.float [148, 6] (Ops.ADD, 0)
-150 Ops.INDEX dtypes.float [120, 144]
-151 Ops.ADD dtypes.float [149, 150]
-152 Ops.CONST dtypes.weakint [] 8
-153 Ops.FLOORDIV dtypes.weakint [132, 152]
-154 Ops.CMPNE dtypes.bool [153, 2]
-155 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=32, device="CPU")
-156 Ops.FLOORMOD dtypes.weakint [132, 152]
-157 Ops.ADD dtypes.weakint [143, 156]
-158 Ops.ADD dtypes.weakint [157, 152]
-159 Ops.INDEX dtypes.float [155, 158]
-160 Ops.PARAM dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=256, device="CPU")
-161 Ops.ADD dtypes.weakint [131, 156]
-162 Ops.INDEX dtypes.float [160, 161]
-163 Ops.MUL dtypes.float [159, 162]
-164 Ops.INDEX dtypes.float [155, 157]
-165 Ops.ADD dtypes.weakint [161, 152]
-166 Ops.INDEX dtypes.float [160, 165]
-167 Ops.MUL dtypes.float [164, 166]
-168 Ops.ADD dtypes.float [163, 167]
-169 Ops.MUL dtypes.float [164, 162]
-170 Ops.MUL dtypes.float [159, 166]
-171 Ops.CONST dtypes.weakfloat [] -1.0
-172 Ops.MUL dtypes.float [170, 171]
-173 Ops.ADD dtypes.float [169, 172]
-174 Ops.WHERE dtypes.float [154, 168, 173]
-175 Ops.ADD dtypes.float [174, 56]
-176 Ops.WHERE dtypes.float [142, 151, 175]
-177 Ops.CAST dtypes.half [176] dtypes.half
-178 Ops.STORE dtypes.void [141, 177]
-179 Ops.END dtypes.void [178, 110, 134, 132]
-180 Ops.SINK dtypes.void [179] KernelInfo()
-181 Ops.PARAM dtypes.half [] ParamArg(slot=6, dtype=dtypes.half, size=1024, device="CPU") tag=()
-182 Ops.PARAM dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=2048, device="CPU") tag=()
-183 Ops.PARAM dtypes.float [] ParamArg(slot=10, dtype=dtypes.float, size=32, device="CPU") tag=()
-184 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=256, device="CPU") tag=()
-185 Ops.CALL dtypes.void [180, 181, 84, 182, 183, 126, 184] CallInfo()
-186 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=68, device="CPU")
-187 Ops.CONST dtypes.weakint [] 17
-188 Ops.MUL dtypes.weakint [88, 187]
-189 Ops.ADD dtypes.weakint [21, 26]
-190 Ops.RANGE dtypes.weakint [189] (2, AxisType.WEAK)
-191 Ops.ADD dtypes.weakint [188, 190]
-192 Ops.INDEX dtypes.float [186, 191]
-193 Ops.RANGE dtypes.weakint [89] (0, AxisType.REDUCE)
-194 Ops.FLOORDIV dtypes.weakint [193, 152]
-195 Ops.CMPNE dtypes.bool [194, 2]
-196 Ops.FLOORMOD dtypes.weakint [193, 152]
-197 Ops.ADD dtypes.weakint [90, 196]
-198 Ops.ADD dtypes.weakint [197, 152]
-199 Ops.INDEX dtypes.float [4, 198]
-200 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=256, device="CPU")
-201 Ops.ADD dtypes.weakint [131, 196]
-202 Ops.INDEX dtypes.float [200, 201]
-203 Ops.MUL dtypes.float [199, 202]
-204 Ops.INDEX dtypes.float [4, 197]
-205 Ops.ADD dtypes.weakint [201, 152]
-206 Ops.INDEX dtypes.float [200, 205]
-207 Ops.MUL dtypes.float [204, 206]
-208 Ops.ADD dtypes.float [203, 207]
-209 Ops.MUL dtypes.float [204, 202]
-210 Ops.MUL dtypes.float [199, 206]
-211 Ops.MUL dtypes.float [210, 171]
-212 Ops.ADD dtypes.float [209, 211]
-213 Ops.WHERE dtypes.float [195, 208, 212]
-214 Ops.ADD dtypes.float [213, 56]
-215 Ops.CONST dtypes.weakint [] 32
-216 Ops.ADD dtypes.weakint [131, 215]
-217 Ops.MUL dtypes.weakint [216, 88]
-218 Ops.ADD dtypes.weakint [217, 190]
-219 Ops.FLOORMOD dtypes.weakint [218, 189]
-220 Ops.CMPLT dtypes.bool [219, 23]
-221 Ops.PARAM dtypes.half [] ParamArg(slot=3, dtype=dtypes.half, size=1024, device="CPU")
-222 Ops.FLOORMOD dtypes.weakint [219, 23]
-223 Ops.MUL dtypes.weakint [222, 89]
-224 Ops.FLOORDIV dtypes.weakint [218, 189]
-225 Ops.ADD dtypes.weakint [224, 193]
-226 Ops.FLOORMOD dtypes.weakint [225, 89]
-227 Ops.ADD dtypes.weakint [223, 226]
-228 Ops.FLOORDIV dtypes.weakint [219, 189]
-229 Ops.FLOORDIV dtypes.weakint [225, 89]
-230 Ops.FLOORMOD dtypes.weakint [229, 87]
-231 Ops.ADD dtypes.weakint [228, 230]
-232 Ops.FLOORDIV dtypes.weakint [231, 26]
-233 Ops.FLOORDIV dtypes.weakint [219, 23]
-234 Ops.ADD dtypes.weakint [232, 233]
-235 Ops.FLOORMOD dtypes.weakint [234, 26]
-236 Ops.MUL dtypes.weakint [235, 135]
-237 Ops.ADD dtypes.weakint [227, 236]
-238 Ops.CONST dtypes.bool [] Invalid
-239 Ops.WHERE dtypes.weakint [220, 237, 238]
-240 Ops.INDEX dtypes.half [221, 239]
-241 Ops.WHERE dtypes.half [220, 240, 56]
-242 Ops.CMPNE dtypes.bool [220, 45]
-243 Ops.CMPLT dtypes.bool [219, 189]
-244 Ops.AND dtypes.bool [242, 243]
-245 Ops.CAST dtypes.half [56] dtypes.half
-246 Ops.WHERE dtypes.half [244, 245, 56]
-247 Ops.ADD dtypes.half [241, 246]
-248 Ops.CAST dtypes.float [247] dtypes.float
-249 Ops.MUL dtypes.float [214, 248]
-250 Ops.REDUCE dtypes.float [249, 193] (Ops.ADD, 0)
-251 Ops.CONST dtypes.weakfloat [] 0.25
-252 Ops.MUL dtypes.float [250, 251]
-253 Ops.CMPLT dtypes.bool [190, 23]
-254 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=16, device="CPU")
-255 Ops.FLOORMOD dtypes.weakint [190, 23]
-256 Ops.WHERE dtypes.weakint [253, 255, 238]
-257 Ops.INDEX dtypes.float [254, 256]
-258 Ops.WHERE dtypes.float [253, 257, 56]
-259 Ops.CMPNE dtypes.bool [253, 45]
-260 Ops.CMPLT dtypes.bool [190, 189]
-261 Ops.AND dtypes.bool [259, 260]
-262 Ops.PARAM dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=4, device="CPU")
-263 Ops.MUL dtypes.weakint [21, 31]
-264 Ops.ADD dtypes.weakint [263, 190]
-265 Ops.ADD dtypes.weakint [264, 88]
-266 Ops.CONST dtypes.weakint [] 3
-267 Ops.ADD dtypes.weakint [265, 266]
-268 Ops.FLOORMOD dtypes.weakint [267, 87]
-269 Ops.WHERE dtypes.weakint [261, 268, 238]
-270 Ops.INDEX dtypes.float [262, 269]
-271 Ops.WHERE dtypes.float [261, 270, 56]
-272 Ops.ADD dtypes.float [258, 271]
-273 Ops.ADD dtypes.float [252, 272]
-274 Ops.STORE dtypes.void [192, 273]
-275 Ops.END dtypes.void [274, 88, 190]
-276 Ops.SINK dtypes.void [275] KernelInfo()
-277 Ops.ALLOC dtypes.float [] ParamArg(slot=76, dtype=dtypes.float, size=68, device="CPU")
-278 Ops.PARAM dtypes.float [] ParamArg(slot=11, dtype=dtypes.float, size=4, device="CPU") tag=()
-279 Ops.CALL dtypes.void [276, 277, 105, 184, 181, 69, 278] CallInfo()
-280 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
-281 Ops.INDEX dtypes.float [280, 88]
-282 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=68, device="CPU")
-283 Ops.RANGE dtypes.weakint [189] (0, AxisType.REDUCE)
-284 Ops.ADD dtypes.weakint [188, 283]
-285 Ops.INDEX dtypes.float [282, 284]
-286 Ops.REDUCE dtypes.float [285, 283] (Ops.MAX, 0)
-287 Ops.STORE dtypes.void [281, 286]
-288 Ops.END dtypes.void [287, 88]
-289 Ops.SINK dtypes.void [288] KernelInfo()
-290 Ops.ALLOC dtypes.float [] ParamArg(slot=82, dtype=dtypes.float, size=4, device="CPU")
-291 Ops.CALL dtypes.void [289, 290, 277] CallInfo()
-292 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="CPU")
-293 Ops.INDEX dtypes.float [292, 88]
-294 Ops.MUL dtypes.float [293, 171]
-295 Ops.ADD dtypes.float [285, 294]
-296 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
-297 Ops.MUL dtypes.float [295, 296]
-298 Ops.EXP2 dtypes.float [297]
-299 Ops.REDUCE dtypes.float [298, 283] (Ops.ADD, 0)
-300 Ops.STORE dtypes.void [281, 299]
-301 Ops.END dtypes.void [300, 88]
-302 Ops.SINK dtypes.void [301] KernelInfo()
-303 Ops.ALLOC dtypes.float [] ParamArg(slot=83, dtype=dtypes.float, size=4, device="CPU")
-304 Ops.CALL dtypes.void [302, 303, 277, 290] CallInfo()
-305 Ops.RANGE dtypes.weakint [87] (0, AxisType.WEAK)
-306 Ops.MUL dtypes.weakint [305, 187]
-307 Ops.RANGE dtypes.weakint [189] (1, AxisType.WEAK)
-308 Ops.ADD dtypes.weakint [306, 307]
-309 Ops.INDEX dtypes.float [186, 308]
-310 Ops.INDEX dtypes.float [282, 308]
-311 Ops.INDEX dtypes.float [292, 305]
-312 Ops.MUL dtypes.float [311, 171]
-313 Ops.ADD dtypes.float [310, 312]
-314 Ops.MUL dtypes.float [313, 296]
-315 Ops.EXP2 dtypes.float [314]
-316 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="CPU")
-317 Ops.INDEX dtypes.float [316, 305]
-318 Ops.RECIPROCAL dtypes.float [317]
-319 Ops.MUL dtypes.float [315, 318]
-320 Ops.STORE dtypes.void [309, 319]
-321 Ops.END dtypes.void [320, 305, 307]
-322 Ops.SINK dtypes.void [321] KernelInfo()
-323 Ops.ALLOC dtypes.float [] ParamArg(slot=75, dtype=dtypes.float, size=68, device="CPU")
-324 Ops.CALL dtypes.void [322, 323, 277, 290, 303] CallInfo()
-325 Ops.CMPLT dtypes.bool [283, 23]
-326 Ops.PARAM dtypes.half [] ParamArg(slot=2, dtype=dtypes.half, size=1024, device="CPU")
-327 Ops.FLOORMOD dtypes.weakint [283, 23]
-328 Ops.MUL dtypes.weakint [327, 89]
-329 Ops.ADD dtypes.weakint [328, 91]
-330 Ops.FLOORDIV dtypes.weakint [88, 26]
-331 Ops.FLOORDIV dtypes.weakint [283, 23]
-332 Ops.ADD dtypes.weakint [330, 331]
-333 Ops.FLOORMOD dtypes.weakint [332, 26]
-334 Ops.MUL dtypes.weakint [333, 135]
-335 Ops.ADD dtypes.weakint [329, 334]
-336 Ops.ADD dtypes.weakint [335, 138]
-337 Ops.WHERE dtypes.weakint [325, 336, 238]
-338 Ops.INDEX dtypes.half [326, 337]
-339 Ops.WHERE dtypes.half [325, 338, 56]
-340 Ops.CMPNE dtypes.bool [325, 45]
-341 Ops.CMPLT dtypes.bool [283, 189]
-342 Ops.AND dtypes.bool [340, 341]
-343 Ops.WHERE dtypes.half [342, 245, 56]
-344 Ops.ADD dtypes.half [339, 343]
-345 Ops.CAST dtypes.float [344] dtypes.float
-346 Ops.MUL dtypes.float [285, 345]
-347 Ops.REDUCE dtypes.float [346, 283] (Ops.ADD, 0)
-348 Ops.STORE dtypes.void [93, 347]
-349 Ops.END dtypes.void [348, 88, 91]
-350 Ops.SINK dtypes.void [349] KernelInfo()
-351 Ops.ALLOC dtypes.float [] ParamArg(slot=74, dtype=dtypes.float, size=64, device="CPU")
-352 Ops.CALL dtypes.void [350, 351, 323, 181] CallInfo()
-353 Ops.RANGE dtypes.weakint [5] (1, AxisType.WEAK)
-354 Ops.INDEX dtypes.float [0, 353]
-355 Ops.INDEX dtypes.float [4, 353]
-356 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=64, device="CPU")
-357 Ops.INDEX dtypes.float [356, 6]
-358 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4096, device="CPU")
-359 Ops.MUL dtypes.weakint [353, 5]
-360 Ops.ADD dtypes.weakint [359, 6]
-361 Ops.INDEX dtypes.float [358, 360]
-362 Ops.MUL dtypes.float [357, 361]
-363 Ops.REDUCE dtypes.float [362, 6] (Ops.ADD, 0)
-364 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=64, device="CPU")
-365 Ops.INDEX dtypes.float [364, 353]
-366 Ops.ADD dtypes.float [363, 365]
-367 Ops.ADD dtypes.float [355, 366]
-368 Ops.STORE dtypes.void [354, 367]
-369 Ops.END dtypes.void [368, 353]
-370 Ops.SINK dtypes.void [369] KernelInfo()
-371 Ops.ALLOC dtypes.float [] ParamArg(slot=73, dtype=dtypes.float, size=64, device="CPU")
-372 Ops.PARAM dtypes.float [] ParamArg(slot=12, dtype=dtypes.float, size=4096, device="CPU") tag=()
-373 Ops.PARAM dtypes.float [] ParamArg(slot=13, dtype=dtypes.float, size=64, device="CPU") tag=()
-374 Ops.CALL dtypes.void [370, 371, 18, 351, 372, 373] CallInfo()
-375 Ops.ALLOC dtypes.float [] ParamArg(slot=85, dtype=dtypes.float, size=1, device="CPU")
-376 Ops.CALL dtypes.void [16, 375, 371] CallInfo()
-377 Ops.ALLOC dtypes.float [] ParamArg(slot=84, dtype=dtypes.float, size=64, device="CPU")
-378 Ops.PARAM dtypes.float [] ParamArg(slot=14, dtype=dtypes.float, size=64, device="CPU") tag=()
-379 Ops.CALL dtypes.void [83, 377, 371, 375, 378] CallInfo()
-380 Ops.ALLOC dtypes.float [] ParamArg(slot=88, dtype=dtypes.float, size=64, device="CPU")
-381 Ops.CALL dtypes.void [83, 380, 371, 375, 378] CallInfo()
-382 Ops.MUL dtypes.weakint [88, 5]
-383 Ops.ADD dtypes.weakint [382, 6]
-384 Ops.INDEX dtypes.float [200, 383]
-385 Ops.MUL dtypes.float [7, 384]
-386 Ops.REDUCE dtypes.float [385, 6] (Ops.ADD, 0)
-387 Ops.INDEX dtypes.float [316, 88]
-388 Ops.ADD dtypes.float [386, 387]
-389 Ops.STORE dtypes.void [281, 388]
-390 Ops.END dtypes.void [389, 88]
-391 Ops.SINK dtypes.void [390] KernelInfo()
-392 Ops.ALLOC dtypes.float [] ParamArg(slot=87, dtype=dtypes.float, size=4, device="CPU")
-393 Ops.PARAM dtypes.float [] ParamArg(slot=15, dtype=dtypes.float, size=256, device="CPU") tag=()
-394 Ops.PARAM dtypes.float [] ParamArg(slot=16, dtype=dtypes.float, size=4, device="CPU") tag=()
-395 Ops.CALL dtypes.void [391, 392, 380, 393, 394] CallInfo()
-396 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=4, device="CPU")
-397 Ops.INDEX dtypes.int [396, 88]
-398 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
-399 Ops.RANGE dtypes.weakint [87] (0, AxisType.REDUCE)
-400 Ops.INDEX dtypes.float [398, 399]
-401 Ops.INDEX dtypes.float [398, 88]
-402 Ops.CMPLT dtypes.bool [400, 401]
-403 Ops.CMPNE dtypes.bool [401, 400]
-404 Ops.CMPNE dtypes.bool [403, 45]
-405 Ops.CAST dtypes.int [88] dtypes.int
-406 Ops.CAST dtypes.int [399] dtypes.int
-407 Ops.CMPLT dtypes.bool [405, 406]
-408 Ops.AND dtypes.bool [404, 407]
-409 Ops.OR dtypes.bool [402, 408]
-410 Ops.CAST dtypes.int [409] dtypes.int
-411 Ops.REDUCE dtypes.int [410, 399] (Ops.ADD, 0)
-412 Ops.STORE dtypes.void [397, 411]
-413 Ops.END dtypes.void [412, 88]
-414 Ops.SINK dtypes.void [413] KernelInfo()
-415 Ops.ALLOC dtypes.int [] ParamArg(slot=86, dtype=dtypes.int, size=4, device="CPU")
-416 Ops.CALL dtypes.void [414, 415, 392] CallInfo()
-417 Ops.MUL dtypes.weakint [134, 215]
-418 Ops.RANGE dtypes.weakint [215] (3, AxisType.WEAK)
-419 Ops.ADD dtypes.weakint [417, 418]
-420 Ops.INDEX dtypes.float [0, 419]
-421 Ops.RANGE dtypes.weakint [5] (1, AxisType.REDUCE)
-422 Ops.INDEX dtypes.float [4, 421]
-423 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=4, device="CPU")
-424 Ops.INDEX dtypes.int [423, 2]
-425 Ops.CAST dtypes.int [134] dtypes.int
-426 Ops.ADD dtypes.int [425, 26]
+109 Ops.CONST dtypes.weakint [] 32
+110 Ops.PARAM dtypes.f32 [109] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+111 Ops.RANGE dtypes.weakint [28] (AxisType.WEAK, 1)
+112 Ops.MUL dtypes.weakint [111, 21]
+113 Ops.ADD dtypes.weakint [112, 90]
+114 Ops.INDEX dtypes.f32 [110, 113]
+115 Ops.CONST dtypes.weakint [] 2048
+116 Ops.PARAM dtypes.f32 [115] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+117 Ops.MUL dtypes.weakint [113, 0]
+118 Ops.ADD dtypes.weakint [117, 7]
+119 Ops.INDEX dtypes.f32 [116, 118]
+120 Ops.MUL dtypes.f32 [8, 119]
+121 Ops.REDUCE dtypes.f32 [120, 7] (Ops.ADD, 0)
+122 Ops.PARAM dtypes.f32 [109] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+123 Ops.INDEX dtypes.f32 [122, 113]
+124 Ops.ADD dtypes.f32 [121, 123]
+125 Ops.STORE dtypes.void [114, 124]
+126 Ops.END dtypes.void [125, 111, 90]
+127 Ops.SINK dtypes.void [126] KernelInfo()
+128 Ops.ALLOC dtypes.f32 [109] ParamArg(slot=80, dtype=dtypes.f32, device="CPU")
+129 Ops.PARAM dtypes.f32 [115] ParamArg(slot=7, dtype=dtypes.f32, device="CPU") tag=()
+130 Ops.PARAM dtypes.f32 [109] ParamArg(slot=8, dtype=dtypes.f32, device="CPU") tag=()
+131 Ops.CALL dtypes.void [127, 128, 84, 129, 130] CallInfo()
+132 Ops.CONST dtypes.weakint [] 1024
+133 Ops.PARAM dtypes.f16 [132] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+134 Ops.MUL dtypes.weakint [24, 21]
+135 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 3)
+136 Ops.ADD dtypes.weakint [134, 135]
+137 Ops.RANGE dtypes.weakint [28] (AxisType.WEAK, 2)
+138 Ops.CONST dtypes.weakint [] 256
+139 Ops.MUL dtypes.weakint [137, 138]
+140 Ops.ADD dtypes.weakint [136, 139]
+141 Ops.CONST dtypes.weakint [] 512
+142 Ops.MUL dtypes.weakint [111, 141]
+143 Ops.ADD dtypes.weakint [140, 142]
+144 Ops.INDEX dtypes.f16 [133, 143]
+145 Ops.CMPNE dtypes.bool [111, 4]
+146 Ops.MUL dtypes.weakint [137, 21]
+147 Ops.ADD dtypes.weakint [146, 135]
+148 Ops.MUL dtypes.weakint [147, 0]
+149 Ops.ADD dtypes.weakint [148, 7]
+150 Ops.INDEX dtypes.f32 [116, 149]
+151 Ops.MUL dtypes.f32 [8, 150]
+152 Ops.REDUCE dtypes.f32 [151, 7] (Ops.ADD, 0)
+153 Ops.INDEX dtypes.f32 [122, 147]
+154 Ops.ADD dtypes.f32 [152, 153]
+155 Ops.CONST dtypes.weakint [] 8
+156 Ops.FLOORDIV dtypes.weakint [135, 155]
+157 Ops.CMPNE dtypes.bool [156, 4]
+158 Ops.PARAM dtypes.f32 [109] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+159 Ops.FLOORMOD dtypes.weakint [135, 155]
+160 Ops.ADD dtypes.weakint [146, 159]
+161 Ops.ADD dtypes.weakint [160, 155]
+162 Ops.INDEX dtypes.f32 [158, 161]
+163 Ops.PARAM dtypes.f32 [138] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+164 Ops.ADD dtypes.weakint [134, 159]
+165 Ops.INDEX dtypes.f32 [163, 164]
+166 Ops.MUL dtypes.f32 [162, 165]
+167 Ops.INDEX dtypes.f32 [158, 160]
+168 Ops.ADD dtypes.weakint [164, 155]
+169 Ops.INDEX dtypes.f32 [163, 168]
+170 Ops.MUL dtypes.f32 [167, 169]
+171 Ops.ADD dtypes.f32 [166, 170]
+172 Ops.MUL dtypes.f32 [167, 165]
+173 Ops.MUL dtypes.f32 [162, 169]
+174 Ops.CONST dtypes.weakfloat [] -1.0
+175 Ops.MUL dtypes.f32 [173, 174]
+176 Ops.ADD dtypes.f32 [172, 175]
+177 Ops.WHERE dtypes.f32 [157, 171, 176]
+178 Ops.ADD dtypes.f32 [177, 58]
+179 Ops.WHERE dtypes.f32 [145, 154, 178]
+180 Ops.CAST dtypes.f16 [179] dtypes.f16
+181 Ops.STORE dtypes.void [144, 180]
+182 Ops.END dtypes.void [181, 111, 137, 135]
+183 Ops.SINK dtypes.void [182] KernelInfo()
+184 Ops.PARAM dtypes.f16 [132] ParamArg(slot=6, dtype=dtypes.f16, device="CPU") tag=()
+185 Ops.PARAM dtypes.f32 [115] ParamArg(slot=9, dtype=dtypes.f32, device="CPU") tag=()
+186 Ops.PARAM dtypes.f32 [109] ParamArg(slot=10, dtype=dtypes.f32, device="CPU") tag=()
+187 Ops.PARAM dtypes.f32 [138] ParamArg(slot=4, dtype=dtypes.f32, device="CPU") tag=()
+188 Ops.CALL dtypes.void [183, 184, 84, 185, 186, 128, 187] CallInfo()
+189 Ops.CONST dtypes.weakint [] 68
+190 Ops.PARAM dtypes.f32 [189] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+191 Ops.CONST dtypes.weakint [] 17
+192 Ops.MUL dtypes.weakint [88, 191]
+193 Ops.ADD dtypes.weakint [24, 28]
+194 Ops.RANGE dtypes.weakint [193] (AxisType.WEAK, 2)
+195 Ops.ADD dtypes.weakint [192, 194]
+196 Ops.INDEX dtypes.f32 [190, 195]
+197 Ops.RANGE dtypes.weakint [21] (AxisType.WEAK, 0)
+198 Ops.FLOORDIV dtypes.weakint [197, 155]
+199 Ops.CMPNE dtypes.bool [198, 4]
+200 Ops.FLOORMOD dtypes.weakint [197, 155]
+201 Ops.ADD dtypes.weakint [89, 200]
+202 Ops.ADD dtypes.weakint [201, 155]
+203 Ops.INDEX dtypes.f32 [6, 202]
+204 Ops.PARAM dtypes.f32 [138] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+205 Ops.ADD dtypes.weakint [134, 200]
+206 Ops.INDEX dtypes.f32 [204, 205]
+207 Ops.MUL dtypes.f32 [203, 206]
+208 Ops.INDEX dtypes.f32 [6, 201]
+209 Ops.ADD dtypes.weakint [205, 155]
+210 Ops.INDEX dtypes.f32 [204, 209]
+211 Ops.MUL dtypes.f32 [208, 210]
+212 Ops.ADD dtypes.f32 [207, 211]
+213 Ops.MUL dtypes.f32 [208, 206]
+214 Ops.MUL dtypes.f32 [203, 210]
+215 Ops.MUL dtypes.f32 [214, 174]
+216 Ops.ADD dtypes.f32 [213, 215]
+217 Ops.WHERE dtypes.f32 [199, 212, 216]
+218 Ops.ADD dtypes.f32 [217, 58]
+219 Ops.ADD dtypes.weakint [134, 109]
+220 Ops.MUL dtypes.weakint [219, 88]
+221 Ops.ADD dtypes.weakint [220, 194]
+222 Ops.FLOORMOD dtypes.weakint [221, 193]
+223 Ops.CMPLT dtypes.bool [222, 25]
+224 Ops.PARAM dtypes.f16 [132] ParamArg(slot=3, dtype=dtypes.f16, device="CPU")
+225 Ops.FLOORMOD dtypes.weakint [222, 25]
+226 Ops.MUL dtypes.weakint [225, 21]
+227 Ops.FLOORDIV dtypes.weakint [221, 193]
+228 Ops.ADD dtypes.weakint [227, 197]
+229 Ops.FLOORMOD dtypes.weakint [228, 21]
+230 Ops.ADD dtypes.weakint [226, 229]
+231 Ops.FLOORDIV dtypes.weakint [222, 193]
+232 Ops.FLOORDIV dtypes.weakint [228, 21]
+233 Ops.FLOORMOD dtypes.weakint [232, 87]
+234 Ops.ADD dtypes.weakint [231, 233]
+235 Ops.FLOORDIV dtypes.weakint [234, 28]
+236 Ops.FLOORDIV dtypes.weakint [222, 25]
+237 Ops.ADD dtypes.weakint [235, 236]
+238 Ops.FLOORMOD dtypes.weakint [237, 28]
+239 Ops.MUL dtypes.weakint [238, 138]
+240 Ops.ADD dtypes.weakint [230, 239]
+241 Ops.CONST dtypes.bool [] Invalid
+242 Ops.WHERE dtypes.weakint [223, 240, 241]
+243 Ops.INDEX dtypes.f16 [224, 242]
+244 Ops.WHERE dtypes.f16 [223, 243, 58]
+245 Ops.CMPNE dtypes.bool [223, 47]
+246 Ops.CMPLT dtypes.bool [222, 193]
+247 Ops.AND dtypes.bool [245, 246]
+248 Ops.CAST dtypes.f16 [58] dtypes.f16
+249 Ops.WHERE dtypes.f16 [247, 248, 58]
+250 Ops.ADD dtypes.f16 [244, 249]
+251 Ops.CAST dtypes.f32 [250] dtypes.f32
+252 Ops.MUL dtypes.f32 [218, 251]
+253 Ops.REDUCE dtypes.f32 [252, 197] (Ops.ADD, 0)
+254 Ops.CONST dtypes.weakfloat [] 0.25
+255 Ops.MUL dtypes.f32 [253, 254]
+256 Ops.CMPLT dtypes.bool [194, 25]
+257 Ops.PARAM dtypes.f32 [21] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+258 Ops.FLOORMOD dtypes.weakint [194, 25]
+259 Ops.WHERE dtypes.weakint [256, 258, 241]
+260 Ops.INDEX dtypes.f32 [257, 259]
+261 Ops.WHERE dtypes.f32 [256, 260, 58]
+262 Ops.CMPNE dtypes.bool [256, 47]
+263 Ops.CMPLT dtypes.bool [194, 193]
+264 Ops.AND dtypes.bool [262, 263]
+265 Ops.PARAM dtypes.f32 [87] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+266 Ops.MUL dtypes.weakint [24, 33]
+267 Ops.ADD dtypes.weakint [266, 194]
+268 Ops.ADD dtypes.weakint [267, 88]
+269 Ops.CONST dtypes.weakint [] 3
+270 Ops.ADD dtypes.weakint [268, 269]
+271 Ops.FLOORMOD dtypes.weakint [270, 87]
+272 Ops.WHERE dtypes.weakint [264, 271, 241]
+273 Ops.INDEX dtypes.f32 [265, 272]
+274 Ops.WHERE dtypes.f32 [264, 273, 58]
+275 Ops.ADD dtypes.f32 [261, 274]
+276 Ops.ADD dtypes.f32 [255, 275]
+277 Ops.STORE dtypes.void [196, 276]
+278 Ops.END dtypes.void [277, 88, 194]
+279 Ops.SINK dtypes.void [278] KernelInfo()
+280 Ops.ALLOC dtypes.f32 [189] ParamArg(slot=76, dtype=dtypes.f32, device="CPU")
+281 Ops.PARAM dtypes.f32 [87] ParamArg(slot=11, dtype=dtypes.f32, device="CPU") tag=()
+282 Ops.CALL dtypes.void [279, 280, 105, 187, 184, 71, 281] CallInfo()
+283 Ops.PARAM dtypes.f32 [87] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+284 Ops.INDEX dtypes.f32 [283, 88]
+285 Ops.PARAM dtypes.f32 [189] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+286 Ops.RANGE dtypes.weakint [193] (AxisType.WEAK, 0)
+287 Ops.ADD dtypes.weakint [192, 286]
+288 Ops.INDEX dtypes.f32 [285, 287]
+289 Ops.REDUCE dtypes.f32 [288, 286] (Ops.MAX, 0)
+290 Ops.STORE dtypes.void [284, 289]
+291 Ops.END dtypes.void [290, 88]
+292 Ops.SINK dtypes.void [291] KernelInfo()
+293 Ops.ALLOC dtypes.f32 [87] ParamArg(slot=82, dtype=dtypes.f32, device="CPU")
+294 Ops.CALL dtypes.void [292, 293, 280] CallInfo()
+295 Ops.PARAM dtypes.f32 [87] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+296 Ops.INDEX dtypes.f32 [295, 88]
+297 Ops.MUL dtypes.f32 [296, 174]
+298 Ops.ADD dtypes.f32 [288, 297]
+299 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+300 Ops.MUL dtypes.f32 [298, 299]
+301 Ops.EXP2 dtypes.f32 [300]
+302 Ops.REDUCE dtypes.f32 [301, 286] (Ops.ADD, 0)
+303 Ops.STORE dtypes.void [284, 302]
+304 Ops.END dtypes.void [303, 88]
+305 Ops.SINK dtypes.void [304] KernelInfo()
+306 Ops.ALLOC dtypes.f32 [87] ParamArg(slot=83, dtype=dtypes.f32, device="CPU")
+307 Ops.CALL dtypes.void [305, 306, 280, 293] CallInfo()
+308 Ops.RANGE dtypes.weakint [87] (AxisType.WEAK, 0)
+309 Ops.MUL dtypes.weakint [308, 191]
+310 Ops.RANGE dtypes.weakint [193] (AxisType.WEAK, 1)
+311 Ops.ADD dtypes.weakint [309, 310]
+312 Ops.INDEX dtypes.f32 [190, 311]
+313 Ops.INDEX dtypes.f32 [285, 311]
+314 Ops.INDEX dtypes.f32 [295, 308]
+315 Ops.MUL dtypes.f32 [314, 174]
+316 Ops.ADD dtypes.f32 [313, 315]
+317 Ops.MUL dtypes.f32 [316, 299]
+318 Ops.EXP2 dtypes.f32 [317]
+319 Ops.PARAM dtypes.f32 [87] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+320 Ops.INDEX dtypes.f32 [319, 308]
+321 Ops.RECIPROCAL dtypes.f32 [320]
+322 Ops.MUL dtypes.f32 [318, 321]
+323 Ops.STORE dtypes.void [312, 322]
+324 Ops.END dtypes.void [323, 308, 310]
+325 Ops.SINK dtypes.void [324] KernelInfo()
+326 Ops.ALLOC dtypes.f32 [189] ParamArg(slot=75, dtype=dtypes.f32, device="CPU")
+327 Ops.CALL dtypes.void [325, 326, 280, 293, 306] CallInfo()
+328 Ops.CMPLT dtypes.bool [286, 25]
+329 Ops.PARAM dtypes.f16 [132] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+330 Ops.FLOORMOD dtypes.weakint [286, 25]
+331 Ops.MUL dtypes.weakint [330, 21]
+332 Ops.ADD dtypes.weakint [331, 90]
+333 Ops.FLOORDIV dtypes.weakint [88, 28]
+334 Ops.FLOORDIV dtypes.weakint [286, 25]
+335 Ops.ADD dtypes.weakint [333, 334]
+336 Ops.FLOORMOD dtypes.weakint [335, 28]
+337 Ops.MUL dtypes.weakint [336, 138]
+338 Ops.ADD dtypes.weakint [332, 337]
+339 Ops.ADD dtypes.weakint [338, 141]
+340 Ops.WHERE dtypes.weakint [328, 339, 241]
+341 Ops.INDEX dtypes.f16 [329, 340]
+342 Ops.WHERE dtypes.f16 [328, 341, 58]
+343 Ops.CMPNE dtypes.bool [328, 47]
+344 Ops.CMPLT dtypes.bool [286, 193]
+345 Ops.AND dtypes.bool [343, 344]
+346 Ops.WHERE dtypes.f16 [345, 248, 58]
+347 Ops.ADD dtypes.f16 [342, 346]
+348 Ops.CAST dtypes.f32 [347] dtypes.f32
+349 Ops.MUL dtypes.f32 [288, 348]
+350 Ops.REDUCE dtypes.f32 [349, 286] (Ops.ADD, 0)
+351 Ops.STORE dtypes.void [92, 350]
+352 Ops.END dtypes.void [351, 88, 90]
+353 Ops.SINK dtypes.void [352] KernelInfo()
+354 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=74, dtype=dtypes.f32, device="CPU")
+355 Ops.CALL dtypes.void [353, 354, 326, 184] CallInfo()
+356 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 1)
+357 Ops.INDEX dtypes.f32 [1, 356]
+358 Ops.INDEX dtypes.f32 [6, 356]
+359 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+360 Ops.INDEX dtypes.f32 [359, 7]
+361 Ops.PARAM dtypes.f32 [93] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+362 Ops.MUL dtypes.weakint [356, 0]
+363 Ops.ADD dtypes.weakint [362, 7]
+364 Ops.INDEX dtypes.f32 [361, 363]
+365 Ops.MUL dtypes.f32 [360, 364]
+366 Ops.REDUCE dtypes.f32 [365, 7] (Ops.ADD, 0)
+367 Ops.PARAM dtypes.f32 [0] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+368 Ops.INDEX dtypes.f32 [367, 356]
+369 Ops.ADD dtypes.f32 [366, 368]
+370 Ops.ADD dtypes.f32 [358, 369]
+371 Ops.STORE dtypes.void [357, 370]
+372 Ops.END dtypes.void [371, 356]
+373 Ops.SINK dtypes.void [372] KernelInfo()
+374 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=73, dtype=dtypes.f32, device="CPU")
+375 Ops.PARAM dtypes.f32 [93] ParamArg(slot=12, dtype=dtypes.f32, device="CPU") tag=()
+376 Ops.PARAM dtypes.f32 [0] ParamArg(slot=13, dtype=dtypes.f32, device="CPU") tag=()
+377 Ops.CALL dtypes.void [373, 374, 19, 354, 375, 376] CallInfo()
+378 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=85, dtype=dtypes.f32, device="CPU")
+379 Ops.CALL dtypes.void [17, 378, 374] CallInfo()
+380 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=84, dtype=dtypes.f32, device="CPU")
+381 Ops.PARAM dtypes.f32 [0] ParamArg(slot=14, dtype=dtypes.f32, device="CPU") tag=()
+382 Ops.CALL dtypes.void [83, 380, 374, 378, 381] CallInfo()
+383 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=88, dtype=dtypes.f32, device="CPU")
+384 Ops.CALL dtypes.void [83, 383, 374, 378, 381] CallInfo()
+385 Ops.MUL dtypes.weakint [88, 0]
+386 Ops.ADD dtypes.weakint [385, 7]
+387 Ops.INDEX dtypes.f32 [204, 386]
+388 Ops.MUL dtypes.f32 [8, 387]
+389 Ops.REDUCE dtypes.f32 [388, 7] (Ops.ADD, 0)
+390 Ops.INDEX dtypes.f32 [319, 88]
+391 Ops.ADD dtypes.f32 [389, 390]
+392 Ops.STORE dtypes.void [284, 391]
+393 Ops.END dtypes.void [392, 88]
+394 Ops.SINK dtypes.void [393] KernelInfo()
+395 Ops.ALLOC dtypes.f32 [87] ParamArg(slot=87, dtype=dtypes.f32, device="CPU")
+396 Ops.PARAM dtypes.f32 [138] ParamArg(slot=15, dtype=dtypes.f32, device="CPU") tag=()
+397 Ops.PARAM dtypes.f32 [87] ParamArg(slot=16, dtype=dtypes.f32, device="CPU") tag=()
+398 Ops.CALL dtypes.void [394, 395, 383, 396, 397] CallInfo()
+399 Ops.PARAM dtypes.i32 [87] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+400 Ops.INDEX dtypes.i32 [399, 88]
+401 Ops.PARAM dtypes.f32 [87] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+402 Ops.INDEX dtypes.f32 [401, 308]
+403 Ops.INDEX dtypes.f32 [401, 88]
+404 Ops.CMPLT dtypes.bool [402, 403]
+405 Ops.CMPNE dtypes.bool [403, 402]
+406 Ops.CMPNE dtypes.bool [405, 47]
+407 Ops.CAST dtypes.i32 [88] dtypes.i32
+408 Ops.CAST dtypes.i32 [308] dtypes.i32
+409 Ops.CMPLT dtypes.bool [407, 408]
+410 Ops.AND dtypes.bool [406, 409]
+411 Ops.OR dtypes.bool [404, 410]
+412 Ops.CAST dtypes.i32 [411] dtypes.i32
+413 Ops.REDUCE dtypes.i32 [412, 308] (Ops.ADD, 0)
+414 Ops.STORE dtypes.void [400, 413]
+415 Ops.END dtypes.void [414, 88]
+416 Ops.SINK dtypes.void [415] KernelInfo()
+417 Ops.ALLOC dtypes.i32 [87] ParamArg(slot=86, dtype=dtypes.i32, device="CPU")
+418 Ops.CALL dtypes.void [416, 417, 395] CallInfo()
+419 Ops.MUL dtypes.weakint [137, 109]
+420 Ops.RANGE dtypes.weakint [109] (AxisType.WEAK, 3)
+421 Ops.ADD dtypes.weakint [419, 420]
+422 Ops.INDEX dtypes.f32 [1, 421]
+423 Ops.PARAM dtypes.i32 [87] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+424 Ops.INDEX dtypes.i32 [423, 4]
+425 Ops.CAST dtypes.i32 [137] dtypes.i32
+426 Ops.ADD dtypes.i32 [425, 28]
 427 Ops.CMPNE dtypes.bool [424, 426]
-428 Ops.CMPNE dtypes.bool [427, 45]
-429 Ops.INDEX dtypes.int [423, 22]
+428 Ops.CMPNE dtypes.bool [427, 47]
+429 Ops.INDEX dtypes.i32 [423, 2]
 430 Ops.CMPNE dtypes.bool [429, 426]
-431 Ops.CMPNE dtypes.bool [430, 45]
+431 Ops.CMPNE dtypes.bool [430, 47]
 432 Ops.OR dtypes.bool [428, 431]
-433 Ops.INDEX dtypes.int [423, 26]
+433 Ops.INDEX dtypes.i32 [423, 28]
 434 Ops.CMPNE dtypes.bool [433, 426]
-435 Ops.CMPNE dtypes.bool [434, 45]
+435 Ops.CMPNE dtypes.bool [434, 47]
 436 Ops.OR dtypes.bool [432, 435]
-437 Ops.INDEX dtypes.int [423, 266]
+437 Ops.INDEX dtypes.i32 [423, 269]
 438 Ops.CMPNE dtypes.bool [437, 426]
-439 Ops.CMPNE dtypes.bool [438, 45]
+439 Ops.CMPNE dtypes.bool [438, 47]
 440 Ops.OR dtypes.bool [436, 439]
 441 Ops.CONST dtypes.weakfloat [] 1.0
-442 Ops.CAST dtypes.float [441] dtypes.float
-443 Ops.WHERE dtypes.float [430, 57, 442]
+442 Ops.CAST dtypes.f32 [441] dtypes.f32
+443 Ops.WHERE dtypes.f32 [430, 59, 442]
 444 Ops.CONST dtypes.weakfloat [] 2.0
-445 Ops.WHERE dtypes.float [434, 443, 444]
+445 Ops.WHERE dtypes.f32 [434, 443, 444]
 446 Ops.CONST dtypes.weakfloat [] 3.0
-447 Ops.WHERE dtypes.float [438, 445, 446]
-448 Ops.WHERE dtypes.float [440, 447, 56]
-449 Ops.CAST dtypes.int [448] dtypes.int
-450 Ops.CMPNE dtypes.bool [449, 406]
-451 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=8192, device="CPU")
-452 Ops.MUL dtypes.weakint [418, 5]
-453 Ops.ADD dtypes.weakint [452, 421]
-454 Ops.CONST dtypes.weakint [] 2048
-455 Ops.MUL dtypes.weakint [399, 454]
-456 Ops.ADD dtypes.weakint [453, 455]
-457 Ops.INDEX dtypes.float [451, 456]
-458 Ops.WHERE dtypes.float [450, 56, 457]
-459 Ops.REDUCE dtypes.float [458, 399] (Ops.ADD, 0)
-460 Ops.MUL dtypes.float [422, 459]
-461 Ops.REDUCE dtypes.float [460, 421] (Ops.ADD, 0)
-462 Ops.STORE dtypes.void [420, 461]
-463 Ops.END dtypes.void [462, 134, 418]
+447 Ops.WHERE dtypes.f32 [438, 445, 446]
+448 Ops.WHERE dtypes.f32 [440, 447, 58]
+449 Ops.CAST dtypes.i32 [448] dtypes.i32
+450 Ops.CMPNE dtypes.bool [449, 408]
+451 Ops.CONST dtypes.weakint [] 8192
+452 Ops.PARAM dtypes.f32 [451] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+453 Ops.MUL dtypes.weakint [420, 0]
+454 Ops.ADD dtypes.weakint [453, 356]
+455 Ops.MUL dtypes.weakint [308, 115]
+456 Ops.ADD dtypes.weakint [454, 455]
+457 Ops.INDEX dtypes.f32 [452, 456]
+458 Ops.WHERE dtypes.f32 [450, 58, 457]
+459 Ops.REDUCE dtypes.f32 [458, 308] (Ops.ADD, 0)
+460 Ops.MUL dtypes.f32 [358, 459]
+461 Ops.REDUCE dtypes.f32 [460, 356] (Ops.ADD, 0)
+462 Ops.STORE dtypes.void [422, 461]
+463 Ops.END dtypes.void [462, 137, 420]
 464 Ops.SINK dtypes.void [463] KernelInfo()
-465 Ops.ALLOC dtypes.float [] ParamArg(slot=71, dtype=dtypes.float, size=64, device="CPU")
-466 Ops.PARAM dtypes.float [] ParamArg(slot=17, dtype=dtypes.float, size=8192, device="CPU") tag=()
-467 Ops.CALL dtypes.void [464, 465, 377, 415, 466] CallInfo()
-468 Ops.ALLOC dtypes.float [] ParamArg(slot=72, dtype=dtypes.float, size=64, device="CPU")
-469 Ops.PARAM dtypes.float [] ParamArg(slot=19, dtype=dtypes.float, size=8192, device="CPU") tag=()
-470 Ops.CALL dtypes.void [464, 468, 377, 415, 469] CallInfo()
-471 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=2, device="CPU")
-472 Ops.INDEX dtypes.float [471, 110]
-473 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=4, device="CPU")
-474 Ops.INDEX dtypes.int [473, 2]
-475 Ops.CAST dtypes.int [110] dtypes.int
-476 Ops.ADD dtypes.int [475, 26]
+465 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=71, dtype=dtypes.f32, device="CPU")
+466 Ops.PARAM dtypes.f32 [451] ParamArg(slot=17, dtype=dtypes.f32, device="CPU") tag=()
+467 Ops.CALL dtypes.void [464, 465, 380, 417, 466] CallInfo()
+468 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=72, dtype=dtypes.f32, device="CPU")
+469 Ops.PARAM dtypes.f32 [451] ParamArg(slot=19, dtype=dtypes.f32, device="CPU") tag=()
+470 Ops.CALL dtypes.void [464, 468, 380, 417, 469] CallInfo()
+471 Ops.PARAM dtypes.f32 [28] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+472 Ops.INDEX dtypes.f32 [471, 111]
+473 Ops.PARAM dtypes.i32 [87] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+474 Ops.INDEX dtypes.i32 [473, 4]
+475 Ops.CAST dtypes.i32 [111] dtypes.i32
+476 Ops.ADD dtypes.i32 [475, 28]
 477 Ops.CMPNE dtypes.bool [474, 476]
-478 Ops.CMPNE dtypes.bool [477, 45]
-479 Ops.INDEX dtypes.int [473, 22]
+478 Ops.CMPNE dtypes.bool [477, 47]
+479 Ops.INDEX dtypes.i32 [473, 2]
 480 Ops.CMPNE dtypes.bool [479, 476]
-481 Ops.CMPNE dtypes.bool [480, 45]
+481 Ops.CMPNE dtypes.bool [480, 47]
 482 Ops.OR dtypes.bool [478, 481]
-483 Ops.INDEX dtypes.int [473, 26]
+483 Ops.INDEX dtypes.i32 [473, 28]
 484 Ops.CMPNE dtypes.bool [483, 476]
-485 Ops.CMPNE dtypes.bool [484, 45]
+485 Ops.CMPNE dtypes.bool [484, 47]
 486 Ops.OR dtypes.bool [482, 485]
-487 Ops.INDEX dtypes.int [473, 266]
+487 Ops.INDEX dtypes.i32 [473, 269]
 488 Ops.CMPNE dtypes.bool [487, 476]
-489 Ops.CMPNE dtypes.bool [488, 45]
+489 Ops.CMPNE dtypes.bool [488, 47]
 490 Ops.OR dtypes.bool [486, 489]
-491 Ops.WHERE dtypes.float [480, 57, 442]
-492 Ops.WHERE dtypes.float [484, 491, 444]
-493 Ops.WHERE dtypes.float [488, 492, 446]
-494 Ops.WHERE dtypes.float [490, 493, 56]
-495 Ops.CAST dtypes.int [494] dtypes.int
-496 Ops.CMPNE dtypes.bool [495, 406]
-497 Ops.INDEX dtypes.float [292, 399]
-498 Ops.WHERE dtypes.float [496, 56, 497]
-499 Ops.REDUCE dtypes.float [498, 399] (Ops.ADD, 0)
-500 Ops.STORE dtypes.void [472, 499]
-501 Ops.END dtypes.void [500, 110]
-502 Ops.SINK dtypes.void [501] KernelInfo()
-503 Ops.ALLOC dtypes.float [] ParamArg(slot=90, dtype=dtypes.float, size=2, device="CPU")
-504 Ops.CALL dtypes.void [502, 503, 415, 392] CallInfo()
-505 Ops.MUL dtypes.weakint [110, 215]
-506 Ops.RANGE dtypes.weakint [215] (2, AxisType.WEAK)
-507 Ops.ADD dtypes.weakint [505, 506]
-508 Ops.INDEX dtypes.float [0, 507]
-509 Ops.CONST dtypes.weakfloat [] 7.0
-510 Ops.INDEX dtypes.float [4, 507]
-511 Ops.CMPNE dtypes.bool [424, 476]
-512 Ops.CMPNE dtypes.bool [511, 45]
-513 Ops.CMPNE dtypes.bool [429, 476]
-514 Ops.CMPNE dtypes.bool [513, 45]
-515 Ops.OR dtypes.bool [512, 514]
-516 Ops.CMPNE dtypes.bool [433, 476]
-517 Ops.CMPNE dtypes.bool [516, 45]
-518 Ops.OR dtypes.bool [515, 517]
-519 Ops.CMPNE dtypes.bool [437, 476]
-520 Ops.CMPNE dtypes.bool [519, 45]
-521 Ops.OR dtypes.bool [518, 520]
-522 Ops.WHERE dtypes.float [513, 57, 442]
-523 Ops.WHERE dtypes.float [516, 522, 444]
-524 Ops.WHERE dtypes.float [519, 523, 446]
-525 Ops.WHERE dtypes.float [521, 524, 56]
-526 Ops.CAST dtypes.int [525] dtypes.int
-527 Ops.CMPNE dtypes.bool [526, 406]
-528 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=128, device="CPU")
-529 Ops.MUL dtypes.weakint [399, 215]
-530 Ops.ADD dtypes.weakint [529, 506]
-531 Ops.INDEX dtypes.float [528, 530]
-532 Ops.WHERE dtypes.float [527, 56, 531]
-533 Ops.REDUCE dtypes.float [532, 399] (Ops.ADD, 0)
-534 Ops.ADD dtypes.float [510, 533]
-535 Ops.CMPLT dtypes.bool [509, 534]
-536 Ops.WHERE dtypes.float [535, 509, 534]
+491 Ops.WHERE dtypes.f32 [480, 59, 442]
+492 Ops.WHERE dtypes.f32 [484, 491, 444]
+493 Ops.WHERE dtypes.f32 [488, 492, 446]
+494 Ops.WHERE dtypes.f32 [490, 493, 58]
+495 Ops.CAST dtypes.i32 [494] dtypes.i32
+496 Ops.CMPNE dtypes.bool [495, 408]
+497 Ops.WHERE dtypes.f32 [496, 58, 314]
+498 Ops.REDUCE dtypes.f32 [497, 308] (Ops.ADD, 0)
+499 Ops.STORE dtypes.void [472, 498]
+500 Ops.END dtypes.void [499, 111]
+501 Ops.SINK dtypes.void [500] KernelInfo()
+502 Ops.ALLOC dtypes.f32 [28] ParamArg(slot=90, dtype=dtypes.f32, device="CPU")
+503 Ops.CALL dtypes.void [501, 502, 417, 395] CallInfo()
+504 Ops.MUL dtypes.weakint [111, 109]
+505 Ops.RANGE dtypes.weakint [109] (AxisType.WEAK, 2)
+506 Ops.ADD dtypes.weakint [504, 505]
+507 Ops.INDEX dtypes.f32 [1, 506]
+508 Ops.CONST dtypes.weakfloat [] 7.0
+509 Ops.INDEX dtypes.f32 [6, 506]
+510 Ops.CMPNE dtypes.bool [424, 476]
+511 Ops.CMPNE dtypes.bool [510, 47]
+512 Ops.CMPNE dtypes.bool [429, 476]
+513 Ops.CMPNE dtypes.bool [512, 47]
+514 Ops.OR dtypes.bool [511, 513]
+515 Ops.CMPNE dtypes.bool [433, 476]
+516 Ops.CMPNE dtypes.bool [515, 47]
+517 Ops.OR dtypes.bool [514, 516]
+518 Ops.CMPNE dtypes.bool [437, 476]
+519 Ops.CMPNE dtypes.bool [518, 47]
+520 Ops.OR dtypes.bool [517, 519]
+521 Ops.WHERE dtypes.f32 [512, 59, 442]
+522 Ops.WHERE dtypes.f32 [515, 521, 444]
+523 Ops.WHERE dtypes.f32 [518, 522, 446]
+524 Ops.WHERE dtypes.f32 [520, 523, 58]
+525 Ops.CAST dtypes.i32 [524] dtypes.i32
+526 Ops.CMPNE dtypes.bool [525, 408]
+527 Ops.CONST dtypes.weakint [] 128
+528 Ops.PARAM dtypes.f32 [527] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+529 Ops.MUL dtypes.weakint [308, 109]
+530 Ops.ADD dtypes.weakint [529, 505]
+531 Ops.INDEX dtypes.f32 [528, 530]
+532 Ops.WHERE dtypes.f32 [526, 58, 531]
+533 Ops.REDUCE dtypes.f32 [532, 308] (Ops.ADD, 0)
+534 Ops.ADD dtypes.f32 [509, 533]
+535 Ops.CMPLT dtypes.bool [508, 534]
+536 Ops.WHERE dtypes.f32 [535, 508, 534]
 537 Ops.CONST dtypes.weakfloat [] 1.702
-538 Ops.MUL dtypes.float [536, 537]
+538 Ops.MUL dtypes.f32 [536, 537]
 539 Ops.CONST dtypes.weakfloat [] -1.4426950408889634
-540 Ops.MUL dtypes.float [538, 539]
-541 Ops.EXP2 dtypes.float [540]
-542 Ops.ADD dtypes.float [441, 541]
-543 Ops.RECIPROCAL dtypes.float [542]
-544 Ops.MUL dtypes.float [536, 543]
-545 Ops.INDEX dtypes.float [364, 507]
-546 Ops.PARAM dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=128, device="CPU")
-547 Ops.INDEX dtypes.float [546, 530]
-548 Ops.WHERE dtypes.float [527, 56, 547]
-549 Ops.REDUCE dtypes.float [548, 399] (Ops.ADD, 0)
-550 Ops.ADD dtypes.float [545, 549]
+540 Ops.MUL dtypes.f32 [538, 539]
+541 Ops.EXP2 dtypes.f32 [540]
+542 Ops.ADD dtypes.f32 [441, 541]
+543 Ops.RECIPROCAL dtypes.f32 [542]
+544 Ops.MUL dtypes.f32 [536, 543]
+545 Ops.INDEX dtypes.f32 [367, 506]
+546 Ops.PARAM dtypes.f32 [527] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+547 Ops.INDEX dtypes.f32 [546, 530]
+548 Ops.WHERE dtypes.f32 [526, 58, 547]
+549 Ops.REDUCE dtypes.f32 [548, 308] (Ops.ADD, 0)
+550 Ops.ADD dtypes.f32 [545, 549]
 551 Ops.CONST dtypes.weakfloat [] -7.0
 552 Ops.CMPLT dtypes.bool [550, 551]
-553 Ops.WHERE dtypes.float [552, 551, 550]
-554 Ops.CMPLT dtypes.bool [509, 553]
-555 Ops.WHERE dtypes.float [554, 509, 553]
-556 Ops.ADD dtypes.float [555, 441]
-557 Ops.MUL dtypes.float [544, 556]
-558 Ops.STORE dtypes.void [508, 557]
-559 Ops.END dtypes.void [558, 110, 506]
+553 Ops.WHERE dtypes.f32 [552, 551, 550]
+554 Ops.CMPLT dtypes.bool [508, 553]
+555 Ops.WHERE dtypes.f32 [554, 508, 553]
+556 Ops.ADD dtypes.f32 [555, 441]
+557 Ops.MUL dtypes.f32 [544, 556]
+558 Ops.STORE dtypes.void [507, 557]
+559 Ops.END dtypes.void [558, 111, 505]
 560 Ops.SINK dtypes.void [559] KernelInfo()
-561 Ops.ALLOC dtypes.float [] ParamArg(slot=70, dtype=dtypes.float, size=64, device="CPU")
-562 Ops.PARAM dtypes.float [] ParamArg(slot=18, dtype=dtypes.float, size=128, device="CPU") tag=()
-563 Ops.PARAM dtypes.float [] ParamArg(slot=20, dtype=dtypes.float, size=128, device="CPU") tag=()
-564 Ops.CALL dtypes.void [560, 561, 465, 415, 562, 468, 563] CallInfo()
-565 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=2, device="CPU")
-566 Ops.RANGE dtypes.weakint [26] (0, AxisType.REDUCE)
-567 Ops.INDEX dtypes.float [565, 566]
-568 Ops.REDUCE dtypes.float [567, 566] (Ops.MAX, 0)
-569 Ops.STORE dtypes.void [3, 568]
+561 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=70, dtype=dtypes.f32, device="CPU")
+562 Ops.PARAM dtypes.f32 [527] ParamArg(slot=18, dtype=dtypes.f32, device="CPU") tag=()
+563 Ops.PARAM dtypes.f32 [527] ParamArg(slot=20, dtype=dtypes.f32, device="CPU") tag=()
+564 Ops.CALL dtypes.void [560, 561, 465, 417, 562, 468, 563] CallInfo()
+565 Ops.PARAM dtypes.f32 [28] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+566 Ops.RANGE dtypes.weakint [28] (AxisType.WEAK, 0)
+567 Ops.INDEX dtypes.f32 [565, 566]
+568 Ops.REDUCE dtypes.f32 [567, 566] (Ops.MAX, 0)
+569 Ops.STORE dtypes.void [5, 568]
 570 Ops.SINK dtypes.void [569] KernelInfo()
-571 Ops.ALLOC dtypes.float [] ParamArg(slot=91, dtype=dtypes.float, size=1, device="CPU")
-572 Ops.CALL dtypes.void [570, 571, 503] CallInfo()
-573 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=128, device="CPU")
-574 Ops.MUL dtypes.weakint [134, 5]
-575 Ops.RANGE dtypes.weakint [5] (3, AxisType.WEAK)
+571 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=91, dtype=dtypes.f32, device="CPU")
+572 Ops.CALL dtypes.void [570, 571, 502] CallInfo()
+573 Ops.PARAM dtypes.f32 [527] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+574 Ops.MUL dtypes.weakint [137, 0]
+575 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 3)
 576 Ops.ADD dtypes.weakint [574, 575]
-577 Ops.INDEX dtypes.float [573, 576]
-578 Ops.RANGE dtypes.weakint [215] (1, AxisType.REDUCE)
-579 Ops.ADD dtypes.weakint [417, 578]
-580 Ops.INDEX dtypes.float [4, 579]
-581 Ops.MUL dtypes.weakint [575, 215]
+577 Ops.INDEX dtypes.f32 [573, 576]
+578 Ops.RANGE dtypes.weakint [109] (AxisType.WEAK, 1)
+579 Ops.ADD dtypes.weakint [419, 578]
+580 Ops.INDEX dtypes.f32 [6, 579]
+581 Ops.MUL dtypes.weakint [575, 109]
 582 Ops.ADD dtypes.weakint [581, 578]
 583 Ops.ADD dtypes.weakint [582, 455]
-584 Ops.INDEX dtypes.float [451, 583]
-585 Ops.WHERE dtypes.float [450, 56, 584]
-586 Ops.REDUCE dtypes.float [585, 399] (Ops.ADD, 0)
-587 Ops.MUL dtypes.float [580, 586]
-588 Ops.REDUCE dtypes.float [587, 578] (Ops.ADD, 0)
+584 Ops.INDEX dtypes.f32 [452, 583]
+585 Ops.WHERE dtypes.f32 [450, 58, 584]
+586 Ops.REDUCE dtypes.f32 [585, 308] (Ops.ADD, 0)
+587 Ops.MUL dtypes.f32 [580, 586]
+588 Ops.REDUCE dtypes.f32 [587, 578] (Ops.ADD, 0)
 589 Ops.STORE dtypes.void [577, 588]
-590 Ops.END dtypes.void [589, 134, 575]
+590 Ops.END dtypes.void [589, 137, 575]
 591 Ops.SINK dtypes.void [590] KernelInfo()
-592 Ops.ALLOC dtypes.float [] ParamArg(slot=69, dtype=dtypes.float, size=128, device="CPU")
-593 Ops.PARAM dtypes.float [] ParamArg(slot=21, dtype=dtypes.float, size=8192, device="CPU") tag=()
-594 Ops.CALL dtypes.void [591, 592, 561, 415, 593] CallInfo()
-595 Ops.MUL dtypes.float [75, 171]
-596 Ops.ADD dtypes.float [567, 595]
-597 Ops.MUL dtypes.float [596, 296]
-598 Ops.EXP2 dtypes.float [597]
-599 Ops.REDUCE dtypes.float [598, 566] (Ops.ADD, 0)
-600 Ops.STORE dtypes.void [3, 599]
+592 Ops.ALLOC dtypes.f32 [527] ParamArg(slot=69, dtype=dtypes.f32, device="CPU")
+593 Ops.PARAM dtypes.f32 [451] ParamArg(slot=21, dtype=dtypes.f32, device="CPU") tag=()
+594 Ops.CALL dtypes.void [591, 592, 561, 417, 593] CallInfo()
+595 Ops.MUL dtypes.f32 [75, 174]
+596 Ops.ADD dtypes.f32 [567, 595]
+597 Ops.MUL dtypes.f32 [596, 299]
+598 Ops.EXP2 dtypes.f32 [597]
+599 Ops.REDUCE dtypes.f32 [598, 566] (Ops.ADD, 0)
+600 Ops.STORE dtypes.void [5, 599]
 601 Ops.SINK dtypes.void [600] KernelInfo()
-602 Ops.ALLOC dtypes.float [] ParamArg(slot=92, dtype=dtypes.float, size=1, device="CPU")
-603 Ops.CALL dtypes.void [601, 602, 503, 571] CallInfo()
-604 Ops.RANGE dtypes.weakint [26] (0, AxisType.WEAK)
-605 Ops.INDEX dtypes.float [471, 604]
-606 Ops.INDEX dtypes.float [565, 604]
-607 Ops.ADD dtypes.float [606, 595]
-608 Ops.MUL dtypes.float [607, 296]
-609 Ops.EXP2 dtypes.float [608]
-610 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=1, device="CPU")
-611 Ops.INDEX dtypes.float [610, 2]
-612 Ops.RECIPROCAL dtypes.float [611]
-613 Ops.MUL dtypes.float [609, 612]
-614 Ops.STORE dtypes.void [605, 613]
-615 Ops.END dtypes.void [614, 604]
-616 Ops.SINK dtypes.void [615] KernelInfo()
-617 Ops.ALLOC dtypes.float [] ParamArg(slot=89, dtype=dtypes.float, size=2, device="CPU")
-618 Ops.CALL dtypes.void [616, 617, 503, 571, 602] CallInfo()
-619 Ops.RANGE dtypes.weakint [5] (2, AxisType.WEAK)
-620 Ops.INDEX dtypes.float [0, 619]
-621 Ops.INDEX dtypes.float [4, 619]
-622 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=128, device="CPU")
-623 Ops.RANGE dtypes.weakint [26] (1, AxisType.REDUCE)
-624 Ops.MUL dtypes.weakint [623, 5]
-625 Ops.ADD dtypes.weakint [624, 619]
-626 Ops.INDEX dtypes.float [622, 625]
-627 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=4, device="CPU")
-628 Ops.INDEX dtypes.int [627, 2]
-629 Ops.CAST dtypes.int [623] dtypes.int
-630 Ops.ADD dtypes.int [629, 26]
-631 Ops.CMPNE dtypes.bool [628, 630]
-632 Ops.CMPNE dtypes.bool [631, 45]
-633 Ops.INDEX dtypes.int [627, 22]
-634 Ops.CMPNE dtypes.bool [633, 630]
-635 Ops.CMPNE dtypes.bool [634, 45]
+602 Ops.ALLOC dtypes.f32 [2] ParamArg(slot=92, dtype=dtypes.f32, device="CPU")
+603 Ops.CALL dtypes.void [601, 602, 502, 571] CallInfo()
+604 Ops.INDEX dtypes.f32 [471, 566]
+605 Ops.PARAM dtypes.f32 [2] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+606 Ops.INDEX dtypes.f32 [605, 4]
+607 Ops.RECIPROCAL dtypes.f32 [606]
+608 Ops.MUL dtypes.f32 [598, 607]
+609 Ops.STORE dtypes.void [604, 608]
+610 Ops.END dtypes.void [609, 566]
+611 Ops.SINK dtypes.void [610] KernelInfo()
+612 Ops.ALLOC dtypes.f32 [28] ParamArg(slot=89, dtype=dtypes.f32, device="CPU")
+613 Ops.CALL dtypes.void [611, 612, 502, 571, 602] CallInfo()
+614 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 2)
+615 Ops.INDEX dtypes.f32 [1, 614]
+616 Ops.INDEX dtypes.f32 [6, 614]
+617 Ops.PARAM dtypes.f32 [527] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+618 Ops.MUL dtypes.weakint [111, 0]
+619 Ops.ADD dtypes.weakint [618, 614]
+620 Ops.INDEX dtypes.f32 [617, 619]
+621 Ops.PARAM dtypes.i32 [87] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
+622 Ops.INDEX dtypes.i32 [621, 4]
+623 Ops.CMPNE dtypes.bool [622, 476]
+624 Ops.CMPNE dtypes.bool [623, 47]
+625 Ops.INDEX dtypes.i32 [621, 2]
+626 Ops.CMPNE dtypes.bool [625, 476]
+627 Ops.CMPNE dtypes.bool [626, 47]
+628 Ops.OR dtypes.bool [624, 627]
+629 Ops.INDEX dtypes.i32 [621, 28]
+630 Ops.CMPNE dtypes.bool [629, 476]
+631 Ops.CMPNE dtypes.bool [630, 47]
+632 Ops.OR dtypes.bool [628, 631]
+633 Ops.INDEX dtypes.i32 [621, 269]
+634 Ops.CMPNE dtypes.bool [633, 476]
+635 Ops.CMPNE dtypes.bool [634, 47]
 636 Ops.OR dtypes.bool [632, 635]
-637 Ops.INDEX dtypes.int [627, 26]
-638 Ops.CMPNE dtypes.bool [637, 630]
-639 Ops.CMPNE dtypes.bool [638, 45]
-640 Ops.OR dtypes.bool [636, 639]
-641 Ops.INDEX dtypes.int [627, 266]
-642 Ops.CMPNE dtypes.bool [641, 630]
-643 Ops.CMPNE dtypes.bool [642, 45]
-644 Ops.OR dtypes.bool [640, 643]
-645 Ops.WHERE dtypes.float [634, 57, 442]
-646 Ops.WHERE dtypes.float [638, 645, 444]
-647 Ops.WHERE dtypes.float [642, 646, 446]
-648 Ops.WHERE dtypes.float [644, 647, 56]
-649 Ops.CAST dtypes.int [648] dtypes.int
-650 Ops.CMPNE dtypes.bool [649, 406]
-651 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=256, device="CPU")
-652 Ops.MUL dtypes.weakint [399, 5]
-653 Ops.ADD dtypes.weakint [652, 619]
-654 Ops.INDEX dtypes.float [651, 653]
-655 Ops.WHERE dtypes.float [650, 56, 654]
-656 Ops.REDUCE dtypes.float [655, 399] (Ops.ADD, 0)
-657 Ops.ADD dtypes.float [626, 656]
-658 Ops.PARAM dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=2, device="CPU")
-659 Ops.INDEX dtypes.float [658, 623]
-660 Ops.MUL dtypes.float [657, 659]
-661 Ops.REDUCE dtypes.float [660, 623] (Ops.ADD, 0)
-662 Ops.ADD dtypes.float [621, 661]
-663 Ops.STORE dtypes.void [620, 662]
-664 Ops.END dtypes.void [663, 619]
-665 Ops.SINK dtypes.void [664] KernelInfo()
-666 Ops.PARAM dtypes.float [] ParamArg(slot=23, dtype=dtypes.float, size=64, device="CPU") tag=()
-667 Ops.PARAM dtypes.float [] ParamArg(slot=22, dtype=dtypes.float, size=256, device="CPU") tag=()
-668 Ops.CALL dtypes.void [665, 666, 371, 592, 415, 667, 617] CallInfo()
-669 Ops.LINEAR dtypes.void [19, 70, 86, 108, 129, 185, 279, 291, 304, 324, 352, 374, 376, 379, 381, 395, 416, 467, 470, 504, 564, 572, 594, 603, 618, 668]
-670 Ops.STACK dtypes.weakint [22, 22, 5]
-671 Ops.RESHAPE dtypes.float [4, 670]
-672 Ops.PARAM dtypes.weakint [] ParamArg(slot=6, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, addrspace=AddrSpace.ALU)
-673 Ops.PARAM dtypes.half [] ParamArg(slot=7, dtype=dtypes.half, size=1024, device="CPU")
-674 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=2048, device="CPU")
-675 Ops.PARAM dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=32, device="CPU")
-676 Ops.PARAM dtypes.float [] ParamArg(slot=10, dtype=dtypes.float, size=2048, device="CPU")
-677 Ops.PARAM dtypes.float [] ParamArg(slot=11, dtype=dtypes.float, size=32, device="CPU")
-678 Ops.PARAM dtypes.float [] ParamArg(slot=12, dtype=dtypes.float, size=4, device="CPU")
-679 Ops.PARAM dtypes.float [] ParamArg(slot=13, dtype=dtypes.float, size=4096, device="CPU")
-680 Ops.PARAM dtypes.float [] ParamArg(slot=14, dtype=dtypes.float, size=64, device="CPU")
-681 Ops.PARAM dtypes.float [] ParamArg(slot=15, dtype=dtypes.float, size=64, device="CPU")
-682 Ops.PARAM dtypes.float [] ParamArg(slot=16, dtype=dtypes.float, size=256, device="CPU")
-683 Ops.PARAM dtypes.float [] ParamArg(slot=17, dtype=dtypes.float, size=4, device="CPU")
-684 Ops.PARAM dtypes.float [] ParamArg(slot=18, dtype=dtypes.float, size=8192, device="CPU")
-685 Ops.PARAM dtypes.float [] ParamArg(slot=19, dtype=dtypes.float, size=128, device="CPU")
-686 Ops.PARAM dtypes.float [] ParamArg(slot=20, dtype=dtypes.float, size=8192, device="CPU")
-687 Ops.PARAM dtypes.float [] ParamArg(slot=21, dtype=dtypes.float, size=128, device="CPU")
-688 Ops.PARAM dtypes.float [] ParamArg(slot=22, dtype=dtypes.float, size=8192, device="CPU")
-689 Ops.PARAM dtypes.float [] ParamArg(slot=23, dtype=dtypes.float, size=256, device="CPU")
-690 Ops.RESHAPE dtypes.float [0, 670]
-691 Ops.CALL dtypes.void [669, 671, 356, 358, 364, 160, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 686, 687, 688, 689, 690] CallInfo(name="FFNBlock.__call__.<locals>._run", precompile=True)
-692 Ops.AFTER dtypes.float [0, 691]
-693 Ops.SINK dtypes.void [692]
+637 Ops.WHERE dtypes.f32 [626, 59, 442]
+638 Ops.WHERE dtypes.f32 [630, 637, 444]
+639 Ops.WHERE dtypes.f32 [634, 638, 446]
+640 Ops.WHERE dtypes.f32 [636, 639, 58]
+641 Ops.CAST dtypes.i32 [640] dtypes.i32
+642 Ops.CMPNE dtypes.bool [641, 408]
+643 Ops.PARAM dtypes.f32 [138] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+644 Ops.MUL dtypes.weakint [308, 0]
+645 Ops.ADD dtypes.weakint [644, 614]
+646 Ops.INDEX dtypes.f32 [643, 645]
+647 Ops.WHERE dtypes.f32 [642, 58, 646]
+648 Ops.REDUCE dtypes.f32 [647, 308] (Ops.ADD, 0)
+649 Ops.ADD dtypes.f32 [620, 648]
+650 Ops.PARAM dtypes.f32 [28] ParamArg(slot=5, dtype=dtypes.f32, device="CPU")
+651 Ops.INDEX dtypes.f32 [650, 111]
+652 Ops.MUL dtypes.f32 [649, 651]
+653 Ops.REDUCE dtypes.f32 [652, 111] (Ops.ADD, 0)
+654 Ops.ADD dtypes.f32 [616, 653]
+655 Ops.STORE dtypes.void [615, 654]
+656 Ops.END dtypes.void [655, 614]
+657 Ops.SINK dtypes.void [656] KernelInfo()
+658 Ops.PARAM dtypes.f32 [0] ParamArg(slot=23, dtype=dtypes.f32, device="CPU") tag=()
+659 Ops.PARAM dtypes.f32 [138] ParamArg(slot=22, dtype=dtypes.f32, device="CPU") tag=()
+660 Ops.CALL dtypes.void [657, 658, 374, 592, 417, 659, 612] CallInfo()
+661 Ops.LINEAR dtypes.void [20, 72, 86, 108, 131, 188, 282, 294, 307, 327, 355, 377, 379, 382, 384, 398, 418, 467, 470, 503, 564, 572, 594, 603, 613, 660]
+662 Ops.STACK dtypes.weakint [2, 2, 0]
+663 Ops.RESHAPE dtypes.f32 [6, 662]
+664 Ops.PARAM dtypes.weakint [23] ParamArg(slot=6, dtype=dtypes.weakint, vmin_vmax=(0, 15), multiple_of=1, addrspace=AddrSpace.ALU)
+665 Ops.PARAM dtypes.f16 [132] ParamArg(slot=7, dtype=dtypes.f16, device="CPU")
+666 Ops.PARAM dtypes.f32 [115] ParamArg(slot=8, dtype=dtypes.f32, device="CPU")
+667 Ops.PARAM dtypes.f32 [109] ParamArg(slot=9, dtype=dtypes.f32, device="CPU")
+668 Ops.PARAM dtypes.f32 [115] ParamArg(slot=10, dtype=dtypes.f32, device="CPU")
+669 Ops.PARAM dtypes.f32 [109] ParamArg(slot=11, dtype=dtypes.f32, device="CPU")
+670 Ops.PARAM dtypes.f32 [87] ParamArg(slot=12, dtype=dtypes.f32, device="CPU")
+671 Ops.PARAM dtypes.f32 [93] ParamArg(slot=13, dtype=dtypes.f32, device="CPU")
+672 Ops.PARAM dtypes.f32 [0] ParamArg(slot=14, dtype=dtypes.f32, device="CPU")
+673 Ops.PARAM dtypes.f32 [0] ParamArg(slot=15, dtype=dtypes.f32, device="CPU")
+674 Ops.PARAM dtypes.f32 [138] ParamArg(slot=16, dtype=dtypes.f32, device="CPU")
+675 Ops.PARAM dtypes.f32 [87] ParamArg(slot=17, dtype=dtypes.f32, device="CPU")
+676 Ops.PARAM dtypes.f32 [451] ParamArg(slot=18, dtype=dtypes.f32, device="CPU")
+677 Ops.PARAM dtypes.f32 [527] ParamArg(slot=19, dtype=dtypes.f32, device="CPU")
+678 Ops.PARAM dtypes.f32 [451] ParamArg(slot=20, dtype=dtypes.f32, device="CPU")
+679 Ops.PARAM dtypes.f32 [527] ParamArg(slot=21, dtype=dtypes.f32, device="CPU")
+680 Ops.PARAM dtypes.f32 [451] ParamArg(slot=22, dtype=dtypes.f32, device="CPU")
+681 Ops.PARAM dtypes.f32 [138] ParamArg(slot=23, dtype=dtypes.f32, device="CPU")
+682 Ops.RESHAPE dtypes.f32 [1, 662]
+683 Ops.CALL dtypes.void [661, 663, 359, 361, 367, 163, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682] CallInfo(name="FFNBlock.__call__.<locals>._run", precompile=True)
+684 Ops.AFTER dtypes.f32 [1, 683]
+685 Ops.SINK dtypes.void [684]
 

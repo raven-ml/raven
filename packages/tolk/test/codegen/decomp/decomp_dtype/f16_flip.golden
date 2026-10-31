@@ -1,0 +1,49 @@
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.MUL dtypes.i32 [5, 3]
+7 Ops.SHRINK dtypes.f16 [2, 6, 4]
+8 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+9 Ops.CONST dtypes.weakint [] -4
+10 Ops.MUL dtypes.i32 [5, 9]
+11 Ops.CONST dtypes.weakint [] 12
+12 Ops.ADD dtypes.i32 [10, 11]
+13 Ops.SHRINK dtypes.f16 [8, 12, 4]
+14 Ops.LOAD dtypes.f16 [13]
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.CAST dtypes.i32 [15] dtypes.i32
+17 Ops.INDEX dtypes.f16 [14, 16]
+18 Ops.CONST dtypes.weakint [] 2
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.INDEX dtypes.f16 [14, 19]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.INDEX dtypes.f16 [14, 22]
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.CAST dtypes.i32 [24] dtypes.i32
+26 Ops.INDEX dtypes.f16 [14, 25]
+27 Ops.STACK dtypes.f16 [17, 20, 23, 26]
+28 Ops.STORE dtypes.void [7, 27]
+29 Ops.AFTER dtypes.void [0, 28]
+30 Ops.END dtypes.void [29, 5]
+31 Ops.SINK dtypes.void [30] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+32 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16, device="CPU") tag=dtypes.f16
+33 Ops.SHRINK dtypes.u16 [32, 6, 4] tag=dtypes.f16
+34 Ops.PARAM dtypes.u16 [1] ParamArg(slot=1, dtype=dtypes.u16, device="CPU") tag=dtypes.f16
+35 Ops.SHRINK dtypes.u16 [34, 12, 4] tag=dtypes.f16
+36 Ops.LOAD dtypes.u16 [35]
+37 Ops.INDEX dtypes.u16 [36, 16]
+38 Ops.INDEX dtypes.u16 [36, 19]
+39 Ops.INDEX dtypes.u16 [36, 22]
+40 Ops.INDEX dtypes.u16 [36, 25]
+41 Ops.STACK dtypes.u16 [37, 38, 39, 40]
+42 Ops.STORE dtypes.void [33, 41]
+43 Ops.AFTER dtypes.void [0, 42]
+44 Ops.END dtypes.void [43, 5]
+45 Ops.SINK dtypes.void [44] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+46 Ops.SINK dtypes.void [31, 45]
+

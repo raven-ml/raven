@@ -1,33 +1,36 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
-1 Ops.CONST dtypes.weakint [] 8
-2 Ops.CONST dtypes.weakint [] 4
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.CONST dtypes.weakint [] 0
-6 Ops.STACK dtypes.weakint [5, 5]
-7 Ops.CONST dtypes.weakint [] 2
-8 Ops.STACK dtypes.weakint [1, 7]
-9 Ops.SHRINK dtypes.float [4, 6, 8]
-10 Ops.COPY dtypes.float [9] "CPU:0"
-11 Ops.STACK dtypes.weakint [5, 7]
-12 Ops.SHRINK dtypes.float [4, 11, 8]
-13 Ops.COPY dtypes.float [12] "CPU:1"
-14 Ops.MSTACK dtypes.float [10, 13]
-15 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=3, device="CPU")
-16 Ops.MAX dtypes.int [15, 5]
-17 Ops.CONST dtypes.weakint [] -1
-18 Ops.XOR dtypes.int [16, 17]
-19 Ops.CONST dtypes.weakint [] 7
-20 Ops.XOR dtypes.weakint [19, 17]
-21 Ops.MAX dtypes.int [18, 20]
-22 Ops.XOR dtypes.int [21, 17]
-23 Ops.COPY dtypes.int [22] "CPU:0"
-24 Ops.COPY dtypes.int [22] "CPU:1"
-25 Ops.MSTACK dtypes.int [23, 24]
-26 Ops.CAST dtypes.weakint [25] dtypes.weakint
-27 Ops.INDEX dtypes.float [14, 26]
-28 Ops.RANGE dtypes.weakint [7] (-1, AxisType.DEVICE)
-29 Ops.UNSHARD dtypes.float [27, 28] (1,)
-30 Ops.SINK dtypes.void [29]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.STACK dtypes.weakint [6, 6]
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.STACK dtypes.weakint [2, 8]
+10 Ops.SHRINK dtypes.f32 [5, 7, 9]
+11 Ops.COPY dtypes.f32 [10] "CPU:0"
+12 Ops.STACK dtypes.weakint [6, 8]
+13 Ops.SHRINK dtypes.f32 [5, 12, 9]
+14 Ops.COPY dtypes.f32 [13] "CPU:1"
+15 Ops.MSTACK dtypes.f32 [11, 14]
+16 Ops.CONST dtypes.weakint [] 3
+17 Ops.PARAM dtypes.i32 [16] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+18 Ops.MAX dtypes.i32 [17, 6]
+19 Ops.CONST dtypes.weakint [] -1
+20 Ops.XOR dtypes.i32 [18, 19]
+21 Ops.CONST dtypes.weakint [] 7
+22 Ops.XOR dtypes.weakint [21, 19]
+23 Ops.MAX dtypes.i32 [20, 22]
+24 Ops.XOR dtypes.i32 [23, 19]
+25 Ops.STAGE dtypes.i32 [24]
+26 Ops.COPY dtypes.i32 [25] "CPU:0"
+27 Ops.COPY dtypes.i32 [25] "CPU:1"
+28 Ops.MSTACK dtypes.i32 [26, 27]
+29 Ops.CAST dtypes.weakint [28] dtypes.weakint
+30 Ops.INDEX dtypes.f32 [15, 29]
+31 Ops.RANGE dtypes.weakint [8] (AxisType.DEVICE, 0)
+32 Ops.UNSHARD dtypes.f32 [30, 31] (1,)
+33 Ops.SINK dtypes.void [32]
 

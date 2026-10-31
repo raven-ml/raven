@@ -1,35 +1,36 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=3, device="CPU")
-1 Ops.CONST dtypes.bool [] True
-2 Ops.CONST dtypes.weakint [] 0
-3 Ops.CONST dtypes.bool [] Invalid
-4 Ops.WHERE dtypes.weakint [1, 2, 3]
-5 Ops.INDEX dtypes.float [0, 4]
-6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
-7 Ops.INDEX dtypes.float [6, 4]
-8 Ops.LOAD dtypes.float [7]
-9 Ops.CONST dtypes.weakint [] 1
-10 Ops.WHERE dtypes.weakint [1, 9, 3]
-11 Ops.INDEX dtypes.float [6, 10]
-12 Ops.LOAD dtypes.float [11]
-13 Ops.CONST dtypes.weakint [] 2
-14 Ops.WHERE dtypes.weakint [1, 13, 3]
-15 Ops.INDEX dtypes.float [6, 14]
-16 Ops.LOAD dtypes.float [15]
-17 Ops.STACK dtypes.float [8, 12, 16]
-18 Ops.CONST dtypes.weakint [] 3
-19 Ops.WHERE dtypes.weakint [1, 18, 3]
-20 Ops.INDEX dtypes.float [6, 19]
-21 Ops.LOAD dtypes.float [20]
-22 Ops.STACK dtypes.float [12, 16, 21]
-23 Ops.ADD dtypes.float [17, 22]
-24 Ops.INDEX dtypes.float [23, 2]
-25 Ops.STORE dtypes.void [5, 24]
-26 Ops.INDEX dtypes.float [0, 10]
-27 Ops.INDEX dtypes.float [23, 9]
-28 Ops.STORE dtypes.void [26, 27]
-29 Ops.INDEX dtypes.float [0, 14]
-30 Ops.INDEX dtypes.float [23, 13]
-31 Ops.STORE dtypes.void [29, 30]
-32 Ops.SINK dtypes.void [25, 28, 31] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.bool [] True
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.CONST dtypes.bool [] Invalid
+5 Ops.WHERE dtypes.weakint [2, 3, 4]
+6 Ops.INDEX dtypes.f32 [1, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.PARAM dtypes.f32 [7] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+9 Ops.INDEX dtypes.f32 [8, 5]
+10 Ops.LOAD dtypes.f32 [9]
+11 Ops.CONST dtypes.weakint [] 1
+12 Ops.WHERE dtypes.weakint [2, 11, 4]
+13 Ops.INDEX dtypes.f32 [8, 12]
+14 Ops.LOAD dtypes.f32 [13]
+15 Ops.CONST dtypes.weakint [] 2
+16 Ops.WHERE dtypes.weakint [2, 15, 4]
+17 Ops.INDEX dtypes.f32 [8, 16]
+18 Ops.LOAD dtypes.f32 [17]
+19 Ops.STACK dtypes.f32 [10, 14, 18]
+20 Ops.WHERE dtypes.weakint [2, 0, 4]
+21 Ops.INDEX dtypes.f32 [8, 20]
+22 Ops.LOAD dtypes.f32 [21]
+23 Ops.STACK dtypes.f32 [14, 18, 22]
+24 Ops.ADD dtypes.f32 [19, 23]
+25 Ops.INDEX dtypes.f32 [24, 3]
+26 Ops.STORE dtypes.void [6, 25]
+27 Ops.INDEX dtypes.f32 [1, 12]
+28 Ops.INDEX dtypes.f32 [24, 11]
+29 Ops.STORE dtypes.void [27, 28]
+30 Ops.INDEX dtypes.f32 [1, 16]
+31 Ops.INDEX dtypes.f32 [24, 15]
+32 Ops.STORE dtypes.void [30, 31]
+33 Ops.SINK dtypes.void [26, 29, 32] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
 

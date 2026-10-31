@@ -220,7 +220,7 @@ def lower_stacked_weak_casts_of_a_node_it_does_not_lower():
 
 @graph
 def lower_keeps_weak_storage_outside_registers_of_scalars():
-    return rewritten(UOp.sink(UOp(Ops.PARAM, arg=ParamArg(0, dtypes.weakint, size=4))), pm_lower_weak)
+    return rewritten(UOp.sink(UOp(Ops.PARAM, src=(UOp.const(4),), arg=ParamArg(0, dtypes.weakint))), pm_lower_weak)
 
 
 @graph

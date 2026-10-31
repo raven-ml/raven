@@ -1,29 +1,30 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-1 Ops.BITCAST dtypes.float [0] dtypes.float
-2 Ops.BITCAST dtypes.int [1] dtypes.int
-3 Ops.SINK dtypes.void [2, 0] tag=("sym", 0, 3)
-4 Ops.CONST dtypes.weakfloat [] 1.0
-5 Ops.CAST dtypes.bfloat16 [4] dtypes.bfloat16
-6 Ops.BITCAST dtypes.ushort [5] dtypes.ushort
-7 Ops.CONST dtypes.weakint [] 16256
-8 Ops.CAST dtypes.ushort [7] dtypes.ushort
-9 Ops.SINK dtypes.void [6, 8] tag=("sym", 16256, 16256)
-10 Ops.BITCAST dtypes.bfloat16 [8] dtypes.bfloat16
-11 Ops.SINK dtypes.void [10, 5] tag="sym"
-12 Ops.CAST dtypes.fp8e4m3 [4] dtypes.fp8e4m3
-13 Ops.BITCAST dtypes.uchar [12] dtypes.uchar
-14 Ops.CONST dtypes.weakint [] 56
-15 Ops.CAST dtypes.uchar [14] dtypes.uchar
-16 Ops.SINK dtypes.void [13, 15] tag=("sym", 56, 56)
-17 Ops.BITCAST dtypes.fp8e4m3 [15] dtypes.fp8e4m3
-18 Ops.SINK dtypes.void [17, 12] tag="sym"
-19 Ops.CAST dtypes.fp8e5m2 [4] dtypes.fp8e5m2
-20 Ops.BITCAST dtypes.uchar [19] dtypes.uchar
-21 Ops.CONST dtypes.weakint [] 60
-22 Ops.CAST dtypes.uchar [21] dtypes.uchar
-23 Ops.SINK dtypes.void [20, 22] tag=("sym", 60, 60)
-24 Ops.BITCAST dtypes.fp8e5m2 [22] dtypes.fp8e5m2
-25 Ops.SINK dtypes.void [24, 19] tag="sym"
-26 Ops.SINK dtypes.void [3, 9, 11, 16, 18, 23, 25]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+2 Ops.BITCAST dtypes.f32 [1] dtypes.f32
+3 Ops.BITCAST dtypes.i32 [2] dtypes.i32
+4 Ops.SINK dtypes.void [3, 1] tag=("sym", 0, 3)
+5 Ops.CONST dtypes.weakfloat [] 1.0
+6 Ops.CAST dtypes.bf16 [5] dtypes.bf16
+7 Ops.BITCAST dtypes.u16 [6] dtypes.u16
+8 Ops.CONST dtypes.weakint [] 16256
+9 Ops.CAST dtypes.u16 [8] dtypes.u16
+10 Ops.SINK dtypes.void [7, 9] tag=("sym", 16256, 16256)
+11 Ops.BITCAST dtypes.bf16 [9] dtypes.bf16
+12 Ops.SINK dtypes.void [11, 6] tag="sym"
+13 Ops.CAST dtypes.fp8e4m3 [5] dtypes.fp8e4m3
+14 Ops.BITCAST dtypes.u8 [13] dtypes.u8
+15 Ops.CONST dtypes.weakint [] 56
+16 Ops.CAST dtypes.u8 [15] dtypes.u8
+17 Ops.SINK dtypes.void [14, 16] tag=("sym", 56, 56)
+18 Ops.BITCAST dtypes.fp8e4m3 [16] dtypes.fp8e4m3
+19 Ops.SINK dtypes.void [18, 13] tag="sym"
+20 Ops.CAST dtypes.fp8e5m2 [5] dtypes.fp8e5m2
+21 Ops.BITCAST dtypes.u8 [20] dtypes.u8
+22 Ops.CONST dtypes.weakint [] 60
+23 Ops.CAST dtypes.u8 [22] dtypes.u8
+24 Ops.SINK dtypes.void [21, 23] tag=("sym", 60, 60)
+25 Ops.BITCAST dtypes.fp8e5m2 [23] dtypes.fp8e5m2
+26 Ops.SINK dtypes.void [25, 20] tag="sym"
+27 Ops.SINK dtypes.void [4, 10, 12, 17, 19, 24, 26]
 

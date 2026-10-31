@@ -1,15 +1,16 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.CONST dtypes.weakint [] 2
-1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
-2 Ops.BUFFER dtypes.float [1] ParamArg(slot=0, dtype=dtypes.float, size=300000, device=("CPU:0", "CPU:1"))
-3 Ops.CONST dtypes.weakint [] 300
-4 Ops.CONST dtypes.weakint [] 1000
-5 Ops.STACK dtypes.weakint [3, 4]
-6 Ops.RESHAPE dtypes.float [2, 5]
-7 Ops.MSELECT dtypes.float [6] 0
-8 Ops.COPY dtypes.float [7, 1] ("CPU:0", "CPU:1")
-9 Ops.MSELECT dtypes.float [6] 1
-10 Ops.COPY dtypes.float [9, 1] ("CPU:0", "CPU:1")
-11 Ops.ADD dtypes.float [8, 10]
-12 Ops.SINK dtypes.void [11]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 300000
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.RANGE dtypes.weakint [1] (AxisType.DEVICE, 0)
+3 Ops.BUFFER dtypes.f32 [0, 2] ParamArg(slot=0, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
+4 Ops.CONST dtypes.weakint [] 300
+5 Ops.CONST dtypes.weakint [] 1000
+6 Ops.STACK dtypes.weakint [4, 5]
+7 Ops.RESHAPE dtypes.f32 [3, 6]
+8 Ops.MSELECT dtypes.f32 [7] 0
+9 Ops.COPY dtypes.f32 [8, 2] ("CPU:0", "CPU:1")
+10 Ops.MSELECT dtypes.f32 [7] 1
+11 Ops.COPY dtypes.f32 [10, 2] ("CPU:0", "CPU:1")
+12 Ops.ADD dtypes.f32 [9, 11]
+13 Ops.SINK dtypes.void [12]
 

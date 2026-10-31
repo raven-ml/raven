@@ -1,29 +1,29 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 consts	dtype
-[]	dtypes.float
+[]	dtypes.f32
 [True]	dtypes.bool
 [False, True]	dtypes.bool
 [Invalid]	dtypes.bool
 [Invalid, True]	dtypes.bool
-[1]	dtypes.int
-[True, 2]	dtypes.int
-[True, 3.0]	dtypes.float
-[2, 3.0]	dtypes.float
-[True, 2, 3.0]	dtypes.float
-[1.5]	dtypes.float
-[Invalid, 1.5]	dtypes.float
-[0, 2147483647]	dtypes.int
-[-2147483648, 0]	dtypes.int
-[2147483648]	dtypes.long
-[-2147483649]	dtypes.long
-[9223372036854775807]	dtypes.long
-[9223372036854775808]	dtypes.ulong
-[18446744073709551615]	dtypes.ulong
-[-1, 9223372036854775808]	dtypes.long
+[1]	dtypes.i32
+[True, 2]	dtypes.i32
+[True, 3.0]	dtypes.f32
+[2, 3.0]	dtypes.f32
+[True, 2, 3.0]	dtypes.f32
+[1.5]	dtypes.f32
+[Invalid, 1.5]	dtypes.f32
+[0, 2147483647]	dtypes.i32
+[-2147483648, 0]	dtypes.i32
+[2147483648]	dtypes.i64
+[-2147483649]	dtypes.i64
+[9223372036854775807]	dtypes.i64
+[9223372036854775808]	dtypes.u64
+[18446744073709551615]	dtypes.u64
+[-1, 9223372036854775808]	dtypes.i64
 [18446744073709551616]	raises OverflowError
 [-9223372036854775809]	raises OverflowError
 [18446744073709551616, 18446744073709551616]	raises OverflowError
-[True, 18446744073709551616]	dtypes.long
+[True, 18446744073709551616]	dtypes.i64
 [Invalid, 18446744073709551616]	raises OverflowError
-[Invalid, 1]	dtypes.int
-[False, 2147483648]	dtypes.long
+[Invalid, 1]	dtypes.i32
+[False, 2147483648]	dtypes.i64

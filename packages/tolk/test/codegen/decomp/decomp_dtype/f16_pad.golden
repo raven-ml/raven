@@ -1,0 +1,70 @@
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 12
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+3 Ops.CONST dtypes.weakint [] 3
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.CONST dtypes.weakint [] 4
+7 Ops.MUL dtypes.i32 [5, 6]
+8 Ops.CAST dtypes.i32 [6] dtypes.i32
+9 Ops.SHRINK dtypes.f16 [2, 7, 8]
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.CMPLT dtypes.bool [5, 10]
+12 Ops.CONST dtypes.weakfloat [] 1.5
+13 Ops.CONST dtypes.weakint [] 8
+14 Ops.PARAM dtypes.f16 [13] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+15 Ops.CONST dtypes.bool [] True
+16 Ops.CMPNE dtypes.bool [11, 15]
+17 Ops.CONST dtypes.weakint [] -2
+18 Ops.ADD dtypes.i32 [7, 17]
+19 Ops.CONST dtypes.bool [] Invalid
+20 Ops.WHERE dtypes.i32 [16, 18, 19]
+21 Ops.CONST dtypes.weakint [] 2
+22 Ops.CAST dtypes.i32 [21] dtypes.i32
+23 Ops.SHRINK dtypes.f16 [14, 20, 22]
+24 Ops.LOAD dtypes.f16 [23]
+25 Ops.CONST dtypes.weakint [] 0
+26 Ops.CAST dtypes.i32 [25] dtypes.i32
+27 Ops.INDEX dtypes.f16 [24, 26]
+28 Ops.WHERE dtypes.f16 [11, 12, 27]
+29 Ops.CAST dtypes.i32 [10] dtypes.i32
+30 Ops.INDEX dtypes.f16 [24, 29]
+31 Ops.WHERE dtypes.f16 [11, 12, 30]
+32 Ops.CMPLT dtypes.bool [5, 21]
+33 Ops.WHERE dtypes.i32 [32, 7, 19]
+34 Ops.SHRINK dtypes.f16 [14, 33, 22]
+35 Ops.LOAD dtypes.f16 [34]
+36 Ops.INDEX dtypes.f16 [35, 26]
+37 Ops.WHERE dtypes.f16 [32, 36, 12]
+38 Ops.INDEX dtypes.f16 [35, 29]
+39 Ops.WHERE dtypes.f16 [32, 38, 12]
+40 Ops.STACK dtypes.f16 [28, 31, 37, 39]
+41 Ops.STORE dtypes.void [9, 40]
+42 Ops.AFTER dtypes.void [0, 41]
+43 Ops.END dtypes.void [42, 5]
+44 Ops.SINK dtypes.void [43] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+45 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16, device="CPU") tag=dtypes.f16
+46 Ops.SHRINK dtypes.u16 [45, 7, 8] tag=dtypes.f16
+47 Ops.CONST dtypes.weakint [] 15872
+48 Ops.CAST dtypes.u16 [47] dtypes.u16
+49 Ops.PARAM dtypes.u16 [13] ParamArg(slot=1, dtype=dtypes.u16, device="CPU") tag=dtypes.f16
+50 Ops.SHRINK dtypes.u16 [49, 20, 22] tag=dtypes.f16
+51 Ops.LOAD dtypes.u16 [50]
+52 Ops.INDEX dtypes.u16 [51, 26]
+53 Ops.WHERE dtypes.u16 [11, 48, 52]
+54 Ops.INDEX dtypes.u16 [51, 29]
+55 Ops.WHERE dtypes.u16 [11, 48, 54]
+56 Ops.SHRINK dtypes.u16 [49, 33, 22] tag=dtypes.f16
+57 Ops.LOAD dtypes.u16 [56]
+58 Ops.INDEX dtypes.u16 [57, 26]
+59 Ops.WHERE dtypes.u16 [32, 58, 48]
+60 Ops.INDEX dtypes.u16 [57, 29]
+61 Ops.WHERE dtypes.u16 [32, 60, 48]
+62 Ops.STACK dtypes.u16 [53, 55, 59, 61]
+63 Ops.STORE dtypes.void [46, 62]
+64 Ops.AFTER dtypes.void [0, 63]
+65 Ops.END dtypes.void [64, 5]
+66 Ops.SINK dtypes.void [65] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+67 Ops.SINK dtypes.void [44, 66]
+

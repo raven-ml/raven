@@ -70,7 +70,7 @@ def split(axis, amount, target, top=False):
 
 def local(axis, amount, top=False): return split(axis, amount, AxisType.LOCAL, top)
 def upcast(axis, amount, top=False): return split(axis, amount, AxisType.UPCAST, top)
-def unroll(axis, amount): return split(axis, amount, AxisType.UNROLL)
+def unroll(axis, amount): return split(axis, amount, AxisType.UPCAST)
 def padto(axis, amount): return Opt(OptOps.PADTO, axis, amount)
 def swap(axis, other): return Opt(OptOps.SWAP, axis, other)
 def tensor_core(axis=0, tc_select=-1, tc_opt=0, use_tc=1): return Opt(OptOps.TC, axis, (tc_select, tc_opt, use_tc))
@@ -89,21 +89,21 @@ def custom(outputs, *inputs, fxn):
 
 
 def custom_gemm(C, A, B):
-    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.REDUCE)
+    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.WEAK)
     C = C[i, j].set(0.0)
     prog = C[i, j].store(C.after(k)[i, j] + A[i, k] * B[k, j]).end(k).end(i, j)
     return prog.sink(arg=KernelInfo(name=f"custom_gemm_{C.shape[0]}_{C.shape[1]}_{A.shape[1]}", opts_to_apply=()))
 
 
 def loop_acc_gemm(ACC, A, B):
-    t, j, k = UOp.range(A.shape[0], 0, AxisType.LOOP), UOp.range(B.shape[1], 1), UOp.range(A.shape[1], 2, AxisType.REDUCE)
+    t, j, k = UOp.range(A.shape[0], 0, AxisType.LOOP), UOp.range(B.shape[1], 1), UOp.range(A.shape[1], 2, AxisType.WEAK)
     mm = (A[t, k] * B[k, j]).cast(dtypes.float).reduce(k, arg=Ops.ADD)
     return ACC[j].store(ACC.after(t)[j] + mm).end(t).end(j).sink(arg=KernelInfo(opts_to_apply=()))
 
 
 def contracted_m(n, m, k, dtype_out):
     def kernel(C, A, B):
-        i, j, r = UOp.range(m*2, 0, AxisType.WEAK), UOp.range(n*2, 1), UOp.range(k*2, 2, AxisType.REDUCE)
+        i, j, r = UOp.range(m*2, 0, AxisType.WEAK), UOp.range(n*2, 1), UOp.range(k*2, 2, AxisType.WEAK)
         out = (A[i, r]*B[r, j]).cast(dtype_out).reduce(i, r, arg=Ops.ADD)
         return C[j].store(out).end(j).sink(arg=KernelInfo(opts_to_apply=()))
     return kernel
@@ -149,7 +149,7 @@ def single_kernel_softmax(x):
 def summing_local(size):
     """out[l] = sum over r of a[l*8+r], the thread axis l of size `size`."""
     out, a = UOp.param(0, dtypes.float, 16), UOp.param(1, dtypes.float, 128)
-    l, r = UOp.range(size, 0, AxisType.LOCAL), UOp.range(8, 1, AxisType.REDUCE)
+    l, r = UOp.range(size, 0, AxisType.LOCAL), UOp.range(8, 1, AxisType.WEAK)
     return kernel_of(out.index(l).store(a.index(l*8+r).reduce(r, arg=Ops.ADD)).end(l))
 
 
@@ -176,7 +176,7 @@ def tagged_swap():
 
 def closed_extent():
     # the extent of the outer range is a reduction over a closed range
-    inner = UOp.range(4, 0, AxisType.REDUCE)
+    inner = UOp.range(4, 0, AxisType.WEAK)
     extent = inner.cast(dtypes.int).reduce(inner, arg=Ops.ADD)
     outer = UOp.range(extent, 1)
     out = UOp.param(0, dtypes.int, 32)
@@ -528,7 +528,7 @@ def tensor_core_cases(renderer):
     warp = scheduled(f"tc_{renderer}_64", renderer, [tensor_core()]).axis_types.index(AxisType.WARP)
     case(f"tc_{renderer}_padto_warp", f"tc_{renderer}_64", renderer, [tensor_core(), padto(warp, 7)], ALLOW_TF32=1)
     KERNELS[f"tc_{renderer}_group"] = lambda: tensor_core_matmul(t, 16, 16, 64)
-    reduce = scheduled(f"tc_{renderer}_group", renderer, [tensor_core()], ALLOW_TF32=1).axis_types.index(AxisType.REDUCE)
+    reduce = scheduled(f"tc_{renderer}_group", renderer, [tensor_core()], ALLOW_TF32=1).axes_of(AxisType.WEAK, reduce=True)[0]
     for amount in (2, 4):
         for top in (False, True):
             case(f"tc_{renderer}_group_{amount}{'_top' if top else ''}", f"tc_{renderer}_group", renderer,
@@ -544,7 +544,7 @@ def tensor_core_cases(renderer):
         fxn=contracted_m(n, m, k, t.dtype_out))
     case(f"tc_{renderer}_contracted_m", f"tc_{renderer}_contracted_m", renderer, [tensor_core()], ALLOW_TF32=1)
     KERNELS[f"tc_{renderer}_ragged"] = lambda: tensor_core_matmul(t, m*2+1, n*2+1, k*3-1)
-    ragged = scheduled(f"tc_{renderer}_ragged", renderer, [tensor_core(tc_opt=2)], ALLOW_TF32=1).axis_types.index(AxisType.REDUCE)
+    ragged = scheduled(f"tc_{renderer}_ragged", renderer, [tensor_core(tc_opt=2)], ALLOW_TF32=1).axes_of(AxisType.WEAK, reduce=True)[0]
     case(f"tc_{renderer}_padto_unroll", f"tc_{renderer}_ragged", renderer,
          [tensor_core(tc_opt=2), padto(ragged, 4), unroll(ragged, 2), unroll(ragged, 0)], ALLOW_TF32=1)
     KERNELS[f"tc_{renderer}_shifted"] = lambda: last(
@@ -569,7 +569,7 @@ def half_accumulate_cases(renderer):
     if t is None: return
     kernel = f"tc_{renderer}_half_128"
     KERNELS[kernel] = lambda: last(empty(128, 128, dtype=dtypes.half).matmul(empty(128, 128, dtype=dtypes.half), dtype=dtypes.half))
-    r = scheduled(kernel, renderer, [tensor_core()]).axis_types.index(AxisType.REDUCE)
+    r = scheduled(kernel, renderer, [tensor_core()]).axes_of(AxisType.WEAK, reduce=True)[0]
     for n, opts in enumerate([
         [], [upcast(0, 4)], [upcast(1, 4)], [upcast(0, 4), upcast(1, 4)], [unroll(r, 2)], [upcast(0, 4), unroll(r+1, 2)],
         [upcast(0, 4), upcast(1, 4), unroll(r+2, 2)], [upcast(0, 4), upcast(1, 4), unroll(r+2, 4)],
@@ -672,7 +672,7 @@ def sints(xs): return "[" + ", ".join(map(sint, xs)) + "]"
 
 
 def rngs_cell(rngs):
-    return " ".join("_".join(map(str, r.arg[:-1])) + f":{r.vmax+1}:{r.arg[-1].name}" for r in rngs)
+    return " ".join("_".join(map(str, r.axis_id)) + f":{r.vmax+1}:{r.axis_type.name}" for r in rngs)
 
 
 def made(ret):
@@ -692,8 +692,8 @@ def axes():
             for opt in opts: ret = k.apply_opt(opt)
         # a size that does not render on one line is pinned by the case's graph
         if any("\n" in sint(x) for x in k.full_shape): continue
-        rows.append((name, k.shape_len, sints(k.full_shape), repr(k.axis_types), repr(k.reduce_axes), repr(k.upcastable_dims),
-                     repr(k.unrollable_dims), k.upcasted, sint(k.upcast_size()), k.group_for_reduces, len(k.reduceops),
+        rows.append((name, k.shape_len, sints(k.full_shape), repr(k.axis_types), repr(k.axes_of(reduce=True)), repr(k.upcastable_dims()),
+                     repr(k.upcastable_dims(reduce=True)), len(k.axes_of(AxisType.UPCAST)), sint(k.upcast_size()), k.group_for_reduces, len(k.reduceops),
                      len(k.bufs), k.colored_shape(), rngs_cell(made(ret)) if opts else ""))
     return ["case", "shape_len", "full_shape", "axis_types", "reduce_axes", "upcastable_dims", "unrollable_dims",
             "upcasted", "upcast_size", "group_for_reduces", "reduceops", "bufs", "colored_shape", "made"], rows

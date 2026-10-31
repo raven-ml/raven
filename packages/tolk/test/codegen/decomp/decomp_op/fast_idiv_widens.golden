@@ -1,10 +1,11 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.short [] ParamArg(slot=-1, dtype=dtypes.short, vmin_vmax=(0, 1000), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-1 Ops.CAST dtypes.int [0] dtypes.int
-2 Ops.CONST dtypes.weakint [] 683
-3 Ops.MUL dtypes.int [1, 2]
-4 Ops.CONST dtypes.weakint [] 11
-5 Ops.SHR dtypes.int [3, 4]
-6 Ops.CAST dtypes.short [5] dtypes.short
-7 Ops.SINK dtypes.void [0, 6]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.i16 [0] ParamArg(slot=-1, dtype=dtypes.i16, vmin_vmax=(0, 1000), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+2 Ops.CAST dtypes.i32 [1] dtypes.i32
+3 Ops.CONST dtypes.weakint [] 683
+4 Ops.MUL dtypes.i32 [2, 3]
+5 Ops.CONST dtypes.weakint [] 11
+6 Ops.SHR dtypes.i32 [4, 5]
+7 Ops.CAST dtypes.i16 [6] dtypes.i16
+8 Ops.SINK dtypes.void [1, 7]
 

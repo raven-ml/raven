@@ -1,30 +1,32 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.ushort [] ParamArg(slot=0, dtype=dtypes.ushort, size=8, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.SPECIAL dtypes.int [2] "lidx0"
-4 Ops.CONST dtypes.weakint [] 1
-5 Ops.CAST dtypes.int [4] dtypes.int
-6 Ops.SHL dtypes.int [3, 5]
-7 Ops.INDEX dtypes.ushort [0, 6]
-8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
-9 Ops.INDEX dtypes.float [8, 3]
-10 Ops.LOAD dtypes.float [9]
-11 Ops.BITCAST dtypes.uint [10] dtypes.uint
-12 Ops.CAST dtypes.ushort [11] dtypes.ushort
-13 Ops.STORE dtypes.void [7, 12]
-14 Ops.ADD dtypes.int [6, 5]
-15 Ops.INDEX dtypes.ushort [0, 14]
-16 Ops.CONST dtypes.weakint [] 16
-17 Ops.CAST dtypes.uint [16] dtypes.uint
-18 Ops.SHR dtypes.uint [11, 17]
-19 Ops.CAST dtypes.ushort [18] dtypes.ushort
-20 Ops.STORE dtypes.void [15, 19]
-21 Ops.GROUP dtypes.void [13, 20]
-22 Ops.SINK dtypes.void [21] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
-23 Ops.SINK dtypes.void [21] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=4, lds=32, mem=32)) tag=1
-24 Ops.LINEAR dtypes.void [0, 8, 1, 2, 3, 9, 10, 4, 5, 6, 14, 15, 7, 16, 17, 11, 12, 18, 19, 20, 13, 21, 22]
-25 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_2(unsigned short* data0_8, float* data1_4) {\n  int lidx0 = __ockl_get_local_id(0); /* 4 */\n  float val0 = (*(data1_4+lidx0));\n  int alu0 = (lidx0<<1);\n  unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)(val0));\n  *(data0_8+(alu0+1)) = ((unsigned short)((cast0>>16u)));\n  *(data0_8+alu0) = ((unsigned short)(cast0));\n}"
-26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(local_size=(4, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
-27 Ops.SINK dtypes.void [22, 26]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.PARAM dtypes.u16 [1] ParamArg(slot=0, dtype=dtypes.u16, device="CPU")
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.SHL dtypes.i32 [5, 7]
+9 Ops.INDEX dtypes.u16 [2, 8]
+10 Ops.PARAM dtypes.f32 [3] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+11 Ops.INDEX dtypes.f32 [10, 5]
+12 Ops.LOAD dtypes.f32 [11]
+13 Ops.BITCAST dtypes.u32 [12] dtypes.u32
+14 Ops.CAST dtypes.u16 [13] dtypes.u16
+15 Ops.STORE dtypes.void [9, 14]
+16 Ops.ADD dtypes.i32 [8, 7]
+17 Ops.INDEX dtypes.u16 [2, 16]
+18 Ops.CONST dtypes.weakint [] 16
+19 Ops.CAST dtypes.u32 [18] dtypes.u32
+20 Ops.SHR dtypes.u32 [13, 19]
+21 Ops.CAST dtypes.u16 [20] dtypes.u16
+22 Ops.STORE dtypes.void [17, 21]
+23 Ops.AFTER dtypes.void [0, 15, 22]
+24 Ops.SINK dtypes.void [23] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
+25 Ops.SINK dtypes.void [23] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=4, lds=32, mem=32)) tag=1
+26 Ops.LINEAR dtypes.void [1, 2, 3, 10, 4, 5, 11, 12, 0, 6, 7, 8, 16, 17, 9, 13, 14, 18, 19, 20, 21, 22, 15, 23, 24]
+27 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_2(unsigned short* data0_8, float* data1_4) {\n  int lidx0 = __ockl_get_local_id(0); /* 4 */\n  float val0 = (*(data1_4+lidx0));\n  int alu0 = (lidx0<<1);\n  unsigned int cast0 = __builtin_bit_cast(unsigned int, (float)(val0));\n  *(data0_8+(alu0+1)) = ((unsigned short)((cast0>>16u)));\n  *(data0_8+alu0) = ((unsigned short)(cast0));\n}"
+28 Ops.PROGRAM dtypes.void [25, 26, 27] ProgramInfo(local_size=(4, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+29 Ops.SINK dtypes.void [24, 28]
 

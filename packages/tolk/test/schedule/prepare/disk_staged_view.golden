@@ -1,12 +1,13 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=4, device="CPU")
-1 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=16, device="DISK:/tmp/tolk-prepare")
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.CONST dtypes.weakint [] 4
-4 Ops.SHRINK dtypes.uchar [1, 2, 3]
-5 Ops.STAGE dtypes.uchar [4]
-6 Ops.COPY dtypes.uchar [5] "CPU"
-7 Ops.STORE dtypes.void [0, 6]
-8 Ops.AFTER dtypes.uchar [0, 7]
-9 Ops.SINK dtypes.void [8]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.u8 [0] ParamArg(slot=0, dtype=dtypes.u8, device="CPU")
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.PARAM dtypes.u8 [2] ParamArg(slot=1, dtype=dtypes.u8, device="DISK:/tmp/tolk-prepare")
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.SHRINK dtypes.u8 [3, 4, 0]
+6 Ops.STAGE dtypes.u8 [5]
+7 Ops.COPY dtypes.u8 [6] "CPU"
+8 Ops.STORE dtypes.void [1, 7]
+9 Ops.AFTER dtypes.u8 [1, 8]
+10 Ops.SINK dtypes.void [9]
 

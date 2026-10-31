@@ -1,28 +1,30 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device=("CPU", "CPU:1"))
-1 Ops.CONST dtypes.weakint [] 2
-2 Ops.CONST dtypes.weakint [] 8
-3 Ops.STACK dtypes.weakint [1, 1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.CONST dtypes.weakint [] 0
-6 Ops.STACK dtypes.weakint [5, 5, 5]
-7 Ops.SHRINK dtypes.float [4, 6, 3]
-8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device=("CPU", "CPU:1"))
-9 Ops.STACK dtypes.weakint [1, 2]
-10 Ops.RESHAPE dtypes.float [8, 9]
-11 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=32, device=("CPU", "CPU:1"))
-12 Ops.CONST dtypes.weakint [] 4
-13 Ops.STACK dtypes.weakint [12, 2]
-14 Ops.RESHAPE dtypes.float [11, 13]
-15 Ops.RANGE dtypes.weakint [1] (-1, AxisType.DEVICE)
-16 Ops.MUL dtypes.weakint [15, 1]
-17 Ops.STACK dtypes.weakint [16, 5]
-18 Ops.SHRINK dtypes.float [14, 17, 9]
-19 Ops.STACK dtypes.float [10, 18]
-20 Ops.CONST dtypes.weakfloat [] 1.0
-21 Ops.ADD dtypes.float [19, 20]
-22 Ops.STORE dtypes.void [7, 21]
-23 Ops.AFTER dtypes.float [4, 22]
-24 Ops.UNSHARD dtypes.float [23, 15] (1,)
-25 Ops.SINK dtypes.void [24]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.STACK dtypes.weakint [2, 2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.STACK dtypes.weakint [6, 6, 6]
+8 Ops.SHRINK dtypes.f32 [5, 7, 4]
+9 Ops.CONST dtypes.weakint [] 16
+10 Ops.PARAM dtypes.f32 [9] ParamArg(slot=1, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+11 Ops.STACK dtypes.weakint [2, 3]
+12 Ops.RESHAPE dtypes.f32 [10, 11]
+13 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+14 Ops.CONST dtypes.weakint [] 4
+15 Ops.STACK dtypes.weakint [14, 3]
+16 Ops.RESHAPE dtypes.f32 [13, 15]
+17 Ops.RANGE dtypes.weakint [2] (AxisType.DEVICE, 0)
+18 Ops.MUL dtypes.weakint [17, 2]
+19 Ops.STACK dtypes.weakint [18, 6]
+20 Ops.SHRINK dtypes.f32 [16, 19, 11]
+21 Ops.STACK dtypes.f32 [12, 20]
+22 Ops.CONST dtypes.weakfloat [] 1.0
+23 Ops.ADD dtypes.f32 [21, 22]
+24 Ops.STORE dtypes.void [8, 23]
+25 Ops.AFTER dtypes.f32 [5, 24]
+26 Ops.UNSHARD dtypes.f32 [25, 17] (1,)
+27 Ops.SINK dtypes.void [26]
 

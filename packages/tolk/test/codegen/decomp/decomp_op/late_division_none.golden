@@ -1,13 +1,14 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float)
-1 Ops.RECIPROCAL dtypes.float [0]
-2 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
-3 Ops.CONST dtypes.weakfloat [] 1.0
-4 Ops.CAST dtypes.float [3] dtypes.float
-5 Ops.FDIV dtypes.float [4, 0]
-6 Ops.MUL dtypes.float [2, 5]
-7 Ops.MUL dtypes.float [5, 2]
-8 Ops.MUL dtypes.float [2, 1]
-9 Ops.SINK dtypes.void [1, 6, 7, 8]
-10 Ops.SINK dtypes.void [9, 9]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32)
+2 Ops.RECIPROCAL dtypes.f32 [1]
+3 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+4 Ops.CONST dtypes.weakfloat [] 1.0
+5 Ops.CAST dtypes.f32 [4] dtypes.f32
+6 Ops.FDIV dtypes.f32 [5, 1]
+7 Ops.MUL dtypes.f32 [3, 6]
+8 Ops.MUL dtypes.f32 [6, 3]
+9 Ops.MUL dtypes.f32 [3, 2]
+10 Ops.SINK dtypes.void [2, 7, 8, 9]
+11 Ops.SINK dtypes.void [10, 10]
 

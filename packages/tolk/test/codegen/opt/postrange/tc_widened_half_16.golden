@@ -1,24 +1,25 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU")
-1 Ops.CONST dtypes.weakint [] 16
-2 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
-3 Ops.MUL dtypes.weakint [2, 1]
-4 Ops.RANGE dtypes.weakint [1] (2, AxisType.WEAK)
-5 Ops.ADD dtypes.weakint [3, 4]
-6 Ops.INDEX dtypes.float [0, 5]
-7 Ops.PARAM dtypes.half [] ParamArg(slot=1, dtype=dtypes.half, size=256, device="CPU")
-8 Ops.RANGE dtypes.weakint [1] (0, AxisType.REDUCE)
-9 Ops.ADD dtypes.weakint [3, 8]
-10 Ops.INDEX dtypes.half [7, 9]
-11 Ops.CAST dtypes.float [10] dtypes.float
-12 Ops.PARAM dtypes.half [] ParamArg(slot=2, dtype=dtypes.half, size=256, device="CPU")
-13 Ops.MUL dtypes.weakint [8, 1]
-14 Ops.ADD dtypes.weakint [13, 4]
-15 Ops.INDEX dtypes.half [12, 14]
-16 Ops.CAST dtypes.float [15] dtypes.float
-17 Ops.MUL dtypes.float [11, 16]
-18 Ops.REDUCE dtypes.float [17, 8] (Ops.ADD, 0)
-19 Ops.STORE dtypes.void [6, 18]
-20 Ops.END dtypes.void [19, 2, 4]
-21 Ops.SINK dtypes.void [20] KernelInfo()
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.MUL dtypes.weakint [3, 2]
+5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 2)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.f32 [1, 6]
+8 Ops.PARAM dtypes.f16 [0] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+9 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+10 Ops.ADD dtypes.weakint [4, 9]
+11 Ops.INDEX dtypes.f16 [8, 10]
+12 Ops.CAST dtypes.f32 [11] dtypes.f32
+13 Ops.PARAM dtypes.f16 [0] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+14 Ops.MUL dtypes.weakint [9, 2]
+15 Ops.ADD dtypes.weakint [14, 5]
+16 Ops.INDEX dtypes.f16 [13, 15]
+17 Ops.CAST dtypes.f32 [16] dtypes.f32
+18 Ops.MUL dtypes.f32 [12, 17]
+19 Ops.REDUCE dtypes.f32 [18, 9] (Ops.ADD, 0)
+20 Ops.STORE dtypes.void [7, 19]
+21 Ops.END dtypes.void [20, 3, 5]
+22 Ops.SINK dtypes.void [21] KernelInfo()
 

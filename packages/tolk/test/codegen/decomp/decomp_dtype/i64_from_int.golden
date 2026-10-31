@@ -1,0 +1,90 @@
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.PARAM dtypes.i64 [1] ParamArg(slot=0, dtype=dtypes.i64, device="CPU")
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.RANGE dtypes.i32 [4] (AxisType.WEAK, 0)
+6 Ops.CONST dtypes.weakint [] 4
+7 Ops.MUL dtypes.i32 [5, 6]
+8 Ops.INDEX dtypes.i64 [2, 7]
+9 Ops.PARAM dtypes.i32 [1] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+10 Ops.CAST dtypes.i32 [6] dtypes.i32
+11 Ops.SHRINK dtypes.i32 [9, 7, 10]
+12 Ops.LOAD dtypes.i32 [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.i32 [13] dtypes.i32
+15 Ops.INDEX dtypes.i32 [12, 14]
+16 Ops.CAST dtypes.i64 [15] dtypes.i64
+17 Ops.STORE dtypes.void [8, 16]
+18 Ops.CONST dtypes.weakint [] 1
+19 Ops.ADD dtypes.i32 [7, 18]
+20 Ops.INDEX dtypes.i64 [2, 19]
+21 Ops.CAST dtypes.i32 [18] dtypes.i32
+22 Ops.INDEX dtypes.i32 [12, 21]
+23 Ops.CAST dtypes.i64 [22] dtypes.i64
+24 Ops.STORE dtypes.void [20, 23]
+25 Ops.ADD dtypes.i32 [7, 3]
+26 Ops.INDEX dtypes.i64 [2, 25]
+27 Ops.INDEX dtypes.i32 [12, 4]
+28 Ops.CAST dtypes.i64 [27] dtypes.i64
+29 Ops.STORE dtypes.void [26, 28]
+30 Ops.CONST dtypes.weakint [] 3
+31 Ops.ADD dtypes.i32 [7, 30]
+32 Ops.INDEX dtypes.i64 [2, 31]
+33 Ops.CAST dtypes.i32 [30] dtypes.i32
+34 Ops.INDEX dtypes.i32 [12, 33]
+35 Ops.CAST dtypes.i64 [34] dtypes.i64
+36 Ops.STORE dtypes.void [32, 35]
+37 Ops.AFTER dtypes.void [0, 17, 24, 29, 36]
+38 Ops.END dtypes.void [37, 5]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+40 Ops.CONST dtypes.weakint [] 16
+41 Ops.PARAM dtypes.i32 [40] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+42 Ops.MUL dtypes.i32 [7, 3]
+43 Ops.ADD dtypes.i32 [42, 13]
+44 Ops.INDEX dtypes.i32 [41, 43]
+45 Ops.STORE dtypes.void [44, 15]
+46 Ops.ADD dtypes.i32 [42, 18]
+47 Ops.INDEX dtypes.i32 [41, 46]
+48 Ops.CMPLT dtypes.bool [15, 14]
+49 Ops.CONST dtypes.weakint [] -1
+50 Ops.CAST dtypes.i32 [49] dtypes.i32
+51 Ops.WHERE dtypes.i32 [48, 50, 14]
+52 Ops.STORE dtypes.void [47, 51]
+53 Ops.AFTER dtypes.void [0, 45, 52]
+54 Ops.MUL dtypes.i32 [19, 3]
+55 Ops.ADD dtypes.i32 [54, 13]
+56 Ops.INDEX dtypes.i32 [41, 55]
+57 Ops.STORE dtypes.void [56, 22]
+58 Ops.ADD dtypes.i32 [54, 18]
+59 Ops.INDEX dtypes.i32 [41, 58]
+60 Ops.CMPLT dtypes.bool [22, 14]
+61 Ops.WHERE dtypes.i32 [60, 50, 14]
+62 Ops.STORE dtypes.void [59, 61]
+63 Ops.AFTER dtypes.void [0, 57, 62]
+64 Ops.MUL dtypes.i32 [25, 3]
+65 Ops.ADD dtypes.i32 [64, 13]
+66 Ops.INDEX dtypes.i32 [41, 65]
+67 Ops.STORE dtypes.void [66, 27]
+68 Ops.ADD dtypes.i32 [64, 18]
+69 Ops.INDEX dtypes.i32 [41, 68]
+70 Ops.CMPLT dtypes.bool [27, 14]
+71 Ops.WHERE dtypes.i32 [70, 50, 14]
+72 Ops.STORE dtypes.void [69, 71]
+73 Ops.AFTER dtypes.void [0, 67, 72]
+74 Ops.MUL dtypes.i32 [31, 3]
+75 Ops.ADD dtypes.i32 [74, 13]
+76 Ops.INDEX dtypes.i32 [41, 75]
+77 Ops.STORE dtypes.void [76, 34]
+78 Ops.ADD dtypes.i32 [74, 18]
+79 Ops.INDEX dtypes.i32 [41, 78]
+80 Ops.CMPLT dtypes.bool [34, 14]
+81 Ops.WHERE dtypes.i32 [80, 50, 14]
+82 Ops.STORE dtypes.void [79, 81]
+83 Ops.AFTER dtypes.void [0, 77, 82]
+84 Ops.AFTER dtypes.void [0, 53, 63, 73, 83]
+85 Ops.END dtypes.void [84, 5]
+86 Ops.SINK dtypes.void [85] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+87 Ops.SINK dtypes.void [39, 86]
+

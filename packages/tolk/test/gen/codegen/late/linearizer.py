@@ -86,7 +86,7 @@ KERNELS = {
     "range_outer_op_before_phi": (lambda: with_opts(last(
         (Tensor.empty(4, 1, device="CPU") + (b := Tensor.empty(1, 1, device="CPU"))[0]).sum() + b[0]), []), CPU, ""),
     "simple_unroll": (lambda: with_opts(last((Tensor.empty(64, 64, device="CPU") @ Tensor.empty(64, 64, device="CPU")).relu()),
-                                        [Opt(OptOps.SPLIT, 2, (4, AxisType.UNROLL)), Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST))]),
+                                        [Opt(OptOps.SPLIT, 2, (4, AxisType.UPCAST)), Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST))]),
                       CPU, ""),
     "wait_loop": (wait_loop(wait_loop_kernel), CPU, ""),
     "nested_loop": (wait_loop(nested_loop_kernel), CPU, "c"),
@@ -208,8 +208,8 @@ def orders_output_toposort():
 
 def splits():
     r0, r1, r2 = (UOp.range(4, i, AxisType.LOOP) for i in range(3))
-    g, lp, rd = UOp.range(4, 0, AxisType.GLOBAL), UOp.range(4, 1, AxisType.LOOP), UOp.range(4, 2, AxisType.REDUCE)
-    a, b, c = (UOp(Ops.RANGE, src=(UOp.const(4),), arg=(*i, AxisType.LOOP)) for i in ((0, 1), (0, 2), (1,)))
+    g, lp, rd = UOp.range(4, 0, AxisType.GLOBAL), UOp.range(4, 1, AxisType.LOOP), UOp.range(4, 2, AxisType.WEAK)
+    a, b, c = (UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.LOOP, *i)) for i in ((0, 1), (0, 2), (1,)))
     u = store_in(0, r0, r1, r2)
     return [
         ("one_range", store_in(0, r0).end(r0)),

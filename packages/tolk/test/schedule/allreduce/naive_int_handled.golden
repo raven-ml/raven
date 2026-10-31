@@ -1,14 +1,15 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.CONST dtypes.weakint [] 3
-1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
-2 Ops.BUFFER dtypes.int [1] ParamArg(slot=0, dtype=dtypes.int, size=6, device=("CPU:0", "CPU:1", "CPU:2"))
-3 Ops.MSELECT dtypes.int [2] 0
-4 Ops.COPY dtypes.int [3, 1] ("CPU:0", "CPU:1", "CPU:2")
-5 Ops.MSELECT dtypes.int [2] 1
-6 Ops.COPY dtypes.int [5, 1] ("CPU:0", "CPU:1", "CPU:2")
-7 Ops.ADD dtypes.int [4, 6]
-8 Ops.MSELECT dtypes.int [2] 2
-9 Ops.COPY dtypes.int [8, 1] ("CPU:0", "CPU:1", "CPU:2")
-10 Ops.ADD dtypes.int [7, 9]
-11 Ops.SINK dtypes.void [10]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 6
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.RANGE dtypes.weakint [1] (AxisType.DEVICE, 0)
+3 Ops.BUFFER dtypes.i32 [0, 2] ParamArg(slot=0, dtype=dtypes.i32, device=("CPU:0", "CPU:1", "CPU:2"))
+4 Ops.MSELECT dtypes.i32 [3] 0
+5 Ops.COPY dtypes.i32 [4, 2] ("CPU:0", "CPU:1", "CPU:2")
+6 Ops.MSELECT dtypes.i32 [3] 1
+7 Ops.COPY dtypes.i32 [6, 2] ("CPU:0", "CPU:1", "CPU:2")
+8 Ops.ADD dtypes.i32 [5, 7]
+9 Ops.MSELECT dtypes.i32 [3] 2
+10 Ops.COPY dtypes.i32 [9, 2] ("CPU:0", "CPU:1", "CPU:2")
+11 Ops.ADD dtypes.i32 [8, 10]
+12 Ops.SINK dtypes.void [11]
 

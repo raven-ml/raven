@@ -1,37 +1,38 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=40, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.CONST dtypes.weakint [] 10
-4 Ops.MUL dtypes.weakint [2, 3]
-5 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
-6 Ops.ADD dtypes.weakint [4, 5]
-7 Ops.INDEX dtypes.float [0, 6]
-8 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=4, device="CPU")
-9 Ops.INDEX dtypes.int [8, 2]
-10 Ops.CONST dtypes.bool [] True
-11 Ops.RANGE dtypes.weakint [3] (2, AxisType.WEAK)
-12 Ops.RANGE dtypes.weakint [3] (3, AxisType.REDUCE)
-13 Ops.ADD dtypes.weakint [11, 12]
-14 Ops.CONST dtypes.weakint [] 9
-15 Ops.CMPLT dtypes.bool [13, 14]
-16 Ops.CMPNE dtypes.bool [15, 10]
-17 Ops.AND dtypes.bool [10, 16]
-18 Ops.CONST dtypes.weakint [] 1
-19 Ops.CAST dtypes.int [18] dtypes.int
-20 Ops.CONST dtypes.weakint [] 0
-21 Ops.WHERE dtypes.int [17, 19, 20]
-22 Ops.REDUCE dtypes.int [21, 12] (Ops.ADD, 0)
-23 Ops.STAGE dtypes.int [22, 11] BufferizeOpts(device="CPU", broadcast=True)
-24 Ops.INDEX dtypes.int [23, 5]
-25 Ops.CONST dtypes.weakint [] -1
-26 Ops.ADD dtypes.int [24, 25]
-27 Ops.CMPNE dtypes.bool [9, 26]
-28 Ops.CMPNE dtypes.bool [27, 10]
-29 Ops.WHERE dtypes.weakint [28, 18, 20]
-30 Ops.CAST dtypes.float [29] dtypes.float
-31 Ops.STORE dtypes.void [7, 30]
-32 Ops.END dtypes.void [31, 2, 5]
-33 Ops.AFTER dtypes.float [0, 32]
-34 Ops.SINK dtypes.void [33]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 40
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.CONST dtypes.weakint [] 10
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 1)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.f32 [1, 7]
+9 Ops.PARAM dtypes.i32 [2] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+10 Ops.INDEX dtypes.i32 [9, 3]
+11 Ops.CONST dtypes.bool [] True
+12 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 2)
+13 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 3)
+14 Ops.ADD dtypes.weakint [12, 13]
+15 Ops.CONST dtypes.weakint [] 9
+16 Ops.CMPLT dtypes.bool [14, 15]
+17 Ops.CMPNE dtypes.bool [16, 11]
+18 Ops.AND dtypes.bool [11, 17]
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.CONST dtypes.weakint [] 0
+22 Ops.WHERE dtypes.i32 [18, 20, 21]
+23 Ops.REDUCE dtypes.i32 [22, 13] (Ops.ADD, 0)
+24 Ops.STAGE dtypes.i32 [23, 12] BufferizeOpts(device="CPU", broadcast=True)
+25 Ops.INDEX dtypes.i32 [24, 6]
+26 Ops.CONST dtypes.weakint [] -1
+27 Ops.ADD dtypes.i32 [25, 26]
+28 Ops.CMPNE dtypes.bool [10, 27]
+29 Ops.CMPNE dtypes.bool [28, 11]
+30 Ops.WHERE dtypes.weakint [29, 19, 21]
+31 Ops.CAST dtypes.f32 [30] dtypes.f32
+32 Ops.STORE dtypes.void [8, 31]
+33 Ops.END dtypes.void [32, 3, 6]
+34 Ops.AFTER dtypes.f32 [1, 33]
+35 Ops.SINK dtypes.void [34]
 

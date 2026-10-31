@@ -1,69 +1,72 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024, device="CPU")
-1 Ops.CONST dtypes.weakint [] 8
-2 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
-3 Ops.CONST dtypes.weakint [] 2
-4 Ops.MUL dtypes.weakint [2, 3]
-5 Ops.RANGE dtypes.weakint [3] (3, AxisType.UPCAST)
-6 Ops.ADD dtypes.weakint [4, 5]
-7 Ops.CONST dtypes.weakint [] 64
-8 Ops.MUL dtypes.weakint [6, 7]
-9 Ops.RANGE dtypes.weakint [7] (2, AxisType.WEAK)
-10 Ops.ADD dtypes.weakint [8, 9]
-11 Ops.INDEX dtypes.float [0, 10]
-12 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1024, device="CPU")
-13 Ops.CONST dtypes.weakint [] 4
-14 Ops.RANGE dtypes.weakint [13] (0, 0, AxisType.REDUCE)
-15 Ops.MUL dtypes.weakint [14, 1]
-16 Ops.RANGE dtypes.weakint [1] (5, AxisType.UNROLL)
-17 Ops.ADD dtypes.weakint [15, 16]
-18 Ops.MUL dtypes.weakint [17, 3]
-19 Ops.CONST dtypes.weakint [] 1
-20 Ops.RANGE dtypes.weakint [19] (0, 1, AxisType.REDUCE)
-21 Ops.MUL dtypes.weakint [20, 3]
-22 Ops.RANGE dtypes.weakint [3] (4, AxisType.UNROLL)
-23 Ops.ADD dtypes.weakint [21, 22]
-24 Ops.ADD dtypes.weakint [18, 23]
-25 Ops.ADD dtypes.weakint [24, 8]
-26 Ops.INDEX dtypes.float [12, 25]
-27 Ops.CONST dtypes.weakint [] 0
-28 Ops.CMPNE dtypes.bool [23, 27]
-29 Ops.PARAM dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=8192, device="CPU")
-30 Ops.CONST dtypes.weakint [] 32
-31 Ops.MUL dtypes.weakint [9, 30]
-32 Ops.ADD dtypes.weakint [31, 17]
-33 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=8, device="CPU")
-34 Ops.FLOORDIV dtypes.weakint [6, 3]
-35 Ops.INDEX dtypes.int [33, 34]
-36 Ops.MAX dtypes.int [35, 27]
-37 Ops.CONST dtypes.weakint [] -1
-38 Ops.XOR dtypes.int [36, 37]
-39 Ops.CONST dtypes.weakint [] -4
-40 Ops.MAX dtypes.int [38, 39]
-41 Ops.XOR dtypes.int [40, 37]
-42 Ops.CAST dtypes.weakint [41] dtypes.weakint
-43 Ops.CONST dtypes.weakint [] 2048
-44 Ops.MUL dtypes.weakint [42, 43]
-45 Ops.ADD dtypes.weakint [32, 44]
-46 Ops.INDEX dtypes.uchar [29, 45]
-47 Ops.SHR dtypes.uchar [46, 13]
-48 Ops.CONST dtypes.weakint [] 15
-49 Ops.AND dtypes.uchar [46, 48]
-50 Ops.WHERE dtypes.uchar [28, 47, 49]
-51 Ops.CAST dtypes.float [50] dtypes.float
-52 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=512, device="CPU")
-53 Ops.MUL dtypes.weakint [9, 3]
-54 Ops.CONST dtypes.weakint [] 16
-55 Ops.FLOORDIV dtypes.weakint [17, 54]
-56 Ops.ADD dtypes.weakint [53, 55]
-57 Ops.CONST dtypes.weakint [] 128
-58 Ops.MUL dtypes.weakint [42, 57]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 1024
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 3)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 64
+9 Ops.MUL dtypes.weakint [7, 8]
+10 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 2)
+11 Ops.ADD dtypes.weakint [9, 10]
+12 Ops.INDEX dtypes.f32 [1, 11]
+13 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+14 Ops.CONST dtypes.weakint [] 4
+15 Ops.RANGE dtypes.weakint [14] (AxisType.WEAK, 0, 0)
+16 Ops.MUL dtypes.weakint [15, 2]
+17 Ops.RANGE dtypes.weakint [2] (AxisType.UPCAST, 5)
+18 Ops.ADD dtypes.weakint [16, 17]
+19 Ops.MUL dtypes.weakint [18, 4]
+20 Ops.CONST dtypes.weakint [] 1
+21 Ops.RANGE dtypes.weakint [20] (AxisType.WEAK, 0, 1)
+22 Ops.MUL dtypes.weakint [21, 4]
+23 Ops.RANGE dtypes.weakint [4] (AxisType.UPCAST, 4)
+24 Ops.ADD dtypes.weakint [22, 23]
+25 Ops.ADD dtypes.weakint [19, 24]
+26 Ops.ADD dtypes.weakint [25, 9]
+27 Ops.INDEX dtypes.f32 [13, 26]
+28 Ops.CONST dtypes.weakint [] 0
+29 Ops.CMPNE dtypes.bool [24, 28]
+30 Ops.CONST dtypes.weakint [] 8192
+31 Ops.PARAM dtypes.u8 [30] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")
+32 Ops.CONST dtypes.weakint [] 32
+33 Ops.MUL dtypes.weakint [10, 32]
+34 Ops.ADD dtypes.weakint [33, 18]
+35 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")
+36 Ops.FLOORDIV dtypes.weakint [7, 4]
+37 Ops.INDEX dtypes.i32 [35, 36]
+38 Ops.MAX dtypes.i32 [37, 28]
+39 Ops.CONST dtypes.weakint [] -1
+40 Ops.XOR dtypes.i32 [38, 39]
+41 Ops.CONST dtypes.weakint [] -4
+42 Ops.MAX dtypes.i32 [40, 41]
+43 Ops.XOR dtypes.i32 [42, 39]
+44 Ops.CAST dtypes.weakint [43] dtypes.weakint
+45 Ops.CONST dtypes.weakint [] 2048
+46 Ops.MUL dtypes.weakint [44, 45]
+47 Ops.ADD dtypes.weakint [34, 46]
+48 Ops.INDEX dtypes.u8 [31, 47]
+49 Ops.SHR dtypes.u8 [48, 14]
+50 Ops.CONST dtypes.weakint [] 15
+51 Ops.AND dtypes.u8 [48, 50]
+52 Ops.WHERE dtypes.u8 [29, 49, 51]
+53 Ops.CAST dtypes.f32 [52] dtypes.f32
+54 Ops.CONST dtypes.weakint [] 512
+55 Ops.PARAM dtypes.f32 [54] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+56 Ops.MUL dtypes.weakint [10, 4]
+57 Ops.CONST dtypes.weakint [] 16
+58 Ops.FLOORDIV dtypes.weakint [18, 57]
 59 Ops.ADD dtypes.weakint [56, 58]
-60 Ops.INDEX dtypes.float [52, 59]
-61 Ops.MUL dtypes.float [51, 60]
-62 Ops.MUL dtypes.float [26, 61]
-63 Ops.REDUCE dtypes.float [62, 14, 16, 20, 22] (Ops.ADD, 0)
-64 Ops.STORE dtypes.void [11, 63]
-65 Ops.END dtypes.void [64, 2, 5, 9]
-66 Ops.SINK dtypes.void [65] KernelInfo(name="r_8_64_2_4_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=3, arg=(8, AxisType.UNROLL)))) tag=1
+60 Ops.CONST dtypes.weakint [] 128
+61 Ops.MUL dtypes.weakint [44, 60]
+62 Ops.ADD dtypes.weakint [59, 61]
+63 Ops.INDEX dtypes.f32 [55, 62]
+64 Ops.MUL dtypes.f32 [53, 63]
+65 Ops.MUL dtypes.f32 [27, 64]
+66 Ops.REDUCE dtypes.f32 [65, 15, 17, 21, 23] (Ops.ADD, 0)
+67 Ops.STORE dtypes.void [12, 66]
+68 Ops.END dtypes.void [67, 3, 6, 10]
+69 Ops.SINK dtypes.void [68] KernelInfo(name="r_8_64_2_4_2_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=4, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=3, arg=(8, AxisType.UPCAST)))) tag=1
 

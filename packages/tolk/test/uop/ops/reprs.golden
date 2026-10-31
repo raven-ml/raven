@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 name	arg	tag
 none	None	None
 int	42	None
@@ -10,10 +10,10 @@ nan	ConstFloat(nan)	None
 inf	ConstFloat(inf)	None
 bool	True	None
 invalid	Invalid	None
-dtype	dtypes.half	None
-range	(0, AxisType.REDUCE)	None
-range with sub-axes	(1, 0, AxisType.UPCAST)	None
-negative range	(-1, AxisType.DEVICE)	None
+dtype	dtypes.f16	None
+range	(AxisType.WEAK, 0)	None
+range with sub-axes	(AxisType.UPCAST, 1, 0)	None
+negative range	(AxisType.DEVICE, -1)	None
 reduce	(Ops.ADD, 1)	None
 special	'gidx0'	None
 permute	(1, 0)	None
@@ -27,20 +27,20 @@ custom	('barrier();', dtypes.void)	None
 ins	('s_endpgm', dtypes.void)	None
 binary	b'\x7fELF\x00\n\'"'	None
 source	"int x = 'a';\n"	None
-param	ParamArg(3, dtypes.float, 256)	None
-scalar param	ParamArg(1, dtypes.int)	None
+param	ParamArg(3, dtypes.f32)	None
+scalar param	ParamArg(1, dtypes.i32)	None
 variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name='n', addrspace=AddrSpace.ALU)	None
 bound variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name='n', addrspace=AddrSpace.ALU, val=3)	None
-named local buffer	ParamArg(2, dtypes.int, 4, name='buf', addrspace=AddrSpace.LOCAL)	'buf'
-volatile param	ParamArg(0, dtypes.uint, 4, device='CPU', volatile=True)	None
-alloc	ParamArg(7, dtypes.float, 4, device='CPU')	None
+named local buffer	ParamArg(2, dtypes.i32, name='buf', addrspace=AddrSpace.LOCAL)	None
+volatile param	ParamArg(0, dtypes.u32, device='CPU', volatile=True)	None
+alloc	ParamArg(7, dtypes.f32, device='CPU')	None
 kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0, split=None)	None
 kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2, split=None)	None
 bufferize	BufferizeOpts(device='CPU', addrspace=AddrSpace.LOCAL, removable=False, broadcast=False)	None
 bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, removable=True, broadcast=False)	None
 call	CallInfo(None, 'f', False, False)	None
-call returning	CallInfo(None, None, True, False, dtype=dtypes.int)	None
+call returning	CallInfo(None, None, True, False)	None
 program	ProgramInfo(global_size=(4, 1, 1), local_size=(8, 1, 1), vars=(), globals=(0, 1), outs=(0,), ins=(1,), target=CPU:CLANG)	None
-wmma	((8, 16, 16), dtypes.half, 32, ((((0,), 2), ((1,), 2)), (((2,), 2),), (((3,), 2),)))	None
-tagged	1	('x', 1, True, dtypes.int, ())
+wmma	((8, 16, 16), dtypes.f16, 32, ((((0,), 2), ((1,), 2)), (((2,), 2),), (((3,), 2),)))	None
+tagged	1	('x', 1, True, dtypes.i32, ())
 bytes tag	2	b"\x00a'"

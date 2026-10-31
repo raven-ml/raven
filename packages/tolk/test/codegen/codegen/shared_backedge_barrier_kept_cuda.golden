@@ -1,41 +1,43 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=1)
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.INDEX dtypes.int [0, 2]
-4 Ops.ALLOC dtypes.int [] ParamArg(slot=10, dtype=dtypes.int, size=1, addrspace=AddrSpace.LOCAL)
-5 Ops.NOOP dtypes.void []
-6 Ops.RANGE dtypes.void [5] (19, AxisType.WEAK)
-7 Ops.AFTER dtypes.int [4, 6]
-8 Ops.INDEX dtypes.int [7, 2]
-9 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1)
-10 Ops.INDEX dtypes.int [9, 2]
-11 Ops.LOAD dtypes.int [10]
-12 Ops.STORE dtypes.void [8, 11]
-13 Ops.BARRIER dtypes.void [12]
-14 Ops.AFTER dtypes.int [4, 13]
-15 Ops.INDEX dtypes.int [14, 2]
-16 Ops.LOAD dtypes.int [15]
-17 Ops.STORE dtypes.void [3, 16]
-18 Ops.BARRIER dtypes.void [17]
-19 Ops.PARAM dtypes.bool [] ParamArg(slot=2, dtype=dtypes.bool)
-20 Ops.BACKEDGE dtypes.void [18, 6, 19]
-21 Ops.SINK dtypes.void [20] KernelInfo() tag=1
-22 Ops.BUFFER dtypes.int [] ParamArg(slot=10, dtype=dtypes.int, size=1, addrspace=AddrSpace.LOCAL)
-23 Ops.AFTER dtypes.int [22, 6]
-24 Ops.INDEX dtypes.int [23, 2]
-25 Ops.STORE dtypes.void [24, 11]
-26 Ops.BARRIER dtypes.void [25]
-27 Ops.AFTER dtypes.int [22, 26]
-28 Ops.INDEX dtypes.int [27, 2]
-29 Ops.LOAD dtypes.int [28]
-30 Ops.STORE dtypes.void [3, 29]
-31 Ops.BARRIER dtypes.void [30]
-32 Ops.BACKEDGE dtypes.void [31, 6, 19]
-33 Ops.SINK dtypes.void [32] KernelInfo(estimates=Estimates(lds=16, mem=8)) tag=1
-34 Ops.SINK dtypes.void [32] KernelInfo() tag=1
-35 Ops.LINEAR dtypes.void [9, 0, 19, 22, 1, 2, 10, 11, 5, 3, 6, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34]
-36 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) test(int* data0_1, int* data1_1, bool* data2_) {\n  __shared__ __align__(16) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (;;) {\n    *(buf0+0) = val0;\n    __syncthreads();\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    __syncthreads();\n    if (!(data2_)) { break; }\n  }\n}"
-37 Ops.PROGRAM dtypes.void [33, 35, 36] ProgramInfo(globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-38 Ops.SINK dtypes.void [21, 37]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.i32 [1, 3]
+5 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
+6 Ops.NOOP dtypes.void []
+7 Ops.RANGE dtypes.void [6] (AxisType.WEAK, 19)
+8 Ops.AFTER dtypes.i32 [5, 7]
+9 Ops.INDEX dtypes.i32 [8, 3]
+10 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+11 Ops.INDEX dtypes.i32 [10, 3]
+12 Ops.LOAD dtypes.i32 [11]
+13 Ops.STORE dtypes.void [9, 12]
+14 Ops.BARRIER dtypes.void [13]
+15 Ops.AFTER dtypes.i32 [5, 14]
+16 Ops.INDEX dtypes.i32 [15, 3]
+17 Ops.LOAD dtypes.i32 [16]
+18 Ops.STORE dtypes.void [4, 17]
+19 Ops.BARRIER dtypes.void [18]
+20 Ops.STACK dtypes.void []
+21 Ops.PARAM dtypes.bool [20] ParamArg(slot=2, dtype=dtypes.bool)
+22 Ops.BACKEDGE dtypes.void [19, 7, 21]
+23 Ops.SINK dtypes.void [22] KernelInfo() tag=1
+24 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=10, dtype=dtypes.i32, addrspace=AddrSpace.LOCAL)
+25 Ops.AFTER dtypes.i32 [24, 7]
+26 Ops.INDEX dtypes.i32 [25, 3]
+27 Ops.STORE dtypes.void [26, 12]
+28 Ops.BARRIER dtypes.void [27]
+29 Ops.AFTER dtypes.i32 [24, 28]
+30 Ops.INDEX dtypes.i32 [29, 3]
+31 Ops.LOAD dtypes.i32 [30]
+32 Ops.STORE dtypes.void [4, 31]
+33 Ops.BARRIER dtypes.void [32]
+34 Ops.BACKEDGE dtypes.void [33, 7, 21]
+35 Ops.SINK dtypes.void [34] KernelInfo(estimates=Estimates(lds=16, mem=8)) tag=1
+36 Ops.SINK dtypes.void [34] KernelInfo() tag=1
+37 Ops.LINEAR dtypes.void [0, 10, 1, 20, 21, 24, 2, 3, 11, 12, 6, 4, 7, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 36]
+38 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) test(int* data0_1, int* data1_1, bool* data2_) {\n  __shared__ __align__(16) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (;;) {\n    *(buf0+0) = val0;\n    __syncthreads();\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    __syncthreads();\n    if (!(data2_)) { break; }\n  }\n}"
+39 Ops.PROGRAM dtypes.void [35, 37, 38] ProgramInfo(globals=(0, 1, 2), outs=(1,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+40 Ops.SINK dtypes.void [23, 39]
 

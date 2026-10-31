@@ -1,19 +1,19 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 dtype	exponent_bias
 dtypes.fp8e4m3	7
 dtypes.fp8e5m2	15
 dtypes.fp8e4m3fnuz	8
 dtypes.fp8e5m2fnuz	16
-dtypes.half	15
-dtypes.bfloat16	127
-dtypes.float	127
-dtypes.double	1023
-dtypes.uchar	raises ValueError
-dtypes.ushort	raises ValueError
-dtypes.uint	raises ValueError
-dtypes.ulong	raises ValueError
-dtypes.char	raises ValueError
-dtypes.short	raises ValueError
-dtypes.int	raises ValueError
-dtypes.long	raises ValueError
+dtypes.f16	15
+dtypes.bf16	127
+dtypes.f32	127
+dtypes.f64	1023
+dtypes.u8	raises ValueError
+dtypes.u16	raises ValueError
+dtypes.u32	raises ValueError
+dtypes.u64	raises ValueError
+dtypes.i8	raises ValueError
+dtypes.i16	raises ValueError
+dtypes.i32	raises ValueError
+dtypes.i64	raises ValueError
 dtypes.bool	raises ValueError

@@ -1,28 +1,29 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256)
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 256
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.RANGE dtypes.int [2] (0, AxisType.LOOP)
-4 Ops.INDEX dtypes.float [0, 3]
-5 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256)
-6 Ops.INDEX dtypes.float [5, 3]
-7 Ops.LOAD dtypes.float [6]
-8 Ops.CONST dtypes.weakfloat [] 1.0
-9 Ops.CAST dtypes.float [8] dtypes.float
-10 Ops.ADD dtypes.float [7, 9]
-11 Ops.STORE dtypes.void [4, 10]
-12 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=256)
-13 Ops.INDEX dtypes.float [12, 3]
-14 Ops.CONST dtypes.weakfloat [] 2.0
-15 Ops.CAST dtypes.float [14] dtypes.float
-16 Ops.MUL dtypes.float [7, 15]
-17 Ops.STORE dtypes.void [13, 16]
-18 Ops.GROUP dtypes.void [11, 17]
-19 Ops.END dtypes.void [18, 3]
-20 Ops.SINK dtypes.void [19] KernelInfo(name="two_outputs") tag=1
-21 Ops.SINK dtypes.void [19] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072)) tag=1
-22 Ops.LINEAR dtypes.void [5, 0, 12, 8, 9, 14, 15, 1, 2, 3, 6, 7, 4, 13, 10, 16, 11, 17, 18, 19, 20]
-23 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void two_outputs(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}\n"
-24 Ops.PROGRAM dtypes.void [21, 22, 23] ProgramInfo(globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-25 Ops.SINK dtypes.void [20, 24]
+2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=1, dtype=dtypes.f32)
+3 Ops.CAST dtypes.i32 [1] dtypes.i32
+4 Ops.RANGE dtypes.i32 [3] (AxisType.LOOP, 0)
+5 Ops.INDEX dtypes.f32 [2, 4]
+6 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
+7 Ops.INDEX dtypes.f32 [6, 4]
+8 Ops.LOAD dtypes.f32 [7]
+9 Ops.CONST dtypes.weakfloat [] 1.0
+10 Ops.CAST dtypes.f32 [9] dtypes.f32
+11 Ops.ADD dtypes.f32 [8, 10]
+12 Ops.STORE dtypes.void [5, 11]
+13 Ops.PARAM dtypes.f32 [1] ParamArg(slot=2, dtype=dtypes.f32)
+14 Ops.INDEX dtypes.f32 [13, 4]
+15 Ops.CONST dtypes.weakfloat [] 2.0
+16 Ops.CAST dtypes.f32 [15] dtypes.f32
+17 Ops.MUL dtypes.f32 [8, 16]
+18 Ops.STORE dtypes.void [14, 17]
+19 Ops.AFTER dtypes.void [0, 12, 18]
+20 Ops.END dtypes.void [19, 4]
+21 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs") tag=1
+22 Ops.SINK dtypes.void [20] KernelInfo(name="two_outputs", estimates=Estimates(ops=512, lds=3072, mem=3072)) tag=1
+23 Ops.LINEAR dtypes.void [1, 6, 2, 13, 0, 9, 10, 15, 16, 3, 4, 7, 8, 5, 14, 11, 17, 12, 18, 19, 20, 21]
+24 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void two_outputs(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = (val0+1.0f);\n    *(data2_256+Lidx0) = (val0*2.0f);\n  }\n}\n"
+25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(globals=(0, 1, 2), outs=(1, 2), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+26 Ops.SINK dtypes.void [21, 25]
 

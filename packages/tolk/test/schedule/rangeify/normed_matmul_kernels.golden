@@ -1,40 +1,43 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU") tag=()
-1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU")
-2 Ops.CONST dtypes.weakint [] 8
-3 Ops.RANGE dtypes.weakint [2] (1, AxisType.WEAK)
-4 Ops.CONST dtypes.weakint [] 32
-5 Ops.MUL dtypes.weakint [3, 4]
-6 Ops.RANGE dtypes.weakint [4] (2, AxisType.WEAK)
-7 Ops.ADD dtypes.weakint [5, 6]
-8 Ops.INDEX dtypes.float [1, 7]
-9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=512, device="CPU")
-10 Ops.CONST dtypes.weakint [] 64
-11 Ops.MUL dtypes.weakint [3, 10]
-12 Ops.RANGE dtypes.weakint [10] (0, AxisType.REDUCE)
-13 Ops.ADD dtypes.weakint [11, 12]
-14 Ops.INDEX dtypes.float [9, 13]
-15 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device="CPU")
-16 Ops.INDEX dtypes.float [15, 3]
-17 Ops.RECIPROCAL dtypes.float [16]
-18 Ops.MUL dtypes.float [14, 17]
-19 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
-20 Ops.INDEX dtypes.float [19, 12]
-21 Ops.MUL dtypes.float [18, 20]
-22 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=2048, device="CPU")
-23 Ops.MUL dtypes.weakint [12, 4]
-24 Ops.ADD dtypes.weakint [23, 6]
-25 Ops.INDEX dtypes.float [22, 24]
-26 Ops.MUL dtypes.float [21, 25]
-27 Ops.REDUCE dtypes.float [26, 12] (Ops.ADD, 0)
-28 Ops.STORE dtypes.void [8, 27]
-29 Ops.END dtypes.void [28, 3, 6]
-30 Ops.SINK dtypes.void [29] KernelInfo()
-31 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=512, device="CPU") tag=()
-32 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device="CPU") tag=()
-33 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU") tag=()
-34 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=2048, device="CPU") tag=()
-35 Ops.CALL dtypes.void [30, 0, 31, 32, 33, 34] CallInfo()
-36 Ops.AFTER dtypes.float [0, 35]
-37 Ops.SINK dtypes.void [36]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 256
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU") tag=()
+2 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 1)
+5 Ops.CONST dtypes.weakint [] 32
+6 Ops.MUL dtypes.weakint [4, 5]
+7 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 2)
+8 Ops.ADD dtypes.weakint [6, 7]
+9 Ops.INDEX dtypes.f32 [2, 8]
+10 Ops.CONST dtypes.weakint [] 512
+11 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+12 Ops.CONST dtypes.weakint [] 64
+13 Ops.MUL dtypes.weakint [4, 12]
+14 Ops.RANGE dtypes.weakint [12] (AxisType.WEAK, 0)
+15 Ops.ADD dtypes.weakint [13, 14]
+16 Ops.INDEX dtypes.f32 [11, 15]
+17 Ops.PARAM dtypes.f32 [3] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+18 Ops.INDEX dtypes.f32 [17, 4]
+19 Ops.RECIPROCAL dtypes.f32 [18]
+20 Ops.MUL dtypes.f32 [16, 19]
+21 Ops.PARAM dtypes.f32 [12] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+22 Ops.INDEX dtypes.f32 [21, 14]
+23 Ops.MUL dtypes.f32 [20, 22]
+24 Ops.CONST dtypes.weakint [] 2048
+25 Ops.PARAM dtypes.f32 [24] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+26 Ops.MUL dtypes.weakint [14, 5]
+27 Ops.ADD dtypes.weakint [26, 7]
+28 Ops.INDEX dtypes.f32 [25, 27]
+29 Ops.MUL dtypes.f32 [23, 28]
+30 Ops.REDUCE dtypes.f32 [29, 14] (Ops.ADD, 0)
+31 Ops.STORE dtypes.void [9, 30]
+32 Ops.END dtypes.void [31, 4, 7]
+33 Ops.SINK dtypes.void [32] KernelInfo()
+34 Ops.PARAM dtypes.f32 [10] ParamArg(slot=1, dtype=dtypes.f32, device="CPU") tag=()
+35 Ops.PARAM dtypes.f32 [3] ParamArg(slot=2, dtype=dtypes.f32, device="CPU") tag=()
+36 Ops.PARAM dtypes.f32 [12] ParamArg(slot=3, dtype=dtypes.f32, device="CPU") tag=()
+37 Ops.PARAM dtypes.f32 [24] ParamArg(slot=4, dtype=dtypes.f32, device="CPU") tag=()
+38 Ops.CALL dtypes.void [33, 1, 34, 35, 36, 37] CallInfo()
+39 Ops.AFTER dtypes.f32 [1, 38]
+40 Ops.SINK dtypes.void [39]
 

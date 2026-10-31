@@ -122,7 +122,7 @@ for name, (capture, program, result, rewrite) in KERNELS.items():
 # Hand-built cases
 
 def rng(n, axis, kind=AxisType.WEAK): return UOp.range(n, axis, kind)
-def red(n, axis): return rng(n, axis, AxisType.REDUCE)
+def red(n, axis): return rng(n, axis, AxisType.WEAK)
 def buf(slot=0, size=1024, dtype=dtypes.float): return UOp.param(slot, dtype, size)
 def kernel(*srcs): return UOp.sink(*srcs, arg=KernelInfo())
 def f32(x): return UOp.const(x, dtypes.float)
@@ -242,7 +242,7 @@ def simplify_cases():
 
 def unparented_cases():
     r0, r1 = red(4, 0), red(5, 1)
-    n = UOp.range(UOp.variable("n", 1, 16), 2, AxisType.REDUCE)
+    n = UOp.range(UOp.variable("n", 1, 16), 2, AxisType.WEAK)
     x = r0.cast(dtypes.float)
     return [
         ("sum_over_an_unused_range", x.reduce(r0, r1, arg=Ops.ADD)),
@@ -256,7 +256,7 @@ def unparented_cases():
         ("sum_over_a_symbolic_range", x.reduce(r0, n, arg=Ops.ADD)),
         ("product_over_a_symbolic_range", x.reduce(r0, n, arg=Ops.MUL)),
         # test_uop_graph.py::TestReduceCollapse::test_reduce_shapeless_const_unroll
-        ("sum_over_an_unroll_range", UOp.const(3.0).cast(dtypes.float).reduce(UOp.range(4, 0, AxisType.UNROLL),
+        ("sum_over_an_unroll_range", UOp.const(3.0).cast(dtypes.float).reduce(UOp.range(4, 0, AxisType.UPCAST),
                                                                               arg=(Ops.ADD, 0))),
         ("sum_of_nothing", UOp(Ops.REDUCE, src=(x,), arg=(Ops.ADD, 0))),
     ]

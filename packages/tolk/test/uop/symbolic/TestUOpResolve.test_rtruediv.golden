@@ -1,11 +1,11 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 0 Ops.CONST dtypes.weakfloat [] 9.0
 1 Ops.CONST dtypes.weakfloat [] 4.0
-2 Ops.CAST dtypes.float [1] dtypes.float
-3 Ops.RECIPROCAL dtypes.float [2]
-4 Ops.MUL dtypes.float [0, 3]
+2 Ops.CAST dtypes.f32 [1] dtypes.f32
+3 Ops.RECIPROCAL dtypes.f32 [2]
+4 Ops.MUL dtypes.f32 [0, 3]
 5 Ops.CONST dtypes.weakfloat [] 2.25
-6 Ops.CAST dtypes.float [5] dtypes.float
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
 7 Ops.SINK dtypes.void [4, 6] tag="simplify"
 8 Ops.SINK dtypes.void [7]
 

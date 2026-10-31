@@ -1,10 +1,11 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-1 Ops.CAST dtypes.float [0] dtypes.float
-2 Ops.BITCAST dtypes.uint [0] dtypes.uint
-3 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-4 Ops.BITCAST dtypes.int [3] dtypes.int
-5 Ops.CONST dtypes.weakint [] 1
-6 Ops.CAST dtypes.bool [5] dtypes.bool
-7 Ops.SINK dtypes.void [0, 1, 1, 2, 0, 4, 6]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.STACK dtypes.void []
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+2 Ops.CAST dtypes.f32 [1] dtypes.f32
+3 Ops.BITCAST dtypes.u32 [1] dtypes.u32
+4 Ops.PARAM dtypes.f32 [0] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+5 Ops.BITCAST dtypes.i32 [4] dtypes.i32
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.CAST dtypes.bool [6] dtypes.bool
+8 Ops.SINK dtypes.void [1, 2, 2, 3, 1, 5, 7]
 

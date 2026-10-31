@@ -1,13 +1,13 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.double [] ParamArg(slot=0, dtype=dtypes.double, size=4096, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4096
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.INDEX dtypes.double [0, 2]
-4 Ops.PARAM dtypes.double [] ParamArg(slot=1, dtype=dtypes.double, size=4096, device="CPU")
-5 Ops.INDEX dtypes.double [4, 2]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 4096
+1 Ops.PARAM dtypes.f64 [0] ParamArg(slot=0, dtype=dtypes.f64, device="CPU")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.f64 [1, 2]
+4 Ops.PARAM dtypes.f64 [0] ParamArg(slot=1, dtype=dtypes.f64, device="CPU")
+5 Ops.INDEX dtypes.f64 [4, 2]
 6 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
-7 Ops.MUL dtypes.double [5, 6]
-8 Ops.EXP2 dtypes.double [7]
+7 Ops.MUL dtypes.f64 [5, 6]
+8 Ops.EXP2 dtypes.f64 [7]
 9 Ops.STORE dtypes.void [3, 8]
 10 Ops.END dtypes.void [9, 2]
 11 Ops.SINK dtypes.void [10] KernelInfo()

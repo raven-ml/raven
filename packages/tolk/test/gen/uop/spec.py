@@ -78,14 +78,17 @@ def global_buffer(device="CPU", size=16, dt=dtypes.float32, slot=100):
 
 
 def rebuffer(b, **fields):
-    """A global BUFFER like `b`, which holds a device buffer, with other fields."""
-    src = fields.pop("src", b.src)
-    return UOp(Ops.BUFFER, src=src, arg=replace(b.arg, **fields))
+    """A global BUFFER like `b`, which holds a device buffer, with other fields: `size` is its size source (none
+    without one), `src` its other sources."""
+    size = fields.pop("size", b.src[0])
+    src = fields.pop("src", b.src[1:])
+    return UOp(Ops.BUFFER, src=((size,) if size is not None else ())+tuple(src), arg=replace(b.arg, **fields))
 
 
 def alloc(size=16, dt=dtypes.float32, addrspace=AddrSpace.GLOBAL, device=None, src=None, slot=200):
-    return UOp(Ops.ALLOC, src=UOp.device_range_src(device) if src is None else src,
-               arg=ParamArg(slot, dt, size, addrspace=addrspace, device=device))
+    size_src = (UOp.const(size),) if size is not None else ()
+    return UOp(Ops.ALLOC, src=size_src+(UOp.device_range_src(device) if src is None else src),
+               arg=ParamArg(slot, dt, addrspace=addrspace, device=device))
 
 
 def local(size=8, dt=dtypes.float32, slot=0): return UOp.placeholder((size,), dt, slot=slot, addrspace=AddrSpace.LOCAL)
@@ -192,9 +195,9 @@ def verdict_cases():
 
     # ranges, indexes and loops
     case("a range", r)
-    case("a range with a nested axis", UOp(Ops.RANGE, src=(UOp.const(16),), arg=(1, 0, AxisType.REDUCE)))
+    case("a range with a nested axis", UOp(Ops.RANGE, src=(UOp.const(16),), arg=(AxisType.WEAK, 1, 0)))
     case("a global int32 range", UOp.range(i32(16), 1, AxisType.GLOBAL, dtype=dtypes.int32))
-    case("a range with extra sources", UOp(Ops.RANGE, src=(UOp.const(4), r), arg=(2, AxisType.LOOP)))
+    case("a range with extra sources", UOp(Ops.RANGE, src=(UOp.const(4), r), arg=(AxisType.LOOP, 2)))
     case("a loop header", UOp.loop(3))
     case("a device range", device_range())
     case("an index by a weak integer", x.index(UOp.const(3)))
@@ -228,7 +231,7 @@ def verdict_cases():
     case("a variable", cvar("n", dtypes.weakint))
     case("an int32 variable", cvar("n", dtypes.int32))
     case("a variable on a device",
-         UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.int32, vmin_vmax=(0, 10), name="n", addrspace=AddrSpace.ALU, device="CPU")))
+         UOp(Ops.PARAM, src=(UOp(Ops.STACK),), arg=ParamArg(-1, dtypes.int32, vmin_vmax=(0, 10), name="n", addrspace=AddrSpace.ALU, device="CPU")))
     case("a bound variable", cvar("n", dtypes.int32).bind(3))
     case("a local buffer", local())
     case("a register buffer", register())
@@ -242,7 +245,7 @@ def verdict_cases():
     case("a buffer on two devices over three", rebuffer(mb, src=(device_range(3),)))
     case("a buffer on two devices over a loop range", rebuffer(mb, src=(UOp.range(2, -1, AxisType.LOOP),)))
     case("a buffer on one device with a range", rebuffer(gb, src=(device_range(1),)))
-    case("an alu buffer", UOp(Ops.BUFFER, arg=ParamArg(5, dtypes.float32, 4, addrspace=AddrSpace.ALU)))
+    case("an alu buffer", UOp(Ops.BUFFER, src=(UOp.const(4),), arg=ParamArg(5, dtypes.float32, addrspace=AddrSpace.ALU)))
     case("a global allocation", alloc())
     case("a global allocation on a device", alloc(device="CPU", slot=201))
     case("a global allocation without a size", alloc(size=None, slot=202))
@@ -254,7 +257,7 @@ def verdict_cases():
     case("an alu allocation", alloc(addrspace=AddrSpace.ALU, slot=208))
     case("binary data", UOp(Ops.BINARY, arg=b"\x7fELF"))
     case("a group of stores", UOp.group(st, x.index(UOp.const(1)).store(f32(1.0))))
-    case("a group of a value", UOp(Ops.GROUP, src=(st, ld)))
+    case("a group of a value", UOp.group(st, ld))
     case("a parameter after a store", x.after(st))
     case("an index after a store", x.index(UOp.const(0)).after(st))
     case("a reshape after a store", x.reshape((4, 4)).after(st))
@@ -272,9 +275,9 @@ def verdict_cases():
     case("a custom function without sources", UOp.custom_function("fn"))
     case("a call of a sink", UOp.sink(st).call(x, y))
     case("a call of a store", st.call(x, y))
-    case("a call of a custom function", UOp.custom_function("fn", x).call(x, ret_dtype=dtypes.int32))
+    case("a call of a custom function", UOp.custom_function("fn", x, dtype=dtypes.int32).call(x))
     case("a call of a constant", UOp(Ops.CALL, src=(UOp.const(1), x), arg=CallInfo()))
-    case("a call of a load", UOp(Ops.CALL, src=(ld,), arg=CallInfo(dtype=dtypes.float32)))
+    case("a call of a load", UOp(Ops.CALL, src=(ld,), arg=CallInfo()))
     case("a barrier", UOp(Ops.BARRIER, src=(st,)))
     case("an instruction", UOp(Ops.INS, src=(ld,), arg=("v_mov", dtypes.float32)))
     case("a wmma", UOp.wmma(fvar("a", dtypes.half), fvar("b", dtypes.half), fvar("acc"), (8, 8, 8), 32))
@@ -319,7 +322,7 @@ def verdict_cases():
     case("a reduce", UOp(Ops.REDUCE, src=(x,), arg=(Ops.ADD, 1)))
     case("a reduce over ranges", UOp(Ops.REDUCE, src=(ld, r, UOp.range(4, 1)), arg=(Ops.MAX, 0)))
     case("a reduce over an int32 range",
-         UOp(Ops.REDUCE, src=(ld, UOp.range(i32(4), 1, AxisType.REDUCE, dtype=dtypes.int32)), arg=(Ops.ADD, 0)))
+         UOp(Ops.REDUCE, src=(ld, UOp.range(i32(4), 1, AxisType.WEAK, dtype=dtypes.int32)), arg=(Ops.ADD, 0)))
     case("a reduce over a uint32 range",
          UOp(Ops.REDUCE, src=(ld, UOp.range(UOp.const(4, dtypes.uint32), 1, dtype=dtypes.uint32)), arg=(Ops.ADD, 0)))
     case("a reduce by sine", UOp(Ops.REDUCE, src=(x,), arg=(Ops.SIN, 1)))
@@ -383,7 +386,6 @@ def verdict_cases():
 
     # nodes without the argument their operation takes
     case("binary data without bytes", UOp(Ops.BINARY))
-    case("a custom function without a name", UOp(Ops.CUSTOM_FUNCTION, src=(x,)))
     case("a call without call info", UOp(Ops.CALL, src=(UOp.sink(st), x, y)))
     case("a wmma without an argument", UOp(Ops.WMMA, src=(fvar("a", dtypes.half), fvar("b", dtypes.half), fvar("acc"))))
     case("a special without a name", UOp(Ops.SPECIAL, src=(UOp.const(8),)))
@@ -490,7 +492,7 @@ def failure_cases():
     ld = x.index(UOp.const(0)).load()
     bad = UOp(Ops.ADD, src=(cvar("a", dtypes.int32), fvar("b")))
     case("a program whose sum mixes int32 and float32", UOp.sink(y.index(UOp.const(0)).store(bad)))
-    case("a graph whose last node fails", UOp(Ops.GROUP, src=(ld,)))
+    case("a graph whose last node fails", UOp(Ops.END, src=(ld,)))
     case("a graph whose first node fails", UOp.sink(UOp(Ops.CONST, src=(UOp.const(1),), arg=2).alu(Ops.ADD, UOp.const(1))))
     case("a reduce by sine", UOp.sink(UOp(Ops.REDUCE, src=(x,), arg=(Ops.SIN, 1))))
     case("a selection past the shards", UOp.sink(UOp.param(6, dtypes.float32, 16, device=("CPU:0", "CPU:1")).mselect(2)))
@@ -498,7 +500,7 @@ def failure_cases():
     case("a load with an int32 alternative", UOp.sink(x.index(UOp.const(0)).load(i32(0), flag("g"))))
     case("a where with a float constant", UOp.sink(UOp(Ops.WHERE, src=(flag("c"), cvar("a", dtypes.int32), f32(1.5)))))
     case("a copy to two devices without its range", UOp.sink(UOp(Ops.COPY, src=(x,), arg=CPU2)))
-    case("an alu buffer", UOp.sink(UOp(Ops.BUFFER, arg=ParamArg(5, dtypes.float32, 4, addrspace=AddrSpace.ALU))))
+    case("an alu buffer", UOp.sink(UOp(Ops.BUFFER, src=(UOp.const(4),), arg=ParamArg(5, dtypes.float32, addrspace=AddrSpace.ALU))))
     case("an and of weak floats", UOp.sink(UOp(Ops.AND, src=(UOp.const(1.0), UOp.const(-0.0)))))
     case("a float constant with a source", UOp.sink(UOp(Ops.CONST, src=(UOp.const(1),), arg=UOp.const(2.5).arg)))
     case("a launch dimension over a weak integer", UOp.sink(UOp.special(8, "gidx0")))

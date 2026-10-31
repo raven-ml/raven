@@ -35,7 +35,7 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 
 # Making a HIP renderer makes its compiler, which asserts that comgr is loaded;
 # comgr is absent where the goldens are generated, and rendering needs none.
-compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
+compiler_amd.c.DLL._loaded_[compiler_amd.comgr.dll.nm] = compiler_amd.comgr.dll
 
 from golden import graph, table, text
 from tinygrad import Tensor, Variable, dtypes
@@ -196,24 +196,24 @@ def inline_const_alu():
 
 
 def call_out():
-    """A call of the function pointer in F[0] that writes C[0], from
+    """A call of the symbol frexp that writes C[0] through its pointer, from
     device/cpu/test_call.py."""
-    F, C = UOp.param(0, dtypes.uint64, 1), UOp.param(1, dtypes.int, 2)
-    call = UOp.custom_function("callback", F[0].load()).call(UOp.const(3).cast(dtypes.int), C[0], ret_dtype=dtypes.void)
+    C = UOp.param(0, dtypes.int, 2)
+    call = UOp.custom_function("frexp", dtype=dtypes.float64).call(UOp.const(8.0, dtypes.float64), C[0])
     return C.after(call)[1].store(C.after(call)[0].load() + 1).sink(arg=KernelInfo(name="call_out"))
 
 
 def call_ret():
-    F, C = UOp.param(0, dtypes.uint64, 1), UOp.param(1, dtypes.int, 1)
-    val = UOp.custom_function("callback", F[0].load()).call(UOp.const(21).cast(dtypes.int), ret_dtype=dtypes.int)
-    return C[0].store(val * 2).sink(arg=KernelInfo(name="call_ret"))
+    C = UOp.param(0, dtypes.int, 1)
+    val = UOp.custom_function("sqrt", dtype=dtypes.float64).call(UOp.const(16.0, dtypes.float64))
+    return C[0].store(val.cast(dtypes.int) * 2).sink(arg=KernelInfo(name="call_ret"))
 
 
 def call_stack():
     """A call whose argument is the address of a register, from
     null/test_call.py."""
     slot = UOp.placeholder((1,), dtypes.uint32, addrspace=AddrSpace.REG)
-    return UOp.custom_function("callback", UOp.const(0, dtypes.uint64)).call(slot[0], ret_dtype=dtypes.void) \
+    return UOp.custom_function("callback").call(slot[0]) \
         .sink(arg=KernelInfo("call_stack"))
 
 
@@ -268,7 +268,7 @@ def int32(v): return UOp.const(v).cast(dtypes.int)
 def unbounded_loop():
     """A loop with no trip count, left by its bottom test."""
     a = UOp.param(0, dtypes.int, 1)
-    r = UOp(Ops.RANGE, src=(UOp(Ops.STACK),), arg=(0, AxisType.LOOP))
+    r = UOp(Ops.RANGE, src=(UOp(Ops.STACK),), arg=(AxisType.LOOP, 0))
     cell = a.after(r).index(int32(0))
     step = cell.store(cell.load() + int32(1))
     done = a.after(step).index(int32(0)).load() < int32(10)
@@ -608,7 +608,7 @@ def naming_vectors(ren):
     def _render_dtype(dtype, sz=1, *args, **kwargs):
         written = render(dtype, sz, *args, **kwargs)
         if sz == 1 or dtype not in METAL_VECTORS: return written
-        return written.replace(dtype.name.replace(" ", "_") + str(sz), METAL_VECTORS[dtype] + str(sz))
+        return written.replace(ren.type_map[dtype].replace(" ", "_") + str(sz), METAL_VECTORS[dtype] + str(sz))
     ren._render_dtype = _render_dtype
     return ren
 

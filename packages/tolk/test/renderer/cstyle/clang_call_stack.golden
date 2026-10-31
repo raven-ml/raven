@@ -1,7 +1,8 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 
+extern void callback();
 __attribute__((min_vector_width(512))) void call_stack() {
   unsigned int buf0[1];
-  (((void(*)(unsigned int*))(0ul))((unsigned int*)((buf0+0))));
+  ((void(*)(unsigned int*))(callback))((unsigned int*)((buf0+0)));
 }
 

@@ -1,30 +1,30 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
-3 Ops.MUL dtypes.weakint [2, 1]
-4 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
-5 Ops.ADD dtypes.weakint [3, 4]
-6 Ops.INDEX dtypes.float [0, 5]
-7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
-8 Ops.MUL dtypes.weakint [4, 1]
-9 Ops.ADD dtypes.weakint [8, 2]
-10 Ops.INDEX dtypes.float [7, 9]
-11 Ops.CONST dtypes.weakfloat [] 1.0
-12 Ops.ADD dtypes.float [10, 11]
-13 Ops.STORE dtypes.void [6, 12]
-14 Ops.END dtypes.void [13, 2, 4]
-15 Ops.SINK dtypes.void [14] KernelInfo()
-16 Ops.ALLOC dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device="CPU")
-17 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU") tag=()
-18 Ops.CALL dtypes.void [15, 16, 17] CallInfo()
-19 Ops.CONST dtypes.weakint [] 16
-20 Ops.RANGE dtypes.weakint [19] (0, AxisType.WEAK)
-21 Ops.INDEX dtypes.float [0, 20]
-22 Ops.INDEX dtypes.float [7, 20]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 0)
+4 Ops.MUL dtypes.weakint [3, 2]
+5 Ops.RANGE dtypes.weakint [2] (AxisType.WEAK, 1)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.f32 [1, 6]
+8 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+9 Ops.MUL dtypes.weakint [5, 2]
+10 Ops.ADD dtypes.weakint [9, 3]
+11 Ops.INDEX dtypes.f32 [8, 10]
+12 Ops.CONST dtypes.weakfloat [] 1.0
+13 Ops.ADD dtypes.f32 [11, 12]
+14 Ops.STORE dtypes.void [7, 13]
+15 Ops.END dtypes.void [14, 3, 5]
+16 Ops.SINK dtypes.void [15] KernelInfo()
+17 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+18 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU") tag=()
+19 Ops.CALL dtypes.void [16, 17, 18] CallInfo()
+20 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+21 Ops.INDEX dtypes.f32 [1, 20]
+22 Ops.INDEX dtypes.f32 [8, 20]
 23 Ops.STORE dtypes.void [21, 22]
 24 Ops.END dtypes.void [23, 20]
 25 Ops.SINK dtypes.void [24] KernelInfo()
-26 Ops.CALL dtypes.void [25, 17, 16] CallInfo()
-27 Ops.LINEAR dtypes.void [18, 26]
+26 Ops.CALL dtypes.void [25, 18, 17] CallInfo()
+27 Ops.LINEAR dtypes.void [19, 26]
 

@@ -1,46 +1,47 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, device="CPU")
-1 Ops.CONST dtypes.weakint [] 0
-2 Ops.CAST dtypes.int [1] dtypes.int
-3 Ops.INDEX dtypes.int [0, 2]
-4 Ops.ALLOC dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
-5 Ops.INDEX dtypes.int [4, 2]
-6 Ops.STORE dtypes.void [5, 2]
-7 Ops.CONST dtypes.weakint [] 3
-8 Ops.CAST dtypes.int [7] dtypes.int
-9 Ops.RANGE dtypes.int [8] (0, AxisType.REDUCE)
-10 Ops.AFTER dtypes.int [4, 6, 9]
-11 Ops.INDEX dtypes.int [10, 2]
-12 Ops.LOAD dtypes.int [11]
-13 Ops.PARAM dtypes.short [] ParamArg(slot=1, dtype=dtypes.short, size=3, device="CPU")
-14 Ops.INDEX dtypes.short [13, 9]
-15 Ops.LOAD dtypes.short [14]
-16 Ops.CAST dtypes.int [15] dtypes.int
-17 Ops.ADD dtypes.int [12, 16]
-18 Ops.STORE dtypes.void [11, 17]
-19 Ops.END dtypes.void [18, 9]
-20 Ops.AFTER dtypes.int [4, 19, 6]
-21 Ops.INDEX dtypes.int [20, 2]
-22 Ops.LOAD dtypes.int [21]
-23 Ops.STORE dtypes.void [3, 22]
-24 Ops.SINK dtypes.void [23] KernelInfo(name="r_3") tag=1
-25 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
-26 Ops.INDEX dtypes.int [25, 2]
-27 Ops.STORE dtypes.void [26, 2]
-28 Ops.AFTER dtypes.int [25, 27, 9]
-29 Ops.INDEX dtypes.int [28, 2]
-30 Ops.LOAD dtypes.int [29]
-31 Ops.ADD dtypes.int [30, 16]
-32 Ops.STORE dtypes.void [29, 31]
-33 Ops.END dtypes.void [32, 9]
-34 Ops.AFTER dtypes.int [25, 33, 27]
-35 Ops.INDEX dtypes.int [34, 2]
-36 Ops.LOAD dtypes.int [35]
-37 Ops.STORE dtypes.void [3, 36]
-38 Ops.SINK dtypes.void [37] KernelInfo(name="r_3", estimates=Estimates(ops=3, lds=10, mem=10)) tag=1
-39 Ops.SINK dtypes.void [37] KernelInfo(name="r_3") tag=1
-40 Ops.LINEAR dtypes.void [0, 13, 25, 1, 2, 26, 7, 8, 27, 9, 14, 15, 28, 29, 30, 16, 31, 32, 33, 34, 35, 36, 3, 37, 39]
-41 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) r_3(int* data0_1, short* data1_3) {\n  int buf0[1];\n  *(buf0+0) = 0;\n  for (int Ridx0 = 0; Ridx0 < 3; Ridx0++) {\n    short val0 = (*(data1_3+Ridx0));\n    *(buf0+0) = ((*(buf0+0))+((int)(val0)));\n  }\n  *(data0_1+0) = (*(buf0+0));\n}"
-42 Ops.PROGRAM dtypes.void [38, 40, 41] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
-43 Ops.SINK dtypes.void [24, 42]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.INDEX dtypes.i32 [1, 3]
+5 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, addrspace=AddrSpace.REG)
+6 Ops.INDEX dtypes.i32 [5, 3]
+7 Ops.STORE dtypes.void [6, 3]
+8 Ops.CONST dtypes.weakint [] 3
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.RANGE dtypes.i32 [9] (AxisType.WEAK, 0)
+11 Ops.AFTER dtypes.i32 [5, 7, 10]
+12 Ops.INDEX dtypes.i32 [11, 3]
+13 Ops.LOAD dtypes.i32 [12]
+14 Ops.PARAM dtypes.i16 [8] ParamArg(slot=1, dtype=dtypes.i16, device="CPU")
+15 Ops.INDEX dtypes.i16 [14, 10]
+16 Ops.LOAD dtypes.i16 [15]
+17 Ops.CAST dtypes.i32 [16] dtypes.i32
+18 Ops.ADD dtypes.i32 [13, 17]
+19 Ops.STORE dtypes.void [12, 18]
+20 Ops.END dtypes.void [19, 10]
+21 Ops.AFTER dtypes.i32 [5, 20, 7]
+22 Ops.INDEX dtypes.i32 [21, 3]
+23 Ops.LOAD dtypes.i32 [22]
+24 Ops.STORE dtypes.void [4, 23]
+25 Ops.SINK dtypes.void [24] KernelInfo(name="r_3") tag=1
+26 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, addrspace=AddrSpace.REG)
+27 Ops.INDEX dtypes.i32 [26, 3]
+28 Ops.STORE dtypes.void [27, 3]
+29 Ops.AFTER dtypes.i32 [26, 28, 10]
+30 Ops.INDEX dtypes.i32 [29, 3]
+31 Ops.LOAD dtypes.i32 [30]
+32 Ops.ADD dtypes.i32 [31, 17]
+33 Ops.STORE dtypes.void [30, 32]
+34 Ops.END dtypes.void [33, 10]
+35 Ops.AFTER dtypes.i32 [26, 34, 28]
+36 Ops.INDEX dtypes.i32 [35, 3]
+37 Ops.LOAD dtypes.i32 [36]
+38 Ops.STORE dtypes.void [4, 37]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="r_3", estimates=Estimates(ops=3, lds=10, mem=10)) tag=1
+40 Ops.SINK dtypes.void [38] KernelInfo(name="r_3") tag=1
+41 Ops.LINEAR dtypes.void [0, 1, 8, 14, 26, 2, 3, 27, 9, 28, 10, 15, 16, 29, 30, 31, 17, 32, 33, 34, 35, 36, 37, 4, 38, 40]
+42 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) r_3(int* data0_1, short* data1_3) {\n  int buf0[1];\n  *(buf0+0) = 0;\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    short val0 = (*(data1_3+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+((int)(val0)));\n  }\n  *(data0_1+0) = (*(buf0+0));\n}"
+43 Ops.PROGRAM dtypes.void [39, 41, 42] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+44 Ops.SINK dtypes.void [25, 43]
 

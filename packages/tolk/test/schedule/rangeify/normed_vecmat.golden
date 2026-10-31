@@ -1,30 +1,31 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU")
-1 Ops.CONST dtypes.weakint [] 1
-2 Ops.CONST dtypes.weakint [] 32
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device="CPU")
-6 Ops.CONST dtypes.weakint [] 64
-7 Ops.STACK dtypes.weakint [1, 6]
-8 Ops.RESHAPE dtypes.float [5, 7]
-9 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=1, device="CPU")
-10 Ops.STACK dtypes.weakint [1, 1]
-11 Ops.RESHAPE dtypes.float [9, 10]
-12 Ops.RECIPROCAL dtypes.float [11]
-13 Ops.MUL dtypes.float [8, 12]
-14 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
-15 Ops.MUL dtypes.float [13, 14]
-16 Ops.STACK dtypes.weakint [1, 1, 6]
-17 Ops.RESHAPE dtypes.float [15, 16]
-18 Ops.PARAM dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=2048, device="CPU")
-19 Ops.STACK dtypes.weakint [1, 6, 2]
-20 Ops.RESHAPE dtypes.float [18, 19]
-21 Ops.PERMUTE dtypes.float [20] (0, 2, 1)
-22 Ops.MUL dtypes.float [17, 21]
-23 Ops.PERMUTE dtypes.float [22] (2, 0, 1)
-24 Ops.REDUCE dtypes.float [23] (Ops.ADD, 1)
-25 Ops.STORE dtypes.void [4, 24]
-26 Ops.AFTER dtypes.float [0, 25]
-27 Ops.SINK dtypes.void [26]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
+2 Ops.CONST dtypes.weakint [] 1
+3 Ops.STACK dtypes.weakint [2, 0]
+4 Ops.RESHAPE dtypes.f32 [1, 3]
+5 Ops.CONST dtypes.weakint [] 64
+6 Ops.PARAM dtypes.f32 [5] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
+7 Ops.STACK dtypes.weakint [2, 5]
+8 Ops.RESHAPE dtypes.f32 [6, 7]
+9 Ops.PARAM dtypes.f32 [2] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
+10 Ops.STACK dtypes.weakint [2, 2]
+11 Ops.RESHAPE dtypes.f32 [9, 10]
+12 Ops.RECIPROCAL dtypes.f32 [11]
+13 Ops.MUL dtypes.f32 [8, 12]
+14 Ops.PARAM dtypes.f32 [5] ParamArg(slot=3, dtype=dtypes.f32, device="CPU")
+15 Ops.MUL dtypes.f32 [13, 14]
+16 Ops.STACK dtypes.weakint [2, 2, 5]
+17 Ops.RESHAPE dtypes.f32 [15, 16]
+18 Ops.CONST dtypes.weakint [] 2048
+19 Ops.PARAM dtypes.f32 [18] ParamArg(slot=4, dtype=dtypes.f32, device="CPU")
+20 Ops.STACK dtypes.weakint [2, 5, 0]
+21 Ops.RESHAPE dtypes.f32 [19, 20]
+22 Ops.PERMUTE dtypes.f32 [21] (0, 2, 1)
+23 Ops.MUL dtypes.f32 [17, 22]
+24 Ops.PERMUTE dtypes.f32 [23] (2, 0, 1)
+25 Ops.REDUCE dtypes.f32 [24] (Ops.ADD, 1)
+26 Ops.STORE dtypes.void [4, 25]
+27 Ops.AFTER dtypes.f32 [1, 26]
+28 Ops.SINK dtypes.void [27]
 

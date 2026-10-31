@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 #include <metal_stdlib>
 using namespace metal;
 struct args_t { device signed char* data0_64; device signed char* data1_64; device signed char* data2_64; };

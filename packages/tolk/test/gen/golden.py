@@ -5,8 +5,6 @@ decorators below. The golden is named after its function, and generate.py
 writes it to `test/<path>/<name>.golden`.
 """
 
-import contextlib
-import io
 
 GOLDENS = []
 
@@ -50,9 +48,6 @@ def graph(fn):
 
 
 def listing(uops):
-    """The listing tinygrad prints for `uops`, a list of UOps in order."""
-    from tinygrad.uop.render import print_uops
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        print_uops(uops)
-    return out.getvalue()
+    """The listing tinygrad prints for `uops`, a list of UOps in order (`render_uir`)."""
+    from tinygrad.uop.render import render_uir
+    return render_uir(uops) + "\n"

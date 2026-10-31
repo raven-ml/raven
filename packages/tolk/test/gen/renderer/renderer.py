@@ -72,7 +72,7 @@ KERNELS = [
     ("simple_matmul_8192", lambda: kernel(empty(8192, 8192) @ empty(8192, 8192))),
     ("gemm", lambda: kernel(gemm(), opts=[])),
     ("gemm_one_upcasted", lambda: kernel(gemm(), opts=[up(0, 4)])),
-    ("gemm_upcasted", lambda: kernel(gemm(), opts=[up(0, 4), up(1, 4), Opt(OptOps.SPLIT, 4, (4, AxisType.UNROLL))])),
+    ("gemm_upcasted", lambda: kernel(gemm(), opts=[up(0, 4), up(1, 4), Opt(OptOps.SPLIT, 4, (4, AxisType.UPCAST))])),
     ("gemm_upcasted_locals", lambda: kernel(gemm(), renderer=CUDA, opts=[up(0, 4), up(1, 4), local(0, 4), local(1, 4)])),
     ("gemm_group", lambda: kernel(gemm(), renderer=CUDA, opts=[Opt(OptOps.SPLIT, 2, (4, AxisType.LOCAL))])),
     ("gemm_tc_half", lambda: kernel(gemm(dtypes.half), renderer=CUDA, opts=[Opt(OptOps.TC, 0, (-1, 0, 1))])),

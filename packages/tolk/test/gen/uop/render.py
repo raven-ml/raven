@@ -16,6 +16,12 @@ from tinygrad.dtype import AddrSpace, Invalid, dtypes
 from tinygrad.helpers import Context
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, KernelInfo, ParamArg, PatternMatcher, UOp
+import dataclasses
+
+
+def named(u, name):
+    """`u`, a define, with the name `name`."""
+    return u.replace(arg=dataclasses.replace(u.arg, name=name))
 
 
 def attempt(fn):
@@ -51,18 +57,18 @@ EXPRESSIONS = [
     ("named_param", UOp.param(2, dtypes.int, name="w")),
     ("buffer", UOp.new_buffer("CPU", 4, dtypes.float, 3)),
     ("local_buffer", UOp.placeholder((4,), dtypes.float, slot=5, addrspace=AddrSpace.LOCAL)),
-    ("named_buffer", UOp.placeholder((4,), dtypes.float, slot=6, addrspace=AddrSpace.LOCAL, tag="smem")),
+    ("named_buffer", named(UOp.placeholder((4,), dtypes.float, slot=6, addrspace=AddrSpace.LOCAL), "smem")),
     ("alloc", UOp.alloc((4,), dtypes.float, slot=2)),
-    ("named_alloc", UOp(Ops.ALLOC, arg=ParamArg(8, dtypes.float, 4, name="scratch"))),
+    ("named_alloc", UOp(Ops.ALLOC, src=(UOp.const(4),), arg=ParamArg(8, dtypes.float, name="scratch"))),
     ("after", UOp.new_buffer("CPU", 4, dtypes.float, 0).after(buf.index(r0).store(1.0))),
     ("special", UOp.special(4, "gidx0")),
     # ranges are their identity, and a loop without bound its first part
     ("range", r0),
-    ("range_of_parts", UOp(Ops.RANGE, src=(UOp.const(4),), arg=(1, 2, AxisType.LOOP))),
-    ("range_negative", UOp(Ops.RANGE, src=(UOp.const(4),), arg=(-1, AxisType.REDUCE))),
+    ("range_of_parts", UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.LOOP, 1, 2))),
+    ("range_negative", UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.WEAK, -1))),
     ("range_typed", UOp.range(4, 3, AxisType.GLOBAL, dtype=dtypes.int)),
     ("loop", UOp.loop(3)),
-    ("loop_of_parts", UOp(Ops.RANGE, src=(UOp(Ops.NOOP),), arg=(5, 6, AxisType.LOOP))),
+    ("loop_of_parts", UOp(Ops.RANGE, src=(UOp(Ops.NOOP),), arg=(AxisType.LOOP, 5, 6))),
     # constants are their value
     ("int", UOp.const(3)),
     ("negative_int", UOp.const(-3)),
@@ -228,7 +234,7 @@ SYMBOLIC = [
     ("param_of_variable_size", UOp.param(0, dtypes.float, (a,))),
     ("reshape_of_variable_size", UOp.param(1, dtypes.float, (4, a))),
     ("shrink_of_simplified_offset", marg_shrink),
-    ("range_after_shrink", UOp.range(1, 0, src=(marg_shrink,), dtype=dtypes.int)),
+    ("range_after_shrink", UOp.range(UOp.const(1, dtypes.int).after(marg_shrink), 0, dtype=dtypes.int)),
     ("pad_of_variable", buf.pad(((0, a),))),
     ("expand_of_variable", UOp.param(2, dtypes.float, (1,)).expand((b,))),
     ("product_of_variable", a * 3 * 4),
@@ -360,12 +366,12 @@ def program(): return listed(PROGRAM)
 
 
 @text
-def program_listing(): return listing(PROGRAM)
+def program_listing(): return attempt(lambda: listing(PROGRAM))
 
 
 @text
 def program_listing_colored():
-    with Context(NO_COLOR=0): return listing(PROGRAM)
+    with Context(NO_COLOR=0): return attempt(lambda: listing(PROGRAM))
 
 
 # A list that leaves out some sources prints them as `--`, constants included.
@@ -384,16 +390,16 @@ def partial(): return listed(PARTIAL)
 
 
 @text
-def partial_listing(): return listing(PARTIAL)
+def partial_listing(): return attempt(lambda: listing(PARTIAL))
 
 
 # Columns wider than their width are not cut, and arguments print as tinygrad
 # prints them.
 def wide_list():
-    ranges = [UOp.range(2, i, t) for i, t in [(12, AxisType.REDUCE), (10, AxisType.GLOBAL), (11, AxisType.LOCAL),
+    ranges = [UOp.range(2, i, t) for i, t in [(12, AxisType.WEAK), (10, AxisType.GLOBAL), (11, AxisType.LOCAL),
                                               (13, AxisType.UPCAST)]]
-    ranges.append(UOp(Ops.RANGE, src=(UOp.const(2),), arg=(0, 1, AxisType.UNROLL)))
-    ranges.append(UOp(Ops.RANGE, src=(UOp.const(2),), arg=(-1, AxisType.LOOP)))
+    ranges.append(UOp(Ops.RANGE, src=(UOp.const(2),), arg=(AxisType.UPCAST, 0, 1)))
+    ranges.append(UOp(Ops.RANGE, src=(UOp.const(2),), arg=(AxisType.LOOP, -1)))
     total = ranges[0]
     for r in ranges[1:]: total = total + r
     wide = UOp.sink(*[UOp.const(i) for i in range(12)])
@@ -426,9 +432,9 @@ def wide(): return listed(WIDE)
 
 
 @text
-def wide_listing(): return listing(WIDE)
+def wide_listing(): return attempt(lambda: listing(WIDE))
 
 
 @text
 def wide_listing_colored():
-    with Context(NO_COLOR=0): return listing(WIDE)
+    with Context(NO_COLOR=0): return attempt(lambda: listing(WIDE))

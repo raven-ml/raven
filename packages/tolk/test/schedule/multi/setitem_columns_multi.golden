@@ -1,83 +1,84 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device=("CPU", "CPU:1"))
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.CONST dtypes.weakint [] 8
-3 Ops.STACK dtypes.weakint [1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.CONST dtypes.weakint [] 0
-6 Ops.STACK dtypes.weakint [5, 5]
-7 Ops.SHRINK dtypes.float [4, 6, 3]
-8 Ops.CONST dtypes.weakint [] 1
-9 Ops.CAST dtypes.int [8] dtypes.int
-10 Ops.EXPAND dtypes.int [9, 2]
-11 Ops.CONST dtypes.weakint [] 7
-12 Ops.CONST dtypes.weakint [] 15
-13 Ops.PAD dtypes.int [10, 11, 12]
-14 Ops.STACK dtypes.weakint [8, 12]
-15 Ops.RESHAPE dtypes.int [13, 14]
-16 Ops.RESHAPE dtypes.int [15, 12]
-17 Ops.CONST dtypes.weakint [] 9
-18 Ops.EXPAND dtypes.int [16, 17]
-19 Ops.CONST dtypes.weakint [] 135
-20 Ops.RESHAPE dtypes.int [18, 19]
-21 Ops.CONST dtypes.weakint [] 128
-22 Ops.SHRINK dtypes.int [20, 5, 21]
-23 Ops.CONST dtypes.weakint [] 16
-24 Ops.STACK dtypes.weakint [2, 23]
-25 Ops.RESHAPE dtypes.int [22, 24]
-26 Ops.STACK dtypes.weakint [2, 2]
-27 Ops.SHRINK dtypes.int [25, 6, 26]
-28 Ops.STACK dtypes.weakint [2, 2, 8]
-29 Ops.RESHAPE dtypes.int [27, 28]
-30 Ops.RESHAPE dtypes.int [29, 26]
-31 Ops.PERMUTE dtypes.int [30] (1, 0)
-32 Ops.PERMUTE dtypes.int [31] (1, 0)
-33 Ops.REDUCE dtypes.int [32] (Ops.ADD, 1)
-34 Ops.CONST dtypes.weakint [] -1
-35 Ops.ADD dtypes.int [33, 34]
-36 Ops.STACK dtypes.weakint [2, 8]
-37 Ops.RESHAPE dtypes.int [35, 36]
-38 Ops.CMPLT dtypes.bool [37, 5]
-39 Ops.CONST dtypes.bool [] True
-40 Ops.CMPNE dtypes.bool [38, 39]
-41 Ops.CMPLT dtypes.bool [37, 2]
-42 Ops.AND dtypes.bool [40, 41]
-43 Ops.MUL dtypes.weakint [5, 34]
-44 Ops.ADD dtypes.int [37, 43]
-45 Ops.FLOORMOD dtypes.int [44, 8]
-46 Ops.CMPNE dtypes.bool [45, 5]
-47 Ops.CMPNE dtypes.bool [46, 39]
-48 Ops.AND dtypes.bool [42, 47]
-49 Ops.STACK dtypes.weakint [8, 2]
-50 Ops.RESHAPE dtypes.int [35, 49]
-51 Ops.CONST dtypes.weakint [] 2
-52 Ops.CMPLT dtypes.bool [50, 51]
-53 Ops.CMPNE dtypes.bool [52, 39]
-54 Ops.CMPLT dtypes.bool [50, 1]
-55 Ops.AND dtypes.bool [53, 54]
-56 Ops.MUL dtypes.weakint [51, 34]
-57 Ops.ADD dtypes.int [50, 56]
-58 Ops.FLOORMOD dtypes.int [57, 8]
-59 Ops.CMPNE dtypes.bool [58, 5]
-60 Ops.CMPNE dtypes.bool [59, 39]
-61 Ops.AND dtypes.bool [55, 60]
-62 Ops.AND dtypes.bool [48, 61]
-63 Ops.RANGE dtypes.weakint [51] (-1, AxisType.DEVICE)
-64 Ops.MUL dtypes.weakint [63, 1]
-65 Ops.STACK dtypes.weakint [64, 5]
-66 Ops.SHRINK dtypes.bool [62, 65, 3]
-67 Ops.CONST dtypes.weakfloat [] 1.0
-68 Ops.CAST dtypes.float [67] dtypes.float
-69 Ops.STACK dtypes.weakint [2, 51]
-70 Ops.EXPAND dtypes.float [68, 69]
-71 Ops.STACK dtypes.weakint [5, 51]
-72 Ops.PAD dtypes.float [70, 71, 26]
-73 Ops.SHRINK dtypes.float [72, 65, 3]
-74 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device=("CPU", "CPU:1"))
-75 Ops.RESHAPE dtypes.float [74, 3]
-76 Ops.WHERE dtypes.float [66, 73, 75]
-77 Ops.STORE dtypes.void [7, 76]
-78 Ops.AFTER dtypes.float [4, 77]
-79 Ops.UNSHARD dtypes.float [78, 63] (0,)
-80 Ops.SINK dtypes.void [79]
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 32
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.STACK dtypes.weakint [2, 3]
+5 Ops.RESHAPE dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.STACK dtypes.weakint [6, 6]
+8 Ops.SHRINK dtypes.f32 [5, 7, 4]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.EXPAND dtypes.i32 [10, 3]
+12 Ops.CONST dtypes.weakint [] 7
+13 Ops.CONST dtypes.weakint [] 15
+14 Ops.PAD dtypes.i32 [11, 12, 13]
+15 Ops.STACK dtypes.weakint [9, 13]
+16 Ops.RESHAPE dtypes.i32 [14, 15]
+17 Ops.RESHAPE dtypes.i32 [16, 13]
+18 Ops.CONST dtypes.weakint [] 9
+19 Ops.EXPAND dtypes.i32 [17, 18]
+20 Ops.CONST dtypes.weakint [] 135
+21 Ops.RESHAPE dtypes.i32 [19, 20]
+22 Ops.CONST dtypes.weakint [] 128
+23 Ops.SHRINK dtypes.i32 [21, 6, 22]
+24 Ops.CONST dtypes.weakint [] 16
+25 Ops.STACK dtypes.weakint [3, 24]
+26 Ops.RESHAPE dtypes.i32 [23, 25]
+27 Ops.STACK dtypes.weakint [3, 3]
+28 Ops.SHRINK dtypes.i32 [26, 7, 27]
+29 Ops.STACK dtypes.weakint [3, 3, 9]
+30 Ops.RESHAPE dtypes.i32 [28, 29]
+31 Ops.RESHAPE dtypes.i32 [30, 27]
+32 Ops.PERMUTE dtypes.i32 [31] (1, 0)
+33 Ops.PERMUTE dtypes.i32 [32] (1, 0)
+34 Ops.REDUCE dtypes.i32 [33] (Ops.ADD, 1)
+35 Ops.CONST dtypes.weakint [] -1
+36 Ops.ADD dtypes.i32 [34, 35]
+37 Ops.STACK dtypes.weakint [3, 9]
+38 Ops.RESHAPE dtypes.i32 [36, 37]
+39 Ops.CMPLT dtypes.bool [38, 6]
+40 Ops.CONST dtypes.bool [] True
+41 Ops.CMPNE dtypes.bool [39, 40]
+42 Ops.CMPLT dtypes.bool [38, 3]
+43 Ops.AND dtypes.bool [41, 42]
+44 Ops.MUL dtypes.weakint [6, 35]
+45 Ops.ADD dtypes.i32 [38, 44]
+46 Ops.FLOORMOD dtypes.i32 [45, 9]
+47 Ops.CMPNE dtypes.bool [46, 6]
+48 Ops.CMPNE dtypes.bool [47, 40]
+49 Ops.AND dtypes.bool [43, 48]
+50 Ops.STACK dtypes.weakint [9, 3]
+51 Ops.RESHAPE dtypes.i32 [36, 50]
+52 Ops.CONST dtypes.weakint [] 2
+53 Ops.CMPLT dtypes.bool [51, 52]
+54 Ops.CMPNE dtypes.bool [53, 40]
+55 Ops.CMPLT dtypes.bool [51, 2]
+56 Ops.AND dtypes.bool [54, 55]
+57 Ops.MUL dtypes.weakint [52, 35]
+58 Ops.ADD dtypes.i32 [51, 57]
+59 Ops.FLOORMOD dtypes.i32 [58, 9]
+60 Ops.CMPNE dtypes.bool [59, 6]
+61 Ops.CMPNE dtypes.bool [60, 40]
+62 Ops.AND dtypes.bool [56, 61]
+63 Ops.AND dtypes.bool [49, 62]
+64 Ops.RANGE dtypes.weakint [52] (AxisType.DEVICE, 0)
+65 Ops.MUL dtypes.weakint [64, 2]
+66 Ops.STACK dtypes.weakint [65, 6]
+67 Ops.SHRINK dtypes.bool [63, 66, 4]
+68 Ops.CONST dtypes.weakfloat [] 1.0
+69 Ops.CAST dtypes.f32 [68] dtypes.f32
+70 Ops.STACK dtypes.weakint [3, 52]
+71 Ops.EXPAND dtypes.f32 [69, 70]
+72 Ops.STACK dtypes.weakint [6, 52]
+73 Ops.PAD dtypes.f32 [71, 72, 27]
+74 Ops.SHRINK dtypes.f32 [73, 66, 4]
+75 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device=("CPU", "CPU:1"))
+76 Ops.RESHAPE dtypes.f32 [75, 4]
+77 Ops.WHERE dtypes.f32 [67, 74, 76]
+78 Ops.STORE dtypes.void [8, 77]
+79 Ops.AFTER dtypes.f32 [5, 78]
+80 Ops.UNSHARD dtypes.f32 [79, 64] (0,)
+81 Ops.SINK dtypes.void [80]
 

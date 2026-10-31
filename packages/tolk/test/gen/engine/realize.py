@@ -11,9 +11,7 @@ its source's bytes.
 it, with the schedule's variables: its buffer arguments (`get_call_arg_uops`) and the values of its
 program's variables (`get_call_var_uops`), both as the positions of the
 call's sources or as values; the buffers it writes and reads
-(`get_call_outs_ins`); the buffers it writes and does not read
-(`get_call_written_bufs`), as positions among its buffer arguments of the
-buffers they view; its name (`get_call_name`, in colour, with the schedule's
+(`get_call_outs_ins`); its name (`get_call_name`, in colour, with the schedule's
 variables); and its cost (`estimate_uop`), with the schedule's variables.
 """
 
@@ -107,14 +105,11 @@ def call_row(program, i, call, var_vals):
     ast = call.body
     variables = realize.get_call_var_uops(call, ast) if ast.op is Ops.PROGRAM else []
     outs, ins = realize.get_call_outs_ins(call)
-    storage = [b.storage_base for b in bufs]
-    storage = [s.src[0].storage_base if s.op is Ops.MSELECT else s for s in storage]
-    written = [storage.index(b) for b in realize.get_call_written_bufs(call)]
     with Context(NO_COLOR=0): name = realize.get_call_name(call, bufs, var_vals)
     e = realize.estimate_uop(call)
     return (program, str(i), " ".join(f"{k}={v}" for k, v in sorted(var_vals.items())) or "-", " ".join(position(call, b) for b in bufs) or "-",
             " ".join(v.arg.name if v.op is Ops.PARAM else str(v.arg) for v in variables) or "-",
-            " ".join(map(str, outs)) or "-", " ".join(map(str, ins)) or "-", " ".join(map(str, written)) or "-",
+            " ".join(map(str, outs)) or "-", " ".join(map(str, ins)) or "-",
             name, sym(e.ops, var_vals), sym(e.lds, var_vals), sym(e.mem, var_vals))
 
 
@@ -136,4 +131,4 @@ def calls():
         linear, var_vals = scheduled(PROGRAMS[program])
         for i, call in enumerate(realize.lower_and_compile(linear).src):
             rows.append(call_row(program, i, call, var_vals))
-    return ["program", "call", "var_vals", "bufs", "vars", "outs", "ins", "written", "name", "ops", "lds", "mem"], rows
+    return ["program", "call", "var_vals", "bufs", "vars", "outs", "ins", "name", "ops", "lds", "mem"], rows

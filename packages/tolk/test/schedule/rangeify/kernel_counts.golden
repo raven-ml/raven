@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 program	kernels
 add	1
 sum	1
@@ -146,7 +146,7 @@ mesh_sum	11
 mesh_sum_1	14
 mesh_to_one	11
 mesh_to_one_1	14
-shard_of_computed	3
+shard_of_computed	5
 shard_gather	3
 replicated_reshape	2
 shard_matmul	1

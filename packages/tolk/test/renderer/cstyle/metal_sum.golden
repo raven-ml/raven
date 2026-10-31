@@ -1,4 +1,4 @@
-# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 #include <metal_stdlib>
 using namespace metal;
 struct args_t { device float* data0_1; device float* data1_256; };
@@ -9,15 +9,15 @@ kernel void r_16_16(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup
   threadgroup __attribute__((aligned(16))) float buf2[16];
   int lidx0 = lid.x; /* 16 */
   *(buf0+0) = 0.0f;
-  for (int Ridx0 = 0; Ridx0 < 16; Ridx0++) {
-    float val0 = (*(data1_256+((lidx0<<4)+Ridx0)));
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    float val0 = (*(data1_256+((lidx0<<4)+Lidx0)));
     *(buf0+0) = ((*(buf0+0))+val0);
   }
   *(buf2+lidx0) = (*(buf0+0));
   threadgroup_barrier(mem_flags::mem_threadgroup);
   *(buf1+0) = 0.0f;
-  for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {
-    float val1 = (*(buf2+Ridx101));
+  for (int Lidx101 = 0; Lidx101 < 16; Lidx101++) {
+    float val1 = (*(buf2+Lidx101));
     *(buf1+0) = ((*(buf1+0))+val1);
   }
   if ((lidx0==0)) {
