@@ -447,22 +447,14 @@ stamps nothing (D146).
   an offset crosses a comparison only where neither side wraps` (the
   committed case).
 
-## D14. Folded comparisons treat NaN as IEEE does
+## D14. Withdrawn
 
-- **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`), whose operands come
-  from `UOp.val` (`uop/ops.py:249-254`) as `ConstFloat`s (`dtype.py:8-22`).
-  `ConstFloat` makes NaN equal to NaN on purpose, so that NaN constants
-  intern as one node, and `exec_alu` compares with it: `nan != nan` and
-  `nan < nan` fold to `False`, where `exec_alu` on floats gives `True` and
-  `False`.
-- **tolk:** `Shape.fold_const_alu`; constants are
-  interned by `Dtype.equal_const`, and `exec_alu` compares floats.
-- **Differs:** a folded comparison of NaN constants follows IEEE: `nan <> nan`
-  is `true`.
-- **Reason:** (b): `Nx.not_equal x x` on a NaN is `true` in eager nx, and
-  rune's jitted graph, whose constants fold here, must agree.
-- **Pinned by:** `Tolk.Symbolic › symbolic_simple › constants › NaN is
-  unequal to itself when constants fold, as IEEE says`.
+Folded comparisons of NaN constants followed IEEE here, where tinygrad compared
+them as `ConstFloat`s, which make NaN equal to NaN. At
+`uop/symbolic.py:30,70-72` `fold_const_alu` reads each operand through
+`const_arg`, which turns a `ConstFloat` into a plain float, so `nan != nan`
+folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
+`test_const_folding.py::TestWeakConstFolding::test_nan_compare` states it.
 
 ## D15. Compilers load their library at the first compile
 
@@ -556,25 +548,12 @@ stamps nothing (D146).
   `Tolk.Cstyle › execution on the host › a kernel over a narrow type wraps
   and rounds as the interpreter`, over each type's whole range.
 
-## D18. Metal computes a bfloat trunc in float
+## D18. Withdrawn
 
-- **tinygrad:** `renderer/cstyle.py:381-385` (`MetalRenderer.extra_matcher`
-  computes `SQRT`, `EXP2`, `LOG2` and `SIN` of a bfloat16 in float32).
-- **tolk:** `Cstyle.metal_extra_matcher`.
-- **Differs:** `TRUNC` of a bfloat16 is computed in float32 as well. Metal
-  has no `trunc` of a `bfloat`: `trunc(x)` converts `x` to `float` and
-  returns a `float`, which does not convert to a `bfloat` implicitly, so a
-  kernel that stores or adds it to a bfloat does not compile. The graph
-  handed to the renderer has a cast to float32 and back around each such
-  `TRUNC`.
-- **Reason:** (b). rune runs bfloat16 models on Metal (gpt-oss), where
-  `Nx.trunc`, `floor`, `ceil` and `round` of a bfloat16 lower to `TRUNC`.
-- **Pinned by:** `Tolk.Cstyle › bfloat16 truncation on Metal ›
-  truncates a bfloat16 in float32` and `› leaves it to CUDA, which truncates a
-  bfloat16 with htrunc`, and the slow `› compiles a kernel that truncates a
-  bfloat16`; `Tolk.Cstyle › every GPU kernel compiles with its target's
-  toolchain › metal_transcendental_bf16`, tinygrad's graph, is an expected
-  failure.
+Metal computed a bfloat16 `TRUNC` in float32 here, where tinygrad truncated the
+bfloat, which Metal has no `trunc` of. At `renderer/cstyle.py:384`
+`MetalRenderer.extra_matcher` computes `TRUNC` in float32 with `SQRT`, `EXP2`,
+`LOG2` and `SIN`, as `Cstyle.metal_extra_matcher` does.
 
 ## D19. Withdrawn
 

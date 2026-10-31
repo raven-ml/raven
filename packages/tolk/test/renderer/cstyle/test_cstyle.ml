@@ -564,8 +564,6 @@ let lacks_toolchain why =
    program (Spec.program) and never reaches the renderer. *)
 let rejected =
   [
-    ( "metal_transcendental_bf16",
-      "tinygrad's graph truncates a bfloat without the float cast" );
     ("cuda_dynamic_lane", "reads a lane by a variable, which no program does");
     ("cuda_vector_cast", "casts a vector, which no program does");
   ]
