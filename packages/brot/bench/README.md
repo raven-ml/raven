@@ -15,8 +15,8 @@ Benchmark inputs live in `./data/`:
 - `llama.json` — Meta LLaMA (BPE, 32K vocab, 61K merges, no pre-tokenizer)
 - `roberta_base.json` — FacebookAI RoBERTa-base (BPE, 50K vocab,
   RobertaProcessing)
-- `t5_base_nonorm.json` — Google T5-base with its `Precompiled` normalizer
-  dropped, which brot does not implement (Unigram, 32K vocab, Metaspace)
+- `t5_base.json` — Google T5-base (Unigram, 32K vocab, SentencePiece
+  `Precompiled` normalizer, Metaspace)
 - `mistral.json` — Mistral-7B-v0.1 (BPE with byte fallback, 32K vocab,
   non-splitting Metaspace pre-tokenizer)
 - `llama3.json` — Llama 3.2 (byte-level BPE, 128K vocab, `ignore_merges`,

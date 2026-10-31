@@ -21,7 +21,7 @@ let models =
     ("llama", corpora);
     ("bert_base", corpora);
     ("roberta_base", corpora);
-    ("t5_base_nonorm", corpora);
+    ("t5_base", corpora);
     ("mistral", corpora);
     ("llama3", regex_split_corpora);
     ("qwen2_5", regex_split_corpora);

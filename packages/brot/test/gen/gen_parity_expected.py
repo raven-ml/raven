@@ -27,8 +27,9 @@ given one tokenizer:
 - `roberta_base` — byte-level BPE with `RobertaProcessing`, which trims the
   offsets the ByteLevel pre-tokenizer produced and wraps the ids in
   `<s>`/`</s>`.
-- `t5_base_nonorm` — Unigram with a Metaspace pre-tokenizer and decoder, and a
-  TemplateProcessing that appends `</s>`.
+- `t5_base` — Unigram behind SentencePiece's `Precompiled` normalizer, with a
+  Metaspace pre-tokenizer and decoder, and a TemplateProcessing that appends
+  `</s>`.
 - `mistral` — BPE with byte fallback, no normalizer, and a Metaspace
   pre-tokenizer with `split: false`, so the whole text reaches BPE as one
   span with a `▁` prepended to the first word.
@@ -42,13 +43,6 @@ given one tokenizer:
   structured by case, with an optional contraction.
 - `phi4` — Llama 3's pattern asked for the other way round, as OLMo 2 does too:
   `Removed` with `invert`, the matches being the text that is kept.
-
-`t5_base_nonorm` is not stock T5: T5's only normalizer is a `Precompiled`
-SentencePiece charsmap, which brot does not implement and refuses to load, so
-`download_data.sh` drops the `normalizer` field on the way in. What that costs
-is the NFKC-like character folding the charsmap performs, which on these corpora
-reaches little more than the edge cases; both sides read the derived file, so
-the fixture stays self-consistent.
 
 A Unigram model is rebuilt from the file's scores as Python reads them (see
 `load_tokenizer`). `Tokenizer.from_file` reads them through a decimal
@@ -147,7 +141,7 @@ TOKENIZERS = {
     "llama": CORPORA,
     "bert_base": CORPORA,
     "roberta_base": CORPORA,
-    "t5_base_nonorm": CORPORA,
+    "t5_base": CORPORA,
     "mistral": CORPORA,
     "llama3": REGEX_SPLIT_CORPORA,
     "qwen2_5": REGEX_SPLIT_CORPORA,

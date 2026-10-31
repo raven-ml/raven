@@ -25,14 +25,9 @@ curl -sL -o "$DATA_DIR/roberta_base.json" \
   "https://huggingface.co/FacebookAI/roberta-base/resolve/main/tokenizer.json"
 echo "  RoBERTa-base (byte-level BPE, 50K vocab, RobertaProcessing)"
 
-# T5's only normalizer is a Precompiled charsmap, which brot does not implement,
-# so what is saved here is T5 with that normalizer dropped. The parity fixtures
-# are generated from this same file, so the reference and brot read one
-# tokenizer; what it loses is the SentencePiece NFKC-like character folding.
-curl -sL "https://huggingface.co/google-t5/t5-base/resolve/main/tokenizer.json" \
-  | python3 -c 'import json,sys; t=json.load(sys.stdin.buffer); t["normalizer"]=None; json.dump(t,sys.stdout)' \
-  > "$DATA_DIR/t5_base_nonorm.json"
-echo "  T5-base without its Precompiled normalizer (Unigram, 32K vocab, Metaspace)"
+curl -sL -o "$DATA_DIR/t5_base.json" \
+  "https://huggingface.co/google-t5/t5-base/resolve/main/tokenizer.json"
+echo "  T5-base (Unigram, 32K vocab, Precompiled normalizer, Metaspace)"
 
 curl -sL -o "$DATA_DIR/mistral.json" \
   "https://huggingface.co/mistralai/Mistral-7B-v0.1/resolve/main/tokenizer.json"

@@ -2,7 +2,7 @@ gpt2.json
 bert_base.json
 llama.json
 roberta_base.json
-t5_base_nonorm.json
+t5_base.json
 mistral.json
 llama3.json
 qwen2_5.json
