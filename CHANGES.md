@@ -501,6 +501,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Ode.path` takes again only its accepted steps, whatever its `budget`: it
+  took a step of zero length in each slot past them. Compiled, its search
+  writes each attempt's records alone, where it wrote them through a mask
+  over every slot.
 - `Minimize.solve` and `System.solve`'s methods and `System.lanes` add the
   matrix products that steer them, `Jᵀ J`, `Jᵀ r`, `H ∇f`, `B s` and their
   like, in a fixed pairwise order, so a compiled solve rounds them as an eager

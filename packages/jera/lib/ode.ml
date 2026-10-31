@@ -728,6 +728,18 @@ let search_ptree y tree =
 let scalar_at t i =
   Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) t)
 
+(* [rows] with [x] combined into row [i], where [only] holds if given: a
+   scatter, at the position [-1] elsewhere, which writes nothing, so that a
+   loop's step whose carry [rows] is writes that row alone. *)
+let put ?(combine = Nx.Set) ?only i x rows =
+  let i = Nx.cast Nx.int64 i in
+  let i =
+    match only with None -> i | Some c -> Nx.where c i (Nx.full_like i (-1L))
+  in
+  let shape = Array.append [| 1 |] (Nx.shape x) in
+  let p = Nx.broadcast_to shape (Nx.reshape (Array.map (fun _ -> 1) shape) i) in
+  Nx.scatter ~combine ~axis:0 p (Nx.reshape shape x) rows
+
 (* What to change for a solve that stopped short, from its lane's facts. *)
 let fix tol (st : Solution.status) facts =
   let fact name = List.assoc name facts in
@@ -962,45 +974,14 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let abs_e = Nx.Ptree.map y (fun _ x -> Nx.abs x) e in
     let acc' = Nx.Ptree.axpy y one abs_e s.acc in
     let finishing = Nx.logical_and ok lands in
-    let row =
-      Nx.equal
-        (Nx.arange_at (Nx.beside at) Nx.int32 0 n 1)
-        (Nx.broadcast_to [| n |] (Nx.add_s j 1l))
-    in
     let put_row c rows v =
       Nx.Ptree.map2 y
-        (fun _ rows x ->
-          let mask =
-            Nx.reshape
-              (Array.append [| n |] (Array.make (Nx.ndim x) 1))
-              (Nx.logical_and row (Nx.broadcast_to [| n |] c))
-          in
-          Nx.where
-            (Nx.broadcast_to (Nx.shape rows) mask)
-            (Nx.broadcast_to (Nx.shape rows) (Nx.unsqueeze ~axes:[ 0 ] x))
-            rows)
+        (fun _ rows x -> put ~only:c (Nx.add_s j 1l) x rows)
         rows v
     in
-    let slot =
-      Nx.equal
-        (Nx.arange_at (Nx.beside at) Nx.int32 0 budget 1)
-        (Nx.broadcast_to [| budget |] s.accepted)
-    in
-    let ends =
-      Nx.where
-        (Nx.logical_and slot (Nx.broadcast_to [| budget |] taken))
-        (Nx.broadcast_to [| budget |] sigma_end)
-        s.ends
-    in
-    let at_j =
-      Nx.equal
-        (Nx.arange_at (Nx.beside at) Nx.int32 0 n_int 1)
-        (Nx.broadcast_to [| n_int |] j)
-    in
+    let ends = put ~only:taken s.accepted sigma_end s.ends in
     let counts =
-      Nx.add s.counts
-        (Nx.cast Nx.int32
-           (Nx.logical_and at_j (Nx.broadcast_to [| n_int |] taken)))
+      put ~combine:Add ~only:taken j (Nx.scalar_like s.counts 1l) s.counts
     in
     let interval = Nx.where finishing (Nx.add_s s.interval 1l) s.interval in
     let st = s.status in
@@ -1367,41 +1348,77 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
   let ext = extension_of fn m in
   let thetas = Array.map (fun u -> (u +. 1.) /. 2.) (Cheb.nodes (degree ext)) in
   let stages = Array.length m.tableau.b in
-  (* Each accepted step taken again with the tracked field, and a step of zero
-     length in each slot past them: its continuous extension at the Chebyshev
-     points, and the accumulated magnitudes of the local estimates. *)
-  let slot (v, (k, (acc, sigma0))) (i, sigma1) =
-    let live = Nx.less i s.accepted in
-    let sigma1 = Nx.where live sigma1 sigma0 in
+  let zeros = Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) y0 in
+  (* [budget] rows of zeros, each of [lead] then a leaf's shape. *)
+  let rows lead =
+    Nx.Ptree.map y
+      (fun _ x ->
+        Nx.zeros_at (Nx.beside x) (Nx.dtype x)
+          (Array.concat [ [| budget |]; lead; Nx.shape x ]))
+      y0
+  in
+  (* Each accepted step taken again with the tracked field: its continuous
+     extension at the Chebyshev points and the accumulated magnitudes of the
+     local estimates, written into row [i] of the pieces. *)
+  let piece (v, (k, (acc, (sigma0, (i, (nodes, accs)))))) =
+    let sigma1 = scalar_at s.ends i in
     let t = Nx.add t0 (Nx.mul span sigma0)
     and h = Nx.mul span (Nx.sub sigma1 sigma0) in
     let stepped = step ~stages:(tol, Stated) fn y m f t h v (Some k) in
     let v' = stepped.next and ks = stepped.stages in
-    let nodes =
+    let node =
       stack y (Array.map (node y ext h v (ks, stepped.values)) thetas)
     in
     let e =
       match stepped.error with
       | Some e -> e
-      | None ->
-          combine y h emb.e (Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) v) ks
+      | None -> combine y h emb.e zeros ks
     in
     let acc =
       Nx.Ptree.map2 y (fun _ a e -> Nx.add a (Rune.detach (Nx.abs e))) acc e
     in
-    ((v', (ks.(stages - 1), (acc, sigma1))), (nodes, acc))
+    let write rows x = Nx.Ptree.map2 y (fun _ r x -> put i x r) rows x in
+    ( v',
+      ( ks.(stages - 1),
+        (acc, (sigma1, (Nx.add_s i 1l, (write nodes node, write accs acc)))) )
+    )
   in
-  let c = Nx.Ptree.(pair y (pair y (pair y tensor))) in
-  let k0 = eval fn y f t0 y0 in
-  let zeros = Nx.Ptree.map y (fun _ x -> Nx.zeros_like x) y0 in
-  let _, (nodes, accs) =
-    Rune.scan c
-      Nx.Ptree.(pair tensor tensor)
-      Nx.Ptree.(pair y y)
-      slot
-      ~init:(y0, (k0, (zeros, Nx.zeros_at (Nx.beside t0) dtype [||])))
-      (Nx.arange_at (Nx.beside t0) Nx.int32 0 budget 1, s.ends)
+  let c =
+    Nx.Ptree.(pair y (pair y (pair y (pair tensor (pair tensor (pair y y))))))
   in
+  let init =
+    ( y0,
+      ( eval fn y f t0 y0,
+        ( zeros,
+          ( Nx.zeros_at (Nx.beside t0) dtype [||],
+            ( Nx.scalar_at (Nx.beside t0) Nx.int32 0l,
+              (rows [| Array.length thetas |], rows [||]) ) ) ) ) )
+  in
+  let v, (_, (acc, (_, (_, (nodes, accs))))) =
+    Rune.iterate c ~max:budget
+      ~until:(fun (_, (_, (_, (_, (i, _))))) -> Nx.greater_equal i s.accepted)
+      piece init
+  in
+  (* The pieces past the accepted steps are empty at the last one's end: the
+     state there, and its accumulated estimates. *)
+  let live =
+    Nx.less
+      (Nx.arange_at (Nx.beside t0) Nx.int32 0 budget 1)
+      (Nx.broadcast_to [| budget |] s.accepted)
+  in
+  let past rows x =
+    Nx.Ptree.map2 y
+      (fun _ r x ->
+        let lead = Array.make (Nx.ndim r - 1) 1 in
+        Nx.where
+          (Nx.broadcast_to (Nx.shape r)
+             (Nx.reshape (Array.append [| budget |] lead) live))
+          r
+          (Nx.broadcast_to (Nx.shape r) (Nx.unsqueeze ~axes:[ 0 ] x)))
+      rows x
+  in
+  let nodes = past nodes (stack y (Array.map (fun _ -> v) thetas))
+  and accs = past accs acc in
   (* The breaks as fractions of the span: past the accepted steps, the last
      one's end. *)
   let live =

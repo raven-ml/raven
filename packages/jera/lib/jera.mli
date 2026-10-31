@@ -1644,13 +1644,12 @@ module Ode : sig
       {b Error.} The error is a series of degree 0 on the same breaks: on each
       piece, per component, the sum of the magnitudes of the local estimates of
       the accepted steps through it. {b Stability.} As {!solve}'s. {b Cost.} A
-      solve's search, then [budget] steps in the answer: the accepted ones taken
-      again with the tracked field, and one of zero length in each slot past
-      them, so a [budget] near the steps the solve takes keeps the answer's cost
-      near the search's. Each piece costs [p + 1] combinations of the stages for
-      an extension of order [p]. {b Derivative.} The accepted steps' and their
-      extensions', through the initial state, [t0], [t1] and every tracked value
-      the field reads; the breaks move with [t0] and [t1].
+      solve's search, then its accepted steps taken again with the tracked
+      field, whatever the [budget], which sizes the pieces' storage. Each piece
+      costs [p + 1] combinations of the stages for an extension of order [p].
+      {b Derivative.} The accepted steps' and their extensions', through the
+      initial state, [t0], [t1] and every tracked value the field reads; the
+      breaks move with [t0] and [t1].
 
       Raises [Invalid_argument] if [budget < 1], if [t0] or [t1] is not a
       scalar, if a leaf of the state is not a float tensor, or as {!march} does
