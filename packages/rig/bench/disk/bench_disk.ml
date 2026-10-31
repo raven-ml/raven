@@ -301,32 +301,41 @@ let borrow_rows =
 (* Opens: one file, and more files than the disk keeps descriptors for, each
    open evicting the least recently used.
 
-   [many-128] keeps every buffer it opens until its trial ends. The disk frees a
-   collected buffer at its next call, so a buffer of an earlier call that the
-   collector reached during a batch would add its free to the batch's count, at
-   a time the collector's pace decides: the count would move with
-   [OCAMLRUNPARAM] and with the rows run before. A trial makes under a thousand
-   calls on fudge, about 650 bytes a buffer; [kept] holds four times as many
-   calls, which bounds the memory they hold. *)
+   [file] and [many-128] keep every buffer they open until their trial ends.
+   The disk frees a collected buffer at its next call, so a buffer of an
+   earlier call that the collector reached during a batch would add its free to
+   the batch's count, at a time the collector's pace decides: the count would
+   move with [OCAMLRUNPARAM] and with the rows run before. A trial on fudge
+   makes under 100,000 calls of [file] and under a thousand of [many-128],
+   about 650 bytes a buffer; each row holds four times as many calls, which
+   bounds the memory they hold. *)
 
-let kept = 4096
+type 'a holding = { name : string; held : 'a array; mutable n : int }
 
-type opening = { paths : string array; held : B.t array array; mutable n : int }
+let holding name ~calls empty = { name; held = Array.make calls empty; n = 0 }
 
-let open_many t =
-  if t.n = kept then failwith (strf "open/many-128: more than %d calls" kept);
-  t.held.(t.n) <- Array.map (fun p -> ok (Rig_disk.of_file p)) t.paths;
+let hold t v =
+  if t.n = Array.length t.held then
+    failwith (strf "open/%s: more than %d calls" t.name t.n);
+  t.held.(t.n) <- v;
   t.n <- t.n + 1
 
 let open_rows =
   let small i = data (strf "small-%d" i) (4 * kib) in
   let smalls () = Array.init many small in
-  let opening () = { paths = smalls (); held = Array.make kept [||]; n = 0 } in
+  let open_file p = ok (Rig_disk.of_file p) in
+  (* [file]'s slots start at a buffer the setup opens, since an array needs a
+     first value. *)
+  let file () =
+    let p = small 0 in
+    (p, holding "file" ~calls:400_000 (open_file p))
+  in
+  let files () = (smalls (), holding "many-128" ~calls:4096 [||]) in
   let open_floor p = close (opened p ~writable:false) in
   Thumper.group "open"
     [
-      row "file" (fun () -> small 0) (fun p -> ok (Rig_disk.of_file p));
-      row "many-128" opening open_many;
+      row "file" file (fun (p, t) -> hold t (open_file p));
+      row "many-128" files (fun (ps, t) -> hold t (Array.map open_file ps));
       row "floor-file" (fun () -> small 0) open_floor;
       row "floor-many-128" smalls (fun ps ->
           Array.iter close (Array.map (opened ~writable:false) ps));
