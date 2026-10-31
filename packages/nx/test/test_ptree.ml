@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Nx.Ptree: what a walk visits; the laws between flatten, rebuild, map and
-   fold, at every dtype; the messages of two values that differ; payload maps,
-   casts and placement through a structure's module; structures nested across
-   sets; and the vector arithmetic of a value's float arrays. *)
+   fold, at every dtype; the messages of two values that differ; payload maps
+   and folds, casts and placement through a structure's module; structures
+   nested across sets; and the vector arithmetic of a value's float arrays. *)
 
 open Windtrap
 open Nx_support
@@ -512,6 +512,107 @@ let payloads =
              second"
             m;
           equal ~msg:"applied" int 0 !calls);
+      prop
+        "a payload fold passes the payloads of a payload map, at their paths, \
+         in walk order"
+        blocks (fun x ->
+          cover "an empty list" (x.layers = []);
+          cover "an absent bias"
+            (List.exists (fun l -> Option.is_none l.b) x.layers);
+          let mapped = ref [] in
+          ignore
+            (P.Payload.map
+               (module Block)
+               (fun p a ->
+                 mapped := (P.Path.to_string p, Nx.P a) :: !mapped;
+                 a)
+               x);
+          let mapped = List.rev !mapped in
+          let folded =
+            P.Payload.fold
+              (module Block)
+              (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc)
+              x []
+            |> List.rev
+          in
+          equal ~msg:"paths" (list string) (List.map fst mapped)
+            (List.map fst folded);
+          equal ~msg:"payloads" leaves (List.map snd mapped)
+            (List.map snd folded));
+      prop
+        "at array payloads, a payload fold is the array fold without the fixed \
+         arrays"
+        blocks (fun x ->
+          let movable =
+            P.fold block
+              (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc)
+              x []
+            |> List.rev
+            |> List.filter (fun (p, _) -> p <> "steps")
+          in
+          let folded =
+            P.Payload.fold
+              (module Block)
+              (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc)
+              x []
+            |> List.rev
+          in
+          equal ~msg:"paths" (list string) (List.map fst movable)
+            (List.map fst folded);
+          equal ~msg:"arrays" leaves (List.map snd movable)
+            (List.map snd folded));
+      cases "a payload fold applies its function at each payload, in walk order"
+        ~id:(fun (x, _) -> if Option.is_some x.b then "w and b" else "w only")
+        [ ({ w = 1; b = Some 2 }, 3); ({ w = 1; b = None }, 1) ]
+        (fun (x, sum) ->
+          equal ~msg:"sum" int sum
+            (P.Payload.fold (module Linear) (fun _ n acc -> n + acc) x 0);
+          equal ~msg:"order" (list int)
+            (List.filter_map Fun.id [ Some x.w; x.b ])
+            (List.rev
+               (P.Payload.fold (module Linear) (fun _ n l -> n :: l) x [])));
+      test "a payload fold of a value with no position is its accumulator"
+        (fun () ->
+          let module Layers = struct
+            type ('a, _) t = 'a linear list
+
+            let walk c x = P.Walk.list Linear.walk c x
+          end in
+          let calls = ref 0 in
+          let acc =
+            P.Payload.fold
+              (module Layers)
+              (fun _ () acc ->
+                incr calls;
+                acc + 1)
+              [] 5
+          in
+          equal ~msg:"accumulator" int 5 acc;
+          equal ~msg:"calls" int 0 !calls);
+      test "a payload fold passes no key walked by Rng.walk" (fun () ->
+          let x = { held = 3; key = Nx.Rng.key 7 } in
+          equal
+            (list (pair string int))
+            [ ("held", 3) ]
+            (P.Payload.fold
+               (module Keyed)
+               (fun p n acc -> (P.Path.to_string p, n) :: acc)
+               x []));
+      test "a payload fold reads a value on another set without a device"
+        (fun () ->
+          let y : (S2.d Nx.float32_t, S2.d) block =
+            P.place (module Block) S2.on example
+          in
+          let paths v =
+            P.Payload.fold
+              (module Block)
+              (fun p _ acc -> P.Path.to_string p :: acc)
+              v []
+            |> List.rev
+          in
+          equal (list string)
+            [ "layers.0.w"; "layers.0.b"; "layers.1.w"; "ends.0"; "ends.1" ]
+            (paths y));
       test "cast changes the parameter's positions and keeps fixed arrays"
         (fun () ->
           let y = P.cast (module Block) Nx.float64 example in
@@ -710,6 +811,35 @@ let nesting =
           cover "blocks" (x <> []);
           agree ~msg:"fixed" list_ref list_fixed x;
           agree ~msg:"module" list_ref list_module x);
+      prop
+        "through under, a payload fold is the array fold without the fixed \
+         arrays"
+        nested_blocks (fun x ->
+          cover "an inner block with layers" ((fst x.ends).layers <> []);
+          cover "an absent inner bias"
+            (List.exists (fun l -> Option.is_none l.b) (fst x.ends).layers);
+          let fixed p =
+            List.nth_opt (List.rev (String.split_on_char '.' p)) 0
+            = Some "steps"
+          in
+          let movable =
+            P.fold nested_module
+              (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc)
+              x []
+            |> List.rev
+            |> List.filter (fun (p, _) -> not (fixed p))
+          in
+          let folded =
+            P.Payload.fold
+              (module Blocks)
+              (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc)
+              x []
+            |> List.rev
+          in
+          equal ~msg:"paths" (list string) (List.map fst movable)
+            (List.map fst folded);
+          equal ~msg:"arrays" leaves (List.map snd movable)
+            (List.map snd folded));
       prop "place takes a state walked with under to a set and back" states
         law_round_trip;
       test "a frozen layer's arrays are fixed arrays at its paths" (fun () ->
@@ -773,6 +903,50 @@ let nesting =
           let w = fst (fst z.model.ends).ends in
           equal ~msg:"dtype" string "float64" (D.name (Nx.dtype w));
           equal ~msg:"values" (array float_exact) [| 1. |] (Nx.to_array w));
+      test "a payload fold of a state passes its model's positions only"
+        (fun () ->
+          let inner a b =
+            {
+              layers = [];
+              steps = i32 [| 1l |];
+              window = 0;
+              kind = Dense;
+              ends = (a, b);
+            }
+          in
+          let a = f32 [| 1. |] and b = f32 [| 2. |] in
+          let c = f32 [| 3. |] and d = f32 [| 4. |] in
+          let x =
+            {
+              model =
+                {
+                  layers = [];
+                  steps = i32 [| 1l |];
+                  window = 0;
+                  kind = Dense;
+                  ends = (inner a b, inner c d);
+                };
+              frozen = { w = f32 [| 5. |]; b = Some (f32 [| 6. |]) };
+            }
+          in
+          let folded =
+            P.Payload.fold
+              (module State)
+              (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc)
+              x []
+            |> List.rev
+          in
+          equal ~msg:"paths" (list string)
+            [
+              "model.ends.0.ends.0";
+              "model.ends.0.ends.1";
+              "model.ends.1.ends.0";
+              "model.ends.1.ends.1";
+            ]
+            (List.map fst folded);
+          equal ~msg:"payloads" leaves
+            [ Nx.P a; Nx.P b; Nx.P c; Nx.P d ]
+            (List.map snd folded));
     ]
 
 (* Arithmetic *)

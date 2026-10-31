@@ -120,6 +120,12 @@ let sizes = Nx.Ptree.Payload.map (module Mlp) (fun _ t -> Nx.numel t) params
 let total = Nx.Ptree.fold mlp (fun _ t acc -> Nx.numel t + acc) params 0
 ```
 
+`Nx.Ptree.fold` reads every array of a value, fixed ones included, each at its own dtype. `Nx.Ptree.Payload.fold` reads the payloads of one type at the parameter's positions, here the integers of `sizes`:
+
+```ocaml
+let count = Nx.Ptree.Payload.fold (module Mlp) (fun _ n acc -> n + acc) sizes 0
+```
+
 `Nx.Ptree.place` moves every array of a value to a placement on another device set, and changes the set in the value's type: `Nx.Ptree.place (module Mlp) Gpu.on params` for a set `Gpu` minted by `Nx.devices`.
 
 ## Fixed Arrays, Integers and Cases

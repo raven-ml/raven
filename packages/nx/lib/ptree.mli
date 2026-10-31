@@ -158,6 +158,10 @@ module Payload : sig
   val map2 :
     (module U : S) ->
     (Path.t -> 'a -> 'b -> 'c) -> ('a, 'd) U.t -> ('b, 'd) U.t -> ('c, 'd) U.t
+
+  val fold :
+    (module U : S) ->
+    (Path.t -> 'a -> 'acc -> 'acc) -> ('a, 'd) U.t -> 'acc -> 'acc
 end
 
 (** {1:signatures Signatures} *)

@@ -332,6 +332,16 @@ module Payload = struct
       (b, d) U.t =
     U.walk { Walk.path = Path.root; leaf = f; visitor = keep } x
 
+  let fold (type a d acc) (module U : S) (f : Path.t -> a -> acc -> acc)
+      (x : (a, d) U.t) (acc : acc) =
+    let acc = ref acc in
+    let leaf p a =
+      acc := f p a !acc;
+      a
+    in
+    ignore (U.walk { Walk.path = Path.root; leaf; visitor = keep } x);
+    !acc
+
   (* A value's payloads and its visits without its fixed arrays. *)
   let record (type a d) (module U : S) (x : (a, d) U.t) =
     let payloads = ref [] and vs = ref [] in

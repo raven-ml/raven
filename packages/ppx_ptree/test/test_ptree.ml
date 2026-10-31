@@ -65,15 +65,10 @@ let agree ~msg hand derived x =
   let y = P.rebuild derived ~like:x arrays in
   equal ~msg:(msg ^ ": rebuild") leaves arrays (fst (P.flatten derived y))
 
-(* [positions map] is the paths at which [map] passes its function a payload, in
-   walk order. *)
-let positions map =
-  let acc = ref [] in
-  ignore
-    (map (fun p v ->
-         acc := P.Path.to_string p :: !acc;
-         v));
-  List.rev !acc
+(* [positions fold] is the paths at which [fold] passes its function a payload,
+   in walk order. *)
+let positions fold =
+  List.rev (fold (fun p _ acc -> P.Path.to_string p :: acc) [])
 
 (* [placements s x] is the placement of each of [x]'s arrays, in walk order. *)
 let placements s x =
@@ -231,8 +226,8 @@ let law_block (x : (f32, host) Block.t) =
   cover "causal" x.causal;
   agree ~msg:"block" block_hand block x;
   equal ~msg:"payload positions" (list string)
-    (positions (fun f -> P.Payload.map (module Block_hand) f x))
-    (positions (fun f -> P.Payload.map (module Block) f x));
+    (positions (fun f -> P.Payload.fold (module Block_hand) f x))
+    (positions (fun f -> P.Payload.fold (module Block) f x));
   let y = P.map block (fun _ a -> a) x in
   equal ~msg:"skip copies the part" string x.name y.name;
   equal ~msg:"a reported bool rebuilds" bool x.causal y.causal;
@@ -401,8 +396,8 @@ let law_tree (x : (f32, host) Tree.t) =
   cover "a deep tree" (match x with Deep _ -> true | _ -> false);
   agree ~msg:"tree" tree_hand tree x;
   equal ~msg:"payload positions" (list string)
-    (positions (fun f -> P.Payload.map (module Tree_hand) f x))
-    (positions (fun f -> P.Payload.map (module Tree) f x))
+    (positions (fun f -> P.Payload.fold (module Tree_hand) f x))
+    (positions (fun f -> P.Payload.fold (module Tree) f x))
 
 (* 'd t: fixed arrays only, with parts that move between sets by their own
    walks. (_, 'd) t: no payload, its key opened from Nx. *)

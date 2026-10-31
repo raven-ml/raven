@@ -4122,6 +4122,15 @@ module Ptree : sig
         their payloads' paths or in their reports, with the message of
         {!section-derived} prefixed by ["Nx.Ptree.Payload.map2"], and if
         [U.walk] walks one value two ways. *)
+
+    val fold :
+      (module U : S) ->
+      (Path.t -> 'a -> 'acc -> 'acc) -> ('a, 'd) U.t -> 'acc -> 'acc
+    (** [fold (module U) f x acc] is [f pn an (… (f p1 a1 acc))], [a1], …,
+        [an] [x]'s payloads and [p1], …, [pn] their paths, in walk order. [f]
+        takes the accumulator last, as {!Ptree.fold}'s does. [x]'s payloads in
+        walk order are [List.rev (fold (module U) (fun _ a l -> a :: l) x [])].
+    *)
   end
 
   (** {1:arithmetic Arithmetic}
