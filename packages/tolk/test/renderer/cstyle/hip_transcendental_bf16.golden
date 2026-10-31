@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 typedef unsigned short hip_bfloat16;
 extern "C" __attribute__((device, pure)) float __ocml_exp2_f32(float);
 extern "C" __attribute__((device, pure)) float __ocml_log2_f32(float);

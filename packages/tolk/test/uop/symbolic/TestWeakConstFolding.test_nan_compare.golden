@@ -1,0 +1,7 @@
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
+0 Ops.CONST dtypes.weakfloat [] nan
+1 Ops.CMPNE dtypes.bool [0, 0]
+2 Ops.CONST dtypes.bool [] True
+3 Ops.SINK dtypes.void [1, 2] tag=("simplify", True, True)
+4 Ops.SINK dtypes.void [3]
+

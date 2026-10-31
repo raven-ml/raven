@@ -128,7 +128,7 @@ def alu_rows():
     # a float operation on integer operands, as a weak integer constant folds
     for op in FLOAT_UNARY_OPS:
         for x in (0, 1, 4, 8, -3, 7): row(op, dtypes.float, (x,))
-    # integer powers stay integers, and a negative exponent gives a float
+    # integer powers stay integers: a negative exponent gives 0, but for 1 and -1
     for pair in [(2, 3), (3, 0), (2, -1), (-2, -2), (0, 5)]: row(Ops.POW, dtypes.weakint, pair)
     # a rounding division with a float operand divides as floats
     for op in (Ops.CDIV, Ops.FLOORDIV, Ops.CMOD, Ops.FLOORMOD):

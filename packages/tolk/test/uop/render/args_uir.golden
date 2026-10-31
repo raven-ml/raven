@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 %0 = cast -5 : i32
 %1 = cast 12345678901234 : i64
 %2 = cast 200 : u8
@@ -39,14 +39,14 @@
 %37 = alloc 4 : dtype=f32 slot=8
 %38 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
 %39 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
-%40 = range 4 : GLOBAL r0
-%41 = range 4 : LOCAL r0
-%42 = range 4 : WARP r0
-%43 = range 4 : WEAK r0
-%44 = range 4 : LOOP r0
-%45 = range 4 : UPCAST r0
-%46 = range 4 : PLACEHOLDER r0
-%47 = range 4 : LOOP r1_2
+%40 = range 4 : GLOBAL 0
+%41 = range 4 : LOCAL 0
+%42 = range 4 : WARP 0
+%43 = range 4 : WEAK 0
+%44 = range 4 : LOOP 0
+%45 = range 4 : UPCAST 0
+%46 = range 4 : PLACEHOLDER 0
+%47 = range 4 : LOOP 1 2
 %48 = sink 1 : named
 %49 = param 4 : dtype=f32 slot=0
 %50 = index %49, 0

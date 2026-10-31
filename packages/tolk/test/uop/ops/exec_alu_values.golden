@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 op	dtype	operands	truncate	result
 Ops.ADD	dtypes.i8	[0, 0]	True	0
 Ops.ADD	dtypes.i8	[7, 3]	True	10
@@ -4326,8 +4326,8 @@ Ops.NEG	dtypes.f32	[-3]	True	3.0
 Ops.NEG	dtypes.f32	[7]	True	-7.0
 Ops.POW	dtypes.weakint	[2, 3]	True	8
 Ops.POW	dtypes.weakint	[3, 0]	True	1
-Ops.POW	dtypes.weakint	[2, -1]	True	0.5
-Ops.POW	dtypes.weakint	[-2, -2]	True	0.25
+Ops.POW	dtypes.weakint	[2, -1]	True	0
+Ops.POW	dtypes.weakint	[-2, -2]	True	0
 Ops.POW	dtypes.weakint	[0, 5]	True	0
 Ops.CDIV	dtypes.weakfloat	[7, 2.0]	True	3.0
 Ops.CDIV	dtypes.weakfloat	[-7.0, 2]	True	-3.0

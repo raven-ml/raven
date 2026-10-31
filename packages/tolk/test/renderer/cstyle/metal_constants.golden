@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 #include <metal_stdlib>
 using namespace metal;
 struct args_t { device bool* data0_1; device bool* data1_1; device signed char* data2_1; device unsigned char* data3_1; device short* data4_1; device unsigned short* data5_1; device int* data6_1; device uint* data7_1; device uint* data8_1; device long* data9_1; device unsigned long* data10_1; device unsigned long* data11_1; device half* data12_1; device bfloat* data13_1; device float* data14_1; };

@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div
@@ -234,6 +234,7 @@ null/test_simplify_valid_idx.py	TestValidIdxSimplification	test_valid_with_non_c
 null/test_simplify_valid_idx.py	TestDropTrueGate	test_const_gate_clause_is_not_moved_to_load
 null/test_const_folding.py	TestWeakConstFolding	test_float_unaries
 null/test_const_folding.py	TestWeakConstFolding	test_invalid_poison
+null/test_const_folding.py	TestWeakConstFolding	test_nan_compare
 null/test_const_folding.py	TestWeakConstFolding	test_weakfloat_math
 null/test_const_folding.py	TestWeakConstFolding	test_weakint_math
 null/test_const_folding.py	TestBitcastConstFolding	test_out_of_range_source_value

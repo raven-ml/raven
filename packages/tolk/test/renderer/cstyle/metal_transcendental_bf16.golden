@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 #include <metal_stdlib>
 using namespace metal;
 struct args_t { device bfloat* data0_1; device bfloat* data1_1; };
@@ -18,5 +18,8 @@ kernel void E(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_posit
   uint cast4 = as_type<uint>((float)(sqrt(cast0)));
   uint alu6 = (((cast4&65535u)!=0u)?(cast4|65536u):cast4);
   uint alu7 = (((-cast4&2139095040u)!=0u)?(cast4+((cast4>>16u)&1u)+32767u):alu6);
-  *(data0_1+0) = (as_type<bfloat>((unsigned short)(((unsigned short)((alu1>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu3>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu5>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu7>>16u)))))+(1/val0)+trunc(val0));
+  uint cast5 = as_type<uint>((float)(trunc(cast0)));
+  uint alu8 = (((cast5&65535u)!=0u)?(cast5|65536u):cast5);
+  uint alu9 = (((-cast5&2139095040u)!=0u)?(cast5+((cast5>>16u)&1u)+32767u):alu8);
+  *(data0_1+0) = (as_type<bfloat>((unsigned short)(((unsigned short)((alu1>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu3>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu5>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu7>>16u)))))+(1/val0)+as_type<bfloat>((unsigned short)(((unsigned short)((alu9>>16u))))));
 }

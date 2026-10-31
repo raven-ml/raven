@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -15,7 +15,7 @@
 13 Ops.STORE dtypes.void [10, 12]
 14 Ops.ALLOC dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
 15 Ops.SPECIAL dtypes.i32 [2] "lidx0"
-16 Ops.AFTER dtypes.f32 [14, 3, 15]
+16 Ops.AFTER dtypes.f32 [14, 15, 3]
 17 Ops.INDEX dtypes.f32 [16, 9]
 18 Ops.STORE dtypes.void [17, 12]
 19 Ops.CONST dtypes.weakint [] 8
@@ -80,7 +80,7 @@
 78 Ops.INDEX dtypes.f32 [77, 9]
 79 Ops.STORE dtypes.void [78, 12]
 80 Ops.BUFFER dtypes.f32 [5] ParamArg(slot=0, dtype=dtypes.f32, addrspace=AddrSpace.REG)
-81 Ops.AFTER dtypes.f32 [80, 3, 15]
+81 Ops.AFTER dtypes.f32 [80, 15, 3]
 82 Ops.INDEX dtypes.f32 [81, 9]
 83 Ops.STORE dtypes.void [82, 12]
 84 Ops.AFTER dtypes.f32 [80, 83, 21]

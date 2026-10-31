@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 **************************
 ***  0 Ops.STORE            (6,)                                 0 [r0]
      1 Ops.REDUCE           (6,)                                 0 [r1][r0] -> [r0]

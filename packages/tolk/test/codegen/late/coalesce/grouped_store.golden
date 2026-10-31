@@ -1,4 +1,4 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+# tinygrad efb4cc8cb8478926e77f522f3dba9bf0d8ffaff9
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 4096
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -25,7 +25,7 @@
 23 Ops.INDEX dtypes.f32 [2, 22]
 24 Ops.CONST dtypes.weakint [] 8
 25 Ops.ALLOC dtypes.f32 [24] ParamArg(slot=1, dtype=dtypes.f32, addrspace=AddrSpace.REG)
-26 Ops.AFTER dtypes.f32 [25, 10, 18, 13]
+26 Ops.AFTER dtypes.f32 [25, 10, 13, 18]
 27 Ops.INDEX dtypes.f32 [26, 5]
 28 Ops.CONST dtypes.weakfloat [] 0.0
 29 Ops.STORE dtypes.void [27, 28]
@@ -305,7 +305,7 @@
 303 Ops.LOAD dtypes.f32 [302]
 304 Ops.STORE dtypes.void [301, 303]
 305 Ops.AFTER dtypes.void [0, 269, 274, 279, 284, 289, 294, 299, 304]
-306 Ops.END dtypes.void [305, 13, 4]
+306 Ops.END dtypes.void [305, 4]
 307 Ops.AFTER dtypes.f32 [53, 306]
 308 Ops.MUL dtypes.weakint [49, 24]
 309 Ops.ADD dtypes.weakint [55, 308]
