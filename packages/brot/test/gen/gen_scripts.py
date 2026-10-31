@@ -11,7 +11,9 @@ gives it, by any of the names PropertyValueAliases.txt gives it. The data is
 taken from the Unicode 17.0.0 files rather than from uucp, whose Unicode
 version follows its own releases, so that it stays at the version of brot's
 grapheme data (`gen_grapheme.py`). `Unknown` is every code point Scripts.txt
-leaves out, as the file's header defines it.
+leaves out, as the file's header defines it. A script without code points,
+`Katakana_Or_Hiragana`, is left out: the engine tokenizer files are written
+for has no such property and refuses the pattern.
 
 This writes `lib/script_data.ml`, derived from Unicode's data files and
 redistributed under the Unicode License v3 in `packages/brot/LICENSE-unicode`.
@@ -75,6 +77,7 @@ def scripts(version: str) -> list[tuple[list[str], list[tuple[int, int]]]]:
     return [
         (by_long[long], merge(rs))
         for long, rs in sorted(ranges.items(), key=lambda kv: by_long[kv[0]][0])
+        if rs
     ]
 
 
@@ -97,9 +100,6 @@ def ocaml(data) -> str:
     for names, ranges in data:
         quoted = "; ".join(f'"{n}"' for n in names)
         bounds = [b for r in ranges for b in r]
-        if not bounds:
-            lines.append(f"    ([ {quoted} ], [||]);")
-            continue
         lines.append(f"    ( [ {quoted} ],")
         lines.append("      [|")
         for i in range(0, len(bounds), 8):

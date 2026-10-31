@@ -307,7 +307,6 @@ let scripts =
       [|
         0x1E100; 0x1E12C; 0x1E130; 0x1E13D; 0x1E140; 0x1E149; 0x1E14E; 0x1E14F;
       |] );
-    ([ "Hrkt"; "Katakana_Or_Hiragana" ], [||]);
     ( [ "Hung"; "Old_Hungarian" ],
       [|
         0x10C80; 0x10CB2; 0x10CC0; 0x10CF2; 0x10CFA; 0x10CFF;

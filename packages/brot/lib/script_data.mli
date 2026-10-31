@@ -11,7 +11,8 @@ val unicode_version : string
 (** [unicode_version] is the version of the data, ["17.0.0"]. *)
 
 val scripts : (string list * int array) array
-(** [scripts] holds each script's names, its short name first, as
+(** [scripts] holds each script that has code points — so not
+    [Katakana_Or_Hiragana] — with its names, its short name first, as
     PropertyValueAliases.txt writes them (["Hani"], ["Han"]), and its code
     points as ascending, disjoint, non-adjacent inclusive ranges, the first and
     the last code point of each in turn. [Unknown] holds every code point no

@@ -334,6 +334,10 @@ let test_replace_regex_rejected () =
   case "[a[b]" "unterminated character class";
   case "[a-[b]]" "invalid range in character class";
   case "\\p{Foo}" "unsupported property \\p{Foo}";
+  (* A script without code points is no property. *)
+  case "\\p{Hrkt}" "unsupported property \\p{Hrkt}";
+  case "\\p{Katakana_Or_Hiragana}"
+    "unsupported property \\p{Katakana_Or_Hiragana}";
   case "\\h" "unsupported escape \\h";
   case "\\R" "unsupported escape \\R";
   case "\\xc3\\xa9" "byte escapes above \\x7F are not supported, use \\x{..}";
