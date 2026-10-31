@@ -1871,15 +1871,17 @@ module Sde : sig
     'y
   (** [march y m ~steps ~drift ~diffusion w ~at y0] is the state at each time of
       [at], stacked on a new leading axis of each leaf, [y0] first, along the
-      path [w]. Each interval of [at] takes [steps] equal steps, each querying
-      the path once, at its end. [drift t y] is the deterministic field;
-      [diffusion t y dw] is [g t y] applied to [dw], of [w]'s shape and the
-      times' dtype, and must be linear in [dw]; it casts [dw] for leaves of
-      another dtype. Reverse mode keeps one state per time of [at] and
-      recomputes each interval while it reverses it; the derivative is the
-      composition's, in the initial state and every tracked value the drift and
-      diffusion read. A compiled function takes [w] as an argument, described
-      by [Nx.Ptree.v Brownian.walk].
+      path [w]. The interval from [at.(i)] to [at.(i+1)] takes [steps] steps of
+      [h = (at.(i+1) − at.(i)) / steps]: step [j] runs from [at.(i) + j h] to
+      where the next starts, the last to [at.(i+1)] itself. A step's size, which
+      the drift and diffusion see, is its span. Each step queries the path once,
+      at its end. [drift t y] is the deterministic field; [diffusion t y dw] is
+      [g t y] applied to [dw], of [w]'s shape and the times' dtype, and must be
+      linear in [dw]; it casts [dw] for leaves of another dtype. Reverse mode
+      keeps one state per time of [at] and recomputes each interval while it
+      reverses it; the derivative is the composition's, in the initial state and
+      every tracked value the drift and diffusion read. A compiled function
+      takes [w] as an argument, described by [Nx.Ptree.v Brownian.walk].
 
       Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
       tensor, through {!Nx.check} if [at] is not strictly increasing or leaves
