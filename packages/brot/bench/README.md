@@ -25,8 +25,9 @@ Benchmark inputs live in `./data/`:
   regular-expression `Split` tokenizers the parity suite reads: Qwen2.5,
   DeepSeek-V3, gpt-oss (the o200k pattern) and Phi-4
 
-The last three are read by the HuggingFace parity test rather than by the
-benchmarks; `test/gen/gen_parity_expected.py` documents the whole set.
+The benchmarks read `gpt2.json`, `bert_base.json`, `llama.json`,
+`llama3.json` and `t5_base.json`; the others are read by the HuggingFace
+parity test, and `test/gen/gen_parity_expected.py` documents the whole set.
 
 Download the tokenizer model files:
 

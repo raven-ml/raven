@@ -110,6 +110,10 @@ let all_benchmarks =
   let llama3 =
     make_suite ~label:"Llama-3" ~tokenizer:(load_tokenizer "llama3.json")
   in
-  [ pre_tokenizer_suite; gpt2; bert; llama; llama3 ]
+  (* Unigram behind SentencePiece's Precompiled normalizer. *)
+  let t5 =
+    make_suite ~label:"T5-base" ~tokenizer:(load_tokenizer "t5_base.json")
+  in
+  [ pre_tokenizer_suite; gpt2; bert; llama; llama3; t5 ]
 
 let () = Thumper.run "brot" all_benchmarks |> exit
