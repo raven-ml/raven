@@ -555,11 +555,7 @@ let bufferize_to_store ctx x idx =
         let slot = !ctx in
         incr ctx;
         let vmin_vmax = stored_bounds value dtype in
-        let buf =
-          v Op.Alloc
-            ~src:[ size_src (Some (max_numel x)) ]
-            ~arg:(Param (param_arg ~slot ?vmin_vmax ?device dtype))
-        in
+        let buf = alloc ~slot ?vmin_vmax ?device [ Int (max_numel x) ] dtype in
         let do_store =
           end_ (store (index buf [ idx ]) (cast value dtype)) rngs
         in
@@ -681,13 +677,9 @@ let debuf ctx buf =
     match arg buf with Param p -> p.vmin_vmax | _ -> None
   in
   let param =
-    v Op.Param
-      ~src:[ size_src (Some (max_numel buf)) ]
-      ~arg:
-        (Param
-           (param_arg ~slot:ctx.dg ?vmin_vmax
-              ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align
-              (dtype buf)))
+    Shape.param ~shape:[ Int (max_numel buf) ] ?vmin_vmax
+      ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align ctx.dg
+      (dtype buf)
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in
   (* A buffer of symbolic shape is its greatest view, shrunk. *)

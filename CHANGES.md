@@ -809,6 +809,7 @@ thread.
   `uint64`, are decomposed too.
 - `Linearizer.linearize` places a node in more loops after one in fewer that
   runs as often.
+- `Shape.alloc` takes `?vmin_vmax`, the bounds of the values it holds.
 - A kernel that calls a sink no longer runs its loops nested wrongly where the
   body has a loop of the size and identity of one of its own
   (`Codegen.to_program`).

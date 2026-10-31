@@ -425,13 +425,11 @@ let expand_bitcast bc =
 let copy_to_anon_store x copy =
   let x = pad_to x (List.map (fun s -> Some (Int s)) (max_shape x)) in
   let buf =
-    v Op.Alloc
-      ~src:[ size_src (Some (max_numel x)) ]
-      ~arg:
-        (Param
-           (param_arg ~slot:(unique_num ())
-              ?vmin_vmax:(stored_bounds x (dtype copy))
-              ?device:(device copy) (dtype copy)))
+    alloc
+      ?vmin_vmax:(stored_bounds x (dtype copy))
+      ?device:(device copy)
+      [ Int (max_numel x) ]
+      (dtype copy)
   in
   let buf = reshape buf (ints (max_shape x)) in
   shrink_to (after buf [ store buf x ]) (List.map Option.some (shape copy))
@@ -439,19 +437,13 @@ let copy_to_anon_store x copy =
 (* The buffer is inside the call and not kept, as those of copies. *)
 let stage_to_anon_store x stg =
   let buf =
-    v Op.Alloc
-      ~src:[ size_src (Some (max_numel x)) ]
-      ~arg:
-        (Param
-           (param_arg ~slot:(unique_num ())
-              ?vmin_vmax:(stored_bounds x (dtype stg))
-              ?device:(device x) (dtype stg)))
+    alloc
+      ?vmin_vmax:(stored_bounds x (dtype stg))
+      ?device:(device x)
+      (ints (max_shape x))
+      (dtype stg)
   in
-  let view =
-    shrink_to
-      (reshape buf (ints (max_shape x)))
-      (List.map Option.some (shape stg))
-  in
+  let view = shrink_to buf (List.map Option.some (shape stg)) in
   after view [ store view x ]
 
 (* A copy across devices reads a whole buffer. *)

@@ -2871,7 +2871,7 @@ let empty ?device new_shape dt =
 
 let view_as u new_shape =
   let max_shape = List.map (fun n -> Int n) (to_max_shape new_shape) in
-  let ret = if List.length new_shape > 1 then reshape u max_shape else u in
+  let ret = if new_shape = [] then u else reshape u max_shape in
   if (List.equal Sint.equal) max_shape new_shape then ret
   else shrink_to ret (List.map Option.some new_shape)
 
@@ -2896,14 +2896,14 @@ let clone ?device:dev u =
   in
   after ret [ store ret (cast src (dtype ret)) ]
 
-let alloc ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
+let alloc ?slot ?(addrspace = Dtype.Global) ?device ?vmin_vmax new_shape dt =
   let slot = match slot with Some s -> s | None -> unique_num () in
   let ret =
     v Op.Alloc
       ~src:[ size_src (Some (size_of (to_max_shape new_shape))) ]
       ~arg:
         (Param
-           (param_arg ~slot ~addrspace:(Some addrspace) ?device
+           (param_arg ~slot ~addrspace:(Some addrspace) ?device ?vmin_vmax
               (Dtype.strong dt)))
   in
   if List.is_empty new_shape then reshape ret []

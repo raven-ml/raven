@@ -233,7 +233,9 @@ val permute : Ops.t -> int list -> Ops.t
     Raises [Invalid_argument] if [order] is not a permutation. *)
 
 val flip : Ops.t -> int list -> Ops.t
-(** [flip u axes] reverses [axes] of [u]. *)
+(** [flip u axes] reverses [axes] of [u], negative axes counting from the end.
+
+    Raises [Invalid_argument] if an axis is out of range or given twice. *)
 
 val shrink : Ops.t -> (Ops.sint * Ops.sint) option list -> Ops.t
 (** [shrink u bounds] keeps, on each axis, the elements from its start to its
@@ -349,10 +351,12 @@ val alloc :
   ?slot:int ->
   ?addrspace:Dtype.addr_space ->
   ?device:Ops.device ->
+  ?vmin_vmax:Dtype.value * Dtype.value ->
   Ops.sint list ->
   Dtype.t ->
   Ops.t
-(** [alloc shape dt] is call-local storage of [shape]. *)
+(** [alloc shape dt] is call-local storage of [shape], whose values lie within
+    [vmin_vmax] if given. *)
 
 val alloc_like : ?slot:int -> ?addrspace:Dtype.addr_space -> Ops.t -> Ops.t
 (** [alloc_like u] is [alloc] of [u]'s greatest shape and type. *)

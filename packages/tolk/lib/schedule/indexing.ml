@@ -393,7 +393,6 @@ let apply_movement_op in_shape m rngs =
           (fun i r ->
             ( r,
               replace r
-                ~src:[ nth r 0 ]
                 ~arg:
                   (Range { axis_type = Axis_type.Placeholder; axis_id = [ i ] })
             ))

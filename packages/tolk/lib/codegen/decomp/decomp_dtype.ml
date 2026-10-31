@@ -281,10 +281,8 @@ let l2i_define x =
         (Printf.sprintf "long decomposition of variable %s unsupported"
            (Option.value p.name ~default:"None"))
   | Param p ->
-      let size = nth x 0 in
       let size =
-        if shape x = [] then size
-        else int (2 * Dtype.Value.to_int (vmax size))
+        if shape x = [] then nth x 0 else size_src (Some (2 * max_numel x))
       in
       replace x
         ~arg:(Param { p with dtype = l2i_dt p.dtype })
