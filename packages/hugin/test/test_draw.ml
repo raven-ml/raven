@@ -2070,6 +2070,23 @@ let times =
     [
       prop "instants are at their normalised values" gen_time_rows
         time_positions;
+      test "instants at the ends of int64 keep apart" (fun () ->
+          List.iter
+            (fun counts ->
+              let us =
+                rows_of
+                  [
+                    Mark.bind Role.x
+                      (time ~scale:(Scale.time ~nice:false ()) Ns (i64 counts));
+                  ]
+                  (fun r -> fst (Mark.positions r))
+              in
+              equal floats [| 0.; 1. |] us)
+            [
+              [| Int64.min_int; Int64.succ Int64.min_int |];
+              [| Int64.pred Int64.max_int; Int64.max_int |];
+              [| Int64.min_int; Int64.max_int |];
+            ]);
       test "the text role writes instants in RFC 3339" (fun () ->
           let texts =
             rows_of

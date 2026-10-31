@@ -268,7 +268,8 @@ type ('d, 'r) channel
     needing the most needs to reproduce itself in its source dtype
     ({!Hugin_kit.Number.decimals}): a float32 [0.9234] reads [0.9234], and an
     integer count reads without a decimal separator. An instant is written at
-    UTC in RFC 3339 form ({!Time.pp}). *)
+    UTC in RFC 3339 form, a year outside \[[0];[9999]\] with its sign and at
+    least four digits as ISO 8601 extends years ({!Time.pp}). *)
 
 val num :
   ?scale:float Scale.t ->

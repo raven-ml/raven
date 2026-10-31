@@ -1630,6 +1630,15 @@ let times =
           in
           equal (pair instant instant) z
             (instants (Resolved.scale r (Scale.time ~name:"x" ()))));
+      test "a time hull reaches the ends of int64" (fun () ->
+          let ends = [| Int64.max_int; Int64.min_int; 0L |] in
+          let r =
+            resolve
+              (dot ~x:(time ~scale:exact_time Ns (i64 ends)) ~y:(const 0.5) ())
+          in
+          equal (pair instant instant)
+            (Time.v Ns Int64.min_int, Time.v Ns Int64.max_int)
+            (instants (Resolved.scale r (Scale.time ~name:"x" ()))));
       test "time takes integers only" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"integer") (fun () ->
               time S (f64 [| 1. |])));
