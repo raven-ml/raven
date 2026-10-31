@@ -704,7 +704,7 @@ let clenshaw cs t =
 
 (* [i0e] and [i1e] at [a = |x|], taken by selection so that [-0] takes the
    right-hand branch with [+0]. On [0, bessel_split], [near] is the series of
-   [q] with [i0e a h = 1 + a q], so that [i0e 0] is 1, or of [i1e a / a h^2],
+   [q] with [i0e a h = 1 + a q], so that [i0e 0] is 1, or of [h^2 i1e a / a],
    for [h = 1 + bessel_weight a], the weight keeping the series' terms of the
    order of its value; above, [far] is the series of [sqrt a i0e a] or [sqrt a
    i1e a]. Each region runs on its clamped [a]. *)
@@ -774,8 +774,8 @@ let stirling_from_one (t : T.t) a =
 
 (* [erfc w e^(w^2)] for [w >= 0]: fdlibm's erfc with the exponential folded in,
    [e^(w^2) erfc w] below 1.25 and [exp (R/S - 0.5625) / w] in the tail, and
-   from [erfcx_far], where the tail ends and its rationals lose their precision,
-   the asymptotic series. *)
+   from [erfc_far_from], where the tail ends and its rationals lose their
+   precision, the asymptotic series. *)
 let erfcx_at w =
   let t = tables w in
   let r = erf_rationals w w in
@@ -783,8 +783,8 @@ let erfcx_at w =
   let wb = clamp r.below_near w 0.5 in
   let r_below = mul (exp (mul wb wb)) (where r.small r.erfc_small e_near) in
   let r_tail = div (exp (sub_s r.rs 0.5625)) r.at in
-  let far = ge w T.erfcx_far in
-  let wf = clamp far w (2. *. T.erfcx_far) in
+  let far = ge w T.erfc_far_from in
+  let wf = clamp far w (2. *. T.erfc_far_from) in
   let r_far =
     div
       (horner t.erfcx_series (recip (mul_s (mul wf wf) 2.)))
