@@ -413,12 +413,11 @@ let finish r =
 (* Arguments *)
 
 let param_arg : Ops.param_arg codec =
-  let make slot dtype size vmin_vmax multiple_of name addrspace device volatile
+  let make slot dtype vmin_vmax multiple_of name addrspace device volatile
       bind_on_realize bound phase align : Ops.param_arg =
     {
       slot;
       dtype;
-      size;
       vmin_vmax;
       multiple_of;
       name;
@@ -435,7 +434,6 @@ let param_arg : Ops.param_arg codec =
   record "ParamArg" make
   |> field "slot" int (get (fun p -> p.slot))
   |> field "dtype" dtype (get (fun p -> p.dtype))
-  |> field "size" ~default:None (option int) (get (fun p -> p.size))
   |> field "vmin_vmax" ~default:None
        (option (pair dvalue dvalue))
        (get (fun p -> p.vmin_vmax))

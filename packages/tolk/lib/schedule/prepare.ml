@@ -343,15 +343,15 @@ let resolve_function c =
       let pa = param_of p in
       let a = args.(pa.slot) in
       let bound =
-        match pa.size with
-        | Some size ->
+        match shape p with
+        | [ Int size ] ->
             let n, flat = flat_storage a in
             if size <> n then
               invalid_arg
                 (Format.asprintf "argument %d of shape %a is not of size %d"
                    pa.slot pp_shape (shape a) size);
             flat
-        | None ->
+        | _ ->
             if shape a <> [] then
               invalid_arg
                 (Format.asprintf "argument %d has the shape %a, not a scalar's"
@@ -426,10 +426,10 @@ let copy_to_anon_store x copy =
   (* The buffer takes the device range from the copy. *)
   let buf =
     v Op.Alloc
-      ~src:(List.tl (src copy))
+      ~src:(size_src (Some (max_numel x)) :: List.tl (src copy))
       ~arg:
         (Param
-           (param_arg ~slot:(unique_num ()) ~size:(max_numel x)
+           (param_arg ~slot:(unique_num ())
               ?vmin_vmax:(stored_bounds x (dtype copy))
               ?device:(device copy) (dtype copy)))
   in
@@ -440,10 +440,10 @@ let copy_to_anon_store x copy =
 let stage_to_anon_store x stg =
   let buf =
     v Op.Alloc
-      ~src:(device_range_src (device x))
+      ~src:(size_src (Some (max_numel x)) :: device_range_src (device x))
       ~arg:
         (Param
-           (param_arg ~slot:(unique_num ()) ~size:(max_numel x)
+           (param_arg ~slot:(unique_num ())
               ?vmin_vmax:(stored_bounds x (dtype stg))
               ?device:(device x) (dtype stg)))
   in

@@ -346,8 +346,8 @@ let current m at =
 
 let storage m u =
   match Ops.arg u with
-  | Param { slot; size; device; addrspace; _ } when addrspace <> Some Alu ->
-      let n = Option.value size ~default:1 in
+  | Param { slot; device; addrspace; _ } when addrspace <> Some Alu ->
+      let n = Shape.max_numel u in
       let shape = concrete u in
       List.init (devices device) (fun k ->
           let cell i =

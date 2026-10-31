@@ -165,7 +165,7 @@ let filled u =
   in
   List.map
     (fun (n, (p : Ops.param_arg)) ->
-      let size = Option.value p.size ~default:1 in
+      let size = Shape.max_numel n in
       let at j =
         let j = if List.memq n sharded then j else j mod size in
         element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3)
@@ -871,9 +871,7 @@ let earliest =
             [ 1 lsl 22 ]
             (List.filter_map
                (fun n ->
-                 match Ops.arg n with
-                 | Param { size = Some s; _ } when Ops.op n = Alloc -> Some s
-                 | _ -> None)
+                 if Ops.op n = Alloc then Some (Shape.max_numel n) else None)
                (Ops.toposort ~calls:Enter u)));
       test "a detach and a gradient marker are their source" (fun () ->
           let value = Ops.exp2 (input 1) in
@@ -905,9 +903,7 @@ let earliest =
           equal (list int) [ 128 ]
             (List.filter_map
                (fun n ->
-                 match Ops.arg n with
-                 | Param { size = Some s; _ } when Ops.op n = Alloc -> Some s
-                 | _ -> None)
+                 if Ops.op n = Alloc then Some (Shape.max_numel n) else None)
                (Ops.toposort ~calls:Enter u)));
       test
         "a value that permutes other storage and reads its destination is \

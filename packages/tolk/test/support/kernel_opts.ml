@@ -125,8 +125,9 @@ let inputs k =
   Ops.toposort ~calls:Enter k
   |> List.filter_map (fun u ->
       match (Ops.op u, Ops.arg u) with
-      | Op.Param, Param ({ slot; size = Some size; _ } as p) when slot >= 0 ->
-          Some (slot, contents p size)
+      | Op.Param, Param ({ slot; _ } as p) when slot >= 0 && Shape.max_shape u <> []
+        ->
+          Some (slot, contents p (Shape.max_numel u))
       | _ -> None)
   |> List.sort_uniq (fun (s0, _) (s1, _) -> Int.compare s0 s1)
 

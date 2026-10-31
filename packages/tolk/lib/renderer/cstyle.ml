@@ -813,7 +813,9 @@ let render_uops l uops =
               | Some n -> String.map (function ':' -> '_' | c -> c) n
               | None -> strf "data%d" p.slot
             in
-            let shape = Option.fold ~none:"" ~some:string_of_int p.size in
+            let shape =
+              String.concat "_" (List.map string_of_int (max_shape u))
+            in
             Tbl.replace r u (base ^ "_" ^ shape);
             bufs := (base ^ "_" ^ shape, u) :: !bufs
         | _ -> failed u)

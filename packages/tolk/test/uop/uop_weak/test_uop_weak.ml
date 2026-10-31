@@ -150,7 +150,9 @@ let pm_lower_weak =
       lower "lower_stacked_weak_casts_of_a_node_it_does_not_lower"
         (Ops.cast (Ops.cast custom Weak_float) Weak_int);
       lower "lower_keeps_weak_storage_outside_registers_of_scalars"
-        (Ops.v Op.Param ~arg:(Param (Ops.param_arg ~size:4 ~slot:0 Weak_int)));
+        (Ops.v Op.Param
+           ~src:[ Ops.size_src (Some 4) ]
+           ~arg:(Param (Ops.param_arg ~slot:0 Weak_int)));
       lower "lower_a_weak_variable_to_its_default" Ops.O.(weak + int 1);
       lower "lower_a_weak_expression_under_a_committed_consumer"
         Ops.O.(small Int32 * (weak + int 1));

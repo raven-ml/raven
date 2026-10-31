@@ -339,7 +339,8 @@ let buffer_dtypes uops =
   List.filter_map
     (fun u ->
       match (Ops.op u, Ops.arg u) with
-      | Op.Param, Param { slot; size = Some _; dtype; _ } when slot >= 0 ->
+      | Op.Param, Param { slot; dtype; _ }
+        when slot >= 0 && Shape.max_shape u <> [] ->
           Some (slot, dtype)
       | _ -> None)
     uops
@@ -1445,8 +1446,8 @@ let lowering_claims =
             List.filter_map
               (fun u ->
                 match Ops.arg u with
-                | Param { slot; name = Some name; size = None; _ }
-                  when is Param u ->
+                | Param { slot; name = Some name; _ }
+                  when is Param u && Shape.max_shape u = [] ->
                     Some (name, slot)
                 | _ -> None)
               (lowered_nodes row)

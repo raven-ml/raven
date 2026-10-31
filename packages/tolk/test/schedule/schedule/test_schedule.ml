@@ -211,11 +211,11 @@ let given u =
 
 let filled u =
   List.map
-    (fun (_, (p : Ops.param_arg)) ->
+    (fun (n, (p : Ops.param_arg)) ->
       let devices =
         match p.device with Some (Multi ds) -> List.length ds | _ -> 1
       in
-      let size = devices * Option.value p.size ~default:1 in
+      let size = devices * Shape.max_numel n in
       let at j = element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3) in
       (p.slot, Array.init size at))
     (given u)

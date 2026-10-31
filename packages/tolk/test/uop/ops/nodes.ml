@@ -119,7 +119,7 @@ let arguments =
           is_true (p.addrspace = Some Dtype.Global);
           is_false p.volatile;
           is_false p.bind_on_realize;
-          is_true (p.size = None && p.vmin_vmax = None && p.multiple_of = None);
+          is_true (p.vmin_vmax = None && p.multiple_of = None);
           is_true (p.name = None && p.device = None && p.bound = None);
           equal int 0 p.phase;
           equal int 16 p.align);
@@ -154,12 +154,12 @@ let arguments =
         "pp_arg writes a parameter's phase that is not 0 and alignment that \
          is not 16" (fun () ->
           let param p = str Ops.pp_arg (Param p) in
-          equal string "ParamArg(0, dtypes.float, 16, phase=4)"
-            (param (Ops.param_arg ~slot:0 ~size:16 ~phase:4 Dtype.Float32));
-          equal string "ParamArg(0, dtypes.float, 16, align=4)"
-            (param (Ops.param_arg ~slot:0 ~size:16 ~align:4 Dtype.Float32));
-          equal string "ParamArg(0, dtypes.float, 16)"
-            (param (Ops.param_arg ~slot:0 ~size:16 Dtype.Float32)));
+          equal string "ParamArg(0, dtypes.float, phase=4)"
+            (param (Ops.param_arg ~slot:0 ~phase:4 Dtype.Float32));
+          equal string "ParamArg(0, dtypes.float, align=4)"
+            (param (Ops.param_arg ~slot:0 ~align:4 Dtype.Float32));
+          equal string "ParamArg(0, dtypes.float)"
+            (param (Ops.param_arg ~slot:0 Dtype.Float32)));
       test "equal_arg tells apart parameters that differ in phase"
         (fun () ->
           is_false
@@ -763,7 +763,6 @@ let data_types =
                 Source;
                 Backedge;
                 Barrier;
-                Group;
                 If;
                 Endif;
                 Noop;
@@ -873,8 +872,9 @@ let graphs =
       test "toposort finishes sources left to right, then the node" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
           let c = Ops.int 2 in
+          let size = Ops.size_src None in
           equal uops
-            [ a; b; Ops.O.(a + b); c; Ops.O.((a + b) * c) ]
+            [ size; a; b; Ops.O.(a + b); c; Ops.O.((a + b) * c) ]
             (Ops.toposort ~calls:Enter Ops.O.((a + b) * c)));
       test "toposort enters only the nodes the gate accepts" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
@@ -900,10 +900,10 @@ let graphs =
             seen := u :: !seen;
             List.length !seen
           in
-          equal int 2 (Ops.topovisit s depth cache);
-          equal uops [ a; s ] (List.rev !seen);
-          equal int 2 (Ops.topovisit s depth cache);
-          equal int 2 (List.length !seen));
+          equal int 3 (Ops.topovisit s depth cache);
+          equal uops [ Ops.size_src None; a; s ] (List.rev !seen);
+          equal int 3 (Ops.topovisit s depth cache);
+          equal int 3 (List.length !seen));
       test "backward_slice is the reached nodes without the root" (fun () ->
           let leaf = Shape.param 97 Int32 in
           let branch = Ops.O.(leaf + Ops.int 3) in
@@ -1033,7 +1033,6 @@ let shapes =
             (fun u -> is_none ~msg:(str Op.pp (Ops.op u)) (Shape.shape_opt u))
             [
               Ops.sink [];
-              Ops.group [ Ops.int 1; Ops.int 2 ];
               Ops.v ~arg:(Code { code = "nop"; dtype = Void }) Op.Custom;
               Ops.v ~arg:(Code { code = "nop"; dtype = Void }) Op.Ins;
               Ops.call (Ops.sink []) [];
@@ -1287,6 +1286,9 @@ let ranges =
           is_true (Ops.Nodes.mem r (Ops.ranges c));
           let e = Ops.end_ (Ops.v Op.Noop) [ r ] in
           is_false (Ops.Nodes.mem r (Ops.ranges e));
+          let group = Ops.group [ e; e ] in
+          is_true (group == Ops.after (Ops.v Op.Stack) [ e; e ]);
+          is_true (Shape.simplify group == Ops.after (Ops.v Op.Stack) [ e ]);
           is_false (Ops.Nodes.mem r (Ops.ranges (Ops.after c [ e ]))));
       test "ranges lists the node first, then its sources' ranges" (fun () ->
           let r0 = Ops.range (Int 4) [ 0 ] in

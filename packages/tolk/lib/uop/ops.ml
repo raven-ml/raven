@@ -226,7 +226,6 @@ end
 type param_arg = {
   slot : int;
   dtype : Dtype.t;
-  size : int option;
   vmin_vmax : (Dtype.value * Dtype.value) option;
   multiple_of : int option;
   name : string option;
@@ -364,7 +363,6 @@ let equal_value_pair (a0, b0) (a1, b1) =
 let equal_param_arg (p0 : param_arg) (p1 : param_arg) =
   Int.equal p0.slot p1.slot
   && Dtype.equal p0.dtype p1.dtype
-  && Option.equal Int.equal p0.size p1.size
   && Option.equal equal_value_pair p0.vmin_vmax p1.vmin_vmax
   && Option.equal Int.equal p0.multiple_of p1.multiple_of
   && Option.equal String.equal p0.name p1.name
@@ -444,7 +442,7 @@ let hash_arg (a : arg) =
   | No_arg -> 0
   | Const c -> h (1, Dtype.hash_const c)
   | Dtype d -> h (2, Dtype.hash d)
-  | Param p -> h (3, p.slot, p.size, p.name, p.device)
+  | Param p -> h (3, p.slot, p.name, p.device)
   | Range r -> h (4, r.axis_id, r.axis_type)
   | Reduce r -> h (5, Op.to_int r.op, r.num_axes)
   | Allreduce r -> h (6, Op.to_int r.op, r.device)
@@ -724,7 +722,6 @@ let repr_param_arg (p : param_arg) =
   in
   let args =
     [ string_of_int p.slot; repr_dtype p.dtype ]
-    @ Option.to_list (Option.map string_of_int p.size)
     @ List.filter_map (fun (k, v) -> Option.map (fun v -> k ^ "=" ^ v) v) fields
   in
   strf "ParamArg(%s)" (String.concat ", " args)
@@ -2177,6 +2174,8 @@ let sharding u =
   | Op.Unshard, Axes axes -> List.combine axes (drop 1 u.src)
   | _ -> []
 
+let size_src = function None -> v Op.Stack | Some n -> int n
+
 let device_range_src = function
   | Some (Multi ds) ->
       [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ -1 ] ]
@@ -2211,7 +2210,7 @@ let allreduce u op d =
 let unique = Atomic.make 0
 let unique_num () = Atomic.fetch_and_add unique 1
 
-let param_arg ?size ?vmin_vmax ?multiple_of ?name
+let param_arg ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Some Dtype.Global) ?device ?(volatile = false)
     ?(bind_on_realize = false) ?bound ?(phase = 0) ?(align = 16) ~slot dtype =
   if not (List.mem align [ 1; 2; 4; 8; 16 ]) then
@@ -2225,7 +2224,6 @@ let param_arg ?size ?vmin_vmax ?multiple_of ?name
   {
     slot;
     dtype;
-    size;
     vmin_vmax;
     multiple_of;
     name;
@@ -2246,15 +2244,15 @@ let new_buffer ?slot ?phase d size dt =
   weak_storage dt;
   let slot = match slot with Some s -> s | None -> unique_num () in
   v Op.Buffer
-    ~src:(device_range_src (Some d))
-    ~arg:(Param (param_arg ~slot ~size ~device:d ?phase dt))
+    ~src:(size_src (Some size) :: device_range_src (Some d))
+    ~arg:(Param (param_arg ~slot ~device:d ?phase dt))
 
 let set ?(ends = []) p x = after (first p.op p.src) [ end_ (store p x) ends ]
 
 (* Variables *)
 
 let variable ?(dtype = Dtype.Weak_int) ?(multiple_of = 1) name lo hi =
-  v Op.Param
+  v Op.Param ~src:[ size_src None ]
     ~arg:
       (Param
          (param_arg ~vmin_vmax:(lo, hi) ~multiple_of ~name

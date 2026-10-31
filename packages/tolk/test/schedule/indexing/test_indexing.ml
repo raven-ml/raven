@@ -468,8 +468,9 @@ let filled u =
   List.filter_map
     (fun n ->
       match (Ops.op n, Ops.arg n) with
-      | ( (Param | Buffer | Alloc),
-          Param { slot; size = Some size; dtype; device; _ } ) ->
+      | (Param | Buffer | Alloc), Param { slot; dtype; device; _ }
+        when Shape.max_shape n <> [] ->
+          let size = Shape.max_numel n in
           let element j : Dtype.value =
             let k = (((j * 7) + (slot * 3)) mod 11) - 3 in
             if Dtype.is_float dtype then `Float (float_of_int k)

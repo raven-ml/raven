@@ -289,7 +289,7 @@ let node ~check p i operands =
   | Const, Const c, [] -> c
   | (Param | Range | Special), _, _ when p.leaves.(i) >= 0 ->
       (leaf p i :> Dtype.const)
-  | Param, Param { slot; size = None; _ }, [] -> (
+  | Param, Param { slot; _ }, _ when Shape.max_shape u = [] -> (
       match List.assoc_opt slot p.params with
       | Some v -> (v :> Dtype.const)
       | None -> invalid_arg (Printf.sprintf "parameter %d has no value" slot))
@@ -310,7 +310,7 @@ let node ~check p i operands =
 
 let storage_slot u =
   match Ops.arg u with
-  | Param { slot; size = Some _; _ } -> slot
+  | Param { slot; _ } when Shape.max_shape u <> [] -> slot
   | _ -> invalid_arg "cannot access a node that is not storage"
 
 (* [over ~check p ranges f acc] folds [f] over the bindings of the environment
@@ -359,6 +359,8 @@ and value ~check p i =
       | Reduce -> reduction ~check p i
       | Index -> read ~check p i
       | Load when Array.length p.srcs.(i) = 3 -> gated_load ~check p i
+      (* A define's source is its size, not a value. *)
+      | Param | Buffer | Alloc -> node ~check p i []
       (* An after is the value of its first source; the others only order it. *)
       | After -> value ~check p p.srcs.(i).(0)
       | _ -> node ~check p i (operands ~check p i 0)

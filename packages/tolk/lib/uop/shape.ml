@@ -267,10 +267,9 @@ and compute_shape u : sint list option =
       | Bytes b -> Some [ Int (String.length b) ]
       | _ -> invalid_arg "binary needs bytes")
   | Op.Buffer | Op.Alloc | Op.Param -> (
-      match arg u with
-      | Param { size = None; _ } -> Some []
-      | Param { size = Some n; _ } -> Some [ Int n ]
-      | _ -> invalid_arg "storage needs a ParamArg")
+      match as_shape (first (op u) (src u)) with
+      | ([] | [ _ ]) as s -> Some s
+      | _ -> invalid_arg "storage has one axis")
   | Op.Custom | Op.Customi -> (
       if void then None
       else
@@ -3021,11 +3020,11 @@ let empty ?device new_shape dt =
   weak_storage dt;
   let max_shape = to_max_shape new_shape in
   let u =
-    v Op.Alloc ~src:(device_range_src device)
+    v Op.Alloc
+      ~src:(size_src (Some (size_of max_shape)) :: device_range_src device)
       ~arg:
         (Param
-           (param_arg ~slot:(unique_num ()) ~size:(size_of max_shape) ?device
-              ~bind_on_realize:true dt))
+           (param_arg ~slot:(unique_num ()) ?device ~bind_on_realize:true dt))
   in
   shrink_to
     (reshape u (List.map (fun n -> Int n) max_shape))
@@ -3067,12 +3066,14 @@ let clone ?device:dev u =
 let alloc ?slot ?(addrspace = Dtype.Global) ?device ?axis new_shape dt =
   let slot = match slot with Some s -> s | None -> unique_num () in
   let ret =
-    v Op.Alloc ~src:(device_range_src device)
+    v Op.Alloc
+      ~src:
+        (size_src (Some (size_of (to_max_shape new_shape)))
+        :: device_range_src device)
       ~arg:
         (Param
-           (param_arg ~slot
-              ~size:(size_of (to_max_shape new_shape))
-              ~addrspace:(Some addrspace) ?device (Dtype.strong dt)))
+           (param_arg ~slot ~addrspace:(Some addrspace) ?device
+              (Dtype.strong dt)))
   in
   if List.is_empty new_shape then reshape ret []
   else view_as ?axis ret new_shape
@@ -3085,19 +3086,17 @@ let alloc_like ?slot ?addrspace u =
 let placeholder ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
   let dt = Dtype.strong dt in
   let slot = match slot with Some s -> s | None -> unique_num () in
-  let size = size_of new_shape in
+  let src = [ size_src (Some (size_of new_shape)) ] in
   let ret =
     match addrspace with
     | Dtype.Global ->
-        v Op.Param
-          ~arg:
-            (Param
-               (param_arg ~slot ~size ~addrspace:(Some addrspace) ?device dt))
+        v Op.Param ~src
+          ~arg:(Param (param_arg ~slot ~addrspace:(Some addrspace) ?device dt))
     | Dtype.Local | Dtype.Reg ->
         if Option.is_some device then
           invalid_arg "workgroup and register storage has no device";
-        v Op.Buffer
-          ~arg:(Param (param_arg ~slot ~size ~addrspace:(Some addrspace) dt))
+        v Op.Buffer ~src
+          ~arg:(Param (param_arg ~slot ~addrspace:(Some addrspace) dt))
     | Dtype.Alu -> invalid_arg "a placeholder cannot be a scalar variable"
   in
   if List.length new_shape > 1 then
@@ -3115,9 +3114,10 @@ let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
   weak_storage dt;
   let make size =
     v Op.Param
+      ~src:[ size_src size ]
       ~arg:
         (Param
-           (param_arg ?size ?vmin_vmax ?multiple_of ?name ~addrspace ?device
+           (param_arg ?vmin_vmax ?multiple_of ?name ~addrspace ?device
               ~volatile ?phase ?align ~slot dt))
   in
   match new_shape with
@@ -3276,7 +3276,7 @@ let param_like ?name u slot =
   match op u with
   | Op.Param when addrspace u = Some Dtype.Alu ->
       let p = param_arg_of u in
-      v Op.Param ~arg:(Param { p with slot; name; bound = None })
+      replace u ~arg:(Param { p with slot; name; bound = None })
   | _ -> (
       let a = axis u and align, phase = storage_phase u in
       match (a, device u) with
@@ -3284,11 +3284,10 @@ let param_like ?name u slot =
           let ss = shard_shape u in
           view_as ~axis:a
             (v Op.Param
+               ~src:[ size_src (Some (size_of (to_max_shape ss))) ]
                ~arg:
                  (Param
-                    (param_arg ~slot
-                       ~size:(size_of (to_max_shape ss))
-                       ?name ~device:d ~phase ~align (dtype u))))
+                    (param_arg ~slot ?name ~device:d ~phase ~align (dtype u))))
             ss
       | _ ->
           param ?shape:(shape_opt u) ?device:(device u) ?name ~phase ~align

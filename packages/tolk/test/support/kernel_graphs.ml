@@ -2,17 +2,18 @@ open Tolk
 
 let fail fmt = Format.kasprintf invalid_arg fmt
 
-(* Storage: whether it is call-local, and its slot and type. *)
+(* Storage: whether it is call-local, its slot and type, and its number of
+   elements. *)
 let rec storage_of u =
   match (Ops.op u, Ops.arg u) with
   | Op.After, _ -> storage_of (Ops.nth u 0)
   | ( (Param | Buffer | Alloc),
       Param ({ device = Some (Single _) | None; _ } as p) )
     when p.addrspace <> Some Alu ->
-      Some (Ops.op u = Alloc, p)
+      Some (Ops.op u = Alloc, p, Shape.max_numel u)
   | _ -> None
 
-let same (s0, (p0 : Ops.param_arg)) (s1, (p1 : Ops.param_arg)) =
+let same (s0, (p0 : Ops.param_arg), _) (s1, (p1 : Ops.param_arg), _) =
   s0 = s1 && p0.slot = p1.slot
 
 let untouched dtype : Dtype.value =
@@ -25,11 +26,11 @@ type state = { values : Dtype.value array; written : int list }
 
 let is_kernel_call u = Ops.op u = Call && Ops.op (Ops.nth u 0) = Sink
 
-let initial buffers (scratch, (p : Ops.param_arg)) =
+let initial buffers (scratch, (p : Ops.param_arg), size) =
   let given = if scratch then None else List.assoc_opt p.slot buffers in
   match given with
   | Some a -> Array.copy a
-  | None -> Array.make (Option.value p.size ~default:1) (untouched p.dtype)
+  | None -> Array.make size (untouched p.dtype)
 
 (* [kernel_writes ~vars ~params values_of call] is what the kernel [call] calls
    writes, each storage argument [a] holding [values_of a], each variable its
@@ -106,12 +107,12 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
   List.iter
     (fun u ->
       match storage_of u with
-      | Some (false, p) ->
+      | Some (false, p, _) ->
           let s = state u in
           List.iter
             (fun i -> Hashtbl.replace final (p.slot, i) s.values.(i))
             s.written
-      | Some (true, _) | None -> ())
+      | Some (true, _, _) | None -> ())
     (Ops.src sink);
   sorted_writes final
 
@@ -119,7 +120,7 @@ let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
   let memory = Hashtbl.create 16 and written = Hashtbl.create 64 in
   let storage a = Option.get (storage_of a) in
   let values_of a =
-    let ((scratch, p) as st) = storage a in
+    let ((scratch, p, _) as st) = storage a in
     match Hashtbl.find_opt memory (scratch, p.slot) with
     | Some v -> v
     | None ->
@@ -137,8 +138,8 @@ let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
         let a = List.nth args k in
         (values_of a).(i) <- v;
         match storage a with
-        | false, p -> Hashtbl.replace written (p.slot, i) v
-        | true, _ -> ())
+        | false, p, _ -> Hashtbl.replace written (p.slot, i) v
+        | true, _, _ -> ())
       (kernel_writes ~vars ~params values_of call)
   in
   List.iter run (Ops.src linear);

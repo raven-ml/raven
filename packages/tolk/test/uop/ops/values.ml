@@ -1052,6 +1052,8 @@ let exact e env =
     match Ops.op n with
     | Const -> Ops.value n
     | Param -> `Int (Bigint.of_int (List.assoc (Ops.expr n) env))
+    (* a variable's size source, which no value reads *)
+    | Stack when Ops.src n = [] -> `Bool false
     | op ->
         Ops.exec_alu ~truncate_output:false op (Ops.dtype n)
           (List.map (Ops.Tbl.find values) (Ops.src n))

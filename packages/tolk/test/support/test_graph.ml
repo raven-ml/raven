@@ -18,7 +18,8 @@ let n =
 
 let buffer =
   Ops.v
-    ~arg:(Param (Ops.param_arg ~slot:0 ~size:16 ~device:(Single "CPU") Float32))
+    ~src:[ Ops.size_src (Some 16) ]
+    ~arg:(Param (Ops.param_arg ~slot:0 ~device:(Single "CPU") Float32))
     Buffer
 
 (* The laws *)
@@ -45,13 +46,14 @@ let kinds =
     ("a buffer", buffer);
     ( "a buffer past a 16-byte boundary",
       Ops.v
+        ~src:[ Ops.size_src (Some 16) ]
         ~arg:
           (Param
-             (Ops.param_arg ~slot:0 ~size:16 ~device:(Single "CPU") ~phase:8
-                Float32))
+             (Ops.param_arg ~slot:0 ~device:(Single "CPU") ~phase:8 Float32))
         Buffer );
     ( "a scalar parameter",
       Ops.v
+        ~src:[ Ops.size_src None ]
         ~arg:
           (Param
              (Ops.param_arg ~slot:1 ~addrspace:None ~volatile:true
@@ -177,8 +179,9 @@ let text =
                (Ops.v ~src:[ x; x ] ~tag:(Tuple [ Int 0; Dtype Int32 ]) Add)));
       test "writes a record's fields that differ from their default" (fun () ->
           equal Windtrap.text
-            "0 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, \
-             size=16, device=\"CPU\")\n"
+            "0 Ops.CONST dtypes.weakint [] 16\n\
+             1 Ops.BUFFER dtypes.float [0] ParamArg(slot=0, dtype=dtypes.float, \
+             device=\"CPU\")\n"
             (Graph.to_string buffer));
       test "writes an argument's nodes before the node that holds them"
         (fun () ->
@@ -209,10 +212,10 @@ let numbers =
       let axis_id = List.map (( + ) next) axes in
       let buffer =
         Ops.v
+          ~src:[ Ops.size_src (Some 4) ]
           ~arg:
             (Param
-               (Ops.param_arg ~slot:(next + slot) ~size:4 ~device:(Single "CPU")
-                  Float32))
+               (Ops.param_arg ~slot:(next + slot) ~device:(Single "CPU") Float32))
           Buffer
       in
       let r = Ops.range ~axis_type:Loop (Int 3) axis_id in

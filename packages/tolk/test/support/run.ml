@@ -98,8 +98,7 @@ let aligned_host n =
   Rig.Buffer.view (Rig.Buffer.create Rig.host (max n 128)) ~first:0 ~length:n
 
 (* A buffer of the host holding [values] as the parameter [p]. *)
-let storage (p : Ops.param_arg) values =
-  let n = Option.get p.size in
+let storage (p : Ops.param_arg) ~size:n values =
   if Array.length values <> n then
     invalid_arg
       (Printf.sprintf "slot %d holds %d elements, not %d" p.slot n
@@ -107,8 +106,7 @@ let storage (p : Ops.param_arg) values =
   let bytes = encode p.dtype values in
   filled (aligned_host (Bigarray.Array1.dim bytes)) bytes
 
-let contents (p : Ops.param_arg) b =
-  Array.sub (values p.dtype b) 0 (Option.get p.size)
+let contents (p : Ops.param_arg) ~size b = Array.sub (values p.dtype b) 0 size
 
 (* The parameters of [prg] by slot: each buffer, in the order its linear order
    declares them, and each positional variable. *)
@@ -118,7 +116,7 @@ let buffer_params prg =
       match Ops.arg u with
       | Ops.Param p
         when Op.equal (Ops.op u) Param && p.addrspace <> Some Dtype.Alu ->
-          Some p
+          Some (p, Shape.max_numel u)
       | _ -> None)
     (Ops.src (Ops.nth prg 1))
 
@@ -129,14 +127,16 @@ let on_host ?vars prg buffers =
     | _ -> invalid_arg "not a compiled program"
   in
   let params = buffer_params prg in
-  let initial (p : Ops.param_arg) =
+  let initial ((p : Ops.param_arg), size) =
     match List.assoc_opt p.slot buffers with
     | Some values -> values
-    | None ->
-        Array.make (Option.get p.size)
-          (Dtype.truncate p.dtype (`Int Bigint.zero))
+    | None -> Array.make size (Dtype.truncate p.dtype (`Int Bigint.zero))
   in
-  let memory = List.map (fun p -> (p, storage p (initial p))) params in
+  let memory =
+    List.map
+      (fun ((p, size) as pn) -> (pn, storage p ~size (initial pn)))
+      params
+  in
   (* The call passes each buffer parameter as the run's slot of its number, and
      each positional variable as itself. *)
   let positional =
@@ -146,11 +146,11 @@ let on_host ?vars prg buffers =
   in
   let slots = List.length info.globals + List.length positional in
   let arg slot =
-    match List.find_opt (fun (p : Ops.param_arg) -> p.slot = slot) params with
-    | Some p ->
-        Shape.param
-          ~shape:[ Int (Option.get p.size) ]
-          ~device:(Single "CPU") slot p.dtype
+    match
+      List.find_opt (fun ((p : Ops.param_arg), _) -> p.slot = slot) params
+    with
+    | Some (p, size) ->
+        Shape.param ~shape:[ Int size ] ~device:(Single "CPU") slot p.dtype
     | None ->
         List.find
           (fun v ->
@@ -161,12 +161,12 @@ let on_host ?vars prg buffers =
   let s = Tolk_engine.link_call ~devices:(fun _ -> Rig.host) call in
   let buffers = Array.make (List.length info.globals) [] in
   List.iter
-    (fun ((p : Ops.param_arg), b) ->
+    (fun (((p : Ops.param_arg), _), b) ->
       if p.slot < Array.length buffers then buffers.(p.slot) <- [ b ])
     memory;
   Tolk_engine.run ?vars s buffers;
   List.map
-    (fun ((p : Ops.param_arg), b) -> (p.slot, contents p b))
+    (fun (((p : Ops.param_arg), size), b) -> (p.slot, contents p ~size b))
     memory
 
 (* Test devices *)

@@ -200,11 +200,8 @@ let create_allreduce_function red =
   | Allreduce { op; device } ->
       let output =
         v Op.Alloc
-          ~src:(device_range_src (Some device))
-          ~arg:
-            (Param
-               (param_arg ~slot:(unique_num ()) ~size:(max_numel red) ~device
-                  (dtype red)))
+          ~src:(size_src (Some (max_numel red)) :: device_range_src (Some device))
+          ~arg:(Param (param_arg ~slot:(unique_num ()) ~device (dtype red)))
       in
       let output =
         shrink_to

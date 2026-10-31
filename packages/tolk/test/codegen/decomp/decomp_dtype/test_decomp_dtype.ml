@@ -1327,9 +1327,12 @@ let computes_natively =
 let params k =
   List.filter_map
     (fun u ->
-      match (Ops.op u, Ops.arg u) with Param, Param a -> Some a | _ -> None)
+      match (Ops.op u, Ops.arg u) with
+      | Param, Param a -> Some (a, Shape.max_shape u)
+      | _ -> None)
     (Ops.toposort ~calls:Enter k)
-  |> List.sort_uniq (fun (a : Ops.param_arg) b -> Int.compare a.slot b.slot)
+  |> List.sort_uniq (fun ((a : Ops.param_arg), _) (b, _) ->
+      Int.compare a.slot b.slot)
 
 let random_z rng bits =
   let word () = Bigint.of_int (Random.State.bits rng land 0xffff) in
@@ -1393,8 +1396,8 @@ let emulated_writes_natively (name, named, lacks) =
       let slots = params k in
       let buffers =
         List.map
-          (fun (a : Ops.param_arg) ->
-            let n = Option.value ~default:1 a.size in
+          (fun ((a : Ops.param_arg), shape) ->
+            let n = List.fold_left ( * ) 1 shape in
             let last = a.slot = List.length slots - 1 in
             (a.slot, List.init n (fun _ -> draw rng name ~last a.dtype)))
           slots
@@ -1416,7 +1419,8 @@ let emulated_writes_natively (name, named, lacks) =
           (told (List.map alias named) (fun () -> emulate (lacking lacks) k))
       in
       let dtype_of slot =
-        (List.find (fun (a : Ops.param_arg) -> a.slot = slot) slots).dtype
+        (fst (List.find (fun ((a : Ops.param_arg), _) -> a.slot = slot) slots))
+          .dtype
       in
       let rec decoded = function
         | (s, i, lo) :: (_, _, hi) :: rest when List.mem (dtype_of s) longs ->
@@ -1501,10 +1505,10 @@ let pass =
             (fun dt ->
               let k = decomps on_32_bits (kernel [ dt ] dt 7 List.hd) in
               equal ~msg:(alias dt)
-                (list (pair dtype (option int)))
-                [ (word_of dt, Some 14); (word_of dt, Some 14) ]
+                (list (pair dtype (list int)))
+                [ (word_of dt, [ 14 ]); (word_of dt, [ 14 ]) ]
                 (List.map
-                   (fun (a : Ops.param_arg) -> (a.dtype, a.size))
+                   (fun ((a : Ops.param_arg), shape) -> (a.dtype, shape))
                    (params k)))
             longs);
       test "64-bit storage of no known size keeps none" (fun () ->
@@ -1514,10 +1518,10 @@ let pass =
               [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int64 3) ]
           in
           equal
-            (list (pair dtype (option int)))
-            [ (Int32, None) ]
+            (list (pair dtype (list int)))
+            [ (Int32, []) ]
             (List.map
-               (fun (a : Ops.param_arg) -> (a.dtype, a.size))
+               (fun ((a : Ops.param_arg), shape) -> (a.dtype, shape))
                (params (decomps on_32_bits k))));
       test "a 64-bit integer variable cannot be emulated" (fun () ->
           let c =

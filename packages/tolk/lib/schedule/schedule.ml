@@ -115,8 +115,8 @@ let copy_state ~slot s =
   (* The copy lies as the state's storage does, which the reader's kernel
      reads it at. *)
   let align, phase = Shape.storage_phase buf in
-  let arg = param_arg ~slot ~size:n ~device ~phase ~align (dtype buf) in
-  let dst = v Op.Alloc ~arg:(Param arg) in
+  let arg = param_arg ~slot ~device ~phase ~align (dtype buf) in
+  let dst = v Op.Alloc ~src:[ size_src (Some n) ] ~arg:(Param arg) in
   let r = range (Int n) [ 0 ] in
   let into = Shape.param_like dst 0 and from = Shape.param_like buf 1 in
   let body =

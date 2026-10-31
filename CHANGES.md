@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** a parameter, buffer or allocation holds its number of elements
+  as its first source (`Ops.size_src`), a weak integer constant or the empty
+  stack of a scalar; `Ops.param_arg` has no `size` field or `?size`.
 - **Breaking:** `Ops.range` takes no `?src`: a range has one source, its bound,
   and a loop ordered after effects has its bound ordered after them
   (`Ops.after`).

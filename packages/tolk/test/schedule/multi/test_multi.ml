@@ -182,9 +182,9 @@ let filled u =
     (fun n ->
       match (Ops.op n, Ops.arg n) with
       | ( (Param | Buffer | Alloc),
-          Param { slot; size; dtype; device; addrspace; _ } )
+          Param { slot; dtype; device; addrspace; _ } )
         when addrspace <> Some Alu ->
-          let size = Option.value size ~default:1 in
+          let size = Shape.max_numel n in
           let per_device = List.memq n sharded in
           let at j =
             let j = if per_device then j else j mod size in

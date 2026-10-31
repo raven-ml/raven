@@ -202,8 +202,10 @@ let pm_lower_weak =
                 let arg = Param { p with dtype = committed u } in
                 Some (cast (replace ~arg u) Dtype.Weak_int)
             | _ -> None);
-        rule (Upat.v ~op:Op.Set.all ~name:"u" ()) (fun m ->
-            lower_weak_node (m "u"));
+        (* A define's size stays a bare weak constant. *)
+        rule
+          (Upat.v ~op:(Op.Set.diff Op.Set.all Op.Set.defines) ~name:"u" ())
+          (fun m -> lower_weak_node (m "u"));
       ]))
 
 (* Commit every remaining bare constant, keyed on the consumer: being bare is a
@@ -229,6 +231,9 @@ let pm_cast_const =
   Pattern_matcher.(
     v
       (fun () -> [
-        rule (Upat.v ~op:Op.Set.all ~name:"u" ~early_reject:[ Op.Const ] ())
+        rule
+          (Upat.v
+             ~op:(Op.Set.diff Op.Set.all Op.Set.defines)
+             ~name:"u" ~early_reject:[ Op.Const ] ())
           (fun m -> cast_consts (m "u"));
       ]))

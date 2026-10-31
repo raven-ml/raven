@@ -29,9 +29,7 @@ let storage =
       test "memory read past its array is refused" (fun () ->
           rejects (fun () -> eval ~buffers:[ (1, iota 2) ] (p 1 3)));
       test "scalar storage holds one element" (fun () ->
-          equal consts
-            [ z 0 ]
-            (eval (Ops.v Param ~arg:(Param (Ops.param_arg ~slot:1 Int32)))));
+          equal consts [ z 0 ] (eval (Shape.param 1 Int32)));
       test "a variable is refused" (fun () ->
           rejects (fun () -> eval (Ops.variable "n" (z 1) (z 3))));
       test "device k of storage holds the k-th run of its memory" (fun () ->

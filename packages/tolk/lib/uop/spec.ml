@@ -110,6 +110,12 @@ let mstack_fits x =
 
 let memory = Upat.or_casted (pat [ Op.Index; Op.Shrink ] ~name:"uidx")
 
+(* A define's first source is its size: a weak integer constant, or the empty
+   stack of a scalar. *)
+let p_size =
+  Upat.any
+    [ pat [ Op.Const ] ~dtype:[ Dtype.Weak_int ] ~src:[]; pat [ Op.Stack ] ~src:[] ]
+
 (* Each argument of storage starts where its parameter in the body takes it to:
    what is known of the argument's start implies what the parameter assumes,
    which its vector accesses were merged for. *)
@@ -242,8 +248,8 @@ let shared : t =
               else Axis_type.equal (axis_type r) Axis_type.Loop)
           && (addrspace (nth x 2) = Some Dtype.Alu
              || max_numel (buf_uop (nth x 2)) = 1));
-      accept (pat [ Op.Param ] ~src:[]);
-      check (pat [ Op.Buffer ] ~src:[] ~name:"x") "x" (fun x ->
+      accept (pat [ Op.Param ] ~src:[ p_size ]);
+      check (pat [ Op.Buffer ] ~src:[ p_size ] ~name:"x") "x" (fun x ->
           List.mem (addrspace x) [ Some Dtype.Reg; Some Dtype.Local ]);
       check (pat [ Op.Binary ] ~dtype:[ Dtype.Uint8 ] ~src:[] ~name:"x") "x"
         (fun x -> match arg x with Bytes _ -> true | _ -> false);
@@ -332,21 +338,30 @@ let tensor : t =
               ~src:[ Upat.wild ] ~name:"u")
            "u"
            (fun u -> Dtype.is_float (dtype u) || is_invalid (base (nth u 0)));
-         decide (pat [ Op.Buffer ] ~name:"buf") "buf" (fun buf ->
+         decide
+           (pat [ Op.Buffer ] ~src:[ p_size ] ~allow_any_len:true ~name:"buf")
+           "buf"
+           (fun buf ->
              let p = param_of buf in
              if addrspace buf = Some Dtype.Global then
                Some
-                 (Option.is_some p.size && is_device p.device
-                 && valid_device_range p.device (src buf))
+                 (is_device p.device
+                 && valid_device_range p.device (List.tl (src buf)))
              else None);
-         check (pat [ Op.Alloc ] ~name:"buf") "buf" (fun buf ->
+         check
+           (pat [ Op.Alloc ] ~src:[ p_size ] ~allow_any_len:true ~name:"buf")
+           "buf"
+           (fun buf ->
              let p = param_of buf in
              List.mem (addrspace buf)
                Dtype.[ Some Global; Some Local; Some Reg ]
              && (Option.is_none p.device
                 || (addrspace buf = Some Dtype.Global && is_device p.device))
-             && valid_device_range p.device (src buf));
-         decide (pat [ Op.Param ] ~src:[] ~name:"buf") "buf" (fun buf ->
+             && valid_device_range p.device (List.tl (src buf)));
+         decide
+           (pat [ Op.Param ] ~src:[ pat [ Op.Stack ] ~src:[] ] ~name:"buf")
+           "buf"
+           (fun buf ->
              if is_variable buf then Some (Option.is_none (param_of buf).device)
              else None);
          check (pat [ Op.Custom_function ] ~name:"x") "x" (fun x ->
@@ -467,7 +482,12 @@ let program_rules vectors : t =
              | v :: lanes when addrspace v = Some Dtype.Alu ->
                  if List.for_all constant lanes then None else Some false
              | _ -> None);
-         decide (Upat.v ~op:Op.Set.all ~name:"x" ()) "x" (fun x ->
+         (* A bare constant appears only under the cast stating its width, or
+            as a define's size. *)
+         decide
+           (Upat.v ~op:(Op.Set.diff Op.Set.all Op.Set.defines) ~name:"x" ())
+           "x"
+           (fun x ->
              if
                op x <> Op.Cast && List.exists (fun s -> op s = Op.Const) (src x)
              then Some false
@@ -487,7 +507,7 @@ let program_rules vectors : t =
                 ]);
          reject (Upat.v ~op:Op.Set.movement ());
          check
-           (pat [ Op.Buffer; Op.Alloc ] ~name:"x")
+           (pat [ Op.Buffer; Op.Alloc ] ~src:[ p_size ] ~name:"x")
            "x"
            (fun x -> List.mem (addrspace x) Dtype.[ Some Reg; Some Local ]);
          reject (Upat.const `Invalid);
@@ -555,13 +575,15 @@ let kernel_graph : t =
           if List.for_all (fun x -> op x = Op.Param || loop_bound x) (src s)
           then Some true
           else None);
-      accept (pat [ Op.Param ] ~src:[]);
-      check (pat [ Op.Buffer ] ~name:"x") "x" (fun x ->
-          valid_device_range (param_of x).device (src x)
+      accept (pat [ Op.Param ] ~src:[ p_size ]);
+      check (pat [ Op.Buffer ] ~src:[ p_size ] ~allow_any_len:true ~name:"x") "x"
+        (fun x ->
+          valid_device_range (param_of x).device (List.tl (src x))
           && List.mem (addrspace x) Dtype.[ Some Global; Some Local; Some Reg ]);
-      check (pat [ Op.Alloc ] ~name:"x") "x" (fun x ->
+      check (pat [ Op.Alloc ] ~src:[ p_size ] ~allow_any_len:true ~name:"x") "x"
+        (fun x ->
           addrspace x = Some Dtype.Global
-          && valid_device_range (param_of x).device (src x));
+          && valid_device_range (param_of x).device (List.tl (src x)));
       accept (pat [ Op.Bitcast ]);
       check (pat [ Op.Mstack ] ~name:"x") "x" mstack_fits;
       check (pat [ Op.Mselect ] ~name:"x") "x" mselect_fits;

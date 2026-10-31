@@ -281,15 +281,14 @@ let l2i_define x =
         (Printf.sprintf "long decomposition of variable %s unsupported"
            (Option.value p.name ~default:"None"))
   | Param p ->
-      v (op x)
-        ~arg:
-          (Param
-             {
-               p with
-               dtype = l2i_dt p.dtype;
-               size = Option.map (fun n -> 2 * n) p.size;
-             })
-        ?tag:(tag x)
+      let size = nth x 0 in
+      let size =
+        if shape x = [] then size
+        else int (2 * Dtype.Value.to_int (vmax size))
+      in
+      replace x
+        ~arg:(Param { p with dtype = l2i_dt p.dtype })
+        ~src:(size :: List.tl (src x))
   | _ -> invalid_arg "a long definition needs a parameter argument"
 
 (* The word a node becomes, [0] for the low word and [1] for the high one, and

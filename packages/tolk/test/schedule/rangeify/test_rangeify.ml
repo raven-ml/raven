@@ -240,8 +240,8 @@ let storage u =
 
 let filled u =
   List.map
-    (fun (_, (p : Ops.param_arg)) ->
-      let size = Option.value p.size ~default:1 in
+    (fun (n, (p : Ops.param_arg)) ->
+      let size = Shape.max_numel n in
       let at j = element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3) in
       (p.slot, Array.init (size * devices p.device) at))
     (storage u)
@@ -574,9 +574,7 @@ let rules =
           equal (list int) [ 16 ]
             (List.filter_map
                (fun n ->
-                 match Ops.arg n with
-                 | Param { size = Some s; _ } when Ops.op n = Alloc -> Some s
-                 | _ -> None)
+                 if Ops.op n = Alloc then Some (Shape.max_numel n) else None)
                (Ops.toposort ~calls:Enter (Rangeify.get_kernel_graph sink))));
     ]
 

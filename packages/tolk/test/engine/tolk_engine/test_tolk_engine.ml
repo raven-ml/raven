@@ -484,7 +484,7 @@ type storage = {
   buffers : Buffer.t list;
 }
 
-let per_device (p : Ops.param_arg) = Option.value p.size ~default:1
+let per_device n = Shape.max_numel n
 
 (* A buffer of [d] holding [values], a file on the disk. *)
 let buffer d dt values =
@@ -504,7 +504,7 @@ let storage_of ?(devices = devices) ?(seed = 0) big =
     (fun n ->
       match (Ops.op n, Ops.arg n) with
       | (Param | Buffer), Param p when p.addrspace <> Some Alu ->
-          let names = placement p and m = per_device p in
+          let names = placement p and m = per_device n in
           let before =
             Array.init
               (List.length names * m)
@@ -541,13 +541,13 @@ let slots storage =
 let contents s =
   Array.concat
     (List.map
-       (fun b -> Array.sub (Run.values s.arg.dtype b) 0 (per_device s.arg))
+       (fun b -> Array.sub (Run.values s.arg.dtype b) 0 (per_device s.node))
        s.buffers)
 
 let refill storage =
   List.iter
     (fun s ->
-      let m = per_device s.arg in
+      let m = per_device s.node in
       List.iteri
         (fun k dst ->
           Buffer.copy
@@ -1651,7 +1651,7 @@ let stores_through_a_gather ?(devices = devices) device targets () =
   let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
   equal ~msg:"kernels" int 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
-  let of_size n = List.find (fun st -> per_device st.arg = n) storage in
+  let of_size n = List.find (fun st -> per_device st.node = n) storage in
   let pool = of_size 64 and slot = of_size 4 and rows = of_size 32 in
   List.iter
     (fun dst ->

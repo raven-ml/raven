@@ -127,7 +127,7 @@ let binding rng k us =
             else
               let v = draw_value rng k dtype (bound_int lo) (bound_int hi) in
               Some { b with vars = (name, v) :: b.vars }
-        | Param, Param { slot; size = None; dtype; _ } ->
+        | Param, Param { slot; dtype; _ } when Shape.max_shape u = [] ->
             if List.mem_assoc slot b.params then Some b
             else
               Some
@@ -135,7 +135,8 @@ let binding rng k us =
                   b with
                   params = (slot, draw_value rng k dtype 0 9) :: b.params;
                 }
-        | Param, Param { slot; size = Some n; dtype; _ } ->
+        | Param, Param { slot; dtype; _ } ->
+            let n = Shape.max_numel u in
             if List.mem_assoc slot b.buffers then Some b
             else
               let elements =

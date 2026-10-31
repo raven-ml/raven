@@ -11,6 +11,9 @@ let b () = var "b" 0 10
 let x () = fvar "x"
 let y () = fvar "y"
 let p () = flag "p"
+
+(* [u], a define, named [name]. *)
+let named u name = replace u ~arg:(Param { (param_arg_of u) with name = Some name })
 let pair (lo, hi) : (sint * sint) option = Some (Int lo, Int hi)
 let param ?device shape slot dt = param ?device ~shape:(ints shape) slot dt
 
@@ -435,7 +438,7 @@ let storage () =
         ~name:"w" ~volatile:true 4 Float32;
       placeholder ~slot:5 [ 2; 3 ] Weak_int;
       placeholder ~slot:6 ~addrspace:Local [ 8 ] Float32;
-      placeholder ~slot:7 ~addrspace:Reg [ 4 ] Float16;
+      named (placeholder ~slot:7 ~addrspace:Reg [ 4 ] Float16) "acc";
       alloc ~slot:9 [] Int32;
       alloc ~slot:10
         ~device:(Multi [ "CPU:0"; "CPU:1" ])
@@ -769,11 +772,7 @@ let reprs () =
     ("variable", n);
     ("bound variable", bind n (i 3));
     ( "named local buffer",
-      v Op.Buffer
-        ~arg:
-          (Param
-             (param_arg ~slot:2 ~size:4 ~name:"buf" ~addrspace:(Some Local)
-                Int32)) );
+      named (placeholder ~slot:2 ~addrspace:Local [ 4 ] Int32) "buf" );
     ( "volatile param",
       Shape.param ~shape:(ints [ 4 ]) ~volatile:true ~device:(Single "CPU") 0
         Uint32 );

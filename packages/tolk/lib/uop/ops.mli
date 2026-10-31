@@ -122,9 +122,6 @@ type param_arg = {
       (** The parameter's position in its function, or [-1] for a named
           variable. *)
   dtype : Dtype.t;  (** The element type. *)
-  size : int option;
-      (** The number of elements, or [None] for a scalar. Never symbolic: a
-          symbolic size is a larger parameter shrunk. *)
   vmin_vmax : (Dtype.value * Dtype.value) option;
       (** The least and greatest value of a variable. *)
   multiple_of : int option;  (** A number every value is a multiple of. *)
@@ -148,10 +145,10 @@ type param_arg = {
           vector access is wider. *)
 }
 (** The type for the arguments of {!Op.Param}, {!Op.Buffer} and {!Op.Alloc}:
-    storage, or a scalar variable. *)
+    storage, or a scalar variable. The number of elements is the node's first
+    source ({!size_src}). *)
 
 val param_arg :
-  ?size:int ->
   ?vmin_vmax:Dtype.value * Dtype.value ->
   ?multiple_of:int ->
   ?name:string ->
@@ -780,6 +777,12 @@ val copy_to_device : ?shard:int -> t -> device -> t
     [d].
 
     Raises [Invalid_argument] if [d] is a disk or [u]'s type is weak. *)
+
+val size_src : int option -> t
+(** [size_src n] is the first source of a {!Op.Param}, {!Op.Buffer} or
+    {!Op.Alloc} of [n] elements: the weak integer constant [n], or the empty
+    {!Op.Stack} for a scalar ([None]). The size is never symbolic: storage of a
+    symbolic size is a larger one shrunk. *)
 
 val device_range_src : device option -> t list
 (** [device_range_src d] is the {!Axis_type.Device} range a node on several

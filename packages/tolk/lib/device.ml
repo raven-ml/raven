@@ -43,7 +43,7 @@ module Tiny_elf = struct
         name = p.name;
         slot;
         dtype = Ops.dtype u;
-        shape = Option.to_list p.size;
+        shape = Shape.max_shape u;
       }
     in
     match (Ops.op prg, Ops.arg prg, Ops.src prg) with

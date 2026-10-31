@@ -559,10 +559,9 @@ let bufferize_to_store ctx x idx =
         incr ctx;
         let vmin_vmax = stored_bounds value dtype in
         let buf =
-          v Op.Alloc ~src:(device_range_src device)
-            ~arg:
-              (Param
-                 (param_arg ~slot ~size:(max_numel x) ?vmin_vmax ?device dtype))
+          v Op.Alloc
+            ~src:(size_src (Some (max_numel x)) :: device_range_src device)
+            ~arg:(Param (param_arg ~slot ?vmin_vmax ?device dtype))
         in
         let do_store =
           end_ (store (index buf [ idx ]) (cast value dtype)) rngs
@@ -697,9 +696,10 @@ let debuf ctx buf =
   in
   let param =
     v Op.Param
+      ~src:[ size_src (Some (max_numel buf)) ]
       ~arg:
         (Param
-           (param_arg ~slot:ctx.dg ~size:(max_numel buf) ?vmin_vmax
+           (param_arg ~slot:ctx.dg ?vmin_vmax
               ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align
               (dtype buf)))
   in

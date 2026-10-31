@@ -347,7 +347,8 @@ let gen_division var =
 
 (* Vectors of index arithmetic: variable [k] is a vector of two variables, each
    constant a scalar. Lane [l] of its value is the value of the graph with each
-   vector replaced by its lane [l], and each broadcast scalar by the scalar. *)
+   vector replaced by its lane [l], and each broadcast scalar by the scalar. A
+   variable is a leaf: its source, the empty stack, is its shape. *)
 let vector k = Shape.stack [ variables.(k); variables.((k + 1) mod 3) ]
 
 let lane l u =
@@ -358,6 +359,7 @@ let lane l u =
     | None ->
         let v =
           match Ops.op u with
+          | Op.Param -> u
           | Op.Stack -> go (Ops.nth u l)
           | Op.Expand | Op.Reshape -> go (Ops.nth u 0)
           | _ -> Ops.replace u ~src:(List.map go (Ops.src u))
