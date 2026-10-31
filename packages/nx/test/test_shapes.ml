@@ -861,6 +861,15 @@ let refusals =
             (Invalid_argument
                "Nx.reshape: int32 [2; 3] would have more elements than an int \
                 counts") (fun () -> Nx.reshape [| max_int; 2 |] x);
+          raises (Invalid_argument "Nx.reshape: extent -2 in [-2; 3]")
+            (fun () -> Nx.reshape [| -2; 3 |] x);
+          raises
+            (Invalid_argument "Nx.reshape: [-1; -1] has two unknown extents")
+            (fun () -> Nx.reshape [| -1; -1 |] x);
+          raises
+            (Invalid_argument
+               "Nx.reshape: int32 [2; 3] has 6 elements, which [4; -1] cannot \
+                hold") (fun () -> Nx.reshape [| 4; -1 |] x);
           raises
             (Invalid_argument "Nx.broadcast_shapes: [-1] has a negative extent")
             (fun () -> Nx.broadcast_shapes [ [| 2 |]; [| -1 |] ]);

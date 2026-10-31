@@ -66,6 +66,10 @@ val same_shape : ('v, 's, 'd) t -> ('w, 'r, 'd) t -> bool
 val shape : ('v, 's, 'd) t -> int array
 (** [shape x] is a fresh array. *)
 
+val layout_shape : ('v, 's, 'd) t -> int iarray
+(** [layout_shape x] is [x]'s shape as layouts hold it: for a value on one
+    device, or a traced one, its layout's, which it does not copy. *)
+
 val has_shape : ('v, 's, 'd) t -> int array -> bool
 (** [has_shape x s] is [shape x = s]. It allocates nothing. *)
 

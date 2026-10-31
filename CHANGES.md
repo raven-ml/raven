@@ -3151,6 +3151,9 @@ thread.
 
 ### Nx
 
+- Eager operations allocate fewer words per call: `Nx.reshape` and
+  `Nx.slice` about a third of what they did, `Nx.sum`, `Nx.cumsum` and
+  `Nx.take` about half, composites such as `Nx.unique` about two thirds.
 - `Nx.Rng.with_key` takes any key, traced included, so code that draws
   without `~key` runs inside `Rune.jit` and a loop's step in a scope at a key
   the function receives. Such a scope draws only on its key's set, as `~key`

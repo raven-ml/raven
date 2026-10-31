@@ -677,7 +677,12 @@ let donate x = Donate.donate ~by:"Nx.donate" x
 (* Shapes, broadcasting and movements *)
 
 let ndim = Prim.rank
-let numel x = Array.fold_left ( * ) 1 (shape x)
+let numel x =
+  let n = ref 1 in
+  for a = 0 to Prim.rank x - 1 do
+    n := !n * Prim.dim x a
+  done;
+  !n
 
 (* The value of [dt] and [shape] whose element at each index is [out], an
    expression of no operand reading [shape]'s coordinates, computed beside
@@ -753,7 +758,12 @@ let pp_value = Prim.pp_value
 
 let pp_ints ppf l = pp_shape ppf (Array.of_list l)
 
-let axis ~by x a = Prim.axis ~by (ndim x) a (fun ppf -> pp_value ppf x)
+(* An axis in range builds no printer for the message it does not raise. *)
+let axis ~by x a =
+  let r = ndim x in
+  if a >= 0 && a < r then a
+  else if a < 0 && a >= -r then a + r
+  else Prim.axis ~by r a (fun ppf -> pp_value ppf x)
 let dim a x = Prim.dim x (axis ~by:"Nx.dim" x a)
 
 (* Distinct axes of [x], or raises naming the repeated one. *)
@@ -784,33 +794,37 @@ let times ~by x a b =
       pp_value x;
   a * b
 
+(* [s] printed, for messages. *)
+let pp_s s ppf () = pp_shape ppf (Iarray.to_array s)
+
 let reshape s x =
   let by = "Nx.reshape" in
   let n = numel x and s = Iarray.of_array s in
-  let pp_s ppf () = pp_shape ppf (Iarray.to_array s) in
-  let unknown = ref None and known = ref 1 in
-  Iarray.iteri
-    (fun i e ->
-      if e < -1 then invalid_argf "%s: extent %d in %a" by e pp_s ();
-      if e = -1 then begin
-        if !unknown <> None then
-          invalid_argf "%s: %a has two unknown extents" by pp_s ();
-        unknown := Some i
-      end
-      else known := times ~by x !known e)
-    s;
+  let unknown = ref (-1) and known = ref 1 in
+  for i = 0 to Iarray.length s - 1 do
+    let e = Iarray.get s i in
+    if e < -1 then invalid_argf "%s: extent %d in %a" by e (pp_s s) ();
+    if e = -1 then begin
+      if !unknown >= 0 then
+        invalid_argf "%s: %a has two unknown extents" by (pp_s s) ();
+      unknown := i
+    end
+    else known := times ~by x !known e
+  done;
   let s =
-    match !unknown with
-    | Some i when !known > 0 && n mod !known = 0 ->
-        Iarray.mapi (fun j e -> if j = i then n / !known else e) s
-    | Some _ ->
+    if !unknown >= 0 then begin
+      let i = !unknown and k = !known in
+      if not (k > 0 && n mod k = 0) then
         invalid_argf "%s: %a has %d elements, which %a cannot hold" by pp_value
-          x n pp_s ()
-    | None ->
-        if !known <> n then
-          invalid_argf "%s: %a has %d elements, %a has %d" by pp_value x n pp_s
-            () !known;
-        s
+          x n (pp_s s) ();
+      Iarray.mapi (fun j e -> if j = i then n / k else e) s
+    end
+    else begin
+      if !known <> n then
+        invalid_argf "%s: %a has %d elements, %a has %d" by pp_value x n
+          (pp_s s) () !known;
+      s
+    end
   in
   Eval.move ~by (Reshape s) x
 
@@ -1310,60 +1324,66 @@ let range d start stop step : Nx_array.Move.range =
     in
     { start = (if count = 0 then 0 else start); count; step }
 
+(* The entries of [idx] that address an axis. *)
+let rec addressed : type d. d index list -> int = function
+  | [] -> 0
+  | N :: rest -> addressed rest
+  | (I _ | L _ | T _ | R _ | Rs _ | A | D _ | M _) :: rest -> 1 + addressed rest
+
+(* The written position [p] checked against axis [a] of [x], of shape [s]. *)
+let written_at ~by s x a p =
+  let p' = if p < 0 then p + s.(a) else p in
+  if p' < 0 || p' >= s.(a) then
+    invalid_argf "%s: position %d is outside axis %d of %a" by p a pp_value x;
+  p'
+
+(* [idx]'s picks, its first entry addressing axis [a] of [x], of shape [s],
+   checked in order. *)
+let rec picks_from : type v s d.
+    by:string ->
+    int array ->
+    (v, s, d) t ->
+    int ->
+    d index list ->
+    (d pick * int option) list =
+ fun ~by s x a idx ->
+  match idx with
+  | [] -> []
+  | N :: rest -> (New, None) :: picks_from ~by s x a rest
+  | entry :: rest ->
+      let pick : d pick =
+        match entry with
+        | I p -> At (written_at ~by s x a p)
+        | L ps -> Rows (List.map (written_at ~by s x a) ps)
+        | T p -> Held p
+        | R (start, stop) -> Span (range s.(a) start stop 1)
+        | Rs (_, _, 0) -> invalid_argf "%s: a step of 0" by
+        | Rs (start, stop, step) -> Span (range s.(a) start stop step)
+        | A -> Span (whole s.(a))
+        | D (start, n) ->
+            if ndim start <> 0 then
+              invalid_argf "%s: a window's start %a is not 0-d" by pp_value
+                start;
+            if n < 0 || n > s.(a) then
+              invalid_argf "%s: a window of %d on axis %d of %a" by n a
+                pp_value x;
+            From (start, n, s.(a))
+        (* The public selections replace each mask by its positions
+           first. *)
+        | M _ | N -> assert false
+      in
+      let first = (pick, Some a) in
+      first :: picks_from ~by s x (a + 1) rest
+
 (* [idx] checked against [x]: each entry with the axis it selects along, [None]
    for [N]. Every refusal raises here, before anything is computed. *)
 let picks ~by idx x =
   let s = shape x in
-  let r = Array.length s in
-  let addressed =
-    List.length (List.filter (function N -> false | _ -> true) idx)
-  in
-  if addressed > r then
+  let addressed = addressed idx in
+  if addressed > Array.length s then
     invalid_argf "%s: %d entries address %d axes; the operand is %a" by
       (List.length idx) addressed pp_value x;
-  let next = ref 0 in
-  (* The next axis, and a written position checked against it. *)
-  let axis () =
-    incr next;
-    !next - 1
-  in
-  let written a p =
-    let p' = if p < 0 then p + s.(a) else p in
-    if p' < 0 || p' >= s.(a) then
-      invalid_argf "%s: position %d is outside axis %d of %a" by p a pp_value x;
-    p'
-  in
-  List.map
-    (fun entry ->
-      match entry with
-      | N -> (New, None)
-      | I p ->
-          let a = axis () in
-          (At (written a p), Some a)
-      | L ps ->
-          let a = axis () in
-          (Rows (List.map (written a) ps), Some a)
-      | T p -> (Held p, Some (axis ()))
-      | R (start, stop) ->
-          let a = axis () in
-          (Span (range s.(a) start stop 1), Some a)
-      | Rs (_, _, 0) -> invalid_argf "%s: a step of 0" by
-      | Rs (start, stop, step) ->
-          let a = axis () in
-          (Span (range s.(a) start stop step), Some a)
-      | A ->
-          let a = axis () in
-          (Span (whole s.(a)), Some a)
-      | D (start, n) ->
-          let a = axis () in
-          if ndim start <> 0 then
-            invalid_argf "%s: a window's start %a is not 0-d" by pp_value start;
-          if n < 0 || n > s.(a) then
-            invalid_argf "%s: a window of %d on axis %d of %a" by n a pp_value x;
-          (From (start, n, s.(a)), Some a)
-      (* The public selections replace each mask by its positions first. *)
-      | M _ -> assert false)
-    idx
+  picks_from ~by s x 0 idx
 
 (* The axes a pick gives the selection. *)
 let extents_of (type d) (p : d pick) =
@@ -1375,13 +1395,60 @@ let extents_of (type d) (p : d pick) =
   | From (_, n, _) -> [| n |]
   | New -> [| 1 |]
 
+(* The number of axes the picks select along, and of the axes they give. *)
+let rec used_axes = function
+  | [] -> 0
+  | (_, None) :: rest -> used_axes rest
+  | (_, Some _) :: rest -> 1 + used_axes rest
+
+let rec given_axes : type d. (d pick * int option) list -> int = function
+  | [] -> 0
+  | (p, _) :: rest ->
+      let k =
+        match p with
+        | At _ -> 0
+        | Span _ | Rows _ | From _ | New -> 1
+        | Held h -> ndim h
+      in
+      k + given_axes rest
+
+(* The picks' axes into [out] from [i]. *)
+let rec fill_given : type d.
+    int array -> int -> (d pick * int option) list -> int =
+ fun out i picks ->
+  match picks with
+  | [] -> i
+  | (p, _) :: rest -> (
+      match p with
+      | At _ -> fill_given out i rest
+      | Span r ->
+          out.(i) <- r.count;
+          fill_given out (i + 1) rest
+      | Rows ps ->
+          out.(i) <- List.length ps;
+          fill_given out (i + 1) rest
+      | From (_, n, _) ->
+          out.(i) <- n;
+          fill_given out (i + 1) rest
+      | New ->
+          out.(i) <- 1;
+          fill_given out (i + 1) rest
+      | Held h ->
+          let k = ndim h in
+          for j = 0 to k - 1 do
+            out.(i + j) <- Prim.dim h j
+          done;
+          fill_given out (i + k) rest)
+
 (* The selection's shape: each pick's axes, then the axes past them. *)
 let selection x picks =
-  let s = shape x in
-  let used = List.length (List.filter (fun (_, a) -> a <> None) picks) in
-  Array.concat
-    (List.map (fun (p, _) -> extents_of p) picks
-    @ [ Array.sub s used (Array.length s - used) ])
+  let r = ndim x and used = used_axes picks in
+  let out = Array.make (given_axes picks + r - used) 0 in
+  let i = fill_given out 0 picks in
+  for a = used to r - 1 do
+    out.(i + a - used) <- Prim.dim x a
+  done;
+  out
 
 (* The 1-d value of [vs] at [p]: one assembly of their fills. *)
 let vector_at ~by p dt vs =
@@ -1431,11 +1498,13 @@ let window ~by start n d =
 let gather_axis ~by axis p y =
   let s = shape y and n = numel p in
   let r = Array.length s in
-  let wide = Array.mapi (fun i d -> if i = axis then n else d) s in
   let idx =
-    if n <> 1 then
-      let col = Array.mapi (fun i _ -> if i = axis then n else 1) s in
+    if n <> 1 then begin
+      let wide = Array.copy s and col = Array.make r 1 in
+      wide.(axis) <- n;
+      col.(axis) <- n;
       Eval.broadcast ~by wide (Eval.reshape ~by col p)
+    end
     else
       let other i = s.(if i < axis then i else i + 1) in
       let row = Array.append (Array.init (r - 1) other) [| 1 |] in
@@ -1453,14 +1522,11 @@ let gather_axis ~by axis p y =
 let take_axis ~by axis p y =
   let s = shape y and ps = shape p in
   let g = gather_axis ~by axis p y in
-  let s' =
-    Array.concat
-      [
-        Array.sub s 0 axis;
-        ps;
-        Array.sub s (axis + 1) (Array.length s - axis - 1);
-      ]
-  in
+  let r = Array.length s and k = Array.length ps in
+  let s' = Array.make (r - 1 + k) 0 in
+  Array.blit s 0 s' 0 axis;
+  Array.blit ps 0 s' axis k;
+  Array.blit s (axis + 1) s' (axis + k) (r - axis - 1);
   Eval.reshape ~by s' g
 
 (* Raises if a value [idx] holds is dead: checked before the selection, whose
@@ -1490,39 +1556,50 @@ let read_picks read picks =
   in
   List.map (fun (p, a) -> (pick p, a)) picks
 
+(* [ranges] narrowed by the picks written in the program. *)
+let rec narrowed : type d.
+    Nx_array.Move.range array -> (d pick * int option) list -> unit =
+ fun ranges picks ->
+  match picks with
+  | [] -> ()
+  | (At i, Some a) :: rest ->
+      ranges.(a) <- { start = i; count = 1; step = 1 };
+      narrowed ranges rest
+  | (Span r, Some a) :: rest ->
+      ranges.(a) <- r;
+      narrowed ranges rest
+  | ((At _ | Span _ | Rows _ | Held _ | From _ | New), _) :: rest ->
+      narrowed ranges rest
+
+let rec whole_ranges (ranges : Nx_array.Move.range array) s i =
+  i = Array.length s
+  || (ranges.(i).count = s.(i) && ranges.(i).step = 1
+     && whole_ranges ranges s (i + 1))
+
+(* [y] gathered at the picks held in data or listed, the last first. *)
+let rec gathered : type v s d.
+    by:string -> (d pick * int option) list -> (v, s, d) t -> (v, s, d) t =
+ fun ~by picks y ->
+  match picks with
+  | [] -> y
+  | (p, a) :: rest -> (
+      let y = gathered ~by rest y in
+      match (p, a) with
+      | Rows ps, Some a -> gather_axis ~by a (written ~by y ps) y
+      | Held p, Some a -> gather_axis ~by a p y
+      | From (start, n, d), Some a -> gather_axis ~by a (window ~by start n d) y
+      | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> y)
+
 (* [x] at the selection [picks]. *)
 let selected ~by picks x =
   let s = shape x in
   let ranges = Array.map whole s in
-  List.iter
-    (fun (p, a) ->
-      match (p, a) with
-      | At i, Some a -> ranges.(a) <- { start = i; count = 1; step = 1 }
-      | Span r, Some a -> ranges.(a) <- r
-      | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> ())
-    picks;
-  let y =
-    if
-      Array.for_all2
-        (fun (r : Nx_array.Move.range) d -> r.count = d && r.step = 1)
-        ranges s
-    then x
-    else sliced ~by ranges x
-  in
+  narrowed ranges picks;
+  let y = if whole_ranges ranges s 0 then x else sliced ~by ranges x in
   (* Each gather keeps the rank: a held axis of [n] positions has extent [n]
      until the reshape below gives it their shape, so no step passes the
      result's rank. *)
-  let y =
-    List.fold_left
-      (fun y (p, a) ->
-        match (p, a) with
-        | Rows ps, Some a -> gather_axis ~by a (written ~by y ps) y
-        | Held p, Some a -> gather_axis ~by a p y
-        | From (start, n, d), Some a ->
-            gather_axis ~by a (window ~by start n d) y
-        | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> y)
-      y (List.rev picks)
-  in
+  let y = gathered ~by picks y in
   (* Each [At] axis now has extent 1 and goes; each [New] axis comes; each
      held axis takes its positions' shape. *)
   let s' = selection x picks in
@@ -1819,7 +1896,7 @@ let reduce_by ~by s axes xs rs out =
 (* The one-operand reduction [r] of [x] along [axes]: of its one load, by the
    identity program, kept. *)
 let reduce_by_one ~by r axes x =
-  let layout = Nx_array.Layout.contiguous (Iarray.of_array (shape x)) in
+  let layout = Nx_array.Layout.contiguous (Prim.layout_shape x) in
   let prog = Prim.identity (dtype x) in
   fst
     (Eval.eval ~by
@@ -1838,9 +1915,9 @@ let kept ~by ~keepdims s axes y =
     Eval.reshape ~by (Array.mapi unit s) y
 
 let reduction ~by m ?axes ?(keepdims = false) x =
-  let s = shape x in
   let axes = reduced_axes ~by x axes in
-  kept ~by ~keepdims s axes (reduce ~by m axes x)
+  let y = reduce ~by m axes x in
+  if keepdims then kept ~by ~keepdims (shape x) axes y else y
 
 let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
 let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
@@ -1852,7 +1929,7 @@ let scan_by ~by r axis x =
   Eval.eval ~by
     (Value.Scan
        {
-         layout = Nx_array.Layout.contiguous (Iarray.of_array (shape x));
+         layout = Nx_array.Layout.contiguous (Prim.layout_shape x);
          axis;
          prog = Prim.identity (dtype x);
          reduction = r;

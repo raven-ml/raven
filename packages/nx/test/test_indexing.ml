@@ -772,6 +772,22 @@ let refusals =
             (Invalid_argument
                "Nx.slice: 3 entries address 3 axes; the operand is int32 [2; 3]")
             (fun () -> Nx.slice Nx.[ A; A; A ] x);
+          raises (Invalid_argument "Nx.slice: a step of 0") (fun () ->
+              Nx.slice Nx.[ Rs (0, 2, 0) ] x);
+          raises
+            (Invalid_argument
+               "Nx.slice: position 3 is outside axis 1 of int32 [2; 3]")
+            (fun () -> Nx.slice Nx.[ A; L [ 0; 3 ] ] x);
+          raises
+            (Invalid_argument
+               "Nx.slice: a window of 3 on axis 0 of int32 [2; 3]")
+            (fun () -> Nx.slice Nx.[ D (held [||] [| 0 |], 3) ] x);
+          raises
+            (Invalid_argument
+               "Nx.slice: a window's start int64 [1] is not 0-d")
+            (fun () -> Nx.slice Nx.[ D (held [| 1 |] [| 0 |], 1) ] x);
+          raises (Invalid_argument "Nx.take: 2 is not an axis of int32 [2; 3]")
+            (fun () -> Nx.take ~axis:2 (held [| 1 |] [| 0 |]) x);
           raises
             (Invalid_argument
                "Nx.set: int32 [4] does not broadcast to the selection [2; 3]")
