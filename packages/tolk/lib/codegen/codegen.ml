@@ -7,7 +7,6 @@
 
 open Ops
 open Shape
-open Call
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx

@@ -24,9 +24,9 @@ let shaping ?beam () = Setting.shaping_under (bindings ?beam ())
 
 let jit_lower ?beam ?search ~targets ~held_bufs ~inputs linear =
   let param i u =
-    let align, phase = Call.storage_phase u in
+    let align, phase = Shape.storage_phase u in
     ( u,
-      Call.param
+      Shape.param
         ~shape:[ Int (Shape.max_numel u) ]
         ?device:(Ops.device u) ~phase ~align i (Ops.dtype u) )
   in

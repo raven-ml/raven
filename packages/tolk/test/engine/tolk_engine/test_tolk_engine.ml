@@ -98,14 +98,14 @@ let targets =
 
 let kernel ?(name = "axpy") ?(size = 4) ?bound () =
   let open Ops.O in
-  let buffer slot = Call.placeholder ~slot [ size ] Float32 in
+  let buffer slot = Shape.placeholder ~slot [ size ] Float32 in
   let n =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
       (Dtype.Value.of_int 100)
   in
   let n =
     match bound with
-    | Some v -> Call.bind n (`Int (Bigint.of_int v))
+    | Some v -> Shape.bind n (`Int (Bigint.of_int v))
     | None -> n
   in
   let i = Ops.range (Int size) [ 0 ] in
@@ -127,7 +127,7 @@ let b = floats [| 10.; 20.; 30.; 40. |]
 let call_on name ~size ~slots prg =
   Ops.call prg
     (List.init slots (fun slot ->
-         Call.param ~shape:[ Ops.Int size ] ~device:(Single name) slot Float32))
+         Shape.param ~shape:[ Ops.Int size ] ~device:(Single name) slot Float32))
 
 let buffers () =
   [|
@@ -162,8 +162,8 @@ let off_phase b = at_phase ~bytes:b (Buffer.device b) 4 (Buffer.length b)
 let phased_kernel () =
   let open Ops.O in
   let buffer slot =
-    if slot = 1 then Call.param ~shape:[ Ops.Int 4 ] ~phase:4 slot Float32
-    else Call.placeholder ~slot [ 4 ] Float32
+    if slot = 1 then Shape.param ~shape:[ Ops.Int 4 ] ~phase:4 slot Float32
+    else Shape.placeholder ~slot [ 4 ] Float32
   in
   let n =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
@@ -184,7 +184,7 @@ let phased_call () =
   Ops.call (Lazy.force phased_prg)
     (List.init 3 (fun slot ->
          let phase = if slot = 1 then 4 else 0 in
-         Call.param ~shape:[ Ops.Int 4 ] ~device:(Single "CPU") ~phase slot
+         Shape.param ~shape:[ Ops.Int 4 ] ~device:(Single "CPU") ~phase slot
            Float32))
 
 let phased_axpy () = Engine.link_call ~devices (phased_call ())
@@ -198,8 +198,8 @@ let off_its_phase = Exn.invalid_arg ~sub:"bytes past a multiple of 16"
 let shifted_axpy =
   lazy
     (let open Ops.O in
-     let a = Call.param ~shape:[ Ops.Int 8 ] ~phase:4 1 Float32 in
-     let buffer slot = Call.placeholder ~slot [ 4 ] Float32 in
+     let a = Shape.param ~shape:[ Ops.Int 8 ] ~phase:4 1 Float32 in
+     let buffer slot = Shape.placeholder ~slot [ 4 ] Float32 in
      let n =
        Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
          (Dtype.Value.of_int 100)
@@ -225,14 +225,14 @@ let shifted_axpy =
    would put the float4 12 bytes past 16, where x86 faults. *)
 let runs_on_made_storage () =
   let param slot n =
-    Call.param ~shape:[ Ops.Int n ] ~device:(Single "CPU") slot Float32
+    Shape.param ~shape:[ Ops.Int n ] ~device:(Single "CPU") slot Float32
   in
   let made = Ops.new_buffer ~phase:4 (Single "CPU") 8 Float32 in
   let linear =
     Ops.v Op.Linear
       ~src:
         [
-          Call.store_call made (param 1 8);
+          Shape.store_call made (param 1 8);
           Ops.call (Lazy.force shifted_axpy) [ param 0 4; made; param 2 4 ];
         ]
   in
@@ -362,7 +362,7 @@ let on_the_host =
    is summed in one block, in the same order whatever the blocks. *)
 
 let sums ?(name = "sums") m k =
-  let buffer slot n = Call.placeholder ~slot [ n ] Float32 in
+  let buffer slot n = Shape.placeholder ~slot [ n ] Float32 in
   let a = buffer 1 (m * k) and b = buffer 2 k in
   let i = Ops.range (Int m) [ 0 ] in
   let j = Ops.range ~axis_type:Reduce (Int k) [ 1 ] in
@@ -774,7 +774,7 @@ let copies_off_phase () =
 let add_one =
   let open Ops.O in
   let i = Ops.range (Int 4) [ 0 ] in
-  let at slot = Ops.index (Call.placeholder ~slot [ 4 ] Float32) [ i ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ 4 ] Float32) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"add_one" ())
     [ Ops.end_ (Ops.store (at 0) (at 1 + Ops.O.float 1.)) [ i ] ]
@@ -815,7 +815,7 @@ let runs_once_per_trip () =
 let scans_with_a_carry () =
   let k = 4 and n = 3 in
   let cpu = Ops.Single "CPU" in
-  let p slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
       [
@@ -870,7 +870,7 @@ let scans_with_a_carry () =
 let scans_with_an_empty_carry () =
   let k = 4 and n = 3 in
   let cpu = Ops.Single "CPU" in
-  let p ?(k = k) slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p ?(k = k) slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
       [
@@ -912,7 +912,7 @@ let scans_with_an_empty_carry () =
    the schedule makes, which no run binds. *)
 let flag_from d f linear =
   let init = Ops.new_buffer (Ops.Single d) 1 Bool in
-  (init, Ops.v Op.Linear ~src:(Call.store_call f init :: Ops.src linear))
+  (init, Ops.v Op.Linear ~src:(Shape.store_call f init :: Ops.src linear))
 
 (* A loop of at most [max] trips on the device [d] around a call that adds one
    to a carry [c], from zero, stores the carry it read into its row of [ys], 16
@@ -920,7 +920,7 @@ let flag_from d f linear =
    [limit]. The flag starts as [0 < limit]. *)
 let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
   let at = Ops.Single d in
-  let p slot dt = Call.param ~shape:[ Int 1 ] ~device:at slot dt in
+  let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
   let next = Ops.O.(p 0 Float32 + float 1.) in
   let body =
     Ops.sink
@@ -971,7 +971,7 @@ let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
    [src], into the one element of its parameter 0, of dtype [dst]. *)
 let scalar_kernel name ~dst ~src f =
   let i = Ops.range (Int 1) [ 0 ] in
-  let at slot dt = Ops.index (Call.placeholder ~slot [ 1 ] dt) [ i ] in
+  let at slot dt = Ops.index (Shape.placeholder ~slot [ 1 ] dt) [ i ] in
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
 
@@ -1109,11 +1109,11 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
                ~src:
                  [
                    Ops.call inc [ t; c ];
-                   Call.store_call t' t;
+                   Shape.store_call t' t;
                    Ops.call twice [ c'; t' ];
                    flag_call;
                    Ops.call copy [ row; t' ];
-                   Call.store_call c c';
+                   Shape.store_call c c';
                  ])
             ~loop:r ~cond:f;
         ]
@@ -1178,7 +1178,7 @@ let loops_across_devices_on ~devices gpu =
    storage is refused, since the engine reads the storage it names. *)
 let refuses_a_view_as_flag () =
   let at = Ops.Single "CPU" in
-  let p = Call.param ~shape:[ Int 1 ] ~device:at 0 Float32 in
+  let p = Shape.param ~shape:[ Int 1 ] ~device:at 0 Float32 in
   let body = Ops.sink [ Ops.store p Ops.O.(p + float 1.) ] in
   let c = Ops.new_buffer at 1 Float32 and f = Ops.new_buffer at 2 Bool in
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
@@ -1219,8 +1219,8 @@ let trip_arguments n =
    [limit]. *)
 let trip_loop ?(devices = devices) ?limit ?(axis = 100) d n arg =
   let at = Ops.Single d in
-  let index = Call.param ~addrspace:(Some Alu) 2 Int32 in
-  let p slot dt = Call.param ~shape:[ Int 1 ] ~device:at slot dt in
+  let index = Shape.param ~addrspace:(Some Alu) 2 Int32 in
+  let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
   let flag =
     match limit with
     | None -> []
@@ -1346,7 +1346,7 @@ let reads_trips_under_a_back_edge ?devices d =
 let replays_a_scan =
   let k = 4 and n = 3 in
   let cpu = Ops.Single "CPU" in
-  let p slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let step =
     Ops.sink
       [
@@ -1485,7 +1485,7 @@ let plans_the_buffers_of_a_range ~through_a_view ~loop () =
 (* A kernel that stores false into its parameter 0, one boolean. *)
 let set_false =
   let i = Ops.range (Int 1) [ 0 ] in
-  let flag = Ops.index (Call.placeholder ~slot:0 [ 1 ] Bool) [ i ] in
+  let flag = Ops.index (Shape.placeholder ~slot:0 [ 1 ] Bool) [ i ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"set_false" ())
     [ Ops.end_ (Ops.store flag (Ops.O.bool false)) [ i ] ]
@@ -1532,9 +1532,9 @@ let copies_in_order () =
     Ops.v Op.Linear
       ~src:
         [
-          Call.store_call out device_side;
-          Call.store_call device_side fresh;
-          Call.store_call out device_side;
+          Shape.store_call out device_side;
+          Shape.store_call device_side fresh;
+          Shape.store_call out device_side;
         ]
   in
   let compiled = compile ~devices linear in
@@ -1570,7 +1570,7 @@ let copies_moving_rows ?(devices = devices) src_device dst_device () =
   in
   let linear =
     Ops.v Op.Linear
-      ~src:[ Ops.end_ (Call.store_call (row dst) (row src)) [ r ] ]
+      ~src:[ Ops.end_ (Shape.store_call (row dst) (row src)) [ r ] ]
   in
   let compiled = compile ~devices linear in
   let dst_buffer = Run.buffer (devices dst_device) Uint8 (bytes 0) in
@@ -1607,8 +1607,8 @@ let moves_rows_into_storage ?(devices = devices) () =
     Ops.v Op.Linear
       ~src:
         [
-          Ops.end_ (Call.store_call (row made) (row src)) [ r ];
-          Call.store_call out made;
+          Ops.end_ (Shape.store_call (row made) (row src)) [ r ];
+          Shape.store_call out made;
         ]
   in
   let compiled = compile ~devices linear in
@@ -2019,7 +2019,7 @@ let spans_each_kernel () =
 (* A kernel on [d] that fills four floats with [x]. *)
 let fill d x =
   let i = Ops.range (Int 4) [ 0 ] in
-  let out = Call.placeholder ~slot:0 [ 4 ] Float32 in
+  let out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
   let kernel =
     Ops.sink
       ~kernel:(Ops.kernel_info ~name:"fill" ())
@@ -2035,7 +2035,7 @@ let run_of_fills n =
     List.init n (fun _ ->
         let y = Ops.new_buffer (Single "CPU") 4 Float32
         and x = Ops.new_buffer (Single "CPU") 4 Float32 in
-        ((y, x), Call.store_call y x))
+        ((y, x), Shape.store_call y x))
   in
   let bound =
     List.concat_map
@@ -2403,7 +2403,7 @@ let timing =
    those a split of its loop would give its block's bounds. *)
 let fill_with name d =
   let i = Ops.range (Int 4) [ 0 ] in
-  let out = Call.placeholder ~slot:0 [ 4 ] Float32 in
+  let out = Shape.placeholder ~slot:0 [ 4 ] Float32 in
   let v =
     Ops.variable ~dtype:Int32 name (Dtype.Value.of_int 0) (Dtype.Value.of_int 4)
   in
@@ -2458,7 +2458,7 @@ let named_as_bounds =
    offset. *)
 let reads_a_view_of_each_shard () =
   let lanes = Ops.Multi [ "CPU:1"; "CPU:2" ] in
-  let param = Call.param ~shape:[ Int 8 ] ~device:lanes 0 Float32 in
+  let param = Shape.param ~shape:[ Int 8 ] ~device:lanes 0 Float32 in
   let out = Ops.new_buffer lanes 4 Float32 in
   let results =
     List.map

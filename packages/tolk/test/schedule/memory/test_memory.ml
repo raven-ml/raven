@@ -222,7 +222,7 @@ let build d =
     List.map
       (fun (bs, copy) ->
         let bs = List.map (fun i -> buffers.(i)) bs in
-        if copy then Call.store_call (List.hd bs) (List.nth bs 1)
+        if copy then Shape.store_call (List.hd bs) (List.nth bs 1)
         else Ops.call (Ops.sink bs) bs)
       d.calls
   in
@@ -299,12 +299,12 @@ let plans d =
     (fun (b, p) ->
       match view p with
       | Some (_, off, len) ->
-          let _, phase = Call.storage_phase b in
+          let _, phase = Shape.storage_phase b in
           equal ~msg:"a view of the buffer's bytes" int (Shape.nbytes b) len;
           equal ~msg:"a place its phase past a block" int 0
             ((off - phase) mod 256);
           equal ~msg:"a view at the buffer's phase" (pair int int)
-            (Call.storage_phase b) (Call.storage_phase p);
+            (Shape.storage_phase b) (Shape.storage_phase p);
           equal ~msg:"a view of the buffer's type" Dtypes.dtype (Ops.dtype b)
             (Ops.dtype p)
       | None -> ())
@@ -334,7 +334,7 @@ let plans d =
   cover "buffers share an arena" (List.length views > 1);
   cover "a buffer off 16 bytes is planned"
     (List.exists
-       (fun (b, _) -> snd (Call.storage_phase buffers.(b)) <> 0)
+       (fun (b, _) -> snd (Shape.storage_phase buffers.(b)) <> 0)
        views)
 
 let laws =

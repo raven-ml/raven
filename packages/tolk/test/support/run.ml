@@ -7,7 +7,7 @@ let program r uops =
     | Ops.Kernel _ -> sink
     | _ -> Ops.replace sink ~arg:(Ops.Kernel (Ops.kernel_info ()))
   in
-  let info = Call.program_info_of_sink ~target:r.Renderer.target sink in
+  let info = Shape.program_info_of_sink ~target:r.Renderer.target sink in
   Codegen.compile
     (Ops.v Op.Program
        ~src:[ sink; Ops.v Op.Linear ~src:uops ]
@@ -148,7 +148,7 @@ let on_host ?vars prg buffers =
   let arg slot =
     match List.find_opt (fun (p : Ops.param_arg) -> p.slot = slot) params with
     | Some p ->
-        Call.param
+        Shape.param
           ~shape:[ Int (Option.get p.size) ]
           ~device:(Single "CPU") slot p.dtype
     | None ->

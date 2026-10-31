@@ -37,8 +37,8 @@ let parameters u =
 (* The parameter the [i]th input [u] becomes: of its type, device, size and
    phase. *)
 let parameter i u =
-  let align, phase = Call.storage_phase u in
-  Call.param
+  let align, phase = Shape.storage_phase u in
+  Shape.param
     ~shape:[ Int (Shape.max_numel u) ]
     ?device:(Ops.device u) ~phase ~align i (Ops.dtype u)
 
@@ -516,7 +516,7 @@ let clang = lazy (Cstyle.clang (Engine.target Rig.host))
 let compiled name f =
   let kernel n =
     let i = Ops.range (Int n) [ 0 ] in
-    let at slot = Ops.index (Call.placeholder ~slot [ n ] Float32) [ i ] in
+    let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
     Codegen.to_program
       (Ops.sink
          ~kernel:(Ops.kernel_info ~name:(Printf.sprintf "%s_%d" name n) ())
@@ -545,7 +545,7 @@ let capture_of d =
     | Inc (dst, s) -> Ops.call (program inc dst) [ nodes.(dst); nodes.(s) ]
     | Add (dst, s0, s1) ->
         Ops.call (program add dst) [ nodes.(dst); nodes.(s0); nodes.(s1) ]
-    | Copy (dst, s) -> Call.store_call nodes.(dst) nodes.(s)
+    | Copy (dst, s) -> Shape.store_call nodes.(dst) nodes.(s)
   in
   let held =
     List.map (Array.get nodes)
@@ -562,8 +562,8 @@ let capture_of d =
 let inc_phased =
   lazy
     (let i = Ops.range (Int 4) [ 0 ] in
-     let out = Call.placeholder ~slot:0 [ 4 ] Float32
-     and src = Call.param ~shape:[ Ops.Int 4 ] ~phase:4 1 Float32 in
+     let out = Shape.placeholder ~slot:0 [ 4 ] Float32
+     and src = Shape.param ~shape:[ Ops.Int 4 ] ~phase:4 1 Float32 in
      let at b = Ops.index b [ i ] in
      Codegen.to_program
        (Ops.sink

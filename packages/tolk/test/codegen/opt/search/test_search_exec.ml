@@ -73,9 +73,9 @@ let scalar_arguments =
       let z n = `Int (Bigint.of_int n) in
       let named = Ops.variable ~dtype:Int32 "n" (z 3) (z 9) in
       let positional =
-        Call.param ~addrspace:(Some Alu) ~vmin_vmax:(z (-7), z (-1)) slot Int32
+        Shape.param ~addrspace:(Some Alu) ~vmin_vmax:(z (-7), z (-1)) slot Int32
       in
-      let output = Call.param ~shape:[ Ops.Int 4 ] 0 Float32 in
+      let output = Shape.param ~shape:[ Ops.Int 4 ] 0 Float32 in
       let r = Ops.range (Int 4) [ 0 ] in
       let value = Ops.cast (Ops.add named positional) Float32 in
       let ast =
@@ -110,7 +110,7 @@ let scalar_arguments =
             List.init (slot + 1) (fun i ->
                 if i = slot then Ops.const ~dtype:Int32 (z scalar)
                 else
-                  Call.param ~shape:[ Int 4 ] ~device:(Single "CPU") i Float32)
+                  Shape.param ~shape:[ Int 4 ] ~device:(Single "CPU") i Float32)
           in
           let s = Tolk_engine.link_call ~devices (Ops.call prg args) in
           let slots = Tolk_engine.slots s in

@@ -7,15 +7,12 @@
 
 open Ops
 open Shape
-open Call
 
 let rule = Pattern_matcher.rule
 let ops = Op.Set.of_list
 let is_unshard u = op u = Op.Unshard
 let peel u = if is_unshard u then nth u 0 else u
 let count rng = Dtype.Value.to_int (vmax rng) + 1
-let equal_shape s0 s1 = List.equal Sint.equal s0 s1
-let truth = function Sint.Known b -> b | Sint.Cond u -> to_bool u
 
 let unshard_as pairs x =
   unshard ~ranges:(List.map snd pairs) x (List.map fst pairs)
@@ -226,12 +223,12 @@ let rec shard_srcs msrcs axis =
   let out_shape = broadcast_shape (List.map shape msrcs) in
   let each mlb =
     let src_axis = axis - (List.length out_shape - ndim mlb) in
-    if Option.equal Int.equal (Call.axis mlb) (Some src_axis) then nth mlb 0
+    if Option.equal Int.equal (Shape.axis mlb) (Some src_axis) then nth mlb 0
     else
       (* Every shard gets the whole copy, sharded iff this source has the axis:
          broadcast sources stay whole. *)
       let full =
-        if Call.axis mlb = None then mlb
+        if Shape.axis mlb = None then mlb
         else copy_multi mlb (Option.get (device mlb))
       in
       if List.mem axis (broadcast_axes (shape mlb) out_shape) then full
@@ -375,7 +372,7 @@ let reduce_multi root multi =
 
 let reshape_multi root multi =
   let new_shape = shape_arg root in
-  if truth Sint.(prod (shape multi) <> prod new_shape) then
+  if Sint.truth Sint.(prod (shape multi) <> prod new_shape) then
     invalid_arg "a reshape must keep the number of elements";
   let moved () = invalid_arg "a reshape moves elements between shards" in
   let sint_simplify = function Sym u -> ssimplify u | n -> n in
@@ -396,7 +393,9 @@ let reshape_multi root multi =
           | Some i -> List.length arg_acc - i - 1
           | None -> moved ()
         in
-        if truth Sint.(List.nth new_shape new_ax % Int (count rng) <> Int 0)
+        if
+          Sint.truth
+            Sint.(List.nth new_shape new_ax % Int (count rng) <> Int 0)
         then moved ();
         (new_ax, rng))
       (sharding multi)
@@ -540,7 +539,7 @@ let index_multi root multi =
     let idx = List.nth idxs ax in
     let within local =
       Dtype.Value.(vmin local >= of_int 0)
-      && truth Sint.(Int (Dtype.Value.to_int (vmax local)) < shard_sz)
+      && Sint.truth Sint.(Int (Dtype.Value.to_int (vmax local)) < shard_sz)
     in
     let local = simplify (sub idx (mul rng sz)) in
     let diff = simplify (sub idx rng) in

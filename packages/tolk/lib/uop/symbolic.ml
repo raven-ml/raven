@@ -23,16 +23,6 @@ let conj = function
   | u :: us -> uprod u us
   | [] -> invalid_arg "empty conjunction"
 
-let dedup l =
-  Helpers.dedup
-    (module struct
-      type t = Ops.t
-
-      let equal = ( == )
-      let hash = hash
-    end)
-    l
-
 let invalid_pat = Upat.op Op.Const ~arg:(Const `Invalid) ~name:"i"
 let boolean = [ Dtype.Bool ]
 let int_or_bool = Dtype.Bool :: Dtype.Weak_int :: Dtype.ints
@@ -153,7 +143,7 @@ let simplify_valid valid =
       | _ -> uop_given_valid (conj (List.rev ret)) stmt)
       :: ret
     in
-    let ret = List.rev (List.fold_left given [] (dedup valids)) in
+    let ret = List.rev (List.fold_left given [] (dedup_nodes valids)) in
     if List.equal ( == ) ret valids then None else Some (conj ret)
 
 (* Phase 3: the complete symbolic *)

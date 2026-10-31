@@ -132,7 +132,7 @@ let compiled sink =
     [ Run.buffer d p.dtype (Array.init n (element p.dtype)) ]
   in
   let arg (p : Device.Tiny_elf.param) =
-    Call.param
+    Shape.param
       ~shape:[ Int (List.fold_left ( * ) 1 p.shape) ]
       ~device:(Single "CPU") p.slot p.dtype
   in

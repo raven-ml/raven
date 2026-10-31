@@ -1349,7 +1349,7 @@ val gate_kernel_sink : t -> bool
 
 (**/**)
 
-(* The memos of the properties [Shape] and [Call] compute: only they write them. *)
+(* The memos of the properties [Shape] computes: only it writes them. *)
 
 val shape_memo : t -> sint list option option
 val set_shape_memo : t -> sint list option -> unit
@@ -1357,3 +1357,30 @@ val movement_memo : t -> movement option
 val set_movement_memo : t -> movement -> unit
 val axis_memo : t -> int option option
 val set_axis_memo : t -> int option -> unit
+
+(* The helpers that [Shape] and later modules share with this one. *)
+
+val invalid_argf : ('a, unit, string, 'b) format4 -> 'a
+val drop : int -> 'a list -> 'a list
+val repr_tuple : string list -> string
+val repr_const : [< Dtype.const ] -> string
+val repr_dtype : Dtype.t -> string
+val repr_sint : sint -> string
+val repr_shape : sint list -> string
+val equal_sint : sint -> sint -> bool
+val equal_shape : sint list -> sint list -> bool
+val align_left : sint list list -> sint list list
+val first : Op.t -> t list -> t
+val param_arg_of : t -> param_arg
+val weak_storage : Dtype.t -> unit
+val dedup_nodes : t list -> t list
+val as_value : Dtype.const -> Dtype.value
+val integer : Dtype.const -> Bigint.t
+
+val memoized :
+  calls:calls ->
+  get:(t -> 'a option) ->
+  set:(t -> 'a -> unit) ->
+  compute:(t -> 'a) ->
+  t ->
+  'a

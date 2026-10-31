@@ -7,7 +7,6 @@
 
 open Ops
 open Shape
-open Call
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
@@ -115,11 +114,11 @@ let copy_state ~slot s =
   let n = max_numel buf in
   (* The copy lies as the state's storage does, which the reader's kernel
      reads it at. *)
-  let align, phase = Call.storage_phase buf in
+  let align, phase = Shape.storage_phase buf in
   let arg = param_arg ~slot ~size:n ~device ~phase ~align (dtype buf) in
   let dst = v Op.Alloc ~arg:(Param arg) in
   let r = range (Int n) [ 0 ] in
-  let into = Call.param_like dst 0 and from = Call.param_like buf 1 in
+  let into = Shape.param_like dst 0 and from = Shape.param_like buf 1 in
   let body =
     sink ~kernel:(kernel_info ())
       [ end_ (store (index into [ r ]) (index from [ r ])) [ r ] ]
@@ -690,7 +689,7 @@ let rec view_of ctx c src =
             | Some view ->
                 let s = sharding unshard in
                 Some
-                  (Call.unshard ~ranges:(List.map snd s) view (List.map fst s)))
+                  (Shape.unshard ~ranges:(List.map snd s) view (List.map fst s)))
     else if op buf <> Op.Buffer then None
     else
       match Prepare.contiguous_view src with

@@ -33,7 +33,7 @@ let idx n =
     (`Int (Bigint.of_int 63))
 
 let x = Ops.variable ~dtype:Float32 "x" (`Float (-1.)) (`Float 1.)
-let buf = Call.param ~shape:[ Int 64 ] 0 Float32
+let buf = Shape.param ~shape:[ Int 64 ] 0 Float32
 
 let access { indices; store; select } =
   let index = function
@@ -134,7 +134,7 @@ let converted_selections =
     let* d = Dtypes.stored in
     let* w = Dtypes.stored in
     let+ a = alternative w in
-    (d, selection (Call.param ~shape:[ Int 64 ] 0 d) w a)
+    (d, selection (Shape.param ~shape:[ Int 64 ] 0 d) w a)
   in
   with_pp
     (fun ppf (_, u) -> Format.pp_print_string ppf (Graph.to_string u))
@@ -161,8 +161,8 @@ let laws =
    not, a subnormal, a fraction, a zero's sign, a magnitude it rounds, and a NaN
    or an infinity, which no integer holds. *)
 let converted =
-  let narrow = Call.param ~shape:[ Int 64 ] 1 Float16 in
-  let bytes = Call.param ~shape:[ Int 64 ] 2 Int8 in
+  let narrow = Shape.param ~shape:[ Int 64 ] 1 Float16 in
+  let bytes = Shape.param ~shape:[ Int 64 ] 2 Int8 in
   let buffers =
     [
       (1, Array.make 64 (`Float 3.)); (2, Array.make 64 (`Int (Bigint.of_int 3)));

@@ -253,7 +253,7 @@ let pp_reduction (rop, x, hi) =
    maximum of NaN may be NaN or the identity (Tolk.Op.Reduce), so both the
    reduction and its rewrite are one of the two; every other value is one. *)
 let reduces_by_size (rop, x, hi) =
-  let n = var "n" 0 hi and value = Call.param 0 Float32 in
+  let n = var "n" 0 hi and value = Shape.param 0 Float32 in
   let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
   let u = Ops.reduce value rop [ r ] in
   let at size u =
@@ -391,7 +391,7 @@ let collapsing =
           let u = Ops.O.(two * Ops.cast Ops.O.(r < Ops.int 3) Float32) in
           equal int 0 (count Where (collapse u)));
       test "a parameter guarding a sum is lifted out of it" (fun () ->
-          let p = Call.param 0 Bool in
+          let p = Shape.param 0 Bool in
           let u =
             collapse
               (sum (Ops.where Ops.O.(p land (r < Ops.int 3)) two zero) [ r ])
@@ -495,7 +495,7 @@ let solving =
         (fun () ->
           let r = reduce_range 4 0
           and k = var "k" 0 4
-          and x = Call.param 0 Float32 in
+          and x = Shape.param 0 Float32 in
           let u = sum (Ops.where Ops.O.(r < k) x zero) [ r ] in
           List.iter
             (fun (kv, xv) ->
@@ -505,7 +505,7 @@ let solving =
                 (Interpreter.eval ~vars ~params (collapse u)))
             [ (0, Float.infinity); (0, Float.nan); (2, 1.5) ]);
       test "a float product by a boolean mask keeps its value" (fun () ->
-          let x = Call.param 0 Float32 and g = Call.param 1 Bool in
+          let x = Shape.param 0 Float32 and g = Shape.param 1 Bool in
           let u = Ops.O.(x * Ops.cast g Float32) in
           List.iter
             (fun xv ->
@@ -517,8 +517,8 @@ let solving =
       test "a float sum lifted past a parameter is +0. where it is false"
         (fun () ->
           let r = reduce_range 4 0
-          and x = Call.param 0 Float32
-          and g = Call.param 1 Bool in
+          and x = Shape.param 0 Float32
+          and g = Shape.param 1 Bool in
           let u = sum (Ops.where Ops.O.(g land (r < Ops.int 3)) x zero) [ r ] in
           List.iter
             (fun xv ->

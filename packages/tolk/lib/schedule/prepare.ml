@@ -7,12 +7,10 @@
 
 open Ops
 open Shape
-open Call
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
 let ops = Op.Set.of_list
-let equal_shape s0 s1 = List.equal Sint.equal s0 s1
 let ints = List.map (fun n -> Int n)
 let reaches = Ops.reaches ~calls:Skip
 let is_empty_shape u = List.exists (Sint.equal (Int 0)) (shape u)
@@ -659,8 +657,6 @@ let strides_for_shape shape =
          ((if Sint.equal s (Int 1) then Int 0 else p) :: strides, Sint.(p * s)))
        shape ([], Int 1))
 
-let truth = function Sint.Known b -> b | Sint.Cond u -> to_bool u
-
 (* A bitcast of a view whose index is the flat index of [ctx] plus a constant is
    the same view of the bitcast's source, when the offset and the size fall on
    whole elements of the source. *)
@@ -681,7 +677,7 @@ let contiguous_bitcast_index ctx b idx =
         let osz = element_size b and isz = element_size (nth b 0) in
         if
           offset * osz mod isz <> 0
-          || truth Sint.(numel * Int osz % Int isz <> Int 0)
+          || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
         then None
         else
           let r = range Sint.(numel * Int osz // Int isz) [ 0 ] in

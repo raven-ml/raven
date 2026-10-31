@@ -605,7 +605,7 @@ let fresh = Atomic.make 1000
 
 let fresh_kernel ?opts_to_apply () =
   let value = Float.of_int (Atomic.fetch_and_add fresh 1) in
-  let out = Call.param ~shape:[ Int 16 ] 0 Float32 in
+  let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
   let r = Ops.range (Int 16) [ 0 ] in
   let store =
     Ops.store (Ops.index out [ r ]) (Ops.float ~dtype:Float32 value)
@@ -1058,7 +1058,7 @@ let ten_scalars () =
         Ops.variable ~dtype:Int32 (Printf.sprintf "v%d" i) (`Int Bigint.zero)
           (`Int (Bigint.of_int 100)))
   in
-  let out = Call.param ~shape:[ Int 1 ] 0 Int32 in
+  let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
   let sum = List.fold_left Ops.add (List.hd vars) (List.tl vars) in
   let k =
     Ops.sink
@@ -1139,7 +1139,7 @@ let programs =
           equal string
             (Format.asprintf "%a" Ops.pp_arg
                (Program
-                  (Call.program_info_of_sink ~target:clang_target
+                  (Shape.program_info_of_sink ~target:clang_target
                      (Ops.nth p 0))))
             (program_info p));
     ]
@@ -1384,7 +1384,7 @@ let lowering_claims =
         "so does an unbounded loop, which keeps its condition" (fun row ->
           ends_with_a_barrier Backedge row;
           let e = one_ending Backedge row in
-          equal Uops.uop ~msg:"the condition" (Call.param 2 Bool) (Ops.nth e 2));
+          equal Uops.uop ~msg:"the condition" (Shape.param 2 Bool) (Ops.nth e 2));
       claim "shared_backedge_two_buffers"
         "a loop that reads another local buffer needs no barrier" (fun row ->
           is_false (is Barrier (Ops.nth (one_ending Backedge row) 0)));
@@ -1570,11 +1570,11 @@ let forty_two = Ops.cast (Ops.float 42.) Float32
 
 let gated_index slot =
   Ops.index
-    (Call.param ~shape:[ Int 8 ] slot Float32)
+    (Shape.param ~shape:[ Int 8 ] slot Float32)
     [ Shape.valid (Ops.mul gidx0 (Ops.int 2)) (Ops.lt gidx0 (Ops.int 1)) ]
 
 let loaded ?(slot = 0) ?(size = 3) dt i =
-  Ops.index (Call.param ~shape:[ Int size ] slot dt) [ Ops.int i ]
+  Ops.index (Shape.param ~shape:[ Int size ] slot dt) [ Ops.int i ]
 
 let fast_idiv = [ Setting.B (Setting.disable_fast_idiv, false) ]
 
@@ -1593,7 +1593,7 @@ let gated_stores =
       test "an ungated store beside it stays out of the if" (fun () ->
           let ungated =
             Ops.index
-              (Call.param ~shape:[ Int 8 ] 1 Float32)
+              (Shape.param ~shape:[ Int 8 ] 1 Float32)
               [ Ops.mul gidx0 (Ops.int 2) ]
           in
           gated_store_inside_its_if
@@ -1753,12 +1753,12 @@ let ends_at n uops =
   | rs -> failf "one range, not %d" (List.length rs)
 
 let r = Ops.range (Int 204) [ 0 ]
-let table = Call.param ~shape:[ Int 1024 ] 0 Float32
+let table = Shape.param ~shape:[ Int 1024 ] 0 Float32
 
 let gated_load bound =
   Ops.load (Ops.index table [ Shape.valid r (Ops.lt r (Ops.int bound)) ]) []
 
-let out = Call.param ~shape:[ Int 204 ] 0 Float32
+let out = Shape.param ~shape:[ Int 204 ] 0 Float32
 
 let range_shrinking =
   let x = Ops.where (Ops.lt r (Ops.int 4)) (Ops.float 1.) Ops.invalid in
@@ -1773,7 +1773,7 @@ let range_shrinking =
       test "a read without a guard leaves it" (fun () ->
           let unguarded =
             Ops.load
-              (Ops.index (Call.param ~shape:[ Int 204 ] 1 Float32) [ r ])
+              (Ops.index (Shape.param ~shape:[ Int 204 ] 1 Float32) [ r ])
               []
           in
           ends_at 204 [ gated_load 4; unguarded ]);
@@ -1819,7 +1819,7 @@ let marker_kernel =
      Ops.sink ~kernel:(Ops.kernel_info ())
        [
          Ops.store
-           (Ops.index (Call.param ~shape:[ Int 1 ] 0 Int32) [ Ops.int 0 ])
+           (Ops.index (Shape.param ~shape:[ Int 1 ] 0 Int32) [ Ops.int 0 ])
            marker;
        ])
 
@@ -1837,7 +1837,7 @@ let checks_what_it_lowers () =
    two floats the kernel loads: [out[i] = (wmma a b c)[i] + acc[i]], where
    [acc], of slot 2, stands for the running sum of a tensor-core loop. *)
 let lane slot dt i =
-  Ops.index (Call.param ~shape:[ Int 2 ] slot dt) [ Ops.int ~dtype:Int32 i ]
+  Ops.index (Shape.param ~shape:[ Int 2 ] slot dt) [ Ops.int ~dtype:Int32 i ]
 
 let lanes slot dt =
   Shape.stack (List.init 2 (fun i -> Ops.load (lane slot dt i) []))
@@ -1965,8 +1965,8 @@ let accumulators =
 type index = Each | Halved
 
 let reduction_by_size rop index hi =
-  let out = Call.param ~shape:[ Int 1 ] 0 Float32 in
-  let x = Call.param ~shape:[ Int hi ] 1 Float32 in
+  let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
+  let x = Shape.param ~shape:[ Int hi ] 1 Float32 in
   let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
   let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
   let at = match index with Each -> r | Halved -> Ops.O.(r // int 2) in
@@ -2008,7 +2008,7 @@ let reduces_by_size (rop, index, hi) =
 (* The int32 maximum of [2 k] for [k] below a variable [n] of at most [hi]: a
    factor that ignores the range moves out of the maximum. *)
 let max_of_a_product hi =
-  let out = Call.param ~shape:[ Int 1 ] 0 Int32 in
+  let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
   let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
   let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
   let doubled = Ops.O.(Ops.cast r Int32 * Ops.int ~dtype:Int32 2) in
@@ -2062,9 +2062,9 @@ let variable_sizes =
    fused, keeps the 2^-24 that rounding the product alone would lose. *)
 
 let dot n =
-  let out = Call.param ~shape:[ Int 1 ] 0 Float32 in
-  let a = Call.param ~shape:[ Int n ] 1 Float32 in
-  let b = Call.param ~shape:[ Int n ] 2 Float32 in
+  let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
+  let a = Shape.param ~shape:[ Int n ] 1 Float32 in
+  let b = Shape.param ~shape:[ Int n ] 2 Float32 in
   let r = Ops.range ~axis_type:Reduce (Int n) [ 0 ] in
   let sum =
     Ops.reduce (Ops.mul (Ops.index a [ r ]) (Ops.index b [ r ])) Op.Add [ r ]
@@ -2076,9 +2076,9 @@ let dot n =
    [i] upcast by 4 and [k] unrolled by 4: the reduce sums a view of its
    products, its unrolled lanes first. *)
 let matvec ~rows n =
-  let out = Call.param ~shape:[ Int rows ] 0 Float32 in
-  let a = Call.param ~shape:[ Int (rows * n) ] 1 Float32 in
-  let b = Call.param ~shape:[ Int n ] 2 Float32 in
+  let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
+  let a = Shape.param ~shape:[ Int (rows * n) ] 1 Float32 in
+  let b = Shape.param ~shape:[ Int n ] 2 Float32 in
   let i = Ops.range (Int rows) [ 0 ] in
   let k = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
   let a_ik = Ops.index a [ Ops.O.((i * Ops.int n) + k) ] in
@@ -2090,8 +2090,8 @@ let matvec ~rows n =
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
 
 let muladd n =
-  let out = Call.param ~shape:[ Int n ] 0 Float32 in
-  let x k = Ops.index (Call.param ~shape:[ Int n ] k Float32) in
+  let out = Shape.param ~shape:[ Int n ] 0 Float32 in
+  let x k = Ops.index (Shape.param ~shape:[ Int n ] k Float32) in
   let i = Ops.range (Int n) [ 0 ] in
   let value = Ops.add (Ops.mul (x 1 [ i ]) (x 2 [ i ])) (x 3 [ i ]) in
   Ops.sink ~kernel:(Ops.kernel_info ())
@@ -2165,8 +2165,8 @@ let multiply_adds =
    [(5 + 2) + 15]. *)
 
 let max_and_sum () =
-  let out = Call.param ~shape:[ Int 1 ] 0 Float32 in
-  let a = Call.param ~shape:[ Int 5 ] 1 Float32 in
+  let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
+  let a = Shape.param ~shape:[ Int 5 ] 1 Float32 in
   let i = Ops.range ~axis_type:Reduce (Int 3) [ 0 ] in
   let k = Ops.range ~axis_type:Reduce (Int 5) [ 1 ] in
   let a_k = Ops.index a [ k ] in
@@ -2295,8 +2295,8 @@ let one_vector n prg =
    upcast whole and its reduce unrolled: a body of 6 lanes. *)
 let six_lanes_kernel () =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 3 ] 0 Uint8 in
-  let x = Call.param ~shape:[ Int 6 ] 1 Uint8 in
+  let out = Shape.param ~shape:[ Int 3 ] 0 Uint8 in
+  let x = Shape.param ~shape:[ Int 6 ] 1 Uint8 in
   let l = Ops.range (Int 3) [ 0 ] in
   let r = Ops.range ~axis_type:Reduce (Int 2) [ 1 ] in
   let byte = Ops.index x [ (l * int 2) + r ] in
@@ -2317,9 +2317,9 @@ let six_lanes_kernel () =
 let rows_kernel rows cols =
   let n = rows * cols in
   let open Ops.O in
-  let out = Call.param ~shape:[ Int n ] 0 Float32 in
-  let x = Call.param ~shape:[ Int n ] 1 Float32 in
-  let y = Call.param ~shape:[ Int cols ] 2 Float32 in
+  let out = Shape.param ~shape:[ Int n ] 0 Float32 in
+  let x = Shape.param ~shape:[ Int n ] 1 Float32 in
+  let y = Shape.param ~shape:[ Int cols ] 2 Float32 in
   let i = Ops.range (Int rows) [ 0 ] in
   let j = Ops.range (Int cols) [ 1 ] in
   let at = (i * int cols) + j in
@@ -2353,7 +2353,7 @@ let selects_rows rows cols () =
    float32 elements upcast whole: a body of [n] lanes. *)
 let lanes_kernel n =
   let open Ops.O in
-  let param slot = Call.param ~shape:[ Int n ] slot Float32 in
+  let param slot = Shape.param ~shape:[ Int n ] slot Float32 in
   let out = param 0 and x = param 1 and y = param 2 in
   let i = Ops.range (Int n) [ 0 ] in
   let a = Ops.index x [ i ] and b = Ops.index y [ i ] in
@@ -2394,9 +2394,9 @@ let selects_lanes n () =
 let dot_kernel n =
   let size = 2 * n in
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 2 ] 0 Float64 in
-  let x = Call.param ~shape:[ Int size ] 1 Float64 in
-  let y = Call.param ~shape:[ Int size ] 2 Float64 in
+  let out = Shape.param ~shape:[ Int 2 ] 0 Float64 in
+  let x = Shape.param ~shape:[ Int size ] 1 Float64 in
+  let y = Shape.param ~shape:[ Int size ] 2 Float64 in
   let l = Ops.range (Int 2) [ 0 ] in
   let r = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
   let at p = Ops.index p [ (l * int n) + r ] in
@@ -2445,7 +2445,7 @@ let compare_select cmp dt n =
   let w = min 16 (n land -n) in
   let opts = if w = n || w = 1 then [ upcast 0 ] else [ upcast w; upcast 0 ] in
   let open Ops.O in
-  let param slot dt = Call.param ~shape:[ Int n ] slot dt in
+  let param slot dt = Shape.param ~shape:[ Int n ] slot dt in
   let out = param 0 dt and a = param 1 cmp and b = param 2 cmp in
   let c = param 3 dt and d = param 4 dt in
   let i = Ops.range (Int n) [ 0 ] in
@@ -2508,8 +2508,8 @@ let unsigned = Dtype.[ Uint8; Uint16; Uint32; Uint64 ]
    a select per lane. *)
 let vector_select_kernel () =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 2 ] 0 Int8 in
-  let x = Call.param ~shape:[ Int 4 ] 1 Int8 in
+  let out = Shape.param ~shape:[ Int 2 ] 0 Int8 in
+  let x = Shape.param ~shape:[ Int 4 ] 1 Int8 in
   let l = Ops.range ~axis_type:Weak (Int 2) [ 2 ] in
   let r0 = Ops.range ~axis_type:Reduce (Int 2) [ 0 ] in
   let r1 = Ops.range ~axis_type:Reduce (Int 4) [ 1 ] in
@@ -2535,7 +2535,7 @@ let vector_select_kernel () =
    lane by lane, and the host converts. *)
 let half_zeros_kernel () =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 4 ] 0 Float16 in
+  let out = Shape.param ~shape:[ Int 4 ] 0 Float16 in
   let r0 = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
   let r1 = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
   let store = Ops.store (Ops.index out [ (r0 * int 2) + r1 ]) (float 0.) in
@@ -2737,7 +2737,7 @@ let unsigned dt =
 (* The bits [dt] stores into each element of a kernel that stores the NaN of
    each word of [words]. *)
 let stored_nans dt words =
-  let out = Call.param ~shape:[ Int (List.length words) ] 0 dt in
+  let out = Shape.param ~shape:[ Int (List.length words) ] 0 dt in
   let store i w =
     let nan = Dtype.bitcast (unsigned dt) dt (word w) in
     Ops.store
@@ -2779,8 +2779,8 @@ let nan_constants =
 (* The kernel that stores into slot 0, of bfloat16, the cast of each of the [n]
    elements of slot 1, of [from]. *)
 let cast_to_bfloat16 from n =
-  let out = Call.param ~shape:[ Int n ] 0 Bfloat16 in
-  let x = Call.param ~shape:[ Int n ] 1 from in
+  let out = Shape.param ~shape:[ Int n ] 0 Bfloat16 in
+  let x = Shape.param ~shape:[ Int n ] 1 from in
   let i = Ops.range (Int n) [ 0 ] in
   let store =
     Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) Bfloat16)
@@ -2833,10 +2833,10 @@ let bfloat16_casts =
    upcast by [n]: one selection between vectors of [n] lanes. *)
 let select_bfloat16 n =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int n ] 0 Bfloat16 in
-  let c = Call.param ~shape:[ Int n ] 1 Float32 in
-  let a = Call.param ~shape:[ Int n ] 2 Bfloat16 in
-  let b = Call.param ~shape:[ Int n ] 3 Bfloat16 in
+  let out = Shape.param ~shape:[ Int n ] 0 Bfloat16 in
+  let c = Shape.param ~shape:[ Int n ] 1 Float32 in
+  let a = Shape.param ~shape:[ Int n ] 2 Bfloat16 in
+  let b = Shape.param ~shape:[ Int n ] 3 Bfloat16 in
   let i = Ops.range (Int n) [ 0 ] in
   let pick =
     Ops.where
@@ -2870,9 +2870,9 @@ let selects_bfloat16_lanes () =
    a load gated by data, whose alternative is a bfloat16 zero. *)
 let take_bfloat16 n =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int n ] 0 Bfloat16 in
-  let x = Call.param ~shape:[ Int n ] 1 Bfloat16 in
-  let ids = Call.param ~shape:[ Int n ] 2 Int32 in
+  let out = Shape.param ~shape:[ Int n ] 0 Bfloat16 in
+  let x = Shape.param ~shape:[ Int n ] 1 Bfloat16 in
+  let ids = Shape.param ~shape:[ Int n ] 2 Int32 in
   let i = Ops.range (Int n) [ 0 ] in
   let k = Ops.index ids [ i ] in
   let inside = k < int n in
@@ -2899,8 +2899,8 @@ let takes_bfloat16 () =
    the reshape and the permute that arranged them keep their width. *)
 let invalid_lanes_kernel () =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 3 ] 0 Float32 in
-  let x = Call.param ~shape:[ Int 4 ] 1 Float32 in
+  let out = Shape.param ~shape:[ Int 3 ] 0 Float32 in
+  let x = Shape.param ~shape:[ Int 4 ] 1 Float32 in
   let o = Ops.range ~axis_type:Weak (Int 3) [ 2 ] in
   let r0 = Ops.range ~axis_type:Reduce (Int 4) [ 0 ] in
   let r1 = Ops.range ~axis_type:Reduce (Int 4) [ 1 ] in
@@ -2938,8 +2938,8 @@ let invalid_lanes =
    1, over 8 elements of [dtype], with [opts]. *)
 let square_kernel ~opts dtype c =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 8 ] 0 dtype in
-  let x = Call.param ~shape:[ Int 8 ] 1 dtype in
+  let out = Shape.param ~shape:[ Int 8 ] 0 dtype in
+  let x = Shape.param ~shape:[ Int 8 ] 1 dtype in
   let i = Ops.range (Int 8) [ 0 ] in
   let c = Ops.const ~dtype (`Int c) in
   let p = Ops.index x [ i ] * c in
@@ -2983,8 +2983,8 @@ let square_wraps () =
    1, over 8 elements of [dtype], [c0] and [c1] weak. *)
 let like_terms_kernel dtype c0 c1 =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 8 ] 0 dtype in
-  let x = Call.param ~shape:[ Int 8 ] 1 dtype in
+  let out = Shape.param ~shape:[ Int 8 ] 0 dtype in
+  let x = Shape.param ~shape:[ Int 8 ] 1 dtype in
   let i = Ops.range (Int 8) [ 0 ] in
   let v = Ops.index x [ i ] in
   let s = (v * Ops.const c0) + (v * Ops.const c1) in
@@ -3022,10 +3022,10 @@ let like_terms_wrap () =
    element [i] of [x], slot 4, over 8 elements of [dtype], [c] weak, with
    [opts]. *)
 let divide_kernel ~opts dtype ops c =
-  let x = Call.param ~shape:[ Int 8 ] 4 dtype in
+  let x = Shape.param ~shape:[ Int 8 ] 4 dtype in
   let i = Ops.range (Int 8) [ 0 ] in
   let store k op =
-    let out = Call.param ~shape:[ Int 8 ] k dtype in
+    let out = Shape.param ~shape:[ Int 8 ] k dtype in
     let q = Ops.alu (Ops.index x [ i ]) op [ Ops.const (`Int c) ] in
     Ops.store (Ops.index out [ i ]) q
   in
@@ -3112,8 +3112,8 @@ let unselected_sum_kernel () =
   let upcast =
     Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
   in
-  let out = Call.param ~shape:[ Int 3 ] 0 Int32 in
-  let x = Call.param ~shape:[ Int 64 ] 1 Int32 in
+  let out = Shape.param ~shape:[ Int 3 ] 0 Int32 in
+  let x = Shape.param ~shape:[ Int 64 ] 1 Int32 in
   let l = Ops.range ~axis_type:Weak (Int 3) [ 1 ] in
   let r = Ops.range ~axis_type:Reduce (Int 64) [ 0 ] in
   let gate = (l * l) % int 3 > int 1 in
@@ -3182,7 +3182,7 @@ let unselected_sum =
    over [r0 < 2], and [0] elsewhere: [0]. *)
 let weak_max_kernel () =
   let open Ops.O in
-  let out = Call.param ~shape:[ Int 1 ] 0 Int32 in
+  let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
   let r1 = Ops.range ~axis_type:Reduce (Int 5) [ 1 ] in
   let r0 = Ops.range ~axis_type:Reduce (Int 3) [ 0 ] in
   let inner = Ops.where (r0 < int 2) (int 0) (Ops.const `Invalid) in
@@ -3205,7 +3205,7 @@ let weak_max =
 
 (* A kernel holds no conditional: only a program's instructions do. *)
 let spec_breaking =
-  let at = Ops.index (Call.param ~shape:[ Int 1 ] 0 Int32) [ Ops.int 0 ] in
+  let at = Ops.index (Shape.param ~shape:[ Int 1 ] 0 Int32) [ Ops.int 0 ] in
   let gate = Ops.lt (Ops.special (Int 4) "lidx0") (Ops.int 1) in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.store at (Ops.int ~dtype:Int32 1); Ops.v If ~src:[ gate; at ] ]
@@ -3422,7 +3422,7 @@ let line_rewrites =
     ]
 
 (* A store of 1 into the int buffer of slot 0, at the thread's index. *)
-let out = Call.param ~shape:[ Int 4 ] 0 Int32
+let out = Shape.param ~shape:[ Int 4 ] 0 Int32
 let at = Ops.index out [ lidx ]
 let one = Ops.int ~dtype:Int32 1
 let gate = Ops.ne lidx (Ops.int 0)
@@ -3481,7 +3481,7 @@ let sint = Testable.make ~pp:Shape.Sint.pp ~equal:Shape.Sint.equal
 let in_blocks uops =
   Codegen.to_program (Ops.sink ~kernel:(Ops.kernel_info ()) uops) clang
 
-let floats n slot = Call.param ~shape:[ Int n ] slot Float32
+let floats n slot = Shape.param ~shape:[ Int n ] slot Float32
 
 let splits_the_output_loop () =
   let i = Ops.range (Int 1024) [ 0 ] in

@@ -119,7 +119,7 @@ let cut ?(hoist = true) ~own next args body =
           else
             let slot = next () and arg = Ops.contiguous u in
             args := (slot, arg) :: !args;
-            Call.param_like arg slot
+            Shape.param_like arg slot
         in
         Ops.Tbl.add rebuilt u v;
         v
@@ -145,7 +145,7 @@ let carry device slot axis u =
           shape
       in
       let view s =
-        Call.unshard
+        Shape.unshard
           (Shape.reshape s (List.map (fun n -> Ops.Int n) part))
           [ axis ]
       in
@@ -166,7 +166,7 @@ let repeat device n init step =
        it mixes with a sharded value. An odd count takes its first step before
        the loop. *)
     let first = step (Ops.const ~dtype:Int32 (`Int Bigint.zero)) init in
-    let axes = List.map Call.axis first in
+    let axes = List.map Shape.axis first in
     let init = if n mod 2 = 1 then List.map Ops.contiguous first else init in
     if n < 2 then init
     else
@@ -194,7 +194,7 @@ let repeat device n init step =
                   (Shape.shape u)
             | Carry { slot; init; numel; view } ->
                 let p =
-                  Call.param ~shape:[ Ops.Int numel ] ~device slot
+                  Shape.param ~shape:[ Ops.Int numel ] ~device slot
                     (Ops.dtype init)
                 in
                 Ops.Tbl.replace own p ();
@@ -210,7 +210,7 @@ let repeat device n init step =
         Ops.range ~axis_type:Loop (Ops.Int (n / 2)) [ Ops.unique_num () ]
       in
       let slot = next () in
-      let index = Call.param ~addrspace:(Some Alu) slot Int32 in
+      let index = Shape.param ~addrspace:(Some Alu) slot Int32 in
       Ops.Tbl.replace own index ();
       let index' = Ops.add index (Shape.const_like index (`Int Bigint.one)) in
       let finals = step index' (List.map Ops.contiguous (step index params)) in

@@ -89,7 +89,7 @@ val beam_search :
     kernel made ready to run on the device of [k]'s renderer. Its arguments hold
     storage parameters in their slots and constant values for positional scalar
     parameters; an unused slot before the last argument holds a byte. Each
-    scalar of [k]'s kernel ({!Call.val-variables}) is sampled at the middle of
+    scalar of [k]'s kernel ({!Shape.val-variables}) is sampled at the middle of
     its bounds, [(vmin + vmax) / 2] rounded down. Launch sizes are evaluated
     with these samples, and the kernel keeps its parameters.
 

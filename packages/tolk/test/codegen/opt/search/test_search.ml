@@ -439,8 +439,8 @@ let positional =
   cases "a search binds a positional size in its call and launch"
     ~id:string_of_bool [ false; true ] (fun allow_test_size ->
       let ast = kernel "symbolic" in
-      let v = List.hd (Call.variables ast) in
-      let p = Call.param_like v 4 in
+      let v = List.hd (Shape.variables ast) in
+      let p = Shape.param_like v 4 in
       let ast = Ops.substitute ~calls:Skip ~pass:Once ast [ (v, p) ] in
       let k = K.v ast (renderer "hip") in
       K.convert_loop_to_global k;

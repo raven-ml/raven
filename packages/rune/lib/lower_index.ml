@@ -264,7 +264,7 @@ let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
      at another phase, such as an argument's, is copied. *)
   let arg v =
     let v = Ops.contiguous (on_device v) in
-    let align, phase = Call.storage_phase v in
+    let align, phase = Shape.storage_phase v in
     if align >= 16 && phase mod 16 = 0 then v else fresh v
   in
   let combined olds us =
@@ -292,7 +292,7 @@ let looped ~dst ~host device (D.Any dt as d) (c : Nx_kernel.combine) ~axis
   let y = if narrow then fresh (flat into) else dst (flat into) in
   let hit = if not narrow then [] else [ fresh (zeros Uint8 [ numel s ]) ] in
   let outs =
-    Call.custom_kernel
+    Shape.custom_kernel
       ([ y; arg i; arg (flat updates) ] @ hit)
       (walk ~host ~rows ~w ~p ~n ~q ~k combined)
   in

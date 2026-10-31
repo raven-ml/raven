@@ -478,12 +478,12 @@ let ints = List.map (fun n -> Ops.Int n)
 
 let input ?(shape = [ 4; 4 ]) slot =
   Shape.reshape
-    (Call.param ~device:cpu
+    (Shape.param ~device:cpu
        ~shape:[ Int (List.fold_left ( * ) 1 shape) ]
        slot Float32)
     (ints shape)
 
-let out = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
+let out = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32
 
 let stores value =
   Ops.sink
@@ -535,11 +535,11 @@ let rules =
       test "without a limit, one kernel reads every storage" (fun () ->
           equal int 1 (kernels (kernel_graph "many_inputs")));
       test "a kernel reading one storage in two states is refused" (fun () ->
-          let a = Call.param ~device:cpu ~shape:[ Int 16 ] 1 Float32 in
+          let a = Shape.param ~device:cpu ~shape:[ Int 16 ] 1 Float32 in
           let written =
             Ops.after a
               [
-                Ops.store a (Call.param ~device:cpu ~shape:[ Int 16 ] 2 Float32);
+                Ops.store a (Shape.param ~device:cpu ~shape:[ Int 16 ] 2 Float32);
               ]
           in
           let sink =
@@ -586,10 +586,10 @@ let rules =
    neither of which reads the other, run as one kernel that writes both. A
    double word's high and low parts are one chain's two ends. *)
 
-let out2 = Call.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
+let out2 = Shape.param ~device:cpu ~shape:[ Int 16 ] 4 Float32
 
 let stores2 ?(size = 16) v w =
-  let at slot = Call.param ~device:cpu ~shape:[ Int size ] slot Float32 in
+  let at slot = Shape.param ~device:cpu ~shape:[ Int size ] slot Float32 in
   let store o v =
     Ops.after o [ Ops.store (Shape.reshape o (Shape.shape v)) v ]
   in
@@ -670,7 +670,7 @@ let shared =
           writes sink);
       test "outputs reading a storage before and after its overwrite run apart"
         (fun () ->
-          let a = Call.param ~device:cpu ~shape:[ Int 16 ] 5 Float32 in
+          let a = Shape.param ~device:cpu ~shape:[ Int 16 ] 5 Float32 in
           let written = Ops.after a [ Ops.store a Ops.O.(a * a) ] in
           let at u = Shape.reshape u (ints [ 4; 4 ]) in
           let store o v = Ops.after o [ Ops.store (at o) v ] in
@@ -691,8 +691,8 @@ let shared =
              after the other. *)
           let at u = Shape.reshape u (ints [ 4; 4 ]) in
           let store o v = Ops.after o [ Ops.store (at o) v ] in
-          let out3 = Call.param ~device:cpu ~shape:[ Int 16 ] 6 Float32 in
-          let out4 = Call.param ~device:cpu ~shape:[ Int 16 ] 7 Float32 in
+          let out3 = Shape.param ~device:cpu ~shape:[ Int 16 ] 6 Float32 in
+          let out4 = Shape.param ~device:cpu ~shape:[ Int 16 ] 7 Float32 in
           let p = Ops.O.(input 1 * input 2) and q = Ops.O.(input 1 - input 2) in
           let a = store out p and c = store out3 q in
           let sink =
@@ -714,7 +714,7 @@ let shared =
    same sizes run one loop when neither reads the other: the nodes their sources
    share are computed once. *)
 
-let small = Call.param ~device:cpu ~shape:[ Int 4 ] 0 Float32
+let small = Shape.param ~device:cpu ~shape:[ Int 4 ] 0 Float32
 
 let stores_small value =
   Ops.sink
@@ -906,7 +906,7 @@ let build (shape, steps) =
   in
   let value = List.fold_left apply (fresh shape) steps in
   let size = List.fold_left ( * ) 1 (dims value) in
-  let result = Call.param ~device:cpu ~shape:[ Int size ] 0 Float32 in
+  let result = Shape.param ~device:cpu ~shape:[ Int size ] 0 Float32 in
   let sink =
     Ops.sink
       [
@@ -969,7 +969,7 @@ let laws =
    already scheduled, as calls inside a program are scheduled before it. *)
 let scan_loop () =
   let k = 4 and n = 3 in
-  let p slot = Call.param ~device:cpu ~shape:[ Int k ] slot Float32 in
+  let p slot = Shape.param ~device:cpu ~shape:[ Int k ] slot Float32 in
   let body =
     Schedule.create_schedule
       (schedule
@@ -979,9 +979,9 @@ let scan_loop () =
               Ops.store (p 2) Ops.O.(p 0 * float 2.);
             ]))
   in
-  let c = Call.param ~device:cpu ~shape:[ Int k ] 0 Float32
-  and xs = Call.param ~device:cpu ~shape:[ Int (n * k) ] 1 Float32
-  and ys = Call.param ~device:cpu ~shape:[ Int (n * k) ] 2 Float32 in
+  let c = Shape.param ~device:cpu ~shape:[ Int k ] 0 Float32
+  and xs = Shape.param ~device:cpu ~shape:[ Int (n * k) ] 1 Float32
+  and ys = Shape.param ~device:cpu ~shape:[ Int (n * k) ] 2 Float32 in
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row b =
     Shape.shrink b
@@ -1025,7 +1025,7 @@ let loops =
    so each of these is expected to fail until it lands. *)
 
 let states =
-  let flat slot = Call.param ~device:cpu ~shape:[ Int 16 ] slot Float32 in
+  let flat slot = Shape.param ~device:cpu ~shape:[ Int 16 ] slot Float32 in
   let x = flat 1 and y = flat 2 in
   let assigned = Ops.after x [ Ops.store x y ] in
   let rows u = Shape.reshape u (ints [ 4; 4 ]) in
@@ -1033,7 +1033,7 @@ let states =
   let at =
     Ops.cast
       (Ops.maximum
-         (Ops.minimum (Call.param ~device:cpu ~shape:[ Int 4 ] 3 Int32) (i32 3))
+         (Ops.minimum (Shape.param ~device:cpu ~shape:[ Int 4 ] 3 Int32) (i32 3))
          (i32 0))
       Weak_int
   in
@@ -1144,7 +1144,7 @@ let removable : Ops.bufferize_opts =
   { device = Some cpu; addrspace = Global; keep = Removable }
 
 let loop n id = Ops.range ~axis_type:Loop (Int n) [ id ]
-let source = Call.param ~device:cpu ~shape:[ Int 256 ] 1 Float32
+let source = Shape.param ~device:cpu ~shape:[ Int 256 ] 1 Float32
 
 (* [chain k x] is [k] steps of [y * y + x] from [x]: [2k] nodes over [x]'s. *)
 let chain k x =
@@ -1154,7 +1154,7 @@ let chain k x =
 (* The kernels of a graph that stores, at each [i] of [16], the sum of [reads
    i]. *)
 let kernels_reading reads =
-  let o = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
+  let o = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
   let i = loop 16 9 in
   let store = Ops.store (Ops.index o [ i ]) (sum_of (reads i)) in
   kernels
@@ -1220,7 +1220,7 @@ let copies =
 (* The kernels of a graph that stores, at each [i] of [16], the sum over [k] of
    [width] of [read i k]. *)
 let kernels_reducing ~width read =
-  let o = Call.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
+  let o = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
   let i = loop 16 9 and k = Ops.range ~axis_type:Reduce (Int width) [ 10 ] in
   let store = Ops.store (Ops.index o [ i ]) (Ops.reduce (read i k) Add [ k ]) in
   kernels
@@ -1330,7 +1330,7 @@ let dead_read_sink () =
   let x = Shape.rop x Add [ 0 ] in
   let x = Shape.shrink x [ Some (Ops.Int 2, Ops.Int 3) ] in
   let total = Ops.O.(x + Shape.shrink s [ Some (Ops.Int 0, Ops.Int 1) ]) in
-  let o = Call.param ~device:cpu ~shape:[ Int 1 ] 0 Float32 in
+  let o = Shape.param ~device:cpu ~shape:[ Int 1 ] 0 Float32 in
   Ops.sink
     [ Ops.after o [ Ops.store (Shape.reshape o (Shape.shape total)) total ] ]
 

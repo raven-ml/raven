@@ -1550,7 +1550,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
       let b = Ops.new_buffer device k (Ops.dtype u) in
       let p =
         hold slot
-          (Tolk.Call.param ~shape:[ Ops.Int k ] ~device (unique ())
+          (Tolk.Shape.param ~shape:[ Ops.Int k ] ~device (unique ())
              (Ops.dtype u))
       in
       let first =
@@ -1586,7 +1586,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
           in
           let w = window (Ops.contiguous flat) Ops.O.(row_at * int k) m in
           let slot = next () in
-          let p = hold slot (Tolk.Call.param_like w (unique ())) in
+          let p = hold slot (Tolk.Shape.param_like w (unique ())) in
           pass slot w;
           Shape.reshape p row)
       xs
@@ -1601,7 +1601,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
             Ops.contiguous (Shape.reshape u [ Ops.Int (Shape.max_numel u) ])
           in
           let slot = next () in
-          let p = hold slot (Tolk.Call.param_like flat (unique ())) in
+          let p = hold slot (Tolk.Shape.param_like flat (unique ())) in
           pass slot flat;
           Shape.reshape p (Shape.shape u))
       bound
@@ -1611,7 +1611,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
      enclosing one's at the loop's start, then each trip's at its end. *)
   let ncarried = Array.length inits in
   let flag_param =
-    Tolk.Call.param ~shape:[ Ops.Int 1 ] ~device (unique ()) Int64
+    Tolk.Shape.param ~shape:[ Ops.Int 1 ] ~device (unique ()) Int64
   in
   let before = Shape.reshape flag_param (ints [ 1 ]) in
   let inner = fresh_checks before in
@@ -1692,7 +1692,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
                 let slot = next () and m = Shape.max_numel u in
                 let w =
                   hold slot
-                    (Tolk.Call.param ~shape:[ Ops.Int m ] ~device (unique ())
+                    (Tolk.Shape.param ~shape:[ Ops.Int m ] ~device (unique ())
                        (Ops.dtype u))
                 in
                 pass slot (Ops.new_buffer device m (Ops.dtype u));
@@ -1719,7 +1719,7 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
           let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
           let w = window b Ops.O.(row_at * int k) m in
           let slot = next () in
-          let p = hold slot (Tolk.Call.param_like w (unique ())) in
+          let p = hold slot (Tolk.Shape.param_like w (unique ())) in
           pass slot w;
           stores :=
             Ops.store p (Shape.reshape (on_device u) [ Ops.Int m ]) :: !stores;

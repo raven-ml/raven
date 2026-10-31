@@ -535,7 +535,7 @@ let counted g =
   in
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point g
-      [ (out, Call.param_like out 0); (input, fresh) ]
+      [ (out, Shape.param_like out 0); (input, fresh) ]
   in
   (Ops.sink [ Ops.after out [ Ops.call ~precompile:true body [ out ] ] ], fresh)
 
@@ -583,10 +583,10 @@ let chained () =
 (* variable_shrink binds v to 3 and multiplies by 2.0. *)
 let rebinding () =
   let big = unique ~constant:2.0 "variable_shrink" in
-  let v = List.find Call.is_bound_var (Ops.toposort ~calls:Enter big) in
+  let v = List.find Shape.is_bound_var (Ops.toposort ~calls:Enter big) in
   let five =
     Ops.substitute ~calls:Skip ~pass:Fixed_point big
-      [ (v, Call.bind (Call.unbound v) (`Int (Bigint.of_int 5))) ]
+      [ (v, Shape.bind (Shape.unbound v) (`Int (Bigint.of_int 5))) ]
   in
   let vals =
     with_settings ~debug:3 ~scache:1 (fun () ->
@@ -908,7 +908,7 @@ let ended_store () =
 
 let bound_argument () =
   let n =
-    Call.bind
+    Shape.bind
       (Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8)))
       (`Int (Bigint.of_int 3))
   in
@@ -990,7 +990,7 @@ let flatten =
 
 let cpu = Ops.Single "CPU"
 let buffer = Ops.new_buffer ~slot:1 cpu 16 Float32
-let alloc = Call.alloc ~device:cpu [ Int 16 ] Float32
+let alloc = Shape.alloc ~device:cpu [ Int 16 ] Float32
 let into p = Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.float 1.0)
 
 let store_after =
@@ -1129,7 +1129,7 @@ let gen_view =
 let stage_phase_holds v =
   let stage = Ops.contiguous v in
   assume (Ops.op stage = Stage);
-  let align, phase = Call.storage_phase stage in
+  let align, phase = Shape.storage_phase stage in
   let holds what (a, p) =
     equal int
       ~msg:(what ^ ": its alignment, up to the stage's")
@@ -1142,7 +1142,7 @@ let stage_phase_holds v =
   match Schedule.contiguous_mops_to_view stage v with
   | Some view ->
       cover "a view" true;
-      holds "the view" (Call.storage_phase view)
+      holds "the view" (Shape.storage_phase view)
   | None -> cover "a view" false
 
 let views =
@@ -1210,7 +1210,7 @@ let views =
           let stage =
             Ops.contiguous (Shape.shrink doubles [ Some (Int 1, Int 8) ])
           in
-          equal (pair int int) (8, 0) (Call.storage_phase stage));
+          equal (pair int int) (8, 0) (Shape.storage_phase stage));
       test
         "a stage of rows padded apart, starting one double past a boundary, is \
          storage of its own on one" (fun () ->
@@ -1222,7 +1222,7 @@ let views =
           in
           let padded = Shape.pad rows [ None; Some (Int 0, Int 1) ] in
           let stage = Ops.contiguous (Shape.reshape padded [ Int 4 ]) in
-          equal (pair int int) (16, 0) (Call.storage_phase stage));
+          equal (pair int int) (16, 0) (Shape.storage_phase stage));
       prop
         "a stage's alignment and phase hold of the storage it gets, a view or \
          its own"
@@ -1243,7 +1243,7 @@ let views =
 
 let bound_var name =
   List.find
-    (fun n -> Call.is_bound_var n && Ops.expr n = name)
+    (fun n -> Shape.is_bound_var n && Ops.expr n = name)
     (Ops.toposort ~calls:Enter (program "variable_two"))
 
 (* variable_two binds v to 4 and w to 7; [rebound value] binds, in w's place,
@@ -1252,7 +1252,7 @@ let rebound value =
   Ops.substitute ~calls:Skip ~pass:Fixed_point (program "variable_two")
     [
       ( bound_var "w",
-        Call.bind
+        Shape.bind
           (Ops.variable "v" (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 10)))
           (`Int (Bigint.of_int value)) );
     ]
@@ -1298,7 +1298,7 @@ let variables =
    adds its row of [xs] to [c]. *)
 let scan_loop ?(axis = 100) ?(n = 3) () =
   let k = 4 in
-  let p slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
       [
@@ -1350,8 +1350,8 @@ let scan_linear () =
 (* A loop of three trips around a call whose body stores its scalar parameter 0,
    the argument [2r + 1], into its row of ys, its parameter 1. *)
 let trip_linear () =
-  let index = Call.param ~addrspace:(Some Alu) 0 Int32
-  and y = Call.param ~shape:[ Int 1 ] ~device:cpu 1 Int32 in
+  let index = Shape.param ~addrspace:(Some Alu) 0 Int32
+  and y = Shape.param ~shape:[ Int 1 ] ~device:cpu 1 Int32 in
   let body = Ops.sink [ Ops.store y (Shape.reshape index [ Int 1 ]) ] in
   let ys = Ops.new_buffer cpu 12 Int32 in
   let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
@@ -1373,8 +1373,8 @@ let trip_linear () =
           equal uop ~msg:"the trip, past the row" trip
             (List.nth (Ops.src_without_body k) 1);
           equal (list uop) ~msg:"the kernel's variable, in the trip's slot"
-            [ Call.param ~addrspace:(Some Alu) 1 Int32 ]
-            (Call.variables (Ops.body k));
+            [ Shape.param ~addrspace:(Some Alu) 1 Int32 ]
+            (Shape.variables (Ops.body k));
           equal bool ~msg:"the kernel reads no range" false
             (Ops.Nodes.mem r (Ops.backward_slice ~calls:Skip (Ops.body k)))
       | calls -> failf "%d calls in the loop" (List.length calls))
@@ -1384,10 +1384,10 @@ let trip_linear () =
    added to the carry in two halves, one inner trip each. *)
 let nested_linear () =
   let k = 4 and n = 3 in
-  let q slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let q slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let inner = Ops.sink [ Ops.store (q 0) Ops.O.(q 0 + q 1) ] in
-  let p0 = Call.param ~shape:[ Int k ] ~device:cpu 0 Float32
-  and p1 = Call.param ~shape:[ Int (2 * k) ] ~device:cpu 1 Float32 in
+  let p0 = Shape.param ~shape:[ Int k ] ~device:cpu 0 Float32
+  and p1 = Shape.param ~shape:[ Int (2 * k) ] ~device:cpu 1 Float32 in
   let r' = Ops.range ~axis_type:Loop (Int 2) [ 101 ]
   and r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row r w b =
@@ -1441,12 +1441,12 @@ let renumbered_loop () =
    [b]: each adds a row of its own buffer to the carry. *)
 let two_loops (a, b) =
   let k = 4 and n = 6 in
-  let q slot = Call.param ~shape:[ Int k ] ~device:cpu slot Float32 in
+  let q slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let inner = Ops.sink [ Ops.store (q 0) Ops.O.(q 0 + q 1) ] in
-  let p0 = Call.param ~shape:[ Int k ] ~device:cpu 0 Float32 in
+  let p0 = Shape.param ~shape:[ Int k ] ~device:cpu 0 Float32 in
   let loop axis slot =
     let r = Ops.range ~axis_type:Loop (Int n) [ axis ] in
-    let p = Call.param ~shape:[ Int (n * k) ] ~device:cpu slot Float32 in
+    let p = Shape.param ~shape:[ Int (n * k) ] ~device:cpu slot Float32 in
     let row =
       Shape.shrink p
         [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]

@@ -31,8 +31,8 @@ val jit_lower :
 (** [jit_lower ~beam ~search ~targets ~held_bufs ~inputs linear] is the captured
     schedule [linear], an {!Op.Linear} of calls, ready to link:
     + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
-      the parameter of slot [i] ({!Call.param}), of its type, device, size,
-      alignment and phase ({!Call.storage_phase});
+      the parameter of slot [i] ({!Shape.param}), of its type, device, size,
+      alignment and phase ({!Shape.storage_phase});
     + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}), except
       [held_bufs], whose contents outlive a run, such as the buffers a caller
       keeps or that hold constants;

@@ -595,7 +595,7 @@ thread.
   printed. `Dtype.sum_acc` and eight test-only `Bigint` functions are removed.
 - **Breaking:** `Ops.hcq_info`, `Ops.hcq_kernel`, `Ops.pp_hcq_info`,
   `Ops.getaddr`, `Spec.hcq`, `call_info.aux` with the `?aux` of `Ops.call` and
-  `Call.call_with_outputs`, and the `Queue` and `Region` arguments are gone:
+  `Shape.call_with_outputs`, and the `Queue` and `Region` arguments are gone:
   rig encodes the queues they described. `Spec.full` no longer accepts a
   program over a buffer. A `Linear`'s name is a `String` argument.
 - `Rangeify.get_kernel_graph` schedules two pairs of outputs that each share a
@@ -790,13 +790,13 @@ thread.
   `Symbolic`.
 - **Breaking:** `Ops` keeps the node language: arguments, construction,
   bounds, ranges, patterns and rewriting. What reads a shape needs
-  simplification and moves to two new modules. `Shape` holds shapes and
+  simplification and moves to the new module `Shape`, with shapes and
   simplification, which call each other: `Shape.shape`, the movements
   (`Shape.reshape`, `Shape.mop`, ...), `Shape.simplify`, `Shape.resolve`,
-  `Shape.Sint`, divisibility and `Shape.sym_infer`. `Call` holds what calls
-  take and the calls: storage (`Call.param`, `Call.alloc`, ...), sharding,
-  the bindings of variables, `Call.call_with_outputs` and
-  `Call.program_info_of_sink`.
+  `Shape.Sint`, divisibility and `Shape.sym_infer`, then what calls take and
+  the calls: storage (`Shape.param`, `Shape.alloc`, ...), sharding, the
+  bindings of variables, `Shape.call_with_outputs` and
+  `Shape.program_info_of_sink`.
 - **Breaking:** `SPEC=2` and `SPEC=3` no longer check each node as
   `Ops.v` builds it; any nonzero `SPEC` checks the graphs passed between
   stages. The check needed every module of tolk linked into every program.

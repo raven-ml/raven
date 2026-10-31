@@ -7,7 +7,6 @@
 
 open Ops
 open Shape
-open Call
 
 (* Calls *)
 
