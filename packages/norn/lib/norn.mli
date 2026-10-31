@@ -673,11 +673,17 @@ module Dist : sig
 
   val quantile :
     ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
-  (** [quantile d p] is the value whose CDF is [p], elementwise.
+  (** [quantile d p] is the value whose CDF is [p], elementwise. For {!gamma}
+      and {!inverse_gamma} it is [0.] at [p = 0.] and [inf] at [p = 1.].
+
+      {!Rune} differentiates it in [p] and in [d]'s parameters. For {!gamma}
+      and {!inverse_gamma} the first derivatives are finite wherever the exact
+      ones are; {!inverse_gamma}'s higher derivatives can overflow where the
+      quantile passes about [2^512].
 
       Raises [Invalid_argument] for a family whose quantile nx does not compute:
-      {!student_t}, {!gamma}, {!inverse_gamma}, {!beta}, the vector families and
-      the combinators but {!iid}. *)
+      {!student_t}, {!beta}, the vector families and the combinators but
+      {!iid}. *)
 
   val coords : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
   (** [coords d] is the bijector onto [d]'s support, from coordinates in which

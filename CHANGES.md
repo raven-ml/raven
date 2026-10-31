@@ -49,6 +49,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.quantile` computes the quantiles of `Dist.gamma` and
+  `Dist.inverse_gamma`, which raised, with first derivatives in `p` and the
+  parameters that stay finite wherever the exact ones are.
 - Add `Dist.binomial ~trials ~logits`, the count of successes in `trials`
   trials of probability `sigmoid logits`, `trials` an `int32` tensor.
 - Every type carries its values' device set: `('u, 'f, 'd) Nuts.state`,

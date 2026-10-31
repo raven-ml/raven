@@ -142,6 +142,325 @@ let quantiles =
          | _ -> assert false)
        (lines "ppf"))
 
+(* Quantiles of the gamma and the inverse gamma *)
+
+(* A gamma of concentration [a] and rate [s], or an inverse gamma of
+   concentration [a] and scale [s]. *)
+type gamma_case = {
+  inverse : bool;
+  a : float;
+  s : float;
+  dist : (Nx.host Nx.float64_t, Nx.float64_elt, Nx.host) D.t;
+}
+
+let gamma_case inverse a s =
+  let dist =
+    if inverse then D.inverse_gamma ~concentration:(f64 a) ~scale:(f64 s)
+    else D.gamma ~concentration:(f64 a) ~rate:(f64 s)
+  in
+  { inverse; a; s; dist }
+
+(* [cdf c] and [sf c] are the CDF and its complement, from nx's incomplete
+   gamma functions: the gamma's CDF is [P(a, s x)], the inverse gamma's
+   [Q(a, s / x)]. *)
+let cdf c x =
+  let a = Nx.scalar_like x c.a in
+  if c.inverse then Nx.gammaincc a (Nx.div (Nx.scalar_like x c.s) x)
+  else Nx.gammainc a (Nx.mul_s x c.s)
+
+let sf c x =
+  let a = Nx.scalar_like x c.a in
+  if c.inverse then Nx.gammainc a (Nx.div (Nx.scalar_like x c.s) x)
+  else Nx.gammaincc a (Nx.mul_s x c.s)
+
+let quantile_at c p = item (D.quantile c.dist (f64 p))
+
+(* [x f(x)], for [f] the density. The quantile's condition number at [x] is
+   [m / (x f(x))], for [m] the tail it is read from. *)
+let x_density c x = Float.exp (Float.log x +. item (D.factors c.dist (f64 x)))
+
+(* nx's bound on the incomplete gamma functions at a tail [t], in ulps, which
+   [κ] scales in their inverses' bound: [32 (1 + |log t|) + 4]. nx states an
+   inverse's bound at the smaller tail [m = min (p, 1 - p)], with
+   [κ = m / (x f(x))]. *)
+let tail_ulps t = (32. *. (1. +. Float.abs (Float.log t))) +. 4.
+let ulps n = float_rel ~rel:(n *. epsilon_float) ~abs:0.
+
+(* Concentrations in [2^-lowest, 2^10], rates and scales in [2^-10, 2^10]. *)
+let gen_case ?(lowest = 4.) () =
+  Gen.(
+    let+ inverse = bool
+    and+ la = float_range (-.lowest) 10.
+    and+ ls = float_range (-10.) 10. in
+    gamma_case inverse (Float.pow 2. la) (Float.pow 2. ls))
+
+(* A probability [p] with its smaller tail [m], exact: [2^e] in the lower tail
+   and [1 - 2^e] in the upper, whose complement is exact by Sterbenz's lemma.
+   The lower tail goes down to [2^-deepest], the upper to [2^-52]. In the tail
+   where the quantile nears [0] or [inf], the gamma's lower and the inverse
+   gamma's upper, the unit gamma variable [y] has mass about [y^a] below it, so
+   that tail goes down to [2^(-reach a)] at most, keeping [y] above about
+   [2^-reach]. *)
+let gen_tail ~deepest ~reach c =
+  Gen.(
+    let edge = reach *. c.a in
+    let lower = if c.inverse then deepest else Float.min deepest edge in
+    let upper = if c.inverse then Float.min 52. edge else 52. in
+    one_of
+      [
+        map
+          (fun e -> (Float.pow 2. e, Float.pow 2. e))
+          (float_range (-.lower) (-1.));
+        map
+          (fun e ->
+            let p = 1. -. Float.pow 2. e in
+            (p, 1. -. p))
+          (float_range (-.upper) (-1.));
+      ])
+
+let gen_case_tail ?lowest ~deepest ~reach () =
+  Gen.(
+    let* c = gen_case ?lowest () in
+    let+ p, m = gen_tail ~deepest ~reach c in
+    (c, p, m))
+
+let cover_case c =
+  cover "inverse gamma" c.inverse;
+  cover "gamma" (not c.inverse);
+  cover "concentration below 1" (c.a < 1.);
+  cover "concentration above 100" (c.a > 100.)
+
+let cover_tails p =
+  cover "p below 2^-100" (p < 0x1p-100);
+  cover "p above 1 - 2^-26" (p > 1. -. 0x1p-26)
+
+(* The quantile [x] is within [4 + κ B(m)] ulps of the exact one, for [B] the
+   bound of [tail_ulps]; the division by the rate or into the scale adds half
+   an ulp, as does the product or quotient [cdf] and [sf] take. The tail at
+   [x] is then within [5 / κ + 2 B(m)] ulps of [m]. *)
+let cdf_of_quantile =
+  prop "the CDF of the quantile at p is p"
+    (gen_case_tail ~deepest:990. ~reach:800. ())
+    (fun (c, p, m) ->
+      cover_case c;
+      cover_tails p;
+      let x = quantile_at c p in
+      let tail = if p <= 0.5 then cdf c (f64 x) else sf c (f64 x) in
+      let tol = (5. *. x_density c x /. m) +. (2. *. tail_ulps m) in
+      equal (ulps tol) m (item tail))
+
+(* An [x] whose CDF lies in either tail, from [y = s x] for the gamma and
+   [y = s / x] for the inverse gamma: [log2 y] in
+   [[log2 a - min (800, 200 / a), log2 a]] for the lower tail of [P(a, y)]
+   and in [[log2 a, log2 (2 a + 40)]] for its upper. *)
+let gen_point c =
+  Gen.(
+    let la = Float.log2 c.a in
+    let+ ly =
+      one_of
+        [
+          float_range (la -. Float.min 800. (200. /. c.a)) la;
+          float_range la (Float.log2 ((2. *. c.a) +. 40.));
+        ]
+    in
+    let y = Float.pow 2. ly in
+    if c.inverse then c.s /. y else y /. c.s)
+
+(* [p] is within [B(p)] ulps of the CDF at [x]. Read from its smaller tail
+   [m], [p] is then within [p B(p) / m] ulps of [m]. The quantile scales that
+   and its own [B(m)] by [κ = m / (x f(x))] and adds [5] ulps, as in
+   [cdf_of_quantile]: it is within [5 + (m B(m) + p B(p)) / (x f(x))] ulps of
+   [x]. *)
+let quantile_of_cdf =
+  prop "the quantile at the CDF of x is x"
+    Gen.(
+      let* c = gen_case () in
+      let+ x = gen_point c in
+      (c, x))
+    (fun (c, x) ->
+      let p = item (cdf c (f64 x)) and q = item (sf c (f64 x)) in
+      assume (Float.is_finite x && x > 0. && p > 0. && p < 1.);
+      cover_case c;
+      cover "p below 2^-100" (p < 0x1p-100);
+      cover "p above 1/2" (p > 0.5);
+      let m = Float.min p q in
+      let tol =
+        5. +. (((m *. tail_ulps m) +. (p *. tail_ulps p)) /. x_density c x)
+      in
+      equal (ulps tol) x (quantile_at c p))
+
+let gamma_variable c x = if c.inverse then c.s /. x else c.s *. x
+
+(* [scaled c d x] is [d f(x)], taken in logs: [d] may be beyond the floats'
+   range where [d f(x)] is not. *)
+let scaled c d x =
+  Float.copy_sign
+    (Float.exp (Float.log (Float.abs d) +. item (D.factors c.dist (f64 x))))
+    d
+
+(* An upper bound on the magnitudes the log density and the derivative rule
+   round, in units of their result: [16] times it bounds their error in
+   ulps. *)
+let magnitudes c x d =
+  let y = gamma_variable c x in
+  Float.abs (c.a *. Float.log c.s)
+  +. Float.abs (Float.log c.s)
+  +. Float.abs (item (Nx.lgamma (f64 c.a)))
+  +. ((c.a +. 1.) *. (Float.abs (Float.log x) +. Float.abs (Float.log y)))
+  +. y
+  +. Float.abs (Float.log (Float.abs d))
+
+(* The derivatives of the quantile [x] at [(a, s, p)]. The quantile is off by
+   [δ = 5 + κ B(m)] ulps, as in [cdf_of_quantile], and a reference taken at
+   it rather than at the exact one moves by its derivative in [log x] times
+   that; [log f] moves by at most [(a + 1 + y) δ], for [y = s x] or [s / x].
+
+   - In [p], [∂x/∂p f(x) = 1]. rune holds the inverse's derivative within
+     [64 + 16 κ B(m)] ulps.
+   - In [s], [∂x/∂s = ±x / s], within a few roundings.
+   - In [a], [∂x/∂a f(x) = ∓∂ₐP(a, y)] by the implicit function theorem on
+     [F(x) = p]. rune holds the inverse's derivative within [2^-40] and
+     [∂ₐP] within [2^-40 (1 + |log m|)]. [∂ₐP] moves by
+     [y |∂_y log |∂ₐP||] times [δ], which rune computes too.
+
+   Draws reach concentrations of [2^-7], and quantiles up to [2^910] and
+   down to [2^-910], whose derivatives are still finite; the examples are
+   inverse gammas whose quantile is past [2^512], where [s / y²]
+   overflows. *)
+(* [quantile_of c] is the quantile as a function of [(a, (s, p))]. *)
+let quantile_of c (a, (s, p)) =
+  let dist =
+    if c.inverse then D.inverse_gamma ~concentration:a ~scale:s
+    else D.gamma ~concentration:a ~rate:s
+  in
+  D.quantile dist p
+
+let args = Nx.Ptree.(pair tensor (pair tensor tensor))
+
+let derivatives =
+  prop "the quantile's derivatives are the implicit function's"
+    ~examples:
+      (List.map
+         (fun (c, p) -> (c, p, 1. -. p))
+         [
+           (gamma_case true 0.01 1., 0.99);
+           (gamma_case true 0.1 1., 1. -. 0x1p-52);
+         ])
+    (gen_case_tail ~lowest:7. ~deepest:990. ~reach:900. ())
+    (fun (c, p, m) ->
+      cover_case c;
+      cover_tails p;
+      cover "concentration below 2^-4" (c.a < 0x1p-4);
+      let a = f64 c.a in
+      let x, (da, (ds, dp)) =
+        Rune.value_and_grad args (quantile_of c) (a, (f64 c.s, f64 p))
+      in
+      let x = item x and da = item da and ds = item ds and dp = item dp in
+      let y = gamma_variable c x in
+      let kappa = m /. x_density c x in
+      let delta = 5. +. (kappa *. tail_ulps m) in
+      let shift = (c.a +. 1. +. y) *. delta in
+      equal
+        (ulps
+           (64. +. (16. *. kappa *. tail_ulps m) +. shift
+           +. (16. *. magnitudes c x dp)))
+        1. (scaled c dp x);
+      let sign = if c.inverse then 1. else -1. in
+      equal (ulps 4.) (sign *. x /. c.s) ds;
+      let dP_da a y = Rune.grad' (fun a -> Nx.gammainc a y) a in
+      let reference = item (dP_da a (f64 y)) in
+      let moves =
+        y
+        *. Float.abs
+             (item
+                (Rune.grad' (fun y -> Nx.log (Nx.abs (dP_da a y))) (f64 y)))
+      in
+      let tol =
+        (0x1p-40 *. (2. +. Float.abs (Float.log m)))
+        +. epsilon_float
+           *. (((moves +. 2.) *. (delta +. 1.))
+              +. shift
+              +. (16. *. magnitudes c x da))
+      in
+      equal (float_rel ~rel:tol ~abs:0.) reference (sign *. scaled c da x))
+
+(* Forward mode applies the derivatives reverse mode transposes: each is
+   within twice its budget of [derivatives] of the other. The points include
+   inverse gammas whose quantile is past [2^512], where [s / y²] overflows,
+   and two whose derivative in [p] overflows, which must leave the
+   derivatives in [a] and [s] finite. *)
+let forward_mode =
+  Windtrap.cases "forward mode agrees with reverse mode"
+    ~id:(fun (n, _, _) -> n)
+    [
+      ("gamma", gamma_case false 2.5 1.5, 0.3);
+      ("gamma near 1", gamma_case false 0.01 1., 1. -. 0x1p-40);
+      ("inverse_gamma", gamma_case true 3. 2., 0.3);
+      ("inverse_gamma at 0.99", gamma_case true 0.01 1., 0.99);
+      ("inverse_gamma near 1", gamma_case true 0.1 1., 1. -. 0x1p-52);
+      ("inverse_gamma at a subnormal p", gamma_case true 2.5 1., 0x1p-1050);
+      ("inverse_gamma of a large scale", gamma_case true 2.5 0x1p100, 1e-300);
+    ]
+    (fun (_, c, p) ->
+      let at = (f64 c.a, (f64 c.s, f64 p)) in
+      let da, (ds, dp) = Rune.grad args (quantile_of c) at in
+      let along t =
+        item (snd (Rune.jvp args Nx.Ptree.tensor (quantile_of c) at t))
+      in
+      let zero = f64 0. and one = f64 1. in
+      let x = quantile_at c p in
+      let m = Float.min p (1. -. p) in
+      let kappa = m /. x_density c x in
+      equal
+        (float_rel ~rel:0x1p-39 ~abs:0.)
+        (item da)
+        (along (one, (zero, zero)));
+      equal (ulps 8.) (item ds) (along (zero, (one, zero)));
+      equal
+        (ulps (2. *. (64. +. (16. *. kappa *. tail_ulps m))))
+        (item dp) (along (zero, (zero, one))))
+
+(* Compiled, the quantile keeps its eager bound, [5 + κ B(m)] ulps of the
+   exact one, so the two are within twice it. *)
+let compiled_quantile =
+  let ps = [| 1e-200; 1e-10; 0.3; 0.5; 0.9; 1. -. 1e-10 |] in
+  Windtrap.cases "a compiled quantile is the eager one"
+    ~id:(fun (n, _) -> n)
+    [
+      ("gamma", gamma_case false 2.5 1.5);
+      ("inverse_gamma", gamma_case true 3. 2.);
+    ]
+    (fun (_, c) ->
+      let compiled = Nx.to_array (Rune.jit' (D.quantile c.dist) (vec ps)) in
+      Array.iteri
+        (fun i p ->
+          let x = quantile_at c p in
+          let m = Float.min p (1. -. p) in
+          let tol = 2. *. (5. +. (m /. x_density c x *. tail_ulps m)) in
+          equal (ulps tol) x compiled.(i))
+        ps)
+
+let gamma_quantiles =
+  group "quantile of the gamma and the inverse gamma"
+    [
+      cdf_of_quantile;
+      quantile_of_cdf;
+      derivatives;
+      forward_mode;
+      compiled_quantile;
+      Windtrap.cases "the quantile is 0 at p = 0 and inf at p = 1"
+        ~id:(fun (n, _) -> n)
+        [
+          ("gamma", gamma_case false 2.5 1.5);
+          ("gamma of small concentration", gamma_case false 0.1 3.);
+          ("inverse_gamma", gamma_case true 3. 2.);
+          ("inverse_gamma of small concentration", gamma_case true 0.1 0.5);
+        ]
+        (fun (_, c) ->
+          equal float_exact 0. (quantile_at c 0.);
+          equal float_exact Float.infinity (quantile_at c 1.));
+    ]
+
 (* Goodness of fit: Pearson's chi-square over the bins of gen/dist.py, whose
    thresholds hold the family-wise false-alarm rate of these tests at 1%. *)
 
@@ -747,6 +1066,7 @@ let () =
        [
          densities;
          quantiles;
+         gamma_quantiles;
          fit;
          normalisation;
          group "laws" [ sums ];

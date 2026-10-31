@@ -378,6 +378,45 @@ let exponential ~rate =
     ~quantile:(fun p -> Nx.div (Nx.neg (Nx.log1p (Nx.neg p))) rate)
     rate
 
+(* [exp_times l t] is [exp l * t], exactly [0] where [t] is: as [exp (l / 3)]
+   three times, finite wherever [|l| < 2129], where [exp l] alone overflows
+   past [709.8] and a zero [t] would make NaN. *)
+let exp_times l t =
+  let e = Nx.exp (Nx.div_s l 3.) in
+  Nx.mul (Nx.mul (Nx.mul t e) e) e
+
+(* The inverse gamma's quantile [x = scale / y], [y] the unit gamma's upper
+   quantile at [p], since the CDF at [x] is [Q(a, scale / x)]. Reverse mode
+   through [scale / y] forms [scale / y²], which overflows once [x] exceeds
+   [sqrt scale 2^512], so the rule states the derivatives: [∂x/∂p = 1 / f(x)
+   = scale Γ(a) e^y / y^(a+1)], taken in logs, [∂x/∂scale = 1 / y], and
+   [∂x/∂a = -x (∂y/∂a) / y], from the inverse's own derivative. A tangent
+   map serves forward mode as well as reverse, and its [jvp] runs only under
+   a differentiation. Each term is [0] where its tangent is, so a tangent
+   that is zero leaves the others' sum alone. *)
+let inverse_gamma_quantile args =
+  Rune.custom_jvp
+    Nx.Ptree.(pair tensor (pair tensor tensor))
+    Nx.Ptree.tensor
+    (fun (a, (scale, p)) ->
+      let y = Nx.gammainccinv a p in
+      let x = Nx.div scale y in
+      let tangent (da, (dscale, dp)) =
+        let log_inv_f =
+          Nx.sub
+            (Nx.add (Nx.add (Nx.log scale) y) (Nx.lgamma a))
+            (Nx.mul (Nx.add_s a 1.) (Nx.log y))
+        in
+        let a' = Nx.broadcast_to (Nx.shape x) a in
+        let _, dy_da =
+          Rune.jvp' (fun a -> Nx.gammainccinv a p) a' (Nx.ones_like a')
+        in
+        let along_a = Nx.neg (Nx.mul (Nx.mul da x) (Nx.div dy_da y)) in
+        Nx.add along_a (Nx.add (Nx.div dscale y) (exp_times log_inv_f dp))
+      in
+      (x, tangent))
+    args
+
 let gamma ~concentration ~rate =
   let family = "gamma" in
   let a = concentration in
@@ -393,6 +432,7 @@ let gamma ~concentration ~rate =
            (Nx.mul (Nx.sub_s a 1.) (Nx.log x)))
         (Nx.mul rate x))
     ~draw:(fun k s -> Nx.div (Nx.Rng.gamma ~key:k (broadcast_to s a)) rate)
+    ~quantile:(fun p -> Nx.div (Nx.gammaincinv a p) rate)
     a
 
 let inverse_gamma ~concentration ~scale =
@@ -410,6 +450,7 @@ let inverse_gamma ~concentration ~scale =
            (Nx.mul (Nx.add_s a 1.) (Nx.log x)))
         (Nx.div scale x))
     ~draw:(fun k s -> Nx.div scale (Nx.Rng.gamma ~key:k (broadcast_to s a)))
+    ~quantile:(fun p -> inverse_gamma_quantile (a, (scale, p)))
     a
 
 let beta ~a ~b =

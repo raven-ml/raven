@@ -59,7 +59,8 @@ SCALAR = {
 }
 
 QUANTILE = ["normal", "half_normal", "lognormal", "cauchy", "half_cauchy", "laplace",
-            "logistic", "exponential", "uniform"]
+            "logistic", "exponential", "gamma", "gamma_small", "inverse_gamma",
+            "uniform"]
 
 DISCRETE = {
     "poisson": (stats.poisson(3.2), list(range(0, 12)) + [-1], 12),

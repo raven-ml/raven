@@ -327,8 +327,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - Nested: slice moves correlate draws within a replacement, so its error
   under-covers 1.5-1.9x on gp_pois_regr (documented in
   `Evidence.expectation`, still a biased error)
-- norn: `quantile` raises for `gamma` and `inverse_gamma` though
-  `Nx.gammaincinv` exists
 - norn: `Diag.psis` and `loo` over `Norn_model.pointwise`, with each
   point's k̂; `Summary.of_weighted`
 - norn: variational layer: `Gaussian.pathfinder`, `importance` (which
