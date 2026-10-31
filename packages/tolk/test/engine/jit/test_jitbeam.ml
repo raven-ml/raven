@@ -21,7 +21,7 @@ let captured c =
           [ i ];
       ]
   in
-  let buffer () = Ops.new_buffer (Single "CPU") 4 Float32 in
+  let buffer () = Ops.new_buffer "CPU" 4 Float32 in
   let out = buffer () and x = buffer () in
   (Ops.v Op.Linear ~src:[ Ops.call kernel [ out; x ] ], out, x)
 

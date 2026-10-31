@@ -11,7 +11,7 @@ module L = Rune.Lower_arith
 type ('v, 's, 'd) Nx.Prim.payload +=
   | Node : Ops.t -> ('v, 's, 'd) Nx.Prim.payload
 
-let cpu = Ops.Single "CPU"
+let cpu = "CPU"
 let numel s = Array.fold_left ( * ) 1 s
 
 (* The elements' bytes as a node holds them: one element of [L.dtype] per

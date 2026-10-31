@@ -77,7 +77,6 @@ let programs =
     "gpt_oss_prefill_1";
     "hazard_behind_other_after";
     "inline_function";
-    "inline_sharded";
     "inline_symbolic";
     "matmul";
     "max_of_nothing";
@@ -89,11 +88,6 @@ let programs =
     "precompiled_function_1";
     "setitem";
     "setitem_tensor";
-    "shard_add";
-    "shard_gather";
-    "shard_sum";
-    "shard_sum_1";
-    "sharded_output_of_whole_storage";
     "softmax";
     "sort";
     "split_at_threshold";
@@ -132,11 +126,8 @@ let recorded =
 
    The law that preparing keeps what a program writes into the storage it is
    given, its parameters and buffers (Tensors); call-local storage ({!Op.Alloc})
-   is scratch, which preparing may remove or add. Memory holds small integers,
-   the same on each device of a replicated buffer and different on each device
-   of a sharded one. *)
-
-let devices = function Some (Ops.Multi l) -> List.length l | _ -> 1
+   is scratch, which preparing may remove or add. Memory holds small
+   integers. *)
 
 (* [element dtype k] is [k], from [-3] to [7], as a [dtype] value; shifted to be
    non-negative in an unsigned type. *)
@@ -156,21 +147,10 @@ let storage u =
     (Ops.toposort ~calls:Enter u)
 
 let filled u =
-  let sharded =
-    List.filter_map
-      (fun n ->
-        if Ops.op n = Unshard then Some (Ops.storage_base (Ops.nth n 0))
-        else None)
-      (Ops.toposort ~calls:Enter u)
-  in
   List.map
     (fun (n, (p : Ops.param_arg)) ->
-      let size = Shape.max_numel n in
-      let at j =
-        let j = if List.memq n sharded then j else j mod size in
-        element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3)
-      in
-      (p.slot, Array.init (size * devices p.device) at))
+      let at j = element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3) in
+      (p.slot, Array.init (Shape.max_numel n) at))
     (storage u)
 
 let close = Testable.float_rel ~rel:1e-6 ~abs:0.
@@ -236,7 +216,7 @@ let range ?(axis_type = Ops.Axis_type.Loop) n axis =
   Ops.range ~axis_type (Int n) [ axis ]
 
 let ranges shape = List.mapi (fun axis n -> range n axis) shape
-let cpu = Ops.Single "CPU"
+let cpu = "CPU"
 let flat n = Shape.param ~device:cpu ~shape:[ Int n ] 1 Float32
 let stored shape = Shape.reshape (flat (size shape)) (ints shape)
 
@@ -419,10 +399,7 @@ let chain = chains [ `Reshape; `Expand; `Shrink; `Permute; `Flip ]
 let moved (shape, ms) = List.fold_left Shape.mop (stored shape) ms
 let iota n = Array.init n (fun j -> `Float (float_of_int (j + 1)))
 
-let tensor_values memory u =
-  match Tensors.eval ~buffers:memory u with
-  | [ elements ] -> Array.to_list elements
-  | _ -> fail "a movement of a value on one device is on one device"
+let tensor_values memory u = Array.to_list (Tensors.eval ~buffers:memory u)
 
 (* [reads memory rs u cs] is [u] at each binding [cs] of the ranges [rs]. *)
 let reads memory rs u cs =
@@ -621,10 +598,9 @@ let viewed (shape, ms) =
   let u = moved (shape, ms) in
   let memory = iota (size shape) in
   let elements =
-    match Tensors.eval ~buffers:[ (1, memory) ] u with
-    | [ e ] ->
-        Array.map (function #Dtype.value as v -> v | `Invalid -> `Float nan) e
-    | _ -> fail "a movement of a value on one device is on one device"
+    Array.map
+      (function #Dtype.value as v -> v | `Invalid -> `Float nan)
+      (Tensors.eval ~buffers:[ (1, memory) ] u)
   in
   let run =
     Option.map (fun off -> (flat (size shape), off)) (is_run memory elements)
@@ -742,16 +718,6 @@ let outputs =
           let u = prepare (Ops.sink [ Ops.store half staged ]) in
           is_false (has Stage u);
           is_false (has Alloc u));
-      test "an output that stores new sharded storage takes its place"
-        (fun () ->
-          let two = Ops.Multi [ "CPU:0"; "CPU:1" ] in
-          let target =
-            Shape.unshard (Shape.param ~device:two ~shape:[ Int 8 ] 0 Float32) [ 0 ]
-          in
-          let fresh =
-            Shape.unshard (Ops.new_buffer ~slot:5 two 8 Float32) [ 0 ]
-          in
-          is_false (has Buffer (prepare (Ops.sink [ Ops.store target fresh ]))));
       test "an output that stores new storage takes the storage's place"
         (fun () ->
           let fresh = Ops.new_buffer ~slot:5 cpu 16 Float32 in
@@ -839,20 +805,6 @@ let calls_inline =
 let earliest =
   group "prepare_rangeify › earliest rewrites"
     [
-      test "an allreduce is a call of its own, named allreduce" (fun () ->
-          let two = Ops.Multi [ "CPU:0"; "CPU:1" ] in
-          let shared = Shape.param ~device:two ~shape:[ Int 16 ] 0 Float32 in
-          let whole = Shape.param ~device:two ~shape:[ Int 16 ] 1 Float32 in
-          let u =
-            prepare
-              (Ops.sink
-                 [
-                   Ops.after shared
-                     [ Ops.store shared (Ops.allreduce whole Add two) ];
-                 ])
-          in
-          is_false (has Allreduce u);
-          equal (list (option string)) [ Some "allreduce" ] (calls u));
       test
         "a split reduction keeps its first reduction's output within 2^22 \
          elements" (fun () ->
@@ -944,16 +896,16 @@ let earliest =
       test "a copy to another device than its destination's is stored first"
         (fun () ->
           let elsewhere =
-            Shape.param ~device:(Single "CPU:1") ~shape:[ Int 16 ] 0 Float32
+            Shape.param ~device:"CPU:1" ~shape:[ Int 16 ] 0 Float32
           in
-          let copied = Ops.copy_to_device (input 1) (Single "CPU:2") in
+          let copied = Ops.copy_to_device (input 1) "CPU:2" in
           let u =
             prepare
               (Ops.sink [ Ops.after elsewhere [ Ops.store elsewhere copied ] ])
           in
           equal
-            (list (Testable.make ~pp:Ops.pp_device ~equal:Ops.equal_device))
-            [ Single "CPU:2" ]
+            (list (Testable.make ~pp:Ops.pp_device ~equal:String.equal))
+            [ "CPU:2" ]
             (List.filter_map
                (fun n -> if Ops.op n = Alloc then Ops.device n else None)
                (Ops.toposort ~calls:Enter u)));
@@ -971,7 +923,7 @@ let earliest =
             (prepare (Ops.sink [ Ops.store (Ops.bitcast out Int32) v ])));
       test "a bitcast on a disk keeps its size" (fun () ->
           let disk =
-            Shape.param ~device:(Single "DISK:/tmp/tolk") ~shape:[ Int 64 ] 1
+            Shape.param ~device:"DISK:/tmp/tolk" ~shape:[ Int 64 ] 1
               Uint8
           in
           let u =

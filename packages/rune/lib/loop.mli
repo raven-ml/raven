@@ -52,11 +52,10 @@ val repeat :
     from [init], computed on [d]. [step i vs] maps values of [init]'s shapes and
     dtypes to values of the same, where [i] is the application's index, an
     [int32] scalar from [0]. [step] receives graph nodes, so it may read them at
-    any index. Where [n >= 2], [step] is applied three times while the loop is
-    built: once from [init] at index 0, whose result an even [n] drops, and
-    twice to trace the body. It is applied once where [n = 1] or [n < 0], and
-    never where [n = 0] or no value of [init] has an element. The call passes
-    each trip its first application's index as a scalar argument, and the
-    second's is one more. Where [n <= 0], the result is [init]. A value with no
-    element stands in [step] as zeros, and is its initial value after the loop.
-*)
+    any index. Where [n >= 2], [step] is applied twice while the loop is built,
+    to trace the body, and once more before it, from [init] at index 0, where
+    [n] is odd. It is applied once where [n = 1], and never where [n <= 0] or no
+    value of [init] has an element. The call passes each trip its first
+    application's index as a scalar argument, and the second's is one more.
+    Where [n <= 0], the result is [init]. A value with no element stands in
+    [step] as zeros, and is its initial value after the loop. *)

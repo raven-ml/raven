@@ -315,9 +315,11 @@ def identities():
 
 @table
 def axis_types():
+    # tolk has no device axis: it compiles for one device (see the README)
+    kept = [a for a in AxisType if a is not AxisType.DEVICE]
     return ["axis_type", "letter", "color", "nesting"], [
         (repr(a), axis_letters.get(a, "raises KeyError"), axis_colors.get(a, "raises KeyError"),
-         value(sorted(AxisType).index(a))) for a in AxisType]
+         value(sorted(kept).index(a))) for a in kept]
 
 
 # Argument reprs: the text of each argument, by the name the suite builds it under
@@ -338,16 +340,12 @@ def reprs_of():
         "dtype": UOp.const(1).cast(dtypes.half),
         "range": UOp.range(4, 0, AxisType.WEAK),
         "range with sub-axes": UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.UPCAST, 1, 0)),
-        "negative range": UOp.range(4, -1, AxisType.DEVICE),
+        "negative range": UOp.range(4, -1, AxisType.LOOP),
         "reduce": UOp(Ops.REDUCE, src=(UOp.const(1.0).expand((4,)),), arg=(Ops.ADD, 1)),
         "special": UOp.special(8, "gidx0"),
         "permute": UOp.param(0, dtypes.float, (2, 3)).permute((1, 0)),
         "flip": UOp.param(0, dtypes.float, (2, 3)).flip(1),
         "device": UOp.param(0, dtypes.float, 4, device="CPU").copy_to_device("CUDA"),
-        "devices": UOp.param(0, dtypes.float, 4, device="CPU").copy_to_device(("CPU:0", "CPU:1")),
-        "mselect": UOp.param(0, dtypes.float, 4, device=("CPU:0", "CPU:1")).mselect(1),
-        "unshard": UOp.param(0, dtypes.float, 4, device=("CPU:0", "CPU:1")).unshard(0),
-        "allreduce": UOp.param(0, dtypes.float, 4, device=("CPU:0", "CPU:1")).allreduce(Ops.ADD, ("CPU:0", "CPU:1")),
         "custom": UOp(Ops.CUSTOM, src=(), arg=("barrier();", dtypes.void)),
         "ins": UOp(Ops.INS, src=(), arg=("s_endpgm", dtypes.void)),
         "binary": UOp(Ops.BINARY, arg=b"\x7fELF\x00\n'\""),
@@ -626,7 +624,6 @@ def storage():
                     UOp.placeholder((2, 3), dtypes.weakint, 5), UOp.placeholder((8,), dtypes.float, 6, addrspace=AddrSpace.LOCAL),
                     named(UOp.placeholder((4,), dtypes.half, 7, addrspace=AddrSpace.REG), "acc"),
                     UOp.alloc((), dtypes.int, slot=9),
-                    UOp.alloc((4, 2), dtypes.float, slot=10, device=("CPU:0", "CPU:1"), axis=0),
                     UOp.new_buffer("CPU", 4, dtypes.float, 11).view_as((2, 2)))
 
 
@@ -634,9 +631,8 @@ def storage():
 def storage_like():
     p = UOp.param(0, dtypes.float, (2, 3), device="CPU")
     v = UOp.variable("n", 1, 8)
-    s = UOp.param(1, dtypes.float, (4, 3), device=("CPU:0", "CPU:1")).unshard(0)
-    return UOp.sink(p.param_like(5), v.param_like(6), v.bind(3).param_like(7), s.param_like(8), p.placeholder_like(9),
-                    p.alloc_like(10), s.alloc_like(11, addrspace=AddrSpace.LOCAL))
+    return UOp.sink(p.param_like(5), v.param_like(6), v.bind(3).param_like(7), p.placeholder_like(9),
+                    p.alloc_like(10), p.alloc_like(11, addrspace=AddrSpace.LOCAL))
 
 
 @graph
@@ -645,15 +641,6 @@ def sets():
     r = UOp.range(4, 0)
     q = p.reshape((2, 2))
     return UOp.sink(p.index(r).set(1.0, end=r), q.set(q.const_like(2.0)))
-
-
-@graph
-def shards():
-    p = UOp.param(0, dtypes.float, (4, 6), device="CPU")
-    m = UOp.param(1, dtypes.float, (4, 6), device=("CPU:0", "CPU:1"))
-    return UOp.sink(p.shard(("CPU:0", "CPU:1")), m.unshard(0), m.unshard((1, 0), (UOp.range(2, -1, AxisType.DEVICE), UOp.range(3, -2, AxisType.LOCAL))),
-                    m.mselect(0), m.mselect(0).mstack(m.mselect(1)), m.mselect(0).mstack(), m.allreduce(Ops.ADD, ("CPU:0", "CPU:1")),
-                    p.copy_to_device("CUDA"), m.copy_to_device(("CUDA:0", "CUDA:1")), m.copy_to_device("CPU", arg=1))
 
 
 @graph
@@ -675,8 +662,7 @@ def variables_and_binding():
     n, m = UOp.variable("n", 1, 8), UOp.variable("m", 0, 4, multiple_of=2)
     e = n.bind(3) * m.bind(2) + n
     unbound, _ = e.unbind_all()
-    return UOp.sink(n.bind(3), n.bind(3).unbound(), n.bind(3).rtag("t").unbound(), unbound, *e.variables(),
-                    *(UOp.range(4, -1, AxisType.DEVICE) + n).variables())
+    return UOp.sink(n.bind(3), n.bind(3).unbound(), n.bind(3).rtag("t").unbound(), unbound, *e.variables())
 
 
 @graph
@@ -736,17 +722,6 @@ def outputs():
 def symbolic_storage():
     n = UOp.variable("n", 1, 8)
     return UOp.sink(UOp.param(0, dtypes.float, (2, n)), UOp.param(1, dtypes.int, n), UOp.alloc((2, n), dtypes.weakfloat, slot=8))
-
-
-@graph
-def symbolic_shards():
-    return UOp.sink(UOp.param(0, dtypes.float, (4, 6), device="CPU").shard(("CPU:0", "CPU:1"), axis=1))
-
-
-@graph
-def symbolic_shard_slices():
-    p = UOp.param(0, dtypes.float, (4, 6))
-    return UOp.sink(p._shard(1, UOp.range(2, -1, AxisType.DEVICE)), p._shard(0, UOp.range(4, 0, AxisType.LOCAL)))
 
 
 @minted

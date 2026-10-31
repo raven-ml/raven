@@ -6,8 +6,7 @@ open Tolk
 open Common
 
 let str pp x = Format.asprintf "%a" pp x
-let cpu = Ops.Single "CPU"
-let pair_devices = Ops.Multi [ "CPU:0"; "CPU:1" ]
+let cpu = "CPU"
 let param ?device shape slot dt = Shape.param ?device ~shape:(ints shape) slot dt
 
 (* Graphs *)
@@ -300,7 +299,7 @@ let movement =
             (List.init 600 (fun i -> i * (i + 1) / 2))
             (List.map
                (function `Int z -> Bigint.to_int z | _ -> -1)
-               (Array.to_list (List.hd (Tensors.eval sums)))));
+               (Array.to_list (Tensors.eval sums))));
       test "arange rejects a step of 0 and a dtype that cannot hold it"
         (fun () ->
           rejects (fun () -> Shape.arange ~step:0 4);
@@ -362,11 +361,6 @@ let movement =
           is_true
             (Ops.base (Shape.permute (Shape.reshape p (ints [ 6; 4 ])) [ 1; 0 ])
             == flat);
-          let u =
-            Shape.unshard (param ~device:pair_devices [ 4 ] 1 Float32) [ 0 ]
-          in
-          equal op Op.Unshard (Ops.op (Ops.base u));
-          equal op Op.Param (Ops.op (Ops.unsharded_base u));
           let viewed =
             Ops.bitcast
               (Ops.after (param ~device:cpu [ 4 ] 2 Uint32) [ Ops.sink [] ])
@@ -392,161 +386,42 @@ let movement =
           equal int 2 (Shape.nbytes (Shape.param 1 Float16)));
     ]
 
-(* Several devices *)
+(* Devices *)
 
 let devices =
-  let m = param ~device:pair_devices [ 4; 6 ] 1 Float32 in
-  let sharded = Shape.unshard m [ 0 ] in
-  group "several devices"
+  group "devices"
     [
-      test "device reads storage, copies and reductions, and sources otherwise"
-        (fun () ->
+      test "device reads storage and copies, and sources otherwise" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
           equal (option device) (Some cpu) (Ops.device p);
           equal (option device) (Some cpu) (Ops.device Ops.O.(p + float 1.));
-          equal (option device) (Some (Single "CUDA"))
-            (Ops.device (Ops.copy_to_device p (Single "CUDA")));
-          equal (option device) (Some pair_devices)
-            (Ops.device (Ops.allreduce m Op.Add pair_devices));
-          equal (option device) (Some (Single "CPU:1"))
-            (Ops.device (Ops.mselect m 1));
-          equal (option device) (Some pair_devices)
-            (Ops.device (Ops.mstack (Ops.mselect m 0) [ Ops.mselect m 1 ]));
+          equal (option device) (Some "CUDA")
+            (Ops.device (Ops.copy_to_device p "CUDA"));
           equal (option device) None (Ops.device (var "a" 0 1)));
-      test "on_disk holds for one disk device" (fun () ->
+      test "on_disk holds for a disk device" (fun () ->
           is_true
-            (Ops.on_disk (param ~device:(Single "DISK:/tmp/f") [ 4 ] 0 Uint8));
-          is_false (Ops.on_disk (param ~device:cpu [ 4 ] 0 Uint8));
-          is_false
-            (Ops.on_disk
-               (param ~device:(Multi [ "DISK:a"; "DISK:b" ]) [ 4 ] 0 Uint8)));
-      test "axis follows movements, and a copy or a sliced shard axis loses it"
-        (fun () ->
-          equal (option int) (Some 0) (Shape.axis sharded);
-          equal (option int) (Some 1) (Shape.axis (Shape.permute sharded [ 1; 0 ]));
-          equal (option int) (Some 0)
-            (Shape.axis (Shape.reshape sharded (ints [ 48 ])));
-          equal (option int) (Some 1)
-            (Shape.axis (Shape.expand sharded (ints [ 2; 8; 6 ])));
-          equal (option int) (Some 0)
-            (Shape.axis (Shape.shrink sharded [ None; Some (Int 1, Int 3) ]));
-          equal (option int) None
-            (Shape.axis (Shape.shrink sharded [ Some (Int 1, Int 3); None ]));
-          equal (option int) None (Shape.axis (Shape.rop sharded Op.Add [ 0 ]));
-          equal (option int) (Some 0) (Shape.axis (Shape.rop sharded Op.Add [ 1 ]));
-          equal (option int) None (Shape.axis (Ops.copy_to_device sharded cpu));
-          equal (option int) None (Shape.axis m));
-      test
-        "axis of an elementwise operation is its sharded source's, aligned \
-         right" (fun () ->
-          equal (option int) (Some 0) (Shape.axis Ops.O.(sharded + float 1.));
-          equal (option int) (Some 1)
-            (Shape.axis
-               Ops.O.(Shape.expand (Ops.float 1.) (ints [ 2; 8; 6 ]) + sharded));
-          equal (option int) (Some 1)
-            (Shape.axis (Shape.stack [ sharded; sharded ])));
-      test "a shrink of part of the sharded axis loses the axis" (fun () ->
-          equal (option int) None
-            (Shape.axis (Shape.shrink sharded [ Some (Int 0, Int 4); None ])));
-      test "a value sharded over a range counts the range's shards" (fun () ->
-          let u =
-            Shape.unshard
-              ~ranges:[ Ops.range ~axis_type:Local (Int 4) [ -2 ] ]
-              m [ 0 ]
-          in
-          equal shape (ints [ 16; 6 ]) (Shape.shape u);
-          equal shape (ints [ 4; 6 ]) (Shape.shard_shape u);
-          equal
-            (list (pair sint sint))
-            [
-              (Int 0, Int 4); (Int 4, Int 8); (Int 8, Int 12); (Int 12, Int 16);
-            ]
-            (Shape.bounds u));
-      test "axis rejects a node sharded on several axes" (fun () ->
-          let two =
-            Shape.unshard
-              ~ranges:
-                [
-                  Ops.range ~axis_type:Device (Int 2) [ -1 ];
-                  Ops.range ~axis_type:Local (Int 2) [ -2 ];
-                ]
-              m [ 0; 1 ]
-          in
-          rejects (fun () -> Shape.axis two));
-      test "axis rejects a reshape that moves elements between shards"
-        (fun () ->
-          rejects (fun () ->
-              Shape.axis (Shape.reshape (Shape.unshard m [ 1 ]) (ints [ 48 ]))));
-      test "sharding pairs each sharded axis with its range" (fun () ->
-          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          equal
-            (list (pair int uop))
-            [ (0, d) ]
-            (Ops.sharding (Shape.unshard ~ranges:[ d ] m [ 0 ]));
-          equal (list (pair int uop)) [] (Ops.sharding m));
-      test "a sharded value has its shards' shape and bounds" (fun () ->
-          equal shape (ints [ 8; 6 ]) (Shape.shape sharded);
-          equal shape (ints [ 4; 6 ]) (Shape.shard_shape sharded);
-          equal (list int) [ 4; 6 ] (Shape.max_shard_shape sharded);
-          equal
-            (list (pair sint sint))
-            [ (Int 0, Int 4); (Int 4, Int 8) ]
-            (Shape.bounds sharded);
-          equal shape (ints [ 4; 6 ]) (Shape.shard_shape m);
-          rejects (fun () -> Shape.bounds m));
-      test
-        "shard_slice is a scalar itself, and rejects a count that does not \
-         divide the axis" (fun () ->
-          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          is_true (Shape.shard_slice (Ops.int 1) 0 d == Ops.int 1);
-          rejects (fun () -> Shape.shard_slice (param [ 3 ] 0 Float32) 0 d));
-      test "shard_slice rejects a size whose divisibility is not decided"
-        (fun () ->
-          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          let x = Shape.param ~shape:[ Sym (weak_var "x" 0 10) ] 0 Float32 in
-          rejects (fun () -> Shape.shard_slice x 0 d));
-      test "unshard rejects unequal lengths and a repeated axis" (fun () ->
-          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          rejects (fun () -> Shape.unshard ~ranges:[ d; d ] m [ 0 ]);
-          rejects (fun () -> Shape.unshard ~ranges:[ d; d ] m [ 0; 0 ]));
+            (Ops.on_disk (param ~device:"DISK:/tmp/f" [ 4 ] 0 Uint8));
+          is_false (Ops.on_disk (param ~device:cpu [ 4 ] 0 Uint8)));
       test "copy_to_device rejects a disk and a weak type" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
-          rejects (fun () -> Ops.copy_to_device p (Single "DISK:/tmp/f"));
-          rejects (fun () -> Ops.copy_to_device p (Single "disk"));
-          rejects (fun () -> Ops.copy_to_device p (Single "disk:0"));
-          rejects (fun () -> Ops.copy_to_device p (Multi [ "CPU"; "DISK:x" ]));
+          rejects (fun () -> Ops.copy_to_device p "DISK:/tmp/f");
+          rejects (fun () -> Ops.copy_to_device p "disk");
+          rejects (fun () -> Ops.copy_to_device p "disk:0");
           rejects (fun () -> Ops.copy_to_device (Ops.int 1) cpu));
-      test "allreduce rejects a value on one device" (fun () ->
-          rejects (fun () ->
-              Ops.allreduce (param ~device:cpu [ 4 ] 0 Float32) Op.Add cpu));
-      test "device_range_src is a device range for several devices" (fun () ->
-          equal uops
-            [ Ops.range ~axis_type:Device (Int 2) [ 0 ] ]
-            (Ops.device_range_src (Some pair_devices));
-          equal uops [] (Ops.device_range_src (Some cpu));
-          equal uops [] (Ops.device_range_src None));
-      test "mstack of one node is the node" (fun () ->
-          is_true (Ops.mstack m [] == m));
       test "the device of a deep graph needs no deep recursion" (fun () ->
           let rec deepen n u =
             if n = 0 then u else deepen (n - 1) Ops.O.(u + u)
           in
           equal (option device) (Some cpu)
             (Ops.device (deepen 10_000 (Ops.new_buffer ~slot:0 cpu 1 Int8))));
-      test "empty_like on one device takes a sharded value's whole shape"
-        (fun () ->
+      test "empty_like on another device takes the value's shape" (fun () ->
           let u =
-            Shape.empty_like ~dtype:Int32 ~device:(Single "CPU:2") sharded
+            Shape.empty_like ~dtype:Int32 ~device:"CPU:2"
+              (param ~device:cpu [ 8; 6 ] 1 Float32)
           in
           equal shape (ints [ 8; 6 ]) (Shape.shape u);
-          equal (option device) (Some (Single "CPU:2")) (Ops.device u);
-          equal (option int) None (Shape.axis u);
+          equal (option device) (Some "CPU:2") (Ops.device u);
           is_true (Ops.has_buffer_identity u));
-      test "empty_like on the same devices keeps the sharding" (fun () ->
-          let u = Shape.empty_like sharded in
-          equal shape (ints [ 8; 6 ]) (Shape.shape u);
-          equal (option int) (Some 0) (Shape.axis u);
-          equal dtype Float32 (Ops.dtype u));
     ]
 
 (* Storage *)
@@ -594,8 +469,8 @@ let storage =
             (Ops.is_virtual
                (Ops.cast (param ~device:cpu [ 4 ] 0 Float32) Weak_float)));
       test
-        "has_buffer_identity sees storage through reshapes, shards and on \
-         request afters" (fun () ->
+        "has_buffer_identity sees storage through reshapes and on request \
+         afters" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
           is_true (Ops.has_buffer_identity p);
           is_true (Ops.has_buffer_identity (Shape.reshape p (ints [ 2; 2 ])));
@@ -646,11 +521,11 @@ let storage =
           equal shape (ints [ 2; 4 ]) (Shape.shape s));
       test "clone rejects a disk, named in any case" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
-          rejects (fun () -> Shape.clone ~device:(Single "DISK:/tmp/f") p);
-          rejects (fun () -> Shape.clone ~device:(Single "disk:0") p);
+          rejects (fun () -> Shape.clone ~device:"DISK:/tmp/f" p);
+          rejects (fun () -> Shape.clone ~device:"disk:0" p);
           is_true
-            (Ops.equal_device (Single "DISKS")
-               (Option.get (Ops.device (Shape.clone ~device:(Single "DISKS") p)))));
+            (String.equal "DISKS"
+               (Option.get (Ops.device (Shape.clone ~device:"DISKS" p)))));
       test "new_buffer takes the next slot without one" (fun () ->
           let slot u =
             match Ops.arg u with Param p -> p.slot | _ -> fail "a buffer"
@@ -720,15 +595,10 @@ let variables =
             (slist (pair uop value) (fun (a, _) (b, _) -> Ops.compare a b))
             [ (n, i 3); (m, i 2) ]
             values);
-      test "variables are sorted by name, with a device range's device number"
-        (fun () ->
+      test "variables are sorted by name" (fun () ->
           let m = weak_var "m" 0 4 in
           equal uops [ m; n ] (Shape.variables Ops.O.(n + m));
-          equal uops [ m; n ] (Shape.variables Ops.O.(Shape.bind n (i 3) + m));
-          let d = Ops.range ~axis_type:Device (Int 4) [ -1 ] in
-          equal uops
-            [ Ops.variable ~dtype:Weak_int "_device_num" (i 0) (i 3); n ]
-            (Shape.variables Ops.O.(d + n)));
+          equal uops [ m; n ] (Shape.variables Ops.O.(Shape.bind n (i 3) + m)));
     ]
 
 (* Calls *)
@@ -752,8 +622,7 @@ let calls =
       test "call rejects a body that computes a value" (fun () ->
           rejects (fun () -> Ops.call (Ops.int 1) [ arg ]);
           rejects (fun () -> Ops.call Ops.O.(arg + float 1.) []));
-      test "call rejects a range leaking out of its body, but a device range"
-        (fun () ->
+      test "call rejects a range leaking out of its body" (fun () ->
           let r = Ops.range (Int 4) [ 0 ] in
           rejects (fun () ->
               Ops.call
@@ -762,16 +631,7 @@ let calls =
                      Ops.store (Ops.index arg [ r ])
                        (Ops.float ~dtype:Float32 1.);
                    ])
-                []);
-          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          ignore
-            (Ops.call
-               (Ops.sink
-                  [
-                    Ops.store (Ops.index arg [ d ])
-                      (Ops.float ~dtype:Float32 1.);
-                  ])
-               []));
+                []));
       test "is_inline_call holds for a plain sink that is not compiled apart"
         (fun () ->
           is_true (Ops.is_inline_call (Ops.call body []));

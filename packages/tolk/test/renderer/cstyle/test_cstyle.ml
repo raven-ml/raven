@@ -1286,7 +1286,7 @@ let divides_on_metal () =
   | Ok m ->
       let devices = function "CPU:1" -> m | _ -> Rig.host in
       let n = Array.length dividends in
-      let buffer () = Ops.new_buffer (Single "CPU:1") n Float32 in
+      let buffer () = Ops.new_buffer "CPU:1" n Float32 in
       let out = buffer () and a = buffer () and b = buffer () in
       let compiled =
         Realize.compile_linear

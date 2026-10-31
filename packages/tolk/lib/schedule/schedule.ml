@@ -31,21 +31,16 @@ end
 
 (* Linearizing *)
 
-(* The data source a kernel reads: a kernel's output, a buffer, or a value on
-   several devices. *)
+(* The data source a kernel reads: a kernel's output or a buffer. *)
 let rec unwrap_src s =
   match (op s, src s) with
-  | (Op.After | Op.Buffer | Op.Alloc | Op.Param | Op.Mselect | Op.Mstack), _
-  | _, [] ->
-      s
+  | (Op.After | Op.Buffer | Op.Alloc | Op.Param), _ | _, [] -> s
   | _, x :: _ -> unwrap_src x
 
-(* A buffer's state is an after or the storage; shard selections and stacks join
-   the states of each device. *)
-let rec states s =
+(* A buffer's state is an after or the storage. *)
+let states s =
   let s = unwrap_src s in
   match op s with
-  | Op.Mselect | Op.Mstack -> List.concat_map states (src s)
   | Op.After | Op.Buffer | Op.Alloc | Op.Param -> [ s ]
   | o ->
       invalid_arg
@@ -105,11 +100,8 @@ let copy_state ~slot s =
   let buf = buf_uop s in
   let device =
     match device buf with
-    | Some (Single _ as d) -> d
-    | _ ->
-        invalid_arg
-          "a kernel reads a buffer state that a kernel it waits for \
-           overwrites, on several devices"
+    | Some d -> d
+    | None -> invalid_arg "a copied buffer state needs a device"
   in
   let n = max_numel buf in
   (* The copy lies as the state's storage does, which the reader's kernel
@@ -132,8 +124,6 @@ let rec swap s c d =
   else
     match (op d, src d) with
     | (Op.After | Op.Buffer | Op.Alloc | Op.Param), _ | _, [] -> d
-    | (Op.Mselect | Op.Mstack), srcs ->
-        replace d ~src:(List.map (swap s c) srcs)
     | _, x :: rest -> replace d ~src:(swap s c x :: rest)
 
 (* [sink] with each kernel of [hazards], a list of a kernel and a state it
@@ -384,8 +374,7 @@ let pass_values values call =
       @ List.map (fun v -> List.assoc (param_of v).slot values) held)
 
 (* Nested linear calls are lexical scopes: their positional parameters shadow
-   the enclosing scope, while calls without scalar arguments, such as a
-   precompiled allreduce, inherit it. A scalar argument that is a variable is
+   the enclosing scope, while calls without scalar arguments inherit it. A scalar argument that is a variable is
    bound into each kernel that reads it; any other is a value its kernels are
    passed ({!pass_values}). *)
 let rec resolve_linear_call ?(outer_binds = []) linear_call =
@@ -559,7 +548,7 @@ let assert_all_same_devices ast =
     List.fold_left
       (fun acc x ->
         match (op x, device x) with
-        | Op.Param, Some d when not (List.exists (equal_device d) acc) ->
+        | Op.Param, Some d when not (List.exists (String.equal d) acc) ->
             acc @ [ d ]
         | _ -> acc)
       []
@@ -575,7 +564,7 @@ let assert_all_same_devices ast =
 
 (* A kernel that copies between devices, or to or from a disk, is a copy. *)
 let is_copy dst src =
-  (not (Option.equal equal_device (device dst) (device src))) || on_disk dst
+  (not (Option.equal String.equal (device dst) (device src))) || on_disk dst
 
 let copy_kernel_to_store call dst src =
   if is_copy dst src then
@@ -657,31 +646,14 @@ let all_int shape =
 
 (* Movements and bitcasts of a buffer are a view of it when they select a
    contiguous range of its elements. *)
-let rec view_of ctx c src =
+let view_of ctx c src =
   if not (all_int (shape c)) then None
   else
     let rec storage b =
       if op b = Op.Bitcast then storage (base (nth b 0)) else b
     in
     let buf = storage (base src) in
-    if op buf = Op.Unshard then
-      match device c with
-      | Some (Single _) -> None
-      | _ -> (
-          let unshard =
-            graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() src
-              (After_sources Multi.multi_pm)
-          in
-          if op unshard <> Op.Unshard then None
-          else
-            let shard = nth unshard 0 in
-            match view_of ctx shard shard with
-            | None -> None
-            | Some view ->
-                let s = sharding unshard in
-                Some
-                  (Shape.unshard ~ranges:(List.map snd s) view (List.map fst s)))
-    else if op buf <> Op.Buffer then None
+    if op buf <> Op.Buffer then None
     else
       match Prepare.contiguous_view src with
       | Some (buf, offset) when op buf = Op.Buffer ->
@@ -702,7 +674,7 @@ let contiguous_mops_to_view c src = view_of None c src
 
 let is_store_after u =
   op u = Op.After
-  && (op (unsharded_base (nth u 0)) <> Op.Alloc || op (nth u 1) = Op.Store)
+  && (op (base (nth u 0)) <> Op.Alloc || op (nth u 1) = Op.Store)
 
 (* Scheduling rewrites belong in Prepare; only storage and interface
    normalisation belongs here. *)

@@ -71,20 +71,9 @@ let rec view_offset v =
       | _ -> invalid_arg "Tolk_engine: a view of storage is one-dimensional")
   | _ -> (v, Ops.Int 0)
 
-(* [view_offset], through a shard selection too: the storage, the shard
-   selected, if any, and the byte offset. *)
-let lane_offset v =
-  let sel, off = view_offset v in
-  if Ops.op sel <> Op.Mselect then (sel, None, off)
-  else
-    let base, inner = view_offset (Ops.nth sel 0) in
-    let shard = match Ops.arg sel with Ops.Shard i -> Some i | _ -> None in
-    (base, shard, Shape.Sint.(off + inner))
-
 let names u =
   match Ops.device u with
-  | Some (Single d) -> [ d ]
-  | Some (Multi ds) -> ds
+  | Some d -> [ d ]
   | None -> invalid_arg (Format.asprintf "%a has no device" Ops.pp u)
 
 let is_slot u =
@@ -430,16 +419,12 @@ let first_byte b base d =
   else p
 
 (* Where the view [u] of lane [lane] lies: a lane of a parameter, which a run
-   gives; of bound storage; of storage made at link; or of a stack of one view
-   per device. A storage of one device serves every lane. *)
-let rec locate b u lane =
-  let base, shard, off = lane_offset u in
+   gives; of bound storage; or of storage made at link. A storage of one device
+   serves every lane. *)
+let locate b u lane =
+  let base, off = view_offset u in
   let offset = affine_sint b lane off in
-  let pick ns =
-    match shard with
-    | Some j -> j
-    | None -> if List.compare_length_with ns 1 = 0 then 0 else lane
-  in
+  let pick ns = if List.compare_length_with ns 1 = 0 then 0 else lane in
   match (Ops.op base, Ops.arg base) with
   | Op.Param, Ops.Param p when is_slot base ->
       let ns = names base in
@@ -476,10 +461,6 @@ let rec locate b u lane =
             device = d;
             start = start base;
           })
-  | Op.Mstack, _ ->
-      let k = match shard with Some k -> k | None -> lane in
-      let l = locate b (List.nth (Ops.src base) k) 0 in
-      { l with offset = plus l.offset offset }
   | _ -> fail b.fn "%s is not storage" (Format.asprintf "%a" Ops.pp base)
 
 (* Steps *)
@@ -867,7 +848,7 @@ and call b e =
      reads it or not. *)
   List.iter
     (fun u ->
-      let base, _, _ = lane_offset u in
+      let base, _ = view_offset u in
       match Ops.arg base with
       | Ops.Param p when is_slot base ->
           note_param b p.slot (List.map b.named (names base)) (bytes base)

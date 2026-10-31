@@ -104,7 +104,7 @@ let timed_call ~value prg =
     match List.assoc_opt slot arguments with
     | Some u -> u
     | None ->
-        param ~shape:[ Int 1 ] ~device:(Single info.target.device) slot
+        param ~shape:[ Int 1 ] ~device:info.target.device slot
           Dtype.Uint8
   in
   call prg (List.init n argument)
@@ -126,7 +126,7 @@ let try_compile (ren : Renderer.t) k =
   let on_device p =
     match arg p with
     | Param a when op p = Op.Param && addrspace p <> Some Dtype.Alu ->
-        let device = Single ren.target.device in
+        let device = ren.target.device in
         [ (p, replace p ~arg:(Param { a with device = Some device })) ]
     | _ -> []
   in

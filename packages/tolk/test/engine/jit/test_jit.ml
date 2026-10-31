@@ -19,7 +19,7 @@ let param_arg u =
 
 let device_name u =
   match (param_arg u).device with
-  | Some (Single d) -> d
+  | Some d -> d
   | _ -> invalid_arg "storage on one device"
 
 let storage u =
@@ -535,7 +535,7 @@ let devices name = List.assoc name (Run.devices ())
 let capture_of d =
   let nodes =
     Array.map
-      (fun (device, n) -> Ops.new_buffer (Single device) n Float32)
+      (fun (device, n) -> Ops.new_buffer device n Float32)
       d.kinds
   in
   let program kernels dst =
@@ -591,8 +591,8 @@ let past_boundary values =
   v
 
 let runs_a_phased_input () =
-  let out = Ops.new_buffer (Single "CPU") 4 Float32
-  and input = Ops.new_buffer ~phase:4 (Single "CPU") 4 Float32 in
+  let out = Ops.new_buffer "CPU" 4 Float32
+  and input = Ops.new_buffer ~phase:4 "CPU" 4 Float32 in
   let linear =
     Ops.v Op.Linear ~src:[ Ops.call (Lazy.force inc_phased) [ out; input ] ]
   in

@@ -19,7 +19,7 @@ let n =
 let buffer =
   Ops.v
     ~src:[ Ops.size_src (Some 16) ]
-    ~arg:(Param (Ops.param_arg ~slot:0 ~device:(Single "CPU") Float32))
+    ~arg:(Param (Ops.param_arg ~slot:0 ~device:"CPU" Float32))
     Buffer
 
 (* The laws *)
@@ -49,7 +49,7 @@ let kinds =
         ~src:[ Ops.size_src (Some 16) ]
         ~arg:
           (Param
-             (Ops.param_arg ~slot:0 ~device:(Single "CPU") ~phase:8 Float32))
+             (Ops.param_arg ~slot:0 ~device:"CPU" ~phase:8 Float32))
         Buffer );
     ( "a scalar parameter",
       Ops.v
@@ -68,14 +68,8 @@ let kinds =
         Range );
     ( "a reduction",
       Ops.v ~src:[ x ] ~arg:(Reduce { op = Add; num_axes = 1 }) Reduce );
-    ( "an allreduce",
-      Ops.v ~src:[ x ]
-        ~arg:(Allreduce { op = Max; device = Multi [ "CPU:0"; "CPU:1" ] })
-        Allreduce );
-    ("a copy to one device", Ops.v ~src:[ x ] ~arg:(Device (Single "CPU")) Copy);
-    ("a shard", Ops.v ~src:[ x ] ~arg:(Shard 1) Mselect);
+    ("a copy", Ops.v ~src:[ x ] ~arg:(Device "CPU") Copy);
     ("a permutation", Ops.v ~src:[ x ] ~arg:(Axes [ 1; 0 ]) Permute);
-    ("an unshard of one axis", Ops.v ~src:[ x ] ~arg:(Axes [ 0 ]) Unshard);
     ("a flip", Ops.v ~src:[ x ] ~arg:(Flips [ true; false ]) Flip);
     ("a launch dimension", Ops.v ~src:[ int 4 ] ~arg:(String "gidx0") Special);
     ( "a flagged load",
@@ -92,7 +86,7 @@ let kinds =
         ~arg:
           (Bufferize
              {
-               device = Some (Single "CPU");
+               device = Some "CPU";
                addrspace = Local;
                keep = Whole;
              })
@@ -217,7 +211,7 @@ let numbers =
           ~src:[ Ops.size_src (Some 4) ]
           ~arg:
             (Param
-               (Ops.param_arg ~slot:(next + slot) ~device:(Single "CPU") Float32))
+               (Ops.param_arg ~slot:(next + slot) ~device:"CPU" Float32))
           Buffer
       in
       let r = Ops.range ~axis_type:Loop (Int 3) axis_id in

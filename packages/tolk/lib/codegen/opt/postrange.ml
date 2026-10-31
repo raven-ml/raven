@@ -128,7 +128,6 @@ module Scheduler = struct
       op u = Op.Range
       && (not (Dtype.equal (dtype u) Dtype.Void))
       && V.(vmax u > of_int 0)
-      && axis_type u <> Device
     in
     (* Keep serial/vectorized reduction axes last, deriving their role from
        REDUCE rather than the axis type. void RANGEs are loops, not opt axes.

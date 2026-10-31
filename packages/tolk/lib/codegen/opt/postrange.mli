@@ -8,8 +8,7 @@
 (** Applying kernel optimisations.
 
     A kernel's axes are its ranges ({!Op.Range}) with a positive count, except
-    serial loops and device ranges, listed by argument
-    ({!Ops.compare_range_arg}), the weak and upcast ranges that a reduction
+    serial loops, listed by argument ({!Ops.compare_range_arg}), the weak and upcast ranges that a reduction
     closes last. A range's role in a reduction is that a reduction
     ({!Op.Reduce}) closes it: its axis is a reduce axis, and an upcast of it
     unrolls the reduction into the thread's lanes. An optimisation

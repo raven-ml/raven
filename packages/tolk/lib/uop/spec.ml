@@ -44,19 +44,10 @@ let validate_index ?(gate = bool true) uidx =
       end
   | _ -> true
 
-let valid_device_range device src =
-  match (device, src) with
-  | Some (Multi devices), [ rng ] ->
-      op rng = Op.Range
-      && Axis_type.equal (axis_type rng) Axis_type.Device
-      && Dtype.Value.to_int (vmax rng) + 1 = List.length devices
-  | Some (Multi _), _ -> false
-  | _, src -> List.is_empty src
-
 (* The failure message writes the node's own argument as text, with names and
    float values bare, and its sources' arguments as literals. *)
 let pp_arg_text ppf = function
-  | String s | Device (Single s) -> Format.pp_print_string ppf s
+  | String s | Device s -> Format.pp_print_string ppf s
   | Const c -> Dtype.pp_const ppf c
   | a -> pp_arg ppf a
 
@@ -93,20 +84,12 @@ let shape_equal s0 s1 = List.equal Sint.equal s0 s1
 let param_of u =
   match arg u with Param p -> p | _ -> invalid_arg "not a parameter"
 
+(* Storage has one source, its size. *)
+let size_only u = List.compare_length_with (src u) 1 = 0
+
 (* Construction gives CONST, CAST, BITCAST, PARAM, BUFFER, ALLOC, CUSTOM,
    CUSTOMI and INS the argument their type comes from, and a CONST the type of
    its value, so the rules check only the arguments construction leaves free. *)
-
-let mselect_fits x =
-  match (device (nth x 0), arg x) with
-  | Some (Multi devices), Shard i -> i < List.length devices
-  | _ -> false
-
-let mstack_fits x =
-  List.for_all
-    (fun s -> match device s with Some (Single _) -> true | _ -> false)
-    (src x)
-  || (all_same ( == ) (src x) && Option.is_none (device (nth x 0)))
 
 let memory = Upat.or_casted (pat [ Op.Index; Op.Shrink ] ~name:"uidx")
 
@@ -269,7 +252,6 @@ let shared : t =
                              Stage;
                              Index;
                              After;
-                             Unshard;
                              Bitcast;
                              Ins;
                              Const;
@@ -340,11 +322,8 @@ let tensor : t =
            (pat [ Op.Buffer ] ~src:[ p_size ] ~allow_any_len:true ~name:"buf")
            "buf"
            (fun buf ->
-             let p = param_of buf in
              if addrspace buf = Some Dtype.Global then
-               Some
-                 (is_device p.device
-                 && valid_device_range p.device (List.tl (src buf)))
+               Some (is_device (param_of buf).device && size_only buf)
              else None);
          check
            (pat [ Op.Alloc ] ~src:[ p_size ] ~allow_any_len:true ~name:"buf")
@@ -355,7 +334,7 @@ let tensor : t =
                Dtype.[ Some Global; Some Local; Some Reg ]
              && (Option.is_none p.device
                 || (addrspace buf = Some Dtype.Global && is_device p.device))
-             && valid_device_range p.device (List.tl (src buf)));
+             && size_only buf);
          decide
            (pat [ Op.Param ] ~src:[ pat [ Op.Stack ] ~src:[] ] ~name:"buf")
            "buf"
@@ -398,21 +377,8 @@ let tensor : t =
              match arg copy with
              | Device d ->
                  (not (is_disk_device d))
-                 && valid_device_range (Some d) (List.tl (src copy))
+                 && List.compare_length_with (src copy) 1 = 0
              | _ -> false);
-         check (pat [ Op.Allreduce ] ~name:"red" ~src:[ Upat.wild ]) "red"
-           (fun red ->
-             match arg red with
-             | Allreduce { op; _ } -> Op.Set.mem op Op.Set.reduce || op = Op.Or
-             | _ -> false);
-         check (pat [ Op.Unshard ] ~name:"multi") "multi" (fun multi ->
-             match arg multi with
-             | Axes axes ->
-                 List.length (src multi) = 1 + List.length axes
-                 && List.for_all is_weak (List.tl (src multi))
-             | _ -> false);
-         check (pat [ Op.Mselect ] ~name:"x") "x" mselect_fits;
-         check (pat [ Op.Mstack ] ~name:"x") "x" mstack_fits;
          accept
            (pat
               [ Op.Detach; Op.Contiguous_backward ]
@@ -574,19 +540,13 @@ let kernel_graph : t =
       accept (pat [ Op.Param ] ~src:[ p_size ]);
       check (pat [ Op.Buffer ] ~src:[ p_size ] ~allow_any_len:true ~name:"x") "x"
         (fun x ->
-          valid_device_range (param_of x).device (List.tl (src x))
+          size_only x
           && List.mem (addrspace x) Dtype.[ Some Global; Some Local; Some Reg ]);
       check (pat [ Op.Alloc ] ~src:[ p_size ] ~allow_any_len:true ~name:"x") "x"
-        (fun x ->
-          addrspace x = Some Dtype.Global
-          && valid_device_range (param_of x).device (List.tl (src x)));
+        (fun x -> size_only x && addrspace x = Some Dtype.Global);
       accept (pat [ Op.Bitcast ]);
-      check (pat [ Op.Mstack ] ~name:"x") "x" mstack_fits;
-      check (pat [ Op.Mselect ] ~name:"x") "x" mselect_fits;
-      (* An open device range is bound per device at launch; a loop range runs
-         the calls an end closes it around. *)
-      check (pat [ Op.Range ] ~name:"r") "r" (fun r ->
-          Axis_type.equal (axis_type r) Axis_type.Device || loop r);
+      (* A loop range runs the calls an end closes it around. *)
+      check (pat [ Op.Range ] ~name:"r") "r" loop;
       check (pat [ Op.End ] ~name:"e") "e" (fun e ->
           op (nth e 0) = Op.Call
           && List.for_all (fun r -> op r = Op.Range && loop r) (List.tl (src e)));
@@ -625,8 +585,6 @@ let kernel_graph : t =
                              After;
                              Buffer;
                              Alloc;
-                             Mstack;
-                             Mselect;
                              Bitcast;
                              Reshape;
                            ]))

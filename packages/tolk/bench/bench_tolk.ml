@@ -136,7 +136,7 @@ let compiled sink =
   let arg (p : Device.Tiny_elf.param) =
     Shape.param
       ~shape:[ Int (List.fold_left ( * ) 1 p.shape) ]
-      ~device:(Single "CPU") p.slot p.dtype
+      ~device:"CPU" p.slot p.dtype
   in
   let s =
     Tolk_engine.link_call

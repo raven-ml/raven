@@ -8,6 +8,11 @@
   operands, local reads, engines per backend, the withdrawal of §Fully sharded
   training, restored at M4, the stage 2 budget); the mapped-weights revision, 2026-09-26
   (borrowed storage, Laws 8 and 9)
+- Amended: 2026-10-31, tolk compiles for one device. Its multi-device rewrite
+  (`schedule/multi.ml`, `schedule/allreduce.ml`, the shard and allreduce
+  nodes) is out of scope (tolk's README, Exclusions): rune's sharded jit
+  lowers nx's per-operation partition into one-device kernels and copies, and
+  the rules this RFC cites from those files are nx's partition's to state.
 - Packages: nx (`Nx.Device`, `Nx.Placement`, `place`, `placement`, the tensor
   representation, routing and reads), rune (devices, the device engine, `jit`
   placement), tolk (ports), kaun (example importers)

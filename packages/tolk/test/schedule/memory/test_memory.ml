@@ -5,7 +5,7 @@ open Windtrap
 open Tolk
 
 let uop = Uops.uop
-let cpu = Ops.Single "CPU"
+let cpu = "CPU"
 
 (* Plans *)
 
@@ -53,7 +53,6 @@ let cases =
     "copy_chain";
     "sizes";
     "disk";
-    "two_devices";
     "random_0";
     "random_1";
     "random_2";
@@ -70,7 +69,6 @@ let cases =
     "attention";
     "matmul_chain";
     "convs";
-    "sharded";
     "copies";
     "sort";
   ]
@@ -113,19 +111,10 @@ let reached u = Ops.toposort ~calls:Skip u
 let planned_away u b = not (List.exists (( == ) b) (reached u))
 
 let taken =
-  let a = buf 16 and b = buf 32 and c = buf 64 in
+  let a = buf 16 and c = buf 64 in
   let run args = Ops.v Linear ~src:[ Ops.call (Ops.sink args) args ] in
   group "memory_plan_rewrite › the buffers a call takes"
     [
-      test "a shard selection and a gather pass their sources' buffers"
-        (fun () ->
-          let linear =
-            run [ Ops.mstack a [ Ops.mselect (Ops.mstack b [ a ]) 0 ] ]
-          in
-          let planned = Memory.memory_plan_rewrite linear in
-          equal int ~msg:"arenas" 1 (List.length (arenas linear planned));
-          equal (list bool) [ true; true ]
-            (List.map (planned_away planned) [ a; b ]));
       test "a view of a buffer keeps it out of the plan" (fun () ->
           let linear = run [ c; Shape.shrink a [ Some (Int 0, Int 4) ] ] in
           let planned = Memory.memory_plan_rewrite linear in

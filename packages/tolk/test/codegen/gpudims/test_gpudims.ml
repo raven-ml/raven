@@ -402,17 +402,6 @@ let group_gpudims_graphs =
     rewrites "group_gpudims_symbolic_global" (fun () ->
         let g = global (Sym (v "n" 1 64)) 0 in
         kernel ~size:64 g one [ g ]);
-    rewrites "group_gpudims_device_range" (fun () ->
-        let d = range ~axis_type:Device (Int 2) 0 and g = global (Int 4) 1 in
-        Ops.sink ~kernel:(Ops.kernel_info ())
-          [
-            Ops.end_
-              (Ops.store (Ops.index (buffer 4) [ g ]) (Ops.cast d Float32))
-              [ g; d ];
-          ]);
-    rewrites "group_gpudims_device_range_without_kernel" (fun () ->
-        let d = range ~axis_type:Device (Int 2) 0 in
-        Ops.sink [ Ops.end_ (Ops.store (Ops.index (buffer 4) [ d ]) one) [ d ] ]);
   ]
 
 let declines =

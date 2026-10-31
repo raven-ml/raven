@@ -415,10 +415,6 @@ let settings =
     number Setting.transcendental;
     switch Setting.split_reduceop;
     switch Setting.no_memory_planner;
-    number Setting.ring;
-    number Setting.all2all;
-    switch Setting.allreduce_cast;
-    number Setting.allreduce_node_ndevs;
     number Setting.cachelevel;
     switch Setting.ignore_beam_cache;
     switch Setting.disable_fast_idiv;
@@ -435,8 +431,6 @@ let settings =
     switch Setting.allow_tf32;
     number Setting.scache;
     switch Setting.disallow_broadcast;
-    switch Setting.late_allreduce;
-    number Setting.ring_allreduce_threshold;
     number Setting.reduceop_split_threshold;
     number Setting.reduceop_split_size;
     switch Setting.mv;
@@ -470,6 +464,8 @@ let not_ported =
   @ [ "CAPTURING"; "MAX_BUFFER_SIZE"; "VALIDATE_WITH_CPU" ]
   (* tolk cannot open a device. *)
   @ [ "ALLOW_DEVICE_USAGE" ]
+  (* The multi-device rewrite is out of scope. *)
+  @ [ "RING"; "ALL2ALL"; "ALLREDUCE_CAST"; "ALLREDUCE_NODE_NDEVS" ]
   (* A device's target follows from the device alone. *)
   @ [ "DEV" ]
   (* Their other readers are not ported. *)
@@ -498,8 +494,6 @@ let unrecorded = [ "PARALLEL"; "NO_COLOR" ]
 let getenv_defaults =
   [
     ("JITBEAM", "");
-    ("LATE_ALLREDUCE", "1");
-    ("RING_ALLREDUCE_THRESHOLD", "256000");
     ("REDUCEOP_SPLIT_THRESHOLD", "32768");
     ("REDUCEOP_SPLIT_SIZE", "22");
     ("MV", "1");
@@ -555,11 +549,8 @@ let holds_tinygrad_default s =
 let output_settings =
   [
     "ALIGNED";
-    "ALL2ALL";
     "ALLOW_HALF8";
     "ALLOW_TF32";
-    "ALLREDUCE_CAST";
-    "ALLREDUCE_NODE_NDEVS";
     "BEAM";
     "BEAM_ESTIMATE";
     "BEAM_LOCAL_MAX";
@@ -574,15 +565,12 @@ let output_settings =
     "EMULATED_DTYPES";
     "EXPAND_SSA";
     "JITBEAM";
-    "LATE_ALLREDUCE";
     "MAX_KERNEL_BUFFERS";
     "MV";
     "NOOPT";
     "NO_MEMORY_PLANNER";
     "REDUCEOP_SPLIT_SIZE";
     "REDUCEOP_SPLIT_THRESHOLD";
-    "RING";
-    "RING_ALLREDUCE_THRESHOLD";
     "SPLIT_REDUCEOP";
     "TC";
     "TC_MIN_GLOBALS";
@@ -606,10 +594,6 @@ let other_outputs =
       B (transcendental, 2);
       B (split_reduceop, false);
       B (no_memory_planner, true);
-      B (ring, 2);
-      B (all2all, 1);
-      B (allreduce_cast, false);
-      B (allreduce_node_ndevs, 2);
       B (disable_fast_idiv, false);
       B (max_kernel_buffers, 8);
       B (emulated_dtypes, [ "half" ]);

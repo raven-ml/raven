@@ -128,31 +128,15 @@ let cut ?(hoist = true) ~own next args body =
 
 (* Repeated steps *)
 
-(* A carry is storage of each device's part of its value: the whole of it, or
-   its shard along [axis]. [view s] is the value over storage [s] of [numel]
-   elements. *)
+(* A carry is storage of its value. [view s] is the value over storage [s] of
+   [numel] elements. *)
 type carry =
   | Empty of Ops.t
   | Carry of { slot : int; init : Ops.t; numel : int; view : Ops.t -> Ops.t }
 
-let carry device slot axis u =
-  let shape = Shape.max_shape u in
-  match (device, axis) with
-  | Ops.Multi devices, Some axis ->
-      let part =
-        List.mapi
-          (fun d n -> if d = axis then n / List.length devices else n)
-          shape
-      in
-      let view s =
-        Shape.unshard
-          (Shape.reshape s (List.map (fun n -> Ops.Int n) part))
-          [ axis ]
-      in
-      Carry { slot; init = u; numel = List.fold_left ( * ) 1 part; view }
-  | _ ->
-      let view s = Shape.reshape s (Shape.shape u) in
-      Carry { slot; init = u; numel = Shape.max_numel u; view }
+let carry slot u =
+  let view s = Shape.reshape s (Shape.shape u) in
+  Carry { slot; init = u; numel = Shape.max_numel u; view }
 
 let repeat device n init step =
   let empty u = Shape.max_numel u = 0 in
@@ -162,12 +146,13 @@ let repeat device n init step =
       if Option.is_none (Ops.device u) then Ops.copy_to_device u device else u
     in
     let init = List.map placed init in
-    (* Each carry is laid out as the step lays out its next value: sharded where
-       it mixes with a sharded value. An odd count takes its first step before
-       the loop. *)
-    let first = step (Ops.const ~dtype:Int32 (`Int Bigint.zero)) init in
-    let axes = List.map Shape.axis first in
-    let init = if n mod 2 = 1 then List.map Ops.contiguous first else init in
+    (* An odd count takes its first step before the loop. *)
+    let init =
+      if n mod 2 <> 1 then init
+      else
+        List.map Ops.contiguous
+          (step (Ops.const ~dtype:Int32 (`Int Bigint.zero)) init)
+    in
     if n < 2 then init
     else
       let count = ref 0 in
@@ -177,10 +162,7 @@ let repeat device n init step =
         k
       in
       let carries =
-        List.map2
-          (fun u axis ->
-            if empty u then Empty u else carry device (next ()) axis u)
-          init axes
+        List.map (fun u -> if empty u then Empty u else carry (next ()) u) init
       in
       let own = Ops.Tbl.create 8 in
       (* A value with no element stands in the step as zeros: reading it reads

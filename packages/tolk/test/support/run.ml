@@ -150,7 +150,7 @@ let on_host ?vars prg buffers =
       List.find_opt (fun ((p : Ops.param_arg), _) -> p.slot = slot) params
     with
     | Some (p, size) ->
-        Shape.param ~shape:[ Int size ] ~device:(Single "CPU") slot p.dtype
+        Shape.param ~shape:[ Int size ] ~device:"CPU" slot p.dtype
     | None ->
         List.find
           (fun v ->

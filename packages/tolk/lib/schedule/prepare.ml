@@ -13,7 +13,7 @@ let ops = Op.Set.of_list
 let ints = List.map (fun n -> Int n)
 let reaches = Ops.reaches ~calls:Skip
 let is_empty_shape u = List.exists (Sint.equal (Int 0)) (shape u)
-let equal_device_of u0 u1 = Option.equal equal_device (device u0) (device u1)
+let equal_device_of u0 u1 = Option.equal String.equal (device u0) (device u1)
 
 let forward_call_outputs sink =
   let placed = Tbl.create 8 in
@@ -53,10 +53,8 @@ let forward_call_outputs sink =
           then Some (storage_base target)
           else if op src = Op.Stage then
             Some (after target [ store target (nth src 0) ])
-          else if
-            (op src = Op.Buffer || op src = Op.Unshard)
-            && has_buffer_identity src
-          then Some target
+          else if op src = Op.Buffer && has_buffer_identity src then
+            Some target
           else None
         in
         match placement with
@@ -73,7 +71,7 @@ let forward_call_outputs sink =
 let rec walk_mop u =
   if
     Op.Set.mem (op u) Op.Set.movement
-    || List.mem (op u) Op.[ Index; Unshard; Bitcast ]
+    || List.mem (op u) Op.[ Index; Bitcast ]
   then walk_mop (nth u 0)
   else if op u = Op.After then
     let b = walk_mop (nth u 0) in
@@ -316,11 +314,7 @@ let resolve_function c =
        shape is a view on top: it binds to its argument viewed as such flat
        storage, so the views on the parameter stay valid. *)
     let flat_storage a =
-      let shp =
-        match (axis a, device a) with
-        | Some _, Some (Multi _) -> max_shard_shape a
-        | _ -> max_shape a
-      in
+      let shp = max_shape a in
       let a =
         let from_start (s, _) = Sint.equal s (Int 0) in
         match op a with
@@ -423,10 +417,9 @@ let expand_bitcast bc =
    copy from an offset. *)
 let copy_to_anon_store x copy =
   let x = pad_to x (List.map (fun s -> Some (Int s)) (max_shape x)) in
-  (* The buffer takes the device range from the copy. *)
   let buf =
     v Op.Alloc
-      ~src:(size_src (Some (max_numel x)) :: List.tl (src copy))
+      ~src:[ size_src (Some (max_numel x)) ]
       ~arg:
         (Param
            (param_arg ~slot:(unique_num ())
@@ -440,7 +433,7 @@ let copy_to_anon_store x copy =
 let stage_to_anon_store x stg =
   let buf =
     v Op.Alloc
-      ~src:(size_src (Some (max_numel x)) :: device_range_src (device x))
+      ~src:[ size_src (Some (max_numel x)) ]
       ~arg:
         (Param
            (param_arg ~slot:(unique_num ())
@@ -500,10 +493,6 @@ let earliest_rewrites =
   Pattern_matcher.append Shape.mop_cleanup
     (Pattern_matcher.v
        (fun () -> [
-         (* Allreduces are resolved bottom up. *)
-         rule
-           (Upat.op Op.Allreduce ~name:"red" ~src:[ var "buf" ])
-           (fun m -> Some (Allreduce.create_allreduce_function (m "red")));
          rule
            (Upat.op Op.Reduce ~name:"reduce" ~src:[ var "x" ])
            (fun m -> split_reduceop (m "reduce") (m "x"));
@@ -513,7 +502,7 @@ let earliest_rewrites =
          (* A sink only references bases. *)
          rule (Upat.op Op.Sink ~name:"x") (fun m ->
              let x = m "x" in
-             Some (replace x ~src:(List.map unsharded_base (src x))));
+             Some (replace x ~src:(List.map base (src x))));
          (* Copies *)
          (* A copy to the device of its source is a no-op: a stage
             materialises on the same device. *)
@@ -636,10 +625,6 @@ let prepare_rangeify sink =
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
       (forward_call_outputs sink)
-      (Around_sources { before = Multi.scatter_dests; after = Multi.multi_pm })
-  in
-  let tsink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink
       (After_sources
          (Pattern_matcher.concat
             [ pm_tensor_mops; pm_inline_calls; pm_disk_copy ]))

@@ -38,7 +38,6 @@ let uops_colors =
       (Index, "CEF9B7");
       (Stack, "D8F9E4");
       (Wmma, "efefc0");
-      (Unshard, "f6ccff");
       (Ins, "eec4ff");
       (Threefry, "ffff80");
       (Buffer, "B0BDFF");
@@ -51,9 +50,6 @@ let uops_colors =
       (Binary, "404040");
       (Linear, "7DF4FF");
       (Alloc, "C07788");
-      (Allreduce, "ff40a0");
-      (Mselect, "d040a0");
-      (Mstack, "d040a0");
       (Stage, "FFC14D");
       (After, "8A7866");
       (End, "524C46");
@@ -106,7 +102,7 @@ let storage_arg u (p : param_arg) =
         | None | Some Dtype.Global -> []
         | Some a -> [ " addrspace=" ^ addr_name a ]);
         (match p.device with
-        | Some (Single s) when word_device s -> [ " device=" ^ s ]
+        | Some s when word_device s -> [ " device=" ^ s ]
         | Some d -> [ " device=" ^ to_string pp_device d ]
         | None -> []);
         (if p.volatile then [ " volatile=true" ] else []);
@@ -138,7 +134,7 @@ let render_arg u =
         (String.lowercase_ascii (Op.name r.op))
         (if r.num_axes <> 0 then strf " pop=%d" r.num_axes else "")
   | (Op.Cast | Op.Bitcast), Dtype dt -> Dtype.name dt
-  | Op.Copy, Device (Single s) | Op.Special, String s -> s
+  | Op.Copy, Device s | Op.Special, String s -> s
   | _, No_arg -> ""
   | _, a -> to_string pp_arg a
 

@@ -39,8 +39,8 @@ val get_call_name :
     buffers are [bufs]: a program's kernel name, as its kernel gives it, or, for
     a copy, ["copy S, D <- E"] in yellow, where [S] is the size copied with the
     variables of [var_vals] (default [[]]) replaced by their values, and [D] and
-    [E] the first seven characters of each device of the destination and the
-    source.
+    [E] the first seven characters of the destination's and the source's
+    devices.
 
     Raises [Invalid_argument] for any other call. *)
 

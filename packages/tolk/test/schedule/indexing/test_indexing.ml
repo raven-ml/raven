@@ -130,10 +130,7 @@ let reads in_shape out_shape idxs =
    invalid index gives. *)
 let moved in_shape m =
   let moved = Shape.mop (view in_shape) m in
-  match Tensors.eval ~buffers:[ (0, elements in_shape) ] moved with
-  | [ elements ] ->
-      List.map (fun v -> (v :> Dtype.const)) (Array.to_list elements)
-  | _ -> fail "a movement of a value on one device is on one device"
+  Array.to_list (Tensors.eval ~buffers:[ (0, elements in_shape) ] moved)
 
 let apply in_shape m idxs = Indexing.apply_movement_op (ints in_shape) m idxs
 
@@ -372,16 +369,9 @@ let programs =
     "variable_stack";
     "copy";
     "bitcast_copy";
-    "shard_add";
-    "shard_sum";
-    "shard_sum_1";
-    "shard_sum_ring";
-    "shard_sum_ring_1";
-    "shard_matmul";
     (* hand-built graphs *)
     "expand_by_range";
     "expand_by_range_stored";
-    "mstack_of_values";
     "scalar_and_wide_uses";
   ]
 
@@ -462,13 +452,11 @@ let debug =
    (Interpreter) are what the program's tensors write (Tensors). Storage [s]
    holds small integers, so that sums are exact in any order. *)
 
-let devices = function Some (Ops.Multi l) -> List.length l | _ -> 1
-
 let filled u =
   List.filter_map
     (fun n ->
       match (Ops.op n, Ops.arg n) with
-      | (Param | Buffer | Alloc), Param { slot; dtype; device; _ }
+      | (Param | Buffer | Alloc), Param { slot; dtype; _ }
         when Shape.max_shape n <> [] ->
           let size = Shape.max_numel n in
           let element j : Dtype.value =
@@ -477,7 +465,7 @@ let filled u =
             else if Dtype.equal dtype Bool then `Bool (k > 0)
             else z k
           in
-          Some (slot, Array.init (size * devices device) element)
+          Some (slot, Array.init size element)
       | _ -> None)
     (Ops.toposort ~calls:Enter u)
 
@@ -551,7 +539,7 @@ let writes =
    Hand-built graphs, each the store of one value into the storage of slot [0]
    on the CPU, that state one rule of run_rangeify at a time. *)
 
-let cpu = Ops.Single "CPU"
+let cpu = "CPU"
 let p slot shape = Shape.param ~device:cpu ~shape:(ints shape) slot Float32
 
 let stored value =
@@ -797,31 +785,15 @@ let rewrites =
                (List.filter
                   (fun n -> List.mem (Ops.op n) movements)
                   (Ops.toposort ~calls:Enter u))));
-      test "calls, afters and shards get no ranges" (fun () ->
-          ignore (Indexing.run_rangeify ~debug:true (program "shard_sum"));
+      test "calls and afters get no ranges" (fun () ->
+          ignore (Indexing.run_rangeify ~debug:true (program "custom_kernel"));
           let printed = output () in
           List.iter
             (fun op -> not_contains ~sub:op printed)
-            [ "Ops.CALL"; "Ops.AFTER"; "Ops.MSELECT"; "Ops.MSTACK" ]);
+            [ "Ops.CALL"; "Ops.AFTER" ]);
       test "a pad that gets no ranges stays a pad" (fun () ->
           let u = Ops.sink [ Shape.pad (p 1 [ 4 ]) [ Some (Int 1, Int 2) ] ] in
           equal int 1 (count Pad (Indexing.run_rangeify u)));
-      test "a source of a gather across devices is stored on its device"
-        (fun () ->
-          equal (list opts_witness)
-            [
-              {
-                device = Some (Single "CPU:0");
-                addrspace = Global;
-                keep = Removable;
-              };
-              {
-                device = Some (Single "CPU:1");
-                addrspace = Global;
-                keep = Removable;
-              };
-            ]
-            (opts (Indexing.run_rangeify (program "mstack_of_values"))));
       test "an expand by a range ends none of its source's ranges" (fun () ->
           equal int 0
             (count Stage (Indexing.run_rangeify (program "expand_by_range"))));

@@ -14,10 +14,9 @@
     and shorten chains of movements. Divisibility and the evaluation of symbolic
     integers are here too, since the rules read them.
 
-    Storage, sharding, variables and calls read shapes, so they are here too:
-    storage of a shape ({!param}, {!alloc}, {!placeholder}), values sharded
-    over devices ({!shard}, {!axis}), variables bound to values ({!bind}),
-    calls that write new storage ({!call_with_outputs}) and the launch
+    Storage, variables and calls read shapes, so they are here too: storage
+    of a shape ({!param}, {!alloc}, {!placeholder}), variables bound to values
+    ({!bind}), calls that write new storage ({!call_with_outputs}) and the launch
     information of a program ({!program_info_of_sink}).
 
     {b Errors.} A broken precondition raises [Invalid_argument]. *)
@@ -325,45 +324,6 @@ val arange : ?start:int -> ?step:int -> ?dtype:Dtype.t -> int -> Ops.t
 val nbytes : Ops.t -> int
 (** [nbytes u] is the number of bytes of [u]'s elements. *)
 
-(** {1:multi Several devices} *)
-
-val axis : Ops.t -> int option
-(** [axis u] is the axis [u] is sharded on, if it is sharded on one.
-
-    Raises [Invalid_argument] if [u] is sharded on several axes, or if a reshape
-    moves elements between shards. *)
-
-val bounds : Ops.t -> (Ops.sint * Ops.sint) list
-(** [bounds u] is the start and end of each shard along [u]'s axis.
-
-    Raises [Invalid_argument] if [u] is not sharded. *)
-
-val shard_shape : Ops.t -> Ops.sint list
-(** [shard_shape u] is the shape of one of [u]'s shards. *)
-
-val max_shard_shape : Ops.t -> int list
-(** [max_shard_shape u] is [to_max_shape (shard_shape u)]. *)
-
-val unshard : ?ranges:Ops.t list -> Ops.t -> int list -> Ops.t
-(** [unshard ~ranges u axes] reassembles [u], sharded on [axes] over [ranges]
-    (default one {!Ops.Axis_type.Device} range over [u]'s devices).
-
-    Raises [Invalid_argument] if the lengths differ or an axis repeats. *)
-
-val shard_slice : Ops.t -> int -> Ops.t -> Ops.t
-(** [shard_slice u axis r] is the part of [u] along [axis] that the range [r]
-    selects: the [n] elements of [axis] from [r * n], where [n] is the size of
-    [axis] divided by [r]'s count. It is [u] if [u] is a scalar.
-
-    Raises [Invalid_argument] if [r]'s count does not divide the axis. *)
-
-val shard : ?axis:int -> Ops.t -> string list -> Ops.t
-(** [shard ~axis u devices] is [u] copied to [devices], split along [axis] if
-    given. *)
-
-val store_call : Ops.t -> Ops.t -> Ops.t
-(** [store_call dst src] is the call that copies [src] into [dst]. *)
-
 (** {1:storage Storage}
 
     Sizes of storage are [int]s: a shape of more than [max_int] elements raises
@@ -376,8 +336,8 @@ val empty : ?device:Ops.device -> Ops.sint list -> Dtype.t -> Ops.t
     Raises [Invalid_argument] if [dt] is weak. *)
 
 val empty_like : ?dtype:Dtype.t -> ?device:Ops.device -> Ops.t -> Ops.t
-(** [empty_like u] is uninitialised storage of [u]'s shape, type and placement,
-    sharded as [u]. *)
+(** [empty_like u] is uninitialised storage of [u]'s shape, type and
+    placement. *)
 
 val clone : ?device:Ops.device -> Ops.t -> Ops.t
 (** [clone ~device u] is a copy of [u] into new storage on [device] (default
@@ -389,14 +349,13 @@ val alloc :
   ?slot:int ->
   ?addrspace:Dtype.addr_space ->
   ?device:Ops.device ->
-  ?axis:int ->
   Ops.sint list ->
   Dtype.t ->
   Ops.t
-(** [alloc shape dt] is call-local storage of [shape], sharded on [axis]. *)
+(** [alloc shape dt] is call-local storage of [shape]. *)
 
 val alloc_like : ?slot:int -> ?addrspace:Dtype.addr_space -> Ops.t -> Ops.t
-(** [alloc_like u] is [alloc] of [u]'s shard shape and type. *)
+(** [alloc_like u] is [alloc] of [u]'s greatest shape and type. *)
 
 val placeholder :
   ?slot:int ->
@@ -411,7 +370,8 @@ val placeholder :
     Raises [Invalid_argument] if local storage gets a device. *)
 
 val placeholder_like : ?addrspace:Dtype.addr_space -> Ops.t -> int -> Ops.t
-(** [placeholder_like u slot] is a placeholder of [u]'s shard shape and type. *)
+(** [placeholder_like u slot] is a placeholder of [u]'s greatest shape and
+    type. *)
 
 val param :
   ?shape:Ops.sint list ->
@@ -435,8 +395,8 @@ val param :
 
 val param_like : ?name:string -> Ops.t -> int -> Ops.t
 (** [param_like ~name u slot] is a parameter in [slot], named [name] (default
-    none), that [u] can be passed to: a scalar variable without its value, one
-    shard of a sharded value, or storage of [u]'s shape. Storage has the phase
+    none), that [u] can be passed to: a scalar variable without its value, or
+    storage of [u]'s shape. Storage has the phase
     and alignment of the storage [u] views ({!storage_phase}).
 
     Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
@@ -450,21 +410,19 @@ val storage_phase : Ops.t -> int * int
     such as a window that moves with a range, lowers the alignment to the
     largest power of two those bytes are a multiple of, and a symbolic start
     into a view that reorders or pads the storage keeps only the element's size.
-    Any other view keeps its storage's: a reordering, a bitcast, an ordering or
-    a shard selection. A stage of a view of a buffer through movements and
+    Any other view keeps its storage's: a reordering, a bitcast or an
+    ordering. A stage of a view of a buffer through movements and
     bitcasts is the view when scheduling finds it contiguous, and storage of its
     own on a 16-byte boundary otherwise, so it has what both hold: phase [0] and
     the largest power of two up to the buffer's alignment that the view's first
-    byte is a multiple of; [(1, 0)] when a size is symbolic or the buffer
-    sharded. A view whose first or last element is padding, or whose last
+    byte is a multiple of; [(1, 0)] when a size is symbolic. A view whose first or last element is padding, or whose last
     element does not lie as many elements past its first as a run of its size,
     is no run, and its stage has [(16, 0)]. Storage on a disk, which no vector
     access reads, and anything else that is not storage or a view of it have
     [(16, 0)]. *)
 
-val view_as : ?axis:int -> Ops.t -> Ops.sint list -> Ops.t
-(** [view_as ~axis u shape] views the flat storage [u] as [shape], sharded on
-    [axis]. *)
+val view_as : Ops.t -> Ops.sint list -> Ops.t
+(** [view_as u shape] views the flat storage [u] as [shape]. *)
 
 (** {1:variables Variables} *)
 
@@ -494,8 +452,8 @@ val unbind_all : Ops.t -> Ops.t * (Ops.t * Dtype.value) list
     with its value. *)
 
 val variables : Ops.t -> Ops.t list
-(** [variables u] is the unbound scalar variables [u] reads, with a
-    ["_device_num"] variable for each device range, sorted by name and slot. *)
+(** [variables u] is the unbound scalar variables [u] reads, sorted by name and
+    slot. *)
 
 (** {1:symbolic Divisibility} *)
 
@@ -513,6 +471,9 @@ val divide_exact : Ops.t -> Ops.t -> Ops.t option
 (** [divide_exact u d] is [u / d] if it divides exactly. *)
 
 (** {1:calls Calls} *)
+
+val store_call : Ops.t -> Ops.t -> Ops.t
+(** [store_call dst src] is the call that copies [src] into [dst]. *)
 
 val call_with_outputs :
   ?name:string ->

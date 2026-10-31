@@ -67,8 +67,7 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
 
     New ranges are numbered from [0] in the order the walk creates them, and
     are {!Ops.Axis_type.Weak}: a range is a reduction's when the reduction
-    closes it. A node is stored whole when it is a {!Op.Store}, a
-    source of an {!Op.Mselect} or an {!Op.Mstack} that is not storage, a source
+    closes it. A node is stored whole when it is a {!Op.Store}, a source
     of a call to a kernel given as code that is not storage, a gathered source
     that is not storage, or a value stored into a destination it reads.
 
@@ -101,10 +100,9 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
     - movements are removed;
     - a stage without a device gets [sink]'s.
 
-    Calls, {!Op.After}s, {!Op.Mselect}s and {!Op.Mstack}s get no ranges, and the
-    walk does not enter kernels ({!Ops.gate_kernel_sink}). With [debug] (default
-    [false]), each node's ranges are printed on standard output as they are
-    assigned.
+    Calls and {!Op.After}s get no ranges, and the walk does not enter kernels
+    ({!Ops.gate_kernel_sink}). With [debug] (default [false]), each node's
+    ranges are printed on standard output as they are assigned.
 
     Raises [Invalid_argument] if a reduction of leading axes gets no ranges, or
     if a gather has more than one index. *)

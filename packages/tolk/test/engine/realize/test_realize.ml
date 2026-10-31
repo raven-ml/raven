@@ -30,7 +30,7 @@ let uncompiled =
 
 (* Kernels and calls *)
 
-let buffer ?(device = Ops.Single "CPU") ?(dtype = Dtype.Float32) slot n =
+let buffer ?(device = "CPU") ?(dtype = Dtype.Float32) slot n =
   Shape.param ~shape:[ Int n ] ~device slot dtype
 
 (* The kernel that stores [f] of each element of slot [src] (default [1]) into
@@ -63,7 +63,7 @@ let bound v x = Shape.bind v (`Int (Bigint.of_int x))
 let loop = Ops.range ~axis_type:Loop (Int 4) [ 100 ]
 
 let storage ?(device = "CPU") ?(dtype = Dtype.Float32) n =
-  Ops.new_buffer (Single device) n dtype
+  Ops.new_buffer device n dtype
 
 let linear calls = Ops.v Linear ~src:calls
 let custom_call args = Ops.call (Ops.custom_function "f" []) args
@@ -94,8 +94,6 @@ let programs =
     "copy_view";
     "copy_big";
     "copy_variable";
-    "shard_add";
-    "shard_to_one";
     "variable_shrink";
     "variable_two";
   ]
@@ -266,15 +264,6 @@ let names =
             (Helpers.colored Yellow "copy       16 B,     CPU <- CPU    ")
             (in_colour (fun () ->
                  Realize.get_call_name call (Realize.get_call_arg_uops call))));
-      test "lists every device of a sharded buffer" (fun () ->
-          let dst = Ops.new_buffer (Multi [ "CPU:0"; "CPU:1" ]) 4 Float32 in
-          let call =
-            Shape.store_call dst
-              (Ops.new_buffer (Multi [ "CPU:2"; "CPU:3" ]) 4 Float32)
-          in
-          equal string "copy       16 B, CPU:0, CPU:1 <- CPU:2, CPU:3"
-            (plain (fun () ->
-                 Realize.get_call_name call (Realize.get_call_arg_uops call))));
       test "sizes a copy with the variables' values" (fun () ->
           let v =
             Ops.variable "v" (`Int Bigint.one) (`Int (Bigint.of_int 10))
@@ -380,19 +369,6 @@ let compiling =
             linear [ Ops.call (program plus_one) [ storage 4; storage 4 ] ]
           in
           equal uop l (Realize.lower_and_compile ~targets l));
-      test "compiles a call on several devices for its first" (fun () ->
-          let asked = ref [] in
-          let targets d =
-            asked := d :: !asked;
-            clang
-          in
-          let devices = Ops.Multi [ "CPU:1"; "CPU:2" ] in
-          let kernel = map_kernel ~device:devices Fun.id in
-          let sharded () = Ops.new_buffer devices 4 Float32 in
-          ignore
-            (Realize.lower_and_compile ~targets
-               (linear [ Ops.call kernel [ sharded (); sharded () ] ]));
-          equal (list string) [ "CPU:1" ] (List.sort_uniq String.compare !asked));
       test "raises Invalid_argument when no renderer serves a call's target"
         (fun () ->
           rejects (fun () ->

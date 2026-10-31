@@ -282,7 +282,7 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uops.py::TestExecALU::test_trunc_nonfinite, test_invalid_poison, test_div, test_floordiv, test_floormod, test_recip, test_bool_cmplt, test_bool_cmpne, test_bool_where, test_overflow | `exec_alu` values, truncation, Invalid | `O › exec_alu › exec_alu_values.golden` (every operand of these tests is a row); `O › exec_alu › Invalid poisons every binary operation` |
 | tinygrad: null/test_uops.py::TestGatedStoreRewrite (3 tests), TestFastIdiv (13 tests) | gated stores, fast division | Codegen's section |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_compare_alu_same_src_different_arg (skipped) | nodes are ordered by `<` | dropped: tinygrad skips it; `O › identity › compare is a total order that agrees with equal` |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_uop_variables | a `Tensor` program's variables | dropped: Tensor surface; `O › variables › variables are sorted by name, with a device range's device number` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_uop_variables | a `Tensor` program's variables | dropped: Tensor surface; `O › variables › variables are sorted by name` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_const_factor | `const_factor` of a hardware index | `O › divisibility › const_factor is a known divisor` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_cmp_self_folding_multidim | `simplify` folds `x < x` | Symbolic's section |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_replace | `replace` changes a field, and rejects an unknown one | `O › identity › replace is the node itself when nothing changes`; the unknown field is dropped: labelled arguments make it a type error |
@@ -291,7 +291,7 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uops.py::TestUOpStr (3 tests) | `str` is compact and `eval` reads it back | Render's section; `eval` is dropped (Python source) |
 | tinygrad: null/test_uops.py::TestUPatHelpers::test_location | a pattern records its source location | dropped: `UPat.location` serves match statistics, not ported (README exclusions) |
 | tinygrad: null/test_uops.py::TestUopsObject::test_timing | building 10k constants | dropped: a timing print |
-| tinygrad: null/test_uops.py::TestUopsObject::test_nested | the device of a 10k-deep graph | `O › several devices › the device of a deep graph needs no deep recursion` |
+| tinygrad: null/test_uops.py::TestUopsObject::test_nested | the device of a 10k-deep graph | `O › devices › the device of a deep graph needs no deep recursion` |
 | tinygrad: null/test_uops.py::TestUOpRender (7 tests) | `render` | Render's section |
 | tinygrad: null/test_uops.py::TestContiguousViewOffset (9 tests) | `contiguous_view_offset` | `Tolk.Prepare › contiguous_view ›` "storage is its own view from 0" (`test_simple`), "a shrink of leading rows starts at their first element" (`test_shrink`), "an element is a view at its offset" (`test_shrink_to_one`), "bytes of one whole element are a view of the storage" (`test_bitcast_shrink_to_one`), "an expand repeats" (`test_expand_is_none`), "an expanded constant is no view" (`test_expand_const_is_none`), "a pad adds elements" (`test_shrink_invalid`), "a shrink of inner columns skips elements" (`test_strided`); `test_2d` by the law `contiguous_view › laws`; `contiguous_view` is Prepare's (D4) |
 | tinygrad: null/test_uops.py::TestBitcastBufferView, TestLocalAccess, TestAssembly | renderer output | the renderers' sections |
@@ -325,8 +325,8 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_dim0, test_stack_dim1, test_stack_3tensors, test_stack_new_last, test_stack_mixed_dtype | `stack` | `O › graphs › stacks.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_index_dtype | a stack of weak constants | `O › graphs › bitcasts.golden` (its last node) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_dtype_string | a type named by a string | dropped: types are values |
-| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_dtype_override | `empty_like` with a type is storage | `O › graphs › clones.golden`; `O › several devices › empty_like on one device takes a sharded value's whole shape` |
-| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device | a sharded value's `empty_like` on one device | `O › several devices › empty_like on one device takes a sharded value's whole shape`; the singleton-tuple spelling is dropped: canonicalizing devices is Device's (L6) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_dtype_override | `empty_like` with a type is storage | `O › graphs › clones.golden`; `O › devices › empty_like on another device takes the value's shape` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device | a sharded value's `empty_like` on one device | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: canonicalizing devices is Device's (L6) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_empty, test_empty_like | `empty`, `empty_like` | `O › graphs › clones.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_full, test_full_kwargs, test_full_symbolic_fill, test_zeros, test_ones, test_invalids, test_arange, test_arange_empty, test_arange_step, test_linspace, test_linspace_one_step, test_eye, test_eye_rect, test_triu, test_triu_diagonal, test_tril, test_tril_diagonal | other creation methods | dropped: not kept (plan §3, L2) |
@@ -750,7 +750,7 @@ last one's divisors move onto it.
 | tinygrad: `null/test_gpudims.py::TestGroupedDims::test_upcast_same_id_as_hardware` | an upcast range of a hardware range's identity stays | `GD › group_gpudims › group_gpudims_keeps_an_upcast_of_a_hardware_identity.golden` |
 | tinygrad: `null/test_gpudims.py::TestGroupedDims::test_execute_grouped_dims` | direct, merged and split launches, with identities shared across axis types, compute every output on the PYTHON device | `GD › grouped_dims › grouped_dims numbers each iteration of the golden's cases once` (the launches); `group_gpudims_masks_by_hardware_ranges.golden` (identities shared); running the kernel is dropped: the PYTHON device is not ported (README) |
 | tinygrad: `null/test_gpudims.py::TestGroupedDims::test_max_sizes_none` | no bounds | `GD › grouped_dims › grouped_dims.golden` (`None` rows) |
-| tinygrad: `codegen/gpudims.py` `group_gpudims`, `pm_device_to_var` (no test) | globals, locals, warps, masks, device ranges | `GD › group_gpudims › group_gpudims_*.golden` (19 kernels); `GD › group_gpudims › group_gpudims_declines.golden`, `group_gpudims_failures.golden` |
+| tinygrad: `codegen/gpudims.py` `group_gpudims` (no test) | globals, locals, warps, masks | `GD › group_gpudims › group_gpudims_*.golden` (17 kernels); `GD › group_gpudims › group_gpudims_declines.golden`, `group_gpudims_failures.golden` |
 | tinygrad: `codegen/gpudims.py` `pm_range_to_special` (no test) | hardware ranges become indices named by their axis, and leave the ends that closed them | `GD › pm_range_to_special › range_to_special_*.golden` (3 kernels); `GD › grouped_dims › grouped_dims.golden` (each row's indices, made indices) |
 | tinygrad: `codegen/gpudims.py` `_split_dims` on a symbolic size or fewer than three bounds (`ValueError`, `AssertionError`, `IndexError`) | README, CPython rows: "cannot limit dim" | `GD › grouped_dims › grouped_dims.golden` (the `IndexError` rows); `GD › grouped_dims › symbolic sizes › grouped_symbolic_failures.golden` |
 | tinygrad: `codegen/gpudims.py` `group_gpudims` with a symbolic warp (`ValueError`) | README, CPython rows: the warp's bound is its size's upper bound | `GD › group_gpudims › group_gpudims_symbolic_warp.golden` |
@@ -1262,29 +1262,18 @@ movements are removed afterwards.
 
 ## Allreduce
 
-The suite is `Tolk.Allreduce` (`schedule/allreduce/`), written `AR`
-below. `AR › handle_allreduce › recorded` holds tinygrad's expansion of
-allreduces on 2 to 8 CPU devices under each algorithm's settings
-(`<case>_handled.golden`), and `AR › create_allreduce_function › recorded`
-the function of some (`<case>_function.golden`, its new storage numbered as
-tinygrad's); `AR › handle_allreduce › values` and `› laws` state that an
-expansion and a function hold, on each device, the elementwise reduction of the
-shards (`Tensors`), on the recorded cases and on generated ones;
-`AR › handle_allreduce › algorithms` states which algorithm applies and how
-each moves values between devices. One mutant survives, equivalent:
-`(i + step) mod ndev` as `i - step` in the ring's source index, which is read
-only at step 0.
+No module: `schedule/allreduce.py` is part of the multi-device rewrite, which
+the README's Exclusions leave out (no consumer). Every row is dropped for that
+reason.
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_allreduce.py::TestRingAllReduce::test_schedule_ring | a ring on 4 devices makes 2N(N-1) copies along a ring | `AR › handle_allreduce › algorithms › a ring moves values only to the next device` |
-| tinygrad: null/test_allreduce.py::TestRingAllReduce::test_schedule_naive | a naive allreduce makes N(N-1) copies between distinct devices | `AR › handle_allreduce › algorithms › a naive allreduce copies each shard to every device`; its two kernels are the scheduler's section |
-| tinygrad: schedule/allreduce.py, the hierarchical branch of `handle_allreduce` (no upstream test) | a hierarchical allreduce to one device | D19: `AR › handle_allreduce › recorded › nodes_to_one_device_handled.golden, landed on its device (D19)` states the corrected graph from tinygrad's; `AR › rules › a hierarchical allreduce to one device lands there` checks its value and placement, and its function's. A known upstream defect: tinygrad leaves the value on every device, and `create_allreduce_function` then stores it into storage on the one target device |
-| tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | `ALLREDUCE_CAST` keeps 16-bit copies | dropped here: the cast is `schedule/multi.py`'s, Multi's section |
-| tinygrad: null/test_multitensor.py::TestMultiRamUsage::test_multi_layer_allreduce, test_allreduce_cast_dtype_memory | memory of allreduces | dropped here: Memory's and Multi's sections |
-| tinygrad: null/test_multitensor.py (the other tests) | sharding, multi-device ALU, batch norm | dropped here: Multi's section |
+| tinygrad: null/test_allreduce.py::TestRingAllReduce::test_schedule_ring, test_schedule_naive | the copies of a ring and a naive allreduce | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: schedule/allreduce.py, the hierarchical branch of `handle_allreduce` (no upstream test) | a hierarchical allreduce to one device | dropped: the multi-device rewrite is excluded (README); D19 is withdrawn |
+| tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | `ALLREDUCE_CAST` keeps 16-bit copies | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: null/test_multitensor.py::TestMultiRamUsage::test_multi_layer_allreduce, test_allreduce_cast_dtype_memory | memory of allreduces | dropped: the multi-device rewrite is excluded (README) |
 
 ## Support_memory
 
@@ -1412,76 +1401,22 @@ calls never return fail. One mutant survives, equivalent: `j < i` as `<=` in
 
 ## Multi
 
-The suite is `Tolk.Multi` (`schedule/multi/`), written `MU` below.
-`MU › multi_pm › recorded › programs` holds what tinygrad's `multi_pm` makes of
-the graph that scheduling a `Tensor` program on 2, 4 or 8 CPU devices hands it
-(`<program>_multi.golden`), and `› kernels` what it makes of kernels sharded
-across a workgroup's threads. `MU › multi_pm › values` states, on each
-recorded program `Tensors` can run, that the rewrite keeps what the program
-writes, and `MU › multi_pm › laws` that a generated sharded value, after a few
-operations, holds on each device the value computed whole; its values draw
-grids of 2 by 2 and 2 by 4 devices. The other groups state one rule each.
-`test_multi_early` runs under `LATE_ALLREDUCE=0`, which the library reads once,
-in a process of its own, so that each branch of that setting is tested by the
-process that takes it. Every mutant of `multi.ml` the suites reach is killed;
-the setting's own check runs at initialisation, outside every test, and each
-of its branches fails one process's tests.
-
-D21 is pinned by `MU › multi_pm › two sharded axes ›` "a reshape divides each
-sharded axis by its own count (D21)" and "a reshape of a mesh of 2 by 4 devices
-keeps each tile (D21)"; D23 by `MU › multi_pm › shard selections › a selection
-of a movement by the device range takes the selected device's position (D23)`
-and by the law's first example.
+No module: `schedule/multi.py` is the multi-device rewrite, which the README's
+Exclusions leave out (no consumer), with the in-kernel shards that codegen
+resolves with it. Every row is dropped for that reason; D21, D23, D35, D61, D82,
+D83 and D87 are withdrawn, and D73 keeps no sharded clause.
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_allreduce.py::TestAllreduceCast::test_allreduce_cast_half, test_allreduce_cast_bf16 | a sum of a half or bfloat16 cast up crosses the devices in 16 bits, and in 32 without `ALLREDUCE_CAST` | `MU › multi_pm › recorded › programs › allreduce_cast_multi.golden`, `allreduce_no_cast_multi.golden`, `allreduce_cast_bfloat16_multi.golden`; `MU › multi_pm › reductions ›` "a value cast up from a half crosses the devices as a half", "… from a bfloat16 …", "without allreduce_cast, it crosses in the type it is reduced in" |
-| tinygrad: null/test_allreduce.py::TestAllreduceCast::test_allreduce_cast_float32_noop | | `MU › … › allreduce_cast_float_multi.golden` |
-| tinygrad: schedule/multi.py:24 `lower_broadcast_copy` on a selected shard of a product with zero (no upstream test) | tinygrad HEAD raises "mselect must be on tuple device, getting None" when a product with zero, then a cast or a reduction, is selected, since simplifying the copy of the shard folds it to a constant | D35: the shard is the constant; `MU › multi_pm › laws ›` "a shard of a product with zero cast to a float is zero (D35)", "a shard of a sum of a product with zero is zero (D35)", and the law over every drawn program |
-| tinygrad: null/test_multitensor.py::TestMultiRamUsage (13 tests) | bytes each device holds | dropped here: memory is Memory's section and the executor's |
-| tinygrad: null/test_multitensor.py::TestMultiScalarALU::test_multi_times_replicated_scalar, test_multi_add_replicated_scalar | a sharded value times a scalar on every device stays sharded | `MU › … › add_replicated_scalar_multi.golden`, its value; `MU › multi_pm › arithmetic › a scalar source is kept as it is` |
-| tinygrad: null/test_multitensor.py::TestMultiScalarALU::test_multi_times_call_scalar | a per-device scalar from a call | `MU › multi_pm › stores and calls › a call of a compiled function passes its arguments' shards`; the value is the executor's |
-| tinygrad: null/test_multitensor.py::TestMultiAxis::test_reshape_shard_invalid, TestMultiTensor::test_shard_reshape_cross_boundary | a reshape that moves elements between shards raises | `MU › multi_pm › movements › a reshape that moves elements between shards is refused` |
-| tinygrad: null/test_multitensor.py::TestMultiAxis::test_reshape_shard_valid | | `MU › multi_pm › movements › a reshape keeps a sharded axis whole`; `reshape_split_multi.golden`, `reshape_inner_multi.golden` |
-| tinygrad: null/test_multitensor.py::TestMultiAxis::test_uop_shard_axis_none, test_empty_like_sharded, test_symbolic_reshape_shard_axis; TestMultiTensor::test_shard_like, test_shard_not_multiple | `UOp.axis`, `shard`, `empty_like` | dropped here: `Ops`' constructors and properties, Ops' section |
-| tinygrad: null/test_multitensor.py::TestMultiTensor::test_bn_ast_on_devices; TestBatchNorm::test_synced_vs_unsynced_bn | a batch norm on 4 devices | `MU › … › batchnorm_stats_multi.golden`, `batchnorm_stats_1_multi.golden`, their values; one kernel per device is Rangeify's |
-| tinygrad: null/test_multitensor.py::TestMultiTensor::test_init_rand_with_multiple_devices_fail, test_rand_like_* (5 tests) | | dropped: `Tensor` surface, the frontend is nx |
-| tinygrad: null/test_multitensor.py::TestBackendMultiTensor::test_shard_invalids_contiguous | | `MU › … › shard_invalids_multi.golden`; its kernel count is Rangeify's |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_to, test_shard, test_shard_empty, test_shard_same_device, test_numpy, test_tensor_from_multi | | `MU › … › shard_multi.golden`, `replicate_multi.golden`, `gather_multi.golden`, their values; `MU › multi_pm › copies`; the rest is the `Tensor` surface |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_four_add, test_elementwise_dtype, test_shard_elementwise, test_simple_add, test_simple_add_X, test_simple_add_W, test_simple_add_XW, test_alu_deviceless_const, test_add_rank_expand_shard | | `MU › … › add_multi.golden`, `add_four_multi.golden`, `add_eight_multi.golden`, `add_whole_multi.golden`, `add_broadcast_multi.golden`, `cast_half_multi.golden`, `arange_multi.golden`, `expand_multi.golden`, their values; `MU › multi_pm › arithmetic`; `MU › multi_pm › laws` |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_shrink_on_shard_axis, test_const_like_shrink_on_shard_axis, test_arange_shrink | | `MU › … › shrink_one_shard_multi.golden`, its value; `MU › multi_pm › movements › a shrink to one device's shard places that shard on every device`; the laws' `select shard` step |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_simple_reduce, test_shard_reduce, test_shard_plus_one_sum, test_shard_plus_one_sum_d0, test_allreduce_shard_ring_sum | | `MU › … › sum_sharded_axis_multi.golden`, `sum_other_axis_multi.golden`, `sum_all_multi.golden`, `max_sharded_axis_multi.golden`, their values; `MU › multi_pm › reductions`; the ring is Allreduce's section |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_stack | | `MU › … › stack_multi.golden`; `MU › multi_pm › arithmetic › a stack of values sharded alike stacks their shards` |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_allreduce_naive, test_allreduce_ring, test_allreduce_all2all, test_fuzz_allreduce | an allreduce of a sharded value | `MU › … › explicit_allreduce_multi.golden`; `MU › multi_pm › reductions › an allreduce of a sharded value reduces its shards`; the algorithms are Allreduce's section |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_allreduce_cast_half, test_allreduce_cast_half_assign | | `MU › … › allreduce_cast_multi.golden`; the kernel counts are Rangeify's |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_broadcast_symbolic, test_broadcast_expand | a copy of a value of symbolic or expanded shape to several devices | `MU › … › broadcast_symbolic_multi.golden`, `broadcast_expand_multi.golden` |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_multiple_to_single_device, test_to_single_device_gather_memory | | `MU › … › gather_multi.golden`, `gather_four_multi.golden`, `select_first_multi.golden`, their values; `MU › multi_pm › copies`; memory is Memory's section |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_matmul_shard_none, _X_0, _X_1, _W_0, _W_1, _0_0, _0_1, _1_0, _1_1 (9 tests), test_double_matmul_shard_* (4 tests) | | `MU › … › matmul_rows_multi.golden` (X 0), `matmul_columns_multi.golden` (W 1), `matmul_contracted_multi.golden` (1, 0), `matmul_resharded_multi.golden` (0, 0), `double_matmul_multi.golden`, their values; the laws |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_conv_data_shard, test_conv_bias_data_shard | | `MU › … › conv_multi.golden`, its value |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_embedding, test_rmsnorm, test_sdpa_causal_shard_batch | | `MU › … › embedding_multi.golden`, `rmsnorm_multi.golden`, `attention_multi.golden`, their values |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_flip, test_reshape_on_axis, test_shard_reshape | | `MU › … › flip_multi.golden`, `reshape_split_multi.golden`, `reshape_inner_multi.golden`, their values; `MU › multi_pm › movements` |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_gradient, test_backprop_conv, test_backprop_conv_wino, test_backward_sum, test_embedding_backward, test_embedding_backward_shard_weight, test_lr_scheduler_OneCycleLR | | dropped: gradients, tolk does not differentiate |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_shard_no_recompile, test_shard_beam, test_copy_jit, test_allreduce_*_jit, test_multitensor_jit_*, test_multi_tensor_jit_*, test_data_parallel_* | | dropped here: the captured jit (L8) and the end-to-end suite |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_assign_kv_cache_multi, test_mlb_assign_change_axis, test_clone | | `MU › … › assign_multi.golden`, `assign_shard_multi.golden`, `variable_shrink_multi.golden`, their values; the jit is L8's |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_symbolic_broadcast_copy, test_symbolic_broadcast_consumed | | `MU › multi_pm › copies › a copy of a value on one device to several is a copy to each`; `variable_shrink_multi.golden` |
-| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_rand_on_multiple_devices*, test_rand_like_on_shard*, test_full_like_on_shard*, test_dropout_on_shard*, test_shard_memory, test_multi_const_folding; TestHandleData; TestMultiFromUnrenderable | | dropped: `Tensor` surface and the executor |
-| tinygrad: runtime/test_multitensor.py::TestMultiBufferView::test_shrink_2d, test_reshape_then_shrink, test_chained_shrink, test_4_devices | a view of a sharded buffer | `MU › … › shrink_rows_multi.golden`, `reshape_then_shrink_multi.golden`, `shrink_chained_multi.golden`, `shrink_element_multi.golden`, their values; that the view needs no kernel is the scheduler's |
-| tinygrad: runtime/test_multitensor.py::Test2DShard (6 tests) | two axes sharded as a grid of devices | `MU › … › grid_add_multi.golden`, `grid_sum_all_multi.golden`, `grid_sum_other_axis_multi.golden`, `grid_matmul_multi.golden`, `grid_to_one_multi.golden`, their values; the laws draw grids |
-| tinygrad: runtime/test_multitensor.py::TestShrinkMultiTensorShardedAxis::test_shrink_bad_args | | `MU › multi_pm › movements › a shrink of part of a sharded axis is refused`, `a shrink of another axis shrinks each shard` |
-| tinygrad: runtime/test_multitensor.py::TestShrinkMultiTensorShardedAxis::test_ops, test_add_two_partitions, test_add_different_tensors | operations on one device's shard | `MU › … › add_two_partitions_multi.golden`, its value; the laws' `select shard` step followed by operations |
-| tinygrad: runtime/test_multitensor.py::TestBatchNorm (4 tests) | | `batchnorm_stats`; the backward passes are dropped, as above |
-| tinygrad: runtime/test_multitensor.py::TestMultiSetitem::test_setitem_scalar_axis0, test_setitem_slice_cross_shard, test_setitem_full_slice, test_setitem_stride, test_setitem_single_shard, test_setitem_tensor_value_replicated, test_setitem_tensor_value_sharded_aligned | | `MU › … › setitem_row_multi.golden`, `setitem_rows_multi.golden`, `setitem_columns_multi.golden`, `setitem_stride_multi.golden`, `setitem_replicated_value_multi.golden`, `setitem_sharded_value_multi.golden`, their values |
-| tinygrad: runtime/test_multitensor.py::TestMultiSetitem::test_setitem_scalar_axis_none | a replicated value holds no shard | dropped: no rule of `multi_pm` applies |
-| tinygrad: runtime/test_multitensor.py::TestTensorOps::test_interpolate, test_bitcast | | `MU › … › interpolate_multi.golden`, `bitcast_multi.golden`, their values |
-| tinygrad: runtime/test_multitensor.py::TestMultiTransformer | | dropped here: the end-to-end suite |
-| tinygrad: runtime/test_custom_kernel.py::TestUnshardIndex::test_contiguous_fragment_index, test_strided_fragment_index | an index into a thread's rows | `MU › multi_pm › recorded › kernels › fragment_blocks_multi.golden`, `fragment_strided_multi.golden`; `MU › multi_pm › fragments` |
-| tinygrad: runtime/test_custom_kernel.py::TestUnshardIndex::test_fragment_index_cannot_shard | | `MU › multi_pm › fragments › an index into rows another thread holds is refused` |
-| tinygrad: runtime/test_custom_kernel.py::TestUnshardAlu (2 tests) | | `MU › … › kernels › alu_scalar_multi.golden`, `alu_whole_multi.golden` |
-| tinygrad: runtime/test_custom_kernel.py::TestUnshardStore::test_store_unshard_value, test_store_unshard_value_2axis, test_store_load_reg_fragment | | `MU › … › kernels › store_value_multi.golden`, `store_value_two_axes_multi.golden`, `store_load_multi.golden`; `MU › multi_pm › stores and calls` |
-| tinygrad: runtime/test_custom_kernel.py::TestUnshardStore::test_store_load_local_fragment | an expected failure at run time | dropped: what fails is the kernel's execution; its rewrite is `store_load`'s |
-| tinygrad: runtime/test_custom_kernel.py::test_simple_sharded, test_sharded_add_one; runtime/test_function.py multi-device custom kernels | a custom kernel on shards | `MU › … › custom_kernel_multi.golden`, `inline_function_multi.golden`; `MU › multi_pm › stores and calls › a call of a compiled function passes its arguments' shards` |
+| tinygrad: null/test_multitensor.py (every class) | sharding, operations on shards, copies across devices, allreduces, memory per device | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: runtime/test_multitensor.py (every class) | the same, run on CPU devices | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | a sum of a half or bfloat16 cast up crosses the devices in 16 bits | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: schedule/multi.py `lower_broadcast_copy`, `reshape_multi`, `replace_allreduce`, `stack_multi`, `store_value_multi`, `copy_multi`, `index_multi` (no upstream test) | the departures D21, D23, D35, D61, D82, D83 and D87 recorded | dropped: the multi-device rewrite is excluded (README); the entries are withdrawn |
+| tinygrad: runtime/test_custom_kernel.py::TestUnshardIndex, TestUnshardAlu, TestUnshardStore | in-kernel shards of a hand-written kernel | dropped: the multi-device rewrite, which resolves them, is excluded (README) |
+| tinygrad: runtime/test_custom_kernel.py::test_simple_sharded, test_sharded_add_one; runtime/test_function.py multi-device custom kernels | a custom kernel on shards | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: runtime/test_assign.py::TestMultiAssign (12 tests) | stores into sharded values | dropped: the multi-device rewrite is excluded (README) |
 
 ## Prepare
 
@@ -1521,7 +1456,7 @@ lasts only while the index carries it, and a caller masks padded values.
 | tinygrad: runtime/test_assign.py::TestAssign::test_nested_after_contiguous_store, test_assign_from_alias | a store of a storage's own contents into itself | `assign_own_contents_prepared.golden`; `PR › … › the second of two equal stores into one storage is dropped` |
 | tinygrad: runtime/test_assign.py::TestAssign::test_assign_to_function_output, test_nested_function_assign | | `assign_to_function_output_prepared.golden`, `inline_function_prepared.golden`, their values |
 | tinygrad: runtime/test_assign.py, the other tests of TestAssign, and TestAssignOrdering, TestAssignToUnrealizedView, TestPartialAssignToSharedBuffer, TestAfterCachePatterns | the order of stores and reads, and kernel counts | dropped here: the order is the schedule's, the counts Rangeify's section; `assign_twice_prepared.golden`, `store_ordered_before_prepared.golden`, `placed_after_read_prepared.golden` hold the preparation of such graphs |
-| tinygrad: runtime/test_assign.py::TestMultiAssign (12 tests) | stores into sharded values | dropped here: Multi's section |
+| tinygrad: runtime/test_assign.py::TestMultiAssign (12 tests) | stores into sharded values | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_assign.py (4 tests), null/test_setitem_schedule.py (3 tests) | kernel counts | dropped here: Rangeify's section; `setitem_prepared.golden`, `setitem_tensor_prepared.golden` hold the preparation |
 | tinygrad: null/test_schedule.py::TestSchedule::test_zero_size, test_zero_size_alt, test_zero_size_assign, test_zero_size_children | empty values | `sum_of_nothing_prepared.golden`, `max_of_nothing_prepared.golden`, `add_nothing_prepared.golden`; `PR › … › a value with an empty axis is zero` |
 | tinygrad: null/test_schedule.py::TestSchedule::test_detach_assign, test_contiguous_backward_assign | | `detach_prepared.golden`, `contiguous_backward_prepared.golden`; `PR › … › a detach and a gradient marker are their source` |
@@ -1529,7 +1464,7 @@ lasts only while the index carries it, and a caller masks padded values.
 | tinygrad: null/test_schedule.py::TestSchedule::test_reduce_doesnt_split and the split tests | large reductions over few outputs split in two | `split_sum_prepared.golden`, `split_rows_prepared.golden`, `split_max_prepared.golden`, `split_expanded_prepared.golden` (a broadcast axis is not split), `split_unit_axis_prepared.golden`, `split_prime_prepared.golden` (no divisor), `split_at_threshold_prepared.golden`, `below_threshold_prepared.golden`, `no_split_prepared.golden`; `PR › … ›` "a split reduction keeps its first reduction's output within 2^22 elements", "a split takes the largest divisor from 256 down", "a split is announced at debug level 3", "a reduction of a symbolic shape is not split" |
 | tinygrad: null/test_schedule.py::TestSchedule::test_contiguous_buffer, test_double_contiguous_realizes_once, test_bitcast_fuses; TestCopyFolding (3 tests) | | `contiguous_of_storage_prepared.golden`, `bitcast_*_prepared.golden`, `copy_*_prepared.golden`, `clone_prepared.golden`; `PR › … › a materialisation of storage is the storage`; their kernel counts are Rangeify's |
 | tinygrad: schedule/prepare.py `pm_disk_copy` (no upstream test) | a disk copy reads its view without materialising it | `copy_from_disk_prepared.golden`, `copy_permuted_from_disk_prepared.golden`, `copy_staged_view_from_disk_prepared.golden`, `disk_staged_view_prepared.golden`, `bitcast_on_disk_prepared.golden`; `PR › … › a bitcast on a disk keeps its size` |
-| tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py (inline and precompiled functions) | calls inlined or compiled on their own | `custom_kernel_prepared.golden`, `inline_function_prepared.golden`, `inline_sharded_prepared.golden`, `inline_symbolic_prepared.golden`, `precompiled_function_prepared.golden`; `PR › prepare_rangeify › inline calls` (7 tests) |
+| tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py (inline and precompiled functions) | calls inlined or compiled on their own | `custom_kernel_prepared.golden`, `inline_function_prepared.golden`, `inline_symbolic_prepared.golden`, `precompiled_function_prepared.golden`; `PR › prepare_rangeify › inline calls` (7 tests) |
 | tinygrad: schedule/prepare.py `pm_mops` on a padded view (no upstream test) | an index through a pad, then a reshape to an axis of one element, an expand, or a shrink onto an axis of one element, loses the pad's gate | `PR › pm_mops › pads` (3 tests), as tinygrad HEAD for an upstream report: `graph_rewrite(p._mop(Ops.RESHAPE,(1,)).pad(((0,1),)).index(r), pm_mops)` with `p` a 1-element param is `INDEX(p, 0)`; a 6-element param reshaped (3,2), padded `((0,3),(2,6))` and shrunk `((0,1),(0,3))`, indexed by two ranges, is `INDEX(p, 0)`; a 2-element param expanded by `(2,)` and padded `((1,3),(0,2))` is `INDEX(p, r1)` |
 | tinygrad: schedule/prepare.py `pm_fold_moved_after`, `OPENPILOT_HACKS`, `FLOAT16` | | dropped: excluded (README) |
 | tinygrad: uop/ops.py `contiguous_view` on CL and WEBGPU | no view | dropped: excluded (README) |
@@ -1588,12 +1523,12 @@ observable in a kernel graph of any program or hand-built graph tried:
 |---|---|---|
 | tinygrad: null/test_schedule.py::TestSchedule (the kernel-count tests) | how many kernels a program schedules | `RA › kernel_counts.golden` and `RA › get_kernel_graph › recorded`, on ports: `arange_sum`, `permute_arange`, `expand_before_cast`, `push_pads_elementwise`, `allow_push_permutes`, `div_collapse`, `reduce_same_size`, `reduce_multiple_paths`, `reduce_ext_reduce_child`, `reduce_expand_child`, `reduce_broadcast_not_recomputed`, `ugly_reduceop_pairing`, `reduce_expand_reduce`, `multireduce_parallel`, `std`, `multireduce_diffops_parallel`, `multimatmul`, `multireduce_push_shrink_chase`, `multireduce_midreduce_nochase`, `partial_fuse`, `pad_reduce_safe`, `pad_reduce_unsafe`, `shrink_pad_unsafe`, `base_change_expand_pad`, `base_change_pad_expand`, `zero_size_children`, `preserve_multistage_reduce`, `clone`; their values |
 | tinygrad: null/test_schedule.py::TestSchedule, the other tests | | dropped here: the realized-buffer, gradient and jit tests are the `Tensor` surface and L8; the Tensor programs above stand for their kernel counts |
-| tinygrad: null/test_schedule.py::TestInvalidTensor::test_full_invalid_is_zero_kernels | | `RA › … › full_invalid_kernels.golden` (no kernel); `RA › get_kernel_graph › rules › a store of invalid values runs no kernel`; `invalids_read`, `partially_invalid`, `invalids_sharded` |
-| tinygrad: null/test_schedule.py::TestLimitBufs | the buffers of one kernel | `many_inputs_kernels.golden`, `many_inputs_limited_kernels.golden`, `many_matrices_limited_kernels.golden`, `many_cubes_limited_kernels.golden`, `many_sums_limited_kernels.golden`, `many_sharded_limited_kernels.golden`; `RA › … ›` "a kernel accesses at most max_kernel_buffers storages", "without a limit, one kernel reads every storage"; the scaling test is dropped: a timing |
+| tinygrad: null/test_schedule.py::TestInvalidTensor::test_full_invalid_is_zero_kernels | | `RA › … › full_invalid_kernels.golden` (no kernel); `RA › get_kernel_graph › rules › a store of invalid values runs no kernel`; `invalids_read`, `partially_invalid` |
+| tinygrad: null/test_schedule.py::TestLimitBufs | the buffers of one kernel | `many_inputs_kernels.golden`, `many_inputs_limited_kernels.golden`, `many_matrices_limited_kernels.golden`, `many_cubes_limited_kernels.golden`, `many_sums_limited_kernels.golden`; `RA › … ›` "a kernel accesses at most max_kernel_buffers storages", "without a limit, one kernel reads every storage"; the scaling test is dropped: a timing |
 | tinygrad: null/test_schedule.py::TestCopyFolding | | `copy_kernels.golden`, `clone_kernels.golden`; the copy kernels' lowering is the schedule's |
 | tinygrad: null/test_assign.py (4 tests), null/test_setitem_schedule.py (3 tests) | kernel counts of assigns and setitems | `assign`, `assign_permuted`, `assign_double_diamond`, `assigned_read_twice`, `assigned_contiguous`, `stage_of_assigned`, `setitem`, `setitem_tensor`: their kernel graphs, counts and values |
-| tinygrad: null/test_multitensor.py::TestBackendMultiTensor::test_shard_invalids_contiguous | one kernel | `invalids_sharded` |
-| tinygrad: runtime/test_rangeify.py::test_double_matmul, test_assign_permuted, test_variable_stack_data, test_variable_data_and_shape, test_matmul_relu_cat, test_multi_gather | | `double_matmul`, `assign_permuted`, `variable_*`, `shard_gather`: graphs and counts; the rest of those programs are Indexing's section |
+| tinygrad: null/test_multitensor.py::TestBackendMultiTensor::test_shard_invalids_contiguous | one kernel | dropped: the multi-device rewrite is excluded (README) |
+| tinygrad: runtime/test_rangeify.py::test_double_matmul, test_assign_permuted, test_variable_stack_data, test_variable_data_and_shape, test_matmul_relu_cat, test_multi_gather | | `double_matmul`, `assign_permuted`, `variable_*`: graphs and counts; the rest of those programs are Indexing's section |
 | tinygrad: runtime/test_rangeify.py, the `*_match` tests (7) | kernel structure after codegen | dropped here: the codegen pipeline's (L4) |
 | tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py | custom kernels and functions | `custom_kernel`, `custom_kernel_permuted`, `custom_kernel_in_place`, `custom_kernel_of_views`, `inline_function`, `precompiled_function`, `precompiled_function_1`: graphs and counts |
 | tinygrad: schedule/rangeify.py `DEBUG_RANGEIFY` | the ranges printed | `RA › get_kernel_graph › debug` (2 tests) |
@@ -1630,7 +1565,7 @@ schedule programs whose constant no other run used, so they hold in any order
 and on any rerun.
 
 The values laws leave out custom kernels (the Interpreter does not compile
-them), graphs on several devices, and graphs with calls that are not kernels.
+them) and graphs with calls that are not kernels.
 They also leave out `assign_bitcast`: its call passes a buffer and a bitcast of
 it as two arguments, one memory that storage keyed by slot cannot alias. The
 end-to-end law leaves out programs with variables, whose movements Tensors
@@ -1730,7 +1665,7 @@ device, whose kernels the host runs, and on Metal.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: `runtime/support/hcq2.py` `_staging` (no test) | one staging buffer of 128 MiB per host, which every schedule's staged copies share | dropped: staging is rig's (`Rig.Buffer.copy`, D146) |
-| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | a linked schedule serves any input, whose address it does not keep | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` (contiguous, copy_view, shard_add) |
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | a linked schedule serves any input, whose address it does not keep | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` (contiguous, copy_view) |
 | tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | compiling a schedule again returns the compiled one | dropped here: the engine keeps no cache of links, and rune keeps its programs by key |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | a copy out, a copy in and a copy out run in order | `EN › link and run › copies run in the order of their schedule` |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_caches_hold_no_buffers | freeing the values frees the device memory | `EN › runs › a linked schedule holds its storage while it is reachable` |

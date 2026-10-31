@@ -4,8 +4,7 @@ graph for its ranges.
 Recorded programs: `<program>.golden` is the graph that `prepare_rangeify`
 receives when the tensors of a `Tensor` program are scheduled on the CPU, and
 `<program>_prepared.golden` what it returns. A program that schedules several
-graphs, such as an allreduce compiled as a function of its own, records the
-later ones as `<program>_<n>.golden` and `<program>_<n>_prepared.golden`.
+graphs, such as a function compiled on its own, records the later ones as `<program>_<n>.golden` and `<program>_<n>_prepared.golden`.
 """
 
 from golden import graph
@@ -18,7 +17,6 @@ import tinygrad.schedule
 import tinygrad.schedule.prepare
 
 DEV.value = "CPU"
-D2 = ("CPU:0", "CPU:1")
 DISK = "DISK:/tmp/tolk-prepare"
 
 
@@ -43,11 +41,6 @@ def scheduled(program):
 
 
 def empty(*shape, dtype=dtypes.float, device=None): return Tensor.empty(*shape, dtype=dtype, device=device)
-
-
-def sharded(*shape, axis, dtype=dtypes.float):
-    shard = tuple(n // 2 if a == axis else n for a, n in enumerate(shape))
-    return Tensor(empty(*shard, dtype=dtype, device=D2).uop.unshard(axis), device=D2)
 
 
 def view_of_self(view):
@@ -101,12 +94,6 @@ def inline_function():
     @function
     def f(a, b): return a * 2 + b
     return f(empty(4, 8), empty(4, 8)).sum(1)
-
-
-def inline_sharded():
-    @function
-    def f(a): return a * 2 + 1
-    return f(sharded(4, 8, axis=0)).sum(1)
 
 
 def inline_symbolic():
@@ -229,14 +216,9 @@ PROGRAMS = {
     "custom_kernel": custom_kernel,
     "inline_function": inline_function,
     "precompiled_function": precompiled_function,
-    "inline_sharded": inline_sharded,
     "inline_symbolic": inline_symbolic,
     # symbolic shapes
     "variable_shrink": lambda: empty(10)[:Variable("v", 1, 10).bind(3)] * 2,
-    # several devices
-    "shard_add": lambda: sharded(4, 8, axis=0) + 1,
-    "shard_sum": lambda: sharded(4, 8, axis=0).sum(0),
-    "shard_gather": lambda: sharded(4, 8, axis=0).to("CPU:0") + 1,
 }
 
 
@@ -310,14 +292,6 @@ def store_ordered_before():
     return UOp.sink(st, other.after(other.store(param(3, 16)), st))
 
 
-def sharded_output_of_whole_storage():
-    # new storage of the whole value's size stored into a sharded output
-    devices = ("CPU:0", "CPU:1")
-    out = UOp.param(0, dtypes.float, 8, devices).unshard(0)
-    s = scratch(16, devices)
-    return UOp.sink(out.store(s.after(s.store(UOp.param(1, dtypes.float, 16, devices).exp2()))))
-
-
 def hazard_behind_other_after():
     # the value reads its destination through a store that another storage waits for
     out, other = param(0, 4, 4), param(2, 4, 4)
@@ -364,7 +338,6 @@ GRAPHS = {
     "placed_through_view": placed_through_view,
     "placed_after_read": placed_after_read,
     "store_ordered_before": store_ordered_before,
-    "sharded_output_of_whole_storage": sharded_output_of_whole_storage,
     "hazard_behind_other_after": hazard_behind_other_after,
     "flip_of_other": flip_of_other,
     "disk_staged_view": disk_staged_view,

@@ -460,7 +460,8 @@ the shard's shapes. The lowering takes it when every part is split on the
 same axis at a block boundary and `x` and `ids` are split or replicated to
 match: a split leading axis, the lane of expert parallelism, and a split `n`
 give a result split on the matching axis, and a split `k` gives partial sums,
-which the lowering reduces with tolk's allreduce. Grouping and the block
+which the lowering reduces across the lanes (tolk's allreduce until
+2026-10-31; tolk now compiles for one device, see RFC 0005's amendment). Grouping and the block
 kernel run per lane. Any other layout takes decode-then-matmul, and
 `RUNE_JIT_DEBUG` reports it. Until split parts land, a program over several
 devices groups nothing, since the ranking would run along a sharded axis, and

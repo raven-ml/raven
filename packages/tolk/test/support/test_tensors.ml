@@ -4,8 +4,7 @@ open Tolk
 let z n = `Int (Bigint.of_int n)
 let ints = List.map z
 let shape = List.map (fun n -> Ops.Int n)
-let cpu = Ops.Single "CPU"
-let two = Ops.Multi [ "CPU:0"; "CPU:1" ]
+let cpu = "CPU"
 
 (* [p slot size] is storage of [size] 32-bit integers, viewed as [dims]. *)
 let p ?(device = cpu) ?(dt = Dtype.Int32) ?dims slot size =
@@ -13,9 +12,7 @@ let p ?(device = cpu) ?(dt = Dtype.Int32) ?dims slot size =
   match dims with None -> flat | Some d -> Shape.reshape flat (shape d)
 
 let iota n = Array.init n (fun j -> z j)
-let values = list (array Dtypes.const)
-let one = function [ v ] -> Array.to_list v | _ -> fail "one device"
-let eval ?(buffers = [ (1, iota 6) ]) u = one (Tensors.eval ~buffers u)
+let eval ?(buffers = [ (1, iota 6) ]) u = Array.to_list (Tensors.eval ~buffers u)
 let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 let consts = list Dtypes.const
 
@@ -32,10 +29,6 @@ let storage =
           equal consts [ z 0 ] (eval (Shape.param 1 Int32)));
       test "a variable is refused" (fun () ->
           rejects (fun () -> eval (Ops.variable "n" (z 1) (z 3))));
-      test "device k of storage holds the k-th run of its memory" (fun () ->
-          equal values
-            [ [| z 0; z 1; z 2 |]; [| z 3; z 4; z 5 |] ]
-            (Tensors.eval ~buffers:[ (1, iota 6) ] (p ~device:two 1 3)));
     ]
 
 let movements =
@@ -117,35 +110,13 @@ let arithmetic =
             (eval (Shape.stack [ p 1 2; Shape.flip (p 1 2) [ 0 ] ])));
     ]
 
-let devices =
-  let x = p ~device:two 1 3 in
-  group "devices"
+let copies =
+  group "copies"
     [
-      test "a shard selection is one device's value" (fun () ->
-          equal consts (ints [ 3; 4; 5 ]) (eval (Ops.mselect x 1)));
-      test "a gather stacks each source's device" (fun () ->
-          equal values
-            [ [| z 3; z 4; z 5 |]; [| z 0; z 1; z 2 |] ]
-            (Tensors.eval
-               ~buffers:[ (1, iota 6) ]
-               (Ops.mstack (Ops.mselect x 1) [ Ops.mselect x 0 ])));
-      test "a copy places its source on each target device" (fun () ->
-          equal values
-            [ [| z 3; z 4; z 5 |]; [| z 3; z 4; z 5 |] ]
-            (Tensors.eval
-               ~buffers:[ (1, iota 6) ]
-               (Ops.copy_to_device (Ops.mselect x 1) two)));
-      test "an allreduce folds the devices, element by element" (fun () ->
-          equal values
-            [ [| z 3; z 5; z 7 |] ]
-            (Tensors.eval ~buffers:[ (1, iota 6) ] (Ops.allreduce x Add cpu)));
-      test "an operation combines device by device, one device for all"
-        (fun () ->
-          equal values
-            [ [| z 1; z 2; z 3 |]; [| z 4; z 5; z 6 |] ]
-            (Tensors.eval
-               ~buffers:[ (1, iota 6) ]
-               Ops.O.(x + Ops.int ~dtype:Int32 1)));
+      test "a copy holds its source's elements" (fun () ->
+          equal consts
+            (ints [ 0; 1; 2 ])
+            (eval (Ops.copy_to_device (p 1 3) "CPU:1")));
     ]
 
 let effects =
@@ -212,89 +183,6 @@ let effects =
           rejects (fun () -> eval (Shape.shrink (p 1 6) [ Some (Int 0, Sym n) ])));
     ]
 
-(* Sharded values *)
-
-let four = Ops.Multi [ "CPU:0"; "CPU:1"; "CPU:2"; "CPU:3" ]
-let device_range n = Ops.range ~axis_type:Device (Int n) [ -1 ]
-
-let shards =
-  let x = p ~device:two 1 3 in
-  group "sharded values"
-    [
-      test "a movement moves device k's value with its device range at k"
-        (fun () ->
-          let d = device_range 2 in
-          let start = Ops.O.(d * Ops.int 2) in
-          equal values
-            [ [| z 0; z 1 |]; [| z 2; z 3 |] ]
-            (Tensors.eval
-               ~buffers:[ (1, iota 6) ]
-               (Shape.mop
-                  (Ops.copy_to_device (p 1 4) two)
-                  (Shrink [ (Sym start, Int 2) ]))));
-      test "an unshard reassembles its devices' parts" (fun () ->
-          equal consts (ints [ 0; 1; 2; 3; 4; 5 ]) (eval (Shape.unshard x [ 0 ])));
-      test "an unshard of two axes places each part at its ranges' values"
-        (fun () ->
-          let d = device_range 4 in
-          let rows = Ops.O.(d // int 2) and cols = Ops.O.(d % int 2) in
-          let x = p ~device:four ~dims:[ 1; 1 ] 1 1 in
-          equal consts
-            (ints [ 0; 1; 2; 3 ])
-            (eval
-               ~buffers:[ (1, iota 4) ]
-               (Shape.unshard ~ranges:[ rows; cols ] x [ 0; 1 ])));
-      test "a value sharded across a kernel's threads is refused" (fun () ->
-          let threads = Ops.range ~axis_type:Local (Int 2) [ 0 ] in
-          rejects (fun () -> eval (Shape.unshard ~ranges:[ threads ] x [ 0 ])));
-      test "a copy of a value on several devices is its first device's"
-        (fun () ->
-          equal consts (ints [ 0; 1; 2 ]) (eval (Ops.copy_to_device x cpu)));
-    ]
-
-let sharded_effects =
-  let out = Shape.unshard (p ~device:two 0 2) [ 0 ] in
-  let write = list (triple int int Dtypes.value) in
-  let writes value =
-    Tensors.writes
-      ~buffers:[ (1, iota 4); (2, iota 8) ]
-      (Ops.sink [ Ops.store out value ])
-  in
-  group "stores of sharded values"
-    [
-      test "a store into a sharded destination writes each device's part"
-        (fun () ->
-          equal write
-            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2); (0, 3, z 3) ]
-            (writes (p 1 4)));
-      test "an element takes the value of the device whose memory it views"
-        (fun () ->
-          equal write
-            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 6); (0, 3, z 7) ]
-            (writes (p ~device:two 2 4)));
-    ]
-
-let sharded_calls =
-  let out = Shape.unshard (p ~device:two 0 2) [ 0 ] in
-  let param slot = Shape.param ~device:two ~shape:[ Int 2 ] slot Int32 in
-  let body =
-    Ops.sink
-      [ Ops.store (Shape.unshard (param 0) [ 0 ]) (Shape.unshard (param 1) [ 0 ]) ]
-  in
-  group "calls on sharded values"
-    [
-      test "a parameter of a sharded argument holds its parts" (fun () ->
-          equal
-            (list (triple int int Dtypes.value))
-            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2); (0, 3, z 3) ]
-            (Tensors.writes
-               ~buffers:[ (1, iota 4) ]
-               (Ops.sink
-                  [
-                    Ops.call body [ out; Shape.unshard (p ~device:two 1 2) [ 0 ] ];
-                  ])));
-    ]
-
 let () =
   exit
     (run "Tensors"
@@ -302,9 +190,6 @@ let () =
          storage;
          movements;
          arithmetic;
-         devices;
-         shards;
+         copies;
          effects;
-         sharded_effects;
-         sharded_calls;
        ])

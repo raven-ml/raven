@@ -46,7 +46,6 @@ module Axis_type : sig
   (** The type for axis types, in the order ranges nest: a kernel's ranges
       sort by axis type, then identity. *)
   type t =
-    | Device  (** Across devices. *)
     | Global  (** Across the workgroups of a launch. *)
     | Local  (** Across the threads of a workgroup. *)
     | Warp  (** Across the threads of a warp. *)
@@ -62,8 +61,8 @@ module Axis_type : sig
   (** [compare] orders axis types by their declaration order in {!t}. *)
 
   val letter : t -> string
-  (** [letter a] is the letter that names [a] in kernel names: ["d"], ["g"],
-      ["l"], ["w"], ["L"] for {!Weak} and {!Loop}, and ["u"].
+  (** [letter a] is the letter that names [a] in kernel names: ["g"], ["l"],
+      ["w"], ["L"] for {!Weak} and {!Loop}, and ["u"].
 
       Raises [Invalid_argument] on {!Placeholder}. *)
 
@@ -83,21 +82,16 @@ end
 
 (** {1:devices Devices} *)
 
-(** The type for device placements: one device, or one value spread over
-    several. Devices are named by the caller, such as ["CPU"] or ["AMD:1"]; only
-    a name starting with ["DISK"] has a meaning here, a disk. *)
-type device = Single of string | Multi of string list
-
-val equal_device : device -> device -> bool
-(** [equal_device d0 d1] is [true] iff [d0] and [d1] are the same placement. *)
+(** The type for devices. Devices are named by the caller, such as ["CPU"] or
+    ["AMD:1"]; only a name starting with ["DISK"] has a meaning here, a disk. *)
+type device = string
 
 val pp_device : Format.formatter -> device -> unit
-(** [pp_device] formats a placement as a quoted name or a tuple of quoted names:
-    ['CPU'], [('CPU:0', 'CPU:1')]. *)
+(** [pp_device] formats a device as its quoted name: ['CPU']. *)
 
 val is_disk_device : device -> bool
-(** [is_disk_device d] is [true] iff a device of [d] is a disk: its name, up to
-    its first [:], is [DISK] in any case. *)
+(** [is_disk_device d] is [true] iff [d] is a disk: its name, up to its first
+    [:], is [DISK] in any case. *)
 
 (** {1:sint Symbolic integers} *)
 
@@ -283,12 +277,8 @@ type arg =
   | Reduce of { op : Op.t; num_axes : int }
       (** {!Op.Reduce}: the operation, and how many leading axes it reduces ([0]
           for a kernel's reduction over range sources). *)
-  | Allreduce of { op : Op.t; device : device }  (** {!Op.Allreduce}. *)
   | Device of device  (** {!Op.Copy}: the target. *)
-  | Shard of int  (** {!Op.Mselect}: the shard selected. *)
-  | Axes of int list
-      (** {!Op.Permute}: the permutation; {!Op.Unshard}: the sharded axes,
-          ascending. *)
+  | Axes of int list  (** {!Op.Permute}: the permutation. *)
   | Flips of bool list  (** {!Op.Flip}: which axes are reversed. *)
   | String of string
       (** {!Op.Special}, {!Op.Linear}: a name;
@@ -552,7 +542,7 @@ val range_start : Op.t -> int option
 val ended_ranges : t -> t list
 (** [ended_ranges u] is the ranges that [u] closes: those among its range
     sources, those a {!Op.Barrier} or an {!Op.After}'s effects close, the loop a
-    {!Op.Backedge} repeats, an {!Op.Unshard}'s sharding ranges. *)
+    {!Op.Backedge} repeats. *)
 
 val ranges : t -> Nodes.t
 (** [ranges u] is the ranges [u] runs inside: [u] itself if it is a range, then
@@ -770,22 +760,17 @@ val bufferize : ?opts:bufferize_opts -> t -> t list -> t
 (** [bufferize ~opts u ranges] is the {!Op.Stage} of [u] over [ranges], into a
     buffer placed by [opts] if given. *)
 
-(** {1:multi Several devices} *)
+(** {1:placement Placement} *)
 
 val device : t -> device option
-(** [device u] is where [u] lives: its argument's device for storage, copies and
-    reductions across devices, its sources' first otherwise. *)
+(** [device u] is where [u] lives: its argument's device for storage and
+    copies, its sources' first otherwise. *)
 
 val on_disk : t -> bool
-(** [on_disk u] is [true] iff [u] lives on a single disk device. *)
+(** [on_disk u] is [true] iff [u] lives on a disk device. *)
 
-val sharding : t -> (int * t) list
-(** [sharding u] is each axis an {!Op.Unshard} [u] is sharded on, with the range
-    over its shards; [[]] for any other node. *)
-
-val copy_to_device : ?shard:int -> t -> device -> t
-(** [copy_to_device ~shard u d] is the copy of [u], or of its shard [shard], to
-    [d].
+val copy_to_device : t -> device -> t
+(** [copy_to_device u d] is the copy of [u] to [d].
 
     Raises [Invalid_argument] if [d] is a disk or [u]'s type is weak. *)
 
@@ -795,32 +780,14 @@ val size_src : int option -> t
     {!Op.Stack} for a scalar ([None]). The size is never symbolic: storage of a
     symbolic size is a larger one shrunk. *)
 
-val device_range_src : device option -> t list
-(** [device_range_src d] is the {!Axis_type.Device} range a node on several
-    devices carries, or [[]]. *)
-
-val mselect : t -> int -> t
-(** [mselect u i] is [u]'s shard on its [i]th device. *)
-
-val mstack : t -> t list -> t
-(** [mstack u rest] is the multi-device value of [u :: rest], or [u]. *)
-
-val allreduce : t -> Op.t -> device -> t
-(** [allreduce u op d] reduces [u] across [d] with [op].
-
-    Raises [Invalid_argument] if [u] is not on several devices. *)
-
 (** {1:movement Movement} *)
 
 val base : t -> t
 (** [base u] is [u] without its movements. *)
 
-val unsharded_base : t -> t
-(** [unsharded_base u] is [base u], also without an {!Op.Unshard}. *)
-
 val storage_base : t -> t
-(** [storage_base u] is the storage [u] targets: [unsharded_base u] without
-    bitcasts and {!Op.After}s. *)
+(** [storage_base u] is the storage [u] targets: [base u] without bitcasts and
+    {!Op.After}s. *)
 
 (** The type for the arguments of movements. *)
 type movement =
@@ -850,7 +817,7 @@ val is_virtual : t -> bool
 
 val has_buffer_identity : ?after_ok:bool -> t -> bool
 (** [has_buffer_identity ~after_ok u] is [true] iff [u] names storage, through
-    reshapes, unshards, shard selections and, if [after_ok], an {!Op.After}. *)
+    reshapes and, if [after_ok], an {!Op.After}. *)
 
 val needs_storage : t -> bool
 (** [needs_storage u] is [true] iff realizing [u] allocates. *)
@@ -930,7 +897,7 @@ val call : ?name:string -> ?precompile:bool -> t -> t list -> t
     shape of [body].
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
-    or a range other than a device range leaks out of it. *)
+    or a range leaks out of it. *)
 
 (** {1:elementwise Elementwise} *)
 
@@ -1363,8 +1330,6 @@ val shape_memo : t -> sint list option option
 val set_shape_memo : t -> sint list option -> unit
 val movement_memo : t -> movement option
 val set_movement_memo : t -> movement -> unit
-val axis_memo : t -> int option option
-val set_axis_memo : t -> int option -> unit
 
 (* The helpers that [Shape] and later modules share with this one. *)
 

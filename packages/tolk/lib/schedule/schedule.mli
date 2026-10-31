@@ -25,8 +25,7 @@ val create_schedule : Ops.t -> Ops.t
     and writes, or the views of it that move with the loops the call runs in. A
     loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
     stays such an end around the call, and a back edge of a call
-    ({!Ops.backedge}) stays a back edge, its condition the storage it reads; the
-    end of a call over device ranges is the call, its ranges bound at launch.
+    ({!Ops.backedge}) stays a back edge, its condition the storage it reads.
 
     A kernel that reads a state of storage on one device and depends on a
     kernel that overwrites it, whichever elements each touches, as [b + a * 3]
@@ -35,9 +34,8 @@ val create_schedule : Ops.t -> Ops.t
     phase, which a kernel of its own makes before the overwrite.
 
     Raises [Invalid_argument] if the kernels' dependencies form a cycle, if a
-    kernel reads a state on several devices that a kernel it depends on
-    overwrites, or if an effect is not a call, a loop of a call, a store or an
-    {!Op.After}. *)
+    state such a kernel reads a copy of has no device, or if an effect is not
+    a call, a loop of a call, a store or an {!Op.After}. *)
 
 val pm_flatten_linear : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_flatten_linear] inlines each {!Op.Linear} among the sources of an
@@ -51,9 +49,7 @@ val contiguous_mops_to_view : Ops.t -> Ops.t -> Ops.t option
     elements ({!Prepare.contiguous_view}) when they are contiguous, and that
     view for any other [c]; [None] when they are not contiguous or [src]'s shape
     is symbolic. The view is the buffer shrunk to the elements and bitcast to
-    [src]'s type, reshaped to [c]'s shape. On several devices, it is the view of
-    each shard of a value sharded on one axis, sharded again, in place of [c].
-*)
+    [src]'s type, reshaped to [c]'s shape. *)
 
 val is_store_after : Ops.t -> bool
 (** [is_store_after u] is [true] iff [u] is an {!Op.After} that orders a store

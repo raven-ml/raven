@@ -1,10 +1,9 @@
 # tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
 axis_type	letter	color	nesting
-AxisType.DEVICE	d	green	0
-AxisType.GLOBAL	g	blue	1
-AxisType.LOCAL	l	cyan	2
-AxisType.WARP	w	CYAN	3
-AxisType.WEAK	L	red	4
-AxisType.LOOP	L	red	5
-AxisType.UPCAST	u	yellow	6
-AxisType.PLACEHOLDER	raises KeyError	raises KeyError	7
+AxisType.GLOBAL	g	blue	0
+AxisType.LOCAL	l	cyan	1
+AxisType.WARP	w	CYAN	2
+AxisType.WEAK	L	red	3
+AxisType.LOOP	L	red	4
+AxisType.UPCAST	u	yellow	5
+AxisType.PLACEHOLDER	raises KeyError	raises KeyError	6

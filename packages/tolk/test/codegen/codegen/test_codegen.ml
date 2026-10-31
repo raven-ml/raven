@@ -292,7 +292,6 @@ let not_interpreted =
     ("llama_ffn_gate", fdiv);
     ("llama_vector_scale", fdiv);
     ("threefry", "computes Ops.THREEFRY, which the interpreter does not compute");
-    ("shard_sum", "stores a loaded vector, which the interpreter does not split");
     ("custom_eye", "stores through two indices");
     ("flip_contract", "stores through two indices");
     ("fp8", "reads its float8 storage as bytes");
@@ -2675,7 +2674,7 @@ let vectors =
    selection is by the mask's negation, [fill] first. *)
 let padded ?(flip = false) fill before after xs =
   let n = Array.length xs in
-  let x = Ops.new_buffer ~slot:1 (Single "CPU") n Float32 in
+  let x = Ops.new_buffer ~slot:1 "CPU" n Float32 in
   let padding = [ Some (Ops.Int before, Ops.Int after) ] in
   let mask = Shape.pad (Shape.const_like ~dtype:Bool x (`Bool true)) padding in
   let fill = Ops.float ~dtype:Float32 fill in
@@ -2684,7 +2683,7 @@ let padded ?(flip = false) fill before after xs =
     else Ops.where mask (Shape.pad x padding) fill
   in
   let out =
-    Ops.new_buffer ~slot:0 (Single "CPU") (n + before + after) Float32
+    Ops.new_buffer ~slot:0 "CPU" (n + before + after) Float32
   in
   (Ops.sink [ Ops.after out [ Ops.store out value ] ], value)
 
@@ -2722,14 +2721,11 @@ let padding_computed ?flip fill before after xs =
       (Interpreter.writes ~buffers:(input slots xs) lowered)
   in
   let expected =
-    match Tensors.eval ~buffers:[ (1, floats xs) ] value with
-    | [ values ] ->
-        Array.to_list
-          (Array.map
-             (function
-               | #Dtype.value as v -> v | `Invalid -> invalid_arg "Invalid")
-             values)
-    | _ -> invalid_arg "a value on one device"
+    Array.to_list
+      (Array.map
+         (function
+           | #Dtype.value as v -> v | `Invalid -> invalid_arg "Invalid")
+         (Tensors.eval ~buffers:[ (1, floats xs) ] value))
   in
   equal (list Dtypes.value) expected written
 
@@ -2757,11 +2753,11 @@ let signed_zeros =
             (floats [| -0.; 1.; 2.; -0. |])
             (List.assoc (parameter slots 0) results));
       test "Shape.pad by -0. computes -0. on the padding" (fun () ->
-          let x = Ops.new_buffer ~slot:1 (Single "CPU") 2 Float32 in
+          let x = Ops.new_buffer ~slot:1 "CPU" 2 Float32 in
           let value =
             Shape.pad ~value:(`Float (-0.)) x [ Some (Ops.Int 1, Ops.Int 1) ]
           in
-          let out = Ops.new_buffer ~slot:0 (Single "CPU") 4 Float32 in
+          let out = Ops.new_buffer ~slot:0 "CPU" 4 Float32 in
           let kernel, slots =
             scheduled (Ops.sink [ Ops.after out [ Ops.store out value ] ])
           in

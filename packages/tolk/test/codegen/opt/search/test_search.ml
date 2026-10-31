@@ -701,7 +701,7 @@ let storage_placed =
           (fun u ->
             match (Ops.op u, Ops.arg u) with
             | Op.Param, Param p when p.addrspace <> Some Dtype.Alu ->
-                is_true ~msg:"on METAL" (p.device = Some (Ops.Single "METAL"))
+                is_true ~msg:"on METAL" (p.device = Some "METAL")
             | _ -> ())
           (Ops.toposort ~calls:Enter (Ops.nth prg 0))
       in

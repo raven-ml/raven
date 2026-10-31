@@ -110,7 +110,7 @@ let scalar_arguments =
             List.init (slot + 1) (fun i ->
                 if i = slot then Ops.const ~dtype:Int32 (z scalar)
                 else
-                  Shape.param ~shape:[ Int 4 ] ~device:(Single "CPU") i Float32)
+                  Shape.param ~shape:[ Int 4 ] ~device:"CPU" i Float32)
           in
           let s = Tolk_engine.link_call ~devices (Ops.call prg args) in
           let slots = Tolk_engine.slots s in

@@ -9,11 +9,7 @@ open Ops
 open Shape
 module Tlsf = Support_memory.Tlsf_allocator
 
-let rec collect_bufs u =
-  match op u with
-  | Op.Buffer -> [ u ]
-  | Op.Mselect | Op.Mstack -> List.concat_map collect_bufs (src u)
-  | _ -> []
+let collect_bufs u = if op u = Op.Buffer then [ u ] else []
 
 (* The buffers an argument reaches through a view. *)
 let rec viewed u =
@@ -21,7 +17,6 @@ let rec viewed u =
   | Op.Shrink | Op.Bitcast | Op.After ->
       let v = nth u 0 in
       collect_bufs v @ viewed v
-  | Op.Mselect | Op.Mstack -> List.concat_map viewed (src u)
   | _ -> []
 
 (* What an entry of a schedule takes: the arguments of each call it runs, a
@@ -110,7 +105,7 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
       let total_memory = 2 * List.fold_left (fun n b -> n + rounded b) 0 bufs in
       let lanes = ref [] in
       let lane k =
-        let same (d, c) = equal_device d (fst k) && c = snd k in
+        let same (d, c) = String.equal d (fst k) && c = snd k in
         match List.find_opt (fun (k', _) -> same k') !lanes with
         | Some (_, l) -> l
         | None ->

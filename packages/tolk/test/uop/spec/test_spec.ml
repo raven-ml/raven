@@ -386,10 +386,6 @@ let loops =
             [ Some true; Some true; Some true ]
             (List.map (judge Spec.kernel_graph)
                [ Ops.end_ call [ r ]; call; trip ]));
-      test "accepts an open device range" (fun () ->
-          equal verdict (Some true)
-            (judge Spec.kernel_graph
-               (Ops.range ~axis_type:Device (Int 2) [ -1 ])));
       test "refuses a weak sum of a weak integer variable" (fun () ->
           equal verdict (Some false)
             (judge Spec.kernel_graph

@@ -19,13 +19,12 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     A buffer is planned unless it is among [held_bufs] (default [[]]), whose
     contents outlive the schedule, lives on a disk, or is reached through a view
     ({!Op.Shrink}, {!Op.Bitcast}, {!Op.After}) by some call. A call takes the
-    buffers of its arguments, an argument passing itself if it is a buffer and
-    the buffers of each of its sources if it is an {!Op.Mselect} or an
-    {!Op.Mstack}. A buffer lives from the first call that takes it to the last,
-    a loop around calls ({!Op.End} or {!Op.Backedge}) counting as one call that
-    takes the buffers of each of its calls and a back edge's flag. The buffers of copies, the calls
-    whose body is an {!Op.Store}, are planned apart from the others on each
-    device, so that planning adds no dependency between copies and kernels, and
+    buffers of its arguments, an argument passing itself if it is a buffer. A
+    buffer lives from the first call that takes it to the last, a loop around
+    calls ({!Op.End} or {!Op.Backedge}) counting as one call that takes the
+    buffers of each of its calls and a back edge's flag. The buffers of copies,
+    the calls whose body is an {!Op.Store}, are planned apart from the others
+    on each device, so that planning adds no dependency between copies and kernels, and
     each lives for as many calls again after its last, so that a copy is not
     overwritten while it may still run.
 

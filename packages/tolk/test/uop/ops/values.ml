@@ -625,7 +625,7 @@ let bounds_group =
       test "a copy and a contiguous keep their source's bounds" (fun () ->
           let src = Ops.O.(Shape.placeholder ~slot:0 [ 4 ] Int32 land int 3) in
           check_bounds (Ops.contiguous src) (int_bounds 0 3);
-          check_bounds (Ops.copy_to_device src (Single "NULL")) (int_bounds 0 3));
+          check_bounds (Ops.copy_to_device src "NULL") (int_bounds 0 3));
       test "a variable cast to float, bool or unsigned" (fun () ->
           let x = var "x" (-10) 10 in
           check_bounds (Ops.cast x Float32) (f (-10.), f 10.);

@@ -181,27 +181,6 @@ val no_memory_planner : bool t
 (** [no_memory_planner] keeps scheduling from reusing the memory of buffers that
     are no longer needed, from [NO_MEMORY_PLANNER]. Defaults to [false]. *)
 
-val ring : int t
-(** [ring] is when allreduce uses the ring algorithm, from [RING]: [0] never,
-    [1] across more than two devices on large enough inputs, [2] always.
-    Defaults to [1]. *)
-
-val all2all : int t
-(** [all2all] is when allreduce uses the all-to-all algorithm, which takes
-    precedence over the ring, from [ALL2ALL], with the levels of {!ring}.
-    Defaults to [0]. *)
-
-val allreduce_cast : bool t
-(** [allreduce_cast] makes the allreduce of a value cast up from a 16-bit float
-    exchange the 16-bit values, from [ALLREDUCE_CAST]. Defaults to [true]. *)
-
-val allreduce_node_ndevs : int t
-(** [allreduce_node_ndevs] is the number of devices per node, from
-    [ALLREDUCE_NODE_NDEVS]. When positive and dividing the number of devices,
-    allreduce reduces within each node before crossing nodes, device [k] of a
-    node exchanging with device [k] of the others. [0] treats all devices as one
-    node. Defaults to [0]. *)
-
 val cachelevel : int t
 (** [cachelevel] enables the {!Helpers.Diskcache} when positive, from
     [CACHELEVEL]. Defaults to [2]. *)
@@ -278,17 +257,6 @@ val disallow_broadcast : bool t
 (** [disallow_broadcast] makes an elementwise operation on operands of different
     shapes fail instead of broadcasting them, from [DISALLOW_BROADCAST].
     Defaults to [false]. *)
-
-val late_allreduce : bool t
-(** [late_allreduce] leaves each allreduce to a call of its own
-    ({!Allreduce.create_allreduce_function}), from [LATE_ALLREDUCE]. Otherwise
-    sharding ({!Multi}) replaces an allreduce of a value that is not sharded
-    ({!Allreduce.handle_allreduce}). Defaults to [true]. *)
-
-val ring_allreduce_threshold : int t
-(** [ring_allreduce_threshold] is the number of elements a value must exceed for
-    allreduce to use the all-to-all or ring algorithm at level [1] of {!all2all}
-    or {!ring}, from [RING_ALLREDUCE_THRESHOLD]. Defaults to [256000]. *)
 
 val reduceop_split_threshold : int t
 (** [reduceop_split_threshold] is how many times as many elements as its output

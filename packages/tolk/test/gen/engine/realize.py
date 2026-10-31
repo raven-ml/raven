@@ -51,11 +51,6 @@ def scheduled(program):
 def empty(*shape, dtype=dtypes.float, device=None): return Tensor.empty(*shape, dtype=dtype, device=device)
 
 
-def sharded(*shape, axis, devices=("CPU:0", "CPU:1")):
-    shard = tuple(n // len(devices) if a == axis else n for a, n in enumerate(shape))
-    return Tensor(empty(*shard, device=devices).uop.unshard(axis), device=devices)
-
-
 def add_one(C, A):
     C, A = C.flatten(), A.flatten()
     i = UOp.range(A.numel(), 0)
@@ -81,8 +76,6 @@ PROGRAMS = {
     "copy_view": lambda: empty(8, 8)[2:6].to("CPU:1") + 1,
     "copy_big": lambda: empty(1 << 20, dtype=dtypes.uint8).to("CPU:1") + 1,
     "copy_variable": lambda: empty(10)[:Variable("v", 1, 10).bind(3)].to("CPU:1") + 1,
-    "shard_add": lambda: sharded(4, 8, axis=0) + 1,
-    "shard_to_one": lambda: sharded(4, 8, axis=0).to("CPU:0") + 1,
     "variable_shrink": lambda: empty(10)[:Variable("v", 1, 10).bind(3)] * 2,
     "variable_two": lambda: (empty(10)[:Variable("v", 1, 10).bind(4)] * 2,
                              empty(10)[:Variable("w", 1, 10).bind(7)] + 1),

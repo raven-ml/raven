@@ -350,19 +350,9 @@ let const : Dtype.const codec =
     read;
   }
 
-let device =
-  let read = function
-    | Str s -> Ops.Single s
-    | Tuple l -> Multi (List.map str.read l)
-    | v -> expected "a device" v
-  in
-  {
-    write =
-      (function
-      | Ops.Single s -> Str s
-      | Multi l -> Tuple (List.map str.write l));
-    read;
-  }
+let device : Ops.device codec =
+  let read = function Str s -> s | v -> expected "a device" v in
+  { write = (fun s -> Str s); read }
 
 let sint =
   let read = function Node u -> Ops.Sym u | v -> Ops.Int (int.read v) in
@@ -682,9 +672,7 @@ let arg_value : Ops.arg -> value option = function
   | Param p -> Some (param_arg.write p)
   | Range r -> Some (range_arg.write (r.axis_type, r.axis_id))
   | Reduce r -> Some ((pair op int).write (r.op, r.num_axes))
-  | Allreduce a -> Some ((pair op device).write (a.op, a.device))
   | Device d -> Some (device.write d)
-  | Shard n -> Some (int.write n)
   | Axes l -> Some ((list int).write l)
   | Flips l -> Some ((list bool).write l)
   | String s -> Some (str.write s)
@@ -708,12 +696,8 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Reduce ->
       let op, num_axes = (pair op int).read v in
       Reduce { op; num_axes }
-  | Allreduce ->
-      let op, device = (pair op device).read v in
-      Allreduce { op; device }
   | Copy -> Device (device.read v)
-  | Mselect -> Shard (int.read v)
-  | Permute | Unshard -> Axes ((list int).read v)
+  | Permute -> Axes ((list int).read v)
   | Flip -> Flips ((list bool).read v)
   | Special | Source | Load | Store | Linear -> String (str.read v)
   | Custom_function -> Custom_function (custom_function.read v)

@@ -10,7 +10,7 @@ let str pp x = Format.asprintf "%a" pp x
 (* Axis types *)
 
 let axis_types =
-  Ops.Axis_type.[ Device; Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
+  Ops.Axis_type.[ Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
 
 let axis_type_of_cell s =
   Result.get_ok (Ops.Axis_type.of_string (after "AxisType." s))
@@ -75,15 +75,9 @@ let axis_type_group =
 let devices =
   group "devices"
     [
-      test "pp_device formats a name quoted, and several as a tuple" (fun () ->
-          equal string "'CPU'" (str Ops.pp_device (Single "CPU"));
-          equal string "('CPU:0', 'CPU:1')"
-            (str Ops.pp_device (Multi [ "CPU:0"; "CPU:1" ]));
-          equal string "('CPU:0',)" (str Ops.pp_device (Multi [ "CPU:0" ])));
-      test "equal_device tells one device from one of several" (fun () ->
-          is_true (Ops.equal_device (Single "CPU") (Single "CPU"));
-          is_false (Ops.equal_device (Single "CPU") (Multi [ "CPU" ]));
-          is_false (Ops.equal_device (Multi [ "A"; "B" ]) (Multi [ "B"; "A" ])));
+      test "pp_device formats a name quoted" (fun () ->
+          equal string "'CPU'" (str Ops.pp_device "CPU");
+          equal string "\"it's\"" (str Ops.pp_device "it's"));
     ]
 
 (* Arguments *)
@@ -161,7 +155,7 @@ let arguments =
       test
         "param_like keeps its storage's phase, moved by a shrink, and knows it \
          modulo what a symbolic start moves by" (fun () ->
-          let b = Ops.new_buffer ~phase:4 (Single "CPU") 16 Dtype.Float32 in
+          let b = Ops.new_buffer ~phase:4 "CPU" 16 Dtype.Float32 in
           let phase u =
             match Ops.arg (Ops.buf_uop (Shape.param_like u 0)) with
             | Param p -> p.phase
@@ -268,7 +262,7 @@ let arguments =
                (Code { code = "a"; dtype = Void })
                (Code { code = "a"; dtype = Int32 }));
           is_false (Ops.equal_arg (Flips [ true ]) (Flips [ false ]));
-          is_false (Ops.equal_arg (Shard 0) (Axes [ 0 ])));
+          is_false (Ops.equal_arg (Device "CPU") (String "CPU")));
       test "equal_arg compares constants by their bits and nodes physically"
         (fun () ->
           is_false
@@ -738,7 +732,7 @@ let data_types =
         (fun () ->
           rejects (fun () -> Ops.v Op.Const);
           rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] Op.Cast);
-          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] ~arg:(Shard 3) Op.Bitcast);
+          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] ~arg:(Axes [ 3 ]) Op.Bitcast);
           rejects (fun () -> Ops.v Op.Param);
           rejects (fun () -> Ops.v Op.Custom));
       test "a transcendental of Invalid is boolean" (fun () ->
@@ -1170,7 +1164,7 @@ let shapes =
           equal shape (ints [ 2; 3 ]) (Shape.shape Ops.O.(a + b)));
       test "a node passing its source through keeps its shape" (fun () ->
           let p =
-            Shape.param ~device:(Single "CPU") ~shape:(ints [ 2; 3 ]) 0 Float32
+            Shape.param ~device:"CPU" ~shape:(ints [ 2; 3 ]) 0 Float32
           in
           List.iter
             (fun u ->
@@ -1181,7 +1175,7 @@ let shapes =
                 (Shape.shape u))
             [
               Ops.after p [ Ops.sink [] ];
-              Ops.copy_to_device p (Single "CUDA");
+              Ops.copy_to_device p "CUDA";
               Ops.v ~src:[ p ] Op.Detach;
               Ops.v ~src:[ p ] Op.Contiguous_backward;
               Ops.v ~src:[ p ] Op.Noop;
@@ -1349,14 +1343,6 @@ let ranges =
           let r = Ops.range (Int 4) [ 0 ] in
           let ended = Ops.end_ Ops.O.(r + int 1) [ r ] in
           equal uops [ r ] (Ops.ended_ranges (Ops.barrier ended [])));
-      test "ended_ranges of an unshard is its sharding ranges" (fun () ->
-          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
-          let u =
-            Shape.unshard ~ranges:[ d ]
-              (Shape.param ~shape:(ints [ 4 ]) 0 Float32)
-              [ 0 ]
-          in
-          equal uops [ d ] (Ops.ended_ranges u));
       test "axis_id and axis_type read a range and reject anything else"
         (fun () ->
           let r = Ops.range ~axis_type:Loop (Int 4) [ 1; 0 ] in
@@ -1369,7 +1355,7 @@ let ranges =
          part" (fun () ->
           equal string "0_1" (Ops.range_str (Ops.range (Int 4) [ 0; 1 ]));
           equal string "m1"
-            (Ops.range_str (Ops.range ~axis_type:Device (Int 4) [ -1 ]));
+            (Ops.range_str (Ops.range ~axis_type:Loop (Int 4) [ -1 ]));
           equal string "2_m3" (Ops.range_str (Ops.range (Int 4) [ 2; -3 ])));
       test "range_str paints in the axis colour on request" (fun () ->
           let r = Ops.range ~axis_type:Upcast (Int 4) [ 3 ] in

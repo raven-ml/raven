@@ -20,13 +20,11 @@ from golden import graph, table
 from tinygrad import Tensor, Variable, dtypes, function
 from tinygrad.dtype import AddrSpace, Invalid
 from tinygrad.helpers import DEV
-from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
+from tinygrad.uop.ops import KernelInfo, Ops, UOp
 import tinygrad.schedule
 import tinygrad.tensor
 
 DEV.value = "CPU"
-D2 = ("CPU:0", "CPU:1")
-D4 = tuple(f"CPU:{k}" for k in range(4))
 DISK = "DISK:/tmp/tolk-schedule"
 
 
@@ -76,17 +74,6 @@ def scheduled(program):
 
 
 def empty(*shape, dtype=dtypes.float, device=None): return Tensor.empty(*shape, dtype=dtype, device=device)
-
-
-def sharded(*shape, axis, devices=D2):
-    shard = tuple(n // len(devices) if a == axis else n for a, n in enumerate(shape))
-    return Tensor(empty(*shard, device=devices).uop.unshard(axis), device=devices)
-
-
-def mesh(*shape):
-    rng = UOp.range(4, -1, AxisType.DEVICE)
-    rows, cols = rng // 2, rng % 2
-    return Tensor(empty(*shape).uop.copy_to_device(D4)._shard(0, rows)._shard(1, cols).unshard((0, 1), (rows, cols)))
 
 
 def add_one(C, A):
@@ -205,15 +192,6 @@ PROGRAMS = {
     "disk_to": lambda: empty(64, dtype=dtypes.uint8, device=DISK).to("CPU") + 1,
     "disk_view_to": lambda: empty(64, dtype=dtypes.uint8, device=DISK)[8:24].to("CPU") + 1,
     "disk_store": lambda: empty(16, dtype=dtypes.uint8, device=DISK).assign(empty(16, dtype=dtypes.uint8).to(DISK)),
-    # several devices
-    "shard_add": lambda: sharded(4, 8, axis=0) + 1,
-    "shard_sum": lambda: sharded(4, 8, axis=0).sum(0),
-    "shard_matmul": lambda: sharded(8, 16, axis=0, devices=D4) @ empty(16, 4, device=D4),
-    "shard_to_one": lambda: sharded(4, 8, axis=0).to("CPU:0") + 1,
-    "mesh_sum": lambda: mesh(4, 4, 2).sum(2),
-    # rows gathered from a value sharded by rows, joined by a bitwise or
-    "shard_gather_rows": lambda: Tensor(sharded(8, 4, axis=0).uop.index(
-        empty(3, dtype=dtypes.int32, device=D2).uop.maximum(0).minimum(7).cast(dtypes.weakint)), device=D2),
     # variables
     "variable_shrink": lambda: empty(10)[:Variable("v", 1, 10).bind(3)] * 2,
     "variable_reduce": lambda: empty(10, 4)[:Variable("v", 1, 10).bind(5)].sum(0),

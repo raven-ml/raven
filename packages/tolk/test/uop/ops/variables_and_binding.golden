@@ -5,6 +5,5 @@
 3 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 4), multiple_of=2, name="m", addrspace=AddrSpace.ALU)
 4 Ops.MUL dtypes.weakint [2, 3]
 5 Ops.ADD dtypes.weakint [4, 2]
-6 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="_device_num", addrspace=AddrSpace.ALU)
-7 Ops.SINK dtypes.void [1, 2, 2, 5, 3, 2, 6, 2]
+6 Ops.SINK dtypes.void [1, 2, 2, 5, 3, 2]
 

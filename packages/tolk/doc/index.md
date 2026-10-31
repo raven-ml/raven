@@ -8,7 +8,7 @@ Tolk is a port of [tinygrad](https://github.com/tinygrad/tinygrad) in OCaml — 
 - **Symbolic simplification** — three-phase algebraic pipeline for index expressions with div/mod folding
 - **Hardware decompositions** — transcendentals, int64 emulation, float type promotion, and late op rewrites
 - **Codegen pipeline** — range simplification, GPU dimension mapping, beam search optimization, and linearization
-- **Schedule pipeline** — tensor-to-kernel graph transformation with range analysis and multi-device sharding
+- **Schedule pipeline** — tensor-to-kernel graph transformation with range analysis, for one device
 - **JIT integration** — used by Rune's `jit` transformation to compile and dispatch kernels at runtime
 
 ## Architecture

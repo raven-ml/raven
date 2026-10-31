@@ -90,7 +90,6 @@ CASES = {
     "sizes": lambda: synthetic([[0, 1, 2], [3, 1], [4, 3, 2], [5, 4], [6, 5, 1]],
                                sizes={0: 1000, 1: 70000, 2: 33, 3: 4096, 4: 257, 5: 9, 6: 1 << 20}),
     "disk": lambda: synthetic([[0, 1], [2, 1]], device="DISK:/tmp/tolk"),
-    "two_devices": lambda: synthetic([[0, 1], [2, 1], [3, 2]], device=("CPU:0", "CPU:1")),
     **{f"random_{k}": (lambda k=k: randomly(k)) for k in range(12)},
     # real schedules
     "softmax": lambda: planned(lambda: empty(64, 64).softmax(-1)),
@@ -98,7 +97,6 @@ CASES = {
     "matmul_chain": lambda: planned(lambda: ((empty(32, 32) @ empty(32, 32)).relu().contiguous() @ empty(32, 32)).exp()
                                     .contiguous().sum(0)),
     "convs": lambda: planned(lambda: empty(1, 2, 8, 8).conv2d(empty(4, 2, 3, 3)).relu().conv2d(empty(4, 4, 3, 3)).sum()),
-    "sharded": lambda: planned(lambda: empty(4, 64).shard(("CPU:0", "CPU:1", "CPU:2", "CPU:3"), axis=0).exp().sum(0) + 1),
     "copies": lambda: planned(lambda: (empty(64, 64).to("CPU:1").exp() + 1).to("CPU:2").sum()),
     "sort": lambda: planned(lambda: empty(64).sort()[0]),
 }

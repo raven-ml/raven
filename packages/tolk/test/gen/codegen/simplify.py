@@ -182,7 +182,6 @@ def split_cases():
         ("cmod_4_of_12", mod_kernel(r12, 4, Ops.CMOD)),
         ("mod_of_a_symbolic_range", mod_kernel(UOp.range(n, 0), 2)),
         ("mod_of_a_warp_range", mod_kernel(rng(8, 0, AxisType.WARP), 2)),
-        ("mod_of_a_device_range", mod_kernel(rng(8, 0, AxisType.DEVICE), 2)),
         ("mod_of_a_local_range", mod_kernel(rng(8, 0, AxisType.LOCAL), 2)),
         ("mod_by_a_variable", kernel(store_at(r8, r8 % UOp.variable("c", 1, 4)).end(r8))),
         ("two_mods_of_one_range", kernel(store_at(r12, r12 % 2 + r12 % 4).end(r12))),

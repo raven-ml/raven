@@ -3,8 +3,7 @@
 Recorded programs: `<program>.golden` is the graph that `get_kernel_graph`
 receives when the tensors of a `Tensor` program are scheduled on the CPU, and
 `<program>_kernels.golden` the kernel graph it returns. A program that
-schedules several graphs, such as an allreduce compiled as a function of its
-own, records the later ones as `<program>_<n>.golden` and
+schedules several graphs, such as a function compiled on its own, records the later ones as `<program>_<n>.golden` and
 `<program>_<n>_kernels.golden`.
 
 `kernel_counts.golden` is the number of kernels of each recorded graph.
@@ -20,14 +19,12 @@ from golden import graph, table, text
 from tinygrad import Tensor, Variable, dtypes, function
 from tinygrad.helpers import DEBUG_RANGEIFY, DEV, MAX_KERNEL_BUFFERS, SPLIT_REDUCEOP
 from tinygrad.dtype import Invalid
-from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
+from tinygrad.uop.ops import KernelInfo, Ops, UOp
 import tinygrad.schedule
 import tinygrad.schedule.prepare
 import tinygrad.schedule.rangeify
 
 DEV.value = "CPU"
-D2 = ("CPU:0", "CPU:1")
-D4 = tuple(f"CPU:{k}" for k in range(4))
 DISK = "DISK:/tmp/tolk-rangeify"
 
 
@@ -52,11 +49,6 @@ def scheduled(program):
 
 
 def empty(*shape, dtype=dtypes.float, device=None): return Tensor.empty(*shape, dtype=dtype, device=device)
-
-
-def sharded(*shape, axis, devices=D2):
-    shard = tuple(n // len(devices) if a == axis else n for a, n in enumerate(shape))
-    return Tensor(empty(*shard, device=devices).uop.unshard(axis), device=devices)
 
 
 def setitem(index, value, shape=(8, 8)):
@@ -188,13 +180,6 @@ def tiled_chain():
 def padded_pair():
     """A value of some forty nodes read through two paddings to 1024: each output computes it at most twice."""
     return (lambda x: x.pad((0, 1020)) + x.pad((1020, 0)))(chain(4))
-
-
-def mesh(*shape):
-    """A value of `shape` sharded on its first two axes across four devices."""
-    rng = UOp.range(4, -1, AxisType.DEVICE)
-    rows, cols = rng // 2, rng % 2
-    return Tensor(empty(*shape).uop.copy_to_device(D4)._shard(0, rows)._shard(1, cols).unshard((0, 1), (rows, cols)))
 
 
 def limited(program, n):
@@ -388,25 +373,14 @@ PROGRAMS = {
     "full_invalid": lambda: Tensor.full((4,), Invalid, dtype=dtypes.float),
     "invalids_read": lambda: Tensor.invalids(8).contiguous() + empty(8),
     "partially_invalid": partially_invalid,
-    "invalids_sharded": lambda: Tensor.invalids(8).shard(D2, axis=0).contiguous(),
     # limits on the buffers of a kernel
     "many_inputs": lambda: many_inputs(8),
     "many_inputs_limited": limited(lambda: many_inputs(8), 4),
     "many_matrices_limited": limited(lambda: many_inputs(8, 4, 4), 4),
     "many_cubes_limited": limited(lambda: many_inputs(8, 2, 3, 4), 4),
     "many_sums_limited": limited(lambda: sum((empty(8, 4).sum(1) for _ in range(6)), start=empty(8)), 4),
-    "many_sharded_limited": limited(lambda: sum((sharded(8, 4, axis=0) for _ in range(6)), start=sharded(8, 4, axis=0)), 4),
     # several devices
     "copy": lambda: empty(4, 4).to("CPU:1") * 2,
-    "shard_add": lambda: sharded(4, 8, axis=0) + 1,
-    "shard_sum": lambda: sharded(4, 8, axis=0).sum(0),
-    "mesh_add": lambda: mesh(4, 4) + 1,
-    "mesh_sum": lambda: mesh(4, 4, 2).sum(2),
-    "mesh_to_one": lambda: mesh(4, 4).to("CPU") + 1,
-    "shard_of_computed": lambda: (empty(4, 4) + 1).shard(D2, 0) * 2,
-    "shard_gather": lambda: sharded(8, 4, axis=1)[Tensor([1, 2], dtype=dtypes.int32).shard(D2)],
-    "replicated_reshape": lambda: empty(4, 4).to(D2).reshape(16) + 1,
-    "shard_matmul": lambda: sharded(8, 16, axis=0, devices=D4) @ empty(16, 4, device=D4),
 }
 
 # Programs whose DEBUG_RANGEIFY printout is recorded.

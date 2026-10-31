@@ -6,6 +6,11 @@
 - Amends: RFC 0005 (where devices come from, engines, placements, the tensor
   representation, routing, Laws 1, 2, 5 and 6), RFC 0006 (host cells)
 - Depends on: RFC 0008, for the representation of a backend value
+- Amended: 2026-10-31, tolk compiles for one device. Its multi-device rewrite
+  (`schedule/multi.ml`, `schedule/allreduce.ml`, the shard and allreduce
+  nodes) is out of scope (tolk's README, Exclusions): rune's sharded jit
+  lowers nx's per-operation partition into one-device kernels and copies, and
+  the rules this RFC cites from those files are nx's partition's to state.
 
 ## Summary
 

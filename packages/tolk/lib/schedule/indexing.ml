@@ -55,10 +55,10 @@ let new_ranges ctx shape =
   List.rev (List.fold_left (fun acc s -> new_range ctx s :: acc) [] shape)
 
 let always_contiguous =
-  ops Op.[ After; Buffer; Alloc; Const; Mselect; Mstack; Param; Load; Call ]
+  ops Op.[ After; Buffer; Alloc; Const; Param; Load; Call ]
 
 let realize ctx u = Tbl.replace ctx.realize_map u None
-let storage = ops Op.[ Param; Buffer; Alloc; Mstack; Mselect; After ]
+let storage = ops Op.[ Param; Buffer; Alloc; After ]
 
 (* A gather is an index by an integer value with axes: its source is read at
    loaded positions, so it is stored whole unless it is storage. A view of
@@ -70,12 +70,6 @@ let is_gather u = op u = Op.Index && is_gather_src (src u)
 let realize_gathered ctx g =
   let x = nth g 0 in
   if is_gather g && not (Op.Set.mem (op x) storage) then realize ctx x
-
-let realize_srcs ctx rb =
-  List.iter
-    (fun s ->
-      if not (Op.Set.mem (op (base s)) always_contiguous) then realize ctx s)
-    (src rb)
 
 (* An assign needs this only for a write-after-read hazard, the destination read
    by the value stored into it. *)
@@ -107,9 +101,6 @@ let pm_generate_realize_map =
         rule_ctx
           (Upat.op Op.Store ~name:"tr")
           (mark (fun ctx m -> realize ctx (m "tr")));
-        rule_ctx
-          (Upat.v ~op:(ops [ Op.Mselect; Op.Mstack ]) ~name:"rb" ())
-          (mark (fun ctx m -> realize_srcs ctx (m "rb")));
         rule_ctx
           (Upat.op Op.Index ~name:"g" ~allow_any_len:true)
           (mark (fun ctx m -> realize_gathered ctx (m "g")));
@@ -547,7 +538,7 @@ let joinable regions a b =
     reads sa b || reads sb a || waits_over sa sb || waits_over sb sa
   in
   List.equal Sint.equal (shape (nth a 1)) (shape (nth b 1))
-  && Option.equal equal_device (device (nth a 0)) (device (nth b 0))
+  && Option.equal String.equal (device (nth a 0)) (device (nth b 0))
   && base (nth a 0) != base (nth b 0)
   && within a b && within b a
   && not (apart ())
@@ -694,9 +685,8 @@ let reduce_loops rctx x sizes outer =
       rctx.siblings <- g :: rctx.siblings;
       reduced
 
-(* Kernels are internal, and after, shard selections and shard stacks carry no
-   ranges, as a sink does not. *)
-let no_ranges = ops Op.[ Call; After; Mstack; Mselect ]
+(* Kernels are internal, and an after carries no ranges, as a sink does not. *)
+let no_ranges = ops Op.[ Call; After ]
 
 let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
   let consumers = List.rev (Tbl.find consumer_map x) in
@@ -767,7 +757,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
           (* A value of no axes that computes a reduction is stored too, as one
              element: inlined where it is broadcast, each element of the
              consumer would compute the reduction whole. Without a reduction it
-             is scalar arithmetic, which may be an offset of a shard. *)
+             is scalar arithmetic, which may be an offset. *)
           if
             List.is_empty out_rngs
             && not (op_in_backward_slice_with_self ~calls:Skip x [ Op.Reduce ])

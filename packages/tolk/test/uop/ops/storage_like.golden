@@ -8,18 +8,11 @@
 6 Ops.STACK dtypes.void []
 7 Ops.PARAM dtypes.weakint [6] ParamArg(slot=6, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, addrspace=AddrSpace.ALU)
 8 Ops.PARAM dtypes.weakint [6] ParamArg(slot=7, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, addrspace=AddrSpace.ALU)
-9 Ops.CONST dtypes.weakint [] 12
-10 Ops.PARAM dtypes.f32 [9] ParamArg(slot=8, dtype=dtypes.f32, device=("CPU:0", "CPU:1"))
-11 Ops.CONST dtypes.weakint [] 4
-12 Ops.STACK dtypes.weakint [11, 3]
-13 Ops.RESHAPE dtypes.f32 [10, 12]
-14 Ops.RANGE dtypes.weakint [2] (AxisType.DEVICE, 0)
-15 Ops.UNSHARD dtypes.f32 [13, 14] (0,)
-16 Ops.PARAM dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32)
-17 Ops.RESHAPE dtypes.f32 [16, 4]
-18 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=10, dtype=dtypes.f32)
-19 Ops.RESHAPE dtypes.f32 [18, 4]
-20 Ops.ALLOC dtypes.f32 [9] ParamArg(slot=11, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
-21 Ops.RESHAPE dtypes.f32 [20, 12]
-22 Ops.SINK dtypes.void [5, 7, 8, 15, 17, 19, 21]
+9 Ops.PARAM dtypes.f32 [0] ParamArg(slot=9, dtype=dtypes.f32)
+10 Ops.RESHAPE dtypes.f32 [9, 4]
+11 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=10, dtype=dtypes.f32)
+12 Ops.RESHAPE dtypes.f32 [11, 4]
+13 Ops.ALLOC dtypes.f32 [0] ParamArg(slot=11, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)
+14 Ops.RESHAPE dtypes.f32 [13, 4]
+15 Ops.SINK dtypes.void [5, 7, 8, 10, 12, 14]
 

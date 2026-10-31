@@ -18,9 +18,6 @@ copy_big	1	-	%1 %2	0 16384	0	1	E_16384_16_4	1048576	2097152	2097152
 copy_variable	0	v=3	%1 %2	0 5 v	0	1	E_5_2	10	80	80
 copy_variable	1	v=3	%1 %2	-	0	1	[33mcopy       40 B,   CPU:1 <- CPU    [0m	0	40	40
 copy_variable	2	v=3	%1 %2	0 v	0	1	E_v	3	24	24
-shard_add	0	-	%1 %2	-	0	1	E_16	16	128	128
-shard_to_one	0	-	%1 %2	-	0	1	[33mcopy       64 B,     CPU <- CPU:1  [0m	0	64	64
-shard_to_one	1	-	%1 %2 %3	0 2	0	1 2	E_2_2_8	32	256	256
 variable_shrink	0	v=3	%1 %2	0 v	0	1	E_v	3	24	24
 variable_two	0	v=4 w=7	%1 %2	0 v	0	1	E_v	4	32	32
 variable_two	1	v=4 w=7	%1 %2	0 w	0	1	E_w	7	56	56

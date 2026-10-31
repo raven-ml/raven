@@ -125,8 +125,6 @@ type t =
   | Detach  (** Its source, through which no gradient flows. *)
   | Stage  (** Realizes its source into a new buffer. *)
   | Copy  (** Copies its source to another device. *)
-  | Mselect  (** One device's shard of a value held on several devices. *)
-  | Mstack  (** Gathers per-device values into one multi-device value. *)
   | Custom_function
       (** A function named by its argument and implemented outside the graph,
           such as a device submission or an external callee. *)
@@ -135,16 +133,12 @@ type t =
   | Expand  (** Broadcasts axes of size one of its source. *)
   | Pad  (** Pads each axis of its source. *)
   | Flip  (** Reverses axes of its source. *)
-  | Unshard
-      (** Reassembles a value sharded across devices: its source is one shard
-          and its result is the whole. *)
   | Reduce
       (** Reduces axes of its source with {!Add}, {!Mul} or {!Max}, in an
           order the compiler chooses; over no element it is the operation's
           identity. Since {!Max} gives either operand for a NaN, a maximum
           over elements one of which is NaN is NaN, the identity or one of
           the elements. *)
-  | Allreduce  (** Reduces a value across devices. *)
 
 val equal : t -> t -> bool
 (** [equal o0 o1] is [true] iff [o0] and [o1] are the same operation. *)
@@ -258,8 +252,8 @@ module Set : sig
       and {!Max}. *)
 
   val reduce : t
-  (** [reduce] is the operations a {!Reduce} or an {!constructor-Allreduce} can
-      reduce with: {!Add}, {!Mul} and {!Max}. *)
+  (** [reduce] is the operations a {!Reduce} can reduce with: {!Add}, {!Mul}
+      and {!Max}. *)
 
   val comparison : t
   (** [comparison] is the operations whose result is a boolean whatever the type

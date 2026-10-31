@@ -10,7 +10,7 @@ let program name = Golden.sink (name ^ ".golden")
 (* The settings a program was recorded under. *)
 let settings = function
   | "many_inputs_limited" | "many_matrices_limited" | "many_cubes_limited"
-  | "many_sums_limited" | "many_sharded_limited" ->
+  | "many_sums_limited" ->
       [ Setting.B (Setting.max_kernel_buffers, 4) ]
   | _ -> []
 
@@ -94,24 +94,16 @@ let programs =
     "full_invalid";
     "inline_function";
     "invalids_read";
-    "invalids_sharded";
     "layernorm";
     "long_cumsum";
     "many_cubes_limited";
     "many_inputs";
     "many_inputs_limited";
     "many_matrices_limited";
-    "many_sharded_limited";
     "many_sums_limited";
     "matmul";
     "maxpool";
     "mean_kept_broadcast";
-    "mesh_add";
-    "mesh_add_1";
-    "mesh_sum";
-    "mesh_sum_1";
-    "mesh_to_one";
-    "mesh_to_one_1";
     "mulacc";
     "multimatmul";
     "multireduce_diffops_parallel";
@@ -145,18 +137,11 @@ let programs =
     "reduce_same_size";
     "reduce_shrink";
     "reduce_unary";
-    "replicated_reshape";
     "reshape_chain";
     "setitem";
     "setitem_column";
     "setitem_cube";
     "setitem_tensor";
-    "shard_add";
-    "shard_gather";
-    "shard_matmul";
-    "shard_of_computed";
-    "shard_sum";
-    "shard_sum_1";
     "shared_sum";
     "shrink_fuse";
     "shrink_pad_unsafe";
@@ -221,8 +206,6 @@ let gather_counts =
    its parameters and buffers, what the tensor graph writes there (Tensors).
    Memory holds small integers. *)
 
-let devices = function Some (Ops.Multi l) -> List.length l | _ -> 1
-
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
@@ -243,7 +226,7 @@ let filled u =
     (fun (n, (p : Ops.param_arg)) ->
       let size = Shape.max_numel n in
       let at j = element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3) in
-      (p.slot, Array.init (size * devices p.device) at))
+      (p.slot, Array.init size at))
     (storage u)
 
 let close = Testable.float_rel ~rel:1e-6 ~abs:0.
@@ -281,8 +264,7 @@ let keeps_writes name =
 
 (* Programs the law does not apply to: custom kernels, whose bodies keep their
    views until they are compiled, a compiled schedule, and symbolic shapes,
-   which Tensors does not run; programs on several devices, which Kernel_graphs
-   does not run, are left out as well. *)
+   which Tensors does not run. *)
 let unevaluated =
   [
     "custom_kernel";
@@ -301,18 +283,11 @@ let unevaluated =
     "variable_staged";
   ]
 
-let on_several_devices u =
-  List.exists
-    (fun n -> match Ops.device n with Some (Multi _) -> true | _ -> false)
-    (Ops.toposort ~calls:Enter u)
-
 let values =
   group "get_kernel_graph › values"
     (List.filter_map
        (fun name ->
-         if List.mem name unevaluated || on_several_devices (program name) then
-           None
-         else Some (keeps_writes name))
+         if List.mem name unevaluated then None else Some (keeps_writes name))
        programs)
 
 (* Kernel graphs
@@ -336,7 +311,7 @@ let storage_params body =
 let rec storage_of u =
   match Ops.op u with
   | After -> storage_of (Ops.nth u 0)
-  | Param | Buffer | Alloc | Mstack | Mselect -> Some u
+  | Param | Buffer | Alloc -> Some u
   | _ -> None
 
 let kernel_graph_law name claim check =
@@ -355,8 +330,6 @@ let numbered u =
       at_most ~msg:"arguments" int ~than:(List.length args) (List.length slots))
     (calls u)
 
-(* A device range a kernel reads from its arguments keeps the id [-1] that marks
-   it. *)
 let ranges_from_zero u =
   List.iter
     (fun c ->
@@ -380,7 +353,7 @@ let arguments_are_storage u =
       List.iter
         (fun a ->
           match (Ops.op a, storage_of a) with
-          | (Param | Buffer | Alloc | After | Mstack | Mselect), Some _ -> ()
+          | (Param | Buffer | Alloc | After), Some _ -> ()
           | _ when Ops.op a = Param -> ()
           | op, _ -> failf "a call's argument is a %a" Op.pp op)
         (List.tl (Ops.src c)))
@@ -394,13 +367,8 @@ let strong_storage u =
     (fun a -> is_false ~msg:"weak storage" (List.mem (Ops.dtype a) Dtype.weaks))
     (made_storage u)
 
-(* [reads_after a arg] is [true] iff the argument [arg] is [a] after effects,
-   directly or as one device's part of a gathered value. *)
-let rec reads_after a arg =
-  match Ops.op arg with
-  | After -> Ops.nth arg 0 == a
-  | Mstack | Mselect -> List.exists (reads_after a) (Ops.src arg)
-  | _ -> false
+(* [reads_after a arg] is [true] iff the argument [arg] is [a] after effects. *)
+let reads_after a arg = Ops.op arg = After && Ops.nth arg 0 == a
 
 (* Storage that no kernel writes, because every value stored into it was
    invalid, may still be read. *)
@@ -473,7 +441,7 @@ let spec =
    Hand-built functions on the CPU, prepared, then turned into kernel graphs: an
    output of sixteen elements in slot [0], inputs in the next slots. *)
 
-let cpu = Ops.Single "CPU"
+let cpu = "CPU"
 let ints = List.map (fun n -> Ops.Int n)
 
 let input ?(shape = [ 4; 4 ]) slot =
@@ -1191,8 +1159,8 @@ let copies =
           let outside = chain 300 (Ops.index source [ Ops.O.int 0 ]) in
           let v = staged (fun x -> Ops.O.(x + outside)) in
           equal int 1 (kernels_reading (twice v)));
-      (* [b] and [a] share the range [s], as stages over one device range do:
-         the reads of [b] count at [s], not as reads of [a]. *)
+      (* [b] and [a] share the range [s]: the reads of [b] count at [s], not as
+         reads of [a]. *)
       test "reads of a stage sharing a range are not the other's" (fun () ->
           let s = loop 48 0 and t = loop 2 1 in
           let a =

@@ -210,18 +210,15 @@ about 330,000 graphs, and refused none.
 
 | Op | Arg |
 |---|---|
-| the ALU ops, `INDEX`, `SHRINK`, `STACK`, `RESHAPE`, `EXPAND`, `PAD`, `AFTER`, `GROUP`, `END`, `BARRIER`, `IF`, `ENDIF`, `NOOP`, `BACKEDGE`, `MSTACK`, `DETACH`, `CONTIGUOUS_BACKWARD` | none |
+| the ALU ops, `INDEX`, `SHRINK`, `STACK`, `RESHAPE`, `EXPAND`, `PAD`, `AFTER`, `GROUP`, `END`, `BARRIER`, `IF`, `ENDIF`, `NOOP`, `BACKEDGE`, `DETACH`, `CONTIGUOUS_BACKWARD` | none |
 | `LOAD`, `STORE` | none, or a string: a flag of the access, such as `"nontemporal"` |
 | `CONST` | an integer, a boolean, a float or `Invalid`; its dtype follows from the kind: `dtypes.weakint`, `dtypes.bool`, `dtypes.weakfloat` and `dtypes.bool` |
 | `CAST`, `BITCAST` | the target data type |
 | `PERMUTE` | a tuple of integers, the order of the axes |
 | `FLIP` | a tuple of booleans, one per axis |
 | `REDUCE` | `(<op>, <count>)`: the reducing operation and how many leading axes it reduces, as `(Ops.ADD, 1)` |
-| `ALLREDUCE` | `(<op>, <device>)` |
 | `RANGE` | its `AxisType`, then the axis id, one or more integers: `(AxisType.LOOP, 0)`, `(AxisType.WEAK, 1, 0)` |
 | `SPECIAL` | a string, the name of the launch dimension: `"gidx0"` |
-| `UNSHARD` | a tuple of one integer, the axis |
-| `MSELECT` | an integer, the device's position |
 | `COPY` | a device |
 | `LINEAR` | none, or a string |
 | `CUSTOM`, `CUSTOMI` | `(<code>, <data type>)`, the code a string |
@@ -248,12 +245,12 @@ The records, with their fields in order:
 | `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile` and `precompile_backward` booleans, `dtype` data type |
 | `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable` and `broadcast` booleans |
 
-A device is a string, or a tuple of strings for a sharded value. The
-enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a
+A device is a string. The enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a
 boolean, an integer, a string, bytes (Metal's indirect command buffers tag
 with them), a data type, or a tuple of these, such as `(0, dtypes.int)`; it
-never holds a node. `PYLITERAL` and `REWRITE_ERROR` are
-excluded operations, and the arg kinds of the excluded ISA path (register
+never holds a node. `PYLITERAL`, `REWRITE_ERROR` and the operations of
+several devices (`MSELECT`, `MSTACK`, `UNSHARD`, `ALLREDUCE`) are excluded
+operations, and the arg kinds of the excluded ISA path (register
 records, integer instructions) are not part of the format.
 
 The format serves the G-list goldens too, in place of the listing

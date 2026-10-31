@@ -127,7 +127,7 @@ let b = floats [| 10.; 20.; 30.; 40. |]
 let call_on name ~size ~slots prg =
   Ops.call prg
     (List.init slots (fun slot ->
-         Shape.param ~shape:[ Ops.Int size ] ~device:(Single name) slot Float32))
+         Shape.param ~shape:[ Ops.Int size ] ~device:name slot Float32))
 
 let buffers () =
   [|
@@ -184,7 +184,7 @@ let phased_call () =
   Ops.call (Lazy.force phased_prg)
     (List.init 3 (fun slot ->
          let phase = if slot = 1 then 4 else 0 in
-         Shape.param ~shape:[ Ops.Int 4 ] ~device:(Single "CPU") ~phase slot
+         Shape.param ~shape:[ Ops.Int 4 ] ~device:"CPU" ~phase slot
            Float32))
 
 let phased_axpy () = Engine.link_call ~devices (phased_call ())
@@ -225,9 +225,9 @@ let shifted_axpy =
    would put the float4 12 bytes past 16, where x86 faults. *)
 let runs_on_made_storage () =
   let param slot n =
-    Shape.param ~shape:[ Ops.Int n ] ~device:(Single "CPU") slot Float32
+    Shape.param ~shape:[ Ops.Int n ] ~device:"CPU" slot Float32
   in
-  let made = Ops.new_buffer ~phase:4 (Single "CPU") 8 Float32 in
+  let made = Ops.new_buffer ~phase:4 "CPU" 8 Float32 in
   let linear =
     Ops.v Op.Linear
       ~src:
@@ -471,8 +471,7 @@ let element dtype k : Dtype.value =
 
 let placement (p : Ops.param_arg) =
   match p.device with
-  | Some (Multi ds) -> ds
-  | Some (Single d) -> [ d ]
+  | Some d -> [ d ]
   | None -> invalid_arg "storage without a device"
 
 (* The storage a program is given, its parameters and buffers, each with its
@@ -597,11 +596,10 @@ let linked ?(devices = devices) big =
 let slot_values = list (pair int values)
 
 (* One program of each kind of call runs by default: a kernel, a copy between
-   devices, lanes of a sharded kernel, a bound scalar and the disk; compiling
-   the others takes seconds. Variables run by default in `a schedule runs with
+   devices, a bound scalar and the disk; compiling the others takes seconds. Variables run by default in `a schedule runs with
    each binding of its variables`. *)
 let by_default =
-  [ "add"; "copy"; "shard_add"; "precompiled_scalar"; "disk_store" ]
+  [ "add"; "copy"; "precompiled_scalar"; "disk_store" ]
 
 let writes_what_it_computes name =
   (if List.mem name by_default then Fun.id else slow)
@@ -636,16 +634,11 @@ let recorded =
     "inline_function";
     "layernorm";
     "matmul";
-    "mesh_sum";
     "precompiled_function";
     "precompiled_scalar";
     "read_then_overwrite";
     "reduce_multiple_paths";
     "setitem";
-    "shard_add";
-    "shard_matmul";
-    "shard_sum";
-    "shard_to_one";
     "softmax";
     "sort";
     "split_sum";
@@ -782,8 +775,8 @@ let add_one =
 let runs_once_per_trip () =
   let open Ops.O in
   let one = add_one in
-  let out = Ops.new_buffer (Single "CPU") 12 Float32
-  and src = Ops.new_buffer (Single "CPU") 12 Float32 in
+  let out = Ops.new_buffer "CPU" 12 Float32
+  and src = Ops.new_buffer "CPU" 12 Float32 in
   let r = Ops.range (Int 3) [ 7 ] in
   let trip b =
     Shape.shrink b
@@ -814,7 +807,7 @@ let runs_once_per_trip () =
    [c * 2] into its row of [ys], then adds its row of [xs] to [c]. *)
 let scans_with_a_carry () =
   let k = 4 and n = 3 in
-  let cpu = Ops.Single "CPU" in
+  let cpu = "CPU" in
   let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
@@ -869,7 +862,7 @@ let scans_with_a_carry () =
    no storage. *)
 let scans_with_an_empty_carry () =
   let k = 4 and n = 3 in
-  let cpu = Ops.Single "CPU" in
+  let cpu = "CPU" in
   let p ?(k = k) slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
@@ -911,7 +904,7 @@ let scans_with_an_empty_carry () =
    which holds the flag's first value, and that buffer. A loop's flag is storage
    the schedule makes, which no run binds. *)
 let flag_from d f linear =
-  let init = Ops.new_buffer (Ops.Single d) 1 Bool in
+  let init = Ops.new_buffer d 1 Bool in
   (init, Ops.v Op.Linear ~src:(Shape.store_call f init :: Ops.src linear))
 
 (* A loop of at most [max] trips on the device [d] around a call that adds one
@@ -919,7 +912,7 @@ let flag_from d f linear =
    bytes apart, and stores into the flag [f] whether the new carry is below
    [limit]. The flag starts as [0 < limit]. *)
 let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
-  let at = Ops.Single d in
+  let at = d in
   let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
   let next = Ops.O.(p 0 Float32 + float 1.) in
   let body =
@@ -982,7 +975,7 @@ let scalar_kernel name ~dst ~src f =
    first wrote in the same trip, and the first reads the carry the second wrote
    in the trip before. The flag starts as [0 < limit]. *)
 let loops_around_calls ?(devices = devices) d (limit, max) =
-  let at = Ops.Single d in
+  let at = d in
   let k name dst f = scalar_kernel name ~dst ~src:Float32 f in
   let inc = k "inc" Float32 (fun x -> Ops.O.(x + float 1.))
   and twice = k "twice" Float32 (fun x -> Ops.O.(x * float 2.))
@@ -1083,12 +1076,12 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
   let flag_device =
     match flag with Host_program -> "CPU" | Gpu_kernel -> gpu
   in
-  let on_gpu = Ops.Single gpu and on_host = Ops.Single "CPU" in
+  let on_gpu = gpu and on_host = "CPU" in
   let c = Ops.new_buffer on_gpu 1 Float32
   and t = Ops.new_buffer on_gpu 1 Float32
   and t' = Ops.new_buffer on_host 1 Float32
   and c' = Ops.new_buffer on_host 1 Float32
-  and f = Ops.new_buffer (Ops.Single flag_device) 1 Bool
+  and f = Ops.new_buffer flag_device 1 Bool
   and ys = Ops.new_buffer on_host (4 * max) Float32 in
   let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
   let row =
@@ -1177,7 +1170,7 @@ let loops_across_devices_on ~devices gpu =
 (* A loop's flag is storage of one boolean: a view of one element of wider
    storage is refused, since the engine reads the storage it names. *)
 let refuses_a_view_as_flag () =
-  let at = Ops.Single "CPU" in
+  let at = "CPU" in
   let p = Shape.param ~shape:[ Int 1 ] ~device:at 0 Float32 in
   let body = Ops.sink [ Ops.store p Ops.O.(p + float 1.) ] in
   let c = Ops.new_buffer at 1 Float32 and f = Ops.new_buffer at 2 Bool in
@@ -1218,7 +1211,7 @@ let trip_arguments n =
    whose call also stores into [f] whether its argument plus one is below
    [limit]. *)
 let trip_loop ?(devices = devices) ?limit ?(axis = 100) d n arg =
-  let at = Ops.Single d in
+  let at = d in
   let index = Shape.param ~addrspace:(Some Alu) 2 Int32 in
   let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
   let flag =
@@ -1345,7 +1338,7 @@ let reads_trips_under_a_back_edge ?devices d =
    [zs]. Each run starts from the carry the previous one left. *)
 let replays_a_scan =
   let k = 4 and n = 3 in
-  let cpu = Ops.Single "CPU" in
+  let cpu = "CPU" in
   let p slot = Shape.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let step =
     Ops.sink
@@ -1436,10 +1429,10 @@ let replays_a_scan =
    for the call after it. The range is an end, or a back edge whose flag holds
    on every trip. *)
 let plans_the_buffers_of_a_range ~through_a_view ~loop () =
-  let buf n = Ops.new_buffer (Single "CPU") n Float32 in
+  let buf n = Ops.new_buffer "CPU" n Float32 in
   let a = buf 4 and b = buf 4 and z = buf 8 and y = buf 8 in
   let out_z = buf 4 and out_y = buf 4 in
-  let flag = Ops.new_buffer (Single "CPU") 1 Bool in
+  let flag = Ops.new_buffer "CPU" 1 Bool in
   let r = Ops.range ~axis_type:Loop (Int 2) [ 7 ] in
   let around c =
     match loop with
@@ -1494,9 +1487,9 @@ let set_false =
    loop reads the flag after the last call that takes it, so the plan does not
    place z over it, and the loop runs no trip. *)
 let plans_a_loop_flag () =
-  let buf n = Ops.new_buffer (Single "CPU") n Float32 in
+  let buf n = Ops.new_buffer "CPU" n Float32 in
   let a = buf 4 and b = buf 4 and z = buf 4 and out = buf 4 in
-  let flag = Ops.new_buffer (Single "CPU") 1 Bool in
+  let flag = Ops.new_buffer "CPU" 1 Bool in
   let r = Ops.range ~axis_type:Loop (Int 2) [ 7 ] in
   let linear =
     Ops.v Op.Linear
@@ -1526,7 +1519,7 @@ let copies_in_order () =
   let bytes k =
     Array.init 16 (fun i -> `Int (Bigint.of_int (i * k land 0xff)))
   in
-  let node d = Ops.new_buffer (Single d) 16 Uint8 in
+  let node d = Ops.new_buffer d 16 Uint8 in
   let device_side = node "CPU:1" and out = node "CPU" and fresh = node "CPU" in
   let linear =
     Ops.v Op.Linear
@@ -1561,7 +1554,7 @@ let copies_moving_rows ?(devices = devices) src_device dst_device () =
     Array.init (4 * n) (fun i ->
         `Int (Bigint.of_int (((i * k) + 1) land 0xff)))
   in
-  let node d = Ops.new_buffer (Single d) (4 * n) Uint8 in
+  let node d = Ops.new_buffer d (4 * n) Uint8 in
   let src = node src_device and dst = node dst_device in
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row b =
@@ -1596,7 +1589,7 @@ let moves_rows_into_storage ?(devices = devices) () =
     Array.init (4 * n) (fun i ->
         `Int (Bigint.of_int (((i * k) + 1) land 0xff)))
   in
-  let node d = Ops.new_buffer (Single d) (4 * n) Uint8 in
+  let node d = Ops.new_buffer d (4 * n) Uint8 in
   let src = node "CPU:1" and made = node "CPU" and out = node "CPU:1" in
   let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
   let row b =
@@ -1631,7 +1624,7 @@ let moves_rows_into_storage ?(devices = devices) () =
 let gathered_store device =
   let buffer n dt shape =
     Shape.reshape
-      (Ops.new_buffer (Single device) n dt)
+      (Ops.new_buffer device n dt)
       (List.map (fun d -> Ops.Int d) shape)
   in
   let pool = buffer 64 Float32 [ 8; 8 ] in
@@ -1679,7 +1672,7 @@ let stores_through_a_gather ?(devices = devices) device targets () =
 let store_at_valid_slot device =
   let buffer n dt shape =
     Shape.reshape
-      (Ops.new_buffer (Single device) n dt)
+      (Ops.new_buffer device n dt)
       (List.map (fun d -> Ops.Int d) shape)
   in
   let pool = buffer 64 Float32 [ 8; 8 ] in
@@ -1728,7 +1721,7 @@ let schedules =
         [ "pad_idiv"; "pad_idiv_stored"; "pad_idiv_nested"; "pad_idiv_shrunk" ]
         (fun name -> divides_on_padding name ());
       cases "a schedule runs on the buffers each run binds to its parameters"
-        ~id:Fun.id [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->
+        ~id:Fun.id [ "contiguous"; "copy_view" ] (fun name ->
           runs_on_its_slots name ());
       test "a range around a call runs it once per trip" runs_once_per_trip;
       test "a scan runs its body once per trip, carrying in place"
@@ -1873,23 +1866,6 @@ let refusals =
         (fun storage ->
           let k = (List.hd storage).arg.slot in
           rebound k (fun _ -> [ floats_on "CPU" 15 ]) storage);
-      run_refuses "a sharded parameter bound to one buffer" "shard_add"
-        (fun storage ->
-          let k =
-            (List.find (fun s -> List.length s.buffers = 2) storage).arg.slot
-          in
-          rebound k (fun bs -> [ List.hd bs ]) storage);
-      run_refuses "a sharded parameter whose second lane is off its phase"
-        "shard_add"
-        ~says:(fun e ->
-          off_its_phase e && Exn.invalid_arg ~sub:"buffer of CPU:1 starts 4" e)
-        (fun storage ->
-          let k =
-            (List.find (fun s -> List.length s.buffers = 2) storage).arg.slot
-          in
-          rebound k
-            (function [ a; b ] -> [ a; off_phase b ] | bs -> bs)
-            storage);
       test "run refuses a variable it binds no value" (fun () ->
           let s, _, big = parameterized "variable_shrink" in
           let storage = storage_of big in
@@ -1960,7 +1936,7 @@ let allocates_nothing ?(devices = devices)
    of collected buffers. *)
 let holds_its_storage () =
   let n = 1 lsl 18 in
-  let buffer () = Ops.new_buffer (Single "CPU") n Float32 in
+  let buffer () = Ops.new_buffer "CPU" n Float32 in
   let compiled =
     compile
       (Ops.v Op.Linear
@@ -2025,7 +2001,7 @@ let fill d x =
       ~kernel:(Ops.kernel_info ~name:"fill" ())
       [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.O.float x)) [ i ] ]
   in
-  let y = Ops.new_buffer (Single d) 4 Float32 in
+  let y = Ops.new_buffer d 4 Float32 in
   (y, Ops.call kernel [ y ])
 
 (* At [DEBUG=1], a run of a schedule of [n] copies on the host, each a call of
@@ -2033,8 +2009,8 @@ let fill d x =
 let run_of_fills n =
   let fills =
     List.init n (fun _ ->
-        let y = Ops.new_buffer (Single "CPU") 4 Float32
-        and x = Ops.new_buffer (Single "CPU") 4 Float32 in
+        let y = Ops.new_buffer "CPU" 4 Float32
+        and x = Ops.new_buffer "CPU" 4 Float32 in
         ((y, x), Shape.store_call y x))
   in
   let bound =
@@ -2360,7 +2336,7 @@ let timing =
   group "timing"
     [
       cases "run takes the slots of a linked schedule" ~id:Fun.id
-        [ "add"; "shard_add" ] slots_fit;
+        [ "add" ] slots_fit;
       test "link_call refuses a name the map does not hold" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Engine.link_call ~devices
@@ -2412,7 +2388,7 @@ let fill_with name d =
       ~kernel:(Ops.kernel_info ~name:"fill_with" ())
       [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.cast v Float32)) [ i ] ]
   in
-  let y = Ops.new_buffer (Single d) 4 Float32 in
+  let y = Ops.new_buffer d 4 Float32 in
   (y, Ops.call kernel [ y ])
 
 (* [fill_with name]'s kernel compiled with its loop whole, which the host
@@ -2453,41 +2429,6 @@ let named_as_bounds =
         (fun d -> List.map (case d) [ "n"; "block_lo"; "block_hi" ])
         [ "CPU"; "CPU:1" ])
 
-(* A kernel on CPU:1 and CPU:2 reads the last four of the eight floats each
-   device holds of a sharded parameter, at the shard's address plus the view's
-   offset. *)
-let reads_a_view_of_each_shard () =
-  let lanes = Ops.Multi [ "CPU:1"; "CPU:2" ] in
-  let param = Shape.param ~shape:[ Int 8 ] ~device:lanes 0 Float32 in
-  let out = Ops.new_buffer lanes 4 Float32 in
-  let results =
-    List.map
-      (fun d -> Run.buffer (device d) Float32 (floats [| 0.; 0.; 0.; 0. |]))
-      [ "CPU:1"; "CPU:2" ]
-  in
-  let s =
-    Engine.link ~devices
-      ~bound:[ (out, results) ]
-      (compile
-         (Ops.v Op.Linear
-            ~src:
-              [
-                Ops.call add_one
-                  [ out; Shape.shrink param [ Some (Int 4, Int 8) ] ];
-              ]))
-  in
-  let shard k = floats (Array.init 8 (fun i -> Float.of_int ((10 * k) + i))) in
-  Engine.run s
-    [|
-      [
-        Run.buffer (device "CPU:1") Float32 (shard 1);
-        Run.buffer (device "CPU:2") Float32 (shard 2);
-      ];
-    |];
-  equal (list values)
-    [ floats [| 15.; 16.; 17.; 18. |]; floats [| 25.; 26.; 27.; 28. |] ]
-    (List.map (Run.values Float32) results)
-
 (* The minor words a run of one kernel on [d] of [devices] allocates on the
    calling domain, the run before it having linked and loaded everything. *)
 let run_words ?(devices = devices) d () =
@@ -2504,11 +2445,9 @@ let run_words ?(devices = devices) d () =
   let words = Gc.minor_words () -. before in
   Float.to_int words
 
-let lanes =
-  group "lanes and words"
+let words =
+  group "words"
     [
-      test "a kernel reads a view of each shard of a parameter"
-        reads_a_view_of_each_shard;
       test "a run of one kernel on the host allocates at most 400 minor words"
         (fun () -> at_most int ~than:400 (run_words "CPU" ()));
     ]
@@ -2599,6 +2538,6 @@ let () =
          runs;
          timing;
          named_as_bounds;
-         lanes;
+         words;
          group "GPUs" (List.map on_a_gpu gpus);
        ])

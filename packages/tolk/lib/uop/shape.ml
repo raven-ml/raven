@@ -214,11 +214,6 @@ let marg_shape u =
   | Reshape s | Expand s -> s
   | _ -> invalid_argf "%s has no shape argument" (Op.name (op u))
 
-let marg_bounds u =
-  match marg u with
-  | Pad b | Shrink b -> b
-  | _ -> invalid_argf "%s has no bounds argument" (Op.name (op u))
-
 let broadcast_axes src out =
   let nleft = List.length out - List.length src in
   if nleft < 0 then
@@ -293,8 +288,8 @@ and compute_shape u : sint list option =
                [ init (shape a); init (shape b); init (shape acc) ]
             @ [ last (shape acc) ])
       | _ -> invalid_arg "wmma needs three sources")
-  | Op.Mstack | Op.Mselect | Op.Detach | Op.Contiguous_backward | Op.After
-  | Op.Load | Op.Copy | Op.Allreduce | Op.Store | Op.End | Op.Call ->
+  | Op.Detach | Op.Contiguous_backward | Op.After | Op.Load | Op.Copy
+  | Op.Store | Op.End | Op.Call ->
       shape_opt (src0 ())
   | Op.Bitcast -> (
       match shape_opt (src0 ()) with
@@ -314,8 +309,7 @@ and compute_shape u : sint list option =
             Some
               (take (n - 1) ps
               @ [ ssimplify_sint Sint.(last * Int in_sz // Int out_sz) ]))
-  | op when Op.Set.mem op Op.Set.movement || op = Op.Unshard || op = Op.Reduce
-    ->
+  | op when Op.Set.mem op Op.Set.movement || op = Op.Reduce ->
       let ps =
         match shape_opt (src0 ()) with
         | Some ps -> ps
@@ -366,22 +360,6 @@ and movement_shape u ps =
     s
   in
   match op u with
-  | Op.Unshard -> (
-      match arg u with
-      | Axes axes ->
-          let ranges = drop 1 (src u) in
-          List.mapi
-            (fun a s ->
-              match List.find_index (Int.equal a) axes with
-              | Some i ->
-                  Sint.(
-                    s
-                    * Int
-                        (Value.to_int
-                           (Value.( + ) (vmax (List.nth ranges i)) (`Int Bigint.one))))
-              | None -> s)
-            ps
-      | _ -> invalid_arg "an unshard needs its axes")
   | Op.Reduce -> (
       match arg u with
       | Reduce { num_axes; _ } when num_axes >= 0 && num_axes <= List.length ps
@@ -2831,193 +2809,6 @@ let symbolic =
 
 let () = simplify_rules := symbolic
 
-(* Several devices *)
-
-let rec axis u =
-  match axis_memo u with
-  | Some a -> a
-  | None ->
-      let a = compute_axis u in
-      set_axis_memo u a;
-      a
-
-and compute_axis u =
-  let src0 () = first (op u) (src u) in
-  match op u with
-  | Op.Copy -> None
-  | Op.Unshard -> (
-      match arg u with
-      | Axes [ a ] -> Some a
-      | Axes l ->
-          invalid_argf "the value is sharded on several axes, %s"
-            (repr_tuple (List.map string_of_int l))
-      | _ -> invalid_arg "an unshard needs its axes")
-  | op when Op.Set.mem op Op.Set.alu || op = Op.Stack -> (
-      let n = ndim u in
-      let axes =
-        List.filter_map
-          (fun x -> Option.map (fun a -> a + n - ndim x) (axis x))
-          (src u)
-      in
-      match List.rev (Helpers.dedup (module Int) axes) with
-      | [] -> None
-      | last :: _ -> Some last)
-  | _ when List.is_empty (src u) -> None
-  | op -> (
-      let src_axis = axis (src0 ()) in
-      match (op, src_axis) with
-      | Op.Shrink, Some a ->
-          let o, sz = List.nth (marg_bounds u) a in
-          if
-            Sint.equal o (Int 0) && Sint.equal sz (List.nth (shape (src0 ())) a)
-          then Some a
-          else None
-      | Op.Reduce, a -> (
-          match (a, arg u) with
-          | None, _ -> None
-          | Some a, Reduce { num_axes; _ } ->
-              if a < num_axes then None else Some (a - num_axes)
-          | _ -> invalid_arg "a reduction needs its argument")
-      | Op.Reshape, None -> None
-      | Op.Reshape, Some a -> Some (reshape_axis u a)
-      | Op.Permute, a -> (
-          match (a, marg u) with
-          | Some a, Permute order -> List.find_index (Int.equal a) order
-          | _ -> None)
-      | Op.Expand, a -> (
-          match (a, marg u) with
-          | Some a, Expand s -> Some (a + List.length s)
-          | _ -> None)
-      | _, a -> a)
-
-(* The new axis is the last one before which the element count is the count
-   before the source's axis, and it must not move elements between shards. *)
-and reshape_axis u src_axis =
-  let src = first (op u) (src u) in
-  let new_shape = marg_shape u in
-  let prefix =
-    List.rev
-      (List.fold_left
-         (fun acc s -> Sint.(List.hd acc * s) :: acc)
-         [ Int 1 ] new_shape)
-  in
-  let acc = List.map ssimplify_sint prefix in
-  let target = ssimplify_sint (Sint.prod (take src_axis (shape src))) in
-  let moved () =
-    invalid_argf "a reshape of %s to %s moves elements between shards"
-      (repr_shape (shape src))
-      (repr_shape (shape u))
-  in
-  let rec last_index i best = function
-    | [] -> best
-    | x :: rest ->
-        last_index (i + 1) (if Sint.equal x target then Some i else best) rest
-  in
-  let new_axis =
-    match last_index 0 None acc with Some i -> i | None -> moved ()
-  in
-  let dcount =
-    match device u with
-    | Some (Multi ds) -> List.length ds
-    | _ -> (
-        match
-          List.find_opt (fun n -> op n = Op.Unshard) (toposort ~calls:Enter src)
-        with
-        | Some un -> Value.to_int (vmax (nth un 1)) + 1
-        | None -> moved ())
-  in
-  if Sint.truth Sint.(List.nth (shape u) new_axis % Int dcount <> Int 0) then
-    moved ();
-  new_axis
-
-let shard_count u =
-  if op u = Op.Unshard then Value.to_int (vmax (nth u 1)) + 1
-  else
-    match device u with
-    | Some (Multi ds) -> List.length ds
-    | _ -> invalid_arg "the value is not on several devices"
-
-let bounds u =
-  match axis u with
-  | None -> invalid_arg "bounds need a sharded value"
-  | Some a ->
-      let size = List.nth (shape (first (op u) (src u))) a in
-      let starts =
-        List.rev
-          (List.fold_left
-             (fun acc _ -> Sint.(List.hd acc + size) :: acc)
-             [ Int 0 ]
-             (List.init (shard_count u) Fun.id))
-      in
-      let rec pairs = function
-        | x :: (y :: _ as rest) -> (x, y) :: pairs rest
-        | _ -> []
-      in
-      pairs starts
-
-let shard_shape u =
-  match device u with
-  | Some (Multi _) -> (
-      match axis u with
-      | Some a ->
-          let n = shard_count u in
-          List.mapi
-            (fun i x -> if i = a then Sint.(x // Int n) else x)
-            (shape u)
-      | None -> shape u)
-  | _ -> shape u
-
-let max_shard_shape u = to_max_shape (shard_shape u)
-
-let unshard ?ranges u axes =
-  let ranges =
-    match ranges with
-    | Some r -> r
-    | None -> (
-        match device u with
-        | Some (Multi ds) ->
-            [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ 0 ] ]
-        | _ -> invalid_arg "an unshard needs a value on several devices")
-  in
-  if
-    List.length axes <> List.length ranges
-    || List.length (List.sort_uniq Int.compare axes) <> List.length axes
-  then invalid_arg "an unshard needs one range per distinct axis";
-  let pairs =
-    List.stable_sort
-      (fun (a, _) (b, _) -> Int.compare a b)
-      (List.combine axes ranges)
-  in
-  v Op.Unshard ~src:(u :: List.map snd pairs) ~arg:(Axes (List.map fst pairs))
-
-let shard_slice u a rng =
-  match shape u with
-  | [] -> u
-  | s ->
-      let dcount = Value.to_int (vmax rng) + 1 in
-      let size = List.nth s a in
-      if Sint.truth Sint.(size % Int dcount <> Int 0) then
-        invalid_argf "axis %d of size %s does not split over %d devices" a
-          (repr_sint size) dcount;
-      let sz = Sint.(size // Int dcount) in
-      let r = Sym rng in
-      shrink u
-        (List.mapi
-           (fun i x ->
-             if i = a then Some (Sint.(r * sz), Sint.((r * sz) + sz))
-             else Some (Int 0, x))
-           s)
-
-let shard ?axis u devices =
-  let copied = copy_to_device u (Multi devices) in
-  match axis with
-  | None -> copied
-  | Some a ->
-      let rng =
-        range ~axis_type:Axis_type.Device (Int (List.length devices)) [ 0 ]
-      in
-      unshard (shard_slice copied a rng) [ a ]
-
 (* Storage *)
 
 let empty ?device new_shape dt =
@@ -3025,7 +2816,7 @@ let empty ?device new_shape dt =
   let max_shape = to_max_shape new_shape in
   let u =
     v Op.Alloc
-      ~src:(size_src (Some (size_of max_shape)) :: device_range_src device)
+      ~src:[ size_src (Some (size_of max_shape)) ]
       ~arg:
         (Param
            (param_arg ~slot:(unique_num ()) ?device ~bind_on_realize:true dt))
@@ -3034,22 +2825,16 @@ let empty ?device new_shape dt =
     (reshape u (List.map (fun n -> Int n) max_shape))
     (List.map Option.some new_shape)
 
-let view_as ?axis u new_shape =
+let view_as u new_shape =
   let max_shape = List.map (fun n -> Int n) (to_max_shape new_shape) in
   let ret = if List.length new_shape > 1 then reshape u max_shape else u in
-  let ret =
-    if (List.equal Sint.equal) max_shape new_shape then ret
-    else shrink_to ret (List.map Option.some new_shape)
-  in
-  match axis with None -> ret | Some a -> unshard ret [ a ]
+  if (List.equal Sint.equal) max_shape new_shape then ret
+  else shrink_to ret (List.map Option.some new_shape)
 
 let empty_like ?dtype ?device:dev u =
   let dev = match dev with Some d -> Some d | None -> device u in
   let dtype = match dtype with Some dt -> dt | None -> commit_dtype u in
-  match dev with
-  | Some (Multi _) when Option.is_some (axis u) ->
-      unshard (empty ?device:dev (shard_shape u) dtype) [ Option.get (axis u) ]
-  | _ -> empty ?device:dev (shape u) dtype
+  empty ?device:dev (shape u) dtype
 
 let clone ?device:dev u =
   let dev = match dev with Some d -> Some d | None -> device u in
@@ -3061,30 +2846,28 @@ let clone ?device:dev u =
   let src =
     match (device u, dev) with
     | None, _ -> u
-    | Some d, Some d' when equal_device d d' -> u
+    | Some d, Some d' when String.equal d d' -> u
     | _, Some d' -> copy_to_device u d'
     | _, None -> u
   in
   after ret [ store ret (cast src (dtype ret)) ]
 
-let alloc ?slot ?(addrspace = Dtype.Global) ?device ?axis new_shape dt =
+let alloc ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
   let slot = match slot with Some s -> s | None -> unique_num () in
   let ret =
     v Op.Alloc
-      ~src:
-        (size_src (Some (size_of (to_max_shape new_shape)))
-        :: device_range_src device)
+      ~src:[ size_src (Some (size_of (to_max_shape new_shape))) ]
       ~arg:
         (Param
            (param_arg ~slot ~addrspace:(Some addrspace) ?device
               (Dtype.strong dt)))
   in
   if List.is_empty new_shape then reshape ret []
-  else view_as ?axis ret new_shape
+  else view_as ret new_shape
 
 let alloc_like ?slot ?addrspace u =
   alloc ?slot ?addrspace
-    (List.map (fun n -> Int n) (max_shard_shape u))
+    (List.map (fun n -> Int n) (max_shape u))
     (dtype u)
 
 let placeholder ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
@@ -3110,7 +2893,7 @@ let placeholder ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
 let placeholder_like ?addrspace u slot =
   if not (List.for_all (function Int _ -> true | Sym _ -> false) (shape u))
   then invalid_arg "a placeholder needs a shape of known sizes";
-  placeholder ~slot ?addrspace (max_shard_shape u) (dtype u)
+  placeholder ~slot ?addrspace (max_shape u) (dtype u)
 
 let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Some Dtype.Global) ?(volatile = false) ?phase ?align slot dt
@@ -3138,7 +2921,7 @@ let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
    or whose ends lie otherwise, is no run. *)
 type view_start =
   | Start of int * int
-  | Unknown (* A size or a bound is symbolic, or the buffer is sharded. *)
+  | Unknown (* A size or a bound is symbolic. *)
   | No_view (* No buffer is viewed, or the view is no run of it. *)
 
 let rec view_start u =
@@ -3190,7 +2973,6 @@ let rec view_start u =
         go x idx
     | Op.Stage, x :: _ when view_start x <> No_view ->
         raise_notrace (Stop Unknown)
-    | Op.Unshard, _ -> raise_notrace (Stop Unknown)
     | _ -> raise_notrace (Stop No_view)
   in
   match
@@ -3219,7 +3001,7 @@ let rec storage_phase u =
   let rec whole v =
     match (op v, src v) with
     | (Op.Buffer | Op.Param | Op.Alloc | Op.Stage), _ -> true
-    | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), v :: _ -> whole v
+    | (Op.Bitcast | Op.Reshape | Op.After), v :: _ -> whole v
     | _ -> false
   in
   let ints l = List.for_all (function Int _ -> true | Sym _ -> false) l in
@@ -3262,7 +3044,7 @@ let rec storage_phase u =
              moves by bytes unknown here: only the element's size holds. *)
           moved (Bigint.of_int bytes) 0
       | _ -> (align, phase))
-  | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
+  | (Op.Bitcast | Op.After), x :: _ -> storage_phase x
   | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
   | Op.Stage, x :: _ when op x = Op.Bitcast || Op.Set.mem (op x) Op.Set.movement
     -> (
@@ -3281,21 +3063,10 @@ let param_like ?name u slot =
   | Op.Param when addrspace u = Some Dtype.Alu ->
       let p = param_arg_of u in
       replace u ~arg:(Param { p with slot; name; bound = None })
-  | _ -> (
-      let a = axis u and align, phase = storage_phase u in
-      match (a, device u) with
-      | Some a, Some (Multi _ as d) ->
-          let ss = shard_shape u in
-          view_as ~axis:a
-            (v Op.Param
-               ~src:[ size_src (Some (size_of (to_max_shape ss))) ]
-               ~arg:
-                 (Param
-                    (param_arg ~slot ?name ~device:d ~phase ~align (dtype u))))
-            ss
-      | _ ->
-          param ?shape:(shape_opt u) ?device:(device u) ?name ~phase ~align
-            slot (dtype u))
+  | _ ->
+      let align, phase = storage_phase u in
+      param ?shape:(shape_opt u) ?device:(device u) ?name ~phase ~align slot
+        (dtype u)
 
 (* Variables *)
 
@@ -3344,12 +3115,6 @@ let variables u =
          (fun x ->
            if op x = Op.Param && addrspace x = Some Dtype.Alu then
              Some (if is_variable x then unbound x else x)
-           else if
-             op x = Op.Range && Axis_type.equal (axis_type x) Axis_type.Device
-           then
-             Some
-               (variable ~dtype:(dtype x) "_device_num" (`Int Bigint.zero)
-                  (vmax x))
            else None)
          (Nodes.to_list (backward_slice_with_self ~calls:Skip u)))
   in
@@ -3405,8 +3170,7 @@ let call_with_outputs ?name ?(precompile = false) ?output_pos values args =
   done;
   let mint o p =
     let dev = match device o with Some d -> Some d | None -> default_dev in
-    let axis = match device o with Some (Multi _) -> axis o | _ -> None in
-    let buf = alloc (shard_shape o) (dtype o) ?device:dev ?axis in
+    let buf = alloc (shape o) (dtype o) ?device:dev in
     let resolved =
       List.map
         (function
@@ -3415,11 +3179,11 @@ let call_with_outputs ?name ?(precompile = false) ?output_pos values args =
               Sym
                 (graph_rewrite ~calls:Skip ~pass:Once ~ctx:params s
                    (After_sources pm_resolve_params)))
-        (shard_shape o)
+        (shape o)
     in
     ( alloc resolved (dtype o)
         ~slot:(param_arg_of (buf_uop buf)).slot
-        ?device:dev ?axis,
+        ?device:dev,
       param_like buf p )
   in
   let outputs = List.map2 mint values pos in

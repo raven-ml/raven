@@ -10,10 +10,9 @@
     A function's tensor graph states what to compute: values, movements of
     values, copies between devices and stores into storage. Before ranges index
     it ({!Indexing.run_rangeify}), it is brought to a normal form: each output
-    is stored into its storage, sharded values compute on shards
-    ({!Multi.multi_pm}), inline calls are inlined, copies and materialisations
-    store into new storage, and the operations that the later passes cannot
-    express are rewritten into ones they can. *)
+    is stored into its storage, inline calls are inlined, copies and
+    materialisations store into new storage, and the operations that the later
+    passes cannot express are rewritten into ones they can. *)
 
 val pm_mops : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_mops] moves movements towards the storage they view:
@@ -37,7 +36,6 @@ val prepare_rangeify : Ops.t -> Ops.t
         output. So is a value materialised by an {!Op.Stage}, or storage, when
         the output is the store itself rather than storage ordered after it;
      }
-     {- sharded values compute on shards ({!Multi.multi_pm}); }
      {- movements move towards storage ({!pm_mops}), except that a gather, an
         index by a value with axes ({!Indexing.is_gather}), is left whole; each
         call to a function without its own compilation ({!Ops.is_inline_call})
@@ -49,8 +47,6 @@ val prepare_rangeify : Ops.t -> Ops.t
      }
      {- from the leaves up, with {!Shape.mop_cleanup} and {!pm_mops}, gathers
         left whole:
-        - an {!Op.Allreduce} is a call of its own
-          ({!Allreduce.create_allreduce_function});
         - a large reduction over few outputs is split in two, when the setting
           {!Setting.split_reduceop} is on: the reduced axis of the input is
           split by the largest divisor from [256] down to [8] that keeps the
@@ -61,7 +57,7 @@ val prepare_rangeify : Ops.t -> Ops.t
           elements as the output, and only to an axis the input is not broadcast
           along;
         - {!Op.Detach} and {!Op.Contiguous_backward} are their source;
-        - the sink's sources lose their movements and sharding;
+        - the sink's sources lose their movements;
         - a copy to the device the value is on is the value; a store of a copy
           into storage on the copy's device stores the value, the store being
           the copy; any other copy stores the value, padded to its greatest

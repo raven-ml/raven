@@ -68,11 +68,7 @@ let get_call_outs_ins call =
   | Op.Store, _ -> ([ 0 ], [ 1 ])
   | _ -> ([], [])
 
-let devices u =
-  match device u with
-  | Some (Single d) -> [ d ]
-  | Some (Multi ds) -> ds
-  | None -> []
+let devices u = Option.to_list (device u)
 
 let bytes_of u = Sint.(numel u * Int (Dtype.itemsize (dtype u)))
 

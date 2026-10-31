@@ -292,18 +292,6 @@ def group_gpudims_symbolic_global():
     return rewritten(kernel(g, UOp.const(1.0, dtypes.float), (g,), 64))
 
 
-@graph
-def group_gpudims_device_range():
-    d, g = rng(2, 0, AxisType.DEVICE), rng(4, 1, AxisType.GLOBAL)
-    return rewritten(UOp.param(0, dtypes.float, 4).index(g).store(d.cast(dtypes.float)).end(g, d).sink(arg=KernelInfo()))
-
-
-@graph
-def group_gpudims_device_range_without_kernel():
-    d = rng(2, 0, AxisType.DEVICE)
-    return rewritten(UOp.param(0, dtypes.float, 4).index(d).store(UOp.const(1.0, dtypes.float)).end(d).sink())
-
-
 @table
 def group_gpudims_declines():
     r = rng(4, 0, AxisType.LOOP)

@@ -1073,12 +1073,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   if setting Setting.debug >= 5 then
     print_endline (Render.render_uir (toposort ~calls:Enter ast));
   check_spec Spec.tensor ast;
-  (* resolve UNSHARDs (multi-device UNSHARDs are already resolved by the
-     scheduler; this handles in-kernel shards, e.g. fragments) *)
-  let sink = rewrite Multi.multi_pm ast in
   (* preprocess *)
   let sink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() sink
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
       (Before_sources Prepare.pm_mops)
   in
   let sink =

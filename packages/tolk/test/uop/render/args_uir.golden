@@ -30,50 +30,46 @@
 %28 = param 16 : dtype=f32 slot=0
 %29 = param 4 : "w" dtype=i32 slot=1
 %30 = param 8 : dtype=f16 slot=2 device=CPU
-%31 = param 8 : dtype=f32 slot=3 device=('CPU:0', 'CPU:1')
-%32 = param 4 : dtype=i32 slot=4 volatile=true
-%33 = param () : dtype=i32 slot=5 bounds=[0,10] multiple_of=2 addrspace=ALU
-%34 = param () : "x" dtype=f32 slot=-1 bounds=[-1.0,1.0] multiple_of=1 addrspace=ALU
-%35 = param () : "g" dtype=bool slot=-1 bounds=[False,True] multiple_of=1 addrspace=ALU
-%36 = buffer 4 : dtype=f32 slot=6 addrspace=LOCAL
-%37 = buffer 4 : dtype=i32 slot=7 addrspace=REG
-%38 = alloc 4 : dtype=f32 slot=8
+%31 = param 4 : dtype=i32 slot=4 volatile=true
+%32 = param () : dtype=i32 slot=5 bounds=[0,10] multiple_of=2 addrspace=ALU
+%33 = param () : "x" dtype=f32 slot=-1 bounds=[-1.0,1.0] multiple_of=1 addrspace=ALU
+%34 = param () : "g" dtype=bool slot=-1 bounds=[False,True] multiple_of=1 addrspace=ALU
+%35 = buffer 4 : dtype=f32 slot=6 addrspace=LOCAL
+%36 = buffer 4 : dtype=i32 slot=7 addrspace=REG
+%37 = alloc 4 : dtype=f32 slot=8
+%38 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
 %39 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
-%40 = param () : "a" dtype=weakint slot=-1 bounds=[1,5] multiple_of=1 addrspace=ALU
-%41 = range 4 : DEVICE r0
-%42 = range 4 : GLOBAL r0
-%43 = range 4 : LOCAL r0
-%44 = range 4 : WARP r0
-%45 = range 4 : WEAK r0
-%46 = range 4 : LOOP r0
-%47 = range 4 : UPCAST r0
-%48 = range 4 : PLACEHOLDER r0
-%49 = range 4 : LOOP r1_2
-%50 = sink 1 : named
-%51 = param 4 : dtype=f32 slot=0
-%52 = index %51, 0
-%53 = cast 1.0 : f32
-%54 = store %52, %53
-%55 = sink %54
-%56 = param 4 : dtype=f32 slot=9
-%57 = call %55, %56
-%58 = call %55, %56 : name='fill'
-%59 = call %55, %56 : name='fill' precompile=true
-%60 = custom_function : CustomFunction(name='sqrt', dtype=dtypes.f64)
-%61 = cast 16.0 : f64
-%62 = call %60, %61
-%63 = reduce %56, %41 : op=add
-%64 = reduce %56, %41 : op=max pop=1
-%65 = cast %39 : i64
-%66 = cast %39 : i32
-%67 = bitcast %66 : f32
-%68 = copy %56 : CPU
-%69 = range 2 : DEVICE r0
-%70 = copy %56, %69 : ('CPU:0', 'CPU:1')
-%71 = special 4 : lidx1
-%72 = custom %39 : ('abs({0})', dtypes.i32)
-%73 = source : 'int main() { return 0; }'
-%74 = stack %39, 2
-%75 = add %39, (1, 2)
-%76 = sink true, false, 3, -5, 1180591620717411303424, 1.5, 0.1, inf, nan, -0.0, invalid, %0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %12, %6, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %24, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %49, %50, %57, %58, %59, %62, %63, %64, %65, %67, %68, %70, %71, %72, %73, (1, 2), (), %74, %75
+%40 = range 4 : GLOBAL r0
+%41 = range 4 : LOCAL r0
+%42 = range 4 : WARP r0
+%43 = range 4 : WEAK r0
+%44 = range 4 : LOOP r0
+%45 = range 4 : UPCAST r0
+%46 = range 4 : PLACEHOLDER r0
+%47 = range 4 : LOOP r1_2
+%48 = sink 1 : named
+%49 = param 4 : dtype=f32 slot=0
+%50 = index %49, 0
+%51 = cast 1.0 : f32
+%52 = store %50, %51
+%53 = sink %52
+%54 = param 4 : dtype=f32 slot=9
+%55 = call %53, %54
+%56 = call %53, %54 : name='fill'
+%57 = call %53, %54 : name='fill' precompile=true
+%58 = custom_function : CustomFunction(name='sqrt', dtype=dtypes.f64)
+%59 = cast 16.0 : f64
+%60 = call %58, %59
+%61 = reduce %54, %40 : op=add
+%62 = reduce %54, %40 : op=max pop=1
+%63 = cast %38 : i64
+%64 = cast %38 : i32
+%65 = bitcast %64 : f32
+%66 = copy %54 : CPU
+%67 = special 4 : lidx1
+%68 = custom %38 : ('abs({0})', dtypes.i32)
+%69 = source : 'int main() { return 0; }'
+%70 = stack %38, 2
+%71 = add %38, (1, 2)
+%72 = sink true, false, 3, -5, 1180591620717411303424, 1.5, 0.1, inf, nan, -0.0, invalid, %0, %1, %2, %3, %4, %5, %6, %7, %8, %9, %10, %11, %12, %12, %6, %13, %14, %15, %16, %17, %18, %19, %20, %21, %22, %24, %26, %27, %28, %29, %30, %31, %32, %33, %34, %35, %36, %37, %38, %39, %40, %41, %42, %43, %44, %45, %46, %47, %48, %55, %56, %57, %60, %61, %62, %63, %65, %66, %67, %68, %69, (1, 2), (), %70, %71
 

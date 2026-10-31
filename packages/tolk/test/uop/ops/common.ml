@@ -29,7 +29,7 @@ let equal_sint (s0 : Ops.sint) (s1 : Ops.sint) =
 
 let sint = Testable.make ~pp:pp_sint ~equal:equal_sint
 let shape = list sint
-let device = Testable.make ~pp:Ops.pp_device ~equal:Ops.equal_device
+let device = Testable.make ~pp:Ops.pp_device ~equal:String.equal
 let addr_space = Testable.make ~pp:Dtype.pp_addr_space ~equal:( = )
 let arg = Testable.make ~pp:Ops.pp_arg ~equal:Ops.equal_arg
 let rejects ?__POS__ f = raises_match ?__POS__ (Exn.invalid_arg ?sub:None) f

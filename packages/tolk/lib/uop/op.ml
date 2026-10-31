@@ -77,17 +77,13 @@ type t =
   | Detach
   | Stage
   | Copy
-  | Mselect
-  | Mstack
   | Custom_function
   | Reshape
   | Permute
   | Expand
   | Pad
   | Flip
-  | Unshard
   | Reduce
-  | Allreduce
 
 let ops =
   [
@@ -154,17 +150,13 @@ let ops =
     Detach;
     Stage;
     Copy;
-    Mselect;
-    Mstack;
     Custom_function;
     Reshape;
     Permute;
     Expand;
     Pad;
     Flip;
-    Unshard;
     Reduce;
-    Allreduce;
   ]
 
 (* [info o] is the position of [o] in the declaration order and its name. *)
@@ -232,17 +224,13 @@ let info = function
   | Detach -> (60, "DETACH")
   | Stage -> (61, "STAGE")
   | Copy -> (62, "COPY")
-  | Mselect -> (63, "MSELECT")
-  | Mstack -> (64, "MSTACK")
-  | Custom_function -> (65, "CUSTOM_FUNCTION")
-  | Reshape -> (66, "RESHAPE")
-  | Permute -> (67, "PERMUTE")
-  | Expand -> (68, "EXPAND")
-  | Pad -> (69, "PAD")
-  | Flip -> (70, "FLIP")
-  | Unshard -> (71, "UNSHARD")
-  | Reduce -> (72, "REDUCE")
-  | Allreduce -> (73, "ALLREDUCE")
+  | Custom_function -> (63, "CUSTOM_FUNCTION")
+  | Reshape -> (64, "RESHAPE")
+  | Permute -> (65, "PERMUTE")
+  | Expand -> (66, "EXPAND")
+  | Pad -> (67, "PAD")
+  | Flip -> (68, "FLIP")
+  | Reduce -> (69, "REDUCE")
 
 let to_int o = fst (info o)
 let name o = snd (info o)

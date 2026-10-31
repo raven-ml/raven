@@ -13,16 +13,12 @@ invalid	Invalid	None
 dtype	dtypes.f16	None
 range	(AxisType.WEAK, 0)	None
 range with sub-axes	(AxisType.UPCAST, 1, 0)	None
-negative range	(AxisType.DEVICE, -1)	None
+negative range	(AxisType.LOOP, -1)	None
 reduce	(Ops.ADD, 1)	None
 special	'gidx0'	None
 permute	(1, 0)	None
 flip	(False, True)	None
 device	'CUDA'	None
-devices	('CPU:0', 'CPU:1')	None
-mselect	1	None
-unshard	(0,)	None
-allreduce	(Ops.ADD, ('CPU:0', 'CPU:1'))	None
 custom	('barrier();', dtypes.void)	None
 ins	('s_endpgm', dtypes.void)	None
 binary	b'\x7fELF\x00\n\'"'	None

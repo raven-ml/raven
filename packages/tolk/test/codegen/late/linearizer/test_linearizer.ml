@@ -380,7 +380,7 @@ let untied_order () =
 let range_order () =
   let types =
     Ops.Axis_type.
-      [ Device; Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
+      [ Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
   in
   let ranges =
     List.concat

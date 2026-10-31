@@ -4,8 +4,8 @@ the ranges of a tensor graph.
 Recorded programs: `<program>.golden` is the graph that `run_rangeify` receives
 when the tensors of a `Tensor` program are scheduled on the CPU, and
 `<program>_rangeified.golden` what it returns. A program that schedules several
-graphs, such as an allreduce compiled as a function of its own, records the
-later ones as `<program>_<n>.golden` and `<program>_<n>_rangeified.golden`.
+graphs, such as a function compiled on its own, records the later ones as
+`<program>_<n>.golden` and `<program>_<n>_rangeified.golden`.
 `<program>_debug.golden` is what `run_rangeify` prints of the first graph with
 `debug`.
 
@@ -16,7 +16,7 @@ result that are ranges, or expressions of them.
 
 from golden import graph, text
 from tinygrad import Tensor, Variable, dtypes
-from tinygrad.helpers import DEV, RING
+from tinygrad.helpers import DEV
 from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
 import contextlib
 import io
@@ -25,7 +25,6 @@ import tinygrad.schedule.indexing
 import tinygrad.schedule.rangeify
 
 DEV.value = "CPU"
-DEVICES = ("CPU:0", "CPU:1", "CPU:2", "CPU:3")
 
 
 def scheduled(program):
@@ -68,12 +67,6 @@ def setitem():
     t = empty(8, 8).contiguous()
     t[2:4] = 1.0
     return t
-
-
-def shard_sum_ring():
-    # each golden runs in a process of its own, which the setting outlives
-    RING.value = 2
-    return empty(4, 400).shard(DEVICES, axis=0).sum(0)
 
 
 def custom_kernel():
@@ -179,10 +172,6 @@ PROGRAMS = {
     # several devices
     "copy": lambda: empty(4, 4).to("CPU:1") * 2,
     "bitcast_copy": lambda: empty(4, 4).bitcast(dtypes.int32).to("CPU:1") + 1,
-    "shard_add": lambda: empty(4, 64).shard(DEVICES, axis=1) + 1,
-    "shard_sum": lambda: empty(4, 64).shard(DEVICES, axis=0).sum(0),
-    "shard_sum_ring": shard_sum_ring,
-    "shard_matmul": lambda: empty(8, 16).shard(DEVICES, axis=0) @ empty(16, 4).shard(DEVICES, axis=None),
 }
 
 # Programs whose DEBUG_RANGEIFY printout is recorded: a pad that a reduction
@@ -243,13 +232,6 @@ def expand_by_range(stored_twice):
     return UOp.sink(out.after(out.reshape((4, 3)).store(value)))
 
 
-def mstack_of_values():
-    # the shards of a value on two devices, each computed on its device
-    shards = [UOp.param(1 + k, dtypes.float, 4, d).exp2() for k, d in enumerate(DEVICES[:2])]
-    out = UOp.param(0, dtypes.float, 4, DEVICES[:2])
-    return UOp.sink(out.after(out.store(UOp.mstack(*shards))))
-
-
 def scalar_and_wide_uses():
     # a scalar used by a full reduction and broadcast to a wide product: the
     # two stores reach nodes that differ only in their movements
@@ -264,7 +246,6 @@ def scalar_and_wide_uses():
 GRAPHS = {
     "expand_by_range": lambda: expand_by_range(False),
     "expand_by_range_stored": lambda: expand_by_range(True),
-    "mstack_of_values": mstack_of_values,
     "scalar_and_wide_uses": scalar_and_wide_uses,
 }
 

@@ -219,12 +219,9 @@ let splitting =
           let r = Ops.range (Sym (var "n" 1 16)) [ 0 ] in
           let u = modulo r 2 in
           equal uop u (split u));
-      test "warp and device ranges stay" (fun () ->
-          List.iter
-            (fun axis_type ->
-              let u = modulo (range ~axis_type 8 0) 2 in
-              equal uop u (split u))
-            [ Ops.Axis_type.Warp; Device ]);
+      test "a warp range stays" (fun () ->
+          let u = modulo (range ~axis_type:Ops.Axis_type.Warp 8 0) 2 in
+          equal uop u (split u));
       test "a sink without kernel information is left as it is" (fun () ->
           let r = r 8 in
           let u =

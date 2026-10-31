@@ -1,2 +1,0 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
-RING ALLREDUCE 3x15 | dtypes.f32

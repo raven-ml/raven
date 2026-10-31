@@ -390,7 +390,6 @@ def arguments():
         UOp.param(0, dtypes.float, 16),
         UOp.param(1, dtypes.int, 4, name="w"),
         UOp.param(2, dtypes.half, 8, device="CPU"),
-        UOp.param(3, dtypes.float, 8, device=("CPU:0", "CPU:1")),
         UOp.param(4, dtypes.int, 4, volatile=True),
         UOp.param(5, dtypes.int, vmin_vmax=(0, 10), multiple_of=2, addrspace=AddrSpace.ALU),
         UOp.variable("x", -1.0, 1.0, dtypes.float),
@@ -400,7 +399,8 @@ def arguments():
         UOp.alloc((4,), dtypes.float, slot=8),
         a, a.bind(3),
     ]
-    ranges = [UOp.range(4, 0, t) for t in AxisType] + [UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.LOOP, 1, 2))]
+    # tolk has no device axis: it compiles for one device (see the README)
+    ranges = [UOp.range(4, 0, t) for t in AxisType if t is not AxisType.DEVICE] + [UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.LOOP, 1, 2))]
     body = UOp.param(0, dtypes.float, 4).index(UOp.const(0)).store(1.0).sink()
     buf = UOp.param(9, dtypes.float, 4)
     others = [
@@ -412,7 +412,7 @@ def arguments():
         UOp(Ops.REDUCE, src=(buf, ranges[0]), arg=(Ops.ADD, 0)),
         UOp(Ops.REDUCE, src=(buf, ranges[0]), arg=(Ops.MAX, 1)),
         a.cast(dtypes.long), UOp(Ops.BITCAST, src=(a.cast(dtypes.int),), arg=dtypes.float),
-        buf.copy_to_device("CPU"), buf.copy_to_device(("CPU:0", "CPU:1")),
+        buf.copy_to_device("CPU"),
         UOp.special(4, "lidx1"),
         UOp(Ops.CUSTOM, src=(a,), arg=("abs({0})", dtypes.int)),
         UOp(Ops.SOURCE, arg="int main() { return 0; }"),

@@ -272,10 +272,6 @@ let tc_min_globals = int ~reach:Output "TC_MIN_GLOBALS" 0
 let transcendental = int ~reach:Output "TRANSCENDENTAL" 1
 let split_reduceop = bool ~reach:Output "SPLIT_REDUCEOP" true
 let no_memory_planner = bool ~reach:Output "NO_MEMORY_PLANNER" false
-let ring = int ~reach:Output "RING" 1
-let all2all = int ~reach:Output "ALL2ALL" 0
-let allreduce_cast = bool ~reach:Output "ALLREDUCE_CAST" true
-let allreduce_node_ndevs = int ~reach:Output "ALLREDUCE_NODE_NDEVS" 0
 let cachelevel = int ~reach:Process "CACHELEVEL" 2
 
 (* A size is a number of bytes, [0] standing for no bound. *)
@@ -326,10 +322,6 @@ let ccache = bool ~reach:Process "CCACHE" true
 let allow_tf32 = bool ~reach:Output "ALLOW_TF32" false
 let scache = int ~reach:Process "SCACHE" 2
 let disallow_broadcast = bool ~reach:Process "DISALLOW_BROADCAST" false
-let late_allreduce = bool ~reach:Output "LATE_ALLREDUCE" true
-
-let ring_allreduce_threshold =
-  int ~reach:Output "RING_ALLREDUCE_THRESHOLD" 256_000
 
 let reduceop_split_threshold =
   int ~reach:Output "REDUCEOP_SPLIT_THRESHOLD" 32768

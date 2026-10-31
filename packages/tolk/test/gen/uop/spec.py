@@ -67,12 +67,6 @@ def flag(name): return UOp.variable(name, False, True, dtypes.bool)
 def buf(slot=0, dt=dtypes.float32, size=16): return UOp.param(slot, dt, size)
 
 
-CPU2 = ("CPU:0", "CPU:1")
-
-
-def device_range(n=2, dt=dtypes.weakint): return UOp.range(n, -1, AxisType.DEVICE, dtype=dt)
-
-
 def global_buffer(device="CPU", size=16, dt=dtypes.float32, slot=100):
     return UOp.new_buffer(device, size, dt, num=slot)
 
@@ -87,7 +81,7 @@ def rebuffer(b, **fields):
 
 def alloc(size=16, dt=dtypes.float32, addrspace=AddrSpace.GLOBAL, device=None, src=None, slot=200):
     size_src = (UOp.const(size),) if size is not None else ()
-    return UOp(Ops.ALLOC, src=size_src+(UOp.device_range_src(device) if src is None else src),
+    return UOp(Ops.ALLOC, src=size_src+(() if src is None else src),
                arg=ParamArg(slot, dt, addrspace=addrspace, device=device))
 
 
@@ -199,7 +193,6 @@ def verdict_cases():
     case("a global int32 range", UOp.range(i32(16), 1, AxisType.GLOBAL, dtype=dtypes.int32))
     case("a range with extra sources", UOp(Ops.RANGE, src=(UOp.const(4), r), arg=(AxisType.LOOP, 2)))
     case("a loop header", UOp.loop(3))
-    case("a device range", device_range())
     case("an index by a weak integer", x.index(UOp.const(3)))
     case("an index by int32", x.index(i32(3)))
     case("an index by two integers", UOp(Ops.INDEX, src=(x.reshape((4, 4)), UOp.const(1), UOp.const(2))))
@@ -239,18 +232,11 @@ def verdict_cases():
     case("a global buffer", gb)
     case("a global buffer without a device", rebuffer(gb, device=None))
     case("a global buffer without a size", rebuffer(gb, size=None))
-    mb = global_buffer(CPU2, slot=101)
-    case("a buffer on two devices", mb)
-    case("a buffer on two devices without its range", rebuffer(mb, src=()))
-    case("a buffer on two devices over three", rebuffer(mb, src=(device_range(3),)))
-    case("a buffer on two devices over a loop range", rebuffer(mb, src=(UOp.range(2, -1, AxisType.LOOP),)))
-    case("a buffer on one device with a range", rebuffer(gb, src=(device_range(1),)))
+    case("a buffer on one device with a range", rebuffer(gb, src=(UOp.range(1, -1, AxisType.LOOP),)))
     case("an alu buffer", UOp(Ops.BUFFER, src=(UOp.const(4),), arg=ParamArg(5, dtypes.float32, addrspace=AddrSpace.ALU)))
     case("a global allocation", alloc())
     case("a global allocation on a device", alloc(device="CPU", slot=201))
     case("a global allocation without a size", alloc(size=None, slot=202))
-    case("an allocation on two devices", alloc(device=CPU2, slot=203))
-    case("an allocation on two devices without its range", alloc(device=CPU2, src=(), slot=204))
     case("a local allocation", alloc(addrspace=AddrSpace.LOCAL, slot=205))
     case("a register allocation", alloc(addrspace=AddrSpace.REG, slot=206))
     case("a local allocation on a device", alloc(addrspace=AddrSpace.LOCAL, device="CPU", slot=207))
@@ -327,25 +313,7 @@ def verdict_cases():
          UOp(Ops.REDUCE, src=(ld, UOp.range(UOp.const(4, dtypes.uint32), 1, dtype=dtypes.uint32)), arg=(Ops.ADD, 0)))
     case("a reduce by sine", UOp(Ops.REDUCE, src=(x,), arg=(Ops.SIN, 1)))
     case("a copy", x.copy_to_device("CPU"))
-    case("a copy to two devices", x.copy_to_device(CPU2))
-    case("a copy to two devices without its range", UOp(Ops.COPY, src=(x,), arg=CPU2))
     case("a copy to a disk", UOp(Ops.COPY, src=(x,), arg="DISK:/tmp/x"))
-    sharded = UOp.param(6, dtypes.float32, 16, device=CPU2)
-    case("an allreduce", UOp(Ops.ALLREDUCE, src=(sharded,), arg=(Ops.ADD, CPU2)))
-    case("an allreduce by sine", UOp(Ops.ALLREDUCE, src=(sharded,), arg=(Ops.SIN, CPU2)))
-    case("an allreduce by a bitwise or", UOp(Ops.ALLREDUCE, src=(sharded.bitcast(dtypes.uint32),), arg=(Ops.OR, CPU2)))
-    case("an unshard", sharded.unshard(0))
-    case("an unshard over a derived range", UOp(Ops.UNSHARD, src=(sharded, device_range() * 2), arg=(0,)))
-    case("an unshard missing a range", UOp(Ops.UNSHARD, src=(sharded,), arg=(0,)))
-    case("an unshard over an int32 range", UOp(Ops.UNSHARD, src=(sharded, device_range(2, dtypes.int32)), arg=(0,)))
-    case("a selection of a shard", sharded.mselect(1))
-    case("a selection past the shards", sharded.mselect(2))
-    case("a selection on one device", UOp.param(7, dtypes.float32, 16, device="CPU").mselect(0))
-    one = [UOp.param(8 + k, dtypes.float32, 16, device=f"CPU:{k}") for k in range(2)]
-    case("a stack of shards", UOp(Ops.MSTACK, src=tuple(one)))
-    case("a stack of sharded values", UOp(Ops.MSTACK, src=(sharded, sharded)))
-    case("a stack of one value without a device", UOp(Ops.MSTACK, src=(x, x)))
-    case("a stack of values without a device", UOp(Ops.MSTACK, src=(x, y)))
     case("a detach", UOp(Ops.DETACH, src=(x,)))
     case("a contiguous backward", UOp(Ops.CONTIGUOUS_BACKWARD, src=(x,)))
     case("a staged value", UOp(Ops.STAGE, src=(ld,)))
@@ -382,7 +350,6 @@ def verdict_cases():
     case("a stack of parameters", UOp(Ops.STACK, src=(x, y)))
     case("a stack of a sum", UOp(Ops.STACK, src=(UOp.const(1) + cvar("a", dtypes.weakint),)))
     case("a cast of a constant", UOp.cconst(1, dtypes.int64))
-    case("an after of a stack of shards", UOp(Ops.MSTACK, src=tuple(one)).after(st))
 
     # nodes without the argument their operation takes
     case("binary data without bytes", UOp(Ops.BINARY))
@@ -393,7 +360,6 @@ def verdict_cases():
     case("a permute without an order", UOp(Ops.PERMUTE, src=(x.reshape((4, 4)),)))
     case("a reduce without an argument", UOp(Ops.REDUCE, src=(x,)))
     case("a copy without a device", UOp(Ops.COPY, src=(x,)))
-    case("an allreduce without an argument", UOp(Ops.ALLREDUCE, src=(sharded,)))
     return case
 
 
@@ -495,11 +461,9 @@ def failure_cases():
     case("a graph whose last node fails", UOp(Ops.END, src=(ld,)))
     case("a graph whose first node fails", UOp.sink(UOp(Ops.CONST, src=(UOp.const(1),), arg=2).alu(Ops.ADD, UOp.const(1))))
     case("a reduce by sine", UOp.sink(UOp(Ops.REDUCE, src=(x,), arg=(Ops.SIN, 1))))
-    case("a selection past the shards", UOp.sink(UOp.param(6, dtypes.float32, 16, device=("CPU:0", "CPU:1")).mselect(2)))
     case("a copy to a disk", UOp.sink(UOp(Ops.COPY, src=(x,), arg="DISK:/tmp/x")))
     case("a load with an int32 alternative", UOp.sink(x.index(UOp.const(0)).load(i32(0), flag("g"))))
     case("a where with a float constant", UOp.sink(UOp(Ops.WHERE, src=(flag("c"), cvar("a", dtypes.int32), f32(1.5)))))
-    case("a copy to two devices without its range", UOp.sink(UOp(Ops.COPY, src=(x,), arg=CPU2)))
     case("an alu buffer", UOp.sink(UOp(Ops.BUFFER, src=(UOp.const(4),), arg=ParamArg(5, dtypes.float32, addrspace=AddrSpace.ALU))))
     case("an and of weak floats", UOp.sink(UOp(Ops.AND, src=(UOp.const(1.0), UOp.const(-0.0)))))
     case("a float constant with a source", UOp.sink(UOp(Ops.CONST, src=(UOp.const(1),), arg=UOp.const(2.5).arg)))

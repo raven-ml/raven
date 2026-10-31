@@ -1,8 +1,0 @@
-# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
-0 Ops.CONST dtypes.weakint [] 8
-1 Ops.CONST dtypes.weakint [] 4
-2 Ops.RANGE dtypes.weakint [1] (AxisType.DEVICE, 0)
-3 Ops.BUFFER dtypes.f32 [0, 2] ParamArg(slot=0, dtype=dtypes.f32, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
-4 Ops.ALLREDUCE dtypes.f32 [3] (Ops.ADD, "CPU:0")
-5 Ops.SINK dtypes.void [4]
-

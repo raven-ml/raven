@@ -68,17 +68,13 @@ let declared =
       Detach;
       Stage;
       Copy;
-      Mselect;
-      Mstack;
       Custom_function;
       Reshape;
       Permute;
       Expand;
       Pad;
       Flip;
-      Unshard;
       Reduce;
-      Allreduce;
     ]
 
 (* Witnesses and generators *)
@@ -129,8 +125,17 @@ let value o =
   in
   int_of_string (row "value")
 
-(* The operations of tinygrad that tolk leaves out. *)
-let excluded = [ "Ops.REWRITE_ERROR"; "Ops.PYLITERAL" ]
+(* The operations of tinygrad that tolk leaves out: an error marker, Python
+   literals, and the operations of several devices (see the README). *)
+let excluded =
+  [
+    "Ops.REWRITE_ERROR";
+    "Ops.MSELECT";
+    "Ops.MSTACK";
+    "Ops.UNSHARD";
+    "Ops.ALLREDUCE";
+    "Ops.PYLITERAL";
+  ]
 
 (* Operations *)
 
@@ -143,7 +148,7 @@ let operations =
                (fun op -> Option.is_some (counterpart op))
                (printed_ops ()))
             (List.map show declared));
-      test "has no counterpart for exactly REWRITE_ERROR and PYLITERAL"
+      test "has no counterpart for exactly the operations it leaves out"
         (fun () ->
           equal (list string) excluded
             (List.filter
@@ -362,8 +367,6 @@ let named_sets =
       prop "idempotent operations give back their operand"
         (Gen.pair (gen_member Op.Set.idempotent) Gen.small_int)
         (fun (o, x) -> equal int x (int_meaning o x x));
-      test "movement leaves out Unshard" (fun () ->
-          is_false (Op.Set.mem Op.Unshard Op.Set.movement));
     ]
 
 let () =

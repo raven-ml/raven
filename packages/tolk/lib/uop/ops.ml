@@ -18,12 +18,11 @@ let rec drop n l =
 (* Axis types *)
 
 module Axis_type = struct
-  type t = Device | Global | Local | Warp | Weak | Loop | Upcast | Placeholder
+  type t = Global | Local | Warp | Weak | Loop | Upcast | Placeholder
 
-  let all = [ Device; Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
+  let all = [ Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
 
   let to_int = function
-    | Device -> 0
     | Global -> 1
     | Local -> 2
     | Warp -> 3
@@ -36,7 +35,6 @@ module Axis_type = struct
   let compare a0 a1 = Int.compare (to_int a0) (to_int a1)
 
   let name = function
-    | Device -> "DEVICE"
     | Global -> "GLOBAL"
     | Local -> "LOCAL"
     | Warp -> "WARP"
@@ -53,7 +51,6 @@ module Axis_type = struct
   let no_placeholder () = invalid_arg "the placeholder axis type has no letter"
 
   let letter = function
-    | Device -> "d"
     | Global -> "g"
     | Local -> "l"
     | Warp -> "w"
@@ -62,7 +59,6 @@ module Axis_type = struct
     | Placeholder -> no_placeholder ()
 
   let color : t -> Helpers.color = function
-    | Device -> Green
     | Global -> Blue
     | Local -> Cyan
     | Warp -> Bright_cyan
@@ -121,31 +117,16 @@ let repr_addr_space a = Format.asprintf "%a" Dtype.pp_addr_space a
 
 (* Devices *)
 
-type device = Single of string | Multi of string list
+type device = string
 
-let equal_device d0 d1 =
-  match (d0, d1) with
-  | Single s0, Single s1 -> String.equal s0 s1
-  | Multi l0, Multi l1 -> List.equal String.equal l0 l1
-  | _ -> false
-
-let repr_device = function
-  | Single s -> repr_string s
-  | Multi l -> repr_tuple (List.map repr_string l)
-
+let repr_device = repr_string
 let pp_device ppf d = Format.pp_print_string ppf (repr_device d)
-let device_names = function Single s -> [ s ] | Multi l -> l
 
 let is_disk_device d =
-  List.exists
-    (fun n ->
-      let kind =
-        match String.index_opt n ':' with
-        | Some i -> String.sub n 0 i
-        | None -> n
-      in
-      String.equal (String.uppercase_ascii kind) "DISK")
-    (device_names d)
+  let kind =
+    match String.index_opt d ':' with Some i -> String.sub d 0 i | None -> d
+  in
+  String.equal (String.uppercase_ascii kind) "DISK"
 
 (* Tags *)
 
@@ -240,7 +221,6 @@ and memos = {
   mutable addrspace_memo : Dtype.addr_space option option; [@atomic]
   mutable backward_slice_memo : nodes option; [@atomic]
   mutable ops_reached_memo : Op.Set.t option; [@atomic]
-  mutable axis_memo : int option option; [@atomic]
   mutable marg_memo : movement option; [@atomic]
   mutable key_memo : string option; [@atomic]
   mutable arg_repr_memo : string option; [@atomic]
@@ -284,9 +264,7 @@ and arg =
   | Param of param_arg
   | Range of { axis_type : Axis_type.t; axis_id : int list }
   | Reduce of { op : Op.t; num_axes : int }
-  | Allreduce of { op : Op.t; device : device }
   | Device of device
-  | Shard of int
   | Axes of int list
   | Flips of bool list
   | String of string
@@ -328,7 +306,7 @@ let equal_param_arg (p0 : param_arg) (p1 : param_arg) =
   && Option.equal Int.equal p0.multiple_of p1.multiple_of
   && Option.equal String.equal p0.name p1.name
   && Option.equal ( = ) p0.addrspace p1.addrspace
-  && Option.equal equal_device p0.device p1.device
+  && Option.equal String.equal p0.device p1.device
   && Bool.equal p0.volatile p1.volatile
   && Bool.equal p0.bind_on_realize p1.bind_on_realize
   && Option.equal Dtype.equal_const p0.bound p1.bound
@@ -358,7 +336,7 @@ let equal_program_info (p0 : program_info) (p1 : program_info) =
   && p0.target = p1.target
 
 let equal_bufferize_opts (b0 : bufferize_opts) (b1 : bufferize_opts) =
-  Option.equal equal_device b0.device b1.device
+  Option.equal String.equal b0.device b1.device
   && b0.addrspace = b1.addrspace
   && b0.keep = b1.keep
 
@@ -379,10 +357,7 @@ let equal_arg (a0 : arg) (a1 : arg) =
       r0.axis_id = r1.axis_id && Axis_type.equal r0.axis_type r1.axis_type
   | Reduce r0, Reduce r1 ->
       Op.equal r0.op r1.op && Int.equal r0.num_axes r1.num_axes
-  | Allreduce r0, Allreduce r1 ->
-      Op.equal r0.op r1.op && equal_device r0.device r1.device
-  | Device d0, Device d1 -> equal_device d0 d1
-  | Shard n0, Shard n1 -> Int.equal n0 n1
+  | Device d0, Device d1 -> String.equal d0 d1
   | Axes l0, Axes l1 -> l0 = l1
   | Flips l0, Flips l1 -> l0 = l1
   | String s0, String s1 | Bytes s0, Bytes s1 -> String.equal s0 s1
@@ -409,9 +384,7 @@ let hash_arg (a : arg) =
   | Param p -> h (3, p.slot, p.name, p.device)
   | Range r -> h (4, r.axis_id, r.axis_type)
   | Reduce r -> h (5, Op.to_int r.op, r.num_axes)
-  | Allreduce r -> h (6, Op.to_int r.op, r.device)
   | Device d -> h (7, d)
-  | Shard n -> h (8, n)
   | Axes l -> h (9, l)
   | Flips l -> h (10, l)
   | String s -> h (11, s)
@@ -469,7 +442,6 @@ let memos () =
     addrspace_memo = None;
     backward_slice_memo = None;
     ops_reached_memo = None;
-    axis_memo = None;
     marg_memo = None;
     key_memo = None;
     arg_repr_memo = None;
@@ -521,9 +493,8 @@ let dtype_of op src arg =
   | Op.Custom | Op.Customi | Op.Ins -> (
       match arg with Code c -> c.dtype | _ -> mismatch "code and a type")
   | Op.Index -> (first op src).dtype
-  | Op.Load | Op.Unshard | Op.Reduce | Op.After | Op.Range
-  | Op.Contiguous_backward | Op.Copy | Op.Stage | Op.Detach | Op.Mstack
-  | Op.Mselect | Op.Allreduce | Op.Special | Op.End ->
+  | Op.Load | Op.Reduce | Op.After | Op.Range | Op.Contiguous_backward
+  | Op.Copy | Op.Stage | Op.Detach | Op.Special | Op.End ->
       (first op src).dtype
   | Op.Cmplt | Op.Cmpne | Op.Cmpeq -> Dtype.Bool
   | Op.Sin | Op.Log2 | Op.Exp2 | Op.Sqrt | Op.Reciprocal ->
@@ -834,10 +805,7 @@ and repr_arg = function
         (Axis_type.repr r.axis_type :: List.map string_of_int r.axis_id)
   | Reduce r ->
       repr_tuple [ Format.asprintf "%a" Op.pp r.op; string_of_int r.num_axes ]
-  | Allreduce r ->
-      repr_tuple [ Format.asprintf "%a" Op.pp r.op; repr_device r.device ]
   | Device d -> repr_device d
-  | Shard i -> string_of_int i
   | Axes l -> repr_tuple (List.map string_of_int l)
   | Flips l -> repr_tuple (List.map repr_bool l)
   | String s -> repr_string s
@@ -1404,16 +1372,9 @@ let invalid = const `Invalid
 
 (* Bounds *)
 
-let mselect u i = v Op.Mselect ~src:[ u ] ~arg:(Shard i)
-
 let rec buf_uop u =
   match u.op with
   | Op.Buffer | Op.Alloc | Op.Param -> u
-  | Op.Mselect -> (
-      match u.arg with
-      | Shard i -> mselect (buf_uop (first u.op u.src)) i
-      | _ -> invalid_arg "a shard selection needs a shard")
-  | Op.Mstack -> v Op.Mstack ~src:(List.map buf_uop u.src)
   | _ ->
       let b = base u in
       if b.op = Op.After then base (buf_uop (first b.op b.src))
@@ -1421,7 +1382,7 @@ let rec buf_uop u =
         let rec down s =
           match s.src with
           | first :: _
-            when not (List.mem s.op Op.[ Buffer; Alloc; Param; Stage; Mstack ])
+            when not (List.mem s.op Op.[ Buffer; Alloc; Param; Stage ])
             ->
               down first
           | _ -> s
@@ -1865,7 +1826,6 @@ let rec ended_ranges u =
             drop (Option.get (range_start op)) u.src
         | Op.After -> List.concat_map ended_ranges (drop 1 u.src)
         | Op.Barrier -> List.concat_map ended_ranges u.src
-        | Op.Unshard -> drop 1 u.src
         | _ -> []
       in
       u.memos.ended_ranges_memo <- Some l;
@@ -2038,29 +1998,13 @@ and compute_device u =
   | (Op.Param | Op.Buffer | Op.Alloc), Param p -> p.device
   | Op.Stage, Bufferize b -> b.device
   | Op.Stage, _ | Op.After, _ -> device (src0 ())
-  | Op.Mselect, Shard i -> (
-      match device (src0 ()) with
-      | Some (Multi ds) -> Some (Single (List.nth ds i))
-      | _ -> invalid_arg "a shard selection needs a value on several devices")
-  | Op.Mstack, _ ->
-      Some
-        (Multi
-           (List.map
-              (fun s ->
-                match device s with
-                | Some (Single d) -> d
-                | _ ->
-                    invalid_arg
-                      "a multi-device stack needs one device per source")
-              u.src))
   | Op.Copy, Device d -> Some d
-  | Op.Allreduce, Allreduce r -> Some r.device
   | _ -> List.find_map device u.src
 
 let on_disk u =
   match device u with
-  | Some (Single d) -> String.starts_with ~prefix:"DISK" d
-  | _ -> false
+  | Some d -> String.starts_with ~prefix:"DISK" d
+  | None -> false
 
 let is_virtual u = Option.is_none (device u) || List.mem u.dtype Dtype.weaks
 
@@ -2075,9 +2019,7 @@ and compute_addrspace u =
   | (Op.Param | Op.Buffer | Op.Alloc), Param p -> p.addrspace
   | (Op.Special | Op.Range | Op.Const), _ | Op.Load, _ -> Some Dtype.Alu
   | Op.Binary, _ -> Some Dtype.Global
-  | ( ( Op.Index | Op.Cast | Op.After | Op.Reduce | Op.Store | Op.Mstack
-      | Op.Mselect | Op.End | Op.Unshard ),
-      _ ) ->
+  | (Op.Index | Op.Cast | Op.After | Op.Reduce | Op.Store | Op.End), _ ->
       addrspace (first u.op u.src)
   | op, _ when Op.Set.mem op Op.Set.movement -> addrspace (first u.op u.src)
   | op, _
@@ -2090,25 +2032,18 @@ and compute_addrspace u =
 
 let rec has_buffer_identity ?(after_ok = false) u =
   match u.op with
-  | Op.Reshape | Op.Unshard | Op.Mselect ->
-      has_buffer_identity ~after_ok (first u.op u.src)
+  | Op.Reshape -> has_buffer_identity ~after_ok (first u.op u.src)
   | Op.After when after_ok -> has_buffer_identity ~after_ok (first u.op u.src)
   | op -> Op.Set.mem op Op.Set.defines
 
 (* Movement *)
 
-let unsharded_base u =
-  if Op.Set.mem u.op Op.Set.movement || u.op = Op.Detach || u.op = Op.Unshard
-  then base (first u.op u.src)
-  else u
-
 let storage_base u =
   let rec strip b =
-    if List.mem b.op Op.[ Bitcast; After; Unshard ] then
-      strip (unsharded_base (first b.op b.src))
+    if List.mem b.op Op.[ Bitcast; After ] then strip (base (first b.op b.src))
     else b
   in
-  strip (unsharded_base u)
+  strip (base u)
 
 let needs_storage u =
   (not (is_virtual u))
@@ -2148,43 +2083,16 @@ let uprod x ys =
     (if Dtype.equal x.dtype Dtype.Bool then bitwise_and else mul)
     x ys
 
-(* Several devices *)
-
-let sharding u =
-  match (u.op, u.arg) with
-  | Op.Unshard, Axes axes -> List.combine axes (drop 1 u.src)
-  | _ -> []
+(* Devices *)
 
 let size_src = function None -> v Op.Stack | Some n -> int n
 
-let device_range_src = function
-  | Some (Multi ds) ->
-      [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ 0 ] ]
-  | _ -> []
-
-let copy_to_device ?shard u d =
+let copy_to_device u d =
   if is_disk_device d then
     invalid_arg "cannot copy to a disk; store into a disk buffer instead";
-  let inp =
-    match shard with
-    | None -> u
-    | Some i ->
-        (match device u with
-        | Some (Multi _) -> ()
-        | _ -> invalid_arg "a shard copy needs a value on several devices");
-        mselect u i
-  in
-  if List.mem inp.dtype Dtype.weaks then
-    invalid_argf "cannot store a weak %s" (repr_dtype inp.dtype);
-  v Op.Copy ~src:(inp :: device_range_src (Some d)) ~arg:(Device d)
-
-let mstack u = function [] -> u | rest -> v Op.Mstack ~src:(u :: rest)
-
-let allreduce u op d =
-  (match device u with
-  | Some (Multi _) -> ()
-  | _ -> invalid_arg "an allreduce needs a value on several devices");
-  v Op.Allreduce ~src:[ u ] ~arg:(Allreduce { op; device = d })
+  if List.mem u.dtype Dtype.weaks then
+    invalid_argf "cannot store a weak %s" (repr_dtype u.dtype);
+  v Op.Copy ~src:[ u ] ~arg:(Device d)
 
 (* Storage *)
 
@@ -2225,7 +2133,7 @@ let new_buffer ?slot ?phase d size dt =
   weak_storage dt;
   let slot = match slot with Some s -> s | None -> unique_num () in
   v Op.Buffer
-    ~src:(size_src (Some size) :: device_range_src (Some d))
+    ~src:[ size_src (Some size) ]
     ~arg:(Param (param_arg ~slot ~device:d ?phase dt))
 
 let set ?(ends = []) p x = after (first p.op p.src) [ end_ (store p x) ends ]
@@ -3216,10 +3124,10 @@ let pm_drop_after =
     v (fun () -> [ rule (Upat.op Op.After ~name:"a") (fun m -> Some (nth (m "a") 0)) ]))
 
 let resolve_returned_after r effects =
-  let target = unsharded_base r in
+  let target = base r in
   match
     List.filter
-      (fun st -> st.op = Op.Store && unsharded_base (nth st 0) == target)
+      (fun st -> st.op = Op.Store && base (nth st 0) == target)
       effects.src
   with
   | [ st ] -> Some (if target.op = Op.Param then after r [ st ] else nth st 1)
@@ -3241,12 +3149,8 @@ let custom_function ?(dtype = Dtype.Void) name args =
 let call ?name ?(precompile = false) body args =
   if not (Op.Set.mem body.op opaque_call_bodies) then
     invalid_argf "a %s cannot be called" (Op.name body.op);
-  if
-    not
-      (List.for_all
-         (fun r -> Axis_type.equal (axis_type r) Axis_type.Device)
-         (Nodes.to_list (ranges body)))
-  then invalid_arg "ranges leak out of the called body";
+  if Nodes.cardinal (ranges body) > 0 then
+    invalid_arg "ranges leak out of the called body";
   v Op.Call ~src:(body :: args)
     ~arg:(Call { name; precompile })
 
@@ -3256,7 +3160,7 @@ let is_inline_call u =
   && match u.arg with Call c -> not c.precompile | _ -> false
 
 let unbound_output x =
-  let b = unsharded_base x in
+  let b = base x in
   b.op = Op.Alloc && not (param_arg_of b).bind_on_realize
 
 let has_unbound_outputs c =
@@ -3290,5 +3194,3 @@ let shape_memo u = u.memos.shape_memo
 let set_shape_memo u s = u.memos.shape_memo <- Some s
 let movement_memo u = u.memos.marg_memo
 let set_movement_memo u m = u.memos.marg_memo <- Some m
-let axis_memo u = u.memos.axis_memo
-let set_axis_memo u a = u.memos.axis_memo <- Some a

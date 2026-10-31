@@ -472,7 +472,7 @@ let access =
   let storages =
     [
       ("param", fun dtype -> buffer ~dtype 0 16);
-      ("buffer", fun dtype -> Ops.new_buffer ~slot:3 (Single "CPU") 16 dtype);
+      ("buffer", fun dtype -> Ops.new_buffer ~slot:3 "CPU" 16 dtype);
       ("local", fun dtype -> Shape.alloc ~addrspace:Local [ Int 16 ] dtype);
       ("register", fun dtype -> Shape.alloc ~addrspace:Reg [ Int 16 ] dtype);
     ]

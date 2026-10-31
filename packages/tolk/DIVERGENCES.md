@@ -107,7 +107,7 @@ the Exclusions of `README.md`.
     them through one reference that the line after them sets, so a
     program that links `Shape` has them. `Symbolic` keeps `sym` and the rules
     on conditions, which call `simplify`. The other `UOp` methods that read
-    shapes, of storage, sharding, variables, calls and programs, are
+    shapes, of storage, variables, calls and programs, are
     `Shape`'s too;
   - `render.py`'s `pretty_print` is `Ops.pp`: it prints arguments
     (`argstr`), and arguments print the nodes they hold, so the two recurse;
@@ -576,33 +576,11 @@ stamps nothing (D146).
   toolchain › metal_transcendental_bf16`, tinygrad's graph, is an expected
   failure.
 
-## D19. A hierarchical allreduce to one device lands there
+## D19. Withdrawn
 
-- **tinygrad:** `schedule/allreduce.py:28-34`, the hierarchical branch of
-  `handle_allreduce`, which returns before it reads the target device
-  (`:11`), so its result is on every device of the source even when the
-  allreduce targets one. `create_allreduce_function` (`:68-76`) then stores
-  that value into storage on the one target device. Repro: with
-  `ALLREDUCE_NODE_NDEVS=2`,
-  `UOp.new_buffer(("CPU:0","CPU:1","CPU:2","CPU:3"), 16, dtypes.float).allreduce(Ops.ADD, "CPU:0")`
-  handled by `handle_allreduce` gives an `MSTACK` on the four devices.
-- **tolk:** `Allreduce.handle_allreduce`.
-- **Differs:** when the target is one device, the hierarchical branch copies
-  each reduced chunk there from the device of its rank in the first node, as
-  the ring and all-to-all branches copy their reduced chunks, and the result
-  is on that device.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. A sharded sum
-  reduced to one device under `ALLREDUCE_NODE_NDEVS`, the multi-node setting,
-  would otherwise compute a value on every device and store it into storage on
-  one. Today rune's jit declines a value over several devices (rune's
-  `Compile`), and no raven code sets `ALLREDUCE_NODE_NDEVS`.
-- **Pinned by:** `Tolk.Allreduce › handle_allreduce › recorded ›
-  nodes_to_one_device_handled.golden, landed on its device`, which
-  states tinygrad's golden in code with each gather of a chunk replaced by its
-  copy to the target, and `Tolk.Allreduce › rules › a hierarchical
-  allreduce to one device lands there`, which evaluates the value and
-  the function on two devices and finds the reduction on the target alone.
+A hierarchical allreduce to one device landed there, where tinygrad's stayed on
+every device of its source. Withdrawn: multi-device is out of scope, see
+README.
 
 ## D20. Storage keeps an e5m2 NaN's payload
 
@@ -625,30 +603,11 @@ stamps nothing (D146).
   of `Tolk.Dtype › storage › reencode.golden` and `Tolk.Dtype ›
   truncate › truncation.golden`, stated in code.
 
-## D21. A reshape of a value sharded on two axes divides each by its own count
+## D21. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:138` (`reshape_multi`), which divides every
-  sharded axis of the new shape by the shard count of the loop variable `rng`
-  left over from `:129`: the count of the last sharded axis. On a value
-  sharded on two axes with different counts, the shard's reshape has the
-  wrong size, and scheduling fails. Repro, a 2×4 mesh on eight devices:
-  `rng = UOp.range(8, -1, AxisType.DEVICE); r0, r1 = rng // 4, rng % 4`,
-  `t = Tensor(Tensor.arange(48).float().reshape(4, 12).contiguous().realize().uop.copy_to_device(devs)._shard(0, r0)._shard(1, r1).unshard((0, 1), (r0, r1)))`,
-  then `(t.reshape(4, 12, 1) * 2).to("CPU").schedule_linear()` raises
-  `ValueError: size mismatch, can't reshape ((2, 3)) -> ((1, 3, 1))`.
-- **tolk:** `Multi.reshape_multi`.
-- **Differs:** each sharded axis of the new shape is divided by the shard
-  count of its own range, so the shard of the repro reshapes to `(2, 3, 1)`.
-  When the sharded axes share one count, the two agree.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. A mesh (RFC 0005's
-  meshes, data by tensor parallelism) shards its two axes by different counts.
-  Today rune's jit declines a value over several devices (rune's `Compile`).
-- **Pinned by:** `Tolk.Multi › multi_pm › two sharded axes › a reshape
-  divides each sharded axis by its own count` and `› a reshape of a mesh
-  of 2 by 4 devices keeps each tile`, and the law `Tolk.Multi ›
-  multi_pm › laws › a rewritten value holds the value computed whole` on grids
-  of 2 by 2 and 2 by 4 devices.
+A reshape of a value sharded on two axes divided each by its own shard count,
+where tinygrad's divided both by the last one's. Withdrawn: multi-device is out
+of scope, see README.
 
 ## D22. An emulated long converts no float past its words' range
 
@@ -667,28 +626,11 @@ stamps nothing (D146).
   emulated cast of a float32 to a 64-bit integer converts no float to a word
   that cannot hold it`.
 
-## D23. A shard selected through a movement reads its own shard
+## D23. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:40-41` (`replace_allreduce`), which moves
-  an `MSELECT` before a movement and keeps the movement's arguments as they
-  are. When they hold the device range, as a sharded shrink's start
-  `drange * n` does, the selected value, now on one device, still reads the
-  range, and so reads the shard of whichever device runs it. Repro:
-  `x = Tensor([10.,20.]).shard(("CPU:0","CPU:1"), 0).realize(); w = Tensor([1.,2.]).to(("CPU:0","CPU:1")).realize(); (x + w)[0:1].tolist()`
-  raises `RuntimeError: unbound Variable '_device_num'`.
-- **tolk:** `Multi.replace_allreduce` (the rule that moves a shard
-  selection before a movement), with `Multi.at_device`.
-- **Differs:** the movement's arguments take the selected shard's position
-  for the device range, as a shrink moved before an `MSTACK` already does
-  (`_apply_shrink`), and are simplified.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. Its programs select
-  a shard from a value computed from a sharded and a replicated one. Today
-  rune's jit declines a value over several devices (rune's `Compile`).
-- **Pinned by:** `Tolk.Multi › multi_pm › shard selections › a
-  selection of a movement by the device range takes the selected device's
-  position`, and the law `Tolk.Multi › multi_pm › laws › a
-  rewritten value holds the value computed whole`.
+A shard selected through a movement read its own shard, the movement's device
+range taking the selected shard's position. Withdrawn: multi-device is out of
+scope, see README.
 
 ## D24. Rewrites keep IEEE and modular values
 
@@ -1137,30 +1079,10 @@ per trip of each submission under it (D146).
 A profiled Metal command buffer waited in its stamps retained. rig's Metal
 driver commits and times its own command buffers (D146).
 
-## D35. A selection of a value on no device is that value
+## D35. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:24-27` (`lower_broadcast_copy` simplifies
-  the copy's source and reads its device), `uop/ops.py:873` (the device of an
-  `MSELECT` asserts that its source is on several devices).
-- **tolk:** `Multi.pm_unselect_deviceless`, applied in
-  `Multi.lower_broadcast_copy`.
-- **Differs:** after simplifying the source of a copy to several devices,
-  every shard selection of a value on no device is replaced by that value, so
-  the copy stacks it on each device. tinygrad raises instead. Simplifying folds
-  an integer product with zero on a sharded value to a constant, which has no
-  device, and the selection above it then has no shards to select: a shard of
-  such a product that a cast, a sum or a max follows raises "mselect must be on
-  tuple device, getting None". The fold is right, since a constant is on no
-  device, so the fix is in the selection, not in the fold.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. Its sharded
-  integer code, where multiplying by zero and then reducing or casting is
-  ordinary, meets this rewrite, and the reference refuses such programs. Today
-  rune's jit declines a value over several devices (rune's `Compile`).
-- **Pinned by:** `Tolk.Multi › multi_pm › laws ›` "a shard of a product
-  with zero cast to a float is zero (D35)", "a shard of a sum of a product with
-  zero is zero (D35)", and the law "a rewritten value holds the value computed
-  whole" over every drawn program.
+A selection of a value on no device was that value, where tinygrad raised.
+Withdrawn: multi-device is out of scope, see README.
 
 ## D36. Withdrawn
 
@@ -1360,7 +1282,7 @@ driver sizes local memory as it loads a function (D146).
   schedule allocates, on a boundary, otherwise: it is known at phase 0 modulo
   the largest power of two up to the buffer's alignment that the byte of the
   view's first element is a multiple of, which holds of both, and modulo 1
-  byte when a size is symbolic or the buffer sharded. A view whose first or
+  byte when a size is symbolic. A view whose first or
   last element is padding, or whose ends lie farther apart or closer than a
   run of its size, is never made the view, and its stage keeps the
   boundary. rune's staged loops give each body parameter the alignment and
@@ -1514,8 +1436,8 @@ driver sizes local memory as it loads a function (D146).
   views, the range loses the tag of kernel ranges, and `create_schedule`
   keeps the end around the call, ordered by the call's reads and writes.
   Once the call's body is scheduled and resolved, the schedule is `LINEAR
-  [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that the memory plan of a range (D41) and `Tolk_engine.run`, a
-  loop of rig's program (D146), run. An end over device ranges is still the call, bound at launch.
+  [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that the memory plan of
+  a range (D41) and `Tolk_engine.run`, a loop of rig's program (D146), run.
   The kernel graph spec admits loop ranges, ends of calls over them, and
   views that move with them, whose bounds are constants, loop ranges, and
   weak integer sums and products of them, which a call may also pass as a
@@ -1530,8 +1452,7 @@ driver sizes local memory as it loads a function (D146).
   `get_kernel_graph › loops of calls › a loop of a precompiled call is
   no kernel` and `› a loop's call reads views that move with its range`; the
   `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules ›
-  an end of a call over a loop schedules the call in its loop`, `› an
-  end of a call over device ranges schedules the call`, `› a loop runs
+  an end of a call over a loop schedules the call in its loop`, `› a loop runs
   after the call that writes what it reads`, `› a loop runs before
   the call that overwrites what it reads`, and
   `create_linear_with_vars › loops of calls › a loop of a precompiled
@@ -1539,35 +1460,16 @@ driver sizes local memory as it loads a function (D146).
   keeps its own end`; and the `Tolk_engine` suite
   (`test/engine/tolk_engine`): `link and run › a scan runs its body
   once per trip, carrying in place`, against the unrolled loop on the
-  host. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls › accepts a loop of a call over a loop range`, `› refuses a loop of
-  a call over a range of any other kind`, `› accepts an open device range`
-  and `› refuses a weak sum of a weak integer variable`; its
+  host. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of calls ›
+  accepts a loop of a call over a loop range`, `› refuses a loop of a call
+  over a range of any other kind` and `› refuses a weak sum of a weak integer
+  variable`; its
   `verdicts.golden` records the patched spec on ends and shrinks.
 
-## D61. A stack takes the per-shard sub-view of a whole source
+## D61. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:187-198` (`stack_multi`, which stacks a
-  source that is not sharded as it is beside the shards of the others).
-- **tolk:** `Multi.stack_multi`, and
-  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
-- **Differs:** in a stack whose sharded sources are sharded alike, a whole
-  source, one value of the full shape on every device, takes its per-shard
-  sub-view (`shard_subview`), as an elementwise operation's does
-  (`alu_multi`). tinygrad stacks it whole beside the shards: the stack's
-  shards then mix a shard with a whole value, and
-  `Tensor.stack(a.shard(devices, axis=0), b.shard(devices))` gives wrong
-  values, or fails at a later operation on the shard sub-view's shape check
-  when the whole source comes first.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. A compiled
-  `Nx.stack` of a value sharded on an axis and a replicated one, and the
-  concatenation and scatter-add lowered to such a stack, need it. rune's jit
-  declines a value placed over several devices today.
-- **Pinned by:** the `Multi` suite (`test/schedule/multi`): `multi_pm ›
-  recorded › programs › stack_whole_multi.golden` and
-  `› stack_whole_first_multi.golden`, and `› values › stack_whole writes
-  what it wrote before` and `› stack_whole_first …`, from the patched
-  tinygrad, whose values for both stacks equal numpy's.
+A stack took the per-shard sub-view of a whole source beside sharded ones.
+Withdrawn: multi-device is out of scope, see README.
 
 ## D62. A move of an emulated float keeps its bits
 
@@ -1637,9 +1539,8 @@ driver sizes local memory as it loads a function (D146).
   declared with its reach (D114), among them those tinygrad reads with
   `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`, `BEAM_ESTIMATE`,
   `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
-  `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`,
-  `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT` variables and
-  `RING_ALLREDUCE_THRESHOLD`), and the keys take every one that reaches
+  `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`, and the
+  `MV` and `REDUCEOP_SPLIT` variables), and the keys take every one that reaches
   output (`Setting.shaping`), so one declared later, by tolk or by its
   caller, is keyed without being listed; a setting of the process alone,
   such as `DEBUG`, `PARALLEL` or `CC`, is not. One key serves memory and
@@ -1791,21 +1692,18 @@ does the same.
 
 - **tinygrad:** `uop/ops.py:340-343` (INDEX's shape: its index sources'
   shapes, then the rest of the source's), which no tinygrad pass puts in a
-  tensor graph; `uop/spec.py:176-177` (an allreduce's operations);
-  `schedule/indexing.py:30-45` (`realize_srcs`, `pm_generate_realize_map`),
-  `:70` (the sources an INDEX's ranges reach), `:135` and `:143`
-  (`pm_apply_rangeify`) and `:229` (`run_rangeify`'s consumer ranges);
-  `schedule/prepare.py:65` (`_mop_index`), `:76` (`pm_mops`), `:94-101`
-  (`fix_store_hazard`), `:114` (`split_reduceop`) and `:275-277`
-  (`prepare_rangeify`); `schedule/multi.py:200` (`index_multi`) and `:289`.
-- **tolk:** `Spec.tensor`'s allreduce rule; `Indexing.storage`,
-  `Indexing.is_gather`, `Indexing.realize_gathered`, `Indexing.data_srcs`,
-  `Indexing.convert_gather` and its rule in `Indexing.pm_apply_rangeify`,
-  and `Indexing.assign_ranges`'s consumer ranges of a gather;
+  tensor graph; `schedule/indexing.py:30-45` (`pm_generate_realize_map` and
+  its rules), `:70` (the sources an INDEX's ranges reach),
+  `:135` and `:143` (`pm_apply_rangeify`) and `:229` (`run_rangeify`'s
+  consumer ranges); `schedule/prepare.py:65` (`_mop_index`), `:76`
+  (`pm_mops`), `:94-101` (`fix_store_hazard`), `:114` (`split_reduceop`) and
+  `:275-277` (`prepare_rangeify`).
+- **tolk:** `Indexing.storage`, `Indexing.is_gather`,
+  `Indexing.realize_gathered`, `Indexing.data_srcs`, `Indexing.convert_gather`
+  and its rule in `Indexing.pm_apply_rangeify`, and
+  `Indexing.assign_ranges`'s consumer ranges of a gather;
   `Prepare.move_index`, `Prepare.mops`, `Prepare.pm_tensor_mops` and
-  `Prepare.fix_store_hazard`'s `reorders`; `Multi.same_devices`,
-  `Multi.gather_shards`, `Multi.gather_multi` and `Multi.multi_pm`'s rule
-  for a gather by a sharded index; the same rules in
+  `Prepare.fix_store_hazard`'s `reorders`; the same rules in
   `test/gen/tinygrad.patch`, which the goldens are recorded with.
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
@@ -1825,44 +1723,24 @@ does the same.
   - a store whose value gathers from its destination's storage materialises
     the value first, as for a permutation; the index, and an index by
     scalars, read the destination in place;
-  - sharded along axes after the gathered one, each shard gathers its own.
-    Sharded along the gathered axis, each shard reads the rows it holds and
-    `0` elsewhere, and the shards' bits are joined by an allreduce with a
-    bitwise or, which keeps `-0.` and NaN payloads a sum would change; the
-    spec admits Or as an allreduce's operation for it. Every device then
-    holds the whole result, so the gathered rows cross the devices: a model
-    that shards weights by rows routes its activations instead;
-  - a sharded index gathers each part of itself from a whole value. From a
-    sharded value it is first joined whole on each device, in `int64`, by the
-    copy's sum of its padded shards, and gathers as a whole index does, so
-    every device holds the result: a gather of experts split over devices by
-    routes split over them runs today. The join moves the index, which is
-    small beside the rows;
-  - refused: a gather by several indices (rune emits one), by an index on
-    other devices than its value, of a value sharded on the gathered axis and
-    another, and across devices of elements whose width has no unsigned
-    integer type.
+  - refused: a gather by several indices (rune emits one).
   The index is in range: rune clamps it and selects `0` where it was not.
 - **Reason:** (b): rune's gather lowering (`Lower_index`) emits this INDEX
   for `Nx.take` and `Nx.take_along_axis`. Without it rune would lower them to
   a one-hot sum over the whole axis, which costs a reduction per element and
   made gpt-oss's decode step schedule embedding and cache reads as their own
   kernels: that cost is (d), with no fudge bench row. D68, which recognised
-  the sum in the scheduler, was withdrawn. The sharded
-  clauses are (b) for rune's sharded jit (design pending), which compiles
-  values placed over several devices; their rune test comes with it.
+  the sum in the scheduler, was withdrawn. The sharded clauses are
+  withdrawn: multi-device is out of scope, see README.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
   `index_zero_fill`, `index_assign_self`) and their kernel counts,
   `gather_kernel_counts`; the Prepare suite's `gather_of_self`,
   `gather_by_self` and `gather_of_reshape`, and `pm_mops › rules › an index
-  that loads from a storage state moves with the state as it is`; the Multi
-  suite's `gathers` programs and `multi_pm › gathers`; the Schedule suite's
-  `shard_gather_rows` goldens; the Spec suite's verdict `an allreduce by a
-  bitwise or`; rune's `Lower_index` suite: `gathers and scatters › gathers
-  give eager's bits`, compiled on the host. On rune, across devices: missing
-  (the old rune's `Jit › gathers across devices` went with its rewrite).
+  that loads from a storage state moves with the state as it is`; rune's
+  `Lower_index` suite: `gathers and scatters › gathers give eager's bits`,
+  compiled on the host.
 
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
@@ -1969,12 +1847,12 @@ does the same.
   cosine (`Lower_real.reduce`) to broadcast constants in the tensor graph.
   Two symbolic passes over such graphs did not terminate:
   `Prepare.contiguous_view`'s, on the old rune's staged scan reading a draw on
-  Metal, and `Multi.lower_broadcast_copy`'s, on a sharded model's rope. Folding
-  the selection at its constant also drops the branch never taken, such as
-  the long reduction of a bounded angle. Unverified that current rune builds
-  either graph: rune still stages scans (`Loop`), but the Metal test of a
-  scan reading a draw went with the old rune, and kaun's `kaun decode over
-  devices` evaluates a program over several devices without compiling it.
+  Metal, and the multi-device rewrite's, since out of scope (see README), on
+  a sharded model's rope. Folding the selection at its constant also drops
+  the branch never taken, such as the long reduction of a bounded angle.
+  Unverified that current rune builds the first graph: rune still stages
+  scans (`Loop`), but the Metal test of a scan reading a draw went with the
+  old rune.
 - **Pinned by:** the Symbolic suite: `symbolic_simple › selections › a
   selection by a broadcast constant is the branch it picks` and `› a selection
   by a padded constant is no constant's`, and `symbolic › selections › a
@@ -2173,53 +2051,16 @@ does the same.
 The matrix-vector layout read its operands through conversions and decoding;
 merged into D89.
 
-## D82. A sharded value is not stored into a replicated destination
+## D82. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:254` (`store_value_multi`), which stores
-  each shard of a sharded value into its own part of an unsharded
-  destination.
-- **tolk:** `Multi.store_value_multi`;
-  `test/gen/tinygrad.patch`.
-- **Differs:** a store of a sharded value into a destination that is whole
-  and lives on several devices raises `Invalid_argument`. Each device would
-  write only its own part into its own copy, so every copy of a replicated
-  value would be partial. tinygrad's Tensor programs never build such a
-  store; a destination on one device, or without one, as a kernel's output
-  tile is, still takes each shard into its part.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. The old rune met
-  it where nx placed a result replicated and the lowered value came out
-  sharded, as a gather of split rows by a split index did: half of each copy
-  read back as zeros. The refusal makes a missed conversion fail where it is
-  built.
-- **Pinned by:** the `Multi` suite: `multi_pm › stores and calls › a store
-  of a sharded value into one replicated on its devices is refused`.
+A sharded value was not stored into a destination replicated on several
+devices. Withdrawn: multi-device is out of scope, see README.
 
-## D83. A sharded value joined on several devices keeps its bits
+## D83. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:226-250` (`copy_multi`), which places each
-  shard at its offset in zeros and sums the devices' values.
-- **tolk:** `Multi.joined` and its use in `Multi.copy_multi`;
-  `Multi.replace_allreduce`'s rule that moves shard selections before casts
-  and bitcasts;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same.
-- **Differs:** the devices' values are joined by an allreduce with a bitwise
-  or over each element's bits, as unsigned integers of its width, `uint8`
-  for a boolean. Each element is nonzero on at most one device, so the or is
-  its exact bits, where the sum turns `-0.` into `+0.` and quiets a
-  signalling NaN. A joined index type, which has no width, is refused. A
-  shard selection moves before a cast or bitcast as it moves before
-  arithmetic, where tinygrad's stops at arithmetic, so the bitcast back is
-  read where the selected shard is read: `mesh_to_one` schedules 11
-  kernels, as with the sum.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. It reads a value
-  sharded over devices whole on each, as nx places a gather of split rows by
-  a split index, and expects eager's bits, `-0.` included.
-- **Pinned by:** the `Multi` suite: `multi_pm › copies › a copy of a sharded
-  value to several devices keeps its bits`, and the recorded programs that
-  copy a sharded value to several devices. On rune: missing (the old rune's
-  `Jit › gathers across devices` went with its rewrite).
+A sharded value joined on several devices kept its bits, by a bitwise or of the
+devices' values in place of a sum. Withdrawn: multi-device is out of scope, see
+README.
 
 ## D84. Withdrawn
 
@@ -2251,29 +2092,10 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   `every GPU kernel compiles with its target's toolchain › cuda_dynamic_lane`,
   tinygrad's source, which NVRTC rejects (slow, an expected failure).
 
-## D87. A store through a gather of a sharded value stores each shard's rows
+## D87. Withdrawn
 
-- **tinygrad:** `schedule/multi.py:289` (`index_multi`, for every `INDEX` of
-  a sharded value); a store reads its destination's `INDEX` as any other, so
-  a store through a gather of a sharded value has no rule of its own.
-- **tolk:** `Multi.scatter_dests` (run as the `bpm` of the rewrite in
-  `Prepare.prepare_rangeify`), `Multi.whole_index`, `Multi.scatter_shards`,
-  `Multi.store_scattered` and `Multi.multi_pm`'s store rule.
-- **Differs:** a gather that a store writes through, of a sharded value, is
-  marked before the rewrite reaches it and becomes a scatter: its index is
-  whole on each device, a sharded one joined with its validity beside it. Of
-  a value sharded on trailing axes, each shard stores its part; of a value
-  sharded on its rows, each shard stores the rows it holds at their index
-  within it, and every other row's index is Invalid, which drops its store.
-  The stored value is whole on each device. Read as a gather instead, each
-  device stored into a joined copy of the rows.
-- **Reason:** (b): rune's sharded jit (design pending), which compiles values
-  placed over several devices; its rune test comes with it. It writes a lent
-  value at loaded indices with one indexed store, a key-value cache's rows
-  among them, and a cache split over devices along its rows.
-- **Pinned by:** the `Multi` suite: `multi_pm › scatters › *`. On rune:
-  missing (the old rune's `Jit › a lent write of rows › a pool split along the
-  written axis is written whole` went with its rewrite).
+A store through a gather of a sharded value stored each shard's rows.
+Withdrawn: multi-device is out of scope, see README.
 
 ## D88. A float zero a host comparison reads reaches C as a value the backend cannot see
 
@@ -2658,7 +2480,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   computation holds a reduction, is stored as one element, as a value with
   axes is. The cost check (`remove_bufferize`) then inlines it again where
   no reduction of it reads a buffer and it reads at most three. A value of
-  no axes without a reduction, such as a shard's offset, stays inlined.
+  no axes without a reduction, such as an offset, stays inlined.
   tinygrad computes such a reduction inside its consumer, once for each
   element: `x - x.sum()` sums the whole of `x` for each element.
 - **Reason:** (d): `Vega.Loss_scale.step`, whose `finite`, the conjunction
@@ -3635,7 +3457,7 @@ driver signals its own (D146).
   where no bench row holds it.
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test); its
-  recorded `shard_of_computed_kernels`, `read_around_assign_kernels`,
+  recorded `read_around_assign_kernels`,
   `crossed_pairs_kernels` and `kernel_counts`, and the Postrange suite's
   `where_max_multioutput` cases, recorded from the equally patched tinygrad.
   On rune: missing (the old rune's `Rune nx.wide › kernels` went with its
@@ -4411,8 +4233,7 @@ merged into D137, which holds the loops that consumers of one domain share.
   and the schedule is made again from the graph with the copy. This holds for
   any overwrite of the storage, whichever elements each kernel touches, so a
   partial overwrite of elements the kernel does not read copies too, at a
-  kernel and the state's size in storage. A state on several devices is
-  refused with `Invalid_argument`.
+  kernel and the state's size in storage.
 - **Reason:** none. No raven call site is known to reach it, since rune
   orders its own lent stores (`assign`) and gives up a lending where they
   have no order. The skipped edge gives a wrong answer with no error, and a
@@ -4424,8 +4245,8 @@ merged into D137, which holds the loops that consumers of one domain share.
   kernel graph `read_overwritten_through_kernels.golden`, `› a kernel reading
   storage before and after a write reads both` and `› reads it before`, and
   the rules after them, for a copy two kernels share, a kernel with two
-  copies, a copy of a state a rebuilt kernel writes, the copy's phase and a
-  state on several devices; and
+  copies, a copy of a state a rebuilt kernel writes and the copy's phase;
+  and
   the program `read_overwritten_through`, whose recorded schedule and linear
   and whose values (`create_linear_with_vars › values`) are tinygrad's,
   patched.
@@ -4547,8 +4368,8 @@ merged into D137, which holds the loops that consumers of one domain share.
 
   The reads are counted once, in a walk of the graph the cleanups start
   from, at each axis of a stage's ranges; a stage's count is the least over
-  its axes, since stages over one device range share that axis, so stages
-  with no other range pool their reads and may stay stored when read once. A
+  its axes, since stages over one range share that axis, so stages with no
+  other range pool their reads and may stay stored when read once. A
   read the cleanups make is not counted, and a read through a stack is not
   one: every stage has a device by then, so no cleanup turns it into a read
   of the stage. Elementwise and stencil fusion, whose values are tens of

@@ -194,7 +194,7 @@ let mark_range_mod ctx r c =
   match value c with
   | `Int n
     when (not (Tbl.mem ctx r))
-         && (not (List.mem (axis_type r) Axis_type.[ Warp; Device ]))
+         && axis_type r <> Axis_type.Warp
          && op (nth r 0) = Op.Const
          && Option.is_some (divides (nth r 0) n) ->
       Tbl.replace ctx r c

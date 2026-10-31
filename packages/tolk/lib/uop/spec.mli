@@ -52,12 +52,10 @@ val tensor : t
 (** [tensor] is {!shared} with the operations of tensor graphs: float-only unary
     math; global buffers with a size and a device, and storage declared without
     a buffer ({!Op.Alloc}); variables without a device; unlowered
-    {!Op.Special}s; movement; reductions; copies to a device other than a disk
-    and all-reductions; sharding ({!Op.Unshard}, {!Op.Mselect}, {!Op.Mstack});
+    {!Op.Special}s; movement; reductions; copies to a device other than a disk;
     {!Op.Detach}, {!Op.Contiguous_backward} and {!Op.Stage}; and programs as
     compilation fills them in: a sink, then its linear form, its source and its
-    binary. A multi-device buffer or copy carries one {!Ops.Axis_type.Device}
-    range over its devices. *)
+    binary. *)
 
 val program : t
 (** [program] is {!shared} as programs restrict it: every width is stated, so a
@@ -82,11 +80,11 @@ val full : t
 val kernel_graph : t
 (** [kernel_graph] accepts the graph of kernel calls: a sink of calls of opaque
     bodies over storage and parameters, with the constants, stacks, casts and
-    bitcasts that make their arguments, sharding ({!Op.Mstack}, {!Op.Mselect}),
-    {!Ops.Axis_type.Device} ranges, and orderings of storage. A call may run in
-    a loop, an {!Op.End} of {!Ops.Axis_type.Loop} ranges around it, and read
-    views of storage ({!Op.Shrink}) that move with those ranges, their bounds
-    constants, loop ranges, and weak integer sums and products of them. *)
+    bitcasts that make their arguments, and orderings of storage. A call may
+    run in a loop, an {!Op.End} of {!Ops.Axis_type.Loop} ranges around it, and
+    read views of storage ({!Op.Shrink}) that move with those ranges, their
+    bounds constants, loop ranges, and weak integer sums and products of them.
+    *)
 
 (** {1:verify Verifying} *)
 

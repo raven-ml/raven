@@ -55,18 +55,12 @@ let programs =
     "inline_function";
     "layernorm";
     "matmul";
-    "mesh_sum";
     "precompiled_function";
     "precompiled_scalar";
     "read_overwritten_through";
     "read_then_overwrite";
     "reduce_multiple_paths";
     "setitem";
-    "shard_add";
-    "shard_gather_rows";
-    "shard_matmul";
-    "shard_sum";
-    "shard_to_one";
     "softmax";
     "sort";
     "split_sum";
@@ -109,8 +103,6 @@ let kernel_graphs =
     "inline_function_kernels";
     "layernorm_kernels";
     "matmul_kernels";
-    "mesh_sum_kernels";
-    "mesh_sum_kernels_1";
     "precompiled_function_kernels";
     "precompiled_function_kernels_1";
     "precompiled_scalar_kernels";
@@ -119,13 +111,6 @@ let kernel_graphs =
     "read_then_overwrite_kernels";
     "reduce_multiple_paths_kernels";
     "setitem_kernels";
-    "shard_add_kernels";
-    "shard_gather_rows_kernels";
-    "shard_gather_rows_kernels_1";
-    "shard_matmul_kernels";
-    "shard_sum_kernels";
-    "shard_sum_kernels_1";
-    "shard_to_one_kernels";
     "softmax_kernels";
     "sort_kernels";
     "split_sum_kernels";
@@ -212,10 +197,7 @@ let given u =
 let filled u =
   List.map
     (fun (n, (p : Ops.param_arg)) ->
-      let devices =
-        match p.device with Some (Multi ds) -> List.length ds | _ -> 1
-      in
-      let size = devices * Shape.max_numel n in
+      let size = Shape.max_numel n in
       let at j = element p.dtype ((((j * 7) + (p.slot * 3)) mod 11) - 3) in
       (p.slot, Array.init size at))
     (given u)
@@ -230,11 +212,6 @@ let value =
       | v0, v1 -> Testable.equal Dtypes.value v0 v1)
 
 let write = triple int int value
-
-let on_several_devices u =
-  List.exists
-    (fun n -> match Ops.device n with Some (Multi _) -> true | _ -> false)
-    (Ops.toposort ~calls:Enter u)
 
 let calls_only_kernels u =
   List.for_all
@@ -291,9 +268,7 @@ let ordered =
        (fun name ->
          let kg = program name in
          if
-           List.mem name apart_from_values
-           || on_several_devices kg
-           || not (calls_only_kernels kg)
+           List.mem name apart_from_values || not (calls_only_kernels kg)
          then None
          else Some (runs_in_order name))
        kernel_graphs)
@@ -329,7 +304,7 @@ let realized =
          let big = program name in
          if
            List.mem name apart_from_values
-           || on_several_devices big || has_variables big
+           || has_variables big
            || not (calls_only_kernels (unplanned big))
          then None
          else
@@ -691,10 +666,6 @@ let cache =
              [
                ("SPLIT_REDUCEOP", B (split_reduceop, false));
                ("MAX_KERNEL_BUFFERS", B (max_kernel_buffers, 8));
-               ("RING", B (ring, 0));
-               ("ALL2ALL", B (all2all, 1));
-               ("ALLREDUCE_CAST", B (allreduce_cast, false));
-               ("ALLREDUCE_NODE_NDEVS", B (allreduce_node_ndevs, 2));
                ("DEFAULT_FLOAT", B (default_float, "half"));
                ("DEFAULT_INT", B (default_int, "long"));
                ("a setting its caller declares", B (declared, 1));
@@ -861,17 +832,6 @@ let copy_keeps_phase () =
   in
   equal (list int) [ 4 ] phases
 
-(* A state on several devices is not copied. *)
-let refuses_several_devices () =
-  let x =
-    like_y ~f:(fun p -> { p with device = Some (Multi [ "CPU"; "CPU:1" ]) }) 0
-  in
-  let a = copies ~into:x ~from:y in
-  let b = reads ~into:z ~from:x [ Ops.after x [ a ] ] in
-  raises_match (Exn.invalid_arg ~sub:"several devices") (fun () ->
-      Schedule.create_schedule
-        (Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ]))
-
 let not_an_effect () =
   let kg = Ops.sink [ Ops.after x [ Ops.float 2.0 ] ] in
   let const = Format.asprintf "%a" Op.pp Const in
@@ -891,13 +851,6 @@ let ended () =
   equal (list uop)
     [ Ops.end_ a [ loop ] ]
     (Ops.src (Schedule.create_schedule kg))
-
-let device_range = Ops.range ~axis_type:Device (Int 2) [ -1 ]
-
-let ended_on_devices () =
-  let a = copies ~into:x ~from:y in
-  let kg = Ops.sink [ Ops.after x [ Ops.end_ a [ device_range ] ] ] in
-  equal (list uop) [ a ] (Ops.src (Schedule.create_schedule kg))
 
 (* A loop runs after the call that writes what it reads, and before the call
    that overwrites what it reads. *)
@@ -941,8 +894,6 @@ let ordering =
     [
       test "a kernel's argument that is no storage is refused" not_storage;
       test "an end of a call over a loop schedules the call in its loop" ended;
-      test "an end of a call over device ranges schedules the call"
-        ended_on_devices;
       test "a loop runs after the call that writes what it reads"
         loop_after_writer;
       test "a loop runs before the call that overwrites what it reads"
@@ -958,8 +909,6 @@ let ordering =
       test "a kernel that waits through a copying kernel reads its state"
         read_through_a_copy;
       test "the copy of a state lies at the state's phase" copy_keeps_phase;
-      test "a state on several devices that a waiting kernel reads is refused"
-        refuses_several_devices;
       test "a kernel overwriting a state runs after the kernel that made it"
         overwrite;
       test "an end of something other than a call is refused" ended_store;
@@ -1006,7 +955,7 @@ let flatten =
 
 (* is_store_after *)
 
-let cpu = Ops.Single "CPU"
+let cpu = "CPU"
 let buffer = Ops.new_buffer ~slot:1 cpu 16 Float32
 let alloc = Shape.alloc ~device:cpu [ Int 16 ] Float32
 let into p = Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.float 1.0)
@@ -1039,30 +988,22 @@ let store_after =
 let grid = Shape.reshape (Ops.new_buffer ~slot:1 cpu 64 Float32) [ Int 8; Int 8 ]
 let rows = Shape.shrink grid [ Some (Int 2, Int 6); None ]
 let columns = Shape.shrink grid [ None; Some (Int 2, Int 6) ]
-let to_cpu1 u = Ops.copy_to_device u (Single "CPU:1")
+let to_cpu1 u = Ops.copy_to_device u "CPU:1"
 
 let bytes =
   Ops.bitcast
     (Shape.shrink (Ops.new_buffer ~slot:1 cpu 64 Uint8) [ Some (Int 8, Int 24) ])
     Float32
 
-(* A value of shape [4; 8] sharded on axis 0 over two devices. *)
-let sharded_grid =
-  List.find
-    (fun n -> Ops.op n = Unshard)
-    (Ops.toposort ~calls:Enter (program "shard_to_one"))
-
-let sharded = Shape.reshape sharded_grid [ Int 32 ]
-
 (* [through_buffer view] checks that [view] reads its buffer only through a
-   reshape, shrink, bitcast or reassembly of shards. *)
+   reshape, shrink or bitcast. *)
 let rec through_buffer view =
   match Ops.op view with
   | Buffer -> ()
-  | Reshape | Shrink | Bitcast | Unshard -> through_buffer (Ops.nth view 0)
+  | Reshape | Shrink | Bitcast -> through_buffer (Ops.nth view 0)
   | op -> failf "the view reads through a %a" Op.pp op
 
-let values = list (array Dtypes.const)
+let values = array Dtypes.const
 
 let copies_a_view c =
   let viewed =
@@ -1072,24 +1013,6 @@ let copies_a_view c =
   through_buffer (Ops.nth viewed 0);
   let buffers = filled c in
   equal values (Tensors.eval ~buffers c) (Tensors.eval ~buffers viewed)
-
-(* The copy holds the whole value on each device, and the view, sharded, is the
-   whole value. *)
-let shards_a_view () =
-  let c = Ops.copy_to_device sharded (Multi [ "CPU"; "CPU:1" ]) in
-  let view = require_some (Schedule.contiguous_mops_to_view c sharded) in
-  equal bool ~msg:"sharded again" true (Ops.op view = Unshard);
-  through_buffer view;
-  let buffers = filled c in
-  match Tensors.eval ~buffers view with
-  | [ whole ] ->
-      List.iteri
-        (fun k on_k ->
-          equal (array Dtypes.const)
-            ~msg:(Printf.sprintf "device %d" k)
-            whole on_k)
-        (Tensors.eval ~buffers c)
-  | parts -> failf "the view is %d values" (List.length parts)
 
 (* A view of a buffer of 24 floats that starts [phase] bytes past a 16-byte
    boundary, through up to three movements of shapes known here. *)
@@ -1170,10 +1093,6 @@ let views =
           copies_a_view (to_cpu1 rows));
       test "a copy of a bitcast of contiguous bytes reads a view of them"
         (fun () -> copies_a_view (to_cpu1 bytes));
-      test
-        "a copy of a sharded value onto its devices is a view of each shard, \
-         sharded again"
-        shards_a_view;
       test "columns are not contiguous" (fun () ->
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 columns) columns));
@@ -1181,11 +1100,6 @@ let views =
           let moved = Shape.permute grid [ 1; 0 ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 moved) moved));
-      test "a copy to one device of a sharded value has no view" (fun () ->
-          equal (option uop) None
-            (Schedule.contiguous_mops_to_view
-               (Ops.copy_to_device sharded cpu)
-               sharded));
       test "a store into a bitcast of contiguous bytes stores into a view"
         (fun () ->
           let value = Ops.new_buffer ~slot:2 cpu 4 Float32 in
@@ -1201,20 +1115,6 @@ let views =
           equal values
             (Tensors.eval ~buffers bytes)
             (Tensors.eval ~buffers view));
-      test
-        "a copy of a sharded value whose shards are not contiguous has no view"
-        (fun () ->
-          let moved = Shape.permute sharded_grid [ 1; 0 ] in
-          equal (option uop) None
-            (Schedule.contiguous_mops_to_view
-               (Ops.copy_to_device moved (Multi [ "CPU"; "CPU:1" ]))
-               moved));
-      test "a copy of part of a sharded axis has no view" (fun () ->
-          let part = Shape.shrink sharded_grid [ Some (Int 0, Int 2); None ] in
-          equal (option uop) None
-            (Schedule.contiguous_mops_to_view
-               (Ops.copy_to_device part (Multi [ "CPU"; "CPU:1" ]))
-               part));
       test "a symbolic shape has no view" (fun () ->
           let v =
             Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8))
@@ -1283,7 +1183,7 @@ let several_devices () =
     | Param ({ slot = 3; _ } as p) ->
         Some
           ( b,
-            Ops.replace ~arg:(Param { p with device = Some (Single "CPU:1") }) b
+            Ops.replace ~arg:(Param { p with device = Some "CPU:1" }) b
           )
     | _ -> None
   in

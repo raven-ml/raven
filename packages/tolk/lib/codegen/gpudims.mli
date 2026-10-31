@@ -59,9 +59,7 @@ val group_gpudims : Renderer.t -> Ops.t -> Ops.t option
     store to mask has more than one index. *)
 
 val pm_group_gpudims : (Renderer.t, Ops.t) Ops.Pattern_matcher.t
-(** [pm_group_gpudims] applies {!group_gpudims} to sinks, and replaces each
-    {!Ops.Axis_type.Device} range by the variable [_device_num], bound per
-    device at launch, which no end closes. It is to run once
+(** [pm_group_gpudims] applies {!group_gpudims} to sinks. It is to run once
     ({!Ops.type-pass} [Once]): the indices it makes are global and local
     ranges, which it would group again. *)
 

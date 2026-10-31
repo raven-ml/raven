@@ -162,7 +162,7 @@ let stage_reads tsink =
   { reads with total = !total }
 
 (* Each read of a stage counts at every axis of its ranges, and other stages can
-   share an axis, a device range or one a symbolic size names, so the least
+   share an axis or one a symbolic size names, so the least
    count bounds the stage's copies from above. A stage of no ranges is read at
    one index, once. *)
 let stage_copies reads buf =
@@ -215,9 +215,6 @@ let remove_bufferize ~reads src buf idx =
           access (buf_uop x);
           false
       | Op.Stage when (opts x).addrspace = Dtype.Global ->
-          access x;
-          false
-      | Op.Mstack ->
           access x;
           false
       (* Stores do not count as buffer accesses. *)
@@ -354,17 +351,6 @@ let pm_const_buffer_folding =
              if after_all_invalid (m "after") then
                Some (const_like (m "idx") `Invalid)
              else None);
-         (* A stack's source without a device is the same value on every device,
-            so an index of the stack is an index of that value. *)
-         rule
-           (Upat.f
-              (Upat.op Op.Mstack ~allow_any_len:true ~src:[ var "s" ])
-              Op.Index ~allow_any_len:true ~name:"idx")
-           (fun m ->
-             let s = m "s" and idx = m "idx" in
-             if Option.is_none (device s) then
-               Some (replace idx ~src:(s :: List.tl (src idx)))
-             else None);
        ]))
 
 let pm_remove_bufferize =
@@ -400,7 +386,6 @@ let no_indexing_calls u =
     match op x with
     | Op.Index -> nth x 0
     | Op.Shrink -> strip_zero_offset_shrink x
-    | Op.Mstack -> replace x ~src:(List.map strip_zero_offset_shrink (src x))
     | (Op.Expand | Op.Reshape)
       when precompiled && Sint.equal (numel x) (Int 0) ->
         base x
@@ -430,7 +415,7 @@ let pm_no_views =
            ~src:
              [
                Upat.v
-                 ~op:(ops Op.[ After; Param; Unshard; Mstack; Buffer; Alloc ])
+                 ~op:(ops Op.[ After; Param; Buffer; Alloc ])
                  ();
              ]
            ())
@@ -461,7 +446,7 @@ let limit_bufs ctx root =
   else
     let visitor u =
       match (op u, src u) with
-      | (Op.Stage | Op.After | Op.Param | Op.Mselect | Op.Mstack), _ ->
+      | (Op.Stage | Op.After | Op.Param), _ ->
           Bufs.singleton u
       | _, [ s ] -> Tbl.find ctx.buf_cache s
       | _, srcs ->
@@ -479,16 +464,12 @@ let limit_bufs ctx root =
         then s
         else
           (* The value is stored first: its reductions are weak ranges of the
-             stage, and the device range stays a launched axis. *)
+             stage. *)
           let orig = Nodes.to_list (ranges s) in
           let fresh r =
-            if not (Axis_type.equal (axis_type r) Axis_type.Device) then begin
-              let n = ctx.range_idx in
-              ctx.range_idx <- n + 1;
-              replace r
-                ~arg:(Range { axis_type = Axis_type.Weak; axis_id = [ n ] })
-            end
-            else r
+            let n = ctx.range_idx in
+            ctx.range_idx <- n + 1;
+            replace r ~arg:(Range { axis_type = Axis_type.Weak; axis_id = [ n ] })
           in
           let ends = List.map fresh orig in
           let opts =
@@ -576,7 +557,7 @@ let bufferize_to_store ctx x idx =
         let vmin_vmax = stored_bounds value dtype in
         let buf =
           v Op.Alloc
-            ~src:(size_src (Some (max_numel x)) :: device_range_src device)
+            ~src:[ size_src (Some (max_numel x)) ]
             ~arg:(Param (param_arg ~slot ?vmin_vmax ?device dtype))
         in
         let do_store =
@@ -646,17 +627,6 @@ let pm_add_buffers =
               let u = m "u" in
               Some
                 (cast (replace u ~src:(m "buf" :: List.tl (src u))) (dtype u)));
-          (* Reshapes move through shard selections and stacks. *)
-          rule
-            (Upat.v
-               ~op:(ops Op.[ Mselect; Mstack ])
-               ~name:"m" ~each:(Upat.op Op.Reshape) ())
-            (fun m ->
-              let m = m "m" in
-              Some
-                (reshape
-                   (replace m ~src:(List.map (fun x -> base (nth x 0)) (src m)))
-                   (shape m)));
           (* A kernel's arguments lose their reshapes. *)
           rule (Upat.op Op.Call ~name:"k") (fun m ->
               let k = m "k" in
@@ -784,7 +754,7 @@ let to_define_global =
           check_buf_states (m "x");
           None);
       rule_ctx
-        (Upat.v ~op:(ops Op.[ Buffer; Alloc; Mstack; Mselect ]) ~name:"buf" ())
+        (Upat.v ~op:(ops Op.[ Buffer; Alloc ]) ~name:"buf" ())
         (fun ctx m -> Some (debuf ctx (m "buf")));
       (* Only storage parameters get kernel-local slots; scalar parameters keep
          the slots of their enclosing call. *)
@@ -808,12 +778,9 @@ let to_define_global =
     ])
 
 let split_store x =
-  (* Open device ranges are bound per device at launch. A loop around a call
-     runs that call, and is no kernel. *)
+  (* A loop around a call runs that call, and is no kernel. *)
   if
-    List.exists
-      (fun r -> not (Axis_type.equal (axis_type r) Axis_type.Device))
-      (Nodes.to_list (ranges x))
+    Nodes.cardinal (ranges x) > 0
     || op x = Op.End
        && op (nth x 0) = Op.Call
        && List.exists loop_range (List.tl (src x))

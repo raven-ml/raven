@@ -269,43 +269,13 @@ let group_gpudims (r : Renderer.t) s =
           Some (substitute ~calls:Skip ~pass:Once masked (pairs subs)))
   | _ -> None
 
-let pm_device_to_var =
-  Pattern_matcher.v
-    (fun () -> [
-      Pattern_matcher.rule (Upat.op Op.Range ~name:"r") (fun m ->
-          let r = m "r" in
-          if axis_type r = Axis_type.Device then
-            Some
-              (variable ~dtype:(dtype r) "_device_num" (Dtype.Value.of_int 0)
-                 (vmax r))
-          else None);
-      Pattern_matcher.rule (Upat.op Op.End ~name:"e") (fun m ->
-          let e = m "e" in
-          let device_num s =
-            op s = Op.Param
-            &&
-            match arg s with
-            | Param p -> p.name = Some "_device_num"
-            | _ -> false
-          in
-          match src e with
-          | body :: ends when List.exists device_num ends ->
-              Some
-                (replace e
-                   ~src:(body :: List.filter (fun s -> op s <> Op.Param) ends))
-          | _ -> None);
-    ])
-
 (* Run once: grouping creates new GLOBAL/LOCAL ranges, which must not be grouped
    again. *)
 let pm_group_gpudims =
-  Pattern_matcher.append
-    (Pattern_matcher.v
-       (fun () -> [
-         Pattern_matcher.rule_ctx (Upat.op Op.Sink ~name:"s") (fun r m ->
-             group_gpudims r (m "s"));
-       ]))
-    (Pattern_matcher.with_ctx pm_device_to_var)
+  Pattern_matcher.v (fun () -> [
+      Pattern_matcher.rule_ctx (Upat.op Op.Sink ~name:"s") (fun r m ->
+          group_gpudims r (m "s"));
+    ])
 
 let pm_range_to_special =
   Pattern_matcher.append

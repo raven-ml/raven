@@ -1903,7 +1903,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
   let st =
     {
       rig;
-      device = Ops.Single (Rig.name rig);
+      device = Rig.name rig;
       issued = issued p forms;
       captures = [];
       bound = [];

@@ -431,7 +431,7 @@ let contraction () =
 let storage () =
   sink
     [
-      param ~device:(Single "CPU") [ 2; 3; 4 ] 2 Float32;
+      param ~device:"CPU" [ 2; 3; 4 ] 2 Float32;
       Shape.param 3 Float16;
       Shape.param ~shape:(ints [ 4 ])
         ~vmin_vmax:(f 0., f 1.)
@@ -440,29 +440,20 @@ let storage () =
       placeholder ~slot:6 ~addrspace:Local [ 8 ] Float32;
       named (placeholder ~slot:7 ~addrspace:Reg [ 4 ] Float16) "acc";
       alloc ~slot:9 [] Int32;
-      alloc ~slot:10
-        ~device:(Multi [ "CPU:0"; "CPU:1" ])
-        ~axis:0
-        (ints [ 4; 2 ])
-        Float32;
-      view_as (new_buffer ~slot:11 (Single "CPU") 4 Float32) (ints [ 2; 2 ]);
+      view_as (new_buffer ~slot:11 "CPU" 4 Float32) (ints [ 2; 2 ]);
     ]
 
-let multi = Multi [ "CPU:0"; "CPU:1" ]
-
 let storage_like () =
-  let p = param ~device:(Single "CPU") [ 2; 3 ] 0 Float32 in
+  let p = param ~device:"CPU" [ 2; 3 ] 0 Float32 in
   let v = weak_var "n" 1 8 in
-  let s = unshard (param ~device:multi [ 4; 3 ] 1 Float32) [ 0 ] in
   sink
     [
       param_like p 5;
       param_like v 6;
       param_like (bind v (i 3)) 7;
-      param_like s 8;
       placeholder_like p 9;
       alloc_like ~slot:10 p;
-      alloc_like ~slot:11 ~addrspace:Local s;
+      alloc_like ~slot:11 ~addrspace:Local p;
     ]
 
 let sets () =
@@ -472,46 +463,22 @@ let sets () =
   sink
     [ set ~ends:[ r ] idx (const_like idx (f 1.)); set q (const_like q (f 2.)) ]
 
-let shards () =
-  let p = param ~device:(Single "CPU") [ 4; 6 ] 0 Float32 in
-  let m = param ~device:multi [ 4; 6 ] 1 Float32 in
-  let devices = [ "CPU:0"; "CPU:1" ] in
-  sink
-    [
-      shard p devices;
-      unshard m [ 0 ];
-      unshard
-        ~ranges:
-          [
-            range ~axis_type:Device (Int 2) [ -1 ];
-            range ~axis_type:Local (Int 3) [ -2 ];
-          ]
-        m [ 1; 0 ];
-      mselect m 0;
-      mstack (mselect m 0) [ mselect m 1 ];
-      mstack (mselect m 0) [];
-      allreduce m Op.Add multi;
-      copy_to_device p (Single "CUDA");
-      copy_to_device m (Multi [ "CUDA:0"; "CUDA:1" ]);
-      copy_to_device ~shard:1 m (Single "CPU");
-    ]
-
 let calls () =
   let r = range (Int 4) [ 0 ] in
   let idx = index (param [ 4 ] 0 Float32) [ r ] in
   let body = sink [ end_ (store idx (const_like idx (f 1.))) [ r ] ] in
-  let a = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
+  let a = param ~device:"CPU" [ 4 ] 0 Float32 in
   sink
     [
       call body [ a ];
       call ~name:"fill" ~precompile:true body [ a ];
       call (custom_function ~dtype:Int32 "f" [ int ~dtype:Uint64 0 ]) [];
-      store_call a (param ~device:(Single "CPU") [ 4 ] 1 Float32);
+      store_call a (param ~device:"CPU" [ 4 ] 1 Float32);
     ]
 
 let custom_kernels () =
-  let a = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
-  let b = param ~device:(Single "CPU") [ 4 ] 1 Float32 in
+  let a = param ~device:"CPU" [ 4 ] 0 Float32 in
+  let b = param ~device:"CPU" [ 4 ] 1 Float32 in
   let copy = function
     | [ x; y ] ->
         let r = range (Int 4) [ 0 ] in
@@ -531,8 +498,7 @@ let variables_and_binding () =
        unbound (rtag ~tag:(String "t") (bind n (i 3)));
        all_unbound;
      ]
-    @ variables e
-    @ variables O.(range ~axis_type:Device (Int 4) [ -1 ] + n))
+    @ variables e)
 
 let instructions () =
   let x = index (param [ 4 ] 0 Float32) [ int 0 ] in
@@ -573,18 +539,18 @@ let substitution () =
     ]
 
 let clones () =
-  let p = param ~device:(Single "CPU") [ 2; 3 ] 0 Float32 in
+  let p = param ~device:"CPU" [ 2; 3 ] 0 Float32 in
   sink
     [
       clone p;
-      clone ~device:(Single "CUDA") p;
+      clone ~device:"CUDA" p;
       empty_like p;
-      empty_like ~dtype:Float16 ~device:(Single "CUDA") p;
-      empty ~device:(Single "CPU") (ints [ 2; 3 ]) Int32;
+      empty_like ~dtype:Float16 ~device:"CUDA" p;
+      empty ~device:"CPU" (ints [ 2; 3 ]) Int32;
     ]
 
 let outputs () =
-  let a = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
+  let a = param ~device:"CPU" [ 4 ] 0 Float32 in
   sink
     (call_with_outputs ~name:"two" O.[ a + float 1.; a * float 2. ] [ a ]
     @ [ call_with_output ~precompile:true a [ a ] ])
@@ -600,26 +566,10 @@ let symbolic_storage () =
       alloc ~slot:8 [ Int 2; Sym n ] Weak_float;
     ]
 
-let symbolic_shards () =
-  sink
-    [
-      shard ~axis:1
-        (param ~device:(Single "CPU") [ 4; 6 ] 0 Float32)
-        [ "CPU:0"; "CPU:1" ];
-    ]
-
-let symbolic_shard_slices () =
-  let p = param [ 4; 6 ] 0 Float32 in
-  sink
-    [
-      shard_slice p 1 (range ~axis_type:Device (Int 2) [ -1 ]);
-      shard_slice p 0 (range ~axis_type:Local (Int 4) [ 0 ]);
-    ]
-
 let symbolic_outputs () =
-  let a = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
+  let a = param ~device:"CPU" [ 4 ] 0 Float32 in
   let n = weak_var "n" 1 4 in
-  let b = Shape.param ~device:(Single "CPU") ~shape:[ Sym n ] 1 Float32 in
+  let b = Shape.param ~device:"CPU" ~shape:[ Sym n ] 1 Float32 in
   let formal =
     Shape.param ~vmin_vmax:(i 1, i 8) ~name:"d" ~addrspace:(Some Alu) 0 Int32
   in
@@ -629,7 +579,7 @@ let symbolic_outputs () =
         call_with_output
           (expand (cast (float 1.) Float32) [ Sym formal ])
           [ int 5 ];
-        empty ~device:(Single "CPU") [ Int 2; Sym n ] Int32;
+        empty ~device:"CPU" [ Int 2; Sym n ] Int32;
       ])
 
 (* Storage made without a slot takes a number no other storage has. [minted]
@@ -699,7 +649,6 @@ let all =
     ("storage", storage, false);
     ("storage_like", storage_like, false);
     ("sets", sets, false);
-    ("shards", shards, false);
     ("calls", calls, false);
     ("custom_kernels", custom_kernels, false);
     ("variables_and_binding", variables_and_binding, false);
@@ -709,8 +658,6 @@ let all =
     ("clones", clones, true);
     ("outputs", outputs, true);
     ("symbolic_storage", symbolic_storage, false);
-    ("symbolic_shards", symbolic_shards, false);
-    ("symbolic_shard_slices", symbolic_shard_slices, false);
     ("symbolic_outputs", symbolic_outputs, true);
   ]
 
@@ -736,8 +683,7 @@ let printed_nodes () =
 
 let reprs () =
   let n = weak_var "n" 1 10 in
-  let m () = param ~device:multi [ 4 ] 0 Float32 in
-  let cpu = param ~device:(Single "CPU") [ 4 ] 0 Float32 in
+  let cpu = param ~device:"CPU" [ 4 ] 0 Float32 in
   [
     ("none", v Op.Noop);
     ("int", int 42);
@@ -752,7 +698,7 @@ let reprs () =
     ("dtype", cast (int 1) Float16);
     ("range", range (Int 4) [ 0 ]);
     ("range with sub-axes", range ~axis_type:Upcast (Int 4) [ 1; 0 ]);
-    ("negative range", range ~axis_type:Device (Int 4) [ -1 ]);
+    ("negative range", range ~axis_type:Loop (Int 4) [ -1 ]);
     ( "reduce",
       v
         ~src:[ expand (float 1.) (ints [ 4 ]) ]
@@ -761,11 +707,7 @@ let reprs () =
     ("special", special (Int 8) "gidx0");
     ("permute", permute (param [ 2; 3 ] 0 Float32) [ 1; 0 ]);
     ("flip", flip (param [ 2; 3 ] 0 Float32) [ 1 ]);
-    ("device", copy_to_device cpu (Single "CUDA"));
-    ("devices", copy_to_device cpu multi);
-    ("mselect", mselect (m ()) 1);
-    ("unshard", unshard (m ()) [ 0 ]);
-    ("allreduce", allreduce (m ()) Op.Add multi);
+    ("device", copy_to_device cpu "CUDA");
     ("custom", v ~arg:(Code { code = "barrier();"; dtype = Void }) Op.Custom);
     ("ins", v ~arg:(Code { code = "s_endpgm"; dtype = Void }) Op.Ins);
     ("binary", v ~arg:(Bytes "\x7fELF\x00\n'\"") Op.Binary);
@@ -777,9 +719,9 @@ let reprs () =
     ( "named local buffer",
       named (placeholder ~slot:2 ~addrspace:Local [ 4 ] Int32) "buf" );
     ( "volatile param",
-      Shape.param ~shape:(ints [ 4 ]) ~volatile:true ~device:(Single "CPU") 0
+      Shape.param ~shape:(ints [ 4 ]) ~volatile:true ~device:"CPU" 0
         Uint32 );
-    ("alloc", alloc ~slot:7 ~device:(Single "CPU") (ints [ 4 ]) Float32);
+    ("alloc", alloc ~slot:7 ~device:"CPU" (ints [ 4 ]) Float32);
     ("kernel", sink ~kernel:(kernel_info ()) []);
     ( "kernel with opts",
       sink
@@ -801,7 +743,7 @@ let reprs () =
     ( "bufferize",
       bufferize
         ~opts:
-          { device = Some (Single "CPU"); addrspace = Local; keep = Whole }
+          { device = Some "CPU"; addrspace = Local; keep = Whole }
         (float 1.) [] );
     ( "bufferize without device",
       bufferize

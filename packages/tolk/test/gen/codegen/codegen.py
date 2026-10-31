@@ -173,8 +173,6 @@ PROGRAMS = {
     "threefry": lambda: last(Tensor.rand(16)),
     "symbolic": lambda: with_vars(empty(64)[:n].contiguous() * 2 + 1),
     "symbolic_sum": lambda: with_vars(empty(64)[:n].sum()),
-    "shard_add": lambda: last(Tensor.empty(16, 16, device="CPU").shard(("CPU:0", "CPU:1"), 0) + 1),
-    "shard_sum": lambda: last(Tensor.empty(16, 16, device="CPU").shard(("CPU:0", "CPU:1"), 1).sum(1)),
     # null/test_linearizer.py
     "load_dedup": lambda: last((lambda a: a[:-1] + a[1:])(empty(4))),
     "reduce_upcast": lambda: last(Tensor.conv2d(empty(1, 1, 3), empty(1, 1, 2), padding=1).relu()),
@@ -625,12 +623,6 @@ def split_range_id_free_of_loop(C, A):
     return C[r].set(A[r] + cnt[0].cast(C.dtype), end=r).sink(arg=KernelInfo(opts_to_apply=(upcast(0, 2),)))
 
 
-def sharded():
-    devs = ("CPU:0", "CPU:1")
-    c = Tensor(Tensor.empty(8, 16, device=devs).uop.unshard(0), device=devs)
-    return custom(c, empty(16, 16).shard(devs, axis=0), empty(16, 16).shard(devs, axis=0), fxn=custom_add)
-
-
 HAND = {
     # the old tolk's codegen goldens
     "elementwise_add": lambda: elementwise("elementwise_add", lambda a, b: a + b),
@@ -690,7 +682,6 @@ HAND = {
     "reg_stage_then_reduce": lambda: custom(empty(4), empty(4, 8), fxn=stage_then_reduce(AddrSpace.REG)),
     "reg_placeholder_then_reduce": lambda: custom(empty(4), empty(4, 8), fxn=reg_placeholder_then_reduce),
     "split_range_id_free_of_loop": lambda: custom(empty(4), empty(4), fxn=split_range_id_free_of_loop),
-    "sharded_custom_add": sharded,
     # the padding of a padded axis divides, through an upcast
     "padto_idiv_upcast": lambda: with_opts(last(strided_idiv()), [padto(0, 16), upcast(0, 4)]),
 }
