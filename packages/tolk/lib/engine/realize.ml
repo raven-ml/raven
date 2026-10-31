@@ -135,7 +135,7 @@ let lower_and_compile ?search ~targets linear =
       (fun c ->
         if op c <> Op.Call then None
         else Option.map (fun a -> (c, a)) (get_call_to_compile targets c))
-      (toposort ~calls:Enter linear)
+      (toposort ~calls:Skip linear)
   in
   let same (a0, r0) (a1, r1) = a0 == a1 && r0 == r1 in
   let todo =

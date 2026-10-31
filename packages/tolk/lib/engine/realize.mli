@@ -63,8 +63,9 @@ val lower_and_compile :
   Ops.t ->
   Ops.t
 (** [lower_and_compile ~search ~targets linear] is [linear] with the body of
-    each call that is a kernel ({!Op.Sink} with {!Ops.type-kernel_info})
-    replaced by its compiled program ({!Codegen.to_program}), for the renderer
+    each call that is a kernel ({!Op.Sink} with {!Ops.type-kernel_info}),
+    outside the bodies of the calls, replaced by its compiled program
+    ({!Codegen.to_program}), for the renderer
     {!Device.renderer} picks for the target [targets d] of the call's device [d]
     (its first, on several).
 
