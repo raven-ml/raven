@@ -569,6 +569,7 @@ let share_loops rctx topo =
       (fun u -> op u = Op.Store && Tbl.mem rctx.realize_map u && looped u)
       topo
   in
+  (* A region holds each node once, so a store enters each node's list once. *)
   let regions = Tbl.create 16 and by_node = Tbl.create 64 in
   List.iter
     (fun s ->
@@ -577,7 +578,7 @@ let share_loops rctx topo =
       List.iter
         (fun u ->
           let ss = Option.value (Tbl.find_opt by_node u) ~default:[] in
-          if not (List.memq s ss) then Tbl.replace by_node u (s :: ss))
+          Tbl.replace by_node u (s :: ss))
         r)
     stores;
   (* The stores each store reads through anything. *)
@@ -590,6 +591,17 @@ let share_loops rctx topo =
         let r = List.filter (fun t -> Nodes.mem t slice) stores in
         Tbl.replace reads_of s r;
         r
+  in
+  (* A group's members, in the order of [stores]: two groups merge by the
+     stores' positions there. *)
+  let position = Tbl.create 16 in
+  List.iteri (fun i s -> Tbl.replace position s i) stores;
+  let rec merge a b =
+    match (a, b) with
+    | [], l | l, [] -> l
+    | x :: a', y :: b' ->
+        if Tbl.find position x < Tbl.find position y then x :: merge a' b
+        else y :: merge a b'
   in
   (* Groups by their first store, each store's group by its first store. *)
   let groups = Tbl.create 16 and first = Tbl.create 16 in
@@ -625,9 +637,7 @@ let share_loops rctx topo =
         List.for_all (fun s -> List.for_all (joinable regions s) gb) ga
         && not (reaches fa fb || reaches fb fa)
       then begin
-        let members =
-          List.filter (fun s -> List.memq s ga || List.memq s gb) stores
-        in
+        let members = merge ga gb in
         let f = List.hd members in
         Tbl.remove groups fa;
         Tbl.remove groups fb;
