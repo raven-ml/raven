@@ -153,7 +153,7 @@ let gzip () =
     (fun path ->
       match Fits.read path with
       | Ok _ -> fail "a gzip stream read"
-      | Error e -> contains ~sub:"Nx_io.gunzip" e)
+      | Error e -> contains ~sub:"Lz.Gzip" e)
 
 let not_fits () =
   with_file (String.make 2880 ' ') (fun path -> is_error (Fits.read path));

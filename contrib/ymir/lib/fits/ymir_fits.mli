@@ -168,7 +168,7 @@ module Fits : sig
       inside a header of an HDU that starts [XTENSION], is an [Error] naming
       that HDU. A file that ends inside its last data unit's padding reads, as
       do bytes after the last HDU that do not start [XTENSION]. A gzip stream is
-      an [Error] naming [Nx_io.gunzip]. *)
+      an [Error] naming [Lz.Gzip]. *)
 
   val of_bytes :
     name:string -> (int, Nx.int8_unsigned_elt, Nx.host) Nx.t -> (hdu list, string) result

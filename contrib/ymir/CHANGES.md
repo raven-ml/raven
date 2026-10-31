@@ -4,6 +4,8 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- A gzip file's `Error` from `Fits.read` names `Lz.Gzip` to decompress it.
+  It named `Nx_io.gunzip`, which nx no longer has.
 - **Breaking:** every type that holds tensors carries their device set:
   `('f, 'd) Direction.t`, `('a, 'b, 'd) Transform.t`, `('w, 'e, 'd) Grid.t`
   and the like. Functions compute where their operands lie, and constants

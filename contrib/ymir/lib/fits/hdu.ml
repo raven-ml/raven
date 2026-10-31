@@ -262,7 +262,7 @@ let walk ~name src =
   let len = B.length src in
   if len >= 2 && read_string src ~offset:0 2 = gzip_magic then
     fail
-      "%s: a gzip stream; decompress it with Nx_io.gunzip and read the result"
+      "%s: a gzip stream; decompress it with Lz.Gzip and read the result"
       name;
   if len < 6 || read_string src ~offset:0 6 <> "SIMPLE" then
     fail "%s: not a FITS file: it does not start with SIMPLE" name;
