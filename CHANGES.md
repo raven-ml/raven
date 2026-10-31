@@ -1078,9 +1078,8 @@ thread.
   simplification, which call each other: `Shape.shape`, the movements
   (`Shape.reshape`, `Shape.mop`, ...), `Shape.simplify`, `Shape.resolve`,
   `Shape.Sint`, divisibility and `Shape.sym_infer`, then what calls take and
-  the calls: storage (`Shape.param`, `Shape.alloc`, ...), sharding, the
-  bindings of variables, `Shape.call_with_outputs` and
-  `Shape.program_info_of_sink`.
+  the calls: storage (`Shape.param`, `Shape.alloc`, ...), the bindings of
+  variables, `Shape.call_with_outputs` and `Shape.program_info_of_sink`.
 - **Breaking:** `SPEC=2` and `SPEC=3` no longer check each node as
   `Ops.v` builds it; any nonzero `SPEC` checks the graphs passed between
   stages. The check needed every module of tolk linked into every program.
@@ -1437,9 +1436,9 @@ thread.
   parent entry fails, preventing physical memory reuse while the device
   may still reach that table.
 
-- Symbolic shapes survive staged-storage cleanup and multi-device view
-  movement. Empty reductions retain their identities, and reused padded
-  materializations preserve the source extent and offset.
+- Symbolic shapes survive staged-storage cleanup. Empty reductions retain
+  their identities, and reused padded materializations preserve the source
+  extent and offset.
 
 - Concurrent HCQ clock calibration keeps each timestamp submission, host
   timing and readback together, preventing overwritten samples and waits
@@ -1495,10 +1494,6 @@ thread.
 - Apply `CCACHE` when creating a compiler and `CACHELEVEL` at each disk-cache
   access, including scoped worker contexts. `ASSERT_COMPILE` now rejects cache
   misses before invoking a compiler while allowing cached binaries.
-
-- Keep shard shape and placement metadata through repeated unbuffered
-  `zeros_like` and `ones_like` calls. Device-less partitions now materialize
-  correctly on one device; `Uop.Multi` retains optional device names per lane.
 
 - Preserve mixed-width symbolic offsets and GPU launch dimensions by promoting
   operands before combining them; apply the same promotion to image coordinates,
@@ -1671,9 +1666,8 @@ thread.
   32-bit operations safe, and preserve shared floating-point expressions when
   distributing negation.
 
-- Late scalar variables, including sharded kernels' device index, receive
-  parameter slots after existing buffers so generated declarations and runtime
-  argument packing agree.
+- Late scalar variables receive parameter slots after existing buffers so
+  generated declarations and runtime argument packing agree.
 
 - Kernel costs remain exact beyond host-integer limits, and symbolic memory
   traffic is capped by its buffer footprint. `Global_counters.global_ops` and
@@ -1724,8 +1718,7 @@ thread.
   the previous session’s clean-shutdown stamp in place.
 
 - `State.load_state_dict` transfers placed checkpoint values to a parameter’s
-  device and shards single-device values along a multi-device parameter’s axis;
-  loading weights previously discarded that placement.
+  device; loading weights previously discarded that placement.
 
 - `Uop.placeholder` and `Tensor.numel` reject element counts that exceed the
   host integer range instead of wrapping; zero-sized shapes remain empty even
@@ -1782,8 +1775,7 @@ thread.
 - Range analysis reuses ended-range results for shared `AFTER` and `BARRIER`
   dependencies, avoiding exponential traversal and allocation during compilation.
 
-- `Creation.full_like`, `zeros_like` and `ones_like` preserve device placement
-  and allocate local shard sizes, including symbolic nonsharded dimensions.
+- `Creation.full_like`, `zeros_like` and `ones_like` preserve device placement.
   Fill and random constructors now use the same placement rules.
 
 - `Uop.semantic_key` ignores auxiliary fallback graphs consistently, so calls
@@ -1793,20 +1785,18 @@ thread.
   Replacing a device with the same name no longer reuses incompatible renderer
   assumptions, loaders or linked queue templates.
 
-- Remove unused `Buffer.uop_refcount`, `Buffer.add_ref` and
-  `Multi_buffer.add_ref`; live views and owning UOps retain storage directly.
+- Remove unused `Buffer.uop_refcount` and `Buffer.add_ref`; live views and
+  owning UOps retain storage directly.
 
 - Failed LRU cache cleanup retains uncertain backing and restores untouched
   entries, preventing a single retirement failure from losing ownership of
   every remaining cached buffer.
 
-- `Rand.rand_like`, `randn_like` and dropout preserve source placement and
-  sharding. RNG keys and counters now belong to their requested device;
-  sharded draws advance independent streams while replicated draws share one.
+- `Rand.rand_like`, `randn_like` and dropout preserve source placement. RNG
+  keys and counters now belong to their requested device.
 
-- `Creation.clone` preserves sharding and allocates each shard separately.
-  `Op.assign` accepts cross-device values through copy preparation and rejects
-  incompatible shard axes; clones reject DISK destinations before allocation.
+- `Op.assign` accepts cross-device values through copy preparation;
+  `Creation.clone` rejects DISK destinations before allocation.
 
 - Symbolic launch dimensions use exact arithmetic, preserving large intermediate
   products, signed shifts and scalar casts. Both launch APIs now agree with
@@ -1872,9 +1862,8 @@ thread.
   unused 16 MiB argument allocation per device and the obsolete
   `Hcq.Kernargs` and backend direct-program APIs.
 
-- Metal and CUDA kernels execute exclusively through compiled queues.
-  Multi-device calls share this path, and unsupported mappings fail before
-  fallback copies execute.
+- Metal and CUDA kernels execute exclusively through compiled queues, and
+  unsupported mappings fail before fallback copies execute.
 - Buffer views refresh after their base storage is reallocated. Remove the
   unused allocator disk-copy hook and redundant capability flags.
 
@@ -1950,19 +1939,6 @@ thread.
   GC from waiting on unsubmitted work or re-entering native allocators. Failed
   teardown retains its storage instead of retrying a partially completed free.
 
-- `Uop.axis` of an operation whose operand of lower rank is split counts the
-  operand's axis from where it broadcasts, as the multi rewrite does. It kept
-  the operand's own index, so a matrix product over a column-split weight
-  reported its split on the wrong axis, and a custom kernel over such a value
-  failed to build ("reshape moved items between shards").
-
-- `Op.scatter_indexed`, `Op.block_matmul` and `Op.quant_matmul` take operands
-  split across devices: each device runs the kernel over its own slices and
-  writes its slice of the result, or its partial product when the matrices or
-  inputs are split, which the result sums. Built from the whole value's
-  extents, they failed to build over split operands (`block_matmul`,
-  `quant_matmul`) or wrote out of their slice (`scatter_indexed`).
-
 - **Breaking:** `Op.quant_row_bound` takes only the renderer: the bound is one
   measured value per device, at every dtype and shape.
 
@@ -1972,33 +1948,9 @@ thread.
   1.2 to 1.3 times at float32 from two rows per position (gpt-oss's expert,
   5760 by 2880). One row per position at float32 is 10% slower.
 
-- With `ALLREDUCE_NODE_NDEVS` set to a box size h, an all-gather or
-  reduce-scatter of concrete shape over its own n devices crosses boxes only
-  between devices at the same position in their boxes: each device moves
-  (b-1)/n of the value between b boxes, where it moved (n-h)/n, at the cost
-  of (b-1)/n of the partial in a reduce-scatter's peak. The reduce-scatter
-  folds within each box first, so its blocks equal the hierarchical
-  allreduce's rows bit for bit.
-
 - A product of narrow floats widened to `float32` before the multiply takes a
   narrow-in, `float32`-out tensor core, which computes the same product. It
   took no narrow tensor core, and on CUDA none at all without `ALLOW_TF32`.
-
-- `Uop.call_info.name` is a `Uop.call_name`: `Label` for a callable's name,
-  or `Collective` for the collective a precompiled call implements
-  (`Allreduce op`, `Allgather axes`, `Reducescatter (op, axis)`), which no
-  longer passes as a string.
-
-- Resharding an allreduced tensor to split rows (`Creation.shard ~axis` of a
-  sum over a split axis) is a reduce-scatter when nothing else uses the sum:
-  each device sends (n-1)/n of its partial and keeps only its rows, bit-equal
-  to the naive allreduce's. It allreduced the whole value first. A fully
-  sharded training step now stays within its share of state plus two layers
-  and its activations.
-
-- An allreduced tensor that a realization returns is written straight into its
-  storage. It was reduced into an intermediate buffer and then copied, which
-  held one more copy of the tensor on each device.
 
 - A `bfloat16` constant rounds once from the double, so compiled constants
   equal nx's eager values.
@@ -2006,14 +1958,6 @@ thread.
 - A `float16` constant between `2^-25` and `2^-24` in a compiled graph folds
   to the smallest subnormal, `2^-24`. It folded to zero, so `3e-8` became
   `0`.
-
-- Realizing a slice of a split tensor whose part on each device is a
-  contiguous window of that device's shard gives a view of the shards:
-  nothing is allocated or copied. Each part was copied into a new buffer.
-
-- Gathering a slice of a split tensor whose part on each device is contiguous
-  reads each part in place. Each device first copied its part into a buffer
-  of its own.
 
 - A copy to another device from a contiguous slice of a realized value reads
   the slice in place. It was first copied into a buffer of its own on the
@@ -2026,23 +1970,9 @@ thread.
   place, another view that the call reads is copied in, and storing into
   one raises, naming the call.
 
-- A gathered tensor that a realization returns is written straight into its
-  storage. It was written to an intermediate buffer and then copied, which
-  held two copies of the tensor on each device.
-
-- Copying a split tensor to a list of devices moves each shard once into its
-  place: every device receives (n-1)/n of the tensor. The copy was an
-  allreduce of zero-padded shards, which moved 2(n-1)/n per device under ring
-  and n-1 whole tensors under the naive strategy, and held a padded copy of
-  each shard. Gathering on one device moves the same bytes as before.
-
 - A precompiled call or custom kernel that stores into an argument which is a
   view, not storage, raises `Invalid_argument` naming the call. The view was
   scheduled as a copy of its values, so the writes were silently lost.
-
-- A realized allreduce whose result is a symbolic slice of an inner axis
-  returned zeros; it now returns the sum. The reduction wrote a copy of the
-  result's view instead of its storage.
 
 - `Op.block_matmul` on the CPU keeps a register tile of rows and columns and
   unrolls the contraction: 9 to 37 times faster at float32 and 8 to 18 times
@@ -2053,24 +1983,11 @@ thread.
   `OCCUPANCY_FLOOR`, `DMC`, `ALLOW_HALF8`, `EXPAND_SSA`, `ALIGNED` or the CPU
   compiler `CC`, which change the kernels emitted.
 
-- `Creation.shard ~axis` accepts a tensor already replicated on the target
-  devices and splits it without copying: each device keeps its own shard of its
-  replica. Other multi-device sources still raise.
-
-- `Run.realize` and `Run.realize_many` accept sharded and replicated tensors.
-  They ran the schedule, then raised while reading back a buffer that a
-  multi-device tensor does not have.
-
-- Replicas of a hierarchical allreduce (`ALLREDUCE_NODE_NDEVS`) are now equal
-  bit for bit on every device. With three or more boxes, devices summed the
-  boxes' partials in different orders and their replicas differed in the last
-  bits.
-
-- Changing a setting that scheduling reads (the allreduce strategy settings,
-  `SPLIT_REDUCEOP` and its thresholds, `FLOAT16`, `PCONTIG`,
-  `MAX_KERNEL_BUFFERS`, `OPENPILOT_HACKS`) between realizations now takes
-  effect for a graph scheduled before. The schedule cache ignored them and
-  replayed the first schedule. `Schedule.config` lists them.
+- Changing a setting that scheduling reads (`SPLIT_REDUCEOP` and its
+  thresholds, `FLOAT16`, `PCONTIG`, `MAX_KERNEL_BUFFERS`, `OPENPILOT_HACKS`)
+  between realizations now takes effect for a graph scheduled before. The
+  schedule cache ignored them and replayed the first schedule.
+  `Schedule.config` lists them.
 
 - Compiled programs on Metal no longer return wrong values from kernels of 16
   to 29 arguments, such as a concatenation of 16 tensors. An M1 Max
@@ -2151,9 +2068,8 @@ thread.
   do not cover, preventing races when separate device groups share host memory.
   Already ordered device accesses retain asynchronous submission.
 
-- AMD compiled transfers use distinct SDMA rings and distribute all-to-all
-  copies according to `ALL2ALL` and `HCQ_NUM_SDMA`, allowing independent
-  transfers to overlap.
+- AMD compiled transfers use distinct SDMA rings according to
+  `HCQ_NUM_SDMA`, allowing independent transfers to overlap.
 
 - AMD without SDMA keeps bulk copies in compiled submissions by using a
   byte-copy kernel, including staged imports. `Device.queue.copy` now selects
@@ -2203,9 +2119,8 @@ thread.
   unordered calls, including overlapping external pointers. Ordered buffer
   donation, read-only aliases and disjoint views remain valid.
 
-- Compile scheduled kernels for their argument devices, fixing CPU-sharded
-  custom kernels when Metal is the default. `Realize` and `Jit` compiler
-  callbacks now receive the execution device.
+- Compile scheduled kernels for their argument devices. `Realize` and `Jit`
+  compiler callbacks now receive the execution device.
 
 - Eager execution reuses compiled queue templates across fresh inputs while
   preserving shared-base views. Small schedules reuse linked command storage;
@@ -2231,16 +2146,8 @@ thread.
   variables as scalar arguments, fixing missing values and unsupported-op
   errors after the variable representation change.
 
-- `Creation.shard` partitions a tensor along an axis or replicates it across
-  devices. Sharded results can be gathered with `Creation.clone` on one device.
-
-- Allreduce preserves symbolic output extents and supports hierarchical
-  reduction through `ALLREDUCE_NODE_NDEVS`. Cross-device symbolic copies
-  transfer padded storage instead of repeating values to fill the allocation.
-
-- Sharded parameters now allocate only their local storage. `Uop.unshard`
-  carries sorted axes and explicit ranges, preserving symbolic sizes and
-  supporting per-thread fragment indexing and multi-axis device gathering.
+- Cross-device symbolic copies transfer padded storage instead of repeating
+  values to fill the allocation.
 
 - AMD uses AQL queues by default on multi-XCC devices, matching tinygrad. Direct
   launches and compiled submissions share HSA dispatch packets, queue-owned
@@ -2343,9 +2250,8 @@ thread.
   pairs for host fallback. Replay detects reallocated buffers even when the
   allocator reuses an address.
 
-- `Uop.max_shard_numel` computes per-device allocation sizes with exact
-  multiplication. View and replay sizing now use the same checked shape
-  properties instead of multiplying host integers independently.
+- Allocation, view and replay sizing use checked shape properties instead of
+  multiplying host integers.
 
 - Reject cyclic buffer dependencies during scheduling instead of silently
   dropping mutually dependent kernels or returning a partial schedule.
@@ -2375,8 +2281,6 @@ thread.
   `movement_ops` and `detect_expanded` share the preparation pass used by scheduling.
 - `Uop.alloc` declares temporary storage. Cached schedules bind it separately
   for each invocation while preserving buffers that already own storage.
-- Fix sharded reductions to a scalar emitting an unindexed output pointer;
-  scalar storage parameters now acquire a flat size-one kernel view.
 - `Uop.variable` now creates a scalar storage identity; `Uop.bind` sequences
   its value through a store and rejects violations of its declared divisor.
   Nested calls resolve scalar parameters within their own scope.
@@ -2525,7 +2429,7 @@ thread.
   extents and bitcast sizes. Incompatible broadcast dimensions raise an error
   instead of silently selecting an operand’s dimension.
 - Empty slices and reductions preserve their output shape during scheduling,
-  so padding and ring allreduce can consume zero-sized chunks.
+  so padding can consume zero-sized chunks.
 
 - `Uop.call_info.dtype` declares a call’s scalar return type. C renderers
   support indirect host calls with typed arguments and preserve calls inside
@@ -2817,15 +2721,8 @@ thread.
   exponents with three digits.
 - A copy between devices is scheduled as a kernel storing the source's
   flat view into a buffer on the target device, then turned back into a
-  transfer once the schedule is linear. Multi-device graphs therefore
-  emit one kernel per per-shard copy, as the reference does, instead of
-  fusing copies into their consumers; a kernel that mixes devices without
+  transfer once the schedule is linear. A kernel that mixes devices without
   being a copy is rejected with `all buffers must be on the same device`.
-- Multi-device sharding slices along a device range instead of a
-  `_device_num` variable. The range is not a program axis: codegen lowers
-  it to `_device_num` and keeps it out of range splitting and the
-  optimizer's axes, and kernels number it first, so a sharded kernel's loop
-  axes now start at 1 (`Lidx1`), as in the reference.
 - Fix the symbolic division rules, which never fired: `x/x`, `(x*y)/y`,
   `0/0`, `(x*0)/0` and `(x/y)/z` were matched on `Fdiv`, an operation that
   only exists after the late decompositions, while a division in the graph
@@ -2979,15 +2876,6 @@ thread.
   an image coordinate and defaulted to one lane; an image access reads four
   floats, so three lanes were left unwritten. The width now comes from the
   load's own lane count, exposed as `Uop.max_numel`.
-- Fix multi-device programs failing to compile with
-  `Invalid_argument "buffer copy: size or dtype mismatch"`. An operand that
-  broadcasts along the shard axis — one of lower rank than the result, or with
-  size one there — was split across devices as if it held a distinct slice per
-  device, so a collective was sized from a fraction of its real shape. Such an
-  operand now stays whole on every device. Separately, the scheduler refused to
-  read a shape off a `Pad` or `Shrink` whose offset was symbolic, even though
-  the shape is the size argument alone; the resulting unknown propagated into
-  an elementwise node as a too-small shape and mis-sized the allreduce buffers.
 - `Op.cat` joins operands with equal extents on the concatenated axis through a
   single stack node instead of padding each operand to the full width and
   summing them, so a concatenation of `n` inputs now selects on one loop range
@@ -3044,13 +2932,6 @@ thread.
   integer, which wrapped on kernels fusing enough reduce axes (an unrolled
   recurrence's weight gradients reach 2^110), so the thread split was silently
   skipped and those kernels ran single-threaded.
-- Multi-device programs with two outputs that both need a cross-device
-  reduction — a data-parallel step returning both the loss and the gradient of
-  a replicated parameter — no longer miscompile. Flattening a bufferize folded
-  the source's own shape into the flattened extent, which overflowed to a
-  negative size whenever that shape was unresolved, leaving the gradient with a
-  one-element buffer that every lane wrote to at index zero. `Rune.pmap` steps
-  that hit this failed to compile rather than returning wrong numbers.
 - Tensor-core kernels now declare each `WMMA` result at the accumulator width
   the instruction actually returns, so tensor cores are usable again on Metal
   and CUDA. The renderer declared them scalar, emitting programs the target
@@ -3112,9 +2993,6 @@ thread.
   again, repeated reads of one buffer cap at its footprint, and tensor-core
   flops count the full matmul volume — beam decisions were skewed on all
   three.
-- Fix multi-device scheduling: sharded elementwise graphs no longer hang
-  kernel lowering, and ring allreduce no longer crashes on gated chunk
-  reassembly.
 - Scalar operands adopt their paired tensor's dtype: `float16_t + s` stays
   float16 instead of silently upcasting to float32, matching the reference's
   mixed-precision behavior.
@@ -3165,46 +3043,12 @@ thread.
   inputs: the constant now follows the operand's dtype, so `float16`/
   `bfloat16` layer norms keep their variance and rsqrt in half precision
   instead of silently widening.
-- Fix multi-device scheduling of keepdims-style reductions: the multi
-  rewrite minted shape dimensions as `int32` constants while the rest of the
-  compiler uses weak integer constants, so broadcasting a realized reduce
-  buffer back against a sharded operand failed shape validation and jit
-  raised `Failure "buffer_like: unknown shape"`.
-- Memoize `Uop.axis` like `Uop.shape`: the unmemoized walk was exponential
-  in residual depth, making multi-device compilation of deep networks
-  appear to hang.
-- `Realize.Buffers.seed_multi` binds a buffer node to a caller-provided
-  multi-device buffer, mirroring `seed`.
-- Fix multi-device scheduling of computed sharded outputs: buffer allocation
-  sized MULTI-wrapped values per shard twice, and the store-revert rule
-  cycled on multi-device store targets.
-- Fix a rewrite cycle in rangeify when shard axes are realigned across
-  devices (e.g. `x @ transpose x` on a sharded value): a symbolic variable
-  parameter in a shard offset was mistaken for a buffer and indexed.
 - Add a device registry: `Device.register` installs a backend opener per
   name prefix and `Device.get` opens and caches devices by canonical name;
   `Run` registers the CPU/CUDA/METAL backends there.
-- The engine now executes multi-device schedules: buffers placed on a
-  device tuple allocate one shard per device, kernels launch once per device
-  with the `_device_num` variable bound, and copies transfer per shard pair
-  (natively within a backend, via a host bounce across backends). Previously
-  `Realize.resolve` silently read only the first shard of
-  `MSELECT`/`MSTACK`.
-- The memory planner suballocates multi-device internal buffers into
-  per-placement arenas; single-device planning is unchanged.
 - Fix scheduled `COPY`/`SLICE` calls dropping their destination buffer, and
   scalar (rank-0) values losing their flat index through staging and kernel
   splitting.
-- Multi-device scheduling now matches the reference: `RING` defaults to 1
-  (ring allreduce with >2 devices above the 256k-element threshold), and the
-  `LATE_ALLREDUCE` toggle is supported (default 1 wraps allreduce into a
-  precompiled function; 0 expands it inline during the multi rewrite).
-- Fix several multi-shard rewrite bugs: `SHRINK`-before-`MSTACK` computed
-  wrong sizes, pads/shrinks of sharded tensors were rejected or mis-shaped,
-  sharded `PARAM`s were never resolved, and unsharding padded to the
-  per-shard instead of the full size.
-- Each allreduce output now gets a fresh buffer; identical allreduces no
-  longer collapse onto one output allocation.
 - Graph replay now repatches buffer arguments whose binding was reseeded
   between runs, not just input `PARAM` slots; previously such replays used
   stale device addresses. Changed arguments are diff-patched, so stable
