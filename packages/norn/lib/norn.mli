@@ -715,10 +715,10 @@ module Dist : sig
 
   val support : ('x, 'f, 'd) t -> Support.t
   (** [support d] is the set of [d]'s values. Bounds given by parameters are
-      read on the host, as the interval holding every element's support: inside
-      a compiled or mapped function, a bound that depends on the function's
-      arguments raises, {!Rune.Jit_error} or [Invalid_argument]. {!bounds} reads
-      nothing. *)
+      read on the host, as the interval holding every element's support. Inside
+      a function {!Rune.jit} compiles, reading one raises [Invalid_argument],
+      and inside a mapped function, reading one that depends on the function's
+      arguments does. {!bounds} reads nothing. *)
 
   val bounds : ('x, 'f, 'd) t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
   (** [bounds d] is the least and greatest value each element of [d]'s values
