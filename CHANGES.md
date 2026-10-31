@@ -802,6 +802,9 @@ thread.
   are gone. `Shape.flip` reverses an axis with pads, reshapes, shrinks and
   permutes, whose index folds to `n - 1 - i` on an axis of known size; a store
   through a padded view gates its destination index (`Prepare.pm_mops`).
+- `Codegen.full_rewrite_to_sink` decomposes the types a target lacks after the
+  transcendental functions, so those they make, such as Payne-Hanek's
+  `uint64`, are decomposed too.
 - `Linearizer.linearize` places a node in more loops after one in fewer that
   runs as often.
 - A kernel that calls a sink no longer runs its loops nested wrongly where the

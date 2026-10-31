@@ -1216,11 +1216,6 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   in
   let sink = rewrite pm_decomp sink in
   (* late decomps + move gates from unrenderable INVALID where *)
-  let sink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Decomp_dtype.ctx ren) sink
-      (After_sources
-         (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak))
-  in
   let pm_decomp =
     Pattern_matcher.concat
       [
@@ -1237,6 +1232,13 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
       (After_sources pm_decomp)
+  in
+  (* the transcendental decompositions can make types the target lacks, as the
+     uint64 of Payne-Hanek's reduction *)
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:(Decomp_dtype.ctx ren) sink
+      (After_sources
+         (Decomp_dtype.pm_dtype_decomps ++ lift Uop_weak.pm_commit_weak))
   in
   let sink = rewrite Gater.pm_move_gates_from_index sink in
   (* final rules for the renderer (without sym) *)
