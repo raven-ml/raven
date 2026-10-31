@@ -267,7 +267,7 @@ module Scheduler = struct
     let independent grouped u =
       not
         (List.exists
-           (fun g -> reaches ~calls:Enter u g || reaches ~calls:Enter g u)
+           (fun g -> reaches ~calls:Skip u g || reaches ~calls:Skip g u)
            grouped)
     in
     let take (axes, grouped) u =

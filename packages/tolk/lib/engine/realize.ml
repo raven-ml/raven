@@ -46,7 +46,7 @@ let get_call_var_uops call prg =
                         if is_variable v then
                           Option.map (fun c -> (v, c)) (named v)
                         else None)
-                      (toposort ~calls:Enter n)
+                      (toposort ~calls:Skip n)
                   in
                   substitute ~calls:Skip ~pass:Fixed_point n values
             in

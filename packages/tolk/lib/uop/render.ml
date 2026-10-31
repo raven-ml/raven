@@ -333,7 +333,7 @@ let rec render ?(simplify = true) u =
     (fun u ->
       Tbl.replace ctx.strs u
         (Option.get (Pattern_matcher.rewrite renderer ctx u)))
-    (toposort ~calls:Enter s);
+    (toposort ~calls:Skip s);
   Tbl.find ctx.strs s
 
 let srender = function Int n -> string_of_int n | Sym u -> render u

@@ -112,12 +112,14 @@ let cfg_context sink =
   List.iter
     (fun u ->
       let d =
-        List.fold_left (fun d s -> union d (Tbl.find deps s)) [] (src u)
+        List.fold_left
+          (fun d s -> union d (Tbl.find deps s))
+          [] (src_without_body u)
       in
       if is_loop u || op u = Op.Sink then List.iter (nest u) d;
       let self = match op u with Op.Range -> true | _ -> is_loop u in
       Tbl.replace deps u (if self then d @ [ u ] else d))
-    (toposort ~calls:Enter sink);
+    (toposort ~calls:Skip sink);
   let nesting = List.rev !nesting and edges = Tbl.create 16 in
   let add_edges k =
     let v =

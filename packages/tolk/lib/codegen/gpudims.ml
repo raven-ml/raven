@@ -150,7 +150,7 @@ let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
       (List.combine sizes (suffix_prods sizes))
 
 let group_gpudims (r : Renderer.t) s =
-  let s_topo = toposort ~calls:Enter s in
+  let s_topo = toposort ~calls:Skip s in
   match arg s with
   | Kernel _ when not (List.exists (fun x -> op x = Op.Special) s_topo) -> (
       let all_ranges = Hashtbl.create 8 in

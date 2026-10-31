@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- A kernel that calls a sink no longer runs its loops nested wrongly where the
+  body has a loop of the size and identity of one of its own
+  (`Codegen.to_program`).
 - A value staged into local memory under a thread index gets a row of the
   buffer per thread, where the threads of a group shared one and overwrote each
   other's elements (`Codegen.full_rewrite_to_sink`).

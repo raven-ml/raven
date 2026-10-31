@@ -42,7 +42,7 @@ let jit_lower ?beam ?search ~targets ~held_bufs ~inputs linear =
         if Ops.op u = Op.Buffer && not (List.memq u held_bufs) then
           Some (u, Ops.rtag ~tag:(String "scratch") u)
         else None)
-      (Ops.toposort ~calls:Enter linear)
+      (Ops.toposort ~calls:Skip linear)
   in
   let linear = Ops.substitute ~calls:Skip ~pass:Once linear scratch in
   Setting.context (bindings ?beam ()) (fun () ->

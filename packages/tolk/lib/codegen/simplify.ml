@@ -423,7 +423,7 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
     | [] -> Some u
     | r :: rest ->
         let included =
-          toposort ~calls:Enter ~gate:(fun x -> Nodes.mem r (ranges x)) u
+          toposort ~calls:Skip ~gate:(fun x -> Nodes.mem r (ranges x)) u
         in
         if List.exists (fun x -> op x = Op.Store || op x = Op.Reduce) included
         then None

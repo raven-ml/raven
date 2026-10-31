@@ -3793,6 +3793,65 @@ let two_bodies () =
   kernel "uopfunc"
     [ Ops.end_ (Ops.store (at c3 i) Ops.O.(at c3 i + i32 1)) [ i ] ]
 
+(* [c = a * 3] by a call of [mul], then [c[m] = a[m]] for [m < 3], then
+   [c[i] = a[i] + 1]. The body's loop is the node of the kernel's last loop,
+   one range of size 4 and identity 0, which the kernel's loops must not take
+   for theirs. *)
+let call_body_range () =
+  let mul =
+    let out = int_param ~name:"out" 0 4 and a = int_param ~name:"A" 1 4 in
+    let k = loop 4 0 in
+    Ops.sink [ Ops.end_ (Ops.store (at out k) Ops.O.(at a k * i32 3)) [ k ] ]
+  in
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let m = loop 3 1 and i = loop 4 0 in
+  let call = Ops.call ~name:"mul" mul [ c; a ] in
+  let end_m =
+    Ops.end_ (Ops.store (at (Ops.after c [ call ]) m) (at a m)) [ m ]
+  in
+  kernel "call_body_range"
+    [
+      Ops.end_
+        (Ops.store (at (Ops.after c [ end_m ]) i) Ops.O.(at a i + i32 1))
+        [ i ];
+    ]
+
+(* [c[0] = a[0] + a[0]] by a call of a body of three parameters, then
+   [c[1] = c[0] + n]. *)
+let call_then_variable () =
+  let add =
+    let out = int_param ~name:"out" 0 1
+    and x = int_param ~name:"x" 1 1
+    and y = int_param ~name:"y" 2 1 in
+    Ops.sink [ Ops.store (first out) Ops.O.(first x + first y) ]
+  in
+  let c = int_param ~name:"C" 0 2 and a = int_param ~name:"A" 1 1 in
+  let n =
+    Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0) (Dtype.Value.of_int 9)
+  in
+  let call = Ops.call ~name:"add" add [ first c; first a; first a ] in
+  kernel "call_then_variable"
+    [ Ops.store (at c (Ops.int 1)) Ops.O.(first (Ops.after c [ call ]) + n) ]
+
+(* [c[0] = a[0] + 1] by a call of a body that computes in a register of slot
+   9, then [c[1]] the sum of [a], which the kernel accumulates in a register of
+   its own. *)
+let call_then_sum () =
+  let incr =
+    let out = int_param ~name:"out" 0 1 and x = int_param ~name:"x" 1 1 in
+    let tmp = Shape.alloc ~slot:9 ~addrspace:Reg [ Int 1 ] Int32 in
+    let tmp = Ops.after tmp [ Ops.store (first tmp) Ops.O.(first x + i32 1) ] in
+    Ops.sink [ Ops.store (first out) (first tmp) ]
+  in
+  let c = int_param ~name:"C" 0 2 and a = int_param ~name:"A" 1 4 in
+  let call = Ops.call ~name:"incr" incr [ first c; first a ] in
+  let r = Ops.range (Int 4) [ 0 ] in
+  kernel "call_then_sum"
+    [
+      call;
+      Ops.store (at c (Ops.int 1)) (Ops.reduce (at a r) Op.Add [ r ]);
+    ]
+
 (* A body's volatile parameter stays volatile in its function. *)
 let volatile_call () =
   let fence =
@@ -3939,6 +3998,41 @@ let calls =
            [ 3; 6; 9; 12 ]);
       test "a call's gated store writes where its gate holds"
         (runs_on_host gated_call [ (1, int_values [ 2 ]) ] [ 1; 1; 8; 1 ]);
+      test
+        "a kernel's variables take the slots after its own parameters, not \
+         its calls' bodies'" (fun () ->
+          let prg = Codegen.to_program (call_then_variable ()) (Lazy.force host) in
+          let slot v = match Ops.arg v with Param p -> p.slot | _ -> -1 in
+          (match Ops.arg prg with
+          | Program p -> equal (list int) [ 2 ] (List.map slot p.vars)
+          | _ -> fail "to_program made no program");
+          equal (array Dtypes.value) (int_values [ 6; 11 ])
+            (List.assoc 0
+               (Run.on_host ~vars:[ ("n", 5) ] prg
+                  [ (1, int_values [ 3 ]) ])));
+      test
+        "a kernel numbers the storage it makes after its own, not its calls' \
+         bodies'" (fun () ->
+          let prg = Codegen.to_program (call_then_sum ()) (Lazy.force host) in
+          let registers =
+            List.filter_map
+              (fun u ->
+                match (Ops.op u, Ops.arg u) with
+                | Buffer, Param p when p.addrspace = Some Reg -> Some p.slot
+                | _ -> None)
+              (Ops.toposort ~calls:Skip (Ops.nth prg 1))
+          in
+          equal (list int) [ 0 ] registers;
+          equal (array Dtypes.value) (int_values [ 4; 10 ])
+            (List.assoc 0 (Run.on_host prg [ (1, int_values [ 3; 2; 1; 4 ]) ])));
+      test "a loop of a call's body is not the kernel's, though the same node"
+        (fun () ->
+          (* the premise: a body's range of size 4 and identity 0 is the node
+             of the kernel's *)
+          equal bool true (loop 4 0 == loop 4 0);
+          runs_on_host call_body_range
+            [ (1, int_values [ 1; 2; 3; 4 ]) ]
+            [ 2; 3; 4; 5 ] ());
       test "bodies of one name traced apart are two functions" (fun () ->
           let prg = Codegen.to_program (two_bodies ()) (Lazy.force host) in
           let src = source prg in

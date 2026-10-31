@@ -91,7 +91,7 @@ let move_index in_shape m idxs =
   in
   match
     List.filter load
-      (toposort ~calls:Enter ~gate:(fun u -> op u <> Op.After) (sink idxs))
+      (toposort ~calls:Skip ~gate:(fun u -> op u <> Op.After) (sink idxs))
   with
   | [] -> Indexing.apply_movement_op in_shape m idxs
   | loads ->
@@ -201,7 +201,7 @@ let fix_store_hazard target src =
       r && reorders && not (s == target && op s = Op.Shrink)
     in
     if
-      List.exists hazard (toposort ~calls:Enter ~gate:store_hazard_boundary src)
+      List.exists hazard (toposort ~calls:Skip ~gate:store_hazard_boundary src)
     then Some (store target (contiguous src))
     else None
 

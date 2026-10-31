@@ -44,7 +44,7 @@ module Estimates = struct
         Sym
           (substitute ~calls:Skip ~pass:Fixed_point m
              (List.map zero
-                (List.filter (is Op.Special) (toposort ~calls:Enter m))))
+                (List.filter (is Op.Special) (toposort ~calls:Skip m))))
 
   let of_uops ?(ignore_indexing = false) uops =
     let flops = ref (Int 0) and lds = ref (Int 0) and mults = ref (Int 1) in
@@ -54,7 +54,7 @@ module Estimates = struct
         (fun u ->
           if is Op.Index u || is Op.Shrink u then
             let gate x = not (is Op.End x || is Op.Backedge x) in
-            toposort ~calls:Enter ~gate (sink (List.tl (src u)))
+            toposort ~calls:Skip ~gate (sink (List.tl (src u)))
             |> List.iter (fun x -> Tbl.replace excluded x ()))
         uops;
     let counted u = not (Tbl.mem excluded u) in

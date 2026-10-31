@@ -99,7 +99,10 @@ val to_program :
     sink is linearized each lowered body becomes the {!Op.Linear} of its
     instructions, made as the program's are, named after its call
     ({!Helpers.to_function_name}). The renderer writes such a body as a
-    function ({!Cstyle}).
+    function ({!Cstyle}). A body is a scope of its own: the program's loops,
+    the slots of its variables (after those of its parameters) and of the
+    storage it makes (after its own) do not depend on a body's, even where a
+    node of the body is one of the program's.
 
     [ast] is a kernel's sink. [to_program ast ren] and
     [compile (linearize ast ren) ren] are equal programs: [to_program] is the

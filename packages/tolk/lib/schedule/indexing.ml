@@ -821,7 +821,7 @@ let run_rangeify ?(debug = false) tsink =
   ignore
     (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
        (After_sources pm_generate_realize_map));
-  let tsink_toposort = toposort ~calls:Enter ~gate:gate_kernel_sink tsink in
+  let tsink_toposort = toposort ~calls:Skip ~gate:gate_kernel_sink tsink in
   share_loops rctx tsink_toposort;
   let consumer_map = Tbl.create 256 in
   List.iter (fun x -> Tbl.replace consumer_map x []) tsink_toposort;

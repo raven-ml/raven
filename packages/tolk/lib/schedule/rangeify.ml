@@ -224,7 +224,7 @@ let remove_bufferize ~reads src buf idx =
           true
       | _ -> true
     in
-    let computed = toposort ~calls:Enter ~gate:red_gate src in
+    let computed = toposort ~calls:Skip ~gate:red_gate src in
     let reduces = List.filter (fun x -> op x = Op.Reduce) computed in
     (* Inlined where it is broadcast, the value would be computed again for each
        element of the ranges it does not vary along: one whose computing runs a
@@ -732,7 +732,7 @@ let check_buf_states x =
   let idxs =
     List.filter
       (fun s -> op s = Op.Index)
-      (toposort ~calls:Enter ~gate:(fun x -> op x <> Op.After) x)
+      (toposort ~calls:Skip ~gate:(fun x -> op x <> Op.After) x)
   in
   let read_from = Tbl.create 8 in
   List.iter
@@ -826,7 +826,7 @@ let get_kernel_graph tsink =
       (After_sources pm_cleanups)
   in
   let ranges =
-    List.filter (fun x -> op x = Op.Range) (toposort ~calls:Enter tsink)
+    List.filter (fun x -> op x = Op.Range) (toposort ~calls:Skip tsink)
   in
   let next_range =
     1 + List.fold_left (fun m r -> max m (List.hd (axis_id r))) (-1) ranges
@@ -840,7 +840,7 @@ let get_kernel_graph tsink =
     List.filter_map
       (fun x ->
         match (op x, arg x) with Op.Alloc, Param p -> Some p.slot | _ -> None)
-      (toposort ~calls:Enter tsink)
+      (toposort ~calls:Skip tsink)
   in
   let next_slot = ref (1 + List.fold_left max (-1) slots) in
   let tsink =

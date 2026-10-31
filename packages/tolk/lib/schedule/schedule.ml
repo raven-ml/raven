@@ -270,7 +270,7 @@ let rec schedule ~copies sched_sink =
               (read_states @ List.concat_map states after_deps))
           kernels
       end)
-    (toposort ~calls:Enter ~gate:gate_kernel_sink sched_sink);
+    (toposort ~calls:Skip ~gate:gate_kernel_sink sched_sink);
   (* Write after read: a kernel reading a state runs before any other write that
      supersedes it. An after supersedes only the state before it: the kernels it
      shares with that state order, and do not write. A kernel that also waits
@@ -552,7 +552,7 @@ let assert_all_same_devices ast =
             acc @ [ d ]
         | _ -> acc)
       []
-      (toposort ~calls:Enter ast)
+      (toposort ~calls:Skip ast)
   in
   if List.length devices >= 2 then
     invalid_arg

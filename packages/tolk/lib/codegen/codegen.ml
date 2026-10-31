@@ -67,7 +67,7 @@ let build_range_map sink =
     (fun x ->
       if is Op.Range x && axis_type x = Axis_type.Upcast then
         Hashtbl.replace ctx (axis_type x, axis_id x) (Hashtbl.length ctx))
-    (toposort ~calls:Enter sink);
+    (toposort ~calls:Skip sink);
   ctx
 
 let expand_reduce r =
@@ -905,7 +905,7 @@ let add_raw_barrier after =
   else
     (* one toposort over all the deps *)
     let deps =
-      toposort ~calls:Enter
+      toposort ~calls:Skip
         ~gate:(fun x -> not (is Op.Barrier x))
         (sink (srcs after))
     in
@@ -1129,7 +1129,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
           | (Op.Buffer | Op.Alloc), Param p -> max n (p.slot + 1)
           | _ -> n)
         0
-        (toposort ~calls:Enter sink)
+        (toposort ~calls:Skip sink)
       |> ref
     in
     fun () ->
@@ -1281,7 +1281,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
         | Op.Param, Param p when p.slot <> -1 -> max n (p.slot + 1)
         | _ -> n)
       0
-      (toposort ~calls:Enter sink)
+      (toposort ~calls:Skip sink)
   in
   let sink =
     graph_rewrite ~calls:Skip ~pass:Once
@@ -1430,7 +1430,7 @@ let whole_loop (k : kernel_info) lin (e : estimates) =
       let bounds_only u =
         List.for_all
           (fun v -> (not (is_variable v)) || v == lo || v == hi)
-          (toposort ~calls:Enter u)
+          (toposort ~calls:Skip u)
       in
       let fill = function
         | Int _ as i -> i

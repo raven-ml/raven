@@ -352,7 +352,7 @@ and movement_shape u ps =
   let numbers s =
     List.iter
       (function
-        | Sym d when List.exists is_invalid (toposort ~calls:Enter d) ->
+        | Sym d when List.exists is_invalid (toposort ~calls:Skip d) ->
             invalid_argf "%s of sizes %s, one holding Invalid, which is no number"
               (Op.name (op u)) (repr_shape s)
         | _ -> ())

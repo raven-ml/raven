@@ -135,7 +135,7 @@ let try_compile (ren : Renderer.t) k =
     let lin =
       Codegen.linearize
         (substitute ~calls:Skip ~pass:Fixed_point ast
-           (List.concat_map on_device (toposort ~calls:Enter ast)))
+           (List.concat_map on_device (toposort ~calls:Skip ast)))
         ren
     in
     let uops = List.length (src (nth lin 1)) in
