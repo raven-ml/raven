@@ -2,5 +2,4 @@
  (name rig_nv_abi)
  (public_name rig.nv.abi)
  (libraries rig_edge rig_elf)
- (private_modules defs repr)
- (modules_without_implementation repr))
+ (private_modules defs repr))

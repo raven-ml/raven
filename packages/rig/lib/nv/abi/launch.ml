@@ -84,16 +84,13 @@ let rec config_for bytes = function
 
 let make (g : Gpu.t) (k : Cubin.kernel) =
   let layout =
-    if g.compute_class = Defs.blackwell_compute_b then Defs.qmd_v5
-    else if
-      g.compute_class = Defs.ampere_compute_b
-      || g.compute_class = Defs.ada_compute_a
-    then Defs.qmd_v3
-    else
-      invalid_argf
-        "Launch.make: compute class 0x%x, expected 0x%x, 0x%x or 0x%x"
-        g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
-        Defs.blackwell_compute_b
+    match Repr.layout g with
+    | Some layout -> layout
+    | None ->
+        invalid_argf
+          "Launch.make: compute class 0x%x, expected 0x%x, 0x%x or 0x%x"
+          g.compute_class Defs.ampere_compute_b Defs.ada_compute_a
+          Defs.blackwell_compute_b
   in
   let max_sass_version = (1 lsl layout.sass_version.bits) - 1 in
   if g.sass_version < 0 || g.sass_version > max_sass_version then
@@ -107,7 +104,6 @@ let make (g : Gpu.t) (k : Cubin.kernel) =
         {
           kernel = k;
           gpu = g;
-          layout;
           shared_bytes;
           shared_config = config_for shared_bytes shared_configs;
           max_shared_config;

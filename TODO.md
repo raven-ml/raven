@@ -79,10 +79,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
   copy between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not
   TCP, over the memory `Rig.Buffer.dma` describes
-- rig.nv.abi: `Launch.t = private Repr.launch` exposes `layout : Defs.qmd`
-  through a public type, so nv/abi/defs.ml fails documentation.md's
-  "Generated tables". Make `Launch.t` abstract and have `Qmd` read it
-  through `Repr`
 
 ### tests and runs
 

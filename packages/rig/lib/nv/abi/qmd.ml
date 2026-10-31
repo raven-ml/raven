@@ -103,7 +103,8 @@ let chain_unit = 8
 
 let make (launch : Launch.t) (d : t) =
   let l = (launch :> Repr.launch) in
-  let q = l.layout and k = l.kernel in
+  (* Launch.make refused every class without a layout. *)
+  let q = Option.get (Repr.layout l.gpu) and k = l.kernel in
   let w = { b = Bytes.make q.bytes '\000'; patches = [] } in
   let set f v = write w.b f v in
   let prefetch = q.program_prefetch_size in
