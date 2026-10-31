@@ -3,15 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Hostile bytes give values or an Error (the RFC's second law). The corpus
-   is the files astropy wrote (gen/fixtures.py): images of every format,
-   tiles of every codec and dither, and binary and ASCII tables with every
-   TFORM code; and cuts of files the archives wrote
-   (../support/survey/README.md): pipeline headers with CONTINUE and HIERARCH records, cfitsio's Rice, gzip
-   and HCOMPRESS tiles, IDL's and STIL's tables, heap arrays, an ASCII table
-   and random groups. A byte changed in each region where a decoder path
-   reads, and a file cut around each of its boundaries, are read by every
-   reader: none may raise. *)
+(* Every reader gives values or an Error on any bytes, never an exception.
+   The corpus is the files astropy wrote (gen/fixtures.py): images of every
+   format, tiles of every codec and dither, and binary and ASCII tables
+   with every TFORM code; and cuts of files the archives wrote
+   (../support/survey/README.md): pipeline headers with CONTINUE and
+   HIERARCH records, cfitsio's Rice, gzip and HCOMPRESS tiles, IDL's and
+   STIL's tables, heap arrays, an ASCII table and random groups. A byte
+   changed in each region where a decoder path reads, and a file cut
+   around each of its boundaries, are read by every reader: none may
+   raise. *)
 
 open Windtrap
 open Ymir_fits
