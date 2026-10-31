@@ -2182,11 +2182,24 @@ let lerp a b w =
       E.(where (w < half) (fma w d a) (fma (w - one) d b)))
 
 (* [sqrt (x^2 + y^2)] with nothing overflowing: at float32, the squares summed
-   at float64, which holds them; at float64, [m sqrt (1 + (n / m)^2)] for the
-   larger magnitude [m] and the smaller [n], zero for two zeros. An infinity
-   where either is, even beside a NaN. Where a constant is selected, the
-   general form reads [1] for each operand, so that its derivative, singular
-   there, does not reach the gradient. *)
+   at float64, which holds them; at float64, [s sqrt ((x / s)^2 + (y / s)^2)]
+   for the larger magnitude [s], zero for two zeros. An infinity where either
+   is, even beside a NaN. Where a constant is selected, the general form reads
+   [1] for each operand, so that its derivative, singular there, does not reach
+   the gradient.
+
+   The float64 form is [sqrt (x^2 + y^2)] whatever [s] is, so its derivatives
+   along [s] vanish at every order and [s]'s kink where [|x| = |y|] reaches no
+   derivative: the second derivative there is hypot's, [y^2 / r^3] along [x]
+   twice. The larger magnitude's ratio, exactly [1], is the fma's addend, so
+   the result rounds bit for bit as [s sqrt (1 + (n / s)^2)] for the smaller
+   [n].
+
+   A ratio's derivative is [1 / s], which overflows where [s] is subnormal.
+   There the operands are scaled by [2^600] into the normal range and the sum
+   of their squares formed, whose derivatives stay in range; [2^-600] scales the
+   root back. This rounds twice, so a result there may differ from the ratio
+   form's by one subnormal unit. *)
 let hypotenuse (type w) (w : (float, w) D.t) x y =
   let lit = E.const w in
   let ax = E.abs x and ay = E.abs y in
@@ -2201,9 +2214,19 @@ let hypotenuse (type w) (w : (float, w) D.t) x y =
         let x = E.cast D.Float64 ax and y = E.cast D.Float64 ay in
         E.(cast w (sqrt (fma x x (y * y))))
     | _ ->
-        let m = E.maximum ax ay in
-        let r = E.(minimum ax ay / m) in
-        E.(m * sqrt (fma r r (lit 1.)))
+        let one = lit 1. in
+        let s = E.maximum ax ay in
+        let tiny = E.(s < lit 0x1p-1022) in
+        let pick v = E.(where tiny one v) in
+        let s = pick s and rx = pick ax and ry = pick ay in
+        let u = E.(rx / s) and v = E.(ry / s) in
+        let ratio =
+          E.(s * sqrt (where (rx < ry) (fma u u (v * v)) (fma v v (u * u))))
+        in
+        let up v = E.(where tiny v one * lit 0x1p600) in
+        let sx = up ax and sy = up ay in
+        let scaled = E.(sqrt (fma sx sx (sy * sy)) * lit 0x1p-600) in
+        E.(where tiny scaled ratio)
   in
   E.(where infinite (lit Float.infinity) (where zeros (lit 0.) h))
 

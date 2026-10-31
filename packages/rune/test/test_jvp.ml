@@ -55,9 +55,15 @@ let differences ~msg g x t d =
           (Float.abs (d -. fd)))
     d
 
+let cover_values c xs =
+  match c.values with
+  | Ties _ -> cover "magnitudes that tie" (tied xs)
+  | Uniform _ | Spaced _ | Zeros _ | Kinks -> ()
+
 let law c (s, xs, ts) =
   if c.empty then cover "a zero-size shape" (numel s = 0);
   cover "a shape of several elements" (numel s > 1);
+  cover_values c xs;
   let x = Nx.create f64 s xs and t = Nx.create f64 s ts in
   let y, dy = Rune.jvp' c.f x t in
   equal ~msg:"primal" bits_t (bits (c.f x)) (bits y);
@@ -71,6 +77,7 @@ let law c (s, xs, ts) =
 let second_law c (s, xs, ts) =
   if c.empty then cover "a zero-size shape" (numel s = 0);
   cover "a shape of several elements" (numel s > 1);
+  cover_values c xs;
   let x = Nx.create f64 s xs and t = Nx.create f64 s ts in
   let u = Nx.create f64 s (spread (Array.fold_left ( +. ) 0.5 ts) (numel s)) in
   let along_u x = snd (Rune.jvp' c.f x u) in
@@ -209,6 +216,27 @@ let kinks =
           (fun (a, b) -> Nx.hypot a b)
           (v [| 1.; -2. |], v [| 1.; 2. |])
           (v [| 1.; 1. |], v [| 2.; 2. |]));
+    (* hypot is smooth there: its second derivative along [u] then [t] is [u H
+       t], [H = [[y²; -xy]; [-xy; x²]] / r³], [1 / (2 √2)] at [(1, 1)] along
+       [x] twice and [1 / (4 √2)] at [(-2, 2)] along [x] then [y]. *)
+    row "hypot's second derivative where its operands' magnitudes tie"
+      [| r /. 2.; r /. 4. |]
+      (fun () ->
+        let u = (v [| 1.; 1. |], v [| 0.; 0. |]) in
+        along2
+          (fun xy ->
+            snd (Rune.jvp (two ()) T.tensor (fun (a, b) -> Nx.hypot a b) xy u))
+          (v [| 1.; -2. |], v [| 1.; 2. |])
+          (v [| 1.; 0. |], v [| 0.; 1. |]));
+    row "magnitude's second derivative where its parts' magnitudes tie"
+      [| r /. 2.; r /. 4. |]
+      (fun () ->
+        let z re im = Nx.complex c128 ~re:(v re) ~im:(v im) in
+        let u = z [| 1.; 1. |] [| 0.; 0. |] in
+        let along_u z = snd (Rune.jvp' (Nx.magnitude f64) z u) in
+        along along_u
+          (z [| 1.; -2. |] [| 1.; 2. |])
+          (z [| 1.; 0. |] [| 0.; 1. |]));
     (* At their jumps and between them. *)
     row "sign, floor, ceil, round and trunc" (Array.make 25 0.) (fun () ->
         let x = v [| 0.; -0.; 1.; -1.5; 2.5 |] in

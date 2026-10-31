@@ -32,12 +32,15 @@ let v xs = Nx.create f64 [| Array.length xs |] xs
    crosses a kink; uniform in a range with one element in three an exact zero of
    either sign; or kinks: ties and zeros of both signs, drawn from six dyadic
    values so that operands meet them together and products and sums of them
-   round exactly. *)
+   round exactly; or ties of magnitudes: two rows of axis 0 of either sign and
+   a magnitude uniform in a range, one element in two of the second row the
+   first row's element or its negation. *)
 type values =
   | Uniform of (float * float) list
   | Spaced of float * float
   | Zeros of float * float
   | Kinks
+  | Ties of float * float
 
 type case = {
   name : string;
@@ -85,6 +88,19 @@ let draw values s =
       array ~size:(constant n)
         (frequency [ (1, of_list [ 0.; -0. ]); (2, float_range lo hi) ])
   | Kinks -> array ~size:(constant n) (of_list [ 0.; -0.; 1.; -1.; 2.; 0.5 ])
+  | Ties (lo, hi) ->
+      let per = n / 2 in
+      let signed =
+        map
+          (fun (neg, m) -> if neg then -.m else m)
+          (pair bool (float_range lo hi))
+      in
+      let* first = array ~size:(constant per) signed in
+      let+ second = array ~size:(constant per) (triple bool bool signed) in
+      let tie j (tied, neg, x) =
+        if not tied then x else if neg then -.first.(j) else first.(j)
+      in
+      Array.append first (Array.mapi tie second)
   | Uniform ranges ->
       let k = List.length ranges in
       let per = if Array.length s = 0 then n else n / Int.max 1 s.(0) in
@@ -98,6 +114,14 @@ let draw values s =
           x :: rest
       in
       map Array.of_list (go 0)
+
+(* Whether a column of two rows of axis 0 ties their magnitudes. *)
+let tied xs =
+  let per = Array.length xs / 2 in
+  let rec go j =
+    j < per && (Float.abs xs.(j) = Float.abs xs.(per + j) || go (j + 1))
+  in
+  go 0
 
 let gen c =
   let open Gen in
@@ -397,11 +421,7 @@ let real_cases =
     binary "atan2" ~values:(Uniform [ (-2., 2.); (0.3, 2.) ]) Nx.atan2;
     binary "maximum" ~values:spaced Nx.maximum;
     binary "minimum" ~values:spaced Nx.minimum;
-    (* Ranges with other ends, so that no draw ties [|x|] and [|y|]: nx composes
-       hypot of the extremes, whose kinks give it a zero second derivative at a
-       tie, where the true one is not zero. The first derivative there is
-       right. *)
-    binary "hypot" ~values:(Uniform [ (0.3, 2.); (0.35, 1.9) ]) Nx.hypot;
+    binary "hypot" ~values:(Ties (0.3, 2.)) Nx.hypot;
     binary "where" ~values:spaced (fun a b ->
         Nx.where (Nx.less a b) (Nx.mul a b) (Nx.sin b));
     case ~shape:(rows 3) "fma" (three Nx.fma);
@@ -823,10 +843,8 @@ let complex_cases =
     z "complex prod" (fun z -> Nx.prod z);
     zz "complex where" (fun a b ->
         Nx.where (Nx.less_s (Nx.real f64 a) 1.17) a b);
-    (* Parts that never tie, as for hypot: the second derivative is wrong at a
-       tie. *)
     case ~shape:(rows 2)
-      ~values:(Uniform [ (0.2, 2.); (0.25, 1.) ])
+      ~values:(Ties (0.2, 2.))
       "magnitude and angle"
       (fun x ->
         let z = complex x in

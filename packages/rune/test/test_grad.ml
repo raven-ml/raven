@@ -142,7 +142,7 @@ let kink_props =
       match c.values with
       | Spaced _ ->
           Some (prop c.name (gen { c with values = Kinks }) (kink_law c))
-      | Uniform _ | Zeros _ | Kinks -> None)
+      | Uniform _ | Zeros _ | Kinks | Ties _ -> None)
     real_cases
 
 (* Finite gradients
@@ -315,6 +315,65 @@ let pairs a = Array.map (fun (c : Complex.t) -> (c.re, c.im)) (Nx.to_array a)
 let close_pairs = array (pair (float 1e-12) (float 1e-12))
 let both (a, b) = Array.append (Nx.to_array a) (Nx.to_array b)
 let two () = T.(pair tensor tensor)
+
+(* hypot's gradient
+
+   [(x / r, y / r)] in both modes wherever [r] is positive and finite: at
+   subnormal, tiny, unit and huge magnitudes, at ties and beside them, and
+   beside a zero or a far smaller operand; for [Nx.magnitude], [x / r - i y /
+   r]. The reference divides operands scaled by a power of two into the normal
+   range, where [Float.hypot] and the quotients keep float64's precision. *)
+
+let hypot_gen =
+  let open Gen in
+  let exponents =
+    [ -1074; -1060; -1040; -1023; -1000; -600; 0; 600; 1000; 1022 ]
+  and ratios = [ 0.; 0x1p-60; 1. /. 3.; 1. -. epsilon_float; 1. ] in
+  (let+ e = of_list exponents
+   and+ m = float_range 1. 1.5
+   and+ k = of_list ratios
+   and+ swap = bool
+   and+ neg_a = bool
+   and+ neg_b = bool in
+   let a = Float.ldexp m e in
+   let b = a *. k in
+   let a = if neg_a then -.a else a and b = if neg_b then -.b else b in
+   if swap then (b, a) else (a, b))
+  |> with_pp (fun ppf (a, b) -> Format.fprintf ppf "x %h, y %h" a b)
+
+let unit_of a b =
+  let s = Float.max (Float.abs a) (Float.abs b) in
+  let c =
+    if s < 0x1p-900 then 0x1p600 else if s > 0x1p900 then 0x1p-600 else 1.
+  in
+  let a = a *. c and b = b *. c in
+  let r = Float.hypot a b in
+  (a /. r, b /. r)
+
+let hypot_law (a, b) =
+  let sub x = x <> 0. && Float.abs x < 0x1p-1022 in
+  cover "a subnormal operand" (sub a || sub b);
+  cover "a tie" (Float.abs a = Float.abs b);
+  cover "a zero" (a = 0. || b = 0.);
+  cover "a magnitude past 2^512"
+    (Float.max (Float.abs a) (Float.abs b) > 0x1p512);
+  let ux, uy = unit_of a b in
+  let near = pair (float 1e-14) (float 1e-14) in
+  let x = v [| a |] and y = v [| b |] in
+  let item t = Nx.item [ 0 ] t in
+  let gx, gy =
+    Rune.grad (two ()) (fun (x, y) -> Nx.sum (Nx.hypot x y)) (x, y)
+  in
+  equal ~msg:"grad" near (ux, uy) (item gx, item gy);
+  let along t =
+    item
+      (snd (Rune.jvp (two ()) T.tensor (fun (x, y) -> Nx.hypot x y) (x, y) t))
+  in
+  let zero = v [| 0. |] and one = v [| 1. |] in
+  equal ~msg:"jvp" near (ux, uy) (along (one, zero), along (zero, one));
+  let g = Rune.grad' (fun z -> Nx.sum (Nx.magnitude f64 z)) (z a b) in
+  let c : Complex.t = Nx.item [ 0 ] g in
+  equal ~msg:"magnitude's grad" near (ux, -.uy) (c.re, c.im)
 
 (* The gradient of a real [f] of [z = x + iy] is [∂f/∂x - i ∂f/∂y], and a
    pullback applies [f'(z)] to its cotangent. *)
@@ -1329,6 +1388,7 @@ let () =
          group "complex adjoint" complex_props;
          group "jacrev' is jacfwd' at ties and zeros" kink_props;
          group "finite gradients of composed functions" finite_cases;
+         prop "hypot's gradient is (x / r, y / r)" hypot_gen hypot_law;
          group "conventions"
            [
              test "complex gradients" test_complex;

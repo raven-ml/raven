@@ -1045,6 +1045,15 @@ let c1m () =
   let re, im = f1m_above () in
   on_host (Nx.complex D.Complex64 ~re ~im)
 
+(* [f1m_above] at float64, and its complex128 value. *)
+let d1m_above () =
+  let x, y = f1m_above () in
+  (on_host (Nx.cast D.Float64 x), on_host (Nx.cast D.Float64 y))
+
+let z1m () =
+  let re, im = d1m_above () in
+  on_host (Nx.complex D.Complex128 ~re ~im)
+
 let h1m () = on_host (Nx.cast D.Bfloat16 (f1m ()))
 let m1024 () = Nx.reshape [| 1024; 1024 |] (f1m ())
 
@@ -1115,12 +1124,16 @@ let frontend_rows =
       Thumper.bench_with_setup "rsqrt-f32-1M" ~setup:above1m Nx.rsqrt;
       Thumper.bench_with_setup "hypot-f32-1M" ~setup:f1m_above (fun (x, y) ->
           Nx.hypot x y);
+      Thumper.bench_with_setup "hypot-f64-1M" ~setup:d1m_above (fun (x, y) ->
+          Nx.hypot x y);
       Thumper.bench_with_setup "asinh-f32-1M" ~setup:f1m Nx.asinh;
       Thumper.bench_with_setup "acosh-f32-1M" ~setup:above1m Nx.acosh;
       Thumper.bench_with_setup "atanh-f32-1M" ~setup:f1m Nx.atanh;
       Thumper.bench_with_setup "real-c64-1M" ~setup:c1m (Nx.real D.Float32);
       Thumper.bench_with_setup "magnitude-c64-1M" ~setup:c1m
         (Nx.magnitude D.Float32);
+      Thumper.bench_with_setup "magnitude-c128-1M" ~setup:z1m
+        (Nx.magnitude D.Float64);
       Thumper.bench_with_setup "angle-c64-1M" ~setup:c1m (Nx.angle D.Float32);
       Thumper.bench_with_setup "complex-c64-1M" ~setup:f1m_above
         (fun (re, im) -> Nx.complex D.Complex64 ~re ~im);

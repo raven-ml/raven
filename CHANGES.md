@@ -3186,6 +3186,12 @@ thread.
 
 ### Nx
 
+- The second derivative of `Nx.hypot x y` and `Nx.magnitude` computed at
+  float64 is right where `|x| = |y|`, where it was zero, and the tangent is
+  right where both magnitudes are subnormal. The gradient at a NaN operand is
+  NaN, as the forward tangent is, where it was zero. Values are unchanged
+  except where both magnitudes are subnormal, where about one result in 120
+  differs by one subnormal unit.
 - Eager operations allocate fewer words per call: `Nx.reshape` and
   `Nx.slice` about a third of what they did, `Nx.sum`, `Nx.cumsum` and
   `Nx.take` about half, composites such as `Nx.unique` about two thirds.
