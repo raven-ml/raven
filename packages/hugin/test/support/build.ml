@@ -103,7 +103,7 @@ let block size parts =
   in
   (List.rev offsets, cat parts)
 
-let file tables =
+let file ?(version = 0x00010000) tables =
   let tables = List.sort compare tables in
   let n = List.length tables in
   let pad s = s ^ String.make ((4 - (String.length s mod 4)) mod 4) '\000' in
@@ -116,7 +116,7 @@ let file tables =
       (12 + (16 * n), "", "")
       tables
   in
-  cat [ be32 0x00010000; be16 n; be16 0; be16 0; be16 0; records; data ]
+  cat [ be32 version; be16 n; be16 0; be16 0; be16 0; records; data ]
 
 type point = { x : int; y : int; on : bool }
 
@@ -287,6 +287,117 @@ let tiny_file ?(tables = []) ?(cmap = cmap_12 [ (0x41, 0x41, 1) ])
 
 let square = [ on 0 0; on 100 0; on 100 100; on 0 100 ]
 
+(* CFF and CFF2 fonts *)
+
+(* An INDEX of [items] with four-byte offsets, its count in [count] bytes: 2
+   for CFF, 4 for CFF2. *)
+let cff_index ?(count = 2) items =
+  let n = List.length items in
+  let head = if count = 2 then be16 n else be32 n in
+  if n = 0 then head
+  else
+    let offsets =
+      List.fold_left
+        (fun acc i -> (List.hd acc + String.length i) :: acc)
+        [ 1 ] items
+      |> List.rev
+    in
+    cat ([ head; "\004" ] @ List.map be32 offsets @ items)
+
+(* A DICT operand in five bytes, so that a DICT's length does not depend on
+   it. *)
+let dict_int v = "\029" ^ be32 v
+
+(* A name-keyed CFF table of [charstrings], with the global subroutines
+   [gsubrs] and the local ones [subrs]. *)
+let cff_table ?(gsubrs = []) ?(subrs = []) charstrings =
+  let top cs size off =
+    cat [ dict_int cs; "\017"; dict_int size; dict_int off; "\018" ]
+  in
+  let names = cff_index [ "T" ] and strings = cff_index [] in
+  let globals = cff_index gsubrs in
+  let tops = cff_index [ top 0 0 0 ] in
+  let at =
+    4 + String.length names + String.length tops + String.length strings
+    + String.length globals
+  in
+  let chars = cff_index charstrings in
+  (* The Private DICT names its subroutines right after it. *)
+  let priv = if subrs = [] then "" else dict_int 6 ^ "\019" in
+  let priv_at = at + String.length chars in
+  cat
+    [
+      "\001\000\004\004";
+      names;
+      cff_index [ top at (String.length priv) priv_at ];
+      strings;
+      globals;
+      chars;
+      priv;
+      cff_index subrs;
+    ]
+
+(* A CFF2 table of [charstrings], with the local subroutines [subrs] and, if
+   [regions] is given, a VariationStore of one ItemVariationData of that many
+   regions. *)
+let cff2_table ?regions ?(subrs = []) charstrings =
+  let index = cff_index ~count:4 in
+  let top ~vs cs fd =
+    cat
+      ([ dict_int cs; "\017"; dict_int fd; "\012\036" ]
+      @ match regions with None -> [] | Some _ -> [ dict_int vs; "\024" ])
+  in
+  let top_len = String.length (top ~vs:0 0 0) in
+  let globals = index [] in
+  let store =
+    match regions with
+    | None -> ""
+    | Some k ->
+        let region = cat [ be16 0; be16 0x4000; be16 0x4000 ] in
+        let list = cat ([ be16 1; be16 k ] @ List.init k (fun _ -> region)) in
+        let ivd = cat ([ be16 0; be16 0; be16 k ] @ List.init k be16) in
+        let ivs =
+          let ivd_at = 12 + String.length list in
+          cat [ be16 1; be32 12; be16 1; be32 ivd_at; list; ivd ]
+        in
+        be16 (String.length ivs) ^ ivs
+  in
+  let vs = 5 + top_len + String.length globals in
+  let cs = vs + String.length store in
+  let chars = index charstrings in
+  let fd = cs + String.length chars in
+  let priv = if subrs = [] then "" else dict_int 6 ^ "\019" in
+  let font_dict p = cat [ dict_int (String.length priv); dict_int p; "\018" ] in
+  let fds = index [ font_dict 0 ] in
+  let priv_at = fd + String.length fds in
+  cat
+    [
+      "\002\000\005";
+      be16 top_len;
+      top ~vs cs fd;
+      globals;
+      store;
+      chars;
+      index [ font_dict priv_at ];
+      priv;
+      index subrs;
+    ]
+
+(* [cff_file ~cff2 ~glyphs outlines] is an OpenType font of the CFF or CFF2
+   table [outlines], which must hold [glyphs] charstrings, with the tables of
+   {!tiny_file} other than its outlines. *)
+let cff_file ?(cff2 = false) ~glyphs outlines =
+  let tiny = tiny_file (List.init glyphs (fun _ -> "")) in
+  let copy tag =
+    let r, off = table tiny tag in
+    (tag, String.sub tiny off (get_u32 tiny (r + 12)))
+  in
+  let tables = List.map copy [ "head"; "hhea"; "hmtx"; "cmap" ] in
+  file ~version:0x4F54544F
+    (((if cff2 then "CFF2" else "CFF "), outlines)
+    :: ("maxp", be32 0x00005000 ^ be16 glyphs)
+    :: tables)
+
 (* Component flags *)
 let words = 0x1
 let xy = 0x2
@@ -454,9 +565,10 @@ let checksum s off len =
 
 (* [check_sfnt data] fails unless [data] has a table directory with its binary
    search fields, tables in increasing order of tags at aligned offsets inside
-   the file, every checksum and [head]'s checksum adjustment right, [loca] and
-   [hmtx] the length [maxp] and [hhea] give them, left side bearings at each
-   glyph's [xMin], character map subtables of their stated length, and a [post]
+   the file, every checksum and [head]'s checksum adjustment right, [hmtx] the
+   length [maxp] and [hhea] give it, and either [loca] that length too and left
+   side bearings at each glyph's [xMin], or a [CFF ] table and [maxp] 0.5 for
+   CFF outlines, character map subtables of their stated length, and a [post]
    table of its version's length. *)
 let check_sfnt data =
   let fail fmt = Windtrap.failf ("not an OpenType file: " ^^ fmt) in
@@ -502,30 +614,40 @@ let check_sfnt data =
   in
   let head, _ = find "head" and maxp, _ = find "maxp" in
   let hhea, _ = find "hhea" and hmtx, hmtx_len = find "hmtx" in
-  let loca, loca_len = find "loca" and glyf, glyf_len = find "glyf" in
   let glyphs = get_u16 data (maxp + 4) in
-  let long = get_u16 data (head + 50) = 1 in
-  if loca_len <> (glyphs + 1) * if long then 4 else 2 then fail "'loca' length";
-  let offset g =
-    if long then get_u32 data (loca + (4 * g))
-    else 2 * get_u16 data (loca + (2 * g))
-  in
-  if offset glyphs <> glyf_len then fail "'loca' ends at %d" (offset glyphs);
   let metrics = get_u16 data (hhea + 34) in
   if
     metrics < 1 || metrics > glyphs
     || hmtx_len <> (4 * metrics) + (2 * (glyphs - metrics))
   then fail "'hmtx' length";
-  for g = 0 to glyphs - 1 do
-    let lsb =
-      if g < metrics then String.get_int16_be data (hmtx + (4 * g) + 2)
-      else String.get_int16_be data (hmtx + (4 * metrics) + (2 * (g - metrics)))
-    in
-    if
-      offset g + 1 < offset (g + 1)
-      && lsb <> String.get_int16_be data (glyf + offset g + 2)
-    then fail "glyph %d: left side bearing %d" g lsb
-  done;
+  (match get_u32 data 0 with
+  | 0x4F54544F ->
+      (* CFF outlines: a 'CFF ' table and a 'maxp' of version 0.5. *)
+      ignore (find "CFF ");
+      if get_u32 data maxp <> 0x00005000 then fail "'maxp' version"
+  | _ ->
+      let loca, loca_len = find "loca" and glyf, glyf_len = find "glyf" in
+      let long = get_u16 data (head + 50) = 1 in
+      if loca_len <> (glyphs + 1) * if long then 4 else 2 then
+        fail "'loca' length";
+      let offset g =
+        if long then get_u32 data (loca + (4 * g))
+        else 2 * get_u16 data (loca + (2 * g))
+      in
+      if offset glyphs <> glyf_len then
+        fail "'loca' ends at %d" (offset glyphs);
+      for g = 0 to glyphs - 1 do
+        let lsb =
+          if g < metrics then String.get_int16_be data (hmtx + (4 * g) + 2)
+          else
+            String.get_int16_be data
+              (hmtx + (4 * metrics) + (2 * (g - metrics)))
+        in
+        if
+          offset g + 1 < offset (g + 1)
+          && lsb <> String.get_int16_be data (glyf + offset g + 2)
+        then fail "glyph %d: left side bearing %d" g lsb
+      done);
   let cmap, cmap_len = find "cmap" in
   for i = 0 to get_u16 data (cmap + 2) - 1 do
     let off = get_u32 data (cmap + 8 + (8 * i)) in

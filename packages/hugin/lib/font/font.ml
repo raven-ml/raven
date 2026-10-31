@@ -69,8 +69,7 @@ let u32 t i = i32 t i land 0xFFFF_FFFF
 let directory s =
   let file = { s; range = File; off = 0; len = String.length s } in
   (match u32 file 0 with
-  | 0x00010000 | 0x74727565 -> ()
-  | 0x4F54544F -> unsupported "CFF outlines"
+  | 0x00010000 | 0x74727565 | 0x4F54544F -> ()
   | 0x74746366 -> unsupported "font collection"
   | 0x774F4646 | 0x774F4632 -> unsupported "WOFF compression"
   | _ -> malformed "not an OpenType file");
@@ -527,6 +526,9 @@ let composite g t =
 
 type glyphs = { glyf : table; loca : int array }
 
+(* A face's outlines: TrueType's quadratic ones or CFF's cubic ones. *)
+type outlines = Glyf of glyphs | Cff of Cff.t
+
 let shape glyphs g =
   let start = glyphs.loca.(g) and stop = glyphs.loca.(g + 1) in
   if stop = start then Empty
@@ -584,7 +586,7 @@ type t = {
   upem : float;
   glyph_count : int;
   advances : float array;
-  glyphs : glyphs;
+  outlines : outlines;
   ink : float array;
   cmap : cmap;
   kerning : kerning;
@@ -692,26 +694,61 @@ let contours upem (m : Affine.t) ends on xs ys path =
     ends;
   !path
 
-let glyph_outline glyphs upem g =
-  let rec emit g m path =
-    match shape glyphs g with
-    | Empty -> path
-    | Simple { ends; on; xs; ys } -> contours upem m ends on xs ys path
-    | Composite cs ->
-        List.fold_left (fun path (c, cm) -> emit c Affine.(m * cm) path) path cs
+(* A CFF outline's points, in font units with y up, are mapped as TrueType's
+   are. A contour starts at its first segment, so that a [moveto] that draws
+   nothing leaves no subpath. *)
+let cff_outline ?(check = false) cff upem g =
+  (* [0. -. y] keeps the baseline at [0.] rather than [-0.]. *)
+  let pt x y = P2.v (x /. upem) ((0. -. y) /. upem) in
+  let path = ref Path.empty and start = ref None in
+  let draw () =
+    Option.iter (fun p -> path := Path.move_to p !path) !start;
+    start := None
   in
-  emit g Affine.id Path.empty
+  (if check then Cff.check else Cff.run)
+    cff g
+    {
+      move = (fun x y -> start := Some (pt x y));
+      line =
+        (fun x y ->
+          draw ();
+          path := Path.line_to (pt x y) !path);
+      curve =
+        (fun xa ya xb yb x y ->
+          draw ();
+          path := Path.cubic_to (pt xa ya) (pt xb yb) (pt x y) !path);
+      close =
+        (fun () ->
+          if Option.is_none !start then path := Path.close !path;
+          start := None);
+    };
+  !path
+
+let glyph_outline outlines upem g =
+  match outlines with
+  | Cff cff -> cff_outline cff upem g
+  | Glyf glyphs ->
+      let rec emit g m path =
+        match shape glyphs g with
+        | Empty -> path
+        | Simple { ends; on; xs; ys } -> contours upem m ends on xs ys path
+        | Composite cs ->
+            List.fold_left
+              (fun path (c, cm) -> emit c Affine.(m * cm) path)
+              path cs
+      in
+      emit g Affine.id Path.empty
 
 let outline f g =
   check_glyph "outline" f g;
-  glyph_outline f.glyphs f.upem g
+  glyph_outline f.outlines f.upem g
 
 (* The ink boxes of glyphs [0] to [n - 1], four floats each, [minx], [miny],
    [maxx] and [maxy], or four NaNs for a glyph without ink. *)
-let inks glyphs upem n =
+let inks outline n =
   let ink = Array.make (4 * n) Float.nan in
   for g = 0 to n - 1 do
-    match Path.bounds (glyph_outline glyphs upem g) with
+    match Path.bounds (outline g) with
     | None -> ()
     | Some b ->
         ink.(4 * g) <- Box2.minx b;
@@ -821,30 +858,41 @@ let decode s =
     Array.init glyph_count (fun g ->
         float (u16 hmtx (4 * Int.min g (hmetrics - 1))) /. upem)
   in
-  let glyf =
-    match find "glyf" with
-    | Some t -> t
-    | None -> unsupported "no 'glyf' outlines"
+  let truetype glyf =
+    let loca = need "loca" in
+    let long =
+      match i16 head 50 with
+      | 0 -> false
+      | 1 -> true
+      | f -> malformed "'head': loca format %d" f
+    in
+    let loca =
+      Array.init (glyph_count + 1) (fun i ->
+          if long then u32 loca (4 * i) else 2 * u16 loca (2 * i))
+    in
+    for i = 0 to glyph_count - 1 do
+      if loca.(i + 1) < loca.(i) then
+        malformed "'loca': offsets not in increasing order"
+    done;
+    if loca.(glyph_count) > glyf.len then
+      malformed "'loca': glyph data past the 'glyf' table";
+    let glyphs = { glyf; loca } in
+    validate_glyphs glyphs glyph_count;
+    Glyf glyphs
   in
-  let loca = need "loca" in
-  let long =
-    match i16 head 50 with
-    | 0 -> false
-    | 1 -> true
-    | f -> malformed "'head': loca format %d" f
+  let cff ~cff2 (t : table) =
+    match Cff.decode ~cff2 ~glyphs:glyph_count t.s ~off:t.off ~len:t.len with
+    | c -> Cff c
+    | exception Cff.Malformed m -> malformed "%s" m
+    | exception Cff.Unsupported m -> unsupported "%s" m
   in
-  let loca =
-    Array.init (glyph_count + 1) (fun i ->
-        if long then u32 loca (4 * i) else 2 * u16 loca (2 * i))
+  let outlines =
+    match (find "glyf", find "CFF2", find "CFF ") with
+    | Some t, _, _ -> truetype t
+    | None, Some t, _ -> cff ~cff2:true t
+    | None, None, Some t -> cff ~cff2:false t
+    | None, None, None -> unsupported "no 'glyf', 'CFF ' or 'CFF2' outlines"
   in
-  for i = 0 to glyph_count - 1 do
-    if loca.(i + 1) < loca.(i) then
-      malformed "'loca': offsets not in increasing order"
-  done;
-  if loca.(glyph_count) > glyf.len then
-    malformed "'loca': glyph data past the 'glyf' table";
-  let glyphs = { glyf; loca } in
-  validate_glyphs glyphs glyph_count;
   let cmap = cmap (need "cmap") in
   let kerning =
     match (Option.bind (find "GPOS") gpos, find "kern") with
@@ -881,8 +929,20 @@ let decode s =
       upem;
       glyph_count;
       advances;
-      glyphs;
-      ink = inks glyphs upem glyph_count;
+      outlines;
+      ink =
+        (* Each CFF glyph is run whole once here, and written as a subset
+           writes it, so that later runs and subsets cannot fail. *)
+        (let outline =
+           match outlines with
+           | Cff c -> (
+               fun g ->
+                 try cff_outline ~check:true c upem g with
+                 | Cff.Malformed m -> malformed "%s" m
+                 | Cff.Unsupported m -> unsupported "%s" m)
+           | Glyf _ -> glyph_outline outlines upem
+         in
+         inks outline glyph_count);
       cmap;
       kerning;
       ascent;
@@ -944,6 +1004,7 @@ let bold = bundled Font_data.inter_bold
 (* Identity *)
 
 let bytes f = f.data
+let outlines f = match f.outlines with Glyf _ -> `Truetype | Cff _ -> `Cff
 let equal f f' = f == f' || String.equal f.data f'.data
 let compare f f' = if f == f' then 0 else String.compare f.data f'.data
 let family f = f.family
@@ -981,9 +1042,12 @@ let closure f gs =
   let rec add g =
     if not keep.(g) then begin
       keep.(g) <- true;
-      match shape f.glyphs g with
-      | Composite cs -> List.iter (fun (c, _) -> add c) cs
-      | Empty | Simple _ -> ()
+      match f.outlines with
+      | Glyf glyphs -> (
+          match shape glyphs g with
+          | Composite cs -> List.iter (fun (c, _) -> add c) cs
+          | Empty | Simple _ -> ())
+      | Cff _ -> ()
     end
   in
   add 0;
@@ -1109,8 +1173,8 @@ let cmap_table ms =
 (* The [glyf] and [loca] tables of the first [count] glyphs, those [keep] does
    not flag left empty, and whether [loca] is long. Glyphs start at even
    offsets, as short offsets count words. *)
-let glyf_loca f keep count =
-  let { glyf; loca } = f.glyphs in
+let glyf_loca glyphs keep count =
+  let { glyf; loca } = glyphs in
   let b = Buffer.create 4096 and offsets = Array.make (count + 1) 0 in
   for g = 0 to count - 1 do
     if keep.(g) then begin
@@ -1128,17 +1192,25 @@ let glyf_loca f keep count =
 
 (* The [hmtx] table of the first [count] glyphs, those [keep] does not flag
    without advance, and its number of long metrics: glyphs past them repeat the
-   last advance. A left side bearing is its glyph's [xMin], which every glyph
-   with data has in its first ten bytes, as {!shape} checked. *)
+   last advance. A left side bearing is its glyph's [xMin], which every
+   TrueType glyph with data has in its first ten bytes, as {!shape} checked,
+   and which a CFF glyph's ink gives. *)
 let hmtx_table f keep count ~hmtx ~metrics =
-  let { glyf; loca } = f.glyphs in
   let advance g =
     if keep.(g) then u16 hmtx (4 * Int.min g (metrics - 1)) else 0
   in
   let lsb g =
-    if keep.(g) && loca.(g + 1) > loca.(g) then
-      String.get_int16_be glyf.s (glyf.off + loca.(g) + 2)
-    else 0
+    if not keep.(g) then 0
+    else
+      match f.outlines with
+      | Glyf { glyf; loca } ->
+          if loca.(g + 1) > loca.(g) then
+            String.get_int16_be glyf.s (glyf.off + loca.(g) + 2)
+          else 0
+      | Cff _ ->
+          let minx = f.ink.(4 * g) in
+          if Float.is_nan minx then 0
+          else Float.to_int (Float.round (minx *. f.upem))
   in
   let advances = Array.init count advance in
   let long = ref count in
@@ -1168,13 +1240,13 @@ let checksum s =
   !sum
 
 (* An OpenType file of [tables], tag and data, in increasing order of tags, each
-   padded to four bytes. [head]'s checksum adjustment, zero in [tables], makes
-   the file's checksum [0xB1B0AFBA]. *)
-let font_file tables =
+   padded to four bytes, with the sfnt version [version]. [head]'s checksum
+   adjustment, zero in [tables], makes the file's checksum [0xB1B0AFBA]. *)
+let font_file version tables =
   let n = List.length tables in
   let p, k = binary n in
   let b = Buffer.create 65536 in
-  add_u32 b 0x00010000;
+  add_u32 b version;
   List.iter (add_u16 b) [ n; 16 * p; k; (16 * n) - (16 * p) ];
   let head = ref 0 in
   ignore
@@ -1215,14 +1287,12 @@ let subset f gs =
   (* The tables [decode] required, with the fields it read. *)
   let need tag = Bytes.of_string (copy (Hashtbl.find tables tag)) in
   let head = need "head" and hhea = need "hhea" and maxp = need "maxp" in
-  let glyf, loca, long = glyf_loca f keep count in
   let hmtx, metrics =
     hmtx_table f keep count
       ~hmtx:(Hashtbl.find tables "hmtx")
       ~metrics:(Bytes.get_uint16_be hhea 34)
   in
   Bytes.set_int32_be head 8 0l;
-  Bytes.set_uint16_be head 50 (Bool.to_int long);
   Bytes.set_uint16_be hhea 34 metrics;
   Bytes.set_uint16_be maxp 4 count;
   let post = Bytes.make 32 '\000' in
@@ -1230,22 +1300,48 @@ let subset f gs =
     (fun t -> Bytes.blit_string t.s t.off post 0 (Int.min 32 t.len))
     (find "post");
   Bytes.set_int32_be post 0 0x00030000l;
+  let version, outlines, hinting =
+    match f.outlines with
+    | Glyf glyphs ->
+        let glyf, loca, long = glyf_loca glyphs keep count in
+        Bytes.set_uint16_be head 50 (Bool.to_int long);
+        ( 0x00010000,
+          [ ("glyf", glyf); ("loca", loca) ],
+          [ "cvt "; "fpgm"; "gasp"; "prep" ] )
+    | Cff c ->
+        (* Glyphs dropped are an [endchar] alone. *)
+        let charstrings =
+          Array.init count (fun g ->
+              if keep.(g) then Cff.charstring c g else "\014")
+        in
+        let cff = Cff.table ~name:f.postscript_name charstrings in
+        (0x4F54544F, [ ("CFF ", cff) ], [])
+  in
+  (* CFF outlines take a [maxp] of version 0.5, which holds the count alone. *)
+  let maxp =
+    match f.outlines with
+    | Glyf _ -> Bytes.to_string maxp
+    | Cff _ ->
+        let m = Bytes.create 6 in
+        Bytes.set_int32_be m 0 0x00005000l;
+        Bytes.set_uint16_be m 4 count;
+        Bytes.to_string m
+  in
   let copied =
     List.filter_map
       (fun tag -> Option.map (fun t -> (tag, copy t)) (find tag))
-      [ "OS/2"; "cvt "; "fpgm"; "gasp"; "name"; "prep" ]
+      ([ "OS/2"; "name" ] @ hinting)
   in
   let tables =
-    [
-      ("cmap", cmap_table (mappings f keep));
-      ("glyf", glyf);
-      ("head", Bytes.to_string head);
-      ("hhea", Bytes.to_string hhea);
-      ("hmtx", hmtx);
-      ("loca", loca);
-      ("maxp", Bytes.to_string maxp);
-      ("post", Bytes.to_string post);
-    ]
+    outlines
+    @ [
+        ("cmap", cmap_table (mappings f keep));
+        ("head", Bytes.to_string head);
+        ("hhea", Bytes.to_string hhea);
+        ("hmtx", hmtx);
+        ("maxp", maxp);
+        ("post", Bytes.to_string post);
+      ]
   in
-  font_file
+  font_file version
     (List.sort (fun (a, _) (b, _) -> String.compare a b) (copied @ tables))

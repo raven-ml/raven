@@ -12,7 +12,8 @@
   nx
   windtrap)
  (deps
-  (glob_files golden/*.svg))
+  (glob_files golden/*.svg)
+  ../../font/golden/cff-small.otf)
  (action
   (progn
    (run %{test} --corrected)

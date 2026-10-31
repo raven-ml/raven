@@ -5,12 +5,12 @@
 
 (** OpenType fonts.
 
-    A font is one face of an OpenType file with TrueType outlines, decoded once:
-    its character map, glyph advances, pair kerning, vertical metrics, glyph
-    outlines and their ink boxes. Two faces of {{:https://rsms.me/inter/}Inter}
-    are bundled, {!regular} and {!bold}, so output is the same on every machine
-    without system fonts; other faces load from a file's bytes with {!of_string}
-    or {!of_file}.
+    A font is one face of an OpenType file with TrueType, CFF or CFF2 outlines,
+    decoded once: its character map, glyph advances, pair kerning, vertical
+    metrics, glyph outlines and their ink boxes. Two faces of
+    {{:https://rsms.me/inter/}Inter} are bundled, {!regular} and {!bold}, so
+    output is the same on every machine without system fonts; other faces load
+    from a file's bytes with {!of_string} or {!of_file}.
 
     Fonts are immutable values. Every function of this module is pure, none
     fails on account of a font's data once {!of_string} returned it, and fonts
@@ -65,18 +65,33 @@ type error =
 
 val of_string : string -> (t, error) result
 (** [of_string s] is [Ok f] if [s] is an OpenType font file with TrueType
-    ([glyf]) outlines, and [Error e] otherwise. Decoding reads the tables
-    [head], [hhea], [maxp], [hmtx], [cmap], [loca] and [glyf], and [OS/2],
-    [name], [post], [GPOS] and [kern] when present, and checks all it reads,
-    every glyph outline included, so that later queries cannot fail.
+    ([glyf]), CFF ([CFF ]) or CFF2 ([CFF2]) outlines, and [Error e] otherwise.
+    Decoding reads the tables [head], [hhea], [maxp], [hmtx], [cmap], and
+    [loca] and [glyf] or the CFF table, and [OS/2], [name], [post], [GPOS] and
+    [kern] when present, and checks all it reads, every glyph outline included,
+    so that later queries cannot fail.
+
+    CFF outlines are read as Adobe Technical Notes #5176, {e The Compact Font
+    Format Specification}, and #5177, {e The Type 2 Charstring Format}, state
+    them, and CFF2 outlines as OpenType's [CFF2] table does: their charstrings
+    are run, subroutines included, the argument stack holding at most 48
+    numbers for CFF and 513 for CFF2 and subroutines nesting at most 10 deep.
+    Coordinates are in units of the [head] table's em, whatever the CFF font
+    matrix says, and the result of an arithmetic operator is rounded to a
+    16.16 number.
 
     The error is [Unsupported _] for a valid font that uses what this decoder
-    does not handle, such as CFF or CFF2 outlines, a font collection, or a
-    character map without a Unicode subtable (platform 0, or platform 3 with
-    encoding 1 or 10) of format 4 or 12, and [Malformed _] for anything else,
+    does not handle, such as a font collection, a character map without a
+    Unicode subtable (platform 0, or platform 3 with encoding 1 or 10) of
+    format 4 or 12, a CFF glyph built from two by the deprecated four-argument
+    [endchar], a charstring running the [random] operator, or one whose
+    outline, written as one charstring without subroutines as {!subset} writes
+    it, takes more than 65535 bytes. It is [Malformed _] for anything else,
     which includes a composite glyph whose components, expanded down to simple
-    glyphs, hold more than 65535 points or more than 65535 components. A
-    variable font decodes as its default instance. *)
+    glyphs, hold more than 65535 points or more than 65535 components, a stack
+    or nesting beyond the limits above, and a charstring that runs more than
+    65535 bytes of charstring and subroutine code, the most one charstring
+    holds. A variable font decodes as its default instance. *)
 
 val of_file : string -> (t, error) result
 (** [of_file path] is [of_string s] for the contents [s] of the file [path], or
@@ -93,6 +108,10 @@ val pp_error : Format.formatter -> error -> unit
 val bytes : t -> string
 (** [bytes f] is an OpenType file holding exactly the face of [f]. For a font
     from {!of_string} it is the string decoded. PDF and SVG output embed it. *)
+
+val outlines : t -> [ `Truetype | `Cff ]
+(** [outlines f] is the format of the outlines of [f]: [`Truetype] for
+    quadratic [glyf] outlines and [`Cff] for cubic CFF or CFF2 ones. *)
 
 val equal : t -> t -> bool
 (** [equal f f'] is [String.equal (bytes f) (bytes f')]. *)
@@ -151,11 +170,15 @@ val subset : t -> glyph list -> string
     - It has no kerning: runs place its glyphs, so it holds no [GPOS], [kern] or
       other layout table.
 
-    The subset holds the tables [head], [hhea], [maxp], [hmtx], [cmap], [loca],
-    [glyf] and [post], without glyph names, and the [OS/2] and [name] tables of
-    [f] and its hinting tables [cvt ], [fpgm], [prep] and [gasp] when it has
-    them. It depends only on [f] and the set of glyphs [gs]: their order and
-    repetitions do not change a byte.
+    The subset holds the tables [head], [hhea], [maxp], [hmtx], [cmap] and
+    [post], without glyph names, and the [OS/2] and [name] tables of [f] when it
+    has them. Its outlines are in the format of those of [f] ({!outlines}): for
+    TrueType outlines, [loca] and [glyf], with the hinting tables [cvt ],
+    [fpgm], [prep] and [gasp] of [f] when it has them; for CFF and CFF2
+    outlines, a CID-keyed [CFF ] table whose glyph [i] is CID [i], each
+    outline one charstring without hints or subroutines, which PDF output
+    embeds as an OpenType font program. It depends only on [f] and the set of
+    glyphs [gs]: their order and repetitions do not change a byte.
 
     Raises [Invalid_argument] if a glyph of [gs] is not in
     \[[0];[glyph_count f - 1]\]. *)
@@ -225,9 +248,11 @@ val kerning : t -> glyph -> glyph -> float
 
 val outline : t -> glyph -> Path.t
 (** [outline f g] is the outline of [g], unhinted, to be filled under the
-    nonzero rule. Its quadratic curves are exact, composite glyphs are the union
-    of their transformed components, and a glyph without ink, such as a space,
-    is {!Hugin_gg.Path.empty}. Its ink box is {!ink}. *)
+    nonzero rule. Its quadratic or cubic curves are exact, composite glyphs are
+    the union of their transformed components, and a glyph without ink, such as
+    a space, is {!Hugin_gg.Path.empty}. A CFF contour is closed by a line back
+    to its start, and a [moveto] followed by no segment draws nothing. Its ink
+    box is {!ink}. *)
 
 val ink : t -> glyph -> Box2.t option
 (** [ink f g] is [Path.bounds (outline f g)], the smallest box containing the

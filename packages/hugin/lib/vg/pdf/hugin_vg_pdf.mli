@@ -20,8 +20,12 @@
       for strokes.
     - A glyph run is text shown in the run's font at the run's size, each glyph
       by its glyph id at its position in the run. Each font is embedded once, as
-      a [CIDFontType2] font with the [Identity-H] encoding whose program is the
-      {{!Hugin_font.Font.subset}subset} of the glyphs the page shows, named
+      a CID font with the [Identity-H] encoding whose program is the
+      {{!Hugin_font.Font.subset}subset} of the glyphs the page shows: a
+      [CIDFontType2] font of a TrueType program for TrueType outlines, and a
+      [CIDFontType0] font of an OpenType program ([FontFile3], PDF 1.6) for CFF
+      and CFF2 outlines ({!Hugin_font.Font.outlines}), its CIDs its glyph ids;
+      it is named
       by a tag of six capital letters that depends on the subset. A [ToUnicode]
       map gives each glyph the text it renders, and a run whose text that map
       cannot reproduce, such as one where a glyph renders several characters or

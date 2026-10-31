@@ -85,8 +85,11 @@ let family doc font =
       let bytes = Font.subset font (snd (List.find shown doc.text)) in
       let f = id "f" bytes in
       let b = Buffer.create ((String.length bytes * 4 / 3) + 128) in
+      let mime =
+        match Font.outlines font with `Truetype -> "ttf" | `Cff -> "otf"
+      in
       Printf.bprintf b
-        "<style>@font-face{font-family:%s;src:url(data:font/ttf;base64," f;
+        "<style>@font-face{font-family:%s;src:url(data:font/%s;base64," f mime;
       add_base64 b bytes;
       Buffer.add_string b ")}</style>\n";
       define doc f (Buffer.contents b);

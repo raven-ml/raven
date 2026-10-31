@@ -400,6 +400,23 @@ let leaves =
           equal string
             (Font.subset Font.regular [ glyph 'A'; glyph 'V' ])
             (stream_of doc "/Length1"));
+      test "a run in a CFF font is a CIDFontType0 of an OpenType program"
+        (fun () ->
+          let font =
+            Result.get_ok
+              (Font.of_string
+                 (In_channel.with_open_bin "../../font/golden/cff-small.otf"
+                    In_channel.input_all))
+          in
+          let h = Font.glyph font (Uchar.of_char 'H') in
+          let doc = pdf (typeset_at 50. ~font "H" 10.) in
+          let d = dicts doc in
+          equal ~msg:"CIDFontType0" bool true
+            (contains d "/Subtype /CIDFontType0");
+          equal ~msg:"FontFile3" bool true (contains d "/FontFile3");
+          equal ~msg:"no CIDToGIDMap" bool false (contains d "/CIDToGIDMap");
+          equal string (Font.subset font [ h ])
+            (stream_of doc "/Subtype /OpenType"));
       test "a run off one baseline places each line of glyphs on its own"
         (fun () ->
           let r =

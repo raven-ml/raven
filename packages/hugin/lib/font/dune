@@ -1,7 +1,7 @@
 (library
  (name hugin_font)
  (public_name hugin.font)
- (private_modules font_data)
+ (private_modules font_data cff)
  (libraries hugin_float_text hugin_literal hugin.gg)
  (instrumentation
   (backend ppx_windtrap.coverage))

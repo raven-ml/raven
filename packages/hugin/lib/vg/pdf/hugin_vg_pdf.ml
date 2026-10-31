@@ -616,9 +616,14 @@ let add_font doc u =
   in
   let bytes = Font.subset f glyphs in
   let base = tag bytes ^ "+" ^ pdf_name (Font.postscript_name f) in
+  let cff = match Font.outlines f with `Cff -> true | `Truetype -> false in
   let file =
     add doc
-      (stream ~dict:(Printf.sprintf " /Length1 %d" (String.length bytes)) bytes)
+      (stream
+         ~dict:
+           (if cff then " /Subtype /OpenType"
+            else Printf.sprintf " /Length1 %d" (String.length bytes))
+         bytes)
   in
   let num v =
     let b = Buffer.create 8 in
@@ -635,7 +640,7 @@ let add_font doc u =
       (Printf.sprintf
          "<< /Type /FontDescriptor /FontName /%s /Flags %d /FontBBox [%s %s %s \
           %s] /ItalicAngle %s /Ascent %s /Descent %s /CapHeight %s /StemV %s \
-          /FontFile2 %d 0 R >>"
+          /FontFile%s %d 0 R >>"
          base flags
          (em (Box2.minx bounds))
          (em (-.Box2.maxy bounds))
@@ -646,6 +651,7 @@ let add_font doc u =
          (em (-.Font.descent f))
          (em (Font.cap_height f))
          (num (Float.round stem))
+         (if cff then "3" else "2")
          file)
   in
   let widths = Buffer.create 256 in
@@ -659,10 +665,12 @@ let add_font doc u =
   let cid =
     add doc
       (Printf.sprintf
-         "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /%s /CIDSystemInfo \
+         "<< /Type /Font /Subtype /CIDFontType%s /BaseFont /%s /CIDSystemInfo \
           << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> \
-          /FontDescriptor %d 0 R /DW 1000 /W [%s] /CIDToGIDMap /Identity >>"
-         base descriptor (Buffer.contents widths))
+          /FontDescriptor %d 0 R /DW 1000 /W [%s]%s >>"
+         (if cff then "0" else "2")
+         base descriptor (Buffer.contents widths)
+         (if cff then "" else " /CIDToGIDMap /Identity"))
   in
   let cmap = Buffer.create 1024 in
   Buffer.add_string cmap

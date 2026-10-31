@@ -13,7 +13,8 @@
   lz
   windtrap)
  (deps
-  (glob_files golden/*.pdf.txt))
+  (glob_files golden/*.pdf.txt)
+  ../../font/golden/cff-small.otf)
  (action
   (progn
    (run %{test} --corrected)

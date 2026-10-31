@@ -23,7 +23,8 @@
       to turn off the viewer's ligatures, kerning and other shaping features, so
       that the viewer draws the run's glyphs where the run puts them and the
       text can be searched and copied. Each font is embedded once, by an
-      [@font-face] rule whose source is a data URI of its
+      [@font-face] rule whose source is a data URI, [font/ttf] for TrueType
+      outlines and [font/otf] for CFF ones ({!Hugin_font.Font.outlines}), of its
       {{!Hugin_font.Font.subset}subset} of the glyphs of the picture's runs
       written as text. A run is written as text only if each of its glyphs
       renders one character of the Basic Multilingual Plane, which XML can hold

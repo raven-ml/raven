@@ -79,7 +79,10 @@ let rejected =
   [
     ("an empty string", `Malformed, "", "the file ends before byte 4");
     ("text", `Malformed, "not a font at all, only text", "not an OpenType file");
-    ("CFF outlines", `Unsupported, set_u32 regular_ttf 0 0x4F54544F, "CFF");
+    ( "CFF of version 3",
+      `Unsupported,
+      cff_file ~glyphs:1 "\003\000\004\004",
+      "'CFF ' version 3" );
     ( "a collection",
       `Unsupported,
       set_u32 regular_ttf 0 0x74746366,
@@ -218,6 +221,357 @@ let loading =
           equal string "z" (Format.asprintf "%a" Font.pp_error (Font.Io "z")));
     ]
 
+(* CFF and CFF2 outlines *)
+
+let cff_otf = read "golden/cff.otf"
+let cff2_otf = read "golden/cff2.otf"
+
+(* [expected_outlines file upem] is each glyph's outline that the generator
+   recorded from fontTools, in em with y down. Coordinates are written as
+   multiples of 2⁻¹⁶. A moveto followed by no segment draws nothing. *)
+let expected_outlines file upem =
+  let v s = Float.of_string s /. 65536. in
+  let pt x y = P2.v (v x /. upem) ((0. -. v y) /. upem) in
+  let glyphs = ref [] and path = ref Path.empty and start = ref None in
+  let draw () =
+    Option.iter (fun p -> path := Path.move_to p !path) !start;
+    start := None
+  in
+  let finish () = glyphs := !path :: !glyphs in
+  List.iteri
+    (fun i line ->
+      match String.split_on_char ' ' line with
+      | [ "glyph"; _ ] ->
+          if i > 0 then finish ();
+          path := Path.empty
+      | [ "M"; x; y ] -> start := Some (pt x y)
+      | [ "L"; x; y ] ->
+          draw ();
+          path := Path.line_to (pt x y) !path
+      | [ "C"; x1; y1; x2; y2; x; y ] ->
+          draw ();
+          path := Path.cubic_to (pt x1 y1) (pt x2 y2) (pt x y) !path
+      | [ "Z" ] ->
+          if Option.is_none !start then path := Path.close !path;
+          start := None
+      | [ "" ] -> ()
+      | _ -> failf "%s: line %S" file line)
+    (String.split_on_char '\n' (read file));
+  finish ();
+  Array.of_list (List.rev !glyphs)
+
+(* Charstrings *)
+
+(* [n v] is the number [v] as a charstring writes an integer. *)
+let n v =
+  if v >= -107 && v <= 107 then String.make 1 (Char.chr (v + 139))
+  else "\028" ^ be16 v
+
+(* [fx v] is [v] as a 16.16 number. *)
+let fx v = "\255" ^ be32 (Float.to_int (Float.round (v *. 65536.)))
+
+let ns vs = cat (List.map n vs)
+let rmoveto = "\021"
+let rlineto = "\005"
+let hlineto = "\006"
+let rrcurveto = "\008"
+let hvcurveto = "\031"
+let endchar = "\014"
+let return = "\011"
+let callsubr = "\010"
+let callgsubr = "\029"
+let esc k = "\012" ^ String.make 1 (Char.chr k)
+
+(* A charstring's subroutine number [k] written with the bias of a font of
+   fewer than 1240 subroutines. *)
+let subr k = n (k - 107)
+
+(* [cff_font ?gsubrs ?subrs glyphs] is the CFF font whose glyph 0 is empty and
+   whose glyph [i + 1] is [glyphs.(i)], decoded. *)
+let cff_result ?gsubrs ?subrs glyphs =
+  Font.of_string
+    (cff_file
+       ~glyphs:(List.length glyphs + 1)
+       (cff_table ?gsubrs ?subrs (endchar :: glyphs)))
+
+let cff2_result ?regions ?subrs glyphs =
+  Font.of_string
+    (cff_file ~cff2:true
+       ~glyphs:(List.length glyphs + 1)
+       (cff2_table ?regions ?subrs ("" :: glyphs)))
+
+let cff_font ?gsubrs ?subrs glyphs =
+  require_ok ~pp:Font.pp_error (cff_result ?gsubrs ?subrs glyphs)
+
+let ptf x y = P2.v (x /. 1000.) ((0. -. y) /. 1000.)
+
+(* [shape pts] is the closed polygon through [pts], in font units. *)
+let shape ?(path = Path.empty) pts =
+  match pts with
+  | [] -> path
+  | (x, y) :: rest ->
+      List.fold_left
+        (fun p (x, y) -> Path.line_to (ptf x y) p)
+        (Path.move_to (ptf x y) path)
+        rest
+      |> Path.close
+
+(* Glyphs whose outlines the Type 2 and CFF2 definitions fix. *)
+let charstring_cases =
+  let curve ?(path = Path.empty) start cs =
+    let x0, y0 = start in
+    List.fold_left
+      (fun p ((a, b), (c, d), (e, f)) ->
+        Path.cubic_to (ptf a b) (ptf c d) (ptf e f) p)
+      (Path.move_to (ptf x0 y0) path)
+      cs
+    |> Path.close
+  in
+  [
+    ( "a width before the first moveto is dropped",
+      cat [ ns [ 500; 10; 20 ]; rmoveto; ns [ 30; 0 ]; rlineto; endchar ],
+      shape [ (10., 20.); (40., 20.) ] );
+    ( "hlineto alternates from horizontal",
+      cat [ ns [ 0; 0 ]; rmoveto; ns [ 10; 20; 30 ]; hlineto; endchar ],
+      shape [ (0., 0.); (10., 0.); (10., 20.); (40., 20.) ] );
+    ( "a moveto closes the contour and moves from its last point",
+      cat
+        [
+          ns [ 0; 0 ]; rmoveto; ns [ 10; 0 ]; rlineto; ns [ 5; 5 ]; rmoveto;
+          ns [ 0; 10 ]; rlineto; endchar;
+        ],
+      shape ~path:(shape [ (0., 0.); (10., 0.) ]) [ (15., 5.); (15., 15.) ] );
+    ( "rrcurveto takes 16.16 deltas",
+      cat
+        [
+          ns [ 0; 0 ]; rmoveto; fx 1.5; fx (-2.25); ns [ 3; 4 ]; fx 0.125;
+          ns [ 6 ]; rrcurveto; endchar;
+        ],
+      curve (0., 0.) [ ((1.5, -2.25), (4.5, 1.75), (4.625, 7.75)) ] );
+    ( "hvcurveto ends a last curve by its fifth argument",
+      cat
+        [ ns [ 0; 0 ]; rmoveto; ns [ 10; 20; 30; 40; 5 ]; hvcurveto; endchar ],
+      curve (0., 0.) [ ((10., 0.), (30., 30.), (35., 70.)) ] );
+    ( "hflex returns to its starting y",
+      cat
+        [
+          ns [ 0; 0 ]; rmoveto; ns [ 10; 20; 30; 40; 50; 60; 70 ]; esc 34;
+          endchar;
+        ],
+      curve (0., 0.)
+        [
+          ((10., 0.), (30., 30.), (70., 30.));
+          ((120., 30.), (180., 0.), (250., 0.));
+        ] );
+    ( "flex1 takes its last delta along the longer of its spans",
+      cat
+        [
+          ns [ 0; 0 ]; rmoveto;
+          ns [ 10; 1; 10; 1; 10; 1; 10; 1; 10; 1; 7 ];
+          esc 37;
+          endchar;
+        ],
+      curve (0., 0.)
+        [ ((10., 1.), (20., 2.), (30., 3.)); ((40., 4.), (50., 5.), (57., 0.)) ]
+    );
+    ( "arithmetic results are 16.16 numbers",
+      cat
+        [
+          ns [ 1; 3 ]; esc 12; ns [ 0 ]; rmoveto;
+          ns [ 2 ]; esc 26; ns [ 0 ]; rlineto;
+          ns [ 4; 5 ]; esc 28; esc 11; ns [ 0 ]; esc 28; rlineto;
+          endchar;
+        ],
+      (* 1/3 and √2 round to the nearest 2⁻¹⁶; [4 5 exch sub] is 1. *)
+      let third = Float.round (65536. /. 3.) /. 65536.
+      and root = Float.round (Float.sqrt 2. *. 65536.) /. 65536. in
+      shape [ (third, 0.); (third +. root, 0.); (third +. root, 1.) ] );
+    ( "the stack operators and the transient array",
+      cat
+        [
+          ns [ 7; 0 ]; esc 20; ns [ 1; 2; 3; 3; 1 ]; esc 30; esc 18; rmoveto;
+          ns [ 0 ]; esc 21; ns [ 0 ]; rlineto;
+          ns [ 1; 2; 5; 4 ]; esc 22; ns [ 9; 1 ]; esc 29; esc 18; rlineto;
+          endchar;
+        ],
+      (* [1 2 3 3 1 roll] is [3 1 2]; [drop] leaves [3 1]. *)
+      shape [ (3., 1.); (10., 1.); (12., 10.) ] );
+    ( "hintmask counts the stems before it, implicit vstems included",
+      cat
+        [
+          ns [ 0; 10; 20; 10 ]; "\018"; ns [ 30; 10; 50; 10 ]; "\019\255";
+          ns [ 0; 0 ]; rmoveto; ns [ 5; 5 ]; rlineto; endchar;
+        ],
+      shape [ (0., 0.); (5., 5.) ] );
+    ( "an endchar alone draws nothing",
+      endchar,
+      Path.empty );
+    ( "a moveto that draws nothing leaves no subpath",
+      cat [ ns [ 5; 5 ]; rmoveto; endchar ],
+      Path.empty );
+  ]
+
+let charstring_case (_, cs, expected) =
+  let f = cff_font [ cs ] in
+  equal path_t expected (Font.outline f 1)
+
+(* Subroutines and their calls. *)
+let subroutine_cases =
+  [
+    ( "a local subroutine draws what it holds",
+      cff_font
+        ~subrs:[ cat [ ns [ 10; 0 ]; rlineto; return ] ]
+        [ cat [ ns [ 0; 0 ]; rmoveto; subr 0; callsubr; endchar ] ],
+      shape [ (0., 0.); (10., 0.) ] );
+    ( "a global subroutine may end the glyph",
+      cff_font
+        ~gsubrs:[ cat [ ns [ 0; 10 ]; rlineto; endchar ] ]
+        [ cat [ ns [ 0; 0 ]; rmoveto; subr 0; callgsubr ] ],
+      shape [ (0., 0.); (0., 10.) ] );
+    ( "subroutines nest ten deep",
+      cff_font
+        ~subrs:
+          (List.init 10 (fun k ->
+               if k = 9 then cat [ ns [ 1; 0 ]; rlineto; return ]
+               else cat [ subr (k + 1); callsubr; return ]))
+        [ cat [ ns [ 0; 0 ]; rmoveto; subr 0; callsubr; endchar ] ],
+      shape [ (0., 0.); (1., 0.) ] );
+  ]
+
+(* Data no font may hold: each raises, at once. *)
+let hostile_cases =
+  let chain k =
+    List.init k (fun i ->
+        if i = k - 1 then return else cat [ subr (i + 1); callsubr; return ])
+  in
+  let call0 = cat [ subr 0; callsubr; endchar ] in
+  [
+    ( "49 arguments",
+      cff_result [ cat [ ns (List.init 49 Fun.id); endchar ] ],
+      `Malformed,
+      "more than 48 arguments" );
+    ( "subroutines nested eleven deep",
+      cff_result ~subrs:(chain 11) [ call0 ],
+      `Malformed,
+      "deeper than 10" );
+    ( "a subroutine calling itself",
+      cff_result ~subrs:[ cat [ subr 0; callsubr ] ] [ call0 ],
+      `Malformed,
+      "deeper than 10" );
+    ( "calls that fan out past 65535 bytes",
+      cff_result
+        ~subrs:
+          (List.init 10 (fun k ->
+               if k = 9 then return
+               else cat (List.init 8 (fun _ -> subr (k + 1) ^ callsubr))))
+        [ call0 ],
+      `Malformed,
+      "more than 65535 bytes" );
+    ( "a call of a missing subroutine",
+      cff_result [ call0 ],
+      `Malformed,
+      "subroutine 0 of 0" );
+    ( "a line before any moveto",
+      cff_result [ cat [ ns [ 1; 1 ]; rlineto; endchar ] ],
+      `Malformed,
+      "before a moveto" );
+    ( "a charstring without endchar",
+      cff_result [ cat [ ns [ 1; 1 ]; rmoveto ] ],
+      `Malformed,
+      "does not end with endchar" );
+    ( "a hint mask past the charstring's end",
+      cff_result [ cat [ ns [ 0; 10 ]; "\001"; "\019" ] ],
+      `Malformed,
+      "hint mask" );
+    ( "a division by zero",
+      cff_result [ cat [ ns [ 1; 0 ]; esc 12; endchar ] ],
+      `Malformed,
+      "divides by zero" );
+    ( "the random operator",
+      cff_result [ cat [ esc 23; endchar ] ],
+      `Unsupported,
+      "random" );
+    ( "an accented glyph built by endchar",
+      cff_result [ cat [ ns [ 0; 0; 65; 97 ]; endchar ] ],
+      `Unsupported,
+      "accented" );
+    ( "514 arguments in CFF2",
+      cff2_result [ ns (List.init 514 (fun _ -> 1)) ],
+      `Malformed,
+      "more than 513 arguments" );
+    ( "a CFF2 blend without a VariationStore",
+      cff2_result [ cat [ ns [ 1; 1 ]; "\016" ] ],
+      `Malformed,
+      "without a VariationStore" );
+    ( "a CFF2 INDEX of 2³² − 1 items",
+      Font.of_string
+        (cff_file ~cff2:true ~glyphs:1
+           (let t = cff2_table [ "" ] in
+            (* The CharStrings INDEX follows the header, Top DICT and the
+               empty global subroutines. *)
+            set_bytes t (5 + 15 + 4) "\255\255\255\255")),
+      `Malformed,
+      "CFF2" );
+    ( "fewer charstrings than glyphs",
+      Font.of_string (cff_file ~glyphs:3 (cff_table [ endchar; endchar ])),
+      `Malformed,
+      "2 charstrings for 3 glyphs" );
+  ]
+
+let cff_outlines =
+  group "CFF outlines"
+    [
+      cases "the outlines of the fixtures are those fontTools decodes"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ("CFF", cff_otf, "golden/cff.expected");
+          ("CFF2", cff2_otf, "golden/cff2.expected");
+        ]
+        (fun (_, data, expected) ->
+          let f = decoded data in
+          equal bool true (Font.outlines f = `Cff);
+          let expected = expected_outlines expected 1000. in
+          equal int (Array.length expected) (Font.glyph_count f);
+          Array.iteri
+            (fun g p ->
+              equal ~msg:(Printf.sprintf "glyph %d" g) path_t p
+                (Font.outline f g))
+            expected);
+      cases "charstrings draw what Type 2 defines" ~id:(fun (n, _, _) -> n)
+        charstring_cases charstring_case;
+      cases "subroutines" ~id:(fun (n, _, _) -> n) subroutine_cases
+        (fun (_, f, expected) -> equal path_t expected (Font.outline f 1));
+      test "a CFF2 blend gives its defaults at the default instance" (fun () ->
+          let f =
+            require_ok ~pp:Font.pp_error
+              (cff2_result ~regions:2
+                 [
+                   cat
+                     [
+                       ns [ 10; 20; 1; 2; 3; 4; 2 ]; "\016"; rmoveto;
+                       ns [ 5; 0 ]; rlineto;
+                     ];
+                 ])
+          in
+          equal path_t (shape [ (10., 20.); (15., 20.) ]) (Font.outline f 1));
+      test "CFF2 ignores an operator it does not know and clears the stack"
+        (fun () ->
+          let f =
+            require_ok ~pp:Font.pp_error
+              (cff2_result
+                 [
+                   cat
+                     [
+                       ns [ 7 ]; "\009"; ns [ 0; 0 ]; rmoveto; ns [ 3; 0 ];
+                       rlineto;
+                     ];
+                 ])
+          in
+          equal path_t (shape [ (0., 0.); (3., 0.) ]) (Font.outline f 1));
+      cases "hostile data raises" ~id:(fun (n, _, _, _) -> n) hostile_cases
+        (fun (_, result, kind, sub) -> is_error kind ~sub result);
+    ]
+
 (* Robustness: [of_string] checks all it reads, so a font it returns answers
    every query. The law runs over fonts with bytes overwritten, from the regular
    face and from two small fonts in which every byte is structure: a GPOS table
@@ -281,6 +635,8 @@ let rich_gpos =
 let seeds =
   [
     ("regular", regular_ttf);
+    ("CFF", read "golden/cff-small.otf");
+    ("CFF2", read "golden/cff2-small.otf");
     ( "GPOS",
       tiny_file
         ~tables:
@@ -1389,10 +1745,12 @@ let outlines =
 
 (* Subsetting *)
 
+let cff_face = decoded cff_otf
+let cff2_face = decoded cff2_otf
+
 let gen_subset =
   let open Gen in
-  let* bold = bool in
-  let f = if bold then Font.bold else Font.regular in
+  let* f = of_list [ Font.regular; Font.bold; cff_face; cff2_face ] in
   let+ gs =
     list ~size:(int_range 0 30) (int_range 0 (Font.glyph_count f - 1))
   in
@@ -1414,6 +1772,7 @@ let subset_keeps (f, gs) =
   let f' = decoded s in
   let n = Font.glyph_count f' in
   cover "a composite" (List.mem eacute gs);
+  cover "CFF outlines" (Font.outlines f = `Cff);
   at_most ~msg:"glyph count" int ~than:(Font.glyph_count f) n;
   at_least ~msg:"glyph count" int ~than:(List.fold_left Int.max 0 gs + 1) n;
   for g = 0 to n - 1 do
@@ -1512,6 +1871,7 @@ let () =
     (run "hugin.font"
        [
          loading;
+         cff_outlines;
          robustness;
          identity;
          metrics;

@@ -252,6 +252,24 @@ let leaves =
             (Font.subset Font.regular [ glyph 'a'; glyph 'b' ])
             (Vg_corpus.of_base64 (String.sub s start (stop - start)));
           equal (list string) [ family; family ] (attrs "font-family" s));
+      test "a CFF font is embedded as font/otf" (fun () ->
+          let font =
+            Result.get_ok
+              (Font.of_string
+                 (In_channel.with_open_bin "../../font/golden/cff-small.otf"
+                    In_channel.input_all))
+          in
+          let s =
+            svg
+              (Picture.glyphs red (P2.v 5. 20.)
+                 (Vg_corpus.typeset ~font "H" 10.))
+          in
+          let uri = ";src:url(data:font/otf;base64," in
+          let start = Option.get (find_from s 0 uri) + String.length uri in
+          let stop = Option.get (find_from s start ")") in
+          equal string
+            (Font.subset font [ Font.glyph font (Uchar.of_char 'H') ])
+            (Vg_corpus.of_base64 (String.sub s start (stop - start))));
       test "a run with a glyph the cmap does not give is outlines" (fun () ->
           let font = Font.regular in
           let r =

@@ -110,6 +110,12 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Font.of_string` reads fonts with CFF and CFF2 outlines, running their
+  Type 2 charstrings with bounded stacks, nesting and work so that a hostile
+  font is rejected, and a variable CFF2 font as its default instance.
+  `Font.outlines` tells the formats apart; `Font.subset` writes a CFF font's
+  subset with a CID-keyed CFF table, which PDF embeds as a `CIDFontType0`
+  OpenType program and SVG as `font/otf`.
 - `legend ~ncol` sets a legend's entries in rows of that many columns, and
   `` `Inside `` takes the middle of each edge and `` `Center `` besides the
   corners (`Hugin.inside`), centring the legend along the edges it does not

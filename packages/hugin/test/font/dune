@@ -7,7 +7,13 @@
   ../../lib/font/fonts/Inter-Regular.ttf
   ../../lib/font/fonts/Inter-Bold.ttf
   golden/cmap.expected
-  golden/kerning.expected)
+  golden/kerning.expected
+  golden/cff.otf
+  golden/cff.expected
+  golden/cff2.otf
+  golden/cff2.expected
+  golden/cff-small.otf
+  golden/cff2-small.otf)
  (action
   (progn
    (run %{test} --corrected)
