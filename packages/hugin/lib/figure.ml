@@ -7,6 +7,7 @@ open Hugin_float_text
 module Text = Hugin_text.Text
 module Picture = Hugin_vg.Picture
 module Scale = Hugin_kit.Scale
+module Stack = Hugin_kit.Stack
 open Common
 open Channel
 
@@ -21,6 +22,7 @@ type binding =
       ch : ('d, 'r) Channel.t;
       imply : 'd Scale.t option;
       guide : bool option;
+      stack : Stack.offset option;
     }
       -> binding
 
@@ -75,6 +77,11 @@ let equal_imply : type d e. d Scale.t option -> e Scale.t option -> bool =
       | None -> false)
   | None, Some _ | Some _, None -> false
 
+let equal_offset (o : Stack.offset) (o' : Stack.offset) =
+  match (o, o') with
+  | `Zero, `Zero | `Expand, `Expand | `Center, `Center -> true
+  | _ -> false
+
 let equal_binding (B b) (B b') =
   String.equal b.role.name b'.role.name
   &&
@@ -84,6 +91,7 @@ let equal_binding (B b) (B b') =
       Channel.equal b.role.range b.ch b'.ch
       && equal_imply b.imply b'.imply
       && Option.equal Bool.equal b.guide b'.guide
+      && Option.equal equal_offset b.stack b'.stack
 
 let equal_mark (m : mark) (m' : mark) =
   String.equal m.kind m'.kind
@@ -277,6 +285,21 @@ let mark_shape fn ?(shape = [||]) bindings =
   List.iter (check_binding fn shape) bindings;
   shape
 
+(* A stacked length has no other end, and only one position stacks. *)
+let check_stacks fn bindings =
+  let stacked (role : _ Role.t) =
+    match find_binding role bindings with
+    | Some (B { stack = Some _; _ }) -> true
+    | _ -> false
+  in
+  let ends (a : _ Role.t) (b : _ Role.t) =
+    if stacked a && Option.is_some (find_binding b bindings) then
+      err fn "%s is stacked and %s is bound" a.name b.name
+  in
+  ends Role.x Role.x2;
+  ends Role.y Role.y2;
+  if stacked Role.x && stacked Role.y then err fn "x and y are both stacked"
+
 let make_mark fn ~name ?reduce ?coord ?shape ?swatch bindings draw =
   let rec distinct = function
     | [] -> ()
@@ -289,6 +312,7 @@ let make_mark fn ~name ?reduce ?coord ?shape ?swatch bindings draw =
   distinct bindings;
   check_ends fn bindings Role.x Role.x2;
   check_ends fn bindings Role.y Role.y2;
+  check_stacks fn bindings;
   let shape = mark_shape fn ?shape bindings in
   { kind = name; reduce; coord; swatch; bindings; draw; shape }
 

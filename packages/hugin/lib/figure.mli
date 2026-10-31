@@ -20,6 +20,8 @@ type binding =
       ch : ('d, 'r) Channel.t;
       imply : 'd Scale.t option;
       guide : bool option;
+      stack : Hugin_kit.Stack.offset option;
+          (** A stacked length, bound to [x] or [y]. *)
     }
       -> binding
 

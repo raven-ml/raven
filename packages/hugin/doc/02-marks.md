@@ -157,6 +157,22 @@ let () =
   |> save "histogram.png"
 ```
 
+With `~stack`, the lengths that share an x are laid end to end in the order
+of their rows, positive ones up from zero and negative ones down, so a matrix
+of three series over four quarters makes four stacked bars. `` `Expand ``
+makes each bar a whole, and `area ~stack` stacks areas the same way:
+
+```ocaml
+let () =
+  let sales = Nx.Rng.uniform ~key:(key 5) Nx.float64 [| 3; 4 |] in
+  rect
+    ~x:(dim ~labels:[| "Q1"; "Q2"; "Q3"; "Q4" |] 1)
+    ~y:(num ~title:"sales" sales)
+    ~fill:(dim ~title:"region" ~labels:[| "north"; "south"; "west" |] 0)
+    ~stack:`Zero ()
+  |> save "stacked.png"
+```
+
 A rect without a y channel spans the whole height of its panel, which
 shades a range of x:
 

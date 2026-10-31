@@ -162,3 +162,25 @@ scales
     (linear (domain -0.1 1.1))
   "color" categorical, read by 0:fill, 1:stroke
     (band (domain (indices (0 "a") (1 "b"))))
+
+stacks
+figure
+  grid root, 1 × 2
+    cell (0, 0)
+      panel 0
+        rect 0
+    cell (0, 1)
+      panel 1
+        area 1
+scales
+  "x" categorical, read by 0:x
+    (band (domain (indices (0 "Q1") (1 "Q2") (2 "Q3") (3 "Q4")))
+     (padding 0.2))
+  "y" quantitative, read by 0:y
+    (linear (domain -5 7))
+  "color" categorical, read by 0:fill, 1:fill
+    (band (domain (indices (0 "north") (1 "south") (2 "west"))))
+  "x" quantitative, read by 1:x
+    (linear (domain 0 30))
+  "y" quantitative, read by 1:y
+    (linear (domain -3.5 3.5))

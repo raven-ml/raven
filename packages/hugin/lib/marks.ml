@@ -100,16 +100,21 @@ let bar_band = Scale.band ~padding:bar_padding ()
    [role]. Quantities are a length, which implies [zero] on their scale, and
    categories a band, which implies [band] if given. *)
 let length : type d r.
-    ?band:string Scale.t -> (d, r) Role.t -> (d, r) channel -> Mark.binding =
- fun ?band role ch ->
+    ?band:string Scale.t ->
+    ?stack:Stack.offset ->
+    (d, r) Role.t ->
+    (d, r) channel ->
+    Mark.binding =
+ fun ?band ?stack role ch ->
   match kind ch with
-  | Some Scale.Quantitative -> on ~imply:(Scale.linear ~zero:true ()) role ch
+  | Some Scale.Quantitative ->
+      on ~imply:(Scale.linear ~zero:true ()) ?stack role ch
   | Some Scale.Categorical -> on ?imply:band role ch
   | Some Scale.Temporal | None -> on role ch
 
-let position ?band role ~alone = function
+let position ?band ?stack role ~alone = function
   | None -> None
-  | Some ch -> Some (if alone then length ?band role ch else on role ch)
+  | Some ch -> Some (if alone then length ?band ?stack role ch else on role ch)
 
 (* [continuous ch] is [true] iff [ch] holds data read by a continuous scale. *)
 let continuous : type d r. (d, r) channel option -> bool = function
@@ -351,14 +356,16 @@ let swatch_area rows =
   let box = Box2.of_pts (P2.v x0.(0) y0.(0)) (P2.v x1.(0) y1.(0)) in
   paint_area rows x0 (Path.rect box)
 
-let area ?x ?y2 ?fill ?opacity ?(curve = Curve.linear) ?fx ?fy ~y () =
+let area ?x ?y2 ?fill ?opacity ?(curve = Curve.linear) ?stack ?fx ?fy ~y () =
+  if Option.is_some stack && Option.is_some y2 then
+    err "area" "stack and y2 are both given";
   let x =
     match x with Some x -> on Role.x x | None -> on Role.x (index (-1))
   in
   make "area" ~swatch:swatch_area
     ([
        Some x;
-       position Role.y ~alone:(Option.is_none y2) (Some y);
+       position Role.y ?stack ~alone:(Option.is_none y2) (Some y);
        opt Role.y2 y2;
        opt Role.fill fill;
        opt Role.opacity opacity;
@@ -391,14 +398,24 @@ let draw_rect rows =
   in
   Picture.group (List.init n cell)
 
-let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?fx ?fy () =
+let rect ?x ?x2 ?y ?y2 ?fill ?stroke ?opacity ?stack ?fx ?fy () =
   (* A band position across a continuous one is a bar. *)
   let bars other = if continuous other then Some bar_band else None in
+  (* A length is a continuous position without its other end. *)
+  let is_length p p2 = continuous p && Option.is_none p2 in
+  let sx, sy =
+    match (stack, is_length x x2, is_length y y2) with
+    | None, _, _ -> (None, None)
+    | Some s, false, true -> (None, Some s)
+    | Some s, true, false -> (Some s, None)
+    | Some _, _, _ ->
+        err "rect" "stack is given and not exactly one of x and y is a length"
+  in
   make "rect" ~reduce:Mark.cells
     ([
-       position Role.x ?band:(bars y) ~alone:(Option.is_none x2) x;
+       position Role.x ?band:(bars y) ?stack:sx ~alone:(Option.is_none x2) x;
        opt Role.x2 x2;
-       position Role.y ?band:(bars x) ~alone:(Option.is_none y2) y;
+       position Role.y ?band:(bars x) ?stack:sy ~alone:(Option.is_none y2) y;
        opt Role.y2 y2;
        opt Role.fill fill;
        opt Role.stroke stroke;

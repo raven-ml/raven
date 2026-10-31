@@ -25,8 +25,11 @@ type t = {
   notes : string list;  (** Problems with the data, for warnings. *)
 }
 
-val summarise : int array -> input list -> Nx.host Nx.bool_t option -> t
-(** [summarise shape inputs filter] is the summary of the [inputs] of a mark of
-    shape [shape], keeping only the rows where [filter] holds, if given. A row
-    missing in an input that does not keep its row is dropped from every other.
-*)
+val summarise :
+  ?stack:Stacked.t -> int array -> input list -> Nx.host Nx.bool_t option -> t
+(** [summarise ~stack shape inputs filter] is the summary of the [inputs] of a
+    mark of shape [shape], keeping only the rows where [filter] holds, if given.
+    A row missing in an input that does not keep its row is dropped from every
+    other. With [stack], the hull of the stacked input is that of the intervals
+    its kept rows cover, stacked over every row that is not dropped, so that
+    each panel's stacks are those it draws. *)

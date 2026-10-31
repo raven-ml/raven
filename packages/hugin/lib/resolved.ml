@@ -852,7 +852,8 @@ let afresh view figure =
   let summary occ pid mask =
     let reads = snd (List.hd (reads_in unfitted pid pid [ occ ])) in
     reading occ.mid (fun () ->
-        Summary.summarise occ.mark.shape (inputs_of groups reads occ) mask)
+        Summary.summarise ?stack:(Stacked.of_mark occ.mark) occ.mark.shape
+          (inputs_of groups reads occ) mask)
   in
   let base =
     List.map (fun (pid, o) -> ((o.mid, pid), summary o pid None)) occs

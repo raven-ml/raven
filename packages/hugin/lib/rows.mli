@@ -29,6 +29,9 @@ type col =
       zero : float option;
           (** On a continuous scale, the normalised value of [0.] clamped into
               its domain. *)
+      start : float array option;
+          (** For a stacked length, the normalised start of each row's
+              interval; [values] holds its end. *)
     }
       -> col
 

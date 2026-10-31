@@ -19,6 +19,7 @@ type binding = Figure.binding
 val bind :
   ?imply:'d Scale.t ->
   ?guide:bool ->
+  ?stack:Hugin_kit.Stack.offset ->
   ('d, 'r) Role.t ->
   ('d, 'r) Channel.t ->
   binding

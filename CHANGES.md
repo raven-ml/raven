@@ -110,6 +110,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `rect ~stack` and `area ~stack` stack bars and areas, and `Mark.bind ~stack`
+  stacks the length of any mark: rows that share the other position and panel
+  are laid end to end, positive and negative lengths apart, with the offsets
+  of `Stack.offset`, and the scale fits the stacked intervals.
 - `dune pkg lock` and `dune build` in a project that depends on raven's
   packages from source build them: `lz`, `rig` and the other packages
   failed with "Module Marks doesn't exist" in a hugin test library.

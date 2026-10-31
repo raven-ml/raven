@@ -1787,6 +1787,175 @@ let areas =
             (page (area ~y:(num ys) ())));
     ]
 
+(* Stacks *)
+
+(* [reference offset columns lengths] is each row's interval, stacked by the
+   definition of [Stack.intervals]: within a column, in row order, the lengths
+   that are not negative upward from [0.] and the negative ones downward, then
+   moved by [offset]. A missing length covers [(nan, nan)]. *)
+let reference offset columns lengths =
+  let n = Array.length lengths in
+  let starts = Array.make n nan and ends = Array.make n nan in
+  let up = Hashtbl.create 8 and down = Hashtbl.create 8 in
+  let get t c = Option.value ~default:0. (Hashtbl.find_opt t c) in
+  Array.iteri
+    (fun r l ->
+      if Float.is_finite l then begin
+        let c = columns.(r) in
+        let t = if l >= 0. then up else down in
+        starts.(r) <- get t c;
+        ends.(r) <- get t c +. l;
+        Hashtbl.replace t c ends.(r)
+      end)
+    lengths;
+  let move r =
+    let c = columns.(r) in
+    let lo = get down c and hi = get up c in
+    match offset with
+    | `Zero -> ()
+    | `Center ->
+        let d = -.(lo +. hi) /. 2. in
+        starts.(r) <- starts.(r) +. d;
+        ends.(r) <- ends.(r) +. d
+    | `Expand ->
+        if hi -. lo > 0. then begin
+          starts.(r) <- (starts.(r) -. lo) /. (hi -. lo);
+          ends.(r) <- (ends.(r) -. lo) /. (hi -. lo)
+        end
+  in
+  for r = 0 to n - 1 do
+    if Float.is_finite lengths.(r) then move r
+  done;
+  (starts, ends)
+
+let pp_offset ppf (o : Stack.offset) =
+  Format.pp_print_string ppf
+    (match o with `Zero -> "zero" | `Expand -> "expand" | `Center -> "center")
+
+(* Long-form rows: each row's x category of three, its panel of two, and its
+   length, some negative, zero or missing. *)
+let gen_stacks =
+  let open Gen in
+  let length =
+    frequency
+      [
+        (6, float_range (-3.) 3.);
+        (1, of_list ~pp:Format.pp_print_float [ 0.; -0.; nan; Float.infinity ]);
+      ]
+  in
+  let* n = int_range 1 9 in
+  let+ xs = array ~size:(constant n) (int_range 0 2)
+  and+ panels = array ~size:(constant n) (int_range 0 1)
+  and+ lengths = array ~size:(constant n) length
+  and+ offset = of_list ~pp:pp_offset [ `Zero; `Expand; `Center ] in
+  (xs, panels, lengths, offset)
+
+(* Law: a stacked y gives each row the interval its column's stack gives it,
+   columns being told apart by x and by panel, and its scale is fitted to the
+   hull of the intervals. *)
+let stack_law (xs, panels, lengths, offset) =
+  let n = Array.length xs in
+  let columns = Array.init n (fun r -> (3 * panels.(r)) + xs.(r)) in
+  let starts, ends = reference offset columns lengths in
+  cover "a negative length" (Array.exists (fun l -> l < 0.) lengths);
+  cover "a dropped row" (Array.exists Float.is_nan starts);
+  cover "a column of two rows"
+    (Array.exists
+       (fun r ->
+         Array.exists
+           (fun r' -> r' <> r && columns.(r') = columns.(r))
+           (Array.init n Fun.id))
+       (Array.init n Fun.id));
+  let m, seen =
+    probe
+      [
+        Mark.bind Role.x (cat ~labels:[| "a"; "b"; "c" |] (i32 xs));
+        Mark.bind ~stack:offset Role.y
+          (num ~scale:(Scale.linear ~nice:false ()) (f64 lengths));
+        Mark.bind Role.fx (cat ~labels:[| "p"; "q" |] (i32 panels));
+      ]
+      (fun r ->
+        let s = Option.get (Mark.scale r `Y Scale.Quantitative) in
+        (Mark.index r, Mark.extent r `Y, s))
+  in
+  ignore (drawn m);
+  let value s u =
+    if Float.is_nan u then nan else Option.get (Scale.invert s u)
+  in
+  let lo = ref infinity and hi = ref neg_infinity in
+  List.iter
+    (fun (index, (a, b), s) ->
+      Array.iteri
+        (fun k r ->
+          let msg = Printf.sprintf "row %d" r in
+          let near = float_rel ~rel:1e-9 ~abs:1e-9 in
+          if Float.is_nan starts.(r) then
+            equal ~msg floats [| nan; nan |] [| a.(k); b.(k) |]
+          else
+            equal ~msg (pair near near) (starts.(r), ends.(r))
+              (value s a.(k), value s b.(k));
+          if not (Float.is_nan a.(k)) then begin
+            lo := Float.min !lo (Float.min a.(k) b.(k));
+            hi := Float.max !hi (Float.max a.(k) b.(k))
+          end)
+        index)
+    !seen;
+  (* A domain of one value normalises it to [0.5]. *)
+  if !lo < !hi then begin
+    cover "a domain fitted to the intervals" true;
+    equal (pair (float 1e-12) (float 1e-12)) (0., 1.) (!lo, !hi)
+  end
+
+let stacks =
+  let bars ?stack () =
+    let v = Nx.create Nx.float64 [| 2; 3 |] [| 1.; -2.; 3.; 2.; 1.; -1. |] in
+    rect ~x:(dim 1) ~y:(num v) ~fill:(dim 0) ?stack ()
+  in
+  let page f = Raster.render ~density:1. (Drawing.renderable (drawn f)) in
+  group "Stacks"
+    [
+      prop "stacked intervals follow Stack.intervals by column and panel"
+        gen_stacks stack_law;
+      test "stacked bars draw the bars of their cumulative sums" (fun () ->
+          let lo = Nx.create Nx.float64 [| 2; 3 |] [| 0.; 0.; 0.; 1.; 0.; 0. |]
+          and hi =
+            Nx.create Nx.float64 [| 2; 3 |] [| 1.; -2.; 3.; 3.; 1.; -1. |]
+          in
+          let explicit =
+            rect ~x:(dim 1) ~y:(num hi) ~y2:(num lo) ~fill:(dim 0) ()
+          in
+          within_one ~msg:"pixels" (page explicit)
+            (page (bars ~stack:`Zero ())));
+      test "a stacked area fills between cumulative sums" (fun () ->
+          let m a = Nx.create Nx.float64 [| 2; 3 |] a in
+          let v = m [| 1.; 2.; 1.; 2.; 1.; 3. |] in
+          let lo = m [| 0.; 0.; 0.; 1.; 2.; 1. |]
+          and hi = m [| 1.; 2.; 1.; 3.; 3.; 4. |] in
+          let scale = Scale.linear ~domain:(0., 4.) () in
+          within_one ~msg:"pixels"
+            (page
+               (area ~y:(num ~scale hi) ~y2:(num ~scale lo) ~fill:(dim 0) ()))
+            (page (area ~y:(num ~scale v) ~fill:(dim 0) ~stack:`Zero ())));
+      test "a stack needs one length" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"exactly one") (fun () ->
+              rect ~x:(dim 0) ~y:(dim 1) ~stack:`Zero ());
+          raises_match (Exn.invalid_arg ~sub:"y2") (fun () ->
+              area ~y:(num (f64 [| 1. |])) ~y2:(num (f64 [| 0. |]))
+                ~stack:`Zero ()));
+      test "only quantities on x or y stack" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"only x and y") (fun () ->
+              Mark.bind ~stack:`Zero Role.opacity (num (f64 [| 1. |])));
+          raises_match (Exn.invalid_arg ~sub:"no quantities") (fun () ->
+              Mark.bind ~stack:`Zero Role.y (dim 0));
+          raises_match (Exn.invalid_arg ~sub:"stacked and y2") (fun () ->
+              Mark.v ~name:"m"
+                [
+                  Mark.bind ~stack:`Zero Role.y (num (f64 [| 1. |]));
+                  Mark.bind Role.y2 (num (f64 [| 0. |]));
+                ]
+                (fun _ -> Picture.empty)));
+    ]
+
 (* Steps *)
 
 let stepped = Scale.linear ~stepped:true ~domain:(0., 10.) ()
@@ -2475,6 +2644,7 @@ let () =
          output;
          reducers;
          areas;
+         stacks;
          steps;
          explicit_ticks;
          dashes;

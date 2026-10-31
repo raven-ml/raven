@@ -35,7 +35,31 @@ let kept_codes keep c =
   done;
   List.sort_uniq Int.compare !codes
 
-let summarise shape inputs filter =
+(* [key_values input] is the values that tell the columns of a stack apart. *)
+let key_values (In i) =
+  match i.lift with
+  | Quantities q -> q.values
+  | Categories c -> Nx.cast Nx.float64 c.codes
+
+(* [intervals shape stack keep inputs] is the index of the stacked input and
+   its starts and ends, [nan] where [keep] does not hold. *)
+let intervals shape (stack : Stacked.t) keep inputs =
+  let find k = List.find_opt (fun (In i) -> i.index = k) inputs in
+  match find stack.stacked with
+  | Some (In { lift = Quantities q; _ }) ->
+      let full t = Nx.broadcast_to shape t in
+      let lengths =
+        Nx.where keep (full q.values) (Nx.full Nx.float64 shape Float.nan)
+      in
+      let keys = List.filter_map find stack.keys |> List.map key_values in
+      let starts, ends =
+        Stacked.intervals stack.offset shape ~lengths ~keys
+      in
+      let t = Nx.create Nx.float64 shape in
+      Some (stack.stacked, t starts, t ends)
+  | Some (In { lift = Categories _; _ }) | None -> None
+
+let summarise ?stack shape inputs filter =
   let numel = Array.fold_left ( * ) 1 shape in
   let full t = Nx.broadcast_to shape t in
   let keep =
@@ -48,6 +72,10 @@ let summarise shape inputs filter =
       (Nx.full Nx.bool shape true)
       inputs
   in
+  let stacked =
+    if numel = 0 then None
+    else Option.bind stack (fun st -> intervals shape st keep inputs)
+  in
   let keep =
     match filter with None -> keep | Some f -> Nx.logical_and keep (full f)
   in
@@ -56,6 +84,11 @@ let summarise shape inputs filter =
     | None -> keep
     | Some m -> Nx.logical_and keep (Nx.logical_not (full m))
   in
+  (* The least and greatest of [v] where [k] holds. *)
+  let hull k v =
+    let pick fill = Nx.where k v (Nx.full_like v fill) in
+    (Nx.min (pick Float.infinity), Nx.max (pick Float.neg_infinity))
+  in
   let hulled =
     if numel = 0 then []
     else
@@ -63,10 +96,18 @@ let summarise shape inputs filter =
         (fun (In i as input) ->
           match i.lift with
           | Quantities q when i.fitted ->
-              let k = kept input and v = full q.values in
-              let lo = Nx.min (Nx.where k v (Nx.full_like v Float.infinity)) in
-              let hi =
-                Nx.max (Nx.where k v (Nx.full_like v Float.neg_infinity))
+              let k = kept input in
+              let lo, hi =
+                match stacked with
+                | Some (j, s, e) when j = i.index ->
+                    (* Piles past [max_float] have no finite hull. *)
+                    let k =
+                      Nx.logical_and k
+                        (Nx.logical_and (Nx.isfinite s) (Nx.isfinite e))
+                    in
+                    let lo, hi = hull k s and lo', hi' = hull k e in
+                    (Nx.minimum lo lo', Nx.maximum hi hi')
+                | _ -> hull k (full q.values)
               in
               Some (i.index, lo, hi)
           | Quantities _ | Categories _ -> None)

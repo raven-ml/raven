@@ -189,6 +189,9 @@ module Dash = Hugin_kit.Dash
 module Curve = Hugin_kit.Curve
 (** Curves through points. *)
 
+module Stack = Hugin_kit.Stack
+(** Stacks: lengths laid end to end. *)
+
 module Stats = Hugin_kit.Stats
 (** Statistics: histograms. *)
 
@@ -467,6 +470,7 @@ val area :
   ?fill:('f, Color.t) channel ->
   ?opacity:('o, float) channel ->
   ?curve:Curve.t ->
+  ?stack:Stack.offset ->
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
   y:('y, float) channel ->
@@ -482,11 +486,18 @@ val area :
       the scale of a length ({!section-merging}).
     - [curve] says how both curves pass through their points, {!Curve.linear} by
       default.
+    - with [stack], the lengths of [y] are stacked ({!Mark.bind}), and each
+      series fills the region between the ends and the starts of its rows'
+      intervals: with [v] of shape [[|k; n|]],
+      [area ~y:(num v) ~fill:(dim 0) ~stack:`Zero ()] lays [k] layers on one
+      another at each of the [n] steps, and [`Center] makes a streamgraph.
 
     A dropped row splits the region, and a series takes its fill and opacity
     from its first row that is not dropped, with a warning if one of them varies
     along it. A legend entry is its box filled. [area ~y:hi ~y2:lo ()] fills a
-    band between two curves. *)
+    band between two curves.
+
+    Raises [Invalid_argument] if [stack] and [y2] are both given. *)
 
 val rect :
   ?x:('x, float) channel ->
@@ -496,6 +507,7 @@ val rect :
   ?fill:('f, Color.t) channel ->
   ?stroke:('s, Color.t) channel ->
   ?opacity:('o, float) channel ->
+  ?stack:Stack.offset ->
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
   unit ->
@@ -514,14 +526,18 @@ val rect :
       ({!section-merging});
     - without [x], the whole panel.
 
-    Likewise along y. It is filled with [fill], or with the accent unless
+    Likewise along y. With [stack], the one of [x] and [y] that is a length is
+    stacked ({!Mark.bind}): with [v] of shape [[|k; n|]],
+    [rect ~x:(dim 1) ~y:(num v) ~fill:(dim 0) ~stack:`Zero ()] draws one bar
+    per column of [v], its [k] rows laid on one another, and [`Expand] makes
+    each bar a whole. It is filled with [fill], or with the accent unless
     [stroke] alone is given, and outlined with [stroke] at the theme's outline
     width. A rectangle is cut at the domain's edges ({!Mark.project}), so the
     outline of one that reaches beyond the domain runs along its edge. Rects are
     reduced by {!Mark.cells}.
 
-    Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y].
-*)
+    Raises [Invalid_argument] if [x2] is given without [x] or [y2] without [y],
+    or if [stack] is given and not exactly one of [x] and [y] is a length. *)
 
 val frame :
   ?stroke:('s, Color.t) channel ->
@@ -1414,10 +1430,12 @@ module Mark : sig
   val bind :
     ?imply:'d Scale.t ->
     ?guide:bool ->
+    ?stack:Stack.offset ->
     ('d, 'r) Role.t ->
     ('d, 'r) channel ->
     binding
-  (** [bind ~imply ~guide r c] binds the channel [c] to the role [r], where:
+  (** [bind ~imply ~guide ~stack r c] binds the channel [c] to the role [r],
+      where:
       - [imply] is the specification whose properties the mark implies on the
         scale [c] reads ({!Hugin.section-merging}), of the kind of [c]'s data;
         its name and transform are ignored, and so is [imply] if [c] is a
@@ -1428,7 +1446,21 @@ module Mark : sig
         legend: [true] that it has one, [false] that it has none. It merges as
         the scale's properties do ({!Hugin.section-merging}): two marks implying
         different values raise in {!resolve}, and an explicit {!axis} or
-        {!legend} overrides both. Unset, it implies nothing. *)
+        {!legend} overrides both. Unset, it implies nothing.
+      - [stack] makes [c], quantities bound to [x] or [y], a {e stacked}
+        length. In each panel the rows that share their value of the mark's
+        other position, [y] for [x] and [x] for [y], and their facet
+        categories form a {e column}, one per panel if the other position is
+        unbound, and the lengths of a column are laid end to end in the order of
+        their rows by {!Stack.intervals} with the offset [stack]: those that are
+        not negative upward from [0.], the negative ones downward. A dropped row
+        ({!Hugin.section-missing}) stacks nothing. The scale [c] reads is fitted
+        to the intervals of the rows, {!extent} gives each row its interval, and
+        {!get}, {!normalized} and {!positions} its end. Unset, [c] is not
+        stacked.
+
+      Raises [Invalid_argument] if [stack] is given and [r] is neither [x] nor
+      [y] or [c] holds no quantities. *)
 
   (** {1:rows Rows}
 
@@ -1506,7 +1538,8 @@ module Mark : sig
   val positions : rows -> float array * float array
   (** [positions rows] is [(us, vs)], row [i] being at the normalised position
       [(us.(i), vs.(i))]: its normalised [x] and [y], [0.5] for a position the
-      mark does not bind and the centre of its band on a band scale. A dropped
+      mark does not bind, the centre of its band on a band scale and the end of
+      its interval for a stacked position ({!bind}). A dropped
       row is at [(nan, nan)], and a position outside the domain is kept. The
       arrays are fresh. *)
 
@@ -1521,6 +1554,8 @@ module Mark : sig
       along x, from [a.(i)] to [b.(i)] in either order:
       - if the mark binds [x2], the hull of the extents of [x] and [x2], each
         its band on a band scale and its value otherwise;
+      - if [x] is stacked ({!bind}), the interval its stack gives the row, from
+        its start to its end;
       - otherwise, if [x] reads a band scale, its band;
       - otherwise, if [x] reads a continuous scale, a {e length}: from the
         normalised value of [0.] clamped into the domain, which is the domain's
@@ -1686,6 +1721,8 @@ module Mark : sig
       - [x2] is bound without [x] or [y2] without [y];
       - [x] and [x2], or [y] and [y2], are bound to one channel of quantities
         and one of categories;
+      - [x] is stacked and [x2] bound, [y] is stacked and [y2] bound, or both
+        [x] and [y] are stacked ({!bind});
       - a channel with a [scale] or a [title] is bound to a role that reads no
         scale, [text] or a {!Role.value};
       - [shape] has a negative dimension;

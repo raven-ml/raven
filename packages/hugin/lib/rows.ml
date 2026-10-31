@@ -23,6 +23,7 @@ type col =
       cats : int array option;
       band : float option;
       zero : float option;
+      start : float array option;
     }
       -> col
 
@@ -51,6 +52,7 @@ let select_col ks (Col c) =
       values = pick c.values ks;
       norm = Option.map (fun a -> pick a ks) c.norm;
       cats = Option.map (fun a -> pick a ks) c.cats;
+      start = Option.map (fun a -> pick a ks) c.start;
     }
 
 let select r ks =
@@ -108,6 +110,7 @@ type position = {
   us : float array;
   band : float option;
   zero : float option;
+  start : float array option;
   scaled : bool;
 }
 
@@ -122,6 +125,7 @@ let position r role : position option =
               us = c.values;
               band = c.band;
               zero = c.zero;
+              start = c.start;
               scaled = Option.is_some c.norm;
             }
       | None -> None)
@@ -175,6 +179,7 @@ let extent r axis =
     | Some p, Some p2 ->
         let a, b = ends p i and a', b' = ends p2 i in
         (Float.min a a', Float.max b b')
+    | Some { start = Some s; us; _ }, None -> (s.(i), us.(i))
     | Some p, None -> (
         match (p.band, p.zero) with
         | Some _, _ -> ends p i

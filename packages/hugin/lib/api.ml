@@ -22,6 +22,7 @@ module Scheme = Hugin_kit.Scheme
 module Symbol = Hugin_kit.Symbol
 module Dash = Hugin_kit.Dash
 module Curve = Hugin_kit.Curve
+module Stack = Hugin_kit.Stack
 module Stats = Hugin_kit.Stats
 
 (* Figures *)

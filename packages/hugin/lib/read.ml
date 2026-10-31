@@ -306,8 +306,8 @@ let area ctx i u =
 
 (* Columns *)
 
-let column ?norm ?fn ?ticks ?cats ?band ?zero role values =
-  Rows.Col { role; values; norm; fn; ticks; cats; band; zero }
+let column ?norm ?fn ?ticks ?cats ?band ?zero ?start role values =
+  Rows.Col { role; values; norm; fn; ticks; cats; band; zero; start }
 
 (* [zero s] is the normalised value of [0.] clamped into the domain of [s]. *)
 let zero (s : float Scale.t) =
@@ -327,7 +327,8 @@ let ticks ctx i =
 (* [scaled ctx ~stroked rd (B b as bd) index sel i] is, if the role of [b] maps
    the scale [i], the column of [b] at the rows [sel] on it, and the rows it
    misses. *)
-let scaled ctx ~stroked rd (B b as bd) index sel i =
+let scaled ?(stack : (float array * float array) option) ctx ~stroked rd
+    (B b as bd) index sel i =
   let (F f as s) = ctx.scales.(i) in
   match base ctx ~stroked b.role.use b.role.range i with
   | None -> None
@@ -336,9 +337,19 @@ let scaled ctx ~stroked rd (B b as bd) index sel i =
       let fn = fn s range missing g in
       match (f.kind, source rd bd index (Some (i, s))) with
       | Quantities, Values v ->
-          let norm = Array.map (Scale.normalize f.scale) (floats rd v sel) in
+          let normalize = Array.map (Scale.normalize f.scale) in
+          let norm, start =
+            match stack with
+            | None -> (normalize (floats rd v sel), None)
+            | Some (starts, ends) ->
+                let n = count rd.mark.shape sel in
+                let at a = Array.init n (fun k -> a.(row_of sel k)) in
+                (normalize (at ends), Some (normalize (at starts)))
+          in
           let zero = zero f.scale in
-          let col = column b.role (Array.map fn norm) ~norm ~fn ~ticks ~zero in
+          let col =
+            column b.role (Array.map fn norm) ~norm ~fn ~ticks ~zero ?start
+          in
           Some (col, Array.map Float.is_nan norm)
       | Categories, Positions p ->
           let ks = ints rd p sel in
@@ -418,17 +429,77 @@ let unscaled ctx rd (B b as bd) index sel =
   | Role.Colors | Role.Symbols | Role.Dashes | Role.Panels | Role.Param _ ->
       err "draw" "the role %s reads no scale" b.role.name
 
+(* [stacked ctx rd st reads] is the starts and ends of the stacked binding of
+   [st] over every row of the mark, its bindings reading the scales [reads]: a
+   row that some binding other than a colour misses is dropped and stacks
+   nothing. *)
+let stacked ctx rd (st : Stacked.t) reads =
+  let shape = rd.mark.shape in
+  let read index =
+    let (B b as bd) = List.nth rd.mark.bindings index in
+    let scale = Option.map (fun i -> (i, ctx.scales.(i))) reads.(index) in
+    let colour = match b.role.range with Role.Colors -> true | _ -> false in
+    (colour, source rd bd index scale)
+  in
+  let sources =
+    List.filter_map
+      (fun index ->
+        let (B b) = List.nth rd.mark.bindings index in
+        Option.map (fun _ -> read index) (data b.ch))
+      (List.init (List.length rd.mark.bindings) Fun.id)
+  in
+  let missing = function
+    | Values v -> Some (Nx.isnan v)
+    | Positions p -> Some (Nx.less_s p 0L)
+    | Codes (_, m) -> m
+  in
+  let keep =
+    List.fold_left
+      (fun keep (colour, src) ->
+        match missing src with
+        | Some m when not colour ->
+            Nx.logical_and keep (Nx.logical_not (Nx.broadcast_to shape m))
+        | _ -> keep)
+      (Nx.full Nx.bool shape true)
+      sources
+  in
+  let key index =
+    match snd (read index) with
+    | Values v -> v
+    | Positions p | Codes (p, _) -> Nx.cast Nx.float64 p
+  in
+  match snd (read st.stacked) with
+  | Values v ->
+      let lengths =
+        Nx.where keep (Nx.broadcast_to shape v)
+          (Nx.full Nx.float64 shape Float.nan)
+      in
+      Some
+        (Stacked.intervals st.offset shape ~lengths
+           ~keys:(List.map key st.keys))
+  | Positions _ | Codes _ -> None
+
 let rows ?only ctx rd ~id projection ~axes ~warn reads sel =
   let m = rd.mark and stroked = stroked rd.mark in
   let n = count m.shape sel in
   let dropped = Array.make n false in
+  let stack = Stacked.of_mark m in
+  let intervals =
+    lazy (Option.bind stack (fun st -> stacked ctx rd st reads))
+  in
   let col index (B b as bd) =
     match Channel.constant b.ch with
     | Some v -> column b.role (Array.make n v)
     | None ->
+        let stack =
+          match stack with
+          | Some st when st.stacked = index -> Lazy.force intervals
+          | _ -> None
+        in
         let col, miss =
           match
-            Option.bind reads.(index) (scaled ctx ~stroked rd bd index sel)
+            Option.bind reads.(index)
+              (scaled ?stack ctx ~stroked rd bd index sel)
           with
           | Some col -> col
           | None -> unscaled ctx rd bd index sel

@@ -212,6 +212,32 @@ let bands () =
       line ~x:step ~y:(num mean) ~stroke:run ();
     ]
 
+(* Stacks: bars of gains and losses per quarter, and a streamgraph of three
+   layers. *)
+
+let stacks () =
+  let quarters = [| "Q1"; "Q2"; "Q3"; "Q4" |] in
+  let teams = [| "north"; "south"; "west" |] in
+  let v =
+    Nx.create Nx.float64 [| 3; 4 |]
+      [| 4.; 3.; -2.; 5.; 2.; -1.; -3.; 2.; 1.; 2.; 1.; -1. |]
+  in
+  let layers =
+    Nx.init Nx.float64 [| 3; 30 |] (fun i ->
+        let t = float i.(1) and k = float i.(0) in
+        1. +. sin ((t /. (4. +. k)) +. k) +. (0.5 *. k))
+  in
+  let team = dim ~title:"team" ~labels:teams 0 in
+  grid
+    [
+      [
+        rect ~x:(dim ~labels:quarters 1) ~y:(num ~title:"change" v) ~fill:team
+          ~stack:`Zero ();
+        area ~x:(index ~title:"week" (-1)) ~y:(num ~title:"load" layers)
+          ~fill:team ~stack:`Center ();
+      ];
+    ]
+
 let paper_theme = Theme.v ~size:8. ()
 let paper_size = Size.figure (Size.mm 180.) (Size.mm 110.)
 
@@ -229,6 +255,7 @@ let goldens =
     ("dashboard", dashboard, Theme.default, default);
     ("paper", paper, paper_theme, paper_size);
     ("bands", bands, Theme.default, default);
+    ("stacks", stacks, Theme.default, default);
   ]
 
 (* Goldens are drawn at one device pixel per point. *)

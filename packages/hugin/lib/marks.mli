@@ -40,6 +40,7 @@ val area :
   ?fill:('f, Color.t) channel ->
   ?opacity:('o, float) channel ->
   ?curve:Curve.t ->
+  ?stack:Stack.offset ->
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
   y:('y, float) channel ->
@@ -54,6 +55,7 @@ val rect :
   ?fill:('f, Color.t) channel ->
   ?stroke:('s, Color.t) channel ->
   ?opacity:('o, float) channel ->
+  ?stack:Stack.offset ->
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
   unit ->
