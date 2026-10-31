@@ -641,28 +641,36 @@ value caml_rig_heap_drop(value unit) {
 /* The runtime's operations of bigarrays, which it exports but declares only
    to itself. A buffer's bigarray is one block made here with the runtime's
    operations but its finaliser. After the array's one dimension the block
-   holds [struct heap_block]: where the bytes were allocated, which may lie
-   before the array's first byte, and the cycles seen ended when it was
-   made. The runtime gives every array it makes over another, a sub, a
-   slice, a reshape, the other's operations and marks it a subarray. Such
-   arrays share a proxy, made at the first ([ensure_proxy]), that names the
+   holds one word ([heap_mark]): the cycles seen ended when it was made, and
+   how many bytes before the array's first byte the bytes were allocated.
+   The runtime gives every array it makes over another, a sub, a slice, a
+   reshape, the other's operations and marks it a subarray. Such arrays
+   share a proxy, made at the first ([ensure_proxy]), that names the
    allocation. The buffer's own array returns its reservation once
    collected, and the last array over the allocation, whichever it is, keeps
    or frees the bytes. */
 extern const struct custom_operations caml_ba_ops;
 
-struct heap_block {
-  void *base;
-  uintnat cycle;
-};
+#define HEAP_BLOCK_BYTES (SIZEOF_BA_ARRAY + 2 * sizeof(intnat))
 
-#define HEAP_BLOCK_BYTES (SIZEOF_BA_ARRAY + sizeof(intnat) + \
-                          sizeof(struct heap_block))
+/* The bits of the mark that hold the offset of the bytes from where they
+   were allocated, below the cycles. The offset is under the alignment:
+   112 at most for a line, under a page on Windows, whose pages are 4 KiB,
+   and 0 for a page elsewhere ([heap_size]). The 48 bits above it count
+   2^48 major cycles before they wrap: 8.9 years at one cycle a
+   microsecond, faster than any major cycle runs. */
+#define HEAP_OFFSET_BITS 16
+#define HEAP_OFFSET_MASK (((uintnat)1 << HEAP_OFFSET_BITS) - 1)
 
 static struct custom_operations heap_ops;
 
-static struct heap_block *heap_block(struct caml_ba_array *b) {
-  return (struct heap_block *)&b->dim[1];
+static uintnat *heap_mark(struct caml_ba_array *b) {
+  return (uintnat *)&b->dim[1];
+}
+
+/* Where [b]'s bytes were allocated, which [free] and [heap_keep] take. */
+static void *heap_base(struct caml_ba_array *b) {
+  return (char *)b->data - (*heap_mark(b) & HEAP_OFFSET_MASK);
 }
 
 /* Buffers from this size start on a page, and the heap keeps them. */
@@ -716,12 +724,12 @@ static void heap_finalize(value v) {
   void *base = NULL;
   size_t size = 0;
   if (!(b->flags & CAML_BA_SUBARRAY)) {
-    struct heap_block *h = heap_block(b);
     intnat n = b->dim[0], f = (intnat)heap_footprint((size_t)n);
+    uintnat made = *heap_mark(b) >> HEAP_OFFSET_BITS;
     atomic_fetch_sub_explicit(&heap_bytes, f, memory_order_relaxed);
-    if (h->cycle < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
+    if (made < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
       atomic_fetch_add_explicit(&heap_collected, f, memory_order_relaxed);
-    base = h->base;
+    base = heap_base(b);
     size = heap_allocated((size_t)n);
   }
   struct caml_ba_proxy *p = b->proxy;
@@ -779,19 +787,19 @@ static value heap_bigarray(void *base, void *data, size_t n) {
   b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED;
   b->proxy = NULL;
   b->dim[0] = (intnat)n;
-  struct heap_block *h = heap_block(b);
-  h->base = base;
-  h->cycle = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
+  uintnat cycle = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
+  *heap_mark(b) =
+      (cycle << HEAP_OFFSET_BITS) | (uintnat)((char *)data - (char *)base);
   return ba;
 }
 
 /* [n] bytes of the C library starting on a multiple of [align], or NULL;
    [*base] is what [free] takes. A page comes from [posix_memalign] where
-   the host has one, a smaller [align] from an allocation [align - 1] bytes
-   larger ([heap_size]): on fudge (Core Ultra 5 235, glibc) [posix_memalign]
-   of 8 bytes on 128 took 33 ns, [malloc] 5.5. */
+   the host has one, a smaller [align] from an allocation [align -
+   MALLOC_ALIGN] bytes larger ([heap_size]): on fudge (Core Ultra 5 235,
+   glibc) [posix_memalign] of 8 bytes on 128 took 33 ns, [malloc] 5.5. */
 static void *heap_malloc(size_t n, size_t align, void **base) {
-  if (align <= 16) return *base = malloc(n);
+  if (align <= MALLOC_ALIGN) return *base = malloc(n);
 #ifndef _WIN32
   if (align >= heap_page) {
     if (posix_memalign(base, align, n) != 0) return *base = NULL;
@@ -900,7 +908,7 @@ static void ensure_proxy(value v) {
   if (proxy == NULL) caml_raise_out_of_memory();
   atomic_store_explicit(&proxy->refcount, 1, memory_order_relaxed);
   if (Custom_ops_val(v) == &heap_ops && !(b->flags & CAML_BA_SUBARRAY)) {
-    proxy->data = heap_block(b)->base;
+    proxy->data = heap_base(b);
     /* the bytes [heap_finalize] keeps */
     proxy->size = heap_allocated((size_t)b->dim[0]);
   } else {

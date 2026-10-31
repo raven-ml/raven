@@ -1472,12 +1472,12 @@ let allocation =
       test "a copy of a one-element host value allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 113 words |});
+          expect (allocated (fun () -> Nx.copy a)) @@ __POS_OF__ {| 112 words |});
       test "a matmul of 4x4 float32 host values allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           expect (allocated (fun () -> Nx.matmul a a))
-          @@ __POS_OF__ {| 177 words |});
+          @@ __POS_OF__ {| 176 words |});
       test "a slice of a 4x4 host value by ranges allocates its baseline"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
@@ -1488,7 +1488,7 @@ let allocation =
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
           expect (allocated (fun () -> Nx.set Nx.[ I 1 ] v a))
-          @@ __POS_OF__ {| 483 words |});
+          @@ __POS_OF__ {| 482 words |});
     ]
 
 (* A scatter's results lie at the union of its operands' cuts, as any

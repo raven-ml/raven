@@ -1101,6 +1101,58 @@ let test_host_keeps_size () =
   equal ~msg:"once it is collected" int !at (Support.at (B.create Rig.host n));
   ignore (Sys.opaque_identity other)
 
+(* An exported array keeps its memory alive while it is reachable
+   ([Rig.Buffer.export]): the buffer collected, a buffer of its size made and
+   written after it leaves the array's bytes as they were, and once the array
+   is collected a buffer of the size holds what is written. The sizes reach
+   the host's three kinds of buffer, by where their bytes start: under a line
+   of 128 bytes, on a line, and on a page from 64 KiB, which the host keeps
+   for reuse; and the bounds between them. *)
+let line = 128
+let kept = 64 * kib
+
+let export_sizes =
+  Gen.with_pp
+    (fun ppf n -> Format.fprintf ppf "%d bytes" n)
+    (Gen.one_of
+       [
+         Gen.of_list [ 0; 1; line - 1; line; line + 1; kept - 1; kept; kept + 1 ];
+         Gen.int_range 0 (line - 1);
+         Gen.int_range line (kept - 1);
+         Gen.int_range kept (kept + (4 * line));
+       ])
+
+let fill c b = B.write b Bigarray.char (fun a -> Bigarray.Array1.fill a c)
+let chars a = String.init (Bigarray.Array1.dim a) (Bigarray.Array1.get a)
+
+let export_law n =
+  cover ~share:0.1 "under a line" (n < line);
+  cover ~share:0.1 "on a line" (line <= n && n < kept);
+  cover ~share:0.1 "kept" (kept <= n);
+  let array =
+    ref
+      (Some
+         ((fun () ->
+            let b = B.create Rig.host n in
+            fill 'a' b;
+            B.export b Bigarray.char)
+            ()))
+  in
+  Gc.full_major ();
+  Gc.full_major ();
+  let other = B.create Rig.host n in
+  fill 'b' other;
+  equal ~msg:"the array's bytes" string (String.make n 'a')
+    (chars (Option.get !array));
+  array := None;
+  Gc.full_major ();
+  Gc.full_major ();
+  let again = B.create Rig.host n in
+  fill 'c' again;
+  equal ~msg:"a buffer after the array" string (String.make n 'c')
+    (B.read again Bigarray.char chars);
+  ignore (Sys.opaque_identity other)
+
 (* The host keeps a collected buffer of 64 KiB or more for the next buffer of
    its size, unless a bigarray of it lives, which keeps its bytes. *)
 let test_host_cache () =
@@ -1373,6 +1425,8 @@ let tests =
           test_host_set_budget;
         test "a buffer's memory serves its size once a view outliving it goes"
           test_host_keeps_size;
+        prop "an exported array keeps its bytes past its buffer's collection"
+          ~count:60 export_sizes export_law;
         test "host memory a device borrowed returns once its work ran"
           test_borrowed_host;
         test "a bigarray a device borrowed lives until its work ran"
