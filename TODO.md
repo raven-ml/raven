@@ -263,9 +263,6 @@ raven / llama.cpp (Vulkan; ROCm):
   `gpu/*/attention-4096-causal` under `Rune.jit` until eager GPU libraries
   land; the family lands only if its kernels beat it by 2x on each,
   forward and cotangent
-- `Nx.contract`'s `?a_scale`, `?b_scale` and `?segments`: `Prim.Contract`
-  and nx.cpu take them and nx.quant calls them through `Prim`. Decide by
-  design.md's vocabulary rule whether a user needs them from `Nx`
 - donation's kill criterion, at least 2x over the copy on CUDA and AMD:
   `dispatch/kv-append-4096` and its `-copied` twin read 3.4 and 44.5 µs on
   fudge's host; record them on CUDA and AMD under `Rune.jit`, or once

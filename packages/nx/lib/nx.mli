@@ -2276,9 +2276,9 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     C order of the windows' first indices and summed over the stack by the
     kernels, then [init] added and the sum rounded once. An operand whole on
     every device is read at the other's cut; summed axes cut otherwise raise
-    ({!section-routing}). A contraction of rows by [b]'s groups
-    ({!Nx_kernel.type-segments}) with [b] cut along its groups computes so
-    too, and an output without products keeps [init]'s bits. Integer
+    ({!section-routing}). [Nx_quant.apply_experts], which multiplies each
+    row by its expert's matrix, computes so too with the experts cut
+    across devices: each device sums its own experts' rows. Integer
     contractions keep the bits they have on one device. A float or complex
     one may differ from it within the bound {!contract} states, and is the
     same on every run for a given placement and set of devices: float32
