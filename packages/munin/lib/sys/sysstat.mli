@@ -18,8 +18,9 @@
     on certain platforms (e.g., macOS CPU counters populate only
     user/nice/system/idle fields).
 
-    On Windows, {!Cpu.sample_per_core}, {!Net.sample}, {!Disk_io.sample},
-    {!Proc.Table.sample} and {!loadavg} raise [Sys_error], as every sampler
+    On Windows every sampler reads the system except {!loadavg}: Windows
+    keeps no load average, and a sampler without state could not average the
+    minutes before its first call. It raises [Sys_error], as every sampler
     does for what a system cannot read. *)
 
 (** {1:modules Modules} *)
@@ -42,12 +43,14 @@ module Cpu : sig
   (** Cumulative CPU time counters in ticks since boot.
 
       All fields represent cumulative time spent in each CPU state. The unit is
-      platform-specific ticks (Linux jiffies or macOS Mach ticks) but is
-      abstracted away by {!compute}.
+      platform-specific ticks (Linux jiffies, macOS Mach ticks or Windows
+      100 ns) but is abstracted away by {!compute}.
 
       Platform behavior:
       - {b macOS}: Only [user], [nice], [system], and [idle] are available;
-        other fields are [0L]. *)
+        other fields are [0L].
+      - {b Windows}: Only [user], [system], and [idle] are available; other
+        fields are [0L]. *)
 
   type stats = {
     user : float;  (** Percentage of time spent in user mode. *)
@@ -78,7 +81,8 @@ module Cpu : sig
       The array length equals the number of logical CPU cores.
 
       Raises [Sys_error] if per-core statistics are unavailable or an error
-      occurs. *)
+      occurs, as on a Windows whose per-processor times leave out processors
+      of another processor group. *)
 
   val compute : prev:t -> next:t -> stats
   (** [compute ~prev ~next] calculates CPU usage percentages between two
@@ -146,8 +150,10 @@ module Net : sig
   }
   (** Cumulative network I/O counters since boot.
 
-      Aggregates all network interfaces except loopback. Counters are cumulative
-      and monotonically increasing (until system reboot or counter overflow). *)
+      Aggregates all network interfaces except loopback, and on Windows except
+      filter modules, which count the traffic of the adapter they filter again.
+      Counters are cumulative and monotonically increasing (until system reboot
+      or counter overflow). *)
 
   type stats = {
     rx_bytes_per_sec : float;  (** Receive rate in bytes per second. *)
@@ -190,7 +196,17 @@ module Disk_io : sig
 
       Platform behavior:
       - {b Linux}: Excludes virtual devices ([dm-*], [loop*], [md*], [zram*])
-        and partitions (detected by prefix matching the parent device name). *)
+        and partitions (detected by prefix matching the parent device name).
+        [time_ms] is the time the disks had requests in flight.
+      - {b macOS} and {b Windows}: [time_ms] is the sum of each request's
+        time, in which concurrent requests count more than once.
+      - {b Windows}: counts the physical drives that report their counters,
+        which a virtual drive may not, from when their collection was first
+        enabled, which may be later than boot. Sampling enables it and leaves
+        it on. Microsoft gives the request times no unit: they are read in
+        the clock of the counters' time stamp, the system time's 100 ns or
+        the performance counter's ticks, and a drive whose time stamp is
+        neither is left out. *)
 
   type stats = {
     read_bytes_per_sec : float;  (** Read rate in bytes per second. *)
@@ -338,19 +354,25 @@ module Proc : sig
       ppid : int;  (** Parent process ID. *)
       name : string;  (** Process name (comm). *)
       cmdline : string;
-          (** Full command line with arguments. Empty if unavailable. *)
-      state : state;  (** Current process state. *)
-      user : string;  (** Owner username. Empty if UID lookup fails. *)
-      priority : int;  (** Scheduling priority. *)
-      nice : int;  (** Nice value (-20 to 19). *)
+          (** Full command line with arguments. Empty if unavailable, and on
+              Windows. *)
+      state : state;  (** Current process state, [Unknown] on Windows. *)
+      user : string;
+          (** Owner username. Empty if UID lookup fails, and on Windows. *)
+      priority : int;
+          (** Scheduling priority; on Windows the base priority of its threads.
+          *)
+      nice : int;  (** Nice value (-20 to 19), [0] on Windows. *)
       user_time : int64;  (** Cumulative user-mode CPU time in ticks. *)
       system_time : int64;  (** Cumulative system-mode CPU time in ticks. *)
       resident_size : int64;  (** Resident set size in bytes. *)
-      virtual_size : int64;  (** Virtual memory size in bytes. *)
+      virtual_size : int64;
+          (** Virtual memory size in bytes, [0L] on Windows. *)
       num_threads : int;  (** Number of threads. *)
       num_running : int;
-          (** Number of running threads (macOS only, [0] on Linux). *)
-      faults : int64;  (** Page faults (macOS only, [0L] on Linux). *)
+          (** Number of running threads (macOS only, [0] elsewhere). *)
+      faults : int64;
+          (** Page faults (macOS and Windows, [0L] on Linux). *)
       mem_percent : float;
           (** Memory usage as percentage of total physical memory. *)
     }
@@ -358,7 +380,9 @@ module Proc : sig
 
         Contains cumulative CPU time, state, and instantaneous memory/thread
         information for a process. CPU times are in platform-specific ticks
-        (Linux jiffies or macOS Mach ticks). *)
+        (Linux jiffies, macOS Mach ticks or Windows 100 ns). On Windows a
+        process this one may not open, such as another user's, has zero CPU
+        times, resident size and faults. *)
 
     type stats = {
       pid : int;  (** Process ID. *)

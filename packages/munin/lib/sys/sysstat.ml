@@ -74,6 +74,9 @@ external c_list_pids : unit -> int array = "caml_sysstat_list_pids"
 external c_get_proc_info : int -> raw_proc_info option
   = "caml_sysstat_get_proc_info"
 
+external c_proc_table : unit -> (int * raw_proc_info) array
+  = "caml_sysstat_proc_table"
+
 external c_statvfs : string -> raw_statvfs = "caml_sysstat_statvfs"
 external c_proc_self_mem : unit -> raw_self_mem = "caml_sysstat_proc_self_mem"
 external c_get_timebase : unit -> raw_timebase = "caml_sysstat_get_timebase"
@@ -151,6 +154,8 @@ let jiffies_to_ns (jiffies : int64) : int64 =
       (Int64.mul q 1_000_000_000L)
       (Int64.div (Int64.mul r 1_000_000_000L) hz)
 
+(* Process times off Linux are in the stub's ticks: Mach ticks on macOS, 100 ns
+   on Windows. *)
 let mach_timebase : (float * float) Lazy.t =
   lazy
     (let tb = c_get_timebase () in
@@ -323,7 +328,8 @@ module Cpu = struct
     | Some (t, _) -> t
     | None -> raise (Sys_error "Cpu.sample: failed to read CPU statistics")
 
-  (* Windows gives system-wide totals only, and no core list. *)
+  (* Windows gives the system-wide row alone where it cannot read every
+     processor's times. *)
   let sample_per_core () : t array =
     match read () with
     | Some (_, (_ :: _ as cores)) -> Array.of_list cores
@@ -1175,6 +1181,31 @@ module Proc = struct
           Unix.closedir dh;
           !procs
 
+    let of_raw ~total_mem pid (info : raw_proc_info) : t =
+      let mem_percent =
+        if Int64.compare total_mem 0L > 0 then
+          Int64.to_float info.resident_size *. 100.0 /. Int64.to_float total_mem
+        else 0.0
+      in
+      {
+        pid;
+        ppid = info.ppid;
+        name = info.name;
+        cmdline = info.cmdline;
+        state = state_of_char info.state;
+        user = info.user;
+        priority = info.priority;
+        nice = info.nice;
+        user_time = info.user_time;
+        system_time = info.system_time;
+        resident_size = info.resident_size;
+        virtual_size = info.virtual_size;
+        num_threads = info.num_threads;
+        num_running = info.num_running;
+        faults = info.faults;
+        mem_percent;
+      }
+
     let sample_macos () : t list =
       let total_mem = total_mem_bytes () in
       let pids =
@@ -1183,37 +1214,21 @@ module Proc = struct
       let add acc pid =
         match c_get_proc_info pid with
         | None -> acc
-        | Some info ->
-            let mem_percent =
-              if Int64.compare total_mem 0L > 0 then
-                Int64.to_float info.resident_size
-                *. 100.0 /. Int64.to_float total_mem
-              else 0.0
-            in
-            {
-              pid;
-              ppid = info.ppid;
-              name = info.name;
-              cmdline = info.cmdline;
-              state = state_of_char info.state;
-              user = info.user;
-              priority = info.priority;
-              nice = info.nice;
-              user_time = info.user_time;
-              system_time = info.system_time;
-              resident_size = info.resident_size;
-              virtual_size = info.virtual_size;
-              num_threads = info.num_threads;
-              num_running = info.num_running;
-              faults = info.faults;
-              mem_percent;
-            }
-            :: acc
+        | Some info -> of_raw ~total_mem pid info :: acc
       in
       List.fold_left add [] pids
 
+    let sample_windows () : t list =
+      let total_mem = total_mem_bytes () in
+      Array.fold_left
+        (fun acc (pid, info) -> of_raw ~total_mem pid info :: acc)
+        [] (c_proc_table ())
+
     let sample () : t list =
-      try if Sys.file_exists "/proc" then sample_linux () else sample_macos ()
+      try
+        if Sys.win32 then sample_windows ()
+        else if Sys.file_exists "/proc" then sample_linux ()
+        else sample_macos ()
       with _ ->
         raise (Sys_error "Proc.Table.sample: failed to read the process table")
 

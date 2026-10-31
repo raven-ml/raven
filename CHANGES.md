@@ -659,6 +659,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Munin_sys.Stat` reads network and disk I/O counters, per-core CPU times and
+  the process table on Windows, and `Munin_sys.start` logs disk I/O there.
+  `Stat.loadavg` still raises `Sys_error`: Windows keeps no load average.
 - `Munin_sys.Stat` samplers raise `Sys_error` where they cannot read the
   system, as network, disk I/O, per-core CPU, process table and load average
   do on Windows, instead of returning zeros or empty lists. `Munin_sys.start`

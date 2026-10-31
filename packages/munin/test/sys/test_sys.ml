@@ -39,21 +39,19 @@ let with_temp_dir f =
   Unix.mkdir base 0o755;
   Fun.protect ~finally:(fun () -> rm_rf base) (fun () -> f base)
 
-(* Munin reads no disk I/O counters on Windows: there the monitor neither
-   defines nor logs the disk metrics. *)
 let sys_keys =
   List.sort compare
-    ([
-       "sys/cpu_user";
-       "sys/cpu_system";
-       "sys/mem_used_pct";
-       "sys/mem_used_gb";
-       "sys/proc_cpu_pct";
-       "sys/proc_mem_mb";
-     ]
-    @
-    if Sys.win32 then []
-    else [ "sys/disk_read_mbs"; "sys/disk_write_mbs"; "sys/disk_util_pct" ])
+    [
+      "sys/cpu_user";
+      "sys/cpu_system";
+      "sys/mem_used_pct";
+      "sys/mem_used_gb";
+      "sys/proc_cpu_pct";
+      "sys/proc_mem_mb";
+      "sys/disk_read_mbs";
+      "sys/disk_write_mbs";
+      "sys/disk_util_pct";
+    ]
 
 let sys_only keys =
   List.sort compare (List.filter (String.starts_with ~prefix:"sys/") keys)
@@ -138,9 +136,8 @@ let test_proc_cpu_mean =
   in
   equal (float_rel ~rel:1e-9 ~abs:1e-9) (cores *. 100.) stats.cpu_percent
 
-(* Every sampler reads the system on Linux and macOS. On Windows the per-core,
-   network, disk I/O, process table and load average samplers raise
-   [Sys_error]. *)
+(* Every sampler reads the system on Linux, macOS and Windows, except the load
+   average, which Windows keeps none of. *)
 let reads name read check = test name @@ fun () -> check (read ())
 
 let unread_on_windows name read check =
@@ -149,18 +146,18 @@ let unread_on_windows name read check =
   else check (read ())
 
 let test_per_core =
-  unread_on_windows "Cpu.sample_per_core" Munin_sys.Stat.Cpu.sample_per_core
+  reads "Cpu.sample_per_core" Munin_sys.Stat.Cpu.sample_per_core
   @@ fun cores -> at_least ~msg:"cores" int ~than:1 (Array.length cores)
 
 let test_net =
-  unread_on_windows "Net.sample" Munin_sys.Stat.Net.sample @@ fun n ->
+  reads "Net.sample" Munin_sys.Stat.Net.sample @@ fun n ->
   at_least ~msg:"bytes_rx" int64 ~than:0L n.bytes_rx;
   at_least ~msg:"packets_rx" int64 ~than:0L n.packets_rx;
   at_least ~msg:"bytes_tx" int64 ~than:0L n.bytes_tx;
   at_least ~msg:"packets_tx" int64 ~than:0L n.packets_tx
 
 let test_disk_io =
-  unread_on_windows "Disk_io.sample" Munin_sys.Stat.Disk_io.sample @@ fun d ->
+  reads "Disk_io.sample" Munin_sys.Stat.Disk_io.sample @@ fun d ->
   at_least ~msg:"bytes_read" int64 ~than:0L d.bytes_read;
   at_least ~msg:"bytes_written" int64 ~than:0L d.bytes_written;
   at_least ~msg:"time_ms" int64 ~than:0L d.time_ms;
@@ -186,11 +183,16 @@ let test_proc_self =
   greater ~msg:"rss_bytes" int64 ~than:0L p.rss_bytes;
   at_least ~msg:"vsize_bytes" int64 ~than:p.rss_bytes p.vsize_bytes
 
+(* This process is in the table, named and resident, whatever user owns the
+   others. *)
 let test_proc_table =
-  unread_on_windows "Proc.Table.sample" Munin_sys.Stat.Proc.Table.sample
-  @@ fun ps ->
-  mem int (Unix.getpid ())
-    (List.map (fun (p : Munin_sys.Stat.Proc.Table.t) -> p.pid) ps)
+  reads "Proc.Table.sample" Munin_sys.Stat.Proc.Table.sample @@ fun ps ->
+  let me = Unix.getpid () in
+  let pid (p : Munin_sys.Stat.Proc.Table.t) = p.pid in
+  mem int me (List.map pid ps);
+  let p = List.find (fun p -> pid p = me) ps in
+  not_equal ~msg:"name" string "" p.name;
+  greater ~msg:"resident_size" int64 ~than:0L p.resident_size
 
 let test_loadavg =
   unread_on_windows "loadavg" Munin_sys.Stat.loadavg @@ fun (l1, l5, l15) ->
