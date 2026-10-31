@@ -15,8 +15,9 @@ runs that data on rig.
 - Numerics follow nx's documented meaning, decided in rune's lowering with a
   failing rune test. tinygrad has bugs; a value it computes is a datapoint.
 - Each difference is an entry in `DIVERGENCES.md`, admitted only for an
-  OCaml constraint, a named raven consumer, or the executor's contract.
-  Taste and unmeasured speed are not reasons.
+  OCaml constraint, a named raven consumer, the executor's contract, or a
+  named workload's speed held by a fudge bench row. Taste and unmeasured
+  speed are not reasons.
 - tolk stays at tinygrad's low-level uops: no matmul, contraction, attention
   or scan node.
 

@@ -2,24 +2,34 @@
 
 tolk follows tinygrad `79af1ca70e7021f504919c4ff5631245acc33ed6`. This
 ledger lists every place where it does something else. An entry is admitted
-for one of three reasons only:
+for one of four reasons only:
 
 - **(a) an OCaml constraint:** acyclic modules, static types, the GC, domains;
 - **(b) a named consumer:** a raven call site that fails without it;
 - **(c) the executor's contract:** rig's devices, submissions and programs,
-  which `tolk.engine` drives with the compiler's output.
+  which `tolk.engine` drives with the compiler's output;
+- **(d) measured speed:** of a named raven workload, pinned by a bench row on
+  fudge whose baseline would catch the regression.
 
-Taste, speed without a measurement, and "the old tolk did it" are not reasons.
-A difference in numerics also needs a failing rune test, since nx semantics
-belong in rune's lowering.
+Taste, speed without such a measurement, "the old tolk did it" and the
+maintainer's call alone are not reasons. A speed measured only on another
+machine is marked "to re-measure on fudge" until a fudge row holds it. An
+entry whose reason has lapsed says "Reason: none" until it is withdrawn or
+redesigned. A difference in numerics also needs a failing rune test, since
+nx semantics belong in rune's lowering.
 
-Each entry gives the tinygrad file and line, the tolk file and line, what
-differs, its reason, and the test that pins it. An entry whose test does not
-exist yet names the layer that brings it; the entry is rejected at that
-layer's review if the test is still missing. An entry goes when its reason
-goes. Entries are in the order of their numbers, and a number is never
-reused, since entries and documents cite them. Keeping only part of a file is
-scope, recorded under Exclusions in `README.md`, not a divergence.
+Each entry gives the tinygrad file and line at the pinned commit, the tolk
+module and symbol (`Rangeify.remove_bufferize`), what differs, its reason,
+and the test that pins it. tolk, and any other raven code, is cited by module
+and symbol, never by line, since lines move with every change. An entry
+whose test does not exist yet names the layer that brings it; the entry is
+rejected at that layer's review if the test is still missing. An entry goes
+when its reason goes. Entries are in the order of their numbers, and a
+number is never reused, since entries and documents cite them: an entry
+merged into another is withdrawn and names the entry that holds its rule,
+where each merged part keeps its own reason and pins.
+Keeping only part of a file is scope, recorded under Exclusions in
+`README.md`, not a divergence.
 
 ## D1. Withdrawn
 
