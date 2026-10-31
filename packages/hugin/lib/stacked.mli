@@ -18,11 +18,15 @@ type t = {
 val of_mark : Figure.mark -> t option
 (** [of_mark m] is the stacked length of [m], if any. *)
 
+(** The values of a binding that tell columns apart: quantities, or the codes,
+    positions or counts of categories and instants. *)
+type key = Floats of Nx.host Nx.float64_t | Ints of Nx.host Nx.int64_t
+
 val intervals :
   Hugin_kit.Stack.offset ->
   int array ->
   lengths:Nx.host Nx.float64_t ->
-  keys:Nx.host Nx.float64_t list ->
+  keys:key list ->
   float array * float array
 (** [intervals offset shape ~lengths ~keys] is the starts and ends, one per row
     of a mark of shape [shape] in row-major order, of [lengths] stacked by

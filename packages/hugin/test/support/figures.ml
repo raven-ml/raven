@@ -238,6 +238,31 @@ let stacks () =
       ];
     ]
 
+(* Time: daily values over a quarter, and a day of readings every ten
+   minutes, whose ticks name hours with their days. *)
+
+let timeline () =
+  let day = 86_400L and start = 1_767_225_600L (* 2026-01-01 UTC *) in
+  let days =
+    Nx.init Nx.int64 [| 90 |] (fun i ->
+        Int64.(add start (mul day (of_int i.(0)))))
+  in
+  let level =
+    Nx.init Nx.float64 [| 90 |] (fun i -> 10. +. sin (float i.(0) /. 9.))
+  in
+  let minutes =
+    Nx.init Nx.int64 [| 144 |] (fun i ->
+        Int64.(add (add start (mul day 40L)) (mul 600L (of_int i.(0)))))
+  in
+  let load =
+    Nx.init Nx.float64 [| 144 |] (fun i -> cos (float i.(0) /. 23.))
+  in
+  grid
+    [
+      [ line ~x:(time S days) ~y:(num ~title:"level" level) () ];
+      [ line ~x:(time S minutes) ~y:(num ~title:"load" load) () ];
+    ]
+
 let paper_theme = Theme.v ~size:8. ()
 let paper_size = Size.figure (Size.mm 180.) (Size.mm 110.)
 
@@ -256,6 +281,7 @@ let goldens =
     ("paper", paper, paper_theme, paper_size);
     ("bands", bands, Theme.default, default);
     ("stacks", stacks, Theme.default, default);
+    ("timeline", timeline, Theme.default, default);
   ]
 
 (* Goldens are drawn at one device pixel per point. *)

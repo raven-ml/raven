@@ -24,6 +24,7 @@ module Picture = Hugin_vg.Picture
 module Renderable = Hugin_vg.Renderable
 module Raster = Hugin_vg_raster
 module Scale = Hugin_kit.Scale
+module Time = Hugin_kit.Time
 module Dash = Hugin_kit.Dash
 open Common
 open Channel
@@ -130,7 +131,7 @@ let band_cells cx reads index =
           if n > 0 && Float.equal (Scale.bandwidth f.scale) (1. /. float n) then
             Some n
           else None
-      | Quantities -> None)
+      | Quantities | Instants -> None)
 
 let binding_index m (role : _ Role.t) =
   let rec go i = function
@@ -269,7 +270,7 @@ let cells cx m (panel : Layout.panel) reads ~rows ~full ~few sel =
 
 (* [quantities shape ~role l s] is the quantities of the lift [l] in a mark of
    shape [shape], where they live, its missing rows, if any, and the fitted
-   scale that reads them, if [s] reads quantities. *)
+   scale that reads them, if [s] reads quantities or instants. *)
 let quantities : type d.
     int array ->
     role:string ->
@@ -281,6 +282,20 @@ let quantities : type d.
   | Quantities, Quantities ->
       let (Lift.Quantities q) = Lift.eval shape ~role l f.spec in
       Some (q.values, q.miss.rows, f.scale)
+  | Instants, Instants ->
+      (* Instants are normalised on the host, and the identity on [0, 1]
+         reads them. *)
+      let (Lift.Instants i) = Lift.eval shape ~role l f.spec in
+      let normalize = Scale.normalize f.scale in
+      let us =
+        Array.map
+          (fun n -> normalize (Time.v i.resolution n))
+          (Nx.to_array i.counts)
+      in
+      Some
+        ( Nx.create Nx.float64 (Nx.shape i.counts) us,
+          i.miss.rows,
+          Scale.linear ~domain:(0., 1.) () )
   | _ -> None
 
 (* [runs edges ~inside ~dropped x y] is the increasing positions of the rows M4

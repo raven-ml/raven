@@ -428,7 +428,7 @@ let resolved_scale =
         fun () -> ignore (quant ~at:(path [ field "b" ]) r "x") );
       ("a name its scope lacks", [ "lr" ], fun () -> ignore (quant r "lr"));
       ("a scale of another kind", [ "x" ], fun () -> ignore (categ r "x"));
-      ( "a time scale, which no channel reads",
+      ( "a time scale the scope lacks",
         [ "x" ],
         fun () -> ignore (Resolved.scale r (Scale.time ~name:"x" ())) );
       ( "a position at a layer repeated over cells",
@@ -1326,7 +1326,7 @@ let zoom_cases =
       zooms (Scale.linear ~name:"gone" ()) (5., 6.) View.empty,
       [ (root, "lr", (1., 2.)) ],
       [ root ] );
-    ( "a zoom of a time scale, which no channel reads, is ignored",
+    ( "a zoom of a time scale named like a quantitative one is ignored",
       on_lr,
       View.set
         (View.zoom (Scale.time ~name:"lr" ()))
@@ -1539,6 +1539,102 @@ let baselines =
       expect_file ~file:"packages/hugin/test/golden/resolved.expected"
         (String.concat "\n" (List.map one Figures.goldens)))
 
+(* Time *)
+
+module Time = Hugin_kit.Time
+
+let i64 a = Nx.create Nx.int64 [| Array.length a |] a
+let exact_time = Scale.time ~nice:false ()
+let instants s = match Scale.domain s with Scale.Instants (a, b) -> (a, b)
+let instant = Testable.make ~pp:Time.pp ~equal:Time.equal
+
+(* Counts of two resolutions, some of them masked, on one scale. *)
+let gen_times =
+  let open Gen in
+  let count = map Int64.of_int (int_range (-1_000_000) 1_000_000) in
+  let* n = int_range 1 6 and+ m = int_range 1 6 in
+  let+ ms = array ~size:(constant n) count
+  and+ valid = array ~size:(constant n) bool
+  and+ s = array ~size:(constant m) count in
+  (ms, valid, s)
+
+(* Law: a temporal scale that does not round is fitted to the hull of the
+   instants of its channels' kept rows, whatever their resolutions. *)
+let time_hull (ms, valid, s) =
+  let kept =
+    List.filteri (fun i _ -> valid.(i)) (Array.to_list ms)
+    |> List.map (Time.v Ms)
+  in
+  let all = kept @ List.map (Time.v S) (Array.to_list s) in
+  cover "a masked row" (Array.exists not valid);
+  let pick keep =
+    List.fold_left (fun a t -> if keep (Time.compare t a) then t else a)
+  in
+  let first = pick (fun c -> c < 0) and last = pick (fun c -> c > 0) in
+  let expected = (first (List.hd all) all, last (List.hd all) all) in
+  let r =
+    resolve
+      (layer
+         [
+           dot
+             ~x:(time ~scale:exact_time ~valid:(mask valid) Ms (i64 ms))
+             ~y:(const 0.5) ();
+           dot ~x:(time S (i64 s)) ~y:(const 0.5) ();
+         ])
+  in
+  equal (pair instant instant) expected
+    (instants (Resolved.scale r (Scale.time ~name:"x" ())))
+
+let times =
+  group "Time"
+    [
+      prop "a time scale is fitted to its instants" gen_times time_hull;
+      test "a nice time domain ends on calendar boundaries" (fun () ->
+          (* A tenth of 24 days and 5 hours is nearest by ratio to 2 days, whose
+             boundaries fall on even days since the epoch. *)
+          let a = Time.of_date_time ((2026, 3, 3), (10, 0, 0))
+          and b = Time.of_date_time ((2026, 3, 27), (15, 0, 0)) in
+          let s t = Option.get (Time.to_int64 S t) in
+          let r =
+            resolve (dot ~x:(time S (i64 [| s a; s b |])) ~y:(const 0.5) ())
+          in
+          equal (pair instant instant)
+            (Time.of_date (2026, 3, 2), Time.of_date (2026, 3, 28))
+            (instants (Resolved.scale r (Scale.time ~name:"x" ()))));
+      test "an unsigned count beyond int64 is missing, with a warning"
+        (fun () ->
+          let c =
+            Nx.create Nx.uint64 [| 2 |] [| 5L; Int64.min_int |]
+          in
+          let r =
+            resolve
+              (layer
+                 [
+                   dot ~x:(time ~scale:exact_time S c) ~y:(const 0.5) ()
+                   |> name "d";
+                 ])
+          in
+          equal (pair instant instant)
+            (Time.v S 5L, Time.v S 5L)
+            (instants (Resolved.scale r (Scale.time ~name:"x" ())));
+          equal (list warning)
+            [ (path [ field "d" ], "x: 1 count is beyond the range of int64") ]
+            (Resolved.warnings r));
+      test "a zoom sets a time domain" (fun () ->
+          let z = (Time.v S 100L, Time.v S 200L) in
+          let view =
+            View.set (View.zoom (Scale.time ~name:"x" ())) (Some z) View.empty
+          in
+          let r =
+            resolve ~view (dot ~x:(time S (i64 [| 0L; 1L |])) ~y:(const 0.5) ())
+          in
+          equal (pair instant instant) z
+            (instants (Resolved.scale r (Scale.time ~name:"x" ()))));
+      test "time takes integers only" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"integer") (fun () ->
+              time S (f64 [| 1. |])));
+    ]
+
 let () =
   exit
     (run "hugin resolve"
@@ -1556,5 +1652,6 @@ let () =
          export;
          views;
          reuse;
+         times;
          baselines;
        ])

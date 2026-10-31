@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 module Scale = Hugin_kit.Scale
+module Time = Hugin_kit.Time
 open Channel
 
 type miss = {
@@ -13,6 +14,12 @@ type miss = {
 
 type _ t =
   | Quantities : { values : Nx.host Nx.float64_t; miss : miss } -> float t
+  | Instants : {
+      counts : Nx.host Nx.int64_t;
+      resolution : Time.resolution;
+      miss : miss;
+    }
+      -> Time.t t
   | Categories : {
       lift : string lift;
       codes : Nx.host Nx.int64_t;
@@ -22,6 +29,7 @@ type _ t =
 
 let miss : type d. d t -> miss = function
   | Quantities q -> q.miss
+  | Instants i -> i.miss
   | Categories c -> c.miss
 
 let labelled : string lift -> bool = function
@@ -119,6 +127,23 @@ let eval : type d. int array -> role:string -> d lift -> d Scale.t -> d t =
       let a = axis k in
       quantities role s (along shape a (Nx.cast Nx.float64 (arange shape.(a))))
   | Floats a -> quantities role s (Nx.create Nx.float64 [| Array.length a |] a)
+  | Time { counts; resolution; valid } ->
+      let c = Nx.cast Nx.int64 counts in
+      let beyond =
+        match Nx.dtype counts with
+        | Uint64 -> Some (Nx.less_s c 0L)
+        | _ -> None
+      in
+      let note k =
+        Format.asprintf "%s: %a beyond the range of int64" role
+          (counted "count") k
+      in
+      let counts =
+        Option.to_list
+          (Option.map (fun b -> (lazy (only valid b), note)) beyond)
+      in
+      let miss = { rows = beyond ||| invalid valid; counts } in
+      Instants { counts = c; resolution; miss }
   | Cat { codes; valid; labels = Some labels } ->
       let c = Nx.cast Nx.int64 codes in
       let n = Array.length labels in

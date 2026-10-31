@@ -39,6 +39,7 @@ a dot mark therefore shares its axes.
 | `Scale.log ()` | positive quantities, by their logarithm |
 | `Scale.symlog ()` | quantities of either sign, logarithmic away from zero |
 | `Scale.pow ~exponent ()` | quantities, by a power |
+| `Scale.time ()` | instants, in proportion |
 | `Scale.band ()` | categories, one band each |
 
 Each constructor's optional arguments set properties, and an unset property
@@ -87,6 +88,22 @@ let () =
 The labels of the x axis read 10⁻⁴, 10⁻³ and 10⁻², and those of the y axis
 are percentages. A tick label names a value; a label that is not the value,
 such as the name of a category, belongs to a band scale.
+
+Instants come from `time`, which reads integer counts of a resolution since
+the Unix epoch, as a datetime column stores them. Their scale is temporal:
+its ticks fall on calendar boundaries, from nanoseconds to centuries, and
+each label names its tick in the calendar, with a second line where the
+coarser part changes, such as the month under the first day of each month.
+`~tz_offset_s` puts the calendar at an offset from UTC:
+
+```ocaml
+let () =
+  let start = 1_767_225_600L (* 2026-01-01 UTC *) in
+  let days = Nx.add_s (Nx.mul_s (Nx.arange Nx.int64 0 90 1) 86_400L) start in
+  let level = Nx.sin (Nx.linspace Nx.float64 0. 10. 90) in
+  line ~x:(time Time.S days) ~y:(num ~title:"level" level) ()
+  |> save "time.png"
+```
 
 Marks imply properties too: a bar implies `~zero:true` on its length's scale
 and padding on its band scale. A property set on a channel overrides what a

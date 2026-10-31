@@ -6,18 +6,21 @@
 (** Channels: the data or constants a role is bound to. *)
 
 module Scale := Hugin_kit.Scale
+module Time := Hugin_kit.Time
 
 (** {1:kinds Kinds} *)
 
 (** The kinds of data a channel holds. *)
-type _ kind = Quantities : float kind | Categories : string kind
+type _ kind =
+  | Quantities : float kind
+  | Instants : Time.t kind
+  | Categories : string kind
 
 val equal_kind : 'a kind -> 'b kind -> ('a, 'b) Type.eq option
 val pp_kind : Format.formatter -> 'd kind -> unit
 
-val of_scale_kind : 'd Scale.kind -> 'd kind option
-(** [of_scale_kind k] is the kind read by scales of kind [k], [None] for
-    [Temporal]: no channel reads a time scale yet. *)
+val of_scale_kind : 'd Scale.kind -> 'd kind
+(** [of_scale_kind k] is the kind read by scales of kind [k]. *)
 
 (** {1:lifts Lifts} *)
 
@@ -30,6 +33,12 @@ type _ lift =
       -> float lift
   | Index : int -> float lift
   | Floats : float array -> float lift
+  | Time : {
+      counts : ('a, 'b, Nx.host) Nx.t;  (** Of an integer dtype. *)
+      resolution : Time.resolution;
+      valid : Nx.host Nx.bool_t option;
+    }
+      -> Time.t lift
   | Cat : {
       codes : ('a, 'b, Nx.host) Nx.t;
       valid : Nx.host Nx.bool_t option;
@@ -94,6 +103,14 @@ val num :
   ?title:string ->
   ('a, 'b, Nx.host) Nx.t ->
   (float, 'r) t
+
+val time :
+  ?scale:Time.t Scale.t ->
+  ?valid:Nx.host Nx.bool_t ->
+  ?title:string ->
+  Time.resolution ->
+  ('a, 'b, Nx.host) Nx.t ->
+  (Time.t, 'r) t
 
 val cat :
   ?scale:string Scale.t ->

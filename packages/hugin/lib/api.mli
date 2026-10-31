@@ -21,6 +21,7 @@ module Picture = Hugin_vg.Picture
 module Renderable = Hugin_vg.Renderable
 module Locale = Hugin_kit.Locale
 module Number = Hugin_kit.Number
+module Time = Hugin_kit.Time
 module Scale = Hugin_kit.Scale
 module Scheme = Hugin_kit.Scheme
 module Symbol = Hugin_kit.Symbol
@@ -43,6 +44,14 @@ val num :
   ?title:string ->
   ('a, 'b, Nx.host) Nx.t ->
   (float, 'r) channel
+
+val time :
+  ?scale:Time.t Scale.t ->
+  ?valid:Nx.host Nx.bool_t ->
+  ?title:string ->
+  Time.resolution ->
+  ('a, 'b, Nx.host) Nx.t ->
+  (Time.t, 'r) channel
 
 val cat :
   ?scale:string Scale.t ->

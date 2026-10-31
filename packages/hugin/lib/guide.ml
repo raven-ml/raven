@@ -210,7 +210,9 @@ let tick_text (t : Ticks.tick) =
   | Some c -> Text.v (t.label ^ "\n" ^ c)
 
 let categorical (F f) =
-  match f.kind with Channel.Categories -> true | Channel.Quantities -> false
+  match f.kind with
+  | Channel.Categories -> true
+  | Channel.Quantities | Channel.Instants -> false
 
 (* [guide_title s explicit note] is the distinct titles of [explicit], or if it
    is empty, those of the channels reading [s] in the order of the figure,
@@ -248,7 +250,7 @@ let category_text (F f) k =
   | Channel.Categories, Scale.Categories (Scale.Labels l) -> Text.v l.(k)
   | Channel.Categories, Scale.Categories (Scale.Indices ix) ->
       Text.v (snd ix.(k))
-  | Channel.Quantities, _ -> Text.v (string_of_int k)
+  | (Channel.Quantities | Channel.Instants), _ -> Text.v (string_of_int k)
 
 (* [bar s] is [true] iff the legend of [s] is a colour bar. *)
 let bar (F f as s) =
@@ -603,12 +605,13 @@ let all_ticks locale (F f) =
   match f.kind with
   | Channel.Categories ->
       Ticks.of_values ~locale f.scale (Array.of_list (category_names f.scale))
-  | Channel.Quantities -> Ticks.of_values ~locale f.scale [||]
+  | Channel.Quantities | Channel.Instants ->
+      Ticks.of_values ~locale f.scale [||]
 
 let notation (F f) =
   match f.kind with
   | Channel.Quantities -> Scale.notation f.scale
-  | Channel.Categories -> None
+  | Channel.Instants | Channel.Categories -> None
 
 (* A scale's explicit ticks are its guide values. Otherwise, a label's extent,
    and the spacing of ticks, are the greatest fractions of a guide's length they

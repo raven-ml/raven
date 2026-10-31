@@ -245,7 +245,8 @@ let content (r : Resolved.t) scales pid c =
         match scale i with
         | Some (F { kind = Channel.Categories; scale; _ }) ->
             List.length (category_names scale)
-        | Some (F { kind = Channel.Quantities; _ }) | None -> 0
+        | Some (F { kind = Channel.Quantities | Channel.Instants; _ }) | None ->
+            0
       in
       let nx = max 1 (count cell.fx) and ny = max 1 (count cell.fy) in
       let pos = Option.value ~default:0 in
@@ -460,7 +461,8 @@ let build (r : Resolved.t) scales =
     let named () =
       match (f.kind, explicit, f.guide) with
       | Channel.Categories, None, None -> List.for_all (named pids) readers
-      | (Channel.Categories | Channel.Quantities), _, _ -> false
+      | (Channel.Categories | Channel.Quantities | Channel.Instants), _, _ ->
+          false
     in
     if readers = [] || named () then (tree, i + 1)
     else
@@ -474,6 +476,7 @@ let build (r : Resolved.t) scales =
       let kind =
         match f.kind with
         | Channel.Quantities -> "num"
+        | Channel.Instants -> "time"
         | Channel.Categories -> "cat"
       in
       let spec id =

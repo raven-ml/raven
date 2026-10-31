@@ -17,6 +17,7 @@ module Picture = Hugin_vg.Picture
 module Renderable = Hugin_vg.Renderable
 module Locale = Hugin_kit.Locale
 module Number = Hugin_kit.Number
+module Time = Hugin_kit.Time
 module Scale = Hugin_kit.Scale
 module Scheme = Hugin_kit.Scheme
 module Symbol = Hugin_kit.Symbol
@@ -34,6 +35,7 @@ type t = Figure.t
 type ('d, 'r) channel = ('d, 'r) Channel.t
 
 let num = Channel.num
+let time = Channel.time
 let cat = Channel.cat
 let strings = Channel.strings
 let floats = Channel.floats

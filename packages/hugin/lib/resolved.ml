@@ -17,6 +17,7 @@
 
 open Hugin_float_text
 module Scale = Hugin_kit.Scale
+module Time = Hugin_kit.Time
 module Text = Hugin_text.Text
 open Common
 open Channel
@@ -281,6 +282,7 @@ let merge_level name level specs =
 
 let default_spec : type d. d kind -> d Scale.t = function
   | Quantities -> Scale.linear ()
+  | Instants -> Scale.time ()
   | Categories -> Scale.band ()
 
 (* [merged kind name ms] is the specification of the scale [ms] read: their
@@ -336,7 +338,7 @@ let merged : type d. d kind -> string -> d member list -> d Scale.t =
                differently"
               name pp_id m.m_occ.mid
       | _ -> ())
-  | Quantities -> ());
+  | Quantities | Instants -> ());
   spec
 
 let merged_guide name ms =
@@ -440,6 +442,23 @@ let fit_scale : type d.
       let observed = List.fold_left hull None ms in
       Scale.fit
         (Option.map (fun (lo, hi) -> Scale.Floats (lo, hi)) observed)
+        spec
+  | Instants ->
+      let span acc m =
+        match
+          ( List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).Summary.spans,
+            acc )
+        with
+        | None, acc -> acc
+        | Some s, None -> Some s
+        | Some (lo, hi), Some (a, b) ->
+            let earlier t t' = if Time.compare t t' <= 0 then t else t' in
+            let later t t' = if Time.compare t t' >= 0 then t else t' in
+            Some (earlier a lo, later b hi)
+      in
+      let observed = List.fold_left span None ms in
+      Scale.fit
+        (Option.map (fun (lo, hi) -> Scale.Instants (lo, hi)) observed)
         spec
   | Categories ->
       Scale.fit (Some (Scale.Categories (categories name ms summary_of))) spec
@@ -589,7 +608,7 @@ let facet_of o (role : (string, string) Role.t) s =
           | Categories, Some s ->
               let lift = Lift.eval o.mark.shape ~role:role.name d.lift s in
               (Each (Lift.positions s lift), [])
-          | Quantities, _ | Categories, None -> (Every, []))
+          | (Quantities | Instants), _ | Categories, None -> (Every, []))
       | _ -> (Every, []))
 
 let mask part p =
@@ -691,7 +710,17 @@ let find_scale scales nodes ~at name kind =
                    (fun (F f as s) -> is s && equal_key f.key key)
                    scales)))
 
-type zoom = { at : id; name : string; key : key; ends : float * float }
+type zoom =
+  | Z : { at : id; name : string; key : key; kind : 'd kind; ends : 'd * 'd }
+      -> zoom
+
+(* [continuous kind (lo, hi)] is the continuous domain from [lo] to [hi]. *)
+let continuous : type d. d kind -> d * d -> d Scale.domain option =
+ fun kind (lo, hi) ->
+  match kind with
+  | Quantities -> Some (Scale.Floats (lo, hi))
+  | Instants -> Some (Scale.Instants (lo, hi))
+  | Categories -> None
 
 (* [zoom view nodes scales] is [scales] with the zooms of [view] applied, and
    the warnings of the zooms it ignores. *)
@@ -707,34 +736,45 @@ let zoom view nodes scales =
           warn at "the zoom of the scale %S applies to no scale" name;
           None
         in
-        (* No channel reads a time scale, and View.zoom refuses categories. *)
-        match of_scale_kind kind with
-        | Some Categories | None -> none ()
-        | Some Quantities -> (
-            match find_scale scales nodes ~at name Quantities with
-            | Found (Some (F f)) -> Some { at; name; key = f.key; ends }
-            | No_scope ->
-                warn at "no scope of the scale %S holds the zoom's node" name;
-                None
-            | No_node | Found None -> none ()))
+        let kind = of_scale_kind kind in
+        match find_scale scales nodes ~at name kind with
+        | Found (Some (F f)) -> Some (Z { at; name; key = f.key; kind; ends })
+        | No_scope ->
+            warn at "no scope of the scale %S holds the zoom's node" name;
+            None
+        | No_node | Found None -> none ())
     | _ -> None
   in
   let zooms = List.filter_map target view in
   let apply (F f) =
-    let of_f z = String.equal z.name f.name && equal_key z.key f.key in
-    match (f.kind, List.filter of_f zooms) with
-    | Categories, _ | Quantities, [] -> F f
-    | Quantities, [ z ] -> (
-        let lo, hi = z.ends in
-        match Scale.with_domain (Scale.Floats (lo, hi)) f.scale with
-        | scale -> F { f with scale }
-        | exception Invalid_argument _ ->
+    let of_f (Z z) =
+      String.equal z.name f.name
+      && equal_key z.key f.key
+      && Option.is_some (equal_kind z.kind f.kind)
+    in
+    match List.filter of_f zooms with
+    | [] -> F f
+    | [ Z z ] -> (
+        let zoomed =
+          match equal_kind z.kind f.kind with
+          | None -> None
+          | Some Type.Equal -> (
+              match continuous f.kind z.ends with
+              | None -> None
+              | Some d -> (
+                  match Scale.with_domain d f.scale with
+                  | scale -> Some (F { f with scale })
+                  | exception Invalid_argument _ -> None))
+        in
+        match zoomed with
+        | Some s -> s
+        | None ->
             warn z.at "the zoom of the scale %S sets a domain it cannot take"
               z.name;
             F f)
-    | Quantities, zs ->
+    | zs ->
         List.iter
-          (fun z ->
+          (fun (Z z) ->
             warn z.at
               "the scale %S is zoomed several times; its zooms are ignored"
               z.name)
@@ -892,7 +932,7 @@ let afresh view figure =
               let (F f) = List.nth fitted i in
               match f.kind with
               | Categories -> Some f.scale
-              | Quantities -> None)
+              | Quantities | Instants -> None)
         in
         let fx = scale (`Header Role.X) and fy = scale (`Header Role.Y) in
         let parts =
@@ -1008,24 +1048,20 @@ let scale : type d. ?at:id -> t -> d Scale.t -> d Scale.t =
     | Some n -> n
     | None -> err "Resolved.scale" "the scale is unnamed"
   in
-  match of_scale_kind (Scale.kind s) with
-  | None ->
-      err "Resolved.scale" "the scope of %a has no temporal scale %S" pp_id at
-        name
-  | Some kind -> (
-      let absent () =
-        err "Resolved.scale" "the scope of %a has no %a scale %S" pp_id at
-          pp_kind kind name
-      in
-      match find_scale r.scales r.nodes ~at name kind with
-      | No_node -> err "Resolved.scale" "no node has the id %a" pp_id at
-      | No_scope ->
-          err "Resolved.scale" "no scope of the scale %S holds %a" name pp_id at
-      | Found None -> absent ()
-      | Found (Some (F f)) -> (
-          match equal_kind f.kind kind with
-          | Some Type.Equal -> f.scale
-          | None -> absent ()))
+  let kind = of_scale_kind (Scale.kind s) in
+  let absent () =
+    err "Resolved.scale" "the scope of %a has no %a scale %S" pp_id at pp_kind
+      kind name
+  in
+  match find_scale r.scales r.nodes ~at name kind with
+  | No_node -> err "Resolved.scale" "no node has the id %a" pp_id at
+  | No_scope ->
+      err "Resolved.scale" "no scope of the scale %S holds %a" name pp_id at
+  | Found None -> absent ()
+  | Found (Some (F f)) -> (
+      match equal_kind f.kind kind with
+      | Some Type.Equal -> f.scale
+      | None -> absent ())
 
 let warnings r = r.warnings
 let panel_of = function Panel (_, p) -> Some p | _ -> None

@@ -7,12 +7,13 @@
 
     A figure is an immutable description of a chart. Its {e marks} draw rows of
     data: each binds {e channels} to its {e roles}, such as [x], [y] and [fill].
-    A channel lifts an nx tensor by what it means ({!num} for quantities, {!cat}
-    for coded categories, {!strings}), reads the index along an axis as a
-    category ({!dim}) or a quantity ({!index}), or holds a constant ({!const}),
-    and reads a {e scale} found by name. Composition ({!layer}, {!grid},
-    {!share}) decides which channels share a scale, and axes and legends follow
-    from the scales each part of a figure holds. A mark is already a figure:
+    A channel lifts an nx tensor by what it means ({!num} for quantities,
+    {!time} for instants, {!cat} for coded categories, {!strings}), reads the
+    index along an axis as a category ({!dim}) or a quantity ({!index}), or
+    holds a constant ({!const}), and reads a {e scale} found by name.
+    Composition ({!layer}, {!grid}, {!share}) decides which channels share a
+    scale, and axes and legends follow from the scales each part of a figure
+    holds. A mark is already a figure:
 
     {[
     open Hugin
@@ -174,6 +175,9 @@ module Locale = Hugin_kit.Locale
 module Number = Hugin_kit.Number
 (** Number formats: the notations of tick labels. *)
 
+module Time = Hugin_kit.Time
+(** Instants and the calendar. *)
+
 module Scale = Hugin_kit.Scale
 (** Scale specifications and fitted scales. *)
 
@@ -226,7 +230,8 @@ type ('d, 'r) channel
 (** The type for channels for roles of range ['r]: data whose values, of the
     domain type ['d], a scale normalises and the role maps into ['r], or a
     constant of ['r]. The domain types are those of the kinds of scales
-    ({!Scale.type-kind}): [float] for quantities and [string] for categories. A
+    ({!Scale.type-kind}): [float] for quantities, {!Time.t} for instants and
+    [string] for categories. A
     channel bound with [let] serves roles of the one range its first use fixes;
     a channel for another range is lifted again. *)
 
@@ -262,7 +267,8 @@ type ('d, 'r) channel
     the theme's locale, every value of the mark with the decimals that the value
     needing the most needs to reproduce itself in its source dtype
     ({!Hugin_kit.Number.decimals}): a float32 [0.9234] reads [0.9234], and an
-    integer count reads without a decimal separator. *)
+    integer count reads without a decimal separator. An instant is written at
+    UTC in RFC 3339 form ({!Time.pp}). *)
 
 val num :
   ?scale:float Scale.t ->
@@ -286,6 +292,27 @@ val num :
 
     Raises [Invalid_argument] if [x] has a complex or boolean dtype, or if
     [valid] does not broadcast to the shape of [x] without growing it. *)
+
+val time :
+  ?scale:Time.t Scale.t ->
+  ?valid:Nx.host Nx.bool_t ->
+  ?title:string ->
+  Time.resolution ->
+  ('a, 'b, Nx.host) Nx.t ->
+  (Time.t, 'r) channel
+(** [time ~scale ~valid ~title r counts] is the instants of the integer
+    [counts], one datum per element, the element [n] being [Time.v r n], [n]
+    units of [r] after the epoch, with [scale], [valid] and [title] as for
+    {!num}. It reads a temporal scale ({!Scale.time}), whose ticks fall on the
+    boundaries of calendar intervals and whose labels name them in the
+    calendar ({!Hugin_kit.Ticks.section-time}):
+    [line ~x:(time Time.S stamps) ~y ()] has a time axis. Days counted from the
+    epoch, such as a date column of [int32] days, are
+    [time Time.S (Nx.mul_s (Nx.cast Nx.int64 days) 86_400L)]. An
+    unsigned count beyond the range of int64 is missing, with a warning.
+
+    Raises [Invalid_argument] if [counts] does not have an integer dtype, or if
+    [valid] does not broadcast to the shape of [counts] without growing it. *)
 
 val cat :
   ?scale:string Scale.t ->
@@ -520,10 +547,12 @@ val rect :
       the rect is a {e bar}, and [rect] implies padding [0.2] on the band scale
       ({!Theme.section-ranges}), so that bars stand apart, while a cell of a
       heatmap, whose [y] reads a band scale too, implies none;
-    - with [x] alone on a continuous scale, a {e length}: from zero to [x], zero
-      being clamped into the domain, so that on a log scale a length starts at
-      the domain's lower end. [rect] implies [zero] on the scale of a length
-      ({!section-merging});
+    - with [x] alone on a quantitative scale, a {e length}: from zero to [x],
+      zero being clamped into the domain, so that on a log scale a length
+      starts at the domain's lower end. [rect] implies [zero] on the scale of a
+      length ({!section-merging});
+    - with [x] alone on a temporal scale, its instant, so that a span of time
+      takes [x] and [x2];
     - without [x], the whole panel.
 
     Likewise along y. With [stack], the one of [x] and [y] that is a length is
@@ -1557,10 +1586,10 @@ module Mark : sig
       - if [x] is stacked ({!bind}), the interval its stack gives the row, from
         its start to its end;
       - otherwise, if [x] reads a band scale, its band;
-      - otherwise, if [x] reads a continuous scale, a {e length}: from the
+      - otherwise, if [x] reads a quantitative scale, a {e length}: from the
         normalised value of [0.] clamped into the domain, which is the domain's
         lower end on a log scale, to [x];
-      - for a constant [x], from [x] to [x];
+      - for [x] on a temporal scale and for a constant [x], from [x] to [x];
       - if the mark binds no [x], from [0.] to [1.].
 
       Ends outside the domain are kept. A dropped row covers [(nan, nan)].

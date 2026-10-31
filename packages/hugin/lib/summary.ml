@@ -14,6 +14,7 @@ type input =
 
 type t = {
   hulls : (int * (float * float)) list;
+  spans : (int * (Hugin_kit.Time.t * Hugin_kit.Time.t)) list;
   codes : (int * int list) list;
   notes : string list;
 }
@@ -38,8 +39,9 @@ let kept_codes keep c =
 (* [key_values input] is the values that tell the columns of a stack apart. *)
 let key_values (In i) =
   match i.lift with
-  | Quantities q -> q.values
-  | Categories c -> Nx.cast Nx.float64 c.codes
+  | Quantities q -> Stacked.Floats q.values
+  | Instants t -> Stacked.Ints t.counts
+  | Categories c -> Stacked.Ints c.codes
 
 (* [intervals shape stack keep inputs] is the index of the stacked input and
    its starts and ends, [nan] where [keep] does not hold. *)
@@ -57,7 +59,7 @@ let intervals shape (stack : Stacked.t) keep inputs =
       in
       let t = Nx.create Nx.float64 shape in
       Some (stack.stacked, t starts, t ends)
-  | Some (In { lift = Categories _; _ }) | None -> None
+  | Some (In { lift = Instants _ | Categories _; _ }) | None -> None
 
 let summarise ?stack shape inputs filter =
   let numel = Array.fold_left ( * ) 1 shape in
@@ -110,8 +112,40 @@ let summarise ?stack shape inputs filter =
                 | _ -> hull k (full q.values)
               in
               Some (i.index, lo, hi)
-          | Quantities _ | Categories _ -> None)
+          | Quantities _ | Instants _ | Categories _ -> None)
         inputs
+  in
+  (* The earliest and latest kept counts, read alone since int64 counts do not
+     fit floats. *)
+  let spanned =
+    if numel = 0 then []
+    else
+      List.filter_map
+        (fun (In i as input) ->
+          match i.lift with
+          | Instants t when i.fitted ->
+              let k = kept input and c = full t.counts in
+              let pick fill = Nx.where k c (Nx.full_like c fill) in
+              Some
+                ( i.index,
+                  t.resolution,
+                  Nx.min (pick Int64.max_int),
+                  Nx.max (pick Int64.min_int) )
+          | Quantities _ | Instants _ | Categories _ -> None)
+        inputs
+  in
+  let ints =
+    match List.concat_map (fun (_, _, lo, hi) -> [ lo; hi ]) spanned with
+    | [] -> [||]
+    | l -> Nx.to_array (Nx.stack l)
+  in
+  let spans =
+    List.mapi
+      (fun k (index, r, _, _) -> (index, r, ints.(2 * k), ints.((2 * k) + 1)))
+      spanned
+    |> List.filter_map (fun (index, r, lo, hi) ->
+        if Int64.compare lo hi > 0 then None
+        else Some (index, Hugin_kit.Time.(v r lo, v r hi)))
   in
   let counts =
     List.concat_map (fun (In i) -> (Lift.miss i.lift).counts) inputs
@@ -145,7 +179,7 @@ let summarise ?stack shape inputs filter =
           | Categories { lift = Cat { labels = None; _ }; codes; _ }
             when i.fitted ->
               Some (i.index, kept_codes (kept input) (full codes))
-          | Quantities _ | Categories _ -> None)
+          | Quantities _ | Instants _ | Categories _ -> None)
         inputs
   in
-  { hulls; codes; notes }
+  { hulls; spans; codes; notes }

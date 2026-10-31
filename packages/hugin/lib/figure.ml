@@ -262,7 +262,7 @@ let check_binding fn shape (B b) =
               err fn "the role %s has %d labels for an axis of length %d"
                 b.role.name (Array.length l) shape.(a)
           | _ -> ())
-      | Num _ | Floats _ | Cat _ | Strings _ -> ())
+      | Num _ | Floats _ | Time _ | Cat _ | Strings _ -> ())
 
 let mark_shape fn ?(shape = [||]) bindings =
   if Array.exists (fun d -> d < 0) shape then

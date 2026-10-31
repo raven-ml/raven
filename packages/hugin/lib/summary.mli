@@ -19,6 +19,8 @@ type input =
 type t = {
   hulls : (int * (float * float)) list;
       (** Per binding index, when some value is kept. *)
+  spans : (int * (Hugin_kit.Time.t * Hugin_kit.Time.t)) list;
+      (** Likewise, of instants. *)
   codes : (int * int list) list;
       (** Per binding index of indexed codes ({!Channel.cat} without labels),
           increasing. *)

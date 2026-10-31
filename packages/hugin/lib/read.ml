@@ -11,6 +11,7 @@ module Symbol = Hugin_kit.Symbol
 module Dash = Hugin_kit.Dash
 module Number = Hugin_kit.Number
 module Ticks = Hugin_kit.Ticks
+module Time = Hugin_kit.Time
 open Common
 open Channel
 open Figure
@@ -53,11 +54,12 @@ let source_of shape s =
       !o
 
 (* What a binding reads of its data, where the data lives: each row's quantity,
-   NaN where missing; on a band scale, each row's index in its domain, [-1]
-   where missing; or, on no scale, each row's category code and the missing
-   rows. *)
+   NaN where missing; each row's instant as a count of a resolution, and the
+   missing rows; on a band scale, each row's index in its domain, [-1] where
+   missing; or, on no scale, each row's category code and the missing rows. *)
 type source =
   | Values of Nx.host Nx.float64_t
+  | Counts of Nx.host Nx.int64_t * Time.resolution * Nx.host Nx.bool_t option
   | Positions of Nx.host Nx.int64_t
   | Codes of Nx.host Nx.int64_t * Nx.host Nx.bool_t option
 
@@ -107,9 +109,16 @@ let gather : type a b c d.
 let floats rd x sel =
   gather Nx.float64 rd.floats ~whole:rd.whole rd.mark.shape x sel
 
-let ints rd x sel =
-  Array.map Int64.to_int
-    (gather Nx.int64 rd.ints ~whole:rd.whole rd.mark.shape x sel)
+let int64s rd x sel =
+  gather Nx.int64 rd.ints ~whole:rd.whole rd.mark.shape x sel
+
+let ints rd x sel = Array.map Int64.to_int (int64s rd x sel)
+
+(* [missed rd m sel] is whether each of the rows [sel] is missing in [m]. *)
+let missed rd m sel =
+  match m with
+  | None -> Array.make (count rd.mark.shape sel) false
+  | Some m -> Array.map (fun f -> f <> 0.) (floats rd m sel)
 
 let evaluate : type d.
     int array -> role:string -> d lift -> fitted option -> source =
@@ -119,6 +128,9 @@ let evaluate : type d.
       Values (Lift.values (Lift.eval shape ~role lift spec))
   | Quantities, _ ->
       Values (Lift.values (Lift.eval shape ~role lift (Scale.linear ())))
+  | Instants, _ ->
+      let (Lift.Instants i) = Lift.eval shape ~role lift (Scale.time ()) in
+      Counts (i.counts, i.resolution, i.miss.rows)
   | Categories, Some (F { kind = Categories; scale; _ }) ->
       Positions (Lift.positions scale (Lift.eval shape ~role lift scale))
   | Categories, _ ->
@@ -132,7 +144,7 @@ let source rd (B b) index scale =
   let key =
     match scale with
     | Some (i, F { kind = Categories; _ }) -> (index, Some i)
-    | Some (_, F { kind = Quantities; _ }) | None -> (index, None)
+    | Some (_, F { kind = Quantities | Instants; _ }) | None -> (index, None)
   in
   match List.assoc_opt key !(rd.sources) with
   | Some s -> s
@@ -200,7 +212,7 @@ let base : type r.
   let n () =
     match f.kind with
     | Categories -> List.length (category_names f.scale)
-    | Quantities -> 0
+    | Quantities | Instants -> 0
   in
   match range with
   | Role.Colors -> (
@@ -214,7 +226,7 @@ let base : type r.
               ~default:(Theme.palette ctx.theme)
           in
           Some (By_index (Scheme.colors (n ()) scheme), unknown)
-      | Quantities ->
+      | Quantities | Instants ->
           let scheme =
             Option.value (Scale.scheme f.scale)
               ~default:(Theme.scheme ctx.theme)
@@ -225,7 +237,7 @@ let base : type r.
         let circle = Float.pi *. Float.pow (em ctx size_em /. 2.) 2. in
         match f.kind with
         | Quantities -> Option.value (Scale.areas f.scale) ~default:(0., circle)
-        | Categories -> (0., circle)
+        | Instants | Categories -> (0., circle)
       in
       let g =
         match use with
@@ -253,7 +265,7 @@ let base : type r.
           Some
             ( By_index (Array.init (n ()) (fun i -> symbols.(i mod k))),
               symbols.(0) )
-      | Quantities -> None)
+      | Quantities | Instants -> None)
   | Role.Dashes -> (
       match f.kind with
       | Categories ->
@@ -266,12 +278,12 @@ let base : type r.
           Some
             ( By_index (Array.init (n ()) (fun i -> dashes.(i mod k))),
               dashes.(0) )
-      | Quantities -> None)
+      | Quantities | Instants -> None)
   | Role.Panels -> (
       match f.kind with
       | Categories ->
           Some (By_index (Array.of_list (category_names f.scale)), "")
-      | Quantities -> None)
+      | Quantities | Instants -> None)
   | Role.Texts | Role.Param _ -> None
 
 (* [index_at s] is the index of the category of the band scale [s] whose step
@@ -289,7 +301,7 @@ let at (F f) = function
       | Categories ->
           let index_at = index_at f.scale in
           fun u -> Option.map (Array.get t) (index_at u)
-      | Quantities -> fun _ -> None)
+      | Quantities | Instants -> fun _ -> None)
 
 let colors ctx i =
   match base ctx ~stroked:false Role.fill.use Role.Colors i with
@@ -351,6 +363,17 @@ let scaled ?(stack : (float array * float array) option) ctx ~stroked rd
             column b.role (Array.map fn norm) ~norm ~fn ~ticks ~zero ?start
           in
           Some (col, Array.map Float.is_nan norm)
+      | Instants, Counts (c, r, m) ->
+          let normalize = Scale.normalize f.scale in
+          let miss = missed rd m sel in
+          let norm =
+            Array.mapi
+              (fun k n ->
+                if miss.(k) then Float.nan else normalize (Time.v r n))
+              (int64s rd c sel)
+          in
+          let col = column b.role (Array.map fn norm) ~norm ~fn ~ticks in
+          Some (col, miss)
       | Categories, Positions p ->
           let ks = ints rd p sel in
           let norm = Array.map (Scale.normalize_index f.scale) ks in
@@ -363,19 +386,21 @@ let scaled ?(stack : (float array * float array) option) ctx ~stroked rd
           let band = Scale.bandwidth f.scale in
           let col = column b.role values ~norm ~fn ~ticks ~cats:ks ~band in
           Some (col, Array.map (fun k -> k < 0) ks)
-      | (Quantities | Categories), _ ->
+      | (Quantities | Instants | Categories), _ ->
           assert false (* A reading's scale has the reading's kind. *))
 
 (* [decimals l] is the decimals that write a quantity of [l]. *)
 let decimals : type d. d lift -> float -> int = function
   | Num { x; _ } -> Number.decimals (Nx.dtype x)
   | Floats _ -> Number.decimals Nx.float64
-  | Index _ | Cat _ | Strings _ | Dim _ -> fun _ -> 0
+  | Index _ | Time _ | Cat _ | Strings _ | Dim _ -> fun _ -> 0
 
 (* [label l] is the text that shows the category of a code of [l]. *)
 let label : type d. d lift -> int -> string =
  fun l ->
-  match kind l with Categories -> Lift.label l | Quantities -> string_of_int
+  match kind l with
+  | Categories -> Lift.label l
+  | Quantities | Instants -> string_of_int
 
 (* [unscaled ctx rd (B b as bd) index sel] is the column of a binding that reads
    no scale, and the rows it misses. *)
@@ -402,13 +427,19 @@ let unscaled ctx rd (B b as bd) index sel =
                v)
         in
         (v, texts, miss)
-    | Codes (c, m) ->
-        let codes = ints rd c sel in
-        let miss =
-          match m with
-          | None -> Array.make (Array.length codes) false
-          | Some m -> Array.map (fun f -> f <> 0.) (floats rd m sel)
+    | Counts (c, r, m) ->
+        let counts = int64s rd c sel and miss = missed rd m sel in
+        let texts =
+          lazy
+            (Array.mapi
+               (fun j n ->
+                 if miss.(j) then blank
+                 else Text.v (Format.asprintf "%a" Time.pp (Time.v r n)))
+               counts)
         in
+        (Array.make (Array.length counts) Float.nan, texts, miss)
+    | Codes (c, m) ->
+        let codes = ints rd c sel and miss = missed rd m sel in
         let texts =
           lazy
             (let label = label lift in
@@ -451,7 +482,7 @@ let stacked ctx rd (st : Stacked.t) reads =
   let missing = function
     | Values v -> Some (Nx.isnan v)
     | Positions p -> Some (Nx.less_s p 0L)
-    | Codes (_, m) -> m
+    | Counts (_, _, m) | Codes (_, m) -> m
   in
   let keep =
     List.fold_left
@@ -465,8 +496,8 @@ let stacked ctx rd (st : Stacked.t) reads =
   in
   let key index =
     match snd (read index) with
-    | Values v -> v
-    | Positions p | Codes (p, _) -> Nx.cast Nx.float64 p
+    | Values v -> Stacked.Floats v
+    | Positions p | Counts (p, _, _) | Codes (p, _) -> Stacked.Ints p
   in
   match snd (read st.stacked) with
   | Values v ->
@@ -477,7 +508,7 @@ let stacked ctx rd (st : Stacked.t) reads =
       Some
         (Stacked.intervals st.offset shape ~lengths
            ~keys:(List.map key st.keys))
-  | Positions _ | Codes _ -> None
+  | Counts _ | Positions _ | Codes _ -> None
 
 let rows ?only ctx rd ~id projection ~axes ~warn reads sel =
   let m = rd.mark and stroked = stroked rd.mark in
@@ -553,6 +584,7 @@ let swatch ctx m ~id projection ~warn ~scale ~reads ~n ~k u =
                   let k = Option.value ~default:(-1) (index_at f.scale u) in
                   (Some [| k |], Some (Scale.bandwidth f.scale), None)
               | Quantities -> (None, None, Some (zero f.scale))
+              | Instants -> (None, None, None)
             in
             Some
               (column b.role

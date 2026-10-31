@@ -33,17 +33,24 @@ let of_mark (m : mark) =
         b.stack)
     indexed
 
-(* [0. +. k] is [0.] for [-0.], so equal keys have equal bits. *)
+type key = Floats of Nx.host Nx.float64_t | Ints of Nx.host Nx.int64_t
+
+(* [0. +. k] is [0.] for [-0.], so equal floats have equal bits. *)
 let bits k = Int64.bits_of_float (0. +. k)
 
 let intervals offset shape ~lengths ~keys =
   let full t = Nx.to_array (Nx.broadcast_to shape t) in
-  let lengths = full lengths and keys = List.map full keys in
+  let lengths = full lengths in
+  let keys =
+    List.map
+      (function Floats k -> Array.map bits (full k) | Ints k -> full k)
+      keys
+  in
   let n = Array.length lengths in
   let ids = Hashtbl.create 64 in
   let columns =
     Array.init n (fun r ->
-        let key = List.map (fun k -> bits k.(r)) keys in
+        let key = List.map (fun k -> k.(r)) keys in
         match Hashtbl.find_opt ids key with
         | Some c -> c
         | None ->

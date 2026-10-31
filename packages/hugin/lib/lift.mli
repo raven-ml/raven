@@ -7,6 +7,7 @@
     the rows that are missing. *)
 
 module Scale := Hugin_kit.Scale
+module Time := Hugin_kit.Time
 
 type miss = {
   rows : Nx.host Nx.bool_t option;
@@ -21,6 +22,13 @@ type miss = {
 (** A lift's rows, indexed by its kind. *)
 type _ t =
   | Quantities : { values : Nx.host Nx.float64_t; miss : miss } -> float t
+  | Instants : {
+      counts : Nx.host Nx.int64_t;
+          (** Counts of [resolution]; garbage where missing. *)
+      resolution : Time.resolution;
+      miss : miss;
+    }
+      -> Time.t t
   | Categories : {
       lift : string Channel.lift;
       codes : Nx.host Nx.int64_t;

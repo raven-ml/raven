@@ -4,26 +4,34 @@
   ---------------------------------------------------------------------------*)
 
 module Scale = Hugin_kit.Scale
+module Time = Hugin_kit.Time
 open Common
 
-type _ kind = Quantities : float kind | Categories : string kind
+type _ kind =
+  | Quantities : float kind
+  | Instants : Time.t kind
+  | Categories : string kind
 
 let equal_kind : type a b. a kind -> b kind -> (a, b) Type.eq option =
  fun k k' ->
   match (k, k') with
   | Quantities, Quantities -> Some Type.Equal
+  | Instants, Instants -> Some Type.Equal
   | Categories, Categories -> Some Type.Equal
-  | Quantities, Categories | Categories, Quantities -> None
+  | (Quantities | Instants | Categories), _ -> None
 
 let pp_kind : type d. Format.formatter -> d kind -> unit =
  fun ppf k ->
   Format.pp_print_string ppf
-    (match k with Quantities -> "quantitative" | Categories -> "categorical")
+    (match k with
+    | Quantities -> "quantitative"
+    | Instants -> "temporal"
+    | Categories -> "categorical")
 
-let of_scale_kind : type d. d Scale.kind -> d kind option = function
-  | Scale.Quantitative -> Some Quantities
-  | Scale.Categorical -> Some Categories
-  | Scale.Temporal -> None
+let of_scale_kind : type d. d Scale.kind -> d kind = function
+  | Scale.Quantitative -> Quantities
+  | Scale.Categorical -> Categories
+  | Scale.Temporal -> Instants
 
 type _ lift =
   | Num : {
@@ -33,6 +41,12 @@ type _ lift =
       -> float lift
   | Index : int -> float lift
   | Floats : float array -> float lift
+  | Time : {
+      counts : ('a, 'b, Nx.host) Nx.t;
+      resolution : Time.resolution;
+      valid : Nx.host Nx.bool_t option;
+    }
+      -> Time.t lift
   | Cat : {
       codes : ('a, 'b, Nx.host) Nx.t;
       valid : Nx.host Nx.bool_t option;
@@ -62,6 +76,7 @@ let kind : type d. d lift -> d kind = function
   | Num _ -> Quantities
   | Index _ -> Quantities
   | Floats _ -> Quantities
+  | Time _ -> Instants
   | Cat _ -> Categories
   | Strings _ -> Categories
   | Dim _ -> Categories
@@ -74,6 +89,11 @@ let equal_lift : type d e. d lift -> e lift -> (d, e) Type.eq option =
       ok (equal_tensor a.x b.x && Option.equal ( == ) a.valid b.valid)
   | Index k, Index k' -> ok (Int.equal k k')
   | Floats a, Floats b -> ok (Array.equal Float.equal a b)
+  | Time a, Time b ->
+      ok
+        (equal_tensor a.counts b.counts
+        && a.resolution = b.resolution
+        && Option.equal ( == ) a.valid b.valid)
   | Cat a, Cat b ->
       ok
         (equal_tensor a.codes b.codes
@@ -123,6 +143,7 @@ let scale_kind : type d r. (d, r) t -> d Scale.kind option =
   | Some d -> (
       match kind d.lift with
       | Quantities -> Some Scale.Quantitative
+      | Instants -> Some Scale.Temporal
       | Categories -> Some Scale.Categorical)
 
 (* Lifts *)
@@ -170,6 +191,13 @@ let num ?scale ?valid ?title x =
   check_valid "num" (Nx.shape x) valid;
   Data { lift = Num { x; valid }; spec = scale; title }
 
+let time ?scale ?valid ?title resolution counts =
+  if not (is_integer (Nx.dtype counts)) then
+    err "time" "the dtype %s is not an integer dtype"
+      (Nx.Dtype.name (Nx.dtype counts));
+  check_valid "time" (Nx.shape counts) valid;
+  Data { lift = Time { counts; resolution; valid }; spec = scale; title }
+
 let cat ?scale ?valid ?title ?labels codes =
   if not (is_integer (Nx.dtype codes)) then
     err "cat" "the dtype %s is not an integer dtype"
@@ -200,6 +228,7 @@ let axis_of shape k =
 
 let lift_shape : type d. d lift -> int array option = function
   | Num { x; _ } -> Some (Nx.shape x)
+  | Time { counts; _ } -> Some (Nx.shape counts)
   | Cat { codes; _ } -> Some (Nx.shape codes)
   | Strings a -> Some [| Array.length a |]
   | Floats a -> Some [| Array.length a |]
@@ -218,6 +247,7 @@ let varies : type d r. int array -> (d, r) t -> int -> bool =
       in
       match d.lift with
       | Num { x; _ } -> along (Nx.shape x)
+      | Time { counts; _ } -> along (Nx.shape counts)
       | Cat { codes; _ } -> along (Nx.shape codes)
       | Strings s -> along [| Array.length s |]
       | Floats s -> along [| Array.length s |]

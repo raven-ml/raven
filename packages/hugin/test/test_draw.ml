@@ -1956,6 +1956,87 @@ let stacks =
                 (fun _ -> Picture.empty)));
     ]
 
+(* Time *)
+
+
+
+let i64 a = Nx.create Nx.int64 [| Array.length a |] a
+
+(* Law: a row of instants is at its instant normalised by the fitted temporal
+   scale, and a masked row is dropped. *)
+let time_positions (counts, valid) =
+  cover "a masked row" (Array.exists not valid);
+  let (us, _), s =
+    rows_of
+      [
+        Mark.bind Role.x
+          (time ~valid:(Nx.create Nx.bool [| Array.length valid |] valid) Us
+             (i64 counts));
+      ]
+      (fun r ->
+        (Mark.positions r, Option.get (Mark.scale r `X Scale.Temporal)))
+  in
+  let expected =
+    Array.mapi
+      (fun i n ->
+        if valid.(i) then Scale.normalize s (Time.v Us n) else nan)
+      counts
+  in
+  equal floats expected us
+
+let gen_time_rows =
+  let open Gen in
+  let* n = int_range 1 6 in
+  pair
+    (array ~size:(constant n)
+       (map Int64.of_int (int_range (-1_000_000_000) 1_000_000_000)))
+    (array ~size:(constant n)
+       (frequency [ (4, constant true); (1, constant false) ]))
+
+let times =
+  group "Time"
+    [
+      prop "instants are at their normalised values" gen_time_rows
+        time_positions;
+      test "the text role writes instants in RFC 3339" (fun () ->
+          let texts =
+            rows_of
+              [
+                Mark.bind Role.text (time Ms (i64 [| 0L; 1_250L |]));
+              ]
+              (fun r -> Option.get (Mark.get r Role.text))
+          in
+          equal (array text_t)
+            (Array.map Text.v
+               [| "1970-01-01T00:00:00Z"; "1970-01-01T00:00:01.25Z" |])
+            texts);
+      test "m4 reduces a line over time as over its normalised values"
+        (fun () ->
+          let n = 1001 in
+          let counts = Nx.cast Nx.int64 (Nx.arange Nx.int32 0 n 1) in
+          let ys = ys n in
+          let kept x =
+            let m, seen =
+              probe ~reduce:Mark.m4
+                [ Mark.bind Role.x x; Mark.bind Role.y (num ys) ]
+                Mark.index
+            in
+            ignore (drawn ~size:(Size.panels 50. 50.) m);
+            !seen
+          in
+          let span = (Time.v Ms 0L, Time.v Ms (Int64.of_int (n - 1))) in
+          let on_time =
+            kept (time ~scale:(Scale.time ~domain:span ()) Ms counts)
+          and on_line =
+            kept
+              (num
+                 ~scale:(Scale.linear ~domain:(0., Float.of_int (n - 1)) ())
+                 counts)
+          in
+          equal (list (array int)) on_line on_time;
+          less int ~than:n (Array.length (List.hd on_time)));
+    ]
+
 (* Steps *)
 
 let stepped = Scale.linear ~stepped:true ~domain:(0., 10.) ()
@@ -2645,6 +2726,7 @@ let () =
          reducers;
          areas;
          stacks;
+         times;
          steps;
          explicit_ticks;
          dashes;

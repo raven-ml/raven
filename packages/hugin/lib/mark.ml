@@ -21,7 +21,7 @@ let bind (type d r) ?imply ?guide ?stack (role : (d, r) Role.t)
         | Some d -> (
             match Channel.kind d.lift with
             | Channel.Quantities -> true
-            | Channel.Categories -> false)
+            | Channel.Instants | Channel.Categories -> false)
       in
       if not quantities then
         Common.err "Mark.bind" "the stacked %s holds no quantities" role.name));

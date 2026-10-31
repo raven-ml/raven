@@ -110,6 +110,10 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `time r counts` lifts integer counts of a `Time.resolution` as instants,
+  read by a temporal scale: axes tick at calendar boundaries and label them in
+  the calendar, zooms take instants, the `text` role writes RFC 3339, and `m4`
+  reduces lines over time. `Hugin.Time` is the kit's `Time`.
 - `rect ~stack` and `area ~stack` stack bars and areas, and `Mark.bind ~stack`
   stacks the length of any mark: rows that share the other position and panel
   are laid end to end, positive and negative lengths apart, with the offsets
