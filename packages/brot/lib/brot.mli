@@ -548,8 +548,9 @@ module Pre_tokenizer : sig
   (** [unicode_scripts] splits on Unicode script boundaries.
 
       A pretoken opens where the writing system changes (e.g. Latin to Cyrillic,
-      Latin to Han) and runs to the next change. Hiragana and Katakana count as
-      Han, as does the prolonged sound mark ["ー"] (U+30FC).
+      Latin to Han) and runs to the next change. The writing system is the
+      Script property of Unicode 17.0.0. Hiragana and Katakana count as Han, as
+      does the prolonged sound mark ["ー"] (U+30FC).
 
       Spaces and characters of no known script join the pretoken they follow, so
       a leading run of them belongs to no pretoken: unlike the other

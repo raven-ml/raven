@@ -3640,6 +3640,10 @@ thread.
 
 ### Brot
 
+- `Pre_tokenizer.unicode_scripts` reads scripts from Unicode 17.0.0, the data
+  of `\p{..}` in `split_regex`, rather than from uucp's Unicode 18.0.0: a
+  character assigned in 18.0.0, such as U+0558, now joins the piece around it
+  as Hugging Face's tokenizers has it.
 - Kimi K2's pattern loads: `Pre_tokenizer.split_regex` and
   `Normalizer.replace_regex` accept nested bracket classes, their
   intersection with `&&`, and scripts as `\p{Han}` (Unicode 17.0.0).

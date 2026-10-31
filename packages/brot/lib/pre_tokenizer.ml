@@ -1114,29 +1114,76 @@ let fill_marker marker s ~pos ~stop spans =
   Spans.set_count spans !n;
   !p
 
-(* [`Any] joins whichever run surrounds it. HuggingFace gives it to U+0020 and
-   to the code points its script table does not know; every other whitespace
-   character keeps its own script, [`Zyyy] (Common) for all of them but the
+(* Scripts are indices into {!Script_data.scripts}, the Script property of the
+   same Unicode version as the regular expressions' [\p{..}]. [any] joins
+   whichever run surrounds it. HuggingFace gives it to U+0020 and to the code
+   points its script table does not know, here those of [Unknown]; every other
+   whitespace character keeps its own script, Common for all of them but the
    Ogham space mark. *)
-type script = [ `Any | Uucp.Script.t ]
+let any = -1
 
-let fixed_script code : script =
-  if not (Uchar.is_valid code) then `Any
-  else if code = 0x30FC then (`Hani :> script)
+let script_index short =
+  let rec find k =
+    if k >= Array.length Script_data.scripts then invalid_arg short
+    else if List.mem short (fst Script_data.scripts.(k)) then k
+    else find (k + 1)
+  in
+  find 0
+
+let hani = script_index "Hani"
+let hira = script_index "Hira"
+let kana = script_index "Kana"
+let latn = script_index "Latn"
+let zyyy = script_index "Zyyy"
+let zzzz = script_index "Zzzz"
+
+(* Every script's ranges as one table: the first code points in ascending
+   order, and the script of the range each opens. Built on first use; a domain
+   that finds it unbuilt while another builds it builds the same table. *)
+let script_table = ref None
+
+let build_script_table () =
+  let ranges = ref [] in
+  Array.iteri
+    (fun k (_, bounds) ->
+      for r = 0 to (Array.length bounds / 2) - 1 do
+        ranges := (bounds.(2 * r), k) :: !ranges
+      done)
+    Script_data.scripts;
+  let sorted = Array.of_list !ranges in
+  Array.sort compare sorted;
+  let table = (Array.map fst sorted, Array.map snd sorted) in
+  script_table := Some table;
+  table
+
+(* The script of [cp], a scalar value: its range is the last one opening at or
+   before it, the ranges covering every code point. *)
+let script_of cp =
+  let starts, scripts =
+    match !script_table with Some t -> t | None -> build_script_table ()
+  in
+  let lo = ref 0 and hi = ref (Array.length starts - 1) in
+  while !lo < !hi do
+    let mid = (!lo + !hi + 1) / 2 in
+    if Array.unsafe_get starts mid <= cp then lo := mid else hi := mid - 1
+  done;
+  Array.unsafe_get scripts !lo
+
+let fixed_script code =
+  if not (Uchar.is_valid code) then any
+  else if code = 0x30FC then hani
   else
-    match Uucp.Script.script (Uchar.unsafe_of_int code) with
-    | `Hira | `Kana -> (`Hani :> script)
-    | `Zzzz -> `Any
-    | s -> (s :> script)
+    let s = script_of code in
+    if s = hira || s = kana then hani else if s = zzzz then any else s
 
-let script_at s i d : script =
+let script_at s i d =
   let b = Char.code (String.unsafe_get s i) in
   match Char_class.at_len d with
   | 1 ->
-      if b >= 0x80 then `Any
-      else if b = 32 then `Any
-      else if Char_class.category b = Char_class.letter then `Latn
-      else `Zyyy
+      if b >= 0x80 then any
+      else if b = 32 then any
+      else if Char_class.category b = Char_class.letter then latn
+      else zyyy
   | 2 ->
       fixed_script
         (((b land 0x1F) lsl 6)
@@ -1153,8 +1200,8 @@ let script_at s i d : script =
         lor ((Char.code (String.unsafe_get s (i + 2)) land 0x3F) lsl 6)
         lor (Char.code (String.unsafe_get s (i + 3)) land 0x3F))
 
-(* A piece runs from a script change to the next one, absorbing the [`Any]
-   characters it meets. A leading [`Any] run belongs to no piece and is dropped:
+(* A piece runs from a script change to the next one, absorbing the [any]
+   characters it meets. A leading [any] run belongs to no piece and is dropped:
    a piece can only open on a script change. *)
 let fill_unicode_scripts s ~pos ~stop spans =
   let capacity = Spans.capacity spans in
@@ -1166,7 +1213,7 @@ let fill_unicode_scripts s ~pos ~stop spans =
     let opening = ref true in
     while !opening && !i < stop do
       let d = Char_class.at s !i ~stop in
-      if script_at s !i d = `Any then i := !i + Char_class.at_len d
+      if script_at s !i d = any then i := !i + Char_class.at_len d
       else opening := false
     done;
     p := !i;
@@ -1180,7 +1227,7 @@ let fill_unicode_scripts s ~pos ~stop spans =
       while !scanning && !j < stop do
         let d = Char_class.at s !j ~stop in
         let s' = script_at s !j d in
-        if s' <> `Any && s' <> script then scanning := false
+        if s' <> any && s' <> script then scanning := false
         else j := !j + Char_class.at_len d
       done;
       Spans.write spans !n start !j;

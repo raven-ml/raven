@@ -1,10 +1,11 @@
 # Generates the expected rows of the regular-expression Split tests in
 # test_pretokenizers.ml (`test_split_regex_cl100k`, `test_split_regex_o200k`,
 # `test_split_regex_tekken`, `test_split_regex_kimi`,
-# `test_split_regex_classes`, `test_split_regex_behaviors`): the pieces
-# HuggingFace tokenizers gives for
-# `pre_tokenizers.Split(Regex(pattern), behavior, invert)`, with its character
-# offsets turned into the byte offsets brot reports. Run with
+# `test_split_regex_classes`, `test_split_regex_behaviors`) and the
+# generated rows of `test_unicode_scripts`: the pieces HuggingFace tokenizers
+# gives for `pre_tokenizers.Split(Regex(pattern), behavior, invert)` and
+# `pre_tokenizers.UnicodeScripts()`, with its character offsets turned into
+# the byte offsets brot reports. Run with
 #
 #   uv run --with tokenizers==0.23.1 python3 gen_split_regex_expected.py
 #
@@ -163,6 +164,10 @@ BEHAVIOR_CASES = [
     (r"x?x|x?y", ["xy"]),
 ]
 
+# Characters Unicode 18.0.0 assigns, which have no script in Unicode 17.0.0 or
+# in HuggingFace's table (U+0558 is Armenian since 18.0.0).
+SCRIPT_TEXTS = ["a\u0558b", "\u0558abc", "\u65e5\u0558\u672c"]
+
 BEHAVIORS = {
     "isolated": "`Isolated",
     "removed": "`Removed",
@@ -197,6 +202,16 @@ def pieces(pattern, behavior, invert, text):
     return rows
 
 
+def emit_scripts(text):
+    rows = []
+    for piece, (start, stop) in pre_tokenizers.UnicodeScripts().pre_tokenize_str(text):
+        rows.append(
+            "(%s, (%d, %d))"
+            % (ocaml(piece.encode()), len(text[:start].encode()), len(text[:stop].encode()))
+        )
+    print("  test_case %s [ %s ];" % (ocaml(text.encode()), "; ".join(rows)))
+
+
 def emit(name, pattern, behavior, invert, text):
     body = "; ".join(
         "(%s, (%d, %d))" % (ocaml(p), a, b)
@@ -228,3 +243,6 @@ for pattern, texts in BEHAVIOR_CASES:
         for invert in (False, True):
             for text in texts:
                 emit("~pattern:" + ocaml(pattern.encode()), pattern, behavior, invert, text)
+print("\n(* test_unicode_scripts *)")
+for text in SCRIPT_TEXTS:
+    emit_scripts(text)

@@ -526,10 +526,12 @@ Common pre-tokenizers:
 | `pre_tokenizers.Split(Regex(pattern), ...)` | `Pre_tokenizer.split_regex ~pattern ()` |
 | `pre_tokenizers.Sequence([...])`       | `Pre_tokenizer.sequence [...]`      |
 
-`unicode_scripts` reads the script of a character from the current Unicode
-data, where HuggingFace ships an older table that reports every character
-assigned since as scriptless and joins it to the preceding piece, so the two
-split differently around recent additions such as "₿" (U+20BF).
+`unicode_scripts` reads the script of a character from the Unicode 17.0.0
+Script property, the data `split_regex` reads `\p{Han}` from. HuggingFace ships
+a Unicode 9.0.0 table that reports every character assigned since as scriptless
+and joins it to the preceding piece, so the two split differently around
+characters assigned from Unicode 10.0.0 to 17.0.0, such as "₿" (U+20BF).
+Characters assigned after 17.0.0 are scriptless to both.
 
 The same skew runs through the character classes. Brot reads them from Uucp,
 which carries Unicode 18.0.0 in brot's lock, where HuggingFace's Rust
@@ -552,6 +554,14 @@ matches `'S` and `'ſ`, but a folding to several characters is not followed:
 `(?i:ss)` does not match "ß". Lookbehind, a lookahead followed by more of the
 pattern, anchors, backreferences, atomic groups and possessive quantifiers are
 rejected when the file is loaded, with a message naming the construct.
+
+Bracket classes nest and intersect with `&&`, as in Kimi K2's
+`[\p{L}&&[^\p{Han}]]`, and `\p{..}` names a script as well as a general
+category. A script is the Script property of Unicode 17.0.0, where
+HuggingFace's regular expression engine (Oniguruma) carries an older version:
+characters assigned since, as the CJK Extension J ideographs (U+323B0 to
+U+33479) of Unicode 17.0.0, are Han to brot and to no script in HuggingFace,
+so `[\p{Han}]+` takes them in brot and leaves them out in HuggingFace.
 
 ### 9.3 Post-processor
 

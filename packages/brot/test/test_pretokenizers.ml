@@ -2414,6 +2414,14 @@ let test_unicode_scripts () =
   test_case "\u{e000}abc" [ ("abc", (3, 6)) ];
   test_case "  \u{e000}  abc" [ ("abc", (7, 10)) ];
 
+  (* Scripts are those of Unicode 17.0.0: U+0558, Armenian since Unicode
+     18.0.0, has none and joins the run around it, as HuggingFace has it
+     ([gen/gen_split_regex_expected.py]). *)
+  test_case "a\xD5\x98b" [ ("a\xD5\x98b", (0, 4)) ];
+  test_case "\xD5\x98abc" [ ("abc", (2, 5)) ];
+  test_case "\xE6\x97\xA5\xD5\x98\xE6\x9C\xAC"
+    [ ("\xE6\x97\xA5\xD5\x98\xE6\x9C\xAC", (0, 8)) ];
+
   (* Kana folds into Han; so does the prolonged sound mark U+30FC, which is
      Common. The iteration mark U+3005 is Han already. *)
   test_case "\u{65e5}\u{672c}\u{8a9e}\u{30c6}\u{30ad}\u{30c8}"
