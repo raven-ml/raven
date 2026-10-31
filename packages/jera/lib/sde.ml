@@ -218,11 +218,16 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
       simple (fun t h dw _ v -> add (g t v dw) (axpy h (f t v) v))
   | Milstein ->
       simple (fun t h dw _ v ->
-          let root = Nx.sqrt h in
+          (* A step whose span rounds to zero has no correction; √1 stands in
+             for its √h, so that neither direction meets 0 / 0. *)
+          let zero = Nx.equal_s h 0. in
+          let root' = Nx.sqrt (Nx.where zero (Nx.ones_like h) h) in
+          let root = Nx.where zero (Nx.zeros_like h) root' in
           let drifted = axpy h (f t v) v in
           let support = add (g t v (Nx.mul (Nx.ones_like dw) root)) drifted in
           (* (g ȳ − g y) applied to (ΔW² − h) / 2√h. *)
-          let q = Nx.div (Nx.sub (Nx.square dw) h) (Nx.mul_s root 2.) in
+          let q = Nx.div (Nx.sub (Nx.square dw) h) (Nx.mul_s root' 2.) in
+          let q = Nx.where zero (Nx.zeros_like q) q in
           let correction = axpy (Nx.neg one) (g t v q) (g t support q) in
           add correction (add (g t v dw) drifted))
   | Sra1 ->

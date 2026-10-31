@@ -283,6 +283,15 @@ let reference w ~steps at x =
   done;
   Nx.stack ~axis:0 (List.rev !states)
 
+(* The methods whose state is the march's alone, so that a march restarted
+   from a state continues it, and a step over no time leaves it. *)
+let exact_methods =
+  [
+    ("euler_maruyama", Sde.euler_maruyama);
+    ("milstein", Sde.milstein);
+    ("sra1", Sde.sra1);
+  ]
+
 let march_tests =
   let w = path ~n:3 31 in
   let run ?(steps = 4) ?(m = Sde.euler_maruyama) at x =
@@ -369,6 +378,20 @@ let march_tests =
             (x0 3)
         in
         equal (array int) [| 2; 3 |] (Nx.shape y));
+    cases "steps whose span rounds to zero leave the state" ~id:fst
+      exact_methods
+      (fun (_, m) ->
+        (* Of 4 steps over [1, 1 + 2^-52], the third spans it all. *)
+        let w =
+          Sde.Brownian.v (Nx.Rng.key 34) f64 ~shape:[| 3 |] ~t0:0. ~t1:2.
+            ~depth:6
+        in
+        let at = vec [| 1.; 1. +. Float.epsilon |] in
+        let run steps =
+          Sde.march one m ~steps ~drift:gbm_drift ~diffusion:gbm_diffusion w
+            ~at (x0 3)
+        in
+        equal (Oracle.tensor ()) (run 1) (run 4));
     test "times that are not increasing raise" (fun () ->
         raises_with "the times of at are not strictly increasing" (fun () ->
             run (vec [| 1.; 0.5 |]) (x0 3)));
