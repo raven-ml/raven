@@ -355,12 +355,9 @@ let tensor : t =
            "x"
            (fun x -> shape_equal (shape (nth x 1)) (shape (nth x 2)));
          check
-           (pat [ Op.Permute; Op.Flip ] ~name:"mv" ~src:[ Upat.wild ])
+           (pat [ Op.Permute ] ~name:"mv" ~src:[ Upat.wild ])
            "mv"
-           (fun mv ->
-             match (op mv, arg mv) with
-             | Op.Permute, Axes _ | Op.Flip, Flips _ -> true
-             | _ -> false);
+           (fun mv -> match arg mv with Axes _ -> true | _ -> false);
          check
            (pat [ Op.Reduce ] ~src:[ Upat.wild ] ~allow_any_len:true ~name:"x")
            "x" (fun x ->

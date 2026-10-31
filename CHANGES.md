@@ -798,6 +798,10 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Op.Flip`, the argument `Ops.Flips` and the movement `Flip`
+  are gone. `Shape.flip` reverses an axis with pads, reshapes, shrinks and
+  permutes, whose index folds to `n - 1 - i` on an axis of known size; a store
+  through a padded view gates its destination index (`Prepare.pm_mops`).
 - A kernel that calls a sink no longer runs its loops nested wrongly where the
   body has a loop of the size and identity of one of its own
   (`Codegen.to_program`).

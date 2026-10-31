@@ -132,7 +132,6 @@ type t =
   | Permute  (** Permutes the axes of its source. *)
   | Expand  (** Broadcasts axes of size one of its source. *)
   | Pad  (** Pads each axis of its source. *)
-  | Flip  (** Reverses axes of its source. *)
   | Reduce
       (** Reduces axes of its source with {!Add}, {!Mul} or {!Max}, in an
           order the compiler chooses; over no element it is the operation's
@@ -234,7 +233,7 @@ module Set : sig
 
   val movement : t
   (** [movement] is the operations that move elements without computing:
-      {!Reshape}, {!Expand}, {!Permute}, {!Pad}, {!Shrink} and {!Flip}. *)
+      {!Reshape}, {!Expand}, {!Permute}, {!Pad} and {!Shrink}. *)
 
   val commutative : t
   (** [commutative] is the binary operations [f] with [f x y = f y x], whose

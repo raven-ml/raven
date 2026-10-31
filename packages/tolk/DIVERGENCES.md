@@ -1812,7 +1812,7 @@ does the same.
   and `Shape.fold_where_closure`; `test/gen/tinygrad.patch`, which gives
   tinygrad the same.
 - **Differs:** a selection whose condition is a constant through movements
-  that keep each element's value (reshape, expand, permute, shrink, flip) is
+  that keep each element's value (reshape, expand, permute, shrink) is
   its branch, as one by a `CONST` is. A padded constant is not folded, since
   its padding holds `False`. `fold_where_closure` leaves a condition that is
   a constant, broadcast, padded or not, in the branches: a broadcast constant

@@ -179,7 +179,6 @@ EXPRESSIONS = [
     ("permute_one", UOp(Ops.PERMUTE, src=(buf,), arg=(0,))),
     ("flip", p.flip((1,))),
     ("flip_all", p.flip((0, 1))),
-    ("flip_none", UOp(Ops.FLIP, src=(p,), arg=(False, False))),
     ("pad", p.pad(((0, 2), (1, 3)))),
     ("pad_one", buf.pad(((1, 1),))),
     ("shrink", p.shrink(((0, 2), (1, 3)))),

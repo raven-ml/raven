@@ -133,10 +133,33 @@ let mop_index r idx =
 (* The movement rules, with [index] for an index of a movement. *)
 let mops index =
   let movement = Upat.v ~op:Op.Set.movement ~name:"r" () in
+  let zero = Upat.O.int 0 in
   Pattern_matcher.v
     (fun () -> [
       rule (Upat.f movement Op.Index ~allow_any_len:true ~name:"idx") (fun m ->
           index (m "r") (m "idx"));
+      (* A store through a padded view gates the destination index, not its
+         loaded value. *)
+      rule
+        (Upat.store
+           (Upat.where (Upat.var "a")
+              (Upat.where (Upat.var "b") (Upat.var "dst") zero)
+              (Upat.var "pad"))
+           [ Upat.var "val" ])
+        (fun m ->
+          if not (is_invalid (m "pad")) then None
+          else
+            let gate = bitwise_and (m "a") (m "b") in
+            Some (store (where gate (m "dst") (int 0)) (m "val")));
+      rule
+        (Upat.store
+           (Upat.where (Upat.var "cond")
+              (Upat.index (Upat.var "buf") [ Upat.var "idx" ])
+              zero)
+           [ Upat.var "val" ])
+        (fun m ->
+          let idx = valid (m "idx") (m "cond") in
+          Some (store (Ops.index (m "buf") [ idx ]) (m "val")));
       (* Movements and indices move after the effects they are ordered after. *)
       rule
         (Upat.after ~name:"a" ~allow_any_len:true
@@ -178,11 +201,11 @@ let fix_store_hazard target src =
   let base = base target in
   if not (reaches src base) then None
   else
-    (* Permutes and flips reorder indices, and a shrink can overlap when the
+    (* A permute reorders indices, and a shrink can overlap when the
        destination is shrunk too. *)
     let unsafe =
-      Op.[ Permute; Flip ]
-      @
+      Op.Permute
+      ::
       if op_in_backward_slice_with_self ~calls:Skip target [ Op.Shrink ] then
         [ Op.Shrink ]
       else []

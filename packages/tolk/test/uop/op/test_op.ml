@@ -73,7 +73,6 @@ let declared =
       Permute;
       Expand;
       Pad;
-      Flip;
       Reduce;
     ]
 

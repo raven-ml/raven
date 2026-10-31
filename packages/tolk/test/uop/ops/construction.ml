@@ -282,6 +282,32 @@ let kernel_nodes =
 
 (* Movement *)
 
+(* Up to three axes of up to four elements, some of them named in either
+   order. *)
+let gen_flip =
+  Gen.(
+    let* dims = list ~size:(int_range 1 3) (int_range 0 4) in
+    let+ flags = list ~size:(constant (List.length dims)) bool
+    and+ backwards = bool in
+    let axes =
+      List.filter_map Fun.id
+        (List.mapi (fun a f -> if f then Some a else None) flags)
+    in
+    (dims, if backwards then List.rev axes else axes))
+
+(* The row-major position in [dims] of the element that output position [i]
+   holds once [axes] are reversed. *)
+let flipped dims axes i =
+  let rank = List.length dims in
+  let rec coords a i acc =
+    if a < 0 then acc
+    else
+      let d = List.nth dims a in
+      let j = if List.mem a axes then d - 1 - (i mod d) else i mod d in
+      coords (a - 1) (i / d) (j :: acc)
+  in
+  List.fold_left2 (fun acc j d -> (acc * d) + j) 0 (coords (rank - 1) i []) dims
+
 let movement =
   let p = param [ 2; 3; 4 ] 0 Float32 in
   group "movement"
@@ -334,9 +360,6 @@ let movement =
           (match Shape.marg (Shape.permute p [ 2; 0; 1 ]) with
           | Permute o -> equal (list int) [ 2; 0; 1 ] o
           | _ -> fail "permute");
-          (match Shape.marg (Shape.flip p [ 1 ]) with
-          | Flip l -> equal (list bool) [ false; true; false ] l
-          | _ -> fail "flip");
           (match
              Shape.marg (Shape.shrink p [ Some (Int 1, Int 2); None; None ])
            with
@@ -371,6 +394,24 @@ let movement =
         (fun () ->
           rejects (fun () -> Shape.flip p [ 0; 0 ]);
           is_true (Shape.flip p [] == p));
+      prop "a flip reverses each axis it names and keeps the others"
+        gen_flip (fun (dims, axes) ->
+          let n = List.fold_left ( * ) 1 dims in
+          let flips_long = List.exists (fun a -> List.nth dims a > 1) axes in
+          cover "an empty axis beside a flipped one"
+            (List.mem 0 dims && flips_long);
+          cover "an axis of one element is flipped"
+            (List.exists (fun a -> List.nth dims a = 1) axes);
+          cover "two axes are flipped" (List.length axes >= 2);
+          let x = Shape.reshape (param [ n ] 1 Int32) (ints dims) in
+          let memory : Dtype.value array =
+            Array.init n (fun j -> `Int (Bigint.of_int j))
+          in
+          equal (list Dtypes.const)
+            (List.init n (fun i ->
+                 (memory.(flipped dims axes i) :> Dtype.const)))
+            (Array.to_list
+               (Tensors.eval ~buffers:[ (1, memory) ] (Shape.flip x axes))));
       test "shrink, pad and pad_to reject a list of another length" (fun () ->
           rejects (fun () -> Shape.shrink p [ None ]);
           rejects (fun () -> Shape.pad p [ None; None ]);

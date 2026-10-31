@@ -279,7 +279,6 @@ type arg =
           for a kernel's reduction over range sources). *)
   | Device of device  (** {!Op.Copy}: the target. *)
   | Axes of int list  (** {!Op.Permute}: the permutation. *)
-  | Flips of bool list  (** {!Op.Flip}: which axes are reversed. *)
   | String of string
       (** {!Op.Special}, {!Op.Linear}: a name;
           {!Op.Source}: the source text. *)
@@ -799,7 +798,6 @@ type movement =
   | Shrink of (sint * sint) list
       (** Where each axis starts in the source, and the result's size. *)
   | Permute of int list  (** The source axis of each result axis. *)
-  | Flip of bool list  (** Which axes are reversed. *)
 
 (** {1:storage Storage}
 

@@ -234,9 +234,6 @@ let marg_str ctx = function
 let render_marg ctx x =
   match marg x with
   | Permute axes -> repr_ints axes
-  | Flip flips ->
-      repr_ints
-        (List.concat (List.mapi (fun i f -> if f then [ i ] else []) flips))
   | Reshape s | Expand s -> tuple (List.map (marg_str ctx) s)
   | Pad b | Shrink b ->
       tuple

@@ -34,10 +34,6 @@ let movements =
         (ints [ 2; 3; 4 ])
         (Permute [ 2; 0; 1 ])
         (ranges [ 4; 2; 3 ]);
-      moved "movement_flip.golden"
-        (ints [ 4; 5 ])
-        (Flip [ true; false ])
-        (ranges [ 4; 5 ]);
       moved "movement_expand.golden" (ints [ 3 ])
         (Expand (ints [ 2; 4 ]))
         (ranges [ 2; 4; 3 ]);
@@ -159,7 +155,6 @@ let composite (m1 : Ops.movement) (m2 : Ops.movement) : Ops.movement =
            (fun (s1, _) (s2, n) -> (Ops.Int (int s1 + int s2), n))
            b1 b2)
   | Permute p1, Permute p2 -> Permute (List.map (List.nth p1) p2)
-  | Flip f1, Flip f2 -> Flip (List.map2 ( <> ) f1 f2)
   | _ -> invalid_arg "movements of two kinds"
 
 let composition_law (in_shape, m1, m2) =
@@ -190,7 +185,6 @@ let pp_movement ppf (m : Ops.movement) =
   | Pad p -> Format.fprintf ppf "Pad %a" (pp_list pp_pair) p
   | Shrink b -> Format.fprintf ppf "Shrink %a" (pp_list pp_pair) b
   | Permute o -> Format.fprintf ppf "Permute %a" (pp_list Format.pp_print_int) o
-  | Flip f -> Format.fprintf ppf "Flip %a" (pp_list Format.pp_print_bool) f
 
 let rec each = function
   | [] -> Gen.constant []
@@ -236,9 +230,6 @@ let movement kind in_shape : Ops.movement Gen.t =
   | `Permute ->
       let+ o = permutation (List.init (List.length in_shape) Fun.id) in
       Ops.Permute o
-  | `Flip ->
-      let+ f = per_axis (fun _ -> bool) in
-      Ops.Flip f
 
 let one kind =
   Gen.(
@@ -265,7 +256,6 @@ let kinds =
   [
     ("shrink", `Shrink);
     ("permute", `Permute);
-    ("flip", `Flip);
     ("expand", `Expand);
     ("pad", `Pad);
     ("reshape", `Reshape);
@@ -723,7 +713,7 @@ let rewrites =
       ~pp:(fun ppf o -> Ops.pp_arg ppf (Bufferize o))
       ~equal:( = )
   in
-  let movements = Op.[ Reshape; Expand; Pad; Shrink; Permute; Flip ] in
+  let movements = Op.[ Reshape; Expand; Pad; Shrink; Permute ] in
   group "run_rangeify › rewrites"
     [
       test "a stage lives on its source's device and may be inlined" (fun () ->

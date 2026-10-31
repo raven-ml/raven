@@ -112,13 +112,6 @@ let movement u t =
                    | [] -> fail "a permutation misses axis %d" a
                  in
                  find 0 order)))
-  | Flip flips ->
-      gather shape t (fun idx ->
-          Some
-            (List.map2
-               (fun (n, f) i -> if f then n - 1 - i else i)
-               (List.combine t.shape flips)
-               idx))
 
 (* Elements *)
 
@@ -314,7 +307,7 @@ let rec run m params u =
     | Param, Param { slot; _ } when List.mem_assoc slot params ->
         { (List.assoc slot params) with shape = concrete u }
     | (Param | Buffer | Alloc), _ -> storage m u
-    | (Reshape | Expand | Pad | Shrink | Permute | Flip), _ ->
+    | (Reshape | Expand | Pad | Shrink | Permute), _ ->
         movement u (value (List.hd src))
     | (Detach | Contiguous_backward), _ -> value (List.hd src)
     | (Stage | Copy), _ -> fresh (value (List.hd src))

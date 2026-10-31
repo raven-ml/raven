@@ -203,7 +203,6 @@ let marg u =
         | Op.Pad, _ -> Pad (List.combine (shape_src 1) (shape_src 2))
         | Op.Shrink, _ -> Shrink (List.combine (shape_src 1) (shape_src 2))
         | Op.Permute, Axes l -> Permute l
-        | Op.Flip, Flips l -> Flip l
         | op, _ -> invalid_argf "%s is not a movement" (Op.name op)
       in
       set_movement_memo u m;
@@ -403,10 +402,7 @@ and movement_shape u ps =
                       && ok Sint.(o + sz <= s))
                     ps bounds)
           then bad "bounds";
-          numbers (List.map snd bounds)
-      | Flip flips ->
-          if List.length flips <> List.length ps then bad "axes";
-          ps)
+          numbers (List.map snd bounds))
 
 let ndim u = List.length (shape u)
 let numel u = Sint.prod (shape u)
@@ -442,7 +438,6 @@ let mop u (m : movement) =
   | Shrink b ->
       v Op.Shrink ~src:(u :: simplified [ List.map fst b; List.map snd b ])
   | Permute l -> v Op.Permute ~src:[ u ] ~arg:(Axes l)
-  | Flip l -> v Op.Flip ~src:[ u ] ~arg:(Flips l)
 
 let resolve_dim ?(extra = 0) u dim =
   let total = ndim u + extra in
@@ -531,14 +526,6 @@ let expand u new_shape =
     (List.map2
        (fun from to_ -> if Sint.equal to_ (Int (-1)) then from else to_)
        (List.nth aligned 0) (List.nth aligned 1))
-
-let flip u axes =
-  let axes = List.map (resolve_dim u) axes in
-  if List.length (List.sort_uniq Int.compare axes) <> List.length axes then
-    invalid_argf "an axis appears twice in %s"
-      (repr_tuple (List.map string_of_int axes));
-  let flips = List.init (ndim u) (fun i -> List.mem i axes) in
-  if List.exists Fun.id flips then mop u (Flip flips) else u
 
 let check_rank u what l =
   if ndim u <> List.length l then
@@ -659,6 +646,59 @@ let transpose u a b =
   let a = resolve_dim u a and b = resolve_dim u b in
   permute u
     (List.init (ndim u) (fun i -> if i = a then b else if i = b then a else i))
+
+(* A flip of an axis of size n is made of the other movements. The axis is
+   moved to the front; its n values are padded and reshaped so that value i
+   lies at row i, column n - 1 - i of an m x m square; the square is transposed
+   and its anti-diagonal read back, which puts value i at n - 1 - i. Index
+   arithmetic folds the result to that index. An axis whose size may be below
+   2 is taken as m = n + 2 and cropped back, and so is an axis of the rest
+   whose size may be 0, so that every reshape keeps its elements. *)
+let flip u axes =
+  let axes = List.map (resolve_dim u) axes in
+  if List.length (List.sort_uniq Int.compare axes) <> List.length axes then
+    invalid_argf "an axis appears twice in %s"
+      (repr_tuple (List.map string_of_int axes));
+  let known c = Sint.resolve ~default:false c in
+  let flip1 ret axis =
+    let n = List.nth (shape ret) axis in
+    if known Sint.(n <= Int 1) then ret
+    else
+      let x = transpose ret 0 axis in
+      let rest = List.tl (shape x) in
+      let whole = List.map (fun _ -> None) rest in
+      let tail =
+        List.map
+          (fun s -> if known Sint.(s > Int 0) then s else Sint.(s + Int 1))
+          rest
+      in
+      let m = if known Sint.(n >= Int 2) then n else Sint.(n + Int 2) in
+      let tail_pad = List.map (fun s -> (Int 0, s)) tail in
+      let m1 = Sint.(m - Int 1) in
+      let x =
+        reshape (mop x (Pad ((Int 0, m) :: tail_pad))) (m :: Int 1 :: tail)
+      in
+      let x =
+        reshape
+          (mop x (Pad ((Int 0, m) :: (Int 0, m1) :: tail_pad)))
+          (Sint.(m * m1) :: tail)
+      in
+      let x =
+        reshape (mop x (Pad ((m1, Sint.(m * m)) :: tail_pad))) (m :: m :: tail)
+      in
+      let x = reshape (transpose x 0 1) (Sint.(m * m) :: tail) in
+      let x =
+        reshape
+          (mop x (Shrink ((m1, Sint.(m * m1)) :: tail_pad)))
+          (m :: m1 :: tail)
+      in
+      let x =
+        reshape (shrink x (None :: Some (Int 0, Int 1) :: whole)) (m :: tail)
+      in
+      let crop = List.map (fun s -> Some (Int 0, s)) rest in
+      transpose (shrink x (Some (Sint.(m - n), m) :: crop)) 0 axis
+  in
+  List.fold_left flip1 u axes
 
 let split ?(axis = 0) u sizes =
   let axis = resolve_dim u axis in
@@ -2012,7 +2052,7 @@ let pm_remove_invalid =
 let rec broadcast_const u =
   match op u with
   | Op.Const -> Some u
-  | Op.Reshape | Op.Expand | Op.Permute | Op.Shrink | Op.Flip ->
+  | Op.Reshape | Op.Expand | Op.Permute | Op.Shrink ->
       broadcast_const (nth u 0)
   | _ -> None
 
@@ -2969,10 +3009,6 @@ let rec view_start u =
               let moved = Array.make (List.length p) 0 in
               List.iter2 (fun i a -> moved.(a) <- i) idx p;
               Array.to_list moved
-          | Flip f ->
-              List.map2
-                (fun (i, n) f -> if f then n - 1 - i else i)
-                (List.combine idx src) f
         in
         go x idx
     | Op.Stage, x :: _ when view_start x <> No_view ->

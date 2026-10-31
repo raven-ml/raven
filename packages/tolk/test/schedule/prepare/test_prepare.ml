@@ -275,6 +275,30 @@ let pm_mops_rules =
           equal uop
             (Ops.index (Ops.after u [ copy_in ]) [ r0 ])
             (mops (Ops.after (Ops.index u [ r0 ]) [ copy_in ])));
+      test "a store through a padded view of a gated index gates it twice"
+        (fun () ->
+          let a = Ops.lt r0 (Ops.int 6) and b = Ops.lt r1 (Ops.int 3) in
+          let dst = Ops.index (flat 32) [ r0 ] in
+          let value = Ops.float ~dtype:Float32 1. in
+          let padded =
+            Ops.where a
+              (Ops.where b dst (Ops.int 0))
+              (Shape.const_like dst `Invalid)
+          in
+          equal uop
+            (Ops.store
+               (Ops.index (flat 32) [ Shape.valid r0 (Ops.bitwise_and a b) ])
+               value)
+            (mops (Ops.store padded value)));
+      test "a store through a selection of an index gates the index" (fun () ->
+          let c = Ops.lt r0 (Ops.int 6) in
+          let value = Ops.float ~dtype:Float32 1. in
+          equal uop
+            (Ops.store (Ops.index (flat 32) [ Shape.valid r0 c ]) value)
+            (mops
+               (Ops.store
+                  (Ops.where c (Ops.index (flat 32) [ r0 ]) (Ops.int 0))
+                  value)));
       test "an end of a movement is the end of its source" (fun () ->
           let u = flat 32 in
           equal uop (Ops.end_ u [ r0 ])
@@ -330,7 +354,6 @@ let pp_movement ppf (m : Ops.movement) =
   | Pad p -> Format.fprintf ppf "pad %a" (pp_list pair) p
   | Shrink b -> Format.fprintf ppf "shrink %a" (pp_list pair) b
   | Permute o -> Format.fprintf ppf "permute %a" (pp_list Format.pp_print_int) o
-  | Flip f -> Format.fprintf ppf "flip %a" (pp_list Format.pp_print_bool) f
 
 let rec each = function
   | [] -> Gen.constant []
@@ -370,9 +393,6 @@ let movement kinds shape : Ops.movement Gen.t =
   | `Permute ->
       let+ o = permutation (List.init (List.length shape) Fun.id) in
       Ops.Permute o
-  | `Flip ->
-      let+ f = per_axis (fun _ -> bool) in
-      Ops.Flip f
 
 (* A shape of up to three axes of up to four elements, and up to three movements
    of one of [kinds], in turn. *)
@@ -395,7 +415,7 @@ let chains kinds =
         (pp_list Format.pp_print_int)
         shape)
 
-let chain = chains [ `Reshape; `Expand; `Shrink; `Permute; `Flip ]
+let chain = chains [ `Reshape; `Expand; `Shrink; `Permute ]
 let moved (shape, ms) = List.fold_left Shape.mop (stored shape) ms
 let iota n = Array.init n (fun j -> `Float (float_of_int (j + 1)))
 

@@ -228,7 +228,7 @@ let convert_pad_to_where_to_keep_behavior_local ctx x =
 let rec constant u =
   match op u with
   | Op.Const -> true
-  | Op.Cast | Reshape | Expand | Permute | Shrink | Flip -> constant (nth u 0)
+  | Op.Cast | Reshape | Expand | Permute | Shrink -> constant (nth u 0)
   | _ -> false
 
 (* An integer division computed where its ranges are invalid, on a pad's
@@ -368,11 +368,6 @@ let apply_movement_op in_shape m rngs =
           if Sint.equal off (Int 0) then a else add a (sint off))
         rngs b
   | Permute p -> List.map (List.nth rngs) (Helpers.argsort p)
-  | Flip f ->
-      List.map2
-        (fun (a, s) f -> if f then sub (sint Sint.(s - Int 1)) a else a)
-        (List.combine rngs in_shape)
-        f
   | Expand added -> List.drop (List.length added) rngs
   | Pad b ->
       (* The validity is simplified on its own, so that the pad's selection

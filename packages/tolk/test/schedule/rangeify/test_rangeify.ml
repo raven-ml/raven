@@ -167,6 +167,7 @@ let programs =
     "variable_same";
     "variable_shrink";
     "variable_staged";
+    "variable_flipped_store";
     "variable_two";
     "where";
     "windowed_chain";
@@ -281,6 +282,7 @@ let unevaluated =
     "variable_two";
     "variable_shrink";
     "variable_staged";
+    "variable_flipped_store";
   ]
 
 let values =

@@ -82,7 +82,6 @@ type t =
   | Permute
   | Expand
   | Pad
-  | Flip
   | Reduce
 
 let ops =
@@ -155,7 +154,6 @@ let ops =
     Permute;
     Expand;
     Pad;
-    Flip;
     Reduce;
   ]
 
@@ -229,8 +227,7 @@ let info = function
   | Permute -> (65, "PERMUTE")
   | Expand -> (66, "EXPAND")
   | Pad -> (67, "PAD")
-  | Flip -> (68, "FLIP")
-  | Reduce -> (69, "REDUCE")
+  | Reduce -> (68, "REDUCE")
 
 let to_int o = fst (info o)
 let name o = snd (info o)
@@ -301,7 +298,7 @@ module Set = struct
   let elementwise = union alu (of_list [ Cast; Bitcast ])
   let defines = of_list [ Param; Buffer; Alloc ]
   let irreducible = of_list [ Const; Special; Range; Param; Getaddr ]
-  let movement = of_list [ Reshape; Expand; Permute; Pad; Shrink; Flip ]
+  let movement = of_list [ Reshape; Expand; Permute; Pad; Shrink ]
   let commutative = of_list [ Add; Mul; Max; Cmpne; Cmpeq; Xor; And; Or ]
   let associative = of_list [ Add; Mul; And; Or; Max ]
   let idempotent = of_list [ Or; And; Max ]

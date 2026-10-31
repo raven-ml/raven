@@ -261,7 +261,7 @@ let arguments =
             (Ops.equal_arg
                (Code { code = "a"; dtype = Void })
                (Code { code = "a"; dtype = Int32 }));
-          is_false (Ops.equal_arg (Flips [ true ]) (Flips [ false ]));
+          is_false (Ops.equal_arg (Axes [ 0; 1 ]) (Axes [ 1; 0 ]));
           is_false (Ops.equal_arg (Device "CPU") (String "CPU")));
       test "equal_arg compares constants by their bits and nodes physically"
         (fun () ->
@@ -1243,8 +1243,8 @@ let shapes =
           rejects (fun () ->
               Shape.shape (Shape.mop p (Shrink [ (Int 1, Int 2); (Int 0, Int 3) ])));
           rejects (fun () ->
-              Shape.shape (Shape.mop p (Pad [ (Int 3, Int 2); (Int 0, Int 3) ])));
-          rejects (fun () -> Shape.shape (Shape.mop p (Flip [ true ]))));
+              Shape.shape
+                (Shape.mop p (Pad [ (Int 3, Int 2); (Int 0, Int 3) ]))));
       test "a symbolic reshape is accepted unless its sizes provably differ"
         (fun () ->
           let n = weak_var "n" 1 8 in

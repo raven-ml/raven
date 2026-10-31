@@ -274,7 +274,6 @@ N = UOp.variable("n", 1, 8)
 MOVEMENTS = {
     "shrink": lambda: moved(Ops.SHRINK, (8, 6), ((2, 4), (0, 6)), ranges(4, 6)),
     "permute": lambda: moved(Ops.PERMUTE, (2, 3, 4), (2, 0, 1), ranges(4, 2, 3)),
-    "flip": lambda: moved(Ops.FLIP, (4, 5), (True, False), ranges(4, 5)),
     "expand": lambda: moved(Ops.EXPAND, (3,), (2, 4), ranges(2, 4, 3)),
     "expand_symbolic": lambda: moved(Ops.EXPAND, (3,), (N,), (rng(N, 0), rng(3, 1))),
     "pad": lambda: moved(Ops.PAD, (4, 4), ((1, 7), (0, 4)), ranges(7, 4)),

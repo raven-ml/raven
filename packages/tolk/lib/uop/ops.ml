@@ -266,7 +266,6 @@ and arg =
   | Reduce of { op : Op.t; num_axes : int }
   | Device of device
   | Axes of int list
-  | Flips of bool list
   | String of string
   | Bytes of string
   | Code of { code : string; dtype : Dtype.t }
@@ -283,7 +282,6 @@ and movement =
   | Pad of (sint * sint) list
   | Shrink of (sint * sint) list
   | Permute of int list
-  | Flip of bool list
 
 (* Equality and hashing of arguments. Nodes inside them compare by [==]:
    polymorphic equality would walk whole graphs and their memo fields. *)
@@ -359,7 +357,6 @@ let equal_arg (a0 : arg) (a1 : arg) =
       Op.equal r0.op r1.op && Int.equal r0.num_axes r1.num_axes
   | Device d0, Device d1 -> String.equal d0 d1
   | Axes l0, Axes l1 -> l0 = l1
-  | Flips l0, Flips l1 -> l0 = l1
   | String s0, String s1 | Bytes s0, Bytes s1 -> String.equal s0 s1
   | Code c0, Code c1 ->
       String.equal c0.code c1.code && Dtype.equal c0.dtype c1.dtype
@@ -386,7 +383,6 @@ let hash_arg (a : arg) =
   | Reduce r -> h (5, Op.to_int r.op, r.num_axes)
   | Device d -> h (7, d)
   | Axes l -> h (9, l)
-  | Flips l -> h (10, l)
   | String s -> h (11, s)
   | Bytes s -> h (12, s)
   | Code c -> h (14, c.code, Dtype.hash c.dtype)
@@ -807,7 +803,6 @@ and repr_arg = function
       repr_tuple [ Format.asprintf "%a" Op.pp r.op; string_of_int r.num_axes ]
   | Device d -> repr_device d
   | Axes l -> repr_tuple (List.map string_of_int l)
-  | Flips l -> repr_tuple (List.map repr_bool l)
   | String s -> repr_string s
   | Bytes s -> repr_bytes s
   | Code c -> repr_tuple [ repr_string c.code; repr_dtype c.dtype ]

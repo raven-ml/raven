@@ -28,7 +28,6 @@ val apply_movement_op :
 
     - [Shrink] adds each axis' start;
     - [Permute] puts each index back on its source axis;
-    - [Flip] counts a reversed axis of size [s] from its end, [s - 1 - i];
     - [Expand] drops the indices of the axes it adds in front;
     - [Pad] subtracts each padded axis' start, and the index is valid
       ({!Shape.valid}) only where it falls within the source;

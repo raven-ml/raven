@@ -29,8 +29,8 @@ val render : ?simplify:bool -> Ops.t -> string
       {!Op.Cdiv} and {!Op.Cmod} are [(-x)], [(1/x)], [max(x, y)], [(x*y+z)],
       [(x if c else y)], [cdiv(x, y)] and [cmod(x, y)];
     - a movement is its source followed by [.reshape], [.expand], [.pad],
-      [.shrink], [.permute] or [.flip] and its argument as a tuple: [(4,8)],
-      [((0, 2),(1, 3))], [(1, 0)], and for a flip the axes reversed;
+      [.shrink] or [.permute] and its argument as a tuple: [(4,8)],
+      [((0, 2),(1, 3))], [(1, 0)];
     - {!Op.Add}, {!Op.Sub}, {!Op.Mul}, {!Op.Floordiv}, {!Op.Floormod},
       {!Op.Shl}, {!Op.Shr}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Cmplt} and
       {!Op.Cmpne} are [+], [-], [*], [//], [%], [<<], [>>], [&], [|], [^], [<]
