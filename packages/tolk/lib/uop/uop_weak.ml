@@ -194,9 +194,7 @@ let pm_lower_weak =
                    (cast (cast x (committed (nth u 0))) (committed u))
                    (dtype u)));
         rule
-          (Upat.v
-             ~op:(Op.Set.of_list [ Op.Param; Op.Buffer; Op.Alloc ])
-             ~dtype:[ Dtype.Weak_int ] ~name:"u" ())
+          (Upat.op Op.Param ~dtype:[ Dtype.Weak_int ] ~name:"u")
           (fun m ->
             let u = m "u" in
             match (addrspace u, arg u) with
