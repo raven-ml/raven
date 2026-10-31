@@ -42,7 +42,8 @@ FIFO order is promised.
 - **The `.mli` files own every definition and every rule,** including the
   rules that span modules. Each lives in exactly one `.mli`. An `.mli`
   states each rule in full and links only to the API: modules, types,
-  values and sections. No `.mli` links to a guide page.
+  values and sections. No `.mli` links to a guide page. A generated table
+  of vendor values is the exception ([Generated tables](#generated-tables)).
 - **A rule that spans modules lives in the lowest module whose values it
   governs and that every reader of the rule depends on.** In rig, ordering
   and loss live in the core module, `rig.mli`. Driver obligations live in
@@ -223,6 +224,30 @@ blocking, ownership, units and effects. A module that implements a public
 one points to it and documents only what differs. The representation of
 an abstract type is commented at the type in the `.ml`. The rules on
 sentences below apply as for a public module.
+
+### Generated tables
+
+A generated table of vendor values has no `.mli` when all of these hold:
+
+- it is in its library's `private_modules`, and no public type's
+  definition names its types;
+- it holds what its generator copies from vendor sources (constants,
+  layouts and the names of pinned firmware images), with the types that
+  hold them and the lookups that find them;
+- it opens with a comment that says not to edit it, and names the
+  excerpts it is generated from, its generator and the command that
+  regenerates it;
+- at each type and lookup it adds, the generator writes a comment that
+  states what it holds or returns, the rule it follows and any sentinel
+  it returns, such as `-1` or `None`;
+- the generator's `--check` fails when the file differs from its output.
+  Review runs it, which is how it checks that the generator made the file
+  ([`REVIEW.md`](../../REVIEW.md), "Do not report").
+
+Its contract with its siblings is the excerpts and those comments. An
+`.mli` would repeat each comment beside a name and a type, and the two
+copies would have to agree. rig's `defs.ml` and `gsp_defs.ml` files are
+generated tables.
 
 ## Guide pages
 

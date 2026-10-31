@@ -39,7 +39,7 @@ writes, so a program never names an event or a fence.
 ## C and generated code
 
 - C builds with GCC `-Werror` on Linux as well as clang on macOS.
-- Generated files come from their `gen.sh`, never by hand.
+- Generated files come from their generator, never by hand.
 - No GPL-only header excerpt is committed. Write the values by hand, with
   one comment giving the reason, and a Linux test that checks them against
   the system header.
