@@ -21,7 +21,8 @@ crlf line one
 crlf line two
 
 ====
-cr onlysame document
+cr only
+same document
 ====
 trailing spaces   
 ====
@@ -257,6 +258,13 @@ line two
 < |endoftext|>
 ====
 <|ENDOFTEXT|>
+====
+<|begin_of_text|>hello<|end_of_text|>
+====
+<｜begin▁of▁sentence｜>hello<｜end▁of▁sentence｜>
+====
+<|im_start|>user
+hi<|im_end|>
 ====
 [CLS] hi [SEP]
 ====

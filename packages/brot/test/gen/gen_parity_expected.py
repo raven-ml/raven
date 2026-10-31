@@ -17,9 +17,9 @@ Tokenizers
 ----------
 
 `bench/download_data.sh` writes the tokenizer files this reads to `bench/data/`.
-`test_parity.ml` reads the copies of them that `trim_parity_tokenizers.py`
-trims to what the corpora need and checks against these rows, or, for a
-tokenizer whose licence keeps a copy out of the repository, the same file:
+`test_parity.ml` reads the same files when they are there, and otherwise the
+copies of them that `trim_parity_tokenizers.py` trims to what the corpora
+need and checks against these rows:
 
 - `gpt2` — byte-level BPE, ByteLevel pre-tokenizer and decoder.
 - `llama` — BPE with byte fallback, a Prepend/Replace normalizer, no

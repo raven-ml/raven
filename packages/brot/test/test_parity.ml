@@ -520,6 +520,45 @@ let check_unmatched model corpus tokenizer =
                     ~match_special_tokens:false text)))
         docs)
 
+(* The same rows through the batch entry points, which must pass the choice
+   on, and pairs of documents against [encode]'s pair. *)
+let check_unmatched_batch model corpus tokenizer =
+  let _, docs = documents corpus in
+  let rows = expected corpus model in
+  let docs = Array.to_list docs in
+  let unmatched = Array.to_list rows.unmatched in
+  let flat (buffer, lengths) =
+    let at = ref 0 in
+    Array.to_list
+      (Array.map
+         (fun length ->
+           let row =
+             Array.init length (fun k ->
+                 Int32.to_int (Bigarray.Array1.get buffer (!at + k)))
+           in
+           at := !at + length;
+           row)
+         lengths)
+  in
+  equal ~msg:"encode_batch" (list (array int)) unmatched
+    (List.map Encoding.ids
+       (encode_batch tokenizer ~add_special_tokens:false
+          ~match_special_tokens:false docs));
+  equal ~msg:"encode_batch_ids" (list (array int)) unmatched
+    (flat
+       (encode_batch_ids tokenizer ~add_special_tokens:false
+          ~match_special_tokens:false docs));
+  if Option.is_some (post_processor tokenizer) then
+    let pairs = List.combine docs (List.rev docs) in
+    equal ~msg:"encode_batch_pairs" (list (array int))
+      (List.map
+         (fun (text, pair) ->
+           Encoding.ids
+             (encode tokenizer ~pair ~match_special_tokens:false text))
+         pairs)
+      (List.map Encoding.ids
+         (encode_batch_pairs tokenizer ~match_special_tokens:false pairs))
+
 (* Byte spans of the [add_special_tokens:false] tokens. The reference reports
    character spans; the generator converts them. *)
 let check_offsets model corpus tokenizer =
@@ -666,7 +705,7 @@ let check_walker model tokenizer =
 
 (* Streaming decoding. A case decodes a stretch of a reference encoding, which
    holds the characters a model spells over several tokens, followed by ids
-   drawn from the whole vocabulary, added tokens included, and the law is that
+   drawn from the vocabulary's own, added tokens included, and the law is that
    the texts of the steps and the finish make up [decode] of the ids. *)
 
 let reference_ids = Hashtbl.create 16
@@ -681,6 +720,18 @@ let reference model corpora =
       in
       Hashtbl.add reference_ids model rows;
       rows
+
+(* The ids of a vocabulary, which may have gaps, added tokens included. *)
+let vocab_id_tables = Hashtbl.create 16
+
+let vocab_ids model tokenizer =
+  match Hashtbl.find_opt vocab_id_tables model with
+  | Some ids -> ids
+  | None ->
+      let ids = Array.of_list (List.map snd (vocab tokenizer)) in
+      Array.sort Int.compare ids;
+      Hashtbl.add vocab_id_tables model ids;
+      ids
 
 let stream_case =
   let open Gen in
@@ -703,16 +754,28 @@ let stream_case =
 (* The two decoders that never wait for a later token. *)
 let immediate = [ "bert_base"; "t5_base" ]
 
+(* Whether after some step the texts given so far differ from [decode] of the
+   ids fed so far, which is the stream keeping text back. *)
+let kept ?skip_special_tokens t ids texts =
+  let texts = Array.of_list texts in
+  let rec from i given =
+    i < Array.length ids
+    &&
+    let given = given ^ texts.(i) in
+    given <> decode t ?skip_special_tokens (Array.sub ids 0 (i + 1))
+    || from (i + 1) given
+  in
+  from 0 ""
+
 let check_stream model corpora tokenizer
     (document, start, length, drawn, skip_special_tokens) =
   let rows = reference model corpora in
   let row = rows.(document mod Array.length rows) in
   let start = start mod (Array.length row + 1) in
   let length = min length (Array.length row - start) in
-  let ids =
-    Array.append (Array.sub row start length)
-      (Array.of_list (List.map (fun id -> id mod vocab_size tokenizer) drawn))
-  in
+  let known = vocab_ids model tokenizer in
+  let drawn = List.map (fun id -> known.(id mod Array.length known)) drawn in
+  let ids = Array.append (Array.sub row start length) (Array.of_list drawn) in
   let texts, s =
     Array.fold_left
       (fun (texts, s) id ->
@@ -722,13 +785,9 @@ let check_stream model corpora tokenizer
       ids
   in
   let texts = List.rev (decode_finish s :: texts) in
-  let rec kept = function
-    | "" :: rest -> List.exists (fun text -> text <> "") rest || kept rest
-    | _ :: rest -> kept rest
-    | [] -> false
-  in
   if not (List.mem model immediate) then
-    cover ~share:0.05 "text kept for a later token" (kept texts);
+    cover ~share:0.02 "text kept for a later token"
+      (kept ~skip_special_tokens tokenizer ids texts);
   List.iter
     (fun text ->
       equal ~msg:(Printf.sprintf "%S is UTF-8" text) bool true
@@ -769,6 +828,7 @@ let () =
                             ("special ids", check_special);
                             ("special tokens mask", check_mask);
                             ("unmatched ids", check_unmatched);
+                            ("unmatched ids in batches", check_unmatched_batch);
                             ("type ids", check_types);
                             ("attention mask", check_attention);
                           ]))

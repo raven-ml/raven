@@ -43,11 +43,12 @@ let with_download relative ~from f =
       failf "%s is missing and BROT_REQUIRE_FIXTURES is set; run %s" relative
         from
 
-(* Pretrained tokenizers. Those whose licence allows a copy in the repository
-   are read from the trimmed ones test/gen/trim_parity_tokenizers.py writes,
-   which encode the parity corpora, and the texts it lists, as the full files
-   do. The others are downloaded by bench/download_data.sh, and a test that
-   needs one skips without it, saying why. *)
+(* Pretrained tokenizers. A test reads the full file bench/download_data.sh
+   writes when it is there, as on CI. Without it, a tokenizer whose licence
+   allows a copy in the repository is read from the one
+   test/gen/trim_parity_tokenizers.py writes, which encodes the parity corpora,
+   and the texts it lists, as the full file does; a test that needs one of the
+   others skips, saying why. *)
 
 let downloaded =
   [
@@ -56,10 +57,14 @@ let downloaded =
       "the Llama 3.2 Community License binds whoever redistributes it" );
   ]
 
+let full_file name = Filename.concat "../bench/data" (name ^ ".json")
+
 let tokenizer_file name =
-  if List.mem_assoc name downloaded then
-    Filename.concat "../bench/data" (name ^ ".json")
-  else Filename.concat "support/tokenizers" (name ^ ".json")
+  if List.mem_assoc name downloaded then full_file name
+  else
+    match locate (full_file name) with
+    | Some path -> path
+    | None -> Filename.concat "support/tokenizers" (name ^ ".json")
 
 let with_tokenizer_file name f =
   let path = tokenizer_file name in

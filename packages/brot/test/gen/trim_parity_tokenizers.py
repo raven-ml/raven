@@ -8,13 +8,14 @@ Run from anywhere, after `packages/brot/bench/download_data.sh`:
 `test_parity.ml` checks brot against the encodings `gen_parity_expected.py`
 records from the full tokenizer files, which are tens of megabytes and are
 downloaded rather than committed. This writes, for each of them whose licence
-allows redistribution, a copy that keeps only the vocabulary and merges the
-corpora and `EXTRA` reach, to `support/tokenizers/<name>.json`, and then
-checks that the reference gives every recorded row again from the copy, and
-the full file's ids for `EXTRA`: the copy encodes and decodes those texts
-exactly as the full file does. `test_parity.ml` reads the
-copies, so its tests run on a fresh checkout. `support/tokenizers/NOTICE`
-records where each one comes from and under which licence.
+allows redistribution, a copy that keeps only the part of the vocabulary and
+merges the corpora and `EXTRA` reach, to `support/tokenizers/<name>.json`.
+It then checks that the reference gives every recorded row again from the
+copy, and the full file's ids for `EXTRA`, so the copy encodes and decodes
+those texts exactly as the full file does. The tests read the full file when
+it is downloaded, as on CI, and the copy otherwise, so they run on a fresh
+checkout. `support/tokenizers/NOTICE` records where each one comes from and
+under which licence.
 
 What a model keeps
 ------------------
@@ -24,19 +25,24 @@ vocabulary can have gaps. An added token outside a BPE model's vocabulary is
 put into it with its id: both the reference and brot number such a token from
 the size of the model vocabulary, which the trimmed vocabulary no longer has.
 
-- BPE: a merge that never fires on the corpora can go, since removing a pair
-  that is never the lowest-ranked one present changes no step. `bpe_merges`
-  replays the model on the corpora's words, and the merges kept are those that
-  fire, in their original order, with the symbols they go through.
-- WordPiece: the greedy longest match of a word tries every vocabulary entry
-  in turn, and a word that fails part way through becomes the unknown token, so
-  the pieces kept are every piece the match takes on the corpora's words,
-  those of the words that fail included, as `wordpiece_pieces` replays it. A
-  removed entry was then never the longest one present.
-- Unigram: the ids are positions in the vocabulary, so a piece that goes is
-  replaced by a placeholder no text contains, a character of the private use
-  plane 15. The pieces of the best segmentations stay, and with them the
-  lowest score, which prices the unknown token.
+A copy keeps more than the corpora's tokens: it keeps every candidate the
+algorithm weighs on their words, so that an implementation that picks the
+wrong one still gives different ids on the copy, as it would on the full file.
+What goes is what no step on these words could look at, so the copy encodes
+them as the full file does.
+
+- BPE: every merge whose result is a run of consecutive symbols of a word,
+  which takes in every merge any order of merging could apply to it, the ones
+  that fire included, in their original order. A merge that is never present
+  is never the lowest-ranked one.
+- WordPiece: every entry that starts where the greedy longest match of a word
+  starts a piece, the one it takes and the shorter ones it passes over, up to
+  where a failing word fails, as `wordpiece_pieces` replays it.
+- Unigram: every piece in the lattice of a word, that is, every piece that is
+  a substring of it. The ids are positions in the vocabulary, so a piece that
+  goes is replaced by a placeholder no text contains, a character of the
+  private use plane 15. The lowest score stays, as it prices the unknown
+  token.
 
 Tokenizers
 ----------
@@ -133,30 +139,42 @@ def words(tokenizer: Tokenizer, text: str, added: list[str]) -> set[str]:
 
 
 def wordpiece_pieces(model: dict, word: str) -> set[str]:
-    """The pieces WordPiece's greedy longest match takes on `word`, up to where
-    it fails."""
+    """The entries WordPiece's greedy longest match tries on `word` and finds:
+    at each start it reaches, every entry that starts there, the longest of
+    which it takes, up to where it fails."""
     vocab = model["vocab"]
     prefix = model["continuing_subword_prefix"]
     if len(word) > model["max_input_chars_per_word"]:
         return set()
-    taken = set()
+    found = set()
     start = 0
     while start < len(word):
-        stop = len(word)
-        piece = None
-        while start < stop:
+        longest = None
+        for stop in range(len(word), start, -1):
             candidate = word[start:stop]
             if start > 0:
                 candidate = prefix + candidate
             if candidate in vocab:
-                piece = candidate
-                break
-            stop -= 1
-        if piece is None:
+                found.add(candidate)
+                longest = longest or stop
+        if longest is None:
             break
-        taken.add(piece)
-        start = stop
-    return taken
+        start = longest
+    return found
+
+
+def spans(symbols: list[str], longest: int) -> set[str]:
+    """Every concatenation of consecutive `symbols` of at most `longest`
+    characters: every token some order of merges could build from them."""
+    found = set()
+    for i in range(len(symbols)):
+        text = ""
+        for symbol in symbols[i:]:
+            text += symbol
+            if len(text) > longest:
+                break
+            found.add(text)
+    return found
 
 
 def merge_parts(merge) -> tuple[str, str]:
@@ -167,15 +185,10 @@ def merge_parts(merge) -> tuple[str, str]:
     return left, right
 
 
-def bpe_merges(
-    model: dict, ranks: dict, word: str
-) -> tuple[set[int], set[str]]:
-    """The ranks of the merges BPE applies to `word`, and the symbols it goes
-    through: from its characters, the lowest-ranked adjacent pair is merged,
-    the leftmost of equal ones, until no pair is a merge."""
+def bpe_symbols(model: dict, word: str) -> list[str]:
+    """The symbols BPE starts `word` from: its characters, or the bytes of
+    those the vocabulary lacks under byte fallback."""
     vocab = model["vocab"]
-    if model.get("ignore_merges") and word in vocab:
-        return set(), {word}
     symbols = []
     for char in word:
         if char in vocab:
@@ -184,40 +197,26 @@ def bpe_merges(
             symbols.extend(f"<0x{byte:02X}>" for byte in char.encode("utf-8"))
         elif model.get("unk_token"):
             symbols.append(model["unk_token"])
-    fired = set()
-    seen = set(symbols)
-    while True:
-        best = None
-        for i in range(len(symbols) - 1):
-            rank = ranks.get((symbols[i], symbols[i + 1]))
-            if rank is not None and (best is None or rank < best[0]):
-                best = (rank, i)
-        if best is None:
-            return fired, seen
-        rank, i = best
-        fired.add(rank)
-        symbols[i : i + 2] = [symbols[i] + symbols[i + 1]]
-        seen.add(symbols[i])
+    return symbols
 
 
 def trim_bpe(model: dict, kept: set[str], seen_words: set[str]) -> None:
     for affix in ("continuing_subword_prefix", "end_of_word_suffix"):
         assert not model.get(affix), f"{affix} is not replayed"
-    ranks = {
-        merge_parts(merge): rank for rank, merge in enumerate(model["merges"])
-    }
-    needed = set(kept)
-    fired = set()
+    longest = max(len(token) for token in model["vocab"])
+    reachable = set(kept)
     for word in seen_words:
-        word_fired, symbols = bpe_merges(model, ranks, word)
-        fired |= word_fired
-        needed |= symbols
+        reachable |= spans(bpe_symbols(model, word), longest)
+    merges = [
+        merge
+        for merge in model["merges"]
+        if "".join(merge_parts(merge)) in reachable
+    ]
+    needed = reachable | {part for merge in merges for part in merge_parts(merge)}
     model["vocab"] = {
         token: id for token, id in model["vocab"].items() if token in needed
     }
-    model["merges"] = [
-        merge for rank, merge in enumerate(model["merges"]) if rank in fired
-    ]
+    model["merges"] = merges
 
 
 def trim_wordpiece(model: dict, kept: set[str], seen: set[str]) -> None:
@@ -230,13 +229,17 @@ def trim_wordpiece(model: dict, kept: set[str], seen: set[str]) -> None:
     }
 
 
-def trim_unigram(model: dict, kept_ids: set[int]) -> None:
+def trim_unigram(model: dict, kept_ids: set[int], seen: set[str]) -> None:
     vocab = model["vocab"]
     lowest = min(score for _, score in vocab)
+    longest = max(len(piece) for piece, _ in vocab)
+    lattice = set()
+    for word in seen:
+        lattice |= spans(list(word), longest)
     kept_ids = kept_ids | {model["unk_id"]}
     trimmed = []
     for id, (piece, score) in enumerate(vocab):
-        if id in kept_ids or score == lowest:
+        if id in kept_ids or piece in lattice or score == lowest:
             trimmed.append([piece, score])
         else:
             trimmed.append([chr(PLACEHOLDER_BASE + id), 0.0])
@@ -267,7 +270,7 @@ def trim(name: str, full: Path, parity_dir: Path) -> dict:
         for token in data["added_tokens"]:
             vocab.setdefault(token["content"], token["id"])
     elif "unk_id" in model:
-        trim_unigram(model, ids)
+        trim_unigram(model, ids, seen)
     else:
         trim_wordpiece(model, kept, seen)
     return data
