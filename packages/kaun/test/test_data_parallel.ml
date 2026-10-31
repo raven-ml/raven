@@ -6,14 +6,15 @@
 (* Data-parallel training through [Rune.jit] over a batch split across two CPU
    devices, on kaun layers: a tiny causal attention + linear stack trained for a
    few SGD steps, the parameters entering from the host as a copy on each
-   device. The loss trajectory and final weights must match the single-device
-   step up to fp32 reduction order (the cross-device gradient allreduce reorders
-   the batch sum). Momentum runs thread a real SGD state through the step — the
-   state is a structure over the model's ([Vega.sgd_ptree model]) whose leaves
-   are copies like the parameters — and the split trajectory must match the
-   single-device one. Runs on two memory devices of one set, which nx.cpu
-   computes; no pretrained weights involved. Every description is made where it
-   is used, at the set its values lie on. *)
+   device. Every step compiles: no call is evaluated. The loss trajectory and
+   final weights must match the single-device step up to fp32 reduction order
+   (the cross-device gradient allreduce reorders the batch sum). Momentum runs
+   thread a real SGD state through the step — the state is a structure over
+   the model's ([Vega.sgd_ptree model]) whose leaves are copies like the
+   parameters — and the split trajectory must match the single-device one.
+   Runs on two memory devices of one set, which nx.cpu computes; no pretrained
+   weights involved. Every description is made where it is used, at the set
+   its values lie on. *)
 
 open Windtrap
 open Kaun
@@ -132,7 +133,9 @@ let trajectory ~steps ~at ~batch_at momentum =
   let s = ref { m; opt = Vega.sgd_init model m } in
   let x = x_init batch_at and tgt = tgt_init batch_at in
   Array.init steps (fun _ ->
+      let before = Rune.evaluations () in
       let next, loss = step !s x tgt in
+      equal ~msg:"the step compiled" int 0 (Rune.evaluations () - before);
       s := next;
       let floats =
         List.map
