@@ -79,9 +79,14 @@ val transpose : t -> Program.value option array -> ct option array
     [cts], the cotangent of each output of the linearized function. [None] in
     [cts] stands for zero, and [None] in the result for a parameter that
     receives no contribution. Each cotangent must have its output's dtype and
-    shape. A value a transpose makes beside a cotangent lies at the placement of
-    the operand it stands for, as the zeros a gather's transpose scatters into
-    do, or else whole on each device of the cotangent, as the zeros an
+    shape. Every cotangent the transpose computes is placed at its variable's
+    placement before it is transposed or returned, a broadcast's once summed
+    over the axes it repeats, so each of the result lies at its parameter's. Two
+    contributions cut along different axes, or on two sets, are placed there
+    before they are added, a broadcast's too; a whole one is added where a cut
+    one lies. A value a transpose makes beside a cotangent lies at the placement
+    of the operand it stands for, as the zeros a gather's transpose scatters
+    into do, or else whole on each device of the cotangent, as the zeros an
     assembly's transpose puts over an overlapped region do.
 
     Raises [Invalid_argument] naming the tape's entry point for an equation that

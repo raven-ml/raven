@@ -363,8 +363,10 @@ All notable changes to this project will be documented in this file.
   interface states; a program the compiler declines is evaluated by nx.
   `RUNE_JIT_DEBUG` reports why a call traced again.
 - Transformations and compiled functions run over nx's device sets: a lane
-  computes on the devices holding its row, and a cotangent lies where its
-  operations route it.
+  computes on the devices holding its row, and every tangent and cotangent
+  lies at its array's placement, so a gradient lies where its parameter does
+  and a backward pass runs wherever nx routed the forward pass. A tangent or
+  cotangent given at another placement raises.
 - Add map names `axis`, with `lanes`, every lane's value, and `lane_index`,
   the calling lane's index.
 - Add `Total`, a sum code anywhere in a function adds to, and `Probe`, values

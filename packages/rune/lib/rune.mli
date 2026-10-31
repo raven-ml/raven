@@ -39,7 +39,8 @@
     its functions applied eagerly: a {!scan} is the fold of its step. A {!jit}
     computes to the accuracy {!section-numerics} states. A value rune makes
     lies where nx places it ({!Nx.section-routing}): a zero beside an array lies
-    at that array's placement, and an operation's result where nx routes it.
+    at that array's placement, an operation's result where nx routes it, and a
+    tangent or cotangent at its array's placement ({!section-tangents}).
 
     The life cycle of a compiled function goes like this:
     + [let g = jit s f] makes a compiled function with no program. [g] must be
@@ -189,12 +190,18 @@
     [Nx.where c x (detach x)] on its input, or branch with {!cond}, per element
     under {!val-vmap}.
 
-    {b Placement.} A cotangent lies where the transposed operations put it, as
-    nx routes them ({!Nx.section-routing}): at its array's placement where every
-    value it meets lies there, and otherwise at the union of their cuts. A
-    {!Nx.place}'s cotangent is moved back to its operand's placement. So
-    [grad' (fun x -> Nx.sum (Nx.mul x w)) x] lies cut along axis 0 where [x] is
-    whole on each device of a set and [w] is cut along axis 0 across them. *)
+    {b Placement.} Every tangent and cotangent lies at its array's placement, so
+    the transposed operations of a forward pass nx routes are routed too
+    ({!Nx.section-routing}), and a gradient lies where its parameter does. A
+    contribution an operation's transpose puts elsewhere is placed there: one
+    cut where its array is whole is gathered, and one whole where its array is
+    cut is read by each device's window. A broadcast's cotangent is first
+    summed over the axes the broadcast repeats, by partials where they are cut,
+    so the gradient of a bias added to a batch cut across devices moves no
+    activation. So [grad' (fun x -> Nx.sum (Nx.mul x w)) x], where [x] is whole
+    on each device of a set and [w] is cut along axis 0 across them, lies whole
+    on each device, its products' windows gathered. A tangent or cotangent
+    given at another placement than its array's raises. *)
 
 (** {2:kinks Kinks and factorisations}
 
@@ -247,9 +254,9 @@ val jvp :
     Raises [Invalid_argument] if [params] holds no float or complex array
     (["Rune.jvp: the parameters hold no real or complex tensor"]), if [tangents]
     and [params] differ in their {!Nx.Ptree.val-visits}, naming the first path
-    where they differ, or if a tangent differs from its parameter in dtype or
-    shape (["Rune.jvp: 1: shape [2] in the parameters, [3] in the tangents"]).
-*)
+    where they differ, or if a tangent differs from its parameter in dtype,
+    shape or placement
+    (["Rune.jvp: 1: shape [2] in the parameters, [3] in the tangents"]). *)
 
 (** {1:special Derivatives of nx's special functions}
 
@@ -381,8 +388,9 @@ val vjp :
 
     Raises [Invalid_argument] as {!jvp} does for [params]. [pullback] raises
     [Invalid_argument] if its argument and the result differ in their
-    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
-    differ (["Rune.vjp: 0: shape [2] in the result, [3] in the cotangents"]). *)
+    {!Nx.Ptree.val-visits}, dtypes, shapes or placements, naming the first path
+    where they differ
+    (["Rune.vjp: 0: shape [2] in the result, [3] in the cotangents"]). *)
 
 val linearize :
   ('p, 'd) Nx.Ptree.t ->
@@ -581,8 +589,8 @@ val custom_jvp :
 
     Raises [Invalid_argument] at the call where [map] runs or is traced
     ({!section-custom}) if its result differs from the result in its
-    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
-    differ, as in
+    {!Nx.Ptree.val-visits}, dtypes, shapes or placements, naming the first
+    path where they differ, as in
     ["Rune.custom_jvp: the root: shape [] in the tangent map's result, [3] in
      the result"], and if [rule] uses a value that a differentiation applying it
     tracks
@@ -614,10 +622,10 @@ val custom_vjp :
 
     Raises [Invalid_argument] at the call where [pb] is traced
     ({!section-custom}) if its result differs from [args] in its
-    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
-    differ; if [rule] uses a value that a differentiation applying it tracks, as
-    {!custom_jvp} does; and under forward mode around no such reverse mode, if
-    the result has a float or complex array
+    {!Nx.Ptree.val-visits}, dtypes, shapes or placements, naming the first
+    path where they differ; if [rule] uses a value that a differentiation
+    applying it tracks, as {!custom_jvp} does; and under forward mode around no
+    such reverse mode, if the result has a float or complex array
     (["Rune.jvp: a custom_vjp rule has no forward derivative; give the function
       a custom_jvp rule"]). Where [pb] runs on values, the check of its result
     raises in the backward pass, as does a [pb] that uses or reads a value its

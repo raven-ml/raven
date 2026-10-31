@@ -27,9 +27,16 @@ let tangent i x =
   match Prim.payload i x with Some (Dual d) -> Some d.tangent | _ -> None
 
 (* A value of [i] whose primal [y] an [Nx.item] reads, as an eager derivative
-   branches on it. [fresh] where [t] is its own memory, in C order. *)
+   branches on it. [fresh] where [t] is its own memory, in C order. A tangent
+   lies at its primal's placement: one a rule computes elsewhere, as a running
+   extreme's gathered positions, is placed there. *)
 let dual i ~fresh y t =
-  Prim.twinned i y (Dual { primal = y; tangent = t; fresh })
+  let p = Nx.placement y and q = Nx.placement t in
+  if q == p || Nx.Placement.equal q p then
+    Prim.twinned i y (Dual { primal = y; tangent = t; fresh })
+  else
+    Prim.twinned i y
+      (Dual { primal = y; tangent = Nx.place p t; fresh = false })
 
 let seed i x t = dual i ~fresh:false x t
 let tangible x = Scalar.tangible (D.Any (Nx.dtype x))
@@ -62,10 +69,34 @@ let load_dtype : 'd Prim.load -> D.any = function
   | Plain x -> D.Any (Nx.dtype x)
   | Padded { x; _ } -> D.Any (Nx.dtype x)
 
-(* The loads of a loop over primals, then tangents. *)
+(* The loads of a loop over primals, then tangents. A whole tangent beside a
+   cut primal load is read at that load's cut, so that the loop's tangents lie
+   where its primals do even where a trace computes them apart, as a tape
+   computes [x - b]'s from [b]'s alone: its transpose then sums a cut
+   cotangent over the cut by partials, where a whole tangent would gather
+   it. *)
 let jvp_loads i loads =
   let ps = Iarray.to_list (Iarray.map (primal_load i) loads) in
   let ts = List.filter_map (tangent_load i) (Iarray.to_list loads) in
+  let cut p = not (Nx.Placement.equal (Nx.Placement.uncut p) p) in
+  let rec first_cut = function
+    | Prim.Plain x :: _ when cut (Nx.placement x) -> Some (Nx.placement x)
+    | _ :: rest -> first_cut rest
+    | [] -> None
+  in
+  let ts =
+    match first_cut ps with
+    | None -> ts
+    | Some p ->
+        List.map
+          (function
+            | Prim.Plain t
+              when Nx.Placement.equal (Nx.Placement.uncut p) (Nx.placement t)
+              ->
+                Prim.Plain (Nx.place p t)
+            | l -> l)
+          ts
+  in
   Iarray.of_list (ps @ ts)
 
 (* Which loads have a tangent. *)

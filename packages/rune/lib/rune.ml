@@ -34,9 +34,23 @@ let first a = a.(0)
 let path_name p =
   if Ptree.Path.segments p = [] then "the root" else Ptree.Path.to_string p
 
+(* Leaves [xs] and [ys], of paths and values, alike in their placements. *)
+let rec placed_alike name ~this ~that xs ys =
+  match (xs, ys) with
+  | (p, V a) :: xs, (_, V b) :: ys ->
+      if not (Nx.Placement.equal (Nx.placement a) (Nx.placement b)) then
+        invalid_argf "%s: %s: at %s %s, at %s %s" name (path_name p)
+          (Format.asprintf "%a" Nx.Placement.pp (Nx.placement a))
+          this
+          (Format.asprintf "%a" Nx.Placement.pp (Nx.placement b))
+          that;
+      placed_alike name ~this ~that xs ys
+  | _ -> ()
+
 (* [x] and [y] of structure [s] alike: the same visits, and at each path the
-   same dtype and shape, as [this] and [that] name them. *)
-let same_leaves name s ~this x ~that y =
+   same dtype and shape, as [this] and [that] name them, and the same placement
+   where [placed]. *)
+let same_leaves ?(placed = false) name s ~this x ~that y =
   let _, k = Ptree.flatten s x and _, k' = Ptree.flatten s y in
   Option.iter
     (fun msg -> invalid_argf "%s: %s" name msg)
@@ -44,6 +58,7 @@ let same_leaves name s ~this x ~that y =
   let leaves x =
     List.rev (Ptree.fold s (fun p y acc -> (p, V y) :: acc) x [])
   in
+  let xs = leaves x and ys = leaves y in
   List.iter2
     (fun (p, V a) (_, V b) ->
       if not (Nx.Dtype.equal (Nx.dtype a) (Nx.dtype b)) then
@@ -58,7 +73,8 @@ let same_leaves name s ~this x ~that y =
           this
           (Format.asprintf "%a" pp_shape (Nx.shape b))
           that)
-    (leaves x) (leaves y)
+    xs ys;
+  if placed then placed_alike name ~this ~that xs ys
 
 (* The carry a step returned against the one it received. *)
 let same_carry name s ~received returned =
@@ -70,8 +86,8 @@ let same_carry name s ~received returned =
 let tangible x = Nx.Dtype.(is Float (Nx.dtype x) || is Complex (Nx.dtype x))
 
 let jvp_named name p q f params tangents =
-  same_leaves name p ~this:"in the parameters" params ~that:"in the tangents"
-    tangents;
+  same_leaves ~placed:true name p ~this:"in the parameters" params
+    ~that:"in the tangents" tangents;
   if not (Ptree.fold p (fun _ x acc -> acc || tangible x) params false) then
     invalid_argf "%s: the parameters hold no real or complex tensor" name;
   Jvp.run ~name (fun i ->
@@ -141,7 +157,8 @@ let vjp_named name p q f params =
   in
   let y = rebuild q ~like ys in
   let back cts =
-    same_leaves name q ~this:"in the result" y ~that:"in the cotangents" cts;
+    same_leaves ~placed:true name q ~this:"in the result" y
+      ~that:"in the cotangents" cts;
     pullback
       (Array.map
          (fun (V c) -> if tangible c then Some (V c) else None)
@@ -163,8 +180,8 @@ let linearize_named name p q f params =
   in
   let y = rebuild q ~like:(Option.get !like) ys in
   let apply tangents =
-    same_leaves name p ~this:"in the parameters" params ~that:"in the tangents"
-      tangents;
+    same_leaves ~placed:true name p ~this:"in the parameters" params
+      ~that:"in the tangents" tangents;
     let ts =
       Array.of_list
         (List.filter
@@ -198,7 +215,8 @@ let linear_transpose_named name p q f params =
   in
   let like = Option.get !shapes in
   fun cts ->
-    same_leaves name q ~this:"in the result" like ~that:"in the cotangents" cts;
+    same_leaves ~placed:true name q ~this:"in the result" like
+      ~that:"in the cotangents" cts;
     let gs =
       Linear.transpose l
         (Array.map
@@ -311,7 +329,7 @@ let custom_jvp p q rule args =
         like := Some y;
         let tangent ts =
           let dy = map (rebuild p ~like:x ts) in
-          same_leaves name q ~this:"in the tangent map's result" dy
+          same_leaves ~placed:true name q ~this:"in the tangent map's result" dy
             ~that:"in the result" y;
           values q dy
         in
@@ -329,28 +347,13 @@ let custom_vjp p q rule args =
         like := Some y;
         let pullback cts =
           let g = pb (rebuild q ~like:y cts) in
-          same_leaves name p ~this:"in the pullback's result" g
+          same_leaves ~placed:true name p ~this:"in the pullback's result" g
             ~that:"in the arguments" x;
           values p g
         in
         (values q y, pullback))
   in
   rebuild q ~like:(Option.get !like) ys
-
-(* [x] and [y] of structure [s] alike in their placements too. *)
-let same_placements name s ~this x ~that y =
-  let placements v =
-    List.rev (Ptree.fold s (fun p y acc -> (p, Nx.placement y) :: acc) v [])
-  in
-  List.iter2
-    (fun (p, a) (_, b) ->
-      if not (Nx.Placement.equal a b) then
-        invalid_argf "%s: %s: placed on %s %s, on %s %s" name (path_name p)
-          (Format.asprintf "%a" Nx.Placement.pp a)
-          this
-          (Format.asprintf "%a" Nx.Placement.pp b)
-          that)
-    (placements x) (placements y)
 
 let custom_transpose p q f ~transpose args =
   let name = "Rune.custom_transpose" in
@@ -364,8 +367,7 @@ let custom_transpose p q f ~transpose args =
           let g = transpose (rebuild q ~like:y cts) in
           let this = "in the transpose's result"
           and that = "in the arguments" in
-          same_leaves name p ~this g ~that x;
-          same_placements name p ~this g ~that x;
+          same_leaves ~placed:true name p ~this g ~that x;
           values p g
         in
         (values q y, transposed))
@@ -1300,6 +1302,10 @@ let jvp' f x t = jvp_named "Rune.jvp'" Ptree.tensor Ptree.tensor f x t
 let vmap' ?axis f x =
   vmap_named "Rune.vmap'" ?axis Ptree.(tensor @-> returns tensor) f x
 
+(* [x] at [p], itself where it lies there. *)
+let placed p x =
+  if Nx.Placement.equal (Nx.placement x) p then x else Nx.place p x
+
 (* The Jacobian's columns as the lanes of one map of [jvp] over the basis of
    [x]'s elements. *)
 let jacfwd' f x =
@@ -1309,6 +1315,8 @@ let jacfwd' f x =
   let iota = Nx.arange_at here Nx.int32 0 n 1 in
   let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
   let basis = Nx.reshape (Array.append [| n |] sx) (Nx.cast (Nx.dtype x) e) in
+  (* Each lane's tangent at [x]'s placement. *)
+  let basis = placed (Nx.Placement.with_leading_axis (Nx.placement x)) basis in
   let column t = snd (jvp_named name Ptree.tensor Ptree.tensor f x t) in
   let ts = vmap_named name Ptree.(tensor @-> returns tensor) column basis in
   let r = Nx.ndim ts - 1 in
@@ -1338,6 +1346,7 @@ let jacrev' f x =
   let iota = Nx.arange_at here Nx.int32 0 n 1 in
   let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
   let basis = Nx.reshape (Array.append [| n |] sy) (Nx.cast (Nx.dtype y) e) in
+  let basis = placed (Nx.Placement.with_leading_axis (Nx.placement y)) basis in
   let rows = vmap_named name Ptree.(tensor @-> returns tensor) pullback basis in
   Nx.reshape (Array.append sy (Nx.shape x)) rows
 

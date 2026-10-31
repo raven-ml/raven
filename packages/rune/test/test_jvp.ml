@@ -930,6 +930,71 @@ let test_one_kernel () =
   equal ~msg:"a sum over twenty operands" (pair int int) (1, 3)
     (calls w tw (wide_reduce (Monoid (Sum, 0, f64))))
 
+(* Placement
+
+   Wherever nx routes an operation over a value whole or cut along an axis,
+   its tangent lies at its result's placement and equals the tangent on the
+   host. *)
+
+module Two = Operand.Two
+
+type unary = {
+  f : 'd. (float, D.float64_elt, 'd) Nx.t -> (float, D.float64_elt, 'd) Nx.t;
+}
+
+let unaries =
+  let open Nx in
+  [
+    ("cummax along 0", { f = (fun x -> cummax ~axis:0 x) });
+    ("cummax along 1", { f = (fun x -> cummax ~axis:1 x) });
+    ("cumsum along 1", { f = (fun x -> cumsum ~axis:1 x) });
+    ("sort along 0", { f = (fun x -> fst (sort ~axis:0 x)) });
+    ("max along 0", { f = (fun x -> max ~axes:[ 0 ] x) });
+    ("logsumexp along 1", { f = (fun x -> logsumexp ~axes:[ 1 ] x) });
+    ("softmax along 1", { f = (fun x -> softmax ~axes:[ 1 ] x) });
+    ("var along 0", { f = (fun x -> var ~axes:[ 0 ] x) });
+    ("x xᵀ", { f = (fun x -> matmul x (matrix_transpose x)) });
+    ("flip", { f = (fun x -> flip ~axes:[ 0 ] x) });
+  ]
+
+let unary_gen =
+  let open Gen in
+  let pp ppf ((name, _), m, n, k) =
+    Format.fprintf ppf "%s, [%d; %d], at %d" name m n k
+  in
+  with_pp pp
+    (let+ u = of_list unaries
+     and+ m = of_list [ 0; 1; 2; 3; 5 ]
+     and+ n = of_list [ 1; 2; 3 ]
+     and+ k = int_range 0 2 in
+     (u, m, n, k))
+
+let law_unary_placed ((name, { f }), m, n, k) =
+  let s = [| m; n |] in
+  let at = if k = 0 then Two.on else Two.split ~axis:(k - 1) in
+  let make seed = Nx.create f64 s (spread seed (numel s)) in
+  let x = Nx.place at (make 0.) and t = Nx.place at (make 1.) in
+  match Rune.jvp' f x t with
+  | exception Invalid_argument _ ->
+      (* A forward pass nx refuses has no tangent to check. *)
+      reject ()
+  | y, dy ->
+      cover name true;
+      cover "a cut operand" (k > 0);
+      cover "uneven windows" (k = 1 && m = 5);
+      let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
+      equal ~msg:"placement" string (where y) (where dy);
+      let _, expected = Rune.jvp' f (make 0.) (make 1.) in
+      let expected = Nx.to_array expected
+      and actual = Nx.to_array (Nx.place Nx.Host.on dy) in
+      (* A variance over no rows is NaN, here and on the host. *)
+      let nan = Array.map Float.is_nan in
+      equal ~msg:"NaNs" (array bool) (nan expected) (nan actual);
+      let finite = Array.map (fun x -> if Float.is_nan x then 0. else x) in
+      equal ~msg:"tangent"
+        (array (float_rel ~rel:1e-12 ~abs:1e-12))
+        (finite expected) (finite actual)
+
 let () =
   exit
     (run "rune jvp"
@@ -970,4 +1035,9 @@ let () =
            ];
          group "kernels"
            [ test "a map's tangent is one kernel" test_one_kernel ];
+         group "placement"
+           [
+             prop ~count:200 "a tangent lies at its result's placement"
+               unary_gen law_unary_placed;
+           ];
        ])

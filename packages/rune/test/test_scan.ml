@@ -606,15 +606,14 @@ type rule =
       h : Expr.t;
       ops : Operand.t array;
       tans : Operand.t array;
-      at : where array;  (** Of [c0], [c1], [xs], [w], then their tangents. *)
+      at : where array;
+          (** Of [c0], [c1], [xs] and [w]; a tangent lies at its array's. *)
       free : bool;  (** Whether [c1'] reads [c0] only where [k] reads [Y]. *)
     }
       -> rule
 
 let pp_case ppf (Case c) =
-  Format.fprintf ppf "%s; tangents %a, %a, %a; "
-    (if c.free then "c1' as k" else "c1' + c0 w")
-    pp_where c.at.(4) pp_where c.at.(5) pp_where c.at.(6);
+  Format.fprintf ppf "%s; " (if c.free then "c1' as k" else "c1' + c0 w");
   Format.fprintf ppf
     "%a %a, %d rows: c0' %a, c1' %a, y %a; c0 %a, c1 %a, xs %a, w %a"
     Nx.pp_dtype c.dt Operand.pp_shape c.s c.n pp c.g pp c.k pp c.h pp_where
@@ -638,7 +637,7 @@ let rule_cases =
       where the program places one beside the other. *)
    let* d = int_range 0 1 in
    let where = frequency [ (1, constant Whole); (1, constant (Dev d)) ] in
-   let* at = array ~size:(constant 7) where in
+   let* at = array ~size:(constant 4) where in
    let* free = bool in
    let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any Nx.float64 ] in
    match D.kind dt with
@@ -760,6 +759,13 @@ let rule_covers (Case c) =
   cover "the second device" (Array.exists (fun w -> w = Dev 1) c.at);
   cover "a leaf on both devices" (Array.exists (fun w -> w = Whole) c.at)
 
+(* The tangents of [c0], [xs] and [w], each at its array's placement. *)
+let tangents (type s) (dt : (float, s) Nx.dtype) s n (tans : Operand.t array)
+    at =
+  let rows = Array.append [| n |] s in
+  let tan k j sh = put at.(j) dt sh tans.(k) in
+  (tan 0 0 s, (tan 1 2 rows, tan 2 3 s))
+
 (* A compiled loop gives the fold's bits where its step's functions are exact
    (Rune.jit's classes): the laws compare compiled calls on the case's functions
    made exact, in one case of three. A compiled case builds and compiles two
@@ -771,16 +777,13 @@ let compiled_too =
 
 let exactly (Case c) =
   let x e = unsummed (exact e) in
-  Case { c with g = x c.g; k = x c.k; h = x c.h; at = Array.make 7 (Dev 0) }
+  Case { c with g = x c.g; k = x c.k; h = x c.h; at = Array.make 4 (Dev 0) }
 
 let law_jvp' ~jit (Case c as case) =
   rule_covers case;
   let o = operands c.dt c.s c.n c.ops c.at in
   let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
-  let rows = Array.append [| c.n |] c.s in
-  let tan k sh = put c.at.(4 + k) c.dt sh c.tans.(k) in
-  let t = (tan 0 c.s, (tan 1 rows, tan 2 c.s)) in
-  cover "a placed tangent" (Array.exists (( <> ) Whole) (Array.sub c.at 4 3));
+  let t = tangents c.dt c.s c.n c.tans c.at in
   let scanned, folded, from =
     functions ~free:c.free c.dt c.s c.n c.g c.k c.h c1
   in
@@ -925,7 +928,7 @@ let grad_examples =
             plain [| 1.5; -2. |];
           |];
         tans = [| plain [| 1.; 1. |]; plain [| 1.; 1. |]; plain [| 1.; 1. |] |];
-        at = Array.make 7 (Dev 0);
+        at = Array.make 4 (Dev 0);
         free = false;
       };
   ]
@@ -1054,10 +1057,7 @@ let law_compose (Case c as case) =
   let c0 = o.(0) and c1 = o.(1) and xs = o.(2) and w = o.(3) in
   let x = (c0, (xs, w)) in
   let rows = Array.append [| c.n |] c.s in
-  let t =
-    ( put Whole c.dt c.s c.tans.(0),
-      (put Whole c.dt rows c.tans.(1), put Whole c.dt c.s c.tans.(2)) )
-  in
+  let t = tangents c.dt c.s c.n c.tans c.at in
   let p = triple () in
   let objective f p =
     let a, (b, y) = f p in
@@ -1138,8 +1138,8 @@ let law_compose (Case c as case) =
   let o2 = operands f64 c.s c.n (Array.map moderated c.ops) c.at in
   let x2 = (o2.(0), (o2.(2), o2.(3))) in
   let t2 =
-    let m k sh = put Whole f64 sh (moderated c.tans.(k)) in
-    (m 0 c.s, (m 1 rows, m 2 c.s))
+    let m k j sh = put c.at.(j) f64 sh (moderated c.tans.(k)) in
+    (m 0 0 c.s, (m 1 2 rows, m 2 3 c.s))
   in
   let s2, f2, _ =
     functions ~free:c.free f64 c.s c.n (smoothed c.g) (smoothed c.k)

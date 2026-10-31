@@ -706,9 +706,9 @@ let test_total () =
   in
   equal floats [| 2. |] (Nx.to_array sum)
 
-(* A gradient lies where its parameter does when every value it meets lies
-   there, a placed creation's included; otherwise at the union of their cuts. A
-   place's cotangent moves back to its operand. *)
+(* A gradient lies where its parameter does, a placed creation's included,
+   whatever the values it meets. A place's cotangent moves back to its
+   operand. *)
 let test_placement () =
   let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
   let x = Nx.place Count.on (v [| 1.; 2. |]) in
@@ -724,7 +724,7 @@ let test_placement () =
   let x = Nx.place Two.on (v [| 1.; 2. |]) in
   let w = Nx.place (Two.split ~axis:0) (v [| 3.; 4. |]) in
   let g = Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) x in
-  equal ~msg:"the union of cuts" string (where w) (where g);
+  equal ~msg:"beside a cut" string (where x) (where g);
   let h = v [| 1.; 2. |] in
   let there x = Nx.sin (Nx.place Count.on x) in
   let g = Rune.grad' (fun x -> Nx.sum (Nx.place Nx.Host.on (there x))) h in
@@ -751,6 +751,315 @@ let test_cut_take () =
   in
   check "whole" Two.on;
   check "split" split
+
+(* Placement
+
+   Every tangent and cotangent lies at its primal's placement, so a forward pass
+   nx routes has a backward pass it routes: a gradient lies where its parameter
+   does and holds the values it holds on one device. *)
+
+module Two = Operand.Two
+
+let where_of x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)
+let near = array (float_rel ~rel:1e-12 ~abs:1e-12)
+
+(* [numel s] elements from [seed]. *)
+let fill seed s =
+  Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 1.7) +. seed))
+
+let at p ?(seed = 0.) s = Nx.place p (Nx.create f64 s (fill seed s))
+
+type 'd f64_at = (float, D.float64_elt, 'd) Nx.t
+
+(* A function of a parameter and of constants, at any set. *)
+type fn = { f : 'd. 'd f64_at array -> 'd f64_at -> 'd f64_at }
+
+(* [f]'s gradient at [x] beside [consts] lies at [x]'s placement and equals the
+   gradient on the host. *)
+let placed_grad ~msg { f } consts x =
+  let g = Rune.grad' (f consts) x in
+  equal ~msg string (where_of x) (where_of g);
+  let host y = Nx.place Nx.Host.on y in
+  let expected = Rune.grad' (f (Array.map host consts)) (host x) in
+  equal ~msg near (Nx.to_array expected) (Nx.to_array (host g))
+
+(* A reduction's cotangent, cut along axis 0 by [w], broadcast back over the
+   axis it summed meets [c], cut along axis 1. *)
+let rows =
+  {
+    f = (fun k y -> Nx.sum (Nx.mul (Nx.sum ~axes:[ 1 ] (Nx.mul y k.(0))) k.(1)));
+  }
+
+let test_cut_residual () =
+  placed_grad ~msg:"rows" rows
+    [| at (Two.split ~axis:1) [| 4; 6 |]; at (Two.split ~axis:0) [| 4 |] |]
+    (at Two.on ~seed:1. [| 4; 6 |])
+
+(* Two contributions, cut along different axes. *)
+let cuts =
+  {
+    f = (fun k x -> Nx.add (Nx.sum (Nx.mul x k.(0))) (Nx.sum (Nx.mul x k.(1))));
+  }
+
+let test_two_cuts () =
+  placed_grad ~msg:"a sum" cuts
+    [|
+      at (Two.split ~axis:0) [| 4; 4 |];
+      at (Two.split ~axis:1) ~seed:2. [| 4; 4 |];
+    |]
+    (at Two.on ~seed:1. [| 4; 4 |])
+
+(* A chain of movements whose transposes cannot regroup a cut. *)
+let chain r c =
+  {
+    f =
+      (fun k x ->
+        Nx.sum (Nx.mul (Nx.transpose (Nx.reshape [| r; c |] x)) k.(0)));
+  }
+
+let test_movements () =
+  let check msg r c =
+    placed_grad ~msg (chain r c)
+      [| at (Two.split ~axis:0) [| c; r |] |]
+      (at Two.on ~seed:1. [| r * c |])
+  in
+  check "a reshape and a transpose, uneven" 2 3;
+  check "a reshape and a transpose, even" 2 4;
+  placed_grad ~msg:"a slice"
+    { f = (fun k x -> Nx.sum (Nx.mul (Nx.slice [ R (1, 4) ] x) k.(0))) }
+    [| at (Two.split ~axis:0) [| 3; 2 |] |]
+    (at Two.on ~seed:1. [| 5; 2 |])
+
+(* The lines of [f]'s gradient program at [x] that place a cut value elsewhere:
+   a gather. A place that reads a whole value, which each device views, is
+   none. *)
+let gathers f x =
+  let on = Format.asprintf "%a" Nx.Placement.pp Two.on in
+  let program = Rune.program T.tensor T.tensor (Rune.grad' f) x in
+  let lines =
+    String.split_on_char '\n' (Format.asprintf "%a" Rune.pp_program program)
+  in
+  (* The text of [l] after [sub], if [l] holds it. *)
+  let after sub l =
+    let k = String.length sub and n = String.length l in
+    let rec go i =
+      if i + k > n then None
+      else if String.sub l i k = sub then
+        Some (String.sub l (i + k) (n - i - k))
+      else go (i + 1)
+    in
+    go 0
+  in
+  let gather l =
+    match after "= Place (" l with
+    | None -> false
+    | Some operand -> Option.is_none (after (" at " ^ on ^ ")") operand)
+  in
+  List.filter gather lines
+
+(* Data-parallel gradients: the parameters whole, the batch cut. A bias's or a
+   mean's cotangent sums over the cut batch by partials, and the gradient lies
+   whole without gathering an activation. *)
+let test_data_parallel () =
+  let x = at (Two.split ~axis:0) [| 8; 6 |] in
+  let w1 = at Two.on ~seed:1. [| 6; 5 |] and b1 = at Two.on ~seed:2. [| 5 |] in
+  let w2 = at Two.on ~seed:3. [| 5; 3 |] in
+  let mlp (w1, (b1, w2)) =
+    let y = Nx.matmul (Nx.tanh (Nx.add (Nx.matmul x w1) b1)) w2 in
+    Nx.mean (Nx.mul y y)
+  in
+  let p = T.(pair tensor (pair tensor tensor)) in
+  let g1, (gb, g2) = Rune.grad p mlp (w1, (b1, w2)) in
+  let on = Format.asprintf "%a" Nx.Placement.pp Two.on in
+  equal ~msg:"placements" (list string) [ on; on; on ]
+    (List.map where_of [ g1; gb; g2 ]);
+  let flat (w1, (b1, w2)) =
+    Nx.concatenate ~axis:0 [ Nx.flatten w1; b1; Nx.flatten w2 ]
+  in
+  let split v =
+    let w1 = Nx.reshape [| 6; 5 |] (Nx.slice [ R (0, 30) ] v) in
+    let b1 = Nx.slice [ R (30, 35) ] v in
+    (w1, (b1, Nx.reshape [| 5; 3 |] (Nx.slice [ R (35, 50) ] v)))
+  in
+  let check msg f b = equal ~msg (list string) [] (gathers f b) in
+  check "an MLP" (fun v -> mlp (split v)) (flat (w1, (b1, w2)));
+  let mu = at Two.on ~seed:4. [| 6 |] in
+  check "a mean subtracted" (fun mu -> Nx.sum (Nx.square (Nx.sub x mu))) mu;
+  check "a bias added" (fun b -> Nx.sum (Nx.mul (Nx.add x b) x)) mu;
+  check "a broadcast read twice"
+    (fun b ->
+      let bb = Nx.broadcast_to [| 8; 6 |] b in
+      Nx.add (Nx.sum (Nx.mul bb x)) (Nx.sum (Nx.mul bb bb)))
+    mu
+
+(* A tangent or a cotangent given at another placement than its primal's raises,
+   naming both. *)
+let test_given_elsewhere () =
+  let x = at Two.on [| 4 |] and cut = at (Two.split ~axis:0) ~seed:1. [| 4 |] in
+  let on = where_of x and split = where_of cut in
+  let given name ~primal ~given =
+    Invalid_argument
+      (Printf.sprintf "%s: the root: at %s in the %s, at %s in the %s" name on
+         primal split given)
+  in
+  raises (given "Rune.jvp'" ~primal:"parameters" ~given:"tangents") (fun () ->
+      Rune.jvp' Nx.sin x cut);
+  let _, back = Rune.vjp' Nx.sin x in
+  raises (given "Rune.vjp'" ~primal:"result" ~given:"cotangents") (fun () ->
+      back cut);
+  let _, apply = Rune.linearize T.tensor T.tensor Nx.sin x in
+  raises (given "Rune.linearize" ~primal:"parameters" ~given:"tangents")
+    (fun () -> apply cut);
+  let transpose =
+    Rune.linear_transpose T.tensor T.tensor (fun x -> Nx.mul_s x 2.) x
+  in
+  raises (given "Rune.linear_transpose" ~primal:"result" ~given:"cotangents")
+    (fun () -> transpose cut);
+  let elsewhere x = Nx.place (Two.split ~axis:0) x in
+  let f = Rune.custom_jvp T.tensor T.tensor (fun x -> (Nx.sin x, elsewhere)) in
+  raises
+    (Invalid_argument
+       (Printf.sprintf
+          "Rune.custom_jvp: the root: at %s in the tangent map's result, at %s \
+           in the result"
+          split on))
+    (fun () -> Rune.jvp' f x x);
+  let g = Rune.custom_vjp T.tensor T.tensor (fun x -> (Nx.sin x, elsewhere)) in
+  raises
+    (Invalid_argument
+       (Printf.sprintf
+          "Rune.custom_vjp: the root: at %s in the pullback's result, at %s in \
+           the arguments"
+          split on))
+    (fun () -> Rune.grad' (fun x -> Nx.sum (g x)) x)
+
+(* A Jacobian of a cut argument, whose basis lies at the argument's or the
+   result's placement, holds the values it holds on the host. *)
+let test_jacobians () =
+  let x = at (Two.split ~axis:0) [| 4 |] in
+  let host = Nx.place Nx.Host.on x in
+  let check msg expected j =
+    equal ~msg near (Nx.to_array expected) (Nx.to_array (Nx.place Nx.Host.on j))
+  in
+  check "jacfwd'" (Rune.jacfwd' Nx.sin host) (Rune.jacfwd' Nx.sin x);
+  check "jacrev'" (Rune.jacrev' Nx.sin host) (Rune.jacrev' Nx.sin x)
+
+(* The law: wherever nx routes [f]'s forward pass, over parameters and constants
+   each whole or cut along an axis, its gradient lies at the parameter's
+   placement, equals the gradient on the host, and agrees with finite
+   differences. *)
+
+type case = {
+  name : string;
+  fn : fn;
+  shapes : int -> int -> int array * int array list;
+      (** The parameter's shape and the constants', from [m] and [n]. *)
+}
+
+let law_cases =
+  let open Nx in
+  [
+    {
+      name = "x * a";
+      fn = { f = (fun k x -> sum (mul x k.(0))) };
+      shapes = (fun m n -> ([| m; n |], [ [| m; n |] ]));
+    };
+    {
+      name = "a reduction's cotangent meets a cut";
+      fn = rows;
+      shapes = (fun m n -> ([| m; n |], [ [| m; n |]; [| m |] ]));
+    };
+    {
+      name = "two contributions";
+      fn = cuts;
+      shapes = (fun m n -> ([| m; n |], [ [| m; n |]; [| m; n |] ]));
+    };
+    {
+      name = "a reshape and a transpose";
+      fn =
+        {
+          f =
+            (fun k x ->
+              let s = shape x in
+              sum (mul (transpose (reshape [| s.(1); s.(0) |] x)) k.(0)));
+        };
+      shapes = (fun m n -> ([| m; n |], [ [| m; n |] ]));
+    };
+    {
+      name = "a slice";
+      fn =
+        { f = (fun k x -> sum (mul (slice [ R (1, (shape x).(0)) ] x) k.(0))) };
+      shapes = (fun m n -> ([| m + 1; n |], [ [| m; n |] ]));
+    };
+    {
+      name = "a bias";
+      fn = { f = (fun k x -> sum (mul (add k.(0) x) k.(0))) };
+      shapes = (fun m n -> ([| n |], [ [| m; n |] ]));
+    };
+    {
+      name = "exp of a broadcast";
+      fn =
+        {
+          f = (fun k x -> sum (mul (exp (broadcast_to (shape k.(0)) x)) k.(0)));
+        };
+      shapes = (fun m n -> ([| n |], [ [| m; n |] ]));
+    };
+    {
+      name = "a contraction";
+      fn = { f = (fun k x -> sum (square (matmul x k.(0)))) };
+      shapes = (fun _ n -> ([| 3; n |], [ [| n; 2 |] ]));
+    };
+  ]
+
+(* Where an array lies: whole on both devices, or cut along an axis it has. *)
+let placement_of s k =
+  if k = 0 || Array.length s = 0 then Two.on
+  else Two.split ~axis:(min (k - 1) (Array.length s - 1))
+
+(* A case, [m] and [n], and where the parameter then each constant lies: [0]
+   whole, [k] cut along axis [k - 1]. *)
+let law_gen =
+  let open Gen in
+  let pp ppf (c, m, n, ks, _) =
+    Format.fprintf ppf "%s, m %d, n %d, at %a" c.name m n
+      Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int)
+      ks
+  in
+  with_pp pp
+    (let+ c = of_list law_cases
+     and+ m = of_list [ 0; 1; 2; 3; 5 ]
+     and+ n = of_list [ 1; 2; 3 ]
+     and+ ks = list ~size:(constant 3) (int_range 0 2)
+     and+ seed = int_range 0 99 in
+     (c, m, n, ks, float_of_int seed))
+
+let law_placed (c, m, n, ks, seed) =
+  let xs, cs = c.shapes m n in
+  let ks = Array.of_list ks in
+  let x = at (placement_of xs ks.(0)) ~seed xs in
+  let consts =
+    Array.of_list
+      (List.mapi
+         (fun j s ->
+           at (placement_of s ks.(j + 1)) ~seed:(seed +. 1. +. float_of_int j) s)
+         cs)
+  in
+  (* A forward pass nx refuses has no backward pass to check. *)
+  (match c.fn.f consts x with
+  | exception Invalid_argument _ -> reject ()
+  | _ -> ());
+  let cut y = not (Nx.Placement.equal (Nx.placement y) Two.on) in
+  cover c.name true;
+  cover "a whole parameter beside a cut"
+    ((not (cut x)) && Array.exists cut consts);
+  cover "a cut parameter" (cut x);
+  cover "uneven windows" (m = 5 && (cut x || Array.exists cut consts));
+  cover "an empty window" (m = 1 && (cut x || Array.exists cut consts));
+  cover "no element" (Nx.numel x = 0);
+  placed_grad ~msg:"gradient" c.fn consts x;
+  if Nx.numel x > 0 then
+    equal ~msg:"finite differences" (result unit string) (Ok ())
+      (Rune.check_grads T.tensor (c.fn.f consts) x)
 
 let test_jacrev () =
   let a = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -1032,6 +1341,17 @@ let () =
              test "a take of split positions" test_cut_take;
              test "jacrev'" test_jacrev;
              test "check_grads" test_check_grads;
+           ];
+         group "placement"
+           [
+             test "a reduction's cotangent meets a cut" test_cut_residual;
+             test "two contributions cut differently" test_two_cuts;
+             test "movements" test_movements;
+             test "data parallel" test_data_parallel;
+             test "given elsewhere" test_given_elsewhere;
+             test "Jacobians" test_jacobians;
+             prop ~count:200 "where nx routes the forward pass" law_gen
+               law_placed;
            ];
          cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;
          stateful ~domains:2 ~count:10 ~steps:8

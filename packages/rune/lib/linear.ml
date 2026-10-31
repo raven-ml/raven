@@ -146,6 +146,48 @@ let sum a b =
       let (V y) = b.v in
       fresh (V (Nx.add (rebrand r x) (with_dtype (Nx.dtype x) (rebrand r y))))
 
+(* Placements
+
+   A variable's cotangent lies at its primal's placement. [ps] holds each
+   variable's primal once one of its contributions lies elsewhere, and is empty
+   until then: where every contribution lies at its primal's placement, as on
+   one device, so do their sums, and the walk only compares placements. *)
+
+let is_cut p = not (Nx.Placement.equal (Nx.Placement.uncut p) p)
+
+(* Whether two contributions are cut apart or lie on two sets, so that each is
+   placed at its primal's before they are added. *)
+let apart a c =
+  let (V x) = a.v in
+  let (V y) = c.v in
+  let p = Nx.placement x and q = Nx.placement y in
+  (not (Nx.Placement.equal (Nx.Placement.uncut p) (Nx.Placement.uncut q)))
+  || (is_cut p && is_cut q && not (Nx.Placement.equal p q))
+
+(* [ps] holding [x] as variable [n]'s primal, of [slots] variables. *)
+let mark ps ~slots n x =
+  let ps = if Array.length ps = 0 then Array.make slots None else ps in
+  if Option.is_none ps.(n) then ps.(n) <- Some (V x);
+  ps
+
+let primal_at ps n = if Array.length ps = 0 then None else ps.(n)
+
+(* [c] at the placement of [primal], where that is known. *)
+let at_primal ~name primal c =
+  match (primal, c.v) with
+  | Some (V x), V w
+    when not (Nx.Placement.equal (Nx.placement x) (Nx.placement w)) ->
+      held (V (Prim.eval ~by:name (Place (Nx.placement x, w))))
+  | _ -> c
+
+(* Variable [n]'s cotangent in [acc] at its primal's placement. *)
+let settle ~name ps acc n =
+  match (primal_at ps n, acc.(n)) with
+  | (Some _ as x), Some c ->
+      let c' = at_primal ~name x c in
+      if c' != c then acc.(n) <- Some c'
+  | _ -> ()
+
 (* Outputs of dtypes known at run time *)
 
 type 'd outs = Outs : ('d, 'r) Prim.outs * ('r -> 'd Prim.any list) -> 'd outs
@@ -568,6 +610,34 @@ let unslice env x (ranges : Move.range iarray) w =
   ignore env;
   Prim.eval ~by:env.name (Fold { shape; pad; x = w })
 
+(* A broadcast's cotangent [w] summed over its repeated [axes] by partials where
+   those are cut, as a contribution to its operand [x], [lead] axes fewer. The
+   sum lies where its axes lie in the broadcast, the operand's axes last; a cut
+   one of them leaves through a transpose that puts the leading axes last, since
+   a reshape pairs axes of one element from the front: [1; n] cut along axis 1
+   is [n] cut along axis 0. *)
+let unbroadcast env x ~lead ~axes w =
+  let s = Nx.shape x and r = Nx.ndim w in
+  let summed = if axes = [] then w else Nx.sum ~axes ~keepdims:true w in
+  let rec lifted p k =
+    if k = 0 then p else lifted (Nx.Placement.with_leading_axis p) (k - 1)
+  in
+  let p = lifted (Nx.placement x) lead in
+  let cut = is_cut p in
+  let here = Nx.Placement.equal (Nx.placement summed) p in
+  let y =
+    if here then rebrand x summed
+    else Prim.eval ~by:env.name (Place (p, summed))
+  in
+  let y =
+    if lead = 0 || not cut then y
+    else
+      let last a = if a < r - lead then a + lead else a - (r - lead) in
+      Nx.transpose ~axes:(List.init r last) y
+  in
+  if axes = [] || not here then held (V (Nx.reshape s y))
+  else fresh (V (Nx.reshape s y))
+
 let move_rule env (mv : Move.t) x (V w) =
   let w = with_dtype (Nx.dtype x) w and s = Nx.shape x in
   let c =
@@ -583,8 +653,13 @@ let move_rule env (mv : Move.t) x (V w) =
         let lead = Array.length b - Array.length s in
         let repeats a = b.(a) <> 1 && (a < lead || s.(a - lead) = 1) in
         let axes = List.filter repeats (List.init (Array.length b) Fun.id) in
-        if axes = [] then held (V (Nx.reshape s w))
-        else fresh (V (Nx.reshape s (Nx.sum ~axes w)))
+        let px = Nx.placement x in
+        if (not (is_cut px)) && Nx.Placement.equal (Nx.placement w) px then
+          (* Whole where the operand is whole, as on one device: so is the
+             sum. *)
+          if axes = [] then held (V (Nx.reshape s w))
+          else fresh (V (Nx.reshape s (Nx.sum ~axes w)))
+        else unbroadcast env x ~lead ~axes w
     | Slice ranges -> fresh (V (unslice env x ranges w))
     | Window windows ->
         let r = Nx.ndim x in
@@ -1031,10 +1106,10 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
             env.give x (fresh (V y))
           end)
   | Place (_, x) ->
-      first (fun (V w) ->
-          if env.lin x then
-            let p = Nx.placement x in
-            env.give x (held (V (Prim.eval ~by (Place (p, w))))))
+      (* The cotangent goes back as it lies, and the walk places it at [x]'s
+         placement: after the sum over a broadcast's repeated axes where [x] is
+         a broadcast. *)
+      first (fun w -> if env.lin x then env.give x (held w))
   | Check _ -> ()
 
 (* [lanes a]'s transpose, as JAX's all_gather's: the calling lane's row of the
@@ -1114,9 +1189,26 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
       | Some v -> like x v
       | None -> invalid_arg (name ^ ": a tangent is read as a constant")
   in
+  (* Every cotangent lies at its primal's placement: a variable's is placed
+     there before its equation transposes it. Two contributions cut apart, or on
+     two sets, are placed there before they are added; a whole one is added
+     where a cut one lies, which nx routes by views. A broadcast's is left where
+     it lies: its transpose sums over the axes it repeats, by partials where
+     those are cut, and its operand's placement then holds the sum. *)
+  let primal = ref [||] in
   let give x c =
     let n = var x in
-    acc.(n) <- Some (match acc.(n) with None -> c | Some a -> sum a c)
+    let (V w) = c.v in
+    if not (Nx.Placement.equal (Nx.placement x) (Nx.placement w)) then
+      primal := mark !primal ~slots:(Array.length acc) n x;
+    acc.(n) <-
+      Some
+        (match acc.(n) with
+        | None -> c
+        | Some a when apart a c ->
+            let x = primal_at !primal n in
+            sum (at_primal ~name x a) (at_primal ~name x c)
+        | Some a -> sum a c)
   in
   let env = { name; lin; const; give; fn } in
   Array.iteri
@@ -1135,6 +1227,13 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
     if k < n then Option.map (fun c -> c.v) acc.(base + k) else None
   in
   for e = Array.length p.eqns - 1 downto 0 do
+    (match p.eqns.(e) with
+    | Op { op = Move (Broadcast _, _); _ } -> ()
+    | Op { base; _ } | Do { base; _ } ->
+        if Array.length !primal > 0 then
+          for n = base to next.(e) - 1 do
+            settle ~name !primal acc n
+          done);
     match p.eqns.(e) with
     | Op { op; base; _ } ->
         let n = next.(e) - base in
@@ -1222,6 +1321,11 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
         if reached base (next.(e) - base) then
           invalid_arg (name ^ ": a loop has no transpose yet")
   done;
+  let ps = !primal in
+  if Array.length ps > 0 then
+    Array.iteri
+      (fun k c -> if Option.is_none c then settle ~name ps acc p.params.(k))
+      consts;
   Array.mapi
     (fun k c -> if Option.is_none c then acc.(p.params.(k)) else None)
     consts
