@@ -801,7 +801,8 @@ type undo =
 (* Runs each step of [undo] in turn, whatever one raises, and the first
    exception passes on once the last has run ([each]). Memory goes back only
    if every object and registration before it went back: the GPU may still
-   read memory one the RM kept names. *)
+   read memory one the RM kept names. Answers whether every step went
+   back. *)
 let give_back undo =
   let kept = ref false in
   let step = function
@@ -815,7 +816,8 @@ let give_back undo =
     | Memory f -> if not !kept then f ()
     | Host f -> f ()
   in
-  each step undo
+  each step undo;
+  not !kept
 
 (* Gives back the set [s]: its channels, their C record, then their memory,
    which the GPU no longer reads once the RM freed them; a set the RM did not
@@ -825,14 +827,16 @@ let drop_channels l s =
   let unregister ch = Object (fun () -> unregistered p ch) in
   let free h = Object (fun () -> freed p ~parent:p.device h) in
   let memory m = Memory (fun () -> p.free m) in
-  give_back
-    (List.map unregister (Array.to_list s.handles)
+  let steps =
+    List.map unregister (Array.to_list s.handles)
     @ [
         free s.debugger;
         free s.group;
         Host (fun () -> if s.record <> 0 then free_channels s.record);
       ]
-    @ List.map memory (s.block :: Array.to_list s.notifiers))
+    @ List.map memory (s.block :: Array.to_list s.notifiers)
+  in
+  ignore (give_back steps : bool)
 
 (* Gives back the sets of channels neither installed nor handed. No work
    uses them: a room installs a set once the device reached every value
@@ -1328,18 +1332,25 @@ let make ~word p =
   | Some release -> (
       let undo = ref [] in
       let taken f = undo := f :: !undo in
-      (* A failure giving something back does not hide the open's. *)
-      let back () = try give_back !undo with Fault _ -> () in
+      (* A failure giving something back does not hide the open's, and the
+         open's [Error] names the memory that stays. *)
+      let failed why =
+        match give_back !undo with
+        | true -> Error why
+        | false ->
+            Error
+              (why
+             ^ "; an object or registration the open made stayed, and the \
+                memory it names stays taken")
+        | exception Fault why' ->
+            Error (strf "%s; giving back what the open made: %s" why why')
+      in
       match start ~word p release ~taken with
-      | exception Fault why ->
-          back ();
-          Error why
-      | Error _ as e ->
-          back ();
-          e
+      | exception Fault why -> failed why
+      | Error why -> failed why
       | exception exn ->
           let bt = Printexc.get_raw_backtrace () in
-          back ();
+          (try ignore (give_back !undo : bool) with Fault _ -> ());
           Printexc.raise_with_backtrace exn bt
       | Ok _ as d -> d)
 
@@ -1492,7 +1503,9 @@ let grow_channels d l want =
     let taken f = undo := f :: !undo in
     (* Where the growth failed, which loses the device, its failure passes on
        before a free's. *)
-    let give_back_failed () = try give_back !undo with Fault _ -> () in
+    let give_back_failed () =
+      try ignore (give_back !undo : bool) with Fault _ -> ()
+    in
     let alloc n what =
       match path_alloc p Pinned n with
       | Some m ->
@@ -1537,7 +1550,7 @@ let grow_channels d l want =
     in
     match made with
     | Error _ when !lacked ->
-        give_back !undo;
+        ignore (give_back !undo : bool);
         block_bytes entries + (2 * page)
     | Error why ->
         give_back_failed ();

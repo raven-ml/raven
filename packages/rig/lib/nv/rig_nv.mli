@@ -656,9 +656,12 @@ val make : word:nativeint -> 'm path -> (t, string) result
 
     [Error msg] if [p.rm.release] is none of [570], [580], [610] and [615], if
     the RM refuses an object, if [p] lacks the memory, or if [p.clock]
-    cannot read the timer. A failed [make] frees
-    what it allocated. [p]'s own objects stay allocated, and another [make] may
-    use them once this one has failed or its device has stopped. *)
+    cannot read the timer. A failed [make] frees what it allocated, but an
+    object the RM does not free, or a registration [p] does not end, and the
+    memory either names, which the GPU may still read: [msg] then says what
+    stays, after its reason, and a fault of that give-back. [p]'s own objects
+    stay allocated, and another [make] may use them once this one has failed
+    or its device has stopped. *)
 
 val windows : int
 (** [windows] is [2{^40} - 8 GiB], the first of the GPU addresses at which a

@@ -2292,13 +2292,14 @@ type switches = {
 }
 
 (* GPU 0's opener; the objects its path made under the device while
-   recording; the frees of regions it gave while recording; and, once the
-   switches are off and the device stopped, the give-back of those objects,
-   then of those regions still taken. *)
+   recording; the frees of regions it gave while recording; those regions
+   still taken; and, once the switches are off and the device stopped, the
+   give-back of those objects, then of those regions. *)
 type rm_keeping = {
   opener : N.t Rig_edge.opener;
   objects : unit -> int;
   frees : unit -> int;
+  taken : unit -> int;
   release : unit -> unit;
 }
 
@@ -2357,6 +2358,7 @@ let rm_keeping answer sw =
     opener = Rig_nv_nvidia.gpu_with 0 ~wrap;
     objects = (fun () -> List.length !objects);
     frees = (fun () -> !frees);
+    taken = (fun () -> List.length !given);
     release;
   }
 
@@ -2432,6 +2434,56 @@ let replaced_kept () =
   equal string ~msg:"the allocation" ("Fault " ^ rm_fault) got;
   equal int ~msg:"the frees of the replaced set" frees (k.frees ())
 
+(* The scheduling of the channels the RM refuses where it lacks the resources
+   ([rm_keeping]'s [lacking]). *)
+let unscheduled = "scheduling the channels: no resources to schedule the group"
+
+(* [failed_open answer] opens GPU 0 on [rm_keeping], whose RM lacks the
+   resources to schedule the channels, a step after the open made them, and
+   answers the frees of RM objects as [answer] says, or frees them if [None]:
+   the open's [Error], the frees of the regions it gave, and those still
+   taken, before the test gives back what stayed. *)
+let failed_open answer =
+  on_kernel ();
+  let failing = Option.is_some answer in
+  let sw = { recording = true; lacking = true; failing } in
+  let k = rm_keeping (Option.value answer ~default:Refuses) sw in
+  let got = Rig_gpu_support.opened k.opener in
+  let frees = k.frees () and taken = k.taken () in
+  sw.recording <- false;
+  sw.lacking <- false;
+  sw.failing <- false;
+  match got with
+  | Ok g ->
+      N.stop g ~fault:None;
+      k.release ();
+      failwith "the open succeeded"
+  | Error why ->
+      k.release ();
+      (why, frees, taken)
+
+(* A failed open gives back what it took. Where the RM keeps an object,
+   refusing its free or faulting, the memory the object names stays taken, and
+   the open's [Error] says so after its own reason. *)
+let make_failed () =
+  let why, frees, taken = failed_open None in
+  equal string ~msg:"an open the RM frees after" unscheduled why;
+  at_least int ~msg:"the frees of what it took" ~than:1 frees;
+  equal int ~msg:"the regions still taken" 0 taken;
+  let why, frees, taken = failed_open (Some Refuses) in
+  equal string ~msg:"an open whose frees the RM refuses"
+    (unscheduled
+   ^ "; an object or registration the open made stayed, and the memory it \
+      names stays taken")
+    why;
+  equal int ~msg:"the frees of what it took, kept" 0 frees;
+  at_least int ~msg:"the regions still taken, kept" ~than:1 taken;
+  let why, frees, _ = failed_open (Some Faults) in
+  equal string ~msg:"an open whose frees the RM faults on"
+    (unscheduled ^ "; giving back what the open made: " ^ rm_fault)
+    why;
+  equal int ~msg:"the frees of what it took, faulted" 0 frees
+
 let faults =
   group ~timeout:60. "a path's faults"
     [
@@ -2446,6 +2498,8 @@ let faults =
         (rm_kept Faults);
       test "a replaced set the RM faults on keeps its memory, raising"
         replaced_kept;
+      test "a failed open names the memory an object the RM kept names"
+        make_failed;
     ]
 
 (* Usage *)

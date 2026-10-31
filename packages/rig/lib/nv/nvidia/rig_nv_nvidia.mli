@@ -99,7 +99,8 @@ val gpu : int -> Rig_nv.t Rig_edge.opener
     changes only the kernel driver's state for this process.
 
     [make] returns [Error msg], having given back what it took for GPU [i],
-    if:
+    but what the kernel driver keeps, which stays for the process and which
+    [msg] names ({!Rig_nv.make}), if:
     - the machine has no GPU [i] ({!count}), saying how many there are;
     - the machine's PCI functions cannot be read, saying why;
     - the kernel driver does not hold GPU [i], or cannot be opened;
