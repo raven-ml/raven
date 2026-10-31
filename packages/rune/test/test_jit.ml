@@ -1096,6 +1096,58 @@ let test_wrapped_max () =
   in
   List.iter case Nx.Dtype.all
 
+(* An evaluated program holds a value from the operation that makes it until
+   the last that reads it, as eager code does: a chain of eight functions of a
+   value cut across two devices holds two of its values at once, where holding
+   each until the call returns would hold eight, and so does one that also
+   makes a value nothing reads at each step. A device's budget refuses an
+   allocation only once what nothing reaches is collected. *)
+let test_evaluated_memory () =
+  let rigs =
+    List.init 2 (fun k ->
+        Result.get_ok
+          (Rig.memory_device (Printf.sprintf "rune-evaluated-%d" k)))
+  in
+  let module S = (val Nx.devices rigs) in
+  let n = 65536 in
+  let value = n / 2 * 4 in
+  let x = Nx.place (S.split ~axis:0) (Nx.zeros f32 [| n |]) in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      List.iter Rig.free_cache rigs
+    done;
+    List.map Rig.allocated rigs
+  in
+  (* [f x] within three values a device more than the devices hold. *)
+  let fits f =
+    let before = Rune.evaluations () in
+    ignore (Sys.opaque_identity (f x));
+    equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+    let held = settled () in
+    List.iter2 (fun r h -> Rig.set_budget r (h + (3 * value))) rigs held;
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun r -> Rig.set_budget r max_int) rigs)
+      (fun () ->
+        match f x with
+        | y ->
+            ignore (Sys.opaque_identity y);
+            None
+        | exception Rig.Out_of_memory (r, bytes) -> Some (Rig.name r, bytes))
+  in
+  let refused = option (pair string int) in
+  let rec chain k x = if k = 0 then x else chain (k - 1) (Nx.sin x) in
+  equal ~msg:"a chain" refused None (fits (Rune.jit' (chain 8)));
+  (* Each step also makes a value nothing reads. *)
+  let rec unread k x =
+    if k = 0 then x
+    else begin
+      ignore (Nx.cos x);
+      unread (k - 1) (Nx.sin x)
+    end
+  in
+  equal ~msg:"values nothing reads" refused None (fits (Rune.jit' (unread 8)))
+
 (* Fresh results: compiled and evaluated, a result has memory of its own, apart
    from the arguments', the captures' and the other results'. *)
 let test_fresh () =
@@ -4118,6 +4170,8 @@ let () =
              test "a jit inside a jit" test_nested;
              test "an integer maximum of a running sum wraps" test_wrapped_max;
              test "results are fresh" test_fresh;
+             test "an evaluated program lets each value go"
+               test_evaluated_memory;
              test "an argument off 16 bytes" test_phase;
              test "a donated argument is consumed" test_consumed;
              test "a result takes a donated argument's memory" test_lending;

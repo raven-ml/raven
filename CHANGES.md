@@ -323,6 +323,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- An evaluated program, such as `Rune.jit` over values on several devices,
+  drops each value after its last use, as eager code does: it held every value
+  until the call returned, 3.5 times the memory of a sharded optimiser update.
 - A compiled loop's step that writes rows into its carry with `Nx.scatter`,
   or `Nx.set` by positions, stores those rows alone, and so does a compiled
   scatter into a donated argument whose memory its result takes, where a
@@ -3261,6 +3264,8 @@ thread.
 
 ### Nx
 
+- `Nx.Prim.iteri` applies a function to an operation's operands without
+  building their list, for interpreters that walk many operations.
 - `Nx.softplus`'s gradient at `0.` is `0.5`, where it was `0.`.
 - The second derivative of `Nx.hypot x y` and `Nx.magnitude` computed at
   float64 is right where `|x| = |y|`, where it was zero, and the tangent is

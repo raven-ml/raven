@@ -6739,6 +6739,7 @@ module Prim = struct
   let kind = Prim.kind
   let pp = Prim.pp
   let operands = Prim.operands
+  let iteri = Prim.iteri
   let map = Prim.map
   let form = Prim.form
   let results = Prim.results

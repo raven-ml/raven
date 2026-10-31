@@ -153,6 +153,9 @@ type addition =
       (** A total a program threads, and the forms of its running value in and
           out. *)
 
+type drops
+(** The type for the values an evaluation drops after each equation. *)
+
 type t = private {
   owner : Nx.Prim.interpretation;  (** The tracer whose variables it has. *)
   params : int array;
@@ -166,6 +169,10 @@ type t = private {
   emits : bool;
       (** Whether an equation emits ({!Emit}), or a program its constructs carry
           does. *)
+  drops : drops option Atomic.t;
+      (** Once {!eval} has run it, which values it drops after each equation:
+          those it reads last, the outputs' excepted, and those it makes that
+          nothing reads. *)
 }
 
 and eqn =

@@ -1672,7 +1672,9 @@ val jit :
     It also declines a program whose device computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them and
-    lends nothing.
+    lends nothing. It holds each value of the program from the operation that
+    makes it until the last that reads it, as the function applied eagerly
+    lets each go.
 
     A declined program that runs a {!callback} is {e split} around it. Each
     maximal {e stretch} of its operations that runs no callback and adds to no

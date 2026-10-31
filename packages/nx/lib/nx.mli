@@ -5293,6 +5293,11 @@ module Prim : sig
       offsets; a triangular solve's [a] then [b]; [Check]'s [ok] then its
       data; the one operand of the others. *)
 
+  val iteri : ('v 's 'd. int -> ('v, 's, 'd) nx -> unit) -> 'r t -> unit
+  (** [iteri f op] is [f i x] for each operand [x] of [op], at its position
+      [i] in {!operands}. It allocates nothing but for a factorisation, a
+      contraction or a check. *)
+
   val map : ('v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx) -> 'r t -> 'r t
   (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
 

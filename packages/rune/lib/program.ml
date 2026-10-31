@@ -153,6 +153,8 @@ type addition =
       ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form * ('v, 's, 'd) Nx.Prim.form
       -> addition
 
+type drops = { starts : int array; vars : int array; read : Bytes.t }
+
 type t = {
   owner : Nx.Prim.interpretation;
   params : int array;
@@ -161,6 +163,7 @@ type t = {
   adds : addition array;
   slots : int;
   emits : bool;
+  drops : drops option Atomic.t;
 }
 
 and eqn =
@@ -353,10 +356,101 @@ and carried_by = function
   | Callback _ | Operator _ ->
       []
 
+let operands = function
+  | Detach x -> [ V x ]
+  | Lanes (_, x) -> [ V x ]
+  | Add (_, x) -> [ V x ]
+  | Accumulate { running; x; _ } -> [ V running; V x ]
+  | Emit (Emission e) -> Array.to_list e.values @ Option.to_list e.mask
+  | Lane_index _ -> []
+  | Callback { args; _ } -> Array.to_list args
+  | Scan { trips; init; xs; captures; seeds; _ } ->
+      Option.to_list trips
+      @ Array.to_list (Array.concat [ init; xs; captures; seeds ])
+  | Iterate { init; step_captures; until_captures; seeds; _ } ->
+      Array.to_list
+        (Array.concat [ init; step_captures; until_captures; seeds ])
+  | Call { args; seeds; _ } | Remat { args; seeds; _ } ->
+      Array.to_list (Array.append args seeds)
+  | Custom { args; captures; seeds; _ } ->
+      Array.to_list (Array.concat [ args; captures; seeds ])
+  | Linear { args; captures; residuals; _ } ->
+      Array.to_list (Array.concat [ args; captures; residuals ])
+  | Operator { args; data; _ } -> Array.to_list (Array.append args data)
+  | Root { solution; theta; captures; _ } ->
+      Array.to_list (Array.concat [ solution; theta; captures ])
+  | Solve { b; data; captures; _ } ->
+      Array.to_list (Array.concat [ b; data; captures ])
+  | Switch { index; captures; seeds; _ } ->
+      index :: Array.to_list (Array.append captures seeds)
+
+(* For each of [eqns], the variables it reads last, those of [outputs]
+   excepted, flat: equation [e]'s are [vars] from [starts.(e)] to
+   [starts.(e + 1)], and [read] marks the variables an equation or an output
+   reads. An evaluation drops each value once its last reader ran, and one
+   nothing reads once it is made, as the function applied eagerly lets each
+   go. *)
+let drops owner eqns outputs slots =
+  let n = Array.length eqns in
+  let last = Array.make slots (-1) and at = ref 0 in
+  let mark : 'v 's 'd. int -> ('v, 's, 'd) Nx.t -> unit =
+   fun _ x ->
+    match Nx.Prim.payload owner x with
+    | Some (Var v) -> last.(v) <- !at
+    | _ -> ()
+  in
+  let read (V x) = mark 0 x in
+  Array.iteri
+    (fun e eqn ->
+      at := e;
+      match eqn with
+      | Op { op; _ } -> Nx.Prim.iteri mark op
+      | Do { c; _ } -> List.iter read (operands c))
+    eqns;
+  at := n;
+  Array.iter read outputs;
+  let starts = Array.make (n + 1) 0 in
+  Array.iter
+    (fun e -> if e >= 0 && e < n then starts.(e + 1) <- starts.(e + 1) + 1)
+    last;
+  for e = 1 to n do
+    starts.(e) <- starts.(e) + starts.(e - 1)
+  done;
+  let vars = Array.make starts.(n) 0 and next = Array.sub starts 0 n in
+  Array.iteri
+    (fun v e ->
+      if e >= 0 && e < n then begin
+        vars.(next.(e)) <- v;
+        next.(e) <- next.(e) + 1
+      end)
+    last;
+  let read =
+    Bytes.init slots (fun v -> if last.(v) >= 0 then '\001' else '\000')
+  in
+  { starts; vars; read }
+
 let make ~owner ~params eqns ~outputs ~adds ~slots =
   let eqns = Array.of_list eqns in
   let emits = Array.exists emitting eqns in
-  { owner; params; eqns; outputs; adds; slots; emits }
+  let drops = Atomic.make None in
+  { owner; params; eqns; outputs; adds; slots; emits; drops }
+
+(* [p] with [eqns] and [outputs], which [emits] says whether they emit. *)
+let remade ?eqns ?outputs ?emits p =
+  let eqns = Option.value eqns ~default:p.eqns
+  and outputs = Option.value outputs ~default:p.outputs in
+  let emits = Option.value emits ~default:p.emits in
+  { p with eqns; outputs; emits; drops = Atomic.make None }
+
+(* [p]'s drops, found at its first evaluation: tracing makes many programs
+   that are never evaluated. Two domains may both find them. *)
+let dropped p =
+  match Atomic.get p.drops with
+  | Some d -> d
+  | None ->
+      let d = drops p.owner p.eqns p.outputs p.slots in
+      Atomic.set p.drops (Some d);
+      d
 
 (* A construct travels in a cell, which {!perform} empties once no handler
    answered: [Effect.Unhandled] holds the effect, and the runtime keeps the
@@ -585,34 +679,6 @@ let map_operands m = function
           captures = map_values m s.captures;
           seeds = map_values m s.seeds;
         }
-
-let operands = function
-  | Detach x -> [ V x ]
-  | Lanes (_, x) -> [ V x ]
-  | Add (_, x) -> [ V x ]
-  | Accumulate { running; x; _ } -> [ V running; V x ]
-  | Emit (Emission e) -> Array.to_list e.values @ Option.to_list e.mask
-  | Lane_index _ -> []
-  | Callback { args; _ } -> Array.to_list args
-  | Scan { trips; init; xs; captures; seeds; _ } ->
-      Option.to_list trips
-      @ Array.to_list (Array.concat [ init; xs; captures; seeds ])
-  | Iterate { init; step_captures; until_captures; seeds; _ } ->
-      Array.to_list
-        (Array.concat [ init; step_captures; until_captures; seeds ])
-  | Call { args; seeds; _ } | Remat { args; seeds; _ } ->
-      Array.to_list (Array.append args seeds)
-  | Custom { args; captures; seeds; _ } ->
-      Array.to_list (Array.concat [ args; captures; seeds ])
-  | Linear { args; captures; residuals; _ } ->
-      Array.to_list (Array.concat [ args; captures; residuals ])
-  | Operator { args; data; _ } -> Array.to_list (Array.append args data)
-  | Root { solution; theta; captures; _ } ->
-      Array.to_list (Array.concat [ solution; theta; captures ])
-  | Solve { b; data; captures; _ } ->
-      Array.to_list (Array.concat [ b; data; captures ])
-  | Switch { index; captures; seeds; _ } ->
-      index :: Array.to_list (Array.append captures seeds)
 
 let once f =
   let cell = ref None and lock = Mutex.create () in
@@ -906,7 +972,7 @@ let rec unobserved p =
     let eqns =
       Array.map eqn (Array.of_list (List.filter keep (Array.to_list p.eqns)))
     in
-    { p with eqns; emits = false }
+    remade ~eqns ~emits:false p
 
 type 'd where = Nowhere | At of 'd Nx.Placement.t option
 
@@ -1066,16 +1132,30 @@ let rec eval ?totals p args =
     env.(!at) <- V y;
     incr at
   in
-  Array.iter
-    (function
+  let d = dropped p in
+  (* The values [eqn] made from [base] to [stop], those nothing reads, then
+     those it read last. *)
+  let drop e base stop =
+    for v = base to stop - 1 do
+      if Bytes.get d.read v = '\000' then env.(v) <- hole
+    done;
+    for k = d.starts.(e) to d.starts.(e + 1) - 1 do
+      env.(d.vars.(k)) <- hole
+    done
+  in
+  Array.iteri
+    (fun e eqn ->
+      match eqn with
       | Op { by; op; base } ->
           let op = Nx.Prim.map lookup op in
           let r = Nx.Prim.eval ~by op in
           at := base;
-          Nx.Prim.iter_results bind op r
+          Nx.Prim.iter_results bind op r;
+          drop e base !at
       | Do { c; base } ->
           let r = perform (map_operands m c) in
-          Array.blit r 0 env base (Array.length r))
+          Array.blit r 0 env base (Array.length r);
+          drop e base (base + Array.length r))
     p.eqns;
   map_values m p.outputs
 
@@ -1284,7 +1364,7 @@ and fill (p : t) ~id body =
     | e -> e
   in
   let eqns = Array.map eqn p.eqns in
-  { p with eqns; emits = Array.exists emitting eqns }
+  remade ~eqns ~emits:(Array.exists emitting eqns) p
 
 (* A site of [body] that evaluates it, as each program derived from it. *)
 and evaluated ~name body =
@@ -1425,7 +1505,7 @@ and values_only p ~ny =
     | _ -> true
   in
   if Array.for_all free (slice p.outputs ny (no - na)) then
-    { p with outputs = Array.append (slice p.outputs 0 ny) (tail p) }
+    remade ~outputs:(Array.append (slice p.outputs 0 ny) (tail p)) p
   else prune p ~outputs:(Array.init ny Fun.id)
 
 (* A loop's sums start from its seeds, the running totals of the collects they
@@ -1616,7 +1696,7 @@ and prune p ~outputs =
       | Do { c; _ } -> List.iter (fun (V x) -> mark x) (operands c)
     end
   done;
-  { p with eqns = Array.of_list !kept; outputs }
+  remade ~eqns:(Array.of_list !kept) ~outputs p
 
 (* A total's running value, where a collect or a tracer answers for it. *)
 type seed = Seed : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> seed | Unseeded
@@ -1914,7 +1994,7 @@ let replayed p ~unknown =
       | _ -> invalid_arg "Rune: a replay's kept value"
     in
     let keeping =
-      { p with outputs = Array.concat [ slice p.outputs 0 no; kept; tail p ] }
+      remade ~outputs:(Array.concat [ slice p.outputs 0 no; kept; tail p ]) p
     in
     let params =
       Array.concat
