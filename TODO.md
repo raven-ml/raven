@@ -378,9 +378,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - munin GPU metrics without NVML (a vendor library, ruled out): amdgpu
   sysfs, IOKit, and NVIDIA through what rig's drivers can read; design
   first
-- munin docs: the Kaun MNIST loop (02-tracking.md) and the four `munin`
-  command fences are unchecked: run the loop on synthetic data and the
-  commands as a cram test over a store with a known run
 
 ## ymir, sowilo
 
