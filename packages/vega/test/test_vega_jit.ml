@@ -205,11 +205,71 @@ let test_polynomial_decay_compiles () =
       done)
     [ 0.5; 0.7; 1.0; 2.0 ]
 
+(* One step on bfloat16 leaves, eager and compiled from equal inputs, at a
+   counter past zero. The inputs make every float32 value the step computes
+   exact, whatever order the compiled program computes in: the parameters,
+   gradients and averages lie on bfloat16's grid in [1, 2), the rate is a
+   power of two, and the averages' weights are a half. So the stores differ
+   only if the draws do, and the draws must be equal. *)
+let half_n = 4096
+
+let grid i = 1.0 +. (Float.of_int (i mod 128) /. 128.0)
+let half_leaf f = Nx.create Nx.bfloat16 [| half_n |] (Array.init half_n f)
+
+let half_agrees state ~init ~step () =
+  let p = Nx.Ptree.tensor in
+  let both = Nx.Ptree.pair p (state p) in
+  let params = half_leaf grid and grads = half_leaf (fun i -> grid (i * 7)) in
+  let body (params, st) = step st ~params ~grads in
+  let x = (params, init p params) in
+  let eager = body x in
+  let compiled = Rune.jit Nx.Ptree.(both @-> returns both) body x in
+  let found = ref [] in
+  let compare (type v r) path (x : (v, r, _) Nx.t) y =
+    let bits x = Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast Nx.uint16 x)) in
+    let ints x = Nx.to_array (Nx.cast Nx.int64 x) in
+    let a, b =
+      match Nx.dtype x with
+      | Bfloat16 -> (bits x, bits y)
+      | _ -> (ints x, ints y)
+    in
+    Array.iteri
+      (fun i a ->
+        if a <> b.(i) then
+          found :=
+            Format.asprintf "%a[%d]: %Lx and %Lx" Nx.Ptree.Path.pp path i a
+              b.(i)
+            :: !found)
+      a;
+    x
+  in
+  ignore (Nx.Ptree.map2 both compare eager compiled);
+  equal (list string) [] (List.rev !found)
+
+(* The states start at the counter 7. *)
+let seven = Nx.scalar Nx.int32 7l
+let lr2 = Vega.lr 0x1p-9
+
+let half_tests =
+  let p = Nx.Ptree.tensor in
+  [
+    test "sgd"
+      (half_agrees Vega.sgd_ptree
+         ~init:(fun p x -> { (Vega.sgd_init p x) with step = seven })
+         ~step:(fun st -> Vega.sgd_step p ~lr:lr2 st));
+    test "lion"
+      (half_agrees Vega.lion_ptree
+         ~init:(fun _ _ ->
+           { Vega.mu = half_leaf (fun i -> grid (i * 3)); step = seven })
+         ~step:(fun st -> Vega.lion_step p ~lr:lr2 ~b1:0.5 ~b2:0.5 st));
+  ]
+
 let () =
   exit
     (run "vega jit"
        [
          group "a step compiles with its state donated" tests;
+         group "a bfloat16 step draws as eager's" half_tests;
          group "precision"
            [
              test "compiled radam rectifies as in float64"

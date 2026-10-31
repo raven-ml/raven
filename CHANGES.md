@@ -158,6 +158,12 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- Steps store float16 and bfloat16 leaves with stochastic rounding keyed by
+  the state's counter and the leaf's path, so an update below half a spacing
+  moves the value in expectation instead of being lost. Thread the state.
+- **Breaking:** `adam_step`, `adamw_step`, `radam_step`, `lamb_step`,
+  `rmsprop_step`, `adagrad_step`, `adan_step` and `adafactor_step` raise on a
+  float16 leaf, whose average of squared gradients underflows to zero.
 - `lbfgs_step` steps a complex leaf as its real coordinates where a part is a
   signed zero, which it could flip.
 - `lbfgs_step` computes a float16 or bfloat16 leaf at float32 and rounds it

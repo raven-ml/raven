@@ -1,6 +1,6 @@
 (tests
- (names test_vega test_schedule test_loss_scale)
- (modules test_vega test_schedule test_loss_scale)
+ (names test_vega test_schedule test_loss_scale test_precision)
+ (modules test_vega test_schedule test_loss_scale test_precision)
  (package vega)
  (libraries vega nx nx.array rig windtrap))
 

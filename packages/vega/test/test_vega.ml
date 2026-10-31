@@ -697,10 +697,12 @@ let test_adafactor_carries_an_int_leaf () =
 
 (* Precision *)
 
-(* Every step, one step on a float16 or bfloat16 leaf. At the leaf's dtype,
-   Adam's [eps] rounds to zero in float16 and [b2] to one in bfloat16, either of
-   which makes a zero-gradient element NaN; steps compute at float32 and round
-   once. The rate is 0.1 so that a move exceeds bfloat16's spacing at 3. *)
+(* Every step that takes the leaf, one step on a float16 or bfloat16 leaf; the
+   steps that average squared gradients refuse float16 leaves. At the leaf's
+   dtype, Adam's [eps] rounds to zero in float16 and [b2] to one in bfloat16,
+   either of which makes a zero-gradient element NaN; steps compute at float32
+   and round once. The rate is 0.1 so that a move exceeds bfloat16's spacing at
+   3. *)
 let low_precision (type b) (dt : (float, b) Nx.dtype) () =
   let p = Nx.Ptree.tensor and lr = Vega.lr 0.1 in
   let params = Nx.create dt [| 3 |] [| 1.0; 2.0; 3.0 |] in
@@ -721,23 +723,33 @@ let low_precision (type b) (dt : (float, b) Nx.dtype) () =
   check "sgd"
     (Vega.sgd_step p ~lr ~momentum:0.9 (Vega.sgd_init p params) ~params ~grads);
   check "lars" (Vega.lars_step p ~lr (Vega.lars_init p params) ~params ~grads);
-  check "adam" (Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads);
-  check "adamw"
-    (Vega.adamw_step p ~lr (Vega.adamw_init p params) ~params ~grads);
-  check "radam"
-    (Vega.radam_step p ~lr (Vega.radam_init p params) ~params ~grads);
-  check "lamb" (Vega.lamb_step p ~lr (Vega.lamb_init p params) ~params ~grads);
-  check "rmsprop"
-    (Vega.rmsprop_step p ~lr (Vega.rmsprop_init p params) ~params ~grads);
-  check "adagrad"
-    (Vega.adagrad_step p ~lr (Vega.adagrad_init p params) ~params ~grads);
-  check "adan" (Vega.adan_step p ~lr (Vega.adan_init p params) ~params ~grads);
   check "lion" (Vega.lion_step p ~lr (Vega.lion_init p params) ~params ~grads);
-  check "adafactor"
-    (Vega.adafactor_step p ~lr (Vega.adafactor_init p params) ~params ~grads);
-  let adam, _ = Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads in
-  equal ~msg:"adam leaves a zero-gradient element" (float 1e-9) 2.0
-    (Nx.item [ 1 ] (Nx.cast Nx.float64 adam))
+  match dt with
+  | Float16 -> ()
+  | _ ->
+      check "adam"
+        (Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads);
+      check "adamw"
+        (Vega.adamw_step p ~lr (Vega.adamw_init p params) ~params ~grads);
+      check "radam"
+        (Vega.radam_step p ~lr (Vega.radam_init p params) ~params ~grads);
+      check "lamb"
+        (Vega.lamb_step p ~lr (Vega.lamb_init p params) ~params ~grads);
+      check "rmsprop"
+        (Vega.rmsprop_step p ~lr (Vega.rmsprop_init p params) ~params ~grads);
+      check "adagrad"
+        (Vega.adagrad_step p ~lr (Vega.adagrad_init p params) ~params ~grads);
+      check "adan"
+        (Vega.adan_step p ~lr (Vega.adan_init p params) ~params ~grads);
+      check "adafactor"
+        (Vega.adafactor_step p ~lr
+           (Vega.adafactor_init p params)
+           ~params ~grads);
+      let adam, _ =
+        Vega.adam_step p ~lr (Vega.adam_init p params) ~params ~grads
+      in
+      equal ~msg:"adam leaves a zero-gradient element" (float 1e-9) 2.0
+        (Nx.item [ 1 ] (Nx.cast Nx.float64 adam))
 
 (* [radam_switch b2] is the first step at which RAdam's [rho] reaches 5, in
    float64 from the closed form. *)
@@ -1442,125 +1454,6 @@ let test_leaves_on_two_devices () =
   equal ~msg:"first leaf" (array float_exact) (Nx.to_array a) (Nx.to_array a');
   equal ~msg:"second leaf" (array float_exact) (Nx.to_array b) (Nx.to_array b')
 
-(* L-BFGS from any state, over a float16 or bfloat16 leaf beside a float32
-   one. A step computes at float32 and rounds once, when it stores, so it is
-   the step from the state's float32 copy, rounded to the leaf's dtype. The
-   pairs below the newest are drawn of positive curvature, so that they enter
-   the recursion. Half the states also draw zeros of either sign, infinities,
-   NaN, and the extremes of float16 and bfloat16. *)
-type lbfgs_leaf = {
-  x : float array;
-  prev : float array;
-  g : float array;
-  s : float array;
-  y : float array;
-}
-
-let half_extremes =
-  [ 65504.0; -65504.0; 0x1p-14; 0x1p-24; 0x1.fep127; -0x1.fep127; 0x1p-133 ]
-
-let specials = [ 0.0; -0.0; infinity; neg_infinity; nan ] @ half_extremes
-
-let lbfgs_leaf ~wild history n =
-  let open Gen in
-  let value r =
-    if wild then frequency [ (2, float_range (-.r) r); (1, of_list specials) ]
-    else float_range (-.r) r
-  in
-  let values k r = array ~size:(constant k) (value r) in
-  let+ x = values n 4.0
-  and+ prev = values n 4.0
-  and+ g = values n 4.0
-  and+ s = values (history * n) 1.0
-  and+ c = array ~size:(constant (history * n)) (float_range 0.5 2.0)
-  and+ e = values (history * n) 0.1 in
-  let y = Array.init (history * n) (fun i -> (s.(i) *. c.(i)) +. e.(i)) in
-  { x; prev; g; s; y }
-
-let lbfgs_draw =
-  let open Gen in
-  let* history = int_range 1 3 in
-  let* n = int_range 0 4 in
-  let* m = int_range 0 2 in
-  let* wild = bool in
-  let+ a = lbfgs_leaf ~wild history n and+ b = lbfgs_leaf ~wild history m in
-  (history, a, b)
-
-let rounds_once (type b) (dt : (float, b) Nx.dtype) =
-  prop
-    (Nx.Dtype.name dt ^ " beside float32 steps as its float32 copy, rounded")
-    lbfgs_draw
-    (fun (history, a, b) ->
-      let n = Array.length a.x and m = Array.length b.x in
-      let both f h =
-        ( Nx.create dt (Array.append h [| n |]) (f a),
-          Nx.create Nx.float32 (Array.append h [| m |]) (f b) )
-      in
-      let st =
-        {
-          Vega.params = both (fun d -> d.x) [||];
-          grads = both (fun d -> d.prev) [||];
-          s = both (fun d -> d.s) [| history |];
-          y = both (fun d -> d.y) [| history |];
-          step = Nx.scalar Nx.int32 3l;
-        }
-      in
-      let grads = both (fun d -> d.g) [||] in
-      let widen (h, f) = (Nx.cast Nx.float32 h, f) in
-      let narrow (f, f') = (Nx.cast dt f, f') in
-      let p = Nx.Ptree.(pair tensor tensor)
-      and p32 = Nx.Ptree.(pair tensor tensor) in
-      (* The curvature of the [i]-th pair, the newest completed by [grads]. *)
-      let curvature i =
-        let dot (u, v) (u', v') =
-          let d u u' = Nx.item [] (Nx.vdot u u') in
-          d u u' +. d v v'
-        in
-        let slot (u, v) = (Nx.get [ i ] u, Nx.get [ i ] v) in
-        let y =
-          if i > 0 then widen (slot st.y)
-          else
-            Nx.Ptree.map2 p32 (fun _ g g' -> Nx.sub g g') (widen grads)
-              (widen st.grads)
-        in
-        dot (widen (slot st.s)) y
-      in
-      cover "a history of two pairs or more" (history >= 2);
-      cover "an empty leaf" (n = 0);
-      let drawn = [ a.x; a.prev; a.g; a.s; a.y; b.x; b.prev; b.g; b.s; b.y ] in
-      let any f = List.exists (Array.exists f) drawn in
-      cover "finite values only" (not (any (fun v -> not (Float.is_finite v))));
-      cover "a -0." (any (fun v -> v = 0.0 && Float.sign_bit v));
-      cover "an infinity" (any (fun v -> Float.abs v = infinity));
-      cover "a NaN" (any Float.is_nan);
-      cover "an extreme of float16 or bfloat16"
-        (any (fun v -> List.mem v half_extremes));
-      cover "a pair of positive curvature"
-        (List.exists (fun i -> curvature i > 0.0) (List.init history Fun.id));
-      let lr = Vega.lr 0.1 in
-      let wide =
-        Vega.lbfgs_step p32 ~lr (widen grads)
-          {
-            params = widen st.params;
-            grads = widen st.grads;
-            s = widen st.s;
-            y = widen st.y;
-            step = st.step;
-          }
-      in
-      let rounded =
-        {
-          Vega.params = narrow wide.params;
-          grads = narrow wide.grads;
-          s = narrow wide.s;
-          y = narrow wide.y;
-          step = wide.step;
-        }
-      in
-      let ptree = Vega.lbfgs_ptree p in
-      equal (list (array float_exact)) (floats ptree rounded)
-        (floats ptree (Vega.lbfgs_step p ~lr grads st)))
-
 let test_empty_structures () =
   let p = Nx.Ptree.unit in
   equal ~msg:"clipping a structure of no array returns it" unit ()
@@ -1687,8 +1580,6 @@ let tests =
           test_lbfgs_checks_the_state_dtypes;
         test "the state's structure visits its leaves and walks it back"
           test_lbfgs_state_is_a_ptree;
-        group "a step rounds once, when it stores"
-          [ rounds_once Nx.float16; rounds_once Nx.bfloat16 ];
       ];
   ]
 

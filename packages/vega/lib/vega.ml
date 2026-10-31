@@ -77,6 +77,129 @@ let take (type a b d) fn name path (x : (a, b, d) Nx.t) rest : (a, b, d) Nx.t =
    to zero in float16 and [b2 = 0.999] to one in bfloat16. *)
 type ('w, 'd) compute = (float, 'w, 'd) Nx.t
 
+(* Stochastic rounding *)
+
+(* A float16 or bfloat16 store rounds the float32 value [x], between two
+   neighbouring values [lo < x < hi] of the dtype, to [hi] with probability
+   [(x - lo) / (hi - lo)] and to [lo] otherwise, so that it is [x] in
+   expectation (Croci et al., "Stochastic rounding: implementation, error
+   analysis and applications", R. Soc. Open Sci. 2022, §6.1). Rounding to
+   nearest loses every update below half a spacing: a bfloat16 weight of 1
+   under Adam at a rate of 1e-3 never moves, and a second moment under
+   [b2 = 0.999] never decays (Zamirai et al., "Revisiting BFloat16 Training",
+   2020, §3.2).
+
+   Each store takes 16 random bits per element from {!Nx.Rng.bits}, where a
+   32-bit word costs one Threefry block. A leaf's stores in one step are
+   numbered, the parameter 0 and the state's part [i] then [i + 1], and store
+   [k] takes the low half of word [k / 2], drawn at its shape, for an even
+   [k] and the high half for an odd one: two stores share one word per
+   element, and the draws are elementwise, the same at every placement. Two
+   elements per word would halve SGD's blocks, but splitting a draw across
+   elements needs an axis no placement cuts.
+
+   Every word's key is the step's base key, which holds the state's counter,
+   folded with a 62-bit FNV-1a hash of the leaf's path and the word: a
+   function of the step's inputs, so a step is deterministic and a checkpoint
+   resumes bit for bit, and of the path rather than the leaf's position, so a
+   leaf added to the structure leaves the others' draws alone. *)
+
+(* FNV-1a over 64 bits (Fowler, Noll and Vo): its constants fix the hash across
+   OCaml versions, which [Hashtbl.hash] does not. *)
+let fnv_offset = 0xcbf29ce484222325L
+let fnv_prime = 0x100000001b3L
+
+let fnv1a h s =
+  let byte h c =
+    Int64.mul (Int64.logxor h (Int64.of_int (Char.code c))) fnv_prime
+  in
+  String.fold_left byte h s
+
+(* The hash of word [j] of the draws at [path], in [0, 2^62). Each segment
+   ends in a zero byte, so the field ["a.b"] and the fields [a] then [b] hash
+   apart. *)
+let path_hash path j =
+  let segment h : Nx.Ptree.Path.seg -> int64 = function
+    | Field s -> fnv1a h ("f" ^ s ^ "\000")
+    | Index i -> fnv1a h (Printf.sprintf "i%d\000" i)
+  in
+  let h = List.fold_left segment fnv_offset (Nx.Ptree.Path.segments path) in
+  Int64.to_int (fnv1a h (Printf.sprintf "w%d" j)) land max_int
+
+(* The words of the base key: a constant and the counter. *)
+let base_word = 0x76656761l
+
+(* [base counter] is a step's base key, made where the counter lies, once. *)
+let base counter =
+  lazy
+    (Nx.Rng.of_tensor (Nx.stack [ Nx.scalar_like counter base_word; counter ]))
+
+(* [draws base path] gives store [k] at [path] its 16 random bits per element
+   of [y], the value it stores, as a uint32 below [2^16]. Word [j] is drawn
+   once per shape, where [y] lies. *)
+let draws base path =
+  let drawn = ref [] in
+  let words j at shape =
+    match List.assoc_opt (j, shape) !drawn with
+    | Some w -> w
+    | None ->
+        let key = Nx.Rng.fold_in (Lazy.force base) (path_hash path j) in
+        let w = Nx.Rng.bits_at at ~key shape in
+        drawn := ((j, shape), w) :: !drawn;
+        w
+  in
+  let low w = Nx.cast Nx.uint32 (Nx.cast Nx.uint16 w)
+  and high w = Nx.rshift (Nx.bitcast Nx.uint32 w) 16 in
+  fun k (y : (float, _, _) Nx.t) ->
+    let w = words (k / 2) (Nx.placement y) (Nx.shape y) in
+    if k mod 2 = 0 then low w else high w
+
+let bfloat16_largest = 0x1.fep127
+
+(* Bfloat16 is float32's top 16 bits, sign and magnitude. Adding [u], 16
+   random bits, to [x]'s bits and keeping the top 16 rounds the magnitude up
+   to the next bfloat16 value where the sum carries into bit 16, with
+   probability (x's low 16 bits) / 2^16, and down otherwise: that probability
+   is [(|x| - lo) / (hi - lo)] in every binade, subnormals included. Up to the
+   largest finite magnitude the carry stops below the sign bit; above it, and
+   for NaN and the infinities, the store is the cast's. *)
+let bfloat16_store x u =
+  let sum = Nx.add (Nx.bitcast Nx.uint32 x) u in
+  let rounded = Nx.bitcast Nx.bfloat16 (Nx.cast Nx.uint16 (Nx.rshift sum 16)) in
+  Nx.where
+    (Nx.less_equal_s (Nx.abs x) bfloat16_largest)
+    rounded (Nx.cast Nx.bfloat16 x)
+
+(* Float16's exponent is narrower than float32's, so its store picks between
+   the nearest value [r] and its other neighbour [n]: [r]'s bits stepped one
+   away from zero where [|x| >= |r|], toward it otherwise, in a format of sign
+   and magnitude whose cast keeps [x]'s sign, zeros included. It takes [n]
+   where [u / 2^16 < |x - r| / |n - r|], at most a half, exact at float32. The
+   ratio is a multiple of [2^-13] for a normal [x], so the probability is
+   exact, and within [2^-16] of it at the subnormals. NaN, the infinities and
+   values the cast rounds to one make the ratio NaN or zero, keeping [r]. *)
+let float16_store x u =
+  let r = Nx.cast Nx.float16 x in
+  let r32 = Nx.cast Nx.float32 r and b = Nx.bitcast Nx.int16 r in
+  let away = Nx.greater_equal (Nx.abs x) (Nx.abs r32) in
+  let n =
+    Nx.bitcast Nx.float16 (Nx.where away (Nx.add_s b 1) (Nx.sub_s b 1))
+  in
+  let gap = Nx.abs (Nx.sub (Nx.cast Nx.float32 n) r32) in
+  let ratio = Nx.div (Nx.abs (Nx.sub x r32)) gap in
+  let u = Nx.mul_s (Nx.cast Nx.float32 u) 0x1p-16 in
+  Nx.where (Nx.less u ratio) n r
+
+(* [store draw k like y] is [y], at its compute dtype, stored at [like]'s
+   dtype as store [k] of its leaf. *)
+let store (type a b c e d)
+    (draw : int -> (float, Nx.float32_elt, d) Nx.t -> d Nx.uint32_t) k
+    (like : (a, b, d) Nx.t) (y : (c, e, d) Nx.t) : (a, b, d) Nx.t =
+  match (Nx.dtype like, Nx.dtype y) with
+  | Float16, Float32 -> float16_store y (draw k y)
+  | Bfloat16, Float32 -> bfloat16_store y (draw k y)
+  | dt, _ -> Nx.cast dt y
+
 (* The compute dtypes, as a witness a step's arithmetic is written against. *)
 type _ wide = F32 : Nx.float32_elt wide | F64 : Nx.float64_elt wide
 
@@ -84,11 +207,28 @@ let dtype : type w. w wide -> (float, w) Nx.dtype = function
   | F32 -> Nx.float32
   | F64 -> Nx.float64
 
-(* [leafwise fn p ~params ~grads parts ~f] steps [params] leaf by leaf. [parts]
-   are the state's values of the parameters' skeleton, each with its name for
-   errors. At a float leaf, [f w x g s] takes the parameter, its gradient and
-   its leaf of each part, in order, cast to the compute dtype [w], and returns
-   the new parameter and the parts' new leaves, which are cast back.
+(* A float16 leaf cannot hold an average of squared gradients: about
+   [(1 - b2) g^2] after Adam's first step, it is below float16's least
+   subnormal, [2^-24], for [|g|] under about [8e-3], and stores zero, where the
+   step divides by its root. Rounding stochastically keeps it unbiased but
+   mostly zero, which [1 / sqrt] does not average away (Li et al., "Memory
+   Efficient Optimizers with 4-bit States", NeurIPS 2023, §4.1, the
+   zero-point problem). Bfloat16 has float32's range. *)
+let refuse_float16 fn path =
+  invalid_argf
+    "%s: %s: float16 cannot hold the average of squared gradients; use \
+     bfloat16 parameters, or float32 ones cast to float16 inside the objective"
+    fn (describe path)
+
+(* [leafwise fn p ~counter ~params ~grads parts ~f] steps [params] leaf by
+   leaf. [parts] are the state's values of the parameters' skeleton, each with
+   its name for errors. At a float leaf, [f w x g s] takes the parameter, its
+   gradient and its leaf of each part, in order, cast to the compute dtype
+   [w], and returns the new parameter and the parts' new leaves, which are
+   stored back at the leaf's dtype, a half one with draws keyed by [counter].
+   A part [f] returns as it took it, or as the gradient, is the input itself,
+   with nothing drawn. With [squared], the parts average squared gradients
+   and a float16 leaf raises.
 
    A complex leaf steps as its real and imaginary parts, two real coordinates
    per element, stacked along a new first axis: [f] sees the leaf of real
@@ -97,7 +237,7 @@ let dtype : type w. w wide -> (float, w) Nx.dtype = function
    [∂f/∂x - i ∂f/∂y], whose parts' gradient is [(∂f/∂x, ∂f/∂y)], so the step
    descends along the conjugate. Other leaves pass through unchanged. The
    result is the new parameters and the new parts. *)
-let leafwise fn p ~params ~grads parts
+let leafwise ?(squared = false) fn p ~counter ~params ~grads parts
     ~(f :
        'w.
        'w wide ->
@@ -111,12 +251,24 @@ let leafwise fn p ~params ~grads parts
   let parts = Array.of_list parts in
   let leaves = Array.map (fun (name, x) -> (name, aligned name x)) parts in
   let parts' = Array.map (fun _ -> ref []) parts in
-  let real (type b w) (w : w wide) (x : (float, b, _) Nx.t) g s =
-    let dt = Nx.dtype x and wide = dtype w in
-    let x, s =
-      f w (Nx.cast wide x) (Nx.cast wide g) (Array.map (Nx.cast wide) s)
-    in
-    (Nx.cast dt x, Array.map (Nx.cast dt) s)
+  let base = base counter in
+  let real (type b w) path (w : w wide) (x : (float, b, _) Nx.t) g s =
+    (match Nx.dtype x with
+    | Float16 when squared -> refuse_float16 fn path
+    | _ -> ());
+    let wide = dtype w in
+    let g' = Nx.cast wide g and s' = Array.map (Nx.cast wide) s in
+    let x', t = f w (Nx.cast wide x) g' s' in
+    match Nx.dtype x with
+    | Float16 | Bfloat16 ->
+        let draw = draws base path in
+        let part i y =
+          if y == s'.(i) then s.(i)
+          else if y == g' then g
+          else store draw (i + 1) x y
+        in
+        (store draw 0 x x', Array.mapi part t)
+    | dt -> (Nx.cast dt x', Array.map (Nx.cast dt) t)
   in
   let complex (type b w) (w : w wide) (x : (Complex.t, b, _) Nx.t) g s =
     let dt = Nx.dtype x and wide = dtype w in
@@ -126,13 +278,13 @@ let leafwise fn p ~params ~grads parts
     let x, s = f w (parts x) g (Array.map parts s) in
     (join x, Array.map join s)
   in
-  let step (type a b) (x : (a, b, _) Nx.t) (g : (a, b, _) Nx.t)
+  let step (type a b) path (x : (a, b, _) Nx.t) (g : (a, b, _) Nx.t)
       (s : (a, b, _) Nx.t array) :
       (a, b, _) Nx.t * (a, b, _) Nx.t array =
     let dt = Nx.dtype x in
     match (Nx.Dtype.kind dt, dt) with
-    | Float, Float64 -> real F64 x g s
-    | Float, _ -> real F32 x g s
+    | Float, Float64 -> real path F64 x g s
+    | Float, _ -> real path F32 x g s
     | Complex, Complex128 -> complex F64 x g s
     | Complex, _ -> complex F32 x g s
     | (Signed | Unsigned | Boolean), _ -> (x, s)
@@ -140,7 +292,7 @@ let leafwise fn p ~params ~grads parts
   let update path x =
     let g = take fn "the gradients" path x grads in
     let s = Array.map (fun (name, rest) -> take fn name path x rest) leaves in
-    let x, s = step x g s in
+    let x, s = step path x g s in
     Array.iteri (fun i y -> parts'.(i) := Nx.P y :: !(parts'.(i))) s;
     x
   in
@@ -345,7 +497,7 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
        the [momentum * v + g] arithmetic avoids touching (and, under [jit],
        capturing) the velocity tensors at all. *)
     let f _ x g _ = (descend ~lr x g, [||]) in
-    let params, _ = leafwise fn p ~params ~grads [] ~f in
+    let params, _ = leafwise fn p ~counter:st.step ~params ~grads [] ~f in
     (* The velocity a later step with momentum reads holds what [leafwise]'s
        would: a complex leaf's descent coordinates, the conjugate gradient. *)
     let velocity = Nx.Ptree.map p (fun _ g -> Nx.conjugate g) grads in
@@ -356,7 +508,9 @@ let sgd_step p ~lr ?(momentum = 0.0) st ~params ~grads =
       (descend ~lr x v, [| v |])
     in
     let params, parts =
-      leafwise fn p ~params ~grads [ ("the velocity", st.velocity) ] ~f
+      leafwise fn p ~counter:st.step ~params ~grads
+        [ ("the velocity", st.velocity) ]
+        ~f
     in
     (params, { velocity = parts.(0); step })
 
@@ -376,7 +530,9 @@ let lars_step p ~lr ?(momentum = 0.9) ?(weight_decay = 0.01) ?(nesterov = false)
     (descend ~lr x d, [| v |])
   in
   let params, parts =
-    leafwise fn p ~params ~grads [ ("the velocity", st.velocity) ] ~f
+    leafwise fn p ~counter:st.step ~params ~grads
+      [ ("the velocity", st.velocity) ]
+      ~f
   in
   (params, { velocity = parts.(0); step = Nx.add_s st.step 1l })
 
@@ -430,7 +586,9 @@ let adam_update fn p ~b1 ~b2
     (apply w x (Nx.div m (at c1 w)) (Nx.div n (at c2 w)), [| m; n |])
   in
   let params, parts =
-    leafwise fn p ~params ~grads [ ("mu", st.mu); ("nu", st.nu) ] ~f
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads
+      [ ("mu", st.mu); ("nu", st.nu) ]
+      ~f
   in
   (params, { mu = parts.(0); nu = parts.(1); step })
 
@@ -568,7 +726,9 @@ let rmsprop_step p ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.0) st ~params
     (descend ~lr x v, [| nu; v |])
   in
   let parts = [ ("nu", st.nu); ("the velocity", st.velocity) ] in
-  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  let params, parts =
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads parts ~f
+  in
   (params, { nu = parts.(0); velocity = parts.(1); step = Nx.add_s st.step 1l })
 
 (* Adagrad *)
@@ -603,7 +763,9 @@ let adagrad_step p ~lr ?(eps = 1e-8) st ~params ~grads =
     (descend ~lr x d, [| s |])
   in
   let parts = [ ("sum_of_squares", st.sum_of_squares) ] in
-  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  let params, parts =
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads parts ~f
+  in
   (params, { sum_of_squares = parts.(0); step = Nx.add_s st.step 1l })
 
 (* Adan *)
@@ -670,7 +832,9 @@ let adan_step p ~lr ?(b1 = 0.98) ?(b2 = 0.92) ?(b3 = 0.99) ?(eps = 1e-8)
       ("prev_grads", st.prev_grads);
     ]
   in
-  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  let params, parts =
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads parts ~f
+  in
   let step = Nx.add_s st.step 1l in
   ( params,
     {
@@ -707,7 +871,9 @@ let lion_step p ~lr ?(b1 = 0.9) ?(b2 = 0.99) st ~params ~grads =
   let f _ x g s =
     (descend ~lr x (Nx.sign (ema b1 s.(0) g)), [| ema b2 s.(0) g |])
   in
-  let params, parts = leafwise fn p ~params ~grads [ ("mu", st.mu) ] ~f in
+  let params, parts =
+    leafwise fn p ~counter:st.step ~params ~grads [ ("mu", st.mu) ] ~f
+  in
   (params, { mu = parts.(0); step = Nx.add_s st.step 1l })
 
 (* Adafactor *)
@@ -798,7 +964,9 @@ let adafactor_step p ~lr ?(decay_rate = 0.8) ?(eps = 1e-30)
     (descend ~lr x (Nx.mul u clip), s)
   in
   let parts = [ ("nu_row", st.nu_row); ("nu_col", st.nu_col); ("nu", st.nu) ] in
-  let params, parts = leafwise fn p ~params ~grads parts ~f in
+  let params, parts =
+    leafwise ~squared:true fn p ~counter:st.step ~params ~grads parts ~f
+  in
   (params, { nu_row = parts.(0); nu_col = parts.(1); nu = parts.(2); step })
 
 (* L-BFGS *)
@@ -867,18 +1035,25 @@ let is_float64 (type a b d) (t : (a, b, d) Nx.t) =
 (* L-BFGS computes each float leaf at float32, or at float64 for a float64
    leaf, and rounds once, when it stores: its vectors are lists of leaves of
    several dtypes, walked by [leaves ()]. [widen] casts a leaf to the dtype it
-   computes at and [narrow like x] casts [x] back to [like]'s. A complex leaf
-   computes as it is, its parts at float32 or float64. *)
+   computes at and [stored draw k like x] stores [x] back at [like]'s, as store
+   [k] of its leaf. A complex leaf computes as it is, its parts at float32 or
+   float64. *)
 let widen (Nx.P x) =
   match (Nx.Dtype.kind (Nx.dtype x), Nx.dtype x) with
   | Float, (Float32 | Float64) -> Nx.P x
   | Float, _ -> Nx.P (Nx.cast Nx.float32 x)
   | (Complex | Signed | Unsigned | Boolean), _ -> Nx.P x
 
-let narrow (Nx.P like) (Nx.P x) =
-  match Nx.Dtype.equal_witness (Nx.dtype like) (Nx.dtype x) with
-  | Some _ -> Nx.P x
-  | None -> Nx.P (Nx.cast (Nx.dtype like) x)
+let stored draw k (Nx.P like) (Nx.P x) = Nx.P (store draw k like x)
+
+(* [into f (P m) (P x)] is [f x m] for [x] stored at the dtype of the memory
+   [m], which it already has. *)
+let into
+    (f : 'v 's. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t)
+    (Nx.P m : 'd Nx.packed) (Nx.P x : 'd Nx.packed) =
+  match Nx.Dtype.equal_witness (Nx.dtype m) (Nx.dtype x) with
+  | Some Equal -> Nx.P (f x m)
+  | None -> Nx.P (f (Nx.cast (Nx.dtype m) x) m)
 
 let leaves () =
   let walk c xs =
@@ -916,10 +1091,6 @@ let lbfgs_step p ~lr grads st =
   in
   let flat = leaves () in
   let wide x = List.map widen (fst (Nx.Ptree.flatten p x)) in
-  let store like x =
-    let dtypes = fst (Nx.Ptree.flatten p like) in
-    Nx.Ptree.rebuild p ~like (List.map2 narrow dtypes x)
-  in
   (* The recursion runs over the real coordinates, two per complex element,
      whose gradient is the conjugate of Rune's ([leafwise]); [Nx.Ptree.dot]
      pairs complex arrays part by part. The gradient difference is of the
@@ -930,12 +1101,8 @@ let lbfgs_step p ~lr grads st =
     Nx.Ptree.map2 flat (fun _ a b -> if updates a then Nx.sub a b else a)
   in
   let g = conjugate grads in
-  let y =
-    Nx.Ptree.map2 flat
-      (fun _ d m -> top d m)
-      (difference g (conjugate st.grads))
-      (wide st.y)
-  in
+  let diff = difference g (conjugate st.grads) in
+  let y = Nx.Ptree.map2 flat (fun _ d m -> top d m) diff (wide st.y) in
   let s = wide st.s in
   let history =
     match s with
@@ -983,12 +1150,34 @@ let lbfgs_step p ~lr grads st =
       (fun _ x d -> if updates x then Nx.add x d else x)
       (wide st.params) move
   in
+  (* Each leaf stores its new point, its move as the newest [s] and its
+     gradient difference as the newest [y], its stores 0, 1 and 2; the older
+     pairs, already at its dtype, move down unrounded. A leaf that computes at
+     its own dtype stores the memory the recursion read. *)
+  let leaves x = Array.of_list (fst (Nx.Ptree.flatten p x)) in
+  let paths = Nx.Ptree.fold p (fun path _ acc -> path :: acc) st.params [] in
+  let base = base st.step in
+  let draw = Array.of_list (List.rev_map (draws base) paths) in
+  let like = leaves st.params and s = leaves st.s in
+  let y_half = leaves st.y and y = Array.of_list y and g = Array.of_list g in
+  let point = Array.of_list params and move = Array.of_list move in
+  let diff = Array.of_list diff in
+  let put k xs i = stored draw.(i) k like.(i) xs.(i) in
+  let rebuild like f =
+    Nx.Ptree.rebuild p ~like (List.init (Array.length draw) f)
+  in
+  let pushed x m = push (Nx.zeros_like x) m in
+  let newest i =
+    let (Nx.P l) = like.(i) in
+    match Nx.dtype l with
+    | Float16 | Bfloat16 ->
+        into (fun x m -> pushed x (top x m)) y_half.(i) (put 2 diff i)
+    | _ -> stored draw.(i) 2 like.(i) (into pushed y.(i) g.(i))
+  in
   {
-    params = store st.params params;
+    params = rebuild st.params (put 0 point);
     grads;
-    s = store st.s (Nx.Ptree.map2 flat (fun _ d m -> push d m) move s);
-    y =
-      store st.y
-        (Nx.Ptree.map2 flat (fun _ d m -> push (Nx.zeros_like d) m) g y);
+    s = rebuild st.s (fun i -> into push s.(i) (put 1 move i));
+    y = rebuild st.y newest;
     step = Nx.add_s st.step 1l;
   }

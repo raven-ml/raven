@@ -106,15 +106,58 @@
     - {b Precision.} A step computes each leaf at float32, or at float64 for a
       float64 or complex128 leaf, and returns the parameters and the state at
       their own dtypes, so a float16 or bfloat16 leaf is rounded once, when
-      stored. Constants that depend only on hyperparameters are computed on the
-      host in float64; scalars of the step counter, once per step at the leaf's
-      compute dtype, [1 - b^t] without cancellation. A low-precision state
-      still rounds what it stores: a bfloat16 moving average whose decay is
-      below half its spacing does not decay.
+      stored, as {!section-half} states. Constants that depend only on
+      hyperparameters are computed on the host in float64; scalars of the step
+      counter, once per step at the leaf's compute dtype, [1 - b^t] without
+      cancellation.
     - {b Placement.} A state lies with the parameters: its parts beside their
       leaves, its counter whole on each device of the parameters' set.
       Every [*_init] raises [Invalid_argument] naming itself if the parameters
       hold no array, which leaves no placement for the counter. *)
+
+(** {1:half Half-Precision Leaves}
+
+    A step stores a float16 or bfloat16 leaf, parameter or state, with
+    stochastic rounding: a computed value [x] between two neighbouring values
+    [lo < x < hi] of the dtype is stored as [hi] with probability
+    [(x - lo) / (hi - lo)] and as [lo] otherwise. Each store errs by less than
+    one spacing and is [x] in expectation, so an update or a decay below half
+    a spacing still moves its value on average, where rounding to nearest
+    would lose it at every step; where nothing pulls a value back, the errors
+    add as a random walk. The probability is exact for bfloat16 and for
+    float16's normal values, and within [2^-16] at float16's subnormal ones. A
+    value the dtype holds is stored exactly, a zero with [x]'s sign; NaN, an
+    infinity and a value beyond the largest finite one are stored as
+    {!Nx.cast} stores them.
+
+    The draws are a function of the state's counter, the leaf's path and the
+    part stored, 16 random bits per element and store from {!Nx.Rng.bits},
+    the same at every placement. So a step is deterministic: equal inputs give
+    equal bits wherever they lie, a checkpoint resumes bit for bit at any
+    placement, copies of one state stepped with equal gradients stay equal,
+    and a leaf added to the structure changes no other leaf's draws. Two states stepped at equal counters draw alike at
+    equal paths, as identical sub-models with a state each, or two models in
+    one process, do: each store is still unbiased, but their rounding errors
+    correlate. The counter is an input of every step: a state re-made at each
+    step, by its [*_init], repeats its draws, and a value whose update is
+    below half a spacing then stalls as under rounding to nearest. Thread the
+    state from step to step. Under [Rune.jit] the draws are the same, so a
+    compiled step stores an element apart from an eager one only where its
+    float32 value differs, and then by one spacing.
+
+    Float16 cannot hold an average of squared gradients: below its least
+    subnormal, [2^-24], the average is zero, and the steps that keep one divide
+    by its root. {!adam_step}, {!adamw_step}, {!radam_step}, {!lamb_step},
+    {!rmsprop_step}, {!adagrad_step}, {!adan_step} and {!adafactor_step}
+    raise [Invalid_argument] on a float16 leaf. Bfloat16 has float32's range.
+
+    To follow the float32 trajectory, keep the parameters at float32 and cast
+    them to the compute dtype inside the objective: [Rune.grad] then returns
+    float32 gradients, and the state is float32.
+
+    {[
+    let objective p = loss (Nx.Ptree.cast (module Model) Nx.bfloat16 p)
+    ]} *)
 
 (** {1:schedules Learning-Rate Schedules}
 
@@ -308,9 +351,10 @@ val sgd_step :
 
     [lr] gives the rate at the counter ({!section-lr}); [momentum] defaults to
     [0.], plain gradient descent: the velocity is then the last gradient, and
-    the input velocity is not read at all. The counter advances by one. The
-    whole step is tensor arithmetic over [(params, st)], so it traces under
-    [Rune.jit].
+    the input velocity is not read at all. The counter is read, for the rate
+    and for the draws of half-precision leaves ({!section-half}), and advances
+    by one. The whole step is tensor arithmetic over [(params, st)], so it
+    traces under [Rune.jit].
 
     Raises [Invalid_argument] if [momentum] is outside \[[0];[1]\), or as
     {!section-structures} states if [grads], or [st.velocity] when [momentum] is
@@ -411,8 +455,9 @@ val adam_step :
     call.
 
     Raises [Invalid_argument] if [b1] or [b2] is outside \[[0];[1]\) or [eps] is
-    not positive, or as {!section-structures} states if [grads], [st.mu] or
-    [st.nu] does not have [params]' skeleton. *)
+    not positive, on a float16 leaf ({!section-half}), or as
+    {!section-structures} states if [grads], [st.mu] or [st.nu] does not have
+    [params]' skeleton. *)
 
 val adamw_init : ('p, 'd) Nx.Ptree.t -> 'p -> ('p, 'd) adam_state
 (** [adamw_init] is {!adam_init}: AdamW shares Adam's state. *)
@@ -557,8 +602,9 @@ val rmsprop_step :
     velocity is the last scaled gradient.
 
     Raises [Invalid_argument] if [decay] or [momentum] is outside \[[0];[1]\) or
-    [eps] is not positive, or as {!section-structures} states if [grads],
-    [st.nu] or [st.velocity] does not have [params]' skeleton. *)
+    [eps] is not positive, on a float16 leaf ({!section-half}), or as
+    {!section-structures} states if [grads], [st.nu] or [st.velocity] does not
+    have [params]' skeleton. *)
 
 (** {1:adagrad Adagrad} *)
 
@@ -598,9 +644,9 @@ val adagrad_step :
 
     [eps] defaults to [1e-8].
 
-    Raises [Invalid_argument] if [eps] is not positive, or as
-    {!section-structures} states if [grads] or [st.sum_of_squares] does not have
-    [params]' skeleton. *)
+    Raises [Invalid_argument] if [eps] is not positive, on a float16 leaf
+    ({!section-half}), or as {!section-structures} states if [grads] or
+    [st.sum_of_squares] does not have [params]' skeleton. *)
 
 (** {1:adan Adan} *)
 
@@ -657,9 +703,9 @@ val adan_step :
     the weight decay is decoupled, as {!adamw_step}'s.
 
     Raises [Invalid_argument] if [b1], [b2] or [b3] is outside \[[0];[1]\),
-    [eps] is not positive or [weight_decay] is negative, or as
-    {!section-structures} states if [grads] or a part of [st] other than [step]
-    does not have [params]' skeleton. *)
+    [eps] is not positive or [weight_decay] is negative, on a float16 leaf
+    ({!section-half}), or as {!section-structures} states if [grads] or a part
+    of [st] other than [step] does not have [params]' skeleton. *)
 
 (** {1:lion Lion} *)
 
@@ -791,8 +837,9 @@ val adafactor_step :
     ]}
 
     Raises [Invalid_argument] if [decay_rate], [eps] or [clipping_threshold] is
-    not positive, or as {!section-structures} states if [grads] or a part of
-    [st] other than [step] does not have [params]' skeleton. *)
+    not positive, on a float16 leaf ({!section-half}), or as
+    {!section-structures} states if [grads] or a part of [st] other than [step]
+    does not have [params]' skeleton. *)
 
 (** {1:lbfgs L-BFGS}
 
@@ -817,9 +864,9 @@ val adafactor_step :
     The history is held at a fixed size, so the state is a parameter tree of
     static shape ({!lbfgs_ptree}) and the step traces under [Rune.jit]. Its
     vectors compute leaf by leaf as {!section-structures} states, a float16 or
-    bfloat16 leaf at float32 and rounded once, when stored. The inner products
-    of the two-loop recursion are at float64 when every float leaf is float64,
-    and at float32 otherwise. *)
+    bfloat16 leaf at float32 and stored as {!section-half} states. The inner
+    products of the two-loop recursion are at float64 when every float leaf is
+    float64, and at float32 otherwise. *)
 
 type ('p, 'd) lbfgs_state = {
   params : 'p;  (** The current point. *)

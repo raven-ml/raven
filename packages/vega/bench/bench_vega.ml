@@ -7,9 +7,10 @@ let p = Nx.Ptree.tensor
 let lr = Vega.lr 1e-3
 let shapes = [ ("256", [| 256; 256 |]); ("1024", [| 1024; 1024 |]) ]
 
-let make_step_bench name init step (label, shape) =
-  let params = Nx.Rng.uniform Nx.float32 shape in
-  let grads = Nx.Rng.uniform Nx.float32 shape in
+let make_step_bench (type b) (dtype : (float, b) Nx.dtype) name init step
+    (label, shape) =
+  let params = Nx.cast dtype (Nx.Rng.uniform Nx.float32 shape) in
+  let grads = Nx.cast dtype (Nx.Rng.uniform Nx.float32 shape) in
   let state = ref (init p params) in
   Thumper.bench (Printf.sprintf "%s/%s" name label) (fun () ->
       let params, st = step !state ~params ~grads in
@@ -17,7 +18,13 @@ let make_step_bench name init step (label, shape) =
       params)
 
 let optimizer_benches name init step =
-  List.map (make_step_bench name init step) shapes
+  List.map (make_step_bench Nx.float32 name init step) shapes
+
+(* A bfloat16 leaf steps at float32 and stores with stochastic rounding: the
+   row times the draws and the stores beside the float32 rows. *)
+let bfloat16_bench name init step =
+  make_step_bench Nx.bfloat16 name init step
+    ("bfloat16/1024", [| 1024; 1024 |])
 
 (* L-BFGS takes the gradient and returns its state, which holds the point.
    A history of 4 pairs keeps the 1024 row's memory at 32 MB. The bfloat16
@@ -36,13 +43,20 @@ let lbfgs_bench (type b) (dt : (float, b) Nx.dtype) (label, shape) =
 let build_benchmarks () =
   [
     Thumper.group "SGD"
-      (optimizer_benches "SGD" Vega.sgd_init (fun st -> Vega.sgd_step p ~lr st));
+      (optimizer_benches "SGD" Vega.sgd_init (fun st -> Vega.sgd_step p ~lr st)
+      @ [
+          bfloat16_bench "SGD" Vega.sgd_init (fun st -> Vega.sgd_step p ~lr st);
+        ]);
     Thumper.group "SGD+Momentum"
       (optimizer_benches "SGD+Momentum" Vega.sgd_init (fun st ->
            Vega.sgd_step p ~lr ~momentum:0.9 st));
     Thumper.group "Adam"
       (optimizer_benches "Adam" Vega.adam_init (fun st ->
-           Vega.adam_step p ~lr st));
+           Vega.adam_step p ~lr st)
+      @ [
+          bfloat16_bench "Adam" Vega.adam_init (fun st ->
+              Vega.adam_step p ~lr st);
+        ]);
     Thumper.group "AdamW"
       (optimizer_benches "AdamW" Vega.adamw_init (fun st ->
            Vega.adamw_step p ~lr st));

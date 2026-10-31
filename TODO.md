@@ -199,8 +199,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
-- vega keeps optimizer state at the leaf dtype: a bfloat16 moment never
-  decays by less than half its spacing (vega.mli). Design pass
 - kaun's TrainStep/train-step allocated 27,332 words eagerly on the old
   rune, ~2,300 of them two traced values and a recorded op per op:
   re-measure on the new rune on fudge, and cut the per-op records if they
