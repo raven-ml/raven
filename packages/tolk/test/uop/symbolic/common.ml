@@ -67,7 +67,7 @@ let draw rng k lo hi =
       (match Random.State.int rng 4 with
         | 0 -> Bigint.(lo + of_int (Random.State.int rng 1000))
         | 1 -> Bigint.(hi - of_int (Random.State.int rng 1000))
-        | 2 -> Bigint.(ediv (lo + hi) (of_int 2))
+        | 2 -> Bigint.(fdiv (lo + hi) (of_int 2))
         | _ -> Bigint.zero)
       |> Bigint.min hi |> Bigint.max lo
 

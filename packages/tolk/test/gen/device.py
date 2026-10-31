@@ -150,13 +150,12 @@ def elfs():
 
 @table
 def signatures():
-    """Each parameter of each program's signature, and its repr."""
+    """Each parameter of each program's signature."""
     rows = []
     for case in PROGRAMS:
-        for position, param in enumerate(program(case).to_elf().signature):
-            name, slot, dt, shape = param
-            rows.append((case, position, repr(name), slot, dt, repr(shape), repr(param)))
-    return ["program", "position", "name", "slot", "dtype", "shape", "repr"], rows
+        for position, (name, slot, dt, shape) in enumerate(program(case).to_elf().signature):
+            rows.append((case, position, repr(name), slot, dt, repr(shape)))
+    return ["program", "position", "name", "slot", "dtype", "shape"], rows
 
 
 @table

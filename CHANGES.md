@@ -587,6 +587,9 @@ thread.
 
 ### Tolk (new)
 
+- `Ops.pp_arg` prints the record arguments that `Ops.pp_param_arg`,
+  `pp_kernel_info`, `pp_program_info`, `pp_bufferize_opts` and `pp_call_info`
+  printed. `Dtype.sum_acc` and eight test-only `Bigint` functions are removed.
 - **Breaking:** `Ops.hcq_info`, `Ops.hcq_kernel`, `Ops.pp_hcq_info`,
   `Ops.getaddr`, `Spec.hcq`, `call_info.aux` with the `?aux` of `Ops.call` and
   `Call.call_with_outputs`, and the `Queue` and `Region` arguments are gone:
@@ -940,9 +943,8 @@ thread.
   `Ops.reaches` stops at the node it looks for.
 - A beam search is read back from the disk cache only for the candidates it
   chose among, so `TC_OPT=0` no longer reads back a search made with `TC_OPT`
-  unset. The search's `BEAM_*` variables, `SUM_DTYPE`, `HCQ_NUM_SDMA` and
-  `WAVES_PER_SH` are declared, and `NO_MEMORY_PLANNER` reaches results, so the
-  caches key on them too.
+  unset. The search's `BEAM_*` variables and `HCQ_NUM_SDMA` are declared, and
+  `NO_MEMORY_PLANNER` reaches results, so the caches key on them too.
 - A function with two loops or reductions of one length, such as a scan body
   of `sum (mul x (matmul x c))`, schedules again: numbering its ranges for the
   schedule cache's key raised "a bottom-up rewrite cycles" when two ranges

@@ -277,8 +277,6 @@ let defaults =
           equal dtype (dtype_of_cell (cell "strong")) (Dtype.strong dt);
           expect dtype dtype_of_cell (cell "least_upper_float") (fun () ->
               Dtype.least_upper_float dt);
-          expect dtype dtype_of_cell (cell "sum_acc") (fun () ->
-              Dtype.sum_acc dt);
           equal (option char)
             (fmt_cell (cell "storage_fmt"))
             (Dtype.storage_fmt dt));
@@ -603,8 +601,7 @@ let truncation =
           let lo, hi = int_bounds dt in
           is_true ~msg:"within bounds" (Bigint.leq lo r && Bigint.leq r hi);
           equal ~msg:"congruent" z Bigint.zero
-            (Bigint.erem (Bigint.sub n r)
-               (Bigint.shift_left Bigint.one (Dtype.bitsize dt))));
+            (Bigint.extract (Bigint.sub n r) 0 (Dtype.bitsize dt)));
       prop "bfloat16 rounding is odd" Gen.any_float (fun f ->
           equal value
             (`Float (-.truncated Dtype.Bfloat16 f))
@@ -1105,12 +1102,6 @@ let conversions =
           is_true ((not (a <= b)) || Stdlib.( <= ) (to_float a) (to_float b)));
     ]
 
-(* The suite runs with SUM_DTYPE at its default (see dune). *)
-let sum_dtype_keyed =
-  test "SUM_DTYPE is keyed with what shapes compilation" (fun () ->
-      equal (option string) (Some "float32")
-        (List.assoc_opt "SUM_DTYPE" (Setting.shaping ())))
-
 let () =
   exit
     (run "Tolk.Dtype"
@@ -1129,5 +1120,4 @@ let () =
          consts;
          values;
          conversions;
-         sum_dtype_keyed;
        ])

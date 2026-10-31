@@ -78,7 +78,7 @@ the Exclusions of `README.md`.
     `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
 - **tolk:** for `uop/ops.py`, `lib/uop/shape.ml:87` (`simplify_rules`) and
-  `:2861` (which sets them); `lib/uop/ops.ml:1217` (`Make_elementwise`), `:765`
+  `:2861` (which sets them); `lib/uop/ops.ml:1209` (`Make_elementwise`), `:759`
   (`repr`), `:244` (`bufferize_opts`);
   `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:709`
@@ -1348,8 +1348,8 @@ driver sizes local memory as it loads a function (D146).
   the kernel's writes, for every phase and alignment`; the `Ops` suite: `param_arg takes a
   phase that is a multiple of the element size below 16`, `param_arg
   takes an alignment that is a power of two up to 16, and a phase below it`,
-  `pp_param_arg writes a phase that is not 0 and an alignment that is
-  not 16`, `equal_arg tells apart parameters that differ in phase` and
+  `pp_arg writes a parameter's phase that is not 0 and alignment that
+  is not 16`, `equal_arg tells apart parameters that differ in phase` and
   `param_like keeps its storage's phase, moved by a shrink, and
   knows it modulo what a symbolic start moves by`;  the graph format's round trip of `a buffer past
   a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
@@ -1583,13 +1583,12 @@ driver sizes local memory as it loads a function (D146).
   `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`, `BEAM_ESTIMATE`,
   `BEAM_LOCAL_MAX`, `BEAM_MIN_PROGRESS`, `BEAM_PADTO`, `BEAM_UOPS_MAX`,
   `BEAM_UPCAST_MAX`, `DMC`, `EXPAND_SSA`, `HCQ_NUM_SDMA`, `JITBEAM`,
-  `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT` variables,
-  `RING_ALLREDUCE_THRESHOLD`, `SUM_DTYPE` and `WAVES_PER_SH`), and the keys
-  take every one that reaches output (`Setting.shaping`), so one declared
-  later, by tolk or by its caller, is keyed without being listed; a setting
-  of the process alone, such as `DEBUG`, `PARALLEL` or `CC`, is not. One
-  key serves memory
-  and disk, so a setting changed within the process by `context` makes the
+  `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT` variables and
+  `RING_ALLREDUCE_THRESHOLD`), and the keys take every one that reaches
+  output (`Setting.shaping`), so one declared later, by tolk or by its
+  caller, is keyed without being listed; a setting of the process alone,
+  such as `DEBUG`, `PARALLEL` or `CC`, is not. One key serves memory and
+  disk, so a setting changed within the process by `context` makes the
   result again, where tinygrad's in-memory keys leave out `TUPLE_ORDER` and,
   for schedules, every setting. The compile cache's table names the compiler
   `CC` runs, where tinygrad's names Clang alone. An entry that does not read
@@ -4482,7 +4481,7 @@ submission, and a range a loop of rig's program (D146).
 
 - **tinygrad:** `uop/ops.py:61` (`identity_element`), whose `Ops.MAX` identity
   is `dt.min`: for `weakint`, of bitsize 800 (`dtype.py:119`), `-2**799`.
-- **tolk:** `lib/uop/ops.ml:1102-1109` (`identity_element`);
+- **tolk:** `lib/uop/ops.ml:1094-1101` (`identity_element`);
   `test/gen/tinygrad.patch`, which makes tinygrad's the same before the
   goldens are generated.
 - **Differs:** a maximum over a weak type has as identity the least value of

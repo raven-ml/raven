@@ -435,7 +435,6 @@ let settings =
     switch Setting.allow_tf32;
     number Setting.scache;
     switch Setting.disallow_broadcast;
-    word Setting.sum_dtype;
     switch Setting.late_allreduce;
     number Setting.ring_allreduce_threshold;
     number Setting.reduceop_split_threshold;
@@ -445,7 +444,6 @@ let settings =
     switch Setting.allow_half8;
     switch Setting.expand_ssa;
     switch Setting.aligned;
-    number Setting.waves_per_sh;
     switch Setting.beam_padto;
     number Setting.beam_uops_max;
     number Setting.beam_upcast_max;
@@ -500,7 +498,6 @@ let unrecorded = [ "PARALLEL"; "NO_COLOR" ]
 let getenv_defaults =
   [
     ("JITBEAM", "");
-    ("SUM_DTYPE", "float32");
     ("LATE_ALLREDUCE", "1");
     ("RING_ALLREDUCE_THRESHOLD", "256000");
     ("REDUCEOP_SPLIT_THRESHOLD", "32768");
@@ -510,7 +507,6 @@ let getenv_defaults =
     ("ALLOW_HALF8", "0");
     ("EXPAND_SSA", "0");
     ("ALIGNED", "1");
-    ("WAVES_PER_SH", "0");
     ("BEAM_PADTO", "0");
     ("BEAM_UOPS_MAX", "3000");
     ("BEAM_UPCAST_MAX", "256");
@@ -588,14 +584,12 @@ let output_settings =
     "RING";
     "RING_ALLREDUCE_THRESHOLD";
     "SPLIT_REDUCEOP";
-    "SUM_DTYPE";
     "TC";
     "TC_MIN_GLOBALS";
     "TC_OPT";
     "TC_SELECT";
     "TRANSCENDENTAL";
     "TUPLE_ORDER";
-    "WAVES_PER_SH";
   ]
 
 (* Each exported setting of output bound to a value other than its default. *)

@@ -326,7 +326,6 @@ let ccache = bool ~reach:Process "CCACHE" true
 let allow_tf32 = bool ~reach:Output "ALLOW_TF32" false
 let scache = int ~reach:Process "SCACHE" 2
 let disallow_broadcast = bool ~reach:Process "DISALLOW_BROADCAST" false
-let sum_dtype = string ~reach:Output "SUM_DTYPE" "float32"
 let late_allreduce = bool ~reach:Output "LATE_ALLREDUCE" true
 
 let ring_allreduce_threshold =
@@ -341,7 +340,6 @@ let dmc = bool ~reach:Output "DMC" false
 let allow_half8 = bool ~reach:Output "ALLOW_HALF8" false
 let expand_ssa = bool ~reach:Output "EXPAND_SSA" false
 let aligned = bool ~reach:Output "ALIGNED" true
-let waves_per_sh = int ~reach:Output "WAVES_PER_SH" 0
 let beam_padto = bool ~reach:Output "BEAM_PADTO" false
 let beam_uops_max = int ~reach:Output "BEAM_UOPS_MAX" 3000
 let beam_upcast_max = int ~reach:Output "BEAM_UPCAST_MAX" 256

@@ -256,8 +256,9 @@ let gen_point d =
     in
     let first = Bigint.(cdiv lo m) in
     let count = Bigint.(succ (fdiv hi m - first)) in
+    let wrap k = Bigint.(of_int k - (count * fdiv (of_int k) count)) in
     Gen.map
-      (fun k -> (Ops.expr v, `Int Bigint.(m * (first + erem (of_int k) count))))
+      (fun k -> (Ops.expr v, `Int Bigint.(m * (first + wrap k))))
       (Gen.frequency
          [ (1, Gen.constant 0); (1, Gen.constant (-1)); (4, Gen.nat) ])
   in

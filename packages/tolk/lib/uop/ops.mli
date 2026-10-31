@@ -173,11 +173,6 @@ val param_arg :
     [16], or [phase] is not below [align] and a multiple of [dtype]'s size or
     of [align], whichever is less. *)
 
-val pp_param_arg : Format.formatter -> param_arg -> unit
-(** [pp_param_arg] formats the slot, the type and the size, then the fields that
-    differ from their defaults, by name:
-    [ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='i', ...)]. *)
-
 type estimates = {
   ops : sint;  (** Arithmetic operations. *)
   lds : sint;  (** Bytes loaded and stored. *)
@@ -225,11 +220,6 @@ val function_name : kernel_info -> string
 (** [function_name k] is [k.name] as an identifier
     ({!Helpers.to_function_name}). *)
 
-val pp_kernel_info : Format.formatter -> kernel_info -> unit
-(** [pp_kernel_info] formats
-    [KernelInfo(name='test', applied_opts=(), opts_to_apply=None,
-     estimates=None, beam=0)]. *)
-
 type program_info = {
   global_size : sint list;  (** The number of workgroups on each axis. *)
   local_size : sint list;  (** The threads of a workgroup on each axis. *)
@@ -245,10 +235,6 @@ val vals : program_info -> (string * int) list -> int list
 (** [vals p vars] is the value in [vars] of each of [p.vars], in order.
 
     Raises [Invalid_argument] naming a variable that [vars] lacks. *)
-
-val pp_program_info : Format.formatter -> program_info -> unit
-(** [pp_program_info] formats
-    [ProgramInfo(global_size=(1, 1, 1), local_size=(1, 1, 1), vars=(), ...)]. *)
 
 (** What later passes may do to a buffer an {!Op.Stage} makes. *)
 type keep =
@@ -271,23 +257,12 @@ type bufferize_opts = {
 }
 (** The type for the arguments of an {!Op.Stage} that makes a buffer. *)
 
-val pp_bufferize_opts : Format.formatter -> bufferize_opts -> unit
-(** [pp_bufferize_opts] formats
-    [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL, removable=True,
-     broadcast=False)]: [removable] is [false] for {!Whole} only, and
-    [broadcast] [true] for {!Broadcast} only. *)
-
 type call_info = {
   name : string option;  (** The name of the function called. *)
   precompile : bool;  (** Compile the body on its own. *)
   dtype : Dtype.t;  (** The type returned, {!Dtype.Void} for none. *)
 }
 (** The type for the arguments of {!Op.Call}. *)
-
-val pp_call_info : Format.formatter -> call_info -> unit
-(** [pp_call_info] formats
-    [CallInfo(None, 'f', False, False, dtype=dtypes.int)], the [dtype] field
-    only when it is not [void]. *)
 
 type wmma = {
   dims : int * int * int;  (** The matrix dimensions N, M and K. *)
@@ -340,7 +315,21 @@ val equal_arg : arg -> arg -> bool
 val pp_arg : Format.formatter -> arg -> unit
 (** [pp_arg] formats an argument as the literal that denotes it: [None], [42],
     [ConstFloat(1.5)], [True], [Invalid], [dtypes.float], [(0, AxisType.WEAK)],
-    [(Ops.ADD, 0)], ['CPU'], [b'ab\x00'], [ParamArg(...)]. *)
+    [(Ops.ADD, 0)], ['CPU'], [b'ab\x00'].
+
+    The records print as calls:
+    - {!Param}: the slot, the type and the size, then the fields that differ
+      from their defaults, by name:
+      [ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='i', ...)];
+    - {!Kernel}: [KernelInfo(name='test', applied_opts=(), opts_to_apply=None,
+      estimates=None, beam=0)];
+    - {!Program}: [ProgramInfo(global_size=(1, 1, 1), local_size=(1, 1, 1),
+      vars=(), ...)];
+    - {!Bufferize}: [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL,
+      removable=True, broadcast=False)], [removable] [False] for {!Whole}
+      only and [broadcast] [True] for {!Broadcast} only;
+    - {!Call}: [CallInfo(None, 'f', False, False, dtype=dtypes.int)], the
+      [dtype] field only when it is not [void]. *)
 
 (** {1:tags Tags} *)
 

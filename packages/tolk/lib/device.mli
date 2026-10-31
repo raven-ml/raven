@@ -52,16 +52,13 @@ module Tiny_elf : sig
       Raises [Invalid_argument] if [prg] is not such a program, or if a buffer
       of its linear order is not among its {!Ops.program_info.globals}. *)
 
-  val pp_param : Format.formatter -> param -> unit
-  (** [pp_param] formats a parameter as the tuple of its fields:
-      [('n', 3, dtypes.int, ())], or [(None, 0, dtypes.float, (16,))] for a
-      parameter without a name. *)
-
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a program as
       [TinyELF(lib=b'...', name='E_4_4', target=CPU::arm64,native,
        signature=((None, 0, dtypes.float, (16,)),), profile_key=b'...')], its
-      binary and profile key as byte literals. *)
+      binary and profile key as byte literals, and each parameter as the tuple
+      of its fields: [('n', 3, dtypes.int, ())], or
+      [(None, 0, dtypes.float, (16,))] for a parameter without a name. *)
 
   val iter_sig : ?offset:int -> param list -> (int * Dtype.t) list
   (** [iter_sig ~offset signature] is where the value of each parameter of

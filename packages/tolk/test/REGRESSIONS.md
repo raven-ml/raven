@@ -101,7 +101,7 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 | tinygrad: null/test_dtype_spec.py::TestTypeSpec::test_bool_ops, test_functions_return_index, test_tensor_indexing_returns_same_dtype, test_gather_returns_same_dtype, test_attention_returns_same_dtype | result dtypes of Tensor operations | dropped: Tensor surface, rune's lowering |
 | tinygrad: null/test_dtype_spec.py::TestAutoCastType::test_least_upper_float_input_is_float | a float keeps its type whatever the default | `D › promotion › least_upper_float keeps a float whatever the default` |
 | tinygrad: null/test_dtype_spec.py::TestAutoCastType::test_least_upper_float_input_is_int | an integer goes to the default float | `D › promotion › least_upper_float takes an integer to the default float` |
-| tinygrad: null/test_dtype_spec.py::TestAutoCastType::test_sum | the accumulator of each data type | `D › defaults › projections.golden` (column `sum_acc`) |
+| tinygrad: null/test_dtype_spec.py::TestAutoCastType::test_sum | the accumulator of each data type | dropped: `sum_acc_dtype` is not ported (README exclusions); rune's lowering picks a sum's accumulator |
 | tinygrad: null/test_dtype_spec.py::TestAutoCastType::test_broadcast_scalar, test_pad_scalar, test_sort, test_int_div_int, test_mean, test_cumsum, test_cumsum_empty, test_matmul, test_linear, test_where_no_scalar, test_where_one_scalar, test_where_two_scalars, test_where_non_bool_cond_raises, test_maximum, test_maximum_const, test_div, test_div_const | result dtypes of Tensor operations | dropped: Tensor surface, rune's lowering. The table they rely on is `D › promotion › least_upper.golden` |
 | tinygrad: null/test_dtype_spec.py::TestUnitTypeSpec::test_default_dtype_context | a context overrides the defaults and restores them | `D › defaults › default_float is the float DEFAULT_FLOAT names`; the restoring is `Setting.context`'s, tested in the Helpers suite |
 | tinygrad: null/test_dtype_spec.py::TestUnitTypeSpec::test_env_set_default_float (skipped upstream) | DEFAULT_FLOAT=HALF selects half; INT32 and TYPO are rejected | `D › defaults › DEFAULT_FLOAT is read in any case`; `D › defaults › default_float rejects what is not a float of known width` |
@@ -1327,8 +1327,8 @@ is the renderer's own. A device lists the renderers of its `Compiled` that
 tolk ports. `<case>_program.golden` holds programs that `to_program`
 compiles for Clang and Metal, with the empty compiler so that no toolchain
 shapes them, and `elfs.golden`, `signatures.golden` and `layouts.golden` what
-`to_elf` and `TinyELF.iter_sig` give for each; `signatures.golden` and
-`reprs.golden` also hold tinygrad's repr, which the printers match. The test that two
+`to_elf` and `TinyELF.iter_sig` give for each; `reprs.golden` also holds
+tinygrad's repr, which `Tiny_elf.pp` matches. The test that two
 domains share a renderer cannot run under mutation testing, which forks.
 
 ### tinygrad

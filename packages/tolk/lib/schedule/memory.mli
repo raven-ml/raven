@@ -12,21 +12,18 @@
     lifetimes do not overlap at shared addresses of a few large buffers, the
     arenas, so the schedule needs less memory. *)
 
-val collect_bufs : Ops.t -> Ops.t list
-(** [collect_bufs u] is the {!Op.Buffer}s that the argument [u] of a call
-    passes: [u] if it is one, and those of each source of an {!Op.Mselect} or an
-    {!Op.Mstack}, in order. *)
-
 val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
 (** [memory_plan_rewrite ~held_bufs linear] is the schedule [linear], an
     {!Op.Linear} of calls run in order, with its buffers placed in arenas.
 
     A buffer is planned unless it is among [held_bufs] (default [[]]), whose
     contents outlive the schedule, lives on a disk, or is reached through a view
-    ({!Op.Shrink}, {!Op.Bitcast}, {!Op.After}) by some call. It lives from the
-    first call that takes it ({!collect_bufs}) to the last, a loop around calls
-    ({!Op.End} or {!Op.Backedge}) counting as one call that takes the buffers of
-    each of its calls and a back edge's flag. The buffers of copies, the calls
+    ({!Op.Shrink}, {!Op.Bitcast}, {!Op.After}) by some call. A call takes the
+    buffers of its arguments, an argument passing itself if it is a buffer and
+    the buffers of each of its sources if it is an {!Op.Mselect} or an
+    {!Op.Mstack}. A buffer lives from the first call that takes it to the last,
+    a loop around calls ({!Op.End} or {!Op.Backedge}) counting as one call that
+    takes the buffers of each of its calls and a back edge's flag. The buffers of copies, the calls
     whose body is an {!Op.Store}, are planned apart from the others on each
     device, so that planning adds no dependency between copies and kernels, and
     each lives for as many calls again after its last, so that a copy is not

@@ -388,16 +388,6 @@ val can_lossless_cast : t -> t -> bool
     It is [false] for some casts that keep every value, such as from an 8-bit
     float to {!Bfloat16}. *)
 
-val sum_acc : t -> t
-(** [sum_acc dt] is the data type that sums of [dt] values accumulate in: at
-    least {!Uint32} for the unsigned integers, at least {!Int32} for {!Bool} and
-    the other integers, and for floats at least the data type
-    {!Setting.sum_dtype} names. rune's lowering takes the accumulator of a sum
-    reduction from it.
-
-    Raises [Invalid_argument] if [dt] is {!Void}, or if {!Setting.sum_dtype}
-    does not name a data type. *)
-
 (** {1:casts Casts} *)
 
 val truncate : t -> value -> value

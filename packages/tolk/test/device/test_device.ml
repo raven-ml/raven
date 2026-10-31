@@ -247,11 +247,6 @@ let param_like_tinygrad cell =
   equal Dtypes.dtype (Dtypes.dtype_of_cell (cell "dtype")) p.dtype;
   equal (list int) (shape_of_cell (cell "shape")) p.shape
 
-let param_printed_like_tinygrad cell =
-  let elf = elf_of (cell "program") in
-  let p = List.nth elf.signature (int_of_cell (cell "position")) in
-  equal string (cell "repr") (Format.asprintf "%a" Elf.pp_param p)
-
 let packed_like_tinygrad cell =
   let signature = (elf_of (cell "program")).signature in
   let offset = int_of_cell (cell "offset") in
@@ -343,8 +338,14 @@ let program_of_layout l =
   (* The linear order holds the variables too, ahead of the buffers. *)
   program ~globals:l.globals ~vars (vars @ List.map buffer l.linear)
 
+let pp_param ppf (p : Elf.param) =
+  Format.fprintf ppf "%s %d %a [%s]"
+    (Option.value p.name ~default:"-")
+    p.slot Dtype.pp p.dtype
+    (String.concat "; " (List.map string_of_int p.shape))
+
 let param_w =
-  Testable.make ~pp:Elf.pp_param ~equal:(fun (p0 : Elf.param) p1 ->
+  Testable.make ~pp:pp_param ~equal:(fun (p0 : Elf.param) p1 ->
       p0.name = p1.name && p0.slot = p1.slot
       && Dtype.equal p0.dtype p1.dtype
       && p0.shape = p1.shape)
@@ -506,11 +507,6 @@ let printed_like_tinygrad cell =
 let printing =
   group "Tiny_elf printers"
     [
-      group "pp_param prints a parameter as tinygrad does"
-        [
-          Golden.cases ~key:[ "program"; "position" ] "signatures.golden"
-            param_printed_like_tinygrad;
-        ];
       group "pp prints a program as tinygrad does"
         [ Golden.cases "reprs.golden" printed_like_tinygrad ];
     ]

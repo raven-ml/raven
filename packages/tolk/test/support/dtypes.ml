@@ -127,9 +127,8 @@ let integer =
        ])
 
 let integer_in (lo, hi) =
-  let within n =
-    Bigint.add lo (Bigint.erem n (Bigint.succ (Bigint.sub hi lo)))
-  in
+  let span = Bigint.(succ (hi - lo)) in
+  let within n = Bigint.(lo + n - (span * fdiv n span)) in
   Gen.frequency
     [
       (1, Gen.of_list [ lo; Bigint.succ lo; Bigint.pred hi; hi ]);

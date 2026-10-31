@@ -1,5 +1,5 @@
 (* Tests of Tolk.Memory: the plans of tinygrad's schedules, the buffers a call
-   passes, and the laws of a plan over generated schedules. *)
+   takes, and the laws of a plan over generated schedules. *)
 
 open Windtrap
 open Tolk
@@ -104,27 +104,33 @@ let printouts =
             equal string "" (output ()));
       ])
 
-(* collect_bufs *)
+(* The buffers a call takes *)
 
 let buf ?(device = cpu) ?(dt = Dtype.Int8) ?phase size =
   Ops.new_buffer ?phase device size dt
 
-let collected =
-  let two = Ops.Multi [ "CPU:0"; "CPU:1" ] in
-  let a = buf 16 and b = buf 32 and m = buf ~device:two 16 in
-  group "collect_bufs"
+let reached u = Ops.toposort ~calls:Skip u
+let planned_away u b = not (List.exists (( == ) b) (reached u))
+
+let taken =
+  let a = buf 16 and b = buf 32 and c = buf 64 in
+  let run args = Ops.v Linear ~src:[ Ops.call (Ops.sink args) args ] in
+  group "memory_plan_rewrite › the buffers a call takes"
     [
-      test "a buffer is itself" (fun () ->
-          equal (list uop) [ a ] (Memory.collect_bufs a));
       test "a shard selection and a gather pass their sources' buffers"
         (fun () ->
-          equal (list uop) [ m ] (Memory.collect_bufs (Ops.mselect m 1));
-          equal (list uop) [ a; b; a; a ]
-            (Memory.collect_bufs
-               (Ops.mstack a [ Ops.mselect (Ops.mstack b [ a ]) 0; a ])));
-      test "a view of a buffer passes none" (fun () ->
-          equal (list uop) []
-            (Memory.collect_bufs (Shape.shrink a [ Some (Int 0, Int 4) ])));
+          let linear =
+            run [ Ops.mstack a [ Ops.mselect (Ops.mstack b [ a ]) 0 ] ]
+          in
+          let planned = Memory.memory_plan_rewrite linear in
+          equal int ~msg:"arenas" 1 (List.length (arenas linear planned));
+          equal (list bool) [ true; true ]
+            (List.map (planned_away planned) [ a; b ]));
+      test "a view of a buffer keeps it out of the plan" (fun () ->
+          let linear = run [ c; Shape.shrink a [ Some (Int 0, Int 4) ] ] in
+          let planned = Memory.memory_plan_rewrite linear in
+          equal (list bool) [ true; false ]
+            (List.map (planned_away planned) [ c; a ]));
     ]
 
 (* Rules *)
@@ -336,4 +342,4 @@ let laws =
     [ prop "a plan places live buffers apart, each at its bytes" drawn plans ]
 
 let () =
-  exit (run "Tolk.Memory" [ recorded; printouts; collected; rules; laws ])
+  exit (run "Tolk.Memory" [ recorded; printouts; taken; rules; laws ])

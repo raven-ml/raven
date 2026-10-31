@@ -27,10 +27,6 @@ type bit = N of int | M of int | K of int
 val equal_bit : bit -> bit -> bool
 (** [equal_bit b0 b1] is [true] iff [b0] and [b1] are the same bit. *)
 
-val pp_bit : Format.formatter -> bit -> unit
-(** [pp_bit] formats a bit as its dimension in lower case and its index: [m0],
-    [k3]. *)
-
 type fragment = {
   lanes : bit list;
       (** The bit of the coordinates each bit of the lane number gives, least

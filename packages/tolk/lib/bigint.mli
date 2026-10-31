@@ -41,9 +41,6 @@ val of_int32 : int32 -> t
 val of_int64 : int64 -> t
 (** [of_int64 n] is [n]. *)
 
-val of_nativeint : nativeint -> t
-(** [of_nativeint n] is [n]. *)
-
 val of_int32_unsigned : int32 -> t
 (** [of_int32_unsigned n] is [n] read as unsigned, in \[[0];[2{^32}-1]\]. *)
 
@@ -65,33 +62,15 @@ val of_string : string -> t
 val fits_int : t -> bool
 (** [fits_int n] is [true] iff [n] is in [int]'s range. *)
 
-val fits_int64 : t -> bool
-(** [fits_int64 n] is [true] iff [n] is in [int64]'s range. *)
-
 val to_int : t -> int
 (** [to_int n] is [n].
 
     Raises {!Overflow} if [n] is out of [int]'s range. *)
 
-val to_int32 : t -> int32
-(** [to_int32 n] is [n].
-
-    Raises {!Overflow} if [n] is out of [int32]'s range. *)
-
 val to_int64 : t -> int64
 (** [to_int64 n] is [n].
 
     Raises {!Overflow} if [n] is out of [int64]'s range. *)
-
-val to_int32_unsigned : t -> int32
-(** [to_int32_unsigned n] is [n] stored as an unsigned [int32].
-
-    Raises {!Overflow} if [n] is out of \[[0];[2{^32}-1]\]. *)
-
-val to_int64_unsigned : t -> int64
-(** [to_int64_unsigned n] is [n] stored as an unsigned [int64].
-
-    Raises {!Overflow} if [n] is out of \[[0];[2{^64}-1]\]. *)
 
 val to_float : t -> float
 (** [to_float n] is the float nearest to [n], ties to even: an infinity if [n]
@@ -180,17 +159,6 @@ val divisible : t -> t -> bool
 (** [divisible a b] is [true] iff [b] divides [a]: [a = b * q] for an integer
     [q]. Only [zero] is divisible by [zero]. *)
 
-val ediv : t -> t -> t
-(** [ediv a b] is the Euclidean quotient [q] of [a] by [b], the one for which
-    [0 <= a - b * q < abs b].
-
-    Raises [Division_by_zero] if [b] is zero. *)
-
-val erem : t -> t -> t
-(** [erem a b] is [a - b * ediv a b], in \[[0];[abs b - 1]\].
-
-    Raises [Division_by_zero] if [b] is zero. *)
-
 val gcd : t -> t -> t
 (** [gcd a b] is the greatest common divisor of [a] and [b], never negative:
     [gcd a zero] is [abs a]. *)
@@ -199,11 +167,6 @@ val pow : t -> int -> t
 (** [pow b e] is [b] to the power [e].
 
     Raises [Invalid_argument] if [e] is negative. *)
-
-val sqrt : t -> t
-(** [sqrt n] is the square root of [n] rounded toward zero.
-
-    Raises [Invalid_argument] if [n] is negative. *)
 
 (** {1:bits Bits}
 

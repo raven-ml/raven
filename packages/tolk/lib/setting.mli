@@ -279,10 +279,6 @@ val disallow_broadcast : bool t
     shapes fail instead of broadcasting them, from [DISALLOW_BROADCAST].
     Defaults to [false]. *)
 
-val sum_dtype : string t
-(** [sum_dtype] names the least data type that sums of floats accumulate in
-    ({!Dtype.sum_acc}), from [SUM_DTYPE]. Defaults to ["float32"]. *)
-
 val late_allreduce : bool t
 (** [late_allreduce] leaves each allreduce to a call of its own
     ({!Allreduce.create_allreduce_function}), from [LATE_ALLREDUCE]. Otherwise
@@ -326,11 +322,6 @@ val aligned : bool t
 (** [aligned] aligns the vector types of {!Cstyle.clang} to their size, from
     [ALIGNED]. Otherwise they are aligned to one byte, so that buffers at any
     address can be passed. Defaults to [true]. *)
-
-val waves_per_sh : int t
-(** [waves_per_sh] is the most waves an AMD dispatch runs on each shader array
-    ([Tolk_engine.Ops_amd]), from [WAVES_PER_SH]. [0] sets no limit. Defaults
-    to [0]. *)
 
 val beam_padto : bool t
 (** [beam_padto] adds pads of axes to the candidates of the beam search

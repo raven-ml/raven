@@ -1617,7 +1617,6 @@ let other_values () =
       ("DEFAULT_INT", "long");
       ("EMULATED_DTYPES", "long");
       ("JITBEAM", "1");
-      ("SUM_DTYPE", "half");
     ]
   in
   List.map

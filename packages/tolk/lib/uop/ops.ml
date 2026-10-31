@@ -720,8 +720,6 @@ let repr_param_arg (p : param_arg) =
   in
   strf "ParamArg(%s)" (String.concat ", " args)
 
-let pp_param_arg ppf p = Format.pp_print_string ppf (repr_param_arg p)
-
 let repr_bufferize_opts (b : bufferize_opts) =
   strf "BufferizeOpts(device=%s, addrspace=%s, removable=%s, broadcast=%s)"
     (repr_option repr_device b.device)
@@ -729,16 +727,12 @@ let repr_bufferize_opts (b : bufferize_opts) =
     (repr_bool (b.keep <> Whole))
     (repr_bool (b.keep = Broadcast))
 
-let pp_bufferize_opts ppf b = Format.pp_print_string ppf (repr_bufferize_opts b)
-
 let repr_call_info (c : call_info) =
   strf "CallInfo(None, %s, %s, False%s)"
     (repr_option repr_string c.name)
     (repr_bool c.precompile)
     (if Dtype.equal c.dtype Dtype.Void then ""
      else ", dtype=" ^ repr_dtype c.dtype)
-
-let pp_call_info ppf c = Format.pp_print_string ppf (repr_call_info c)
 
 let repr_wmma w =
   let m, n, k = w.dims in
@@ -876,8 +870,6 @@ and repr_arg = function
 let pp ppf u = Format.pp_print_string ppf (repr u)
 let pp_arg ppf a = Format.pp_print_string ppf (repr_arg a)
 let pp_estimates ppf e = Format.pp_print_string ppf (repr_estimates e)
-let pp_kernel_info ppf k = Format.pp_print_string ppf (repr_kernel_info k)
-let pp_program_info ppf p = Format.pp_print_string ppf (repr_program_info p)
 
 (* Graphs *)
 

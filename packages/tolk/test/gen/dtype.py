@@ -10,7 +10,7 @@ import struct
 
 from golden import table
 from tinygrad.dtype import (DType, DTypes, Invalid, bitcast, can_lossless_cast, commit_int, dtypes, from_storage_scalar,
-                            least_upper_dtype, least_upper_float, strong_dtype, sum_acc_dtype, to_dtype, to_storage_scalar,
+                            least_upper_dtype, least_upper_float, strong_dtype, to_dtype, to_storage_scalar,
                             truncate, weak_dtype)
 
 # Every dtype that takes part in promotion, in priority order.
@@ -75,10 +75,9 @@ def properties():
 
 @table
 def projections():
-    columns = ["dtype", "weak", "strong", "least_upper_float", "sum_acc", "storage_fmt"]
+    columns = ["dtype", "weak", "strong", "least_upper_float", "storage_fmt"]
     storage_fmt = lambda dt: 'H' if dt == dtypes.bfloat16 else 'B' if dt in dtypes.fp8s else dt.fmt  # noqa: E731
-    return columns, [(dt, weak_dtype(dt), strong_dtype(dt), attempt(least_upper_float, dt), attempt(sum_acc_dtype, dt),
-                      storage_fmt(dt)) for dt in DTYPES]
+    return columns, [(dt, weak_dtype(dt), strong_dtype(dt), attempt(least_upper_float, dt), storage_fmt(dt)) for dt in DTYPES]
 
 
 @table

@@ -120,14 +120,11 @@ let laws =
           equal bigint a (B.add (B.mul b q) r);
           is_true (B.lt (B.abs r) (B.abs b));
           is_true (B.sign r = 0 || B.sign r = B.sign a));
-      prop "fdiv, cdiv and ediv" (Gen.pair any nonzero) (fun (a, b) ->
+      prop "fdiv and cdiv" (Gen.pair any nonzero) (fun (a, b) ->
           let rf = B.sub a (B.mul b (B.fdiv a b))
-          and rc = B.sub a (B.mul b (B.cdiv a b))
-          and re = B.erem a b in
+          and rc = B.sub a (B.mul b (B.cdiv a b)) in
           is_true (B.lt (B.abs rf) (B.abs b) && B.sign rf * B.sign b >= 0);
-          is_true (B.lt (B.abs rc) (B.abs b) && B.sign rc * B.sign b <= 0);
-          equal bigint a (B.add (B.mul b (B.ediv a b)) re);
-          is_true (B.sign re >= 0 && B.lt re (B.abs b)));
+          is_true (B.lt (B.abs rc) (B.abs b) && B.sign rc * B.sign b <= 0));
       prop "divisible is a zero remainder" pair (fun (a, b) ->
           equal bool
             (if B.sign b = 0 then B.sign a = 0 else B.sign (B.rem a b) = 0)
@@ -148,8 +145,9 @@ let laws =
         (Gen.triple any small_k (Gen.int_range 1 200))
         (fun (a, off, len) ->
           let e = B.extract a off len and s = B.signed_extract a off len in
-          equal bigint (B.erem (B.shift_right a off) (two_to len)) e;
-          equal bigint (B.erem s (two_to len)) e;
+          let modulo n m = B.sub n (B.mul m (B.fdiv n m)) in
+          equal bigint (modulo (B.shift_right a off) (two_to len)) e;
+          equal bigint (modulo s (two_to len)) e;
           is_true
             (B.leq (B.neg (two_to (len - 1))) s && B.lt s (two_to (len - 1))));
       prop "numbits and trailing_zeros" nonzero (fun a ->
@@ -173,10 +171,6 @@ let laws =
         (Gen.triple any (Gen.int_range 0 6) (Gen.int_range 0 6))
         (fun (b, e0, e1) ->
           equal bigint (B.pow b (e0 + e1)) (B.mul (B.pow b e0) (B.pow b e1)));
-      prop "sqrt" any (fun a ->
-          let a = B.abs a in
-          let s = B.sqrt a in
-          is_true (B.leq (B.mul s s) a && B.lt a (B.mul (B.succ s) (B.succ s))));
       prop "decimal round trip" any (fun a ->
           equal bigint a (B.of_string (B.to_string a)));
     ]
@@ -206,11 +200,14 @@ let conversions =
               (B.to_float (B.of_float x)));
       prop "int64" Gen.int64 (fun x ->
           equal int64 x (B.to_int64 (B.of_int64 x));
-          equal int64 x (B.to_int64_unsigned (B.of_int64_unsigned x));
-          equal int32 (Int64.to_int32 x)
-            (B.to_int32 (B.of_int32 (Int64.to_int32 x)));
-          equal int32 (Int64.to_int32 x)
-            (B.to_int32_unsigned (B.of_int32_unsigned (Int64.to_int32 x))));
+          equal int64 (Int64.of_int32 (Int64.to_int32 x))
+            (B.to_int64 (B.of_int32 (Int64.to_int32 x)));
+          equal bigint
+            (B.extract (B.of_int64 x) 0 64)
+            (B.of_int64_unsigned x);
+          equal bigint
+            (B.extract (B.of_int64 x) 0 32)
+            (B.of_int32_unsigned (Int64.to_int32 x)));
       test "ties round to even" (fun () ->
           let x = Float.ldexp 1. 64 in
           equal float_exact x (B.to_float (B.of_string "18446744073709553664"));
@@ -226,22 +223,17 @@ let conversions =
             [ Float.nan; Float.infinity; Float.neg_infinity ]);
       test "unsigned ranges" (fun () ->
           equal string p64 (B.to_string (B.succ (B.of_int64_unsigned (-1L))));
-          equal bigint (two_to 32) (B.succ (B.of_int32_unsigned (-1l)));
-          equal int64 (-1L) (B.to_int64_unsigned (B.pred (two_to 64)));
-          raises B.Overflow (fun () -> B.to_int64_unsigned (two_to 64));
-          raises B.Overflow (fun () -> B.to_int64_unsigned B.minus_one);
-          raises B.Overflow (fun () -> B.to_int32_unsigned (two_to 32)));
+          equal bigint (two_to 32) (B.succ (B.of_int32_unsigned (-1l))));
       test "int and int64 edges" (fun () ->
           let past_int = B.succ (B.of_int max_int) in
           is_true (B.fits_int (B.of_int min_int));
           is_false (B.fits_int past_int);
           is_false (B.fits_int (B.pred (B.of_int min_int)));
           raises B.Overflow (fun () -> B.to_int past_int);
-          is_true (B.fits_int64 (B.pred (two_to 63)));
-          is_false (B.fits_int64 (two_to 63));
-          is_true (B.fits_int64 (B.neg (two_to 63)));
+          equal int64 Int64.max_int (B.to_int64 (B.pred (two_to 63)));
+          equal int64 Int64.min_int (B.to_int64 (B.neg (two_to 63)));
           raises B.Overflow (fun () -> B.to_int64 (two_to 63));
-          raises B.Overflow (fun () -> B.to_int32 (two_to 31)));
+          raises B.Overflow (fun () -> B.to_int64 (B.pred (B.neg (two_to 63)))));
       test "of_string" (fun () ->
           equal bigint (B.of_int 255) (B.of_string "0xff");
           equal bigint (B.of_int (-5)) (B.of_string "-0b101");
@@ -274,7 +266,6 @@ let boundaries =
         ( B.mul (B.pred (two_to 64)) (B.pred (two_to 64)),
           "340282366920938463426481119284349108225" ) );
       ("numbits min_int", (B.of_int (B.numbits m), "63"));
-      ("sqrt 2^128", (B.sqrt (two_to 128), p64));
       ("gcd min_int 0", (B.gcd m B.zero, "4611686018427387904"));
       ( "2^799 / 7 * 7 + rem",
         ( B.add
@@ -291,14 +282,13 @@ let errors =
         (fun f ->
           raises Division_by_zero (fun () -> f b B.zero);
           raises Division_by_zero (fun () -> f B.one B.zero))
-        [ B.div; B.rem; B.fdiv; B.cdiv; B.ediv; B.erem ];
+        [ B.div; B.rem; B.fdiv; B.cdiv ];
       let invalid f = raises_match Exn.invalid_arg f in
       invalid (fun () -> B.shift_left B.one (-1));
       invalid (fun () -> B.shift_right b (-1));
       invalid (fun () -> B.extract b (-1) 3);
       invalid (fun () -> B.signed_extract B.one 0 0);
       invalid (fun () -> B.pow B.one (-1));
-      invalid (fun () -> B.sqrt B.minus_one);
       raises B.Overflow (fun () -> B.popcount B.minus_one);
       equal int max_int (B.trailing_zeros B.zero);
       equal int 0 (B.numbits B.zero))

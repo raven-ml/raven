@@ -729,7 +729,11 @@ let rewrites =
         | _ -> fail "a stage has options")
       (all Stage u)
   in
-  let opts_witness = Testable.make ~pp:Ops.pp_bufferize_opts ~equal:( = ) in
+  let opts_witness =
+    Testable.make
+      ~pp:(fun ppf o -> Ops.pp_arg ppf (Bufferize o))
+      ~equal:( = )
+  in
   let movements = Op.[ Reshape; Expand; Pad; Shrink; Permute; Flip ] in
   group "run_rangeify › rewrites"
     [

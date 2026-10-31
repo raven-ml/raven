@@ -111,23 +111,6 @@ let arguments =
             (slist string String.compare)
             (List.map (fun cell -> cell "name") (Golden.rows "reprs.golden"))
             (List.map fst (Lazy.force reprs)));
-      test "each payload formats as its argument does" (fun () ->
-          List.iter
-            (fun (name, u) ->
-              let payload =
-                match Ops.arg u with
-                | Param p -> Some (str Ops.pp_param_arg p)
-                | Kernel k -> Some (str Ops.pp_kernel_info k)
-                | Program p -> Some (str Ops.pp_program_info p)
-                | Call c -> Some (str Ops.pp_call_info c)
-                | Bufferize b -> Some (str Ops.pp_bufferize_opts b)
-                | _ -> None
-              in
-              Option.iter
-                (fun text ->
-                  equal ~msg:name string (str Ops.pp_arg (Ops.arg u)) text)
-                payload)
-            (Lazy.force reprs));
       test "pp_estimates formats the record" (fun () ->
           equal string "Estimates(ops=0, lds=0, mem=0)"
             (str Ops.pp_estimates { ops = Int 0; lds = Int 0; mem = Int 0 }));
@@ -168,17 +151,15 @@ let arguments =
               (1, 4, Dtype.Float16);
             ]);
       test
-        "pp_param_arg writes a phase that is not 0 and an alignment that is \
-         not 16" (fun () ->
+        "pp_arg writes a parameter's phase that is not 0 and alignment that \
+         is not 16" (fun () ->
+          let param p = str Ops.pp_arg (Param p) in
           equal string "ParamArg(0, dtypes.float, 16, phase=4)"
-            (str Ops.pp_param_arg
-               (Ops.param_arg ~slot:0 ~size:16 ~phase:4 Dtype.Float32));
+            (param (Ops.param_arg ~slot:0 ~size:16 ~phase:4 Dtype.Float32));
           equal string "ParamArg(0, dtypes.float, 16, align=4)"
-            (str Ops.pp_param_arg
-               (Ops.param_arg ~slot:0 ~size:16 ~align:4 Dtype.Float32));
+            (param (Ops.param_arg ~slot:0 ~size:16 ~align:4 Dtype.Float32));
           equal string "ParamArg(0, dtypes.float, 16)"
-            (str Ops.pp_param_arg
-               (Ops.param_arg ~slot:0 ~size:16 Dtype.Float32)));
+            (param (Ops.param_arg ~slot:0 ~size:16 Dtype.Float32)));
       test "equal_arg tells apart parameters that differ in phase"
         (fun () ->
           is_false

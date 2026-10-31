@@ -263,15 +263,7 @@ let cdiv a b =
   let q, r = div_rem a b in
   if sign r <> 0 && sign r = sign b then succ q else q
 
-let ediv_rem a b =
-  let q, r = div_rem a b in
-  if sign r >= 0 then (q, r)
-  else if sign b > 0 then (pred q, add r b)
-  else (succ q, sub r b)
-
 let divisible a b = if sign b = 0 then sign a = 0 else sign (rem a b) = 0
-let ediv a b = fst (ediv_rem a b)
-let erem a b = snd (ediv_rem a b)
 
 let rec gcd a b =
   if is_small a && is_small b && to_small a <> min_int && to_small b <> min_int
@@ -395,14 +387,6 @@ let popcount n =
   else if is_small n then int_popcount (to_small n)
   else Array.fold_left (fun k l -> k + int_popcount l) 0 (to_big n)
 
-let sqrt n =
-  if sign n < 0 then invalid_arg "Bigint.sqrt: negative argument";
-  let rec go x =
-    let y = shift_right (add x (div n x)) 1 in
-    if geq y x then x else go y
-  in
-  if sign n = 0 then zero else go (shift_left one ((numbits n + 1) / 2))
-
 (* Conversions *)
 
 let of_int = of_small
@@ -418,7 +402,6 @@ let of_int64 x =
            Int64.(to_int (logand (shift_right x (bits * k)) (of_int mask)))))
 
 let of_int32 x = of_int64 (Int64.of_int32 x)
-let of_nativeint x = of_int64 (Int64.of_nativeint x)
 
 let of_int32_unsigned x =
   of_int64 (Int64.logand (Int64.of_int32 x) 0xFFFF_FFFFL)
@@ -490,17 +473,6 @@ let low_int64 n =
 
 let to_int n = if is_small n then to_small n else raise Overflow
 let to_int64 n = if fits_int64 n then low_int64 n else raise Overflow
-
-let to_int32 n =
-  let x = to_int64 n in
-  if Int64.equal (Int64.of_int32 (Int64.to_int32 x)) x then Int64.to_int32 x
-  else raise Overflow
-
-let to_unsigned width n =
-  if sign n >= 0 && numbits n <= width then low_int64 n else raise Overflow
-
-let to_int32_unsigned n = Int64.to_int32 (to_unsigned 32 n)
-let to_int64_unsigned n = to_unsigned 64 n
 
 (* Rounding to odd onto 55 bits leaves two bits below a double's 53 for the
    conversion to round to nearest once. *)

@@ -158,7 +158,7 @@ let programs_as_tinygrad row =
 
 let program_info u =
   match Ops.arg u with
-  | Program p -> Format.asprintf "%a" Ops.pp_program_info p
+  | Program _ as arg -> Format.asprintf "%a" Ops.pp_arg arg
   | _ -> invalid_arg "a program holds its program information"
 
 let launches_as_tinygrad row =
@@ -962,7 +962,6 @@ let other_values () =
       ("EMULATED_DTYPES", "long");
       ("HCQ_NUM_SDMA", "2");
       ("JITBEAM", "1");
-      ("SUM_DTYPE", "half");
     ]
   in
   List.map
@@ -1138,8 +1137,10 @@ let programs =
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in
           equal string
-            (Format.asprintf "%a" Ops.pp_program_info
-               (Call.program_info_of_sink ~target:clang_target (Ops.nth p 0)))
+            (Format.asprintf "%a" Ops.pp_arg
+               (Program
+                  (Call.program_info_of_sink ~target:clang_target
+                     (Ops.nth p 0))))
             (program_info p));
     ]
 

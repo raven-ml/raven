@@ -808,7 +808,7 @@ let held dt (v : Dtype.value) : Dtype.value =
   in
   let bits = 8 * Dtype.itemsize dt in
   let modulus = Bigint.shift_left Bigint.one bits in
-  let r = Bigint.erem n modulus in
+  let r = Bigint.(n - (modulus * fdiv n modulus)) in
   if
     Dtype.is_unsigned dt
     || Bigint.lt r (Bigint.shift_left Bigint.one (bits - 1))
@@ -893,7 +893,10 @@ let constants_of_ints =
 
 let stores_ints_as_their_type_holds_them (dt, cs) =
   let beyond_64_bits = function
-    | `Int n -> not (Bigint.fits_int64 n)
+    | `Int n -> (
+        match Bigint.to_int64 n with
+        | _ -> false
+        | exception Bigint.Overflow -> true)
     | `Float x -> Float.abs x >= 0x1p64
     | `Bool _ -> false
   in

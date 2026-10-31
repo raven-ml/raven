@@ -23,7 +23,14 @@ let named_cores =
 
 let any_core = Gen.of_list ~pp:Tc.pp (List.map snd named_cores)
 let core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
-let bit = Testable.make ~pp:Tc.pp_bit ~equal:Tc.equal_bit
+(* A bit as the cells write it: its dimension in lower case and its index. *)
+let bit_to_string = function
+  | Tc.M i -> Printf.sprintf "m%d" i
+  | Tc.N i -> Printf.sprintf "n%d" i
+  | Tc.K i -> Printf.sprintf "k%d" i
+
+let pp_bit ppf b = Format.pp_print_string ppf (bit_to_string b)
+let bit = Testable.make ~pp:pp_bit ~equal:Tc.equal_bit
 let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
 (* Cells: bits separated by spaces, [m0 k1]; a fragment as its lanes and its
@@ -49,14 +56,14 @@ let fragment_of_cell s =
   | _ -> invalid_arg s
 
 let bits_text bits =
-  String.concat " " (List.map (Format.asprintf "%a" Tc.pp_bit) bits)
+  String.concat " " (List.map bit_to_string bits)
 
 let fragment_text f = bits_text f.Tc.lanes ^ "/" ^ bits_text f.elements
 
 let relabel_text pairs =
   String.concat " "
     (List.map
-       (fun (c, y) -> Format.asprintf "%a>%a" Tc.pp_bit c Tc.pp_bit y)
+       (fun (c, y) -> bit_to_string c ^ ">" ^ bit_to_string y)
        pairs)
 
 let coords_text lanes =
@@ -84,9 +91,6 @@ let per_core column check =
 let bits =
   group "bits"
     [
-      cases "pp_bit writes the dimension in lower case and the index" ~id:fst
-        [ ("m0", Tc.M 0); ("n2", Tc.N 2); ("k6", Tc.K 6); ("m12", Tc.M 12) ]
-        (fun (text, b) -> equal string text (Format.asprintf "%a" Tc.pp_bit b));
       test "bits of different dimensions differ" (fun () ->
           not_equal bit (Tc.M 0) (Tc.N 0);
           not_equal bit (Tc.N 1) (Tc.K 1));
@@ -100,7 +104,7 @@ let bits =
          in
          Gen.with_pp
            (fun ppf (a, b) ->
-             Format.fprintf ppf "%a, %a" Tc.pp_bit a Tc.pp_bit b)
+             Format.fprintf ppf "%a, %a" pp_bit a pp_bit b)
            (Gen.pair one one))
         (Law.equivalence bit);
     ]
