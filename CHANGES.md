@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- A value staged into local memory under a thread index gets a row of the
+  buffer per thread, where the threads of a group shared one and overwrote each
+  other's elements (`Codegen.full_rewrite_to_sink`).
 - `Render.render_uir` writes a range's identity as words, `LOOP 1 2`, where it
   wrote `LOOP r1_2`.
 - An integer `Op.Pow` computes by wrapping products (`Transcendental.xpow_int`,

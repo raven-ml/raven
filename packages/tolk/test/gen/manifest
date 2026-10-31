@@ -470,6 +470,9 @@ codegen/codegen/sqrt_of_int_clang.golden
 codegen/codegen/sqrt_of_int_cuda.golden
 codegen/codegen/sqrt_of_int_hip.golden
 codegen/codegen/sqrt_of_int_metal.golden
+codegen/codegen/stage_in_thread_range_cuda.golden
+codegen/codegen/stage_in_thread_range_hip.golden
+codegen/codegen/stage_in_thread_range_metal.golden
 codegen/codegen/stage_then_reduce_cuda.golden
 codegen/codegen/stage_then_reduce_hip.golden
 codegen/codegen/stage_then_reduce_metal.golden

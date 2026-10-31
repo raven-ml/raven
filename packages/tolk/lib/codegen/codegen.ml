@@ -574,12 +574,6 @@ let fix_group_for_reduce x =
   match List.partition thread (srcs x) with
   | [], _ -> None
   | reduce_gfr, reduce_r ->
-      (* NOTE: if there's other locals here, we need them in the buffer too *)
-      let upstream_locals =
-        List.filter
-          (fun u -> List.mem (axis_type u) threads)
-          (Nodes.to_list (ranges x))
-      in
       (* do only the non grouped reduces early *)
       let ret = replace x ~src:(nth x 0 :: reduce_r) in
       let reduce_loop =
@@ -593,11 +587,7 @@ let fix_group_for_reduce x =
           reduce_gfr
       in
       let opts = { device = None; addrspace = Dtype.Local; keep = Removable } in
-      let buf =
-        index
-          (bufferize ~opts ret (upstream_locals @ reduce_gfr))
-          (upstream_locals @ reduce_loop)
-      in
+      let buf = index (bufferize ~opts ret reduce_gfr) reduce_loop in
       (* do the final reduce (if/barrier are added in gpudims step) *)
       (* NOTE: we remove all horizontal reduces here, they remain in the first reduce *)
       Some (reduce buf (fst (reduce_arg x)) reduce_loop)
@@ -790,16 +780,30 @@ let pm_add_loads =
           | _ -> None);
     ])
 
+(* A local buffer is shared by the threads of a group: each of the hardware
+   indices it is computed under, which its own indices leave out, gives it a
+   dimension of its own. *)
 let add_local_buffer slots x =
   let addrspace =
     match arg x with Bufferize o -> o.addrspace | _ -> assert false
   in
+  let locals =
+    if addrspace <> Dtype.Local then []
+    else
+      List.filter
+        (fun u -> List.mem (axis_type u) Axis_type.[ Warp; Local ])
+        (Nodes.to_list (ranges x))
+  in
+  let extent u = Int (Dtype.Value.to_int (vmax u) + 1) in
   let buf =
     alloc ~slot:(slots ()) ~addrspace
-      (List.map (fun n -> Int n) (max_shape x))
+      (List.map extent locals @ List.map (fun n -> Int n) (max_shape x))
       (dtype x)
   in
-  Some (after buf [ end_ (store (index buf (srcs x)) (nth x 0)) (srcs x) ])
+  let stored =
+    end_ (store (index buf (locals @ srcs x)) (nth x 0)) (srcs x)
+  in
+  Some (index (after buf [ stored ]) locals)
 
 let pm_add_local_buffers =
   pm

@@ -608,6 +608,13 @@ def stage_then_reduce(addrspace):
     return kernel
 
 
+def stage_in_thread_range(C, A):
+    # the stage is inside the thread range i, so every thread stages its own row
+    i, j, jj = UOp.range(4, 0, AxisType.LOCAL), UOp.range(8, 1, AxisType.LOOP), UOp.range(8, 2, AxisType.LOOP)
+    stage = (A[i, j] * 2).bufferize(j, arg=BufferizeOpts(None, AddrSpace.LOCAL))
+    return C[i].store(stage.index(jj).reduce(jj, arg=Ops.ADD)).end(i).sink(arg=KernelInfo(opts_to_apply=()))
+
+
 def reg_placeholder_then_reduce(C, A):
     i, j = UOp.range(4, 0), UOp.range(8, 1, AxisType.WEAK)
     reg = UOp.placeholder((1,), dtypes.float, 0, addrspace=AddrSpace.REG)
@@ -680,6 +687,7 @@ HAND = {
     "warp_reduce": lambda: custom(empty(4), empty(4, 8), fxn=thread_reduce(AxisType.WARP)),
     "stage_then_reduce": lambda: custom(empty(4), empty(4, 8), fxn=stage_then_reduce(AddrSpace.LOCAL)),
     "reg_stage_then_reduce": lambda: custom(empty(4), empty(4, 8), fxn=stage_then_reduce(AddrSpace.REG)),
+    "stage_in_thread_range": lambda: custom(empty(4), empty(4, 8), fxn=stage_in_thread_range),
     "reg_placeholder_then_reduce": lambda: custom(empty(4), empty(4, 8), fxn=reg_placeholder_then_reduce),
     "split_range_id_free_of_loop": lambda: custom(empty(4), empty(4), fxn=split_range_id_free_of_loop),
     # the padding of a padded axis divides, through an upcast
@@ -722,7 +730,7 @@ SETTINGS = {
 # The targets of a case, where it is not every target: kernels with thread axes
 # of their own need a target with threads.
 ON_GPUS = {"gated_threads", "group_reduce_split_range", "nested_group_reduce", "local_reduce", "warp_reduce",
-           "stage_then_reduce", "matmul_small", "elementwise_2d", "default_global_reversed", "two_grouped_stores_local",
+           "stage_then_reduce", "stage_in_thread_range", "matmul_small", "elementwise_2d", "default_global_reversed", "two_grouped_stores_local",
            "failure_beam_mnist", "shared_loop_barrier", "shared_backedge_barrier", "shared_backedge_two_buffers",
            "shared_backedge_barrier_kept", "explicit_local_slots", "anonymous_local", "shared_local_axis_loop"}
 
