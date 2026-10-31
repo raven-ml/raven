@@ -283,6 +283,12 @@ let of_weighted =
           else equal (float_rel ~rel:1e-9 ~abs:0.) (float_of_int n) ess);
       prop "a constant added to the log weights changes nothing" weighted_gen
         (fun (xs, lw) ->
+          (* On a grid of [2^-20] the sums with 300 are exact: a sum that
+             rounds moves a weight just above the tail's threshold by much
+             more than its rounding. *)
+          let lw =
+            Array.map (fun l -> Float.round (l *. 0x1p20) /. 0x1p20) lw
+          in
           let s = S.of_weighted Nx.Ptree.tensor (weighted (vec xs) (vec lw)) in
           let s' =
             S.of_weighted Nx.Ptree.tensor
