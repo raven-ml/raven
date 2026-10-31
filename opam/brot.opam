@@ -6,7 +6,7 @@ description:
   "Fast, HuggingFace-compatible tokenization for language models. BPE, WordPiece, Unigram, word-level, and character-level algorithms with composable pipelines and training from scratch."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
-license: "ISC"
+license: "ISC AND Unicode-3.0"
 tags: [
   "tokenization" "bpe" "wordpiece" "subword-tokenization" "language-models"
 ]

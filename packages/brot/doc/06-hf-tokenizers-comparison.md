@@ -475,7 +475,14 @@ Common normalizers:
 | `normalizers.BertNormalizer()`      | `Normalizer.bert ()`                       |
 | `normalizers.ByteLevel()`           | `Normalizer.byte_level`                    |
 | `normalizers.Nmt()`                 | `Normalizer.nmt`                           |
+| `normalizers.Precompiled(charsmap)` | `Normalizer.precompiled charsmap`          |
 | `normalizers.Sequence([...])`       | `Normalizer.sequence [...]`                |
+
+`precompiled` reads text by extended grapheme cluster. Brot cuts clusters with
+its own tables of Unicode 17.0.0, the version HuggingFace's unicode-segmentation
+implements, rather than with Uucp's, so the two agree on characters whose
+cluster properties changed since: U+05C8, unassigned in Unicode 17, is a
+cluster of its own after "½" for both.
 
 ### 9.2 Pre-tokenizer
 
@@ -525,13 +532,15 @@ assigned since as scriptless and joins it to the preceding piece, so the two
 split differently around recent additions such as "₿" (U+20BF).
 
 The same skew runs through the character classes. Brot reads them from Uucp,
-which carries Unicode 17.0.0, where HuggingFace's Rust dependencies ship older
-tables: `\p{L}` and `\p{N}`, which `byte_level` splits on, disagree on about
-4,600 and 13 code points respectively, and the punctuation class of `bert` and
-`punctuation` on 143. Nearly all of those are characters assigned since
-HuggingFace's tables were generated, which brot classifies as letters, numbers
-or punctuation and HuggingFace does not; two go the other way (U+166D and
-U+111C9 are punctuation to HuggingFace and not to Unicode 17).
+which carries Unicode 18.0.0 in brot's lock, where HuggingFace's Rust
+dependencies ship older tables. Measured when Uucp carried Unicode 17.0.0,
+`\p{L}` and `\p{N}`, which `byte_level` splits on, disagreed on about 4,600
+and 13 code points respectively, and the punctuation class of `bert` and
+`punctuation` on 143; Unicode 18.0.0 widens the gap by the characters it
+assigns. Nearly all of those are characters assigned since HuggingFace's tables
+were generated, which brot classifies as letters, numbers or punctuation and
+HuggingFace does not; two go the other way (U+166D and U+111C9 are punctuation
+to HuggingFace and not to Unicode 17.0.0).
 
 `split_regex` reads the pattern of a `Split` whose `pattern` is a `Regex`, which
 is how the tokenizer files of Llama 3, Qwen, DeepSeek-V3 and gpt-oss describe

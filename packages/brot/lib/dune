@@ -15,6 +15,8 @@
   chars
   decoder
   encoding
+  grapheme
+  grapheme_data
   ints
   kernel
   normalizer

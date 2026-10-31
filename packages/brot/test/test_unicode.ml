@@ -961,6 +961,43 @@ let test_identity_alignment () =
   raises (Invalid_argument "0,6 is not a span of the 5 normalized bytes")
     (fun () -> Normalizer.original_span a ~start:0 ~stop:6)
 
+(* The charsmap of test/gen/gen_precompiled.py: a few of T5's rules, compiled by
+   SentencePiece, and the rules themselves. *)
+let charsmap_document =
+  lazy
+    (match
+       Jsont_bytesrw.decode_string Jsont.json
+         (Fixture.read "support/precompiled/charsmap.json")
+     with
+    | Ok json -> json
+    | Error msg -> failf "cannot read the charsmap: %s" msg)
+
+let member name = function
+  | Jsont.Object (members, _) -> (
+      match Jsont.Json.find_mem name members with
+      | Some (_, value) -> value
+      | None -> failf "no %S member" name)
+  | _ -> failf "looking for %S in something that is not an object" name
+
+let charsmap_json () = member "normalizer" (Lazy.force charsmap_document)
+
+let charsmap_rules () =
+  match member "rules" (Lazy.force charsmap_document) with
+  | Jsont.Array (rules, _) ->
+      List.map
+        (function
+          | Jsont.Array ([ Jsont.String (s, _); Jsont.String (r, _) ], _) ->
+              (s, r)
+          | _ -> failf "a rule is not a pair of strings")
+        rules
+  | _ -> failf "the rules are not an array"
+
+let precompiled =
+  lazy
+    (match Normalizer.of_json (charsmap_json ()) with
+    | Ok n -> n
+    | Error msg -> failf "cannot load the charsmap: %s" msg)
+
 let alignment_corpus =
   [
     "";
@@ -994,6 +1031,7 @@ let alignment_normalizers =
     ("prepend", Normalizer.prepend "\xE2\x96\x81");
     ("byte_level", Normalizer.byte_level);
     ("nmt", Normalizer.nmt);
+    ("precompiled", Lazy.force precompiled);
     ("bert", Normalizer.bert ());
     ("bert nolower", Normalizer.bert ~lowercase:false ());
     ("bert noclean", Normalizer.bert ~clean_text:false ());
@@ -1059,6 +1097,375 @@ let test_alignment_is_monotonic () =
           done)
         alignment_corpus)
     alignment_normalizers
+
+(* SentencePiece charsmaps *)
+
+(* Expectations from HuggingFace's tokenizers (test/gen/hf_alignments.py). A
+   cluster under six bytes becomes the replacement of the shortest source it
+   starts with, so [e\u{302}\u{300}] becomes [ê] although a rule composes the
+   whole of it; longer clusters go character by character. A character removed
+   before anything is written leaves the next ones shifted onto it. *)
+let test_align_precompiled () =
+  let case = aligned (Lazy.force precompiled) "precompiled" in
+  case "" "" "";
+  case "abc" "abc" "0,1 1,2 2,3";
+  case "\xEF\xBC\xA1\xEF\xBD\x85\xEF\xBC\x91\xEF\xBC\x81" "Ae1!"
+    "0,3 3,6 6,9 9,12";
+  case "\xEF\xAC\x81x \xEF\xAC\x83 \xC7\x84" "fix ffi D\xC5\xBD"
+    "0,3 0,3 3,4 4,5 5,8 5,8 5,8 8,9 9,11 9,11";
+  case "\xE2\x84\xA2 \xC2\xBD \xE2\x80\xA6" "TM 1\xE2\x81\x842 ..."
+    "0,3 0,3 3,4 4,6 4,6 4,6 6,7 7,10 7,10 7,10";
+  case "\x01ab" "ab" "0,1 1,2";
+  case "a\x01b" "ab" "0,1 2,3";
+  case "ab\x01" "ab" "0,1 1,2";
+  case "a\x01\x1F" "a" "0,1";
+  case "\xE2\x84\xA2\x01g" "TMg" "0,3 3,4 4,5";
+  case "e\xCC\x81" "\xC3\xA9" "0,1";
+  case "e\xCC\x81\xCC\x81" "\xC3\xA9" "0,1";
+  case "e\xCC\x82\xCC\x80" "\xC3\xAA" "0,1";
+  case "\xEF\xBD\x85\xCC\x81" "e" "0,3";
+  case "\xEF\xBD\x85\xCC\x81\xCC\x81" "e\xCC\x81\xCC\x81" "0,3 3,5 5,7";
+  case "\xEF\xBD\xB6\xEF\xBE\x9E" "\xE3\x82\xAB\xE3\x82\x99" "0,3 3,6";
+  case "C\xCC\xA7a" "\xC3\x87a" "0,1 3,4";
+  case "\xE1\x84\x80\xE1\x85\xA1" "\xE1\x84\x80\xE1\x85\xA1" "0,3 3,6";
+  case "a\x0D\nb" "a b" "0,1 1,2 3,4";
+  case "\x0D\x0D\n" "  " "0,1 1,2";
+  case "a\tb\n" "a b " "0,1 1,2 2,3 3,4";
+  case "x\xE3\x80\x80\xE2\x80\x8By" "x  y" "0,1 1,4 4,7 7,8";
+  case "\xEF\xBF\xBD" " " "0,3";
+  case "\xF0\x9F\x98\x80\xE2\x84\xA2" "\xF0\x9F\x98\x80TM" "0,4 4,7 4,7";
+  (* A spacing mark (GB9a) and a prepend (GB9b) belong to the cluster; a
+     regional indicator pair is one of eight bytes; U+05C8, unassigned in
+     Unicode 17, is not a mark. *)
+  case "\xC2\xBD\xE0\xA4\x83" "1\xE2\x81\x842" "0,2 2,5 2,5";
+  case "\xD8\x80\xC2\xBD" "#" "0,2";
+  case "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7\xC2\xBD"
+    "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB71\xE2\x81\x842" "0,4 4,8 8,10 8,10 8,10";
+  case "\xC2\xBD\xD7\x88" "1\xE2\x81\x842\xD7\x88" "0,2 0,2 0,2 2,4"
+
+(* A byte that does not start a valid character becomes U+FFFD, one per byte,
+   and is not looked up: the rule for U+FFFD itself does not apply to it. The
+   expectations are SentencePiece's. *)
+let test_precompiled_malformed () =
+  let n = Lazy.force precompiled in
+  let case text expected =
+    equal ~msg:(Printf.sprintf "%S" text) string expected
+      (Normalizer.apply n text)
+  in
+  let r = "\xEF\xBF\xBD" in
+  case "a\xFFb" ("a" ^ r ^ "b");
+  case "\xC3" r;
+  case "\xE2\x82" (r ^ r);
+  case "\xC0\xAF" (r ^ r);
+  case "\xED\xA0\x80" (r ^ r ^ r);
+  case "\xF4\x90\x80\x80" (r ^ r ^ r ^ r);
+  case "\xFF\xEF\xBC\xA1" (r ^ "A");
+  case "\x80\xE2\x84\xA2" (r ^ "TM");
+  case "e\x80\xCC\x81" ("e" ^ r ^ "\xCC\x81");
+  (* Each U+FFFD stands for its own byte, though a lead byte and the
+     continuation bytes after it read as one character elsewhere. *)
+  aligned n "precompiled" "a\xFF\xEF\xBC\xA1" ("a" ^ r ^ "A") "0,1 1,2 2,5";
+  aligned n "precompiled" "e\x80\xCC\x81" ("e" ^ r ^ "\xCC\x81") "0,1 1,2 2,4";
+  aligned n "precompiled" "\xFF\x80" (r ^ r) "0,1 1,2";
+  aligned n "precompiled" "a\xE2\x82b" ("a" ^ r ^ r ^ "b") "0,1 1,2 2,3 3,4"
+
+(* Grapheme clusters through Unicode's conformance test for UAX #29 at Unicode
+   17.0.0 (support/unicode/GraphemeBreakTest-17.0.0.txt). The charsmap of
+   support/precompiled/graphemes.json names every code point of the test but
+   NUL, U+0308 as [<0308>], so a cluster under six bytes comes out as its first
+   character's name and a longer one as the names of all its characters. A
+   test line is [÷ 0020 × 0308 ÷ ...  # comment]: code points in hex, [÷]
+   where a boundary falls and [×] where none does. *)
+let test_precompiled_clusters () =
+  let n =
+    match
+      Jsont_bytesrw.decode_string Jsont.json
+        (Fixture.read "support/precompiled/graphemes.json")
+    with
+    | Error msg -> failf "cannot read the charsmap: %s" msg
+    | Ok json -> (
+        match Normalizer.of_json json with
+        | Ok n -> n
+        | Error msg -> failf "cannot load the charsmap: %s" msg)
+  in
+  let utf8 cp =
+    let b = Buffer.create 4 in
+    Buffer.add_utf_8_uchar b (Uchar.of_int cp);
+    Buffer.contents b
+  in
+  let name cp = if cp = 0 then "\x00" else Printf.sprintf "<%04X>" cp in
+  (* The clusters of a line, each a list of code points. *)
+  let clusters line =
+    let fields =
+      String.split_on_char ' ' (List.hd (String.split_on_char '#' line))
+      |> List.map String.trim
+      |> List.filter (fun f -> f <> "")
+    in
+    let rec go current acc = function
+      | [] -> List.rev acc
+      | "\xC3\xB7" :: rest ->
+          go [] (if current = [] then acc else List.rev current :: acc) rest
+      | "\xC3\x97" :: rest -> go current acc rest
+      | cp :: rest -> go (int_of_string ("0x" ^ cp) :: current) acc rest
+    in
+    go [] [] fields
+  in
+  let expected cluster =
+    let bytes = String.concat "" (List.map utf8 cluster) in
+    match cluster with
+    | first :: _ when first <> 0 && String.length bytes < 6 -> name first
+    | _ -> String.concat "" (List.map name cluster)
+  in
+  let lines =
+    Fixture.read "support/unicode/GraphemeBreakTest-17.0.0.txt"
+    |> String.split_on_char '\n'
+    |> List.filter (fun l -> String.length l > 0 && l.[0] <> '#')
+  in
+  equal ~msg:"test lines" int 766 (List.length lines);
+  List.iter
+    (fun line ->
+      let cs = clusters line in
+      let text = String.concat "" (List.map utf8 (List.concat cs)) in
+      equal ~msg:line string
+        (String.concat "" (List.map expected cs))
+        (Normalizer.apply n text))
+    lines
+
+(* A charsmap of one rule, [a] to [b], laid out by hand: unit 0 with children
+   at offset 1, the unit for byte [a] (label 0x61, a leaf below, children at
+   offset 2), and its leaf, of value 0. [blob] lays out any units in one block
+   of 256. *)
+let u32 n =
+  let b = Bytes.create 4 in
+  Bytes.set_int32_le b 0 (Int32.of_int n);
+  Bytes.to_string b
+
+let blob ?(size = 1024) units replacements =
+  let trie =
+    String.concat ""
+      (List.init 256 (fun i ->
+           u32 (match List.assoc_opt i units with Some u -> u | None -> 0)))
+  in
+  u32 size ^ trie ^ replacements
+
+let offset o = o lsl 10
+let root = (0, offset 1)
+let unit_a = (1 lxor 0x61, 0x61 lor 0x100 lor offset 2)
+let leaf v = ((1 lxor 0x61) lxor 2, 0x8000_0000 lor v)
+let a_to_b = blob [ root; unit_a; leaf 0 ] "b\x00"
+
+(* A tokenizer file stores the charsmap in base64, and writing the normalizer
+   back gives the same text. *)
+let test_precompiled_json () =
+  let charsmap json =
+    match member "precompiled_charsmap" json with
+    | Jsont.String (s, _) -> s
+    | _ -> failf "the charsmap is not a string"
+  in
+  equal ~msg:"charsmap written back" string
+    (charsmap (charsmap_json ()))
+    (charsmap (Normalizer.to_json (Lazy.force precompiled)));
+  let load fields =
+    Result.map ignore
+      (Normalizer.of_json
+         (Jsont.Json.object'
+            (List.map
+               (fun (k, v) -> (Jsont.Json.name k, Jsont.Json.string v))
+               (("type", "Precompiled") :: fields))))
+  in
+  let rejected label fields reason =
+    equal ~msg:label (result unit string) (Error reason) (load fields)
+  in
+  rejected "no charsmap" [] "missing precompiled_charsmap";
+  rejected "not base64"
+    [ ("precompiled_charsmap", "AAA*") ]
+    "precompiled_charsmap is not base64";
+  rejected "bits after the last byte"
+    [ ("precompiled_charsmap", "AB==") ]
+    "precompiled_charsmap is not base64";
+  rejected "bits after the last byte, unpadded"
+    [ ("precompiled_charsmap", "AB") ]
+    "precompiled_charsmap is not base64";
+  (* The padding of the last group may be complete, partial or absent, as
+     HuggingFace's tokenizers reads it, but no more than the group needs. *)
+  let padded =
+    charsmap (Normalizer.to_json (Normalizer.precompiled a_to_b))
+  in
+  let bare = String.sub padded 0 (String.index padded '=') in
+  let reads label b64 =
+    match
+      Normalizer.of_json
+        (Jsont.Json.object'
+           [
+             (Jsont.Json.name "type", Jsont.Json.string "Precompiled");
+             (Jsont.Json.name "precompiled_charsmap", Jsont.Json.string b64);
+           ])
+    with
+    | Ok n -> equal ~msg:label string "bbc" (Normalizer.apply n "abc")
+    | Error msg -> failf "%s: %s" label msg
+  in
+  reads "padded" padded;
+  reads "unpadded" bare;
+  reads "partly padded" (bare ^ "=");
+  rejected "padded past the group"
+    [ ("precompiled_charsmap", bare ^ "===") ]
+    "precompiled_charsmap is not base64";
+  rejected "padding after a whole group"
+    [ ("precompiled_charsmap", "AAAA=") ]
+    "precompiled_charsmap is not base64";
+  rejected "a lone character"
+    [ ("precompiled_charsmap", "AAAAA") ]
+    "precompiled_charsmap is not base64";
+  rejected "padding inside"
+    [ ("precompiled_charsmap", "AA==AAAA") ]
+    "precompiled_charsmap is not base64";
+  rejected "empty"
+    [ ("precompiled_charsmap", "") ]
+    "invalid precompiled_charsmap: the charsmap is truncated"
+
+(* The checks SentencePiece makes before it reads a charsmap: a trie of whole
+   blocks of 256 units that ends before the replacements, which are UTF-8, and
+   whose every child and value is in range. *)
+let test_precompiled_rejected () =
+  let rejected label charsmap reason =
+    raises ~msg:label
+      (Invalid_argument ("invalid precompiled charsmap: " ^ reason))
+      (fun () -> ignore (Normalizer.precompiled charsmap))
+  in
+  let a = unit_a in
+  let valid = a_to_b in
+  equal ~msg:"a minimal charsmap" string "bbc"
+    (Normalizer.apply (Normalizer.precompiled valid) "abc");
+  rejected "too short" "\x00\x04" "the charsmap is truncated";
+  rejected "no replacements" (blob [ root; a; leaf 0 ] "")
+    "the trie overruns the charsmap";
+  rejected "a part of a block"
+    (blob ~size:1020 [ root; a; leaf 0 ] "b\x00")
+    "the trie size is not a multiple of 1024";
+  rejected "replacements not UTF-8"
+    (blob [ root; a; leaf 0 ] "\xFF\x00")
+    "the replacements are not valid UTF-8";
+  rejected "root without children" (blob [] "b\x00") "the trie is malformed";
+  rejected "value past the replacements"
+    (blob [ root; a; leaf 2 ] "b\x00")
+    "the trie is malformed";
+  rejected "value inside a character"
+    (blob [ root; a; leaf 1 ] "\xC3\xA9\x00")
+    "the trie is malformed";
+  rejected "children past the trie"
+    (blob [ root; (1 lxor 0x61, 0x61 lor offset 300) ] "b\x00")
+    "the trie is malformed"
+
+(* The reference reads the rules themselves rather than the trie compiled from
+   them. Its alphabet holds characters of four kinds only, whose clusters are
+   simple: CR LF, a control alone, or any other character and the extends after
+   it. *)
+let precompiled_alphabet =
+  [
+    "a"; "e"; "C"; "x"; " "; "\xEF\xBD\x85"; "\xEF\xBD\xB6"; "\xEF\xBC\xA1";
+    "\xEF\xAC\x81"; "\xE2\x84\xA2"; "\xC2\xBD"; "\xEF\xBF\xBD"; "\xCC\x81";
+    "\xCC\x80"; "\xCC\x82"; "\xCC\xA7"; "\xEF\xBE\x9E"; "\x01"; "\t"; "\r";
+    "\n"; "\r\n"; "\xE2\x80\x8B"; "\xFF"; "\x80"; "\xC3";
+  ]
+[@@ocamlformat "disable"]
+
+let extends = [ 0x300; 0x301; 0x302; 0x327; 0xFF9E ]
+let controls = [ 0x01; 0x09; 0x0A; 0x0D; 0x200B ]
+
+(* The characters of [s]: [Some code] and its bytes, or [None] for a byte that
+   does not start one. *)
+let characters s =
+  let rec go i acc =
+    if i >= String.length s then List.rev acc
+    else
+      let d = String.get_utf_8_uchar s i in
+      if Uchar.utf_decode_is_valid d then
+        let n = Uchar.utf_decode_length d in
+        go (i + n)
+          ((Some (Uchar.to_int (Uchar.utf_decode_uchar d)), String.sub s i n)
+          :: acc)
+      else go (i + 1) ((None, String.sub s i 1) :: acc)
+  in
+  go 0 []
+
+let clusters s =
+  let joins prev cur =
+    match (prev, cur) with
+    | Some 0x0D, Some 0x0A -> true
+    | (None, _) | (_, None) -> false
+    | Some p, Some c -> List.mem c extends && not (List.mem p controls)
+  in
+  let rec go prev current acc = function
+    | [] -> List.rev (List.rev current :: acc)
+    | ((code, _) as c) :: rest ->
+        if current <> [] && joins prev code then go code (c :: current) acc rest
+        else
+          go code [ c ]
+            (if current = [] then acc else List.rev current :: acc)
+            rest
+  in
+  if s = "" then [] else go None [] [] (characters s)
+
+let reference rules s =
+  let starts chunk (source, _) = String.starts_with ~prefix:source chunk in
+  let shortest chunk =
+    List.fold_left
+      (fun best ((source, _) as rule) ->
+        if not (starts chunk rule) then best
+        else
+          match best with
+          | Some (s, _) when String.length s <= String.length source -> best
+          | _ -> Some rule)
+      None rules
+  in
+  let character (code, bytes) =
+    if code = None then "\xEF\xBF\xBD"
+    else match shortest bytes with Some (_, r) -> r | None -> bytes
+  in
+  let cluster chars =
+    let bytes = String.concat "" (List.map snd chars) in
+    match (String.length bytes < 6, shortest bytes) with
+    | true, Some (_, r) when List.for_all (fun (c, _) -> c <> None) chars -> r
+    | _ -> String.concat "" (List.map character chars)
+  in
+  String.concat "" (List.map cluster (clusters s))
+
+let precompiled_props =
+  [
+    prop ~count:1000 "precompiled: the trie is its rules"
+      (Gen.map (String.concat "")
+         (Gen.list ~size:(Gen.int_range 0 12)
+            (Gen.of_list precompiled_alphabet)))
+      (fun text ->
+        let rules = charsmap_rules () in
+        let n = Lazy.force precompiled in
+        let groups = clusters text in
+        let text_of chars = String.concat "" (List.map snd chars) in
+        let bytes chars = String.length (text_of chars) in
+        cover "a cluster cut short"
+          (List.exists
+             (fun chars ->
+               List.length chars > 1 && bytes chars < 6
+               && List.exists
+                    (fun (s, _) ->
+                      String.length s < bytes chars
+                      && String.starts_with ~prefix:s (text_of chars))
+                    rules)
+             groups);
+        cover "a cluster of six bytes or more"
+          (List.exists (fun chars -> bytes chars >= 6) groups);
+        cover "CR LF"
+          (List.exists
+             (fun chars -> List.map fst chars = [ Some 0x0D; Some 0x0A ])
+             groups);
+        cover "a malformed byte"
+          (List.exists (fun chars -> List.mem_assoc None chars) groups);
+        equal ~msg:(Printf.sprintf "%S" text) string (reference rules text)
+          (Normalizer.apply n text);
+        equal ~msg:(Printf.sprintf "%S aligned" text) string
+          (Normalizer.apply n text)
+          (fst (Normalizer.apply_aligned n text)));
+  ]
 
 (* Integration with Tokenizer *)
 
@@ -1136,6 +1543,14 @@ let unicode_tests =
     test "identity alignment" test_identity_alignment;
     test "aligned matches apply" test_aligned_matches_apply;
     test "alignment is monotonic" test_alignment_is_monotonic;
+    test "precompiled alignment" test_align_precompiled;
+    test "precompiled malformed" test_precompiled_malformed;
+    test "precompiled clusters" test_precompiled_clusters;
+    test "precompiled json" test_precompiled_json;
+    test "precompiled rejected" test_precompiled_rejected;
+  ]
+  @ precompiled_props
+  @ [
     (* Integration *)
     test "tokenize with normalization" test_tokenize_with_normalization;
     test "tokenize unicode words" test_tokenize_unicode_words;

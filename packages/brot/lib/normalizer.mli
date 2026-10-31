@@ -99,6 +99,30 @@ val nmt : t
     carriage return, [U+1680], [U+200B-U+200F], [U+2028], [U+2029], [U+2581],
     [U+FEFF] and [U+FFFD]. *)
 
+val precompiled : string -> t
+(** [precompiled charsmap] is the normalizer of a SentencePiece model, as T5,
+    ALBERT and XLNet ship it. [charsmap] is the model's [precompiled_charsmap],
+    as bytes: rules, each replacing a source string by another, compiled into a
+    darts-clone double-array trie. Tokenizer files store it in base64, which
+    {!of_json} decodes.
+
+    The text is read one extended grapheme cluster at a time, as UAX #29 defines
+    them at Unicode 17.0.0. A cluster of fewer than 6 bytes that starts with a
+    rule's source becomes the replacement of the shortest such source, and the
+    rest of the cluster is dropped. In any other cluster each character that is
+    a rule's source becomes its replacement and the others are kept. A byte that
+    does not start a valid UTF-8 character becomes [U+FFFD].
+
+    In the alignment, a replacement stands for its source character by
+    character, and the characters of a longer one past the source's length take
+    the span of the source's last character. The rest of the source of a shorter
+    one, like a removed character, belongs to no span. Characters removed before
+    anything was written shift the spans of all that follows back by as many
+    characters, and a removal right after a longer replacement gives its last
+    character the span of the first character removed.
+
+    Raises [Invalid_argument] if [charsmap] is not a well-formed charsmap. *)
+
 val bert :
   ?clean_text:bool ->
   ?handle_chinese_chars:bool ->

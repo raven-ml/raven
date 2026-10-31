@@ -12,9 +12,23 @@ let err_replace_missing_pattern = "missing pattern"
 let err_replace_missing_content = "missing content"
 let err_prepend_missing = "missing prepend field"
 let err_sequence_missing = "missing normalizers"
+let err_charsmap_missing = "missing precompiled_charsmap"
+let err_charsmap_base64 = "precompiled_charsmap is not base64"
 let strf = Printf.sprintf
 
 (* Type *)
+
+(* A SentencePiece [precompiled_charsmap]: a little-endian [u32], the size in
+   bytes of a darts-clone double-array trie that follows it as little-endian
+   [u32] units, then the replacements, each ended by a NUL. The trie maps the
+   bytes of a rule's source to the offset of its replacement. [ascii.(b)] is the
+   replacement offset of the source made of the one byte [b], or [-1]. *)
+type charsmap = {
+  blob : string;
+  units : int;
+  replacements : string;
+  ascii : int array;
+}
 
 type t =
   | Bert of {
@@ -34,6 +48,7 @@ type t =
   | Prepend of string
   | Byte_level
   | Nmt
+  | Precompiled of charsmap
   | Sequence of t list
 
 and pattern =
@@ -1186,6 +1201,334 @@ let nmt_text s o =
   done;
   text o
 
+(* SentencePiece charsmaps *)
+
+(* The format is SentencePiece's (src/normalizer.cc, EncodePrecompiledCharsMap)
+   around darts-clone's double array (third_party/darts_clone/darts.h). A unit
+   is a 32-bit word: bit 31 marks a leaf, whose low 31 bits are a value; any
+   other unit has its label in the low byte, bit 8 set when a leaf hangs off it,
+   and an offset to its children in bits 10 to 31, shifted left by 8 more when
+   bit 9 is set. From unit [id], the child labelled [c] is at [id lxor offset
+   lxor c] and the leaf at [id lxor offset]. *)
+
+let[@inline] unit_at m id =
+  Int32.to_int (String.get_int32_le m.blob (4 + (id lsl 2))) land 0xFFFF_FFFF
+
+let[@inline] unit_has_leaf u = (u lsr 8) land 1 = 1
+let[@inline] unit_value u = u land 0x7FFF_FFFF
+let[@inline] unit_label u = u land 0x8000_00FF
+let[@inline] unit_offset u = (u lsr 10) lsl ((u land 0x200) lsr 6)
+
+(* The replacement of the shortest source that bytes [start] to [stop - 1] of
+   [s] start with, as an offset into the replacements, or [-1]. A NUL byte ends
+   the search, as no source holds one. Every index the walk reaches is in the
+   trie: the charsmap was validated. *)
+let shortest m s start stop =
+  let rec walk id i =
+    if i = stop then -1
+    else
+      let c = Char.code (String.unsafe_get s i) in
+      if c = 0 then -1
+      else
+        let id = id lxor c in
+        let u = unit_at m id in
+        if unit_label u <> c then -1
+        else
+          let id = id lxor unit_offset u in
+          if unit_has_leaf u then unit_value (unit_at m id) else walk id (i + 1)
+  in
+  walk (unit_offset (unit_at m 0)) start
+
+let replacement_stop m v =
+  match String.index_from_opt m.replacements v '\000' with
+  | Some e -> e
+  | None -> String.length m.replacements
+
+let utf8_chars s start stop =
+  let n = ref 0 in
+  for i = start to stop - 1 do
+    if not (is_continuation s i) then incr n
+  done;
+  !n
+
+(* A byte that does not start a valid character is read as a character of one
+   byte, [malformed], which becomes U+FFFD. SentencePiece reads it so, where
+   [String.get_utf_8_uchar] would take the maximal invalid subpart. [decode]
+   returns the code point and the length as [utf8_next] does. *)
+let malformed = 0x110000
+let replacement_char = "\xEF\xBF\xBD"
+
+let[@inline] decode s i =
+  let d = String.get_utf_8_uchar s i in
+  if Uchar.utf_decode_is_valid d then
+    (Uchar.to_int (Uchar.utf_decode_uchar d) lsl 3)
+    lor Uchar.utf_decode_length d
+  else (malformed lsl 3) lor 1
+
+let utf8_valid s =
+  let len = String.length s in
+  let rec go i =
+    i >= len
+    ||
+    let d = String.get_utf_8_uchar s i in
+    Uchar.utf_decode_is_valid d && go (i + Uchar.utf_decode_length d)
+  in
+  go 0
+
+(* Offsets follow the edit script HuggingFace's tokenizers builds for a
+   charsmap, so that tokens report the same spans: one entry per output
+   character, [0] for a character standing for the next input character, [1]
+   for one inserted after the last, [-n] for one standing for the next input
+   character and the [n] after it. Replacing [k] characters by [r] marks the
+   last [r - k] of them inserted when [r > k], and when [r < k] folds the
+   characters dropped into the last entry written, whichever replacement that
+   came from; with nothing written yet, they stand for nothing and the
+   characters after them shift onto them. *)
+type script = { mutable edits : int array; mutable count : int }
+
+let push_edit sc e =
+  if sc.count = Array.length sc.edits then begin
+    let a = Array.make (2 * sc.count) 0 in
+    Array.blit sc.edits 0 a 0 sc.count;
+    sc.edits <- a
+  end;
+  Array.unsafe_set sc.edits sc.count e;
+  sc.count <- sc.count + 1
+
+let edit_replace sc ~removed ~added =
+  for _ = 1 to added do
+    push_edit sc 0
+  done;
+  let diff = added - removed in
+  if diff > 0 then
+    for k = sc.count - diff to sc.count - 1 do
+      sc.edits.(k) <- 1
+    done
+  else if diff < 0 && sc.count > 0 then
+    sc.edits.(sc.count - 1) <- sc.edits.(sc.count - 1) + diff
+
+(* The spans of [normalized], the text [s] became, from its edit script. A
+   character stands for the range of the input character it is aligned with. In
+   text not normalized before, that is the character's bytes as [decode] reads
+   them, a malformed byte alone, where the identity would join a byte to any
+   continuation bytes after it. *)
+let replay s base normalized sc =
+  let len = String.length s in
+  let spans = spans_create (String.length normalized) in
+  let char_range i =
+    if i < 0 then 0
+    else
+      match base with
+      | Identity _ -> pack i (i + (decode s i land 7))
+      | _ -> range base i
+  in
+  (* [consumed] is the next input byte to read, [last] where the last input
+     character read starts. *)
+  let consumed = ref 0 and last = ref (-1) and p = ref 0 in
+  let consume () =
+    if !consumed < len then begin
+      last := !consumed;
+      consumed := !consumed + (decode s !consumed land 7)
+    end
+  in
+  for k = 0 to sc.count - 1 do
+    let e = sc.edits.(k) in
+    let r =
+      if e > 0 then char_range !last else char_range (min !consumed (len - 1))
+    in
+    if e <= 0 then
+      for _ = 0 to -e do
+        consume ()
+      done;
+    let n = Uchar.utf_decode_length (String.get_utf_8_uchar normalized !p) in
+    for q = !p to !p + n - 1 do
+      span_set spans q r
+    done;
+    p := !p + n
+  done;
+  spans
+
+(* Text is read one extended grapheme cluster at a time, as {!Grapheme} cuts
+   it: UAX #29 at Unicode 17, as HuggingFace's tokenizers has it through
+   unicode-segmentation. A cluster under six bytes that starts with a source
+   becomes the replacement of the shortest one, whatever follows it in the
+   cluster; any other cluster is read one character at a time. This is
+   HuggingFace's reading (tokenizers, normalizers/precompiled.rs), which brot
+   matches; SentencePiece's own takes the longest source over the bytes, with
+   no clusters. An ASCII byte followed by another, CR before LF aside, is a
+   cluster of its own, and goes through [ascii]. *)
+let charsmap_text m s o sc =
+  let len = String.length s in
+  let modified = ref false in
+  let edit ~removed ~added =
+    match sc with Some sc -> edit_replace sc ~removed ~added | None -> ()
+  in
+  let keep () = match sc with Some sc -> push_edit sc 0 | None -> () in
+  let emit src v ~removed =
+    let e = replacement_stop m v in
+    add_sub o src m.replacements v (e - v);
+    (match sc with
+    | Some sc -> edit_replace sc ~removed ~added:(utf8_chars m.replacements v e)
+    | None -> ());
+    modified := true
+  in
+  let i = ref 0 in
+  while !i < len do
+    let b = Char.code (String.unsafe_get s !i) in
+    let alone =
+      b < 0x80
+      && (!i + 1 = len
+         ||
+         let c = Char.code (String.unsafe_get s (!i + 1)) in
+         c < 0x80 && not (b = 0x0D && c = 0x0A))
+    in
+    if alone then begin
+      let v = Array.unsafe_get m.ascii b in
+      if v < 0 then begin
+        add_char o !i (Char.unsafe_chr b);
+        keep ()
+      end
+      else emit !i v ~removed:1;
+      incr i
+    end
+    else if decode s !i lsr 3 = malformed then begin
+      add_string o !i replacement_char;
+      edit ~removed:1 ~added:1;
+      modified := true;
+      incr i
+    end
+    else begin
+      let stop = Grapheme.stop s !i in
+      let v = if stop - !i < 6 then shortest m s !i stop else -1 in
+      if v >= 0 then emit !i v ~removed:(utf8_chars s !i stop)
+      else begin
+        let j = ref !i in
+        while !j < stop do
+          let n = decode s !j land 7 in
+          let v = shortest m s !j (!j + n) in
+          if v >= 0 then emit !j v ~removed:1
+          else begin
+            add_sub o !j s !j n;
+            keep ()
+          end;
+          j := !j + n
+        done
+      end;
+      i := stop
+    end
+  done;
+  if !modified then text o else s
+
+let valid_trie m =
+  let size = m.units in
+  let u0 = unit_at m 0 in
+  let leaf_ok u =
+    let v = unit_value u in
+    v < String.length m.replacements && not (is_continuation m.replacements v)
+  in
+  let rec units_ok i =
+    i >= size
+    ||
+    let u = unit_at m i in
+    (if unit_label u <= 0xFF then
+       let child = i lxor unit_offset u in
+       child lor 0xFF < size
+       && ((not (unit_has_leaf u)) || unit_label (unit_at m child) > 0xFF)
+     else leaf_ok u)
+    && units_ok (i + 1)
+  in
+  unit_label u0 = 0
+  && (not (unit_has_leaf u0))
+  && unit_offset u0 <> 0
+  && unit_offset u0 lor 0xFF < size
+  && units_ok 1
+
+(* SentencePiece's checks of a charsmap (Normalizer::Init and darts-clone's
+   validate), and the replacements being UTF-8, which HuggingFace's tokenizers
+   requires. Every index a search can reach is then in range. *)
+let charsmap_of_blob blob =
+  let len = String.length blob in
+  let size =
+    if len <= 4 then -1
+    else Int32.to_int (String.get_int32_le blob 0) land 0xFFFF_FFFF
+  in
+  if size < 0 then Error "the charsmap is truncated"
+  else if size >= len - 4 then Error "the trie overruns the charsmap"
+  else if size < 1024 || size land 0x3FF <> 0 then
+    Error "the trie size is not a multiple of 1024"
+  else
+    let replacements = String.sub blob (4 + size) (len - 4 - size) in
+    let m = { blob; units = size lsr 2; replacements; ascii = [||] } in
+    if not (utf8_valid replacements) then
+      Error "the replacements are not valid UTF-8"
+    else if not (valid_trie m) then Error "the trie is malformed"
+    else
+      let ascii =
+        Array.init 128 (fun b -> shortest m (String.make 1 (Char.chr b)) 0 1)
+      in
+      Ok { m with ascii }
+
+(* Base64, the standard alphabet, as tokenizer files store a charsmap
+   (RFC 4648, section 4). Decoding reads what HuggingFace's tokenizers reads:
+   the padding of the last group may be complete, partial or absent, but no
+   more than it needs, and the bits left over in its last character must be
+   zero. *)
+
+let base64_alphabet =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+let base64_encode s =
+  let len = String.length s in
+  let out = Bytes.make ((len + 2) / 3 * 4) '=' in
+  let digit k v = Bytes.set out k base64_alphabet.[v land 63] in
+  for g = 0 to ((len + 2) / 3) - 1 do
+    let i = 3 * g in
+    let byte k = if i + k < len then Char.code s.[i + k] else 0 in
+    let w = (byte 0 lsl 16) lor (byte 1 lsl 8) lor byte 2 in
+    digit (4 * g) (w lsr 18);
+    digit ((4 * g) + 1) (w lsr 12);
+    if i + 1 < len then digit ((4 * g) + 2) (w lsr 6);
+    if i + 2 < len then digit ((4 * g) + 3) w
+  done;
+  Bytes.unsafe_to_string out
+
+let base64_digit = function
+  | 'A' .. 'Z' as c -> Char.code c - 65
+  | 'a' .. 'z' as c -> Char.code c - 71
+  | '0' .. '9' as c -> Char.code c + 4
+  | '+' -> 62
+  | '/' -> 63
+  | _ -> -1
+
+let base64_decode s =
+  let len = String.length s in
+  let data = ref len in
+  while !data > 0 && s.[!data - 1] = '=' do
+    decr data
+  done;
+  let data = !data in
+  let rest = data land 3 in
+  if rest = 1 || len - data > (4 - rest) land 3 then None
+  else
+    let out = Bytes.create ((data / 4 * 3) + max 0 (rest - 1)) in
+    let ok = ref true in
+    for g = 0 to ((data + 3) / 4) - 1 do
+      let w = ref 0 in
+      for k = 0 to 3 do
+        let i = (4 * g) + k in
+        let d = if i >= data then 0 else base64_digit s.[i] in
+        if d < 0 then ok := false;
+        w := (!w lsl 6) lor (d land 63)
+      done;
+      for k = 0 to 2 do
+        let at = (3 * g) + k in
+        let b = (!w lsr (16 - (8 * k))) land 0xFF in
+        if at < Bytes.length out then Bytes.set out at (Char.chr b)
+        else if b <> 0 then ok := false
+      done
+    done;
+    if !ok then Some (Bytes.unsafe_to_string out) else None
+
 (* Constructors *)
 
 let nfc = NFC
@@ -1211,6 +1554,11 @@ let replace_regex ~pattern ~replacement =
 let prepend s = Prepend s
 let byte_level = Byte_level
 let nmt = Nmt
+
+let precompiled blob =
+  match charsmap_of_blob blob with
+  | Ok m -> Precompiled m
+  | Error msg -> invalid_arg (strf "invalid precompiled charsmap: %s" msg)
 
 let bert ?(clean_text = true) ?(handle_chinese_chars = true)
     ?(strip_accents = None) ?(lowercase = true) () =
@@ -1264,6 +1612,30 @@ let rec normalize t s a ~track =
       else (prefix ^ s, if track then prefixed a (String.length prefix) else a)
   | Byte_level -> step s a ~track (byte_level_text s)
   | Nmt -> step s a ~track (nmt_text s)
+  | Precompiled m ->
+      if String.length s = 0 then (s, a)
+      else
+        (* The spans come from the edit script once the text is known, so the
+           output does not track them as it is written. *)
+        let o = out ~track:false a (String.length s) in
+        let sc =
+          if track then Some { edits = Array.make 16 0; count = 0 } else None
+        in
+        let s' = charsmap_text m s o sc in
+        if s' == s then (s, a)
+        else begin
+          match sc with
+          | None -> (s', a)
+          | Some sc ->
+              let spans = replay s a s' sc in
+              ( s',
+                Map
+                  {
+                    spans;
+                    count = String.length s';
+                    original = original_length a;
+                  } )
+        end
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
       let strip_accents =
         match strip_accents with Some v -> v | None -> lowercase
@@ -1310,6 +1682,8 @@ let rec pp ppf = function
   | Prepend s -> Format.fprintf ppf "Prepend(%S)" s
   | Byte_level -> Format.pp_print_string ppf "ByteLevel"
   | Nmt -> Format.pp_print_string ppf "Nmt"
+  | Precompiled m ->
+      Format.fprintf ppf "Precompiled(%d bytes)" (String.length m.blob)
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
       Format.fprintf ppf
         "@[<1>Bert(clean_text=%b,@ handle_chinese_chars=%b,@ \
@@ -1371,6 +1745,9 @@ let rec to_json = function
       typed_with "Prepend" [ ("prepend", Jsont.Json.string prefix) ]
   | Byte_level -> typed "ByteLevel"
   | Nmt -> typed "Nmt"
+  | Precompiled m ->
+      typed_with "Precompiled"
+        [ ("precompiled_charsmap", Jsont.Json.string (base64_encode m.blob)) ]
   | Sequence ns ->
       typed_with "Sequence"
         [ ("normalizers", Jsont.Json.list (List.map to_json ns)) ]
@@ -1443,6 +1820,18 @@ let rec of_json = function
           | _ -> Error err_prepend_missing)
       | Some (Jsont.String ("ByteLevel", _)) -> Ok Byte_level
       | Some (Jsont.String ("Nmt", _)) -> Ok Nmt
+      | Some (Jsont.String ("Precompiled", _)) -> (
+          match find "precompiled_charsmap" with
+          | Some (Jsont.String (b64, _)) -> (
+              match base64_decode b64 with
+              | None -> Error err_charsmap_base64
+              | Some blob ->
+                  Result.map
+                    (fun m -> Precompiled m)
+                    (Result.map_error
+                       (strf "invalid precompiled_charsmap: %s")
+                       (charsmap_of_blob blob)))
+          | _ -> Error err_charsmap_missing)
       | Some (Jsont.String ("Sequence", _)) -> (
           match find "normalizers" with
           | Some (Jsont.Array (l, _)) ->

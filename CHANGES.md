@@ -3626,6 +3626,10 @@ thread.
 
 ### Brot
 
+- Tokenizer files with a `Precompiled` normalizer (T5, ALBERT, XLNet and other
+  SentencePiece models) load: `Normalizer.precompiled` reads the SentencePiece
+  charsmap and normalizes, with offsets, as Hugging Face's tokenizers does,
+  cutting grapheme clusters as UAX #29 does at Unicode 17.0.0.
 - OLMo 2 and Phi-4 take the cl100k scanner too: they ask for the pattern's
   matches as `Removed` with `invert`, which is now recognised as the same
   pieces (Phi-4 24 → 45 MB/s single-threaded; not through the fused kernel).

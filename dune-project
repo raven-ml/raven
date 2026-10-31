@@ -107,6 +107,7 @@
 (package
  (name brot)
  (dir packages/brot)
+ (license "ISC AND Unicode-3.0")
  (synopsis "Tokenization for OCaml")
  (description
   "Fast, HuggingFace-compatible tokenization for language models. BPE, WordPiece, Unigram, word-level, and character-level algorithms with composable pipelines and training from scratch.")

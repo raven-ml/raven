@@ -17,6 +17,10 @@ Each case prints the input, the normalized text and one span per normalized
 character, escaped so that the lines can be pasted into the OCaml test.
 """
 
+import base64
+import json
+from pathlib import Path
+
 from tokenizers import NormalizedString, PreTokenizedString, Regex, normalizers
 
 ANY = Regex(r"[\s\S]")
@@ -70,6 +74,13 @@ LLAMA = normalizers.Sequence(
     [normalizers.Prepend("▁"), normalizers.Replace(" ", "▁")]
 )
 
+# The charsmap gen_precompiled.py writes.
+CHARSMAP = json.loads(
+    (Path(__file__).resolve().parents[1] / "support" / "precompiled"
+     / "charsmap.json").read_text(encoding="utf-8")
+)["normalizer"]["precompiled_charsmap"]
+PRECOMPILED = normalizers.Precompiled(base64.b64decode(CHARSMAP))
+
 CASES = [
     ("nfd", NFD, ["café", "ẛ̣xy", "ḍ́", "한글",
                   "á̖"]),
@@ -95,6 +106,21 @@ CASES = [
     ("llama", LLAMA, ["\n\nNot", "a  b"]),
     ("nfd strip lower", normalizers.Sequence([NFD, STRIP_ACCENTS, LOWERCASE]),
      ["Café"]),
+    # Full-width forms, ligatures, controls; a cluster under 6 bytes takes the
+    # shortest source it starts with and drops the rest; longer clusters go
+    # character by character; CR LF is one cluster.
+    ("precompiled", PRECOMPILED,
+     ["", "abc", "\uff21\uff45\uff11\uff01", "\ufb01x \ufb03 \u01c4",
+      "\u2122 \u00bd \u2026", "\x01ab", "a\x01b", "ab\x01", "a\x01\x1f",
+      "\u2122\x01g", "e\u0301", "e\u0301\u0301", "e\u0302\u0300",
+      "\uff45\u0301", "\uff45\u0301\u0301", "\uff76\uff9e", "C\u0327a",
+      "\u1100\u1161", "a\r\nb", "\r\r\n", "a\tb\n", "x\u3000\u200by",
+      "\ufffd", "\U0001F600\u2122",
+      # Clusters whose rules look past an extend: a spacing mark (GB9a), a
+      # prepend (GB9b), a regional indicator pair (GB12); U+05C8 is
+      # unassigned in Unicode 17, so a cluster of its own.
+      "\u00bd\u0903", "\u0600\u00bd", "\U0001F1EB\U0001F1F7\u00bd",
+      "\u00bd\u05c8"]),
 ]
 
 for label, normalizer, texts in CASES:
