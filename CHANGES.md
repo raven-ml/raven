@@ -664,8 +664,10 @@ All notable changes to this project will be documented in this file.
   `Rig_nv_nvidia.usage`) on Linux, IOKit's accelerators on macOS, with no
   vendor library. `Munin_sys.start` logs them as `sys/gpuN_*`, and
   `munin watch` shows them. A GPU the kernel suspended for being idle is not
-  read; the first read of an NVIDIA GPU keeps its device file open for the
-  process, as persistence mode does.
+  read. The first read of an NVIDIA GPU keeps its device file open until the
+  process exits, as persistence mode does: unbinding the GPU (as for VFIO)
+  waits, and unloading the driver or resetting the GPU is refused, until
+  then.
 - `Munin_sys.Stat` reads network and disk I/O counters, per-core CPU times and
   the process table on Windows, and `Munin_sys.start` logs disk I/O there.
   `Stat.loadavg` still raises `Sys_error`: Windows keeps no load average.

@@ -3,7 +3,6 @@
  (public_name munin.tui)
  (libraries
   munin
-  munin.sys
   unix
   mosaic
   mosaic.ui

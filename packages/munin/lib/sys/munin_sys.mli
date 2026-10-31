@@ -73,14 +73,6 @@ module Stat : module type of Sysstat
     is left out of that interval. An interval over which the wall clock
     stepped back logs no rates. *)
 
-val gpu_key : int -> string -> string
-(** [gpu_key i name] is GPU [i]'s metric [name], [sys/gpu]{i i}[_]{i name},
-    such as ["sys/gpu1_util_pct"] for [gpu_key 1 "util_pct"]. *)
-
-val gpu_metric : string -> (int * string) option
-(** [gpu_metric key] is [Some (i, name)] if [key] is {!gpu_key}[ i name],
-    and [None] for any other key. *)
-
 type t
 (** The type for background monitors. *)
 
@@ -89,11 +81,15 @@ val start : ?interval:float -> Munin.Session.t -> t
 
     Every [interval] seconds the monitor logs one sample per metric. Rates
     ([sys/cpu_*], [sys/proc_cpu_pct], [sys/disk_*]) are means over the interval,
-    computed from cumulative counters; memory and GPU metrics are the value
-    at the sample's instant.
+    computed from cumulative counters; an NVIDIA GPU's load is the mean of its
+    driver's samples over the interval; memory and the other GPU metrics are
+    the value at the sample's instant.
 
     [interval] defaults to [15.0] seconds. The first sample is taken after one
-    interval. The monitor thread is a daemon thread. *)
+    interval. The monitor thread is a daemon thread.
+
+    Raises [Invalid_argument] if [interval] is not positive (or is NaN),
+    having sampled and declared nothing. *)
 
 val stop : t -> unit
 (** [stop t] wakes the monitoring thread and blocks until it terminates. It

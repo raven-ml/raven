@@ -227,9 +227,9 @@ let view_summary_banner m =
 
 (* The GPUs of the run's GPU metrics, by index. *)
 let sys_gpus tags sys_latest =
-  let index tag = Option.map fst (Munin_sys.gpu_metric tag) in
+  let index tag = Option.map fst (Munin.Metric.gpu_metric tag) in
   let gpu index =
-    let key name = sys_latest (Munin_sys.gpu_key index name) in
+    let key name = sys_latest (Munin.Metric.gpu_key index name) in
     System.
       {
         index;

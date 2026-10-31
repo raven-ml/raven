@@ -109,32 +109,6 @@ let source session sample define =
 let fixed keys values _first =
   (keys, fun ~prev ~next ~dt -> List.combine keys (values ~prev ~next ~dt))
 
-(* GPU metrics' keys *)
-
-let gpu_prefix = "sys/gpu"
-let gpu_key i name = Printf.sprintf "%s%d_%s" gpu_prefix i name
-
-(* The digits after the prefix, as [gpu_key] prints them, without a leading
-   zero, up to the first '_', then a name. *)
-let gpu_metric key =
-  let p = String.length gpu_prefix and n = String.length key in
-  if not (String.starts_with ~prefix:gpu_prefix key) then None
-  else
-    match String.index_from_opt key p '_' with
-    | None -> None
-    | Some u ->
-        let digits = String.sub key p (u - p) in
-        let all_digits =
-          digits <> ""
-          && String.for_all (function '0' .. '9' -> true | _ -> false) digits
-          && (digits = "0" || digits.[0] <> '0')
-        in
-        if (not all_digits) || u + 1 = n then None
-        else
-          Option.map
-            (fun i -> (i, String.sub key (u + 1) (n - u - 1)))
-            (int_of_string_opt digits)
-
 (* A GPU's metrics, each logged when its sample has its value. *)
 let gpu_fields : (string * (Sysstat.Gpu.t -> float option)) list =
   let gb bytes = Int64.to_float bytes /. 1_073_741_824. in
@@ -172,7 +146,7 @@ let gpu_define (first : Sysstat.Gpu.t list) =
         let i = number g in
         List.filter_map
           (fun (name, field) ->
-            Option.map (fun v -> (gpu_key i name, v)) (field g))
+            Option.map (fun v -> (Metric.gpu_key i name, v)) (field g))
           gpu_fields)
       gpus
   in
@@ -182,6 +156,9 @@ let gpu_define (first : Sysstat.Gpu.t list) =
 let mb bytes = bytes /. 1_048_576.
 
 let start ?(interval = 15.0) session =
+  if not (interval > 0.) then
+    invalid_arg
+      (Printf.sprintf "Munin_sys.start: interval %g is not positive" interval);
   let cpu =
     source session Sysstat.Cpu.sample
       (fixed [ "sys/cpu_user"; "sys/cpu_system" ] (fun ~prev ~next ~dt:_ ->

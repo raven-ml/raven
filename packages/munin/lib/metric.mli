@@ -48,6 +48,22 @@ val log : t -> step:int -> ?timestamp:float -> float -> unit
     declaring session is closed. Use {!Session.log_metrics} to write several
     metrics at one step under a single timestamp. *)
 
+(** {1:gpu GPU metrics' keys}
+
+    [munin.sys] logs GPU [i]'s metric [name] under {!gpu_key}[ i name], and a
+    reader of a run, such as the dashboard, finds it back with
+    {!gpu_metric}. *)
+
+val gpu_key : int -> string -> string
+(** [gpu_key i name] is the key [sys/gpu]{i i}[_]{i name}, such as
+    ["sys/gpu1_util_pct"] for [gpu_key 1 "util_pct"].
+
+    Raises [Invalid_argument] if [i < 0] or [name] is empty. *)
+
+val gpu_metric : string -> (int * string) option
+(** [gpu_metric key] is [Some (i, name)] if [key] is {!gpu_key}[ i name], and
+    [None] for any other key. *)
+
 (**/**)
 
 (* Constructed by Session.metric, which supplies the event-log write as

@@ -455,14 +455,16 @@ module Gpu : sig
       - {b Linux, NVIDIA}: NVIDIA's GPUs, read from NVIDIA's kernel driver
         through {!Rig_nv_nvidia.usage}. Its first read of a GPU makes the
         process's client of that driver and opens the GPU's device file,
-        both kept for the process: while the file is open the driver keeps
-        its state of the GPU, as its persistence mode does. [busy_percent] is
+        both kept until the process exits. While the file is open the driver
+        keeps its state of the GPU, as its persistence mode does, unbinding
+        the GPU from the driver (as to bind it to [vfio-pci]) waits, and
+        unloading the driver or resetting the GPU is refused. [busy_percent] is
         the mean of the driver's samples over the sample's window, and
         [memory_used] counts what the driver holds for itself.
         [temperature] and [power] are [None]: NVIDIA's open headers define no
         command that reads them. A GPU the driver does not answer for, such
         as one the kernel suspended for being idle, which a read would
-        resume, has every field [None].
+        resume, or whose power state cannot be read, has every field [None].
       - {b macOS}: [busy_percent], and [memory_used] on Apple silicon, from
         each IOKit accelerator. *)
 

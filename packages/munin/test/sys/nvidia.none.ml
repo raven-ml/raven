@@ -5,4 +5,3 @@
 
 (* No NVIDIA GPU is read off Linux. *)
 let buses () : string list = []
-let reads (_ : int) = false

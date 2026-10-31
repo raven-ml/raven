@@ -294,52 +294,22 @@ let test_gpu_nvidia =
   let buses = Nvidia.buses () in
   if buses = [] then skip ~reason:"the machine has no NVIDIA GPU" ();
   let gpus = gpus () in
-  let read i bus =
+  let read bus =
     let g = List.find (fun (g : Munin_sys.Stat.Gpu.t) -> g.id = bus) gpus in
     let f = option float_exact in
     equal ~msg:(bus ^ " temperature") f None g.temperature;
     equal ~msg:(bus ^ " power") f None g.power;
-    if not (Nvidia.reads i) then begin
-      equal ~msg:(bus ^ " busy_percent") f None g.busy_percent;
-      equal ~msg:(bus ^ " memory_used") (option int64) None g.memory_used;
-      equal ~msg:(bus ^ " memory_total") (option int64) None g.memory_total
-    end
-    else
-      match (g.memory_used, g.memory_total) with
-      | Some used, Some total ->
-          greater ~msg:"memory_total" int64 ~than:0L total;
-          at_most ~msg:"memory_used" int64 ~than:total used
-      | _ -> failf "%s: memory not read" bus
+    match (g.memory_used, g.memory_total) with
+    | Some used, Some total ->
+        greater ~msg:"memory_total" int64 ~than:0L total;
+        at_most ~msg:"memory_used" int64 ~than:total used
+    | used, total ->
+        (* A GPU the RM does not answer for. *)
+        equal ~msg:(bus ^ " busy_percent") f None g.busy_percent;
+        equal ~msg:(bus ^ " memory_used") (option int64) None used;
+        equal ~msg:(bus ^ " memory_total") (option int64) None total
   in
-  List.iteri read buses
-
-(* A GPU metric's key reads back as its GPU and name. *)
-let test_gpu_key =
-  let gen =
-    Gen.pair (Gen.int_range 0 10_000)
-      (Gen.of_list [ "util_pct"; "mem_used_gb"; "temp_c"; "a_b"; "x" ])
-  in
-  prop "gpu_metric reads gpu_key back" gen @@ fun (i, name) ->
-  cover "two digits or more" (i >= 10);
-  equal (option (pair int string)) (Some (i, name))
-    (Munin_sys.gpu_metric (Munin_sys.gpu_key i name))
-
-(* Any key that no [gpu_key] prints is no GPU metric. *)
-let test_gpu_metric_others =
-  cases "gpu_metric of other keys" ~id:(Printf.sprintf "%S")
-    [
-      "sys/gpu_util_pct";
-      "sys/gpu1";
-      "sys/gpu1_";
-      "sys/gpu01_util_pct";
-      "sys/gpu-1_util_pct";
-      "sys/gpux_util_pct";
-      "sys/cpu_user";
-      "gpu1_util_pct";
-      "";
-    ]
-  @@ fun key ->
-  equal (option (pair int string)) None (Munin_sys.gpu_metric key)
+  List.iter read buses
 
 (* The keys of the values a sample of the GPUs has, GPU [i] the [i]th. *)
 let gpu_keys gs =
@@ -348,7 +318,7 @@ let gpu_keys gs =
        (fun i (g : Munin_sys.Stat.Gpu.t) ->
          List.filter_map
            (fun (name, present) ->
-             if present then Some (Munin_sys.gpu_key i name) else None)
+             if present then Some (Metric.gpu_key i name) else None)
            [
              ("util_pct", g.busy_percent <> None);
              ("mem_used_gb", g.memory_used <> None);
@@ -391,8 +361,25 @@ let test_uptime =
   reads "uptime" Munin_sys.Stat.uptime @@ fun s ->
   greater ~msg:"seconds" int64 ~than:0L s
 
+(* An interval that is not positive raises before the monitor declares any
+   metric. *)
+let test_system_monitor_bad_interval () =
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  List.iter
+    (fun interval ->
+      raises_match Exn.invalid_arg (fun () ->
+          Munin_sys.start ~interval session))
+    [ 0.; -1.; Float.nan ];
+  Session.finish session;
+  let defs = Run.metric_defs (Session.run session) in
+  equal (list string) [] (sys_only (List.map fst defs))
+
 let system_monitor_tests =
   [
+    test "an interval that is not positive raises"
+      test_system_monitor_bad_interval;
     test "logs metrics" test_system_monitor_logs_metrics;
     test "defines metrics" test_system_monitor_defines_metrics;
     test "stop idempotent" test_system_monitor_stop_idempotent;
@@ -422,7 +409,5 @@ let () =
              test_gpu;
              test_gpu_nvidia;
              test_gpu_monitor;
-             test_gpu_key;
-             test_gpu_metric_others;
            ];
        ])

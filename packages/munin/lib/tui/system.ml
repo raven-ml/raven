@@ -198,7 +198,7 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
   let some_text fmt = Option.fold ~none:"" ~some:(Printf.sprintf fmt) in
   let gpu_lines (g : gpu) =
     let i = g.index in
-    let key = Munin_sys.gpu_key i in
+    let key = Munin.Metric.gpu_key i in
     [
       line g.util_pct (fun util c ~y ~width ->
           draw_bar c ~y ~width

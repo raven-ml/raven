@@ -1941,6 +1941,50 @@ let media =
     test "media empty history" test_media_empty_history;
   ]
 
+(* GPU metrics' keys *)
+
+(* A GPU metric's key reads back as its GPU and name. *)
+let test_gpu_key =
+  let gen =
+    Gen.pair
+      (Gen.one_of [ Gen.int_range 0 0; Gen.int_range 0 10_000 ])
+      (Gen.of_list [ "util_pct"; "mem_used_gb"; "temp_c"; "a_b"; "x" ])
+  in
+  prop "gpu_metric reads gpu_key back" gen @@ fun (i, name) ->
+  cover "GPU 0" (i = 0);
+  cover "two digits or more" (i >= 10);
+  equal (option (pair int string)) (Some (i, name))
+    (Metric.gpu_metric (Metric.gpu_key i name))
+
+(* Any key that no [gpu_key] prints is no GPU metric. *)
+let test_gpu_metric_others =
+  cases "gpu_metric of other keys" ~id:(Printf.sprintf "%S")
+    [
+      "sys/gpu_util_pct";
+      "sys/gpu1";
+      "sys/gpu1_";
+      "sys/gpu01_util_pct";
+      "sys/gpu-1_util_pct";
+      "sys/gpux_util_pct";
+      "sys/cpu_user";
+      "gpu1_util_pct";
+      "";
+    ]
+  @@ fun key ->
+  equal (option (pair int string)) None (Metric.gpu_metric key)
+
+(* The keys no GPU and name give are refused. *)
+let test_gpu_key_domain () =
+  raises_match Exn.invalid_arg (fun () -> Metric.gpu_key (-1) "util_pct");
+  raises_match Exn.invalid_arg (fun () -> Metric.gpu_key 0 "")
+
+let gpu_keys =
+  [
+    test_gpu_key;
+    test_gpu_metric_others;
+    test "gpu_key refuses a negative GPU or an empty name" test_gpu_key_domain;
+  ]
+
 (* Suite *)
 
 let suite =
@@ -1958,6 +2002,7 @@ let suite =
     group "Auto-computed summaries" auto_summaries;
     group "Grouping" grouping;
     group "Media" media;
+    group "GPU metrics' keys" gpu_keys;
   ]
 
 let () = exit (run "Munin" suite)
