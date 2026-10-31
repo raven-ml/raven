@@ -24,13 +24,25 @@ val run :
     [state (interval t_i t_(i+1) carry)] for each interval of [at], stacked on a
     new leading axis. *)
 
+val grid :
+  steps:int ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t * (float, 'b, 'd) Nx.t
+(** [grid ~steps t0 t1] is [(h, starts)] for [steps] steps from the scalar
+    [t0] to the scalar [t1]: [h = (t1 − t0) / steps], and a vector of [steps]
+    starts, step [j]'s [t0 + j h] or [t1] where that rounds past it. Every
+    step but the last has size [h]; the last has size [t1] minus its start,
+    never past [t1]. [t1] may lie below [t0]. *)
+
 val steps :
   ('c, 'd) Nx.Ptree.t ->
-  'd Nx.Placement.t ->
-  (float, 't) Nx.dtype ->
+  ('x, 'd) Nx.Ptree.t ->
   int ->
-  ((float, 't, 'd) Nx.t -> 'c -> 'c) ->
+  ('x -> 'c -> 'c) ->
   'c ->
+  'x ->
   'c
-(** [steps c at dtype n f init] applies [f j] for [j = 0, ..., n - 1], [j] a
-    scalar of [dtype] at [at], by a scan when [n > 1]; [n = 0] is [init]. *)
+(** [steps c x n f init xs] applies [f] to row [j] of [xs] for
+    [j = 0, ..., n - 1], each leaf of [xs] a vector of at least [n] elements,
+    by a scan when [n > 1]; [n = 0] is [init]. *)

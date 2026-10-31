@@ -161,6 +161,44 @@ let march_tests =
             (Nx.get [ 1 ] q, Nx.get [ 1 ] p)
         in
         equal (Oracle.tensor ~rel:1e-13 ()) (scalar 1.) (Nx.get [ 1 ] q'));
+    cases "steps have size h, the last ending at its interval's end"
+      ~id:(fun (at, steps) ->
+        Printf.sprintf "[%s] in %d"
+          (String.concat "; " (Array.to_list (Array.map (Printf.sprintf "%h") at)))
+          steps)
+      [
+        ([| 0.; 0.3; 0.9 |], 10);
+        ([| 0.9; 0.3; 0. |], 7);
+        ([| 0.; 1.5e-323 |], 5);
+        ([| 1.; 1. +. Float.epsilon |], 4);
+      ]
+      (fun (at, steps) ->
+        (* A unit drift moves q by each step's size: h = (b - a) / steps for
+           all but the last, which runs from a + (steps - 1) h, held at b
+           where that rounds past it, to b. *)
+        let expected = Array.copy at in
+        let q = ref at.(0) in
+        for i = 1 to Array.length at - 1 do
+          let a = at.(i - 1) and b = at.(i) in
+          let h = (b -. a) /. Float.of_int steps in
+          for _ = 1 to steps - 1 do
+            q := !q +. h
+          done;
+          let start = a +. (Float.of_int (steps - 1) *. h) in
+          let start =
+            if (b > a && start > b) || (b < a && start < b) then b else start
+          in
+          q := !q +. (b -. start);
+          expected.(i) <- !q
+        done;
+        let q, _ =
+          Split.march state Split.leapfrog ~steps
+            ~kick:(fun _ s -> s)
+            ~drift:(fun h (q, p) -> (Nx.add q (Nx.mul h p), p))
+            ~at:(vec at)
+            (scalar at.(0), scalar 1.)
+        in
+        equal (Oracle.tensor ()) (vec expected) q);
     cases "times whose gaps multiply to below the floats are monotone"
       ~id:(fun a -> Printf.sprintf "[%g; %g; %g]" a.(0) a.(1) a.(2))
       [ [| 0.; 1e-162; 3e-162 |]; [| 3e-162; 1e-162; 0. |] ]

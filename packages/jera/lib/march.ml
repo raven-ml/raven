@@ -15,8 +15,8 @@ let check fn ~steps at =
     let prev = Nx.slice [ Nx.R (0, n - 1) ] at
     and next = Nx.slice [ Nx.R (1, n) ] at in
     let d = Nx.sub next prev in
-    (* Signs compared, not multiplied: the product of two gaps of 1e-162
-       underflows to zero. A zero first gap fails at [1]. *)
+    (* Each gap's sign against the first's: a product of two gaps of 1e-162
+       would underflow to zero. A zero first gap fails at [1]. *)
     let up = Nx.greater_s (Nx.slice [ Nx.R (0, 1) ] d) 0. in
     let same_sign = Nx.where up (Nx.greater_s d 0.) (Nx.less_s d 0.) in
     Nx.check
@@ -63,12 +63,21 @@ let run c y ~at ~interval ~state init =
     in
     prepend y y0 ys
 
-let steps c at dtype n f init =
+let grid ~steps t0 t1 =
+  let n = float steps in
+  let h = Nx.div_s (Nx.sub t1 t0) n in
+  let k = Nx.arange_f_at (Nx.beside t0) (Nx.dtype t0) 0. n 1. in
+  let x = Nx.add t0 (Nx.mul k h) in
+  (* With h below half an ulp of the times, t0 + k h can round past t1:
+     [0; 1.5e-323] in 5 steps of one subnormal unit reaches 4 units. *)
+  let past = Nx.where (Nx.greater t1 t0) (Nx.greater x t1) (Nx.less x t1) in
+  (h, Nx.where past (Nx.broadcast_to [| steps |] t1) x)
+
+let steps c x n f init xs =
   if n = 0 then init
-  else if n = 1 then f (Nx.zeros_at at dtype [||]) init
   else
-    fst
-      (Rune.scan c Nx.Ptree.tensor Nx.Ptree.unit
-         (fun carry j -> (f j carry, ()))
-         ~init
-         (Nx.arange_f_at at dtype 0. (float n) 1.))
+    let xs = Nx.Ptree.map x (fun _ v -> Nx.slice [ Nx.R (0, n) ] v) xs in
+    if n = 1 then f (Nx.Ptree.map x (fun _ v -> Nx.get [ 0 ] v) xs) init
+    else
+      fst
+        (Rune.scan c x Nx.Ptree.unit (fun carry r -> (f r carry, ())) ~init xs)

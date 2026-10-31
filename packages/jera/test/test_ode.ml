@@ -133,6 +133,18 @@ let order_tests =
         equal (Oracle.structure pair) (run Ode.rk4) (run m));
   ]
 
+(* Intervals whose steps round: t0 + j h past the end in [0; 1.5e-323], and
+   spans that round to zero in [1; 1 + 2^-52]. *)
+let intervals =
+  [
+    ([| 0.; 0.3 |], 10);
+    ([| 0.9; 0.3 |], 7);
+    ([| 0.; 1.5e-323 |], 5);
+    ([| 1.; 1. +. Float.epsilon |], 4);
+  ]
+
+let interval_id (at, steps) = Printf.sprintf "[%h; %h] in %d" at.(0) at.(1) steps
+
 let march_tests =
   [
     test "a march stacks the state at each time, the start first" (fun () ->
@@ -181,6 +193,32 @@ let march_tests =
           (Oracle.tensor ~rel:1e-5 ())
           (Nx.create Nx.float32 [| 2 |] [| 1.; Float.exp (-1.) |])
           y);
+    cases "no step starts past its interval's end" ~id:interval_id intervals
+      (fun (at, steps) ->
+        (* Euler reads the field at each step's start only: 1 past the end, 0
+           before it. *)
+        let b = at.(1) and up = at.(1) > at.(0) in
+        let past t =
+          Nx.cast f64 (if up then Nx.greater_s t b else Nx.less_s t b)
+        in
+        let y =
+          Ode.march one Ode.euler ~steps
+            (fun t _ -> past t)
+            ~at:(vec at) (scalar 0.)
+        in
+        equal (Oracle.tensor ()) (vec [| 0.; 0. |]) y);
+    cases "the last step ends at its interval's end" ~id:interval_id
+      [ ([| 0.; 0.3 |], 10); ([| 0.9; 0.3 |], 7); ([| 0.2; 0.7 |], 3) ]
+      (fun (at, steps) ->
+        (* rk4's last stage reads the field at its step's end: 1 there and 0
+           elsewhere, so only a last step ending at b moves y. *)
+        let b = at.(1) in
+        let y =
+          Ode.march one Ode.rk4 ~steps
+            (fun t _ -> Nx.cast f64 (Nx.equal_s t b))
+            ~at:(vec at) (scalar 0.)
+        in
+        less float_exact ~than:(Float.abs (Nx.item [ 1 ] y)) 0.);
     test "a leaf that is not a float is carried unchanged" (fun () ->
         let s = Nx.Ptree.(pair tensor tensor) in
         let _, n =

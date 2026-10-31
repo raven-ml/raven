@@ -367,7 +367,8 @@ let march_tests =
       ~id:(fun (t1, steps) -> Printf.sprintf "[0, %g] in %d" t1 steps)
       [ (0.3, 10); (0.9, 7); (5., 12) ]
       (fun (t1, steps) ->
-        (* On these, t1 / steps added steps times rounds past t1. *)
+        (* The last step ends at at's last time, the path's end, even where
+           steps additions of t1 / steps round past it, as on these. *)
         let w =
           Sde.Brownian.v (Nx.Rng.key 33) f64 ~shape:[| 3 |] ~t0:0. ~t1 ~depth:4
         in
@@ -378,10 +379,10 @@ let march_tests =
             (x0 3)
         in
         equal (array int) [| 2; 3 |] (Nx.shape y));
-    cases "steps whose span rounds to zero leave the state" ~id:fst
-      exact_methods
+    cases "steps whose span rounds to zero stay finite" ~id:fst exact_methods
       (fun (_, m) ->
-        (* Of 4 steps over [1, 1 + 2^-52], the third spans it all. *)
+        (* Of 4 steps over [1, 1 + 2^-52], three draw their increment over no
+           time. *)
         let w =
           Sde.Brownian.v (Nx.Rng.key 34) f64 ~shape:[| 3 |] ~t0:0. ~t1:2.
             ~depth:6
@@ -391,7 +392,23 @@ let march_tests =
           Sde.march one m ~steps ~drift:gbm_drift ~diffusion:gbm_diffusion w
             ~at (x0 3)
         in
-        equal (Oracle.tensor ()) (run 1) (run 4));
+        equal (Oracle.tensor ~abs:1e-12 ()) (run 1) (run 4));
+    cases "no step starts past its interval's end" ~id:fst
+      [ ("euler_maruyama", Sde.euler_maruyama); ("milstein", Sde.milstein) ]
+      (fun (_, m) ->
+        (* 1.5e-323 is three subnormal units: 5 steps of a unit each start at
+           0, 1, 2, 3 and 3. The drift, read at each step's start, is NaN past
+           the end. *)
+        let b = 1.5e-323 in
+        let drift t x =
+          Nx.where (Nx.greater_s t b) (Nx.full_like x Float.nan) (gbm_drift t x)
+        in
+        let y =
+          Sde.march one m ~steps:5 ~drift ~diffusion:gbm_diffusion w
+            ~at:(vec [| 0.; b |])
+            (x0 3)
+        in
+        equal (Oracle.tensor ()) (Nx.ones f64 [| 2; 3 |]) y);
     test "times that are not increasing raise" (fun () ->
         raises_with "the times of at are not strictly increasing" (fun () ->
             run (vec [| 1.; 0.5 |]) (x0 3)));

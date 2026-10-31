@@ -1513,8 +1513,12 @@ module Ode : sig
     'y ->
     'y
   (** [march y m ~steps f ~at y0] is the state at each time of [at], stacked on
-      a new leading axis of each leaf, [y0] first at [at.(0)]. Each interval of
-      [at] takes [steps] equal steps of [m]; [at] may decrease, to march back.
+      a new leading axis of each leaf, [y0] first at [at.(0)]. The interval from
+      [at.(i)] to [at.(i+1)] takes [steps] steps of [m]: step [j] starts at
+      [at.(i) + j h] with [h = (at.(i+1) − at.(i)) / steps], or at [at.(i+1)]
+      where that rounds past it. Every step but the last has size [h]; the last
+      has size [at.(i+1)] minus its start, never negative, and ends at
+      [at.(i+1)] itself. [at] may decrease, to march back.
 
       {b Error.} A method of order [p] has global error [O(h^p)] for a smooth
       field. {b Stability.} An explicit method is stable only while [h] times
@@ -1871,11 +1875,13 @@ module Sde : sig
     'y
   (** [march y m ~steps ~drift ~diffusion w ~at y0] is the state at each time of
       [at], stacked on a new leading axis of each leaf, [y0] first, along the
-      path [w]. The interval from [at.(i)] to [at.(i+1)] takes [steps] steps of
-      [h = (at.(i+1) − at.(i)) / steps]: step [j] runs from [at.(i) + j h] to
-      where the next starts, the last to [at.(i+1)] itself. A step's size, which
-      the drift and diffusion see, is its span. Each step queries the path once,
-      at its end. [drift t y] is the deterministic field; [diffusion t y dw] is
+      path [w]. The interval from [at.(i)] to [at.(i+1)] takes [steps] steps:
+      step [j] starts at [at.(i) + j h] with [h = (at.(i+1) − at.(i)) / steps],
+      or at [at.(i+1)] where that rounds past it. Every step but the last has
+      size [h]; the last has size [at.(i+1)] minus its start, never negative,
+      and ends at [at.(i+1)] itself. A step draws its increment over the path
+      from its start to the next step's start, and queries the path once, at
+      that end. [drift t y] is the deterministic field; [diffusion t y dw] is
       [g t y] applied to [dw], of [w]'s shape and the times' dtype, and must be
       linear in [dw]; it casts [dw] for leaves of another dtype. Reverse mode
       keeps one state per time of [at] and recomputes each interval while it
@@ -1970,11 +1976,14 @@ module Split : sig
     's ->
     's
   (** [march s m ~steps ~kick ~drift ~at s0] is the state at each time of [at],
-      stacked on a new leading axis of each leaf, [s0] first at [at.(0)]. Each
-      interval of [at] takes [steps] equal steps, its adjacent kicks merged into
-      one: a {!leapfrog} interval makes [steps + 1] kicks. Reverse mode keeps
-      one state per time of [at] and recomputes each interval while it reverses
-      it.
+      stacked on a new leading axis of each leaf, [s0] first at [at.(0)]. The
+      interval from [at.(i)] to [at.(i+1)] takes [steps] steps: step [j] starts
+      at [at.(i) + j h] with [h = (at.(i+1) − at.(i)) / steps], or at [at.(i+1)]
+      where that rounds past it. Every step but the last has size [h]; the last
+      has size [at.(i+1)] minus its start, never negative, and ends at
+      [at.(i+1)] itself. Adjacent kicks merge into one: a {!leapfrog} interval
+      makes [steps + 1] kicks. Reverse mode keeps one state per time of [at] and
+      recomputes each interval while it reverses it.
 
       Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
       tensor, or if [at] is not strictly monotone. *)

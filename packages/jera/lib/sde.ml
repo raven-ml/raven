@@ -179,30 +179,32 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   (* [v + a x] and [v + x] over the float leaves. *)
   let axpy a x v = Nx.Ptree.axpy y a x v in
   let add x v = axpy one x v in
-  (* Step [j] spans [[t0 + j h, t0 + (j + 1) h]], the last one ending at [t1]
-     itself: [t0 + steps h] can round past [t1], and so past the path. The
-     times lie in the path's interval, as [at]'s ends were checked to.
+  (* Each step's times lie in the path's interval, as [at]'s ends were
+     checked to. Every step but the last has size [h]; the last runs from its
+     start to [t1].
 
-     The path's W and I at a step's end carry into the next step. Its start
-     is that end to the bit, as [t0 + (j + 1) h] computed alike, or an
-     interval's [t1] being the next one's [t0], so the march queries the path
-     once per step and sees what a query at each start would. *)
+     The path's W and I at a step's end carry into the next step, which starts
+     there to the bit, so the march queries the path once per step and sees
+     what a query at each start would. *)
   let path = Nx.Ptree.(pair tensor tensor) in
   let interval c step t0 t1 carry =
-    let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
-    let last = float (steps - 1) in
-    March.steps
-      Nx.Ptree.(pair c path)
-      here dtype steps
-      (fun j (carry, start) ->
-        let t = Nx.add t0 (Nx.mul j h) in
-        let next = Nx.add t0 (Nx.mul (Nx.add_s j 1.) h) in
-        let t' = Nx.where (Nx.equal_s j last) t1 next in
-        let h = Nx.sub t' t in
-        let stop = Brownian.point w t' in
-        let dw, area = Brownian.between start stop h in
-        (step t h dw area carry, stop))
-      carry
+    let h, starts = March.grid ~steps t0 t1 in
+    let advance t t' h (carry, start) =
+      let stop = Brownian.point w t' in
+      let dw, area = Brownian.between start stop h in
+      (step t h dw area carry, stop)
+    in
+    let carry =
+      March.steps
+        Nx.Ptree.(pair c path)
+        Nx.Ptree.(pair tensor tensor)
+        (steps - 1)
+        (fun (t, t') carry -> advance t t' h carry)
+        carry
+        (starts, Nx.slice [ Nx.R (1, steps) ] starts)
+    in
+    let t = Nx.get [ steps - 1 ] starts in
+    advance t t1 (Nx.sub t1 t) carry
   in
   let start = Brownian.point w (Nx.get [ 0 ] at) in
   let run c step ~state init =

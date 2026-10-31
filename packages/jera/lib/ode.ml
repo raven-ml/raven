@@ -586,12 +586,15 @@ let step ?stages fn y m f t h v k0 =
 let march y m ~steps f ~at y0 =
   let fn = "Jera.Ode.march" in
   March.check fn ~steps at;
-  let dtype = Nx.dtype at in
   let interval c step t0 t1 carry =
-    let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
-    March.steps c (Nx.beside at) dtype steps
-      (fun j carry -> step (Nx.add t0 (Nx.mul j h)) h carry)
-      carry
+    let h, starts = March.grid ~steps t0 t1 in
+    let carry =
+      March.steps c Nx.Ptree.tensor (steps - 1)
+        (fun t carry -> step t h carry)
+        carry starts
+    in
+    let t = Nx.get [ steps - 1 ] starts in
+    step t (Nx.sub t1 t) carry
   in
   let m = m.tableau in
   if m.fsal then

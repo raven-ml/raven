@@ -445,9 +445,12 @@ All notable changes to this project will be documented in this file.
   carrying its value and integral from each step's end to the next step.
 - `Sde.milstein` gives no NaN on a step whose span rounds to zero, as 4 steps
   over `[1, 1 + 2^-52]` make.
-- `Sde.march` ends each interval's last step at its time of `at`. The steps'
-  sum could round past the path's end and raise, as over `[0, 0.3]` in 10
-  steps.
+- Each interval's last step changes in `Ode.march`, `Split.march` and
+  `Sde.march`, so their results change in their last bits. Step `j` starts at
+  `at.(i) + j h`, held at `at.(i+1)` where that rounds past it; every step but
+  the last has size `h`, and the last runs from its start to `at.(i+1)`. It
+  used to end a rounding error past `at.(i+1)`, so `Sde.march` to the path's
+  end could raise, as over `[0, 0.3]` in 10 steps.
 - `Ode.march`, `Split.march` and `Sde.march` accept monotone times a tiny gap
   apart. Their check multiplied each gap by the first, which underflowed to
   zero, and raised, for gaps of `1e-162` in float64.
