@@ -1,17 +1,14 @@
-"""Goldens of tinygrad/helpers.py: division, targets, selection and terminal
-text.
+"""Goldens of tinygrad/helpers.py: division, targets and terminal text.
 
 A column that holds arbitrary text, control characters included, holds it as
 an OCaml string literal, which the suite reads back with Scanf's "%S".
 """
 
 import re
-import random
-import string
 
 from golden import table
 from tinygrad.helpers import (Context, Target, ansilen, ansistrip, ceildiv, colored, floordiv, floormod, round_up,
-                              select_by_name, size_to_str, strip_parens, time_to_str, to_function_name)
+                              size_to_str, strip_parens, time_to_str, to_function_name)
 
 
 def literal(s):
@@ -76,52 +73,6 @@ def fields(s):
 def targets():
     return ["input", "device", "renderer", "arch", "interface", "indices", "to_string", "names"], [
         (s, *fields(s)) for s in TARGETS]
-
-
-# Selection
-
-CANDIDATES = [
-    [], ["CLANG", "LLVM"], ["CLANG", "LLVM", "CLANG"], ["PCI", "USB", "KFD", "AM", "MOCK"],
-    ["CPU", "CUDA", "METAL", "AMD", "NV", "NULL", "DISK"], ["AC", "AD", "AB"], ["ab", "ba"],
-]
-QUERIES = ["", "CLANG", "LLVM", "CLANGJIT", "clang", "LVM", "USA", "PCIE", "NVK", "AM", "AX", "ADC", "X", "CUDAA", "a"]
-# Queries that match candidates in several blocks, score exactly the cutoff,
-# or are long enough, at 200 characters, for popular characters to be junk.
-PAIRS = [
-    (["METAL", "MOCK", "DISK", "ABCDE"], q) for q in ["MXTAL", "TEMAL", "MEAL", "DSIK", "ABCXY", "XABCDEX", "AMETXL",
-                                                      "EDCBA", "KCOM", "DIKS", "MMETAL", "METALM"]
-] + [(["A" * (n - 2), "QB"], "Z" + "A" * (n - 2) + "B") for n in [199, 200]] + [
-    (["A" * 190 + "BCD", "BCD" + "A" * 150, "XBCD"], "A" * 197 + "BCD"),
-]
-
-# A 201-character query whose every character occurs three times, the most
-# that is not yet popular, and a candidate that differs from its first
-# character on, so that no match extends over popular characters.
-_THRICE = (string.ascii_letters + string.digits + "!#$%&") * 3
-PAIRS.append((["~" + _THRICE[1:195]], _THRICE))
-
-
-def words(rng, count):
-    return ["".join(rng.choice("ABCD") for _ in range(rng.randint(3, 9))) for _ in range(count)]
-
-
-# Random words over four letters, which share many blocks.
-_rng = random.Random(0)
-PAIRS += [(words(_rng, 4), words(_rng, 1)[0]) for _ in range(120)]
-
-
-def select(candidates, query):
-    try:
-        return ",".join(str(i) for i, _ in select_by_name(list(enumerate(candidates)), lambda c: c[1], query,
-                                                              "no match")), ""
-    except RuntimeError as e:
-        return "", str(e)
-
-
-@table
-def selection():
-    return ["candidates", "query", "selected", "error"], [(",".join(cs), q, *select(cs, q))
-                                                          for cs, q in [(cs, q) for cs in CANDIDATES for q in QUERIES] + PAIRS]
 
 
 # Terminal text

@@ -61,7 +61,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads a target as tinygrad does (`targets.golden`, every input of the test); the DEV setting is dropped (D95): Setting › startup › starts whatever DEV holds |
 | tinygrad: null/test_device.py::TestDevVar::test_target | the target of a device under DEV | dropped: a device's target follows from the device alone (D95) |
 | tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite, and there is no DEV (D95) |
-| tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | Helpers › selection › select_by_name selects as tinygrad does (`candidates=CLANG,LLVM query=CLANGJIT`); the renderer lookup belongs to `Device`'s suite |
+| tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | dropped: `select_by_name` and its suggestion are not ported (README exclusions); the renderer lookup belongs to `Device`'s suite |
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache follows CCACHE | dropped: `Compiler` belongs to `Device`'s suite |
 | tinygrad: null/test_hashing.py::TestKeccak::test_shape_keeping | `Tensor.keccak` | dropped: the `Tensor` surface; the frontend is nx |
 | tinygrad: null/test_tqdm.py (all) | `tqdm` | dropped: not ported (plan, L0 scope) |
@@ -1321,8 +1321,9 @@ their own; and that held buffers stay.
 The suite is `Tolk.Device` (`device/`), written `DV` below.
 `renderers.golden` holds `Compiled._select_renderer` for 36 DEV settings, each
 device and each architecture the device reports (its own and none): the target
-it renders for, which the suite gives `Device.renderer`, and the renderer it picks, the error of a target that names a
-renderer the device lacks, or the failure of the renderer itself, whose text
+it renders for, which the suite gives `Device.renderer`, and the renderer it
+picks, the error of a target that names a renderer the device lacks (which
+tolk gives without tinygrad's suggestion of a misspelling), or the failure of the renderer itself, whose text
 is the renderer's own. A device lists the renderers of its `Compiled` that
 tolk ports. `<case>_program.golden` holds programs that `to_program`
 compiles for Clang and Metal, with the empty compiler so that no toolchain
@@ -1335,11 +1336,11 @@ domains share a renderer cannot run under mutation testing, which forks.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | `CPU:TYPO` has no renderer; `CPU:CLANGJIT` suggests `CLANG` | `DV › renderer › picks a device's renderer as tinygrad does › renderers.golden` (`dev=CPU:TYPO`, `dev=CPU:CLANGJIT`, and a misspelling for each device); `DV › renderer › names the renderer a target misspells` |
+| tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | `CPU:TYPO` has no renderer; `CPU:CLANGJIT` suggests `CLANG` | `DV › renderer › picks a device's renderer as tinygrad does › renderers.golden` (`dev=CPU:TYPO`, `dev=CPU:CLANGJIT`, and a misspelling for each device); `DV › renderer › refuses a renderer the device lacks`. The suggestion is dropped (README exclusions): the suite compares tinygrad's error without it |
 | tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | `renderers.golden` (`dev=::gfx942`, `dev=CUDA::sm_75`, ...), each row's target given to `Device.renderer`; `DV › renderer › renders for the target it is given` (the NULL device of the test is excluded) |
 | tinygrad: null/test_device.py::TestDevice::test_env_online | the renderer follows DEV within a context, and is remembered | dropped: there is no DEV (D95); `DV › renderer's memory › returns the same renderer to a second call`, `returns one renderer per target, whatever the order of the calls` |
 | tinygrad: null/test_device.py::TestDevice::test_env_overwrite_default_compiler | `DEV=CPU:LLVM`, `AMD:LLVM` pick another compiler | dropped: the LLVM renderers are excluded (README); `renderers.golden` pins that `CPU:LLVM` has no renderer and `CPU:CLANG` and `AMD:HIP` pick theirs |
-| tinygrad: null/test_device.py::TestDevice::test_compiler_autodetect_fallback | a renderer that fails to make gives way to the next | dropped here: each device has one ported renderer, so the fallback never runs; `Helpers.select_first_inited` is `Helpers › selection`'s. A failing renderer's own message is `DV › renderer › fails with the renderer's own message on an architecture it refuses` |
+| tinygrad: null/test_device.py::TestDevice::test_compiler_autodetect_fallback | a renderer that fails to make gives way to the next | dropped here: each device has one ported renderer, so there is no fallback, and `select_first_inited` is not ported (README exclusions). A failing renderer's own message is `DV › renderer › fails with the renderer's own message on an architecture it refuses` |
 | tinygrad: null/test_device.py::TestDevice::test_old_renderer_env_raises | `CPU_LLVM=1` is refused | dropped: the `{DEV}_{RENDERER}` migration check is not ported (README exclusions) |
 | tinygrad: null/test_device.py::TestDevice::test_canonicalize, test_lowercase_canonicalizes | `cpu`, `CL:0` and `disk:...` canonicalize | `DV › renderer takes a device's name as it is`: tolk never parses a name, and refuses `cpu`, `CPU:0` and `DISK:...` |
 | tinygrad: null/test_device.py::TestDevice::test_getitem_not_exist | `Device["TYPO"]` fails | `DV › renderer › raises on a name that is no device` |

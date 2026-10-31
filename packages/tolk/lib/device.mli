@@ -70,25 +70,21 @@ end
 (** {1:renderers Renderers} *)
 
 val renderer : Helpers.Target.t -> (Renderer.t, string) result
-(** [renderer t] is the renderer of programs for [t]: a renderer of [t]'s
+(** [renderer t] is the renderer of programs for [t]: the renderer of [t]'s
     device, made for [t].
 
-    Each device has these renderers, in order of preference, named as a target's
-    [RENDERER] field names them:
+    Each device has one renderer, named as a target's [RENDERER] field names
+    it:
     - ["CPU"]: ["CLANG"], {!Cstyle.clang};
     - ["METAL"]: ["METAL"], {!Cstyle.metal};
     - ["CUDA"] and ["NV"]: ["CUDA"], {!Cstyle.cuda};
     - ["AMD"]: ["HIP"], {!Cstyle.hip}.
 
-    If the target names a renderer, only that one is tried; otherwise each is,
-    in order, and the first that the target suits is the result. A target does
-    not suit a renderer that raises [Invalid_argument] for it. A renderer is
-    made once for each name and target, and later calls return that one.
+    A renderer is made once for each name and target, and later calls return
+    that one.
 
     The error is ["D has no renderer 'R'"] if the target names a renderer [R]
-    that the device [D] lacks, with the name that [R] may misspell
-    ({!Helpers.select_by_name}). If no renderer suits the target, it is the
-    message of the only renderer tried, or ["No renderer for D is available"]
-    followed by each renderer's message, one per line.
+    other than its device [D]'s, and the renderer's own message if it raises
+    [Invalid_argument] for the target.
 
     Raises [Invalid_argument] if [t]'s device is not one of these devices. *)

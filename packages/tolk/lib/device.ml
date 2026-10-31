@@ -118,11 +118,12 @@ end
 
 (* Renderers *)
 
-let renderers = function
-  | "CPU" -> [ ("CLANG", Cstyle.clang) ]
-  | "METAL" -> [ ("METAL", Cstyle.metal) ]
-  | "CUDA" | "NV" -> [ ("CUDA", Cstyle.cuda) ]
-  | "AMD" -> [ ("HIP", Cstyle.hip) ]
+(* Each device has one renderer. *)
+let renderer_of = function
+  | "CPU" -> ("CLANG", Cstyle.clang)
+  | "METAL" -> ("METAL", Cstyle.metal)
+  | "CUDA" | "NV" -> ("CUDA", Cstyle.cuda)
+  | "AMD" -> ("HIP", Cstyle.hip)
   | device -> invalid_arg (strf "no device named '%s'" device)
 
 (* A renderer is a function of its name and target, which also key the programs
@@ -130,7 +131,7 @@ let renderers = function
 let cache = Hashtbl.create 8
 let lock = Mutex.create ()
 
-let cached name make target () =
+let cached name make target =
   Mutex.protect lock @@ fun () ->
   match Hashtbl.find_opt cache (name, target) with
   | Some r -> Ok r
@@ -142,10 +143,7 @@ let cached name make target () =
       | exception Invalid_argument e -> Error e)
 
 let renderer (t : Helpers.Target.t) =
-  let candidates = renderers t.device in
-  let error = strf "%s has no renderer '%s'" t.device t.renderer in
-  Result.bind (Helpers.select_by_name ~error fst t.renderer candidates)
-  @@ fun named ->
-  Helpers.select_first_inited
-    ~error:(strf "No renderer for %s is available" t.device)
-    (List.map (fun (name, make) -> cached name make t) named)
+  let name, make = renderer_of t.device in
+  if t.renderer <> "" && t.renderer <> name then
+    Error (strf "%s has no renderer '%s'" t.device t.renderer)
+  else cached name make t

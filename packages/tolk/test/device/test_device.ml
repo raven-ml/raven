@@ -48,13 +48,25 @@ let message_of_renderer name target =
       failf "%s makes a renderer for %s" name
         (Format.asprintf "%a" Helpers.Target.pp target)
 
+(* tinygrad's error ends with a renderer the name may misspell, which tolk
+   leaves out: each device has one renderer. *)
+let without_hint error =
+  let hint = ", did you mean: " in
+  let n = String.length hint in
+  let rec cut i =
+    if i + n > String.length error then error
+    else if String.sub error i n = hint then String.sub error 0 i
+    else cut (i + 1)
+  in
+  cut 0
+
 (* The golden's target is the one tinygrad's DEV setting gives the device. *)
 let selected_like_tinygrad cell =
   let target = target_of_string (cell "target") in
   let expected =
     match cell "outcome" with
     | "ok" -> Ok (renderer_named (cell "renderer") target)
-    | "no renderer" -> Error (cell "error")
+    | "no renderer" -> Error (without_hint (cell "error"))
     | "renderer fails" -> Error (message_of_renderer (cell "renderer") target)
     | outcome -> failf "no outcome %s" outcome
   in
@@ -78,9 +90,8 @@ let selection =
           equal string "PCI:1+AMD:HIP:gfx942"
             (Format.asprintf "%a" Helpers.Target.pp
                (chosen "PCI:1+AMD:HIP:gfx942").target));
-      test "names the renderer a target misspells" (fun () ->
-          equal renderer_or_error
-            (Error "AMD has no renderer 'HIPP', did you mean: 'HIP'?")
+      test "refuses a renderer the device lacks" (fun () ->
+          equal renderer_or_error (Error "AMD has no renderer 'HIPP'")
             (Device.renderer (target_of_string "AMD:HIPP:gfx1100")));
       test "fails with the renderer's own message on an architecture it refuses"
         (fun () ->

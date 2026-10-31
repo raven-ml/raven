@@ -2477,8 +2477,8 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 - **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
   of the device: its vendor's kind, which its driver declares
   (`Rig.capability`), and its `arch`, or the host's CPU target.
-  `Device.renderer` takes the target and renders for it, the first renderer
-  of its kind that suits it when it names none. `Helpers.Target` keeps the
+  `Device.renderer` takes the target and renders for it with the renderer
+  of its kind. `Helpers.Target` keeps the
   record and its syntax, which tests and the goldens' generator write.
 - **Reason:** (c). rig places values on devices, and the compiler
   compiles for the device the values live on. A target read from the

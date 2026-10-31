@@ -90,27 +90,6 @@ val data64 : int -> int * int
 val data64_le : int -> int * int
 (** [data64_le x] is [(lo32 x, hi32 x)]. *)
 
-(** {1:select Selection} *)
-
-val select_by_name :
-  error:string ->
-  ('a -> string) ->
-  string ->
-  'a list ->
-  ('a list, string) result
-(** [select_by_name ~error name query candidates] is the candidates [c] with
-    [name c = query] in their order, or [candidates] if [query] is [""]. If
-    there are none, the error is [error], followed by the name of a candidate
-    that [query] may have misspelled, if one is similar enough. *)
-
-val select_first_inited :
-  error:string -> (unit -> ('a, string) result) list -> ('a, string) result
-(** [select_first_inited ~error candidates] is the value of the first of
-    [candidates] that initializes, trying them in order. If none does, the error
-    is the only candidate's error, or [error] followed by each candidate's
-    error, one per line. An exception raised by a candidate is not caught: it
-    escapes, and the later candidates are not tried. *)
-
 (** {1:text Terminal text} *)
 
 (** The type for the colors of terminal text. *)

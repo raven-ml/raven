@@ -587,6 +587,9 @@ thread.
 
 ### Tolk (new)
 
+- `Device.renderer` gives each device's one renderer, and a target naming another
+  fails with `D has no renderer 'R'`, no longer followed by a suggested spelling.
+  `Helpers.select_by_name` and `Helpers.select_first_inited` are removed.
 - `Ops.pp_arg` prints the record arguments that `Ops.pp_param_arg`,
   `pp_kernel_info`, `pp_program_info`, `pp_bufferize_opts` and `pp_call_info`
   printed. `Dtype.sum_acc` and eight test-only `Bigint` functions are removed.

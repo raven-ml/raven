@@ -375,80 +375,6 @@ let integers =
           refuses (fun () -> get_single_element [ 1; 2 ]));
     ]
 
-(* Selection *)
-
-let selects_like_tinygrad cell =
-  let names =
-    match cell "candidates" with "" -> [] | s -> String.split_on_char ',' s
-  in
-  let candidates = List.mapi (fun i name -> (i, name)) names in
-  let outcome =
-    Result.map
-      (fun selected ->
-        String.concat "," (List.map (fun (i, _) -> string_of_int i) selected))
-      (select_by_name ~error:"no match" snd (cell "query") candidates)
-  in
-  let expected =
-    match cell "error" with "" -> Ok (cell "selected") | error -> Error error
-  in
-  equal (result string string) expected outcome
-
-let initializes name calls () =
-  calls := name :: !calls;
-  Ok name
-
-let fails message calls () =
-  calls := message :: !calls;
-  Error message
-
-let first_inited candidates =
-  let calls = ref [] in
-  let outcome =
-    select_first_inited ~error:"no candidate"
-      (List.map (fun c -> c calls) candidates)
-  in
-  (outcome, List.rev !calls)
-
-let tried = pair (result string string) (list string)
-
-let selection =
-  group "selection"
-    [
-      as_tinygrad ~key:[ "candidates"; "query" ]
-        "select_by_name selects as tinygrad does" "selection.golden"
-        selects_like_tinygrad;
-      test "select_first_inited takes the first candidate and tries no other"
-        (fun () ->
-          equal tried (Ok "a", [ "a" ])
-            (first_inited [ initializes "a"; initializes "b" ]));
-      test "select_first_inited tries the next candidate after a failure"
-        (fun () ->
-          equal tried
-            (Ok "b", [ "a failed"; "b" ])
-            (first_inited [ fails "a failed"; initializes "b" ]));
-      test "select_first_inited reports the only candidate's error as it is"
-        (fun () ->
-          equal tried
-            (Error "a failed", [ "a failed" ])
-            (first_inited [ fails "a failed" ]));
-      test "select_first_inited reports every candidate's error, one per line"
-        (fun () ->
-          equal tried
-            ( Error "no candidate\na failed\nb failed",
-              [ "a failed"; "b failed" ] )
-            (first_inited [ fails "a failed"; fails "b failed" ]));
-      test "select_first_inited without candidates reports its error" (fun () ->
-          equal tried (Error "no candidate", []) (first_inited []));
-      test
-        "select_first_inited lets a candidate's exception escape, trying no \
-         other" (fun () ->
-          let calls = ref [] in
-          raises Exit (fun () ->
-              select_first_inited ~error:"no candidate"
-                [ (fun () -> raise Exit); initializes "b" calls ]);
-          equal (list string) [] !calls);
-    ]
-
 (* Terminal text *)
 
 let text_input cell = literal (cell "input")
@@ -1243,7 +1169,6 @@ let () =
              cache_directory;
              targets;
              integers;
-             selection;
              terminal_text;
              diskcache;
              programs;

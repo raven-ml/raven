@@ -26,8 +26,8 @@ val target : Rig.t -> Helpers.Target.t
 (** [target d] is what [d]'s programs are compiled for, a function of [d] alone.
     A Metal, CUDA, AMD or NV device, as its driver declares it
     ({!Rig.capability}), has its vendor's device kind and its {!Rig.arch}, and
-    names no renderer: its programs are rendered by the first of its kind's
-    renderers that suits it ({!Tolk.Device.renderer}). A host, of this machine
+    names no renderer: its programs are rendered by its kind's renderer
+    ({!Tolk.Device.renderer}). A host, of this machine
     or another, and a device whose work is this process's code
     ({!Rig.runs_on_host}), such as a {!Rig.memory_device}, run host programs:
     device ["CPU"], renderer ["CLANG"], and architecture its host's {!Rig.arch}

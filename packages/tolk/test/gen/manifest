@@ -2176,7 +2176,6 @@ engine/realize/variable_two_compiled.golden
 helpers/colors.golden
 helpers/division.golden
 helpers/durations.golden
-helpers/selection.golden
 helpers/sizes.golden
 helpers/targets.golden
 helpers/text.golden
