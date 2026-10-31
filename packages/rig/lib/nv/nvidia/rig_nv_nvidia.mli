@@ -133,17 +133,22 @@ val usage : window:float -> int -> (usage, string) result
     It reads through the process's client of the kernel driver, the GPU's
     device file and the RM's device and subdevice of the GPU, which its first
     call makes and which stay for the process, as an open's do. It makes no
-    channel, address space or mapping, and opens no device. While the file
-    stays open the kernel driver keeps its state of the GPU, as its
-    persistence mode does, rather than tear it down at the last close.
+    channel, address space or mapping, and opens no device. The GPU's device
+    file stays open until the process exits: the kernel driver keeps its
+    state of the GPU, as its persistence mode does, rather than tear it down
+    at the last close. Unbinding the GPU from the driver, as to bind it to
+    [vfio-pci], waits until the process exits, and unloading the driver or
+    resetting the GPU is refused until then.
 
-    [Error msg] if the machine has no GPU [i]; if the kernel suspended the
-    GPU for being idle, which reading would resume; if the kernel driver
-    does not hold the GPU, cannot be opened, or is of a release
+    [Error msg] if the machine has no GPU [i]; if the GPU's PCI function is
+    not active by its [power/runtime_status], or that cannot be read, since
+    reading could resume a GPU the kernel suspended for being idle; if the
+    kernel driver does not hold the GPU, cannot be opened, or is of a release
     {!Rig_nv.make} does not accept; or with the RM's refusal of a command.
 
-    Raises [Invalid_argument] if [i < 0] or [window <= 0.], or, having read
-    nothing, from a callback inside a lock ([Rig]'s domains section). *)
+    Raises [Invalid_argument] if [i < 0] or [window] is not positive (or is
+    NaN), or, having read nothing, from a callback inside a lock ([Rig]'s
+    domains section). *)
 
 (**/**)
 

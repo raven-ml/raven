@@ -83,11 +83,10 @@ let in_child (f : unit -> 'a) : ('a, string) result =
 
 (* Operations *)
 
-type op = Open | Usage | Alloc of Rig_edge.memory | Map_host | Grow
+type op = Open | Alloc of Rig_edge.memory | Map_host | Grow
 
 let op_name = function
   | Open -> "open"
-  | Usage -> "usage"
   | Alloc Device -> "alloc of device memory"
   | Alloc Pinned -> "alloc of pinned memory"
   | Alloc Mapped -> "alloc of mapped memory"
@@ -114,10 +113,6 @@ let take on op =
   | Open, _ -> (
       match Rig_gpu_support.opened (P.gpu 0) with
       | Ok g -> ("Ok", fun () -> N.stop g ~fault:None)
-      | Error e -> ("Error " ^ e, ignore))
-  | Usage, _ -> (
-      match P.usage ~window:1. 0 with
-      | Ok _ -> ("Ok", ignore)
       | Error e -> ("Error " ^ e, ignore))
   | Alloc kind, Some g -> region g (N.alloc g kind page)
   | Map_host, Some g ->
@@ -172,7 +167,7 @@ type report = {
    under [lim], and with the limit lifted. *)
 let attempt ?(cold = false) op lim =
   let g =
-    if op = Open || op = Usage then None
+    if op = Open then None
     else Some (Result.get_ok (Rig_gpu_support.opened (P.gpu 0)))
   in
   let host = H.pages host_bytes in
@@ -202,7 +197,7 @@ let succeeded = function "Ok" | "Some" | "Grown" -> true | _ -> false
    channels. *)
 let allowed op got =
   match op with
-  | Open | Usage -> String.starts_with ~prefix:"Error " got
+  | Open -> String.starts_with ~prefix:"Error " got
   | Alloc _ | Map_host ->
       got = "None" || String.starts_with ~prefix:"Fault " got
   | Grow -> String.starts_with ~prefix:"Short " got
@@ -301,8 +296,8 @@ let making (a : Gc.Memprof.allocation) =
           at 0
         in
         has ".make_client" || has ".make_unified" || has ".make_base"
-        || has ".make_gpu" || has "Rm.client" || has "Rm.unified"
-        || has "Rig_nv_nvidia.gpu"
+        || has ".make_gpu" || has ".undoing" || has "Rm.client"
+        || has "Rm.unified" || has "Rig_nv_nvidia.gpu"
     | None -> false
   in
   match Printexc.backtrace_slots a.callstack with
@@ -340,8 +335,7 @@ let interrupted_first () =
   (* The makes allocate around each of the dozen objects they take. *)
   at_least ~msg:"the allocations walked" int ~than:12 (walk 1)
 
-let ops =
-  [ Open; Usage; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
+let ops = [ Open; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
 
 let () =
   exit

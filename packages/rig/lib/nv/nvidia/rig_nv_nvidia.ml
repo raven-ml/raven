@@ -89,10 +89,10 @@ type gpu = {
    which takes it back once the object is freed. *)
 type naming = Rm_named | Self_named
 
-(* Where a range's GPU addresses come from: the client's range of memory the
-   host maps too ([Rm.t]'s [low]), or the process's own addresses, reserved
-   for the range alone wherever the process has room ({!Rm.reserve_any}), out
-   of the client's range. The GPU's MMU takes 49-bit addresses, and unified
+(* Where a range's GPU addresses come from: the process's range of memory the
+   host maps too ([Rm.unified]'s [low]), or the process's own addresses,
+   reserved for the range alone wherever the process has room
+   ({!Rm.reserve_any}), out of that range. The GPU's MMU takes 49-bit addresses, and unified
    memory maps a range for a GPU in the lower half of the CPU's addresses
    (open-gpu-kernel-modules' uvm_gpu.c, uvm_gpu_can_address): below 2^47 on
    x86-64, 2^48 on arm64, which bound the addresses the kernel gives a
@@ -1139,7 +1139,12 @@ let busy c subdevice ~window =
   else
     let* () = Rm.check c "reading the GPU's utilization" status in
     let* now = gpu_time c subdevice in
-    let since = now - int_of_float (window *. 1e9) in
+    (* A window past the GPU's time since 1970 holds every sample, and its
+       nanoseconds may not fit an [int]. *)
+    let span = window *. 1e9 in
+    let since =
+      if span >= float_of_int now then 0 else now - int_of_float span
+    in
     let field i (f, n) = get p (at + (i * size) + f, n) in
     let rec sum i n total =
       if i = slots then (n, total)
@@ -1152,24 +1157,27 @@ let busy c subdevice ~window =
     | 0, _ -> Ok None
     | n, total -> Ok (Some (float_of_int total /. float_of_int n /. 100.))
 
-(* Whether the kernel suspended the PCI function [bus] under [root] for being
-   idle (Linux's Documentation/ABI/testing/sysfs-devices-power,
-   runtime_status). *)
-let suspended ~root bus =
+(* Whether the PCI function [bus] under [root] is powered for a read, by its
+   runtime_status (Linux's Documentation/ABI/testing/sysfs-devices-power):
+   [active], or [unsupported] where the kernel does not suspend it. A function
+   suspended, suspending, resuming or in error, or whose status cannot be read,
+   is not: a read could resume it. *)
+let powered ~root bus =
   let dir = Filename.concat root ("sys/bus/pci/devices/" ^ bus) in
   let path = Filename.concat dir "power/runtime_status" in
   match In_channel.with_open_bin path In_channel.input_line with
-  | Some "suspended" -> true
+  | Some ("active" | "unsupported") -> true
   | Some _ | None | (exception Sys_error _) -> false
 
 let usage ~window i =
   Rig_nv.Lock.guarded "Rig_nv_nvidia.usage" @@ fun () ->
   if i < 0 then invalid_argf "Rig_nv_nvidia.usage: GPU %d < 0" i;
   if not (window > 0.) then
-    invalid_argf "Rig_nv_nvidia.usage: window %g <= 0" window;
+    invalid_argf "Rig_nv_nvidia.usage: window %g is not positive" window;
   let root = "/" in
   let* bus = nth_bus ~root i in
-  if suspended ~root bus then Error (bus ^ " is suspended")
+  if not (powered ~root bus) then
+    Error (bus ^ " is not active: the kernel may have suspended it")
   else
     let dev = Filename.concat root "dev" in
     let* c = Rm.client ~dev in
