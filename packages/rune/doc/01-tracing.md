@@ -137,7 +137,11 @@ float64 [4] [2, 4, 6, 8]
 
 Both calls have the key of `x`, so the second runs the program traced at
 the first, where `!scale` was `2`. A value that changes between calls is
-passed as an argument.
+passed as an argument. So is any other state the function reads, a handler
+of the caller's own effect or domain-local state included. Whether a map is
+around is rune's: a compiled function keys its programs on what its trace
+asked of the maps around it, and code that acts only inside a map asks
+`Rune.lane_count`.
 
 ## Reading a program
 

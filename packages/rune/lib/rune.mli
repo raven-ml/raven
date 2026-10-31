@@ -94,16 +94,21 @@
     operation their functions apply: they record it in the program, operations
     on captured values included. A traced function reads what it captures when
     it is traced, so it sees a [ref]'s contents at the trace: under {!jit}, at
-    the first call of each key.
+    the first call of each key. So does any state it reads other than its
+    arguments and rune's own extents: a mutable value, a handler of the caller's
+    own effect, domain-local state. Whether a map, a {!Total.collect} or a
+    {!Probe.collect} is around is rune's, and a {!jit} keys its programs on what
+    its trace asked of them; a function that must act otherwise inside a map
+    asks {!lane_count}.
 
     {b Extents.} A transformation, a {!Total.collect} or a {!Probe.collect} is
     around all code its function runs, on whichever domain that code resumes,
     including the fibers of a scheduler the function installs while they run on
     its domain. It is not around a systhread or a domain the function starts,
     nor around a fiber such a scheduler resumes on another domain: there
-    {!lanes} and {!lane_index} raise, and an addition to a
-    {{!section-totals}total} and an emission to a {{!section-probes}probe} are
-    dropped. *)
+    {!lanes} and {!lane_index} raise, {!lane_count} is [None], and an addition
+    to a {{!section-totals}total} and an emission to a {{!section-probes}probe}
+    are dropped. *)
 
 (** {1:errors Errors}
 
@@ -512,7 +517,7 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     point, as [Nx.item: the value is traced by Rune.custom_jvp]. The
     derivative's code runs once per trace, whether a differentiation applies it
     or not, so a tangent map that calls {!lanes} of a map it does not run in
-    raises at every trace.
+    raises at every trace: such a tangent map asks {!lane_count} first.
 
     {b Errors.} A draw without [~key] in the rule or its derivative raises
     wherever it runs. An error the derivative raises reaches the code that runs
@@ -743,7 +748,8 @@ val check_transpose :
 
     A map's lanes are named by an axis, so that code inside nested maps reads
     the lanes of the map it names: {!lanes} gathers every lane's value and
-    {!lane_index} gives the calling lane's position. An inner map of the same
+    {!lane_index} gives the calling lane's position. {!lane_count} says whether
+    a map of the name is around, and of how many lanes. An inner map of the same
     name hides an outer one. A map applied without [~axis] has a fresh name, so
     no code reads its lanes. *)
 
@@ -793,6 +799,25 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
     each of [x]'s devices.
 
     Raises [Invalid_argument] with no map named [a] around the call. *)
+
+val lane_count : axis -> int option
+(** [lane_count a] is [Some n] inside the map named [a] of [n] lanes, and [None]
+    with no map named [a] around the call, as where {!lanes} raises. It reads no
+    value, so it is the same in every lane, a held one's included, and a traced
+    function reads it as it is traced: a {!jit} keys its programs on it
+    ({!section-keys}). A custom rule's tangent map that gathers a map's lanes
+    asks first, since it is traced wherever the rule is ({!section-custom}).
+    [mark y] below adds every lane's tangent of [y] to the total [t] inside the
+    map named [a], and nothing elsewhere:
+
+    {[
+    let mark =
+      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit (fun _ ->
+          ( (),
+            fun dy ->
+              if Option.is_some (Rune.lane_count a) then
+                Rune.Total.add t (Nx.sum (Rune.lanes a dy)) ))
+    ]} *)
 
 (** {1:totals Totals}
 
@@ -1276,8 +1301,9 @@ val jit :
     - their {!Nx.Ptree.val-visits}, the integers and cases their walk reports
       included;
     - each array's dtype, shape and placement;
-    - the number of lanes of each map whose name the program reads through
-      {!lanes} or {!lane_index};
+    - for each name [f] passes to {!lanes}, {!lane_index} or {!lane_count} as it
+      is traced, the number of lanes of the map of that name around the call, or
+      that none is;
     - the placement of the running value of each {!Total} [f] adds to, where a
       call finds it elsewhere than the key's first trace did;
     - whether a {!Probe.collect} of each probe [f] emitted to is open.

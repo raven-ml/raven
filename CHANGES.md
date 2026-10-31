@@ -313,6 +313,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.lane_count a` is `Some n` inside the map named `a` of `n` lanes and
+  `None` outside it, where `lanes` raises. A `jit` keys its programs on each
+  answer its trace got about the maps around it, `None` included, so a
+  compiled function whose trace asked about a map, traced outside it and
+  called inside it, traces again.
 - **Breaking:** a `jit` call's checks (`Nx.check`, a sampler's parameters, a
   `switch` index, an `iterate` past `max`) are one check of the call. Off the
   host the call compiles, returns without waiting for its device, and its

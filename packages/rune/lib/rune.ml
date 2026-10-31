@@ -451,6 +451,8 @@ let lane_index a x =
   let index = first (perform (Lane_index (a, placement))) in
   cast Nx.int32 (Nx.Placement.devices placement) index
 
+let lane_count = Program.bound
+
 module Total = struct
   type ('v, 's, 'd) t = ('v, 's, 'd) total
 

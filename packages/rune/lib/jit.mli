@@ -3,21 +3,31 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** A compiled function's programs, one per key. This module implements the keys
-    of {!Rune.section-jit}.
+(** A compiled function's programs, by key. This module implements the keys of
+    {!Rune.section-jit}.
 
-    A compiled function is traced once per key, over stand-ins ({!stand_ins}).
-    Its program compiles the first time a call runs it compiled, then once per
-    variant ({!Compile}). A call first finds the program of its key without the
-    number of lanes of any map. Where the number of lanes of a map the program
-    names differs from those at its trace, the call then finds the program of
-    its key with them, tracing it the first time.
+    A compiled function is traced over stand-ins ({!stand_ins}). Each program
+    compiles the first time a call runs it compiled, then once per variant
+    ({!Compile}). A key's programs differ in the answers their traces got to the
+    questions they asked of the call's context: the number of lanes of a map of
+    a name ({!Program.bound}), and whether a collect of a probe is open
+    ({!Program.opened}). A call runs the first of its key's programs whose
+    questions it answers as that program's trace was answered, and traces
+    another where none does, so it traces when the answers to the questions
+    its trace would ask are new to its key. A call that traces holds its key's
+    next program's latch, so a call of another domain waits for it; a call of
+    the same key made inside that trace traces again, and its program is kept
+    beside the others.
 
     With [RUNE_JIT_DEBUG] a nonzero integer in the environment
     ({!Compile.report}), a call reports each retrace, with the first difference
     between its key and that of the latest call that returned, on any domain, or
-    the line [a map's lanes differ], and, the first time, why its program
+    the line [a map around the call differs] or
+    [a probe's collect is open or closed], and, the first time, why its program
     evaluates uncompiled. *)
+
+type probe =
+  | Probe : 'a Program.probe -> probe  (** A probe a trace asked about. *)
 
 type 'y entry = {
   body : Program.t;  (** The function traced. *)
@@ -27,13 +37,17 @@ type 'y entry = {
           totals' running values in. It runs [body] compiled ({!Compile.run}),
           or evaluated where the compiler declines it ({!Compile.evaluate}), and
           compiles the programs derived from it alike. *)
+  axes : Program.axis list;
+      (** Each map the trace asked about ({!Program.Bound_asked}) or [body]
+          names ({!Program.axes}), once. *)
   lanes : int list;
-      (** The lanes of each map [body] names ({!Program.axes}) at the trace,
-          [-1] for one not around it. *)
+      (** The lanes of each map of [axes] at the trace, [-1] for one not around
+          it. *)
+  asked : probe list;
+      (** Each probe a site of the trace asked about ({!Program.Open}), once. *)
   probes : (int * bool) list;
-      (** Each probe a site of the trace asked about ({!Program.Open}), once,
-          and whether a collect of it was open. *)
-  asked : Program.asked list;  (** The same, each probe once. *)
+      (** The number of each probe of [asked] and whether a collect of it was
+          open. *)
 }
 (** The type for a key's program. *)
 
@@ -64,9 +78,8 @@ val find :
     whose arguments' leaves are [leaves], in walk order, with skeleton
     [skeleton] and its totals' running values in lying at the placements
     [totals] gives. The first time [t] meets its key, [trace forms totals] makes
-    it, where [forms] is the leaves' stand-ins, and gives the probes it asked
-    about. A call where a collect of one of those is open or closed otherwise
-    than at the trace has a program of its own. Calls on several domains wait
-    for each other as {!Cache} states. A [trace] that raises installs nothing,
-    and the next call with the key traces again. [paths ()] names the leaves in
-    reports. *)
+    it, where [forms] is the leaves' stand-ins, and gives the questions it
+    asked. A call that answers one of those otherwise than at the trace has a
+    program of its own. Calls on several domains wait for each other as {!Cache}
+    states. A [trace] that raises installs nothing, and the next call with the
+    key traces again. [paths ()] names the leaves in reports. *)

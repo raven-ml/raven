@@ -70,6 +70,25 @@ The reference is JAX's `jax.lax` and `jax.vmap`.
   computes only its branch`, `Iterate › maps › a stopped lane computes its
   donor's step`, `› a stopped lane keeps a non-finite carry`.
 
+### T4. A compiled call keys on the maps its trace asked about
+
+- **Reference:** `jax.jit`'s tracing cache keys on the whole axis
+  environment, the name and size of every enclosing named map
+  (`axis_env_state`, `include_in_jit_key=True`, `jax/_src/core.py`), and
+  `jax.lax.axis_size` raises for a name no map binds.
+- **Raven:** `jit.ml` (`find`, `current`); `trace.ml` (`trace_in`, its `Bound`
+  answer; `claims`); `rune.ml` (`lane_count`).
+- **Differs:** a key holds, for each name the trace passed to `lanes`,
+  `lane_index` or `lane_count`, the lanes of the map of that name around the
+  call, or that none is. A map the trace never asked about does not retrace
+  it. `lane_count` answers `None` where no map of the name is around.
+- **Reason:** a function under a named map it never reads compiles once, and
+  code that acts only inside a map, such as a custom rule's tangent map that
+  gathers the lanes, asks without raising.
+- **Pinned by:** `Jit › maps around › a call retraces iff its shape and its
+  trace's answers are new`, `› a caught raise outside the map is keyed`, `Vmap › names
+  › lane counts`.
+
 ## Lowering
 
 rune lowers each nx kernel operation to tolk's UOps (`lower*.ml`). Where

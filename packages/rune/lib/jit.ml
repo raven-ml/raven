@@ -30,24 +30,21 @@ let same_leaf a b =
   (match (a.dtype, b.dtype) with D.Any x, D.Any y -> D.equal x y)
   && a.shape = b.shape && same_place a.at b.at
 
-(* A key's lanes are those of each map its program names, where they differ
-   from the ones it was first traced at: a [Lanes] result's shape holds them.
-   Its totals are where the program takes the running values of the totals it
-   threads, where a call found them elsewhere than a trace without them took
-   them: each total's number and placement. *)
+(* What a call's program depends on of its arguments and of where the running
+   values of the totals it threads lie, where a call found them elsewhere than a
+   trace without them took them: each total's number and placement. The answers
+   to the questions a trace asks of the call's context are its entry's
+   ({!current}). *)
 type key = {
   skeleton : Ptree.Skeleton.t;
   leaves : leaf array;
-  lanes : int list option;
   totals : (int * place) array;
-  probes : (int * bool) list option;
 }
 
 let same_key k k' =
   Ptree.Skeleton.equal k.skeleton k'.skeleton
   && Array.length k.leaves = Array.length k'.leaves
   && Array.for_all2 same_leaf k.leaves k'.leaves
-  && k.lanes = k'.lanes && k.probes = k'.probes
   && Array.length k.totals = Array.length k'.totals
   && Array.for_all2
        (fun (a, p) (b, q) -> a = b && same_place p q)
@@ -56,7 +53,7 @@ let same_key k k' =
 let hash k =
   Array.fold_left
     (fun h l -> (h * 31) + Hashtbl.hash l.shape)
-    (Ptree.Skeleton.hash k.skeleton + Hashtbl.hash k.lanes)
+    (Ptree.Skeleton.hash k.skeleton)
     k.leaves
 
 (* A leaf's parts, in the order a retrace names the first that differs. *)
@@ -126,57 +123,67 @@ let difference paths k k' =
 
 (* Programs *)
 
+(* A key's programs, the [n]th traced under [(key, n)]. *)
 module Programs = Cache.Make (struct
+  type t = key * int
+
+  let equal (k, n) (k', n') = n = n' && same_key k k'
+  let hash (k, n) = hash k + n
+end)
+
+type probe = Probe : 'a Program.probe -> probe
+
+let probe_id (Probe p) = Program.probe_id p
+
+type 'y entry = {
+  body : Program.t;
+  like : 'y;
+  site : Program.site;
+  axes : Program.axis list;
+  lanes : int list;
+  asked : probe list;
+  probes : (int * bool) list;
+}
+
+(* A map's lanes, [-1] for none. *)
+let count = function Some n -> n | None -> -1
+
+(* The lanes of each map of [axes] around the call. *)
+let lanes axes = List.map (fun a -> count (Program.bound a)) axes
+
+(* Whether a collect of each probe of [ps] is open around the call. *)
+let opened ps =
+  List.map (fun (Probe p) -> (Program.probe_id p, Program.opened p)) ps
+
+(* Whether the call answers each question [e]'s trace asked as the trace was
+   answered, so that [e]'s program is the call's: its trace would ask the same
+   questions in the same order. *)
+let current e = lanes e.axes = e.lanes && opened e.asked = e.probes
+
+(* [xs] then each of [ys] that [same] finds in none before it, in order. *)
+let union same xs ys =
+  List.fold_left
+    (fun acc y -> if List.exists (same y) acc then acc else acc @ [ y ])
+    xs ys
+
+(* The programs of a key, in the order traced. *)
+module Families = Cache.Make (struct
   type t = key
 
   let equal = same_key
   let hash = hash
 end)
 
-type 'y entry = {
-  body : Program.t;
-  like : 'y;
-  site : Program.site;
-  lanes : int list;
-  probes : (int * bool) list;
-  asked : Program.asked list;
-}
-
-(* The lanes of each map of [axes] around the call, [-1] for none. *)
-let lanes axes =
-  List.map
-    (fun a -> match Program.bound a with Some n -> n | None -> -1)
-    axes
-
-(* The key of the latest call that looked one up in the table, without lanes
-   or probes, and the entry the table holds for it; then, where that call's
-   lanes differed from the entry's, those lanes and the entry they keyed; then,
-   where its probes' collects differed from that entry's, the lanes of the
-   entry they refined, the collects and the entry they keyed. A call that finds
-   each it needs there reads it without the table's lock. *)
-type 'y last = {
-  key : key;
-  base : 'y entry;
-  laned : (int list * 'y entry) option;
-  probed : (int list option * (int * bool) list * 'y entry) option;
-}
-
-(* Whether a call's [stage] is one it looked up: not the [stored] one. *)
-let made stage stored = Option.is_some stage && stage != stored
-
-(* Whether a probes stage stored over the lanes [l] refines the stage
-   [laned]. *)
-let refines l laned =
-  match (l, laned) with
-  | None, None -> true
-  | Some a, Some (b, _) -> a = b
-  | None, Some _ | Some _, None -> false
+(* The key of the latest call that looked one up in the table, and its programs.
+   A call that finds a current one there reads it without the tables' locks. *)
+type 'y last = { key : key; family : 'y entry list Atomic.t }
 
 type 'y t = {
   name : string;
   beam : int option;
   parallel : int option;
   table : 'y entry Programs.t;
+  families : 'y entry list Atomic.t Families.t;
   last : 'y last option Atomic.t;
 }
 
@@ -186,6 +193,7 @@ let create ~name ?beam ?parallel () =
     beam;
     parallel;
     table = Programs.create ();
+    families = Families.create ();
     last = Atomic.make None;
   }
 
@@ -429,8 +437,6 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
     {
       skeleton;
       leaves = Array.of_list (List.map leaf leaves);
-      lanes = None;
-      probes = None;
       totals =
         Array.map
           (fun (Program.Addition (u, (f : _ Nx.Prim.form), _)) ->
@@ -438,29 +444,22 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
           totals;
     }
   in
-  let miss () =
-    Option.iter
-      (fun l -> report "retrace: %s" (difference (paths ()) key l.key))
-      (Atomic.get t.last)
-  in
   let make () =
     let forms = stand_ins leaves in
     let body, like, asked = trace forms totals in
-    let asked =
-      List.fold_left
-        (fun acc (Program.Asked (p, _) as a) ->
-          let id = Program.probe_id p in
-          if
-            List.exists
-              (fun (Program.Asked (q, _)) -> Program.probe_id q = id)
-              acc
-          then acc
-          else a :: acc)
-        [] asked
-      |> List.rev
+    (* Each question the trace asked, once, in the order first asked. *)
+    let maps =
+      List.filter_map
+        (function Program.Bound_asked (a, n) -> Some (a, n) | Asked _ -> None)
+        asked
+      |> union (fun (a, _) (b, _) -> Program.same_axis a b) []
     in
-    let probes =
-      List.map (fun (Program.Asked (p, o)) -> (Program.probe_id p, o)) asked
+    let probed =
+      List.filter_map
+        (function
+          | Program.Asked (p, o) -> Some (Probe p, o) | Bound_asked _ -> None)
+        asked
+      |> union (fun (p, _) (q, _) -> probe_id p = probe_id q) []
     in
     (* A program threads its totals' running values, its last arguments. *)
     let totals =
@@ -470,53 +469,64 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
     let site =
       Program.site ~name:t.name ~compile body (Array.append forms totals)
     in
-    { body; like; site; lanes = lanes (Program.axes site); probes; asked }
+    let axes =
+      union Program.same_axis (List.map fst maps) (Program.axes site)
+    in
+    let answer a =
+      match List.find_opt (fun (b, _) -> Program.same_axis a b) maps with
+      | Some (_, n) -> count n
+      | None -> count (Program.bound a)
+    in
+    {
+      body;
+      like;
+      site;
+      axes;
+      lanes = List.map answer axes;
+      asked = List.map fst probed;
+      probes = List.map (fun (p, o) -> (probe_id p, o)) probed;
+    }
   in
-  let last =
-    match Atomic.get t.last with
-    | Some l as last when same_key l.key key -> last
-    | _ -> None
+  let previous = Atomic.get t.last in
+  (* The first of [family]'s programs that is current. A key's programs are
+     numbered as they are traced: a call that finds none current traces under
+     the next number, so that a call of another domain with the same answers
+     waits for that trace and then finds it current. A program found that is not
+     current joined [family] after the call looked, so each turn sees one more,
+     and a call traces only where no program answers as it does. *)
+  let rec found family =
+    let es = Atomic.get family in
+    match List.find_opt current es with
+    | Some e -> e
+    | None ->
+        let miss () =
+          match es with
+          | [] ->
+              Option.iter
+                (fun l ->
+                  report "retrace: %s" (difference (paths ()) key l.key))
+                previous
+          | _ when List.for_all (fun e -> lanes e.axes <> e.lanes) es ->
+              report "retrace: a map around the call differs"
+          | _ -> report "retrace: a probe's collect is open or closed"
+        in
+        let made () =
+          let e = make () in
+          let rec add () =
+            let es = Atomic.get family in
+            if not (Atomic.compare_and_set family es (es @ [ e ])) then add ()
+          in
+          add ();
+          e
+        in
+        let e = Programs.find t.table (key, List.length es) ~miss made in
+        if current e then e else found family
   in
-  let base =
-    match last with
-    | Some l -> l.base
-    | None -> Programs.find t.table key ~miss make
-  in
-  let now = lanes (Program.axes base.site) in
-  let laned =
-    if now = base.lanes then None
-    else
-      match last with
-      | Some { laned = Some (l, _) as laned; _ } when l = now -> laned
-      | _ ->
-          let miss () = report "retrace: a map's lanes differ" in
-          let key = { key with lanes = Some now } in
-          Some (now, Programs.find t.table key ~miss make)
-  in
-  let e = match laned with Some (_, e) -> e | None -> base in
-  (* A collect of a probe the trace asked about, open or closed otherwise. *)
-  let opened =
-    List.map
-      (fun (Program.Asked (p, _)) -> (Program.probe_id p, Program.opened p))
-      e.asked
-  in
-  let probed =
-    if opened = e.probes then None
-    else
-      match last with
-      | Some { probed = Some (l, o, _) as probed; _ }
-        when refines l laned && o = opened ->
-          probed
-      | _ ->
-          let miss () = report "retrace: a probe's collect is open or closed" in
-          let at = Option.map fst laned in
-          let key = { key with lanes = at; probes = Some opened } in
-          Some (at, opened, Programs.find t.table key ~miss make)
-  in
-  (* Only a call that looked a stage up writes [last], so one that reads it
-     leaves it as it stands, a stage it did not use included: calls
-     alternating between the traced lane count and one other both read it. *)
-  (match last with
-  | Some l when not (made laned l.laned || made probed l.probed) -> ()
-  | _ -> Atomic.set t.last (Some { key; base; laned; probed }));
-  match probed with Some (_, _, p) -> p | None -> e
+  match previous with
+  | Some l when same_key l.key key -> found l.family
+  | _ ->
+      let family =
+        Families.find t.families key ~miss:ignore (fun () -> Atomic.make [])
+      in
+      Atomic.set t.last (Some { key; family });
+      found family

@@ -88,7 +88,9 @@ int32 [2] [0, 1]
 The mean of the two rows is `[1.5; 3]`, which each lane subtracts from its
 row. The lanes' positions are `0` and `1`. A map applied without `~axis`
 has a fresh name that no code can read (`axis`, `lanes` and `lane_index` in
-the Maps section).
+the Maps section). `Rune.lane_count a` is `Some n` inside the map named `a`
+of `n` lanes and `None` where none is around, where `lanes` and
+`lane_index` raise.
 
 ## Jacobians
 

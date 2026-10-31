@@ -84,7 +84,9 @@ let probe tree = Probe { id = Type.Id.make (); tree }
 let probe_id (Probe p) = Type.Id.uid p.id
 let same_probe (Probe p) (Probe q) = Type.Id.provably_equal p.id q.id
 
-type asked = Asked : 'a probe * bool -> asked
+type asked =
+  | Asked : 'a probe * bool -> asked
+  | Bound_asked : axis * int option -> asked
 
 let sites = Atomic.make 0
 let fresh_site () = Atomic.fetch_and_add sites 1

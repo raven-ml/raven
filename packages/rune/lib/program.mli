@@ -134,6 +134,9 @@ val fresh_site : unit -> int
 type asked =
   | Asked : 'a probe * bool -> asked
       (** A probe a trace asked about, and whether a collect of it was open. *)
+  | Bound_asked : axis * int option -> asked
+      (** A map's name a trace asked about, and the lanes of the map of that
+          name around it, if one was. *)
 
 (** {1:programs Programs}
 

@@ -88,6 +88,20 @@ let test_raising_jit () =
   equal bits_t (bits Nx.(add (zero ()) x)) (bits eager);
   equal bits_t (bits (zero ())) (bits jitted)
 
+(* A compiled function's program threads its additions whether or not a collect
+   is open at its trace: called first with none open, then inside one, it adds
+   as eager does. *)
+let test_collect_after_none () =
+  let t = Total.make () in
+  let f x =
+    Total.add t (Nx.mul_s x 2.);
+    Nx.neg x
+  in
+  let g = Rune.jit' f and x = Nx.scalar f32 1.5 in
+  equal ~msg:"no collect" bits_t (bits (f x)) (bits (g x));
+  let collected f = snd (Total.collect t ~init:(zero ()) (fun () -> f x)) in
+  equal ~msg:"inside a collect" bits_t (bits (collected f)) (bits (collected g))
+
 (* The additions a function makes, collected around it and around its jit, give
    the same total, its zero's sign kept. *)
 let additions =
@@ -1178,6 +1192,8 @@ let () =
          test "a scope inside a jit" test_scope_in_jit;
          prop "jit adds what eager adds" additions law_additions;
          test "a jit that raises adds nothing" test_raising_jit;
+         test "a jit traced with no collect open adds inside one"
+           test_collect_after_none;
          test "an addition of another shape raises" test_shape_refused;
          test "a top-level total serves every set" test_sets;
          test "an addition on another set raises" test_set_refused;

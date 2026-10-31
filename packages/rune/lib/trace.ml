@@ -37,8 +37,8 @@ type state = {
   hints : addition array;
       (** Where a total's running value in lies, where the caller knows. *)
   mutable asked : Program.asked list;
-      (** Each probe a site asked about, whether a collect of it was open,
-          newest first. *)
+      (** Each probe a site asked about, whether a collect of it was open, and
+          each map the trace asked about, with its lanes, newest first. *)
 }
 
 let fresh st i form =
@@ -348,6 +348,14 @@ let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
 
 let owned i (V x) = owns i x
 
+(* The lanes of the map named [a] around the tracer, recorded as a question the
+   trace asked. The handler runs outside its own extent, so its own answer to
+   [Bound] does not see this one. *)
+let lanes_around st a =
+  let n = bound a in
+  st.asked <- Bound_asked (a, n) :: st.asked;
+  n
+
 (* Whether [i]'s handler answers [c]: a construct over its variables, or any of
    the extent of a tracer that stages every operation. A map's operation with no
    such map around is left to its default, which raises. An addition no running
@@ -357,7 +365,7 @@ let claims st i = function
   | Add (_, x) -> st.kind = Tape && owns i x
   (* An abstract operator is recorded, to be filled in, whatever it reads. *)
   | Operator _ -> true
-  | (Lanes (a, _) | Lane_index (a, _)) when bound a = None -> false
+  | (Lanes (a, _) | Lane_index (a, _)) when lanes_around st a = None -> false
   | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
 
 (* The running value of [t] at the shape of [f] where the trace is: its
@@ -1183,6 +1191,10 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
     | Within, _ -> Some (fun k -> Effect.Deep.continue k true)
+    | Bound a, _ ->
+        (* The lanes of a map around the trace, which a jit's key records,
+           [None] included. *)
+        Some (fun k -> Effect.Deep.continue k (lanes_around st a))
     | Open p, Some _ ->
         (* Whether a collect of the probe is open around the trace, which a
            jit's key records. *)

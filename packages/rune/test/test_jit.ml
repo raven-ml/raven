@@ -2618,6 +2618,284 @@ let cache_commands ~variants =
       (model ~variants) (system_call ~variants);
   ]
 
+(* Maps around a call
+
+   A call's key holds, for each name its trace asked about, the lanes of the map
+   of that name around the call, or that none is. [scaled] asks
+   [Rune.lane_count] of [around], and of [outer] only inside [around]: a call
+   retraces exactly when its lane's shape and the answers to the questions its
+   trace asks are new to the compiled function, and gives eager's bits. The
+   model is the set of shapes and answers traced. *)
+
+let around = Rune.axis ()
+let outer = Rune.axis ()
+
+let scaled x =
+  Domain.DLS.set traced_here true;
+  match Rune.lane_count around with
+  | None -> Nx.neg x
+  | Some n -> (
+      match Rune.lane_count outer with
+      | None -> Nx.mul_s x (Float.of_int (n + 1))
+      | Some m -> Nx.mul_s x (Float.of_int ((n + 1) * m)))
+
+(* Where a call runs: the lanes of the map [around] and of the map [outer]
+   around it, if any. *)
+type place = { inner : int option; outer : int option }
+
+(* A call at [place], of lanes of [rows] elements, all [value]. *)
+type placed_call = { place : place; rows : int; value : float }
+
+let pp_placed_call ppf c =
+  let map name = function
+    | None -> ""
+    | Some n -> Printf.sprintf " %s of %d" name n
+  in
+  Format.fprintf ppf "in%s%s, rows of %d, %g"
+    (map "outer" c.place.outer)
+    (map "around" c.place.inner)
+    c.rows c.value
+
+let some_rows = Gen.(frequency [ (3, constant 1); (1, constant 2) ])
+
+let placed_calls =
+  let open Gen in
+  let lanes =
+    frequency
+      [ (2, constant None); (2, constant (Some 1)); (1, constant (Some 2)) ]
+  in
+  let+ inner = lanes
+  and+ outer = frequency [ (1, constant None); (1, constant (Some 2)) ]
+  and+ rows = some_rows
+  and+ value = float_range (-2.) 2. in
+  { place = { inner; outer }; rows; value }
+
+(* Calls in turn: one call, or, an eighth of the time, the calls under which
+   [scaled]'s trace asks about [outer] only under an answer about [around]:
+   outside every map, then inside [around] of [k] lanes under one answer about
+   [outer] and then the other. *)
+let placed_runs ~nested =
+  let open Gen in
+  let one = map (fun c -> [ c ]) placed_calls in
+  let shaped =
+    let+ k = frequency [ (1, constant 1); (1, constant 2) ]
+    and+ first = frequency [ (1, constant None); (1, constant (Some 2)) ]
+    and+ rows = some_rows
+    and+ value = float_range (-2.) 2. in
+    let call inner outer = { place = { inner; outer }; rows; value } in
+    let other = match first with None -> Some 2 | Some _ -> None in
+    [ call None None; call (Some k) first; call (Some k) other ]
+  in
+  (if nested then frequency [ (7, one); (1, shaped) ] else one)
+  |> with_pp
+       (Format.pp_print_list
+          ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+          pp_placed_call)
+
+(* The answers [scaled]'s trace gets at [p]: of [outer] only inside
+   [around]. *)
+let answers p =
+  match p.inner with None -> (None, None) | Some _ -> (p.inner, p.outer)
+
+(* The shapes and answers traced, in the order first met. *)
+type met = { mutable met : (int * (int option * int option)) list }
+
+let model_placed ~demand m c =
+  let key = (c.rows, answers c.place) in
+  let met p = List.exists (fun (r, (a, _)) -> r = c.rows && p a) m.met in
+  if demand then begin
+    let inside = Option.is_some c.place.inner in
+    cover "inside after outside" (inside && met Option.is_none);
+    cover "outside after inside" ((not inside) && met Option.is_some);
+    cover "one lane after none" (c.place.inner = Some 1 && met Option.is_none);
+    (* The first trace at the shape asked about [around] alone, and one
+       inside [around] asked about [outer] too, answered otherwise. *)
+    let first = List.find_opt (fun (r, _) -> r = c.rows) m.met in
+    cover "a question asked only under an earlier answer"
+      (inside
+      && Option.map (fun (_, (a, _)) -> a) first = Some None
+      && List.exists
+           (fun (r, (a, b)) ->
+             r = c.rows && a = c.place.inner && b <> c.place.outer)
+           m.met)
+  end;
+  let traced = not (List.mem key m.met) in
+  if traced then m.met <- m.met @ [ key ];
+  let lanes = function None -> 1 | Some n -> n in
+  let n = lanes c.place.inner * lanes c.place.outer in
+  let y =
+    match answers c.place with
+    | None, _ -> -.c.value
+    | Some k, None -> c.value *. Float.of_int (k + 1)
+    | Some k, Some j -> c.value *. Float.of_int ((k + 1) * j)
+  in
+  (traced, Array.make (n * c.rows) y)
+
+let system_placed g c =
+  Domain.DLS.set traced_here false;
+  (* [g] inside a map of each name with lanes, [outer] outermost, over arrays
+     that lead with their lanes. *)
+  let map axis lanes (f, shape) =
+    match lanes with
+    | None -> (f, shape)
+    | Some n -> (Rune.vmap' ~axis f, n :: shape)
+  in
+  let f, shape =
+    (g, [ c.rows ]) |> map around c.place.inner |> map outer c.place.outer
+  in
+  let y = f (Nx.full f64 (Array.of_list shape) c.value) in
+  (Domain.DLS.get traced_here, Nx.to_array y)
+
+let scaled_t = abstract "scaled"
+
+let placed_commands ~demand =
+  let start () = { met = [] } and system () = Rune.jit' scaled in
+  let results = Testable.(list (pair bool (array float_exact))) in
+  [
+    command "start" (Gen.unit @-> makes scaled_t) start system;
+    command "call"
+      (scaled_t ^-> placed_runs ~nested:demand @-> returns results)
+      (fun m cs -> List.map (model_placed ~demand m) cs)
+      (fun g cs -> List.map (system_placed g) cs);
+  ]
+
+(* A mark: a custom rule of no result whose tangent map, inside the map
+   [around], adds every lane's tangent of [y], summed, to [marks], and adds
+   nothing outside it, where lanes would raise. A loss marks each step of a
+   scan, as a library's observation of curvature does. *)
+let marks : (float, Nx.float64_elt, 'd) Rune.Total.t = Rune.Total.make ()
+
+let mark =
+  Rune.custom_jvp T.tensor T.unit (fun _ ->
+      ( (),
+        fun dy ->
+          if Option.is_some (Rune.lane_count around) then
+            Rune.Total.add marks (Nx.sum (Rune.lanes around dy)) ))
+
+let marked xs p =
+  let step c r =
+    let y = Nx.mul c r in
+    mark y;
+    (y, y)
+  in
+  Nx.sum (snd (Rune.scan' step ~init:p xs))
+
+(* The marks of [loss] along each of [dirs]' rows, as the lanes of [around],
+   collected around the map. *)
+let sketched loss p dirs =
+  Rune.Total.collect marks ~init:(Nx.scalar f64 (-0.)) (fun () ->
+      Rune.vmap' ~axis:around (fun d -> snd (Rune.jvp' loss p d)) dirs)
+
+(* A loss compiled and called under reverse mode outside every map, then inside
+   the map: its trace outside made no mark, and the call inside makes them. *)
+let test_mark_after_grad () =
+  let xs = Nx.create f64 [| 1; 2 |] [| 3.; -1. |] in
+  let p = v64 [| 1.; 2. |] in
+  let dirs = Nx.create f64 [| 3; 2 |] [| 1.; 0.; 0.; 1.; 1.; 1. |] in
+  let loss = Rune.jit' (marked xs) in
+  let (_, grad), outside =
+    Rune.Total.collect marks ~init:(Nx.scalar f64 (-0.)) (fun () ->
+        Rune.value_and_grad' loss p)
+  in
+  equal ~msg:"the gradient" (array float_exact) [| 3.; -1. |] (Nx.to_array grad);
+  equal ~msg:"no mark outside the map" bits_t
+    (bits (Nx.scalar f64 (-0.)))
+    (bits outside);
+  (* Each lane's tangent of [y] is its direction times [xs]'s row: [3; 0], [0;
+     -1] and [3; -1], summing to 4, which each of the 3 lanes adds. *)
+  let _, inside = sketched loss p dirs in
+  equal ~msg:"the marks inside the map" (array float_exact) [| 12. |]
+    (Nx.to_array (Nx.reshape [| 1 |] inside))
+
+(* A marked loss, compiled, called under [Rune.grad] outside every map and
+   inside the map, in either order, gives the uncompiled loss's gradient and
+   marks. *)
+type sketch = {
+  xs : float array array;
+  p : float array;
+  dirs : float array array;
+}
+
+let pp_floats ppf a =
+  Format.(pp_print_list ~pp_sep:pp_print_space pp_print_float)
+    ppf (Array.to_list a)
+
+let pp_sketch ppf s =
+  let rows ppf r =
+    Format.(
+      pp_print_list ~pp_sep:(fun ppf () -> pp_print_string ppf "; ") pp_floats)
+      ppf (Array.to_list r)
+  in
+  Format.fprintf ppf "xs [%a], p [%a], dirs [%a]" rows s.xs pp_floats s.p rows
+    s.dirs
+
+let sketches =
+  let open Gen in
+  let one_or_more = frequency [ (1, constant 1); (1, int_range 2 3) ] in
+  (let* m = int_range 1 3 and+ steps = one_or_more and+ k = one_or_more in
+   let value = float_range (-2.) 2. in
+   let row = array ~size:(constant m) value in
+   let+ xs = array ~size:(constant steps) row
+   and+ p = row
+   and+ dirs = array ~size:(constant k) row in
+   { xs; p; dirs })
+  |> with_pp pp_sketch
+
+let matrix rows =
+  let n = Array.length rows and m = Array.length rows.(0) in
+  Nx.create f64 [| n; m |] (Array.concat (Array.to_list rows))
+
+let law_marks s =
+  cover "one lane" (Array.length s.dirs = 1);
+  cover "several lanes" (Array.length s.dirs > 1);
+  cover "several steps" (Array.length s.xs > 1);
+  let xs = matrix s.xs and p = Nx.create f64 [| Array.length s.p |] s.p in
+  let dirs = matrix s.dirs in
+  let close = float_rel ~rel:1e-12 ~abs:1e-12 in
+  let eager = marked xs in
+  let grad loss = Nx.to_array (Rune.grad' loss p) in
+  let marks loss =
+    Nx.to_array (Nx.reshape [| 1 |] (snd (sketched loss p dirs)))
+  in
+  let want_grad = grad eager and want_marks = marks eager in
+  let outside_first = Rune.jit' (marked xs) in
+  equal ~msg:"outside first: the gradient" (array close) want_grad
+    (grad outside_first);
+  equal ~msg:"outside first: the marks" (array close) want_marks
+    (marks outside_first);
+  let inside_first = Rune.jit' (marked xs) in
+  equal ~msg:"inside first: the marks" (array close) want_marks
+    (marks inside_first);
+  equal ~msg:"inside first: the gradient" (array close) want_grad
+    (grad inside_first);
+  equal ~msg:"inside again: the marks" (array close) want_marks
+    (marks inside_first)
+
+(* A function that catches lanes' or lane_index's raise outside the map,
+   compiled and traced outside, then called inside: the negative answer is in
+   its key, so the call inside traces again, as eager's map runs it. *)
+let caught_raises =
+  let gathered x =
+    match Rune.lanes around x with
+    | g -> Nx.sum ~axes:[ 0 ] g
+    | exception Invalid_argument _ -> Nx.neg x
+  in
+  let indexed x =
+    match Rune.lane_index around x with
+    | i -> Nx.add x (Nx.cast f64 i)
+    | exception Invalid_argument _ -> Nx.neg x
+  in
+  [ ("lanes", gathered); ("lane_index", indexed) ]
+
+let law_caught_raise (_, f) =
+  let x = v64 [| 1.; -2. |] in
+  let xs = Nx.create f64 [| 3; 2 |] [| 1.; -2.; 0.5; 4.; -0.; 8. |] in
+  let g = Rune.jit' f in
+  equal ~msg:"outside" bits_t (bits (f x)) (bits (g x));
+  equal ~msg:"inside" bits_t
+    (bits (Rune.vmap' ~axis:around f xs))
+    (bits (Rune.vmap' ~axis:around g xs))
+
 (* Derived programs
 
    Under a transformation a call is a call of a program derived from its key's,
@@ -3900,6 +4178,24 @@ let () =
              test "a captured value another call donates" test_captured_donor;
              test "errors name the entry point" test_errors;
              test "two threads of a domain trace once" test_threads;
+           ];
+         group "maps around"
+           [
+             stateful ~count:300 ~steps:10
+               "a call retraces iff its shape and its trace's answers are new"
+               (placed_commands ~demand:true);
+             stateful ~domains:2 ~count:5 ~steps:8
+               "calls on two domains retrace iff their shape and their trace's \
+                answers are new"
+               (placed_commands ~demand:false);
+             test "a mark of a loss traced outside the map is made inside"
+               test_mark_after_grad;
+             prop ~count:30
+               "a marked loss under grad and in the map, in either order, \
+                gives eager's"
+               sketches law_marks;
+             Windtrap.cases ~id:fst "a caught raise outside the map is keyed"
+               caught_raises law_caught_raise;
            ];
          group "constructs"
            [

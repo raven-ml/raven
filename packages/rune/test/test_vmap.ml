@@ -6,8 +6,8 @@
 (* Rune.vmap: a map equals its lanes computed one by one and stacked, for every
    operation, its operands lanes and constants, of every dtype and view; named
    maps nest; a lane's reads raise, and so do lanes and lane_index outside their
-   map; totals, forward mode, compiled functions, loops, placements and checks
-   inside maps. *)
+   map, where lane_count answers None; totals, forward mode, compiled functions,
+   loops, placements and checks inside maps. *)
 
 open Windtrap
 open Compose
@@ -699,6 +699,90 @@ let test_reads () =
   in
   equal ~msg:"in a step" floats [| 1.; 13. |] (Nx.to_array y)
 
+(* Lane counts: [Some n] inside the map of the name, of [n] lanes, and [None]
+   where lanes raises. Each row asks in its place and gives the answer. *)
+
+let rows n = Nx.zeros f64 [| n; 2 |]
+
+(* What [ask ()] answers inside a map over [n] rows. *)
+let in_map ?axis n ask =
+  let got = ref (Some (-1)) in
+  ignore
+    (Rune.vmap' ?axis
+       (fun x ->
+         got := ask ();
+         x)
+       (rows n));
+  !got
+
+let lane_counts =
+  let a = Rune.axis () and b = Rune.axis () in
+  let count () = Rune.lane_count a in
+  let mapped n =
+    ( Printf.sprintf "a map of %d lanes" n,
+      (fun () -> in_map ~axis:a n count),
+      Some n )
+  in
+  [
+    ("no map", count, None);
+    mapped 0;
+    mapped 1;
+    mapped 2;
+    mapped 5;
+    ("an anonymous map", (fun () -> in_map 2 count), None);
+    ("a map of another name", (fun () -> in_map ~axis:b 2 count), None);
+    ( "an inner map of the same name",
+      (fun () -> in_map ~axis:a 2 (fun () -> in_map ~axis:a 3 count)),
+      Some 3 );
+    ( "the outer map, inside one of another name",
+      (fun () -> in_map ~axis:a 2 (fun () -> in_map ~axis:b 3 count)),
+      Some 2 );
+    ( "a systhread the map starts",
+      (fun () ->
+        in_map ~axis:a 2 (fun () ->
+            let got = ref (Some (-1)) in
+            Thread.join (Thread.create (fun () -> got := count ()) ());
+            !got)),
+      None );
+    ( "a domain the map starts",
+      (fun () -> in_map ~axis:a 2 (fun () -> Domain.join (Domain.spawn count))),
+      None );
+    ( "a callback's function in the map",
+      (fun () ->
+        let got = ref (Some (-1)) in
+        ignore
+          (Rune.vmap' ~axis:a
+             (fun x ->
+               Rune.callback
+                 T.(tensor @-> returns tensor)
+                 ~like:x
+                 (fun y ->
+                   got := count ();
+                   y)
+                 x)
+             (rows 2));
+        !got),
+      None );
+    ( "a branch a lane is held in",
+      (fun () ->
+        let got = ref (Some (-1)) in
+        ignore
+          (Rune.vmap' ~axis:a
+             (fun x ->
+               Rune.switch T.tensor (Rune.lane_index a x)
+                 [
+                   (fun () ->
+                     got := count ();
+                     x);
+                   (fun () -> x);
+                 ])
+             (rows 2));
+        !got),
+      Some 2 );
+  ]
+
+let law_lane_count (_, ask, want) = equal (option int) want (ask ())
+
 (* Errors *)
 
 let test_errors () =
@@ -1211,6 +1295,9 @@ let () =
            [
              test "nested maps" test_named;
              test "reads raise" test_reads;
+             Windtrap.cases
+               ~id:(fun (name, _, _) -> name)
+               "lane counts" lane_counts law_lane_count;
              test "errors" test_errors;
            ];
          group "constructs"
