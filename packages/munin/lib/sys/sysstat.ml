@@ -1349,7 +1349,7 @@ module Gpu = struct
         | None -> sensor "power1_input" 1e6);
     }
 
-  let sample_under ~root =
+  let amdgpus ~root =
     let drm = Filename.concat root "sys/class/drm" in
     let read card =
       let dev = Filename.concat (Filename.concat drm card) "device" in
@@ -1360,9 +1360,40 @@ module Gpu = struct
     in
     match Sys.readdir drm with
     | exception Sys_error _ -> []
-    | names ->
-        Array.to_list names |> List.filter is_card |> List.filter_map read
-        |> List.sort (fun a b -> String.compare a.id b.id)
+    | names -> Array.to_list names |> List.filter is_card |> List.filter_map read
+
+  (* NVIDIA's GPUs, as rig lists them, read from their RM. NVIDIA's open
+     headers define no reading of the temperature or the power that the RM
+     answers. A GPU whose RM does not answer gives nothing. *)
+  let nvidia ~root =
+    let read i id =
+      match Rig_nv_nvidia.usage_under ~root i with
+      | Error _ ->
+          {
+            id;
+            busy_percent = None;
+            memory_used = None;
+            memory_total = None;
+            temperature = None;
+            power = None;
+          }
+      | Ok u ->
+          {
+            id;
+            busy_percent = u.busy;
+            memory_used = Some (Int64.of_int (u.memory_total - u.memory_free));
+            memory_total = Some (Int64.of_int u.memory_total);
+            temperature = None;
+            power = None;
+          }
+    in
+    match Rig_nv_nvidia.buses_under ~root with
+    | Error _ -> []
+    | Ok buses -> List.mapi read buses
+
+  let sample_under ~root =
+    amdgpus ~root @ nvidia ~root
+    |> List.sort (fun a b -> String.compare a.id b.id)
 
   (* The stub gives each accelerator's IOKit class, its load and the memory
      it holds, or -1 for what it lacks. *)

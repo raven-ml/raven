@@ -315,6 +315,25 @@ let test_gpu =
           g.busy_percent)
       (Munin_sys.Stat.Gpu.sample ())
 
+(* Every NVIDIA GPU of the machine is read from its RM: its memory, used
+   within its total, and no temperature or power. *)
+let test_gpu_nvidia =
+  test "Gpu.sample reads NVIDIA's GPUs" @@ fun () ->
+  let buses = Result.value (Rig_nv_nvidia.buses ()) ~default:[] in
+  if buses = [] then skip ~reason:"the machine has no NVIDIA GPU" ();
+  let gpus = Munin_sys.Stat.Gpu.sample () in
+  let read bus =
+    let g = List.find (fun (g : Munin_sys.Stat.Gpu.t) -> g.id = bus) gpus in
+    equal ~msg:"temperature" (option float_exact) None g.temperature;
+    equal ~msg:"power" (option float_exact) None g.power;
+    match (g.memory_used, g.memory_total) with
+    | Some used, Some total ->
+        greater ~msg:"memory_total" int64 ~than:0L total;
+        at_most ~msg:"memory_used" int64 ~than:total used
+    | _ -> failf "%s: memory not read" bus
+  in
+  List.iter read buses
+
 let test_uptime =
   reads "uptime" Munin_sys.Stat.uptime @@ fun s ->
   greater ~msg:"seconds" int64 ~than:0L s
@@ -345,5 +364,6 @@ let () =
              test_loadavg;
              test_uptime;
            ];
-         group "Gpu" [ test_gpu_sysfs; test_gpu_no_drm; test_gpu ];
+         group "Gpu"
+           [ test_gpu_sysfs; test_gpu_no_drm; test_gpu; test_gpu_nvidia ];
        ])

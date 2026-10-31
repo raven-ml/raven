@@ -2,7 +2,7 @@
  (name munin_sys)
  (public_name munin.sys)
  (private_modules sysstat)
- (libraries unix str munin threads.posix)
+ (libraries unix str munin rig.nv.nvidia threads.posix)
  (foreign_stubs
   (language c)
   (names sysstat_stubs))

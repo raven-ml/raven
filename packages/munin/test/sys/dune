@@ -1,4 +1,4 @@
 (test
  (name test_sys)
  (package munin)
- (libraries munin munin.sys unix threads.posix windtrap))
+ (libraries munin munin.sys rig.nv.nvidia unix threads.posix windtrap))

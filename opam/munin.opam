@@ -19,6 +19,7 @@ depends: [
   "cmdliner"
   "mosaic"
   "matrix"
+  "rig" {= version}
   "windtrap" {with-test & >= "0.2.0"}
   "mdx" {with-test}
   "nx" {= version & with-dev-setup}

@@ -660,8 +660,9 @@ All notable changes to this project will be documented in this file.
 ### Munin (new)
 
 - `Munin_sys.Stat.Gpu.sample` reads GPU load, memory, temperature and power:
-  amdgpu's sysfs files on Linux, IOKit's accelerators on macOS, with no vendor
-  library. `Munin_sys.start` logs them as `sys/gpuN_*`, and `munin watch`
+  amdgpu's sysfs files and NVIDIA's kernel driver (load and memory, through
+  `Rig_nv_nvidia.usage`) on Linux, IOKit's accelerators on macOS, with no
+  vendor library. `Munin_sys.start` logs them as `sys/gpuN_*`, and `munin watch`
   shows them. A GPU the kernel suspended is not woken to be read.
 - `Munin_sys.Stat` reads network and disk I/O counters, per-core CPU times and
   the process table on Windows, and `Munin_sys.start` logs disk I/O there.

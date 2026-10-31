@@ -445,10 +445,17 @@ module Gpu : sig
   (** A GPU's statistics, [None] for what its driver does not report.
 
       Platform behavior:
-      - {b Linux}: GPUs of the [amdgpu] driver, read from its sysfs files.
-        On an APU [power] includes the CPU's. A GPU the kernel suspended for
-        being idle gives its memory alone, since reading the rest would
-        resume it.
+      - {b Linux, AMD}: GPUs of the [amdgpu] driver, read from its sysfs
+        files. On an APU [power] includes the CPU's. A GPU the kernel
+        suspended for being idle gives its memory alone, since reading the
+        rest would resume it.
+      - {b Linux, NVIDIA}: NVIDIA's GPUs, read from NVIDIA's kernel driver
+        through {!Rig_nv_nvidia.usage}, whose first call makes the process's
+        client of that driver. [busy_percent] is a mean over the last 15
+        seconds, and [memory_used] counts what the driver holds for itself.
+        [temperature] and [power] are [None]: NVIDIA's open headers define no
+        command that reads them. A GPU the driver does not answer for has
+        every field [None].
       - {b macOS}: [busy_percent], and [memory_used] on Apple silicon, from
         each IOKit accelerator. *)
 
