@@ -144,10 +144,6 @@ let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
 let kernel_loads loads =
   Array.init (Iarray.length loads) (fun i -> kernel_load (Iarray.get loads i))
 
-(* A reduction as a kernel takes it, what it computes and the output it folds:
-   the kernel reads the result's dtype from its destination. *)
-let kernel (r, k, _) = (r, k)
-
 (* The arrays at position [j] of [x] and of the results [r] of [op]. An
    [Array] is read in place, and the results of a map of one output, a
    reduction of one or a scan of one, which most calls are, without
@@ -183,13 +179,13 @@ let call : type r.
     | Value.Map { prog; loads; _ } ->
         K.map prog ~dsts:(dsts_at op r j) (kernel_loads loads)
     | Value.Reduce { layout; axes; prog; reductions; loads } ->
-        let rs = Array.map kernel (Prim.reductions reductions)
+        let rs = Prim.kernel_reductions reductions
         and shape = Iarray.to_array (L.shape layout) in
         K.reduce prog ~shape ~axes rs ~dsts:(dsts_at op r j)
           (kernel_loads loads)
     | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
         let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
-        K.scan ?carry prog ~axis (kernel (Prim.reduction reduction))
+        K.scan ?carry prog ~axis (Prim.kernel_reduction reduction)
           ~dsts:(dsts_at op r j) (kernel_loads loads)
     | Value.Contract
         {
@@ -534,8 +530,11 @@ let windows : type r.
           (* On one device each operand is read whole: itself where it lies
              there alone, as it does where the route found every operand at
              one placement, and otherwise a view of its array there. *)
-          let read _ x = if Prim.placement x == p then x else whole ~by p x in
-          on_device ~by kernels set r 0 k (Prim.mapi read op);
+          if Prim.all_at p op then on_device ~by kernels set r 0 k op
+          else begin
+            let read _ x = if Prim.placement x == p then x else whole ~by p x in
+            on_device ~by kernels set r 0 k (Prim.mapi read op)
+          end;
           r
       | None ->
           let rule = Prim.rule op

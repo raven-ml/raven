@@ -152,6 +152,10 @@ val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
     nor {!iteri} allocates for an operation other than a factorisation, a
     contraction or a check. *)
 
+val all_at : unit Devices.placement -> 'r prim -> bool
+(** [all_at p op] is whether every operand of [op] lies at [p], physically.
+    It allocates as {!exists} does. *)
+
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
 
@@ -277,6 +281,14 @@ val reduction :
 val reductions :
   ('d, 'r) reductions -> (Nx_kernel.reduction * int * Nx_array.Dtype.any) array
 (** [reductions rs] is {!val-reduction} of each of [rs], in order. *)
+
+val kernel_reductions : ('d, 'r) reductions -> (Nx_kernel.reduction * int) array
+(** [kernel_reductions rs] is what each of [rs] computes and the output it
+    reduces, in order, as {!Nx_kernel.S.reduce} takes them. *)
+
+val kernel_reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
+(** [kernel_reduction r] is what [r] computes and the output it reduces, as
+    {!Nx_kernel.S.scan} takes it. *)
 
 val reduction_name : Nx_kernel.reduction -> string
 (** [reduction_name r] names [r] in messages, as ["Logsumexp"] or

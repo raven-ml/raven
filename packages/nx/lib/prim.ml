@@ -565,6 +565,8 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
 let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
  fun f op -> fold (fun e found x -> found || e.test x) { test = f } false op
 
+let all_at p op = fold (fun p all x -> all && placement x == p) p true op
+
 let mapi : type r.
     ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
  fun m op ->
@@ -846,6 +848,59 @@ let rec reductions_list : type d r.
 
 let reductions rs = Array.of_list (reductions_list rs)
 
+(* What [r] computes, a constant: it allocates nothing. *)
+let reduction_kind : type d a. (d, a) reduction -> Nx_kernel.reduction =
+  function
+  | Monoid (Sum, _, _) -> Monoid Sum
+  | Monoid (Prod, _, _) -> Monoid Prod
+  | Monoid (Max, _, _) -> Monoid Max
+  | Monoid (Min, _, _) -> Monoid Min
+  | Logsumexp _ -> Logsumexp
+  | Moments _ -> Moments
+  | Arg (Max, _, _) -> Arg Max
+  | Arg (Min, _, _) -> Arg Min
+
+(* The program output [r] reduces. *)
+let output : type d a. (d, a) reduction -> int = function
+  | Monoid (_, k, _) | Logsumexp (k, _) | Moments (k, _) | Arg (_, k, _) -> k
+
+let rec count_reductions : type d r. (d, r) reductions -> int = function
+  | [] -> 0
+  | _ :: rest -> 1 + count_reductions rest
+
+(* Each of [rs]' kinds into [a], from [i] on. *)
+let rec fill_kinds : type d r.
+    Nx_kernel.reduction array -> int -> (d, r) reductions -> unit =
+ fun a i rs ->
+  match rs with
+  | [] -> ()
+  | r :: rest ->
+      a.(i) <- reduction_kind r;
+      fill_kinds a (i + 1) rest
+
+let kernel_reduction r = (reduction_kind r, output r)
+
+(* Each of [rs] as a kernel takes it into [a], from [i] on. *)
+let rec fill_kernel : type d r.
+    (Nx_kernel.reduction * int) array -> int -> (d, r) reductions -> unit =
+ fun a i rs ->
+  match rs with
+  | [] -> ()
+  | r :: rest ->
+      a.(i) <- kernel_reduction r;
+      fill_kernel a (i + 1) rest
+
+(* [rs]' kinds, in order. *)
+let kinds rs =
+  let a = Array.make (count_reductions rs) Nx_kernel.Moments in
+  fill_kinds a 0 rs;
+  a
+
+let kernel_reductions rs =
+  let a = Array.make (count_reductions rs) (Nx_kernel.Moments, 0) in
+  fill_kernel a 0 rs;
+  a
+
 let pp_reduced (prog : P.t) (pr : printer) ppf (r, k, _) =
   Format.fprintf ppf "%s %a" (reduction_name r) pr.expr
     (Iarray.get prog.outs k)
@@ -1020,7 +1075,8 @@ let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
 
 (* A reduction's rule over [prog]'s outputs: its output exists and is of a
    dtype it takes. *)
-let check_reduction ~by (prog : P.t) (r, k, _) =
+let check_reduction (type d a) ~by (prog : P.t) (red : (d, a) reduction) =
+  let r = reduction_kind red and k = output red in
   let produced = prog.outs in
   if k < 0 || k >= Iarray.length produced then
     invalid_argf "%s: a reduction of output %d of a program of %d" by k
@@ -1036,16 +1092,24 @@ let reduction_width : type d a. (d, a) reduction -> int = function
 (* The shape of the results of [rs] along [axes] of a loop of [layout]: its
    rule. *)
 let reduced_shape ~by layout axes rs =
-  let kinds = Array.map (fun (r, _, _) -> r) (reductions rs) in
-  shaped ~by (Shape.reduce ~axes kinds (Iarray.to_array (L.shape layout)))
+  shaped ~by (Shape.reduce ~axes (kinds rs) (Iarray.to_array (L.shape layout)))
+
+let rec check_reductions : type d r.
+    by:string -> P.t -> (d, r) reductions -> unit =
+ fun ~by prog rs ->
+  match rs with
+  | [] -> ()
+  | r :: rest ->
+      check_reduction ~by prog r;
+      check_reductions ~by prog rest
 
 (* A reduction's rule; its results' shape. *)
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
     (loads : d load iarray) =
   check_loads ~by ~what:"reduction" layout prog loads;
-  (match reductions_list rs with
+  (match rs with
   | [] -> invalid_argf "%s: a reduction of no output" by
-  | l -> List.iter (check_reduction ~by prog) l);
+  | _ :: _ -> check_reductions ~by prog rs);
   reduced_shape ~by layout axes rs
 
 let any_shape (Any x) = shape x
@@ -1056,7 +1120,7 @@ let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
   let shape =
     shaped ~by (Shape.scan ~axis (Iarray.to_array (L.shape layout)))
   in
-  check_reduction ~by prog (reduction r);
+  check_reduction ~by prog r;
   match (carry, r) with
   | None, _ -> ()
   | Some (Any c), Monoid ((Sum | Prod | Max | Min), k, _) ->
