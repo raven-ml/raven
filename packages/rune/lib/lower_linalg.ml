@@ -227,7 +227,15 @@ let roundoff dt = Float.ldexp 1. (-(snd (Dtype.finfo dt) + 1))
 (* [norm_roundoff l] is the unit roundoff times the Frobenius norm of each
    symmetric matrix whose lower triangle [l] holds, zeros above it: an element
    below the diagonal counts twice. [l]'s magnitudes are below 2, so that no
-   square overflows. *)
+   square overflows.
+
+   [eigh]'s floor is this absolute one, where [svd]'s is relative to each pair.
+   A floor relative to the pair's diagonal elements vanishes with them in a
+   cluster of zero eigenvalues, as of a rank-deficient matrix, which then keeps
+   turning by arbitrary angles and converges a bit a sweep; the fixed count of
+   sweeps would need [svd]'s extra one to cover it. A graded matrix's small
+   eigenvalues are therefore accurate only to the interface's normwise
+   bound. *)
 let norm_roundoff l =
   let _, m, n = matrix l in
   let twice =

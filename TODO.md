@@ -193,11 +193,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
-- compiled `eigh` skips a pair below u·‖A‖_F (`norm_roundoff`), svd below
-  u·‖a‖‖b‖ per pair: two rules for one cause. One relative floor in
-  `tangents`, |γ| ≤ u·√(|α||β|) (Demmel and Veselić, LAPACK Working Note
-  15; eager's split test), removes `norm_roundoff`, its reduction and
-  `lower_linalg.mli`'s graded-matrix carve-out
 - vega keeps optimizer state at the leaf dtype: a bfloat16 moment never
   decays by less than half its spacing (vega.mli). Design pass
 - kaun's TrainStep/train-step allocated 27,332 words eagerly on the old
