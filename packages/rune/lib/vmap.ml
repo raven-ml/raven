@@ -826,27 +826,39 @@ let claims i axis : Program.construct -> bool = function
      one is mapped. *)
   | c when Program.calls c -> true
   | Lanes (a, x) -> Program.same_axis a axis || owned i x
-  (* An iterate whose programs read the map's lanes may stop them apart. *)
-  | Iterate { step; until; _ }
-    when Program.mentions axis step || Program.mentions axis until ->
-      true
-  | Switch { branches; _ } when Array.exists (Program.mentions axis) branches ->
-      true
+  (* A construct whose programs read the map's lanes is mapped, whatever its
+     operands: an iterate's lanes may then stop apart, and a custom rule's
+     derivative reads them of its tangents, which are none of its operands. An
+     interpretation around this map would evaluate those programs outside it,
+     where its lanes are not. *)
+  | c when List.exists (Program.mentions axis) (Program.carried c) -> true
   | Lane_index (a, _) -> Program.same_axis a axis
   | Add _ | Emit _ -> true
-  | Call { args; site; seeds; _ } ->
-      Array.exists (operand i) args
-      || Array.exists (operand i) seeds
-      || List.exists (Program.same_axis axis) (Program.axes site)
   | c -> List.exists (operand i) (Program.operands c)
+
+let lane_v i (Program.V x) = Program.V (lane i x)
+let batch_v i n (Program.V x) = Program.V (batch i n x)
+let owned_v i (Program.V x) = owned i x
+
+(* [vs], lane values of [w] where [mask] holds. *)
+let lanes_of w mask vs =
+  Array.map2 (fun m v -> if m then lane_v w v else v) mask vs
 
 (* Custom rules
 
-   A custom rule ({!Program.Custom}) or a linear call ({!Program.Linear}) over
-   lane values, as {!Custom} calls trace them. It is performed outward with each
-   of its programs traced again at its signature over the batches and evaluated
-   over their lanes. A pullback or a transpose runs in a backward pass outside
-   the map, so its additions reach a running value every lane shares. *)
+   A custom rule ({!Program.Custom}) or a linear call ({!Program.Linear}) that
+   the map claims, as {!Custom} calls trace them. It is performed outward with
+   each of its programs traced again at its signature over batches and evaluated
+   over their lanes, so that the differentiations around the map apply it.
+
+   A tangent map's rule is batched as JAX batches a custom_jvp call: over the
+   operands the map holds, the others as they are, and a result holds lanes
+   where the primal's or the tangent map's form of it does, the other form
+   broadcast to agree. A pullback or a transpose is applied to every lane on
+   that lane's cotangents, so its rule is batched over every operand, each
+   broadcast where the map does not hold it, and every result holds lanes. A
+   pullback or a transpose runs in a backward pass outside the map, so its
+   additions reach a running value every lane shares. *)
 
 module Rules = struct
   open Program
@@ -854,66 +866,68 @@ module Rules = struct
   let sub = Array.sub
   let residual_count = Custom.residual_count
 
-  (* The map, its number of lanes, and [map ~shared f bs], the batches of [f]'s
-     results over the lanes of the batches [bs] inside a map of the same name
-     and size, the last of [bs] and of the results running values, shared where
-     [shared] says. *)
+  (* How a program's result leaves the map: its batch where it holds lanes and
+     itself otherwise, or its batch. *)
+  type put = Laned | Batched
+
+  (* The map, its number of lanes, and [map ~shared ~la ~puts ~flags f bs], the
+     results of [f] over the lanes of [bs] where [la] holds and over the others
+     as they are, inside a map of the same name and size, put as [puts] says,
+     with which left as batches in [flags]; the last of [bs] and of the results
+     are running values, shared where [shared] says. *)
   type ctx = {
     i : Prim.interpretation;
     n : int;
     map :
       shared:bool array ->
+      la:bool array ->
+      puts:put array ->
+      flags:bool array ref ->
       (value array -> value array) ->
       value array ->
       value array;
   }
 
-  (* [p] over the lanes of [vs], its results' batches, its totals threaded:
-     shared where [shared] says, and otherwise every lane's. *)
-  let over m ~shared ~results (p : Program.t) vs =
+  (* [p] over the lanes of [vs] where [la] holds, its results put as [puts] says
+     and which left as batches in [flags], its totals threaded: shared where
+     [shared] says, and otherwise every lane's. *)
+  let over m ~shared ~la ~puts ~flags (p : Program.t) vs =
     let nv = Array.length vs in
-    let out =
-      Program.threaded ~lanes:(laned m.n shared) p (fun running ->
-          m.map ~shared
-            (fun lanes ->
-              eval
-                ~totals:(sub lanes nv (Array.length lanes - nv))
-                p (sub lanes 0 nv))
-            (Array.append vs running))
-    in
-    sub out 0 results
+    Program.threaded ~lanes:(laned m.n shared) p (fun running ->
+        m.map ~shared ~la ~puts ~flags
+          (fun lanes ->
+            eval
+              ~totals:(sub lanes nv (Array.length lanes - nv))
+              p (sub lanes 0 nv))
+          (Array.append vs running))
 
   let every (p : Program.t) b = Array.make (Array.length p.adds) b
+  let as_laned = Array.map (fun l -> if l then Batched else Laned)
 
-  (* A custom rule over a map's values: the rule traced again over its operands'
-     batches, every program evaluated over their lanes, so that the
-     differentiations around the map apply it; its results are the lanes of the
-     batched call's. A pullback's and a transpose's additions, which a backward
-     pass makes outside the map, add each lane's rows in turn to the running
-     value around that pass. *)
+  let batches m la =
+    Array.map2 (fun l v -> if l then batch_v m.i m.n v else v) la
+
+  (* The form of [v] over the lanes where [l], one lane's otherwise. *)
+  let form_at m l v = if l then stacked m.n (form v) else form v
+
+  (* [d] traced at its own signature [forms] over the lanes of its parameters
+     where [la] holds, its results put as [puts] says: the program, what it
+     captures, and which of its results left as batches. *)
+  let traced m ~name ~shared ~la ~puts (d : Program.t) forms =
+    let flags = ref [||] in
+    let d, more =
+      Trace.trace Body ~name forms
+        (over m ~shared:(every d shared) ~la ~puts ~flags d)
+    in
+    (d, more, !flags)
+
+  (* A custom rule over a map's values. The primal is traced first, for which of
+     its results and residuals hold lanes; the derivative over those; then, for
+     a tangent map, the primal again where a result's lanes come from the
+     tangent map alone, or where the derivative captures values, which the
+     primal returns as further residuals. The results are lane values where they
+     hold lanes. *)
   let rule m c =
-    let batched = Array.map (fun (V x) -> V (batch m.i m.n x)) in
-    let lanes ~keep r =
-      Array.mapi (fun k (V b as v) -> if keep k then v else V (lane m.i b)) r
-    in
-    (* [primal] over the operands' batches, its results and residuals batched in
-       order, then the values the batched derivative [d] captures, which are its
-       further residuals. *)
-    let primal_over ~name ~shared ops (p : Program.t) ~ny more =
-      Trace.trace Body ~name (Array.map form ops) (fun vs ->
-          let nr = residual_count p ~ny in
-          Array.append (over m ~shared ~results:(ny + nr) p vs) more)
-    in
-    (* Each derivative program is traced at its own signature, its parameters
-       batched in their order. *)
-    let batched_derivative ~name ~shared ~results (d : Program.t) forms
-        (p : Program.t) ~ny =
-      let res = sub p.outputs ny (residual_count p ~ny) in
-      let forms =
-        Array.append forms (Array.map (fun v -> stacked m.n (form v)) res)
-      in
-      Trace.trace Body ~name forms (over m ~shared:(every d shared) ~results d)
-    in
     match c with
     | Custom
         {
@@ -928,33 +942,59 @@ module Rules = struct
           seeds;
         } ->
         let na = Array.length args in
-        let ops = Array.append (batched args) (batched captures) in
-        let derivative, more =
+        let ops = Array.append args captures in
+        let la =
           match derivative with
-          | Tangent t ->
-              let forms = Array.map form (sub ops 0 na) in
-              (* A tangent map's sums start from the identity, every lane's. *)
-              let t, more =
-                batched_derivative ~name ~shared:false ~results:ny t forms
-                  primal ~ny
-              in
-              (Tangent t, more)
-          | Pullback b ->
-              let ys = sub primal.outputs 0 ny in
-              let forms = Array.map (fun v -> stacked m.n (form v)) ys in
-              let b, more =
-                batched_derivative ~name ~shared:true ~results:na b forms primal
-                  ~ny
-              in
-              (Pullback b, more)
+          | Tangent _ -> Array.map (owned_v m.i) ops
+          | Pullback _ -> Array.map (fun _ -> true) ops
         in
+        let ops = batches m la ops in
         let nr = residual_count primal ~ny in
         let shared = sharing m.i (Array.length primal.adds) seeds in
-        let primal, captured = primal_over ~name ~shared ops primal ~ny more in
-        let captures =
-          Array.append (sub ops na (Array.length ops - na)) captured
+        let primal_over ~puts more =
+          let flags = ref [||] in
+          let p, captured =
+            Trace.trace Body ~name (Array.map form ops) (fun vs ->
+                Array.append (over m ~shared ~la ~puts ~flags primal vs) more)
+          in
+          (p, captured, !flags)
         in
-        let args = sub ops 0 na in
+        let put =
+          match derivative with Tangent _ -> Laned | Pullback _ -> Batched
+        in
+        let ((_, _, lp) as first) =
+          primal_over ~puts:(Array.make (ny + nr) put) [||]
+        in
+        let ly = sub lp 0 ny and lr = sub lp ny nr in
+        let res = Array.map2 (form_at m) lr (sub primal.outputs ny nr) in
+        let derivative, more, ly =
+          match derivative with
+          | Tangent t ->
+              (* A tangent holds lanes where its argument does, and a tangent
+                 map's sums start from the identity, every lane's. *)
+              let forms = Array.append (Array.map form (sub ops 0 na)) res in
+              let la = Array.append (sub la 0 na) lr in
+              let trace puts = traced m ~name ~shared:false ~la ~puts t forms in
+              let ((_, _, lt) as natural) = trace (Array.make ny Laned) in
+              let l = Array.map2 ( || ) ly lt in
+              let t, more, _ = if l = lt then natural else trace (as_laned l) in
+              (Tangent t, more, l)
+          | Pullback b ->
+              let ys = Array.map (form_at m true) (sub primal.outputs 0 ny) in
+              let b, more, _ =
+                traced m ~name ~shared:true
+                  ~la:(Array.make (ny + nr) true)
+                  ~puts:(Array.make na Batched) b (Array.append ys res)
+              in
+              (Pullback b, more, ly)
+        in
+        let primal, captured, _ =
+          if Array.length more = 0 && ly = sub lp 0 ny then first
+          else
+            primal_over
+              ~puts:(Array.append (as_laned ly) (Array.make nr put))
+              more
+        in
         let c =
           Custom
             {
@@ -962,28 +1002,36 @@ module Rules = struct
               primal;
               derivative;
               ny;
-              args;
-              captures;
+              args = sub ops 0 na;
+              captures =
+                Array.append (sub ops na (Array.length ops - na)) captured;
               residuals;
               applied;
               seeds = seeds_out m.i m.n shared seeds;
             }
         in
-        (* Unused residuals hold nothing to take lanes of; the primal's sums
-           follow the residuals. *)
+        (* Unused residuals hold nothing to take lanes of, nor do the values the
+           derivative captures; the primal's sums follow them, then the tangent
+           map's, every lane's. *)
         let base = ny + nr + Array.length more in
-        let unused k = (not residuals) && k >= ny && k < base in
         let ns = Array.length shared in
+        let laned k =
+          if k < ny then ly.(k)
+          else if k < ny + nr then residuals && lr.(k - ny)
+          else k >= base
+        in
         let sum k = k >= base && k < base + ns && shared.(k - base) in
         Some
           (Array.mapi
              (fun k (V b as v) ->
-               if unused k then v
-               else if sum k then share_v m.i v
-               else V (lane m.i b))
+               if sum k then share_v m.i v
+               else if laned k then V (lane m.i b)
+               else v)
              (perform c))
     | Linear { name; apply; transpose; args; captures; residuals; forms } ->
         let na = Array.length args and ny = Array.length forms in
+        let all vs = Array.map (fun _ -> true) vs in
+        let batched vs = batches m (all vs) vs in
         let args = batched args and captures = batched captures in
         let residuals = batched residuals in
         let forms = Array.map (stacked m.n) forms in
@@ -991,10 +1039,10 @@ module Rules = struct
           match apply with
           | None -> (None, captures)
           | Some a ->
-              let a, more =
-                Trace.trace Body ~name
-                  (Array.map form (Array.append args captures))
-                  (over m ~shared:(every a false) ~results:ny a)
+              let ops = Array.append args captures in
+              let a, more, _ =
+                traced m ~name ~shared:false ~la:(all ops)
+                  ~puts:(Array.make ny Batched) a (Array.map form ops)
               in
               (Some a, Array.append captures more)
         in
@@ -1008,15 +1056,14 @@ module Rules = struct
                ^ ": a custom_vjp rule has no forward derivative; give the \
                   function a custom_jvp rule")
         in
-        let transpose, more =
-          Trace.trace Body ~name
-            (Array.append forms (Array.map form residuals))
-            (over m ~shared:(every transpose true) ~results:na transpose)
+        let ins = Array.append forms (Array.map form residuals) in
+        let transpose, more, _ =
+          traced m ~name ~shared:true ~la:(all ins)
+            ~puts:(Array.make na Batched) transpose ins
         in
         let residuals = Array.append residuals more in
         Some
-          (lanes
-             ~keep:(fun _ -> false)
+          (Array.map (lane_v m.i)
              (perform
                 (Linear
                    {
@@ -1048,17 +1095,9 @@ let stacked_form (type v s d) n (f : (v, s, d) Nx.Prim.form) :
     placement = Nx.Placement.with_leading_axis f.placement;
   }
 
-let lane_v i (Program.V x) = Program.V (lane i x)
-let batch_v i n (Program.V x) = Program.V (batch i n x)
-let owned_v i (Program.V x) = owned i x
-
 (* A batch [n; length; ...] read row by row: [length; n; ...]. *)
 let rows_of i (Program.V x as v) =
   match batched i x with Some b -> Program.V (Nx.moveaxis 0 1 b) | None -> v
-
-(* [vs], lane values of [w] where [mask] holds. *)
-let lanes_of w mask vs =
-  Array.map2 (fun m v -> if m then lane_v w v else v) mask vs
 
 (* A callback over this map's lanes, performed outward as one callback over
    their batches. With [~lanes], its function runs once on them, a held lane
@@ -2123,22 +2162,27 @@ and call ~name ?held i axis n (body : Program.t) args site seeds =
        (Array.sub r 0 no))
     (ends_in i shared (Array.sub r no (Array.length shared)))
 
-(* [f]'s results' batches over the lanes of the batches [bs], in a map of this
-   one's name, size and held lanes. *)
-and map ~name ?held axis n ~shared f bs =
+(* [f]'s results over the lanes of [bs] where [la] holds and over the others as
+   they are, in a map of this one's name, size and held lanes, put as [puts]
+   says, with which left as batches in [flags]. *)
+and map ~name ?held axis n ~shared ~la ~puts ~flags f bs =
   let ns = Array.length shared in
   interpret ~name ~axis ?held n (fun j ->
       let tail vs = Array.sub vs (Array.length vs - ns) ns in
       let head vs = Array.sub vs 0 (Array.length vs - ns) in
       let lanes =
-        Array.append
-          (Array.map (fun (Program.V b) -> Program.V (lane j b)) (head bs))
-          (totals_in j shared (tail bs))
+        Array.append (lanes_of j la (head bs)) (totals_in j shared (tail bs))
       in
       let out = f lanes in
-      Array.append
-        (Array.map (fun (Program.V y) -> Program.V (batch j n y)) (head out))
-        (totals_out j n shared (tail out)))
+      let ys = head out in
+      let batched k v =
+        match (puts.(k) : Rules.put) with
+        | Batched -> true
+        | Laned -> owned_v j v
+      in
+      flags := Array.mapi batched ys;
+      let put k v = if batched k v then batch_v j n v else v in
+      Array.append (Array.mapi put ys) (totals_out j n shared (tail out)))
 
 and interpret :
     'a.

@@ -289,6 +289,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A function traced by `scan`, `remat`, `custom_jvp`, `custom_vjp` or
+  `custom_transpose` that calls `Rune.lanes` or `Rune.lane_index` of a `vmap`
+  no longer raises when a `vmap`, `grad` or `jvp` around that map holds its
+  arguments. A traced `custom_jvp`'s result holds the map's lanes only where it
+  is computed from a value the map holds or from `Rune.lane_index`; a traced
+  `custom_vjp`'s or `custom_transpose`'s results always hold them.
 - A compiled `Nx_quant.apply_experts` contracts each row with its own
   expert's matrix alone, where it computed every expert's product for every
   row and kept one: 32 experts cost 32 times the work. Its gradient in `x`

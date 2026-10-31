@@ -1177,6 +1177,179 @@ let dxs () = Nx.create f64 [| 2; 3 |] [| 1.; 0.5; -2.; 0.3; 1.5; -0.7 |]
 let row i x = Nx.get [ i ] x
 let stack n f = Nx.stack ~axis:0 (List.init n f)
 
+(* A construct over [p] inside maps of [t]'s lanes, whose programs or
+   derivatives read the lanes of the maps [inner], every one's mean, and the
+   calling lane's index in the innermost. Each derivative given is its
+   function's, so the construct is one function of every lane's [p]. *)
+type kind =
+  | Jvp_rule
+  | Vjp_rule
+  | Transpose_rule
+  | Mean_vjp
+  | Mean_transpose
+  | Scan_loop
+  | Remat_call
+
+let kinds =
+  [
+    Jvp_rule;
+    Vjp_rule;
+    Transpose_rule;
+    Mean_vjp;
+    Mean_transpose;
+    Scan_loop;
+    Remat_call;
+  ]
+
+let kind_name = function
+  | Jvp_rule -> "custom_jvp"
+  | Vjp_rule -> "custom_vjp"
+  | Transpose_rule -> "custom_transpose"
+  | Mean_vjp -> "custom_vjp of the lanes' mean"
+  | Mean_transpose -> "custom_transpose of the lanes' mean"
+  | Scan_loop -> "scan"
+  | Remat_call -> "remat"
+
+let construct kind inner p t =
+  let read x =
+    List.fold_left (fun x a -> Nx.mean ~axes:[ 0 ] (Rune.lanes a x)) x inner
+  in
+  let index x =
+    Nx.cast f64 (Rune.lane_index (List.nth inner (List.length inner - 1)) x)
+  in
+  match kind with
+  | Jvp_rule ->
+      let mark =
+        Rune.custom_jvp tensor tensor (fun y ->
+            let i = index y in
+            (y, fun dy -> Nx.add (read dy) (Nx.mul dy i)))
+      in
+      let y, dy = Rune.jvp' (fun p -> mark (Nx.mul p p)) p t in
+      Nx.add y dy
+  | Vjp_rule ->
+      (* y = x m + x i, m the lanes' mean of x. *)
+      let rule =
+        Rune.custom_vjp tensor tensor (fun x ->
+            let m = read x and i = index x in
+            ( Nx.add (Nx.mul x m) (Nx.mul x i),
+              fun ct ->
+                Nx.add (Nx.add (Nx.mul ct m) (read (Nx.mul ct x))) (Nx.mul ct i)
+            ))
+      in
+      let y, pb = Rune.vjp' rule p in
+      Nx.add y (pb t)
+  | Transpose_rule ->
+      (* v ↦ mean v + v i is its own transpose. *)
+      let i = index p in
+      let op v = Nx.add (read v) (Nx.mul v i) in
+      let lin = Rune.custom_transpose tensor tensor op ~transpose:op in
+      let y, pb = Rune.vjp' lin p in
+      Nx.add y (pb t)
+  | Mean_vjp ->
+      (* The lanes' mean, whose result no lane changes, weighed by each lane's
+         [t], so that its cotangents differ between lanes. *)
+      let rule = Rune.custom_vjp tensor tensor (fun x -> (read x, read)) in
+      let y, pb = Rune.vjp' rule p in
+      Nx.add (Nx.mul t y) (pb t)
+  | Mean_transpose ->
+      let lin = Rune.custom_transpose tensor tensor read ~transpose:read in
+      let y, pb = Rune.vjp' lin p in
+      Nx.add (Nx.mul t y) (pb t)
+  | Scan_loop ->
+      let step c x = (Nx.add c (read (Nx.mul p x)), Nx.zeros f64 [| 0 |]) in
+      let c, _ =
+        Rune.scan tensor tensor tensor step
+          ~init:(Nx.mul p (index p))
+          (vec [| 1.; 2. |])
+      in
+      Nx.add t c
+  | Remat_call ->
+      Nx.add t
+        (Rune.remat
+           Nx.Ptree.(tensor @-> returns tensor)
+           (fun p -> Nx.add (read (Nx.mul p p)) (Nx.mul p (index p)))
+           p)
+
+(* [body p t] inside maps named [inner], outermost first, each over the rows of
+   [dirs], [t] the sum of their rows. With [held] each map holds [p] too,
+   broadcast along its lanes; without, none does. *)
+let nest ~held inner body dirs p =
+  let rec go inner p t =
+    match inner with
+    | [] -> body p t
+    | a :: rest when held ->
+        let lanes = Nx.broadcast_to (Nx.shape dirs) p in
+        Rune.vmap ~axis:a
+          Nx.Ptree.(pair tensor tensor @-> returns tensor)
+          (fun (d, p) -> go rest p (Nx.add t d))
+          (dirs, lanes)
+    | a :: rest ->
+        Rune.vmap ~axis:a
+          Nx.Ptree.(tensor @-> returns tensor)
+          (fun d -> go rest p (Nx.add t d))
+          dirs
+  in
+  go inner p (Nx.zeros f64 [| 3 |])
+
+type around = Plain | Outer_map | Grad | Jvp | Jit
+
+let around_name = function
+  | Plain -> "none"
+  | Outer_map -> "an outer vmap"
+  | Grad -> "grad"
+  | Jvp -> "jvp"
+  | Jit -> "jit"
+
+let transformed how f ps vs =
+  match how with
+  | Plain -> f ps
+  | Outer_map -> Rune.vmap' f (Nx.stack [ ps; vs ])
+  | Grad -> Rune.grad' (fun ps -> Nx.sum (f ps)) ps
+  | Jvp -> snd (Rune.jvp' f ps vs)
+  | Jit -> Rune.jit' f ps
+
+let gen_lanes =
+  let open Gen in
+  let pp name ppf x = Format.pp_print_string ppf (name x) in
+  let arounds = [ Plain; Outer_map; Grad; Jvp; Jit ] in
+  (* Small integers, so that every result is exact whatever the order of a
+     sum. *)
+  let rows = array ~size:(constant 6) (map float_of_int (int_range (-3) 3)) in
+  let floats ppf a =
+    Format.pp_print_string ppf
+      (String.concat " " (Array.to_list (Array.map string_of_float a)))
+  in
+  let case ppf (kind, how, depth, ps, vs, dirs) =
+    Format.fprintf ppf "%s under %s, %d maps, ps %a, vs %a, dirs %a"
+      (kind_name kind) (around_name how) depth floats ps floats vs floats dirs
+  in
+  with_pp case
+    (let+ kind = of_list ~pp:(pp kind_name) kinds
+     and+ how = of_list ~pp:(pp around_name) arounds
+     and+ depth = int_range 2 3
+     and+ ps = rows
+     and+ vs = rows
+     and+ dirs = rows in
+     (kind, how, depth, ps, vs, dirs))
+
+(* A map holds [p] in the outermost of [depth] maps; the construct reads the
+   lanes of the others, which do not hold it, and gives what it gives over [p]
+   broadcast along their lanes. *)
+let lanes_law (kind, how, depth, ps, vs, dirs) =
+  List.iter (fun k -> cover (kind_name k) (kind = k)) kinds;
+  List.iter
+    (fun h -> cover ("under " ^ around_name h) (how = h))
+    [ Plain; Outer_map; Grad; Jvp; Jit ];
+  cover "two maps" (depth = 2);
+  cover "three maps" (depth = 3);
+  let rows a = Nx.create f64 [| 2; 3 |] a in
+  let ps = rows ps and vs = rows vs and dirs = rows dirs in
+  let inner = List.init (depth - 1) (fun _ -> Rune.axis ()) in
+  let f ~held = Rune.vmap' (nest ~held inner (construct kind inner) dirs) in
+  exact
+    (transformed how (f ~held:true) ps vs)
+    (transformed how (f ~held:false) ps vs)
+
 let map_tests =
   [
     test "per-lane gradients through custom rules" (fun () ->
@@ -1367,6 +1540,190 @@ let map_tests =
         exact ~msg:"eagerly" (Nx.sum (Nx.mul x x)) (loss x);
         exact ~msg:"under grad" (Nx.mul_s x 2.) (Rune.grad' loss x);
         invalid ~sub:"Rune.lanes" (fun () -> Rune.jvp' loss x (along ())));
+    test
+      "a tangent map reads the lanes of the map around the call, under a map \
+       around that one" (fun () ->
+        (* A forward pass along each lane's direction of [dirs], the map named
+           [axis]; the rule's tangent is the lanes' mean. Over the rows of [ps],
+           an outer map holds the rule's argument. *)
+        let axis = Rune.axis () in
+        let mark =
+          Rune.custom_jvp tensor tensor (fun y ->
+              (y, fun dy -> Nx.mean ~axes:[ 0 ] (Rune.lanes axis dy)))
+        in
+        let sketch dirs p =
+          Rune.vmap ~axis
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun t -> snd (Rune.jvp' (fun p -> mark (Nx.mul p p)) p t))
+            dirs
+        in
+        let dirs = Nx.create f64 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+        let ps = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        (* Each lane's tangent is the directions' mean of [2 p t]: [p]'s first
+           two entries, then [0]. *)
+        let want =
+          Nx.create f64 [| 2; 2; 3 |]
+            [| 1.; 2.; 0.; 1.; 2.; 0.; 4.; 5.; 0.; 4.; 5.; 0. |]
+        in
+        exact ~msg:"row by row" want (stack 2 (fun i -> sketch dirs (row i ps)));
+        exact ~msg:"under a map" want (Rune.vmap' (sketch dirs) ps);
+        exact ~msg:"compiled" want (Rune.jit' (Rune.vmap' (sketch dirs)) ps);
+        (* Each row's tangents sum to [2 (p0 + p1)], and along ones each lane's
+           tangent is [1 1 0]. *)
+        let loss ps = Nx.sum (Rune.vmap' (sketch dirs) ps) in
+        let grads = Nx.create f64 [| 2; 3 |] [| 2.; 2.; 0.; 2.; 2.; 0. |] in
+        exact ~msg:"under grad" grads (Rune.grad' loss ps);
+        exact ~msg:"compiled grad" grads (Rune.jit' (Rune.grad' loss) ps);
+        exact ~msg:"under jvp"
+          (Nx.create f64 [| 2; 2; 3 |]
+             [| 1.; 1.; 0.; 1.; 1.; 0.; 1.; 1.; 0.; 1.; 1.; 0. |])
+          (snd (Rune.jvp' (Rune.vmap' (sketch dirs)) ps (Nx.ones_like ps))));
+    test
+      "a rule whose tangent map reads the lanes, on a value every lane shares"
+      (fun () ->
+        (* [mark p] is [p], the same in every lane, so the switch on it takes
+           one branch for all of them, where the lanes may be read. *)
+        let axis = Rune.axis () in
+        let mark =
+          Rune.custom_jvp tensor tensor (fun y ->
+              (y, fun dy -> Nx.mean ~axes:[ 0 ] (Rune.lanes axis dy)))
+        in
+        let dirs = Nx.create f64 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+        let body p =
+          Rune.vmap ~axis
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun t ->
+              let idx = Nx.cast Nx.int32 (Nx.greater_s (Nx.sum (mark p)) 0.) in
+              Rune.switch tensor idx
+                [
+                  (fun () -> t);
+                  (fun () -> Nx.sum ~axes:[ 0 ] (Rune.lanes axis t));
+                ])
+            dirs
+        in
+        let p = vec [| 1.; 2.; 3. |] in
+        let want = Nx.create f64 [| 2; 3 |] [| 1.; 1.; 0.; 1.; 1.; 0. |] in
+        exact ~msg:"eagerly" want (body p);
+        exact ~msg:"compiled" want (Rune.jit' body p);
+        exact ~msg:"under a map"
+          (Nx.stack [ want; want ])
+          (Rune.vmap' body (Nx.stack [ p; Nx.mul_s p 2. ])));
+    test "a pullback that reads the lanes holds them where the rule is traced"
+      (fun () ->
+        (* Eagerly the rule runs on [p], whose result every lane shares, so the
+           switch takes one branch, where the lanes may be read. Compiled, the
+           map batches the rule for its pullback, whose cotangents are each
+           lane's, so the switch runs per lane and the branch's read raises. *)
+        let axis = Rune.axis () in
+        let read x = Nx.mean ~axes:[ 0 ] (Rune.lanes axis x) in
+        let rules =
+          [
+            ("custom_vjp", Rune.custom_vjp tensor tensor (fun x -> (x, read)));
+            ( "custom_transpose",
+              Rune.custom_transpose tensor tensor Fun.id ~transpose:read );
+          ]
+        in
+        let dirs = Nx.create f64 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+        let body rule p =
+          Rune.vmap ~axis
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun t ->
+              let idx = Nx.cast Nx.int32 (Nx.greater_s (Nx.sum (rule p)) 0.) in
+              Rune.switch tensor idx
+                [
+                  (fun () -> t);
+                  (fun () -> Nx.sum ~axes:[ 0 ] (Rune.lanes axis t));
+                ])
+            dirs
+        in
+        let p = vec [| 1.; 2.; 3. |] in
+        let want = Nx.create f64 [| 2; 3 |] [| 1.; 1.; 0.; 1.; 1.; 0. |] in
+        List.iter
+          (fun (name, rule) ->
+            exact ~msg:(name ^ ", eagerly") want (body rule p);
+            invalid ~msg:(name ^ ", compiled") ~sub:"held apart" (fun () ->
+                Rune.jit' (body rule) p))
+          rules);
+    test "a rule's result the lanes do not change is not a lane value"
+      (fun () ->
+        (* The rule receives a lane value, [t], but its result and tangent are
+           [p]'s, the same in every lane, so the switch on it takes one branch
+           for all of them, where the lanes may be read. *)
+        let axis = Rune.axis () in
+        let first =
+          Rune.custom_jvp pair tensor (fun (p, _) -> (p, fun (dp, _) -> dp))
+        in
+        let dirs = Nx.create f64 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+        let body p =
+          Rune.vmap ~axis
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun t ->
+              let y = first (p, t) in
+              let idx = Nx.cast Nx.int32 (Nx.greater_s (Nx.sum y) 0.) in
+              Rune.switch tensor idx
+                [
+                  (fun () -> t);
+                  (fun () -> Nx.add y (Nx.sum ~axes:[ 0 ] (Rune.lanes axis t)));
+                ])
+            dirs
+        in
+        let p = vec [| 1.; 2.; 3. |] in
+        let want = Nx.create f64 [| 2; 3 |] [| 2.; 3.; 3.; 2.; 3.; 3. |] in
+        exact ~msg:"eagerly" want (body p);
+        exact ~msg:"compiled" want (Rune.jit' body p);
+        exact ~msg:"under grad"
+          (vec [| 2.; 2.; 2. |])
+          (Rune.grad' (fun p -> Nx.sum (body p)) p));
+    prop "a construct over a value the map does not hold is its broadcast's"
+      gen_lanes lanes_law;
+    test "a pullback that reads the lanes receives each lane's cotangent"
+      (fun () ->
+        (* Lane l weighs the lanes' mean of x by w_l, so x_k's gradient is the
+           lanes' mean of w. *)
+        let axis = Rune.axis () in
+        let read x = Nx.mean ~axes:[ 0 ] (Rune.lanes axis x) in
+        let xs = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        let ws = Nx.create f64 [| 2; 3 |] [| 1.; 0.; 2.; 3.; 1.; 0. |] in
+        let loss f xs =
+          Nx.sum
+            (Rune.vmap ~axis
+               Nx.Ptree.(pair tensor tensor @-> returns tensor)
+               (fun (x, w) -> Nx.mul w (f x))
+               (xs, ws))
+        in
+        let want = Nx.create f64 [| 2; 3 |] [| 2.; 0.5; 1.; 2.; 0.5; 1. |] in
+        let vjp = Rune.custom_vjp tensor tensor (fun x -> (read x, read)) in
+        let lin = Rune.custom_transpose tensor tensor read ~transpose:read in
+        exact ~msg:"no rule" want (Rune.grad' (loss read) xs);
+        exact ~msg:"custom_vjp" want (Rune.grad' (loss vjp) xs);
+        exact ~msg:"custom_transpose" want (Rune.grad' (loss lin) xs);
+        exact ~msg:"compiled" want (Rune.jit' (Rune.grad' (loss vjp)) xs));
+    test "a rule's additions under a map inside its differentiation" (fun () ->
+        (* The primal adds each lane's sum of x, the tangent map each lane's sum
+           of its tangent, so the total is their sum over the lanes. *)
+        let t = Total.make () in
+        let rule =
+          Rune.custom_jvp tensor tensor (fun x ->
+              Total.add t (Nx.sum x);
+              ( Nx.sin x,
+                fun dx ->
+                  Total.add t (Nx.sum dx);
+                  Nx.mul_s (Nx.mul dx (Nx.cos x)) 3. ))
+        in
+        let step x = snd (Rune.jvp' rule x (Nx.ones_like x)) in
+        let x = xs () in
+        let want = Nx.add_s (Nx.sum x) 6. in
+        let dys, total =
+          Total.collect t ~init:(scalar 0.) (fun () -> Rune.vmap' step x)
+        in
+        near ~msg:"tangents" (Nx.mul_s (Nx.cos x) 3.) dys;
+        near ~msg:"total" want total;
+        let dys, total =
+          Total.collect t ~init:(scalar 0.) (fun () ->
+              Rune.jit' (Rune.vmap' step) x)
+        in
+        near ~msg:"compiled tangents" (Nx.mul_s (Nx.cos x) 3.) dys;
+        near ~msg:"compiled total" want total);
     test "grad of a map of a custom_transpose applies its transpose" (fun () ->
         let declared =
           Rune.custom_transpose tensor tensor

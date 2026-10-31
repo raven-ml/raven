@@ -550,12 +550,23 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     selects beside one with {!Nx.where}, counts as zero. A pullback or a
     transpose reads a result's cotangent at the result's set.
 
-    {b Maps.} {!vmap} batches a rule over an argument that belongs to the map:
-    the rule and its derivative are traced and evaluated over the lanes, and a
-    differentiation around the map applies the rule to every lane. A rule whose
-    arguments belong to no code runs on them inside the map, which batches the
-    operations it applies to the lanes it captures. One over an argument that a
-    differentiation outside the map tracks is traced, as {b Traced rules} says.
+    {b Maps.} {!vmap} batches a rule over an argument that belongs to the map,
+    and a traced rule whose code reads the map's {!lanes} or {!lane_index}: the
+    rule and its derivative are traced and evaluated over the lanes, and a
+    differentiation around the map applies the rule to every lane. A traced
+    {!custom_jvp}'s result holds the lanes where the rule or its tangent map
+    computes it from a value that belongs to the map or from {!lane_index}, and
+    is otherwise one value every lane shares, on which a {!switch} takes one
+    branch for all of them. A traced {!custom_vjp}'s or {!custom_transpose}'s
+    results always hold the lanes, so that its pullback or transpose receives
+    each lane's cotangent: a {!switch} on them is per lane, as {b Held lanes} in
+    {!section-maps} says. A rule whose arguments belong to no code runs on them
+    inside the map, which batches the operations it applies to the lanes it
+    captures, and its results are values every lane shares. So a {!switch} on
+    the result of a rule that reads the lanes may take one branch eagerly and
+    run per lane under {!jit}, which traces the rule. One over an argument that
+    a differentiation outside the map tracks is traced, as {b Traced rules}
+    says.
 
     {b Totals.} The additions a rule makes reach the innermost open
     {!Total.collect} of their total around the call, once per call. A tangent
