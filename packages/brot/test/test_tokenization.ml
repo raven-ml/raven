@@ -922,10 +922,7 @@ let parity_documents corpus =
   split [] [] lines
 
 let with_pretrained model f =
-  Fixture.with_download
-    (Filename.concat "../bench/data" (model ^ ".json"))
-    ~from:"packages/brot/bench/download_data.sh"
-    (fun path ->
+  Fixture.with_tokenizer_file model (fun path ->
       match from_file path with
       | Ok tokenizer -> f tokenizer
       | Error msg -> failf "failed to load %s: %s" path msg)
@@ -1231,6 +1228,8 @@ let batch_tests =
       (test_batch_ids_matches_encode_ids "roberta_base");
     test "batch ids agree with encode_ids (llama3)"
       (test_batch_ids_matches_encode_ids "llama3");
+    test "batch ids agree with encode_ids (gpt-oss)"
+      (test_batch_ids_matches_encode_ids "gpt_oss");
     test "batch ids pad to the longest of the batch"
       test_batch_ids_pads_to_the_longest;
     test "batch ids do not depend on the domain count" test_batch_ids_one_domain;
@@ -1244,6 +1243,9 @@ let batch_tests =
     slow
     @@ test "a cut document keeps its ids (llama3)"
          (test_batch_ids_cut_document "llama3");
+    slow
+    @@ test "a cut document keeps its ids (gpt-oss)"
+         (test_batch_ids_cut_document "gpt_oss");
     test "a cut avoids the added tokens" test_batch_ids_cut_avoids_added_tokens;
     test "a pipeline with a normalizer is not cut"
       test_batch_ids_uncut_under_normalizer;
@@ -1480,8 +1482,7 @@ let sp_add_crossing_piece root piece id =
     root
 
 let sp_llama_pair f =
-  Fixture.with_download "../bench/data/llama.json"
-    ~from:"packages/brot/bench/download_data.sh" (fun path ->
+  Fixture.with_tokenizer_file "llama" (fun path ->
       let text = In_channel.with_open_bin path In_channel.input_all in
       let json =
         match Jsont_bytesrw.decode_string Jsont.json text with

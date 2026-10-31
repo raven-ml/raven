@@ -7,17 +7,13 @@ open Brot
 open Windtrap
 
 let with_hf_tokenizer model f =
-  let relative =
-    Filename.concat "support/hf" (Filename.concat model "tokenizer.json")
-  in
-  Fixture.with_download relative
-    ~from:"packages/brot/test/gen/download_hf_tokenizers.py" (fun path ->
+  Fixture.with_tokenizer_file model (fun path ->
       match from_file path with
       | Ok tok -> f tok
       | Error msg -> failf "Failed to load tokenizer %s: %s" model msg)
 
 let test_bert_base_uncased () =
-  with_hf_tokenizer "bert-base-uncased" (fun tok ->
+  with_hf_tokenizer "bert_base" (fun tok ->
       let encoding = encode tok "Hello world!" in
       let tokens = Encoding.tokens encoding |> Array.to_list in
       equal ~msg:"token sequence" (list string)
@@ -39,7 +35,7 @@ let test_gpt2_small () =
       equal ~msg:"decode" string "Hello world" roundtrip)
 
 let test_roberta_base () =
-  with_hf_tokenizer "roberta-base" (fun tok ->
+  with_hf_tokenizer "roberta_base" (fun tok ->
       let encoding = encode tok "A quick test" in
       let tokens = Encoding.tokens encoding |> Array.to_list in
       equal ~msg:"tokens" (list string)

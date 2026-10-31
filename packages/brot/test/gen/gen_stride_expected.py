@@ -11,7 +11,9 @@ from pathlib import Path
 
 from tokenizers import Tokenizer
 
-DATA = Path(__file__).resolve().parents[2] / "bench" / "data"
+# The trimmed copies test_tokenization.ml reads, which trim_parity_tokenizers.py
+# makes encode these texts as the full files do.
+DATA = Path(__file__).resolve().parents[1] / "support" / "tokenizers"
 
 SINGLE = "The quick brown fox jumps over the lazy dog while seventeen astronauts"
 PAIR = (

@@ -9,9 +9,10 @@ Run from anywhere, after `packages/brot/bench/download_data.sh`:
 records from the full tokenizer files, which are tens of megabytes and are
 downloaded rather than committed. This writes, for each of them whose licence
 allows redistribution, a copy that keeps only the vocabulary and merges the
-corpora reach, to `support/tokenizers/<name>.json`, and then checks that the
-reference gives every recorded row again from the copy: the copy encodes and
-decodes the corpora exactly as the full file does. `test_parity.ml` reads the
+corpora and `EXTRA` reach, to `support/tokenizers/<name>.json`, and then
+checks that the reference gives every recorded row again from the copy, and
+the full file's ids for `EXTRA`: the copy encodes and decodes those texts
+exactly as the full file does. `test_parity.ml` reads the
 copies, so its tests run on a fresh checkout. `support/tokenizers/NOTICE`
 records where each one comes from and under which licence.
 
@@ -62,6 +63,7 @@ import tokenizers
 from tokenizers import Tokenizer
 
 from gen_parity_expected import TOKENIZERS, documents, load_tokenizer, rows
+from gen_stride_expected import PAIR, SINGLE
 
 COMMITTED = (
     "gpt2",
@@ -75,6 +77,11 @@ COMMITTED = (
     "phi4",
     "mistral_nemo",
 )
+
+# Texts other suites encode with a trimmed copy and expect the full file's ids
+# for: the stride differential of test_tokenization.ml, and
+# test_hf_tokenizers.ml.
+EXTRA = (SINGLE, *PAIR, "Hello world!", "Hello world", "A quick test")
 
 # The first code point of the supplementary private use area A.
 PLACEHOLDER_BASE = 0xF0000
@@ -246,6 +253,7 @@ def trim(name: str, full: Path, parity_dir: Path) -> dict:
         (parity_dir / f"{corpus}.txt").read_bytes().decode("utf-8")
         for corpus in TOKENIZERS[name]
     ]
+    texts.append("\n====\n".join(EXTRA) + "\n")
     ids = {
         id for text in texts for row in encodings(tokenizer, text) for id in row
     }
@@ -296,10 +304,19 @@ def dump(data: dict) -> str:
     return "{\n" + ",\n".join(members) + "\n}\n"
 
 
-def check(name: str, trimmed: Path, parity_dir: Path) -> bool:
-    """Whether the reference gives every recorded row again from `trimmed`."""
+def check(name: str, full: Path, trimmed: Path, parity_dir: Path) -> bool:
+    """Whether the reference gives every recorded row again from `trimmed`,
+    and the ids `full` gives for `EXTRA`."""
     tokenizer = load_tokenizer(trimmed)
+    reference = load_tokenizer(full)
     same = True
+    for text in EXTRA:
+        for specials in (False, True):
+            expected = reference.encode(text, add_special_tokens=specials)
+            actual = tokenizer.encode(text, add_special_tokens=specials)
+            if expected.ids != actual.ids:
+                print(f"{trimmed}: {text!r} ids differ", file=sys.stderr)
+                same = False
     for corpus in TOKENIZERS[name]:
         text = (parity_dir / f"{corpus}.txt").read_bytes().decode("utf-8")
         recorded = [
@@ -335,7 +352,7 @@ def main() -> int:
         data = trim(name, full, parity_dir)
         out = out_dir / f"{name}.json"
         out.write_text(dump(data), encoding="utf-8", newline="\n")
-        same = check(name, out, parity_dir)
+        same = check(name, full, out, parity_dir)
         ok = ok and same
         print(
             f"wrote {out} ({out.stat().st_size} bytes, "

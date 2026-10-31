@@ -42,3 +42,35 @@ let with_download relative ~from f =
   | None ->
       failf "%s is missing and BROT_REQUIRE_FIXTURES is set; run %s" relative
         from
+
+(* Pretrained tokenizers. Those whose licence allows a copy in the repository
+   are read from the trimmed ones test/gen/trim_parity_tokenizers.py writes,
+   which encode the parity corpora, and the texts it lists, as the full files
+   do. The others are downloaded by bench/download_data.sh, and a test that
+   needs one skips without it, saying why. *)
+
+let downloaded =
+  [
+    ("llama", "its model card states no licence");
+    ( "llama3",
+      "the Llama 3.2 Community License binds whoever redistributes it" );
+  ]
+
+let tokenizer_file name =
+  if List.mem_assoc name downloaded then
+    Filename.concat "../bench/data" (name ^ ".json")
+  else Filename.concat "support/tokenizers" (name ^ ".json")
+
+let with_tokenizer_file name f =
+  let path = tokenizer_file name in
+  match List.assoc_opt name downloaded with
+  | None -> (
+      match locate path with
+      | Some path -> f path
+      | None -> failf "missing fixture %s" path)
+  | Some licence ->
+      with_download path
+        ~from:
+          (Printf.sprintf
+             "packages/brot/bench/download_data.sh (not committed: %s)" licence)
+        f

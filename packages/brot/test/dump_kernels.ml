@@ -565,7 +565,7 @@ let () =
   let fixture name = read_opt (Filename.concat "support/parity" name) in
   let data name = read_opt (Filename.concat "../bench/data" name) in
   let file_tok name =
-    let path = Filename.concat "../bench/data" (name ^ ".json") in
+    let path = Fixture.tokenizer_file name in
     if not (Sys.file_exists path) then None
     else match Brot.from_file path with Ok tok -> Some tok | Error _ -> None
   in
@@ -618,9 +618,15 @@ let () =
   let from_file name =
     match file_tok name with
     | Some tok -> run name tok
-    | None ->
-        incr tokenizer;
-        if mine 0 then pf "%s: skipped\n" name
+    | None -> (
+        let path = Fixture.tokenizer_file name in
+        match List.assoc_opt name Fixture.downloaded with
+        | None -> failwith (Printf.sprintf "cannot load %s" path)
+        | Some licence ->
+            incr tokenizer;
+            if mine 0 then
+              pf "%s: skipped, %s is missing (not committed: %s)\n" name path
+                licence)
   in
   from_file "gpt2";
   from_file "roberta_base";

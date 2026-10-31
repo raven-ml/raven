@@ -189,13 +189,11 @@ let test_sentencepiece_decoder_json () =
 
 (* Loading a pretrained tokenizer and writing it back must give HuggingFace the
    decoder it had. GPT-2's carries [add_prefix_space] and [trim_offsets], which
-   the byte-level decoder ignores but HuggingFace insists on. *)
+   the byte-level decoder ignores but HuggingFace insists on. Mistral's is the
+   SentencePiece decoder LLaMA's file carries too. *)
 let test_pretrained_decoder_json () =
   let case model expected =
-    Fixture.with_download
-      ("../bench/data/" ^ model ^ ".json")
-      ~from:"bench/download_data.sh"
-      (fun path ->
+    Fixture.with_tokenizer_file model (fun path ->
         match from_file path with
         | Error msg -> failf "cannot load %s: %s" model msg
         | Ok t -> (
@@ -208,7 +206,7 @@ let test_pretrained_decoder_json () =
   case "gpt2"
     {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":true}|};
   case "bert_base" {|{"type":"WordPiece","prefix":"##","cleanup":true}|};
-  case "llama"
+  case "mistral"
     ({|{"type":"Sequence","decoders":[{"type":"Replace","pattern":{"String":"|}
    ^ marker
    ^ {|"},"content":" "},{"type":"ByteFallback"},{"type":"Fuse"},{"type":"Strip","content":" ","start":1,"stop":0}]}|}
@@ -286,13 +284,10 @@ let test_post_processor_hf_members () =
 
 (* Loading a pretrained tokenizer and writing it back must give HuggingFace the
    post-processor it had: GPT-2 keeps [add_prefix_space], which brot used to
-   drop, leaving JSON HuggingFace refused to load. *)
+   drop, leaving JSON HuggingFace refused to load. Mistral's is LLaMA's. *)
 let test_pretrained_post_processor_json () =
   let case model expected =
-    Fixture.with_download
-      ("../bench/data/" ^ model ^ ".json")
-      ~from:"bench/download_data.sh"
-      (fun path ->
+    Fixture.with_tokenizer_file model (fun path ->
         match from_file path with
         | Error msg -> failf "cannot load %s: %s" model msg
         | Ok t -> (
@@ -306,7 +301,7 @@ let test_pretrained_post_processor_json () =
     {|{"type":"ByteLevel","add_prefix_space":true,"trim_offsets":false}|};
   case "bert_base"
     {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"[CLS]","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"[SEP]","type_id":0}}],"pair":[{"SpecialToken":{"id":"[CLS]","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"[SEP]","type_id":0}},{"Sequence":{"id":"B","type_id":1}},{"SpecialToken":{"id":"[SEP]","type_id":1}}],"special_tokens":{"[CLS]":{"id":"[CLS]","ids":[101],"tokens":["[CLS]"]},"[SEP]":{"id":"[SEP]","ids":[102],"tokens":["[SEP]"]}}}|};
-  case "llama"
+  case "mistral"
     {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"<s>","type_id":0}},{"Sequence":{"id":"A","type_id":0}}],"pair":[{"SpecialToken":{"id":"<s>","type_id":0}},{"Sequence":{"id":"A","type_id":0}},{"SpecialToken":{"id":"<s>","type_id":1}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{"<s>":{"id":"<s>","ids":[1],"tokens":["<s>"]}}}|}
 
 (* A BPE model whose flags each change how ["abc"] is tokenized, so that a flag
@@ -382,8 +377,7 @@ let test_bpe_flags_json () =
    a decoder that puts them back. Expectations from HuggingFace
    [Tokenizer.from_file("llama.json")]. *)
 let test_llama () =
-  Fixture.with_download "../bench/data/llama.json"
-    ~from:"bench/download_data.sh" (fun path ->
+  Fixture.with_tokenizer_file "llama" (fun path ->
       match from_file path with
       | Error msg -> failf "cannot load llama.json: %s" msg
       | Ok t ->
@@ -430,8 +424,7 @@ let with_saved_tokenizer t f =
    HuggingFace [Tokenizer.from_file], which encodes the same ids from it; brot
    used to write a post-processor HuggingFace refused to load at all. *)
 let test_gpt2_round_trip () =
-  Fixture.with_download "../bench/data/gpt2.json" ~from:"bench/download_data.sh"
-    (fun path ->
+  Fixture.with_tokenizer_file "gpt2" (fun path ->
       match from_file path with
       | Error msg -> failf "cannot load gpt2.json: %s" msg
       | Ok t ->
