@@ -48,17 +48,52 @@ let mem_ranges r u = Nodes.mem r (ranges u)
 let special_name u = match arg u with String s -> s | _ -> ""
 
 module Scheduler = struct
+  (* What the axis queries read of a kernel. The heuristic and the search ask
+     them many times between two rewrites of the kernel, so they are computed
+     once per kernel. *)
+  type view = {
+    of_ast : Ops.t;
+    slice : Ops.t list;
+    reduceops : Ops.t list;
+    reduce_ranges : Ops.t list;
+    rngs : Ops.t list;
+    mutable full_shape : sint list option;
+  }
+
   type t = {
     mutable ast : Ops.t;
     ren : Renderer.t;
     mutable applied_opts : Opt.t list;
     mutable next_range : int;
+    mutable view : view option;
   }
+
+  (* Whether the ranges each reduction and end of [ast] closes are distinct
+     ranges, which {!Simplify.pm_flatten_range} leaves as they are: checking
+     costs a copy less than rewriting its kernel. *)
+  let flat ast =
+    let rec distinct = function
+      | [] -> true
+      | r :: rest ->
+          op r = Op.Range && (not (List.memq r rest)) && distinct rest
+    in
+    let closes_ranges u =
+      match op u with
+      | Op.Reduce | Op.End ->
+          distinct (List.drop (Option.get (range_start (op u))) (src u))
+      | _ -> true
+    in
+    Nodes.fold
+      (fun u ok -> ok && closes_ranges u)
+      (backward_slice ~calls:Skip ast)
+      true
 
   let v ast ren =
     let ast =
-      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
-        (After_sources Simplify.pm_flatten_range)
+      if flat ast then ast
+      else
+        graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
+          (After_sources Simplify.pm_flatten_range)
     in
     let applied_opts =
       match arg ast with Kernel k -> k.applied_opts | _ -> []
@@ -69,7 +104,7 @@ module Scheduler = struct
         (Nodes.to_list (backward_slice ~calls:Skip ast))
     in
     let last = match ids with [] -> 0 | i :: is -> List.fold_left max i is in
-    { ast; ren; applied_opts; next_range = last + 1 }
+    { ast; ren; applied_opts; next_range = last + 1; view = None }
 
   let copy k =
     let c = v k.ast k.ren in
@@ -79,38 +114,66 @@ module Scheduler = struct
   let ast k = k.ast
   let ren k = k.ren
   let applied_opts k = k.applied_opts
-  let slice k = Nodes.to_list (backward_slice ~calls:Skip k.ast)
-  let of_op k o = List.filter (fun u -> op u = o) (slice k)
 
-  let reduceops k = of_op k Op.Reduce
-
-  (* The ranges the reductions close: their sources, which the scheduler keeps
-     flat. *)
-  let reduce_ranges k =
-    Helpers.dedup (module Ops)
-      (List.concat_map (fun u -> List.tl (src u)) (reduceops k))
-
-  (* Keep serial/vectorized reduction axes last, deriving their role from REDUCE
-     rather than the axis type. void RANGEs are loops, not opt axes. the DEVICE
-     axis is launched, not an opt axis *)
-  let rngs k =
+  let view_of ast =
+    let slice = Nodes.to_list (backward_slice ~calls:Skip ast) in
+    let reduceops = List.filter (fun u -> op u = Op.Reduce) slice in
+    (* The ranges the reductions close: their sources, which the scheduler
+       keeps flat. *)
+    let red =
+      Helpers.dedup (module Ops)
+        (List.concat_map (fun u -> List.tl (src u)) reduceops)
+    in
     let axis u =
       op u = Op.Range
       && (not (Dtype.equal (dtype u) Dtype.Void))
       && V.(vmax u > of_int 0)
       && axis_type u <> Device
     in
-    let red = reduce_ranges k in
+    (* Keep serial/vectorized reduction axes last, deriving their role from
+       REDUCE rather than the axis type. void RANGEs are loops, not opt axes.
+       the DEVICE axis is launched, not an opt axis *)
     let last u = List.memq u red && List.mem (axis_type u) [ Weak; Upcast ] in
-    List.stable_sort
-      (fun a b ->
-        match Bool.compare (last a) (last b) with
-        | 0 -> compare_range_arg a b
-        | c -> c)
-      (List.filter axis (slice k))
+    let rngs =
+      List.stable_sort
+        (fun a b ->
+          match Bool.compare (last a) (last b) with
+          | 0 -> compare_range_arg a b
+          | c -> c)
+        (List.filter axis slice)
+    in
+    {
+      of_ast = ast;
+      slice;
+      reduceops;
+      reduce_ranges = red;
+      rngs;
+      full_shape = None;
+    }
+
+  let view k =
+    match k.view with
+    | Some w when w.of_ast == k.ast -> w
+    | _ ->
+        let w = view_of k.ast in
+        k.view <- Some w;
+        w
+
+  let slice k = (view k).slice
+  let of_op k o = List.filter (fun u -> op u = o) (slice k)
+  let reduceops k = (view k).reduceops
+  let reduce_ranges k = (view k).reduce_ranges
+  let rngs k = (view k).rngs
 
   let shape_len k = List.length (rngs k)
-  let full_shape k = List.map (fun r -> ssimplify (nth r 0)) (rngs k)
+  let full_shape k =
+    let w = view k in
+    match w.full_shape with
+    | Some shape -> shape
+    | None ->
+        let shape = List.map (fun r -> ssimplify (nth r 0)) w.rngs in
+        w.full_shape <- Some shape;
+        shape
   let axis_types k = List.map axis_type (rngs k)
 
   let positions p l =

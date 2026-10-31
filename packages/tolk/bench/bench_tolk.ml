@@ -13,8 +13,10 @@
 
    [search/linearize] times a beam search's lowering of a candidate up to its
    instructions, which every candidate pays, for the kernels of [lorenz] on a
-   CUDA renderer. What a search pays per candidate beyond it, and what it costs
-   whole, rune's compile suite times through [Rune.jit ~beam].
+   CUDA renderer, and [search/actions] its making of the candidates one action
+   makes of a kernel, which a round pays for each kernel of its beam. What a
+   search pays per candidate beyond them, and what it costs whole, rune's
+   compile suite times through [Rune.jit ~beam].
 
    [lorenz] runs the kernels of lorenz_simple's step (sofo-raven's tangent step)
    on the host where the hand-coded optimisations lost most to a beam search,
@@ -180,7 +182,8 @@ let cuda_renderer =
     (Cstyle.cuda
        { target with device = "CUDA"; renderer = "CUDA"; arch = "sm_89" })
 
-let candidates text =
+(* The scheduler of a lorenz kernel that a search is handed. *)
+let handed text =
   let k = Graph.of_string text in
   let k =
     match Ops.arg k with
@@ -194,7 +197,10 @@ let candidates text =
     s
   in
   ignore (Codegen.full_rewrite_to_sink ~beam:search k cuda_renderer);
-  Search.get_kernel_actions (Option.get !handed)
+  Option.get !handed
+
+let candidates text =
+  Search.get_kernel_actions (handed text)
   |> List.filteri (fun i _ -> i < linearized)
   |> List.map (fun (_, c) ->
       Postrange.Scheduler.get_optimized_ast ~name_override:"test" c)
@@ -214,9 +220,20 @@ let linearize_candidates =
            (List.map (fun ast -> Codegen.linearize ast cuda_renderer)))
        Lorenz.all)
 
+let kernel_actions =
+  Thumper.group "actions"
+    ~metrics:[ Thumper.Metric.wall_time ]
+    (List.map
+       (fun (kernel, text) ->
+         Thumper.bench_with_setup
+           ~setup:(fun () -> handed text)
+           kernel
+           (fun s -> Search.get_kernel_actions s))
+       Lorenz.all)
+
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
-  @ [ lorenz; Thumper.group "search" [ linearize_candidates ] ]
+  @ [ lorenz; Thumper.group "search" [ linearize_candidates; kernel_actions ] ]
 
 let () =
   match Array.to_list Sys.argv with

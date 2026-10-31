@@ -4757,3 +4757,43 @@ merged into D137, which holds the loops that consumers of one domain share.
   tolk bench's `*/render` rows on fudge, whose time and exact allocation
   would catch the toposort's return.
 
+## D169. A scheduler reads its kernel's axes once, and keeps a flat kernel
+
+- **tinygrad:** `codegen/opt/postrange.py:18-19` (`Scheduler.__init__`,
+  which rewrites its kernel by `pm_flatten_range`), `:23-34`
+  (`Scheduler.rngs` and `full_shape`, properties computed at each access),
+  `:38-41` (`copy`, which makes a scheduler of the kernel, rewriting it
+  again), `:75-80` (`axes_of`, which computes `reduce_ranges` and `rngs`,
+  itself computing `reduce_ranges`) and `:227` (`reduceops`).
+- **tolk:** `Postrange.Scheduler.view` (`view_of`), which `slice`, `rngs`,
+  `full_shape`, `reduce_ranges` and `reduceops` read;
+  `Postrange.Scheduler.flat` and `Postrange.Scheduler.v`.
+- **Differs:**
+  - the kernel's slice, its reductions, the ranges they close, its axes and
+    their sizes are computed when first asked after the kernel changes, and
+    kept until it changes. tinygrad computes them at each query;
+  - a kernel whose reductions and ends each close distinct ranges, which the
+    rewrite would leave unchanged, is kept without it; any other is
+    rewritten. tinygrad rewrites every kernel, a copy's included.
+
+  The kernels and the answers are the same.
+- **Reason:** (d): a beam search's rounds and the hand-coded optimisations
+  of every kernel. With a range's reduce role read from the reductions, each
+  axis query listed the kernel's slice up to five times, and each copy of a
+  scheduler rewrote its kernel. Measured on fudge by instruction counts:
+  making the candidates of `matmul`'s kernel for CUDA took 14.0M
+  instructions with the role and 6.6M with both changes (9.5M before the
+  role, whose search also had unroll actions); lowering `matmul`'s kernel
+  took 14.96M with the role, 14.57M with both, 14.31M before. With both, the
+  tolk bench's `search/actions/*` rows (the three lorenz kernels) run 25 to
+  27% faster than before the role, and `matmul/codegen` within 1%, where it
+  had taken 12% longer.
+- **Pinned by:** `Tolk.Postrange › a scheduler's axes answer as a fresh
+  copy's, whatever came before`, which interleaves optimisations, copies and
+  queries; `› the scheduler's axes after optimising are tinygrad's`;
+  `› Scheduler ›` `v's kernel has the ranges its reductions and ends
+  close flattened`, `v's kernel of a recorded kernel is it flattened` and `a
+  copy's kernel after optimising is the kernel flattened`; the tolk bench's
+  `search/actions/*` rows on fudge, which time making a search's candidates,
+  and its `*/codegen` rows.
+

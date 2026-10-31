@@ -242,9 +242,60 @@ let colors =
 let sum_rows_64 () = K.v (kernel "sum_rows_64") (renderer "cpu")
 let upcast_4 = split 0 4 Upcast
 
+(* Kernels over [a[r0 * 8 + r1]] whose reduction, or end, closes
+   [closes r0 r1]. *)
+let closing ~by_end closes =
+  let r0 = Ops.range (Int 4) [ 0 ] and r1 = Ops.range (Int 8) [ 1 ] in
+  let out = Shape.param ~shape:[ Int 32 ] 0 Float32
+  and a = Shape.param ~shape:[ Int 32 ] 1 Float32 in
+  let i = Ops.O.((r0 * Ops.int 8) + r1) in
+  let x = Ops.index a [ i ] in
+  let closer =
+    if by_end then Ops.end_ (Ops.store (Ops.index out [ i ]) x) (closes r0 r1)
+    else
+      Ops.store
+        (Ops.index out [ Ops.int 0 ])
+        (Ops.reduce x Op.Add (closes r0 r1))
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ closer ]
+
+let closings =
+  List.concat_map
+    (fun (what, closes) ->
+      [
+        ("a reduction closing " ^ what, closing ~by_end:false closes);
+        ("an end closing " ^ what, closing ~by_end:true closes);
+      ])
+    [
+      ("distinct ranges", fun r0 r1 -> [ r0; r1 ]);
+      ( "an expression of ranges",
+        fun r0 r1 -> [ Ops.O.((r0 * Ops.int 8) + r1) ] );
+      ("a range twice", fun r0 r1 -> [ r0; r1; r0 ]);
+    ]
+
+let flattened ast =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
+    (After_sources Simplify.pm_flatten_range)
+
 let schedulers =
   group "Scheduler"
     [
+      cases "v's kernel has the ranges its reductions and ends close flattened"
+        ~id:fst closings (fun (_, ast) ->
+          equal Uops.uop (flattened ast) (K.ast (K.v ast (renderer "cpu"))));
+      cases "v's kernel of a recorded kernel is it flattened"
+        ~id:(fun c -> c.name) recorded_cases (fun c ->
+          let ast = kernel c.kernel in
+          equal Uops.uop (flattened ast)
+            (K.ast (K.v ast (renderer c.renderer))));
+      cases "a copy's kernel after optimising is the kernel flattened"
+        ~id:(fun c -> c.name)
+        (List.filter (fun c -> c.refused = None) recorded_cases)
+        (fun c ->
+          recorded ~settings:c.settings (fun () ->
+              let k = scheduler c in
+              List.iter (fun o -> ignore (apply k o)) c.opts;
+              equal Uops.uop (flattened (K.ast k)) (K.ast (K.copy k))));
       test "v reads the optimisations its kernel's argument lists" (fun () ->
           let k = K.v (Golden.sink "matmul_0.golden") (renderer "metal") in
           equal (list Kernel_opts.opt) [ split 1 32 Local ] (K.applied_opts k));
@@ -589,6 +640,56 @@ let fuzzer =
         writes"
        fuzzed_program fuzz
 
+(* A scheduler's axis queries, between optimisations and copies, answer as
+   those of a fresh copy of it, which has computed nothing yet. *)
+let queries =
+  let sched = abstract "k" in
+  let kernels = [| "sum_rows_64"; "matmul_0"; "custom_gemm" |] in
+  let opt i =
+    let amount = List.nth [ 2; 4; 8 ] (i / 4 mod 3) in
+    split (i mod 4) amount (if i >= 12 then Opt.Local else Upcast)
+  in
+  let make i = K.v (kernel kernels.(i)) (renderer "metal") in
+  let fresh f k = f (K.copy k) in
+  let ok k o = Result.is_ok (K.apply_opt k o) in
+  let applies o k =
+    let r = ok k o in
+    cover "an optimisation applies" r;
+    r
+  in
+  let copy k =
+    cover "an optimised scheduler is copied" (K.applied_opts k <> []);
+    K.copy k
+  in
+  let shape k = repr_list sint (K.full_shape k) in
+  let ints = list int and uops = list Uops.uop in
+  let query name w f =
+    command name (sched ^-> returns w) (fresh f) f
+  in
+  stateful ~count:60 ~steps:12
+    "a scheduler's axes answer as a fresh copy's, whatever came before"
+    [
+      command "v"
+        (Gen.int_range 0 (Array.length kernels - 1) @-> makes sched)
+        make make;
+      command "copy" (sched ^-> makes sched) K.copy copy;
+      command "apply_opt"
+        (Gen.map opt (Gen.int_range 0 23) @-> sched ^-> returns bool)
+        (fun o k -> ok k o)
+        applies;
+      command "apply_opt"
+        (Gen.map opt (Gen.int_range 0 23) @-> sched ^-> returns bool)
+        (fun o k -> ok k o)
+        applies;
+      query "rngs" uops K.rngs;
+      query "full_shape" string shape;
+      query "reduce_ranges" uops K.reduce_ranges;
+      query "reduceops" uops K.reduceops;
+      query "reduce axes" ints (fun k -> K.axes_of ~reduce:true k []);
+      query "upcastable_dims" ints (fun k -> K.upcastable_dims k);
+      query "upcast axes" ints (fun k -> K.axes_of k [ Upcast ]);
+    ]
+
 let () =
   exit
     (Windtrap.run "Tolk.Postrange"
@@ -598,6 +699,7 @@ let () =
          axes;
          colors;
          schedulers;
+         queries;
          shifts;
          split_targets;
          dispatch;
