@@ -311,6 +311,19 @@ module Fits : sig
       [Error]; a range with [start < 0] or [start > stop] raises
       [Invalid_argument].
 
+      {b Tiles.} A tile-compressed image, a [BINTABLE] of [ZIMAGE = T], reads
+      as the image it holds, and a read decodes only the tiles its window
+      meets.
+
+      {b Memory.} A read allocates its window, and decodes the tiles it
+      meets one at a time: a Rice, gzip or uncompressed tile whole, in
+      memory for its pixels, which its heap bytes bound, and a PLIO tile
+      only where it meets the window, in memory for its list and that part.
+      A few bytes of a PLIO tile stand for any number of pixels, so the
+      file's size bounds neither the image nor such a tile: a whole read
+      allocates the declared {!Image.shape}, which a caller checks before
+      reading an untrusted image whole.
+
       {b Byte order.} FITS stores big-endian. Every result is host memory
       independent of the file. *)
   module Image : sig

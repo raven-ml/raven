@@ -19,12 +19,14 @@ type codec =
   | Gzip_1
   | Gzip_2
   | Nocompress
+  | Plio_1 of { offset : int }
 
 let codec_name = function
   | Rice _ -> "RICE_1"
   | Gzip_1 -> "GZIP_1"
   | Gzip_2 -> "GZIP_2"
   | Nocompress -> "NOCOMPRESS"
+  | Plio_1 _ -> "PLIO_1"
 
 (* A per-tile parameter: a column of the table, a keyword, or absent. *)
 type 'a param = Column of Bintable.column | Keyword of 'a | Absent
@@ -52,6 +54,27 @@ type t = {
 let tile_place t n = Err.sub t.table.place ("tile " ^ Int.to_string (n + 1))
 
 (* Description *)
+
+(* The most pixels a byte of the heap decodes to, if the codec bounds it: a
+   gzip tile stores at least one byte per pixel and deflate expands at most
+   1032-fold. A PLIO list zero-fills its tile past its end and many rows
+   may share it, so a few bytes stand for any number of pixels: it decodes
+   only the window's part of a tile. *)
+let max_pixels_per_byte = function
+  | Plio_1 _ -> None
+  | _ -> Some 1032
+
+(* cfitsio's fpack stores an unsigned 16-bit image (BZERO = 32768, BSCALE
+   = 1) in PLIO tiles as its unsigned values, since a list holds no negative
+   one, and subtracts 32768 reading them back (imcompress.c). *)
+let plio_offset h zbitpix =
+  let find k = Hdu.find_struct h Value.float k in
+  if
+    zbitpix = 16
+    && find "BZERO" = Some 32768.
+    && Option.value ~default:1. (find "BSCALE") = 1.
+  then 32768
+  else 0
 
 let describe h (store : Hdu.store) =
   let place = Header.place h in
@@ -103,11 +126,6 @@ let describe h (store : Hdu.store) =
         | None -> fail_at place "the image's size overflows")
       1 axes
   in
-  (* A gzip tile stores at least one byte per pixel and deflate expands at
-     most 1032-fold. *)
-  if pixels > 0 && pixels / 1032 > table.heap_size then
-    fail_at place "%d pixels in a heap of %d bytes, past 1032 pixels per byte"
-      pixels table.heap_size;
   let names = ref [] in
   for i = 1 to 99 do
     match find Value.string (strf "ZNAME%d" i) with
@@ -145,11 +163,17 @@ let describe h (store : Hdu.store) =
     | "GZIP_1" -> Gzip_1
     | "GZIP_2" -> Gzip_2
     | "NOCOMPRESS" -> Nocompress
-    | ("HCOMPRESS_1" | "PLIO_1") as c ->
+    | "PLIO_1" -> Plio_1 { offset = plio_offset h zbitpix }
+    | "HCOMPRESS_1" as c ->
         Hdu.card_fail h "ZCMPTYPE"
           (strf "%s is not read; decompress the file with funpack" c)
     | c -> Hdu.card_fail h "ZCMPTYPE" (strf "%S is no tile compression" c)
   in
+  (match max_pixels_per_byte codec with
+  | Some per_byte when pixels > 0 && pixels / per_byte > table.heap_size ->
+      fail_at place "%d pixels in a heap of %d bytes, past %d pixels per byte"
+        pixels table.heap_size per_byte
+  | _ -> ());
   let column name = Bintable.find table name in
   let compressed =
     match column "COMPRESSED_DATA" with
@@ -333,18 +357,104 @@ let param_value (type a) rows (p : a param) (of_float : float -> a)
       | K -> Some (of_int (Int64.to_int (Bintable.be_int64 rows c.start)))
       | _ -> None)
 
-(* [decode_tile t place n npix budget] decodes tile [n] of [npix] pixels, at
-   [place]. [budget] counts the heap bytes a read may still decode. *)
-let decode_tile t place n npix budget =
-  let rows = Bintable.read_rows t.table n (n + 1) in
-  let fetch c =
-    let count, offset = Bintable.descriptor t.table c rows 0 in
+(* Boxes *)
+
+(* A box of a tile: [start] and [len] per axis, in file order, within a
+   tile of [ext]. Values over a box lie axis 0 fastest. *)
+type box = { ext : int array; start : int array; len : int array }
+
+let box_pixels b = Array.fold_left ( * ) 1 b.len
+
+(* [starts b] is the tile index of the first pixel of each of [b]'s lines,
+   the runs along axis 0, in order. *)
+let starts b =
+  let rank = Array.length b.ext in
+  let lines = box_pixels b / Int.max 1 b.len.(0) in
+  let idx = Array.copy b.start in
+  Array.init lines (fun _ ->
+      let k = ref 0 and stride = ref 1 in
+      for i = 0 to rank - 1 do
+        k := !k + (idx.(i) * !stride);
+        stride := !stride * b.ext.(i)
+      done;
+      (* the next line, axis 1 fastest *)
+      let rec bump i =
+        if i < rank then
+          if idx.(i) + 1 < b.start.(i) + b.len.(i) then idx.(i) <- idx.(i) + 1
+          else begin
+            idx.(i) <- b.start.(i);
+            bump (i + 1)
+          end
+      in
+      bump 1;
+      !k)
+
+(* [last b] is one past the tile index of [b]'s last pixel. *)
+let last b =
+  let k = ref 0 and stride = ref 1 in
+  Array.iteri
+    (fun i e ->
+      k := !k + ((b.start.(i) + b.len.(i) - 1) * !stride);
+      stride := !stride * e)
+    b.ext;
+  !k + 1
+
+(* [fill_box b out p m v] sets to [v] the values over [b] in [out] of the
+   tile's pixels [p] to [p + m - 1], line by line. *)
+let fill_box b (out : ints) p m v =
+  let rank = Array.length b.ext in
+  let e0 = b.ext.(0) and s0 = b.start.(0) and l0 = b.len.(0) in
+  let p = ref p and m = ref m in
+  while !m > 0 do
+    let c0 = !p mod e0 in
+    let run = Int.min !m (e0 - c0) in
+    let line = ref (!p / e0) and off = ref 0 and stride = ref l0 in
+    let inside = ref true in
+    for i = 1 to rank - 1 do
+      let d = (!line mod b.ext.(i)) - b.start.(i) in
+      line := !line / b.ext.(i);
+      if d < 0 || d >= b.len.(i) then inside := false;
+      off := !off + (d * !stride);
+      stride := !stride * b.len.(i)
+    done;
+    if !inside then
+      for x = Int.max c0 s0 to Int.min (c0 + run) (s0 + l0) - 1 do
+        A.unsafe_set out (!off + x - s0) v
+      done;
+    p := !p + run;
+    m := !m - run
+  done
+
+(* Decoding one tile's box *)
+
+(* [boxed t] is [true] if [t]'s COMPRESSED_DATA tiles decode to the box a
+   read asks of them, as PLIO ones do: their few bytes may stand for a
+   tile of any size. The other codecs decode whole tiles, which
+   the heap bounds. *)
+let boxed t = match t.codec with Plio_1 _ -> true | _ -> false
+
+(* The box that tiles decoded whole ignore. *)
+let no_box = { ext = [||]; start = [||]; len = [||] }
+
+let first_line = [| 0 |]
+
+let not_floats t place name =
+  if t.zbitpix < 0 && not t.quantized then
+    fail_at place "%s codes integers; the float image is not quantized" name
+
+(* [decode_tile t place n rows cd npix box budget] decodes tile [n] of
+   [npix] pixels, whose table row is [rows] and COMPRESSED_DATA descriptor
+   [cd], at [place]: the box [box] of it if [boxed t] and [cd] is nonempty,
+   else the whole tile. [budget] counts the heap bytes a read may still
+   decode. *)
+let decode_tile t place n rows cd npix box budget =
+  (* the bytes of the array [(count, offset)] describes in column [c] *)
+  let fetch (count, offset) c =
     let bytes = count * Bintable.size c.Bintable.form.elt in
     if bytes > !budget then
       fail_at place "the tiles decode more bytes than the heap holds";
     budget := !budget - bytes;
-    ( count,
-      if count = 0 then None else Some (Bintable.heap t.table offset bytes) )
+    if count = 0 then None else Some (Bintable.heap t.table offset bytes)
   in
   (match t.null_mask with
   | Some c when fst (Bintable.descriptor t.table c rows 0) > 0 ->
@@ -355,28 +465,44 @@ let decode_tile t place n npix budget =
   let scale = param_value rows t.zscale Fun.id Float.of_int in
   let zero = param_value rows t.zzero Fun.id Float.of_int in
   let blank = param_value rows t.zblank int_of_float Fun.id in
-  let dequantize i =
+  (* [i] holds lines of [line] pixels of the tile from [starts] *)
+  let dequantize ~starts ~line i =
     let scale = Option.value ~default:1. scale
     and zero = Option.value ~default:0. zero in
     if not (Float.is_finite scale && Float.is_finite zero) then
       fail_at place "ZSCALE or ZZERO is not finite";
-    let out = floats npix in
+    let out = floats (Array.length starts * line) in
     Quantize.dequantize ~dither:t.dither ~row:(n + t.zdither0) ~scale ~zero
-      ~blank i npix out;
+      ~blank ~starts ~line i out;
     Reals out
   in
-  let raw c = match fetch c with _, None -> None | _, Some b -> Some b in
-  match raw t.compressed with
+  let raw c = fetch (Bintable.descriptor t.table c rows 0) c in
+  match fetch cd t.compressed with
   | Some b -> (
       match t.codec with
       | Rice { block; bytepix } ->
-          if t.zbitpix < 0 && not t.quantized then
-            fail_at place
-              "Rice codes integers; the float image is not quantized";
+          not_floats t place "Rice";
           let out = ints npix in
           (try Rice.decode ~width:bytepix ~block b 0 (A.dim b) out npix
            with Fail e -> fail_at place "%s" e);
-          if t.quantized then dequantize out else Ints out
+          if t.quantized then dequantize ~starts:first_line ~line:npix out
+          else Ints out
+      | Plio_1 { offset } ->
+          not_floats t place "PLIO";
+          let k = box_pixels box in
+          let out = ints k in
+          A.fill out 0;
+          (try
+             Plio.decode b 0 (A.dim b) npix ~until:(last box) (fun p m v ->
+                 fill_box box out p m v)
+           with Fail e -> fail_at place "%s" e);
+          if offset <> 0 then
+            for i = 0 to k - 1 do
+              A.unsafe_set out i (A.unsafe_get out i - offset)
+            done;
+          if t.quantized then
+            dequantize ~starts:(starts box) ~line:box.len.(0) out
+          else Ints out
       | Gzip_1 | Gzip_2 | Nocompress -> (
           let data, len =
             if t.codec = Nocompress then (b, A.dim b) else gunzip place npix b
@@ -389,7 +515,8 @@ let decode_tile t place n npix budget =
             else fun i -> A.unsafe_get data i
           in
           match of_bytes t place ~as_ints:t.quantized get len npix with
-          | Ints i when t.quantized -> dequantize i
+          | Ints i when t.quantized ->
+              dequantize ~starts:first_line ~line:npix i
           | v -> v))
   | None -> (
       let lossless c f =
@@ -423,6 +550,91 @@ let decode_tile t place n npix budget =
           | None ->
               if npix = 0 then Ints (ints 0)
               else fail_at place "the tile holds no data"))
+
+(* Shared tiles *)
+
+(* The last two tiles decoded from a COMPRESSED_DATA descriptor, the most
+   recent first, keyed by its offset and count, the tile's pixels and the
+   box asked of it. IRAF points every empty line of a mask at one list, and
+   a line equal to the one before at that line's list, so a read that keeps
+   these decodes, and charges to its budget, each such list once. *)
+type memo = {
+  mutable offset0 : int;
+  mutable count0 : int;
+  mutable npix0 : int;
+  mutable box0 : box;
+  mutable v0 : values;
+  mutable offset1 : int;
+  mutable count1 : int;
+  mutable npix1 : int;
+  mutable box1 : box;
+  mutable v1 : values;
+}
+
+let memo () =
+  let none = Ints (ints 0) in
+  {
+    offset0 = 0;
+    count0 = 0;
+    npix0 = 0;
+    box0 = no_box;
+    v0 = none;
+    offset1 = 0;
+    count1 = 0;
+    npix1 = 0;
+    box1 = no_box;
+    v1 = none;
+  }
+
+(* Only a tile that no row's parameters change is kept: one neither
+   quantized nor masked. A read keeps them only for the codecs that decode
+   boxes, whose lists IRAF shares; the others hold one tile at a time. *)
+let shareable t = (not t.quantized) && t.null_mask = None
+
+let swap m =
+  let o = m.offset0 and c = m.count0 and p = m.npix0 in
+  let b = m.box0 and v = m.v0 in
+  m.offset0 <- m.offset1;
+  m.count0 <- m.count1;
+  m.npix0 <- m.npix1;
+  m.box0 <- m.box1;
+  m.v0 <- m.v1;
+  m.offset1 <- o;
+  m.count1 <- c;
+  m.npix1 <- p;
+  m.box1 <- b;
+  m.v1 <- v
+
+let same_box a b = a == b || a = b
+
+(* [shared t m place n rows cd npix box budget] is tile [n], from [m] if
+   its descriptor [cd], pixels and box are one of the last two decoded. *)
+let shared t m place n rows cd npix box budget =
+  let count, offset = cd in
+  let is0 =
+    m.count0 = count && m.offset0 = offset && m.npix0 = npix
+    && same_box m.box0 box
+  in
+  let is1 =
+    m.count1 = count && m.offset1 = offset && m.npix1 = npix
+    && same_box m.box1 box
+  in
+  if count > 0 && is0 then m.v0
+  else if count > 0 && is1 then begin
+    swap m;
+    m.v0
+  end
+  else
+    let v = decode_tile t place n rows cd npix box budget in
+    if count > 0 then begin
+      swap m;
+      m.offset0 <- offset;
+      m.count0 <- count;
+      m.npix0 <- npix;
+      m.box0 <- box;
+      m.v0 <- v
+    end;
+    v
 
 (* Reading a window *)
 
@@ -515,6 +727,9 @@ let read t bounds : Nx.host Nx.packed =
   in
   if n > 0 then begin
     let budget = ref t.table.heap_size in
+    let boxed = boxed t in
+    let m = memo () and share = shareable t && boxed in
+    let zeros = Array.make rank 0 in
     let lo = Array.mapi (fun i (a, _) -> a / t.tile.(i)) fb in
     let hi = Array.mapi (fun i (_, b) -> (b - 1) / t.tile.(i)) fb in
     let ti = Array.copy lo in
@@ -535,27 +750,45 @@ let read t bounds : Nx.host Nx.packed =
       let len =
         Array.mapi (fun i s -> Int.min t.tile.(i) (t.axes.(i) - s)) start
       in
-      for i = 1 to rank - 1 do
-        tstride.(i) <- tstride.(i - 1) * len.(i - 1)
-      done;
-      let npix = Array.fold_left ( * ) 1 len in
       let place = tile_place t !number in
-      let v = decode_tile t place !number npix budget in
       (* the intersection of the tile and the window *)
       let a = Array.mapi (fun i s -> Int.max s (fst fb.(i))) start in
       let b =
         Array.mapi (fun i s -> Int.min (s + len.(i)) (snd fb.(i))) start
       in
+      let npix = Array.fold_left ( * ) 1 len in
+      let box =
+        if not boxed then no_box
+        else
+          {
+            ext = len;
+            start = Array.mapi (fun i x -> x - start.(i)) a;
+            len = Array.mapi (fun i x -> x - a.(i)) b;
+          }
+      in
+      let rows = Bintable.read_rows t.table !number (!number + 1) in
+      let cd = Bintable.descriptor t.table t.compressed rows 0 in
+      let v =
+        if share then shared t m place !number rows cd npix box budget
+        else decode_tile t place !number rows cd npix box budget
+      in
+      (* the part of the tile the values cover: the box or the whole *)
+      let covers = boxed && fst cd > 0 in
+      let vstart = if covers then box.start else zeros in
+      let vlen = if covers then box.len else len in
+      for i = 1 to rank - 1 do
+        tstride.(i) <- tstride.(i - 1) * vlen.(i - 1)
+      done;
       let idx = Array.copy a in
       let run = b.(0) - a.(0) in
       let rec loop axis =
         if axis = 0 then begin
           let tk = ref 0 and ok = ref 0 in
           for i = 1 to rank - 1 do
-            tk := !tk + ((idx.(i) - start.(i)) * tstride.(i));
+            tk := !tk + ((idx.(i) - start.(i) - vstart.(i)) * tstride.(i));
             ok := !ok + ((idx.(i) - fst fb.(i)) * ostride.(i))
           done;
-          let tk = !tk + (a.(0) - start.(0))
+          let tk = !tk + (a.(0) - start.(0) - vstart.(0))
           and ok = !ok + (a.(0) - fst fb.(0)) in
           if run > 0 then copy_run place out ok v tk run
         end
@@ -818,6 +1051,7 @@ let code ~bitpix ~axes ~tile plan ~zdither0 ~slab ~heap =
                    0. )
              | Lossless Nocompress ->
                  (add (bytes ~shuffle:false), (0, 0), 0., 0.)
+             | Lossless (Plio_1 _) -> invalid_arg "Tiles.code: PLIO_1"
              | Quantized { q } -> (
                  let f = floats n in
                  gather saxes w start len (fun i off ->

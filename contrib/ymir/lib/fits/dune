@@ -14,6 +14,7 @@
   structure
   bintable
   rice
+  plio
   quantize
   tiles
   fits_unit

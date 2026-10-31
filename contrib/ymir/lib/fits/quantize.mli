@@ -33,17 +33,20 @@ val dequantize :
   scale:float ->
   zero:float ->
   blank:int option ->
+  starts:int array ->
+  line:int ->
   ints ->
-  int ->
   floats ->
   unit
-(** [dequantize ~dither ~row ~scale ~zero ~blank i n out] writes the
-    physical values of the first [n] values of [i] to [out]:
+(** [dequantize ~dither ~row ~scale ~zero ~blank ~starts ~line i out]
+    writes the physical values of the quantized [i] to [out]:
     [I × ZSCALE + ZZERO], or [((I − R) + 0.5) × ZSCALE + ZZERO] dithered,
     each operation rounded in float64, NaN for [blank] and 0 for
-    SUBTRACTIVE_DITHER_2's zero value. [row] is [tile + ZDITHER0] for a
-    0-based tile. [i] and [out] hold at least [n] values, which
-    [dequantize] does not check. *)
+    SUBTRACTIVE_DITHER_2's zero value. [i] holds lines of [line] pixels of
+    a tile, line [k] from the tile's pixel [starts.(k)], in increasing
+    order, so a dithered pixel takes its place's deviate. [row] is
+    [tile + ZDITHER0] for a 0-based tile. [i] and [out] hold the lines'
+    values, which [dequantize] does not check. *)
 
 val quantize :
   dither:dither ->

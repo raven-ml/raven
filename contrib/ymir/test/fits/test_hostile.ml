@@ -5,8 +5,8 @@
 
 (* Every reader gives values or an Error on any bytes, never an exception.
    The corpus is the files astropy wrote (gen/fixtures.py): images of every
-   format, tiles of every codec and dither, and binary and ASCII tables
-   with every TFORM code; and cuts of files the archives wrote
+   format, tiles of every codec and dither, PLIO masks, and binary and ASCII
+   tables with every TFORM code; and cuts of files the archives wrote
    (../support/survey/README.md): pipeline headers with CONTINUE and
    HIERARCH records, cfitsio's Rice, gzip and HCOMPRESS tiles, IDL's and
    STIL's tables, heap arrays, an ASCII table and random groups. A byte
@@ -22,7 +22,12 @@ module I = Fits.Image
 module T = Fits.Table
 
 let files =
-  [ "golden/images.fits"; "golden/tiles.fits"; "golden/tables.fits" ]
+  [
+    "golden/images.fits";
+    "golden/tiles.fits";
+    "golden/tables.fits";
+    "golden/plio.fits";
+  ]
   @ (Sys.readdir "../support/survey" |> Array.to_list
     |> List.filter (fun f -> Filename.check_suffix f ".fits")
     |> List.sort compare
@@ -201,6 +206,7 @@ let regions =
               else if String.length cmp >= 4 && String.sub cmp 0 4 = "GZIP" then
                 "gzip"
               else if cmp = "NOCOMPRESS" then "uncompressed tiles"
+              else if cmp = "PLIO_1" then "plio"
               else "unknown codec"
             in
             tag label [ sp.data ]

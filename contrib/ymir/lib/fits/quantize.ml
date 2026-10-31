@@ -47,8 +47,23 @@ type seq = {
   f32 : bool;
 }
 
-let index s r =
-  if s.f32 then int_of_float (to_f32 (r *. 500.)) else int_of_float (r *. 500.)
+let index_of ~f32 r =
+  if f32 then int_of_float (to_f32 (r *. 500.)) else int_of_float (r *. 500.)
+
+let index s r = index_of ~f32:s.f32 r
+
+(* The sequence in segments: seed [i] runs from deviate [index r.(i)] to
+   the last, and the seeds cycle. [prefix ~f32].(i) is the pixels of seeds
+   0 to [i - 1], so [prefix ~f32].(n_random) is the cycle's. *)
+let prefix ~f32 =
+  let p = Array.make (n_random + 1) 0 in
+  for i = 0 to n_random - 1 do
+    p.(i + 1) <- p.(i) + n_random - index_of ~f32 randoms.(i)
+  done;
+  p
+
+let prefix32 = prefix ~f32:true
+let prefix64 = prefix ~f32:false
 
 let start ~f32 row =
   let r = randoms in
@@ -64,6 +79,27 @@ let advance s =
     s.next <- index s s.r.(s.iseed)
   end
 
+(* [skip s m] advances [s] past [m] pixels: past the rest of its seed's
+   segment, whole cycles, then to the segment that holds the place, found
+   by binary search. *)
+let skip s m =
+  let left = n_random - s.next in
+  if m < left then s.next <- s.next + m
+  else begin
+    let p = if s.f32 then prefix32 else prefix64 in
+    let cycle = p.(n_random) in
+    let j = if s.iseed + 1 = n_random then 0 else s.iseed + 1 in
+    (* the place's pixels from seed 0's first, within a cycle *)
+    let at = (p.(j) + ((m - left) mod cycle)) mod cycle in
+    let lo = ref 0 and hi = ref n_random in
+    while !hi - !lo > 1 do
+      let mid = (!lo + !hi) / 2 in
+      if p.(mid) <= at then lo := mid else hi := mid
+    done;
+    s.iseed <- !lo;
+    s.next <- index s s.r.(!lo) + (at - p.(!lo))
+  end
+
 (* [scaled out k x ~scale ~zero] writes [x × scale + zero] to [out.{k}],
    the product rounded before the sum. ocamlopt fuses a product and a sum
    into one multiply-add on arm64, which rounds once; reading the product
@@ -73,29 +109,38 @@ let[@inline] scaled (out : floats) k x ~scale ~zero =
   Bigarray.Array1.unsafe_set out k (x *. scale);
   Bigarray.Array1.unsafe_set out k (Bigarray.Array1.unsafe_get out k +. zero)
 
-(* [dequantize ~dither ~row ~scale ~zero ~blank i n out] writes the
-   physical values of the [n] quantized [i] to [out]: [I × ZSCALE + ZZERO],
-   or [((I − R) + 0.5) × ZSCALE + ZZERO] dithered, each operation rounded in
-   float64, NaN for [blank] and 0 for the zero value of
-   SUBTRACTIVE_DITHER_2. [row] is [tile + ZDITHER0] for a 0-based tile. *)
-let dequantize ~dither ~row ~scale ~zero ~blank (i : ints) n (out : floats) =
+(* [dequantize ~dither ~row ~scale ~zero ~blank ~starts ~line i out]
+   writes the physical values of the quantized [i] to [out]: [I × ZSCALE +
+   ZZERO], or [((I − R) + 0.5) × ZSCALE + ZZERO] dithered, each operation
+   rounded in float64, NaN for [blank] and 0 for the zero value of
+   SUBTRACTIVE_DITHER_2. [i] holds lines of [line] pixels of the tile, line
+   [k] from its pixel [starts.(k)], and [row] is [tile + ZDITHER0] for a
+   0-based tile. *)
+let dequantize ~dither ~row ~scale ~zero ~blank ~starts ~line (i : ints)
+    (out : floats) =
   let is_blank v = match blank with Some b -> v = b | None -> false in
   match dither with
   | No_dither ->
-      for k = 0 to n - 1 do
+      for k = 0 to (Array.length starts * line) - 1 do
         let v = Bigarray.Array1.unsafe_get i k in
         if is_blank v then Bigarray.Array1.unsafe_set out k Float.nan
         else scaled out k (Float.of_int v) ~scale ~zero
       done
   | Subtractive_1 | Subtractive_2 ->
       let s = start ~f32:true row in
-      for k = 0 to n - 1 do
-        let v = Bigarray.Array1.unsafe_get i k in
-        if is_blank v then Bigarray.Array1.unsafe_set out k Float.nan
-        else if dither = Subtractive_2 && v = zero_value then
-          Bigarray.Array1.unsafe_set out k 0.
-        else scaled out k (Float.of_int v -. s.r.(s.next) +. 0.5) ~scale ~zero;
-        advance s
+      for l = 0 to Array.length starts - 1 do
+        (* the sequence stands at pixel [starts.(l - 1) + line] *)
+        let at = if l = 0 then 0 else starts.(l - 1) + line in
+        skip s (starts.(l) - at);
+        for k = l * line to ((l + 1) * line) - 1 do
+          let v = Bigarray.Array1.unsafe_get i k in
+          if is_blank v then Bigarray.Array1.unsafe_set out k Float.nan
+          else if dither = Subtractive_2 && v = zero_value then
+            Bigarray.Array1.unsafe_set out k 0.
+          else
+            scaled out k (Float.of_int v -. s.r.(s.next) +. 0.5) ~scale ~zero;
+          advance s
+        done
       done
 
 (* Noise *)

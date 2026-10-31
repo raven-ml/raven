@@ -8,7 +8,8 @@
   test_table
   test_domains
   test_hostile
-  test_survey)
+  test_survey
+  test_plio)
  (package ymir)
  (libraries ymir.fits ymir.units nx nx.array nx.ragged windtrap)
  (deps

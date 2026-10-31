@@ -335,6 +335,59 @@ def tables(path):
     path.with_suffix(".values").write_text("\n".join(lines) + "\n")
 
 
+def plio(path):
+    """PLIO_1 tiles of masks, edge tiles partial: levels that rise and fall
+    by less and more than 4095, values at 2^24 - 1 (cfitsio's largest),
+    tiles all zero, and tiles of one row with runs past 4095 pixels. The
+    values file holds the source pixels, which astropy reads back."""
+    rng = np.random.default_rng(11)
+    shape = (10, 13)
+    n = shape[0] * shape[1]
+
+    def runs(n, levels, longest):
+        v, k = [], 0
+        while len(v) < n:
+            v += [levels[k % len(levels)]] * int(rng.integers(1, longest + 1))
+            k += 1
+        return np.array(v[:n])
+
+    top = 2**24 - 1
+    i32 = runs(n, [0, 1, 5000, 5001, 4999, 0, top, top - 4095, 70000, 3, 0, top], 6)
+    i32[:12] = top
+    i32[-1] = top
+    i16 = runs(n, [0, 1, 2, 32767, 1, 0, 4096, 4095, 8191, 0], 5)
+    u8 = runs(n, [0, 1, 255, 254, 0, 128, 0], 4)
+    holes = runs(n, [0, 7, 3], 9)
+    holes[:4 * 13] = 0  # the first tile row all zero
+    wide = (3, 9000)
+    long_runs = np.zeros(wide[0] * wide[1], dtype=np.int64)
+    long_runs[100:9000 + 5000] = 9
+    long_runs[2 * 9000 - 1] = 4096
+    long_runs[2 * 9000 + 1 : 3 * 9000] = 1
+    hdus = [fits.PrimaryHDU()]
+    sources = []
+
+    def comp(name, data, dtype, shape, tile):
+        data = data.astype(dtype).reshape(shape)
+        sources.append((name, data))
+        hdus.append(fits.CompImageHDU(data, name=name, compression_type="PLIO_1", tile_shape=tile))
+
+    comp("PLIO_I32", i32, np.int32, shape, (3, 4))
+    comp("PLIO_I16", i16, np.int16, shape, (3, 4))
+    comp("PLIO_U8", u8, np.uint8, shape, (3, 4))
+    comp("PLIO_HOLES", holes, np.int32, shape, (4, 13))
+    comp("PLIO_ZERO", np.zeros(n), np.int16, shape, (3, 4))
+    comp("PLIO_ROWS", long_runs, np.int32, wide, (1, 9000))
+    write(path, hdus)
+    with fits.open(path) as hdul:
+        for name, data in sources:
+            back = hdul[name].data
+            if back.dtype != data.dtype or not np.array_equal(back, data):
+                sys.exit(f"astropy reads {name} back otherwise")
+    lines = [" ".join([name] + [text(x) for x in data.ravel()]) for name, data in sources]
+    path.with_suffix(".values").write_text("\n".join(lines) + "\n")
+
+
 def checksum_text(x):
     """FITS 4.0 Appendix J's encoding of the 32-bit [x]."""
     exclude = {0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60}
@@ -392,6 +445,7 @@ def write_all(directory):
     images(directory / "images.fits")
     tiles(directory / "tiles.fits")
     tables(directory / "tables.fits")
+    plio(directory / "plio.fits")
 
 
 def main():

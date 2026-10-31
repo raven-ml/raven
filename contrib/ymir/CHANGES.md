@@ -4,6 +4,9 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- `Fits.Image` reads PLIO_1 tiles, IRAF's run-length coded masks: lists
+  that leave out trailing zeros, rows that share a list, and unsigned
+  16-bit masks as cfitsio stores them. A window decodes only its part.
 - `Fits.Image.raw` and `Fits.Image.values` allocate a third as many words
   reading an image of 64x64 tiles, and `Fits.Table` reads of a heap column
   120 fewer words a row. Reads built an error's place for each tile and row
@@ -118,7 +121,7 @@ All notable changes to Ymir are documented in this file.
   the writer computes, and `Fits.verify` checks them.
 - `Fits.Image` reads tile-compressed images (Rice, gzip, uncompressed and
   quantized tiles under every dither) as it reads plain ones, decoding only
-  the tiles a window meets; HCOMPRESS and PLIO tiles are an `Error` naming
+  the tiles a window meets; HCOMPRESS tiles are an `Error` naming
   funpack. `Fits.Image.hdu ~tiles` writes them losslessly, and
   `Fits.Image.quantized` writes floats Rice-coded in steps of each tile's
   noise, with cfitsio's quantizer and a dither seed derived from the pixels.
