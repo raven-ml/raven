@@ -225,6 +225,9 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
+- test_reduce.ml:4026 "refusals, cpu/base" misses its cover "a padding
+  that misfits" on some seeds (s1:c19c873ddac7becd): draw that case often
+  enough that every run reaches it
 - `Nx_ragged.take` writes an int64 position per output byte (fill,
   scatter, cumsum, gather): ~40 bytes moved per byte of text. It dominates
   talon's joins on text (join_run.ml, column.ml)
