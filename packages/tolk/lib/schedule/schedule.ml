@@ -504,7 +504,7 @@ let lower_sink_to_linear call =
       let make () =
         made := true;
         if setting Setting.spec <> 0 then
-          Spec.type_verify ~calls:Enter Spec.tensor fn;
+          Spec.type_verify ~calls:Skip Spec.tensor fn;
         place
           (create_schedule
              (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
@@ -770,7 +770,7 @@ let pm_replace_buf =
 
 let transform_to_call big_sink =
   if setting Setting.spec <> 0 then
-    Spec.type_verify ~calls:Enter Spec.tensor big_sink;
+    Spec.type_verify ~calls:Skip Spec.tensor big_sink;
   (* The stores are collected before these rewrites change node identities. *)
   let ctx = callify_ctx () in
   ignore

@@ -969,7 +969,7 @@ let kernel_info u =
   | _ -> invalid_arg "a kernel's sink needs kernel information"
 
 let check_spec spec sink =
-  if setting Setting.spec <> 0 then Spec.type_verify ~calls:Enter spec sink
+  if setting Setting.spec <> 0 then Spec.type_verify ~calls:Skip spec sink
 
 let apply_opts ?beam sink ren =
   let k = kernel_info sink in
@@ -1292,25 +1292,11 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   in
   if setting Setting.spec <> 0 then (
     let spec = if ren.vector_alu then Spec.vector_program else Spec.program in
-    try Spec.type_verify ~calls:Enter spec sink
+    try Spec.type_verify ~calls:Skip spec sink
     with Invalid_argument _ as e when Setting.value Setting.dbgtv <> "" ->
       print_endline (Render.render_uir (toposort ~calls:Enter sink));
       raise e);
   sink
-
-(* A call of a sink inside a kernel runs its body as code of the kernel's
-   program: the body is lowered alone, unoptimised, before the kernel. *)
-let pm_lower_calls =
-  pm (fun () ->
-      [
-        rule_ctx
-          (Upat.op Op.Call ~name:"call" ~allow_any_len:true
-             ~src:[ Upat.op Op.Sink ])
-          (fun ren m ->
-            let call = m "call" in
-            let body = full_rewrite_to_sink ~optimize:false (body call) ren in
-            Some (replace call ~src:(body :: src_without_body call)));
-      ])
 
 (* Linearizing *)
 
@@ -1360,30 +1346,44 @@ let line_rewrite lst m ctx =
       lines)
     lst
 
-(* A lowered call body becomes the list of its lines, named as its call: the
-   renderer writes it as a function of the kernel's program. *)
-let pm_call_fixup =
+(* A call of a sink inside a kernel runs its body as code of the kernel's
+   program: the body, its own calls lowered first, is lowered alone and
+   unoptimised, and becomes the list of its lines, named as its call, which the
+   renderer writes as a function of the kernel's program. *)
+let lower_calls = ref (Pattern_matcher.v (fun () -> []))
+
+let lower_call ren call =
+  let name =
+    match arg call with
+    | Call { name = Some n; _ } -> Helpers.to_function_name n
+    | _ -> invalid_arg "a call inside a kernel needs a name"
+  in
+  let body =
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren (body call)
+      (After_sources !lower_calls)
+  in
+  let body = full_rewrite_to_sink ~optimize:false body ren in
+  let lines =
+    line_rewrite
+      (Linearizer.linearize body)
+      (pm_linearize_cleanups ++ pm_alloc_to_buf)
+      ()
+  in
+  let body = v Op.Linear ~src:lines ~arg:(String name) in
+  replace call ~src:(body :: src_without_body call)
+
+let pm_lower_calls =
   pm (fun () ->
       [
-        rule
+        rule_ctx
           (Upat.op Op.Call ~name:"call" ~allow_any_len:true
-             ~src:[ Upat.op Op.Sink ~name:"sink" ])
-          (fun m ->
-            let call = m "call" in
-            let name =
-              match arg call with
-              | Call { name = Some n; _ } -> Helpers.to_function_name n
-              | _ -> invalid_arg "a call inside a kernel needs a name"
-            in
-            let lines =
-              line_rewrite
-                (Linearizer.linearize (m "sink"))
-                (pm_linearize_cleanups ++ pm_alloc_to_buf)
-                ()
-            in
-            let body = v Op.Linear ~src:lines ~arg:(String name) in
-            Some (replace call ~src:(body :: src_without_body call)));
+             ~src:[ Upat.op Op.Sink ])
+          (fun ren m -> Some (lower_call ren (m "call")));
       ])
+
+(* A body's calls are lowered by the same rule; set once, when the module is
+   initialised, and only read after. *)
+let () = lower_calls := pm_lower_calls
 
 (* Programs *)
 
@@ -1400,10 +1400,6 @@ let do_linearize prg sink =
   let k = kernel_info sink in
   if setting Setting.debug >= 3 && k.applied_opts <> [] then
     Format.printf "%-25s opts: %a@." (function_name k) pp_opts k.applied_opts;
-  let sink =
-    graph_rewrite ~calls:Enter ~pass:Fixed_point ~ctx:() sink
-      (After_sources pm_call_fixup)
-  in
   let lst =
     line_rewrite
       (Linearizer.linearize sink)
@@ -1587,7 +1583,7 @@ let linearized ?beam ast (ren : Renderer.t) =
   let (_ : kernel_info) = kernel_of ast in
   let optimize = Option.is_none (tag ast) in
   let ast =
-    graph_rewrite ~calls:Enter ~pass:Once ~ctx:ren ast
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren ast
       (After_sources pm_lower_calls)
   in
   let full_sink = full_rewrite_to_sink ~optimize ?beam ast ren in
