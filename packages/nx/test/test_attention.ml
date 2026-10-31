@@ -7,8 +7,9 @@
    each row's visible scaled scores, rewritten by its score, times the values,
    over dense and paged keys, grouped heads, lead axes, lengths, masks as
    programs and as captured arrays, empty sequences, and float16 and bfloat16
-   accumulating at float32. A hidden finite value never changes the result,
-   and a hidden NaN or infinity within the lengths makes its row NaN. *)
+   accumulating at float32, each within the error bound nx.mli states. A
+   hidden finite value never changes the result, and a hidden NaN or infinity
+   within the lengths makes its row NaN. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -23,7 +24,10 @@ let same_bits =
 
 let invalid f = raises_match (Exn.invalid_arg ~sub:"Nx.attention") f
 let numel s = Array.fold_left ( * ) 1 s
-let u32 = 0x1p-23
+
+(* Float32's unit roundoff, and [x] rounded to float32. *)
+let u32 = 0x1p-24
+let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 (* A case *)
 
@@ -117,7 +121,10 @@ let case =
     frequency
       [
         (2, constant Identity);
-        (1, map (fun s -> Alibi s) (array ~size:(constant hq) (float_range 0. 0.5)));
+        ( 1,
+          map
+            (fun s -> Alibi s)
+            (array ~size:(constant hq) (map round32 (float_range 0. 0.5))) );
       ]
   in
   let n = numel lead in
@@ -125,6 +132,36 @@ let case =
   let* k = array ~size:(constant (n * hk * tk * dk)) element in
   let+ v = array ~size:(constant (n * hk * tk * dv)) element in
   { lead; hk; groups; tq; tk; dk; dv; lengths; scale; mask; score; q; k; v }
+
+(* The bound *)
+
+let gamma n v = Float.of_int n *. v /. (1. -. (Float.of_int n *. v))
+
+(* The bound on a visible score's error in float32, nx.mli's [η] for one key:
+   [a] is [|scale| Σ |q k|] and [s] the rewritten score. Without [score] it
+   is [(2dk + 4) u a] to first order; ALiBi adds the rounding of its product
+   and of its difference, a bias that of its sum. Products below float32's
+   normal range round absolutely. *)
+let score_error c h i j ~a s =
+  let u = u32 in
+  let dot =
+    (a *. (((1. +. u) *. (1. +. u) *. (1. +. gamma (c.dk + 1) (2. *. u))) -. 1.))
+    +. (Float.of_int (c.dk + 2) *. 0x1p-149)
+  in
+  match c.score with
+  | Identity -> dot
+  | Alibi slopes ->
+      ((dot +. (u *. Float.abs (Float.of_int (i - j) *. slopes.(h)))) *. (1. +. u))
+      +. (u *. Float.abs s)
+  | Bias _ -> (dot *. (1. +. u)) +. (u *. Float.abs s)
+
+(* nx.cpu's bound on a [Logsumexp] of [n] terms whose result is [r], nx.mli's
+   [ε]: [(L + D + 5 + 6 ln n) u + u |r|]. *)
+let logsumexp_bound n r =
+  let rec log2 k = if k <= 1 then 0 else 1 + log2 ((k + 1) / 2) in
+  let l = ((min n 1024 + 15) / 16) + 3 and d = log2 ((n + 1023) / 1024) in
+  ((Float.of_int (l + d + 5) +. (6. *. Float.log (Float.of_int n))) *. u32)
+  +. (u32 *. Float.abs r)
 
 (* The definition *)
 
@@ -157,12 +194,20 @@ type reached = {
   mutable zero_weight_nan : bool;
 }
 
-(* Per row [(b, h, i)]: [o] and the mass [Σ P |v|] at each [d], [lse], and
-   the greatest [|scale| Σ |q k|] or rewritten score, the size of a score's
-   rounding; then what the case reaches. [key b kh j d] and [value b kh j d]
-   read key [j] of key head [kh]. Weights are float32's: one below half its
-   least subnormal is zero. A value hidden from a row within its length is
-   read at weight zero. *)
+(* The exact result and what nx.mli's bound reads of it. *)
+type exact = {
+  o : float array;
+  mass : float array;  (** [M = Σ p |v|] at each element of [o]. *)
+  vmax : float array;  (** The greatest finite visible [|v|] at each. *)
+  lse : float array;
+  eta : float array;  (** [η] at each row. *)
+  size : float array;  (** [b], the greatest visible [|s|], at each row. *)
+}
+
+(* Per row [(b, h, i)], the exact result; then what the case reaches.
+   [key b kh j d] and [value b kh j d] read key [j] of key head [kh]. Weights
+   are float32's: one below half its least subnormal is zero. A value hidden
+   from a row within its length is read at weight zero. *)
 let definition c ~visible ~key ~value q =
   let hq = hq c in
   let scale =
@@ -171,8 +216,16 @@ let definition c ~visible ~key ~value q =
     | None -> 1. /. Float.sqrt (Float.of_int c.dk)
   in
   let n = rows c * hq * c.tq in
-  let o = Array.make (n * c.dv) 0. and mass = Array.make (n * c.dv) 0. in
-  let lse = Array.make n neg_infinity and big = Array.make n 0. in
+  let e =
+    {
+      o = Array.make (n * c.dv) 0.;
+      mass = Array.make (n * c.dv) 0.;
+      vmax = Array.make (n * c.dv) 0.;
+      lse = Array.make n neg_infinity;
+      eta = Array.make n 0.;
+      size = Array.make n 0.;
+    }
+  in
   let reached =
     { hidden_finite = false; hidden_nonfinite = false; zero_weight_nan = false }
   in
@@ -181,6 +234,7 @@ let definition c ~visible ~key ~value q =
       let kh = h / c.groups in
       for i = 0 to c.tq - 1 do
         let row = (((b * hq) + h) * c.tq) + i in
+        let seen j = visible b h i j in
         let s =
           Array.init c.tk (fun j ->
               let dot = ref 0. and size = ref 0. in
@@ -190,36 +244,39 @@ let definition c ~visible ~key ~value q =
                 size := !size +. Float.abs (x *. y)
               done;
               let s = rewritten c h i j (scale *. !dot) in
-              let size = Float.abs scale *. !size in
-              big.(row) <- Float.max big.(row) (Float.max size (Float.abs s));
+              if seen j then begin
+                let a = Float.abs scale *. !size in
+                e.eta.(row) <- Float.max e.eta.(row) (score_error c h i j ~a s);
+                e.size.(row) <- Float.max e.size.(row) (Float.abs s)
+              end;
               s)
         in
-        let seen j = visible b h i j in
         let m = ref neg_infinity in
         Array.iteri (fun j x -> if seen j then m := Float.max !m x) s;
         if !m > neg_infinity then begin
           let sum = ref 0. in
           Array.iteri (fun j x -> if seen j then sum := !sum +. Float.exp (x -. !m)) s;
-          lse.(row) <- !m +. Float.log !sum;
+          e.lse.(row) <- !m +. Float.log !sum;
           Array.iteri
             (fun j x ->
-              let p = Float.exp (x -. lse.(row)) in
+              let p = Float.exp (x -. e.lse.(row)) in
               let p = if p < 0x1p-150 then 0. else p in
               for d = 0 to c.dv - 1 do
-                let y = value b kh j d in
+                let y = value b kh j d and at = (row * c.dv) + d in
                 if not (seen j) then begin
                   if j < length c b then
                     if Float.is_finite y then reached.hidden_finite <- true
                     else begin
                       reached.hidden_nonfinite <- true;
-                      o.((row * c.dv) + d) <- nan
+                      e.o.(at) <- nan
                     end
                 end
                 else begin
                   if p = 0. && Float.is_nan y then reached.zero_weight_nan <- true;
-                  o.((row * c.dv) + d) <- o.((row * c.dv) + d) +. (p *. y);
-                  if p > 0. then
-                    mass.((row * c.dv) + d) <- mass.((row * c.dv) + d) +. (p *. Float.abs y)
+                  e.o.(at) <- e.o.(at) +. (p *. y);
+                  if Float.is_finite y then
+                    e.vmax.(at) <- Float.max e.vmax.(at) (Float.abs y);
+                  if p > 0. then e.mass.(at) <- e.mass.(at) +. (p *. Float.abs y)
                 end
               done)
             s
@@ -227,7 +284,7 @@ let definition c ~visible ~key ~value q =
       done
     done
   done;
-  ((o, mass, lse, big), reached)
+  (e, reached)
 
 (* Nx's call *)
 
@@ -253,44 +310,57 @@ let score_of c : (Nx.host Nx.pair -> Nx.host Nx.float32_t -> Nx.host Nx.float32_
 
 let lengths_of c = Option.map (ints c.lead) c.lengths
 
-(* [o] and [lse] against the definition: [o] within [q]'s rounding [u] of the
-   value and float32's of the scores, sums and weights, relative to the mass;
-   [lse] within float32's. [tiny] is [q]'s least subnormal. *)
-let agrees c ~u ~tiny (o, lse) (o', mass, lse', big) =
+(* [o] and [lse] against the definition, within nx.mli's bound: [lse] within
+   [η + ε], and each element of [o] within
+   [u{_q} |o| + (1 + u{_q}) (e{^w} - 1 + γ(tk + 1, 2u) e{^w}) M] for
+   [w = (1 + u) (2η + ε) + (2b + ln tk + 5) u], [uq] being [u{_q}].
+   Underflow adds [3] least float32 subnormals for each weight, times [|v|],
+   and one for each product, and [tiny], [q]'s least subnormal, for the
+   rounding of [o]. *)
+let agrees c ~uq ~tiny (o, lse) (e : exact) =
   let o = Nx.to_array o and lse = Nx.to_array lse in
-  equal ~msg:"o's elements" int (Array.length o') (Array.length o);
-  equal ~msg:"lse's elements" int (Array.length lse') (Array.length lse);
+  equal ~msg:"o's elements" int (Array.length e.o) (Array.length o);
+  equal ~msg:"lse's elements" int (Array.length e.lse) (Array.length lse);
   Array.iteri
     (fun row l' ->
       let l = lse.(row) in
-      let rounds = Float.of_int (c.tk + 16) +. (4. *. Float.of_int (c.dk + 2) *. big.(row)) in
       if l' = neg_infinity then begin
         if l <> neg_infinity then failf "lse at %d: %h, by definition -inf" row l
       end
-      else if not (Float.abs (l -. l') <= rounds *. u32 *. (1. +. Float.abs l')) then
-        failf "lse at %d: %h, by definition %h" row l l';
-      for d = 0 to c.dv - 1 do
-        let i = (row * c.dv) + d in
-        (* Products below float32's normal range round absolutely. *)
-        let under = Float.of_int (c.tk + 1) *. 0x1p-149 in
-        let tol = ((u +. (rounds *. u32)) *. mass.(i)) +. tiny +. under in
-        let x = o.(i) and x' = o'.(i) in
-        let agree =
-          if Float.is_nan x' then Float.is_nan x
-          else if Float.is_finite x' && mass.(i) = 0. then
-            (* An exact zero sum is +0. *)
-            Int64.equal (Int64.bits_of_float x) 0L
-          else if Float.is_finite x' then Float.abs (x -. x') <= tol
-          else x = x'
+      else begin
+        let eta = e.eta.(row) and eps = logsumexp_bound c.tk l' in
+        if not (Float.abs (l -. l') <= eta +. eps) then
+          failf "lse at %d: %h, by definition %h" row l l';
+        let tk = Float.of_int c.tk in
+        let w =
+          ((1. +. u32) *. ((2. *. eta) +. eps))
+          +. (((2. *. e.size.(row)) +. Float.log tk +. 5.) *. u32)
         in
-        if not agree then failf "o at %d: %h, by definition %h" i x x'
-      done)
-    lse'
+        let weight = Float.expm1 w in
+        for d = 0 to c.dv - 1 do
+          let i = (row * c.dv) + d in
+          let x = o.(i) and x' = e.o.(i) and m = e.mass.(i) in
+          let sum = (weight *. m) +. (gamma (c.tk + 1) (2. *. u32) *. (1. +. weight) *. m) in
+          let under = (tk *. ((3. *. e.vmax.(i)) +. 1.) *. 0x1p-149) +. tiny in
+          let tol = sum +. (uq *. (Float.abs x' +. sum)) +. under in
+          let agree =
+            if Float.is_nan x' then Float.is_nan x
+            else if Float.is_finite x' && m = 0. then
+              (* An exact zero sum is +0. *)
+              Int64.equal (Int64.bits_of_float x) 0L
+            else if Float.is_finite x' then Float.abs (x -. x') <= tol
+            else x = x'
+          in
+          if not agree then
+            failf "o at %d: %h, by definition %h, beyond the bound %h" i x x' tol
+        done
+      end)
+    e.lse
 
 let shape c tail = Array.append c.lead tail
 
 (* The dense call of [c] at [dt] against the definition; what [c] reaches. *)
-let dense (type s) (dt : (float, s) D.t) u tiny c =
+let dense (type s) (dt : (float, s) D.t) uq tiny c =
   let hq = hq c in
   let q = Nx.create dt (shape c [| hq; c.tq; c.dk |]) c.q in
   let k = Nx.create dt (shape c [| c.hk; c.tk; c.dk |]) c.k in
@@ -305,7 +375,7 @@ let dense (type s) (dt : (float, s) D.t) u tiny c =
   equal ~msg:"o's shape" (array int) (shape c [| hq; c.tq; c.dv |]) (Nx.shape (fst result));
   equal ~msg:"lse's shape" (array int) (shape c [| hq; c.tq |]) (Nx.shape (snd result));
   let expected, reached = definition c ~visible:(visible c) ~key ~value qs in
-  agrees c ~u ~tiny result expected;
+  agrees c ~uq ~tiny result expected;
   reached
 
 let law_dense dt u tiny c =
@@ -322,6 +392,38 @@ let law_dense dt u tiny c =
   cover "a row with no visible key"
     (rows c > 0 && c.tq > 0
     && not (List.exists (visible c 0 0 0) (List.init c.tk Fun.id)));
+  ignore (dense dt u tiny c : reached)
+
+(* Scores of up to a few thousand from keys near one base key, so a row's
+   visible scores lie within a few units of each other, or tie: each weight
+   is far from zero while each score rounds by thousands of [u]. Keys have
+   one or two dimensions, where a score's error comes nearest its bound.
+   Zero values let [o] rest on keys of small weight, whose relative error is
+   the largest. *)
+let tied =
+  let open Gen in
+  let* c = case in
+  let* dk = int_range 1 2 in
+  let n = numel c.lead in
+  let large = float_range (-32.) 32. in
+  let* base = array ~size:(constant dk) large in
+  let* q = array ~size:(constant (n * hq c * c.tq * dk)) large in
+  let* near =
+    array ~size:(constant (n * c.hk * c.tk * dk))
+      (frequency [ (1, constant 0.); (3, float_range (-0.1) 0.1) ])
+  in
+  let+ v =
+    array ~size:(constant (Array.length c.v))
+      (frequency
+         [ (2, constant 0.); (2, constant 1.); (1, constant (-1.)); (1, element) ])
+  in
+  let k = Array.mapi (fun i x -> base.(i mod dk) +. x) near in
+  { c with dk; q; k; v; score = Identity }
+
+let law_tied dt u tiny c =
+  cover "masked" (c.mask <> Unmasked || c.lengths <> None);
+  cover "one key" (c.tk = 1 && c.tq > 0 && rows c > 0);
+  cover "no key" (c.tk = 0 && c.tq > 0 && rows c > 0);
   ignore (dense dt u tiny c : reached)
 
 (* Values with NaN, infinities and [-0.], and a bias of [0] or [-200], whose
@@ -412,7 +514,7 @@ let law_paged (c, (pages, page, max_pages, table)) =
       ~kv:(Nx.Paged { k; v; table = ints (shape c [| max_pages |]) table })
       q
   in
-  agrees c ~u:u32 ~tiny:0x1p-149 result
+  agrees c ~uq:u32 ~tiny:0x1p-149 result
     (fst (definition c ~visible ~key:(pool ks c.dk) ~value:(pool vs c.dv) qs))
 
 (* Cases *)
@@ -583,6 +685,10 @@ let () =
                (Gen.with_pp pp_case unusual) (law_unusual D.Float32 u32 0x1p-149);
              prop "float16, non-finite and hidden values"
                (Gen.with_pp pp_case unusual) (law_unusual D.Float16 0x1p-11 0x1p-24);
+             prop ~count:3000 "float32, large and tied scores"
+               (Gen.with_pp pp_case tied) (law_tied D.Float32 u32 0x1p-149);
+             prop ~count:300 "bfloat16, large and tied scores"
+               (Gen.with_pp pp_case tied) (law_tied D.Bfloat16 0x1p-8 0x1p-133);
            ];
          prop "paged by its definition" (Gen.with_pp pp_paged paged) law_paged;
          test "a hidden NaN" test_hidden_nan;
