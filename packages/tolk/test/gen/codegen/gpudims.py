@@ -1,18 +1,19 @@
 """Goldens of tinygrad/codegen/gpudims.py: the launch dimensions that
-get_grouped_dims makes of loop sizes, and kernels rewritten by pm_add_gpudims.
+get_grouped_dims makes of loop sizes, kernels rewritten by pm_group_gpudims,
+and their hardware ranges made indices by pm_range_to_special.
 
 `grouped_dims.golden` holds the cases of tinygrad's test_gpudims.py, then a
 sweep of sizes drawn from a fixed seed against the bounds of real targets. A
 row gives the sizes of the hardware indices, by name, and each loop's index as
-an expression, or the exception tinygrad raises. The goldens named after a
-claim hold one graph each, which the suite builds with tolk's
-constructors.
+an expression, once pm_range_to_special has made its hardware ranges indices,
+or the exception tinygrad raises. The goldens named after a claim hold one
+graph each, which the suite builds with tolk's constructors.
 """
 
 import random
 
 from golden import graph, table
-from tinygrad.codegen.gpudims import add_gpudims, get_grouped_dims, pm_add_gpudims
+from tinygrad.codegen.gpudims import get_grouped_dims, group_gpudims, pm_group_gpudims, pm_range_to_special
 from tinygrad.dtype import AddrSpace, dtypes
 from tinygrad.helpers import Target
 from tinygrad.renderer import Renderer
@@ -67,6 +68,11 @@ def render(idx):
     return idx.render(simplify=False) if isinstance(idx, UOp) else str(idx)
 
 
+def to_special(idxs):
+    """The indices with their hardware ranges made hardware indices."""
+    return graph_rewrite(UOp.sink(*as_uops(idxs)), pm_range_to_special).src
+
+
 def specials(idxs):
     found = {u.arg: u.src[0].arg for idx in idxs if isinstance(idx, UOp) for u in idx.toposort() if u.op is Ops.SPECIAL}
     return " ".join(f"{name}={size}" for name, size in sorted(found.items()))
@@ -77,7 +83,7 @@ def grouped_dims():
     rows = []
     for dims, max_sizes, reverse in TINYGRAD_CASES + sweep():
         try:
-            idxs = get_grouped_dims("gidx", dims, max_sizes, reverse)
+            idxs = to_special(get_grouped_dims("gidx", dims, max_sizes, reverse))
             result, exprs = specials(idxs), "[" + ", ".join(render(i) for i in idxs) + "]"
         except Exception as e:
             result, exprs = type(e).__name__, ""
@@ -85,8 +91,11 @@ def grouped_dims():
     return ["dims", "max_sizes", "reverse", "specials", "idxs"], rows
 
 
+def as_uops(idxs): return [UOp.const(i, dtypes.weakint) if isinstance(i, int) else i for i in idxs]
+
+
 def grouped(dims, max_sizes, reverse=False, prefix="gidx"):
-    return UOp.sink(*get_grouped_dims(prefix, dims, max_sizes, reverse))
+    return UOp.sink(*as_uops(get_grouped_dims(prefix, dims, max_sizes, reverse)))
 
 
 @graph
@@ -138,7 +147,7 @@ def grouped_symbolic_failures():
     return ["case", "raises"], rows
 
 
-# add_gpudims
+# group_gpudims
 
 def rng(size, axis, axis_type):
     return UOp.range(size, axis, axis_type)
@@ -149,7 +158,7 @@ def kernel(index, value, ranges, size=4096):
 
 
 def rewritten(sink, ren=None):
-    return UOp.sink(sink, graph_rewrite(sink, pm_add_gpudims, ctx=ren or renderer()))
+    return UOp.sink(sink, graph_rewrite(sink, pm_group_gpudims, ctx=ren or renderer(), walk=True))
 
 
 def globals_kernel():
@@ -158,36 +167,36 @@ def globals_kernel():
 
 
 @graph
-def add_gpudims_globals():
+def group_gpudims_globals():
     return rewritten(globals_kernel())
 
 
 @graph
-def add_gpudims_globals_by_axis_order():
+def group_gpudims_globals_by_axis_order():
     g3, g1 = rng(32, 3, AxisType.GLOBAL), rng(16, 1, AxisType.GLOBAL)
     return rewritten(kernel(g3 * 16 + g1, UOp.const(1.0, dtypes.float), (g3, g1)))
 
 
 @graph
-def add_gpudims_globals_and_locals():
+def group_gpudims_globals_and_locals():
     g, l = rng(32, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOCAL)
     return rewritten(kernel(g * 8 + l, UOp.const(1.0, dtypes.float), (g, l)))
 
 
 @graph
-def add_gpudims_merges_four_globals():
+def group_gpudims_merges_four_globals():
     gs = [rng(n, i, AxisType.GLOBAL) for i, n in enumerate((2, 3, 4, 5))]
     return rewritten(kernel(((gs[0] * 3 + gs[1]) * 4 + gs[2]) * 5 + gs[3], UOp.const(1.0, dtypes.float), gs, 120))
 
 
 @graph
-def add_gpudims_splits_a_global():
+def group_gpudims_splits_a_global():
     g = rng(1024, 0, AxisType.GLOBAL)
     return rewritten(kernel(g, UOp.const(1.0, dtypes.float), (g,)), renderer(global_max=(256, 256, 256)))
 
 
 @graph
-def add_gpudims_keeps_the_warp_apart():
+def group_gpudims_keeps_the_warp_apart():
     w = rng(32, 0, AxisType.WARP)
     ls = [rng(2, i, AxisType.LOCAL) for i in (1, 2, 3)]
     g = rng(4, 4, AxisType.GLOBAL)
@@ -202,11 +211,11 @@ def symbolic_warp_kernel():
 
 
 @table
-def add_gpudims_symbolic_warp():
+def group_gpudims_symbolic_warp():
     """tinygrad puts a symbolic warp's size, a node, among the integers of
     local_max, and fails comparing with it."""
     try:
-        add_gpudims(renderer(local_max=(1024, 1024, 64)), symbolic_warp_kernel())
+        group_gpudims(renderer(local_max=(1024, 1024, 64)), symbolic_warp_kernel())
         result = "None"
     except Exception as e:
         result = type(e).__name__
@@ -214,7 +223,7 @@ def add_gpudims_symbolic_warp():
 
 
 @graph
-def add_gpudims_bounds_globals_by_threads():
+def group_gpudims_bounds_globals_by_threads():
     g, l = rng(256, 0, AxisType.GLOBAL), rng(256, 1, AxisType.LOCAL)
     ren = renderer(global_max=(256, 256, 256), local_max=(128, 128, 128), global_prod_max=(128, 128, 128))
     return rewritten(UOp.param(0, dtypes.float, 512).index(g + l).store(UOp.const(1.0)).end(g, l).sink(arg=KernelInfo()),
@@ -222,7 +231,7 @@ def add_gpudims_bounds_globals_by_threads():
 
 
 @graph
-def add_gpudims_bounds_globals_by_merged_threads():
+def group_gpudims_bounds_globals_by_merged_threads():
     g = rng(256, 0, AxisType.GLOBAL)
     ls = [rng(4, i, AxisType.LOCAL) for i in (1, 2, 3, 4)]
     ren = renderer(global_max=(256, 256, 256), local_max=(16, 16, 16), global_prod_max=(1024, 1024, 1024))
@@ -231,14 +240,14 @@ def add_gpudims_bounds_globals_by_merged_threads():
 
 
 @graph
-def add_gpudims_bounds_globals_by_threads_alone():
+def group_gpudims_bounds_globals_by_threads_alone():
     g, l = rng(256, 0, AxisType.GLOBAL), rng(256, 1, AxisType.LOCAL)
     ren = renderer(global_max=None, local_max=(128, 128, 128), global_prod_max=(128, 128, 128))
     return rewritten(kernel(g + l, UOp.const(1.0, dtypes.float), (g, l), 512), ren)
 
 
 @graph
-def add_gpudims_keeps_an_end_of_a_variable():
+def group_gpudims_keeps_an_end_of_a_variable():
     n = UOp.variable("n", 0, 3)
     return rewritten(UOp.param(0, dtypes.float, 4).index(n).store(UOp.const(1.0, dtypes.float)).end(n).sink())
 
@@ -252,24 +261,24 @@ def missing_locals_kernel(sizes):
 
 
 @graph
-def add_gpudims_masks_a_store_by_its_missing_local():
+def group_gpudims_masks_a_store_by_its_missing_local():
     return rewritten(missing_locals_kernel((8,)))
 
 
 @graph
-def add_gpudims_masks_a_store_by_its_missing_locals():
+def group_gpudims_masks_a_store_by_its_missing_locals():
     return rewritten(missing_locals_kernel((8, 4)))
 
 
 @graph
-def add_gpudims_keeps_a_reduce_range():
-    g, r = rng(16, 0, AxisType.GLOBAL), rng(8, 1, AxisType.WEAK)
+def group_gpudims_keeps_a_loop():
+    g, r = rng(16, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOOP)
     loaded = UOp.param(1, dtypes.float, 128).index(g * 8 + r).load()
     return rewritten(UOp.param(0, dtypes.float, 16).index(g).store(loaded).end(g, r).sink(arg=KernelInfo()))
 
 
 @graph
-def add_gpudims_leaves_a_local_store_unmasked():
+def group_gpudims_leaves_a_local_store_unmasked():
     g, l = rng(32, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOCAL)
     shared = UOp.param(0, dtypes.float, 32, addrspace=AddrSpace.LOCAL)
     loaded = UOp.param(1, dtypes.float, 256).index(g * 8 + l).load()
@@ -277,27 +286,27 @@ def add_gpudims_leaves_a_local_store_unmasked():
 
 
 @graph
-def add_gpudims_symbolic_global():
+def group_gpudims_symbolic_global():
     n = UOp.variable("n", 1, 64)
     g = rng(n, 0, AxisType.GLOBAL)
     return rewritten(kernel(g, UOp.const(1.0, dtypes.float), (g,), 64))
 
 
 @graph
-def add_gpudims_device_range():
+def group_gpudims_device_range():
     d, g = rng(2, 0, AxisType.DEVICE), rng(4, 1, AxisType.GLOBAL)
     return rewritten(UOp.param(0, dtypes.float, 4).index(g).store(d.cast(dtypes.float)).end(g, d).sink(arg=KernelInfo()))
 
 
 @graph
-def add_gpudims_device_range_without_kernel():
+def group_gpudims_device_range_without_kernel():
     d = rng(2, 0, AxisType.DEVICE)
     return rewritten(UOp.param(0, dtypes.float, 4).index(d).store(UOp.const(1.0, dtypes.float)).end(d).sink())
 
 
 @table
-def add_gpudims_declines():
-    r = rng(4, 0, AxisType.WEAK)
+def group_gpudims_declines():
+    r = rng(4, 0, AxisType.LOOP)
     g = rng(32, 0, AxisType.GLOBAL)
     s = UOp.special(32, "gidx0")
     cases = {
@@ -305,16 +314,57 @@ def add_gpudims_declines():
         "hardware_indices": UOp.param(0, dtypes.float, 32).index(s).store(UOp.const(1.0, dtypes.float)).sink(arg=KernelInfo()),
         "no_global_or_local": kernel(r, UOp.const(1.0, dtypes.float), (r,)),
     }
-    return ["case", "result"], [(name, repr(add_gpudims(renderer(), sink))) for name, sink in cases.items()]
+    return ["case", "result"], [(name, repr(group_gpudims(renderer(), sink))) for name, sink in cases.items()]
+
+
+@graph
+def group_gpudims_masks_by_hardware_ranges():
+    # test_gpudims.py::test_grouped_mask_ranges: the mask reads the hardware ranges, which share the loops' identities
+    g, l = rng(3, 0, AxisType.GLOBAL), rng(2, 5, AxisType.LOCAL)
+    return rewritten(UOp.param(0, dtypes.int, 3).index(g).store((g + l).cast(dtypes.int)).end(g, l).sink(arg=KernelInfo()))
+
+
+@graph
+def group_gpudims_keeps_an_upcast_of_a_hardware_identity():
+    # test_gpudims.py::test_upcast_same_id_as_hardware
+    g, u = rng(3, 0, AxisType.GLOBAL), rng(2, 0, AxisType.UPCAST)
+    idx = g * 2 + u
+    return rewritten(UOp.param(0, dtypes.int, 6).index(idx).store((idx * 3 + 7).cast(dtypes.int)).end(g, u).sink(arg=KernelInfo()))
+
+
+# pm_range_to_special
+
+def specialized(sink, ren=None):
+    grouped = graph_rewrite(sink, pm_group_gpudims, ctx=ren or renderer(), walk=True)
+    return UOp.sink(grouped, graph_rewrite(grouped, pm_range_to_special))
+
+
+@graph
+def range_to_special_globals_and_locals():
+    g, l = rng(32, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOCAL)
+    return specialized(kernel(g * 8 + l, UOp.const(1.0, dtypes.float), (g, l)))
+
+
+@graph
+def range_to_special_splits_its_ends():
+    g = rng(1024, 0, AxisType.GLOBAL)
+    return specialized(kernel(g, UOp.const(1.0, dtypes.float), (g,)), renderer(global_max=(256, 256, 256)))
+
+
+@graph
+def range_to_special_keeps_a_loop():
+    g, r = rng(16, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOOP)
+    loaded = UOp.param(1, dtypes.float, 128).index(g * 8 + r).load()
+    return specialized(UOp.param(0, dtypes.float, 16).index(g).store(loaded).end(g, r).sink(arg=KernelInfo()))
 
 
 @table
-def add_gpudims_failures():
+def group_gpudims_failures():
     g, l = rng(32, 0, AxisType.GLOBAL), rng(8, 1, AxisType.LOCAL)
     loaded = UOp.param(1, dtypes.float, 64).index(g + l).load()
     two = UOp.param(0, dtypes.float, (32, 2)).index(g, UOp.const(0)).store(loaded).end(g, l).sink(arg=KernelInfo())
     try:
-        add_gpudims(renderer(), two)
+        group_gpudims(renderer(), two)
         result = "None"
     except Exception as e:
         result = type(e).__name__

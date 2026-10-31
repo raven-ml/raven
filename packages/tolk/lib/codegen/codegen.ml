@@ -1144,10 +1144,11 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:slots sink
       (After_sources pm_add_local_buffers)
   in
-  (* add gpu dims (late). this works after devectorize, but it's faster here *)
+  (* group GPU dimensions early so their index arithmetic goes through normal
+     lowering *)
   let sink =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:ren sink
-      (After_sources Gpudims.pm_add_gpudims)
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:ren sink
+      (After_sources Gpudims.pm_group_gpudims)
   in
   (* optimizations are done, now we lower to actual code *)
   let sink =
@@ -1261,6 +1262,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   (* add implicit barriers (stores/loads through LOCAL memory ordered by AFTER
      or across loop iterations need workgroup barriers) *)
   let sink = rewrite pm_implicit_barriers sink in
+  (* hardware ranges are no longer loops; preserve their already lowered
+     bounds *)
+  let sink = rewrite Gpudims.pm_range_to_special sink in
   (* this was the linearizer *)
   let sink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point

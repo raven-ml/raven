@@ -8,6 +8,12 @@ let split u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
     (After_sources Linearizer.pm_split_ends)
 
+(* Hardware ranges become indices once the ends are split, before the loops
+   are chained. *)
+let to_special u =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+    (After_sources Gpudims.pm_range_to_special)
+
 let chain sink =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point
     ~ctx:(Linearizer.cfg_context sink)
@@ -236,7 +242,7 @@ let kernels_gen =
     (fun ppf k -> Format.pp_print_string ppf (Graph.to_string k))
     (Gen.map kernel (Gen.list ~size:(Gen.int_range 1 3) (item 3)))
 
-let compiled sink = Linearizer.linearize (chain (split sink))
+let compiled sink = Linearizer.linearize (chain (to_special (split sink)))
 
 (* The ranges whose run count the linearizer raises to two: a variable size of
    at most 1, and a constant size of 0 or 1. *)

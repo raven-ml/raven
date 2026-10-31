@@ -1,0 +1,30 @@
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 512
+1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
+2 Ops.CONST dtypes.weakint [] 256
+3 Ops.RANGE dtypes.weakint [2] (AxisType.GLOBAL, 0)
+4 Ops.RANGE dtypes.weakint [2] (AxisType.LOCAL, 1)
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.INDEX dtypes.f32 [1, 5]
+7 Ops.CONST dtypes.weakfloat [] 1.0
+8 Ops.CAST dtypes.f32 [7] dtypes.f32
+9 Ops.STORE dtypes.void [6, 8]
+10 Ops.END dtypes.void [9, 3, 4]
+11 Ops.SINK dtypes.void [10] KernelInfo()
+12 Ops.CONST dtypes.weakint [] 128
+13 Ops.RANGE dtypes.weakint [12] (AxisType.GLOBAL, 0)
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.MUL dtypes.weakint [13, 14]
+16 Ops.RANGE dtypes.weakint [14] (AxisType.GLOBAL, 1)
+17 Ops.ADD dtypes.weakint [15, 16]
+18 Ops.RANGE dtypes.weakint [12] (AxisType.LOCAL, 0)
+19 Ops.MUL dtypes.weakint [18, 14]
+20 Ops.RANGE dtypes.weakint [14] (AxisType.LOCAL, 1)
+21 Ops.ADD dtypes.weakint [19, 20]
+22 Ops.ADD dtypes.weakint [17, 21]
+23 Ops.INDEX dtypes.f32 [1, 22]
+24 Ops.STORE dtypes.void [23, 8]
+25 Ops.END dtypes.void [24, 17, 21]
+26 Ops.SINK dtypes.void [25] KernelInfo()
+27 Ops.SINK dtypes.void [11, 26]
+

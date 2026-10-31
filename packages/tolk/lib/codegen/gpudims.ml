@@ -129,10 +129,13 @@ let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
           if List.equal Sint.equal limited dims then split_dims dims max_sizes
           else List.map size limited
     in
+    (* Keep hardware axes as ranges through index lowering. The axis id is the
+       hardware dimension. *)
+    let axis_type =
+      if prefix = "gidx" then Axis_type.Global else Axis_type.Local
+    in
     let raw_idxs =
-      List.mapi
-        (fun i s -> special (Sym (node s)) (prefix ^ string_of_int i))
-        limited
+      List.mapi (fun i s -> range ~axis_type (Sym (node s)) [ i ]) limited
     in
     let flat =
       List.fold_left2
@@ -146,7 +149,7 @@ let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
         simplify (if i = 0 then q else O.(q % node d)))
       (List.combine sizes (suffix_prods sizes))
 
-let add_gpudims (r : Renderer.t) s =
+let group_gpudims (r : Renderer.t) s =
   let s_topo = toposort ~calls:Enter s in
   match arg s with
   | Kernel _ when not (List.exists (fun x -> op x = Op.Special) s_topo) -> (
@@ -156,17 +159,27 @@ let add_gpudims (r : Renderer.t) s =
           if op x = Op.Range then
             Hashtbl.replace all_ranges (axis_type x, axis_id x) x)
         s_topo;
-      let range id = Hashtbl.find all_ranges id in
-      let dims_of types =
+      let range key = Hashtbl.find all_ranges key in
+      let ranges_of types =
         Hashtbl.fold
           (fun _ x acc ->
             if List.mem (axis_type x) types then x :: acc else acc)
           all_ranges []
-        |> List.sort compare_range_arg
-        |> List.map (fun x -> (axis_type x, axis_id x))
       in
-      let global_dims = dims_of [ Axis_type.Global ] in
-      let local_dims = dims_of [ Axis_type.Warp; Axis_type.Local ] in
+      let key x = (axis_type x, axis_id x) in
+      let global_dims =
+        List.map key
+          (List.sort compare_range_arg (ranges_of [ Axis_type.Global ]))
+      in
+      (* WARP maps to hardware dimension zero, independently of nesting
+         order. *)
+      let local_dims =
+        let order x = (axis_type x <> Axis_type.Warp, axis_id x) in
+        List.map key
+          (List.sort
+             (fun a b -> Stdlib.compare (order a) (order b))
+             (ranges_of [ Axis_type.Warp; Axis_type.Local ]))
+      in
       match (global_dims, local_dims) with
       | [], [] -> None
       | _ ->
@@ -187,7 +200,7 @@ let add_gpudims (r : Renderer.t) s =
           let hw_local =
             List.filter_map
               (fun u ->
-                if op u = Op.Special then
+                if op u = Op.Range then
                   Some (Bigint.to_int (dim_max (Sym (nth u 0))))
                 else None)
               local_idxs
@@ -210,7 +223,7 @@ let add_gpudims (r : Renderer.t) s =
             grouped_dims ~reverse:true "gidx" global_shape (Some global_max)
             @ local_idxs
           in
-          let subs = Tbl.create 16 in
+          let subs = Tbl.create 16 and masks = Tbl.create 4 in
           let axes = global_dims @ local_dims in
           List.iter
             (fun x ->
@@ -239,19 +252,21 @@ let add_gpudims (r : Renderer.t) s =
                              (eq m (int 0))
                              (List.map (fun x -> eq x (int 0)) ms)
                          in
-                         Tbl.replace subs idx
+                         Tbl.replace masks idx
                            (replace idx ~src:[ buf; valid (nth idx 1) mask ]))
                  | _ -> ());
               if op x = Op.Range then
-                match
-                  List.find_index (( = ) (axis_type x, axis_id x)) axes
-                with
+                match List.find_index (( = ) (key x)) axes with
                 | Some i -> Tbl.replace subs x (List.nth idxs i)
                 | None -> ())
             s_topo;
-          Some
-            (substitute ~calls:Skip ~pass:Fixed_point s
-               (Tbl.fold (fun k v acc -> (k, v) :: acc) subs [])))
+          let pairs t = Tbl.fold (fun k v acc -> (k, v) :: acc) t [] in
+          (* Hardware ids may coincide with logical ids: replace ranges
+             simultaneously, including those in the new masks. *)
+          let masked =
+            substitute ~calls:Skip ~pass:Fixed_point s (pairs masks)
+          in
+          Some (substitute ~calls:Skip ~pass:Once masked (pairs subs)))
   | _ -> None
 
 let pm_device_to_var =
@@ -281,11 +296,35 @@ let pm_device_to_var =
           | _ -> None);
     ])
 
-let pm_add_gpudims =
+(* Run once: grouping creates new GLOBAL/LOCAL ranges, which must not be grouped
+   again. *)
+let pm_group_gpudims =
   Pattern_matcher.append
     (Pattern_matcher.v
        (fun () -> [
          Pattern_matcher.rule_ctx (Upat.op Op.Sink ~name:"s") (fun r m ->
-             add_gpudims r (m "s"));
+             group_gpudims r (m "s"));
        ]))
     (Pattern_matcher.with_ctx pm_device_to_var)
+
+let pm_range_to_special =
+  Pattern_matcher.append
+    (Pattern_matcher.v
+       (fun () -> [
+         Pattern_matcher.rule (Upat.op Op.Range ~name:"r") (fun m ->
+             let r = m "r" in
+             let prefix =
+               match axis_type r with
+               | Axis_type.Global -> Some "gidx"
+               | Local -> Some "lidx"
+               | _ -> None
+             in
+             Option.map
+               (fun prefix ->
+                 let id = axis_id r in
+                 let last = List.nth id (List.length id - 1) in
+                 replace r ~op:Op.Special
+                   ~arg:(String (prefix ^ string_of_int last)))
+               prefix);
+       ]))
+    Linearizer.pm_split_ends

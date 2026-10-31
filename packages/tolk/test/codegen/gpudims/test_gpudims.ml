@@ -21,9 +21,16 @@ let grouped ?reverse ?(prefix = "gidx") dims max_sizes =
 
 let rejects f = raises_match (Exn.invalid_arg ?sub:None) f
 
-(* The hardware indices under [idxs], with their sizes, by name. *)
+(* [idxs] with their hardware ranges made hardware indices. *)
+let to_special idxs =
+  Ops.src
+    (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (Ops.sink idxs)
+       (After_sources Gpudims.pm_range_to_special))
+
+(* The hardware indices under [idxs], once made indices, with their sizes, by
+   name. *)
 let specials idxs =
-  List.concat_map (Ops.toposort ~calls:Enter) idxs
+  List.concat_map (Ops.toposort ~calls:Enter) (to_special idxs)
   |> List.filter (fun u -> Ops.op u = Special)
   |> List.sort_uniq Ops.compare
   |> List.map (fun u ->
@@ -55,7 +62,7 @@ let numbers_once dims idxs =
               | c ->
                   failf "an index is an integer, not %a"
                     (Testable.pp Dtypes.const) c)
-            0 idxs strides
+            0 (to_special idxs) strides
         in
         if flat < 0 || flat >= total then
           failf "iteration %d is outside the %d iterations" flat total;
@@ -108,7 +115,10 @@ let render_specials idxs =
        (specials idxs))
 
 let render_idxs idxs =
-  "[" ^ String.concat ", " (List.map (Render.render ~simplify:false) idxs) ^ "]"
+  "["
+  ^ String.concat ", "
+      (List.map (Render.render ~simplify:false) (to_special idxs))
+  ^ "]"
 
 let grouped_dims_golden =
   Golden.cases ~key:[ "dims"; "max_sizes"; "reverse" ] "grouped_dims.golden"
@@ -186,19 +196,19 @@ let grouped_dims_law =
       | exception Invalid_argument _ -> cover "refuses" true)
 
 let direct_dims =
-  test "a loop that keeps its own axis is that hardware index" (fun () ->
+  test "a loop that keeps its own axis is that hardware range" (fun () ->
       let idxs = grouped (ints [ 2; 3; 4; 5 ]) (Some [ 16; 16; 16 ]) in
       equal (list string)
-        [ "Ops.SPECIAL"; "Ops.SPECIAL" ]
+        [ "Ops.RANGE"; "Ops.RANGE" ]
         (List.map
            (fun u -> Format.asprintf "%a" Op.pp (Ops.op u))
            [ List.nth idxs 2; List.nth idxs 3 ]))
 
 let untouched =
-  test "without bounds, every loop is its own hardware index" (fun () ->
+  test "without bounds, every loop is its own hardware range" (fun () ->
       List.iter
         (fun u ->
-          equal string "Ops.SPECIAL" (Format.asprintf "%a" Op.pp (Ops.op u)))
+          equal string "Ops.RANGE" (Format.asprintf "%a" Op.pp (Ops.op u)))
         (grouped (ints [ 2; 3; 4; 5 ]) None))
 
 let graph_of name idxs =
@@ -242,7 +252,7 @@ let grouped_dims =
       symbolic;
     ]
 
-(* add_gpudims *)
+(* group_gpudims *)
 
 let range ?(axis_type = Ops.Axis_type.Global) size axis =
   Ops.range ~axis_type size [ axis ]
@@ -256,13 +266,11 @@ let kernel ?(size = 4096) index value ranges =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index (buffer size) [ index ]) value) ranges ]
 
-let rewritten ?(renderer = renderer ()) sink =
-  Ops.sink
-    [
-      sink;
-      Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:renderer sink
-        (After_sources Gpudims.pm_add_gpudims);
-    ]
+let group_kernel ?(renderer = renderer ()) sink =
+  Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:renderer sink
+    (After_sources Gpudims.pm_group_gpudims)
+
+let rewritten ?renderer sink = Ops.sink [ sink; group_kernel ?renderer sink ]
 
 let rewrites name ?renderer sink =
   Golden.graph (name ^ ".golden") (fun () -> rewritten ?renderer (sink ()))
@@ -279,30 +287,30 @@ let missing_locals sizes =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index (buffer 64) [ g ]) loaded) (g :: ls) ]
 
-let add_gpudims_graphs =
+let group_gpudims_graphs =
   let open Ops.O in
   [
-    rewrites "add_gpudims_globals" (fun () ->
+    rewrites "group_gpudims_globals" (fun () ->
         let g0 = global (Int 32) 0 and g1 = global (Int 16) 1 in
         kernel ((g0 * int 16) + g1) one [ g0; g1 ]);
-    rewrites "add_gpudims_globals_by_axis_order" (fun () ->
+    rewrites "group_gpudims_globals_by_axis_order" (fun () ->
         let g3 = global (Int 32) 3 and g1 = global (Int 16) 1 in
         kernel ((g3 * int 16) + g1) one [ g3; g1 ]);
-    rewrites "add_gpudims_globals_and_locals" (fun () ->
+    rewrites "group_gpudims_globals_and_locals" (fun () ->
         let g = global (Int 32) 0 and l = local (Int 8) 1 in
         kernel ((g * int 8) + l) one [ g; l ]);
-    rewrites "add_gpudims_merges_four_globals" (fun () ->
+    rewrites "group_gpudims_merges_four_globals" (fun () ->
         let gs = List.mapi (fun k n -> global (Int n) k) [ 2; 3; 4; 5 ] in
         let g k = List.nth gs k in
         kernel ~size:120
           ((((((g 0 * int 3) + g 1) * int 4) + g 2) * int 5) + g 3)
           one gs);
-    rewrites "add_gpudims_splits_a_global"
+    rewrites "group_gpudims_splits_a_global"
       ~renderer:(renderer ~global_max:[ 256; 256; 256 ] ())
       (fun () ->
         let g = global (Int 1024) 0 in
         kernel g one [ g ]);
-    rewrites "add_gpudims_keeps_the_warp_apart"
+    rewrites "group_gpudims_keeps_the_warp_apart"
       ~renderer:(renderer ~local_max:[ 1024; 1024; 64 ] ())
       (fun () ->
         let w = range ~axis_type:Warp (Int 32) 0 in
@@ -314,7 +322,7 @@ let add_gpudims_graphs =
           (((((((g * int 32) + w) * int 2) + l1) * int 2) + l2) * int 2) + l3
         in
         kernel index one [ w; l1; l2; l3; g ]);
-    rewrites "add_gpudims_bounds_globals_by_threads"
+    rewrites "group_gpudims_bounds_globals_by_threads"
       ~renderer:
         (renderer ~global_max:[ 256; 256; 256 ] ~local_max:[ 128; 128; 128 ]
            ~global_prod_max:[ 128; 128; 128 ] ())
@@ -326,7 +334,7 @@ let add_gpudims_graphs =
               (Ops.store (Ops.index (buffer 512) [ g + l ]) (float 1.))
               [ g; l ];
           ]);
-    rewrites "add_gpudims_bounds_globals_by_merged_threads"
+    rewrites "group_gpudims_bounds_globals_by_merged_threads"
       ~renderer:
         (renderer ~global_max:[ 256; 256; 256 ] ~local_max:[ 16; 16; 16 ]
            ~global_prod_max:[ 1024; 1024; 1024 ] ())
@@ -337,28 +345,51 @@ let add_gpudims_graphs =
         kernel ~size:65536 index one (g :: ls));
     (* An empty [global_max] stands for tinygrad's [None]: no bound but the
        product's. *)
-    rewrites "add_gpudims_bounds_globals_by_threads_alone"
+    rewrites "group_gpudims_bounds_globals_by_threads_alone"
       ~renderer:
         (renderer ~global_max:[] ~local_max:[ 128; 128; 128 ]
            ~global_prod_max:[ 128; 128; 128 ] ())
       (fun () ->
         let g = global (Int 256) 0 and l = local (Int 256) 1 in
         kernel ~size:512 (g + l) one [ g; l ]);
-    rewrites "add_gpudims_keeps_an_end_of_a_variable" (fun () ->
+    rewrites "group_gpudims_keeps_an_end_of_a_variable" (fun () ->
         let n = v "n" 0 3 in
         Ops.sink [ Ops.end_ (Ops.store (Ops.index (buffer 4) [ n ]) one) [ n ] ]);
-    rewrites "add_gpudims_masks_a_store_by_its_missing_local" (fun () ->
+    rewrites "group_gpudims_masks_a_store_by_its_missing_local" (fun () ->
         missing_locals [ 8 ]);
-    rewrites "add_gpudims_masks_a_store_by_its_missing_locals" (fun () ->
+    rewrites "group_gpudims_masks_a_store_by_its_missing_locals" (fun () ->
         missing_locals [ 8; 4 ]);
-    rewrites "add_gpudims_keeps_a_reduce_range" (fun () ->
-        let g = global (Int 16) 0 and r = range ~axis_type:Weak (Int 8) 1 in
+    rewrites "group_gpudims_keeps_a_loop" (fun () ->
+        let g = global (Int 16) 0 and r = range ~axis_type:Loop (Int 8) 1 in
         let loaded =
           Ops.load (Ops.index (buffer ~slot:1 128) [ (g * int 8) + r ]) []
         in
         Ops.sink ~kernel:(Ops.kernel_info ())
           [ Ops.end_ (Ops.store (Ops.index (buffer 16) [ g ]) loaded) [ g; r ] ]);
-    rewrites "add_gpudims_leaves_a_local_store_unmasked" (fun () ->
+    (* The mask reads the hardware ranges, which share the loops'
+       identities. *)
+    rewrites "group_gpudims_masks_by_hardware_ranges" (fun () ->
+        let g = global (Int 3) 0 and l = local (Int 2) 5 in
+        let out = Shape.param ~shape:[ Int 3 ] 0 Int32 in
+        Ops.sink ~kernel:(Ops.kernel_info ())
+          [
+            Ops.end_
+              (Ops.store (Ops.index out [ g ]) (Ops.cast (g + l) Int32))
+              [ g; l ];
+          ]);
+    rewrites "group_gpudims_keeps_an_upcast_of_a_hardware_identity" (fun () ->
+        let g = global (Int 3) 0
+        and u = range ~axis_type:Upcast (Int 2) 0 in
+        let out = Shape.param ~shape:[ Int 6 ] 0 Int32 in
+        let idx = (g * int 2) + u in
+        Ops.sink ~kernel:(Ops.kernel_info ())
+          [
+            Ops.end_
+              (Ops.store (Ops.index out [ idx ])
+                 (Ops.cast ((idx * int 3) + int 7) Int32))
+              [ g; u ];
+          ]);
+    rewrites "group_gpudims_leaves_a_local_store_unmasked" (fun () ->
         let g = global (Int 32) 0 and l = local (Int 8) 1 in
         let shared =
           Shape.param ~shape:[ Int 32 ] ~addrspace:(Some Local) 0 Float32
@@ -368,10 +399,10 @@ let add_gpudims_graphs =
         in
         Ops.sink ~kernel:(Ops.kernel_info ())
           [ Ops.end_ (Ops.store (Ops.index shared [ g ]) loaded) [ g; l ] ]);
-    rewrites "add_gpudims_symbolic_global" (fun () ->
+    rewrites "group_gpudims_symbolic_global" (fun () ->
         let g = global (Sym (v "n" 1 64)) 0 in
         kernel ~size:64 g one [ g ]);
-    rewrites "add_gpudims_device_range" (fun () ->
+    rewrites "group_gpudims_device_range" (fun () ->
         let d = range ~axis_type:Device (Int 2) 0 and g = global (Int 4) 1 in
         Ops.sink ~kernel:(Ops.kernel_info ())
           [
@@ -379,13 +410,13 @@ let add_gpudims_graphs =
               (Ops.store (Ops.index (buffer 4) [ g ]) (Ops.cast d Float32))
               [ g; d ];
           ]);
-    rewrites "add_gpudims_device_range_without_kernel" (fun () ->
+    rewrites "group_gpudims_device_range_without_kernel" (fun () ->
         let d = range ~axis_type:Device (Int 2) 0 in
         Ops.sink [ Ops.end_ (Ops.store (Ops.index (buffer 4) [ d ]) one) [ d ] ]);
   ]
 
 let declines =
-  let g = global (Int 32) 0 and r = range ~axis_type:Weak (Int 4) 0 in
+  let g = global (Int 32) 0 and r = range ~axis_type:Loop (Int 4) 0 in
   let sink = function
     | "no_kernel_info" ->
         Ops.sink
@@ -400,15 +431,15 @@ let declines =
     | "no_global_or_local" -> kernel r one [ r ]
     | case -> invalid_arg case
   in
-  Golden.cases "add_gpudims_declines.golden" (fun cell ->
+  Golden.cases "group_gpudims_declines.golden" (fun cell ->
       equal string (cell "result") "None";
       is_none ~pp:Ops.pp
-        (Gpudims.add_gpudims (renderer ()) (sink (cell "case"))))
+        (Gpudims.group_gpudims (renderer ()) (sink (cell "case"))))
 
 (* ASSUMPTION: the .mli is silent on a masked store whose index has more than
    one index; tinygrad asserts, and this pins Invalid_argument. *)
 let failures =
-  Golden.cases "add_gpudims_failures.golden" (fun cell ->
+  Golden.cases "group_gpudims_failures.golden" (fun cell ->
       equal string "AssertionError" (cell "raises");
       let g = global (Int 32) 0 and l = local (Int 8) 1 in
       let loaded =
@@ -423,13 +454,13 @@ let failures =
               [ g; l ];
           ]
       in
-      rejects (fun () -> Gpudims.add_gpudims (renderer ()) sink))
+      rejects (fun () -> Gpudims.group_gpudims (renderer ()) sink))
 
 (* tinygrad puts a symbolic warp's size, a node, among the integers of
    [local_max] and fails comparing with it; its bound is its size's upper bound
    (README, CPython rows), so the warp keeps its own axis. *)
 let symbolic_warp =
-  Golden.cases "add_gpudims_symbolic_warp.golden" (fun cell ->
+  Golden.cases "group_gpudims_symbolic_warp.golden" (fun cell ->
       equal string "ValueError" (cell "raises");
       let w = range ~axis_type:Warp (Sym (v "n" 1 32)) 0 in
       let l = local (Int 4) 1 and g = global (Int 4) 2 in
@@ -437,10 +468,12 @@ let symbolic_warp =
       let sink = kernel index one [ w; l; g ] in
       let r =
         require_some
-          (Gpudims.add_gpudims (renderer ~local_max:[ 1024; 1024; 64 ] ()) sink)
+          (Gpudims.group_gpudims
+             (renderer ~local_max:[ 1024; 1024; 64 ] ())
+             sink)
       in
       let sizes =
-        Ops.toposort ~calls:Enter r
+        Ops.toposort ~calls:Enter (List.hd (to_special [ r ]))
         |> List.filter (fun u -> Ops.op u = Special)
         |> List.map (fun u ->
             ( Render.render ~simplify:false u,
@@ -452,8 +485,39 @@ let symbolic_warp =
         [ ("gidx0", "4"); ("lidx0", "n"); ("lidx1", "4") ]
         sizes)
 
-let add_gpudims =
-  group "add_gpudims"
-    (add_gpudims_graphs @ [ declines; failures; symbolic_warp ])
+(* pm_range_to_special *)
 
-let () = exit (run "Tolk.Gpudims" [ grouped_dims; add_gpudims ])
+let specializes name ?renderer sink =
+  Golden.graph (name ^ ".golden") (fun () ->
+      let grouped = group_kernel ?renderer (sink ()) in
+      Ops.sink [ grouped; List.hd (to_special [ grouped ]) ])
+
+let range_to_special =
+  let open Ops.O in
+  group "pm_range_to_special"
+    [
+      specializes "range_to_special_globals_and_locals" (fun () ->
+          let g = global (Int 32) 0 and l = local (Int 8) 1 in
+          kernel ((g * int 8) + l) one [ g; l ]);
+      specializes "range_to_special_splits_its_ends"
+        ~renderer:(renderer ~global_max:[ 256; 256; 256 ] ())
+        (fun () ->
+          let g = global (Int 1024) 0 in
+          kernel g one [ g ]);
+      specializes "range_to_special_keeps_a_loop" (fun () ->
+          let g = global (Int 16) 0 and r = range ~axis_type:Loop (Int 8) 1 in
+          let loaded =
+            Ops.load (Ops.index (buffer ~slot:1 128) [ (g * int 8) + r ]) []
+          in
+          Ops.sink ~kernel:(Ops.kernel_info ())
+            [
+              Ops.end_ (Ops.store (Ops.index (buffer 16) [ g ]) loaded) [ g; r ];
+            ]);
+    ]
+
+let group_gpudims =
+  group "group_gpudims"
+    (group_gpudims_graphs @ [ declines; failures; symbolic_warp ])
+
+let () =
+  exit (run "Tolk.Gpudims" [ grouped_dims; group_gpudims; range_to_special ])

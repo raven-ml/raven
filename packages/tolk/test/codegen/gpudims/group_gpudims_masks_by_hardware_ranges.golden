@@ -1,0 +1,27 @@
+# tinygrad 4e0192eaf418b22234d437e8a0cd463460e9fe90
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+2 Ops.RANGE dtypes.weakint [0] (AxisType.GLOBAL, 0)
+3 Ops.INDEX dtypes.i32 [1, 2]
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 5)
+6 Ops.ADD dtypes.weakint [2, 5]
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.STORE dtypes.void [3, 7]
+9 Ops.END dtypes.void [8, 2, 5]
+10 Ops.SINK dtypes.void [9] KernelInfo()
+11 Ops.RANGE dtypes.weakint [4] (AxisType.LOCAL, 0)
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.CMPNE dtypes.bool [11, 12]
+14 Ops.CONST dtypes.bool [] True
+15 Ops.CMPNE dtypes.bool [13, 14]
+16 Ops.CONST dtypes.bool [] Invalid
+17 Ops.WHERE dtypes.weakint [15, 2, 16]
+18 Ops.INDEX dtypes.i32 [1, 17]
+19 Ops.ADD dtypes.weakint [2, 11]
+20 Ops.CAST dtypes.i32 [19] dtypes.i32
+21 Ops.STORE dtypes.void [18, 20]
+22 Ops.END dtypes.void [21, 2, 11]
+23 Ops.SINK dtypes.void [22] KernelInfo()
+24 Ops.SINK dtypes.void [10, 23]
+

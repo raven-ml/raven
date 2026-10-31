@@ -809,6 +809,10 @@ thread.
   `axes_of ~reduce` and `upcastable_dims ~reduce`.
 - **Breaking:** a tensor core's `upcast_axes` (`Ops.wmma`) are `Ops.wmma_axis`
   values, which name each axis's type; `Ops.compare_range_arg` orders ranges.
+- **Breaking:** `Gpudims.add_gpudims` and `pm_add_gpudims` become
+  `group_gpudims` and `pm_group_gpudims`, whose hardware indices are global and
+  local ranges lowered as other indices are; `Gpudims.pm_range_to_special`
+  makes them `Special` nodes once barriers are placed.
 - **Breaking:** `Op.Group` is gone: `Ops.group` is the empty stack ordered after
   its effects (`Ops.after`), and only a sink splices the effects of its sources
   (`Symbolic.pm_clean_up_group_sink`).
