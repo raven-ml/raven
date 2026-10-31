@@ -33,12 +33,6 @@ val get_call_outs_ins : Ops.t -> int list * int list
     ({!Ops.program_info.outs} and {!Ops.program_info.ins}), [([0], [1])] for a
     copy, and [([], [])] for any other call. *)
 
-val get_call_written_bufs : Ops.t -> Ops.t list
-(** [get_call_written_bufs call] is the storage ({!Op.Buffer}) [call] writes and
-    does not read, each once: the storage of the outputs that are not also
-    inputs ({!get_call_outs_ins}), a shard selection standing for the storage
-    it selects from. *)
-
 val get_call_name :
   ?var_vals:(string * int) list -> Ops.t -> Ops.t list -> string
 (** [get_call_name ~var_vals call bufs] is how diagnostics name [call], whose

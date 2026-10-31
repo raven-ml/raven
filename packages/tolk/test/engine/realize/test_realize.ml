@@ -129,18 +129,6 @@ let variable u =
   | Const c -> Format.asprintf "%a" Dtype.pp_const c
   | _ -> Format.asprintf "%a" Ops.pp_arg (Ops.arg u)
 
-let selected_storage b =
-  let s = Ops.storage_base b in
-  if Op.equal (Ops.op s) Mselect then Ops.storage_base (Ops.nth s 0) else s
-
-let index_of u us =
-  let rec find i = function
-    | x :: _ when x == u -> i
-    | _ :: rest -> find (i + 1) rest
-    | [] -> failf "%a is no buffer argument" Ops.pp u
-  in
-  find 0 us
-
 let recorded_call cell =
   List.nth (Ops.src (compiled (cell "program"))) (int_of_string (cell "call"))
 
@@ -154,7 +142,6 @@ let reads_as_recorded cell =
   let bufs = Realize.get_call_arg_uops call in
   let body = body_of call in
   let outs, ins = Realize.get_call_outs_ins call in
-  let storage = List.map selected_storage bufs in
   let e = Realize.estimate_uop call in
   let ints = List.map string_of_int in
   equal (list string) ~msg:"bufs"
@@ -166,12 +153,6 @@ let reads_as_recorded cell =
       (List.map variable (Realize.get_call_var_uops call body));
   equal (list string) ~msg:"outs" (words (cell "outs")) (ints outs);
   equal (list string) ~msg:"ins" (words (cell "ins")) (ints ins);
-  equal (list string) ~msg:"written"
-    (words (cell "written"))
-    (ints
-       (List.map
-          (fun b -> index_of b storage)
-          (Realize.get_call_written_bufs call)));
   equal string ~msg:"name" (cell "name")
     (in_colour (fun () -> Realize.get_call_name ~var_vals call bufs));
   equal (list string) ~msg:"estimates"
@@ -258,44 +239,6 @@ let outs_ins =
             (pair (list int) (list int))
             ([], [])
             (Realize.get_call_outs_ins (custom_call [ storage 4 ])));
-    ]
-
-let written =
-  group "get_call_written_bufs"
-    [
-      test "is the storage a program writes and does not read" (fun () ->
-          let out = storage 4 and inp = storage 4 in
-          equal uops [ out ]
-            (Realize.get_call_written_bufs
-               (Ops.call (program plus_one) [ out; inp ])));
-      test "leaves out an output the call also reads" (fun () ->
-          let in_place = program (map_kernel ~src:0 (fun x -> Ops.add x x)) in
-          equal uops []
-            (Realize.get_call_written_bufs (Ops.call in_place [ storage 4 ])));
-      test "tells outputs from inputs by position, not by storage" (fun () ->
-          let a = storage 4 in
-          equal uops [ a ]
-            (Realize.get_call_written_bufs
-               (Ops.call (program plus_one) [ a; a ])));
-      test "is a copy's destination, through its view" (fun () ->
-          let dst = storage ~dtype:Uint8 64 in
-          let view =
-            Ops.bitcast (Shape.shrink dst [ Some (Int 16, Int 32) ]) Float32
-          in
-          equal uops [ dst ]
-            (Realize.get_call_written_bufs (Shape.store_call view (storage 4))));
-      test "names the storage a shard selection selects from" (fun () ->
-          let dst = Ops.new_buffer (Multi [ "CPU:0"; "CPU:1" ]) 4 Float32 in
-          equal uops [ dst ]
-            (Realize.get_call_written_bufs
-               (Shape.store_call (Ops.mselect dst 1) (storage ~device:"CPU:1" 4))));
-      test "leaves out a parameter, which is no storage" (fun () ->
-          equal uops []
-            (Realize.get_call_written_bufs
-               (Shape.store_call (buffer 0 4) (storage 4))));
-      test "is nothing for any other call" (fun () ->
-          equal uops []
-            (Realize.get_call_written_bufs (custom_call [ storage 4 ])));
     ]
 
 let names =
@@ -547,7 +490,6 @@ let () =
          arguments;
          variables;
          outs_ins;
-         written;
          names;
          costs;
          recorded_compilation;

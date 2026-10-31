@@ -68,17 +68,6 @@ let get_call_outs_ins call =
   | Op.Store, _ -> ([ 0 ], [ 1 ])
   | _ -> ([], [])
 
-let get_call_written_bufs call =
-  let args = get_call_arg_uops call and outs, ins = get_call_outs_ins call in
-  let storage k =
-    let b = storage_base (List.nth args k) in
-    if op b = Op.Mselect then storage_base (nth b 0) else b
-  in
-  List.filter (fun k -> not (List.mem k ins)) outs
-  |> List.map storage
-  |> List.filter (fun b -> op b = Op.Buffer)
-  |> Helpers.dedup (module Ops)
-
 let devices u =
   match device u with
   | Some (Single d) -> [ d ]

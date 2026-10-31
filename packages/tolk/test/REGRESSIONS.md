@@ -1671,13 +1671,13 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_var_uops`, `get_call_outs_ins`, `get_call_written_bufs`, `get_call_name`, `estimate_uop` | what a call does | `R › calls of recorded schedules › calls.golden` (21 calls of 14 programs), and `R › get_call_arg_uops`, `› get_call_var_uops`, `› get_call_outs_ins`, `› get_call_written_bufs`, `› get_call_name`, `› estimate_uop` (25 tests) |
+| tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_var_uops`, `get_call_outs_ins`, `get_call_name`, `estimate_uop` | what a call does | `R › calls of recorded schedules › calls.golden` (21 calls of 14 programs), and `R › get_call_arg_uops`, `› get_call_var_uops`, `› get_call_outs_ins`, `› get_call_name`, `› estimate_uop` (20 tests) |
 | tinygrad: engine/realize.py `lower_and_compile` | kernels compiled once, in parallel unless one asks for a beam | `R › lower_and_compile of recorded schedules` (14 goldens), `R › lower_and_compile` (8 tests), `R › lower_and_compile with a beam search`, `R › lower_and_compile in parallel` |
 | tinygrad: engine/realize.py `pm_beam`, `compile_linear`'s `BEAM` | a kernel asking for no beam asks for `BEAM`'s | `JB › JITBEAM unset › a kernel is searched with BEAM's width` |
 | tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s (plan §1a); its execution is `EN › link and run` |
 | tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: excluded (ruling) |
 | tinygrad: engine/realize.py `get_call_name`'s `encdec` and `get_call_outs_ins`'s | | dropped: the video decoder queue is excluded |
-| tinygrad: engine/realize.py the `HCQInfo` branches of `get_call_outs_ins`, `get_call_written_bufs` and `estimate_uop` | | dropped: a call that submits queues is excluded (README) |
+| tinygrad: engine/realize.py the `HCQInfo` branches of `get_call_outs_ins` and `estimate_uop` | | dropped: a call that submits queues is excluded (README) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_var_uops › is the constant a call binds each variable to, in the program's order` (a program's variables are read by name, whatever the call's slots) |
 | tinygrad: null/test_call.py::TestCallCodegen::test_call_stack_pointer | a custom-function call's arguments in C | dropped here: Cstyle's rendering of `CALL` |
 | tinygrad: null/test_call.py (TestCall, TestCallShape, TestCallSchedule, TestArgOrder) | call construction and scheduling | dropped here: `Ops`' `call`/`call_with_outputs` and Schedule's sections |
