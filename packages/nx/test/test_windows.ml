@@ -615,28 +615,34 @@ let svd_case =
   let* batch = int_range 0 3 in
   let* rows = int_range 1 4 in
   let* cols = int_range 1 4 in
-  let* vectors = bool in
+  let* values = bool in
   let+ a = matrix [| batch; rows; cols |] in
   let run pl =
-    let u, s, vh = Nx.svd ~vectors Nx.float32 (pl.place a) in
-    [ Nx.P u; Nx.P s; Nx.P vh ]
+    let a = pl.place a in
+    if values then [ Nx.P (Nx.svdvals Nx.float32 a) ]
+    else
+      let u, s, vh = Nx.svd Nx.float32 a in
+      [ Nx.P u; Nx.P s; Nx.P vh ]
   in
   routine "Svd"
-    (fun ppf -> Format.fprintf ppf "svd vectors %b %a" vectors pp_x a)
+    (fun ppf -> Format.fprintf ppf "svd values %b %a" values pp_x a)
     { run }
 
 let eigh_case =
   let open Gen in
   let* batch = int_range 0 3 in
   let* n = int_range 1 4 in
-  let* vectors = bool in
+  let* values = bool in
   let+ a = matrix [| batch; n; n |] in
   let run pl =
-    let w, v = Nx.eigh ~vectors Nx.float32 (pl.place a) in
-    [ Nx.P w; Nx.P v ]
+    let a = pl.place a in
+    if values then [ Nx.P (Nx.eigvalsh Nx.float32 a) ]
+    else
+      let w, v = Nx.eigh Nx.float32 a in
+      [ Nx.P w; Nx.P v ]
   in
   routine "Eigh"
-    (fun ppf -> Format.fprintf ppf "eigh vectors %b %a" vectors pp_x a)
+    (fun ppf -> Format.fprintf ppf "eigh values %b %a" values pp_x a)
     { run }
 
 (* Contractions *)

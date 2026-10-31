@@ -649,6 +649,15 @@ let svd_zero () =
   in
   equal (array int64) [| 0L; 0L; 0L |] (bits [| s.(0); s.(1); s.(3) |])
 
+(* The distance an eigenvalue of [n] rows at roundoff [u] may lie from
+   eager's for a matrix of Frobenius norm [norm]: the rotations' bound and
+   eager's own error. *)
+let eigh_near u n norm =
+  let rf = float_of_int (rounds n u) and nf = float_of_int n in
+  (gamma u (16. *. (rf +. nf)) *. norm)
+  +. (gamma u (16. *. nf) *. norm)
+  +. (eta u *. 16. *. nf)
+
 let eigh_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let n = List.hd shape in
@@ -691,10 +700,7 @@ let eigh_law (c, shape) =
   let g = gamma u (16. *. (rf +. nf) *. (1. +. Float.sqrt nf)) in
   let check = gamma u64 (nf +. 2.) in
   let norm b = frobenius sym b in
-  let near b =
-    (gamma u (16. *. (rf +. nf)) *. norm b) +. (gamma u (16. *. nf) *. norm b)
-    +. (eta u *. 16. *. nf)
-  in
+  let near b = eigh_near u n (norm b) in
   values_near ~msg:"w against eager" ~tol:near n w eager;
   values_near ~msg:"values alone against eager" ~tol:near n values eager;
   frobenius_near ~msg:"vᵀ v = I" ~tol:(fun _ -> g +. check) (gram v);
@@ -757,6 +763,39 @@ let eigh_extremes () =
   check "float64 norm past 1.8e308" D.Float64 0x1p-53 [ big64 ];
   check "float64 subnormal" D.Float64 0x1p-53 [ small64 ];
   check "float64 both in one batch" D.Float64 0x1p-53 [ big64; small64 ]
+
+(* Through Nx: a compiled [Nx.svdvals] and [Nx.eigvalsh] are eager's within
+   the bounds above, [eigvalsh] of either triangle. *)
+let values_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  cover_case c shape;
+  let st = state c in
+  match shape with
+  | [ m; n ] ->
+      let a = operand dt c.layout c.batch m n (fun _ _ _ -> uniform st) in
+      let ours = Nx.to_array (Rune.jit' (Nx.svdvals dt) a) in
+      let eager = Nx.to_array (Nx.svdvals dt a) in
+      let _, near = svd_bound u m n in
+      let am = of_nx a in
+      values_near ~msg:"svdvals"
+        ~tol:(fun b -> near (frobenius am b))
+        (Int.min m n) ours eager
+  | n :: _ ->
+      let triangle : Nx.triangle = if flag c 1 then Upper else Lower in
+      let a = operand dt c.layout c.batch n n (fun _ _ _ -> uniform st) in
+      let ours = Nx.to_array (Rune.jit' (Nx.eigvalsh ~triangle dt) a) in
+      let eager = Nx.to_array (Nx.eigvalsh ~triangle dt a) in
+      let am = of_nx a in
+      let sym =
+        init am.b n n (fun k i j ->
+            match triangle with
+            | Lower -> get am k (max i j) (min i j)
+            | Upper -> get am k (min i j) (max i j))
+      in
+      values_near ~msg:"eigvalsh"
+        ~tol:(fun b -> eigh_near u n (frobenius sym b))
+        n ours eager
+  | [] -> fail "a shape"
 
 (* Refusals *)
 
@@ -834,5 +873,7 @@ let () =
              test "NaN in the lower triangle is NaN" eigh_fails;
              test "norms past the dtype's range, and subnormals" eigh_extremes;
            ];
+         law "Nx's values alone compiled are eager's" ~count:6
+           (square @ general) values_law;
          test "complex operands and eig are refused" refused;
        ])

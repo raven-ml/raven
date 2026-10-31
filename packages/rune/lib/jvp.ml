@@ -867,13 +867,15 @@ let linalg_rule (type d r) name i ~by (l : (d, r) Prim.linalg) : r =
           (dual w dw, dual v dv)
       | None -> (w, v))
   | Eig_values { dtype; a } -> (
+      (* The values alone come in an order of their own, and each tangent
+         lies at its vector's position: under a tangent, the values are
+         [Eig]'s, in the order of the vectors that give it. *)
       let pa = primal i a in
-      let w = eval (Eig_values { dtype; a = pa }) in
       match tangent i a with
       | Some da ->
-          let _, v = eval (Eig { dtype; a = pa }) in
+          let w, v = eval (Eig { dtype; a = pa }) in
           dual w (Factor.eig_values v da)
-      | None -> w)
+      | None -> eval (Eig_values { dtype; a = pa }))
   | Eig { dtype; a } -> (
       let w, v = eval (Eig { dtype; a = primal i a }) in
       match tangent i a with

@@ -338,6 +338,20 @@ let test_complex () =
     (pairs (Nx.mul y w))
     (pairs (pullback w))
 
+(* A factorisation's values alone have finite gradients where values repeat,
+   where its vectors' tangents are not finite: the sum of [eigvalsh]'s is the
+   trace, whose gradient is the identity, and the sum of the squares of
+   [svdvals]'s is [‖a‖_F²], whose gradient is [2 a]. *)
+let test_repeated_values () =
+  let i = Nx.eye f64 3 in
+  equal ~msg:"eigvalsh at the identity" floats (Nx.to_array i)
+    (Nx.to_array (Rune.grad' (fun a -> Nx.sum (Nx.eigvalsh f64 a)) i));
+  let a = Nx.create f64 [| 3; 2 |] [| 2.; 0.; 0.; 2.; 0.; 0. |] in
+  equal ~msg:"svdvals of two equal values" floats
+    (Nx.to_array (Nx.mul_s a 2.))
+    (Nx.to_array
+       (Rune.grad' (fun a -> Nx.sum (Nx.square (Nx.svdvals f64 a))) a))
+
 let test_kinks () =
   equal ~msg:"abs at both zeros" floats [| 1.; 1.; -1. |]
     (Nx.to_array
@@ -1319,6 +1333,7 @@ let () =
            [
              test "complex gradients" test_complex;
              test "kinks" test_kinks;
+             test "values alone at repeated values" test_repeated_values;
              test "selections" test_selections;
              test "signs of zero" test_zeros;
              test "a truncated normal's bounds" test_draws;

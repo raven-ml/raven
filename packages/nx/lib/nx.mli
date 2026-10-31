@@ -2717,10 +2717,11 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     [aᴴ] is the conjugate transpose, the transpose of a real [a].
 
     A result has its operand's dtype, except a real result ({!svd}'s
-    singular values, {!eigh}'s eigenvalues, {!slogdet}'s logarithm,
-    {!lstsq}'s residuals and singular values, the norms {!vector_norm} and
-    {!matrix_norm}, and {!cond}) and {!eig}'s complex results, each of
-    which takes its dtype first, of a real or a complex operand. A
+    singular values, {!svdvals}' and {!eigvalsh}'s values, {!eigh}'s
+    eigenvalues, {!slogdet}'s logarithm, {!lstsq}'s residuals and singular
+    values, the norms {!vector_norm} and {!matrix_norm}, and {!cond}) and
+    {!eig}'s and {!eigvals}' complex results, each of which takes its dtype
+    first, of a real or a complex operand. A
     norm or condition number is computed at the wider of its operand's
     precision and its dtype's, every other result at its operand's
     precision. Each is then rounded once to its dtype by the conversion
@@ -2734,7 +2735,8 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     batch are positive definite.
 
     Each kernel library states its error bounds. A factorisation leaves some
-    choices open: the order of {!eig}'s eigenvalues; {!qr}'s factors, unique
+    choices open: the order of {!eig}'s eigenvalues and of {!eigvals}';
+    {!qr}'s factors, unique
     up to a unit factor per column of [q] and row of [r] where [r]'s diagonal
     has no zero; the vectors of {!svd}, {!eigh} and {!eig}, unique up to a
     unit factor where their value is simple and up to a unitary basis of its
@@ -2784,39 +2786,49 @@ val lu : ('v, 's, 'd) t -> 'd int64_t * ('v, 's, 'd) t * ('v, 's, 'd) t
     dtype. *)
 
 val svd :
-  ?vectors:bool ->
   ?factors:factors ->
   (float, 'r) dtype ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t * (float, 'r, 'd) t * ('v, 's, 'd) t
 (** [svd dt a] is [(u, s, vh)], [a] the product of [u], the diagonal matrix
-    of [s] and [vh], [s] the [[…; k]]
-    singular values in [dt], descending and not negative, a zero one [+0];
-    [u] and [vh] have orthonormal columns and rows: [[…; m; k]] and
-    [[…; k; n]], or under [~factors:Complete] [[…; m; m]] and [[…; n; n]].
-    Under [~vectors:false] (default [true]) neither [u] nor [vh] is computed:
-    they are [[…; m; 0]] and [[…; 0; n]]. A matrix that holds NaN or an
-    infinity, or on which the iteration does not converge, is NaN in all three.
+    of [s] and [vh], [s] the [[…; k]] singular values in [dt], descending
+    and not negative, a zero one [+0]; [u] and [vh] have orthonormal columns
+    and rows: [[…; m; k]] and [[…; k; n]], or under [~factors:Complete]
+    [[…; m; m]] and [[…; n; n]]. A matrix that holds NaN or an infinity, or
+    on which the iteration does not converge, is NaN in all three.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, or for its
+    dtype. *)
+
+val svdvals : (float, 'r) dtype -> ('v, 's, 'd) t -> (float, 'r, 'd) t
+(** [svdvals dt a] is {!svd}'s [s] of [a], computed without its vectors by
+    an iteration that may round otherwise: its elements lie within the
+    kernel library's bounds of [s]'s, not always bit for bit. A matrix that
+    holds NaN or an infinity, or on which the iteration does not converge,
+    is NaN.
 
     Raises [Invalid_argument] if [a] has fewer than two axes, or for its
     dtype. *)
 
 val eig :
-  ?vectors:bool ->
   (Complex.t, 'c) dtype ->
   ('v, 's, 'd) t ->
   (Complex.t, 'c, 'd) t * (Complex.t, 'c, 'd) t
 (** [eig dt a] is [(w, v)] in [dt], the [[…; n]] eigenvalues of the real or
     complex [a] and columns of unit norm [v], [matmul a v] being [v] with
-    each column scaled by its eigenvalue. Under
-    [~vectors:false] (default [true]) [v] is not computed and is [[…; n; 0]].
-    NaN as for {!svd}.
+    each column scaled by its eigenvalue. NaN as for {!svd}.
 
     Raises [Invalid_argument] if [a] has fewer than two axes or is not
     square, or for its dtype. *)
 
+val eigvals : (Complex.t, 'c) dtype -> ('v, 's, 'd) t -> (Complex.t, 'c, 'd) t
+(** [eigvals dt a] is {!eig}'s [w] of [a], computed without its vectors, as
+    {!svdvals} is of {!svd}, in an order of its own, which need not be
+    [w]'s. NaN as for {!svdvals}.
+
+    Raises [Invalid_argument] as {!eig}. *)
+
 val eigh :
-  ?vectors:bool ->
   ?triangle:triangle ->
   (float, 'r) dtype ->
   ('v, 's, 'd) t ->
@@ -2824,14 +2836,21 @@ val eigh :
 (** [eigh dt a] is [(w, v)], the [[…; n]] eigenvalues in [dt] of the
     Hermitian [a], ascending, and orthonormal columns [v], [matmul a v]
     being [v] with each column scaled by its eigenvalue. [a] is the
-    Hermitian
-    matrix its [triangle] (default [Lower]) and the real parts of its diagonal
-    name, which alone are read. Under [~vectors:false] (default [true]) [v] is
-    not computed and is [[…; n; 0]]. A matrix whose read part holds NaN or an
-    infinity, or on which the iteration does not converge, is NaN in both.
+    Hermitian matrix its [triangle] (default [Lower]) and the real parts of
+    its diagonal name, which alone are read. A matrix whose read part holds
+    NaN or an infinity, or on which the iteration does not converge, is NaN
+    in both.
 
     Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
     or for its dtype. *)
+
+val eigvalsh :
+  ?triangle:triangle -> (float, 'r) dtype -> ('v, 's, 'd) t -> (float, 'r, 'd) t
+(** [eigvalsh dt a] is {!eigh}'s [w] of [a], reading the same part, computed
+    without its vectors, as {!svdvals} is of {!svd}: ascending. NaN as for
+    {!eigh}, over what is read.
+
+    Raises [Invalid_argument] as {!eigh}. *)
 
 val det : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [det a] is the determinant of each matrix of [a], the product of the
@@ -2974,9 +2993,9 @@ val matrix_rank : ?rtol:float -> ('v, 's, 'd) t -> 'd int64_t
     the number of its singular values above [rtol] times the greatest, as
     {!lstsq} counts them, [rtol] defaulting to [max m n] times the dtype's
     machine epsilon, float32's for a narrower float. A matrix of no element
-    has rank [0]. A matrix on which {!svd} is NaN, one that holds NaN or an
-    infinity or on which the iteration does not converge, has rank [-1]: its
-    rank is undefined.
+    has rank [0]. A matrix on which {!svdvals} is NaN, one that holds NaN or
+    an infinity or on which the iteration does not converge, has rank [-1]:
+    its rank is undefined.
 
     Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
     or if [rtol] is negative or NaN. *)
@@ -2994,7 +3013,7 @@ val cond :
     infinite condition number; one singular only to rounding has one near
     [1 / ε] or above, [ε] the machine epsilon of the precision it is
     computed at. A matrix that holds NaN or an infinity, or on which
-    {!svd} fails, has NaN.
+    {!svdvals} fails, has NaN.
 
     Raises [Invalid_argument] if [a] has fewer than two axes or a matrix of
     no element, if [dt] has no infinities, or if [p] is [`One] or [`Inf]

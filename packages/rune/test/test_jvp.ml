@@ -432,20 +432,59 @@ let alone : type v s.
   let tangent g = codes (snd (Rune.jvp' g a t)) in
   let same alone full = equal codes_t (tangent full) (tangent alone) in
   match f with
-  | Eigh ->
-      same
-        (fun a -> fst (Nx.eigh ~vectors:false f64 a))
-        (fun a -> fst (Nx.eigh f64 a))
-  | Eig ->
-      same
-        (fun a -> fst (Nx.eig ~vectors:false c128 a))
-        (fun a -> fst (Nx.eig c128 a))
+  | Eigh -> same (Nx.eigvalsh f64) (fun a -> fst (Nx.eigh f64 a))
+  | Eig -> same (Nx.eigvals c128) (fun a -> fst (Nx.eig c128 a))
   | Svd ->
-      let s ~vectors a =
-        let _, s, _ = Nx.svd ~vectors f64 a in
-        s
-      in
-      same (s ~vectors:false) (s ~vectors:true)
+      same (Nx.svdvals f64) (fun a ->
+          let _, s, _ = Nx.svd f64 a in
+          s)
+
+(* A value's tangent lies at that value's position in the primal the same call
+   returns, whatever order the values come in: it is the central difference of
+   the values at the two steps, each step's value taken nearest to its primal
+   value. *)
+let paired : type v s.
+    factorisation -> (v, s, Nx.host) Nx.t -> (v, s, Nx.host) Nx.t -> unit =
+ fun f a t ->
+  let check (g : (v, s, Nx.host) Nx.t -> (Complex.t, _, Nx.host) Nx.t) =
+    let y, dy = Rune.jvp' g a t in
+    let z x = Nx.to_array (Nx.cast c128 x) in
+    let step e =
+      z (g (Nx.add a (Nx.mul t (Nx.cast (Nx.dtype t) (Nx.scalar f64 e)))))
+    in
+    let plus = step h and minus = step (-.h) in
+    let y = z y and dy = z dy in
+    let k = (Nx.shape a).(Nx.ndim a - 1) in
+    let k = if f = Svd then Stdlib.min k (Nx.shape a).(Nx.ndim a - 2) else k in
+    let nearest at j =
+      let b = j / k * k in
+      let d i = Complex.norm (Complex.sub at.(b + i) y.(j)) in
+      let best = ref 0 in
+      for i = 1 to k - 1 do
+        if d i < d !best then best := i
+      done;
+      at.(b + !best)
+    in
+    Array.iteri
+      (fun j (d : Complex.t) ->
+        let fd =
+          Complex.div
+            (Complex.sub (nearest plus j) (nearest minus j))
+            { Complex.re = 2. *. h; im = 0. }
+        in
+        less
+          ~msg:
+            (Printf.sprintf "value %d: %h%+hi, differences %h%+hi" j d.re d.im
+               fd.re fd.im)
+          float_exact
+          ~than:(1e-5 *. (1. +. Complex.norm fd))
+          (Complex.norm (Complex.sub d fd)))
+      dy
+  in
+  match f with
+  | Eigh -> check (fun a -> Nx.cast c128 (Nx.eigvalsh f64 a))
+  | Eig -> check (Nx.eigvals c128)
+  | Svd -> check (fun a -> Nx.cast c128 (Nx.svdvals f64 a))
 
 (* A law over a draw's matrix, spaced so that its values are distinct, and its
    tangent. *)
@@ -470,6 +509,9 @@ let gauge_law ((fn, _, _, _, _) as d) =
 
 let alone_law ((fn, _, _, _, _) as d) =
   on_draw { law = (fun a t -> alone fn a t) } d
+
+let paired_law ((fn, _, _, _, _) as d) =
+  on_draw { law = (fun a t -> paired fn a t) } d
 
 let test_repeated () =
   let i = Nx.eye f64 2 and t = Nx.create f64 [| 2; 2 |] [| 0.; 1.; 1.; 0. |] in
@@ -1010,6 +1052,8 @@ let () =
                gauge_law;
              prop "values alone take the full routine's tangents" factor_draws
                alone_law;
+             prop "values alone's tangents lie at their primals' positions"
+               factor_draws paired_law;
              test "vectors at repeated values are not finite" test_repeated;
            ];
          group "interface"

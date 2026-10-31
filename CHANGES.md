@@ -3202,17 +3202,17 @@ thread.
 - **Breaking:** a key is `'d Nx.Rng.key`, two 32-bit Threefry-2x32 words,
   where it was an `int`. `Rng.run ~seed f` is `Rng.with_key (Rng.key seed) f`
   and `Rng.to_int` is `Rng.to_tensor`. A seed draws other numbers.
-- **Breaking:** `svd`, `eig`, `eigh`, `slogdet`, `lstsq`, `cond`, `rfft`,
-  `irfft`, `fftfreq` and `rfftfreq` take their real or complex result's dtype
-  first, where some returned `float64`.
-- **Breaking:** `svdvals`, `eigvals` and `eigvalsh` are `svd`, `eig` and
-  `eigh` `~vectors:false`; `norm` is `vector_norm` and `matrix_norm`.
+- **Breaking:** `svd`, `svdvals`, `eig`, `eigvals`, `eigh`, `eigvalsh`,
+  `slogdet`, `lstsq`, `cond`, `rfft`, `irfft`, `fftfreq` and `rfftfreq` take
+  their real or complex result's dtype first, where some returned `float64`.
+- **Breaking:** `norm` is `vector_norm` and `matrix_norm`.
 - **Breaking:** `lstsq ?rcond` is `?rtol`, `matrix_rank` keeps `?rtol` alone,
   dropping `?tol` and `?hermitian`, and `cond ?p` drops `Fro` and the
   negative norms.
-- **Breaking:** options are variants: `cholesky ?upper` and `eigh ?uplo` are
-  `?triangle:(Lower | Upper)`, `qr ?mode` and `svd ?full_matrices` are
-  `?factors:(Reduced | Complete)`, and `fft_norm` is a variant.
+- **Breaking:** options are variants: `cholesky ?upper`, `eigh ?uplo` and
+  `eigvalsh ?uplo` are `?triangle:(Lower | Upper)`, `qr ?mode` and
+  `svd ?full_matrices` are `?factors:(Reduced | Complete)`, and `fft_norm`
+  is a variant.
 - **Breaking:** `fft ?axis ?n` is `fft ?axes ?s`, and `fft2`, `fftn`,
   `ifft2`, `ifftn`, `rfft2`, `rfftn`, `irfft2` and `irfftn` are `fft`,
   `ifft`, `rfft` and `irfft` over `~axes`.

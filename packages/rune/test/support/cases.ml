@@ -633,14 +633,11 @@ let factor_cases =
     m "qr complete of a wide matrix" wider (fun x ->
         let q, r = Nx.qr ~factors:Complete (spaced x) in
         flat [ q; r ]);
-    m "svd's values" tall_or_wide (fun x ->
-        let _, s, _ = Nx.svd ~vectors:false f64 (spaced x) in
-        s);
+    m "svdvals" tall_or_wide (fun x -> Nx.svdvals f64 (spaced x));
     m "svd" tall_or_wide (fun x ->
         let u, s, vh = Nx.svd f64 (spaced x) in
         flat [ s; Nx.square u; Nx.square vh ]);
-    m "eigh's values" square (fun x ->
-        fst (Nx.eigh ~vectors:false f64 (spaced (symmetric x))));
+    m "eigvalsh" square (fun x -> Nx.eigvalsh f64 (spaced (symmetric x)));
     m "eigh" square (fun x ->
         let w, v = Nx.eigh f64 (spaced (symmetric x)) in
         flat [ w; Nx.square v ]);
@@ -651,9 +648,8 @@ let factor_cases =
     m "eigh of the upper triangle" square (fun x ->
         let w, v = Nx.eigh ~triangle:Upper f64 (spaced (symmetric x)) in
         flat [ w; Nx.square v ]);
-    m "eig's values" square (fun x ->
-        let w, _ = Nx.eig ~vectors:false c128 (spaced (Nx.mul_s x 0.3)) in
-        Nx.real f64 w);
+    m "eigvals" square (fun x ->
+        Nx.real f64 (Nx.eigvals c128 (spaced (Nx.mul_s x 0.3))));
     m "eig" square (fun x ->
         let w, v = Nx.eig c128 (spaced (Nx.mul_s x 0.3)) in
         flat [ Nx.real f64 w; Nx.real f64 (squared v) ]);
@@ -761,11 +757,9 @@ let complex_factor_cases =
     m "complex qr" ztw (fun z ->
         let q, r = Nx.qr (zspaced z) in
         flat [ q; r ]);
-    m "complex svd's values" ztw (fun z ->
-        let _, s, _ = Nx.svd ~vectors:false f64 (zspaced z) in
-        Nx.cast c128 s);
-    m "complex eigh's values" zsq (fun z ->
-        Nx.cast c128 (fst (Nx.eigh ~vectors:false f64 (zspaced (symmetric z)))));
+    m "complex svdvals" ztw (fun z -> Nx.cast c128 (Nx.svdvals f64 (zspaced z)));
+    m "complex eigvalsh" zsq (fun z ->
+        Nx.cast c128 (Nx.eigvalsh f64 (zspaced (symmetric z))));
     m "complex solve_triangular" zsq (fun z ->
         let a = spaced (Nx.tril z) in
         flat

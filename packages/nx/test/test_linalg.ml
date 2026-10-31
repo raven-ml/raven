@@ -510,10 +510,6 @@ let test_svd =
           if i mod k > 0 then
             less ~msg:"descending" float_exact ~than:(values.(i - 1) +. Float.min_float) x)
         values;
-      let u', sv', vh' = Nx.svd ~vectors:false r a in
-      equal ~msg:"no u" (array int) (Array.append (lead s) [| m; 0 |]) (Nx.shape u');
-      equal ~msg:"no vh" (array int) (Array.append (lead s) [| 0; n |]) (Nx.shape vh');
-      near ~msg:"values alone" sv' sv;
       let u, _, vh = Nx.svd ~factors:Complete r a in
       near ~msg:"complete u" (Nx.matmul (adj u) u) (identity dt (lead s) m);
       near ~msg:"complete vh" (Nx.matmul vh (adj vh)) (identity dt (lead s) n))
@@ -618,7 +614,7 @@ let eig_bounded (type v s) (dt : (v, s) D.t) n a w v =
 let test_eig =
   prop
     "eig: a v is v diag w within its bound, of a real or complex a balancing \
-     leaves alone, its values with v or without"
+     leaves alone"
     (matrices ~square:true ()) (fun (Case (dt, s, re, im)) ->
       cover_shapes ~square:true s;
       let n = s.(Array.length s - 1) in
@@ -627,20 +623,12 @@ let test_eig =
       let (Cplx c) = complex_of dt in
       let (Real r) = real_of dt in
       let w, v = Nx.eig c a in
-      let w', v' = Nx.eig ~vectors:false c a in
-      equal ~msg:"no v" (array int)
-        (Array.append (lead s) [| n; 0 |])
-        (Nx.shape v');
       eig_bounded dt n a w v;
       let a = Nx.cast c a in
       if n > 0 then
-        List.iter
-          (fun (msg, w) ->
-            below
-              ~msg:("σ_min (a - w_j I), " ^ msg)
-              ~than:(tolerance r *. Float.max 1. (worst a))
-              (worst (least_singular r n a w)))
-          [ ("with v", w); ("alone", w') ])
+        below ~msg:"σ_min (a - w_j I)"
+          ~than:(tolerance r *. Float.max 1. (worst a))
+          (worst (least_singular r n a w)))
 
 let test_eigh =
   prop "eigh: a v is v diag w, w ascending, one triangle read" (matrices ~square:true ())
@@ -665,6 +653,140 @@ let test_eigh =
       let wu, _ = Nx.eigh ~triangle:Upper r upper and wl, _ = Nx.eigh r lower in
       near ~msg:"upper triangle" wu w;
       near ~msg:"lower triangle" wl w)
+
+(* The values alone: each the values of its factorisation, computed without
+   the vectors, within the tolerance of the factorisation's laws. *)
+
+(* [x]'s elements at complex128, each matrix's [n] sorted by real part. *)
+let sorted_by_real n x =
+  let z = Nx.to_array (Nx.cast Nx.complex128 x) in
+  let by (a : Complex.t) (b : Complex.t) = Float.compare a.re b.re in
+  let chunk b = List.sort by (Array.to_list (Array.sub z (b * n) n)) in
+  if n = 0 then [] else List.concat_map chunk (List.init (Array.length z / n) Fun.id)
+
+let test_svdvals =
+  prop "svdvals: svd's s, descending, not negative, Σ s² the ‖a‖_F²"
+    (matrices ())
+    (fun (Case (dt, s, re, im)) ->
+      cover_shapes s;
+      let a = value dt s re im in
+      let m = s.(Array.length s - 2) and n = s.(Array.length s - 1) in
+      let k = Stdlib.min m n in
+      let (Real r) = real_of dt in
+      let sv = Nx.svdvals r a in
+      equal ~msg:"shape" (array int) (Array.append (lead s) [| k |]) (Nx.shape sv);
+      let _, s_full, _ = Nx.svd r a in
+      near ~msg:"svd's s" sv s_full;
+      let values = Nx.to_array (Nx.cast Nx.float64 sv) in
+      Array.iter (greater ~msg:"not negative, a zero +0" float_exact ~than:(-0.)) values;
+      Array.iteri
+        (fun i x ->
+          if i mod k > 0 then
+            less ~msg:"descending" float_exact ~than:(values.(i - 1) +. Float.min_float) x)
+        values;
+      let squares = Nx.sum ~axes:[ -1 ] (Nx.square (Nx.cast Nx.float64 sv)) in
+      let fro = Nx.sum ~axes:[ -2; -1 ] (Nx.square (Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 a))) in
+      near ~tol:(tolerance dt) ~msg:"Σ s²" squares fro)
+
+let test_svdvals_cases () =
+  let f64 sh xs = Nx.create Nx.float64 sh xs in
+  let svdvals a = Nx.svdvals Nx.float64 a in
+  let bits x = Array.map Int64.bits_of_float (Nx.to_array x) in
+  equal ~msg:"zeros of -0 are +0" (array int64) (Array.make 4 0L)
+    (bits (svdvals (f64 [| 2; 3; 2 |] (Array.make 12 (-0.)))));
+  equal ~msg:"a zero value +0" (array int64)
+    (Array.map Int64.bits_of_float [| 2.; 0. |])
+    (bits (svdvals (f64 [| 2; 2 |] [| 0.; -0.; -0.; -2. |])));
+  equal ~msg:"1 × 1" (array float_exact) [| 3. |] (Nx.to_array (svdvals (f64 [| 1; 1 |] [| -3. |])));
+  equal ~msg:"k = 0" (array int) [| 2; 0 |] (Nx.shape (svdvals (f64 [| 2; 0; 3 |] [||])));
+  equal ~msg:"no matrix" (array int) [| 0; 2 |] (Nx.shape (svdvals (f64 [| 0; 2; 3 |] [||])))
+
+let test_eigvalsh =
+  prop "eigvalsh: eigh's w, ascending, Σ w the real trace, one triangle read"
+    (matrices ~square:true ())
+    (fun (Case (dt, s, re, im)) ->
+      cover_shapes ~square:true s;
+      let g = value dt s re im in
+      let a = Nx.add g (adj g) in
+      let n = s.(Array.length s - 1) in
+      let (Real r) = real_of dt in
+      let w = Nx.eigvalsh r a in
+      equal ~msg:"shape" (array int) (Array.append (lead s) [| n |]) (Nx.shape w);
+      near ~msg:"eigh's w" w (fst (Nx.eigh r a));
+      let values = Nx.to_array (Nx.cast Nx.float64 w) in
+      Array.iteri
+        (fun i x ->
+          if i mod n > 0 then
+            less ~msg:"ascending" float_exact ~than:x (values.(i - 1) -. Float.min_float))
+        values;
+      let trace = Nx.real Nx.float64 (Nx.cast Nx.complex128 (Nx.trace a)) in
+      near ~tol:(tolerance dt) ~msg:"Σ w" (Nx.sum ~axes:[ -1 ] (Nx.cast Nx.float64 w)) trace;
+      let noise = Nx.tril ~k:(-1) (Nx.add g g) in
+      let upper = Nx.add (Nx.triu a) noise in
+      let lower = Nx.add (Nx.tril a) (Nx.matrix_transpose noise) in
+      near ~msg:"upper triangle" (Nx.eigvalsh ~triangle:Upper r upper) w;
+      near ~msg:"lower triangle" (Nx.eigvalsh r lower) w)
+
+let test_eigvals =
+  prop
+    "eigvals: each an eigenvalue of a matrix near a balancing leaves alone, \
+     Σ w the trace, Σ w² that of a², eig's w of a Hermitian a"
+    (matrices ~square:true ()) (fun (Case (dt, s, re, im)) ->
+      cover_shapes ~square:true s;
+      let n = s.(Array.length s - 1) in
+      let re, im = mirrored s re im in
+      let a = value dt s re im in
+      let (Cplx c) = complex_of dt in
+      let (Real r) = real_of dt in
+      let w = Nx.eigvals c a in
+      equal ~msg:"shape" (array int) (Array.append (lead s) [| n |]) (Nx.shape w);
+      let a = Nx.cast c a in
+      near ~msg:"Σ w" (Nx.sum ~axes:[ -1 ] w) (Nx.trace a);
+      (* [Σ w²] is the trace of [a²], moved by twice [‖a‖_F] times the
+         matrix's backward error. *)
+      let fro2 = Array.fold_left (fun t x -> t +. (x *. x)) 0. (magnitudes a) in
+      near ~scale:(Float.max 1. fro2) ~msg:"Σ w²"
+        (Nx.sum ~axes:[ -1 ] (Nx.square w))
+        (Nx.trace (Nx.matmul a a));
+      if n > 0 then
+        below ~msg:"σ_min (a - w_j I)"
+          ~than:(tolerance r *. Float.max 1. (worst a))
+          (worst (least_singular r n a w));
+      (* A Hermitian matrix's eigenvalues are real, and change no more than
+         the matrix does: sorted, they are eig's, sorted. *)
+      let h = Nx.add a (adj a) in
+      let re_im (x : Complex.t) = (x.re, x.im) in
+      let bound = 2. *. tolerance r *. Float.max 1. (worst h) in
+      equal ~msg:"eig's w of a Hermitian a"
+        (list (pair (float bound) (float bound)))
+        (List.map re_im (sorted_by_real n (fst (Nx.eig c h))))
+        (List.map re_im (sorted_by_real n (Nx.eigvals c h))))
+
+(* A batch of a finite matrix and one holding NaN or an infinity in what is
+   read: the values of the finite one are those of its factorisation, and
+   the other's are NaN. *)
+let test_values_nan () =
+  let f64 sh xs = Nx.create Nx.float64 sh xs in
+  let a = f64 [| 3; 2; 2 |] [| 2.; 1.; 1.; 3.; 1.; 0.; Float.nan; 1.; Float.infinity; 0.; 1.; 1. |] in
+  let finite = Nx.get [ 0 ] a in
+  let w = Nx.eigvalsh Nx.float64 a in
+  near ~msg:"eigvalsh" (Nx.get [ 0 ] w) (fst (Nx.eigh Nx.float64 finite));
+  all_nan ~msg:"eigvalsh's NaN" (Nx.get [ 1 ] w);
+  all_nan ~msg:"eigvalsh's infinity" (Nx.get [ 2 ] w);
+  let s = Nx.svdvals Nx.float64 a in
+  let _, s0, _ = Nx.svd Nx.float64 finite in
+  near ~msg:"svdvals" (Nx.get [ 0 ] s) s0;
+  all_nan ~msg:"svdvals' NaN" (Nx.get [ 1 ] s);
+  all_nan ~msg:"svdvals' infinity" (Nx.get [ 2 ] s);
+  let w = Nx.eigvals Nx.complex128 a in
+  near ~msg:"eigvals' trace" (Nx.sum (Nx.get [ 0 ] w)) (Nx.cast Nx.complex128 (Nx.trace finite));
+  all_nan ~msg:"eigvals' NaN" (Nx.get [ 1 ] w);
+  all_nan ~msg:"eigvals' infinity" (Nx.get [ 2 ] w);
+  (* [eigvalsh] reads the lower triangle: NaN above it changes nothing. *)
+  let above = f64 [| 2; 2 |] [| 2.; Float.nan; 1.; 3. |] in
+  equal ~msg:"NaN in the unread triangle" (array float_exact)
+    (Nx.to_array (Nx.eigvalsh Nx.float64 finite))
+    (Nx.to_array (Nx.eigvalsh Nx.float64 above))
 
 (* Every float format, each a dtype a real result may take. *)
 type flt = Flt : (float, 's) D.t -> flt
@@ -695,8 +817,9 @@ let test_rounded_once =
         equal ~msg (array float_exact) (parts want) (parts x)
       in
       let _, s_r, _ = Nx.svd r a in
-      let _, values_r, _ = Nx.svd ~vectors:false r a in
+      let values_r = Nx.svdvals r a in
       let w_r, _ = Nx.eigh r a in
+      let wh_r = Nx.eigvalsh r a in
       let _, l_r = Nx.slogdet r a in
       let _, res_r, _, ls_r = Nx.lstsq r a a in
       List.iter
@@ -705,9 +828,9 @@ let test_rounded_once =
           let msg what = what ^ " in " ^ D.name f in
           let _, s', _ = Nx.svd f a in
           rounded (msg "svd's s") (Nx.cast f s_r) s';
-          let _, s', _ = Nx.svd ~vectors:false f a in
-          rounded (msg "svd's values") (Nx.cast f values_r) s';
+          rounded (msg "svdvals") (Nx.cast f values_r) (Nx.svdvals f a);
           rounded (msg "eigh's w") (Nx.cast f w_r) (fst (Nx.eigh f a));
+          rounded (msg "eigvalsh") (Nx.cast f wh_r) (Nx.eigvalsh f a);
           rounded (msg "slogdet's logabs") (Nx.cast f l_r) (snd (Nx.slogdet f a));
           let _, res', _, ls' = Nx.lstsq f a a in
           rounded (msg "lstsq's residuals") (Nx.cast f res_r) res';
@@ -715,12 +838,14 @@ let test_rounded_once =
         float_formats;
       let (Cplx c) = complex_of dt in
       let w_c, v_c = Nx.eig c a in
+      let values_c = Nx.eigvals c a in
       List.iter
         (fun (Cplx c') ->
           let msg what = what ^ " in " ^ D.name c' in
           let w', v' = Nx.eig c' a in
           rounded (msg "eig's w") (Nx.cast c' w_c) w';
-          rounded (msg "eig's v") (Nx.cast c' v_c) v')
+          rounded (msg "eig's v") (Nx.cast c' v_c) v';
+          rounded (msg "eigvals") (Nx.cast c' values_c) (Nx.eigvals c' a))
         [ Cplx D.Complex64; Cplx D.Complex128 ])
 
 let test_det =
@@ -877,7 +1002,7 @@ let test_lstsq =
         (fun i v ->
           equal ~msg:"residuals" (float (tolerance dt *. 10. *. Float.max 1. v)) v residuals.(i))
         squares;
-      let _, s', _ = Nx.svd ~vectors:false f a in
+      let _, s', _ = Nx.svd f a in
       equal ~msg:"s" (array float_exact) (Nx.to_array s') (Nx.to_array sv);
       let full = Int64.of_int (Stdlib.min m s.(Array.length s - 1)) in
       Array.iter (equal ~msg:"rank" int64 full) (Nx.to_array rank))
@@ -1038,7 +1163,7 @@ let test_matrix_norms =
       near ~msg:"negone" (norm `NegOne) (Nx.min ~axes:[ -1 ] (Nx.sum ~axes:[ -2 ] abs));
       near ~msg:"inf" (norm `Inf) (Nx.max ~axes:[ -1 ] (Nx.sum ~axes:[ -1 ] abs));
       near ~msg:"neginf" (norm `NegInf) (Nx.min ~axes:[ -1 ] (Nx.sum ~axes:[ -1 ] abs));
-      let _, sv, _ = Nx.svd ~vectors:false Nx.float64 (Nx.cast Nx.complex128 x) in
+      let sv = Nx.svdvals Nx.float64 (Nx.cast Nx.complex128 x) in
       near ~msg:"two" (norm `Two) (Nx.max ~axes:[ -1 ] sv);
       near ~msg:"negtwo" (norm `NegTwo) (Nx.min ~axes:[ -1 ] sv);
       near ~msg:"nuc" (norm `Nuc) (Nx.sum ~axes:[ -1 ] sv);
@@ -1358,6 +1483,12 @@ let test_refusals () =
   invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex64 h);
   invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex128 (Nx.ones Nx.int32 [| 2; 2 |]));
   invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex128 r);
+  invalid_by ~by:"Nx.svdvals" (fun () -> Nx.svdvals Nx.float32 h);
+  invalid_by ~by:"Nx.svdvals" (fun () -> Nx.svdvals Nx.float64 (Nx.ones Nx.float64 [| 3 |]));
+  invalid_by ~by:"Nx.eigvalsh" (fun () -> Nx.eigvalsh Nx.float32 h);
+  invalid_by ~by:"Nx.eigvalsh" (fun () -> Nx.eigvalsh Nx.float64 r);
+  invalid_by ~by:"Nx.eigvals" (fun () -> Nx.eigvals Nx.complex64 h);
+  invalid_by ~by:"Nx.eigvals" (fun () -> Nx.eigvals Nx.complex128 r);
   invalid_by ~by:"Nx.slogdet" (fun () -> Nx.slogdet Nx.float32 h);
   invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq Nx.float32 h (Nx.ones Nx.float16 [| 2 |]));
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true r);
@@ -1400,6 +1531,9 @@ let test_composites_named () =
   invalid_by ~by:"Nx.svd" (fun () -> Nx.svd Nx.float32 a);
   invalid_by ~by:"Nx.eigh" (fun () -> Nx.eigh Nx.float32 a);
   invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex64 a);
+  invalid_by ~by:"Nx.svdvals" (fun () -> Nx.svdvals Nx.float32 a);
+  invalid_by ~by:"Nx.eigvalsh" (fun () -> Nx.eigvalsh Nx.float32 a);
+  invalid_by ~by:"Nx.eigvals" (fun () -> Nx.eigvals Nx.complex64 a);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv a);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true a);
   invalid_by ~by:"Nx.det" (fun () -> Nx.det a);
@@ -1421,6 +1555,8 @@ let test_dead_named () =
       Nx.cholesky ~triangle:Upper (square ()));
   invalid_by ~by:"Nx.eigh" (fun () ->
       Nx.eigh ~triangle:Upper Nx.float64 (square ()));
+  invalid_by ~by:"Nx.eigvalsh" (fun () ->
+      Nx.eigvalsh ~triangle:Upper Nx.float64 (square ()));
   invalid_by ~by:"Nx.solve_triangular" (fun () ->
       Nx.solve_triangular ~transpose:Transpose (Nx.eye Nx.complex64 2)
         (dead Nx.complex64 [| 2; 1 |] Complex.one))
@@ -1448,6 +1584,11 @@ let () =
              test "svd fails in its matrix alone" test_svd_nan;
              test_eig;
              test_eigh;
+             test_svdvals;
+             test "svdvals at its edges" test_svdvals_cases;
+             test_eigvalsh;
+             test_eigvals;
+             test "values alone fail in their matrix alone" test_values_nan;
              test_rounded_once;
            ];
          group "determinants and solves"

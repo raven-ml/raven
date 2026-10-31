@@ -230,9 +230,11 @@
     [Nx.eigh] and [Nx.eig] is orthogonal to it, so a vector of [Nx.eig] keeps
     its unit norm, and the tangent of each right singular vector of [Nx.svd] is
     orthogonal to it, the left one carrying the change of phase that keeps
-    [a = u diag(s) vh]. A factorisation's values alone, as
-    [Nx.svd ~vectors:false]'s, take their tangents from the vectors the full
-    routine computes. *)
+    [a = u diag(s) vh]. A factorisation's values alone, as [Nx.svdvals]',
+    take their tangents from the vectors the full routine computes. Where a
+    differentiation tracks its operand, [Nx.eigvals] is [Nx.eig]'s values, in
+    the order of the vectors their tangents come from, which may differ from
+    its value outside one in order and in the last bits. *)
 
 (** {2:forward Forward mode} *)
 
@@ -1449,9 +1451,10 @@ val jit :
     operand, of [m] rows, [n] columns and [k = min m n], to first order in [u]
     barring overflow and underflow. [|·|] is elementwise and [‖·‖_F] the
     Frobenius norm. [a] is the matrix read, symmetric from its triangle for
-    {!Nx.cholesky} and {!Nx.eigh}, and for {!Nx.solve_triangular} the triangle,
-    transposed under [adjoint], unit on its diagonal under [unit_diagonal]. [P]
-    is {!Nx.lu}'s permutation, its rule applied to the computed columns. For [b]
+    {!Nx.cholesky}, {!Nx.eigh} and {!Nx.eigvalsh}, and for
+    {!Nx.solve_triangular} the triangle, transposed under [adjoint], unit on
+    its diagonal under [unit_diagonal]. [P] is {!Nx.lu}'s permutation, its
+    rule applied to the computed columns. For [b]
     the dtype's bits of precision, [R] is [S] times [k - 1] for an even [k] or
     [k] for an odd one, [0] for [k < 2], where [S = ⌈b ⌈log₂ k⌉ / 10⌉] for
     {!Nx.eigh} and [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for {!Nx.svd}:
@@ -1473,9 +1476,11 @@ val jit :
                            g = γ(8 k (p (p + 6) + 8 R)), p = max m n
     v}
 
-    {!Nx.svd}'s bound is over [u]'s first [k] columns and [vh]'s first [k] rows,
-    and is vacuous from [k = p = 68] at [float32] and [k = p = 82313] at
-    [float64], and at a smaller [k] where [p > k]. {!Nx.cholesky}'s [Upper]
+    {!Nx.eigvalsh}'s and {!Nx.svdvals}' values have {!Nx.eigh}'s and
+    {!Nx.svd}'s bounds on each value. {!Nx.svd}'s bound is over [u]'s first
+    [k] columns and [vh]'s first [k] rows, and is vacuous from [k = p = 68]
+    at [float32] and [k = p = 82313] at [float64], and at a smaller [k] where
+    [p > k]. {!Nx.cholesky}'s [Upper]
     factor is the transpose of [Lower]'s, bit for bit, and {!Nx.qr}'s [r] has a
     diagonal of either sign. A matrix that holds NaN or an infinity, or whose
     iteration does not converge, makes only its own results NaN.

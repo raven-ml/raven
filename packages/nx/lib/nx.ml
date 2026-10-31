@@ -3001,10 +3001,6 @@ let epsilon (type v s) (dt : (v, s) D.t) =
 (* [x]'s batch: its axes before its last two. *)
 let batch x = Array.sub (shape x) 0 (ndim x - 2)
 
-(* An empty value of [dt] where [x] lies: the vectors a routine did not
-   compute. *)
-let uncomputed ~by dt x s = fill ~by (placement x) dt s (D.zero dt)
-
 (* The first [rows] rows and [cols] columns of [x]'s matrices. *)
 let corner ~by rows cols x =
   let s = shape x in
@@ -3096,56 +3092,60 @@ let lu a =
 (* A routine gives a real result in [real_precision], and [cast_by] stores
    it in the caller's [dt], or returns it itself where the two are one. *)
 
-let svd_by ~by ?(vectors = true) ?(factors = Reduced) dt a =
+let svd_by ~by ?(factors = Reduced) dt a =
   matrices ~by a;
   let (Nx_kernel.Any_float r) = real_precision ~by a in
-  if vectors then
-    let s, u, vh = routine ~by (Svd { factors; dtype = r; a }) in
-    (u, cast_by ~by dt s, vh)
-  else
-    let s = routine ~by (Svd_values { dtype = r; a }) in
-    let lead = batch a and v = dtype a in
-    let u = uncomputed ~by v a (Array.append lead [| dim (-2) a; 0 |]) in
-    let vh = uncomputed ~by v a (Array.append lead [| 0; dim (-1) a |]) in
-    (u, cast_by ~by dt s, vh)
+  let s, u, vh = routine ~by (Svd { factors; dtype = r; a }) in
+  (u, cast_by ~by dt s, vh)
 
-let svd ?vectors ?factors dt a = svd_by ~by:"Nx.svd" ?vectors ?factors dt a
+let svd ?factors dt a = svd_by ~by:"Nx.svd" ?factors dt a
 
-(* The [[…; n; 0]] vectors of [dt] an eigenvalue routine did not compute. *)
-let no_vectors ~by dt a =
-  uncomputed ~by dt a (Array.append (batch a) [| dim (-1) a; 0 |])
+let svdvals_by ~by dt a =
+  matrices ~by a;
+  let (Nx_kernel.Any_float r) = real_precision ~by a in
+  cast_by ~by dt (routine ~by (Svd_values { dtype = r; a }))
 
-let eig (type v s c d) ?(vectors = true) (dt : (Complex.t, c) D.t)
-    (a : (v, s, d) t) : (Complex.t, c, d) t * (Complex.t, c, d) t =
+let svdvals dt a = svdvals_by ~by:"Nx.svdvals" dt a
+
+let eig (type v s c d) (dt : (Complex.t, c) D.t) (a : (v, s, d) t) :
+    (Complex.t, c, d) t * (Complex.t, c, d) t =
   let by = "Nx.eig" in
   square_matrices ~by a;
   (* At the complex dtype of [a]'s precision, then stored in [dt]. *)
   let at (type c) (c : (Complex.t, c) D.t) =
-    if vectors then
-      let w, v = routine ~by (Eig { dtype = c; a }) in
-      let w = cast_by ~by dt w in
-      (w, cast_by ~by dt v)
-    else
-      let w = routine ~by (Eig_values { dtype = c; a }) in
-      (cast_by ~by dt w, no_vectors ~by dt a)
+    let w, v = routine ~by (Eig { dtype = c; a }) in
+    (cast_by ~by dt w, cast_by ~by dt v)
   in
   match dtype a with
   | D.Float32 | D.Complex64 -> at D.Complex64
   | _ -> at D.Complex128
 
-let eigh_by ~by ?(vectors = true) ?(triangle = Lower) dt a =
+let eigvals (type v s c d) (dt : (Complex.t, c) D.t) (a : (v, s, d) t) :
+    (Complex.t, c, d) t =
+  let by = "Nx.eigvals" in
+  square_matrices ~by a;
+  (* As [eig]'s. *)
+  let at (type c) (c : (Complex.t, c) D.t) =
+    cast_by ~by dt (routine ~by (Eig_values { dtype = c; a }))
+  in
+  match dtype a with
+  | D.Float32 | D.Complex64 -> at D.Complex64
+  | _ -> at D.Complex128
+
+let eigh_by ~by ?(triangle = Lower) dt a =
   square_matrices ~by a;
   let (Nx_kernel.Any_float r) = real_precision ~by a in
-  let a' = lower_of ~by triangle a in
-  if vectors then
-    let w, v = routine ~by (Eigh { dtype = r; a = a' }) in
-    (cast_by ~by dt w, v)
-  else
-    let w = routine ~by (Eigh_values { dtype = r; a = a' }) in
-    (cast_by ~by dt w, no_vectors ~by (dtype a) a)
+  let w, v = routine ~by (Eigh { dtype = r; a = lower_of ~by triangle a }) in
+  (cast_by ~by dt w, v)
 
-let eigh ?vectors ?triangle dt a =
-  eigh_by ~by:"Nx.eigh" ?vectors ?triangle dt a
+let eigh ?triangle dt a = eigh_by ~by:"Nx.eigh" ?triangle dt a
+
+let eigvalsh ?(triangle = Lower) dt a =
+  let by = "Nx.eigvalsh" in
+  square_matrices ~by a;
+  let (Nx_kernel.Any_float r) = real_precision ~by a in
+  let a = lower_of ~by triangle a in
+  cast_by ~by dt (routine ~by (Eigh_values { dtype = r; a }))
 
 (* The diagonal of [lu]'s factors, and the function that negates [x] where
    each matrix's rows were interchanged an odd number of times and makes a
@@ -3500,7 +3500,7 @@ let matrix_norms ~by w dt ord x =
   in
   (* [x]'s singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
   let singular k =
-    let _, s, _ = svd_by ~by ~vectors:false w x in
+    let s = svdvals_by ~by w x in
     let s = unsqueeze_by ~by ~axes:[ -1 ] s in
     cast_by ~by dt (reduction ~by k ~axes:[ r ] ~keepdims:true s)
   in
@@ -3540,7 +3540,7 @@ let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =
       fill_beside ~by a D.Int64 (batch a) 0L
     else
       let (Nx_kernel.Any_float f) = real_precision ~by a in
-      let _, s, _ = svd_by ~by ~vectors:false f a in
+      let s = svdvals_by ~by f a in
       let r = ndim s - 1 in
       let top = reduction ~by Max ~axes:[ r ] ~keepdims:true s in
       let v = operand 0 s and t = operand 1 top in
@@ -3588,7 +3588,7 @@ let cond (type v s r d) (dt : (float, r) D.t) ?(p = `Two) (a : (v, s, d) t) :
       let inf = E.const w Float.infinity in
       match p with
       | `Two ->
-          let _, s, _ = svd_by ~by ~vectors:false w a in
+          let s = svdvals_by ~by w a in
           let r = ndim s - 1 in
           let top = reduction ~by Max ~axes:[ r ] s
           and bottom = reduction ~by Min ~axes:[ r ] s in

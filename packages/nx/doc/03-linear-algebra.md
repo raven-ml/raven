@@ -111,8 +111,8 @@ Singular value decomposition A = U·Σ·Vᴴ, the singular values in the dtype g
 
 <!-- $MDX skip -->
 ```ocaml
-let u, s, vh = Nx.svd Nx.float64 a                  (* reduced factors *)
-let _, s_only, _ = Nx.svd ~vectors:false Nx.float64 a  (* singular values only *)
+let u, s, vh = Nx.svd Nx.float64 a   (* reduced factors *)
+let s_only = Nx.svdvals Nx.float64 a  (* singular values only *)
 ```
 
 ### Eigendecomposition
@@ -121,11 +121,11 @@ let _, s_only, _ = Nx.svd ~vectors:false Nx.float64 a  (* singular values only *
 ```ocaml
 (* General: complex eigenvalues and eigenvectors *)
 let eigenvalues, eigenvectors = Nx.eig Nx.complex128 a
-let eigenvalues_only, _ = Nx.eig ~vectors:false Nx.complex128 a
+let eigenvalues_only = Nx.eigvals Nx.complex128 a
 
 (* Symmetric/Hermitian: real eigenvalues, ascending *)
 let eigenvalues, eigenvectors = Nx.eigh Nx.float64 a
-let eigenvalues_only, _ = Nx.eigh ~vectors:false Nx.float64 a
+let eigenvalues_only = Nx.eigvalsh Nx.float64 a
 ```
 
 ## Solving Linear Systems

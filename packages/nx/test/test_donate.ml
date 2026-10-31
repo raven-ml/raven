@@ -2171,17 +2171,20 @@ let routines (type v s r c) (dt : (v, s) Nx.dtype) (r : (float, r) Nx.dtype)
       c ~consumes:true "svd" 1 (fun d ->
           let u, s, vh = Nx.svd r (d 0 (spd ())) in
           shows [ show u; show s; show vh ]);
-      c ~consumes:true "svd" 1 (fun d ->
-          let _, s, _ = Nx.svd ~vectors:false Nx.float16 (d 0 (spd ())) in
-          show s);
+      c ~consumes:true "svdvals" 1 (fun d ->
+          show (Nx.svdvals Nx.float16 (d 0 (spd ()))));
       c ~consumes:true "eigh" 1 (fun d ->
           let w, v = Nx.eigh r (d 0 (spd ())) in
           shows [ show w; show v ]);
       c ~consumes:true "eigh" 1 (fun d ->
           show (fst (Nx.eigh ~triangle:Upper r (d 0 (spd ())))));
+      c ~consumes:true "eigvalsh" 1 (fun d ->
+          show (Nx.eigvalsh ~triangle:Upper r (d 0 (spd ()))));
       c ~consumes:true "eig" 1 (fun d ->
           let w, v = Nx.eig c' (d 0 (spd ())) in
           showl [ w; v ]);
+      c ~consumes:true "eigvals" 1 (fun d ->
+          show (Nx.eigvals c' (d 0 (spd ()))));
       c ~consumes:true "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
       c ~consumes:true "slogdet" 1 (fun d ->
           let s, l = Nx.slogdet r (d 0 (spd ())) in
