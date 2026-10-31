@@ -1106,10 +1106,10 @@ let test_host_keeps_size () =
    written after it leaves the array's bytes as they were, and once the array
    is collected a buffer of the size holds what is written. The sizes reach
    the host's three kinds of buffer, by where their bytes start: under a line
-   of 128 bytes, on a line, and on a page from 64 KiB, which the host keeps
-   for reuse; and the bounds between them. *)
+   of 128 bytes, on a line, and on a page from 64 KiB and four pages, which
+   the host keeps for reuse; and the bounds between them. *)
 let line = 128
-let kept = 64 * kib
+let kept = Int.max (64 * kib) (4 * Rig_gpu_support.Host.page)
 
 let export_sizes =
   Gen.with_pp
