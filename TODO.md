@@ -17,15 +17,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - first call 0.39 s (12 tokens, kernels cached; 1.43 s compiling them)
 - llama.cpp b11344 Vulkan, b11342 ROCm; tinygrad needs Resizable BAR here
 
-- the port's gates on rig (ca03dcfa9; pre-port main is ca03dcfa9^), on
-  the new nx and rune: on fudge (CUDA, NV) and nonnormal (AMD), gpt-oss
-  decode, prefill-512 and first call, and GPT-2, re-recording the GptOss
-  rows (kimchi's only; fudge has kimchi's CPU and GPU) and llama.cpp at a
-  stated build; sofo/symo; rune's test_jit on CUDA, NV and AMD; the tolk,
-  rune, nx and kaun decode benches against ca03dcfa9^; remat memory over
-  its bound on NV/AMD; jit replay's 639 words (c56ee080d) on x86; the
-  engine's wrong answers on Metal+host staged loops (no case recorded: find
-  it or drop it)
+- gpt-oss-20b on the new nx and rune: decode, prefill-512 and first call
+  on fudge (CUDA, NV) and nonnormal (AMD), recorded as the GptOss
+  baselines, against llama.cpp at a stated build; rune's test_jit on
+  CUDA, NV and AMD
 
 ## rig
 
