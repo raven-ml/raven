@@ -213,6 +213,14 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
+- words per eager operation, old nx -> new (talon's Gc.Memprof, fudge):
+  take 58 -> 191, slice 44 -> 179, reshape 25 -> 91, sum 94 -> 279, cumsum
+  62 -> 207. Each operation routes through `Prim`, computing its layouts
+  when routing and again when executing, and each composite builds and
+  lowers its own small program with two hashtables; `Nx.unique` composes
+  about 25 operations (1,437 -> 6,956 words). Profile `dispatch/reshape-1`
+  and `index/take-rows-1K-of-8K`, and cut the per-operation words; talon's
+  Group, Join and Filter rows show it
 - `Nx_ragged.take` writes an int64 position per output byte (fill,
   scatter, cumsum, gather): ~40 bytes moved per byte of text. It dominates
   talon's joins on text (join_run.ml, column.ml)
