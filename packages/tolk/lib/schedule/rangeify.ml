@@ -466,10 +466,7 @@ let limit_bufs ctx root =
              stage, and the device range stays a launched axis. *)
           let orig = Nodes.to_list (ranges s) in
           let fresh r =
-            if
-              op r = Op.Range
-              && not (Axis_type.equal (axis_type r) Axis_type.Device)
-            then begin
+            if not (Axis_type.equal (axis_type r) Axis_type.Device) then begin
               let n = ctx.range_idx in
               ctx.range_idx <- n + 1;
               replace r

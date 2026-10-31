@@ -693,7 +693,7 @@ let reduce_loops rctx x sizes outer =
 
 (* Kernels are internal, and after, shard selections and shard stacks carry no
    ranges, as a sink does not. *)
-let no_ranges = ops Op.[ Call; Linear; After; Mstack; Mselect ]
+let no_ranges = ops Op.[ Call; After; Mstack; Mselect ]
 
 let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
   let consumers = List.rev (Tbl.find consumer_map x) in

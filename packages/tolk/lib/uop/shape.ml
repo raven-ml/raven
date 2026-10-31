@@ -315,7 +315,6 @@ and compute_shape u : sint list option =
             Some
               (take (n - 1) ps
               @ [ ssimplify_sint Sint.(last * Int in_sz // Int out_sz) ]))
-  | Op.Unshard when List.is_empty (src u) -> None
   | op when Op.Set.mem op Op.Set.movement || op = Op.Unshard || op = Op.Reduce
     ->
       let ps =
@@ -2839,7 +2838,7 @@ let rec axis u =
 and compute_axis u =
   let src0 () = first (op u) (src u) in
   match op u with
-  | Op.Copy | Op.Param -> None
+  | Op.Copy -> None
   | Op.Unshard -> (
       match arg u with
       | Axes [ a ] -> Some a
