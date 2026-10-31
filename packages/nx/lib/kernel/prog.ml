@@ -574,6 +574,16 @@ let leaf : type v s. D.any iarray -> (v, s) E.t -> node option =
   | Const { dt; bits; _ } -> Some (Const (D.Any dt, bits))
   | In _ | Op1 _ | Op2 _ | Op3 _ -> None
 
+(* Two nodes of one structure, compared field by field, the kind last. *)
+let node_equal (a : node) (b : node) =
+  match (a, b) with
+  | In i, In j | Coord i, Coord j -> i = j
+  | Const (D.Any x, s), Const (D.Any y, t) -> D.equal x y && String.equal s t
+  | Op1 (k, D.Any x, i), Op1 (l, D.Any y, j) -> i = j && D.equal x y && k = l
+  | Op2 (k, i, j), Op2 (l, i', j') -> i = i' && j = j' && k = l
+  | Op3 (k, i, j, m), Op3 (l, i', j', m') -> i = i' && j = j' && m = m' && k = l
+  | (In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _), _ -> false
+
 (* Nodes as a table's keys, hashed by their operands and compared field by
    field: the runtime's polymorphic hash and compare of a whole node,
    called for each node a lowering adds, cost a fifth of a draw from beta.
@@ -583,15 +593,7 @@ let leaf : type v s. D.any iarray -> (v, s) E.t -> node option =
 module Nodes = Hashtbl.Make (struct
   type t = node
 
-  let equal (a : node) (b : node) =
-    match (a, b) with
-    | In i, In j | Coord i, Coord j -> i = j
-    | Const (D.Any x, s), Const (D.Any y, t) -> D.equal x y && String.equal s t
-    | Op1 (k, D.Any x, i), Op1 (l, D.Any y, j) -> i = j && D.equal x y && k = l
-    | Op2 (k, i, j), Op2 (l, i', j') -> i = i' && j = j' && k = l
-    | Op3 (k, i, j, m), Op3 (l, i', j', m') ->
-        i = i' && j = j' && m = m' && k = l
-    | (In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _), _ -> false
+  let equal = node_equal
 
   (* An odd multiplier keeps distinct operands apart in the low bits a
      table indexes by. *)
@@ -606,73 +608,165 @@ module Nodes = Hashtbl.Make (struct
     | Op3 (_, a, b, c) -> mix (mix a b) c
 end)
 
-(* A lowering keeps two tables: [seen] gives an expression walked before,
-   by its id, its node, so that a shared subexpression is walked once;
-   [index] gives a node the index of the first node of its structure, so
-   that two expressions of one structure are one node. A node's dtype
+(* A lowering finds an expression walked before, so that a shared
+   subexpression is walked once, and the first node of a node's structure,
+   so that two expressions of one structure are one node. A node's dtype
    follows from its structure and the nodes before it, so the node alone is
-   the key. An id is unique within one process alone: an expression read
-   back through [Marshal] can carry the id of another here, so a hit in
-   [seen] counts only for the expression itself. *)
+   the key.
+
+   Up to [small] nodes and [walked_bound] walked expressions it finds both
+   by scanning [walked] and [nodes]: a table's buckets cost more than the
+   scans of a small program, which most composites lower. Past either it
+   builds two tables from them and keeps them: [seen] gives a walked
+   expression, by its id, its node, and [index] a node its index. An id is
+   unique within one process alone: an expression read back through
+   [Marshal] can carry the id of another here, so a hit in [seen] counts
+   only for the expression itself, as a scan compares the expression
+   itself. *)
+type tables = { seen : (int, E.any * int) Hashtbl.t; index : int Nodes.t }
+
 type lowering = {
   fn : string;
   operands : D.any iarray;
-  seen : (int, E.any * int) Hashtbl.t;
-  index : int Nodes.t;
-  mutable rev_nodes : node list;
+  mutable nodes : node array;  (* The program's nodes: the first [count]. *)
   mutable count : int;
+  mutable walked : E.any array;  (* Scanned: the first [nwalked]. *)
+  mutable at : int array;  (* Each walked expression's node. *)
+  mutable nwalked : int;
+  mutable tables : tables option;
 }
 
-(* A lowering over [ins] of about [n] nodes, refusing in the name of [fn]. *)
+(* Up to 16 nodes the scans take no longer than the tables; at 40 they
+   take about 0.8 us longer, and save the tables' 400 to 450 words. *)
+let small = 40
+
+(* The walked expressions a scan holds at most. *)
+let walked_bound = 2 * small
+
+(* [a] of [n] elements in an array twice as long, filled with [fill]. *)
+let grown a n fill =
+  let b = Array.make (max 8 (2 * n)) fill in
+  Array.blit a 0 b 0 n;
+  b
+
+(* [l]'s tables, of about [n] nodes, holding what it found so far. *)
+let tables_of l n =
+  let seen = Hashtbl.create n and index = Nodes.create n in
+  for i = 0 to l.nwalked - 1 do
+    let (E.Any e) = l.walked.(i) in
+    Hashtbl.replace seen (E.id e) (l.walked.(i), l.at.(i))
+  done;
+  for i = 0 to l.count - 1 do
+    Nodes.add index l.nodes.(i) i
+  done;
+  l.walked <- [||];
+  l.at <- [||];
+  l.nwalked <- 0;
+  { seen; index }
+
+(* A lowering over [ins] of about [n] nodes, refusing in the name of [fn]:
+   with its tables from the start where [n] is past [small]. *)
 let lowering fn ~ins n =
-  {
-    fn;
-    operands = ins;
-    seen = Hashtbl.create 16;
-    index = Nodes.create n;
-    rev_nodes = [];
-    count = 0;
-  }
+  let l =
+    {
+      fn;
+      operands = ins;
+      nodes = Array.make (max 8 n) (In 0);
+      count = 0;
+      walked = [||];
+      at = [||];
+      nwalked = 0;
+      tables = None;
+    }
+  in
+  if n > small then l.tables <- Some (tables_of l n);
+  l
 
 let refuse_in l k =
   invalid_arg (strf "%s: In %d is no operand of ins" l.fn k)
 
+let rec find_node l nd i =
+  if i = l.count then -1
+  else if node_equal (Array.unsafe_get l.nodes i) nd then i
+  else find_node l nd (i + 1)
+
 (* The index of the node [nd], added unless one of its structure is. *)
 let add l nd =
-  match Nodes.find_opt l.index nd with
-  | Some i -> i
+  let found =
+    match l.tables with
+    | None -> find_node l nd 0
+    | Some t -> ( match Nodes.find_opt t.index nd with Some i -> i | None -> -1)
+  in
+  if found >= 0 then found
+  else begin
+    let i = l.count in
+    if i = Array.length l.nodes then l.nodes <- grown l.nodes i nd;
+    l.nodes.(i) <- nd;
+    l.count <- i + 1;
+    (match l.tables with
+    | Some t -> Nodes.add t.index nd i
+    | None -> if l.count > small then l.tables <- Some (tables_of l (2 * i)));
+    i
+  end
+
+let rec find_walked l e i =
+  if i = l.nwalked then -1
+  else if Array.unsafe_get l.walked i == e then Array.unsafe_get l.at i
+  else find_walked l e (i + 1)
+
+(* The node of [e], walked before, or [-1]. *)
+let walked_before (type v s) l (e : (v, s) E.t) =
+  match l.tables with
+  | None -> find_walked l (E.Any e) 0
+  | Some t -> (
+      match Hashtbl.find_opt t.seen (E.id e) with
+      | Some (walked, i) when walked == E.Any e -> i
+      | Some _ | None -> -1)
+
+(* Records that [e] is node [i]. *)
+let walk_done (type v s) l (e : (v, s) E.t) i =
+  match l.tables with
+  | Some t -> Hashtbl.replace t.seen (E.id e) (E.Any e, i)
   | None ->
-      Nodes.add l.index nd l.count;
-      l.rev_nodes <- nd :: l.rev_nodes;
-      l.count <- l.count + 1;
-      l.count - 1
+      let k = l.nwalked in
+      if k = Array.length l.walked then begin
+        l.walked <- grown l.walked k (E.Any e);
+        l.at <- grown l.at k 0
+      end;
+      l.walked.(k) <- E.Any e;
+      l.at.(k) <- i;
+      l.nwalked <- k + 1;
+      (* Fresh copies of one structure walk many expressions into few
+         nodes: the scan is bounded by them too. *)
+      if l.nwalked > walked_bound then
+        l.tables <- Some (tables_of l (2 * l.nwalked))
 
 let rec walk : type v s. lowering -> (v, s) E.t -> int =
  fun l e ->
-  let id = E.id e in
-  match Hashtbl.find_opt l.seen id with
-  | Some (E.Any walked, i) when E.Any walked == E.Any e -> i
-  | Some _ | None ->
-      let nd =
-        match (leaf l.operands e, e) with
-        | Some nd, _ -> nd
-        | None, In { k; _ } -> refuse_in l k
-        | None, Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk l x)
-        | None, Op2 { k; x; y; _ } ->
-            let a = walk l x in
-            Op2 (k, a, walk l y)
-        | None, Op3 { k; c; x; y; _ } ->
-            let a = walk l c in
-            let b = walk l x in
-            Op3 (k, a, b, walk l y)
-        | None, (Coord _ | Const _) -> assert false
-      in
-      let i = add l nd in
-      Hashtbl.replace l.seen id (E.Any e, i);
-      i
+  let i = walked_before l e in
+  if i >= 0 then i
+  else
+    let nd =
+      match (leaf l.operands e, e) with
+      | Some nd, _ -> nd
+      | None, In { k; _ } -> refuse_in l k
+      | None, Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk l x)
+      | None, Op2 { k; x; y; _ } ->
+          let a = walk l x in
+          Op2 (k, a, walk l y)
+      | None, Op3 { k; c; x; y; _ } ->
+          let a = walk l c in
+          let b = walk l x in
+          Op3 (k, a, b, walk l y)
+      | None, (Coord _ | Const _) -> assert false
+    in
+    let i = add l nd in
+    walk_done l e i;
+    i
 
 let lowered l outs =
-  { ins = l.operands; nodes = Iarray.of_list (List.rev l.rev_nodes); outs }
+  let nodes = l.nodes in
+  { ins = l.operands; nodes = Iarray.init l.count (Array.get nodes); outs }
 
 (* One output that reads no other node, as a fill's constant is, is its one
    node: no table is needed to share it. *)

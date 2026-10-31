@@ -954,9 +954,11 @@ let law_of_exprs (d, seed) =
   cover "outputs of two builds" (Array.length d.outs >= 2);
   cover "fewer nodes than drawn" (Iarray.length q.nodes < Array.length d.nodes)
 
-(* Programs grown node by node, up to 400, so that the walk's tables grow:
-   each node is an operand, an axis, a constant, a copy of an earlier node's
-   structure, or a kind over earlier nodes of the dtypes it takes. Constants
+(* Programs grown node by node, up to 400, so that the walk's tables grow,
+   a third of them up to 80, so that lowerings that scan and lowerings that
+   cross to tables are both reached: each node is an operand, an axis, a
+   constant, a copy of an earlier node's structure, or a kind over earlier
+   nodes of the dtypes it takes. Constants
    are small integers, [-0.], NaNs with payloads, and the same bits in dtypes
    of one width. Outputs repeat and leave nodes unreached. *)
 
@@ -1071,7 +1073,7 @@ let grown =
   let open Gen in
   with_pp pp_drawn
     (let+ ins = array ~size:(int_range 0 3) (of_list ~pp:pp_dtype base_dtypes)
-     and+ n = int_range 1 400
+     and+ n = frequency [ (1, int_range 1 80); (2, int_range 1 400) ]
      and+ nouts = int_range 1 4
      and+ seed = int in
      grow (Random.State.make [| seed |]) ins n nouts)
@@ -1102,6 +1104,8 @@ let law_of_grown_exprs (d, seed) =
         v = 0. && Float.sign_bit v
     | _ -> false
   in
+  cover "at most 40 nodes" (n <= 40);
+  cover "41 to 80 nodes" (n > 40 && n <= 80);
   cover "over 128 nodes" (n > 128);
   cover "a merge" (n < r);
   cover "a node unreached" (r < Array.length d.nodes);
@@ -1131,6 +1135,26 @@ let test_of_exprs_two_builds () =
   let q = P.of_exprs ~ins:[| D.Any D.Int64 |] [| chain (); chain () |] in
   equal ~msg:"nodes" int 14999 (Iarray.length q.nodes);
   equal ~msg:"outs" (array int) [| 14998; 14998 |] (Iarray.to_array q.outs)
+
+let test_of_exprs_fresh_copies () =
+  (* A sum of two fresh builds of one sum, 16 levels deep: 2^17 - 1
+     expressions, apart as values, of 17 nodes. A lowering that scanned
+     its walked expressions while it held few nodes would compare billions
+     of pairs. *)
+  let rec tree d =
+    if d = 0 then P.E.input 0 D.Int64
+    else
+      let a = tree (d - 1) in
+      let b = tree (d - 1) in
+      P.E.(a + b)
+  in
+  let q = P.of_exprs ~ins:[| D.Any D.Int64 |] [| P.E.any (tree 16) |] in
+  let want =
+    Array.init 17 (fun i : P.node ->
+        if i = 0 then In 0 else Op2 (Binary Add, i - 1, i - 1))
+  in
+  equal ~msg:"nodes" (array node) want (Iarray.to_array q.nodes);
+  equal ~msg:"outs" (array int) [| 16 |] (Iarray.to_array q.outs)
 
 (* Each kind function makes the node its kind's constructor makes. *)
 let test_exprs_kind_functions () =
@@ -1340,6 +1364,8 @@ let tests =
           (Gen.pair grown Gen.int) law_of_grown_exprs;
         test "of_exprs merges two builds of 15000 nodes"
           test_of_exprs_two_builds;
+        test "of_exprs merges 2^17 fresh copies into 17 nodes"
+          test_of_exprs_fresh_copies;
         test "each kind function makes its kind's node"
           test_exprs_kind_functions;
         cases "each operator makes the node of the function it names"
@@ -1353,6 +1379,8 @@ let tests =
       [
         prop "subst keeping every leaf is p lowered as of_exprs lowers it"
           drawn law_subst_keeps;
+        prop "subst is so for programs of hundreds of nodes" grown
+          law_subst_keeps;
         prop "subst binding an operand is p over its value" binding law_bind;
         test "subst binds an operand to an operand, a coordinate or a constant"
           test_subst_leaves;
