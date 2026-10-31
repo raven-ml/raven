@@ -201,6 +201,15 @@ let composite_components () =
   is_error `Malformed ~sub:"glyph 3: more than 65535 components"
     (Font.of_string (tiny_file nested))
 
+(* A load's work is bounded by the file's size: 1000 copies of a glyph of
+   65534 points expand to 65.5 million points from a file under 400 kB, past
+   the 16,777,216 + 64 n steps of a load. *)
+let composite_work () =
+  let copies = List.init 1000 (fun _ -> composite_of [ 1 ]) in
+  let over = tiny_file ("" :: simple_line 65534 :: copies) in
+  less int ~than:400_000 (String.length over);
+  is_error `Unsupported ~sub:"expand to more than" (Font.of_string over)
+
 let loading =
   group "loading"
     [
@@ -211,6 +220,7 @@ let loading =
       test "a composite expands to at most 65535 points" composite_points;
       test "a composite expands to at most 65535 components"
         composite_components;
+      test "a load's work is bounded by the file's size" composite_work;
       test "of_file decodes a file and reports what it cannot read"
         of_file_reads;
       test "pp_error formats the kind and the message" (fun () ->
@@ -225,6 +235,7 @@ let loading =
 
 let cff_otf = read "golden/cff.otf"
 let cff2_otf = read "golden/cff2.otf"
+let cff_2048_otf = read "golden/cff-2048.otf"
 
 (* [expected_outlines file upem] is each glyph's outline that the generator
    recorded from fontTools, in em with y down. Coordinates are written as
@@ -465,8 +476,20 @@ let hostile_cases =
                if k = 9 then return
                else cat (List.init 8 (fun _ -> subr (k + 1) ^ callsubr))))
         [ call0 ],
-      `Malformed,
+      `Unsupported,
       "more than 65535 bytes" );
+    ( "glyphs whose runs add up past the load's bound",
+      (* Each glyph runs 49155 bytes through subroutines that call the next
+         four times, so 400 of them pass 16,777,216 + 64 n steps. *)
+      cff_result
+        ~subrs:
+          (List.init 8 (fun k ->
+               if k = 7 then ""
+               else
+                 cat (List.init 4 (fun _ -> subr (k + 1) ^ callsubr)) ^ return))
+        (List.init 400 (fun _ -> cat [ ns [ 0; 0 ]; rmoveto; call0 ])),
+      `Unsupported,
+      "expand to more than" );
     ( "a call of a missing subroutine",
       cff_result [ call0 ],
       `Malformed,
@@ -522,21 +545,39 @@ let cff_outlines =
   group "CFF outlines"
     [
       cases "the outlines of the fixtures are those fontTools decodes"
-        ~id:(fun (n, _, _) -> n)
+        ~id:(fun (n, _, _, _) -> n)
         [
-          ("CFF", cff_otf, "golden/cff.expected");
-          ("CFF2", cff2_otf, "golden/cff2.expected");
+          ("CFF", cff_otf, "golden/cff.expected", 1000.);
+          ("CFF2", cff2_otf, "golden/cff2.expected", 1000.);
+          ( "CFF of 2048 units per em",
+            cff_2048_otf,
+            "golden/cff-2048.expected",
+            2048. );
         ]
-        (fun (_, data, expected) ->
+        (fun (_, data, expected, upem) ->
           let f = decoded data in
           equal bool true (Font.outlines f = `Cff);
-          let expected = expected_outlines expected 1000. in
+          let expected = expected_outlines expected upem in
           equal int (Array.length expected) (Font.glyph_count f);
           Array.iteri
             (fun g p ->
               equal ~msg:(Printf.sprintf "glyph %d" g) path_t p
                 (Font.outline f g))
             expected);
+      test "a subset's font matrix is the head table's em" (fun () ->
+          let s = Font.subset (decoded cff_2048_otf) [ 1 ] in
+          (* [0.00048828125 0 0 0.00048828125 0 0 FontMatrix], the reals in
+             nibbles. *)
+          let scale = "\030\010\000\004\136\040\018\095" in
+          let matrix = cat [ scale; "\139\139"; scale; "\139\139\012\007" ] in
+          let holds s sub =
+            let n = String.length sub in
+            let rec at i =
+              i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+            in
+            at 0
+          in
+          equal bool true (holds s matrix));
       cases "charstrings draw what Type 2 defines" ~id:(fun (n, _, _) -> n)
         charstring_cases charstring_case;
       cases "subroutines" ~id:(fun (n, _, _) -> n) subroutine_cases
@@ -1750,7 +1791,10 @@ let cff2_face = decoded cff2_otf
 
 let gen_subset =
   let open Gen in
-  let* f = of_list [ Font.regular; Font.bold; cff_face; cff2_face ] in
+  let* f =
+    of_list
+      [ Font.regular; Font.bold; cff_face; cff2_face; decoded cff_2048_otf ]
+  in
   let+ gs =
     list ~size:(int_range 0 30) (int_range 0 (Font.glyph_count f - 1))
   in

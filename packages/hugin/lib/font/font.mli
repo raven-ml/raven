@@ -88,10 +88,18 @@ val of_string : string -> (t, error) result
     outline, written as one charstring without subroutines as {!subset} writes
     it, takes more than 65535 bytes. It is [Malformed _] for anything else,
     which includes a composite glyph whose components, expanded down to simple
-    glyphs, hold more than 65535 points or more than 65535 components, a stack
-    or nesting beyond the limits above, and a charstring that runs more than
-    65535 bytes of charstring and subroutine code, the most one charstring
-    holds. A variable font decodes as its default instance. *)
+    glyphs, hold more than 65535 points or more than 65535 components, and a
+    stack or nesting beyond the limits above.
+
+    Decoding checks every glyph's outline whole, and two bounds of hugin's
+    own, which OpenType does not set, keep that work linear in the size of the
+    file, however its glyphs share components or subroutines: the error is
+    [Unsupported _] for a CFF glyph that runs more than 65535 bytes of
+    charstring and subroutine code, as calls fanning out through subroutines
+    do, and for a font whose glyphs, expanded, take more than
+    [16_777_216 + 64 n] steps for a file of [n] bytes, a step being a point or
+    a component of a TrueType glyph and a byte a CFF glyph runs. A variable
+    font decodes as its default instance. *)
 
 val of_file : string -> (t, error) result
 (** [of_file path] is [of_string s] for the contents [s] of the file [path], or

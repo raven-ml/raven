@@ -13,7 +13,9 @@
   golden/cff2.otf
   golden/cff2.expected
   golden/cff-small.otf
-  golden/cff2-small.otf)
+  golden/cff2-small.otf
+  golden/cff-2048.otf
+  golden/cff-2048.expected)
  (action
   (progn
    (run %{test} --corrected)

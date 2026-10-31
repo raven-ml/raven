@@ -544,6 +544,18 @@ let shape glyphs g =
     let contours = i16 t 0 in
     if contours >= 0 then simple g t contours else composite g t
 
+(* Decoding checks every outline whole. Its work is bounded by the size of
+   the file, [load_work len] steps for [len] bytes, so that a small
+   file whose glyphs expand shared data, components or subroutines, cannot cost
+   billions of steps: hugin's own bound, which OpenType does not set. A step is
+   a point or component of a TrueType glyph and a byte a CFF glyph runs. *)
+let load_work len = 16_777_216 + (64 * len)
+
+let check_work steps len =
+  if steps > load_work len then
+    unsupported "glyph outlines that expand to more than %d steps from %d bytes"
+      (load_work len) len
+
 (* The points and the components of every glyph, composites expanded, each
    checked against 65535: TrueType's point indices are 16-bit, and the bound on
    components keeps the expansion of a composite, which [outline] and [inks]
@@ -575,8 +587,11 @@ let validate_glyphs glyphs n =
         parts.(g) <- k
     | _ -> ()
   in
+  let steps = ref 0 in
   for g = 0 to n - 1 do
-    visit g
+    visit g;
+    steps := !steps + points.(g) + parts.(g);
+    check_work !steps (String.length glyphs.glyf.s)
   done
 
 (* Fonts *)
@@ -697,7 +712,7 @@ let contours upem (m : Affine.t) ends on xs ys path =
 (* A CFF outline's points, in font units with y up, are mapped as TrueType's
    are. A contour starts at its first segment, so that a [moveto] that draws
    nothing leaves no subpath. *)
-let cff_outline ?(check = false) cff upem g =
+let cff_outline ?spent cff upem g =
   (* [0. -. y] keeps the baseline at [0.] rather than [-0.]. *)
   let pt x y = P2.v (x /. upem) ((0. -. y) /. upem) in
   let path = ref Path.empty and start = ref None in
@@ -705,10 +720,9 @@ let cff_outline ?(check = false) cff upem g =
     Option.iter (fun p -> path := Path.move_to p !path) !start;
     start := None
   in
-  (if check then Cff.check else Cff.run)
-    cff g
+  let sink =
     {
-      move = (fun x y -> start := Some (pt x y));
+      Cff.move = (fun x y -> start := Some (pt x y));
       line =
         (fun x y ->
           draw ();
@@ -721,7 +735,11 @@ let cff_outline ?(check = false) cff upem g =
         (fun () ->
           if Option.is_none !start then path := Path.close !path;
           start := None);
-    };
+    }
+  in
+  (match spent with
+  | None -> Cff.run cff g sink
+  | Some spent -> spent := !spent + Cff.check cff g sink);
   !path
 
 let glyph_outline outlines upem g =
@@ -936,10 +954,14 @@ let decode s =
         (let outline =
            match outlines with
            | Cff c -> (
+               let spent = ref 0 and len = String.length s in
                fun g ->
-                 try cff_outline ~check:true c upem g with
-                 | Cff.Malformed m -> malformed "%s" m
-                 | Cff.Unsupported m -> unsupported "%s" m)
+                 match cff_outline ~spent c upem g with
+                 | path ->
+                     check_work !spent len;
+                     path
+                 | exception Cff.Malformed m -> malformed "%s" m
+                 | exception Cff.Unsupported m -> unsupported "%s" m)
            | Glyf _ -> glyph_outline outlines upem
          in
          inks outline glyph_count);
@@ -1314,7 +1336,8 @@ let subset f gs =
           Array.init count (fun g ->
               if keep.(g) then Cff.charstring c g else "\014")
         in
-        let cff = Cff.table ~name:f.postscript_name charstrings in
+        let upem = Float.to_int f.upem in
+        let cff = Cff.table ~name:f.postscript_name ~upem charstrings in
         (0x4F54544F, [ ("CFF ", cff) ], [])
   in
   (* CFF outlines take a [maxp] of version 0.5, which holds the count alone. *)

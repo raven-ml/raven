@@ -317,7 +317,10 @@ type sink = {
 
 let max_stems = 96 (* Type 2's limit on stem hints. *)
 let max_depth = 10 (* The nesting of subroutines. *)
-let max_bytes = 65535 (* The most bytes a charstring holds. *)
+(* A glyph runs at most as many bytes as a charstring holds, so that calls
+   fanning out through subroutines end at once: hugin's own bound, which the
+   Type 2 format does not set. *)
+let max_bytes = 65535
 let transient = 32 (* Elements of the transient array. *)
 
 type state = {
@@ -464,7 +467,8 @@ let rec exec st (a, b) depth =
   let ran n =
     st.ran <- st.ran + n;
     if st.ran > max_bytes then
-      fail st "it runs more than %d bytes of charstrings" max_bytes;
+      unsupported "glyph %d: it runs more than %d bytes of charstrings" st.g
+        max_bytes;
     i := !i + n
   in
   let reserved () =
@@ -728,7 +732,8 @@ and escape st b1 =
       end
   | _ -> fail st "it holds the reserved operator 12 %d" b1
 
-let run c g sink =
+(* [runs c g sink] runs glyph [g] and is the bytes it ran. *)
+let runs c g sink =
   let fd = c.fd_of.(g) in
   let st =
     {
@@ -748,11 +753,14 @@ let run c g sink =
       sink;
     }
   in
-  match exec st (item c.charstrings g) 0 with
+  (match exec st (item c.charstrings g) 0 with
   | () ->
       if not c.cff2 then fail st "its charstring does not end with endchar";
       close st
-  | exception End -> ()
+  | exception End -> ());
+  st.ran
+
+let run c g sink = ignore (runs c g sink)
 
 (* Writing charstrings *)
 
@@ -859,7 +867,7 @@ let charstring c g =
 
 let check c g sink =
   let e, finish = encoder g in
-  run c g
+  let both =
     {
       move =
         (fun x y ->
@@ -877,8 +885,11 @@ let check c g sink =
         (fun () ->
           e.close ();
           sink.close ());
-    };
-  ignore (finish ())
+    }
+  in
+  let ran = runs c g both in
+  ignore (finish ());
+  ran
 
 (* Writing tables *)
 
@@ -933,10 +944,53 @@ let font_name s =
 
 let std_strings = 391 (* SIDs below this name standard strings. *)
 
-let table ~name charstrings =
+(* [real b v] writes [v] as a DICT real: the nibbles of its decimal text,
+   ended by [0xf]. *)
+let real b v =
+  let text = Hugin_float_text.Float_text.exact v in
+  let nibbles = ref [] in
+  let add n = nibbles := n :: !nibbles in
+  let i = ref 0 in
+  while !i < String.length text do
+    (match text.[!i] with
+    | '0' .. '9' as c -> add (Char.code c - Char.code '0')
+    | '.' -> add 0xa
+    | '-' -> add 0xe
+    | 'e' when !i + 1 < String.length text && text.[!i + 1] = '-' ->
+        add 0xc;
+        incr i
+    | 'e' when !i + 1 < String.length text && text.[!i + 1] = '+' ->
+        add 0xb;
+        incr i
+    | _ -> add 0xb);
+    incr i
+  done;
+  add 0xf;
+  if List.length !nibbles mod 2 = 1 then add 0xf;
+  let rec bytes = function
+    | lo :: hi :: rest ->
+        bytes rest;
+        add_byte b ((hi lsl 4) lor lo)
+    | _ -> ()
+  in
+  add_byte b 30;
+  bytes !nibbles
+
+let table ~name ~upem charstrings =
   let n = Array.length charstrings in
   let top ~charset ~fdselect ~chars ~fdarray =
     let b = Buffer.create 64 in
+    (* The em of the head table, which the default matrix says is 1000. *)
+    if upem <> 1000 then begin
+      let s = 1. /. float upem in
+      real b s;
+      small b 0;
+      small b 0;
+      real b s;
+      small b 0;
+      small b 0;
+      escaped b 7
+    end;
     small b std_strings;
     small b (std_strings + 1);
     small b 0;

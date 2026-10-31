@@ -13,6 +13,11 @@ kept, and renamed: Source is a Reserved Font Name of the SIL Open Font
 License they are under, so the modified fonts take another name and keep the
 copyright notice and the license, which LICENSE.md copies.
 
+`cff-2048.otf` has an em of 2048 units: the CFF outlines of the glyphs of
+SMALL of the bundled Inter Regular, its quadratic curves written as the cubic
+ones they are, renamed. Inter is under the SIL Open Font License without a
+Reserved Font Name; LICENSE-Inter.txt copies its license.
+
 Each face also gives `<name>-small.otf`, of the glyphs of SMALL and the
 names the license asks to keep, small enough that the robustness tests
 overwrite each of its bytes.
@@ -34,6 +39,8 @@ import sys
 import urllib.request
 
 from fontTools import subset
+from fontTools.fontBuilder import FontBuilder
+from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.ttLib import TTFont
 
@@ -56,6 +63,7 @@ SAMPLE = "Hamburgefontsiv 0123456789 &@%?!éÅßœ()[]{}"
 SMALL = "Ho"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "golden")
+FONTS = os.path.join(HERE, "..", "..", "..", "lib", "font", "fonts")
 
 
 def fetch(url, sha256=None):
@@ -115,6 +123,54 @@ def subset_of(data, postscript, text, names):
     return out.getvalue()
 
 
+def inter_cff():
+    """The CFF font of the glyphs of SMALL of the bundled Inter Regular."""
+    src = TTFont(os.path.join(FONTS, "Inter-Regular.ttf"))
+    options = subset.Options()
+    options.notdef_outline = True
+    options.layout_features = []
+    sub = subset.Subsetter(options)
+    sub.populate(text=SMALL)
+    sub.subset(src)
+    order = src.getGlyphOrder()
+    glyphs = src.getGlyphSet()
+    charstrings = {}
+    for name in order:
+        # Cubic curves hold the quadratic ones exactly, up to the 16.16
+        # numbers charstrings write their control points in.
+        pen = T2CharStringPen(None, glyphs, roundTolerance=0)
+        glyphs[name].draw(pen)
+        charstrings[name] = pen.getCharString()
+    postscript = "HuginFixture-cff2048"
+    fb = FontBuilder(src["head"].unitsPerEm, isTTF=False)
+    fb.setupGlyphOrder(order)
+    fb.setupCharacterMap(src.getBestCmap())
+    fb.setupCFF(postscript, {"FullName": NAME}, charstrings, {})
+    fb.setupHorizontalMetrics({n: src["hmtx"][n] for n in order})
+    hhea = src["hhea"]
+    fb.setupHorizontalHeader(ascent=hhea.ascent, descent=hhea.descent)
+    fb.setupNameTable(
+        {"familyName": NAME, "styleName": "Regular", "psName": postscript,
+         "copyright": src["name"].getDebugName(0)}
+    )
+    os2 = src["OS/2"]
+    fb.setupOS2(
+        version=os2.version,
+        sCapHeight=os2.sCapHeight,
+        sxHeight=os2.sxHeight,
+        usWeightClass=os2.usWeightClass,
+        sTypoAscender=os2.sTypoAscender,
+        sTypoDescender=os2.sTypoDescender,
+        sTypoLineGap=os2.sTypoLineGap,
+    )
+    fb.setupPost()
+    fb.font["head"].created = fb.font["head"].modified = 0
+    out = io.BytesIO()
+    fb.font.recalcTimestamp = False
+    fb.save(out)
+    return out.getvalue()
+
+
 def fixed(v):
     n = v * 65536
     if n != int(n):
@@ -157,6 +213,11 @@ def main():
         # The copyright notice and the family's names stay.
         small = subset_of(face, f"HuginFixture-{name}", SMALL, [0, 1, 2, 6])
         files[f"{name}-small.otf"] = small
+    data = inter_cff()
+    files["cff-2048.otf"] = data
+    files["cff-2048.expected"] = outlines(data).encode()
+    with open(os.path.join(FONTS, "LICENSE.txt"), "rb") as f:
+        files["LICENSE-Inter.txt"] = f.read()
     changed = []
     for name, data in files.items():
         path = os.path.join(OUT, name)

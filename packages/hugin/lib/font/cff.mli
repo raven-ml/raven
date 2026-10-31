@@ -15,8 +15,9 @@
     running raise {!Malformed} or {!Unsupported} on data they cannot read, and
     nothing else: every read is checked against the table's end, the argument
     stack holds at most 48 numbers in CFF and 513 in CFF2, subroutines nest at
-    most 10 deep, and a glyph runs at most 65535 bytes of charstring and
-    subroutine code. A variable CFF2 font runs as its default instance, where
+    most 10 deep, as the formats say, and a glyph runs at most 65535 bytes of
+    charstring and subroutine code, hugin's own bound against calls that fan
+    out. A variable CFF2 font runs as its default instance, where
     every [blend] gives its default values. *)
 
 exception Malformed of string
@@ -54,11 +55,13 @@ val charstring : t -> int -> string
 
     Raises {!Unsupported} if it would take more than 65535 bytes. *)
 
-val check : t -> int -> sink -> unit
-(** [check c g sink] is [run c g sink], then raises as {!charstring} would. *)
+val check : t -> int -> sink -> int
+(** [check c g sink] is [run c g sink], then raises as {!charstring} would. It
+    is the bytes of charstrings and subroutines the glyph ran. *)
 
-val table : name:string -> string array -> string
-(** [table ~name charstrings] is a CID-keyed ['CFF '] table of one font named
-    [name] whose glyph [i], CID [i], is [charstrings.(i)]: registry [Adobe],
-    ordering [Identity], one font DICT with an empty Private DICT, and no
-    subroutines. [charstrings] must not be empty. *)
+val table : name:string -> upem:int -> string array -> string
+(** [table ~name ~upem charstrings] is a CID-keyed ['CFF '] table of one font
+    named [name] whose glyph [i], CID [i], is [charstrings.(i)]: registry
+    [Adobe], ordering [Identity], the font matrix of [upem] units per em, one
+    font DICT with an empty Private DICT, and no subroutines. [charstrings]
+    must not be empty. *)
