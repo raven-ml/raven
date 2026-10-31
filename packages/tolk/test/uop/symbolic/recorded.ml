@@ -57,10 +57,12 @@ let record u =
   | [ input ] -> { kind; bounds; input; result = None }
   | _ -> failf "a record of %d nodes" (List.length (Ops.src u))
 
-(* The host's libm folds these operations, and libms legitimately differ in the
-   last place: macOS's sin 4.0 is one unit in the last place from glibc's, which
-   is correctly rounded. A constant they fold agrees within one. *)
-let host_libm = Op.[ Sin; Log2; Exp2; Pow ]
+(* The goldens hold correctly rounded values, and tolk computes these
+   operations with the host's C library, which can be one unit from them:
+   glibc's pow, which exp2 calls as [pow 2. x], is for about one x in a
+   thousand. A folded constant agrees within one. The sine is tolk's own,
+   correctly rounded, and agrees exactly. *)
+let host_libm = Op.[ Log2; Exp2; Pow ]
 
 let folded_within_ulp =
   let near a b =

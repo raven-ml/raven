@@ -4097,20 +4097,26 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 - **tinygrad:** `uop/ops.py:1410` (`python_alu`'s `SIN`, `math.sin`, the C
   library's).
-- **tolk:** `Ops.sine`, which `python_alu` calls.
+- **tolk:** `Ops.sine`, which `python_alu` calls; `test/gen/tinygrad.patch`,
+  which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`, in
+  decimal) before the goldens are generated.
 - **Differs:** `exec_alu` computes a sine on integers: the argument is
   reduced exactly by pi/2, held to 1200 bits, and the sine or cosine of the
   remainder is summed in fixed point to 192 bits, then rounded once. The
   result is correctly rounded on every host, where tinygrad's is the C
-  library's: on an M1 Mac about 3% of drawn float64 sines are one unit off,
-  and mingw-w64's reduces by x87's 66-bit pi. A NaN operand gives `Dtype.nan`.
+  library's: on an M1 Mac about 3% of drawn float64 sines are one unit off
+  (`sin 2.5`, `sin 4.0`), glibc's about 0.1% (`sin 0.259`), and mingw-w64's
+  reduces by x87's 66-bit pi. A NaN operand gives `Dtype.nan`.
 - **Reason:** (b). rune's `sin` and `cos` are `SIN` nodes
   (rune's `Lower_real.sin_`), which fold through `exec_alu`, and a
   fold must not depend on the host: on Windows `sin 1e300` folded to
   `0.979`, of the wrong sign.
 - **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `SIN`
-  rows include `1e300`, `3.4e38`, pi and floats near multiples of pi, and
-  which fail on Windows with the C library's sine.
+  rows include `1e300`, `3.4e38`, pi, floats near multiples of pi and floats
+  whose sine glibc rounds to the wrong neighbour, compared exactly, and which
+  fail with the C library's sine on macOS, glibc and Windows; `Tolk.Symbolic ›
+  tinygrad › tests.golden › TestWeakConstFolding.test_float_unaries`, which
+  folds `sin 4.0`.
 
 ## D151. An x86 kernel declares that it uses 512-bit vectors
 

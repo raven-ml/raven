@@ -1,7 +1,7 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
 0 Ops.CONST dtypes.weakfloat [] 4.0
 1 Ops.SIN dtypes.weakfloat [0]
-2 Ops.CONST dtypes.weakfloat [] -0.7568024953079283
+2 Ops.CONST dtypes.weakfloat [] -0.7568024953079282
 3 Ops.SINK dtypes.void [1, 2] tag="simplify"
 4 Ops.LOG2 dtypes.weakfloat [0]
 5 Ops.CONST dtypes.weakfloat [] 2.0

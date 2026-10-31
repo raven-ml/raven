@@ -11,7 +11,9 @@ the tinygrad checkout, which must be clean and at TINYGRAD, with
 `gen/tinygrad.patch` applied to a copy of it: the patch makes tinygrad's
 rewrites keep IEEE and modular values, and its constants a NaN's bits, as
 tolk's do, and its constant arithmetic
-compute what the README's CPython rows say; it also removes `spec_hcq`
+compute what the README's CPython rows say, with sin, log2, exp2 and pow
+correctly rounded, so that the goldens are the same on every host's C
+library; it also removes `spec_hcq`
 from `uop/spec.py`, which tolk does not port (see the README).
 Moving TINYGRAD means re-applying it. MODULE, such as `dtype` or `uop/op`,
 limits the run to those generators; by default all run.

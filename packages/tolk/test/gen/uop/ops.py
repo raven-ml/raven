@@ -116,6 +116,9 @@ def alu_rows():
     # bits than the float has
     for x in [math.pi, -math.pi, 2.0 ** 10 * math.pi, 2.0 ** 30 * math.pi, 1e22]:
         row(Ops.SIN, dtypes.double, (x,))
+    # sines that glibc rounds to the wrong neighbour (macOS: 2.5 and 4.0)
+    for x in [0.259, 1.622, 3.226, 8.85]:
+        row(Ops.SIN, dtypes.double, (x,))
     # a float operation on integer operands, as a weak integer constant folds
     for op in FLOAT_UNARY_OPS:
         for x in (0, 1, 4, 8, -3, 7): row(op, dtypes.float, (x,))

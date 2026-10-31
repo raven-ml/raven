@@ -14,10 +14,12 @@ let bool_cell = function
 
 (* exec_alu *)
 
-(* The host's libm computes these operations, and libms legitimately differ in
-   the last place: macOS's sin 2.5 is one unit in the last place from glibc's,
-   which is correctly rounded. Their results agree within one. *)
-let host_libm = Op.[ Sin; Log2; Exp2; Pow ]
+(* The goldens hold correctly rounded values, and tolk computes these
+   operations with the host's C library, which can be one unit from them:
+   glibc's pow, which exp2 calls as [pow 2. x], is for about one x in a
+   thousand. A result agrees within one. The sine is tolk's own, correctly
+   rounded, and agrees exactly. *)
+let host_libm = Op.[ Log2; Exp2; Pow ]
 
 let within_ulp =
   let near a b =

@@ -2915,10 +2915,18 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..5b998d3 100644
+index 2842d7e..7a6d701 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
-@@ -58,7 +58,8 @@ axis_to_pos = {AxisType.DEVICE: -2, AxisType.WEAK: -1, AxisType.LOOP: -1, AxisTy
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ from typing import Any, Callable, cast, TYPE_CHECKING, Type, Sequence, Iterable, Final, Iterator
+ import sys, time, functools, itertools, math, operator, hashlib, os, types, pickle, pathlib, inspect, weakref, collections, struct
++import decimal, fractions
+ from dataclasses import dataclass, replace
+ from enum import Enum, auto
+ from tinygrad.uop import Ops, GroupOp
+@@ -58,7 +59,8 @@ axis_to_pos = {AxisType.DEVICE: -2, AxisType.WEAK: -1, AxisType.LOOP: -1, AxisTy
  range_start = {Ops.STAGE: 1, Ops.REDUCE: 1, Ops.END: 1, Ops.CALL: 1, Ops.LINEAR: 0}
  
  # https://en.wikipedia.org/wiki/Identity_element
@@ -2928,7 +2936,7 @@ index 2842d7e..5b998d3 100644
  
  # With True as the default, this matches the old symbolic behavior
  def resolve(x:UOp|bool, default:bool=True):
-@@ -92,6 +93,21 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+@@ -92,6 +94,21 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -2950,7 +2958,7 @@ index 2842d7e..5b998d3 100644
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1102,8 +1118,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1102,8 +1119,31 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -2983,7 +2991,7 @@ index 2842d7e..5b998d3 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,28 +1178,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1139,28 +1179,55 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -3047,7 +3055,7 @@ index 2842d7e..5b998d3 100644
  
    @functools.cached_property
    def _sym_fxn(self):
-@@ -1333,6 +1399,8 @@ class KernelInfo:
+@@ -1333,6 +1400,8 @@ class KernelInfo:
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
@@ -3056,7 +3064,7 @@ index 2842d7e..5b998d3 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1363,6 +1431,7 @@ class ProgramInfo:
+@@ -1363,6 +1432,7 @@ class ProgramInfo:
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -3064,28 +3072,116 @@ index 2842d7e..5b998d3 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1404,12 +1473,18 @@ def safe_pow(x, y):
+@@ -1395,21 +1465,102 @@ class CallInfo:
+ 
+ # ******** ops in python ********
+ 
++# sin, log2, exp2 and pow are correctly rounded, so that a fold is the same on every host: the C library's differ in the last
++# place between hosts. A power that is a fraction is computed exactly, any other value in decimal to CR_DIGITS digits, then
++# rounded once; a decimal value so near halfway between two floats that it could round wrong raises.
++CR_DIGITS = 80
++def cr_round(v:decimal.Decimal) -> float:
++  if math.isinf(f:=float(v)): return f
++  # past the greatest float, the next value is the one at which rounding goes to infinity
++  n = math.nextafter(f, math.inf if v > f else -math.inf)
++  mid = (fractions.Fraction(f) + (fractions.Fraction(n) if math.isfinite(n) else fractions.Fraction(f) + (2**971 if f > 0 else -2**971))) / 2
++  if abs(fractions.Fraction(v) - mid) * 10**(CR_DIGITS-5) <= abs(mid): raise ArithmeticError(f"{v} is too near halfway between floats")
++  return f
++
++def iroot(n:int, q:int) -> int|None:
++  # the integer whose q-th power is n, if there is one
++  lo, hi = 0, 1 << (n.bit_length() // q + 1)
++  while lo < hi:
++    if (mid:=(lo + hi) // 2) ** q < n: lo = mid + 1
++    else: hi = mid
++  return lo if lo ** q == n else None
++
++@functools.cache
++def cr_pi(digits:int) -> decimal.Decimal:
++  # the decimal module's recipe: pi = 3 + 3/24 + 3/24*9/80 + 3/24*9/80*25/168 + ...
++  with decimal.localcontext(prec=digits+2):
++    lasts, t, s, n, na, d, da = 0, decimal.Decimal(3), 3, 1, 0, 0, 24
++    while s != lasts:
++      lasts, n, na, d, da = s, n+na, na+8, d+da, da+32
++      t = (t * n) / d
++      s += t
++  with decimal.localcontext(prec=digits): return +s
++
++def cr_sin(x) -> float:
++  if math.isinf(x:=float(x)): return math.nan
++  if x == 0 or math.isnan(x): return x
++  # x = k pi/2 + r, |r| <= pi/4: r has CR_DIGITS digits once pi has that many more than x has above r
++  d, prec = decimal.Decimal(x), 2*CR_DIGITS + max(0, decimal.Decimal(x).adjusted())
++  while True:
++    with decimal.localcontext(prec=prec):
++      k = (d / (half_pi:=cr_pi(prec) / 2)).to_integral_value()
++      r = d - k * half_pi
++    if r != 0 and prec >= d.adjusted() - r.adjusted() + CR_DIGITS + 10: break
++    prec *= 2
++  # sin x is sin r, cos r, -sin r, -cos r by k's quadrant; each series term is the last times -r^2/((j+1)(j+2))
++  q = int(k) % 4
++  with decimal.localcontext(prec=CR_DIGITS+10):
++    r2, (s, t, j) = r * r, (r, r, 1) if q % 2 == 0 else (decimal.Decimal(1), decimal.Decimal(1), 0)
++    while s + (t:=-t * r2 / ((j+1) * (j+2))) != s: s, j = s + t, j + 2
++  return cr_round(-s if q >= 2 else s)
++
++def cr_log2(x) -> float:
++  if not x > 0: return -math.inf if x == 0 else math.nan
++  if x == math.inf: return x
++  # math.log2 rounds an integer to a float, but one too large for a float
++  try: x = float(x)
++  except OverflowError: pass
++  with decimal.localcontext(prec=CR_DIGITS+10): return cr_round(decimal.Decimal(x).ln() / decimal.Decimal(2).ln())
++
+ def safe_exp2(x):
+-  try: return 2 ** x
++  try:
++    if isinstance(x, int) and x >= 0: return 2 ** x
++    if not math.isfinite(x:=float(x)): return 2 ** x
++    if x.is_integer(): return math.ldexp(1.0, int(x))
++    # past these, 2^x rounds to an infinity or to 0
++    if x > 1024: return math.inf
++    if x < -1076: return 0.0
++    with decimal.localcontext(prec=CR_DIGITS+10): return cr_round((decimal.Decimal(x) * decimal.Decimal(2).ln()).exp())
+   except OverflowError: return math.inf
+ 
+ def safe_pow(x, y):
+-  try: return math.nan if isinstance(p:=pow(x, y), complex) else p
++  try: p = pow(x, y)
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
- 
++  if isinstance(p, complex): return math.nan
++  # a float power is of the operands as floats; x < 0 only with an integer y
++  if not isinstance(p, float) or math.isnan(p) or not (math.isfinite(fx:=float(x)) and math.isfinite(fy:=float(y))) or fx == 0: return p
++  sign = -1.0 if fx < 0 and fy.is_integer() and int(fy) % 2 else 1.0
++  # with y = a/b, x^y is a fraction where |x| is a b-th power, which needs b <= 64 of a float; past |a| = 1100, only an x near 1
++  # has a float power, and only 1 an exact one
++  a, b = fractions.Fraction(fy).as_integer_ratio()
++  if b <= 64 and abs(a) <= 1100:
++    num, den = fractions.Fraction(abs(fx)).as_integer_ratio()
++    if (rn:=iroot(num, b)) is not None and (rd:=iroot(den, b)) is not None: return sign * float(fractions.Fraction(rn, rd) ** a)
++  with decimal.localcontext(prec=CR_DIGITS+10): return sign * cr_round((decimal.Decimal(fy) * decimal.Decimal(abs(fx)).ln()).exp())
++
 +def fdiv(x, y):
 +  # IEEE division: a zero divisor gives an infinity of the quotient's sign, or nan
 +  try: return x / y
 +  except ZeroDivisionError: return math.nan if x == 0 or x != x else math.copysign(math.inf, x) * math.copysign(1.0, y)
-+
+ 
  python_alu: dict[Ops, Callable]  = {
-   Ops.LOG2: lambda x: math.log2(x) if x > 0 else -math.inf if x == 0 else math.nan, Ops.EXP2: safe_exp2,
+-  Ops.LOG2: lambda x: math.log2(x) if x > 0 else -math.inf if x == 0 else math.nan, Ops.EXP2: safe_exp2,
++  Ops.LOG2: cr_log2, Ops.EXP2: safe_exp2,
    Ops.SQRT: lambda x: math.sqrt(x) if x >= 0 else math.nan, Ops.RECIPROCAL: lambda x: 1/x if x != 0 else math.copysign(math.inf, x),
-   Ops.SIN: lambda x: math.sin(x) if not math.isinf(x) else math.nan, Ops.POW: safe_pow,
+-  Ops.SIN: lambda x: math.sin(x) if not math.isinf(x) else math.nan, Ops.POW: safe_pow,
 -  Ops.TRUNC: lambda x: math.trunc(x) if math.isfinite(x) else x,
 -  Ops.NEG: operator.neg, Ops.ADD: operator.add, Ops.SUB: operator.sub, Ops.MUL: operator.mul, Ops.CMPNE: operator.ne, Ops.CMPLT: operator.lt,
++  Ops.SIN: cr_sin, Ops.POW: safe_pow,
 +  Ops.TRUNC: lambda x: (math.copysign(math.trunc(x), x) if math.isfinite(x) else x) if isinstance(x, float) else math.trunc(x),
 +  Ops.NEG: operator.neg, Ops.ADD: operator.add, Ops.SUB: operator.sub, Ops.MUL: operator.mul, Ops.FDIV: fdiv, Ops.CMPNE: operator.ne,
 +  Ops.CMPLT: operator.lt,
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1495,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1571,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
@@ -3163,7 +3259,7 @@ index 72a08ff..d2dc7ca 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..e00589d 100644
+index 2eb2e96..ef73f97 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -3173,7 +3269,7 @@ index 2eb2e96..e00589d 100644
  from collections import defaultdict
 -from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype
 -from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, bitcast, truncate
-+from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact, identity_element
++from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact, identity_element, cr_log2
 +from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, exact_bitcast, truncate
  from tinygrad.helpers import partition, all_same, prod, flatten, unwrap, IMAGE, dedup
  from tinygrad.uop.divandmod import div_and_mod_symbolic
@@ -3290,7 +3386,7 @@ index 2eb2e96..e00589d 100644
    (UPat.var("x").alu(Ops.POW, UPat.cvar("c")), simplify_pow),
    # positive const ** x
 -  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")), lambda c,x: c if c.val == 1 else (x*math.log2(c.val)).exp2() if c.val > 0 else None),
-+  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")), lambda c,x: c if c.val == 1 else (x*math.log2(c.val)).exp2() if 0 < c.val < math.inf else None),
++  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")), lambda c,x: c if c.val == 1 else (x*cr_log2(c.val)).exp2() if 0 < c.val < math.inf else None),
    # unpack a uint64 packed from two uint32 (threefry)
    (((UPat.var(None, dtypes.uint64)<<32) | UPat.var('y', dtypes.uint32).cast(dtypes.uint64)).cast(dtypes.uint32), lambda y: y),
    (((UPat.var('x', dtypes.uint32).cast(dtypes.uint64)<<32) | UPat.var(None, dtypes.uint32).cast(dtypes.uint64))>>32,
