@@ -5,7 +5,8 @@ goalpost: jit-compiled gpt-oss at least as fast as {tinygrad,JAX,llama.cpp/vLLM}
 gpt-oss-20b, CUDA (kimchi, ebfb61e268, before tolk ran on rig), raven /
 llama.cpp a868c3e:
 - decode 9.50 ms / 5.92 ms: attention and lm-head weights as Q8_0 as GGUF
-  does (~-2.2 ms, changes numerics); small kernels ~0.3 ms per step
+  does (~-2.2 ms, changes numerics, so a format the caller picks); small
+  kernels ~0.3 ms per step
 - prefill-512 0.188 s / 58.6 ms: profile what's left after tensor cores
 - first call 0.220 s with filled caches (first step 0.115 s)
 
@@ -16,96 +17,111 @@ raven / llama.cpp (Vulkan; ROCm):
 - first call 0.39 s (12 tokens, kernels cached; 1.43 s compiling them)
 - llama.cpp b11344 Vulkan, b11342 ROCm; tinygrad needs Resizable BAR here
 
-- re-record both on rig: GptOss rows and first call on fudge (kimchi's CPU
-  and GPU; kimchi is retired) and an AMD host, llama.cpp at a stated build
-- the port's gates on rig: gpt-oss decode and first call, sofo/symo, rune's
-  test_jit on CUDA, NV and AMD, the tolk, rune, nx and kaun decode benches
-  against the pre-port main; remat memory over its bound on NV/AMD; jit
-  replay's words on x86; the engine's wrong answers on Metal+host staged
-  loops
+- the port's gates on rig (ca03dcfa9; pre-port main is ca03dcfa9^), on
+  the new nx and rune: on fudge (CUDA, NV) and nonnormal (AMD), gpt-oss
+  decode, prefill-512 and first call, and GPT-2, re-recording the GptOss
+  rows (kimchi's only; fudge has kimchi's CPU and GPU) and llama.cpp at a
+  stated build; sofo/symo; rune's test_jit on CUDA, NV and AMD; the tolk,
+  rune, nx and kaun decode benches against ca03dcfa9^; remat memory over
+  its bound on NV/AMD; jit replay's 639 words (c56ee080d) on x86; the
+  engine's wrong answers on Metal+host staged loops (no case recorded: find
+  it or drop it)
 
 ## rig
 
 ### drivers
 
+- rig.pci: a peer GPU's memory mapped through its BAR is given back by
+  its owner's free while a peer that may still master can write it
+  (`give_back`, pci/memory.ml); a fix needs the two GPUs' locks taken
+  together
+- rig.nv: memory a failed `make` could not free stays for the process,
+  and the open's `Error` does not say so: `make`'s `back ()` drops every
+  `Fault` (rig_nv.ml). The kernel path keeps its client
+- rig.amd over PCI, rig.pci: `peer` must take no lock (rig_edge.mli's
+  Drivers section). AMD over PCI's `reaches` takes `machines_lock`, and
+  rig.pci's `Memory.reaches` reads each GPU's route under `routes`
+  without an IOMMU, for NV over PCI too. A callback inside those sections
+  gets `Invalid_argument`. NV over PCI's atomic list is the shape for AMD;
+  the route needs a first read that takes no lock
+- rig's drivers keep state whole by rig.mli's rule: a synchronous raise
+  leaves it whole; an asynchronous one may leak and lose the device but
+  never makes a later call wrong. worklist-m.md (b8a35696e) has 89 rows
+  to fix of 199. nv, nv-pci, pci, cuda, disk and remote have had their
+  fix series since; rig.amd (21 rows, nonnormal), mlx5 (8), bnxt (11) and
+  metal (1) have not. Recount on main, fix the rest. On Windows OCaml has
+  no signal masks, so a Ctrl-C lands at any poll point below rig's core,
+  rows worklist-m.md counts as unreached included (rig.cuda's page-lock
+  registry under a contended lock): those rows need the same fix there
+- rig.remote: one Ctrl-C ends an agent's `serve` two ways: inside a
+  command it answers `Error "Stdlib.Sys.Break"`, against rig_remote.mli's
+  "a handler's exception ends `serve`"; in `serve`'s own waits it raises.
+  An agent idle in its wait for a controller sees the Ctrl-C only when a
+  controller arrives
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
-  second slot once an AMD host runs it, and drop its 16 MiB ring
-- rig.pci: a peer GPU's memory mapped through its BAR is given back by
-  its owner's free while a peer that may still master can write it; a
-  fix needs the two GPUs' locks taken together
-- rig.nv: an asynchronous exception that is no signal's (a Gc.Memprof
-  callback's, `Out_of_memory`) between `Rm.alloc` and `alloc_video`'s
-  rollback keeps that video memory for the process, as rig.mli allows:
-  its RM device outlives the lost device (568 MiB per interrupted growth
-  of local memory on the RTX 5000, kernel path)
-- rig.nv: memory a failed `make` could not free stays for the process,
-  and the open's `Error` does not say so (the kernel path keeps its
-  client)
-- rig.amd, rig.pci: `peer`, promised to take no lock, takes AMD over
-  PCI's `machines_lock` and, without an IOMMU, rig.pci's `routes` lock; a
-  callback inside those sections gets `Invalid_argument`
-- every library below rig keeps its state whole under an exception: about
-  200 sections take a resource and record it after an allocation, or raise
-  with a change half made; each allocates its record, takes the resource,
-  then publishes with one store
-- rig.remote: one Ctrl-C ends an agent's `serve` two ways: inside a
-  command it answers `Error "Stdlib.Sys.Break"`, in `serve`'s own waits it
-  raises. An agent idle in its wait for a controller sees the Ctrl-C only
-  when a controller arrives
-- Windows: rig's signal mask blocks nothing there, so a Ctrl-C can land
-  inside sections below rig's core that Linux and macOS keep it out of,
-  such as rig.cuda's page-lock registry under a contended lock
+  second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
+  Needs an SDMA 4 GPU (Vega, MI100-MI300); nonnormal's gfx1201 runs SDMA 7
 
 ### limits and size
 
-- NV address spaces: Device memory in the 49-bit space on the PCI path
+- NV over PCI: every GPU's memory, Device and host-mapped, comes from one
+  range, 64 GiB to `Rig_nv.windows` (about 952 GiB, rig_nv_pci.ml),
+  shared by all GPUs: eight 141 GB GPUs don't fit. Place Device memory in
+  the GSP's 49-bit space (gsp.ml), as e81be363c did for the kernel path;
+  only segments, launch descriptors and semaphores need 2^40
 
 ### API
 
 - copies: nx's placement, allocation and assembly through
   `Buffer.submit_copy`, boxes and `Buffer.submit_fill`; done when placing on
   N GPUs costs one wait
+- a read of a remote device's memory that doesn't follow its later work:
+  `Nx.check` on another machine's device settles through
+  `Nx_array.to_device`, whose `Rig.Buffer.copy` follows every value
+  submitted there, so a check waits for its step
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
   copy between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not
   TCP, over the memory `Rig.Buffer.dma` describes
 
 ### tests and runs
 
-- relock windtrap once its `workers-block` branch (a883e72, a start
-  barrier that sleeps once workers stop arriving) lands: rig_pci.space
-  "two domains allocate and free at once" times out at its 10 s bound in
-  60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
-  barrier, and in none of 96 with it
-- hardware runs: the box and fill laws on SDMA 4 to 6; two GPUs (peers);
-  mlx5 and bnxt NICs
+- hardware runs, none possible on fudge or nonnormal (SDMA 7, one GPU
+  each, no RDMA NIC): the box and fill laws on SDMA 4 to 6; two GPUs
+  (peers); mlx5 and bnxt NICs
 
 ### perf
 
-- AMD boxes as one COPY_LINEAR_SUB_WIND packet per 2^14 rows on SDMA 4-6,
-  where they run as a COPY_LINEAR per row: measured on an AMD host against
-  rows; it also lifts the row limit of a box on SDMA 4 over PCI, about
-  170,000 rows, past which a box never fits the ring
+- AMD boxes as one COPY_LINEAR_SUB_WIND packet per 2^14 rows, where they
+  run as a COPY_LINEAR per row (rig_amd.mli). Linux drives SDMA 7 with the
+  v6 packet header (sdma_v7_0.c), so check SDMA 7's packet and measure on
+  nonnormal against rows; SDMA 4 to 6 wait for a host. On SDMA 4 over PCI
+  it also lifts a box's limit of about 170,000 rows, past which it never
+  fits the ring
 - a host buffer's creation: every fresh nx result mallocs through
-  `caml_rig_heap_bytes` and allocates a custom block (`buffer/host-create-16`
-  54 ns, 31 words on the M1; nx's `dispatch/add-1` 214 ns): profile malloc
+  `caml_rig_heap_bytes` and allocates a custom block (fudge:
+  `buffer/host-create-16` 36 ns, 31 words; nx's `dispatch/add-1` 207 ns,
+  51 words). Below `heap_kept_from` nothing is kept: profile malloc
   against the custom block and `host_memory`, then A/B a per-domain free
   list of small host buffers
 - kaun's GPU decode rows measure allocation again (bench_decode.ml's
-  gpu_metrics) once a decode call's words are shown not to depend on the
-  collector's phase, on Metal and CUDA
-- AMD 4 KiB prepared copies are 17-26% slower since 70cca2ae5's wait change
-  (the compute route itself starts at 2 MiB): name the row, explain it or
-  revert the wait change for small copies
-- rig.disk: each transfer pays about 220 ns for blocking signals below
-  rig's core (5493c9821): two sigmask calls, and a runtime release at the
-  call's end, about 14 ns of read/4K's cost. read/4K went 246 to 481 ns,
-  write/4K 315 to 547 ns on fudge. Find a mask that a short transfer does
-  not pay twice
+  `gpu_metrics`) once a decode call's words are shown not to depend on
+  the collector's phase: on fudge (CUDA) and nonnormal (AMD)
+- AMD 4 KiB copies: `copy/amd/within-device-4K` on nonnormal is bimodal,
+  7.9-9.2 µs in 9 samples and 14.6-15.4 µs in 11 (rig-gpu.thumper),
+  against fudge's 5.5 µs CUDA and 4.0 µs NV. The copy kernel starts at
+  2 MiB, so this is SDMA and the wait: find what splits the modes
+- every call below rig's core pays about 270 ns for its signal mask
+  (5493c9821): two sigmask calls and a runtime release, the release about
+  14 ns (561a0b34c). fudge: rig.disk read/4K 246 to 481 ns, write/4K 315
+  to 547; copy/staged-4K +51%, device/open-close-memory +41%,
+  drain/free-cache-1000 +42%. Find a mask in rig.edge that a short call
+  does not pay in full
 - rig.disk's open/many-128 counts the frees of earlier rounds' buffers,
   which `of_io`'s drain runs when the GC has collected them, so its
   `exact` word count moves with `OCAMLRUNPARAM` and the rows run beside
-  it: drain outside the measured window
+  it (10,889 on fudge, 10,930-28,040 elsewhere): drain outside the
+  measured window
 
 ## tolk
 
@@ -189,207 +205,222 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
+- compiled `eigh`'s floor overflows: `norm_roundoff` (lower_linalg.ml)
+  multiplies the norm by its scale before the roundoff, so a float32
+  matrix whose Frobenius norm passes 3.4e38 skips every rotation and fails
+  to NaN, e.g. [[2.5e38, 1e38], [1e38, -2.5e38]] (eigenvalues ±2.7e38).
+  Multiply by the roundoff first, test that matrix
 - compiled `eigh` skips a pair below u·‖A‖_F (`norm_roundoff`), svd below
   u·‖a‖‖b‖ per pair: two rules for one cause. One relative floor in
   `tangents`, |γ| ≤ u·√(|α||β|) (Demmel and Veselić, LAPACK Working Note
   15; eager's split test), removes `norm_roundoff`, its reduction and
-  `lower_linalg.mli`'s graded-matrix carve-out. `norm_roundoff` overflows
-  today: a float32 matrix with diagonal 2.5e38 and finite eigenvalues
-  returns NaN
-- baselines on fudge: the `compile` suite's four `trig/` rows, and a
-  re-record of the `compiled` suite's float64 sine rows
-  (`transcendental/sin*`, `special/sin*`), whose kernels now take vector lanes
-- a compiled `Nx.take` gradient costs the table times the tokens:
-  `indexed/take-grad-1024-of-32768x64-host` takes 94 ms on the M1 (load 20)
-  against ~2 ms eager. At 128256 rows a plain loop measured 17 ms and thumper
-  0.67-1.05 s, unexplained. The row has no baselines yet (Mac, fudge)
-- jit compiles no complex tensor (lower.ml:36); ymir's `test_quantity`
-  holds an `xfail`
+  `lower_linalg.mli`'s graded-matrix carve-out
 - vega keeps optimizer state at the leaf dtype: a bfloat16 moment never
-  decays by less than half its spacing (vega.mli:98). Design pass
-- compiled Cholesky stays unrolled (lower_linalg.ml:613): compile grows with
-  n (35 s at n=32); as a loop it ran 1.5x slower at n=11
-- the `compile` bench suite takes ~2.4 min quiet on the Mac
-  (`log_betainc-grad-b` 13 s, `betainc` 6 s, `sinkhorn-64` 3.8 s)
-- kaun's TrainStep/train-step allocates 27,332 words (22,460 before the
-  redesign), ~2,300 of them two traced values and a recorded op per op:
-  re-record on the Mac and fudge, and cut the per-op records
-- eager rune links tolk (rune's library lists tolk and tolk.engine): the
-  compile path behind its own module (_plans/tolk/linkall-design.md)
+  decays by less than half its spacing (vega.mli). Design pass
+- kaun's TrainStep/train-step allocated 27,332 words eagerly on the old
+  rune, ~2,300 of them two traced values and a recorded op per op:
+  re-measure on the new rune on fudge, and cut the per-op records if they
+  remain
+- an eager rune program links tolk whole: rune lists tolk and tolk.engine,
+  and `jit` reaches every stage (06bdcea5b). Put the compile path in its
+  own module so a program that never compiles links none of it
 - an `iterate` that emits rows; jera's `Ode.path` scans every `budget`
-  slot (ode.ml:961). Design pass
+  slot (ode.ml's `slot` mask and `put_row`). Try a scatter at a run-time
+  index first, as kaun's decode cache compiles. Design pass
 - fully sharded training: RFC 0005's bound (P+G+O)/n + 2 layers has no test
-  since the rune/tolk rewrite
+  since d478112cb removed the counting-device test
 - kaun: 05-llama loads a GGUF checkpoint (`Nx_io.load_gguf`, Q8_0/Q4_K/Q6_K
   in `Nx_quant`) and matches the reference's logits
-- tests read other packages' test trees: rune reads nx's goldens and links
-  nx's and tolk's test kits; ppx_ptree's suite links rune, vega and kaun
-- on a cold tolk cache, rune's test_special takes 348 s (38 s warm) and
-  test_laws' "a gradient through a compiled function" 28 s (3 s warm),
-  past its 60 s timeout under load: the user's cache hid their compiles
+- a fresh _build starts each test directory's tolk cache empty
+  (66f223fcd): the old rune's test_special took 348 s cold (38 s warm).
+  Re-time the new rune's suites cold on fudge, and fix the slow ones at
+  their cause
 
 ## nx
 
-- nx.wide's `chunk_levels` was tuned when each chunk compiled two kernels:
-  time `compile/wide/sum-1e6` at 2-5 levels
-- `betaincinv`, once tolk compiles long programs (~20-25k ops)
-- GC stress for nx's C stubs: run them once under the stressed collector
-- the kinds quiet the NaN they return. `nx_nan1`, `nx_nan2`, `nx_maximum`
-  and `nx_minimum` keep a signalling NaN's bits (`nx_kinds.h`), while
-  reductions, scans, scatters and ranges promise it quieted, so each Max or
-  Min path quiets again (`reduce.c`'s `quiet_*`, `index.c`'s `QUIETED`). IEEE 754-2019 §6.2.1 and §9.6 quiet it in the
-  operation. Done when the kinds quiet it and those wrappers are gone;
-  elementwise bits change for signalling NaNs
-- `reduce_ranges` flattens its result to quiet it, which gathers a result
-  cut along its row axis onto every device; its sparse table's `assemble`
-  gathers a row-cut `x` at every level
+- `Nx_ragged.take` writes an int64 position per output byte (fill,
+  scatter, cumsum, gather): ~40 bytes moved per byte of text. It dominates
+  talon's joins on text (join_run.ml, column.ml)
+- nx.wide's `chunk_levels` (3, nx_wide.ml) was timed on the old rune,
+  when each chunk compiled two kernels; tolk now compiles a double-word
+  add as one. Add `wide/sum-1e6` to rune's compile bench and time 2-5
+  levels
+- `Nx.betaincinv` and `betainccinv`, as the gamma's inverses are
+  (0947081db left them out): norn's `quantile` raises for `beta` for want
+  of them. First measure rune compiling a program of their size (~20-25k
+  operations)
 - a reshape that factors or merges a cut axis gathers it whole onto every
   device where the tiles don't divide both extents: gpt-oss's 2880 inputs,
   90 MXFP4 blocks, over 4 or 8 devices. A halo exchange, as GSPMD's
   reshape realigns an uneven cut (arXiv 2105.04663 §4.1), would move only
   the rows across each window's boundary
-- a check on another machine's device waits for its step: settling reads
-  its result with `Nx_array.to_device`, whose `Rig.Buffer.copy` follows
-  every value submitted there. Done when rig offers a read of a remote
-  device's memory that doesn't follow its later work
-
-- frontend, `fuse` and `widen` (`float_fn`, `Ptree.fuse`): one rounding
-  per element, bit for bit with `f ()` on one kernel library
-- frontend, symbolic shapes: `Size.v`, `Size.dims`, `Ptree.sized`; `shape`,
-  `dim` and `numel` raising on a symbolic axis under a trace; inheritance
-  through `_like`, movements, broadcasting and pattern groups
+- `reduce_ranges`'s sparse table reshapes a row-cut `x` to
+  `[blocks; 2; h; ...]` and assembles it at each level (`ranges`, nx.ml):
+  where a level's chunk is wider than a device's tile, the reshape reads
+  the axis whole onto every device. Build the levels from slices of the
+  cut axis, or after the reshape item above
+- symbolic extents: `Rune.jit` keys on each array's shape, so a decode
+  step retraces at each new context length or pads to a window, as kaun's
+  cached attention does; rune's lowering refuses tolk's `Sym` extents.
+  Design it from references before nx, rune and kaun take it
 - `Nx.attention`'s error bound: derive it for the identity score, state it
   in nx.mli, and tie the law's tolerance in `test_attention.ml` to it
+- eager GPU kernel libraries, nx.cuda, nx.metal and nx.amd, onto nx's
+  current kernel interface; until then a GPU set computes under
+  `Rune.jit` only. Their last code is 64478fedf
+  (`dev/nx2/lib/{cuda,metal,amd}`; branch `nx2-gpu` is gone, and only
+  `cr/*` and `fx/*` refs reach it: tag it before those are pruned)
 - the attention family: `Attention`, `Attention_tangent` and
-  `Attention_cotangent` with nx.cpu's forward and cotangent kernels and
-  `Prog.status`, in place of `Nx.attention`'s composition, which stores each
-  head's `tq × tk` scores and gives an interpreter only its contractions,
-  maps and reduction. Kernels keep hidden values out of `o`: a partial
-  tile with a non-finite value takes the selecting path. Record
-  `attention/host-*` and `gpu/*/attention-4096-causal` on the composition
-  first; the family lands only if its kernels beat it by 2x on each,
+  `Attention_cotangent` with nx.cpu's forward and cotangent kernels, in
+  place of `Nx.attention`'s composition, which stores three float32
+  `[lead…; hq; tq; tk]` arrays a call and gives an interpreter only its
+  contractions, maps and reduction. Kernels keep hidden values out of
+  `o`: a partial tile with a non-finite value takes the selecting path.
+  First add and record `attention/host-*` on the composition, and
+  `gpu/*/attention-4096-causal` under `Rune.jit` until eager GPU libraries
+  land; the family lands only if its kernels beat it by 2x on each,
   forward and cotangent
-- frontend, `contract`'s `?a_scale`, `?b_scale` (`scale`) and `?segments`,
-  after `Prim.Contract` and nx.cpu take them
-- record `dispatch/kv-append-4096` and its `-copied` twin; donation's kill
-  criterion is at least 2x over the copy on CUDA and AMD
-- order and counting operations: check their contracts, public laws and
-  bench baselines
-- the GPT-2 and gpt-oss comparisons on the new nx and rune
-- eager GPU kernel libraries (nx.cuda, nx.metal, nx.amd; branch `nx2-gpu`,
-  `dev/nx2/lib/{cuda,metal,amd}`) onto nx's current kernel interface. Until
-  then a GPU set computes under `Rune.jit` only
-- nx.cpu's jobs size their threads by older cost estimates, many below the
-  call prices' measured kind and term costs, so costly kinds get too few
-  threads (a float64 pow over 16 K elements runs on 3): derive the job
-  costs from the prices' tables and measure them on thread-count rows
-- complex products and extremes over few terms (reduce.c's few_, e.g. 2x2
-  windows) run 1.2-1.7x slower under gcc since their lanes became vectors:
-  gcc vectorises IN_ARRAY's 16-lane start step only inside few_'s own loop
-  nest, not as start_'s (M1, gcc 15: prod few complex64 1.17 -> 1.78 ns an
-  element); inlining it for every monoid costs the float extremes 15%:
-  find a form that vectorises both. gcc's complex64 one-block product
-  (prod block1) runs 1.3x slower too, untraced
-- the FFT's four steps on fudge: c2c-64K-c64 and c2c-32x64K-c64 read 1.02
-  and 1.03-1.04 against the commit before the column and row steps (6
-  P-cores), measured with the grid-in-result code in the column step:
-  re-time without it and remove what remains
-- the four steps' grid in the result past the largest cache, where malloc
-  maps blocks per call (Linux): the columns write it in the result's
-  layout, both steps streaming, the rows transform it in place; 2^22
-  points took 0.685 the time on six Arrow Lake cores (528 faults a call
-  fewer) and 1.03-1.07 on the M1, which keeps scratch. Land it with
-  test_fft passing on fudge
-- linalg's v3 build loses 1.5-4% at order 64 on fudge (eigh-f64-64x32
-  1.040, svd-f64-64 1.026, svd-f64-64x32 1.015); gcc's 128-bit vectors in
-  linalg_v3.c recover it but cost lu-f64-1024-pivoting 7%: find the loops
-- svd at order 64: the panel reduction's serial path (labrd) costs 2% on
-  fudge (svd-f64-64 1.023, svd-f64-64x32 1.019): find what the in-order
-  chunks pay over one pass
-- MR-aligned GEMM row subdivision
-  (`refs/audit/20261010-deep/branches/few-units`): public matmul A/Bs and
-  baselines on the Mac and fudge
-- engine dispatch costs: staged patches and the missing `dispatch/real-1`
-  and `dispatch/sum-1` rows in `refs/audit/20261010-deep/worktrees/wt-13`;
-  per-stage A/Bs and baselines, compiler internals private
+- `Nx.contract`'s `?a_scale`, `?b_scale` and `?segments`: `Prim.Contract`
+  and nx.cpu take them and nx.quant calls them through `Prim`. Decide by
+  design.md's vocabulary rule whether a user needs them from `Nx`
+- donation's kill criterion, at least 2x over the copy on CUDA and AMD:
+  `dispatch/kv-append-4096` and its `-copied` twin read 3.4 and 44.5 µs on
+  fudge's host; record them on CUDA and AMD under `Rune.jit`, or once
+  eager GPU libraries land
+- nx.cpu's thread splits follow the call prices (179ea5cc5, 82e42b78d) and
+  the kind tables of f6876a0ad, measured under load 1.3-4.7: time them
+  quiet on fudge, with a row of a costly kind where its threads change
+  (pow-f64-16K), and re-record the elementwise rows
+- complex products and extremes over few terms (`few_`, `IN_ARRAY` in
+  reduce_body.h) ran 1.2-1.7x slower under gcc 15 on the M1 than before
+  their lanes became vectors; inlining the start step for every monoid
+  costs the float extremes 15%. Add a row (prod of complex64 2x2 windows),
+  time it on fudge's gcc, and act only if it loses there
+- a four-step FFT line past `KEPT_BYTES` (job.c) takes fresh scratch every
+  call, which faults its pages in on Linux: 528 faults a call at 2^22
+  complex64 points. The grid in the result (uncommitted in ~/wt/fft3b on
+  fudge, on pre-squash 70b99a9fa) took 0.685 the time on six fudge cores
+  and 1.03-1.07 on the M1. Weigh it against keeping large scratch in
+  job.c, then port the winner; A/B c2c-4M-c64, c2c-64K-c64 and
+  c2c-32x64K-c64 quiet on fudge, test_fft passing
 
 ## norn, jera
 
-- jera: Newton stops at the floats' limit by three rules (`still`, the
-  merit-rounding branch, `at_limit` with `bounded`), because `still` floors
-  each component at |x|·ε, which is 0 at 0. One test in norm in
-  `Search.judge` (MINPACK's `hybrd`: a step within xtol·‖x‖) covers Root,
-  System, Broyden, Anderson and Minimize, which miss it today. Meanwhile
-  `at_limit` reads a step that did not move (q = r = ∞) as at the limit,
-  and the unscaled `Search.norm` underflows, so a lane of small unknowns
-  converges 100 times off its tolerance; `resolved` converges without
-  meeting `tol`; `jera.mli` states the limit rule for every method
-- eager NUTS: ~3.3 ms per transition, ~475 µs per leapfrog against HMC's
-  ~110 µs on the same density. Profile its bookkeeping; add a row
-- jera eager `Sde.march`: 2,000 lanes at Brownian depth 12 take ~6 ms a step
-- Law 10 flags: HMC's one pooled step size strands chains (a tenth of 128
-  sblrc chains), and the stretch move barely moves gp_pois_regr. Per-chain
-  adaptation
+- jera: Newton stops at the floats' limit by three rules (`Search.still`,
+  System.newton's merit-rounding branch, `at_limit` with `bounded`),
+  because `still` floors each component at |x|·ε, which is 0 at 0. One
+  test in norm in `Search.judge` (MINPACK's `hybrd`: a step within
+  xtol·‖x‖) would cover Root, System, Broyden, Anderson and Minimize.
+  Wrong today: `at_limit` reads a step that did not move (q = r = ∞) as at
+  the limit; the unscaled `Search.norm` underflows, so a lane of small
+  unknowns converges 100 times off its tolerance; `resolved` converges
+  without meeting `tol`, against `Converged`'s doc. `jera.mli` states the
+  limit rule for Root and System.newton only; state it for every method
+- norn NUTS: ~3.3 ms per eager transition, ~475 µs per leapfrog against
+  HMC's ~110 µs on the same density (machine unstated). Only compiled
+  rows exist (nuts/schools/64 3.44 ms, M1 Max). Add an eager row, measure
+  on fudge, profile the bookkeeping
+- jera eager `Sde.march`: ~1.3 ms a step at 100 lanes, depth 8
+  (sde-euler-maruyama-100/eager, M1 Max); 2,000 lanes at depth 12 took
+  ~6 ms. Each step descends the Brownian tree twice from the root and
+  runs two eager `check_time` reads; carry W and I at a step's end into
+  the next step's start
+- norn docs: state where Law 10's sweep flags a sampler. HMC's one step
+  size and geometry leave chains at low E-BFMI on sblrc and one at
+  low_dim_gauss_mix's degenerate mode; the stretch move barely moves
+  gp_pois_regr's hyperparameters. Say so in `Hmc` and `Ensemble`, and
+  point to `Nuts`
 - Nested: slice moves correlate draws within a replacement, so its error
-  under-covers 1.5-1.9x on gp_pois_regr
-- a record parameter needs a hand-written walk (or ppx_ptree) to be an
-  `Nx.Ptree`, and Summary rows lose its field names. Design pass
-- variational layer: `Gaussian.pathfinder` and `importance`, `Vi`,
-  `Diag.psis` and `loo`, `Summary.of_weighted`, each checked by k̂
+  under-covers 1.5-1.9x on gp_pois_regr (documented in
+  `Evidence.expectation`, still a biased error)
+- norn: `quantile` raises for `gamma` and `inverse_gamma` though
+  `Nx.gammaincinv` exists
+- norn: `Diag.psis` and `loo` over `Norn_model.pointwise`, with each
+  point's k̂; `Summary.of_weighted`
+- norn: variational layer: `Gaussian.pathfinder`, `importance` (which
+  `Weighted`'s doc already names as a source), `Vi`, each checked by k̂
 - distributions: `binomial`, `von_mises`, `lkj_cholesky`, `truncated`,
   `hmm` with `hmm_marginals`, and an example that sums an HMM's states out
 
 ## talon, hugin, brot, munin, quill
 
-- talon vs the faster of DuckDB/Polars: decision support SF1 13.2x, H2O
-  group-by and join 2.8x; pandas 1.36x on filter and 2.05x on join.
-  `Nx_ragged.take` moves ~40 bytes per byte of text and dominates joins;
-  test_run 1.2 s
-- talon benches: commit the query suite's DuckDB/Polars baselines (H2O
-  1e7/1e8, decision support SF1/SF10) and a CSV read row; GC stress for its C stubs
-- talon 1.0 plan (_plans/talon/product/plan.md): windows and ewm, as-of and
-  interval joins, interval sets and folds, zoned time, `cut` and temporal
-  casts, hash/sample/shuffle, Pivot and nesting, dense round trips,
-  partial aggregation, `Str.trim`/`concat`/regex, compressed and
-  fixed-width CSV, Parquet nested columns, datasets and writer,
+- talon benches: record the query suite's DuckDB/Polars baselines on fudge
+  (H2O 1e7/1e8, decision support SF1/SF10; none committed) and add a CSV
+  read row to bench_talon.ml
+- talon perf, machine and commit unrecorded: vs the faster of
+  DuckDB/Polars, decision support SF1 13.2x, H2O group-by and join 2.8x;
+  vs pandas 1.36x on filter, 2.05x on join. Re-measure on fudge once the
+  query baselines exist
+- talon 1.0 plan (_plans/talon/product/plan.md, on the Mac): windows and
+  ewm, as-of and interval joins, interval sets and folds, zoned time,
+  `cut` and temporal casts, hash/sample/shuffle, Pivot and nesting, dense
+  round trips, partial aggregation, `Str.trim`/`concat`/regex, compressed
+  and fixed-width CSV, Parquet nested columns, datasets and writer,
   talon.arrow, talon.jsont, complex and validity columns, HTML display
+- talon.mli: Sel's docs name "the pivot's [~cols]"; talon has no pivot
 - talon under `Rune.jit`/`vmap`: state which verbs raise, and test filter,
   sort, group and join under jit
 - hugin: stacked marks and time axes in hugin.mli; legends with `~ncol` and
-  centred placements; CFF and CFF2 outlines; hugin_plot bench baselines
-- brot vs gigatoken: gpt2 2.5x one thread, 3x multi-thread; SentencePiece
-  pipelines 40-58 MB/s (added-token scan 28%, normalizer 15%); bert unfused
-- brot: added tokens encoded as text; an incremental decoder; walkers for
-  o200k and Tekken; Kimi's class intersection and `\p{Han}`; T5's
-  Precompiled normalizer; the parity tests skip without downloaded
-  tokenizers: commit trimmed ones with their generator
-- munin: GPU metrics (NVML by dlopen, IOKit, AMD sysfs); 7 doc fences
-  mdx skips (installs, `munin` command lines naming generated run ids, the
-  Kaun MNIST loop), and the guides skip Windows, which munin.sys lacks
+  centred placements; CFF and CFF2 outlines; hugin_plot baselines on fudge
+  (no hugin_plot.thumper exists)
+- brot vs gigatoken (machine unrecorded): gpt2 2.5x one thread, 3x
+  multi-thread; SentencePiece pipelines 40-58 MB/s (added-token scan 28%,
+  normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken
+  commit
+- brot: an option to encode added tokens in the input as text; an
+  incremental decoder; walkers for o200k and Tekken; Kimi's class
+  intersection and `\p{Han}` (rejected at load); T5's Precompiled
+  normalizer (rejected at load)
+- brot: the parity tests skip in local runtest without downloaded
+  tokenizers (CI downloads them): commit trimmed ones with their
+  generator, each under a licence that allows it
+- munin.sys on Windows reports 0 for network and disk I/O and 0.0 load
+  (sysstat_stubs.c) where sysstat.mli promises `Sys_error`: raise, or
+  implement them
+- munin GPU metrics without NVML (a vendor library, ruled out): amdgpu
+  sysfs, IOKit, and NVIDIA through what rig's drivers can read; design
+  first
+- munin docs: the Kaun MNIST loop (02-tracking.md) and the four `munin`
+  command fences are unchecked: run the loop on synthetic data and the
+  commands as a cram test over a store with a known run
 
 ## ymir, sowilo
 
-- ymir.fits: HCOMPRESS_1 (Legacy Surveys ships maskbits and nexp in it);
-  `fits-image-4096/raw-int16-rice` allocates +4.9% over its baseline, cause
-  unknown
-- ymir: HEALPix and spherical harmonics (RFC 0027 slice 3); time scales,
-  time-dependent frames and ephemerides
+- ymir.fits: read HCOMPRESS_1 (Legacy Surveys ships maskbits and nexp in
+  it) and PLIO_1; both raise today (tiles.ml)
+- ymir bench: fits-image-4096/raw-int16-rice allocated +4.9% over its
+  4435930-word baseline (2026-10-07). Rerun; suspects fe69dde74,
+  8d783356e, e7023356e
+- ymir: HEALPix and spherical harmonics (RFC 0027 slice 3)
+- ymir: time scales (UTC, TAI, TT, TDB), then time-dependent frames
+  (precession, nutation, aberration) and ephemerides
 - sowilo: `threshold` and `canny` return `Nx.bool_t` and morphology takes a
-  bool kernel
+  bool kernel; today they return `Nx.float32_t` and morphology treats any
+  nonzero `uint8` as a member, which sowilo.mli does not say
 
 ## repo
 
-- private modules: each gets an .mli per doc/dev/documentation.md, rig as
-  the reference. Left, in rig's lib/: amd/amdgpu/request.ml,
-  nv/pci/gsp_defs.ml and the `defs.ml` of amd/abi, amd/pci, bnxt, mlx5,
-  mlx5/abi, mlx5/uverbs, nv, nv/abi, nv/nvidia and nv/pci
-- windtrap: its per-test timeout does nothing on Windows; release 0.3.0 and
-  drop the git pins in dune-project and ci.yml
+- thumper: suites whose only x86 section is kimchi's (retired): brot,
+  hugin_vg, kaun, kaun_decode, gpt_oss, vega, fehu, sowilo; ymir has no
+  x86 section. Record each on fudge, then delete every kimchi section,
+  nx's and tolk's included. talon.thumper's Mac rows predate the Nx.Rng
+  fixture (76105a215): the maintainer re-records them
+- windtrap: dune-project and ci.yml pin 4f2b11f, eight test commits
+  before the v0.3.0 tag (e367294): pin by version once 0.3.0 is on opam;
+  thumper's pin names no commit. Its start barrier still spins
+  (lib/workers.ml): rig_pci.space "two domains allocate and free at once"
+  times out at its 10 s bound in 60 of 64 copies run 32 at once at load
+  ~65, in none of 96 with a sleeping barrier (a883e72, not on GitHub).
+  Its timeout does nothing on Windows (windtrap.mli)
+- generated rig tables without an .mli (the `defs.ml` of amd/abi, amd/pci,
+  bnxt, mlx5, mlx5/abi, nv, nv/abi, nv/nvidia and nv/pci, and
+  nv/pci/gsp_defs.ml): have documentation.md exempt a generated
+  vendor-constant table whose header names its source and generator, or
+  have gen.py emit the .mli
 - tests: CI runtest under a memory cap
-- talon bench: re-record Talon/{Filter,Group,Join,Sort} in talon.thumper on
-  the Mac and on fudge (kimchi's section is stale): their fixture is now
-  drawn from Nx.Rng
-- dune stale builds: a source rewritten within seconds is digested in one
-  version and copied in another; a passive server stops seeing changes yet
-  answers `rpc ping`; under load it loops on "Event queue overflow".
-  _plans/dune-stale-watch/
+- dune stale builds (3.24.2), _plans/dune-stale-watch/: one capture, a
+  `sed -i` temp file kept in _build/.db stays "File unavailable" for a
+  fresh server. Uncaptured: a source digested in one version and copied
+  in another; a passive server that answers `rpc ping` but sees no
+  changes; "Event queue overflow" under load. Reduce to a reproducer for
+  ocaml/dune
