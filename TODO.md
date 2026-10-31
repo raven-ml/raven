@@ -352,7 +352,6 @@ raven / llama.cpp (Vulkan; ROCm):
   round trips, partial aggregation, `Str.trim`/`concat`/regex, compressed
   and fixed-width CSV, Parquet nested columns, datasets and writer,
   talon.arrow, talon.jsont, complex and validity columns, HTML display
-- talon.mli: Sel's docs name "the pivot's [~cols]"; talon has no pivot
 - talon under `Rune.jit`/`vmap`: state which verbs raise, and test filter,
   sort, group and join under jit
 - hugin: stacked marks and time axes in hugin.mli; legends with `~ncol` and

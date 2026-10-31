@@ -919,8 +919,7 @@ module Sel : sig
       A selector chooses a set of columns by name, type or kind, without naming
       a schema. A verb resolves it against its input schema when it is applied,
       to an ordered list of distinct names. [Expr.keep], [Expr.across],
-      [Expr.each], the pivot's [~cols] and [Kit.drop] take selectors; keys stay
-      [string list].
+      [Expr.each] and [Kit.drop] take selectors; keys stay [string list].
 
       Selectors combine with {!( + )}, {!( - )} and {!inter}, written inside
       [Sel.( … )]: [Sel.(prefix "wk" - names [ "wk76" ])]. *)
