@@ -36,9 +36,16 @@
     of the searched range [(?!..)] holds.
 
     A script is the Script property of Unicode 17.0.0, by its short or long
-    name; [Unknown] is every code point outside the other scripts. In a bracket
-    class, [&&] intersects the items on its left with those on its right, and
-    an empty side is the empty set, so [[a&&]] matches nothing.
+    name; [Unknown] is every code point outside the other scripts, and
+    [Katakana_Or_Hiragana], which has none, is rejected. General categories,
+    [\s], [\d] and [\w] are of Unicode 18.0.0, uucp's version. A character new
+    in 18.0.0 thus has a category and no script: the ideograph U+2B81E is in
+    [[\p{Lo}&&[^\p{Han}]]].
+
+    In a bracket class, [&&] intersects the items on its left with those on its
+    right, and an empty side is the empty set, so [[a&&]] matches nothing. A
+    leading [^] negates the whole intersection: [[^a-z&&[^aeiou]]] is everything
+    but the consonants.
 
     Rejected with an error: the options other than [i], lookbehind, a lookahead
     anywhere else, atomic groups, backreferences, possessive quantifiers, word

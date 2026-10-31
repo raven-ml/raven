@@ -269,11 +269,15 @@ module Normalizer : sig
       [pattern] is written in the dialect of tokenizer files: Unicode-aware, so
       that [\s], [\d] and [\w] and their negations, [.] and negated classes
       stand for characters rather than bytes, and [\p{..}] selects a general
-      category ([L], [Lu], [Nd], ...) or a script of Unicode 17.0.0 ([Han],
-      [Latin], ...). [^] and [$] are line anchors, [\A], [\z] and [\Z] text
-      anchors. Groups, alternation, greedy and lazy quantifiers and bracket
-      classes are supported, nested and intersected with [&&] as in
-      [[\p{L}&&[^\p{Han}]]], as are the case-insensitive option
+      category ([L], [Lu], [Nd], ...) of Unicode 18.0.0 or a script ([Han],
+      [Latin], ...) of Unicode 17.0.0. A character new in 18.0.0 has a category
+      and no script, so the ideograph U+2B81E, new in 18.0.0, is in
+      [[\p{Lo}&&[^\p{Han}]]] and Kimi K2's pattern takes it into its words.
+      [^] and [$] are line anchors, [\A], [\z] and [\Z] text anchors. Groups,
+      alternation, greedy and lazy quantifiers and bracket classes are
+      supported, nested and intersected with [&&] as in [[\p{L}&&[^\p{Han}]]],
+      a leading [^] negating the whole intersection, as are the case-insensitive
+      option
       ([(?i)], [(?i:..)]), under which a character or a bracket class stands for
       every character with the same simple case folding, and a lookahead
       ([(?=..)], or [(?!..)] over one character) that ends the pattern or one of
