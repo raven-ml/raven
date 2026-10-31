@@ -19,6 +19,20 @@ let make_step_bench name init step (label, shape) =
 let optimizer_benches name init step =
   List.map (make_step_bench name init step) shapes
 
+(* L-BFGS takes the gradient and returns its state, which holds the point.
+   A history of 4 pairs keeps the 1024 row's memory at 32 MB. The bfloat16
+   row steps at float32 and rounds when it stores. *)
+let lbfgs_history = 4
+
+let lbfgs_bench (type b) (dt : (float, b) Nx.dtype) (label, shape) =
+  let params = Nx.cast dt (Nx.Rng.uniform Nx.float32 shape) in
+  let grads = Nx.cast dt (Nx.Rng.uniform Nx.float32 shape) in
+  let state = ref (Vega.lbfgs_init p ~history:lbfgs_history params) in
+  Thumper.bench label (fun () ->
+      let st = Vega.lbfgs_step p ~lr grads !state in
+      state := st;
+      st.params)
+
 let build_benchmarks () =
   [
     Thumper.group "SGD"
@@ -57,6 +71,9 @@ let build_benchmarks () =
       (optimizer_benches "Adafactor"
          (fun p x -> Vega.adafactor_init p x)
          (fun st -> Vega.adafactor_step p ~lr st));
+    Thumper.group "L-BFGS"
+      (List.map (lbfgs_bench Nx.float32) shapes
+      @ [ lbfgs_bench Nx.bfloat16 ("bfloat16/256", [| 256; 256 |]) ]);
   ]
 
 let () =
