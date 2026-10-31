@@ -452,6 +452,21 @@ let test_dropout_scoped_jit_is_keyed () =
         (f { Keyed_x.x; key }))
     [ 23; 24 ]
 
+(* Off the host, keyed dropout compiles: its sampler's check is the call's,
+   which raises at a later wait, and its mask is eager's. *)
+module Away =
+  (val Nx.devices [ Result.get_ok (Rig.memory_device "kaun-dropout") ])
+
+let test_dropout_jit_off_host () =
+  let x = vec (Array.init 64 (fun i -> float_of_int (i + 1))) in
+  let x = Nx.place Away.on x in
+  let key = Nx.Rng.place Away.on (Nx.Rng.key 21) in
+  let apply x = Dropout.apply ~rate:0.5 ~training:true ~key x in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' apply x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  check_arr ~eps:0.0 ~msg:"jit == eager, same key" (Nx.to_array (apply x)) y
+
 (* Jitted training steps: a tiny MLP with dropout between its layers, the
    per-step key an input leaf derived by [fold_in] from a root seed. *)
 
@@ -603,6 +618,8 @@ let tests =
           test_dropout_keyed_jit_matches_eager;
         test "keyless dropout in a scope at the step's key is keyed dropout"
           test_dropout_scoped_jit_is_keyed;
+        test "keyed dropout off the host compiles and matches eager"
+          test_dropout_jit_off_host;
         test "jitted train steps with fold_in keys reproduce from the seed"
           test_dropout_jitted_training_steps;
         test "keyed dropout composes with the bfloat16 astype sandwich"

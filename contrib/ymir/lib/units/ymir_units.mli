@@ -582,8 +582,8 @@ module Quantity : sig
       [Quantity.value], as in
       ["Quantity.value: the factor from 1e-35 kg s^-2 to kg s^-2 is 1e-35, which
        is 0 in float16"]. An integer payload raises when an element times the
-      factor leaves the dtype, at once on a concrete payload and when the
-      compiled call returns on a traced one, as in
+      factor leaves the dtype, through {!Nx.check}: at once on the host, at the
+      next wait on another set, on a concrete payload or a traced one, as in
       ["Quantity.value: element [41] of an int32 payload overflows converting
        1e3 m to m (factor 1000)"], or ["an int32 payload overflows"] for a
       scalar. The index is the first such element's in C order. *)
@@ -656,8 +656,8 @@ module Quantity : sig
       narrower than float32 is rooted in float32 and cast back, so the exponent
       is not rounded to its dtype. For odd [n] the root of an element below zero
       is the negative real root; for even [n] such an element raises
-      [Invalid_argument], at once on a concrete payload and when the compiled
-      call returns on a traced one, as in
+      [Invalid_argument] through {!Nx.check}: at once on the host, at the next
+      wait on another set, on a concrete payload or a traced one, as in
       ["Quantity.root: element [3] of a float32 payload is below 0, whose root
        of order 2 is not real"]. NaN and [-0.] give what [Nx.pow] gives them.
       Raises [Invalid_argument] ["Quantity.root: 0 is below 1"] if [n < 1]. *)

@@ -238,15 +238,21 @@ let test_outlined_bare () =
     Testable.(list float_exact)
     [ 0.5; 1. ]
     (floats (Nx.place Nx.Host.on y));
-  (* A stretch the compiler declines, as one holding a check off the host, and a
-     call with donated arguments are evaluated by nx, which raises there. *)
+  (* A stretch that holds a check compiles: the call returns, and a failure
+     raises at the next wait on the set. *)
   let g =
     Rune.jit s (fun x ->
         Nx.check T.tensor (Nx.less x (Nx.scalar_like x 3.)) x (fun _ _ -> Exit);
         Rune.callback s ~like:x Fun.id x)
   in
-  raises_match ~msg:"a check off the host"
-    (Exn.invalid_arg ~sub:"has no kernels") (fun () -> ignore (g x));
+  let y = g (Nx.place at (vec [| 0.5; 4. |])) in
+  raises ~msg:"a failing check, at the next wait" Exit (fun () ->
+      ignore (Nx.place Nx.Host.on y));
+  equal ~msg:"a passing check"
+    Testable.(list float_exact)
+    [ 0.5; 1. ]
+    (floats (Nx.place Nx.Host.on (g x)));
+  (* A call with donated arguments is evaluated by nx, which raises there. *)
   let g = Rune.jit s (fun x -> Nx.add_s (Rune.callback s ~like:x host x) 1.) in
   raises_match ~msg:"donated" (Exn.invalid_arg ~sub:"has no kernels") (fun () ->
       ignore (g (Nx.donate (Nx.place at (vec [| 0.5; 1. |])))));

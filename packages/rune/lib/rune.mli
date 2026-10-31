@@ -122,10 +122,10 @@
 
     A failure that depends on the values, as an {!iterate} still running after
     [max] steps or a {!switch} index out of range, raises at the call, and under
-    a {!jit} as the call returns, as a check does ({!section-checks}). A later
-    operation on an argument a {!jit} consumed raises in nx, naming the entry
-    point that consumed it ({!section-donation}). A {!jit} whose trace raises
-    keeps no program for the key. *)
+    a {!jit} as the call's check does ({!section-checks}). A later operation on
+    an argument a {!jit} consumed raises in nx, naming the entry point that
+    consumed it ({!section-donation}). A {!jit} whose trace raises keeps no
+    program for the key. *)
 
 (** {1:derivatives Derivatives}
 
@@ -1350,12 +1350,17 @@ val jit :
 
 (** {2:checks Checks}
 
-    A check the function makes ({!Nx.check}) on the host is computed with the
-    program, and the first that fails, in the order the function made them,
-    raises its exception when the call returns, with the data at its first
-    failing index, as eagerly; the call's results are then lost. A program with
-    a check on a device other than the host, which raises at a later wait there,
-    is evaluated ({!section-evaluated}). *)
+    The checks a function makes, by {!Nx.check}, a sampler's parameters
+    ({!Nx.Rng}), an {!iterate} still running after [max] steps or a {!switch}
+    index out of range, are computed with the program, on its device. They are
+    one {{!Nx.section-waiting}check} of the call, made as it returns: it fails
+    where one of them fails, with the exception of the first that fails in the
+    order the function made them and the data at its first failing index, as
+    eagerly. On the host it raises as the call returns, and the call's results
+    are lost. On another set the call returns its results, and the failure
+    raises at the next wait on that set, so that no check makes a call wait for
+    its device, where an {!iterate} or a {!switch} applied eagerly raises at the
+    call. *)
 
 (** {2:numerics Numerics}
 
@@ -1573,17 +1578,17 @@ val jit :
     compiled once whatever its number of steps: each step reads its row, writes
     its outputs' row, and updates the carry in its own storage. Where the rows
     of an array do not lie a multiple of 16 bytes apart, the step reads them
-    from a copy whose rows do. A check in a step raises, once the call returns,
-    the first failure of the first step that fails, as the steps written out
-    would, and an {!iterate} stops at the first failure. A map's {!iterate}
-    whose lanes stop apart runs while any lane runs on, a lane that has stopped
-    {{!section-maps}held}. Under reverse mode or {!linearize} an {!iterate}
-    stacks what its steps keep in room for [max] steps, rows past the steps
-    taken zeros, and its derivative is a loop over the steps taken. Under
-    reverse mode that loop runs from the last step, reading and writing its rows
-    through copies in reverse order. A {!switch} compiles as one loop per branch
-    of at most one trip, which runs where the index names its branch, so a
-    branch not taken computes nothing. A {!remat}, a {!custom_jvp}, a
+    from a copy whose rows do. A check in a step fails as the call's check does
+    ({!section-checks}), with the first failure of the first step that fails, as
+    the steps written out would, and an {!iterate} stops at the first failure. A
+    map's {!iterate} whose lanes stop apart runs while any lane runs on, a lane
+    that has stopped {{!section-maps}held}. Under reverse mode or {!linearize}
+    an {!iterate} stacks what its steps keep in room for [max] steps, rows past
+    the steps taken zeros, and its derivative is a loop over the steps taken.
+    Under reverse mode that loop runs from the last step, reading and writing
+    its rows through copies in reverse order. A {!switch} compiles as one loop
+    per branch of at most one trip, which runs where the index names its branch,
+    so a branch not taken computes nothing. A {!remat}, a {!custom_jvp}, a
     {!custom_vjp} and a {!custom_transpose} compile as their function's
     operations, the program's own. So does a {!root}'s solve, and its derivative
     compiles as its linear solve's operations, each application of the operator
@@ -1595,8 +1600,11 @@ val jit :
     compiled program returns them as more results: those its function makes, and
     those of a {!scan}'s step, a call, a {!remat} and a custom rule inside it, a
     scan's stacked over its rows. A program whose emissions lie in another
-    construct, or that both emits and checks, is evaluated, so that a failing
-    check keeps the offers made before it. *)
+    construct, or that both emits and checks on the host, is evaluated, so that
+    a failing check keeps the offers made before it. Off the host the call's
+    check raises at a later wait, so the call offers every emission: as eagerly
+    for a check of {!Nx.check} or a sampler, while an {!iterate} or a {!switch}
+    that fails eagerly raises at the call, before the emissions after it. *)
 
 (** {2:evaluated Evaluated programs}
 
@@ -1609,7 +1617,8 @@ val jit :
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
       which then raise as eagerly;
     - an operation the compiler does not lower;
-    - a check on a device other than the host;
+    - a check whose flags lie on another set than the program's first argument,
+      or else its first result, which raises at a wait on that set;
     - no value, an argument or a result with an element on a device other than
       the program's, or a value over several devices. A result the function
       returns without computing it, a constant with an element that lies whole
@@ -1633,9 +1642,9 @@ val jit :
     Each compiled call costs a dispatch, a loop holding a callback runs step by
     step, and a switch holding one reads its index on the host. A stretch the
     compiler declines is evaluated, so on a set without kernels ({!Nx.devices})
-    a stretch that holds a check off the host or values on several devices
-    raises, and so do a call with donated arguments and a loop holding a
-    callback whose outputs it stacks, since nx stacks the rows. *)
+    a stretch that holds values on several devices raises, and so do a call with
+    donated arguments and a loop holding a callback whose outputs it stacks,
+    since nx stacks the rows. *)
 
 (** {2:inspect Inspecting a trace} *)
 

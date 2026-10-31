@@ -2082,6 +2082,234 @@ let test_checks () =
   equal ~msg:"read by a check: in place" bool false took;
   equal bits_t (bits (Nx.neg (m [| 1.; 2.; -0.; 2.5 |]))) (bits y)
 
+(* Checks off the host: a compiled call's checks are one check of the call,
+   issued as it returns, as an eager check is. On the host it raises at the
+   call; on another set the call returns, and the next wait there raises eager's
+   failure. Each test has a set of its own, so that no failure one leaves
+   pending reaches another. *)
+
+module Deferred = (val Nx.devices [ Nx_support.memory 1 ])
+
+let scan_checked xs =
+  fst
+    (Rune.scan'
+       ~init:(Nx.zeros_like (Nx.get [ 0 ] xs))
+       (fun c r -> (Nx.add c (checked r), Nx.neg c))
+       xs)
+
+let host_checked = Rune.jit' checked
+let host_scanned = Rune.jit' scan_checked
+let off_checked = Rune.jit' checked
+let off_scanned = Rune.jit' scan_checked
+
+(* [f x]'s failure, raised by the call or by a wait on its result after it,
+   whether the call returned, and the result's bits where nothing failed. *)
+let settled f x =
+  let returned = ref false and out = ref None in
+  let failure =
+    raised (fun () ->
+        let y = f x in
+        returned := true;
+        Nx.sync y;
+        out := Some (bits y))
+  in
+  (failure, !returned, !out)
+
+type deferred_case = { off : bool; xs : float array; scanned : bool }
+
+let deferred_cases =
+  let open Gen in
+  let value = of_list [ 1.; 2.; 0.; -0.; 2.5; 4.; 5.; -1.; Float.nan ] in
+  (let* n = of_list [ 0; 1; 2; 4 ] in
+   let+ xs = array ~size:(constant n) value
+   and+ off = bool
+   and+ scanned = if n >= 2 then bool else constant false in
+   { off; xs; scanned })
+  |> with_pp (fun ppf c ->
+      Format.fprintf ppf "%s%s [%s]"
+        (if c.off then "off the host" else "on the host")
+        (if c.scanned then ", in a scan's step" else "")
+        (String.concat "; " (Array.to_list (Array.map string_of_float c.xs))))
+
+let law_deferred c =
+  let n = Array.length c.xs in
+  let small x = x < 3. and signed x = x >= 0. in
+  let first =
+    let rec go i =
+      if i >= n then None
+      else if small c.xs.(i) && signed c.xs.(i) then go (i + 1)
+      else Some i
+    in
+    go 0
+  in
+  cover "on the host" (not c.off);
+  cover "off the host" c.off;
+  cover "passing" (n > 0 && first = None);
+  cover "failing at the first element" (first = Some 0);
+  cover "failing at the last element" (n > 1 && first = Some (n - 1));
+  cover "both checks failing"
+    (Array.exists (fun x -> not (small x)) c.xs
+    && Array.exists (fun x -> not (signed x)) c.xs);
+  cover "one element" (n = 1);
+  cover "an empty check" (n = 0);
+  cover "a check in a scan's step" c.scanned;
+  let x = Nx.create f32 (if c.scanned then [| n / 2; 2 |] else [| n |]) c.xs in
+  let run f g x =
+    let eager = settled f x in
+    let before = Rune.evaluations () in
+    let jitted = settled g x in
+    equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+    (eager, jitted)
+  in
+  let (ef, er, eo), (jf, jr, jo) =
+    match (c.off, c.scanned) with
+    | false, false -> run checked host_checked x
+    | false, true -> run scan_checked host_scanned x
+    | true, false -> run checked off_checked (Nx.place Deferred.on x)
+    | true, true -> run scan_checked off_scanned (Nx.place Deferred.on x)
+  in
+  cover "the second check, its data of two dtypes"
+    (match ef with Signed_at _ -> true | _ -> false);
+  equal ~msg:"the failure" failure ef jf;
+  equal ~msg:"the results" (option bits_t) eo jo;
+  let returns = c.off || ef = None_raised in
+  equal ~msg:"eager's call returned" bool returns er;
+  equal ~msg:"the call returned" bool returns jr
+
+(* Compiled calls whose checks fail raise at the next wait on their set, the
+   earliest first, the later ones dropped, as eager checks do. *)
+
+module Pending = (val Nx.devices [ Nx_support.memory 1 ])
+
+exception Called of int
+
+let called x =
+  Nx.check T.tensor
+    (Nx.less x (Nx.scalar_like x 0.))
+    x
+    (fun _ d -> Called (int_of_float (Nx.item [] d)));
+  Nx.neg x
+
+let pending_call = Rune.jit' called
+let pending_value = lazy (Nx.place Pending.on (v [| 0. |]))
+
+(* The calls since the last wait, as [(id, fails)] in call order. *)
+let pending_calls = ref []
+
+(* Drains the set's checks, so that no program sees another's. *)
+let drain_pending () =
+  try Nx.sync (Lazy.force pending_value) with Called _ -> ()
+
+let pending_session = abstract "c" ~release:drain_pending
+
+let pending_commands =
+  [
+    command "start"
+      (Gen.unit @-> makes pending_session)
+      (fun () -> pending_calls := [])
+      drain_pending;
+    command "call"
+      (pending_session ^-> Gen.bool @-> Gen.int_range 0 99 @-> returns unit)
+      (fun () fails id -> pending_calls := !pending_calls @ [ (id, fails) ])
+      (fun () fails id ->
+        let x = if fails then float_of_int id else -1. in
+        ignore (pending_call (Nx.place Pending.on (v [| x |]))));
+    command "sync"
+      (pending_session ^-> returns (option int))
+      (fun () ->
+        let rec first = function
+          | [] -> None
+          | (_, false) :: rest ->
+              cover "a wait passes a call before a failing one" (rest <> []);
+              first rest
+          | (id, true) :: rest ->
+              cover "a wait drops a later failure" (List.exists snd rest);
+              Some id
+        in
+        let raised = first !pending_calls in
+        pending_calls := [];
+        raised)
+      (fun () ->
+        match Nx.sync (Lazy.force pending_value) with
+        | () -> None
+        | exception Called id -> Some id);
+  ]
+
+(* A check whose flags lie on another set than the program's raises at a wait
+   on that set, as eagerly, and a wait on the program's set raises nothing. *)
+
+module Set_a = (val Nx.devices [ Nx_support.memory 2 ])
+module Set_b = (val Nx.devices [ Nx_support.memory 2 ])
+
+let test_check_elsewhere () =
+  let f x =
+    let y = Nx.place Set_b.on x in
+    Nx.check T.tensor (Nx.less y (Nx.scalar_like y 0.)) y (fun _ _ -> Exit);
+    Nx.place Set_a.on (Nx.neg y)
+  in
+  let x = Nx.place Set_a.on (v [| 1. |]) in
+  let on_b = Nx.place Set_b.on (v [| 0. |]) in
+  List.iter
+    (fun (mode, f) ->
+      let y = f x in
+      let raised =
+        match Nx.sync y with () -> false | exception Exit -> true
+      in
+      equal ~msg:(mode ^ ": a wait on the program's set") bool false raised;
+      raises ~msg:(mode ^ ": a wait on the flags' set") Exit (fun () ->
+          Nx.sync on_b))
+    [ ("eager", f); ("jit", Rune.jit' f) ]
+
+(* A sampler's parameter outside its domain, a switch index out of range and an
+   iterate still running after [max] steps: compiled, on the host the call
+   raises; on another set it returns, and the next wait raises eager's
+   message. *)
+
+module Sampled = (val Nx.devices [ Nx_support.memory 1 ])
+
+let test_deferred_failures () =
+  let compiled msg f =
+    let before = Rune.evaluations () in
+    let y = f () in
+    equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
+    y
+  in
+  let p = Nx.place Sampled.on (v [| 0.5; 1.5 |]) in
+  let key = Nx.Rng.place Sampled.on (Nx.Rng.key 0) in
+  let draw p = Nx.Rng.bernoulli ~key p in
+  let message = "Nx.Rng.bernoulli: p at [1] is 1.5, not in [0, 1]" in
+  let y = draw p in
+  raises ~msg:"bernoulli, eagerly" (Invalid_argument message) (fun () ->
+      Nx.sync y);
+  let y = compiled "bernoulli" (fun () -> Rune.jit' draw p) in
+  raises ~msg:"bernoulli, compiled" (Invalid_argument message) (fun () ->
+      Nx.sync y);
+  let both msg message ~host ~off =
+    raises ~msg:(msg ^ ": on the host, at the call") (Invalid_argument message)
+      (fun () -> ignore (compiled msg host));
+    let y = compiled msg off in
+    raises ~msg:(msg ^ ": off the host, at the next wait")
+      (Invalid_argument message) (fun () -> Nx.sync y)
+  in
+  let switched x =
+    let i = Nx.cast Nx.int32 (Nx.sum x) in
+    Rune.switch T.tensor i [ (fun () -> Nx.neg x); (fun () -> Nx.exp x) ]
+  in
+  let x = v [| 2. |] in
+  both "a switch" "Rune.switch: index 2 outside 0 .. 1"
+    ~host:(fun () -> Rune.jit' switched x)
+    ~off:(fun () -> Rune.jit' switched (Nx.place Sampled.on x));
+  let iterated x =
+    Rune.iterate' ~max:3
+      ~until:(fun x -> Nx.less (Nx.sum x) (Nx.scalar_like (Nx.sum x) 0.))
+      (fun x -> Nx.add x (Nx.scalar_like x 1.))
+      x
+  in
+  let x = v [| 0. |] in
+  both "an iterate" "Rune.iterate': until is still false after max = 3 steps"
+    ~host:(fun () -> Rune.jit' iterated x)
+    ~off:(fun () -> Rune.jit' iterated (Nx.place Sampled.on x))
+
 (* A loop's step that checks, on the host, compiles with the loop: the call
    raises the first failure of the first step that fails, as the steps written
    out raise it. Compiled, a result takes a donated argument's memory, which an
@@ -3646,6 +3874,20 @@ let () =
                test_long_flat;
              test "donated pools scattered and read lend" test_pools;
              test "checks raise as eagerly" test_checks;
+             prop
+               "a compiled check raises as eagerly, at the call on the host \
+                and at the next wait elsewhere"
+               deferred_cases law_deferred;
+             stateful
+               "a wait raises the earliest failing call's check, the later \
+                ones dropped"
+               pending_commands;
+             test
+               "a sampler, a switch and an iterate fail at the next wait off \
+                the host"
+               test_deferred_failures;
+             test "a check on another set raises at a wait there"
+               test_check_elsewhere;
              test "a shortcut over a capture stages" test_shortcut_captures;
              stateful ~count:10 ~steps:8
                "a call retraces iff its key is new, compiles iff its variant is"

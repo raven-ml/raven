@@ -284,7 +284,8 @@ let test_captured_argument () =
   equal bits_t (bits three) (bits y)
 
 (* Compiled, the step is traced once and the loop is one loop of the program,
-   which runs no eager kernel, whatever its number of trips. *)
+   which runs no eager kernel, whatever its number of trips. Off the host a
+   loop still running at [max] raises at the next wait. *)
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
 
@@ -306,8 +307,9 @@ let test_staged () =
   equal ~msg:"no retrace" int 0 !traces;
   equal ~msg:"no eager kernel" int 0 (C.calls ());
   equal bits_t (bits (Rune.iterate' ~max:50 ~until halve x)) (bits y);
+  let y = Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until halve x) x in
   invalid ~sub:"Rune.iterate': until is still false after max = 3 steps"
-    (fun () -> Rune.jit' (fun x -> Rune.iterate' ~max:3 ~until halve x) x)
+    (fun () -> Nx.sync y)
 
 (* A compiled call in a step stays a call, which computes at each step the bits
    it computes outside the loop, over carries in every view and a capture. *)

@@ -232,6 +232,79 @@ let test_scan_raise () =
         got)
     [ ("eager", scan); ("jit", Rune.jit' scan) ]
 
+(* A memory device's set, where a check raises at a later wait. *)
+module Away = (val Nx.devices [ Nx_support.memory 1 ])
+
+(* A failing iterate raises at the call on the host, which keeps the offers made
+   before it, compiled as eagerly. Off the host the compiled call's check raises
+   at a later wait, after the call offered every emission. *)
+let iterate_emits p x =
+  let tag k = Nx.place (Nx.placement x) (tag k) in
+  Probe.emit p (tag 0, x);
+  let y =
+    Rune.iterate' ~max:2
+      ~until:(fun y -> Nx.less (Nx.sum y) (Nx.scalar_like (Nx.sum y) 0.))
+      (fun y -> Nx.add y (Nx.scalar_like y 1.))
+      x
+  in
+  Probe.emit p (tag 1, y);
+  y
+
+let test_iterate_raise () =
+  let message =
+    "Invalid_argument(\"Rune.iterate': until is still false after max = 2 \
+     steps\")"
+  in
+  let x = vec [| 1.; 2. |] in
+  let p = Probe.make (tagged ()) in
+  List.iter
+    (fun (mode, run) ->
+      let r, got = collected p (fun () -> ignore (run x)) in
+      equal ~msg:mode (outcome_t pass) (Raised message) r;
+      equal ~msg:mode offers_t [ offer 0 [ x ] ] got)
+    [ ("eager", iterate_emits p); ("jit", Rune.jit' (iterate_emits p)) ];
+  let p = Probe.make (tagged ()) in
+  let before = Rune.evaluations () in
+  let r, got =
+    collected p (fun () ->
+        Nx.sync (Rune.jit' (iterate_emits p) (Nx.place Away.on x)))
+  in
+  equal ~msg:"off the host: compiled" int 0 (Rune.evaluations () - before);
+  equal ~msg:"off the host" (outcome_t pass) (Raised message) r;
+  equal ~msg:"off the host" offers_t
+    [ offer 0 [ x ]; offer 1 [ vec [| 3.; 4. |] ] ]
+    got
+
+(* Off the host a check raises at the next wait, so every row emits before it
+   raises, and a compiled scan offers them all, as eagerly. *)
+let test_scan_raise_off_host () =
+  let p = Probe.make (tagged ()) in
+  let xs = Nx.place Away.on (vec [| 1.; 2.; Float.nan; 4. |]) in
+  let f c r =
+    let tag k = Nx.place (Nx.placement r) (tag k) in
+    Probe.emit p (tag 0, r);
+    Nx.check T.tensor (Nx.logical_not (Nx.isnan r)) r (fun _ _ -> Exit);
+    Probe.emit p (tag 1, r);
+    (Nx.add c r, r)
+  in
+  let scan xs =
+    snd
+      (Rune.scan T.tensor T.tensor T.tensor f
+         ~init:(Nx.place Away.on (Nx.scalar f64 0.))
+         xs)
+  in
+  let rows = List.init 4 (fun k -> Nx.get [ k ] xs) in
+  let synced f xs = Nx.sync (f xs) in
+  List.iter
+    (fun (mode, run) ->
+      let before = Rune.evaluations () in
+      let r, got = collected p (fun () -> synced run xs) in
+      if mode = "jit" then
+        equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+      equal ~msg:mode (outcome_t pass) (Raised "Stdlib.Exit") r;
+      equal ~msg:mode offers_t [ offer 0 rows; offer 1 rows ] got)
+    [ ("eager", scan); ("jit", Rune.jit' scan) ]
+
 (* A scan in a scan's step: the inner rows of each outer row, in turn. *)
 let test_nested_scan () =
   let p = Probe.make (tagged ()) in
@@ -779,6 +852,10 @@ let () =
            [
              prop "a step offers a row per row, in every mode" scans law_scan;
              test "a raise keeps the rows before" test_scan_raise;
+             test "off the host, every row emits before the check raises"
+               test_scan_raise_off_host;
+             test "a failing iterate keeps the offers before it on the host"
+               test_iterate_raise;
              test "a scan in a step" test_nested_scan;
            ];
          group "maps"

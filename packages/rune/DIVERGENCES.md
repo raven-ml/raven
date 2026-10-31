@@ -19,7 +19,8 @@ The reference is JAX's `jax.lax` and `jax.vmap`.
 - **Raven:** `program.ml` (`default`, its `Switch` case); `compile.ml`
   (`switch`); `vmap.ml` (`switch_apart`).
 - **Differs:** an index outside `0 .. n-1` raises `Invalid_argument` at the
-  call, under a `jit` as the call returns, naming the lane under a map.
+  call, under a `jit` as the call's check (at the call on the host, at the
+  next wait on its set elsewhere), naming the lane under a map.
 - **Reason:** a clamped index takes the first or last branch with no error.
 - **Pinned by:** `Switch › an index out of range raises`.
 

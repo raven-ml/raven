@@ -295,6 +295,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** a `jit` call's checks (`Nx.check`, a sampler's parameters, a
+  `switch` index, an `iterate` past `max`) are one check of the call. Off the
+  host the call compiles, returns without waiting for its device, and its
+  failure raises at the next wait on its set, as an eager `Nx.check`'s does; an
+  eager `switch` or `iterate` still raises at the call.
 - Derivative rules allocate fewer words per operation: a reduction's
   derivative keeps its fused program, and a broadcast's and a contraction's
   transposes skip unused work. `Rune.value_and_grad` of a three-layer MLP

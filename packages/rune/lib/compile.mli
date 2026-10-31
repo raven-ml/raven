@@ -76,10 +76,11 @@ val make :
     {!Program.Lane_index}), a scan that runs some of its rows, an iterate that
     stacks its steps or whose lanes stop apart, a root, a root's linear solve or
     operator, an addition, a linear call with no function to apply, an operation
-    that {!Lower.op} does not lower, a check on a device other than the host, a
-    program with no value, and a value with an element on a device other than
-    the program's or over several devices. It also declines a program whose
-    device computes nothing. *)
+    that {!Lower.op} does not lower, a check whose flags lie on another set than
+    the program's first argument or else its first result, a program with no
+    value, and a value with an element on a device other than the program's or
+    over several devices. It also declines a program whose device computes
+    nothing. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], which must
@@ -91,8 +92,10 @@ val run : t -> Program.value array -> Program.value array
     donated handles among them, and reads each argument as it was at the claim.
     Where {!Nx.Prim.Consumer.take} does not give the memory of an argument a
     result takes, the result computes into a copy of it. A declined variant's
-    results are all copies. The first check that fails, in the program's order,
-    raises its exception after the program has run.
+    results are all copies. Once the program is submitted, the call issues its
+    checks as one check of nx on the program's set ({!Rune.section-checks}),
+    which raises the first that failed, in the program's order: at once on the
+    host, and at the next wait on another set.
 
     Raises [Invalid_argument] if [args] lie on several device sets
     ({!Nx.Placement.devices}) or if {!Nx.Prim.Consumer.with_} raises it, and

@@ -120,8 +120,8 @@
     - {b Errors.} A broken precondition on static data raises [Invalid_argument]
       naming the function, at once. A missed tolerance is a status. A broken
       precondition on a formula's tensor data raises [Invalid_argument] through
-      {!Nx.check}: at once eagerly, when the compiled call returns under
-      {!Rune.val-jit}.
+      {!Nx.check}, as a check does: at once on the host, at the next wait on
+      another set, eagerly or under {!Rune.val-jit}.
     - {b Devices.} Every result lies on its data's device set ['d], and the
       types carry it. Constants are computed on the host in float64, rounded
       once to the working dtype and placed whole on each device the data lies
@@ -208,7 +208,8 @@ module Solution : sig
       converge: the entry point, the lane, its status, the solve's settings, the
       lane's data, the budget it used, what to change, and how many other
       elements of its problem converged. Inside {!Rune.val-jit}, [get] returns
-      {!best} and the compiled call raises when it returns. *)
+      {!best} and the compiled call's check raises: at once on the host, at the
+      next wait on another set. *)
 
   val best : ('a, 'd) t -> 'a
   (** [best s] is the estimate in every lane. A lane that did not converge holds

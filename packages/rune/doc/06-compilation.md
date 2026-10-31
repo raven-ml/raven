@@ -115,8 +115,8 @@ memory, so `w'` equals `kept`. `w` was consumed by the second call.
 ## Checks
 
 A check (`Nx.check`) inside a compiled function is computed with the
-program, and the first that fails raises its exception when the call
-returns (the Checks section):
+program, and the first that fails raises its exception as a check does: at
+once on the host, at the next wait on another set (the Checks section):
 
 ```ocaml
 let checked_log =
@@ -134,7 +134,8 @@ let checked_log =
 log of a nonpositive element at 1
 ```
 
-The first failing index in C order is `1`, and the call's results are lost.
+The first failing index in C order is `1`, and on the host the call's results
+are lost.
 
 ## Accuracy
 

@@ -622,9 +622,10 @@ module Dist : sig
 
       {b Validation on use.} Constructors are total: they check shapes, raising
       [Invalid_argument] naming the function, and record their parameters'
-      domain checks. Every eliminator runs them with {!Nx.check}, eagerly at
-      once and in a compiled function when the call returns: a parameter outside
-      its domain raises [Invalid_argument] naming its index and value, as in
+      domain checks. Every eliminator runs them with {!Nx.check}, as a check
+      does: at once on the host, at the next wait on another set, eagerly or in
+      a compiled function. A parameter outside its domain raises
+      [Invalid_argument] naming its index and value, as in
       [Norn.Dist.log_density: normal: scale at [3] is -1, not in (0, inf)]. A
       value outside the support has density [-inf] and raises nothing. {!valid}
       reads the same checks as data, for a density that must be total:

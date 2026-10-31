@@ -228,6 +228,9 @@ type lowered = {
   params : Ops.t option array;  (** Each argument's buffer, if it has one. *)
   outs : out array;
   checks : check list;  (** In the program's order. *)
+  ok : Ops.t option;
+      (** The buffer of one boolean that holds where no check failed, where
+          the program checks. *)
   bound : (Ops.t * Rig.Buffer.t list) list;  (** The captures' storage. *)
 }
 
@@ -235,9 +238,15 @@ type lowered = {
    the node that holds the target there, and the target's node. *)
 type dst = { buf : Ops.t; filled : Ops.t; into : Ops.t }
 
+(* The form on whose set a call issues its checks: its first argument's, or
+   else its first result's. *)
+let issued (p : Program.t) (forms : form array) =
+  if Array.length forms > 0 then forms.(0) else form p.outputs.(0)
+
 type state = {
   rig : Rig.t;
   device : Ops.device;
+  issued : form;  (** {!issued}'s form of the program. *)
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t list) list;
   uploads : (value * A.any) list ref;
@@ -748,8 +757,11 @@ let raises cs ok failure =
 
 let check st cs env (type d e) (ok : (bool, _, d) Nx.t)
     (data : (d, e) Nx.Prim.data) (fail : int array -> e -> exn) =
-  if not (Rig.equal st.rig Rig.host) then
-    decline "a check off the host, which raises at a later wait";
+  (* The call's check raises at a wait on the set it is issued on, and an
+     eager check at a wait on its flags' set. *)
+  let (F at) = st.issued in
+  if Option.is_none (Nx.Placement.same (Nx.Prim.form ok).placement at.placement)
+  then decline "a check on another set than the program's";
   let shape = Nx.shape ok in
   let n = numel shape in
   cs.read <- reach env ok :: cs.read;
@@ -1826,6 +1838,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
     {
       rig;
       device = Ops.Single (Rig.name rig);
+      issued = issued p forms;
       captures = [];
       bound = [];
       uploads;
@@ -1995,10 +2008,10 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
     stores := store dt o u :: !stores;
     o
   in
+  let read u = assigned.read (-1) (sub u) in
   let checks =
     List.rev_map
       (fun (c : made) ->
-        let read u = assigned.read (-1) (sub u) in
         let first = one D.Int64 (read c.first) in
         let data =
           List.map (fun ((D.Any dt as d), u) -> (d, one dt (read u))) c.data
@@ -2006,10 +2019,27 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
         ({ shape = c.shape; first; data; fail = c.fail } : check))
       cs.made
   in
+  (* Whether every check holds: each one's first failure is its element
+     count. *)
+  let ok =
+    match cs.made with
+    | [] -> None
+    | made ->
+        let failing (c : made) =
+          let count = int64 (numel c.shape) in
+          Ops.where (Ops.lt (read c.first) count) (int64 1) (int64 0)
+        in
+        let failed =
+          List.fold_left
+            (fun acc c -> Ops.maximum acc (failing c))
+            (int64 0) made
+        in
+        Some (one Nx.bool (Ops.eq failed (int64 0)))
+  in
   let sink =
     match !stores with [] -> None | s -> Some (Ops.sink (List.rev s))
   in
-  { sink; params; outs; checks; bound = st.bound }
+  { sink; params; outs; checks; ok; bound = st.bound }
 
 (* Linking *)
 
@@ -2078,6 +2108,7 @@ type linked = {
   outs : out array;
   checks : (check * int * int list) list;
       (** Each check, the slot of its index and of each datum. *)
+  ok : int option;  (** The slot of the flag that no check failed. *)
 }
 
 type variant = {
@@ -2100,6 +2131,7 @@ let link ~beam ~parallel rig l =
         out_slots = Array.map (fun _ -> -1) l.outs;
         outs = l.outs;
         checks = [];
+        ok = None;
       }
   | Some sink ->
       let present = Ops.Tbl.create 16 in
@@ -2131,6 +2163,7 @@ let link ~beam ~parallel rig l =
             (c, slot c.first, List.map (fun (_, o) -> slot o) c.data))
           l.checks
       in
+      let ok = Option.map slot l.ok in
       let linear, vars =
         Tolk.Schedule.create_linear_with_vars ~capturing:true sink
       in
@@ -2149,6 +2182,7 @@ let link ~beam ~parallel rig l =
         out_slots;
         outs = l.outs;
         checks;
+        ok;
       }
 
 (* Programs *)
@@ -2398,17 +2432,40 @@ let unravel shape i =
   done;
   index
 
-(* Raises [c]'s failure if it failed: its index is below its element count. *)
-let answer slots ((c : check), first, data) =
-  let at = A.expect D.Int64 (element D.Int64 (List.hd slots.(first))) in
+(* [c]'s failure if it failed, its index below its element count, read from
+   the buffers of its index and its data. *)
+let failure ((c : check), first, data) =
+  let at = A.expect D.Int64 (element D.Int64 first) in
   let i = Int64.to_int (A.get at (Iarray.of_list [ 0 ])) in
-  if i < numel c.shape then
-    let data =
-      List.map2
-        (fun (D.Any dt, _) s -> element dt (List.hd slots.(s)))
-        c.data data
-    in
-    raise (c.fail (unravel c.shape i) data)
+  if i >= numel c.shape then None
+  else
+    let data = List.map2 (fun (D.Any dt, _) b -> element dt b) c.data data in
+    Some (c.fail (unravel c.shape i) data)
+
+(* Issues the call's checks as one check of nx on the program's set, over the
+   flag in [slots.(s)]: its failure is the first check's that failed, in the
+   program's order, raised at once on the host and at the next wait on another
+   set ({!Nx.section-waiting}). The buffers it reads are the call's own, which
+   no donation reaches, so the check holds none of them. *)
+let issue_checks t v slots s =
+  let flag =
+    A.v Nx.bool (L.contiguous (Iarray.of_list [ 1 ])) (List.hd slots.(s))
+  in
+  let checks =
+    List.map
+      (fun (c, first, data) ->
+        (c, List.hd slots.(first), List.map (fun d -> List.hd slots.(d)) data))
+      v.checks
+  in
+  let by = t.name in
+  let fail _ () =
+    match List.find_map failure checks with
+    | Some e -> e
+    | None -> invalid_arg (by ^ ": a failed check without a failure")
+  in
+  let (F f) = issued t.program t.forms in
+  let ok = Nx.Repr.unsafe_of_array (Nx.Placement.devices f.placement) flag in
+  Nx.Prim.eval ~by (Check { ok; data = []; fail })
 
 (* A buffer for one element of [dt]. *)
 let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
@@ -2502,6 +2559,7 @@ and linked t v args leaves take =
         (fun (D.Any dt, _) s -> slots.(s) <- [ one t.rig dt ])
         c.data data)
     v.checks;
+  Option.iter (fun s -> slots.(s) <- [ one t.rig Nx.bool ]) v.ok;
   Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
-  List.iter (answer slots) v.checks;
+  Option.iter (issue_checks t v slots) v.ok;
   Array.mapi (fun j r -> value t.rig r buffers.(j)) t.results

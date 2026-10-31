@@ -203,17 +203,21 @@ let stand_ins leaves = Array.of_list (List.map stand_in leaves)
    traced again with its emissions caught. A scan whose step emits is a scan of
    the step traced so, its emissions more outputs stacked over its rows; a call,
    a remat and a custom rule run their function in place, as the lowering does.
-   Another construct whose programs emit, and a program that checks, whose
-   failure would lose its outputs, are evaluated. *)
+   Another construct whose programs emit, and a program that checks on the
+   host, whose failure there would lose its outputs, are evaluated. Off the
+   host the call's check raises at a later wait, so every emission is
+   offered. *)
 
 exception Kept
 
-(* Whether [p] or a program it carries checks. *)
+(* Whether [p] or a program it carries checks: by a [Check], or by an
+   iterate's [max] or a switch's index, which the call's check holds too. *)
 let rec checks (p : Program.t) =
   Array.exists
     (function
       | Program.Op { op = Nx.Prim.Check _; _ } -> true
       | Op _ -> false
+      | Do { c = Program.Iterate _ | Program.Switch _; _ } -> true
       | Do { c; _ } -> List.exists checks (Program.carried c))
     p.eqns
 
@@ -338,10 +342,19 @@ and scan ~name (c : Program.construct) : Program.value array =
         (Array.sub r !at (Array.length r - !at))
   | _ -> invalid_arg "Rune: a scan's emissions"
 
+(* Whether [body] computes on the host's set: its first argument's, or else
+   its first result's. *)
+let on_host (body : Program.t) forms =
+  let firsts = Array.append forms (Array.map Program.form body.outputs) in
+  Array.length firsts = 0
+  ||
+  let (Program.F f) = firsts.(0) in
+  Option.is_some (Nx.Placement.same f.placement Nx.Host.on)
+
 (* [body] over arguments of [forms] with its emissions as outputs, or [None]
    where it is to be evaluated. *)
 let offered name (body : Program.t) forms =
-  if (not body.emits) || checks body then None
+  if (not body.emits) || (checks body && on_host body forms) then None
   else
     let na = Array.length body.adds in
     match

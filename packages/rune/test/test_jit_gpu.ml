@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
-   the host's eager values. It skips without a GPU, or without the compiler
-   the GPU's kernels need. *)
+   the host's eager values, and a call's check raises at the next wait, so the
+   call returns while its work runs. It skips without a GPU, or without the
+   compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -14,7 +15,7 @@ let gpu =
   lazy
     (match Rig_gpus.first () with
     | Error _ -> None
-    | Ok d -> Some (Nx.devices [ d ]))
+    | Ok d -> Some (d, Nx.devices [ d ]))
 
 (* A compile error that names a compiler library or a header the machine
    lacks is the machine's: the test skips. Half floats' kernels read headers
@@ -50,11 +51,59 @@ let compiles (module S : Nx.Devices) =
 let on_gpu () =
   match Lazy.force gpu with
   | None -> skip ~reason:"no GPU" ()
-  | Some s ->
+  | Some (d, s) ->
       compiles s;
-      s
+      (d, s)
 
-let law c = Scatters.law (on_gpu ()) c
+let law c = Scatters.law (snd (on_gpu ())) c
+
+exception Big of int array * float
+
+(* A step whose work is in flight when the call returns. An iterate's stop is
+   read on the host each trip, so the work that stays in flight is the work
+   after it: [products] products of [n; n] matrices, after a check of the first
+   one, which fails at [0; 0]. They are 4.4 TFLOP: at least 68 ms at the RTX
+   5000 Ada's float32 peak of 65 TFLOPS, tens of milliseconds on any current
+   GPU, while the host reads the timeline microseconds after the call's last
+   submit, so the GPU cannot finish them before the read. Each product by
+   [w], whose elements are [1/n], keeps the values [n], exactly. *)
+let n = 4096
+let products = 32
+
+let test_deferred () =
+  let d, (module S) = on_gpu () in
+  let step x =
+    let x =
+      Rune.iterate' ~max:4
+        ~until:(fun x -> Nx.greater (Nx.sum x) (Nx.scalar_like (Nx.sum x) 0.))
+        (fun x -> Nx.add x (Nx.scalar_like x 1.))
+        x
+    in
+    let y = Nx.matmul x x in
+    Nx.check Nx.Ptree.tensor
+      (Nx.less y (Nx.scalar_like y (float_of_int n /. 2.)))
+      y
+      (fun i v -> Big (i, Nx.item [] v));
+    let w = Nx.div x (Nx.scalar_like x (float_of_int n)) in
+    let h = ref y in
+    for _ = 1 to products do
+      h := Nx.matmul !h w
+    done;
+    !h
+  in
+  let x = Nx.place S.on (Nx.zeros Nx.float32 [| n; n |]) in
+  let g = Rune.jit' step in
+  let before = Rune.evaluations () in
+  (* The first call compiles. *)
+  (try Nx.sync (g x) with Big _ -> ());
+  let y = g x in
+  let signaled = Rig.signaled d and submitted = Rig.submitted d in
+  equal ~msg:"compiled" Testable.int 0 (Rune.evaluations () - before);
+  less ~msg:"the call returned before its work completed" Testable.int
+    ~than:submitted signaled;
+  raises ~msg:"the next wait raises the check"
+    (Big ([| 0; 0 |], float_of_int n))
+    (fun () -> Nx.sync y)
 
 let () =
   exit
@@ -66,5 +115,10 @@ let () =
                "a scatter past 16 times eager's work compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                law;
+           ];
+         group "checks"
+           [
+             test "a call's check raises at the next wait, not at the call"
+               test_deferred;
            ];
        ])
