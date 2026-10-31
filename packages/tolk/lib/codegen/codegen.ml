@@ -1344,17 +1344,16 @@ let line_rewrite lst m ctx =
       lines)
     lst
 
-(* Each kernel's program is made once: a domain that asks for one being made
-   waits for it rather than making it again. [made] reads a made program
-   without waiting. *)
-let to_program_cache = Helpers.Memo.create ()
+(* Each call's body is lowered once: a domain that asks for one being lowered
+   waits for it rather than lowering it again. *)
+let lowered_bodies = Helpers.Memo.create ()
 
-(* The key of a program, in memory and on disk: the kernel, the renderer and its
-   target, the table of its compiler's binaries, which names the compiler and
-   its options, every setting and variable that shapes what compilation makes
+(* The key of a call's body: the body, the renderer and its target, the table
+   of its compiler's binaries, which names the compiler and its options, every
+   setting and variable that shapes what compilation makes
    ([Setting.shaping]), and the digest of this library's sources, of which a
-   program is a function. *)
-let program_key ast (ren : Renderer.t) =
+   body's lines are a function. *)
+let body_key ast (ren : Renderer.t) =
   String.concat "\n"
     ([
        Source_digest.digest;
@@ -1391,8 +1390,8 @@ let lower_call ren call =
            (pm_linearize_cleanups ++ pm_alloc_to_buf)
            ())
   in
-  let key = "call\n" ^ program_key (body call) ren in
-  let body = Helpers.Memo.get to_program_cache key lower in
+  let key = body_key (body call) ren in
+  let body = Helpers.Memo.get lowered_bodies key lower in
   replace call ~src:(replace body ~arg:(String name) :: src_without_body call)
 
 let pm_lower_calls =
@@ -1594,6 +1593,90 @@ let compiled compile_source prg (ren : Renderer.t) =
 
 let compile prg ren = compiled Renderer.Compiler.compile prg ren
 
+(* A kernel's parameters' devices, by slot in the order a walk finds them, and
+   the key of the kernel with each parameter that names a device naming
+   [device], its target's: the program's source names no device, and a link
+   binds it to its call's buffers, so one program, its parameters' devices
+   renamed ([rename]), serves every device of the target (D170). A kernel on
+   the target's first device, named as the target is, is its own key. They
+   are kept with the kernel while it lives, since a kernel asks for its
+   program several times; [key] holds its last key and the [suffix] that key
+   ends with. *)
+type params = {
+  devices : (int * device) list;
+  device : device;
+  free : string;
+  key : (string * string) option Atomic.t;
+}
+
+module Kernels = Ephemeron.K1.Make (struct
+  type t = Ops.t
+
+  let equal = Ops.equal
+  let hash = Ops.hash
+end)
+
+let kernels = Kernels.create 64
+let kernels_lock = Mutex.create ()
+
+let params_on device ast =
+  let devices = ref [] in
+  let named u =
+    match arg u with
+    | Param ({ slot; device = Some d; _ } as p) ->
+        devices := (slot, d) :: !devices;
+        if String.equal d device then None
+        else Some (Param { p with device = Some device })
+    | _ -> None
+  in
+  let free = key_with ~arg:named ast in
+  { devices = List.rev !devices; device; free; key = Atomic.make None }
+
+let params ast (ren : Renderer.t) =
+  let device = ren.target.device in
+  match Mutex.protect kernels_lock (fun () -> Kernels.find_opt kernels ast) with
+  | Some p when String.equal p.device device -> p
+  | Some _ | None ->
+      let p = params_on device ast in
+      Mutex.protect kernels_lock (fun () -> Kernels.replace kernels ast p);
+      p
+
+(* The key of a program, in memory and on disk: the kernel with its
+   parameters on its target's device, the renderer and its target, the table
+   of its compiler's binaries, which names the compiler and its options, every
+   setting and variable that shapes what compilation makes
+   ([Setting.shaping]), and the digest of this library's sources, of which a
+   program is a function. The part past the kernel is kept while the renderer
+   and the settings' list stay the same, as the list does while no setting
+   changes. *)
+let suffixes = Atomic.make None
+
+let suffix (ren : Renderer.t) =
+  let shaping = Setting.shaping () in
+  match Atomic.get suffixes with
+  | Some (r, s, text) when r == ren && s == shaping -> text
+  | Some _ | None ->
+      let text =
+        String.concat "\n"
+          ([
+             ren.name;
+             Format.asprintf "%a" Helpers.Target.pp ren.target;
+             Option.value (Renderer.Compiler.cachekey ren.compiler) ~default:"";
+           ]
+          @ List.map (fun (k, v) -> k ^ "=" ^ v) shaping)
+      in
+      Atomic.set suffixes (Some (ren, shaping, text));
+      text
+
+let keyed p ren =
+  let text = suffix ren in
+  match Atomic.get p.key with
+  | Some (t, key) when t == text -> key
+  | Some _ | None ->
+      let key = String.concat "\n" [ Source_digest.digest; p.free; text ] in
+      Atomic.set p.key (Some (text, key));
+      key
+
 (* A program is kept on disk up to its source, only while its compiler's
    binaries are, under a table that names the compiler: its binary is the
    compiler's entry for that source, so each binary is stored once. A kernel
@@ -1613,17 +1696,73 @@ let made_program ?beam ~key ~kernel ast (ren : Renderer.t) =
     let prg = linearized ?beam ast ren in
     Option.get (do_render ren prg (nth prg 1))
   in
-  let prg =
-    if not (kept kernel ren) then render ()
-    else fst (Graph.cached ~table:"to_program" ~key ~valid:rendered render)
+  let prg, read =
+    if not (kept kernel ren) then (render (), false)
+    else Graph.cached ~table:"to_program" ~key ~valid:rendered render
   in
-  Option.get
-    (do_compile (ren, Renderer.Compiler.compile_cached) prg (nth prg 2))
+  let prg =
+    Option.get
+      (do_compile (ren, Renderer.Compiler.compile_cached) prg (nth prg 2))
+  in
+  (prg, read)
+
+(* [prg] with each parameter that names a device naming the one [devices]
+   gives its slot, if any: those of its graph and those its information
+   lists, which a substitution of the graph does not reach. *)
+let rename devices prg =
+  let table = Hashtbl.create 8 in
+  List.iter (fun (slot, d) -> Hashtbl.replace table slot d) devices;
+  let moved u =
+    match arg u with
+    | Param ({ slot; device = Some d; _ } as p) -> (
+        match Hashtbl.find_opt table slot with
+        | Some d' when not (String.equal d d') ->
+            Some (u, replace u ~arg:(Param { p with device = Some d' }))
+        | Some _ | None -> None)
+    | _ -> None
+  in
+  match List.filter_map moved (toposort ~calls:Enter prg) with
+  | [] -> prg
+  | subs -> (
+      let renamed = substitute ~calls:Enter ~pass:Once prg subs in
+      let param u = match moved u with Some (_, u') -> u' | None -> u in
+      match arg renamed with
+      | Program info ->
+          let params = List.map param info.params in
+          replace renamed ~arg:(Program { info with params })
+      | _ -> renamed)
+
+(* A kept program: [prg] as made or read, and [named], it renamed to the
+   [devices] of the kernel that made it. *)
+type made = { devices : (int * device) list; named : Ops.t; prg : Ops.t }
+
+let same_devices =
+  List.equal (fun (s, d) (s', d') -> s = s' && String.equal d d')
+
+(* A program made here from [ast] names [ast]'s devices, slot by slot, so it
+   needs no renaming; one read back names the devices of the kernel that
+   made it in another process. *)
+let made_of ?beam ~key ~kernel (p : params) ast ren =
+  let prg, read = made_program ?beam ~key ~kernel ast ren in
+  let named = if read then rename p.devices prg else prg in
+  { devices = p.devices; named; prg }
+
+(* Each kernel's program is made once: a domain that asks for one being made
+   waits for it rather than making it again. [made] reads a made program
+   without waiting. *)
+let to_program_cache = (Helpers.Memo.create () : made Helpers.Memo.t)
+
+let served (p : params) m =
+  if same_devices p.devices m.devices then m.named else rename p.devices m.prg
 
 let to_program ?beam ast ren =
   let kernel = kernel_of ast in
-  let key = program_key ast ren in
-  Helpers.Memo.get to_program_cache key (fun () ->
-      made_program ?beam ~key ~kernel ast ren)
+  let p = params ast ren in
+  let key = keyed p ren in
+  served p
+    (Helpers.Memo.get to_program_cache key (fun () ->
+         made_of ?beam ~key ~kernel p ast ren))
 
-let made ast ren = Helpers.Memo.find to_program_cache (program_key ast ren)
+let made ast ren =
+  let p = params ast ren in
+  Option.map (served p) (Helpers.Memo.find to_program_cache (keyed p ren))

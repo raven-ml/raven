@@ -965,26 +965,57 @@ let compare_structure u0 u1 =
 
 (* An argument as [key] reads it: its repr, which writes every NaN [nan], with a
    NaN constant's bits, since NaNs of different bits are different nodes. *)
+let nan_key x = strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
+
 let arg_key n =
   match n.arg with
-  | Const (`Float x) when Float.is_nan x ->
-      strf "ConstFloat(nan 0x%Lx)" (Int64.bits_of_float x)
+  | Const (`Float x) when Float.is_nan x -> nan_key x
   | _ -> arg_repr n
+
+(* A node's digest from its argument's key and its sources' digests. *)
+let rec add_keys b src_key = function
+  | [] -> ()
+  | s :: rest ->
+      Buffer.add_string b (src_key s);
+      add_keys b src_key rest
+
+let digest n arg_key src_key =
+  let b = Buffer.create 128 in
+  Buffer.add_string b
+    (repr_tuple
+       [ Format.asprintf "%a" Op.pp n.op; repr_dtype n.dtype; arg_key ]);
+  add_keys b src_key n.src;
+  Digest.BLAKE256.string (Buffer.contents b)
 
 let key u =
   memoized ~calls:Enter
     ~get:(fun n -> n.memos.key_memo)
     ~set:(fun n k -> n.memos.key_memo <- Some k)
     ~compute:(fun n ->
-      let b = Buffer.create 128 in
-      Buffer.add_string b
-        (repr_tuple
-           [ Format.asprintf "%a" Op.pp n.op; repr_dtype n.dtype; arg_key n ]);
-      List.iter
-        (fun s -> Buffer.add_string b (Option.get s.memos.key_memo))
-        n.src;
-      Digest.BLAKE256.string (Buffer.contents b))
+      digest n (arg_key n) (fun s -> Option.get s.memos.key_memo))
     u
+
+(* The nodes [arg] gives an argument and those above them differ from their
+   [key]: their digests are held here, the others' are their keys, filled in
+   order. *)
+let key_with ~arg u =
+  let moved = Tbl.create 16 in
+  let src_key s =
+    match Tbl.find moved s with k -> k | exception Not_found -> key s
+  in
+  let is_moved s = Tbl.mem moved s in
+  List.iter
+    (fun n ->
+      match arg n with
+      | Some (Const (`Float x)) when Float.is_nan x ->
+          Tbl.replace moved n (digest n (nan_key x) src_key)
+      | Some a -> Tbl.replace moved n (digest n (repr_arg a) src_key)
+      | None ->
+          if List.exists is_moved n.src then
+            Tbl.replace moved n (digest n (arg_key n) src_key)
+          else ignore (key n))
+    (toposort ~calls:Enter u);
+  src_key u
 
 let identity_element op dt : Dtype.const =
   match op with

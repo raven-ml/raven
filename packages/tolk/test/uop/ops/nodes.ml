@@ -613,6 +613,37 @@ let keys =
           equal string (Ops.key quiet) (Ops.key (nan 0x7FF8_0000_0000_0000L)));
     ]
 
+(* [u] with each node [arg] gives an argument taking it. *)
+let with_args arg u =
+  Ops.substitute ~calls:Enter ~pass:Once u
+    (List.filter_map
+       (fun n -> Option.map (fun a -> (n, Ops.replace n ~arg:a)) (arg n))
+       (Ops.toposort ~calls:Enter u))
+
+let keys_with =
+  group "key_with"
+    [
+      prop "is the key of the graph with the arguments given" gen_recipe
+        (fun r ->
+          let vars = leaves () in
+          let u = build vars r in
+          let renamed = Ops.arg (var "w" (-8) 8) in
+          let arg n = if n == vars.(0) then Some renamed else None in
+          cover "renames" (List.memq vars.(0) (Ops.toposort ~calls:Enter u));
+          equal string (Ops.key (with_args arg u)) (Ops.key_with ~arg u));
+      test "is the key of a NaN constant of the bits given" (fun () ->
+          let nan bits = Ops.float (Int64.float_of_bits bits) in
+          let quiet = nan 0x7FF8_0000_0000_0000L in
+          let u = Ops.O.(fvar "x" + quiet) in
+          let payload = Ops.arg (nan 0x7FF8_0000_0000_0001L) in
+          let arg n = if n == quiet then Some payload else None in
+          equal string (Ops.key (with_args arg u)) (Ops.key_with ~arg u);
+          not_equal string (Ops.key u) (Ops.key_with ~arg u));
+      test "is the key when no argument is given" (fun () ->
+          let u = Ops.O.(var "x" 0 4 + Ops.int 1) in
+          equal string (Ops.key u) (Ops.key_with ~arg:(fun _ -> None) u));
+    ]
+
 (* Data types *)
 
 let dtype_or_raise cell =
@@ -1304,6 +1335,7 @@ let groups =
     identity;
     structure_order;
     keys;
+    keys_with;
     data_types;
     graphs;
     shapes;

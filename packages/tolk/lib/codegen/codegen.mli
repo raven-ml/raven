@@ -110,11 +110,14 @@ val to_program :
     pipeline that keeps what it makes, {!linearize} and {!compile} the one that
     keeps nothing.
 
-    Programs are kept: a second call with an equal [ast], a renderer of the same
-    name and target whose compiler has the same name of its toolchain and
+    Programs are kept: a second call with an [ast] equal to the first's but
+    for which device each parameter that names one names, a renderer of the
+    same name and target whose compiler has the same name of its toolchain and
     options ({!Renderer.Compiler.cachekey}), if any, and the same values of the
     settings and variables that shape what compilation makes
-    ({!Setting.shaping}) returns the program the first made. [to_program] may be
+    ({!Setting.shaping}) returns the program the first made, each parameter
+    naming the device [ast]'s parameter of its slot names. Its source and
+    binary are the first's, and name no device. [to_program] may be
     called from several domains at once, and makes each program once: a call
     that asks for a program another domain is making waits for it. A call that
     raises keeps nothing, and the next call makes the program anew.
@@ -142,7 +145,8 @@ val to_program :
 
 val made : Ops.t -> Renderer.t -> Ops.t option
 (** [made ast ren] is the program {!to_program} has made of [ast] for [ren] in
-    this process, kept in memory under the same key, if it has. It makes
+    this process, kept in memory under the same key, if it has, its
+    parameters naming [ast]'s devices as {!to_program}'s do. It makes
     nothing, reads nothing from disk and waits for no program being made. *)
 
 val linearize : Ops.t -> Renderer.t -> Ops.t

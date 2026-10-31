@@ -4601,3 +4601,26 @@ fold wraps integers and holds its float bound`, hold.
   `search/actions/*` rows on fudge, which time making a search's candidates,
   and its `*/codegen` rows.
 
+## D170. A program serves every device of its target
+
+- **tinygrad:** `codegen/__init__.py:513` (`to_program_key`): the key is
+  `ast.key`, whose `PARAM`s carry their buffer's device
+  (`schedule/rangeify.py:278`, `debuf`), so each device makes its own
+  program of one kernel.
+- **tolk:** `Codegen.program_key` (`Codegen.params`) and
+  `Codegen.to_program` (`Codegen.rename`).
+- **Differs:** the key of a program is its kernel with each parameter that
+  names a device naming its target's (`CPU`, `CUDA`), so a kernel on the
+  target's first device is its own key. A kernel for one device takes the
+  program made for another of its target, in memory and on disk, its
+  parameters renamed to the kernel's devices: its source and binary name no
+  device, and a link binds the program to its call's buffers and launches it
+  on its call's devices.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Compile.make`, `Pieces.split`) lower each device's operations on that
+  device, so a program over `n` memory devices of one host makes `n` copies
+  of each kernel. With the devices in the key, a data-parallel step's first
+  call over 16 memory devices took 0.92 s on fudge, 52 ms per device past
+  the first; with them erased, 0.24 s.
+- **Pinned by:** `Tolk.Codegen › programs are kept › a program for one device
+  serves another of its target`; rune's `Rune.jit over several devices`.
