@@ -3123,6 +3123,7 @@ thread.
 
 ### Nx
 
+- `Nx.attention` states its error bound for each element of `o` and for `lse`.
 - A compiled `Nx_wide.sum` of 10^6 float64 numbers makes its first call in
   1.8 s, from 2.2 s: it stores its tree's partial sums every five levels, from
   three. The association changes with them, so a sum may differ in its last

@@ -257,8 +257,6 @@ raven / llama.cpp (Vulkan; ROCm):
   step retraces at each new context length or pads to a window, as kaun's
   cached attention does; rune's lowering refuses tolk's `Sym` extents.
   Design it from references before nx, rune and kaun take it
-- `Nx.attention`'s error bound: derive it for the identity score, state it
-  in nx.mli, and tie the law's tolerance in `test_attention.ml` to it
 - eager GPU kernel libraries, nx.cuda, nx.metal and nx.amd, onto nx's
   current kernel interface; until then a GPU set computes under
   `Rune.jit` only. Their last code is 64478fedf

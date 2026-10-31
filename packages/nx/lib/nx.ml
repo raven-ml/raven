@@ -5429,6 +5429,16 @@ let paged_read ~by positions pool =
     (Eval.reshape ~by (Array.append lead [| 1; tk; 1 |]) positions)
     (Eval.reshape ~by (Array.append units (shape flat)) flat)
 
+(* The bound nx.mli states, step by step, to first order in float32's [u].
+   A score's contraction errs by [γ(dk + 1, 2u) Σ |q k|] (contract's bound),
+   and the roundings of [scale] to float32 and of its product add [u |s|]
+   each: [η = (2dk + 4) u a]. The log-sum-exp of the computed scores is
+   within [η] of the exact one, and the kernels' reduction adds [ε]. The
+   exponent of a weight [exp (s - lse)] then errs by [η + (η + ε)], plus
+   [u (lse - s) <= (2b + ln tk) u] from the subtraction, and [exp]'s 2 ulps
+   add [5u]: the weight errs by a relative [e^w - 1]. The contraction for
+   [o] adds [γ(tk + 1, 2u) Σ p |v|], and the rounding to [q]'s dtype
+   [u_q |o|]. *)
 let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     (q : (v, s, d) t) : (v, s, d) t * d float32_t =
   let by = "Nx.attention" in

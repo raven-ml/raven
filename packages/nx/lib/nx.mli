@@ -2629,6 +2629,24 @@ val attention :
     [q]'s dtype is float16, bfloat16 or float32. Scores, their maxima and
     sums, and [lse] compute in float32, and [o] rounds once to [q]'s dtype.
 
+    The bound below holds at a row with a visible key, for finite [q], [k]
+    and [v], barring overflow and underflow. Let [u] be float32's unit
+    roundoff and [u{_q}] that of [q]'s dtype. Let [η] bound the error of
+    each of the row's visible scores, as [score] rewrites them, and [b]
+    bound their magnitudes. Each element of [o] is within
+    [u{_q} |o| + (1 + u{_q}) (e{^w} - 1 + γ(tk + 1, 2u) e{^w}) M] of the
+    exact one, and [lse] within [η + ε], where
+    [w = (1 + u) (2η + ε) + (2b + ln tk + 5) u]. Here [M] is the element's
+    [Σ p |v|] over the row's visible keys at their exact weights [p], at
+    most its greatest [|v|], [ε] is the bound the kernels' library states
+    for a [Logsumexp] of [tk] terms, and [γ] is as {!contract} defines it.
+    Without [score], [η] is [((1 + u)² (1 + γ(dk + 1, 2u)) - 1) a], about
+    [(2dk + 4) u a], and [b] is at most [a], where [a] is the greatest
+    [|scale| Σ |q k|] of a visible key. The bound holds where a set's
+    kernels compute, as those of {!section-transcendental} do. Under a
+    compiler such as [Rune.jit], the compiler's bounds compose the same
+    way.
+
     It computes as a contraction for the scores, a map and a reduction for
     the visible scores' log-sum-exp, a map for the weights and a contraction
     for [o]. Each call stores three float32 arrays of
