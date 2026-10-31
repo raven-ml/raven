@@ -182,6 +182,39 @@ let factors =
   Thumper.bench_with_setup ~setup "student_t/100000" (fun (d, x) ->
       D.factors d x)
 
+(* A count family's factors at 100000 of its draws, eager, and as a compiled
+   value and gradient in one parameter [p]. *)
+let counts name family p =
+  let x = D.sample (Nx.Rng.key 6) (D.iid [| 100_000 |] (family (f64 p))) in
+  let n = Printf.sprintf "%s/100000" name in
+  let eager =
+    let setup () = (D.iid [| 100_000 |] (family (f64 p)), x) in
+    Thumper.bench_with_setup ~setup n (fun (d, x) -> D.factors d x)
+  in
+  let grad =
+    let setup () =
+      let lp p = Nx.sum (D.factors (D.iid [| 100_000 |] (family p)) x) in
+      let grad =
+        Rune.jit
+          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+          (Rune.value_and_grad Nx.Ptree.tensor lp)
+      in
+      ignore (grad (f64 p));
+      (grad, f64 p)
+    in
+    Thumper.bench_with_setup ~setup (n ^ "/grad") (fun (grad, p) -> grad p)
+  in
+  [ eager; grad ]
+
+let count_factors =
+  counts "poisson" (fun rate -> D.poisson ~rate) 30.
+  @ counts "binomial"
+      (fun logits -> D.binomial ~trials:(Nx.scalar Nx.int32 1000l) ~logits)
+      (-1.)
+  @ counts "neg_binomial"
+      (fun mean -> D.neg_binomial ~mean ~dispersion:(f64 4.5))
+      30.
+
 let rhat =
   let setup () =
     Norn.Draws.v Nx.Ptree.tensor
@@ -221,7 +254,7 @@ let () =
       Thumper.group "smc"
         [ smc_step Norn.Smc.Hmc "hmc"; smc_step Norn.Smc.Slice "slice" ];
       Thumper.group "model" [ log_density ];
-      Thumper.group "dist" [ factors ];
+      Thumper.group "dist" (factors :: count_factors);
       Thumper.group "diag" [ rhat ];
       Thumper.group "posteriordb" posteriordb;
     ]
