@@ -250,9 +250,10 @@ end
 
     A step's [~lr] is a function of the step counter, as a {!Schedule} is:
     the step applies it to its state's counter of completed steps and casts
-    the scalar float tensor it gives to each leaf's dtype. A constant rate is
-    {!val-lr}; a rate exact at float64 is one at that dtype beside the
-    counter, [fun step -> Nx.scalar_at (Nx.placement step) Nx.float64 0.1].
+    the scalar float tensor it gives to the dtype each leaf computes at
+    ({!section-structures}). A constant rate is {!val-lr}; a rate exact at
+    float64 is one at that dtype beside the counter,
+    [fun step -> Nx.scalar_at (Nx.placement step) Nx.float64 0.1].
     Either is tensor arithmetic beside the counter, which is what makes the
     rate track correctly under [Rune.jit]. *)
 
@@ -804,9 +805,11 @@ val adafactor_step :
     ]}
 
     The history is held at a fixed size, so the state is a parameter tree of
-    static shape ({!lbfgs_ptree}) and the step traces under [Rune.jit]. The
-    inner products of the two-loop recursion are at float64 when every float
-    leaf is float64, and at float32 otherwise. *)
+    static shape ({!lbfgs_ptree}) and the step traces under [Rune.jit]. Its
+    vectors compute leaf by leaf as {!section-structures} states, a float16 or
+    bfloat16 leaf at float32 and rounded once, when stored. The inner products
+    of the two-loop recursion are at float64 when every float leaf is float64,
+    and at float32 otherwise. *)
 
 type ('p, 'd) lbfgs_state = {
   params : 'p;  (** The current point. *)
@@ -845,5 +848,5 @@ val lbfgs_step :
     [st.params + lr * d], and pushes the move as the newest pair, dropping the
     oldest. With no pair of positive curvature, [d] is [-grads].
 
-    Raises [Invalid_argument] as {!section-structures} states if [grads] does
-    not have [st.params]' skeleton. *)
+    Raises [Invalid_argument] as {!section-structures} states if [grads],
+    [st.grads], [st.s] or [st.y] does not have [st.params]' skeleton. *)

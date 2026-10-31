@@ -107,6 +107,13 @@ let tests =
              Nx.mul_s (Nx.rsqrt (Nx.cast Nx.float32 (Nx.add_s step 1l))) 1e-2
            in
            Vega.adafactor_step Wb.ptree ~lr st));
+    (* Six steps fill a history of three and evict from it. *)
+    test "lbfgs"
+      (compiles Vega.lbfgs_ptree
+         ~init:(fun p x -> Vega.lbfgs_init p ~history:3 x)
+         ~step:(fun st ~params ~grads ->
+           let st = Vega.lbfgs_step Wb.ptree ~lr grads { st with params } in
+           (st.params, st)));
   ]
 
 (* A loss-scaled Adam step compiles once and follows the eager steps, through a

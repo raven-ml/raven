@@ -158,6 +158,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- `lbfgs_step` computes a float16 or bfloat16 leaf at float32 and rounds it
+  once, when stored, as the other steps do. It rounded its recursion, rate and
+  move to the leaf's dtype at every operation.
 - **Breaking:** states and structures carry the parameters' device set, as
   `('p, 'd) adam_state` over an `('p, 'd) Nx.Ptree.t`. Each `*_init` makes
   the step counter beside the parameters and raises when they hold no array.

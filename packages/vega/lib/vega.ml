@@ -862,6 +862,29 @@ let top x memory =
 let is_float64 (type a b d) (t : (a, b, d) Nx.t) =
   match Nx.dtype t with Float64 | Complex128 -> true | _ -> false
 
+(* L-BFGS computes each float leaf at float32, or at float64 for a float64
+   leaf, and rounds once, when it stores: its vectors are lists of leaves of
+   several dtypes, walked by [leaves ()]. [widen] casts a leaf to the dtype it
+   computes at and [narrow like x] casts [x] back to [like]'s. A complex leaf
+   computes as it is, its parts at float32 or float64. *)
+let widen (Nx.P x) =
+  match (Nx.Dtype.kind (Nx.dtype x), Nx.dtype x) with
+  | Float, (Float32 | Float64) -> Nx.P x
+  | Float, _ -> Nx.P (Nx.cast Nx.float32 x)
+  | (Complex | Signed | Unsigned | Boolean), _ -> Nx.P x
+
+let narrow (Nx.P like) (Nx.P x) =
+  match Nx.Dtype.equal_witness (Nx.dtype like) (Nx.dtype x) with
+  | Some _ -> Nx.P x
+  | None -> Nx.P (Nx.cast (Nx.dtype like) x)
+
+let leaves () =
+  let walk c xs =
+    let open Nx.Ptree.Walk in
+    list (fun c (Nx.P x) -> Nx.P (tensor c x)) c xs
+  in
+  Nx.Ptree.v walk
+
 (* The newest pair's step is the move the last call made; this call completes
    its gradient difference, [grads - st.grads]. The direction is the two-loop
    recursion (Nocedal, 1980) over the pairs with [rho = 1 / (y . s)], a pair
@@ -872,50 +895,65 @@ let is_float64 (type a b d) (t : (a, b, d) Nx.t) =
 let lbfgs_step p ~lr grads st =
   let fn = "Vega.lbfgs_step" in
   let lr = lr st.step in
+  (* Every value has the parameters' skeleton and dtypes, checked before the
+     leaves are widened, which would hide a part of another dtype. *)
   let skeleton = snd (Nx.Ptree.flatten p st.params) in
-  let rest = ref (aligned fn p skeleton "the gradients" grads) in
+  let parts =
+    List.map
+      (fun (name, x) -> (name, ref (aligned fn p skeleton name x)))
+      [ ("the gradients", grads); ("grads", st.grads); ("s", st.s); ("y", st.y) ]
+  in
   Nx.Ptree.fold p
-    (fun path x () -> ignore (take fn "the gradients" path x rest))
+    (fun path x () ->
+      List.iter (fun (name, rest) -> ignore (take fn name path x rest)) parts)
     st.params ();
   let float64 =
     Nx.Ptree.fold p
       (fun _ t acc -> acc && ((not (updates t)) || is_float64 t))
       st.params true
   in
+  let flat = leaves () in
+  let wide x = List.map widen (fst (Nx.Ptree.flatten p x)) in
+  let store like x =
+    let dtypes = fst (Nx.Ptree.flatten p like) in
+    Nx.Ptree.rebuild p ~like (List.map2 narrow dtypes x)
+  in
   (* The recursion runs over the real coordinates, two per complex element,
      whose gradient is the conjugate of Rune's ([leafwise]); [Nx.Ptree.dot]
      pairs complex arrays part by part. *)
-  let conjugate = Nx.Ptree.map p (fun _ g -> Nx.conjugate g) in
+  let conjugate = Nx.Ptree.map flat (fun _ g -> Nx.conjugate g) in
   let difference =
-    Nx.Ptree.map2 p (fun _ a b -> if updates a then Nx.sub a b else a)
+    Nx.Ptree.map2 flat (fun _ a b -> if updates a then Nx.sub a b else a)
   in
+  let g = wide grads in
   let y =
-    Nx.Ptree.map2 p
+    Nx.Ptree.map2 flat
       (fun _ d m -> top d m)
-      (conjugate (difference grads st.grads))
-      st.y
+      (conjugate (difference g (wide st.grads)))
+      (wide st.y)
   in
+  let s = wide st.s in
   let history =
-    match fst (Nx.Ptree.flatten p st.s) with
+    match s with
     | Nx.P t :: _ -> Nx.dim 0 t
     | [] -> invalid_arg (fn ^ ": the parameters hold no array")
   in
   let run (type w) (w : w wide) =
     let dt = dtype w in
-    let dot = Nx.Ptree.dot p dt in
+    let dot = Nx.Ptree.dot flat dt in
     let pair i =
-      let s = Nx.Ptree.map p (fun _ m -> slot i m) st.s
-      and y = Nx.Ptree.map p (fun _ m -> slot i m) y in
+      let s = Nx.Ptree.map flat (fun _ m -> slot i m) s
+      and y = Nx.Ptree.map flat (fun _ m -> slot i m) y in
       let ys = dot y s in
       (s, y, Nx.where (Nx.greater_s ys 0.0) (Nx.recip ys) (Nx.zeros_like ys))
     in
     let pairs = Array.init history pair in
     let alphas = Array.map (fun (_, _, rho) -> Nx.zeros_like rho) pairs in
-    let q = ref (conjugate grads) in
+    let q = ref (conjugate g) in
     for i = 0 to history - 1 do
       let s, y, rho = pairs.(i) in
       alphas.(i) <- Nx.mul rho (dot s !q);
-      q := Nx.Ptree.axpy p (Nx.neg alphas.(i)) y !q
+      q := Nx.Ptree.axpy flat (Nx.neg alphas.(i)) y !q
     done;
     let _, y0, rho0 = pairs.(0) in
     let gamma =
@@ -923,30 +961,32 @@ let lbfgs_step p ~lr grads st =
         (Nx.recip (Nx.mul rho0 (dot y0 y0)))
         (Nx.ones_like rho0)
     in
-    let r = ref (Nx.Ptree.scale p gamma !q) in
+    let r = ref (Nx.Ptree.scale flat gamma !q) in
     for i = history - 1 downto 0 do
       let s, y, rho = pairs.(i) in
       let beta = Nx.mul rho (dot y !r) in
-      r := Nx.Ptree.axpy p (Nx.sub alphas.(i) beta) s !r
+      r := Nx.Ptree.axpy flat (Nx.sub alphas.(i) beta) s !r
     done;
     !r
   in
   let r = if float64 then run F64 else run F32 in
   let move =
-    Nx.Ptree.map p
+    Nx.Ptree.map flat
       (fun _ r ->
         if updates r then Nx.neg (Nx.mul r (Nx.cast (Nx.dtype r) lr)) else r)
       r
   in
   let params =
-    Nx.Ptree.map2 p
+    Nx.Ptree.map2 flat
       (fun _ x d -> if updates x then Nx.add x d else x)
-      st.params move
+      (wide st.params) move
   in
   {
-    params;
+    params = store st.params params;
     grads;
-    s = Nx.Ptree.map2 p (fun _ d m -> push d m) move st.s;
-    y = Nx.Ptree.map2 p (fun _ d m -> push (Nx.zeros_like d) m) grads y;
+    s = store st.s (Nx.Ptree.map2 flat (fun _ d m -> push d m) move s);
+    y =
+      store st.y
+        (Nx.Ptree.map2 flat (fun _ d m -> push (Nx.zeros_like d) m) g y);
     step = Nx.add_s st.step 1l;
   }

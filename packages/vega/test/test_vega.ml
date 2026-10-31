@@ -1156,6 +1156,27 @@ let test_steps_check_the_skeleton () =
            ~params
            ~grads:(Nx.P (Nx.create Nx.float32 [| 1 |] [| 1.0 |]))))
 
+(* An L-BFGS state's parts have the parameters' dtypes, as the gradients
+   do: a part of another dtype raises at its leaf, naming the part. *)
+let test_lbfgs_checks_the_state_dtypes () =
+  let any : ((_, Nx.host) Any.t, Nx.host) Nx.Ptree.t =
+    Nx.Ptree.instantiate (module Any)
+  in
+  let params = Nx.create Nx.bfloat16 [| 2 |] [| 1.0; 2.0 |] in
+  let st = Vega.lbfgs_init any ~history:2 (Nx.P params) in
+  let recast dt (Nx.P x) = Nx.P (Nx.cast dt x) in
+  let rejects part dt st =
+    raises
+      (Invalid_argument
+         (Printf.sprintf
+            "Vega.lbfgs_step: the root: %s in %s, bfloat16 in the parameters"
+            (Nx.Dtype.name dt) part))
+      (fun () -> Vega.lbfgs_step any ~lr:(Vega.lr 0.1) (Nx.P params) st)
+  in
+  rejects "grads" Nx.float16 { st with grads = recast Nx.float16 st.grads };
+  rejects "s" Nx.float32 { st with s = recast Nx.float32 st.s };
+  rejects "y" Nx.float32 { st with y = recast Nx.float32 st.y }
+
 (* Complex leaves *)
 
 let cmat dt zs =
@@ -1392,6 +1413,125 @@ let test_leaves_on_two_devices () =
   equal ~msg:"first leaf" (array float_exact) (Nx.to_array a) (Nx.to_array a');
   equal ~msg:"second leaf" (array float_exact) (Nx.to_array b) (Nx.to_array b')
 
+(* L-BFGS from any state, over a float16 or bfloat16 leaf beside a float32
+   one. A step computes at float32 and rounds once, when it stores, so it is
+   the step from the state's float32 copy, rounded to the leaf's dtype. The
+   pairs below the newest are drawn of positive curvature, so that they enter
+   the recursion. Half the states also draw zeros of either sign, infinities,
+   NaN, and the extremes of float16 and bfloat16. *)
+type lbfgs_leaf = {
+  x : float array;
+  prev : float array;
+  g : float array;
+  s : float array;
+  y : float array;
+}
+
+let half_extremes =
+  [ 65504.0; -65504.0; 0x1p-14; 0x1p-24; 0x1.fep127; -0x1.fep127; 0x1p-133 ]
+
+let specials = [ 0.0; -0.0; infinity; neg_infinity; nan ] @ half_extremes
+
+let lbfgs_leaf ~wild history n =
+  let open Gen in
+  let value r =
+    if wild then frequency [ (2, float_range (-.r) r); (1, of_list specials) ]
+    else float_range (-.r) r
+  in
+  let values k r = array ~size:(constant k) (value r) in
+  let+ x = values n 4.0
+  and+ prev = values n 4.0
+  and+ g = values n 4.0
+  and+ s = values (history * n) 1.0
+  and+ c = array ~size:(constant (history * n)) (float_range 0.5 2.0)
+  and+ e = values (history * n) 0.1 in
+  let y = Array.init (history * n) (fun i -> (s.(i) *. c.(i)) +. e.(i)) in
+  { x; prev; g; s; y }
+
+let lbfgs_draw =
+  let open Gen in
+  let* history = int_range 1 3 in
+  let* n = int_range 0 4 in
+  let* m = int_range 0 2 in
+  let* wild = bool in
+  let+ a = lbfgs_leaf ~wild history n and+ b = lbfgs_leaf ~wild history m in
+  (history, a, b)
+
+let rounds_once (type b) (dt : (float, b) Nx.dtype) =
+  prop
+    (Nx.Dtype.name dt ^ " beside float32 steps as its float32 copy, rounded")
+    lbfgs_draw
+    (fun (history, a, b) ->
+      let n = Array.length a.x and m = Array.length b.x in
+      let both f h =
+        ( Nx.create dt (Array.append h [| n |]) (f a),
+          Nx.create Nx.float32 (Array.append h [| m |]) (f b) )
+      in
+      let st =
+        {
+          Vega.params = both (fun d -> d.x) [||];
+          grads = both (fun d -> d.prev) [||];
+          s = both (fun d -> d.s) [| history |];
+          y = both (fun d -> d.y) [| history |];
+          step = Nx.scalar Nx.int32 3l;
+        }
+      in
+      let grads = both (fun d -> d.g) [||] in
+      let widen (h, f) = (Nx.cast Nx.float32 h, f) in
+      let narrow (f, f') = (Nx.cast dt f, f') in
+      let p = Nx.Ptree.(pair tensor tensor)
+      and p32 = Nx.Ptree.(pair tensor tensor) in
+      (* The curvature of the [i]-th pair, the newest completed by [grads]. *)
+      let curvature i =
+        let dot (u, v) (u', v') =
+          let d u u' = Nx.item [] (Nx.vdot u u') in
+          d u u' +. d v v'
+        in
+        let slot (u, v) = (Nx.get [ i ] u, Nx.get [ i ] v) in
+        let y =
+          if i > 0 then widen (slot st.y)
+          else
+            Nx.Ptree.map2 p32 (fun _ g g' -> Nx.sub g g') (widen grads)
+              (widen st.grads)
+        in
+        dot (widen (slot st.s)) y
+      in
+      cover "a history of two pairs or more" (history >= 2);
+      cover "an empty leaf" (n = 0);
+      let drawn = [ a.x; a.prev; a.g; a.s; a.y; b.x; b.prev; b.g; b.s; b.y ] in
+      let any f = List.exists (Array.exists f) drawn in
+      cover "finite values only" (not (any (fun v -> not (Float.is_finite v))));
+      cover "a -0." (any (fun v -> v = 0.0 && Float.sign_bit v));
+      cover "an infinity" (any (fun v -> Float.abs v = infinity));
+      cover "a NaN" (any Float.is_nan);
+      cover "an extreme of float16 or bfloat16"
+        (any (fun v -> List.mem v half_extremes));
+      cover "a pair of positive curvature"
+        (List.exists (fun i -> curvature i > 0.0) (List.init history Fun.id));
+      let lr = Vega.lr 0.1 in
+      let wide =
+        Vega.lbfgs_step p32 ~lr (widen grads)
+          {
+            params = widen st.params;
+            grads = widen st.grads;
+            s = widen st.s;
+            y = widen st.y;
+            step = st.step;
+          }
+      in
+      let rounded =
+        {
+          Vega.params = narrow wide.params;
+          grads = narrow wide.grads;
+          s = narrow wide.s;
+          y = narrow wide.y;
+          step = wide.step;
+        }
+      in
+      let ptree = Vega.lbfgs_ptree p in
+      equal (list (array float_exact)) (floats ptree rounded)
+        (floats ptree (Vega.lbfgs_step p ~lr grads st)))
+
 let test_empty_structures () =
   let p = Nx.Ptree.unit in
   equal ~msg:"clipping a structure of no array returns it" unit ()
@@ -1514,8 +1654,12 @@ let tests =
           test_lbfgs_carries_a_non_parameter_leaf;
         test "gradients of another skeleton raise"
           test_lbfgs_rejects_other_gradients;
+        test "a state part of another dtype raises"
+          test_lbfgs_checks_the_state_dtypes;
         test "the state's structure visits its leaves and walks it back"
           test_lbfgs_state_is_a_ptree;
+        group "a step rounds once, when it stores"
+          [ rounds_once Nx.float16; rounds_once Nx.bfloat16 ];
       ];
   ]
 
