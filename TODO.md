@@ -85,6 +85,17 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### tests and runs
 
+- two-domain `stateful` tests time out on a loaded machine: test_space's
+  "two domains allocate and free at once" and test_memory's "two domains'
+  allocations stay within the budget" take 0.1-0.3 s, but 6 s and 50-60 s
+  pinned to one core. rig's code does not spin. windtrap's start barrier
+  (`Workers.run_job`) spins on `Domain.cpu_relax` without bound, a
+  scheduler slice (3-5 ms) per run when the workers share a core: to fix
+  in windtrap, as a bounded spin then a block. Each budget refusal calls
+  `Gc.full_major` twice (`Memory.reclaim_round`), whose stop-the-world
+  sections loop in every domain, backup threads included, until all
+  finish: 60 ms a call on one core with two idle domains, 0.15 ms
+  unpinned. Then decide whether the budget test needs 16 x 50 runs
 - hardware runs, none possible on fudge or nonnormal (SDMA 7, one GPU
   each, no RDMA NIC): the box and fill laws on SDMA 4 to 6; two GPUs
   (peers); mlx5 and bnxt NICs
