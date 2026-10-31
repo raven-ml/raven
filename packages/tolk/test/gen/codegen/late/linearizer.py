@@ -52,6 +52,15 @@ def dependent_loop_bound():
     return UOp.sink(out.after(store).index(outer).store(UOp.const(2, dtypes.int)).end(outer))
 
 
+def sibling_loops_shared_value():
+    # test/runtime/test_linearizer.py::test_sibling_loops_shared_value: two loops in a loop read one loaded value
+    f, o, i = UOp.param(0, dtypes.int, 1), UOp.param(1, dtypes.int, 4), UOp.range(2, 0, dtype=dtypes.int)
+    v, g = (x := f.after(i).index(0).load()) + i, x.eq(0).cast(dtypes.int)
+    r1 = UOp.range(g, 1, dtype=dtypes.int)
+    r2 = UOp.range(g.after(o.index(i * 2 + r1).store(v).end(r1)), 2, dtype=dtypes.int)
+    return o.index(i * 2 + 1 + r2).store(v).end(r2).end(i).sink(arg=KernelInfo(opts_to_apply=()))
+
+
 def wait_loop(fxn):
     # test/runtime/test_wait_loop.py, compiled for one int of output
     return lambda: fxn(UOp.param(0, dtypes.int, 1))
@@ -88,6 +97,7 @@ KERNELS = {
     "simple_unroll": (lambda: with_opts(last((Tensor.empty(64, 64, device="CPU") @ Tensor.empty(64, 64, device="CPU")).relu()),
                                         [Opt(OptOps.SPLIT, 2, (4, AxisType.UPCAST)), Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST))]),
                       CPU, ""),
+    "sibling_loops_shared_value": (sibling_loops_shared_value, CPU, "c"),
     "wait_loop": (wait_loop(wait_loop_kernel), CPU, ""),
     "nested_loop": (wait_loop(nested_loop_kernel), CPU, "c"),
     "two_loops": (wait_loop(two_loops_kernel), CPU, "c"),

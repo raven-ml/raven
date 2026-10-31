@@ -802,6 +802,8 @@ thread.
   are gone. `Shape.flip` reverses an axis with pads, reshapes, shrinks and
   permutes, whose index folds to `n - 1 - i` on an axis of known size; a store
   through a padded view gates its destination index (`Prepare.pm_mops`).
+- `Linearizer.linearize` places a node in more loops after one in fewer that
+  runs as often.
 - A kernel that calls a sink no longer runs its loops nested wrongly where the
   body has a loop of the size and identity of one of its own
   (`Codegen.to_program`).

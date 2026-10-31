@@ -35,7 +35,9 @@ let case file cell =
    target in particular. [late_bias_load] and the three after it are the kernels
    of tinygrad's runtime/test_linearizer.py, whose claims are about the order: a
    bias loaded after the reduction's loop ends, a load and its index between two
-   ranges, a load hoisted before the range, register stores inside the loop. The
+   ranges, a load hoisted before the range, register stores inside the loop;
+   [sibling_loops_shared_value], a value two loops in a loop read, placed
+   before both. The
    loops are the do-while kernels of tinygrad's test_wait_loop. *)
 let kernels =
   [
@@ -53,6 +55,7 @@ let kernels =
     ("two_nested_range_alt_indexing", []);
     ("range_outer_op_before_phi", []);
     ("simple_unroll", []);
+    ("sibling_loops_shared_value", [ `Chain ]);
     ("wait_loop", []);
     ("nested_loop", [ `Chain ]);
     ("two_loops", [ `Chain ]);

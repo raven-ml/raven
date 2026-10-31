@@ -10,13 +10,15 @@ module Ready = Set.Make (Int)
 
 (* Linearizing *)
 
-(* A range counts at least two runs. Counted as one, a range over a variable of
-   at most 1 would tie its body with an accumulator's first store, which would
-   then be placed inside the loop and skipped when it runs no time. *)
-let runs r = max 2 (Dtype.Value.to_int (vmax r) + 1)
+(* A range counts at least one run. Counted as none, a range that may run no
+   time would place its body before the nodes around the loop, an
+   accumulator's first store among them, which would then be skipped when the
+   loop runs no time. *)
+let runs r = max 1 (Dtype.Value.to_int (vmax r) + 1)
 
 let priority u =
-  let run_count = Nodes.fold (fun r n -> n * runs r) (ranges u) 1 in
+  let rs = ranges u in
+  let run_count = Nodes.fold (fun r n -> n * runs r) rs 1 in
   (* Smaller numbers are placed closer to the top. *)
   let priority, extra =
     match (op u, arg u) with
@@ -29,14 +31,15 @@ let priority u =
     | (Op.End | Op.Backedge), _ -> (-5, None)
     | _ -> (0, None)
   in
-  (run_count, priority, extra)
+  (* A node in more loops is placed later. *)
+  (run_count, Nodes.cardinal rs, priority, extra)
 
-let pp_priority ppf (run_count, priority, extra) =
+let pp_priority ppf (run_count, depth, priority, extra) =
   let pp_extra ppf = function
     | None -> Format.pp_print_string ppf "None"
     | Some slot -> Format.pp_print_int ppf slot
   in
-  Format.fprintf ppf "(%d, %d, %a)" run_count priority pp_extra extra
+  Format.fprintf ppf "(%d, %d, %d, %a)" run_count depth priority pp_extra extra
 
 let linearize sink =
   let lst = toposort ~calls:Skip sink in
