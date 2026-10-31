@@ -300,11 +300,11 @@ let rec stack_select r0 srcs lo hi =
       (stack_select r0 srcs lo mid)
       (stack_select r0 srcs mid hi)
 
-(* A stack of shapes has no ranges, and the empty shape is void. The sources are
-   taken from the list, since a stack of them may not fit its shape. *)
+(* A stack of shapes has no ranges. The sources are taken from the list, since a
+   stack of them may not fit its shape. *)
 let convert_stack_to_where ctx x =
   match Tbl.find_opt ctx.range_map x with
-  | Some (_, r0 :: _) when not (Dtype.equal (dtype x) Dtype.Void) ->
+  | Some (_, r0 :: _) ->
       let srcs = Array.of_list (create_bufferize_and_index_srcs ctx x) in
       let n = Array.length srcs in
       let ret = stack_select r0 srcs 0 n in

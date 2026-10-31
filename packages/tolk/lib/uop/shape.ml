@@ -1166,7 +1166,7 @@ let sym_compile (s : sint) var =
         | Op.Const ->
             let v = as_value (value n) in
             fun _ -> v
-        | Op.Param when addrspace n = Some Dtype.Alu || is_variable n ->
+        | Op.Param when addrspace n = Some Dtype.Alu ->
             let read = var n in
             fun env -> `Int (Bigint.of_int (read env))
         | Op.Cast ->
@@ -1194,7 +1194,7 @@ let sym_compile (s : sint) var =
                   let c = Bigint.to_int z in
                   Some (fun _ -> c)
               | _ -> None)
-          | Op.Param, _ when addrspace n = Some Dtype.Alu || is_variable n ->
+          | Op.Param, _ when addrspace n = Some Dtype.Alu ->
               Some (var n)
           | Op.Neg, [ x ] ->
               Option.map

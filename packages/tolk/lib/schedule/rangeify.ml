@@ -33,14 +33,13 @@ let rec zip l0 l1 =
 
 (* Cleanups *)
 
-let always_run u = op u = Op.Noop
 let transcendental = ops Op.[ Exp2; Log2; Sin; Pow ]
 
 (* Whether an axis dies is only known once an expand to its left is seen. *)
 let cleanup_dead_axes b =
   let value = nth b 0 in
   (* An after is storage: its ranges say how consumers read it. *)
-  if (opts b).keep = Whole || always_run value || op value = Op.After then None
+  if (opts b).keep = Whole || op value = Op.After then None
   else
     let axes = zip (shape b) (List.tl (src b)) in
     let dead rng =
@@ -188,7 +187,7 @@ let remove_bufferize ~reads src buf idx =
          (List.tl (Ops.src buf)))
   then invalid_arg "a stage's ranges are ranges or constants";
   (* A user's materialisation is never removed. *)
-  if always_run src || (opts buf).keep = Whole then None
+  if (opts buf).keep = Whole then None
   else
     (* The cost: the buffers the value reads, and whether a reduction reads
        one. *)
@@ -772,12 +771,7 @@ let to_define_global =
          the slots of their enclosing call. *)
       rule_ctx (Upat.op Op.Param ~name:"buf") (fun ctx m ->
           let buf = m "buf" in
-          if
-            (not (is_tagged buf))
-            || (addrspace buf = Some Dtype.Alu
-               || shape_opt buf = None)
-               [@mutate off "a scalar parameter has no shape"]
-          then None
+          if (not (is_tagged buf)) || addrspace buf = Some Dtype.Alu then None
           else Some (debuf ctx buf));
       (* Scalar parameters are values, not buffers. *)
       rule_ctx

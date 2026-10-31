@@ -842,11 +842,8 @@ and multi_pm =
             rule (Upat.op Op.Call ~name:"call") (fun m ->
                 rewrite_into_function (m "call"));
             rule
-              (Upat.v
-                 ~op:(ops Op.[ Call; After ])
-                 ~name:"root" ~allow_any_len:true
-                 ~src:[ Upat.op Op.Unshard ~name:"multi" ]
-                 ())
+              (Upat.op Op.After ~name:"root" ~allow_any_len:true
+                 ~src:[ Upat.op Op.Unshard ~name:"multi" ])
               (fun m -> Some (passthrough_multi (m "root") (m "multi")));
             (* Other calls, custom kernels among them, just lose their
                unshards. *)
