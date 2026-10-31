@@ -3207,6 +3207,292 @@ let law_strided_sort xs =
     (outcome (fun () -> codes (sort a)))
     (compiled (fun () -> codes (Rune.jit' sort a)))
 
+(* Segmented contractions
+
+   Elements are multiples of [1/2] up to [2] in magnitude, which every float
+   dtype holds, so that every partial sum of a contraction of up to 40 terms
+   is exact in its float32 or float64 accumulator: a compiled result and
+   eager's then round one exact value, and agree but for a zero's sign, which
+   a segmented contraction leaves open. A [Rows] contraction multiplies x[n;
+   k] by W[g; j; k], a [Contracting] one x[n; k] by y[n; j] into [g; k; j],
+   their [n] indices grouped by offsets that may fall outside the axis, as
+   {!Nx_kernel.type-segments} allows: a pair of 24 indices or more in 3 or 4
+   groups is computed in blocks. *)
+
+type segmented = {
+  sdt : Nx.Dtype.any;
+  rows : bool;
+  n : int;
+  k : int;
+  j : int;
+  g : int;
+  offsets : int64 array;
+  xs : float array;
+  ws : float array;
+}
+
+let segmented_dts =
+  Nx.Dtype.
+    [
+      Any Nx.float64;
+      Any Nx.float32;
+      Any Nx.float16;
+      Any Nx.bfloat16;
+      Any Nx.float8_e4m3fn;
+      Any Nx.float8_e5m2;
+      Any Nx.float4_e2m1fn;
+    ]
+
+let segmented_cases ?(dts = segmented_dts) () =
+  let open Gen in
+  let half = map (fun i -> Float.of_int i /. 2.) (int_range (-4) 4) in
+  let elements n = array ~size:(constant n) half in
+  let* sdt = of_list dts and+ rows = bool in
+  let* n = frequency [ (1, int_range 0 3); (3, int_range 24 40) ] in
+  let* g = frequency [ (1, constant 1); (3, int_range 2 4) ] in
+  let* k = int_range 1 3 and+ j = int_range 1 3 in
+  let entry =
+    frequency
+      [
+        (8, map Int64.of_int (int_range (-2) (n + 2)));
+        (1, of_list [ Int64.min_int; Int64.max_int ]);
+      ]
+  in
+  let* offsets = array ~size:(constant (g + 1)) entry in
+  let* xs = elements (n * k) in
+  let+ ws = elements (if rows then g * j * k else n * j) in
+  { sdt; rows; n; k; j; g; offsets; xs; ws }
+
+let pp_segmented ppf c =
+  let (Nx.Dtype.Any d) = c.sdt in
+  Format.fprintf ppf "%a %s n %d k %d j %d g %d offsets [%s]" Nx.pp_dtype d
+    (if c.rows then "rows" else "contracting")
+    c.n c.k c.j c.g
+    (String.concat "; " (Array.to_list (Array.map Int64.to_string c.offsets)))
+
+let segmented_cases ?dts () =
+  Gen.with_pp pp_segmented (segmented_cases ?dts ())
+
+(* A pair of 30 indices in blocks, its group [1] empty and its first two
+   indices in none; rows of one group; and no index. *)
+let segmented_examples dt =
+  let half n = Array.init n (fun i -> Float.of_int ((i mod 7) - 3) /. 2.) in
+  let blocked =
+    {
+      sdt = dt;
+      rows = false;
+      n = 30;
+      k = 2;
+      j = 3;
+      g = 3;
+      offsets = [| 2L; 9L; 9L; 30L |];
+      xs = half 60;
+      ws = half 90;
+    }
+  in
+  let one =
+    {
+      blocked with
+      rows = true;
+      g = 1;
+      offsets = [| 0L; 30L |];
+      ws = half 6;
+    }
+  in
+  [ blocked; one; { one with n = 0; xs = [||] } ]
+
+(* The group of each index, by {!Nx_kernel.type-segments}' rule. *)
+let group_of c r =
+  let o = c.offsets and r = Int64.of_int r in
+  let below e =
+    Array.for_all (fun x -> r < x) (Array.sub o (e + 1) (c.g - e))
+  in
+  List.find_opt
+    (fun e -> Int64.max o.(0) o.(e) <= r && below e)
+    (List.init c.g Fun.id)
+
+let cover_segmented c =
+  let counts = Array.make c.g 0 in
+  let add e = counts.(e) <- counts.(e) + 1 in
+  List.iter (fun r -> Option.iter add (group_of c r)) (List.init c.n Fun.id);
+  let held = Array.fold_left ( + ) 0 counts in
+  cover "rows" c.rows;
+  cover "a contracting pair in blocks" ((not c.rows) && c.n >= 24 && c.g >= 3);
+  cover "one group" (c.g = 1);
+  cover "an empty group" (Array.exists (( = ) 0) counts);
+  cover "an index in no group" (held < c.n);
+  cover "no index" (c.n = 0)
+
+(* [segmented_of c] is the contraction of [c] on [x], [w] and the offsets. *)
+let segmented_of (type s d) c (x : (float, s, d) Nx.t) w offsets =
+  let segments : _ Nx_kernel.segments =
+    if c.rows then Rows { offsets; a_axis = 0; b_axis = 0 }
+    else Contracting { offsets; pair = 0 }
+  in
+  let acc : Nx.Dtype.any =
+    match Nx.dtype x with
+    | Nx.Dtype.Float64 -> Any Nx.float64
+    | Float32 | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
+    | Float4_e2m1fn ->
+        Any f32
+  in
+  Nx.Prim.eval ~by:"test"
+    (Contract
+       {
+         batch = Iarray.of_list [];
+         contracting =
+           Iarray.of_list (if c.rows then [ (1, 2) ] else [ (0, 0) ]);
+         acc;
+         out = Nx.dtype x;
+         a = x;
+         b = w;
+         init = None;
+         a_scale = None;
+         b_scale = None;
+         segments = Some segments;
+       })
+
+let operands (type s) (dt : (float, s) Nx.dtype) c =
+  let x = Nx.create dt [| c.n; c.k |] c.xs in
+  let ws = if c.rows then [| c.g; c.j; c.k |] else [| c.n; c.j |] in
+  let w = Nx.create dt ws c.ws in
+  (x, w, Nx.create Nx.int64 [| c.g + 1 |] c.offsets)
+
+(* [x]'s values as float64, zeros as [+0]. *)
+let as_floats x =
+  Array.map (fun v -> if v = 0. then 0. else v) (Nx.to_array (Nx.cast f64 x))
+
+let triple_fn () = T.(tensor @-> tensor @-> tensor @-> returns tensor)
+
+let same msg u v = equal ~msg (array float_exact) (as_floats u) (as_floats v)
+
+(* [jitted f] is [f ()], which must compile every call it makes. *)
+let jitted f =
+  match compiled f with Value v -> v | Raised e -> fail ("raised " ^ e)
+
+let law_segmented c =
+  cover_segmented c;
+  let (Nx.Dtype.Any dt) = c.sdt in
+  match Nx.Dtype.kind dt with
+  | Float ->
+      let x, w, o = operands dt c in
+      let f x w o = segmented_of c x w o in
+      same "jit" (f x w o) (jitted (fun () -> Rune.jit (triple_fn ()) f x w o))
+  | _ -> assert false
+
+(* The gradients of [<c, y>], [c] of [y]'s shape, by both operands: jit of
+   grad and grad of jit give eager's. *)
+let law_segmented_grad c =
+  cover_segmented c;
+  let x, w, o = operands f64 c in
+  let y = segmented_of c x w o in
+  let ct =
+    Nx.create f64 (Nx.shape y)
+      (Array.init (Nx.numel y) (fun i -> Float.of_int ((i mod 5) - 2) /. 2.))
+  in
+  let both = T.(pair tensor tensor) in
+  let loss (x, w) = Nx.sum (Nx.mul ct (segmented_of c x w o)) in
+  let grads xw = Rune.grad both loss xw in
+  let gx, gw = grads (x, w) in
+  let fn = T.(both @-> returns both) in
+  let gx', gw' = jitted (fun () -> Rune.jit fn grads (x, w)) in
+  same "jit of grad, x" gx gx';
+  same "jit of grad, w" gw gw';
+  let compiled_loss xw = Rune.jit T.(both @-> returns tensor) loss xw in
+  let hx, hw = jitted (fun () -> Rune.grad both compiled_loss (x, w)) in
+  same "grad of jit, x" gx hx;
+  same "grad of jit, w" gw hw
+
+(* Experts: an MXFP4 stack of [e] experts of [n] outputs over 32 inputs,
+   scale byte 127, applied to [t] tokens of [top] ids each, drawn from [-1]
+   to [e], so that some fall outside the experts. Values are exact in each
+   sum as above. A float64 [x] decodes the experts its ids name. *)
+
+type experts = {
+  xdt : Nx.Dtype.any;
+  e : int;
+  outs : int;
+  t : int;
+  top : int;
+  ids : int array;
+  codes : int array;
+  inputs : float array;
+}
+
+let experts_cases =
+  let open Gen in
+  let* xdt =
+    of_list Nx.Dtype.[ Any f32; Any Nx.float16; Any Nx.bfloat16; Any f64 ]
+  in
+  let* e = of_list [ 1; 3; 4 ] and+ outs = int_range 1 3 in
+  let* t = of_list [ 0; 1; 6 ] and+ top = int_range 1 2 in
+  let* ids = array ~size:(constant (t * top)) (int_range (-1) e) in
+  let* codes = array ~size:(constant (e * outs * 16)) (int_range 0 255) in
+  let half = map (fun i -> Float.of_int i /. 2.) (int_range (-4) 4) in
+  let+ inputs = array ~size:(constant (t * 32)) half in
+  { xdt; e; outs; t; top; ids; codes; inputs }
+
+let experts_cases =
+  experts_cases
+  |> Gen.with_pp (fun ppf c ->
+      let (Nx.Dtype.Any d) = c.xdt in
+      Format.fprintf ppf "%a e %d n %d tokens %d top %d ids [%s]" Nx.pp_dtype
+        d c.e c.outs c.t c.top
+        (String.concat "; " (Array.to_list (Array.map string_of_int c.ids))))
+
+(* One expert and no token; one expert, a token's second id past it; three
+   experts, two named by none, an id below them. *)
+let experts_examples =
+  let halves n = Array.init n (fun i -> Float.of_int ((i mod 9) - 4) /. 2.) in
+  let codes e = Array.init (e * 2 * 16) (fun i -> (i * 37) mod 256) in
+  let base =
+    {
+      xdt = Nx.Dtype.Any f32;
+      e = 1;
+      outs = 2;
+      t = 0;
+      top = 1;
+      ids = [||];
+      codes = codes 1;
+      inputs = [||];
+    }
+  in
+  [
+    base;
+    { base with t = 1; top = 2; ids = [| 0; 1 |]; inputs = halves 32 };
+    {
+      base with
+      e = 3;
+      t = 1;
+      top = 2;
+      ids = [| -1; 2 |];
+      codes = codes 3;
+      inputs = halves 32;
+    };
+  ]
+
+let law_experts c =
+  let out = Array.exists (fun i -> i < 0 || i >= c.e) c.ids in
+  cover "an id outside the experts" out;
+  cover "one expert" (c.e = 1);
+  cover "an expert no id names"
+    (List.exists (fun x -> not (Array.mem x c.ids)) (List.init c.e Fun.id));
+  cover "no token" (c.t = 0);
+  let (Nx.Dtype.Any dt) = c.xdt in
+  match Nx.Dtype.kind dt with
+  | Float ->
+      let codes = Nx.create Nx.uint8 [| c.e; c.outs; 16 |] c.codes in
+      let scales = Nx.full Nx.uint8 [| c.e; c.outs; 1 |] 127 in
+      let w = Nx_quant.mxfp4 ~scales codes in
+      let ids =
+        Nx.create Nx.int64 [| c.t; c.top |] (Array.map Int64.of_int c.ids)
+      in
+      let x = Nx.create dt [| c.t; 1; 32 |] c.inputs in
+      let f ids x = Nx_quant.apply_experts ~ids w x in
+      let fn = T.(tensor @-> tensor @-> returns tensor) in
+      same "jit" (f ids x) (jitted (fun () -> Rune.jit fn f ids x))
+  | _ -> assert false
+
 let () =
   exit
     (run "rune jit"
@@ -3219,6 +3505,17 @@ let () =
              prop "a function of one kind is within its bounds" unary_cases
                law_unary;
              prop "a sum is within its bound" sum_cases law_sum;
+             prop ~count:24
+               ~examples:(segmented_examples (Nx.Dtype.Any f32))
+               "a segmented contraction gives eager's values"
+               (segmented_cases ()) law_segmented;
+             prop ~count:12
+               ~examples:(segmented_examples (Nx.Dtype.Any f64))
+               "a segmented contraction's gradients give eager's values"
+               (segmented_cases ~dts:[ Nx.Dtype.Any f64 ] ())
+               law_segmented_grad;
+             prop ~count:16 ~examples:experts_examples
+               "experts applied give eager's values" experts_cases law_experts;
              prop ~count:20 ~examples:bitcast_examples
                "a bitcast gives eager's bits" bitcast_cases law_bitcast;
              prop ~count:12

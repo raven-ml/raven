@@ -289,6 +289,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled `Nx_quant.apply_experts` contracts each row with its own
+  expert's matrix alone, where it computed every expert's product for every
+  row and kept one: 32 experts cost 32 times the work. Its gradient in `x`
+  compiles alike.
 - The derivative budget of `Nx.gammaincinv` and `Nx.gammainccinv` in `p` is
   stated at the smaller tail `min (p, 1 - p)`.
 - A compiled `Nx.eigh` of a matrix whose norm passes its dtype's range, such

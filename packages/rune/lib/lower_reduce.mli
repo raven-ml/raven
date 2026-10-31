@@ -162,11 +162,19 @@ val contract :
     indices alone. The other indices add exact zeros, which can change only a
     zero result's sign.
 
-    A [Rows] contraction contracts each row with each of the [g] groups' slices
-    of [b], then picks each output from among the [g] results by its row's
-    group. It costs [g] times the work of the contraction of one slice, through
-    [g] results per output. A [Contracting] contraction computes each group over
-    the pair's whole extent, [g] times the unsegmented work.
+    A [Rows] contraction contracts each of its [n] rows with its own group's
+    slice of [b] alone, which it loads at the row's group: the products of the
+    contraction of one slice, and work in [n g + g²] to find each row's group.
+
+    A [Contracting] contraction of [g] groups over a pair of [n] indices
+    computes each group's output over the pair's whole extent, [n] products
+    each, [g n] for each index of the other axes. Where it takes fewer, it
+    cuts each group into blocks of [c] indices instead, [c] one of
+    [⌈n / g⌉] and [⌈√(n - g)⌉]: at most [B = g + ⌊(n - g) / c⌋] blocks,
+    [B c] products for each index of the other axes into [B] partial
+    results stored apart, and [g B] sums of them, each group's of its own
+    blocks. Finding the groups takes work in [n g], and the blocks' bounds
+    in [g B].
 
     Raises [Invalid_argument] for a scale with an [acc] other than [float32]
     or [float64]. *)

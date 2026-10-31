@@ -77,7 +77,7 @@ decomposition if it computes what nx states. This section lists every place
 where it builds something else, or builds what tinygrad has no source for,
 except these, not yet recorded: the complex kinds (`lower_complex.ml`), the
 transforms (`lower_fft.ml`), `eigh`, logsumexp and moments, `expm1` and
-`log1p`, and scaled and segmented contractions.
+`log1p`, and scaled contractions.
 
 An entry is admitted for one of three reasons only:
 
@@ -726,3 +726,38 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reason:** (b).
 - **Pinned by:** `Lower_linalg › lu › L U reconstructs P a`, `› pivots follow
   the rule`.
+
+### L7. Segmented contractions read each group's indices by position
+
+- **Reference:** none: tinygrad has no segmented contraction. Its gather,
+  `mixin/op.py:1041`, is a one-hot `where` summed over the axis, which
+  `codegen/simplify.py:153` (`pm_reduce_load_collapse`, under
+  `pm_load_collapse`) rewrites into a load at the index.
+- **Raven:** `lower_reduce.ml` (`rows`, `blocked`, `block_size`,
+  `segmented`).
+- **Differs:** a `Rows` row reads `b` at its group's index as a sum over the
+  groups of `b`'s bits where the index is the group's, `0` elsewhere, which
+  tolk collapses into a load through the operand's decode and scale; the
+  group is found once per row and clamped into `[0, g - 1]`. A row reads its
+  own group's slice alone, its bits exact, a NaN's payload and `-0.`
+  included. A `Contracting` pair cuts each group into blocks of `c` indices
+  from its first, each position read by the same gated sum, a position past
+  its group's last reading `0`; each block sums into a partial result stored
+  apart, and each group sums its own blocks', the others entering as `+0.`.
+  Where blocks take more products and sums than computing each group over
+  the whole pair, each operand is zeroed outside the group instead. Without
+  the collapse either read costs `g` loads per element and stays correct.
+- **nx:** `nx_kernel.mli`, `segments` and `contract`: each group's products
+  alone; an output without products is its `init`.
+- **Class:** exact for the `Rows` read and on integers; a rounded sum on
+  floats, the blocks' association one of those the bound allows, a zero
+  result's sign open.
+- **Reason:** (b).
+- **Pinned by:** `Lower_reduce › contractions › segmented contractions give
+  eager's integers and hold their bound`, `› contracting pairs in blocks give
+  eager's integers and hold their bound`, `Lower_reduce › work › a Rows
+  contraction's work is one slice's at 8 and 32 groups`, `› a scaled float4
+  Rows contraction's work is one slice's`, `› a Contracting contraction of 8
+  groups works in blocks`, `rune jit › classes › a segmented contraction
+  gives eager's values`, `› a segmented contraction's gradients give eager's
+  values`, `› experts applied give eager's values`.

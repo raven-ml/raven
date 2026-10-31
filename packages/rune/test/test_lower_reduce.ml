@@ -1280,7 +1280,9 @@ let pp_contraction ppf c =
   | Some (Contracting (p, g, o)) ->
       Format.fprintf ppf " pair %d groups %d [%s]" p g (raws o)
 
-type extras = Plain_contraction | Scaled | Segmented
+(* [Long] segments a contracting pair of 24 to 40 indices into 3 or 4 groups,
+   which the lowering cuts into blocks, the first of up to two pairs. *)
+type extras = Plain_contraction | Scaled | Segmented | Long
 
 let contraction ?(extras = Plain_contraction) dts accs =
   let open Gen in
@@ -1301,13 +1303,20 @@ let contraction ?(extras = Plain_contraction) dts accs =
   let* cdt = frequency (List.map (fun (w, d) -> (w, constant d)) dts) in
   let* acc = among (accs cdt) in
   let* rows = if extras = Segmented then bool else constant false in
-  let segmented = extras = Segmented in
+  let long = extras = Long in
+  let segmented = extras = Segmented || long in
   let count lo hi =
     let* n = int_range lo hi in
     extents n
   in
   let* eb = count 0 1 in
-  let* ek = count (if segmented && not rows then 1 else 0) 2 in
+  let* ek =
+    if long then
+      let* n = int_range 24 40 in
+      let+ rest = count 0 1 in
+      Array.append [| n |] rest
+    else count (if segmented && not rows then 1 else 0) 2
+  in
   (* [Rows] draws up to two free axes on each side beyond the segmented one. *)
   let lo, hi = if rows then (1, 3) else (0, 1) in
   let* fa = count lo hi in
@@ -1360,8 +1369,10 @@ let contraction ?(extras = Plain_contraction) dts accs =
       let* j = int_range 0 (Array.length fb - 1) in
       map (fun o -> Some (Rows (i, j, o))) (offsets fb.(j) fa.(i))
     else
-      let* p = int_range 0 (Array.length ek - 1) in
-      let* g = int_range 0 3 in
+      let* p =
+        if long then constant 0 else int_range 0 (Array.length ek - 1)
+      in
+      let* g = if long then int_range 3 4 else int_range 0 3 in
       map (fun o -> Some (Contracting (p, g, o))) (offsets g ek.(p))
   in
   let scale s =
@@ -1763,19 +1774,21 @@ let segmented_examples =
   in
   [ rows; grouped; pair [| 0L; 3L; Int64.max_int |]; pair [| 0L; 3L; 2L |] ]
 
+let segmented_accs (D.Any d as dt) =
+  match D.kind d with
+  | D.Float when not (D.equal d D.Float64) -> [ D.Any D.Float32 ]
+  | D.Signed | D.Unsigned -> [ dt; D.Any D.Int64 ]
+  | _ -> [ dt ]
+
+let segmented_dts =
+  weigh 2 D.[ Any Float32; Any Float64 ]
+  @ weigh 1 D.[ Any Int32; Any Uint8; Any Complex64; Any Float16 ]
+
 let segmented_contractions =
-  let accs (D.Any d as dt) =
-    match D.kind d with
-    | D.Float when not (D.equal d D.Float64) -> [ D.Any D.Float32 ]
-    | D.Signed | D.Unsigned -> [ dt; D.Any D.Int64 ]
-    | _ -> [ dt ]
-  in
+  let accs = segmented_accs in
   prop ~count:16 ~examples:segmented_examples
     "segmented contractions give eager's integers and hold their bound"
-    (contraction ~extras:Segmented
-       (weigh 2 D.[ Any Float32; Any Float64 ]
-       @ weigh 1 D.[ Any Int32; Any Uint8; Any Complex64; Any Float16 ])
-       accs)
+    (contraction ~extras:Segmented segmented_dts accs)
     (fun c ->
       let g, n = groups c in
       let os = batches c in
@@ -1803,6 +1816,71 @@ let segmented_contractions =
       cover "an int64 extreme" (any (Array.exists extreme));
       cover "decreasing offsets"
         (any (fun o -> List.exists (fun i -> o.(i + 1) < o.(i)) groups));
+      contract_check c)
+
+(* Contracting pairs long enough to be cut into blocks of [⌈n / g⌉] indices:
+   groups of several blocks, empty groups and indices in no group. *)
+(* 30 indices of x[2, 30]·y[30] in 3 groups, group [1] empty and indices
+   [0] and [1] in none; with a second pair of 2, read transposed in y, and of
+   none from an init of [-0], which the empty sum keeps. *)
+let blocked_examples =
+  let c = List.hd (empty (D.Any D.Float32)) in
+  let ones n = Array.make n 0x3f800000L in
+  let one =
+    {
+      c with
+      ek = [| 30 |];
+      fa = [| 2 |];
+      ra = [| F 0; C 0 |];
+      rb = [| C 0 |];
+      araws = ones 60;
+      braws = ones 30;
+      seg = Some (Contracting (0, 3, [| 2L; 9L; 9L; 30L |]));
+    }
+  in
+  let two =
+    {
+      one with
+      ek = [| 30; 2 |];
+      ra = [| F 0; C 0; C 1 |];
+      rb = [| C 1; C 0 |];
+      araws = ones 120;
+      braws = ones 60;
+    }
+  in
+  let none =
+    {
+      two with
+      ek = [| 30; 0 |];
+      araws = [||];
+      braws = [||];
+      init = Some (Array.make 6 0x80000000L);
+    }
+  in
+  [ one; two; none ]
+
+let blocked_contractions =
+  prop ~count:16 ~examples:blocked_examples
+    "contracting pairs in blocks give eager's integers and hold their bound"
+    (contraction ~extras:Long segmented_dts segmented_accs)
+    (fun c ->
+      let g, n = groups c in
+      let os = batches c in
+      let block = (n + g - 1) / g in
+      let count o e =
+        List.length
+          (List.filter (fun r -> member o ~g r = Some e) (List.init n Fun.id))
+      in
+      let any f = List.exists f os in
+      let groups = List.init g Fun.id in
+      cover "a group of several blocks"
+        (any (fun o -> List.exists (fun e -> count o e > block) groups));
+      cover "an empty group"
+        (any (fun o -> List.exists (fun e -> count o e = 0) groups));
+      cover "an index in no group"
+        (any (fun o -> List.fold_left (fun k e -> k + count o e) 0 groups < n));
+      cover "a second contracting pair" (Array.length c.ek = 2);
+      cover "no product" (numel c.ek = 0);
       contract_check c)
 
 (* Cases *)
@@ -2001,6 +2079,94 @@ let moments_overflow () =
   let inf = Float.infinity in
   equal (array float_exact) [| 0.; inf; inf; inf |] (Lowered.run op)
 
+(* Work
+
+   The estimated work and bytes loaded and stored of float32 contractions
+   whose [n] indices are spread evenly over [g] groups: [Rows] of x[n; k] by
+   W[g; j; k], [Contracting] of x[n; k] by y[n; j] into [g; k; j], and the
+   unsegmented contraction of x[n; k] by W[j; k] that both take as their
+   unit. *)
+
+type form = Plain | Rows_of | Contracting_of
+
+(* Where [scaled], [W] is float4_e2m1fn with a code scale per row of [k], as
+   an MXFP4 weight enters, which a row reads by its group through the decode
+   and the scale. *)
+let work ?(scaled = false) form ~n ~k ~j g =
+  let ramp s = f32 s (Array.init (numel s) (fun i -> Float.of_int (i mod 7))) in
+  let offsets =
+    Nx.create D.Int64 [| g + 1 |]
+      (Array.init (g + 1) (fun e -> Int64.of_int (e * n / g)))
+  in
+  let run (type v s) (b : (v, s, Nx.host) Nx.t) contracting b_scale segments =
+    Lowered.work (fun () ->
+        P.eval ~by:"t"
+          (P.Contract
+             {
+               batch = Iarray.of_list [];
+               contracting = Iarray.of_list contracting;
+               acc = D.Any D.Float32;
+               out = D.Float32;
+               a = ramp [| n; k |];
+               b;
+               init = None;
+               a_scale = None;
+               b_scale;
+               segments;
+             }))
+  in
+  (* [W] of shape [s], its last axis of [k]. *)
+  let weight s contracting segments =
+    if not scaled then run (ramp s) contracting None segments
+    else
+      let last = Array.length s - 1 in
+      let codes = Array.mapi (fun i e -> if i = last then 1 else e) s in
+      let scale = P.Exponent (Nx.full D.Uint8 codes 127) in
+      run (Nx.cast D.Float4_e2m1fn (ramp s)) contracting (Some scale) segments
+  in
+  match form with
+  | Plain -> weight [| j; k |] [ (1, 1) ] None
+  | Rows_of ->
+      weight [| g; j; k |] [ (1, 2) ]
+        (Some (K.Rows { offsets; a_axis = 0; b_axis = 0 }))
+  | Contracting_of ->
+      run (ramp [| n; j |]) [ (0, 0) ] None
+        (Some (K.Contracting { offsets; pair = 0 }))
+
+(* Each row of [Rows] loads its own group's slice, so tolk cannot share a
+   slice's loads, or [x]'s, between rows and columns as it does the
+   unsegmented contraction's: a float32 one loads a few times its bytes, a
+   float4 one, whose slice is an eighth of [x]'s bytes, more. A load that
+   missed the collapse would read every group's slice, so the bytes grow
+   with [g] no more than a quarter from 8 groups to 32. The old lowering's
+   work grew with [g]. *)
+let work_bounds =
+  let n = 256 and k = 16 and j = 16 in
+  let rows ~scaled () =
+    let ops, lds = work ~scaled Plain ~n ~k ~j 1 in
+    let at g =
+      let o, l = work ~scaled Rows_of ~n ~k ~j g in
+      at_most int ~msg:"operations" ~than:(2 * ops) o;
+      if not scaled then at_most int ~msg:"bytes" ~than:(4 * lds) l;
+      l
+    in
+    let l8 = at 8 in
+    let l32 = at 32 in
+    at_most int ~msg:"bytes at 32 groups" ~than:(l8 + (l8 / 4)) l32
+  in
+  group "work"
+    [
+      test "a Rows contraction's work is one slice's at 8 and 32 groups"
+        (rows ~scaled:false);
+      test "a scaled float4 Rows contraction's work is one slice's"
+        (rows ~scaled:true);
+      test "a Contracting contraction of 8 groups works in blocks" (fun () ->
+          let ops, lds = work Plain ~n ~k ~j 1 in
+          let o, l = work Contracting_of ~n ~k ~j 8 in
+          at_most int ~msg:"operations" ~than:(4 * ops) o;
+          at_most int ~msg:"bytes" ~than:(4 * lds) l);
+    ]
+
 let cases =
   group "cases"
     [
@@ -2055,6 +2221,8 @@ let () =
              complex_contractions;
              scaled_contractions;
              segmented_contractions;
+             blocked_contractions;
            ];
+         work_bounds;
          cases;
        ])

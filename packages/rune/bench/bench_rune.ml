@@ -398,6 +398,8 @@ let jit_rows () =
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
   let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
   let wide = between f64 50 0. 1. [| 1_000_000 |] in
+  let experts_ids = positions 64 32 |> Nx.reshape [| 16; 4 |] in
+  let experts_x = between f32 52 (-1.) 1. [| 16; 1; 256 |] in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -477,6 +479,20 @@ let jit_rows () =
     warm "matmul-64"
       (fun () -> Rune.jit (pair_fn ()) Nx.matmul)
       (fun f -> synced (f m m));
+    (* A mixture of experts' product, 16 tokens of 4 ids each through 32
+       MXFP4 experts of 256 by 256, compiled: each row contracts with its own
+       expert's matrix alone. *)
+    warm "experts-mxfp4-16x4of32-256"
+      (fun () ->
+        let w =
+          Nx_quant.mxfp4
+            ~scales:(host (Nx.full Nx.uint8 [| 32; 256; 8 |] 127))
+            (host
+               (Nx.cast Nx.uint8
+                  (Nx.mul_s (between f32 51 0. 1. [| 32; 256; 128 |]) 255.)))
+        in
+        Rune.jit (pair_fn ()) (fun ids x -> Nx_quant.apply_experts ~ids w x))
+      (fun f -> synced (f experts_ids experts_x));
     (* The gradient of 8 sines through a remat, compiled: the backward pass
        stores the remat's computed argument and computes the sines again. A
        longer chain takes too long to compile. *)

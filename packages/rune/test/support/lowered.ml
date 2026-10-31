@@ -63,7 +63,10 @@ let strided a flat =
   in
   Ops.index flat [ at ]
 
-let bind (type v s d) bound (x : (v, s, d) Nx.t) =
+(* [bind ~direct bound x] binds [x]'s storage; where [direct], an array laid
+   out contiguously from its storage's start is read as the storage itself,
+   as a compiled call reads its argument. *)
+let bind (type v s d) ~direct bound (x : (v, s, d) Nx.t) =
   let dt = Nx.dtype x and shape = Nx.shape x in
   let tdt = L.dtype (D.Any dt) and k = parts dt in
   let leaf bytes n =
@@ -83,7 +86,11 @@ let bind (type v s d) bound (x : (v, s, d) Nx.t) =
         if k = 1 then flat
         else Shape.reshape flat [ Ops.Int (n / k); Ops.Int k ]
       in
-      strided a flat
+      let l = A.layout a in
+      if direct && A.Layout.is_contiguous l && A.Layout.offset l = 0
+         && numel shape * k = n
+      then Shape.reshape flat (L.dims (D.Any dt) shape)
+      else strided a flat
   | _ when numel shape = 0 ->
       let dims = L.dims (D.Any dt) shape in
       Shape.expand
@@ -120,22 +127,23 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
 
 (* Lowering *)
 
-let rule bound i ~by (type r) (op : r Nx.Prim.t) : r =
+let rule ~direct bound i ~by (type r) (op : r Nx.Prim.t) : r =
   let node : type v s d. (v, s, d) Nx.t -> Ops.t =
    fun x ->
     match Nx.Prim.payload i x with
     | Some (Node u) -> u
     | Some _ -> invalid_arg "Lowered: a value of another payload"
-    | None -> bind bound x
+    | None -> bind ~direct bound x
   in
   let ys = Rune.Lower.op ~device:cpu ~host:true node op in
   Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
 
-let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =
+(* [f ()]'s graph, the storage it binds and its result's elements. *)
+let lowered (type v s d) ?(direct = false) (f : unit -> (v, s, d) Nx.t) =
   let bound = ref [] in
   let y, u =
     Nx.Prim.interpret ~name:"Lowered" Nx.Prim.Extent
-      (fun i ~by op -> rule bound i ~by op)
+      (fun i ~by op -> rule ~direct bound i ~by op)
       (fun i ->
         let y = f () in
         match Nx.Prim.payload i y with
@@ -143,20 +151,24 @@ let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =
         | _ -> invalid_arg "Lowered: the result is not lowered")
   in
   let dt = (Nx.Prim.form y).dtype and shape = Nx.shape y in
+  (bound, u, dt, shape, numel shape * parts dt)
+
+(* The compiled schedule storing [u], of [n] elements, into [o]. *)
+let compiled u o n =
+  let sink =
+    Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ] ]
+  in
+  let linear, vars = Schedule.create_linear_with_vars sink in
+  let targets _ = Tolk_engine.target Rig.host in
+  (Realize.compile_linear ~targets linear, vars)
+
+let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =
+  let bound, u, dt, shape, n = lowered f in
   let tdt = L.dtype (D.Any dt) in
-  let n = numel shape * parts dt in
   if n = 0 then [||]
   else
     let o = Ops.new_buffer cpu n tdt in
-    let sink =
-      Ops.sink [ Ops.after o [ Ops.store o (Shape.reshape u [ Ops.Int n ]) ] ]
-    in
-    let linear, vars = Schedule.create_linear_with_vars sink in
-    let compiled =
-      Realize.compile_linear
-        ~targets:(fun _ -> Tolk_engine.target Rig.host)
-        linear
-    in
+    let compiled, vars = compiled u o n in
     let len = n * Dtype.itemsize tdt in
     let out = Rig.Buffer.create Rig.host len in
     let s =
@@ -168,3 +180,16 @@ let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =
     let bytes = Bytes.create len in
     Rig.Buffer.blit_to_bytes out 0 bytes 0 len;
     decode dt shape bytes
+
+let work (type v s d) (f : unit -> (v, s, d) Nx.t) =
+  let _, u, dt, _, n = lowered ~direct:true f in
+  let o = Ops.new_buffer cpu (max 1 n) (L.dtype (D.Any dt)) in
+  let compiled, vars = compiled u o (max 1 n) in
+  let count x = Shape.sym_infer x vars in
+  List.fold_left
+    (fun (ops, lds) call ->
+      if not (Op.equal (Ops.op call) Op.Call) then
+        invalid_arg "Lowered.work: a schedule with loops";
+      let e = Realize.estimate_uop call in
+      (ops + count e.ops, lds + count e.lds))
+    (0, 0) (Ops.src compiled)

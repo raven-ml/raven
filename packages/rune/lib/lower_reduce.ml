@@ -476,9 +476,11 @@ let zero u =
   Shape.const_like u
     (if Dtype.is_float (Ops.dtype u) then `Float 0. else `Int Bigint.zero)
 
-(* [sum ~batch ~contracting ~acc ~out a b init] contracts the parts [a] and [b],
-   values of [acc]. *)
-let sum ~batch ~contracting ~acc ~out a b init =
+(* [products ~batch ~contracting a b] is the sums of the products of the parts
+   [a] and [b], values of one accumulator, held as {!close} takes them: a
+   float as it is, an integer lifted. With it, whether the contracted extent
+   is [0]. *)
+let products ~batch ~contracting a b =
   let sa = extents (List.hd a) and sb = extents (List.hd b) in
   let ba = List.map fst batch and bb = List.map snd batch in
   let ka = List.map fst contracting and kb = List.map snd contracting in
@@ -487,8 +489,7 @@ let sum ~batch ~contracting ~acc ~out a b init =
   let pick s = List.map (List.nth s) in
   let target = pick sa ba @ pick sa fa @ pick sb fb @ pick sa ka in
   let nb = List.length ba and nfa = List.length fa and nfb = List.length fb in
-  let t = Ops.dtype (List.hd a) in
-  let float = Dtype.is_float t in
+  let float = Dtype.is_float (Ops.dtype (List.hd a)) in
   let held u = if float then u else lift u in
   let lay s order ~at ~ones u = held (laid u s order ~at ~ones target) in
   let a = List.map (lay sa (ba @ fa @ ka) ~at:(nb + nfa) ~ones:nfb) a in
@@ -505,10 +506,15 @@ let sum ~batch ~contracting ~acc ~out a b init =
     | [ a ], [ b ] -> [ sum (Ops.mul a b) ]
     | _ -> invalid_arg "Lower_reduce.contract: operands of another dtype"
   in
-  (* The sum starts from [init], or from [+0] added last. With no products
-     the result is [init] itself: adding the empty sum's [+0] would turn an
-     [init] of [-0] into [+0]. *)
-  let empty = List.exists (Int.equal 0) (pick sa ka) in
+  (r, List.exists (Int.equal 0) (pick sa ka))
+
+(* [close ~acc ~out ~empty t init r] is the sums [r] of {!products}, of
+   operands of node type [t], started from [init], or from [+0] added last,
+   rounded once to [out]. Where [empty] the result is [init] itself: adding
+   the empty sum's [+0] would turn an [init] of [-0] into [+0]. *)
+let close ~acc ~out ~empty t init r =
+  let float = Dtype.is_float t in
+  let held u = if float then u else lift u in
   let r =
     match init with
     | Some i ->
@@ -518,6 +524,12 @@ let sum ~batch ~contracting ~acc ~out a b init =
   in
   let r = if float then r else List.map (store t) r in
   Arith.cast ~src:acc out (wrap acc (Arith.of_parts acc r))
+
+(* [sum ~batch ~contracting ~acc ~out a b init] contracts the parts [a] and [b],
+   values of [acc]. *)
+let sum ~batch ~contracting ~acc ~out a b init =
+  let r, empty = products ~batch ~contracting a b in
+  close ~acc ~out ~empty (Ops.dtype (List.hd a)) init r
 
 (* Scales
 
@@ -611,40 +623,61 @@ let unless has ~acc ~out init r =
   Arith.of_parts out
     (List.map2 keep (Arith.parts out r) (Arith.parts out none))
 
-(* [Rows]: [a] contracts with every group's slice of [b], [b_axis] a free axis
-   like the others, at axis [e] of that result, and each output is picked by
-   bits from among them by its row's group, so that the pick is exact, a NaN's
-   payload and [-0] included, and no other group's result enters it. [init]
-   is spread over the groups. *)
+(* [move u ~src ~dst] is [u] with its axis [src] moved to [dst]. *)
+let move u ~src ~dst =
+  let rest = List.filter (( <> ) src) (List.init (Shape.ndim u) Fun.id) in
+  let before = List.filteri (fun i _ -> i < dst) rest in
+  let after = List.filteri (fun i _ -> i >= dst) rest in
+  Shape.permute u (before @ (src :: after))
+
+(* [Rows]: row [r] of [a]'s [a_axis] reads [b] at its group's index along
+   [b_axis], which then holds [a]'s rows, a batch pair whose axis moves back
+   among [a]'s free axes in the result. Each row contracts with its own
+   group's slice alone: the work of one slice's contraction, whatever [g].
+
+   The read sums, over the groups [s], [b]'s bits at [s] where [s] is the
+   row's group and [0] elsewhere, which is exact, a NaN's payload and [-0]
+   included. tolk collapses a sum gated on an index equal to its range into
+   a load at that index (Simplify.pm_load_collapse), so a row loads its own
+   group's slice and no other. The group is clamped into [0, g - 1], where it
+   already lies, so that the load needs no guard. A row in no group reads
+   group [0], and its outputs take the no-product rule. *)
 let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   let sa = extents (List.hd a) and sb = extents (List.hd b) in
   let n = List.nth sa a_axis and g = List.nth sb b_axis in
   let m = groups o n in
   let nb = List.length batch in
+  (* Each row's group, [Bs; n]: the index of the group that holds it, or 0,
+     stored apart so that a kernel finds it once per row. *)
+  let index = lay (Shape.arange ~dtype:Int64 g) [ nb ] (extents m) in
+  let id = Shape.rop (Ops.where m index (int index 0)) Op.Add [ nb ] in
+  let id = Ops.contiguous id in
+  let id = Ops.minimum (Ops.maximum id (int id 0)) (int id (max 0 (g - 1))) in
+  (* [b] laid over its axes with [b_axis] cut into the rows and the groups. *)
+  let at k = if k < b_axis then k else k + 1 in
+  let spread =
+    List.concat
+      (List.mapi (fun k x -> if k = b_axis then [ n; g ] else [ x ]) sb)
+  in
+  let id = lay id (List.map (fun (_, k) -> at k) batch @ [ b_axis ]) spread in
+  let slot = lay (Shape.arange ~dtype:Int64 g) [ b_axis + 1 ] spread in
+  let other = Ops.ne id slot in
+  let read u =
+    let x = Bits.bits (lay u (List.init (List.length sb) at) spread) in
+    let x = Ops.where other (Shape.const_like x (`Int Bigint.zero)) x in
+    Ops.bitcast (Shape.rop x Op.Add [ b_axis + 1 ]) (Ops.dtype u)
+  in
+  let b = List.map read b in
   let fa = free (List.length sa) (List.map fst (batch @ contracting)) in
-  let fb = free (List.length sb) (List.map snd (batch @ contracting)) in
-  let index x l = Option.get (List.find_index (Int.equal x) l) in
-  let i = nb + index a_axis fa in
-  let e = nb + List.length fa + index b_axis fb in
-  let spread u =
-    let s = extents u in
-    let before = List.filteri (fun k _ -> k < e) s in
-    let after = List.filteri (fun k _ -> k >= e) s in
-    let at = List.init (List.length s) (fun k -> if k < e then k else k + 1) in
-    lay u at (before @ (g :: after))
+  let j = nb + Option.get (List.find_index (Int.equal a_axis) fa) in
+  let laid = Option.map (move ~src:j ~dst:nb) init in
+  let r =
+    sum ~batch:(batch @ [ (a_axis, b_axis) ]) ~contracting ~acc ~out a b laid
   in
-  let r = sum ~batch ~contracting ~acc ~out a b (Option.map spread init) in
-  let value = Arith.parts out r |> List.hd |> extents in
-  let mine = lay m (List.init nb Fun.id @ [ e; i ]) value in
-  let pick u =
-    let x = Bits.bits u in
-    let x = Ops.where mine x (Shape.const_like x (`Int Bigint.zero)) in
-    Ops.bitcast (Shape.rop x Op.Add [ e ]) (Ops.dtype u)
-  in
-  let r = Arith.of_parts out (List.map pick (Arith.parts out r)) in
+  let r = move ~src:nb ~dst:j r in
   let has = any_along m nb in
   let value = Arith.parts out r |> List.hd |> extents in
-  let has = lay has (List.init nb Fun.id @ [ i ]) value in
+  let has = lay has (List.init nb Fun.id @ [ j ]) value in
   unless has ~acc ~out init r
 
 (* [Contracting]: each operand gains a leading batch axis of the groups, its
@@ -675,6 +708,128 @@ let segmented ~batch ~contracting ~acc ~out a b init o ~pair =
   let has = lay has (List.init nb succ @ [ 0 ]) value in
   unless has ~acc ~out init r
 
+(* [block_bound ~n ~g c] bounds the blocks of [c] indices that [g] groups of
+   [n > g] indices cut into: a group of [1 + c m] indices takes [m + 1]
+   blocks, so the groups take at most [g + ⌊(n - g) / c⌋]. *)
+let block_bound ~n ~g c = g + ((n - g) / c)
+
+(* [Contracting] in blocks of [c] indices: a group of [k] indices is cut into
+   [⌈k / c⌉] blocks from its first, so that no block holds indices of two
+   groups, and the groups' blocks are numbered in order, as many as
+   {!block_bound} bounds.
+   Each block's products sum into its partial result, its indices read by
+   their positions in it, as [Rows] reads a row's group: a sum gated on the
+   index equal to its range, which tolk collapses into a load. A position
+   past its group's last index reads [0] from each operand, so that its
+   product adds [+0]. Each group then sums its own blocks' partial results,
+   materialised, the others' entering as [+0]. *)
+let blocked ~batch ~contracting ~acc ~out a b init o ~pair ~c =
+  let ka, kb = List.nth contracting pair in
+  let n = Bits.extent (List.hd a) ka in
+  let m = groups o n in
+  let nb = List.length batch in
+  let g = Bits.extent m nb in
+  let blocks = block_bound ~n ~g c in
+  let ms = extents m in
+  (* Each group's count and first index, [Bs; g], its count of blocks and
+     the index of its first block. A first index is [n] less the greatest
+     [n - r] of its indices [r]. *)
+  let r = lay (Shape.arange ~dtype:Int64 n) [ nb + 1 ] ms in
+  let count = Shape.rop (Ops.cast m Int64) Op.Add [ nb + 1 ] in
+  let past = Ops.where m (Ops.sub (int r n) r) (int r 0) in
+  let first = Ops.sub (int count n) (Shape.rop past Op.Max [ nb + 1 ]) in
+  let spans = Ops.add count (int count (c - 1)) in
+  let spans = Ops.div ~rounding:`Trunc spans (int spans c) in
+  let start = Ops.sub (Shape.cumalu spans nb Op.Add) spans in
+  (* Whether block [β] is group [e]'s, [Bs; g; blocks]. *)
+  let target = List.filteri (fun i _ -> i <= nb) ms @ [ blocks ] in
+  let per u = lay u (List.init (nb + 1) Fun.id) target in
+  let beta = lay (Shape.arange ~dtype:Int64 blocks) [ nb + 1 ] target in
+  let start = per start in
+  let mine =
+    Ops.bitwise_and (Ops.le start beta)
+      (Ops.lt beta (Ops.add start (per spans)))
+  in
+  (* Each block's first index and the indices left in its group from it,
+     [Bs; blocks], [0] left for a block of no group. *)
+  let taken = Ops.mul (Ops.sub beta start) (int beta c) in
+  let of_block u =
+    Ops.contiguous (Shape.rop (Ops.where mine u (int u 0)) Op.Add [ nb ])
+  in
+  let lo = of_block (Ops.add (per first) taken) in
+  let left = of_block (Ops.sub (per count) taken) in
+  (* Each position's index, [Bs; blocks; c], or [n], which reads [0], past its
+     group's last. *)
+  let spot = List.filteri (fun i _ -> i < nb) ms @ [ blocks; c ] in
+  let t = lay (Shape.arange ~dtype:Int64 c) [ nb + 1 ] spot in
+  let at u = lay u (List.init (nb + 1) Fun.id) spot in
+  let index = Ops.where (Ops.lt t (at left)) (Ops.add (at lo) t) (int t n) in
+  (* An operand's part [u] with its axis [k] cut into the blocks and their
+     positions, each position read at its index. *)
+  let read side k u =
+    let s = extents u in
+    let cut x e = if x = k then [ blocks; c; n ] else [ e ] in
+    let wide = List.concat (List.mapi cut s) in
+    let to_wide x = if x < k then x else x + 2 in
+    let sides = List.map (fun p -> to_wide (side p)) batch in
+    let index = lay index (sides @ [ k; k + 1 ]) wide in
+    let r = lay (Shape.arange ~dtype:Int64 n) [ k + 2 ] wide in
+    let x = Bits.bits (lay u (List.init (List.length s) to_wide) wide) in
+    let none = Shape.const_like x (`Int Bigint.zero) in
+    let x = Ops.where (Ops.ne index r) none x in
+    Ops.bitcast (Shape.rop x Op.Add [ k + 2 ]) (Ops.dtype u)
+  in
+  let a = List.map (read fst ka) a and b = List.map (read snd kb) b in
+  let shift ka kb (i, j) =
+    ((if i < ka then i else i + 1), if j < kb then j else j + 1)
+  in
+  let batch' = (ka, kb) :: List.map (shift ka kb) batch in
+  let contracting' =
+    List.mapi
+      (fun q p -> if q = pair then (ka + 1, kb + 1) else shift ka kb p)
+      contracting
+  in
+  let parts, empty = products ~batch:batch' ~contracting:contracting' a b in
+  let parts = List.map Ops.contiguous parts in
+  (* Each group's sum of its blocks' partial results, [g; Bs; fa; fb]. *)
+  let gather u =
+    let s = extents u in
+    let wide = g :: s in
+    let x = lay u (List.init (List.length s) succ) wide in
+    let mine = lay mine (List.init nb (fun i -> i + 2) @ [ 0; 1 ]) wide in
+    Shape.rop (Ops.where mine x (zero x)) Op.Add [ 1 ]
+  in
+  let t = Ops.dtype (List.hd a) in
+  let r = close ~acc ~out ~empty t init (List.map gather parts) in
+  let has = any_along m (nb + 1) in
+  let value = Arith.parts out r |> List.hd |> extents in
+  let has = lay has (List.init nb succ @ [ 0 ]) value in
+  unless has ~acc ~out init r
+
+(* [ceil_sqrt m] is [⌈√m⌉] for [m >= 0]. *)
+let ceil_sqrt m =
+  let r = Float.to_int (Float.sqrt (Float.of_int m)) in
+  let r = if r * r > m then r - 1 else r in
+  let r = if (r + 1) * (r + 1) <= m then r + 1 else r in
+  if r * r < m then r + 1 else r
+
+(* For each index of its other axes, a [Contracting] contraction of [g] groups
+   over [n] indices takes [g n] products in full, and in blocks of [c]
+   indices [B c] products and [g B] sums of partial results, [B] the bound of
+   {!block_bound}. The block size is [⌈n / g⌉] or [⌈√(n - g)⌉], whichever
+   takes fewer, the latter near the count's least, [n - g + 2 g √(n - g) +
+   g²]. The blocks are taken where they take fewer than the full form. *)
+let block_size ~n ~g =
+  if g = 0 || n <= g then None
+  else
+    let cost c =
+      let b = block_bound ~n ~g c in
+      (b * c) + (g * b)
+    in
+    let by_groups = (n + g - 1) / g and by_root = max 1 (ceil_sqrt (n - g)) in
+    let c = if cost by_root < cost by_groups then by_root else by_groups in
+    if cost c < g * n then Some c else None
+
 let contract ~batch ~contracting ~segments ~acc ~out a b init =
   let batch = Iarray.to_list batch in
   let contracting = Iarray.to_list contracting in
@@ -683,5 +838,10 @@ let contract ~batch ~contracting ~segments ~acc ~out a b init =
   | None -> sum ~batch ~contracting ~acc ~out a b init
   | Some (Rows { offsets; a_axis; b_axis }) ->
       rows ~batch ~contracting ~acc ~out a b init offsets ~a_axis ~b_axis
-  | Some (Contracting { offsets; pair }) ->
-      segmented ~batch ~contracting ~acc ~out a b init offsets ~pair
+  | Some (Contracting { offsets; pair }) -> (
+      let n = Bits.extent (List.hd a) (fst (List.nth contracting pair)) in
+      let g = Bits.extent offsets (Shape.ndim offsets - 1) - 1 in
+      match block_size ~n ~g with
+      | Some c ->
+          blocked ~batch ~contracting ~acc ~out a b init offsets ~pair ~c
+      | None -> segmented ~batch ~contracting ~acc ~out a b init offsets ~pair)
