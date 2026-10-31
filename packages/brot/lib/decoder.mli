@@ -112,6 +112,27 @@ val decode : t -> string list -> string
 (** [decode decoder tokens] applies [decoder] to [tokens] and returns the
     decoded text. *)
 
+(** {1:streaming Streaming} *)
+
+type stream
+(** The type for decodings fed one token at a time. A stream is a value: a
+    step gives a new one and leaves the old one as it was. *)
+
+val stream : t -> stream
+(** [stream decoder] is a decoding by [decoder] that has been fed no token. *)
+
+val step : stream -> string -> string * stream
+(** [step s token] is [(text, s')]: [s] fed [token], and the text that becomes
+    final with it, which no later token can change. Every text {!step} and
+    {!finish} give for a list of tokens, in order, make up the text {!decode}
+    gives for it. A character's bytes are never split between two texts, and
+    text that depends on tokens still to come, such as an open run of
+    {!byte_fallback} tokens, is kept until they arrive. *)
+
+val finish : stream -> string
+(** [finish s] is the text of [s] not yet given out, decoded as the end of the
+    token list. *)
+
 (** {1:fmt Formatting} *)
 
 val pp : Format.formatter -> t -> unit

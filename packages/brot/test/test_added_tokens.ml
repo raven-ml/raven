@@ -336,6 +336,54 @@ let test_scan_three_firsts () =
     [| 0; 13; 1; 11; 2; 12; 10 |]
     (ids_of t "a{d}b<s>c[c]d")
 
+(* HuggingFace's [test_encode_special_tokens] in [added_vocabulary.rs]: with
+   [encode_special_tokens] set, the special [<mask>] and [<pad>] are passed
+   over, while [ask>], matched against normalized text, is still found inside
+   the text of [<mask>]. *)
+let test_unmatched_special () =
+  let chars = "hi<mask>terpd \t\u{2000}" in
+  let rec scalars i =
+    if i >= String.length chars then []
+    else
+      let d = String.get_utf_8_uchar chars i in
+      let n = Uchar.utf_decode_length d in
+      String.sub chars i n :: scalars (i + n)
+  in
+  let vocab = List.mapi (fun i c -> (c, i)) (scalars 0) in
+  let t =
+    bpe ~normalizer:Normalizer.lowercase ~vocab ~merges:[]
+      ~added_tokens:
+        [
+          added_token ~lstrip:true ~rstrip:true ~single_word:true "<mask>";
+          added_token ~special:false "ask>";
+          added_token "<pad>";
+        ]
+      ()
+  in
+  let text = "Hi <mask> there\t<mask>\t<mask>\u{2000} <pad> <mask><pad><pad>" in
+  let pieces =
+    [ "h"; "i"; " "; "<"; "m"; "ask>"; " "; "t"; "h"; "e"; "r"; "e"; "\t"; "<";
+      "m"; "ask>"; "\t"; "<"; "m"; "ask>"; "\u{2000}"; " "; "<"; "p"; "a"; "d";
+      ">"; " "; "<"; "m"; "ask>"; "<"; "p"; "a"; "d"; ">"; "<"; "p"; "a"; "d";
+      ">" ]
+  in
+  let ask = Option.get (token_to_id t "ask>") in
+  let encoding = encode t ~match_special_tokens:false text in
+  equal ~msg:"tokens" (list string) pieces
+    (Array.to_list (Encoding.tokens encoding));
+  equal ~msg:"ids" (list int)
+    (List.map
+       (fun piece ->
+         if piece = "ask>" then ask else Option.get (token_to_id t piece))
+       pieces)
+    (Array.to_list (Encoding.ids encoding));
+  equal ~msg:"ids via encode_ids" (array int) (Encoding.ids encoding)
+    (encode_ids t ~match_special_tokens:false text);
+  equal ~msg:"matched by default" (list string)
+    [ "h"; "i"; " <mask> "; "t"; "h"; "e"; "r"; "e"; "\t<mask>\t";
+      "<mask>\u{2000} "; "<pad>"; " <mask>"; "<pad>"; "<pad>" ]
+    (Array.to_list (Encoding.tokens (encode t text)))
+
 let test_scan_dense_near () =
   let t = scan_tokenizer [ added_token "<s>" ] in
   equal ~msg:"near matches all along" (array int) [| 4; 4; 3; 11; 3; 5 |]
@@ -388,6 +436,7 @@ let suite =
     test "normalized" test_normalized;
     test "normalized after raw" test_normalized_after_raw;
     test "add_special_tokens false" test_add_special_tokens_false;
+    test "special tokens unmatched" test_unmatched_special;
     test "json round trip" test_json_round_trip;
     test "scan offsets" test_scan_offsets;
     test "scan two firsts" test_scan_two_firsts;

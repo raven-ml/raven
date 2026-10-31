@@ -34,6 +34,7 @@ type t = {
   by_id : (int, pattern) Hashtbl.t;
   raw : matcher;
   normalized : matcher;
+  match_special : bool;  (* Whether the tokens whose [special] is set match. *)
 }
 
 (* Character boundaries. Malformed bytes are a character of no class, which
@@ -188,7 +189,10 @@ let matches_at text pos pattern =
   in
   same 0
 
-let find m text ~pos =
+(* A special token passed over keeps the text it covers, as a [single_word]
+   token that does not stand alone does: no other token of [m] is sought inside
+   it. *)
+let find m ~match_special text ~pos =
   if Array.length m.buckets = 0 then None
   else begin
     let len = String.length text in
@@ -218,8 +222,9 @@ let find m text ~pos =
         | Some { text = content; token } ->
             let stop = start + String.length content in
             if
-              token.single_word
-              && (ends_with_word text start || starts_with_word text stop)
+              (token.special && not match_special)
+              || token.single_word
+                 && (ends_with_word text start || starts_with_word text stop)
             then at := stop
             else begin
               let start =
@@ -284,7 +289,10 @@ let make ~normalize tokens =
     by_id;
     raw = matcher (List.rev !raw);
     normalized = matcher (List.rev !normalized);
+    match_special = true;
   }
+
+let without_special t = { t with match_special = false }
 
 let tokens t = t.tokens
 let is_empty t = match t.tokens with [] -> true | _ -> false
@@ -300,5 +308,7 @@ let is_special t id =
   | Some pattern -> pattern.token.special
   | None -> false
 
-let find_raw t text ~pos = find t.raw text ~pos
-let find_normalized t text ~pos = find t.normalized text ~pos
+let find_raw t text ~pos = find t.raw ~match_special:t.match_special text ~pos
+
+let find_normalized t text ~pos =
+  find t.normalized ~match_special:t.match_special text ~pos

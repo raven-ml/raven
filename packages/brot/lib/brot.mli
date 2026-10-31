@@ -1240,6 +1240,7 @@ val encode :
   t ->
   ?pair:string ->
   ?add_special_tokens:bool ->
+  ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
   string ->
@@ -1247,7 +1248,10 @@ val encode :
 (** [encode t text] is the encoding of [text] by [t].
 
     Added tokens occurring in [text] are matched atomically and emitted with
-    their own ID, whatever [add_special_tokens] is.
+    their own ID, whatever [add_special_tokens] is. Text that comes from a user
+    is encoded with [~match_special_tokens:false], so that typing a token such
+    as ["<|endoftext|>"] gives the model its text rather than the control
+    token.
 
     {!Encoding.offsets} are byte spans of [text] itself, not of the normalized
     form: a token of ["café"] under a normalizer that strips accents reports the
@@ -1261,12 +1265,19 @@ val encode :
       merges both sequences with appropriate type IDs. Default: none.
     - [add_special_tokens]: whether to insert special tokens via the
       post-processor. Default: [true].
+    - [match_special_tokens]: whether the added tokens whose [special] is set
+      are matched in [text] and [pair]. With [false], the text of such a token
+      is normalized, pre-tokenized and encoded by the model like the text
+      around it. The other added tokens are still matched, except inside such
+      a token's text by one matched against the same form of the text, raw or
+      normalized. Default: [true].
     - [padding]: padding configuration. Default: none (no padding).
     - [truncation]: truncation configuration. Default: none (no truncation). *)
 
 val encode_batch :
   t ->
   ?add_special_tokens:bool ->
+  ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
   ?domains:int ->
@@ -1285,6 +1296,7 @@ val encode_batch :
 val encode_batch_pairs :
   t ->
   ?add_special_tokens:bool ->
+  ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
   ?domains:int ->
@@ -1302,6 +1314,7 @@ val encode_ids :
   t ->
   ?pair:string ->
   ?add_special_tokens:bool ->
+  ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
   string ->
@@ -1320,6 +1333,7 @@ type ids = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 val encode_batch_ids :
   t ->
   ?add_special_tokens:bool ->
+  ?match_special_tokens:bool ->
   ?padding:padding ->
   ?truncation:truncation ->
   ?domains:int ->
@@ -1358,6 +1372,50 @@ val decode_batch :
 (** [decode_batch t ids_list] decodes each element of [ids_list].
 
     [skip_special_tokens] defaults to [false]. *)
+
+(** {1:streaming Streaming decoding}
+
+    A model generates its output one token at a time, and a reader wants each
+    piece of text as soon as it is final. Decoding each token on its own gets
+    that text wrong: the decoder of a byte-level model may need several
+    tokens for one character outside ASCII, and a SentencePiece decoder drops
+    the space before the first word only. A {e stream} decodes the tokens as
+    they come, keeping the ones whose text is not final yet. It is a value: a
+    step gives a new stream and leaves the old one as it was, so a stream can
+    be kept to decode another continuation from it.
+
+    {[
+      let print_tokens tokenizer ids =
+        let s = ref (Brot.decode_stream tokenizer) in
+        Array.iter
+          (fun id ->
+            let text, next = Brot.decode_step !s id in
+            print_string text;
+            s := next)
+          ids;
+        print_string (Brot.decode_finish !s)
+    ]} *)
+
+type stream
+(** The type for streaming decodings. *)
+
+val decode_stream : ?skip_special_tokens:bool -> t -> stream
+(** [decode_stream t] is a decoding by [t] that has been fed no token.
+    [skip_special_tokens] is as in {!decode}. *)
+
+val decode_step : stream -> int -> string * stream
+(** [decode_step s id] is [(text, s')], where [s'] is [s] fed [id] and [text]
+    is the text that becomes final with it: no token fed after [id] changes it.
+    [text] is often empty, as when [id] ends in part of a character or opens a
+    run of byte-fallback tokens, whose text depends on where the run ends.
+
+    The texts of every step, followed by {!decode_finish}, make up {!decode}
+    of the ids fed, and each is valid UTF-8 when the vocabulary is: no text
+    ends inside a character. *)
+
+val decode_finish : stream -> string
+(** [decode_finish s] is the text of the ids fed to [s] that no step has given
+    out yet, decoded as the end of the ids. *)
 
 (** {1:training Training} *)
 

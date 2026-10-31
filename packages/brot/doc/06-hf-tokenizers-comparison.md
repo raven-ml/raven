@@ -206,6 +206,42 @@ let texts =
     [ [| 101; 7592; 102 |]; [| 101; 2088; 102 |] ]
 ```
 
+### 4.3 Streaming decoding
+
+**HuggingFace**
+
+```python
+from tokenizers.decoders import DecodeStream
+
+stream = DecodeStream(skip_special_tokens=False)
+for id in ids:
+    chunk = stream.step(tokenizer, id)  # None while the text is not final
+    if chunk is not None:
+        print(chunk, end="")
+```
+
+**Brot**
+
+<!-- $MDX skip -->
+```ocaml
+let s =
+  Array.fold_left
+    (fun s id ->
+      let text, s = Brot.decode_step s id in
+      print_string text;
+      s)
+    (Brot.decode_stream tokenizer)
+    ids
+in
+print_string (Brot.decode_finish s)
+```
+
+A brot stream is a value: `decode_step` returns the next one. Its texts and
+`decode_finish` always make up `decode` of the ids, so a run of byte-fallback
+tokens is held until the run ends, where a valid prefix of it may already have
+come out of `DecodeStream`. See `decode_step` in
+[`brot.mli`](../lib/brot.mli).
+
 ---
 
 ## 5. Batch Encoding
@@ -426,6 +462,26 @@ output.special_tokens_mask  # [1, 0, 0, 0, 1]
 ```ocaml
 let mask = Encoding.special_tokens_mask enc  (* int array: 1 for special, 0 for content *)
 ```
+
+### 8.4 Special tokens in the input as text
+
+**HuggingFace**
+
+```python
+tokenizer.encode_special_tokens = True
+output = tokenizer.encode("<|endoftext|> from a user")
+```
+
+**Brot**
+
+<!-- $MDX skip -->
+```ocaml
+let enc = Brot.encode tokenizer ~match_special_tokens:false "<|endoftext|> from a user"
+```
+
+HuggingFace sets this on the tokenizer; brot takes it per call, on every
+`encode` function, so text from a user and text the program writes can be
+encoded by the same tokenizer.
 
 ---
 
@@ -849,6 +905,7 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 | Encode pairs batch  | `tokenizer.encode_batch([("a","b"), ...])`                  | `Brot.encode_batch_pairs tokenizer [("a","b"); ...]`             |
 | Decode              | `tokenizer.decode(ids)`                                     | `Brot.decode tokenizer ids`                                      |
 | Decode batch        | `tokenizer.decode_batch([ids1, ids2])`                      | `Brot.decode_batch tokenizer [ids1; ids2]`                       |
+| Decode a stream     | `DecodeStream().step(tokenizer, id)`                        | `Brot.decode_step (Brot.decode_stream tokenizer) id`             |
 | Get token IDs       | `output.ids`                                                | `Encoding.ids enc`                                               |
 | Get tokens          | `output.tokens`                                             | `Encoding.tokens enc`                                            |
 | Get attention mask  | `output.attention_mask`                                     | `Encoding.attention_mask enc`                                    |

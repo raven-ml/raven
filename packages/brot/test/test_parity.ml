@@ -59,13 +59,14 @@ let documents corpus =
   in
   (drop_final_newline text, Array.of_list (split [] [] (lines text)))
 
-(* Expected encodings. Every row is a kind followed by its value, the five
+(* Expected encodings. Every row is a kind followed by its value, the six
    per-document kinds once per document in document order, then the whole file
    as a single document under ALL. [ids] and [offsets] are what
    [add_special_tokens:false] must produce, [offsets] holding one byte span per
    [ids] token; [decode] is the [ids] row decoded back to text; [special] and
-   [mask] are what [add_special_tokens:true] must produce; [whole] is the whole
-   file with [add_special_tokens:false]. *)
+   [mask] are what [add_special_tokens:true] must produce; [unmatched] is what
+   [add_special_tokens:false] must produce with [match_special_tokens:false];
+   [whole] is the whole file with [add_special_tokens:false]. *)
 
 type expected = {
   ids : int array array;
@@ -73,6 +74,7 @@ type expected = {
   decode : string array;
   special : int array array;
   mask : int array array;
+  unmatched : int array array;
   whole : int array;
 }
 
@@ -174,7 +176,7 @@ let unescape relative quoted =
 
 (* The rows of a document are zipped by position, so the file has to hold them
    in this order and complete. *)
-let order = [| "IDS"; "OFFSETS"; "DECODE"; "SPECIAL"; "MASK" |]
+let order = [| "IDS"; "OFFSETS"; "DECODE"; "SPECIAL"; "MASK"; "UNMATCHED" |]
 
 let expected corpus model =
   let relative = ids_path corpus model in
@@ -183,6 +185,7 @@ let expected corpus model =
   and decode = ref []
   and special = ref []
   and mask = ref []
+  and unmatched = ref []
   and whole = ref None
   and position = ref 0 in
   List.iter
@@ -213,6 +216,9 @@ let expected corpus model =
         | "MASK" ->
             in_order ();
             mask := numbers relative (fields rest) :: !mask
+        | "UNMATCHED" ->
+            in_order ();
+            unmatched := numbers relative (fields rest) :: !unmatched
         | "ALL" ->
             if !position <> 0 then
               failf "%s: ALL row where a %s row was expected" relative
@@ -238,6 +244,7 @@ let expected corpus model =
         decode = aligned "DECODE" !decode;
         special = aligned "SPECIAL" !special;
         mask = aligned "MASK" !mask;
+        unmatched = aligned "UNMATCHED" !unmatched;
         whole;
       }
 
@@ -482,6 +489,39 @@ let check_kind ~kind ~add_special_tokens ~rows_of ~spans_of ~select ~render
                ~expected:rows.(index) ~actual))
         docs)
 
+(* The [add_special_tokens:false] ids again, with the text of special tokens
+   encoded as text, through both entry points. A mismatch is placed with the
+   spans of the IDS row, which cover the same text up to the first special
+   token they differ on. *)
+let check_unmatched model corpus tokenizer =
+  let _, docs = documents corpus in
+  let rows = expected corpus model in
+  one_row_per_document corpus model docs rows.unmatched;
+  survey (fun record ->
+      Array.iteri
+        (fun index text ->
+          let expected = rows.unmatched.(index) in
+          let against ~via ~actual =
+            compare_rows
+              ~what:(what corpus model (Numbered index))
+              ~kind:"ids" ~via ~text ~offsets:rows.offsets.(index)
+              ~render:string_of_int
+              ~detail:(ids_detail tokenizer ~expected ~actual)
+              ~expected ~actual
+          in
+          record (Numbered index)
+            (against ~via:"encode"
+               ~actual:
+                 (Encoding.ids
+                    (encode tokenizer ~add_special_tokens:false
+                       ~match_special_tokens:false text)));
+          record (Numbered index)
+            (against ~via:"encode_ids"
+               ~actual:
+                 (encode_ids tokenizer ~add_special_tokens:false
+                    ~match_special_tokens:false text)))
+        docs)
+
 (* Byte spans of the [add_special_tokens:false] tokens. The reference reports
    character spans; the generator converts them. *)
 let check_offsets model corpus tokenizer =
@@ -627,6 +667,86 @@ let check_walker model tokenizer =
     ~msg:(Printf.sprintf "%s is split by a walker" model)
     bool (List.mem model walked) (from 0)
 
+(* Streaming decoding. A case decodes a stretch of a reference encoding, which
+   holds the characters a model spells over several tokens, followed by ids
+   drawn from the whole vocabulary, added tokens included, and the law is that
+   the texts of the steps and the finish make up [decode] of the ids. *)
+
+let reference_ids = Hashtbl.create 16
+
+let reference model corpora =
+  match Hashtbl.find_opt reference_ids model with
+  | Some rows -> rows
+  | None ->
+      let rows =
+        Array.concat
+          (List.map (fun corpus -> (expected corpus model).ids) corpora)
+      in
+      Hashtbl.add reference_ids model rows;
+      rows
+
+let stream_case =
+  let open Gen in
+  let case =
+    let+ document = nat
+    and+ start = nat
+    and+ length = int_range 0 48
+    and+ drawn = list ~size:(int_range 0 8) nat
+    and+ skip_special_tokens = bool in
+    (document, start, length, drawn, skip_special_tokens)
+  in
+  let pp ppf (document, start, length, drawn, skip) =
+    Format.fprintf ppf "document %d from %d for %d, then [%s], skip %b" document
+      start length
+      (String.concat "; " (List.map string_of_int drawn))
+      skip
+  in
+  with_pp pp case
+
+(* The two decoders that never wait for a later token. *)
+let immediate = [ "bert_base"; "t5_base" ]
+
+let check_stream model corpora tokenizer
+    (document, start, length, drawn, skip_special_tokens) =
+  let rows = reference model corpora in
+  let row = rows.(document mod Array.length rows) in
+  let start = start mod (Array.length row + 1) in
+  let length = min length (Array.length row - start) in
+  let ids =
+    Array.append (Array.sub row start length)
+      (Array.of_list (List.map (fun id -> id mod vocab_size tokenizer) drawn))
+  in
+  let texts, s =
+    Array.fold_left
+      (fun (texts, s) id ->
+        let text, s = decode_step s id in
+        (text :: texts, s))
+      ([], decode_stream ~skip_special_tokens tokenizer)
+      ids
+  in
+  let texts = List.rev (decode_finish s :: texts) in
+  let rec kept = function
+    | "" :: rest -> List.exists (fun text -> text <> "") rest || kept rest
+    | _ :: rest -> kept rest
+    | [] -> false
+  in
+  if not (List.mem model immediate) then
+    cover ~share:0.05 "text kept for a later token" (kept texts);
+  List.iter
+    (fun text ->
+      equal ~msg:(Printf.sprintf "%S is UTF-8" text) bool true
+        (String.is_valid_utf_8 text))
+    texts;
+  equal ~msg:(model ^ " stream") string
+    (decode tokenizer ~skip_special_tokens ids)
+    (String.concat "" texts)
+
+let stream_test model corpora =
+  prop "stream" stream_case (fun case ->
+      with_tokenizer model (fun tokenizer ->
+          check_stream model corpora tokenizer case)
+        ())
+
 (* One test per (tokenizer, corpus, kind), so that a kind that brot does not yet
    match shows up on its own instead of hiding the kinds after it. *)
 let () =
@@ -637,6 +757,7 @@ let () =
             group model
               ((slow @@ test "load" (with_tokenizer model ignore))
               :: test "walker" (with_tokenizer model (check_walker model))
+              :: stream_test model corpora
               :: List.map
                    (fun corpus ->
                      group corpus
@@ -650,6 +771,7 @@ let () =
                             ("decode", check_decode);
                             ("special ids", check_special);
                             ("special tokens mask", check_mask);
+                            ("unmatched ids", check_unmatched);
                             ("type ids", check_types);
                             ("attention mask", check_attention);
                           ]))

@@ -1180,7 +1180,15 @@ let encode_sequences t sequences ~add_special_tokens ~padding ~truncation
           done);
       apply_padding t (Array.to_list results) padding
 
-let encode t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
+(* [t] with its special tokens left unmatched when the caller asks for their
+   text to be encoded like any other. *)
+let matching t ~match_special_tokens =
+  if match_special_tokens then t
+  else { t with added = Added_tokens.without_special t.added }
+
+let encode t ?pair ?(add_special_tokens = true) ?(match_special_tokens = true)
+    ?padding ?truncation text =
+  let t = matching t ~match_special_tokens in
   match
     apply_padding t
       [ encode_single t ~add_special_tokens ~truncation { text; pair } ]
@@ -1189,18 +1197,20 @@ let encode t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
   | [ encoding ] -> encoding
   | _ -> assert false
 
-let encode_batch t ?(add_special_tokens = true) ?padding ?truncation ?domains =
-  function
+let encode_batch t ?(add_special_tokens = true) ?(match_special_tokens = true)
+    ?padding ?truncation ?domains = function
   | [] -> []
   | texts ->
+      let t = matching t ~match_special_tokens in
       let sequences = List.map (fun text -> { text; pair = None }) texts in
       encode_sequences t sequences ~add_special_tokens ~padding ~truncation
         ~domains:(domain_count domains)
 
-let encode_batch_pairs t ?(add_special_tokens = true) ?padding ?truncation
-    ?domains = function
+let encode_batch_pairs t ?(add_special_tokens = true)
+    ?(match_special_tokens = true) ?padding ?truncation ?domains = function
   | [] -> []
   | pairs ->
+      let t = matching t ~match_special_tokens in
       let sequences =
         List.map (fun (text, pair) -> { text; pair = Some pair }) pairs
       in
@@ -1213,7 +1223,9 @@ let encode_batch_pairs t ?(add_special_tokens = true) ?padding ?truncation
    interleaves two sequences, so it goes the long way, and so does anything the
    post-processor does not describe as affixes. Overflowing windows have nowhere
    to go in an [int array] and are dropped. *)
-let encode_ids t ?pair ?(add_special_tokens = true) ?padding ?truncation text =
+let encode_ids t ?pair ?(add_special_tokens = true)
+    ?(match_special_tokens = true) ?padding ?truncation text =
+  let t = matching t ~match_special_tokens in
   let affixes =
     match pair with
     | Some _ -> None
@@ -1371,8 +1383,9 @@ let pieces_of t rows ~cut ~chunk =
    during that copy, chunk by chunk again: they move no ids the model produced.
    The buffers are [ids] rather than [Ints.t]: they hold the bulk of a batch,
    and outside the heap the collector neither scans nor sweeps them. *)
-let encode_batch_ids t ?(add_special_tokens = true) ?padding ?truncation
-    ?domains texts =
+let encode_batch_ids t ?(add_special_tokens = true)
+    ?(match_special_tokens = true) ?padding ?truncation ?domains texts =
+  let t = matching t ~match_special_tokens in
   let rows = Array.of_list texts in
   let nrows = Array.length rows in
   let affixes =
@@ -1565,6 +1578,44 @@ let decode t ?(skip_special_tokens = false) ids =
 
 let decode_batch t ?(skip_special_tokens = false) id_lists =
   List.map (decode t ~skip_special_tokens) id_lists
+
+(* A tokenizer without a decoder joins its tokens, with a space between two for
+   a word-level model, so the next text is known with each token. *)
+type decoding = Decoding of Decoder.stream | Joining of { first : bool }
+
+type stream = { tokenizer : t; skip_special_tokens : bool; decoding : decoding }
+
+let decode_stream ?(skip_special_tokens = false) t =
+  let decoding =
+    match t.decoder with
+    | Some decoder -> Decoding (Decoder.stream decoder)
+    | None -> Joining { first = true }
+  in
+  { tokenizer = t; skip_special_tokens; decoding }
+
+let decode_step s id =
+  let t = s.tokenizer in
+  let token =
+    if s.skip_special_tokens && Added_tokens.is_special t.added id then None
+    else id_to_token t id
+  in
+  match (token, s.decoding) with
+  | None, _ -> ("", s)
+  | Some token, Decoding stream ->
+      let text, stream = Decoder.step stream token in
+      (text, { s with decoding = Decoding stream })
+  | Some token, Joining { first } ->
+      let text =
+        match t.algorithm with
+        | Alg_wordlevel _ when not first -> " " ^ token
+        | _ -> token
+      in
+      (text, { s with decoding = Joining { first = false } })
+
+let decode_finish s =
+  match s.decoding with
+  | Decoding stream -> Decoder.finish stream
+  | Joining _ -> ""
 
 (* Training *)
 

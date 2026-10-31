@@ -33,6 +33,13 @@ val make : normalize:(string -> string) -> token list -> t
     tokens with the same content are one: it keeps the identifier of the first
     and the flags of the last. *)
 
+val without_special : t -> t
+(** [without_special t] is [t] with the tokens whose [special] is set no longer
+    matched: {!find_raw} and {!find_normalized} pass over a match of one as
+    they pass over a [single_word] token that does not stand alone, so the text
+    it covers is left to the model and no other token of the same search is
+    sought inside it. *)
+
 val is_empty : t -> bool
 (** [is_empty t] is [true] iff [t] has no added token. *)
 
@@ -63,7 +70,8 @@ val find_raw : t -> string -> pos:int -> (int * int * int) option
     later ones. [start] and [stop] delimit the match in [text], extended over
     the neighbouring white space of a token with [lstrip] or [rstrip], but never
     before [pos]. A [single_word] token whose neighbouring character is a word
-    character is discarded and the search resumes past it. [text] is a whole
+    character is discarded and the search resumes past it, and so is a
+    special token of a table made by {!without_special}. [text] is a whole
     sentence: [pos] bounds the search, not the neighbourhood a [single_word]
     token is tested against. *)
 

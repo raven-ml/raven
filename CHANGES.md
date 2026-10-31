@@ -3744,6 +3744,14 @@ thread.
 
 ### Brot
 
+- `decode_stream`, `decode_step` and `decode_finish` decode ids one at a time,
+  as a model generates them, giving each piece of text once no later id can
+  change it. Their texts make up `decode` of the ids, and none ends inside a
+  character or an open run of byte-fallback tokens.
+- `encode` and the other encode functions take `~match_special_tokens:false`,
+  which encodes the text of special tokens in the input as ordinary text, as
+  Hugging Face's `encode_special_tokens`, so text from a user cannot produce
+  control tokens.
 - `Pre_tokenizer.unicode_scripts` reads scripts from Unicode 17.0.0, the data
   of `\p{..}` in `split_regex`, rather than from uucp's Unicode 18.0.0: a
   character assigned in 18.0.0, such as U+0558, now joins the piece around it

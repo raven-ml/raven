@@ -95,13 +95,15 @@ For corpus `<corpus>.txt` and tokenizer `<name>` this writes
     DECODE <the IDS row decoded back to text, as a JSON string>
     SPECIAL <ids of document 0, add_special_tokens=True>
     MASK <special-token mask of the SPECIAL row>
+    UNMATCHED <ids of document 0, add_special_tokens=False, with the text of
+               special tokens encoded as text (encode_special_tokens=True)>
     IDS <ids of document 1>
     ...
     ALL <ids of the whole corpus file as a single document>
 
 Lines starting with `#` are comments. Every other line is a row `<KIND>` or
 `<KIND> <value> <value> ...`; a row with no values is a document that encodes
-to no tokens at all. Rows of the five per-document kinds appear once per
+to no tokens at all. Rows of the six per-document kinds appear once per
 document, in document order, so the n-th `IDS` row and the n-th `OFFSETS` row
 describe the same document. The trailing `ALL` row holds the whole corpus file
 (again minus its final newline) encoded as one document, which exercises the
@@ -202,6 +204,31 @@ def load_tokenizer(path: Path) -> Tokenizer:
     return tokenizer
 
 
+def rows(tokenizer: Tokenizer, text: str) -> list[str]:
+    """The rows of the expected encodings of corpus `text` by `tokenizer`."""
+    lines = []
+    for document in documents(text):
+        plain = tokenizer.encode(document, add_special_tokens=False)
+        special = tokenizer.encode(document, add_special_tokens=True)
+        offsets = [
+            f"{start},{stop}"
+            for start, stop in byte_spans(document, plain.offsets)
+        ]
+        decoded = tokenizer.decode(plain.ids, skip_special_tokens=False)
+        lines.append(row("IDS", ints(plain.ids)))
+        lines.append(row("OFFSETS", offsets))
+        lines.append(row("DECODE", [json.dumps(decoded, ensure_ascii=False)]))
+        lines.append(row("SPECIAL", ints(special.ids)))
+        lines.append(row("MASK", ints(special.special_tokens_mask)))
+        tokenizer.encode_special_tokens = True
+        unmatched = tokenizer.encode(document, add_special_tokens=False)
+        tokenizer.encode_special_tokens = False
+        lines.append(row("UNMATCHED", ints(unmatched.ids)))
+    whole = tokenizer.encode(text.removesuffix("\n"), add_special_tokens=False)
+    lines.append(row("ALL", ints(whole.ids)))
+    return lines
+
+
 def main() -> int:
     test_root = Path(__file__).resolve().parents[1]
     parity_dir = test_root / "support" / "parity"
@@ -225,29 +252,8 @@ def main() -> int:
                     f"{tokenizers.__version__}"
                 ),
                 f"# corpus {corpus}.txt, tokenizer {name}",
+                *rows(tokenizer, text),
             ]
-            for document in documents(text):
-                plain = tokenizer.encode(document, add_special_tokens=False)
-                special = tokenizer.encode(document, add_special_tokens=True)
-                offsets = [
-                    f"{start},{stop}"
-                    for start, stop in byte_spans(document, plain.offsets)
-                ]
-                decoded = tokenizer.decode(
-                    plain.ids, skip_special_tokens=False
-                )
-                lines.append(row("IDS", ints(plain.ids)))
-                lines.append(row("OFFSETS", offsets))
-                lines.append(
-                    row("DECODE", [json.dumps(decoded, ensure_ascii=False)])
-                )
-                lines.append(row("SPECIAL", ints(special.ids)))
-                lines.append(row("MASK", ints(special.special_tokens_mask)))
-            whole = tokenizer.encode(
-                text.removesuffix("\n"), add_special_tokens=False
-            )
-            lines.append(row("ALL", ints(whole.ids)))
-
             out = parity_dir / f"{corpus}.{name}.ids"
             out.write_text(
                 "\n".join(lines) + "\n", encoding="utf-8", newline="\n"

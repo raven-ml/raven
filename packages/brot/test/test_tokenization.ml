@@ -637,6 +637,169 @@ let test_skip_special_tokens () =
   equal ~msg:"nothing but the skipped token" string ""
     (decode t ~skip_special_tokens:true [| 1 |])
 
+(* Streaming decoding *)
+
+(* The texts a stream gives for [ids], one per step and then the finish. *)
+let stream_texts ?skip_special_tokens t ids =
+  let texts, s =
+    Array.fold_left
+      (fun (texts, s) id ->
+        let text, s = decode_step s id in
+        (text :: texts, s))
+      ([], decode_stream ?skip_special_tokens t)
+      ids
+  in
+  List.rev (decode_finish s :: texts)
+
+(* A tokenizer whose ids are the positions of [tokens], decoded by [decoder]. *)
+let listed ?decoder tokens =
+  word_level ?decoder ~vocab:(List.mapi (fun i token -> (token, i)) tokens) ()
+
+(* Byte-level characters: [â], [Ĥ] and [¬] are the bytes of [€]. *)
+let euro = [ "\xc3\xa2"; "\xc4\xa4"; "\xc2\xac" ]
+
+let test_stream_cases () =
+  let case msg t ids expected =
+    equal ~msg (list string) expected (stream_texts t (Array.of_list ids))
+  in
+  case "a character waits for its last byte"
+    (listed ~decoder:Decoder.byte_level ("a" :: euro))
+    [ 0; 1; 2; 3; 0 ] [ "a"; ""; ""; "\xe2\x82\xac"; "a"; "" ];
+  case "a character cut short ends the text"
+    (listed ~decoder:Decoder.byte_level ("a" :: euro))
+    [ 0; 1; 2 ] [ "a"; ""; ""; "\xef\xbf\xbd" ];
+  (* The text of a run of byte tokens is known once the run ends: a byte that
+     breaks the UTF-8 turns every byte of the run into a replacement
+     character. *)
+  let fallback =
+    listed ~decoder:Decoder.byte_fallback
+      [ "<0x20>"; "<0xC3>"; "<0xA9>"; " This"; "<0xFF>" ]
+  in
+  case "a run of byte tokens waits for its end" fallback [ 0; 1; 2; 3 ]
+    [ ""; ""; ""; " \xc3\xa9 This"; "" ];
+  case "a run that is not UTF-8" fallback [ 0; 4; 3 ]
+    [ ""; ""; "\xef\xbf\xbd\xef\xbf\xbd This"; "" ];
+  case "a run at the end" fallback [ 3; 1; 2 ] [ " This"; ""; ""; "\xc3\xa9" ];
+  (* The marker that stands for nothing on the first token stands for a space
+     on the others. *)
+  case "the first token keeps its own text"
+    (listed ~decoder:(Decoder.metaspace ()) [ "\xe2\x96\x81This" ])
+    [ 0; 0 ] [ "This"; " This"; "" ];
+  (* A suffix is a space unless its token is the last. *)
+  case "the last token waits for the next"
+    (listed ~decoder:(Decoder.bpe ()) [ "a</w>"; "b</w>" ])
+    [ 0; 1 ] [ ""; "a "; "b" ];
+  case "no decoder joins a word-level model's tokens with spaces"
+    (listed [ "a"; "b" ]) [ 0; 1; 0 ] [ "a"; " b"; " a"; "" ];
+  case "an id outside the vocabulary gives nothing" (listed [ "a" ]) [ 0; 7; 0 ]
+    [ "a"; ""; " a"; "" ]
+
+let test_stream_skips_special_tokens () =
+  let t =
+    word_level
+      ~vocab:[ ("a", 0); ("b", 1) ]
+      ~added_tokens:[ added_token "<s>" ]
+      ()
+  in
+  let s = Option.get (token_to_id t "<s>") in
+  equal ~msg:"skipped" (list string) [ "a"; ""; " b"; "" ]
+    (stream_texts ~skip_special_tokens:true t [| 0; s; 1 |]);
+  equal ~msg:"kept" (list string) [ "a"; " <s>"; " b"; "" ]
+    (stream_texts t [| 0; s; 1 |])
+
+(* Decoders that reach every case a stream keeps text back for: an open run of
+   byte tokens, a character not yet complete, a last token, and, after a
+   collapse, the start of a match and the ends a strip may cut. *)
+let stream_decoders =
+  [
+    ("bpe", Decoder.bpe ());
+    ("bpe a", Decoder.bpe ~suffix:"a" ());
+    ("byte_level", Decoder.byte_level);
+    ("byte_fallback", Decoder.byte_fallback);
+    ("wordpiece", Decoder.wordpiece ());
+    ("wordpiece no cleanup", Decoder.wordpiece ~cleanup:false ());
+    ("metaspace", Decoder.metaspace ());
+    ("metaspace never", Decoder.metaspace ~prepend_scheme:`Never ());
+    ("ctc", Decoder.ctc ());
+    ("ctc no cleanup", Decoder.ctc ~cleanup:false ());
+    ("replace marker", Decoder.replace ~pattern:"\xe2\x96\x81" ~by:" " ());
+    ("replace ab", Decoder.replace ~pattern:"ab" ~by:"x" ());
+    ("replace aa", Decoder.replace ~pattern:"aa" ~by:"a" ());
+    ("strip start", Decoder.strip ~start:1 ());
+    ("strip stop", Decoder.strip ~stop:2 ());
+    ("strip ab", Decoder.strip ~content:"ab" ~start:1 ~stop:1 ());
+    ("strip marker", Decoder.strip ~content:"\xe2\x96\x81" ~stop:1 ());
+    ("fuse", Decoder.fuse);
+  ]
+
+let stream_tokens =
+  [
+    "a"; "b"; "ab"; " "; "  "; "\xe2\x96\x81"; "\xe2\x96\x81a";
+    "a\xe2\x96\x81"; "##a"; "a</w>"; "</w>"; "<0x41>"; "<0xC3>"; "<0xA9>";
+    "<0xE2>"; "<0x82>"; "<0xAC>"; "<0xFF>"; "<pad>"; "|"; "."; " ."; "do";
+    " not"; "'"; "n't"; "\xc4\xa0"; "\xc3\x83"; "\xc2\xa9"; "\xc3\xbf"; "é";
+  ]
+  @ euro
+
+let collapses = [ "byte_level"; "fuse" ]
+
+(* A sequence of decoders, most often with a collapse between two lists, so
+   that the decoders after it rewrite text arriving piece by piece. *)
+let stream_case =
+  let open Gen in
+  let leaf =
+    of_list ~pp:Format.pp_print_string (List.map fst stream_decoders)
+  in
+  let+ before = list ~size:(int_range 0 2) leaf
+  and+ collapse = of_list [ []; [ "byte_level" ]; [ "fuse" ]; [ "fuse" ] ]
+  and+ after = list ~size:(int_range 0 2) leaf
+  and+ ids =
+    list ~size:(int_range 0 12) (int_range 0 (List.length stream_tokens - 1))
+  in
+  (before @ collapse @ after, ids)
+
+let stream_case =
+  let pp ppf (names, ids) =
+    Format.fprintf ppf "[%s], [%s]" (String.concat "; " names)
+      (String.concat "; " (List.map string_of_int ids))
+  in
+  Gen.with_pp pp stream_case
+
+let decoder_stream_law =
+  prop ~count:2000 "a stream gives the text of decode" stream_case
+    (fun (names, ids) ->
+      let decoder =
+        Decoder.sequence
+          (List.map (fun name -> List.assoc name stream_decoders) names)
+      in
+      let t = listed ~decoder stream_tokens in
+      let ids = Array.of_list ids in
+      let texts = stream_texts t ids in
+      let rec after_collapse prefix = function
+        | name :: rest when List.mem name collapses ->
+            List.exists (String.starts_with ~prefix) rest
+        | _ :: rest -> after_collapse prefix rest
+        | [] -> false
+      in
+      let rec kept = function
+        | "" :: rest -> List.exists (fun text -> text <> "") rest || kept rest
+        | _ :: rest -> kept rest
+        | [] -> false
+      in
+      cover ~share:0.1 "a strip after a collapse"
+        (after_collapse "strip" names);
+      cover ~share:0.1 "a replace after a collapse"
+        (after_collapse "replace" names);
+      cover ~share:0.2 "text kept for a later token" (kept texts);
+      List.iter
+        (fun text ->
+          equal ~msg:(Printf.sprintf "%S is UTF-8" text) bool true
+            (String.is_valid_utf_8 text))
+        texts;
+      equal
+        ~msg:(String.concat ", " names)
+        string (decode t ids) (String.concat "" texts))
+
 (* Training. Every trainer counts the pre-tokens the pipeline hands the model,
    which is what the [tokenizers] wheel counts; the words below were probed with
    it. The unigram vocabulary is brot's own: its trainer keeps the most frequent
@@ -1607,6 +1770,9 @@ let tokenization_tests =
     test "replace and strip decoders" test_replace_and_strip_decoders;
     test "sentencepiece decoder" test_sentencepiece_decoder;
     test "skip special tokens" test_skip_special_tokens;
+    test "a stream's texts" test_stream_cases;
+    test "a stream skips special tokens" test_stream_skips_special_tokens;
+    decoder_stream_law;
     (* Training *)
     test "wordpiece trains on pre-tokens" test_train_wordpiece_words;
     test "wordlevel trains on pre-tokens" test_train_word_level_words;
