@@ -115,14 +115,15 @@ let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
     | _ -> ""
   in
   let suffix = if is_ptr addrspace || override_ptr then "*" else "" in
+  (* A data type is a constant constructor, so identity is equality. *)
   let name =
-    match List.assoc_opt dt l.type_map with
+    match List.assq_opt dt l.type_map with
     | Some name -> name
     | None -> invalid_arg (strf "the language has no type %s" (Dtype.name dt))
   in
   if sz > 1 then
     let element =
-      match List.assoc_opt dt l.vector_names with
+      match List.assq_opt dt l.vector_names with
       | Some element -> element
       | None -> String.map (function ' ' -> '_' | c -> c) name
     in
