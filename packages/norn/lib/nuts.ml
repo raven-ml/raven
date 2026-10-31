@@ -79,7 +79,7 @@ let logaddexp a b =
    (fold_in keys.(i) 1) j) id]. *)
 let uniforms (type f) dt keys j ids : (float, f, 'd) Nx.t =
   Rune.vmap
-    P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+    P.(Nx.Rng.ptree @-> returns tensor)
     (fun k ->
       let k = Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) j in
       Rune.vmap

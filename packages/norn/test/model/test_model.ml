@@ -412,7 +412,7 @@ let refusals =
           let start =
             Rune.jit
               Nx.Ptree.(
-                (Nx.Ptree.v Nx.Rng.walk) @-> tensor @-> tensor @-> tensor @-> returns tensor)
+                Nx.Rng.ptree @-> tensor @-> tensor @-> tensor @-> returns tensor)
               (fun k low high y ->
                 (M.init (m low high) y ~chains:1 k :> Nx.host Nx.float64_t))
           in

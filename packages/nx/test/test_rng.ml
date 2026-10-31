@@ -170,7 +170,7 @@ let keys_group =
             (Nx.placement (Rng.to_tensor (Rng.key 7))));
       test "a key's walk is one array at the root, checked on rebuild"
         (fun () ->
-          let k = Rng.key 7 and ptree = Nx.Ptree.v Rng.walk in
+          let k = Rng.key 7 and ptree = Rng.ptree in
           equal ~msg:"visits" (list string) [ "the root: a leaf" ]
             (List.map
                (Format.asprintf "%a" Nx.Ptree.pp_visit)
@@ -372,7 +372,7 @@ let keys_group =
           equal ~msg:"of_tensor of its words" (array int32) each
             (words (Rng.of_tensor (Rng.to_tensor y)));
           equal ~msg:"a walk of it" (array int32) each
-            (words (Nx.Ptree.map (Nx.Ptree.v Rng.walk) (fun _ a -> a) y)));
+            (words (Nx.Ptree.map Rng.ptree (fun _ a -> a) y)));
       test "split refuses n below 1" (fun () ->
           equal string "Nx.Rng.split: n is 0, not at least 1"
             (message (fun () -> Rng.split ~n:0 (Rng.key 1))));

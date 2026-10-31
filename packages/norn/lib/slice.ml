@@ -106,7 +106,7 @@ let walk_ptree (type u f a) (u : (u, 'd) P.t) (a : (a, 'd) P.t) : ((u, f, a, 'd)
   P.v walk
 
 (* [per_row keys f] is [f k] for each row's key [k]. *)
-let per_row keys f = Rune.vmap P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor) f keys
+let per_row keys f = Rune.vmap P.(Nx.Rng.ptree @-> returns tensor) f keys
 
 (* Per-walker flags, [[walker; bits]]: [at flags column i] is row [r]'s flag
    [i.(r)], and [put flags column i mask v] sets it to [v.(r)] where [mask];
@@ -151,7 +151,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
   let column = Nx.unsqueeze ~axes:[ 0 ] (Nx.arange_at on Nx.int32 0 b 1) in
   let trip_keys =
     Rune.vmap
-      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
+      P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
       (fun k -> Nx.Rng.fold_in k 3)
       keys
   in
@@ -168,7 +168,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
     (* A draw, and a key for the density, per walker and trip. *)
     let draw, eval_keys =
       Rune.vmap
-        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (pair tensor (Nx.Ptree.v Nx.Rng.walk)))
+        P.(Nx.Rng.ptree @-> returns (pair tensor Nx.Rng.ptree))
         (fun k ->
           let k = Nx.Rng.fold_in_tensor k w.trip in
           (Noise.uniform (Nx.Rng.fold_in k 0) dt [||], Nx.Rng.fold_in k 1))
@@ -343,7 +343,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t
 let unit_directions u keys lp like =
   let z =
     Rune.vmap
-      P.((Nx.Ptree.v Nx.Rng.walk) @-> u @-> returns u)
+      P.(Nx.Rng.ptree @-> u @-> returns u)
       (fun k x ->
         let i = ref (-1) in
         P.map u
@@ -365,7 +365,7 @@ let hit_and_run context u a eval keys g x lp aux =
   let z =
     unit_directions P.tensor
       (Rune.vmap
-         P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
+         P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
          (fun k -> Nx.Rng.fold_in k 5)
          keys)
       lp rows

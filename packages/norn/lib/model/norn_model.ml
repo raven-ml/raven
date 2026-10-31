@@ -810,7 +810,7 @@ let from_prior m ~n k =
   let context = "Norn_model.from_prior" in
   if n < 1 then invalid_argf "%s: n = %d is not positive" context n;
   Rune.vmap
-    Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns m.latent)
+    Nx.Ptree.(Nx.Rng.ptree @-> returns m.latent)
     (fun k ->
       let p, _, us = prior_draw m context k in
       coordinates m p us)
@@ -1050,7 +1050,7 @@ let init ?(from = Init.Uniform) m y ~chains k =
     Nx.Ptree.map m.latent (fun _ x -> Nx.take ~axis:0 first x) cands
   in
   Rune.vmap
-    Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns m.latent)
+    Nx.Ptree.(Nx.Rng.ptree @-> returns m.latent)
     start
     (Nx.Rng.split_batch ~n:chains k)
 

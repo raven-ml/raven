@@ -156,7 +156,7 @@ let runs_and_refusals =
           in
           let compiled =
             Rune.jit
-              Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+              Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
               step (Nx.Rng.key 3) s
           in
           let eager = step (Nx.Rng.key 3) s in

@@ -55,7 +55,7 @@ let reproducible =
           let sp = E.ptree t in
           let step =
             Rune.jit
-              Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+              Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
               (E.step t banana)
           in
           let compiled = step (Nx.Rng.key 3) s in

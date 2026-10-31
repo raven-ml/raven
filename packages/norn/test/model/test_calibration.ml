@@ -72,7 +72,7 @@ let nuts =
       let u = M.coords model in
       let fit =
         Rune.jit
-          Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> tensor @-> returns (Norn.Draws.ptree u))
+          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns (Norn.Draws.ptree u))
           (fun k y ->
             let lp = M.log_density model y in
             let start = M.init model y ~chains:1 (Nx.Rng.fold_in k 0) in

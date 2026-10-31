@@ -179,7 +179,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
   let keys = Nx.Rng.split_batch ~n:b k in
   let pick =
     Rune.vmap
-      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+      P.(Nx.Rng.ptree @-> returns tensor)
       (fun k -> Noise.uniform (Nx.Rng.fold_in k 0) dt [||])
       keys
   in
@@ -197,7 +197,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
     Rows.check_range context ll;
     let rank =
       Rune.vmap
-        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+        P.(Nx.Rng.ptree @-> returns tensor)
         (fun k -> Noise.uniform k dt [||])
         ks
     in
@@ -209,7 +209,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
   let walk (x, (lp, aux_v)) j =
     let ks =
       Rune.vmap
-        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
+        P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
         (fun k -> Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) j)
         keys
     in

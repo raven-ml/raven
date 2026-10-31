@@ -28,7 +28,7 @@ let choose_point u mask a b =
 
 let momentum u keys like =
   Rune.vmap
-    P.((Nx.Ptree.v Nx.Rng.walk) @-> u @-> returns u)
+    P.(Nx.Rng.ptree @-> u @-> returns u)
     (fun k x ->
       let k = Nx.Rng.fold_in k 0 in
       let j = ref (-1) in
@@ -67,7 +67,7 @@ let search (type f) context u lp_z ~reduce keys start (eps : (float, f, 'd) Nx.t
   let log_ratio eps i =
     let keys =
       Rune.vmap
-        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
+        P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
         (fun k -> Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 2) i)
         keys
     in
@@ -226,7 +226,7 @@ let transition (type f) context u lp k g ~step_size:eps ~length x
   in
   let uniform =
     Rune.vmap
-      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+      P.(Nx.Rng.ptree @-> returns tensor)
       (fun k -> Noise.uniform (Nx.Rng.fold_in k 1) dt [||])
       keys
   in

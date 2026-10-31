@@ -169,7 +169,7 @@ let train_step gpt2_tree objective params =
 (* The step's dropout key is an optional argument: [Some key] when [--dropout]
    is positive, [None] otherwise. [None] holds no tensor, so dropout-free runs
    trace the exact reference graph. *)
-let key () = Nx.Ptree.option (Nx.Ptree.v Nx.Rng.walk)
+let key () = Nx.Ptree.option Nx.Rng.ptree
 
 (* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
    The scale state is donated to and returned by the jitted step as tensor

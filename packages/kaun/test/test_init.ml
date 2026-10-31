@@ -213,7 +213,7 @@ let test_non_positive_fan_rejected () =
 let test_init_compiles_under_jit () =
   let check name (init : (Nx.float32_elt, Nx.host) Init.t) =
     let draw key = init key ~fan_in:8 ~fan_out:8 Nx.float32 [| 8; 8 |] in
-    let f = Rune.jit Nx.Ptree.(v Nx.Rng.walk @-> returns tensor) draw in
+    let f = Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) draw in
     let at k = Nx.to_array (f (Nx.Rng.key k)) in
     is_true ~msg:(name ^ " follows the key it is given") (at 1 <> at 2);
     equal

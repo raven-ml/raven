@@ -94,13 +94,13 @@ let half (type f) u lp e keys j position (lp0 : (float, f, 'd) Nx.t) =
   in
   let x, others = split u position in
   let l, held_lp = split P.tensor lp0 in
-  let keys, _ = split (Nx.Ptree.v Nx.Rng.walk) keys in
+  let keys, _ = split Nx.Rng.ptree keys in
   let x = ungrouped u x and l = ungrouped P.tensor l in
   let draw i =
     Rune.vmap
-      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+      P.(Nx.Rng.ptree @-> returns tensor)
       (fun k -> Noise.uniform (Nx.Rng.fold_in (Nx.Rng.fold_in k j) i) dt [||])
-      (ungrouped (Nx.Ptree.v Nx.Rng.walk) keys)
+      (ungrouped Nx.Rng.ptree keys)
   in
   (* A partner drawn from the held half of the walker's own group. *)
   let pick =
@@ -194,7 +194,7 @@ let split e keys =
   in
   let order =
     Rune.vmap
-      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+      P.(Nx.Rng.ptree @-> returns tensor)
       (fun k ->
         Nx.argsort (Noise.uniform (Nx.Rng.fold_in k 2) Nx.float32 [| n |]))
       firsts
@@ -213,7 +213,7 @@ let step u lp k (s : (_, _, 'd) state) =
   let back = Nx.cast Nx.int64 (Nx.argsort perm) in
   let take p v = P.map p (fun _ t -> Nx.take ~axis:0 perm t) v in
   let untake p v = P.map p (fun _ t -> Nx.take ~axis:0 back t) v in
-  let keys' = take (Nx.Ptree.v Nx.Rng.walk) keys in
+  let keys' = take Nx.Rng.ptree keys in
   let x, l, first =
     half u lp s.ensembles keys' 0 (take u s.position) (take P.tensor s.lp)
   in

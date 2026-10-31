@@ -523,7 +523,7 @@ let jit_rows () =
     warm "cumsum-neg-log-uniform-8x1024"
       (fun () ->
         ( Rune.jit
-            Nx.Ptree.(v Nx.Rng.walk @-> returns tensor)
+            Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
             (fun key ->
               let u = Nx.Rng.uniform ~key f64 [| 8; 1024 |] in
               Nx.cumsum ~axis:1 (Nx.neg (Nx.log u))),

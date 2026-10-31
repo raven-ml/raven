@@ -158,7 +158,7 @@ let fit (type p y) kernel (m : (p, y, Nx.float64_elt, Nx.host) M.t)
   let run =
     Rune.jit
       Nx.Ptree.(
-        (Nx.Ptree.v Nx.Rng.walk)
+        Nx.Rng.ptree
         @-> returns (pair (Norn.Draws.ptree u) (option stats_ptree)))
       (fun k -> kernel.run u lp k (M.init m y ~chains:kernel.chains k))
   in
@@ -321,10 +321,10 @@ let replicated_cell sampler (P.Posterior p) =
   let ez = Norn.Evidence.ptree u in
   let run =
     Rune.jit
-      Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns (pair ez tensor))
+      Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
       (fun ks ->
         Rune.vmap
-          Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns (pair ez tensor))
+          Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
           (fun k ->
             let z =
               sampler.evidence u ~prior:(M.log_prior m)

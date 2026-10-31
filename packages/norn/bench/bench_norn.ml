@@ -56,7 +56,7 @@ let nuts_step chains =
     let sp = Norn.Nuts.ptree u in
     let step =
       Rune.jit
-        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
         (Norn.Nuts.step u lp)
     in
     let k = Nx.Rng.key 2 in
@@ -76,7 +76,7 @@ let hmc_step chains =
     let sp = Norn.Hmc.ptree u in
     let step =
       Rune.jit
-        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
         (Norn.Hmc.step u lp)
     in
     let k = Nx.Rng.key 2 in
@@ -95,7 +95,7 @@ let ensemble_step =
     let sp = Norn.Ensemble.ptree u in
     let step =
       Rune.jit
-        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
         (Norn.Ensemble.step u lp)
     in
     let k = Nx.Rng.key 2 in
@@ -134,7 +134,7 @@ let nested_step =
     let sp = Norn.Nested.ptree t in
     let step =
       Rune.jit
-        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
         (Norn.Nested.step t ~prior:cube_prior ~likelihood:gaussian)
     in
     let k = Nx.Rng.key 2 in
@@ -154,7 +154,7 @@ let smc_step move name =
     let sp = Norn.Smc.ptree t in
     let step =
       Rune.jit
-        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
+        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
         (Norn.Smc.step t ~prior:cube_prior ~likelihood:gaussian)
     in
     let k = Nx.Rng.key 2 in

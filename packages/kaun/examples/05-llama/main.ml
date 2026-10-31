@@ -83,7 +83,7 @@ let generate (type b d) ~jit
     else
       let sampling = Nx.Ptree.instantiate (module Sampling)
       and caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
-      and key = Nx.Ptree.v Nx.Rng.walk in
+      and key = Nx.Rng.ptree in
       let compiled =
         Rune.jit
           Nx.Ptree.(

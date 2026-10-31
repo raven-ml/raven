@@ -197,7 +197,7 @@ let schools () =
     let k = Nx.Rng.of_tensor k in
     let q =
       Rune.vmap
-        Nx.Ptree.(v Nx.Rng.walk @-> returns tensor)
+        Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
         start
         (Nx.Rng.split_batch ~n:8 k)
     in

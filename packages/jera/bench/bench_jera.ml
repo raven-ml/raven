@@ -759,9 +759,7 @@ let qmc () =
       Thumper.bench_with_setup
         ~setup:(fun () ->
           let f =
-            Rune.jit
-              Nx.Ptree.(Nx.Ptree.v Nx.Rng.walk @-> returns tensor)
-              mean_exp
+            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) mean_exp
           in
           checked f (key ()))
         "compiled" timed;

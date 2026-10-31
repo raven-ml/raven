@@ -162,7 +162,7 @@ let slice_moves context u ~prior ~likelihood keys g ~m moves tempered x0 pl0 ll0
   let move (x, (lp, aux)) j =
     let ks =
       Rune.vmap
-        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
+        P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
         (fun k -> Nx.Rng.fold_in_tensor k j)
         keys
     in

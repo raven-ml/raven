@@ -641,19 +641,20 @@ let tried =
     ]
 
 let walks =
-  let key () = Nx.Rng.key 7 and keys () = P.v Nx.Rng.walk in
+  let key () = Nx.Rng.key 7 in
   group "walks that refuse 0-d arrays"
     [
       test "raise at the call on the host, naming Nx.check" (fun () ->
           let ok = Nx.create Nx.bool [| 2 |] [| true; false |] in
-          invalid ~by:"Nx.check" (fun () -> Nx.check (keys ()) ok (key ()) pass));
+          invalid ~by:"Nx.check" (fun () ->
+              Nx.check Nx.Rng.ptree ok (key ()) pass));
       test "raise at the call on another set, leaving nothing pending"
         (fun () ->
           let ok =
             Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; false |])
           in
           let key = Nx.Rng.place S.on (key ()) in
-          invalid ~by:"Nx.check" (fun () -> Nx.check (keys ()) ok key pass);
+          invalid ~by:"Nx.check" (fun () -> Nx.check Nx.Rng.ptree ok key pass);
           Nx.sync ok;
           Nx.check P.unit
             (Nx.place S.on (Nx.create Nx.bool [| 1 |] [| true |]))
