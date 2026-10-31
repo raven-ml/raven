@@ -94,7 +94,7 @@ val type_verify : calls:Ops.calls -> t -> Ops.t -> unit
 (** [type_verify ~calls spec u] checks every node of [u]'s graph against [spec],
     sources first ({!Ops.toposort}[ ~calls u]). When {!Setting.debug} is 3 or
     more, a failure first prints the graph's nodes on standard error
-    ({!Render.pp_uops}).
+    ({!Render.render_uir}).
 
     Raises [Invalid_argument] on the first node that fails, naming its position
     in that order, its operation, type and number of sources, each source's

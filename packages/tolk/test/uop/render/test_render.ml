@@ -231,51 +231,61 @@ let srender =
             (Render.srender Shape.Sint.(prod [ Int 3; Int 4; Sym a ])));
     ]
 
-(* pp_uops *)
+(* render_uir *)
 
-let listing ?(color = false) uops =
+let uir ?(color = false) uops =
   Setting.context
     [ B (Setting.no_color, not color) ]
-    (fun () -> Format.asprintf "%a" Render.pp_uops uops)
+    (fun () -> Render.render_uir uops)
 
-(* tinygrad prints each line ended; a formatter leaves the last line open. *)
-let printed ?color uops =
-  match uops with [] -> "" | _ -> listing ?color uops ^ "\n"
+(* tinygrad prints the text, ended. *)
+let printed ?color file =
+  uir ?color (Ops.toposort ~calls:Enter (Golden.sink file)) ^ "\n"
 
-let listings =
+let wire_formats =
   [
-    ("program_listing.golden", "program.golden", false);
-    ("program_listing_colored.golden", "program.golden", true);
-    ("partial_listing.golden", "partial.golden", false);
-    ("wide_listing.golden", "wide.golden", false);
-    ("wide_listing_colored.golden", "wide.golden", true);
+    ("program_uir.golden", "program.golden", false);
+    ("program_uir_colored.golden", "program.golden", true);
+    ("args_uir.golden", "args.golden", false);
+    ("symbolic_vars_uir.golden", "symbolic_vars.golden", false);
   ]
 
-let positions = Gen.list ~size:(Gen.int_range 0 10) (Gen.int_range 0 22)
+let f32 x = Ops.float ~dtype:Float32 x
 
-let one_line_per_node positions =
-  let program = sources "program.golden" in
-  let lines =
-    String.split_on_char '\n' (listing (List.map (List.nth program) positions))
-  in
-  equal int (max 1 (List.length positions)) (List.length lines);
+(* A node of a sum of [n] float32 constants, [n] at least 1. *)
+let sum n =
+  List.init (n - 1) (fun i -> f32 (float_of_int i))
+  |> List.fold_left Ops.add (f32 0.)
+
+let one_line_per_node n =
+  let uops = Ops.toposort ~calls:Enter (sum n) in
+  let lines = String.split_on_char '\n' (uir uops) in
+  let nodes = List.filter (fun u -> Ops.op u <> Op.Const) uops in
+  equal int (max 1 (List.length nodes)) (List.length lines);
   List.iteri
     (fun i line ->
-      if positions <> [] then
-        starts_with ~msg:line ~prefix:(Printf.sprintf "%4d " i) line)
+      if nodes <> [] then
+        starts_with ~msg:line ~prefix:(Printf.sprintf "%%%d = " i) line)
     lines
 
-let pp_uops =
-  group "pp_uops"
+let render_uir =
+  group "render_uir"
     (List.map
        (fun (golden, input, color) ->
-         Golden.text golden (fun () -> printed ~color (sources input)))
-       listings
+         Golden.text golden (fun () -> printed ~color input))
+       wire_formats
     @ [
-        test "an empty list prints nothing" (fun () ->
-            equal string "" (listing []));
-        prop "prints a line per node, numbered from 0, the last not ended"
-          positions one_line_per_node;
+        test "an empty list writes nothing" (fun () ->
+            equal string "" (uir []));
+        test "a constant is written in its user" (fun () ->
+            let x = Ops.add (Ops.float 1.5) (Ops.float (-0.)) in
+            equal string "%0 = add 1.5, -0.0" (uir (Ops.toposort ~calls:Enter x)));
+        test "an operation is written in its colour" (fun () ->
+            let x = Ops.add (Ops.float 1.) (Ops.float 2.) in
+            equal string "%0 = \027[38;2;255;255;192madd\027[0m 1.0, 2.0"
+              (uir ~color:true (Ops.toposort ~calls:Enter x)));
+        prop "writes a line per node that is no constant, numbered from 0"
+          (Gen.int_range 1 12) one_line_per_node;
       ])
 
-let () = exit (run "Tolk.Render" [ render; simplified; srender; pp_uops ])
+let () = exit (run "Tolk.Render" [ render; simplified; srender; render_uir ])

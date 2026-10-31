@@ -426,6 +426,12 @@ let terminal_text =
     [
       as_tinygrad ~key:[ "color"; "background" ]
         "colored paints as tinygrad does" "colors.golden" colored_like_tinygrad;
+      test "colored paints a 24-bit colour, or its background" (fun () ->
+          with_color (fun () ->
+              equal string "\027[38;2;20;104;111mx\027[0m"
+                (colored (Rgb (0x14, 0x68, 0x6f)) "x");
+              equal string "\027[48;2;255;255;192mx\027[0m"
+                (colored ~background:true (Rgb (0xff, 0xff, 0xc0)) "x")));
       test "colored leaves text alone under no_color" (fun () ->
           Setting.context
             [ B (Setting.no_color, true) ]

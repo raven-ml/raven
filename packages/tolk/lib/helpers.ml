@@ -152,31 +152,34 @@ type color =
   | Bright_magenta
   | Bright_cyan
   | Bright_white
+  | Rgb of int * int * int
 
-let color_code = function
-  | Black -> 30
-  | Red -> 31
-  | Green -> 32
-  | Yellow -> 33
-  | Blue -> 34
-  | Magenta -> 35
-  | Cyan -> 36
-  | White -> 37
-  | Bright_black -> 90
-  | Bright_red -> 91
-  | Bright_green -> 92
-  | Bright_yellow -> 93
-  | Bright_blue -> 94
-  | Bright_magenta -> 95
-  | Bright_cyan -> 96
-  | Bright_white -> 97
+(* The parameters of the escape sequence that paints in [color]. *)
+let graphics ~background color =
+  let named n = string_of_int (if background then n + 10 else n) in
+  match color with
+  | Black -> named 30
+  | Red -> named 31
+  | Green -> named 32
+  | Yellow -> named 33
+  | Blue -> named 34
+  | Magenta -> named 35
+  | Cyan -> named 36
+  | White -> named 37
+  | Bright_black -> named 90
+  | Bright_red -> named 91
+  | Bright_green -> named 92
+  | Bright_yellow -> named 93
+  | Bright_blue -> named 94
+  | Bright_magenta -> named 95
+  | Bright_cyan -> named 96
+  | Bright_white -> named 97
+  | Rgb (r, g, b) ->
+      Printf.sprintf "%d;2;%d;%d;%d" (if background then 48 else 38) r g b
 
 let colored ?(background = false) color st =
   if Setting.value Setting.no_color then st
-  else
-    Printf.sprintf "\027[%dm%s\027[0m"
-      (color_code color + if background then 10 else 0)
-      st
+  else Printf.sprintf "\027[%sm%s\027[0m" (graphics ~background color) st
 
 let time_to_str ?(w = 8) t =
   if t > 10. then Printf.sprintf "%*.2fs " w t

@@ -16,35 +16,163 @@ let repr_ints = function
   | [ n ] -> strf "(%d,)" n
   | ns -> "(" ^ String.concat ", " (List.map string_of_int ns) ^ ")"
 
-(* Uop helpers *)
+(* Wire format *)
 
-(* A float constant prints bare and a string without its quotes, as Python's
-   [str] prints them. *)
-let str_arg = function
-  | Const c -> str_const c
-  | String s | Device (Single s) -> s
-  | a -> to_string pp_arg a
+let rgb hex =
+  Helpers.Rgb
+    ( int_of_string ("0x" ^ String.sub hex 0 2),
+      int_of_string ("0x" ^ String.sub hex 2 2),
+      int_of_string ("0x" ^ String.sub hex 4 2) )
 
-let pp_uops ppf uops =
-  let index = Tbl.create 64 in
-  List.iteri (fun i u -> Tbl.replace index u i) uops;
-  let src_str x =
-    match Tbl.find_opt index x with
-    | None -> "'--'"
-    | Some _ when op x = Op.Const -> "'" ^ str_const (value x) ^ "'"
-    | Some i -> string_of_int i
+let uops_colors =
+  Op.
+    [
+      (Load, "ffc0c0");
+      (Store, "87CEEB");
+      (Const, "e0e0e0");
+      (Reduce, "FF5B5B");
+      (Range, "c8a0e0");
+      (Barrier, "ff8080");
+      (If, "c8b0c0");
+      (Special, "c0c0ff");
+      (Index, "CEF9B7");
+      (Stack, "D8F9E4");
+      (Wmma, "efefc0");
+      (Unshard, "f6ccff");
+      (Ins, "eec4ff");
+      (Threefry, "ffff80");
+      (Buffer, "B0BDFF");
+      (Getaddr, "9DB1F0");
+      (Copy, "ff90c0");
+      (Custom_function, "bf71b6");
+      (Call, "00B7C8");
+      (Param, "14686F");
+      (Source, "c0c0c0");
+      (Binary, "404040");
+      (Linear, "7DF4FF");
+      (Alloc, "C07788");
+      (Allreduce, "ff40a0");
+      (Mselect, "d040a0");
+      (Mstack, "d040a0");
+      (Stage, "FFC14D");
+      (After, "8A7866");
+      (End, "524C46");
+      (Backedge, "464752");
+    ]
+
+let op_color o =
+  match List.assoc_opt o uops_colors with
+  | Some hex -> Some (rgb hex)
+  | None when Op.Set.mem o Op.Set.alu -> Some (rgb "ffffc0")
+  | None when Op.Set.mem o Op.Set.movement -> Some (rgb "D8F9E4")
+  | None -> None
+
+(* An enumeration's name, without its type: [LOOP] for [AxisType.LOOP]. *)
+let member s =
+  let dot = String.index s '.' + 1 in
+  String.sub s dot (String.length s - dot)
+
+let addr_name a = member (to_string Dtype.pp_addr_space a)
+let axis_name a = member (to_string Axis_type.pp a)
+
+let word_device s =
+  String.length s > 0
+  && String.for_all
+       (function
+         | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | ':' -> true
+         | _ -> false)
+       s
+
+(* A constant is a literal, of a weak type or boolean: a constant of another
+   type is a cast of one. *)
+let const_arg u =
+  match value u with
+  | `Invalid -> "invalid"
+  | `Bool b -> string_of_bool b
+  | v -> str_const v
+
+let storage_arg u (p : param_arg) =
+  let opts =
+    List.concat
+      [
+        (match p.vmin_vmax with
+        | Some (lo, hi) ->
+            [ strf " bounds=[%s,%s]" (str_const lo) (str_const hi) ]
+        | None -> []);
+        (match p.multiple_of with
+        | Some m -> [ strf " multiple_of=%d" m ]
+        | None -> []);
+        (match p.addrspace with
+        | None | Some Dtype.Global -> []
+        | Some a -> [ " addrspace=" ^ addr_name a ]);
+        (match p.device with
+        | Some (Single s) when word_device s -> [ " device=" ^ s ]
+        | Some d -> [ " device=" ^ to_string pp_device d ]
+        | None -> []);
+        (if p.volatile then [ " volatile=true" ] else []);
+      ]
+  in
+  let name = match p.name with Some n -> strf "\"%s\" " n | None -> "" in
+  strf "%sdtype=%s slot=%d%s" name (Dtype.name (dtype u)) p.slot
+    (String.concat "" opts)
+
+(* Bare scalars, keyed fields, and the literal of any other argument. *)
+let render_arg u =
+  match (op u, arg u) with
+  | Op.Const, _ -> const_arg u
+  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> storage_arg u p
+  | Op.Range, _ ->
+      strf "%s r%s"
+        (axis_name (axis_type u))
+        (String.concat "_" (List.map string_of_int (axis_id u)))
+  | Op.Sink, Kernel k -> k.name
+  | Op.Sink, _ -> ""
+  | Op.Call, Call c ->
+      String.concat " "
+        ((match c.name with
+         | Some n -> [ "name=" ^ to_string pp_arg (String n) ]
+         | None -> [])
+        @ if c.precompile then [ "precompile=true" ] else [])
+  | Op.Reduce, Reduce r ->
+      strf "op=%s%s"
+        (String.lowercase_ascii (Op.name r.op))
+        (if r.num_axes <> 0 then strf " pop=%d" r.num_axes else "")
+  | (Op.Cast | Op.Bitcast), Dtype dt -> Dtype.name dt
+  | Op.Copy, Device (Single s) | Op.Special, String s -> s
+  | _, No_arg -> ""
+  | _, a -> to_string pp_arg a
+
+(* Constants have no line: they are written in their users, and so is a stack
+   of constants, as a tuple. *)
+let inline u =
+  op u = Op.Const
+  || (op u = Op.Stack && List.for_all (fun s -> op s = Op.Const) (src u))
+
+let render_uir uops =
+  let nodes = List.filter (fun u -> not (inline u)) uops in
+  let table = Tbl.create 64 in
+  List.iteri (fun i u -> Tbl.replace table u i) nodes;
+  let rec src_str u =
+    if not (inline u) then strf "%%%d" (Tbl.find table u)
+    else if op u = Op.Const then render_arg u
+    else "(" ^ String.concat ", " (List.map src_str (src u)) ^ ")"
   in
   let line i u =
-    strf "%4d %-20s: %s %-40s %-32s %s" i
-      (to_string Op.pp (op u))
-      (multirange_str ~color:true ~pad:10 (Nodes.to_list (ranges u)))
-      (to_string Dtype.pp (dtype u))
-      ("[" ^ String.concat ", " (List.map src_str (src u)) ^ "]")
-      (str_arg (arg u))
+    let name = String.lowercase_ascii (Op.name (op u)) in
+    let name =
+      match op_color (op u) with
+      | Some c -> Helpers.colored c name
+      | None -> name
+    in
+    let srcs =
+      match src u with
+      | [] -> ""
+      | s -> " " ^ String.concat ", " (List.map src_str s)
+    in
+    let a = match render_arg u with "" -> "" | a -> " : " ^ a in
+    strf "%%%d = %s%s%s" i name srcs a
   in
-  Format.fprintf ppf "@[<v>%a@]"
-    (Format.pp_print_list ~pp_sep:Format.pp_print_cut Format.pp_print_string)
-    (List.mapi line uops)
+  String.concat "\n" (List.mapi line nodes)
 
 (* For debug *)
 

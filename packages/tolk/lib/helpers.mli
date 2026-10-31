@@ -110,11 +110,13 @@ type color =
   | Bright_magenta
   | Bright_cyan
   | Bright_white
+  | Rgb of int * int * int  (** Red, green and blue, each from 0 to 255. *)
 
 val colored : ?background:bool -> color -> string -> string
 (** [colored c s] is [s] wrapped in the ANSI escape sequences that paint it, or
-    its background if [background] is [true], in [c]. It is [s] itself when
-    {!Setting.no_color} is set. [background] defaults to [false]. *)
+    its background if [background] is [true], in [c]: a 24-bit color for
+    {!Rgb}. It is [s] itself when {!Setting.no_color} is set. [background]
+    defaults to [false]. *)
 
 val time_to_str : ?w:int -> float -> string
 (** [time_to_str ~w t] is the duration of [t] seconds right-aligned in [w]

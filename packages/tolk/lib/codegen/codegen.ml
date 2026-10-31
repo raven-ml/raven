@@ -1071,6 +1071,8 @@ let split_blocks sink =
       replace sink ~arg:(Kernel { k with split = Some split })
 
 let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
+  if setting Setting.debug >= 5 then
+    print_endline (Render.render_uir (toposort ~calls:Enter ast));
   check_spec Spec.tensor ast;
   (* resolve UNSHARDs (multi-device UNSHARDs are already resolved by the
      scheduler; this handles in-kernel shards, e.g. fragments) *)
@@ -1286,7 +1288,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
     let spec = if ren.vector_alu then Spec.vector_program else Spec.program in
     try Spec.type_verify ~calls:Enter spec sink
     with Invalid_argument _ as e when Setting.value Setting.dbgtv <> "" ->
-      Format.printf "%a@." Render.pp_uops (toposort ~calls:Enter sink);
+      print_endline (Render.render_uir (toposort ~calls:Enter sink));
       raise e);
   sink
 

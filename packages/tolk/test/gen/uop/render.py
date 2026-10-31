@@ -1,21 +1,22 @@
 """Goldens of tinygrad/uop/render.py: nodes written as expressions by
-`UOp.render`, and linear programs listed by `print_uops`.
+`UOp.render`, and graphs written one node a line by `render_uir`.
 
 An input golden is a sink in the graph format of test/README.md. For the
 expressions, the sink's sources are the cases, in order, and a table golden
 gives each case's position among them and what `render` writes for it: with
-`simplify=False` (`render`) and with the default (`simplified`). A listing's
-input is a sink whose sources are the list printed, in order.
+`simplify=False` (`render`) and with the default (`simplified`). A wire format
+golden is what `render_uir` writes for the toposort of a graph golden's sink.
 """
 
 import ast
 import functools
 
-from golden import graph, listing, table, text
+from golden import graph, table, text
 from tinygrad.dtype import AddrSpace, Invalid, dtypes
 from tinygrad.helpers import Context
 from tinygrad.uop import Ops
 from tinygrad.uop.ops import AxisType, KernelInfo, ParamArg, PatternMatcher, UOp
+from tinygrad.uop.render import render_uir
 import dataclasses
 
 
@@ -343,7 +344,10 @@ def trees_rendered():
     return ["case", "src", "tinygrad", "simplified"], rows
 
 
-# Listings
+# Wire format
+
+# render_uir writes a graph one node a line: `%i = op srcs : arg`. The inputs
+# are sinks; each output is what render_uir writes for the sink's toposort.
 
 def kernel():
     out, inp = UOp.param(0, dtypes.float, 16), UOp.param(1, dtypes.float, 16)
@@ -355,86 +359,87 @@ def kernel():
     return UOp.sink(out.index(i).store(guarded).end(r), arg=KernelInfo(name="k"))
 
 
-def listed(uops): return UOp.sink(*uops)
-
-
-PROGRAM = list(kernel().toposort())
+def uir(sink): return render_uir(sink) + "\n"
 
 
 @graph
-def program(): return listed(PROGRAM)
+def program(): return kernel()
 
 
 @text
-def program_listing(): return attempt(lambda: listing(PROGRAM))
+def program_uir(): return uir(kernel())
 
 
 @text
-def program_listing_colored():
-    with Context(NO_COLOR=0): return attempt(lambda: listing(PROGRAM))
+def program_uir_colored():
+    with Context(NO_COLOR=0): return uir(kernel())
 
 
-# A list that leaves out some sources prints them as `--`, constants included.
-def partial_list():
-    r = UOp.range(4, 0)
-    add = r + 1
-    typed = UOp.const(2, dtypes.int)
-    return [add, r, typed, typed.cast(dtypes.long) + a.cast(dtypes.long), a]
-
-
-PARTIAL = partial_list()
-
-
-@graph
-def partial(): return listed(PARTIAL)
-
-
-@text
-def partial_listing(): return attempt(lambda: listing(PARTIAL))
-
-
-# Columns wider than their width are not cut, and arguments print as tinygrad
-# prints them.
-def wide_list():
-    ranges = [UOp.range(2, i, t) for i, t in [(12, AxisType.WEAK), (10, AxisType.GLOBAL), (11, AxisType.LOCAL),
-                                              (13, AxisType.UPCAST)]]
-    ranges.append(UOp(Ops.RANGE, src=(UOp.const(2),), arg=(AxisType.UPCAST, 0, 1)))
-    ranges.append(UOp(Ops.RANGE, src=(UOp.const(2),), arg=(AxisType.LOOP, -1)))
-    total = ranges[0]
-    for r in ranges[1:]: total = total + r
-    wide = UOp.sink(*[UOp.const(i) for i in range(12)])
-    consts = [UOp.const(v) for v in (1e16, -0.0, float("nan"), float("inf"), 0.1, True, Invalid, 2**70)]
-    tail = [
-        UOp(Ops.CONTIGUOUS_BACKWARD, src=(total,)),
-        UOp.const(3, dtypes.int).copy_to_device("CPU"),
-        UOp.const(3, dtypes.int).copy_to_device(("CPU:0", "CPU:1")),
-        UOp(Ops.SOURCE, arg="int main() { return 0; }"),
-        UOp(Ops.CUSTOM, src=(a,), arg=("abs({0})", dtypes.int)),
-        UOp(Ops.REDUCE, src=(UOp.param(6, dtypes.float, 8), ranges[0]), arg=(Ops.ADD, 0)),
-        UOp.param(7, dtypes.half, 8, name="named"),
-        a,
-        a.bind(2),
-        UOp.const(2).rtag("hidden"),
-        UOp(Ops.STACK, src=tuple(consts[:5])),
-        binary(Ops.AND, consts[5], flag),
-        a.valid(flag),
-        binary(Ops.ADD, a, consts[7]),
-        wide,
+# Every form of argument: constants of each kind, inline in their users;
+# storage and variables with each option; ranges, kernels, calls, reductions,
+# casts, copies and the arguments written as their repr.
+def arguments():
+    floats = [1.5, -0.0, 0.1, 1e16, float("inf"), float("-inf"), float("nan"), 5e-324, 2.0 ** -1022, -1e-300]
+    consts = [UOp.const(True), UOp.const(False), UOp.const(3), UOp.const(-5), UOp.const(2**70), UOp.const(1.5),
+              UOp.const(0.1), UOp.const(float("inf")), UOp.const(float("nan")), UOp.const(-0.0), UOp.const(Invalid),
+              UOp.const(-5, dtypes.int32), UOp.const(12345678901234, dtypes.int64), UOp.const(200, dtypes.uint8),
+              UOp.const(1.5, dtypes.half), UOp.const(2.0, dtypes.bfloat16),
+              *[UOp.const(v, dtypes.float32) for v in floats], *[UOp.const(v, dtypes.float64) for v in floats]]
+    a = UOp.variable("a", 1, 5)
+    storage = [
+        UOp.param(0, dtypes.float, 16),
+        UOp.param(1, dtypes.int, 4, name="w"),
+        UOp.param(2, dtypes.half, 8, device="CPU"),
+        UOp.param(3, dtypes.float, 8, device=("CPU:0", "CPU:1")),
+        UOp.param(4, dtypes.int, 4, volatile=True),
+        UOp.param(5, dtypes.int, vmin_vmax=(0, 10), multiple_of=2, addrspace=AddrSpace.ALU),
+        UOp.variable("x", -1.0, 1.0, dtypes.float),
+        UOp.variable("g", False, True, dtypes.bool),
+        UOp.placeholder((4,), dtypes.float, slot=6, addrspace=AddrSpace.LOCAL),
+        UOp.placeholder((4,), dtypes.int, slot=7, addrspace=AddrSpace.REG),
+        UOp.alloc((4,), dtypes.float, slot=8),
+        a, a.bind(3),
     ]
-    return [*ranges, total, *consts, *tail]
-
-
-WIDE = wide_list()
+    ranges = [UOp.range(4, 0, t) for t in AxisType] + [UOp(Ops.RANGE, src=(UOp.const(4),), arg=(AxisType.LOOP, 1, 2))]
+    body = UOp.param(0, dtypes.float, 4).index(UOp.const(0)).store(1.0).sink()
+    buf = UOp.param(9, dtypes.float, 4)
+    others = [
+        UOp.sink(UOp.const(1), arg=KernelInfo(name="named")),
+        body.call(buf),
+        body.call(buf, name="fill"),
+        body.call(buf, name="fill", precompile=True),
+        UOp.custom_function("sqrt", dtype=dtypes.float64).call(UOp.const(16.0, dtypes.float64)),
+        UOp(Ops.REDUCE, src=(buf, ranges[0]), arg=(Ops.ADD, 0)),
+        UOp(Ops.REDUCE, src=(buf, ranges[0]), arg=(Ops.MAX, 1)),
+        a.cast(dtypes.long), UOp(Ops.BITCAST, src=(a.cast(dtypes.int),), arg=dtypes.float),
+        buf.copy_to_device("CPU"), buf.copy_to_device(("CPU:0", "CPU:1")),
+        UOp.special(4, "lidx1"),
+        UOp(Ops.CUSTOM, src=(a,), arg=("abs({0})", dtypes.int)),
+        UOp(Ops.SOURCE, arg="int main() { return 0; }"),
+        UOp.stack(UOp.const(1), UOp.const(2)), UOp(Ops.STACK, src=()), UOp.stack(a, UOp.const(2)),
+        a + UOp.stack(UOp.const(1), UOp.const(2)),
+    ]
+    return UOp.sink(*consts, *[c + 0 for c in consts[:3]], *storage, *ranges, *others)
 
 
 @graph
-def wide(): return listed(WIDE)
+def args(): return arguments()
 
 
 @text
-def wide_listing(): return attempt(lambda: listing(WIDE))
+def args_uir(): return uir(arguments())
+
+
+# A symbolic variable and the arithmetic of bounds and Invalid, from
+# test_uir_render.py.
+def symbolic_graph():
+    n = UOp.variable("n", 1, 64)
+    return UOp.sink(((n + 1) * 2) % 7, (n % 5) + UOp.const(Invalid))
+
+
+@graph
+def symbolic_vars(): return symbolic_graph()
 
 
 @text
-def wide_listing_colored():
-    with Context(NO_COLOR=0): return attempt(lambda: listing(WIDE))
+def symbolic_vars_uir(): return uir(symbolic_graph())

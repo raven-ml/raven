@@ -66,7 +66,7 @@ let type_verify ~calls spec ast =
     (fun i u ->
       if Pattern_matcher.rewrite spec () u <> Some true then begin
         if Setting.value Setting.debug >= 3 then
-          Format.eprintf "%a@." Render.pp_uops lst;
+          prerr_endline (Render.render_uir lst);
         let pp_src ppf x =
           Format.fprintf ppf "(%a, %a, %a)" Op.pp (op x) Dtype.pp (dtype x)
             pp_arg (arg x)

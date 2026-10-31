@@ -3343,7 +3343,7 @@ let prints_the_optimisations opts =
    when the program starts, so the child runs with it set. *)
 let lowers_a_breaking_graph () =
   Setting.context
-    [ B (Setting.spec, 1) ]
+    [ B (Setting.spec, 1); B (Setting.no_color, true) ]
     (fun () ->
       match
         Codegen.full_rewrite_to_sink ~optimize:false (Lazy.force marker_kernel)
@@ -3358,7 +3358,7 @@ let prints_a_breaking_graph () =
       ~env:[ ("DBGTV", "1") ]
       ~cachedb:(Disk_cache.fresh ()) "breaking graph"
   with
-  | Ok out -> contains ~sub:"Ops.SOURCE" out
+  | Ok out -> contains ~sub:"= source : 'x'" out
   | Error err -> failf "the child failed: %s" err
 
 let prints_the_source () =

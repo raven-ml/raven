@@ -8,9 +8,9 @@
 (** Nodes as text: expressions and program listings.
 
     {!render} writes the value a node computes as a one-line expression, which
-    diagnostics and kernel names print for indices and sizes. {!pp_uops} lists
-    the nodes of a linear program, one per line. {!Ops.pp} prints a node as the
-    calls that build it. *)
+    diagnostics and kernel names print for indices and sizes. {!render_uir}
+    writes a graph one node a line, as diagnostics print it. {!Ops.pp} prints a
+    node as the calls that build it. *)
 
 val render : ?simplify:bool -> Ops.t -> string
 (** [render ~simplify u] is [u] written as an expression, after {!Shape.simplify}
@@ -55,16 +55,31 @@ val srender : Ops.sint -> string
 (** [srender s] is an integer [s] in decimal, and a node [s] as {!render} writes
     it. *)
 
-val pp_uops : Format.formatter -> Ops.t list -> unit
-(** [pp_uops] formats a list of nodes, a linear program, one line per node, in
-    columns: its position, from [0], right-aligned on 4 columns; its operation
-    as {!Op.pp} prints it, on 20; the ranges it runs inside ({!Ops.val-ranges})
-    as {!Ops.multirange_str} writes them in colour ({!Helpers.colored}), on 10;
-    its type as {!Dtype.pp} prints it, on 40; its sources as a list, on 32; and
-    its argument. A source is its position in the list, the value of a constant
-    as a quoted literal ([['1.5']]), or ['--'] if it is not in the list. The
-    argument prints as {!Ops.pp_arg} does, except a string, such as a name,
-    source text or a single device, which prints without quotes, and a float
-    constant, which prints as {!Dtype.pp_const} does. A column is padded with
-    spaces and never cut. Lines are separated by newlines; the last is not
-    ended. *)
+val render_uir : Ops.t list -> string
+(** [render_uir uops] writes the nodes [uops], in order, one line each, as
+    [%i = op srcs : arg]: its position among the lines, from [0]; its operation
+    in lower case, in its colour ({!Helpers.colored}); its sources, separated
+    by commas; and its argument after [" : "], if it writes one. A constant has
+    no line and is written in its users, as is a stack of constants, as a tuple
+    of them; any other source is written [%i]. Lines are separated by newlines;
+    the last is not ended.
+
+    The argument is written as:
+    - for a constant, [invalid], [true] or [false], or its value as
+      {!Dtype.pp_const} writes it, a constant being of a weak type or boolean
+      ({!Ops.const});
+    - for storage and variables, its name in double quotes if it has one,
+      then [dtype=] and [slot=], and then [bounds=[lo,hi]], [multiple_of=],
+      [addrspace=] (but global memory), [device=] (bare if a word of letters,
+      digits, [_] and [:], else as {!Ops.pp_device} writes it) and
+      [volatile=true], where they apply;
+    - for a range, its axis type and [r] followed by its identity, its parts
+      separated by [_]: [LOOP r1_2];
+    - for a kernel's sink, its name, and nothing for any other sink;
+    - for a call, [name='f'] and [precompile=true], where they apply;
+    - for a reduction, [op=add] and, unless [0], [pop=n];
+    - for a cast, the type's {!Dtype.name}; for a copy to one device, its name;
+      for a hardware index, its name;
+    - for any other argument, the literal {!Ops.pp_arg} writes.
+
+    Raises [Not_found] if a source that has a line is not among [uops]. *)

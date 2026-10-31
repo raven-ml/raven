@@ -244,7 +244,7 @@ let type_verify =
         [
           Golden.text "debug_listing.golden" (fun () ->
               Setting.context
-                [ B (Setting.debug, 3) ]
+                [ B (Setting.debug, 3); B (Setting.no_color, true) ]
                 (fun () ->
                   ignore (failure ~calls:Enter Spec.shared ill_typed_graph));
               output ());

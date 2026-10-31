@@ -818,6 +818,10 @@ thread.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.
+- **Breaking:** `Render.render_uir` replaces `Render.pp_uops`: it writes a
+  graph one node a line, `%i = op srcs : arg`, constants inline, as the
+  `DEBUG` and `BEAM_DEBUG` prints now do.
+- **Breaking:** `Helpers.colored` takes 24-bit colours (`Helpers.Rgb`).
 - **Breaking:** `Realize.get_call_written_bufs` is removed: nothing read it
   but its tests.
 - A kernel can call a sink: `Codegen.to_program` lowers its body alone,

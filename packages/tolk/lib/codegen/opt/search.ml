@@ -435,7 +435,10 @@ let beam_search ~link ~time ~clock ?allow_test_size amt s =
       in
       let st = Unix.gettimeofday () in
       let elapsed () = Unix.gettimeofday () -. st in
-      if beam_debug > 0 then Format.printf "BEAM_SEARCH:@.%a@." pp (K.ast s);
+      if beam_debug > 0 then
+        Format.printf "BEAM_SEARCH:@.%s@."
+          (Render.render_uir
+             (toposort ~calls:Enter (replace (K.ast s) ~arg:No_arg)));
       if debug () >= 2 then
         Printf.printf "   0.00s:                from   1 ->   1 actions %s\n%!"
           (K.colored_shape s);
