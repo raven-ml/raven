@@ -147,7 +147,7 @@ let unplanned ~devices ~held ~inputs captured =
   let bufs = observed ~devices ~held ~inputs captured in
   let s =
     Engine.link ~devices
-      ~bound:(List.map (fun (u, b) -> (u, [ b ])) bufs)
+      ~bound:bufs
       (plain (fun () ->
            Realize.compile_linear
              ~targets:(fun n -> Engine.target (devices n))
@@ -159,12 +159,8 @@ let replayed ~devices ~held ~inputs captured lowered =
   let bufs = observed ~devices ~held ~inputs captured in
   let reached = storage lowered in
   let bound = List.filter (fun (u, _) -> List.memq u reached) bufs in
-  let slots = Array.of_list (List.map (fun u -> [ List.assq u bufs ]) inputs) in
-  let s =
-    Engine.link ~devices
-      ~bound:(List.map (fun (u, b) -> (u, [ b ])) bound)
-      lowered
-  in
+  let slots = Array.of_list (List.map (fun u -> Some (List.assq u bufs)) inputs) in
+  let s = Engine.link ~devices ~bound lowered in
   replay ~inputs bufs (fun vars -> Engine.run ~vars s slots)
 
 let contents = list (array Dtypes.value)
@@ -603,9 +599,9 @@ let runs_a_phased_input () =
   in
   binds_inputs ~inputs:[ input ] linear lowered;
   let dst = Run.buffer Rig.host Float32 (Array.make 4 (`Float 0.)) in
-  let s = Engine.link ~devices ~bound:[ (out, [ dst ]) ] lowered in
+  let s = Engine.link ~devices ~bound:[ (out, dst) ] lowered in
   let floats xs = Array.map (fun x -> `Float x) xs in
-  Engine.run s [| [ past_boundary (floats [| 1.; 2.; 3.; 4. |]) ] |];
+  Engine.run s [| Some (past_boundary (floats [| 1.; 2.; 3.; 4. |])) |];
   equal (array Dtypes.value)
     (floats [| 2.; 3.; 4.; 5. |])
     (Run.values Float32 dst)

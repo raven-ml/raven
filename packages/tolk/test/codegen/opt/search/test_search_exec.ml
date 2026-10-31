@@ -90,7 +90,7 @@ let scalar_arguments =
         Tolk_engine.run ~vars s slots;
         equal (array Dtypes.value)
           (Array.make 4 (`Float 2.))
-          (Run.values Float32 (List.hd slots.(0)));
+          (Run.values Float32 (Option.get slots.(0)));
         incr measured;
         1.
       in
@@ -117,7 +117,7 @@ let scalar_arguments =
           Tolk_engine.run ~vars:[ ("n", 3) ] s slots;
           equal (array Dtypes.value)
             (Array.make 4 (`Float (float_of_int (3 + scalar))))
-            (Run.values Float32 (List.hd slots.(0))))
+            (Run.values Float32 (Option.get slots.(0))))
         [ -7; -1 ])
 
 let () =

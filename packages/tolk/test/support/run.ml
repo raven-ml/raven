@@ -159,10 +159,10 @@ let on_host ?vars prg buffers =
   in
   let call = Ops.call prg (List.init slots arg) in
   let s = Tolk_engine.link_call ~devices:(fun _ -> Rig.host) call in
-  let buffers = Array.make (List.length info.globals) [] in
+  let buffers = Array.make (List.length info.globals) None in
   List.iter
     (fun (((p : Ops.param_arg), _), b) ->
-      if p.slot < Array.length buffers then buffers.(p.slot) <- [ b ])
+      if p.slot < Array.length buffers then buffers.(p.slot) <- Some b)
     memory;
   Tolk_engine.run ?vars s buffers;
   List.map

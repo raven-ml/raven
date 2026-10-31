@@ -131,9 +131,9 @@ let call_on name ~size ~slots prg =
 
 let buffers () =
   [|
-    [ Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]) ];
-    [ Run.buffer host Float32 a ];
-    [ Run.buffer host Float32 b ];
+    Some (Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]));
+    Some (Run.buffer host Float32 a);
+    Some (Run.buffer host Float32 b);
   |]
 
 let axpy_on_host prg =
@@ -238,26 +238,26 @@ let runs_on_made_storage () =
   in
   let s = Engine.link ~devices (compile linear) and bufs = buffers () in
   bufs.(1) <-
-    [ Run.buffer host Float32 (floats [| 0.; 0.; 0.; 1.; 2.; 3.; 4.; 0. |]) ];
+    Some (Run.buffer host Float32 (floats [| 0.; 0.; 0.; 1.; 2.; 3.; 4.; 0. |]));
   Engine.run ~vars:[ ("n", 3) ] s bufs;
   equal values
     (floats [| 13.; 26.; 39.; 52. |])
-    (Run.values Float32 (List.hd bufs.(0)))
+    (Run.values Float32 (Option.get bufs.(0)))
 
 let runs_at_its_phase () =
   let s = phased_axpy () and bufs = buffers () in
-  bufs.(1) <- [ off_phase (List.hd bufs.(1)) ];
+  bufs.(1) <- Some (off_phase (Option.get bufs.(1)));
   Engine.run ~vars:[ ("n", 3) ] s bufs;
   equal values
     (floats [| 13.; 26.; 39.; 52. |])
-    (Run.values Float32 (List.hd bufs.(0)))
+    (Run.values Float32 (Option.get bufs.(0)))
 
 let runs_a_kernel () =
   let s = axpy_on_host (Lazy.force axpy) and bufs = buffers () in
   Engine.run ~vars:[ ("n", 3) ] s bufs;
   equal values
     (floats [| 13.; 26.; 39.; 52. |])
-    (Run.values Float32 (List.hd bufs.(0)))
+    (Run.values Float32 (Option.get bufs.(0)))
 
 let takes_the_bound_value () =
   let s = axpy_on_host (compiled ~name:"axpy_bound" ~bound:2 ()) in
@@ -265,7 +265,7 @@ let takes_the_bound_value () =
   Engine.run s bufs;
   equal values
     (floats [| 12.; 24.; 36.; 48. |])
-    (Run.values Float32 (List.hd bufs.(0)))
+    (Run.values Float32 (Option.get bufs.(0)))
 
 (* The do-while loops of the Linearizer suite, each storing what it counts. *)
 let counts_in_a_loop (name, count) =
@@ -316,20 +316,20 @@ let on_the_host =
       test "run refuses a buffer smaller than its parameter" (fun () ->
           let s = axpy_on_host (Lazy.force axpy) in
           let bufs = buffers () in
-          bufs.(0) <- [ Run.buffer host Float32 (floats [| 0.; 0.; 0. |]) ];
+          bufs.(0) <- Some (Run.buffer host Float32 (floats [| 0.; 0.; 0. |]));
           raises_match Exn.invalid_arg (fun () ->
               Engine.run ~vars:[ ("n", 1) ] s bufs));
       test "run refuses a buffer that starts off its parameter's phase"
         (fun () ->
           let s = axpy_on_host (Lazy.force axpy) in
           let bufs = buffers () in
-          bufs.(1) <- [ off_phase (List.hd bufs.(1)) ];
+          bufs.(1) <- Some (off_phase (Option.get bufs.(1)));
           raises_match
             (Exn.invalid_arg ~sub:"slot 1's buffer of CPU starts 4 bytes")
             (fun () -> Engine.run ~vars:[ ("n", 1) ] s bufs);
           equal values
             (floats [| 0.; 0.; 0.; 0. |])
-            (Run.values Float32 (List.hd bufs.(0))));
+            (Run.values Float32 (Option.get bufs.(0))));
       test "a parameter of phase 4 runs on a buffer 4 bytes past 16"
         runs_at_its_phase;
       test "storage made at link of phase 4 is made 4 bytes past 16"
@@ -338,7 +338,7 @@ let on_the_host =
         (fun () ->
           let s = phased_axpy () in
           let bufs = buffers () in
-          bufs.(1) <- [ at_phase ~bytes:(List.hd bufs.(1)) host 0 16 ];
+          bufs.(1) <- Some (at_phase ~bytes:(Option.get bufs.(1)) host 0 16);
           raises_match
             (Exn.invalid_arg ~sub:"slot 1's buffer of CPU starts 0 bytes")
             (fun () -> Engine.run ~vars:[ ("n", 1) ] s bufs));
@@ -471,19 +471,17 @@ let element dtype k : Dtype.value =
 
 let placement (p : Ops.param_arg) =
   match p.device with
-  | Some d -> [ d ]
+  | Some d -> d
   | None -> invalid_arg "storage without a device"
 
 (* The storage a program is given, its parameters and buffers, each with its
-   contents before the run and a buffer per device of its placement. *)
+   contents before the run and its buffer. *)
 type storage = {
   node : Ops.t;
   arg : Ops.param_arg;
   before : Dtype.value array;
-  buffers : Buffer.t list;
+  buffer : Buffer.t;
 }
-
-let per_device n = Shape.max_numel n
 
 (* A buffer of [d] holding [values], a file on the disk. *)
 let buffer d dt values =
@@ -503,26 +501,18 @@ let storage_of ?(devices = devices) ?(seed = 0) big =
     (fun n ->
       match (Ops.op n, Ops.arg n) with
       | (Param | Buffer), Param p when p.addrspace <> Some Alu ->
-          let names = placement p and m = per_device n in
           let before =
-            Array.init
-              (List.length names * m)
-              (fun j ->
+            Array.init (Shape.max_numel n) (fun j ->
                 element p.dtype ((((j * 7) + (p.slot * 3) + seed) mod 11) - 3))
           in
-          let buffers =
-            List.mapi
-              (fun k d ->
-                buffer (devices d) p.dtype (Array.sub before (k * m) m))
-              names
-          in
-          Some { node = n; arg = p; before; buffers }
+          let buffer = buffer (devices (placement p)) p.dtype before in
+          Some { node = n; arg = p; before; buffer }
       | _ -> None)
     (Ops.toposort ~calls:Skip big)
 
 let bound storage =
   List.filter_map
-    (fun s -> if Ops.op s.node = Buffer then Some (s.node, s.buffers) else None)
+    (fun s -> if Ops.op s.node = Buffer then Some (s.node, s.buffer) else None)
     storage
 
 let slots storage =
@@ -531,28 +521,19 @@ let slots storage =
       (fun n s -> if Ops.op s.node = Param then max n (s.arg.slot + 1) else n)
       0 storage
   in
-  let slots = Array.make n [] in
+  let slots = Array.make n None in
   List.iter
-    (fun s -> if Ops.op s.node = Param then slots.(s.arg.slot) <- s.buffers)
+    (fun s -> if Ops.op s.node = Param then slots.(s.arg.slot) <- Some s.buffer)
     storage;
   slots
 
 let contents s =
-  Array.concat
-    (List.map
-       (fun b -> Array.sub (Run.values s.arg.dtype b) 0 (per_device s.node))
-       s.buffers)
+  Array.sub (Run.values s.arg.dtype s.buffer) 0 (Shape.max_numel s.node)
 
 let refill storage =
   List.iter
     (fun s ->
-      let m = per_device s.node in
-      List.iteri
-        (fun k dst ->
-          Buffer.copy
-            ~src:(Run.buffer host s.arg.dtype (Array.sub s.before (k * m) m))
-            ~dst)
-        s.buffers)
+      Buffer.copy ~src:(Run.buffer host s.arg.dtype s.before) ~dst:s.buffer)
     storage
 
 let by_slot storage f = List.map (fun s -> (s.arg.slot, f s)) storage
@@ -754,7 +735,7 @@ let copies_off_phase () =
     List.map
       (fun s ->
         if s.arg.slot <> 1 then s
-        else { s with buffers = List.map off_phase s.buffers })
+        else { s with buffer = off_phase s.buffer })
       (storage_of big)
   in
   Engine.run ~vars s (slots storage);
@@ -793,7 +774,7 @@ let runs_once_per_trip () =
     Engine.link ~devices
       ~bound:
         [
-          (out, [ out_buffer ]); (src, [ Run.buffer host Float32 (floats xs) ]);
+          (out, out_buffer); (src, Run.buffer host Float32 (floats xs));
         ]
       compiled
   in
@@ -839,9 +820,9 @@ let scans_with_a_carry () =
     Engine.link ~devices
       ~bound:
         [
-          (c, [ c_buffer ]);
-          (xs, [ Run.buffer host Float32 (floats x) ]);
-          (ys, [ ys_buffer ]);
+          (c, c_buffer);
+          (xs, Run.buffer host Float32 (floats x));
+          (ys, ys_buffer);
         ]
       compiled
   in
@@ -892,7 +873,7 @@ let scans_with_an_empty_carry () =
   let s =
     Engine.link ~devices
       ~bound:
-        [ (xs, [ Run.buffer host Float32 (floats x) ]); (ys, [ ys_buffer ]) ]
+        [ (xs, Run.buffer host Float32 (floats x)); (ys, ys_buffer) ]
       compiled
   in
   Engine.run s [||];
@@ -946,7 +927,7 @@ let loops_while_a_flag_holds ?(devices = devices) d (limit, max) =
   and ys_buffer = Run.buffer on Float32 (floats (Array.make (4 * max) (-1.))) in
   let s =
     Engine.link ~devices
-      ~bound:[ (c, [ c_buffer ]); (init, [ f_buffer ]); (ys, [ ys_buffer ]) ]
+      ~bound:[ (c, c_buffer); (init, f_buffer); (ys, ys_buffer) ]
       compiled
   in
   Engine.run s [||];
@@ -1016,10 +997,10 @@ let loops_around_calls ?(devices = devices) d (limit, max) =
     Engine.link ~devices
       ~bound:
         [
-          (c, [ c_buffer ]);
-          (t, [ Run.buffer on Float32 [| `Float (-1.) |] ]);
-          (init, [ Run.buffer on Bool [| `Bool (0 < limit) |] ]);
-          (ys, [ ys_buffer ]);
+          (c, c_buffer);
+          (t, Run.buffer on Float32 [| `Float (-1.) |]);
+          (init, Run.buffer on Bool [| `Bool (0 < limit) |]);
+          (ys, ys_buffer);
         ]
       compiled
   in
@@ -1123,13 +1104,13 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
     Engine.link ~devices
       ~bound:
         [
-          (c, [ c_buffer ]);
-          (t, [ one on (-1.) ]);
-          (t', [ one host (-1.) ]);
-          (c', [ one host (-1.) ]);
+          (c, c_buffer);
+          (t, one on (-1.));
+          (t', one host (-1.));
+          (c', one host (-1.));
           ( init,
-            [ Run.buffer (devices flag_device) Bool [| `Bool (0 < limit) |] ] );
-          (ys, [ ys_buffer ]);
+            Run.buffer (devices flag_device) Bool [| `Bool (0 < limit) |] );
+          (ys, ys_buffer);
         ]
       compiled
   in
@@ -1261,7 +1242,7 @@ let reads_its_trip ?(devices = devices) ?limit d n (_, arg, expected) =
   let s =
     Engine.link ~devices
       ~bound:
-        [ (ys, [ ys_buffer ]); (f, [ Run.buffer on Bool [| `Bool true |] ]) ]
+        [ (ys, ys_buffer); (f, Run.buffer on Bool [| `Bool true |]) ]
       compiled
   in
   Engine.run s [||];
@@ -1306,9 +1287,9 @@ let reads_a_bound_flag () =
     Engine.link ~devices
       ~bound:
         [
-          (f, [ flag ]);
-          (ys, [ ys_buffer ]);
-          (init, [ Run.buffer host Bool [| `Bool true |] ]);
+          (f, flag);
+          (ys, ys_buffer);
+          (init, Run.buffer host Bool [| `Bool true |]);
         ]
       compiled
   in
@@ -1394,16 +1375,16 @@ let replays_a_scan =
       and zs_buffer = Run.buffer host Float32 (floats zeros) in
       let s =
         Engine.link ~devices
-          ~bound:[ (c, [ c_buffer ]); (zs, [ zs_buffer ]) ]
+          ~bound:[ (c, c_buffer); (zs, zs_buffer) ]
           compiled
       in
       let carry = Array.copy c0 in
       List.iteri
         (fun i x ->
           let ys_buffer = Run.buffer host Float32 (floats zeros) in
-          let slots = Array.make (1 + max (slot xs) (slot ys)) [] in
-          slots.(slot xs) <- [ Run.buffer host Float32 (floats x) ];
-          slots.(slot ys) <- [ ys_buffer ];
+          let slots = Array.make (1 + max (slot xs) (slot ys)) None in
+          slots.(slot xs) <- Some (Run.buffer host Float32 (floats x));
+          slots.(slot ys) <- Some ys_buffer;
           Engine.run s slots;
           let y = Array.make (n * k) 0. in
           for t = 0 to n - 1 do
@@ -1464,11 +1445,11 @@ let plans_the_buffers_of_a_range ~through_a_view ~loop () =
   let result_z = zeros () and result_y = zeros () in
   let bound =
     [
-      (a, [ Run.buffer host Float32 (floats [| 1.; 2.; 3.; 4. |]) ]);
-      (b, [ Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]) ]);
-      (out_z, [ result_z ]);
-      (out_y, [ result_y ]);
-      (init, [ Run.buffer host Bool [| `Bool true |] ]);
+      (a, Run.buffer host Float32 (floats [| 1.; 2.; 3.; 4. |]));
+      (b, Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]));
+      (out_z, result_z);
+      (out_y, result_y);
+      (init, Run.buffer host Bool [| `Bool true |]);
     ]
   in
   Engine.run (Engine.link ~devices ~bound compiled) [||];
@@ -1505,9 +1486,9 @@ let plans_a_loop_flag () =
   let result = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]) in
   let bound =
     [
-      (a, [ Run.buffer host Float32 (floats [| 0.1; 0.2; 0.3; 0.4 |]) ]);
-      (b, [ Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]) ]);
-      (out, [ result ]);
+      (a, Run.buffer host Float32 (floats [| 0.1; 0.2; 0.3; 0.4 |]));
+      (b, Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]));
+      (out, result);
     ]
   in
   Engine.run (Engine.link ~devices ~bound compiled) [||];
@@ -1536,9 +1517,9 @@ let copies_in_order () =
     Engine.link ~devices
       ~bound:
         [
-          (device_side, [ Run.buffer (device "CPU:1") Uint8 (bytes 3) ]);
-          (out, [ out_buffer ]);
-          (fresh, [ Run.buffer host Uint8 (bytes 7) ]);
+          (device_side, Run.buffer (device "CPU:1") Uint8 (bytes 3));
+          (out, out_buffer);
+          (fresh, Run.buffer host Uint8 (bytes 7));
         ]
       compiled
   in
@@ -1571,8 +1552,8 @@ let copies_moving_rows ?(devices = devices) src_device dst_device () =
     Engine.link ~devices
       ~bound:
         [
-          (src, [ Run.buffer (devices src_device) Uint8 (bytes 3) ]);
-          (dst, [ dst_buffer ]);
+          (src, Run.buffer (devices src_device) Uint8 (bytes 3));
+          (dst, dst_buffer);
         ]
       compiled
   in
@@ -1610,8 +1591,8 @@ let moves_rows_into_storage ?(devices = devices) () =
     Engine.link ~devices
       ~bound:
         [
-          (src, [ Run.buffer (devices "CPU:1") Uint8 (bytes 3) ]);
-          (out, [ out_buffer ]);
+          (src, Run.buffer (devices "CPU:1") Uint8 (bytes 3));
+          (out, out_buffer);
         ]
       compiled
   in
@@ -1644,16 +1625,12 @@ let stores_through_a_gather ?(devices = devices) device targets () =
   let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
   equal ~msg:"kernels" int 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
-  let of_size n = List.find (fun st -> per_device st.node = n) storage in
+  let of_size n = List.find (fun st -> Shape.max_numel st.node = n) storage in
   let pool = of_size 64 and slot = of_size 4 and rows = of_size 32 in
-  List.iter
-    (fun dst ->
-      Buffer.copy
-        ~src:
-          (Run.buffer host Int32
-             (Array.map (fun i -> `Int (Bigint.of_int i)) targets))
-        ~dst)
-    slot.buffers;
+  Buffer.copy
+    ~src:
+      (Run.buffer host Int32 (Array.map (fun i -> `Int (Bigint.of_int i)) targets))
+    ~dst:slot.buffer;
   Engine.run ~vars s (slots storage);
   let num v = match v with `Float f -> f | _ -> fail "a float" in
   let expected =
@@ -1769,20 +1746,20 @@ let run_refuses ?(devices = devices) ?(says = Exn.invalid_arg ~sub:"slot") what
       let storage = storage_of ~devices big in
       raises_match says (fun () -> Engine.run ~vars s (slots_of storage)))
 
-(* [rebound storage k f] is the slots of [storage] with slot [k]'s buffers [f
-   buffers]. *)
+(* [rebound k f storage] is the slots of [storage] with slot [k]'s buffer [b]
+   replaced by [f b]. *)
 let rebound k f storage =
   let slots = slots storage in
-  slots.(k) <- f slots.(k);
+  slots.(k) <- Option.map f slots.(k);
   slots
 
-(* Links the schedule of add with the buffers of its slot [k] replaced by [f] of
-   them. *)
+(* Links the schedule of add with the buffer of its slot [k] replaced by [f] of
+   it. *)
 let with_bound k f () =
   let storage = storage_of (program "add") in
   let bound =
     List.map
-      (fun s -> (s.node, if s.arg.slot = k then f s.buffers else s.buffers))
+      (fun s -> (s.node, if s.arg.slot = k then f s.buffer else s.buffer))
       storage
   in
   Engine.link ~devices ~bound (Lazy.force compiled_add)
@@ -1801,7 +1778,7 @@ let consumed_floats () =
    is never exclusive, and no consumption ends it. *)
 let holds_bound () =
   let b = floats_on "CPU" 16 in
-  let s = with_bound 2 (fun _ -> [ b ]) () in
+  let s = with_bound 2 (fun _ -> b) () in
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       equal ~msg:"exclusive" bool false (Rig.Claim.exclusive c b);
       equal ~msg:"consumable" bool false (Rig.Claim.consumable c b));
@@ -1811,7 +1788,7 @@ let holds_bound () =
    memory right after it finds the memory exclusive. *)
 let refusal_holds_nothing () =
   let b = Buffer.create host (64 + 15) in
-  raises_match off_its_phase (with_bound 2 (fun _ -> [ view_at_phase b 4 64 ]));
+  raises_match off_its_phase (with_bound 2 (fun _ -> view_at_phase b 4 64));
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       equal ~msg:"exclusive" bool true (Rig.Claim.exclusive c b))
 
@@ -1828,29 +1805,27 @@ let refusals =
       link_refuses "a schedule whose kernels are not compiled" (fun () ->
           Engine.link ~devices
             (fst (Schedule.create_linear_with_vars (program "add"))));
-      link_refuses "storage bound to buffers of another device"
-        (with_bound 4 (fun _ -> [ floats_on "CPU:1" 16 ]));
+      link_refuses "storage bound to a buffer of another device"
+        (with_bound 4 (fun _ -> floats_on "CPU:1" 16));
       link_refuses "storage bound to fewer bytes than it holds"
-        (with_bound 4 (fun _ -> [ floats_on "CPU" 15 ]));
-      link_refuses "storage bound to a buffer for each of two devices"
-        (with_bound 4 (fun bs -> bs @ bs));
+        (with_bound 4 (fun _ -> floats_on "CPU" 15));
       link_refuses "storage a kernel reads bound to a dead buffer"
-        (with_bound 2 (fun _ -> [ consumed_floats () ]));
+        (with_bound 2 (fun _ -> consumed_floats ()));
       test "link holds the bound buffers its runs read" holds_bound;
       test "link refuses storage a kernel reads bound off its phase" (fun () ->
           raises_match off_its_phase
-            (with_bound 2 (fun _ -> [ at_phase host 4 64 ])));
+            (with_bound 2 (fun _ -> at_phase host 4 64)));
       test "a refused link holds none of its bound buffers"
         refusal_holds_nothing;
       link_refuses "a bound node that is no storage" (fun () ->
           let storage = storage_of (program "add") in
           let bound =
             List.map
-              (fun s -> (Ops.replace ~op:Param s.node, s.buffers))
+              (fun s -> (Ops.replace ~op:Param s.node, s.buffer))
               storage
           in
           Engine.link ~devices ~bound (Lazy.force compiled_add));
-      run_refuses "a parameter it binds no buffers" "add" (fun _ -> [||]);
+      run_refuses "a parameter it binds no buffer" "add" (fun _ -> [||]);
       test "run refuses slots that stop before the last parameter" (fun () ->
           let s, vars, big = parameterized "add" in
           let slots = slots (storage_of big) in
@@ -1858,14 +1833,14 @@ let refusals =
           raises_match
             (Exn.invalid_arg ~sub:(Printf.sprintf "slot %d" last))
             (fun () -> Engine.run ~vars s (Array.sub slots 0 last)));
-      run_refuses "a parameter bound to buffers of another device" "add"
+      run_refuses "a parameter bound to a buffer of another device" "add"
         (fun storage ->
           let k = (List.hd storage).arg.slot in
-          rebound k (fun _ -> [ floats_on "CPU:1" 16 ]) storage);
+          rebound k (fun _ -> floats_on "CPU:1" 16) storage);
       run_refuses "a parameter bound to fewer bytes than it holds" "add"
         (fun storage ->
           let k = (List.hd storage).arg.slot in
-          rebound k (fun _ -> [ floats_on "CPU" 15 ]) storage);
+          rebound k (fun _ -> floats_on "CPU" 15) storage);
       test "run refuses a variable it binds no value" (fun () ->
           let s, _, big = parameterized "variable_shrink" in
           let storage = storage_of big in
@@ -2017,7 +1992,7 @@ let run_of_fills n =
     List.concat_map
       (fun ((y, x), _) ->
         [
-          (y, [ Run.buffer host Float32 a ]); (x, [ Run.buffer host Float32 a ]);
+          (y, Run.buffer host Float32 a); (x, Run.buffer host Float32 a);
         ])
       fills
   in
@@ -2068,7 +2043,7 @@ let counts_up lines =
 let reports_each_kernel ?(devices = devices) name () =
   let fills = List.init 3 (fun k -> fill name (Float.of_int k)) in
   let bound =
-    List.map (fun (y, _) -> (y, [ Run.buffer (devices name) Float32 a ])) fills
+    List.map (fun (y, _) -> (y, Run.buffer (devices name) Float32 a)) fills
   in
   Setting.context
     [ B (Setting.debug, 2) ]
@@ -2322,13 +2297,13 @@ let skipping_a_slot () =
   Ops.substitute ~calls:Skip ~pass:Fixed_point k
     (List.concat_map moved (Ops.toposort ~calls:Enter k))
 
-(* The slots of the linked schedule of the program [name], which hold as many
-   buffers per slot as its storage's, and which a run takes. *)
+(* The slots of the linked schedule of the program [name], which hold a buffer
+   where its storage does, and which a run takes. *)
 let slots_fit name =
   let s, vars, storage = linked (program name) in
   let fresh = Engine.slots s in
-  let counts slots = Array.to_list (Array.map List.length slots) in
-  equal (list int) (counts (slots storage)) (counts fresh);
+  let held slots = Array.to_list (Array.map Option.is_some slots) in
+  equal (list bool) (held (slots storage)) (held fresh);
   Engine.run ~vars s fresh
 
 let timing =
@@ -2350,8 +2325,8 @@ let timing =
             Engine.link_call ~devices (call_on "CPU" ~size:4 ~slots:4 prg)
           in
           let slots = Engine.slots s in
-          equal ~msg:"buffers by slot" (list int) [ 1; 1; 1; 1 ]
-            (Array.to_list (Array.map List.length slots));
+          equal ~msg:"buffers by slot" (list bool) [ true; true; true; true ]
+            (Array.to_list (Array.map Option.is_some slots));
           Engine.run ~vars:n_bound s slots);
       group "the clock is a GPU's on a GPU, the host's otherwise"
         [ on clock_by_device ];
@@ -2402,7 +2377,7 @@ let filled d name =
     unoptimized (fun () -> compile (Ops.v Op.Linear ~src:[ call ]))
   in
   let out = Run.buffer (devices d) Float32 (floats [| 0.; 0.; 0.; 0. |]) in
-  let s = Engine.link ~devices ~bound:[ (y, [ out ]) ] compiled in
+  let s = Engine.link ~devices ~bound:[ (y, out) ] compiled in
   Engine.run ~vars:[ (name, 3) ] s [||];
   Run.values Float32 out
 
@@ -2436,7 +2411,7 @@ let run_words ?(devices = devices) d () =
   let compiled = compile ~devices (Ops.v Op.Linear ~src:[ filled ]) in
   let s =
     Engine.link ~devices
-      ~bound:[ (y, [ Run.buffer (devices d) Float32 a ]) ]
+      ~bound:[ (y, Run.buffer (devices d) Float32 a) ]
       compiled
   in
   Engine.run s [||];
@@ -2518,7 +2493,7 @@ let on_a_gpu (kind, _) =
         (moves_rows_into_storage ~devices);
       run_refuses ~devices ~says:off_its_phase
         "a buffer its kernel writes off its phase" "copy"
-        (rebound 2 (List.map off_phase));
+        (rebound 2 off_phase);
       slow
       @@ test "at DEBUG=2, a run prints a line per kernel"
            (reports_each_kernel ~devices "CPU:1");

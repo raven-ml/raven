@@ -131,7 +131,7 @@ let compiled sink =
   in
   let scratch (p : Device.Tiny_elf.param) =
     let n = List.fold_left ( * ) 1 p.shape in
-    [ Run.buffer d p.dtype (Array.init n (element p.dtype)) ]
+    Some (Run.buffer d p.dtype (Array.init n (element p.dtype)))
   in
   let arg (p : Device.Tiny_elf.param) =
     Shape.param

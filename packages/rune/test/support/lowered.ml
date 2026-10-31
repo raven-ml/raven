@@ -71,7 +71,7 @@ let bind (type v s d) ~direct bound (x : (v, s, d) Nx.t) =
   let tdt = L.dtype (D.Any dt) and k = parts dt in
   let leaf bytes n =
     let u = Ops.new_buffer cpu (max 1 n) tdt in
-    bound := (u, [ host_buffer bytes ]) :: !bound;
+    bound := (u, host_buffer bytes) :: !bound;
     u
   in
   match Nx.Repr.array x with
@@ -174,7 +174,7 @@ let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =
     let s =
       Tolk_engine.link
         ~devices:(fun _ -> Rig.host)
-        ~bound:((o, [ out ]) :: !bound) compiled
+        ~bound:((o, out) :: !bound) compiled
     in
     Tolk_engine.run ~vars s [||];
     let bytes = Bytes.create len in

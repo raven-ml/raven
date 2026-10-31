@@ -802,6 +802,9 @@ thread.
   gone: `Multi`, `Allreduce`, their operations and settings, `Axis_type.Device`
   and the sharding functions of `Ops` and `Shape`; the type `Ops.device` is a
   device's name. nx partitions a value placed over several devices.
+- **Breaking:** `Tolk_engine.link ~bound` binds one buffer per storage node, and
+  `Tolk_engine.run`, `time` and `slots` take one buffer per slot, `None` where
+  no parameter takes it (`Rig.Buffer.t option array`).
 - Two variables of one name, such as one read under two bounds, take one
   parameter slot: a program lists the name once in its `vars`.
 - `Jit.jit_lower` tags each buffer it leaves out of `held_bufs` with

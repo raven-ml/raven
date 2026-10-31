@@ -231,7 +231,7 @@ type lowered = {
   ok : Ops.t option;
       (** The buffer of one boolean that holds where no check failed, where
           the program checks. *)
-  bound : (Ops.t * Rig.Buffer.t list) list;  (** The captures' storage. *)
+  bound : (Ops.t * Rig.Buffer.t) list;  (** The captures' storage. *)
 }
 
 (* The storage a scatter combines into ({!Lower_index.scatter}): its buffer,
@@ -248,7 +248,7 @@ type state = {
   device : Ops.device;
   issued : form;  (** {!issued}'s form of the program. *)
   mutable captures : (value * Ops.t) list;
-  mutable bound : (Ops.t * Rig.Buffer.t list) list;
+  mutable bound : (Ops.t * Rig.Buffer.t) list;
   uploads : (value * A.any) list ref;
       (** The constants of other devices, each with its copy on this one,
           which every lowering of the program shares. *)
@@ -287,7 +287,7 @@ let bind st (A.Any a) =
     let first, length = run_bytes dt l in
     let b = A.buffer a in
     let buffer, u = storage ~device:st.device ~phase:(phase b first) dt l in
-    st.bound <- (buffer, [ Rig.Buffer.view b ~first ~length ]) :: st.bound;
+    st.bound <- (buffer, Rig.Buffer.view b ~first ~length) :: st.bound;
     view_of st u;
     u
 
@@ -2515,12 +2515,12 @@ let failure ((c : check), first, data) =
    no donation reaches, so the check holds none of them. *)
 let issue_checks t v slots s =
   let flag =
-    A.v Nx.bool (L.contiguous (Iarray.of_list [ 1 ])) (List.hd slots.(s))
+    A.v Nx.bool (L.contiguous (Iarray.of_list [ 1 ])) (Option.get slots.(s))
   in
   let checks =
     List.map
       (fun (c, first, data) ->
-        (c, List.hd slots.(first), List.map (fun d -> List.hd slots.(d)) data))
+        (c, Option.get slots.(first), List.map (fun d -> Option.get slots.(d)) data))
       v.checks
   in
   let by = t.name in
@@ -2561,7 +2561,7 @@ let rec run t args =
 (* [linked t v args leaves take] runs the variant [v] of [t] on [args], whose
    arrays under the call's consumer are [leaves]. *)
 and linked t v args leaves take =
-  let slots = Array.make v.inputs [] in
+  let slots = Array.make v.inputs None in
   (* The run an argument binds: its buffer itself where the run is all of
      it. *)
   let run_of k =
@@ -2596,7 +2596,7 @@ and linked t v args leaves take =
     (fun k s ->
       if s >= 0 then
         slots.(s) <-
-          [ (match lending.(k) with Some b -> b | None -> run_of k) ])
+          Some (match lending.(k) with Some b -> b | None -> run_of k))
     v.leaf_slots;
   let buffers =
     Array.mapi
@@ -2605,7 +2605,7 @@ and linked t v args leaves take =
         | Lent k | Taken k -> lending.(k)
         | Stored _ ->
             let b = Rig.Buffer.create t.rig t.results.(j).bytes in
-            slots.(s) <- [ b ];
+            slots.(s) <- Some b;
             Some b
         | Copied src ->
             (* Queued: the stamps order a later access of [dst] after it. *)
@@ -2620,12 +2620,12 @@ and linked t v args leaves take =
   in
   List.iter
     (fun ((c : check), first, data) ->
-      slots.(first) <- [ one t.rig D.Int64 ];
+      slots.(first) <- Some (one t.rig D.Int64);
       List.iter2
-        (fun (D.Any dt, _) s -> slots.(s) <- [ one t.rig dt ])
+        (fun (D.Any dt, _) s -> slots.(s) <- Some (one t.rig dt))
         c.data data)
     v.checks;
-  Option.iter (fun s -> slots.(s) <- [ one t.rig Nx.bool ]) v.ok;
+  Option.iter (fun s -> slots.(s) <- Some (one t.rig Nx.bool)) v.ok;
   Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
   Option.iter (issue_checks t v slots) v.ok;
   Array.mapi (fun j r -> value t.rig r buffers.(j)) t.results

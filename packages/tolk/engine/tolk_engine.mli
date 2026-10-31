@@ -51,21 +51,19 @@ type t
 
 val link :
   devices:(string -> Rig.t) ->
-  ?bound:(Ops.t * Rig.Buffer.t list) list ->
+  ?bound:(Ops.t * Rig.Buffer.t) list ->
   Ops.t ->
   t
 (** [link ~devices ~bound linear] is the compiled schedule [linear]
     ({!Tolk.Realize.compile_linear}, compiled for the {!target} of each device)
     loaded on [devices], which maps each device name of [linear] to its device.
-    - Each storage node ({!Tolk.Op.Buffer}) is bound to its buffers in [bound]
-      (default [[]]), one per device of its placement, and is made at link
-      otherwise, in its device's memory, which the runs share, starting at its
-      phase ({!run}). The schedule holds the memory of every bound buffer a
+    - Each storage node ({!Tolk.Op.Buffer}) is bound to its buffer in [bound]
+      (default [[]]), of its device, and is made at link otherwise, in its
+      device's memory, which the runs share, starting at its phase ({!run}). The schedule holds the memory of every bound buffer a
       kernel or copy accesses ({!Rig.Claim.hold}) while it is reachable, so
       no call consumes it. A link that raises holds none of them.
-    - A kernel's lanes are the devices of its first argument: it is launched on
-      each, with the lane's shard of each argument and ["_device_num"] bound to
-      the lane's index. A host program is launched on its device's host, which
+    - A kernel is launched on the device of its first argument. A host program
+      is launched on its device's host, which
       splits its loop over its cores where the program splits one
       ({!Tolk.Ops.kernel_info.split}).
     - A copy is a copy part of a submission of its source's device, or else of
@@ -87,11 +85,11 @@ val link :
     range's trips, is fixed for the run.
 
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
-    its devices are of several machines, if a kernel's lane is a device of
-    another kind than its program's target, if [bound] gives a storage node
-    buffers of other devices, sizes or number than its placement, a buffer a
-    kernel or copy accesses that is dead or whose memory is held exclusive, or a
-    buffer a kernel accesses that does not start at the node's phase ({!run}),
+    its devices are of several machines, if a kernel's device is of another
+    kind than its program's target, if [bound] binds a node that is not storage,
+    or a buffer of another device or of fewer bytes than the node's, a buffer
+    a kernel or copy accesses that is dead or whose memory is held exclusive,
+    or a buffer a kernel accesses that does not start at the node's phase ({!run}),
     if a computing device starts its memory on fewer bytes ({!Rig.alignment})
     than the alignment of a storage node made there, if kernels access a
     parameter at two alignments or phases, if a value under a range moves with
@@ -101,10 +99,10 @@ val link :
     the program does not load, such as a device that refuses a program's
     binary. *)
 
-val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
-(** [run ~vars s slots] runs [s] with [slots.(i)] bound to its parameter [i] (an
-    untagged {!Tolk.Op.Param}), one buffer per device of the parameter's
-    placement, and each variable of the schedule bound to its value in [vars]
+val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
+(** [run ~vars s slots] runs [s] with the buffer of [slots.(i)] bound to its
+    parameter [i] (an untagged {!Tolk.Op.Param}), on the parameter's device,
+    and each variable of the schedule bound to its value in [vars]
     (default [[]]), or else to the value it is bound to. It runs the calls of
     [s] in order, with each range's trips, and each back edge's while its flag
     holds ({!Rig_program.run}).
@@ -129,14 +127,14 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> unit
     records its submission's work ({!Rig.Profile.Work}).
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
-    buffers of its placement's devices, each holding its parameter's bytes, if a
+    a buffer of its device holding its parameter's bytes, if a
     buffer a kernel accesses does not start at its parameter's phase, if a
     variable is unbound, and as {!Rig_program.run} does. *)
 
-val slots : t -> Rig.Buffer.t list array
-(** [slots s] is, for each slot that a parameter of [s] takes, a buffer on each
-    device of the parameter's placement holding the parameter's bytes, starting
-    at its phase, and no buffer for a slot no parameter takes: slots {!run} and
+val slots : t -> Rig.Buffer.t option array
+(** [slots s] is, for each slot that a parameter of [s] takes, a buffer of the
+    parameter's device holding the parameter's bytes, starting at its phase,
+    and [None] for a slot no parameter takes: slots {!run} and
     {!time} accept. Their contents are unspecified.
 
     Raises {!Rig.Out_of_memory} if a device cannot allocate a buffer. *)
@@ -161,7 +159,7 @@ val clock : t -> Tolk.Search.clock
     kernel of [s] runs on a GPU, which times its submissions' work, and
     {!Tolk.Search.Host} otherwise. *)
 
-val time : ?vars:(string * int) list -> t -> Rig.Buffer.t list array -> float
+val time : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> float
 (** [time ~vars s slots] is the time in seconds of one run of [s] on [slots]
     with [vars] ({!run}), reporting nothing on standard output whatever
     {!Tolk.Setting.debug} holds. The time is the sum, over the run's

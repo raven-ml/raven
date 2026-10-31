@@ -71,9 +71,9 @@ let rec view_offset v =
       | _ -> invalid_arg "Tolk_engine: a view of storage is one-dimensional")
   | _ -> (v, Ops.Int 0)
 
-let names u =
+let name u =
   match Ops.device u with
-  | Some d -> [ d ]
+  | Some d -> d
   | None -> invalid_arg (Format.asprintf "%a has no device" Ops.pp u)
 
 let is_slot u =
@@ -175,12 +175,10 @@ type word_kind = Computed of (env -> int) | Trip
 
 (* Inputs *)
 
-(* An input of the program, a buffer a run is given: a lane of a parameter's
-   buffers, or a buffer bound at link, with its hold, which keeps every call
-   from consuming what each run accesses while the schedule lives. *)
-type input =
-  | Lane of { slot : int; lane : int }
-  | Bound of Rig.Buffer.t * Rig.Claim.hold
+(* An input of the program, a buffer a run is given: a parameter's buffer, by
+   slot, or a buffer bound at link, with its hold, which keeps every call from
+   consuming what each run accesses while the schedule lives. *)
+type input = Slot of int | Bound of Rig.Buffer.t * Rig.Claim.hold
 
 (* Where a view lies: in memory made at link, of its bytes from its byte
    [first], or in an input, at an offset; and the alignment and phase its
@@ -216,21 +214,21 @@ type builder = {
   fn : string;
   named : string -> Rig.t;
   separate : bool;
-  bound : Rig.Buffer.t list Ops.Tbl.t;
+  bound : Rig.Buffer.t Ops.Tbl.t;
   cells : (string, int) Hashtbl.t;
   rigs : Rig.t Dynarray.t;
   memory : Rig_program.memory Dynarray.t;
-  memories : (int, int) Hashtbl.t Ops.Tbl.t;
+  memories : int Ops.Tbl.t;
   images : Rig_program.image Dynarray.t;
   image_of : (int * string, int) Hashtbl.t;
   inputs : (input * Rig_program.input) Dynarray.t;
-  lane_inputs : (int * int, int) Hashtbl.t;
+  slot_inputs : (int, int) Hashtbl.t;
   mutable bound_inputs : (Rig.Buffer.t * int) list;
-  mutable params : (int * Rig.t list * int) list;
-  starts : (int * int, int * int) Hashtbl.t;
+  mutable params : (int * Rig.t * int) list;
+  starts : (int, int * int) Hashtbl.t;
   words : word_kind Dynarray.t;
   var_words : (string, int) Hashtbl.t;
-  computed : (int * int) list Ops.Tbl.t;
+  computed : int Ops.Tbl.t;
   trips : int Ops.Tbl.t;
   mutable steps : Rig_program.step list;
   mutable pending : pending option;
@@ -273,20 +271,14 @@ let moves u =
 
 let reads_variable u = List.exists is_variable (Ops.toposort ~calls:Skip u)
 
-(* The word that holds [u], an expression of the run's variables on lane [lane],
-   which each run computes. *)
-let computed_word b lane u =
-  let ws = Option.value (Ops.Tbl.find_opt b.computed u) ~default:[] in
-  match List.assoc_opt lane ws with
+(* The word that holds [u], an expression of the run's variables, which each
+   run computes. *)
+let computed_word b u =
+  match Ops.Tbl.find_opt b.computed u with
   | Some w -> w
   | None ->
-      let read v =
-        match Ops.arg v with
-        | Ops.Param { name = Some "_device_num"; _ } -> fun _ -> lane
-        | _ -> reader b.cells v
-      in
-      let w = new_word b (Computed (Shape.sym_compile (Sym u) read)) in
-      Ops.Tbl.replace b.computed u ((lane, w) :: ws);
+      let w = new_word b (Computed (Shape.sym_compile (Sym u) (reader b.cells))) in
+      Ops.Tbl.replace b.computed u w;
       w
 
 let int_of_const u =
@@ -295,63 +287,54 @@ let int_of_const u =
   | Ops.Const (`Bool x) -> Bool.to_int x
   | _ -> invalid_arg (Format.asprintf "%a is no integer" Ops.pp u)
 
-(* [u] on lane [lane] as a form of words: a range's trip moves it by a constant
-   factor, and the rest of it is computed for the run. *)
-let rec affine b lane u =
+(* [u] as a form of words: a range's trip moves it by a constant factor, and
+   the rest of it is computed for the run. *)
+let rec affine b u =
   match (Ops.op u, Ops.arg u) with
   | Op.Const, _ -> constant (int_of_const u)
   | Op.Range, _ -> (
       match Ops.Tbl.find_opt b.trips u with
       | Some w -> word w
       | None -> fail b.fn "%s reads a range outside its loop" (Ops.expr u))
-  | Op.Param, Ops.Param { name = Some "_device_num"; _ } -> constant lane
   | Op.Param, _ when is_variable u -> word (var_word b u)
   | Op.Add, _ ->
-      plus (affine b lane (Ops.nth u 0)) (affine b lane (Ops.nth u 1))
+      plus (affine b (Ops.nth u 0)) (affine b (Ops.nth u 1))
   | Op.Mul, _ -> (
-      let x = affine b lane (Ops.nth u 0) and y = affine b lane (Ops.nth u 1) in
+      let x = affine b (Ops.nth u 0) and y = affine b (Ops.nth u 1) in
       match (x.terms, y.terms) with
       | [], _ -> scale x.add y
       | _, [] -> scale y.add x
-      | _ -> computed b lane u)
-  | Op.Cast, _ when Dtype.is_int (Ops.dtype u) -> affine b lane (Ops.nth u 0)
-  | Op.After, _ -> affine b lane (Ops.nth u 0)
-  | _ -> computed b lane u
+      | _ -> computed b u)
+  | Op.Cast, _ when Dtype.is_int (Ops.dtype u) -> affine b (Ops.nth u 0)
+  | Op.After, _ -> affine b (Ops.nth u 0)
+  | _ -> computed b u
 
-and computed b lane u =
+and computed b u =
   if moves u then
     fail b.fn "%s moves with its loop's trips by no constant factor"
       (Ops.expr u)
   else if not (reads_variable u) then constant (Shape.sym_infer (Sym u) [])
-  else word (computed_word b lane u)
+  else word (computed_word b u)
 
-let affine_sint b lane : Ops.sint -> affine = function
+let affine_sint b : Ops.sint -> affine = function
   | Int n -> constant n
-  | Sym u -> affine b lane u
+  | Sym u -> affine b u
 
 (* A value of one word, such as a grid's size or a loop's trips. *)
-let value b lane (s : Ops.sint) : Rig_program.value =
-  let a = affine_sint b lane s in
+let value b (s : Ops.sint) : Rig_program.value =
+  let a = affine_sint b s in
   match (a.terms, s) with
   | [], _ -> Fixed a.add
   | [ (w, 1) ], _ when a.add = 0 -> Int w
-  | _, Sym u when not (moves u) -> Int (computed_word b lane u)
+  | _, Sym u when not (moves u) -> Int (computed_word b u)
   | _ -> fail b.fn "a value of one word moves with its loop's trips"
 
 (* Storage *)
 
-(* The memory of lane [lane] of storage [base] made at link on [d], whose first
-   [first] bytes lie before the storage's. *)
-let memory b base lane d ~first =
-  let lanes =
-    match Ops.Tbl.find_opt b.memories base with
-    | Some l -> l
-    | None ->
-        let l = Hashtbl.create 1 in
-        Ops.Tbl.replace b.memories base l;
-        l
-  in
-  match Hashtbl.find_opt lanes lane with
+(* The memory of storage [base] made at link on [d], whose first [first] bytes
+   lie before the storage's. *)
+let memory b base d ~first =
+  match Ops.Tbl.find_opt b.memories base with
   | Some m -> m
   | None ->
       let m =
@@ -365,21 +348,17 @@ let memory b base lane d ~first =
           }
       in
       let i = push b.memory m in
-      Hashtbl.replace lanes lane i;
+      Ops.Tbl.replace b.memories base i;
       i
 
 let add_input b input desc = push b.inputs (input, desc)
 
-let lane_input b ~slot ~lane d n =
-  match Hashtbl.find_opt b.lane_inputs (slot, lane) with
+let slot_input b ~slot d n =
+  match Hashtbl.find_opt b.slot_inputs slot with
   | Some i -> i
   | None ->
-      let i =
-        add_input b
-          (Lane { slot; lane })
-          { device = device_index b d; bytes = n }
-      in
-      Hashtbl.replace b.lane_inputs (slot, lane) i;
+      let i = add_input b (Slot slot) { device = device_index b d; bytes = n } in
+      Hashtbl.replace b.slot_inputs slot i;
       i
 
 (* A hold of the bound [buf], refused in the link's name. *)
@@ -402,9 +381,9 @@ let bound_input b buf =
       b.bound_inputs <- (buf, i) :: b.bound_inputs;
       i
 
-let note_param b slot ds n =
+let note_param b slot d n =
   if not (List.exists (fun (s, _, _) -> s = slot) b.params) then
-    b.params <- (slot, ds, n) :: b.params
+    b.params <- (slot, d, n) :: b.params
 
 (* The bytes before storage made at link on [d] in its memory, which starts on
    [d]'s alignment ([Rig.alignment]): the storage's phase. An io device's
@@ -418,33 +397,24 @@ let first_byte b base d =
       (Format.asprintf "%a" Ops.pp base)
   else p
 
-(* Where the view [u] of lane [lane] lies: a lane of a parameter, which a run
-   gives; of bound storage; or of storage made at link. A storage of one device
-   serves every lane. *)
-let locate b u lane =
+(* Where the view [u] lies: in a parameter's buffer, which a run gives; in
+   bound storage; or in storage made at link. *)
+let locate b u =
   let base, off = view_offset u in
-  let offset = affine_sint b lane off in
-  let pick ns = if List.compare_length_with ns 1 = 0 then 0 else lane in
+  let offset = affine_sint b off in
   match (Ops.op base, Ops.arg base) with
   | Op.Param, Ops.Param p when is_slot base ->
-      let ns = names base in
-      let ds = List.map b.named ns in
-      let n = bytes base in
-      note_param b p.slot ds n;
-      let j = pick ns in
-      let d = List.nth ds j in
+      let d = b.named (name base) and n = bytes base in
+      note_param b p.slot d n;
       {
-        place = Input (lane_input b ~slot:p.slot ~lane:j d n);
+        place = Input (slot_input b ~slot:p.slot d n);
         offset;
         device = d;
         start = start base;
       }
   | Op.Buffer, _ -> (
-      let ns = names base in
-      let j = pick ns in
       match Ops.Tbl.find_opt b.bound base with
-      | Some bs ->
-          let buf = List.nth bs j in
+      | Some buf ->
           {
             place = Input (bound_input b buf);
             offset;
@@ -452,9 +422,9 @@ let locate b u lane =
             start = start base;
           }
       | None ->
-          let d = b.named (List.nth ns j) in
+          let d = b.named (name base) in
           let first = first_byte b base d in
-          let memory = memory b base j d ~first in
+          let memory = memory b base d ~first in
           {
             place = Memory { memory; first; bytes = max 1 (bytes base) };
             offset;
@@ -596,30 +566,24 @@ let triple : Rig_program.value list -> grid = function
   | [ x ] -> (x, Fixed 1, Fixed 1)
   | _ -> (Fixed 1, Fixed 1, Fixed 1)
 
-(* How a run computes [s], which reads no range, on lane [lane]. *)
-let counter b lane (s : Ops.sint) =
+(* How a run computes [s], which reads no range. *)
+let counter b (s : Ops.sint) =
   match s with
   | Int n -> fun _ -> n
   | Sym u when moves u ->
       fail b.fn "a split loop's iterations move with its loop's trips"
-  | Sym _ ->
-      let read v =
-        match Ops.arg v with
-        | Ops.Param { name = Some "_device_num"; _ } -> fun _ -> lane
-        | _ -> reader b.cells v
-      in
-      Shape.sym_compile s read
+  | Sym _ -> Shape.sym_compile s (reader b.cells)
 
 (* The grid of a host program that splits its loop of [extent] iterations into
    blocks: a group of threads per block, a thread per iteration. *)
-let split_grid b lane extent (k : Ops.kernel_info) : grid * grid =
+let split_grid b extent (k : Ops.kernel_info) : grid * grid =
   let ops = match k.estimates with Some e -> e.ops | None -> extent in
   match (extent, ops) with
   | Int extent, Int ops ->
       let n, t = blocks ~extent ~ops in
       ((Fixed n, Fixed 1, Fixed 1), (Fixed t, Fixed 1, Fixed 1))
   | extent, ops ->
-      let extent = counter b lane extent and ops = counter b lane ops in
+      let extent = counter b extent and ops = counter b ops in
       let n env = fst (blocks ~extent:(extent env) ~ops:(ops env)) in
       let t env = snd (blocks ~extent:(extent env) ~ops:(ops env)) in
       ( (Int (new_word b (Computed n)), Fixed 1, Fixed 1),
@@ -627,16 +591,16 @@ let split_grid b lane extent (k : Ops.kernel_info) : grid * grid =
 
 (* A kernel's vector accesses lie on their width only where each buffer it
    accesses starts at its storage's alignment and phase ({!Tolk.Codegen}).
-   Linking checks a bound buffer here, and each run the lanes of parameters. A
+   Linking checks a bound buffer here, and each run the buffers of parameters. A
    copy moves bytes wherever they start. *)
 let note_start b (l : located) =
   match l.place with
   | Memory _ -> ()
   | Input i -> (
       match fst (Dynarray.get b.inputs i) with
-      | Lane { slot; lane } -> (
-          match Hashtbl.find_opt b.starts (slot, lane) with
-          | None -> Hashtbl.replace b.starts (slot, lane) l.start
+      | Slot slot -> (
+          match Hashtbl.find_opt b.starts slot with
+          | None -> Hashtbl.replace b.starts slot l.start
           | Some s when s = l.start -> ()
           | Some (align, p) ->
               let align', p' = l.start in
@@ -652,9 +616,9 @@ let note_start b (l : located) =
             (phase buf align) align p
       | Bound _ -> ())
 
-(* The launch of the compiled program [prg] that [call] makes on its lane
-   [lane], whose device is [d]. A host program runs on its device's host. *)
-let launch b call prg lane d =
+(* The launch of the compiled program [prg] that [call] makes on [d]. A host
+   program runs on its device's host. *)
+let launch b call prg d =
   let info = program_info prg and k = kernel_of prg in
   let elf = Device.Tiny_elf.of_program prg in
   let kind = (target d).device in
@@ -706,7 +670,7 @@ let launch b call prg lane d =
   let refs =
     List.map2
       (fun g (at, _) ->
-        let l = locate b (List.nth args g) lane in
+        let l = locate b (List.nth args g) in
         note_start b l;
         place b params holes at 8 l.offset;
         let use : Rig_program.use =
@@ -717,7 +681,7 @@ let launch b call prg lane d =
   in
   List.iter2
     (fun (_, v) (at, dt) ->
-      place b params holes at (Dtype.itemsize dt) (affine b lane v))
+      place b params holes at (Dtype.itemsize dt) (affine b v))
     vars vars_at;
   let groups, threads =
     match k.split with
@@ -733,13 +697,13 @@ let launch b call prg lane d =
           |> Option.value ~default:s.iterations
         in
         List.iter
-          (fun (at, _) -> place b params holes at 8 (affine_sint b lane extent))
+          (fun (at, _) -> place b params holes at 8 (affine_sint b extent))
           extent_at;
-        split_grid b lane extent k
+        split_grid b extent k
     | None when host -> (one, one)
     | None ->
-        ( triple (List.map (value b lane) info.global_size),
-          triple (List.map (value b lane) info.local_size) )
+        ( triple (List.map (value b) info.global_size),
+          triple (List.map (value b) info.local_size) )
   in
   b.kernels <- { device = on; name = elf.name; call } :: b.kernels;
   add_part b p
@@ -773,14 +737,14 @@ let copy_end (l : located) :
   in
   (slot, Iarray.of_list (add @ words))
 
-(* The copy [call] makes on its lane [lane]: a copy part of the source's device
-   or the destination's, the source's first, where it copies between the two
+(* The copy [call] makes: a copy part of the source's device or the
+   destination's, the source's first, where it copies between the two
    ([copies_between]), or else a move of the program. *)
-let copy b call lane =
+let copy b call =
   match Realize.get_call_arg_uops call with
   | [ dst; src ] ->
       let length = bytes dst in
-      let d = locate b dst lane and s = locate b src lane in
+      let d = locate b dst and s = locate b src in
       let dst_slot, dst_offset = copy_end d
       and src_slot, src_offset = copy_end s in
       let runs c = copies_between c s.device d.device in
@@ -815,7 +779,7 @@ let rec entry b e =
       in
       ranges (List.tl (Ops.src e))
   | Op.Backedge ->
-      let flag = locate b (Ops.nth e 2) 0 in
+      let flag = locate b (Ops.nth e 2) in
       if flag.offset.terms <> [] then
         fail b.fn "a back edge's flag moves with the run's words";
       let flag = (fst (copy_end flag), flag.offset.add) in
@@ -832,7 +796,7 @@ and loop b r flag f =
   let trips, trip =
     if Ops.op r <> Op.Range then (Rig_program.Fixed 1, None)
     else
-      let trips = value b 0 (sint (Ops.nth r 0)) in
+      let trips = value b (sint (Ops.nth r 0)) in
       let w = new_word b Trip in
       Ops.Tbl.replace b.trips r w;
       (trips, Some w)
@@ -851,16 +815,14 @@ and call b e =
       let base, _ = view_offset u in
       match Ops.arg base with
       | Ops.Param p when is_slot base ->
-          note_param b p.slot (List.map b.named (names base)) (bytes base)
+          note_param b p.slot (b.named (name base)) (bytes base)
       | _ -> ())
     (Realize.get_call_arg_uops c);
   match Ops.op prg with
-  | Op.Store ->
-      let dst = List.hd (Realize.get_call_arg_uops c) in
-      List.iteri (fun lane _ -> copy b c lane) (names dst)
+  | Op.Store -> copy b c
   | Op.Program ->
       let first = List.hd (Realize.get_call_arg_uops c) in
-      List.iteri (fun lane n -> launch b c prg lane (b.named n)) (names first)
+      launch b c prg (b.named (name first))
   | o -> fail b.fn "%s is no call to run" (Format.asprintf "%a" Op.pp o)
 
 (* Linked schedules *)
@@ -868,11 +830,11 @@ and call b e =
 type t = {
   lock : Mutex.t; (* the frame is shared: one run at a time *)
   loaded : Rig_program.loaded;
-  params : (int * Rig.t list * int) list;
-      (* the parameters the runs bind: slot, devices and bytes *)
-  starts : ((int * int) * (int * int)) list;
-      (* the lanes of parameters kernels read, by slot and lane, and the
-         alignment and phase their buffers start at *)
+  params : (int * Rig.t * int) list;
+      (* the parameters the runs bind: slot, device and bytes *)
+  starts : (int * (int * int)) list;
+      (* the parameters kernels read, by slot, and the alignment and phase
+         their buffers start at *)
   cells : (string, int) Hashtbl.t; (* the variables' cells, by name *)
   env : env; (* the variables of the run being made *)
   words : word_kind array;
@@ -929,7 +891,7 @@ let assemble b linear =
    donation right after the raise consumes their memory. *)
 let release_bound (b : builder) =
   Dynarray.iter
-    (function Bound (_, h), _ -> Rig.Claim.release h | Lane _, _ -> ())
+    (function Bound (_, h), _ -> Rig.Claim.release h | Slot _, _ -> ())
     b.inputs
 
 let link_with ~separate ~devices ?(bound = []) linear =
@@ -937,20 +899,15 @@ let link_with ~separate ~devices ?(bound = []) linear =
   if Ops.op linear <> Op.Linear then fail fn "not a compiled schedule";
   let tbl = Ops.Tbl.create 16 in
   List.iter
-    (fun (u, bs) ->
-      let ns = names u in
-      if Ops.op u <> Op.Buffer || List.length bs <> List.length ns then
-        fail fn "%s is not bound to a buffer on each device"
-          (Format.asprintf "%a" Ops.pp u);
-      List.iter2
-        (fun n buf ->
-          if
-            (not (Rig.equal (Rig.Buffer.device buf) (devices n)))
-            || Rig.Buffer.length buf < bytes u
-          then
-            fail fn "a storage node is not bound to %d bytes of %s" (bytes u) n)
-        ns bs;
-      Ops.Tbl.replace tbl u bs)
+    (fun (u, buf) ->
+      if Ops.op u <> Op.Buffer then
+        fail fn "%s is not storage" (Format.asprintf "%a" Ops.pp u);
+      let n = name u in
+      if
+        (not (Rig.equal (Rig.Buffer.device buf) (devices n)))
+        || Rig.Buffer.length buf < bytes u
+      then fail fn "a storage node is not bound to %d bytes of %s" (bytes u) n;
+      Ops.Tbl.replace tbl u buf)
     bound;
   let b =
     {
@@ -965,7 +922,7 @@ let link_with ~separate ~devices ?(bound = []) linear =
       images = Dynarray.create ();
       image_of = Hashtbl.create 16;
       inputs = Dynarray.create ();
-      lane_inputs = Hashtbl.create 16;
+      slot_inputs = Hashtbl.create 16;
       bound_inputs = [];
       params = [];
       starts = Hashtbl.create 16;
@@ -988,12 +945,15 @@ let link_with ~separate ~devices ?(bound = []) linear =
 let link ~devices ?bound linear =
   link_with ~separate:(Setting.value Setting.debug >= 2) ~devices ?bound linear
 
-(* Checks, without allocating, that each lane a kernel accesses starts at its
+(* The buffer [slots] binds to [slot], which [check_slots] found. *)
+let slot_buffer slots slot = Option.get slots.(slot)
+
+(* Checks, without allocating, that each buffer a kernel accesses starts at its
    parameter's phase. *)
 let rec check_starts fn slots = function
   | [] -> ()
-  | ((slot, lane), start) :: rest ->
-      let buf = List.nth slots.(slot) lane in
+  | (slot, start) :: rest ->
+      let buf = slot_buffer slots slot in
       if not (starts_at buf start) then begin
         let align, p = start in
         fail fn
@@ -1007,28 +967,22 @@ let rec check_starts fn slots = function
 let check_slots t slots =
   let fn = "Tolk_engine.run" in
   List.iter
-    (fun (slot, ds, n) ->
-      if slot >= Array.length slots then fail fn "no buffers for slot %d" slot;
-      let bs = slots.(slot) in
-      if List.length bs <> List.length ds then
-        fail fn "slot %d takes %d buffers, not %d" slot (List.length ds)
-          (List.length bs);
-      List.iter2
-        (fun d buf ->
+    (fun (slot, d, n) ->
+      match if slot < Array.length slots then slots.(slot) else None with
+      | None -> fail fn "no buffer for slot %d" slot
+      | Some buf ->
           if not (Rig.equal (Rig.Buffer.device buf) d) then
             fail fn "slot %d takes a buffer of %s, not of %s" slot (Rig.name d)
               (Rig.name (Rig.Buffer.device buf));
           if Rig.Buffer.length buf < n then
             fail fn "slot %d takes %d bytes, not %d" slot n
               (Rig.Buffer.length buf))
-        ds bs)
     t.params;
   check_starts fn slots t.starts
 
 let buffer slots = function
   | Bound (buf, _) -> buf
-  | Lane { slot; lane } -> (
-      match slots.(slot) with [ buf ] -> buf | bs -> List.nth bs lane)
+  | Slot slot -> slot_buffer slots slot
 
 (* Writes the run's frame: its words, then its inputs. *)
 let frame t ~vars slots =
@@ -1134,15 +1088,15 @@ let run ?(vars = []) t slots =
 
 let slots t =
   let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.params in
-  let slots = Array.make n [] in
+  let slots = Array.make n None in
   List.iter
-    (fun (slot, ds, bytes) ->
-      let create lane d =
-        match List.assoc_opt (slot, lane) t.starts with
+    (fun (slot, d, bytes) ->
+      let buf =
+        match List.assoc_opt slot t.starts with
         | Some start -> create_at d (max 1 bytes) start
         | None -> Rig.Buffer.create d (max 1 bytes)
       in
-      slots.(slot) <- List.mapi create ds)
+      slots.(slot) <- Some buf)
     t.params;
   slots
 

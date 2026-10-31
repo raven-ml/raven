@@ -1299,9 +1299,9 @@ let divides_on_metal () =
         Tolk_engine.link ~devices
           ~bound:
             [
-              (out, [ quotients ]);
-              (a, [ on_metal dividends ]);
-              (b, [ on_metal divisors ]);
+              (out, quotients);
+              (a, on_metal dividends);
+              (b, on_metal divisors);
             ]
           compiled
       in
