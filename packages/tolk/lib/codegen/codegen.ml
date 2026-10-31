@@ -42,14 +42,22 @@ let int_shape s =
       | Int n -> n | Sym _ -> invalid_arg "a symbolic axis has no lanes")
     s
 
+(* After the parameters, one slot per name. *)
 let pm_number_params =
   pm
     (fun () -> [
-      rule_ctx (Upat.op Op.Param ~name:"x") (fun ctx m ->
+      rule_ctx (Upat.op Op.Param ~name:"x") (fun (first, names) m ->
           match arg (m "x") with
           | Param p when p.slot = -1 ->
-              incr ctx;
-              Some (replace (m "x") ~arg:(Param { p with slot = !ctx - 1 }))
+              let i =
+                match Hashtbl.find_opt names p.name with
+                | Some i -> i
+                | None ->
+                    let i = Hashtbl.length names in
+                    Hashtbl.add names p.name i;
+                    i
+              in
+              Some (replace (m "x") ~arg:(Param { p with slot = first + i }))
           | _ -> None);
     ])
 
@@ -1258,9 +1266,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       ~ctx:(Linearizer.cfg_context sink)
       sink (Before_sources Linearizer.pm_add_control_flow)
   in
-  (* put unnumbered variable PARAMs in slots, past every slot a PARAM takes:
-     the slots can skip some, and a split's bounds take the first two past
-     the others *)
+  (* put the variables in slots, past every slot a PARAM takes: the slots can
+     skip some, and a split's bounds take the first two past the others *)
   let num_params =
     List.fold_left
       (fun n x ->
@@ -1271,8 +1278,9 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       (toposort ~calls:Enter sink)
   in
   let sink =
-    graph_rewrite ~calls:Skip ~pass:Once ~ctx:(ref num_params) sink
-      (After_sources pm_number_params)
+    graph_rewrite ~calls:Skip ~pass:Once
+      ~ctx:(num_params, Hashtbl.create 8)
+      sink (After_sources pm_number_params)
   in
   if setting Setting.spec <> 0 then (
     let spec = if ren.vector_alu then Spec.vector_program else Spec.program in

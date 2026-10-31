@@ -2112,14 +2112,16 @@ does the same.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 
-- **tinygrad:** `runtime/ops_cpu.py:58-72` (`CPUProgram.__call__`), which
-  calls a kernel once per launch on the calling thread;
-  `codegen/__init__.py:371` (the pipeline after `pm_cast_const`) and `:435`
-  (`do_estimates`); `uop/ops.py:1330` (`KernelInfo`) and `:1359`
-  (`ProgramInfo.from_sink`); `engine/realize.py:16` (`get_call_var_uops`) and
-  `:160` (`exec_kernel`).
+- **tinygrad:** `runtime/ops_cpu.py:58-73@4e0192eaf` (`CPUProgram.__call__`),
+  which calls a kernel once per launch on the calling thread;
+  `codegen/__init__.py:368@4e0192eaf` (the pipeline after `pm_cast_const`),
+  `:33-34,379-381` (`do_number_param` and its pass) and `:446`
+  (`do_estimates`); `uop/ops.py:1320@4e0192eaf` (`KernelInfo`) and `:1349`
+  (`ProgramInfo.from_sink`); `engine/realize.py:16@4e0192eaf`
+  (`get_call_var_uops`) and `:154` (`exec_kernel`).
 - **tolk:** `Codegen.split_blocks`, its place in
-  `Codegen.full_rewrite_to_sink`, and `Codegen.whole_loop`; `Ops.kernel_info`'s
+  `Codegen.full_rewrite_to_sink`, `Codegen.pm_number_params` and
+  `Codegen.whole_loop`; `Ops.kernel_info`'s
   `split`; `Shape.program_info_of_sink`; `Realize.get_call_var_uops`;
   `Tolk_engine.block_ops`, `Tolk_engine.blocks` and `Tolk_engine.split_grid`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same split, estimates,
@@ -2135,11 +2137,11 @@ does the same.
   first two slots past those the kernel's parameters took, a loop's trip
   among them (D140), and named afresh
   where the kernel has a variable of either name. The variables numbered
-  after them take the slots past every slot a parameter takes, where tinygrad
-  numbers them from the count of the numbered parameters
-  (`codegen/__init__.py:380`): a kernel whose buffers skip a slot, as a beam
-  search's timer links them, would give a variable a bound's slot, and a
-  launch would read the bound for it. The kernel's `KernelInfo`
+  after them take the slots past every slot a parameter takes, the bounds'
+  included, one slot per name. tinygrad numbers every variable past the
+  largest slot of a parameter that is no variable: the bounds are variables
+  that carry their slots, so it would number them again and give another
+  variable a bound's slot, and a launch would read the bound for it. The kernel's `KernelInfo`
   records `split = (n, lo, hi)`, the iterations and the two slots, by which
   each launch finds the bounds; `n` is its program's first global size, and
   its estimates count the whole loop, exactly when they read no other

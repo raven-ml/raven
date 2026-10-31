@@ -798,6 +798,8 @@ thread.
 
 ### Tolk (new)
 
+- Two variables of one name, such as one read under two bounds, take one
+  parameter slot: a program lists the name once in its `vars`.
 - **Breaking:** `Op.Group` is gone: `Ops.group` is the empty stack ordered after
   its effects (`Ops.after`), and only a sink splices the effects of its sources
   (`Symbolic.pm_clean_up_group_sink`).

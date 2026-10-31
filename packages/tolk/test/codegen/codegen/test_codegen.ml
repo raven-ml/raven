@@ -1126,9 +1126,34 @@ let ten_scalars () =
   | Error why -> fail why);
   equal ~msg:"1 + 2 + ... + 10" int32 55l result.{0}
 
+(* Two variables of one name, with different bounds, in [out[0] = a + b]. *)
+let one_name_twice () =
+  let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
+  let n hi =
+    Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0) (Dtype.Value.of_int hi)
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[] ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.add (n 10) (n 20)) ]
+
+let variable_slots prg =
+  match Ops.arg prg with
+  | Program p ->
+      List.map
+        (fun v ->
+          match Ops.arg v with
+          | Param q -> q.slot
+          | _ -> invalid_arg "a variable of a program is a parameter")
+        p.vars
+  | _ -> invalid_arg "a program holds its program information"
+
 let programs =
   group "programs"
     [
+      test "variables of one name take one slot, past the parameters"
+        (fun () ->
+          let prg = Codegen.linearize (one_name_twice ()) clang in
+          equal (list int) [ 1; 1 ] (variable_slots prg));
       group "the estimates count the instructions, leaving out index arithmetic"
         (per_row ~only:compiles counts_its_instructions);
       group "full_rewrite_to_sink lowers a kernel the same each time"
