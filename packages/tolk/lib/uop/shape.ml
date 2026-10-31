@@ -414,7 +414,7 @@ and movement_shape u ps =
                       && ok Sint.(o + s <= sz))
                     ps bounds)
           then bad "padding";
-          numbers (List.map (fun (_, sz) -> ssimplify_sint sz) bounds)
+          numbers (List.map snd bounds)
       | Shrink bounds ->
           if
             List.length ps <> List.length bounds
@@ -426,7 +426,7 @@ and movement_shape u ps =
                       && ok Sint.(o + sz <= s))
                     ps bounds)
           then bad "bounds";
-          numbers (List.map (fun (_, sz) -> ssimplify_sint sz) bounds)
+          numbers (List.map snd bounds)
       | Flip flips ->
           if List.length flips <> List.length ps then bad "axes";
           ps)
@@ -3496,7 +3496,7 @@ let program_info_of_sink
   let vars =
     List.stable_sort
       (fun a b -> Int.compare (param_arg_of a).slot (param_arg_of b).slot)
-      (dedup_nodes (List.rev !vars))
+      (List.rev !vars)
   in
   {
     global_size = Array.to_list global_size;

@@ -297,7 +297,7 @@ let split_reduceop reduce x =
             let first =
               contiguous (rop splitted reduce_op (List.init num_axes Fun.id))
             in
-            Some (reshape (rop first reduce_op [ ndim reduce ]) (shape reduce)))
+            Some (rop first reduce_op [ ndim reduce ]))
   | _ -> None
 
 let resolve_function c =

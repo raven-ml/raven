@@ -798,7 +798,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
          | _ -> ());
       let rngs =
         match arg x with
-        | Reduce { num_axes; _ } when num_axes <> 0 ->
+        | Reduce { num_axes; _ } ->
             reduce_loops rctx x (List.take num_axes (shape (nth x 0))) out_rngs
             @ out_rngs
         | _ -> rngs
