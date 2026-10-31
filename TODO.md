@@ -199,9 +199,6 @@ raven / llama.cpp (Vulkan; ROCm):
   rune, ~2,300 of them two traced values and a recorded op per op:
   re-measure on the new rune on fudge, and cut the per-op records if they
   remain
-- an eager rune program links tolk whole: rune lists tolk and tolk.engine,
-  and `jit` reaches every stage (06bdcea5b). Put the compile path in its
-  own module so a program that never compiles links none of it
 - an `iterate` that emits rows; jera's `Ode.path` scans every `budget`
   slot (ode.ml's `slot` mask and `put_row`). Try a scatter at a run-time
   index first, as kaun's decode cache compiles. Design pass
