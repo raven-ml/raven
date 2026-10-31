@@ -225,6 +225,28 @@ let view_summary_banner m =
      ]
     @ metric_rows)
 
+(* GPU [i] of the run, while the run logged any metric of GPU [i]. *)
+let sys_gpus sys_latest =
+  let rec from i =
+    let key name = sys_latest (Printf.sprintf "sys/gpu%d_%s" i name) in
+    let g =
+      System.
+        {
+          util_pct = key "util_pct";
+          mem_used_gb = key "mem_used_gb";
+          mem_used_pct = key "mem_used_pct";
+          temp_c = key "temp_c";
+          power_w = key "power_w";
+        }
+    in
+    if
+      List.for_all Option.is_none
+        [ g.util_pct; g.mem_used_gb; g.mem_used_pct; g.temp_c; g.power_w ]
+    then []
+    else g :: from (i + 1)
+  in
+  from 0
+
 let view_dashboard m =
   let all_metrics = Munin.Run.latest_metrics m.run in
   let metric_tags = user_metric_tags m.run in
@@ -253,6 +275,7 @@ let view_dashboard m =
         disk_read_mbs = sys_latest "sys/disk_read_mbs";
         disk_write_mbs = sys_latest "sys/disk_write_mbs";
         disk_util_pct = sys_latest "sys/disk_util_pct";
+        gpus = sys_gpus sys_latest;
       }
   in
   let right_panel =

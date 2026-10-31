@@ -16,7 +16,8 @@
     Every sampler reads the system on Linux and macOS. Platform-specific
     behavior is documented per module. Some metrics have limited availability
     on certain platforms (e.g., macOS CPU counters populate only
-    user/nice/system/idle fields). Windows keeps no load average. *)
+    user/nice/system/idle fields). Windows keeps no load average, and munin
+    reads no GPU statistics there. *)
 
 (** {1:sampling Sampling} *)
 
@@ -31,7 +32,7 @@ module Stat : module type of Sysstat
 (** {1:monitor Background monitoring}
 
     {!start} spawns a background thread that periodically samples CPU, memory,
-    process and disk I/O statistics and logs them as scalar metrics via
+    process, disk I/O and GPU statistics and logs them as scalar metrics via
     {!Munin.Session}.
 
     Logged metrics (all with [sys/] prefix):
@@ -51,13 +52,21 @@ module Stat : module type of Sysstat
     - [sys/disk_write_mbs] — disk write rate in MB/s
     - [sys/disk_util_pct] — disk utilization percentage
 
+    {b GPU} [i], the [i]th of {!Stat.Gpu.sample} when the monitor starts:
+    - [sys/gpu]{i i}[_util_pct] — how busy the GPU is (0–100)
+    - [sys/gpu]{i i}[_mem_used_gb] — GPU memory used in GB
+    - [sys/gpu]{i i}[_mem_used_pct] — GPU memory used, percent of its own
+    - [sys/gpu]{i i}[_temp_c] — temperature in Celsius
+    - [sys/gpu]{i i}[_power_w] — power in watts
+
     Each group of metrics above comes from one sampler of {!Stat}, the
     per-process group from {!Stat.Proc.Self.sample}. A group whose sampler
-    raises [Sys_error] when the monitor starts is neither defined nor logged.
-    A sample that raises later leaves its
-    group out of that interval's samples, and the group's next rates are means
-    over both intervals. An interval over which the wall clock stepped back
-    logs no rates. *)
+    raises [Sys_error] when the monitor starts is neither defined nor logged,
+    and of a GPU's metrics only those its first sample gives. A sample that
+    raises later leaves its group out of that interval's samples, and the
+    group's next rates are means over both intervals; a GPU missing from a
+    sample, or a value its sample lacks, is left out of that interval. An
+    interval over which the wall clock stepped back logs no rates. *)
 
 type t
 (** The type for background monitors. *)
@@ -67,8 +76,8 @@ val start : ?interval:float -> Munin.Session.t -> t
 
     Every [interval] seconds the monitor logs one sample per metric. Rates
     ([sys/cpu_*], [sys/proc_cpu_pct], [sys/disk_*]) are means over the interval,
-    computed from cumulative counters; memory metrics are the value at the
-    sample's instant.
+    computed from cumulative counters; memory and GPU metrics are the value
+    at the sample's instant.
 
     [interval] defaults to [15.0] seconds. The first sample is taken after one
     interval. The monitor thread is a daemon thread. *)

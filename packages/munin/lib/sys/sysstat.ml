@@ -89,6 +89,9 @@ external c_get_loadavg : unit -> float * float * float
 
 external c_get_uptime : unit -> int64 = "caml_sysstat_get_uptime"
 
+external c_get_gpus : unit -> (string * int64 * int64) array
+  = "caml_sysstat_get_gpus"
+
 (* Helpers *)
 
 let is_whitespace = function ' ' | '\t' | '\r' | '\n' -> true | _ -> false
@@ -1271,6 +1274,116 @@ module Proc = struct
                      ~mem_percent:curr.mem_percent ~rss_bytes:curr.resident_size)
               else None)
   end
+end
+
+(* Gpu *)
+
+module Gpu = struct
+  type t = {
+    id : string;
+    busy_percent : float option;
+    memory_used : int64 option;
+    memory_total : int64 option;
+    temperature : float option;
+    power : float option;
+  }
+
+  let read_line path =
+    try Some (String.trim (with_in_file path input_line)) with _ -> None
+
+  let read_int64 path = Option.bind (read_line path) int64_of_string_opt
+
+  let read_scaled path scale =
+    Option.map (fun v -> Int64.to_float v /. scale) (read_int64 path)
+
+  (* The [KEY=VALUE] lines of a device's uevent file. *)
+  let uevent path =
+    let field acc line =
+      match String.index_opt line '=' with
+      | None -> acc
+      | Some i ->
+          let n = String.length line in
+          (String.sub line 0 i, String.sub line (i + 1) (n - i - 1)) :: acc
+    in
+    try fold_lines path ~init:[] ~f:field with _ -> []
+
+  (* A DRM device is [cardN]; its connectors are [cardN-NAME]. *)
+  let is_card name =
+    let n = String.length name in
+    n > 4
+    && String.starts_with ~prefix:"card" name
+    && String.for_all (function '0' .. '9' -> true | _ -> false)
+         (String.sub name 4 (n - 4))
+
+  let hwmon dev =
+    let dir = Filename.concat dev "hwmon" in
+    match Sys.readdir dir with
+    | exception Sys_error _ -> None
+    | names -> (
+        Array.sort compare names;
+        match names with
+        | [||] -> None
+        | names -> Some (Filename.concat dir names.(0)))
+
+  (* amdgpu's files, from the kernel's amdgpu documentation: memory in bytes,
+     temperature in millidegrees Celsius, power in microwatts, which on an APU
+     includes the CPU's. Reading the load or a sensor resumes a GPU the kernel
+     suspended for being idle, so a suspended GPU gives its memory alone. *)
+  let amdgpu ~id dev =
+    let file = Filename.concat dev in
+    let awake = read_line (file "power/runtime_status") <> Some "suspended" in
+    let hw = if awake then hwmon dev else None in
+    let sensor name scale =
+      Option.bind hw (fun h -> read_scaled (Filename.concat h name) scale)
+    in
+    {
+      id;
+      busy_percent =
+        (if awake then read_scaled (file "gpu_busy_percent") 1. else None);
+      memory_used = read_int64 (file "mem_info_vram_used");
+      memory_total = read_int64 (file "mem_info_vram_total");
+      temperature = sensor "temp1_input" 1e3;
+      power =
+        (match sensor "power1_average" 1e6 with
+        | Some _ as p -> p
+        | None -> sensor "power1_input" 1e6);
+    }
+
+  let sample_under ~root =
+    let drm = Filename.concat root "sys/class/drm" in
+    let read card =
+      let dev = Filename.concat (Filename.concat drm card) "device" in
+      let ev = uevent (Filename.concat dev "uevent") in
+      match (List.assoc_opt "DRIVER" ev, List.assoc_opt "PCI_SLOT_NAME" ev) with
+      | Some "amdgpu", Some id -> Some (amdgpu ~id dev)
+      | _ -> None
+    in
+    match Sys.readdir drm with
+    | exception Sys_error _ -> []
+    | names ->
+        Array.to_list names |> List.filter is_card |> List.filter_map read
+        |> List.sort (fun a b -> String.compare a.id b.id)
+
+  (* The stub gives each accelerator's IOKit class, its load and the memory
+     it holds, or -1 for what it lacks. *)
+  let of_stub () =
+    let known v = if Int64.compare v 0L < 0 then None else Some v in
+    Array.to_list (c_get_gpus ())
+    |> List.map (fun (id, busy, used) ->
+        {
+          id;
+          busy_percent = Option.map Int64.to_float (known busy);
+          memory_used = known used;
+          memory_total = None;
+          temperature = None;
+          power = None;
+        })
+
+  let sample () =
+    if Sys.file_exists "/proc" then sample_under ~root:"/"
+    else
+      try of_stub ()
+      with Failure e -> raise (Sys_error ("Gpu.sample: " ^ e))
 end
 
 (* System info *)

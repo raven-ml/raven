@@ -1257,3 +1257,92 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
 
   CAMLreturn(result);
 }
+
+/* GPUs */
+
+#ifdef __APPLE__
+/* The integer at [key] of the dictionary [d], or -1. */
+static int64_t cf_int(CFDictionaryRef d, CFStringRef key) {
+  CFTypeRef n = CFDictionaryGetValue(d, key);
+  int64_t v;
+  if (n == NULL || CFGetTypeID(n) != CFNumberGetTypeID()) return -1;
+  if (!CFNumberGetValue((CFNumberRef)n, kCFNumberSInt64Type, &v)) return -1;
+  return v;
+}
+#endif
+
+/* The GPUs as an array of (IOKit class, load in percent, memory held in
+   bytes), -1 for what an accelerator does not report. Apple documents no key
+   of an accelerator's PerformanceStatistics: these are the keys
+   ioreg -c IOAccelerator shows, the memory on Apple silicon. The accelerators
+   are read into C memory before any OCaml value is made. Linux reads sysfs
+   in OCaml. */
+CAMLprim value caml_sysstat_get_gpus(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal3(result, tup, str);
+
+#ifdef __APPLE__
+  struct gpu {
+    io_name_t name;
+    int64_t busy, used;
+  };
+  io_iterator_t it;
+  if (IOServiceGetMatchingServices(kIOMainPortDefault,
+                                   IOServiceMatching("IOAccelerator"),
+                                   &it) != KERN_SUCCESS) {
+    caml_failwith("IOServiceGetMatchingServices failed");
+  }
+  size_t cap = 4, count = 0;
+  struct gpu* gpus = malloc(cap * sizeof *gpus);
+  int failed = gpus == NULL;
+  io_registry_entry_t entry;
+  while (!failed && (entry = IOIteratorNext(it)) != 0) {
+    if (count == cap) {
+      struct gpu* grown = realloc(gpus, 2 * cap * sizeof *gpus);
+      if (grown == NULL) {
+        IOObjectRelease(entry);
+        failed = 1;
+        break;
+      }
+      gpus = grown;
+      cap *= 2;
+    }
+    struct gpu* g = &gpus[count++];
+    g->busy = -1;
+    g->used = -1;
+    if (IOObjectGetClass(entry, g->name) != KERN_SUCCESS) {
+      strcpy(g->name, "IOAccelerator");
+    }
+    CFTypeRef stats = IORegistryEntryCreateCFProperty(
+        entry, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
+    if (stats != NULL && CFGetTypeID(stats) == CFDictionaryGetTypeID()) {
+      g->busy = cf_int((CFDictionaryRef)stats, CFSTR("Device Utilization %"));
+      g->used = cf_int((CFDictionaryRef)stats, CFSTR("In use system memory"));
+    }
+    if (stats != NULL) CFRelease(stats);
+    IOObjectRelease(entry);
+  }
+  IOObjectRelease(it);
+  if (failed) {
+    free(gpus);
+    caml_failwith("out of memory listing the accelerators");
+  }
+
+  result = caml_alloc(count, 0);
+  for (size_t i = 0; i < count; i++) {
+    tup = caml_alloc_tuple(3);
+    str = caml_copy_string(gpus[i].name);
+    Store_field(tup, 0, str);
+    str = caml_copy_int64(gpus[i].busy);
+    Store_field(tup, 1, str);
+    str = caml_copy_int64(gpus[i].used);
+    Store_field(tup, 2, str);
+    Store_field(result, i, tup);
+  }
+  free(gpus);
+#else
+  caml_failwith("no GPU statistics on this system");
+#endif
+
+  CAMLreturn(result);
+}

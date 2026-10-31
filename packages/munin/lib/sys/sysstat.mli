@@ -18,10 +18,11 @@
     on certain platforms (e.g., macOS CPU counters populate only
     user/nice/system/idle fields).
 
-    On Windows every sampler reads the system except {!loadavg}: Windows
-    keeps no load average, and a sampler without state could not average the
-    minutes before its first call. It raises [Sys_error], as every sampler
-    does for what a system cannot read. *)
+    On Windows every sampler reads the system except {!loadavg} and
+    {!Gpu.sample}. Windows keeps no load average, and a sampler without state
+    could not average the minutes before its first call; munin reads no
+    Windows GPU statistics. Both raise [Sys_error], as every sampler does for
+    what a system cannot read. *)
 
 (** {1:modules Modules} *)
 
@@ -422,6 +423,49 @@ module Proc : sig
 
         Raises [Invalid_argument] if [dt <= 0.0]. *)
   end
+end
+
+(** GPU statistics (instantaneous). *)
+module Gpu : sig
+  type t = {
+    id : string;
+        (** The GPU's name: on Linux its PCI address, such as
+            ["0000:05:00.0"]; on macOS its accelerator's IOKit class, such as
+            ["AGXAcceleratorG14X"]. *)
+    busy_percent : float option;
+        (** How busy the GPU is, from [0.0] to [100.0], as its driver
+            measures it over its own recent window. *)
+    memory_used : int64 option;  (** Memory the GPU holds, in bytes. *)
+    memory_total : int64 option;  (** The GPU's own memory, in bytes. *)
+    temperature : float option;  (** The die's temperature in Celsius. *)
+    power : float option;
+        (** Power the GPU draws, in watts, averaged by its driver where it
+            averages. *)
+  }
+  (** A GPU's statistics, [None] for what its driver does not report.
+
+      Platform behavior:
+      - {b Linux}: GPUs of the [amdgpu] driver, read from its sysfs files.
+        On an APU [power] includes the CPU's. A GPU the kernel suspended for
+        being idle gives its memory alone, since reading the rest would
+        resume it.
+      - {b macOS}: [busy_percent], and [memory_used] on Apple silicon, from
+        each IOKit accelerator. *)
+
+  val sample : unit -> t list
+  (** [sample ()] returns the statistics of the GPUs munin reads, in order of
+      {!field-id}: [[]] on a machine without such a GPU.
+
+      Raises [Sys_error] on Windows, which munin reads no GPU statistics of,
+      and if the accelerators cannot be listed. *)
+
+  (**/**)
+
+  val sample_under : root:string -> t list
+  (* [sample_under ~root] is {!sample} on Linux for the machine whose files are
+     under the directory [root] in place of ["/"], such as a test's tree. *)
+
+  (**/**)
 end
 
 (** {1:sysinfo System information} *)

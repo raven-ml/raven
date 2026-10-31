@@ -7,6 +7,14 @@ open Mosaic
 
 (* Types *)
 
+type gpu = {
+  util_pct : float option;
+  mem_used_gb : float option;
+  mem_used_pct : float option;
+  temp_c : float option;
+  power_w : float option;
+}
+
 type values = {
   cpu_user : float option;
   cpu_system : float option;
@@ -17,6 +25,7 @@ type values = {
   disk_read_mbs : float option;
   disk_write_mbs : float option;
   disk_util_pct : float option;
+  gpus : gpu list;
 }
 
 (* Styles *)
@@ -182,7 +191,32 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
   let both a b =
     match (a, b) with Some a, Some b -> Some (a, b) | _ -> None
   in
-  let lines =
+  let either a b =
+    match (a, b) with None, None -> None | _ -> Some (a, b)
+  in
+  let some_text fmt = Option.fold ~none:"" ~some:(Printf.sprintf fmt) in
+  let gpu_lines i (g : gpu) =
+    let key name = Printf.sprintf "sys/gpu%d_%s" i name in
+    [
+      line g.util_pct (fun util c ~y ~width ->
+          draw_bar c ~y ~width
+            ~label:(Printf.sprintf "GPU%-2d" i)
+            ~value_text:(Printf.sprintf "%.0f%%" util)
+            ~percent:util ~spark:(spark (key "util_pct")));
+      line (either g.mem_used_gb g.mem_used_pct) (fun (gb, pct) c ~y ~width ->
+          draw_value_line c ~y ~width ~label:"  M  "
+            ~value_text:
+              (String.trim (some_text "%.0f%%" pct ^ "  " ^ some_text "%.1fG" gb))
+            ~spark:(spark (key "mem_used_gb")));
+      line (either g.temp_c g.power_w) (fun (temp, power) c ~y ~width ->
+          draw_value_line c ~y ~width ~label:"  T  "
+            ~value_text:
+              (String.trim
+                 (some_text "%.0fC" temp ^ "  " ^ some_text "%.0fW" power))
+            ~spark:(spark (key "power_w")));
+    ]
+  in
+  let system =
     List.filter_map Fun.id
       [
         line (both v.cpu_user v.cpu_system) (fun (cpu_user, cpu_system) ->
@@ -217,6 +251,8 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
               ~spark:(spark "sys/disk_write_mbs"));
       ]
   in
+  let gpus = List.concat (List.mapi gpu_lines v.gpus) in
+  let lines = system @ List.filter_map Fun.id gpus in
   canvas
     ~size:{ width = pct 100; height = px (List.length lines) }
     (fun c ~dt:_ ->

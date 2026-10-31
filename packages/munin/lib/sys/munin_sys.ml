@@ -60,69 +60,128 @@ let socket_pair () =
   if Sys.win32 then tcp_pair ()
   else Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
 
-(* [source session keys sample values] defines the metrics [keys] if [sample ()]
-   reads the system now, and is then the tick of that source: it samples again
-   and pairs each metric with its value from the previous and the new sample,
-   [dt] seconds apart. A system that cannot read the source when the monitor
-   starts gets none of its metrics. A tick whose sample fails logs none of them
-   and keeps the previous sample: the next tick's rates span both intervals. A
-   tick after the wall clock stepped back ([dt <= 0]) logs none of them either,
-   and its sample becomes the previous one. *)
-let source session keys sample values =
+(* [source session sample define] samples now and, if [sample ()] reads the
+   system, defines the metrics [keys] of [define first = (keys, values)], the
+   first sample. It is then the tick of that source: it samples again and pairs
+   each metric with its value from the previous and the new sample, [dt]
+   seconds apart, where [values] gives one. A system that cannot read the
+   source when the monitor starts, or that it gives no metric, gets none of
+   its metrics. A tick whose sample fails logs none of them and keeps the
+   previous sample: the next tick's rates span both intervals. A tick after the
+   wall clock stepped back ([dt <= 0]) logs none of them either, and its sample
+   becomes the previous one. *)
+let source session sample define =
   let timed () =
     let s = sample () in
     (s, Unix.gettimeofday ())
   in
   match timed () with
   | exception Sys_error _ -> None
-  | first ->
-      let metrics = List.map (fun key -> Session.metric session key) keys in
-      let prev = ref first in
-      let tick () =
-        match timed () with
-        | exception Sys_error _ -> []
-        | (next, t) as sampled ->
-            let prev_sample, prev_t = !prev in
-            prev := sampled;
-            let dt = t -. prev_t in
-            if dt <= 0. then []
-            else List.combine metrics (values ~prev:prev_sample ~next ~dt)
-      in
-      Some tick
+  | (first, _) as sampled -> (
+      match define first with
+      | [], _ -> None
+      | keys, values ->
+          let metrics = List.map (fun key -> Session.metric session key) keys in
+          let prev = ref sampled in
+          let logged (m, v) = Option.map (fun v -> (m, v)) v in
+          let tick () =
+            match timed () with
+            | exception Sys_error _ -> []
+            | (next, t) as sampled ->
+                let prev_sample, prev_t = !prev in
+                prev := sampled;
+                let dt = t -. prev_t in
+                if dt <= 0. then []
+                else
+                  List.combine metrics (values ~prev:prev_sample ~next ~dt)
+                  |> List.filter_map logged
+          in
+          Some tick)
+
+(* The [define] of a source whose metrics [keys] each sample gives. *)
+let fixed keys values _first =
+  (keys, fun ~prev ~next ~dt -> List.map Option.some (values ~prev ~next ~dt))
+
+(* Each GPU's metrics, named by its place in the first sample and kept to its
+   id, and each one its first sample gives. A GPU gone from a later sample
+   logs nothing then. *)
+let gpu_fields : (string * (Sysstat.Gpu.t -> float option)) list =
+  let gb bytes = Int64.to_float bytes /. 1_073_741_824. in
+  [
+    ("util_pct", fun g -> g.busy_percent);
+    ("mem_used_gb", fun g -> Option.map gb g.memory_used);
+    ( "mem_used_pct",
+      fun g ->
+        match (g.memory_used, g.memory_total) with
+        | Some used, Some total when Int64.compare total 0L > 0 ->
+            Some (Int64.to_float used *. 100. /. Int64.to_float total)
+        | _ -> None );
+    ("temp_c", fun g -> g.temperature);
+    ("power_w", fun g -> g.power);
+  ]
+
+let gpu_define (first : Sysstat.Gpu.t list) =
+  let plan =
+    List.concat
+      (List.mapi
+         (fun i (g : Sysstat.Gpu.t) ->
+           List.filter_map
+             (fun (name, field) ->
+               match field g with
+               | None -> None
+               | Some _ ->
+                   Some (Printf.sprintf "sys/gpu%d_%s" i name, g.id, field))
+             gpu_fields)
+         first)
+  in
+  let values ~prev:_ ~(next : Sysstat.Gpu.t list) ~dt:_ =
+    List.map
+      (fun (_, id, field) ->
+        match List.find_opt (fun (g : Sysstat.Gpu.t) -> g.id = id) next with
+        | Some g -> field g
+        | None -> None)
+      plan
+  in
+  (List.map (fun (key, _, _) -> key) plan, values)
 
 let mb bytes = bytes /. 1_048_576.
 
 let start ?(interval = 15.0) session =
   let cpu =
-    source session [ "sys/cpu_user"; "sys/cpu_system" ] Sysstat.Cpu.sample
-      (fun ~prev ~next ~dt:_ ->
-        let stats = Sysstat.Cpu.compute ~prev ~next in
-        [ stats.user; stats.system ])
+    source session Sysstat.Cpu.sample
+      (fixed [ "sys/cpu_user"; "sys/cpu_system" ] (fun ~prev ~next ~dt:_ ->
+           let stats = Sysstat.Cpu.compute ~prev ~next in
+           [ stats.user; stats.system ]))
   in
   let mem =
-    source session [ "sys/mem_used_pct"; "sys/mem_used_gb" ] Sysstat.Mem.sample
-      (fun ~prev:_ ~(next : Sysstat.Mem.t) ~dt:_ ->
-        let used = Int64.to_float next.used in
-        [ used *. 100. /. Int64.to_float next.total; used /. 1_073_741_824. ])
+    source session Sysstat.Mem.sample
+      (fixed [ "sys/mem_used_pct"; "sys/mem_used_gb" ]
+         (fun ~prev:_ ~(next : Sysstat.Mem.t) ~dt:_ ->
+           let used = Int64.to_float next.used in
+           [ used *. 100. /. Int64.to_float next.total; used /. 1_073_741_824. ]))
   in
   let proc =
-    source session [ "sys/proc_cpu_pct"; "sys/proc_mem_mb" ]
-      Sysstat.Proc.Self.sample (fun ~prev ~next ~dt ->
-        let stats = Sysstat.Proc.Self.compute ~prev ~next ~dt ~num_cores:None in
-        [ stats.cpu_percent; mb (Int64.to_float stats.rss_bytes) ])
+    source session Sysstat.Proc.Self.sample
+      (fixed [ "sys/proc_cpu_pct"; "sys/proc_mem_mb" ] (fun ~prev ~next ~dt ->
+           let stats =
+             Sysstat.Proc.Self.compute ~prev ~next ~dt ~num_cores:None
+           in
+           [ stats.cpu_percent; mb (Int64.to_float stats.rss_bytes) ]))
   in
   let disk =
-    source session
-      [ "sys/disk_read_mbs"; "sys/disk_write_mbs"; "sys/disk_util_pct" ]
-      Sysstat.Disk_io.sample (fun ~prev ~next ~dt ->
-        let stats = Sysstat.Disk_io.compute ~prev ~next ~dt in
-        [
-          mb stats.read_bytes_per_sec;
-          mb stats.write_bytes_per_sec;
-          stats.utilization_percent;
-        ])
+    source session Sysstat.Disk_io.sample
+      (fixed
+         [ "sys/disk_read_mbs"; "sys/disk_write_mbs"; "sys/disk_util_pct" ]
+         (fun ~prev ~next ~dt ->
+           let stats = Sysstat.Disk_io.compute ~prev ~next ~dt in
+           [
+             mb stats.read_bytes_per_sec;
+             mb stats.write_bytes_per_sec;
+             stats.utilization_percent;
+           ]))
   in
-  let sources = List.filter_map Fun.id [ cpu; mem; proc; disk ] in
+  let gpu = source session Sysstat.Gpu.sample gpu_define in
+  let sources = List.filter_map Fun.id [ cpu; mem; proc; disk; gpu ] in
   let stop_flag = Atomic.make false in
   let wake = socket_pair () in
   let prev_time = ref (Unix.gettimeofday ()) in
