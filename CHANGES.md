@@ -275,6 +275,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- The derivative budget of `Nx.gammaincinv` and `Nx.gammainccinv` in `p` is
+  stated at the smaller tail `min (p, 1 - p)`.
 - A compiled `Nx.eigh` of a matrix whose norm passes its dtype's range, such
   as `float32` `[[2.5e38, 1e38], [1e38, -2.5e38]]`, returns its eigenvalues
   and eigenvectors instead of NaN: the rotations run on the matrix scaled by
@@ -3072,6 +3074,8 @@ thread.
 
 ### Nx
 
+- `gammaincinv` and `gammainccinv` state their error bound at the smaller
+  tail `min (p, 1 - p)`, the precision they keep as `p` nears `1`.
 - `#require "nx.top"` no longer loads `compiler-libs.toplevel`, which the
   toplevel already holds: loading it printed an `Invalid_argument`
   exception on OCaml 5.5. When it cannot install `Nx.pp`, `nx.top` raises

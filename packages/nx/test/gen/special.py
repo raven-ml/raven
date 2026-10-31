@@ -1998,7 +1998,8 @@ def igamma_quantile_reference(upper):
 
 
 def igamma_kappa(upper):
-    """|p / (x F'(x))| at the exact quantile x, F the tail."""
+    """|m / (x F'(x))| at the exact quantile x, F the tail and m the smaller
+    tail, min(p, 1 - p)."""
     def extra(fmt, value, a, p):
         if math.isnan(value) or math.isinf(value):
             return "1"
@@ -2006,7 +2007,8 @@ def igamma_kappa(upper):
             return "0"
         with mp.workprec(fmt.p + 40):
             x = igamma_quantile(a, p, upper)
-            return scale(mpmath.exp(mpmath.log(mpf(p)) - (mpf(a) * mpmath.log(x) - x - mpmath.loggamma(mpf(a)))))
+            m = min(mpf(p), 1 - mpf(p))
+            return scale(mpmath.exp(mpmath.log(m) - (mpf(a) * mpmath.log(x) - x - mpmath.loggamma(mpf(a)))))
     extra.__name__ = "kappa"
     return extra
 

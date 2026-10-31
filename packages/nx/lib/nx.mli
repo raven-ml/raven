@@ -1734,14 +1734,15 @@ val gammaincinv :
     precision near either end. It is [0.] at [p = 0.], [inf] at [p = 1.] and
     where [a] is [inf] for [p > 0], and at [a = 0.], where the mass is at
     [0.], [0.] for [p < 1]. For [0 < a ≤ 2{^20}] within
-    [4 + κ (32 (1 + |log p|) + 4)] ulps, where [κ = |p / (x ∂ₓP(a, x))|]. *)
+    [4 + κ (32 (1 + |log m|) + 4)] ulps, where [m = min (p, 1 - p)] is the
+    smaller tail and [κ = |m / (x ∂ₓP(a, x))|]. *)
 
 val gammainccinv :
   (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t
 (** [gammainccinv a q] is the [x] with [gammaincc a x = q], as
     {!gammaincinv} from the upper tail: [inf] at [q = 0.], [0.] at [q = 1.],
     and [0.] at [a = 0.] for [q > 0]. Within the bound of {!gammaincinv},
-    in [q]. *)
+    with [m = min (q, 1 - q)]. *)
 
 val betainc :
   (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->

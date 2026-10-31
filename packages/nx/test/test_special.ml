@@ -519,8 +519,9 @@ let binary name ~bound ?scale ~firsts ~seconds { b } =
            ~bound ?scale ~firsts ~seconds f);
     ]
 
-(* An inverse's condition number [|p / (x ∂ₓF)|] at its result [x], [F] the
-   tail, [∂ₓP = x^(a - 1) e^-x / Γ(a)]. *)
+(* An inverse's condition number [|m / (x ∂ₓF)|] at its result [x], [F] the
+   tail, [m = min (p, 1 - p)] the smaller tail and
+   [∂ₓP = x^(a - 1) e^-x / Γ(a)]. *)
 let quantile_kappa (inverse : b) =
   {
     b =
@@ -528,12 +529,18 @@ let quantile_kappa (inverse : b) =
         let x = inverse.b a p in
         let open Nx in
         let density = sub (sub (mul a (log x)) x) (lgamma a) in
-        exp (sub (log p) density));
+        let m = minimum p (rsub_s 1. p) in
+        exp (sub (log m) density));
   }
 
 (* The forward bound at [f], in ulps, rounded down. *)
 let forward f = int_of_float (log_ulps 16 f)
-let inverse_bound args = Inverse (4, forward args.(1))
+
+(* An inverse's bound at its probability [args.(1)], read in the smaller
+   tail. *)
+let inverse_bound args =
+  let p = args.(1) in
+  Inverse (4, forward (Float.min p (1. -. p)))
 
 (* The partners of every 16-bit float: two of the parameter and two of the
    variable, one and two for an inverse, whose program is three times as
@@ -794,6 +801,33 @@ let close ~than i error =
     ~msg:(Printf.sprintf "the error at element %d" i)
     float_exact ~than error
 
+(* [upper_tail ~tail ~inverse a x] holds [inverse]'s bound above [1/2],
+   where it inverts the other tail. [t = tail a x], within [B(t)] ulps, is
+   read as [p = 1 - t] rounded, whose smaller tail [m = 1 - p] is exact by
+   Sterbenz's lemma and differs from [t] by [m - t], also exact. The
+   quantile at [p] is [x] moved by [κ (B(t) + |log (m / t)| / ε)] ulps, for
+   [κ] the slope of [log x] in [log m], and [|log (m / t)|] is at most
+   [|m - t| / min (m, t)]. [inverse a p] is within [4 + κ B(m)] ulps of
+   it. *)
+let upper_tail ~tail ~(inverse : b) a x =
+  let open Nx in
+  let t = tail a x in
+  let p = rsub_s 1. t in
+  let back = inverse.b a p in
+  let kappa = values ((quantile_kappa inverse).b a p) in
+  let t = values t and p = values p and back = values back in
+  Array.iteri
+    (fun i x ->
+      let t = t.(i) and m = 1. -. p.(i) in
+      if t >= 0x1p-1022 && t < 0.5 && p.(i) < 1. then
+        let moved =
+          kappa.(i)
+          *. (log_ulps 16 t +. (Float.abs (m -. t) /. (Float.min m t *. eps)))
+        in
+        let own = 4. +. (kappa.(i) *. log_ulps 16 m) in
+        close i ~than:((own +. moved) *. eps *. x) (Float.abs (back.(i) -. x)))
+    (values x)
+
 let gamma_laws =
   let open Nx in
   group "incomplete gamma laws"
@@ -839,27 +873,41 @@ let gamma_laws =
                 (Float.abs (p -. e)))
             (gammainc a x) lp (exp lp));
       prop "gammaincinv inverts gammainc" pairs (fun (a, x) ->
+          (* [p] within [B(p)] ulps moves the quantile by [κ_p B(p)], for
+             [κ_p = κ p / m]; the inverse adds [4 + κ B(m)]. *)
           let p = gammainc a x in
           let back = gammaincinv a p in
           let kappa = values ((quantile_kappa { b = gammaincinv }).b a p) in
           elementwise
             (fun i x p back ->
               if p >= 0x1p-1022 && p < 1. then
+                let m = Float.min p (1. -. p) in
+                let moved = kappa.(i) *. p /. m *. log_ulps 16 p in
+                let own = 4. +. (kappa.(i) *. log_ulps 16 m) in
                 close i
-                  ~than:((4. +. (2. *. kappa.(i) *. log_ulps 16 p)) *. eps *. x)
+                  ~than:((own +. moved) *. eps *. x)
                   (Float.abs (back -. x)))
             x p back);
       prop "gammainccinv inverts gammaincc" pairs (fun (a, x) ->
+          (* [q] within [B(q)] ulps moves the quantile by [κ_q B(q)], for
+             [κ_q = κ q / m]; the inverse adds [4 + κ B(m)]. *)
           let q = gammaincc a x in
           let back = gammainccinv a q in
           let kappa = values ((quantile_kappa { b = gammainccinv }).b a q) in
           elementwise
             (fun i x q back ->
               if q >= 0x1p-1022 && q < 1. then
+                let m = Float.min q (1. -. q) in
+                let moved = kappa.(i) *. q /. m *. log_ulps 16 q in
+                let own = 4. +. (kappa.(i) *. log_ulps 16 m) in
                 close i
-                  ~than:((4. +. (2. *. kappa.(i) *. log_ulps 16 q)) *. eps *. x)
+                  ~than:((own +. moved) *. eps *. x)
                   (Float.abs (back -. x)))
             x q back);
+      prop "gammaincinv holds its bound above p = 1/2" pairs (fun (a, x) ->
+          upper_tail ~tail:gammaincc ~inverse:{ b = gammaincinv } a x);
+      prop "gammainccinv holds its bound above q = 1/2" pairs (fun (a, x) ->
+          upper_tail ~tail:gammainc ~inverse:{ b = gammainccinv } a x);
       prop "gammainc increases in x and decreases in a"
         (Gen.pair pairs (log_batch 1e-6 1.))
         (fun ((a, x), d) ->

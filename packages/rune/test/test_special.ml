@@ -368,8 +368,10 @@ let in_a = everywhere (Relative_scaled (0x1p-40, 0x1p-16))
 let linear_in_x = everywhere (Inverse (64, 512))
 
 let incomplete_gamma_derivatives =
+  (* Read in the smaller tail [m = min (p, 1 - p)], as the scale's [κ] is. *)
   let gammaincinv_p args =
-    Inverse (64, 16 * int_of_float (log_ulps 16 args.(1)))
+    let p = args.(1) in
+    Inverse (64, 16 * int_of_float (log_ulps 16 (Float.min p (1. -. p))))
   in
   let inverse_a = everywhere (Relative (0x1p-40, 0x1p-16)) in
   let near_zeros = everywhere (Near_zeros (256, 256)) in

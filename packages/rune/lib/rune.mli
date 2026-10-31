@@ -286,8 +286,8 @@ val jvp :
     - The four, in [a]: [2^-40 (1 + |log f|)] relative at [float64],
       [2^-16 (1 + |log f|)] at [float32].
     - {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q]:
-      [64 + 16κ (32 (1 + |log p|) + 4)] ulps, [q] in place of [p] for
-      {!Nx.gammainccinv}.
+      [64 + 16κ (32 (1 + |log m|) + 4)] ulps, [m] the smaller tail
+      [min (p, 1 - p)], or [min (q, 1 - q)] for {!Nx.gammainccinv}.
     - The two, in [a]: [2^-40] relative at [float64], [2^-16] at [float32].
     - {!Nx.betainc}, {!Nx.betaincc}, in [x]: [1024 (1 + |log f|) + 64] ulps.
     - {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x]: 512 ulps, or [512ε]
