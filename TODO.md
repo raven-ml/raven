@@ -180,7 +180,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - running sums cost ~257 ops per element (shape.ml:955): `Nx.cumsum` over
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row
-- Metal groups: after D144, lorenz-step-batch-1024's r_3_256_16_64_64 went
+- Metal groups: after D137, lorenz-step-batch-1024's r_3_256_16_64_64 went
   10.7 -> 18.9 ms (loads stride across 16 threads)
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise

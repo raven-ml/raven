@@ -2183,37 +2183,10 @@ its launch descriptors (D146).
   blocks` and `› a run of a large kernel computes its sums`, and `a variable
   named as a block's bounds is a variable like any other`.
 
-## D81. The matrix-vector layout reads its operands through conversions and decoding
+## D81. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
-  matrix-vector case), which applies only when the reduced product's two
-  operands are loads (`mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
-  Ops.INDEX`) and the vector's index has the first reduce range as a term of
-  its sum.
-- **tolk:** `Heuristic.term_of` and `Heuristic.operands`, which D89 widens; `test/gen/tinygrad.patch`, which gives
-  tinygrad the same before the goldens are recorded.
-- **Differs:** the vector is a load read through dtype conversions (`CAST`,
-  `BITCAST`), and the matrix any computation of loads with no reduce, whose
-  ranges then stand for the matrix load's index's. The first reduce range may
-  be a term of the vector's index alone or times a constant. A product of two
-  loads is chosen as before.
-- **Reason:** (d): nx.quant's products (`Nx_quant.apply`) compiled by rune,
-  whose matrix is MXFP4 codes decoded by bit operations and scaled by their
-  group, and whose vector is a bfloat16 activation widened to float32.
-  A decoded byte splits the reduce into a range over bytes and one over a
-  byte's two values, so the vector reads the byte range times 2. tinygrad
-  declines the case, as it does a vector read through a cast alone, and the
-  kernel then ran each row's whole reduce in one thread: gpt-oss-20b's expert
-  products on CUDA launched 960 threads, the down product taking 1.98 ms per
-  layer and gate-up 2.01 ms. On Metal (M1 Max), the down product of four
-  experts at gpt-oss's widths takes 0.65 ms where it took 2.2 ms with the
-  codes decoded by bit operations, and 0.64 to 0.77 ms where it took 2.8 to
-  8.2 ms with the table. To re-measure on fudge: no fudge bench row holds it
-  (kaun's `Quant/cuda/*` and `Quant/metal/*` rows are baselined on kimchi and
-  the Mac only).
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `vecmat_of_cast_*` and `vecmat_decoded_*`,
-  recorded from the equally patched tinygrad.
+The matrix-vector layout read its operands through conversions and decoding;
+merged into D89.
 
 ## D82. A sharded value is not stored into a replicated destination
 
@@ -2371,51 +2344,104 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 ## D89. A matrix-vector product is laid out by its matrix
 
 - **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
-  matrix-vector case: the first reduce axis split into `MV_THREADS_PER_ROW`
-  local threads, 8, the first global axis that 16 divides into
-  `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast lanes,
-  4, whatever the matrix's layout and size), and `codegen/opt/postrange.py:132-134`
-  (`apply_opt`, which refuses a local split of a reduce axis inside another
-  reduce).
-- **tolk:** `Heuristic.lanes`, `Heuristic.rows`, `Heuristic.columns`,
-  `Heuristic.busy`, `Heuristic.in_flight`, `Heuristic.operands`,
-  `Heuristic.units` and `Heuristic.matvec`; `Postrange.Scheduler.apply`'s
-  check of a group inside a reduce;
+  matrix-vector case, which applies only when the reduced product's two
+  operands are loads, `mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
+  Ops.INDEX`, and the vector's index has the first reduce range as a term of
+  its sum: the first reduce axis split into `MV_THREADS_PER_ROW` local
+  threads, 8, the first global axis that 16 divides, whichever operand reads
+  it, into `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast
+  lanes, 4, whatever the matrix's layout and size), and
+  `codegen/opt/postrange.py:132-134` (`apply_opt`, which refuses a local split
+  of a reduce axis inside another reduce).
+- **tolk:** `Heuristic.term_of`, `Heuristic.operands`, `Heuristic.lanes`,
+  `Heuristic.rows`, `Heuristic.columns`, `Heuristic.sector_lanes`,
+  `Heuristic.busy`, `Heuristic.in_flight`, `Heuristic.units` and
+  `Heuristic.matvec` (its `rows_layout`, and its `columns_layout` with its
+  `across`); `Postrange.Scheduler.apply`'s check of a group inside a reduce;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
-- **Differs:** the vector is any computation of accesses with no reduce,
-  either operand of the product, in fewer ranges than the matrix. The range of
-  unit stride in an access of the matrix that reads along the reduce chooses
-  the layout. Along the reduce (`W[n, k]`): the reduce splits into up to 32
-  local threads, adjacent threads reading adjacent elements, 4 rows a
-  workgroup, and what is left of the reduce is unrolled by its largest divisor
-  up to 8. Along an output (`W[k, n]`): that axis splits into 32 local threads
-  and 2 upcast lanes, and the reduce into the threads, up to 32, that make
-  32768 threads; with more than 32768 outputs the kernel takes the other
-  rules. `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD` are
-  gone; `MV=0` stays. A reduce axis inside another reduce splits into local
-  threads, each iteration of the outer reduce storing and reading the shared
-  buffer between barriers; inside an unrolled reduce it is still refused.
-- **Reason:** (d): gpt-oss-20b's decode on CUDA (RTX 5000 Ada, 576 GB/s).
-  tinygrad's layout puts 8 threads on a row whatever the matrix: rows along
-  the reduce read one byte a thread, columns along an output read 8 rows apart,
-  and few outputs leave the GPU short of threads. The query projection
-  multiplies a normalised activation, which tinygrad declines, and ran 1024
-  threads; the experts' down product sums four experts, a reduce around the
-  matrix-vector one, which could not split, and ran 720 threads reading
-  11520 bytes each. Per decode step, from 45.5 ms to 11.1 ms: the down
-  products from 15.72 ms to 0.91 ms (5% to 81% of the bandwidth), gate-up
-  from 15.38 ms to 2.60 ms (10% to 57%), the attention projections from
-  8.56 ms to 2.17 ms, the output projection from 1.57 ms to 1.12 ms (63% to
-  88%); the 201088 outputs of the head keep their layout. To re-measure on
-  fudge: no fudge bench row holds it (kaun's `GptOss/decode-step-cache-1024`
-  is baselined on kimchi and nonnormal, its `Quant/cuda/*` rows on kimchi).
+- **Differs:**
+  - the operands: the vector is any computation of accesses with no reduce,
+    a load read through dtype conversions (`CAST`, `BITCAST`) among them,
+    either operand of the product, in fewer ranges than the matrix. The
+    matrix is any computation of loads with no reduce, such as decoded codes,
+    whose ranges then stand for its load's index. The first reduce range may
+    be a term of the vector's index alone or times a constant;
+  - the layout: the range of unit stride in an access of the matrix that
+    reads along the reduce chooses it. Along the reduce (`W[n, k]`): the
+    reduce splits into up to 32 local threads, adjacent threads reading
+    adjacent elements, 4 rows a workgroup, and what is left of the reduce is
+    unrolled by its largest divisor up to 8. Along an output (`W[k, n]`): that
+    axis splits into 32 local threads and 2 upcast lanes, and the reduce into
+    the threads, up to 32, that make 32768 threads; with more than 32768
+    outputs the kernel takes the other rules. `MV_BLOCKSIZE`,
+    `MV_THREADS_PER_ROW` and `MV_ROWS_PER_THREAD` are gone; `MV=0` stays;
+  - a workgroup's rows: the rows layout splits its 4 SIMD groups from the
+    first global axis that 4 divides among those the vector does not read,
+    and from one the vector reads only when none of the others divides;
+  - few outputs: when the outputs are too few for the columns layout to run
+    32768 threads, a workgroup of 1024 threads takes fewer threads across
+    them, down to 8, and more along the reduce, as many as the reduce's
+    power-of-two divisor allows, so that more workgroups share the outputs.
+    8 threads of 2 bfloat16 columns read a 32-byte sector. The columns
+    layout, which took at least 64 outputs, takes a product of 32 too;
+  - a reduce axis inside another reduce splits into local threads, each
+    iteration of the outer reduce storing and reading the shared buffer
+    between barriers; inside an unrolled reduce it is still refused.
+- **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA (RTX 5000
+  Ada, 576 GB/s, 100 multiprocessors), and nx.quant's products
+  (`Nx_quant.apply`) compiled by rune. tinygrad's layout puts 8 threads on a
+  row whatever the matrix: rows along the reduce read one byte a thread,
+  columns along an output read 8 rows apart, and few outputs leave the GPU
+  short of threads.
+  - The decode step went from 45.5 ms to 11.1 ms. The query projection
+    multiplies a normalised activation, which tinygrad declines, and ran
+    1024 threads; the experts' down product sums four experts, a reduce
+    around the matrix-vector one, which could not split, and ran 720 threads
+    reading 11520 bytes each. The down products went from 15.72 ms to 0.91 ms
+    (5% to 81% of the bandwidth), gate-up from 15.38 ms to 2.60 ms (10% to
+    57%), the attention projections from 8.56 ms to 2.17 ms, the output
+    projection from 1.57 ms to 1.12 ms (63% to 88%); the 201088 outputs of
+    the head keep their layout.
+  - The operands: an expert's matrix is MXFP4 codes decoded by bit
+    operations and scaled by their group, and its vector a bfloat16
+    activation widened to float32. A decoded byte splits the reduce into a
+    range over bytes and one over a byte's two values, so the vector reads
+    the byte range times 2. tinygrad declines the case, as it does a vector
+    read through a cast alone, and the kernel then ran each row's whole
+    reduce in one thread: the expert products launched 960 threads, the down
+    product taking 1.98 ms per layer and gate-up 2.01 ms. On Metal (M1 Max),
+    the down product of four experts at gpt-oss's widths takes 0.65 ms where
+    it took 2.2 ms with the codes decoded by bit operations, and 0.64 to
+    0.77 ms where it took 2.8 to 8.2 ms with the table.
+  - A workgroup's rows: under `Nx.map_segments` over `Nx_quant.apply` on a
+    prompt, whose blocks of rows each multiply their expert's matrix, the
+    vector, a block's rows, reads the block axis, so the 4 groups of a
+    workgroup took 4 blocks, each reading its own rows for every output. In
+    blocks of 4, D92's upcast, a workgroup reads 16 rows of 2880 floats,
+    184 KB, more than an SM's L1 holds; in blocks of 2, half that. On the
+    matrix's rows the 4 groups read one block's rows. The 512-token gate and
+    up product went, in blocks of 4, from 56.6 ms to 21.9 ms, and in blocks
+    of 2 from 26.0 ms to 25.3 ms, with the same registers (63 and 61, no
+    spills); on an M1 Max's Metal from 224 ms to 162 ms and from 225 ms to
+    167 ms.
+  - Few outputs: the key and value projections, 512 outputs, ran on 8
+    workgroups and took 9.05 us each; on 32 they take 7.8 us. The router, 32
+    outputs, fell back to a group of 16 threads per output and took 6.7 us;
+    it takes 3.7 us.
+
+  To re-measure on fudge: no fudge bench row holds it (kaun's
+  `GptOss/decode-step-cache-1024` is baselined on kimchi and nonnormal, its
+  `Quant/cuda/*` and `Quant/metal/*` rows on kimchi and the Mac).
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`, `experts_down_*`
-  and `gpt_oss_*`, recorded from the equally patched tinygrad, and `the
-  hand-coded optimisations keep a kernel's writes › small kernels ›
-  experts_down_metal` (a group inside another reduce); the Postrange suite's
-  cases `double_sum_group` and `double_sum_group_twice`.
+  tinygrad's › applied_opts`, cases `matvec_*`, `vecmat_*`,
+  `vecmat_of_cast_*`, `vecmat_decoded_*`, `experts_down_*`, `gpt_oss_*`
+  (`gpt_oss_kv_*` and `gpt_oss_router_*` among them), `shared_keys_*` and
+  `routed_blocks_{metal,cuda,amd}` (the local split on the matrix's row
+  axis), recorded from the equally patched tinygrad, and `the hand-coded
+  optimisations keep a kernel's writes › small kernels › experts_down_metal`
+  (a group inside another reduce); the Postrange suite's cases
+  `double_sum_group` and `double_sum_group_twice`.
 
 ## D90. A linked schedule resolves its launches at link
 
@@ -2516,65 +2542,61 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   tinygrad, and `the hand-coded optimisations keep a kernel's writes › large
   kernels › routed_blocks_*` (slow).
 
-## D93. The where-closure rule searches for its condition
+## D93. The where-closure rule's slice queries walk no more than they need
 
-- **tinygrad:** `uop/symbolic.py:228-230` (`fold_where_closure`, which asks
-  whether the condition is in `t.bool_slice` or `f.bool_slice`) and
-  `uop/ops.py:289-293` (`_bool_slice`, a `recursive_property`: each node
-  keeps the set of the boolean nodes it reaches).
-- **tolk:** `Shape.fold_where_closure` and `Ops.reaches`.
-- **Differs:** the rule asks whether `t` or `f` reaches the condition, a
-  scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
-  node built before the condition, since a node is built after its sources.
-  `Ops.bool_slice` is gone. The search runs last, after the INDEX gate,
-  which reads a property of each node (D94), where tinygrad's lookup runs
-  first: a branch that reaches an INDEX is rejected without a walk. The rule
-  folds the same selections.
+- **tinygrad:** `uop/symbolic.py:228-232` (`fold_where_closure`, which asks
+  whether the condition is in `t.bool_slice` or `f.bool_slice`, and whether
+  the condition and both branches reach an `INDEX`); `uop/ops.py:289-293`
+  (`_bool_slice`, a `recursive_property`: each node keeps the set of the
+  boolean nodes it reaches) and `:277-287` (`backward_slice`, a
+  `cached_property` holding the whole slice of each node asked, and
+  `op_in_backward_slice_with_self`, which walks it).
+- **tolk:** `Shape.fold_where_closure`, `Ops.reaches`, `Ops.ops_reached` and
+  `Ops.op_in_backward_slice_with_self`.
+- **Differs:**
+  - the condition: the rule asks whether `t` or `f` reaches the condition, a
+    scalar boolean, with `Ops.reaches`: a walk from the branch that enters no
+    node built before the condition, since a node is built after its
+    sources. `Ops.bool_slice` is gone. The search runs last, after the INDEX
+    gate, where tinygrad's lookup runs first: a branch that reaches an INDEX
+    is rejected without a walk;
+  - the INDEX gate: each node keeps, as a property filled from its sources,
+    the set of the operations of itself and of the nodes it reaches outside
+    call bodies; a node whose set is a source's shares it.
+    `op_in_backward_slice_with_self` reads that set and no longer builds the
+    node's `backward_slice`.
+
+  The rule folds the same selections, and the answers are the same.
 - **Reason:** (d): compile time. rune lowers `Nx.sin` to a reduction full of
-  comparisons and selections (`Lower_real.reduce`), so in a jitted chain of
-  `Nx.sin` each
-  node's boolean set holds every comparison of the links before it, and the
-  sets grow with the square of the chain. Compiling a chain of 80 `Nx.sin`
-  cold on an M1 Max took 63.0 s and a heap of 618M words with the property,
-  and takes 16.6 s and 76M words with the search, whose walks stay inside
-  the link that built the condition. A condition built before a long chain
-  of selections still makes each search walk the chain below it, which the
-  INDEX gate spares when the branches read memory: the jitted training step
-  of a model of 2031 kernels spent 3 s of its 10 s schedule in the search.
-  To re-measure on fudge. rune's `Jit/jit-run-chain` times warm runs and
-  cannot catch it; rune's compile bench row `shaped-4k`, a cold compile of
-  4k operations in regions of selections, is the nearest fudge row
-  (unverified that it catches the slice's square).
+  comparisons and selections (`Lower_real.reduce`), and in a jitted chain of
+  `Nx.sin` every link's selections are asked about. Each node's boolean set
+  holds every comparison of the links before it, and each slice the whole
+  chain below, so work and memory grow with the square of the chain.
+  Compiling a chain of 80 `Nx.sin` cold on an M1 Max took 63.0 s and a heap
+  of 618M words with the boolean sets, and 16.6 s and 76M words with the
+  search, whose walks stay inside the link that built the condition; with
+  the slices it took 28.0 s and 218M words, and 16.4 s and 73M words with
+  the operation sets. A condition built before a long chain of selections
+  still makes each search walk the chain below it, which the INDEX gate
+  spares when the branches read memory: the jitted training step of a model
+  of 2031 kernels spent 3 s of its 10 s schedule in the search. To
+  re-measure on fudge. rune's `Jit/jit-run-chain` times warm runs and cannot
+  catch it; rune's compile bench row `shaped-4k`, a cold compile of 4k
+  operations in regions of selections, is the nearest fudge row (unverified
+  that it catches the square).
 - **Pinned by:** the Symbolic suite (`test/uop/symbolic`): `cost › sym's work
   on a chain of selections is linear in its length`, `› sym's work on a chain
   under one far condition is linear in its length` and tinygrad's
   `test_where_closure_folding*` goldens; the Ops suite (`test/uop/ops`):
-  `graphs › reaches is membership in the node's toposort` and `› reaches
-  ~calls:Enter enters call bodies`.
+  `graphs › reaches is membership in the node's toposort`, `› reaches
+  ~calls:Enter enters call bodies`, `› op_in_backward_slice_with_self is an
+  operation of the slice` and `› op_in_backward_slice_with_self enters call
+  bodies only under Enter`.
 
-## D94. A node keeps the operations it reaches
+## D94. Withdrawn
 
-- **tinygrad:** `uop/ops.py:277-287` (`backward_slice`, a `cached_property`
-  holding the whole slice of each node asked, and
-  `op_in_backward_slice_with_self`, which walks it).
-- **tolk:** `Ops.ops_reached` and `Ops.op_in_backward_slice_with_self`.
-- **Differs:** each node keeps, as a property filled from its sources, the
-  set of the operations of itself and of the nodes it reaches outside call
-  bodies; a node whose set is a source's shares it.
-  `op_in_backward_slice_with_self` reads that set and no longer builds the
-  node's `backward_slice`. Answers are the same.
-- **Reason:** (d): compile time. The where-closure rule asks whether the
-  condition and both
-  branches reach an `Index`, which builds and keeps the slice of every node it
-  asks about. In a jitted chain of `Nx.sin` every link's selections are
-  asked, each slice holds the whole chain below, and the work and memory grow
-  with the square of the chain. Compiling a chain of 80 `Nx.sin` cold on an M1
-  Max took 28.0 s and a heap of 218M words, and takes 16.4 s and 73M words.
-  To re-measure on fudge, as for D93.
-- **Pinned by:** the Symbolic suite: `cost › sym's work on a chain of
-  selections is linear in its length`; the Ops suite: `graphs ›
-  op_in_backward_slice_with_self is an operation of the slice` and `›
-  op_in_backward_slice_with_self enters call bodies only under Enter`.
+A node kept the operations it reaches, so that the where-closure rule's INDEX
+gate read a set; merged into D93.
 
 ## D95. A device's target follows from the device alone
 
@@ -2598,32 +2620,9 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   (each row renders for the target tinygrad's `DEV` gives the device) and
   `renders for the target it is given`.
 
-## D96. A matrix-vector workgroup's rows are the matrix's own
+## D96. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
-  matrix-vector case, which splits `MV_BLOCKSIZE` local threads from the
-  first global axis that divides, whichever operand reads it).
-- **tolk:** `Heuristic.operands` and `Heuristic.matvec`'s `rows_layout`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same
-  before the goldens are recorded.
-- **Differs:** D89's rows layout splits its 4 SIMD groups from the first
-  global axis that 4 divides among those the vector does not read, and from
-  one the vector reads only when none of the others divides.
-- **Reason:** (d): `Nx.map_segments` over `Nx_quant.apply` on a prompt, whose
-  blocks of rows each multiply their expert's matrix. The vector, a block's
-  rows, reads the block axis, so the 4 groups of a workgroup took 4 blocks, each
-  reading its own rows for every output. In blocks of 4, D92's upcast, a
-  workgroup reads 16 rows of 2880 floats, 184 KB, more than an SM's L1 holds on
-  an RTX 5000 Ada; in blocks of 2, half that. On the matrix's rows the 4 groups
-  read one block's rows. gpt-oss-20b's 512-token gate and up product on that
-  GPU, in blocks of 4, from 56.6 ms to 21.9 ms, and in blocks of 2 from 26.0 ms
-  to 25.3 ms, with the same registers (63 and 61, no spills); on an M1 Max's
-  Metal from 224 ms to 162 ms and from 225 ms to 167 ms. To re-measure on
-  fudge: no fudge bench row holds it.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `routed_blocks_metal`,
-  `routed_blocks_cuda` and `routed_blocks_amd` (the local split on the
-  matrix's row axis), recorded from the equally patched tinygrad.
+A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 ## D100. A reduction of no axes that a broadcast ends is stored
 
@@ -2786,7 +2785,7 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   sorts positions by expert into blocks of up to 16 rows, each multiplying its
   expert's matrix, `W[owner[row / 16]]`. The rows read the row axis and the
   matrix reads it by blocks, so tinygrad finds no M range; the decoded bytes
-  split the reduce into bytes and a byte's two values (D81), which tinygrad's
+  split the reduce into bytes and a byte's two values (D89), which tinygrad's
   heuristic leaves to the hand-coded path. A block of 8, which fewer positions
   take, fits CUDA's N of 8 and not its M of 16, so its rows are the core's B.
   gpt-oss-20b's 512-token gate and up product on an RTX 5000 Ada takes 2.9 ms on
@@ -2906,30 +2905,11 @@ submissions across queues (D146).
   `metal`, `cuda` and `amd` the sum is unrolled), recorded from the equally
   patched tinygrad; the tolk bench's `lorenz/*/heuristic` rows on fudge.
 
-## D110. A matrix-vector product with few outputs takes fewer threads across them
+## D110. Withdrawn
 
-- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
-  matrix-vector case, `MV_BLOCKSIZE` local threads on the output, whatever
-  its size); D89 replaces it.
-- **tolk:** `Heuristic.sector_lanes` and `Heuristic.matvec`'s `columns_layout`
-  (its `across`); `test/gen/tinygrad.patch`, which gives
-  tinygrad the same before the goldens are recorded.
-- **Differs:** D89's columns layout puts 32 threads across the outputs and
-  up to 32 along the reduce. When the outputs are too few for that to run
-  32768 threads, a workgroup of 1024 threads takes fewer across, down to 8,
-  and more along the reduce, as many as the reduce's power-of-two divisor
-  allows, so that more workgroups share the outputs. 8 threads of 2
-  bfloat16 columns read a 32-byte sector. A product of 32 outputs, which
-  took D89's 64 at least, now takes this layout too.
-- **Reason:** (d): gpt-oss-20b's decode on CUDA (RTX 5000 Ada, 100
-  multiprocessors). The key and value projections, 512 outputs, ran on 8
-  workgroups and took 9.05 us each; on 32 they take 7.8 us. The router, 32
-  outputs, fell back to a group of 16 threads per output and took 6.7 us; it
-  takes 3.7 us. To re-measure on fudge: no fudge bench row holds it.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › applied_opts`, cases `gpt_oss_kv_*`, `gpt_oss_router_*`,
-  `vecmat_*` and `shared_keys_*`, recorded from the equally patched
-  tinygrad.
+A matrix-vector product with few outputs took fewer threads across them;
+merged into D89.
+
 ## D111. A hung AM device is lost, never recovered in the process
 
 - **tinygrad:** `runtime/ops_amd.py:782-801` (`_collect_interrupts`, whose
@@ -3106,13 +3086,19 @@ encodes its barriers (D146).
   linearize and compile › compile completes linearize into the program
   to_program makes` and `› linearize compiles nothing`.
 
-## D116. A search compiles each kernel and each source once
+## D116. A search compiles each kernel and source once, and keeps nothing of its candidates
 
 - **tinygrad:** `codegen/opt/search.py:132-142` (each candidate compiled,
-  then dropped if its binary is in `seen_libs`).
+  then dropped if its binary is in `seen_libs`), `:64` (`_try_compile` calls
+  `to_program`); `codegen/__init__.py:465-491` (`do_to_program` takes a
+  sink or a program at any stage), `:502-504` (`to_program_cache`) and
+  `:451` (`do_compile` calls `compile_cached`); `engine/realize.py:231`
+  (`_get_call_to_compile` takes a program not yet compiled).
 - **tolk:** `Search.beam_search` (its `compiled`, the compiler it memoizes
-  and its `compile`); `Search.memo`.
-- **Differs:** a search keeps each kernel's compilation, by its scheduler's
+  and its `compile`); `Search.memo`; `Search.try_compile`, `Codegen.compile`
+  and `Codegen.to_program`, and `Realize.get_call_to_compile`.
+- **Differs:** a search compiles through memos of its own, and keeps nothing
+  beyond them. It keeps each kernel's compilation, by its scheduler's
   kernel (`Postrange.Scheduler.ast`), and a candidate whose kernel it met
   before, in this round or an earlier one, takes that result uncompiled. The
   memo is filled before a round's compilations are spread over the domains.
@@ -3125,18 +3111,42 @@ encodes its barriers (D146).
   kernels can also render one source: the search compiles through a memo of
   its compiler, so a source is compiled or rejected once, and a domain asking
   for one another is compiling waits for it. A binary or a rejection depends
-  only on its source, so `seen_libs` sees the same binaries. Candidates are
-  compiled without the disk cache of the compiler's binaries.
-- **Reason:** (d): the beam searches of GNODE and of lorenz_simple's step
-  (sofo-raven) on AMD, where 12 to 16% of a search's candidates were such
-  duplicates, and the host searches of a lorenz_simple step on AMD, where 10
-  of 12 candidates of a round compiled to binaries already timed. Measured
-  on AMD; to re-measure on fudge. No fudge bench row times a search's
-  compilations: tolk's `search/linearize/*` rows lower candidates and
-  compile none.
+  only on its source, so `seen_libs` sees the same binaries.
+
+  A candidate is compiled by `Codegen.linearize` then `Codegen.compile`,
+  which keep nothing: the compiler neither reads nor fills its disk cache
+  table, and the program enters neither of `to_program`'s tables. tinygrad
+  compiles a candidate through `to_program`, which keeps the program in
+  memory for the life of the process, and through `compile_cached`, which
+  keeps its binary on disk. A search keeps its choice, and the kernel
+  compiled with it keeps its own binary, as in tinygrad; as in tinygrad, that
+  kernel is compiled apart from the candidate it was, since a candidate is
+  named `"test"`. `to_program` takes only a kernel's sink, and `compile` only
+  what `linearize` returns: `to_program ast ren` is
+  `compile (linearize ast ren) ren`, kept. tinygrad's `do_to_program`, and
+  `lower_and_compile` with it, also resume a program from any stage. Under
+  `ASSERT_COMPILE` a search not kept compiles its candidates, and the kernel
+  compiled with it raises at its own compilation, where tinygrad raises at
+  the first candidate.
+- **Reason:** for the memos, (d): the beam searches of GNODE and of
+  lorenz_simple's step (sofo-raven) on AMD, where 12 to 16% of a search's
+  candidates were such duplicates, and the host searches of a lorenz_simple
+  step on AMD, where 10 of 12 candidates of a round compiled to binaries
+  already timed. Measured on AMD; to re-measure on fudge. No fudge bench row
+  times a search's compilations: tolk's `search/linearize/*` rows lower
+  candidates and compile none. For keeping nothing, none: it saves disk and
+  memory, since a search makes hundreds of candidates, and kept, they grew
+  tolk's disk cache to 8.9 GB on an M1 Max, and its memory table for the
+  life of a process. A later search of the same kernel reads its choice back
+  and compiles no candidate, so the kept binaries served only a search run
+  again under `IGNORE_BEAM_CACHE`. A program resumed from a later stage had
+  no caller but tests. No raven call site is shown to fail with the
+  candidates kept, and `CACHESIZE` (D152) now bounds the disk cache.
 - **Pinned by:** `Tolk.Search › a search compiles each kernel once`
-  (`matmul_small`, whose upcast and swap commute; it counts renders) and
-  `› a search compiles each source once` (both tests).
+  (`matmul_small`, whose upcast and swap commute; it counts renders), `› a
+  search compiles each source once` (both tests) and `› a kernel compiled
+  with a search keeps the search's choice and its own binary alone`;
+  `Tolk.Codegen › linearize and compile` (every test).
 
 ## D117. A search starts from its kernel's samples and progresses beyond their spread
 
@@ -3402,41 +3412,10 @@ launch descriptors (D146).
   On rune: missing (the old rune's `a compiled program › computes eager's
   bits`, whose examples held the pad, went with its rewrite).
 
-## D129. A search keeps nothing of its candidates
+## D129. Withdrawn
 
-- **tinygrad:** `codegen/opt/search.py:64` (`_try_compile` calls
-  `to_program`), `codegen/__init__.py:465-491` (`do_to_program` takes a
-  sink or a program at any stage), `:502-504` (`to_program_cache`) and
-  `:451` (`do_compile` calls `compile_cached`); `engine/realize.py:231`
-  (`_get_call_to_compile` takes a program not yet compiled).
-- **tolk:** `Search.try_compile`, `Codegen.compile` and
-  `Codegen.to_program`, and `Realize.get_call_to_compile`.
-- **Differs:** a candidate is compiled by `Codegen.linearize` then
-  `Codegen.compile`, which keep nothing: the compiler neither reads nor fills
-  its disk cache table, and the program enters neither of `to_program`'s
-  tables. tinygrad compiles a candidate through `to_program`, which keeps the
-  program in memory for the life of the process, and through
-  `compile_cached`, which keeps its binary on disk. A search keeps its
-  choice, and the kernel compiled with it keeps its own binary, as in
-  tinygrad; as in tinygrad, that kernel is compiled apart from the candidate
-  it was, since a candidate is named `"test"`. `to_program` takes only a
-  kernel's sink, and `compile` only what `linearize` returns:
-  `to_program ast ren` is `compile (linearize ast ren) ren`, kept. tinygrad's
-  `do_to_program`, and `lower_and_compile` with it, also resume a program
-  from any stage. Under `ASSERT_COMPILE` a search not kept compiles its
-  candidates, and the kernel compiled with it raises at its own compilation,
-  where tinygrad raises at the first candidate.
-- **Reason:** none. The rule saves disk and memory: a search makes hundreds
-  of candidates, and kept, they grew tolk's disk cache to 8.9 GB on an M1
-  Max, and its memory table for the life of a process. A later search of the
-  same kernel reads its choice back and compiles no candidate, so the kept
-  binaries served only a search run again under `IGNORE_BEAM_CACHE`. A
-  program resumed from a later stage had no caller but tests. No raven call
-  site is shown to fail with the candidates kept, and `CACHESIZE` (D152) now
-  bounds the disk cache.
-- **Pinned by:** `Tolk.Search › a kernel compiled with a search keeps the
-  search's choice and its own binary alone`; `Tolk.Codegen › linearize and
-  compile` (every test).
+A search kept nothing of its candidates; merged into D116, which holds the
+search's memos and what it keeps.
 
 ## D130. A search times its candidates in order, compiling meanwhile on a device's clock
 
@@ -3550,50 +3529,109 @@ launch descriptors (D146).
 A Metal command buffer signalled through the device's signaler. rig's Metal
 driver signals its own (D146).
 
-## D137. Stored values that share a computation share their loops
+## D137. Consumers of one domain share their loops
 
-- **tinygrad:** `schedule/indexing.py:233` (new ranges for every stored
-  value) and `:253-276` (a node its consumers index apart is stored);
+- **tinygrad:** `schedule/indexing.py:233` (new ranges for every stored value)
+  and `:253-276` (a node its consumers index apart is stored);
   `schedule/rangeify.py:50` (`remove_bufferize`, which inlines such a store
   back into each consumer) and `:335-348` (`split_store`, one kernel per
   store). Upstream calls scheduling several outputs into one kernel pending:
-  `test/runtime/test_assign.py:355`, `:384` and `:397` skip "multi output
-  not supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
-  multioutput implementation #3607". Codegen already compiles a kernel of
-  one end over a group of stores (`test/runtime/test_custom_kernel.py:139`).
-- **tolk:** `Indexing.region`, `Indexing.waits_over`, `Indexing.share_loops`,
-  `Indexing.loops_of` and `Indexing.end_shared` (which
-  `Indexing.bufferize_and_index` returns for each store of a group);
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before the
-  goldens are recorded.
-- **Differs:** before ranges are assigned, the stores of the tensor graph that
-  have a loop are grouped. Two join when their values have one shape and one
-  device, they write different storage, neither reads the other or the
-  storage the other writes, through anything, neither waits for a write over
-  storage that the other reads in a state before it, which one kernel of both
-  could run neither before nor after, and the computed nodes each reaches
-  before storage or another stored value share one. Two groups join only
-  when neither reads the other through the stores of a third: where `b`
-  reads `c` and `d` reads `a`, a kernel of `a` and `b` and one of `c` and
-  `d` would each run before and after the other. Neither may reach
-  a reduction the other does not: a kernel of two reductions can lose the
-  optimisations each would take. A group's stores take one set of loops, so
-  their shared nodes are indexed alike and computed once, and they end as one
-  end over a group of the stores, which the kernel split makes one kernel
-  writing them all. Outputs that share only loads stay apart.
-- **Reason:** (d): `Nx_wide`, whose operations return a double word's high
-  and low parts, the two ends of one chain. tinygrad schedules each part as a
-  kernel that computes the whole chain: a compiled double-word add ran six
-  kernels and runs one, and the old rune's `compile/wide/sum-1e6` row
-  compiled 17 kernels. Kernel counts only; no time was measured, and no
-  fudge bench row holds it.
-- **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
+  `test/runtime/test_assign.py:355`, `:384` and `:397` skip "multi output not
+  supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
+  multioutput implementation #3607". Codegen already compiles a kernel of one
+  end over a group of stores (`test/runtime/test_custom_kernel.py:139`). For
+  reductions, `schedule/indexing.py:299-301` (`run_rangeify`: each reduction
+  takes new ranges for the axes it reduces); `codegen/__init__.py:177`
+  (`merge_reduce_ends`, which already makes one loop of the reductions that
+  close one range); `codegen/simplify.py:21` (`simplify_merge_adjacent`, which
+  merges a reduction's ranges in that reduction alone).
+- **tolk:** for stores, `Indexing.region`, `Indexing.waits_over`,
+  `Indexing.share_loops`, `Indexing.loops_of` and `Indexing.end_shared` (which
+  `Indexing.bufferize_and_index` returns for each store of a group); for
+  reductions, `Indexing.reaches`, `Indexing.reduce_loops` and its use in
+  `Indexing.assign_ranges`; `Simplify.merge_reductions`;
+  `Codegen.merge_reduce_ends`; `test/gen/tinygrad.patch`, which gives tinygrad
+  the same before the goldens are recorded.
+- **Differs:** consumers of one domain take one set of ranges, so a node they
+  share is indexed alike and computed once, where tinygrad indexes each
+  consumer apart, stores what they share and inlines it back into each. Stores
+  and reductions are its two cases.
+
+  Stores: before ranges are assigned, the stores of the tensor graph that have
+  a loop are grouped. Two join when their values have one shape and one
+  device, they write different storage, neither reads the other or the storage
+  the other writes, through anything, neither waits for a write over storage
+  that the other reads in a state before it, which one kernel of both could
+  run neither before nor after, and the computed nodes each reaches before
+  storage or another stored value share one. Two groups join only when neither
+  reads the other through the stores of a third: where `b` reads `c` and `d`
+  reads `a`, a kernel of `a` and `b` and one of `c` and `d` would each run
+  before and after the other. Neither may reach a reduction the other does
+  not: a kernel of two reductions can lose the optimisations each would take.
+  A group's stores take one set of loops, so their shared nodes are indexed
+  alike and computed once, and they end as one end over a group of the stores,
+  which the kernel split makes one kernel writing them all. Outputs that share
+  only loads stay apart.
+
+  Reductions: a reduction whose output is indexed by the same ranges as an
+  earlier one's in the walk, and that reduces axes of the same sizes, takes
+  that reduction's reduce ranges when no reduction of the group reaches it,
+  through anything. The walk meets a reduction before those it reads, so only
+  a reduction already in the group can read it. The sources are then indexed
+  alike: a node they share is one node, computed once per element of the loop,
+  where tinygrad indexes it by each reduction's ranges, stores it, and inlines
+  the store back into each loop. A group of a loop that several reductions
+  close takes a buffer of shared memory for each (D101). Two ranges that
+  reductions close merge, at the kernel's sink, in every reduction that closes
+  them, when that leaves all of them no more floor divisions and remainders:
+  merged in one alone, they would leave its siblings' loops apart from its
+  own, a range that runs again after the loop that ends it, which the
+  linearizer refuses. A reduction can stop closing its group's ranges: a sum
+  over a range its source does not read drops it (`pm_reduce_unparented`), so
+  a sum over `i` and `k` of a source that reads `k` alone closes `k` alone,
+  where a maximum beside it closes `k` within `i`'s loop. tinygrad gives a
+  reduction's end fresh ranges only when it closes the same ranges as another
+  at a different depth; tolk gives them to every end that closes a range an
+  earlier end closes, so each range has one end. No recorded kernel has such
+  ends, so the patch leaves tinygrad's `merge_reduce_ends` as it is.
+- **Reason:** for stores, (d): `Nx_wide`, whose operations return a double
+  word's high and low parts, the two ends of one chain. tinygrad schedules
+  each part as a kernel that computes the whole chain: a compiled double-word
+  add ran six kernels and runs one, and the old rune's `compile/wide/sum-1e6`
+  row compiled 17 kernels. Kernel counts only; no time was measured, and no
+  fudge bench row holds it. For reductions, (d): rune's reverse mode. The
+  cotangent of a value that operations broadcast sums one reduction per
+  operation, each over the same cotangent computation: the gradient of an
+  aperture's weights over a 104 x 104 grid in its radius, which 28 operations
+  broadcast, was one kernel of 28 loops, each computing the whole cell, and
+  took 647-672 ms compiled against 93-171 ms eagerly on an M1 Max under load
+  11-15; one loop takes 30-31 ms. Measured on the Mac; to re-measure on fudge,
+  where no bench row holds it.
+- **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
   `get_kernel_graph › outputs that share a computation` (every test); its
   recorded `shard_of_computed_kernels`, `read_around_assign_kernels`,
-  `crossed_pairs_kernels` and
-  `kernel_counts`, and the Postrange suite's `where_max_multioutput` cases,
-  recorded from the equally patched tinygrad. On rune: missing (the old
-  rune's `Rune nx.wide › kernels` went with its rewrite).
+  `crossed_pairs_kernels` and `kernel_counts`, and the Postrange suite's
+  `where_max_multioutput` cases, recorded from the equally patched tinygrad.
+  On rune: missing (the old rune's `Rune nx.wide › kernels` went with its
+  rewrite). For reductions, the Rangeify suite (`test/schedule/rangeify`):
+  `get_kernel_graph › reductions that share a domain` (every test), and its
+  law over generated programs, whose `sum k + max k` and `x - sum k` steps
+  cover reductions that share a loop; its recorded `multireduce_*` and
+  `ugly_reduceop_pairing` kernel graphs and `kernel_counts`; the Indexing
+  suite's recorded `two_consumers` graph; the Postrange suite's
+  `sum_and_max_grouped`, `ten_shared_sums_group` and
+  `ten_shared_sums_group_unfit` cases, and the Codegen suite's
+  `two_grouped_stores_local`, whose upstream axes count one loop for the two
+  maximums; all from the equally patched tinygrad. The Codegen suite's
+  `reductions that share a range › a range two reductions close at two depths
+  runs as two loops`. The Simplify suite's `pm_simplify_ranges › merging ›
+  reductions that share ranges merge them in all of them` and `… keep them
+  when one would divide`. On rune: missing (went with the old rune's rewrite):
+  its Packed suite's bit example of `a compiled call computes eager's values`,
+  two views a bit apart whose sums share their loops; its Jit suite's
+  `transformations › a compiled gradient of a parameter broadcast over a grid
+  is its gradient`; and its bench row
+  `reverse/jit-of-grad-clipped-disc-float64-104x104-host`.
 
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
@@ -3894,69 +3932,10 @@ submission, and a range a loop of rig's program (D146).
   decodes a checkpoint's codes 16 at once on the host` went with its
   rewrite).
 
-## D144. Reductions of one domain that read none of each other share their loop
+## D144. Withdrawn
 
-- **tinygrad:** `schedule/indexing.py:299-301` (`run_rangeify`: each
-  reduction takes new ranges for the axes it reduces), `:253-276` (a node its
-  consumers index apart is stored) and `schedule/rangeify.py:50`
-  (`remove_bufferize`, which inlines such a store back into each consumer);
-  `codegen/__init__.py:177` (`merge_reduce_ends`, which already makes one
-  loop of the reductions that close one range); `codegen/simplify.py:21`
-  (`simplify_merge_adjacent`, which merges a reduction's ranges in that
-  reduction alone).
-- **tolk:** `Indexing.reaches`, `Indexing.reduce_loops` and its use in
-  `Indexing.assign_ranges`; `Simplify.merge_reductions`;
-  `Codegen.merge_reduce_ends`;
-  `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
-  are recorded.
-- **Differs:** a reduction whose output is indexed by the same ranges as an
-  earlier one's in the walk, and that reduces axes of the same sizes, takes
-  that reduction's reduce ranges when no reduction of the group reaches it,
-  through anything. The walk meets a reduction before those it reads, so only
-  a reduction already in the group can read it. The sources are then indexed
-  alike: a node they share is one node, computed once per element of the
-  loop, where tinygrad indexes it by each reduction's ranges, stores it, and
-  inlines the store back into each loop. A group of a loop that several
-  reductions close takes a buffer of shared memory for each (D101). Two
-  ranges that reductions close merge, at the kernel's sink, in every
-  reduction that closes them, when that leaves all of them no more floor
-  divisions and remainders: merged in one alone, they would leave its
-  siblings' loops apart from its own, a range that runs again after the loop
-  that ends it, which the linearizer refuses. A reduction can stop closing
-  its group's ranges: a sum over a range its source does not read drops it
-  (`pm_reduce_unparented`), so a sum over `i` and `k` of a source that reads
-  `k` alone closes `k` alone, where a maximum beside it closes `k` within
-  `i`'s loop. tinygrad gives a reduction's end fresh ranges only when it
-  closes the same ranges as another at a different depth; tolk gives them to
-  every end that closes a range an earlier end closes, so each range has one
-  end. No recorded kernel has such ends, so the patch leaves tinygrad's
-  `merge_reduce_ends` as it is.
-- **Reason:** (d): rune's reverse mode. The cotangent of a value that
-  operations broadcast sums one reduction per operation, each over the same
-  cotangent computation: the gradient of an aperture's weights over a 104 x
-  104 grid in its radius, which 28 operations broadcast, was one kernel of 28
-  loops, each computing the whole cell, and took 647-672 ms compiled against
-  93-171 ms eagerly on an M1 Max under load 11-15; one loop takes 30-31 ms.
-  Measured on the Mac; to re-measure on fudge, where no bench row holds it.
-- **Pinned by:** the Rangeify suite (`test/schedule/rangeify`):
-  `get_kernel_graph › reductions that share a domain` (every test), and its
-  law over generated programs, whose `sum k + max k` and `x - sum k` steps
-  cover reductions that share a loop; its recorded `multireduce_*` and
-  `ugly_reduceop_pairing` kernel graphs and `kernel_counts`; the Indexing
-  suite's recorded `two_consumers` graph; the Postrange suite's
-  `sum_and_max_grouped`, `ten_shared_sums_group` and
-  `ten_shared_sums_group_unfit` cases, and the Codegen suite's
-  `two_grouped_stores_local`, whose upstream axes count one loop for the two
-  maximums; all from the equally patched tinygrad. The Codegen suite's
-  `reductions that share a range › a range two reductions close at two
-  depths runs as two loops`. The Simplify suite's
-  `pm_simplify_ranges › merging › reductions that share ranges merge them in
-  all of them` and `… keep them when one would divide`. On rune: missing
-  (went with the old rune's rewrite): its Packed suite's bit example of `a
-  compiled call computes eager's values`, two views a bit apart whose sums
-  share their loops; its Jit suite's `transformations › a compiled gradient
-  of a parameter broadcast over a grid is its gradient`; and its bench row
-  `reverse/jit-of-grad-clipped-disc-float64-104x104-host`.
+Reductions of one domain that read none of each other shared their loop;
+merged into D137, which holds the loops that consumers of one domain share.
 
 ## D145. An integer division on padding divides by 1 there
 

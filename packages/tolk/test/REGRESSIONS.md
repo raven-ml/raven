@@ -1031,7 +1031,7 @@ one target, in turn; the slow run compiles every row.
 | tinygrad: `codegen/__init__.py` `pm_wmma_add` | the running sum replaces a zero tensor-core accumulator; a sum keeps its value, apart from a zero's sign | `CG › tensor-core accumulators` (every test); the lowered tensor cores: `CG › stages › matmul_tc`, `matmul_half`, `attention` |
 | tinygrad: `codegen/__init__.py` `beam` | a kernel asking for a beam search of width `w` is searched with `beam w` | `CG › beam search` (every test) |
 | tinygrad: `codegen/__init__.py` `to_program_cache`, `engine/worker.py` | programs are kept per kernel, renderer and settings; workers share them | `CG › programs are kept` (every test) |
-| tinygrad: `codegen/__init__.py` `do_to_program`, `pm_to_program` | a program resumes from a sink or a sink and its instructions | narrowed (D129): `CG › linearize and compile › compile completes linearize into the program to_program makes`, `› compile refuses what linearize does not make`, `› to_program refuses a program` |
+| tinygrad: `codegen/__init__.py` `do_to_program`, `pm_to_program` | a program resumes from a sink or a sink and its instructions | narrowed (D116): `CG › linearize and compile › compile completes linearize into the program to_program makes`, `› compile refuses what linearize does not make`, `› to_program refuses a program` |
 | tinygrad: `codegen/__init__.py` `do_estimates` | estimates leave index arithmetic out | `CG › programs › the estimates count the instructions, leaving out index arithmetic` |
 | tinygrad: `codegen/__init__.py` `do_linearize`, `do_render`, `do_compile` (`DEBUG`) | diagnostics | `CG › diagnostics` (every test) |
 | tinygrad: `codegen/__init__.py` `line_rewrite` | | `CG › line_rewrite` (every test) |
