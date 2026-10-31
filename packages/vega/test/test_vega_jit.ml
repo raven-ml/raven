@@ -38,9 +38,7 @@ let grads (x : Wb.t) =
   let t = Lazy.force target in
   { Wb.w = Nx.mul_s (Nx.sub x.w t.w) 2.0; b = Nx.mul_s (Nx.sub x.b t.b) 2.0 }
 
-let max_diff (type a b d) (x : (a, b, d) Nx.t) (y : (a, b, d) Nx.t) =
-  Nx.item []
-    (Nx.max (Nx.abs (Nx.sub (Nx.cast Nx.float64 x) (Nx.cast Nx.float64 y))))
+let floats x = Nx.to_array (Nx.cast Nx.float64 x)
 
 let compiles state ~init ~step () =
   let both = Nx.Ptree.pair Wb.ptree (state Wb.ptree) in
@@ -58,12 +56,9 @@ let compiles state ~init ~step () =
   ignore
     (Nx.Ptree.map2 both
        (fun path x y ->
-         let d = max_diff x y in
-         is_true
-           ~msg:
-             (Format.asprintf "%a: |eager - compiled| = %g" Nx.Ptree.Path.pp
-                path d)
-           (d <= 1e-5);
+         equal
+           ~msg:(Format.asprintf "%a" Nx.Ptree.Path.pp path)
+           (array (float 1e-5)) (floats x) (floats y);
          x)
        eager compiled)
 
@@ -154,7 +149,7 @@ let test_loss_scaled_compiles () =
        (fun path x y ->
          equal
            ~msg:(Format.asprintf "%a" Nx.Ptree.Path.pp path)
-           (float 1e-5) 0.0 (max_diff x y);
+           (array (float 1e-5)) (floats x) (floats y);
          x)
        eager compiled)
 
@@ -188,13 +183,7 @@ let test_radam_compiled_rectification () =
     path (fun x -> f (Nx.Ptree.donate both x)) (Nx.zeros Nx.float32 [| 3 |])
   in
   let exact = path (step target64) (Nx.zeros Nx.float64 [| 3 |]) in
-  Array.iteri
-    (fun i d ->
-      let rel = Float.abs (compiled.(i) -. d) /. Float.abs d in
-      is_true
-        ~msg:(Printf.sprintf "element %d: relative error %g" i rel)
-        (rel <= 3e-4))
-    exact
+  equal (array (float_rel ~rel:3e-4 ~abs:0.0)) exact compiled
 
 (* A compiled polynomial decay takes eager's values through the decay and after
    it, where it stays at [end_value]: its base is exactly zero there. *)

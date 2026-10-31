@@ -212,13 +212,13 @@ let () =
              prop "cosine_decay bounded" Gen.nat (fun step ->
                  let s = S.cosine_decay ~init_value:1.0 ~decay_steps:100 () in
                  let v = S.eval s step in
-                 is_true ~msg:">=0" (v >= 0.0);
-                 is_true ~msg:"<=1" (v <= 1.0 +. 1e-6));
+                 at_least float_exact ~than:0.0 v;
+                 at_most float_exact ~than:(1.0 +. 1e-6) v);
              prop "one_cycle bounded" Gen.nat (fun step ->
                  let s = S.one_cycle ~max_value:1.0 ~total_steps:100 () in
                  let v = S.eval s step in
-                 is_true ~msg:">=0" (v >= 0.0);
-                 is_true ~msg:"<=max" (v <= 1.0 +. 1e-6));
+                 at_least float_exact ~than:0.0 v;
+                 at_most float_exact ~than:(1.0 +. 1e-6) v);
              prop "cosine_decay_restarts periodic" Gen.nat (fun step ->
                  let period = 50 in
                  let s =

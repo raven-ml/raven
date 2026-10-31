@@ -148,7 +148,8 @@ let test_sgd_converges () =
   let params, _ =
     descend ~steps:100 ~step (params, Vega.sgd_init Pair.ptree params)
   in
-  is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 1e-3)
+  equal ~msg:"reaches the bottom of the bowl" (float 1e-3) 0.0
+    (bowl_distance params)
 
 let test_sgd_momentum_converges () =
   let params = Lazy.force bowl_start in
@@ -159,7 +160,8 @@ let test_sgd_momentum_converges () =
   let params, _ =
     descend ~steps:200 ~step (params, Vega.sgd_init Pair.ptree params)
   in
-  is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 1e-3)
+  equal ~msg:"reaches the bottom of the bowl" (float 1e-3) 0.0
+    (bowl_distance params)
 
 let test_sgd_pairs_leaves_structurally () =
   let params = pair [| 1.0; 2.0 |] [| 3.0 |] in
@@ -231,7 +233,8 @@ let test_adam_converges () =
   let params, _ =
     descend ~steps:800 ~step (params, Vega.adam_init Pair.ptree params)
   in
-  is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
+  equal ~msg:"reaches the bottom of the bowl" (float 0.05) 0.0
+    (bowl_distance params)
 
 let test_adam_with_schedule_converges () =
   (* The learning rate comes from the state's own step counter through the
@@ -244,8 +247,8 @@ let test_adam_with_schedule_converges () =
     let grads = bowl_grads params in
     state := Vega.adam_step Pair.ptree ~lr:sched st ~params ~grads
   done;
-  is_true ~msg:"decayed steps settle at the bottom"
-    (bowl_distance (fst !state) < 0.02)
+  equal ~msg:"decayed steps settle at the bottom" (float 0.02) 0.0
+    (bowl_distance (fst !state))
 
 let test_adam_zero_grads () =
   let params = vec [| 1.0; -2.0 |] in
@@ -319,7 +322,8 @@ let test_adamw_converges () =
   let params, _ =
     descend ~steps:800 ~step (params, Vega.adamw_init Pair.ptree params)
   in
-  is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
+  equal ~msg:"reaches the bottom of the bowl" (float 0.05) 0.0
+    (bowl_distance params)
 
 let test_steps_validate () =
   let params = vec [| 1.0 |] in
@@ -369,9 +373,11 @@ let test_optimizers_carry_a_non_parameter_leaf () =
   in
   let key_before = Nx.to_array (params.Stepper.key :> Nx.host Nx.int32_t) in
   let check name (updated : Stepper.t) =
-    is_true
+    not_equal
       ~msg:(name ^ " moves the weight")
-      (Nx.to_array updated.Stepper.w <> Nx.to_array params.Stepper.w);
+      (array float_exact)
+      (Nx.to_array params.Stepper.w)
+      (Nx.to_array updated.Stepper.w);
     equal
       ~msg:(name ^ " leaves the key alone")
       (array int32) key_before
@@ -685,8 +691,8 @@ let test_adafactor_carries_an_int_leaf () =
   in
   equal ~msg:"the int leaf is unchanged" (array int32) [| 3l; 7l |]
     (Nx.to_array count');
-  is_true ~msg:"the float leaf moves"
-    (Nx.to_array w' <> Nx.to_array (fst params));
+  not_equal ~msg:"the float leaf moves" (array float_exact)
+    (Nx.to_array (fst params)) (Nx.to_array w');
   check_state "step" st'
 
 (* Precision *)
@@ -704,13 +710,13 @@ let low_precision (type b) (dt : (float, b) Nx.dtype) () =
     and after = Nx.to_array (Nx.cast Nx.float64 updated) in
     Array.iteri
       (fun i x ->
-        is_true
-          ~msg:(Printf.sprintf "%s: element %d is finite" name i)
-          (Float.is_finite x))
+        satisfies
+          ~msg:(Printf.sprintf "%s: element %d" name i)
+          ~claim:"a finite float" float_exact Float.is_finite x)
       after;
-    is_true
-      ~msg:(name ^ ": a nonzero gradient moves its element")
-      (after.(0) < before.(0) && after.(2) > before.(2))
+    let moves = name ^ ": a nonzero gradient moves its element" in
+    less ~msg:moves float_exact ~than:before.(0) after.(0);
+    greater ~msg:moves float_exact ~than:before.(2) after.(2)
   in
   check "sgd"
     (Vega.sgd_step p ~lr ~momentum:0.9 (Vega.sgd_init p params) ~params ~grads);
@@ -793,13 +799,7 @@ let test_radam_rectification_in_float32 () =
   in
   let f32 = radam_rectified Nx.float32 step
   and f64 = radam_rectified Nx.float64 step in
-  Array.iteri
-    (fun i d ->
-      let rel = Float.abs (f32.(i) -. d) /. Float.abs d in
-      is_true
-        ~msg:(Printf.sprintf "element %d: relative error %g" i rel)
-        (rel <= 1e-4))
-    f64
+  equal (array (float_rel ~rel:1e-4 ~abs:0.0)) f64 f32
 
 let test_ported_steps_validate () =
   let params = vec [| 1.0 |] in
@@ -879,7 +879,7 @@ let test_lbfgs_preconditions () =
       (Vega.lbfgs_init Pair.ptree (Lazy.force bowl_start))
   in
   let st = advance ~lr:(Vega.lr 1.0) st in
-  is_true ~msg:"reaches the target" (bowl_distance st.params < 1e-5)
+  equal ~msg:"reaches the target" (float 1e-5) 0.0 (bowl_distance st.params)
 
 let test_lbfgs_rejects_negative_curvature () =
   (* A concave objective: along the descent direction the gradient difference
@@ -912,8 +912,10 @@ let test_lbfgs_memory_evicts () =
     (array (float 1e-6))
     (top st2)
     (Nx.to_array (Nx.get [ 1 ] st3.s.a));
-  is_true ~msg:"the first move is gone"
-    (top st1 <> top st3 && top st1 <> Nx.to_array (Nx.get [ 1 ] st3.s.a))
+  not_equal ~msg:"the first move is not on top" (array float_exact) (top st1)
+    (top st3);
+  not_equal ~msg:"the first move is not below" (array float_exact) (top st1)
+    (Nx.to_array (Nx.get [ 1 ] st3.s.a))
 
 let test_lbfgs_carries_a_non_parameter_leaf () =
   let params =
