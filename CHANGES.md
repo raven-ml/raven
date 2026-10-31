@@ -441,6 +441,8 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Sde.march` queries the Brownian path once per step instead of twice,
+  carrying its value and integral from each step's end to the next step.
 - `Sde.march` ends each interval's last step at its time of `at`. The steps'
   sum could round past the path's end and raise, as over `[0, 0.3]` in 10
   steps.

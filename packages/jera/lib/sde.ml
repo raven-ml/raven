@@ -181,25 +181,38 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   let add x v = axpy one x v in
   (* Step [j] spans [[t0 + j h, t0 + (j + 1) h]], the last one ending at [t1]
      itself: [t0 + steps h] can round past [t1], and so past the path. The
-     times lie in the path's interval, as [at]'s ends were checked to. *)
+     times lie in the path's interval, as [at]'s ends were checked to.
+
+     The path's W and I at a step's end carry into the next step. Its start
+     is that end to the bit, as [t0 + (j + 1) h] computed alike, or an
+     interval's [t1] being the next one's [t0], so the march queries the path
+     once per step and sees what a query at each start would. *)
+  let path = Nx.Ptree.(pair tensor tensor) in
   let interval c step t0 t1 carry =
     let h = Nx.div_s (Nx.sub t1 t0) (float steps) in
     let last = float (steps - 1) in
-    March.steps c here dtype steps
-      (fun j carry ->
+    March.steps
+      Nx.Ptree.(pair c path)
+      here dtype steps
+      (fun j (carry, start) ->
         let t = Nx.add t0 (Nx.mul j h) in
         let next = Nx.add t0 (Nx.mul (Nx.add_s j 1.) h) in
         let t' = Nx.where (Nx.equal_s j last) t1 next in
         let h = Nx.sub t' t in
-        let dw, area =
-          Brownian.between (Brownian.point w t) (Brownian.point w t') h
-        in
-        step t h dw area carry)
+        let stop = Brownian.point w t' in
+        let dw, area = Brownian.between start stop h in
+        (step t h dw area carry, stop))
       carry
   in
-  let simple step =
-    March.run y y ~at ~interval:(interval y step) ~state:Fun.id y0
+  let start = Brownian.point w (Nx.get [ 0 ] at) in
+  let run c step ~state init =
+    March.run
+      Nx.Ptree.(pair c path)
+      y ~at ~interval:(interval c step)
+      ~state:(fun (v, _) -> state v)
+      (init, start)
   in
+  let simple step = run y step ~state:Fun.id y0 in
   match m with
   | Euler_maruyama ->
       simple (fun t h dw _ v -> add (g t v dw) (axpy h (f t v) v))
@@ -246,5 +259,4 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
         (v, (hat', fhat'))
       in
       let t0 = Nx.get [ 0 ] at in
-      March.run c y ~at ~interval:(interval c step) ~state:fst
-        (y0, (y0, f t0 y0))
+      run c step ~state:fst (y0, (y0, f t0 y0))

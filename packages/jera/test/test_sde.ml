@@ -329,9 +329,16 @@ let march_tests =
           (Oracle.tensor ~rel:1e-7 ())
           (Nx.reshape [||] (Oracle.central ~eps:1e-6 f x v))
           (scalar (Oracle.dot (Rune.grad' f x) v)));
-    test "a compiled march with the path an argument equals eager" (fun () ->
+    cases "a compiled march with the path an argument equals eager" ~id:fst
+      [
+        ("euler_maruyama", Sde.euler_maruyama);
+        ("milstein", Sde.milstein);
+        ("sra1", Sde.sra1);
+        ("reversible_heun", Sde.reversible_heun);
+      ]
+      (fun (_, m) ->
         let f w x =
-          Sde.march one Sde.milstein ~steps:4 ~drift:gbm_drift
+          Sde.march one m ~steps:4 ~drift:gbm_drift
             ~diffusion:gbm_diffusion w
             ~at:(vec [| 0.; 0.5; 1. |])
             x

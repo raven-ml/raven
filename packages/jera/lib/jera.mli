@@ -1871,13 +1871,14 @@ module Sde : sig
     'y
   (** [march y m ~steps ~drift ~diffusion w ~at y0] is the state at each time of
       [at], stacked on a new leading axis of each leaf, [y0] first, along the
-      path [w]. Each interval of [at] takes [steps] equal steps. [drift t y] is
-      the deterministic field; [diffusion t y dw] is [g t y] applied to [dw], of
-      [w]'s shape and the times' dtype, and must be linear in [dw]; it casts
-      [dw] for leaves of another dtype. Reverse mode keeps one state per time of
-      [at] and recomputes each interval while it reverses it; the derivative is
-      the composition's, in the initial state and every tracked value the drift
-      and diffusion read. A compiled function takes [w] as an argument of
+      path [w]. Each interval of [at] takes [steps] equal steps, each querying
+      the path once, at its end. [drift t y] is the deterministic field;
+      [diffusion t y dw] is [g t y] applied to [dw], of [w]'s shape and the
+      times' dtype, and must be linear in [dw]; it casts [dw] for leaves of
+      another dtype. Reverse mode keeps one state per time of [at] and
+      recomputes each interval while it reverses it; the derivative is the
+      composition's, in the initial state and every tracked value the drift and
+      diffusion read. A compiled function takes [w] as an argument of
       {!Brownian.ptree}'s structure.
 
       Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
