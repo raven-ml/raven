@@ -323,6 +323,37 @@ All notable changes to this project will be documented in this file.
   compares a gradient with central differences.
 - **Breaking:** `debug` is removed: `program` and `pp_program` print what a
   function computes.
+- **Breaking:** `scan`, `scan'`, `iterate` and `iterate'` take the step as a
+  positional argument, `scan c x y f ~init xs`, where they took `~f`.
+- **Breaking:** a `scan` or `iterate` step is traced once, eagerly too: an
+  OCaml `if` on `Nx.item` in it raises, so branch with `switch` or `Nx.where`,
+  and a draw without `~key` raises, so draw from a key in the carry or rows.
+- **Breaking:** a `custom_jvp` or `custom_vjp` rule and its derivative are
+  traced at each call under `grad` of `grad`, a Hessian-vector product, a
+  loop's step or a map capturing an argument, so `Nx.item` of one raises.
+- **Breaking:** `lane_index a x` takes the map's name, which a map without
+  `~axis` lacks, and an array whose devices hold the index. `lanes` and
+  `lane_index` raise outside a map of that name, where they saw one lane.
+- **Breaking:** `Nx.item` in a `root`'s `solve` of a value a transformation
+  around tracks raises, since `solve` stages its operations; it read the plain
+  value. Read it before the `root`, where `Nx.item` gives its primal.
+- **Breaking:** a `scan` step returns a carry of the shapes it received; one
+  whose shapes change raises at the trace.
+- **Breaking:** under `vmap`, the gradient of an array an `iterate`'s step
+  captures may be NaN where its lanes stop apart, where it was an exact zero:
+  a held lane's zero cotangent meets its donor's infinite partial derivative.
+- **Breaking:** `Total.add` of a value on another device set than its
+  `collect`'s `init` raises, naming both sets; the addition was moved to the
+  total's placement. Place the value with `Nx.place` first.
+- **Breaking:** `Total.collect`'s `~zero` is `~init`.
+- **Breaking:** `grad` of a complex scalar raises; it differentiated the real
+  part. Take the real part with `Nx.real`, or use `vjp`.
+- **Breaking:** `Jit_error` is removed: a function `jit` cannot trace raises
+  `Invalid_argument`, as `Nx.item: the value is traced by Rune.jit`.
+- **Breaking:** a `jit` program the compiler declines, such as one holding
+  `lanes` or an operation it does not lower, is evaluated by nx. On a set
+  without kernels, such as a GPU set, it raises
+  `Invalid_argument "… has no kernels …"`, where one holding `lanes` compiled.
 
 - Every operation nx computes has a derivative, `Nx.svd`, `Nx.eigh`,
   `Nx.eig`, `Nx.lu` and the special functions (`Nx.erfinv`, `Nx.lgamma`,
