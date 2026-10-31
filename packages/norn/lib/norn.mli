@@ -650,7 +650,29 @@ module Dist : sig
     | Categories : ('d Nx.int64_t, 'f, 'd) kind  (** Category indices, from [0]. *)
     | Booleans : ('d Nx.bool_t, 'f, 'd) kind  (** Booleans. *)
 
-  (** {1:continuous Continuous families} *)
+  (** {1:continuous Continuous families}
+
+      The log densities of {!gamma}, {!inverse_gamma}, {!beta}, {!dirichlet}
+      and {!student_t} are Poisson, binomial and multinomial masses at real
+      counts, rescaled, in Loader's saddle-point form
+      ({{!section-discrete}discrete families}): no term grows faster than
+      the logarithm of a parameter. A log density [f] is within
+      [ε (16 |f| + 48 Λ + 12 M)] of the exact one, [ε] the epsilon of the
+      parameters' dtype, where [Λ] sums the magnitudes of the logarithms the
+      family takes and [M] measures how far its counts lie from their means:
+      - {!gamma}: [Λ = 1 + |log α| + |log x|] and [M = |rate x - α|];
+      - {!inverse_gamma}: the same [Λ] and [M = |scale / x - α|];
+      - {!dirichlet}, of [K] concentrations [α_k] summing to [A]:
+        [Λ = K + |log A| + Σ_k (|log α_k| + |log x_k|)] and
+        [M = Σ_k |α_k - A x_k|]; {!beta} is the dirichlet of [(a, b)] at
+        [(x, 1 - x)];
+      - {!student_t}: [Λ = 1 + |log df| + |log scale|] and [M = 0].
+
+      [ε M] is near the change in [f] that rounding the point by [ε] makes.
+      A dtype narrower than float32 computes at float32 and rounds once:
+      within the float32 bound plus half its own ulp. At float64 the
+      densities' derivatives in the parameters are finite wherever the exact
+      ones are, at concentrations and degrees of freedom from [1e-300]. *)
 
   val normal :
     loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
@@ -721,7 +743,11 @@ module Dist : sig
   (** [dirichlet ~concentration] is over vectors along the last axis of
       [concentration], of positive components summing to one, with density
       proportional to [prod_k x_k^(α_k - 1)]. A matrix of concentrations is
-      independent rows.
+      independent rows. A vector whose sum is within [4 K ε] of one, [K] its
+      length, is read as [x / Σ x], the point of the simplex on its ray, so the
+      rounding that keeps it off the simplex does not move its density.
+      Draws are {!Nx.Rng.dirichlet}'s, made at float32 for a narrower dtype,
+      each component at least the dtype's least positive value.
 
       Raises [Invalid_argument] if the last axis has fewer than two components.
   *)

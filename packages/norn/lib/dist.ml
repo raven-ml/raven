@@ -370,27 +370,29 @@ let deviance_of x ~d ~v ~log_ratio =
    [log x - log m]. *)
 let ratio_band = 0x1p32
 
-(* [deviance x m log_m] is [D(x, m)] for [x > 0] and [m >= 0], [log_m] being
-   [log m]: [inf] at [m = 0]. Within a factor [2^32] it takes
-   [log (x / m)]; past it [log x - log_m], where [log_m] keeps the digits that
-   an [m] near underflow has lost and its derivative stays finite where that
-   of [x / m], [x / m^2], overflows. One [log] serves both: of [x / m] or of
-   [x]. The ratio reads [x] and [m] only where it is taken. *)
-let deviance x m log_m =
-  let d = Nx.sub x m in
-  let r = Nx.div x m in
+(* [log_quotient x m log_m r] is [log (x / m)] for [x > 0], [m >= 0] and
+   [r = x / m], [log_m] being [log m]: [inf] at [m = 0]. Within a factor
+   [2^32] it takes [log (x / m)]; past it [log x - log_m], where [log_m]
+   keeps the digits that an [m] near underflow has lost and its derivative
+   stays finite where that of [x / m], [x / m^2], overflows. One [log] serves
+   both: of [x / m] or of [x]. The ratio reads [x] and [m] only where it is
+   taken. [deviance x m log_m] is [D(x, m)] from it. *)
+let log_quotient x m log_m r =
   let band =
     Nx.logical_and
       (Nx.less_equal r (const r ratio_band))
       (Nx.greater_equal r (const r (1. /. ratio_band)))
   in
   let ratio = Nx.div (inside band x 1.) (inside band m 1.) in
-  let log_ratio =
-    Nx.sub
-      (Nx.log (Nx.where band ratio x))
-      (Nx.where band (const log_m 0.) log_m)
-  in
-  deviance_of x ~d ~v:(Nx.div d (Nx.add x m)) ~log_ratio
+  Nx.sub
+    (Nx.log (Nx.where band ratio x))
+    (Nx.where band (const log_m 0.) log_m)
+
+let deviance x m log_m =
+  let d = Nx.sub x m in
+  deviance_of x ~d
+    ~v:(Nx.div d (Nx.add x m))
+    ~log_ratio:(log_quotient x m log_m (Nx.div x m))
 
 (* [half lo n] is [log (2π lo (n - lo) / n) / 2] for [0 < lo <= n / 2],
    from [log lo + log1p (-lo / n)], exact for [lo ≪ n]. *)
@@ -541,6 +543,201 @@ let binomial_mass logits trials x rest =
   in
   Nx.where inner f edge
 
+(* Continuous densities *)
+
+(* A gamma, beta or Dirichlet density is a Poisson, binomial or multinomial
+   mass at real counts, rescaled, as R's dgamma.c and dbeta.c compute them
+   through dpois_raw and dbinom_raw. From [Γ(a) = Γ(a + 1) / a]:
+
+     gamma      f(x) = (α / x) Pois(α; m),  m = rate x
+     dirichlet  f(x) = (Π α_k / A) / (Π x_k) Mult(α; A, x),  A = Σ α_k
+
+   and Loader's form of the masses gives, for [δ_h(r) = δ(r) + log r / 2],
+
+     log f = δ_h(A) - log A - (K - 1) log √(2π)
+             - Σ_k [δ_h(α_k) - log α_k + log x_k + D(α_k, A x_k)]
+
+   with [K = 1] and [A x] read as [m] for the gamma. No term grows with the
+   concentrations faster than their logarithms, where [log Γ] sums cancel
+   terms near [α log α]. [δ_h] stays finite with a finite derivative as a
+   concentration nears [0], so one form serves every concentration; R's
+   dgamma.c switches to [Pois(α - 1; m)] above 1 and dbeta.c to the direct
+   form below 2. The terms of the parameters alone, [δ_h(α_k) - log α_k]
+   and the whole's, are computed once, as the distribution is built.
+
+   Error, as for the counts with [u = ε/2] per step:
+   - [δ_h(r)] is within [50 u] absolutely and [2.5 u |log r|]; [log r],
+     [log x] within [4 u] of theirs, and the bracket's sums round within
+     [u] of their partial sums.
+   - [D] within [30 u D + 6 ε |α_k - A x_k|] ([mean_deviance]), where
+     [D <= |f| + Λ], [Λ] the sum of the logs' magnitudes plus [K], since
+     every other term is within [Λ] of [0]; and the mean [A x_k] rounds
+     within [2 u], moving [D] by [2 u |α_k - A x_k|]. [A]'s own rounding
+     moves [Σ_k D] by its square: [Σ_k A x_k = A] makes the sum stationary
+     in [A].
+   Hence [ε (16 |f| + 48 Λ + 12 M)] for [M = Σ_k |α_k - A x_k|]. The
+   second term is the conditioning of the density in the point: moving
+   [x_k] by [ε] moves [log f] by about [ε |α_k - A x_k|]. The Student t's
+   normaliser is a ratio of gammas whose [δ] terms are those of reals
+   [ν / 2] and [ν / 2 + 1/2] apart by [1/2]: the same bound with
+   [Λ = 1 + |log ν| + |log σ|] and no mean. *)
+
+(* [ratio_log (x, (lx, (m, log_m)))] is [log (x / m)] for [x > 0] and
+   [m >= 0], [lx] and [log_m] being their logs: [log1p t],
+   [t = (x - m) / m], where [x / m] lies between [ε] and the floats' largest
+   over [e], and [lx - log_m] elsewhere, the arm read from [lx - log_m]
+   itself. Below [ε] the logs' error, [4 u (|lx| + |log_m|)], times [x] is
+   below [u m <= u D]; above, [|log (x / m)| > 708] and the error is within
+   [16 u] of it at float64. Its derivative is stated, that of
+   [lx - log_m]: taken through the quotient it would form [x / m²], and
+   [dm / m] overflows where [m] underflows, while the logs' derivatives,
+   formed by the caller from the parameters and the point, stay finite.
+   No arm needs a guard and none is differentiated. *)
+let ratio_log args =
+  Rune.custom_jvp
+    Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
+    Nx.Ptree.tensor
+    (fun (x, (lx, (m, log_m))) ->
+      let logs = Nx.sub lx log_m in
+      let dt = Nx.dtype logs in
+      let near =
+        Nx.logical_and
+          (Nx.greater_equal logs (const logs (Float.log (Prec.eps dt))))
+          (Nx.less_equal logs (const logs (Float.log (Prec.huge dt) -. 1.)))
+      in
+      let l = Nx.where near (Nx.log1p (Nx.div (Nx.sub x m) m)) logs in
+      (l, fun (_, (dlx, (_, dlog_m))) -> Nx.sub dlx dlog_m))
+    args
+
+(* [mean_deviance x lx m log_m] is [D(x, m)] for a real count [x > 0] whose
+   distance from its mean [m] the bound counts, [lx] and [log_m] being
+   their logs: [x log (x / m) - (x - m)] from [ratio_log], one
+   transcendental per element and no series. Near [m], [x - m] is exact
+   (Sterbenz) and [log1p t] within [2 ε] of itself, so the two terms near
+   [x - m] leave [6 ε |x - m|]. Below [x = m / 2], [1 + t] carries the
+   rounding [u] of [x - m] relative to [m], [u m <= 7 u D] in [D], which is
+   at least [0.15 m] there. *)
+let mean_deviance x lx m log_m =
+  Nx.sub (Nx.mul x (ratio_log (x, (lx, (m, log_m))))) (Nx.sub x m)
+
+(* [head a] is [-(δ_h(a) - log a)], a component's term of its parameter
+   alone. *)
+let head a = Nx.sub (Nx.log a) (delta_half a)
+
+(* [share (h, a, la) lx m log_m] is a component's bracket negated:
+   [h - lx - D(a, m)], [h = head a] and [la = log a] its parameter's terms,
+   [lx] the log of its share of the whole and [log_m] that of the mean
+   [m]. *)
+let share (h, a, la) lx m log_m =
+  Nx.sub (Nx.sub h lx) (mean_deviance a la m log_m)
+
+(* [gamma_density (c, rate, lr) x] is a gamma's log density at [x], [c]
+   its count's terms ([component]) and [lr] the log of the rate. The
+   inverse gamma's density at [x] is the gamma's at [1 / x] times
+   [1 / x^2]: its mean count is [scale / x]. *)
+let gamma_density (c, rate, lr) x =
+  let lx = Nx.log x in
+  share c lx (Nx.mul rate x) (Nx.add lr lx)
+
+let inverse_gamma_density (c, scale, ls) x =
+  let lx = Nx.log x in
+  share c lx (Nx.div scale x) (Nx.sub ls lx)
+
+(* [component ~shift a] is [share]'s terms of a count [a], its head less
+   [shift]. *)
+let component ?(shift = 0.) a = (Nx.sub_s (head a) shift, a, Nx.log a)
+
+(* [whole n k] is [δ_h(n) - log n - (k - 1) log √(2π)]. *)
+let whole n k =
+  Nx.sub_s
+    (Nx.sub (delta_half n) (Nx.log n))
+    (float_of_int (k - 1) *. half_log_2pi)
+
+(* A beta is the dirichlet of [(x, 1 - x)]: [log1p (-x)] keeps the digits of
+   [log (1 - x)] near [0]. Its terms of the parameters alone are [whole],
+   both heads, [n = a + b] and [log n]. *)
+let beta_terms a b =
+  let n = Nx.add a b in
+  let w = Nx.add (whole n 2) (Nx.add (head a) (head b)) in
+  (w, (a, Nx.log a), (b, Nx.log b), n, Nx.log n)
+
+let beta_density (w, (a, la), (b, lb), n, ln) x =
+  let lx = Nx.log x and l1 = Nx.log1p (Nx.neg x) in
+  let rest = Nx.sub (const x 1.) x in
+  let da = mean_deviance a la (Nx.mul n x) (Nx.add ln lx) in
+  let db = mean_deviance b lb (Nx.mul n rest) (Nx.add ln l1) in
+  Nx.sub (Nx.sub (Nx.sub (Nx.sub w lx) l1) da) db
+
+(* [dirichlet_density (w, c, n, ln) x] along the last axis of [a] and
+   [x], [x] read as [x / Σx]: within the rounding a point keeps off the
+   simplex, the density of its nearest point along the ray, so the sum's
+   rounding does not move the means by [A ε]. *)
+let dirichlet_terms a =
+  let k = (Nx.shape a).(Nx.ndim a - 1) in
+  let n = Nx.sum ~axes:[ Nx.ndim a - 1 ] ~keepdims:true a in
+  (Nx.squeeze ~axes:[ Nx.ndim a - 1 ] (whole n k), component a, n, Nx.log n)
+
+let dirichlet_density (w, c, n, ln) x =
+  let ax = Nx.ndim x - 1 in
+  let x = Nx.div x (Nx.sum ~axes:[ ax ] ~keepdims:true x) in
+  let lx = Nx.log x in
+  let parts = share c lx (Nx.mul n x) (Nx.add ln lx) in
+  Nx.add w (Nx.sum ~axes:[ Nx.ndim parts - 1 ] parts)
+
+(* [log_ratio df] is [log ((ν + 1) / ν)]: [log1p (1 / ν)] above 1,
+   [log1p ν - log ν] below, where [1 / ν] may overflow. *)
+let log_ratio df =
+  let above = Nx.greater df (const df 1.) in
+  let hi = inside above df 1. and lo = Nx.where above (const df 1.) df in
+  Nx.where above
+    (Nx.log1p (Nx.recip hi))
+    (Nx.sub (Nx.log1p lo) (Nx.log lo))
+
+(* [student_normaliser df] is
+   [log Γ((ν + 1) / 2) - log Γ(ν / 2) - log (ν π) / 2], R's dt.c's form:
+   [δ(h + 1/2) - δ(h) - D(h, h + 1/2) - log √(2π)] for [h = ν / 2]. From
+   [h = 1] up the [δ] are the reals' series; below, where [δ] grows as
+   [-log h / 2], they are [δ_h] less [log (1 + 1/ν) / 2]. *)
+let student_normaliser df =
+  let h = Nx.mul_s df 0.5 in
+  let lr = log_ratio df in
+  let large = Nx.greater_equal h (const h 1.) in
+  let hl = Nx.where large h (const h 1.) in
+  let hs = Nx.where large (const h 0.5) h in
+  let deltas =
+    Nx.where large
+      (Nx.sub (delta_real (Nx.add_s hl 0.5)) (delta_real hl))
+      (Nx.sub
+         (Nx.sub (delta_half (Nx.add_s hs 0.5)) (delta_half hs))
+         (Nx.mul_s lr 0.5))
+  in
+  let dev =
+    deviance_of h ~d:(const h (-0.5))
+      ~v:(Nx.div (const df (-1.)) (Nx.add_s (Nx.mul_s df 2.) 1.))
+      ~log_ratio:(Nx.neg lr)
+  in
+  Nx.sub_s (Nx.sub deltas dev) half_log_2pi
+
+(* The Student t's terms of its parameters alone: its normaliser less
+   [log σ], [√ν] and [(ν + 1) / 2]. *)
+let student_terms df scale =
+  ( Nx.sub (student_normaliser df) (Nx.log scale),
+    Nx.sqrt df,
+    Nx.mul_s (Nx.add_s df 1.) 0.5 )
+
+(* [log1p (z² / ν)] is [2 log max (w, 1) + log1p (min (w, 1/w)²)] for
+   [w = |z| / √ν]: no square overflows, and both arms are the same
+   expression. At [w = 1] each selection takes the side of [w <= 1], whose
+   derivative is the whole's: a tie split between [max]'s operands would
+   halve it. *)
+let student_t_density (c, root, half1) loc scale x =
+  let w = Nx.div (Nx.abs (Nx.div (Nx.sub x loc) scale)) root in
+  let beyond = Nx.greater w (const w 1.) in
+  let big = Nx.where beyond w (const w 1.) in
+  let small = Nx.where beyond (Nx.recip big) w in
+  let l = Nx.add (Nx.mul_s (Nx.log big) 2.) (Nx.log1p (Nx.square small)) in
+  Nx.sub c (Nx.mul half1 l)
+
 (* A format narrower than float32 computes a mass at float32 and rounds it
    once, as nx computes its functions: its own range and precision would
    lose the terms' digits and underflow their ratios. *)
@@ -639,17 +836,14 @@ let student_t ~df ~loc ~scale =
   let family = "student_t" in
   let dt = Nx.dtype loc in
   let half_df = Nx.mul_s df 0.5 in
-  let half_df1 = Nx.add_s half_df 0.5 in
-  let normaliser =
-    Nx.sub
-      (Nx.sub (Nx.lgamma half_df1) (Nx.lgamma half_df))
-      (Nx.mul_s (Nx.add_s (Nx.log df) log_pi) 0.5)
-  in
-  let factors x =
-    let z = Nx.div (Nx.sub x loc) scale in
-    Nx.sub
-      (Nx.sub normaliser (Nx.log scale))
-      (Nx.mul half_df1 (Nx.log1p (Nx.div (Nx.square z) df)))
+  let factors =
+    if narrow dt then
+      let t = student_terms (widen df) (widen scale) in
+      let loc = widen loc and scale = widen scale in
+      fun x -> Nx.cast dt (student_t_density t loc scale (widen x))
+    else
+      let t = student_terms df scale in
+      fun x -> student_t_density t loc scale x
   in
   (* A normal over the square root of a chi-square over its degrees of freedom:
      [z sqrt (df / 2g)], [g] gamma of concentration [df / 2]. *)
@@ -798,17 +992,22 @@ let inverse_gamma_quantile args =
 let gamma ~concentration ~rate =
   let family = "gamma" in
   let a = concentration in
+  let dt = Nx.dtype a in
   positive_family ~family ~closed:false
     ~params:[ param "concentration" a; param "rate" rate ]
     ~shape:(broadcast family [ Nx.shape a; Nx.shape rate ])
     ~checks:
       [ in_positive family "concentration" a; in_positive family "rate" rate ]
-    ~density:(fun x ->
-      Nx.sub
-        (Nx.add
-           (Nx.sub (Nx.mul a (Nx.log rate)) (Nx.lgamma a))
-           (Nx.mul (Nx.sub_s a 1.) (Nx.log x)))
-        (Nx.mul rate x))
+    ~density:
+      (let terms a rate =
+         (component ~shift:half_log_2pi a, rate, Nx.log rate)
+       in
+       if narrow dt then
+         let t = terms (widen a) (widen rate) in
+         fun x -> Nx.cast dt (gamma_density t (widen x))
+       else
+         let t = terms a rate in
+         fun x -> gamma_density t x)
     ~draw:(fun k s -> Nx.div (Nx.Rng.gamma ~key:k (broadcast_to s a)) rate)
     ~quantile:(fun p -> Nx.div (Nx.gammaincinv a p) rate)
     a
@@ -816,32 +1015,40 @@ let gamma ~concentration ~rate =
 let inverse_gamma ~concentration ~scale =
   let family = "inverse_gamma" in
   let a = concentration in
+  let dt = Nx.dtype a in
   positive_family ~family ~closed:false
     ~params:[ param "concentration" a; param "scale" scale ]
     ~shape:(broadcast family [ Nx.shape a; Nx.shape scale ])
     ~checks:
       [ in_positive family "concentration" a; in_positive family "scale" scale ]
-    ~density:(fun x ->
-      Nx.sub
-        (Nx.sub
-           (Nx.sub (Nx.mul a (Nx.log scale)) (Nx.lgamma a))
-           (Nx.mul (Nx.add_s a 1.) (Nx.log x)))
-        (Nx.div scale x))
+    ~density:
+      (let terms a scale =
+         (component ~shift:half_log_2pi a, scale, Nx.log scale)
+       in
+       if narrow dt then
+         let t = terms (widen a) (widen scale) in
+         fun x -> Nx.cast dt (inverse_gamma_density t (widen x))
+       else
+         let t = terms a scale in
+         fun x -> inverse_gamma_density t x)
     ~draw:(fun k s -> Nx.div scale (Nx.Rng.gamma ~key:k (broadcast_to s a)))
     ~quantile:(fun p -> inverse_gamma_quantile (a, (scale, p)))
     a
 
 let beta ~a ~b =
   let family = "beta" in
+  let dt = Nx.dtype a in
+  let density =
+    if narrow dt then
+      let t = beta_terms (widen a) (widen b) in
+      fun x -> Nx.cast dt (beta_density t (widen x))
+    else
+      let t = beta_terms a b in
+      fun x -> beta_density t x
+  in
   let factors x =
     let ok = Nx.logical_and (positive x) (Nx.less x (const x 1.)) in
-    let x = inside ok x 0.5 in
-    outside ok
-      (Nx.sub
-         (Nx.add
-            (Nx.mul (Nx.sub_s a 1.) (Nx.log x))
-            (Nx.mul (Nx.sub_s b 1.) (Nx.log1p (Nx.neg x))))
-         (Nx.lbeta a b))
+    outside ok (density (inside ok x 0.5))
   in
   continuous ~family
     ~params:[ param "a" a; param "b" b ]
@@ -891,7 +1098,15 @@ let dirichlet ~concentration =
       (shape_string s);
   let k = s.(n - 1) in
   let last x = Nx.ndim x - 1 in
-  let tol = 64. *. float_of_int k *. Prec.eps dt in
+  let tol = 4. *. float_of_int k *. Prec.eps dt in
+  let density =
+    if narrow dt then
+      let t = dirichlet_terms (widen a) in
+      fun x -> Nx.cast dt (dirichlet_density t (widen x))
+    else
+      let t = dirichlet_terms a in
+      fun x -> dirichlet_density t x
+  in
   let factors x =
     let x = Nx.broadcast_to (broadcast family [ Nx.shape x; s ]) x in
     let ax = last x in
@@ -906,14 +1121,7 @@ let dirichlet ~concentration =
     let x =
       Nx.where (Nx.unsqueeze ~axes:[ ax ] ok) x (const x (1. /. float_of_int k))
     in
-    let normaliser =
-      Nx.sub
-        (Nx.lgamma (Nx.sum ~axes:[ n - 1 ] a))
-        (Nx.sum ~axes:[ n - 1 ] (Nx.lgamma a))
-    in
-    outside ok
-      (Nx.add normaliser
-         (Nx.sum ~axes:[ ax ] (Nx.mul (Nx.sub_s a 1.) (Nx.log x))))
+    outside ok (density x)
   in
   continuous ~family
     ~params:[ param "concentration" a ]
@@ -921,7 +1129,18 @@ let dirichlet ~concentration =
     ~checks:[ in_positive family "concentration" a ]
     ~support:(fun () -> Support.Simplex k)
     ~factors
-    ~draw:(fun key shape -> Nx.Rng.dirichlet ~key:key (broadcast_to shape a))
+    ~draw:(fun key shape ->
+      (* A format narrower than float32 draws at float32, whose components'
+         range holds what its own would underflow, and every format keeps
+         each component at least its least positive value: a component of
+         [0] lies outside the support. *)
+      let x =
+        if narrow dt then
+          Nx.cast dt (Nx.Rng.dirichlet ~key (broadcast_to shape (widen a)))
+        else Nx.Rng.dirichlet ~key (broadcast_to shape a)
+      in
+      let f = Nx.Dtype.float_format dt in
+      Nx.maximum x (const x (f.min_normal *. f.epsilon)))
     ~coords:Bij.simplex a
 
 let mvn ~loc ~scale_tril =

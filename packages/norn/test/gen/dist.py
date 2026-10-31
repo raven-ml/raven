@@ -28,6 +28,16 @@ Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
   values, so float32 and float64 read the same distribution; the counts reach
   far into both tails and up to 2^31 - 1, the logits past where their
   sigmoid underflows, and the means down to subnormal.
+- `density FAMILY ARGS... X... V`: the exact log density, from mpmath at 200
+  bits, of gamma (concentration, rate), inverse_gamma (concentration, scale),
+  beta (a, b), student_t (df, scale, at location 0) or dirichlet (three
+  concentrations) at the point X: a scalar, or three components, the density
+  then taken at X over its sum. The arguments are float32 values, at
+  concentrations from 1e-30 to 1e30, near the mode and far into both tails.
+- `density64 FAMILY ARGS... X V`: the same at float64 arguments, for gamma
+  and inverse_gamma at concentrations from 1e230 to 1e300 whose mean count
+  lies past 2^32 times the concentration, past the floats' range, or far
+  below it.
 """
 
 import argparse
@@ -168,6 +178,131 @@ def masses():
     return out
 
 
+def gamma_density(a, rate, x):
+    a, rate, x = mpf(a), mpf(rate), mpf(x)
+    return a * mpmath.log(rate) + (a - 1) * mpmath.log(x) - rate * x - mpmath.loggamma(a)
+
+
+def beta_density(a, b, x):
+    a, b, x = mpf(a), mpf(b), mpf(x)
+    return ((a - 1) * mpmath.log(x) + (b - 1) * mpmath.log1p(-x)
+            - mpmath.loggamma(a) - mpmath.loggamma(b) + mpmath.loggamma(a + b))
+
+
+def student_t_density(df, scale, x):
+    df, scale, x = mpf(df), mpf(scale), mpf(x)
+    z = x / scale
+    return (mpmath.loggamma((df + 1) / 2) - mpmath.loggamma(df / 2)
+            - mpmath.log(df * mpmath.pi) / 2 - mpmath.log(scale)
+            - (df + 1) / 2 * mpmath.log1p(z * z / df))
+
+
+def dirichlet_density(alpha, x):
+    alpha = [mpf(a) for a in alpha]
+    s = sum(mpf(v) for v in x)
+    x = [mpf(v) / s for v in x]
+    return (mpmath.loggamma(sum(alpha)) - sum(mpmath.loggamma(a) for a in alpha)
+            + sum((a - 1) * mpmath.log(v) for a, v in zip(alpha, x)))
+
+
+GAMMA_CONCENTRATIONS = [1e-30, 1e-6, 0.01, 0.4, 1.0, 2.5, 30.0, 1e3, 1e6, 1e7, 1e12, 1e30]
+GAMMA_RATES = [1e-20, 0.75, 1e6, 1e7]
+BETA_SHAPES = [(1e-3, 1e-3), (0.5, 0.5), (1.0, 1.0), (2.0, 5.0), (0.3, 1e8), (1e3, 1e6),
+               (1e7, 1e7), (40.0, 1e12), (1e30, 1e30)]
+T_DFS = [1e-3, 0.5, 1.0, 3.5, 30.0, 1e4, 1e7, 1e12, 1e30]
+T_SCALES = [0.4, 1e10]
+T_POINTS = [0.0, 0.5, 3.0, 40.0, 1e5, 1e20]
+DIRICHLET = [[1.5, 2.0, 0.7], [1e7, 1e7, 1e7], [1e-3, 1e-3, 1.0], [1e6, 1.0, 1e3],
+             [1e20, 3e20, 1e20]]
+
+
+def unit_gamma_points(a):
+    """Unit-rate gamma points near the mode and in both tails."""
+    sd = max(a, 1.0) ** 0.5
+    ys = {a, a + sd, max(a - sd, a / 2), a + 6 * sd, a / 1e3, 10 * a + 10, 1e-30}
+    return sorted(y for y in ys if y > 0)
+
+
+def densities():
+    mp.prec = 200
+    out = []
+    for a in map(f32, GAMMA_CONCENTRATIONS):
+        for rate in map(f32, GAMMA_RATES):
+            for y in unit_gamma_points(a):
+                if y / rate > 3e38:
+                    continue
+                x = f32(y / rate)
+                if x > 0:
+                    out.append(f"density gamma {fmt(a)} {fmt(rate)} {fmt(x)} "
+                               f"{fmt(gamma_density(a, rate, x))}\n")
+                    # 1 / x is inverse gamma of concentration a and scale rate.
+                    v = gamma_density(a, rate, mpf(1) / mpf(x)) - 2 * mpmath.log(mpf(x))
+                    out.append(f"density inverse_gamma {fmt(a)} {fmt(rate)} {fmt(x)} "
+                               f"{fmt(v)}\n")
+    for a, b in BETA_SHAPES:
+        a, b = f32(a), f32(b)
+        m = a / (a + b)
+        sd = (a * b / ((a + b) ** 2 * (a + b + 1))) ** 0.5
+        xs = {f32(v) for v in [m, m + sd, m - sd, m + 6 * sd, m - 6 * sd, m / 1e3,
+                               1 - (1 - m) / 1e3, 1e-30, 0.5]}
+        for x in sorted(v for v in xs if 0 < v < 1):
+            out.append(f"density beta {fmt(a)} {fmt(b)} {fmt(x)} "
+                       f"{fmt(beta_density(a, b, x))}\n")
+    for df in map(f32, T_DFS):
+        for scale in map(f32, T_SCALES):
+            for z in T_POINTS:
+                for x in sorted({f32(z * scale), f32(-z * scale)}):
+                    if abs(x) < 3e38:
+                        out.append(f"density student_t {fmt(df)} {fmt(scale)} {fmt(x)} "
+                                   f"{fmt(student_t_density(df, scale, x))}\n")
+    for alpha in DIRICHLET:
+        alpha = [f32(a) for a in alpha]
+        total = sum(alpha)
+        mean = [a / total for a in alpha]
+        sd = [(m * (1 - m) / (total + 1)) ** 0.5 for m in mean]
+        points = [mean,
+                  [mean[0] + 3 * sd[0], mean[1] - 3 * sd[0], mean[2]],
+                  [mean[0] - 5 * sd[0], mean[1], mean[2] + 5 * sd[0]],
+                  [1 / 3, 1 / 3, 1 / 3], [0.6, 0.39, 0.01]]
+        for x in points:
+            x = [f32(v) for v in x]
+            if min(x) > 0:
+                out.append("density dirichlet " + " ".join(fmt(a) for a in alpha) + " "
+                           + " ".join(fmt(v) for v in x)
+                           + f" {fmt(dirichlet_density(alpha, x))}\n")
+    return list(dict.fromkeys(out))
+
+
+# Float64 points at concentrations from 1e230 to 1e300 whose mean count m
+# lies where the deviance changes form: log (a / m) up to 22, in (22.2, 25),
+# past the floats' range and far below a.
+FAR_CONCENTRATIONS = [2.5e230, 4.11e273, 1e300]
+FAR_SCALES = [1e-20, 3.03e-86, 1.0, 1.95e67]
+FAR_LOGS = [-800.0, -40.0, 1e-3, 5.0, 22.5, 23.7, 24.9, 100.0, 800.0]
+
+
+def far_densities():
+    mp.prec = 200
+    out = []
+    points = [("inverse_gamma", 2.41e239, 3.03e-86, 6.84e-316),
+              ("gamma", 4.11e273, 1.95e67, 3.55e196)]
+    for a in FAR_CONCENTRATIONS:
+        for s in FAR_SCALES:
+            for l in FAR_LOGS:
+                m = mpf(a) * mpmath.exp(-mpf(l))
+                points.append(("gamma", a, s, float(m / s)))
+                points.append(("inverse_gamma", a, s, float(s / m)))
+    for family, a, s, x in points:
+        if not (0 < x < float("inf")):
+            continue
+        if family == "gamma":
+            v = gamma_density(a, s, x)
+        else:
+            v = gamma_density(a, s, mpf(1) / mpf(x)) - 2 * mpmath.log(mpf(x))
+        out.append(f"density64 {family} {fmt(a)} {fmt(s)} {fmt(x)} {fmt(v)}\n")
+    return list(dict.fromkeys(out))
+
+
 def merge(bins):
     """Merge each bin below MIN_BIN into its left neighbour."""
     out = []
@@ -232,6 +367,8 @@ def render():
             out.append(f"bin {name} {bound(lo)} {bound(hi)} {fmt(p)}\n")
         out.append(f"threshold {name} {fmt(stats.chi2.ppf(1 - alpha, len(bs) - 1))}\n")
     out.extend(masses())
+    out.extend(densities())
+    out.extend(far_densities())
     return "".join(out)
 
 

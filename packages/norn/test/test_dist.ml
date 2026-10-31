@@ -1369,6 +1369,394 @@ let count_masses =
             (Nx.to_array (Rune.jit' (fun p -> D.factors (d p) counts) p)));
     ]
 
+(* Continuous densities *)
+
+(* The bound norn.mli states on a log density [f]:
+   [ε (16 |f| + 48 Λ + 12 M)], for [ε] the dtype's epsilon and the family's
+   [Λ] and [M] at the exact parameters and point. *)
+let density_bound eps f ~logs ~off =
+  eps *. ((16. *. Float.abs f) +. (48. *. logs) +. (12. *. off))
+
+let alog v = Float.abs (Float.log v)
+
+(* [Λ] and [M] of a dirichlet of concentrations [alpha] at [x], read as
+   [x / Σx]. *)
+let simplex_terms alpha x =
+  let total = Array.fold_left ( +. ) 0. alpha in
+  let s = Array.fold_left ( +. ) 0. x in
+  let x = Array.map (fun v -> v /. s) x in
+  let logs = ref (float_of_int (Array.length alpha) +. alog total) in
+  let off = ref 0. in
+  Array.iteri
+    (fun k a ->
+      logs := !logs +. alog a +. alog x.(k);
+      off := !off +. Float.abs (a -. (total *. x.(k))))
+    alpha;
+  (!logs, !off)
+
+(* [Λ] and [M] of a golden line's family at its arguments. *)
+let density_terms family args =
+  match (family, args) with
+  | "gamma", [ a; rate; x ] ->
+      (1. +. alog a +. alog x, Float.abs ((rate *. x) -. a))
+  | "inverse_gamma", [ a; scale; x ] ->
+      (1. +. alog a +. alog x, Float.abs ((scale /. x) -. a))
+  | "beta", [ a; b; x ] -> simplex_terms [| a; b |] [| x; 1. -. x |]
+  | "student_t", [ df; scale; _ ] -> (1. +. alog df +. alog scale, 0.)
+  | "dirichlet", [ a1; a2; a3; x1; x2; x3 ] ->
+      simplex_terms [| a1; a2; a3 |] [| x1; x2; x3 |]
+  | _ -> failwith ("dist.golden: a malformed density line for " ^ family)
+
+(* The log density of a golden line's family at [dt]. *)
+let density_at (type b) (dt : (float, b) Nx.dtype) family args =
+  let s v = Nx.scalar dt v in
+  let v xs = Nx.create dt [| Array.length xs |] xs in
+  let f =
+    match (family, args) with
+    | "gamma", [ a; rate; x ] ->
+        D.factors (D.gamma ~concentration:(s a) ~rate:(s rate)) (s x)
+    | "inverse_gamma", [ a; scale; x ] ->
+        D.factors (D.inverse_gamma ~concentration:(s a) ~scale:(s scale)) (s x)
+    | "beta", [ a; b; x ] -> D.factors (D.beta ~a:(s a) ~b:(s b)) (s x)
+    | "student_t", [ df; scale; x ] ->
+        D.factors (D.student_t ~df:(s df) ~loc:(s 0.) ~scale:(s scale)) (s x)
+    | "dirichlet", [ a1; a2; a3; x1; x2; x3 ] ->
+        (* Points of float32 components sum to one within float32's
+           rounding: read at a wider dtype, they are first put back on the
+           simplex. *)
+        let x = v [| x1; x2; x3 |] in
+        D.factors
+          (D.dirichlet ~concentration:(v [| a1; a2; a3 |]))
+          (Nx.div x (Nx.sum x))
+    | _ -> failwith ("dist.golden: a malformed density line for " ^ family)
+  in
+  Nx.item [] (Nx.cast Nx.float64 f)
+
+(* [v] read at [dt] is [v]. *)
+let holds (type b) (dt : (float, b) Nx.dtype) v =
+  Float.equal v (Nx.item [] (Nx.cast Nx.float64 (Nx.scalar dt v)))
+
+(* Against mpmath at float64 and float32, and at float16 and bfloat16 where
+   they hold the arguments: those compute at float32 and round once, half an
+   ulp more. *)
+let exact_densities =
+  let check (type b) (dt : (float, b) Nx.dtype) family args v =
+    let format = Nx.Dtype.float_format dt in
+    let fits = Float.abs v < format.max_finite in
+    if List.for_all (holds dt) args && fits then begin
+      let logs, off = density_terms family args in
+      let eps, rounding =
+        if format.fraction_bits >= 23 then (format.epsilon, 0.)
+        else
+          ( (Nx.Dtype.float_format Nx.float32).epsilon,
+            0.5 *. format.epsilon *. (Float.abs v +. format.min_normal) )
+      in
+      equal ~msg:(Nx.Dtype.name dt)
+        (float (density_bound eps v ~logs ~off +. rounding))
+        v (density_at dt family args)
+    end
+  in
+  group "log densities against mpmath"
+    (List.map
+       (fun l ->
+         match l with
+         | _ :: family :: rest ->
+             let rest = floats rest in
+             let n = List.length rest - 1 in
+             let args = List.filteri (fun i _ -> i < n) rest in
+             let v = List.nth rest n in
+             test
+               (Printf.sprintf "%s at %s" family
+                  (String.concat " " (List.map (Printf.sprintf "%h") args)))
+               (fun () ->
+                 check Nx.float64 family args v;
+                 check Nx.float32 family args v;
+                 check Nx.float16 family args v;
+                 check Nx.bfloat16 family args v)
+         | _ -> failwith "dist.golden: a malformed density line")
+       (lines "density"))
+
+(* Scores of the continuous densities against their closed forms, from
+   nx's digamma, within [64 ε] of the magnitudes they sum: the closed form
+   itself cancels where the score nears [0]. Concentrations reach from
+   [1e-300], where the score is near [1 / α], to [1e30]; points lie near the
+   mode and far into both tails. *)
+let digamma v = item (Nx.digamma (f64 v))
+
+(* [log10] of a concentration: mostly moderate, often extreme. *)
+let concentration =
+  Gen.(
+    map
+      (fun e -> 10. ** e)
+      (frequency
+         [
+           (4, float_range (-3.) 7.);
+           (1, float_range (-300.) (-3.));
+           (1, float_range 7. 30.);
+         ]))
+
+(* A unit gamma point of concentration [a]: [a] times [10^e]. *)
+let unit_point a =
+  Gen.(map (fun e -> a *. (10. ** e)) (float_range (-3.) 1.))
+
+let score_tol terms =
+  let scale = List.fold_left (fun s t -> s +. Float.abs t) 1. terms in
+  float (64. *. epsilon_float *. scale)
+
+let grad2 f a b =
+  let ga, gb =
+    Rune.grad
+      Nx.Ptree.(pair tensor tensor)
+      (fun (a, b) -> f a b)
+      (f64 a, f64 b)
+  in
+  (item ga, item gb)
+
+let power lo hi = Gen.(map (fun e -> 10. ** e) (float_range lo hi))
+
+(* Against mpmath at float64 alone, where the mean count lies far from the
+   concentration and the logarithm of their ratio changes form. *)
+let far_densities =
+  group "log densities far from the mean count against mpmath"
+    (List.map
+       (fun l ->
+         match l with
+         | [ _; family; a; s; x; v ] ->
+             let args = floats [ a; s; x ] and v = float_of_string v in
+             test
+               (Printf.sprintf "%s at %s" family
+                  (String.concat " " (List.map (Printf.sprintf "%h") args)))
+               (fun () ->
+                 let logs, off = density_terms family args in
+                 equal
+                   (float (density_bound epsilon_float v ~logs ~off))
+                   v
+                   (density_at Nx.float64 family args))
+         | _ -> failwith "dist.golden: a malformed density64 line")
+       (lines "density64"))
+
+let continuous_scores =
+  group "scores"
+    [
+      prop "the gamma's scores are log (rate x) - ψ(α) and α / rate - x"
+        Gen.(
+          let* a = concentration in
+          let+ y = unit_point a and+ rate = power (-6.) 6. in
+          (a, rate, y /. rate))
+        (fun (a, rate, x) ->
+          assume (Float.is_finite x && x > 0. && rate *. x > 0.);
+          cover "concentration below 1e-3" (a < 1e-3);
+          cover "concentration above 1e7" (a > 1e7);
+          let ga, gr =
+            grad2
+              (fun a rate ->
+                D.factors (D.gamma ~concentration:a ~rate) (f64 x))
+              a rate
+          in
+          let y = rate *. x in
+          equal ~msg:"concentration"
+            (score_tol [ Float.log y; digamma a ])
+            (Float.log y -. digamma a) ga;
+          equal ~msg:"rate"
+            (score_tol [ a /. rate; x ])
+            ((a /. rate) -. x) gr);
+      prop
+        "the inverse gamma's scores are log (s / x) - ψ(α) and α / s - 1 / x"
+        Gen.(
+          let* a = concentration in
+          let+ y = unit_point a and+ s = power (-6.) 6. in
+          (a, s, s /. y))
+        (fun (a, s, x) ->
+          assume (Float.is_finite x && x > 0. && s /. x > 0.);
+          cover "concentration below 1e-3" (a < 1e-3);
+          cover "concentration above 1e7" (a > 1e7);
+          let ga, gs =
+            grad2
+              (fun a scale ->
+                D.factors (D.inverse_gamma ~concentration:a ~scale) (f64 x))
+              a s
+          in
+          let y = s /. x in
+          equal ~msg:"concentration"
+            (score_tol [ Float.log y; digamma a ])
+            (Float.log y -. digamma a) ga;
+          equal ~msg:"scale"
+            (score_tol [ a /. s; 1. /. x ])
+            ((a /. s) -. (1. /. x))
+            gs);
+      prop "the beta's scores are log x - ψ(a) + ψ(a + b) and its mirror"
+        Gen.(
+          let+ a = concentration
+          and+ b = concentration
+          and+ z = float_range (-6.) 6. in
+          let n = a +. b in
+          let m = a /. n in
+          let sd = Float.sqrt (m *. (1. -. m) /. (n +. 1.)) in
+          (a, b, m +. (z *. sd)))
+        (fun (a, b, x) ->
+          assume (x > 0. && x < 1.);
+          cover "a below 1e-3" (a < 1e-3);
+          cover "a above 1e7" (a > 1e7);
+          let ga, gb =
+            grad2 (fun a b -> D.factors (D.beta ~a ~b) (f64 x)) a b
+          in
+          let n = digamma (a +. b) in
+          equal ~msg:"a"
+            (score_tol [ Float.log x; digamma a; n ])
+            (Float.log x -. digamma a +. n)
+            ga;
+          let l1 = Float.log1p (-.x) in
+          equal ~msg:"b"
+            (score_tol [ l1; digamma b; n ])
+            (l1 -. digamma b +. n) gb);
+      (* Where the mean count [rate x] or [scale / x] is subnormal or [0],
+         [dm / m] overflows; the scores stay the closed forms'. *)
+      Windtrap.cases "the scores where the mean count underflows"
+        ~id:(fun (name, _, _, _, _) -> name)
+        [
+          ("gamma, rate x of 0", false, 1., 1e-200, 1e-200);
+          ("gamma, rate x subnormal", false, 1., 1., 1e-310);
+          ("inverse gamma, scale / x subnormal", true, 2., 1e-10, 1e300);
+          ("inverse gamma, scale / x of 0", true, 2., 1e-30, 1e300);
+        ]
+        (fun (_, inverse, a, s, x) ->
+          let f a s =
+            D.factors
+              (if inverse then D.inverse_gamma ~concentration:a ~scale:s
+               else D.gamma ~concentration:a ~rate:s)
+              (f64 x)
+          in
+          let ga, gs = grad2 f a s in
+          (* The log of the mean count, from the logs: [log (rate x)] or
+             [log (scale / x)]. *)
+          let ly =
+            if inverse then Float.log s -. Float.log x
+            else Float.log s +. Float.log x
+          in
+          let gs_exact =
+            if inverse then (a /. s) -. (1. /. x) else (a /. s) -. x
+          in
+          equal ~msg:"concentration"
+            (score_tol [ ly; digamma a ])
+            (ly -. digamma a) ga;
+          equal ~msg:"scale"
+            (float_rel ~rel:(64. *. epsilon_float) ~abs:0.)
+            gs_exact gs);
+      prop "a dirichlet's scores are ψ(A) - ψ(α_k) + log x_k"
+        Gen.(triple concentration concentration concentration)
+        (fun (a1, a2, a3) ->
+          let alpha = [| a1; a2; a3 |] in
+          let total = a1 +. a2 +. a3 in
+          let x = Array.map (fun a -> a /. total) alpha in
+          assume (Array.for_all (fun v -> v > 0.) x);
+          cover "a concentration above 1e7"
+            (Array.exists (fun a -> a > 1e7) alpha);
+          let g =
+            Rune.grad'
+              (fun a -> D.factors (D.dirichlet ~concentration:a) (vec x))
+              (vec alpha)
+          in
+          Array.iteri
+            (fun k a ->
+              equal
+                (score_tol [ digamma total; digamma a; Float.log x.(k) ])
+                (digamma total -. digamma a +. Float.log x.(k))
+                (Nx.item [ k ] g))
+            alpha);
+      (* [∂ν f = (ψ((ν + 1) / 2) - ψ(ν / 2) - 1/ν - log1p (z²/ν)
+         + (ν + 1) z² / (ν (ν + z²))) / 2] and
+         [∂σ f = ((ν + 1) z² / (ν + z²) - 1) / σ]. *)
+      prop "the student t's scores in its degrees of freedom and scale"
+        ~examples:[ (1., 1., 1.); (4., 0.5, 2.) ]
+        Gen.(triple concentration (power (-3.) 3.) (power (-3.) 4.))
+        (fun (df, scale, z) ->
+          cover "df below 1e-3" (df < 1e-3);
+          cover "df above 1e7" (df > 1e7);
+          let x = z *. scale in
+          let gd, gs =
+            grad2
+              (fun df scale ->
+                D.factors (D.student_t ~df ~loc:(f64 0.) ~scale) (f64 x))
+              df scale
+          in
+          let z2 = z *. z in
+          let w = (df +. 1.) *. z2 /. (df *. (df +. z2)) in
+          let a = digamma ((df +. 1.) /. 2.) and b = digamma (df /. 2.) in
+          let l = Float.log1p (z2 /. df) in
+          equal ~msg:"df"
+            (score_tol [ a; b; 1. /. df; l; w ])
+            (0.5 *. (a -. b -. (1. /. df) -. l +. w))
+            gd;
+          let v = (df +. 1.) *. z2 /. (df +. z2) in
+          equal ~msg:"scale"
+            (score_tol [ v /. scale; 1. /. scale ])
+            ((v -. 1.) /. scale) gs);
+    ]
+
+(* Each family at large parameters, at points near its mode and in its
+   tails. *)
+let compiled_densities =
+  let pos = vec [| 1e-7; 0.25; 0.9; 1.; 1.1; 3.; 1e6 |] in
+  let unit = vec [| 1e-7; 0.1; 0.249; 0.25; 0.2501; 0.5; 0.999 |] in
+  let real = vec [| -1e6; -3.; -0.5; 0.; 1e-3; 2.; 1e20 |] in
+  Windtrap.cases "a compiled density is the eager one"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("gamma", pos, fun p -> D.gamma ~concentration:(Nx.mul_s p 1e6) ~rate:p);
+      ( "inverse_gamma",
+        pos,
+        fun p -> D.inverse_gamma ~concentration:(Nx.mul_s p 1e6) ~scale:p );
+      ("beta", unit, fun p -> D.beta ~a:(Nx.mul_s p 1e6) ~b:(Nx.mul_s p 3e6));
+      ( "student_t",
+        real,
+        fun p -> D.student_t ~df:(Nx.mul_s p 1e7) ~loc:(f64 0.) ~scale:p );
+    ]
+    (fun (_, xs, d) ->
+      let p = f64 1.5 in
+      let f p = D.factors (D.iid [| 7 |] (d p)) xs in
+      (* Each within its bound, a few hundred ulps of [|f|] and the logs. *)
+      equal
+        (array (float_rel ~rel:1e-12 ~abs:1e-11))
+        (Nx.to_array (f p))
+        (Nx.to_array (Rune.jit' f p)))
+
+let bfloat16_simplex =
+  test "at bfloat16 a dirichlet's tolerance is the point's rounding"
+    (fun () ->
+      let bf xs = Nx.create Nx.bfloat16 [| Array.length xs |] xs in
+      let d = D.dirichlet ~concentration:(bf [| 1.; 1.; 1. |]) in
+      let f x = Nx.item [] (Nx.cast Nx.float64 (D.factors d (bf x))) in
+      satisfies ~claim:"finite" float_exact Float.is_finite
+        (f [| 1. /. 3.; 1. /. 3.; 1. /. 3. |]);
+      equal float_exact Float.neg_infinity (f [| 0.5; 0.5; 0.3 |]))
+
+(* At float16, components of a dirichlet of many small concentrations
+   underflowed: a draw then had density [-inf]. *)
+let narrow_dirichlet_draws =
+  Windtrap.cases "a narrow dirichlet's draws have finite densities"
+    ~id:(fun k -> Printf.sprintf "%d components" k)
+    [ 100; 1000 ]
+    (fun k ->
+      let d =
+        D.dirichlet ~concentration:(Nx.full Nx.float16 [| k |] 0.7)
+      in
+      let x = D.sample (Nx.Rng.key 41) (D.iid [| 2000 |] d) in
+      let f = Nx.to_array (Nx.cast Nx.float64 (D.factors (D.iid [| 2000 |] d) x)) in
+      satisfies ~claim:"every density finite" (array float_exact)
+        (Array.for_all Float.is_finite) f)
+
+let compiled_dirichlet =
+  test "a compiled dirichlet density is the eager one" (fun () ->
+      let x =
+        Nx.create Nx.float64 [| 2; 3 |] [| 0.2; 0.3; 0.5; 0.6; 0.39; 0.01 |]
+      in
+      let f a = D.factors (D.iid [| 2 |] (D.dirichlet ~concentration:a)) x in
+      let a = vec [| 1.5; 2e6; 0.7 |] in
+      equal
+        (array (float_rel ~rel:1e-14 ~abs:1e-14))
+        (Nx.to_array (f a))
+        (Nx.to_array (Rune.jit' f a)))
+
 let laplace =
   group "laplace"
     [
@@ -1586,5 +1974,15 @@ let () =
          transforms;
          binomial;
          count_masses;
+         group "continuous densities"
+           [
+             exact_densities;
+             far_densities;
+             continuous_scores;
+             compiled_densities;
+             compiled_dirichlet;
+             bfloat16_simplex;
+             narrow_dirichlet_draws;
+           ];
          laplace;
        ])

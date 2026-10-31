@@ -49,6 +49,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta`, `Dist.dirichlet` and
+  `Dist.student_t` compute their log densities in Loader's form, within a
+  stated bound: a float32 gamma(1e7, 1e7) read 0 at 1 for 7.14.
+- `Dist.dirichlet` reads a point within rounding of the simplex as `x / Σ x`.
 - `Summary.v`, `Summary.of_weighted`, `Diag.mcse_mean` and `Diag.loo`'s `se`
   compute spreads over the draws' scale: draws 1e-200 apart no longer get an
   `sd` of 0 and draws 1e200 apart an infinite one, the error scales with the

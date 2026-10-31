@@ -5,7 +5,24 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed pathfinder/schools/4 vi/schools/4 under load 29.7 on 14 cores
+# forced: blessed dist/beta/100000 dist/beta/100000/grad dist/binomial/100000 dist/binomial/100000/grad dist/dirichlet/100000 dist/dirichlet/100000/grad dist/gamma/100000 dist/gamma/100000/grad dist/inverse_gamma/100000 dist/inverse_gamma/100000/grad dist/neg_binomial/100000 dist/neg_binomial/100000/grad dist/poisson/100000 dist/poisson/100000/grad dist/student_t/100000 dist/student_t/100000/grad under load 44.1 on 14 cores
 
+dist/beta/100000	alloc_words	exact	7396
+dist/beta/100000/grad	alloc_words	exact	1324
+dist/binomial/100000	alloc_words	exact	31774
+dist/binomial/100000/grad	alloc_words	exact	1324
+dist/dirichlet/100000	alloc_words	exact	5916
+dist/dirichlet/100000/grad	alloc_words	exact	1182
+dist/gamma/100000	alloc_words	exact	4508
+dist/gamma/100000/grad	alloc_words	exact	1324
+dist/inverse_gamma/100000	alloc_words	exact	4510
+dist/inverse_gamma/100000/grad	alloc_words	exact	1324
+dist/neg_binomial/100000	alloc_words	exact	40147
+dist/neg_binomial/100000/grad	alloc_words	exact	1324
+dist/poisson/100000	alloc_words	exact	12431
+dist/poisson/100000/grad	alloc_words	exact	1182
+dist/student_t/100000	alloc_words	exact	3291
+dist/student_t/100000/grad	alloc_words	exact	1466
 pathfinder/schools/4	alloc_words	exact	9807778
 vi/schools/4	alloc_words	exact	11265956
 

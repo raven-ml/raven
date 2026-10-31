@@ -189,20 +189,9 @@ let log_density =
   in
   Thumper.bench_with_setup ~setup "schools/16" (fun (lp, c) -> lp c)
 
-let factors =
-  let setup () =
-    let d =
-      D.iid [| 100_000 |]
-        (D.student_t ~df:(f64 4.) ~loc:(f64 0.) ~scale:(f64 1.))
-    in
-    (d, Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 100_000 |])
-  in
-  Thumper.bench_with_setup ~setup "student_t/100000" (fun (d, x) ->
-      D.factors d x)
-
-(* A count family's factors at 100000 of its draws, eager, and as a compiled
-   value and gradient in one parameter [p]. *)
-let counts name family p =
+(* A family's factors at 100000 of its draws, eager, and as a compiled value
+   and gradient in one parameter [p]. *)
+let rows name family p =
   let x = D.sample (Nx.Rng.key 6) (D.iid [| 100_000 |] (family (f64 p))) in
   let n = Printf.sprintf "%s/100000" name in
   let eager =
@@ -225,12 +214,27 @@ let counts name family p =
   [ eager; grad ]
 
 let count_factors =
-  counts "poisson" (fun rate -> D.poisson ~rate) 30.
-  @ counts "binomial"
+  rows "poisson" (fun rate -> D.poisson ~rate) 30.
+  @ rows "binomial"
       (fun logits -> D.binomial ~trials:(Nx.scalar Nx.int32 1000l) ~logits)
       (-1.)
-  @ counts "neg_binomial"
+  @ rows "neg_binomial"
       (fun mean -> D.neg_binomial ~mean ~dispersion:(f64 4.5))
+      30.
+
+let continuous_factors =
+  rows "gamma" (fun a -> D.gamma ~concentration:a ~rate:(f64 2.)) 30.
+  @ rows "inverse_gamma"
+      (fun a -> D.inverse_gamma ~concentration:a ~scale:(f64 2.))
+      30.
+  @ rows "beta" (fun a -> D.beta ~a ~b:(f64 4.5)) 30.
+  @ rows "student_t"
+      (fun df -> D.student_t ~df ~loc:(f64 0.) ~scale:(f64 1.))
+      4.
+  @ rows "dirichlet"
+      (fun a ->
+        let weights = Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |] in
+        D.dirichlet ~concentration:(Nx.mul a weights))
       30.
 
 let rhat =
@@ -274,7 +278,7 @@ let () =
       Thumper.group "smc"
         [ smc_step Norn.Smc.Hmc "hmc"; smc_step Norn.Smc.Slice "slice" ];
       Thumper.group "model" [ log_density ];
-      Thumper.group "dist" (factors :: count_factors);
+      Thumper.group "dist" (count_factors @ continuous_factors);
       Thumper.group "diag" [ rhat ];
       Thumper.group "posteriordb" posteriordb;
     ]
