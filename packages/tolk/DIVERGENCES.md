@@ -40,7 +40,7 @@ memory it uses, and tolk encodes no queue (D146).
 ## D2. Withdrawn
 
 tinygrad matches patterns without generating code when `UPAT_COMPILE` is 0
-(`uop/ops.py:1557`, `upat_interpret`), and `UPat`, `PatternMatcher` and
+(`uop/ops.py:1556`, `upat_interpret`), and `UPat`, `PatternMatcher` and
 `graph_rewrite` live in `uop/ops.py`. tolk ports that path in
 `Ops`, so leaving out `uop/upat.py`, the pattern compiler, is scope: see
 the Exclusions of `README.md`.
@@ -61,7 +61,7 @@ the Exclusions of `README.md`.
   `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
-  (`uop/ops.py:835-980`) are the engine's. Whether storage is bound is the
+  (`uop/ops.py:836-980`) are the engine's. Whether storage is bound is the
   operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
   `ParamArg.buffer` (`uop/spec.py:149,153,264,266`) hold by construction.
 - **Reason:** (c).
@@ -76,7 +76,7 @@ the Exclusions of `README.md`.
 ## D4. Import cycles are broken
 
 - **tinygrad:** the imports inside functions that Python uses to hide a cycle:
-  - `uop/ops.py:15,196,261,500,917,1153-1176,1573` calls `symbolic`, `render`,
+  - `uop/ops.py:15,196,261,497,917,1153-1176,1572` calls `symbolic`, `render`,
     `spec`, `upat`, `schedule.prepare`, `mixin.rand` and `renderer`;
   - `uop/spec.py:6` against `device`;
   - `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
@@ -170,7 +170,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `engine/worker.py:1-2` (`multiprocessing` spawn workers);
   `helpers.py:173-190` (`Context` and `ContextVar`, one value per process);
-  `codegen/__init__.py:506-516` (`to_program_context`, the settings a worker
+  `codegen/__init__.py:505-515` (`to_program_context`, the settings a worker
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk:** `Worker.spawned` and `Worker.map`; `Setting.t` and
   `Setting.context`; `Codegen.to_program_cache` (`to_program`'s cache);
@@ -293,7 +293,7 @@ stamps nothing (D146).
   - `dtype.py:229-233` (`float_to_bf16` rounds to float32 with
     `truncate[dtypes.float]`, then to bfloat16), and `dtype.py:84` (`const`
     converts an integer to a float through a double, `float(val)`);
-  - `codegen/decomp/dtype.py:36-38,101-134,198-199`: `l2i` converts a long
+  - `codegen/decomp/dtype.py:36-38,102-135,199-200`: `l2i` converts a long
     to a float32 word by word; an emulated cast narrows its source to float32
     first; `f2f` flushes subnormals to zero both ways; `f2f_clamp` sends a
     finite value above the greatest one to infinity in the 16-bit floats, and
@@ -946,7 +946,7 @@ scope, see README.
 
 ## D28. A host program has rig's entry
 
-- **tinygrad:** `codegen/__init__.py:458-460` (`do_compile`: the binary is the
+- **tinygrad:** `codegen/__init__.py:457-459` (`do_compile`: the binary is the
   source compiled), `runtime/ops_cpu.py:58-70` (`CPUProgram.__call__` calls
   the kernel's own signature through ctypes, every argument a `c_uint64`).
 - **tolk:** `Codegen.host_entry`, `Codegen.do_compile`.
@@ -1090,7 +1090,7 @@ encodes its own releases (D146).
 
 ## D41. The memory plan sees a range's calls, and leaves buffers reached through views
 
-- **tinygrad:** `schedule/memory.py:28-33` (`memory_plan_rewrite` takes each
+- **tinygrad:** `schedule/memory.py:27-32` (`memory_plan_rewrite` takes each
   entry's buffers from its sources after the first, through `_collect_bufs`,
   which passes buffers, `MSELECT` and `MSTACK` only).
 - **tolk:** `Memory.viewed`, `Memory.uses` and
@@ -1342,7 +1342,7 @@ driver sizes local memory as it loads a function (D146).
 
 ## D56. The logarithm of a negative subnormal is NaN
 
-- **tinygrad:** `codegen/decomp/transcendental.py:250-255` (`xlog2` selects
+- **tinygrad:** `codegen/decomp/transcendental.py:250-253` (`xlog2` selects
   NaN where `d < -0.0`, then `-inf` where the reciprocal of `d` is `-inf`,
   which it means for `-0.0`).
 - **tolk:** `Transcendental.xlog2`,
@@ -1452,7 +1452,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D62. A move of an emulated float keeps its bits
 
-- **tinygrad:** `codegen/decomp/dtype.py:181-206` (`pm_float_decomp`, which
+- **tinygrad:** `codegen/decomp/dtype.py:182-207` (`pm_float_decomp`, which
   widens every load of an emulated float to the emulating float and narrows
   every store back).
 - **tolk:** `Decomp_dtype.moved` and the store rule of
@@ -1486,7 +1486,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D63. Programs and schedules are kept on disk
 
-- **tinygrad:** `codegen/__init__.py:508-516` (`to_program_config`,
+- **tinygrad:** `codegen/__init__.py:507-515` (`to_program_config`,
   `to_program_key` and `to_program_cache`, a dictionary of the process),
   `schedule/__init__.py:126-136` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:291` (`SCACHE`, `1` by
@@ -1591,7 +1591,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D65. An emulated value is a value of its float
 
-- **tinygrad:** `codegen/decomp/dtype.py:198-201` (`pm_float_decomp`: a cast
+- **tinygrad:** `codegen/decomp/dtype.py:199-202` (`pm_float_decomp`: a cast
   to the emulated float only clamps its operand, `f2f_clamp`, and an
   operation on it computes in the emulating float; only a store rounds).
 - **tolk:** `Decomp_dtype.rounded`, and the cast rule and the operation
@@ -1673,9 +1673,9 @@ does the same.
   shapes, then the rest of the source's), which no tinygrad pass puts in a
   tensor graph; `schedule/indexing.py:30-45` (`pm_generate_realize_map` and
   its rules), `:70` (the sources an INDEX's ranges reach),
-  `:135` and `:143` (`pm_apply_rangeify`) and `:229` (`run_rangeify`'s
+  `:135` and `:143` (`pm_apply_rangeify`) and `:228` (`run_rangeify`'s
   consumer ranges); `schedule/prepare.py:65` (`_mop_index`), `:76`
-  (`pm_mops`), `:94-101` (`fix_store_hazard`) and `:275-277`
+  (`pm_mops`), `:99-106` (`fix_store_hazard`) and `:279-281`
   (`prepare_rangeify`).
 - **tolk:** `Indexing.storage`, `Indexing.is_gather`,
   `Indexing.realize_gathered`, `Indexing.data_srcs`, `Indexing.convert_gather`
@@ -1870,7 +1870,7 @@ does the same.
 
 ## D77. A broadcast value that runs a transcendental stays stored
 
-- **tinygrad:** `schedule/indexing.py:269-275` (`run_rangeify`, which
+- **tinygrad:** `schedule/indexing.py:268-274` (`run_rangeify`, which
   stores an elementwise value or reduction whose ranges a broadcast ends),
   `:60` (`BufferizeOpts.removable`) and `:90` (its value), and
   `schedule/rangeify.py:23` (`cleanup_dead_axes`) and `:48-90`
@@ -1970,11 +1970,11 @@ does the same.
 
 - **tinygrad:** `runtime/ops_cpu.py:58-73` (`CPUProgram.__call__`),
   which calls a kernel once per launch on the calling thread;
-  `codegen/__init__.py:366` (the pipeline after `pm_cast_const`),
-  `:33-34,377-379` (`do_number_param` and its pass) and `:444`
-  (`do_estimates`); `uop/ops.py:1324` (`KernelInfo`) and `:1353`
+  `codegen/__init__.py:367` (the pipeline after `pm_cast_const`),
+  `:33-34,378-380` (`do_number_param` and its pass) and `:443`
+  (`do_estimates`); `uop/ops.py:1323` (`KernelInfo`) and `:1352`
   (`ProgramInfo.from_sink`); `engine/realize.py:16`
-  (`get_call_var_uops`) and `:149` (`exec_kernel`).
+  (`get_call_var_uops`) and `:151` (`exec_kernel`).
 - **tolk:** `Codegen.split_blocks`, its place in
   `Codegen.full_rewrite_to_sink`, `Codegen.pm_number_params` and
   `Codegen.whole_loop`; `Ops.kernel_info`'s
@@ -2239,7 +2239,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D90. A linked schedule resolves its launches at link
 
-- **tinygrad:** `engine/realize.py:126` (`resolve_params`) and `:149`
+- **tinygrad:** `engine/realize.py:126` (`resolve_params`) and `:151`
   (`exec_kernel`), which find a call's buffers, launch dimensions and variable
   values on every run, and `uop/ops.py:1152-1165` (`UOp._sym_fxn`, a cached
   property that simplifies a symbolic integer once and compiles it to a
@@ -2424,7 +2424,7 @@ gate read a set; merged into D93.
 ## D95. A device's target follows from the device alone
 
 - **tinygrad:** `helpers.py:225-240` (`_DEV`, the `DEV` setting, and
-  `DEV.target`); `device.py:457-460` (`_select_renderer`, which renders for
+  `DEV.target`); `device.py:457-462` (`_select_renderer`, which renders for
   `DEV.target` of the device's kind).
 - **tolk:** `Tolk_engine.target`; `Device.renderer`; `Helpers.Target`.
 - **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
@@ -2449,7 +2449,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 ## D100. A reduction of no axes that a broadcast ends is stored
 
-- **tinygrad:** `schedule/indexing.py:270-275` (`run_rangeify`, which stores
+- **tinygrad:** `schedule/indexing.py:269-274` (`run_rangeify`, which stores
   an elementwise value or reduction whose ranges a broadcast ends by
   realizing each of its axes, so a value of no axes is not stored).
 - **tolk:** `Indexing.assign_ranges`;
@@ -2507,7 +2507,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 ## D102. An empty argument of a precompiled call is its constant
 
-- **tinygrad:** `schedule/prepare.py:264` (the size-0 rule, which makes every
+- **tinygrad:** `schedule/prepare.py:268` (the size-0 rule, which makes every
   value with no element a constant expanded to its shape), `schedule/rangeify.py:138`
   (`no_indexing_calls`), `uop/spec.py:251-278` (`spec_kernel_graph`, which
   admits no expand) and `schedule/__init__.py:18-22,71-74` (`_states` and the
@@ -2626,7 +2626,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 - **tinygrad:** `schedule/rangeify.py:48-97` (`remove_bufferize`, which
   inlines a stored value that reads at most three buffers and no reduction
-  reading a buffer, whoever reads it) and `schedule/indexing.py:266`
+  reading a buffer, whoever reads it) and `schedule/indexing.py:265`
   (`run_rangeify`, which stores a value its consumers read at different
   indices without marking it broadcast).
 - **tolk:** `Rangeify.remove_bufferize`'s `read_by_every_output`, with
@@ -2827,8 +2827,8 @@ encodes its barriers (D146).
   actions, reading `getenv("TC", 1)` and `getenv("TC_OPT", 2)`);
   `codegen/opt/heuristic.py:21` (`TC_OPT`'s default, `2` during a search and
   `0` otherwise); `engine/jit.py:37` (`getenv("JITBEAM", BEAM.value)`);
-  `engine/realize.py:271` (`compile_linear`'s `profile`, `PROFILE or
-  DEBUG >= 2` unless given, for `hcq_compile`); `codegen/__init__.py:384`
+  `engine/realize.py:274` (`compile_linear`'s `profile`, `PROFILE or
+  DEBUG >= 2` unless given, for `hcq_compile`); `codegen/__init__.py:385`
   (`os.environ.get("DBGTV")`, read on each failure).
 - **tolk:** `Setting.reach`, `Setting.shaping`, `Setting.t`,
   `Setting.jitbeam` and `Setting.tc_opt`; `Search.tc_opt_all` and
@@ -2914,9 +2914,9 @@ encodes its barriers (D146).
 
 - **tinygrad:** `codegen/opt/search.py:133-143` (each candidate compiled,
   then dropped if its binary is in `seen_libs`), `:63` (`_try_compile` calls
-  `to_program`); `codegen/__init__.py:474-502` (`do_to_program` takes a
-  sink or a program at any stage), `:513-515` (`to_program_cache`) and
-  `:460` (`do_compile` calls `compile_cached`); `engine/realize.py:226`
+  `to_program`); `codegen/__init__.py:473-501` (`do_to_program` takes a
+  sink or a program at any stage), `:512-514` (`to_program_cache`) and
+  `:459` (`do_compile` calls `compile_cached`); `engine/realize.py:229`
   (`_get_call_to_compile` takes a program not yet compiled).
 - **tolk:** `Search.beam_search` (its `compiled`, the compiler it memoizes
   and its `compile`); `Search.memo`; `Search.try_compile`, `Codegen.compile`
@@ -3029,7 +3029,7 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 ## D122. A stored value keeps its bounds
 
 - **tinygrad:** `schedule/rangeify.py:225` (`bufferize_to_store`'s `ALLOC`),
-  `:278` (`debuf`) and `schedule/prepare.py:164,172` (`copy_to_anon_store`,
+  `:278` (`debuf`) and `schedule/prepare.py:169,177` (`copy_to_anon_store`,
   `stage_to_anon_store`), whose storage carries no bounds, so a read of it
   has its type's; `uop/ops.py:1149` (`_min_max`, which bounds a `BITCAST` by
   its type).
@@ -3068,7 +3068,7 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 ## D123. The engine runs a loop of calls while a flag holds
 
 - **tinygrad:** `uop/spec.py:88` (a `BACKEDGE` closes a bound-less range,
-  inside a kernel), `engine/realize.py:277-284` (`run_linear` runs every
+  inside a kernel), `engine/realize.py:280-287` (`run_linear` runs every
   call of a schedule once, in order).
 - **tolk:** `Spec.shared` and `Spec.kernel_graph` (a `Backedge` around
   calls, in the tensor and kernel-graph specs), `Schedule.is_loop` and
@@ -3355,8 +3355,8 @@ driver signals its own (D146).
 
 ## D137. Consumers of one domain share their loops
 
-- **tinygrad:** `schedule/indexing.py:232` (new ranges for every stored value)
-  and `:252-275` (a node its consumers index apart is stored);
+- **tinygrad:** `schedule/indexing.py:231` (new ranges for every stored value)
+  and `:251-274` (a node its consumers index apart is stored);
   `schedule/rangeify.py:48` (`remove_bufferize`, which inlines such a store
   back into each consumer) and `:330-343` (`split_store`, one kernel per
   store). Upstream calls scheduling several outputs into one kernel pending:
@@ -3364,7 +3364,7 @@ driver signals its own (D146).
   supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
   multioutput implementation #3607". Codegen already compiles a kernel of one
   end over a group of stores (`test/runtime/test_custom_kernel.py:140`). For
-  reductions, `schedule/indexing.py:298-300` (`run_rangeify`: each reduction
+  reductions, `schedule/indexing.py:297-299` (`run_rangeify`: each reduction
   takes new ranges for the axes it reduces); `codegen/__init__.py:172`
   (`merge_reduce_ends`, which already makes one loop of the reductions that
   close one range); `codegen/simplify.py:21` (`simplify_merge_adjacent`, which
@@ -3767,7 +3767,7 @@ merged into D137, which holds the loops that consumers of one domain share.
 ## D145. An integer division on padding divides by 1 there
 
 - **tinygrad:** `schedule/indexing.py:100-104`
-  (`convert_pad_to_where_to_keep_behavior_local`) and `:176`
+  (`convert_pad_to_where_to_keep_behavior_local`) and `:175`
   (`apply_movement_op` on a `PAD`, which makes the source's ranges invalid on
   the padding); `codegen/opt/postrange.py:127-143` (`PADTO`, which gates the
   loads of the padded axis). Either way the source is computed on every lane,
@@ -3812,8 +3812,8 @@ merged into D137, which holds the loops that consumers of one domain share.
   the queue encoders it calls through `Compiled.pm_encode`, the host
   programs that submit them, the staging copies and `hcq_link`);
   `runtime/ops_*.py` (`pm_encode` and the queues);
-  `engine/realize.py:267` (`compile_linear`, which ends in `hcq_compile`)
-  and `:277` (`run_linear`).
+  `engine/realize.py:270` (`compile_linear`, which ends in `hcq_compile`)
+  and `:280` (`run_linear`).
 - **tolk:** `Realize.compile_linear`; `Tolk_engine.link`, `Tolk_engine.run`
   and `Tolk_engine.time`; `test/gen/engine/jit.py`,
   which stops tinygrad's `compile_linear` before `hcq_compile`.
@@ -3922,7 +3922,7 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 ## D150. The folder's sine is correctly rounded
 
-- **tinygrad:** `uop/ops.py:1409` (`python_alu`'s `SIN`, `math.sin`, the C
+- **tinygrad:** `uop/ops.py:1408` (`python_alu`'s `SIN`, `math.sin`, the C
   library's).
 - **tolk:** `Ops.sine`, which `python_alu` calls; `test/gen/tinygrad.patch`,
   which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`, in
@@ -4299,7 +4299,7 @@ merged into D137, which holds the loops that consumers of one domain share.
 - **tinygrad:** `schedule/rangeify.py:48-97` (`remove_bufferize`, which
   inlines a stored value that reads at most three buffers and no reduction
   reading a buffer, at every position and every trip it is read at) and
-  `:346-353` (`get_kernel_graph`); `schedule/indexing.py:225-276`
+  `:346-353` (`get_kernel_graph`); `schedule/indexing.py:224-275`
   (`run_rangeify`, which stores a value its consumers index differently, or
   one a reduction or an elementwise operation reads past a broadcast, the
   stores `remove_bufferize` weighs).
