@@ -436,11 +436,11 @@ val param :
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
-val param_like : Ops.t -> int -> Ops.t
-(** [param_like u slot] is a parameter in [slot] that [u] can be passed to: a
-    scalar variable without its name and value, one shard of a sharded value, or
-    storage of [u]'s shape. Storage has the phase and alignment of the storage
-    [u] views ({!storage_phase}).
+val param_like : ?name:string -> Ops.t -> int -> Ops.t
+(** [param_like ~name u slot] is a parameter in [slot], named [name] (default
+    none), that [u] can be passed to: a scalar variable without its value, one
+    shard of a sharded value, or storage of [u]'s shape. Storage has the phase
+    and alignment of the storage [u] views ({!storage_phase}).
 
     Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
 

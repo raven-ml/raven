@@ -3275,11 +3275,11 @@ let rec storage_phase u =
           (known align, 0))
   | _ -> (16, 0)
 
-let param_like u slot =
+let param_like ?name u slot =
   match op u with
   | Op.Param when addrspace u = Some Dtype.Alu ->
       let p = param_arg_of u in
-      v Op.Param ~arg:(Param { p with slot; name = None; bound = None })
+      v Op.Param ~arg:(Param { p with slot; name; bound = None })
   | _ -> (
       let a = axis u and align, phase = storage_phase u in
       match (a, device u) with
@@ -3291,11 +3291,11 @@ let param_like u slot =
                  (Param
                     (param_arg ~slot
                        ~size:(size_of (to_max_shape ss))
-                       ~device:d ~phase ~align (dtype u))))
+                       ?name ~device:d ~phase ~align (dtype u))))
             ss
       | _ ->
-          param ?shape:(shape_opt u) ?device:(device u) ~phase ~align slot
-            (dtype u))
+          param ?shape:(shape_opt u) ?device:(device u) ?name ~phase ~align
+            slot (dtype u))
 
 (* Variables *)
 

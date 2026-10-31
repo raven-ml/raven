@@ -678,6 +678,13 @@ let variables =
           equal string "w"
             (Ops.expr (Shape.param ~name:"w" ~shape:(ints [ 4 ]) 0 Float32));
           rejects (fun () -> Ops.expr (param [ 4 ] 0 Float32)));
+      test "param_like names the parameter it makes, or leaves it unnamed"
+        (fun () ->
+          let p = param ~device:cpu [ 4 ] 0 Float32 in
+          equal string "x" (Ops.expr (Shape.param_like ~name:"x" p 1));
+          equal string "y" (Ops.expr (Shape.param_like ~name:"y" n 2));
+          rejects (fun () -> Ops.expr (Shape.param_like n 2));
+          rejects (fun () -> Ops.expr (Shape.param_like p 1)));
       test "bind binds a value within the range" (fun () ->
           let b = Shape.bind n (i 3) in
           is_true (Shape.is_bound_var b);

@@ -798,6 +798,7 @@ thread.
 
 ### Tolk (new)
 
+- `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.
 - A jitted chain of 4 float32 `Nx.betainc` over 4 values compiles in 2.9 s
