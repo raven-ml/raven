@@ -683,6 +683,24 @@ let map_operands m = function
           seeds = map_values m s.seeds;
         }
 
+let construct_name = function
+  | Scan _ -> "a scan"
+  | Iterate _ -> "an iterate"
+  | Lanes _ -> "Rune.lanes"
+  | Lane_index _ -> "Rune.lane_index"
+  | Call _ -> "a call"
+  | Remat _ -> "Rune.remat"
+  | Operator _ -> "Rune.root's operator"
+  | Root { name; _ } -> name
+  | Solve { name; _ } -> name ^ "'s linear solve"
+  | Switch { name; _ } -> name
+  | Add _ -> "an addition"
+  | Accumulate _ -> "Rune.Total.add"
+  | Emit _ -> "an emission"
+  | Detach _ -> "Rune.detach"
+  | Callback _ -> "Rune.callback"
+  | Custom { name; _ } | Linear { name; _ } -> name
+
 let once f =
   let cell = ref None and lock = Mutex.create () in
   fun ~name ->

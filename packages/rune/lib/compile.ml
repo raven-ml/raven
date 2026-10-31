@@ -12,7 +12,7 @@ module Shape = Tolk.Shape
 module Engine = Tolk_engine
 module Arith = Lower_arith
 
-exception Declined of string
+exception Declined = Pieces.Declined
 
 let decline fmt = Printf.ksprintf (fun s -> raise (Declined s)) fmt
 let numel s = Array.fold_left ( * ) 1 s
@@ -20,11 +20,7 @@ let ints l = List.map (fun n -> Ops.Int n) l
 let shape_of (f : _ Nx.Prim.form) = Iarray.to_array (L.shape f.layout)
 
 (* The device a placement holds a whole value on, if it is one. *)
-let device_of p =
-  let s = Nx.Placement.devices p in
-  List.find_opt
-    (fun r -> Nx.Placement.equal p (Nx.Placement.device s r))
-    (Nx.rigs s)
+let device_of = Pieces.device_of
 
 (* Storage
 
@@ -247,6 +243,10 @@ type state = {
   rig : Rig.t;
   device : Ops.device;
   issued : form;  (** {!issued}'s form of the program. *)
+  split : bool;
+      (** Whether the program is a split one ({!Pieces}), each of its values
+          on one device of its own, so that each operation computes on its
+          values' device and a placement onto another device copies. *)
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t) list;
   uploads : (value * A.any) list ref;
@@ -269,15 +269,21 @@ let view_of st u = Ops.Tbl.replace st.views (Ops.base u) ()
 let rec unshaped u =
   if Ops.op u = Tolk.Op.Reshape then unshaped (Ops.nth u 0) else u
 
+(* The device of a value at [p] in the program's graph. *)
+let device_at st p =
+  if st.split then Rig.name (Pieces.rig_of p) else st.device
+
 let on_rig st p what =
-  match device_of p with
-  | Some r when Rig.equal r st.rig -> ()
-  | Some r ->
-      decline "%s on %s, where the program computes on %s" what (Rig.name r)
-        (Rig.name st.rig)
-  | None ->
-      decline "%s placed at %s, over several devices" what
-        (Format.asprintf "%a" Nx.Placement.pp p)
+  if st.split then ()
+  else
+    match device_of p with
+    | Some r when Rig.equal r st.rig -> ()
+    | Some r ->
+        decline "%s on %s, where the program computes on %s" what (Rig.name r)
+          (Rig.name st.rig)
+    | None ->
+        decline "%s placed at %s, over several devices" what
+          (Format.asprintf "%a" Nx.Placement.pp p)
 
 (* [bind st a] is the node of the array [a], bound once as a capture. *)
 let bind st (A.Any a) =
@@ -286,7 +292,8 @@ let bind st (A.Any a) =
   else
     let first, length = run_bytes dt l in
     let b = A.buffer a in
-    let buffer, u = storage ~device:st.device ~phase:(phase b first) dt l in
+    let device = Rig.name (A.device a) in
+    let buffer, u = storage ~device ~phase:(phase b first) dt l in
     st.bound <- (buffer, Rig.Buffer.view b ~first ~length) :: st.bound;
     view_of st u;
     u
@@ -317,7 +324,7 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
       let a = A.Any (Iarray.get arrays 0) in
       let u =
         match device_of (Nx.placement x) with
-        | Some r when Rig.equal r st.rig -> bind st a
+        | Some r when st.split || Rig.equal r st.rig -> bind st a
         | Some _ ->
             let made = List.find_opt (fun (v, _) -> same v (V x)) in
             let copy =
@@ -342,7 +349,9 @@ let capture (type v s d) st (x : (v, s, d) Nx.t) =
 let elsewhere (type v s d) st (x : (v, s, d) Nx.t) =
   let arrays = Nx.Repr.shards x in
   match device_of (Nx.placement x) with
-  | Some r when (not (Rig.equal r st.rig)) && Iarray.length arrays = 1 ->
+  | Some r
+    when (not st.split) && (not (Rig.equal r st.rig))
+         && Iarray.length arrays = 1 ->
       let a = Iarray.get arrays 0 in
       let dt = A.dtype a and l = A.layout a in
       let bit = L.offset l * D.bits dt in
@@ -353,24 +362,6 @@ let elsewhere (type v s d) st (x : (v, s, d) Nx.t) =
         Some (Rig.Buffer.view (A.buffer a) ~first:(bit / 8) ~length)
       else None
   | _ -> None
-
-let construct_name = function
-  | Scan _ -> "a scan"
-  | Iterate _ -> "an iterate"
-  | Lanes _ -> "Rune.lanes"
-  | Lane_index _ -> "Rune.lane_index"
-  | Call _ -> "a call"
-  | Remat _ -> "Rune.remat"
-  | Operator _ -> "Rune.root's operator"
-  | Root { name; _ } -> name
-  | Solve { name; _ } -> name ^ "'s linear solve"
-  | Switch { name; _ } -> name
-  | Add _ -> "an addition"
-  | Accumulate _ -> "Rune.Total.add"
-  | Emit _ -> "an emission"
-  | Detach _ -> "Rune.detach"
-  | Callback _ -> "Rune.callback"
-  | Custom { name; _ } | Linear { name; _ } -> name
 
 (* Lending
 
@@ -819,8 +810,26 @@ let may_take env base into =
      || List.exists donated (List.init (Array.length env.donated) Fun.id)
         && Array.exists output env.p.outputs)
 
+(* The device [op] computes on: its result's. *)
+let op_device st (type r) (op : r Nx.Prim.t) =
+  match op with
+  | _ when not st.split -> st.device
+  | Place (q, _) -> device_at st q
+  | Map { at = Some q; _ } -> device_at st q
+  | _ -> (
+      match Nx.Prim.operands op with
+      | Nx.Prim.Operands (Nx.Prim.Any x :: _) -> device_at st (Nx.placement x)
+      | Nx.Prim.Operands [] -> st.device)
+
+(* [u] on [d]: a copy where it lies on another device. *)
+let moved u d =
+  match Ops.device u with
+  | Some d' when not (String.equal d' d) -> Ops.copy_to_device u d
+  | Some _ | None -> u
+
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
   (match op with Place (q, _) -> on_rig st q "a placement" | _ -> ());
+  let device = op_device st op in
   match op with
   | Check { ok; data; fail } -> check st cs env ok data fail
   | _ ->
@@ -829,7 +838,7 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
          storage of the carry it updates ({!may_take}). *)
       let given = ref None in
       let dst v =
-        let buf = Ops.new_buffer st.device (Shape.max_numel v) (Ops.dtype v) in
+        let buf = Ops.new_buffer device (Shape.max_numel v) (Ops.dtype v) in
         let filled = Ops.after buf [ Ops.store buf v ] in
         given := Some (buf, filled);
         filled
@@ -853,8 +862,11 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
       in
       let read x = node st env x in
       let ys =
-        match Lower.op ?dst ~device:st.device ~host read op with
-        | ys -> ys
+        match Lower.op ?dst ~device ~host read op with
+        | ys -> (
+            match op with
+            | Place (q, _) -> Array.map (fun u -> moved u (device_at st q)) ys
+            | _ -> ys)
         | exception Invalid_argument why -> decline "%s" why
       in
       (* A value that computes Threefry blocks, a draw or a key split or a map
@@ -1898,13 +1910,14 @@ and inline_over st cs (q : Program.t) operands =
    [forms], each laid out over its run as [layouts] says, its run at [phases],
    the arguments [donated] says lending their storage where a result may take
    it. *)
-let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
-    ~donated =
+let lower ~rig ~split ~uploads (p : Program.t) (forms : form array) ~layouts
+    ~phases ~donated =
   let st =
     {
       rig;
       device = Rig.name rig;
       issued = issued p forms;
+      split;
       captures = [];
       bound = [];
       uploads;
@@ -1926,9 +1939,8 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
         end
         else begin
           on_rig st f.placement "an argument";
-          let b, u =
-            storage ~device:st.device ~phase:phases.(k) f.dtype layouts.(k)
-          in
+          let device = device_at st f.placement in
+          let b, u = storage ~device ~phase:phases.(k) f.dtype layouts.(k) in
           env.nodes.(var) <- Some u;
           view_of st u;
           Some b
@@ -2028,9 +2040,9 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
   in
   let lent, assigned, nodes, sub = settle [] in
   let stores = ref [] in
-  let buffer dt n =
-    if packed dt then Ops.new_buffer st.device (D.bytes dt n) Uint8
-    else Ops.new_buffer st.device (n * parts dt) (tdtype dt)
+  let buffer ?(device = st.device) dt n =
+    if packed dt then Ops.new_buffer device (D.bytes dt n) Uint8
+    else Ops.new_buffer device (n * parts dt) (tdtype dt)
   in
   (* A scatter's own storage is its result, once: nothing else holds it. *)
   let taken = Ops.Tbl.create 4 in
@@ -2044,7 +2056,7 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
           stores := Ops.base u :: !stores;
           Stored d.buf
       | _ ->
-          let o = buffer f.dtype n in
+          let o = buffer ~device:(device_at st f.placement) f.dtype n in
           stores := store f.dtype o u :: !stores;
           Stored o
   in
@@ -2116,13 +2128,19 @@ let report fmt =
   if Tolk.Setting.value debug then Printf.eprintf ("rune.jit: " ^^ fmt ^^ "\n%!")
   else Printf.ifprintf stderr fmt
 
-(* A kernel searched at width [width], each candidate timed on [rig], on the
-   slots of the first one timed, compiled on [parallel] domains, or as many as
-   the [PARALLEL] setting gives. *)
-let search rig ~parallel width k =
+(* The device of [rigs] that a graph names [name]. *)
+let named rigs name =
+  match List.find_opt (fun r -> String.equal (Rig.name r) name) rigs with
+  | Some r -> r
+  | None -> invalid_arg ("Rune.jit: no device named " ^ name)
+
+(* A kernel searched at width [width], each candidate timed on its device of
+   [rigs], on the slots of the first one timed, compiled on [parallel]
+   domains, or as many as the [PARALLEL] setting gives. *)
+let search rigs ~parallel width k =
   report "searched a kernel at width %d" width;
   let slots = ref None in
-  let link call = Engine.link_call ~devices:(fun _ -> rig) call in
+  let link call = Engine.link_call ~devices:(named rigs) call in
   let time ~vars s =
     let slots =
       match !slots with
@@ -2188,7 +2206,7 @@ type variant = {
           then evaluates. *)
 }
 
-let link ~beam ~parallel rig l =
+let link ~beam ~parallel rigs l =
   match l.sink with
   | None ->
       {
@@ -2235,13 +2253,13 @@ let link ~beam ~parallel rig l =
         Tolk.Schedule.create_linear_with_vars ~capturing:true sink
       in
       let linear =
-        Tolk.Jit.jit_lower ?beam ~search:(search rig ~parallel)
-          ~targets:(fun _ -> Engine.target rig)
+        Tolk.Jit.jit_lower ?beam ~search:(search rigs ~parallel)
+          ~targets:(fun name -> Engine.target (named rigs name))
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order)
           ~input_vars:vars linear
       in
       let schedule =
-        Engine.link ~devices:(fun _ -> rig) ~bound:l.bound linear
+        Engine.link ~devices:(named rigs) ~bound:l.bound linear
       in
       {
         schedule = Some (schedule, vars);
@@ -2256,20 +2274,27 @@ let link ~beam ~parallel rig l =
 (* Programs *)
 
 (* An output's form, and for a placed one the layout and bytes of the memory
-   its result takes. *)
-type output = { form : form; contiguous : L.t; bytes : int }
+   its result takes and its device, the program's where it lies whole on
+   none. *)
+type output = { form : form; contiguous : L.t; bytes : int; rig : Rig.t }
 
-let output_of (F f as form) =
+let output_of rig (F f as form) =
   let shape = shape_of f in
   {
     form;
     contiguous = L.contiguous (Iarray.of_array shape);
     bytes = D.bytes f.dtype (numel shape);
+    rig = Option.value (device_of f.placement) ~default:rig;
   }
 
 type t = {
   name : string;
   rig : Rig.t;
+  rigs : Rig.t list;  (** The devices of the program's values, [rig] first. *)
+  source : Program.t;  (** The program as traced, which evaluates. *)
+  split : Pieces.t option;
+      (** Where the program is split, how its pieces make its arguments and
+          results ({!Pieces}). *)
   program : Program.t;
   forms : form array;
   results : output array;  (** Each output's, read once. *)
@@ -2307,6 +2332,51 @@ let device (p : Program.t) forms =
   | Some r when Rig.computes r -> r
   | Some r -> decline "a value on %s, which computes nothing" (Rig.name r)
   | None -> decline "no value"
+
+(* The devices of a split program's values, in the order the program meets
+   them, each of which computes, all of one target: the device kind and
+   architecture tolk compiles for. *)
+let rigs (p : Program.t) forms =
+  let seen = ref [] in
+  let note placement =
+    let r = Pieces.rig_of placement in
+    if not (List.exists (Rig.equal r) !seen) then begin
+      if not (Rig.computes r) then
+        decline "a value on %s, which computes nothing" (Rig.name r);
+      seen := r :: !seen
+    end
+  in
+  let value (type v s d) (x : (v, s, d) Nx.t) = note (Nx.placement x) in
+  Array.iter (fun (F f) -> note f.placement) forms;
+  Array.iter
+    (function
+      | Op { op; _ } -> (
+          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+          List.iter (fun (Nx.Prim.Any x) -> value x) xs;
+          match op with
+          | Place (q, _) -> note q
+          | Map { at = Some q; _ } -> note q
+          | _ -> ())
+      | Do { c; _ } -> List.iter (fun (V x) -> value x) (Program.operands c))
+    p.eqns;
+  Array.iter (fun (V y) -> value y) p.outputs;
+  let rigs = List.rev !seen in
+  let kind r =
+    let t = Engine.target r in
+    (t.device, t.arch)
+  in
+  (match rigs with
+  | [] -> decline "no value"
+  | r :: rest -> (
+      match List.find_opt (fun r' -> kind r' <> kind r) rest with
+      | None -> ()
+      | Some r' ->
+          let pp r =
+            Format.asprintf "%a" Tolk.Helpers.Target.pp (Engine.target r)
+          in
+          decline "values on devices of several targets: %s for %s, %s for %s"
+            (Rig.name r) (pp r) (Rig.name r') (pp r')));
+  rigs
 
 (* What a program the compiler takes must not raise to compile: an operation it
    does not lower, or tolk refusing the graph, as a target whose compiler is
@@ -2353,14 +2423,14 @@ let variant t layouts phases donated settings =
                    && not (Array.exists Fun.id donated) ->
                 lowered
             | _ ->
-                lower ~rig:t.rig ~uploads:t.uploads t.program t.forms ~layouts
-                  ~phases ~donated
+                lower ~rig:t.rig ~split:(Option.is_some t.split)
+                  ~uploads:t.uploads t.program t.forms ~layouts ~phases ~donated
           in
           (* A declined variant is kept; another failure, as an interrupted
              search, keeps nothing. *)
           let linked =
             match
-              link ~beam:t.beam ~parallel:t.parallel t.rig (lowered ())
+              link ~beam:t.beam ~parallel:t.parallel t.rigs (lowered ())
             with
             | l -> Ok l
             | exception e -> (
@@ -2377,7 +2447,18 @@ let variant t layouts phases donated settings =
 
 let make ~name ?beam ?parallel p forms =
   match
-    let rig = device p forms in
+    let split =
+      if Pieces.needed p forms then Some (Pieces.split ~name p forms) else None
+    in
+    let source = p in
+    let p, forms, rigs =
+      match split with
+      | None -> (p, forms, [ device p forms ])
+      | Some s ->
+          List.iter (report "%s") s.moves;
+          (s.program, s.forms, rigs s.program s.forms)
+    in
+    let rig = List.hd rigs in
     let layouts =
       Array.map
         (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout)))
@@ -2386,13 +2467,19 @@ let make ~name ?beam ?parallel p forms =
     let phases = Array.map (fun _ -> 0) forms in
     let donated = Array.map (fun _ -> false) forms in
     let uploads = ref [] in
-    let lowered = lower ~rig ~uploads p forms ~layouts ~phases ~donated in
+    let lowered =
+      lower ~rig ~split:(Option.is_some split) ~uploads p forms ~layouts ~phases
+        ~donated
+    in
     {
       name;
       rig;
+      rigs;
+      source;
+      split;
       program = p;
       forms;
-      results = Array.map (fun v -> output_of (form v)) p.outputs;
+      results = Array.map (fun v -> output_of rig (form v)) p.outputs;
       beam;
       parallel;
       shaping = shaping beam;
@@ -2441,14 +2528,35 @@ let consumed ~by args f =
               let (V x) = args.(k) in
               V (Nx.Prim.Consumer.value c k (Nx.dtype x))))
 
-let value rig r buffer =
+(* The array of the output [r] over [buffer], or else over fresh memory. *)
+let array_of r buffer =
   let (F f) = r.form in
   let buffer =
-    match buffer with Some b -> b | None -> Rig.Buffer.create rig r.bytes
+    match buffer with Some b -> b | None -> Rig.Buffer.create r.rig r.bytes
   in
+  A.Any (A.v f.dtype r.contiguous buffer)
+
+let value r a =
+  let (F f) = r.form in
   V
     (Nx.Repr.unsafe_of_array (Nx.Placement.devices f.placement)
-       (A.v f.dtype r.contiguous buffer))
+       (A.expect f.dtype a))
+
+(* The results of [t] from the arrays of its program's outputs: each the
+   output's array, or, where [t] is split, a value over several devices
+   gathered from its pieces' arrays. *)
+let results t arrays =
+  match t.split with
+  | None -> Array.mapi (fun j r -> value r arrays.(j)) t.results
+  | Some s ->
+      Array.map
+        (function
+          | Pieces.One j -> value t.results.(j) arrays.(j)
+          | Over (F f, js) ->
+              let array j = A.expect f.dtype arrays.(j) in
+              let arrays = Iarray.map array (Iarray.of_array js) in
+              V (Nx.Repr.of_shards f.placement arrays))
+        s.outputs
 
 (* Evaluation *)
 
@@ -2581,10 +2689,15 @@ let issue_checks t v slots s =
 let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
 
 let rec run t args =
-  let p = t.program in
-  let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
+  (* A split program reads each piece of an argument as an argument of its
+     own and lends no memory. *)
+  let donated =
+    match t.split with
+    | None -> Array.map (fun (V x) -> Nx.Prim.donated x) args
+    | Some _ -> Array.map (fun _ -> false) t.forms
+  in
   consumed ~by:t.name args @@ fun arrays take value ->
-  let leaves = Array.mapi (fun k _ -> (arrays k).(0)) args in
+  let leaves = Array.concat (List.init (Array.length args) arrays) in
   let layouts =
     Array.map (fun (A.Any a) -> within (A.dtype a) (A.layout a)) leaves
   in
@@ -2599,12 +2712,12 @@ let rec run t args =
   match (variant t layouts phases donated (settings t.shaping)).linked with
   | Error _ ->
       evaluated_call ();
-      evaluated ~fresh:false p args arrays value
-  | Ok v -> linked t v args leaves take
+      evaluated ~fresh:false t.source args arrays value
+  | Ok v -> linked t v leaves take
 
-(* [linked t v args leaves take] runs the variant [v] of [t] on [args], whose
-   arrays under the call's consumer are [leaves]. *)
-and linked t v args leaves take =
+(* [linked t v leaves take] runs the variant [v] of [t] on the arrays of its
+   arguments under the call's consumer, [leaves]. *)
+and linked t v leaves take =
   let slots = Array.make v.inputs None in
   (* The run an argument binds: its buffer itself where the run is all of
      it. *)
@@ -2617,7 +2730,7 @@ and linked t v args leaves take =
   in
   (* A lending argument's memory, or a copy of it where nx's consumer does not
      give its memory, as where another value reads it. *)
-  let lending = Array.make (Array.length args) None in
+  let lending = Array.make (Array.length leaves) None in
   let lend k =
     match lending.(k) with
     | Some b -> b
@@ -2648,7 +2761,7 @@ and linked t v args leaves take =
         match v.outs.(j) with
         | Lent k | Taken k -> lending.(k)
         | Stored _ ->
-            let b = Rig.Buffer.create t.rig t.results.(j).bytes in
+            let b = Rig.Buffer.create t.results.(j).rig t.results.(j).bytes in
             slots.(s) <- Some b;
             Some b
         | Copied src ->
@@ -2672,4 +2785,4 @@ and linked t v args leaves take =
   Option.iter (fun s -> slots.(s) <- Some (one t.rig Nx.bool)) v.ok;
   Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
   Option.iter (issue_checks t v slots) v.ok;
-  Array.mapi (fun j r -> value t.rig r buffers.(j)) t.results
+  results t (Array.mapi (fun j r -> array_of r buffers.(j)) t.results)

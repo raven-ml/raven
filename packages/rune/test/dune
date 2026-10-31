@@ -3,6 +3,7 @@
 (tests
  (names
   test_jit
+  test_jit_devices
   test_constructs
   test_total
   test_scan
@@ -20,6 +21,7 @@
  (modules
   compose
   test_jit
+  test_jit_devices
   test_constructs
   test_total
   test_scan

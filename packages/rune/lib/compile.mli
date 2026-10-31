@@ -17,8 +17,12 @@
     {!make} lists lowering's reasons, and an [Invalid_argument] or [Failure]
     that lowering or linking raises is a decline too. nx then {e evaluates} the
     program, in the sense that it applies each operation eagerly ({!evaluate}).
-    The program's {e device} is the one its first argument, or else its first
-    result, lies whole on.
+    A program whose values lie on one device has that {e device}: the one its
+    first argument, or else its first result, lies whole on. A program over
+    several devices is {e split} first ({!Pieces}): its program of one-device
+    operations and copies lowers each operation on its own device, binds each
+    piece of an argument as a parameter of its own, and gathers each result
+    over several devices from its pieces.
 
     An argument's {e run} is the storage its layout reads, from the element at
     or below the lowest position the layout reaches whose bits start a multiple
@@ -78,9 +82,10 @@ val make :
     operator, an addition, a linear call with no function to apply, an operation
     that {!Lower.op} does not lower, a check whose flags lie on another set than
     the program's first argument or else its first result, a program with no
-    value, and a value with an element on a device other than the program's or
-    over several devices. It also declines a program whose device computes
-    nothing. *)
+    value, and a value with an element on a device other than the program's
+    device. It declines what {!Pieces.split} declines, and a split program whose
+    values lie on devices of several targets. It also declines a program with a
+    value on a device that computes nothing. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], which must
@@ -96,6 +101,9 @@ val run : t -> Program.value array -> Program.value array
     checks as one check of nx on the program's set ({!Rune.section-checks}),
     which raises the first that failed, in the program's order: at once on the
     host, and at the next wait on another set.
+
+    A split program reads each argument's arrays, one per device of its
+    placement, and lends none of them.
 
     Raises [Invalid_argument] if [args] lie on several device sets
     ({!Nx.Placement.devices}) or if {!Nx.Prim.Consumer.with_} raises it, and

@@ -1098,10 +1098,11 @@ let test_wrapped_max () =
 
 (* An evaluated program holds a value from the operation that makes it until
    the last that reads it, as eager code does: a chain of eight functions of a
-   value cut across two devices holds two of its values at once, where holding
-   each until the call returns would hold eight, and so does one that also
-   makes a value nothing reads at each step. A device's budget refuses an
-   allocation only once what nothing reaches is collected. *)
+   value cut across two devices, evaluated for a check of the value's sum,
+   holds two of its values at once, where holding each until the call returns
+   would hold eight, and so does one that also makes a value nothing reads at
+   each step. A device's budget refuses an allocation only once what nothing
+   reaches is collected. *)
 let test_evaluated_memory () =
   let rigs =
     List.init 2 (fun k ->
@@ -1136,8 +1137,13 @@ let test_evaluated_memory () =
         | exception Rig.Out_of_memory (r, bytes) -> Some (Rig.name r, bytes))
   in
   let refused = option (pair string int) in
+  let checked f x =
+    let s = Nx.sum x in
+    Nx.check T.tensor (Nx.less_s s 1.) s (fun _ _ -> Exit);
+    f x
+  in
   let rec chain k x = if k = 0 then x else chain (k - 1) (Nx.sin x) in
-  equal ~msg:"a chain" refused None (fits (Rune.jit' (chain 8)));
+  equal ~msg:"a chain" refused None (fits (Rune.jit' (checked (chain 8))));
   (* Each step also makes a value nothing reads. *)
   let rec unread k x =
     if k = 0 then x
@@ -1146,7 +1152,8 @@ let test_evaluated_memory () =
       unread (k - 1) (Nx.sin x)
     end
   in
-  equal ~msg:"values nothing reads" refused None (fits (Rune.jit' (unread 8)))
+  equal ~msg:"values nothing reads" refused None
+    (fits (Rune.jit' (checked (unread 8))))
 
 (* An evaluated call over values cut across two devices writes its donated
    state in place: each donated argument, and each value an operation of
@@ -1360,14 +1367,26 @@ let test_fresh () =
   let compiled = Rune.jit' (fun x -> x) x in
   equal ~msg:"compiled" bool false (shares compiled);
   equal bits_t (bits x) (bits compiled);
-  (* A program over values cut across two devices is evaluated: its argument
-     result is a copy too, which keeps its values once the argument's memory is
-     consumed. *)
+  (* An argument result of a program over values cut across two devices, and
+     of an evaluated one, a check over them, is a copy too, which keeps its
+     values once the argument's memory is consumed. *)
   let xs = Nx.place (on Cut) (v [| 1.; -0.; 3.; 4. |]) in
   let before = Rune.evaluations () in
   let r = Rune.jit' (fun x -> x) xs in
-  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  equal ~msg:"compiled over two devices" int 0 (Rune.evaluations () - before);
   ignore (Nx.to_array (Nx.neg (Nx.donate xs)));
+  equal ~msg:"a cut argument result is a copy" bits_t
+    (bits (v [| 1.; -0.; 3.; 4. |]))
+    (bits r);
+  let xd = Nx.place (on Cut) (v [| 1.; -0.; 3.; 4. |]) in
+  let checked x =
+    Nx.check T.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
+    x
+  in
+  let before = Rune.evaluations () in
+  let r = Rune.jit' checked xd in
+  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  ignore (Nx.to_array (Nx.neg (Nx.donate xd)));
   equal ~msg:"an evaluated argument result is a copy" bits_t
     (bits (v [| 1.; -0.; 3.; 4. |]))
     (bits r);
@@ -1598,17 +1617,30 @@ let test_shared () =
     (bits (Nx.create f32 [| 2; 1 |] [| 1.; 2. |]))
     (bits view)
 
-(* An evaluated program, here over values cut across two devices, consumes its
-   donated arguments and gives eager's values. *)
+(* An evaluated program, here with a check over values cut across two
+   devices, and a program over such values, which lends nothing, consume their
+   donated arguments and give eager's values. *)
 let test_evaluated_donation () =
-  let x () = Nx.place (on Cut) (v [| 1.; 2.; -0.; 4. |]) in
-  let f x = Nx.mul x x in
-  let expected = bits (f (x ())) in
-  let d = x () in
+  let at w () = Nx.place (on w) (v [| 1.; 2.; -0.; 4. |]) in
+  let f x =
+    Nx.check T.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
+    Nx.mul x x
+  in
+  let expected = bits (f (at Cut ())) in
+  let d = at Cut () in
   let before = Rune.evaluations () in
   let y = Rune.jit' f (Nx.donate d) in
   equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
   equal bits_t expected (bits y);
+  dead d;
+  let g x = Nx.mul x x in
+  let d = at Cut () in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' g (Nx.donate d) in
+  equal ~msg:"compiled over two devices" int 0 (Rune.evaluations () - before);
+  equal bits_t expected (bits y);
+  equal ~msg:"placement" bool true
+    (Nx.Placement.equal (Nx.placement y) (on Cut));
   dead d
 
 type donation_case =

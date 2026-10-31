@@ -1362,7 +1362,25 @@ val jit :
     for its layout. Each result that takes no donated argument's memory is
     fresh, at the placement eager computation gives it. A value [f] captures on
     another device, which [f] places where the program computes, is copied there
-    once per program, which holds the copy. *)
+    once per program, which holds the copy.
+
+    {b Several devices.} A program whose values lie on several devices of one
+    set, cut across them ({!Nx.Placement.split}, {!Nx.Placement.mesh}), whole on
+    each ({!Nx.Placement.on}) or each whole on one of them, computes each
+    operation as eager computation does ({!Nx.section-routing}): every device
+    computes its windows of the results from its windows of the operands, in
+    kernels of its own, a fold over a cut axis closes to a whole value, and a
+    window moves from one device to another only where eager computation moves
+    it. Each value's placement is eager's, uneven windows included, and a device
+    whose windows of an operation's results are all empty computes nothing for
+    it. A program for one device serves every device of its target, so the
+    devices of a set compile each kernel once. Each argument's piece on a
+    device is an argument of its own for the variant, and a donated argument
+    lends no memory. With [RUNE_JIT_DEBUG] set, the first call prints each move
+    between devices, the function that makes it and its bytes. The values of a
+    program over several devices must lie on devices of one target, its device
+    kind and architecture, such as the memory devices of one host
+    ({!Rig.memory_device}). *)
 
 (** {2:search Search}
 
@@ -1673,9 +1691,9 @@ val jit :
 (** {2:evaluated Evaluated programs}
 
     An {e evaluated} program runs as its operations evaluated by nx, giving
-    eager's values. A program's {e device} is the one its first argument, or
-    else its first result, lies whole on. The compiler declines, and so
-    evaluates, a program that holds:
+    eager's values. A program whose values lie on one device has that {e
+    device}: the one its first argument, or else its first result, lies whole
+    on. The compiler declines, and so evaluates, a program that holds:
     - a map's {!lanes} or {!lane_index};
     - an emission {!section-emissions} names as evaluated;
     - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
@@ -1683,13 +1701,17 @@ val jit :
     - an operation the compiler does not lower;
     - a check whose flags lie on another set than the program's first argument,
       or else its first result, which raises at a wait on that set;
-    - no value, an argument or a result with an element on a device other than
-      the program's, or a value over several devices. A result the function
-      returns without computing it, a constant with an element that lies whole
-      on another device, its elements in C order from a byte boundary, is no
-      such result: each call copies it into fresh memory of its own device.
+    - no value, or an argument or a result with an element on a device other
+      than the program's device. A result the function returns without
+      computing it, a constant with an element that lies whole on another
+      device, its elements in C order from a byte boundary, is no such result:
+      each call copies it into fresh memory of its own device.
 
-    It also declines a program whose device computes nothing ({!Rig.computes}),
+    Over several devices it declines a program that holds a construct other
+    than {!detach}, such as a loop, a {!switch}, a {!remat} or a custom rule, a
+    check, an addition to a {!Total}, an emission, a traced value placed onto
+    another set, or values on devices of several targets. It also declines a
+    program with a value on a device that computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
     compiled call's are, and a call with donated arguments consumes them. It
     holds each value of the program from the operation that makes it until
@@ -1715,9 +1737,10 @@ val jit :
     Each compiled call costs a dispatch, a loop holding a callback runs step by
     step, and a switch holding one reads its index on the host. A stretch the
     compiler declines is evaluated, so on a set without kernels ({!Nx.devices})
-    a stretch that holds values on several devices raises, and so do a call with
-    donated arguments and a loop holding a callback whose outputs it stacks,
-    since nx stacks the rows.
+    a stretch that holds what the compiler declines over several devices
+    raises, and so do a call with donated arguments and a loop holding a
+    callback whose outputs it stacks, since nx stacks the rows.
+
 
     {b Fully sharded training.} Rajbhandari et al., "ZeRO: Memory
     Optimizations Toward Training Trillion Parameter Models" (SC 2020, §5),

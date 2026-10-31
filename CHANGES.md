@@ -353,6 +353,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles programs over several devices of one set, values cut
+  across them, whole on each or whole on one: each device computes its
+  windows in kernels of its own, compiled once per target, with eager's
+  placements. Such programs were evaluated. Loops, `switch`, `remat`, custom
+  rules, checks and totals over several devices are still evaluated, as are
+  programs over devices of several targets.
 - A loop's step that runs a construct over none of the step's values, such as
   a scan over a capture, executes its `Rune.callback`s and offers its
   `Rune.Probe` emissions every trip: the construct ran once, so a callback ran

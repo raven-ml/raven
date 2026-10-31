@@ -868,6 +868,10 @@ val unset : value -> 'a
     The values below take a construct's operands and programs apart, and make
     programs and forms from them. *)
 
+val construct_name : construct -> string
+(** [construct_name c] names [c] in messages, as ["a scan"] or
+    ["Rune.remat"]. *)
+
 val operands : construct -> value list
 (** [operands c] is the values [c] reads, captures included. *)
 

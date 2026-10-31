@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
-   the host's eager values, and a call's check raises at the next wait, so the
-   call returns while its work runs. It skips without a GPU, or without the
-   compiler the GPU's kernels need. *)
+   the host's eager values, a call's check raises at the next wait, so the
+   call returns while its work runs, and a program over the GPU and a memory
+   device, devices of two targets, is evaluated. It skips without a GPU, or
+   without the compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -105,6 +106,26 @@ let test_deferred () =
     (Big ([| 0; 0 |], float_of_int n))
     (fun () -> Nx.sync y)
 
+(* A program over the GPU and a memory device lies on devices of two targets,
+   so it is evaluated, as nx evaluates it: the set has no kernels, so the copy
+   of its result raises, as rune.mli's evaluated programs on such a set do. *)
+let mixed () =
+  match Rig_gpus.first () with
+  | Error _ -> skip ~reason:"no GPU" ()
+  | Ok gpu ->
+      let memory = Result.get_ok (Rig.memory_device "rune-jit-gpu-mixed") in
+      let module S = (val Nx.devices [ gpu; memory ]) in
+      let x =
+        Nx.place S.on
+          (Nx.create Nx.float32 [| 4; 2 |] (Array.init 8 Float.of_int))
+      in
+      let f x = Nx.place (S.split ~axis:0) x in
+      let before = Rune.evaluations () in
+      raises_match
+        (Exn.invalid_arg ~sub:"has no kernels")
+        (fun () -> ignore (Rune.jit' f x));
+      equal ~msg:"evaluated" int 1 (Rune.evaluations () - before)
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -120,5 +141,10 @@ let () =
            [
              test "a call's check raises at the next wait, not at the call"
                test_deferred;
+           ];
+         group "several targets"
+           [
+             test "a program over a GPU and a memory device is evaluated"
+               mixed;
            ];
        ])
