@@ -1914,24 +1914,31 @@ let hip_wmma arch tensor_cores type_map (name, (n, m, k), dtype_in, dtype_out, _
       (if k = 128 then "scale_" else "")
       n m k (tm dtype_in)
   end
+  else if Dtype.equal dtype_out Dtype.Int32 then
+    (* RDNA 4 takes 8 int8 values per lane in 2 registers, RDNA 3 16 in 4. *)
+    let rdna4 = List.equal Tc.equal tensor_cores Tc.amd_rdna4 in
+    let regs = if rdna4 then 2 else 4 in
+    String.concat "\n"
+      [
+        strf "typedef int wmma_int%d __attribute__((ext_vector_type(%d)));" regs
+          regs;
+        strf
+          "static inline __attribute__((device)) int8 __%s(signed_char%d a, \
+           signed_char%d b, int8 c) {"
+          name (regs * 4) (regs * 4);
+        strf
+          "  return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32%s(true, \
+           __builtin_bit_cast(wmma_int%d, a),"
+          (if rdna4 then "_gfx12" else "")
+          regs;
+        strf "    true, __builtin_bit_cast(wmma_int%d, b), c, false);" regs;
+        "}";
+      ]
   else if List.equal Tc.equal tensor_cores Tc.amd_rdna4 then
     (* #define __WMMA_16_16_16_f16_f16
        __builtin_amdgcn_wmma_f16_16x16x16_f16_w32_gfx12 *)
     strf "#define __%s __builtin_amdgcn_wmma_%s_16x16x16_%s_w32_gfx12" name
       (tm dtype_out) (tm dtype_in)
-  else if Dtype.equal dtype_out Dtype.Int32 then
-    String.concat "\n"
-      [
-        "typedef int wmma_int4 __attribute__((ext_vector_type(4)));";
-        strf
-          "static inline __attribute__((device)) int8 __%s(signed_char16 a, \
-           signed_char16 b, int8 c) {"
-          name;
-        "  return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, \
-         __builtin_bit_cast(wmma_int4, a),";
-        "    true, __builtin_bit_cast(wmma_int4, b), c, false);";
-        "}";
-      ]
   else if Dtype.equal dtype_out Dtype.Float32 then
     strf "#define __%s __builtin_amdgcn_wmma_f32_16x16x16_%s_w32" name
       (if Dtype.equal dtype_in Dtype.Float16 then "f16" else "bf16")

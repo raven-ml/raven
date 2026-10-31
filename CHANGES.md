@@ -802,6 +802,8 @@ thread.
   are gone. `Shape.flip` reverses an axis with pads, reshapes, shrinks and
   permutes, whose index folds to `n - 1 - i` on an axis of known size; a store
   through a padded view gates its destination index (`Prepare.pm_mops`).
+- HIP on RDNA 4 multiplies int8 matrices into int32 on its tensor cores
+  (`Tc.amd_rdna4`).
 - `Codegen.full_rewrite_to_sink` decomposes the types a target lacks after the
   transcendental functions, so those they make, such as Payne-Hanek's
   `uint64`, are decomposed too.

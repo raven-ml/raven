@@ -207,6 +207,7 @@ let amd_rdna4 =
         (Bfloat16, Bfloat16);
         (Fp8e4m3, Float32);
         (Fp8e5m2, Float32);
+        (Int8, Int32);
       ]
 
 (* 16x16xK: A[i,k] is element k mod K_L of lane i + 16 * (k / K_L), with K_L =
