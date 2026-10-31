@@ -968,6 +968,19 @@ module Hmc : sig
       or whose energy error exceeds [1000] diverges: it is held at its last
       point, the density evaluated again there, and rejected.
 
+      {b Posteriors it suits.} The shared step size, length and geometry fit a
+      posterior whose scale is much the same wherever the chains are. A chain in
+      a region of another scale moves with values tuned for the others. One that
+      warmup leaves far in a tail, where the density is flatter than in the
+      bulk, takes steps and trajectories too short for it. It accepts nearly
+      every transition and drifts toward the bulk over many of them. Its log
+      density trends across its draws, so its energy changes little from one
+      draw to the next against its spread over the run, and its E-BFMI
+      ({!Diag.ebfmi}) is below [0.3]. {!Summary.v} reports [Ebfmi_low] for
+      it, with R-hat above [1.01]. {!Nuts} tunes a step size and geometry for
+      each chain and extends each trajectory until it turns, so it suits a
+      posterior whose scale varies, and chains that start far from its bulk.
+
       {b Keys.} Transition [n] of a run has the key [k = Nx.Rng.fold_in run n].
       Chain [i] has row [i] of
       [Nx.Rng.split_batch ~n:chains (Nx.Rng.fold_in k 0)], so its randomness
@@ -1104,6 +1117,18 @@ module Ensemble : sig
       correlated posterior, spread over a region of another shape, come back to
       it only over many transitions: start them where a warmed sampler or the
       posterior's approximation leaves them.
+
+      {b Posteriors it suits.} The move suits a posterior that one affine map
+      brings close to a Gaussian. Where the posterior's shape changes from
+      region to region, as when a hyperparameter sets the scale of other
+      elements in a hierarchical model, no such map exists. A move along the
+      line between two walkers then stays where the density is high only when
+      it is short, and the elements whose value shapes the rest, such as the
+      hyperparameters, move slowest. Their effective sizes ({!Diag.ess_bulk})
+      grow far slower than the draws, {!Summary.v} reports [Ess_low] for them,
+      and their nested R-hat may exceed [1.01]. {!Nuts} follows the gradient, so
+      its trajectories bend with the posterior. Use it when the density has a
+      gradient.
 
       {b Keys.} Transition [n] of a run has the key [k = Nx.Rng.fold_in run n],
       and walker [i] row [i] of [Nx.Rng.split_batch ~n:walkers k]; an ensemble's

@@ -41,8 +41,11 @@ let hmc_cell (P.Posterior p as post) =
   in
   (* Known pathologies, flagged at every size: on low_dim_gauss_mix a chain that
      starts at the degenerate solution, both components one wide Gaussian, stays
-     there under the step size and metric the other chains tune (R-hat 1.03); on
-     sblrc-blr the shared warmup leaves some chains with a low E-BFMI. *)
+     there (R-hat 1.03). A NUTS chain does too: NUTS at 64 chains is flagged
+     there, and its cell runs 8, which miss that start. On sblrc-blr a few
+     chains end warmup far in the tails, where the shared step size and length
+     are too short; they drift in, accepting nearly every transition, and their
+     E-BFMI is low. NUTS at 64 chains reaches the bulk on every chain. *)
   R.chain_cell (R.hmc ~draws) post
 
 let ensemble_cell (P.Posterior p as post) =

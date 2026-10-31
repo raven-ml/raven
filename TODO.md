@@ -314,11 +314,6 @@ raven / llama.cpp (Vulkan; ROCm):
   ~6 ms. Each step descends the Brownian tree twice from the root and
   runs two eager `check_time` reads; carry W and I at a step's end into
   the next step's start
-- norn docs: state where Law 10's sweep flags a sampler. HMC's one step
-  size and geometry leave chains at low E-BFMI on sblrc and one at
-  low_dim_gauss_mix's degenerate mode; the stretch move barely moves
-  gp_pois_regr's hyperparameters. Say so in `Hmc` and `Ensemble`, and
-  point to `Nuts`
 - Nested: slice moves correlate draws within a replacement, so its error
   under-covers 1.5-1.9x on gp_pois_regr (documented in
   `Evidence.expectation`, still a biased error)
