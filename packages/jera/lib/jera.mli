@@ -1878,8 +1878,8 @@ module Sde : sig
       another dtype. Reverse mode keeps one state per time of [at] and
       recomputes each interval while it reverses it; the derivative is the
       composition's, in the initial state and every tracked value the drift and
-      diffusion read. A compiled function takes [w] as an argument of
-      {!Brownian.ptree}'s structure.
+      diffusion read. A compiled function takes [w] as an argument, described
+      by [Nx.Ptree.v Brownian.walk].
 
       Raises [Invalid_argument] if [steps < 1], if [at] is not a non-empty 1-D
       tensor, through {!Nx.check} if [at] is not strictly increasing or leaves
