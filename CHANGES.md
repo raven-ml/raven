@@ -158,6 +158,8 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- `lbfgs_step` steps a complex leaf as its real coordinates where a part is a
+  signed zero, which it could flip.
 - `lbfgs_step` computes a float16 or bfloat16 leaf at float32 and rounds it
   once, when stored, as the other steps do. It rounded its recursion, rate and
   move to the leaf's dtype at every operation.

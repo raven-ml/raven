@@ -922,16 +922,18 @@ let lbfgs_step p ~lr grads st =
   in
   (* The recursion runs over the real coordinates, two per complex element,
      whose gradient is the conjugate of Rune's ([leafwise]); [Nx.Ptree.dot]
-     pairs complex arrays part by part. *)
-  let conjugate = Nx.Ptree.map flat (fun _ g -> Nx.conjugate g) in
+     pairs complex arrays part by part. The gradient difference is of the
+     coordinates' gradients: conjugating after subtracting would turn a part
+     [-0 - -0 = 0] into [-0]. *)
+  let conjugate x = Nx.Ptree.map flat (fun _ g -> Nx.conjugate g) (wide x) in
   let difference =
     Nx.Ptree.map2 flat (fun _ a b -> if updates a then Nx.sub a b else a)
   in
-  let g = wide grads in
+  let g = conjugate grads in
   let y =
     Nx.Ptree.map2 flat
       (fun _ d m -> top d m)
-      (conjugate (difference g (wide st.grads)))
+      (difference g (conjugate st.grads))
       (wide st.y)
   in
   let s = wide st.s in
@@ -951,7 +953,7 @@ let lbfgs_step p ~lr grads st =
     in
     let pairs = Array.init history pair in
     let alphas = Array.map (fun (_, _, rho) -> Nx.zeros_like rho) pairs in
-    let q = ref (conjugate g) in
+    let q = ref g in
     for i = 0 to history - 1 do
       let s, y, rho = pairs.(i) in
       alphas.(i) <- Nx.mul rho (dot s !q);
@@ -972,12 +974,10 @@ let lbfgs_step p ~lr grads st =
     !r
   in
   let r = if float64 then run F64 else run F32 in
-  let move =
-    Nx.Ptree.map flat
-      (fun _ r ->
-        if updates r then Nx.neg (Nx.mul r (Nx.cast (Nx.dtype r) lr)) else r)
-      r
-  in
+  (* [-lr * r], a complex [r] part by part: a complex product by the rate
+     would add the product of a zero part to the other part's, losing a sign
+     of zero the coordinates keep. *)
+  let move = Nx.Ptree.scale flat (Nx.neg lr) r in
   let params =
     Nx.Ptree.map2 flat
       (fun _ x d -> if updates x then Nx.add x d else x)

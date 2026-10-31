@@ -1232,6 +1232,7 @@ let thrice init step state params grads =
   floats (Nx.Ptree.pair p (state p)) (go 3 (params, init p params))
 
 let lr = Vega.lr 0.01
+let lbfgs_history = 2
 
 let optimizers =
   [
@@ -1336,7 +1337,7 @@ let optimizers =
         run =
           (fun x g ->
             thrice
-              (fun p x -> Vega.lbfgs_init p ~history:2 x)
+              (fun p x -> Vega.lbfgs_init p ~history:lbfgs_history x)
               (fun p st params grads ->
                 let st = Vega.lbfgs_step p ~lr grads { st with params } in
                 (st.params, st))
@@ -1349,22 +1350,33 @@ let optimizers =
    of its coordinates: its parameters and its state, at the parts' format. A
    leaf of fewer axes steps each part as a real leaf of its own shape, which
    Adafactor factors differently, so the law is drawn over two and three axes,
-   empty ones included. *)
+   empty ones included. Parts are often zeros of either sign, whose sign a
+   complex product by a real factor can lose. *)
 let complex_leaf =
   let open Gen in
   let* rank = int_range 2 3 in
   let* shape = array ~size:(constant rank) (int_range 0 3) in
   let n = Array.fold_left ( * ) 1 shape in
-  let part = float_range (-4.0) 4.0 in
+  let part =
+    frequency
+      [ (1, constant 0.0); (1, constant (-0.0)); (6, float_range (-4.0) 4.0) ]
+  in
   let+ z = array ~size:(constant n) (pair part part)
   and+ g = array ~size:(constant n) (pair part part) in
   (shape, z, g)
 
 let as_coordinates dtype parts =
-  prop "every optimizer steps such a leaf as its coordinates" complex_leaf
+  prop "every optimizer steps such a leaf as its coordinates"
+    ~examples:[ ([| 1; 1 |], [| (0.0, -0.0) |], [| (0.0, 0.0) |]) ]
+    complex_leaf
     (fun (shape, z, g) ->
       cover "an empty leaf" (Array.exists (( = ) 0) shape);
       cover "a leaf of three axes" (Array.length shape = 3);
+      let negative_zero x = x = 0.0 && Float.sign_bit x in
+      cover "a part of -0."
+        (Array.exists
+           (fun (re, im) -> negative_zero re || negative_zero im)
+           (Array.append z g));
       let leaf zs =
         Nx.create dtype shape
           (Array.map (fun (re, im) -> { Complex.re; im }) zs)
@@ -1372,20 +1384,35 @@ let as_coordinates dtype parts =
       let z = leaf z and g = leaf g in
       (* Adafactor's moment of a factored leaf's elements is unused, a scalar
          zero at the leaf's dtype: a complex zero's two coordinates against a
-         real zero's one. L-BFGS keeps the gradient it received, and its
-         memory stacks pairs before the coordinates' axis: its parameters
-         alone are compared. *)
+         real zero's one. L-BFGS keeps the gradient it received, Rune's on the
+         complex leaf: its parameters and its memory, [s] and [y], are
+         compared. The complex memory's coordinates come before its axis of
+         [history] pairs, the real memory's after: [pairs_first] moves them
+         there. *)
       let used name floats =
         match name with
         | "adafactor" -> List.filteri (fun i _ -> i < 3) floats
-        | "lbfgs" -> List.filteri (fun i _ -> i < 1) floats
+        | "lbfgs" -> List.filteri (fun i _ -> i = 0 || i = 3 || i = 4) floats
+        | _ -> floats
+      in
+      let pairs_first a =
+        let history = lbfgs_history in
+        let n = Array.length a / (2 * history) in
+        Array.init (Array.length a) (fun j ->
+            let i = j / (2 * n) and c = j / n mod 2 and k = j mod n in
+            a.((((c * history) + i) * n) + k))
+      in
+      let on_complex name floats =
+        match name with
+        | "lbfgs" ->
+            List.mapi (fun i a -> if i = 0 then a else pairs_first a) floats
         | _ -> floats
       in
       List.iter
         (fun (name, o) ->
           equal ~msg:name (list (array float_exact))
             (used name (o.run (coordinates parts z) (descent parts g)))
-            (used name (o.run z g)))
+            (on_complex name (used name (o.run z g))))
         optimizers)
 
 let test_complex_clip_by_value () =
