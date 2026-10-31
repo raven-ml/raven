@@ -177,8 +177,13 @@ let sub r ~offset ~length:k =
     err "sub" "rows %d to %d of %d rows" offset (offset + k) l;
   { r with offsets = Nx.slice [ R (offset, offset + k + 1) ] r.offsets }
 
-(* Element [k] of new row [j] is the old value at [k] plus [shift.{j}], the
-   row's old start less its new one. *)
+(* Position [k] of the result reads the values at [k + shift.{j}], [j] its
+   row and [shift.{j}] the row's old start less its new one. The positions are
+   a running sum of ones, plus at each row's new start the change of [shift]
+   from the row before, as from a [shift] of 1 before the first: rows that
+   start together are empty but the last, and their changes add up to the
+   last one's. A row starting at the end writes nothing. Each position is
+   written once as a one, scanned once and read once by the gather. *)
 let take ~indices r =
   if Nx.ndim indices <> 1 then
     err "take" "indices of shape %s, not 1-D" (pp_shape (Nx.shape indices));
@@ -200,12 +205,14 @@ let take ~indices r =
   in
   if total = 0 then { offsets; values = Nx.slice [ R (0, 0) ] r.values }
   else
-    let row = Nx.positions ~size:total lens in
-    let shift = Nx.sub (Nx.take indices (starts r.offsets)) (starts offsets) in
-    let here = Nx.beside row in
-    let at =
-      Nx.add (Nx.arange_at here Nx.int64 0 total 1) (Nx.take row shift)
+    let begins = starts offsets in
+    let shift = Nx.sub (Nx.take indices (starts r.offsets)) begins in
+    let change = Nx.sub shift (Nx.pad [| (1, 0) |] 1L (starts shift)) in
+    let ones = Nx.ones_at (Nx.beside lens) Nx.int64 [| total |] in
+    let steps =
+      Nx.scatter ~combine:Add ~axis:0 begins change (Nx.donate ones)
     in
+    let at = Nx.cumsum steps in
     { offsets; values = Nx.take ~axis:0 at r.values }
 
 let cells r = Array.sub (Nx.shape r.values) 1 (Nx.ndim r.values - 1)

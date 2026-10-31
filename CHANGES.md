@@ -3272,6 +3272,10 @@ thread.
 
 ### Nx
 
+- `Nx_ragged.take` costs one int64 write, one scan and one gather per value
+  it copies, where it built each value's position from `Nx.positions`, an
+  `arange`, an add and a second gather. Talon's joins, which take their
+  string columns this way, allocate 11% fewer words.
 - `Nx.place` of a value on one device onto one other device takes half the
   time it did and a quarter of the words; `Nx.place` onto several devices and
   `Nx.item` of a split value allocate a fifth less.

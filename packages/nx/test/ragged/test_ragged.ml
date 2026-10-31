@@ -379,6 +379,32 @@ let transforming =
             (Array.exists
                (fun k -> k >= 0L && k < n && d.lengths.(Int64.to_int k) > 0)
                i);
+          let len k =
+            if k >= 0L && k < n then d.lengths.(Int64.to_int k) else 0
+          in
+          let count k =
+            Array.fold_left (fun c j -> c + Bool.to_int (j = k)) 0 i
+          in
+          cover "an index repeated" (Array.exists (fun k -> count k > 1) i);
+          cover "an empty row before a non-empty one"
+            (Array.length i > 1 && len i.(0) = 0
+            && Array.exists (fun k -> len k > 0) i);
+          (* Rows that start at the total write their change nowhere, and
+             empty rows that start together add their changes up. *)
+          let lens = Array.map len i in
+          let total = Array.fold_left ( + ) 0 lens in
+          let last = Array.length lens - 1 in
+          cover "empty rows last, after a non-empty one"
+            (total > 0 && last >= 0 && lens.(last) = 0);
+          cover "two empty rows together between non-empty ones"
+            (List.exists
+               (fun j ->
+                 lens.(j) = 0
+                 && lens.(j + 1) = 0
+                 && Array.exists (( < ) 0) (Array.sub lens 0 j)
+                 && Array.exists (( < ) 0)
+                      (Array.sub lens (j + 2) (last - j - 1)))
+               (List.init (Int.max 0 last) Fun.id));
           let m = model d in
           let expected =
             Array.map

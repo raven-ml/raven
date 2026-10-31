@@ -205,9 +205,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
-- `Nx_ragged.take` writes an int64 position per output byte (fill,
-  scatter, cumsum, gather): ~40 bytes moved per byte of text. It dominates
-  talon's joins on text (join_run.ml, column.ml)
 - `Nx.betaincinv` and `betainccinv`, as the gamma's inverses are
   (0947081db left them out): norn's `quantile` raises for `beta` for want
   of them. First measure rune compiling a program of their size (~20-25k
@@ -307,7 +304,6 @@ raven / llama.cpp (Vulkan; ROCm):
   gives main's. The rise is the new nx's words per operation, not more
   work in talon. Nx.unique is about 25 operations where the old nx's was
   one backend group: 1,437 -> 6,956 words (Group, Join, Nulls/group-sum).
-  Nx_ragged.take's Nx.positions costs 5,493 at 514 rows (Filter, Join).
   One take costs 58 -> 191 words, a slice 44 -> 179, a sum 94 -> 279; a
   read takes a claim and waits (parse-float64 +150). Sort and the other
   Nulls rows fell. Re-record the section's words with its next re-record;

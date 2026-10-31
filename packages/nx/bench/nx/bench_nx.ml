@@ -1441,6 +1441,32 @@ let quant_rows =
           Value (Nx_quant.apply_experts ~ids (next ws turn) x));
     ]
 
+(* Ragged arrays: a take of every row of a text column in a scrambled order,
+   as a join or a sort gathers a column of strings. 64K short texts of 4 to 20
+   bytes, as names and codes are, and 1K long ones of 512 to 1536 bytes, drawn
+   once from a fixed seed. *)
+let texts n lo hi () =
+  let rs = Random.State.make [| 13 |] in
+  let ss =
+    Array.init n (fun _ ->
+        String.init
+          (lo + Random.State.int rs (hi - lo + 1))
+          (fun _ -> Char.chr (97 + Random.State.int rs 26)))
+  in
+  let order = Array.init n (fun i -> Int64.of_int (i * 7919 mod n)) in
+  (Nx.create D.Int64 [| n |] order, Nx_ragged.of_strings ss)
+
+let take_texts (indices, r) = Nx_ragged.values (Nx_ragged.take ~indices r)
+
+let ragged_rows =
+  Thumper.group "ragged"
+    [
+      Thumper.bench_with_setup "take-text-64K-of-4-to-20B"
+        ~setup:(texts 65536 4 20) take_texts;
+      Thumper.bench_with_setup "take-text-1K-of-512-to-1536B"
+        ~setup:(texts 1024 512 1536) take_texts;
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx"
@@ -1463,4 +1489,5 @@ let () =
          order_rows;
          fft_rows;
          quant_rows;
+         ragged_rows;
        ]
