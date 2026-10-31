@@ -1063,6 +1063,117 @@ let loops_around_calls_on_the_host =
     "a loop runs its calls in order each trip while its flag holds" loop_bounds
     (fun bounds -> loops_around_calls "CPU" bounds)
 
+(* Where a loop of [loops_across_devices] computes its flag. *)
+type flag_side = Host_program | Gpu_kernel
+
+(* [loops_around_calls]'s loop with its calls on the GPU [gpu] and on the host:
+   a kernel on [gpu] stores [c + 1] into [t], a move copies [t] into [t'] on
+   the host, host programs store [2 t'] into [c'] and [t'] into its row of
+   [ys], and a move copies [c'] into the carry [c]. The flag [f] holds whether
+   [2 t] is below [limit]: a host program stores it from [t'], or a kernel on
+   [gpu] from [t]. Each trip's host programs read what its kernel wrote, and
+   each trip's kernel what the host programs of the trip before wrote. *)
+let loops_across_devices ~devices ~flag gpu (limit, max) =
+  let k name dst f = scalar_kernel name ~dst ~src:Float32 f in
+  let inc = k "inc" Float32 (fun x -> Ops.O.(x + float 1.))
+  and twice = k "twice" Float32 (fun x -> Ops.O.(x * float 2.))
+  and below =
+    k "below" Bool (fun x -> Ops.O.(x * float 2. < float (Float.of_int limit)))
+  and copy = k "copy" Float32 Fun.id in
+  let flag_device =
+    match flag with Host_program -> "CPU" | Gpu_kernel -> gpu
+  in
+  let on_gpu = Ops.Single gpu and on_host = Ops.Single "CPU" in
+  let c = Ops.new_buffer on_gpu 1 Float32
+  and t = Ops.new_buffer on_gpu 1 Float32
+  and t' = Ops.new_buffer on_host 1 Float32
+  and c' = Ops.new_buffer on_host 1 Float32
+  and f = Ops.new_buffer (Ops.Single flag_device) 1 Bool
+  and ys = Ops.new_buffer on_host (4 * max) Float32 in
+  let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
+  let row =
+    Shape.shrink ys
+      [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
+  in
+  let flag_call =
+    match flag with
+    | Host_program -> Ops.call below [ f; t' ]
+    | Gpu_kernel -> Ops.call below [ f; t ]
+  in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Ops.backedge
+            (Ops.v Op.Linear
+               ~src:
+                 [
+                   Ops.call inc [ t; c ];
+                   Call.store_call t' t;
+                   Ops.call twice [ c'; t' ];
+                   flag_call;
+                   Ops.call copy [ row; t' ];
+                   Call.store_call c c';
+                 ])
+            ~loop:r ~cond:f;
+        ]
+  in
+  let init, linear = flag_from flag_device f linear in
+  let compiled = compile ~devices linear in
+  let on = devices gpu in
+  let one d x = Run.buffer d Float32 [| `Float x |] in
+  let c_buffer = one on 0.
+  and ys_buffer =
+    Run.buffer host Float32 (floats (Array.make (4 * max) (-1.)))
+  in
+  let s =
+    Engine.link ~devices
+      ~bound:
+        [
+          (c, [ c_buffer ]);
+          (t, [ one on (-1.) ]);
+          (t', [ one host (-1.) ]);
+          (c', [ one host (-1.) ]);
+          ( init,
+            [ Run.buffer (devices flag_device) Bool [| `Bool (0 < limit) |] ] );
+          (ys, [ ys_buffer ]);
+        ]
+      compiled
+  in
+  Engine.run s [||];
+  (* As in [loops_around_calls]: the carry after [k] trips is [2^(k+1) - 2]. *)
+  let carry k = Float.of_int ((1 lsl (k + 1)) - 2) in
+  let rec trips k =
+    if k < max && carry k < Float.of_int limit then trips (k + 1) else k
+  in
+  let trips = trips 0 in
+  cover "no trip" (trips = 0);
+  cover "stops on its flag" (trips > 0 && trips < max);
+  cover "stops at its trips" (trips = max);
+  equal values ~msg:"the carry"
+    (floats [| carry trips |])
+    (Run.values Float32 c_buffer);
+  equal values ~msg:"the rows"
+    (floats
+       (Array.init (4 * max) (fun i ->
+            if i mod 4 = 0 && i / 4 < trips then carry (i / 4) +. 1. else -1.)))
+    (Run.values Float32 ys_buffer)
+
+(* [loops_across_devices] on the GPU [gpu], its flag computed on each side. *)
+let loops_across_devices_on ~devices gpu =
+  let on (flag, side) =
+    prop ~count:30 ~examples:[ (0, 3); (10, 6); (40, 2) ] side loop_bounds
+      (loops_across_devices ~devices ~flag gpu)
+  in
+  group
+    "a loop of a kernel and host programs runs them in order each trip while \
+     its flag holds"
+    (List.map on
+       [
+         (Host_program, "its flag of a host program");
+         (Gpu_kernel, "its flag of a kernel");
+       ])
+
 (* A loop's flag is storage of one boolean: a view of one element of wider
    storage is refused, since the engine reads the storage it names. *)
 let refuses_a_view_as_flag () =
@@ -2459,6 +2570,7 @@ let on_a_gpu (kind, _) =
       @@ prop "a loop runs its calls in order each trip while its flag holds"
            loop_bounds (fun bounds ->
              loops_around_calls ~devices "CPU:1" bounds);
+      slow @@ loops_across_devices_on ~devices "CPU:1";
       reads_trips_on ~devices "CPU:1";
       reads_trips_under_a_back_edge ~devices "CPU:1";
       test "a loop's move copies the rows its trips name"

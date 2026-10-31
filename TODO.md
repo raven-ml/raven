@@ -141,8 +141,6 @@ raven / llama.cpp (Vulkan; ROCm):
   (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
   64x32x32 at x1.59 slower. The M1 Max's cap at its 8 P-cores
   (`hw.perflevel0.physicalcpu`, as nx's) needs the same runs on the Mac
-- tolk.engine: no GPU test of a loop whose body mixes a GPU kernel and a
-  host program
 - search timing on NV clears no L2 (tinygrad's invalidate_caches); AMD
   counters and thread traces are not collected: encode both as words parts
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
