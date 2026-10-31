@@ -350,7 +350,7 @@ let algorithms =
     [
       prop "the algorithm is the first that applies" choice (fun c ->
           equal string
-            (Printf.sprintf "%s ALLREDUCE %dx%d | dtypes.float" (label c)
+            (Printf.sprintf "%s ALLREDUCE %dx%d | dtypes.f32" (label c)
                c.devices c.numel)
             (chosen c));
       test "a ring moves values only to the next device" (fun () ->

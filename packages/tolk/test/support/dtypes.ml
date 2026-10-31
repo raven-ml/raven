@@ -7,23 +7,23 @@ let reprs =
       (Void, "dtypes.void");
       (Weak_int, "dtypes.weakint");
       (Bool, "dtypes.bool");
-      (Int8, "dtypes.char");
-      (Uint8, "dtypes.uchar");
-      (Int16, "dtypes.short");
-      (Uint16, "dtypes.ushort");
-      (Int32, "dtypes.int");
-      (Uint32, "dtypes.uint");
-      (Int64, "dtypes.long");
-      (Uint64, "dtypes.ulong");
+      (Int8, "dtypes.i8");
+      (Uint8, "dtypes.u8");
+      (Int16, "dtypes.i16");
+      (Uint16, "dtypes.u16");
+      (Int32, "dtypes.i32");
+      (Uint32, "dtypes.u32");
+      (Int64, "dtypes.i64");
+      (Uint64, "dtypes.u64");
       (Weak_float, "dtypes.weakfloat");
       (Fp8e4m3, "dtypes.fp8e4m3");
       (Fp8e5m2, "dtypes.fp8e5m2");
       (Fp8e4m3fnuz, "dtypes.fp8e4m3fnuz");
       (Fp8e5m2fnuz, "dtypes.fp8e5m2fnuz");
-      (Float16, "dtypes.half");
-      (Bfloat16, "dtypes.bfloat16");
-      (Float32, "dtypes.float");
-      (Float64, "dtypes.double");
+      (Float16, "dtypes.f16");
+      (Bfloat16, "dtypes.bf16");
+      (Float32, "dtypes.f32");
+      (Float64, "dtypes.f64");
     ]
 
 (* Witnesses *)

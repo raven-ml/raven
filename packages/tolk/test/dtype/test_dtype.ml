@@ -223,11 +223,20 @@ let names =
             (Dtype.of_string "Float32");
           equal (result dtype string) (Ok Dtype.Uint64)
             (Dtype.of_string "ULong"));
+      test "a short name is read, and the older ones" (fun () ->
+          equal (result dtype string) (Ok Dtype.Float32) (Dtype.of_string "f32");
+          equal (result dtype string) (Ok Dtype.Bfloat16)
+            (Dtype.of_string "bf16");
+          equal (result dtype string) (Ok Dtype.Int8) (Dtype.of_string "i8");
+          equal (result dtype string) (Ok Dtype.Int8) (Dtype.of_string "char");
+          equal (result dtype string) (Ok Dtype.Uint64) (Dtype.of_string "u64");
+          equal (result dtype string) (Ok Dtype.Uint64)
+            (Dtype.of_string "uint64"));
       cases "the error names what is not a data type" ~id:(Printf.sprintf "%S")
         [
           "nonexistdtype";
-          "f32";
-          "bf16";
+          "f8";
+          "i128";
           " half ";
           "uint128";
           "floats";

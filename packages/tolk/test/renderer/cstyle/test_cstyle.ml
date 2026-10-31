@@ -346,10 +346,10 @@ let guard_only_where_converted () =
   in
   equal (list string) ~msg:"the kernels that convert"
     [
-      "cuda_dtype_float8_e4m3";
-      "cuda_dtype_float8_e5m2";
-      "cuda_inf_nan_float8_e4m3";
-      "cuda_inf_nan_float8_e5m2";
+      "cuda_dtype_fp8e4m3";
+      "cuda_dtype_fp8e5m2";
+      "cuda_inf_nan_fp8e4m3";
+      "cuda_inf_nan_fp8e5m2";
     ]
     guarded;
   List.iter
@@ -378,8 +378,8 @@ let fp8_infinities =
       cases "converts with the byte of the infinity's image"
         ~id:(fun (_, t, _) -> t)
         [
-          ("cuda_dtype_float8_e4m3", "__nv_fp8_e4m3", Dtype.Fp8e4m3);
-          ("cuda_dtype_float8_e5m2", "__nv_fp8_e5m2", Fp8e5m2);
+          ("cuda_dtype_fp8e4m3", "__nv_fp8_e4m3", Dtype.Fp8e4m3);
+          ("cuda_dtype_fp8e5m2", "__nv_fp8_e5m2", Fp8e5m2);
         ]
         converts_with_the_infinity_byte;
       cases "writes an infinite e5m2 constant as its bits" ~id:Fun.id
@@ -389,7 +389,7 @@ let fp8_infinities =
             ~claim:("a source that writes " ^ bits)
             string
             (fun src -> contains src bits)
-            (source_of_case "cuda_inf_nan_float8_e5m2"));
+            (source_of_case "cuda_inf_nan_fp8e5m2"));
       test
         "the image of an infinity is a NaN of its sign in e4m3 and itself in \
          e5m2" (fun () ->
@@ -543,9 +543,9 @@ let rendering =
         ~id:fst
         [
           ( "HIP gfx1100 converts to a float8 it lacks",
-            (hip, "hip_cdna4_dtype_float8_e4m3") );
+            (hip, "hip_cdna4_dtype_fp8e4m3") );
           ( "CUDA has no core for chars",
-            (cuda, "hip_tc_signed_char_int_16_16_16") );
+            (cuda, "hip_tc_i8_i32_16_16_16") );
         ]
         (fun (_, (r, case)) ->
           rejects (fun () -> render r (kernel (find_case case))));
@@ -965,7 +965,7 @@ let rounds_each_operation_on_halves () =
   let x = Array.concat [ x; x; x; x ] and y = Array.concat [ y; y; y; y ] in
   let out =
     Run.on_host
-      (loaded "clang_dtype_half")
+      (loaded "clang_dtype_f16")
       [ (1, floats x); (2, floats (Array.map half y)) ]
   in
   let expected i = half (half (half x.(i) +. y.(i)) *. 3.) in
@@ -974,7 +974,7 @@ let rounds_each_operation_on_halves () =
 let wraps_each_operation_on_chars () =
   let out =
     Run.on_host
-      (loaded "clang_dtype_unsigned_char")
+      (loaded "clang_dtype_u8")
       [ (1, floats (Array.make 16 16.)); (2, ints (Array.make 16 86)) ]
   in
   equal values
@@ -987,9 +987,9 @@ let wraps_each_operation_on_chars () =
    case but these, each with its reason. *)
 let not_interpreted =
   [
-    ("clang_call_out", "calls a function pointer the test cannot provide");
-    ("clang_call_ret", "calls a function pointer the test cannot provide");
-    ("clang_call_stack", "calls a function pointer the test cannot provide");
+    ("clang_call_out", "calls an external function");
+    ("clang_call_ret", "calls an external function");
+    ("clang_call_stack", "calls an external function");
     ("clang_unbounded_loop", "has a loop without a trip count");
     ("clang_sum", "accumulates in registers");
     ("clang_matmul", "accumulates in registers");
@@ -999,10 +999,10 @@ let not_interpreted =
     ("clang_gated_store_in_loop", "gates its store with an if");
     ("clang_custom", "runs custom code");
     ("clang_table", "reads a constant table");
-    ("clang_transcendental_half", "divides with Ops.FDIV");
+    ("clang_transcendental_f16", "divides with Ops.FDIV");
     ("clang_transcendental_bf16", "divides with Ops.FDIV");
-    ("clang_transcendental_float", "divides with Ops.FDIV");
-    ("clang_transcendental_double", "divides with Ops.FDIV");
+    ("clang_transcendental_f32", "divides with Ops.FDIV");
+    ("clang_transcendental_f64", "divides with Ops.FDIV");
     ("clang_packed_cast", "reads memory at another type");
     ("clang_packed_bitcast", "reads memory at another type");
     ("clang_dynamic_lane", "indexes a vector value");

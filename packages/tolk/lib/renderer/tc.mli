@@ -105,7 +105,7 @@ val equal : t -> t -> bool
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a tensor core as its types and fragments:
-    [TensorCore(dtype_in=dtypes.half, dtype_out=dtypes.float, frag_a=(('k1',
+    [TensorCore(dtype_in=dtypes.f16, dtype_out=dtypes.f32, frag_a=(('k1',
      'm0', ...), ('k0',)), frag_b=..., frag_c=...)]. *)
 
 (** {1:targets Targets}

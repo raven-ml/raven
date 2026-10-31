@@ -292,7 +292,7 @@ let option c =
   let read = function None_ -> None | v -> Some (c.read v) in
   { write = (function None -> None_ | Some x -> c.write x); read }
 
-(* A name written after its prefix, such as [dtypes.half], as [pp] prints it,
+(* A name written after its prefix, such as [dtypes.f16], as [pp] prints it,
    and read back with [of_string]. *)
 let named prefix pp of_string =
   let write x =

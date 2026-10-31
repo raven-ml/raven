@@ -311,7 +311,7 @@ val equal_arg : arg -> arg -> bool
 
 val pp_arg : Format.formatter -> arg -> unit
 (** [pp_arg] formats an argument as the literal that denotes it: [None], [42],
-    [ConstFloat(1.5)], [True], [Invalid], [dtypes.float], [(0, AxisType.WEAK)],
+    [ConstFloat(1.5)], [True], [Invalid], [dtypes.f32], [(0, AxisType.WEAK)],
     [(Ops.ADD, 0)], ['CPU'], [b'ab\x00'].
 
     The records print as calls:
@@ -325,7 +325,7 @@ val pp_arg : Format.formatter -> arg -> unit
     - {!Bufferize}: [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL,
       removable=True, broadcast=False)], [removable] [False] for {!Whole}
       only and [broadcast] [True] for {!Broadcast} only;
-    - {!Call}: [CallInfo(None, 'f', False, False, dtype=dtypes.int)], the
+    - {!Call}: [CallInfo(None, 'f', False, False, dtype=dtypes.i32)], the
       [dtype] field only when it is not [void]. *)
 
 (** {1:tags Tags} *)
@@ -355,7 +355,7 @@ module Tag : sig
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a tag as the literal it is: [True], [1], ['mergeable'],
-      [b'\x00'], [dtypes.int], [(0, dtypes.int)], [()]. *)
+      [b'\x00'], [dtypes.i32], [(0, dtypes.i32)], [()]. *)
 end
 
 (** {1:nodes Nodes} *)

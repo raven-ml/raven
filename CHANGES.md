@@ -798,6 +798,10 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Dtype.name` is a data type's short name (`i8`, `u32`, `f16`,
+  `bf16`, `f32`, `fp8e4m3`) and `Dtype.pp` prints `dtypes.<name>`, where both
+  used C names (`signed char`, `half`). `Dtype.of_string` reads the short names
+  and the older ones. WMMA functions are named by them (`WMMA_8_8_8_f16_f32`).
 - **Breaking:** a parameter, buffer or allocation holds its number of elements
   as its first source (`Ops.size_src`), a weak integer constant or the empty
   stack of a scalar; `Ops.param_arg` has no `size` field or `?size`.

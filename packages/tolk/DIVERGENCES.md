@@ -518,8 +518,8 @@ stamps nothing (D146).
 - **Pinned by:** `Tolk.Cstyle › float8 infinities on CUDA`, which
   checks where the guard is declared, the byte each infinity writes and the
   bits of infinite e5m2 constants; `Tolk.Cstyle › sources › by default ›`
-  `cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`, `cuda_inf_nan_float8_e4m3`
-  and `cuda_inf_nan_float8_e5m2`, which compare with tinygrad's source once the
+  `cuda_dtype_fp8e4m3`, `cuda_dtype_fp8e5m2`, `cuda_inf_nan_fp8e4m3`
+  and `cuda_inf_nan_fp8e5m2`, which compare with tinygrad's source once the
   guard is written back as tinygrad writes it; and `Tolk.Cstyle › every
   GPU kernel compiles with its target's toolchain › cuda_*` (slow, skipped
   without NVRTC).
@@ -1418,9 +1418,10 @@ driver sizes local memory as it loads a function (D146).
 
 ## D55. Metal names a vector after its element's one-word name
 
-- **tinygrad:** `renderer/cstyle.py:186` (`_render_dtype` names a vector
-  after its element's name with spaces made underscores) and `:362`
-  (`MetalRenderer.type_map` renames only `uint` and `bfloat`).
+- **tinygrad:** `renderer/cstyle.py:190@4e0192eaf` (`_render_dtype` names a
+  vector after its element's name in `type_map` with spaces made
+  underscores) and `:375@4e0192eaf` (`MetalRenderer.type_map` renames only
+  `uint` and `bfloat` of `CStyleLanguage.type_map`'s C names).
 - **tolk:** `Cstyle.lang`'s field `vector_names`, which
   `Cstyle.render_dtype` reads, and Metal's in `Cstyle.metal_lang`.
 - **Differs:** a Metal vector of `signed char`, `unsigned char`,
@@ -2740,7 +2741,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   literal past 64 bits, which C refuses.
 - **Pinned by:** the Cstyle suite: `execution on the host › stores each
   integer constant as its type holds it` and `› converts an infinity or a NaN
-  to an integer type`; `clang_transcendental_half.golden`, recorded from the
+  to an integer type`; `clang_transcendental_f16.golden`, recorded from the
   equally patched tinygrad; rune's `rune jit` suite: `classes › integer
   constants keep their bits and wrap`. On rune, a float converted to an
   integer past 64 bits: missing (the old rune's `test_jit_programs` went with
@@ -4024,15 +4025,15 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 ## D147. The x86 host holds bfloat16 as its bits
 
-- **tinygrad:** `renderer/cstyle.py:276` (`ClangRenderer.type_map`, which
-  maps no bfloat16, so a bfloat16 is written by its name, Clang's `__bf16`
-  (`dtype.py:135`), on every machine).
+- **tinygrad:** `renderer/cstyle.py:291@4e0192eaf` (`ClangRenderer.type_map`,
+  which keeps `CStyleLanguage.type_map`'s bfloat16, Clang's `__bf16`
+  (`:136-140@4e0192eaf`), on every machine).
 - **tolk:** `Cstyle.clang` (the Clang renderer's language,
   which on x86 maps bfloat16 to `unsigned short` and renders its constants as
   their bits with `pm_bf16_ushort_const`).
 - **Differs:** on x86, a bfloat16 value, pointer or vector is written as
   `unsigned short`, and a bfloat16 constant as its bits, as HIP writes them
-  on targets other than gfx950 (`renderer/cstyle.py:515,557`:
+  on targets other than gfx950 (`renderer/cstyle.py:533,572@4e0192eaf`:
   `pm_bf16_ushort_const` and `typedef unsigned short hip_bfloat16`). The
   kernel's graph is tinygrad's; only its C
   types change. Every bfloat16 operation already computes in float32 through

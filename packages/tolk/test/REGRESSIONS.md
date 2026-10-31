@@ -62,6 +62,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_device.py::TestDevVar::test_target | the target of a device under DEV | dropped: a device's target follows from the device alone (D95) |
 | tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite, and there is no DEV (D95) |
 | tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | dropped: `select_by_name` and its suggestion are not ported (README exclusions); the renderer lookup belongs to `Device`'s suite |
+| tinygrad: null/test_device.py::TestDevice::test_null_cast_all_dtypes | a cast to every data type and back renders on the NULL device | dropped: the NULL device and its renderer are excluded |
 | tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache follows CCACHE | dropped: `Compiler` belongs to `Device`'s suite |
 | tinygrad: null/test_hashing.py::TestKeccak::test_shape_keeping | `Tensor.keccak` | dropped: the `Tensor` surface; the frontend is nx |
 | tinygrad: null/test_tqdm.py (all) | `tqdm` | dropped: not ported (plan, L0 scope) |
@@ -74,7 +75,8 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_dtype.py::TestEqStrDType::test_strs | a data type prints as `dtypes.<alias>` | `D › data types › properties.golden` (column `dtype`) |
+| tinygrad: null/test_dtype.py::TestEqStrDType::test_strs | a data type prints as `dtypes.<name>` | `D › data types › properties.golden` (column `dtype`) |
+| tinygrad: null/test_dtype.py::TestEqStrDType::test_roundtrip | every data type, `void` and the weak ones included, reads back from what it prints | `D › names › of_string reads the name pp prints after dtypes.`; pickling dropped: nothing is pickled |
 | tinygrad: null/test_dtype.py::TestToDtype::test_dtype_to_dtype | `to_dtype` returns a DType as is | dropped: `of_string` takes a string, and a `Dtype.t` needs no conversion |
 | tinygrad: null/test_dtype.py::TestToDtype::test_str_to_dtype | a name reads as its data type | `D › names › names.golden`; `D › names › of_string reads the name pp prints after dtypes.` |
 | tinygrad: null/test_dtype.py::TestCastConvenienceMethod::test_method | `Tensor.half()` and friends | dropped: Tensor surface, rune's lowering |
@@ -587,7 +589,7 @@ laws check every quotient against `Bigint.div` in the interpreter.
 | tinygrad: `null/test_uops.py::TestFastIdiv::test_fast_idiv_cmod_kept_when_idiv_declines` | CMOD by a variable, and uint64 CMOD by 3, stay CMOD | `DO › late_patterns › late_cdiv_shr_fast_idiv.golden` (`p` mod `d`, `w` mod 3) |
 | tinygrad: `null/test_uops.py::TestFastIdiv::test_fast_idiv_bounded_numerator_zero` | `x` in [0, 1] divided by 3 is 0 | `DO › fast_idiv › fast_idiv_folds_a_small_dividend.golden`; `DO › fast_idiv › fast_idiv of a dividend below the divisor is zero of its type` |
 | tinygrad: `null/test_uops.py::TestFastIdiv::test_fast_idiv_remove_powers_of_two` | `r // 448` for `r` below 2^20 shifts out 64 first and stays in int32 | `DO › fast_idiv › fast_idiv_shifts_out_powers_of_two.golden` |
-| tinygrad: `null/test_uops.py::TestFastIdiv::test_fast_idiv_overflow` | (expected failure) uint32 by 7 over the whole range | `DO › fast_idiv › fast_idiv_grid.golden` (uint 4294967295 by 7 is `None` without a wider type, and widens to ulong with one) |
+| tinygrad: `null/test_uops.py::TestFastIdiv::test_fast_idiv_overflow` | (expected failure) uint32 by 7 over the whole range | `DO › fast_idiv › fast_idiv_grid.golden` (u32 4294967295 by 7 is `None` without a wider type, and widens to u64 with one) |
 | tinygrad: `null/test_uops.py::TestFastIdiv::test_disable_fast_idiv` | with `DISABLE_FAST_IDIV`, CDIV by 3 stays | `DO › late_patterns › late_cdiv_shr.golden` (`~disable_fast_idiv:true`) |
 | tinygrad: `null/test_uops.py::TestUOpGraph::test_mulacc_shl` | `a*4096 + b` becomes MULACC after SHL | `DO › late_patterns › late_mulacc_mulacc_shl.golden` |
 | tinygrad: `null/test_uops.py::TestUOpGraph::test_use_cmpeq` | `(x != 7) != True` becomes CMPEQ | `DO › late_patterns › late_comparison_cmpeq.golden` |
@@ -1092,7 +1094,7 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `renderer/cstyle.py` `ClangRenderer` (no test) | kernels run as their graph says | `CS › execution on the host` (18 tests on known values); slow law `every kernel the interpreter runs writes what it computes` (36 kernels, 10 random inputs each; the others excluded in the suite with their reasons) |
 | D17: `renderer/cstyle.py:245-250` C promotion of narrow operands | char, short and `__fp16` operations compute in int or float, and only the stored value narrows; tolk casts each inlined one back | `CS › narrowing › cases.golden` (every kernel's written kernel is `with_d17_casts` of it; 21 sources are tinygrad's for the kernel with those casts); `CS › execution on the host › rounds each operation on halves to a half`, `wraps each operation on unsigned chars`; slow law `a kernel over a narrow type wraps and rounds as the interpreter` (8 kernels, inputs over each type's whole range) |
 | D18: `renderer/cstyle.py:368-372` Metal's `extra_matcher` computes `SQRT`, `EXP2`, `LOG2` and `SIN` of a bfloat16 in float32, not `TRUNC` | Metal truncates only floats, so a bfloat16 `TRUNC` is computed in float32 too | `CS › bfloat16 truncation on Metal › truncates a bfloat16 in float32`, `leaves it to CUDA, which truncates a bfloat16 with htrunc`; slow: `compiles a kernel that truncates a bfloat16` (skipped without MTLCompiler) |
-| D16: `renderer/cstyle.py:33,42` a float8 conversion saturates infinities on CUDA | an infinity stays one in e5m2 and becomes a NaN of its sign in e4m3; finite values saturate | `CS › float8 infinities on CUDA` (6 tests: the guard exactly where a value converts to a float8, the byte of each infinity, infinite constants as their bits); `CS › sources › cuda_dtype_float8_*`, `cuda_inf_nan_float8_*` through `tinygrad_of_d16`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` |
+| D16: `renderer/cstyle.py:33,42` a float8 conversion saturates infinities on CUDA | an infinity stays one in e5m2 and becomes a NaN of its sign in e4m3; finite values saturate | `CS › float8 infinities on CUDA` (6 tests: the guard exactly where a value converts to a float8, the byte of each infinity, infinite constants as their bits); `CS › sources › cuda_dtype_fp8*`, `cuda_inf_nan_fp8*` through `tinygrad_of_d16`; NVRTC: slow, `CS › every GPU kernel compiles with its target's toolchain › cuda_*` |
 
 ## C
 

@@ -186,30 +186,30 @@ let info = function
   | Void -> { priority = -1; bitsize = 0; name = "void"; fmt = None }
   | Weak_int -> { priority = 0; bitsize = 800; name = "weakint"; fmt = None }
   | Bool -> { priority = 0; bitsize = 1; name = "bool"; fmt = Some '?' }
-  | Int8 -> { priority = 1; bitsize = 8; name = "signed char"; fmt = Some 'b' }
+  | Int8 -> { priority = 1; bitsize = 8; name = "i8"; fmt = Some 'b' }
   | Uint8 ->
-      { priority = 2; bitsize = 8; name = "unsigned char"; fmt = Some 'B' }
-  | Int16 -> { priority = 3; bitsize = 16; name = "short"; fmt = Some 'h' }
+      { priority = 2; bitsize = 8; name = "u8"; fmt = Some 'B' }
+  | Int16 -> { priority = 3; bitsize = 16; name = "i16"; fmt = Some 'h' }
   | Uint16 ->
-      { priority = 4; bitsize = 16; name = "unsigned short"; fmt = Some 'H' }
-  | Int32 -> { priority = 5; bitsize = 32; name = "int"; fmt = Some 'i' }
+      { priority = 4; bitsize = 16; name = "u16"; fmt = Some 'H' }
+  | Int32 -> { priority = 5; bitsize = 32; name = "i32"; fmt = Some 'i' }
   | Uint32 ->
-      { priority = 6; bitsize = 32; name = "unsigned int"; fmt = Some 'I' }
-  | Int64 -> { priority = 7; bitsize = 64; name = "long"; fmt = Some 'q' }
+      { priority = 6; bitsize = 32; name = "u32"; fmt = Some 'I' }
+  | Int64 -> { priority = 7; bitsize = 64; name = "i64"; fmt = Some 'q' }
   | Uint64 ->
-      { priority = 8; bitsize = 64; name = "unsigned long"; fmt = Some 'Q' }
+      { priority = 8; bitsize = 64; name = "u64"; fmt = Some 'Q' }
   | Weak_float ->
       { priority = 9; bitsize = 800; name = "weakfloat"; fmt = None }
-  | Fp8e4m3 -> { priority = 10; bitsize = 8; name = "float8_e4m3"; fmt = None }
-  | Fp8e5m2 -> { priority = 11; bitsize = 8; name = "float8_e5m2"; fmt = None }
+  | Fp8e4m3 -> { priority = 10; bitsize = 8; name = "fp8e4m3"; fmt = None }
+  | Fp8e5m2 -> { priority = 11; bitsize = 8; name = "fp8e5m2"; fmt = None }
   | Fp8e4m3fnuz ->
-      { priority = 10; bitsize = 8; name = "float8_e4m3fnuz"; fmt = None }
+      { priority = 10; bitsize = 8; name = "fp8e4m3fnuz"; fmt = None }
   | Fp8e5m2fnuz ->
-      { priority = 11; bitsize = 8; name = "float8_e5m2fnuz"; fmt = None }
-  | Float16 -> { priority = 12; bitsize = 16; name = "half"; fmt = Some 'e' }
-  | Bfloat16 -> { priority = 13; bitsize = 16; name = "__bf16"; fmt = None }
-  | Float32 -> { priority = 14; bitsize = 32; name = "float"; fmt = Some 'f' }
-  | Float64 -> { priority = 15; bitsize = 64; name = "double"; fmt = Some 'd' }
+      { priority = 11; bitsize = 8; name = "fp8e5m2fnuz"; fmt = None }
+  | Float16 -> { priority = 12; bitsize = 16; name = "f16"; fmt = Some 'e' }
+  | Bfloat16 -> { priority = 13; bitsize = 16; name = "bf16"; fmt = None }
+  | Float32 -> { priority = 14; bitsize = 32; name = "f32"; fmt = Some 'f' }
+  | Float64 -> { priority = 15; bitsize = 64; name = "f64"; fmt = Some 'd' }
 
 let priority dt = (info dt).priority
 let bitsize dt = (info dt).bitsize
@@ -229,32 +229,33 @@ let compare d0 d1 =
 
 let hash (dt : t) = Hashtbl.hash dt
 
-(* The names of each data type, the one it prints as first. *)
+(* The names of each data type: its own, then the older ones it is still read
+   by. *)
 let names =
   [
     (Void, [ "void" ]);
     (Weak_int, [ "weakint" ]);
     (Bool, [ "bool" ]);
-    (Int8, [ "char"; "int8" ]);
-    (Uint8, [ "uchar"; "uint8" ]);
-    (Int16, [ "short"; "int16" ]);
-    (Uint16, [ "ushort"; "uint16" ]);
-    (Int32, [ "int"; "int32" ]);
-    (Uint32, [ "uint"; "uint32" ]);
-    (Int64, [ "long"; "int64" ]);
-    (Uint64, [ "ulong"; "uint64" ]);
+    (Int8, [ "i8"; "int8"; "char" ]);
+    (Uint8, [ "u8"; "uint8"; "uchar" ]);
+    (Int16, [ "i16"; "int16"; "short" ]);
+    (Uint16, [ "u16"; "uint16"; "ushort" ]);
+    (Int32, [ "i32"; "int32"; "int" ]);
+    (Uint32, [ "u32"; "uint32"; "uint" ]);
+    (Int64, [ "i64"; "int64"; "long" ]);
+    (Uint64, [ "u64"; "uint64"; "ulong" ]);
     (Weak_float, [ "weakfloat" ]);
     (Fp8e4m3, [ "fp8e4m3" ]);
     (Fp8e5m2, [ "fp8e5m2" ]);
     (Fp8e4m3fnuz, [ "fp8e4m3fnuz" ]);
     (Fp8e5m2fnuz, [ "fp8e5m2fnuz" ]);
-    (Float16, [ "half"; "float16" ]);
-    (Bfloat16, [ "bfloat16" ]);
-    (Float32, [ "float"; "float32" ]);
-    (Float64, [ "double"; "float64" ]);
+    (Float16, [ "f16"; "float16"; "half" ]);
+    (Bfloat16, [ "bf16"; "bfloat16" ]);
+    (Float32, [ "f32"; "float32"; "float" ]);
+    (Float64, [ "f64"; "float64"; "double" ]);
   ]
 
-let pp ppf dt = Format.fprintf ppf "dtypes.%s" (List.hd (List.assoc dt names))
+let pp ppf dt = Format.fprintf ppf "dtypes.%s" (name dt)
 
 (* Predicates and groups *)
 

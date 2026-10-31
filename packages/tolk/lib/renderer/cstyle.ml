@@ -115,7 +115,9 @@ let render_dtype ?(sz = 1) ?(addrspace = Some Dtype.Alu) ?(override_ptr = false)
   in
   let suffix = if is_ptr addrspace || override_ptr then "*" else "" in
   let name =
-    Option.value (List.assoc_opt dt l.type_map) ~default:(Dtype.name dt)
+    match List.assoc_opt dt l.type_map with
+    | Some name -> name
+    | None -> invalid_arg (strf "the language has no type %s" (Dtype.name dt))
   in
   if sz > 1 then
     let element =
@@ -172,10 +174,8 @@ let render_buffer ctx x =
 let wmma_name u =
   match arg u with
   | Wmma { dims = n, m, k; dtype_in; _ } ->
-      String.map
-        (function ' ' -> '_' | c -> c)
-        (strf "WMMA_%d_%d_%d_%s_%s" n m k (Dtype.name dtype_in)
-           (Dtype.name (dtype u)))
+      strf "WMMA_%d_%d_%d_%s_%s" n m k (Dtype.name dtype_in)
+        (Dtype.name (dtype u))
   | _ -> invalid_arg "a WMMA without its tensor core argument"
 
 (* Base rewrite *)
@@ -668,7 +668,24 @@ let cstyle =
     float4 = (fun _ -> invalid_arg "the language has no vector constructor");
     float4_style = ("(", ")");
     gep_arr_threshold = 4;
-    type_map = [];
+    type_map =
+      Dtype.
+        [
+          (Void, "void");
+          (Bool, "bool");
+          (Int8, "signed char");
+          (Uint8, "unsigned char");
+          (Int16, "short");
+          (Uint16, "unsigned short");
+          (Int32, "int");
+          (Uint32, "unsigned int");
+          (Int64, "long");
+          (Uint64, "unsigned long");
+          (Float16, "half");
+          (Bfloat16, "__bf16");
+          (Float32, "float");
+          (Float64, "double");
+        ];
     infinity = "INFINITY";
     nan = "NAN";
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
@@ -1090,7 +1107,8 @@ let clang_lang =
     nan = "__builtin_nanf(\"\")";
     barrier = "__atomic_thread_fence(__ATOMIC_SEQ_CST);";
     buffer_suffix = " restrict";
-    type_map = [ (Dtype.Bool, "_Bool"); (Dtype.Float16, "__fp16") ];
+    type_map =
+      (Dtype.Bool, "_Bool") :: (Dtype.Float16, "__fp16") :: cstyle.type_map;
     (* __fp16 is a storage format: its operations compute in float *)
     promoted = Dtype.Float16 :: cstyle.promoted;
     code_for_op =
@@ -1292,7 +1310,8 @@ let metal_lang =
         "uint3 gid [[threadgroup_position_in_grid]]";
         "uint3 lid [[thread_position_in_threadgroup]]";
       ];
-    type_map = [ (Dtype.Uint32, "uint"); (Dtype.Bfloat16, "bfloat") ];
+    type_map =
+      (Dtype.Uint32, "uint") :: (Dtype.Bfloat16, "bfloat") :: cstyle.type_map;
     bitcast = strf "as_type<%s>((%s)(%s))";
     (* Metal's vector types are named after one-word elements *)
     vector_names =
@@ -1453,12 +1472,11 @@ let cuda_lang =
             (Mulacc, fma (by_width ~double:"__fma_rn" ~single:"__fmaf_rn"));
           ];
     type_map =
-      [
-        (Dtype.Uint32, "uint");
-        (Dtype.Bfloat16, "nv_bfloat16");
-        (Dtype.Fp8e4m3, "__nv_fp8_e4m3");
-        (Dtype.Fp8e5m2, "__nv_fp8_e5m2");
-      ];
+      (Dtype.Uint32, "uint")
+      :: (Dtype.Bfloat16, "nv_bfloat16")
+      :: (Dtype.Fp8e4m3, "__nv_fp8_e4m3")
+      :: (Dtype.Fp8e5m2, "__nv_fp8_e5m2")
+      :: cstyle.type_map;
     bitcast = strf "tg_bitcast<%s>((%s)(%s))";
     string_rewrite =
       Pattern_matcher.append
@@ -1755,10 +1773,11 @@ let hip_lang arch =
       ^ "__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"workgroup\");";
     float4 = (fun t -> "make_" ^ t);
     type_map =
-      (Dtype.Bfloat16, "hip_bfloat16")
+      ((Dtype.Bfloat16, "hip_bfloat16")
       :: List.map
            (fun d -> (d, if fp8_index d = 0 then "hip_fp8" else "hip_bf8"))
-           Dtype.fp8s;
+           Dtype.fp8s)
+      @ cstyle.type_map;
     string_rewrite =
       (if is_cdna4 arch then rewrite
        else Pattern_matcher.append pm_bf16_ushort_const rewrite);
@@ -1815,7 +1834,7 @@ let hip_wmma arch tensor_cores type_map (name, (n, m, k), dtype_in, dtype_out, _
       n m k (tm dtype_in)
   end
   else if List.equal Tc.equal tensor_cores Tc.amd_rdna4 then
-    (* #define __WMMA_16_16_16_half_half
+    (* #define __WMMA_16_16_16_f16_f16
        __builtin_amdgcn_wmma_f16_16x16x16_f16_w32_gfx12 *)
     strf "#define __%s __builtin_amdgcn_wmma_%s_16x16x16_%s_w32_gfx12" name
       (tm dtype_out) (tm dtype_in)
@@ -1881,8 +1900,8 @@ let hip_kernel arch tensor_cores l ~name kernel bufs uops =
     | Some (n, attr) when List.mem dt Dtype.[ Float16; Float32; Float64 ] ->
         Some
           ( strf "__ocml_%s_f%d" n (Dtype.bitsize dt),
-            Dtype.name dt,
-            Dtype.name dt,
+            render_dtype l dt,
+            render_dtype l dt,
             attr )
     | _ -> None
   in

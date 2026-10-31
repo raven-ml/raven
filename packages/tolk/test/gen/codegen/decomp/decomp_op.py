@@ -35,9 +35,8 @@ def v(name, lo, hi, dtype=dtypes.int32):
 
 # fast_idiv
 
-INTS = {"char": dtypes.int8, "uchar": dtypes.uint8, "short": dtypes.int16, "ushort": dtypes.uint16,
-        "int": dtypes.int32, "uint": dtypes.uint32, "long": dtypes.int64, "ulong": dtypes.uint64,
-        "weakint": dtypes.weakint}
+INTS = [dtypes.int8, dtypes.uint8, dtypes.int16, dtypes.uint16, dtypes.int32, dtypes.uint32, dtypes.int64, dtypes.uint64,
+        dtypes.weakint]
 DIVISORS = [-3, 0, 1, 2, 3, 5, 6, 7, 10, 12, 25, 100, 127, 255, 448, 641, 1000, 2**15 - 1, 2**16 + 1, 2**31 - 1,
             2**31 + 11, 2**32 + 1, 2**40 + 3, 2**63 - 1, 2**63 + 1, 2**64 - 1, 2**64, 2**70 + 1]
 BOUNDS = [1, 6, 7, 100, 1000, 2**15 - 1, 2**16 - 1, 90000, 2**31 - 1, 2**32 - 1, 2**40, 2**63 - 1, 2**64 - 1]
@@ -46,7 +45,7 @@ BOUNDS = [1, 6, 7, 100, 1000, 2**15 - 1, 2**16 - 1, 90000, 2**31 - 1, 2**32 - 1,
 @table
 def fast_idiv_grid():
     rows = []
-    for name, dt in INTS.items():
+    for dt in INTS:
         top = 2**64 - 1 if dt is dtypes.weakint else dt.max
         for vmin, vmax in [(0, b) for b in BOUNDS if b <= top] + [(-1, 100)]:
             if dt in dtypes.uints and vmin < 0: continue
@@ -54,7 +53,7 @@ def fast_idiv_grid():
             for d in DIVISORS:
                 for ren in RENDERERS:
                     r = fast_idiv(RENDERERS[ren], x, d)
-                    rows.append((name, vmin, vmax, d, ren, "None" if r is None else r.render(simplify=False)))
+                    rows.append((dt.name, vmin, vmax, d, ren, "None" if r is None else r.render(simplify=False)))
     return ["dtype", "vmin", "vmax", "d", "renderer", "result"], rows
 
 

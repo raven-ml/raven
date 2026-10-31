@@ -173,14 +173,14 @@ let text =
       test "writes one line per node, sources first" (fun () ->
           equal Windtrap.text
             "0 Ops.CONST dtypes.weakint [] 1\n\
-             1 Ops.CAST dtypes.float [0] dtypes.float\n\
-             2 Ops.ADD dtypes.float [1, 1] tag=(0, dtypes.int)\n"
+             1 Ops.CAST dtypes.f32 [0] dtypes.f32\n\
+             2 Ops.ADD dtypes.f32 [1, 1] tag=(0, dtypes.i32)\n"
             (Graph.to_string
                (Ops.v ~src:[ x; x ] ~tag:(Tuple [ Int 0; Dtype Int32 ]) Add)));
       test "writes a record's fields that differ from their default" (fun () ->
           equal Windtrap.text
             "0 Ops.CONST dtypes.weakint [] 16\n\
-             1 Ops.BUFFER dtypes.float [0] ParamArg(slot=0, dtype=dtypes.float, \
+             1 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, \
              device=\"CPU\")\n"
             (Graph.to_string buffer));
       test "writes an argument's nodes before the node that holds them"
@@ -231,10 +231,10 @@ let errors =
       test "rejects an empty text" (fun () -> rejects "no node" "");
       test "rejects a written dtype that the node does not derive" (fun () ->
           rejects
-            "node 1: the node's data type is dtypes.float, not the written \
-             dtypes.int"
+            "node 1: the node's data type is dtypes.f32, not the written \
+             dtypes.i32"
             "0 Ops.CONST dtypes.weakint [] 1\n\
-             1 Ops.CAST dtypes.int [0] dtypes.float\n");
+             1 Ops.CAST dtypes.i32 [0] dtypes.f32\n");
       test "rejects a source that is not an earlier line" (fun () ->
           rejects "node 0: node 0 is not an earlier line"
             "0 Ops.NEG dtypes.weakint [0]\n");

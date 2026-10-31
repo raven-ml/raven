@@ -154,11 +154,11 @@ let arguments =
         "pp_arg writes a parameter's phase that is not 0 and alignment that \
          is not 16" (fun () ->
           let param p = str Ops.pp_arg (Param p) in
-          equal string "ParamArg(0, dtypes.float, phase=4)"
+          equal string "ParamArg(0, dtypes.f32, phase=4)"
             (param (Ops.param_arg ~slot:0 ~phase:4 Dtype.Float32));
-          equal string "ParamArg(0, dtypes.float, align=4)"
+          equal string "ParamArg(0, dtypes.f32, align=4)"
             (param (Ops.param_arg ~slot:0 ~align:4 Dtype.Float32));
-          equal string "ParamArg(0, dtypes.float)"
+          equal string "ParamArg(0, dtypes.f32)"
             (param (Ops.param_arg ~slot:0 Dtype.Float32)));
       test "equal_arg tells apart parameters that differ in phase"
         (fun () ->
@@ -365,8 +365,8 @@ let tags =
                 (Bool true, "True");
                 (Int 1, "1");
                 (String "mergeable", "'mergeable'");
-                (Dtype Int32, "dtypes.int");
-                (Tuple [ Int 0; Dtype Int32 ], "(0, dtypes.int)");
+                (Dtype Int32, "dtypes.i32");
+                (Tuple [ Int 0; Dtype Int32 ], "(0, dtypes.i32)");
                 (Tuple [ Int 0 ], "(0,)");
                 (Tuple [], "()");
                 (Bytes "\x00a'", "b\"\\x00a'\"");

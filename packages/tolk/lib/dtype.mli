@@ -196,9 +196,11 @@ val itemsize : t -> int
     up to a whole byte. *)
 
 val name : t -> string
-(** [name dt] is the name of [dt] in C, such as ["unsigned char"], ["half"] or
-    ["__bf16"]. {!Void} and the weak data types have the names ["void"],
-    ["weakint"] and ["weakfloat"]. *)
+(** [name dt] is the short name of [dt]: ["i8"] to ["i64"] for the signed
+    integers, ["u8"] to ["u64"] for the unsigned ones, ["f16"], ["bf16"],
+    ["f32"] and ["f64"], ["fp8e4m3"], ["fp8e5m2"], ["fp8e4m3fnuz"] and
+    ["fp8e5m2fnuz"] for the 8-bit floats, and ["bool"], ["void"], ["weakint"]
+    and ["weakfloat"]. *)
 
 val fmt : t -> char option
 (** [fmt dt] is the format character of a [dt] value in a byte string: ['?'] for
@@ -243,11 +245,9 @@ val hash : t -> int
 (** [hash dt] is a hash of [dt], compatible with {!equal}. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] formats a data type as [dtypes.] followed by its C-flavoured alias if
-    it has one ([dtypes.char], [dtypes.uint], [dtypes.half], [dtypes.float],
-    [dtypes.double]), and by its constructor's name in lowercase, without
-    underscores, otherwise ([dtypes.bool], [dtypes.bfloat16], [dtypes.weakint]):
-    [dtypes.] followed by a name {!of_string} reads. *)
+(** [pp] formats a data type as [dtypes.] followed by its {!name}
+    ([dtypes.i8], [dtypes.f32], [dtypes.weakint]), a name {!of_string}
+    reads. *)
 
 (** {2:predicates Predicates and groups} *)
 
@@ -313,11 +313,12 @@ val finfo : t -> int * int
 (** {2:names Names and defaults} *)
 
 val of_string : string -> (t, string) result
-(** [of_string s] is the data type named [s], in any case: its constructor's
-    name without underscores ([float32], [weakint]), a C-flavoured alias
-    ([half], [float], [double], [char], [uchar], [short], [ushort], [int],
-    [uint], [long], [ulong]), or [default_float] and [default_int] for
-    {!default_float} and {!default_int}. The error names [s]. *)
+(** [of_string s] is the data type named [s], in any case: its {!name}
+    ([f32], [i8]), its constructor's name without underscores ([float32],
+    [int8], [bfloat16], [weakint]), a C-flavoured alias ([half], [float],
+    [double], [char], [uchar], [short], [ushort], [int], [uint], [long],
+    [ulong]), or [default_float] and [default_int] for {!default_float} and
+    {!default_int}. The error names [s]. *)
 
 val default_float : unit -> t
 (** [default_float ()] is the data type named, in any case, by the current value
