@@ -405,22 +405,9 @@ raven / llama.cpp (Vulkan; ROCm):
   x86 section. Record each on fudge, then delete every kimchi section,
   nx's and tolk's included. talon.thumper's Mac rows predate the Nx.Rng
   fixture (76105a215): the maintainer re-records them
-- windtrap: dune-project and ci.yml pin 4f2b11f, eight test commits
-  before the v0.3.0 tag (e367294): pin by version once 0.3.0 is on opam;
-  thumper's pin names no commit. Its start barrier still spins
-  (lib/workers.ml): rig_pci.space "two domains allocate and free at once"
-  times out at its 10 s bound in 60 of 64 copies run 32 at once at load
-  ~65, in none of 96 with a sleeping barrier (a883e72, not on GitHub).
-  Its timeout does nothing on Windows (windtrap.mli)
 - generated rig tables without an .mli (the `defs.ml` of amd/abi, amd/pci,
   bnxt, mlx5, mlx5/abi, nv, nv/abi, nv/nvidia and nv/pci, and
   nv/pci/gsp_defs.ml): have documentation.md exempt a generated
   vendor-constant table whose header names its source and generator, or
   have gen.py emit the .mli
 - tests: CI runtest under a memory cap
-- dune stale builds (3.24.2), _plans/dune-stale-watch/: one capture, a
-  `sed -i` temp file kept in _build/.db stays "File unavailable" for a
-  fresh server. Uncaptured: a source digested in one version and copied
-  in another; a passive server that answers `rpc ping` but sees no
-  changes; "Event queue overflow" under load. Reduce to a reproducer for
-  ocaml/dune
