@@ -656,6 +656,7 @@ let transpose u a b =
    whose size may be 0, so that every reshape keeps its elements. *)
 let flip u axes =
   let axes = List.map (resolve_dim u) axes in
+  if ndim u = 0 && axes <> [] then invalid_arg "a scalar has no axis to flip";
   if List.length (List.sort_uniq Int.compare axes) <> List.length axes then
     invalid_argf "an axis appears twice in %s"
       (repr_tuple (List.map string_of_int axes));
@@ -720,6 +721,9 @@ let split ?(axis = 0) u sizes =
   List.rev (snd (List.fold_left cut (0, []) sizes))
 
 let repeat u repeats =
+  if List.exists (fun r -> r < 0) repeats then
+    invalid_argf "repeats are not negative, in %s"
+      (repr_tuple (List.map string_of_int repeats));
   let base =
     List.hd (align_left [ shape u; List.map (fun _ -> Int 1) repeats ])
   in

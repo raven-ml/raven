@@ -393,7 +393,29 @@ let movement =
       test "flip rejects an axis given twice, and is the node for no axis"
         (fun () ->
           rejects (fun () -> Shape.flip p [ 0; 0 ]);
+          rejects (fun () -> Shape.flip (Shape.param 1 Float32) [ 0 ]);
+          is_true (Shape.flip (Shape.param 1 Float32) [] == Shape.param 1 Float32);
           is_true (Shape.flip p [] == p));
+      test "repeat refuses a negative repeat" (fun () ->
+          rejects (fun () -> Shape.repeat (param [ 1 ] 1 Float32) [ -1 ]));
+      test "a flip of a view of variable size reverses it at each size"
+        (fun () ->
+          let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int 4)) in
+          let x = param [ 4 ] 1 Int32 in
+          let flipped = Shape.flip (Shape.shrink x [ Some (Int 0, Sym n) ]) [ 0 ] in
+          let memory : Dtype.value array =
+            Array.init 4 (fun j -> `Int (Bigint.of_int j))
+          in
+          List.iter
+            (fun k ->
+              let bound =
+                Ops.substitute ~calls:Skip ~pass:Fixed_point flipped
+                  [ (n, Ops.int k) ]
+              in
+              equal ~msg:(string_of_int k) (list Dtypes.const)
+                (List.init k (fun i -> `Int (Bigint.of_int (k - 1 - i))))
+                (Array.to_list (Tensors.eval ~buffers:[ (1, memory) ] bound)))
+            [ 0; 1; 2; 3; 4 ]);
       prop "a flip reverses each axis it names and keeps the others"
         gen_flip (fun (dims, axes) ->
           let n = List.fold_left ( * ) 1 dims in

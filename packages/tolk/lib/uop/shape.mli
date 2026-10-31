@@ -235,7 +235,8 @@ val permute : Ops.t -> int list -> Ops.t
 val flip : Ops.t -> int list -> Ops.t
 (** [flip u axes] reverses [axes] of [u], negative axes counting from the end.
 
-    Raises [Invalid_argument] if an axis is out of range or given twice. *)
+    Raises [Invalid_argument] if an axis is out of range or given twice, or if
+    [u] is a scalar and [axes] is not empty. *)
 
 val shrink : Ops.t -> (Ops.sint * Ops.sint) option list -> Ops.t
 (** [shrink u bounds] keeps, on each axis, the elements from its start to its
@@ -286,7 +287,8 @@ val repeat : Ops.t -> int list -> Ops.t
 (** [repeat u repeats] tiles [u] [repeats] times along each axis, the axes
     aligned to the right: a [repeats] longer than [u]'s shape adds leading axes.
 
-    Raises [Invalid_argument] if a movement does. *)
+    Raises [Invalid_argument] if a repeat is negative, or if a movement does.
+    *)
 
 val pool : ?stride:int list -> ?dilation:int list -> Ops.t -> int list -> Ops.t
 (** [pool ~stride ~dilation u kernel] is the windows of [kernel] over the last
