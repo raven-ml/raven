@@ -326,7 +326,7 @@ external job_wait : nativeint -> int -> int * string
   = "caml_rig_remote_link_job_wait"
 
 external fail : nativeint -> string -> unit = "caml_rig_remote_link_job_fail"
-external close : nativeint -> unit = "caml_rig_remote_link_job_close"
+external close_c : nativeint -> bool = "caml_rig_remote_link_job_close"
 
 let job () =
   let j = job_make () in
@@ -352,7 +352,11 @@ let unblocked f x =
       block ();
       reraise e
 
-let close = unblocked close
+(* A close waits at most 200 ms at a time, then returns to OCaml, where a
+   pending signal's handler runs, and waits again: a link sends its close
+   once. *)
+let rec close_all j = if not (close_c j) then close_all j
+let close = unblocked close_all
 
 let wait j ~ms =
   match unblocked (job_wait j) (max 0 ms) with
@@ -367,10 +371,19 @@ let failed j = match wait j ~ms:0 with Failed why -> Some why | _ -> None
 external link_make : nativeint -> Unix.file_descr -> string -> int -> nativeint
   = "caml_rig_remote_link_make"
 
-external post : nativeint -> int -> string -> unit = "caml_rig_remote_link_post"
+external post_c : nativeint -> int -> string -> bool
+  = "caml_rig_remote_link_post"
 
-external post_area : nativeint -> int -> string -> area -> unit
+external post_area_c : nativeint -> int -> string -> area -> bool
   = "caml_rig_remote_link_post_area"
+
+(* A post waits for the send claim at most 200 ms at a time, then returns to
+   OCaml, where a pending signal's handler runs, and waits again. Its
+   message goes once it holds the claim, whole. *)
+let rec post l k head = if not (post_c l k head) then post l k head
+
+let rec post_area l k head a =
+  if not (post_area_c l k head a) then post_area l k head a
 
 external request_c : nativeint -> string -> int * area
   = "caml_rig_remote_link_request"
@@ -629,6 +642,10 @@ let next l =
    request. *)
 let answer_lost = "an answer was lost to an exception in the agent"
 
+(* Why a link's job fails when a [Sys.Break], a Ctrl-C's, ends such an
+   [answer]: its text, as for any of the agent's steps. *)
+let interrupted = Printexc.to_string Sys.Break
+
 let answer l q a =
   guarded "answer" @@ fun () ->
   let payload =
@@ -644,12 +661,13 @@ let answer l q a =
     invalid_arg
       "Rig_remote_proxy.Link.answer: the request is not the oldest unanswered";
   (* Once popped, the request is answered or its job fails: [post]'s
-     Out_of_memory for the frame would leave it answered by no one, and the
+     Out_of_memory for the frame, or an exception where it returns to OCaml
+     between its waits, would leave it answered by no one, and the
      controller waiting. *)
   match post l.c k_answer payload with
   | () -> ()
   | exception e ->
-      fail l.job answer_lost;
+      fail l.job (match e with Sys.Break -> interrupted | _ -> answer_lost);
       reraise e
 
 let word l ~device v =
@@ -709,7 +727,9 @@ let rail l ~id ~send ~receive =
   rail_c l.c id (flat send) (flat receive) outbound inbound counts;
   e
 
-let release_rail l id = unblocked (release_rail_c l.c) id
+(* The release takes no signal: rig calls it from finalisers, which take
+   none, and where no transfer of the rail began. *)
+let release_rail l id = release_rail_c l.c id
 
 (* Pairs *)
 

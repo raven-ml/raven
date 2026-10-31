@@ -52,12 +52,6 @@ raven / llama.cpp (Vulkan; ROCm):
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot (`Sdma.slots`) and drop its 16 MiB ring (`most_ring`).
   Needs an SDMA 4 GPU (Vega, MI100-MI300); nonnormal's gfx1201 runs SDMA 7
-- rig.remote: two waits of an agent's serving thread take signals but
-  never return to OCaml before they end, so a Ctrl-C lands only then: a
-  join's `unblocked Thread.join` of its dials (agent.ml, at most `join_s`,
-  10 s) and `Link.release_rail`'s untimed `pthread_cond_wait` for the
-  rail's active transfers (rig_remote_link.c). Bound them as the waits for
-  a controller and a command are (`RIG_REMOTE_STILL_NS`)
 
 ### limits and size
 

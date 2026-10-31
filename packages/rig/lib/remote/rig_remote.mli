@@ -301,9 +301,11 @@ val close : t -> unit
     [j] is [None], and the process may start another job. A job that fails
     during [close] ends as a failed job does ({!section-failure}): [close]
     returns once every connection has closed, up to about 11 seconds after
-    the failure, or after an abort that left later behind a message, and
-    does not return to OCaml meanwhile, so a [Sys.Break] from Ctrl-C raises
-    only then. The process's exit waits the same way for its last job.
+    the failure, or after an abort that left later behind a message. The
+    process's exit waits the same way for its last job. [close]'s wait for
+    the agents returns to OCaml at least every 200 ms, where a pending
+    [Sys.Break] from Ctrl-C raises: [j] then stays open, its closes sent, and
+    a later [close] of [j], or the process's exit, waits for it again.
 
     Raises [Invalid_argument] as {!Rig.close} does, such as from a callback
     inside a call of rig's on the same thread. *)
@@ -346,8 +348,11 @@ val serve :
     Errors section states, and a signal's handler may run between them.
     [serve]'s own steps block signals but in their waits, except on Windows,
     where nothing blocks them ({!Rig}'s Errors section). Its waits for a
-    controller and for the controller's next command return to OCaml at
-    least every 200 ms, where a pending [Sys.Break] from Ctrl-C raises.
+    controller, for the controller's next command, for a join's connections
+    to the job's other agents and for the job's close return to OCaml at
+    least every 200 ms, where a pending [Sys.Break] from Ctrl-C raises. A
+    join it ends leaves its connections' dials to end within their own
+    bounds, each closing its connection.
 
     [Ok ()] once the controller has closed the job, as {!close} states.
     [Error why] once the job has failed, [why] its root cause

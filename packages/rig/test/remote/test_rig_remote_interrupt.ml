@@ -847,6 +847,62 @@ let break_between_commands () =
     [ (k_abort, str (Printexc.to_string Sys.Break)) ]
     frames
 
+(* A loopback listener that accepts no connection, and its port: a dial to it
+   connects, then waits for a handshake's reply that never comes. *)
+let deaf () =
+  let l = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.bind l (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  Unix.listen l 1;
+  match Unix.getsockname l with
+  | Unix.ADDR_INET (_, port) -> (l, port)
+  | Unix.ADDR_UNIX _ -> assert false
+
+(* A Ctrl-C while serve's join waits for a dial ends serve with [Sys.Break]
+   without the join's answer: the job's second agent accepts nothing, so the
+   dial to it waits 10 s for its reply. SIGINT comes once that dial has
+   connected and serve blocks in a timed wait that takes it: the join's wait
+   for its dials. The controller receives the abort and no answer. *)
+let break_in_join () =
+  Rig_support.needs_fork ();
+  if not Rig_support.sees_waits then
+    skip ~reason:"the system does not show a thread's waits" ();
+  let served, frames =
+    in_child ", a Ctrl-C in a join's wait for its dials" @@ fun () ->
+    child_start ();
+    Sys.catch_break true;
+    let a = agent_here () in
+    let port = Rig_remote.port a in
+    let l, deaf_port = deaf () in
+    let serving = Rig_support.self () in
+    let frames = ref [] in
+    let controller () =
+      match dial port with
+      | Some fd ->
+          let agent name port = str name ^ str "127.0.0.1" ^ u32 port in
+          let agents =
+            agent (strf "127.0.0.1:%d" port) port ^ agent "deaf" deaf_port
+          in
+          send fd (frame k_request (u8 1 ^ u32 2 ^ agents));
+          ignore (Unix.select [ l ] [] [] patience);
+          let fs, _ =
+            Rig_support.interrupt_in_wait ~thread:serving ~timed:true
+              (fun () -> rest fd)
+          in
+          frames := fs
+      | None -> ()
+    in
+    let t = quiet controller () in
+    let served = outcome (fun () -> Rig_remote.serve a []) in
+    Thread.join t;
+    Unix.close l;
+    (served, !frames)
+  in
+  equal ~msg:"serve" string raised_break served;
+  equal ~msg:"the controller's frames"
+    (list (pair int string))
+    [ (k_abort, str (Printexc.to_string Sys.Break)) ]
+    frames
+
 (* Hosts of a start that raised *)
 
 (* An opener of no device, named [name]. *)
@@ -1039,5 +1095,7 @@ let () =
              test "in a command raises Sys.Break" break_in_command;
              test "in the wait for a command raises Sys.Break"
                break_between_commands;
+             test "in a join's wait for its dials raises Sys.Break"
+               break_in_join;
            ];
        ])

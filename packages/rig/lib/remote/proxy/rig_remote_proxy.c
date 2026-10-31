@@ -249,7 +249,7 @@ static int proxy_submit(void *self, uint64_t v, const struct rig_wait *waits,
   d->handed = v;
   pthread_mutex_unlock(&l->mu);
 
-  int r = rig_remote_send(l, frame, NULL);
+  int r = rig_remote_send(l, frame, NULL, -1);
   free(packed);
   if (r == 0) return RIG_COMMITTED;
   *failure = r == -3 ? "the job is closed" : why(l);

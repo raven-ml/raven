@@ -1217,19 +1217,27 @@ struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans) {
    send claim, so that answers find their requests in the order sent; a
    close makes the frame the link's last. */
 int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
-                    struct pending *q) {
+                    struct pending *q, int64_t until) {
   uint64_t np = f->n - HEADER;
   for (int i = 0; i < f->nspans; i++) np += f->spans[i].n;
   put_header(f->buf, np, f->kind);
   pthread_mutex_lock(&l->mu);
   l->writers++;
   /* Once the job began to fail, it waits until its link is marked failed. */
-  while (!atomic_load(&l->failed) && !l->closing &&
-         (l->sending || failing(l->job)))
-    pthread_cond_wait(&l->cv, &l->mu);
+  int late = 0;
+  while (!late && !atomic_load(&l->failed) && !l->closing &&
+         (l->sending || failing(l->job))) {
+    int64_t now = now_ns();
+    if (until < 0)
+      pthread_cond_wait(&l->cv, &l->mu);
+    else if (now < until)
+      rig_remote_wait_ns(&l->cv, &l->mu, until - now);
+    else
+      late = 1;
+  }
   l->writers--;
-  if (atomic_load(&l->failed) || l->closing) {
-    int r = atomic_load(&l->failed) ? -1 : -3;
+  if (late || atomic_load(&l->failed) || l->closing) {
+    int r = late ? -4 : atomic_load(&l->failed) ? -1 : -3;
     pthread_mutex_unlock(&l->mu);
     free(f);
     return r;
@@ -1324,42 +1332,45 @@ value caml_rig_remote_link_job_fail(value vj, value why) {
   return Val_unit;
 }
 
-/* Ends the job: in order if it is open, then waits for its links' threads.
-   On a failed job these end once each link has settled its abort and read
-   its peer's stream to the end, or given up. Releases the runtime. */
+/* Ends the job: in order if it is open, then waits for its links' threads,
+   [RIG_REMOTE_STILL_NS] at most: whether they have ended. On a failed job
+   these end once each link has settled its abort and read its peer's stream
+   to the end, or given up. A link sends its close once, so a call after one
+   that answered false sends the closes not yet sent and waits again.
+   Releases the runtime. */
 value caml_rig_remote_link_job_close(value vj) {
   CAMLparam1(vj);
   struct rig_remote_job *j = Job_val(vj);
-  if (rig_remote_forked(j)) CAMLreturn(Val_unit);
+  if (rig_remote_forked(j)) CAMLreturn(Val_true);
   caml_release_runtime_system();
+  int64_t until = now_ns() + RIG_REMOTE_STILL_NS;
   pthread_mutex_lock(&j->mu);
   if (atomic_load(&j->state) == OPEN) {
     for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
       pthread_mutex_unlock(&j->mu);
       struct rig_remote_frame *f = rig_remote_frame(K_CLOSE, 0, 0);
-      if (f != NULL) rig_remote_send(l, f, NULL);
+      if (f != NULL) rig_remote_send(l, f, NULL, until);
       pthread_mutex_lock(&j->mu);
     }
   }
-  while (atomic_load(&j->state) != CLOSED) {
-    int ended = 1;
+  int ended = 0;
+  for (int64_t now = now_ns(); !ended; now = now_ns()) {
+    ended = 1;
     for (struct rig_remote_link *l = j->links; l != NULL; l = l->next) {
       pthread_mutex_lock(&l->mu);
       if (l->threads > 0) ended = 0;
       pthread_mutex_unlock(&l->mu);
     }
-    if (ended) {
-      if (atomic_load(&j->state) == OPEN) {
-        atomic_store(&j->state, CLOSED);
-        pthread_cond_broadcast(&j->cv);
-      }
-      break;
-    }
-    pthread_cond_wait(&j->cv, &j->mu);
+    if (!ended && now >= until) break;
+    if (!ended) rig_remote_wait_ns(&j->cv, &j->mu, until - now);
+  }
+  if (ended && atomic_load(&j->state) == OPEN) {
+    atomic_store(&j->state, CLOSED);
+    pthread_cond_broadcast(&j->cv);
   }
   pthread_mutex_unlock(&j->mu);
   caml_acquire_runtime_system();
-  CAMLreturn(Val_unit);
+  CAMLreturn(Val_bool(ended));
 }
 
 /* Stubs: links */
@@ -1453,30 +1464,32 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   return caml_copy_nativeint((intnat)l);
 }
 
-/* Sends the frame of [kind] whose payload is [head]. Releases the
-   runtime. */
+/* Sends the frame of [kind] whose payload is [head], unless the send claim
+   is not free within [RIG_REMOTE_STILL_NS]: whether it is sent, or the job
+   failed or its close began. Releases the runtime. */
 value caml_rig_remote_link_post(value vl, value vkind, value head) {
   CAMLparam3(vl, vkind, head);
   struct rig_remote_link *l = Link_val(vl);
-  if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
+  if (rig_remote_forked(l->job)) CAMLreturn(Val_true);
   size_t n = caml_string_length(head);
   struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), n, 0);
   if (f == NULL) caml_raise_out_of_memory();
   memcpy(f->buf + HEADER, String_val(head), n);
   caml_enter_blocking_section_no_pending();
-  rig_remote_send(l, f, NULL);
+  int r = rig_remote_send(l, f, NULL, now_ns() + RIG_REMOTE_STILL_NS);
   caml_leave_blocking_section();
-  CAMLreturn(Val_unit);
+  CAMLreturn(Val_bool(r != -4));
 }
 
 /* Sends the frame of [kind] whose payload is [head] then [area]'s bytes,
-   which it reads in place: it returns once they are sent, or the job
-   failed. Releases the runtime. */
+   which it reads in place, as [caml_rig_remote_link_post] does: once it
+   returns true, they are sent, or the job failed or its close began.
+   Releases the runtime. */
 value caml_rig_remote_link_post_area(value vl, value vkind, value head,
                                      value area) {
   CAMLparam4(vl, vkind, head, area);
   struct rig_remote_link *l = Link_val(vl);
-  if (rig_remote_forked(l->job)) CAMLreturn(Val_unit);
+  if (rig_remote_forked(l->job)) CAMLreturn(Val_true);
   size_t n = caml_string_length(head);
   struct rig_remote_frame *f = rig_remote_frame(Int_val(vkind), n, 1);
   if (f == NULL) caml_raise_out_of_memory();
@@ -1484,9 +1497,9 @@ value caml_rig_remote_link_post_area(value vl, value vkind, value head,
   f->spans[0].p = Caml_ba_data_val(area);
   f->spans[0].n = caml_ba_byte_size(Caml_ba_array_val(area));
   caml_enter_blocking_section_no_pending();
-  rig_remote_send(l, f, NULL);
+  int r = rig_remote_send(l, f, NULL, now_ns() + RIG_REMOTE_STILL_NS);
   caml_leave_blocking_section();
-  CAMLreturn(Val_unit);
+  CAMLreturn(Val_bool(r != -4));
 }
 
 static value area_of(unsigned char *p, size_t n) {
@@ -1522,7 +1535,7 @@ value caml_rig_remote_link_request(value vl, value head) {
     }
     memcpy(f->buf + HEADER, String_val(head), n);
     caml_enter_blocking_section_no_pending();
-    int k = rig_remote_send(l, f, q);
+    int k = rig_remote_send(l, f, q, -1);
     if (k == 0) {
       pthread_mutex_lock(&l->mu);
       while (!q->done && !atomic_load(&l->failed))

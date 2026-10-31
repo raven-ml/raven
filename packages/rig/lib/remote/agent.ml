@@ -672,6 +672,21 @@ let account s id d : Wire.account =
     reached_by = List.sort compare reached_by;
   }
 
+(* A join's dial of an agent, on a thread of its own: its outcome, or the
+   exception it raised, once [state] has left [`Running] for [`Ended]. A join
+   that ends first marks it [`Abandoned], and the dial then closes its own
+   connection. *)
+type dialing = {
+  mutable dialled : (int * string * Unix.file_descr, string) result;
+  mutable raised : exn;  (** [Not_raised] unless the dial raised. *)
+  state : [ `Running | `Ended | `Abandoned ] Atomic.t;
+}
+
+exception Not_raised
+
+let close_dialled d =
+  match d.dialled with Ok (_, _, fd) -> close_quietly fd | Error _ -> ()
+
 (* Connects to the job's agents after this one, each on a thread of its own,
    then makes links of the connections of those before it, all within
    [join_s]: a join takes as long as its slowest connection, whatever the
@@ -703,26 +718,58 @@ let join s agents =
           | Ok () -> Ok (j, name, fd))
   in
   (* Each dial runs on a thread of its own, its exception raised again on this
-     thread. Every thread ends before the join reads a result or leaves, an
-     exception's way included, and a connection no link took is closed: a
-     failed join leaves no dial running and no connection open. *)
+     thread. The join waits until every dial has ended, at most 200 ms at a
+     time, then closes each connection no link took. An exception that ends
+     the wait, a Ctrl-C's in it, abandons the dials still running: each
+     closes its connection as it ends, within its bounds. A dial stores its
+     outcome and ends with nothing between that allocates. *)
+  let ended = changes () in
   let started = ref [] and linked = ref [] in
   let start (j, m) =
-    let r = ref (Ok (Error (late m.Wire.name))) in
-    let run () = r := match dial j m with v -> Ok v | exception e -> Error e in
-    started := (r, spawn run ()) :: !started
+    let d =
+      {
+        dialled = Error (late m.Wire.name);
+        raised = Not_raised;
+        state = Atomic.make `Running;
+      }
+    in
+    let run () =
+      (match d.dialled <- dial j m with
+      | () -> ()
+      | exception e -> d.raised <- e);
+      if not (Atomic.compare_and_set d.state `Running `Ended) then
+        close_dialled d;
+      change ended
+    in
+    (* [d] is recorded before its thread starts, so the join closes its
+       connection whatever exception comes after. A dial whose thread does
+       not start is marked ended. *)
+    started := d :: !started;
+    match spawn run () with
+    | _ -> ()
+    | exception e ->
+        Atomic.set d.state `Ended;
+        reraise e
+  in
+  let rec wait () =
+    let n = count ended in
+    if List.exists (fun d -> Atomic.get d.state = `Running) !started then begin
+      unblocked (await ended) n;
+      wait ()
+    end
   in
   let close_unlinked () =
     List.iter
-      (fun (r, t) ->
-        unblocked Thread.join t;
-        match !r with
-        | Ok (Ok (_, _, fd)) when not (List.memq fd !linked) -> (
-            try Unix.close fd with Unix.Unix_error _ -> ())
-        | Ok _ | Error _ -> ())
+      (fun d ->
+        if not (Atomic.compare_and_set d.state `Running `Abandoned) then
+          match d.dialled with
+          | Ok (_, _, fd) when not (List.memq fd !linked) -> close_quietly fd
+          | Ok _ | Error _ -> ())
       !started
   in
-  let result (r, _) = match !r with Ok v -> v | Error e -> raise e in
+  let result d =
+    match d.raised with Not_raised -> d.dialled | e -> raise e
+  in
   (* The note that a link took [fd] comes before the take: an exception
      between them leaves [fd] open, where one after the take would have
      [close_unlinked] close the link's descriptor, which the system may since
@@ -736,7 +783,7 @@ let join s agents =
   ( Fun.protect ~finally:close_unlinked @@ fun () ->
     List.filteri (fun i _ -> i + 1 > s.self) agents
     |> List.iteri (fun k m -> start (s.self + 1 + k, m));
-    List.iter (fun (_, t) -> unblocked Thread.join t) !started;
+    wait ();
     let dialled = List.rev_map result !started in
     match List.find_map refusal dialled with
     | Some why -> raise (Refused why)

@@ -253,11 +253,13 @@ struct rig_remote_frame *rig_remote_frame(int kind, size_t np, int nspans);
 
 /* Sends [f], which it takes, after writing its header, from the calling
    thread once it holds the link's send claim, and returns once it is sent
-   or the job failed meanwhile: [0]; [-1] if the job failed, or [-3] if the
-   link closes, [f] then not sent. Called without the runtime, and without
-   the link's lock. */
+   or the job failed meanwhile: [0]; [-1] if the job failed, [-3] if the
+   link closes, or [-4] if the claim was not free by [until] on
+   CLOCK_MONOTONIC, in nanoseconds, [f] then not sent. A negative [until]
+   waits for the claim for good. Called without the runtime, and without the
+   link's lock. */
 int rig_remote_send(struct rig_remote_link *l, struct rig_remote_frame *f,
-                    struct pending *q);
+                    struct pending *q, int64_t until);
 
 /* Writes [handed] into a stopped proxy's word once no copy into this
    process's memory may still land: none is pending, or the receiving thread

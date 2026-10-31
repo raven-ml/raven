@@ -128,7 +128,12 @@ val close : job -> unit
     has failed, before or meanwhile, [close] returns once each link has sent
     its abort and read its peer's stream to the end, or given up
     ({!section-failure}), so a process that ends after [close] leaves each
-    peer its abort. On a closed job it returns immediately. *)
+    peer its abort. On a closed job it returns immediately.
+
+    Its wait returns to OCaml at least every 200 ms, where a pending signal's
+    handler runs. The handler's exception ends [close] with the job as it
+    was, the closes sent so far sent; a later [close] sends the others and
+    waits again. *)
 
 (** {1:links Links} *)
 
@@ -174,7 +179,11 @@ val request :
 val drop : t -> int -> unit
 (** [drop l id] sends the release of the agent's object [id] after every
     message sent before it, and returns once it is sent, or immediately if the
-    job has failed or its close has begun.
+    job has failed or its close has begun. While another message holds the
+    link's stream, it returns to OCaml at least every 200 ms, where a pending
+    signal's handler runs, and the handler's exception ends [drop] with
+    nothing sent; once its message has the stream, it sends it whole. So do
+    {!word} and {!bytes}.
 
     Raises [Invalid_argument] if [id] is negative. *)
 
@@ -210,7 +219,11 @@ val answer : t -> 'a Wire.request -> ('a, string) result -> unit
 
     An exception that ends [answer] once it took [r] as answered, such as
     [Out_of_memory] for its frame, fails the job, which ends the controller's
-    wait.
+    wait; a [Sys.Break] fails it with [Sys.Break]'s text as its root cause.
+    While another message holds the link's stream, [answer] returns to OCaml
+    at least every 200 ms, where finalisers may run, and on Windows, which
+    blocks no signal, a signal's handler. Elsewhere it blocks signals
+    throughout.
 
     Raises [Invalid_argument] if [r] is not, physically, the oldest request
     {!next} gave and none answered, and from a callback inside a lock
@@ -255,7 +268,10 @@ val release_rail : t -> int -> unit
     releases of the same rail all wait for its active transfers to finish. A
     transfer of it that arrives later is discarded, as is one of a rail [l]
     never had. It does nothing if [l] has no rail [id]. It takes no lock an
-    OCaml thread holds, so a finaliser may call it. *)
+    OCaml thread holds, so a finaliser may call it. Its wait does not return
+    to OCaml before it ends, so a signal's handler runs only then: rig's
+    callers run it with signals blocked, from a finaliser or before any
+    transfer of the rail began. *)
 
 (**/**)
 

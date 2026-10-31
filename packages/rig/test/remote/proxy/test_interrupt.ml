@@ -16,6 +16,7 @@ open Windtrap
 open Proxy_machine
 module Link = Rig_remote_proxy.Link
 module Proxy = Rig_remote_proxy
+module Probe = Rig_remote_proxy.Probe
 
 let strf = Printf.sprintf
 let timeout = 120.
@@ -432,6 +433,131 @@ let make_raise () =
       end;
       reached)
 
+(* A Ctrl-C in a link's waits, in a forked child where it raises
+   [Sys.Break]. SIGINT comes once the calling thread blocks in a timed wait
+   that takes it, which an untimed wait never is. *)
+
+(* What [f ()] did, as text. *)
+let outcome f =
+  match f () with
+  | () -> "returned"
+  | exception e -> "raised " ^ Printexc.to_string e
+
+(* [broken f] is [outcome f], with SIGINT raised once the calling thread
+   blocks in a timed wait that takes it. *)
+let broken f =
+  fst (Rig_support.interrupt_in_wait ~timed:true (fun () -> outcome f))
+
+let raised_break = "raised " ^ Printexc.to_string Sys.Break
+
+(* [in_child_break f] is [f j l peer] in a forked child that catches
+   Ctrl-C: [l] is a link of the job [j] whose peer is the raw socket [peer],
+   and its own socket's send buffer is small, so that a large transfer
+   waits for the peer to read. *)
+let in_child_break f =
+  if not Rig_support.sees_waits then
+    skip ~reason:"the system does not show a thread's waits" ();
+  in_child @@ fun () ->
+  Sys.catch_break true;
+  let fd, peer = connected () in
+  Unix.setsockopt_int fd Unix.SO_SNDBUF 4096;
+  Rig_support.recv_timeout peer patience;
+  let j = Link.job () in
+  let l = Link.make j fd ~name:"peer" ~peer:(Wire.Agent 1) in
+  f j l peer
+
+let read fd n =
+  let b = Bytes.create n in
+  let rec go off =
+    if off < n then
+      match Unix.read fd b off (n - off) with
+      | 0 -> failf "the stream ended after %d of %d bytes" off n
+      | k -> go (off + k)
+  in
+  go 0;
+  Bytes.unsafe_to_string b
+
+(* The next frame [fd] reads other than a beat: its kind and payload. *)
+let rec frame fd =
+  let h = read fd 9 in
+  let payload = read fd (Int64.to_int (String.get_int64_le h 0)) in
+  if Char.code h.[8] = 8 then frame fd else (Char.code h.[8], payload)
+
+(* A frame's kind, then a rail frame's id, count and byte count. *)
+let rail_frame (kind, p) =
+  let u64 at = Int64.to_int (String.get_int64_le p at) in
+  [ kind; u64 0; u64 8; String.length p - 16 ]
+
+(* A close frame, as wire.mli lays it out. *)
+let close_frame = String.make 8 '\000' ^ String.make 1 (Char.chr 10)
+let mib = 1 lsl 20
+
+(* [reading fd] reads [fd]'s next frame on a thread that blocks SIGINT, so
+   that a Ctrl-C's handler never runs there: its join is the frame as
+   {!rail_frame} gives it. *)
+let reading fd =
+  let mask = Thread.sigmask Unix.SIG_BLOCK [ Sys.sigint ] in
+  let _, join = spawn (fun () -> rail_frame (frame fd)) in
+  ignore (Thread.sigmask Unix.SIG_SETMASK mask);
+  join
+
+(* [holding l f] is [f ()] while the link's sending thread holds the send
+   claim and a use of [l]'s rail 4, partway through its 1 MiB transfer;
+   whether the hold was observed comes first. *)
+let holding l f =
+  let t = { Rig_remote_abi.src = 0; dst = 0; length = mib } in
+  let e = Link.rail l ~id:4 ~send:[| t |] ~receive:[||] in
+  Bigarray.Array1.fill e.outbound 'r';
+  Probe.arm Sending;
+  e.ready 1;
+  let held = Probe.held () in
+  Fun.protect ~finally:Probe.resume (fun () -> (held, f ()))
+
+(* A Ctrl-C while a drop waits for the send claim ends it with [Sys.Break],
+   its frame unsent: the peer reads the transfer that held the claim, then
+   a later drop. *)
+let break_in_post () =
+  let held, dropped, sent, next =
+    in_child_break @@ fun _ l peer ->
+    let sent = reading peer in
+    let held, dropped =
+      holding l (fun () -> broken (fun () -> Link.drop l 99))
+    in
+    let sent = sent () in
+    Link.drop l 98;
+    let kind, p = frame peer in
+    (held, dropped, sent, (kind, String.get_int64_le p 0))
+  in
+  equal ~msg:"the transfer is held" bool true held;
+  equal ~msg:"the drop" string raised_break dropped;
+  equal ~msg:"the transfer" (list int) [ 7; 4; 1; mib ] sent;
+  equal ~msg:"the next frame" (pair int int64) (4, 98L) next
+
+(* A Ctrl-C while a close waits for the peer's close ends it with
+   [Sys.Break], the job open and its close sent: a later close returns once
+   the peer's close came, the job closed. *)
+let break_in_close () =
+  let closed, sent, between, again, after =
+    in_child_break @@ fun j _ peer ->
+    let state () =
+      match Link.wait j ~ms:0 with
+      | Link.Open -> "open"
+      | Link.Closed -> "closed"
+      | Link.Failed why -> "failed " ^ why
+    in
+    let closed = broken (fun () -> Link.close j) in
+    let sent = fst (frame peer) in
+    let between = state () in
+    ignore (Unix.write_substring peer close_frame 0 9);
+    let again = outcome (fun () -> Link.close j) in
+    (closed, sent, between, again, state ())
+  in
+  equal ~msg:"the close" string raised_break closed;
+  equal ~msg:"the frame sent" int 10 sent;
+  equal ~msg:"the job after it" string "open" between;
+  equal ~msg:"a later close" string "returned" again;
+  equal ~msg:"the job after the later close" string "closed" after
+
 let () =
   exit
     (run "rig_remote_proxy interrupt"
@@ -462,4 +588,9 @@ let () =
          group ~timeout
            "a call to rig from a callback at any allocation keeps the host"
            [ test "a load in a load" load_in_load_rig ];
+         group ~timeout "a Ctrl-C in a link's wait raises Sys.Break"
+           [
+             test "in a drop's wait for the send claim" break_in_post;
+             test "in a close's wait for the peer's close" break_in_close;
+           ];
        ])
