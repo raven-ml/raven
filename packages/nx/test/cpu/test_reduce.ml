@@ -784,6 +784,28 @@ let pad_of s =
   let interior = Iarray.of_array interior in
   { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
 
+(* A padding [Nx_kernel.Shape.padded] refuses for an operand of shape [s]:
+   one of a rank above [s]'s, or [pad_of s] with one axis cropped one below
+   zero at either end, or with a negative interior padding. *)
+let misfit_pad_of s =
+  let open Gen in
+  let r = Array.length s in
+  let ranked = pad_of (Array.append s [| 1 |]) in
+  if r = 0 then ranked
+  else
+    let changed =
+      let* (p : Nx_kernel.pad) = pad_of s in
+      let+ i = int_range 0 (r - 1) and+ kind = int_range 0 2 in
+      let set a v = Iarray.mapi (fun j x -> if j = i then v else x) a in
+      let d = s.(i) and interior = Iarray.get p.interior i in
+      let gaps = if d <= 1 then 0 else interior * (d - 1) in
+      match kind with
+      | 0 -> { p with lo = set p.lo (-(d + gaps + Iarray.get p.hi i) - 1) }
+      | 1 -> { p with hi = set p.hi (-(d + gaps + Iarray.get p.lo i) - 1) }
+      | _ -> { p with interior = set p.interior (-1) }
+    in
+    frequency [ (1, ranked); (3, changed) ]
+
 (* [x] loaded padded with the element of bits [fill] as [pad] says. *)
 let padded_load (A.Any x) fill pad =
   let dt = A.dtype x in
@@ -830,7 +852,16 @@ let misfits =
   Gen.with_pp pp_misfit
     (let open Gen in
      let* x = Nx_array_gen.shape in
-     let* pad = frequency [ (3, constant None); (1, map Option.some (pad_of x)) ] in
+     (* A refused padding in at least a quarter of the cases, so that every
+        run of 100 reaches one. *)
+     let* pad =
+       frequency
+         [
+           (2, constant None);
+           (1, map Option.some (pad_of x));
+           (1, map Option.some (misfit_pad_of x));
+         ]
+     in
      let loop =
        match pad with
        | None -> x
