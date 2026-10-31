@@ -1274,11 +1274,11 @@ static int64_t cf_int(CFDictionaryRef d, CFStringRef key) {
 
 /* The GPUs as an array of (name, load in percent, memory held in bytes), -1
    for what an accelerator does not report. The name is the accelerator's
-   IOKit class and registry entry ID, which tells two of one class apart. Apple documents no key
-   of an accelerator's PerformanceStatistics: these are the keys
-   ioreg -c IOAccelerator shows, the memory on Apple silicon. The accelerators
-   are read into C memory before any OCaml value is made. Linux reads sysfs
-   in OCaml. */
+   IOKit class and registry entry ID, which tells two of one class apart.
+   Apple documents no key of an accelerator's PerformanceStatistics: these
+   are the keys ioreg -c IOAccelerator shows, the memory on Apple silicon.
+   The accelerators are read into C memory before any OCaml value is made.
+   Linux reads sysfs in OCaml. */
 CAMLprim value caml_sysstat_get_gpus(value unit) {
   CAMLparam1(unit);
   CAMLlocal3(result, tup, str);

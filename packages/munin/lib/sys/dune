@@ -1,8 +1,17 @@
 (library
  (name munin_sys)
  (public_name munin.sys)
- (private_modules sysstat)
- (libraries unix str munin rig.nv.nvidia threads.posix)
+ (private_modules sysstat nvidia)
+ (libraries
+  unix
+  str
+  munin
+  threads.posix
+  (select
+   nvidia.ml
+   from
+   (munin_sys_nvidia -> nvidia.linux.ml)
+   (-> nvidia.none.ml)))
  (foreign_stubs
   (language c)
   (names sysstat_stubs))

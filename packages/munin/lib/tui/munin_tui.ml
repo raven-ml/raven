@@ -225,15 +225,11 @@ let view_summary_banner m =
      ]
     @ metric_rows)
 
-(* The GPUs of the run's sys/gpuI_* metrics, by index I. *)
+(* The GPUs of the run's GPU metrics, by index. *)
 let sys_gpus tags sys_latest =
-  let index tag =
-    match Scanf.sscanf tag "sys/gpu%u_%s%!" (fun i _ -> i) with
-    | i -> Some i
-    | exception (Scanf.Scan_failure _ | Failure _ | End_of_file) -> None
-  in
+  let index tag = Option.map fst (Munin_sys.gpu_metric tag) in
   let gpu index =
-    let key name = sys_latest (Printf.sprintf "sys/gpu%d_%s" index name) in
+    let key name = sys_latest (Munin_sys.gpu_key index name) in
     System.
       {
         index;

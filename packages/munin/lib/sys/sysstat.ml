@@ -1365,15 +1365,16 @@ module Gpu = struct
     in
     match Sys.readdir drm with
     | exception Sys_error _ -> []
-    | names -> Array.to_list names |> List.filter is_card |> List.filter_map read
+    | names ->
+        Array.to_list names |> List.filter is_card |> List.filter_map read
 
-  (* NVIDIA's GPUs, as rig lists them, read from their RM. NVIDIA's open
-     headers define no reading of the temperature or the power that the RM
-     answers. A GPU whose RM does not answer gives nothing. *)
-  let nvidia () =
-    let read i id =
-      match Rig_nv_nvidia.usage i with
-      | Error _ ->
+  (* NVIDIA's GPUs, read from their RM through rig on Linux ([Nvidia]).
+     NVIDIA's open headers define no reading of the temperature or the power
+     that the RM answers. A GPU whose RM does not answer gives nothing. *)
+  let nvidia ~window =
+    let read (id, usage) =
+      match usage with
+      | None ->
           {
             id;
             busy_percent = None;
@@ -1382,19 +1383,17 @@ module Gpu = struct
             temperature = None;
             power = None;
           }
-      | Ok u ->
+      | Some (total, free, busy) ->
           {
             id;
-            busy_percent = u.busy;
-            memory_used = Some (Int64.of_int (u.memory_total - u.memory_free));
-            memory_total = Some (Int64.of_int u.memory_total);
+            busy_percent = busy;
+            memory_used = Some (Int64.of_int (total - free));
+            memory_total = Some (Int64.of_int total);
             temperature = None;
             power = None;
           }
     in
-    match Rig_nv_nvidia.buses () with
-    | Error _ -> []
-    | Ok buses -> List.mapi read buses
+    List.map read (Nvidia.read ~window)
 
   (* The stub gives each accelerator's IOKit class and registry entry ID, its
      load and the memory it holds, or -1 for what it lacks. *)
@@ -1411,9 +1410,10 @@ module Gpu = struct
           power = None;
         })
 
-  let sample () =
+  let sample ?(window = 1.) () =
+    if not (window > 0.) then invalid_arg "Gpu.sample: window must be positive";
     let gpus =
-      if Sys.file_exists "/proc" then amdgpus () @ nvidia ()
+      if Sys.file_exists "/proc" then amdgpus () @ nvidia ~window
       else
         try of_stub ()
         with Failure e -> raise (Sys_error ("Gpu.sample: " ^ e))

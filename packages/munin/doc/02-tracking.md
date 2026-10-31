@@ -253,7 +253,7 @@ let () =
 ## System Monitoring
 
 `Munin_sys.start` spawns a background thread that samples CPU, memory,
-process and disk I/O statistics every 15 seconds (configurable via
+process, disk I/O and GPU statistics every 15 seconds (configurable via
 `~interval`):
 
 ```ocaml
@@ -264,9 +264,11 @@ Munin_sys.stop sysmon
 
 Logged metrics: `sys/cpu_user`, `sys/cpu_system`, `sys/mem_used_pct`,
 `sys/mem_used_gb`, `sys/proc_cpu_pct`, `sys/proc_mem_mb`,
-`sys/disk_read_mbs`, `sys/disk_write_mbs`, `sys/disk_util_pct`. A group the
-system cannot read is not logged: on Windows the monitor logs no disk
-metrics. See [System Monitoring](06-system-monitoring.md).
+`sys/disk_read_mbs`, `sys/disk_write_mbs`, `sys/disk_util_pct`, and for GPU
+`N` `sys/gpuN_util_pct`, `sys/gpuN_mem_used_gb`, `sys/gpuN_mem_used_pct`,
+`sys/gpuN_temp_c`, `sys/gpuN_power_w`. A group the system cannot read is not
+logged: on Windows the monitor logs no GPU metrics. See
+[System Monitoring](06-system-monitoring.md).
 
 ## Next Steps
 

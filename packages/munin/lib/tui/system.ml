@@ -198,7 +198,7 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
   let some_text fmt = Option.fold ~none:"" ~some:(Printf.sprintf fmt) in
   let gpu_lines (g : gpu) =
     let i = g.index in
-    let key name = Printf.sprintf "sys/gpu%d_%s" i name in
+    let key = Munin_sys.gpu_key i in
     [
       line g.util_pct (fun util c ~y ~width ->
           draw_bar c ~y ~width
@@ -208,7 +208,8 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
       line (either g.mem_used_gb g.mem_used_pct) (fun (gb, pct) c ~y ~width ->
           draw_value_line c ~y ~width ~label:"  M  "
             ~value_text:
-              (String.trim (some_text "%.0f%%" pct ^ "  " ^ some_text "%.1fG" gb))
+              (String.trim
+                 (some_text "%.0f%%" pct ^ "  " ^ some_text "%.1fG" gb))
             ~spark:(spark (key "mem_used_gb")));
       line (either g.temp_c g.power_w) (fun (temp, power) c ~y ~width ->
           draw_value_line c ~y ~width ~label:"  T  "

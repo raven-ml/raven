@@ -55,7 +55,8 @@ module Stat : module type of Sysstat
     {b GPU} [i], the [i]th GPU the monitor saw by {!Stat.Gpu.field-id}: in
     the order of {!Stat.Gpu.sample} when it starts, then in the order GPUs
     appear:
-    - [sys/gpu]{i i}[_util_pct] — how busy the GPU is (0–100)
+    - [sys/gpu]{i i}[_util_pct] — how busy the GPU is (0–100), on NVIDIA a
+      mean over the interval
     - [sys/gpu]{i i}[_mem_used_gb] — GPU memory used in GB
     - [sys/gpu]{i i}[_mem_used_pct] — GPU memory used, percent of its own
     - [sys/gpu]{i i}[_temp_c] — temperature in Celsius
@@ -71,6 +72,14 @@ module Stat : module type of Sysstat
     both intervals; a GPU missing from a sample, or a value its sample lacks,
     is left out of that interval. An interval over which the wall clock
     stepped back logs no rates. *)
+
+val gpu_key : int -> string -> string
+(** [gpu_key i name] is GPU [i]'s metric [name], [sys/gpu]{i i}[_]{i name},
+    such as ["sys/gpu1_util_pct"] for [gpu_key 1 "util_pct"]. *)
+
+val gpu_metric : string -> (int * string) option
+(** [gpu_metric key] is [Some (i, name)] if [key] is {!gpu_key}[ i name],
+    and [None] for any other key. *)
 
 type t
 (** The type for background monitors. *)

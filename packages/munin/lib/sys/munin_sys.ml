@@ -109,6 +109,32 @@ let source session sample define =
 let fixed keys values _first =
   (keys, fun ~prev ~next ~dt -> List.combine keys (values ~prev ~next ~dt))
 
+(* GPU metrics' keys *)
+
+let gpu_prefix = "sys/gpu"
+let gpu_key i name = Printf.sprintf "%s%d_%s" gpu_prefix i name
+
+(* The digits after the prefix, as [gpu_key] prints them, without a leading
+   zero, up to the first '_', then a name. *)
+let gpu_metric key =
+  let p = String.length gpu_prefix and n = String.length key in
+  if not (String.starts_with ~prefix:gpu_prefix key) then None
+  else
+    match String.index_from_opt key p '_' with
+    | None -> None
+    | Some u ->
+        let digits = String.sub key p (u - p) in
+        let all_digits =
+          digits <> ""
+          && String.for_all (function '0' .. '9' -> true | _ -> false) digits
+          && (digits = "0" || digits.[0] <> '0')
+        in
+        if (not all_digits) || u + 1 = n then None
+        else
+          Option.map
+            (fun i -> (i, String.sub key (u + 1) (n - u - 1)))
+            (int_of_string_opt digits)
+
 (* A GPU's metrics, each logged when its sample has its value. *)
 let gpu_fields : (string * (Sysstat.Gpu.t -> float option)) list =
   let gb bytes = Int64.to_float bytes /. 1_073_741_824. in
@@ -146,9 +172,7 @@ let gpu_define (first : Sysstat.Gpu.t list) =
         let i = number g in
         List.filter_map
           (fun (name, field) ->
-            Option.map
-              (fun v -> (Printf.sprintf "sys/gpu%d_%s" i name, v))
-              (field g))
+            Option.map (fun v -> (gpu_key i name, v)) (field g))
           gpu_fields)
       gpus
   in
@@ -169,7 +193,8 @@ let start ?(interval = 15.0) session =
       (fixed [ "sys/mem_used_pct"; "sys/mem_used_gb" ]
          (fun ~prev:_ ~(next : Sysstat.Mem.t) ~dt:_ ->
            let used = Int64.to_float next.used in
-           [ used *. 100. /. Int64.to_float next.total; used /. 1_073_741_824. ]))
+           let total = Int64.to_float next.total in
+           [ used *. 100. /. total; used /. 1_073_741_824. ]))
   in
   let proc =
     source session Sysstat.Proc.Self.sample
@@ -191,7 +216,9 @@ let start ?(interval = 15.0) session =
              stats.utilization_percent;
            ]))
   in
-  let gpu = source session Sysstat.Gpu.sample gpu_define in
+  let gpu =
+    source session (Sysstat.Gpu.sample ~window:interval) gpu_define
+  in
   let sources = List.filter_map Fun.id [ cpu; mem; proc; disk; gpu ] in
   let stop_flag = Atomic.make false in
   let wake = socket_pair () in

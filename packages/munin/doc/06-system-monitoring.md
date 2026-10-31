@@ -1,7 +1,7 @@
 # System Monitoring
 
-The `munin.sys` library provides background system monitoring that logs CPU, memory
-and disk I/O metrics alongside your training metrics.
+The `munin.sys` library provides background system monitoring that logs CPU,
+memory, disk I/O and GPU metrics alongside your training metrics.
 
 ## Setup
 
@@ -45,7 +45,8 @@ let () = Munin_sys.stop monitor
 
 The first sample is taken after one interval elapses. Rates (`sys/cpu_*`,
 `sys/proc_cpu_pct`, `sys/disk_*`) are means over the interval, computed from
-cumulative counters; memory metrics are the value at the sample's instant.
+cumulative counters; memory and GPU metrics are the value at the sample's
+instant, except an NVIDIA GPU's load, a mean over the interval.
 
 ## Logged metrics
 
@@ -80,17 +81,35 @@ Disk metrics sum the physical disks and leave out partitions and virtual
 devices. MB is 2^20 bytes, as in `sys/proc_mem_mb`. Utilization divides the
 I/O time by the interval times the number of disks, and is capped at 100.
 
+### GPUs
+
+GPU `N` is the `N`th GPU the monitor saw, in the order of
+`Munin_sys.Stat.Gpu.sample` when it starts, then in the order GPUs appear.
+
+| Metric key              | Description                              | Range    |
+|-------------------------|------------------------------------------|----------|
+| `sys/gpuN_util_pct`     | How busy the GPU is, in percent          | 0--100   |
+| `sys/gpuN_mem_used_gb`  | GPU memory used in GB                    | 0+       |
+| `sys/gpuN_mem_used_pct` | GPU memory used, percent of its own      | 0--100   |
+| `sys/gpuN_temp_c`       | The die's temperature in Celsius         |          |
+| `sys/gpuN_power_w`      | Power the GPU draws in watts             | 0+       |
+
+A GPU metric is defined at the start if the first sample has its value, else
+the first time a sample has it, as the load of a GPU that was suspended at the
+start. `Munin_sys.gpu_key` builds these keys and `Munin_sys.gpu_metric` reads
+a key back as its GPU and name.
+
 Each group above comes from one sampler of `Munin_sys.Stat`. A group whose
 sampler cannot read the system when the monitor starts is neither defined
-nor logged, as the disk I/O group on Windows. A sample that fails later
+nor logged, as the GPU group on Windows. A sample that fails later
 leaves its group out of that interval, and the group's next rates are means
 over both intervals. An interval over which the wall clock stepped back logs
 no rates.
 
 ## Platform support
 
-`munin.sys` reads every statistic on Linux and macOS, and most on Windows.
-Platform-specific behavior:
+`munin.sys` reads every statistic on Linux and macOS, and all but the load
+average and GPUs on Windows. Platform-specific behavior:
 
 - **Linux**: CPU counters are read from `/proc/stat`; memory from
   `/proc/meminfo`; process stats from `/proc/self/stat` and `Unix.times`;
@@ -101,19 +120,25 @@ Platform-specific behavior:
   user/nice/system/idle CPU fields are populated. Disk I/O time is the sum
   of read and write request times, so overlapping requests count twice and
   `sys/disk_util_pct` reaches 100 before the disk is saturated.
-- **Windows**: CPU times come from `GetSystemTimes`; memory from
-  `GlobalMemoryStatusEx`; process memory from `GetProcessMemoryInfo`, with
-  the reserved or committed address space as virtual size; partitions from
-  the fixed drives; uptime from `GetTickCount64`. Network and disk I/O
-  counters, per-core CPU times, the process table and the load average are
-  not read: `Stat.Net.sample`, `Stat.Disk_io.sample`,
-  `Stat.Cpu.sample_per_core`, `Stat.Proc.Table.sample` and `Stat.loadavg`
-  raise `Sys_error`, and the monitor logs no disk metrics.
+- **Windows**: CPU times come from `GetSystemTimes`, per-core times from
+  `NtQuerySystemInformation`; memory from `GlobalMemoryStatusEx`; process
+  memory from `GetProcessMemoryInfo`, with the reserved or committed address
+  space as virtual size; the process table from a toolhelp snapshot; network
+  counters from `GetIfTable2`; disk counters from `IOCTL_DISK_PERFORMANCE` on
+  each physical drive, from when their collection was first enabled;
+  partitions from the fixed drives; uptime from `GetTickCount64`. Windows
+  keeps no load average, and munin reads no Windows GPU: `Stat.loadavg` and
+  `Stat.Gpu.sample` raise `Sys_error`.
+- **GPUs**: on Linux, amdgpu's sysfs files and NVIDIA's kernel driver
+  (through `Rig_nv_nvidia.usage`, load and memory alone); on macOS, IOKit's
+  accelerators (load, and memory on Apple silicon). A GPU the kernel
+  suspended for being idle is not woken to be read.
 
 ## TUI system panel
 
 The `munin watch` dashboard displays a system panel on the right side with
-CPU, memory, process CPU, RSS and disk bars. This panel reads the `sys/`
+CPU, memory, process CPU, RSS and disk bars, and for each GPU its load, its
+memory and its temperature and power. This panel reads the `sys/`
 metrics from the run's event log -- it does not perform its own sampling. It
 shows a bar only for a metric the run has logged, so it is empty for a run
 that does not use `munin.sys`.
@@ -211,6 +236,19 @@ List.iter (fun (p : Munin_sys.Stat.Proc.Table.stats) ->
 ) (List.sort (fun (a : Munin_sys.Stat.Proc.Table.stats) b ->
      Float.compare b.cpu_percent a.cpu_percent) stats)
 ```
+
+### Gpu
+
+```ocaml
+List.iter (fun (g : Munin_sys.Stat.Gpu.t) ->
+  Printf.printf "%s: %s busy\n" g.id
+    (match g.busy_percent with
+     | Some b -> Printf.sprintf "%.0f%%" b
+     | None -> "unknown")
+) (try Munin_sys.Stat.Gpu.sample () with Sys_error _ -> [])
+```
+
+An NVIDIA GPU's load is a mean over `~window` seconds, 1 by default.
 
 ### System info
 

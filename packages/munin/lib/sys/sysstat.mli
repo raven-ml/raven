@@ -453,22 +453,29 @@ module Gpu : sig
         GPU's autosuspend delay, so sampling an idle GPU more often than that
         delay keeps it awake.
       - {b Linux, NVIDIA}: NVIDIA's GPUs, read from NVIDIA's kernel driver
-        through {!Rig_nv_nvidia.usage}, whose first call makes the process's
-        client of that driver. [busy_percent] is a mean over the last 15
-        seconds, and [memory_used] counts what the driver holds for itself.
+        through {!Rig_nv_nvidia.usage}. Its first read of a GPU makes the
+        process's client of that driver and opens the GPU's device file,
+        both kept for the process: while the file is open the driver keeps
+        its state of the GPU, as its persistence mode does. [busy_percent] is
+        the mean of the driver's samples over the sample's window, and
+        [memory_used] counts what the driver holds for itself.
         [temperature] and [power] are [None]: NVIDIA's open headers define no
-        command that reads them. A GPU the driver does not answer for has
-        every field [None].
+        command that reads them. A GPU the driver does not answer for, such
+        as one the kernel suspended for being idle, which a read would
+        resume, has every field [None].
       - {b macOS}: [busy_percent], and [memory_used] on Apple silicon, from
         each IOKit accelerator. *)
 
-  val sample : unit -> t list
-  (** [sample ()] returns the statistics of the GPUs munin reads, in order of
-      {!field-id}: [[]] on a machine without such a GPU.
+  val sample : ?window:float -> unit -> t list
+  (** [sample ~window ()] returns the statistics of the GPUs munin reads, in
+      order of {!field-id}: [[]] on a machine without such a GPU. An NVIDIA
+      GPU's [busy_percent] is a mean over the last [window] seconds, [1.0] by
+      default, and over at most about the last 14 seconds; the other
+      drivers' load is their own.
 
-      Raises [Sys_error] on Windows, which munin reads no GPU statistics of,
-      and if the accelerators cannot be listed. *)
-
+      Raises [Invalid_argument] if [window <= 0.]. Raises [Sys_error] on
+      Windows, which munin reads no GPU statistics of, and if the
+      accelerators cannot be listed. *)
 end
 
 (** {1:sysinfo System information} *)

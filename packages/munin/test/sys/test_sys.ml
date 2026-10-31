@@ -242,12 +242,13 @@ let machine_gpus () =
     | exception Sys_error _ -> []
     | names ->
         List.filter
-          (fun n -> String.starts_with ~prefix:"card" n && not (String.contains n '-'))
+          (fun n ->
+            String.starts_with ~prefix:"card" n && not (String.contains n '-'))
           (Array.to_list names)
   in
   List.sort compare
     (List.filter_map amd cards
-    @ Result.value (Rig_nv_nvidia.buses ()) ~default:[])
+    @ Nvidia.buses ())
 
 (* Every value within its unit's bounds: a percentage, a die's temperature in
    Celsius, a GPU's power in watts, memory within the GPU's. On Linux a GPU is
@@ -286,23 +287,59 @@ let test_gpu =
   end
 
 (* Every NVIDIA GPU of the machine is read from its RM: its memory, used
-   within its total, and no temperature or power. *)
+   within its total, and no temperature or power; a GPU the RM does not
+   answer for, every field [None]. *)
 let test_gpu_nvidia =
   test "Gpu.sample reads NVIDIA's GPUs" @@ fun () ->
-  let buses = Result.value (Rig_nv_nvidia.buses ()) ~default:[] in
+  let buses = Nvidia.buses () in
   if buses = [] then skip ~reason:"the machine has no NVIDIA GPU" ();
   let gpus = gpus () in
-  let read bus =
+  let read i bus =
     let g = List.find (fun (g : Munin_sys.Stat.Gpu.t) -> g.id = bus) gpus in
-    equal ~msg:"temperature" (option float_exact) None g.temperature;
-    equal ~msg:"power" (option float_exact) None g.power;
-    match (g.memory_used, g.memory_total) with
-    | Some used, Some total ->
-        greater ~msg:"memory_total" int64 ~than:0L total;
-        at_most ~msg:"memory_used" int64 ~than:total used
-    | _ -> failf "%s: memory not read" bus
+    let f = option float_exact in
+    equal ~msg:(bus ^ " temperature") f None g.temperature;
+    equal ~msg:(bus ^ " power") f None g.power;
+    if not (Nvidia.reads i) then begin
+      equal ~msg:(bus ^ " busy_percent") f None g.busy_percent;
+      equal ~msg:(bus ^ " memory_used") (option int64) None g.memory_used;
+      equal ~msg:(bus ^ " memory_total") (option int64) None g.memory_total
+    end
+    else
+      match (g.memory_used, g.memory_total) with
+      | Some used, Some total ->
+          greater ~msg:"memory_total" int64 ~than:0L total;
+          at_most ~msg:"memory_used" int64 ~than:total used
+      | _ -> failf "%s: memory not read" bus
   in
-  List.iter read buses
+  List.iteri read buses
+
+(* A GPU metric's key reads back as its GPU and name. *)
+let test_gpu_key =
+  let gen =
+    Gen.pair (Gen.int_range 0 10_000)
+      (Gen.of_list [ "util_pct"; "mem_used_gb"; "temp_c"; "a_b"; "x" ])
+  in
+  prop "gpu_metric reads gpu_key back" gen @@ fun (i, name) ->
+  cover "two digits or more" (i >= 10);
+  equal (option (pair int string)) (Some (i, name))
+    (Munin_sys.gpu_metric (Munin_sys.gpu_key i name))
+
+(* Any key that no [gpu_key] prints is no GPU metric. *)
+let test_gpu_metric_others =
+  cases "gpu_metric of other keys" ~id:(Printf.sprintf "%S")
+    [
+      "sys/gpu_util_pct";
+      "sys/gpu1";
+      "sys/gpu1_";
+      "sys/gpu01_util_pct";
+      "sys/gpu-1_util_pct";
+      "sys/gpux_util_pct";
+      "sys/cpu_user";
+      "gpu1_util_pct";
+      "";
+    ]
+  @@ fun key ->
+  equal (option (pair int string)) None (Munin_sys.gpu_metric key)
 
 (* The keys of the values a sample of the GPUs has, GPU [i] the [i]th. *)
 let gpu_keys gs =
@@ -311,8 +348,7 @@ let gpu_keys gs =
        (fun i (g : Munin_sys.Stat.Gpu.t) ->
          List.filter_map
            (fun (name, present) ->
-             if present then Some (Printf.sprintf "sys/gpu%d_%s" i name)
-             else None)
+             if present then Some (Munin_sys.gpu_key i name) else None)
            [
              ("util_pct", g.busy_percent <> None);
              ("mem_used_gb", g.memory_used <> None);
@@ -346,7 +382,9 @@ let test_gpu_monitor =
     |> List.sort_uniq compare
   in
   let b = gpu_keys before and a = gpu_keys after in
-  List.iter (fun k -> if List.mem k a then mem ~msg:"defined" string k defined) b;
+  List.iter
+    (fun k -> if List.mem k a then mem ~msg:"defined" string k defined)
+    b;
   List.iter (fun k -> mem ~msg:"in a sample" string k (b @ a)) defined
 
 let test_uptime =
@@ -379,5 +417,12 @@ let () =
              test_loadavg;
              test_uptime;
            ];
-         group "Gpu" [ test_gpu; test_gpu_nvidia; test_gpu_monitor ];
+         group "Gpu"
+           [
+             test_gpu;
+             test_gpu_nvidia;
+             test_gpu_monitor;
+             test_gpu_key;
+             test_gpu_metric_others;
+           ];
        ])
