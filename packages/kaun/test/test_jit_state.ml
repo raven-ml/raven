@@ -172,9 +172,9 @@ let test_state_advances_across_compiled_calls () =
     Nx.item [] (Nx.sum (Nx.abs (Nx.cast Nx.float64 t)))
   in
   let moved =
-    Nx.Ptree.fold model (fun _ t moved -> moved || abs_sum t > 0.0) opt.mu false
+    Nx.Ptree.fold model (fun _ t acc -> acc +. abs_sum t) opt.mu 0.0
   in
-  is_true ~msg:"moments moved" moved;
+  greater ~msg:"moments moved" float_exact ~than:0.0 moved;
   (* The schedule tracks the counter: the compiled program's rate at the next
      step matches the schedule read on the host. *)
   equal ~msg:"schedule follows the counter" (float 1e-6)
@@ -228,7 +228,8 @@ let test_lbfgs_jit_matches_eager () =
     run_lbfgs ~step0:(Rune.jit lbfgs_signature lbfgs_step) steps (lbfgs_init ())
   in
   check_trajectory ~msg:"jit lbfgs" 1e-5 eager compiled;
-  is_true ~msg:"the loss decreases" (fst eager.(steps - 1) < fst eager.(0));
+  less ~msg:"the loss decreases" float_exact ~than:(fst eager.(0))
+    (fst eager.(steps - 1));
   (* The memory fills through the compiled program: after [steps] calls the
      counter reads n and every completed slot, all but the newest, holds a pair
      of positive curvature. *)
@@ -237,9 +238,11 @@ let test_lbfgs_jit_matches_eager () =
   let slot i m = Nx.Ptree.map model (fun _ t -> Nx.get [ i ] t) m in
   List.iter
     (fun i ->
-      is_true ~msg:"a completed slot holds a curvature pair"
-        (Nx.item [] (Nx.Ptree.dot model Nx.float32 (slot i st.y) (slot i st.s))
-        > 0.0))
+      let curvature =
+        Nx.Ptree.dot model Nx.float32 (slot i st.y) (slot i st.s)
+      in
+      greater ~msg:"a completed slot holds a curvature pair" float_exact
+        ~than:0.0 (Nx.item [] curvature))
     [ 1; 2; 3 ]
 
 let tests =
@@ -251,9 +254,8 @@ let tests =
           test_state_advances_across_compiled_calls;
         test "a batch split over two devices matches one"
           test_split_batch_matches_jit;
-        slow
-        @@ test "jit lbfgs at a fixed rate matches the eager trajectory"
-             test_lbfgs_jit_matches_eager;
+        test "jit lbfgs at a fixed rate matches the eager trajectory"
+          test_lbfgs_jit_matches_eager;
       ];
   ]
 
