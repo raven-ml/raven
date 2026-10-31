@@ -17,7 +17,8 @@
      ioctls), src/nvidia/arch/nvalloc/unix/include/nv_escape.h,
      src/common/sdk/nvidia/inc/nvos.h (NVOS00, NVOS02, NVOS21, NVOS32,
      NVOS33, NVOS54), ctrl0000gpu.h, ctrl0080gpu.h, ctrl2080fb.h,
-     ctrl2080gpu.h, ctrl2080gr.h, and kernel-open/nvidia-uvm/uvm_ioctl.h and
+     ctrl2080gpu.h, ctrl2080gr.h, ctrl2080perf.h and ctrl2080gpumon.h (the
+     utilization samples), and kernel-open/nvidia-uvm/uvm_ioctl.h and
      uvm_linux_ioctl.h.
    - Linux's Documentation/ABI/testing/sysfs-bus-pci: a function's vendor
      and class files. *)
@@ -1001,9 +1002,8 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   if i = 0 then "NV" else strf "NV:%d" i
 
-let open_ ?(wrap = Fun.id) ~root ~word i =
-  Rig_nv.Lock.guarded "Rig_nv_nvidia.gpu" @@ fun () ->
-  if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
+(* GPU [i] of the machine under [root], its objects made at its first call. *)
+let nth_gpu ~root i =
   let* buses =
     Result.map_error
       (fun why -> "reading the machine's GPUs: " ^ why)
@@ -1013,15 +1013,22 @@ let open_ ?(wrap = Fun.id) ~root ~word i =
   | None ->
       Error
         (strf "no GPU %d: the machine has %d NVIDIA GPUs" i (List.length buses))
-  | Some bus -> (
+  | Some bus ->
       let dev = Filename.concat root "dev" in
       let* c = Rm.client ~dev in
-      let* g = gpu c ~dev ~index:i bus in
+      gpu c ~dev ~index:i bus
+
+let open_ ?(wrap = Fun.id) ~root ~word i =
+  Rig_nv.Lock.guarded "Rig_nv_nvidia.gpu" @@ fun () ->
+  if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
+  match nth_gpu ~root i with
+  | Error _ as e -> e
+  | Ok g -> (
       let p = wrap (path g) in
       (* The claim is given back on any end of the make but its [Ok], and
          nothing allocates between the claim and the make. *)
       if not (Atomic.compare_and_set g.opened false true) then
-        Error (strf "%s has a device open" bus)
+        Error (strf "%s has a device open" g.bus)
       else
         match Rig_nv.make ~word p with
         | Ok _ as d -> d
@@ -1043,3 +1050,55 @@ let gpu i = gpu_under ~root:"/" i
 
 let gpu_with ~wrap i =
   { (gpu i) with make = (fun ~word -> open_ ~wrap ~root:"/" ~word i) }
+
+(* Usage *)
+
+type usage = { memory_total : int; memory_free : int; busy : float option }
+
+(* The mean of the RM's utilization samples of the graphics engine taken in
+   the last [busy_window] seconds, from its ring of the last 72 samples. A
+   sample's time stamp is in nanoseconds of the host's clock since 1970, zero
+   in a slot not yet written, and its utilization in hundredths of a percent.
+   The ring's [count] is not used: release 615's GSP leaves it 0 with every
+   slot written. On an RTX 5000 Ada the RM samples every 200 ms, so the ring
+   holds 14.4 s, and hands the samples over about 3 s late. The window leaves
+   out a ring that stopped advancing, as one did for 12 s after a CUDA
+   process ended, whose samples are stale. *)
+let busy_window = 15.
+let busy c subdevice =
+  let module U = D.Util_samples in
+  let module S = D.Util_sample in
+  let p = params U.sizeof in
+  let at, size, slots = U.samples in
+  set p U.type_ D.nv2080_ctrl_gpumon_sample_type_perfmon_util;
+  set p U.buf_size (size * slots);
+  let* () =
+    Rm.control c subdevice
+      D.nv2080_ctrl_cmd_perf_get_gpumon_perfmon_util_samples_v2 p
+  in
+  let field i (f, n) = get p (at + (i * size) + f, n) in
+  let since = (Unix.gettimeofday () -. busy_window) *. 1e9 in
+  let rec sum i n total =
+    if i = slots then (n, total)
+    else if float_of_int (field i S.base_time_stamp) < since then
+      sum (i + 1) n total
+    else sum (i + 1) (n + 1) (total + field i S.gr_util)
+  in
+  match sum 0 0 0 with
+  | 0, _ -> Ok None
+  | n, total -> Ok (Some (float_of_int total /. float_of_int n /. 100.))
+
+let usage_under ~root i =
+  Rig_nv.Lock.guarded "Rig_nv_nvidia.usage" @@ fun () ->
+  if i < 0 then invalid_argf "Rig_nv_nvidia.usage: GPU %d < 0" i;
+  let* g = nth_gpu ~root i in
+  let* memory_total =
+    fb_info g.c g.subdevice D.nv2080_ctrl_fb_info_index_total_ram_size
+  in
+  let* memory_free =
+    fb_info g.c g.subdevice D.nv2080_ctrl_fb_info_index_heap_free
+  in
+  let* busy = busy g.c g.subdevice in
+  Ok { memory_total; memory_free; busy }
+
+let usage i = usage_under ~root:"/" i

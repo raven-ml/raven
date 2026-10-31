@@ -265,6 +265,7 @@ NVIDIA = Defs(
         "ctrla06c.h": SDK + "ctrl/ctrla06c.h",
         "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
         "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
+        "ctrl2080gpumon.h": SDK + "ctrl/ctrl2080/ctrl2080gpumon.h",
         "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
         "nv-ioctl.h": COMMON + "nv-ioctl.h",
         "nv-ioctl-numbers.h": COMMON + "nv-ioctl-numbers.h",
@@ -307,6 +308,9 @@ NVIDIA = Defs(
         "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC", "NV2080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM",
         "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION", "NV2080_CTRL_CMD_FB_GET_INFO_V2",
         "NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE", "NV2080_CTRL_FB_INFO_INDEX_BAR1_SIZE",
+        "NV2080_CTRL_FB_INFO_INDEX_TOTAL_RAM_SIZE", "NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE",
+        "NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2", "NV2080_CTRL_GPUMON_SAMPLE_TYPE_PERFMON_UTIL",
+        "NV2080_CTRL_PERF_GPUMON_SAMPLE_COUNT_PERFMON_UTIL",
         "NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO", "NV2080_CTRL_RC_GET_WATCHDOG_INFO_FLAGS_RUNNING",
         "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
         "NV2080_CTRL_CMD_PERF_BOOST", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
@@ -378,6 +382,9 @@ NVIDIA = Defs(
         "NV2080_CTRL_RC_GET_WATCHDOG_INFO_PARAMS": ("Watchdog_info", ["watchdogStatusFlags"]),
         "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
         "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
+        "NV2080_CTRL_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2_PARAMS": ("Util_samples", [
+            "type", "bufSize", "samples"]),
+        "NV2080_CTRL_PERF_GPUMON_PERFMON_UTIL_SAMPLE": ("Util_sample", ["base__timeStamp", "gr__util"]),
         "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
         "UVM_FREE_PARAMS": ("Uvm_free", ["base", "length?", "rmStatus"]),
         "UVM_UNREGISTER_CHANNEL_PARAMS": ("Uvm_unregister_channel", [

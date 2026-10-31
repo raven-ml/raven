@@ -27,7 +27,11 @@ typedef NVXXXX_CTRL_XXX_INFO NV2080_CTRL_FB_INFO;
 
 #define NV2080_CTRL_FB_INFO_INDEX_BAR1_SIZE                         (0x00000005U)
 
+#define NV2080_CTRL_FB_INFO_INDEX_TOTAL_RAM_SIZE                    (0x00000008U)
+
 #define NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE                         (0x00000009U)
+
+#define NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE                         (0x00000016U)
 
 #define NV2080_CTRL_FB_INFO_MAX_LIST_SIZE                           (0x00000080U)
 

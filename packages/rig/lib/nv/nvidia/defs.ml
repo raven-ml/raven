@@ -26,6 +26,7 @@
    Copyright (c) 2006-2026 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2009-2022 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2013 NVidia Corporation
+   Copyright (c) 2013-2020 NVIDIA CORPORATION & AFFILIATES
    Copyright (c) 2013-2024 NVidia Corporation
    Copyright (c) 2013-2025 NVidia Corporation
    Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES
@@ -125,6 +126,11 @@ let nv2080_ctrl_gr_info_index_sm_version = 0xc
 let nv2080_ctrl_cmd_fb_get_info_v2 = 0x20801303
 let nv2080_ctrl_fb_info_index_heap_size = 9
 let nv2080_ctrl_fb_info_index_bar1_size = 5
+let nv2080_ctrl_fb_info_index_total_ram_size = 8
+let nv2080_ctrl_fb_info_index_heap_free = 0x16
+let nv2080_ctrl_cmd_perf_get_gpumon_perfmon_util_samples_v2 = 0x20802096
+let nv2080_ctrl_gpumon_sample_type_perfmon_util = 2
+let nv2080_ctrl_perf_gpumon_sample_count_perfmon_util = 0x48
 let nv2080_ctrl_cmd_rc_get_watchdog_info = 0x20802209
 let nv2080_ctrl_rc_get_watchdog_info_flags_running = 2
 let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
@@ -452,6 +458,19 @@ module Perf_boost = struct
   let sizeof = 8
   let flags = (0, 4)
   let duration = (4, 4)
+end
+
+module Util_samples = struct
+  let sizeof = 55888
+  let type_ = (0, 1)
+  let buf_size = (4, 4)
+  let samples = (0x10, 0x308, 0x48)
+end
+
+module Util_sample = struct
+  let sizeof = 776
+  let base_time_stamp = (0, 8)
+  let gr_util = (0x88, 4)
 end
 
 (* What differs between the releases. *)

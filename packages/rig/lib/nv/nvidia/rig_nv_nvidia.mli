@@ -108,10 +108,42 @@ val gpu : int -> Rig_nv.t Rig_edge.opener
     Raises [Invalid_argument] if [i < 0]. [make] raises it, having opened
     nothing, from a callback inside a lock ([Rig]'s domains section). *)
 
+(** {1:usage Usage} *)
+
+type usage = {
+  memory_total : int;
+      (** The GPU's memory, in bytes ([NV2080_CTRL_FB_INFO_INDEX_TOTAL_RAM_SIZE]
+          of NVIDIA's [ctrl2080fb.h]). *)
+  memory_free : int;
+      (** The bytes of it that the RM has free to allocate
+          ([NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE]). The rest is held by every
+          process on the GPU, and by the RM and its firmware. *)
+  busy : float option;
+      (** How busy the GPU's graphics and compute engine was, from [0.0] to
+          [100.0]: the mean of the RM's samples of it taken in the last 15
+          seconds by the host's clock
+          ([NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2] of
+          [ctrl2080perf.h]). The RM hands samples over a few seconds late.
+          [None] if it took none in that time. *)
+}
+(** The type for what a GPU's RM reports of its use, by every process. *)
+
+val usage : int -> (usage, string) result
+(** [usage i] is GPU [i]'s usage, read through the process's client of the
+    kernel driver and the GPU's objects in the RM, which it makes as an open
+    would, and which stay for the process ({!gpu}). It opens no device: a
+    device of GPU [i] may be open, and stays so.
+
+    [Error msg] as for {!gpu}'s [make], or with the RM's refusal of a
+    command.
+
+    Raises [Invalid_argument] if [i < 0], or, having read nothing, from a
+    callback inside a lock ([Rig]'s domains section). *)
+
 (**/**)
 
-(* [buses_under ~root], [count_under ~root] and [gpu_under ~root] are
-   {!buses}, {!count} and {!gpu} for the machine whose files are under the
+(* [buses_under ~root], [count_under ~root], [gpu_under ~root] and
+   [usage_under ~root] are {!buses}, {!count}, {!gpu} and {!usage} for the machine whose files are under the
    directory [root] in place of ["/"], such as a container's view of its host
    or a test's tree. Every [root] a process uses must show the same kernel
    driver. The process's client of the kernel driver is made from the
@@ -120,6 +152,7 @@ val gpu : int -> Rig_nv.t Rig_edge.opener
 val buses_under : root:string -> (string list, string) result
 val count_under : root:string -> (int, string) result
 val gpu_under : root:string -> int -> Rig_nv.t Rig_edge.opener
+val usage_under : root:string -> int -> (usage, string) result
 
 type mem
 (* The type for the memory of this library's paths. *)
