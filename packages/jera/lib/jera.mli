@@ -1804,9 +1804,10 @@ module Sde : sig
         standard components of shape [shape] over [[t0, t1]], resolved to
         [(t1 − t0) / 2^depth].
 
-        Raises [Invalid_argument] if [t0] or [t1] is not finite, if [t1 <= t0],
-        if [depth] is not in [[0, 30]], or if a dimension of [shape] is
-        negative. *)
+        Raises [Invalid_argument] if [t0] or [t1] is not finite, if [t1 <= t0]
+        or [t1 − t0] is not finite once the ends are rounded to [dtype], if
+        [depth] is not in [[0, 30]], or if a dimension of [shape] is negative.
+    *)
 
     val increment :
       ('b, 'd) t ->

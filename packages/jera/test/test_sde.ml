@@ -104,6 +104,14 @@ let brownian_tests =
         raises_with "depth = 31 is not in [0, 30]" (fun () ->
             Sde.Brownian.v (Nx.Rng.key 0) f64 ~shape:[||] ~t0:0. ~t1:1.
               ~depth:31));
+    test "v rejects ends that round together in the dtype" (fun () ->
+        raises_with "t1 = 1 is not above t0 = 1 in float32" (fun () ->
+            Sde.Brownian.v (Nx.Rng.key 0) Nx.float32 ~shape:[||] ~t0:1.
+              ~t1:(1. +. 1e-9) ~depth:3));
+    test "v rejects an interval longer than the dtype holds" (fun () ->
+        raises_with "t1 - t0 is not finite in float64" (fun () ->
+            Sde.Brownian.v (Nx.Rng.key 0) f64 ~shape:[||] ~t0:(-1e308)
+              ~t1:1e308 ~depth:3));
   ]
 
 (* Strong orders *)

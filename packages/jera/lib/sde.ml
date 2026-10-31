@@ -23,6 +23,15 @@ module Brownian = struct
     if not (Float.is_finite t0 && Float.is_finite t1) then
       fail "t0 and t1 must be finite";
     if t1 <= t0 then fail "t1 = %g is not above t0 = %g" t1 t0;
+    (* The path computes in its dtype, where the ends round and their span
+       may round together or overflow. *)
+    let name = Nx.Dtype.name dtype in
+    let t0 = Nx.Dtype.of_float dtype t0 and t1 = Nx.Dtype.of_float dtype t1 in
+    if not (Float.is_finite t0 && Float.is_finite t1) then
+      fail "t0 and t1 must be finite in %s" name;
+    if t1 <= t0 then fail "t1 = %g is not above t0 = %g in %s" t1 t0 name;
+    if not (Float.is_finite (Nx.Dtype.of_float dtype (t1 -. t0))) then
+      fail "t1 - t0 is not finite in %s" name;
     if depth < 0 || depth > max_depth then
       fail "depth = %d is not in [0, %d]" depth max_depth;
     if Array.exists (fun d -> d < 0) shape then

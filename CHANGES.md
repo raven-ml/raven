@@ -445,6 +445,9 @@ All notable changes to this project will be documented in this file.
   carrying its value and integral from each step's end to the next step.
 - `Sde.milstein` gives no NaN on a step whose span rounds to zero, as 4 steps
   over `[1, 1 + 2^-52]` make.
+- `Sde.Brownian.v` raises on ends that round together in its dtype, as `1` and
+  `1 + 1e-9` in float32, or whose span overflows it. Such a path made every
+  query NaN.
 - Each interval's last step changes in `Ode.march`, `Split.march` and
   `Sde.march`, so their results change in their last bits. Step `j` starts at
   `at.(i) + j h`, held at `at.(i+1)` where that rounds past it; every step but
