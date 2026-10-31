@@ -3660,6 +3660,51 @@ let blocks =
         numbers_past_a_skipped_slot;
     ]
 
+(* Calls in a kernel
+
+   A call of an external function calls the symbol the program is linked
+   against. *)
+
+let int_param ~name slot n = Shape.param ~shape:[ Int n ] ~name slot Int32
+let at u i = Ops.index u [ i ]
+let first u = at u (Ops.int 0)
+let i32 n = Ops.int ~dtype:Int32 n
+
+let kernel name l =
+  Ops.sink ~kernel:(Ops.kernel_info ~name ~opts_to_apply:[] ()) l
+
+(* [frexp] writes the exponent of 8, 4, through its pointer into [c[0]]; then
+   [c[1] = c[0] + 1]. *)
+let call_out () =
+  let c = int_param ~name:"C" 0 2 in
+  let frexp = Ops.custom_function ~dtype:Float64 "frexp" [] in
+  let call = Ops.call frexp [ Ops.float ~dtype:Float64 8.; first c ] in
+  let c = Ops.after c [ call ] in
+  kernel "call_out" [ Ops.store (at c (Ops.int 1)) Ops.O.(first c + i32 1) ]
+
+(* [c[0] = int (sqrt 16) * 2]. *)
+let call_ret () =
+  let c = int_param ~name:"C" 0 1 in
+  let sqrt = Ops.custom_function ~dtype:Float64 "sqrt" [] in
+  let v = Ops.call sqrt [ Ops.float ~dtype:Float64 16. ] in
+  kernel "call_ret" [ Ops.store (first c) Ops.O.(Ops.cast v Int32 * i32 2) ]
+
+let int_values l = Array.of_list (List.map (fun n -> `Int (Bigint.of_int n)) l)
+
+let runs_on_host k inputs expected () =
+  let prg = Codegen.to_program (k ()) (Lazy.force host) in
+  equal (array Dtypes.value) (int_values expected)
+    (List.assoc 0 (Run.on_host prg inputs))
+
+let calls =
+  group "calls in a kernel"
+    [
+      test "an external function writes through its pointer argument"
+        (runs_on_host call_out [] [ 4; 5 ]);
+      test "an external function returns its value"
+        (runs_on_host call_ret [] [ 8 ]);
+    ]
+
 let () =
   Disk_cache.play (("breaking graph", lowers_a_breaking_graph) :: parts);
   exit
@@ -3701,4 +3746,5 @@ let () =
          diagnostics;
          line_rewrites;
          cleanups;
+         calls;
        ])

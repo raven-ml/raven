@@ -816,7 +816,10 @@ thread.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.
-- **Breaking:** a call has the type and shape of its body: `Ops.call` loses
+- A call of an external function calls its symbol, which `Cstyle.clang`
+  declares and the host links against, where it called a pointer the
+  function's body held: a kernel can call `sqrt` or `frexp` of the C library.
+- **Breaking:** A call has the type and shape of its body: `Ops.call` loses
   `?ret_dtype`, and an external function states the type it returns
   (`Ops.custom_function ~dtype`, the `Custom_function` argument).
 - `Shape.program_info_of_sink` reads no parameter of a call's body.

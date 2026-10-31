@@ -390,11 +390,11 @@ let base_rewrite =
       r
         (Upat.op ~src:[ Upat.var "a"; Upat.var "b" ] Op.Fdiv)
         (fun ctx m -> Some (strf "(%s/%s)" ctx.%{m "a"} ctx.%{m "b"}));
-      (* call an external function: the CUSTOM_FUNCTION body holds the callee (a
-         function pointer), the other sources are the arguments *)
+      (* call an external function by symbol: the CUSTOM_FUNCTION body names
+         the callee, the sources are the arguments and set the types *)
       r
         (Upat.op ~name:"x" ~allow_any_len:true
-           ~src:[ Upat.op ~src:[ Upat.var "fptr" ] Op.Custom_function ]
+           ~src:[ Upat.op ~name:"f" Op.Custom_function ]
            Op.Call)
         (fun ctx m ->
           let x = m "x" and l = ctx.lang in
@@ -403,13 +403,16 @@ let base_rewrite =
           let values =
             List.map2 (fun t y -> strf "(%s)(%s)" t ctx.%{y}) types args
           in
-          Some
-            (strf "(((%s(*)(%s))(%s))(%s))%s"
-               (render_scalar l (dtype x))
-               (String.concat ", " types)
-               ctx.%{m "fptr"}
-               (String.concat ", " values)
-               (if Dtype.equal (dtype x) Dtype.Void then ";" else "")));
+          match arg (m "f") with
+          | Custom_function f ->
+              Some
+                (strf "((%s(*)(%s))(%s))(%s)%s"
+                   (render_scalar l (dtype x))
+                   (String.concat ", " types)
+                   f.name
+                   (String.concat ", " values)
+                   (if Dtype.equal (dtype x) Dtype.Void then ";" else ""))
+          | _ -> None);
       (* custom passes through with format *)
       r
         (Upat.v ~op:(Op.Set.of_list [ Op.Custom; Op.Customi ]) ~name:"x" ())
@@ -902,9 +905,25 @@ let render_uops l uops =
   List.iter visit uops;
   (!name, List.rev !kernel, List.rev !bufs)
 
+(* The program declares the external functions it calls, which it links
+   against. *)
 let render render_kernel l uops =
+  let externs =
+    List.filter_map
+      (fun u ->
+        match arg u with
+        | Custom_function f when is Op.Custom_function u ->
+            Some (strf "extern void %s();" f.name)
+        | _ -> None)
+      (toposort ~calls:Enter (sink uops))
+  in
   let name, kernel, bufs = render_uops l uops in
-  render_kernel l ~name kernel bufs uops
+  let prefix = match dedup externs with [] -> None | p -> Some p in
+  render_kernel ?prefix l ~name kernel bufs uops
+
+(* Metal, CUDA and HIP write a prefix of their own in place of the one [render]
+   gives: the external functions a kernel calls are Clang's alone. *)
+let own_prefix render_kernel ?prefix:_ l = render_kernel l
 
 (* Clang *)
 
@@ -1199,7 +1218,7 @@ let clang_vector_prefix l (dt, count) =
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"
     (render_scalar l dt) vec alignment count
 
-let clang_kernel l ~name kernel bufs uops =
+let clang_kernel ?prefix l ~name kernel bufs uops =
   let masks = mask_widths uops in
   (* A selection on vectors reads its condition as a mask of its arms' width. *)
   let types u =
@@ -1218,7 +1237,7 @@ let clang_kernel l ~name kernel bufs uops =
       (dedup (List.concat_map types uops))
   in
   let defines = String.concat "\n" (List.map (clang_vector_prefix l) vectors) in
-  defines ^ "\n" ^ render_kernel l ~name kernel bufs uops ^ "\n"
+  defines ^ "\n" ^ render_kernel ?prefix l ~name kernel bufs uops ^ "\n"
 
 let clang (target : Helpers.Target.t) =
   let arch = target.arch in
@@ -1411,7 +1430,7 @@ let metal (target : Helpers.Target.t) =
     ~tensor_cores:(if from 7 then Tc.metal else [])
     ~extra_matcher:metal_extra_matcher ~code_for_op:metal_lang.code_for_op
     ~native
-    ~render:(render metal_kernel metal_lang)
+    ~render:(render (own_prefix metal_kernel) metal_lang)
     ~compiler:(Compiler_metal.compiler ()) target
 
 (* CUDA *)
@@ -1642,7 +1661,7 @@ let cuda (target : Helpers.Target.t) =
     ~global_max:[ 2147483647; 65535; 65535 ]
     ~local_max:[ 1024; 1024; 64 ] ~shared_max:49152 ~tensor_cores
     ~extra_matcher:cuda_extra_matcher ~code_for_op:cuda_lang.code_for_op ~native
-    ~render:(render cuda_kernel cuda_lang)
+    ~render:(render (own_prefix cuda_kernel) cuda_lang)
     ~compiler target
 
 (* HIP *)
@@ -1985,5 +2004,5 @@ let hip (target : Helpers.Target.t) =
     ~global_prod_max:[ 0xFFFFFFFF; 0xFFFFFFFF; 0xFFFFFFFF ]
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)
     ~code_for_op:lang.code_for_op ~native
-    ~render:(render (hip_kernel arch tensor_cores) lang)
+    ~render:(render (own_prefix (hip_kernel arch tensor_cores)) lang)
     ~compiler:(Compiler_amd.hip arch) target

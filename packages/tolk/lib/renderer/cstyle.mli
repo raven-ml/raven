@@ -25,6 +25,12 @@
     A NaN constant is written from its bits, so a program stores its sign and
     payload, a signalling NaN staying one.
 
+    A call ({!Op.Call}) of an external function ({!Op.Custom_function}) casts
+    the function's symbol, which the program declares and is linked against, to
+    the type its arguments and result give it. Only {!clang} writes those
+    declarations: the other languages write their own prefix, so their kernels
+    call no external function.
+
     A floating-point division ({!Op.Fdiv}) is the language's [/] on every
     target, whether or not the target lists it among its native operations: that
     list only decides whether code generation turns a reciprocal into a
