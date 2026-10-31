@@ -95,7 +95,7 @@ the Exclusions of `README.md`.
   `Realize.lower_and_compile`; and `Compiler_metal`.
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
-    module: `contiguous_view` and its matcher go to `Prepare`,
+    module: `contiguous_view` goes to `Prepare`,
     `to_elf` to `Device`, and `render` and `srender` to `Render`;
   - `engine/realize.py`'s `pm_flatten_linear`, which `schedule/__init__.py`
     imports, is `Schedule.pm_flatten_linear`, since `Realize` follows
@@ -1779,30 +1779,13 @@ staged copies replace it (D146).
 A launch stated a constant bank's size in 16-byte units. rig's NV driver writes
 its launch descriptors (D146).
 
-## D72. Only a view of storage has a contiguous view
+## D72. Withdrawn
 
-- **tinygrad:** `uop/ops.py:935-948` (`UOp.contiguous_view`), which rewrites
-  the index of any value with `pm_mops`, `symbolic` and
-  `pm_contiguous_view_offset` (`:1905-1911`). On a constant the rewrite does
-  not terminate: the offset rules mark the constant the index reaches, and
-  `symbolic` rebuilds the constant without its mark, so each undoes the
-  other. `UOp.const(1, dtypes.long).contiguous_view()` raises "infinite loop
-  in graph_rewrite", in tinygrad and in the patched tinygrad of
-  `test/gen/tinygrad.patch`. tinygrad's own caller asks only about views of
-  buffers (`schedule/__init__.py:210`).
-- **tolk:** `Prepare.contiguous_view`.
-- **Differs:** a value whose storage base (`Ops.storage_base`) is not storage
-  (`Op.Buffer`, `Op.Alloc` or `Op.Param`) has no contiguous view, without a
-  rewrite: a constant, and a computed value, which tinygrad would mark and
-  return.
-- **Reason:** none. It was (b): the old rune's jit asked whether each result
-  of a compiled call was a view of a buffer it made, and a result could be a
-  constant: kaun's decoder test `gradients › a fully padded row, compiled`
-  did not compile. That caller went with rune's rewrite. tolk's own caller,
-  `Schedule.contiguous_mops_to_view`, asks only about movements of a
-  buffer.
-- **Pinned by:** the `Prepare` suite: `contiguous_view › a constant is no view`, `› a constant of one element is no view` and `› a computed
-  value is no view`.
+Only a view of storage had a contiguous view, since tinygrad's rewrite of a
+constant's index marked the constant and `symbolic` rebuilt it unmarked, without
+end. At `uop/ops.py:912-931@4e0192eaf` the rewrite marks nothing and finds a
+view of any value, a constant or a computed one included; `Prepare.contiguous_view`
+does the same.
 
 ## D73. A gather is an INDEX of a tensor by a value with axes
 
@@ -3473,11 +3456,11 @@ search's memos and what it keeps.
 
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
 
-- **tinygrad:** `uop/ops.py:934-948` (`UOp.contiguous_view`), whose rewrite
-  of the index with `pm_mops` and `symbolic` visits every node the index
-  reaches, the effects an `AFTER` orders its storage after and the graphs they
-  compute included, and returns the storage node it reaches as rewritten
-  (`b.rtag(None)`).
+- **tinygrad:** `uop/ops.py:923-931@4e0192eaf` (`UOp.contiguous_view`), whose
+  rewrite of the index with `pm_mops` and `symbolic` visits every node the
+  index reaches, the effects an `AFTER` orders its storage after and the graphs
+  they compute included, and returns the node it reaches as rewritten
+  (`out.src[0]`).
 - **tolk:** `Prepare.pm_stop_at_effects` and `Prepare.contiguous_view`.
 - **Differs:** the rewrite stops at void nodes, the effects storage is ordered
   after, and leaves them and what they compute as they are, so that the

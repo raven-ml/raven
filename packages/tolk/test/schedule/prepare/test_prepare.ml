@@ -590,11 +590,24 @@ let contiguous_views =
       case "bytes within an element are a view of the bytes"
         (Some (bytes, 2))
         (Shape.shrink bytes [ Some (Int 2, Int 6) ]);
+      (let words = Shape.param ~device:cpu ~shape:[ Int 2 ] 1 Uint32 in
+       case "bytes of one whole element are a view of the storage"
+         (Some (words, 1))
+         (Shape.shrink (Ops.bitcast words Uint8) [ Some (Int 4, Int 8) ]));
+      case "an expanded constant is no view" None
+        (Shape.expand
+           (Shape.reshape (Ops.const ~dtype:Float32 (`Float 5.0)) (ints [ 1 ]))
+           (ints [ 4 ]));
       (let one = Ops.const ~dtype:Int64 (`Int Bigint.one) in
-       case "a constant is no view" None one);
-      case "a constant of one element is no view" None
-        (Shape.reshape (Ops.const ~dtype:Int64 (`Int Bigint.one)) (ints [ 1 ]));
-      case "a computed value is no view" None (Ops.add b b);
+       case "a constant is its own view from 0" (Some (one, 0)) one);
+      (let one = Ops.const ~dtype:Int64 (`Int Bigint.one) in
+       case "a constant of one element is a view of the constant"
+         (Some (one, 0))
+         (Shape.reshape one (ints [ 1 ])));
+      (let sum =
+         Ops.add b (Shape.param ~device:cpu ~shape:[ Int 32 ] 2 Float32)
+       in
+       case "a computed value is its own view from 0" (Some (sum, 0)) sum);
     ]
 
 let is_run memory elements =

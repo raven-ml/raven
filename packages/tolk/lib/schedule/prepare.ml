@@ -9,7 +9,6 @@ open Ops
 open Shape
 
 let rule = Pattern_matcher.rule
-let rule_ctx = Pattern_matcher.rule_ctx
 let ops = Op.Set.of_list
 let ints = List.map (fun n -> Int n)
 let reaches = Ops.reaches ~calls:Skip
@@ -657,60 +656,6 @@ let strides_for_shape shape =
          ((if Sint.equal s (Int 1) then Int 0 else p) :: strides, Sint.(p * s)))
        shape ([], Int 1))
 
-(* A bitcast of a view whose index is the flat index of [ctx] plus a constant is
-   the same view of the bitcast's source, when the offset and the size fall on
-   whole elements of the source. *)
-let contiguous_bitcast_index ctx b idx =
-  let idxs = List.tl (src idx) in
-  if List.length idxs <> ndim b then None
-  else
-    let numel = numel ctx in
-    let flat =
-      List.fold_left2
-        (fun acc i s -> add acc (mul i (sint_to_uop s)))
-        (int 0) idxs
-        (strides_for_shape (shape b))
-    in
-    match ssimplify (sub flat (range numel [ 0 ])) with
-    | Sym _ -> None
-    | Int offset ->
-        let osz = element_size b and isz = element_size (nth b 0) in
-        if
-          offset * osz mod isz <> 0
-          || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
-        then None
-        else
-          let r = range Sint.(numel * Int osz // Int isz) [ 0 ] in
-          Some
-            (index
-               (flatten (nth b 0))
-               [ add r (int (Helpers.floordiv (offset * osz) isz)) ])
-
-(* The context is the node whose contiguous view is sought. Storage reached
-   through views is tagged, with the offset of the view's first element. *)
-let pm_contiguous_view_offset =
-  let var = Upat.var in
-  let first b c = Some (index (rtag b) [ c ]) in
-  Pattern_matcher.v
-    (fun () -> [
-      rule_ctx
-        (Upat.f
-           (Upat.op Op.Bitcast ~name:"b")
-           Op.Index ~name:"idx" ~allow_any_len:true)
-        (fun ctx m -> contiguous_bitcast_index ctx (m "b") (m "idx"));
-      rule (Upat.op Op.Index ~src:[ var "b" ]) (fun m -> first (m "b") (int 0));
-      rule
-        (Upat.op Op.Index ~src:[ var "b"; Upat.op Op.Range ])
-        (fun m -> first (m "b") (int 0));
-      rule
-        (Upat.op Op.Index ~src:[ var "b"; Upat.(op Op.Range + cvar "c") ])
-        (fun m -> first (m "b") (m "c"));
-      rule_ctx
-        (Upat.op Op.Index ~src:[ var "b"; Upat.cvar "c" ])
-        (fun ctx m ->
-          if Sint.equal (numel ctx) (Int 1) then first (m "b") (m "c") else None);
-    ])
-
 (* The effects storage is ordered after decide nothing of where its elements
    lie: the rewrite of a view's index stops at them, a void node, and leaves the
    graphs they compute, which hold gathers and arithmetic on tensors that the
@@ -722,30 +667,43 @@ let pm_stop_at_effects =
           raise Bottom_up_gate);
     ])
 
-(* Only a view of storage can be one. The offset rules mark the node an index
-   reaches, and the symbolic rules rebuild a constant without its mark, so on a
-   constant the two would take turns without end. *)
-let contiguous_view u =
-  if not (List.mem (op (storage_base u)) Op.[ Buffer; Alloc; Param ]) then None
+(* The index of [u]'s elements rewritten through its movements ends at the node
+   they are read from; the elements are a run of that node when its flat index
+   is the range plus a constant. A bitcast's run is also a run of its source
+   when it starts and ends on whole elements of the source. *)
+let rec contiguous_view u =
+  let numel = numel u in
+  let rng = range numel [ 0 ] in
+  let out =
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() (index (flatten u) [ rng ])
+      (Around_sources
+         {
+           before = pm_stop_at_effects;
+           after = Pattern_matcher.concat [ pm_mops; Shape.symbolic ];
+         })
+  in
+  if op out <> Op.Index then None
   else
-    let idx = index (flatten u) [ range (numel u) [ 0 ] ] in
-    let out =
-      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:u idx
-        (Around_sources
-           {
-             before = pm_stop_at_effects;
-             after =
-               Pattern_matcher.concat
-                 [
-                   Pattern_matcher.with_ctx pm_mops;
-                   Pattern_matcher.with_ctx Shape.symbolic;
-                   pm_contiguous_view_offset;
-                 ];
-           })
-    in
-    match (op out, src out) with
-    | Op.Index, b :: c :: _ when Option.is_some (tag b) && op c = Op.Const -> (
-        match arg c with
-        | Const (`Int n) -> Some (replace ~tag:None b, Bigint.to_int n)
-        | _ -> None)
-    | _ -> None
+    let b = nth out 0 and idxs = List.tl (src out) in
+    if List.length idxs <> ndim b then None
+    else
+      let flat =
+        List.fold_left2
+          (fun acc i s -> add acc (mul i (sint_to_uop s)))
+          (int 0) idxs
+          (strides_for_shape (shape b))
+      in
+      match ssimplify (sub flat rng) with
+      | Sym _ -> None
+      | Int offset when op b <> Op.Bitcast -> Some (b, offset)
+      | Int offset ->
+          let osz = element_size b and isz = element_size (nth b 0) in
+          if
+            offset * osz mod isz <> 0
+            || Sint.truth Sint.(numel * Int osz % Int isz <> Int 0)
+          then Some (b, offset)
+          else
+            let first = Int (offset * osz / isz) in
+            let last = Sint.((Int offset + numel) * Int osz // Int isz) in
+            contiguous_view
+              (shrink (flatten (nth b 0)) [ Some (first, last) ])
