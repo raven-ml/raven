@@ -519,6 +519,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Munin_sys.Stat` samplers raise `Sys_error` where they cannot read the
+  system, as network, disk I/O, per-core CPU, process table and load average
+  do on Windows, instead of returning zeros or empty lists. `Munin_sys.start`
+  and `munin watch` leave out the metrics a system lacks.
 - `Store.list_runs` and `Store.find_run` take a run's status from its event
   log where `index.json` is behind it, as a process killed between the two
   writes of `Session.finish` or `Session.resume` leaves it: such a run read as
@@ -551,9 +555,9 @@ All notable changes to this project will be documented in this file.
   SHA-256, so `munin` no longer depends on the `sha` package. Blobs live
   under `blobs/blake2b` in the store.
 - The system statistics stubs build on Windows. CPU times come from
-  `GetSystemTimes`, memory from `GlobalMemoryStatusEx`, disk space and page
-  size from the Win32 calls; the load average, which Windows does not keep,
-  reads as zero.
+  `GetSystemTimes`, memory from `GlobalMemoryStatusEx`, process memory from
+  `GetProcessMemoryInfo`, uptime from `GetTickCount64`, partitions and disk
+  space from the fixed drives, page size from the Win32 calls.
 
 Local experiment tracking for Raven. Evolves `kaun-board` into a full
 experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.

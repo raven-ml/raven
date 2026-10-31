@@ -13,10 +13,14 @@
 
     {1:platform Platform support}
 
-    Supported platforms: Linux and macOS. Platform-specific behavior is
-    documented per module. Some metrics have limited availability on certain
-    platforms (e.g., macOS CPU counters populate only user/nice/system/idle
-    fields). *)
+    Every sampler reads the system on Linux and macOS. Platform-specific
+    behavior is documented per module. Some metrics have limited availability
+    on certain platforms (e.g., macOS CPU counters populate only
+    user/nice/system/idle fields).
+
+    On Windows, {!Cpu.sample_per_core}, {!Net.sample}, {!Disk_io.sample},
+    {!Proc.Table.sample} and {!loadavg} raise [Sys_error], as every sampler
+    does for what a system cannot read. *)
 
 (** {1:modules Modules} *)
 
@@ -254,7 +258,8 @@ module Fs : sig
       are excluded from the partitions list. Filesystems smaller than
       approximately 100 MB are also excluded.
 
-      Raises [Sys_error] if the path does not exist or an error occurs. *)
+      Raises [Sys_error] if the path does not exist, the mount table cannot be
+      read or an error occurs. *)
 
   val partitions : unit -> partition list
   (** [partitions ()] returns a list of all mounted partitions.
@@ -262,7 +267,7 @@ module Fs : sig
       Enumerates mounted filesystems and queries their usage. Excludes
       virtual/system filesystems and small filesystems (< 100 MB).
 
-      Returns an empty list if no partitions are found or an error occurs. *)
+      Raises [Sys_error] if the mount table cannot be read. *)
 end
 
 (** Process statistics. *)
@@ -374,9 +379,10 @@ module Proc : sig
         Enumerates all processes visible to the current user and reads their
         statistics.
 
-        Returns an empty list if an error occurs during enumeration. Individual
-        process errors (e.g., process termination during sampling) are silently
-        skipped. *)
+        Individual process errors (e.g., process termination during sampling)
+        are silently skipped.
+
+        Raises [Sys_error] if the process table cannot be read. *)
 
     val compute : prev:t list -> next:t list -> dt:float -> stats list
     (** [compute ~prev ~next ~dt] calculates CPU percentages and filters
@@ -397,7 +403,12 @@ end
 (** {1:sysinfo System information} *)
 
 val loadavg : unit -> float * float * float
-(** [loadavg ()] returns the 1, 5, and 15 minute load averages. *)
+(** [loadavg ()] returns the 1, 5, and 15 minute load averages.
+
+    Raises [Sys_error] if the platform keeps no load average or it cannot be
+    read. *)
 
 val uptime : unit -> int64
-(** [uptime ()] returns system uptime in seconds. *)
+(** [uptime ()] returns system uptime in seconds.
+
+    Raises [Sys_error] if it cannot be read. *)

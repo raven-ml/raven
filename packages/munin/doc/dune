@@ -4,8 +4,8 @@
 ; 05-dashboard.md give them as plain fences); and the Kaun training loop, which
 ; downloads MNIST.
 ;
-; The guides sample the system through munin.sys, which supports Linux and
-; macOS only.
+; The guides sample the system through munin.sys, which reads most of it on
+; Linux and macOS only.
 
 (mdx
  (files *.md)

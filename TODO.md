@@ -363,9 +363,10 @@ raven / llama.cpp (Vulkan; ROCm):
 - brot: the parity tests skip in local runtest without downloaded
   tokenizers (CI downloads them): commit trimmed ones with their
   generator, each under a licence that allows it
-- munin.sys on Windows reports 0 for network and disk I/O and 0.0 load
-  (sysstat_stubs.c) where sysstat.mli promises `Sys_error`: raise, or
-  implement them
+- munin.sys on Windows raises `Sys_error` for network and disk I/O
+  counters, per-core CPU times, the process table and the load average:
+  read them (GetIfTable2 needs iphlpapi, IOCTL_DISK_PERFORMANCE a handle
+  per physical drive, per-core times ntdll, the table a process snapshot)
 - munin GPU metrics without NVML (a vendor library, ruled out): amdgpu
   sysfs, IOKit, and NVIDIA through what rig's drivers can read; design
   first

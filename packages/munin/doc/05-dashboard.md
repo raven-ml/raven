@@ -57,13 +57,15 @@ border. Pressing Enter on the selected chart opens the detail view.
 
 ### System panel
 
-A side panel (right 34% of the screen) showing four resource bars when system
-metrics are available:
+A side panel (right 34% of the screen) showing resource bars, each only when
+the run has logged its metrics:
 
 - **CPU** -- combined user (green) + system (cyan) percentage with sparkline
 - **Mem** -- system memory percentage and absolute GB with sparkline
 - **Proc** -- process CPU percentage with sparkline
 - **RSS** -- process resident set size in MB with sparkline
+- **Disk**, **R**, **W** -- disk utilization percentage, read and write
+  rates with sparklines
 
 The bars change color based on utilization: green below 50%, yellow 50-80%,
 red above 80%.

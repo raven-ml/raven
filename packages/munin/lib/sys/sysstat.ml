@@ -323,10 +323,11 @@ module Cpu = struct
     | Some (t, _) -> t
     | None -> raise (Sys_error "Cpu.sample: failed to read CPU statistics")
 
+  (* Windows gives system-wide totals only, and no core list. *)
   let sample_per_core () : t array =
     match read () with
-    | Some (_, cores) -> Array.of_list cores
-    | None ->
+    | Some (_, (_ :: _ as cores)) -> Array.of_list cores
+    | Some (_, []) | None ->
         raise
           (Sys_error
              "Cpu.sample_per_core: failed to read per-core CPU statistics")
@@ -838,7 +839,8 @@ module Fs = struct
       |> List.filter_map (fun (mount_point, _device, fstype) ->
           if is_excluded_mount ~mount_point ~fstype then None
           else stat_partition mount_point)
-    with _ -> []
+    with _ ->
+      raise (Sys_error "Fs.partitions: failed to read the mount table")
 
   let sample ?(path = "/") () : t =
     let result =
@@ -936,14 +938,10 @@ module Proc = struct
             if Sys.file_exists "/proc/self/stat" then
               match linux_rss_vsize () with
               | Some (rss, vsz) -> (rss, vsz)
-              | None -> (0L, 0L)
+              | None -> failwith "cannot read /proc/self/stat"
             else
               let raw = c_proc_self_mem () in
-              let rss = if Int64.compare raw.rss 0L < 0 then 0L else raw.rss in
-              let vsz =
-                if Int64.compare raw.vsize 0L < 0 then 0L else raw.vsize
-              in
-              (rss, vsz)
+              (raw.rss, raw.vsize)
           in
           Some { utime; stime; rss_bytes; vsize_bytes }
         with _ -> None
@@ -1074,7 +1072,7 @@ module Proc = struct
       let dir = "/proc" in
       let dh = try Some (Unix.opendir dir) with _ -> None in
       match dh with
-      | None -> []
+      | None -> failwith "cannot open /proc"
       | Some dh ->
           let procs = ref [] in
           let add pid fields =
@@ -1180,8 +1178,7 @@ module Proc = struct
     let sample_macos () : t list =
       let total_mem = total_mem_bytes () in
       let pids =
-        try c_list_pids () |> Array.to_list |> List.filter (fun pid -> pid > 0)
-        with _ -> []
+        c_list_pids () |> Array.to_list |> List.filter (fun pid -> pid > 0)
       in
       let add acc pid =
         match c_get_proc_info pid with
@@ -1217,7 +1214,8 @@ module Proc = struct
 
     let sample () : t list =
       try if Sys.file_exists "/proc" then sample_linux () else sample_macos ()
-      with _ -> []
+      with _ ->
+        raise (Sys_error "Proc.Table.sample: failed to read the process table")
 
     let compute ~(prev : t list) ~(next : t list) ~(dt : float) : stats list =
       if dt <= 0.0 then invalid_arg "Proc.Table.compute: dt must be positive";
@@ -1262,5 +1260,8 @@ end
 
 (* System info *)
 
-let loadavg () = c_get_loadavg ()
-let uptime () = c_get_uptime ()
+let loadavg () =
+  try c_get_loadavg () with Failure e -> raise (Sys_error ("loadavg: " ^ e))
+
+let uptime () =
+  try c_get_uptime () with Failure e -> raise (Sys_error ("uptime: " ^ e))

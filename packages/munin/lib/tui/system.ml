@@ -8,15 +8,15 @@ open Mosaic
 (* Types *)
 
 type values = {
-  cpu_user : float;
-  cpu_system : float;
-  mem_pct : float;
-  mem_gb : float;
-  proc_cpu : float;
-  proc_mem_mb : float;
-  disk_read_mbs : float;
-  disk_write_mbs : float;
-  disk_util_pct : float;
+  cpu_user : float option;
+  cpu_system : float option;
+  mem_pct : float option;
+  mem_gb : float option;
+  proc_cpu : float option;
+  proc_mem_mb : float option;
+  disk_read_mbs : float option;
+  disk_write_mbs : float option;
+  disk_util_pct : float option;
 }
 
 (* Styles *)
@@ -176,29 +176,50 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
     else if mbs >= 1. then Printf.sprintf "%.1f MB/s" mbs
     else Printf.sprintf "%.0f KB/s" (mbs *. 1024.)
   in
+  (* Each line draws at the [y] it is given: the lines present stack without
+     gaps. *)
+  let line value draw = Option.map draw value in
+  let both a b =
+    match (a, b) with Some a, Some b -> Some (a, b) | _ -> None
+  in
+  let lines =
+    List.filter_map Fun.id
+      [
+        line (both v.cpu_user v.cpu_system) (fun (cpu_user, cpu_system) ->
+            fun c ~y ~width ->
+             draw_cpu_bar c ~y ~width ~label:"CPU  " ~cpu_user ~cpu_system
+               ~spark:cpu_spark);
+        line (both v.mem_pct v.mem_gb) (fun (mem_pct, mem_gb) ->
+            fun c ~y ~width ->
+             draw_bar c ~y ~width ~label:"Mem  "
+               ~value_text:(Printf.sprintf "%.0f%%  %.1fG" mem_pct mem_gb)
+               ~percent:mem_pct ~spark:(spark "sys/mem_used_pct"));
+        line v.proc_cpu (fun proc_cpu c ~y ~width ->
+            draw_bar c ~y ~width ~label:"Proc "
+              ~value_text:(Printf.sprintf "%.0f%%" proc_cpu)
+              ~percent:proc_cpu ~spark:(spark "sys/proc_cpu_pct"));
+        line v.proc_mem_mb (fun proc_mem_mb c ~y ~width ->
+            draw_value_line c ~y ~width ~label:"RSS  "
+              ~value_text:(Printf.sprintf "%.0fM" proc_mem_mb)
+              ~spark:(spark "sys/proc_mem_mb"));
+        line v.disk_util_pct (fun disk_util_pct c ~y ~width ->
+            draw_bar c ~y ~width ~label:"Disk "
+              ~value_text:(Printf.sprintf "%.0f%%" disk_util_pct)
+              ~percent:disk_util_pct
+              ~spark:(spark "sys/disk_util_pct"));
+        line v.disk_read_mbs (fun disk_read_mbs c ~y ~width ->
+            draw_value_line c ~y ~width ~label:"  R  "
+              ~value_text:(format_rate disk_read_mbs)
+              ~spark:(spark "sys/disk_read_mbs"));
+        line v.disk_write_mbs (fun disk_write_mbs c ~y ~width ->
+            draw_value_line c ~y ~width ~label:"  W  "
+              ~value_text:(format_rate disk_write_mbs)
+              ~spark:(spark "sys/disk_write_mbs"));
+      ]
+  in
   canvas
-    ~size:{ width = pct 100; height = px 7 }
+    ~size:{ width = pct 100; height = px (List.length lines) }
     (fun c ~dt:_ ->
       Canvas.clear c;
-      let w = Canvas.width c in
-      draw_cpu_bar c ~y:0 ~width:w ~label:"CPU  " ~cpu_user:v.cpu_user
-        ~cpu_system:v.cpu_system ~spark:cpu_spark;
-      draw_bar c ~y:1 ~width:w ~label:"Mem  "
-        ~value_text:(Printf.sprintf "%.0f%%  %.1fG" v.mem_pct v.mem_gb)
-        ~percent:v.mem_pct ~spark:(spark "sys/mem_used_pct");
-      draw_bar c ~y:2 ~width:w ~label:"Proc "
-        ~value_text:(Printf.sprintf "%.0f%%" v.proc_cpu)
-        ~percent:v.proc_cpu ~spark:(spark "sys/proc_cpu_pct");
-      draw_value_line c ~y:3 ~width:w ~label:"RSS  "
-        ~value_text:(Printf.sprintf "%.0fM" v.proc_mem_mb)
-        ~spark:(spark "sys/proc_mem_mb");
-      draw_bar c ~y:4 ~width:w ~label:"Disk "
-        ~value_text:(Printf.sprintf "%.0f%%" v.disk_util_pct)
-        ~percent:v.disk_util_pct
-        ~spark:(spark "sys/disk_util_pct");
-      draw_value_line c ~y:5 ~width:w ~label:"  R  "
-        ~value_text:(format_rate v.disk_read_mbs)
-        ~spark:(spark "sys/disk_read_mbs");
-      draw_value_line c ~y:6 ~width:w ~label:"  W  "
-        ~value_text:(format_rate v.disk_write_mbs)
-        ~spark:(spark "sys/disk_write_mbs"))
+      let width = Canvas.width c in
+      List.iteri (fun y draw -> draw c ~y ~width) lines)

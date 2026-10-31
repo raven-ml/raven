@@ -3,10 +3,26 @@
  *
  * Platform-specific implementations.
  * macOS uses Mach APIs, IOKit, and libproc.
- * Linux uses /proc filesystem (parsed in OCaml), stubs return defaults.
+ * Linux reads most statistics from /proc in OCaml.
+ * Windows uses kernel32 only.
+ * A stub that cannot read what it returns raises Failure, as the network,
+ * disk I/O, load average and process table stubs do on Windows.
  */
 
 #define _GNU_SOURCE
+
+/* _WIN32_WINNT 0x0600 (Vista) declares GetTickCount64; PSAPI_VERSION 2 maps
+   GetProcessMemoryInfo to K32GetProcessMemoryInfo, in Windows 7's kernel32,
+   so the stubs link no psapi. Both before any header: <stdint.h> fixes
+   _WIN32_WINNT. */
+#if defined(_WIN32)
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0601
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#undef PSAPI_VERSION
+#define PSAPI_VERSION 2
+#endif
 
 #include <caml/alloc.h>
 #include <caml/fail.h>
@@ -22,6 +38,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+/* psapi.h needs windows.h's types. */
+#include <psapi.h>
 #else
 #include <sys/statvfs.h>
 #endif
@@ -223,11 +241,8 @@ CAMLprim value caml_sysstat_get_memory(value unit) {
   Store_field(result, 10, caml_copy_int64(swap_total));
   Store_field(result, 11, caml_copy_int64(swap_used));
 #else
-  /* Linux: Memory stats read from /proc/meminfo in OCaml */
-  result = caml_alloc_tuple(12);
-  for (int i = 0; i < 12; i++) {
-    Store_field(result, i, caml_copy_int64(0));
-  }
+  /* Linux reads /proc/meminfo in OCaml. */
+  caml_failwith("no memory statistics on this system");
 #endif
 
   CAMLreturn(result);
@@ -282,12 +297,10 @@ CAMLprim value caml_sysstat_get_network_io(value unit) {
   CAMLreturn(result);
 
 fail:
-  result = caml_alloc_tuple(4);
-  for (int i = 0; i < 4; i++) Store_field(result, i, caml_copy_int64(0));
+  caml_failwith("reading the interface list failed");
 #else
-  /* Linux: Network stats read from /proc/net/dev in OCaml */
-  result = caml_alloc_tuple(4);
-  for (int i = 0; i < 4; i++) Store_field(result, i, caml_copy_int64(0));
+  /* Linux reads /proc/net/dev in OCaml. */
+  caml_failwith("no network counters on this system");
 #endif
 
   CAMLreturn(result);
@@ -307,9 +320,7 @@ CAMLprim value caml_sysstat_get_disk_io(value unit) {
       &drive_list);
 
   if (kr != KERN_SUCCESS) {
-    result = caml_alloc_tuple(4);
-    for (int i = 0; i < 4; i++) Store_field(result, i, caml_copy_int64(0));
-    CAMLreturn(result);
+    caml_failwith("IOServiceGetMatchingServices failed");
   }
 
   uint64_t read_sum = 0, write_sum = 0, time_sum = 0;
@@ -380,11 +391,8 @@ CAMLprim value caml_sysstat_get_disk_io(value unit) {
               caml_copy_int64((int64_t)(time_sum / 1000000))); /* ns to ms */
   Store_field(result, 3, caml_copy_int64((int64_t)num_disks));
 #else
-  /* Linux: Disk stats read from /proc/diskstats in OCaml */
-  result = caml_alloc_tuple(4);
-  for (int i = 0; i < 4; i++) {
-    Store_field(result, i, caml_copy_int64(0));
-  }
+  /* Linux reads /proc/diskstats in OCaml. */
+  caml_failwith("no disk I/O counters on this system");
 #endif
 
   CAMLreturn(result);
@@ -398,22 +406,15 @@ CAMLprim value caml_sysstat_list_pids(value unit) {
 
 #ifdef __APPLE__
   int bufsize = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
-  if (bufsize <= 0) {
-    result = caml_alloc(0, 0);
-    CAMLreturn(result);
-  }
+  if (bufsize <= 0) caml_failwith("proc_listpids failed");
 
   pid_t* pids = malloc(bufsize);
-  if (!pids) {
-    result = caml_alloc(0, 0);
-    CAMLreturn(result);
-  }
+  if (!pids) caml_failwith("proc_listpids failed");
 
   int bytes_written = proc_listpids(PROC_ALL_PIDS, 0, pids, bufsize);
   if (bytes_written <= 0) {
     free(pids);
-    result = caml_alloc(0, 0);
-    CAMLreturn(result);
+    caml_failwith("proc_listpids failed");
   }
 
   int num_pids = bytes_written / (int)sizeof(pid_t);
@@ -425,8 +426,8 @@ CAMLprim value caml_sysstat_list_pids(value unit) {
 
   free(pids);
 #else
-  /* Linux: PIDs enumerated from /proc in OCaml */
-  result = caml_alloc(0, 0);
+  /* Linux enumerates /proc in OCaml. */
+  caml_failwith("no process table on this system");
 #endif
 
   CAMLreturn(result);
@@ -652,20 +653,19 @@ CAMLprim value caml_sysstat_get_loadavg(value unit) {
   CAMLparam1(unit);
   CAMLlocal1(result);
 
-  double loadavg[3];
 #if defined(_WIN32)
-  /* Windows keeps no load average. */
-  loadavg[0] = loadavg[1] = loadavg[2] = 0.0;
+  caml_failwith("Windows keeps no load average");
 #else
+  double loadavg[3];
   if (getloadavg(loadavg, 3) != 3) {
-    loadavg[0] = loadavg[1] = loadavg[2] = 0.0;
+    caml_failwith("getloadavg failed");
   }
-#endif
 
   result = caml_alloc_tuple(3);
   Store_field(result, 0, caml_copy_double(loadavg[0]));
   Store_field(result, 1, caml_copy_double(loadavg[1]));
   Store_field(result, 2, caml_copy_double(loadavg[2]));
+#endif
 
   CAMLreturn(result);
 }
@@ -680,7 +680,7 @@ CAMLprim value caml_sysstat_get_uptime(value unit) {
   int mib[2] = {CTL_KERN, KERN_BOOTTIME};
 
   if (sysctl(mib, 2, &boottime, &size, NULL, 0) != 0) {
-    CAMLreturn(caml_copy_int64(0));
+    caml_failwith("sysctl KERN_BOOTTIME failed");
   }
 
   struct timeval now;
@@ -688,18 +688,18 @@ CAMLprim value caml_sysstat_get_uptime(value unit) {
 
   int64_t uptime = (int64_t)(now.tv_sec - boottime.tv_sec);
   CAMLreturn(caml_copy_int64(uptime));
+#elif defined(_WIN32)
+  /* Milliseconds since boot. */
+  CAMLreturn(caml_copy_int64((int64_t)(GetTickCount64() / 1000)));
 #else
-  /* Linux: read from /proc/uptime */
+  /* Linux */
   FILE* f = fopen("/proc/uptime", "r");
-  if (!f) {
-    CAMLreturn(caml_copy_int64(0));
-  }
+  if (!f) caml_failwith("cannot open /proc/uptime");
 
   double uptime_secs = 0.0;
-  if (fscanf(f, "%lf", &uptime_secs) != 1) {
-    uptime_secs = 0.0;
-  }
+  int n = fscanf(f, "%lf", &uptime_secs);
   fclose(f);
+  if (n != 1) caml_failwith("cannot read /proc/uptime");
 
   CAMLreturn(caml_copy_int64((int64_t)uptime_secs));
 #endif
@@ -761,20 +761,30 @@ CAMLprim value caml_sysstat_proc_self_mem(value unit) {
   mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
   kern_return_t kr = task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
                                (task_info_t)&info, &count);
-  if (kr != KERN_SUCCESS) {
-    tup = caml_alloc_tuple(2);
-    Store_field(tup, 0, caml_copy_int64(-1));
-    Store_field(tup, 1, caml_copy_int64(-1));
-    CAMLreturn(tup);
-  }
+  if (kr != KERN_SUCCESS) caml_failwith("task_info failed");
   tup = caml_alloc_tuple(2);
   Store_field(tup, 0, caml_copy_int64((int64_t)info.resident_size));
   Store_field(tup, 1, caml_copy_int64((int64_t)info.virtual_size));
-#else
-  /* Linux: Handled in OCaml via /proc/self/stat */
+#elif defined(_WIN32)
+  /* The working set is resident. The virtual size is the user address space
+     reserved or committed, which GlobalMemoryStatusEx gives for the calling
+     process. */
+  PROCESS_MEMORY_COUNTERS pmc;
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc)) {
+    caml_failwith("GetProcessMemoryInfo failed");
+  }
+  MEMORYSTATUSEX status;
+  status.dwLength = sizeof status;
+  if (!GlobalMemoryStatusEx(&status)) {
+    caml_failwith("GlobalMemoryStatusEx failed");
+  }
+  DWORDLONG vsize = status.ullTotalVirtual - status.ullAvailVirtual;
   tup = caml_alloc_tuple(2);
-  Store_field(tup, 0, caml_copy_int64(-1));
-  Store_field(tup, 1, caml_copy_int64(-1));
+  Store_field(tup, 0, caml_copy_int64((int64_t)pmc.WorkingSetSize));
+  Store_field(tup, 1, caml_copy_int64((int64_t)vsize));
+#else
+  /* Linux reads /proc/self/stat in OCaml. */
+  caml_failwith("no process memory statistics on this system");
 #endif
 
   CAMLreturn(tup);
@@ -802,10 +812,7 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
 #ifdef __APPLE__
   struct statfs* mntbuf;
   int count = getmntinfo(&mntbuf, MNT_NOWAIT);
-  if (count <= 0) {
-    result = caml_alloc(0, 0);
-    CAMLreturn(result);
-  }
+  if (count <= 0) caml_failwith("getmntinfo failed");
 
   result = caml_alloc(count, 0);
   for (int i = 0; i < count; i++) {
@@ -820,10 +827,7 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
   }
 #elif defined(__linux__)
   FILE* f = setmntent("/proc/mounts", "r");
-  if (!f) {
-    result = caml_alloc(0, 0);
-    CAMLreturn(result);
-  }
+  if (!f) caml_failwith("cannot open /proc/mounts");
 
   /* Read all entries into a temporary buffer to avoid TOCTOU race */
   struct mount {
@@ -855,9 +859,7 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
   endmntent(f);
 
   /* Now allocate OCaml structures from the buffered data */
-  if (failed) {
-    result = caml_alloc(0, 0);
-  } else {
+  if (!failed) {
     result = caml_alloc(count, 0);
     for (size_t i = 0; i < count; i++) {
       tup = caml_alloc_tuple(3);
@@ -877,8 +879,41 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
     free(mounts[i].type);
   }
   free(mounts);
+  if (failed) caml_failwith("cannot read /proc/mounts");
+#elif defined(_WIN32)
+  /* The drive roots, such as C:\, each ended by a NUL, then an empty string:
+     26 letters of 4 bytes each fit. Only fixed drives are listed. */
+  enum { MAX_DRIVES = 26 };
+  char drives[MAX_DRIVES * 4 + 1];
+  DWORD len = GetLogicalDriveStringsA(sizeof drives, drives);
+  if (len == 0 || len > sizeof drives) {
+    caml_failwith("GetLogicalDriveStringsA failed");
+  }
+
+  char* fixed[MAX_DRIVES];
+  int count = 0;
+  for (char* d = drives; *d != '\0' && count < MAX_DRIVES; d += strlen(d) + 1) {
+    if (GetDriveTypeA(d) == DRIVE_FIXED) fixed[count++] = d;
+  }
+
+  result = caml_alloc(count, 0);
+  for (int i = 0; i < count; i++) {
+    char fstype[MAX_PATH + 1];
+    if (!GetVolumeInformationA(fixed[i], NULL, 0, NULL, NULL, NULL, fstype,
+                               sizeof fstype)) {
+      fstype[0] = '\0';
+    }
+    tup = caml_alloc_tuple(3);
+    str = caml_copy_string(fixed[i]);
+    Store_field(tup, 0, str);
+    str = caml_copy_string(fixed[i]);
+    Store_field(tup, 1, str);
+    str = caml_copy_string(fstype);
+    Store_field(tup, 2, str);
+    Store_field(result, i, tup);
+  }
 #else
-  result = caml_alloc(0, 0);
+  caml_failwith("no mount table on this system");
 #endif
 
   CAMLreturn(result);

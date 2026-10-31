@@ -80,9 +80,17 @@ Disk metrics sum the physical disks and leave out partitions and virtual
 devices. MB is 2^20 bytes, as in `sys/proc_mem_mb`. Utilization divides the
 I/O time by the interval times the number of disks, and is capped at 100.
 
+Each group above comes from one sampler of `Munin_sys.Stat`. A group whose
+sampler cannot read the system when the monitor starts is neither defined
+nor logged, as the disk I/O group on Windows. A sample that fails later
+leaves its group out of that interval, and the group's next rates are means
+over both intervals. An interval over which the wall clock stepped back logs
+no rates.
+
 ## Platform support
 
-`munin.sys` works on Linux and macOS. Platform-specific behavior:
+`munin.sys` reads every statistic on Linux and macOS, and most on Windows.
+Platform-specific behavior:
 
 - **Linux**: CPU counters are read from `/proc/stat`; memory from
   `/proc/meminfo`; process stats from `/proc/self/stat` and `Unix.times`;
@@ -93,13 +101,22 @@ I/O time by the interval times the number of disks, and is capped at 100.
   user/nice/system/idle CPU fields are populated. Disk I/O time is the sum
   of read and write request times, so overlapping requests count twice and
   `sys/disk_util_pct` reaches 100 before the disk is saturated.
+- **Windows**: CPU times come from `GetSystemTimes`; memory from
+  `GlobalMemoryStatusEx`; process memory from `GetProcessMemoryInfo`, with
+  the reserved or committed address space as virtual size; partitions from
+  the fixed drives; uptime from `GetTickCount64`. Network and disk I/O
+  counters, per-core CPU times, the process table and the load average are
+  not read: `Stat.Net.sample`, `Stat.Disk_io.sample`,
+  `Stat.Cpu.sample_per_core`, `Stat.Proc.Table.sample` and `Stat.loadavg`
+  raise `Sys_error`, and the monitor logs no disk metrics.
 
 ## TUI system panel
 
 The `munin watch` dashboard displays a system panel on the right side with
-CPU, memory, process CPU, and RSS bars. This panel reads the `sys/` metrics
-from the run's event log -- it does not perform its own sampling. If your run
-does not use `munin.sys`, the system panel shows zeroes.
+CPU, memory, process CPU, RSS and disk bars. This panel reads the `sys/`
+metrics from the run's event log -- it does not perform its own sampling. It
+shows a bar only for a metric the run has logged, so it is empty for a run
+that does not use `munin.sys`.
 
 Toggle the panel with `[` or `]` in the dashboard.
 

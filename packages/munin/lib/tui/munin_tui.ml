@@ -237,9 +237,9 @@ let view_dashboard m =
   in
   let metrics_pct = if m.show_system then 66 else 100 in
   let sys_latest tag =
-    match List.assoc_opt tag all_metrics with
-    | Some (m : Munin.Metric.sample) -> m.value
-    | None -> 0.0
+    Option.map
+      (fun (m : Munin.Metric.sample) -> m.value)
+      (List.assoc_opt tag all_metrics)
   in
   let sys_values =
     System.

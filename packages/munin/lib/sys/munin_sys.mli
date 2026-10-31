@@ -13,10 +13,12 @@
 
     {1:platform Platform support}
 
-    Supported platforms: Linux and macOS. Platform-specific behavior is
-    documented per module. Some metrics have limited availability on certain
-    platforms (e.g., macOS CPU counters populate only user/nice/system/idle
-    fields). *)
+    Every sampler reads the system on Linux and macOS. Platform-specific
+    behavior is documented per module. Some metrics have limited availability
+    on certain platforms (e.g., macOS CPU counters populate only
+    user/nice/system/idle fields). On Windows network and disk I/O counters,
+    per-core CPU times, the process table and the load average are not read,
+    and the monitor logs no disk I/O metrics. *)
 
 (** {1:sampling Sampling} *)
 
@@ -49,7 +51,15 @@ module Stat : module type of Sysstat
     {b Disk I/O:}
     - [sys/disk_read_mbs] — disk read rate in MB/s
     - [sys/disk_write_mbs] — disk write rate in MB/s
-    - [sys/disk_util_pct] — disk utilization percentage *)
+    - [sys/disk_util_pct] — disk utilization percentage
+
+    Each group of metrics above comes from one sampler of {!Stat}, the
+    per-process group from {!Stat.Proc.Self.sample}. A group whose sampler
+    raises [Sys_error] when the monitor starts is neither defined nor logged,
+    as the disk I/O group on Windows. A sample that raises later leaves its
+    group out of that interval's samples, and the group's next rates are means
+    over both intervals. An interval over which the wall clock stepped back
+    logs no rates. *)
 
 type t
 (** The type for background monitors. *)
