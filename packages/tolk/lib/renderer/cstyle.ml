@@ -298,14 +298,6 @@ let base_rewrite =
       (* casting *)
       r (Upat.op ~name:"x" Op.Cast) (fun ctx m ->
           let x = m "x" in
-          if max_numel x > 1 && addrspace x = Some Dtype.Reg then
-            Some
-              (strf "__builtin_convertvector(%s, %s)"
-                 ctx.%{nth x 0}
-                 (render_type ctx.lang x))
-          else None);
-      r (Upat.op ~name:"x" Op.Cast) (fun ctx m ->
-          let x = m "x" in
           Some (strf "(%s)" (render_cast ctx x ctx.%{nth x 0})));
       r (Upat.op ~name:"x" Op.Bitcast) (fun ctx m ->
           let x = m "x" in
