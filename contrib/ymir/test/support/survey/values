@@ -1,7 +1,7 @@
 jwst-nircam-i2d hdus 5
-jwst-nircam-i2d 1 image 32x64 8b62b0729452051a86fbf92110c970c1
-jwst-nircam-i2d 2 image 32x64 6a0711b424406216344b35fdc8fc581d
-jwst-nircam-i2d 3 image 3x32x64 b3ca90c63d9acfe7ad90e3fda4347159
+jwst-nircam-i2d 1 image 32x64 b1acca8855f9956821ca2d47289ed6d9
+jwst-nircam-i2d 2 image 32x64 4f7ac7c03f4ca025764515a1ea2ec526
+jwst-nircam-i2d 3 image 3x32x64 509e34d478329afeca7636d215ed642f
 jwst-nircam-i2d 4 column 14 4 3313627b44882e3e30a6d799076e1405
 jwst-nircam-i2d 4 column 15 4 9872fe6d63d0a6790c4aa977bd1343d2
 jwst-nircam-i2d 4 column 51 4 fe4c5109739699aa9a76cf948d901388
@@ -18,9 +18,9 @@ jwst-nircam-i2d 4 column 75 4 fb8320b48a142ee64f5db179a5073c10
 jwst-nircam-i2d 4 column 76 4 fb8320b48a142ee64f5db179a5073c10
 jwst-nircam-i2d 4 column 77 4 dd1ce84a4d41ded56510c9b6c16c5656
 jwst-nircam-i2d 4 column 78 4 dd1ce84a4d41ded56510c9b6c16c5656
-jwst-nircam-i2d 4 column 79 4 ec69ce7d35d57aa03a66683ea13e710b
-jwst-nircam-i2d 4 column 80 4 24c879be3415c81ffe7dc7b94df36d47
-jwst-nircam-i2d 4 column 81 4 87e6a219209840672fe0e789c75c9a8b
+jwst-nircam-i2d 4 column 79 4 4e9a842b81a8a5e344e542f2d085149c
+jwst-nircam-i2d 4 column 80 4 070682db9328e4af07ae0ed071f4585e
+jwst-nircam-i2d 4 column 81 4 22e3134a124898ae02871dd01ab538fe
 jwst-nircam-i2d 4 column 92 4 93b11a9ad5499a97dcf3d04615cae8c8
 jwst-nircam-i2d 4 column 93 4 250cd25c12b06e9a5a5dd0edc39021f2
 jwst-nircam-i2d 4 column 94 4 329273c038825006a9dee8287c867609
@@ -50,14 +50,14 @@ jwst-nircam-i2d 4 column 141 4 b2eda0c080d42d3dd4016f453bc7a7f6
 jwst-nircam-i2d 4 column 142 4 1e118504259f26213f951e45d78bde80
 jwst-nircam-i2d 4 column 143 4 04b2400f02193b96de3184eed00685e9
 jwst-nircam-i2d 4 column 144 4 c07abb6f3141b86ac46562e952382524
-jwst-nircam-i2d 4 column 145 4 a05ab44b985ca3488c36e6651edeafd6
-jwst-nircam-i2d 4 column 146 4 ec69ce7d35d57aa03a66683ea13e710b
-jwst-nircam-i2d 4 column 147 4 87e6a219209840672fe0e789c75c9a8b
-jwst-nircam-i2d 4 column 148 4 24c879be3415c81ffe7dc7b94df36d47
-jwst-nircam-i2d 4 column 149 4 06879ea7ee2dd95d6e3aafbb78e82742
-jwst-nircam-i2d 4 column 150 4 49d3bad0df93e2902e548ccd73d11a1c
+jwst-nircam-i2d 4 column 145 4 efb9716b5922a748990ecedb09899fc1
+jwst-nircam-i2d 4 column 146 4 4e9a842b81a8a5e344e542f2d085149c
+jwst-nircam-i2d 4 column 147 4 22e3134a124898ae02871dd01ab538fe
+jwst-nircam-i2d 4 column 148 4 070682db9328e4af07ae0ed071f4585e
+jwst-nircam-i2d 4 column 149 4 e4654537fd6b1a97ae9066f4e4cb185c
+jwst-nircam-i2d 4 column 150 4 4aa260a2d046ecb92f2a7cd8f0a49b63
 jwst-nircam-i2d 4 column 151 4 bd02bedeb423e2de89ae7ce0ca2b778a
-jwst-nircam-i2d 4 column 152 4 f84a9e359a5975088d084bfcd381ab0c
+jwst-nircam-i2d 4 column 152 4 1598f937202802790a09557f9b3c6b32
 jwst-nircam-i2d 4 column 155 4 70bc8f4b72a86921468bf8e8441dce51
 jwst-nircam-i2d 4 column 160 4 70bc8f4b72a86921468bf8e8441dce51
 jwst-nircam-i2d 4 column 165 4 70bc8f4b72a86921468bf8e8441dce51
@@ -68,28 +68,28 @@ jwst-nircam-i2d 4 column 175 4 253f8ec93b90a673f7aabedbb5d83c2a
 jwst-nircam-i2d 4 column 176 4 05d0b53a75ddae94388fa79bb6028809
 jwst-nircam-i2d 4 column 177 4 355afacefd8c880115974030950b403f
 jwst-nircam-i2d 4 column 178 4 67dfdb896e5c0d2f72f3cf4fb0721a08
-jwst-nircam-i2d 4 column 234 4 f006d26e5a00ffdee9e5fbec9595eff0
-jwst-nircam-i2d 4 column 237 4 04f4b5407077dc4eb9e4a9a5f5677fd1
-jwst-nircam-i2d 4 column 238 4 e3b6b2a26c8b882d6861feeb1ef09f7d
-jwst-nircam-i2d 4 column 239 4 6707c7027b16037449e5e5b533ae9344
-jwst-nircam-i2d 4 column 240 4 f5ca1978a8037d2522423275e746abc0
-jwst-nircam-i2d 4 column 242 4 2b566606df20b312586b7c21ead02a33
-jwst-nircam-i2d 4 column 243 4 fe42847d17f10c7c2fcbe80c18e2678c
-jwst-nircam-i2d 4 column 244 4 f9796780c6560540eb8d38045e3fa524
-jwst-nircam-i2d 4 column 246 4 e9ad219c71e8ba584b76c1c32a28625a
+jwst-nircam-i2d 4 column 235 4 fa69f511bcf938647887a54b3763dfb2
+jwst-nircam-i2d 4 column 238 4 04f4b5407077dc4eb9e4a9a5f5677fd1
+jwst-nircam-i2d 4 column 239 4 e3b6b2a26c8b882d6861feeb1ef09f7d
+jwst-nircam-i2d 4 column 240 4 6707c7027b16037449e5e5b533ae9344
+jwst-nircam-i2d 4 column 241 4 f5ca1978a8037d2522423275e746abc0
+jwst-nircam-i2d 4 column 243 4 2b566606df20b312586b7c21ead02a33
+jwst-nircam-i2d 4 column 244 4 fe42847d17f10c7c2fcbe80c18e2678c
+jwst-nircam-i2d 4 column 245 4 f9796780c6560540eb8d38045e3fa524
 jwst-nircam-i2d 4 column 247 4 e9ad219c71e8ba584b76c1c32a28625a
-jwst-nircam-i2d 4 column 248 4 9f3ffbd7888a857f2311df79213fb06b
-jwst-nircam-i2d 4 column 249 4 4e864a00041293c21889f5d5e3e115b9
-jwst-nircam-i2d 4 column 254 4 3114479bc6389569a80d14266927a0a4
-jwst-nircam-i2d 4 column 255 4 0cee7450edcd593687ebdc57a1468864
-jwst-nircam-i2d 4 column 256 4 b90f2b6fa4119c946d890bd5f95d3714
-jwst-nircam-i2d 4 column 257 4 f28d41fa8d475fb0c4fbaecc151a9d98
-jwst-nircam-i2d 4 column 259 4 047376310fd02640ef7ec88b1e648bbf
-jwst-nircam-i2d 4 column 260 4 8ee9a97f289a4d0163227426d9f2e095
-jwst-nircam-i2d 4 column 262 4 9bfb492439bc853bafec7ca742723a9b
-jwst-nircam-i2d 4 column 263 4 7d395b56dd4af8071a63ccdcc44e4638
-jwst-nircam-i2d 4 column 264 4 bc1508d75370f17174cfc6f54ca327e7
-jwst-nircam-i2d 4 column 265 4 3d8af4f722a739b59027600729c856c2
+jwst-nircam-i2d 4 column 248 4 e9ad219c71e8ba584b76c1c32a28625a
+jwst-nircam-i2d 4 column 249 4 9f3ffbd7888a857f2311df79213fb06b
+jwst-nircam-i2d 4 column 250 4 4e864a00041293c21889f5d5e3e115b9
+jwst-nircam-i2d 4 column 255 4 3114479bc6389569a80d14266927a0a4
+jwst-nircam-i2d 4 column 256 4 0cee7450edcd593687ebdc57a1468864
+jwst-nircam-i2d 4 column 257 4 b90f2b6fa4119c946d890bd5f95d3714
+jwst-nircam-i2d 4 column 258 4 f28d41fa8d475fb0c4fbaecc151a9d98
+jwst-nircam-i2d 4 column 260 4 047376310fd02640ef7ec88b1e648bbf
+jwst-nircam-i2d 4 column 261 4 8ee9a97f289a4d0163227426d9f2e095
+jwst-nircam-i2d 4 column 263 4 9bfb492439bc853bafec7ca742723a9b
+jwst-nircam-i2d 4 column 264 4 7d395b56dd4af8071a63ccdcc44e4638
+jwst-nircam-i2d 4 column 265 4 bc1508d75370f17174cfc6f54ca327e7
+jwst-nircam-i2d 4 column 266 4 3d8af4f722a739b59027600729c856c2
 hst-acs-drz hdus 5
 hst-acs-drz 1 image 32x64 d08e66cf1496d122f03d81157ae73c25
 hst-acs-drz 2 image 32x64 4a9ddf1ec6450936d7ebd3f2fe573a20

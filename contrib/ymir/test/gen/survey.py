@@ -368,8 +368,8 @@ SOURCES = [
         "MAST (JWST ERO 2736, SMACS 0723, NIRCam F090W mosaic)",
         "Public JWST data from MAST; NASA/ESA/CSA, acknowledgement requested.",
         "the JWST pipeline's headers, a 3-axis int32 context image, and a "
-        "265-column header table written through astropy by stdatamodels",
-        "48aa8ef717b677574aaf7a9c307b72574b97b6eea5c6c36b4445602a45d15c9b",
+        "266-column header table written through astropy by stdatamodels",
+        "c0245d3a497c55612ee12acdd8ce069f9f1bafdfb745fed7933239e5201c46ff",
         9,
         lambda r, h: [
             whole(r, h[0]),
