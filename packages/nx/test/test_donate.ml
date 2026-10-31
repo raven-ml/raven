@@ -462,6 +462,26 @@ let test_shards_of_one_allocation () =
   donated [| 4; 2 |] 0;
   donated [| 4; 2 |] 1
 
+(* A gather moves its positions where its route reads them: across the set,
+   over the positions' memory where the devices address it. A donation of the
+   positions afterwards writes over that memory, after the gather's reads of
+   it, which keep their values. *)
+let test_after_moved_positions () =
+  let xs = Array.init 12 Float.of_int in
+  let x = Nx.place (Two.split ~axis:0) (fresh_at [| 4; 3 |] xs) in
+  let p = Nx.create Nx.int64 [| 2 |] [| 2L; 0L |] in
+  let p = Nx.place (Nx.Placement.device Two.v (Nx_support.memory 1)) p in
+  let p = Nx.add p (Nx.zeros_like p) in
+  let y = Nx.take ~axis:1 p x in
+  let q = Nx.add_s (Nx.donate p) 1L in
+  equal ~msg:"the gather" (array float_exact)
+    [| 2.; 0.; 5.; 3.; 8.; 6.; 11.; 9. |]
+    (elements y);
+  equal ~msg:"the donation" (array int64) [| 3L; 1L |] (elements q);
+  let z = Nx.take ~axis:1 (Nx.sub_s q 1L) x in
+  equal ~msg:"a gather by the donation's result" (array float_exact)
+    (elements y) (elements z)
+
 let test_is_handle () =
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
@@ -2985,6 +3005,8 @@ let () =
              test_consumer_frees_every_handle;
              test "two values a call gives back over one donor stay apart"
                test_given_back_twice;
+             test "a donation after a gather moved its positions"
+               test_after_moved_positions;
            ];
          group "reuse"
            [
