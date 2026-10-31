@@ -17,9 +17,18 @@ type cl100k = { digits : int; marks : bool }
 type o200k = { digits : int; contractions : bool }
 type walker = Gpt2 | Cl100k of cl100k | O200k of o200k
 
+(* The walkers a recognised split pattern runs on. *)
+module Split_walker = struct
+  type t = Cl100k of cl100k | O200k of o200k
+end
+
 type pattern =
   | Literal of string
-  | Regex of { source : string; compiled : Regex.t; walker : walker option }
+  | Regex of {
+      source : string;
+      compiled : Regex.t;
+      walker : Split_walker.t option;
+    }
 
 type t =
   | Byte_level of {
@@ -357,13 +366,13 @@ let fill_byte_level s ~pos ~stop spans =
 let cl100k_patterns =
   [
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
-      Cl100k { digits = 3; marks = false } );
+      Split_walker.Cl100k { digits = 3; marks = false } );
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+|re},
-      Cl100k { digits = 3; marks = false } );
+      Split_walker.Cl100k { digits = 3; marks = false } );
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
-      Cl100k { digits = 1; marks = false } );
+      Split_walker.Cl100k { digits = 1; marks = false } );
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
-      Cl100k { digits = 1; marks = true } );
+      Split_walker.Cl100k { digits = 1; marks = true } );
   ]
 
 let k_stray = 4
@@ -714,7 +723,7 @@ let o200k_patterns =
           {re|\s+(?!\S)|re};
           {re|\s+|re};
         ],
-      O200k { digits = 3; contractions = true } );
+      Split_walker.O200k { digits = 3; contractions = true } );
     ( String.concat "|"
         [
           {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|re};
@@ -725,7 +734,7 @@ let o200k_patterns =
           {re|\s+(?!\S)|re};
           {re|\s+|re};
         ],
-      O200k { digits = 1; contractions = false } );
+      Split_walker.O200k { digits = 1; contractions = false } );
   ]
 
 (* The walker of a split and its [gaps], when the pattern is a recognised one
@@ -1372,10 +1381,11 @@ let rec fill_walk t s ~pos ~stop spans =
       fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
   | Split { pattern = Regex { compiled; _ } as pattern; behavior; invert } -> (
       match split_walker pattern behavior ~invert with
-      | Some (Cl100k walker, gaps) ->
+      | Some (Split_walker.Cl100k walker, gaps) ->
           fill_cl100k walker ~gaps s ~pos ~stop spans
-      | Some (O200k walker, gaps) -> fill_o200k walker ~gaps s ~pos ~stop spans
-      | Some (Gpt2, _) | None ->
+      | Some (Split_walker.O200k walker, gaps) ->
+          fill_o200k walker ~gaps s ~pos ~stop spans
+      | None ->
           fill_split_regex ~regex:compiled ~behavior ~invert s ~pos ~stop spans)
   | Char_delimiter delimiter ->
       fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
@@ -1457,7 +1467,8 @@ let byte_level_walker t =
        Split { pattern; behavior; invert }; Byte_level { use_regex = false; _ };
       ] -> (
           match split_walker pattern behavior ~invert with
-          | Some (walker, true) -> Some walker
+          | Some (Split_walker.Cl100k walker, true) -> Some (Cl100k walker)
+          | Some (Split_walker.O200k walker, true) -> Some (O200k walker)
           | Some (_, false) | None -> None)
       | _ -> None)
   | _ -> None
@@ -1737,13 +1748,13 @@ let rec pp ppf = function
       Format.fprintf ppf "@[<1>Split(Regex(%S),@ %s,@ invert=%b%t)@]" source
         (behavior_to_string behavior) invert (fun ppf ->
           match split_walker pattern behavior ~invert with
-          | Some (Cl100k { digits; marks }, _) ->
+          | Some (Split_walker.Cl100k { digits; marks }, _) ->
               Format.fprintf ppf ",@ walker=cl100k(digits=%d,@ marks=%b)" digits
                 marks
-          | Some (O200k { digits; contractions }, _) ->
+          | Some (Split_walker.O200k { digits; contractions }, _) ->
               Format.fprintf ppf ",@ walker=o200k(digits=%d,@ contractions=%b)"
                 digits contractions
-          | Some (Gpt2, _) | None -> ())
+          | None -> ())
   | Char_delimiter delimiter -> Format.fprintf ppf "CharDelimiter(%S)" delimiter
   | Digits { individual } ->
       Format.fprintf ppf "Digits(individual=%b)" individual
