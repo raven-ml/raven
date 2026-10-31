@@ -370,6 +370,31 @@ let compiling =
           match calls_of (Realize.lower_and_compile ~targets l) with
           | [ c0; c1 ] -> equal uop (body_of c0) (body_of c1)
           | cs -> failf "two calls, not %d" (List.length cs));
+      test "compiles the kernels of one key once, each on its call's device"
+        (fun () ->
+          let fresh = float_of_int (Ops.unique_num ()) in
+          let call d =
+            let scale x = Ops.mul x (Ops.float ~dtype:Float32 fresh) in
+            let kernel = map_kernel ~device:d scale in
+            Ops.call kernel [ storage ~device:d 4; storage ~device:d 4 ]
+          in
+          let devices c =
+            List.sort_uniq String.compare
+              (List.filter_map
+                 (fun u ->
+                   match Ops.arg u with
+                   | Ops.Param { device = Some d; _ } -> Some d
+                   | _ -> None)
+                 (Ops.toposort ~calls:Enter (body_of c)))
+          in
+          let before = Codegen.programs () in
+          let l =
+            Realize.lower_and_compile ~targets
+              (linear [ call "CPU:1"; call "CPU:2" ])
+          in
+          equal int ~msg:"programs made" 1 (Codegen.programs () - before);
+          equal (list (list string)) [ [ "CPU:1" ]; [ "CPU:2" ] ]
+            (List.map devices (calls_of l)));
       test "keeps each call's arguments" (fun () ->
           let args = [ storage 4; storage 4 ] in
           match

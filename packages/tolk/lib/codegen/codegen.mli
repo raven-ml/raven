@@ -143,6 +143,16 @@ val to_program :
     {!full_rewrite_to_sink} does. Raises
     {!Renderer.Compiler.Compile_error} if the compiler rejects the source. *)
 
+val program_key : Ops.t -> Renderer.t -> string
+(** [program_key ast ren] is the key under which {!to_program} keeps the
+    program of the kernel's sink [ast] for [ren], in memory and on disk: two
+    kernels of one key take one program. *)
+
+val programs : unit -> int
+(** [programs ()] is the number of programs {!to_program} has made in this
+    process, from their kernels or read back from disk. A call that finds its
+    program kept in memory makes none, and one that raises makes none. *)
+
 val made : Ops.t -> Renderer.t -> Ops.t option
 (** [made ast ren] is the program {!to_program} has made of [ast] for [ren] in
     this process, kept in memory under the same key, if it has, its

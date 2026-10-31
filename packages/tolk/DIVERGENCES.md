@@ -4608,7 +4608,9 @@ fold wraps integers and holds its float bound`, hold.
   (`schedule/rangeify.py:278`, `debuf`), so each device makes its own
   program of one kernel.
 - **tolk:** `Codegen.program_key` (`Codegen.params`) and
-  `Codegen.to_program` (`Codegen.rename`).
+  `Codegen.to_program` (`Codegen.rename`); `Realize.lower_and_compile`
+  compiles one kernel of each key, as tinygrad's does
+  (`engine/realize.py:241`).
 - **Differs:** the key of a program is its kernel with each parameter that
   names a device naming its target's (`CPU`, `CUDA`), so a kernel on the
   target's first device is its own key. A kernel for one device takes the
@@ -4624,3 +4626,4 @@ fold wraps integers and holds its float bound`, hold.
   the first; with them erased, 0.24 s.
 - **Pinned by:** `Tolk.Codegen › programs are kept › a program for one device
   serves another of its target`; rune's `Rune.jit over several devices`.
+

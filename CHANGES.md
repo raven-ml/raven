@@ -838,6 +838,10 @@ thread.
 
 ### Tolk (new)
 
+- `Codegen.program_key` gives the key a program is kept under, and
+  `Codegen.programs` counts the programs made. `Realize.lower_and_compile`
+  compiles one kernel of each key, so kernels that differ in their
+  parameters' devices alone no longer wait for one another's compilation.
 - `Codegen.to_program` gives a kernel the program made for another device of
   its target, in memory and on disk: a program's key no longer holds its
   parameters' devices, so the devices of a set compile each kernel once.

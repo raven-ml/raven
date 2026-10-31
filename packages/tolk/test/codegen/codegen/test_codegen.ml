@@ -716,10 +716,14 @@ let serves_devices first () =
     Ops.substitute ~calls:Enter ~pass:Once k
       (List.filter_map param (Ops.toposort ~calls:Enter k))
   in
+  let before = Codegen.programs () in
   let p = Codegen.to_program k r in
   let k' = on "CPU:1" in
+  equal string ~msg:"one key" (Codegen.program_key k r)
+    (Codegen.program_key k' r);
   let again = Codegen.to_program k' r in
   equal int ~msg:"compilations" 1 (Atomic.get compiled);
+  equal int ~msg:"programs made" 1 (Codegen.programs () - before);
   let devices prg =
     List.filter_map
       (fun u ->

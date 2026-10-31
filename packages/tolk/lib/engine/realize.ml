@@ -126,23 +126,20 @@ let lower_and_compile ?search ~targets linear =
         else Option.map (fun a -> (c, a)) (get_call_to_compile targets c))
       (toposort ~calls:Skip linear)
   in
-  let same (a0, r0) (a1, r1) = a0 == a1 && r0 == r1 in
-  let todo =
-    List.fold_left
-      (fun todo (_, a) -> if List.exists (same a) todo then todo else a :: todo)
-      [] calls
-    |> List.rev
+  (* One kernel of each program key, as kernels of one key take one program:
+     those that differ only in their parameters' devices (D170). Only the
+     kernels without a program are compiled, so a schedule whose programs are
+     all made spawns no domain. *)
+  let seen = Hashtbl.create 64 in
+  let first (_, (ast, ren)) =
+    let key = Codegen.program_key ast ren in
+    if Hashtbl.mem seen key then None
+    else begin
+      Hashtbl.replace seen key ();
+      match Codegen.made ast ren with Some _ -> None | None -> Some (ast, ren)
+    end
   in
-  (* Only the kernels without a program are compiled, so a schedule whose
-     programs are all made spawns no domain. *)
-  let made, missing =
-    List.partition_map
-      (fun ((ast, ren) as a) ->
-        match Codegen.made ast ren with
-        | Some prg -> Left (a, prg)
-        | None -> Right a)
-      todo
-  in
+  let missing = List.filter_map first calls in
   (* A beam search times its candidates, which concurrent compilations would
      disturb. *)
   let beam (_, (ast, _)) =
@@ -153,15 +150,12 @@ let lower_and_compile ?search ~targets linear =
       List.map
     else Worker.map
   in
-  let compiled =
-    made
-    @ List.combine missing
-        (map (fun (ast, ren) -> Codegen.to_program ?beam:search ast ren) missing)
-  in
-  let program a = snd (List.find (fun (b, _) -> same a b) compiled) in
+  let compile (ast, ren) = Codegen.to_program ?beam:search ast ren in
+  ignore (map compile missing);
+  (* Each kernel now finds its program kept, its parameters on its devices. *)
   substitute ~calls:Skip ~pass:Fixed_point linear
     (List.map
-       (fun (c, a) -> (c, replace c ~src:(program a :: List.tl (src c))))
+       (fun (c, a) -> (c, replace c ~src:(compile a :: List.tl (src c))))
        calls)
 
 (* A kernel that asks for no beam search asks for one of the setting's width. *)

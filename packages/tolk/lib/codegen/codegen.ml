@@ -1677,6 +1677,8 @@ let keyed p ren =
       Atomic.set p.key (Some (text, key));
       key
 
+let program_key ast ren = keyed (params ast ren) ren
+
 (* A program is kept on disk up to its source, only while its compiler's
    binaries are, under a table that names the compiler: its binary is the
    compiler's entry for that source, so each binary is stored once. A kernel
@@ -1688,6 +1690,9 @@ let kept (k : kernel_info) (ren : Renderer.t) =
   && k.beam = 0
 
 let rendered prg = op prg = Op.Program && List.length (src prg) = 3
+
+let programs_made = Atomic.make 0
+let programs () = Atomic.get programs_made
 
 (* A program read back is compiled as a made one is, so it shows its source
    from DEBUG 4 and its instructions from 7. *)
@@ -1704,6 +1709,7 @@ let made_program ?beam ~key ~kernel ast (ren : Renderer.t) =
     Option.get
       (do_compile (ren, Renderer.Compiler.compile_cached) prg (nth prg 2))
   in
+  Atomic.incr programs_made;
   (prg, read)
 
 (* [prg] with each parameter that names a device naming the one [devices]
