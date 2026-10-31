@@ -1249,9 +1249,10 @@ val encode :
 
     Added tokens occurring in [text] are matched atomically and emitted with
     their own ID, whatever [add_special_tokens] is. Text that comes from a user
-    is encoded with [~match_special_tokens:false], so that typing a token such
-    as ["<|endoftext|>"] gives the model its text rather than the control
-    token.
+    must be encoded with [~match_special_tokens:false], so that typing
+    ["<|endoftext|>"] does not end the text. The model can still give a special
+    token's ID when its vocabulary holds that token's text as a piece, as
+    T5's holds ["</s>"].
 
     {!Encoding.offsets} are byte spans of [text] itself, not of the normalized
     form: a token of ["café"] under a normalizer that strips accents reports the
@@ -1362,7 +1363,8 @@ val encode_batch_ids :
 
 val decode : t -> ?skip_special_tokens:bool -> int array -> string
 (** [decode t ids] is the text obtained by decoding [ids] through [t]'s
-    vocabulary and decoder.
+    vocabulary and decoder. An ID outside the vocabulary gives no text. A
+    tokenizer without a decoder joins the tokens with a space between two.
 
     [skip_special_tokens] defaults to [false]. It drops the added tokens whose
     [special] is set, and only those. *)
@@ -1377,12 +1379,28 @@ val decode_batch :
 
     A model generates its output one token at a time, and a reader wants each
     piece of text as soon as it is final. Decoding each token on its own gets
-    that text wrong: the decoder of a byte-level model may need several
-    tokens for one character outside ASCII, and a SentencePiece decoder drops
-    the space before the first word only. A {e stream} decodes the tokens as
-    they come, keeping the ones whose text is not final yet. It is a value: a
-    step gives a new stream and leaves the old one as it was, so a stream can
-    be kept to decode another continuation from it.
+    that text wrong. The decoder of a byte-level model may need several tokens
+    for one character outside ASCII, and a SentencePiece decoder drops the
+    space before the first word only. A {e stream} decodes the tokens as they
+    come and gives out the text no later token changes, keeping the rest. A
+    stream is a value. A step gives a new stream and leaves the old one as it
+    was, so a stream can be kept to decode another continuation from it.
+
+    A stream keeps text back in these cases only, and gives it out once the
+    token that settles it arrives or at {!decode_finish}:
+    - under a {!Decoder.bpe} decoder, the last token, while it holds the
+      suffix, which becomes a space unless the token is the last;
+    - under {!Decoder.byte_fallback}, an open run of byte tokens, however
+      long, since one byte that is not UTF-8 turns each byte of the run into a
+      replacement character;
+    - under {!Decoder.byte_level}, up to three bytes that start a character
+      not yet complete. A byte no later byte can complete, such as [\xff], is
+      given its replacement character at once;
+    - after a {!Decoder.byte_level} or {!Decoder.fuse} decoder in a
+      {!Decoder.sequence}, the start of a {!Decoder.replace} pattern that may
+      yet complete, the occurrences a {!Decoder.strip} may yet cut from either
+      end, and everything when a {!Decoder.byte_level} or
+      {!Decoder.byte_fallback} decoder follows, since it reads the text whole.
 
     {[
       let print_tokens tokenizer ids =
@@ -1405,13 +1423,13 @@ val decode_stream : ?skip_special_tokens:bool -> t -> stream
 
 val decode_step : stream -> int -> string * stream
 (** [decode_step s id] is [(text, s')], where [s'] is [s] fed [id] and [text]
-    is the text that becomes final with it: no token fed after [id] changes it.
-    [text] is often empty, as when [id] ends in part of a character or opens a
-    run of byte-fallback tokens, whose text depends on where the run ends.
+    is the text that no id fed after [id] changes, less what earlier steps
+    gave. [text] is empty when [id] settles nothing, as when it ends in part of
+    a character or extends a run of byte-fallback tokens.
 
     The texts of every step, followed by {!decode_finish}, make up {!decode}
-    of the ids fed, and each is valid UTF-8 when the vocabulary is: no text
-    ends inside a character. *)
+    of the ids fed. Each is valid UTF-8 when the vocabulary is, as no text ends
+    inside a character. *)
 
 val decode_finish : stream -> string
 (** [decode_finish s] is the text of the ids fed to [s] that no step has given

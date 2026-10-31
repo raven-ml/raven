@@ -3750,8 +3750,12 @@ thread.
   character or an open run of byte-fallback tokens.
 - `encode` and the other encode functions take `~match_special_tokens:false`,
   which encodes the text of special tokens in the input as ordinary text, as
-  Hugging Face's `encode_special_tokens`, so text from a user cannot produce
-  control tokens.
+  Hugging Face's `encode_special_tokens`. Text from a user must be encoded with
+  it; the model can still give a special token's id when its vocabulary holds
+  that text as a piece.
+- `decode` on a tokenizer without a decoder joins the tokens with spaces for
+  every model, as Hugging Face does; it joined them with nothing except for
+  word-level models.
 - `Pre_tokenizer.unicode_scripts` reads scripts from Unicode 17.0.0, the data
   of `\p{..}` in `split_regex`, rather than from uucp's Unicode 18.0.0: a
   character assigned in 18.0.0, such as U+0558, now joins the piece around it

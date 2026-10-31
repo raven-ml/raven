@@ -122,12 +122,12 @@ val stream : t -> stream
 (** [stream decoder] is a decoding by [decoder] that has been fed no token. *)
 
 val step : stream -> string -> string * stream
-(** [step s token] is [(text, s')]: [s] fed [token], and the text that becomes
-    final with it, which no later token can change. Every text {!step} and
-    {!finish} give for a list of tokens, in order, make up the text {!decode}
-    gives for it. A character's bytes are never split between two texts, and
-    text that depends on tokens still to come, such as an open run of
-    {!byte_fallback} tokens, is kept until they arrive. *)
+(** [step s token] is [(text, s')], where [s'] is [s] fed [token] and [text]
+    is the text no later token changes, less what earlier steps gave. Every
+    text {!step} and {!finish} give for a list of tokens, in order, make up the
+    text {!decode} gives for it. A character's bytes are never split between
+    two texts, and text that depends on tokens still to come, such as an open
+    run of {!byte_fallback} tokens, is kept until they arrive. *)
 
 val finish : stream -> string
 (** [finish s] is the text of [s] not yet given out, decoded as the end of the

@@ -1571,16 +1571,13 @@ let decode t ?(skip_special_tokens = false) ids =
   in
   match t.decoder with
   | Some decoder -> Decoder.decode decoder tokens
-  | None -> (
-      match t.algorithm with
-      | Alg_wordlevel _ -> String.concat " " tokens
-      | _ -> String.concat "" tokens)
+  | None -> String.concat " " tokens
 
 let decode_batch t ?(skip_special_tokens = false) id_lists =
   List.map (decode t ~skip_special_tokens) id_lists
 
-(* A tokenizer without a decoder joins its tokens, with a space between two for
-   a word-level model, so the next text is known with each token. *)
+(* A tokenizer without a decoder joins its tokens with spaces, so the text of
+   each token is known as it arrives. *)
 type decoding = Decoding of Decoder.stream | Joining of { first : bool }
 
 type stream = { tokenizer : t; skip_special_tokens : bool; decoding : decoding }
@@ -1605,11 +1602,7 @@ let decode_step s id =
       let text, stream = Decoder.step stream token in
       (text, { s with decoding = Decoding stream })
   | Some token, Joining { first } ->
-      let text =
-        match t.algorithm with
-        | Alg_wordlevel _ when not first -> " " ^ token
-        | _ -> token
-      in
+      let text = if first then token else " " ^ token in
       (text, { s with decoding = Joining { first = false } })
 
 let decode_finish s =

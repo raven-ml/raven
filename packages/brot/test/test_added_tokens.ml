@@ -86,12 +86,12 @@ let test_special_tokens_mask () =
 
 let test_decode_skips_special_only () =
   let t = tokenizer [ added_token "<s>" ] in
-  equal ~msg:"special kept" string "a<s>b" (decode t (ids_of t "a<s>b"));
-  equal ~msg:"special skipped" string "ab"
+  equal ~msg:"special kept" string "a <s> b" (decode t (ids_of t "a<s>b"));
+  equal ~msg:"special skipped" string "a b"
     (decode t ~skip_special_tokens:true (ids_of t "a<s>b"));
   let t = tokenizer [ added_token ~special:false "<s>" ] in
-  equal ~msg:"plain kept" string "a<s>b" (decode t (ids_of t "a<s>b"));
-  equal ~msg:"plain not skipped" string "a<s>b"
+  equal ~msg:"plain kept" string "a <s> b" (decode t (ids_of t "a<s>b"));
+  equal ~msg:"plain not skipped" string "a <s> b"
     (decode t ~skip_special_tokens:true (ids_of t "a<s>b"))
 
 (* An added token the model does not hold is numbered from the end of the model
@@ -148,7 +148,7 @@ let test_role_tokens () =
     (List.map (fun (a : added_token) -> a.content) (added_tokens held));
   equal ~msg:"keeps the model id" (array int) [| 0; 2; 1 |]
     (ids_of held "a[PAD]b");
-  equal ~msg:"skipped when decoding" string "ab"
+  equal ~msg:"skipped when decoding" string "a b"
     (decode held ~skip_special_tokens:true (ids_of held "a[PAD]b"));
   let absent =
     bpe ~vocab:[ ("a", 0); ("b", 1) ] ~merges:[] ~pad_token:"[PAD]" ()
@@ -282,9 +282,9 @@ let test_json_round_trip () =
       equal ~msg:"ids" (array int) (ids_of t "a<s>b") (ids_of reloaded "a<s>b");
       equal ~msg:"lstrip survives" (array int) [| 0; 18 |]
         (ids_of reloaded "a <p>");
-      equal ~msg:"special survives" string "ab"
+      equal ~msg:"special survives" string "a b"
         (decode reloaded ~skip_special_tokens:true (ids_of reloaded "a<s>b"));
-      equal ~msg:"plain survives" string "a<p>"
+      equal ~msg:"plain survives" string "a <p>"
         (decode reloaded ~skip_special_tokens:true (ids_of reloaded "a <p>"))
 
 (* The scan skips to the next byte that can start a token — with a SWAR search

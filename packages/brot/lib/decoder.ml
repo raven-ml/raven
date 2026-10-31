@@ -299,9 +299,9 @@ let decode decoder tokens = String.concat "" (decode_chain decoder tokens)
 (* A stream feeds tokens through the decoders one at a time and hands on text
    as soon as no token to come can change it. The decoders before the first
    collapsing one rewrite whole tokens, each as a stage that keeps what it
-   cannot rewrite yet: [bpe] keeps the last token, which may turn out to be the
-   last of all, and [byte_fallback] an open run of byte tokens, whose text
-   depends on where the run ends. The collapse turns the tokens into text:
+   cannot rewrite yet: [bpe] keeps the last token while it holds the suffix,
+   which may turn out to end the text, and [byte_fallback] an open run of byte
+   tokens, whose text depends on where the run ends. The collapse turns the tokens into text:
    [byte_level] keeps the bytes of a character not yet complete, while [fuse],
    or the end of a list with no collapse, hands the tokens on as they are.
 
@@ -316,9 +316,11 @@ let decode decoder tokens = String.concat "" (decode_chain decoder tokens)
    far, less what a later token could change, so the text of a stream is the
    text [decode] gives for its tokens. *)
 
+(* An open run of byte tokens is kept as its bytes, last first, so that a step
+   costs one cons and the stream stays a value. *)
 type token_stage =
   | Bpe_stage of { suffix : string; held : string option }
-  | Fallback_stage of { bytes : string }
+  | Fallback_stage of { run : char list }
   | Wordpiece_stage of { prefix : string; cleanup : bool; first : bool }
   | Metaspace_stage of { replacement : string; prepended : bool; first : bool }
   | Ctc_stage of {
@@ -345,6 +347,19 @@ type stream = {
   text : text_stage list;
 }
 
+(* Whether [pattern] occurs in [text]. *)
+let contains ~pattern text =
+  let plen = String.length pattern in
+  let rec from i =
+    i + plen <= String.length text
+    && (String.sub text i plen = pattern || from (i + 1))
+  in
+  plen > 0 && from 0
+
+let run_bytes run = String.of_seq (List.to_seq (List.rev run))
+
+(* A BPE token is kept only while its suffix may still have to go: one without
+   it reads the same last or not. *)
 let token_step stage token =
   match stage with
   | Bpe_stage { suffix; held } ->
@@ -353,13 +368,15 @@ let token_step stage token =
         | None -> []
         | Some held -> [ bpe_piece ~suffix ~last:false held ]
       in
-      (Bpe_stage { suffix; held = Some token }, out)
-  | Fallback_stage { bytes } -> (
+      if contains ~pattern:suffix token then
+        (Bpe_stage { suffix; held = Some token }, out)
+      else (Bpe_stage { suffix; held = None }, out @ [ token ])
+  | Fallback_stage { run } -> (
       match byte_token_value token with
-      | Some b -> (Fallback_stage { bytes = bytes ^ String.make 1 b }, [])
+      | Some b -> (Fallback_stage { run = b :: run }, [])
       | None ->
-          ( Fallback_stage { bytes = "" },
-            List.rev (token :: fallback_run bytes []) ))
+          ( Fallback_stage { run = [] },
+            List.rev (token :: fallback_run (run_bytes run) []) ))
   | Wordpiece_stage ({ prefix; cleanup; first } as w) ->
       ( Wordpiece_stage { w with first = false },
         [ wordpiece_piece ~prefix ~cleanup ~first token ] )
@@ -381,7 +398,7 @@ let token_step stage token =
 let token_finish = function
   | Bpe_stage { suffix; held = Some held } ->
       [ bpe_piece ~suffix ~last:true held ]
-  | Fallback_stage { bytes } -> List.rev (fallback_run bytes [])
+  | Fallback_stage { run } -> List.rev (fallback_run (run_bytes run) [])
   | _ -> []
 
 let rec feed_tokens stages tokens =
@@ -404,8 +421,22 @@ let rec finish_tokens = function
       let rest, out = feed_tokens rest (token_finish stage) in
       out @ finish_tokens rest
 
+(* The length of the UTF-8 sequence a lead byte opens, or [0] for a byte that
+   opens none. *)
+let sequence_length c =
+  match Char.code c with
+  | b when b < 0x80 -> 1
+  | b when b >= 0xc2 && b <= 0xdf -> 2
+  | b when b >= 0xe0 && b <= 0xef -> 3
+  | b when b >= 0xf0 && b <= 0xf4 -> 4
+  | _ -> 0
+
 (* Where the bytes stop decoding the same whatever follows them: before a last
-   sequence that is not a character, which a later byte may complete. *)
+   sequence that is the start of a character, which a later byte may complete.
+   An ill-formed sequence decodes the same whatever follows it, so it is given
+   its replacement character at once, as is a stray [\xff] or [\x80].
+   [get_utf_8_uchar] reads a maximal ill-formed subpart, so a sequence that
+   reaches the end and is shorter than its lead byte asks is a start. *)
 let settled bytes =
   let len = String.length bytes in
   let rec scan i =
@@ -413,7 +444,12 @@ let settled bytes =
     else
       let d = String.get_utf_8_uchar bytes i in
       let next = i + Uchar.utf_decode_length d in
-      if next >= len && not (Uchar.utf_decode_is_valid d) then i else scan next
+      if
+        next >= len
+        && (not (Uchar.utf_decode_is_valid d))
+        && next - i < sequence_length bytes.[i]
+      then i
+      else scan next
   in
   scan 0
 
@@ -433,15 +469,20 @@ let collapse_finish = function
   | Fuse_collapse -> ""
   | Bytes_collapse pending -> utf8_lossy pending
 
-(* Whether [text] from [at] to its end is where [pattern] starts. *)
-let starts_at text at pattern =
+(* Whether [text] from [at] to its end is a prefix of [pattern]. *)
+let prefix_at text at pattern =
   let rec same i =
     at + i >= String.length text
     || i < String.length pattern
        && text.[at + i] = pattern.[i]
        && same (i + 1)
   in
-  String.length text - at < String.length pattern && same 0
+  String.length text - at <= String.length pattern && same 0
+
+(* Whether [text] from [at] to its end is where [pattern] starts, short of a
+   whole match. *)
+let starts_at text at pattern =
+  String.length text - at < String.length pattern && prefix_at text at pattern
 
 let matches_at text at pattern =
   let len = String.length pattern in
@@ -469,9 +510,9 @@ let replace_some ~pattern ~by text ~final =
   (Buffer.contents buf, String.sub text cut (len - cut))
 
 (* [strip_token] on as much of [text] as decides it. The occurrences at the
-   start are cut as they arrive. A later end cuts at most [stop] occurrences
-   from the text, so what lies further from its end than those is settled; the
-   cut is moved back to a character boundary. *)
+   start are cut as they arrive. A later end cuts at most [stop] occurrences,
+   so a byte can only be cut there when what runs from it to the end of
+   [text] starts [stop] copies of [content]; the rest is settled. *)
 let strip_some ~content ~leading ~stop text ~final =
   let len = String.length text and clen = String.length content in
   let rec lead at leading =
@@ -488,11 +529,12 @@ let strip_some ~content ~leading ~stop text ~final =
       if final then (strip_token ~content ~start:0 ~stop rest, 0, "")
       else begin
         let n = String.length rest in
-        let cut = ref (max 0 (n - (stop * clen))) in
-        while !cut > 0 && !cut < n && Char.code rest.[!cut] land 0xc0 = 0x80 do
-          decr cut
-        done;
-        (String.sub rest 0 !cut, 0, String.sub rest !cut (n - !cut))
+        let copies = String.concat "" (List.init stop (fun _ -> content)) in
+        let rec cut j =
+          if j >= n || prefix_at rest j copies then j else cut (j + 1)
+        in
+        let cut = cut (max 0 (n - String.length copies)) in
+        (String.sub rest 0 cut, 0, String.sub rest cut (n - cut))
       end
 
 let text_step stage text ~final =
@@ -563,7 +605,7 @@ let stream decoder =
         | Fuse -> collapse Fuse_collapse
         | Sequence decoders -> build stages (decoders @ rest)
         | BPE { suffix } -> stage (Bpe_stage { suffix; held = None })
-        | Byte_fallback -> stage (Fallback_stage { bytes = "" })
+        | Byte_fallback -> stage (Fallback_stage { run = [] })
         | Word_piece { prefix; cleanup } ->
             stage (Wordpiece_stage { prefix; cleanup; first = true })
         | Metaspace { replacement; prepend_scheme } ->

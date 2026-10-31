@@ -689,6 +689,47 @@ let test_stream_cases () =
   case "the last token waits for the next"
     (listed ~decoder:(Decoder.bpe ()) [ "a</w>"; "b</w>" ])
     [ 0; 1 ] [ ""; "a "; "b" ];
+  case "a token without the suffix is given at once"
+    (listed ~decoder:(Decoder.bpe ()) [ "a"; "b</w>" ])
+    [ 0; 1; 0; 1 ] [ "a"; ""; "b a"; ""; "b" ];
+  (* [ÿ] and [Ģ] are the bytes [\xff] and [\x80], which no later byte makes
+     part of a character. *)
+  case "a byte no character starts with is replaced at once"
+    (listed ~decoder:Decoder.byte_level [ "a"; "\xc3\xbf"; "\xc4\xa2" ])
+    [ 0; 1; 2; 0 ]
+    [ "a"; "\xef\xbf\xbd"; "\xef\xbf\xbd"; "a"; "" ];
+  case "a character's start that a later byte breaks"
+    (listed ~decoder:Decoder.byte_level ("a" :: euro))
+    [ 1; 0 ] [ ""; "\xef\xbf\xbda"; "" ];
+  let long = 10_000 in
+  case "a long run of byte tokens"
+    (listed ~decoder:Decoder.byte_fallback [ "<0x41>"; "b" ])
+    (List.init long (fun _ -> 0) @ [ 1 ])
+    (List.init long (fun _ -> "") @ [ String.make long 'A' ^ "b"; "" ]);
+  (* After a collapse, a stage keeps what a later piece may change. *)
+  let after decoders tokens =
+    listed ~decoder:(Decoder.sequence decoders) tokens
+  in
+  case "the start of a match"
+    (after [ Decoder.fuse; Decoder.replace ~pattern:"ab" ~by:"x" () ]
+       [ "a"; "b"; "c" ])
+    [ 0; 1; 0; 2 ] [ ""; "x"; ""; "ac"; "" ];
+  case "the occurrences an end may cut"
+    (after [ Decoder.fuse; Decoder.strip ~stop:2 () ] [ "a"; " "; "b" ])
+    [ 0; 1; 1; 1; 2; 1 ] [ "a"; ""; ""; " "; "  b"; ""; "" ];
+  case "the occurrences the start may cut"
+    (after [ Decoder.fuse; Decoder.strip ~start:2 () ] [ "a"; " " ])
+    [ 1; 1; 1; 0 ] [ ""; ""; " "; "a"; "" ];
+  case "a decoder that reads its text whole"
+    (after [ Decoder.fuse; Decoder.byte_level ] [ "a"; "b" ])
+    [ 0; 1 ] [ ""; ""; "ab" ];
+  (* With no decoder, the tokens are joined with spaces. HuggingFace
+     [tokenizers] 0.23.1 decodes [0; 1; 0] of this BPE model to ["a b a"]. *)
+  case "no decoder joins the tokens with spaces"
+    (bpe ~vocab:[ ("a", 0); ("b", 1) ] ~merges:[] ())
+    [ 0; 1; 0 ] [ "a"; " b"; " a"; "" ];
+  equal ~msg:"decode with no decoder" string "a b a"
+    (decode (bpe ~vocab:[ ("a", 0); ("b", 1) ] ~merges:[] ()) [| 0; 1; 0 |]);
   case "no decoder joins a word-level model's tokens with spaces"
     (listed [ "a"; "b" ]) [ 0; 1; 0 ] [ "a"; " b"; " a"; "" ];
   case "an id outside the vocabulary gives nothing" (listed [ "a" ]) [ 0; 7; 0 ]
@@ -737,7 +778,8 @@ let stream_tokens =
     "a"; "b"; "ab"; " "; "  "; "\xe2\x96\x81"; "\xe2\x96\x81a";
     "a\xe2\x96\x81"; "##a"; "a</w>"; "</w>"; "<0x41>"; "<0xC3>"; "<0xA9>";
     "<0xE2>"; "<0x82>"; "<0xAC>"; "<0xFF>"; "<pad>"; "|"; "."; " ."; "do";
-    " not"; "'"; "n't"; "\xc4\xa0"; "\xc3\x83"; "\xc2\xa9"; "\xc3\xbf"; "é";
+    " not"; "'"; "n't"; "\xc4\xa0"; "\xc3\x83"; "\xc2\xa9"; "\xc3\xbf";
+    "\xc4\xa2"; "é";
   ]
   @ euro
 
@@ -765,6 +807,19 @@ let stream_case =
   in
   Gen.with_pp pp stream_case
 
+(* Whether after some step the texts given so far differ from [decode] of the
+   ids fed so far, which is the stream keeping text back. *)
+let kept ?skip_special_tokens t ids texts =
+  let texts = Array.of_list texts in
+  let rec from i given =
+    i < Array.length ids
+    &&
+    let given = given ^ texts.(i) in
+    given <> decode t ?skip_special_tokens (Array.sub ids 0 (i + 1))
+    || from (i + 1) given
+  in
+  from 0 ""
+
 let decoder_stream_law =
   prop ~count:2000 "a stream gives the text of decode" stream_case
     (fun (names, ids) ->
@@ -781,16 +836,11 @@ let decoder_stream_law =
         | _ :: rest -> after_collapse prefix rest
         | [] -> false
       in
-      let rec kept = function
-        | "" :: rest -> List.exists (fun text -> text <> "") rest || kept rest
-        | _ :: rest -> kept rest
-        | [] -> false
-      in
       cover ~share:0.1 "a strip after a collapse"
         (after_collapse "strip" names);
       cover ~share:0.1 "a replace after a collapse"
         (after_collapse "replace" names);
-      cover ~share:0.2 "text kept for a later token" (kept texts);
+      cover ~share:0.2 "text kept for a later token" (kept t ids texts);
       List.iter
         (fun text ->
           equal ~msg:(Printf.sprintf "%S is UTF-8" text) bool true
@@ -1063,6 +1113,24 @@ let test_batch_ids_cut_document model () =
         ~truncation:(truncation ~direction:`Left 64)
         tokenizer documents)
 
+(* The pieces of a cut document pass over the special tokens as the whole
+   does when their text is to be encoded as text. *)
+let test_batch_ids_cut_unmatched () =
+  with_pretrained "gpt2" (fun tokenizer ->
+      let corpus =
+        repeat
+          (String.concat "\n" (parity_documents "edge_cases"))
+          (2 * 1024 * 1024)
+      in
+      let as_text = encode_ids tokenizer ~match_special_tokens:false corpus in
+      equal ~msg:"the corpus holds special tokens" bool false
+        (as_text = encode_ids tokenizer corpus);
+      equal ~msg:"the ids of the pieces are the ids of the document"
+        (list (array int))
+        [ as_text ]
+        (rows
+           (encode_batch_ids tokenizer ~match_special_tokens:false [ corpus ])))
+
 (* Added tokens are matched by one scan of the whole document, and a piece
    starting where the whole did not is not the whole: a [single_word] token
    turned down in the whole for the word before it stands alone at the head of a
@@ -1247,6 +1315,8 @@ let batch_tests =
     @@ test "a cut document keeps its ids (gpt-oss)"
          (test_batch_ids_cut_document "gpt_oss");
     test "a cut avoids the added tokens" test_batch_ids_cut_avoids_added_tokens;
+    test "a cut document keeps its special tokens as text"
+      test_batch_ids_cut_unmatched;
     test "a pipeline with a normalizer is not cut"
       test_batch_ids_uncut_under_normalizer;
     test "a cut keeps space runs whole" test_batch_ids_cut_keeps_space_runs;
