@@ -101,12 +101,12 @@ let register fd ~ctl =
 
 type t = {
   ctl : int;
-  uvm : int;
   root : int;
   layouts : (module D.RELEASE);
   release : int;
-  low : Va.t;
 }
+
+type unified = { uvm : int; low : Va.t }
 
 let status_name (module R : D.RELEASE) s =
   match List.assoc_opt s R.statuses with Some n -> n | None -> strf "0x%x" s
@@ -144,6 +144,9 @@ let control_raw ctl ~root obj cmd p =
   let* () = escape_rm ctl D.nv_esc_rm_control a "controlling a GPU object" in
   ignore (Sys.opaque_identity p);
   Ok (get a C.status)
+
+let control_status c obj cmd p =
+  Result.map_error why (control_raw c.ctl ~root:c.root obj cmd (Some p))
 
 let control c ?(refs = []) obj cmd p =
   List.iter (fun (field, q) -> set p field (address q)) refs;
@@ -227,12 +230,12 @@ let rm c =
 
 (* Unified memory *)
 
-let uvm c cmd p status what =
-  let* () = guard what (fun () -> ioctl c.uvm cmd p) in
+let uvm u cmd p status what =
+  let* () = guard what (fun () -> ioctl u.uvm cmd p) in
   Ok (get p status)
 
-let uvm_call c cmd p status what =
-  let* s = uvm c cmd p status what in
+let uvm_call c u cmd p status what =
+  let* s = uvm u cmd p status what in
   check c what s
 
 (* The client *)
@@ -272,102 +275,107 @@ let driver_version ctl root =
 
 let client_lock = Rig_nv.Lock.create ()
 let opened = ref None
+let unified_made = ref None
 
-(* The process's client, or [Error]: a failed make, and one an exception ends,
-   gives back what it took, last first. *)
-let make_client ~dev =
+(* [undoing f] is [f taken], whose [taken g] records [g] to undo it: a failed
+   [f], and one an exception ends, gives back what it took, last first. *)
+let undoing f =
   let undo = ref [] in
-  let taken f = undo := f :: !undo in
-  let uvm_path = Filename.concat dev "nvidia-uvm" in
-  let opened_client () =
-    let* ctl = open_file (Filename.concat dev "nvidiactl") in
-    taken (fun () -> close ctl);
-    let* s, root =
-      Result.map_error why
-        (alloc_raw ctl ~root:0 ~parent:0 D.nv01_root_client None)
-    in
-    let* () =
-      if s = D.nv_ok then Ok ()
-      else Error (strf "creating a client of NVIDIA's driver: status 0x%x" s)
-    in
-    let* version = driver_version ctl root in
-    let* number, layouts =
-      match
-        Option.bind (branch version) (fun n ->
-            Option.map (fun r -> (n, r)) (D.release n))
-      with
-      | Some x -> Ok x
-      | None ->
-          Error
-            (strf
-               "NVIDIA's kernel driver %s is not supported; the supported \
-                releases are %s"
-               version
-               (String.concat ", " (List.map string_of_int D.releases)))
-    in
-    let* uvm_fd = open_file uvm_path in
-    taken (fun () -> close uvm_fd);
-    let* mm = open_file uvm_path in
-    taken (fun () -> close mm);
-    (* Recorded before it is taken, and marked taken with nothing allocated
-       after the call: a later reserve of a range this process still held
-       would fail for good. *)
-    let reserved = ref false in
-    taken (fun () -> if !reserved then unreserve low_base (top - low_base));
-    let* () =
-      match reserve_raw low_base (top - low_base) with
-      | () ->
-          reserved := true;
-          Ok ()
-      | exception Unix.Unix_error (e, _, _) ->
-          failed "reserving the GPU's addresses" e
-    in
-    let c =
-      {
-        ctl;
-        uvm = uvm_fd;
-        root;
-        layouts;
-        release = number;
-        low = Va.make ~base:low_base (Rig_nv.windows - low_base);
-      }
-    in
-    let module I = D.Uvm_initialize in
-    let* () =
-      uvm_call c D.uvm_initialize (params I.sizeof) I.rm_status
-        "initializing NVIDIA's unified memory"
-    in
-    (* The memory manager ties unified memory to the process's address space,
-       through a second file kept open for the process. Its registration is made
-       once per process; a second one, such as CUDA's in the same process, is
-       refused, and the first serves: its answer is dropped. *)
-    let module M = D.Uvm_mm_initialize in
-    let m = params M.sizeof in
-    set m M.uvm_fd uvm_fd;
-    (try ioctl mm D.uvm_mm_initialize m with Unix.Unix_error _ -> ());
-    Ok (c, Some c)
-  in
-  match opened_client () with
-  | Ok _ as c -> c
+  let taken g = undo := g :: !undo in
+  match f taken with
+  | Ok _ as x -> x
   | Error _ as e ->
-      List.iter (fun f -> f ()) !undo;
+      List.iter (fun g -> g ()) !undo;
       e
   | exception e ->
-      List.iter (fun f -> f ()) !undo;
+      List.iter (fun g -> g ()) !undo;
       reraise e
 
-let client ~dev =
+let make_client ~dev =
+  undoing @@ fun taken ->
+  let* ctl = open_file (Filename.concat dev "nvidiactl") in
+  taken (fun () -> close ctl);
+  let* s, root =
+    Result.map_error why
+      (alloc_raw ctl ~root:0 ~parent:0 D.nv01_root_client None)
+  in
+  let* () =
+    if s = D.nv_ok then Ok ()
+    else Error (strf "creating a client of NVIDIA's driver: status 0x%x" s)
+  in
+  let* version = driver_version ctl root in
+  let* release, layouts =
+    match
+      Option.bind (branch version) (fun n ->
+          Option.map (fun r -> (n, r)) (D.release n))
+    with
+    | Some x -> Ok x
+    | None ->
+        Error
+          (strf
+             "NVIDIA's kernel driver %s is not supported; the supported \
+              releases are %s"
+             version
+             (String.concat ", " (List.map string_of_int D.releases)))
+  in
+  let c = { ctl; root; layouts; release } in
+  Ok (c, Some c)
+
+let make_unified c ~dev =
+  undoing @@ fun taken ->
+  let uvm_path = Filename.concat dev "nvidia-uvm" in
+  let* uvm_fd = open_file uvm_path in
+  taken (fun () -> close uvm_fd);
+  let* mm = open_file uvm_path in
+  taken (fun () -> close mm);
+  (* Recorded before it is taken, and marked taken with nothing allocated
+     after the call: a later reserve of a range this process still held
+     would fail for good. *)
+  let reserved = ref false in
+  taken (fun () -> if !reserved then unreserve low_base (top - low_base));
+  let* () =
+    match reserve_raw low_base (top - low_base) with
+    | () ->
+        reserved := true;
+        Ok ()
+    | exception Unix.Unix_error (e, _, _) ->
+        failed "reserving the GPU's addresses" e
+  in
+  let u =
+    { uvm = uvm_fd; low = Va.make ~base:low_base (Rig_nv.windows - low_base) }
+  in
+  let module I = D.Uvm_initialize in
+  let* () =
+    uvm_call c u D.uvm_initialize (params I.sizeof) I.rm_status
+      "initializing NVIDIA's unified memory"
+  in
+  (* The memory manager ties unified memory to the process's address space,
+     through a second file kept open for the process. Its registration is made
+     once per process; a second one, such as CUDA's in the same process, is
+     refused, and the first serves: its answer is dropped. *)
+  let module M = D.Uvm_mm_initialize in
+  let m = params M.sizeof in
+  set m M.uvm_fd uvm_fd;
+  (try ioctl mm D.uvm_mm_initialize m with Unix.Unix_error _ -> ());
+  Ok (u, Some u)
+
+(* [once cell make] is the value [cell] holds, or the one [make ()] makes and
+   [cell] then holds, under [client_lock]. [make ()] is [Ok (x, Some x)], made
+   inside the make, whose handler gives [x] back, so that nothing allocates
+   from its return to the store. *)
+let once cell make =
   Rig_nv.Lock.protect client_lock @@ fun () ->
-  match !opened with
-  | Some c -> Ok c
-  | None ->
-      (* [Some c] is made inside the make, whose handler gives the client
-         back, and nothing allocates from its return to the store. *)
-      match make_client ~dev with
+  match !cell with
+  | Some x -> Ok x
+  | None -> (
+      match make () with
       | Error _ as e -> e
-      | Ok (c, kept) ->
-          opened := kept;
-          Ok c
+      | Ok (x, kept) ->
+          cell := kept;
+          Ok x)
+
+let client ~dev = once opened (fun () -> make_client ~dev)
+let unified c ~dev = once unified_made (fun () -> make_unified c ~dev)
 
 (* The handles the process names objects by. A freed one is taken again
    before a new one, so the highest stays [first_handle] plus the most objects

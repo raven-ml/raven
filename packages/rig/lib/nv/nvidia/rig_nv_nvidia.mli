@@ -24,11 +24,13 @@
     ]}
 
     A device's life goes in four steps:
-    + The first open that succeeds in creating the process's client of the
-      kernel driver keeps it for the process. The client is three open files
-      and a reservation of the process's addresses from 384 GiB to
+    + The first open, or {!usage}, that succeeds in creating the process's
+      client of the kernel driver keeps it for the process: the control
+      file and the RM's client. The first open that succeeds in creating the
+      process's unified memory keeps it too: two files of the unified memory
+      driver and a reservation of the process's addresses from 384 GiB to
       [2{^40}], where the GPUs' memory that the host maps too lies. Every
-      later open uses it, whether or not that open succeeds.
+      later open uses both, whether or not that open succeeds.
     + The first open of a GPU makes the GPU's objects in the RM, which stay
       for the process. Later opens of that GPU reuse them.
     + The open makes the device ({!Rig_nv.make}). A GPU has one device at a
@@ -69,9 +71,9 @@
     cross only the switch. The device's facts name the GPU's function as
     [bus].
 
-    {!buses}, {!count} and an opener's [make] read the machine's files: its
-    PCI functions under [/sys/bus/pci], and the kernel driver's files under
-    [/dev]. Listing GPUs changes nothing on the machine.
+    {!buses}, {!count}, {!usage} and an opener's [make] read the machine's
+    files: its PCI functions under [/sys/bus/pci], and the kernel driver's
+    files under [/dev]. Listing GPUs changes nothing on the machine.
 
     Any domain may call any function, at the same time as others. *)
 
@@ -111,34 +113,37 @@ val gpu : int -> Rig_nv.t Rig_edge.opener
 (** {1:usage Usage} *)
 
 type usage = {
-  memory_total : int;
-      (** The GPU's memory, in bytes ([NV2080_CTRL_FB_INFO_INDEX_TOTAL_RAM_SIZE]
-          of NVIDIA's [ctrl2080fb.h]). *)
+  memory_total : int;  (** The GPU's memory, in bytes. *)
   memory_free : int;
-      (** The bytes of it that the RM has free to allocate
-          ([NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE]). The rest is held by every
-          process on the GPU, and by the RM and its firmware. *)
+      (** The bytes of it that the RM has free to allocate. The rest is held
+          by every process on the GPU, and by the RM and its firmware. *)
   busy : float option;
       (** How busy the GPU's graphics and compute engine was, from [0.0] to
-          [100.0]: the mean of the RM's samples of it taken in the last 15
-          seconds by the host's clock
-          ([NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2] of
-          [ctrl2080perf.h]). The RM hands samples over a few seconds late.
-          [None] if it took none in that time. *)
+          [100.0]: the mean of the RM's samples of it taken in the window
+          {!usage} reads, by the GPU's own clock. [None] if the RM took none
+          in that time, or takes none on this GPU. *)
 }
 (** The type for what a GPU's RM reports of its use, by every process. *)
 
-val usage : int -> (usage, string) result
-(** [usage i] is GPU [i]'s usage, read through the process's client of the
-    kernel driver and the GPU's objects in the RM, which it makes as an open
-    would, and which stay for the process ({!gpu}). It opens no device: a
-    device of GPU [i] may be open, and stays so.
+val usage : window:float -> int -> (usage, string) result
+(** [usage ~window i] is GPU [i]'s usage, [busy] over the last [window]
+    seconds. The RM keeps samples of about the last 14 seconds, so a longer
+    window reads those.
 
-    [Error msg] as for {!gpu}'s [make], or with the RM's refusal of a
-    command.
+    It reads through the process's client of the kernel driver, the GPU's
+    device file and the RM's device and subdevice of the GPU, which its first
+    call makes and which stay for the process, as an open's do. It makes no
+    channel, address space or mapping, and opens no device. While the file
+    stays open the kernel driver keeps its state of the GPU, as its
+    persistence mode does, rather than tear it down at the last close.
 
-    Raises [Invalid_argument] if [i < 0], or, having read nothing, from a
-    callback inside a lock ([Rig]'s domains section). *)
+    [Error msg] if the machine has no GPU [i]; if the kernel suspended the
+    GPU for being idle, which reading would resume; if the kernel driver
+    does not hold the GPU, cannot be opened, or is of a release
+    {!Rig_nv.make} does not accept; or with the RM's refusal of a command.
+
+    Raises [Invalid_argument] if [i < 0] or [window <= 0.], or, having read
+    nothing, from a callback inside a lock ([Rig]'s domains section). *)
 
 (**/**)
 

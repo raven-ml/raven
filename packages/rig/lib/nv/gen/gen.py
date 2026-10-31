@@ -266,6 +266,7 @@ NVIDIA = Defs(
         "ctrlc36f.h": SDK + "ctrl/ctrlc36f.h",
         "ctrl2080perf.h": SDK + "ctrl/ctrl2080/ctrl2080perf.h",
         "ctrl2080gpumon.h": SDK + "ctrl/ctrl2080/ctrl2080gpumon.h",
+        "ctrl2080tmr.h": SDK + "ctrl/ctrl2080/ctrl2080tmr.h",
         "ctrl83dedebug.h": SDK + "ctrl/ctrl83de/ctrl83dedebug.h",
         "nv-ioctl.h": COMMON + "nv-ioctl.h",
         "nv-ioctl-numbers.h": COMMON + "nv-ioctl-numbers.h",
@@ -310,7 +311,7 @@ NVIDIA = Defs(
         "NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE", "NV2080_CTRL_FB_INFO_INDEX_BAR1_SIZE",
         "NV2080_CTRL_FB_INFO_INDEX_TOTAL_RAM_SIZE", "NV2080_CTRL_FB_INFO_INDEX_HEAP_FREE",
         "NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2", "NV2080_CTRL_GPUMON_SAMPLE_TYPE_PERFMON_UTIL",
-        "NV2080_CTRL_PERF_GPUMON_SAMPLE_COUNT_PERFMON_UTIL",
+        "NV2080_CTRL_PERF_GPUMON_SAMPLE_COUNT_PERFMON_UTIL", "NV2080_CTRL_CMD_TIMER_GET_TIME",
         "NV2080_CTRL_CMD_RC_GET_WATCHDOG_INFO", "NV2080_CTRL_RC_GET_WATCHDOG_INFO_FLAGS_RUNNING",
         "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
         "NV2080_CTRL_CMD_PERF_BOOST", "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES",
@@ -385,6 +386,7 @@ NVIDIA = Defs(
         "NV2080_CTRL_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2_PARAMS": ("Util_samples", [
             "type", "bufSize", "samples"]),
         "NV2080_CTRL_PERF_GPUMON_PERFMON_UTIL_SAMPLE": ("Util_sample", ["base__timeStamp", "gr__util"]),
+        "NV2080_CTRL_TIMER_GET_TIME_PARAMS": ("Timer_time", ["time_nsec"]),
         "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
         "UVM_FREE_PARAMS": ("Uvm_free", ["base", "length?", "rmStatus"]),
         "UVM_UNREGISTER_CHANNEL_PARAMS": ("Uvm_unregister_channel", [

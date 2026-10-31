@@ -2448,6 +2448,26 @@ let faults =
         replaced_kept;
     ]
 
+(* Usage *)
+
+(* The RM samples a GPU's load from the work it runs: after three seconds of
+   a kernel, the load over those seconds is more than none. *)
+let busy_after_work () =
+  if S.path () <> Some Kernel then
+    skip ~reason:"no GPU that NVIDIA's kernel driver holds" ();
+  S.with_ @@ fun t ->
+  Rig.Point.wait (S.submit_work t [ S.spin t ~ns:(3 * second) ]);
+  let u =
+    require_ok ~pp:Format.pp_print_string (Rig_nv_nvidia.usage ~window:3. 0)
+  in
+  match u.busy with
+  | Some b -> greater ~msg:"busy" float_exact ~than:0. b
+  | None -> fail "no sample of the work's seconds"
+
+let usage =
+  group ~timeout:60. "usage"
+    [ test "a GPU that ran work was busy" busy_after_work ]
+
 let () =
   if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then
     exit
@@ -2474,4 +2494,5 @@ let () =
          timeline;
          stateful;
          faults;
+         usage;
        ])

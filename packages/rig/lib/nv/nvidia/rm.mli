@@ -50,22 +50,31 @@ val unreserve : int -> int -> unit
 
 type t = {
   ctl : int;  (** [/dev/nvidiactl]. *)
-  uvm : int;  (** [/dev/nvidia-uvm]. *)
   root : int;  (** The client's handle. *)
   layouts : (module Defs.RELEASE);  (** The layouts of the driver's release. *)
   release : int;  (** The release's number, such as [615]. *)
-  low : Va.t;  (** The GPU's addresses of memory the host maps too. *)
 }
-(** The type for the process's client. *)
+(** The type for the process's client of the RM. *)
 
 val client : dev:string -> (t, string) result
-(** [client ~dev] is the process's client, opened at its first call from the
-    device files in the directory [dev]: the RM's client, the unified memory
-    driver, and the GPU's addresses of memory the host maps too, reserved in
-    the process from 384 GiB to [2{^40}].
-    Later calls return it whatever their [dev], since a process has one
-    client of the machine's kernel driver. It is [Error] if the kernel
-    driver's release is none of {!Defs.releases}. *)
+(** [client ~dev] is the process's client of the RM, opened at its first call
+    from the control file in the directory [dev]. Later calls return it
+    whatever their [dev], since a process has one client of the machine's
+    kernel driver. It is [Error] if the kernel driver's release is none of
+    {!Defs.releases}. *)
+
+type unified = {
+  uvm : int;  (** [/dev/nvidia-uvm]. *)
+  low : Va.t;  (** The GPU's addresses of memory the host maps too. *)
+}
+(** The type for the process's unified memory. *)
+
+val unified : t -> dev:string -> (unified, string) result
+(** [unified c ~dev] is the process's unified memory, opened at its first call
+    from the files in the directory [dev]: the unified memory driver, tied to
+    the process's address space, and the GPU's addresses of memory the host
+    maps too, reserved in the process from 384 GiB to [2{^40}]. Later calls
+    return it, as {!client} does. *)
 
 val handle : unit -> int
 (** [handle ()] is a handle for an object the process names itself, one no
@@ -107,6 +116,11 @@ val control :
     checked, once it has written at each field of [p] that [refs] names the
     address of that ref's bytes, which it keeps through the call. *)
 
+val control_status :
+  t -> int -> int -> Rig_nv.params -> (int, string) result
+(** [control_status c obj cmd p] is {!control}'s, unchecked: the RM's status
+    of the command, or the escape's failure. *)
+
 val free : t -> parent:int -> int -> (unit, string) result
 (** [free c ~parent obj] frees [obj], a child of [parent], and every object
     under it, or is the RM's refusal ([NV_ESC_RM_FREE]). *)
@@ -122,10 +136,16 @@ val control_request : int
 (** {1:uvm Unified memory} *)
 
 val uvm :
-  t -> int -> Rig_nv.params -> int * int -> string -> (int, string) result
-(** [uvm c cmd p status what] runs the unified memory ioctl [cmd] with [p]: the
+  unified -> int -> Rig_nv.params -> int * int -> string -> (int, string) result
+(** [uvm u cmd p status what] runs the unified memory ioctl [cmd] with [p]: the
     RM status it leaves at the field [status]. *)
 
 val uvm_call :
-  t -> int -> Rig_nv.params -> int * int -> string -> (unit, string) result
-(** [uvm_call] is {!uvm} that checks the status. *)
+  t ->
+  unified ->
+  int ->
+  Rig_nv.params ->
+  int * int ->
+  string ->
+  (unit, string) result
+(** [uvm_call c u] is {!uvm}[ u] that checks the status by [c]'s release. *)

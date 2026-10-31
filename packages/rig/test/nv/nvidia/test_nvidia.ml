@@ -286,7 +286,7 @@ let inside_lock () =
 (* Usage *)
 
 let usage () =
-  require_ok ~msg:"usage" ~pp:Format.pp_print_string (N.usage 0)
+  require_ok ~msg:"usage" ~pp:Format.pp_print_string (N.usage ~window:1. 0)
 
 (* A GPU's memory holds what is free of it, and its engine is busy from 0 to
    100 percent of the time. *)
@@ -377,7 +377,10 @@ let () =
              test "a GPU's free memory and load are within their bounds"
                usage_bounds;
              test "memory a device holds is not free" usage_counts_device;
-             test "a negative GPU raises" (fun () ->
-                 raises_match Exn.invalid_arg (fun () -> N.usage (-1)));
+             test "a negative GPU or window raises" (fun () ->
+                 raises_match Exn.invalid_arg (fun () ->
+                     N.usage ~window:1. (-1));
+                 raises_match Exn.invalid_arg (fun () ->
+                     N.usage ~window:0. 0));
            ];
        ]

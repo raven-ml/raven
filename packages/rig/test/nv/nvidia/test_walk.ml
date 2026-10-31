@@ -83,10 +83,11 @@ let in_child (f : unit -> 'a) : ('a, string) result =
 
 (* Operations *)
 
-type op = Open | Alloc of Rig_edge.memory | Map_host | Grow
+type op = Open | Usage | Alloc of Rig_edge.memory | Map_host | Grow
 
 let op_name = function
   | Open -> "open"
+  | Usage -> "usage"
   | Alloc Device -> "alloc of device memory"
   | Alloc Pinned -> "alloc of pinned memory"
   | Alloc Mapped -> "alloc of mapped memory"
@@ -113,6 +114,10 @@ let take on op =
   | Open, _ -> (
       match Rig_gpu_support.opened (P.gpu 0) with
       | Ok g -> ("Ok", fun () -> N.stop g ~fault:None)
+      | Error e -> ("Error " ^ e, ignore))
+  | Usage, _ -> (
+      match P.usage ~window:1. 0 with
+      | Ok _ -> ("Ok", ignore)
       | Error e -> ("Error " ^ e, ignore))
   | Alloc kind, Some g -> region g (N.alloc g kind page)
   | Map_host, Some g ->
@@ -162,18 +167,21 @@ type report = {
   reopened : bool;
 }
 
-(* In a child: opens the GPU, and runs [op] once, unless [cold], which leaves an
-   open the process's first; then runs [op] under [lim], and with the limit
-   lifted. *)
+(* In a child: opens the GPU, and runs [op] once, unless [cold], which reads
+   a usage alone and so leaves an open the process's first; then runs [op]
+   under [lim], and with the limit lifted. *)
 let attempt ?(cold = false) op lim =
   let g =
-    if op = Open then None
+    if op = Open || op = Usage then None
     else Some (Result.get_ok (Rig_gpu_support.opened (P.gpu 0)))
   in
   let host = H.pages host_bytes in
   Fun.protect ~finally:(fun () -> H.free_pages host host_bytes) @@ fun () ->
   let on = { g; host; want = 280_000 } in
-  if not cold then ignore (run_once on op);
+  (* The client of the RM stays once made, as rig_nv_nvidia.mli states; a
+     usage makes it alone, without the unified memory an open makes. *)
+  if cold then ignore (P.usage ~window:1. 0)
+  else ignore (run_once on op);
   let files = S.files () and maps = S.mappings () in
   let got, give = under lim (fun () -> answer on op) in
   give ();
@@ -194,7 +202,7 @@ let succeeded = function "Ok" | "Some" | "Grown" -> true | _ -> false
    channels. *)
 let allowed op got =
   match op with
-  | Open -> String.starts_with ~prefix:"Error " got
+  | Open | Usage -> String.starts_with ~prefix:"Error " got
   | Alloc _ | Map_host ->
       got = "None" || String.starts_with ~prefix:"Fault " got
   | Grow -> String.starts_with ~prefix:"Short " got
@@ -226,7 +234,8 @@ let walk_files op () =
     if k > most_files then failf "%s takes more than %d files" (op_name op) k;
     let lim = Files k in
     let r =
-      require_ok ~pp:Format.pp_print_string (in_child (fun () -> attempt op lim))
+      require_ok ~pp:Format.pp_print_string
+        (in_child (fun () -> attempt op lim))
     in
     check op lim r;
     if not (succeeded r.got) then go (k + 1)
@@ -291,7 +300,8 @@ let making (a : Gc.Memprof.allocation) =
           in
           at 0
         in
-        has ".make_client" || has ".make_gpu" || has "Rm.client"
+        has ".make_client" || has ".make_unified" || has ".make_base"
+        || has ".make_gpu" || has "Rm.client" || has "Rm.unified"
         || has "Rig_nv_nvidia.gpu"
     | None -> false
   in
@@ -314,6 +324,18 @@ let first_open n =
   let again = run_once { g = None; host = 0; want = 0 } Open in
   (reached, again)
 
+(* In a child: a process's first usage with an exception at the [n]-th
+   allocation [making] holds for, whether it reached it, and what an open
+   after it answers. *)
+let first_usage n =
+  let reached =
+    Rig_support.interrupted ~from:making
+      ~landing:(Call (fun () -> raise Exit))
+      n
+      (fun () -> ignore (P.usage ~window:1. 0))
+  in
+  (reached, run_once { g = None; host = 0; want = 0 } Open)
+
 (* A process's first open, interrupted at each allocation that makes what the
    process keeps: the next open answers [Ok], having made it whole. *)
 let interrupted_first () =
@@ -328,7 +350,21 @@ let interrupted_first () =
   (* The makes allocate around each of the dozen objects they take. *)
   at_least ~msg:"the allocations walked" int ~than:12 (walk 1)
 
-let ops = [ Open; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
+(* A process's first usage, interrupted at each allocation that makes what
+   the process keeps: an open after it answers [Ok]. *)
+let interrupted_usage () =
+  need_gpu ();
+  let rec walk n =
+    let reached, again =
+      require_ok ~pp:Format.pp_print_string (in_child (fun () -> first_usage n))
+    in
+    equal string ~msg:(strf "from allocation %d, an open after" n) "Ok" again;
+    if reached then walk (n + 1) else n - 1
+  in
+  at_least ~msg:"the allocations walked" int ~than:4 (walk 1)
+
+let ops =
+  [ Open; Usage; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
 
 let () =
   exit
@@ -349,6 +385,8 @@ let () =
            [
              test "of a process's first open leaves the next to open"
                interrupted_first;
+             test "of a process's first usage leaves the next to open"
+               interrupted_usage;
            ];
          group ~timeout "a process out of files"
            (test "fails an open naming the cause, not the machine's GPUs"

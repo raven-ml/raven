@@ -61,6 +61,7 @@ let hang_ms = 30_000
 
 type gpu = {
   c : Rm.t;
+  u : Rm.unified;
   root : string; (* the machine's root *)
   file : string; (* its device file, [/dev/nvidiaN] under the machine's root *)
   bus : string;
@@ -200,17 +201,17 @@ let map_external g va size h =
     (at + fst G.gpu_mapping_type, snd G.gpu_mapping_type)
     D.uvm_gpu_mapping_type_read_write_atomic;
   let what = "mapping GPU memory" in
-  let* s = Rm.uvm g.c D.uvm_map_external_allocation u U.rm_status what in
+  let* s = Rm.uvm g.u D.uvm_map_external_allocation u U.rm_status what in
   fits g what s
 
 (* Frees the unified memory range at [va], unmapping it from every GPU. *)
-let uvm_free c va size =
+let uvm_free c u va size =
   let (module R : D.RELEASE) = c.Rm.layouts in
   let module U = R.Uvm_free in
-  let u = params U.sizeof in
-  set u U.base va;
-  Option.iter (fun l -> set u l size) U.length;
-  Rm.uvm_call c D.uvm_free u U.rm_status "unmapping GPU memory"
+  let p = params U.sizeof in
+  set p U.base va;
+  Option.iter (fun l -> set p l size) U.length;
+  Rm.uvm_call c u D.uvm_free p U.rm_status "unmapping GPU memory"
 
 (* Makes the unified memory range of [size] bytes at [va] and maps the memory
    object [h] there for [g]. [Ok false] if [g] has no memory for it; the range
@@ -221,14 +222,14 @@ let uvm_map g va size h =
   set e E.base va;
   set e E.length size;
   let* () =
-    Rm.uvm_call g.c D.uvm_create_external_range e E.rm_status
+    Rm.uvm_call g.c g.u D.uvm_create_external_range e E.rm_status
       "reserving GPU addresses"
   in
   let mapped = map_external g va size h in
   match mapped with
   | Ok true -> Ok true
   | Ok false | Error _ ->
-      ignore (uvm_free g.c va size : (unit, string) result);
+      ignore (uvm_free g.c g.u va size : (unit, string) result);
       mapped
 
 (* Unmaps for [g] the [size] bytes at [va] of a range that stays. *)
@@ -238,7 +239,7 @@ let uvm_unmap g va size =
   set u U.base va;
   set u U.length size;
   set_uuid u U.gpu_uuid g.uuid;
-  Rm.uvm_call g.c D.uvm_unmap_external u U.rm_status "unmapping GPU memory"
+  Rm.uvm_call g.c g.u D.uvm_unmap_external u U.rm_status "unmapping GPU memory"
 
 (* The RM's refusals of host memory to describe: an address no memory backs,
    such as an unmapped page, or memory it cannot pin. *)
@@ -322,12 +323,12 @@ let video_params g ~contiguous ~page_size size =
    has no room. *)
 let addresses g space ~align size =
   match space with
-  | Host_visible -> Ok (Va.alloc g.c.low ~align size)
+  | Host_visible -> Ok (Va.alloc g.u.low ~align size)
   | Process -> Rm.reserve_any ~align size
 
 let free_addresses g space va size =
   match space with
-  | Host_visible -> Va.free g.c.low va size
+  | Host_visible -> Va.free g.u.low va size
   | Process -> Rm.unreserve va size
 
 (* Takes [size] addresses of [space] for [f], giving them back if [f] fails or
@@ -457,7 +458,7 @@ let give g r =
       r.users <- List.remove_assq g r.users;
       if r.users <> [] then fault (uvm_unmap g r.gpu_addr r.bytes)
       else begin
-        fault (uvm_free g.c r.gpu_addr r.bytes);
+        fault (uvm_free g.c g.u r.gpu_addr r.bytes);
         free_object ~naming:r.naming r.parent r.memory;
         Option.iter (fun a -> Rm.unmap a r.bytes) r.mapped;
         free_addresses r.parent r.space r.gpu_addr r.bytes
@@ -574,7 +575,7 @@ let dma g (m : mem Rig_nv.memory) ~fn =
 (* Registers the channel [ch] with unified memory at a range of its own. *)
 let register g ch =
   let* base =
-    match Va.alloc g.c.low ~align:page channel_range with
+    match Va.alloc g.u.low ~align:page channel_range with
     | Some va -> Ok va
     | None -> Error "no address for the GPU channel"
   in
@@ -587,11 +588,11 @@ let register g ch =
   set r R.base base;
   set r R.length channel_range;
   match
-    Rm.uvm_call g.c D.uvm_register_channel r R.rm_status
+    Rm.uvm_call g.c g.u D.uvm_register_channel r R.rm_status
       "registering a GPU channel"
   with
   | Error _ as e ->
-      Va.free g.c.low base channel_range;
+      Va.free g.u.low base channel_range;
       e
   | Ok () ->
       Rig_nv.Lock.protect gpus_lock (fun () ->
@@ -613,7 +614,7 @@ let unregister g ch =
   set u U.h_client g.c.root;
   set u U.h_channel ch;
   let* () =
-    Rm.uvm_call g.c D.uvm_unregister_channel u U.rm_status
+    Rm.uvm_call g.c g.u D.uvm_unregister_channel u U.rm_status
       "unregistering a GPU channel"
   in
   let free =
@@ -630,7 +631,7 @@ let unregister g ch =
       []
     end
   in
-  List.iter (fun (_, base) -> Va.free g.c.low base channel_range) free;
+  List.iter (fun (_, base) -> Va.free g.u.low base channel_range) free;
   Ok ()
 
 (* Opening a GPU *)
@@ -747,54 +748,95 @@ let refused_by g others =
       set_uuid e E.gpu_uuid_a g.uuid;
       set_uuid e E.gpu_uuid_b g'.uuid;
       match
-        Rm.uvm_call g.c D.uvm_enable_peer_access e E.rm_status
+        Rm.uvm_call g.c g.u D.uvm_enable_peer_access e E.rm_status
           "enabling peer access"
       with
       | Ok () -> None
       | Error _ -> Some g'.index)
     others
 
+(* A GPU's first objects, which its usage reads through and an open builds on:
+   its device file, registered with the client's control file, and the RM's
+   device and subdevice of the GPU. Made at the GPU's first use and kept for
+   the process, by bus address, under [gpus_lock]. *)
+type base = { path : string; device : int; subdevice : int }
+
+let bases : (string * base) list ref = ref []
+
+(* [undoing f] is [f taken], whose [taken g] records [g] to undo it: a failed
+   [f], and one an exception ends, gives back what it took, last first. *)
+let undoing f =
+  let undo = ref [] in
+  let taken g = undo := g :: !undo in
+  match f taken with
+  | Ok _ as x -> x
+  | Error _ as e ->
+      List.iter (fun g -> g ()) !undo;
+      e
+  | exception e ->
+      List.iter (fun g -> g ()) !undo;
+      reraise e
+
+let make_base c ~dev bus =
+  undoing @@ fun taken ->
+  let rm = Rm.rm c in
+  let* cards = cards c in
+  let* gpu_id, minor =
+    match List.find_opt (fun (b, _, _) -> b = bus) cards with
+    | Some (_, id, minor) -> Ok (id, minor)
+    | None -> Error (bus ^ " is not held by NVIDIA's kernel driver")
+  in
+  let path = Filename.concat dev (strf "nvidia%d" minor) in
+  let* file = Rm.open_file path in
+  taken (fun () -> Rm.close file);
+  let* () = Rm.register file ~ctl:c.ctl in
+  let id = params D.Id_info.sizeof in
+  set id D.Id_info.gpu_id gpu_id;
+  let* () = Rm.control c c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 id in
+  let instance = get id D.Id_info.device_instance in
+  let p = params D.Nv0080_alloc.sizeof in
+  set p D.Nv0080_alloc.device_id instance;
+  set p D.Nv0080_alloc.h_client_share c.root;
+  set p D.Nv0080_alloc.va_mode
+    D.nv_device_allocation_vamode_optional_multiple_vaspaces;
+  let* device =
+    Result.map_error why (rm.alloc ~parent:c.root D.nv01_device_0 (Some p))
+  in
+  (* Freeing the device frees every object under it. *)
+  taken (fun () -> ignore (Rm.free c ~parent:c.root device));
+  let* subdevice =
+    Result.map_error why
+      (rm.alloc ~parent:device D.nv20_subdevice_0
+         (Some (params D.Nv2080_alloc.sizeof)))
+  in
+  let b = { path; device; subdevice } in
+  Ok (b, (bus, b) :: !bases)
+
+(* GPU [bus]'s base, under [gpus_lock]. *)
+let base c ~dev bus =
+  match List.assoc_opt bus !bases with
+  | Some b -> Ok b
+  | None -> (
+      match make_base c ~dev bus with
+      | Error _ as e -> e
+      | Ok (b, bases') ->
+          bases := bases';
+          Ok b)
+
 (* GPU [bus]'s objects, made at its first open and kept for the process,
    under [gpus_lock], with the values [gpus] and [peer_refusals] take as it
    joins them: the refusals of [others], the GPUs opened before it. A failed
    open, and one an exception ends, gives back what it took, last first. *)
-let make_gpu c ~dev ~index ~others bus =
+let make_gpu c um ~dev ~index ~others bus =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
   let rm = Rm.rm c in
   let made () =
-    let* cards = cards c in
-    let* gpu_id, minor =
-      match List.find_opt (fun (b, _, _) -> b = bus) cards with
-      | Some (_, id, minor) -> Ok (id, minor)
-      | None -> Error (bus ^ " is not held by NVIDIA's kernel driver")
-    in
-    let path = Filename.concat dev (strf "nvidia%d" minor) in
-    let* file = Rm.open_file path in
-    taken (fun () -> Rm.close file);
-    let* () = Rm.register file ~ctl:c.ctl in
-    let id = params D.Id_info.sizeof in
-    set id D.Id_info.gpu_id gpu_id;
-    let* () = Rm.control c c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 id in
-    let instance = get id D.Id_info.device_instance in
+    let* { path; device; subdevice } = base c ~dev bus in
     let alloc ~parent cls f size =
       let p = params size in
       f p;
       Result.map_error why (rm.alloc ~parent cls (Some p))
-    in
-    let* device =
-      alloc ~parent:c.root D.nv01_device_0
-        (fun p ->
-          set p D.Nv0080_alloc.device_id instance;
-          set p D.Nv0080_alloc.h_client_share c.root;
-          set p D.Nv0080_alloc.va_mode
-            D.nv_device_allocation_vamode_optional_multiple_vaspaces)
-        D.Nv0080_alloc.sizeof
-    in
-    (* Freeing the device frees every object under it. *)
-    taken (fun () -> ignore (Rm.free c ~parent:c.root device));
-    let* subdevice =
-      alloc ~parent:device D.nv20_subdevice_0 ignore D.Nv2080_alloc.sizeof
     in
     let (module R : D.RELEASE) = c.layouts in
     let* vaspace =
@@ -807,6 +849,7 @@ let make_gpu c ~dev ~index ~others bus =
            lor D.nv_vaspace_allocation_flags_is_externally_owned))
         R.Vaspace_alloc.sizeof
     in
+    taken (fun () -> ignore (Rm.free c ~parent:device vaspace));
     let* available = classes c device in
     let* usermode_class =
       pick "usermode" [ D.hopper_usermode_a; D.turing_usermode_a ] available
@@ -844,15 +887,17 @@ let make_gpu c ~dev ~index ~others bus =
     let* usermode =
       Result.map_error why (rm.alloc ~parent:subdevice usermode_class None)
     in
+    taken (fun () -> ignore (Rm.free c ~parent:subdevice usermode));
     let* doorbell =
-      match Va.alloc c.low ~align:page usermode_bytes with
+      match Va.alloc um.Rm.low ~align:page usermode_bytes with
       | Some va -> Ok va
       | None -> Error "no address for the GPU's doorbell"
     in
-    taken (fun () -> Va.free c.low doorbell usermode_bytes);
+    taken (fun () -> Va.free um.Rm.low doorbell usermode_bytes);
     let g =
       {
         c;
+        u = um;
         root = Filename.dirname dev;
         file = path;
         bus;
@@ -896,7 +941,7 @@ let make_gpu c ~dev ~index ~others bus =
       let u = params U.sizeof in
       set_uuid u U.gpu_uuid uuid;
       ignore
-        (Rm.uvm_call c D.uvm_unregister_gpu u U.rm_status
+        (Rm.uvm_call c um D.uvm_unregister_gpu u U.rm_status
            "unregistering the GPU"
           : (unit, string) result)
     in
@@ -906,7 +951,7 @@ let make_gpu c ~dev ~index ~others bus =
        dropped. *)
     taken unregister_gpu;
     let* () =
-      Rm.uvm_call c D.uvm_register_gpu u U.rm_status "registering the GPU"
+      Rm.uvm_call c um D.uvm_register_gpu u U.rm_status "registering the GPU"
     in
     let module V = D.Uvm_register_gpu_vaspace in
     let v = params V.sizeof in
@@ -915,7 +960,7 @@ let make_gpu c ~dev ~index ~others bus =
     set v V.h_client c.root;
     set v V.h_va_space vaspace;
     let* () =
-      Rm.uvm_call c D.uvm_register_gpu_vaspace v V.rm_status
+      Rm.uvm_call c um D.uvm_register_gpu_vaspace v V.rm_status
         "registering the GPU's address space"
     in
     (* The flush word's page, kept with the GPU's objects. A GPU whose BAR
@@ -942,7 +987,7 @@ let make_gpu c ~dev ~index ~others bus =
       List.iter (fun f -> f ()) !undo;
       reraise e
 
-let gpu c ~dev ~index bus =
+let gpu c u ~dev ~index bus =
   Rig_nv.Lock.protect gpus_lock @@ fun () ->
   match List.assoc_opt bus !gpus with
   | Some g -> Ok g
@@ -950,7 +995,7 @@ let gpu c ~dev ~index bus =
       let others = List.map snd !gpus in
       (* What the GPU joins is made inside the make, whose handler gives the
          GPU back, and nothing allocates from its return to the stores. *)
-      match make_gpu c ~dev ~index ~others bus with
+      match make_gpu c u ~dev ~index ~others bus with
       | Error _ as e -> e
       | Ok (g, gpus', pairs) ->
           gpus := gpus';
@@ -1002,8 +1047,8 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   if i = 0 then "NV" else strf "NV:%d" i
 
-(* GPU [i] of the machine under [root], its objects made at its first call. *)
-let nth_gpu ~root i =
+(* The bus address of GPU [i] of the machine under [root]. *)
+let nth_bus ~root i =
   let* buses =
     Result.map_error
       (fun why -> "reading the machine's GPUs: " ^ why)
@@ -1013,10 +1058,15 @@ let nth_gpu ~root i =
   | None ->
       Error
         (strf "no GPU %d: the machine has %d NVIDIA GPUs" i (List.length buses))
-  | Some bus ->
-      let dev = Filename.concat root "dev" in
-      let* c = Rm.client ~dev in
-      gpu c ~dev ~index:i bus
+  | Some bus -> Ok bus
+
+(* GPU [i] of the machine under [root], its objects made at its first call. *)
+let nth_gpu ~root i =
+  let* bus = nth_bus ~root i in
+  let dev = Filename.concat root "dev" in
+  let* c = Rm.client ~dev in
+  let* u = Rm.unified c ~dev in
+  gpu c u ~dev ~index:i bus
 
 let open_ ?(wrap = Fun.id) ~root ~word i =
   Rig_nv.Lock.guarded "Rig_nv_nvidia.gpu" @@ fun () ->
@@ -1055,48 +1105,80 @@ let gpu_with ~wrap i =
 
 type usage = { memory_total : int; memory_free : int; busy : float option }
 
+(* The GPU's timer, in nanoseconds since 1970 (NV2080_CTRL_CMD_TIMER_GET_TIME
+   of open-gpu-kernel-modules' ctrl2080tmr.h): the clock of the utilization
+   samples' time stamps, which runs apart from the host's (2.9 s behind on an
+   RTX 5000 Ada, and 4.5 ppm slower). *)
+let gpu_time c subdevice =
+  let module T = D.Timer_time in
+  let p = params T.sizeof in
+  let* () = Rm.control c subdevice D.nv2080_ctrl_cmd_timer_get_time p in
+  Ok (get p T.time_nsec)
+
 (* The mean of the RM's utilization samples of the graphics engine taken in
-   the last [busy_window] seconds, from its ring of the last 72 samples. A
-   sample's time stamp is in nanoseconds of the host's clock since 1970, zero
-   in a slot not yet written, and its utilization in hundredths of a percent.
-   The ring's [count] is not used: release 615's GSP leaves it 0 with every
-   slot written. On an RTX 5000 Ada the RM samples every 200 ms, so the ring
-   holds 14.4 s, and hands the samples over about 3 s late. The window leaves
-   out a ring that stopped advancing, as one did for 12 s after a CUDA
-   process ended, whose samples are stale. *)
-let busy_window = 15.
-let busy c subdevice =
+   the last [window] seconds of the GPU's timer, from its ring of the last 72
+   samples (NV2080_CTRL_CMD_PERF_GET_GPUMON_PERFMON_UTIL_SAMPLES_V2 of
+   ctrl2080perf.h, the samples of ctrl2080gpumon.h). A sample's time stamp is
+   zero in a slot not yet written, and its utilization in hundredths of a
+   percent. The ring's [count] is not used: release 615's GSP leaves it 0
+   with every slot written. On an RTX 5000 Ada the RM samples every 200 ms,
+   so the ring holds 14.4 s. [None] where the RM takes no samples: it refuses
+   the command with NV_ERR_NOT_SUPPORTED, as with MIG. *)
+let busy c subdevice ~window =
   let module U = D.Util_samples in
   let module S = D.Util_sample in
   let p = params U.sizeof in
   let at, size, slots = U.samples in
   set p U.type_ D.nv2080_ctrl_gpumon_sample_type_perfmon_util;
   set p U.buf_size (size * slots);
-  let* () =
-    Rm.control c subdevice
+  let* status =
+    Rm.control_status c subdevice
       D.nv2080_ctrl_cmd_perf_get_gpumon_perfmon_util_samples_v2 p
   in
-  let field i (f, n) = get p (at + (i * size) + f, n) in
-  let since = (Unix.gettimeofday () -. busy_window) *. 1e9 in
-  let rec sum i n total =
-    if i = slots then (n, total)
-    else if float_of_int (field i S.base_time_stamp) < since then
-      sum (i + 1) n total
-    else sum (i + 1) (n + 1) (total + field i S.gr_util)
-  in
-  match sum 0 0 0 with
-  | 0, _ -> Ok None
-  | n, total -> Ok (Some (float_of_int total /. float_of_int n /. 100.))
+  if status = D.nv_err_not_supported then Ok None
+  else
+    let* () = Rm.check c "reading the GPU's utilization" status in
+    let* now = gpu_time c subdevice in
+    let since = now - int_of_float (window *. 1e9) in
+    let field i (f, n) = get p (at + (i * size) + f, n) in
+    let rec sum i n total =
+      if i = slots then (n, total)
+      else
+        let t = field i S.base_time_stamp in
+        if t = 0 || t < since then sum (i + 1) n total
+        else sum (i + 1) (n + 1) (total + field i S.gr_util)
+    in
+    match sum 0 0 0 with
+    | 0, _ -> Ok None
+    | n, total -> Ok (Some (float_of_int total /. float_of_int n /. 100.))
 
-let usage i =
+(* Whether the kernel suspended the PCI function [bus] under [root] for being
+   idle (Linux's Documentation/ABI/testing/sysfs-devices-power,
+   runtime_status). *)
+let suspended ~root bus =
+  let dir = Filename.concat root ("sys/bus/pci/devices/" ^ bus) in
+  let path = Filename.concat dir "power/runtime_status" in
+  match In_channel.with_open_bin path In_channel.input_line with
+  | Some "suspended" -> true
+  | Some _ | None | (exception Sys_error _) -> false
+
+let usage ~window i =
   Rig_nv.Lock.guarded "Rig_nv_nvidia.usage" @@ fun () ->
   if i < 0 then invalid_argf "Rig_nv_nvidia.usage: GPU %d < 0" i;
-  let* g = nth_gpu ~root:"/" i in
-  let* memory_total =
-    fb_info g.c g.subdevice D.nv2080_ctrl_fb_info_index_total_ram_size
-  in
-  let* memory_free =
-    fb_info g.c g.subdevice D.nv2080_ctrl_fb_info_index_heap_free
-  in
-  let* busy = busy g.c g.subdevice in
-  Ok { memory_total; memory_free; busy }
+  if not (window > 0.) then
+    invalid_argf "Rig_nv_nvidia.usage: window %g <= 0" window;
+  let root = "/" in
+  let* bus = nth_bus ~root i in
+  if suspended ~root bus then Error (bus ^ " is suspended")
+  else
+    let dev = Filename.concat root "dev" in
+    let* c = Rm.client ~dev in
+    let* b = Rig_nv.Lock.protect gpus_lock (fun () -> base c ~dev bus) in
+    let* memory_total =
+      fb_info c b.subdevice D.nv2080_ctrl_fb_info_index_total_ram_size
+    in
+    let* memory_free =
+      fb_info c b.subdevice D.nv2080_ctrl_fb_info_index_heap_free
+    in
+    let* busy = busy c b.subdevice ~window in
+    Ok { memory_total; memory_free; busy }
