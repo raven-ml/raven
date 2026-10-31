@@ -902,6 +902,26 @@ let test_paced_host () =
   let rate = cycles_per_mib 256 in
   at_most ~msg:"cycles per MiB" float_exact ~than:(margin /. 4.) rate
 
+(* A refused allocation leaves the pace as it was: its bytes were never a
+   buffer's, so they count in no bound, and dropped buffers bring cycles after
+   it as often as before it. *)
+let test_paced_refused () =
+  let cycles k =
+    let before = (Gc.quick_stat ()).major_collections in
+    for _ = 1 to k do
+      ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+    done;
+    Float.of_int ((Gc.quick_stat ()).major_collections - before)
+  in
+  Gc.full_major ();
+  let usual = cycles 256 in
+  Gc.full_major ();
+  let refused = 1 lsl 60 in
+  raises_match (out_of_memory Rig.host refused) (fun () ->
+      B.create Rig.host refused);
+  at_least ~msg:"cycles over 256 MiB dropped after the refusal" float_exact
+    ~than:(usual /. margin) (cycles 256)
+
 (* Live host buffers raise the bound as heap bytes do: beside 256 MiB of
    them, dropped buffers bring a cycle at most once per [custom_major_ratio]
    / 150 of the heap's and their bytes, about 75 MiB. Without the live term,
@@ -1417,6 +1437,8 @@ let tests =
           "at a small heap, dropped host buffers bring a cycle per 4 MiB at \
            most"
           test_paced_host;
+        test "a refused host allocation leaves the collector's pace as it was"
+          test_paced_refused;
         test "live host buffers raise the bound as heap bytes do"
           test_paced_host_live;
         test "a large heap's cycles come once per its share at most"

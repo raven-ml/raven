@@ -279,9 +279,43 @@ value caml_rig_released_any(value v_list) {
    returns them. */
 static _Atomic intnat heap_bytes;
 
+/* The bytes of [heap_bytes] whose memory is made: a reservation counts in it
+   once its buffer's array or a device's pinned memory is made
+   ([heap_add_made]), never if the C library or the driver refuses it. A
+   refused reservation holds its bytes through the out-of-memory ladder,
+   whose collections end cycles, so what live memory held at a cycle's end
+   and at its peak is read here. */
+static _Atomic intnat heap_made;
+
 /* The most bytes buffers held at once in the running major cycle, from what
    they held as it began, and in the cycle before it. */
 static _Atomic intnat heap_peak, heap_peak_before;
+
+/* Counts [n] reserved bytes as made, and raises the peak to what made
+   memory holds with them. */
+static void heap_add_made(intnat n) {
+  intnat held =
+      atomic_fetch_add_explicit(&heap_made, n, memory_order_relaxed) + n;
+  intnat peak = atomic_load_explicit(&heap_peak, memory_order_relaxed);
+  while (held > peak &&
+         !atomic_compare_exchange_weak_explicit(&heap_peak, &peak, held,
+                                                memory_order_relaxed,
+                                                memory_order_relaxed)) {
+  }
+}
+
+/* [v_n] reserved bytes of memory other than a buffer's bigarray, made, such
+   as a device's pinned memory. */
+value caml_rig_heap_made(value v_n) {
+  heap_add_made(Long_val(v_n));
+  return Val_unit;
+}
+
+/* Gives back [v_n] reserved bytes whose memory was refused. */
+value caml_rig_heap_refuse(value v_n) {
+  atomic_fetch_sub_explicit(&heap_bytes, Long_val(v_n), memory_order_relaxed);
+  return Val_unit;
+}
 
 static void heap_drop_all(void);
 static intnat heap_kept(void);
@@ -299,12 +333,6 @@ value caml_rig_heap_reserve(value v_n, value v_budget) {
   } while (!atomic_compare_exchange_weak_explicit(
       &heap_bytes, &held, held + n, memory_order_relaxed,
       memory_order_relaxed));
-  intnat peak = atomic_load_explicit(&heap_peak, memory_order_relaxed);
-  while (held + n > peak &&
-         !atomic_compare_exchange_weak_explicit(&heap_peak, &peak, held + n,
-                                                memory_order_relaxed,
-                                                memory_order_relaxed)) {
-  }
   return Val_true;
 }
 
@@ -358,7 +386,7 @@ static void heap_trim(size_t cap);
 
 /* Run once per major cycle, after it ends ([slice_end]). */
 static void cycle_ended(void) {
-  intnat held = atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+  intnat held = atomic_load_explicit(&heap_made, memory_order_relaxed);
   intnat collected =
       atomic_load_explicit(&heap_collected, memory_order_relaxed);
   intnat live =
@@ -606,9 +634,11 @@ static void heap_drop_all(void) {
 }
 
 /* Gives back [v_n] bytes a reservation took ([caml_rig_heap_reserve]) for
-   memory other than a buffer's bigarray, such as a device's pinned memory. */
+   memory other than a buffer's bigarray, such as a device's pinned memory,
+   once that memory is freed. */
 value caml_rig_heap_release(value v_n) {
   atomic_fetch_sub_explicit(&heap_bytes, Long_val(v_n), memory_order_relaxed);
+  atomic_fetch_sub_explicit(&heap_made, Long_val(v_n), memory_order_relaxed);
   return Val_unit;
 }
 
@@ -725,9 +755,10 @@ static void heap_finalize(value v) {
   size_t size = 0;
   if (!(b->flags & CAML_BA_SUBARRAY)) {
     intnat n = b->dim[0], f = (intnat)heap_footprint((size_t)n);
-    uintnat made = *heap_mark(b) >> HEAP_OFFSET_BITS;
+    uintnat cycle = *heap_mark(b) >> HEAP_OFFSET_BITS;
     atomic_fetch_sub_explicit(&heap_bytes, f, memory_order_relaxed);
-    if (made < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
+    atomic_fetch_sub_explicit(&heap_made, f, memory_order_relaxed);
+    if (cycle < atomic_load_explicit(&cycles_seen, memory_order_relaxed))
       atomic_fetch_add_explicit(&heap_collected, f, memory_order_relaxed);
     base = heap_base(b);
     size = heap_allocated((size_t)n);
@@ -790,6 +821,7 @@ static value heap_bigarray(void *base, void *data, size_t n) {
   uintnat cycle = atomic_load_explicit(&cycles_seen, memory_order_relaxed);
   *heap_mark(b) =
       (cycle << HEAP_OFFSET_BITS) | (uintnat)((char *)data - (char *)base);
+  heap_add_made((intnat)f);
   return ba;
 }
 

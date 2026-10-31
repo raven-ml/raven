@@ -203,6 +203,8 @@ external heap_footprint : int -> int = "caml_rig_heap_footprint" [@@noalloc]
 external heap_drop : unit -> unit = "caml_rig_heap_drop"
 external heap_trim : int -> unit = "caml_rig_heap_trim"
 external heap_release : int -> unit = "caml_rig_heap_release" [@@noalloc]
+external heap_made : int -> unit = "caml_rig_heap_made" [@@noalloc]
+external heap_refuse : int -> unit = "caml_rig_heap_refuse" [@@noalloc]
 external heap_held : unit -> int = "caml_rig_heap_held" [@@noalloc]
 
 external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
@@ -424,6 +426,12 @@ let give_room d budget n =
       Lock.release l.lock
   | Host_budget -> heap_release n
   | No_budget -> ()
+
+(* Gives back the room taken for memory that was never made. *)
+let refuse_room d budget n =
+  match budget with
+  | Host_budget -> heap_refuse n
+  | Device_budget | No_budget -> give_room d budget n
 
 (* Releases *)
 
@@ -1532,12 +1540,14 @@ let new_counted d kind n =
   if not (take_room d budget n) then None
   else
     match new_entry d kind n with
-    | Some _ as e -> e
+    | Some _ as e ->
+        if budget = Host_budget then heap_made n;
+        e
     | None ->
-        give_room d budget n;
+        refuse_room d budget n;
         None
     | exception x ->
-        give_room d budget n;
+        refuse_room d budget n;
         raise x
 
 (* One try at [n] bytes of [d]'s memory of [kind]: from its cache, else from its
@@ -1603,8 +1613,8 @@ let host_bytes n =
   | exception Stdlib.Out_of_memory -> (
       match reclaiming Dev.host ~pool:Dev.host n (bytes n) with
       | ba -> ba
-      | exception (Dev.Out_of_memory _ as x) ->
-          heap_release (heap_footprint n);
+      | exception x ->
+          heap_refuse (heap_footprint n);
           raise x)
 
 (* What every host buffer of no bytes keeps: nothing to free. *)
