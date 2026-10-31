@@ -645,6 +645,27 @@ let compiles_once_across_domains () =
     programs;
   equal int ~msg:"compilations" 1 (Atomic.get compiled)
 
+(* A compiler that rejects its first source: the call that raises keeps
+   nothing, and the next makes the program. *)
+let raising_keeps_nothing () =
+  let compiled = Atomic.make 0 in
+  let compiler =
+    Renderer.Compiler.v (fun src ->
+        if Atomic.fetch_and_add compiled 1 = 0 then
+          raise (Renderer.Compiler.Compile_error "first");
+        src)
+  in
+  let r = renderer_for ~compiler clang_target in
+  let k = fresh_kernel () in
+  raises ~msg:"first call" (Renderer.Compiler.Compile_error "first") (fun () ->
+      ignore (Codegen.to_program k r));
+  is_none ~msg:"after the raise" (Codegen.made k r);
+  let p = Codegen.to_program k r in
+  equal int ~msg:"compilations" 2 (Atomic.get compiled);
+  match Codegen.made k r with
+  | Some q -> same_graph p q
+  | None -> fail "the made program is not returned"
+
 (* The heuristic unrolls a sum of 64 rows of 64 by 4, and NOOPT keeps it from
    it; the kernel is renamed so that no other test compiles it. *)
 let separates_settings () =
@@ -767,6 +788,8 @@ let caching =
         keeps_its_programs;
       test "calls from several domains at once make one program, compiled once"
         compiles_once_across_domains;
+      test "a call that raises keeps nothing, and the next makes the program"
+        raising_keeps_nothing;
       test "a program made under one setting is not returned under another"
         separates_settings;
       group "a program is made again under another value of"

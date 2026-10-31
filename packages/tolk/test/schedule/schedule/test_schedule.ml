@@ -639,6 +639,22 @@ let one_body_at_once () =
   | [ (_, verdict, _) ] -> equal string " cache hit" verdict
   | lines -> failf "scheduling printed %d lines" (List.length lines)
 
+(* Domains scheduling one body at once schedule each of its calls once: the
+   others wait for the schedule and print a hit. *)
+let one_body_once () =
+  let big = unique "assign" in
+  with_settings ~debug:3 ~scache:1 (fun () ->
+      ignore (in_domains (List.init 4 (fun _ -> big))));
+  let lines = reports () in
+  let keys = List.sort_uniq compare (List.map (fun (_, _, k) -> k) lines) in
+  let missed =
+    List.filter_map
+      (fun (_, verdict, k) -> if verdict = "CACHE MISS" then Some k else None)
+      lines
+  in
+  equal ~msg:"lines" int (4 * List.length keys) (List.length lines);
+  equal ~msg:"misses" (list string) keys (List.sort compare missed)
+
 let bodies_at_once () =
   let bigs = List.init 4 (fun _ -> unique "softmax") in
   List.iteri
@@ -698,6 +714,8 @@ let cache =
       test "a variable bound to another value is the same body" rebinding;
       test "domains scheduling one body at once schedule it alike"
         one_body_at_once;
+      test "domains scheduling one body at once schedule it once"
+        one_body_once;
       test "domains scheduling bodies at once schedule each as alone"
         bodies_at_once;
     ]

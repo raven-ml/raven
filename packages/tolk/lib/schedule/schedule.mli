@@ -74,7 +74,8 @@ val create_linear_with_vars :
       variables, each replaced in the body by a parameter; call-local storage is
       numbered by its order in each body, so equal graphs schedule alike;
     + each such call's body is scheduled ({!create_schedule}), once per body
-      when the setting {!Setting.scache} is [1] or more. From [2], the default,
+      when the setting {!Setting.scache} is [1] or more: a call that asks for a
+      body another domain is scheduling waits for it. From [2], the default,
       schedules are also kept on disk ({!Helpers.Diskcache}, table
       ["schedule_cache"]) for later processes: a schedule is read back for the
       same body, the same values of the settings and variables that shape what

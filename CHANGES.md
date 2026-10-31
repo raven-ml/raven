@@ -587,6 +587,9 @@ thread.
 
 ### Tolk (new)
 
+- `Schedule.create_linear_with_vars` called from several domains at once
+  schedules each body once, the others waiting for it, as `Codegen.to_program`
+  compiles each program once.
 - `Device.renderer` gives each device's one renderer, and a target naming another
   fails with `D has no renderer 'R'`, no longer followed by a suggested spelling.
   `Helpers.select_by_name` and `Helpers.select_first_inited` are removed.

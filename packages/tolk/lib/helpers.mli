@@ -279,3 +279,22 @@ val run_program :
 
     It is [Error] naming [prog] with the reason if [prog] cannot start. Raises
     [Unix.Unix_error] if a file cannot be opened. *)
+
+(** Tables that make each value once, for every domain. *)
+module Memo : sig
+  type 'a t
+  (** The type for tables from keys to values of type ['a]. *)
+
+  val create : unit -> 'a t
+  (** [create ()] is an empty table. *)
+
+  val get : 'a t -> string -> (unit -> 'a) -> 'a
+  (** [get t key make] is the value of [key] in [t], [make ()] if it has none,
+      which then becomes its value. A call that finds [key]'s value being made
+      by another domain waits for it, so [make] runs once per key. A [make]
+      that raises leaves [key] without a value, and the next call makes it. *)
+
+  val find : 'a t -> string -> 'a option
+  (** [find t key] is the value of [key] in [t], if it has one. It does not
+      wait for a value being made. *)
+end

@@ -187,10 +187,11 @@ the Exclusions of `README.md`.
   leaves the others alone; process-wide settings shared by compiling domains
   would let one domain's override and restore clobber another's. A spawned
   domain starts with its spawner's settings, so `to_program_context` goes
-  too. `to_program` keeps its programs in one table that every domain reads
-  and fills under a lock, and a domain that asks for a program another is
-  making waits for it, so each program is compiled once, as tinygrad's
-  parent compiles each key once. MTLCompiler, which a tinygrad worker loads
+  too. `to_program` keeps its programs, and `lower_sink_to_linear` its
+  schedules, in a table that every domain reads and fills under a lock
+  (`Helpers.Memo`), and a domain that asks for one another is making waits
+  for it, so each program is compiled once, as tinygrad's parent compiles
+  each key once, and each body is scheduled once. MTLCompiler, which a tinygrad worker loads
   in its own process, is loaded once for every domain, and it re-parses its
   options into LLVM's global option registry on every build, which is not
   thread-safe: its builds run one at a time. comgr serialises the compiles
@@ -1555,9 +1556,9 @@ driver sizes local memory as it loads a function (D146).
   `schedule/__init__.py:127-137` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
-- **tolk:** `lib/codegen/codegen.ml:1539` (`program_key`), `:1555`
-  (`kept`) and `:1564` (`made_program`); `lib/schedule/schedule.ml:355`
-  (`in_order`), `:387` (`schedule_key`) and `:392`
+- **tolk:** `lib/codegen/codegen.ml:1559` (`program_key`), `:1575`
+  (`kept`) and `:1584` (`made_program`); `lib/schedule/schedule.ml:466`
+  (`in_order`), `:498` (`schedule_key`) and `:503`
   (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:663` (`get_optimized_ast`'s
   name); `lib/setting.ml:266` (`scache`, `2` by default) and `:141`
@@ -2855,7 +2856,7 @@ encodes its barriers (D146).
   `lib/runtime/support/compiler_cpu.ml:38` (`statement`)
   and `:110`, `compiler_metal.ml:98`, `compiler_cuda.ml:94` and
   `compiler_amd.ml:86` (the tables); `lib/runtime/support/c.ml:108`
-  (`C.identity`); `lib/codegen/codegen.ml:1539-1558` (`program_key`, `kept`);
+  (`C.identity`); `lib/codegen/codegen.ml:1559-1578` (`program_key`, `kept`);
   `lib/setting.ml:285-290` (the search's settings) and
   `lib/codegen/opt/search.ml:299` (the beam search's key).
 - **Differs:** a table also names everything besides the source that

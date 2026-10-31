@@ -451,8 +451,7 @@ let pm_resolve_linear_call =
 
 (* Scheduling calls *)
 
-let schedule_cache : (string, t) Hashtbl.t = Hashtbl.create 64
-let schedule_cache_lock = Mutex.create ()
+let schedule_cache : t Helpers.Memo.t = Helpers.Memo.create ()
 
 (* [in_order fn] is the pairs that take each range and each storage of [fn] to a
    placeholder numbered by its order in it. Whoever makes a loop numbers its
@@ -510,42 +509,34 @@ let lower_sink_to_linear call =
       let start = Unix.gettimeofday () in
       let placed = in_order fn in
       let place g = substitute ~calls:Enter ~pass:Once g placed in
-      let cache_key = Digest.BLAKE256.string (schedule_key (place fn))
-      and cached = setting Setting.scache >= 1 in
-      let hit =
-        if cached then
-          Mutex.protect schedule_cache_lock (fun () ->
-              Hashtbl.find_opt schedule_cache cache_key)
-        else None
-      in
+      let cache_key = Digest.BLAKE256.string (schedule_key (place fn)) in
+      (* Whether neither memory nor disk had the schedule. *)
+      let made = ref false in
       let make () =
+        made := true;
         if setting Setting.spec <> 0 then
           Spec.type_verify ~calls:Enter Spec.tensor fn;
         place
           (create_schedule
              (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn)))
       in
-      let linear, kept =
-        match hit with
-        | Some linear -> (linear, true)
-        | None ->
-            let linear, kept =
-              if setting Setting.scache >= 2 then
-                Graph.cached ~table:"schedule_cache" ~key:cache_key
-                  ~valid:(fun l -> op l = Op.Linear)
-                  make
-              else (make (), false)
-            in
-            if cached then
-              Mutex.protect schedule_cache_lock (fun () ->
-                  Hashtbl.replace schedule_cache cache_key linear);
-            (linear, kept)
+      let read_or_make () =
+        if setting Setting.scache < 2 then make ()
+        else
+          fst
+            (Graph.cached ~table:"schedule_cache" ~key:cache_key
+               ~valid:(fun l -> op l = Op.Linear)
+               make)
+      in
+      let linear =
+        if setting Setting.scache < 1 then read_or_make ()
+        else Helpers.Memo.get schedule_cache cache_key read_or_make
       in
       let n = List.length (src linear) and debug = setting Setting.debug in
       if (debug >= 1 && n > 1) || debug >= 3 then
         Format.printf "scheduled %5d kernels in %8.2f ms | %s %s@." n
           ((Unix.gettimeofday () -. start) *. 1000.)
-          (if kept then " cache hit" else "CACHE MISS")
+          (if !made then "CACHE MISS" else " cache hit")
           (String.sub (Digest.BLAKE256.to_hex cache_key) 0 8);
       let linear =
         substitute ~calls:Enter ~pass:Once linear
