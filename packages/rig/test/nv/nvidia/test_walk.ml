@@ -324,20 +324,10 @@ let first_open n =
   let again = run_once { g = None; host = 0; want = 0 } Open in
   (reached, again)
 
-(* In a child: a process's first usage with an exception at the [n]-th
-   allocation [making] holds for, whether it reached it, and what an open
-   after it answers. *)
-let first_usage n =
-  let reached =
-    Rig_support.interrupted ~from:making
-      ~landing:(Call (fun () -> raise Exit))
-      n
-      (fun () -> ignore (P.usage ~window:1. 0))
-  in
-  (reached, run_once { g = None; host = 0; want = 0 } Open)
-
 (* A process's first open, interrupted at each allocation that makes what the
-   process keeps: the next open answers [Ok], having made it whole. *)
+   process keeps: the next open answers [Ok], having made it whole. A first
+   usage makes the client and a GPU's base, which a first open makes first,
+   so this walk covers each allocation a usage keeps. *)
 let interrupted_first () =
   need_gpu ();
   let rec walk n =
@@ -349,19 +339,6 @@ let interrupted_first () =
   in
   (* The makes allocate around each of the dozen objects they take. *)
   at_least ~msg:"the allocations walked" int ~than:12 (walk 1)
-
-(* A process's first usage, interrupted at each allocation that makes what
-   the process keeps: an open after it answers [Ok]. *)
-let interrupted_usage () =
-  need_gpu ();
-  let rec walk n =
-    let reached, again =
-      require_ok ~pp:Format.pp_print_string (in_child (fun () -> first_usage n))
-    in
-    equal string ~msg:(strf "from allocation %d, an open after" n) "Ok" again;
-    if reached then walk (n + 1) else n - 1
-  in
-  at_least ~msg:"the allocations walked" int ~than:4 (walk 1)
 
 let ops =
   [ Open; Usage; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
@@ -385,8 +362,6 @@ let () =
            [
              test "of a process's first open leaves the next to open"
                interrupted_first;
-             test "of a process's first usage leaves the next to open"
-               interrupted_usage;
            ];
          group ~timeout "a process out of files"
            (test "fails an open naming the cause, not the machine's GPUs"
