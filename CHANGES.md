@@ -49,6 +49,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Dist.binomial ~trials ~logits`, the count of successes in `trials`
+  trials of probability `sigmoid logits`, `trials` an `int32` tensor.
 - Every type carries its values' device set: `('u, 'f, 'd) Nuts.state`,
   `('f, 'd) Bij.t`, `('x, 'f, 'd) Dist.t` and the like. Samplers make their
   state beside the position; `Dist.placement` is where a distribution makes

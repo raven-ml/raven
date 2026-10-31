@@ -7,6 +7,7 @@ open Windtrap
 module D = Norn.Dist
 
 let f64 = Nx.scalar Nx.float64
+let i32 n = Nx.scalar Nx.int32 (Int32.of_int n)
 let vec xs = Nx.create Nx.float64 [| Array.length xs |] xs
 let item x = Nx.item [] x
 
@@ -43,6 +44,11 @@ let cases =
       ( "neg_binomial",
         Count (D.neg_binomial ~mean:(f64 4.) ~dispersion:(f64 2.5)) );
       ("bernoulli", Flag (D.bernoulli ~logits:(f64 0.4)));
+      ("binomial", Count (D.binomial ~trials:(i32 12) ~logits:(f64 0.4)));
+      ( "binomial_rare",
+        Count (D.binomial ~trials:(i32 40) ~logits:(f64 (-2.5))) );
+      ( "binomial_many",
+        Count (D.binomial ~trials:(i32 200) ~logits:(f64 (-1.))) );
       ("categorical", Index (D.categorical ~logits:(vec [| 0.1; -1.; 2. |])));
     ]
 
@@ -388,6 +394,168 @@ let bijectors =
                (D.support (D.poisson ~rate:(f64 1.)))));
     ]
 
+(* Binomial *)
+
+let sigmoid l = 1. /. (1. +. Float.exp (-.l))
+
+(* Mostly finite logits, often infinite ones. *)
+let logit =
+  Gen.frequency
+    [
+      (6, Gen.float_range (-30.) 30.);
+      (1, Gen.constant Float.infinity);
+      (1, Gen.constant Float.neg_infinity);
+    ]
+
+let binomial_mass =
+  prop "a binomial's mass sums to one over {0, ..., trials}"
+    Gen.(
+      pair
+        (frequency
+           [ (1, constant 0); (1, int_range 1 3); (4, int_range 4 300) ])
+        logit)
+    (fun (n, l) ->
+      cover "no trials" (n = 0);
+      cover "an infinite logit" (Float.abs l = Float.infinity);
+      cover "a finite logit" (Float.is_finite l);
+      let d = D.binomial ~trials:(i32 n) ~logits:(f64 l) in
+      let xs = Nx.arange Nx.int32 0 (n + 1) 1 in
+      let mass = Nx.sum (Nx.exp (D.factors d xs)) in
+      (* Each of at most 301 terms within a few hundred ulps. *)
+      equal (float 1e-11) 1. (item mass))
+
+let binomial_bernoulli =
+  prop "a binomial of one trial is a bernoulli" logit (fun l ->
+      let b = D.bernoulli ~logits:(f64 l) in
+      let d = D.binomial ~trials:(i32 1) ~logits:(f64 l) in
+      let flags = Nx.create Nx.bool [| 2 |] [| false; true |] in
+      let counts = Nx.create Nx.int32 [| 2 |] [| 0l; 1l |] in
+      equal (array exact_inf)
+        (Nx.to_array (D.factors b flags))
+        (Nx.to_array (D.factors d counts)))
+
+(* The mean [n p] and variance [n p q] of [m] draws, each within [z] of its
+   standard error: [sqrt (n p q / m)] for the mean and, for the variance,
+   [sqrt ((mu4 - (n p q)^2) / m)] with [mu4 = n p q (1 + 3 p q (n - 2))]. At
+   [z = 5.3] each check fails falsely with probability about 1.2e-7, the eight
+   together below 1e-6. *)
+let binomial_moments =
+  let m = 20000 and z = 5.3 in
+  Windtrap.cases "a binomial's draws have its mean and variance"
+    ~id:(fun (n, l) -> Printf.sprintf "trials %d, logits %g" n l)
+    [ (12, 0.4); (1000, -6.); (1_000_000, 3.); (50, 8.) ]
+    (fun (n, l) ->
+      let d = D.iid [| m |] (D.binomial ~trials:(i32 n) ~logits:(f64 l)) in
+      let xs =
+        Array.map Int32.to_float (Nx.to_array (D.sample (Nx.Rng.key n) d))
+      in
+      let fm = float_of_int m and fn = float_of_int n in
+      let mean = Array.fold_left ( +. ) 0. xs /. fm in
+      let var =
+        Array.fold_left (fun a x -> a +. ((x -. mean) ** 2.)) 0. xs
+        /. (fm -. 1.)
+      in
+      let p = sigmoid l and q = sigmoid (-.l) in
+      let v = fn *. p *. q in
+      let mu4 = v *. (1. +. (3. *. p *. q *. (fn -. 2.))) in
+      equal (float (z *. Float.sqrt (v /. fm))) (fn *. p) mean;
+      equal (float (z *. Float.sqrt ((mu4 -. (v *. v)) /. fm))) v var)
+
+let binomial_edges =
+  Windtrap.cases "a binomial's point masses"
+    ~id:(fun (name, _, _, _) -> name)
+    [
+      ("p = 0", 5, Float.neg_infinity, 0);
+      ("p = 1", 5, Float.infinity, 5);
+      ("no trials", 0, 0.3, 0);
+    ]
+    (fun (_, n, l, at) ->
+      let d = D.binomial ~trials:(i32 n) ~logits:(f64 l) in
+      let xs = Array.init 8 (fun i -> i - 1) in
+      let counts = Nx.create Nx.int32 [| 8 |] (Array.map Int32.of_int xs) in
+      equal (array exact_inf)
+        (Array.map (fun x -> if x = at then 0. else Float.neg_infinity) xs)
+        (Nx.to_array (D.factors d counts));
+      equal (array int32)
+        (Array.make 100 (Int32.of_int at))
+        (Nx.to_array (D.sample (Nx.Rng.key 1) (D.iid [| 100 |] d))))
+
+let binomial =
+  group "binomial"
+    [
+      binomial_mass;
+      binomial_bernoulli;
+      binomial_moments;
+      binomial_edges;
+      test "its support and bounds reach the most trials" (fun () ->
+          let d =
+            D.binomial
+              ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; 7l |])
+              ~logits:(f64 0.)
+          in
+          equal string "{0, 1, ..., 7}"
+            (Format.asprintf "%a" Norn.Support.pp (D.support d));
+          let lo, hi = D.bounds d in
+          equal (array float_exact) [| 0.; 0. |] (Nx.to_array lo);
+          equal (array float_exact) [| 3.; 7. |] (Nx.to_array hi);
+          let f = Nx.to_array (D.factors d (i32 5)) in
+          equal float_exact Float.neg_infinity f.(0);
+          let seven = D.binomial ~trials:(i32 7) ~logits:(f64 0.) in
+          equal close (item (D.factors seven (i32 5))) f.(1));
+      test "a mixture over trials has the hull of their supports" (fun () ->
+          let trials = Nx.create Nx.int32 [| 2 |] [| 3l; 7l |] in
+          let d =
+            D.mixture
+              ~logits:(vec [| 0.; 0. |])
+              (D.binomial ~trials ~logits:(f64 0.))
+          in
+          equal string "{0, 1, ..., 7}"
+            (Format.asprintf "%a" Norn.Support.pp (D.support d));
+          let lo, hi = D.bounds d in
+          equal (pair float_exact float_exact) (0., 7.) (item lo, item hi);
+          let none =
+            D.mixture
+              ~logits:(Nx.zeros Nx.float64 [| 0 |])
+              (D.binomial ~trials:(Nx.zeros Nx.int32 [| 0 |]) ~logits:(f64 0.))
+          in
+          let lo, hi = D.bounds none in
+          equal (pair float_exact float_exact)
+            (Float.infinity, Float.neg_infinity)
+            (item lo, item hi);
+          (* 5 is outside the first component's support. *)
+          let seven = D.binomial ~trials:(i32 7) ~logits:(f64 0.) in
+          equal close
+            (Float.log 0.5 +. item (D.log_density seven (i32 5)))
+            (item (D.log_density d (i32 5))));
+      test "the score of the logits is x - trials sigmoid logits" (fun () ->
+          let x = Nx.create Nx.int32 [| 3 |] [| 0l; 3l; 12l |] in
+          let g =
+            Rune.grad'
+              (fun logits ->
+                D.log_density
+                  (D.iid [| 3 |] (D.binomial ~trials:(i32 12) ~logits))
+                  x)
+              (f64 0.4)
+          in
+          equal close (15. -. (36. *. sigmoid 0.4)) (item g));
+      test "a compiled density is the eager one" (fun () ->
+          let d logits = D.iid [| 50 |] (D.binomial ~trials:(i32 30) ~logits) in
+          let x =
+            Nx.create Nx.int32 [| 50 |]
+              (Array.init 50 (fun i -> Int32.of_int (i mod 31)))
+          in
+          equal
+            (array (float 1e-12))
+            (Nx.to_array (D.factors (d (f64 0.5)) x))
+            (Nx.to_array (Rune.jit' (fun l -> D.factors (d l) x) (f64 0.5))));
+      test "a compiled draw is the eager one" (fun () ->
+          let d logits = D.iid [| 50 |] (D.binomial ~trials:(i32 30) ~logits) in
+          let k = Nx.Rng.key 4 in
+          equal (array int32)
+            (Nx.to_array (D.sample k (d (f64 0.5))))
+            (Nx.to_array (Rune.jit' (fun l -> D.sample k (d l)) (f64 0.5))));
+    ]
+
 let validation =
   group "parameter checks"
     [
@@ -426,6 +594,16 @@ let validation =
       test "a dirichlet needs two components" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"fewer than two components")
             (fun () -> D.dirichlet ~concentration:(vec [| 1. |])));
+      test "trials are counted from zero" (fun () ->
+          raises
+            (Invalid_argument
+               "Norn.Dist.log_density: binomial: trials at [1] is -2, not in \
+                [0, inf)") (fun () ->
+              D.log_density
+                (D.binomial
+                   ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; -2l |])
+                   ~logits:(f64 0.))
+                (i32 0)));
       test "the uniform's bounds are ordered" (fun () ->
           raises
             (Invalid_argument
@@ -577,4 +755,5 @@ let () =
          validation;
          valid;
          transforms;
+         binomial;
        ])

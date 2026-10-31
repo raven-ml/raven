@@ -697,6 +697,22 @@ let kinds =
             (item (M.log_joint m counts rate));
           let c = M.init m counts ~chains:2 (Nx.Rng.key 0) in
           equal (array int) [| 2 |] (Nx.shape (M.log_density m counts c)));
+      test "a mixture over trials is scored" (fun () ->
+          let trials = Nx.create Nx.int32 [| 2 |] [| 3l; 7l |] in
+          let mix l =
+            D.mixture
+              ~logits:(vec [| 0.; 0. |])
+              (D.binomial ~trials ~logits:(Nx.broadcast_to [| 2 |] l))
+          in
+          let m =
+            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+                let l = M.sample std in
+                (l, M.sample (mix l)))
+          in
+          let l = f64 0.3 and y = Nx.scalar Nx.int32 5l in
+          equal close
+            (item (D.log_density std l) +. item (D.log_density (mix l) y))
+            (item (M.log_joint m y l)));
       test "a simplex site has one coordinate fewer" (fun () ->
           let m =
             M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->

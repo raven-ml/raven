@@ -74,6 +74,9 @@ val poisson : rate:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
 val neg_binomial :
   mean:(float, 'f, 'd) Nx.t -> dispersion:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
 
+val binomial :
+  trials:'d Nx.int32_t -> logits:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
+
 val categorical : logits:(float, 'f, 'd) Nx.t -> ('d Nx.int64_t, 'f, 'd) t
 
 (** {1:combinators Combinators} *)

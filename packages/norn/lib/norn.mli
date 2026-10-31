@@ -607,6 +607,15 @@ module Dist : sig
       concentration [dispersion]. [mean] is non-negative and finite,
       [dispersion] in [(0, inf)]. *)
 
+  val binomial :
+    trials:'d Nx.int32_t -> logits:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
+  (** [binomial ~trials ~logits] is the number of successes in [trials]
+      independent trials, each a success with probability [p = sigmoid logits]:
+      the count [x] in [{0, ..., trials}] with probability
+      [C(trials, x) p^x (1 - p)^(trials - x)]. [trials] is non-negative. A logit
+      may be infinite: [-inf] puts all mass at [0], [inf] at [trials]. Draws are
+      {!Nx.Rng.binomial}'s, within the limits it states. *)
+
   val categorical : logits:(float, 'f, 'd) Nx.t -> ('d Nx.int64_t, 'f, 'd) t
   (** [categorical ~logits] is the index [k] with probability [softmax logits]
       along the last axis. A logit may be [-inf], a category of probability

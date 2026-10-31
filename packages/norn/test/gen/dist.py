@@ -65,6 +65,9 @@ DISCRETE = {
     "poisson": (stats.poisson(3.2), list(range(0, 12)) + [-1], 12),
     "neg_binomial": (stats.nbinom(2.5, 2.5 / (2.5 + 4.0)), list(range(0, 15)) + [-2], 20),
     "bernoulli": (stats.bernoulli(sigmoid(0.4)), [0, 1], 2),
+    "binomial": (stats.binom(12, special.expit(0.4)), list(range(0, 14)) + [-1], 12),
+    "binomial_rare": (stats.binom(40, special.expit(-2.5)), [0, 1, 3, 10, 40, 41], 40),
+    "binomial_many": (stats.binom(200, special.expit(-1.0)), [0, 30, 54, 100, 200], 200),
 }
 
 

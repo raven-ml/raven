@@ -565,6 +565,12 @@ let mvn ~loc ~scale_tril =
 
 (* Discrete families *)
 
+(* [fixed like (lo, hi)] is bounds [lo] and [hi] beside [like], at its
+   dtype. *)
+let fixed like (lo, hi) () =
+  let at = Nx.beside like and dt = Nx.dtype like in
+  (Nx.scalar_at at dt lo, Nx.scalar_at at dt hi)
+
 let discrete ~family ~kind ~params ~shape ~checks ~support ~bounds ~factors
     ~draw like =
   let dtype = Nx.dtype like and at = Nx.beside like in
@@ -575,10 +581,8 @@ let discrete ~family ~kind ~params ~shape ~checks ~support ~bounds ~factors
     shape;
     checks;
     checked = false;
-    support = (fun () -> support);
-    bounds =
-      (fun () ->
-        (Nx.scalar_at at dtype (fst bounds), Nx.scalar_at at dtype (snd bounds)));
+    support;
+    bounds;
     factors;
     draw;
     coords = None;
@@ -595,7 +599,8 @@ let bernoulli ~logits =
     ~params:[ param "logits" logits ]
     ~shape:(Nx.shape logits)
     ~checks:[ check family "logits" "[-inf, inf]" not_nan logits ]
-    ~support:Support.Boolean ~bounds:(0., 1.)
+    ~support:(fun () -> Support.Boolean)
+    ~bounds:(fixed logits (0., 1.))
     ~factors:(fun x ->
       Nx.where x (log_sigmoid logits) (log_sigmoid (Nx.neg logits)))
     ~draw:(fun k s -> Nx.Rng.bernoulli ~key:k (Nx.sigmoid (broadcast_to s logits)))
@@ -612,7 +617,8 @@ let poisson ~rate =
           (fun r -> Nx.logical_and (non_negative r) (below_infinity r))
           rate;
       ]
-    ~support:(Support.Integers_from 0) ~bounds:(0., Float.infinity)
+    ~support:(fun () -> Support.Integers_from 0)
+    ~bounds:(fixed rate (0., Float.infinity))
     ~factors:(fun x ->
       let ok = Nx.greater_equal x (Nx.scalar_like x 0l) in
       let x = Nx.cast (Nx.dtype rate) (Nx.where ok x (Nx.scalar_like x 0l)) in
@@ -634,7 +640,8 @@ let neg_binomial ~mean ~dispersion =
           mean;
         in_positive family "dispersion" r;
       ]
-    ~support:(Support.Integers_from 0) ~bounds:(0., Float.infinity)
+    ~support:(fun () -> Support.Integers_from 0)
+    ~bounds:(fixed mean (0., Float.infinity))
     ~factors:(fun x ->
       let ok = Nx.greater_equal x (Nx.scalar_like x 0l) in
       let x = Nx.cast (Nx.dtype mean) (Nx.where ok x (Nx.scalar_like x 0l)) in
@@ -656,6 +663,68 @@ let neg_binomial ~mean ~dispersion =
       let rate = Nx.mul (Nx.Rng.gamma ~key:k1 (broadcast_to s r)) (Nx.div mean r) in
       Nx.Rng.poisson ~key:k2 rate)
     mean
+
+(* [times n y] is [n y], [0] where [n] is [0]: no successes at a probability
+   of [0] weigh nothing. *)
+let times n y = Nx.where (Nx.equal n (const n 0.)) (const n 0.) (Nx.mul n y)
+
+let binomial ~trials ~logits =
+  let family = "binomial" in
+  let dt = Nx.dtype logits in
+  (* [log C(n, x) = -log (n + 1) - log B(x + 1, n - x + 1)], whose log-beta
+     keeps the digits that the factorials' three log-gammas lose to
+     cancellation. *)
+  let factors x =
+    let ok =
+      Nx.logical_and
+        (Nx.greater_equal x (Nx.scalar_like x 0l))
+        (Nx.less_equal x trials)
+    in
+    let x = Nx.cast dt (Nx.where ok x (Nx.scalar_like x 0l)) in
+    let n = Nx.cast dt trials in
+    let rest = Nx.sub n x in
+    let choose =
+      Nx.neg (Nx.add (Nx.log1p n) (Nx.lbeta (Nx.add_s x 1.) (Nx.add_s rest 1.)))
+    in
+    outside ok
+      (Nx.add choose
+         (Nx.add
+            (times x (log_sigmoid logits))
+            (times rest (log_sigmoid (Nx.neg logits)))))
+  in
+  (* Drawn at the rarer outcome's probability [sigmoid (-|logits|)], then
+     counted down from [trials] where success is the likelier: a probability
+     near [1] keeps the digits that [1 - sigmoid logits] would lose. *)
+  let draw k s =
+    let n = broadcast_to s trials and l = broadcast_to s logits in
+    let x = Nx.Rng.binomial ~key:k n (Nx.sigmoid (Nx.neg (Nx.abs l))) in
+    Nx.where (Nx.greater l (const l 0.)) (Nx.sub n x) x
+  in
+  let support () =
+    let most =
+      if Nx.numel trials = 0 then 0
+      else Int32.to_int (Nx.item [] (Nx.max trials))
+    in
+    Support.Integer_interval (0, max 0 most)
+  in
+  let d =
+    discrete ~family ~kind:Counts
+      ~params:[ param "trials" trials; param "logits" logits ]
+      ~shape:(broadcast family [ Nx.shape trials; Nx.shape logits ])
+      ~checks:
+        [
+          check family "trials" "[0, inf)"
+            (fun n -> Nx.greater_equal n (Nx.scalar_like n 0l))
+            trials;
+          check family "logits" "[-inf, inf]" not_nan logits;
+        ]
+      ~support
+      ~bounds:(fun () ->
+        (Nx.scalar_at (Nx.beside trials) dt 0., Nx.cast dt trials))
+      ~factors ~draw logits
+  in
+  (* Beside the first parameter, as every family's. *)
+  { d with at = Nx.beside trials }
 
 let categorical ~logits =
   let family = "categorical" in
@@ -692,8 +761,8 @@ let categorical ~logits =
           (fun l -> Nx.logical_and (not_nan l) (below_infinity l))
           logits;
       ]
-    ~support:(Support.Integer_interval (0, k - 1))
-    ~bounds:(0., float_of_int (k - 1))
+    ~support:(fun () -> Support.Integer_interval (0, k - 1))
+    ~bounds:(fixed logits (0., float_of_int (k - 1)))
     ~factors
     ~draw:(fun key shape ->
       Nx.Rng.categorical ~key:key (broadcast_to (Array.append shape [| k |]) logits))
@@ -803,6 +872,19 @@ let hull_coords family d =
         ->
           invalid_argf "Norn.Dist.%s: %s has no coordinates" family d.family)
 
+(* [component_hull d] is the least lower and greatest upper bound of [d]'s
+   components, along its leading axis: a binomial's per-component trials give
+   per-component upper bounds. No component bounds the empty set, from [inf]
+   to [-inf]. *)
+let component_hull d () =
+  let lo, hi = d.bounds () in
+  if d.shape.(0) = 0 then
+    let c v = Nx.scalar_at d.at d.dtype v in
+    (c Float.infinity, c Float.neg_infinity)
+  else
+    ( Nx.min ~axes:[ 0 ] (Nx.broadcast_to d.shape lo),
+      Nx.max ~axes:[ 0 ] (Nx.broadcast_to d.shape hi) )
+
 let mixture ~logits d =
   let family = "mixture" in
   let ls = Nx.shape logits in
@@ -863,7 +945,9 @@ let mixture ~logits d =
     draw;
     coords = hull;
     bounds =
-      (match hull with Some h -> coord_bounds d.at d.dtype h | None -> d.bounds);
+      (match hull with
+      | Some h -> coord_bounds d.at d.dtype h
+      | None -> component_hull d);
     standardize = None;
     quantile = None;
     membership = Some membership;
