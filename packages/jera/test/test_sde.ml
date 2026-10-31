@@ -300,6 +300,18 @@ let exact_methods =
     ("sra1", Sde.sra1);
   ]
 
+let restarts =
+  Gen.(
+    let+ m = of_list exact_methods
+    and+ seed = int_range 0 1000
+    and+ depth = int_range 0 12
+    and+ steps = int_range 1 6
+    and+ ts = times in
+    (m, seed, depth, steps, ts))
+  |> Gen.with_pp (fun ppf ((name, _), seed, depth, steps, (a, b, c)) ->
+      Format.fprintf ppf "%s, key %d, depth %d, %d steps, at [%g; %g; %g]"
+        name seed depth steps a b c)
+
 let march_tests =
   let w = path ~n:3 31 in
   let run ?(steps = 4) ?(m = Sde.euler_maruyama) at x =
@@ -417,6 +429,22 @@ let march_tests =
             (x0 3)
         in
         equal (Oracle.tensor ()) (Nx.ones f64 [| 2; 3 |]) y);
+    prop "a march restarted at one of its times continues it" restarts
+      (fun ((_, m), seed, depth, steps, (a, b, c)) ->
+        (* Bit for bit: the interval from b continues from the path's W and I
+           carried to b, the restarted march from a query of the path at b. *)
+        assume (a < b && b < c);
+        let w =
+          Sde.Brownian.v (Nx.Rng.key seed) f64 ~shape:[| 3 |] ~t0:0. ~t1:1.
+            ~depth
+        in
+        let run at x =
+          Sde.march one m ~steps ~drift:gbm_drift ~diffusion:gbm_diffusion w
+            ~at:(vec at) x
+        in
+        let whole = run [| a; b; c |] (x0 3) in
+        let rest = run [| b; c |] (Nx.get [ 1 ] whole) in
+        equal (Oracle.tensor ()) (Nx.get [ 2 ] whole) (Nx.get [ 1 ] rest));
     test "times that are not increasing raise" (fun () ->
         raises_with "the times of at are not strictly increasing" (fun () ->
             run (vec [| 1.; 0.5 |]) (x0 3)));
