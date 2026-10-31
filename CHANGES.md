@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- `Multi.multi_pm` broadcasts a value of symbolic or expanded shape to several
+  devices: it copies a contiguous buffer padded to the largest shape, then
+  shrinks the copies to the value's shape.
 - Two variables of one name, such as one read under two bounds, take one
   parameter slot: a program lists the name once in its `vars`.
 - **Breaking:** `Ops.Axis_type` loses `Reduce` and `Unroll` and orders `Device`,

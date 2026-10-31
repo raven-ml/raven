@@ -191,6 +191,8 @@ PROGRAMS = {
     "gather_four": lambda: sharded(8, 4, axis=0, devices=D4).to("CPU:1") + 1,
     "select_first": lambda: empty(4, 8, devices=D2).to("CPU:1") + 1,
     "reshard_devices": lambda: sharded(4, 8, axis=0).to(D4[2:]) + 1,
+    "broadcast_symbolic": lambda: empty(2, 3, 4)[:, :Variable("rows", 1, 3).bind(2)].contiguous().to(D2).sum(1),
+    "broadcast_expand": lambda: empty(2, 3, 1).expand(2, 3, 4).to(D2).sum(1),
     # stores
     "contiguous": lambda: (sharded(4, 8, axis=0) + 1).contiguous().sum(1),
     "assign": lambda: sharded(4, 8, axis=0).assign(sharded(4, 8, axis=0) + 1),

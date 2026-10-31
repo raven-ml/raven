@@ -103,6 +103,8 @@ let programs =
     "select_first";
     "reshard_devices";
     "reshard_devices_1";
+    "broadcast_symbolic";
+    "broadcast_expand";
     "contiguous";
     "assign";
     "assign_shard";

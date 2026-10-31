@@ -2960,6 +2960,10 @@ schedule/multi/batchnorm_stats_1_multi.golden
 schedule/multi/batchnorm_stats_multi.golden
 schedule/multi/bitcast.golden
 schedule/multi/bitcast_multi.golden
+schedule/multi/broadcast_expand.golden
+schedule/multi/broadcast_expand_multi.golden
+schedule/multi/broadcast_symbolic.golden
+schedule/multi/broadcast_symbolic_multi.golden
 schedule/multi/cast_half.golden
 schedule/multi/cast_half_multi.golden
 schedule/multi/cat.golden

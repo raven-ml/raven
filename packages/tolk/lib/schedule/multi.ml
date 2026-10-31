@@ -92,9 +92,16 @@ let lower_broadcast_copy c x =
       if Option.is_none (device sx) then
         Some (v Op.Mstack ~src:(List.map (fun _ -> sx) ds))
       else
+        (* Each device copies the whole buffer of [x], padded to its largest
+           shape, and keeps the elements of [c]. *)
+        let staged =
+          contiguous (pad_to x (List.map (fun n -> Some (Int n)) (max_shape x)))
+        in
         Some
-          (v Op.Mstack
-             ~src:(List.map (fun d -> copy_to_device x (Single d)) ds))
+          (shrink_to
+             (v Op.Mstack
+                ~src:(List.map (fun d -> copy_to_device staged (Single d)) ds))
+             (List.map Option.some (shape c)))
   | _ -> None
 
 let copy_to_one c x =
