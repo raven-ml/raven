@@ -64,7 +64,7 @@ let kinds =
     ( "a range",
       Ops.v
         ~src:[ int 16 ]
-        ~arg:(Range { axis_id = [ 1; 0 ]; axis_type = Reduce })
+        ~arg:(Range { axis_type = Weak; axis_id = [ 1; 0 ] })
         Range );
     ( "a reduction",
       Ops.v ~src:[ x ] ~arg:(Reduce { op = Add; num_axes = 1 }) Reduce );
@@ -148,7 +148,10 @@ let kinds =
                dtype_in = Float16;
                threads = 32;
                upcast_axes =
-                 Some ([ ([ 0 ], 2) ], [ ([ 1 ], 2) ], [ ([ 2 ], 2) ]);
+                 Some
+                   ( [ ((Upcast, [ 0 ]), 2) ],
+                     [ ((Upcast, [ 1 ]), 2) ],
+                     [ ((Upcast, [ 2 ]), 2) ] );
              })
         Wmma );
     ("a tuple tag", Ops.v ~src:[ x ] ~tag:(Tuple [ Int 0; Dtype Int32 ]) Add);
@@ -244,10 +247,10 @@ let errors =
       test "rejects an argument on an operation that takes none" (fun () ->
           rejects "Ops.NOOP takes no argument" "0 Ops.NOOP dtypes.void [] 1\n");
       test "rejects a split into an axis type no split makes" (fun () ->
-          rejects "a split cannot make an axis of type AxisType.REDUCE"
+          rejects "a split cannot make an axis of type AxisType.WEAK"
             "0 Ops.SINK dtypes.void [] \
              KernelInfo(applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, \
-             AxisType.REDUCE)),))\n");
+             AxisType.WEAK)),))\n");
       test "rejects an unknown field" (fun () ->
           rejects "KernelInfo has no field size"
             "0 Ops.SINK dtypes.void [] KernelInfo(size=1)\n");

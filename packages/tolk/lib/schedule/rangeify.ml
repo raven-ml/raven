@@ -20,12 +20,7 @@ let opts u =
   | Bufferize o -> o
   | _ -> invalid_arg "a stage needs its buffer's options"
 
-let compare_range r0 r1 =
-  match List.compare Int.compare (axis_id r0) (axis_id r1) with
-  | 0 -> Axis_type.compare (axis_type r0) (axis_type r1)
-  | c -> c
-
-let sorted_ranges rs = List.sort_uniq compare_range rs
+let sorted_ranges rs = List.sort_uniq compare_range_arg rs
 let is_tagged u = Option.equal Tag.equal (tag u) (Some (Tag.Tuple []))
 
 let rec zip l0 l1 =
@@ -91,35 +86,47 @@ let read_ranges xs =
    are gated there. A coordinate the value does not vary along counts neither
    elements nor trips: substituting its index leaves the value as it is. A
    symbolic size counts at its largest. *)
-let read_copies buf idx =
+let read_copies ~reduced buf idx =
   let live =
     List.filter
       (fun (r, _) -> op r = Op.Range && Nodes.mem r (ranges (nth buf 0)))
       (zip (List.tl (src buf)) (List.tl (src idx)))
   in
   let read = read_ranges (List.map snd live) in
-  let reduce =
-    List.filter (fun r -> Axis_type.equal (axis_type r) Reduce) read
-  in
+  let reduce = List.filter reduced read in
   let elements = extent (List.map fst live) in
   if elements <= 0. then 1.
   else Float.max 1. (Float.min (extent reduce) (extent read /. elements))
+
+(* A range's axis: its type and identity, which name it while the cleanups
+   rebuild the nodes around it. *)
+let axis r = (axis_type r, axis_id r)
 
 (* The copies the reads of the stages of a graph make of their values once
    inlined ({!read_copies}): [total] in all, and [by_axis] those of the stages
    over each range axis. Reads at several distinct indices copy the value at
    each. The axes of a stage's ranges are its own and name it while the
-   cleanups rebuild it on its rewritten value. *)
-type reads = { total : float; by_axis : (int list, float) Hashtbl.t }
+   cleanups rebuild it on its rewritten value. [reduce_axes] holds the axes of
+   the ranges a reduction closes. *)
+type reads = {
+  total : float;
+  by_axis : (Axis_type.t * int list, float) Hashtbl.t;
+  reduce_axes : (Axis_type.t * int list, unit) Hashtbl.t;
+}
+
+(* Whether the range [r] is one a reduction of the graph [reads] was taken from
+   closes. *)
+let reduced reads r = op r = Op.Range && Hashtbl.mem reads.reduce_axes (axis r)
 
 (* The reads of the stages of [tsink]. A read through a stack is not counted: by
    now every stage has a device, so the cleanups never turn it into a read of
    the stage. *)
 let stage_reads tsink =
   let total = ref 0. and by_axis = Hashtbl.create 16 and seen = Tbl.create 64 in
+  let reduce_axes = Hashtbl.create 16 in
   let count c r =
     if op r = Op.Range then
-      let k = axis_id r in
+      let k = axis r in
       let n = Option.value (Hashtbl.find_opt by_axis k) ~default:0. in
       Hashtbl.replace by_axis k (n +. c)
   in
@@ -131,19 +138,28 @@ let stage_reads tsink =
       u :: stack
     end
   in
-  let rec walk = function
-    | [] -> ()
+  let rec gather nodes = function
+    | [] -> nodes
     | u :: rest ->
-        if op u = Op.Index && op (nth u 0) = Op.Stage then begin
-          let buf = nth u 0 in
-          let c = read_copies buf u in
-          total := !total +. c;
-          List.iter (count c) (List.tl (src buf))
-        end;
-        walk (List.fold_left push rest (src_without_body u))
+        if op u = Op.Reduce then
+          List.iter
+            (fun r ->
+              if op r = Op.Range then Hashtbl.replace reduce_axes (axis r) ())
+            (List.tl (src u));
+        gather (u :: nodes) (List.fold_left push rest (src_without_body u))
   in
-  walk (push [] tsink);
-  { total = !total; by_axis }
+  let nodes = gather [] (push [] tsink) in
+  let reads = { total = 0.; by_axis; reduce_axes } in
+  List.iter
+    (fun u ->
+      if op u = Op.Index && op (nth u 0) = Op.Stage then begin
+        let buf = nth u 0 in
+        let c = read_copies ~reduced:(reduced reads) buf u in
+        total := !total +. c;
+        List.iter (count c) (List.tl (src buf))
+      end)
+    nodes;
+  { reads with total = !total }
 
 (* Each read of a stage counts at every axis of its ranges, and other stages can
    share an axis, a device range or one a symbolic size names, so the least
@@ -154,7 +170,7 @@ let stage_copies reads buf =
     if op r <> Op.Range then n
     else
       Float.min n
-        (Option.value (Hashtbl.find_opt reads.by_axis (axis_id r)) ~default:0.)
+        (Option.value (Hashtbl.find_opt reads.by_axis (axis r)) ~default:0.)
   in
   match List.fold_left least Float.infinity (List.tl (src buf)) with
   | n when n = Float.infinity -> 1.
@@ -229,7 +245,7 @@ let remove_bufferize ~reads src buf idx =
       let read = read_ranges (List.tl (Ops.src idx)) in
       (opts buf).keep = Broadcast
       && read <> []
-      && List.for_all (fun r -> Axis_type.equal (axis_type r) Reduce) read
+      && List.for_all (reduced reads) read
       && Tbl.length accessed > 1
     in
     (* Inlined, the value is copied to each position it is read at, and
@@ -470,7 +486,7 @@ let limit_bufs ctx root =
               let n = ctx.range_idx in
               ctx.range_idx <- n + 1;
               replace r
-                ~arg:(Range { axis_id = [ n ]; axis_type = Axis_type.Weak })
+                ~arg:(Range { axis_type = Axis_type.Weak; axis_id = [ n ] })
             end
             else r
           in
@@ -732,7 +748,12 @@ let renumber_range ctx r =
   else
     let ret =
       replace r ~tag:None
-        ~arg:(Range { axis_id = [ ctx.range ]; axis_type = axis_type r })
+        ~arg:
+          (Range
+             {
+               axis_type = axis_type r;
+               axis_id = ctx.range :: List.tl (axis_id r);
+             })
     in
     ctx.range <- ctx.range + 1;
     Some ret

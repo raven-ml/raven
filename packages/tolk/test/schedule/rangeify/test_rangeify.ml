@@ -721,14 +721,18 @@ let stores_small value =
         [ Ops.store (Shape.reshape small (Shape.shape value)) value ];
     ]
 
-(* The loops each kernel reduces over. *)
+(* The loops each kernel reduces over: the ranges its reductions close. *)
 let reduce_loops sink =
+  let closed u =
+    if Ops.op u = Reduce then
+      List.filter (fun r -> Ops.op r = Range) (List.tl (Ops.src u))
+    else []
+  in
   List.map
     (fun c ->
       List.length
-        (List.filter
-           (fun u -> Ops.op u = Range && Ops.axis_type u = Reduce)
-           (Ops.toposort ~calls:Skip (Ops.nth c 0))))
+        (List.sort_uniq Ops.compare
+           (List.concat_map closed (Ops.toposort ~calls:Skip (Ops.nth c 0)))))
     (calls (schedule sink))
 
 let siblings =
@@ -1219,7 +1223,7 @@ let copies =
    [width] of [read i k]. *)
 let kernels_reducing ~width read =
   let o = Shape.param ~device:cpu ~shape:[ Int 16 ] 0 Float32 in
-  let i = loop 16 9 and k = Ops.range ~axis_type:Reduce (Int width) [ 10 ] in
+  let i = loop 16 9 and k = Ops.range (Int width) [ 10 ] in
   let store = Ops.store (Ops.index o [ i ]) (Ops.reduce (read i k) Add [ k ]) in
   kernels
     (Rangeify.get_kernel_graph

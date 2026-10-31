@@ -1,8 +1,5 @@
 """Goldens of tinygrad/codegen/opt/__init__.py: how an Opt prints, and how two
-Opts compare.
-
-Two splits of one axis and amount into different targets do not compare in
-tinygrad, whose AxisType has no order: the comparisons leave those pairs out.
+Opts compare, a split's target by the order of AxisType.
 """
 
 from golden import table
@@ -15,7 +12,7 @@ OPTS = [
     Opt(OptOps.TC, 2, (1, 1, 1)),
     Opt(OptOps.SPLIT, 0, (0, AxisType.UPCAST)),
     Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)),
-    Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)),
+    Opt(OptOps.SPLIT, 0, (4, AxisType.LOCAL)),
     Opt(OptOps.SPLIT, 0, (8, AxisType.UPCAST)),
     Opt(OptOps.SPLIT, 1, (16, AxisType.LOCAL)),
     Opt(OptOps.SPLIT, 1, (16, AxisType.LOCAL, True)),
@@ -32,14 +29,9 @@ def reprs():
     return ["opt", "axis"], [(repr(o), o.axis) for o in OPTS]
 
 
-def order(a, b):
-    try:
-        return "<" if a < b else ">" if b < a else "="
-    except TypeError:
-        return None
+def order(a, b): return "<" if a < b else ">" if b < a else "="
 
 
 @table
 def comparisons():
-    rows = [(repr(a), repr(b), order(a, b)) for a in OPTS for b in OPTS]
-    return ["a", "b", "order"], [row for row in rows if row[2] is not None]
+    return ["a", "b", "order"], [(repr(a), repr(b), order(a, b)) for a in OPTS for b in OPTS]

@@ -29,8 +29,8 @@
 val actions : unit -> Opt.t list
 (** [actions ()] is the optimisations the search tries under the current
     settings, in order:
-    - splits of the axes [0] to [9] into {!Opt.Upcast}, then {!Opt.Unroll},
-      lanes by [0], [2], [3], [4], [5] and [7];
+    - splits of the axes [0] to [9] into {!Opt.Upcast} lanes by [0], [2], [3],
+      [4], [5] and [7];
     - splits of the axes [0] to [7] into {!Opt.Local} threads by [0], [2], [3],
       [4], [8], [13], [16] and [29], then from the top by [13], [16], [28],
       [29], [32], [49], [64] and [256];
@@ -52,7 +52,7 @@ val get_kernel_actions :
     - it does not apply ({!Postrange.Scheduler.apply_opt});
     - it is no tensor core and its axis is not one of [k]'s, or it splits a
       whole axis by its size while [actions ()] splits it by [0] alike;
-    - [k'] has more upcast and unrolled lanes than [max_up] (default
+    - [k'] has more upcast lanes than [max_up] (default
       {!Setting.beam_upcast_max}), not counting a tensor core's product for each
       of its threads, or more warp and local threads than
       {!Setting.beam_local_max}. Under {!Setting.beam_log_surpass_max}, these

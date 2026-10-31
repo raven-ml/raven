@@ -947,9 +947,13 @@ let compiles_sources_once =
   group "a search compiles each source once"
     [
       test "and keeps a rejection, on one domain" (fun () ->
-          let repeats = repeated "Apple72" "matmul_small" in
-          greater int ~msg:"sources rendered twice in a round" ~than:0
-            (List.length repeats);
+          (* The first repeat: rejecting it leaves the search as it was up to
+             its round, whose candidates render it again. *)
+          let repeats =
+            match repeated "Apple72" "sum_rows" with
+            | src :: _ -> [ src ]
+            | [] -> fail "no source rendered twice in a round"
+          in
           let before ~rendered:_ ~compiled:_ src =
             if List.mem src repeats then
               raise (Renderer.Compiler.Compile_error "rejected")
@@ -960,7 +964,7 @@ let compiles_sources_once =
             (search
                ~settings:[ B (Setting.parallel, 0) ]
                ~timing 2
-               (scheduled_for ren "matmul_small"));
+               (scheduled_for ren "sum_rows"));
           List.iter
             (fun src ->
               let msg = Digest.to_hex (Digest.string src) in
@@ -971,7 +975,7 @@ let compiles_sources_once =
         "when a domain asks for a source another is compiling, on several \
          domains" (fun () ->
           let first =
-            match repeated "Apple74" "matmul_small" with
+            match repeated "Apple74" "sum_rows" with
             | src :: _ -> src
             | [] -> fail "no source rendered twice in a round"
           in
@@ -999,7 +1003,7 @@ let compiles_sources_once =
             (search
                ~settings:[ B (Setting.parallel, 4) ]
                ~timing 2
-               (scheduled_for ren "matmul_small"));
+               (scheduled_for ren "sum_rows"));
           at_least int ~msg:"renders of the source" ~than:2
             (counted rendered first);
           List.iter
@@ -1381,8 +1385,8 @@ let under_environment =
                (int_of_string (cell "measurements"))
                (List.length (calls ())));
          test
-           "a candidate of more than 1000 times the fewest operations is not \
-            measured" (fun () ->
+           "a candidate of more than 1000 times the fewest operations of its \
+            round so far is not measured" (fun () ->
              let is_pad = function Opt.Padto _ -> true | _ -> false in
              let k = scheduled "transpose_33" "metal" in
              let pads =
@@ -1396,10 +1400,28 @@ let under_environment =
              ignore (search ~timing 1 k);
              contains ~sub:"too much compute" (output ());
              is_true ~msg:"measured" (calls () <> []);
+             (* [k] applies no optimisation, and a candidate of round [r]
+                applies [r]. A candidate dropped for its operations lowers no
+                round's fewest, so the fewest so far are those measured. *)
+             let fewest = Hashtbl.create 4 in
              List.iter
                (fun c ->
-                 is_true ~msg:"a pad was measured"
-                   (not (List.exists is_pad (kernel_info c.prg).applied_opts)))
+                 let info = kernel_info c.prg in
+                 let round = List.length info.applied_opts in
+                 let ops =
+                   match info.estimates with
+                   | Some e -> Shape.sym_infer e.ops c.vars
+                   | None -> 0
+                 in
+                 let least =
+                   Option.fold ~none:ops ~some:(Int.min ops)
+                     (Hashtbl.find_opt fewest round)
+                 in
+                 let msg =
+                   Format.asprintf "%a" (Testable.pp opts) info.applied_opts
+                 in
+                 at_most int ~msg ~than:(1000 * least) ops;
+                 Hashtbl.replace fewest round least)
                (calls ()));
          test
            "kernels of too many lanes are reported under BEAM_LOG_SURPASS_MAX"

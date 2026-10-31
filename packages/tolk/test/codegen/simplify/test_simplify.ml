@@ -254,7 +254,7 @@ let pp_reduction (rop, x, hi) =
    reduction and its rewrite are one of the two; every other value is one. *)
 let reduces_by_size (rop, x, hi) =
   let n = var "n" 0 hi and value = Shape.param 0 Float32 in
-  let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
+  let r = Ops.range (Sym n) [ 0 ] in
   let u = Ops.reduce value rop [ r ] in
   let at size u =
     let vars = [ ("n", i size) ] and params = [ (0, `Float x) ] in

@@ -267,7 +267,7 @@ let kernel_nodes =
           let b = var "b" 0 1 in
           equal uops [ b; a; b ] (Ops.src (Ops.sink [ b; a; b ])));
       test "contract rejects a range that is not upcast" (fun () ->
-          let r = Ops.range ~axis_type:Reduce (Int 2) [ 0 ] in
+          let r = Ops.range (Int 2) [ 0 ] in
           rejects (fun () -> Shape.contract Ops.O.(r + int 1) [ r ]));
       test "range defaults to a weak integer loop of weak role" (fun () ->
           let r = Ops.range (Int 4) [ 0 ] in
@@ -521,7 +521,7 @@ let devices =
               Ops.allreduce (param ~device:cpu [ 4 ] 0 Float32) Op.Add cpu));
       test "device_range_src is a device range for several devices" (fun () ->
           equal uops
-            [ Ops.range ~axis_type:Device (Int 2) [ -1 ] ]
+            [ Ops.range ~axis_type:Device (Int 2) [ 0 ] ]
             (Ops.device_range_src (Some pair_devices));
           equal uops [] (Ops.device_range_src (Some cpu));
           equal uops [] (Ops.device_range_src None));

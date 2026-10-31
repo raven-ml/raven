@@ -5,7 +5,7 @@ Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	0
 Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	2
 Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	0
 Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	0
-Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	0
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))	0
 Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST))	0
 Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	1
 Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	1

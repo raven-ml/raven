@@ -178,8 +178,8 @@ tc_without_reduce	add_one	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		Ke
 tc_on_max	row_max	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
 tc_operands_swapped	matmul	metal	(Opt(op=OptOps.TC, axis=1, arg=(-1, 0, 1)),)		ok	
 tc_axis_out_of_choices	matmul	metal	(Opt(op=OptOps.TC, axis=2, arg=(-1, 0, 1)),)		KernelOptError	0
-custom_gemm_group	custom_gemm	amd	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		ok	
-custom_gemm_unroll	custom_gemm	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UPCAST)),)		ok	
+custom_gemm_group	custom_gemm	amd	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)),)		KernelOptError	0
+custom_gemm_unroll	custom_gemm	cpu	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UPCAST)),)		KernelOptError	0
 stage_then_reduce_globals	stage_then_reduce	metal	()		ok	
 stage_outside_an_output_globals	stage_outside_an_output	metal	()		ok	
 loop_counter_upcast	loop_counter	cpu	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	
@@ -196,6 +196,10 @@ flatten_keeps_a_closed_extent	closed_extent	cpu	()		ok
 nested_end_globals	nested_end	metal	()		ok	
 launched_upcast	launched	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	
 split_int32_axis	int32_axis	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		KernelOptError	0
+padto_reduction_bound	bounded_reduction	amd	(Opt(op=OptOps.PADTO, axis=0, arg=8),)		ok	
+upcast_both_roles	sum_rows_64	cpu	(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)))		ok	
+group_beside_unrolled_reduce	sum_rows_64	tiny_shared	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(32, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)))		ok	
+double_sum_unrolled_group	double_sum	metal	(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.LOCAL)))		KernelOptError	1
 tc_metal_0_basic	tc_metal_0	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)	ALLOW_TF32=1	ok	
 tc_metal_0_padded_0	tc_metal_0_padded	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)	ALLOW_TF32=1	KernelOptError	0
 tc_metal_0_padded_1	tc_metal_0_padded	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 1, 1)),)	ALLOW_TF32=1	KernelOptError	0
@@ -211,11 +215,11 @@ tc_metal_tiled_extra_locals	tc_metal_tiled	metal	(Opt(op=OptOps.TC, axis=0, arg=
 tc_metal_tiled_use_tc_2	tc_metal_tiled	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)	ALLOW_TF32=1	ok	
 tc_metal_batched_upcast	tc_metal_batched	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	ALLOW_TF32=1	ok	
 tc_metal_padto_warp	tc_metal_64	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.PADTO, axis=2, arg=7))	ALLOW_TF32=1	KernelOptError	1
-tc_metal_group_2	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
-tc_metal_group_2_top	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
-tc_metal_group_4	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
-tc_metal_group_4_top	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
-tc_metal_unroll	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.UPCAST)))	ALLOW_TF32=1	ok	
+tc_metal_group_2	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
+tc_metal_group_2_top	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
+tc_metal_group_4	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
+tc_metal_group_4_top	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
+tc_metal_unroll	tc_metal_group	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=2, arg=(2, AxisType.UPCAST)))	ALLOW_TF32=1	ok	
 tc_metal_failed_padto	tc_metal_failed_padto	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)),)	ALLOW_TF32=1	KernelOptError	0
 tc_metal_nested_reduce	tc_metal_nested_reduce	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)	ALLOW_TF32=1	KernelOptError	0
 tc_metal_contracted_m	tc_metal_contracted_m	metal	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)	ALLOW_TF32=1	KernelOptError	0
@@ -251,11 +255,11 @@ tc_cuda_tiled_extra_locals	tc_cuda_tiled	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1
 tc_cuda_tiled_use_tc_2	tc_cuda_tiled	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)	ALLOW_TF32=1	ok	
 tc_cuda_batched_upcast	tc_cuda_batched	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	ALLOW_TF32=1	ok	
 tc_cuda_padto_warp	tc_cuda_64	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.PADTO, axis=2, arg=7))	ALLOW_TF32=1	KernelOptError	1
-tc_cuda_group_2	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(2, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
-tc_cuda_group_2_top	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(2, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
-tc_cuda_group_4	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(4, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
-tc_cuda_group_4_top	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(4, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
-tc_cuda_unroll	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=5, arg=(2, AxisType.UPCAST)))	ALLOW_TF32=1	ok	
+tc_cuda_group_2	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
+tc_cuda_group_2_top	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
+tc_cuda_group_4	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.LOCAL)))	ALLOW_TF32=1	ok	
+tc_cuda_group_4_top	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.LOCAL, True)))	ALLOW_TF32=1	ok	
+tc_cuda_unroll	tc_cuda_group	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.UPCAST)))	ALLOW_TF32=1	ok	
 tc_cuda_failed_padto	tc_cuda_failed_padto	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)),)	ALLOW_TF32=1	KernelOptError	0
 tc_cuda_nested_reduce	tc_cuda_nested_reduce	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)	ALLOW_TF32=1	KernelOptError	0
 tc_cuda_contracted_m	tc_cuda_contracted_m	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)	ALLOW_TF32=1	KernelOptError	0

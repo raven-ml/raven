@@ -190,8 +190,8 @@ let walk ~host ~rows ~w ~p ~n ~q ~k f args =
   let range t e id = Ops.range ~axis_type:t (Ops.Int e) [ id ] in
   let a = range Weak p 0 and g = range Weak runs 1 in
   let j, b =
-    if host then (range Reduce k 2, range Reduce q 3)
-    else (range Reduce k 3, range Weak q 2)
+    if host then (range Loop k 2, range Loop q 3)
+    else (range Loop k 3, range Weak q 2)
   in
   let y, i, u, hit =
     match args with

@@ -59,6 +59,10 @@ let idx b = get_idx (nth b 1)
 let indexes r b = Nodes.mem r (backward_slice ~calls:Skip (idx b))
 let reads r b = Nodes.mem r (backward_slice_with_self ~calls:Skip (idx b))
 
+(* The ranges of the axes of [k] of a role in [types], reduced if [reduce]. *)
+let ranges_of ?reduce k types =
+  List.map (List.nth (K.rngs k)) (K.axes_of ?reduce k types)
+
 (* Whether [r] is a term of the index [i], alone or times a constant. *)
 let term_of r i =
   List.exists
@@ -105,7 +109,8 @@ let tensor_cores k =
   let min_globals = setting Setting.tc_min_globals in
   if
     use_tc > 0
-    && (List.length (K.reduce_axes k) = 1 || tc_opt >= 1 || decoded_product k)
+    && (List.length (K.axes_of ~reduce:true k []) = 1
+       || tc_opt >= 1 || decoded_product k)
   then
     List.find_map
       (fun axis ->
@@ -257,7 +262,7 @@ let matvec k =
         (match List.find_opt same (K.rngs k) with
         | Some rest ->
             let loads = divisor_at_most rest in_flight in
-            if loads > 1 then ignore (try_split k (axis rest) loads Opt.Unroll)
+            if loads > 1 then ignore (try_split k (axis rest) loads Opt.Upcast)
         | None -> ());
         Some k
     | _ -> None
@@ -285,7 +290,7 @@ let matvec k =
     end
   in
   let ren = K.ren k in
-  match (K.reduceop k, K.ranges_of k [ Reduce ]) with
+  match (K.reduceop k, ranges_of ~reduce:true k [ Weak ]) with
   | Some r, first :: _
     when ren.has_local && ren.has_shared
          && Setting.value Setting.mv
@@ -294,7 +299,7 @@ let matvec k =
       match operands first (nth r 0) with
       | None -> None
       | Some (v, w) ->
-          let units = units first w and globals = K.ranges_of k [ Global ] in
+          let units = units first w and globals = ranges_of k [ Global ] in
           if List.memq first units then rows_layout first v globals
           else
             Option.bind
@@ -387,7 +392,7 @@ let group k =
     ignore
       (List.find_opt
          (fun axis -> try_split ~top:true k axis 16 Opt.Local)
-         (List.filteri (fun i _ -> i < 3) (K.axes_of k [ Reduce ])))
+         (List.filteri (fun i _ -> i < 3) (K.axes_of ~reduce:true k [ Weak ])))
 
 (* if there are small dims with lots of valid masks, upcast them (they might be
    from Tensor.stack) *)
@@ -537,12 +542,14 @@ let upcast_more k =
            for a buffer of stride 0 on the axis that a reduce reads, a load each
            lane of the axis shares in every iteration of the reduce *)
         let rng = List.nth (K.rngs k) axis in
-        let upcast = K.ranges_of k [ Upcast; Unroll ] in
+        let upcast = ranges_of k [ Upcast ] in
         let bufs = K.bufs k in
         let reuses b =
           if fill then
             (not (reads rng b))
-            && List.exists (fun r -> reads r b) (K.ranges_of k [ Reduce ])
+            && List.exists
+                 (fun r -> reads r b)
+                 (ranges_of ~reduce:true k [ Weak ])
           else
             (not (indexes rng b))
             && List.for_all (fun r2 -> indexes r2 b) upcast
@@ -614,7 +621,7 @@ let unroll_vector k ~fits unrolled axis =
   let rec largest n =
     if n >= 2 then
       if divisible (shape_at k axis) n && fits n then
-        ignore (try_split k axis n Opt.Unroll)
+        ignore (try_split k axis n Opt.Upcast)
       else largest (n / 2)
   in
   let rec pow2 p = if 2 * p > room then p else pow2 (2 * p) in
@@ -624,12 +631,13 @@ let unroll_vector k ~fits unrolled axis =
    on multireduce with mismatching dimensions, this is okay *)
 let unroll k =
   let small n = holds Sint.(K.upcast_size k <= Int n) in
+  let unrollable () = K.upcastable_dims ~reduce:true k in
   if
-    K.unrollable_dims k <> []
-    && (small 4 || K.axes_of k [ Unroll ] = [])
+    unrollable () <> []
+    && (small 4 || K.axes_of ~reduce:true k [ Upcast ] = [])
     && holds Sint.(K.upcast_size k < Int 64)
   then
-    let s = size_at k (last (K.unrollable_dims k)) in
+    let s = size_at k (last (unrollable ())) in
     let at_most n x = Bigint.(leq x (of_int n)) in
     let fits n =
       List.length (K.reduceops k) < 2 || not (beyond_host_lanes k n)
@@ -637,24 +645,24 @@ let unroll k =
     if at_most 32 s then
       begin if
         fits (Bigint.to_int s)
-        && try_split k (last (K.unrollable_dims k)) 0 Opt.Unroll
+        && try_split k (last (unrollable ())) 0 Opt.Upcast
       then
         (* if it's small, upcast a second reduce dimension too *)
-        match K.unrollable_dims k with
+        match unrollable () with
         | [] -> ()
         | dims ->
             let s2 () = size_at k (last dims) in
             if at_most 3 s && at_most 3 (s2 ()) then begin
               if fits (Bigint.to_int (s2 ())) then
-                ignore (try_split k (last dims) 0 Opt.Unroll)
+                ignore (try_split k (last dims) 0 Opt.Upcast)
             end
             else if at_most 3 s && on_host k then
               unroll_vector k ~fits (Bigint.to_int s) (last dims)
       end
     else
-      let axis = last (K.unrollable_dims k) in
+      let axis = last (unrollable ()) in
       if divisible (shape_at k axis) 4 && fits 4 then
-        ignore (try_split k axis 4 Opt.Unroll)
+        ignore (try_split k axis 4 Opt.Upcast)
 
 (* if nothing at all is upcasted and it's easy to, do an upcast *)
 let upcast_one k =
@@ -662,7 +670,7 @@ let upcast_one k =
   | [] -> ()
   | dims ->
       let axis = last dims in
-      if K.upcasted k = 0 && divisible (shape_at k axis) 4 then
+      if K.axes_of k [ Upcast ] = [] && divisible (shape_at k axis) 4 then
         ignore (split k axis 4 Opt.Upcast)
 
 (* prioritize making expand axes local *)
@@ -674,7 +682,7 @@ let locals k =
         if op (nth r 0) = Op.Const then
           Some (List.exists (fun b -> not (indexes r b)) (K.bufs k), axis)
         else None)
-      (K.axes_of k [ Global; Weak ])
+      (K.axes_of ~reduce:false k [ Global; Weak ])
   in
   let order (e0, a0) (e1, a1) =
     match Bool.compare e1 e0 with 0 -> Int.compare a1 a0 | c -> c

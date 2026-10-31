@@ -29,7 +29,6 @@ let actions () =
   List.concat
     [
       split Upcast [ 0; 2; 3; 4; 5; 7 ] (upto 10);
-      split Unroll [ 0; 2; 3; 4; 5; 7 ] (upto 10);
       split Local [ 0; 2; 3; 4; 8; 13; 16; 29 ] (upto 8);
       split ~top:true Local [ 13; 16; 28; 29; 32; 49; 64; 256 ] (upto 8);
       (if setting Setting.beam_padto then
@@ -229,7 +228,7 @@ let too_many ~max_up ~max_lcl k =
       (List.find_map tc (Nodes.to_list (backward_slice ~calls:Skip (K.ast k))))
   in
   let up =
-    let lo, hi = size [ Upcast; Unroll ] in
+    let lo, hi = size [ Upcast ] in
     Bigint.(fdiv lo (of_int tc_up), fdiv hi (of_int tc_up))
   and lcl = size [ Warp; Local ] in
   let too_many = exceeds up max_up || exceeds lcl max_lcl in
@@ -268,9 +267,7 @@ let get_kernel_actions ?max_up k =
 let opt_ints = function
   | Opt.Tc t -> [ 0; t.axis; t.tc_select; t.tc_opt; t.use_tc ]
   | Split s ->
-      let target =
-        match s.target with Upcast -> 0 | Unroll -> 1 | Local -> 2
-      in
+      let target = match s.target with Upcast -> 0 | Local -> 2 in
       [ 1; s.axis; s.amount; target; Bool.to_int s.top ]
   | Padto p -> [ 2; p.axis; p.amount; 0; 0 ]
   | Swap s -> [ 3; s.axis; s.with_axis; 0; 0 ]
@@ -289,9 +286,8 @@ let decode_opts s =
     | [] -> []
     | 0 :: axis :: tc_select :: tc_opt :: use_tc :: rest ->
         Opt.Tc { axis; tc_select; tc_opt; use_tc } :: opts rest
-    | 1 :: axis :: amount :: target :: top :: rest
-      when 0 <= target && target <= 2 ->
-        let target = List.nth Opt.[ Upcast; Unroll; Local ] target in
+    | 1 :: axis :: amount :: ((0 | 2) as target) :: top :: rest ->
+        let target = if target = 0 then Opt.Upcast else Local in
         Opt.Split { axis; amount; target; top = top <> 0 } :: opts rest
     | 2 :: axis :: amount :: _ :: _ :: rest ->
         Opt.Padto { axis; amount } :: opts rest

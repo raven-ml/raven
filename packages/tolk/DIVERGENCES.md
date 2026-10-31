@@ -82,7 +82,7 @@ the Exclusions of `README.md`.
     `schedule.rangeify` and `renderer`;
   - `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
     holds renderers;
-  - `codegen/opt/postrange.py:267,273` against `search` and `heuristic`, with
+  - `codegen/opt/postrange.py:246,252` against `search` and `heuristic`, with
     `search` importing `engine.realize`;
   - `schedule/__init__.py` against `engine.realize`, and `tensor.py` against
     `engine.jit` and `engine.realize`;
@@ -358,14 +358,14 @@ stamps nothing (D146).
 
 ## D11. Kernel optimisations are typed
 
-- **tinygrad:** `codegen/opt/__init__.py:9-15` (`Opt(op, axis, arg)`, with an
-  `arg` of any type), checked by `codegen/opt/postrange.py:109-164`.
+- **tinygrad:** `codegen/opt/__init__.py:10-15` (`Opt(op, axis, arg)`, with an
+  `arg` of any type), checked by `codegen/opt/postrange.py:93-150`.
 - **tolk:** `Opt.t`, `Opt.target`.
 - **Differs:** each kind of optimisation is a constructor with its own
   fields, which stand for `OptOps` too, and a split's target is one of the
-  three axis types a split can make (`split_targets`, `postrange.py:14`). The
-  malformed arguments that `postrange.py` refuses at run time cannot be
-  built.
+  two axis types a split can make (`split_targets`, `postrange.py:14-15`),
+  `Local` and `Upcast`, in their axis types' order. The malformed arguments
+  that `postrange.py` refuses at run time cannot be built.
 - **Reason:** (a): static types.
 - **Pinned by:** the type itself, whose printing `Tolk.Ops › arguments ›
   reprs.golden` checks against tinygrad's `Opt` repr (the row "kernel with
@@ -1053,9 +1053,9 @@ stamps nothing (D146).
 
 ## D29. A float32 tensor core takes operands widened from its narrow input
 
-- **tinygrad:** `codegen/opt/postrange.py:185` (`_apply_tc_opt`: a core
+- **tinygrad:** `codegen/opt/postrange.py:166` (`_apply_tc_opt`: a core
   applies only when both operands of the multiply have its input dtype),
-  `:222` (the core multiplies the multiply's own operands).
+  `:203` (the core multiplies the multiply's own operands).
 - **tolk:** `Postrange`'s `tc_operand`, `try_core` and `use_wmma`;
   `test/gen/tinygrad.patch`, which gives tinygrad's matcher the
   same rule before the goldens are generated.
@@ -1610,7 +1610,7 @@ driver sizes local memory as it loads a function (D146).
   `to_program_key` and `to_program_cache`, a dictionary of the process),
   `schedule/__init__.py:127-137` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
-  default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
+  default), and `codegen/opt/postrange.py:48-49` (a kernel's name, coloured).
 - **tolk:** `Codegen.program_key`, `Codegen.kept` and
   `Codegen.made_program`; `Schedule.in_order`, `Schedule.schedule_key` and
   `Schedule.lower_sink_to_linear`; `Graph.cached`;
@@ -2329,16 +2329,17 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 
 ## D89. A matrix-vector product is laid out by its matrix
 
-- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
+- **tinygrad:** `codegen/opt/heuristic.py:61-78` (`hand_coded_optimizations`'
   matrix-vector case, which applies only when the reduced product's two
   operands are loads, `mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
-  Ops.INDEX`, and the vector's index has the first reduce range as a term of
-  its sum: the first reduce axis split into `MV_THREADS_PER_ROW` local
-  threads, 8, the first global axis that 16 divides, whichever operand reads
-  it, into `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast
-  lanes, 4, whatever the matrix's layout and size), and
-  `codegen/opt/postrange.py:132-134` (`apply_opt`, which refuses a local split
-  of a reduce axis inside another reduce).
+  Ops.INDEX`, and the vector's index has the first weak reduce range as a term
+  of its sum: that axis split into `MV_THREADS_PER_ROW` local threads, 8, the
+  first global axis that 16 divides, whichever operand reads it, into
+  `MV_BLOCKSIZE` local threads, 4, then `MV_ROWS_PER_THREAD` upcast lanes, 4,
+  whatever the matrix's layout and size), and
+  `codegen/opt/postrange.py:111-115` (`apply_opt`, which refuses a local split
+  of a reduce axis whose reduction runs inside a weak range that a reduction
+  closes, a serial reduce).
 - **tolk:** `Heuristic.term_of`, `Heuristic.operands`, `Heuristic.lanes`,
   `Heuristic.rows`, `Heuristic.columns`, `Heuristic.sector_lanes`,
   `Heuristic.busy`, `Heuristic.in_flight`, `Heuristic.units` and
@@ -2371,9 +2372,15 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
     power-of-two divisor allows, so that more workgroups share the outputs.
     8 threads of 2 bfloat16 columns read a 32-byte sector. The columns
     layout, which took at least 64 outputs, takes a product of 32 too;
-  - a reduce axis inside another reduce splits into local threads, each
-    iteration of the outer reduce storing and reading the shared buffer
-    between barriers; inside an unrolled reduce it is still refused.
+  - a group inside a reduce: a reduce axis whose reduction runs inside a
+    serial reduce, a weak range that a reduction closes, splits into local
+    threads, each iteration of the outer reduce storing and reading the shared
+    buffer between barriers. One inside an unrolled reduce, an upcast range
+    that a reduction closes, is refused, since each of its lanes would need a
+    buffer. tinygrad, which checks only for a weak range, refuses that one too
+    for the weak quotient that the unroll's split leaves its reduction; the
+    lanes of a tensor core's K, which the core contracts and no reduction
+    closes, take a group in both.
 - **Reason:** (d): gpt-oss-20b (`kaun/examples/06-gpt-oss`) on CUDA (RTX 5000
   Ada, 576 GB/s, 100 multiprocessors), and nx.quant's products
   (`Nx_quant.apply`) compiled by rune. tinygrad's layout puts 8 threads on a
@@ -2427,7 +2434,8 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
   axis), recorded from the equally patched tinygrad, and `the hand-coded
   optimisations keep a kernel's writes › small kernels › experts_down_metal`
   (a group inside another reduce); the Postrange suite's cases
-  `double_sum_group` and `double_sum_group_twice`.
+  `double_sum_group` and `double_sum_group_twice`, and
+  `double_sum_unrolled_group` (refused: a group inside an unrolled reduce).
 
 ## D90. A linked schedule resolves its launches at link
 
@@ -2471,14 +2479,15 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 
 ## D91. The host's upcast lanes stay within 32
 
-- **tinygrad:** `codegen/opt/heuristic.py:115-120` (`hand_coded_optimizations`:
+- **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`:
   more upcasts while `k.upcast_size() < 32`, each by 3 or 4, so the last one
   can take a kernel to 64 lanes or more).
 - **tolk:** `Heuristic.host_lanes`, `Heuristic.beyond_host_lanes` and
   `Heuristic.upcast_more`.
 - **Differs:** on the host (`target.device = "CPU"`), the heuristic does not
-  take an upcast that would make the kernel's upcast and unrolled lanes more
-  than 32. Other devices upcast as tinygrad does.
+  take an upcast that would make the kernel's upcast lanes, its unrolled
+  reduce axes' among them, more than 32. Other devices upcast as tinygrad
+  does.
 - **Reason:** (d): lorenz_simple's step (sofo-raven). Each lane holds a value
   across the kernel's loops, and past 32 they spill out of the host's
   registers. Its tangent kernel `r_32_256_400_4_2_4_2` takes 2.12 ms as
@@ -2492,10 +2501,10 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 
 ## D92. A decoded operand shared by a run of an output axis is decoded once a run
 
-- **tinygrad:** `codegen/opt/heuristic.py:112-138` (`hand_coded_optimizations`'
+- **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`'
   upcasts of output axes, which find reuse only on an axis that some access
   does not read, take 3 or 4 values of it, and come after the matrix-vector
-  layout of `:61-79` has returned).
+  layout of `:61-78` has returned).
 - **tolk:** `Heuristic.run_cap`, `Heuristic.run`, `Heuristic.decoded`,
   `Heuristic.upcast_shared` and its place in
   `Heuristic.hand_coded_optimizations`, before `matvec`;
@@ -2669,7 +2678,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 ## D101. A group shares its threads with the kernel's independent reductions
 
-- **tinygrad:** `codegen/opt/postrange.py:123-135` (`apply_opt`: a local
+- **tinygrad:** `codegen/opt/postrange.py:102-116` (`apply_opt`: a local
   split of a reduce axis splits that axis alone, and sizes the shared
   memory by the first reduction's type).
 - **tolk:** `Postrange.Scheduler.siblings`, `Postrange.Scheduler.smem` and
@@ -2677,10 +2686,10 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   which gives tinygrad the same before the goldens are recorded.
 - **Differs:** a local split of an axis of reductions that no reduce axis
   encloses also splits, by the same threads, one axis of each other such
-  reduction: its first reduce axis that the amount divides, when only such
-  reductions close it, when it neither reads a grouped reduction nor is
-  read by one, and while every grouped reduction's buffer fits in shared
-  memory. The shared memory checked is the sum of the grouped reductions'
+  reduction: its first weak axis that the reduction closes and the amount
+  divides, when only such reductions close it, when it neither reads a
+  grouped reduction nor is read by one, and while every grouped reduction's
+  buffer fits in shared memory. The shared memory checked is the sum of the grouped reductions'
   buffers. A reduction that reads another stays out, since the final
   reductions of shared buffers that one thread range closes run as one
   loop.
@@ -2778,9 +2787,9 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 ## D105. A tensor core takes rows that share the other operand's tile
 
-- **tinygrad:** `codegen/opt/postrange.py:187-197` (`_apply_tc_opt`: M runs
+- **tinygrad:** `codegen/opt/postrange.py:168-180` (`_apply_tc_opt`: M runs
   along a range of `in0` that `in1` does not read, N along one of `in1` that
-  `in0` does not read), `:222` (the core multiplies the multiply's own
+  `in0` does not read), `:203` (the core multiplies the multiply's own
   operands), and `codegen/opt/heuristic.py:28` (`hand_coded_optimizations`
   tries the cores on a kernel of one reduce axis only, below `TC_OPT=1`).
 - **tolk:** `Postrange.Scheduler.in_tiles`, `Postrange.Scheduler.try_core`'s
@@ -2820,13 +2829,14 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   reading a buffer, whoever reads it) and `schedule/indexing.py:267`
   (`run_rangeify`, which stores a value its consumers read at different
   indices without marking it broadcast).
-- **tolk:** `Rangeify.remove_bufferize`'s `read_by_every_output` and
+- **tolk:** `Rangeify.remove_bufferize`'s `read_by_every_output`, with
+  `Rangeify.reduced` (a range a reduction of the graph closes), and
   `Indexing.assign_ranges`, which marks such a value `Broadcast` when its
   consumers broadcast it;
   `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
 - **Differs:** a stored value that is broadcast, read only through the
-  reduce ranges of its consumer, and reads more than one buffer stays
-  stored. Its consumer is a reduction that every output of reads it, as a
+  reduce ranges of its consumer, those its reductions close, and reads more
+  than one buffer stays stored. Its consumer is a reduction that every output of reads it, as a
   matrix-vector product reads its vector, so inlined it would be computed,
   and each of its buffers loaded, once per output. A value read through an
   output range, as a matrix's rows are, is inlined as before: a tiled
@@ -2859,7 +2869,7 @@ submissions across queues (D146).
 
 ## D108. On the host, a load a reduce reads fills the lanes by 2
 
-- **tinygrad:** `codegen/opt/heuristic.py:115-138` (`hand_coded_optimizations`'
+- **tinygrad:** `codegen/opt/heuristic.py:111-137` (`hand_coded_optimizations`'
   upcasts of output axes: by 3 or 4, of an axis that some access does not
   read while it reads every upcast axis, until the kernel has 32 lanes).
 - **tolk:** `Heuristic.reads`, and `Heuristic.upcast_more`'s `choice ~fill`
@@ -2867,8 +2877,8 @@ submissions across queues (D146).
   tinygrad the same before the goldens are recorded.
 - **Differs:** on the host (`target.device = "CPU"`), when no upcast by 3 or 4
   is left, an output axis not yet upcast is upcast by 2 if the kernel's lanes
-  stay within D91's 32 and some access that a reduce reads does not read the
-  axis. A range counts as read by an index that is the range itself. Among
+  stay within D91's 32 and some access that reads a serial reduce axis, a
+  weak range that a reduction closes, does not read the axis. A range counts as read by an index that is the range itself. Among
   such axes the order is tinygrad's: fewest accesses reading the axis, then
   the least sum of their strides.
 - **Reason:** (d): lorenz_simple's step (sofo-raven), measured on kimchi's
@@ -2891,15 +2901,15 @@ submissions across queues (D146).
 
 ## D109. On the host, a kernel of several reduces unrolls within 32 lanes
 
-- **tinygrad:** `codegen/opt/heuristic.py:140-154` (the unroll of the last
-  reduce axis: whole when it is at most 32, by 4 otherwise, while the kernel
-  has fewer than 64 lanes).
+- **tinygrad:** `codegen/opt/heuristic.py:139-150` (the unroll, an upcast, of
+  the last reduce axis: whole when it is at most 32, by 4 otherwise, while the
+  kernel has fewer than 64 lanes).
 - **tolk:** `Heuristic.unroll`, its `fits`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before the goldens
   are recorded.
 - **Differs:** on the host, a kernel with more than one reduce does not take
-  an unroll that would make its upcast and unrolled lanes more than D91's 32.
-  A kernel of one reduce unrolls as tinygrad's does.
+  an unroll that would make its upcast lanes, the unrolled ones among them,
+  more than D91's 32. A kernel of one reduce unrolls as tinygrad's does.
 - **Reason:** (d): lorenz_simple's step, measured as in D108. Its hidden
   layer's tangent, two sums of 4 into a `[128, 256, 400]` output, had 16
   upcast lanes and tinygrad's whole unroll of one of the sums took it to 64:
@@ -3554,8 +3564,8 @@ driver signals its own (D146).
   supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
   multioutput implementation #3607". Codegen already compiles a kernel of one
   end over a group of stores (`test/runtime/test_custom_kernel.py:139`). For
-  reductions, `schedule/indexing.py:299-301` (`run_rangeify`: each reduction
-  takes new ranges for the axes it reduces); `codegen/__init__.py:177`
+  reductions, `schedule/indexing.py:298-300` (`run_rangeify`: each reduction
+  takes new ranges for the axes it reduces); `codegen/__init__.py:175`
   (`merge_reduce_ends`, which already makes one loop of the reductions that
   close one range); `codegen/simplify.py:21` (`simplify_merge_adjacent`, which
   merges a reduction's ranges in that reduction alone).
@@ -3723,7 +3733,7 @@ driver signals its own (D146).
   Its `link` callback takes a complete call, with the scalar samples passed in
   their slots and the launch sizes evaluated from the same samples; the
   candidate's compiled body keeps its parameters. `Tolk_engine.link_call`
-  links that call. tinygrad's `codegen/opt/postrange.py:255` (`args_from_ast`)
+  links that call. tinygrad's `codegen/opt/postrange.py:235` (`args_from_ast`)
   reads every scalar's `expr` and constructs only buffer arguments.
 - **Reason:** (b). rune's `Loop.repeat` and staged scans give each step its
   trip's index, which a kernel or a buffer of indices would otherwise compute.
@@ -3751,8 +3761,8 @@ driver signals its own (D146).
   lane, on every target) and `:137` (`devectorizer2`);
   `renderer/cstyle.py:40-42`, which writes a conversion of a vector that is
   not in registers as a C cast, a reinterpretation of its bits;
-  `codegen/opt/heuristic.py:112-138` (the upcasts of output axes by 3 or 4)
-  and `:156-159` (the upcast by 4 of a kernel that has none).
+  `codegen/opt/heuristic.py:111-137` (the upcasts of output axes by 3 or 4)
+  and `:152-154` (the upcast by 4 of a kernel that has none).
 - **tolk:** `Renderer.t`'s `vector_alu`; `Codegen.constant_lanes`,
   `Codegen.in_order`, `Codegen.vector_operation`, `Codegen.distinct_lanes`,
   `Codegen.vector_dtypes`, `Codegen.do_devectorize`,
@@ -3915,8 +3925,8 @@ submission, and a range a loop of rig's program (D146).
 
 ## D143. The host unrolls a reduce beside a small unrolled axis to a vector
 
-- **tinygrad:** `codegen/opt/heuristic.py:140-153` (the unroll of the last
-  reduce axis, and of a second one when both are at most 3).
+- **tinygrad:** `codegen/opt/heuristic.py:139-150` (the unroll, an upcast, of
+  the last reduce axis, and of a second one when both are at most 3).
 - **tolk:** `Heuristic.unroll_vector` and `Heuristic.unroll`;
   `test/gen/tinygrad.patch`, which gives tinygrad the same before
   the goldens are recorded.
@@ -3959,7 +3969,7 @@ merged into D137, which holds the loops that consumers of one domain share.
 - **tinygrad:** `schedule/indexing.py:101-105`
   (`convert_pad_to_where_to_keep_behavior_local`) and `:177`
   (`apply_movement_op` on a `PAD`, which makes the source's ranges invalid on
-  the padding); `codegen/opt/postrange.py:146-161` (`PADTO`, which gates the
+  the padding); `codegen/opt/postrange.py:127-143` (`PADTO`, which gates the
   loads of the padded axis). Either way the source is computed on every lane,
   and its loads read zeros on the padding.
 - **tolk:** `Indexing.constant`, `Indexing.guard_division_on_padding` and
@@ -4493,8 +4503,8 @@ merged into D137, which holds the loops that consumers of one domain share.
   stores `remove_bufferize` weighs).
 - **tolk:** `Rangeify.extent`, `Rangeify.read_ranges` and
   `Rangeify.read_copies` (the copies a read makes of a stage's value);
-  `Rangeify.reads`, `Rangeify.stage_reads` and `Rangeify.stage_copies` (the
-  copies of each stage); `Rangeify.inline_budget` and `Rangeify.copied`;
+  `Rangeify.reads`, `Rangeify.stage_reads`, `Rangeify.reduced` and
+  `Rangeify.stage_copies` (the copies of each stage); `Rangeify.inline_budget` and `Rangeify.copied`;
   `copies` in `Rangeify.remove_bufferize`; `Rangeify.pm_cleanups` and
   `Rangeify.get_kernel_graph`, which counts the reads before the cleanups;
   `test/gen/tinygrad.patch`, which
@@ -4504,7 +4514,8 @@ merged into D137, which holds the loops that consumers of one domain share.
   producers already inlined, that its ranges reach: those an index copies,
   since the substitution leaves the others shared. `c` sums over the stage's
   reads. A read makes one copy at each distinct index; in a reduction it
-  makes one per trip `w` of the reduction ranges its index runs in, at most
+  makes one per trip `w` of the reduction ranges its index runs in, those a
+  reduction of the graph closes, at most
   its trips per element of the stage, `t / e`, since a trip that computes no
   element again computes nothing that storing saves. A running sum's windows
   of `w` count `w`; a sum that reads each element once counts 1; a read whose

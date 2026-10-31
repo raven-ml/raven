@@ -22,8 +22,8 @@ its source's bytes. The measurement is a function of what the program's kernel
 and launch record, so that tolk's suite can compute it too.
 `searches_environment` lists the same under ENVIRONMENT: there a transposing
 copy has no arithmetic, and each pad adds a selection per element, so the
-search leaves out the pads, which cost more than a thousand times the fewest
-operations.
+search leaves out a pad that a copy precedes in its round: it costs more than a
+thousand times the fewest operations so far.
 """
 
 import contextlib
@@ -173,6 +173,9 @@ for kernel in [*KERNELS, *BUILT]:
 
 CANDIDATES = [(kernel, target, None) for kernel in KERNELS for target in TARGETS if kernel not in ("add_large", "add_3d")]
 CANDIDATES += [("add", "clang", 4), ("matmul_half", "metal", 16), ("huge_upcasts", "metal", None), ("huge_locals", "metal", None)]
+# test_beam_search.py::test_reduce_upcast_actions, test_reduce_upcast_budget: an output and a reduce axis upcast within one
+# budget, each within its own limit
+CANDIDATES += [("sum_rows", "clang", 32), ("sum_rows", "clang", 4)]
 
 
 @table

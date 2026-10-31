@@ -44,7 +44,7 @@ let initial_symbolic u =
 let range ?(axis_type = Ops.Axis_type.Weak) n axis =
   Ops.range ~axis_type (Int n) [ axis ]
 
-let reduce_range n axis = range ~axis_type:Reduce n axis
+let reduce_range n axis = range n axis
 let var ?dtype name lo hi = Ops.variable ?dtype name (i lo) (i hi)
 let buf ?(slot = 0) ?(size = 1024) dt = Shape.param ~shape:[ Int size ] slot dt
 let kernel us = Ops.sink ~kernel:(Ops.kernel_info ()) us

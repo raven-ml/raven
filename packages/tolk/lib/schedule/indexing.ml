@@ -42,18 +42,17 @@ and siblings = {
 }
 
 (* A range of size 1 only ever takes the value 0. *)
-let new_range ?(axis_type = Axis_type.Weak) ctx (s : sint) =
+let new_range ctx (s : sint) =
   match s with
   | Sym r when op r = Op.Range -> r
   | _ when Sint.(resolve (s <> Int 1)) ->
-      let r = range ~axis_type s [ ctx.range_idx ] in
+      let r = range s [ ctx.range_idx ] in
       ctx.range_idx <- ctx.range_idx + 1;
       r
   | _ -> int 0
 
-let new_ranges ?axis_type ctx shape =
-  List.rev
-    (List.fold_left (fun acc s -> new_range ?axis_type ctx s :: acc) [] shape)
+let new_ranges ctx shape =
+  List.rev (List.fold_left (fun acc s -> new_range ctx s :: acc) [] shape)
 
 let always_contiguous =
   ops Op.[ After; Buffer; Alloc; Const; Mselect; Mstack; Param; Load; Call ]
@@ -410,7 +409,7 @@ let apply_movement_op in_shape m rngs =
               replace r
                 ~src:[ nth r 0 ]
                 ~arg:
-                  (Range { axis_id = [ i ]; axis_type = Axis_type.Placeholder })
+                  (Range { axis_type = Axis_type.Placeholder; axis_id = [ i ] })
             ))
           (Nodes.to_list (ranges sink))
       in
@@ -688,7 +687,7 @@ let reduce_loops rctx x sizes outer =
       g.pending <- x :: g.pending;
       g.reduced
   | None ->
-      let reduced = new_ranges ~axis_type:Axis_type.Reduce rctx sizes in
+      let reduced = new_ranges rctx sizes in
       let g =
         { sizes; outer; reduced; reached = Tbl.create 64; pending = [ x ] }
       in

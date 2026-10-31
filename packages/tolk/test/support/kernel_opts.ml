@@ -8,7 +8,6 @@ let opt =
 
 let target_of_cell = function
   | "AxisType.UPCAST" -> Opt.Upcast
-  | "AxisType.UNROLL" -> Unroll
   | "AxisType.LOCAL" -> Local
   | t -> failwith ("no split target " ^ t)
 

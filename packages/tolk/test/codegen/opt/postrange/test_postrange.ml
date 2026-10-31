@@ -187,10 +187,9 @@ let axes =
                 (repr_list sint (K.full_shape k));
               equal ~msg:"axis_types" string (cell "axis_types")
                 (repr_list Ops.Axis_type.pp (K.axis_types k));
-              list "reduce_axes" (K.reduce_axes k);
+              list "reduce_axes" (K.axes_of ~reduce:true k []);
               list "upcastable_dims" (K.upcastable_dims k);
-              list "unrollable_dims" (K.unrollable_dims k);
-              count "upcasted" (K.upcasted k);
+              list "upcastable_reduce_dims" (K.upcastable_dims ~reduce:true k);
               equal ~msg:"upcast_size" string (cell "upcast_size")
                 (Format.asprintf "%a" sint (K.upcast_size k));
               count "group_for_reduces" (K.group_for_reduces k);
@@ -266,9 +265,9 @@ let schedulers =
       test "apply_opt records each optimisation it applies, in order" (fun () ->
           let k = sum_rows_64 () in
           ignore (apply k upcast_4);
-          ignore (apply k (split 2 4 Unroll));
+          ignore (apply k (split 2 4 Upcast));
           equal (list Kernel_opts.opt)
-            [ upcast_4; split 2 4 Unroll ]
+            [ upcast_4; split 2 4 Upcast ]
             (K.applied_opts k));
       test "apply_opt ~append_opt:false leaves the optimisation unrecorded"
         (fun () ->
@@ -301,7 +300,7 @@ let shifts =
     let made = K.shift_to ?top ?new_rng k (axis n) amount target in
     (k, made)
   in
-  let targets = [ (0, Opt.Upcast); (0, Local); (1, Unroll); (1, Local) ] in
+  let targets = [ (0, Opt.Upcast); (0, Local); (1, Upcast); (1, Local) ] in
   let splits =
     List.concat_map
       (fun (n, target) ->
@@ -313,10 +312,7 @@ let shifts =
   in
   let name (n, target, amount, top) =
     Printf.sprintf "axis %d by %d to %s%s" n amount
-      (match target with
-      | Opt.Upcast -> "upcast"
-      | Unroll -> "unroll"
-      | Local -> "local")
+      (match target with Opt.Upcast -> "upcast" | Local -> "local")
       (if top then " from the top" else "")
   in
   group "shift_to"
@@ -340,7 +336,14 @@ let shifts =
           let _, (_, made) = shifted ~new_rng 0 4 Upcast in
           equal Uops.uop new_rng made);
       test "raises Invalid_argument on a target its axis's role cannot split to"
-        (fun () -> raises_invalid_arg (fun () -> shifted 1 4 Upcast));
+        (fun () ->
+          let k = K.v (kernel "custom_gemm") (renderer "cpu") in
+          let loop =
+            List.find
+              (fun r -> Ops.op r = Range && Ops.axis_type r = Loop)
+              (Ops.toposort ~calls:Skip (K.ast k))
+          in
+          raises_invalid_arg (fun () -> K.shift_to k loop 4 Upcast));
       test "raises Invalid_argument on an amount of 1" (fun () ->
           raises_invalid_arg (fun () -> shifted 0 1 Upcast));
       test "raises Invalid_argument on an amount that does not divide the axis"
@@ -357,11 +360,8 @@ let split_targets =
       test "upcasts come from global, local and weak axes" (fun () ->
           equal (list axis_type) [ Global; Local; Weak ]
             (Postrange.split_targets Upcast));
-      test "unrolls come from reduce and local axes" (fun () ->
-          equal (list axis_type) [ Reduce; Local ]
-            (Postrange.split_targets Unroll));
-      test "locals come from global, weak and reduce axes" (fun () ->
-          equal (list axis_type) [ Global; Weak; Reduce ]
+      test "locals come from global and weak axes" (fun () ->
+          equal (list axis_type) [ Global; Weak ]
             (Postrange.split_targets Local));
     ]
 
@@ -391,7 +391,8 @@ let dispatch =
           let calls = ref 0 in
           let hand_coded k =
             incr calls;
-            equal (list axis_type) [ Global; Reduce ] (K.axis_types k);
+            equal (list axis_type) [ Global; Weak ] (K.axis_types k);
+            equal (list int) [ 1 ] (K.axes_of ~reduce:true k []);
             upcasting k
           in
           let ast =
@@ -539,7 +540,7 @@ let fuzzed_opt =
        [
          (let+ axis
           and+ amount
-          and+ target = of_list [ Opt.Upcast; Unroll; Local ]
+          and+ target = of_list [ Opt.Upcast; Local ]
           and+ top = bool in
           Opt.Split { axis; amount; target; top });
          (let+ axis and+ amount in

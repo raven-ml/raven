@@ -681,7 +681,7 @@ let separates_settings () =
   in
   let applied p = (kernel_info (Ops.nth p 0)).applied_opts in
   let unroll4 =
-    Opt.Split { axis = 1; amount = 4; target = Unroll; top = false }
+    Opt.Split { axis = 1; amount = 4; target = Upcast; top = false }
   in
   equal (list Kernel_opts.opt) ~msg:"with the heuristic" [ unroll4 ]
     (applied optimised);
@@ -2018,7 +2018,7 @@ let reduction_by_size rop index hi =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let x = Shape.param ~shape:[ Int hi ] 1 Float32 in
   let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
-  let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
+  let r = Ops.range (Sym n) [ 0 ] in
   let at = match index with Each -> r | Halved -> Ops.O.(r // int 2) in
   let reduced = Ops.reduce (Ops.index x [ at ]) rop [ r ] in
   Ops.sink ~kernel:(Ops.kernel_info ())
@@ -2060,7 +2060,7 @@ let reduces_by_size (rop, index, hi) =
 let max_of_a_product hi =
   let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
   let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int hi)) in
-  let r = Ops.range ~axis_type:Reduce (Sym n) [ 0 ] in
+  let r = Ops.range (Sym n) [ 0 ] in
   let doubled = Ops.O.(Ops.cast r Int32 * Ops.int ~dtype:Int32 2) in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [
@@ -2115,7 +2115,7 @@ let dot n =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let a = Shape.param ~shape:[ Int n ] 1 Float32 in
   let b = Shape.param ~shape:[ Int n ] 2 Float32 in
-  let r = Ops.range ~axis_type:Reduce (Int n) [ 0 ] in
+  let r = Ops.range (Int n) [ 0 ] in
   let sum =
     Ops.reduce (Ops.mul (Ops.index a [ r ]) (Ops.index b [ r ])) Op.Add [ r ]
   in
@@ -2130,13 +2130,13 @@ let matvec ~rows n =
   let a = Shape.param ~shape:[ Int (rows * n) ] 1 Float32 in
   let b = Shape.param ~shape:[ Int n ] 2 Float32 in
   let i = Ops.range (Int rows) [ 0 ] in
-  let k = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
+  let k = Ops.range (Int n) [ 1 ] in
   let a_ik = Ops.index a [ Ops.O.((i * Ops.int n) + k) ] in
   let sum = Ops.reduce (Ops.mul a_ik (Ops.index b [ k ])) Op.Add [ k ] in
   let split axis target = Opt.Split { axis; amount = 4; target; top = false } in
   Ops.sink
     ~kernel:
-      (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Unroll ] ())
+      (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
 
 let muladd n =
@@ -2217,8 +2217,8 @@ let multiply_adds =
 let max_and_sum () =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let a = Shape.param ~shape:[ Int 5 ] 1 Float32 in
-  let i = Ops.range ~axis_type:Reduce (Int 3) [ 0 ] in
-  let k = Ops.range ~axis_type:Reduce (Int 5) [ 1 ] in
+  let i = Ops.range (Int 3) [ 0 ] in
+  let k = Ops.range (Int 5) [ 1 ] in
   let a_k = Ops.index a [ k ] in
   let max = Ops.reduce (Ops.add a_k (Ops.cast i Float32)) Op.Max [ i; k ] in
   let sum = Ops.reduce a_k Op.Add [ k ] in
@@ -2348,14 +2348,14 @@ let six_lanes_kernel () =
   let out = Shape.param ~shape:[ Int 3 ] 0 Uint8 in
   let x = Shape.param ~shape:[ Int 6 ] 1 Uint8 in
   let l = Ops.range (Int 3) [ 0 ] in
-  let r = Ops.range ~axis_type:Reduce (Int 2) [ 1 ] in
+  let r = Ops.range (Int 2) [ 1 ] in
   let byte = Ops.index x [ (l * int 2) + r ] in
   let nibble =
     (byte lsr Ops.int ~dtype:Uint8 4) land Ops.int ~dtype:Uint8 15
   in
   let sum = Ops.reduce nibble Op.Add [ r ] in
   let whole axis target = Opt.Split { axis; amount = 0; target; top = false } in
-  let opts = [ whole 0 Upcast; whole 1 Unroll ] in
+  let opts = [ whole 0 Upcast; whole 1 Upcast ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
     [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
@@ -2448,12 +2448,13 @@ let dot_kernel n =
   let x = Shape.param ~shape:[ Int size ] 1 Float64 in
   let y = Shape.param ~shape:[ Int size ] 2 Float64 in
   let l = Ops.range (Int 2) [ 0 ] in
-  let r = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
+  let r = Ops.range (Int n) [ 1 ] in
   let at p = Ops.index p [ (l * int n) + r ] in
   let sum = Ops.reduce (at x * at y) Op.Add [ r ] in
   let whole axis target = Opt.Split { axis; amount = 0; target; top = false } in
   Ops.sink
-    ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 0 Upcast; whole 1 Unroll ] ())
+    ~kernel:
+      (Ops.kernel_info ~opts_to_apply:[ whole 0 Upcast; whole 1 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
 
 (* Each lane's product past the first fuses into a multiply-add and the first
@@ -2561,8 +2562,8 @@ let vector_select_kernel () =
   let out = Shape.param ~shape:[ Int 2 ] 0 Int8 in
   let x = Shape.param ~shape:[ Int 4 ] 1 Int8 in
   let l = Ops.range ~axis_type:Weak (Int 2) [ 2 ] in
-  let r0 = Ops.range ~axis_type:Reduce (Int 2) [ 0 ] in
-  let r1 = Ops.range ~axis_type:Reduce (Int 4) [ 1 ] in
+  let r0 = Ops.range (Int 2) [ 0 ] in
+  let r1 = Ops.range (Int 4) [ 1 ] in
   let j = (r1 * int 3) + int 1 in
   let gate =
     ((r0 * int 2) + l < int 3)
@@ -2952,8 +2953,8 @@ let invalid_lanes_kernel () =
   let out = Shape.param ~shape:[ Int 3 ] 0 Float32 in
   let x = Shape.param ~shape:[ Int 4 ] 1 Float32 in
   let o = Ops.range ~axis_type:Weak (Int 3) [ 2 ] in
-  let r0 = Ops.range ~axis_type:Reduce (Int 4) [ 0 ] in
-  let r1 = Ops.range ~axis_type:Reduce (Int 4) [ 1 ] in
+  let r0 = Ops.range (Int 4) [ 0 ] in
+  let r1 = Ops.range (Int 4) [ 1 ] in
   let j = (r0 * int 3) + o and k = (r1 * int 3) + int 1 in
   let inside = (r1 < int 3) land (j < int 10) in
   let gate =
@@ -3165,7 +3166,7 @@ let unselected_sum_kernel () =
   let out = Shape.param ~shape:[ Int 3 ] 0 Int32 in
   let x = Shape.param ~shape:[ Int 64 ] 1 Int32 in
   let l = Ops.range ~axis_type:Weak (Int 3) [ 1 ] in
-  let r = Ops.range ~axis_type:Reduce (Int 64) [ 0 ] in
+  let r = Ops.range (Int 64) [ 0 ] in
   let gate = (l * l) % int 3 > int 1 in
   let value = Ops.where gate (Ops.index x [ r ]) (Ops.int ~dtype:Int32 0) in
   let sum = Ops.reduce value Op.Add [ r ] in
@@ -3233,8 +3234,8 @@ let unselected_sum =
 let weak_max_kernel () =
   let open Ops.O in
   let out = Shape.param ~shape:[ Int 1 ] 0 Int32 in
-  let r1 = Ops.range ~axis_type:Reduce (Int 5) [ 1 ] in
-  let r0 = Ops.range ~axis_type:Reduce (Int 3) [ 0 ] in
+  let r1 = Ops.range (Int 5) [ 1 ] in
+  let r0 = Ops.range (Int 3) [ 0 ] in
   let inner = Ops.where (r0 < int 2) (int 0) (Ops.const `Invalid) in
   let inner = Ops.reduce inner Op.Max [ r0 ] in
   let outer = Ops.reduce (Ops.where (r1 < int 4) inner (int 0)) Op.Max [ r1 ] in
@@ -3613,7 +3614,7 @@ let leaves_a_serial_loop () =
           [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]))
 
 let leaves_a_reduction () =
-  let j = Ops.range ~axis_type:Reduce (Int 4096) [ 0 ] in
+  let j = Ops.range (Int 4096) [ 0 ] in
   let sum = Ops.reduce (Ops.index (floats 4096 1) [ j ]) Op.Add [ j ] in
   equal (option sint) None
     (split_of
@@ -3651,7 +3652,7 @@ let keeps_narrow_indices () =
 let counts_a_large_loop () =
   let n = 1 lsl 16 in
   let i = Ops.range (Int n) [ 0 ] in
-  let j = Ops.range ~axis_type:Reduce (Int n) [ 1 ] in
+  let j = Ops.range (Int n) [ 1 ] in
   let x =
     Ops.mul (Ops.index (floats n 1) [ i ]) (Ops.index (floats n 2) [ j ])
   in

@@ -373,7 +373,7 @@ let loops =
               equal (list verdict)
                 [ Some false; Some false; Some false; Some false ]
                 (kernel_graph_judges axis_type))
-            Ops.Axis_type.[ Weak; Global; Reduce; Upcast ]);
+            Ops.Axis_type.[ Weak; Global; Upcast ]);
       test
         "accepts a loop's call whose scalar argument is an expression of its \
          range" (fun () ->

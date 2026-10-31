@@ -2976,7 +2976,7 @@ let unshard ?ranges u axes =
     | None -> (
         match device u with
         | Some (Multi ds) ->
-            [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ -1 ] ]
+            [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ 0 ] ]
         | _ -> invalid_arg "an unshard needs a value on several devices")
   in
   if
@@ -3014,7 +3014,7 @@ let shard ?axis u devices =
   | None -> copied
   | Some a ->
       let rng =
-        range ~axis_type:Axis_type.Device (Int (List.length devices)) [ -1 ]
+        range ~axis_type:Axis_type.Device (Int (List.length devices)) [ 0 ]
       in
       unshard (shard_slice copied a rng) [ a ]
 

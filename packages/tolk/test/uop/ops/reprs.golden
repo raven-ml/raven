@@ -41,6 +41,6 @@ bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, 
 call	CallInfo(None, 'f', False, False)	None
 call returning	CallInfo(None, None, True, False)	None
 program	ProgramInfo(global_size=(4, 1, 1), local_size=(8, 1, 1), vars=(), globals=(0, 1), outs=(0,), ins=(1,), target=CPU:CLANG)	None
-wmma	((8, 16, 16), dtypes.f16, 32, ((((0,), 2), ((1,), 2)), (((2,), 2),), (((3,), 2),)))	None
+wmma	((8, 16, 16), dtypes.f16, 32, ((((AxisType.UPCAST, 0), 2), ((AxisType.UPCAST, 1), 2)), (((AxisType.UPCAST, 2), 2),), (((AxisType.UPCAST, 3), 2),)))	None
 tagged	1	('x', 1, True, dtypes.i32, ())
 bytes tag	2	b"\x00a'"

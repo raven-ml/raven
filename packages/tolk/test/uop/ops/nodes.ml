@@ -10,19 +10,7 @@ let str pp x = Format.asprintf "%a" pp x
 (* Axis types *)
 
 let axis_types =
-  Ops.Axis_type.
-    [
-      Device;
-      Global;
-      Warp;
-      Local;
-      Weak;
-      Reduce;
-      Upcast;
-      Unroll;
-      Placeholder;
-      Loop;
-    ]
+  Ops.Axis_type.[ Device; Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
 
 let axis_type_of_cell s =
   Result.get_ok (Ops.Axis_type.of_string (after "AxisType." s))
@@ -53,8 +41,12 @@ let axis_type_group =
               Ops.Axis_type.letter a);
           expect color color_of_cell (cell "color") (fun () ->
               Ops.Axis_type.color a);
-          expect int int_of_string (cell "position") (fun () ->
-              Ops.Axis_type.position a));
+          equal ~msg:"nesting" int
+            (int_of_string (cell "nesting"))
+            (List.length
+               (List.filter
+                  (fun b -> Ops.Axis_type.compare b a < 0)
+                  axis_types)));
       test "of_string reads back the name pp formats, without its prefix"
         (fun () ->
           List.iter
@@ -63,9 +55,9 @@ let axis_type_group =
               is_true ~msg:name (Ops.Axis_type.of_string name = Ok a))
             axis_types);
       test "of_string rejects a name in lower case, naming it" (fun () ->
-          match Ops.Axis_type.of_string "reduce" with
-          | Ok _ -> fail "read reduce"
-          | Error e -> contains ~sub:"reduce" e);
+          match Ops.Axis_type.of_string "weak" with
+          | Ok _ -> fail "read weak"
+          | Error e -> contains ~sub:"weak" e);
       test "compare follows the declaration order" (fun () ->
           List.iteri
             (fun i a ->
@@ -261,12 +253,12 @@ let arguments =
       test "equal_arg tells apart arguments that differ in one field" (fun () ->
           is_false
             (Ops.equal_arg
-               (Range { axis_id = [ 0 ]; axis_type = Reduce })
-               (Range { axis_id = [ 0 ]; axis_type = Upcast }));
+               (Range { axis_type = Weak; axis_id = [ 0 ] })
+               (Range { axis_type = Upcast; axis_id = [ 0 ] }));
           is_false
             (Ops.equal_arg
-               (Range { axis_id = [ 0 ]; axis_type = Reduce })
-               (Range { axis_id = [ 1 ]; axis_type = Reduce }));
+               (Range { axis_type = Weak; axis_id = [ 0 ] })
+               (Range { axis_type = Weak; axis_id = [ 1 ] }));
           is_false
             (Ops.equal_arg
                (Reduce { op = Op.Add; num_axes = 1 })
@@ -574,7 +566,7 @@ let identity =
           let cuda = Result.get_ok (Helpers.Target.of_string "CUDA") in
           is_false (program cpu == program cuda);
           is_false
-            (Ops.range ~axis_type:Reduce (Int 4) [ 0 ]
+            (Ops.range ~axis_type:Weak (Int 4) [ 0 ]
             == Ops.range ~axis_type:Upcast (Int 4) [ 0 ]));
       test "Tbl is keyed by identity" (fun () ->
           let t = Ops.Tbl.create 4 in
@@ -1367,9 +1359,9 @@ let ranges =
           equal uops [ d ] (Ops.ended_ranges u));
       test "axis_id and axis_type read a range and reject anything else"
         (fun () ->
-          let r = Ops.range ~axis_type:Reduce (Int 4) [ 1; 0 ] in
+          let r = Ops.range ~axis_type:Loop (Int 4) [ 1; 0 ] in
           equal (list int) [ 1; 0 ] (Ops.axis_id r);
-          is_true (Ops.axis_type r = Reduce);
+          is_true (Ops.axis_type r = Loop);
           rejects (fun () -> Ops.axis_id (Ops.int 1));
           rejects (fun () -> Ops.axis_type (Ops.int 1)));
       test
@@ -1380,14 +1372,17 @@ let ranges =
             (Ops.range_str (Ops.range ~axis_type:Device (Int 4) [ -1 ]));
           equal string "2_m3" (Ops.range_str (Ops.range (Int 4) [ 2; -3 ])));
       test "range_str paints in the axis colour on request" (fun () ->
-          let r = Ops.range ~axis_type:Reduce (Int 4) [ 3 ] in
-          equal string (Helpers.colored Red "3") (Ops.range_str ~color:true r));
-      test "multirange_str sorts by argument and pads to printed columns"
-        (fun () ->
+          let r = Ops.range ~axis_type:Upcast (Int 4) [ 3 ] in
+          equal string
+            (Helpers.colored Yellow "3")
+            (Ops.range_str ~color:true r));
+      test
+        "multirange_str sorts by argument, axis type first, and pads to \
+         printed columns" (fun () ->
           let r0 = Ops.range ~axis_type:Global (Int 4) [ 0; 1 ]
           and r1 = Ops.range ~axis_type:Upcast (Int 4) [ 0; 0 ] in
-          equal string "0_0,0_1" (Ops.multirange_str [ r0; r1 ]);
-          equal string "0_0,0_1   " (Ops.multirange_str ~pad:10 [ r0; r1 ]);
+          equal string "0_1,0_0" (Ops.multirange_str [ r1; r0 ]);
+          equal string "0_1,0_0   " (Ops.multirange_str ~pad:10 [ r1; r0 ]);
           equal int 10
             (Helpers.ansilen
                (Ops.multirange_str ~color:true ~pad:10 [ r0; r1 ])));

@@ -52,3 +52,5 @@ add	clang	4	0 11 31
 matmul_half	metal	16	0 11 12 13 31 32 33 61 62 63 69 70 71 85 86 87 93 94 95 109 110 111 133 134 135 157 158 159 173 174 175 189 190 191 192 200
 huge_upcasts	metal		0
 huge_locals	metal		0
+sum_rows	clang	32	0 2 11 12 31 32
+sum_rows	clang	4	0 11 12 31 32

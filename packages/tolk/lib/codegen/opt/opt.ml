@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-type target = Upcast | Unroll | Local
+type target = Local | Upcast
 
 type t =
   | Tc of { axis : int; tc_select : int; tc_opt : int; use_tc : int }
@@ -18,7 +18,7 @@ let axis = function
       axis
 
 let rank = function Tc _ -> 0 | Split _ -> 1 | Padto _ -> 2 | Swap _ -> 3
-let target_rank = function Upcast -> 0 | Unroll -> 1 | Local -> 2
+let target_rank = function Local -> 0 | Upcast -> 1
 
 let args = function
   | Tc t -> [ t.tc_select; t.tc_opt; t.use_tc ]
@@ -37,9 +37,8 @@ let compare o0 o1 =
 let equal o0 o1 = compare o0 o1 = 0
 
 let target_name = function
-  | Upcast -> "AxisType.UPCAST"
-  | Unroll -> "AxisType.UNROLL"
   | Local -> "AxisType.LOCAL"
+  | Upcast -> "AxisType.UPCAST"
 
 let tuple l = "(" ^ String.concat ", " l ^ ")"
 

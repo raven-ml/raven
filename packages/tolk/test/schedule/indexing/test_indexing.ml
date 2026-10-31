@@ -590,10 +590,10 @@ let new_ranges =
           equal ranges_witness
             [ ([ 0 ], Weak, 0) ]
             (ranges_of (rangeified (exp2 (p 1 [ 0 ])))));
-      test "the axes a reduction reduces get reduce ranges, numbered after"
+      test "the axes a reduction reduces get weak ranges, numbered after"
         (fun () ->
           equal ranges_witness
-            [ ([ 0 ], Weak, 4); ([ 1 ], Reduce, 8) ]
+            [ ([ 0 ], Weak, 4); ([ 1 ], Weak, 8) ]
             (ranges_of (rangeified (Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ]))));
       test "consumers that index a node alike share its ranges" (fun () ->
           let x = exp2 (p 1 [ 4; 4 ]) in

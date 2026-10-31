@@ -43,18 +43,17 @@ type t
 
     The role of a loop variable ({!Op.Range}) in a kernel. *)
 module Axis_type : sig
-  (** The type for axis types. *)
+  (** The type for axis types, in the order ranges nest: a kernel's ranges
+      sort by axis type, then identity. *)
   type t =
     | Device  (** Across devices. *)
     | Global  (** Across the workgroups of a launch. *)
-    | Warp  (** Across the threads of a warp. *)
     | Local  (** Across the threads of a workgroup. *)
-    | Weak  (** Not yet assigned. *)
-    | Reduce  (** Reduced over. *)
-    | Upcast  (** Unrolled into vector lanes of a thread. *)
-    | Unroll  (** A reduction unrolled within a thread. *)
-    | Placeholder  (** Stands for an axis while it is built. *)
+    | Warp  (** Across the threads of a warp. *)
+    | Weak  (** A loop not yet assigned to hardware. *)
     | Loop  (** A serial loop. *)
+    | Upcast  (** Unrolled into vector lanes of a thread. *)
+    | Placeholder  (** Stands for an axis while it is built. *)
 
   val equal : t -> t -> bool
   (** [equal a0 a1] is [true] iff [a0] and [a1] are the same axis type. *)
@@ -64,7 +63,7 @@ module Axis_type : sig
 
   val letter : t -> string
   (** [letter a] is the letter that names [a] in kernel names: ["d"], ["g"],
-      ["w"], ["l"], ["L"] for {!Weak} and {!Loop}, ["R"], ["u"] and ["r"].
+      ["l"], ["w"], ["L"] for {!Weak} and {!Loop}, and ["u"].
 
       Raises [Invalid_argument] on {!Placeholder}. *)
 
@@ -73,21 +72,13 @@ module Axis_type : sig
 
       Raises [Invalid_argument] on {!Placeholder}. *)
 
-  val position : t -> int
-  (** [position a] is [a]'s rank in the order in which a kernel lists its axes:
-      [-2] for {!constructor-Device}, [-1] for {!Weak} and {!Loop}, then
-      {!Global}, {!Warp}, {!Local}, {!Upcast}, {!Reduce} and {!Unroll} from [0]
-      to [5].
-
-      Raises [Invalid_argument] on {!Placeholder}. *)
-
   val of_string : string -> (t, string) result
   (** [of_string s] is the axis type named [s] in upper case, without its
-      [AxisType.] prefix: [REDUCE]. The error names [s]. *)
+      [AxisType.] prefix: [WEAK]. The error names [s]. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats an axis type as [AxisType.] followed by its name in upper
-      case: [AxisType.REDUCE]. *)
+      case: [AxisType.WEAK]. *)
 end
 
 (** {1:devices Devices} *)
@@ -266,15 +257,17 @@ type call_info = {
 }
 (** The type for the arguments of {!Op.Call}. *)
 
+type wmma_axis = (Axis_type.t * int list) * int
+(** The type for an axis a tensor core folds: its range's role and identity,
+    and its size. *)
+
 type wmma = {
   dims : int * int * int;  (** The matrix dimensions N, M and K. *)
   dtype_in : Dtype.t;  (** The type of the multiplied operands. *)
   threads : int;  (** The threads that cooperate on one product. *)
-  upcast_axes :
-    ((int list * int) list * (int list * int) list * (int list * int) list)
-    option;
-      (** For each operand, the axes still to fold into it and their sizes, or
-          [None] once folded. *)
+  upcast_axes : (wmma_axis list * wmma_axis list * wmma_axis list) option;
+      (** For each operand, the axes still to fold into it, or [None] once
+          folded. *)
 }
 (** The type for the arguments of {!Op.Wmma}. *)
 
@@ -285,8 +278,8 @@ type arg =
   | Const of Dtype.const  (** {!Op.Const}: its value. *)
   | Dtype of Dtype.t  (** {!Op.Cast}, {!Op.Bitcast}: the target type. *)
   | Param of param_arg  (** {!Op.Param}, {!Op.Buffer}, {!Op.Alloc}. *)
-  | Range of { axis_id : int list; axis_type : Axis_type.t }
-      (** {!Op.Range}: its identity and role. *)
+  | Range of { axis_type : Axis_type.t; axis_id : int list }
+      (** {!Op.Range}: its role and identity. *)
   | Reduce of { op : Op.t; num_axes : int }
       (** {!Op.Reduce}: the operation, and how many leading axes it reduces ([0]
           for a kernel's reduction over range sources). *)
@@ -317,7 +310,7 @@ val equal_arg : arg -> arg -> bool
 
 val pp_arg : Format.formatter -> arg -> unit
 (** [pp_arg] formats an argument as the literal that denotes it: [None], [42],
-    [ConstFloat(1.5)], [True], [Invalid], [dtypes.f32], [(0, AxisType.WEAK)],
+    [ConstFloat(1.5)], [True], [Invalid], [dtypes.f32], [(AxisType.WEAK, 0)],
     [(Ops.ADD, 0)], ['CPU'], [b'ab\x00'].
 
     The records print as calls:
@@ -575,6 +568,13 @@ val axis_type : t -> Axis_type.t
 
     Raises [Invalid_argument] if [r] is not a range. *)
 
+val compare_range_arg : t -> t -> int
+(** [compare_range_arg r0 r1] orders the ranges [r0] and [r1] by argument: axis
+    type ({!Axis_type.compare}), then identity, lexicographically, a prefix
+    before its extensions.
+
+    Raises [Invalid_argument] if [r0] or [r1] is not a range. *)
+
 val range_str : ?color:bool -> t -> string
 (** [range_str ~color r] is [r]'s identity written with underscores, a negative
     part written [m] and its magnitude: [0_1], [m1]. It is in [r]'s axis colour
@@ -745,8 +745,7 @@ val special : sint -> string -> t
 (** [special end_ name] is the hardware index [name], bounded by [end_]. *)
 
 val wmma :
-  ?upcast_axes:
-    (int list * int) list * (int list * int) list * (int list * int) list ->
+  ?upcast_axes:wmma_axis list * wmma_axis list * wmma_axis list ->
   t ->
   t ->
   acc:t ->

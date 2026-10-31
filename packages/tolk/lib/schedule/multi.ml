@@ -214,7 +214,7 @@ let rec shard_srcs msrcs axis =
   let sharding_rng =
     match devices with
     | Multi ds :: _ ->
-        range ~axis_type:Axis_type.Device (Int (List.length ds)) [ -1 ]
+        range ~axis_type:Axis_type.Device (Int (List.length ds)) [ 0 ]
     | _ -> (
         match List.find_opt is_unshard msrcs with
         | Some m -> nth m 1

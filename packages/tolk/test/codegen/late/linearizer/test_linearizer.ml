@@ -369,6 +369,29 @@ let untied_order () =
   nests ~outer:(range Global [ 1 ]) ~inner:(range Loop [ 1 ]);
   nests ~outer:(range Loop [ 1 ]) ~inner:(range Loop [ 1; 0 ])
 
+(* Ranges of every axis type, of identities that fall as the types rise, two
+   parts each: the axis type decides the order before the identity. *)
+let range_order () =
+  let types =
+    Ops.Axis_type.
+      [ Device; Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
+  in
+  let ranges =
+    List.concat
+      (List.mapi
+         (fun i axis_type ->
+           List.map
+             (fun j -> Ops.range ~axis_type (Int 4) [ 10 - i; j ])
+             [ 0; 1 ])
+         types)
+  in
+  equal (list Uops.uop) ranges
+    (List.stable_sort Ops.compare_range_arg (List.rev ranges));
+  let u = Ops.v Op.Noop in
+  equal Uops.uop
+    (List.fold_left (fun e r -> Ops.end_ e [ r ]) u (List.rev ranges))
+    (split (Ops.v Op.End ~src:(u :: List.rev ranges)))
+
 let pm_split_ends =
   group "pm_split_ends"
     (Golden.cases "splits.golden" (fun cell ->
@@ -377,6 +400,7 @@ let pm_split_ends =
            (split (case "splits_input.golden" cell)))
     :: test "ranges of one identity and different axis types nest by axis type"
          untied_order
+    :: test "ranges nest by axis type, then identity" range_order
     :: List.map split_kernel (recorded `Split))
 
 let pm_add_control_flow =

@@ -153,15 +153,17 @@ let add_gpudims (r : Renderer.t) s =
       let all_ranges = Hashtbl.create 8 in
       List.iter
         (fun x ->
-          if op x = Op.Range then Hashtbl.replace all_ranges (axis_id x) x)
+          if op x = Op.Range then
+            Hashtbl.replace all_ranges (axis_type x, axis_id x) x)
         s_topo;
       let range id = Hashtbl.find all_ranges id in
       let dims_of types =
         Hashtbl.fold
-          (fun id x acc ->
-            if List.mem (axis_type x) types then id :: acc else acc)
+          (fun _ x acc ->
+            if List.mem (axis_type x) types then x :: acc else acc)
           all_ranges []
-        |> List.sort (List.compare Int.compare)
+        |> List.sort compare_range_arg
+        |> List.map (fun x -> (axis_type x, axis_id x))
       in
       let global_dims = dims_of [ Axis_type.Global ] in
       let local_dims = dims_of [ Axis_type.Warp; Axis_type.Local ] in
@@ -242,7 +244,7 @@ let add_gpudims (r : Renderer.t) s =
                  | _ -> ());
               if op x = Op.Range then
                 match
-                  List.find_index (List.equal Int.equal (axis_id x)) axes
+                  List.find_index (( = ) (axis_type x, axis_id x)) axes
                 with
                 | Some i -> Tbl.replace subs x (List.nth idxs i)
                 | None -> ())

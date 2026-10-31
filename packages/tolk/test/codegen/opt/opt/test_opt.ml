@@ -18,7 +18,7 @@ let gen_opt =
              Opt.Split { axis; amount; target; top })
            (Gen.pair
               (Gen.pair gen_axis gen_small)
-              (Gen.pair (Gen.of_list [ Opt.Upcast; Unroll; Local ]) Gen.bool));
+              (Gen.pair (Gen.of_list [ Opt.Local; Upcast ]) Gen.bool));
          Gen.map
            (fun (axis, amount) -> Opt.Padto { axis; amount })
            (Gen.pair gen_axis gen_small);
@@ -52,9 +52,9 @@ let printing =
                 (Opt.axis (Kernel_opts.opt_of_cell (cell "opt"))));
         ];
       test "a split that is not from the top prints without its flag" (fun () ->
-          equal string "Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL))"
+          equal string "Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UPCAST))"
             (show
-               (Split { axis = 2; amount = 0; target = Unroll; top = false })));
+               (Split { axis = 2; amount = 0; target = Upcast; top = false })));
     ]
 
 (* Order *)
@@ -62,7 +62,7 @@ let printing =
 let order =
   group "order"
     [
-      group "compare agrees with tinygrad where tinygrad orders"
+      group "compare agrees with tinygrad"
         [
           Golden.cases "comparisons.golden" ~key:[ "a"; "b" ] (fun cell ->
               equal int
@@ -79,12 +79,12 @@ let order =
       prop "compare is 0 exactly on equal optimisations"
         (Gen.pair gen_opt gen_opt) (fun (o0, o1) ->
           equal bool (o0 = o1) (Opt.compare o0 o1 = 0));
-      test "splits into different targets are different" (fun () ->
+      test "a split into local threads precedes one into upcast lanes"
+        (fun () ->
           let split target =
             Opt.Split { axis = 0; amount = 4; target; top = false }
           in
-          not_equal int 0 (Opt.compare (split Upcast) (split Unroll));
-          not_equal int 0 (Opt.compare (split Unroll) (split Local)));
+          less int ~than:0 (Opt.compare (split Local) (split Upcast)));
     ]
 
 let () = exit (Windtrap.run "Tolk.Opt" [ printing; order ])

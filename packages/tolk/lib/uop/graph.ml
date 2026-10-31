@@ -314,6 +314,15 @@ let dtype = named "dtypes" Dtype.pp Dtype.of_string
 let op = named "Ops" Op.pp Op.of_string
 let axis_type = named "AxisType" Ops.Axis_type.pp Ops.Axis_type.of_string
 
+(* A range's argument is written as its axis type followed by its identity. *)
+let range_arg : (Ops.Axis_type.t * int list) codec =
+  let write (t, ids) = Tuple (axis_type.write t :: List.map int.write ids) in
+  let read = function
+    | Tuple (t :: ids) -> (axis_type.read t, List.map int.read ids)
+    | v -> expected "a range" v
+  in
+  { write; read }
+
 let addr_space =
   named "AddrSpace" Dtype.pp_addr_space Dtype.addr_space_of_string
 
@@ -459,12 +468,10 @@ let opt : Opt.t codec =
   let target =
     let write : Opt.target -> Ops.Axis_type.t = function
       | Upcast -> Upcast
-      | Unroll -> Unroll
       | Local -> Local
     in
     let read : Ops.Axis_type.t -> Opt.target = function
       | Upcast -> Upcast
-      | Unroll -> Unroll
       | Local -> Local
       | t ->
           fail "a split cannot make an axis of type %s"
@@ -645,7 +652,7 @@ let custom_function : Ops.custom_function codec =
   |> finish
 
 let wmma : Ops.wmma codec =
-  let axes = list (pair (list int) int) in
+  let axes = list (pair range_arg int) in
   let dims = triple int int int and upcast = option (triple axes axes axes) in
   let write (w : Ops.wmma) =
     Tuple
@@ -673,9 +680,7 @@ let arg_value : Ops.arg -> value option = function
   | Const c -> Some (const.write c)
   | Dtype d -> Some (dtype.write d)
   | Param p -> Some (param_arg.write p)
-  | Range r ->
-      Some
-        (Tuple (List.map int.write r.axis_id @ [ axis_type.write r.axis_type ]))
+  | Range r -> Some (range_arg.write (r.axis_type, r.axis_id))
   | Reduce r -> Some ((pair op int).write (r.op, r.num_axes))
   | Allreduce a -> Some ((pair op device).write (a.op, a.device))
   | Device d -> Some (device.write d)
@@ -697,18 +702,9 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Const -> Const (const.read v)
   | Cast | Bitcast -> Dtype (dtype.read v)
   | Param | Buffer | Alloc -> Param (param_arg.read v)
-  | Range -> (
-      match v with
-      | Tuple l -> (
-          match List.rev l with
-          | t :: ids ->
-              Range
-                {
-                  axis_id = List.rev_map int.read ids;
-                  axis_type = axis_type.read t;
-                }
-          | [] -> expected "a range" v)
-      | v -> expected "a range" v)
+  | Range ->
+      let axis_type, axis_id = range_arg.read v in
+      Range { axis_type; axis_id }
   | Reduce ->
       let op, num_axes = (pair op int).read v in
       Reduce { op; num_axes }

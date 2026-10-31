@@ -1397,9 +1397,9 @@ index 9384cd0..b654ac1 100644
 +
 +  # a local split of a reduce axis groups the reductions that close it: each thread of the workgroup reduces its part of the axis into a
 +  # buffer in shared memory, which every thread then reduces
-+  def _closers(self, rng:UOp) -> list[UOp]: return [u for u in self.reduceops if any(rng in s.ranges for s in u.src[1:])]
++  def _closers(self, rng:UOp) -> list[UOp]: return [u for u in self.reduceops if rng in u.src[1:]]
 +  def _grouped_reduces(self) -> list[UOp]:
-+    return [u for u in self.reduceops if any(r.axis_type in (AxisType.WARP, AxisType.LOCAL) for s in u.src[1:] for r in s.ranges)]
++    return [u for u in self.reduceops if any(r.axis_type in (AxisType.WARP, AxisType.LOCAL) for r in u.src[1:])]
 +  def _smem(self, amt:int, grouped:list[UOp]):
 +    return amt*prod([self.full_shape[a] for a in self.axes_of(AxisType.UPCAST, reduce=False)+self.axes_of(AxisType.WARP, AxisType.LOCAL)])*sum(u.dtype.itemsize for u in grouped)
 +  def _siblings(self, rng:UOp, amt:int, grouped:list[UOp]) -> list[UOp]:
@@ -1413,7 +1413,7 @@ index 9384cd0..b654ac1 100644
 +    if not all(u in top for u in self._closers(rng)): return []
 +    axes: list[UOp] = []
 +    for u in top:
-+      r = next((r for r in self.rngs if r in self.reduce_ranges and r.axis_type is AxisType.WEAK and any(r in s.ranges for s in u.src[1:])
++      r = next((r for r in self.rngs if r in self.reduce_ranges and r.axis_type is AxisType.WEAK and r in u.src[1:]
 +                and r.src[0].divides(amt) is not None and all(c in top for c in self._closers(r))), None)
 +      if r is None or u in grouped or r in axes: continue
 +      joined = _union(grouped, joining:=self._closers(r))
@@ -2776,7 +2776,7 @@ index 26e28fa..1b98889 100644
 +  read = dedup(r for _, x in live for r in x.ranges)
 +  elements = extent([r for r, _ in live])
 +  if elements <= 0: return 1
-+  return max(1, min(extent([r for r in read if r.axis_id in reduced]), extent(read) / elements))
++  return max(1, min(extent([r for r in read if r.arg in reduced]), extent(read) / elements))
 +
 +# the copies the reads of each stage make of its value once inlined, reads at several distinct indices copying it at
 +# each. keyed by the axes of the stage's ranges, which are its own and name it while the cleanups rebuild it, as are the
@@ -2790,13 +2790,13 @@ index 26e28fa..1b98889 100644
 +
 +def stage_reads(sink:UOp) -> StageReads:
 +  nodes = sink.toposort(enter_calls=False)
-+  reduced = {r.axis_id for u in nodes if u.op is Ops.REDUCE for r in u.src[1:] if r.op is Ops.RANGE}
++  reduced = {r.arg for u in nodes if u.op is Ops.REDUCE for r in u.src[1:] if r.op is Ops.RANGE}
 +  reads: dict[tuple, float] = {}
 +  for u in nodes:
 +    if u.op is Ops.INDEX and u.src[0].op is Ops.STAGE:
 +      c = read_copies(u.src[0], u, reduced)
 +      for r in u.src[0].src[1:]:
-+        if r.op is Ops.RANGE: reads[r.axis_id] = reads.get(r.axis_id, 0) + c
++        if r.op is Ops.RANGE: reads[r.arg] = reads.get(r.arg, 0) + c
 +  return StageReads(reads, reduced)
 +
 +# the nodes that inlining a stage may add to its readers: the nodes of its value that its ranges reach, which the inlining
@@ -2827,7 +2827,7 @@ index 26e28fa..1b98889 100644
 +  # read by every output of a reduction, as a matrix-vector product reads its vector, the value would be computed again
 +  # for each output and each of its buffers loaded again: one that reads more than one buffer stays stored
 +  read = [r for x in idx.src[1:] for r in x.ranges]
-+  if buf.arg.broadcast and len(accessed_buffers) > 1 and read and all(r.axis_id in ctx.reduced for r in read): return None
++  if buf.arg.broadcast and len(accessed_buffers) > 1 and read and all(r.arg in ctx.reduced for r in read): return None
 +
 +  # inlined, the value is copied to each position it is read at, and computed again at each trip of a reduction over a
 +  # window. its producers are inlined already, so the copies compound: k values each reading the one before at two
@@ -2836,7 +2836,7 @@ index 26e28fa..1b98889 100644
 +  # each read counts at every axis of the stage's ranges, and other stages can share an axis, a device range or one a
 +  # symbolic size names, so the least count bounds the stage's copies from above
 +  rngs = [r for r in buf.src[1:] if r.op is Ops.RANGE]
-+  copies = max(min([ctx.copies.get(r.axis_id, 0) for r in rngs], default=1), 1)
++  copies = max(min([ctx.copies.get(r.arg, 0) for r in rngs], default=1), 1)
 +  copied = len([x for x in computed if any(r in x.ranges for r in rngs)])
 +  if copies > 1 and copied * copies > INLINE_BUDGET: return None
 +

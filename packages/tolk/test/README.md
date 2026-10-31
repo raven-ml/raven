@@ -157,7 +157,7 @@ topological order:
 ```
 4 Ops.PARAM dtypes.half [] ParamArg(slot=1, dtype=dtypes.half, size=16, device="CPU")
 5 Ops.CONST dtypes.weakint [] 16
-6 Ops.RANGE dtypes.weakint [5] (0, AxisType.REDUCE)
+6 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 0)
 7 Ops.INDEX dtypes.half [4, 6]
 8 Ops.CAST dtypes.float [7] dtypes.float
 9 Ops.REDUCE dtypes.float [8, 6] (Ops.ADD, 0)
@@ -182,7 +182,7 @@ topological order:
 | string | in double quotes; `"`, `\`, newline and tab escaped as `\"`, `\\`, `\n` and `\t`, and every other byte outside printable ASCII as `\xHH` |
 | bytes | as a string, prefixed with `b`: `b"\x7fELF"` |
 | data type | as `Dtype.pp` prints it: `dtypes.half` |
-| enumeration | `<Enum>.<NAME>`: `Ops.ADD`, `AxisType.REDUCE`, `AddrSpace.GLOBAL` |
+| enumeration | `<Enum>.<NAME>`: `Ops.ADD`, `AxisType.WEAK`, `AddrSpace.GLOBAL` |
 | node | `%` and its index: `%12` |
 | tuple | `()`, `(v,)`, `(v, w)` |
 | record | `<Name>(<field>=<value>, ...)`, fields in declaration order, each field left out when it holds its default |
@@ -218,7 +218,7 @@ about 330,000 graphs, and refused none.
 | `FLIP` | a tuple of booleans, one per axis |
 | `REDUCE` | `(<op>, <count>)`: the reducing operation and how many leading axes it reduces, as `(Ops.ADD, 1)` |
 | `ALLREDUCE` | `(<op>, <device>)` |
-| `RANGE` | the axis id, one or more integers, then its `AxisType`: `(0, AxisType.LOOP)`, `(1, 0, AxisType.REDUCE)` |
+| `RANGE` | its `AxisType`, then the axis id, one or more integers: `(AxisType.LOOP, 0)`, `(AxisType.WEAK, 1, 0)` |
 | `SPECIAL` | a string, the name of the launch dimension: `"gidx0"` |
 | `UNSHARD` | a tuple of one integer, the axis |
 | `MSELECT` | an integer, the device's position |
@@ -228,7 +228,7 @@ about 330,000 graphs, and refused none.
 | `INS` | `(<instruction>, <data type>)`, the instruction a string |
 | `CUSTOM_FUNCTION`, `SOURCE` | a string |
 | `BINARY` | bytes |
-| `WMMA` | `((<N>, <M>, <K>), <input data type>, <threads>, <upcast axes>)`, the upcast axes a tuple of tuples of `(<axis>, <size>)` pairs |
+| `WMMA` | `((<N>, <M>, <K>), <input data type>, <threads>, <upcast axes>)`, the upcast axes a tuple of tuples of `(<range argument>, <size>)` pairs, a range argument as a `RANGE` writes it |
 | `PARAM`, `BUFFER`, `ALLOC` | `ParamArg` |
 | `CALL` | `CallInfo` |
 | `SINK` | none, or `KernelInfo` |

@@ -8,7 +8,10 @@
 (** Hand-coded kernel optimisations.
 
     Rules of thumb that pick a kernel's optimisations ({!Opt.t}) from its shape
-    and accesses, without measuring it. *)
+    and accesses, without measuring it. A reduce axis is one a reduction closes;
+    the upcastable axes are the global, local and weak axes of a known size
+    that no reduction closes, and the unrollable axes those that one does. An
+    unroll is an upcast of a reduce axis. *)
 
 val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with optimisations applied;
@@ -52,7 +55,7 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
       and of least stride first;
     - the last unrollable axis is unrolled whole if of size at most 32 (and a
       second one if both are at most 3), or else by 4, when at most 4 lanes are
-      upcast or none are unrolled, and fewer than 64;
+      upcast or no reduce axis is, and fewer than 64;
     - if nothing is upcast, the last upcastable axis is upcast by 4 when 4
       divides it;
     - for a renderer with local indices, global and weak axes of a constant size

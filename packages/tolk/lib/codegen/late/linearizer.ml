@@ -156,11 +156,6 @@ let pm_add_control_flow =
 
 (* Splitting ends *)
 
-let compare_range_arg r0 r1 =
-  match Stdlib.compare (axis_id r0) (axis_id r1) with
-  | 0 -> Axis_type.compare (axis_type r0) (axis_type r1)
-  | c -> c
-
 let do_split_ends e =
   let ranges_of s =
     if op s = Op.Range then [ s ] else Nodes.to_list (ranges s)

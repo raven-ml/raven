@@ -159,8 +159,8 @@ let commits =
     ]
 
 let reductions =
-  let r = Ops.range ~axis_type:Reduce (Int 4) [ 0 ]
-  and s = Ops.range ~axis_type:Reduce (Int 3) [ 1 ]
+  let r = Ops.range (Int 4) [ 0 ]
+  and s = Ops.range (Int 3) [ 1 ]
   and o = Ops.range (Int 5) [ 2 ] in
   let over rs op u = Ops.reduce u op rs in
   let int32 u = Ops.cast u Dtype.Int32 in
@@ -184,12 +184,12 @@ let reductions =
           equal const (int 6)
             (eval ~vars:[ ("r0", int 3) ] (over [ r ] Add (int32 r))));
       test "a reduction over an empty range is its identity" (fun () ->
-          let empty = Ops.range ~axis_type:Reduce (Int 0) [ 3 ] in
+          let empty = Ops.range (Int 0) [ 3 ] in
           equal const (int 0) (eval (over [ empty ] Add (int32 empty)));
           equal const (int (-2147483648))
             (eval (over [ empty ] Max (int32 empty))));
       test "a range's end may be a variable" (fun () ->
-          let n = Ops.range ~axis_type:Reduce (Sym (var "n")) [ 4 ] in
+          let n = Ops.range (Sym (var "n")) [ 4 ] in
           equal const (int 10)
             (eval ~vars:[ ("n", int 5) ] (over [ n ] Add (int32 n))));
       test "a reduction of an invalid value is invalid" (fun () ->

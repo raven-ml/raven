@@ -65,9 +65,9 @@ val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
       being the disjunction of theirs; a node without indexed consumers gets
       none.
 
-    New ranges are numbered from [0] in the order the walk creates them; they
-    are {!Ops.Axis_type.Weak}, and those of the axes a reduction reduces are
-    {!Ops.Axis_type.Reduce}. A node is stored whole when it is a {!Op.Store}, a
+    New ranges are numbered from [0] in the order the walk creates them, and
+    are {!Ops.Axis_type.Weak}: a range is a reduction's when the reduction
+    closes it. A node is stored whole when it is a {!Op.Store}, a
     source of an {!Op.Mselect} or an {!Op.Mstack} that is not storage, a source
     of a call to a kernel given as code that is not storage, a gathered source
     that is not storage, or a value stored into a destination it reads.

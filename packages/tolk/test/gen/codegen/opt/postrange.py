@@ -39,9 +39,9 @@ def hip(arch):
     return r
 
 
-def small_shared():
-    """A renderer whose workgroups share 64 bytes."""
-    class SmallShared(Renderer): shared_max = 64
+def small_shared(size):
+    """A renderer whose workgroups share `size` bytes."""
+    class SmallShared(Renderer): shared_max = size
     return SmallShared(Target())
 
 
@@ -51,7 +51,8 @@ RENDERERS = {
     "cuda": CUDARenderer(Target("CUDA", "CUDA", "sm_89")),
     "nv": CUDARenderer(Target("NV", "CUDA", "sm_89")),
     "amd": hip("gfx1100"),
-    "small_shared": small_shared(),
+    "small_shared": small_shared(64),
+    "tiny_shared": small_shared(16),
 }
 
 
@@ -70,7 +71,8 @@ def split(axis, amount, target, top=False):
 
 def local(axis, amount, top=False): return split(axis, amount, AxisType.LOCAL, top)
 def upcast(axis, amount, top=False): return split(axis, amount, AxisType.UPCAST, top)
-def unroll(axis, amount): return split(axis, amount, AxisType.UPCAST)
+# an upcast of a reduce axis unrolls its reduction
+def unroll(axis, amount): return upcast(axis, amount)
 def padto(axis, amount): return Opt(OptOps.PADTO, axis, amount)
 def swap(axis, other): return Opt(OptOps.SWAP, axis, other)
 def tensor_core(axis=0, tc_select=-1, tc_opt=0, use_tc=1): return Opt(OptOps.TC, axis, (tc_select, tc_opt, use_tc))
@@ -89,21 +91,21 @@ def custom(outputs, *inputs, fxn):
 
 
 def custom_gemm(C, A, B):
-    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.WEAK)
+    i, j, k = UOp.range(C.shape[0], 0), UOp.range(C.shape[1], 1), UOp.range(A.shape[1], 2, axis_type=AxisType.LOOP)
     C = C[i, j].set(0.0)
     prog = C[i, j].store(C.after(k)[i, j] + A[i, k] * B[k, j]).end(k).end(i, j)
     return prog.sink(arg=KernelInfo(name=f"custom_gemm_{C.shape[0]}_{C.shape[1]}_{A.shape[1]}", opts_to_apply=()))
 
 
 def loop_acc_gemm(ACC, A, B):
-    t, j, k = UOp.range(A.shape[0], 0, AxisType.LOOP), UOp.range(B.shape[1], 1), UOp.range(A.shape[1], 2, AxisType.WEAK)
+    t, j, k = UOp.range(A.shape[0], 0, AxisType.LOOP), UOp.range(B.shape[1], 1), UOp.range(A.shape[1], 2)
     mm = (A[t, k] * B[k, j]).cast(dtypes.float).reduce(k, arg=Ops.ADD)
     return ACC[j].store(ACC.after(t)[j] + mm).end(t).end(j).sink(arg=KernelInfo(opts_to_apply=()))
 
 
 def contracted_m(n, m, k, dtype_out):
     def kernel(C, A, B):
-        i, j, r = UOp.range(m*2, 0, AxisType.WEAK), UOp.range(n*2, 1), UOp.range(k*2, 2, AxisType.WEAK)
+        i, j, r = UOp.range(m*2, 0, AxisType.WEAK), UOp.range(n*2, 1), UOp.range(k*2, 2)
         out = (A[i, r]*B[r, j]).cast(dtype_out).reduce(i, r, arg=Ops.ADD)
         return C[j].store(out).end(j).sink(arg=KernelInfo(opts_to_apply=()))
     return kernel
@@ -149,8 +151,17 @@ def single_kernel_softmax(x):
 def summing_local(size):
     """out[l] = sum over r of a[l*8+r], the thread axis l of size `size`."""
     out, a = UOp.param(0, dtypes.float, 16), UOp.param(1, dtypes.float, 128)
-    l, r = UOp.range(size, 0, AxisType.LOCAL), UOp.range(8, 1, AxisType.WEAK)
+    l, r = UOp.range(size, 0, AxisType.LOCAL), UOp.range(8, 1)
     return kernel_of(out.index(l).store(a.index(l*8+r).reduce(r, arg=Ops.ADD)).end(l))
+
+
+def bounded_reduction():
+    """test_postrange.py::test_reduction_bound_is_not_reduced: a sum over r,
+    whose bound reads the output axis i, reduces r alone."""
+    out, a = UOp.param(0, dtypes.float, 4), UOp.param(1, dtypes.float, 16)
+    i = UOp.range(4, 0)
+    r = UOp.range(i+1, 1)
+    return kernel_of(out.index(i).store(a.index(i*4+r).reduce(r, arg=Ops.ADD)).end(i))
 
 
 def huge_axes(size, *types):
@@ -176,7 +187,7 @@ def tagged_swap():
 
 def closed_extent():
     # the extent of the outer range is a reduction over a closed range
-    inner = UOp.range(4, 0, AxisType.WEAK)
+    inner = UOp.range(4, 0)
     extent = inner.cast(dtypes.int).reduce(inner, arg=Ops.ADD)
     outer = UOp.range(extent, 1)
     out = UOp.param(0, dtypes.int, 32)
@@ -288,6 +299,7 @@ KERNELS = {
     "huge_upcasts": lambda: huge_axes(2**32, AxisType.UPCAST, AxisType.UPCAST),
     "tagged_swap": tagged_swap,
     "closed_extent": closed_extent,
+    "bounded_reduction": bounded_reduction,
     "nested_end": nested_end,
     "int32_axis": int32_axis,
     "launched": launched,
@@ -495,6 +507,17 @@ case("nested_end_globals", "nested_end", "metal", [])
 case("launched_upcast", "launched", "metal", [upcast(0, 2)])
 case("split_int32_axis", "int32_axis", "metal", [upcast(0, 2)])
 
+# test_postrange.py: a range's role in a reduction is that a reduction closes it
+
+# padding the axis a reduction's bound reads masks the read, not the reduction's input
+case("padto_reduction_bound", "bounded_reduction", "amd", [padto(0, 8)])
+# an output and a reduce axis upcast alike, each upcast within its own limit
+case("upcast_both_roles", "sum_rows_64", "cpu", [unroll(1, 4), upcast(0, 2)])
+# a group's shared memory counts the output's upcast lanes, not the reduction's
+case("group_beside_unrolled_reduce", "sum_rows_64", "tiny_shared", [upcast(0, 2), unroll(2, 32), local(2, 2)])
+# a group inside an unrolled reduce is refused, as tinygrad refuses it by the weak quotient the unroll leaves
+case("double_sum_unrolled_group", "double_sum", "metal", [unroll(1, 0), local(0, 2)])
+
 
 # test_tensor_cores.py, on each renderer with tensor cores
 
@@ -527,7 +550,8 @@ def tensor_core_cases(renderer):
     KERNELS[f"tc_{renderer}_64"] = lambda: tensor_core_matmul(t, 64, 64, 64)
     warp = scheduled(f"tc_{renderer}_64", renderer, [tensor_core()]).axis_types.index(AxisType.WARP)
     case(f"tc_{renderer}_padto_warp", f"tc_{renderer}_64", renderer, [tensor_core(), padto(warp, 7)], ALLOW_TF32=1)
-    KERNELS[f"tc_{renderer}_group"] = lambda: tensor_core_matmul(t, 16, 16, 64)
+    # four tiles along K, so that both group sizes divide what the core leaves of it
+    KERNELS[f"tc_{renderer}_group"] = lambda: tensor_core_matmul(t, m, n, k*4)
     reduce = scheduled(f"tc_{renderer}_group", renderer, [tensor_core()], ALLOW_TF32=1).axes_of(AxisType.WEAK, reduce=True)[0]
     for amount in (2, 4):
         for top in (False, True):
@@ -561,7 +585,8 @@ def tensor_core_cases(renderer):
          [tensor_core(tc_opt=2), padto(0, 4), upcast(0, 0)], ALLOW_TF32=1)
     KERNELS[f"tc_{renderer}_relu"] = lambda: last(
         empty(16, 64, dtype=t.dtype_in).matmul(empty(64, 16, dtype=t.dtype_in), dtype=t.dtype_out).relu())
-    case(f"tc_{renderer}_unroll_relu", f"tc_{renderer}_relu", renderer, [tensor_core(), unroll(reduce, 2)], ALLOW_TF32=1)
+    relu = scheduled(f"tc_{renderer}_relu", renderer, [tensor_core()], ALLOW_TF32=1).axes_of(AxisType.WEAK, reduce=True)[0]
+    case(f"tc_{renderer}_unroll_relu", f"tc_{renderer}_relu", renderer, [tensor_core(), unroll(relu, 2)], ALLOW_TF32=1)
 
 
 def half_accumulate_cases(renderer):
@@ -692,18 +717,18 @@ def axes():
             for opt in opts: ret = k.apply_opt(opt)
         # a size that does not render on one line is pinned by the case's graph
         if any("\n" in sint(x) for x in k.full_shape): continue
-        rows.append((name, k.shape_len, sints(k.full_shape), repr(k.axis_types), repr(k.axes_of(reduce=True)), repr(k.upcastable_dims()),
-                     repr(k.upcastable_dims(reduce=True)), len(k.axes_of(AxisType.UPCAST)), sint(k.upcast_size()), k.group_for_reduces, len(k.reduceops),
-                     len(k.bufs), k.colored_shape(), rngs_cell(made(ret)) if opts else ""))
-    return ["case", "shape_len", "full_shape", "axis_types", "reduce_axes", "upcastable_dims", "unrollable_dims",
-            "upcasted", "upcast_size", "group_for_reduces", "reduceops", "bufs", "colored_shape", "made"], rows
+        rows.append((name, k.shape_len, sints(k.full_shape), repr(k.axis_types), repr(k.axes_of(reduce=True)),
+                     repr(k.upcastable_dims()), repr(k.upcastable_dims(reduce=True)), sint(k.upcast_size()),
+                     k.group_for_reduces, len(k.reduceops), len(k.bufs), k.colored_shape(), rngs_cell(made(ret)) if opts else ""))
+    return ["case", "shape_len", "full_shape", "axis_types", "reduce_axes", "upcastable_dims", "upcastable_reduce_dims",
+            "upcast_size", "group_for_reduces", "reduceops", "bufs", "colored_shape", "made"], rows
 
 
 def escaped(text): return text.replace("\x1b", "\\e")
 
 
-# Weak axes: an output axis (CPU), one a buffered value keeps weak, and one
-# that is no output
+# Weak axes, coloured alike: an output axis (CPU), one a buffered value keeps
+# weak, and one a reduction closes
 WEAK_COLORS = [("weak_output", "sum_rows_64", "cpu"), ("weak_outside_a_stage", "stage_outside_an_output", "metal"),
                ("weak_reduced", "tc_metal_contracted_m", "metal")]
 

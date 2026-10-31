@@ -65,8 +65,8 @@ let build_range_map sink =
   let ctx = Hashtbl.create 8 in
   List.iter
     (fun x ->
-      if is Op.Range x && List.mem (axis_type x) Axis_type.[ Unroll; Upcast ]
-      then Hashtbl.replace ctx (axis_id x) (Hashtbl.length ctx))
+      if is Op.Range x && axis_type x = Axis_type.Upcast then
+        Hashtbl.replace ctx (axis_type x, axis_id x) (Hashtbl.length ctx))
     (toposort ~calls:Enter sink);
   ctx
 
@@ -122,7 +122,7 @@ let expand_wmma ctx u =
   | _ -> None
 
 let expand_range ctx r =
-  Hashtbl.find_opt ctx (axis_id r)
+  Hashtbl.find_opt ctx (axis_type r, axis_id r)
   |> Option.map (fun axis ->
       let n = Dtype.Value.to_int (vmax r) + 1 in
       let c =
@@ -588,8 +588,7 @@ let fix_group_for_reduce x =
             match axis_id r with
             | a :: rest ->
                 replace r
-                  ~arg:
-                    (Range { axis_id = (a + 100) :: rest; axis_type = Reduce })
+                  ~arg:(Range { axis_type = Weak; axis_id = (a + 100) :: rest })
             | [] -> assert false)
           reduce_gfr
       in
@@ -645,7 +644,7 @@ let merge_reduce_ends sink =
     else
       let axis_id = !next_axis :: List.tl (axis_id rr) in
       incr next_axis;
-      replace rr ~arg:(Range { axis_id; axis_type = axis_type rr })
+      replace rr ~arg:(Range { axis_type = axis_type rr; axis_id })
   in
   List.iter
     (fun (r, ends) ->
@@ -915,7 +914,7 @@ let add_war_barrier end_ =
   let rngs =
     List.filter
       (fun r ->
-        List.mem (axis_type r) Axis_type.[ Reduce; Weak; Loop ]
+        List.mem (axis_type r) Axis_type.[ Weak; Loop ]
         && Dtype.Value.(vmax r > of_int 0))
       (ended_ranges end_)
   in

@@ -352,7 +352,7 @@ let add_gpudims_graphs =
     rewrites "add_gpudims_masks_a_store_by_its_missing_locals" (fun () ->
         missing_locals [ 8; 4 ]);
     rewrites "add_gpudims_keeps_a_reduce_range" (fun () ->
-        let g = global (Int 16) 0 and r = range ~axis_type:Reduce (Int 8) 1 in
+        let g = global (Int 16) 0 and r = range ~axis_type:Weak (Int 8) 1 in
         let loaded =
           Ops.load (Ops.index (buffer ~slot:1 128) [ (g * int 8) + r ]) []
         in
@@ -385,7 +385,7 @@ let add_gpudims_graphs =
   ]
 
 let declines =
-  let g = global (Int 32) 0 and r = range ~axis_type:Reduce (Int 4) 0 in
+  let g = global (Int 32) 0 and r = range ~axis_type:Weak (Int 4) 0 in
   let sink = function
     | "no_kernel_info" ->
         Ops.sink

@@ -8,8 +8,11 @@
 (** Applying kernel optimisations.
 
     A kernel's axes are its ranges ({!Op.Range}) with a positive count, except
-    serial loops and device ranges, listed by the role that
-    {!Ops.Axis_type.position} orders, then by identity. An optimisation
+    serial loops and device ranges, listed by argument
+    ({!Ops.compare_range_arg}), the weak and upcast ranges that a reduction
+    closes last. A range's role in a reduction is that a reduction
+    ({!Op.Reduce}) closes it: its axis is a reduce axis, and an upcast of it
+    unrolls the reduction into the thread's lanes. An optimisation
     ({!Opt.t}) names an axis by its position in that list, and rewrites the
     kernel: a split replaces an axis [r] of size [n] by [r'] of size [n / a] and
     a new axis [s] of size [a], and every use of [r] by [r' * a + s], or
@@ -31,8 +34,9 @@ module Scheduler : sig
 
   val v : Ops.t -> Renderer.t -> t
   (** [v ast ren] schedules the kernel [ast], the sink of a kernel
-      ({!Ops.type-kernel_info}), for [ren]. Its applied optimisations are those
-      [ast]'s argument lists. *)
+      ({!Ops.type-kernel_info}), for [ren], with the ranges its reductions and
+      ends close flattened ({!Simplify.pm_flatten_range}). Its applied
+      optimisations are those [ast]'s argument lists. *)
 
   val copy : t -> t
   (** [copy k] is a scheduler of [k]'s kernel and optimisations, which applying
@@ -61,34 +65,25 @@ module Scheduler : sig
   val axis_types : t -> Ops.Axis_type.t list
   (** [axis_types k] is the role of each of [k]'s axes. *)
 
-  val ranges_of : t -> Ops.Axis_type.t list -> Ops.t list
-  (** [ranges_of k types] is [k]'s axes of a role in [types]. *)
+  val reduce_ranges : t -> Ops.t list
+  (** [reduce_ranges k] is the ranges [k]'s reductions close, each once. *)
 
-  val axes_of : t -> Ops.Axis_type.t list -> int list
-  (** [axes_of k types] is the positions of [k]'s axes of a role in [types]. *)
-
-  val reduce_axes : t -> int list
-  (** [reduce_axes k] is the positions of [k]'s axes that a reduction
-      ({!Op.Reduce}) reduces over. *)
+  val axes_of : ?reduce:bool -> t -> Ops.Axis_type.t list -> int list
+  (** [axes_of ~reduce k types] is the positions of [k]'s axes of a role in
+      [types], or of any role if [types] is [[]], that are reduce axes if
+      [reduce] is [true] and are not if it is [false]. Without [reduce], any. *)
 
   val upcast_size : t -> Ops.sint
   (** [upcast_size k] is the product of the sizes of [k]'s
-      {!Ops.Axis_type.Upcast} and {!Ops.Axis_type.Unroll} axes. *)
+      {!Ops.Axis_type.Upcast} axes. *)
 
-  val upcastable_dims : t -> int list
-  (** [upcastable_dims k] is the positions of [k]'s global, local and weak axes
-      of a known size greater than [1]. *)
-
-  val unrollable_dims : t -> int list
-  (** [unrollable_dims k] is the positions of [k]'s reduced local and reduce
-      axes of a known size greater than [1]. *)
-
-  val upcasted : t -> int
-  (** [upcasted k] is the number of [k]'s {!Ops.Axis_type.Upcast} and
-      {!Ops.Axis_type.Unroll} axes. *)
+  val upcastable_dims : ?reduce:bool -> t -> int list
+  (** [upcastable_dims ~reduce k] is the positions of [k]'s global, local and
+      weak axes of a known size, that are reduce axes if [reduce] is [true] and
+      are not if it is [false] (default). *)
 
   val group_for_reduces : t -> int
-  (** [group_for_reduces k] is the number of [k]'s reduced axes that are warp or
+  (** [group_for_reduces k] is the number of [k]'s reduce axes that are warp or
       local axes. *)
 
   val reduceops : t -> Ops.t list
@@ -103,15 +98,14 @@ module Scheduler : sig
 
   val colored_shape : t -> string
   (** [colored_shape k] is the size of each of [k]'s axes, right-aligned in four
-      columns and coloured by its role; a weak axis is black if it is not an
-      output axis and white if it cannot be made global. *)
+      columns and coloured by its role ({!Ops.Axis_type.color}). *)
 
   (** {1:rewriting Rewriting} *)
 
   val convert_loop_to_global : t -> unit
-  (** [convert_loop_to_global k] makes global each weak output axis of [k] that
-      every buffered value ({!Op.Stage}) runs inside, if [k]'s renderer has
-      local indices. *)
+  (** [convert_loop_to_global k] makes global each weak range that an end of
+      [k]'s sink closes and no reduction does, that every buffered value
+      ({!Op.Stage}) runs inside, if [k]'s renderer has local indices. *)
 
   val shift_to :
     ?top:bool ->
@@ -124,7 +118,8 @@ module Scheduler : sig
   (** [shift_to k r amount target] splits the axis [r] into [(r', s)]: [r'] of
       [r]'s size divided by [amount], and [s], of size [amount] and [target]'s
       role, a new range unless [new_rng] is given. [r] becomes
-      [r' * amount + s], or [s * size r' + r'] if [top] (default [false]).
+      [r' * amount + s], or [s * size r' + r'] if [top] (default [false]), and
+      the ranges reductions and ends close stay flat.
 
       Raises [Invalid_argument] if [amount] is not greater than [1], if [r]'s
       role is not among [split_targets target], or if [amount] does not divide
@@ -140,16 +135,16 @@ module Scheduler : sig
       was unless a tensor core's reduction is found ambiguous after its axes are
       split. It does not apply when its axis is out of range, a split's target
       cannot come from its axis's role, or exceeds what the renderer allows (32
-      unrolled or 16 upcast lanes, locals only with local indices, the
-      workgroup's shared memory), a pad's axis is not of a constant size or
-      would more than quadruple, or no tensor core fits. Raises
+      lanes of a reduce axis or 16 of another, locals only with local indices,
+      the workgroup's shared memory), a local split of a reduce axis whose
+      reduction runs inside an unrolled reduce axis, a pad's axis is not of a
+      constant size or would more than quadruple, or no tensor core fits. Raises
       [Invalid_argument] if the shared memory a split needs depends on a
       symbolic size and cannot be decided. *)
 
   val get_optimized_ast : ?name_override:string -> t -> Ops.t
-  (** [get_optimized_ast ~name_override k] is [k]'s kernel with the ranges its
-      reductions and ends close flattened ({!Simplify.pm_flatten_range}),
-      argument listing the applied optimisations, and tagged [1]. It is named
+  (** [get_optimized_ast ~name_override k] is [k]'s kernel with its argument
+      listing the applied optimisations, and tagged [1]. It is named
       [name_override], or else ["r"] for a kernel that reduces and ["E"]
       otherwise, followed by the sizes of its hardware indices and axes, each
       after an underscore. The name holds no colour. *)
@@ -159,8 +154,8 @@ end
 
 val split_targets : Opt.target -> Ops.Axis_type.t list
 (** [split_targets target] is the roles of the axes a split can move to
-    [target]: global, local and weak axes to {!Opt.Upcast}, reduce and local
-    axes to {!Opt.Unroll}, and global, weak and reduce axes to {!Opt.Local}. *)
+    [target]: global, local and weak axes to {!Opt.Upcast}, and global and weak
+    axes to {!Opt.Local}. *)
 
 val apply_opts :
   ?beam:(Scheduler.t -> Scheduler.t) ->

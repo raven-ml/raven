@@ -371,7 +371,7 @@ def reprs_of():
         "program": UOp(Ops.PROGRAM, src=(UOp.sink(arg=KernelInfo()),), arg=ProgramInfo(
             global_size=(4, 1, 1), local_size=(8, 1, 1), vars=(), globals=(0, 1), outs=(0,), ins=(1,), target=Target("CPU", "CLANG"))),
         "wmma": UOp.wmma(UOp.param(0, dtypes.half, (8,)), UOp.param(1, dtypes.half, (8,)), UOp.param(2, dtypes.float, (4,)),
-                         (8, 16, 16), 32, ((((0,), 2), ((1,), 2)), (((2,), 2),), (((3,), 2),))),
+                         (8, 16, 16), 32, ((((AxisType.UPCAST, 0), 2), ((AxisType.UPCAST, 1), 2)), (((AxisType.UPCAST, 2), 2),), (((AxisType.UPCAST, 3), 2),))),
         "tagged": UOp.const(1).rtag(("x", 1, True, dtypes.int, ())),
         "bytes tag": UOp.const(2).rtag(b"\x00a'"),
     }
@@ -688,7 +688,7 @@ def instructions():
 @graph
 def wmmas():
     a, b, c = UOp.param(0, dtypes.half, (8,)), UOp.param(1, dtypes.half, (8,)), UOp.param(2, dtypes.float, (4,))
-    return UOp.sink(UOp.wmma(a, b, c, (8, 16, 16), 32), UOp.wmma(a, b, c, (8, 16, 16), 32, ((((0,), 2),), (((1,), 2),), (((2,), 2),))))
+    return UOp.sink(UOp.wmma(a, b, c, (8, 16, 16), 32), UOp.wmma(a, b, c, (8, 16, 16), 32, ((((AxisType.UPCAST, 0), 2),), (((AxisType.UPCAST, 1), 2),), (((AxisType.UPCAST, 2), 2),))))
 
 
 @graph

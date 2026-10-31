@@ -10,10 +10,11 @@
     An optimisation reshapes the loops of a kernel. It names the axis it acts on
     by its position among the kernel's axes. *)
 
-(** The type for the roles a split gives the axis it makes: an axis unrolled
-    into vector lanes, a reduction unrolled within a thread, or an axis across
-    the threads of a workgroup. *)
-type target = Upcast | Unroll | Local
+(** The type for the roles a split gives the axis it makes, in the order of
+    their axis types ({!Ops.Axis_type.compare}): an axis across the threads of
+    a workgroup, or an axis unrolled into the lanes of a thread, which a
+    reduction's axis unrolls as its loop. *)
+type target = Local | Upcast
 
 (** The type for kernel optimisations. *)
 type t =
@@ -38,7 +39,8 @@ val equal : t -> t -> bool
 
 val compare : t -> t -> int
 (** [compare o0 o1] orders optimisations by kind ({!constructor-Tc}, {!Split},
-    {!Padto}, {!Swap}), then axis, then arguments. *)
+    {!Padto}, {!Swap}), then axis, then arguments, a split's target among them
+    in the order of {!type-target}. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats [Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))]. *)

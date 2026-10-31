@@ -551,7 +551,10 @@ let wmmas () =
     [
       wmma a b ~acc:c ~dims:(8, 16, 16) ~threads:32;
       wmma
-        ~upcast_axes:([ ([ 0 ], 2) ], [ ([ 1 ], 2) ], [ ([ 2 ], 2) ])
+        ~upcast_axes:
+          ( [ ((Upcast, [ 0 ]), 2) ],
+            [ ((Upcast, [ 1 ]), 2) ],
+            [ ((Upcast, [ 2 ]), 2) ] )
         a b ~acc:c ~dims:(8, 16, 16) ~threads:32;
     ]
 
@@ -723,7 +726,7 @@ let printed_nodes () =
     rtag ~tag:(Tuple [ String "y"; Int 1 ]) forty_two;
     n;
     sink ~kernel:(kernel_info ()) O.[ n + int 1; n * int 2 ];
-    range ~axis_type:Reduce (Int 4) [ 0 ];
+    range (Int 4) [ 0 ];
     int ~dtype:Int32 3;
     float 1.5;
     param [ 2; 3 ] 0 Float32;
@@ -747,7 +750,7 @@ let reprs () =
     ("bool", bool true);
     ("invalid", invalid);
     ("dtype", cast (int 1) Float16);
-    ("range", range ~axis_type:Reduce (Int 4) [ 0 ]);
+    ("range", range (Int 4) [ 0 ]);
     ("range with sub-axes", range ~axis_type:Upcast (Int 4) [ 1; 0 ]);
     ("negative range", range ~axis_type:Device (Int 4) [ -1 ]);
     ( "reduce",
@@ -831,7 +834,10 @@ let reprs () =
         Op.Program );
     ( "wmma",
       wmma
-        ~upcast_axes:([ ([ 0 ], 2); ([ 1 ], 2) ], [ ([ 2 ], 2) ], [ ([ 3 ], 2) ])
+        ~upcast_axes:
+          ( [ ((Upcast, [ 0 ]), 2); ((Upcast, [ 1 ]), 2) ],
+            [ ((Upcast, [ 2 ]), 2) ],
+            [ ((Upcast, [ 3 ]), 2) ] )
         (param [ 8 ] 0 Float16) (param [ 8 ] 1 Float16)
         ~acc:(param [ 4 ] 2 Float32) ~dims:(8, 16, 16) ~threads:32 );
     ("bytes tag", rtag ~tag:(Bytes "\x00a'") (int 2));

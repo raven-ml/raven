@@ -365,7 +365,7 @@ let sums ?(name = "sums") m k =
   let buffer slot n = Shape.placeholder ~slot [ n ] Float32 in
   let a = buffer 1 (m * k) and b = buffer 2 k in
   let i = Ops.range (Int m) [ 0 ] in
-  let j = Ops.range ~axis_type:Reduce (Int k) [ 1 ] in
+  let j = Ops.range (Int k) [ 1 ] in
   let term =
     let open Ops.O in
     Ops.index a [ (i * Ops.int k) + j ] * Ops.index b [ j ]

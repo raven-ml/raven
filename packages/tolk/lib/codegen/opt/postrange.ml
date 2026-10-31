@@ -19,13 +19,11 @@ let check cond msg = if not cond then raise_notrace (Refused msg)
 
 let role : Opt.target -> Axis_type.t = function
   | Upcast -> Upcast
-  | Unroll -> Unroll
   | Local -> Local
 
 let split_targets : Opt.target -> Axis_type.t list = function
   | Upcast -> [ Global; Local; Weak ]
-  | Unroll -> [ Reduce; Local ]
-  | Local -> [ Global; Weak; Reduce ]
+  | Local -> [ Global; Weak ]
 
 let pp_types ppf ts =
   Format.pp_print_list
@@ -47,7 +45,6 @@ let known_size = function
   | Sym _ -> None
 
 let mem_ranges r u = Nodes.mem r (ranges u)
-let sink_ranges us = Nodes.to_list (ranges (sink us))
 let special_name u = match arg u with String s -> s | _ -> ""
 
 module Scheduler = struct
@@ -59,6 +56,10 @@ module Scheduler = struct
   }
 
   let v ast ren =
+    let ast =
+      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
+        (After_sources Simplify.pm_flatten_range)
+    in
     let applied_opts =
       match arg ast with Kernel k -> k.applied_opts | _ -> []
     in
@@ -81,8 +82,17 @@ module Scheduler = struct
   let slice k = Nodes.to_list (backward_slice ~calls:Skip k.ast)
   let of_op k o = List.filter (fun u -> op u = o) (slice k)
 
-  (* always in order by axistype. void RANGEs are loops, not opt axes. the
-     DEVICE axis is launched, not an opt axis *)
+  let reduceops k = of_op k Op.Reduce
+
+  (* The ranges the reductions close: their sources, which the scheduler keeps
+     flat. *)
+  let reduce_ranges k =
+    Helpers.dedup (module Ops)
+      (List.concat_map (fun u -> List.tl (src u)) (reduceops k))
+
+  (* Keep serial/vectorized reduction axes last, deriving their role from REDUCE
+     rather than the axis type. void RANGEs are loops, not opt axes. the DEVICE
+     axis is launched, not an opt axis *)
   let rngs k =
     let axis u =
       op u = Op.Range
@@ -90,9 +100,13 @@ module Scheduler = struct
       && V.(vmax u > of_int 0)
       && axis_type u <> Device
     in
-    let key u = (Axis_type.position (axis_type u), axis_id u) in
+    let red = reduce_ranges k in
+    let last u = List.memq u red && List.mem (axis_type u) [ Weak; Upcast ] in
     List.stable_sort
-      (fun a b -> Stdlib.compare (key a) (key b))
+      (fun a b ->
+        match Bool.compare (last a) (last b) with
+        | 0 -> compare_range_arg a b
+        | c -> c)
       (List.filter axis (slice k))
 
   let shape_len k = List.length (rngs k)
@@ -102,48 +116,29 @@ module Scheduler = struct
   let positions p l =
     List.concat (List.mapi (fun i x -> if p x then [ i ] else []) l)
 
-  let ranges_of k types =
-    List.filter (fun r -> List.mem (axis_type r) types) (rngs k)
+  let axes_of ?reduce k types =
+    let red = reduce_ranges k in
+    let wanted r =
+      (types = [] || List.mem (axis_type r) types)
+      && match reduce with None -> true | Some b -> List.memq r red = b
+    in
+    positions wanted (rngs k)
 
-  let axes_of k types = positions (fun t -> List.mem t types) (axis_types k)
-  let reduceops k = of_op k Op.Reduce
   let reduceop k = match reduceops k with r :: _ -> Some r | [] -> None
   let bufs k = List.rev (of_op k Op.Index)
 
-  let reduce_axes k =
-    let red = List.concat_map (fun u -> List.tl (src u)) (reduceops k) in
-    positions (fun r -> List.exists (mem_ranges r) red) (rngs k)
-
   let upcast_size k =
     let shape = full_shape k in
-    Sint.prod (List.map (List.nth shape) (axes_of k [ Upcast; Unroll ]))
+    Sint.prod (List.map (List.nth shape) (axes_of k [ Upcast ]))
 
-  let known_above_one shape i =
-    match known_size (List.nth shape i) with
-    | Some s -> Bigint.gt s Bigint.one
-    | None -> false
-
-  let upcastable_dims k =
+  let upcastable_dims ?(reduce = false) k =
+    let shape = full_shape k in
     List.filter
-      (known_above_one (full_shape k))
-      (axes_of k [ Global; Local; Weak ])
-
-  let unrollable_dims k =
-    let types = axis_types k and shape = full_shape k in
-    List.filter
-      (fun i ->
-        List.mem (List.nth types i) [ Axis_type.Local; Reduce ]
-        && known_above_one shape i)
-      (reduce_axes k)
-
-  let upcasted k = List.length (axes_of k [ Upcast; Unroll ])
+      (fun i -> Option.is_some (known_size (List.nth shape i)))
+      (axes_of ~reduce k (split_targets Upcast))
 
   let group_for_reduces k =
-    let types = axis_types k in
-    List.length
-      (List.filter
-         (fun i -> List.mem (List.nth types i) [ Axis_type.Warp; Local ])
-         (reduce_axes k))
+    List.length (axes_of ~reduce:true k [ Warp; Local ])
 
   (* Grouping
 
@@ -152,18 +147,11 @@ module Scheduler = struct
      shared memory, which every thread then reduces. *)
 
   let closers k rng =
-    List.filter
-      (fun u -> List.exists (mem_ranges rng) (List.tl (src u)))
-      (reduceops k)
+    List.filter (fun u -> List.memq rng (List.tl (src u))) (reduceops k)
 
   let grouped_reduces k =
     let thread r = List.mem (axis_type r) Axis_type.[ Warp; Local ] in
-    List.filter
-      (fun u ->
-        List.exists
-          (fun s -> List.exists thread (Nodes.to_list (ranges s)))
-          (List.tl (src u)))
-      (reduceops k)
+    List.filter (fun u -> List.exists thread (List.tl (src u))) (reduceops k)
 
   let union us vs = us @ List.filter (fun v -> not (List.memq v us)) vs
 
@@ -175,7 +163,7 @@ module Scheduler = struct
       List.fold_left
         (fun p a -> mul p (sint_to_uop (List.nth shape a)))
         (z amt)
-        (axes_of k [ Upcast; Warp; Local ])
+        (axes_of ~reduce:false k [ Upcast ] @ axes_of k [ Warp; Local ])
     in
     let bytes =
       List.fold_left (fun n u -> n + Dtype.itemsize (dtype u)) 0 grouped
@@ -187,7 +175,7 @@ module Scheduler = struct
 
   (* The reductions no reduce axis of the kernel encloses. *)
   let outermost k =
-    let red = List.map (List.nth (rngs k)) (reduce_axes k) in
+    let red = List.map (List.nth (rngs k)) (axes_of ~reduce:true k []) in
     List.filter
       (fun u -> not (List.exists (fun r -> mem_ranges r u) red))
       (reduceops k)
@@ -203,11 +191,13 @@ module Scheduler = struct
      the two final reductions of the shared buffers would run one loop. *)
   let siblings k rng amt grouped =
     let top = outermost k in
+    let red = reduce_ranges k in
     let axis_of u =
       List.find_opt
         (fun r ->
-          axis_type r = Axis_type.Reduce
-          && List.exists (mem_ranges r) (List.tl (src u))
+          axis_type r = Axis_type.Weak
+          && List.memq r red
+          && List.memq r (List.tl (src u))
           && Option.is_some (divides (nth r 0) amt)
           && List.for_all (fun c -> List.memq c top) (closers k r))
         (rngs k)
@@ -234,41 +224,39 @@ module Scheduler = struct
 
   (* Printing *)
 
-  let output_rngs k =
-    List.concat_map
-      (fun s -> if op s = Op.End then sink_ranges (List.tl (src s)) else [])
-      (src k.ast)
-
-  (* exclude any output ranges from global that don't appear in all BUFFERIZE *)
-  let globalizable_rngs k =
-    let weak = List.filter (fun r -> axis_type r = Weak) (output_rngs k) in
-    List.fold_left
-      (fun ret x -> List.filter (fun r -> mem_ranges r x) ret)
-      weak (of_op k Op.Stage)
-
-  let colors k =
-    let output = output_rngs k and globalizable = globalizable_rngs k in
+  let colored_shape k =
     List.map
       (fun r ->
-        match axis_type r with
-        | Weak when not (List.memq r output) -> Helpers.Bright_black
-        | Weak when not (List.memq r globalizable) -> Helpers.White
-        | t -> Axis_type.color t)
+        Helpers.colored
+          (Axis_type.color (axis_type r))
+          (strf "%4s" (Render.render (nth r 0))))
       (rngs k)
-
-  let colored_shape k =
-    List.map2
-      (fun r c -> Helpers.colored c (strf "%4s" (Render.render (nth r 0))))
-      (rngs k) (colors k)
     |> String.concat " "
 
   (* Rewriting *)
 
   let convert_loop_to_global k =
     if k.ren.has_local then begin
-      let globalizable = globalizable_rngs k in
+      let red = reduce_ranges k in
+      let weak =
+        List.concat_map
+          (fun s ->
+            if op s = Op.End then
+              List.filter
+                (fun r -> axis_type r = Weak && not (List.memq r red))
+                (List.tl (src s))
+            else [])
+          (src k.ast)
+      in
+      (* exclude any output ranges from global that don't appear in all
+         BUFFERIZE *)
+      let globalizable =
+        List.fold_left
+          (fun ret x -> List.filter (fun r -> mem_ranges r x) ret)
+          weak (of_op k Op.Stage)
+      in
       let global r =
-        (r, replace r ~arg:(Range { axis_id = axis_id r; axis_type = Global }))
+        (r, replace r ~arg:(Range { axis_type = Global; axis_id = axis_id r }))
       in
       k.ast <-
         substitute ~calls:Skip ~pass:Fixed_point k.ast
@@ -298,6 +286,8 @@ module Scheduler = struct
                (Render.render (nth rng 0))
                (colored_shape k))
 
+  let flatten = Pattern_matcher.with_ctx Simplify.pm_flatten_range
+
   let shift_by ?(top = false) ?new_rng k rng amount target old_sz =
     let new_rng =
       match new_rng with
@@ -309,7 +299,9 @@ module Scheduler = struct
       if top then O.((new_rng * old_sz) + replaced_rng)
       else O.((replaced_rng * z amount) + new_rng)
     in
-    k.ast <- substitute ~calls:Skip ~pass:Fixed_point k.ast [ (rng, sub_axis) ];
+    k.ast <-
+      substitute ~extra_pm:flatten ~calls:Skip ~pass:Fixed_point k.ast
+        [ (rng, sub_axis) ];
     (replaced_rng, new_rng)
 
   let shift_to ?top ?new_rng k rng amount target =
@@ -384,11 +376,12 @@ module Scheduler = struct
             (strf "a split takes 0 or more than 1, not %d" amount);
           if target = Local then check k.ren.has_local "locals needed for opt";
           let amt = if amount = 0 then size rng else Bigint.of_int amount in
-          if target = Unroll then
-            check Bigint.(leq amt (of_int 32)) "don't unroll more than 32";
+          let is_reduce = List.memq rng (reduce_ranges k) in
           if target = Upcast then
-            check Bigint.(leq amt (of_int 16)) "don't upcast more than 16";
-          let groups = target = Local && List.mem axis (reduce_axes k) in
+            if is_reduce then
+              check Bigint.(leq amt (of_int 32)) "don't unroll more than 32"
+            else check Bigint.(leq amt (of_int 16)) "don't upcast more than 16";
+          let groups = target = Local && is_reduce in
           let grouped = grouped_reduces k in
           let grouped =
             if groups then union grouped (closers k rng) else grouped
@@ -399,25 +392,17 @@ module Scheduler = struct
               (strf "exceeds maximum shared memory size: needs %s, max %d"
                  (Render.render (smem k amt grouped))
                  k.ren.shared_max);
-          if target = Unroll || axis_type rng = Reduce then begin
-            let reduces =
-              List.filter
-                (fun u -> List.exists (mem_ranges rng) (List.tl (src u)))
-                (reduceops k)
-            in
-            check (reduces <> [])
-              (Format.asprintf "cannot %a an axis that's not in a REDUCE"
-                 Axis_type.pp (role target));
+          if groups then begin
+            let red = reduce_ranges k in
             (* An enclosing reduce runs its iterations in turn, each storing
                and reading the shared buffer between barriers; an unrolled one
                would need a buffer per lane. *)
-            if target = Local then
-              check
-                (not
-                   (List.exists
-                      (fun u -> axis_type u = Axis_type.Unroll)
-                      (Nodes.to_list (ranges (List.hd reduces)))))
-                "cannot have a group inside an unrolled reduce"
+            check
+              (not
+                 (List.exists
+                    (fun u -> List.memq u red && axis_type u = Axis_type.Upcast)
+                    (Nodes.to_list (ranges (List.hd (closers k rng))))))
+              "cannot have a group inside an unrolled reduce"
           end;
           let shared = if groups then siblings k rng amt grouped else [] in
           let replaced, new_rng = split ~top k rng amt target in
@@ -445,7 +430,7 @@ module Scheduler = struct
           check (amount > 1) (strf "padto arg is a multiple > 1, not %d" amount);
           check (op (nth rng 0) = Op.Const) "only pad const axes";
           check
-            (not (List.mem (axis_type rng) [ Axis_type.Upcast; Unroll; Warp ]))
+            (not (List.mem (axis_type rng) [ Axis_type.Upcast; Warp ]))
             "cannot pad upcasted or warp";
           let amount = Bigint.of_int amount in
           let sz = size rng in
@@ -470,7 +455,7 @@ module Scheduler = struct
             else []
           in
           let pad_reduce r =
-            if List.exists (mem_ranges rng) (List.tl (src r)) then
+            if List.memq rng (List.tl (src r)) then
               let op =
                 match arg r with Reduce { op; _ } -> op | _ -> Op.Add
               in
@@ -513,7 +498,7 @@ module Scheduler = struct
             "swap only for globals";
           let renamed r other =
             replace r
-              ~arg:(Range { axis_id = axis_id other; axis_type = axis_type r })
+              ~arg:(Range { axis_type = axis_type r; axis_id = axis_id other })
           in
           k.ast <-
             substitute ~calls:Skip ~pass:Once k.ast
@@ -558,8 +543,7 @@ module Scheduler = struct
     else
       (* tensor cores have three ranges. X, Y, and REDUCE *)
       let by_id_desc rs =
-        let first r = List.hd (axis_id r) in
-        List.stable_sort (fun a b -> Int.compare (first b) (first a)) rs
+        List.stable_sort (fun a b -> compare_range_arg b a) rs
       in
       let n_dim, m_dim, _ = Tc.dims tc in
       let only a b dim =
@@ -568,7 +552,7 @@ module Scheduler = struct
              (fun u -> (not (mem_ranges u b)) || in_tiles b u dim)
              (Nodes.to_list (ranges a)))
       in
-      let red_ranges = by_id_desc (sink_ranges (List.tl (src reduceop))) in
+      let red_ranges = by_id_desc (List.tl (src reduceop)) in
       (* pick ranges: the core's A runs along M and its B along N, tc.dims
          being (N, M, K). Either operand may be A: in0 first, as tinygrad
          takes it, then in1, whose ranges then run along M. *)
@@ -579,8 +563,8 @@ module Scheduler = struct
             String.concat ", "
               (List.map
                  (fun r ->
-                   strf "(%d, %s)"
-                     (List.hd (axis_id r))
+                   strf "((%s), %s)"
+                     (String.concat ", " (List.map string_of_int (axis_id r)))
                      (Bigint.to_string (size r)))
                  rs)
           in
@@ -598,13 +582,9 @@ module Scheduler = struct
       if axis >= List.length choices then None
       else
         let swapped, axes = List.nth choices axis in
-        let rs = rngs k in
+        let red = reduce_ranges k in
         check
-          (not
-             (List.exists
-                (fun i ->
-                  List.nth rs i == axes.(0) || List.nth rs i == axes.(1))
-                (reduce_axes k)))
+          (not (List.memq axes.(0) red || List.memq axes.(1) red))
           "tensor core N and M can't be contracted";
         (* do optimizations and save the ranges *)
         let saved = k.ast in
@@ -641,9 +621,7 @@ module Scheduler = struct
                       ~new_rng:
                         (let p = 1 lsl j in
                          O.(warp // int p % int 2))
-                | None ->
-                    split k axes.(d) (Bigint.of_int 2)
-                      (if d = 2 then Unroll else Upcast)
+                | None -> split k axes.(d) (Bigint.of_int 2) Upcast
               in
               axes.(d) <- replaced;
               (c, r))
@@ -665,7 +643,7 @@ module Scheduler = struct
     let reduceop =
       match
         List.filter
-          (fun x -> List.memq axes.(2) (sink_ranges (List.tl (src x))))
+          (fun x -> List.memq axes.(2) (List.tl (src x)))
           (reduceops k)
       with
       | [ r ] -> r
@@ -720,7 +698,11 @@ module Scheduler = struct
     in
     (* get upcast axes for the tensor cores *)
     let base_upcast_axes =
-      List.map (fun c -> axis_id (ne_of c)) (Tc.base_upcast_axes tc)
+      List.map
+        (fun c ->
+          let r = ne_of c in
+          (axis_type r, axis_id r))
+        (Tc.base_upcast_axes tc)
     in
     let cnt (f : Tc.fragment) = List.length f.elements in
     let ca = cnt tc.frag_a and cb = cnt tc.frag_b and cc = cnt tc.frag_c in
@@ -744,9 +726,7 @@ module Scheduler = struct
       List.filter_map (function Tc.K _, r -> Some r | _ -> None) ne
     in
     let reduce_ranges =
-      List.filter
-        (fun x -> op x = Op.Range && not (List.memq x k_ranges))
-        (toposort ~calls:Enter (sink (List.tl (src reduceop))))
+      List.filter (fun x -> not (List.memq x k_ranges)) (List.tl (src reduceop))
     in
     let tc_uop =
       match reduce_ranges with
@@ -799,9 +779,6 @@ module Scheduler = struct
           let axes = List.map (fun x -> Render.render (nth x 0)) (rngs k) in
           k_type ^ String.concat "_" (("" :: special_ops) @ axes)
     in
-    k.ast <-
-      graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() k.ast
-        (After_sources Simplify.pm_flatten_range);
     replace k.ast
       ~arg:(Kernel (kernel_info ~name ~applied_opts:k.applied_opts ()))
       ~tag:(Some (Tag.Int 1))

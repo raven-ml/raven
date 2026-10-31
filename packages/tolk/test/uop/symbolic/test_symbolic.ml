@@ -27,7 +27,7 @@ let g = Shape.param 1 Dtype.Float32
 let buf = Shape.param ~shape:[ Int 16 ] 2 Dtype.Float32
 let r0 = Ops.range (Int 4) [ 0 ]
 let r1 = Ops.range (Int 4) [ 1 ]
-let reduce_range = Ops.range ~axis_type:Reduce (Int 4) [ 2 ]
+let reduce_range = Ops.range (Int 4) [ 2 ]
 let int32 n = Ops.int ~dtype:Int32 n
 let cast_bool dt = Ops.cast cond dt
 
@@ -925,7 +925,7 @@ let wrapping =
          -112 over r < 2 is 0, where 1 * -112 is -112. *)
       test "a factor leaves a maximum only where it is not negative" (fun () ->
           let p = var ~dtype:Int8 "p" 0 50 and q = var ~dtype:Int8 "q" 0 50 in
-          let r = Ops.range ~axis_type:Reduce (Int 2) [ 3 ] in
+          let r = Ops.range (Int 2) [ 3 ] in
           let red = Ops.reduce Ops.O.(Ops.cast r Int8 * p * q) Max [ r ] in
           keeps_machine_value red
             [ [ ("p", i 2); ("q", i 3) ]; [ ("p", i 12); ("q", i 12) ] ]);
@@ -1088,7 +1088,7 @@ let floats =
               + Ops.where cond (float tiny) (float 0.)
               + Ops.where cond (float tiny) (float 0.))
             [ [ 0.; 1. ] ];
-          let r = Ops.range ~axis_type:Reduce (Int 3) [ 2 ] in
+          let r = Ops.range (Int 3) [ 2 ] in
           keeps_float_bits
             (Ops.reduce Ops.O.(Ops.cast r Float32 * f * g) Add [ r ])
             [ [ 2e38; 0.25 ] ]);

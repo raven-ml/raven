@@ -18,43 +18,19 @@ let rec drop n l =
 (* Axis types *)
 
 module Axis_type = struct
-  type t =
-    | Device
-    | Global
-    | Warp
-    | Local
-    | Weak
-    | Reduce
-    | Upcast
-    | Unroll
-    | Placeholder
-    | Loop
+  type t = Device | Global | Local | Warp | Weak | Loop | Upcast | Placeholder
 
-  let all =
-    [
-      Device;
-      Global;
-      Warp;
-      Local;
-      Weak;
-      Reduce;
-      Upcast;
-      Unroll;
-      Placeholder;
-      Loop;
-    ]
+  let all = [ Device; Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
 
   let to_int = function
     | Device -> 0
     | Global -> 1
-    | Warp -> 2
-    | Local -> 3
+    | Local -> 2
+    | Warp -> 3
     | Weak -> 4
-    | Reduce -> 5
+    | Loop -> 5
     | Upcast -> 6
-    | Unroll -> 7
-    | Placeholder -> 8
-    | Loop -> 9
+    | Placeholder -> 7
 
   let equal (a0 : t) a1 = a0 = a1
   let compare a0 a1 = Int.compare (to_int a0) (to_int a1)
@@ -62,14 +38,12 @@ module Axis_type = struct
   let name = function
     | Device -> "DEVICE"
     | Global -> "GLOBAL"
-    | Warp -> "WARP"
     | Local -> "LOCAL"
+    | Warp -> "WARP"
     | Weak -> "WEAK"
-    | Reduce -> "REDUCE"
-    | Upcast -> "UPCAST"
-    | Unroll -> "UNROLL"
-    | Placeholder -> "PLACEHOLDER"
     | Loop -> "LOOP"
+    | Upcast -> "UPCAST"
+    | Placeholder -> "PLACEHOLDER"
 
   let of_string s =
     match List.find_opt (fun a -> String.equal (name a) s) all with
@@ -85,8 +59,6 @@ module Axis_type = struct
     | Warp -> "w"
     | Weak | Loop -> "L"
     | Upcast -> "u"
-    | Reduce -> "R"
-    | Unroll -> "r"
     | Placeholder -> no_placeholder ()
 
   let color : t -> Helpers.color = function
@@ -94,21 +66,8 @@ module Axis_type = struct
     | Global -> Blue
     | Local -> Cyan
     | Warp -> Bright_cyan
-    | Weak | Loop -> Bright_white
+    | Weak | Loop -> Red
     | Upcast -> Yellow
-    | Reduce -> Red
-    | Unroll -> Magenta
-    | Placeholder -> no_placeholder ()
-
-  let position = function
-    | Device -> -2
-    | Weak | Loop -> -1
-    | Global -> 0
-    | Warp -> 1
-    | Local -> 2
-    | Upcast -> 3
-    | Reduce -> 4
-    | Unroll -> 5
     | Placeholder -> no_placeholder ()
 
   let repr a = "AxisType." ^ name a
@@ -246,13 +205,13 @@ type bufferize_opts = {
   keep : keep;
 }
 
+type wmma_axis = (Axis_type.t * int list) * int
+
 type wmma = {
   dims : int * int * int;
   dtype_in : Dtype.t;
   threads : int;
-  upcast_axes :
-    ((int list * int) list * (int list * int) list * (int list * int) list)
-    option;
+  upcast_axes : (wmma_axis list * wmma_axis list * wmma_axis list) option;
 }
 
 type custom_function = { name : string; dtype : Dtype.t }
@@ -323,7 +282,7 @@ and arg =
   | Const of Dtype.const
   | Dtype of Dtype.t
   | Param of param_arg
-  | Range of { axis_id : int list; axis_type : Axis_type.t }
+  | Range of { axis_type : Axis_type.t; axis_id : int list }
   | Reduce of { op : Op.t; num_axes : int }
   | Allreduce of { op : Op.t; device : device }
   | Device of device
@@ -759,9 +718,12 @@ let repr_wmma w =
   let repr_axes axes =
     repr_tuple
       (List.map
-         (fun (ids, size) ->
+         (fun ((t, ids), size) ->
            repr_tuple
-             [ repr_tuple (List.map string_of_int ids); string_of_int size ])
+             [
+               repr_tuple (Axis_type.repr t :: List.map string_of_int ids);
+               string_of_int size;
+             ])
          axes)
   in
   repr_tuple
@@ -869,7 +831,7 @@ and repr_arg = function
   | Param p -> repr_param_arg p
   | Range r ->
       repr_tuple
-        (List.map string_of_int r.axis_id @ [ Axis_type.repr r.axis_type ])
+        (Axis_type.repr r.axis_type :: List.map string_of_int r.axis_id)
   | Reduce r ->
       repr_tuple [ Format.asprintf "%a" Op.pp r.op; string_of_int r.num_axes ]
   | Allreduce r ->
@@ -1952,7 +1914,9 @@ let range_str ?(color = false) u =
 
 let compare_range_arg r0 r1 =
   let id0, t0 = range_arg r0 and id1, t1 = range_arg r1 in
-  match Stdlib.compare id0 id1 with 0 -> Axis_type.compare t0 t1 | c -> c
+  match Axis_type.compare t0 t1 with
+  | 0 -> List.compare Int.compare id0 id1
+  | c -> c
 
 let multirange_str ?color ?pad rs =
   let s =
@@ -2195,7 +2159,7 @@ let size_src = function None -> v Op.Stack | Some n -> int n
 
 let device_range_src = function
   | Some (Multi ds) ->
-      [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ -1 ] ]
+      [ range ~axis_type:Axis_type.Device (Int (List.length ds)) [ 0 ] ]
   | _ -> []
 
 let copy_to_device ?shard u d =

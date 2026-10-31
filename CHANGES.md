@@ -800,6 +800,15 @@ thread.
 
 - Two variables of one name, such as one read under two bounds, take one
   parameter slot: a program lists the name once in its `vars`.
+- **Breaking:** `Ops.Axis_type` loses `Reduce` and `Unroll` and orders `Device`,
+  `Global`, `Local`, `Warp`, `Weak`, `Loop`, `Upcast`, `Placeholder`: a range is
+  a reduce axis when a reduction closes it. Its argument prints the type first.
+- **Breaking:** `Opt.target` loses `Unroll`: an `Upcast` of a reduce axis
+  unrolls it. `Axis_type.position`, `Scheduler.ranges_of`, `reduce_axes`,
+  `unrollable_dims` and `upcasted` give way to `Scheduler.reduce_ranges`,
+  `axes_of ~reduce` and `upcastable_dims ~reduce`.
+- **Breaking:** a tensor core's `upcast_axes` (`Ops.wmma`) are `Ops.wmma_axis`
+  values, which name each axis's type; `Ops.compare_range_arg` orders ranges.
 - **Breaking:** `Op.Group` is gone: `Ops.group` is the empty stack ordered after
   its effects (`Ops.after`), and only a sink splices the effects of its sources
   (`Symbolic.pm_clean_up_group_sink`).
