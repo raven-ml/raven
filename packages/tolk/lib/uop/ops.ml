@@ -255,7 +255,8 @@ type wmma = {
     option;
 }
 
-type call_info = { name : string option; precompile : bool; dtype : Dtype.t }
+type custom_function = { name : string; dtype : Dtype.t }
+type call_info = { name : string option; precompile : bool }
 
 type t = {
   op : Op.t;
@@ -335,6 +336,7 @@ and arg =
   | Bufferize of bufferize_opts
   | Kernel of kernel_info
   | Program of program_info
+  | Custom_function of custom_function
   | Call of call_info
   | Wmma of wmma
 
@@ -401,10 +403,12 @@ let equal_bufferize_opts (b0 : bufferize_opts) (b1 : bufferize_opts) =
   && b0.addrspace = b1.addrspace
   && b0.keep = b1.keep
 
+let equal_custom_function (f0 : custom_function) (f1 : custom_function) =
+  String.equal f0.name f1.name && Dtype.equal f0.dtype f1.dtype
+
 let equal_call_info (c0 : call_info) (c1 : call_info) =
   Option.equal String.equal c0.name c1.name
   && Bool.equal c0.precompile c1.precompile
-  && Dtype.equal c0.dtype c1.dtype
 
 let equal_arg (a0 : arg) (a1 : arg) =
   match (a0, a1) with
@@ -428,6 +432,7 @@ let equal_arg (a0 : arg) (a1 : arg) =
   | Bufferize b0, Bufferize b1 -> equal_bufferize_opts b0 b1
   | Kernel k0, Kernel k1 -> equal_kernel_info k0 k1
   | Program p0, Program p1 -> equal_program_info p0 p1
+  | Custom_function f0, Custom_function f1 -> equal_custom_function f0 f1
   | Call c0, Call c1 -> equal_call_info c0 c1
   | Wmma w0, Wmma w1 ->
       w0.dims = w1.dims
@@ -456,6 +461,7 @@ let hash_arg (a : arg) =
   | Bufferize b -> h (15, b.device, b.keep)
   | Kernel k -> h (16, k.name, k.beam)
   | Program p -> h (17, p.globals, List.map hash_sint p.global_size)
+  | Custom_function f -> h (20, f.name, Dtype.hash f.dtype)
   | Call c -> h (18, c.name, c.precompile)
   | Wmma w -> h (19, w.dims, w.threads)
 
@@ -544,9 +550,15 @@ let dtype_of op src arg =
   in
   match op with
   | Op.Store | Op.Linear | Op.Sink | Op.Program | Op.Source | Op.Backedge
-  | Op.Barrier | Op.If | Op.Endif | Op.Noop | Op.Custom_function ->
+  | Op.Barrier | Op.If | Op.Endif | Op.Noop ->
       Dtype.Void
-  | Op.Call -> ( match arg with Call c -> c.dtype | _ -> Dtype.Void)
+  (* a call has the type of its body, void for opaque bodies *)
+  | Op.Call -> (first op src).dtype
+  (* an external function states the type it returns *)
+  | Op.Custom_function -> (
+      match arg with
+      | Custom_function f -> f.dtype
+      | _ -> mismatch "a CustomFunction")
   | Op.Custom | Op.Customi | Op.Ins -> (
       match arg with Code c -> c.dtype | _ -> mismatch "code and a type")
   | Op.Index -> (first op src).dtype
@@ -733,12 +745,14 @@ let repr_bufferize_opts (b : bufferize_opts) =
     (repr_bool (b.keep <> Whole))
     (repr_bool (b.keep = Broadcast))
 
+let repr_custom_function (f : custom_function) =
+  strf "CustomFunction(name=%s, dtype=%s)" (repr_string f.name)
+    (repr_dtype f.dtype)
+
 let repr_call_info (c : call_info) =
-  strf "CallInfo(None, %s, %s, False%s)"
+  strf "CallInfo(None, %s, %s, False)"
     (repr_option repr_string c.name)
     (repr_bool c.precompile)
-    (if Dtype.equal c.dtype Dtype.Void then ""
-     else ", dtype=" ^ repr_dtype c.dtype)
 
 let repr_wmma w =
   let m, n, k = w.dims in
@@ -870,6 +884,7 @@ and repr_arg = function
   | Bufferize b -> repr_bufferize_opts b
   | Kernel k -> repr_kernel_info k
   | Program p -> repr_program_info p
+  | Custom_function f -> repr_custom_function f
   | Call c -> repr_call_info c
   | Wmma w -> repr_wmma w
 
@@ -1880,10 +1895,7 @@ let rec ended_ranges u =
   | None ->
       let l =
         match u.op with
-        | Op.Call
-          when (body u).op = Op.Custom_function
-               && not (List.is_empty (body u).src) ->
-            []
+        | Op.Call when (body u).op = Op.Custom_function -> []
         | Op.End -> List.filter (fun r -> r.op = Op.Range) (drop 1 u.src)
         | Op.Backedge -> (
             match u.src with _ :: loop :: _ -> [ loop ] | _ -> [])
@@ -3259,10 +3271,10 @@ let gate_kernel_sink u =
 let opaque_call_bodies =
   Op.Set.of_list Op.[ Sink; Program; Linear; Store; Custom_function ]
 
-let custom_function name args =
-  v Op.Custom_function ~src:args ~arg:(String name)
+let custom_function ?(dtype = Dtype.Void) name args =
+  v Op.Custom_function ~src:args ~arg:(Custom_function { name; dtype })
 
-let call ?(ret_dtype = Dtype.Void) ?name ?(precompile = false) body args =
+let call ?name ?(precompile = false) body args =
   if not (Op.Set.mem body.op opaque_call_bodies) then
     invalid_argf "a %s cannot be called" (Op.name body.op);
   if
@@ -3272,7 +3284,7 @@ let call ?(ret_dtype = Dtype.Void) ?name ?(precompile = false) body args =
          (Nodes.to_list (ranges body)))
   then invalid_arg "ranges leak out of the called body";
   v Op.Call ~src:(body :: args)
-    ~arg:(Call { name; precompile; dtype = ret_dtype })
+    ~arg:(Call { name; precompile })
 
 let is_inline_call u =
   u.op = Op.Call && (body u).op = Op.Sink

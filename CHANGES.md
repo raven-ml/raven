@@ -816,6 +816,10 @@ thread.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.
+- **Breaking:** a call has the type and shape of its body: `Ops.call` loses
+  `?ret_dtype`, and an external function states the type it returns
+  (`Ops.custom_function ~dtype`, the `Custom_function` argument).
+- `Shape.program_info_of_sink` reads no parameter of a call's body.
 - A jitted chain of 4 float32 `Nx.betainc` over 4 values compiles in 2.9 s
   instead of 172 s: `Shape.symbolic` leaves a selection whose condition or
   branch reads a load as it leaves one that reads an index, so kernels that

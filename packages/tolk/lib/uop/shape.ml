@@ -249,9 +249,9 @@ and compute_shape u : sint list option =
   let void = Dtype.equal (dtype u) Dtype.Void in
   match op u with
   | Op.If | Op.Barrier | Op.Sink | Op.Endif | Op.Backedge | Op.Linear
-  | Op.Program | Op.Source | Op.Custom_function ->
+  | Op.Program | Op.Source ->
       None
-  | Op.Call | Op.Ins -> if void then None else Some []
+  | Op.Custom_function | Op.Ins -> if void then None else Some []
   | Op.Reshape when (op (src0 ())) = Op.Noop -> Some (marg_shape u)
   | Op.Noop -> ( match src u with s :: _ -> shape_opt s | [] -> None)
   | Op.Index ->
@@ -294,7 +294,7 @@ and compute_shape u : sint list option =
             @ [ last (shape acc) ])
       | _ -> invalid_arg "wmma needs three sources")
   | Op.Mstack | Op.Mselect | Op.Detach | Op.Contiguous_backward | Op.After
-  | Op.Load | Op.Copy | Op.Allreduce | Op.Store | Op.End ->
+  | Op.Load | Op.Copy | Op.Allreduce | Op.Store | Op.End | Op.Call ->
       shape_opt (src0 ())
   | Op.Bitcast -> (
       match shape_opt (src0 ()) with
@@ -3493,7 +3493,7 @@ let program_info_of_sink
             let sizes = if name.[0] = 'l' then local_size else global_size in
             sizes.(axis) <- ssimplify (nth u 0)
         | _ -> invalid_arg "a hardware index needs a name")
-    (toposort ~calls:Enter sink);
+    (toposort ~calls:Skip sink);
   let sorted l = List.sort_uniq Int.compare l in
   let outs, ins =
     if List.is_empty !outs && List.is_empty !ins then (!globals, !globals)

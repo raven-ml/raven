@@ -254,10 +254,15 @@ type bufferize_opts = {
 }
 (** The type for the arguments of an {!Op.Stage} that makes a buffer. *)
 
+type custom_function = {
+  name : string;  (** The symbol of the function. *)
+  dtype : Dtype.t;  (** The type it returns, {!Dtype.Void} for none. *)
+}
+(** The type for the arguments of {!Op.Custom_function}. *)
+
 type call_info = {
   name : string option;  (** The name of the function called. *)
   precompile : bool;  (** Compile the body on its own. *)
-  dtype : Dtype.t;  (** The type returned, {!Dtype.Void} for none. *)
 }
 (** The type for the arguments of {!Op.Call}. *)
 
@@ -293,7 +298,7 @@ type arg =
           ascending. *)
   | Flips of bool list  (** {!Op.Flip}: which axes are reversed. *)
   | String of string
-      (** {!Op.Special}, {!Op.Custom_function}, {!Op.Linear}: a name;
+      (** {!Op.Special}, {!Op.Linear}: a name;
           {!Op.Source}: the source text. *)
   | Bytes of string  (** {!Op.Binary}: the bytes. *)
   | Code of { code : string; dtype : Dtype.t }
@@ -302,6 +307,7 @@ type arg =
   | Bufferize of bufferize_opts  (** {!Op.Stage}. *)
   | Kernel of kernel_info  (** {!Op.Sink}: the root of a kernel. *)
   | Program of program_info  (** {!Op.Program}. *)
+  | Custom_function of custom_function  (** {!Op.Custom_function}. *)
   | Call of call_info  (** {!Op.Call}. *)
   | Wmma of wmma  (** {!Op.Wmma}. *)
 
@@ -325,8 +331,8 @@ val pp_arg : Format.formatter -> arg -> unit
     - {!Bufferize}: [BufferizeOpts(device='CPU', addrspace=AddrSpace.GLOBAL,
       removable=True, broadcast=False)], [removable] [False] for {!Whole}
       only and [broadcast] [True] for {!Broadcast} only;
-    - {!Call}: [CallInfo(None, 'f', False, False, dtype=dtypes.i32)], the
-      [dtype] field only when it is not [void]. *)
+    - {!Custom_function}: [CustomFunction(name='f', dtype=dtypes.i32)];
+    - {!Call}: [CallInfo(None, 'f', False, False)]. *)
 
 (** {1:tags Tags} *)
 
@@ -915,18 +921,14 @@ val has_unbound_outputs : t -> bool
 val unbound_outputs : t -> t list
 (** [unbound_outputs c] is those outputs, each ordered after [c]. *)
 
-val custom_function : string -> t list -> t
-(** [custom_function name args] is the external function [name]. *)
+val custom_function : ?dtype:Dtype.t -> string -> t list -> t
+(** [custom_function ~dtype name src] is the external function [name], which
+    returns [dtype] (default {!Dtype.Void}). Its value has no shape when
+    [dtype] is {!Dtype.Void}, and is a scalar otherwise. *)
 
-val call :
-  ?ret_dtype:Dtype.t ->
-  ?name:string ->
-  ?precompile:bool ->
-  t ->
-  t list ->
-  t
-(** [call body args] calls [body] on [args], returning [ret_dtype] (default
-    {!Dtype.Void}).
+val call : ?name:string -> ?precompile:bool -> t -> t list -> t
+(** [call body args] calls [body] on [args]. The call has the type and the
+    shape of [body].
 
     Raises [Invalid_argument] if [body] cannot be called ({!opaque_call_bodies})
     or a range other than a device range leaks out of it. *)

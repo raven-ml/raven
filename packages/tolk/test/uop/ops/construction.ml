@@ -804,11 +804,15 @@ let calls =
           let v = Ops.O.(arg + float 1.) in
           let out = Shape.call_with_output ~precompile:true v [ v ] in
           equal op Op.Stage (Ops.op (Ops.nth (Ops.nth out 1) 1)));
-      test "custom_function names an external function" (fun () ->
+      test "custom_function names an external function and its type" (fun () ->
           let fn = Ops.custom_function "f" [ arg ] in
           equal op Op.Custom_function (Ops.op fn);
-          is_true (Ops.arg fn = String "f");
-          equal uops [ arg ] (Ops.src fn));
+          equal Common.arg
+            (Custom_function { name = "f"; dtype = Void })
+            (Ops.arg fn);
+          equal uops [ arg ] (Ops.src fn);
+          equal dtype Int32
+            (Ops.dtype (Ops.custom_function ~dtype:Int32 "f" [])));
     ]
 
 let groups =

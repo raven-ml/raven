@@ -1260,6 +1260,18 @@ let programs =
           in
           equal (list int) [ 1 ] info.outs;
           equal (list int) [] info.ins);
+      test "the parameters of a called body are not the program's" (fun () ->
+          let p0 = Shape.param ~shape:(ints [ 4 ]) 0 Uint8
+          and p5 = Shape.param ~shape:(ints [ 4 ]) 5 Uint8 in
+          let one p = Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Uint8 1) in
+          let body = Ops.sink [ one p5 ] in
+          let info =
+            Shape.program_info_of_sink
+              (Ops.sink [ one p0; Ops.call ~name:"f" body [] ])
+          in
+          equal (list int) [ 0 ] info.globals;
+          equal (list int) [ 0 ] info.outs;
+          equal (list int) [] info.ins);
       test "vals rejects a missing variable, naming it" (fun () ->
           let info =
             Shape.program_info_of_sink (Ops.sink [ alu_param "extent" 0 ])

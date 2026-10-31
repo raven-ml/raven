@@ -505,7 +505,7 @@ let calls () =
     [
       call body [ a ];
       call ~name:"fill" ~precompile:true body [ a ];
-      call ~ret_dtype:Int32 (custom_function "f" [ int ~dtype:Uint64 0 ]) [];
+      call (custom_function ~dtype:Int32 "f" [ int ~dtype:Uint64 0 ]) [];
       store_call a (param ~device:(Single "CPU") [ 4 ] 1 Float32);
     ]
 
@@ -806,7 +806,7 @@ let reprs () =
         (float 1.) [] );
     ("call", call ~name:"f" (sink []) []);
     ( "call returning",
-      call ~ret_dtype:Int32 ~precompile:true (custom_function "f" []) [] );
+      call ~precompile:true (custom_function ~dtype:Int32 "f" []) [] );
     ( "program",
       v
         ~src:[ sink ~kernel:(kernel_info ()) [] ]

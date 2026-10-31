@@ -543,9 +543,10 @@ val custom_kernel : Ops.t list -> (Ops.t list -> Ops.t) -> Ops.t list
 val program_info_of_sink : ?target:Helpers.Target.t -> Ops.t -> Ops.program_info
 (** [program_info_of_sink ~target sink] reads the program's launch dimensions
     from its {!Op.Special} nodes, its variables and buffers from its {!Op.Param}
-    nodes, and which buffers it reads and writes from its loads and stores. When
-    none is found reading or writing, every buffer is taken to do both. [target]
-    defaults to the empty target. *)
+    nodes, and which buffers it reads and writes from its loads and stores,
+    outside the bodies of the calls it makes. When none is found reading or
+    writing, every buffer is taken to do both. [target] defaults to the empty
+    target. *)
 
 val launch_dims : Ops.program_info -> (string * int) list -> int list * int list
 (** [launch_dims p vars] is [p]'s global and local sizes with each variable

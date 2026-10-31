@@ -288,7 +288,7 @@ let shared : t =
         (fun x -> shape_opt x = Some []);
       accept (pat [ Op.Customi; Op.Custom ]);
       check (pat [ Op.Custom_function ] ~allow_any_len:true ~name:"x") "x"
-        (fun x -> match arg x with String _ -> true | _ -> false);
+        (fun x -> match arg x with Custom_function _ -> true | _ -> false);
       check
         (pat [ Op.Call ]
            ~src:[ Upat.v ~op:opaque_call_bodies () ]
@@ -362,8 +362,6 @@ let tensor : t =
            (fun buf ->
              if is_variable buf then Some (Option.is_none (param_of buf).device)
              else None);
-         check (pat [ Op.Custom_function ] ~name:"x") "x" (fun x ->
-             match arg x with String _ -> true | _ -> false);
          check
            (pat [ Op.Special ]
               ~src:[ Upat.v ~dtype:[ Dtype.Weak_int ] () ]

@@ -751,7 +751,7 @@ let data_types =
           rejects (fun () -> Ops.v Op.Custom));
       test "a transcendental of Invalid is boolean" (fun () ->
           equal dtype Bool (Ops.dtype (Ops.alu Ops.invalid Op.Sqrt [])));
-      test "effects are void, and a call returns its CallInfo's type" (fun () ->
+      test "effects are void, and a call has its body's type" (fun () ->
           List.iter
             (fun o ->
               equal ~msg:(str Op.pp o) dtype Void (Ops.dtype_of o [] No_arg))
@@ -769,7 +769,9 @@ let data_types =
               ];
           equal dtype Int32
             (Ops.dtype
-               (Ops.call ~ret_dtype:Int32 (Ops.custom_function "f" []) [])));
+               (Ops.call (Ops.custom_function ~dtype:Int32 "f" []) []));
+          equal dtype Void
+            (Ops.dtype (Ops.call (Ops.custom_function "f" []) [ Ops.int 1 ])));
       test "promo_dtype is the shared type, or the least upper one" (fun () ->
           equal dtype Float32
             (Ops.promo_dtype [ fvar "x"; fvar ~dtype:Float16 "y" ]);
@@ -1039,6 +1041,14 @@ let shapes =
               Ops.custom_function "f" [];
             ];
           rejects (fun () -> Shape.shape (Ops.sink [])));
+      test "a call has its body's shape" (fun () ->
+          let f = Ops.custom_function ~dtype:Float64 "sqrt" [] in
+          equal shape [] (Shape.shape f);
+          equal shape [] (Shape.shape (Ops.call f [ Ops.float 16. ]));
+          let a = Shape.param ~shape:(ints [ 4 ]) 0 Float32
+          and b = Shape.param ~shape:(ints [ 4 ]) 1 Float32 in
+          equal shape (ints [ 4 ])
+            (Shape.shape (Ops.call (Ops.store a b) [ a; b ])));
       test
         "a typed instruction is a scalar, and a custom node broadcasts its \
          sources" (fun () ->
@@ -1304,9 +1314,9 @@ let ranges =
         (fun () ->
           let r = Ops.range ~dtype:Int32 (Int 4) [ 0 ] in
           let c =
-            Ops.call ~ret_dtype:Int32
-              (Ops.custom_function "external" [ Ops.int ~dtype:Uint64 0 ])
-              [ Ops.O.(r + int 1) ]
+            Ops.call
+              (Ops.custom_function ~dtype:Int32 "external" [])
+              [ Ops.int ~dtype:Uint64 0; Ops.O.(r + int 1) ]
           in
           equal uops [ r ] (list_ranges c));
       test "a backedge closes its loop and keeps the condition's other ranges"
@@ -1326,10 +1336,10 @@ let ranges =
             Ops.after Ops.O.(first + closed + last) [ barrier; barrier ]
           in
           equal uops [ first; last ] (list_ranges root));
-      test "a call to a function without arguments ends its range arguments"
+      test "an external call keeps the ranges it is given, whatever its body"
         (fun () ->
           let r = Ops.range (Int 4) [ 0 ] in
-          equal uops []
+          equal uops [ r ]
             (list_ranges (Ops.call (Ops.custom_function "f" []) [ r ]));
           equal uops [ r ]
             (list_ranges
