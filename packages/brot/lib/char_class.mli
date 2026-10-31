@@ -72,6 +72,14 @@ val at_is_mark : int -> bool
     combining mark, that is of the regular expression class [\p{M}]: the general
     categories [Mc], [Me] and [Mn]. *)
 
+val at_is_upper : int -> bool
+(** [at_is_upper d] is [true] iff the character in the result [d] of {!at} is
+    an uppercase or titlecase letter: the general categories [Lu] and [Lt]. *)
+
+val at_is_lower : int -> bool
+(** [at_is_lower d] is [true] iff the character in the result [d] of {!at} is
+    a lowercase letter: the general category [Ll]. *)
+
 (** {1:internals Internals} *)
 
 val unicode_table : unit -> Bytes.t

@@ -352,47 +352,56 @@ static intnat next_span(walker *w, intnat i)
 /* Char_class's mark bit in a byte of the Unicode table. */
 #define PROP_MARK 16
 
-/* Pre_tokenizer.kind_beyond_ascii: Char_class.at with the sequences a decoder
-   is to refuse — overlong, surrogates, above U+10FFFF — each one stray byte,
-   as are the ones Char_class.at refuses itself. */
-static intnat cl100k_kind_beyond_ascii(walker *w, intnat i, int marks)
+/* Char_class.at as Pre_tokenizer.decodes refines it, beyond ASCII: the code
+   point at [i] with its byte length in [*len], or -1 for one stray byte —
+   the sequences a decoder is to refuse (overlong, surrogates, above
+   U+10FFFF) and the ones Char_class.at refuses itself. */
+static inline intnat strict_decode(walker *w, intnat i, intnat *len)
 {
   const unsigned char *s = w->s;
   intnat stop = w->stop;
-  intnat c = s[i], cp, len;
-  if (c < 0xC2) return CL100K_STRAY;
+  intnat c = s[i];
+  if (c < 0xC2) return -1;
   if (c < 0xE0) {
     intnat b1;
-    if (i + 1 >= stop) return CL100K_STRAY;
+    if (i + 1 >= stop) return -1;
     b1 = s[i + 1];
-    if ((b1 & 0xC0) != 0x80) return CL100K_STRAY;
-    cp = ((c & 0x1F) << 6) | (b1 & 0x3F);
-    len = 2;
-  } else if (c < 0xF0) {
+    if ((b1 & 0xC0) != 0x80) return -1;
+    *len = 2;
+    return ((c & 0x1F) << 6) | (b1 & 0x3F);
+  }
+  if (c < 0xF0) {
     intnat b1, b2;
-    if (i + 2 >= stop) return CL100K_STRAY;
+    if (i + 2 >= stop) return -1;
     b1 = s[i + 1];
     b2 = s[i + 2];
-    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return CL100K_STRAY;
-    if ((c == 0xE0 && b1 < 0xA0) || (c == 0xED && b1 >= 0xA0))
-      return CL100K_STRAY;
-    cp = ((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
-    len = 3;
-  } else if (c < 0xF5) {
+    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return -1;
+    if ((c == 0xE0 && b1 < 0xA0) || (c == 0xED && b1 >= 0xA0)) return -1;
+    *len = 3;
+    return ((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+  }
+  if (c < 0xF5) {
     intnat b1, b2, b3;
-    if (i + 3 >= stop) return CL100K_STRAY;
+    if (i + 3 >= stop) return -1;
     b1 = s[i + 1];
     b2 = s[i + 2];
     b3 = s[i + 3];
     if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
-      return CL100K_STRAY;
-    if ((c == 0xF0 && b1 < 0x90) || (c == 0xF4 && b1 >= 0x90))
-      return CL100K_STRAY;
-    cp = ((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6)
-         | (b3 & 0x3F);
-    len = 4;
-  } else
-    return CL100K_STRAY;
+      return -1;
+    if ((c == 0xF0 && b1 < 0x90) || (c == 0xF4 && b1 >= 0x90)) return -1;
+    *len = 4;
+    return ((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6)
+           | (b3 & 0x3F);
+  }
+  return -1;
+}
+
+/* Pre_tokenizer.kind_beyond_ascii. */
+static intnat cl100k_kind_beyond_ascii(walker *w, intnat i, int marks)
+{
+  intnat len = 1;
+  intnat cp = strict_decode(w, i, &len);
+  if (cp < 0) return CL100K_STRAY;
   if (cp - 128 < w->uni_len && w->uni[cp - 128] != 0) {
     intnat props = w->uni[cp - 128];
     intnat cat = (marks && (props & PROP_MARK)) ? CL_LETTER : (props & 3);
@@ -537,6 +546,171 @@ static intnat cl100k_next_span(walker *w, intnat i, intnat digits, int marks)
   if (next < stop && (after >> 3) == CL_LETTER)
     return cl100k_letter_run(w, next, marks);
   return cl100k_punctuation_run(w, next, marks);
+}
+
+/* The o200k walker — Pre_tokenizer.fill_o200k, line for line. [digits] is
+   the longest group of numbers and [contractions] whether a word takes one.
+   Every function is its OCaml namesake, or -1 propagating a class
+   hand-back. */
+
+#define K_UPPER 5
+#define K_LOWER 6
+#define K_MARK 7
+
+/* Char_class's case bits in a byte of the Unicode table. */
+#define PROP_UPPER 32
+#define PROP_LOWER 64
+
+#define IN_BOTH(k) ((k) == CL_LETTER || (k) == K_MARK)
+
+/* Pre_tokenizer.o200k_kind_of on a byte of the Unicode table. */
+static inline intnat o200k_kind_of(intnat props)
+{
+  intnat cat = props & 3;
+  if (cat == CL_LETTER) {
+    if (props & PROP_UPPER) return K_UPPER;
+    if (props & PROP_LOWER) return K_LOWER;
+    return CL_LETTER;
+  }
+  if (props & PROP_MARK) return K_MARK;
+  return cat;
+}
+
+/* Pre_tokenizer.o200k_ascii, from the lead table and the ASCII letters. */
+static inline intnat o200k_ascii_kind(const unsigned char *lead, intnat c)
+{
+  if (c >= 'a' && c <= 'z') return K_LOWER;
+  if (c >= 'A' && c <= 'Z') return K_UPPER;
+  return ascii_cat(lead, c);
+}
+
+static intnat o200k_kind_beyond_ascii(walker *w, intnat i)
+{
+  intnat len = 1;
+  intnat cp = strict_decode(w, i, &len);
+  if (cp < 0) return CL100K_STRAY;
+  if (cp - 128 < w->uni_len && w->uni[cp - 128] != 0)
+    return (o200k_kind_of(w->uni[cp - 128]) << 3) | len;
+  w->cp = cp;
+  return -1;
+}
+
+static inline intnat o200k_kind(walker *w, intnat i)
+{
+  intnat c = w->s[i];
+  if (c < 0x80) return (o200k_ascii_kind(w->lead, c) << 3) | 1;
+  return o200k_kind_beyond_ascii(w, i);
+}
+
+static intnat o200k_lower_run(walker *w, intnat i)
+{
+  intnat stop = w->stop;
+  intnat j = i;
+  while (j < stop) {
+    intnat k = o200k_kind(w, j), c;
+    if (k < 0) return -1;
+    c = k >> 3;
+    if (c != K_LOWER && !IN_BOTH(c)) break;
+    j += k & 7;
+  }
+  return j;
+}
+
+/* -1 is the class hand-back here and -2 no match, where the OCaml namesake
+   returns -1. */
+static intnat o200k_word(walker *w, intnat i, int contractions, int a2)
+{
+  const unsigned char *s = w->s;
+  intnat stop = w->stop;
+  intnat u = i, last_both = -1, e;
+  int lower_follows = 0;
+  while (u < stop) {
+    intnat k = o200k_kind(w, u), c;
+    if (k < 0) return -1;
+    c = k >> 3;
+    if (c == K_UPPER)
+      u += k & 7;
+    else if (IN_BOTH(c)) {
+      u += k & 7;
+      last_both = u;
+    } else {
+      lower_follows = c == K_LOWER;
+      break;
+    }
+  }
+  if (lower_follows) {
+    e = o200k_lower_run(w, u);
+    if (e < 0) return -1;
+  } else if (last_both >= 0)
+    e = last_both;
+  else if (a2 && u > i)
+    e = u;
+  else
+    return -2;
+  if (contractions && e < stop && s[e] == '\'')
+    return cl100k_contraction(s, e, stop);
+  return e;
+}
+
+static intnat o200k_punctuation_run(walker *w, intnat i)
+{
+  const unsigned char *s = w->s;
+  intnat stop = w->stop;
+  intnat j = i;
+  while (j < stop) {
+    intnat k = o200k_kind(w, j), c;
+    if (k < 0) return -1;
+    c = k >> 3;
+    if (c != CL_OTHER && c != K_MARK) break;
+    j += k & 7;
+  }
+  while (j < stop && (s[j] == '\n' || s[j] == '\r' || s[j] == '/')) j++;
+  return j;
+}
+
+/* One span of Pre_tokenizer.fill_o200k: the end of the span opening at [i],
+   or -1 with [w->cp] set. */
+static intnat o200k_next_span(walker *w, intnat i, intnat digits,
+                              int contractions)
+{
+  const unsigned char *s = w->s;
+  intnat stop = w->stop;
+  intnat k = o200k_kind(w, i);
+  intnat next, category, e, c;
+  if (k < 0) return -1;
+  next = i + (k & 7);
+  category = k >> 3;
+  if (category == K_UPPER || category == K_LOWER || category == CL_LETTER)
+    return o200k_word(w, i, contractions, 1);
+  if (category == K_MARK) {
+    e = o200k_word(w, next, contractions, 0);
+    if (e != -2) return e;
+    return o200k_word(w, i, contractions, 1);
+  }
+  if (category == CL_NUM) return cl100k_number_run(w, next, digits, 0);
+  if (category == K_STRAY) {
+    intnat j = next;
+    while (j < stop) {
+      intnat kj = o200k_kind(w, j);
+      if (kj < 0) return -1;
+      if ((kj >> 3) != K_STRAY) break;
+      j++;
+    }
+    return j;
+  }
+  c = s[i];
+  if (c != '\n' && c != '\r') {
+    e = o200k_word(w, next, contractions, 1);
+    if (e != -2) return e;
+  }
+  if (category == CL_OTHER) return o200k_punctuation_run(w, next);
+  if (c == ' ' && next < stop) {
+    intnat after = o200k_kind(w, next);
+    if (after < 0) return -1;
+    if ((after >> 3) == CL_OTHER || (after >> 3) == K_MARK)
+      return o200k_punctuation_run(w, next);
+  }
+  return cl100k_whitespace(w, i);
 }
 
 /* The mask scanner. Instead of walking span by span, each full 64-byte
@@ -1075,13 +1249,13 @@ static int merge_short(const value *mkeys, const value *mvals, intnat mmask,
    unconditionally as Ints.add4 does. [emit32] selects the ids sink — the
    int array of Kernel.byte_level_encode or the int32 Bigarray of
    Kernel.byte_level_encode_ids32 — and is a compile-time constant in each
-   wrapper, so its branches cost nothing. So is [cl100k], which selects the
-   walker: the GPT-2 mask scanner, or the scalar cl100k walker under the
-   parameters [vwalker] packs as Kernel.cl100k_encode documents. */
+   wrapper, so its branches cost nothing. So is [split], which selects the
+   walker: the GPT-2 mask scanner, or the scalar cl100k or o200k walker
+   under the parameters [vwalker] packs as Kernel.split_encode documents. */
 static value byte_level_encode_impl(value text, value vpos, value vstop,
                                     value vspans, value vids, value vmarks,
                                     value vcursor, value vunicode, value vt,
-                                    value vwalker, int emit32, int cl100k)
+                                    value vwalker, int emit32, int split)
 {
   const unsigned char *s = (const unsigned char *)String_val(text);
   intnat n = (intnat)caml_string_length(text);
@@ -1123,8 +1297,9 @@ static value byte_level_encode_impl(value text, value vpos, value vstop,
   intnat i = Long_val(vpos);
   intnat resume;
   int reason;
-  intnat digits = cl100k ? Long_val(vwalker) >> 1 : 0;
-  int marks = cl100k ? (int)(Long_val(vwalker) & 1) : 0;
+  intnat digits = split ? Long_val(vwalker) >> 2 : 0;
+  int o200k = split ? (int)((Long_val(vwalker) >> 1) & 1) : 0;
+  int flag = split ? (int)(Long_val(vwalker) & 1) : 0;
 
   w.s = s;
   w.stop = stop;
@@ -1132,7 +1307,7 @@ static value byte_level_encode_impl(value text, value vpos, value vstop,
   w.uni = Bytes_val(vunicode);
   w.uni_len = (intnat)caml_string_length(vunicode);
   w.cp = 0;
-  if (!cl100k) mask_init(&ms, i);
+  if (!split) mask_init(&ms, i);
 
   /* The loop is software-pipelined over the cache line: span k's walk, keys
      and set are computed and the set's line prefetched one iteration ahead,
@@ -1155,8 +1330,9 @@ static value byte_level_encode_impl(value text, value vpos, value vstop,
       uint64_t k0 = 0, k1 = 0;
       int walked = 0;
       if (i < stop) {
-        e = cl100k ? cl100k_next_span(&w, i, digits, marks)
-                   : mask_next_span(&ms, &w, i);
+        e = !split  ? mask_next_span(&ms, &w, i)
+            : o200k ? o200k_next_span(&w, i, digits, flag)
+                    : cl100k_next_span(&w, i, digits, flag);
         walked = 1;
         if (e >= 0) {
           len = e - i;
@@ -1315,7 +1491,7 @@ CAMLprim value brot_byte_level_encode_ids32_byte(value *argv, int argn)
                                       argv[8]);
 }
 
-CAMLprim value brot_cl100k_encode(value text, value vpos, value vstop,
+CAMLprim value brot_split_encode(value text, value vpos, value vstop,
                                   value vspans, value vids, value vmarks,
                                   value vcursor, value vunicode, value vt,
                                   value vwalker)
@@ -1324,14 +1500,14 @@ CAMLprim value brot_cl100k_encode(value text, value vpos, value vstop,
                                 vcursor, vunicode, vt, vwalker, 0, 1);
 }
 
-CAMLprim value brot_cl100k_encode_byte(value *argv, int argn)
+CAMLprim value brot_split_encode_byte(value *argv, int argn)
 {
   (void)argn;
-  return brot_cl100k_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
+  return brot_split_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
                             argv[5], argv[6], argv[7], argv[8], argv[9]);
 }
 
-CAMLprim value brot_cl100k_encode_ids32(value text, value vpos, value vstop,
+CAMLprim value brot_split_encode_ids32(value text, value vpos, value vstop,
                                         value vspans, value vids,
                                         value vmarks, value vcursor,
                                         value vunicode, value vt,
@@ -1341,10 +1517,10 @@ CAMLprim value brot_cl100k_encode_ids32(value text, value vpos, value vstop,
                                 vcursor, vunicode, vt, vwalker, 1, 1);
 }
 
-CAMLprim value brot_cl100k_encode_ids32_byte(value *argv, int argn)
+CAMLprim value brot_split_encode_ids32_byte(value *argv, int argn)
 {
   (void)argn;
-  return brot_cl100k_encode_ids32(argv[0], argv[1], argv[2], argv[3], argv[4],
+  return brot_split_encode_ids32(argv[0], argv[1], argv[2], argv[3], argv[4],
                                   argv[5], argv[6], argv[7], argv[8],
                                   argv[9]);
 }

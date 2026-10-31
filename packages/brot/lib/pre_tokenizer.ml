@@ -14,10 +14,12 @@ type behavior =
 
 type prepend_scheme = [ `First | `Never | `Always ]
 type cl100k = { digits : int; marks : bool }
+type o200k = { digits : int; contractions : bool }
+type walker = Gpt2 | Cl100k of cl100k | O200k of o200k
 
 type pattern =
   | Literal of string
-  | Regex of { source : string; compiled : Regex.t; walker : cl100k option }
+  | Regex of { source : string; compiled : Regex.t; walker : walker option }
 
 type t =
   | Byte_level of {
@@ -355,35 +357,36 @@ let fill_byte_level s ~pos ~stop spans =
 let cl100k_patterns =
   [
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
-      { digits = 3; marks = false } );
+      Cl100k { digits = 3; marks = false } );
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+|re},
-      { digits = 3; marks = false } );
+      Cl100k { digits = 3; marks = false } );
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
-      { digits = 1; marks = false } );
+      Cl100k { digits = 1; marks = false } );
     ( {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re},
-      { digits = 1; marks = true } );
+      Cl100k { digits = 1; marks = true } );
   ]
 
 let k_stray = 4
 
 (* {!Char_class.at} accepts the sequences a decoder is to refuse — overlong
    ones, surrogates, values above U+10FFFF — and a regular expression matches
-   none of their bytes. *)
+   none of their bytes. [d] is the result of {!Char_class.at} at [i], beyond
+   ASCII. *)
+let[@inline] decodes s i d =
+  let len = Char_class.at_len d in
+  len = 2
+  || len > 2
+     &&
+     let b0 = Char.code (String.unsafe_get s i) in
+     let b1 = Char.code (String.unsafe_get s (i + 1)) in
+     if len = 3 then not ((b0 = 0xE0 && b1 < 0xA0) || (b0 = 0xED && b1 >= 0xA0))
+     else
+       not ((b0 = 0xF0 && b1 < 0x90) || (b0 = 0xF4 && b1 >= 0x90) || b0 > 0xF4)
+
 let[@inline never] kind_beyond_ascii ~marks s i stop =
   let d = Char_class.at s i ~stop in
   let len = Char_class.at_len d in
-  let valid =
-    len = 2
-    || len > 2
-       &&
-       let b0 = Char.code (String.unsafe_get s i) in
-       let b1 = Char.code (String.unsafe_get s (i + 1)) in
-       if len = 3 then
-         not ((b0 = 0xE0 && b1 < 0xA0) || (b0 = 0xED && b1 >= 0xA0))
-       else
-         not ((b0 = 0xF0 && b1 < 0x90) || (b0 = 0xF4 && b1 >= 0x90) || b0 > 0xF4)
-  in
-  if not valid then (k_stray lsl 3) lor 1
+  if not (decodes s i d) then (k_stray lsl 3) lor 1
   else if marks && Char_class.at_is_mark d then (c_letter lsl 3) lor len
   else d land 31
 
@@ -529,6 +532,201 @@ let fill_cl100k { digits; marks } ~gaps s ~pos ~stop spans =
   done;
   Spans.set_count spans !n;
   !p
+
+(* The o200k walker
+
+   The pattern [[^\r\n\p{L}\p{N}]?U*W+C?|[^\r\n\p{L}\p{N}]?U+W*C?|
+   \p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+], where
+   [U] is [[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]], [W] is [[\p{Ll}\p{Lm}\p{Lo}\p{M}]]
+   and [C] is [(?i:'s|'t|'re|'ve|'m|'ll|'d)], and Tekken's, which has no [C]
+   and takes numbers one at a time. Matched like the cl100k one, by the first
+   alternative that applies at each position, with the backtracking of the
+   first one worked out: [U*] runs over the characters of both classes, and
+   when no [Ll] follows it gives back up to the last one of them that [W] has,
+   which is then [W+]. So ["XMLHttp"] is one word, and ["日本A"] is ["日本"]
+   then ["A"].
+
+   [digits] is the longest group of numbers, and [contractions] whether a word
+   takes [C]. A mark is in both [U] and [W] and outside [\p{L}], so it can
+   open a word as its prefix and continue a run of punctuation. As in the
+   cl100k walker, a run of bytes that belong to no character is a span of its
+   own. *)
+
+let k_upper = 5
+let k_lower = 6
+let k_mark = 7
+
+let[@inline] o200k_kind_of d =
+  let category = Char_class.at_category d in
+  let k =
+    if category = c_letter then
+      if Char_class.at_is_upper d then k_upper
+      else if Char_class.at_is_lower d then k_lower
+      else c_letter
+    else if Char_class.at_is_mark d then k_mark
+    else category
+  in
+  (k lsl 3) lor Char_class.at_len d
+
+(* The kinds of the ASCII characters, each one byte long. *)
+let o200k_ascii =
+  Array.init 128 (fun b ->
+      o200k_kind_of (Char_class.at (String.make 1 (Char.chr b)) 0 ~stop:1))
+
+let[@inline never] o200k_kind_beyond_ascii s i stop =
+  let d = Char_class.at s i ~stop in
+  if decodes s i d then o200k_kind_of d else (k_stray lsl 3) lor 1
+
+(* The character at [i] as [(kind lsl 3) lor length], the kind being one of the
+   four categories, [k_stray], or for letters and marks [k_upper], [k_lower],
+   [c_letter] (in [U] and [W]) and [k_mark]. *)
+let[@inline] o200k_kind s i stop =
+  let b = Char.code (String.unsafe_get s i) in
+  if b < 0x80 then Array.unsafe_get o200k_ascii b
+  else o200k_kind_beyond_ascii s i stop
+
+let[@inline] in_both k = k = c_letter || k = k_mark
+
+(* [W*] from [i]. *)
+let lower_run s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let k = o200k_kind s !j stop in
+    let c = k lsr 3 in
+    if c = k_lower || in_both c then j := !j + (k land 7)
+    else scanning := false
+  done;
+  !j
+
+(* The end of [U*W+C?] from [i], or when [a2] that of [U+W*C?] if the first
+   does not match; [-1] if none does. *)
+let o200k_word ~contractions ~a2 s i stop =
+  let u = ref i and last_both = ref (-1) and lower_follows = ref false in
+  let scanning = ref true in
+  while !scanning && !u < stop do
+    let k = o200k_kind s !u stop in
+    let c = k lsr 3 in
+    if c = k_upper then u := !u + (k land 7)
+    else if in_both c then begin
+      u := !u + (k land 7);
+      last_both := !u
+    end
+    else begin
+      lower_follows := c = k_lower;
+      scanning := false
+    end
+  done;
+  let e =
+    if !lower_follows then lower_run s !u stop
+    else if !last_both >= 0 then !last_both
+    else if a2 && !u > i then !u
+    else -1
+  in
+  if e >= 0 && contractions && e < stop && String.unsafe_get s e = '\'' then
+    cl100k_contraction s e stop
+  else e
+
+(* [[^\s\p{L}\p{N}]+[\r\n/]*] from [i], where the first character of the run
+   has been seen. *)
+let o200k_punctuation_run s i stop =
+  let j = ref i in
+  let scanning = ref true in
+  while !scanning && !j < stop do
+    let k = o200k_kind s !j stop in
+    let c = k lsr 3 in
+    if c = c_other || c = k_mark then j := !j + (k land 7)
+    else scanning := false
+  done;
+  while
+    !j < stop
+    &&
+    let c = String.unsafe_get s !j in
+    c = '\n' || c = '\r' || c = '/'
+  do
+    incr j
+  done;
+  !j
+
+let fill_o200k { digits; contractions } ~gaps s ~pos ~stop spans =
+  let capacity = Spans.capacity spans in
+  let n = ref (Spans.count spans) in
+  let p = ref pos in
+  while !p < stop && !n < capacity do
+    let i = !p in
+    let k = o200k_kind s i stop in
+    let next = i + (k land 7) in
+    let category = k lsr 3 in
+    let e =
+      if category = k_upper || category = k_lower || category = c_letter then
+        o200k_word ~contractions ~a2:true s i stop
+      else if category = k_mark then
+        (* The mark as the prefix, then as the start of [U*W+C?], which always
+           matches. *)
+        let e = o200k_word ~contractions ~a2:false s next stop in
+        if e >= 0 then e else o200k_word ~contractions ~a2:true s i stop
+      else if category = c_numeric then
+        number_run ~marks:false ~digits s next stop
+      else if category = k_stray then begin
+        let j = ref next in
+        while !j < stop && o200k_kind s !j stop lsr 3 = k_stray do
+          incr j
+        done;
+        !j
+      end
+      else
+        (* Whitespace or punctuation: the prefix of a word unless it is a
+           newline, then punctuation, then whitespace. *)
+        let c = String.unsafe_get s i in
+        let word =
+          if c = '\n' || c = '\r' then -1
+          else o200k_word ~contractions ~a2:true s next stop
+        in
+        if word >= 0 then word
+        else if category = c_other then o200k_punctuation_run s next stop
+        else if
+          c = ' '
+          && next < stop
+          &&
+          let after = o200k_kind s next stop lsr 3 in
+          after = c_other || after = k_mark
+        then o200k_punctuation_run s next stop
+        else cl100k_whitespace s i stop
+    in
+    if gaps || category <> k_stray then begin
+      Spans.write spans !n i e;
+      incr n
+    end;
+    p := e
+  done;
+  Spans.set_count spans !n;
+  !p
+
+let o200k_patterns =
+  [
+    ( String.concat "|"
+        [
+          {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+          {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+          {re|\p{N}{1,3}|re};
+          {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+          {re|\s*[\r\n]+|re};
+          {re|\s+(?!\S)|re};
+          {re|\s+|re};
+        ],
+      O200k { digits = 3; contractions = true } );
+    ( String.concat "|"
+        [
+          {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|re};
+          {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|re};
+          {re|\p{N}|re};
+          {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+          {re|\s*[\r\n]+|re};
+          {re|\s+(?!\S)|re};
+          {re|\s+|re};
+        ],
+      O200k { digits = 1; contractions = false } );
+  ]
 
 (* The walker of a split and its [gaps], when the pattern is a recognised one
    whose matches are the pieces: under [`Isolated], and under [`Removed]
@@ -1127,8 +1325,10 @@ let rec fill_walk t s ~pos ~stop spans =
       fill_split ~pattern ~behavior ~invert s ~pos ~stop spans
   | Split { pattern = Regex { compiled; _ } as pattern; behavior; invert } -> (
       match split_walker pattern behavior ~invert with
-      | Some (walker, gaps) -> fill_cl100k walker ~gaps s ~pos ~stop spans
-      | None ->
+      | Some (Cl100k walker, gaps) ->
+          fill_cl100k walker ~gaps s ~pos ~stop spans
+      | Some (O200k walker, gaps) -> fill_o200k walker ~gaps s ~pos ~stop spans
+      | Some (Gpt2, _) | None ->
           fill_split_regex ~regex:compiled ~behavior ~invert s ~pos ~stop spans)
   | Char_delimiter delimiter ->
       fill_split ~pattern:delimiter ~behavior:`Removed ~invert:false s ~pos
@@ -1201,8 +1401,6 @@ let fill t s ~pos ~stop spans =
   if pos < 0 || stop < pos || stop > String.length s then invalid_arg err_range;
   fill_walk t s ~pos ~stop spans
 
-type walker = Gpt2 | Cl100k of cl100k
-
 let byte_level_walker t =
   match t with
   | Byte_level { use_regex = true; _ } -> Some Gpt2
@@ -1212,7 +1410,7 @@ let byte_level_walker t =
        Split { pattern; behavior; invert }; Byte_level { use_regex = false; _ };
       ] -> (
           match split_walker pattern behavior ~invert with
-          | Some (walker, true) -> Some (Cl100k walker)
+          | Some (walker, true) -> Some walker
           | Some (_, false) | None -> None)
       | _ -> None)
   | _ -> None
@@ -1412,7 +1610,12 @@ let split ~pattern ?(behavior = `Removed) ?(invert = false) () =
 let regex source =
   Result.map
     (fun compiled ->
-      Regex { source; compiled; walker = List.assoc_opt source cl100k_patterns })
+      let walker =
+        match List.assoc_opt source cl100k_patterns with
+        | Some walker -> Some walker
+        | None -> List.assoc_opt source o200k_patterns
+      in
+      Regex { source; compiled; walker })
     (Regex.compile ~anchors:false source)
 
 let split_regex ~pattern ?(behavior = `Removed) ?(invert = false) () =
@@ -1487,10 +1690,13 @@ let rec pp ppf = function
       Format.fprintf ppf "@[<1>Split(Regex(%S),@ %s,@ invert=%b%t)@]" source
         (behavior_to_string behavior) invert (fun ppf ->
           match split_walker pattern behavior ~invert with
-          | Some ({ digits; marks }, _) ->
+          | Some (Cl100k { digits; marks }, _) ->
               Format.fprintf ppf ",@ walker=cl100k(digits=%d,@ marks=%b)" digits
                 marks
-          | None -> ())
+          | Some (O200k { digits; contractions }, _) ->
+              Format.fprintf ppf ",@ walker=o200k(digits=%d,@ contractions=%b)"
+                digits contractions
+          | Some (Gpt2, _) | None -> ())
   | Char_delimiter delimiter -> Format.fprintf ppf "CharDelimiter(%S)" delimiter
   | Digits { individual } ->
       Format.fprintf ppf "Digits(individual=%b)" individual

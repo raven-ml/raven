@@ -33,6 +33,8 @@ let complement s =
   in
   fill 0 s
 
+let inter a b = complement (union (complement a) (complement b))
+
 (* Unicode properties *)
 
 let index_of_category : Uucp.Gc.t -> int = function
@@ -137,13 +139,30 @@ let category_names =
     ("zs", "spaceseparator", [ `Zs ]);
   ]
 
-let category_of_name name =
-  if name = "any" then Some [ (0, max_scalar) ]
+(* Names are matched ignoring case, spaces, hyphens and underscores. *)
+let name_key name =
+  let significant c = c <> ' ' && c <> '-' && c <> '_' in
+  String.lowercase_ascii
+    (String.of_seq (Seq.filter significant (String.to_seq name)))
+
+let category_of_name key =
+  if key = "any" then Some [ (0, max_scalar) ]
   else
     List.find_map
       (fun (short, long, gcs) ->
-        if name = short || name = long then Some (categories gcs) else None)
+        if key = short || key = long then Some (categories gcs) else None)
       category_names
+
+let script_of_name key =
+  Array.find_map
+    (fun (names, bounds) ->
+      if List.exists (fun name -> name_key name = key) names then
+        Some
+          (List.init
+             (Array.length bounds / 2)
+             (fun k -> (bounds.(2 * k), bounds.((2 * k) + 1))))
+      else None)
+    Script_data.scripts
 
 let space =
   once (fun () ->
@@ -288,9 +307,14 @@ let seq nodes =
     context = context nodes;
   }
 
+(* Each alternative is nested: {!Re.alt} merges alternatives that open with
+   the same expression into one that opens with it once, which a backtracking
+   engine does not do when that expression can match more than one way. On
+   ["xy"], [x?x|x?y] matches ["x"], and [x?(x|y)] ["xy"]. A nest is no
+   expression of its own, so it stops the merge and changes nothing else. *)
 let alt nodes =
   {
-    re = Re.alt (List.map (fun n -> n.re) nodes);
+    re = Re.alt (List.map (fun n -> Re.nest n.re) nodes);
     nullable = List.exists (fun n -> n.nullable) nodes;
     open_bol = List.exists (fun n -> n.open_bol) nodes;
     context = List.exists (fun n -> n.context) nodes;
@@ -356,7 +380,7 @@ let hex_escape p =
     | Some _ -> fail "byte escapes above \\x7F are not supported, use \\x{..}"
     | None -> fail "invalid hexadecimal escape"
 
-(* Property names are matched ignoring case, spaces, hyphens and underscores. *)
+(* A general category, [Any], or a script. *)
 let property_escape p ~negate =
   if not (accept p '{') then fail "invalid property escape";
   let negate = if accept p '^' then not negate else negate in
@@ -367,12 +391,13 @@ let property_escape p ~negate =
   if eos p then fail "unterminated property escape";
   let name = String.sub p.s start (p.i - start) in
   skip p;
-  let significant c = c <> ' ' && c <> '-' && c <> '_' in
-  match
-    category_of_name
-      (String.lowercase_ascii
-         (String.of_seq (Seq.filter significant (String.to_seq name))))
-  with
+  let key = name_key name in
+  let set =
+    match category_of_name key with
+    | Some set -> Some set
+    | None -> script_of_name key
+  in
+  match set with
   | Some set -> if negate then complement set else set
   | None -> fail "unsupported property \\p{%s}" name
 
@@ -410,13 +435,14 @@ let escape p ~in_class =
       | c -> fail "unsupported escape \\%c" c)
   | _ -> `Char (scalar p)
 
-let class_item p =
+(* A bracket class nested in one is an item of it. *)
+let rec class_item p =
   match peek p with
   | '[' when peek_next p ':' ->
       fail "POSIX bracket expressions are not supported"
-  | '[' -> fail "nested character classes are not supported"
-  | '&' when peek_next p '&' ->
-      fail "character class intersection is not supported"
+  | '[' ->
+      skip p;
+      `Set (bracket_set p)
   | '\\' ->
       skip p;
       if eos p then fail "pattern ends with a backslash";
@@ -424,8 +450,10 @@ let class_item p =
   | _ -> `Char (scalar p)
 
 (* A leading []] is a literal, and so is a [-] that does not sit between two
-   characters. *)
-let bracket_set p =
+   characters. [&&] intersects the unions of items on either side of it, and
+   binds looser than the items: [[a-z&&[^aeiou]]] is the consonants. An empty
+   side is the empty set. A leading [^] negates the intersection. *)
+and bracket_set p =
   let negate = accept p '^' in
   let range_follows p =
     (not (eos p))
@@ -433,23 +461,32 @@ let bracket_set p =
     && p.i + 1 < String.length p.s
     && not (peek_next p ']')
   in
-  let rec items acc ~first =
+  let rec items acc sides ~first =
     if eos p then fail "unterminated character class";
-    if (not first) && accept p ']' then acc
+    if (not first) && accept p ']' then normalize acc :: sides
+    else if peek p = '&' && peek_next p '&' then begin
+      skip p;
+      skip p;
+      items [] (normalize acc :: sides) ~first:false
+    end
     else
       match class_item p with
       | `Set s ->
           if range_follows p then fail "invalid range in character class";
-          items (List.rev_append s acc) ~first:false
+          items (List.rev_append s acc) sides ~first:false
       | `Char lo when range_follows p -> (
           skip p;
           match class_item p with
-          | `Char hi when lo <= hi -> items ((lo, hi) :: acc) ~first:false
+          | `Char hi when lo <= hi -> items ((lo, hi) :: acc) sides ~first:false
           | `Char _ -> fail "empty range in character class"
           | `Set _ -> fail "invalid range in character class")
-      | `Char c -> items ((c, c) :: acc) ~first:false
+      | `Char c -> items ((c, c) :: acc) sides ~first:false
   in
-  let set = normalize (items [] ~first:true) in
+  let set =
+    match items [] [] ~first:true with
+    | [] -> []
+    | side :: sides -> List.fold_left inter side sides
+  in
   let set = if p.fold then fold_closure set else set in
   if negate then complement set else set
 

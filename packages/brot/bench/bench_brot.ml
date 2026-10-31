@@ -78,6 +78,46 @@ let split_cl100k =
       Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
     ]
 
+(* gpt-oss's pre-tokenizer: the o200k split, then the byte-level encoding. *)
+let split_o200k =
+  Pre_tokenizer.sequence
+    [
+      Pre_tokenizer.split_regex
+        ~pattern:
+          (String.concat "|"
+             [
+               {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+               {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+               {re|\p{N}{1,3}|re};
+               {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+               {re|\s*[\r\n]+|re};
+               {re|\s+(?!\S)|re};
+               {re|\s+|re};
+             ])
+        ~behavior:`Isolated ();
+      Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+    ]
+
+(* Mistral NeMo's: the Tekken split, then the byte-level encoding. *)
+let split_tekken =
+  Pre_tokenizer.sequence
+    [
+      Pre_tokenizer.split_regex
+        ~pattern:
+          (String.concat "|"
+             [
+               {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|re};
+               {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|re};
+               {re|\p{N}|re};
+               {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+               {re|\s*[\r\n]+|re};
+               {re|\s+(?!\S)|re};
+               {re|\s+|re};
+             ])
+        ~behavior:`Isolated ();
+      Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
+    ]
+
 (* Pre-tokenization on its own: the span walkers, plus the pieces and offsets
    [pre_tokenize] builds from them. *)
 let pre_tokenizer_suite =
@@ -92,6 +132,8 @@ let pre_tokenizer_suite =
       case "whitespace" Pre_tokenizer.whitespace;
       case "metaspace" (Pre_tokenizer.metaspace ());
       case "split_cl100k" split_cl100k;
+      case "split_o200k" split_o200k;
+      case "split_tekken" split_tekken;
       Thumper.bench "byte_level/short" (fun () ->
           Pre_tokenizer.pre_tokenize (Pre_tokenizer.byte_level ()) short_text);
     ]

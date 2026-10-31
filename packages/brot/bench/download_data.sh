@@ -53,4 +53,8 @@ curl -sL -o "$DATA_DIR/phi4.json" \
   "https://huggingface.co/microsoft/phi-4/resolve/main/tokenizer.json"
 echo "  Phi-4 (byte-level BPE, 100K vocab, the cl100k Split with its matches kept)"
 
+curl -sL -o "$DATA_DIR/mistral_nemo.json" \
+  "https://huggingface.co/mistralai/Mistral-Nemo-Instruct-2407/resolve/main/tokenizer.json"
+echo "  Mistral NeMo (byte-level BPE, 131K vocab, the Tekken regular-expression Split)"
+
 echo "Done."

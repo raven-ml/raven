@@ -1452,6 +1452,13 @@ let fused model =
 
 let err_range = "range is not within the text"
 
+(* A split walker's parameters as {!Kernel.split_encode} takes them. *)
+let packed_walker : Pre_tokenizer.walker -> int = function
+  | Gpt2 -> 0
+  | Cl100k { digits; marks } -> (digits lsl 2) lor Bool.to_int marks
+  | O200k { digits; contractions } ->
+      (digits lsl 2) lor 2 lor Bool.to_int contractions
+
 (* The fused walk: the C kernel cuts spans, probes the cache and merges short
    misses, and everything it refuses comes back here with a resume position — an
    unclassified code point is classified and the call re-entered, a full ids
@@ -1478,10 +1485,10 @@ let encode_walk model st ~walker ids ~opaque ~marks spans text ~pos ~stop =
         | Gpt2 ->
             Kernel.byte_level_encode text p stop (Spans.buffer spans)
               (Ints.buffer ids) (Ints.buffer marks) cur unicode t
-        | Cl100k { digits; marks = letters } ->
-            Kernel.cl100k_encode text p stop (Spans.buffer spans)
+        | (Cl100k _ | O200k _) as walker ->
+            Kernel.split_encode text p stop (Spans.buffer spans)
               (Ints.buffer ids) (Ints.buffer marks) cur unicode t
-              ((digits lsl 1) lor Bool.to_int letters)
+              (packed_walker walker)
       in
       Spans.set_count spans (Kernel.spans cur);
       Ints.set_length ids (Kernel.ids cur);
@@ -1529,10 +1536,9 @@ let encode_walk_ids32 model st ~walker sink spill ~opaque ~marks spans text ~pos
         | Gpt2 ->
             Kernel.byte_level_encode_ids32 text p stop (Spans.buffer spans)
               sink.ba (Ints.buffer marks) cur unicode t
-        | Cl100k { digits; marks = letters } ->
-            Kernel.cl100k_encode_ids32 text p stop (Spans.buffer spans) sink.ba
-              (Ints.buffer marks) cur unicode t
-              ((digits lsl 1) lor Bool.to_int letters)
+        | (Cl100k _ | O200k _) as walker ->
+            Kernel.split_encode_ids32 text p stop (Spans.buffer spans) sink.ba
+              (Ints.buffer marks) cur unicode t (packed_walker walker)
       in
       Spans.set_count spans (Kernel.spans cur);
       sink.used <- Kernel.ids cur;

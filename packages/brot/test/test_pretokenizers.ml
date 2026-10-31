@@ -662,17 +662,47 @@ let o200k =
       {re|\s+|re};
     ]
 
+(* Tekken's pattern, in tekken.json and the tokenizer.json of Mistral NeMo. *)
+let tekken =
+  String.concat "|"
+    [
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|re};
+      {re|\p{N}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
+
+(* Kimi K2's pattern, o200k's with the Han script split out of its words by
+   class intersection. *)
+let kimi =
+  String.concat "|"
+    [
+      {re|[\p{Han}]+|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]+[\p{Ll}\p{Lm}\p{Lo}\p{M}&&[^\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|\p{N}{1,3}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
+
 (* A pattern brot knows is run by a walker written for it, and the same pattern
    in a group is not recognised and goes through the regular expression. Both
    are held to the same expectations. *)
 let unrecognised pattern = "(?:" ^ pattern ^ ")"
 
+(* A case run through the walker and through the regular expression. *)
+let walked_case ~pattern behavior ~invert text expected =
+  split_regex_case ~pattern behavior ~invert text expected;
+  split_regex_case ~pattern:(unrecognised pattern) behavior ~invert text
+    expected
+
 let test_split_regex_cl100k () =
-  let case ~pattern behavior ~invert text expected =
-    split_regex_case ~pattern behavior ~invert text expected;
-    split_regex_case ~pattern:(unrecognised pattern) behavior ~invert text
-      expected
-  in
+  let case = walked_case in
   case ~pattern:cl100k `Isolated ~invert:false "a  b"
     [ ("a", (0, 1)); (" ", (1, 2)); (" b", (2, 4)) ];
   case ~pattern:cl100k `Isolated ~invert:false "x\x0A\x0A  y"
@@ -860,7 +890,7 @@ let test_split_regex_cl100k () =
     ]
 
 let test_split_regex_o200k () =
-  let case = split_regex_case in
+  let case = walked_case in
   case ~pattern:o200k `Isolated ~invert:false "Hello World"
     [ ("Hello", (0, 5)); (" World", (5, 11)) ];
   case ~pattern:o200k `Isolated ~invert:false "helloWorld"
@@ -885,7 +915,832 @@ let test_split_regex_o200k () =
   case ~pattern:o200k `Isolated ~invert:false "e\xCC\x81A\xCC\x81b"
     [ ("e\xCC\x81", (0, 3)); ("A\xCC\x81b", (3, 7)) ];
   case ~pattern:o200k `Isolated ~invert:false "\xC7\x85a"
-    [ ("\xC7\x85a", (0, 3)) ]
+    [ ("\xC7\x85a", (0, 3)) ];
+  (* Case runs, marks, scripts, contractions, numbers, punctuation, emoji and
+     whitespace. *)
+  case ~pattern:o200k `Isolated ~invert:false "iPhone eBay HTTPServer"
+    [
+      ("i", (0, 1));
+      ("Phone", (1, 6));
+      (" e", (6, 8));
+      ("Bay", (8, 11));
+      (" HTTPServer", (11, 22));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xC3\x89COLE\xC3\xA9cole \xC4\xB0stanbul"
+    [ ("\xC3\x89COLE\xC3\xA9cole", (0, 12)); (" \xC4\xB0stanbul", (12, 22)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\xE6\x97\xA5\xE6\x9C\xACA"
+    [ ("\xE6\x97\xA5\xE6\x9C\xAC", (0, 6)); ("A", (6, 7)) ];
+  case ~pattern:o200k `Isolated ~invert:false "A\xE6\x97\xA5B"
+    [ ("A\xE6\x97\xA5", (0, 4)); ("B", (4, 5)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\xCA\xB0A A\xCA\xB0 A\xCA\xB0B"
+    [
+      ("\xCA\xB0", (0, 2));
+      ("A", (2, 3));
+      (" A\xCA\xB0", (3, 7));
+      (" A\xCA\xB0", (7, 11));
+      ("B", (11, 12));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false "\xC7\x85ungla \xC7\x84A"
+    [ ("\xC7\x85ungla", (0, 7)); (" \xC7\x84A", (7, 11)) ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xF0\x9D\x90\x80\xF0\x9D\x90\x81c \xF0\x9D\x90\x80b"
+    [
+      ("\xF0\x9D\x90\x80\xF0\x9D\x90\x81c", (0, 9));
+      (" \xF0\x9D\x90\x80b", (9, 15));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false "\xEF\xAC\x81ne Stra\xC3\x9Fe"
+    [ ("\xEF\xAC\x81ne", (0, 5)); (" Stra\xC3\x9Fe", (5, 13)) ];
+  case ~pattern:o200k `Isolated ~invert:false "a\xCC\x81B \xCC\x81A"
+    [
+      ("a\xCC\x81", (0, 3)); ("B", (3, 4)); (" \xCC\x81", (4, 7)); ("A", (7, 8));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false "\xCC\x81"
+    [ ("\xCC\x81", (0, 2)) ];
+  case ~pattern:o200k `Isolated ~invert:false " \xCC\x81x"
+    [ (" \xCC\x81x", (0, 4)) ];
+  case ~pattern:o200k `Isolated ~invert:false "!\xCC\x81!"
+    [ ("!\xCC\x81", (0, 3)); ("!", (3, 4)) ];
+  case ~pattern:o200k `Isolated ~invert:false "e\xCC\x81\xCC\x81E"
+    [ ("e\xCC\x81\xCC\x81", (0, 5)); ("E", (5, 6)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\xCC\x81Z"
+    [ ("\xCC\x81", (0, 2)); ("Z", (2, 3)) ];
+  case ~pattern:o200k `Isolated ~invert:false "!\xCC\x81Z"
+    [ ("!\xCC\x81", (0, 3)); ("Z", (3, 4)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\xCC\x81\xE6\x97\xA5Z"
+    [ ("\xCC\x81\xE6\x97\xA5", (0, 5)); ("Z", (5, 6)) ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87 \xE0\xA4\xA6\xE0\xA5\x81\xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xBE"
+    [
+      ( "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87",
+        (0, 18) );
+      ( " \xE0\xA4\xA6\xE0\xA5\x81\xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xBE",
+        (18, 37) );
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\x9C\xD0\xB8\xD1\x80"
+    [
+      ("\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", (0, 12));
+      (" \xD0\x9C\xD0\xB8\xD1\x80", (12, 19));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xCE\x93\xCE\xB5\xCE\xB9\xCE\xAC \xCF\x83\xCE\xBF\xCF\x85"
+    [
+      ("\xCE\x93\xCE\xB5\xCE\xB9\xCE\xAC", (0, 8));
+      (" \xCF\x83\xCE\xBF\xCF\x85", (8, 15));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7123 \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D"
+    [
+      ("\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7", (0, 10));
+      ("123", (10, 13));
+      (" \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D", (13, 22));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4 \xED\x85\x8D\xEC\x8A\xA4\xED\x8A\xB8"
+    [
+      ("\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4", (0, 9));
+      (" \xED\x85\x8D\xEC\x8A\xA4\xED\x8A\xB8", (9, 19));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A\xE6\xBC\xA2\xE5\xAD\x97"
+    [
+      ( "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A\xE6\xBC\xA2\xE5\xAD\x97",
+        (0, 30) );
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE4\xB8\xAD\xE6\x96\x87\xEF\xBC\x8C\xE6\xA0\x87\xE7\x82\xB9\xE3\x80\x82English\xE6\xB7\xB7\xE5\x90\x88"
+    [
+      ("\xE4\xB8\xAD\xE6\x96\x87", (0, 6));
+      ("\xEF\xBC\x8C\xE6\xA0\x87\xE7\x82\xB9", (6, 15));
+      ("\xE3\x80\x82English\xE6\xB7\xB7\xE5\x90\x88", (15, 31));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9Eabc"
+    [ ("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9Eabc", (0, 12)) ];
+  case ~pattern:o200k `Isolated ~invert:false "Abc\xE6\x97\xA5's"
+    [ ("Abc\xE6\x97\xA5's", (0, 8)) ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE3\x80\x87\xE4\xB8\x80\xE4\xBA\x8C \xE3\x80\x85 a\xE3\x80\x85b \xE3\x80\x81\xE3\x80\x82"
+    [
+      ("\xE3\x80\x87", (0, 3));
+      ("\xE4\xB8\x80\xE4\xBA\x8C", (3, 9));
+      (" \xE3\x80\x85", (9, 13));
+      (" a\xE3\x80\x85b", (13, 19));
+      (" \xE3\x80\x81\xE3\x80\x82", (19, 26));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE2\xBA\x80\xE2\xBA\x81 \xF0\xA0\x80\x80\xF0\xA0\x80\x81 \xEF\xBD\xB6\xEF\xBE\x80\xEF\xBD\xB6\xEF\xBE\x85"
+    [
+      ("\xE2\xBA\x80\xE2\xBA\x81", (0, 6));
+      (" \xF0\xA0\x80\x80\xF0\xA0\x80\x81", (6, 15));
+      (" \xEF\xBD\xB6\xEF\xBE\x80\xEF\xBD\xB6\xEF\xBE\x85", (15, 28));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xE4\xB8\x80\xCC\x81 \xCC\x81\xE6\x97\xA5 !\xE6\x97\xA5 123\xE6\x97\xA5"
+    [
+      ("\xE4\xB8\x80\xCC\x81", (0, 5));
+      (" \xCC\x81\xE6\x97\xA5", (5, 11));
+      (" !", (11, 13));
+      ("\xE6\x97\xA5", (13, 16));
+      (" ", (16, 17));
+      ("123", (17, 20));
+      ("\xE6\x97\xA5", (20, 23));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "eBay's McDONALD'S OK'd won't' a'\xC5\xBF 'll x'LL"
+    [
+      ("e", (0, 1));
+      ("Bay's", (1, 6));
+      (" Mc", (6, 9));
+      ("DONALD'S", (9, 17));
+      (" OK'd", (17, 22));
+      (" won't", (22, 28));
+      ("'", (28, 29));
+      (" a'\xC5\xBF", (29, 34));
+      (" '", (34, 36));
+      ("ll", (36, 38));
+      (" x'LL", (38, 43));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "1234567 \xD9\xA1\xD9\xA2\xD9\xA3\xD9\xA4\xD9\xA5 \xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93 \xC2\xBD\xC2\xBE x\xC2\xB2 3.14159 12,345"
+    [
+      ("123", (0, 3));
+      ("456", (3, 6));
+      ("7", (6, 7));
+      (" ", (7, 8));
+      ("\xD9\xA1\xD9\xA2\xD9\xA3", (8, 14));
+      ("\xD9\xA4\xD9\xA5", (14, 18));
+      (" ", (18, 19));
+      ("\xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93", (19, 28));
+      (" ", (28, 29));
+      ("\xC2\xBD\xC2\xBE", (29, 33));
+      (" x", (33, 35));
+      ("\xC2\xB2", (35, 37));
+      (" ", (37, 38));
+      ("3", (38, 39));
+      (".", (39, 40));
+      ("141", (40, 43));
+      ("59", (43, 45));
+      (" ", (45, 46));
+      ("12", (46, 48));
+      (",", (48, 49));
+      ("345", (49, 52));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false "a/b/c http://x.y/z \\/"
+    [
+      ("a", (0, 1));
+      ("/b", (1, 3));
+      ("/c", (3, 5));
+      (" http", (5, 10));
+      ("://", (10, 13));
+      ("x", (13, 14));
+      (".y", (14, 16));
+      ("/z", (16, 18));
+      (" \\/", (18, 21));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false " //\x0A//"
+    [ (" //\x0A//", (0, 6)) ];
+  case ~pattern:o200k `Isolated ~invert:false "!/\x0D\x0A/a"
+    [ ("!/\x0D\x0A/", (0, 5)); ("a", (5, 6)) ];
+  case ~pattern:o200k `Isolated ~invert:false "(a) [b] {c}"
+    [
+      ("(a", (0, 2));
+      (")", (2, 3));
+      (" [", (3, 5));
+      ("b", (5, 6));
+      ("]", (6, 7));
+      (" {", (7, 9));
+      ("c", (9, 10));
+      ("}", (10, 11));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xF0\x9F\x98\x80\xF0\x9F\x98\x80 a\xF0\x9F\x98\x80b"
+    [
+      ("\xF0\x9F\x98\x80\xF0\x9F\x98\x80", (0, 8));
+      (" a", (8, 10));
+      ("\xF0\x9F\x98\x80b", (10, 15));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 \xE2\x9D\xA4\xEF\xB8\x8Fok"
+    [
+      ( "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7",
+        (0, 18) );
+      (" \xE2\x9D\xA4\xEF\xB8\x8F", (18, 25));
+      ("ok", (25, 27));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false
+    "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7 \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD"
+    [
+      ("\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7", (0, 8));
+      (" \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", (8, 17));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false "a\xE3\x80\x80b \xC2\xA0\xC2\xA0x"
+    [
+      ("a", (0, 1));
+      ("\xE3\x80\x80b", (1, 5));
+      (" \xC2\xA0", (5, 8));
+      ("\xC2\xA0x", (8, 11));
+    ];
+  case ~pattern:o200k `Isolated ~invert:false "  \x09\x0A  x"
+    [ ("  \x09\x0A", (0, 4)); (" ", (4, 5)); (" x", (5, 7)) ];
+  case ~pattern:o200k `Isolated ~invert:false "x \x0A"
+    [ ("x", (0, 1)); (" \x0A", (1, 3)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\x0A\x0A\x0A"
+    [ ("\x0A\x0A\x0A", (0, 3)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\x0D\x0A\x0D\x0A"
+    [ ("\x0D\x0A\x0D\x0A", (0, 4)) ];
+  case ~pattern:o200k `Isolated ~invert:false " \x0D\x0A x"
+    [ (" \x0D\x0A", (0, 3)); (" x", (3, 5)) ];
+  case ~pattern:o200k `Isolated ~invert:false "a   "
+    [ ("a", (0, 1)); ("   ", (1, 4)) ];
+  case ~pattern:o200k `Isolated ~invert:false "\xE2\x80\xA8a \xC2\x85a"
+    [ ("\xE2\x80\xA8a", (0, 4)); (" ", (4, 5)); ("\xC2\x85a", (5, 8)) ]
+
+(* The texts of the o200k cases, words without contractions and numbers one at
+   a time. *)
+let test_split_regex_tekken () =
+  let case = walked_case in
+  case ~pattern:tekken `Isolated ~invert:false "iPhone eBay HTTPServer"
+    [
+      ("i", (0, 1));
+      ("Phone", (1, 6));
+      (" e", (6, 8));
+      ("Bay", (8, 11));
+      (" HTTPServer", (11, 22));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xC3\x89COLE\xC3\xA9cole \xC4\xB0stanbul"
+    [ ("\xC3\x89COLE\xC3\xA9cole", (0, 12)); (" \xC4\xB0stanbul", (12, 22)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\xE6\x97\xA5\xE6\x9C\xACA"
+    [ ("\xE6\x97\xA5\xE6\x9C\xAC", (0, 6)); ("A", (6, 7)) ];
+  case ~pattern:tekken `Isolated ~invert:false "A\xE6\x97\xA5B"
+    [ ("A\xE6\x97\xA5", (0, 4)); ("B", (4, 5)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\xCA\xB0A A\xCA\xB0 A\xCA\xB0B"
+    [
+      ("\xCA\xB0", (0, 2));
+      ("A", (2, 3));
+      (" A\xCA\xB0", (3, 7));
+      (" A\xCA\xB0", (7, 11));
+      ("B", (11, 12));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false "\xC7\x85ungla \xC7\x84A"
+    [ ("\xC7\x85ungla", (0, 7)); (" \xC7\x84A", (7, 11)) ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xF0\x9D\x90\x80\xF0\x9D\x90\x81c \xF0\x9D\x90\x80b"
+    [
+      ("\xF0\x9D\x90\x80\xF0\x9D\x90\x81c", (0, 9));
+      (" \xF0\x9D\x90\x80b", (9, 15));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false "\xEF\xAC\x81ne Stra\xC3\x9Fe"
+    [ ("\xEF\xAC\x81ne", (0, 5)); (" Stra\xC3\x9Fe", (5, 13)) ];
+  case ~pattern:tekken `Isolated ~invert:false "a\xCC\x81B \xCC\x81A"
+    [
+      ("a\xCC\x81", (0, 3)); ("B", (3, 4)); (" \xCC\x81", (4, 7)); ("A", (7, 8));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false "\xCC\x81"
+    [ ("\xCC\x81", (0, 2)) ];
+  case ~pattern:tekken `Isolated ~invert:false " \xCC\x81x"
+    [ (" \xCC\x81x", (0, 4)) ];
+  case ~pattern:tekken `Isolated ~invert:false "!\xCC\x81!"
+    [ ("!\xCC\x81", (0, 3)); ("!", (3, 4)) ];
+  case ~pattern:tekken `Isolated ~invert:false "e\xCC\x81\xCC\x81E"
+    [ ("e\xCC\x81\xCC\x81", (0, 5)); ("E", (5, 6)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\xCC\x81Z"
+    [ ("\xCC\x81", (0, 2)); ("Z", (2, 3)) ];
+  case ~pattern:tekken `Isolated ~invert:false "!\xCC\x81Z"
+    [ ("!\xCC\x81", (0, 3)); ("Z", (3, 4)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\xCC\x81\xE6\x97\xA5Z"
+    [ ("\xCC\x81\xE6\x97\xA5", (0, 5)); ("Z", (5, 6)) ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87 \xE0\xA4\xA6\xE0\xA5\x81\xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xBE"
+    [
+      ( "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87",
+        (0, 18) );
+      ( " \xE0\xA4\xA6\xE0\xA5\x81\xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xBE",
+        (18, 37) );
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\x9C\xD0\xB8\xD1\x80"
+    [
+      ("\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", (0, 12));
+      (" \xD0\x9C\xD0\xB8\xD1\x80", (12, 19));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xCE\x93\xCE\xB5\xCE\xB9\xCE\xAC \xCF\x83\xCE\xBF\xCF\x85"
+    [
+      ("\xCE\x93\xCE\xB5\xCE\xB9\xCE\xAC", (0, 8));
+      (" \xCF\x83\xCE\xBF\xCF\x85", (8, 15));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7123 \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D"
+    [
+      ("\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7", (0, 10));
+      ("1", (10, 11));
+      ("2", (11, 12));
+      ("3", (12, 13));
+      (" \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D", (13, 22));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4 \xED\x85\x8D\xEC\x8A\xA4\xED\x8A\xB8"
+    [
+      ("\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4", (0, 9));
+      (" \xED\x85\x8D\xEC\x8A\xA4\xED\x8A\xB8", (9, 19));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A\xE6\xBC\xA2\xE5\xAD\x97"
+    [
+      ( "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A\xE6\xBC\xA2\xE5\xAD\x97",
+        (0, 30) );
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE4\xB8\xAD\xE6\x96\x87\xEF\xBC\x8C\xE6\xA0\x87\xE7\x82\xB9\xE3\x80\x82English\xE6\xB7\xB7\xE5\x90\x88"
+    [
+      ("\xE4\xB8\xAD\xE6\x96\x87", (0, 6));
+      ("\xEF\xBC\x8C\xE6\xA0\x87\xE7\x82\xB9", (6, 15));
+      ("\xE3\x80\x82English\xE6\xB7\xB7\xE5\x90\x88", (15, 31));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9Eabc"
+    [ ("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9Eabc", (0, 12)) ];
+  case ~pattern:tekken `Isolated ~invert:false "Abc\xE6\x97\xA5's"
+    [ ("Abc\xE6\x97\xA5", (0, 6)); ("'s", (6, 8)) ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE3\x80\x87\xE4\xB8\x80\xE4\xBA\x8C \xE3\x80\x85 a\xE3\x80\x85b \xE3\x80\x81\xE3\x80\x82"
+    [
+      ("\xE3\x80\x87", (0, 3));
+      ("\xE4\xB8\x80\xE4\xBA\x8C", (3, 9));
+      (" \xE3\x80\x85", (9, 13));
+      (" a\xE3\x80\x85b", (13, 19));
+      (" \xE3\x80\x81\xE3\x80\x82", (19, 26));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE2\xBA\x80\xE2\xBA\x81 \xF0\xA0\x80\x80\xF0\xA0\x80\x81 \xEF\xBD\xB6\xEF\xBE\x80\xEF\xBD\xB6\xEF\xBE\x85"
+    [
+      ("\xE2\xBA\x80\xE2\xBA\x81", (0, 6));
+      (" \xF0\xA0\x80\x80\xF0\xA0\x80\x81", (6, 15));
+      (" \xEF\xBD\xB6\xEF\xBE\x80\xEF\xBD\xB6\xEF\xBE\x85", (15, 28));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xE4\xB8\x80\xCC\x81 \xCC\x81\xE6\x97\xA5 !\xE6\x97\xA5 123\xE6\x97\xA5"
+    [
+      ("\xE4\xB8\x80\xCC\x81", (0, 5));
+      (" \xCC\x81\xE6\x97\xA5", (5, 11));
+      (" !", (11, 13));
+      ("\xE6\x97\xA5", (13, 16));
+      (" ", (16, 17));
+      ("1", (17, 18));
+      ("2", (18, 19));
+      ("3", (19, 20));
+      ("\xE6\x97\xA5", (20, 23));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "eBay's McDONALD'S OK'd won't' a'\xC5\xBF 'll x'LL"
+    [
+      ("e", (0, 1));
+      ("Bay", (1, 4));
+      ("'s", (4, 6));
+      (" Mc", (6, 9));
+      ("DONALD", (9, 15));
+      ("'S", (15, 17));
+      (" OK", (17, 20));
+      ("'d", (20, 22));
+      (" won", (22, 26));
+      ("'t", (26, 28));
+      ("'", (28, 29));
+      (" a", (29, 31));
+      ("'\xC5\xBF", (31, 34));
+      (" '", (34, 36));
+      ("ll", (36, 38));
+      (" x", (38, 40));
+      ("'LL", (40, 43));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "1234567 \xD9\xA1\xD9\xA2\xD9\xA3\xD9\xA4\xD9\xA5 \xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93 \xC2\xBD\xC2\xBE x\xC2\xB2 3.14159 12,345"
+    [
+      ("1", (0, 1));
+      ("2", (1, 2));
+      ("3", (2, 3));
+      ("4", (3, 4));
+      ("5", (4, 5));
+      ("6", (5, 6));
+      ("7", (6, 7));
+      (" ", (7, 8));
+      ("\xD9\xA1", (8, 10));
+      ("\xD9\xA2", (10, 12));
+      ("\xD9\xA3", (12, 14));
+      ("\xD9\xA4", (14, 16));
+      ("\xD9\xA5", (16, 18));
+      (" ", (18, 19));
+      ("\xEF\xBC\x91", (19, 22));
+      ("\xEF\xBC\x92", (22, 25));
+      ("\xEF\xBC\x93", (25, 28));
+      (" ", (28, 29));
+      ("\xC2\xBD", (29, 31));
+      ("\xC2\xBE", (31, 33));
+      (" x", (33, 35));
+      ("\xC2\xB2", (35, 37));
+      (" ", (37, 38));
+      ("3", (38, 39));
+      (".", (39, 40));
+      ("1", (40, 41));
+      ("4", (41, 42));
+      ("1", (42, 43));
+      ("5", (43, 44));
+      ("9", (44, 45));
+      (" ", (45, 46));
+      ("1", (46, 47));
+      ("2", (47, 48));
+      (",", (48, 49));
+      ("3", (49, 50));
+      ("4", (50, 51));
+      ("5", (51, 52));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false "a/b/c http://x.y/z \\/"
+    [
+      ("a", (0, 1));
+      ("/b", (1, 3));
+      ("/c", (3, 5));
+      (" http", (5, 10));
+      ("://", (10, 13));
+      ("x", (13, 14));
+      (".y", (14, 16));
+      ("/z", (16, 18));
+      (" \\/", (18, 21));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false " //\x0A//"
+    [ (" //\x0A//", (0, 6)) ];
+  case ~pattern:tekken `Isolated ~invert:false "!/\x0D\x0A/a"
+    [ ("!/\x0D\x0A/", (0, 5)); ("a", (5, 6)) ];
+  case ~pattern:tekken `Isolated ~invert:false "(a) [b] {c}"
+    [
+      ("(a", (0, 2));
+      (")", (2, 3));
+      (" [", (3, 5));
+      ("b", (5, 6));
+      ("]", (6, 7));
+      (" {", (7, 9));
+      ("c", (9, 10));
+      ("}", (10, 11));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xF0\x9F\x98\x80\xF0\x9F\x98\x80 a\xF0\x9F\x98\x80b"
+    [
+      ("\xF0\x9F\x98\x80\xF0\x9F\x98\x80", (0, 8));
+      (" a", (8, 10));
+      ("\xF0\x9F\x98\x80b", (10, 15));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 \xE2\x9D\xA4\xEF\xB8\x8Fok"
+    [
+      ( "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7",
+        (0, 18) );
+      (" \xE2\x9D\xA4\xEF\xB8\x8F", (18, 25));
+      ("ok", (25, 27));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7 \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD"
+    [
+      ("\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7", (0, 8));
+      (" \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", (8, 17));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false
+    "a\xE3\x80\x80b \xC2\xA0\xC2\xA0x"
+    [
+      ("a", (0, 1));
+      ("\xE3\x80\x80b", (1, 5));
+      (" \xC2\xA0", (5, 8));
+      ("\xC2\xA0x", (8, 11));
+    ];
+  case ~pattern:tekken `Isolated ~invert:false "  \x09\x0A  x"
+    [ ("  \x09\x0A", (0, 4)); (" ", (4, 5)); (" x", (5, 7)) ];
+  case ~pattern:tekken `Isolated ~invert:false "x \x0A"
+    [ ("x", (0, 1)); (" \x0A", (1, 3)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\x0A\x0A\x0A"
+    [ ("\x0A\x0A\x0A", (0, 3)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\x0D\x0A\x0D\x0A"
+    [ ("\x0D\x0A\x0D\x0A", (0, 4)) ];
+  case ~pattern:tekken `Isolated ~invert:false " \x0D\x0A x"
+    [ (" \x0D\x0A", (0, 3)); (" x", (3, 5)) ];
+  case ~pattern:tekken `Isolated ~invert:false "a   "
+    [ ("a", (0, 1)); ("   ", (1, 4)) ];
+  case ~pattern:tekken `Isolated ~invert:false "\xE2\x80\xA8a \xC2\x85a"
+    [ ("\xE2\x80\xA8a", (0, 4)); (" ", (4, 5)); ("\xC2\x85a", (5, 8)) ]
+
+(* No walker runs Kimi's pattern: its Han runs and intersected classes go
+   through the regular expression. *)
+let test_split_regex_kimi () =
+  let case = split_regex_case in
+  case ~pattern:kimi `Isolated ~invert:false "iPhone eBay HTTPServer"
+    [
+      ("i", (0, 1));
+      ("Phone", (1, 6));
+      (" e", (6, 8));
+      ("Bay", (8, 11));
+      (" HTTPServer", (11, 22));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xC3\x89COLE\xC3\xA9cole \xC4\xB0stanbul"
+    [ ("\xC3\x89COLE\xC3\xA9cole", (0, 12)); (" \xC4\xB0stanbul", (12, 22)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\xE6\x97\xA5\xE6\x9C\xACA"
+    [ ("\xE6\x97\xA5\xE6\x9C\xAC", (0, 6)); ("A", (6, 7)) ];
+  case ~pattern:kimi `Isolated ~invert:false "A\xE6\x97\xA5B"
+    [ ("A", (0, 1)); ("\xE6\x97\xA5", (1, 4)); ("B", (4, 5)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\xCA\xB0A A\xCA\xB0 A\xCA\xB0B"
+    [
+      ("\xCA\xB0", (0, 2));
+      ("A", (2, 3));
+      (" A\xCA\xB0", (3, 7));
+      (" A\xCA\xB0", (7, 11));
+      ("B", (11, 12));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false "\xC7\x85ungla \xC7\x84A"
+    [ ("\xC7\x85ungla", (0, 7)); (" \xC7\x84A", (7, 11)) ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xF0\x9D\x90\x80\xF0\x9D\x90\x81c \xF0\x9D\x90\x80b"
+    [
+      ("\xF0\x9D\x90\x80\xF0\x9D\x90\x81c", (0, 9));
+      (" \xF0\x9D\x90\x80b", (9, 15));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false "\xEF\xAC\x81ne Stra\xC3\x9Fe"
+    [ ("\xEF\xAC\x81ne", (0, 5)); (" Stra\xC3\x9Fe", (5, 13)) ];
+  case ~pattern:kimi `Isolated ~invert:false "a\xCC\x81B \xCC\x81A"
+    [
+      ("a\xCC\x81", (0, 3)); ("B", (3, 4)); (" \xCC\x81", (4, 7)); ("A", (7, 8));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false "\xCC\x81" [ ("\xCC\x81", (0, 2)) ];
+  case ~pattern:kimi `Isolated ~invert:false " \xCC\x81x"
+    [ (" \xCC\x81x", (0, 4)) ];
+  case ~pattern:kimi `Isolated ~invert:false "!\xCC\x81!"
+    [ ("!\xCC\x81", (0, 3)); ("!", (3, 4)) ];
+  case ~pattern:kimi `Isolated ~invert:false "e\xCC\x81\xCC\x81E"
+    [ ("e\xCC\x81\xCC\x81", (0, 5)); ("E", (5, 6)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\xCC\x81Z"
+    [ ("\xCC\x81", (0, 2)); ("Z", (2, 3)) ];
+  case ~pattern:kimi `Isolated ~invert:false "!\xCC\x81Z"
+    [ ("!\xCC\x81", (0, 3)); ("Z", (3, 4)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\xCC\x81\xE6\x97\xA5Z"
+    [ ("\xCC\x81", (0, 2)); ("\xE6\x97\xA5", (2, 5)); ("Z", (5, 6)) ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87 \xE0\xA4\xA6\xE0\xA5\x81\xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xBE"
+    [
+      ( "\xE0\xA4\xA8\xE0\xA4\xAE\xE0\xA4\xB8\xE0\xA5\x8D\xE0\xA4\xA4\xE0\xA5\x87",
+        (0, 18) );
+      ( " \xE0\xA4\xA6\xE0\xA5\x81\xE0\xA4\xA8\xE0\xA4\xBF\xE0\xA4\xAF\xE0\xA4\xBE",
+        (18, 37) );
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82 \xD0\x9C\xD0\xB8\xD1\x80"
+    [
+      ("\xD0\x9F\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82", (0, 12));
+      (" \xD0\x9C\xD0\xB8\xD1\x80", (12, 19));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xCE\x93\xCE\xB5\xCE\xB9\xCE\xAC \xCF\x83\xCE\xBF\xCF\x85"
+    [
+      ("\xCE\x93\xCE\xB5\xCE\xB9\xCE\xAC", (0, 8));
+      (" \xCF\x83\xCE\xBF\xCF\x85", (8, 15));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7123 \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D"
+    [
+      ("\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7", (0, 10));
+      ("123", (10, 13));
+      (" \xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D", (13, 22));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4 \xED\x85\x8D\xEC\x8A\xA4\xED\x8A\xB8"
+    [
+      ("\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4", (0, 9));
+      (" \xED\x85\x8D\xEC\x8A\xA4\xED\x8A\xB8", (9, 19));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A\xE6\xBC\xA2\xE5\xAD\x97"
+    [
+      ( "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A",
+        (0, 24) );
+      ("\xE6\xBC\xA2\xE5\xAD\x97", (24, 30));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE4\xB8\xAD\xE6\x96\x87\xEF\xBC\x8C\xE6\xA0\x87\xE7\x82\xB9\xE3\x80\x82English\xE6\xB7\xB7\xE5\x90\x88"
+    [
+      ("\xE4\xB8\xAD\xE6\x96\x87", (0, 6));
+      ("\xEF\xBC\x8C", (6, 9));
+      ("\xE6\xA0\x87\xE7\x82\xB9", (9, 15));
+      ("\xE3\x80\x82English", (15, 25));
+      ("\xE6\xB7\xB7\xE5\x90\x88", (25, 31));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9Eabc"
+    [ ("\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", (0, 9)); ("abc", (9, 12)) ];
+  case ~pattern:kimi `Isolated ~invert:false "Abc\xE6\x97\xA5's"
+    [ ("Abc", (0, 3)); ("\xE6\x97\xA5", (3, 6)); ("'s", (6, 8)) ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE3\x80\x87\xE4\xB8\x80\xE4\xBA\x8C \xE3\x80\x85 a\xE3\x80\x85b \xE3\x80\x81\xE3\x80\x82"
+    [
+      ("\xE3\x80\x87\xE4\xB8\x80\xE4\xBA\x8C", (0, 9));
+      (" ", (9, 10));
+      ("\xE3\x80\x85", (10, 13));
+      (" a", (13, 15));
+      ("\xE3\x80\x85", (15, 18));
+      ("b", (18, 19));
+      (" \xE3\x80\x81\xE3\x80\x82", (19, 26));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE2\xBA\x80\xE2\xBA\x81 \xF0\xA0\x80\x80\xF0\xA0\x80\x81 \xEF\xBD\xB6\xEF\xBE\x80\xEF\xBD\xB6\xEF\xBE\x85"
+    [
+      ("\xE2\xBA\x80\xE2\xBA\x81", (0, 6));
+      (" ", (6, 7));
+      ("\xF0\xA0\x80\x80\xF0\xA0\x80\x81", (7, 15));
+      (" \xEF\xBD\xB6\xEF\xBE\x80\xEF\xBD\xB6\xEF\xBE\x85", (15, 28));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xE4\xB8\x80\xCC\x81 \xCC\x81\xE6\x97\xA5 !\xE6\x97\xA5 123\xE6\x97\xA5"
+    [
+      ("\xE4\xB8\x80", (0, 3));
+      ("\xCC\x81", (3, 5));
+      (" \xCC\x81", (5, 8));
+      ("\xE6\x97\xA5", (8, 11));
+      (" !", (11, 13));
+      ("\xE6\x97\xA5", (13, 16));
+      (" ", (16, 17));
+      ("123", (17, 20));
+      ("\xE6\x97\xA5", (20, 23));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "eBay's McDONALD'S OK'd won't' a'\xC5\xBF 'll x'LL"
+    [
+      ("e", (0, 1));
+      ("Bay's", (1, 6));
+      (" Mc", (6, 9));
+      ("DONALD'S", (9, 17));
+      (" OK'd", (17, 22));
+      (" won't", (22, 28));
+      ("'", (28, 29));
+      (" a'\xC5\xBF", (29, 34));
+      (" '", (34, 36));
+      ("ll", (36, 38));
+      (" x'LL", (38, 43));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "1234567 \xD9\xA1\xD9\xA2\xD9\xA3\xD9\xA4\xD9\xA5 \xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93 \xC2\xBD\xC2\xBE x\xC2\xB2 3.14159 12,345"
+    [
+      ("123", (0, 3));
+      ("456", (3, 6));
+      ("7", (6, 7));
+      (" ", (7, 8));
+      ("\xD9\xA1\xD9\xA2\xD9\xA3", (8, 14));
+      ("\xD9\xA4\xD9\xA5", (14, 18));
+      (" ", (18, 19));
+      ("\xEF\xBC\x91\xEF\xBC\x92\xEF\xBC\x93", (19, 28));
+      (" ", (28, 29));
+      ("\xC2\xBD\xC2\xBE", (29, 33));
+      (" x", (33, 35));
+      ("\xC2\xB2", (35, 37));
+      (" ", (37, 38));
+      ("3", (38, 39));
+      (".", (39, 40));
+      ("141", (40, 43));
+      ("59", (43, 45));
+      (" ", (45, 46));
+      ("12", (46, 48));
+      (",", (48, 49));
+      ("345", (49, 52));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false "a/b/c http://x.y/z \\/"
+    [
+      ("a", (0, 1));
+      ("/b", (1, 3));
+      ("/c", (3, 5));
+      (" http", (5, 10));
+      ("://", (10, 13));
+      ("x", (13, 14));
+      (".y", (14, 16));
+      ("/z", (16, 18));
+      (" \\/", (18, 21));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false " //\x0A//"
+    [ (" //\x0A", (0, 4)); ("//", (4, 6)) ];
+  case ~pattern:kimi `Isolated ~invert:false "!/\x0D\x0A/a"
+    [ ("!/\x0D\x0A", (0, 4)); ("/a", (4, 6)) ];
+  case ~pattern:kimi `Isolated ~invert:false "(a) [b] {c}"
+    [
+      ("(a", (0, 2));
+      (")", (2, 3));
+      (" [", (3, 5));
+      ("b", (5, 6));
+      ("]", (6, 7));
+      (" {", (7, 9));
+      ("c", (9, 10));
+      ("}", (10, 11));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xF0\x9F\x98\x80\xF0\x9F\x98\x80 a\xF0\x9F\x98\x80b"
+    [
+      ("\xF0\x9F\x98\x80\xF0\x9F\x98\x80", (0, 8));
+      (" a", (8, 10));
+      ("\xF0\x9F\x98\x80b", (10, 15));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 \xE2\x9D\xA4\xEF\xB8\x8Fok"
+    [
+      ( "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7",
+        (0, 18) );
+      (" \xE2\x9D\xA4\xEF\xB8\x8F", (18, 25));
+      ("ok", (25, 27));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false
+    "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7 \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD"
+    [
+      ("\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7", (0, 8));
+      (" \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", (8, 17));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false "a\xE3\x80\x80b \xC2\xA0\xC2\xA0x"
+    [
+      ("a", (0, 1));
+      ("\xE3\x80\x80b", (1, 5));
+      (" \xC2\xA0", (5, 8));
+      ("\xC2\xA0x", (8, 11));
+    ];
+  case ~pattern:kimi `Isolated ~invert:false "  \x09\x0A  x"
+    [ ("  \x09\x0A", (0, 4)); (" ", (4, 5)); (" x", (5, 7)) ];
+  case ~pattern:kimi `Isolated ~invert:false "x \x0A"
+    [ ("x", (0, 1)); (" \x0A", (1, 3)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\x0A\x0A\x0A"
+    [ ("\x0A\x0A\x0A", (0, 3)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\x0D\x0A\x0D\x0A"
+    [ ("\x0D\x0A\x0D\x0A", (0, 4)) ];
+  case ~pattern:kimi `Isolated ~invert:false " \x0D\x0A x"
+    [ (" \x0D\x0A", (0, 3)); (" x", (3, 5)) ];
+  case ~pattern:kimi `Isolated ~invert:false "a   "
+    [ ("a", (0, 1)); ("   ", (1, 4)) ];
+  case ~pattern:kimi `Isolated ~invert:false "\xE2\x80\xA8a \xC2\x85a"
+    [ ("\xE2\x80\xA8a", (0, 4)); (" ", (4, 5)); ("\xC2\x85a", (5, 8)) ]
+
+(* Nested classes, their intersection, and scripts. *)
+let test_split_regex_classes () =
+  let case = split_regex_case in
+  case ~pattern:"[a-z&&[^aeiou]]+" `Isolated ~invert:false "abcdefe"
+    [
+      ("a", (0, 1)); ("bcd", (1, 4)); ("e", (4, 5)); ("f", (5, 6)); ("e", (6, 7));
+    ];
+  case ~pattern:"[^a-z&&[^aeiou]]+" `Isolated ~invert:false "abcdefe1"
+    [
+      ("a", (0, 1));
+      ("bcd", (1, 4));
+      ("e", (4, 5));
+      ("f", (5, 6));
+      ("e1", (6, 8));
+    ];
+  case ~pattern:"[a-z&&b-d&&c-z]+" `Isolated ~invert:false "abcdefe"
+    [ ("ab", (0, 2)); ("cd", (2, 4)); ("efe", (4, 7)) ];
+  case ~pattern:"[a&&]+" `Isolated ~invert:false "a&b" [ ("a&b", (0, 3)) ];
+  case ~pattern:"[&&a]+" `Isolated ~invert:false "a&b" [ ("a&b", (0, 3)) ];
+  case ~pattern:"[a[bc]d]+" `Isolated ~invert:false "abcdex"
+    [ ("abcd", (0, 4)); ("ex", (4, 6)) ];
+  case ~pattern:"[[^a]&&[^b]]+" `Isolated ~invert:false "abcab"
+    [ ("ab", (0, 2)); ("c", (2, 3)); ("ab", (3, 5)) ];
+  case ~pattern:"[\\p{L}&&\\p{Greek}]+" `Isolated ~invert:false
+    "a\xCE\xB2\xCE\xB3d1"
+    [ ("a", (0, 1)); ("\xCE\xB2\xCE\xB3", (1, 5)); ("d1", (5, 7)) ];
+  case ~pattern:"\\p{Han}+" `Isolated ~invert:false
+    "a\xE6\x97\xA5\xE6\x9C\xACb\xE3\x80\x87\xE3\x80\x81\xE3\x80\x85\xE3\x83\xBC"
+    [
+      ("a", (0, 1));
+      ("\xE6\x97\xA5\xE6\x9C\xAC", (1, 7));
+      ("b", (7, 8));
+      ("\xE3\x80\x87", (8, 11));
+      ("\xE3\x80\x81", (11, 14));
+      ("\xE3\x80\x85", (14, 17));
+      ("\xE3\x83\xBC", (17, 20));
+    ];
+  case ~pattern:"\\p{Hani}+|\\p{Latin}+" `Isolated ~invert:false
+    "ab\xE6\x97\xA5\xE6\x9C\xAC\xCE\xA9c"
+    [
+      ("ab", (0, 2));
+      ("\xE6\x97\xA5\xE6\x9C\xAC", (2, 8));
+      ("\xCE\xA9", (8, 10));
+      ("c", (10, 11));
+    ];
+  case ~pattern:"\\P{Han}+" `Isolated ~invert:false "\xE6\x97\xA5a\xE6\x9C\xAC"
+    [ ("\xE6\x97\xA5", (0, 3)); ("a", (3, 4)); ("\xE6\x9C\xAC", (4, 7)) ];
+  case ~pattern:"[^\\p{Han}]+" `Isolated ~invert:false
+    "\xE6\x97\xA5a\xE6\x9C\xAC"
+    [ ("\xE6\x97\xA5", (0, 3)); ("a", (3, 4)); ("\xE6\x9C\xAC", (4, 7)) ];
+  case ~pattern:"\\p{Hiragana}+|\\p{Katakana}+" `Isolated ~invert:false
+    "\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A\xE3\x83\xBC"
+    [
+      ("\xE3\x81\xB2\xE3\x82\x89\xE3\x81\x8C\xE3\x81\xAA", (0, 12));
+      ("\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A", (12, 24));
+      ("\xE3\x83\xBC", (24, 27));
+    ];
+  case ~pattern:"\\p{Common}+" `Isolated ~invert:false "a1!\xE3\x80\x81b"
+    [ ("a", (0, 1)); ("1!\xE3\x80\x81", (1, 6)); ("b", (6, 7)) ];
+  case ~pattern:"\\p{Inherited}+" `Isolated ~invert:false "a\xCC\x81\xCC\x82b"
+    [ ("a", (0, 1)); ("\xCC\x81\xCC\x82", (1, 5)); ("b", (5, 6)) ];
+  case ~pattern:"\\p{Arabic}+" `Isolated ~invert:false
+    "abc \xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7"
+    [ ("abc ", (0, 4)); ("\xD9\x85\xD8\xB1\xD8\xAD\xD8\xA8\xD8\xA7", (4, 14)) ]
 
 let test_split_regex_behaviors () =
   let case = split_regex_case in
@@ -1075,7 +1930,24 @@ let test_split_regex_behaviors () =
   case ~pattern:"a(?=b)|b" `Merged_with_next ~invert:true "abab"
     [ ("a", (0, 1)); ("b", (1, 2)); ("a", (2, 3)); ("b", (3, 4)) ];
   case ~pattern:"a(?=b)|b" `Contiguous ~invert:false "abab" [ ("abab", (0, 4)) ];
-  case ~pattern:"a(?=b)|b" `Contiguous ~invert:true "abab" [ ("abab", (0, 4)) ]
+  case ~pattern:"a(?=b)|b" `Contiguous ~invert:true "abab" [ ("abab", (0, 4)) ];
+  case ~pattern:"x?x|x?y" `Isolated ~invert:false "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Isolated ~invert:true "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Removed ~invert:false "xy" [];
+  case ~pattern:"x?x|x?y" `Removed ~invert:true "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Merged_with_previous ~invert:false "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Merged_with_previous ~invert:true "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Merged_with_next ~invert:false "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Merged_with_next ~invert:true "xy"
+    [ ("x", (0, 1)); ("y", (1, 2)) ];
+  case ~pattern:"x?x|x?y" `Contiguous ~invert:false "xy" [ ("xy", (0, 2)) ];
+  case ~pattern:"x?x|x?y" `Contiguous ~invert:true "xy" [ ("xy", (0, 2)) ]
 
 (* HuggingFace takes no text that is not valid UTF-8. A byte that belongs to no
    character matches no class, so it is text between the matches, and [(?!\S)]
@@ -1156,6 +2028,8 @@ let walked =
     ("cl100k, HuggingFace spelling", cl100k_hf);
     ("qwen2", qwen2);
     ("qwen3.5", qwen35);
+    ("o200k", o200k);
+    ("tekken", tekken);
   ]
 
 let isolated pattern = Pre.split_regex ~pattern ~behavior:`Isolated ()
@@ -1177,9 +2051,7 @@ let contains ~sub s =
    the same: without this a pattern that stopped being recognised would only get
    slower. *)
 let test_split_regex_walkers () =
-  let walks pre =
-    contains ~sub:"walker=cl100k" (Format.asprintf "%a" Pre.pp pre)
-  in
+  let walks pre = contains ~sub:"walker=" (Format.asprintf "%a" Pre.pp pre) in
   List.iter
     (fun (name, pattern) ->
       equal ~msg:(name ^ " is walked") bool true (walks (isolated pattern));
@@ -1200,7 +2072,7 @@ let test_split_regex_walkers () =
         bool true
         (walks (kept_matches pattern)))
     walked;
-  equal ~msg:"o200k is not walked" bool false (walks (isolated o200k))
+  equal ~msg:"kimi is not walked" bool false (walks (isolated kimi))
 
 (* Each pattern as the walker runs it and as the regular expression does, its
    matches isolated and its matches kept. *)
@@ -1216,25 +2088,141 @@ let both_ways =
          ])
        walked)
 
+(* What the walked patterns tell characters apart by. *)
+type kind =
+  | Upper  (** [Lu] and [Lt]: in o200k's [U] only. *)
+  | Lower  (** [Ll]: in o200k's [W] only. *)
+  | Both  (** [Lm] and [Lo]: letters in [U] and [W]. *)
+  | Mark  (** In [U] and [W], and not a letter. *)
+  | Number
+  | Space  (** Whitespace other than the newlines. *)
+  | Newline
+  | Apostrophe
+  | Other
+  | Stray  (** A byte that belongs to no character. *)
+
 (* One representative of everything the patterns tell apart, and bytes that
    belong to no character. *)
-let cl100k_alphabet =
+let kinds =
   [
-    "a"; "Z"; "s"; "S"; "t"; "l"; "L"; "r"; "v"; "e"; "E"; "m"; "d";
-    "\xC5\xBF"; "\xC3\xA9"; "\xE6\x97\xA5"; "\xCC\x81"; "\xE0\xA4\xBF";
-    "1"; "\xD9\xA3"; "\xC2\xB2"; "\xE2\x85\xA7";
-    " "; " "; "\t"; "\n"; "\r"; "\x0C"; "\xC2\xA0"; "\xE3\x80\x80";
-    "\xE2\x80\xA8"; "\xC2\x85";
-    "'"; "'"; "!"; "."; "/"; "_"; "\x00"; "\xE2\x80\x9C"; "\xF0\x9F\x98\x80";
-    "\xE2\x80\x8D"; "\xEF\xB8\x8F";
-    "\xFF"; "\x80"; "\xC3"; "\xE2\x82"; "\xE0\x81\x81"; "\xED\xA0\x80";
-    "\xF4\x90\x80\x80";
+    ("a", Lower); ("Z", Upper); ("s", Lower); ("S", Upper); ("t", Lower);
+    ("l", Lower); ("L", Upper); ("r", Lower); ("v", Lower); ("e", Lower);
+    ("E", Upper); ("m", Lower); ("d", Lower); ("\xC5\xBF", Lower);
+    ("\xC3\xA9", Lower); ("\xC3\x81", Upper); ("\xC7\x85", Upper);
+    ("\xCA\xB0", Both); ("\xE6\x97\xA5", Both); ("\xCC\x81", Mark);
+    ("\xE0\xA4\xBF", Mark);
+    ("1", Number); ("\xD9\xA3", Number); ("\xC2\xB2", Number);
+    ("\xE2\x85\xA7", Number);
+    (" ", Space); ("\t", Space); ("\x0C", Space); ("\xC2\xA0", Space);
+    ("\xE3\x80\x80", Space); ("\xE2\x80\xA8", Space); ("\xC2\x85", Space);
+    ("\n", Newline); ("\r", Newline);
+    ("'", Apostrophe);
+    ("!", Other); (".", Other); ("/", Other); ("_", Other); ("\x00", Other);
+    ("\xE2\x80\x9C", Other); ("\xF0\x9F\x98\x80", Other);
+    ("\xE2\x80\x8D", Other); ("\xEF\xB8\x8F", Other);
   ]
 [@@ocamlformat "disable"]
 
-let cl100k_text =
+let stray =
+  [
+    "\xFF"; "\x80"; "\xC3"; "\xE2\x82"; "\xE0\x81\x81"; "\xED\xA0\x80";
+    "\xF4\x90\x80\x80";
+  ]
+
+(* The characters, the spaces and apostrophes twice as often, and runs that
+   reach the alternatives single characters seldom do: number groups past
+   three, contractions, camel case and newlines after spaces. *)
+let split_alphabet =
+  List.map fst kinds @ stray
+  @ [ " "; " "; "'"; "1234"; "'s"; "'re"; "'LL"; "XMLHttp"; "  "; " \r\n" ]
+
+let split_text =
   Gen.map (String.concat "")
-    (Gen.list ~size:(Gen.int_range 0 24) (Gen.of_list cl100k_alphabet))
+    (Gen.list ~size:(Gen.int_range 0 24) (Gen.of_list split_alphabet))
+
+(* The kinds of the characters of [s], a stray byte for anything outside
+   [kinds]. *)
+let kinds_of s =
+  let rec go i acc =
+    if i >= String.length s then List.rev acc
+    else
+      let d = String.get_utf_8_uchar s i in
+      let n = Uchar.utf_decode_length d in
+      let k =
+        if not (Uchar.utf_decode_is_valid d) then Stray
+        else
+          Option.value
+            (List.assoc_opt (String.sub s i n) kinds)
+            ~default:Stray
+      in
+      go (i + n) (k :: acc)
+  in
+  go 0 []
+
+let is_letter = function Upper | Lower | Both | Mark -> true | _ -> false
+let is_space = function Space | Newline -> true | _ -> false
+
+(* Marks the cases that reach each alternative of o200k's pattern, from the
+   kinds of the characters of each piece and of the one after it. *)
+let cover_o200k ~contractions ~digits pieces =
+  let pieces = List.map (fun (p, _) -> kinds_of p) pieces in
+  let rec pairs = function
+    | [] -> []
+    | [ p ] -> [ (p, None) ]
+    | p :: (q :: _ as rest) -> (p, Some q) :: pairs rest
+  in
+  let pairs = pairs pieces in
+  let any f = List.exists f pairs in
+  let starts_with k = function Some (k' :: _) -> k' = k | _ -> false in
+  let last l = List.nth l (List.length l - 1) in
+  let word p = List.filter is_letter p in
+  cover "a word after a prefix"
+    (any (function
+      | (Space | Other | Mark) :: k :: _, _ -> is_letter k
+      | _ -> false));
+  cover "a word of capitals then lower case"
+    (any (fun (p, _) ->
+         let w = word p in
+         List.mem Upper w && List.mem Lower w));
+  cover "capitals giving back to a letter of both classes"
+    (any (fun (p, q) ->
+         let w = word p in
+         w <> [] && last w = Both
+         && (not (List.mem Lower w))
+         && starts_with Upper q));
+  cover "a word of capitals alone"
+    (any (fun (p, _) ->
+         let w = word p in
+         w <> [] && List.for_all (( = ) Upper) w));
+  cover "a word opened by a mark"
+    (any (function Mark :: _, _ -> true | _ -> false));
+  if contractions then
+    cover "a contraction"
+      (any (fun (p, _) ->
+           List.exists is_letter p && List.mem Apostrophe p
+           && is_letter (List.hd p)));
+  cover "a group of numbers cut short"
+    (any (fun (p, q) ->
+         List.length p = digits
+         && List.for_all (( = ) Number) p
+         && starts_with Number q));
+  cover "punctuation after a space"
+    (any (function Space :: (Other | Apostrophe) :: _, _ -> true | _ -> false));
+  cover "punctuation with newlines after it"
+    (any (fun (p, _) ->
+         match p with
+         | (Other | Apostrophe) :: _ -> last p = Newline
+         | _ -> false));
+  cover "whitespace through its newlines"
+    (any (fun (p, _) -> List.for_all is_space p && List.mem Newline p));
+  cover "whitespace leaving its last character"
+    (any (fun (p, q) ->
+         List.for_all (( = ) Space) p && starts_with Space q));
+  cover "whitespace at the end"
+    (any (fun (p, q) -> q = None && p <> [] && List.for_all is_space p));
+  cover "bytes of no character" (any (fun (p, _) -> List.mem Stray p))
+
+let covers = [ ("o200k", (true, 3)); ("tekken", (false, 1)) ]
 
 let split_regex_walker_props =
   List.concat_map
@@ -1243,15 +2231,47 @@ let split_regex_walker_props =
         (fun name ->
           prop ~count:2000
             (Printf.sprintf "regex: the %s walker is its pattern" name)
-            cl100k_text (fun text ->
+            split_text (fun text ->
               let _, walker, regex =
                 List.find (fun (n, _, _) -> n = name) (Lazy.force both_ways)
               in
+              let pieces = Pre.pre_tokenize walker text in
+              (match List.assoc_opt name covers with
+              | Some (contractions, digits) ->
+                  cover_o200k ~contractions ~digits pieces
+              | None -> ());
               check_tokenization
                 (Printf.sprintf "%s walker on %S" name text)
-                (Pre.pre_tokenize walker text)
+                pieces
                 (Pre.pre_tokenize regex text)))
         [ name; name ^ ", matches kept" ])
+    walked
+
+(* Isolated, the pieces of a walker are the text cut where they meet: bytes
+   that belong to no character are pieces of their own. *)
+let split_regex_walker_cuts =
+  List.map
+    (fun (name, pattern) ->
+      let pre = isolated pattern in
+      prop ~count:500
+        (Printf.sprintf "regex: the %s walker cuts the text" name)
+        split_text (fun text ->
+          let pieces = Pre.pre_tokenize pre text in
+          equal
+            ~msg:(Printf.sprintf "%s pieces of %S" name text)
+            string text
+            (String.concat "" (List.map fst pieces));
+          ignore
+            (List.fold_left
+               (fun at (piece, (start, stop)) ->
+                 equal ~msg:"a piece starts where the last one stopped" int at
+                   start;
+                 equal ~msg:"a piece spans its bytes" int
+                   (start + String.length piece)
+                   stop;
+                 stop)
+               0 pieces
+              : int)))
     walked
 
 (* The same over the parity corpora, as whole files: their document separators
@@ -2209,6 +3229,10 @@ let test_json_of_hf () =
   accepts "split with the cl100k pattern"
     {|{"type":"Split","pattern":{"Regex":"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"},"behavior":"Isolated","invert":false}|}
     {|{"type":"Split","pattern":{"Regex":"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"},"behavior":"Isolated","invert":false}|};
+  (* Kimi K2's pattern intersects classes and names a script. *)
+  accepts "split with Kimi's pattern"
+    {|{"type":"Split","pattern":{"Regex":"[\\p{Han}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?"},"behavior":"Isolated","invert":false}|}
+    {|{"type":"Split","pattern":{"Regex":"[\\p{Han}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?"},"behavior":"Isolated","invert":false}|};
   rejects "split with a regex that is not supported"
     {|{"type":"Split","pattern":{"Regex":"(?<=a)b"},"behavior":"Removed","invert":false}|};
   rejects "metaspace with a capitalised scheme"
@@ -2263,6 +3287,10 @@ let () =
                 test_split_patterns;
               test "regex: the cl100k pattern" test_split_regex_cl100k;
               test "regex: the o200k pattern" test_split_regex_o200k;
+              test "regex: the Tekken pattern" test_split_regex_tekken;
+              test "regex: the Kimi pattern" test_split_regex_kimi;
+              test "regex: nested classes, intersection and scripts"
+                test_split_regex_classes;
               test "regex: every behavior and invert" test_split_regex_behaviors;
               test "regex: invalid UTF-8" test_split_regex_invalid_utf8;
               test "regex: in a sequence" test_split_regex_in_sequence;
@@ -2272,7 +3300,7 @@ let () =
                 test_split_regex_walkers_on_corpora;
               test "CharDelimiterSplit" test_char_delimiter_split;
             ]
-           @ split_regex_walker_props);
+           @ split_regex_walker_props @ split_regex_walker_cuts);
          group "sequence"
            [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
          group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];

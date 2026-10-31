@@ -269,9 +269,11 @@ module Normalizer : sig
       [pattern] is written in the dialect of tokenizer files: Unicode-aware, so
       that [\s], [\d] and [\w] and their negations, [.] and negated classes
       stand for characters rather than bytes, and [\p{..}] selects a general
-      category ([L], [Lu], [Nd], ...). [^] and [$] are line anchors, [\A], [\z]
-      and [\Z] text anchors. Groups, alternation, greedy and lazy quantifiers
-      and bracket classes are supported, as are the case-insensitive option
+      category ([L], [Lu], [Nd], ...) or a script of Unicode 17.0.0 ([Han],
+      [Latin], ...). [^] and [$] are line anchors, [\A], [\z] and [\Z] text
+      anchors. Groups, alternation, greedy and lazy quantifiers and bracket
+      classes are supported, nested and intersected with [&&] as in
+      [[\p{L}&&[^\p{Han}]]], as are the case-insensitive option
       ([(?i)], [(?i:..)]), under which a character or a bracket class stands for
       every character with the same simple case folding, and a lookahead
       ([(?=..)], or [(?!..)] over one character) that ends the pattern or one of

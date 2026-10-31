@@ -28,6 +28,7 @@ let models =
     ("deepseek_v3", regex_split_corpora);
     ("gpt_oss", regex_split_corpora);
     ("phi4", regex_split_corpora);
+    ("mistral_nemo", regex_split_corpora);
   ]
 
 let corpus_path corpus = Filename.concat "support/parity" (corpus ^ ".txt")
@@ -608,7 +609,7 @@ let with_tokenizer model check () =
 (* Whether the pattern of a file is one brot has a walker for shows in how its
    pre-tokenizer prints and nowhere else, the encodings being the same: a
    spelling that stopped being recognised would only get slower. *)
-let walked = [ "llama3"; "qwen2_5"; "phi4" ]
+let walked = [ "llama3"; "qwen2_5"; "phi4"; "gpt_oss"; "mistral_nemo" ]
 
 let check_walker model tokenizer =
   let printed =
@@ -616,7 +617,7 @@ let check_walker model tokenizer =
     | Some pre -> Format.asprintf "%a" Pre_tokenizer.pp pre
     | None -> ""
   in
-  let sub = "walker=cl100k" in
+  let sub = "walker=" in
   let n = String.length sub in
   let rec from i =
     i + n <= String.length printed

@@ -33,10 +33,10 @@ type byte_level = {
   merge : bool;  (** Whether a miss may be merged in C. *)
 }
 (** Tables of the fused byte-level kernel: a walker over raw bytes — the GPT-2
-    one or the cl100k one, by the entry called — the pretoken cache and the
-    byte-level BPE merge, built once per [Bpe.state]. Field order is the C ABI —
-    [brot_kernels.c] reads the record as its [BROT_BL_*] slots; change neither
-    without the other. *)
+    one, or the cl100k or o200k one, by the entry called — the pretoken cache
+    and the byte-level BPE merge, built once per [Bpe.state]. Field order is the
+    C ABI — [brot_kernels.c] reads the record as its [BROT_BL_*] slots; change
+    neither without the other. *)
 
 (** {1:sp The fused SentencePiece kernel} *)
 
@@ -172,7 +172,7 @@ val byte_level_encode_ids32 :
     against the buffer's length; every other contract is {!byte_level_encode}'s.
 *)
 
-val cl100k_encode :
+val split_encode :
   string ->
   int ->
   int ->
@@ -184,14 +184,17 @@ val cl100k_encode :
   byte_level ->
   int ->
   reason
-(** [cl100k_encode text pos stop spans ids marks cursor unicode t walker] is
-    {!byte_level_encode} walking with {!Pre_tokenizer.fill_cl100k} in place of
-    the GPT-2 pattern: the same probes, merges, table stores, exits and
-    contract. [walker] is [(digits lsl 1) lor marks], the longest group of
-    numbers and whether combining marks are letters, which [unicode] tells by
-    {!Char_class}'s mark bit. *)
+(** [split_encode text pos stop spans ids marks cursor unicode t walker] is
+    {!byte_level_encode} walking with the cl100k or the o200k walker of
+    {!Pre_tokenizer.fill} in place of the GPT-2 pattern: the same probes,
+    merges, table stores, exits and contract. [walker] is
+    [(digits lsl 2) lor (o200k lsl 1) lor flag]: the longest group of numbers,
+    [1] for the o200k walker and [0] for the cl100k one, and its flag, whether
+    combining marks are letters for the cl100k walker and whether words take
+    contractions for the o200k one. [unicode] tells marks and case by
+    {!Char_class}'s bits. *)
 
-val cl100k_encode_ids32 :
+val split_encode_ids32 :
   string ->
   int ->
   int ->
@@ -203,7 +206,7 @@ val cl100k_encode_ids32 :
   byte_level ->
   int ->
   reason
-(** [cl100k_encode_ids32] is {!cl100k_encode} with the ids sink an {!ids32}
+(** [split_encode_ids32] is {!split_encode} with the ids sink an {!ids32}
     buffer, as {!byte_level_encode_ids32} is {!byte_level_encode}. *)
 
 val sp_encode : string -> int -> int -> int array -> Bytes.t -> sp -> reason

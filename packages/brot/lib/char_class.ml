@@ -10,6 +10,8 @@ let numeric = 3
 let punct = 4
 let word = 8
 let mark = 16
+let upper = 32
+let lower = 64
 let known = 128
 
 let ascii =
@@ -26,10 +28,10 @@ let ascii =
     set i (numeric lor word)
   done;
   for i = 65 to 90 do
-    set i (letter lor word)
+    set i (letter lor word lor upper)
   done;
   for i = 97 to 122 do
-    set i (letter lor word)
+    set i (letter lor word lor lower)
   done;
   set 95 (other lor punct lor word);
   t
@@ -64,7 +66,10 @@ let classify t cp =
         else 0
       in
       let mark = match gc with `Mc | `Me | `Mn -> mark | _ -> 0 in
-      category lor punct lor word lor mark lor known
+      let case =
+        match gc with `Lu | `Lt -> upper | `Ll -> lower | _ -> 0
+      in
+      category lor punct lor word lor mark lor case lor known
   in
   Bytes.unsafe_set t (cp - 128) (Char.unsafe_chr v);
   v
@@ -98,6 +103,8 @@ let[@inline] at_category d = (d lsr 3) land 3
 let[@inline] at_is_punctuation d = (d lsr 3) land punct <> 0
 let[@inline] at_is_word d = (d lsr 3) land word <> 0
 let[@inline] at_is_mark d = (d lsr 3) land mark <> 0
+let[@inline] at_is_upper d = (d lsr 3) land upper <> 0
+let[@inline] at_is_lower d = (d lsr 3) land lower <> 0
 let[@inline] pack cp len = (props cp lsl 3) lor len
 let stray = ((other lor known) lsl 3) lor 1
 

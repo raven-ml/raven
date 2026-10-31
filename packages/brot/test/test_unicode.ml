@@ -331,9 +331,8 @@ let test_replace_regex_rejected () =
   case "\\ba" "word boundaries are not supported";
   case "a++" "possessive quantifiers are not supported";
   case "[[:alpha:]]" "POSIX bracket expressions are not supported";
-  case "[a[b]]" "nested character classes are not supported";
-  case "[a-z&&[^aeiou]]" "character class intersection is not supported";
-  case "\\p{Han}" "unsupported property \\p{Han}";
+  case "[a[b]" "unterminated character class";
+  case "[a-[b]]" "invalid range in character class";
   case "\\p{Foo}" "unsupported property \\p{Foo}";
   case "\\h" "unsupported escape \\h";
   case "\\R" "unsupported escape \\R";

@@ -43,6 +43,8 @@ given one tokenizer:
   structured by case, with an optional contraction.
 - `phi4` — Llama 3's pattern asked for the other way round, as OLMo 2 does too:
   `Removed` with `invert`, the matches being the text that is kept.
+- `mistral_nemo` — Mistral's Tekken pattern: o200k's words without
+  contractions, and numbers one at a time.
 
 A Unigram model is rebuilt from the file's scores as Python reads them (see
 `load_tokenizer`). `Tokenizer.from_file` reads them through a decimal
@@ -148,6 +150,7 @@ TOKENIZERS = {
     "deepseek_v3": REGEX_SPLIT_CORPORA,
     "gpt_oss": REGEX_SPLIT_CORPORA,
     "phi4": REGEX_SPLIT_CORPORA,
+    "mistral_nemo": REGEX_SPLIT_CORPORA,
 }
 
 

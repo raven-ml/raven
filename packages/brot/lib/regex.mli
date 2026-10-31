@@ -12,13 +12,15 @@
 
     Supported: literals, [.] (any character but newline), the classes [\s],
     [\d], [\w] and their negations, [\p{..}] and [\P{..}] over general
-    categories ([L], [Lu], [Nd], [Letter], [Uppercase_Letter], ...) and [Any],
-    bracket classes with ranges and negation, groups [(..)], [(?:..)] and
-    [(?<name>..)], comments [(?#..)], alternation, greedy and lazy quantifiers
-    ([*], [+], [?], [{n}], [{n,}], [{,m}], [{n,m}]), the anchors [^], [$], [\A],
-    [\z], [\Z] and [\G], the escapes [\t \n \r \f \v \e \a \0 \xHH \x{H..}], the
-    case-insensitive option [(?i)], [(?-i)], [(?i:..)], [(?-i:..)], and a
-    lookahead [(?=..)] or [(?!..)] that ends the pattern.
+    categories ([L], [Lu], [Nd], [Letter], [Uppercase_Letter], ...), [Any] and
+    scripts ([Han], [Hani], [Latin], ...), bracket classes with ranges,
+    negation, nested classes and intersection ([[\p{L}&&[^\p{Han}]]]), groups
+    [(..)], [(?:..)] and [(?<name>..)], comments [(?#..)], alternation, greedy
+    and lazy quantifiers ([*], [+], [?], [{n}], [{n,}], [{,m}], [{n,m}]), the
+    anchors [^], [$], [\A], [\z], [\Z] and [\G], the escapes
+    [\t \n \r \f \v \e \a \0 \xHH \x{H..}], the case-insensitive option [(?i)],
+    [(?-i)], [(?i:..)], [(?-i:..)], and a lookahead [(?=..)] or [(?!..)] that
+    ends the pattern.
 
     Under [(?i)] a character stands for every character with the same simple
     case folding, so ['s] matches ['S] and the long s of U+017F. A folding to
@@ -33,12 +35,16 @@
     is one character: a literal, an escape, [.] or a bracket class. At the end
     of the searched range [(?!..)] holds.
 
+    A script is the Script property of Unicode 17.0.0, by its short or long
+    name; [Unknown] is every code point outside the other scripts. In a bracket
+    class, [&&] intersects the items on its left with those on its right, and
+    an empty side is the empty set, so [[a&&]] matches nothing.
+
     Rejected with an error: the options other than [i], lookbehind, a lookahead
     anywhere else, atomic groups, backreferences, possessive quantifiers, word
-    boundaries, POSIX brackets, class intersection and nesting, properties other
-    than general categories, byte escapes above [\x7F], and a [^] that can end a
-    match, whose meaning at the end of a text closing with a newline cannot be
-    reproduced.
+    boundaries, POSIX brackets, properties other than general categories and
+    scripts, byte escapes above [\x7F], and a [^] that can end a match, whose
+    meaning at the end of a text closing with a newline cannot be reproduced.
 
     One difference remains: a quantified group whose earlier alternative can
     match empty, as [(x?|a)+] on ["a"], matches empty here where the original

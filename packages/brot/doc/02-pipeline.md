@@ -149,9 +149,11 @@ let pieces = Pre_tokenizer.pre_tokenize pre "order 42 shipped"
 ### Splitting on a regular expression
 
 `split_regex` takes the pattern a tokenizer file carries, in the same dialect:
-Unicode classes such as `\p{L}` and `\p{N}`, alternation that prefers its first
-branch, greedy quantifiers, the case-insensitive group `(?i:...)`, and a
-lookahead that ends the pattern or one of its alternatives. Each match is a
+Unicode classes such as `\p{L}` and `\p{N}`, scripts such as `\p{Han}`,
+bracket classes nested and intersected as in `[\p{L}&&[^\p{Han}]]`,
+alternation that prefers its first branch, greedy quantifiers, the
+case-insensitive group `(?i:...)`, and a lookahead that ends the pattern or one
+of its alternatives. Each match is a
 piece under `` `Isolated ``; the other behaviors treat a match as the delimiter,
 as `split` does.
 
@@ -184,16 +186,18 @@ is built, with a message naming the construct.
 
 Some patterns are common enough that brot runs them with a hand-written scanner
 in place of the automaton: the cl100k pattern as Llama 3 and OLMo spell it and
-as GPT-4's HuggingFace files do, and its Qwen2 and Qwen3.5 variants, when the
-matches are the pieces: under `` `Isolated ``, or under `` `Removed `` with
+as GPT-4's HuggingFace files do, and its Qwen2 and Qwen3.5 variants; and the
+o200k pattern of GPT-4o and gpt-oss, and its Tekken variant of Mistral NeMo and
+Ministral, whose words are runs of letters structured by case. They run so when
+the matches are the pieces: under `` `Isolated ``, or under `` `Removed `` with
 `invert`, which is how OLMo 2 and Phi-4 ask for them. The pieces are the same either
 way, and the automaton is what the scanner is tested against; the difference is
-speed: about twice on pre-tokenization alone, and three times on encoding when
+speed, for cl100k about twice on pre-tokenization alone, and three times on encoding when
 an `` `Isolated `` pattern is followed by a byte-level pre-tokenizer over a BPE
 model, which then runs in the same C kernel as GPT-2's. `Pre_tokenizer.pp` shows
-`walker=cl100k(...)` on a pre-tokenizer that takes this path. Recognition is by
-the exact text of the pattern, so an equivalent pattern written differently
-runs on the automaton.
+`walker=cl100k(...)` or `walker=o200k(...)` on a pre-tokenizer that takes this
+path. Recognition is by the exact text of the pattern, so an equivalent pattern
+written differently runs on the automaton.
 
 ## Tokenization Algorithms
 

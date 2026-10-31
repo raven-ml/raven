@@ -376,8 +376,7 @@ raven / llama.cpp (Vulkan; ROCm):
   normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken
   commit
 - brot: an option to encode added tokens in the input as text; an
-  incremental decoder; walkers for o200k and Tekken; Kimi's class
-  intersection and `\p{Han}` (rejected at load)
+  incremental decoder
 - brot: the parity tests skip in local runtest without downloaded
   tokenizers (CI downloads them): commit trimmed ones with their
   generator, each under a licence that allows it

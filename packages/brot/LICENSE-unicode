@@ -1,6 +1,7 @@
-brot's lib/grapheme_data.ml is derived from the Unicode Character Database
-17.0.0, and test/support/unicode/GraphemeBreakTest-17.0.0.txt is one of its
-files, under this notice:
+brot's lib/grapheme_data.ml and lib/script_data.ml are derived from the
+Unicode Character Database 17.0.0, and
+test/support/unicode/GraphemeBreakTest-17.0.0.txt is one of its files, under
+this notice:
 
 UNICODE LICENSE V3
 

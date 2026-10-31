@@ -88,7 +88,8 @@ val split_regex :
     would find: the first alternative that matches, with greedy repetition.
 
     The syntax is the one tokenizer files use (Oniguruma): literals, classes,
-    Unicode general categories as [\p{L}], groups, alternation, quantifiers, the
+    nested classes and their intersection [&&], Unicode general categories as
+    [\p{L}] and scripts as [\p{Han}], groups, alternation, quantifiers, the
     case-insensitive option [(?i:..)], and a lookahead [(?=..)] or [(?!..)] that
     ends the pattern or one of its alternatives, which is how [\s+(?!\S)] leaves
     the last space of a run to the word after it. Anchors, lookbehind,
@@ -290,15 +291,21 @@ type cl100k = { digits : int; marks : bool }
     [digits] is the longest group of numbers, and [marks] is whether combining
     marks count as letters. *)
 
+type o200k = { digits : int; contractions : bool }
+(** The type for the variants of the o200k pattern that {!fill} walks by hand,
+    o200k's own and Tekken's: [digits] is the longest group of numbers, and
+    [contractions] is whether a word takes a contraction after it. *)
+
 (** The type for the walkers the fused byte-level kernel has a twin of. *)
 type walker =
   | Gpt2  (** The GPT-2 pattern of a byte-level pre-tokenizer. *)
   | Cl100k of cl100k
       (** A recognised cl100k pattern, split with [`Isolated]. *)
+  | O200k of o200k  (** A recognised o200k pattern, split with [`Isolated]. *)
 
 val byte_level_walker : t -> walker option
 (** [byte_level_walker t] is the walker {!fill} walks [t] with when its spans
     are those of one pattern over the raw bytes of the text, to be byte-level
     encoded as they are: [t] is a byte-level pre-tokenizer using the GPT-2
-    regex, or a recognised cl100k split followed by a byte-level pre-tokenizer
-    that does not split. *)
+    regex, or a recognised cl100k or o200k split followed by a byte-level
+    pre-tokenizer that does not split. *)

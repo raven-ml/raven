@@ -13,10 +13,11 @@
    huge spans, more pretokens than a span chunk, every exit at the staged
    chunk's seams, bytes without an id, [ignore_merges], caching off, and a merge
    whose result stands for other bytes than its entry's. The byte-level models
-   run behind the GPT-2 walker and behind the cl100k one, which has its own
-   inputs: contractions in every case, digit groups, newlines inside whitespace,
-   the one-character prefix of a word, combining marks, and the sequences a
-   strict decoder refuses.
+   run behind the GPT-2 walker and behind the cl100k and o200k ones, which have
+   their own inputs: contractions in every case, digit groups, newlines inside
+   whitespace, the one-character prefix of a word, combining marks, the
+   sequences a strict decoder refuses, and for o200k case runs, the letters of
+   both of its classes between them, and slashes after punctuation.
 
    An optional corpus path argument, after [--compare] when given, appends
    [encode_batch_ids] digests over that file split on <|endoftext|>, for
@@ -161,6 +162,16 @@ let adversarial =
       ( "cl_refused",
         "a\xE0\x81\x81b \xF0\x80\x80\x80 \xED\xA0\x80! \xF4\x90\x80\x80 \
          \xF5\x80\x80\x80x  \xC3" );
+      ( "o2_case",
+        "iPhone eBay HTTPServer XMLHttpRequest \xC3\x89COLE\xC3\xA9cole \
+         \xC7\x85ungla \xC7\x84A \xF0\x9D\x90\x80\xF0\x9D\x90\x81c" );
+      ( "o2_both",
+        "\xE6\x97\xA5\xE6\x9C\xACA A\xE6\x97\xA5B \xCA\xB0A A\xCA\xB0B \
+         \xCC\x81Z !\xCC\x81Z \xCC\x81\xE6\x97\xA5Z \xCC\x81 !\xCC\x81! \
+         e\xCC\x81\xCC\x81E" );
+      ( "o2_contractions",
+        "eBay's McDONALD'S OK'd won't' a'\xC5\xBF 'll x'LL \xE6\x97\xA5'S" );
+      ("o2_slash", "a/b/c http://x.y/z \\/ //\n// !/\r\n/a !!/\n/x");
     ]
   in
   let random_ascii n = String.init n (fun _ -> Char.chr (32 + rand_int 95)) in
@@ -363,9 +374,9 @@ let byte_alphabet =
 
 let pre () = Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ()
 
-(* A recognised cl100k pattern, then the byte-level encoding of its pieces: the
-   pipeline the cl100k walker of the kernel serves. *)
-let pre_cl100k pattern =
+(* A recognised cl100k or o200k pattern, then the byte-level encoding of its
+   pieces: the pipeline the split walkers of the kernel serve. *)
+let pre_split pattern =
   Brot.Pre_tokenizer.sequence
     [
       Brot.Pre_tokenizer.split_regex ~pattern ~behavior:`Isolated ();
@@ -374,6 +385,30 @@ let pre_cl100k pattern =
 
 let cl100k =
   {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
+
+let o200k =
+  String.concat "|"
+    [
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|re};
+      {re|\p{N}{1,3}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
+
+let tekken =
+  String.concat "|"
+    [
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|re};
+      {re|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|re};
+      {re|\p{N}|re};
+      {re| ?[^\s\p{L}\p{N}]+[\r\n/]*|re};
+      {re|\s*[\r\n]+|re};
+      {re|\s+(?!\S)|re};
+      {re|\s+|re};
+    ]
 
 let qwen35 =
   {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
@@ -595,10 +630,14 @@ let () =
   run "synth_full" (synth_full ());
   run "synth_nocache" (synth_full ~cache_capacity:0 ());
   run "synth_ignore" (synth_full ~ignore_merges:true ());
-  run "synth_cl100k" (synth_full ~pre:(pre_cl100k cl100k) ());
+  run "synth_cl100k" (synth_full ~pre:(pre_split cl100k) ());
   run "synth_cl100k_ignore"
-    (synth_full ~pre:(pre_cl100k cl100k) ~ignore_merges:true ());
-  run "synth_qwen35" (synth_full ~pre:(pre_cl100k qwen35) ());
+    (synth_full ~pre:(pre_split cl100k) ~ignore_merges:true ());
+  run "synth_qwen35" (synth_full ~pre:(pre_split qwen35) ());
+  run "synth_o200k" (synth_full ~pre:(pre_split o200k) ());
+  run "synth_o200k_ignore"
+    (synth_full ~pre:(pre_split o200k) ~ignore_merges:true ());
+  run "synth_tekken" (synth_full ~pre:(pre_split tekken) ());
   run "synth_missing" (synth_missing ());
   run "synth_disagree" (synth_disagree ());
   run "synth_sp" (synth_sp ());

@@ -3640,6 +3640,15 @@ thread.
 
 ### Brot
 
+- Kimi K2's pattern loads: `Pre_tokenizer.split_regex` and
+  `Normalizer.replace_regex` accept nested bracket classes, their
+  intersection with `&&`, and scripts as `\p{Han}` (Unicode 17.0.0).
+- Fix `split_regex` and `replace_regex` matching alternatives that open alike
+  as one: `x?x|x?y` matched `"xy"` on `"xy"` where Hugging Face matches `"x"`,
+  and o200k's pattern took a mark and the capitals after it as one word.
+- GPT-4o, gpt-oss (o200k), Mistral NeMo and Ministral (Tekken) tokenizers
+  pre-tokenize with a walker for their pattern and encode through the fused C
+  kernel, in place of the regular expression.
 - Tokenizer files with a `Precompiled` normalizer (T5, ALBERT, XLNet and other
   SentencePiece models) load: `Normalizer.precompiled` reads the SentencePiece
   charsmap and normalizes, with offsets, as Hugging Face's tokenizers does,
