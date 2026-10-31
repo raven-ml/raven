@@ -270,12 +270,47 @@ module Draws : sig
       Raises [Invalid_argument] if [every < 1]. *)
 end
 
+module Weighted : sig
+  (** Weighted draws.
+
+      Weighted draws of a structure ['u] are a value of ['u] whose every tensor
+      has one leading axis of [n] draws, and a log weight per draw. The weights
+      need not be normalised, and a draw of log weight [-inf] has none.
+      Importance sampling, sequential Monte Carlo and nested sampling return
+      them. *)
+
+  type ('u, 'f, 'd) t = {
+    values : 'u;  (** The draws, on a leading axis of [n]. *)
+    log_weights : (float, 'f, 'd) Nx.t;  (** Their log weights, shape [[n]]. *)
+  }
+  (** The type for weighted draws of ['u]. *)
+
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
+  (** [ptree u] is the structure of weighted draws of [u]: [values], walked as
+      [u], and [log_weights]. *)
+
+  val ess : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
+  (** [ess w] is Kish's effective sample size [(Σ w)² / Σ w²], a scalar from [1]
+      to [n]. It is NaN if no weight is positive. *)
+
+  val resample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
+  (** [resample u k ~n w] is [n] equal-weight draws of [w], by systematic
+      resampling: one uniform [v] places the points [(i + v) / n] on the
+      cumulative normalised weights, so a draw of normalised weight [w_i] is
+      copied [floor (n w_i)] or [ceil (n w_i)] times.
+
+      Raises [Invalid_argument] if [n < 1]. *)
+end
+
 module Diag : sig
   (** Diagnostics of draws.
 
-      A diagnostic of draws of ['u] is a value of ['u] holding one number per
-      element, at the element's dtype: [(rhat schools post).tau] is the R-hat of
-      [tau]. Diagnostics read their draws on the host and take float tensors.
+      A chain diagnostic of draws of ['u] is a value of ['u] holding one number
+      per element, at the element's dtype: [(rhat schools post).tau] is the
+      R-hat of [tau]. The importance sampling diagnostics take one tensor, of
+      log ratios or log likelihoods, and return numbers at its dtype.
+      Diagnostics read their draws on the host, compute at float64, and take
+      float tensors.
 
       The chain diagnostics follow Vehtari, Gelman, Simpson, Carpenter and
       Bürkner (2021). Each splits every chain into its two halves, dropping the
@@ -365,6 +400,90 @@ module Diag : sig
 
       Raises [Invalid_argument] if [ranks] is empty, if [draws < 1], or if a
       rank is not an integer in [0], ..., [draws]. *)
+
+  (** {1:importance Importance sampling}
+
+      Draws [θ_s] of a proposal [g] estimate expectations under a target [p]
+      once each is weighted by its {e importance ratio}
+      [r_s = p(θ_s) / g(θ_s)], known up to a constant factor. When the ratios
+      have a heavy right tail, a few draws dominate the estimate. Pareto
+      smoothed importance sampling (Vehtari, Simpson, Gelman, Yao and Gabry
+      2024) replaces the [M] largest ratios by the values a generalized Pareto
+      tail fitted to them predicts, and the tail's shape [k̂] says whether the
+      estimate can be trusted: the ratios have about [1 / k̂] finite moments,
+      and from [S] draws the estimate is reliable when
+      [k̂ <= min (1 - 1 / log10 S, 0.7)], [0.7] from about 2000 draws.
+
+      [k̂] is [-inf] when the [M] largest ratios are equal, a bounded tail, as
+      when every ratio is equal; they are left as they are. It is NaN, and the
+      ratios are left as they are, when no tail can be fitted: fewer than 25
+      draws, a ratio NaN or [+inf], every ratio [-inf], or the tail's first
+      quartile at the largest of the other ratios. A ratio of [-inf] is a
+      weight of zero, which stays zero unless it is among the [M] largest. *)
+
+  type ('f, 'd) psis = {
+    log_weights : (float, 'f, 'd) Nx.t;
+        (** The smoothed log weights, of the ratios' shape, not normalised. *)
+    khat : (float, 'f, 'd) Nx.t;  (** Each set's [k̂]. *)
+  }
+  (** The type for smoothed importance weights. *)
+
+  val psis : (float, 'f, 'd) Nx.t -> ('f, 'd) psis
+  (** [psis lr] smooths the log importance ratios [lr]. Axis 0 of [lr] holds
+      [S] independent draws, and each index of the other axes is a set of [S]
+      ratios smoothed on its own: [khat] has the other axes' shape.
+      [{ w with log_weights = (psis w.log_weights).log_weights }] smooths
+      {!Weighted.t} draws.
+
+      Of each set, the [M = floor (min (S / 5, 3 sqrt S))] largest ratios are
+      replaced. A generalized Pareto distribution is fitted to their excesses
+      over [u], the largest of the others, by Zhang and Stephens' (2009)
+      posterior mean, its shape [k] then shrunk toward [1/2] as
+      [k̂ = (M k + 5) / (M + 10)]. The [z]-th smallest of the [M] becomes [u]
+      plus the fitted quantile of [(z - 1/2) / M], capped at the largest
+      ratio. The others are unchanged, the order of the ratios is kept, and
+      adding a constant to [lr] adds it to the weights.
+
+      Raises [Invalid_argument] if [lr] is a scalar. *)
+
+  type ('f, 'd) loo = {
+    elpd : (float, 'f, 'd) Nx.t;
+        (** [elpd_loo], the sum of [pointwise], a scalar. *)
+    se : (float, 'f, 'd) Nx.t;
+        (** The standard error of [elpd] from the spread of the [n] points'
+            terms, [sqrt (n var elpd_i)] with the variance of [n - 1] degrees of
+            freedom: the points taken as a sample of the data. It omits the
+            Monte Carlo error. NaN for fewer than two points. *)
+    p : (float, 'f, 'd) Nx.t;
+        (** [p_loo], the effective number of parameters, [lpd - elpd]:
+            [lpd = Σ_i log ((1/S) Σ_s p(y_i | θ_s))] is the log density of
+            each point given all of the data, summed. *)
+    pointwise : (float, 'f, 'd) Nx.t;
+        (** [elpd_i], the estimate of [log p(y_i | y_-i)] of each point given
+            the others, on the points' axes. *)
+    khat : (float, 'f, 'd) Nx.t;
+        (** The [k̂] of each point's ratios ({!psis}), on the points' axes. *)
+  }
+  (** The type for leave-one-out cross-validations. *)
+
+  val loo : (float, 'f, 'd) Nx.t Draws.t -> ('f, 'd) loo
+  (** [loo ll] is the Pareto-smoothed leave-one-out cross-validation (Vehtari,
+      Gelman and Gabry 2017) of the log likelihoods [ll], of shape
+      [[chain; draw; ...]]: [log p(y_i | θ_s)] of each point [y_i] at each
+      posterior draw [θ_s], as {!Draws.map} of [Norn_model.pointwise] gives
+      them.
+
+      The draws are importance draws of each posterior that leaves one point
+      out, the points independent given [θ]: point [i]'s ratios
+      [1 / p(y_i | θ_s)] are smoothed as {!psis} does into [w_s], and
+      [elpd_i = log (Σ_s w_s p(y_i | θ_s) / Σ_s w_s)]. Autocorrelated chains
+      widen the tail to [M = floor (min (S / 5, 3 sqrt (S / r)))], [r] the
+      ratios' bulk effective sample size ({!ess_bulk}) over [S], or [1] where
+      they have none; the threshold on [k̂] stays that of [S] draws.
+
+      A point's [elpd_i] is unreliable when its [k̂] is above the threshold.
+      A point whose log likelihood is NaN or infinite at some draw has NaN
+      [elpd_i], [k̂] and term of [p]. *)
 end
 
 module Summary : sig
@@ -375,7 +494,9 @@ module Summary : sig
       95% quantiles, the Monte Carlo standard error of the mean, the bulk and
       tail effective sample sizes and R-hat ({!Norn.Diag}). Its findings are the
       problems those numbers and the transitions' statistics show, as data:
-      there are no warnings.
+      there are no warnings. A summary of weighted draws ({!of_weighted}) has
+      the columns that weights allow, and judges the weights instead of the
+      chains.
 
       {[
       Format.printf "%a@." Norn.Summary.pp (Norn.Summary.v schools ~stats post)
@@ -411,6 +532,10 @@ module Summary : sig
             before they turned. *)
     | Ebfmi_low of { chain : int; ebfmi : float }
         (** A chain's E-BFMI is below [0.3]. *)
+    | Pareto_k of { khat : float; threshold : float }
+        (** The [k̂] of the raw weights ({!Norn.Diag.psis}) is above
+            [threshold], [min (1 - 1 / log10 S, 0.7)] for [S] draws, or NaN,
+            so that estimates from them are unreliable or cannot be judged. *)
 
   and region = { path : Nx.Ptree.Path.t; index : int array; shift : float }
   (** The type for where divergences gather: an element whose draws from
@@ -434,9 +559,30 @@ module Summary : sig
       [superchains] does not divide the chains, and as {!Norn.Diag} does for a
       tensor that is not of a float dtype. *)
 
+  val of_weighted : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) Weighted.t -> t
+  (** [of_weighted u w] summarises the weighted draws [w] of [u], their log
+      weights raw: it smooths them as {!Norn.Diag.psis} does, and judges them
+      by the raw weights' [k̂]. With [x_s] an element's draws and [w̃_s] the
+      smoothed weights normalised, its columns are the mean
+      [μ = Σ w̃_s x_s], the standard deviation [sqrt (Σ w̃_s (x_s - μ)²)], the
+      5%, 50% and 95% quantiles, the Monte Carlo standard error of the mean
+      of independent draws [sqrt (Σ w̃_s² (x_s - μ)²)], and the mean's
+      effective sample size, the variance over that error squared. A
+      quantile interpolates linearly between the draws of positive weight in
+      order, the [j]-th at the middle of its weight,
+      [w̃_1 + ... + w̃_(j-1) + w̃_j / 2]. Its findings are each element's
+      [Not_finite] and [Constant], in row order, then [Pareto_k]. The
+      statistics are computed at float64.
+
+      Raises [Invalid_argument] if [w.log_weights] is not of shape [[n]], or if
+      a tensor of [w.values] has no leading axis of [n], naming the path. *)
+
   val concat : t list -> t
   (** [concat ss] is the rows and findings of [ss], in order: derived quantities
-      summarised beside parameters. *)
+      summarised beside parameters.
+
+      Raises [Invalid_argument] if the summaries' columns differ, as those of
+      chains and of weighted draws do. *)
 
   val findings : t -> finding list
   (** [findings s] is [s]'s findings, the elements' in row order, then the
@@ -450,8 +596,8 @@ module Summary : sig
 
   val columns : t -> (string * Nx.host Nx.float64_t) list
   (** [columns s] is [s]'s columns, each a vector with one element per row:
-      [mean], [sd], [q5], [median], [q95], [mcse], [ess_bulk], [ess_tail] and
-      [rhat]. *)
+      [mean], [sd], [q5], [median], [q95], [mcse], then [ess_bulk], [ess_tail]
+      and [rhat] for chains, [ess] for weighted draws. *)
 
   val pp_finding : Format.formatter -> finding -> unit
   (** [pp_finding ppf f] formats [f] as a sentence. *)
@@ -1227,38 +1373,6 @@ module Ensemble : sig
       [s.draw], has the key [Nx.Rng.fold_in k n].
 
       Raises [Invalid_argument] if [draws < 1]. *)
-end
-
-module Weighted : sig
-  (** Weighted draws.
-
-      Weighted draws of a structure ['u] are a value of ['u] whose every tensor
-      has one leading axis of [n] draws, and a log weight per draw. The weights
-      need not be normalised, and a draw of log weight [-inf] has none.
-      Importance sampling, sequential Monte Carlo and nested sampling return
-      them. *)
-
-  type ('u, 'f, 'd) t = {
-    values : 'u;  (** The draws, on a leading axis of [n]. *)
-    log_weights : (float, 'f, 'd) Nx.t;  (** Their log weights, shape [[n]]. *)
-  }
-  (** The type for weighted draws of ['u]. *)
-
-  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
-  (** [ptree u] is the structure of weighted draws of [u]: [values], walked as
-      [u], and [log_weights]. *)
-
-  val ess : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
-  (** [ess w] is Kish's effective sample size [(Σ w)² / Σ w²], a scalar from [1]
-      to [n]. It is NaN if no weight is positive. *)
-
-  val resample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
-  (** [resample u k ~n w] is [n] equal-weight draws of [w], by systematic
-      resampling: one uniform [v] places the points [(i + v) / n] on the
-      cumulative normalised weights, so a draw of normalised weight [w_i] is
-      copied [floor (n w_i)] or [ceil (n w_i)] times.
-
-      Raises [Invalid_argument] if [n < 1]. *)
 end
 
 module Evidence : sig

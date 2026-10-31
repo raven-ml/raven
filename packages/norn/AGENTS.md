@@ -6,7 +6,7 @@ user's type becomes draws and diagnostics returned as values of that type.
 
 - norn depends on nx, rune and jera. It uses rune only for what it states
   about its own computations; it never calls `jit`.
-- Goldens come from `test/gen/` through `uv run`: `diag.py` (ArviZ),
-  `dist.py`, `posteriordb.py`.
+- Goldens come from `test/gen/` through `uv run`: `diag.py` and `psis.py`
+  (ArviZ), `dist.py`, `posteriordb.py`.
 - A sampler test is statistical. Its threshold states the false-failure
   rate.

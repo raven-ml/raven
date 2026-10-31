@@ -28,3 +28,22 @@ val divergent_shift : ('u, 'd) Nx.Ptree.t -> ('f, 'd) Stats.t Draws.t -> 'u Draw
 val rank : ('u, 'd) Nx.Ptree.t -> truth:'u -> 'u Draws.t -> 'u
 
 val rank_uniformity : ('u, 'd) Nx.Ptree.t -> draws:int -> 'u list -> 'u
+
+(** {1:importance Importance sampling} *)
+
+type ('f, 'd) psis = {
+  log_weights : (float, 'f, 'd) Nx.t;
+  khat : (float, 'f, 'd) Nx.t;
+}
+
+val psis : (float, 'f, 'd) Nx.t -> ('f, 'd) psis
+
+type ('f, 'd) loo = {
+  elpd : (float, 'f, 'd) Nx.t;
+  se : (float, 'f, 'd) Nx.t;
+  p : (float, 'f, 'd) Nx.t;
+  pointwise : (float, 'f, 'd) Nx.t;
+  khat : (float, 'f, 'd) Nx.t;
+}
+
+val loo : (float, 'f, 'd) Nx.t Draws.t -> ('f, 'd) loo

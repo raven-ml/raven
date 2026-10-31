@@ -16,6 +16,7 @@ type finding =
   | Divergent of { count : int; total : int; regions : region list }
   | Saturated of { count : int; total : int }
   | Ebfmi_low of { chain : int; ebfmi : float }
+  | Pareto_k of { khat : float; threshold : float }
 
 and region = { path : Nx.Ptree.Path.t; index : int array; shift : float }
 
@@ -213,10 +214,141 @@ let v (type u) (u : (u, 'd) Nx.Ptree.t) ?stats ?superchains (d : u Draws.t) =
     findings;
   }
 
+(* Weighted draws *)
+
+(* [weighted_quantile xs w q] is the [q] quantile of the draws [xs] of positive
+   normalised weight [w]: in order, draw [j] stands at the middle of its
+   weight's span, [C_(j-1) + w_j / 2], and [q] interpolates linearly between
+   the draws beside it, clamped to the first and last. Unlike the inverse of
+   the cumulative weights, it moves little when the weights do. *)
+let weighted_quantile xs w q =
+  let order =
+    Array.of_list
+      (List.filter (fun i -> w.(i) > 0.) (List.init (Array.length xs) Fun.id))
+  in
+  Array.stable_sort (fun i j -> Float.compare xs.(i) xs.(j)) order;
+  let n = Array.length order in
+  let x j = xs.(order.(j)) in
+  let mid = Array.make n 0. in
+  let acc = ref 0. in
+  Array.iteri
+    (fun j i ->
+      mid.(j) <- !acc +. (w.(i) /. 2.);
+      acc := !acc +. w.(i))
+    order;
+  if n = 0 then Float.nan
+  else if q <= mid.(0) then x 0
+  else if q >= mid.(n - 1) then x (n - 1)
+  else
+    let j = ref 1 in
+    while mid.(!j) < q do
+      incr j
+    done;
+    let j = !j in
+    let f = (q -. mid.(j - 1)) /. (mid.(j) -. mid.(j - 1)) in
+    x (j - 1) +. (f *. (x j -. x (j - 1)))
+
+let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
+    (wd : (u, f, 'd) Weighted.t) =
+  let lw = wd.log_weights in
+  if Array.length (Nx.shape lw) <> 1 then
+    invalid_arg
+      (Printf.sprintf
+         "Norn.Summary.of_weighted: log weights of shape [%s], not [n]"
+         (String.concat "; "
+            (Array.to_list (Array.map string_of_int (Nx.shape lw)))));
+  let n = (Nx.shape lw).(0) in
+  (* Algorithm 1 whole: the statistics weigh by the smoothed weights, and the
+     raw weights' k̂ judges them. *)
+  let lw, khat =
+    Pareto.smooth
+      ~tail:(Pareto.tail_length ~r_eff:1. n)
+      (Nx.to_array (Nx.cast Nx.float64 lw))
+  in
+  let total = Pareto.log_sum_exp lw in
+  let w = Array.map (fun l -> Float.exp (l -. total)) lw in
+  let leaf path x acc =
+    let s = Nx.shape x in
+    if Array.length s = 0 || s.(0) <> n then
+      invalid_arg
+        (Printf.sprintf
+           "Norn.Summary.of_weighted: %s: %s draws for %d weights"
+           (Nx.Ptree.Path.to_string path)
+           (if Array.length s = 0 then "no axis of" else string_of_int s.(0))
+           n);
+    let x = Nx.reshape (Array.append [| 1 |] s) x in
+    let one (index, chains) =
+      { path; index; chains; draws = Chains.pooled chains }
+    in
+    List.rev_append (Array.to_list (Array.map one (Chains.leaf x))) acc
+  in
+  let elements = List.rev (Nx.Ptree.fold u leaf wd.values []) in
+  let dot f xs =
+    let s = ref 0. in
+    Array.iteri (fun i x -> s := !s +. f w.(i) x) xs;
+    !s
+  in
+  (* About the first draw, so that a constant element's mean is exact and its
+     spread 0 however the weights round. *)
+  let mean xs =
+    if Array.length xs = 0 then Float.nan
+    else xs.(0) +. dot (fun w x -> w *. (x -. xs.(0))) xs
+  in
+  (* The weighted variance, and the variance of the weighted mean of
+     independent draws (Vehtari et al. 2024, equation 5). Their ratio, the
+     [ess] column, is Var_p(h) / Var(Î): the draws a plain Monte Carlo mean
+     needs for the same error, which for an [h] whose spread is unrelated to
+     the weights is Kish's 1 / Σ w̃² (their equation 8). Their equation 7
+     puts the spread of [h] over the unweighted draws in the numerator, the
+     proposal's and not the target's: on 4 draws it can give 14.5. *)
+  let spread xs =
+    let m = mean xs in
+    ( dot (fun w x -> w *. (x -. m) *. (x -. m)) xs,
+      dot (fun w x -> w *. w *. (x -. m) *. (x -. m)) xs )
+  in
+  let column f = Array.of_list (List.map (fun e -> f e.draws) elements) in
+  let columns =
+    [
+      ("mean", column mean);
+      ("sd", column (fun xs -> Float.sqrt (fst (spread xs))));
+    ]
+    @ List.map
+        (fun (name, q) -> (name, column (fun xs -> weighted_quantile xs w q)))
+        quantiles
+    @ [
+        ("mcse", column (fun xs -> Float.sqrt (snd (spread xs))));
+        ( "ess",
+          column (fun xs ->
+              let v, e = spread xs in
+              v /. e) );
+      ]
+  in
+  let element e =
+    let count = not_finite e in
+    if count > 0 then [ Not_finite { path = e.path; index = e.index; count } ]
+    else if n > 0 && constant e then
+      [ Constant { path = e.path; index = e.index } ]
+    else []
+  in
+  let threshold = Pareto.threshold n in
+  let weights =
+    if khat <= threshold then [] else [ Pareto_k { khat; threshold } ]
+  in
+  {
+    labels = Array.of_list (List.map (fun e -> label e.path e.index) elements);
+    columns;
+    findings = List.concat_map element elements @ weights;
+  }
+
 let concat ss =
   match ss with
   | [] -> { labels = [||]; columns = []; findings = [] }
   | first :: _ ->
+      let names s = List.map fst s.columns in
+      if List.exists (fun s -> names s <> names first) ss then
+        invalid_arg
+          "Norn.Summary.concat: summaries of chains and of weighted draws \
+           have different columns";
       {
         labels = Array.concat (List.map (fun s -> s.labels) ss);
         columns =
@@ -270,12 +402,21 @@ let pp_finding ppf = function
   | Ebfmi_low { chain; ebfmi } ->
       Format.fprintf ppf "E-BFMI of chain %d is %.2f, below %.1f" chain ebfmi
         ebfmi_min
+  | Pareto_k { khat; threshold } ->
+      if Float.is_nan khat then
+        Format.fprintf ppf
+          "the weights have no Pareto k-hat: estimates from them are not judged"
+      else
+        Format.fprintf ppf
+          "Pareto k-hat of the weights is %.2f, above %.2f: estimates from \
+           them are unreliable"
+          khat threshold
 
 let cell name x =
   if Float.is_nan x then "nan"
   else
     match name with
-    | "ess_bulk" | "ess_tail" -> Printf.sprintf "%.0f" x
+    | "ess_bulk" | "ess_tail" | "ess" -> Printf.sprintf "%.0f" x
     | "rhat" -> Printf.sprintf "%.2f" x
     | _ -> Printf.sprintf "%.3g" x
 

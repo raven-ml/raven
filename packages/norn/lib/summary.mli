@@ -20,6 +20,7 @@ type finding =
   | Divergent of { count : int; total : int; regions : region list }
   | Saturated of { count : int; total : int }
   | Ebfmi_low of { chain : int; ebfmi : float }
+  | Pareto_k of { khat : float; threshold : float }
 
 and region = { path : Nx.Ptree.Path.t; index : int array; shift : float }
 
@@ -29,6 +30,8 @@ val v :
   ?superchains:int ->
   'u Draws.t ->
   t
+
+val of_weighted : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) Weighted.t -> t
 
 val concat : t list -> t
 

@@ -90,8 +90,10 @@ The [examples](../examples/01-distributions/README.md) cover each part on small 
 - **Draws and diagnostics**: `Draws` holds draws with `[chain; draw]` axes;
   `Diag` computes rank-normalised split R-hat, nested R-hat, bulk and tail
   effective sample sizes, Monte Carlo errors, E-BFMI, divergence locations,
-  and simulation-based calibration ranks with an exact uniformity test.
-  `Summary` tabulates them and lists its findings as data.
+  simulation-based calibration ranks with an exact uniformity test, Pareto
+  smoothed importance weights with their k-hat, and leave-one-out
+  cross-validation over pointwise likelihoods. `Summary` tabulates draws or
+  weighted draws and lists its findings as data.
 - **Models**: `Norn_model.v` reads one function that draws every random
   variable with `sample`. From it come the posterior, prior and likelihood
   densities over coordinates, starting points, prior draws, simulation,

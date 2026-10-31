@@ -1,6 +1,6 @@
 (tests
- (names test_model test_calibration test_posteriordb)
- (modules test_model test_calibration test_posteriordb)
+ (names test_model test_loo test_calibration test_posteriordb)
+ (modules test_model test_loo test_calibration test_posteriordb)
  (package norn)
  (deps support/posteriordb.golden)
  (libraries norn norn.model posteriordb recovery nx nx.array rig rune windtrap))

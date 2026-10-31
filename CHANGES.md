@@ -49,6 +49,12 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Diag.psis`, Pareto smoothed importance weights with each set's `k̂`,
+  and `Diag.loo`, leave-one-out cross-validation of pointwise log likelihoods
+  (`Norn_model.pointwise` over draws) with each point's `elpd_i` and `k̂`.
+- Add `Summary.of_weighted`, the summary of `Weighted.t` draws; its
+  `Pareto_k` finding, new in `Summary.finding`, judges the weights.
+  `Summary.concat` raises on summaries whose columns differ.
 - `Dist.quantile` computes the quantiles of `Dist.gamma` and
   `Dist.inverse_gamma`, which raised, with first derivatives in `p` and the
   parameters that stay finite wherever the exact ones are.

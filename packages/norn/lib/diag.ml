@@ -257,3 +257,97 @@ let rank_uniformity u ~draws ranks =
         (Nx.place (Nx.beside x)
            (Nx.create Nx.float64 (Nx.shape x) (Array.init (Nx.numel x) one))))
     first
+
+(* Importance sampling *)
+
+(* [sets x] is the draws of each index past axis 0 of [x], at float64: [x] of
+   shape [[s; ...]] holds [numel x / s] sets of [s] draws. *)
+let sets x =
+  let shape = Nx.shape x in
+  let s = shape.(0) in
+  let rest = Array.sub shape 1 (Array.length shape - 1) in
+  let n = Array.fold_left ( * ) 1 rest in
+  let a = Nx.to_array (Nx.cast Nx.float64 x) in
+  (rest, Array.init n (fun j -> Array.init s (fun i -> a.((i * n) + j))))
+
+(* [like x shape a] is the float64 elements [a] as a tensor of [shape], at [x]'s
+   dtype, beside [x]. *)
+let like x shape a =
+  Nx.cast (Nx.dtype x) (Nx.place (Nx.beside x) (Nx.create Nx.float64 shape a))
+
+type ('f, 'd) psis = {
+  log_weights : (float, 'f, 'd) Nx.t;
+  khat : (float, 'f, 'd) Nx.t;
+}
+
+let psis lr =
+  if Array.length (Nx.shape lr) = 0 then
+    invalid_arg "Norn.Diag.psis: a scalar has no axis of draws";
+  let rest, sets = sets lr in
+  let s = (Nx.shape lr).(0) and n = Array.length sets in
+  let tail = Pareto.tail_length ~r_eff:1. s in
+  let smoothed = Array.map (Pareto.smooth ~tail) sets in
+  let w = Array.init (s * n) (fun k -> (fst smoothed.(k mod n)).(k / n)) in
+  {
+    log_weights = like lr (Nx.shape lr) w;
+    khat = like lr rest (Array.map snd smoothed);
+  }
+
+type ('f, 'd) loo = {
+  elpd : (float, 'f, 'd) Nx.t;
+  se : (float, 'f, 'd) Nx.t;
+  p : (float, 'f, 'd) Nx.t;
+  pointwise : (float, 'f, 'd) Nx.t;
+  khat : (float, 'f, 'd) Nx.t;
+}
+
+(* [relative_ess ~chains ll] is the bulk effective sample size of a point's
+   ratios over their number, 1 where it has none (Vehtari et al. 2024,
+   appendix H). The ranks of the ratios [1 / p(y | θ)] are those of [ll]
+   reversed, which leaves the bulk size alone. *)
+let relative_ess ~chains ll =
+  let s = Array.length ll in
+  let n = if chains = 0 then 0 else s / chains in
+  let m = Array.init chains (fun c -> Array.sub ll (c * n) n) in
+  if s = 0 || Chains.undefined m then 1.
+  else
+    let r = Chains.ess_bulk_of m /. float_of_int s in
+    if Float.is_nan r then 1. else r
+
+(* One point's elpd_loo, p_loo and k̂ from its log likelihood at each draw,
+   chain by chain. *)
+let loo_point ~chains ll =
+  if not (Array.for_all Float.is_finite ll) then
+    (Float.nan, Float.nan, Float.nan)
+  else
+    let r_eff = relative_ess ~chains ll in
+    let tail = Pareto.tail_length ~r_eff (Array.length ll) in
+    let lw, k = Pareto.smooth ~tail (Array.map Float.neg ll) in
+    let elpd =
+      Pareto.log_sum_exp (Array.map2 ( +. ) lw ll) -. Pareto.log_sum_exp lw
+    in
+    let lpd =
+      Pareto.log_sum_exp ll -. Float.log (float_of_int (Array.length ll))
+    in
+    (elpd, lpd -. elpd, k)
+
+let loo (type f) (d : (float, f, 'd) Nx.t Draws.t) =
+  let x = (d : (float, f, 'd) Nx.t Draws.t :> (float, f, 'd) Nx.t) in
+  let shape = Nx.shape x in
+  let draws = shape.(0) * shape.(1) in
+  let points = Array.sub shape 2 (Array.length shape - 2) in
+  let x = Nx.reshape (Array.append [| draws |] points) x in
+  let _, sets = sets x in
+  let each = Array.map (loo_point ~chains:shape.(0)) sets in
+  let elpd_i = Array.map (fun (e, _, _) -> e) each in
+  let n = Array.length each in
+  let sum xs = Array.fold_left ( +. ) 0. xs in
+  let se = Float.sqrt (float_of_int n *. Chains.var1 elpd_i) in
+  let scalar v = like x [||] [| v |] in
+  {
+    elpd = scalar (sum elpd_i);
+    se = scalar se;
+    p = scalar (sum (Array.map (fun (_, p, _) -> p) each));
+    pointwise = like x points elpd_i;
+    khat = like x points (Array.map (fun (_, _, k) -> k) each);
+  }

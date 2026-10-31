@@ -219,6 +219,7 @@ let judge_chains (type l) (latent : (l, 'd) Nx.Ptree.t) ~superchains
         | Divergent _ -> "divergent"
         | Saturated _ -> "saturated"
         | Ebfmi_low _ -> "E-BFMI"
+        | Pareto_k _ -> "Pareto k"
       in
       let kinds = List.sort_uniq compare (List.map kind fs) in
       Flagged
