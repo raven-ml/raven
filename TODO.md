@@ -370,8 +370,6 @@ raven / llama.cpp (Vulkan; ROCm):
   round trips, partial aggregation, `Str.trim`/`concat`/regex, compressed
   and fixed-width CSV, Parquet nested columns, datasets and writer,
   talon.arrow, talon.jsont, complex and validity columns, HTML display
-- talon under `Rune.jit`/`vmap`: state which verbs raise, and test filter,
-  sort, group and join under jit
 - hugin: stacked marks and time axes in hugin.mli; legends with `~ncol` and
   centred placements; CFF and CFF2 outlines; hugin_plot baselines on fudge
   (no hugin_plot.thumper exists)

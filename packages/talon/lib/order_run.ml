@@ -19,16 +19,17 @@ let sub b ~offset ~length =
   Table.batch (Table.schema b) ~rows:length
     (Array.map (Column.sub ~offset ~length) (Table.columns b))
 
+let permute p b =
+  Table.batch (Table.schema b) ~rows:(Table.rows b)
+    (Array.map (Column.permute p) (Table.columns b))
+
 let sort ks b =
-  if ks = [] then b
-  else
-    let p = Nx.lexsort (words ks (column b)) in
-    Table.batch (Table.schema b) ~rows:(Table.rows b)
-      (Array.map (Column.permute p) (Table.columns b))
+  if ks = [] then b else permute (Nx.lexsort (words ks (column b))) b
 
 (* Past [k] rows, the [k] first rows are among those whose first word is at most
    the [k]th smallest: [Nx.top_k] of the complemented words finds it, and only
-   those rows are sorted, in row order so that the sort stays stable. *)
+   those rows are sorted, in row order so that the sort stays stable. Traced
+   words have no count of those rows to read, so their rows are all sorted. *)
 let top_k ~offset ~length ks b =
   let n = Table.rows b in
   let k = if length > max_int - offset then max_int else offset + length in
@@ -37,13 +38,15 @@ let top_k ~offset ~length ks b =
     sub (sort ks b) ~offset ~length:(Int.min k n - offset)
   else
     let w = words ks (column b) in
-    let first = Nx.slice [ A; I 0 ] w in
-    let greatest, _ = Nx.top_k ~k (Nx.bitwise_not first) in
-    let kth = Nx.bitwise_not (Nx.slice [ R (k - 1, k) ] greatest) in
-    let candidates = Nx.positions (Nx.less_equal first kth) in
-    let order = Nx.lexsort (Nx.take ~axis:0 candidates w) in
-    let idx = Nx.take order candidates in
-    rows (Nx.slice [ Nx.R (offset, k) ] idx) b
+    if Column.traced w then sub (permute (Nx.lexsort w) b) ~offset ~length
+    else
+      let first = Nx.slice [ A; I 0 ] w in
+      let greatest, _ = Nx.top_k ~k (Nx.bitwise_not first) in
+      let kth = Nx.bitwise_not (Nx.slice [ R (k - 1, k) ] greatest) in
+      let candidates = Nx.positions (Nx.less_equal first kth) in
+      let order = Nx.lexsort (Nx.take ~axis:0 candidates w) in
+      let idx = Nx.take order candidates in
+      rows (Nx.slice [ Nx.R (offset, k) ] idx) b
 
 (* A row is out of order where, at the first word where it differs from the row
    before, its word is the smaller. *)

@@ -203,9 +203,11 @@ let reduce : type a b.
       in
       (value (first_at lo), first_where several "only finds several values")
   | N_unique ->
-      let g = Nx.unique (keyed s (Key.identity [ c ])) in
-      let ones = Nx.ones Nx.int64 [| Nx.dim 0 g.first |] in
-      ok (fixed int64 (segment_sum s (Nx.take g.first s.ids) ones))
+      (* [n] groups at most, so that no count of them is read: a group past
+         the last has no key, and counts [0] in segment [0]. *)
+      let g = Nx.unique ~size:n (keyed s (Key.identity [ c ])) in
+      let real = Nx.cast Nx.int64 (Nx.greater_s g.counts 0L) in
+      ok (fixed int64 (segment_sum s (Nx.take g.first s.ids) real))
 
 let shift s k c =
   let r = view s and n = Column.length c in

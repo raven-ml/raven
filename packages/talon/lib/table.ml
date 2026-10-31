@@ -85,6 +85,9 @@ let canonical t =
 
 let column t name = Column.concat (parts t (index "column" t name))
 
+let outside_rows i rows =
+  Printf.sprintf "Talon.take: index %Ld of a table of %d rows" i rows
+
 let take indices t =
   if Nx.ndim indices <> 1 then
     err "Talon.take: indices of shape %a, not 1-D" Nx.pp_shape
@@ -93,11 +96,15 @@ let take indices t =
     Nx.logical_or (Nx.less_s indices 0L)
       (Nx.greater_equal_s indices (Int64.of_int t.rows))
   in
-  (* The first index outside is looked for only when there is one. *)
-  if Nx.item [] (Nx.any outside) then begin
+  (* Traced indices have no elements to read, so the program checks them
+     ({!Nx.check}), and a compiled call raises as it returns. *)
+  if Column.traced indices then
+    Nx.check Nx.Ptree.tensor (Nx.logical_not outside) indices (fun _ i ->
+        Invalid_argument (outside_rows (Nx.item [] i) t.rows))
+  else if Nx.item [] (Nx.any outside) then begin
+    (* The first index outside is looked for only when there is one. *)
     let first = Nx.item [] (Nx.argmax outside) in
-    let i = Nx.item [ Int64.to_int first ] indices in
-    err "Talon.take: index %Ld of a table of %d rows" i t.rows
+    invalid_arg (outside_rows (Nx.item [ Int64.to_int first ] indices) t.rows)
   end;
   let rows = Nx.dim 0 indices in
   batch t.schema ~rows (Array.map (Column.gather indices) (columns (concat t)))
@@ -115,8 +122,8 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) names t : (a, b, Nx.host) Nx.t =
     if not (numeric ty) then
       err "Talon.to_tensor: %a is %a, neither numeric nor boolean"
         Type.pp_quoted name Type.pp ty;
-    if Column.null_count c > 0 then
-      err "Talon.to_tensor: %a has a null" Type.pp_quoted name;
+    let null = Format.asprintf "Talon.to_tensor: %a has a null" in
+    Column.no_null c (fun _ -> Invalid_argument (null Type.pp_quoted name));
     match Column.data c with Fixed (P x) -> Nx.cast dt x | _ -> assert false
   in
   match names with

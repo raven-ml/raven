@@ -4117,6 +4117,9 @@ thread.
 
 ### Talon
 
+- Queries run under `Rune.grad`, and under `Rune.jit` and `Rune.vmap` where
+  every size a step computes follows from its inputs' sizes; `Query.run` and
+  `Talon.column` raised there. Steps such as `filter` raise at a trace.
 - **Breaking:** `Column.of_tensor`, `to_tensor`, `validity`, `ragged`,
   `of_ragged`, `layout`, `Talon.take`, `Talon.to_tensor`, `Kind.tensor`,
   `Type.tensor` and `Expr.fn` use `Nx.host` values, as columns are host data.

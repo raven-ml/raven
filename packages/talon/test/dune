@@ -118,3 +118,9 @@
   (progn
    (run %{test} --corrected)
    (diff? test_convert.ml test_convert.ml.corrected))))
+
+(test
+ (name test_jit)
+ (modules test_jit)
+ (package talon)
+ (libraries windtrap talon nx rune))

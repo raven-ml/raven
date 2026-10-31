@@ -24,6 +24,13 @@ and data =
   | Fields of t list
 
 let err fmt = Format.kasprintf invalid_arg fmt
+
+(* A traced value is one an interpretation owns: a stand-in under [Rune.jit],
+   a lane under [Rune.vmap], a value under [Rune.grad]. Its bytes and layout
+   are not readable. Under a derivative [Nx.item] reads its twin's elements;
+   under a trace they exist only when the program runs. *)
+let traced x = Option.is_some (Nx.Prim.owner x)
+
 let type_ c = c.type_
 let length c = c.length
 let unread bits = { bits; nulls = Atomic.make (-1) }
@@ -41,6 +48,11 @@ let count length v =
 
 let null_count c =
   match c.validity with None -> 0 | Some v -> count c.length v
+
+(* [uncounted v] is [true] iff [v]'s bits are traced and its count was not
+   read. Its readers check it with the program ({!Nx.check}) instead of
+   counting, since a stand-in has no elements to count. *)
+let uncounted v = traced v.bits && Atomic.get v.nulls = -1
 
 let known_zero c =
   match c.validity with None -> true | Some v -> Atomic.get v.nulls = 0
@@ -588,6 +600,16 @@ let first_null c =
   let flags = Option.get (flags c) in
   Option.get (first c.length (fun i -> if flags.(i) then None else Some i))
 
+(* [no_null c fail] raises [fail i], [i] the first null row of [c], if [c] has
+   one. An uncounted validity is checked with the program ({!Nx.check}), which
+   raises when the compiled call returns. *)
+let no_null c fail =
+  match c.validity with
+  | Some v when uncounted v ->
+      Nx.check Nx.Ptree.unit (Nx.cast Nx.bool v.bits) () (fun i () ->
+          fail i.(0))
+  | _ -> if null_count c > 0 then raise (fail (first_null c))
+
 (* [cells fn x] is the type of the rows of [x] and their storage: its dtype's
    scalar type for a 1-D [x], whose [bool] values are packed into bits, and a
    tensor type of its cells otherwise. *)
@@ -630,9 +652,10 @@ let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx.t =
   | Fixed (P x) when not (Nx.Dtype.equal dt (Nx.dtype x)) ->
       err "Column.to_tensor: %a is stored as %a, not %a" Type.pp ty Nx.Dtype.pp
         (Nx.dtype x) Nx.Dtype.pp dt
-  | Fixed _ when null_count c > 0 ->
-      err "Column.to_tensor: row %d is null" (first_null c)
-  | Fixed p -> own (Nx.unpack dt p)
+  | Fixed p ->
+      let null i = Printf.sprintf "Column.to_tensor: row %d is null" i in
+      no_null c (fun i -> Invalid_argument (null i));
+      own (Nx.unpack dt p)
   | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
 
 (* Structural operations *)
@@ -765,14 +788,17 @@ let bounds offsets =
    buffers, which formats read byte for byte, shows through [Nx.Repr] alone. *)
 
 (* [in_order x] is [true] iff [x]'s elements lie in one buffer in C order, and
-   [at_start x] iff they lie there from its first bit. *)
+   [at_start x] iff they lie there from its first bit. A traced value counts as
+   both, since its interpretation, not the column, holds its memory. *)
 let layout x = Option.map Nx_array.layout (Nx.Repr.array x)
 
 let in_order x =
-  Option.fold ~none:false ~some:Nx_array.Layout.is_contiguous (layout x)
+  traced x
+  || Option.fold ~none:false ~some:Nx_array.Layout.is_contiguous (layout x)
 
 let at_start x =
-  in_order x && Nx_array.Layout.offset (Option.get (layout x)) = 0
+  traced x
+  || (in_order x && Nx_array.Layout.offset (Option.get (layout x)) = 0)
 
 (* [stored x] is [x] over C-contiguous storage: [x] itself where it lies so, a
    copy otherwise. *)
@@ -802,6 +828,7 @@ let canonical_packed x =
   let used = Nx.numel x * bitsize x in
   at_start x
   && (used land 7 = 0
+     || traced x
      || Strings.reading ~by:"Column.canonical" x Bigarray.int8_unsigned
           (fun bytes ->
             Bigarray.Array1.get bytes (used / 8) lsr (used land 7) = 0))
@@ -809,6 +836,7 @@ let canonical_packed x =
 let rec canonical c =
   let validity =
     match c.validity with
+    | Some v as kept when uncounted v -> kept
     | Some v when count c.length v = 0 -> None
     | Some v as kept when canonical_packed v.bits -> kept
     | Some v -> Some (counted (Nx.copy v.bits) (count c.length v))

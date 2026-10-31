@@ -13,7 +13,6 @@ type t =
 let ( let* ) = Result.bind
 let arange n = Nx.arange Nx.int64 0 n 1
 let none n = Nx.full Nx.int64 [| n |] (-1L)
-let ints n k = Nx.full Nx.int64 [| n |] (Int64.of_int k)
 
 (* [exclusive c] is the sum of the entries of [c] before each one. *)
 let exclusive c = Nx.sub (Nx.cumsum c) c
@@ -65,6 +64,27 @@ let phrase : Join.count -> string = function
   | One -> "one"
   | At_least_one -> "at least one"
 
+(* [failure side count keys row c] is the failure of [side]'s row [row], whose
+   [c] matches [count] does not allow, naming the row's [keys]. *)
+let failure side count keys row c =
+  let key ppf (n, k) =
+    Format.fprintf ppf "%a is %t" Type.pp_quoted n (Form.pp_cell k row)
+  in
+  let whose ppf = function
+    | [] -> ()
+    | ks ->
+        Format.fprintf ppf " whose %a"
+          (Format.pp_print_list
+             ~pp_sep:(fun ppf () -> Format.pp_print_string ppf " and ")
+             key)
+          ks
+  in
+  let why =
+    Format.asprintf "the %s row%a matches %Ld rows, not %s" side whose keys c
+      (phrase count)
+  in
+  Error { Eval.row; cause = Data (Error.v (why ^ ".")) }
+
 (* [check side count keys counts] fails at the first row of [side] whose number
    of matches [counts] [count] does not allow, naming the row's [keys]. *)
 let check side (count : Join.count) keys counts =
@@ -83,23 +103,23 @@ let check side (count : Join.count) keys counts =
       if Nx.numel at = 0 then Ok ()
       else
         let row = Int64.to_int (Nx.item [ 0 ] at) in
-        let key ppf (n, k) =
-          Format.fprintf ppf "%a is %t" Type.pp_quoted n (Form.pp_cell k row)
-        in
-        let whose ppf = function
-          | [] -> ()
-          | ks ->
-              Format.fprintf ppf " whose %a"
-                (Format.pp_print_list
-                   ~pp_sep:(fun ppf () -> Format.pp_print_string ppf " and ")
-                   key)
-                ks
-        in
-        let why =
-          Format.asprintf "the %s row%a matches %Ld rows, not %s" side whose
-            keys (Nx.item [ row ] c) (phrase count)
-        in
-        Error { Eval.row; cause = Data (Error.v (why ^ ".")) }
+        failure side count keys row (Nx.item [ row ] c)
+
+(* [sized side count ~rows (k, a) b] is {!check} for matches that follow from
+   the sides' sizes: [side]'s first [k] of [rows] rows match [a] rows each, and
+   the others [b]. It reads no value, so it holds over traced columns too. *)
+let sized side (count : Join.count) ~rows (k, a) b =
+  let allows c =
+    match count with
+    | Any -> true
+    | At_most_one -> c <= 1
+    | One -> c = 1
+    | At_least_one -> c >= 1
+  in
+  let fails row c = failure side count [] row (Int64.of_int c) in
+  if Int.min k rows > 0 && not (allows a) then fails 0 a
+  else if rows > k && not (allows b) then fails k b
+  else Ok ()
 
 let named t ns = List.map (fun n -> (n, Table.column t n)) ns
 
@@ -176,9 +196,8 @@ let equality q kind (each_left, each_right) left right eqs =
 
 let position q kind (each_left, each_right) l r =
   let n = Table.rows l and m = Table.rows r in
-  let below k rows = lazy (Nx.cast Nx.int64 (Nx.less_s (arange rows) k)) in
-  let* () = check "left" each_left [] (below (Int64.of_int m) n) in
-  let* () = check "right" each_right [] (below (Int64.of_int n) m) in
+  let* () = sized "left" each_left ~rows:n (m, 1) 0 in
+  let* () = sized "right" each_right ~rows:m (n, 1) 0 in
   let idx =
     match (kind : Join.kind) with
     | Inner | Semi -> arange (Int.min n m)
@@ -191,7 +210,7 @@ let position q kind (each_left, each_right) l r =
 let cross q kind (each_left, each_right) =
   let batch r b =
     let n = Table.rows b and m = Table.rows r in
-    let* () = check "left" each_left [] (lazy (ints n m)) in
+    let* () = sized "left" each_left ~rows:n (0, 0) m in
     let kept keep = if keep then arange n else arange 0 in
     let li, ri =
       match (kind : Join.kind) with
@@ -207,7 +226,7 @@ let cross q kind (each_left, each_right) =
   in
   let last r e n =
     let m = Table.rows r in
-    let* () = check "right" each_right [] (lazy (ints m n)) in
+    let* () = sized "right" each_right ~rows:m (0, 0) n in
     if kind = Full && n = 0 then Ok (assemble q kind e (none m) r (arange m) [])
     else Ok (assemble q kind e (arange 0) r (arange 0) [])
   in

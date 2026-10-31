@@ -556,7 +556,9 @@ module Column : sig
 
   val null_count : t -> int
   (** [null_count c] is the number of null rows of [c]. The first call may read
-      [c]'s validity once; later calls cost O(1). *)
+      [c]'s validity once; later calls cost O(1). It raises [Invalid_argument]
+      for a validity [Rune.jit] or [Rune.vmap] traces
+      ({!Query.section-compiled}), whose bits have no elements to count. *)
 
   (** {1:ocaml OCaml values} *)
 
@@ -613,7 +615,8 @@ module Column : sig
 
       Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
       converts the result), if [c] is not stored one element per row, or if [c]
-      has a null. *)
+      has a null; under [Rune.jit], for a traced validity
+      ({!Query.section-compiled}), the null raises when the call returns. *)
 
   val validity : t -> Nx.host Nx.bit_t option
   (** [validity c] is true at row [i] iff row [i] of [c] holds a value. [None]
@@ -773,7 +776,9 @@ val take : Nx.host Nx.int64_t -> t -> t
     [take (Nx.Rng.permutation ~key (rows t)) t] shuffles every column.
 
     Raises [Invalid_argument] if [indices] is not 1-D or holds an index outside
-    \[[0];[rows t - 1]\]. *)
+    \[[0];[rows t - 1]\]; under [Rune.jit], for traced [indices]
+    ({!Query.section-compiled}), the index outside raises when the call
+    returns. *)
 
 val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
 (** [to_tensor dt names t] is the [(rows t, List.length names)] matrix whose
@@ -782,12 +787,17 @@ val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
     The columns are numeric or boolean, and have no null.
 
     Raises [Invalid_argument] if a name is not a column of [t], if a column is
-    neither numeric nor boolean, or has a null. *)
+    neither numeric nor boolean, or has a null; under [Rune.jit], for a traced
+    validity ({!Query.section-compiled}), the null raises when the call
+    returns. *)
 
 val equal : t -> t -> bool
 (** [equal t0 t1] is [true] iff [t0] and [t1] have equal schemas and the same
     keys row by row, by key identity ({!Type.compare_value}, null being one more
-    key), whatever their batches. *)
+    key), whatever their batches.
+
+    Raises [Invalid_argument] over traced columns ({!Query.section-compiled}).
+*)
 
 (** {1:display Display} *)
 
@@ -835,7 +845,8 @@ val pp_with : limits -> Format.formatter -> t -> unit
     as {!Time.Span.pp} formats them, lists as OCaml lists, and records and
     tensors as [<record>] and [<tensor>].
 
-    Raises [Invalid_argument] if a limit is negative or [l.width] is [0]. *)
+    Raises [Invalid_argument] if a limit is negative or [l.width] is [0], and
+    over traced columns or under [Rune.grad] ({!Query.section-compiled}). *)
 
 module Error : sig
   (** Failures found in data and in the environment.
@@ -1329,7 +1340,8 @@ module Expr : sig
       [filter], [over (mean x)] is the mean of the whole input, and it blocks
       the pipeline. Its type is [e]'s. A column named twice in [by] or in
       [order] is a problem, and so is an [order] key on a column whose type is
-      or holds an extension type. *)
+      or holds an extension type. Over traced columns
+      ({!Query.section-compiled}) a nonempty [by] raises. *)
 
   val shift : int -> ('a, row) t -> ('a, row) t
   (** [shift n a] is [a]'s value [n] rows earlier in the frame, or [-n] rows
@@ -1988,6 +2000,8 @@ module Query : sig
       in O(n), except that {!Expr.over} and {!Expr.rank} over the input's rows
       need the whole input: the verb then blocks.
 
+      Over traced columns ({!section-compiled}) it raises when [p] reads one.
+
       Its problems are those of binding [p], and an extension's values, even
       when they read as [bool]. *)
 
@@ -2019,7 +2033,8 @@ module Query : sig
       the outputs [os] reduced over the group's rows in [q]'s order. [~by:[]]
       makes one group of every row, so one row, even when [q] has none. It
       blocks, in O(n) expected time, holding the columns [by] and those that
-      [os] read.
+      [os] read. Over traced columns ({!section-compiled}) it raises unless
+      [by] is empty.
 
       Its problems are a key that names no column or is named twice, those of
       binding [os], two outputs of one name, and an output of a key's name. *)
@@ -2048,7 +2063,8 @@ module Query : sig
       {!Join.Anti} [left]'s rows past m. Its columns are those {!Join}
       describes. An equality or {!Join.position} join blocks on both inputs; a
       join on {!Join.all} blocks on [right] and streams [left]. An equality join
-      runs in O(n + m + matches).
+      runs in O(n + m + matches). Over traced columns ({!section-compiled}) an
+      equality join raises, and the others run, their counts included.
 
       Its problems are, for each atom of [on] in order: a column missing on its
       side, and columns that do not meet. Then, in a {!Join.Full} join, a left
@@ -2083,21 +2099,21 @@ module Query : sig
       would, at the first row, in that order, where a step fails, whether an
       error or an exception. Which failure is reported depends on the plan and
       its inputs' values in order, never on batches or cores. [e] names the
-      step, as {!pp} prints it, and the row of the step's input.
+      step, as {!pp} prints it, and the row of the step's input. Over traced
+      columns ({!section-compiled}) a step that can fail on a value, such as a
+      cast that may lose one, raises at the trace.
 
       A function of [q]'s expressions may be called on rows past a limit. Every
       reader [fold] opens is closed when it returns, also when [f], a function
       of [q]'s expressions or a source raises; the exception then propagates.
-
-      Running under a transformation of nx, such as compilation or
-      vectorization, is not specified yet: talon runs on the caller's fiber, and
-      a step that reads values on the host, such as a filter, a sort, a group, a
-      join or text, raises whatever nx raises when those values are traced. *)
+  *)
 
   val run : t -> (table, Error.t) result
   (** [run q] is [q]'s rows as one batch: [fold] into a table, then one copy
       into a single batch. Its columns are canonical ({!Column}), so their
-      {!Column.type-layout}s do not depend on batches. *)
+      {!Column.type-layout}s do not depend on batches, except that a column
+      whose validity is traced ({!section-compiled}) keeps it, even with no
+      null. *)
 
   val values : ('a, Expr.row) Expr.t -> t -> ('a array, Error.t) result
   (** [values e q] is [e] on each row of [q], decoded to OCaml:
@@ -2110,7 +2126,23 @@ module Query : sig
       {!Expr.option}. [e] then names the step [values] followed by [e].
 
       Raises [Invalid_argument] with a report like a verb's, named [values], if
-      [e] does not bind against [q]'s schema. *)
+      [e] does not bind against [q]'s schema, and over traced columns or under
+      [Rune.grad] ({!section-compiled}), as nx refuses to read their arrays
+      out. *)
+
+  (** {1:compiled Compiled, mapped and differentiated runs}
+
+      A query may run in a function that [Rune.jit] compiles, [Rune.vmap] maps
+      or [Rune.grad] differentiates, over columns of its arrays
+      ({!Column.of_tensor}). Under [Rune.jit] and [Rune.vmap] those arrays are
+      {e traced}, in the sense that their elements exist only when the program
+      runs; under [Rune.jit] so is every result computed from a table the
+      function captures, so steps on its text raise. A step over traced columns
+      computes eager's values when every size it computes follows from its
+      inputs' sizes. Otherwise it raises [Invalid_argument] at the trace with
+      nx's message for the read, such as
+      [Nx.positions: the value is traced by Rune.jit], and its doc says so.
+      Under [Rune.grad] every step runs, {!values} and display aside. *)
 
   (** {1:optimizing Optimizing} *)
 

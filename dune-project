@@ -150,6 +150,10 @@
   (lz
    (= :version))
   bytesrw
+  (rune
+   (and
+    :with-test
+    (= :version)))
   (windtrap
    (and
     :with-test

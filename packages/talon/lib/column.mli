@@ -77,6 +77,18 @@ val known_zero : t -> bool
     [0]. It reads nothing: fast paths consult it, and the absence of a validity
     implies no null, not the reverse. *)
 
+val no_null : t -> (int -> exn) -> unit
+(** [no_null c fail] raises [fail i], [i] the first null row of [c], if [c] has
+    one. A validity whose bits are traced ({!traced}) and whose count was not
+    read is checked with the program instead ({!Nx.check}): [fail i] is then
+    raised when the compiled call returns. *)
+
+val traced : ('a, 'b, 'd) Nx.t -> bool
+(** [traced x] is [true] iff an interpretation owns [x] ({!Nx.Prim.owner}): a
+    stand-in under [Rune.jit], a lane under [Rune.vmap], a value under
+    [Rune.grad]. No read of its bytes or layout works. {!Nx.item} reads a
+    derivative's value through its twin, and raises on the others. *)
+
 val make : Type.any -> ?validity:Nx.host Nx.bit_t -> length:int -> data -> t
 (** [make ty ?validity ~length d] is the column of type [ty] with values [d] and
     a null wherever [validity] is clear, its count not yet read. It checks that
@@ -165,6 +177,8 @@ val canonical : t -> t
     [0], values exactly the rows', and every buffer of elements narrower than a
     byte from the first bit of its storage with every bit past its last element
     clear, at every depth. It is [c] itself when [c] is canonical, and one copy
-    otherwise. It reads its null count, and drops a validity with no null. Two
+    otherwise. It reads its null count, and drops a validity with no null,
+    except one whose bits are traced and uncounted, which it keeps. A traced
+    buffer counts as canonical, since the program lays it out. Two
     canonical columns whose rows hold the same bytes, under their nulls
     included, have the same layout, byte for byte. *)
