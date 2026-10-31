@@ -44,7 +44,7 @@
 
 (pin
  (url
-  "git+https://github.com/invariant-hq/windtrap.git#4f2b11f2f5e70b3ffcf9bf972a037d12dd8031ba")
+  "git+https://github.com/invariant-hq/windtrap.git#aeac8903769e756bf3a37304e3860073928d9736")
  (package
   (name windtrap))
  (package
