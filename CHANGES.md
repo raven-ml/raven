@@ -798,6 +798,8 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Shape.placeholder` takes no `?tag` or `?volatile`: a named or
+  volatile parameter is made with `Shape.param`.
 - `Shape.param_like` takes an optional `~name` for the parameter it makes.
 - `Prepare.contiguous_view` finds a view of a constant or a computed value:
   the value itself, at offset 0. It found none before.

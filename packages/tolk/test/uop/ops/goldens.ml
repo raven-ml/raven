@@ -435,7 +435,7 @@ let storage () =
         ~name:"w" ~volatile:true 4 Float32;
       placeholder ~slot:5 [ 2; 3 ] Weak_int;
       placeholder ~slot:6 ~addrspace:Local [ 8 ] Float32;
-      placeholder ~slot:7 ~addrspace:Reg ~tag:(String "acc") [ 4 ] Float16;
+      placeholder ~slot:7 ~addrspace:Reg [ 4 ] Float16;
       alloc ~slot:9 [] Int32;
       alloc ~slot:10
         ~device:(Multi [ "CPU:0"; "CPU:1" ])
@@ -769,7 +769,11 @@ let reprs () =
     ("variable", n);
     ("bound variable", bind n (i 3));
     ( "named local buffer",
-      placeholder ~slot:2 ~addrspace:Local ~tag:(String "buf") [ 4 ] Int32 );
+      v Op.Buffer
+        ~arg:
+          (Param
+             (param_arg ~slot:2 ~size:4 ~name:"buf" ~addrspace:(Some Local)
+                Int32)) );
     ( "volatile param",
       Shape.param ~shape:(ints [ 4 ]) ~volatile:true ~device:(Single "CPU") 0
         Uint32 );

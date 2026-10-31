@@ -402,14 +402,11 @@ val placeholder :
   ?slot:int ->
   ?addrspace:Dtype.addr_space ->
   ?device:Ops.device ->
-  ?volatile:bool ->
-  ?tag:Ops.Tag.t ->
   int list ->
   Dtype.t ->
   Ops.t
 (** [placeholder shape dt] is a parameter of [shape] and [dt] ([dt] committed,
     {!Dtype.strong}), or workgroup or register storage for those address spaces.
-    A [String] tag also names it.
 
     Raises [Invalid_argument] if local storage gets a device. *)
 

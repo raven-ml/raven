@@ -3079,11 +3079,9 @@ let alloc_like ?slot ?addrspace u =
     (List.map (fun n -> Int n) (max_shard_shape u))
     (dtype u)
 
-let placeholder ?slot ?(addrspace = Dtype.Global) ?device ?(volatile = false)
-    ?tag new_shape dt =
+let placeholder ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
   let dt = Dtype.strong dt in
   let slot = match slot with Some s -> s | None -> unique_num () in
-  let name = match tag with Some (Tag.String s) -> Some s | _ -> None in
   let size = size_of new_shape in
   let ret =
     match addrspace with
@@ -3091,17 +3089,14 @@ let placeholder ?slot ?(addrspace = Dtype.Global) ?device ?(volatile = false)
         v Op.Param
           ~arg:
             (Param
-               (param_arg ~slot ~size ?name ~addrspace:(Some addrspace) ?device
-                  ~volatile dt))
+               (param_arg ~slot ~size ~addrspace:(Some addrspace) ?device dt))
     | Dtype.Local | Dtype.Reg ->
         if Option.is_some device then
           invalid_arg "workgroup and register storage has no device";
         v Op.Buffer
-          ~arg:
-            (Param (param_arg ~slot ~size ?name ~addrspace:(Some addrspace) dt))
+          ~arg:(Param (param_arg ~slot ~size ~addrspace:(Some addrspace) dt))
     | Dtype.Alu -> invalid_arg "a placeholder cannot be a scalar variable"
   in
-  let ret = match tag with Some g -> rtag ~tag:g ret | None -> ret in
   if List.length new_shape > 1 then
     reshape ret (List.map (fun n -> Int n) new_shape)
   else ret
