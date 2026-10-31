@@ -3,7 +3,7 @@
 
 (executable
  (name bench_rune)
- (libraries nx rune thumper))
+ (libraries nx nx.wide rune thumper))
 
 (rule
  (alias bench)

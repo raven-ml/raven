@@ -4,7 +4,7 @@
 
 (executable
  (name bench_compile)
- (libraries nx rune thumper unix))
+ (libraries nx nx.wide rune thumper unix))
 
 (rule
  (alias bench)

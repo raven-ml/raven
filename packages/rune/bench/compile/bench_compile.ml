@@ -10,8 +10,8 @@
    function: tracing, lowering, tolk's passes and the kernel compiler, and the
    process's start. A warm process cannot hold this cost: tolk's disk cache
    serves a program after its first compile. A case takes three samples. The
-   cases are those whose compile time rune's lowering or tolk's vectors
-   decide.
+   cases are those whose compile time rune's lowering, tolk's vectors or a
+   library's stores of its intermediates decide.
 
    [--cold ID] runs one case's first call and prints its milliseconds: run it
    with [CACHEDB] at an empty path and [PARALLEL=1]. *)
@@ -243,6 +243,21 @@ let normal dt () =
   let draw k = Nx.Rng.normal ~key:(Nx.Rng.of_tensor k) dt [| 1024 |] in
   compile draw (Nx.Rng.to_tensor (Nx.Rng.key 0))
 
+(* A double-word sum of 10^6 float64 numbers, both words returned: a tree of
+   20 levels of double-word additions, which nx.wide cuts into programs of a
+   few levels each. *)
+let wide_sum () =
+  let sum x =
+    let s = Nx_wide.sum (Nx_wide.v x) in
+    (Nx_wide.hi s, Nx_wide.lo s)
+  in
+  ignore
+    (Sys.opaque_identity
+       (Rune.jit
+          Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+          sum
+          (input ~n:1_000_000 0. 1.)))
+
 let cases =
   [
     ("linalg/solve-32", solve);
@@ -258,6 +273,7 @@ let cases =
     ( "shaped-4k",
       fun () -> compile (shaped 4096 (Nx.scalar f64 0.5)) (input 0. 1.) );
     ("shaped-4k-3-lanes", shaped_padded);
+    ("wide/sum-1e6", wide_sum);
   ]
 
 let rec remove path =

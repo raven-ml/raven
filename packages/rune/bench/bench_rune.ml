@@ -397,6 +397,7 @@ let jit_rows () =
   let bases = between f32 43 0.01 30. [| 65536 |] in
   let exponents = between f32 47 (-3.) 3. [| 65536 |] in
   let scaled = between f32 49 (-1.) 1. [| 100; 400 |] in
+  let wide = between f64 50 0. 1. [| 1_000_000 |] in
   [
     warm "add-1-hit"
       (fun () -> Rune.jit (pair_fn ()) Nx.add)
@@ -537,6 +538,15 @@ let jit_rows () =
     warm "pow-float32-64K"
       (fun () -> Rune.jit (pair_fn ()) Nx.pow)
       (fun f -> synced (f bases exponents));
+    (* A double-word sum of 10^6 float64 numbers, both words returned: a tree
+       of 20 levels, a program of a few levels each, whose stores hold each
+       program's results. *)
+    warm "wide-sum-1e6"
+      (fun () ->
+        Rune.jit (split_fn ()) (fun x ->
+            let s = Nx_wide.sum (Nx_wide.v x) in
+            (Nx_wide.hi s, Nx_wide.lo s)))
+      (fun f -> synced2 (f wide));
   ]
 
 (* Loops whose lanes stop apart: Newton's iteration for one value's square root,
