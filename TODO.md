@@ -352,9 +352,6 @@ raven / llama.cpp (Vulkan; ROCm):
   multi-thread; SentencePiece pipelines 40-58 MB/s (added-token scan 28%,
   normalizer 15%); bert unfused. Re-measure on fudge at a stated gigatoken
   commit
-- munin GPU metrics without NVML (a vendor library, ruled out): amdgpu
-  sysfs, IOKit, and NVIDIA through what rig's drivers can read; design
-  first
 
 ## ymir, sowilo
 
