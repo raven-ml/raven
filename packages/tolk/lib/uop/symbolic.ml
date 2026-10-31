@@ -268,15 +268,14 @@ let pm_simplify_valid =
       rule invalid_gate (fun m -> gated_given_valid (m "cond") (m "x") (m "i"));
     ])
 
-let remove_from_sink_like = ops [ Op.Noop; Op.Stack; Op.Sink; Op.Group ]
+let remove_from_sink_like = ops [ Op.Noop; Op.Stack; Op.Sink; Op.After ]
 
 let pm_clean_up_group_sink =
   pm
     (fun () -> [
-      (* clean up GROUP/SINK *)
-      rule (Upat.op Op.Group ~src:[ Upat.var "x" ]) (fun m -> Some (m "x"));
+      (* clean up SINK *)
       rule
-        (Upat.v ~op:(ops [ Op.Sink; Op.Group ]) ~name:"root" ())
+        (Upat.op Op.Sink ~name:"root")
         (fun m ->
           let root = m "root" in
           let spliced x = Op.Set.mem (op x) remove_from_sink_like in

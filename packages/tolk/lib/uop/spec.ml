@@ -254,9 +254,6 @@ let shared : t =
       check (pat [ Op.Binary ] ~dtype:[ Dtype.Uint8 ] ~src:[] ~name:"x") "x"
         (fun x -> match arg x with Bytes _ -> true | _ -> false);
       accept
-        (pat [ Op.Group ] ~dtype:[ Dtype.Void ]
-           ~each:(Upat.v ~dtype:[ Dtype.Void ] ()));
-      accept
         (pat [ Op.After ] ~allow_any_len:true
            ~src:
              [
@@ -278,6 +275,7 @@ let shared : t =
                              Const;
                              Cast;
                              Noop;
+                             Stack;
                            ]))
                  ();
              ]);

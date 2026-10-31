@@ -51,9 +51,8 @@ val pm_move_where_on_load : (unit, Ops.t) Ops.Pattern_matcher.t
     fails, so a selection of [-0.] is left as it is. *)
 
 val pm_clean_up_group_sink : (unit, Ops.t) Ops.Pattern_matcher.t
-(** [pm_clean_up_group_sink] replaces a group of one node by that node, and
-    splices into each sink and group the sources of its {!Op.Noop}, {!Op.Stack},
-    {!Op.Sink} and {!Op.Group} sources. *)
+(** [pm_clean_up_group_sink] splices into each sink the sources of its
+    {!Op.Noop}, {!Op.Stack}, {!Op.Sink} and {!Op.After} sources. *)
 
 val sym : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [sym] is {!Shape.val-symbolic} and {!pm_simplify_valid}, followed by:

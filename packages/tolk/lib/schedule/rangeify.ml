@@ -717,8 +717,9 @@ let debuf ctx buf =
   ctx.dg <- ctx.dg + 1;
   ret
 
+(* A group of stores is no state of a buffer. *)
 let handle_after ctx after =
-  if addrspace after = Some Dtype.Local then None
+  if addrspace after = Some Dtype.Local || is_group after then None
   else
     let buf = buf_uop after in
     (* Bottom up, so it is added once. *)

@@ -798,6 +798,9 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** `Op.Group` is gone: `Ops.group` is the empty stack ordered after
+  its effects (`Ops.after`), and only a sink splices the effects of its sources
+  (`Symbolic.pm_clean_up_group_sink`).
 - **Breaking:** `Dtype.name` is a data type's short name (`i8`, `u32`, `f16`,
   `bf16`, `f32`, `fp8e4m3`) and `Dtype.pp` prints `dtypes.<name>`, where both
   used C names (`signed char`, `half`). `Dtype.of_string` reads the short names

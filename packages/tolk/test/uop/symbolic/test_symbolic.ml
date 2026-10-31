@@ -1492,17 +1492,16 @@ let clean_up_group_sink =
   group "pm_clean_up_group_sink"
     [
       test "a group of one node is that node" (fun () ->
-          equal uop a (rewrite (raw Group [ a ])));
+          equal uop a (Ops.group [ a ]));
       test "a sink splices the sources of its sinks, groups, stacks and noops"
         (fun () ->
           equal uop
             (Ops.sink [ a; b; f; g ])
-            (rewrite (Ops.sink [ Ops.sink [ a; b ]; raw Group [ f; g ] ]));
+            (rewrite (Ops.sink [ Ops.sink [ a; b ]; Ops.group [ f; g ] ]));
           equal uop (Ops.sink [ a ]) (rewrite (Ops.sink [ raw Noop [ a ] ])));
-      test "a group splices the sources of its sinks and groups" (fun () ->
-          equal uop
-            (raw Group [ a; b; f ])
-            (rewrite (raw Group [ raw Group [ a; b ]; f ])));
+      test "a group keeps the groups it is ordered after" (fun () ->
+          let nested = Ops.group [ Ops.group [ a; b ]; f ] in
+          equal uop nested (rewrite nested));
     ]
 
 let conditions =

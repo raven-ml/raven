@@ -544,7 +544,7 @@ let dtype_of op src arg =
   in
   match op with
   | Op.Store | Op.Linear | Op.Sink | Op.Program | Op.Source | Op.Backedge
-  | Op.Barrier | Op.Group | Op.If | Op.Endif | Op.Noop | Op.Custom_function ->
+  | Op.Barrier | Op.If | Op.Endif | Op.Noop | Op.Custom_function ->
       Dtype.Void
   | Op.Call -> ( match arg with Call c -> c.dtype | _ -> Dtype.Void)
   | Op.Custom | Op.Customi | Op.Ins -> (
@@ -1970,7 +1970,6 @@ let sink ?kernel ?tag us =
     ~arg:(match kernel with Some k -> Kernel k | None -> No_arg)
     ?tag
 
-let group = function [ u ] -> u | us -> v Op.Group ~src:us
 
 let broadcast u n =
   if n = 1 then u else v Op.Stack ~src:(List.init n (fun _ -> u))
@@ -1991,6 +1990,12 @@ let store ?gate ?tag p x = v Op.Store ~src:([ p; x ] @ Option.to_list gate) ?tag
 let end_ u = function [] -> u | rs -> v Op.End ~src:(u :: rs)
 let backedge u ~loop ~cond = v Op.Backedge ~src:[ u; loop; cond ]
 let after ?tag u = function [] -> u | deps -> v Op.After ~src:(u :: deps) ?tag
+let group = function [ u ] -> u | us -> after (v Op.Stack) us
+
+let is_group u =
+  match (u.op, u.src) with
+  | Op.After, s :: _ -> s.op = Op.Stack && s.src = []
+  | _ -> false
 
 let rec without_after u =
   if u.op = Op.After then without_after (first u.op u.src) else u
@@ -2100,7 +2105,7 @@ and compute_addrspace u =
       addrspace (first u.op u.src)
   | op, _ when Op.Set.mem op Op.Set.movement -> addrspace (first u.op u.src)
   | op, _
-    when List.mem op Op.[ Stack; Wmma; Group ]
+    when List.mem op Op.[ Stack; Wmma ]
          || Op.Set.mem op Op.Set.elementwise -> (
       match List.filter_map addrspace u.src with
       | a :: rest when List.for_all (( = ) a) rest -> Some a

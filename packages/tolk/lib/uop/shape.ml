@@ -248,7 +248,7 @@ and compute_shape u : sint list option =
   let src0 () = first (op u) (src u) in
   let void = Dtype.equal (dtype u) Dtype.Void in
   match op u with
-  | Op.If | Op.Barrier | Op.Sink | Op.Endif | Op.Backedge | Op.Group | Op.Linear
+  | Op.If | Op.Barrier | Op.Sink | Op.Endif | Op.Backedge | Op.Linear
   | Op.Program | Op.Source | Op.Custom_function ->
       None
   | Op.Call | Op.Ins -> if void then None else Some []
@@ -2551,7 +2551,11 @@ let symbolic =
                 ~name:"x" ())
              (fun m ->
                let x = m "x" in
-               if V.(vmin x = vmax x) then Some (const_v x (vmin x)) else None);
+               if
+                 (not (Dtype.equal (dtype x) Dtype.Void))
+                 && V.(vmin x = vmax x)
+               then Some (const_v x (vmin x))
+               else None);
            rule
              (Upat.op Op.Range
                 ~src:[ Upat.or_casted (Upat.op Op.Const) ]

@@ -221,7 +221,8 @@ let stages =
 (* Values *)
 
 (* A kernel is interpretable when it writes through stores alone: no memory of
-   its own, no hardware index, no code the interpreter cannot read. *)
+   its own, no hardware index, no code the interpreter cannot read. A group,
+   the empty stack ordered after effects, only merges them. *)
 let opaque =
   Op.
     [
@@ -240,7 +241,7 @@ let opaque =
 
 let interpretable u =
   List.for_all
-    (fun v -> not (List.mem (Ops.op v) opaque))
+    (fun v -> Ops.is_group v || not (List.mem (Ops.op v) opaque))
     (Ops.toposort ~calls:Enter u)
 
 let bound k =

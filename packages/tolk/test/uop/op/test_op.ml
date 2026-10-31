@@ -17,7 +17,6 @@ let declared =
       Binary;
       Sink;
       After;
-      Group;
       Stack;
       Getaddr;
       Index;

@@ -677,7 +677,13 @@ val sink : ?kernel:kernel_info -> ?tag:Tag.t -> t list -> t
     if given. *)
 
 val group : t list -> t
-(** [group us] is the {!Op.Group} of [us], or the one node of [us]. *)
+(** [group us] is the empty {!Op.Stack} ordered after [us] ({!after}): the
+    effects [us] merged without a value. When [us] is one node, it is that
+    node. *)
+
+val is_group : t -> bool
+(** [is_group u] is [true] if and only if [u] is an {!Op.After} of the empty
+    {!Op.Stack}, as {!group} makes of several effects. *)
 
 val broadcast : t -> int -> t
 (** [broadcast u n] is the {!Op.Stack} of [n] copies of [u], or [u] if [n] is

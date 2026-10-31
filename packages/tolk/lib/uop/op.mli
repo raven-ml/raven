@@ -49,7 +49,6 @@ type t =
   | After
       (** Its first source, ordered after the remaining sources: every consumer
           runs after them. *)
-  | Group  (** Merges effects without producing a value. *)
   | Stack  (** A vector of its sources. *)
   | Getaddr
       (** The device address of a buffer or of a command sequence, for command

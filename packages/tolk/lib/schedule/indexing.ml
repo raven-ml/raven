@@ -138,10 +138,12 @@ let broadcast_rngs x s rngs =
          rngs)
 
 (* The sources that hold data, as opposed to shapes, bounds and ranges. *)
-let data_srcs op src =
+let data_srcs u =
+  let op = op u and src = src u in
   let first = match src with s :: _ -> [ s ] | [] -> [] in
   if Op.Set.mem op (ops Op.[ Param; Buffer; Alloc; Range; Special ]) then []
   else if op = Op.Index && is_gather_src src then src
+  else if is_group u then (* every store is data *) src
   else if
     Op.Set.mem op
       (Op.Set.union Op.Set.movement
@@ -192,7 +194,7 @@ let bufferize_and_index ctx ~indexed s src_rngs =
         if indexed then index staged src_rngs else staged
 
 let create_bufferize_and_index_srcs ctx x =
-  let data_src_count = List.length (data_srcs (op x) (src x)) in
+  let data_src_count = List.length (data_srcs x) in
   let rngs = Option.map fst (Tbl.find_opt ctx.range_map x) in
   List.mapi
     (fun i s ->
@@ -219,7 +221,8 @@ let convert_gather ctx x =
 
 (* A group's stores are its own: each indexes its sources as any node does. *)
 let create_bufferize_and_index_based_on_ranges ctx x =
-  Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
+  if is_group x then None
+  else Some (replace x ~src:(create_bufferize_and_index_srcs ctx x))
 
 (* The first source is taken from the list: rebuilding [x] on an indexed source
    would give it a shape its argument does not fit. *)
@@ -328,7 +331,7 @@ let pm_apply_rangeify =
           (ops [ Op.Cdiv; Op.Cmod; Op.Floordiv; Op.Floormod ])
           guard_division_on_padding;
         on
-          (Op.Set.diff Op.Set.all (ops [ Op.Stage; Op.Index; Op.Group ]))
+          (Op.Set.diff Op.Set.all (ops [ Op.Stage; Op.Index ]))
           create_bufferize_and_index_based_on_ranges;
         on Op.Set.movement remove_movement_op_after_rangeify;
       ])
@@ -841,7 +844,7 @@ let run_rangeify ?(debug = false) tsink =
           | Some (c' :: _) when c' == c -> ()
           | Some cs -> Tbl.replace consumer_map x (c :: cs)
           | None -> ())
-        (data_srcs (op c) (src c)))
+        (data_srcs c))
     tsink_toposort;
   let ending_ranges = Tbl.create 256 in
   List.iter

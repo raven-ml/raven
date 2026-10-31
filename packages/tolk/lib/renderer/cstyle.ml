@@ -814,11 +814,9 @@ let render_uops l uops =
   in
   let visit u =
     match op u with
-    | Op.Noop | Op.Group | Op.Const | Op.Custom_function -> ()
+    | Op.Noop | Op.Const | Op.Custom_function -> ()
     | Op.Stack when src u = [] -> ()
-    (* the bound of an unbounded loop, ordered after effects, is never
-       rendered *)
-    | Op.After when op (nth u 0) = Op.Noop -> ()
+    | Op.After when Dtype.equal (dtype u) Dtype.Void -> ()
     | Op.After -> Tbl.replace r u ctx.%{nth u 0}
     | Op.Sink -> (
         match arg u with Kernel k -> name := function_name k | _ -> ())

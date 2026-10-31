@@ -3559,9 +3559,12 @@ driver signals its own (D146).
   merges a reduction's ranges in that reduction alone).
 - **tolk:** for stores, `Indexing.region`, `Indexing.waits_over`,
   `Indexing.share_loops`, `Indexing.loops_of` and `Indexing.end_shared` (which
-  `Indexing.bufferize_and_index` returns for each store of a group); for
-  reductions, `Indexing.reaches`, `Indexing.reduce_loops` and its use in
-  `Indexing.assign_ranges`; `Simplify.merge_reductions`;
+  `Indexing.bufferize_and_index` returns for each store of a group), with
+  `Indexing.data_srcs`, `Indexing.create_bufferize_and_index_based_on_ranges`
+  and `Rangeify.handle_after`, which take a group (`Ops.is_group`) as its
+  stores and no state of a buffer; for reductions, `Indexing.reaches`,
+  `Indexing.reduce_loops` and its use in `Indexing.assign_ranges`;
+  `Simplify.merge_reductions`;
   `Codegen.merge_reduce_ends`; `test/gen/tinygrad.patch`, which gives tinygrad
   the same before the goldens are recorded.
 - **Differs:** consumers of one domain take one set of ranges, so a node they
