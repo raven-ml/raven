@@ -32,6 +32,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/param.h>
@@ -1271,8 +1272,9 @@ static int64_t cf_int(CFDictionaryRef d, CFStringRef key) {
 }
 #endif
 
-/* The GPUs as an array of (IOKit class, load in percent, memory held in
-   bytes), -1 for what an accelerator does not report. Apple documents no key
+/* The GPUs as an array of (name, load in percent, memory held in bytes), -1
+   for what an accelerator does not report. The name is the accelerator's
+   IOKit class and registry entry ID, which tells two of one class apart. Apple documents no key
    of an accelerator's PerformanceStatistics: these are the keys
    ioreg -c IOAccelerator shows, the memory on Apple silicon. The accelerators
    are read into C memory before any OCaml value is made. Linux reads sysfs
@@ -1283,7 +1285,7 @@ CAMLprim value caml_sysstat_get_gpus(value unit) {
 
 #ifdef __APPLE__
   struct gpu {
-    io_name_t name;
+    char name[sizeof(io_name_t) + 20];
     int64_t busy, used;
   };
   io_iterator_t it;
@@ -1310,9 +1312,14 @@ CAMLprim value caml_sysstat_get_gpus(value unit) {
     struct gpu* g = &gpus[count++];
     g->busy = -1;
     g->used = -1;
-    if (IOObjectGetClass(entry, g->name) != KERN_SUCCESS) {
-      strcpy(g->name, "IOAccelerator");
+    io_name_t cls;
+    uint64_t entry_id = 0;
+    if (IOObjectGetClass(entry, cls) != KERN_SUCCESS) {
+      strcpy(cls, "IOAccelerator");
     }
+    IORegistryEntryGetRegistryEntryID(entry, &entry_id);
+    snprintf(g->name, sizeof g->name, "%s:%llx", cls,
+             (unsigned long long)entry_id);
     CFTypeRef stats = IORegistryEntryCreateCFProperty(
         entry, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
     if (stats != NULL && CFGetTypeID(stats) == CFDictionaryGetTypeID()) {

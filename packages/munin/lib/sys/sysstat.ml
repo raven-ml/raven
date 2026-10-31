@@ -1327,8 +1327,13 @@ module Gpu = struct
 
   (* amdgpu's files, from the kernel's amdgpu documentation: memory in bytes,
      temperature in millidegrees Celsius, power in microwatts, which on an APU
-     includes the CPU's. Reading the load or a sensor resumes a GPU the kernel
-     suspended for being idle, so a suspended GPU gives its memory alone. *)
+     includes the CPU's. Up to Linux 6.12 reading the load or a sensor resumes
+     a GPU the kernel suspended for being idle (pm_runtime_get_sync in
+     amdgpu_hwmon_get_sensor_generic, drivers/gpu/drm/amd/pm/amdgpu_pm.c);
+     from 6.13 it fails with EPERM (pm_runtime_get_if_active). So a suspended
+     GPU gives its memory alone, which reads no sensor. Up to 6.12 a read also
+     restarts the GPU's autosuspend delay: sampling an awake idle GPU more often
+     than that delay keeps it from suspending. *)
   let amdgpu ~id dev =
     let file = Filename.concat dev in
     let awake = read_line (file "power/runtime_status") <> Some "suspended" in
@@ -1349,8 +1354,8 @@ module Gpu = struct
         | None -> sensor "power1_input" 1e6);
     }
 
-  let amdgpus ~root =
-    let drm = Filename.concat root "sys/class/drm" in
+  let amdgpus () =
+    let drm = "/sys/class/drm" in
     let read card =
       let dev = Filename.concat (Filename.concat drm card) "device" in
       let ev = uevent (Filename.concat dev "uevent") in
@@ -1365,9 +1370,9 @@ module Gpu = struct
   (* NVIDIA's GPUs, as rig lists them, read from their RM. NVIDIA's open
      headers define no reading of the temperature or the power that the RM
      answers. A GPU whose RM does not answer gives nothing. *)
-  let nvidia ~root =
+  let nvidia () =
     let read i id =
-      match Rig_nv_nvidia.usage_under ~root i with
+      match Rig_nv_nvidia.usage i with
       | Error _ ->
           {
             id;
@@ -1387,16 +1392,12 @@ module Gpu = struct
             power = None;
           }
     in
-    match Rig_nv_nvidia.buses_under ~root with
+    match Rig_nv_nvidia.buses () with
     | Error _ -> []
     | Ok buses -> List.mapi read buses
 
-  let sample_under ~root =
-    amdgpus ~root @ nvidia ~root
-    |> List.sort (fun a b -> String.compare a.id b.id)
-
-  (* The stub gives each accelerator's IOKit class, its load and the memory
-     it holds, or -1 for what it lacks. *)
+  (* The stub gives each accelerator's IOKit class and registry entry ID, its
+     load and the memory it holds, or -1 for what it lacks. *)
   let of_stub () =
     let known v = if Int64.compare v 0L < 0 then None else Some v in
     Array.to_list (c_get_gpus ())
@@ -1411,10 +1412,13 @@ module Gpu = struct
         })
 
   let sample () =
-    if Sys.file_exists "/proc" then sample_under ~root:"/"
-    else
-      try of_stub ()
-      with Failure e -> raise (Sys_error ("Gpu.sample: " ^ e))
+    let gpus =
+      if Sys.file_exists "/proc" then amdgpus () @ nvidia ()
+      else
+        try of_stub ()
+        with Failure e -> raise (Sys_error ("Gpu.sample: " ^ e))
+    in
+    List.sort (fun a b -> String.compare a.id b.id) gpus
 end
 
 (* System info *)

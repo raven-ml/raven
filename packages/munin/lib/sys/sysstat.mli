@@ -430,8 +430,9 @@ module Gpu : sig
   type t = {
     id : string;
         (** The GPU's name: on Linux its PCI address, such as
-            ["0000:05:00.0"]; on macOS its accelerator's IOKit class, such as
-            ["AGXAcceleratorG14X"]. *)
+            ["0000:05:00.0"]; on macOS its accelerator's IOKit class and
+            registry entry ID in hexadecimal, such as
+            ["AGXAcceleratorG14X:100000b29"]. *)
     busy_percent : float option;
         (** How busy the GPU is, from [0.0] to [100.0], as its driver
             measures it over its own recent window. *)
@@ -447,8 +448,10 @@ module Gpu : sig
       Platform behavior:
       - {b Linux, AMD}: GPUs of the [amdgpu] driver, read from its sysfs
         files. On an APU [power] includes the CPU's. A GPU the kernel
-        suspended for being idle gives its memory alone, since reading the
-        rest would resume it.
+        suspended for being idle gives its memory alone: up to Linux 6.12
+        reading the rest would resume it. Up to 6.12 a read also restarts the
+        GPU's autosuspend delay, so sampling an idle GPU more often than that
+        delay keeps it awake.
       - {b Linux, NVIDIA}: NVIDIA's GPUs, read from NVIDIA's kernel driver
         through {!Rig_nv_nvidia.usage}, whose first call makes the process's
         client of that driver. [busy_percent] is a mean over the last 15
@@ -466,13 +469,6 @@ module Gpu : sig
       Raises [Sys_error] on Windows, which munin reads no GPU statistics of,
       and if the accelerators cannot be listed. *)
 
-  (**/**)
-
-  val sample_under : root:string -> t list
-  (* [sample_under ~root] is {!sample} on Linux for the machine whose files are
-     under the directory [root] in place of ["/"], such as a test's tree. *)
-
-  (**/**)
 end
 
 (** {1:sysinfo System information} *)

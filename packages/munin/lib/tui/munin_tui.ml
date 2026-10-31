@@ -225,27 +225,26 @@ let view_summary_banner m =
      ]
     @ metric_rows)
 
-(* GPU [i] of the run, while the run logged any metric of GPU [i]. *)
-let sys_gpus sys_latest =
-  let rec from i =
-    let key name = sys_latest (Printf.sprintf "sys/gpu%d_%s" i name) in
-    let g =
-      System.
-        {
-          util_pct = key "util_pct";
-          mem_used_gb = key "mem_used_gb";
-          mem_used_pct = key "mem_used_pct";
-          temp_c = key "temp_c";
-          power_w = key "power_w";
-        }
-    in
-    if
-      List.for_all Option.is_none
-        [ g.util_pct; g.mem_used_gb; g.mem_used_pct; g.temp_c; g.power_w ]
-    then []
-    else g :: from (i + 1)
+(* The GPUs of the run's sys/gpuI_* metrics, by index I. *)
+let sys_gpus tags sys_latest =
+  let index tag =
+    match Scanf.sscanf tag "sys/gpu%u_%s%!" (fun i _ -> i) with
+    | i -> Some i
+    | exception (Scanf.Scan_failure _ | Failure _ | End_of_file) -> None
   in
-  from 0
+  let gpu index =
+    let key name = sys_latest (Printf.sprintf "sys/gpu%d_%s" index name) in
+    System.
+      {
+        index;
+        util_pct = key "util_pct";
+        mem_used_gb = key "mem_used_gb";
+        mem_used_pct = key "mem_used_pct";
+        temp_c = key "temp_c";
+        power_w = key "power_w";
+      }
+  in
+  List.map gpu (List.sort_uniq compare (List.filter_map index tags))
 
 let view_dashboard m =
   let all_metrics = Munin.Run.latest_metrics m.run in
@@ -275,7 +274,7 @@ let view_dashboard m =
         disk_read_mbs = sys_latest "sys/disk_read_mbs";
         disk_write_mbs = sys_latest "sys/disk_write_mbs";
         disk_util_pct = sys_latest "sys/disk_util_pct";
-        gpus = sys_gpus sys_latest;
+        gpus = sys_gpus (List.map fst all_metrics) sys_latest;
       }
   in
   let right_panel =

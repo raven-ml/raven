@@ -8,6 +8,7 @@ open Mosaic
 (* Types *)
 
 type gpu = {
+  index : int;
   util_pct : float option;
   mem_used_gb : float option;
   mem_used_pct : float option;
@@ -195,7 +196,8 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
     match (a, b) with None, None -> None | _ -> Some (a, b)
   in
   let some_text fmt = Option.fold ~none:"" ~some:(Printf.sprintf fmt) in
-  let gpu_lines i (g : gpu) =
+  let gpu_lines (g : gpu) =
+    let i = g.index in
     let key name = Printf.sprintf "sys/gpu%d_%s" i name in
     [
       line g.util_pct (fun util c ~y ~width ->
@@ -251,7 +253,7 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
               ~spark:(spark "sys/disk_write_mbs"));
       ]
   in
-  let gpus = List.concat (List.mapi gpu_lines v.gpus) in
+  let gpus = List.concat_map gpu_lines v.gpus in
   let lines = system @ List.filter_map Fun.id gpus in
   canvas
     ~size:{ width = pct 100; height = px (List.length lines) }

@@ -6,6 +6,7 @@
 (** The dashboard's panel of system usage. *)
 
 type gpu = {
+  index : int;  (** [i] of its [sys/gpu]{i i}[_*] metrics. *)
   util_pct : float option;
   mem_used_gb : float option;
   mem_used_pct : float option;
@@ -25,7 +26,7 @@ type values = {
   disk_read_mbs : float option;  (** MB per second. *)
   disk_write_mbs : float option;  (** MB per second. *)
   disk_util_pct : float option;
-  gpus : gpu list;  (** GPU [i] is the run's [sys/gpu]{i i}[_*] metrics. *)
+  gpus : gpu list;  (** The GPUs the run logged metrics of, by index. *)
 }
 (** The type for the latest system values, [None] for a metric the run has
     not logged. *)

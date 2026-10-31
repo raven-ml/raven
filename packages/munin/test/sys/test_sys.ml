@@ -208,112 +208,82 @@ let test_loadavg =
 
 (* GPUs *)
 
-let rec mkdir_p dir =
-  if not (Sys.file_exists dir) then begin
-    mkdir_p (Filename.dirname dir);
-    Unix.mkdir dir 0o755
-  end
+let gpus () = Munin_sys.Stat.Gpu.sample ()
 
-let write path contents =
-  mkdir_p (Filename.dirname path);
-  Out_channel.with_open_bin path (fun oc -> output_string oc contents)
+(* [id] as a PCI address reads it, [domain:bus:device.function] in
+   hexadecimal, or [""]: an id that is one reads back as itself. *)
+let as_pci id =
+  try
+    Scanf.sscanf id "%x:%x:%x.%x%!" (fun domain bus dev fn ->
+        Printf.sprintf "%04x:%02x:%02x.%x" domain bus dev fn)
+  with Scanf.Scan_failure _ | Failure _ | End_of_file -> ""
 
-(* An amdgpu GPU's files, each present or not, in the units of the kernel's
-   amdgpu documentation: bytes, millidegrees Celsius and microwatts. *)
-type amdgpu = {
-  busy : int option;
-  used : int option;
-  total : int option;
-  millic : int option;
-  avg_uw : int option;
-  input_uw : int option;
-  suspended : bool;
-}
-
-let gen_amdgpu =
-  let open Gen in
-  let some g = option g in
-  let+ busy = some (int_range 0 100)
-  and+ used = some (int_range 0 (1 lsl 40))
-  and+ total = some (int_range 1 (1 lsl 40))
-  and+ millic = some (int_range (-40_000) 125_000)
-  and+ avg_uw = some (int_range 0 1_000_000_000)
-  and+ input_uw = some (int_range 0 1_000_000_000)
-  and+ suspended = bool in
-  { busy; used; total; millic; avg_uw; input_uw; suspended }
-
-let slot i = Printf.sprintf "0000:%02x:00.0" (i + 3)
-
-(* Card [i] is the amdgpu [g]; the root also holds a connector and a GPU of
-   another driver, which munin does not read. *)
-let make_card root i g =
-  let dev = Filename.concat root (Printf.sprintf "sys/class/drm/card%d/device" i) in
-  let file name v =
-    Option.iter (fun v -> write (Filename.concat dev name) (Printf.sprintf "%d\n" v)) v
+(* The machine's amdgpu GPUs, by their DRM devices' uevent files, and its
+   NVIDIA GPUs, as rig lists them. *)
+let machine_gpus () =
+  let drm = "/sys/class/drm" in
+  let amd card =
+    let path = Filename.concat drm (card ^ "/device/uevent") in
+    match In_channel.with_open_bin path In_channel.input_all with
+    | exception Sys_error _ -> None
+    | text ->
+        let lines = String.split_on_char '\n' text in
+        if not (List.mem "DRIVER=amdgpu" lines) then None
+        else
+          List.find_map
+            (fun l ->
+              if String.starts_with ~prefix:"PCI_SLOT_NAME=" l then
+                Some (String.sub l 14 (String.length l - 14))
+              else None)
+            lines
   in
-  write (Filename.concat dev "uevent")
-    (Printf.sprintf "DRIVER=amdgpu\nPCI_CLASS=30000\nPCI_SLOT_NAME=%s\n" (slot i));
-  write (Filename.concat dev "power/runtime_status")
-    (if g.suspended then "suspended\n" else "active\n");
-  file "gpu_busy_percent" g.busy;
-  file "mem_info_vram_used" g.used;
-  file "mem_info_vram_total" g.total;
-  file "hwmon/hwmon4/temp1_input" g.millic;
-  file "hwmon/hwmon4/power1_average" g.avg_uw;
-  file "hwmon/hwmon4/power1_input" g.input_uw
+  let cards =
+    match Sys.readdir drm with
+    | exception Sys_error _ -> []
+    | names ->
+        List.filter
+          (fun n -> String.starts_with ~prefix:"card" n && not (String.contains n '-'))
+          (Array.to_list names)
+  in
+  List.sort compare
+    (List.filter_map amd cards
+    @ Result.value (Rig_nv_nvidia.buses ()) ~default:[])
 
-let make_others root =
-  write (Filename.concat root "sys/class/drm/card0-DP-1/status") "connected\n";
-  write
-    (Filename.concat root "sys/class/drm/card9/device/uevent")
-    "DRIVER=i915\nPCI_SLOT_NAME=0000:00:02.0\n"
-
-let check_gpu i g (got : Munin_sys.Stat.Gpu.t) =
-  let f = option (float_rel ~rel:1e-12 ~abs:0.) and i64 = option int64 in
-  let awake x = if g.suspended then None else x in
-  let scaled s = Option.map (fun v -> float_of_int v /. s) in
-  equal ~msg:"id" string (slot i) got.id;
-  equal ~msg:"busy_percent" f (awake (scaled 1. g.busy)) got.busy_percent;
-  equal ~msg:"memory_used" i64 (Option.map Int64.of_int g.used) got.memory_used;
-  equal ~msg:"memory_total" i64 (Option.map Int64.of_int g.total)
-    got.memory_total;
-  equal ~msg:"temperature" f (awake (scaled 1e3 g.millic)) got.temperature;
-  let power = match g.avg_uw with Some _ -> g.avg_uw | None -> g.input_uw in
-  equal ~msg:"power" f (awake (scaled 1e6 power)) got.power
-
-(* Every amdgpu GPU reads back what its files hold, in bytes, Celsius and
-   watts; the average power before the instantaneous one; a suspended GPU its
-   memory alone; and no other DRM entry. *)
-let test_gpu_sysfs =
-  prop "Gpu.sample reads amdgpu's files"
-    (Gen.list ~size:(Gen.int_range 0 3) gen_amdgpu)
-  @@ fun gpus ->
-  cover "a suspended GPU" (List.exists (fun g -> g.suspended) gpus);
-  cover "power from power1_input alone"
-    (List.exists (fun g -> g.avg_uw = None && g.input_uw <> None) gpus);
-  cover "no GPU" (gpus = []);
-  with_temp_dir @@ fun root ->
-  List.iteri (make_card root) gpus;
-  make_others root;
-  let got = Munin_sys.Stat.Gpu.sample_under ~root in
-  equal ~msg:"GPUs" int (List.length gpus) (List.length got);
-  List.iteri (fun i (g, got) -> check_gpu i g got) (List.combine gpus got)
-
-let test_gpu_no_drm =
-  test "Gpu.sample without /sys/class/drm" @@ fun () ->
-  with_temp_dir @@ fun root ->
-  equal int 0 (List.length (Munin_sys.Stat.Gpu.sample_under ~root))
-
+(* Every value within its unit's bounds: a percentage, a die's temperature in
+   Celsius, a GPU's power in watts, memory within the GPU's. On Linux a GPU is
+   named by its PCI address, and the GPUs are the machine's amdgpu and NVIDIA
+   ones, in order of name. *)
 let test_gpu =
   test "Gpu.sample" @@ fun () ->
-  if Sys.win32 then raises_match Exn.sys_error Munin_sys.Stat.Gpu.sample
-  else
+  if Sys.win32 then raises_match Exn.sys_error gpus
+  else begin
+    let gs = gpus () in
+    if Sys.file_exists "/proc" then
+      equal ~msg:"ids" (list string) (machine_gpus ())
+        (List.map (fun (g : Munin_sys.Stat.Gpu.t) -> g.id) gs);
+    if gs = [] then skip ~reason:"the machine has no GPU munin reads" ();
     List.iter
       (fun (g : Munin_sys.Stat.Gpu.t) ->
+        let within name lo hi =
+          Option.iter (fun v ->
+              greater ~msg:(g.id ^ " " ^ name) float_exact ~than:lo v;
+              less ~msg:(g.id ^ " " ^ name) float_exact ~than:hi v)
+        in
+        if Sys.file_exists "/proc" then
+          equal ~msg:"a PCI address" string g.id (as_pci g.id);
         Option.iter
-          (fun b -> at_most ~msg:g.id float_exact ~than:100. b)
-          g.busy_percent)
-      (Munin_sys.Stat.Gpu.sample ())
+          (fun b ->
+            at_least ~msg:(g.id ^ " busy") float_exact ~than:0. b;
+            at_most ~msg:(g.id ^ " busy") float_exact ~than:100. b)
+          g.busy_percent;
+        within "temperature" (-40.) 150. g.temperature;
+        within "power" 0. 2000. g.power;
+        match (g.memory_used, g.memory_total) with
+        | Some used, Some total ->
+            at_most ~msg:(g.id ^ " memory_used") int64 ~than:total used
+        | _ -> ())
+      gs
+  end
 
 (* Every NVIDIA GPU of the machine is read from its RM: its memory, used
    within its total, and no temperature or power. *)
@@ -321,7 +291,7 @@ let test_gpu_nvidia =
   test "Gpu.sample reads NVIDIA's GPUs" @@ fun () ->
   let buses = Result.value (Rig_nv_nvidia.buses ()) ~default:[] in
   if buses = [] then skip ~reason:"the machine has no NVIDIA GPU" ();
-  let gpus = Munin_sys.Stat.Gpu.sample () in
+  let gpus = gpus () in
   let read bus =
     let g = List.find (fun (g : Munin_sys.Stat.Gpu.t) -> g.id = bus) gpus in
     equal ~msg:"temperature" (option float_exact) None g.temperature;
@@ -333,6 +303,51 @@ let test_gpu_nvidia =
     | _ -> failf "%s: memory not read" bus
   in
   List.iter read buses
+
+(* The keys of the values a sample of the GPUs has, GPU [i] the [i]th. *)
+let gpu_keys gs =
+  List.concat
+    (List.mapi
+       (fun i (g : Munin_sys.Stat.Gpu.t) ->
+         List.filter_map
+           (fun (name, present) ->
+             if present then Some (Printf.sprintf "sys/gpu%d_%s" i name)
+             else None)
+           [
+             ("util_pct", g.busy_percent <> None);
+             ("mem_used_gb", g.memory_used <> None);
+             ( "mem_used_pct",
+               g.memory_used <> None && g.memory_total <> None );
+             ("temp_c", g.temperature <> None);
+             ("power_w", g.power <> None);
+           ])
+       gs)
+  |> List.sort compare
+
+(* The monitor defines a GPU's metric for each value that its samples have:
+   every value a sample before and one after the monitor ran both have, and
+   none that neither has. *)
+let test_gpu_monitor =
+  test "the monitor defines the GPU metrics its samples have" @@ fun () ->
+  let before = gpus () in
+  if before = [] then skip ~reason:"the machine has no GPU munin reads" ();
+  with_temp_dir @@ fun root ->
+  let store = Store.open_ ~root () in
+  let session = Session.start ~store ~experiment:"exp" () in
+  let monitor = Munin_sys.start ~interval:0.1 session in
+  Thread.delay 0.5;
+  Munin_sys.stop monitor;
+  Session.finish session;
+  let after = gpus () in
+  let defined =
+    List.filter
+      (String.starts_with ~prefix:"sys/gpu")
+      (List.map fst (Run.metric_defs (Session.run session)))
+    |> List.sort_uniq compare
+  in
+  let b = gpu_keys before and a = gpu_keys after in
+  List.iter (fun k -> if List.mem k a then mem ~msg:"defined" string k defined) b;
+  List.iter (fun k -> mem ~msg:"in a sample" string k (b @ a)) defined
 
 let test_uptime =
   reads "uptime" Munin_sys.Stat.uptime @@ fun s ->
@@ -364,6 +379,5 @@ let () =
              test_loadavg;
              test_uptime;
            ];
-         group "Gpu"
-           [ test_gpu_sysfs; test_gpu_no_drm; test_gpu; test_gpu_nvidia ];
+         group "Gpu" [ test_gpu; test_gpu_nvidia; test_gpu_monitor ];
        ])

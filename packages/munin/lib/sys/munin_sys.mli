@@ -52,7 +52,9 @@ module Stat : module type of Sysstat
     - [sys/disk_write_mbs] — disk write rate in MB/s
     - [sys/disk_util_pct] — disk utilization percentage
 
-    {b GPU} [i], the [i]th of {!Stat.Gpu.sample} when the monitor starts:
+    {b GPU} [i], the [i]th GPU the monitor saw by {!Stat.Gpu.field-id}: in
+    the order of {!Stat.Gpu.sample} when it starts, then in the order GPUs
+    appear:
     - [sys/gpu]{i i}[_util_pct] — how busy the GPU is (0–100)
     - [sys/gpu]{i i}[_mem_used_gb] — GPU memory used in GB
     - [sys/gpu]{i i}[_mem_used_pct] — GPU memory used, percent of its own
@@ -61,12 +63,14 @@ module Stat : module type of Sysstat
 
     Each group of metrics above comes from one sampler of {!Stat}, the
     per-process group from {!Stat.Proc.Self.sample}. A group whose sampler
-    raises [Sys_error] when the monitor starts is neither defined nor logged,
-    and of a GPU's metrics only those its first sample gives. A sample that
-    raises later leaves its group out of that interval's samples, and the
-    group's next rates are means over both intervals; a GPU missing from a
-    sample, or a value its sample lacks, is left out of that interval. An
-    interval over which the wall clock stepped back logs no rates. *)
+    raises [Sys_error] when the monitor starts is neither defined nor logged.
+    A GPU's metric is defined when the monitor starts if the first sample has
+    its value, else the first time a sample has it, as the load of a GPU that
+    was suspended at the start. A sample that raises later leaves its group
+    out of that interval's samples, and the group's next rates are means over
+    both intervals; a GPU missing from a sample, or a value its sample lacks,
+    is left out of that interval. An interval over which the wall clock
+    stepped back logs no rates. *)
 
 type t
 (** The type for background monitors. *)

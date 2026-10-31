@@ -61,15 +61,15 @@ let socket_pair () =
   else Unix.socketpair ~cloexec:true Unix.PF_UNIX Unix.SOCK_STREAM 0
 
 (* [source session sample define] samples now and, if [sample ()] reads the
-   system, defines the metrics [keys] of [define first = (keys, values)], the
-   first sample. It is then the tick of that source: it samples again and pairs
-   each metric with its value from the previous and the new sample, [dt]
-   seconds apart, where [values] gives one. A system that cannot read the
-   source when the monitor starts, or that it gives no metric, gets none of
-   its metrics. A tick whose sample fails logs none of them and keeps the
-   previous sample: the next tick's rates span both intervals. A tick after the
-   wall clock stepped back ([dt <= 0]) logs none of them either, and its sample
-   becomes the previous one. *)
+   system, is the tick of that source, where [define first = (keys, values)]
+   for the first sample. It declares the metrics [keys] at once. Each tick
+   samples again and logs the [(key, value)] pairs that [values] gives from
+   the previous and the new sample, [dt] seconds apart, declaring a key the
+   first time it is logged. A system that cannot read the source when the
+   monitor starts gets none of its metrics. A tick whose sample fails logs
+   none of them and keeps the previous sample: the next tick's rates span
+   both intervals. A tick after the wall clock stepped back ([dt <= 0]) logs
+   none of them either, and its sample becomes the previous one. *)
 let source session sample define =
   let timed () =
     let s = sample () in
@@ -77,34 +77,39 @@ let source session sample define =
   in
   match timed () with
   | exception Sys_error _ -> None
-  | (first, _) as sampled -> (
-      match define first with
-      | [], _ -> None
-      | keys, values ->
-          let metrics = List.map (fun key -> Session.metric session key) keys in
-          let prev = ref sampled in
-          let logged (m, v) = Option.map (fun v -> (m, v)) v in
-          let tick () =
-            match timed () with
-            | exception Sys_error _ -> []
-            | (next, t) as sampled ->
-                let prev_sample, prev_t = !prev in
-                prev := sampled;
-                let dt = t -. prev_t in
-                if dt <= 0. then []
-                else
-                  List.combine metrics (values ~prev:prev_sample ~next ~dt)
-                  |> List.filter_map logged
-          in
-          Some tick)
+  | (first, _) as sampled ->
+      let keys, values = define first in
+      let metrics = Hashtbl.create 16 in
+      let metric key =
+        match Hashtbl.find_opt metrics key with
+        | Some m -> m
+        | None ->
+            let m = Session.metric session key in
+            Hashtbl.replace metrics key m;
+            m
+      in
+      List.iter (fun key -> ignore (metric key)) keys;
+      let prev = ref sampled in
+      let tick () =
+        match timed () with
+        | exception Sys_error _ -> []
+        | (next, t) as sampled ->
+            let prev_sample, prev_t = !prev in
+            prev := sampled;
+            let dt = t -. prev_t in
+            if dt <= 0. then []
+            else
+              List.map
+                (fun (key, v) -> (metric key, v))
+                (values ~prev:prev_sample ~next ~dt)
+      in
+      Some tick
 
 (* The [define] of a source whose metrics [keys] each sample gives. *)
 let fixed keys values _first =
-  (keys, fun ~prev ~next ~dt -> List.map Option.some (values ~prev ~next ~dt))
+  (keys, fun ~prev ~next ~dt -> List.combine keys (values ~prev ~next ~dt))
 
-(* Each GPU's metrics, named by its place in the first sample and kept to its
-   id, and each one its first sample gives. A GPU gone from a later sample
-   logs nothing then. *)
+(* A GPU's metrics, each logged when its sample has its value. *)
 let gpu_fields : (string * (Sysstat.Gpu.t -> float option)) list =
   let gb bytes = Int64.to_float bytes /. 1_073_741_824. in
   [
@@ -120,29 +125,35 @@ let gpu_fields : (string * (Sysstat.Gpu.t -> float option)) list =
     ("power_w", fun g -> g.power);
   ]
 
+(* GPU [i] is the [i]th id the monitor saw, in the order of the first sample
+   and then of the samples a new id appears in, so a GPU keeps its number. The
+   metrics of the first sample's values are declared at the start; each other
+   is declared the first time a sample has its value, as the load of a GPU
+   that was suspended at the start. *)
 let gpu_define (first : Sysstat.Gpu.t list) =
-  let plan =
-    List.concat
-      (List.mapi
-         (fun i (g : Sysstat.Gpu.t) ->
-           List.filter_map
-             (fun (name, field) ->
-               match field g with
-               | None -> None
-               | Some _ ->
-                   Some (Printf.sprintf "sys/gpu%d_%s" i name, g.id, field))
-             gpu_fields)
-         first)
+  let numbers = Hashtbl.create 4 in
+  let number (g : Sysstat.Gpu.t) =
+    match Hashtbl.find_opt numbers g.id with
+    | Some i -> i
+    | None ->
+        let i = Hashtbl.length numbers in
+        Hashtbl.replace numbers g.id i;
+        i
   in
-  let values ~prev:_ ~(next : Sysstat.Gpu.t list) ~dt:_ =
-    List.map
-      (fun (_, id, field) ->
-        match List.find_opt (fun (g : Sysstat.Gpu.t) -> g.id = id) next with
-        | Some g -> field g
-        | None -> None)
-      plan
+  let values (gpus : Sysstat.Gpu.t list) =
+    List.concat_map
+      (fun g ->
+        let i = number g in
+        List.filter_map
+          (fun (name, field) ->
+            Option.map
+              (fun v -> (Printf.sprintf "sys/gpu%d_%s" i name, v))
+              (field g))
+          gpu_fields)
+      gpus
   in
-  (List.map (fun (key, _, _) -> key) plan, values)
+  ( List.map fst (values first),
+    fun ~prev:_ ~next ~dt:_ -> values next )
 
 let mb bytes = bytes /. 1_048_576.
 
