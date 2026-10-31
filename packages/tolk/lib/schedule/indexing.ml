@@ -31,6 +31,11 @@ type ctx = {
   ends : t Tbl.t; (* A group's end, by its first store. *)
   mutable siblings : siblings list;
       (* The reductions that share their loops, newest group first. *)
+  topo : t list;
+      (* A walk of the graph that finishes a node after its sources. *)
+  size : int; (* The length of [topo]. *)
+  mutable walked : int; (* The nodes the stores' walks have entered. *)
+  mutable order : int Tbl.t option; (* Each node's position in [topo]. *)
 }
 
 and siblings = {
@@ -71,10 +76,36 @@ let realize_gathered ctx g =
   let x = nth g 0 in
   if is_gather g && not (Op.Set.mem (op x) storage) then realize ctx x
 
+(* Each node's position in [ctx.topo], once the stores' walks have entered as
+   many nodes as the graph holds: from then on the table costs less than the
+   walks it shortens. A program with a store per move between devices gets
+   there within a few stores, one with a few stores never does. *)
+let order ctx =
+  match ctx.order with
+  | Some _ as o -> o
+  | None when ctx.walked < ctx.size -> None
+  | None ->
+      let o = Tbl.create ctx.size in
+      List.iteri (fun i u -> Tbl.replace o u i) ctx.topo;
+      ctx.order <- Some o;
+      ctx.order
+
 (* An assign needs this only for a write-after-read hazard, the destination read
-   by the value stored into it. *)
+   by the value stored into it. With [order], the walk enters only the nodes
+   after the destination, since a node before it cannot reach it (D171). *)
 let realize_store_after_src ctx dest s =
-  if List.memq (base dest) (toposort ~calls:Skip s) then realize ctx s
+  let b = base dest in
+  let after o i u =
+    match Tbl.find_opt o u with Some j -> j >= i | None -> true
+  in
+  let gate =
+    match order ctx with
+    | None -> None
+    | Some o -> Option.map (after o) (Tbl.find_opt o b)
+  in
+  let slice = toposort ?gate ~calls:Skip s in
+  ctx.walked <- ctx.walked + List.length slice;
+  if List.memq b slice then realize ctx s
 
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
@@ -792,6 +823,7 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
 
 let run_rangeify ?(debug = false) tsink =
   if debug then print_endline "**************************";
+  let tsink_toposort = toposort ~calls:Skip ~gate:gate_kernel_sink tsink in
   let rctx =
     {
       realize_map = Tbl.create 64;
@@ -803,12 +835,15 @@ let run_rangeify ?(debug = false) tsink =
       loops = Tbl.create 8;
       ends = Tbl.create 8;
       siblings = [];
+      topo = tsink_toposort;
+      size = List.length tsink_toposort;
+      walked = 0;
+      order = None;
     }
   in
   ignore
     (graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:rctx tsink
        (After_sources pm_generate_realize_map));
-  let tsink_toposort = toposort ~calls:Skip ~gate:gate_kernel_sink tsink in
   share_loops rctx tsink_toposort;
   let consumer_map = Tbl.create 256 in
   List.iter (fun x -> Tbl.replace consumer_map x []) tsink_toposort;

@@ -4627,3 +4627,25 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** `Tolk.Codegen › programs are kept › a program for one device
   serves another of its target`; rune's `Rune.jit over several devices`.
 
+
+## D171. A store's check for reading its destination walks what follows it
+
+- **tinygrad:** `schedule/indexing.py:34` (`realize_store_after_src`): each
+  store walks its value's whole backward slice for its destination's
+  storage.
+- **tolk:** `Indexing.realize_store_after_src`, over the order
+  `Indexing.run_rangeify` gives the graph.
+- **Differs:** once the stores' walks have entered as many nodes as the
+  graph holds, each walk enters only the nodes that come after the
+  destination's storage in one walk of the graph that finishes each node
+  after its sources: a node before it cannot reach it. The values stored
+  are tinygrad's.
+- **Reason:** (d): rune's data-parallel step over 16 memory devices
+  (`Rune.jit` over `Nx.Placement.split`) has a store per move between
+  devices, about 1500, each of whose values reaches its device's whole step.
+  Their walks covered 1.84 million nodes, 235 ms of a 1.05 s schedule on
+  fudge; pruned, 38 thousand in 8 ms. Pinned by rune's `devices/dp-step-16`
+  row on fudge.
+- **Pinned by:** `Tolk.Indexing › run_rangeify › recorded graphs`
+  (`assign`, `assign_permuted`, `assign_double_diamond`), whose stores read
+  their destinations.

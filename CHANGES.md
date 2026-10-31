@@ -842,6 +842,9 @@ thread.
   `Codegen.programs` counts the programs made. `Realize.lower_and_compile`
   compiles one kernel of each key, so kernels that differ in their
   parameters' devices alone no longer wait for one another's compilation.
+- Scheduling a graph of many copies between devices walks less of it: a
+  store's check for reading its destination enters only the nodes after the
+  destination.
 - `Codegen.to_program` gives a kernel the program made for another device of
   its target, in memory and on disk: a program's key no longer holds its
   parameters' devices, so the devices of a set compile each kernel once.
