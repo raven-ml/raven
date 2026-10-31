@@ -85,6 +85,97 @@ let unusable (type v s d) (x : (v, s, d) t) =
   | Array _ | Shards _ | Handle _ -> (
       match Prim.death x with Live -> false | Died _ -> true)
 
+(* Partitions *)
+
+(* Whether each piece of [x] on [e] repeats its elements along axis [a], as a
+   broadcast does: a piece's layout says so, an array's or a stand-in's
+   form's. *)
+let repeats (type v s d) (e : Partition.engine) (x : (v, s, d) t) a =
+  let along l = A.Layout.numel l = 0 || A.Layout.stride l a = 0 in
+  let at = Prim.placement x in
+  let set = Devices.set at in
+  let layout (y : (v, s, d) t) =
+    match y with
+    | Traced { form; _ } -> along form.layout
+    | Array _ | Shards _ | Handle _ ->
+        Iarray.for_all (fun arr -> along (A.layout arr)) (Prim.arrays y)
+  in
+  let ks = Grid.devices (Devices.grid at) in
+  let rec all j =
+    j >= Array.length ks
+    || (layout (e.piece x j (Devices.one set ks.(j))) && all (j + 1))
+  in
+  all 0
+
+let rec partition : type r. Partition.engine -> by:string -> r prim -> r =
+ fun e ~by op ->
+  match op with
+  | Place (p, x) -> Partition.place e ~by p x
+  | Check _ -> invalid_arg "Eval.partition: a check"
+  | _ -> partitioned e ~by (Prim.route ~by op) op
+
+(* [op] computed on [e] as its route [r] says, its first result into [into]
+   where it is given. *)
+and partitioned : type r d.
+    Partition.engine -> by:string -> ?into:d any -> Prim.routed -> r prim -> r
+    =
+ fun e ~by ?into r op ->
+  (* Every operation but a placement and a check has a route. *)
+  let route = Option.get r.Prim.route in
+  let op = gather e ~by route op in
+  match route.compute with
+  | Partials -> Partial.run e ~by route op
+  | Windows -> Partition.windows e ~by ?into route r.layouts op
+
+(* [op] with the positions [route] gathers moved where it reads them
+   ({!Route.gathers}). Only a gather's and a scatter's positions, operand
+   [0], move, so other operations check nothing, and positions read where
+   they lie check one placement. *)
+and gather : type r.
+    Partition.engine -> by:string -> unit Route.t -> r prim -> r prim =
+ fun e ~by route op ->
+  match op with
+  | Gather g when moves route g.idx ->
+      Gather { g with idx = moved e ~by route g.idx }
+  | Scatter s when moves route s.idx ->
+      Scatter { s with idx = moved e ~by route s.idx }
+  | _ -> op
+
+and moves : type v s d. unit Route.t -> (v, s, d) t -> bool =
+ fun route x ->
+  let p = Prim.placement x in
+  (not (Grid.equal (Devices.grid p) (Devices.grid route.operands.(0))))
+  && Route.gathers route 0 p (Prim.shape x)
+
+(* [x] where [route] reads it. An axis that [x]'s placement does not cut and
+   that each of its pieces repeats moves one element long, whole on each
+   device, and is stretched back by a view, so that only [x]'s own elements
+   move. *)
+and moved : type v s d.
+    Partition.engine -> by:string -> unit Route.t -> (v, s, d) t -> (v, s, d) t
+    =
+ fun e ~by route x ->
+  let q = Devices.grid route.operands.(0) in
+  let s = Prim.shape x in
+  let at = Prim.placement x in
+  let set = Devices.set at in
+  let cuts = Grid.cuts (Devices.grid at) in
+  let cut a = Array.exists (fun (c, _) -> c = a) cuts in
+  let repeats a = s.(a) > 1 && (not (cut a)) && repeats e x a in
+  let axes = Array.init (Array.length s) Fun.id in
+  if not (Array.exists repeats axes) then
+    Partition.place e ~by (Devices.v ~by set q) x
+  else
+    let one a =
+      { A.Move.start = 0; count = (if repeats a then 1 else s.(a)); step = 1 }
+    in
+    let whole q a = if repeats a then Grid.uncut q ~axis:a else q in
+    let q = Devices.v ~by set (Array.fold_left whole q axes) in
+    let slice = A.Move.Slice (Iarray.init (Array.length s) one) in
+    let core = partition e ~by (Move (slice, x)) in
+    let core = Partition.place e ~by q core in
+    partition e ~by (Move (Broadcast (Iarray.of_array s), core))
+
 let rec run : type r. by:string -> r prim -> r =
  fun ~by op -> if Exec.is_local op then Exec.local ~by op else general ~by op
 
@@ -172,58 +263,6 @@ and plain : type r. by:string -> r prim -> r =
       Check.issue ~by ok data fail
   | _ -> routed ~by (Prim.route ~by op) op
 
-(* [op] with the positions [route] gathers moved where it reads them
-   ({!Route.gathers}). Only a gather's and a scatter's positions, operand
-   [0], move, so other operations check nothing, and positions read where
-   they lie check one placement. *)
-and gather : type r. by:string -> unit Route.t -> r prim -> r prim =
- fun ~by route op ->
-  match op with
-  | Gather g when moves route g.idx ->
-      Gather { g with idx = moved ~by route g.idx }
-  | Scatter s when moves route s.idx ->
-      Scatter { s with idx = moved ~by route s.idx }
-  | _ -> op
-
-and moves : type v s d. unit Route.t -> (v, s, d) t -> bool =
- fun route x ->
-  let p = Prim.placement x in
-  (not (Grid.equal (Devices.grid p) (Devices.grid route.operands.(0))))
-  && Route.gathers route 0 p (Prim.shape x)
-
-(* [x] where [route] reads it. An axis that [x]'s placement does not cut and
-   that each of its arrays repeats, as a broadcast does, moves one element
-   long, whole on each device, and is stretched back by a view, so that
-   only [x]'s own elements move. *)
-and moved : type v s d. by:string -> unit Route.t -> (v, s, d) t -> (v, s, d) t
-    =
- fun ~by route x ->
-  let q = Devices.grid route.operands.(0) in
-  let s = Prim.shape x and arrays = Prim.arrays x in
-  let at = Prim.placement x in
-  let set = Devices.set at in
-  let cuts = Grid.cuts (Devices.grid at) in
-  let cut a = Array.exists (fun (c, _) -> c = a) cuts in
-  let repeats a =
-    s.(a) > 1
-    && (not (cut a))
-    && Iarray.for_all
-         (fun arr ->
-           let l = A.layout arr in
-           A.Layout.numel l = 0 || A.Layout.stride l a = 0)
-         arrays
-  in
-  let axes = Array.init (Array.length s) Fun.id in
-  if not (Array.exists repeats axes) then placed ~by (Devices.v ~by set q) x
-  else
-    let one a =
-      { A.Move.start = 0; count = (if repeats a then 1 else s.(a)); step = 1 }
-    in
-    let whole q a = if repeats a then Grid.uncut q ~axis:a else q in
-    let q = Devices.v ~by set (Array.fold_left whole q axes) in
-    let core = run ~by (Move (Slice (Iarray.init (Array.length s) one), x)) in
-    run ~by (Move (Broadcast (Iarray.of_array s), placed ~by q core))
-
 (* [op], a placement, a check, or another operation, computed as its rule
    decided [r] ({!Prim.route}): by partials or by windows as the route
    computes, its first result into [into] where it is given, or over
@@ -240,32 +279,24 @@ and routed : type r.
   | Place (p, x) -> placed ~by p x
   | Check { ok; data; fail } -> Check.issue ~by ok data fail
   | _ -> (
-      (* Every operation but a placement and a check has a route. *)
-      let route = Option.get r.Prim.route in
-      let op = gather ~by route op in
-      match route.compute with
-      | Partials -> Partial.run Exec.eager ~by route op
-      | Windows -> (
-          match (into, cut) with
-          | None, None -> Partition.windows Exec.eager ~by route r.layouts op
-          | Some (A.Any a), _ ->
-              (* A value on the route's one device, over the donated
-                 memory. *)
-              let at = route.result in
-              let into = Value.Any (Array { at; a; dead = Live }) in
-              Partition.windows Exec.eager ~by ~into route r.layouts op
-          | None, Some arrays ->
-              (* A value at the route's result, each device's window over
-                 its donated memory. *)
-              let (A.Any a0) = arrays.(0) in
-              let dt = A.dtype a0 in
-              let arrays = Iarray.map (A.expect dt) (Iarray.of_array arrays) in
-              let l = r.layouts.(0) in
-              let shape = Iarray.to_array (Nx_array.Layout.shape l) in
-              let into =
-                Value.Any (Prim.of_arrays route.result ~shape arrays)
-              in
-              Partition.windows Exec.eager ~by ~into route r.layouts op))
+      match (into, cut) with
+      | None, None -> partitioned Exec.eager ~by r op
+      | Some (A.Any a), _ ->
+          (* A value on the route's one device, over the donated memory. *)
+          let at = (Option.get r.Prim.route).result in
+          let into = Value.Any (Array { at; a; dead = Live }) in
+          partitioned Exec.eager ~by ~into r op
+      | None, Some arrays ->
+          (* A value at the route's result, each device's window over its
+             donated memory. *)
+          let at = (Option.get r.Prim.route).result in
+          let (A.Any a0) = arrays.(0) in
+          let dt = A.dtype a0 in
+          let arrays = Iarray.map (A.expect dt) (Iarray.of_array arrays) in
+          let l = r.layouts.(0) in
+          let shape = Iarray.to_array (Nx_array.Layout.shape l) in
+          let into = Value.Any (Prim.of_arrays at ~shape arrays) in
+          partitioned Exec.eager ~by ~into r op)
 
 let is_traced (type v s d) (x : (v, s, d) t) =
   match x with

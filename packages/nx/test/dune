@@ -38,6 +38,7 @@
   test_check
   test_scan
   test_partial
+  test_partition
   test_windows
   test_stack)
  (modules
@@ -77,6 +78,7 @@
   test_check
   test_scan
   test_partial
+  test_partition
   test_windows
   test_stack)
  (libraries

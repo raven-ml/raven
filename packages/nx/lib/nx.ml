@@ -6751,6 +6751,53 @@ module Prim = struct
   let results = Prim.results
   let iter_results = Prim.iter_results
 
+  type engine = Partition.engine = {
+    run :
+      'r 'd.
+      by:string ->
+      ?into:'d any ->
+      unit Placement.t ->
+      Nx_array.Layout.t array ->
+      'r t ->
+      'r;
+    piece :
+      'v 's 'd.
+      ('v, 's, 'd) Value.t -> int -> 'd Placement.t -> ('v, 's, 'd) Value.t;
+    view :
+      'v 's 'd. Nx_array.Move.t -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t;
+    bring :
+      'v 's 'd 'e.
+      'e Placement.t ->
+      (('v, 's, 'd) Value.t * Nx_array.Move.range array) list ->
+      ('v, 's, 'e) Value.t;
+    gather :
+      'v 's 'd 'e.
+      'e Placement.t ->
+      ('v, 's) dtype ->
+      int iarray ->
+      (Nx_array.Move.range array
+      * ('v, 's, 'd) Value.t
+      * Nx_array.Move.range array)
+      list ->
+      ('v, 's, 'e) Value.t;
+    assemble :
+      'v 's 'd 'e.
+      'e Placement.t ->
+      int array ->
+      ('v, 's) dtype ->
+      ('v, 's, 'd) Value.t option array ->
+      ('v, 's, 'e) Value.t;
+  }
+
+  let partition = Eval.partition
+
+  let pieces p shape =
+    let set = Devices.set p in
+    Array.mapi
+      (fun j k ->
+        (Devices.one set k, Devices.window ~by:"Nx.Prim.pieces" p shape j))
+      (Grid.devices (Devices.grid p))
+
   type interpretation = Value.interpretation
   type reach = Value.reach =
     | Values

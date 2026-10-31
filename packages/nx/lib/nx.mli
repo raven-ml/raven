@@ -5549,6 +5549,98 @@ module Prim : sig
 
   (**/**)
 
+  (** {1:partitions Partitions}
+
+      For compilers that lower an operation over several devices as nx
+      computes it: as operations on one device each and moves between
+      them, its {e partition}. A value over a placement of several devices
+      has a {e piece} on each: its window there ({!pieces}), as a value on
+      that device alone. *)
+
+  type engine = {
+    run :
+      'r 'd.
+      by:string ->
+      ?into:'d any ->
+      unit Placement.t ->
+      Nx_array.Layout.t array ->
+      'r t ->
+      'r;
+        (** [run ~by ~into here layouts op] is [op] at the one-device
+            placement [here], where every operand lies, its results laid
+            out as [layouts]. [into] is memory the first result may take;
+            an engine may ignore it. *)
+    piece :
+      'v 's 'd. ('v, 's, 'd) nx -> int -> 'd Placement.t -> ('v, 's, 'd) nx;
+        (** [piece x j here] is [x]'s piece on the device at position [j] of
+            its placement's devices, whose one-device placement is [here]:
+            [x] itself on one device. A piece of an empty window has no
+            elements. *)
+    view : 'v 's 'd. Nx_array.Move.t -> ('v, 's, 'd) nx -> ('v, 's, 'd) nx;
+        (** [view mv x] is [Move (mv, x)] for [x] on one device. *)
+    bring :
+      'v 's 'd 'e.
+      'e Placement.t ->
+      (('v, 's, 'd) nx * Nx_array.Move.range array) list ->
+      ('v, 's, 'e) nx;
+        (** [bring at ps] is [Place (at, v)] at the one-device placement
+            [at], [v] the window [w] of a piece [x], for the one [(x, w)] of
+            [ps] the engine chooses. Each holds the same elements. *)
+    gather :
+      'v 's 'd 'e.
+      'e Placement.t ->
+      ('v, 's) dtype ->
+      int iarray ->
+      (Nx_array.Move.range array * ('v, 's, 'd) nx * Nx_array.Move.range array)
+      list ->
+      ('v, 's, 'e) nx;
+        (** [gather at dt s boxes] is the value of shape [s] at the
+            one-device placement [at] that holds, at each window [w] of
+            [(w, x, b)] in [boxes], the window [b] of the piece [x], on any
+            device. The windows [w] tile [s]. *)
+    assemble :
+      'v 's 'd 'e.
+      'e Placement.t ->
+      int array ->
+      ('v, 's) dtype ->
+      ('v, 's, 'd) nx option array ->
+      ('v, 's, 'e) nx;
+        (** [assemble p s dt ps] is the value of shape [s] at [p] whose piece
+            on the device at position [j] of [p]'s devices is [ps.(j)], or of
+            no elements where [ps.(j)] is [None]. *)
+  }
+  (** The type for engines: the steps of a partition, each named by the
+      operation it stands for, which an engine computes or records. The
+      partition decides every window, every device that computes and the
+      pieces each window comes from; the engine decides how a step runs.
+      Eager execution runs every operation over several devices as its
+      partition on an engine of its own, so an engine whose steps record
+      operations records what eager execution computes. *)
+
+  val partition : engine -> by:string -> 'r t -> 'r
+  (** [partition e ~by op] is [op] computed as its partition on [e]. The
+      route ({!section-routing}) decides where each operand is read and
+      where the results lie; each device computes its windows of the
+      results by operations on it alone over its operands' pieces, with
+      their programs' coordinates offset by their windows' starts, and a
+      fold over a cut axis closes by moves and folds on one device each. A
+      [Place] moves pieces. A device whose windows of the results are all
+      empty computes nothing, but the first, where every device's are.
+
+      Raises [Invalid_argument] naming [by] where [op]'s operands break its
+      rule or its route, as eager execution raises, what [e]'s steps raise,
+      and [Invalid_argument] for a [Check]. *)
+
+  val pieces :
+    'd Placement.t ->
+    int array ->
+    ('d Placement.t * Nx_array.Move.range array) array
+  (** [pieces p s] is, for each device of [p] in order, its one-device
+      placement and its window of a value of shape [s] at [p]: one per
+      array of {!Repr.shards}, in their order.
+
+      Raises [Invalid_argument] if [p] cuts an axis [s] lacks. *)
+
   val coerce :
     ('v, 's) dtype -> 'd devices -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
   (** [coerce dt s x] is [Some x] at [dt] and [s]'s brand iff [x]'s dtype is

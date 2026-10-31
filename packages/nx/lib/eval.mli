@@ -114,6 +114,17 @@ val eval : by:string -> 'r prim -> 'r
     [Extent] is live and no operand is traced, and otherwise what the
     handlers around the caller make of it. Errors name [by]. *)
 
+val partition : Partition.engine -> by:string -> 'r prim -> 'r
+(** [partition e ~by op] is [op] computed as its partition on [e]: a [Place]
+    by {!Partition.place}, and any other operation by partials ({!Partial})
+    or by windows ({!Partition.windows}), as its route ({!Prim.val-route})
+    says, a gather's or a scatter's positions first moved where the route
+    reads them. {!run} computes an operation so on {!Exec.eager}.
+
+    Raises [Invalid_argument] naming [by] where [op]'s operands break its
+    rule, what [e]'s steps raise, and [Invalid_argument] as an internal fault
+    for a [Check]. *)
+
 val apply1 :
   by:string ->
   Nx_kernel.Prog.op1 ->
