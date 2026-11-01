@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["numpy==2.5.4", "safetensors==0.8.0", "torch==2.15.0",
+#                 "pillow==13.0.0"]
+# ///
 """Generate nx.io's test fixtures: files other tools write.
 
 numpy writes the NPY, NPZ and text files and the float16 SafeTensors file,
@@ -17,17 +22,26 @@ jpeg_table16_coarse.jpg, whose 16-bit table Pillow writes and decodes. Nor
 have jpeg_zrl_progressive.jpg and jpeg_zrl_baseline.jpg, which decode to the
 same pixels.
 
+The fixtures are written into ../support. Pillow 13.0.0 encodes JPEG with
+the libjpeg-turbo its wheel bundles, and every fixture reproduces byte for
+byte with the pinned versions. With --check nothing is written, and the run
+fails if a fixture would change.
+
 Usage:
-    cd packages/nx/test/io/support
-    uv run --with numpy --with safetensors --with torch --with pillow \\
-      python ../gen/generate.py
+    uv run packages/nx/test/io/gen/generate.py [--check]
 """
 
+import argparse
+import filecmp
 import io
+import os
 import random
 import struct
+import sys
+import tempfile
 import zipfile
 import zlib
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -471,7 +485,10 @@ def image_fixtures():
     reference("jpeg_table16_coarse.jpg", "L")
 
 
-if __name__ == "__main__":
+SUPPORT = Path(__file__).resolve().parent.parent / "support"
+
+
+def generate():
     safetensors_fixtures()
     numpy_fixtures()
     float_literals()
@@ -480,3 +497,24 @@ if __name__ == "__main__":
     skipped_entries_npz()
     stored_block_npz()
     image_fixtures()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    if not parser.parse_args().check:
+        os.chdir(SUPPORT)
+        generate()
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        generate()
+        made = sorted(os.listdir(tmp))
+        _, differ, missing = filecmp.cmpfiles(tmp, SUPPORT, made, shallow=False)
+    stale = differ + missing + sorted(set(os.listdir(SUPPORT)) - set(made))
+    if stale:
+        sys.exit("stale: " + " ".join(stale))
+
+
+if __name__ == "__main__":
+    main()

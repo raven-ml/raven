@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["gguf==0.19.0", "numpy==2.5.4"]
+# ///
 """Generate golden/: block-quantised tensors and ggml's values of them.
 
 For each of Q8_0, Q4_K, Q6_K and MXFP4, golden/<type>.blocks holds the bytes of
@@ -10,12 +14,15 @@ subnormal scales, and blocks of random bytes under finite scales. MXFP4's
 blocks hold scale bytes 0, 1, 127, 253 and 254 and random ones, never 255,
 which ggml reads as 2^128 and the OCP format as NaN.
 
+With --check nothing is written, and the run fails if a file would change.
+
 Usage:
-    uv run --no-project --with gguf --with numpy \\
-      python packages/nx/test/quant/gen/generate.py
+    uv run packages/nx/test/quant/gen/generate.py [--check]
 """
 
+import argparse
 import os
+import sys
 
 import numpy as np
 from gguf import GGMLQuantizationType
@@ -68,24 +75,35 @@ def mxfp4_blocks():
     return b.reshape(ROWS, -1)
 
 
-def write(name, raw, qtype):
+def files(name, raw, qtype):
     values = dequantize(raw, qtype).astype("<f4")
     assert values.shape == (ROWS, COLS)
-    with open(os.path.join(OUT, name + ".blocks"), "wb") as f:
-        f.write(raw.astype(np.uint8).tobytes())
-    with open(os.path.join(OUT, name + ".values"), "wb") as f:
-        f.write(values.tobytes())
+    return {name + ".blocks": raw.astype(np.uint8).tobytes(), name + ".values": values.tobytes()}
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    check = parser.parse_args().check
     cases = [
         ("q8_0", GGMLQuantizationType.Q8_0, 34, [0]),
         ("q4_k", GGMLQuantizationType.Q4_K, 144, [0, 2]),
         ("q6_k", GGMLQuantizationType.Q6_K, 210, [208]),
     ]
+    out = {}
     for name, qtype, nbytes, fields in cases:
-        write(name, blocks(qtype, nbytes, fields), qtype)
-    write("mxfp4", mxfp4_blocks(), GGMLQuantizationType.MXFP4)
+        out |= files(name, blocks(qtype, nbytes, fields), qtype)
+    out |= files("mxfp4", mxfp4_blocks(), GGMLQuantizationType.MXFP4)
+    stale = []
+    for name, data in out.items():
+        path = os.path.join(OUT, name)
+        if not check:
+            with open(path, "wb") as f:
+                f.write(data)
+        elif not os.path.exists(path) or open(path, "rb").read() != data:
+            stale.append(name)
+    if stale:
+        sys.exit("stale: " + " ".join(stale))
 
 
 if __name__ == "__main__":

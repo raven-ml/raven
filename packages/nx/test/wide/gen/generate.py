@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mpmath==1.3.0", "numpy>=2"]
+# dependencies = ["mpmath==1.3.0", "numpy==2.5.4"]
 # ///
 """Generate the goldens of nx.wide: double-word operands and mpmath's exact
 results of them.
