@@ -1946,6 +1946,87 @@ let mastering root x =
   let s = In_channel.with_open_bin (config_of root x) In_channel.input_all in
   String.get_uint16_le s 4 land 0x4 <> 0
 
+(* An owner GPU released while a peer maps its GPU memory, as a close leaves
+   it, stops mastering the bus and stays taken: a take of its bus is refused,
+   naming the wait, until the peer's free gives the take back, and a take
+   then succeeds. *)
+let test_lent_reopen () =
+  with_gpus 2 @@ fun root m gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 in
+  let bus = Function.bus o.t_fn in
+  Function.set_bus_master o.t_fn true;
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  Memory.release o.t_memory;
+  equal ~msg:"mastering once released" bool false (mastering root o);
+  equal ~msg:"taken while the peer maps" bool true (taken root o);
+  contains ~msg:"the reopen" ~sub:"may still write"
+    (require_error (Function.take m bus));
+  Memory.free x.t_memory p;
+  equal ~msg:"taken after the peer's free" bool false (taken root o);
+  Function.release (require_ok (Function.take m bus));
+  Memory.free o.t_memory r
+
+(* A peer whose unmap its GPU did not confirm may still write the memory: the
+   released owner stays taken until the peer is released too. *)
+let test_lent_writer () =
+  with_gpus 2 @@ fun root m gpus ->
+  let o = List.nth gpus 0 and x = List.nth gpus 1 in
+  let bus = Function.bus o.t_fn in
+  let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+  let p = mapped (Memory.map_peer x.t_memory r) in
+  x.t_g.confirms <- false;
+  Memory.free x.t_memory p;
+  x.t_g.confirms <- true;
+  Memory.release o.t_memory;
+  contains ~msg:"the reopen before the peer's release" ~sub:"may still write"
+    (require_error (Function.take m bus));
+  Function.release x.t_fn;
+  Function.release (require_ok (Function.take m bus));
+  equal ~msg:"given back" bool false (taken root o);
+  Memory.free o.t_memory r
+
+(* An exception at any allocation of the owner's release, while a peer maps
+   its memory, never lets a take of its bus succeed before the peer's free.
+   Once the release has run again, as its driver's next stop runs it, and the
+   peer's free and a finish of the releases have run, a take succeeds. *)
+let test_lent_release_cut () =
+  let rec from n =
+    let reached =
+      with_gpus 2 @@ fun _ m gpus ->
+      let o = List.nth gpus 0 and x = List.nth gpus 1 in
+      let bus = Function.bus o.t_fn in
+      let r = given (Memory.alloc o.t_memory Gpu (64 * kib)) in
+      let p = mapped (Memory.map_peer x.t_memory r) in
+      let reached =
+        Rig_support.interrupted n (fun () -> Memory.release o.t_memory)
+      in
+      let at what = strf "%s, cut at %d" what n in
+      Function.finish_releases ();
+      (match Function.take m bus with
+      | Ok f ->
+          Function.release f;
+          fail (at "a take after the cut, while the peer maps")
+      | Error _ -> ());
+      Memory.release o.t_memory;
+      Function.finish_releases ();
+      (match Function.take m bus with
+      | Ok f ->
+          Function.release f;
+          fail (at "a take while the peer maps")
+      | Error _ -> ());
+      Memory.free x.t_memory p;
+      Function.finish_releases ();
+      (match Function.take m bus with
+      | Ok f -> Function.release f
+      | Error why -> fail (at ("the take after the peer's free: " ^ why)));
+      Memory.free o.t_memory r;
+      reached
+    in
+    if reached then from (n + 1)
+  in
+  from 1
+
 (* A GPU mastering the bus whose free of a region is held in its first clear
    of an entry, on a domain of its own: [held f] is [f root x], with the free
    inside the clear, and lets the free go on as [f] returns or raises. It
@@ -2349,6 +2430,16 @@ let on_files =
       test "an exception at any allocation of a map_peer or its free makes no \
             later call wrong"
         test_peer_cut;
+      test "a released owner a peer maps stays taken until the peer's free"
+        test_lent_reopen;
+      test
+        "a released owner stays taken until a peer that may still write is \
+         released"
+        test_lent_writer;
+      test
+        "an exception at any allocation of a lending owner's release lets no \
+         take in before the peer's free"
+        test_lent_release_cut;
       stateful ~count:200 ~steps:3 ~domains:2
         "two GPUs' owners free the memory one maps of the other at once"
         peer_commands;

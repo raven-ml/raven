@@ -321,12 +321,14 @@ let take_locked g m l =
 (* The check and the take hold one lock, so that no change comes between them.
    Through a transport the far machine's take locks the function. *)
 let take g m bus =
+  let* () = Function.takeable m bus in
   match Machine.files m with
   | None -> Function.take m bus
   | Some files -> Sysfs.locked files bus (fun l -> take_locked g m l)
 
 (* [take] into the vacant [fn]. *)
 let take_into g m fn =
+  let* () = Function.takeable m (Function.bus fn) in
   match Machine.files m with
   | None -> Function.take_into fn
   | Some files ->

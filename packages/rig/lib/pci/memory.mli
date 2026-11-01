@@ -51,6 +51,14 @@
     function's release while the function may still master the bus
     ({!Function.release}), leaves the memory reached: none of it goes back.
 
+    The owner's {!release} while another GPU maps its GPU memory, or may still
+    write it after its free, as above, turns the owner's bus mastering off and
+    keeps its function taken, so that no open resets the GPU and gives that
+    memory out: {!Function.take} of its bus is [Error], saying so. The take
+    goes back once no other GPU maps the memory or may still write it, at
+    that GPU's last {!free} of it, or else at the next take of the bus or
+    {!Function.finish_releases}.
+
     The GPU's owner makes one call at a time on one GPU's memory. Calls on two
     GPUs' memory may run at once: a {!map_peer} or {!free} that involves
     another GPU's regions reads and counts them under a lock of that GPU's
@@ -86,7 +94,8 @@ val release : t -> unit
     driver that keeps [m] past the GPU's stop ({!Driver.stop}) releases it
     there, so that [m] holds no page table. Releasing [m] again does nothing
     but drop the page tables if an earlier release did not, and give back the
-    memory that no other GPU reaches any more ({b Peers}).
+    memory that no other GPU reaches any more. While another GPU maps [m]'s
+    GPU memory, the function stays taken ({b Peers}).
 
     An exception that ends the function's release passes
     ({!Function.release}), and leaves the page tables to the next release of

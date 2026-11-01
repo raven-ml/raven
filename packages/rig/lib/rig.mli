@@ -605,6 +605,11 @@ val signaled : t -> int
     driver to end its work, may keep running it, reading and writing the
     memory it addresses. So a program that has no more use for a lost
     device closes it, and the device's memory returns once it has stopped.
+    A GPU driven over PCI whose memory another GPU maps still, or may still
+    write, stays taken past its stop, its own work ended: an open of its name
+    is [Error] until that GPU's mapping of the memory has gone and it can no
+    longer write it, so that no open resets the GPU and gives that memory out
+    meanwhile.
 
     A call that runs a stop takes the time of the driver's stop, and raises
     again any exception other than a fault that escapes it. Since no call

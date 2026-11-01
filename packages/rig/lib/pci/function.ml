@@ -35,6 +35,13 @@ type t = {
   given : bool Atomic.t;
       (* once the machine's release or [keep]'s returned, read from any
          domain *)
+  lent : int Atomic.t; (* [lend]s not [unlend]ed *)
+  writers : t list Atomic.t;
+      (* the functions an [unlend_after] named, which may still write its
+         memory *)
+  parked : bool Atomic.t;
+      (* once its give-back stopped its DMA and kept its take for lent
+         memory, until [unpark] gives the take back *)
 }
 
 (* A function reaches 64 bits of address until its driver says otherwise. *)
@@ -96,6 +103,9 @@ let vacant machine bus =
       listed = false;
       unmapping = [];
       given = Atomic.make false;
+      lent = Atomic.make 0;
+      writers = Atomic.make [];
+      parked = Atomic.make false;
     }
   in
   update unfinished (List.cons (Unix.getpid (), f));
@@ -111,7 +121,52 @@ let rec give_out f =
   if not (Atomic.compare_and_set given_out l ((f.machine, f.bus) :: l)) then
     give_out f
 
+(* Lent memory
+
+   A GPU whose memory another GPU maps ([Memory.map_peer]) lends it: its
+   release stops its DMA and keeps its take, so that no open resets it and
+   gives the memory out while the other GPU may write it. The take goes back
+   once nothing lent remains: at the last [unlend], at a take of its bus, or
+   at a finish of the releases. [lenders] lists, by process, the functions
+   that lent and are not yet given back whole, so that a take finds a parked
+   one of its bus. *)
+let lenders = Atomic.make []
+
+let unlist f = update lenders (List.filter (fun (_, f') -> f' != f))
+
+(* Whether [f] lends memory that another function may still write: a
+   mapping is out, or a function that unmapped it is not released and quiet
+   yet. *)
+let lends f =
+  Atomic.get f.lent > 0
+  || List.exists
+       (fun w ->
+         Atomic.get w.state land 1 = 0 || not (Atomic.get w.quiet))
+       (Atomic.get f.writers)
+
+(* Gives back the take that [f]'s parked give-back kept, once: of two calls,
+   the one that clears [parked] gives it back. An exception that ends the
+   machine's release parks [f] again, for the next call. *)
+let unpark f =
+  if Atomic.compare_and_set f.parked true false then
+    match f.fn.release () with
+    | quiet ->
+        if quiet then Atomic.set f.quiet true;
+        unlist f
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        Atomic.set f.parked true;
+        Printexc.raise_with_backtrace e bt
+
+let settle_parked f = if Atomic.get f.parked && not (lends f) then unpark f
+
 let refused machine bus =
+  let me = Unix.getpid () in
+  let parked (pid, f) =
+    pid = me && f.machine == machine && f.bus = bus
+    && (settle_parked f;
+        Atomic.get f.parked)
+  in
   if List.exists (fun (m, b) -> m == machine && b = bus) (Atomic.get given_out)
   then
     Some
@@ -120,7 +175,17 @@ let refused machine bus =
             "%s: its memory was given to another PCI function, which may still \
              write it, until the process exits"
             bus))
+  else if List.exists parked (Atomic.get lenders) then
+    Some
+      (Error
+         (strf
+            "%s: another GPU maps memory of its last open and may still write \
+             it; the open waits for that GPU's free of it"
+            bus))
   else None
+
+let takeable machine bus =
+  match refused machine bus with Some (Error why) -> Error why | _ -> Ok ()
 
 (* Stores the machine's take in [f] and is [ok], [Ok f] allocated before the
    take, so that nothing between the machine's take returning and the store
@@ -195,8 +260,10 @@ let give_back f =
       f.listed <- true
     end;
     unmap_listed f;
+    let kept = Atomic.get f.kept in
+    let lent = (not kept) && lends f in
     let quiet =
-      if Atomic.get f.kept then begin
+      if kept || lent then begin
         f.fn.set_config Local.command 2
           (f.fn.config Local.command 2 land lnot Local.bus_master);
         not (Local.masters (f.fn.config Local.command 2))
@@ -204,7 +271,11 @@ let give_back f =
       else f.fn.release ()
     in
     if quiet then Atomic.set f.quiet true;
-    Atomic.set f.given true
+    if lent then Atomic.set f.parked true;
+    Atomic.set f.given true;
+    (* A last [unlend] that ran before [parked] was set left the take to
+       this. *)
+    if lent then settle_parked f else unlist f
   end
 
 (* Gives [f] back under [giving], which the caller took, giving it back
@@ -356,13 +427,45 @@ let rec finish_from me first = function
             finish_from me (if first == Finished then e else first) rest)
 
 let finish_held () =
-  finish_from (Unix.getpid ()) Finished (Atomic.get unfinished)
+  let me = Unix.getpid () in
+  finish_from me Finished (Atomic.get unfinished);
+  List.iter
+    (fun (pid, f) -> if pid = me then settle_parked f)
+    (Atomic.get lenders)
 
 let finish_releases () =
   Lock.check "Function.finish_releases";
   finish_held ()
 
 let reaching f = released f && not (Atomic.get f.quiet)
+
+(* A lend counts before it checks the release's bit, and the give-back reads
+   the count after the bit is set: either the lend sees the bit and takes its
+   count back, or the give-back sees the count and parks. [f] is listed at
+   its first lend, before the count, so that a parked [f] is always listed. *)
+let lend f =
+  if not (List.exists (fun (_, f') -> f' == f) (Atomic.get lenders)) then
+    update lenders (List.cons (Unix.getpid (), f));
+  Atomic.incr f.lent;
+  if released f then begin
+    Atomic.decr f.lent;
+    false
+  end
+  else true
+
+(* A refused lend may have been the count a release waited for, and listed
+   a function given back already. *)
+let lend_refused f =
+  settle_parked f;
+  if Atomic.get f.given && not (Atomic.get f.parked) then unlist f
+
+let unlend f =
+  Atomic.decr f.lent;
+  settle_parked f
+
+let unlend_after f w =
+  update f.writers (List.cons w);
+  unlend f
 
 (* [kept] is set once [f] is given out, so that a keep an exception ended
    gives it out again. A function given out twice is listed twice. *)

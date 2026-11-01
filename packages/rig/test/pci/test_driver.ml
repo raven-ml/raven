@@ -530,9 +530,34 @@ let test_open_interrupted () = walk_open ~after:true
    included, leaves nothing of the GPU taken: the next open takes it. *)
 let test_take_interrupted () = walk_open ~after:false
 
+(* A GPU whose memory another GPU maps, stopped as a close stops it, keeps
+   its function taken: an open of it is refused with the reason, without
+   calling the driver, until the lend ends, and then opens. *)
+let test_lent_open () =
+  needs_flock ();
+  let g, m, root = three () in
+  let fn = ref None in
+  let h =
+    require_ok
+      (Driver.open_ g m 0 (fun h f ->
+           fn := Some f;
+           kept h))
+  in
+  let f = require_some !fn in
+  equal ~msg:"the lend" bool true (Function.lend f);
+  stop h;
+  equal ~msg:"held while lent" bool true (held root gpu_bus);
+  contains ~msg:"the open while lent" ~sub:"may still write"
+    (unopened (open_ g m 0));
+  Function.unlend f;
+  equal ~msg:"held after the lend" bool false (held root gpu_bus);
+  stop (hold g m 0)
+
 let opening =
   group ~timeout:patience "opening"
     [
+      test "a stopped GPU whose memory another GPU maps opens after the lend"
+        test_lent_open;
       test "an exception at any allocation of an open leaves it to open again"
         test_open_interrupted;
       cases

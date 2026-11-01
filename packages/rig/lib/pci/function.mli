@@ -96,7 +96,9 @@ val take : Machine.t -> string -> (t, string) result
     [Error why] if [bus] is not a function of [m], if [m] has failed, if a
     process, this one included, holds it, if this process gave the memory
     its BAR reaches to another function ({!Memory.bus}), until the process
-    exits, or if neither way is open:
+    exits, if another GPU still maps GPU memory of its last take in this
+    process and may write it ({!Memory}'s {b Peers}), until that GPU's
+    {!Memory.free} of it, or if neither way is open:
     - it is bound to a driver other than [vfio-pci] ({!Driver.detach});
     - the IOMMU translates its addresses and it is not bound to [vfio-pci];
     - not behind an IOMMU, it is disabled, or it shares its device with
@@ -501,6 +503,41 @@ val finish_held : unit -> unit
 (* [inherited f] is the [inherited] of [f]'s take ({!Machine.fn}) until
    {!forget} returns [Ok ()], and [false] after. *)
 val inherited : t -> bool
+
+(* [lend f] counts a mapping that another GPU makes of [f]'s memory, and is
+   [true], or is [false], counting nothing, if a release of [f] has begun.
+   While a lend is counted, or a function named by {!unlend_after} is not
+   released or may still master the bus, [f] {e lends} its memory: its
+   give-back ({!release}) turns its bus mastering off, unmaps its windows
+   and keeps its take, so that {!take} of its bus is [Error] and no open
+   resets the GPU and gives the memory out. The take goes back once [f]
+   lends nothing, at the last {!unlend} that ends it, or else at a take of
+   [f]'s bus or a {!finish_releases}, whichever comes first. *)
+val lend : t -> bool
+
+(* [lend_refused f] settles [f] after {!lend} returned [false]: it may give
+   back [f]'s parked take, which takes the locks of the machine's release, so
+   a caller makes it outside its own locks. *)
+val lend_refused : t -> unit
+
+(* [takeable m bus] is [Error why] if {!take} of [bus] on [m] is refused
+   for this process's sake alone: its memory was given to another function
+   ({!keep}), or another GPU may still write memory of its last take
+   ({!lend}), and [Ok ()] otherwise. It first gives back a parked take whose
+   lends have ended. {!Driver} asks it before it locks the function, since a
+   parked take keeps the function's lock. *)
+val takeable : Machine.t -> string -> (unit, string) result
+
+(* [unlend f] ends a lend that {!lend} counted, once the other GPU's mapping
+   is gone and that GPU can no longer write the memory. It may give back
+   [f]'s take, which raises what ends that, leaving it to the next. *)
+val unlend : t -> unit
+
+(* [unlend_after f w] is {!unlend} for a mapping whose function [w] may
+   still write the memory: its unmap was not confirmed, or [w] was released
+   with its bus mastering possibly on. [f] lends until [w] is released and
+   its bus mastering reads off. *)
+val unlend_after : t -> t -> unit
 
 (* [keep f] keeps [f] taken until the process exits, since another function
    may write the memory its BAR reaches ({!Memory.bus}): from then on
