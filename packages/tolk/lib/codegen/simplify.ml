@@ -389,10 +389,12 @@ let pm_reduce_load_collapse =
       pm_reduce_collapse;
       Pattern_matcher.v
         (fun () -> [
-          (* Lift x + y out of a reduction on an inequality, where no cast
+          (* Lift x + y out of a reduction on an equality, where no cast
              narrows. *)
           rule
-            Upat.O.(Upat.or_casted ~name:"s" (var "x" + var "y") <> var "c")
+            (Upat.eq
+               Upat.O.(Upat.or_casted ~name:"s" (var "x" + var "y"))
+               (var "c"))
             (fun m ->
               let x = m "x" and y = m "y" and c = m "c" in
               let dt = dtype y in
@@ -400,16 +402,16 @@ let pm_reduce_load_collapse =
                 no_range y && no_range c && solves_sum x y c
                 && Dtype.can_lossless_cast dt (dtype (m "s"))
                 && exact dt [ vmin c; vmax c ]
-              then Some O.(x <> cast c dt - y)
+              then Some (eq x O.(cast c dt - y))
               else None);
           (* A sum of a load gated on its index equal to the range is the load
              at that index. *)
           rule
             (Upat.reduce ~op:Op.Add
                (Upat.where
-                  Upat.O.(
-                    var "idx" <> Upat.or_casted (Upat.op Op.Range ~name:"r"))
-                  (Upat.O.int 0) (var "expr"))
+                  (Upat.eq (var "idx")
+                     (Upat.or_casted (Upat.op Op.Range ~name:"r")))
+                  (var "expr") (Upat.O.int 0))
                [ var "r" ])
             (fun m ->
               let r = m "r" and expr = m "expr" in

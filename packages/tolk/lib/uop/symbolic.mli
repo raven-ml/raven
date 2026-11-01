@@ -61,7 +61,8 @@ val sym : (unit, Ops.t) Ops.Pattern_matcher.t
       ({!Transcendental.xpow}), and an integer one by repeated squaring
       ({!Transcendental.xpow_int});
     - {b stores}: storing to an index what a load from that index reads does
-      nothing; storing [where g alt (load index)] stores [alt] where [g] holds;
+      nothing; storing [where g alt (load index)] stores [alt] where [g] holds,
+      and [where g (load index) alt] where it does not;
       storing {!Ops.invalid} does nothing, and storing a gated value stores it
       where its gate holds;
     - {b reductions}: the factors of an integer reduced product that do not

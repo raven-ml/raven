@@ -2135,7 +2135,8 @@ let symbolic_simple =
             Upat.(var ~dtype:boolean "x" lor cvar "c")
             (fun m -> Some (if V.to_bool (num (m "c")) then m "c" else m "x"));
           rule
-            Upat.(var ~dtype:boolean "x" <> const ~dtype:boolean (`Bool false))
+            Upat.(
+              eq (var ~dtype:boolean "x") (const ~dtype:boolean (`Bool true)))
             (fun m -> Some (m "x"));
           rule
             (Upat.v ~op:Op.Set.idempotent ~src:Upat.[ var "x"; var "x" ] ())
@@ -2155,17 +2156,19 @@ let symbolic_simple =
                 (const ~dtype:boolean (`Bool false))
                 (const ~dtype:boolean (`Bool true)))
             (fun m -> Some (logical_not (m "x")));
-          (* CAST(bool -> int) != const — CAST(True)=1, CAST(False)=0, so fold
+          (* CAST(bool -> int) == const — CAST(True)=1, CAST(False)=0, so fold
              based on const value *)
           rule
             Upat.(
-              f ~dtype:int_like (var ~dtype:boolean "x") Op.Cast <> cvar "c")
+              eq
+                (f ~dtype:int_like (var ~dtype:boolean "x") Op.Cast)
+                (cvar "c"))
             (fun m ->
               let x = m "x" and c = m "c" in
               Some
-                (if equals c zero then x
-                 else if equals c one then logical_not x
-                 else const_like x (`Bool true)));
+                (if equals c zero then logical_not x
+                 else if equals c one then x
+                 else const_like x (`Bool false)));
           rule Upat.(trunc (var ~dtype:int_or_bool "x")) (fun m -> Some (m "x"));
           (* Zero folding *)
           rule
@@ -2198,10 +2201,10 @@ let symbolic_simple =
                 && all_ones (m "x") Bigint.(logor mask (pred c))
               then Some O.(m "x" // lit (`Int c))
               else None);
-          (* x != x -> False (only ints) *)
+          (* x == x -> True (only ints) *)
           rule
-            Upat.(var ~dtype:int_or_bool "x" <> var "x")
-            (fun m -> Some (const_like ~dtype:Dtype.Bool (m "x") (`Bool false)));
+            Upat.(eq (var ~dtype:int_or_bool "x") (var "x"))
+            (fun m -> Some (const_like ~dtype:Dtype.Bool (m "x") (`Bool true)));
           (* Constant folding *)
           (* canonicalize casted CONST *)
           rule
@@ -2570,6 +2573,13 @@ let symbolic =
              Upat.(
                where (var "a") (where (var "b") (var "c") (var "d")) (var "d"))
              (fun m -> Some (where O.(m "a" land m "b") (m "c") (m "d")));
+           (* a.where(b.where(c, d), c) -> (a & !b).where(d, c) *)
+           rule
+             Upat.(
+               where (var "a") (where (var "b") (var "c") (var "d")) (var "c"))
+             (fun m ->
+               Some
+                 (where O.(m "a" land logical_not (m "b")) (m "d") (m "c")));
            (* a.where(c, b.where(c, d)) -> (a | b).where(c, d) *)
            rule
              Upat.(
@@ -2621,7 +2631,7 @@ let symbolic =
                   (ops
                      [
                        Op.Cmplt;
-                       Op.Cmpne;
+                       Op.Cmpeq;
                        Op.Div;
                        Op.Mod;
                        Op.Param;
@@ -2758,10 +2768,10 @@ let symbolic =
            (* canonicalize a simplex with positive coefficients > 0. NOTE: not
               x < 1 means x > 0 *)
            rule
-             Upat.(ne (var ~dtype:[ Dtype.Weak_int ] "x" < int 1) (bool true))
+             Upat.(logical_not (var ~dtype:[ Dtype.Weak_int ] "x" < int 1))
              (fun m ->
                Option.map
-                 (fun x -> O.(x < int 1 <> bool true))
+                 (fun x -> logical_not O.(x < int 1))
                  (canonicalize_simplex (m "x")));
            (* a range mod its own upper bound is just the range *)
            rule

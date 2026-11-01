@@ -1058,7 +1058,7 @@ module type Elementwise = sig
   val add : t -> t -> t
   val mul : t -> t -> t
   val lt : t -> t -> t
-  val ne : t -> t -> t
+  val eq : t -> t -> t
   val maximum : t -> t -> t
   val bitwise_and : t -> t -> t
   val bitwise_or : t -> t -> t
@@ -1080,7 +1080,7 @@ module type Elementwise = sig
   val gt : t -> t -> t
   val le : t -> t -> t
   val ge : t -> t -> t
-  val eq : t -> t -> t
+  val ne : t -> t -> t
   val logical_not : t -> t
   val bitwise_not : t -> t
   val where : t -> t -> t -> t
@@ -1146,8 +1146,9 @@ module Make_elementwise (B : Elementwise_base) = struct
   let bool b = literal (`Bool b)
   let add x y = binop Op.Add x y
   let mul x y = binop Op.Mul x y
-  let ne x y = binop Op.Cmpne x y
-  let logical_not x = ne (cast x Dtype.Bool) (bool true)
+  let eq x y = binop Op.Cmpeq x y
+  let logical_not x = eq (cast x Dtype.Bool) (bool false)
+  let ne x y = logical_not (eq x y)
 
   let neg x =
     if Dtype.equal (dtype x) Dtype.Bool then logical_not x else mul x (int (-1))
@@ -1167,7 +1168,6 @@ module Make_elementwise (B : Elementwise_base) = struct
   let gt x y = binop Op.Cmplt y x
   let le x y = logical_not (gt x y)
   let ge x y = logical_not (lt x y)
-  let eq x y = logical_not (ne x y)
 
   let where c x y =
     let x, y = broadcasted x y in
@@ -1696,13 +1696,11 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
       Some (zero, `Int (Bigint.pred (Bigint.shift_left Bigint.one n)))
   | Op.Max -> Some (Value.max s0_min s1_min, Value.max s0_max s1_max)
   | Op.Cmplt -> Some (`Bool (lt s0_max s1_min), `Bool (lt s0_min s1_max))
-  | Op.Cmpne ->
+  | Op.Cmpeq ->
       Some
-        ( `Bool (lt s0_max s1_min || lt s1_max s0_min),
-          `Bool
-            (not
-               (equal s0_min s0_max && equal s0_max s1_min
-              && equal s1_min s1_max)) )
+        ( `Bool
+            (equal s0_min s0_max && equal s0_max s1_min && equal s1_min s1_max),
+          `Bool (not (lt s0_max s1_min || lt s1_max s0_min)) )
   | Op.Or when Dtype.equal u.dtype Dtype.Bool ->
       Some
         ( (if Value.to_bool s0_min then s0_min else s1_min),
@@ -2581,7 +2579,7 @@ module Upat = struct
     let alu p o rest =
       let srcs = p :: rest in
       let dtypes =
-        if o = Op.Cmplt || o = Op.Cmpne then Some [ Dtype.Bool ]
+        if Op.Set.mem o Op.Set.comparison then Some [ Dtype.Bool ]
         else (List.nth srcs (List.length srcs - 1)).dtypes
       in
       make ~ops:[ o ] ?dtypes

@@ -33,7 +33,7 @@ let int_or_bool = Dtype.Bool :: Dtype.Weak_int :: Dtype.ints
 let parse_valid v =
   (* a<b gives a<=b.vmax-1 (b>=a+1 for a const a), its negation a>=b.vmin
      (b<=a for a const a) *)
-  let neg = op v = Op.Cmpne && is_const (nth v 1) && equals (nth v 1) one in
+  let neg = op v = Op.Cmpeq && is_const (nth v 1) && equals (nth v 1) zero in
   let lt = if neg then nth v 0 else v in
   if op lt <> Op.Cmplt || not (Dtype.is_int (dtype (nth lt 0))) then None
   else
@@ -316,6 +316,13 @@ let sym =
             Upat.(
               store indexed [ where (var "gate") (var "alt") (load indexed []) ])
             (fun m -> Some (gated_store (m "index") (m "gate") (m "alt")));
+          rule
+            Upat.(
+              store indexed
+                [ where (var "gate") (load indexed []) (var "alt") ])
+            (fun m ->
+              let gate = logical_not (m "gate") in
+              Some (gated_store (m "index") gate (m "alt")));
           (* fold gated LOAD/STORE *)
           rule
             (Upat.op Op.Store ~name:"x" ~src:[ Upat.wild; invalid_pat ])

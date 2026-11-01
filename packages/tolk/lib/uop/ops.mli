@@ -550,12 +550,12 @@ val vmin : t -> Dtype.value
 
 val vmax : t -> Dtype.value
 (** [vmax u] is an upper bound of every value [u] can take. Bounds follow
-    interval arithmetic through the integer operations, comparisons, selections,
-    casts and loads from constant tables; elsewhere they are the bounds of [u]'s
-    type. A committed integer wraps at its width, and so does a weak integer
-    operand of an operation on one ({!operand_bounds}): an interval that leaves
-    its type is one value wrapped, or the type's bounds. A table holding a NaN
-    has its type's bounds. *)
+    interval arithmetic through the integer operations, the less-than and
+    equality comparisons, selections, casts and loads from constant tables;
+    elsewhere they are the bounds of [u]'s type. A committed integer wraps at
+    its width, and so does a weak integer operand of an operation on one
+    ({!operand_bounds}): an interval that leaves its type is one value wrapped,
+    or the type's bounds. A table holding a NaN has its type's bounds. *)
 
 val operand_bounds : t -> t -> Dtype.value * Dtype.value
 (** [operand_bounds u s] is the bounds of [u]'s source [s] as [u] reads it: an
@@ -888,9 +888,9 @@ module type Elementwise = sig
 
   (** {2:arith Arithmetic}
 
-      [add], [mul], [lt], [ne], [maximum], [bitwise_and], [bitwise_or],
+      [add], [mul], [lt], [eq], [maximum], [bitwise_and], [bitwise_or],
       [bitwise_xor], [shl] and [shr] are {!Op.Add}, {!Op.Mul}, {!Op.Cmplt},
-      {!Op.Cmpne}, {!Op.Max}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Shl} and
+      {!Op.Cmpeq}, {!Op.Max}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Shl} and
       {!Op.Shr} of their promoted operands. [reciprocal], [trunc], [sqrt],
       [exp2] and [log2] are {!Op.Recip}, {!Op.Trunc}, {!Op.Sqrt},
       {!Op.Exp2} and {!Op.Log2} of their operand. The others are built from
@@ -899,7 +899,7 @@ module type Elementwise = sig
   val add : t -> t -> t
   val mul : t -> t -> t
   val lt : t -> t -> t
-  val ne : t -> t -> t
+  val eq : t -> t -> t
   val maximum : t -> t -> t
   val bitwise_and : t -> t -> t
   val bitwise_or : t -> t -> t
@@ -947,11 +947,11 @@ module type Elementwise = sig
   val ge : t -> t -> t
   (** [ge x y] is [logical_not (lt x y)]. *)
 
-  val eq : t -> t -> t
-  (** [eq x y] is [logical_not (ne x y)]. *)
+  val ne : t -> t -> t
+  (** [ne x y] is [logical_not (eq x y)]. *)
 
   val logical_not : t -> t
-  (** [logical_not x] is [ne (cast x Bool) true]. *)
+  (** [logical_not x] is [eq (cast x Bool) false]. *)
 
   val bitwise_not : t -> t
   (** [bitwise_not x] is [logical_not x] for booleans, and [x] xor all ones

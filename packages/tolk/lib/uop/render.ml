@@ -183,6 +183,7 @@ let syms =
       (Mul, "*");
       (Cmplt, "<");
       (Cmpne, "!=");
+      (Cmpeq, "==");
       (And, "&");
       (Or, "|");
       (Xor, "^");

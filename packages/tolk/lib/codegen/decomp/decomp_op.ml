@@ -367,11 +367,11 @@ let late_patterns ~disable_fast_idiv ops =
                      Some (eq (m "x") O.(m "c1" + int 1))
                  | _ -> None);
            ];
-         when_ ops Cmpeq
+         when_ ops Cmpne
            [
              rule
-               (Upat.logical_not Upat.O.(var "x" <> var "y"))
-               (fun m -> Some (alu (m "x") Cmpeq [ m "y" ]));
+               (Upat.logical_not (Upat.eq (var "x") (var "y")))
+               (fun m -> Some (alu (m "x") Cmpne [ m "y" ]));
            ];
          when_ ops Mulacc
            (rule

@@ -84,14 +84,15 @@ let elementwise =
           equal uop (Ops.mul b (Ops.int (-1))) (Ops.neg b));
       test "greater is less with its operands swapped" (fun () ->
           equal uop (Ops.lt b a) (Ops.gt a b));
-      test "at most, at least and equal negate a strict comparison" (fun () ->
+      test "at most and at least negate a strict comparison" (fun () ->
           equal uop (Ops.logical_not (Ops.gt a b)) (Ops.le a b);
-          equal uop (Ops.logical_not (Ops.lt a b)) (Ops.ge a b);
-          equal uop (Ops.logical_not (Ops.ne a b)) (Ops.eq a b));
-      test "logical_not compares the boolean cast with true" (fun () ->
+          equal uop (Ops.logical_not (Ops.lt a b)) (Ops.ge a b));
+      test "logical_not compares the boolean cast with false" (fun () ->
           equal uop
-            (Ops.ne (Ops.cast a Bool) (Ops.bool true))
+            (Ops.eq (Ops.cast a Bool) (Ops.bool false))
             (Ops.logical_not a));
+      test "an inequality negates an equality" (fun () ->
+          equal uop (Ops.logical_not (Ops.eq a b)) (Ops.ne a b));
       test "negation and bitwise not of a boolean are logical not" (fun () ->
           let p = flag "p" in
           equal uop (Ops.logical_not p) (Ops.neg p);

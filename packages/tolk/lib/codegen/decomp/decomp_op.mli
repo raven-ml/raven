@@ -82,6 +82,6 @@ val late_patterns :
       constants to comparisons, [x * -1 < y * c] to [y * -c < x], [x * -1 < c]
       to [-c < x], and [c1 < x && x < c2] to [x == c1 + 1] when it is the one
       integer between;
-    - negated {!Op.Cmpne} to {!Op.Cmpeq} if [ops] has it;
+    - negated {!Op.Cmpeq} to {!Op.Cmpne} if [ops] has it;
     - [a * b + c], and [(x << n) + c], to {!Op.Mulacc} if [ops] has it;
     - if [ops] has {!Op.Fdiv}, reciprocals to a division of [1.0]. *)

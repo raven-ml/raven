@@ -32,14 +32,15 @@ val render : ?simplify:bool -> Ops.t -> string
       [.shrink] or [.permute] and its argument as a tuple: [(4,8)],
       [((0, 2),(1, 3))], [(1, 0)];
     - {!Op.Add}, {!Op.Sub}, {!Op.Mul}, {!Op.Div}, {!Op.Mod},
-      {!Op.Shl}, {!Op.Shr}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Cmplt} and
-      {!Op.Cmpne} are [+], [-], [*], [//], [%], [<<], [>>], [&], [|], [^], [<]
-      and [!=] between their operands, in parentheses. An operand loses its own
-      parentheses where precedence makes them redundant: from the tightest,
-      [* // %], then [+ -], [<< >>], [&], [^] and [|]. Operations of equal
-      precedence associate to the left, so [(a+b)+c] is [(a+b+c)] and [a-(b+c)]
-      keeps its parentheses. A comparison keeps its operands' parentheses, and
-      its own within any operation;
+      {!Op.Shl}, {!Op.Shr}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Cmplt},
+      {!Op.Cmpne} and {!Op.Cmpeq} are [+], [-], [*], [//], [%], [<<], [>>],
+      [&], [|], [^], [<], [!=] and [==] between their operands, in
+      parentheses. An operand loses its own parentheses where precedence makes
+      them redundant: from the tightest, [* // %], then [+ -], [<< >>], [&],
+      [^] and [|]. Operations of equal precedence associate to the left, so
+      [(a+b)+c] is [(a+b+c)] and [a-(b+c)] keeps its parentheses. A
+      comparison keeps its operands' parentheses, and its own within any
+      operation;
     - an {!Op.Index} or an {!Op.Stage} is each source after the first between
       brackets, without their outer parentheses: [[i][j]];
     - a load through an index is the indexed storage followed by the index:

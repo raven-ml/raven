@@ -475,7 +475,7 @@ let powers =
       test "x ** 0.5 is the square root of x, +0. at -0. and +inf at -inf"
         (fun () ->
           let special v r =
-            Ops.where Ops.O.(f <> float v) r (Ops.float (Float.abs v))
+            Ops.where (Ops.eq f (Ops.float v)) (Ops.float (Float.abs v)) r
           in
           by_symbolic
             (Ops.pow f (Ops.float 0.5))
@@ -672,7 +672,7 @@ let symbolic_selections =
             (Ops.where (Ops.logical_not cond) t e)
             (Ops.where cond e t);
           by_symbolic
-            (Ops.where (raw Cmpne [ Ops.bool true; cond ]) t e)
+            (Ops.where (raw Cmpeq [ Ops.bool false; cond ]) t e)
             (Ops.where cond e t));
       test "the condition is true in the true branch and false in the other"
         (fun () ->
@@ -870,13 +870,13 @@ let comparisons =
       test "-x < -y is y < x" (fun () ->
           by_symbolic Ops.O.(a * int (-1) < b * int (-1)) Ops.O.(b < a));
       test "not (x < 1) drops the positive coefficients of x" (fun () ->
-          let lt1 e = Ops.O.(e < int 1 <> bool true) in
+          let lt1 e = Ops.O.(lnot (e < int 1)) in
           by_symbolic
             (lt1 Ops.O.((a * int 3) + (b * int 4)))
             (lt1 Ops.O.(a + b)));
       test "not (x < 1) keeps the coefficients of a term that can be negative"
         (fun () ->
-          let lt1 e = Ops.O.(e < int 1 <> bool true) in
+          let lt1 e = Ops.O.(lnot (e < int 1)) in
           let v = var "v" (-3) 3 in
           let e = lt1 Ops.O.((a * int 3) + (v * int 4)) in
           by_symbolic e e;
@@ -1356,7 +1356,7 @@ let given_valid =
       test "a negated clause bounds an expression from below" (fun () ->
           equal uop (Ops.bool false)
             (Symbolic.uop_given_valid
-               Ops.O.(a < int 5 <> bool true)
+               Ops.O.(lnot (a < int 5))
                Ops.O.(a < int 3)));
       test "every clause of a conjunction holds" (fun () ->
           equal uop (Ops.int 0)
@@ -1367,11 +1367,11 @@ let given_valid =
         (fun () ->
           equal uop (Ops.bool true)
             (Symbolic.uop_given_valid
-               Ops.O.(int 2 < a <> bool true)
+               Ops.O.(lnot (int 2 < a))
                Ops.O.(a < int 3));
           equal uop (Ops.int 0)
             (Symbolic.uop_given_valid
-               Ops.O.(int 1 < a <> bool true)
+               Ops.O.(lnot (int 1 < a))
                Ops.O.(a // int 2)));
       test "a clause on a sum with a constant term tries no term of it"
         (fun () ->
@@ -1380,8 +1380,8 @@ let given_valid =
           let a = var "a" 0 7 and b = var "b" 0 7 and d = var "d" 0 1 in
           let valid =
             Ops.O.(
-              (a + b + int 1 < int 1 <> bool true)
-              land (c + d < int 1 <> bool true))
+              lnot (a + b + int 1 < int 1)
+              land lnot (c + d < int 1))
           in
           let base =
             Ops.O.(
@@ -1396,14 +1396,14 @@ let given_valid =
             (fun k -> equal ~msg:(string_of_int k) uop (lane 1) (lane k))
             [ 2; 3 ]);
       test "a clause on a sum tries each term at least 1" (fun () ->
-          let valid = Ops.O.(a + b < int 1 <> bool true) in
+          let valid = Ops.O.(lnot (a + b < int 1)) in
           let both_zero = Ops.O.((a < int 1) land (b < int 1)) in
           equal uop (Ops.bool false) (Symbolic.uop_given_valid valid both_zero);
           equal uop both_zero
             (Symbolic.uop_given_valid ~try_simplex:false valid both_zero));
       test "a clause on a sum simplifies each lane of a pair on its own"
         (fun () ->
-          let valid = Ops.O.(a + b < int 1 <> bool true) in
+          let valid = Ops.O.(lnot (a + b < int 1)) in
           let both_zero = Ops.O.((a < int 1) land (b < int 1)) in
           let pair = raw Stack [ both_zero; Ops.O.(a < int 1) ] in
           equal uop
@@ -1431,11 +1431,11 @@ let given_valid =
                Ops.O.(a // int 5)));
       test "a clause on a sum with coefficients does not try each term"
         (fun () ->
-          let valid = Ops.O.((a * int 2) + b < int 1 <> bool true) in
+          let valid = Ops.O.(lnot ((a * int 2) + b < int 1)) in
           let e = Ops.O.((a * int 2 < int 1) land (b < int 1)) in
           equal uop e (Symbolic.uop_given_valid valid e));
       test "a clause on a sum leaves what its terms disagree on" (fun () ->
-          let valid = Ops.O.(a + b < int 1 <> bool true) in
+          let valid = Ops.O.(lnot (a + b < int 1)) in
           let e = Ops.O.((a < int 1) lor (b < int 1)) in
           equal uop e (Symbolic.uop_given_valid valid e));
       test "a clause that bounds nothing leaves the expression" (fun () ->

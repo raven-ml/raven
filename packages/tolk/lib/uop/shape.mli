@@ -569,16 +569,16 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       [x * 1] and [x // 1] are [x], a float [x + 0] only for [-0.]; [x // -1] is
       [-x]; [x // x] is [1]; [(x lxor y) lxor y] is [x]; [(x % y) % y] is
       [x % y]; a boolean [x land c] and [x lor c] with [c] constant are [x] or
-      [c]; [x <> false], a double negation, [where x true false] and an
+      [c]; [x = true], a double negation, [where x true false] and an
       idempotent operation of [x] with itself are [x]; [where x false true] is
-      the negation of [x]; a boolean cast to an integer and compared to [0] or
-      [1] is the boolean or its negation, and to any other integer [true]; the
-      truncation of an integer is itself;
+      the negation of [x]; a boolean cast to an integer and equal to [0] or [1]
+      is the boolean's negation or the boolean, and to any other integer
+      [false]; the truncation of an integer is itself;
     - {b recombination}: in a weak integer sum, [(b % d) * m] and a term
       [q * (d * m)], where [q] is [b' // d] for some [b'] congruent to [b]
       modulo [d] up to constants, recombine into [b' * m]; where [q] is
       [(b' // d) % k] with [k] positive, into [(b' % (d * k)) * m];
-    - {b zeros}: [x < x] is [false], [x <> x] is [false] for integers and
+    - {b zeros}: [x < x] is [false], [x = x] is [true] for integers and
       booleans, [x % x], [x lxor x] and [x land 0] are [0], and so is [x * 0]
       for integers and booleans; a mask that clears only bits that a right shift
       or a division by a power of two drops is removed;
@@ -626,7 +626,9 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       operand of a conversion of a float to an integer or of an integer
       divisor in a branch, where it may be the guard of a value that operation
       is undefined for; [where g x 0 <> 0] is [g land (x <> 0)]; nested
-      selections sharing a branch merge their conditions with [land] or [lor];
+      selections sharing a branch merge their conditions with [land] or [lor],
+      or with [land] of the inner one's negation where the outer's other branch
+      is the inner's first;
       an operation on two selections by the same condition, one of whose branch
       pairs is constant, selects between the operations on the branches, also as
       the last two terms of an integer sum; for integers,
