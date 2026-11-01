@@ -2235,6 +2235,35 @@ let symbolic_simple =
               in
               if List.mem dt Dtype.weaks then None
               else Some (replace a ~src:(List.map commit (src a))));
+        ]
+        (* Two stage ALU folding; sums, products and maxima for integers: in
+           floats each step rounds, and a maximum keeps a NaN only as its first
+           operand *)
+        @ List.map
+            (fun o ->
+              let dtype =
+                if List.mem o Op.[ Add; Mul; Max ] then Some int_or_bool
+                else None
+              in
+              let x = Upat.var ?dtype "x" in
+              rule
+                Upat.(named "f" (alu (alu x o [ cvar "c1" ]) o [ cvar "c2" ]))
+                (fun m ->
+                  let f = m "f" in
+                  let o = op f in
+                  (* a sum, a product and a bitwise operation fold the same
+                     before or after wrapping; a maximum orders wrapped values:
+                     on uint8, max(1, -3) is 253, so its weak constants fold at
+                     its width *)
+                  let at_width c =
+                    if o = Op.Max && List.mem (Ops.dtype c) Dtype.weaks then
+                      ccast c (Ops.dtype f)
+                    else c
+                  in
+                  let c1 = at_width (m "c1") and c2 = at_width (m "c2") in
+                  Some (alu (m "x") o [ wrap_folded f c1 c2 ])))
+            (Op.Set.to_list Op.Set.associative)
+        @ [
           (* bool MUL is AND, ADD/MAX is OR. prevents other rules to rewrite
              bool ADD/MUL incorrectly *)
           rule
@@ -2637,221 +2666,192 @@ let symbolic =
                if V.(x0 >= y1) then Some (keep x)
                else if V.(x1 <= y0) then Some (keep y)
                else None);
-         ]
-        (* Two stage ALU folding; sums, products and maxima for integers: in
-           floats each step rounds, and a maximum keeps a NaN only as its first
-           operand *)
-        @ List.map
-            (fun o ->
-              let dtype =
-                if List.mem o Op.[ Add; Mul; Max ] then Some int_or_bool
-                else None
-              in
-              let x = Upat.var ?dtype "x" in
-              rule
-                Upat.(named "f" (alu (alu x o [ cvar "c1" ]) o [ cvar "c2" ]))
-                (fun m ->
-                  let f = m "f" in
-                  let o = op f in
-                  (* a sum, a product and a bitwise operation fold the same
-                     before or after wrapping; a maximum orders wrapped values:
-                     on uint8, max(1, -3) is 253, so its weak constants fold at
-                     its width *)
-                  let at_width c =
-                    if o = Op.Max && List.mem (Ops.dtype c) Dtype.weaks then
-                      ccast c (Ops.dtype f)
-                    else c
-                  in
-                  let c1 = at_width (m "c1") and c2 = at_width (m "c2") in
-                  Some (alu (m "x") o [ wrap_folded f c1 c2 ])))
-            (Op.Set.to_list Op.Set.associative)
-        @ [
-            (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)
-            rule
-              Upat.(var "x" // cvar "c1" // cvar "c2")
-              (fun m ->
-                let c1 = vmin (m "c1") and c2 = vmin (m "c2") in
-                if V.(c2 > zero) && exact (dtype (m "x")) V.[ c1; c2; c1 * c2 ]
-                then Some O.(m "x" // (m "c1" * m "c2"))
-                else None);
-            (* Lt *)
-            (* c0+x<c1 -> x < c1-c0 for signed x, where neither side wraps:
-               an unsigned sum that wraps moves past c1 *)
-            rule
-              Upat.(cvar "c0" + var ~dtype:(Dtype.Weak_int :: Dtype.sints) "x" < cvar "c1")
-              (fun m ->
-                let x = m "x" and c0 = vmin (m "c0") and c1 = vmin (m "c1") in
-                if
-                  exact (dtype x)
-                    V.[ c0; c1; vmin x + c0; vmax x + c0; c1 - c0 ]
-                then Some O.(x < m "c1" - m "c0")
-                else None);
-            (* x//d<c -> x<c*d for d>0, and -> c*d<x for d<0 *)
-            rule
-              Upat.(var ~dtype:[ Dtype.Weak_int ] "x" // cvar "d" < cvar "c")
-              (fun m ->
-                let d = num (m "d")
-                and cd = lit V.(num (m "c") * num (m "d"))
-                and x = m "x" in
-                if V.(d > zero) then Some O.(x < cd)
-                else if V.(d < zero) then Some O.(x > cd)
-                else None);
-            (* Move add/mul consts to end (NOTE: this is still happening before
-               constant folding), for integers: it reassociates *)
-            rule
-              Upat.(var ~dtype:int_or_bool "x" + cvar "c1" + var "y")
-              (fun m ->
-                let y = m "y" in
-                if is_const y then None else Some O.(m "x" + y + m "c1"));
-            rule
-              Upat.(var ~dtype:int_or_bool "x" * cvar "c1" * var "y")
-              (fun m ->
-                let y = m "y" in
-                if is_const y then None else Some O.(m "x" * y * m "c1"));
-            (* Rules from symbolic *)
-            (* generic lt folding *)
-            rule
-              Upat.(var ~dtype:[ Dtype.Weak_int ] "x" < cvar "c")
-              (fun m ->
-                match num (m "c") with
-                | `Int c -> lt_folding (m "x") c
-                | _ -> None);
-            rule
-              Upat.(
-                var ~dtype:[ Dtype.Weak_int ] "x" * int (-1)
-                < var "y" * int (-1))
-              (fun m -> Some O.(m "y" < m "x"));
-            (* canonicalize a simplex with positive coefficients > 0. NOTE: not
-               x < 1 means x > 0 *)
-            rule
-              Upat.(ne (var ~dtype:[ Dtype.Weak_int ] "x" < int 1) (bool true))
-              (fun m ->
-                Option.map
-                  (fun x -> O.(x < int 1 <> bool true))
-                  (canonicalize_simplex (m "x")));
-            (* a range mod its own upper bound is just the range *)
-            rule
-              Upat.(op Op.Range ~each:(var "end") ~name:"r" % var "end")
-              (fun m -> Some (m "r"));
-            rule
-              Upat.(op Op.Range ~each:(var "end") ~name:"r" // var "end")
-              (fun m -> Some (const_v (m "r") zero));
-            (* cast/long folding *)
-            (* if the intermediate cast doesnt narrow we can do it in one cast *)
-            rule
-              Upat.(f ~name:"b" (f ~name:"a" (var "x") Op.Cast) Op.Cast)
-              (fun m ->
-                let x = m "x" in
-                if Dtype.can_lossless_cast (dtype x) (dtype (m "a")) then
-                  Some (cast x (dtype (m "b")))
-                else None);
-            rule
-              Upat.(
-                f ~name:"b"
-                  (f ~dtype:int_like ~name:"a" (var ~dtype:int_like "x") Op.Cast)
-                  Op.Cast)
-              (fun m ->
-                let x = m "x" in
-                if overflows x (dtype (m "a")) then None
-                else Some (ccast x (dtype (m "b"))));
-            (* a zero extension commutes with a mask and with a right shift by
-               less than the operand's width: a widening cast of an unsigned
-               [x land y] or [x lsr k] is the operation on the widened
-               operands, so packed values unpack at the width their consumer
-               computes in *)
-            rule
-              Upat.(
-                f ~dtype:Dtype.uints ~name:"c"
-                  (v ~op:(ops [ Op.And; Op.Shr ]) ~dtype:Dtype.uints ~name:"u"
-                     ())
-                  Op.Cast)
-              (fun m ->
-                let c = m "c" and u = m "u" in
-                let dt = dtype c and width = Dtype.bitsize (dtype u) in
-                let k = nth u 1 in
-                let exact =
-                  Dtype.bitsize dt > width
-                  && (op u = Op.And
-                     || V.(vmin k >= zero && vmax k < of_int width))
-                in
-                if exact then
-                  Some (alu (cast (nth u 0) dt) (op u) [ cast k dt ])
-                else None);
-            (* try to do math in int instead of long, keep weak const weak *)
-            rule
-              (Upat.v ~op:Op.Set.binary ~name:"u"
-                 ~src:
-                   Upat.
-                     [
-                       var ~dtype:[ Dtype.Int64; Dtype.Weak_int ] "x";
-                       var ~dtype:[ Dtype.Int64; Dtype.Weak_int ] "y";
-                     ]
-                 ())
-              (fun m ->
-                let u = m "u" and x = m "x" and y = m "y" in
-                let narrow w =
-                  if is_const w then lit (num w) else cast w Dtype.Int32
-                in
-                if
-                  List.exists
-                    (fun w -> Dtype.equal (dtype w) Dtype.Int64)
-                    [ x; y ]
-                  && not
-                       (List.exists
-                          (fun w -> overflows w Dtype.Int32)
-                          [ u; x; y ])
-                then Some (cast (alu (narrow x) (op u) [ narrow y ]) (dtype u))
-                else None);
-            rule
-              Upat.(
-                f ~dtype:Dtype.sints ~name:"cast"
-                  (var ~dtype:[ Dtype.Weak_int ] "x" + cvar "c")
-                  Op.Cast)
-              (fun m ->
-                let c = m "cast" in
-                Some O.(cast (m "x") (dtype c) + const_like c (value (m "c"))));
-            (* an AFTER waits only on the effect ops listed here, any other dep
-               is replaced by its srcs *)
-            rule (Upat.op Op.After ~name:"x") (fun m ->
-                let x = m "x" in
-                let effects =
-                  ops
+           (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)
+           rule
+             Upat.(var "x" // cvar "c1" // cvar "c2")
+             (fun m ->
+               let c1 = vmin (m "c1") and c2 = vmin (m "c2") in
+               if V.(c2 > zero) && exact (dtype (m "x")) V.[ c1; c2; c1 * c2 ]
+               then Some O.(m "x" // (m "c1" * m "c2"))
+               else None);
+           (* Lt *)
+           (* c0+x<c1 -> x < c1-c0 for signed x, where neither side wraps:
+              an unsigned sum that wraps moves past c1 *)
+           rule
+             Upat.(cvar "c0" + var ~dtype:(Dtype.Weak_int :: Dtype.sints) "x" < cvar "c1")
+             (fun m ->
+               let x = m "x" and c0 = vmin (m "c0") and c1 = vmin (m "c1") in
+               if
+                 exact (dtype x)
+                   V.[ c0; c1; vmin x + c0; vmax x + c0; c1 - c0 ]
+               then Some O.(x < m "c1" - m "c0")
+               else None);
+           (* x//d<c -> x<c*d for d>0, and -> c*d<x for d<0 *)
+           rule
+             Upat.(var ~dtype:[ Dtype.Weak_int ] "x" // cvar "d" < cvar "c")
+             (fun m ->
+               let d = num (m "d")
+               and cd = lit V.(num (m "c") * num (m "d"))
+               and x = m "x" in
+               if V.(d > zero) then Some O.(x < cd)
+               else if V.(d < zero) then Some O.(x > cd)
+               else None);
+           (* Move add/mul consts to end (NOTE: this is still happening before
+              constant folding), for integers: it reassociates *)
+           rule
+             Upat.(var ~dtype:int_or_bool "x" + cvar "c1" + var "y")
+             (fun m ->
+               let y = m "y" in
+               if is_const y then None else Some O.(m "x" + y + m "c1"));
+           rule
+             Upat.(var ~dtype:int_or_bool "x" * cvar "c1" * var "y")
+             (fun m ->
+               let y = m "y" in
+               if is_const y then None else Some O.(m "x" * y * m "c1"));
+           (* Rules from symbolic *)
+           (* generic lt folding *)
+           rule
+             Upat.(var ~dtype:[ Dtype.Weak_int ] "x" < cvar "c")
+             (fun m ->
+               match num (m "c") with
+               | `Int c -> lt_folding (m "x") c
+               | _ -> None);
+           rule
+             Upat.(
+               var ~dtype:[ Dtype.Weak_int ] "x" * int (-1)
+               < var "y" * int (-1))
+             (fun m -> Some O.(m "y" < m "x"));
+           (* canonicalize a simplex with positive coefficients > 0. NOTE: not
+              x < 1 means x > 0 *)
+           rule
+             Upat.(ne (var ~dtype:[ Dtype.Weak_int ] "x" < int 1) (bool true))
+             (fun m ->
+               Option.map
+                 (fun x -> O.(x < int 1 <> bool true))
+                 (canonicalize_simplex (m "x")));
+           (* a range mod its own upper bound is just the range *)
+           rule
+             Upat.(op Op.Range ~each:(var "end") ~name:"r" % var "end")
+             (fun m -> Some (m "r"));
+           rule
+             Upat.(op Op.Range ~each:(var "end") ~name:"r" // var "end")
+             (fun m -> Some (const_v (m "r") zero));
+           (* cast/long folding *)
+           (* if the intermediate cast doesnt narrow we can do it in one cast *)
+           rule
+             Upat.(f ~name:"b" (f ~name:"a" (var "x") Op.Cast) Op.Cast)
+             (fun m ->
+               let x = m "x" in
+               if Dtype.can_lossless_cast (dtype x) (dtype (m "a")) then
+                 Some (cast x (dtype (m "b")))
+               else None);
+           rule
+             Upat.(
+               f ~name:"b"
+                 (f ~dtype:int_like ~name:"a" (var ~dtype:int_like "x") Op.Cast)
+                 Op.Cast)
+             (fun m ->
+               let x = m "x" in
+               if overflows x (dtype (m "a")) then None
+               else Some (ccast x (dtype (m "b"))));
+           (* a zero extension commutes with a mask and with a right shift by
+              less than the operand's width: a widening cast of an unsigned
+              [x land y] or [x lsr k] is the operation on the widened
+              operands, so packed values unpack at the width their consumer
+              computes in *)
+           rule
+             Upat.(
+               f ~dtype:Dtype.uints ~name:"c"
+                 (v ~op:(ops [ Op.And; Op.Shr ]) ~dtype:Dtype.uints ~name:"u"
+                    ())
+                 Op.Cast)
+             (fun m ->
+               let c = m "c" and u = m "u" in
+               let dt = dtype c and width = Dtype.bitsize (dtype u) in
+               let k = nth u 1 in
+               let exact =
+                 Dtype.bitsize dt > width
+                 && (op u = Op.And
+                    || V.(vmin k >= zero && vmax k < of_int width))
+               in
+               if exact then
+                 Some (alu (cast (nth u 0) dt) (op u) [ cast k dt ])
+               else None);
+           (* try to do math in int instead of long, keep weak const weak *)
+           rule
+             (Upat.v ~op:Op.Set.binary ~name:"u"
+                ~src:
+                  Upat.
                     [
-                      Op.Range;
-                      Op.Store;
-                      Op.Call;
-                      Op.Barrier;
-                      Op.End;
-                      Op.Backedge;
-                      Op.Linear;
-                      Op.Stage;
+                      var ~dtype:[ Dtype.Int64; Dtype.Weak_int ] "x";
+                      var ~dtype:[ Dtype.Int64; Dtype.Weak_int ] "y";
                     ]
-                in
-                let deps y =
-                  if Op.Set.mem (op y) effects then [ y ] else src y
-                in
-                Some
-                  (replace x
-                     ~src:
-                       (nth x 0
-                       :: dedup_nodes
-                            (List.concat_map deps (List.tl (src x))))));
-            (* after/end with 1 src is just src[0] *)
-            rule
-              (Upat.v ~op:(ops [ Op.After; Op.End ]) ~src:[ Upat.var "s" ] ())
-              (fun m -> Some (m "s"));
-            (* ranges can be subbed for CONSTs, remove them from ENDs. BACKEDGE
-               conditions are never range selectors. *)
-            rule (Upat.op Op.End ~name:"x") (fun m ->
-                let x = m "x" in
-                Some
-                  (replace x
-                     ~src:
-                       (nth x 0
-                       :: List.filter
-                            (fun r -> not (is_const r))
-                            (List.tl (src x)))));
-          ]);
+                ())
+             (fun m ->
+               let u = m "u" and x = m "x" and y = m "y" in
+               let narrow w =
+                 if is_const w then lit (num w) else cast w Dtype.Int32
+               in
+               if
+                 List.exists
+                   (fun w -> Dtype.equal (dtype w) Dtype.Int64)
+                   [ x; y ]
+                 && not
+                      (List.exists
+                         (fun w -> overflows w Dtype.Int32)
+                         [ u; x; y ])
+               then Some (cast (alu (narrow x) (op u) [ narrow y ]) (dtype u))
+               else None);
+           rule
+             Upat.(
+               f ~dtype:Dtype.sints ~name:"cast"
+                 (var ~dtype:[ Dtype.Weak_int ] "x" + cvar "c")
+                 Op.Cast)
+             (fun m ->
+               let c = m "cast" in
+               Some O.(cast (m "x") (dtype c) + const_like c (value (m "c"))));
+           (* an AFTER waits only on the effect ops listed here, any other dep
+              is replaced by its srcs *)
+           rule (Upat.op Op.After ~name:"x") (fun m ->
+               let x = m "x" in
+               let effects =
+                 ops
+                   [
+                     Op.Range;
+                     Op.Store;
+                     Op.Call;
+                     Op.Barrier;
+                     Op.End;
+                     Op.Backedge;
+                     Op.Linear;
+                     Op.Stage;
+                   ]
+               in
+               let deps y =
+                 if Op.Set.mem (op y) effects then [ y ] else src y
+               in
+               Some
+                 (replace x
+                    ~src:
+                      (nth x 0
+                      :: dedup_nodes
+                           (List.concat_map deps (List.tl (src x))))));
+           (* after/end with 1 src is just src[0] *)
+           rule
+             (Upat.v ~op:(ops [ Op.After; Op.End ]) ~src:[ Upat.var "s" ] ())
+             (fun m -> Some (m "s"));
+           (* ranges can be subbed for CONSTs, remove them from ENDs. BACKEDGE
+              conditions are never range selectors. *)
+           rule (Upat.op Op.End ~name:"x") (fun m ->
+               let x = m "x" in
+               Some
+                 (replace x
+                    ~src:
+                      (nth x 0
+                      :: List.filter
+                           (fun r -> not (is_const r))
+                           (List.tl (src x)))));
+         ]);
       div_and_mod_symbolic;
       (* the rules above key on bare CONSTs, so a redundantly committed const
          has to be uncast in the same fixpoint *)
