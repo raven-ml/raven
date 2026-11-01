@@ -3193,10 +3193,10 @@ launch descriptors (D146).
   On the host, where Clang renders none of these functions, every one is
   tolk's.
 - **Pinned by:** the Transcendental suite (`test/codegen/decomp/transcendental`):
-  `accuracy › <function> of <type> is within an ulp` for `exp2`, `log2` and
-  `sin` in float16, bfloat16, float32 and float64, against references computed
-  in integers (`exact.ml`), and `› xsin ~fast of <type> is within an ulp below
-  30`; `special values › sin <type> -0x0p+0 is -0x0p+0` and the subnormal rows;
+  `accuracy › accuracy.golden`, which holds `exp2`, `log2` and `sin` of
+  float16, bfloat16, float32 and float64 values correctly rounded by mpmath
+  (`test/gen/codegen/decomp/transcendental.py`) and checks each function, and
+  `xsin ~fast` below 30, within an ulp of them; `special values › sin <type> -0x0p+0 is -0x0p+0` and the subnormal rows;
   `types › <function> refuses a node of another type › half`; the graph
   goldens and `values.golden`, from the patched tinygrad; and rune's
   `Lower_real › transcendental › exp within 2 ulps at float32, 9 at

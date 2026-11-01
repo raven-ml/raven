@@ -397,9 +397,9 @@ pin every operation, constant and data type of each function for Float32 and
 Float64, and of the reductions and `xpow` for Float16 too, and `values.golden`
 and `pow_values.golden` pin the value of tinygrad's graphs, evaluated node by
 node, at about 260 inputs per function and type: special values, the
-reductions' boundaries and values drawn from their bits. The accuracy
-properties hold each function within one ulp of the correctly rounded result
-in every float from Float16 up.
+reductions' boundaries and values drawn from their bits. `accuracy.golden`
+holds each function within one ulp of its correctly rounded result, mpmath's,
+at about 400 inputs per function and type, in every float from Float16 up.
 
 | Source | Behaviour | Outcome |
 |---|---|---|

@@ -794,6 +794,7 @@ codegen/decomp/decomp_op/simplifying_threefry_none.golden
 codegen/decomp/decomp_op/simplifying_threefry_shr_and.golden
 codegen/decomp/decomp_op/simplifying_threefry_shr_and_threefry.golden
 codegen/decomp/decomp_op/threefry.golden
+codegen/decomp/transcendental/accuracy.golden
 codegen/decomp/transcendental/cody_waite_double.golden
 codegen/decomp/transcendental/cody_waite_float.golden
 codegen/decomp/transcendental/cody_waite_half.golden

@@ -13,6 +13,8 @@ import math
 import random
 import struct
 
+import mpmath
+
 from golden import graph, table
 from tinygrad.codegen.decomp.transcendental import (cody_waite_reduction, exponent_bias, frexp,
                                                     get_transcendental_patterns, payne_hanek_reduction, pow2if,
@@ -188,21 +190,10 @@ def pow_values():
 
 # The remainders of angles near multiples of pi/2, from pi to 1400 bits
 
-def pi_scaled(bits):
-    """pi * 2^bits, by Machin's formula in integers."""
-    prec = bits + 64
-    def arctan_inv(n):
-        x, s, k, sign = (1 << prec) // n, 0, 0, 1
-        while x:
-            s += sign * (x // (2 * k + 1))
-            x //= n * n
-            k, sign = k + 1, -sign
-        return s
-    return (16 * arctan_inv(5) - 4 * arctan_inv(239)) >> 64
-
-
 PI_BITS = 1400
-PI_SCALED = pi_scaled(PI_BITS)
+# pi * 2^PI_BITS, rounded down
+with mpmath.workprec(PI_BITS + 64):
+    PI_SCALED = int(mpmath.floor(mpmath.ldexp(mpmath.pi, PI_BITS)))
 
 
 def reduced(x):
@@ -228,3 +219,130 @@ def payne_hanek_near_multiples():
             r, q = reduced(v)
             rows.append((name, cell(v), cell(r), q))
     return ["dtype", "x", "r", "quadrant"], rows
+
+
+# Correctly rounded exp2, log2 and sin, against which the accuracy of tolk's
+# functions is measured: mpmath's values, at a precision doubled until the
+# value's error bound rounds to one value of the type (Ziv's strategy), or the
+# exact value where it is a power of two or an integer.
+
+# precision, least and greatest exponents
+FORMATS = {"half": (11, -14, 15), "bfloat16": (8, -126, 127), "float": (24, -126, 127), "double": (53, -1022, 1023)}
+
+
+def round_to(v, fmt):
+    """v rounded to nearest, ties to even, in fmt: its subnormals below the
+    least normal, an infinity from the greatest value and half an ulp."""
+    p, emin, emax = fmt
+    if v == 0:
+        return 0.0
+    _, e = mpmath.frexp(v)
+    ulp = mpmath.ldexp(1, max(e - 1, emin) - p + 1)
+    r = mpmath.nint(v / ulp) * ulp
+    if abs(r) >= mpmath.ldexp(1, emax + 1):
+        return math.copysign(math.inf, v)
+    return math.copysign(float(r), v)
+
+
+ZIV_START, ZIV_LAST, ZIV_GUARD = 64, 1 << 16, 16
+
+
+def correctly_rounded(f, x, fmt):
+    prec = ZIV_START
+    while prec <= ZIV_LAST:
+        with mpmath.workprec(prec + ZIV_GUARD):
+            v = f(mpmath.mpf(x))
+            err = abs(v) * mpmath.ldexp(1, -prec)
+            if (lo := round_to(v - err, fmt)) == round_to(v + err, fmt):
+                return lo
+        prec *= 2
+    raise ArithmeticError(f"{x!r} is too near halfway between values")
+
+
+def cr_exp2(x, fmt):
+    p, emin, emax = fmt
+    if math.isnan(x) or x == math.inf:
+        return x
+    # past these, 2^x is above the greatest value or below half the least
+    if x > emax + 1:
+        return math.inf
+    if x < emin - p:
+        return 0.0
+    if x.is_integer():
+        return round_to(mpmath.ldexp(1, int(x)), fmt)
+    return correctly_rounded(lambda v: mpmath.exp(v * mpmath.ln2), x, fmt)
+
+
+def cr_log2(x, fmt):
+    if math.isnan(x) or x < 0:
+        return math.nan
+    if x == 0:
+        return -math.inf
+    if x == math.inf:
+        return x
+    m, e = math.frexp(x)
+    if m == 0.5:
+        return round_to(mpmath.mpf(e - 1), fmt)
+    return correctly_rounded(lambda v: mpmath.log(v, 2), x, fmt)
+
+
+def cr_sin(x, fmt):
+    if not math.isfinite(x):
+        return math.nan
+    if x == 0:
+        return x
+    return correctly_rounded(mpmath.sin, x, fmt)
+
+
+def of_bits(name, rng):
+    if name == "double":
+        return struct.unpack("<d", struct.pack("<Q", rng.getrandbits(64)))[0]
+    if name == "float":
+        return struct.unpack("<f", struct.pack("<I", rng.getrandbits(32)))[0]
+    if name == "bfloat16":
+        return struct.unpack("<f", struct.pack("<I", rng.getrandbits(16) << 16))[0]
+    return struct.unpack("<e", struct.pack("<H", rng.getrandbits(16)))[0]
+
+
+def accuracy_inputs(fname, name, rng):
+    """The inputs of fname in the type name: values from the type's bits (every
+    magnitude, the subnormals, the zeros, the infinities and NaN), from the
+    range where the result is neither 0, 1 nor infinite, and for the sine near
+    multiples of a quarter turn, where it cancels; first those tinygrad's
+    fuzzer found."""
+    fmt = FORMATS[name]
+    p, emin, emax = fmt
+    def between(lo, hi): return lambda: round_to(mpmath.mpf(rng.uniform(lo, hi)), fmt)
+    def quarter_turns(n): return lambda: round_to(mpmath.mpf(rng.randint(1, n) * math.pi / 2), fmt)
+    least_normal = math.ldexp(1.0, emin)
+    if fname == "exp2":
+        fuzzed, draws = [], [between(emin - p - 1, emax + 2), between(-1.0, 1.0)]
+    elif fname == "log2":
+        fuzzed = [s * least_normal * scale for scale in (1.0, 1e10, 1e20, 1e30) for s in (1, -1)] + [0.0, 9e-7]
+        draws = [between(0.5, 2.0), between(0.0, 1e-30)]
+    else:
+        fuzzed = [-35.0, -25.0, 25.0, 30.0, 35.0, 0.0, math.pi / 2, 2 * math.pi]
+        draws = [between(-30.0, 30.0), quarter_turns(20), quarter_turns(40000 if name == "half" else 0x3fffffff)]
+    draws.append(lambda: of_bits(name, rng))
+    seen, out = set(), []
+    for v in [round_to(mpmath.mpf(v), fmt) for v in fuzzed] + [rng.choice(draws)() for _ in range(ACCURACY_DRAWS)]:
+        key = struct.pack("<d", v) if not math.isnan(v) else b"nan"
+        if key not in seen:
+            seen.add(key)
+            out.append(v)
+    return out
+
+
+ACCURACY_DRAWS = 400
+REFERENCES = {"exp2": cr_exp2, "log2": cr_log2, "sin": cr_sin}
+
+
+@table
+def accuracy():
+    rows = []
+    for fname, reference in REFERENCES.items():
+        for name, fmt in FORMATS.items():
+            rng = random.Random(f"{fname}/{name}")
+            for v in accuracy_inputs(fname, name, rng):
+                rows.append((fname, name, cell(v), cell(reference(v, fmt))))
+    return ["function", "dtype", "x", "result"], rows

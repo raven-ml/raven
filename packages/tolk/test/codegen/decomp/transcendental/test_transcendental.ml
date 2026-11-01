@@ -587,112 +587,70 @@ let refused_types =
 (* Accuracy
 
    Each function is within one unit in the last place of the correctly rounded
-   result ({!Exact}), counted on the ordered line of its type, over values drawn
-   from the bits of the type (every magnitude, the subnormals, the zeros, the
-   infinities and NaN), from the range where the result is neither 0, 1 nor
-   infinite, and for the sine near multiples of a quarter turn, where it
-   cancels. *)
+   result, counted on the ordered line of its type. [accuracy.golden] holds the
+   results, mpmath's rounded once to the type, at values drawn from the bits of
+   the type (every magnitude, the subnormals, the zeros, the infinities and
+   NaN), from the range where the result is neither 0, 1 nor infinite, and for
+   the sine near multiples of a quarter turn, where it cancels. *)
 
-let pp_hex ppf v = Format.fprintf ppf "%h" v
-
-let of_bits dt =
-  let gen =
-    match (dt : Dtype.t) with
-    | Float16 | Bfloat16 ->
-        Gen.map
-          (fun b -> as_float (Dtype.bitcast Uint16 dt (`Int (Bigint.of_int b))))
-          (Gen.int_range 0 0xffff)
-    | Float32 -> Gen.map Int32.float_of_bits Gen.int32
-    | _ -> Gen.map Int64.float_of_bits Gen.int64
+(* [rank dt v] is [v]'s place on the ordered line of [dt]'s values: [-0.] lies
+   one below [0.], an infinity one past the greatest value. *)
+let rank dt v =
+  let w = 8 * Dtype.itemsize dt in
+  let unsigned : Dtype.t =
+    match w with 16 -> Uint16 | 32 -> Uint32 | _ -> Uint64
   in
-  Gen.with_pp pp_hex gen
+  match Dtype.bitcast dt unsigned (`Float v) with
+  | `Int bits ->
+      let magnitude = Bigint.extract bits 0 (w - 1) in
+      if Float.sign_bit v then Bigint.sub Bigint.minus_one magnitude
+      else magnitude
+  | _ -> invalid_arg "a float's bits"
 
-let between dt lo hi =
-  Gen.with_pp pp_hex (Gen.map (round dt) (Gen.float_range lo hi))
+(* [ulps dt expected actual] is the distance between two values of [dt] on its
+   ordered line. A NaN is at no distance from a NaN, and at [max_int] from any
+   number. *)
+let ulps dt expected actual =
+  if Float.is_nan expected || Float.is_nan actual then
+    if Float.is_nan expected && Float.is_nan actual then 0 else max_int
+  else
+    let d = Bigint.abs (Bigint.sub (rank dt expected) (rank dt actual)) in
+    if Bigint.fits_int d then Bigint.to_int d else max_int
 
-(* [k pi/2] rounded to [dt], for [k] from 1 to [n]. *)
-let quarter_turns dt n =
-  Gen.with_pp pp_hex
-    (Gen.map
-       (fun k -> round dt (Float.of_int k *. Float.pi /. 2.))
-       (Gen.int_range 1 n))
-
-let draws gens = Gen.frequency (List.map (fun g -> (1, g)) gens)
-
-(* The exponents past which [2^x] overflows and underflows [dt]. *)
-let exp2_range dt =
-  let bias = T.exponent_bias dt and _, mbits = Dtype.finfo dt in
-  (Float.of_int (-bias - mbits - 2), Float.of_int (bias + 2))
-
-let last_turn dt = if dt = Dtype.Float16 then 40000 else 0x3fffffff
-
-(* tinygrad's fuzzer found these inputs, run before any drawn one. *)
-let least_normal dt = Float.ldexp 1. (1 - T.exponent_bias dt)
-
-let fuzzed_sines =
-  [ -35.; -25.; 25.; 30.; 35.; 0.; Float.pi /. 2.; 2. *. Float.pi ]
-
-let fuzzed_logarithms dt =
-  List.concat_map
-    (fun scale ->
-      let v = least_normal dt *. scale in
-      [ v; -.v ])
-    [ 1.; 1e10; 1e20; 1e30 ]
-  @ [ 0.; 9e-7 ]
-
-let accuracy_of =
-  [
-    ( "exp2",
-      exp2,
-      Exact.exp2,
-      (fun _ -> []),
-      fun dt ->
-        let lo, hi = exp2_range dt in
-        [ of_bits dt; between dt lo hi; between dt (-1.) 1. ] );
-    ( "log2",
-      log2,
-      Exact.log2,
-      fuzzed_logarithms,
-      fun dt -> [ of_bits dt; between dt 0.5 2.; between dt 0. 1e-30 ] );
-    ( "sin",
-      sin,
-      Exact.sin,
-      (fun _ -> fuzzed_sines),
-      fun dt ->
-        [
-          of_bits dt;
-          between dt (-30.) 30.;
-          quarter_turns dt 20;
-          quarter_turns dt (last_turn dt);
-        ] );
-  ]
-
-let within_ulp dt f exact v =
-  let expected = exact dt v and actual = as_float (at dt f v) in
+let within_ulp dt f v expected =
+  let actual = as_float (at dt f v) in
   at_most int ~than:1
     ~msg:(Printf.sprintf "at %h: %h, correctly rounded %h" v actual expected)
-    (Exact.ulps dt expected actual)
+    (ulps dt expected actual)
+
+let accuracy_of = [ ("exp2", exp2); ("log2", log2); ("sin", sin) ]
 
 let accuracy =
+  (* each function's rewrite, once for each type *)
+  let rewrites =
+    List.concat_map
+      (fun (fname, op) ->
+        List.map
+          (fun (dname, dt) -> ((fname, dname), rewritten op dt))
+          sixteen_up)
+      accuracy_of
+  in
+  let row cell =
+    let fname = cell "function" and dname = cell "dtype" in
+    let dt = List.assoc dname sixteen_up in
+    let v = as_float (value_of_cell (cell "x"))
+    and expected = as_float (value_of_cell (cell "result")) in
+    let rewrite = List.assoc (fname, dname) rewrites in
+    within_ulp dt (fun _ -> rewrite) v expected;
+    (* below 30, the fast sine too, defined in float32 and float64 *)
+    if
+      fname = "sin"
+      && Float.abs v < 30.
+      && List.mem dt Dtype.[ Float32; Float64 ]
+    then within_ulp dt (T.xsin ~fast:true) v expected
+  in
   group "accuracy"
-    (List.concat_map
-       (fun (name, op, exact, examples, gens) ->
-         List.map
-           (fun (dname, dt) ->
-             let examples = List.map (round dt) (examples dt) in
-             prop ~count:500 ~examples
-               (Printf.sprintf "%s of %s is within an ulp" name dname)
-               (draws (gens dt))
-               (within_ulp dt (fun _ -> rewritten op dt) exact))
-           sixteen_up)
-       accuracy_of
-    @ List.map
-        (fun (dname, dt) ->
-          prop ~count:500
-            (Printf.sprintf "xsin ~fast of %s is within an ulp below 30" dname)
-            (draws [ between dt (-30.) 30.; quarter_turns dt 19 ])
-            (within_ulp dt (T.xsin ~fast:true) Exact.sin))
-        [ ("float", Dtype.Float32); ("double", Dtype.Float64) ])
+    [ Golden.cases ~key:[ "function"; "dtype"; "x" ] "accuracy.golden" row ]
 
 let () =
   exit
