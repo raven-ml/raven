@@ -1802,6 +1802,10 @@ let fold_const_alu a =
   in
   let read s =
     match (op s, value s) with
+    (* a float constant is its bits: a NaN operand keeps them for a selection
+       or a negation to move *)
+    | Op.Cast, (#Dtype.value as v) when Dtype.is_float (dtype s) ->
+        Dtype.const (dtype s) v
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
     | Op.Const, (`Int _ as v)
       when Dtype.equal (dtype s) Dtype.Weak_int && List.mem operands Dtype.ints

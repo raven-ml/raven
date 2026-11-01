@@ -1563,7 +1563,7 @@ index 6908b1430..2b2138f6a 100644
    (UPat.var("idx").eq(UPat(Ops.RANGE, name="r").or_casted()).where(UPat.var("expr"), 0).reduce(UPat.var("r"), arg=Ops.ADD),
     lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
 diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
-index e404abc69..07e7f5385 100644
+index e404abc69..3181a9850 100644
 --- a/tinygrad/dtype.py
 +++ b/tinygrad/dtype.py
 @@ -6,7 +6,7 @@ from tinygrad.helpers import getenv, DEFAULT_FLOAT, DEFAULT_INT
@@ -2745,7 +2745,7 @@ index b6c07a241..66602f979 100644
    next_range = max((x.axis_id[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
    tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 416e8e983..634e3ec68 100644
+index 416e8e983..4312d09a0 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
@@ -3029,12 +3029,14 @@ index 416e8e983..634e3ec68 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.TRUNCMOD: cmod, Ops.TRUNCDIV: cdiv, Ops.DIV: floordiv, Ops.MOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1407,6 +1557,8 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1407,6 +1557,10 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
 +  # the nan of an invalid operation is the canonical one, whatever the host's FPU makes of it
 +  if isinstance(alu, float) and math.isnan(alu) and not any(isinstance(x, float) and math.isnan(x) for x in operands): alu = math.nan
++  # a selection and a negation convert nothing, so a NaN keeps its bits, which a truncation would quiet
++  if op in (Ops.WHERE, Ops.NEG) and isinstance(alu, float) and math.isnan(alu) and dtypes.is_float(dtype): return dtype.const(alu)
    return truncate_fxn(alu) if (truncate_fxn:=truncate.get(dtype)) is not None else alu
  
  # ***** pattern matcher *****

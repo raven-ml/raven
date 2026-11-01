@@ -595,7 +595,11 @@ val exec_alu :
     [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if [x < y] and [x] otherwise, as
     compiled code computes it, so a NaN wins only as the first operand. A binary
     operation on [`Invalid] is [`Invalid]. {!Op.Where} is the branch it picks,
-    [`Invalid] included; its condition must not be [`Invalid].
+    [`Invalid] included; its condition must not be [`Invalid]. {!Op.Where} and
+    {!Op.Neg} convert nothing: truncated, a float NaN they give is
+    {!Dtype.val-const} of [dt], which keeps the operand's sign, flipped by
+    {!Op.Neg}, and its payload, a signalling NaN staying one, in a float of 16
+    bits or more.
 
     Raises [Invalid_argument] if [op] is not an arithmetic operation or the
     arguments do not fit it, as for a shift by a negative count, which has no

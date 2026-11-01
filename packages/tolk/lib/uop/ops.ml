@@ -2394,6 +2394,14 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
     then (Dtype.truncate dt x :> Dtype.const)
     else (x :> Dtype.const)
   in
+  (* A selection and a negation convert nothing, so a NaN keeps its bits, a
+     signalling one's included, where a truncation would quiet it. *)
+  let move (x : Dtype.value) : Dtype.const =
+    match x with
+    | `Float v when truncate_output && Float.is_nan v && Dtype.is_float dt ->
+        Dtype.const dt x
+    | x -> truncate x
+  in
   if
     Op.Set.mem op Op.Set.binary
     && List.exists (function `Invalid -> true | _ -> false) args
@@ -2403,7 +2411,7 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
     | Op.Where, [ c; x; y ] -> (
         match if Value.to_bool (as_value c) then x else y with
         | `Invalid -> `Invalid
-        | #Dtype.value as v -> truncate v)
+        | #Dtype.value as v -> move v)
     | _ ->
         let args = List.map as_value args in
         let is_nan = function `Float f -> Float.is_nan f | _ -> false in
@@ -2430,7 +2438,7 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
           | v when is_nan v && not (List.exists is_nan args) -> `Float Dtype.nan
           | v -> v
         in
-        truncate v
+        if Op.equal op Op.Neg then move v else truncate v
 
 (* Patterns *)
 

@@ -414,6 +414,34 @@ let constants =
           match Ops.arg nan with
           | Const (`Float v) when Float.is_nan v -> ()
           | _ -> failf "0 / 0 is@ %a" (Testable.pp uop) nan);
+      cases
+        "a folded selection keeps a signalling NaN's bits, and a negation \
+         flips only its sign"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+        (fun dt ->
+          (* A signalling NaN whose leading payload bit every format holds. *)
+          let snan = Int64.float_of_bits 0x7FF4_0000_0000_0000L in
+          let c = Ops.float ~dtype:dt snan in
+          let bits u =
+            match Ops.value (rewrite Shape.symbolic_simple u) with
+            | `Float v -> Int64.bits_of_float v
+            | _ -> failf "%a is not a float constant" (Testable.pp uop) u
+          in
+          let int64 =
+            Testable.make ~pp:(fun ppf b -> Format.fprintf ppf "0x%Lx" b)
+              ~equal:Int64.equal
+          in
+          let held = bits c in
+          equal ~msg:"the constant is signalling" int64 0L
+            (Int64.logand held 0x8_0000_0000_0000L);
+          let one = Ops.float ~dtype:dt 1. in
+          equal ~msg:"where" int64 held (bits (Ops.where (Ops.bool true) c one));
+          equal ~msg:"where, other branch" int64 held
+            (bits (Ops.where (Ops.bool false) one c));
+          equal ~msg:"neg" int64
+            (Int64.logxor Int64.min_int held)
+            (bits (raw Neg [ c ])));
       test "x / x and (x * y) / y stay, for floats" (fun () ->
           folds_to Ops.O.(f / f) Ops.O.(f / f);
           folds_to Ops.O.(f * g / g) Ops.O.(f * g / g));

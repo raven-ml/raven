@@ -880,6 +880,8 @@ thread.
 
 ### Tolk (new)
 
+- A folded `Op.Where` or `Op.Neg` keeps a NaN's payload, a signalling NaN's
+  included, where it quieted one: a selection and a negation convert nothing.
 - An 8-bit float's NaN folds as its format's NaN of its sign, the positive one
   in e4m3 and the fnuz formats, and an emulated cast to a narrow float gives
   its quiet NaN: a NaN result's sign and payload are unspecified.

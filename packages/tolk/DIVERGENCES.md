@@ -4704,3 +4704,39 @@ fold wraps integers and holds its float bound`, hold.
   with D175 applied by its generator; the tolk bench's
   `gpt_oss/gpt_oss_decode_values` and `gpt_oss/gpt_oss_prefill_router` rows on
   fudge, which run those kernels of gpt-oss as rune compiles them.
+
+## D176. A folded selection or negation keeps a NaN's bits
+
+- **tinygrad:** `uop/ops.py:1404-1410` (`exec_alu`), which truncates every
+  result to its type through `dtype.py:290-294` (`truncate`), whose
+  conversions to `float`, `half` and `bfloat16` quiet a signalling NaN; the
+  patch's `exec_alu` (`test/gen/tinygrad.patch`) applies tolk's rule before
+  the goldens are generated.
+- **tolk:** `Ops.exec_alu`, whose `Where` and `Neg` give a NaN as
+  `Dtype.const` holds it, and `Shape.fold_const_alu`, which reads a float
+  constant operand as `Dtype.const` holds it, its bits (D27).
+- **Differs:** a folded selection is the NaN it picks, and a folded negation
+  that NaN with its sign flipped, a signalling NaN staying one, in a float of
+  16 bits or more; tinygrad's quiets a signalling one. Every other operation
+  still truncates its result. tolk has no absolute value or sign copy among
+  its operations: rune computes both on a float's bits (`Lower_bits`).
+- **Reason:** (b). Under the NaN rule a selection and a negation keep a NaN's
+  bits, as LLVM's LangRef states ("Behavior of Floating-Point NaN values"):
+  "if there is no floating-point operation being performed, NaN signs, quiet
+  bits, and payloads are preserved", and `fneg`, `llvm.fabs` and
+  `llvm.copysign` "act directly on the underlying bit representation and
+  never change anything except possibly for the sign bit". nx's `where` keeps
+  a signalling NaN (D62), and rune lowers it to `Ops.where`
+  (`Lower_arith`), so a selection tolk folds must give the bits the kernel's
+  selection gives. The `Neg` half has no rune call site: rune negates a float
+  on its bits (`Lower_bits.negated`), and `Op.Neg` reaches the folder only
+  from `Decomp_op`'s rewrite of `x * -1`. It rests on D27's rule that a
+  rewrite keeps a graph's value: a `Neg` the folder leaves renders as C's
+  `-x`, which flips the sign bit alone, so a folded one must too.
+- **Pinned by:** `Tolk.Ops › exec_alu › a selection keeps a NaN's bits and a
+  negation flips only its sign, a signalling NaN's included`, over NaNs of
+  every sign and payload of `half`, `bfloat16`, `float` and `double`; and
+  `Tolk.Symbolic › symbolic_simple › constants › a folded selection keeps a
+  signalling NaN's bits, and a negation flips only its sign`. On rune:
+  missing; rune's `Lower_arith` suite brings it, with a compiled `where` whose
+  folded branch is a signalling NaN constant.

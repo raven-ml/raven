@@ -106,6 +106,44 @@ let exec_alu =
                   ])
             Dtype.[ Float32; Float64 ];
           equal string "7ff8000000000000" (bits (f Dtype.nan)));
+      prop
+        "a selection keeps a NaN's bits and a negation flips only its sign, a \
+         signalling NaN's included"
+        (Gen.triple
+           (Gen.of_list ~pp:Dtype.pp
+              Dtype.[ Float16; Bfloat16; Float32; Float64 ])
+           Gen.bool Gen.int64)
+        (fun (dt, quiet, drawn) ->
+          (* A NaN of any sign and payload. The payload's leading bit is set in
+             a signalling NaN, so that every format holds a nonzero payload. *)
+          let quiet_bit = 0x8_0000_0000_0000L in
+          let lead = if quiet then quiet_bit else Int64.shift_right quiet_bit 1 in
+          let nan =
+            Int64.(
+              logor
+                (logand drawn (logor min_int 0x7_FFFF_FFFF_FFFFL))
+                (logor 0x7FF0_0000_0000_0000L lead))
+          in
+          let x =
+            match Dtype.const dt (f (Int64.float_of_bits nan)) with
+            | `Float x -> x
+            | c -> failf "%a is not a float" Dtype.pp_const c
+          in
+          let bits = function
+            | `Float x -> Printf.sprintf "%Lx" (Int64.bits_of_float x)
+            | c -> str Dtype.pp_const c
+          in
+          cover ~share:0.3 "a signalling NaN"
+            (Int64.logand (Int64.bits_of_float x) quiet_bit = 0L);
+          equal ~msg:"where true" string
+            (bits (f x))
+            (bits (alu dt Op.Where [ `Bool true; f x; f 1. ]));
+          equal ~msg:"where false" string
+            (bits (f x))
+            (bits (alu dt Op.Where [ `Bool false; f 1.; f x ]));
+          equal ~msg:"neg" string
+            (bits (f (Float.neg x)))
+            (bits (alu dt Op.Neg [ f x ])));
       test "a float multiply-add folds rounded once" (fun () ->
           let e = Float.ldexp 1. in
           equal ~msg:"float32" const
