@@ -722,7 +722,8 @@ let formats_round_trip =
 
 (* Types that talon's comparisons order: numbers, temporal values, text and
    compound values. Floats are listed twice, so that NaN and the infinities are
-   drawn in every run. *)
+   drawn in every run, and tensors, which alone take cut's path of compound
+   words, three times. *)
 let orderable =
   Type.
     [
@@ -750,6 +751,9 @@ let orderable =
       Any (categorical [| "b"; "a"; "é"; "" |]);
       Any (list int8);
       Any (record [ ("a", Any int8); ("b", Any string) ]);
+      Any (tensor Nx.float32 [| 2 |]);
+      Any (tensor Nx.float32 [| 2 |]);
+      Any (tensor Nx.int8 [| 1; 2 |]);
     ]
 
 let is_nan : type a. a Type.t -> a -> bool =
@@ -765,19 +769,43 @@ let specials : type a. a Type.t -> a list =
   | Some Equal -> [ Float.nan; Float.nan; infinity; neg_infinity; -0. ]
   | None -> []
 
-(* [ascending ty vs] is [vs] as a column of [ty] stores them, without NaN, in
-   talon's order and without repeats. *)
+let is_tensor : type a. a Type.t -> bool = function
+  | Tensor _ -> true
+  | _ -> false
+
+(* [unrounded ty] draws floats that a narrow float type holds and rounds, as
+   [0.7], which float32 stores as [0.699999988]. *)
+let unrounded : type a. a Type.t -> a Gen.t option =
+ fun ty ->
+  match Kind.provably_equal (Type.kind ty) Kind.float with
+  | Some Equal -> Some (Gen.float_range (-1000.) 1000.)
+  | None -> None
+
+(* [ascending ty vs] is the edges [vs] as given and as a column of [ty] stores
+   them, without NaN, in talon's stored order and without stored repeats. *)
 let ascending ty vs =
   let stored = Column.values (Type.kind ty) (Column.v ty vs) in
-  let kept = List.filter (fun v -> not (is_nan ty v)) (Array.to_list stored) in
-  Array.of_list (List.sort_uniq (Type.compare_value ty) kept)
+  let pairs = List.combine (Array.to_list vs) (Array.to_list stored) in
+  let pairs = List.filter (fun (_, s) -> not (is_nan ty s)) pairs in
+  let pairs =
+    List.sort_uniq (fun (_, a) (_, b) -> Type.compare_value ty a b) pairs
+  in
+  (Array.of_list (List.map fst pairs), Array.of_list (List.map snd pairs))
 
-type cut_case = Cut_case : 'a Type.t * 'a array * 'a option array -> cut_case
+type cut_case =
+  | Cut_case : 'a Type.t * 'a array * 'a array * 'a option array -> cut_case
 
-let pp_cut_case ppf (Cut_case (ty, es, xs)) =
-  Format.fprintf ppf "@[<v>edges %a@,rows %a@]" G.pp_sample
-    (G.Sample (ty, Array.map Option.some es))
-    G.pp_sample
+(* [pp_edges ty] formats edges as given: floats with every digit, before the
+   type rounds them. *)
+let pp_edges : type a. a Type.t -> Format.formatter -> a array -> unit =
+ fun ty ppf vs ->
+  match Kind.provably_equal (Type.kind ty) Kind.float with
+  | Some Equal -> Array.iter (fun v -> Format.fprintf ppf "%.17g@ " v) vs
+  | None -> G.pp_sample ppf (G.Sample (ty, Array.map Option.some vs))
+
+let pp_cut_case ppf (Cut_case (ty, raw, es, xs)) =
+  Format.fprintf ppf "@[<v>edges @[%a@]@,stored %a@,rows %a@]" (pp_edges ty) raw
+    (pp_edges ty) es G.pp_sample
     (G.Sample (ty, xs))
 
 (* Edges drawn at a type's bounds as well as anywhere, and rows on the edges,
@@ -786,8 +814,13 @@ let cut_cases =
   let open Gen in
   let* (Type.Any ty) = of_list orderable in
   let value = Option.get (G.value ty) in
-  let* es = array ~size:(int_range 2 6) value in
-  let es = ascending ty es in
+  let edge =
+    match unrounded ty with
+    | None -> value
+    | Some raw -> frequency [ (1, value); (2, raw) ]
+  in
+  let* raw = array ~size:(int_range 2 6) edge in
+  let raw, es = ascending ty raw in
   let n = Array.length es in
   let on_edge = map (fun i -> Some es.(i mod n)) nat in
   let rows =
@@ -799,11 +832,11 @@ let cut_cases =
     | vs -> [ (3, map Option.some (of_list vs)) ]
   in
   let+ xs = array ~size:(int_range 0 12) (frequency rows) in
-  Cut_case (ty, es, xs)
+  Cut_case (ty, raw, es, xs)
 
 let cut_law =
   prop "cut is the bin that a linear scan of the edges finds"
-    (Gen.with_pp pp_cut_case cut_cases) (fun (Cut_case (ty, es, xs)) ->
+    (Gen.with_pp pp_cut_case cut_cases) (fun (Cut_case (ty, raw, es, xs)) ->
       assume (Array.length es >= 2);
       let c = Column.of_options ty xs in
       let xs = Column.options (Type.kind ty) c in
@@ -824,11 +857,14 @@ let cut_law =
         (has (fun x -> cmp x es.(last) >= 0));
       cover "a null" (Array.exists Option.is_none xs);
       cover "NaN" (has (is_nan ty));
+      cover "an edge that its type rounds"
+        (Array.exists2 (fun r e -> Type.compare_value ty r e <> 0) raw es);
+      cover "a tensor" (is_tensor ty);
       let x = Col.v (Type.kind ty) "x" in
       equal
         (array (option int))
         (Array.map (fun x -> Option.bind x bin) xs)
-        (Column.options Kind.int (result (Expr.cut es x) (one "x" c))))
+        (Column.options Kind.int (result (Expr.cut raw x) (one "x" c))))
 
 let epoch ~ordered =
   Ext.v ~name:"epoch" ~ordered Type.float64 ~dec:Fun.id ~enc:Fun.id
@@ -1414,11 +1450,20 @@ let trimmed s =
 
 let trims vs = Column.options Kind.string (result (Expr.Str.trim s) (texts vs))
 
+(* A scalar value of four bytes of UTF-8, the length no white space has. *)
+let four_bytes = utf_8 0x1F600
+
 let trim_law =
-  let tokens =
-    List.map utf_8 (white_space @ not_white_space) @ [ "a"; "é"; "日" ]
+  let of_list vs = Gen.of_list ~pp:(fun ppf -> Format.fprintf ppf "%S") vs in
+  let token =
+    Gen.frequency
+      [
+        (2, of_list (List.map utf_8 white_space));
+        (2, of_list (List.map utf_8 not_white_space));
+        (1, of_list [ "a"; "é"; "日" ]);
+        (2, of_list [ four_bytes ]);
+      ]
   in
-  let token = Gen.of_list ~pp:(fun ppf -> Format.fprintf ppf "%S") tokens in
   let text =
     Gen.map (String.concat "") (Gen.list ~size:(Gen.int_range 0 8) token)
   in
@@ -1434,6 +1479,12 @@ let trim_law =
       cover "white space at both ends and a scalar outside it"
         (has (fun s -> ends s && trimmed s <> ""));
       cover "white space alone" (has (fun s -> s <> "" && trimmed s = ""));
+      let starts s = String.starts_with ~prefix:four_bytes s in
+      let ends s = String.ends_with ~suffix:four_bytes s in
+      cover "a text that trims to a four-byte scalar at its start"
+        (has (fun s -> starts (trimmed s) && not (starts s)));
+      cover "a text that trims to a four-byte scalar at its end"
+        (has (fun s -> ends (trimmed s) && not (ends s)));
       equal
         (array (option string))
         (Array.map (Option.map trimmed) vs)
