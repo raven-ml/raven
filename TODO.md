@@ -110,16 +110,22 @@ raven / llama.cpp (Vulkan; ROCm):
   default and at 4M; a sample of the 14-domain run, the stop-the-world
   barrier against `pthread_mutex_lock`. nx's P-core cap, on this CPU
   (kimchi, 2026-10-01), timed large GEMMs at x0.96-1.04 and batched
-  64x32x32 at x1.59 slower. The M1 Max's cap at its 8 P-cores
-  (`hw.perflevel0.physicalcpu`, as nx's) needs the same runs on the Mac
+  64x32x32 at x1.59 slower. The Mac's cap closes on fudge's numbers
+  (maintainer, 2026-10-31). Host blocks' placement matters as much:
+  Jit/chain-100-rooted-hit runs its 4 blocks in 12.9 µs pinned to the
+  P-cores, 43.5 µs on one core, and 13.0 or 20.4 µs unpinned on a quiet
+  fudge depending on which cores they reach
 - search timing on NV clears no L2 (tinygrad's invalidate_caches); AMD
   counters and thread traces are not collected: encode both as words parts
 - AMD machine code without comgr (_plans/amd-isa/design-reviewed.md): an
   assembly renderer and assembler, gfx12 first, the default once its gate
   passes; HIP stays as a choice. First read the terms of AMD's ISA XML
-- divergences: for each entry of tolk's and rune's DIVERGENCES.md, look in
-  references (tinygrad HEAD, papers, other compilers) for a better
-  solution; keep it with its reason or replace it
+- divergences: tolk's entries were audited against tinygrad HEAD
+  (2026-10-31); left: one store-or-recompute rule for D77, D100, D106 and
+  D163; one host lane budget for D91, D108, D109, D141 and D143; the
+  matrix-vector layout (D89) with its fudge rows; entries marked "Reason:
+  none" decided once the port reaches HEAD. rune's DIVERGENCES.md is not
+  audited yet
 - compile speed: one Clang process per kernel (~30 ms each; one per program
   saves ~20%). Hypothesis, to time first: on fudge, each Clang run's wall
   time against its source's bytes, on a model-size schedule; if the process
@@ -142,7 +148,13 @@ raven / llama.cpp (Vulkan; ROCm):
   fusion of loop bodies
 - long programs: the incomplete beta (~11,400 ops) compiles in 3 s, 10-20 s
   per derivative, past 10 min for three; a 1,000-term slice-tree sum is one
-  kernel clang -O2 takes over 8 min on
+  kernel clang -O2 takes over 8 min on. rune's test_special builds 6.7 MB
+  of C in 54 kernels (incomplete-beta gradients 430-630 KB, ndtri's f32
+  derivative 951 KB), 5-14 s each in Clang; 90% of Clang's IR-pass time
+  is LoopVectorizePass, and `-fno-vectorize` takes the 631 KB kernel from
+  8.6 to 2.1 s, while changing ordinary kernels by ±10% and losing the
+  vectors of kernels such as E_3945 (width 4). Decide beside D167 by a
+  quiet bench: a size gate, a loop pragma or a flag
 - host upcast width per target: D141's 64-byte lanes (heuristic.ml:446)
   slowed memory-bound select-zero ~15% on x86; time 32 against 64 bytes on
   fudge
@@ -152,7 +164,9 @@ raven / llama.cpp (Vulkan; ROCm):
   float64 [100; 50500] takes ~1.0 s on CPU. A scan with constant work per
   element, and a compiled cumsum row
 - Metal groups: after D137, lorenz-step-batch-1024's r_3_256_16_64_64 went
-  10.7 -> 18.9 ms (loads stride across 16 threads)
+  10.7 -> 18.9 ms (loads stride across 16 threads). Decided without Apple
+  timing (maintainer, 2026-10-31): a rule for loads that stride across a
+  group's threads, checked by reading the Metal source
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise
 - comgr's per-process setup is paid on every compile: each HIP compile
@@ -162,11 +176,32 @@ raven / llama.cpp (Vulkan; ROCm):
   NVRTC's cache disabled. Move comgr to
   serving workers once nonnormal times search/amd and a first call both
   ways
+- folds of `Log2`, `Exp2` and `Pow` use the host's C library, so a folded
+  constant can differ between macOS and Linux; D150 made the sine fold
+  correctly rounded for that reason. Do the same for these, or state why a
+  host's value is acceptable
+- a call body that stores to LOCAL memory gets no barrier before the
+  kernel reads it back: since tinygrad efb4cc8cb, `add_raw_barrier` does
+  not look into call bodies, and tolk follows. Nothing builds such a body
+  yet; check tinygrad HEAD before one does
+- compile.thumper's fudge rows run 9-25% faster than c0682e939 does at
+  equal load: find whether a regression landed unexplained before it or
+  the baseline was recorded under other conditions
 - a link reloads images an earlier link loaded: measure on fudge the load
   cost a search pays, and if it matters, design how rig.program takes loaded
   images (a description entry naming a Rig.Image.t)
 
 ## rune, kaun, vega
+
+- sharded jit after its first slice (one target, 1-D sets, no loops):
+  lending per piece, mixed-target sets, a place onto another set, loops,
+  compiled `lanes` (_plans/rune-sharding/adjudication.md). nx's closing
+  moves a chunk between every pair of devices: time it against tinygrad's
+  ring and hierarchical allreduce on a machine with several GPUs, and if
+  it is slower, write those in nx's partition
+- vega: `complex leaves › complex128 › every optimizer steps such a leaf
+  as its coordinates` fails on fudge at 814416922 (lbfgs gives `-0.`
+  where `0.` is expected)
 
 - fully sharded training: RFC 0005's bound (P+G+O)/n + 2 layers has no test
   since d478112cb removed the counting-device test
@@ -264,5 +299,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - thumper: suites whose only x86 section is kimchi's (retired): brot,
   hugin_vg, kaun, kaun_decode, gpt_oss, vega, fehu, sowilo; ymir has no
   x86 section. Record each on fudge, then delete every kimchi section,
-  nx's and tolk's included. talon.thumper's Mac rows predate the Nx.Rng
+  nx's and tolk's included. nx.thumper's fudge section was recorded under
+  OCaml 5.5.1, so it compares nothing under 5.5.2: re-record it on a quiet
+  fudge. talon.thumper's Mac rows predate the Nx.Rng
   fixture (76105a215): the maintainer re-records them
