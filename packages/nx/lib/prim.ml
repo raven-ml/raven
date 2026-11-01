@@ -1461,14 +1461,14 @@ let join acc q =
   | Unseen -> One q
   | One p -> if p == q then acc else Apart
 
+(* Where [op]'s operands lie together. *)
+let together op = fold (fun () acc x -> join acc (placement x)) () Unseen op
+
 (* [op]'s route over its operands ({!Route.route}). Where every operand lies
    at one placement that cuts no axis, all are read there and the results lie
    there whatever the rule, so neither [op]'s rule nor its operands' shapes
    are computed. An operation of no operands lies where its map names, else on
    the host, and each device of that placement computes its window. *)
-(* Where [op]'s operands lie together. *)
-let together op = fold (fun () acc x -> join acc (placement x)) () Unseen op
-
 let route_of (type r) ~by (op : r prim) : unit Route.t =
   match together op with
   | Unseen ->

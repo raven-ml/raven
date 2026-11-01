@@ -389,9 +389,9 @@ let operands = function
 (* For each of [eqns], the variables it reads last, those of [outputs]
    excepted, flat: equation [e]'s are [vars] from [starts.(e)] to
    [starts.(e + 1)], and [last.(v)] is the last reader of variable [v], [-1]
-   for one nothing reads. An evaluation drops each value once its last reader ran, and one
-   nothing reads once it is made, as the function applied eagerly lets each
-   go. *)
+   for one nothing reads. An evaluation drops each value once its last
+   reader ran, and one nothing reads once it is made, as the function
+   applied eagerly lets each go. *)
 let drops owner eqns outputs slots =
   let n = Array.length eqns in
   let last = Array.make slots (-1) and at = ref 0 in
