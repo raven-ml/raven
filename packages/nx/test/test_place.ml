@@ -976,6 +976,81 @@ let law_rearranged (p, sizes, shape, f, cut) =
   | Some _, None -> fail "a batch of one raises where a batch of two lies"
   | None, Some _ -> fail "a batch of one lies where a batch of two raises"
 
+(* Operations that keep or drop axes of one element by a stated map within
+   nx: keepdims, the norms, meshgrid. [run at n] runs one over a batch of
+   [n], [at a] placing a host value cut along [a], or whole on every device
+   where [a < 0]; the result lies cut along [lies_along]. *)
+type internal = {
+  label : string;
+  run :
+    'd.
+    (int ->
+    (float, A.Dtype.float32_elt, Nx.host) Nx.t ->
+    (float, A.Dtype.float32_elt, 'd) Nx.t) ->
+    int ->
+    (float, A.Dtype.float32_elt, 'd) Nx.t;
+  lies_along : int;
+}
+
+let internal_maps =
+  let mean_keep s a =
+    {
+      label =
+        Format.asprintf "mean ~axes:[0] ~keepdims:true of %a split %d" pp_ints
+          (s 1) a;
+      run =
+        (fun at n -> Nx.mean ~axes:[ 0 ] ~keepdims:true (at a (iota (s n))));
+      lies_along = a;
+    }
+  in
+  [
+    mean_keep (fun n -> [| 3; n; 1 |]) 2;
+    mean_keep (fun n -> [| 3; n; 4 |]) 1;
+    {
+      label = "argmax ~axis:0 ~keepdims:true of [3; n; 1] split 1";
+      run =
+        (fun at n ->
+          Nx.cast Nx.float32
+            (Nx.argmax ~axis:0 ~keepdims:true (at 1 (iota [| 3; n; 1 |]))));
+      lies_along = 1;
+    };
+    {
+      label = "vector_norm ~axes:[0] of [3; n; 1] split 1";
+      run =
+        (fun at n ->
+          Nx.vector_norm Nx.float32 ~axes:[ 0 ] (at 1 (iota [| 3; n; 1 |])));
+      lies_along = 0;
+    };
+    {
+      label = "matrix_norm of [n; 2; 2] split 0";
+      run = (fun at n -> Nx.matrix_norm Nx.float32 (at 0 (iota [| n; 2; 2 |])));
+      lies_along = 0;
+    };
+    {
+      label = "meshgrid's first grid of [n] split 0 and [3]";
+      run =
+        (fun at n ->
+          List.hd
+            (Nx.meshgrid ~indexing:`Ij
+               [ at 0 (iota [| n |]); at (-1) (iota [| 3 |]) ]));
+      lies_along = 0;
+    };
+  ]
+
+let law_internal c =
+  List.iter
+    (fun n ->
+      let h = c.run (fun _ x -> x) n in
+      let at a x =
+        if a < 0 then Nx.place Mem.on x else Nx.place (Mem.split ~axis:a) x
+      in
+      let y = c.run at n in
+      equal (placement ())
+        ~msg:(Printf.sprintf "a batch of %d" n)
+        (Mem.split ~axis:c.lies_along) (Nx.placement y);
+      holds_own h y)
+    [ 2; 1 ]
+
 let units =
   group "axes of one element"
     [
@@ -1011,6 +1086,8 @@ let units =
       (* A plain reshape states no map: it pairs axes of one element front to
          back, and regroups a cut axis only in tiles that divide both
          extents, at a batch of one as at three over two devices. *)
+      cases "keepdims, the norms and meshgrid keep a batch's cut on its axis"
+        ~id:(fun c -> c.label) internal_maps law_internal;
       prop "a rearrangement lies at a batch of one as at a batch of two"
         rearranged_case law_rearranged;
       test "a reshape pairs axes of one element front to back" (fun () ->
