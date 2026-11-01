@@ -4653,3 +4653,42 @@ fold wraps integers and holds its float bound`, hold.
   host with their bodies inlined, and `› a CUDA kernel defines the functions
   it calls, as device functions`, `› a Metal kernel defines the functions it
   calls` and `› a call of a compiled program is refused`.
+
+## D175. A split after a tensor core leaves a workgroup for each compute unit
+
+- **tinygrad:** `codegen/opt/heuristic.py:40-43` (`hand_coded_optimizations`,
+  without `TC_MIN_GLOBALS`: after the core, M and N are upcast and N split
+  into local threads, by the first size that divides them, whatever the
+  workgroups left; the same at `6b7b018da`).
+- **tolk:** `Heuristic.min_workgroups` and `Heuristic.tensor_cores`;
+  `test/gen/tinygrad.patch`, which gives tinygrad's heuristic the same rule
+  before the goldens are generated.
+- **Differs:** each of the three splits applies only when the kernel's
+  workgroups, the product of its global axes, are at least 100 after it, or
+  when that product is not known. A workgroup runs on one compute unit, and
+  a split gives a workgroup more outputs and the kernel fewer workgroups,
+  which leaves units idle once they are fewer than the units. The renderer
+  does not know a device's units: 100 is an RTX 5000 Ada's. Under
+  `TC_MIN_GLOBALS` the splits are tinygrad's.
+- **Reason:** (d): gpt-oss-20b on fudge's RTX 5000 Ada, its products at bfloat16
+  widened by a cast (D29), as rune widens them from the change that lands after
+  this entry; before it rune reaches no tensor core on these kernels, and the
+  bench rows time the kernels it makes after it. A decode step's attention
+  values, 64 by 64 outputs summed over 1024 slots, take 32 workgroups from the
+  core and one after tinygrad's splits: 68.9 us, 23.6 us without them. A
+  prefill's router, 512 tokens by 32 experts over 2880, goes from 8 workgroups
+  and 343 us a layer to 128 and 130 us (978 and 285 us on the bench row's
+  values), and a key projection, 512 by 512, from 32 workgroups and 164 us to
+  128 and 145 us. The decode step goes from 12.8 to 11.4 ms; the prefill of 512
+  tokens from 769 to 763 ms, the 5.6 ms those two kernels save over 24 layers.
+  Skipping the core in place of its splits is slower on each: 26 to 36 us, 2025
+  us, 365 us. Thresholds of 64 and 128 choose as 100 does on every kernel of the
+  step. Metal and AMD take the same rule; the kernels it changes there are to
+  re-measure (AMD on nonnormal).
+- **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024` (every
+  split applies), `matmul_half_512` (both upcasts), `matmul_half_256` (the
+  upcast of M alone), `attention_values` (none) and `matmul_half_variable` (a
+  variable counts the workgroups: every split), with the goldens from tinygrad
+  with D175 applied by its generator; the tolk bench's
+  `gpt_oss/gpt_oss_decode_values` and `gpt_oss/gpt_oss_prefill_router` rows on
+  fudge, which run those kernels of gpt-oss as rune compiles them.

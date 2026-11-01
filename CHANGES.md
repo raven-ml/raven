@@ -880,6 +880,10 @@ thread.
 
 ### Tolk (new)
 
+- `Heuristic.hand_coded_optimizations` upcasts a tensor-core kernel only
+  while it keeps 100 workgroups: a product of a few hundred rows, such as a
+  128 by 128 half-precision matmul, ran in a few workgroups and left most of
+  a GPU's compute units idle.
 - A Metal or CUDA kernel that calls a body compiles: it defines the body's
   function, where it dropped it. A call of a compiled program inside a kernel
   raises `Invalid_argument`.

@@ -192,6 +192,12 @@ raven / llama.cpp (Vulkan; ROCm):
 - a link reloads images an earlier link loaded: measure on fudge the load
   cost a search pays, and if it matters, design how rig.program takes loaded
   images (a description entry naming a Rig.Image.t)
+- D175 and D110 use constants for a device's size (100 workgroups,
+  `busy = 32768`): neither the renderer nor rig knows a device's compute
+  units; decide where that count lives without making source depend on the
+  physical part
+- decode's values kernel takes 23.6 us against 12 us in the formula form: a
+  core reduce split, or `decoded` covering float widening
 
 ## rune, kaun, vega
 

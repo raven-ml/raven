@@ -22,7 +22,14 @@
    on the host where the hand-coded optimisations lost most to a beam search,
    each compiled with the optimisations the search chose for it ([searched]) and
    with the hand-coded ones ([heuristic]). No public call applies chosen
-   optimisations to a kernel, so these run through tolk's engine. *)
+   optimisations to a kernel, so these run through tolk's engine.
+
+   [gpt_oss] runs, on the first CUDA GPU, kernels of gpt-oss-20b's step at
+   bfloat16 as rune compiles them, with the hand-coded optimisations: a decode
+   step's attention values, 64 by 64 outputs summed over 1024 cache slots, and
+   a prefill's router, 512 tokens by 32 experts summed over 2880. Each takes a
+   tensor core that leaves few workgroups. Without a CUDA GPU the group is
+   empty. *)
 
 open Tolk
 
@@ -115,17 +122,19 @@ let program name =
 
 (* Lorenz kernels *)
 
-(* An element of a buffer a timed kernel reads: a small float, a small integer.
-   Uninitialised memory would time NaN and subnormal arithmetic. *)
-let element dt i : Dtype.value =
+(* An element of a buffer a timed kernel reads, at an index of a buffer of a
+   length: a small float, a small integer. Uninitialised memory would time NaN
+   and subnormal arithmetic. *)
+let element dt (_ : int) i : Dtype.value =
   if Dtype.is_float dt then `Float (Float.of_int ((i mod 7) - 3) *. 0.25)
   else if Dtype.is_bool dt then `Bool (i mod 2 = 0)
   else `Int (Bigint.of_int (i mod 7))
 
-(* [sink] compiled for the host, and a run of it on buffers of small values
-   ({!element}). *)
-let compiled sink =
-  let d = Rig.host in
+(* [sink] compiled for [d], and a run of it on buffers of the values [element]
+   gives each, from its type, its length and the index, which returns once the
+   run's writes are done. *)
+let compiled ~element d sink =
+  let device = (Tolk_engine.target d).device in
   let prg = Codegen.to_program sink (Tolk_engine.renderer d) in
   let params =
     List.filter
@@ -134,20 +143,25 @@ let compiled sink =
   in
   let scratch u =
     let dt = Ops.dtype u in
-    Some (Run.buffer d dt (Array.init (Shape.max_numel u) (element dt)))
+    let n = Shape.max_numel u in
+    Some (Run.buffer d dt (Array.init n (element dt n)))
   in
   let arg u =
     let slot = match Ops.arg u with Param p -> p.slot | _ -> assert false in
     Shape.param
       ~shape:[ Int (Shape.max_numel u) ]
-      ~device:"CPU" slot (Ops.dtype u)
+      ~device slot (Ops.dtype u)
   in
   let s =
     Tolk_engine.link_call
       ~devices:(fun _ -> d)
       (Ops.call prg (List.map arg params))
   and buffers = Array.of_list (List.map scratch params) in
-  fun () -> Tolk_engine.run s buffers
+  fun () ->
+    Tolk_engine.run s buffers;
+    for i = 0 to Array.length buffers - 1 do
+      match buffers.(i) with Some b -> Rig.Buffer.wait b Read | None -> ()
+    done
 
 (* The kernel graph [text] with the optimisations it asks for, or with the
    hand-coded ones when [heuristic]. *)
@@ -161,7 +175,8 @@ let lorenz_kernel ~heuristic text =
 let lorenz =
   let case text heuristic name =
     Thumper.bench_with_setup
-      ~setup:(fun () -> compiled (lorenz_kernel ~heuristic text))
+      ~setup:(fun () ->
+        compiled ~element Rig.host (lorenz_kernel ~heuristic text))
       name
       (fun run -> run ())
   in
@@ -171,6 +186,46 @@ let lorenz =
          Thumper.group kernel
            [ case text false "searched"; case text true "heuristic" ])
        Lorenz.all)
+
+(* gpt-oss kernels *)
+
+(* An element of a buffer a gpt-oss kernel reads: a small float, the position
+   of a decode step in the middle of a cache of 1024 slots for a one-element
+   integer buffer, and the slot itself for the table of a cache's slots, whose
+   reads the position masks past it. *)
+let position = 512
+
+let cache_element dt n i : Dtype.value =
+  if Dtype.is_int dt then `Int (Bigint.of_int (if n = 1 then position else i))
+  else element dt n i
+
+(* Whether CUDA's first GPU opens, asked of a fresh process: a GPU's driver must
+   not be initialized before the fork that isolates a case. *)
+let cuda_opens () =
+  let exe = Sys.executable_name in
+  let pid =
+    Unix.create_process exe [| exe; "--cuda" |] Unix.stdin Unix.stdout
+      Unix.stderr
+  in
+  match Unix.waitpid [] pid with _, Unix.WEXITED 0 -> true | _ -> false
+
+let cuda () =
+  match Rig.open_ (Rig_cuda.gpu 0) with Ok d -> d | Error e -> failwith e
+
+(* Only the time is measured: a GPU buffer's release allocates when the
+   collector finalises it, so a call's count depends on the collection's
+   phase. *)
+let gpt_oss () =
+  let case (kernel, text) =
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        compiled ~element:cache_element (cuda ()) (Graph.of_string text))
+      kernel
+      (fun run -> run ())
+  in
+  Thumper.group "gpt_oss"
+    ~metrics:[ Thumper.Metric.wall_time ]
+    (if cuda_opens () then List.map case Gpt_oss_kernels.all else [])
 
 (* Searches *)
 
@@ -237,10 +292,16 @@ let kernel_actions =
 
 let suite () =
   List.map (fun (name, _) -> program name) Programs.all
-  @ [ lorenz; Thumper.group "search" [ linearize_candidates; kernel_actions ] ]
+  @ [
+      lorenz;
+      gpt_oss ();
+      Thumper.group "search" [ linearize_candidates; kernel_actions ];
+    ]
 
 let () =
   match Array.to_list Sys.argv with
+  | [ _; "--cuda" ] ->
+      exit (if Result.is_ok (Rig.open_ (Rig_cuda.gpu 0)) then 0 else 1)
   | [ _; "--warm" ] ->
       (* Each case that compiles, once, in as few calls as a trial takes: the
          kernels its setup compiles land in tolk's disk cache, which a
@@ -248,7 +309,8 @@ let () =
       ignore
         (Thumper.measure
            ~config:Thumper.Config.(default |> samples 3 |> warmup 0.)
-           ~filter:(`Id "lorenz/") (suite ()))
+           ~filter:(`Or [ `Id "lorenz/"; `Id "gpt_oss/" ])
+           (suite ()))
   | _ ->
       Thumper.run "tolk"
         ~config:Thumper.Config.(default |> deadline 30.)

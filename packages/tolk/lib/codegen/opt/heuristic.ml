@@ -101,6 +101,12 @@ let decoded_product k =
       | _ -> false)
   | None -> false
 
+(* The fewest workgroups that keep every compute unit of a large GPU busy. A
+   workgroup runs on one unit, so a kernel of fewer workgroups than the units
+   leaves some idle. The renderer does not know a device's count: an RTX 5000
+   Ada has 100 streaming multiprocessors, a Radeon R9700 64 compute units. *)
+let min_workgroups = 100
+
 (* first try the tensor cores *)
 let tensor_cores k =
   let use_tc = setting Setting.use_tc in
@@ -123,30 +129,39 @@ let tensor_cores k =
               let axis = index_of rngs.(i) (K.rngs tk) in
               rngs.(i) <- List.hd (split tk axis size target)
             in
-            let upcast i sizes target =
-              Option.iter
-                (fun sz -> split i sz target)
-                (first_dividing rngs.(i) sizes)
+            (* A split of [i] by the first of [sizes] that divides it, when
+               [keep] holds of that size. *)
+            let upcast ~keep i sizes target =
+              match first_dividing rngs.(i) sizes with
+              | Some size when keep size -> split i size target
+              | _ -> ()
             in
+            (* Whether [n] workgroups are left once a split by [size] divides
+               them, or [default] when their count is not known. *)
+            let leaves ~default n size =
+              Sint.resolve ~default
+                Sint.(prod_at tk (K.axes_of tk [ Global ]) >= Int size * Int n)
+            in
+            let always _ = true in
             if min_globals <> 0 then begin
               (* attempt to upcast M, local N, upcast N, skipping upcast N if
                  we'd end up with too few globals *)
-              upcast 1 [ 5; 4; 3; 2 ] Opt.Upcast;
-              upcast 0 [ 4; 2 ] Opt.Local;
-              match first_dividing rngs.(0) [ 5; 4; 3; 2 ] with
-              | Some size
-                when Sint.resolve ~default:false
-                       Sint.(
-                         prod_at tk (K.axes_of tk [ Global ])
-                         >= Int size * Int min_globals) ->
-                  split 0 size Opt.Upcast
-              | _ -> ()
+              upcast ~keep:always 1 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast ~keep:always 0 [ 4; 2 ] Opt.Local;
+              upcast
+                ~keep:(leaves ~default:false min_globals)
+                0 [ 5; 4; 3; 2 ] Opt.Upcast
             end
             else begin
-              (* attempt to upcast M, N, local N *)
-              upcast 1 [ 5; 4; 3; 2 ] Opt.Upcast;
-              upcast 0 [ 5; 4; 3; 2 ] Opt.Upcast;
-              upcast 0 [ 4; 2 ] Opt.Local
+              (* attempt to upcast M, N, local N. Each gives a warp more of the
+                 outputs and the kernel fewer workgroups, which pays only while
+                 every compute unit keeps one: CUDA's core makes a product of 64
+                 by 64 outputs over 1024 32 workgroups of a warp, which its
+                 upcasts would leave one, three times slower. *)
+              let keep = leaves ~default:true min_workgroups in
+              upcast ~keep 1 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast ~keep 0 [ 5; 4; 3; 2 ] Opt.Upcast;
+              upcast ~keep 0 [ 4; 2 ] Opt.Local
             end;
             Some tk)
       [ 0; 1; 2 ]

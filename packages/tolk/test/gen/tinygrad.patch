@@ -1003,10 +1003,10 @@ index 0838d70c9..dadd54ab5 100644
      # simple priority override. this is all bottom up now, smaller numbers will be closer to the top
      extra = None
 diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
-index ec97cac6f..cdae10eec 100644
+index ec97cac6f..b11b406db 100644
 --- a/tinygrad/codegen/opt/heuristic.py
 +++ b/tinygrad/codegen/opt/heuristic.py
-@@ -1,9 +1,39 @@
+@@ -1,9 +1,42 @@
  import itertools
  from tinygrad.codegen.opt import Opt, OptOps, KernelOptError
  from tinygrad.helpers import getenv, DEBUG, prod, TC_OPT, TC_SELECT, TC_MIN_GLOBALS, USE_TC, IMAGE
@@ -1018,6 +1018,9 @@ index ec97cac6f..cdae10eec 100644
 +from tinygrad.codegen.decomp.dtype import emulates
 +
 +HOST_VECTOR_BYTES, HOST_ILP, SPLIT_LANES = 64, 5, 16
++# the fewest workgroups that keep every compute unit of a large GPU busy, whose count the renderer does not know: an RTX
++# 5000 Ada's 100 SMs
++MIN_WORKGROUPS = 100
 +
 +def upcast_vectors(k:Scheduler):
 +  values = UOp.sink(*[u.src[1] for u in k.ast.toposort() if u.op is Ops.STORE]).toposort(lambda u: u.op is not Ops.INDEX)
@@ -1047,7 +1050,7 @@ index ec97cac6f..cdae10eec 100644
  
  def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # first try the tensor cores
-@@ -24,8 +54,18 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -24,8 +57,18 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
      2: allows kernels with M, N, K axes that are not multiples of the tensor core dimensions by applying padding those axes as needed
    TC_MIN_GLOBALS -- do not upcast N when it would drop the specified global count
    """
@@ -1067,7 +1070,24 @@ index ec97cac6f..cdae10eec 100644
      for axis in range(3):
        tk = k.copy()
        # check TC first and apply hand-coded opts if successful
-@@ -57,25 +97,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -37,10 +80,13 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+         if (size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [4,2]), None)) is not None: split(0, size, AxisType.LOCAL)
+         if ((size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None and
+             resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*TC_MIN_GLOBALS.value, False)): split(0, size, AxisType.UPCAST)
+-      else: # attempt to upcast M, N, local N
++      else: # attempt to upcast M, N, local N, each only while it leaves MIN_WORKGROUPS
++        def leaves(size): return resolve(prod(tk.full_shape[i] for i in tk.axes_of(AxisType.GLOBAL)) >= size*MIN_WORKGROUPS, True)
+         for i in [1,0]:
+-          if (size:=next(filter(lambda sz: rngs[i].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None: split(i, size, AxisType.UPCAST)
+-        if (size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [4,2]), None)) is not None: split(0, size, AxisType.LOCAL)
++          if (size:=next(filter(lambda sz: rngs[i].src[0].divides(sz) is not None, [5,4,3,2]), None)) is not None and leaves(size):
++            split(i, size, AxisType.UPCAST)
++        if (size:=next(filter(lambda sz: rngs[0].src[0].divides(sz) is not None, [4,2]), None)) is not None and leaves(size):
++          split(0, size, AxisType.LOCAL)
+       return tk
+ 
+   # make a copy so it does not mutate the input
+@@ -57,25 +103,77 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
          if unit_stride_axes_mul_4 and (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims(reduce=None):
            k.apply_opt(Opt(OptOps.SPLIT, axis, (4, AxisType.UPCAST)))
  
@@ -1164,7 +1184,7 @@ index ec97cac6f..cdae10eec 100644
  
    # are we grouping? (requires local shape support)
    if resolve(prod(k.full_shape[i] for i in k.upcastable_dims()) <= (240 if k.ren.target.device == "QCOM" else 2048), False):
-@@ -110,25 +202,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -110,25 +208,44 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
  
    # potentially do more upcasts of non reduce axes based on a heuristic
    is_dsp = k.ren.target.device == "DSP"
@@ -1219,7 +1239,7 @@ index ec97cac6f..cdae10eec 100644
      if xb_choices:
        xb_choices = sorted(xb_choices)
        if DEBUG >= 4: print(f"more upcast axis : {xb_choices}")
-@@ -140,17 +251,28 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+@@ -140,17 +257,28 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
    # NOTE: this can fail on multireduce with mismatching dimensions, this is okay
    try:
      if (axes:=k.upcastable_dims(reduce=True)) and (k.upcast_size() <= 4 or not k.axes_of(AxisType.UPCAST, reduce=True)) and k.upcast_size() < 64:

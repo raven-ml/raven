@@ -20,10 +20,16 @@ val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
     - {b tensor cores}, when the setting {!Setting.use_tc} is positive and [k]
       reduces over one axis, or {!Setting.tc_opt} admits more: the first of the
       three candidate axes on which a tensor core applies ({!Opt.Tc}), then
-      upcasts and a local split of its [N] and [M] axes, by the first of 5, 4,
-      3 and 2 (4 and 2 for the local) that divides them.
-      With {!Setting.tc_min_globals}, [M] is upcast only while enough global
-      threads remain;
+      upcasts of its [M] and [N] axes and a local split of [N], by the first
+      of 5, 4, 3 and 2 (4 and 2 for the local) that divides them. Each split
+      applies only when it leaves at least 100 workgroups, the fewest that
+      keep every compute unit of a large GPU busy, or when the count is not
+      known: a split gives each workgroup more of the outputs and the kernel
+      fewer workgroups, which leaves compute units idle once they are fewer
+      than the units.
+      With {!Setting.tc_min_globals}, [M] is upcast and [N] split locally
+      whatever the workgroups, and [N] is upcast only while that many
+      workgroups remain;
     - {b matrix-vector}, for a renderer with local indices and shared memory
       and a sum over the first reduce axis of products of a matrix and a
       vector: computations of accesses with no reduce, the vector's axes some of

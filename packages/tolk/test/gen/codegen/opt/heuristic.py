@@ -119,6 +119,16 @@ KERNELS = {
     "matmul": lambda: last(empty(128, 128) @ empty(128, 128)),
     "matmul_half": lambda: last(empty(128, 128, dtype=dtypes.half).matmul(empty(128, 128, dtype=dtypes.half), dtype=dtypes.float)),
     "matmul_half_ragged": lambda: last(empty(17, 23, dtype=dtypes.half).matmul(empty(23, 29, dtype=dtypes.half), dtype=dtypes.float)),
+    # a tensor core leaves 8192, 2048, 512 and 32 workgroups of a warp on CUDA: its upcasts and local split apply while
+    # they leave 100 workgroups, all three, both upcasts, the upcast of M alone, none
+    "matmul_half_1024": lambda: last(empty(1024, 1024, dtype=dtypes.half).matmul(empty(1024, 1024, dtype=dtypes.half), dtype=dtypes.float)),
+    "matmul_half_512": lambda: last(empty(512, 512, dtype=dtypes.half).matmul(empty(512, 512, dtype=dtypes.half), dtype=dtypes.float)),
+    "matmul_half_256": lambda: last(empty(256, 256, dtype=dtypes.half).matmul(empty(256, 256, dtype=dtypes.half), dtype=dtypes.float)),
+    # gpt-oss-20b's attention values at a decode step: 64 by 64 outputs over 1024 slots, from bfloat16 widened
+    "attention_values": lambda: last(empty(64, 1024, dtype=dtypes.bfloat16).float() @ empty(1024, 64, dtype=dtypes.bfloat16).float()),
+    # products a variable counts: the workgroups are not known, and every split applies
+    "matmul_half_variable": lambda: with_vars(empty(64, 128, 128, dtype=dtypes.half)[:UOp.variable("n", 1, 64).bind(8)]
+                                              .matmul(empty(128, 128, dtype=dtypes.half), dtype=dtypes.float)),
     "batched_matmul_half": lambda: last(empty(4, 64, 64, dtype=dtypes.half).matmul(empty(4, 64, 64, dtype=dtypes.half))),
     "vecmat": lambda: last(empty(1, 4096) @ empty(4096, 1024)),
     "vecmat_of_exp": lambda: last(empty(1, 4096).exp() @ empty(4096, 1024)),
