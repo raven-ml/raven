@@ -1186,7 +1186,18 @@ let test_check_grads () =
     (Error
        "Rune.check_grads: the directional derivative along ones is -4999, and \
         the gradient predicts 1")
-    (Rune.check_grads T.tensor jump (v [| 0. |]))
+    (Rune.check_grads T.tensor jump (v [| 0. |]));
+  (* A slope of -1e6 prints as the shortest decimal that reads back, the same
+     on every system: the C library's [%g] wrote 1e+06, 1e+006 under
+     mingw-w64. *)
+  let cliff x =
+    Nx.sum (Nx.where (Nx.greater_s x 0.) x (Nx.add_s x (1e6 +. 1.)))
+  in
+  equal ~msg:"a cliff" (result unit string)
+    (Error
+       "Rune.check_grads: the directional derivative along ones is -1000000, \
+        and the gradient predicts 1")
+    (Rune.check_grads ~eps:0.5 T.tensor cliff (v [| 0. |]))
 
 (* Errors *)
 

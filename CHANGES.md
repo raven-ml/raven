@@ -356,6 +356,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `check_grads` and `check_transpose` write their values as the shortest
+  decimal that reads back, the same text on every system: `-1000000` where
+  they wrote `-1e+06`, or `-1e+006` under Windows.
 - `Rune.jit` compiles `Rune.scan` and `Rune.iterate` over values on several
   devices of one set: one loop whose trips run each device's kernels and
   moves of the step, with eager's placements and bits. Such programs were

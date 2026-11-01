@@ -281,6 +281,11 @@ let grad p f params = snd (value_and_grad_named "Rune.grad" p f params)
 
 type 'd move = { move : 'v 's. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t }
 
+(* A float in a message: the shortest decimal that reads as it, the same on
+   every system, where [Printf]'s [%g] writes the C library's exponent, of
+   three digits under mingw-w64. *)
+let pp_float = Nx.Dtype.pp_value Nx.float64
+
 let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
   let name = "Rune.check_grads" in
   let _, g = value_and_grad_named name p f params in
@@ -319,10 +324,10 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
     then Ok ()
     else
       Error
-        (Printf.sprintf
-           "%s: the directional derivative along %s is %g, and the gradient \
-            predicts %g"
-           name name' numeric analytic)
+        (Format.asprintf
+           "%s: the directional derivative along %s is %a, and the gradient \
+            predicts %a"
+           name name' pp_float numeric pp_float analytic)
   in
   List.fold_left
     (fun acc d -> match acc with Ok () -> check d | Error _ -> acc)
@@ -440,8 +445,8 @@ let check_transpose ?(tol = 1e-5) p q f ~transpose args =
     if Float.abs (a -. b) <= tol *. Float.max 1. (Float.max sa sb) then Ok ()
     else
       Error
-        (Printf.sprintf "%s: pair %d: <w, L v> is %g, and <Lᵀ w, v> is %g" name
-           pair a b)
+        (Format.asprintf "%s: pair %d: <w, L v> is %a, and <Lᵀ w, v> is %a"
+           name pair pp_float a pp_float b)
   in
   List.fold_left
     (fun acc pair -> match acc with Ok () -> check pair | Error _ -> acc)
