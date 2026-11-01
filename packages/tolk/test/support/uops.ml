@@ -43,18 +43,3 @@ let binaries_as_sources u =
   Ops.substitute ~calls:Enter ~pass:Fixed_point u
     (List.filter_map recorded programs)
 
-let placeholders_like like u =
-  let placeholders g =
-    List.filter
-      (fun n -> Ops.op n = Param && Option.is_some (Ops.tag n))
-      (Ops.toposort ~calls:Enter g)
-  in
-  let renumbered mine theirs =
-    match (Ops.arg mine, Ops.arg theirs) with
-    | Param p, Param q ->
-        (mine, Ops.replace ~arg:(Param { p with slot = q.slot }) mine)
-    | _ -> (mine, mine)
-  in
-  match List.map2 renumbered (placeholders u) (placeholders like) with
-  | subs -> Ops.substitute ~calls:Enter ~pass:Fixed_point u subs
-  | exception Invalid_argument _ -> u

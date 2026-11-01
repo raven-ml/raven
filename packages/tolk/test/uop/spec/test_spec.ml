@@ -60,15 +60,13 @@ let gated_load buf idx =
 let store ?gate buf idx =
   Ops.store ?gate (Ops.index buf [ idx ]) (Ops.int ~dtype:Int32 0)
 
+(* [fresh ()] is a float variable that construction has never built: its name
+   is new, and so is every node over it. *)
 let fresh =
   let n = ref 0 in
   fun () ->
     incr n;
-    Ops.Tag.Int !n
-
-(* [fresh_v ~src ~arg op] is a node that construction has never built: its tag
-   is new. *)
-let fresh_v ?src ?arg op = Ops.v ?src ?arg ~tag:(fresh ()) op
+    fvar (Printf.sprintf "fresh%d" !n)
 
 (* Verdicts *)
 
@@ -312,8 +310,9 @@ let vectors =
           equal verdict (Some true)
             (judge Spec.vector_program (Ops.add lanes lanes)));
       test "a program reads a lane of a vector at a constant" (fun () ->
-          let vector = Shape.stack [ fvar "a"; fvar "b" ] in
-          let lane i = fresh_v ~src:[ vector; i ] Op.Index in
+          let lane i =
+            Ops.v ~src:[ Shape.stack [ fresh (); fvar "b" ]; i ] Op.Index
+          in
           let i =
             Ops.variable ~dtype:Int32 "i" (`Int Bigint.zero) (`Int Bigint.one)
           in
@@ -329,7 +328,7 @@ let construction =
     [
       test "builds a node that breaks the full specification, whatever SPEC"
         (fun () ->
-          let ill_typed () = fresh_v ~src:[ fvar "a"; fvar "b" ] Op.And in
+          let ill_typed () = Ops.v ~src:[ fresh (); fvar "b" ] Op.And in
           List.iter
             (fun level ->
               let u = Setting.context [ B (Setting.spec, level) ] ill_typed in

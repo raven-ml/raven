@@ -54,7 +54,10 @@ let kernels name =
     (Ops.src (schedule name))
 
 let lower k =
-  Codegen.full_rewrite_to_sink ~optimize:(Option.is_none (Ops.tag k)) k renderer
+  let optimize =
+    match Ops.arg k with Kernel { optimized; _ } -> not optimized | _ -> true
+  in
+  Codegen.full_rewrite_to_sink ~optimize k renderer
 
 let linearize sink =
   Codegen.line_rewrite

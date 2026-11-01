@@ -8,10 +8,10 @@ module Pm = Ops.Pattern_matcher
 
 let str pp x = Format.asprintf "%a" pp x
 let matches p u = P.match_ p u <> []
-let tagged u = Some (Ops.rtag u)
+let sunk u = Some (Ops.sink [ u ])
 
-(* [pm_rtag p] tags the node [p] names ["x"]. *)
-let pm_rtag p = Pm.v (fun () -> [ Pm.rule p (fun m -> tagged (m "x")) ])
+(* [pm_sink p] wraps the node [p] names ["x"] in a sink. *)
+let pm_sink p = Pm.v (fun () -> [ Pm.rule p (fun m -> sunk (m "x")) ])
 let rewrite m u = Pm.rewrite m () u
 
 let c1 = Ops.float 1.
@@ -31,21 +31,21 @@ let upat =
   group "Upat"
     [
       test "matches a constant of a type" (fun () ->
-          let m = pm_rtag (P.op ~name:"x" ~dtype:[ Weak_float ] Op.Const) in
-          equal (option uop) (tagged (Ops.float 1.)) (rewrite m (Ops.float 1.));
+          let m = pm_sink (P.op ~name:"x" ~dtype:[ Weak_float ] Op.Const) in
+          equal (option uop) (sunk (Ops.float 1.)) (rewrite m (Ops.float 1.));
           equal (option uop) None (rewrite m (Ops.int 1)));
       test "matches an operation, and no other" (fun () ->
-          let m = pm_rtag (P.op ~name:"x" Op.Const) in
-          equal (option uop) (tagged c1) (rewrite m c1);
+          let m = pm_sink (P.op ~name:"x" Op.Const) in
+          equal (option uop) (sunk c1) (rewrite m c1);
           equal (option uop) None (rewrite m (add c1 c1)));
       test "matches any operation of a set" (fun () ->
           let m =
-            pm_rtag (P.v ~op:(Op.Set.of_list [ Const; Cast ]) ~name:"x" ())
+            pm_sink (P.v ~op:(Op.Set.of_list [ Const; Cast ]) ~name:"x" ())
           in
           let f = Ops.bool false in
           let cast = Ops.v ~src:[ f ] ~arg:(Dtype Int32) Op.Cast in
-          equal (option uop) (tagged f) (rewrite m f);
-          equal (option uop) (tagged cast) (rewrite m cast);
+          equal (option uop) (sunk f) (rewrite m f);
+          equal (option uop) (sunk cast) (rewrite m cast);
           equal (option uop) None (rewrite m (add c3 c3)));
       test "matches an argument as a number: 0, 0.0 and false are equal"
         (fun () ->
@@ -54,20 +54,20 @@ let upat =
                 [
                   Pm.rule
                     (P.op ~arg:(Const (i 0)) ~name:"x" Op.Const)
-                    (fun m -> tagged (m "x"));
-                  Pm.rule (P.op ~name:"x" Op.Max) (fun m -> tagged (m "x"));
+                    (fun m -> sunk (m "x"));
+                  Pm.rule (P.op ~name:"x" Op.Max) (fun m -> sunk (m "x"));
                 ])
           in
           let zero = Ops.float 0. in
-          equal (option uop) (tagged zero) (rewrite m zero);
+          equal (option uop) (sunk zero) (rewrite m zero);
           equal (option uop)
-            (tagged (Ops.float (-0.)))
+            (sunk (Ops.float (-0.)))
             (rewrite m (Ops.float (-0.)));
           equal (option uop)
-            (tagged (Ops.bool false))
+            (sunk (Ops.bool false))
             (rewrite m (Ops.bool false));
           let max = Ops.v ~src:[ zero; zero ] Op.Max in
-          equal (option uop) (tagged max) (rewrite m max);
+          equal (option uop) (sunk max) (rewrite m max);
           equal (option uop) None (rewrite m (Ops.v ~src:[ zero; zero ] Op.Mul));
           equal (option uop) None (rewrite m (Ops.int (-1))));
       test "matches integers and floats exactly" (fun () ->
@@ -114,7 +114,7 @@ let upat =
                     (fun m ->
                       match Ops.value (m "c") with
                       | `Int n when Bigint.equal (Bigint.abs n) Bigint.one ->
-                          tagged (m "x")
+                          sunk (m "x")
                       | _ -> None);
                 ])
           in
@@ -124,7 +124,7 @@ let upat =
               equal
                 ~msg:(Printf.sprintf "%d * %d" a b)
                 (option uop)
-                (if fires then tagged (mul a b) else None)
+                (if fires then sunk (mul a b) else None)
                 (rewrite m (mul a b)))
             [
               (1, 2, true);
@@ -144,28 +144,28 @@ let upat =
           is_false (matches p (add c1 c2)));
       test "matches a type among several" (fun () ->
           let m =
-            pm_rtag (P.op ~name:"x" ~dtype:[ Float32; Float64 ] Op.Cast)
+            pm_sink (P.op ~name:"x" ~dtype:[ Float32; Float64 ] Op.Cast)
           in
           let cast dt = Ops.cast (Ops.float 1.) dt in
-          equal (option uop) (tagged (cast Float32)) (rewrite m (cast Float32));
-          equal (option uop) (tagged (cast Float64)) (rewrite m (cast Float64));
+          equal (option uop) (sunk (cast Float32)) (rewrite m (cast Float32));
+          equal (option uop) (sunk (cast Float64)) (rewrite m (cast Float64));
           equal (option uop) None (rewrite m (cast Float16));
           equal (option uop) None (rewrite m (Ops.int ~dtype:Int32 1)));
       test "src matches the sources in order, and exactly as many" (fun () ->
           let m =
-            pm_rtag
+            pm_sink
               (P.v ~op:Op.Set.alu ~name:"x"
                  ~src:[ P.op Op.Const; P.op Op.Const ]
                  ())
           in
           let s = add c1 c2 in
-          equal (option uop) (tagged s) (rewrite m s);
+          equal (option uop) (sunk s) (rewrite m s);
           equal (option uop) None (rewrite m c2);
           equal (option uop) None
             (rewrite m (Ops.v ~src:[ c1; c2; c3 ] Op.Mulacc)));
       test "perm matches the sources in any order" (fun () ->
           let m =
-            pm_rtag
+            pm_sink
               (P.v ~op:Op.Set.alu ~name:"x"
                  ~perm:[ P.op Op.Const; P.v ~op:Op.Set.alu () ]
                  ())
@@ -173,19 +173,19 @@ let upat =
           let s3 = add c1 c2 in
           let s4 = add s3 c2 and s5 = add c2 s3 in
           equal (option uop) None (rewrite m s3);
-          equal (option uop) (tagged s4) (rewrite m s4);
-          equal (option uop) (tagged s5) (rewrite m s5);
+          equal (option uop) (sunk s4) (rewrite m s4);
+          equal (option uop) (sunk s5) (rewrite m s5);
           equal (option uop) None (rewrite m (add s3 s4)));
       test "each matches every source" (fun () ->
           let m =
-            pm_rtag (P.v ~op:Op.Set.alu ~name:"x" ~each:(P.op Op.Const) ())
+            pm_sink (P.v ~op:Op.Set.alu ~name:"x" ~each:(P.op Op.Const) ())
           in
           let s = add c1 c2 in
-          equal (option uop) (tagged s) (rewrite m s);
+          equal (option uop) (sunk s) (rewrite m s);
           equal (option uop) None (rewrite m (add c2 s)));
       test "allow_any_len takes more sources, never fewer" (fun () ->
           let m =
-            pm_rtag
+            pm_sink
               (P.op ~name:"x"
                  ~src:[ P.op Op.Const ]
                  ~allow_any_len:true Op.Mulacc)
@@ -193,7 +193,7 @@ let upat =
           let s = Ops.v ~src:[ c1; c2; c3 ] Op.Mulacc in
           equal (option uop) None (rewrite m (Ops.v ~src:[ c1 ] Op.Exp2));
           equal (option uop) None (rewrite m (add c1 c2));
-          equal (option uop) (tagged s) (rewrite m s);
+          equal (option uop) (sunk s) (rewrite m s);
           let noop = Ops.v Op.Noop in
           let p =
             Pm.fold (fun () ->
@@ -232,12 +232,12 @@ let upat =
                     P.(P.var "a" + P.any [ P.var "x"; P.var "y"; P.var "z" ])
                     (fun m ->
                       match m "y" with
-                      | y -> tagged Ops.O.(m "a" + y)
+                      | y -> sunk Ops.O.(m "a" + y)
                       | exception Invalid_argument _ -> None);
                 ])
           in
           equal (option uop)
-            (tagged Ops.O.(v1 + v2))
+            (sunk Ops.O.(v1 + v2))
             (rewrite m Ops.O.(v1 + v2)));
       test "match_ names the nodes of each way a pattern matches" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
@@ -248,10 +248,6 @@ let upat =
             (list (list (pair string uop)))
             []
             (P.match_ (P.op Op.Mul) Ops.O.(a + b)));
-      test "a pattern matches a node whatever its tag" (fun () ->
-          let t = Ops.rtag ~tag:(String "lane0") (Ops.int 1) in
-          equal bool true (matches (P.cvar "c") t);
-          equal bool true (matches (P.op Op.Const) t));
       test "v rejects two ways of matching sources" (fun () ->
           rejects (fun () -> P.v ~src:[ P.wild ] ~perm:[ P.wild ] ());
           rejects (fun () -> P.v ~src:[ P.wild ] ~each:P.wild ()));
@@ -767,34 +763,6 @@ let rewriting =
           equal (list string)
             [ "Ops.ADD bpm"; "1 bpm"; "1 pm"; "2 bpm"; "2 pm"; "Ops.ADD pm" ]
             (recorded log));
-      test "tags let a rewrite apply once" (fun () ->
-          let plus_one =
-            Pm.v (fun () ->
-                [
-                  Pm.rule (P.op ~name:"x" Op.Const) (fun m ->
-                      let x = m "x" in
-                      if Option.is_some (Ops.tag x) then None
-                      else
-                        match Ops.value x with
-                        | `Int n ->
-                            Some
-                              (Ops.rtag ~tag:(Int 1)
-                                 (Ops.int (Bigint.to_int n + 1)))
-                        | _ -> None);
-                ])
-          in
-          let one = Ops.int 1 in
-          let g =
-            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-              Ops.O.(one + one)
-              (After_sources plus_one)
-          in
-          let two = Ops.rtag ~tag:(Int 1) (Ops.int 2) in
-          equal uop (Ops.v ~src:[ two; two ] Op.Add) g;
-          is_true
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() g
-               (After_sources plus_one)
-            == g));
       test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
           equal string "REWRITE_STACK_LIMIT"
             (Setting.key Setting.rewrite_stack_limit);
@@ -848,13 +816,6 @@ let substituting =
             (Ops.substitute ~calls:Skip ~pass:Fixed_point
                (sin (sin x))
                [ (sin x, Ops.sqrt x); (sin (sin x), Ops.sqrt (sin x)) ]));
-      test "keeps a rebuilt node's tag" (fun () ->
-          let t u = Ops.replace ~tag:(Some (Int 1)) u in
-          equal uop
-            (t Ops.O.(b + int 4))
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               (t Ops.O.(a + int 4))
-               [ (a, b) ]));
       test "ignores nodes paired with themselves" (fun () ->
           let e = Ops.O.(a + int 4) in
           is_true

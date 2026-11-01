@@ -89,9 +89,7 @@ let arguments =
     [
       Golden.cases "reprs.golden" (fun cell ->
           let u = List.assoc (cell "name") (Lazy.force reprs) in
-          equal string (cell "arg") (str Ops.pp_arg (Ops.arg u));
-          equal string (cell "tag")
-            (match Ops.tag u with None -> "None" | Some t -> str Ops.Tag.pp t));
+          equal string (cell "arg") (str Ops.pp_arg (Ops.arg u)));
       test "reprs.golden names every argument the suite builds" (fun () ->
           equal
             (slist string String.compare)
@@ -296,68 +294,6 @@ let printing =
           ^ "\n");
     ]
 
-(* Tags *)
-
-let gen_tag =
-  let open Gen in
-  let leaf =
-    frequency
-      [
-        (1, map (fun b -> Ops.Tag.Bool b) bool);
-        (1, map (fun n -> Ops.Tag.Int n) small_int);
-        (1, map (fun s -> Ops.Tag.String s) (of_list [ ""; "x"; "mergeable" ]));
-        (1, map (fun dt -> Ops.Tag.Dtype dt) (of_list Dtypes.declared));
-        (1, map (fun s -> Ops.Tag.Bytes s) (of_list [ ""; "\x00a'" ]));
-      ]
-  in
-  with_pp Ops.Tag.pp
-    (frequency
-       [
-         (3, leaf);
-         (1, map (fun l -> Ops.Tag.Tuple l) (list ~size:(int_range 0 3) leaf));
-       ])
-
-let tag = Testable.make ~pp:Ops.Tag.pp ~equal:Ops.Tag.equal
-
-(* A pair of tags, equal a quarter of the time: the second is then a fresh copy
-   of the first. *)
-let gen_tag_pair =
-  let rec copy : Ops.Tag.t -> Ops.Tag.t = function
-    | String s -> String (String.init (String.length s) (String.get s))
-    | Bytes s -> Bytes (String.init (String.length s) (String.get s))
-    | Tuple l -> Tuple (List.map copy l)
-    | t -> t
-  in
-  Gen.frequency
-    [
-      (1, Gen.map (fun t -> (t, copy t)) gen_tag); (3, Gen.pair gen_tag gen_tag);
-    ]
-
-let tags =
-  group "Tag"
-    [
-      prop "equal is an equivalence" (Gen.pair gen_tag gen_tag)
-        (Law.equivalence tag);
-      prop "hash agrees with equal" gen_tag_pair (fun (t0, t1) ->
-          cover "equal tags" (Ops.Tag.equal t0 t1);
-          if Ops.Tag.equal t0 t1 then
-            equal int (Ops.Tag.hash t0) (Ops.Tag.hash t1));
-      test "pp formats a literal as Python writes it" (fun () ->
-          List.iter
-            (fun (t, text) -> equal string text (str Ops.Tag.pp t))
-            Ops.Tag.
-              [
-                (Bool true, "True");
-                (Int 1, "1");
-                (String "mergeable", "'mergeable'");
-                (Dtype Int32, "dtypes.i32");
-                (Tuple [ Int 0; Dtype Int32 ], "(0, dtypes.i32)");
-                (Tuple [ Int 0 ], "(0,)");
-                (Tuple [], "()");
-                (Bytes "\x00a'", "b\"\\x00a'\"");
-              ]);
-    ]
-
 (* Identity *)
 
 (* Random expressions over two variables, built from a recipe so that each can
@@ -499,11 +435,6 @@ let identity =
         (fun () ->
           is_false (Ops.int 1 == Ops.bool true);
           is_false (Ops.int 0 == Ops.float 0.));
-      test "a tag is part of the node" (fun () ->
-          let a = Ops.int 1 in
-          is_false (a == Ops.rtag a);
-          is_true (Ops.rtag a == Ops.rtag ~tag:(Bool true) a);
-          is_false (Ops.rtag ~tag:(String "x") a == Ops.rtag ~tag:(String "y") a));
       test "replace is the node itself when nothing changes" (fun () ->
           let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
           is_true (Ops.replace a == a);
@@ -511,8 +442,7 @@ let identity =
             (Ops.replace ~op:Op.Add ~src:(Ops.src a) ~arg:Ops.No_arg a == a);
           is_true
             (Ops.replace ~op:Op.Mul a
-            == Ops.alu (Ops.nth a 0) Op.Mul [ Ops.nth a 1 ]);
-          is_true (Ops.replace ~tag:None (Ops.rtag a) == a));
+            == Ops.alu (Ops.nth a 0) Op.Mul [ Ops.nth a 1 ]));
       test "nth is the ith source, and rejects one past the last" (fun () ->
           let a = var "a" 0 4 and b = var "b" 0 4 in
           equal uop b (Ops.nth Ops.O.(a + b) 1);
@@ -583,8 +513,8 @@ let identity =
             results);
       test "an exception at any allocation of v keeps the nodes built"
         (fun () ->
-          let node tag = Ops.v ~tag Op.Noop in
-          let tag name n = Ops.Tag.Tuple [ String name; Int n ] in
+          let node tag = Ops.v ~arg:(String tag) Op.Noop in
+          let tag name n = Printf.sprintf "%s %d" name n in
           let built = ref [] in
           let build tag = built := (tag, node tag) :: !built in
           List.iter build (List.init 256 (tag "kept"));
@@ -608,13 +538,7 @@ let identity =
 let structure_order =
   group "compare_structure"
     [
-      test "ignores tags" (fun () ->
-          let a = Ops.int 1 in
-          equal int 0
-            (Ops.compare_structure a (Ops.rtag ~tag:(String "tagged") a));
-          equal int 0
-            (Ops.compare_structure (Ops.rtag ~tag:(String "tagged") a) a));
-      test "is zero exactly on equal graphs, when untagged" (fun () ->
+      test "is zero exactly on equal graphs" (fun () ->
           let a = Ops.int 1 and b = Ops.int 2 in
           List.iter
             (fun (x, y) -> equal bool (x == y) (Ops.compare_structure x y = 0))
@@ -671,9 +595,6 @@ let keys =
               ("source", Ops.O.(y + x));
             ];
           equal int 32 (String.length (Ops.key a)));
-      test "ignores tags" (fun () ->
-          let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
-          equal string (Ops.key a) (Ops.key (Ops.rtag ~tag:(String "t") a)));
       test "tells arguments apart" (fun () ->
           not_equal string
             (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ()) []))
@@ -1380,7 +1301,6 @@ let groups =
     devices;
     arguments;
     printing;
-    tags;
     identity;
     structure_order;
     keys;

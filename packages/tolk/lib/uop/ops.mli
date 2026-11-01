@@ -8,8 +8,7 @@
 (** The intermediate representation: nodes, patterns and graph rewriting.
 
     A node ({!t}) is an operation ({!Op.t}) applied to source nodes, with a
-    payload ({!type-arg}), an annotation ({!Tag.t}) and a data type derived from
-    the three. Nodes form a directed acyclic graph, and one vocabulary serves
+    payload ({!type-arg}) and a data type derived from the three. Nodes form a directed acyclic graph, and one vocabulary serves
     every stage of compilation: tensor graphs, kernels, programs and command
     sequences.
 
@@ -315,41 +314,11 @@ val pp_arg : Format.formatter -> arg -> unit
     - {!Custom_function}: [CustomFunction(name='f', dtype=dtypes.i32)];
     - {!Call}: [CallInfo(None, 'f', False, False)]. *)
 
-(** {1:tags Tags} *)
-
-(** Tags.
-
-    A tag annotates a node for the passes that handle it; it is part of the
-    node's identity, and ignored by everything else. Tags are written as
-    literals. *)
-module Tag : sig
-  (** The type for tags. *)
-  type t =
-    | Bool of bool
-    | Int of int
-    | String of string
-    | Bytes of string
-        (** Bytes, such as the program libraries a Metal command buffer's tag
-            lists. *)
-    | Dtype of Dtype.t
-    | Tuple of t list
-
-  val equal : t -> t -> bool
-  (** [equal g0 g1] is [true] iff [g0] and [g1] are the same literal. *)
-
-  val hash : t -> int
-  (** [hash g] is a hash of [g], compatible with {!equal}. *)
-
-  val pp : Format.formatter -> t -> unit
-  (** [pp] formats a tag as the literal it is: [True], [1], ['mergeable'],
-      [b'\x00'], [dtypes.i32], [(0, dtypes.i32)], [()]. *)
-end
-
 (** {1:nodes Nodes} *)
 
-val v : ?src:t list -> ?arg:arg -> ?tag:Tag.t -> Op.t -> t
-(** [v ~src ~arg ~tag op] is the node [op] of [src] (default [[]]) with argument
-    [arg] (default [No_arg]) and tag [tag] (default none).
+val v : ?src:t list -> ?arg:arg -> Op.t -> t
+(** [v ~src ~arg op] is the node [op] of [src] (default [[]]) with argument
+    [arg] (default [No_arg]).
 
     Its data type is derived from [op], [src] and [arg] ({!dtype_of}). The
     operations whose type comes from their argument need its shape: {!Op.Const}
@@ -381,15 +350,9 @@ val nth : t -> int -> t
 val arg : t -> arg
 (** [arg u] is [u]'s argument. *)
 
-val tag : t -> Tag.t option
-(** [tag u] is [u]'s tag. *)
-
-val replace : ?op:Op.t -> ?src:t list -> ?arg:arg -> ?tag:Tag.t option -> t -> t
+val replace : ?op:Op.t -> ?src:t list -> ?arg:arg -> t -> t
 (** [replace u] is [u] with the given fields replaced; [u] itself if none
     changes. *)
-
-val rtag : ?tag:Tag.t -> t -> t
-(** [rtag ~tag u] is [u] tagged [tag], by default [Bool true]. *)
 
 val equal : t -> t -> bool
 (** [equal u0 u1] is [u0 == u1]: structural equality, since nodes are
@@ -412,14 +375,12 @@ val pp : Format.formatter -> t -> unit
       x0,))
     v}
     A node reached more than once is named [xN:=] where first printed and [xN]
-    afterwards. The argument prints as {!pp_arg}, and a tag follows it as
-    [, tag=] and the tag, a string without its quotes. *)
+    afterwards. The argument prints as {!pp_arg}. *)
 
 val compare_structure : t -> t -> int
 (** [compare_structure u0 u1] orders by operation, then argument as {!pp_arg}
-    prints it, then data type, then sources, recursively. It ignores tags, so it
-    is [0] for nodes that differ only by their tags. The order does not depend
-    on how or when the nodes were built. *)
+    prints it, then data type, then sources, recursively. The order does not
+    depend on how or when the nodes were built. *)
 
 val key : t -> string
 (** [key u] is a digest of [u]'s operation, type, argument and sources,
@@ -668,7 +629,7 @@ val cconst : Dtype.t -> Dtype.const -> t
 (** [cconst dt c] is the cast to [dt] of the literal [c], even where {!const}
     would fold the cast away. *)
 
-val sink : ?kernel:kernel_info -> ?tag:Tag.t -> t list -> t
+val sink : ?kernel:kernel_info -> t list -> t
 (** [sink ~kernel us] is the {!Op.Sink} of [us], the root of the kernel [kernel]
     if given. *)
 
@@ -685,14 +646,14 @@ val broadcast : t -> int -> t
 (** [broadcast u n] is the {!Op.Stack} of [n] copies of [u], or [u] if [n] is
     [1]. *)
 
-val index : ?tag:Tag.t -> t -> t list -> t
+val index : t -> t list -> t
 (** [index u idxs] is the {!Op.Index} of [u] by [idxs]; the [i]th source of a
     stack if [u] is a stack and [idxs] the constant [i]. *)
 
-val load : ?tag:Tag.t -> t -> t list -> t
+val load : t -> t list -> t
 (** [load p rest] is the {!Op.Load} through [p]. *)
 
-val store : ?gate:t -> ?tag:Tag.t -> t -> t -> t
+val store : ?gate:t -> t -> t -> t
 (** [store p x] is the {!Op.Store} of [x] through [p], guarded by [gate]. *)
 
 val end_ : t -> t list -> t
@@ -709,7 +670,7 @@ val backedge : t -> loop:t -> cond:t -> t
     calls run in order once per trip of [loop] while [cond] holds, so they may
     run no trip. *)
 
-val after : ?tag:Tag.t -> t -> t list -> t
+val after : t -> t list -> t
 (** [after u deps] is [u] ordered after [deps], or [u] if [deps] is empty. *)
 
 val without_after : t -> t
@@ -718,8 +679,8 @@ val without_after : t -> t
 val barrier : t -> t list -> t
 (** [barrier u rest] is the {!Op.Barrier} of [u] and [rest]. *)
 
-val ins : ?src:t list -> ?dtype:Dtype.t -> ?tag:Tag.t option -> t -> string -> t
-(** [ins u i] is the instruction [i] with [u]'s sources, type and tag, unless
+val ins : ?src:t list -> ?dtype:Dtype.t -> t -> string -> t
+(** [ins u i] is the instruction [i] with [u]'s sources and type, unless
     given. *)
 
 val range : ?axis_type:Axis_type.t -> ?dtype:Dtype.t -> sint -> int list -> t

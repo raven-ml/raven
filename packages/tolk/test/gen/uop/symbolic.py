@@ -11,13 +11,14 @@ pass. `<class>.<test>.golden` holds the records of that test, in the order the
 test makes them, each once, and `tests.golden` lists the tests that have
 records, with the file that declares them.
 
-A record is a sink, tagged with its kind, whose sources are the input and the
-result: `(in, out)` for a rewrite and for `simplify`, `(valid, out)` for
-`simplify_valid`, and `(valid,)` when it is `None`. The kind names the matcher,
-`sym`, `symbolic`, ..., or `simplify` or `simplify_valid`, with ` bottom_up`
-for a bottom-up rewrite. When the result is an integer or a boolean whose bounds
-are integers of 62 bits, the tag is `(kind, vmin, vmax)`, the bounds tinygrad
-computes for it.
+A record is a sink whose sources are its kind, the input and the result:
+`(kind, in, out)` for a rewrite and for `simplify`, `(kind, valid, out)` for
+`simplify_valid`, and `(kind, valid)` when it is `None`. The kind is a void
+`CUSTOM` whose text names the matcher, `sym`, `symbolic`, ..., or `simplify` or
+`simplify_valid`, with ` bottom_up` for a bottom-up rewrite. When the result is
+an integer or a boolean whose bounds are integers of 62 bits, the kind's
+sources are the constants `vmin` and `vmax`, the bounds tinygrad computes for
+it.
 """
 
 import random
@@ -112,15 +113,16 @@ def matcher_name(pm):
     return next((name for name, m in MATCHERS.items() if m is pm), None)
 
 
-def kind_tag(kind, out):
-    if out.dtype in (dtypes.bool, dtypes.weakint) or dtypes.is_int(out.dtype):
+def kind_node(kind, out):
+    bounds = ()
+    if out is not None and (out.dtype in (dtypes.bool, dtypes.weakint) or dtypes.is_int(out.dtype)):
         lo, hi = out.vmin, out.vmax
-        if all(isinstance(v, (bool, int)) and -BOUND < v < BOUND for v in (lo, hi)): return (kind, lo, hi)
-    return kind
+        if all(isinstance(v, (bool, int)) and -BOUND < v < BOUND for v in (lo, hi)): bounds = (UOp.const(lo), UOp.const(hi))
+    return UOp(Ops.CUSTOM, src=bounds, arg=(kind, dtypes.void))
 
 
 def make_record(kind, srcs, out):
-    return UOp(Ops.SINK, src=tuple(srcs), tag=kind_tag(kind, out) if out is not None else kind)
+    return UOp(Ops.SINK, src=(kind_node(kind, out),) + tuple(srcs))
 
 
 def test_cases():

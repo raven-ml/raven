@@ -2,7 +2,7 @@
 
 A graph is its nodes in topological order, one line each:
 
-    <index> <op> <dtype> [<source indices>] [<arg>] [tag=<tag>]
+    <index> <op> <dtype> [<source indices>] [<arg>]
 
 `write(sink)` is the text of the graph under `sink`, `boundary(*tensors)`
 is the sink that a tinygrad `Tensor` program hands to the compiler, and
@@ -110,7 +110,6 @@ def write(sink):
     for u, i in index.items():
         line = f"{i} {u.op} {u.dtype} [{', '.join(str(index[s]) for s in u.src)}]"
         if u.arg is not None: line += " " + value(u.arg, index)
-        if u.tag is not None: line += " tag=" + value(u.tag, index)
         lines.append(line)
     return "\n".join(lines) + "\n"
 

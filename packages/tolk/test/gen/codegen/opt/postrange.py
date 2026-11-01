@@ -179,12 +179,6 @@ def loop_counter(C, A):
     return C[r].set(A[r] + cnt[0].cast(C.dtype), end=r).sink(arg=KernelInfo(opts_to_apply=()))
 
 
-def tagged_swap():
-    out = UOp.param(0, dtypes.float, 64)
-    r0, r1 = UOp.range(8, 0, AxisType.GLOBAL), UOp.range(8, 1, AxisType.GLOBAL)
-    return kernel_of(out.index((r0*8+r1).rtag("keep")).store(r0.cast(dtypes.float)).end(r0, r1))
-
-
 def closed_extent():
     # the extent of the outer range is a reduction over a closed range
     inner = UOp.range(4, 0)
@@ -297,7 +291,6 @@ KERNELS = {
     "symbolic_local_16": lambda: summing_local(UOp.variable("n", 2, 16)),
     "huge_global": lambda: huge_axes(2**62 - 1, AxisType.GLOBAL),
     "huge_upcasts": lambda: huge_axes(2**32, AxisType.UPCAST, AxisType.UPCAST),
-    "tagged_swap": tagged_swap,
     "closed_extent": closed_extent,
     "bounded_reduction": bounded_reduction,
     "nested_end": nested_end,
@@ -501,7 +494,6 @@ case("group_maybe_beyond_symbolic_shared_memory", "symbolic_local_16", "small_sh
 case("padto_beyond_host_integers", "huge_global", "metal", [padto(0, 4)])
 case("local_whole_axis_beyond_host_integers", "huge_global", "metal", [padto(0, 4), local(0, 0)])
 case("upcasts_beyond_host_integers", "huge_upcasts", "metal", [])
-case("swap_keeps_tags", "tagged_swap", "metal", [swap(0, 1)])
 case("flatten_keeps_a_closed_extent", "closed_extent", "cpu", [])
 case("nested_end_globals", "nested_end", "metal", [])
 case("launched_upcast", "launched", "metal", [upcast(0, 2)])

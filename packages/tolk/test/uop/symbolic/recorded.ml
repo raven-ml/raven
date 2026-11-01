@@ -40,22 +40,30 @@ type record = {
   result : Ops.t option;
 }
 
-let bound : Ops.Tag.t -> Dtype.value = function
-  | Int n -> `Int (Bigint.of_int n)
-  | Bool b -> `Bool b
-  | tag -> failf "%a is not a bound" Ops.Tag.pp tag
+let bound c : Dtype.value =
+  match Ops.value c with
+  | #Dtype.value as v -> v
+  | `Invalid -> failf "an invalid bound"
 
 let record u =
-  let kind, bounds =
-    match Ops.tag u with
-    | Some (String kind) -> (kind, None)
-    | Some (Tuple [ String kind; lo; hi ]) -> (kind, Some (bound lo, bound hi))
+  let kind, bounds, srcs =
+    match Ops.src u with
+    | k :: srcs when Ops.op k = Op.Custom -> (
+        let kind =
+          match Ops.arg k with
+          | Code c -> c.code
+          | _ -> failf "a record's kind without its name"
+        in
+        match Ops.src k with
+        | [] -> (kind, None, srcs)
+        | [ lo; hi ] -> (kind, Some (bound lo, bound hi), srcs)
+        | _ -> failf "a record's kind with %d bounds" (List.length (Ops.src k)))
     | _ -> failf "a record without its kind"
   in
-  match Ops.src u with
+  match srcs with
   | [ input; result ] -> { kind; bounds; input; result = Some result }
   | [ input ] -> { kind; bounds; input; result = None }
-  | _ -> failf "a record of %d nodes" (List.length (Ops.src u))
+  | _ -> failf "a record of %d nodes" (List.length srcs)
 
 (* The goldens hold correctly rounded values, and tolk computes these
    operations with the host's C library, which can be one unit from them:

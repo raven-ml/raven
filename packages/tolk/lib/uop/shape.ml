@@ -3170,7 +3170,7 @@ let bind var x =
 let unbound var =
   if not (is_variable var) then
     invalid_argf "%s is not a variable" (Op.name (op var));
-  replace var ~arg:(Param { (param_arg_of var) with bound = None }) ~tag:None
+  replace var ~arg:(Param { (param_arg_of var) with bound = None })
 
 let unbind var =
   match (is_bound_var var, arg var) with
@@ -3290,9 +3290,7 @@ let custom_kernel args f =
   (* A variable stays a variable of the kernel, unbound, in its own slot. *)
   let placeholder i s =
     if is_variable s then
-      replace s
-        ~arg:(Param { (param_arg_of s) with slot = i; bound = None })
-        ~tag:None
+      replace s ~arg:(Param { (param_arg_of s) with slot = i; bound = None })
     else placeholder_like s i
   in
   let placeholders = List.mapi placeholder args in

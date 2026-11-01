@@ -639,8 +639,8 @@ let variables =
           rejects (fun () -> Shape.bind (weak_var ~multiple_of:4 "m" 0 16) (i 6));
           ignore (Shape.bind (weak_var ~multiple_of:4 "m" 0 16) (i 12));
           rejects (fun () -> Shape.bind (param [ 4 ] 0 Float32) (i 1)));
-      test "unbound strips the value and the tag" (fun () ->
-          is_true (Shape.unbound (Ops.rtag (Shape.bind n (i 3))) == n);
+      test "unbound strips the value" (fun () ->
+          is_true (Shape.unbound (Shape.bind n (i 3)) == n);
           is_true (Shape.unbound n == n));
       test "unbound rejects a node that is not a variable" (fun () ->
           rejects (fun () -> Shape.unbound (param [ 4 ] 0 Float32)));

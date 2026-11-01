@@ -210,8 +210,6 @@ EXPRESSIONS = [
     ("stack_of_sums", UOp.stack(binary(Ops.ADD, a, b), binary(Ops.MUL, b, c))),
     # shared operands are written each time they are used
     ("shared", binary(Ops.MUL, binary(Ops.ADD, a, b), binary(Ops.ADD, a, b))),
-    # tags are not written
-    ("tagged", binary(Ops.ADD, a.rtag(1), UOp.const(2).rtag("t")).rtag(True)),
 ]
 
 # Operations without a form of their own are written as their repr, over
@@ -223,7 +221,6 @@ UNRENDERED = [
     ("load_without_index", UOp(Ops.LOAD, src=(buf,))),
     ("load_of_two", UOp(Ops.LOAD, src=(buf.index(r0), UOp.const(0.0, dtypes.float)))),
     ("sink", UOp.sink(a, b)),
-    ("tagged_sqrt", UOp(Ops.SQRT, src=(x,)).rtag("t")),
 ]
 
 # The sizes of these movements are nodes, which a movement's argument holds

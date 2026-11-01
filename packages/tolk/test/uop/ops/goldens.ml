@@ -495,7 +495,6 @@ let variables_and_binding () =
     ([
        bind n (i 3);
        unbound (bind n (i 3));
-       unbound (rtag ~tag:(String "t") (bind n (i 3)));
        all_unbound;
      ]
     @ variables e)
@@ -506,7 +505,7 @@ let instructions () =
     [
       ins x "v_mov";
       ins ~src:[ x; x ] ~dtype:Float16 x "v_add";
-      ins ~dtype:Void ~tag:None (rtag ~tag:(Int 1) x) "nop";
+      ins ~dtype:Void x "nop";
     ]
 
 let wmmas () =
@@ -532,9 +531,7 @@ let substitution () =
     [
       substitute ~calls:Skip ~pass:Fixed_point e [ (a, b) ];
       substitute ~calls:Skip ~pass:Fixed_point e [ (a, a) ];
-      substitute ~calls:Skip ~pass:Fixed_point
-        (replace ~tag:(Some (Tag.Int 1)) O.(a + int 4))
-        [ (a, c) ];
+      substitute ~calls:Skip ~pass:Fixed_point O.(a + int 4) [ (a, c) ];
       substitute ~calls:Skip ~pass:Fixed_point (sin (sin x)) [ (sin x, sqrt x) ];
     ]
 
@@ -669,8 +666,6 @@ let printed_nodes () =
     O.(forty_two + int 3);
     O.(forty_two + forty_two);
     O.((one + one) * (one + one));
-    rtag ~tag:(String "x") forty_two;
-    rtag ~tag:(Tuple [ String "y"; Int 1 ]) forty_two;
     n;
     sink ~kernel:(kernel_info ()) O.[ n + int 1; n * int 2 ];
     range (Int 4) [ 0 ];
@@ -679,7 +674,7 @@ let printed_nodes () =
     param [ 2; 3 ] 0 Float32;
   ]
 
-(* Arguments and tags, by the name reprs.golden gives them. *)
+(* Arguments, by the name reprs.golden gives them. *)
 
 let reprs () =
   let n = weak_var "n" 1 10 in
@@ -782,9 +777,4 @@ let reprs () =
             [ ((Upcast, [ 3 ]), 2) ] )
         (param [ 8 ] 0 Float16) (param [ 8 ] 1 Float16)
         ~acc:(param [ 4 ] 2 Float32) ~dims:(8, 16, 16) ~threads:32 );
-    ("bytes tag", rtag ~tag:(Bytes "\x00a'") (int 2));
-    ( "tagged",
-      rtag
-        ~tag:(Tuple [ String "x"; Int 1; Bool true; Dtype Int32; Tuple [] ])
-        (int 1) );
   ]

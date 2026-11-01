@@ -141,11 +141,6 @@ let rec boolean depth =
 
 let expression = Gen.with_pp Ops.pp (Gen.one_of [ integer 4; boolean 2 ])
 
-let rec tag_everywhere u =
-  Ops.replace
-    ~src:(List.map tag_everywhere (Ops.src u))
-    ~tag:(Some (Ops.Tag.Int 1)) u
-
 (* render *)
 
 let render =
@@ -167,8 +162,6 @@ let render =
             (Render.render ~simplify:false Ops.O.((a + b) * c)));
       prop "an expression reads back as the tree it writes" expression
         (Law.round_trip uop string (Render.render ~simplify:false) parse);
-      prop "tags are not written" expression
-        (Law.ignores uop string (Render.render ~simplify:false) tag_everywhere);
     ]
 
 (* The [simplified] column follows the README's negative-shift row: where

@@ -372,22 +372,19 @@ def reprs_of():
             global_size=(4, 1, 1), local_size=(8, 1, 1), params=(), globals=(0, 1), outs=(0,), ins=(1,), target=Target("CPU", "CLANG"))),
         "wmma": UOp.wmma(UOp.param(0, dtypes.half, (8,)), UOp.param(1, dtypes.half, (8,)), UOp.param(2, dtypes.float, (4,)),
                          (8, 16, 16), 32, ((((AxisType.UPCAST, 0), 2), ((AxisType.UPCAST, 1), 2)), (((AxisType.UPCAST, 2), 2),), (((AxisType.UPCAST, 3), 2),))),
-        "tagged": UOp.const(1).rtag(("x", 1, True, dtypes.int, ())),
-        "bytes tag": UOp.const(2).rtag(b"\x00a'"),
     }
 
 
 @table
 def reprs():
-    return ["name", "arg", "tag"], [(name, u.argstr(), repr(u.tag)) for name, u in reprs_of().items()]
+    return ["name", "arg"], [(name, u.argstr()) for name, u in reprs_of().items()]
 
 
 # Printed nodes: the calls that build them, with shared nodes named
 
 def printed_nodes():
     forty_two, one, n = UOp.const(42), UOp.const(1), UOp.variable("n", 1, 8)
-    return [forty_two, forty_two + UOp.const(3), forty_two + forty_two, (one + one) * (one + one), forty_two.rtag("x"),
-            forty_two.rtag(("y", 1)), n, UOp.sink(n + 1, n * 2, arg=KernelInfo()), UOp.range(4, 0, AxisType.WEAK),
+    return [forty_two, forty_two + UOp.const(3), forty_two + forty_two, (one + one) * (one + one), n, UOp.sink(n + 1, n * 2, arg=KernelInfo()), UOp.range(4, 0, AxisType.WEAK),
             UOp.const(3, dtypes.int32), UOp.const(1.5), UOp.param(0, dtypes.float, (2, 3))]
 
 
@@ -664,13 +661,13 @@ def variables_and_binding():
     n, m = UOp.variable("n", 1, 8), UOp.variable("m", 0, 4, multiple_of=2)
     e = n.bind(3) * m.bind(2) + n
     unbound, _ = e.unbind_all()
-    return UOp.sink(n.bind(3), n.bind(3).unbound(), n.bind(3).rtag("t").unbound(), unbound, *e.variables())
+    return UOp.sink(n.bind(3), n.bind(3).unbound(), unbound, *e.variables())
 
 
 @graph
 def instructions():
     x = UOp.param(0, dtypes.float, 4).index(UOp.const(0))
-    return UOp.sink(x.ins("v_mov"), x.ins("v_add", src=(x, x), dtype=dtypes.half), x.rtag(1).ins("nop", dtype=dtypes.void, tag=None))
+    return UOp.sink(x.ins("v_mov"), x.ins("v_add", src=(x, x), dtype=dtypes.half), x.ins("nop", dtype=dtypes.void))
 
 
 @graph
@@ -683,7 +680,7 @@ def wmmas():
 def substitution():
     a, b, c = var("a"), var("b"), var("c")
     x = (a + 4) + (a + 5)
-    return UOp.sink(x.substitute({a: b}), x.substitute({a: a}), (a + 4).replace(tag=1).substitute({a: c}),
+    return UOp.sink(x.substitute({a: b}), x.substitute({a: a}), (a + 4).substitute({a: c}),
                     fvar("x").sin().sin().substitute({fvar("x").sin(): fvar("x").sqrt()}))
 
 

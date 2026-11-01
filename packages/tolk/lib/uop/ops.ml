@@ -72,7 +72,7 @@ end
 
 (* Python literals *)
 
-(* Arguments and tags print as the Python literals that denote them, so that
+(* Arguments print as the Python literals that denote them, so that
    listings match tinygrad's. *)
 
 let repr_quoted ~bytes s =
@@ -130,37 +130,6 @@ let is_disk_device d =
 
 (* Tags *)
 
-module Tag = struct
-  type t =
-    | Bool of bool
-    | Int of int
-    | String of string
-    | Bytes of string
-    | Dtype of Dtype.t
-    | Tuple of t list
-
-  let rec equal g0 g1 =
-    match (g0, g1) with
-    | Bool b0, Bool b1 -> Bool.equal b0 b1
-    | Int n0, Int n1 -> Int.equal n0 n1
-    | String s0, String s1 | Bytes s0, Bytes s1 -> String.equal s0 s1
-    | Dtype d0, Dtype d1 -> Dtype.equal d0 d1
-    | Tuple l0, Tuple l1 -> List.equal equal l0 l1
-    | _ -> false
-
-  let hash = Hashtbl.hash
-
-  let rec repr = function
-    | Bool b -> repr_bool b
-    | Int n -> string_of_int n
-    | String s -> repr_string s
-    | Bytes s -> repr_bytes s
-    | Dtype d -> repr_dtype d
-    | Tuple l -> repr_tuple (List.map repr l)
-
-  let pp ppf g = Format.pp_print_string ppf (repr g)
-end
-
 (* Arguments *)
 
 type param_arg = {
@@ -202,7 +171,6 @@ type t = {
   op : Op.t;
   src : t list;
   arg : arg;
-  tag : Tag.t option;
   dtype : Dtype.t;
   id : int;
   memos : memos;
@@ -402,13 +370,11 @@ module Interned = struct
     Op.equal u0.op u1.op
     && List.equal ( == ) u0.src u1.src
     && equal_arg u0.arg u1.arg
-    && Option.equal Tag.equal u0.tag u1.tag
 
   let hash u =
-    let tag = match u.tag with None -> 0 | Some g -> 1 + Tag.hash g in
     List.fold_left
       (fun h s -> (h * 31) + s.id)
-      (Hashtbl.hash ((((Op.to_int u.op * 31) + hash_arg u.arg) * 31) + tag))
+      (Hashtbl.hash ((Op.to_int u.op * 31) + hash_arg u.arg))
       u.src
 end
 
@@ -444,8 +410,7 @@ let memos () =
     storage_base_memo = None;
   }
 
-let node op src arg tag dtype id =
-  { op; src; arg; tag; dtype; id; memos = memos () }
+let node op src arg dtype id = { op; src; arg; dtype; id; memos = memos () }
 
 (* The memos of every probe, which no one reads or fills: a probe only looks its
    node up. *)
@@ -544,16 +509,14 @@ let intern table probe =
   match Table.find_opt table probe with
   | Some u -> u
   | None ->
-      let { op; src; arg; tag; _ } = probe in
+      let { op; src; arg; _ } = probe in
       let dtype = dtype_of op src arg in
-      let u = node op src arg tag dtype (Atomic.fetch_and_add next_id 1) in
+      let u = node op src arg dtype (Atomic.fetch_and_add next_id 1) in
       Table.add table u;
       u
 
-let v ?(src = []) ?(arg = No_arg) ?tag op =
-  let probe =
-    { op; src; arg; tag; dtype = Dtype.Void; id = -1; memos = probe_memos }
-  in
+let v ?(src = []) ?(arg = No_arg) op =
+  let probe = { op; src; arg; dtype = Dtype.Void; id = -1; memos = probe_memos } in
   let table, lock = shards.(Hashtbl.hash (Interned.hash probe) land 63) in
   (* Written as [Mutex.protect] is, without its closure: nothing runs between
      the lock and the handler, so an exception raised in the section, as a
@@ -572,27 +535,19 @@ let op u = u.op
 let dtype u = u.dtype
 let src u = u.src
 let arg u = u.arg
-let tag u = u.tag
 
 let nth u i =
   match List.nth_opt u.src i with
   | Some s -> s
   | None -> invalid_argf "%s has no source %d" (Op.name u.op) i
 
-let replace ?op ?src ?arg ?tag u =
+let replace ?op ?src ?arg u =
   let op = Option.value op ~default:u.op
   and src = Option.value src ~default:u.src
-  and arg = Option.value arg ~default:u.arg
-  and tag = Option.value tag ~default:u.tag in
-  if
-    Op.equal op u.op
-    && List.equal ( == ) src u.src
-    && equal_arg arg u.arg
-    && Option.equal Tag.equal tag u.tag
-  then u
-  else v ~src ~arg ?tag op
+  and arg = Option.value arg ~default:u.arg in
+  if Op.equal op u.op && List.equal ( == ) src u.src && equal_arg arg u.arg then u
+  else v ~src ~arg op
 
-let rtag ?(tag = Tag.Bool true) u = replace ~tag:(Some tag) u
 let equal u0 u1 = u0 == u1
 let compare u0 u1 = Int.compare u0.id u1.id
 let hash u = u.id
@@ -730,9 +685,9 @@ let rec repr u =
       Tbl.replace cache u (i, n, true);
       if n > 1 then Buffer.add_string b (strf "x%d:=" i);
       Buffer.add_string b
-        (strf "UOp(%s, arg=%s%s, src=("
+        (strf "UOp(%s, arg=%s, src=("
            (Format.asprintf "%a" Op.pp u.op)
-           (arg_repr u) (tag_str u));
+           (arg_repr u));
       List.iter
         (fun s ->
           Buffer.add_char b '\n';
@@ -744,12 +699,6 @@ let rec repr u =
   in
   print 0 u;
   Buffer.contents b
-
-and tag_str u =
-  match u.tag with
-  | None -> ""
-  | Some (Tag.String s) -> ", tag=" ^ s
-  | Some g -> ", tag=" ^ Tag.repr g
 
 and arg_repr u =
   match u.memos.arg_repr_memo with
@@ -1895,16 +1844,15 @@ let param_arg_of u =
   | Some p -> p
   | None -> invalid_argf "%s has no ParamArg" (Op.name u.op)
 
-let sink ?kernel ?tag us =
+let sink ?kernel us =
   v Op.Sink ~src:us
     ~arg:(match kernel with Some k -> Kernel k | None -> No_arg)
-    ?tag
 
 
 let broadcast u n =
   if n = 1 then u else v Op.Stack ~src:(List.init n (fun _ -> u))
 
-let index ?tag u idxs =
+let index u idxs =
   match (u.op, idxs) with
   | Op.Stack, [ ({ op = Op.Const; _ } as c) ] ->
       let i = Value.to_int (as_index (value c)) in
@@ -1913,13 +1861,13 @@ let index ?tag u idxs =
       if i < 0 || i >= n then
         invalid_argf "index %s of a stack of %d" (repr_const (value c)) n;
       List.nth u.src i
-  | _ -> v Op.Index ~src:(u :: idxs) ?tag
+  | _ -> v Op.Index ~src:(u :: idxs)
 
-let load ?tag u rest = v Op.Load ~src:(u :: rest) ?tag
-let store ?gate ?tag p x = v Op.Store ~src:([ p; x ] @ Option.to_list gate) ?tag
+let load u rest = v Op.Load ~src:(u :: rest)
+let store ?gate p x = v Op.Store ~src:([ p; x ] @ Option.to_list gate)
 let end_ u = function [] -> u | rs -> v Op.End ~src:(u :: rs)
 let backedge u ~loop ~cond = v Op.Backedge ~src:[ u; loop; cond ]
-let after ?tag u = function [] -> u | deps -> v Op.After ~src:(u :: deps) ?tag
+let after u = function [] -> u | deps -> v Op.After ~src:(u :: deps)
 let group = function [ u ] -> u | us -> after (v Op.Stack) us
 
 let is_group u =
@@ -1932,11 +1880,10 @@ let rec without_after u =
 
 let barrier u rest = v Op.Barrier ~src:(u :: rest)
 
-let ins ?src ?dtype ?tag u i =
+let ins ?src ?dtype u i =
   let src = Option.value src ~default:u.src
-  and dtype = Option.value dtype ~default:u.dtype
-  and tag = Option.value tag ~default:u.tag in
-  v Op.Ins ~src ~arg:(Code { code = i; dtype }) ?tag
+  and dtype = Option.value dtype ~default:u.dtype in
+  v Op.Ins ~src ~arg:(Code { code = i; dtype })
 
 let cconst dt c = v Op.Cast ~src:[ const c ] ~arg:(Dtype dt)
 
@@ -2973,7 +2920,7 @@ let graph_rewrite ~calls ~pass ~ctx root rules =
         if body_skipped n then List.hd n.src :: List.map now (drop 1 n.src)
         else List.map now n.src
       in
-      v n.op ~src ~arg:n.arg ?tag:n.tag
+      v n.op ~src ~arg:n.arg
   in
   if walk then begin
     (* A single pass: a node rewritten on the way down is not entered, and one

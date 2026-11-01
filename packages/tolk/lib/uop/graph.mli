@@ -3,7 +3,7 @@
     specifies.
 
     A graph is the nodes under a sink, one line each, in topological order:
-    {v <index> <op> <dtype> [<sources>] <arg> tag=<tag> v}
+    {v <index> <op> <dtype> [<sources>] <arg> v}
     [test/gen/graph.py] writes the same text from tinygrad's graphs, so a graph
     golden reads into the UOps tinygrad built, and a graph built here writes as
     the golden tinygrad recorded. *)

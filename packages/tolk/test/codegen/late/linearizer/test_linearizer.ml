@@ -300,24 +300,6 @@ let laws =
 
 (* Tests *)
 
-(* The README's CPython row on tuplize: tinygrad ties [c' + b] and [c + a],
-   whose first sources differ only by a tag, and keeps [c' + b] first, as the
-   sink lists it; tolk goes on to the second sources, as tinygrad does for [c +
-   b] and [c + a]. *)
-let tag_blind_order () =
-  let c = Ops.int ~dtype:Int32 1 in
-  let var name =
-    Ops.variable ~dtype:Int32 name (`Int Bigint.zero) (`Int (Bigint.of_int 9))
-  in
-  let ca = Ops.add c (var "a") and cb = Ops.add c (var "b") in
-  let c'b = Ops.add (Ops.rtag ~tag:(Ops.Tag.Int 1) c) (var "b") in
-  let before sources earlier later =
-    let at = positions (Linearizer.linearize (Ops.sink sources)) in
-    less int ~than:(at later) (at earlier)
-  in
-  before [ cb; ca ] ca cb;
-  before [ c'b; ca ] ca c'b
-
 let linearize =
   group "linearize"
     ([
@@ -332,10 +314,6 @@ let linearize =
        Golden.graph "orders_output_toposort.golden" (fun () ->
            let cases = Ops.src (Golden.sink "orders_input.golden") in
            toposorted (fun () -> Ops.sink (List.map linear cases)));
-       test
-         "nodes whose sources differ only by a tag are ordered by their later \
-          sources"
-         tag_blind_order;
        test "without DEBUG_LINEARIZE, nothing is printed" (fun () ->
            ignore (output ());
            ignore (Linearizer.linearize (sink "dependent_loop_bound" ""));

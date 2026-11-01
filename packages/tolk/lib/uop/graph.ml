@@ -707,24 +707,9 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Program -> Program (program_info.read v)
   | Call -> Call (call_info.read v)
   | Wmma -> Wmma (wmma.read v)
+  (* a sum's addition that fuses with its product is marked by its argument *)
+  | Add -> String (str.read v)
   | o -> fail "%s takes no argument" (Format.asprintf "%a" Op.pp o)
-
-let rec tag_value : Ops.Tag.t -> value = function
-  | Bool b -> Bool b
-  | Int n -> int.write n
-  | String s -> Str s
-  | Bytes s -> Bytes s
-  | Dtype d -> dtype.write d
-  | Tuple l -> Tuple (List.map tag_value l)
-
-let rec tag_of : value -> Ops.Tag.t = function
-  | Bool b -> Bool b
-  | Int _ as v -> Int (int.read v)
-  | Str s -> String s
-  | Bytes s -> Bytes s
-  | Name ("dtypes", _) as v -> Dtype (dtype.read v)
-  | Tuple l -> Tuple (List.map tag_of l)
-  | v -> expected "a tag" v
 
 (* Graphs *)
 
@@ -773,9 +758,6 @@ let to_string sink =
     Option.iter
       (fun v -> Buffer.add_string b (" " ^ print index v))
       (arg_value (Ops.arg u));
-    Option.iter
-      (fun t -> Buffer.add_string b (" tag=" ^ print index (tag_value t)))
-      (Ops.tag u);
     Buffer.add_char b '\n'
   in
   List.iter line order;
@@ -803,23 +785,14 @@ let node_line nodes i text =
   in
   expect c "]";
   let arg =
-    if
-      c.pos < String.length text
-      && not (String.starts_with ~prefix:" tag=" (rest c))
-    then (
+    if c.pos < String.length text then (
       expect c " ";
       arg_of o (parse nodes c))
     else No_arg
   in
-  let tag =
-    if c.pos < String.length text then (
-      expect c " tag=";
-      Some (tag_of (parse nodes c)))
-    else None
-  in
   if c.pos <> String.length text then
     fail "unexpected text at column %d" (c.pos + 1);
-  let u = Ops.v ~src ~arg ?tag o in
+  let u = Ops.v ~src ~arg o in
   let text dt = Format.asprintf "%a" Dtype.pp dt in
   if not (Dtype.equal (Ops.dtype u) written) then
     fail "the node's data type is %s, not the written %s"

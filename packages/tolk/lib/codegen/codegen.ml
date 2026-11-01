@@ -668,9 +668,9 @@ let merge_reduce_ends sink =
 (* A sum adds each product of its source into its running sum as one
    multiply-add, rounded once, where the renderer [ren] writes one for its type,
    in the order it adds them unfused. [fuses ren r x] is [true] iff the
-   reduce [r] of [x] adds products that way. Its additions are tagged [fusable]
-   while the products are indexed down to their operands, and [pm_fuse_products]
-   fuses them. A reduce of unrolled lanes beside upcast ones sums a view of the
+   reduce [r] of [x] adds products that way. Its additions are marked by the
+   argument [fusable] while the products are indexed down to their operands,
+   and [pm_fuse_products] fuses them. A reduce of unrolled lanes beside upcast ones sums a view of the
    products, a permute that brings the unrolled axes first, so the product is
    looked for under [x]'s movements. *)
 let fuses (ren : Renderer.t) r x =
@@ -681,7 +681,8 @@ let fuses (ren : Renderer.t) r x =
   && List.exists (Dtype.equal dt) Dtype.[ Float32; Float64 ]
   && ren.native dt
 
-let fusable = Tag.String "fusable"
+let fusable = String "fusable"
+let mark_fusable u = replace u ~arg:fusable
 
 let reduce_ranges_to_acc (slots, ren) r =
   let op, num_axes = reduce_arg r and x = nth r 0 and rngs = srcs r in
@@ -696,7 +697,7 @@ let reduce_ranges_to_acc (slots, ren) r =
   let inp = if num_axes > 0 then v Op.Reduce ~src:[ x ] ~arg:(arg r) else x in
   let update = alu acc_initted op [ inp ] in
   let update =
-    if num_axes = 0 && fuses ren r x then rtag ~tag:fusable update else update
+    if num_axes = 0 && fuses ren r x then mark_fusable update else update
   in
   Some (after acc [ end_ (store acc_initted update) rngs ])
 
@@ -704,7 +705,7 @@ let expand_horizontal_reduce ren r =
   let op, num_axes = reduce_arg r and inp = nth r 0 in
   let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
   let add =
-    if fuses ren r inp then fun x y -> rtag ~tag:fusable (alu x op [ y ])
+    if fuses ren r inp then fun x y -> mark_fusable (alu x op [ y ])
     else fun x y -> alu x op [ y ]
   in
   match List.map (index_ints inp) (product sizes) with
@@ -877,15 +878,15 @@ let pm_fuse_products =
       [
         rule (Upat.op ~name:"s" Op.Add) (fun m ->
             let s = m "s" in
-            if not (Option.equal Tag.equal (tag s) (Some fusable)) then None
+            if not (equal_arg (arg s) fusable) then None
             else
               match src s with
               | [ sum; p ] -> (
                   match product_operands p with
                   | Some (a, b) ->
                       Some (alu a Op.Mulacc [ b; first_lane sum ])
-                  | None -> Some (replace s ~tag:None))
-              | _ -> Some (replace s ~tag:None));
+                  | None -> Some (replace s ~arg:No_arg))
+              | _ -> Some (replace s ~arg:No_arg));
       ])
 
 (* Barriers *)

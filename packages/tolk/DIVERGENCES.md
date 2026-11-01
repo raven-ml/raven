@@ -381,8 +381,7 @@ stamps nothing (D146).
   name compiled programs in caches that tolk alone writes, so the digest
   is free to differ, and tolk takes the one OCaml's standard library
   has, which has MD5 and BLAKE2 but not SHA-256.
-- **Pinned by:** `Tolk.Ops › key › ignores tags` and `Tolk.Ops ›
-  key › tells arguments apart`.
+- **Pinned by:** `Tolk.Ops › key › tells arguments apart`.
 
 ## D13. Folding reads and writes committed constants at their width
 

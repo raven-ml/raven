@@ -34,7 +34,7 @@ let parameters u =
   List.sort_uniq Ops.compare
     (List.filter
        (fun n ->
-         Ops.op n = Param && Ops.tag n = None && (param_arg n).slot >= 0)
+         Ops.op n = Param && (param_arg n).slot >= 0)
        (Ops.toposort ~calls:Skip u))
 
 (* The parameter the [i]th input [u] becomes: of its type, device, size and
@@ -95,7 +95,7 @@ let binds_inputs ~inputs captured lowered =
 let lowers_the_same lower =
   let first = lower () in
   equal uop first
-    (Uops.numbered_like first (Uops.placeholders_like first (lower ())))
+    (Uops.numbered_like first (lower ()))
 
 (* Replays
 
@@ -325,7 +325,6 @@ let lowers_as_recorded case =
       let golden = Golden.sink file in
       equal text (Graph.to_string golden)
         (lower case |> Uops.binaries_as_sources
-        |> Uops.placeholders_like golden
         |> Uops.numbered_like golden |> Graph.to_string))
 
 let recorded =

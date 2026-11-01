@@ -76,10 +76,7 @@ let name u =
   | Some d -> d
   | None -> invalid_arg (Format.asprintf "%a has no device" Ops.pp u)
 
-let is_slot u =
-  Ops.op u = Op.Param
-  && Option.is_none (Ops.tag u)
-  && Ops.addrspace u <> Some Dtype.Alu
+let is_slot u = Ops.op u = Op.Param && Ops.addrspace u <> Some Dtype.Alu
 
 let bytes u = Shape.max_numel u * Dtype.itemsize (Ops.dtype u)
 

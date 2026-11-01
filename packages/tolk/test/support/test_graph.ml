@@ -30,7 +30,7 @@ let goldens =
        (fun file -> Golden.graph file (fun () -> Golden.sink file))
        [ "matmul.golden"; "sum_of_cast.golden"; "sum_of_cast_kernels.golden" ])
 
-(* One node for each kind of argument and tag. *)
+(* One node for each kind of argument. *)
 let kinds =
   let k = Ops.kernel_info in
   [
@@ -146,9 +146,6 @@ let kinds =
                      [ ((Upcast, [ 2 ]), 2) ] );
              })
         Wmma );
-    ("a tuple tag", Ops.v ~src:[ x ] ~tag:(Tuple [ Int 0; Dtype Int32 ]) Add);
-    ("a bytes tag", Ops.rtag ~tag:(Bytes "\x01") x);
-    ("a string tag", Ops.rtag ~tag:(String "mergeable") x);
     ( "a chain of 100000 nodes",
       List.fold_left
         (fun u _ -> Ops.v ~src:[ u ] Neg)
@@ -168,9 +165,8 @@ let text =
           equal Windtrap.text
             "0 Ops.CONST dtypes.weakint [] 1\n\
              1 Ops.CAST dtypes.f32 [0] dtypes.f32\n\
-             2 Ops.ADD dtypes.f32 [1, 1] tag=(0, dtypes.i32)\n"
-            (Graph.to_string
-               (Ops.v ~src:[ x; x ] ~tag:(Tuple [ Int 0; Dtype Int32 ]) Add)));
+             2 Ops.ADD dtypes.f32 [1, 1]\n"
+            (Graph.to_string (Ops.v ~src:[ x; x ] Add)));
       test "writes a record's fields that differ from their default" (fun () ->
           equal Windtrap.text
             "0 Ops.CONST dtypes.weakint [] 16\n\
@@ -246,12 +242,9 @@ let errors =
       test "rejects an unknown field" (fun () ->
           rejects "KernelInfo has no field size"
             "0 Ops.SINK dtypes.void [] KernelInfo(size=1)\n");
-      test "rejects text after the argument that is not a tag" (fun () ->
-          rejects "expected \" tag=\" at column 32"
+      test "rejects text after the argument" (fun () ->
+          rejects "unexpected text at column 32"
             "0 Ops.CONST dtypes.weakint [] 1 2\n");
-      test "rejects text after the tag" (fun () ->
-          rejects "unexpected text at column 38"
-            "0 Ops.CONST dtypes.weakint [] 1 tag=1 2\n");
     ]
 
 let () = exit (run "Graph" [ goldens; round_trip; text; numbers; errors ])
