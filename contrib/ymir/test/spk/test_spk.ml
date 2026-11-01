@@ -146,16 +146,11 @@ let summary = (fward - 1) * 1024
 let last_word =
   Int32.to_int (String.get_int32_le little (summary + 24 + 16 + 20))
 
-(* [contains sub e] is whether [sub] occurs in [e]. *)
-let contains sub e =
-  let n = String.length sub and m = String.length e in
-  let rec at i = i + n <= m && (String.sub e i n = sub || at (i + 1)) in
-  at 0
-
 let error_with sub = function
   | Ok _ -> failwith "a corrupt file read"
   | Error e ->
-      equal bool true (String.starts_with ~prefix:"bad: " e && contains sub e)
+      starts_with ~prefix:"bad: " e;
+      contains ~sub e
 
 let set_double b o x = Bytes.set_int64_le b o (Int64.bits_of_float x)
 
@@ -172,7 +167,7 @@ let corrupted =
           error_with "comes twice"
             (corrupt (fun b -> set_double b summary (float_of_int fward))));
       test "a NEXT outside the file" (fun () ->
-          error_with "NEXT, 1e+06"
+          error_with "NEXT, 1000000,"
             (corrupt (fun b -> set_double b summary 1e6)));
       test "an NSUM above 25" (fun () ->
           error_with "NSUM, 26"

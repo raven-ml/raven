@@ -99,6 +99,11 @@ exception Fail of string
 
 let fail fmt = Printf.ksprintf (fun s -> raise (Fail s)) fmt
 
+(* [num x] is the shortest decimal that reads as [x], the same text on every
+   system. [Printf]'s [%g] is the C library's, which under mingw-w64 writes
+   three exponent digits: 1e+006. *)
+let num x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
+
 (* [floats ~little src ~offset ~count] is the [count] float64 of [src] from
    byte [offset]: a host tensor over a host copy of those bytes alone, each
    element's bytes reversed where the file's order is not the host's. *)
@@ -169,13 +174,13 @@ let read_buffer ~file ~at src =
     let sets = if seg.kind = 2 then 3 else 6 in
     if not (Float.is_finite init && Float.is_finite intlen && intlen > 0.)
     then
-      fail "%s: segment %S's INIT %g and INTLEN %g name no records" file
-        seg.name init intlen;
+      fail "%s: segment %S's INIT %s and INTLEN %s name no records" file
+        seg.name (num init) (num intlen);
     let whole x = Float.is_integer x && x >= 1. && x <= float_of_int size in
     if not (whole rsize && whole count) then
-      fail "%s: segment %S's directory, RSIZE %g and N %g, does not fit its \
+      fail "%s: segment %S's directory, RSIZE %s and N %s, does not fit its \
             %d words"
-        file seg.name rsize count size;
+        file seg.name (num rsize) (num count) size;
     let rsize = int_of_float rsize and records = int_of_float count in
     if rsize < 2 + sets
        || (rsize - 2) mod sets <> 0
@@ -206,14 +211,16 @@ let read_buffer ~file ~at src =
       if
         not
           (Float.is_integer next && next >= 0. && next <= float_of_int total)
-      then fail "%s: summary record %d's NEXT, %g, names no record" file r next;
+      then
+        fail "%s: summary record %d's NEXT, %s, names no record" file r
+          (num next);
       if
         not
           (Float.is_integer count && count >= 0.
           && count <= float_of_int max_summaries)
       then
-        fail "%s: summary record %d's NSUM, %g, is not 0 to %d" file r count
-          max_summaries;
+        fail "%s: summary record %d's NSUM, %s, is not 0 to %d" file r
+          (num count) max_summaries;
       let one acc k =
         let o = (3 + (k * summary_words)) * word in
         let i j = int32 s (o + (nd * word) + (4 * j)) in
@@ -228,9 +235,9 @@ let read_buffer ~file ~at src =
         let first_s = double s o and last_s = double s (o + word) in
         let bounded x = Float.abs x < epoch_bound in
         if not (bounded first_s && bounded last_s) then
-          fail "%s: segment %S's epochs, %g and %g s past J2000, are not \
+          fail "%s: segment %S's epochs, %s and %s s past J2000, are not \
                 within 2^62 s of it"
-            file name first_s last_s;
+            file name (num first_s) (num last_s);
         let descriptor =
           {
             name;
@@ -512,9 +519,9 @@ let state_named fn t ~target ~center tdb =
   Nx.check Nx.Ptree.tensor served et (fun i e ->
       Invalid_argument
         (strf
-           "%s: TDB %.17g s past J2000%s is outside %s's segments that chain \
+           "%s: TDB %s s past J2000%s is outside %s's segments that chain \
             body %d to body %d"
-           fn (Nx.item [] e) (at_index i) t.file target center));
+           fn (num (Nx.item [] e)) (at_index i) t.file target center));
   let p, v =
     match pieces with
     | [] -> assert false
