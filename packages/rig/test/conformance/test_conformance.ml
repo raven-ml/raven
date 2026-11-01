@@ -641,25 +641,94 @@ let edge_memory =
 let span ~width ~rows ~pitch =
   if rows = 0 then 0 else ((rows - 1) * pitch) + width
 
-(* Widths at 0, 1, a few bytes, pages, and around SDMA's 14-bit fields;
-   pads of 0, where rows lie end to end, and of a few bytes. *)
+(* SDMA's sub-window copy bounds a packet's rows at 2^14, and from GC 12 its
+   rows and the elements of its rows at 2^16, an element being up to 16
+   bytes, and its pitches at 2^16 elements. *)
+let sub_window = 1 lsl 14
+let sub_window_12 = 1 lsl 16
+
+(* The pad that puts [width] plus it at a multiple of [m], and [k] times [m]
+   further. *)
+let aligned ~m width k = ((m - (width mod m)) mod m) + (k * m)
+
+(* Boxes of three shapes. A few rows: widths at 0, 1, a few bytes, multiples
+   of 4, pages and around SDMA's 14-bit fields, and pads of 0, where rows lie
+   end to end, of a few bytes, of whatever puts a pitch at a multiple of 4,
+   and around a pitch of 2^16 bytes. Many rows: up to 64 bytes each, at each side of
+   [sub_window] and [sub_window_12] rows. Wide rows: two or three, of 16-byte
+   elements at each side of those counts. *)
 let boxes =
   let open Gen in
-  let width =
-    frequency
-      [
-        (2, constant 0);
-        (4, int_range 1 64);
-        (2, int_range 65 4096);
-        (1, of_list ~pp:Format.pp_print_int [ 16383; 16384; 16385 ]);
-      ]
+  let int = Format.pp_print_int in
+  let shape width rows pad =
+    let* width = width in
+    pair (pair (constant width) rows) (pair (pad width) (pad width))
   in
-  let rows =
-    frequency [ (2, constant 0); (2, constant 1); (6, int_range 2 6) ]
+  let few =
+    let width =
+      frequency
+        [
+          (2, constant 0);
+          (4, int_range 1 64);
+          (2, int_range 65 4096);
+          (2, map (fun k -> 4 * k) (int_range 1 16));
+          (1, of_list ~pp:int [ 16383; 16384; 16385 ]);
+        ]
+    in
+    let rows =
+      frequency [ (2, constant 0); (2, constant 1); (6, int_range 2 6) ]
+    in
+    let pad width =
+      frequency
+        [
+          (3, constant 0);
+          (1, int_range 1 37);
+          (2, map (aligned ~m:4 width) (int_range 0 9));
+          ( 2,
+            map
+              (fun k -> sub_window_12 - width + (4 * k))
+              (int_range (-1) 1) );
+        ]
+    in
+    shape width rows pad
   in
-  let pad = frequency [ (2, constant 0); (1, int_range 1 37) ] in
-  let side =
-    let+ m = edge_memory and+ offset = int_range 0 19 and+ pad = pad in
+  let many =
+    let around n = of_list ~pp:int [ n - 1; n; n + 1 ] in
+    let rows =
+      frequency [ (1, around sub_window); (1, around sub_window_12) ]
+    in
+    let pad width =
+      frequency
+        [
+          (1, constant 0);
+          (1, int_range 1 3);
+          (2, map (aligned ~m:4 width) (int_range 0 9));
+        ]
+    in
+    shape (int_range 1 64) rows pad
+  in
+  let wide =
+    let width =
+      map
+        (fun n -> 16 * n)
+        (of_list ~pp:int
+           [
+             sub_window - 1;
+             sub_window;
+             sub_window + 1;
+             sub_window_12 - 1;
+             sub_window_12;
+             sub_window_12 + 1;
+           ])
+    in
+    let pad _ =
+      frequency
+        [ (1, constant 0); (1, map (fun k -> 16 * k) (int_range 1 3)) ]
+    in
+    shape width (int_range 2 3) pad
+  in
+  let side pad =
+    let+ m = edge_memory and+ offset = int_range 0 19 in
     (m, offset, pad)
   in
   let slack = frequency [ (1, constant 0); (2, int_range 1 64) ] in
@@ -671,11 +740,10 @@ let boxes =
          slack %d"
         b.rows b.width pp_edge_memory sm so (b.width + sp) pp_edge_memory dm
         d_o (b.width + dp) b.slack)
-    (let+ width = width
-     and+ rows = rows
-     and+ src = side
-     and+ dst = side
-     and+ slack = slack in
+    (let* (width, rows), (sp, dp) =
+       frequency [ (6, few); (2, many); (1, wide) ]
+     in
+     let+ src = side sp and+ dst = side dp and+ slack = slack in
      { width; rows; sides = (src, dst); slack })
 
 (* A copy part of rows and pitches copies each row of its source into its
@@ -694,6 +762,24 @@ let edge_boxes (module G : Gpu) b =
     (b.slack = 0 && rows > 0 && width > 0);
   cover "Device memory on both sides, rows apart"
     (sm = Device && dm = Device && rows > 1 && (sp > 0 || dp > 0));
+  cover "rows apart at pitches of multiples of 4"
+    (rows > 1 && width > 0
+    && (sp > 0 || dp > 0)
+    && src_pitch mod 4 = 0
+    && dst_pitch mod 4 = 0);
+  cover "an offset in its word plus the width past a pitch of 4-byte words"
+    (rows > 1 && width > 0
+    && src_pitch mod 4 = 0
+    && dst_pitch mod 4 = 0
+    && ((so land 3) + width > src_pitch || (d_o land 3) + width > dst_pitch));
+  cover "more rows than one packet of 2^14" (rows > sub_window && width > 0);
+  cover "2^16 rows or more" (rows >= sub_window_12 - 1 && width > 0);
+  cover "a pitch around 2^16 bytes"
+    (rows > 1 && width > 0
+    && (abs (src_pitch - sub_window_12) <= 4
+       || abs (dst_pitch - sub_window_12) <= 4));
+  cover "rows of 2^14 elements of 16 bytes or more"
+    (rows > 1 && width >= 16 * (sub_window - 1));
   G.with_shared_driver @@ fun g ->
   if (G.D.facts g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
