@@ -20,6 +20,13 @@ jobs:
     # A run takes about an hour; this ends a hang before GitHub's six hours.
     timeout-minutes: 120
 
+    # On Windows, which has no fork, windtrap runs a suite's tests in its own
+    # process, so a test that crashes it ends the suite with no report. There
+    # a suite prints a line as each test ends: the crashed test is the one
+    # after the last line, in the order its --list prints.
+    env:
+      WINDTRAP_VERBOSE: ${{ startsWith(matrix.os, 'windows') && '1' || '0' }}
+
     defaults:
       run:
         shell: bash
