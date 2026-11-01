@@ -254,15 +254,19 @@ let infinity_of s = Float.copy_sign Float.infinity s
 
 (* [overflows_at_the_edge ?sat dt] checks that narrowing keeps [dt]'s greatest
    value and the float32 below the edge, and gives the code of an infinity, a
-   NaN in a format without one, from the edge on. *)
+   NaN in a format without one, above the edge. The edge is a tie, which rounds
+   to the even code: the greatest one if it is even, as e4m3's is. *)
 let overflows_at_the_edge ?sat dt =
   List.iter
     (fun s ->
       let x = narrowed ?sat dt and greatest = encode dt (`Float (s *. top dt)) in
       let infinity = encode dt (`Float (infinity_of s)) in
+      let tie = if greatest land 1 = 0 then greatest else infinity in
       equal ~msg:"the greatest value" hex greatest (x (s *. top dt));
       equal ~msg:"below the edge" hex greatest (x (s *. below (edge dt)));
-      equal ~msg:"the edge" hex infinity (x (s *. edge dt));
+      equal ~msg:"the edge" hex tie (x (s *. edge dt));
+      equal ~msg:"above the edge" hex infinity
+        (x (s *. f32 (bits (edge dt) + 1)));
       equal ~msg:"an infinity" hex infinity (x (infinity_of s)))
     [ 1.; -1. ]
 
@@ -277,7 +281,7 @@ let overflow =
           overflows_at_the_edge dt;
           overflows_at_the_edge ~sat:false dt);
       cases
-        "without saturation, an 8-bit float is an infinity or its NaN from its \
+        "without saturation, an 8-bit float is an infinity or its NaN past its \
          greatest value plus half an ulp"
         ~id:alias Dtype.fp8s
         (overflows_at_the_edge ~sat:false);

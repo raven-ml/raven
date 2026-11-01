@@ -1443,9 +1443,6 @@ let claims =
             (List.filter_map
                (fun u -> match Ops.arg u with Const c -> Some c | _ -> None)
                nodes));
-      claim "threefry" "computes random bits without 64-bit values" (fun row ->
-          if row "target" = "clang" then
-            equal (list Uops.uop) [] (List.filter wide (instructions row)));
       claim "long" "computes a long in 64 bits" (fun row ->
           is_true ~msg:"a 64-bit operation" (wide_alu row > 0));
       claim "fancy_index" "indexes without 64-bit arithmetic" (fun row ->

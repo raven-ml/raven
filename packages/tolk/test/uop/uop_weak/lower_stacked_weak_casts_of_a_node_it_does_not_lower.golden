@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 0 Ops.CUSTOM dtypes.weakint [] ("n", dtypes.weakint)
 1 Ops.CAST dtypes.weakfloat [0] dtypes.weakfloat
 2 Ops.CAST dtypes.weakint [1] dtypes.weakint

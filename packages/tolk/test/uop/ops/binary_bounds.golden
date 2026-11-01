@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 op	dtype	a_lo	a_hi	b_lo	b_hi	vmin	vmax
 Ops.ADD	dtypes.weakint	0	0	0	0	0	0
 Ops.ADD	dtypes.weakint	0	0	3	3	3	3

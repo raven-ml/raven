@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 target	device	renderer	arch
 clang	CPU	CLANG	x86_64,x86-64
 metal	METAL	METAL	Apple9

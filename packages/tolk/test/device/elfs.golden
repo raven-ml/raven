@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 program	name	target	params	lib_bytes
 elementwise	E_16	CPU:CLANG:x86_64,x86-64	3	1616
 elementwise_metal	E_4_4	METAL:METAL:Apple9	3	736

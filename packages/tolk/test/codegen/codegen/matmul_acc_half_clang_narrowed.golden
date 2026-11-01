@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 
 struct r_8_8_8_args { __fp16* data0_64; __fp16* data1_64; __fp16* data2_64; int block_lo_; int block_hi_; };
 __attribute__((min_vector_width(512))) void r_8_8_8(const struct r_8_8_8_args* args) {

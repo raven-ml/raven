@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.u32 [0] ParamArg(slot=-1, dtype=dtypes.u32, vmin_vmax=(0, 255), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 4294967292

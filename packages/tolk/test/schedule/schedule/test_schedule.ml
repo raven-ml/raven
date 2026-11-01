@@ -31,9 +31,11 @@ let () =
 let programs =
   [
     "add";
+    "add_row_from_self";
     "assign";
     "assign_bitcast";
     "assign_double_diamond";
+    "assign_flipped_from_self";
     "assign_permuted_self";
     "attention";
     "cat";
@@ -60,6 +62,7 @@ let programs =
     "read_overwritten_through";
     "read_then_overwrite";
     "reduce_multiple_paths";
+    "roll_from_self";
     "setitem";
     "softmax";
     "sort";
@@ -77,8 +80,10 @@ let programs =
 let kernel_graphs =
   [
     "add_kernels";
+    "add_row_from_self_kernels";
     "assign_bitcast_kernels";
     "assign_double_diamond_kernels";
+    "assign_flipped_from_self_kernels";
     "assign_kernels";
     "assign_permuted_self_kernels";
     "attention_kernels";
@@ -110,6 +115,7 @@ let kernel_graphs =
     "read_overwritten_through_kernels";
     "read_then_overwrite_kernels";
     "reduce_multiple_paths_kernels";
+    "roll_from_self_kernels";
     "setitem_kernels";
     "softmax_kernels";
     "sort_kernels";

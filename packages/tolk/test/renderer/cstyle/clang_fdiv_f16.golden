@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 
 struct fdiv_args { __fp16* data0_16; __fp16* data1_16; __fp16* data2_16; };
 __attribute__((min_vector_width(512))) void fdiv(const struct fdiv_args* args) {

@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
@@ -20,7 +20,7 @@
 18 Ops.WHERE dtypes.weakint [8, 4, 14]
 19 Ops.INDEX dtypes.f32 [1, 3, 18]
 20 Ops.LOAD dtypes.f32 [19]
-21 Ops.INDEX dtypes.f32 [1, 3, 18, 3]
+21 Ops.INDEX dtypes.f32 [1, 3, 4, 3]
 22 Ops.LOAD dtypes.f32 [21, 7, 8]
 23 Ops.INDEX dtypes.f32 [1, 4]
 24 Ops.LOAD dtypes.f32 [23, 7, 8]
@@ -43,35 +43,34 @@
 41 Ops.LOAD dtypes.f32 [23]
 42 Ops.WHERE dtypes.f32 [8, 25, 14]
 43 Ops.STORE dtypes.void [23, 42]
-44 Ops.CONST dtypes.weakfloat [] 2.5
-45 Ops.CAST dtypes.f32 [44] dtypes.f32
-46 Ops.LOAD dtypes.f32 [23, 45, 8]
-47 Ops.LOAD dtypes.f32 [23, 25, 8]
-48 Ops.CAST dtypes.f64 [47] dtypes.f64
-49 Ops.PARAM dtypes.f64 [2] ParamArg(slot=-1, dtype=dtypes.f64, vmin_vmax=(-1.0, 1.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
-50 Ops.CAST dtypes.f32 [49] dtypes.f32
-51 Ops.LOAD dtypes.f32 [23, 50, 8]
-52 Ops.CAST dtypes.f64 [51] dtypes.f64
-53 Ops.CAST dtypes.f64 [24] dtypes.f64
-54 Ops.WHERE dtypes.f64 [8, 53, 49]
-55 Ops.CONST dtypes.weakfloat [] -0.5
+44 Ops.CAST dtypes.f32 [14] dtypes.f32
+45 Ops.LOAD dtypes.f32 [23, 44, 8]
+46 Ops.CONST dtypes.weakfloat [] 2.5
+47 Ops.CAST dtypes.f32 [46] dtypes.f32
+48 Ops.LOAD dtypes.f32 [23, 47, 8]
+49 Ops.LOAD dtypes.f32 [23, 25, 8]
+50 Ops.CAST dtypes.f64 [24] dtypes.f64
+51 Ops.CAST dtypes.f64 [25] dtypes.f64
+52 Ops.WHERE dtypes.f64 [8, 50, 51]
+53 Ops.PARAM dtypes.f64 [2] ParamArg(slot=-1, dtype=dtypes.f64, vmin_vmax=(-1.0, 1.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+54 Ops.CAST dtypes.f32 [53] dtypes.f32
+55 Ops.LOAD dtypes.f32 [23, 54, 8]
 56 Ops.CAST dtypes.f64 [55] dtypes.f64
-57 Ops.CAST dtypes.f32 [56] dtypes.f32
-58 Ops.LOAD dtypes.f32 [23, 57, 8]
+57 Ops.WHERE dtypes.f64 [8, 50, 53]
+58 Ops.CONST dtypes.weakfloat [] -0.5
 59 Ops.CAST dtypes.f64 [58] dtypes.f64
-60 Ops.CAST dtypes.f32 [55] dtypes.f32
-61 Ops.LOAD dtypes.f32 [23, 60, 8]
-62 Ops.CAST dtypes.f64 [61] dtypes.f64
-63 Ops.CAST dtypes.f32 [38] dtypes.f32
-64 Ops.WHERE dtypes.f32 [8, 63, 25]
-65 Ops.CONST dtypes.bool [] True
-66 Ops.CMPNE dtypes.bool [8, 65]
-67 Ops.LOAD dtypes.f32 [23, 25, 66]
-68 Ops.LOAD dtypes.f32 [23, 7, 66]
-69 Ops.WHERE dtypes.f32 [13, 24, 25]
-70 Ops.WHERE dtypes.f32 [8, 41, 25]
-71 Ops.CMPNE dtypes.bool [13, 65]
-72 Ops.LOAD dtypes.f32 [23, 7, 71]
-73 Ops.WHERE dtypes.f32 [8, 25, 72]
-74 Ops.SINK dtypes.void [9, 12, 17, 20, 22, 24, 26, 30, 31, 34, 38, 40, 41, 43, 24, 46, 46, 47, 48, 51, 52, 54, 59, 62, 64, 67, 68, 69, 70, 73, 47, 67]
+60 Ops.WHERE dtypes.f64 [8, 50, 59]
+61 Ops.WHERE dtypes.f64 [8, 50, 58]
+62 Ops.CAST dtypes.f32 [38] dtypes.f32
+63 Ops.WHERE dtypes.f32 [8, 62, 25]
+64 Ops.CONST dtypes.bool [] True
+65 Ops.CMPNE dtypes.bool [8, 64]
+66 Ops.LOAD dtypes.f32 [23, 25, 65]
+67 Ops.LOAD dtypes.f32 [23, 44, 65]
+68 Ops.WHERE dtypes.f32 [13, 24, 25]
+69 Ops.WHERE dtypes.f32 [8, 41, 25]
+70 Ops.CMPNE dtypes.bool [13, 64]
+71 Ops.LOAD dtypes.f32 [23, 7, 70]
+72 Ops.WHERE dtypes.f32 [8, 25, 71]
+73 Ops.SINK dtypes.void [9, 12, 17, 20, 22, 24, 26, 30, 31, 34, 38, 40, 41, 43, 45, 48, 48, 49, 52, 55, 56, 57, 60, 61, 63, 66, 67, 68, 69, 72, 49, 66]
 

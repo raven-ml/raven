@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -2690,6 +2690,10 @@ schedule/indexing/roll.golden
 schedule/indexing/roll_rangeified.golden
 schedule/indexing/scalar_and_wide_uses.golden
 schedule/indexing/scalar_and_wide_uses_rangeified.golden
+schedule/indexing/select_no_lane.golden
+schedule/indexing/select_no_lane_rangeified.golden
+schedule/indexing/select_no_lane_rows.golden
+schedule/indexing/select_no_lane_rows_rangeified.golden
 schedule/indexing/setitem.golden
 schedule/indexing/setitem_rangeified.golden
 schedule/indexing/shared_sum.golden
@@ -3321,6 +3325,10 @@ schedule/rangeify/zero_size_children_kernels.golden
 schedule/schedule/add.golden
 schedule/schedule/add_kernels.golden
 schedule/schedule/add_linear.golden
+schedule/schedule/add_row_from_self.golden
+schedule/schedule/add_row_from_self_kernels.golden
+schedule/schedule/add_row_from_self_linear.golden
+schedule/schedule/add_row_from_self_schedule.golden
 schedule/schedule/add_schedule.golden
 schedule/schedule/arguments.golden
 schedule/schedule/assign.golden
@@ -3332,6 +3340,10 @@ schedule/schedule/assign_double_diamond.golden
 schedule/schedule/assign_double_diamond_kernels.golden
 schedule/schedule/assign_double_diamond_linear.golden
 schedule/schedule/assign_double_diamond_schedule.golden
+schedule/schedule/assign_flipped_from_self.golden
+schedule/schedule/assign_flipped_from_self_kernels.golden
+schedule/schedule/assign_flipped_from_self_linear.golden
+schedule/schedule/assign_flipped_from_self_schedule.golden
 schedule/schedule/assign_kernels.golden
 schedule/schedule/assign_linear.golden
 schedule/schedule/assign_permuted_self.golden
@@ -3479,6 +3491,10 @@ schedule/schedule/reduce_multiple_paths.golden
 schedule/schedule/reduce_multiple_paths_kernels.golden
 schedule/schedule/reduce_multiple_paths_linear.golden
 schedule/schedule/reduce_multiple_paths_schedule.golden
+schedule/schedule/roll_from_self.golden
+schedule/schedule/roll_from_self_kernels.golden
+schedule/schedule/roll_from_self_linear.golden
+schedule/schedule/roll_from_self_schedule.golden
 schedule/schedule/setitem.golden
 schedule/schedule/setitem_kernels.golden
 schedule/schedule/setitem_linear.golden
@@ -3996,6 +4012,7 @@ uop/symbolic/TestSymbolic.test_range_div_its_symbolic_bound.golden
 uop/symbolic/TestSymbolic.test_range_mod_its_symbolic_bound.golden
 uop/symbolic/TestSymbolic.test_reshape_index_roundtrip.golden
 uop/symbolic/TestSymbolic.test_shift_0.golden
+uop/symbolic/TestSymbolic.test_signed_const_wraps.golden
 uop/symbolic/TestSymbolic.test_simplex_lt.golden
 uop/symbolic/TestSymbolic.test_sub_1.golden
 uop/symbolic/TestSymbolic.test_sub_self.golden
@@ -4025,6 +4042,7 @@ uop/symbolic/TestSymbolic.test_symbolic_gcd_div.golden
 uop/symbolic/TestSymbolic.test_symbolic_range_doesnt_collapse.golden
 uop/symbolic/TestSymbolic.test_trunc_noop.golden
 uop/symbolic/TestSymbolic.test_two_stage_const_folding.golden
+uop/symbolic/TestSymbolic.test_unpack_uint64_high.golden
 uop/symbolic/TestSymbolic.test_uop_gcd_method.golden
 uop/symbolic/TestSymbolic.test_where_cast.golden
 uop/symbolic/TestSymbolic.test_where_closure_folding.golden

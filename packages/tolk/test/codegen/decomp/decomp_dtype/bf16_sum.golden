@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.bf16 [0] ParamArg(slot=0, dtype=dtypes.bf16, device="CPU")
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -97,14 +97,13 @@
 95 Ops.CUSTOM dtypes.f32 [94] ("f2f bf16 f32 True", dtypes.f32)
 96 Ops.CAST dtypes.f32 [95] dtypes.f32
 97 Ops.ADD dtypes.f32 [92, 96]
-98 Ops.CUSTOM dtypes.f32 [97] ("f2f_clamp bf16 True", dtypes.f32)
-99 Ops.BITCAST dtypes.u32 [98] dtypes.u32
-100 Ops.CUSTOM dtypes.u16 [99] ("f2f f32 bf16 True", dtypes.u16)
-101 Ops.CUSTOM dtypes.f32 [100] ("f2f bf16 f32 True", dtypes.f32)
-102 Ops.BITCAST dtypes.u32 [101] dtypes.u32
-103 Ops.CUSTOM dtypes.u16 [102] ("f2f f32 bf16 True", dtypes.u16)
-104 Ops.STORE dtypes.void [57, 103]
-105 Ops.END dtypes.void [104, 3]
-106 Ops.SINK dtypes.void [105] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True)
-107 Ops.SINK dtypes.void [55, 106]
+98 Ops.BITCAST dtypes.u32 [97] dtypes.u32
+99 Ops.CUSTOM dtypes.u16 [98] ("f2f f32 bf16 True", dtypes.u16)
+100 Ops.CUSTOM dtypes.f32 [99] ("f2f bf16 f32 True", dtypes.f32)
+101 Ops.BITCAST dtypes.u32 [100] dtypes.u32
+102 Ops.CUSTOM dtypes.u16 [101] ("f2f f32 bf16 True", dtypes.u16)
+103 Ops.STORE dtypes.void [57, 102]
+104 Ops.END dtypes.void [103, 3]
+105 Ops.SINK dtypes.void [104] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True)
+106 Ops.SINK dtypes.void [55, 105]
 

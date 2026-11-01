@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 #define half _Float16
 extern "C" __attribute__((device, pure)) half __ocml_exp2_f16(half);
 extern "C" __attribute__((device, pure)) half __ocml_log2_f16(half);

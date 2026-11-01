@@ -224,6 +224,10 @@ PROGRAMS = {
     "contiguous": lambda: (empty(4, 4) + 1).contiguous().sum(0),
     "assign": lambda: empty(4, 4).assign(empty(4, 4) + 1),
     "assign_permuted_self": lambda: (lambda a: a.assign(a.permute(1, 0) + 1))(empty(4, 4).contiguous()),
+    # stores whose value reads the destination at other indices, as runtime/test_assign.py's *_from_self
+    "assign_flipped_from_self": lambda: (lambda a: a.flip(0).assign(a))(empty(3, dtype=dtypes.int32).contiguous()),
+    "add_row_from_self": lambda: (lambda a: a.assign(a + a[0]))(empty(3, 2, dtype=dtypes.int32).contiguous()),
+    "roll_from_self": lambda: (lambda a: a.assign(a.roll(1, 0)))(empty(2, 2, dtype=dtypes.int32).contiguous()),
     "assign_double_diamond": assign_double_diamond,
     "read_then_overwrite": read_then_overwrite,
     "read_overwritten_through": read_overwritten_through,

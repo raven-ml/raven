@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 platform	case	lib	tree	name_path	ld_library_path	paths	extra_paths	found
 linux	name_path_file	tk-a	x/custom.bin=text e/libtk-a.so=elf	x/custom.bin	-	tk-a	e	x/custom.bin
 linux	name_path_missing_file	tkb	e/libtkb.so=elf	x/none.so	-	tkb	e	e/libtkb.so

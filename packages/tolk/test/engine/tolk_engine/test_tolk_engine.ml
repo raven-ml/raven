@@ -596,8 +596,10 @@ let writes_what_it_computes name =
 let recorded =
   [
     "add";
+    "add_row_from_self";
     "assign";
     "assign_double_diamond";
+    "assign_flipped_from_self";
     "assign_permuted_self";
     "attention";
     "cat";
@@ -622,6 +624,7 @@ let recorded =
     "precompiled_scalar";
     "read_then_overwrite";
     "reduce_multiple_paths";
+    "roll_from_self";
     "setitem";
     "softmax";
     "sort";

@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 extern "C" __attribute__((device, pure)) double __ocml_exp2_f64(double);
 extern "C" __attribute__((device, pure)) double __ocml_log2_f64(double);
 extern "C" __attribute__((device)) double __ocml_sin_f64(double);

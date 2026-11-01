@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 
 struct constants_args { _Bool* data0_1; _Bool* data1_1; signed char* data2_1; unsigned char* data3_1; short* data4_1; unsigned short* data5_1; int* data6_1; unsigned int* data7_1; unsigned int* data8_1; long* data9_1; unsigned long* data10_1; unsigned long* data11_1; __fp16* data12_1; unsigned short* data13_1; float* data14_1; double* data15_1; };
 __attribute__((min_vector_width(512))) void constants(const struct constants_args* args) {

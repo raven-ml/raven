@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 graph	arguments
 add_kernels	-
 sum_kernels	-
@@ -21,6 +21,9 @@ reduce_multiple_paths_kernels	-
 contiguous_kernels	-
 assign_kernels	-
 assign_permuted_self_kernels	-
+assign_flipped_from_self_kernels	-
+add_row_from_self_kernels	-
+roll_from_self_kernels	-
 assign_double_diamond_kernels	-
 read_then_overwrite_kernels	-
 read_overwritten_through_kernels	-

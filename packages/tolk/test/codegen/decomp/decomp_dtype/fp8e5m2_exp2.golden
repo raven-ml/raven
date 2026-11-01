@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 16
 2 Ops.PARAM dtypes.fp8e5m2 [1] ParamArg(slot=0, dtype=dtypes.fp8e5m2, device="CPU")
@@ -287,170 +287,166 @@
 285 Ops.WHERE dtypes.f32 [245, 28, 284]
 286 Ops.WHERE dtypes.f32 [243, 22, 285]
 287 Ops.WHERE dtypes.f32 [242, 18, 286]
-288 Ops.CUSTOM dtypes.f32 [287] ("f2f_clamp fp8e5m2 True", dtypes.f32)
-289 Ops.BITCAST dtypes.u32 [288] dtypes.u32
-290 Ops.CUSTOM dtypes.u8 [289] ("f2f f32 fp8e5m2 True", dtypes.u8)
-291 Ops.CUSTOM dtypes.f32 [290] ("f2f fp8e5m2 f32 True", dtypes.f32)
-292 Ops.CAST dtypes.f32 [291] dtypes.f32
-293 Ops.BITCAST dtypes.u32 [292] dtypes.u32
-294 Ops.CUSTOM dtypes.u8 [293] ("f2f f32 fp8e5m2 True", dtypes.u8)
-295 Ops.STORE dtypes.void [221, 294]
-296 Ops.INDEX dtypes.u8 [219, 226]
-297 Ops.INDEX dtypes.f32 [239, 81]
-298 Ops.CAST dtypes.f32 [297] dtypes.f32
-299 Ops.CMPNE dtypes.bool [298, 298]
-300 Ops.CMPLT dtypes.bool [298, 19]
-301 Ops.CMPLT dtypes.bool [298, 23]
-302 Ops.CMPNE dtypes.bool [301, 25]
-303 Ops.CMPNE dtypes.bool [298, 27]
-304 Ops.CMPNE dtypes.bool [298, 31]
-305 Ops.WHERE dtypes.f32 [304, 298, 22]
-306 Ops.WHERE dtypes.f32 [299, 22, 305]
-307 Ops.WHERE dtypes.f32 [303, 306, 22]
-308 Ops.CMPLT dtypes.bool [307, 21]
-309 Ops.WHERE dtypes.f32 [308, 38, 40]
-310 Ops.ADD dtypes.f32 [307, 309]
-311 Ops.CAST dtypes.i32 [310] dtypes.i32
-312 Ops.CAST dtypes.f32 [311] dtypes.f32
-313 Ops.SUB dtypes.f32 [307, 312]
-314 Ops.MUL dtypes.f32 [246, 313]
-315 Ops.ADD dtypes.f32 [314, 259]
-316 Ops.MUL dtypes.f32 [315, 313]
-317 Ops.ADD dtypes.f32 [316, 262]
-318 Ops.MUL dtypes.f32 [317, 313]
-319 Ops.ADD dtypes.f32 [318, 265]
-320 Ops.MUL dtypes.f32 [319, 313]
-321 Ops.ADD dtypes.f32 [320, 268]
-322 Ops.MUL dtypes.f32 [321, 313]
-323 Ops.ADD dtypes.f32 [322, 271]
-324 Ops.MUL dtypes.f32 [323, 313]
-325 Ops.ADD dtypes.f32 [324, 62]
-326 Ops.SHR dtypes.i32 [311, 64]
-327 Ops.ADD dtypes.i32 [326, 66]
-328 Ops.SHL dtypes.i32 [327, 68]
-329 Ops.BITCAST dtypes.f32 [328] dtypes.f32
-330 Ops.MUL dtypes.f32 [325, 329]
-331 Ops.SUB dtypes.i32 [311, 326]
-332 Ops.ADD dtypes.i32 [331, 66]
-333 Ops.SHL dtypes.i32 [332, 68]
-334 Ops.BITCAST dtypes.f32 [333] dtypes.f32
-335 Ops.MUL dtypes.f32 [330, 334]
-336 Ops.WHERE dtypes.f32 [302, 28, 335]
-337 Ops.WHERE dtypes.f32 [300, 22, 336]
-338 Ops.WHERE dtypes.f32 [299, 18, 337]
-339 Ops.CUSTOM dtypes.f32 [338] ("f2f_clamp fp8e5m2 True", dtypes.f32)
-340 Ops.BITCAST dtypes.u32 [339] dtypes.u32
-341 Ops.CUSTOM dtypes.u8 [340] ("f2f f32 fp8e5m2 True", dtypes.u8)
-342 Ops.CUSTOM dtypes.f32 [341] ("f2f fp8e5m2 f32 True", dtypes.f32)
-343 Ops.CAST dtypes.f32 [342] dtypes.f32
-344 Ops.BITCAST dtypes.u32 [343] dtypes.u32
-345 Ops.CUSTOM dtypes.u8 [344] ("f2f f32 fp8e5m2 True", dtypes.u8)
-346 Ops.STORE dtypes.void [296, 345]
-347 Ops.INDEX dtypes.u8 [219, 230]
-348 Ops.INDEX dtypes.f32 [239, 125]
-349 Ops.CAST dtypes.f32 [348] dtypes.f32
-350 Ops.CMPNE dtypes.bool [349, 349]
-351 Ops.CMPLT dtypes.bool [349, 19]
-352 Ops.CMPLT dtypes.bool [349, 23]
-353 Ops.CMPNE dtypes.bool [352, 25]
-354 Ops.CMPNE dtypes.bool [349, 27]
-355 Ops.CMPNE dtypes.bool [349, 31]
-356 Ops.WHERE dtypes.f32 [355, 349, 22]
-357 Ops.WHERE dtypes.f32 [350, 22, 356]
-358 Ops.WHERE dtypes.f32 [354, 357, 22]
-359 Ops.CMPLT dtypes.bool [358, 21]
-360 Ops.WHERE dtypes.f32 [359, 38, 40]
-361 Ops.ADD dtypes.f32 [358, 360]
-362 Ops.CAST dtypes.i32 [361] dtypes.i32
-363 Ops.CAST dtypes.f32 [362] dtypes.f32
-364 Ops.SUB dtypes.f32 [358, 363]
-365 Ops.MUL dtypes.f32 [246, 364]
-366 Ops.ADD dtypes.f32 [365, 259]
-367 Ops.MUL dtypes.f32 [366, 364]
-368 Ops.ADD dtypes.f32 [367, 262]
-369 Ops.MUL dtypes.f32 [368, 364]
-370 Ops.ADD dtypes.f32 [369, 265]
-371 Ops.MUL dtypes.f32 [370, 364]
-372 Ops.ADD dtypes.f32 [371, 268]
-373 Ops.MUL dtypes.f32 [372, 364]
-374 Ops.ADD dtypes.f32 [373, 271]
-375 Ops.MUL dtypes.f32 [374, 364]
-376 Ops.ADD dtypes.f32 [375, 62]
-377 Ops.SHR dtypes.i32 [362, 64]
-378 Ops.ADD dtypes.i32 [377, 66]
-379 Ops.SHL dtypes.i32 [378, 68]
-380 Ops.BITCAST dtypes.f32 [379] dtypes.f32
-381 Ops.MUL dtypes.f32 [376, 380]
-382 Ops.SUB dtypes.i32 [362, 377]
-383 Ops.ADD dtypes.i32 [382, 66]
-384 Ops.SHL dtypes.i32 [383, 68]
-385 Ops.BITCAST dtypes.f32 [384] dtypes.f32
-386 Ops.MUL dtypes.f32 [381, 385]
-387 Ops.WHERE dtypes.f32 [353, 28, 386]
-388 Ops.WHERE dtypes.f32 [351, 22, 387]
-389 Ops.WHERE dtypes.f32 [350, 18, 388]
-390 Ops.CUSTOM dtypes.f32 [389] ("f2f_clamp fp8e5m2 True", dtypes.f32)
-391 Ops.BITCAST dtypes.u32 [390] dtypes.u32
-392 Ops.CUSTOM dtypes.u8 [391] ("f2f f32 fp8e5m2 True", dtypes.u8)
-393 Ops.CUSTOM dtypes.f32 [392] ("f2f fp8e5m2 f32 True", dtypes.f32)
-394 Ops.CAST dtypes.f32 [393] dtypes.f32
-395 Ops.BITCAST dtypes.u32 [394] dtypes.u32
-396 Ops.CUSTOM dtypes.u8 [395] ("f2f f32 fp8e5m2 True", dtypes.u8)
-397 Ops.STORE dtypes.void [347, 396]
-398 Ops.INDEX dtypes.u8 [219, 234]
-399 Ops.INDEX dtypes.f32 [239, 170]
-400 Ops.CAST dtypes.f32 [399] dtypes.f32
-401 Ops.CMPNE dtypes.bool [400, 400]
-402 Ops.CMPLT dtypes.bool [400, 19]
-403 Ops.CMPLT dtypes.bool [400, 23]
-404 Ops.CMPNE dtypes.bool [403, 25]
-405 Ops.CMPNE dtypes.bool [400, 27]
-406 Ops.CMPNE dtypes.bool [400, 31]
-407 Ops.WHERE dtypes.f32 [406, 400, 22]
-408 Ops.WHERE dtypes.f32 [401, 22, 407]
-409 Ops.WHERE dtypes.f32 [405, 408, 22]
-410 Ops.CMPLT dtypes.bool [409, 21]
-411 Ops.WHERE dtypes.f32 [410, 38, 40]
-412 Ops.ADD dtypes.f32 [409, 411]
-413 Ops.CAST dtypes.i32 [412] dtypes.i32
-414 Ops.CAST dtypes.f32 [413] dtypes.f32
-415 Ops.SUB dtypes.f32 [409, 414]
-416 Ops.MUL dtypes.f32 [246, 415]
-417 Ops.ADD dtypes.f32 [416, 259]
-418 Ops.MUL dtypes.f32 [417, 415]
-419 Ops.ADD dtypes.f32 [418, 262]
-420 Ops.MUL dtypes.f32 [419, 415]
-421 Ops.ADD dtypes.f32 [420, 265]
-422 Ops.MUL dtypes.f32 [421, 415]
-423 Ops.ADD dtypes.f32 [422, 268]
-424 Ops.MUL dtypes.f32 [423, 415]
-425 Ops.ADD dtypes.f32 [424, 271]
-426 Ops.MUL dtypes.f32 [425, 415]
-427 Ops.ADD dtypes.f32 [426, 62]
-428 Ops.SHR dtypes.i32 [413, 64]
-429 Ops.ADD dtypes.i32 [428, 66]
-430 Ops.SHL dtypes.i32 [429, 68]
-431 Ops.BITCAST dtypes.f32 [430] dtypes.f32
-432 Ops.MUL dtypes.f32 [427, 431]
-433 Ops.SUB dtypes.i32 [413, 428]
-434 Ops.ADD dtypes.i32 [433, 66]
-435 Ops.SHL dtypes.i32 [434, 68]
-436 Ops.BITCAST dtypes.f32 [435] dtypes.f32
-437 Ops.MUL dtypes.f32 [432, 436]
-438 Ops.WHERE dtypes.f32 [404, 28, 437]
-439 Ops.WHERE dtypes.f32 [402, 22, 438]
-440 Ops.WHERE dtypes.f32 [401, 18, 439]
-441 Ops.CUSTOM dtypes.f32 [440] ("f2f_clamp fp8e5m2 True", dtypes.f32)
+288 Ops.BITCAST dtypes.u32 [287] dtypes.u32
+289 Ops.CUSTOM dtypes.u8 [288] ("f2f f32 fp8e5m2 True", dtypes.u8)
+290 Ops.CUSTOM dtypes.f32 [289] ("f2f fp8e5m2 f32 True", dtypes.f32)
+291 Ops.CAST dtypes.f32 [290] dtypes.f32
+292 Ops.BITCAST dtypes.u32 [291] dtypes.u32
+293 Ops.CUSTOM dtypes.u8 [292] ("f2f f32 fp8e5m2 True", dtypes.u8)
+294 Ops.STORE dtypes.void [221, 293]
+295 Ops.INDEX dtypes.u8 [219, 226]
+296 Ops.INDEX dtypes.f32 [239, 81]
+297 Ops.CAST dtypes.f32 [296] dtypes.f32
+298 Ops.CMPNE dtypes.bool [297, 297]
+299 Ops.CMPLT dtypes.bool [297, 19]
+300 Ops.CMPLT dtypes.bool [297, 23]
+301 Ops.CMPNE dtypes.bool [300, 25]
+302 Ops.CMPNE dtypes.bool [297, 27]
+303 Ops.CMPNE dtypes.bool [297, 31]
+304 Ops.WHERE dtypes.f32 [303, 297, 22]
+305 Ops.WHERE dtypes.f32 [298, 22, 304]
+306 Ops.WHERE dtypes.f32 [302, 305, 22]
+307 Ops.CMPLT dtypes.bool [306, 21]
+308 Ops.WHERE dtypes.f32 [307, 38, 40]
+309 Ops.ADD dtypes.f32 [306, 308]
+310 Ops.CAST dtypes.i32 [309] dtypes.i32
+311 Ops.CAST dtypes.f32 [310] dtypes.f32
+312 Ops.SUB dtypes.f32 [306, 311]
+313 Ops.MUL dtypes.f32 [246, 312]
+314 Ops.ADD dtypes.f32 [313, 259]
+315 Ops.MUL dtypes.f32 [314, 312]
+316 Ops.ADD dtypes.f32 [315, 262]
+317 Ops.MUL dtypes.f32 [316, 312]
+318 Ops.ADD dtypes.f32 [317, 265]
+319 Ops.MUL dtypes.f32 [318, 312]
+320 Ops.ADD dtypes.f32 [319, 268]
+321 Ops.MUL dtypes.f32 [320, 312]
+322 Ops.ADD dtypes.f32 [321, 271]
+323 Ops.MUL dtypes.f32 [322, 312]
+324 Ops.ADD dtypes.f32 [323, 62]
+325 Ops.SHR dtypes.i32 [310, 64]
+326 Ops.ADD dtypes.i32 [325, 66]
+327 Ops.SHL dtypes.i32 [326, 68]
+328 Ops.BITCAST dtypes.f32 [327] dtypes.f32
+329 Ops.MUL dtypes.f32 [324, 328]
+330 Ops.SUB dtypes.i32 [310, 325]
+331 Ops.ADD dtypes.i32 [330, 66]
+332 Ops.SHL dtypes.i32 [331, 68]
+333 Ops.BITCAST dtypes.f32 [332] dtypes.f32
+334 Ops.MUL dtypes.f32 [329, 333]
+335 Ops.WHERE dtypes.f32 [301, 28, 334]
+336 Ops.WHERE dtypes.f32 [299, 22, 335]
+337 Ops.WHERE dtypes.f32 [298, 18, 336]
+338 Ops.BITCAST dtypes.u32 [337] dtypes.u32
+339 Ops.CUSTOM dtypes.u8 [338] ("f2f f32 fp8e5m2 True", dtypes.u8)
+340 Ops.CUSTOM dtypes.f32 [339] ("f2f fp8e5m2 f32 True", dtypes.f32)
+341 Ops.CAST dtypes.f32 [340] dtypes.f32
+342 Ops.BITCAST dtypes.u32 [341] dtypes.u32
+343 Ops.CUSTOM dtypes.u8 [342] ("f2f f32 fp8e5m2 True", dtypes.u8)
+344 Ops.STORE dtypes.void [295, 343]
+345 Ops.INDEX dtypes.u8 [219, 230]
+346 Ops.INDEX dtypes.f32 [239, 125]
+347 Ops.CAST dtypes.f32 [346] dtypes.f32
+348 Ops.CMPNE dtypes.bool [347, 347]
+349 Ops.CMPLT dtypes.bool [347, 19]
+350 Ops.CMPLT dtypes.bool [347, 23]
+351 Ops.CMPNE dtypes.bool [350, 25]
+352 Ops.CMPNE dtypes.bool [347, 27]
+353 Ops.CMPNE dtypes.bool [347, 31]
+354 Ops.WHERE dtypes.f32 [353, 347, 22]
+355 Ops.WHERE dtypes.f32 [348, 22, 354]
+356 Ops.WHERE dtypes.f32 [352, 355, 22]
+357 Ops.CMPLT dtypes.bool [356, 21]
+358 Ops.WHERE dtypes.f32 [357, 38, 40]
+359 Ops.ADD dtypes.f32 [356, 358]
+360 Ops.CAST dtypes.i32 [359] dtypes.i32
+361 Ops.CAST dtypes.f32 [360] dtypes.f32
+362 Ops.SUB dtypes.f32 [356, 361]
+363 Ops.MUL dtypes.f32 [246, 362]
+364 Ops.ADD dtypes.f32 [363, 259]
+365 Ops.MUL dtypes.f32 [364, 362]
+366 Ops.ADD dtypes.f32 [365, 262]
+367 Ops.MUL dtypes.f32 [366, 362]
+368 Ops.ADD dtypes.f32 [367, 265]
+369 Ops.MUL dtypes.f32 [368, 362]
+370 Ops.ADD dtypes.f32 [369, 268]
+371 Ops.MUL dtypes.f32 [370, 362]
+372 Ops.ADD dtypes.f32 [371, 271]
+373 Ops.MUL dtypes.f32 [372, 362]
+374 Ops.ADD dtypes.f32 [373, 62]
+375 Ops.SHR dtypes.i32 [360, 64]
+376 Ops.ADD dtypes.i32 [375, 66]
+377 Ops.SHL dtypes.i32 [376, 68]
+378 Ops.BITCAST dtypes.f32 [377] dtypes.f32
+379 Ops.MUL dtypes.f32 [374, 378]
+380 Ops.SUB dtypes.i32 [360, 375]
+381 Ops.ADD dtypes.i32 [380, 66]
+382 Ops.SHL dtypes.i32 [381, 68]
+383 Ops.BITCAST dtypes.f32 [382] dtypes.f32
+384 Ops.MUL dtypes.f32 [379, 383]
+385 Ops.WHERE dtypes.f32 [351, 28, 384]
+386 Ops.WHERE dtypes.f32 [349, 22, 385]
+387 Ops.WHERE dtypes.f32 [348, 18, 386]
+388 Ops.BITCAST dtypes.u32 [387] dtypes.u32
+389 Ops.CUSTOM dtypes.u8 [388] ("f2f f32 fp8e5m2 True", dtypes.u8)
+390 Ops.CUSTOM dtypes.f32 [389] ("f2f fp8e5m2 f32 True", dtypes.f32)
+391 Ops.CAST dtypes.f32 [390] dtypes.f32
+392 Ops.BITCAST dtypes.u32 [391] dtypes.u32
+393 Ops.CUSTOM dtypes.u8 [392] ("f2f f32 fp8e5m2 True", dtypes.u8)
+394 Ops.STORE dtypes.void [345, 393]
+395 Ops.INDEX dtypes.u8 [219, 234]
+396 Ops.INDEX dtypes.f32 [239, 170]
+397 Ops.CAST dtypes.f32 [396] dtypes.f32
+398 Ops.CMPNE dtypes.bool [397, 397]
+399 Ops.CMPLT dtypes.bool [397, 19]
+400 Ops.CMPLT dtypes.bool [397, 23]
+401 Ops.CMPNE dtypes.bool [400, 25]
+402 Ops.CMPNE dtypes.bool [397, 27]
+403 Ops.CMPNE dtypes.bool [397, 31]
+404 Ops.WHERE dtypes.f32 [403, 397, 22]
+405 Ops.WHERE dtypes.f32 [398, 22, 404]
+406 Ops.WHERE dtypes.f32 [402, 405, 22]
+407 Ops.CMPLT dtypes.bool [406, 21]
+408 Ops.WHERE dtypes.f32 [407, 38, 40]
+409 Ops.ADD dtypes.f32 [406, 408]
+410 Ops.CAST dtypes.i32 [409] dtypes.i32
+411 Ops.CAST dtypes.f32 [410] dtypes.f32
+412 Ops.SUB dtypes.f32 [406, 411]
+413 Ops.MUL dtypes.f32 [246, 412]
+414 Ops.ADD dtypes.f32 [413, 259]
+415 Ops.MUL dtypes.f32 [414, 412]
+416 Ops.ADD dtypes.f32 [415, 262]
+417 Ops.MUL dtypes.f32 [416, 412]
+418 Ops.ADD dtypes.f32 [417, 265]
+419 Ops.MUL dtypes.f32 [418, 412]
+420 Ops.ADD dtypes.f32 [419, 268]
+421 Ops.MUL dtypes.f32 [420, 412]
+422 Ops.ADD dtypes.f32 [421, 271]
+423 Ops.MUL dtypes.f32 [422, 412]
+424 Ops.ADD dtypes.f32 [423, 62]
+425 Ops.SHR dtypes.i32 [410, 64]
+426 Ops.ADD dtypes.i32 [425, 66]
+427 Ops.SHL dtypes.i32 [426, 68]
+428 Ops.BITCAST dtypes.f32 [427] dtypes.f32
+429 Ops.MUL dtypes.f32 [424, 428]
+430 Ops.SUB dtypes.i32 [410, 425]
+431 Ops.ADD dtypes.i32 [430, 66]
+432 Ops.SHL dtypes.i32 [431, 68]
+433 Ops.BITCAST dtypes.f32 [432] dtypes.f32
+434 Ops.MUL dtypes.f32 [429, 433]
+435 Ops.WHERE dtypes.f32 [401, 28, 434]
+436 Ops.WHERE dtypes.f32 [399, 22, 435]
+437 Ops.WHERE dtypes.f32 [398, 18, 436]
+438 Ops.BITCAST dtypes.u32 [437] dtypes.u32
+439 Ops.CUSTOM dtypes.u8 [438] ("f2f f32 fp8e5m2 True", dtypes.u8)
+440 Ops.CUSTOM dtypes.f32 [439] ("f2f fp8e5m2 f32 True", dtypes.f32)
+441 Ops.CAST dtypes.f32 [440] dtypes.f32
 442 Ops.BITCAST dtypes.u32 [441] dtypes.u32
 443 Ops.CUSTOM dtypes.u8 [442] ("f2f f32 fp8e5m2 True", dtypes.u8)
-444 Ops.CUSTOM dtypes.f32 [443] ("f2f fp8e5m2 f32 True", dtypes.f32)
-445 Ops.CAST dtypes.f32 [444] dtypes.f32
-446 Ops.BITCAST dtypes.u32 [445] dtypes.u32
-447 Ops.CUSTOM dtypes.u8 [446] ("f2f f32 fp8e5m2 True", dtypes.u8)
-448 Ops.STORE dtypes.void [398, 447]
-449 Ops.AFTER dtypes.void [0, 295, 346, 397, 448]
-450 Ops.AFTER dtypes.void [0, 449]
-451 Ops.END dtypes.void [450, 5]
-452 Ops.SINK dtypes.void [451] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
-453 Ops.SINK dtypes.void [218, 452]
+444 Ops.STORE dtypes.void [395, 443]
+445 Ops.AFTER dtypes.void [0, 294, 344, 394, 444]
+446 Ops.AFTER dtypes.void [0, 445]
+447 Ops.END dtypes.void [446, 5]
+448 Ops.SINK dtypes.void [447] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
+449 Ops.SINK dtypes.void [218, 448]
 

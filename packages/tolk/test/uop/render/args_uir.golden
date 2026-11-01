@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 %0 = cast -5 : i32
 %1 = cast 12345678901234 : i64
 %2 = cast 200 : u8

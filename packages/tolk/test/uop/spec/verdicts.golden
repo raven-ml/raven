@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True

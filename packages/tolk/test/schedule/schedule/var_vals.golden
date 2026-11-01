@@ -1,4 +1,4 @@
-# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+# tinygrad f0abe5fa732e6e6afbad199692c0eb93ed6e8ce2
 program	var_vals
 add	-
 sum	-
@@ -21,6 +21,9 @@ reduce_multiple_paths	-
 contiguous	-
 assign	-
 assign_permuted_self	-
+assign_flipped_from_self	-
+add_row_from_self	-
+roll_from_self	-
 assign_double_diamond	-
 read_then_overwrite	-
 read_overwritten_through	-
