@@ -49,6 +49,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Add `Gaussian.pathfinder` (Pathfinder), `Gaussian.vi` (ADVI over a factor
+  covariance of any rank) and `Gaussian.importance`, whose weighted draws'
+  `Diag.psis` `k̂` says whether a fitted Gaussian holds.
 - The log masses of `Dist.poisson`, `Dist.binomial` and `Dist.neg_binomial`
   use Loader's saddle-point form and state their bound: at float32 and
   counts near 10^6 the old sums of log-gammas were off by up to 0.8 nats.

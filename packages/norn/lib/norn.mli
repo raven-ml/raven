@@ -990,6 +990,94 @@ module Gaussian : sig
       positive and finite, or at an [l_j] that is negative or not finite, and
       [Invalid_argument] if [low_rank] is absent and [mean] holds no tensor. *)
 
+  (** {1:fitting Fitting a density}
+
+      A fit is a Gaussian [q] per chain close to a density [lp], by the
+      evidence lower bound [E_q (lp - log q)]: [lp]'s log normaliser less the
+      Kullback-Leibler divergence [KL (q ‖ p)] of [lp]'s distribution [p] from
+      [q]. A larger bound is a closer [q]. The divergence weighs [q]'s mass
+      where [p] has little, so [q] errs narrow: a [q] that cannot match [p],
+      as a diagonal one of a correlated [p], has the variances of [p]'s
+      conditionals, not of its marginals, and misses heavier tails. The bound
+      says nothing of how close: {!importance} weighs [q]'s draws for [lp],
+      and {!Diag.psis}'s [k̂] of their weights judges [q] (Yao, Vehtari,
+      Simpson and Gelman 2018).
+
+      A fit takes a start of [c] chains and fits each on its own: chain [i]
+      draws from row [i] of [Nx.Rng.split_batch ~n:c k], so its fit does not
+      depend on the others. A draw outside the reals has log density [-inf],
+      and [lp] reads zeros in its place. *)
+
+  type ('u, 'f, 'd) fit = {
+    gaussian : ('u, 'f, 'd) t;
+        (** The chains' Gaussians, stacked on the chain axis. Chain [i]'s is
+            [Nx.Ptree.map (ptree u) (fun _ t -> Nx.get [ i ] t) gaussian]. *)
+    elbo : (float, 'f, 'd) Nx.t;
+        (** Each chain's estimate of its Gaussian's bound from 100 draws of
+            their own, not those that chose or fitted it, shape [[c]];
+            [-inf] where the fit failed. *)
+  }
+  (** The type for fits of Gaussians to a density. *)
+
+  val pathfinder :
+    ('u, 'd) Nx.Ptree.t ->
+    ?history:int ->
+    ?elbo_draws:int ->
+    steps:int ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    'u ->
+    ('u, 'f, 'd) fit
+  (** [pathfinder u ?history ?elbo_draws ~steps lp k start] fits each chain
+      along its path to a mode (Pathfinder; Zhang, Carpenter, Gelman and
+      Vehtari 2022). The path is the first [steps] iterates
+      [θ_0, ..., θ_L] of L-BFGS of memory [history] on [-lp]
+      ({!Jera.Minimize.iterates}). Iterate [θ_l] has the Gaussian of mean
+      [θ_l + Σ_l ∇lp (θ_l)], [Σ_l] L-BFGS's inverse Hessian from its last
+      [history] pairs of step [s] and gradient change [z] with
+      [sᵀz > 10⁻¹² |z|²], over a diagonal each pair updates (Gilbert and
+      Lemaréchal 1989) from the identity. The fit is the Gaussian of
+      [θ_1, ..., θ_L] of the largest bound, estimated from [elbo_draws]
+      draws, among those whose covariance is positive definite and whose
+      iterate differs from the one before. A chain with none failed: its
+      Gaussian has unit covariance at [θ_0]. [history] defaults to [6] and
+      [elbo_draws] to [5]; the chosen Gaussian's [elbo] is estimated anew,
+      since the largest of many estimates is biased high. Several chains are
+      multi-path Pathfinder's paths.
+
+      Raises [Invalid_argument] if a count is not positive, if [start] has no
+      float element or float tensors of two dtypes, if [lp] or its gradient
+      is not finite at a chain of [start], or as {!Nuts.init} does for a
+      density that does not return one log density per chain. *)
+
+  val vi :
+    ('u, 'd) Nx.Ptree.t ->
+    ?rank:int ->
+    ?draws:int ->
+    steps:int ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    'u ->
+    ('u, 'f, 'd) fit
+  (** [vi u ?rank ?draws ~steps lp k start] ascends the bound in [steps]
+      stochastic gradient steps (ADVI; Kucukelbir et al. 2017) over
+      [q = N (μ, B Bᵀ + D²)], [D] diagonal and [B] of [rank] columns, upper
+      triangle zero (Ong, Nott and Smith 2018). [rank = 0], the default, is
+      mean field; [d], a chain's float elements, any covariance; a larger
+      rank is [d]. Near [d], [D] is not identified and may drift toward [0],
+      where a component's step size can stall. A chain starts at its
+      position with unit covariance. Step [i] estimates the gradient [g_i]
+      from [draws] draws, by default [1] (Ong et al., eqs. 6, 9, 10), and
+      adds [η i^(-1/2 + 10⁻¹⁶) g_i / (1 + sqrt s_i)] to each parameter,
+      [s_i = 0.1 g_i² + 0.9 s_(i-1)] from [s_1 = g_1²]. [η] is the one of
+      [0.01], [0.1], [1], [10] and [100] whose first [min (steps, 50)] steps
+      reach the largest bound. A chain whose bound estimate, gradient or step
+      is not finite stays put.
+
+      Raises [Invalid_argument] if [steps] or [draws] is not positive, [rank]
+      is negative, [start] has no float element, or as {!pathfinder} does
+      for [lp]. *)
+
   (** {1:eliminators Eliminators} *)
 
   val sample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
@@ -1006,6 +1094,40 @@ module Gaussian : sig
 
   val variance : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u
   (** [variance u g] is the diagonal of [g]'s covariance, element by element. *)
+
+  val importance :
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    n:int ->
+    ('u, 'f, 'd) t ->
+    ('u, 'f, 'd) Weighted.t
+  (** [importance u lp k ~n g] is [n] draws [x_s] of [g] weighted for the
+      density [lp], each log weight the raw log importance ratio
+      [lp x_s - log g (x_s)]. [g] may be Gaussians stacked on a leading axis
+      of [c], as a {!fit} holds them: Gaussian [i] draws rows [i n] to
+      [i n + n - 1], each weighted by the Gaussian that drew it, so the [c n]
+      draws come from the Gaussians' equal mixture (Zhang et al. 2022,
+      section 2.2).
+
+      The weights' [k̂] ({!Diag.psis}) below [0.5] means [g] is close to
+      [lp] (Yao et al. 2018); above {!Diag.psis}'s threshold the draws'
+      estimates are unreliable. {!Summary.of_weighted} reports it, and
+      {!Weighted.resample} of the smoothed draws completes multi-path
+      Pathfinder:
+
+      {[
+      let k0 = Nx.Rng.fold_in k 0 and k1 = Nx.Rng.fold_in k 1 in
+      let f = Norn.Gaussian.pathfinder u ~steps:100 lp k0 start in
+      let w = Norn.Gaussian.importance u lp k1 ~n:250 f.gaussian in
+      let s = Norn.Diag.psis w.log_weights in
+      let draws =
+        Norn.Weighted.resample u (Nx.Rng.fold_in k 2) ~n:100
+          { w with log_weights = s.log_weights }
+      ]}
+
+      Raises [Invalid_argument] if [n < 1], or if [lp] does not return one log
+      density per draw. *)
 
   val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of Gaussians over [u]: [mean], [scale] and

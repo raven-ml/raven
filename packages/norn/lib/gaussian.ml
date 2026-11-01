@@ -188,6 +188,52 @@ let diagonal_in context u dtype ~mean ~scale =
 let diagonal u dtype ~mean ~scale =
   diagonal_in "Norn.Gaussian.diagonal" u dtype ~mean ~scale
 
+type ('u, 'f, 'd) fit = {
+  gaussian : ('u, 'f, 'd) t;
+  elbo : (float, 'f, 'd) Nx.t;
+}
+
+(* [factor dt w m] is the directions and variances of [I + W M Wᵀ], for [W]
+   [[..; d; m]] and a symmetric [M] [[..; m; m]]: with [W = Q R], the
+   eigenvectors [V] of [I + R M Rᵀ] give the directions [Q V], as rows
+   [[..; k; d]], and its eigenvalues the variances [[..; k]],
+   [k = min (d, m)]. *)
+let factor dt w m =
+  let mt = Nx.matrix_transpose in
+  let q, r = Nx.qr w in
+  let k = (Nx.shape r).(Nx.ndim r - 2) in
+  let inner = Nx.matmul r (Nx.matmul m (mt r)) in
+  let variances, v = Nx.eigh dt (Nx.add (Nx.eye_at (Nx.beside w) dt k) inner) in
+  (mt (Nx.matmul q v), variances)
+
+(* [of_rows u like ~mean ~scale ~directions ~variances] is the Gaussians of
+   flat rows stacked on the chain axis of [like], a position of [c] chains
+   whose structure they take: [mean] and [scale] [[c; d]], [directions]
+   [[c; k; d]] and [variances] [[c; k]]. *)
+let of_rows u like ~mean ~scale ~directions ~variances =
+  let c = (Nx.shape mean).(0) and d = (Nx.shape mean).(1) in
+  let k = (Nx.shape variances).(1) in
+  let trailing t = Array.sub (Nx.shape t) 1 (Nx.ndim t - 1) in
+  let directions =
+    if k = 0 then
+      Nx.Ptree.map u
+        (fun _ t ->
+          Nx.zeros_at (Nx.beside t) (Nx.dtype t)
+            (Array.append [| c; 0 |] (trailing t)))
+        like
+    else
+      let repeated = Nx.Ptree.map u (fun _ t -> Nx.repeat ~axis:0 k t) like in
+      Nx.Ptree.map u
+        (fun _ t -> Nx.reshape (Array.append [| c; k |] (trailing t)) t)
+        (Rows.unravel u repeated (Nx.reshape [| c * k; d |] directions))
+  in
+  {
+    mean = Rows.unravel u like mean;
+    scale = Rows.unravel u like scale;
+    directions;
+    variances;
+  }
+
 (* [matrix u like dirs] is the directions [dirs] as the columns of a matrix [[d;
    k]] at [like]'s dtype, and [split] its inverse. *)
 let matrix (type f) u (like : (float, f, 'd) Nx.t) dirs : (float, f, 'd) Nx.t =
@@ -360,3 +406,54 @@ let ptree (type u f) (u : (u, 'd) Nx.Ptree.t) : ((u, f, 'd) t, 'd) Nx.Ptree.t =
 let pp u ppf g =
   Format.fprintf ppf "gaussian(dimension %d, rank %d)" (elements u g.mean)
     (Nx.shape g.variances).(0)
+
+(* Importance *)
+
+(* [importance u lp k ~n g] draws [n] points of [g], or of each Gaussian of [g]
+   stacked on a leading axis, Gaussian [i]'s at rows [i n] to [i n + n - 1], and
+   weighs each by [lp] over the density of the Gaussian that drew it. *)
+let importance u lp k ~n g =
+  let context = "Norn.Gaussian.importance" in
+  let at = Nx.beside g.variances in
+  let k = Nx.Rng.place at k in
+  if n < 1 then invalid_argf "%s: n = %d is not positive" context n;
+  let dt = Nx.dtype g.variances in
+  let stacked = Nx.ndim g.variances = 2 in
+  let c = if stacked then (Nx.shape g.variances).(0) else 1 in
+  let total = c * n in
+  let rows = Nx.div_s (Nx.arange_at at Nx.int64 0 total 1) (Int64.of_int n) in
+  let repeat x =
+    if stacked then Nx.take ~axis:0 rows x
+    else
+      Nx.broadcast_to
+        (Array.append [| total |] (Nx.shape x))
+        (Nx.unsqueeze ~axes:[ 0 ] x)
+  in
+  let d = elements u g.mean / c in
+  let like = Nx.Ptree.map u (fun _ x -> repeat x) g.mean in
+  let g =
+    if stacked then Nx.Ptree.map (ptree u) (fun _ x -> repeat x) g else g
+  in
+  let f = flat u like g in
+  let z = Noise.normal k dt [| total; d |] in
+  let x = color_flat f z in
+  let log_det =
+    Nx.add
+      (Nx.sum ~axes:[ -1 ] (Nx.log f.s))
+      (Nx.mul_s (Nx.sum ~axes:[ -1 ] (Nx.log f.v)) 0.5)
+  in
+  let log_q =
+    Nx.sub
+      (Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square z)) (-0.5))
+      (Nx.add_s log_det (0.5 *. float_of_int d *. Float.log (2. *. Float.pi)))
+  in
+  let values = Rows.unravel u like x in
+  let l = lp values in
+  if Nx.shape l <> [| total |] then
+    invalid_argf
+      "%s: the density returned shape [%s] for %d draws; a density returns one \
+       log density per draw, shape [%d]"
+      context
+      (shape_string (Nx.shape l))
+      total total;
+  Weighted.{ values; log_weights = Nx.sub l log_q }

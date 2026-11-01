@@ -81,6 +81,17 @@ val evaluate :
 (** [evaluate u lp x] is the density [lp] at [x] and its gradient, chain by
     chain. *)
 
+val at_rows :
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  'u ->
+  (float, 'f, 'd) Nx.t ->
+  (float, 'f, 'd) Nx.t
+(** [at_rows u lp like m] is [lp] at the position whose float tensors hold the
+    rows of [m] ({!unravel} on [like]), [-inf] at a row that is not finite:
+    [lp] reads zeros there, since a density need not answer outside the
+    reals. *)
+
 val check_range : string -> (float, 'f, 'd) Nx.t -> unit
 (** [check_range context l] raises through {!Nx.check} at a chain whose log
     density [l] is NaN or [+inf]. *)

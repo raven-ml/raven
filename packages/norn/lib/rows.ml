@@ -134,6 +134,15 @@ let unravel u x m =
 
 (* Densities *)
 
+(* [at_rows u lp like m] is [lp] at the rows [m] on [like]'s structure, [-inf]
+   at a row that is not finite, where [lp] reads zeros instead: a density need
+   not answer outside the reals, and a model's raises there. *)
+let at_rows u lp like m =
+  let ok = Nx.all ~axes:[ 1 ] (Nx.isfinite m) in
+  let safe = Nx.where (Nx.unsqueeze ~axes:[ 1 ] ok) m (Nx.zeros_like m) in
+  let l = lp (unravel u like safe) in
+  Nx.where ok l (Nx.scalar_like l Float.neg_infinity)
+
 let count context u x =
   let c =
     P.fold u

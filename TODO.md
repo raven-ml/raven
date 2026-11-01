@@ -298,8 +298,6 @@ raven / llama.cpp (Vulkan; ROCm):
 - Nested: slice moves correlate draws within a replacement, so its error
   under-covers 1.5-1.9x on gp_pois_regr (documented in
   `Evidence.expectation`, still a biased error)
-- norn: variational layer: `Gaussian.pathfinder`, `importance` (which
-  `Weighted`'s doc already names as a source), `Vi`, each checked by k̂
 - distributions: `von_mises`, `lkj_cholesky`, `truncated`,
   `hmm` with `hmm_marginals`, and an example that sums an HMM's states out
 

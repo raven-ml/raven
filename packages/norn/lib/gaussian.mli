@@ -29,6 +29,33 @@ val of_precision :
   'u ->
   ('u, 'f, 'd) t
 
+type ('u, 'f, 'd) fit = {
+  gaussian : ('u, 'f, 'd) t;
+  elbo : (float, 'f, 'd) Nx.t;
+}
+
+val factor :
+  (float, 'f) Nx.dtype ->
+  (float, 'f, 'd) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
+  (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
+(** [factor dt w m] is the orthonormal directions, rows [[..; k; d]], and the
+    variances [[..; k]] along them of [I + W M Wᵀ], for [W] [[..; d; m]] and a
+    symmetric [M] [[..; m; m]], [k = min (d, m)]. *)
+
+val of_rows :
+  ('u, 'd) Nx.Ptree.t ->
+  'u ->
+  mean:(float, 'f, 'd) Nx.t ->
+  scale:(float, 'f, 'd) Nx.t ->
+  directions:(float, 'f, 'd) Nx.t ->
+  variances:(float, 'f, 'd) Nx.t ->
+  ('u, 'f, 'd) t
+(** [of_rows u like ~mean ~scale ~directions ~variances] is the Gaussians of
+    flat rows ({!Rows.ravel}) stacked on the chain axis of [like], a position
+    of [c] chains whose structure they take: [mean] and [scale] [[c; d]],
+    [directions] orthonormal rows [[c; k; d]] and [variances] [[c; k]]. *)
+
 (** {1:eliminators Eliminators} *)
 
 val sample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
@@ -42,6 +69,17 @@ val variance : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u
 val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
 
 val pp : ('u, 'd) Nx.Ptree.t -> Format.formatter -> ('u, 'f, 'd) t -> unit
+
+val importance :
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  'd Nx.Rng.key ->
+  n:int ->
+  ('u, 'f, 'd) t ->
+  ('u, 'f, 'd) Weighted.t
+(** [importance u lp k ~n g] is [n] draws of [g], or of each Gaussian of [g]
+    stacked on a leading axis, weighted by [lp] over the density of the
+    Gaussian that drew them ({!Norn.Gaussian.importance}). *)
 
 val rank : ('u, 'f, 'd) t -> int
 (** [rank g] is the number of [g]'s directions, also of Gaussians stacked on a

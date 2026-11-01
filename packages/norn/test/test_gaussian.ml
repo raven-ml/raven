@@ -173,4 +173,137 @@ let errors =
                (G.diagonal pos Nx.float64 ~mean ~scale)));
     ]
 
-let () = exit (run "Norn.Gaussian" [ laws; errors ])
+(* Importance *)
+
+let rows p = Nx.concatenate ~axis:1 [ p.a; p.b ]
+let log_weights (w : (_, _, _) Norn.Weighted.t) = floats w.log_weights
+
+(* Two diagonal Gaussians stacked on a leading axis of two. *)
+let pair_of g g' =
+  Nx.Ptree.map2 (G.ptree pos) (fun _ x y -> Nx.stack ~axis:0 [ x; y ]) g g'
+
+let wide =
+  G.diagonal pos Nx.float64 ~mean ~scale:(of_vec (vec [| 4.; 2.; 3.; 6. |]))
+
+let narrow =
+  G.diagonal pos Nx.float64 ~mean ~scale:(of_vec (vec [| 1.; 1.; 1.; 1. |]))
+
+(* [khats w ~sets] is the [k̂] of each of [sets] equal parts of the draws [w]:
+   their draws are independent, so each part is a set of its own. *)
+let khats (w : (_, _, _) Norn.Weighted.t) ~sets =
+  let n = (Nx.shape w.log_weights).(0) / sets in
+  floats (Norn.Diag.psis (Nx.reshape [| n; sets |] w.log_weights)).khat
+
+let median xs =
+  let xs = Array.copy xs in
+  Array.sort Float.compare xs;
+  xs.(Array.length xs / 2)
+
+let std_normal x =
+  Nx.sum ~axes:[ 1 ]
+    (Norn.Dist.factors
+       (Norn.Dist.normal ~loc:(Nx.scalar Nx.float64 0.)
+          ~scale:(Nx.scalar Nx.float64 1.))
+       x)
+
+let one_d m s =
+  G.diagonal Nx.Ptree.tensor Nx.float64 ~mean:(vec [| m |]) ~scale:(vec [| s |])
+
+let importance =
+  group "importance"
+    [
+      prop "a Gaussian weighted for its own density has log weights of zero"
+        Gen.(pair (int_range 0 1000) (int_range 1 50))
+        (fun (key, n) ->
+          let w =
+            G.importance pos (G.log_density pos g) (Nx.Rng.key key) ~n g
+          in
+          equal (array (float 1e-12)) (Array.make n 0.) (log_weights w));
+      test "stacked Gaussians each draw n, weighted by the one that drew them"
+        (fun () ->
+          let n = 6 in
+          let w =
+            G.importance pos (G.log_density pos narrow) (Nx.Rng.key 3) ~n
+              (pair_of narrow wide)
+          in
+          let x = rows w.values in
+          let theirs =
+            Nx.sub
+              (G.log_density pos narrow w.values)
+              (G.log_density pos wide w.values)
+          in
+          let expected =
+            Array.init (2 * n) (fun i ->
+                if i < n then 0. else (floats theirs).(i))
+          in
+          equal (array int) [| 2 * n; 4 |] (Nx.shape x);
+          equal (array (float 1e-12)) expected (log_weights w));
+      test "weighted means of a wider proposal match the target's" (fun () ->
+          (* A proposal wider than the target in every direction bounds the
+             ratios, so k̂ is below 0.5 and the smoothed weights' means are
+             normal about the target's with the summary's standard error. Six
+             errors give a false alarm of 2e-9 per element. *)
+          let w =
+            G.importance pos (G.log_density pos g) (Nx.Rng.key 5) ~n:4000 wide
+          in
+          less float_exact ~than:0.5
+            (Nx.item [] (Norn.Diag.psis w.log_weights).khat);
+          let s = Norn.Summary.of_weighted pos w in
+          let column name = floats (List.assoc name (Norn.Summary.columns s)) in
+          let m = column "mean" and se = column "mcse" in
+          Array.iteri
+            (fun i exact ->
+              less float_exact ~than:(6. *. se.(i)) (Float.abs (m.(i) -. exact)))
+            (floats (to_vec mean)));
+      test "a proposal narrower than the target has k̂ above 0.7" (fun () ->
+          (* N(0, 0.3²) for N(0, 1): the ratios' tail has shape [k = 1 - 0.3²] =
+             0.91. Over 1000 sets of 4000 draws, 20% of the k̂ fall below 0.7;
+             the median of 40 does with probability below 1e-5. *)
+          let w =
+            G.importance Nx.Ptree.tensor std_normal (Nx.Rng.key 7)
+              ~n:(40 * 4000) (one_d 0. 0.3)
+          in
+          greater float_exact ~than:0.7 (median (khats w ~sets:40)));
+      test "the draws depend on the key alone" (fun () ->
+          let draw k =
+            rows (G.importance pos (G.log_density pos wide) k ~n:5 g).values
+          in
+          let a = draw (Nx.Rng.key 11) in
+          equal (array float_exact)
+            (floats (Nx.reshape [| 20 |] a))
+            (floats (Nx.reshape [| 20 |] (draw (Nx.Rng.key 11))));
+          not_equal (array float_exact)
+            (floats (Nx.reshape [| 20 |] a))
+            (floats (Nx.reshape [| 20 |] (draw (Nx.Rng.key 12)))));
+      test "compiled, it is the eager draws" (fun () ->
+          let lp = G.log_density pos wide in
+          let f k = G.importance pos lp k ~n:5 g in
+          let wp = Norn.Weighted.ptree pos in
+          let compiled =
+            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns wp) f (Nx.Rng.key 13)
+          in
+          let eager = f (Nx.Rng.key 13) in
+          equal
+            (array (float_rel ~rel:1e-12 ~abs:1e-12))
+            (floats (Nx.reshape [| 20 |] (rows eager.values)))
+            (floats (Nx.reshape [| 20 |] (rows compiled.values)));
+          equal
+            (array (float_rel ~rel:1e-12 ~abs:1e-12))
+            (log_weights eager) (log_weights compiled));
+      test "n below 1 is refused" (fun () ->
+          raises
+            (Invalid_argument "Norn.Gaussian.importance: n = 0 is not positive")
+            (fun () ->
+              G.importance pos (G.log_density pos g) (Nx.Rng.key 1) ~n:0 g));
+      test "a density of the wrong shape is refused" (fun () ->
+          raises
+            (Invalid_argument
+               "Norn.Gaussian.importance: the density returned shape [] for 3 \
+                draws; a density returns one log density per draw, shape [3]")
+            (fun () ->
+              G.importance pos
+                (fun x -> Nx.sum (G.log_density pos g x))
+                (Nx.Rng.key 1) ~n:3 g));
+    ]
+
+let () = exit (run "Norn.Gaussian" [ laws; errors; importance ])

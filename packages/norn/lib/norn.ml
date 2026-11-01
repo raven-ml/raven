@@ -46,7 +46,12 @@ module Weighted = Weighted
 module Diag = Diag
 module Summary = Summary
 module Dist = Dist
-module Gaussian = Gaussian
+module Gaussian = struct
+  include Gaussian
+
+  let pathfinder = Pathfinder.pathfinder
+  let vi = Vi.vi
+end
 module Nuts = Nuts
 module Hmc = Hmc
 module Ensemble = Ensemble
