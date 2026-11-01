@@ -80,6 +80,21 @@ def setitem(index, value):
     return t
 
 
+def add_at_first_twice():
+    # each x[0] += 1 stores into the shrink of x that it reads: in place, no copy
+    x = empty(2).contiguous()
+    for _ in range(2): x[0] += 1
+    return x
+
+
+def assign_overlapping_shrink_pending():
+    # the shifted read of a pending store is copied first, since it overlaps the shrink it writes
+    a = empty(6).contiguous()
+    a += 1
+    a[1:] = a[:-1]
+    return a
+
+
 def add_one(C, A):
     C, A = C.flatten(), A.flatten()
     i = UOp.range(A.numel(), 0)
@@ -209,6 +224,8 @@ PROGRAMS = {
     "assign_to_function_output": assign_to_function_output,
     "setitem": lambda: setitem(slice(2, 4), 1.0),
     "setitem_tensor": lambda: setitem((slice(None), slice(2, 4)), empty(8, 2)),
+    "add_at_first_twice": add_at_first_twice,
+    "assign_overlapping_shrink_pending": assign_overlapping_shrink_pending,
     # models
     "gpt_oss_prefill": lambda: gpt_oss_block(8, 0),
     "gpt_oss_decode": lambda: gpt_oss_block(1, Variable("start_pos", 0, 15).bind(7)),

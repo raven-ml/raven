@@ -202,26 +202,29 @@ let fix_store_hazard target src =
   if not (reaches src base) then None
   else
     (* A permute reorders indices, and a shrink can overlap when the
-       destination is shrunk too. *)
+       destination is shrunk too, above its storage: a shrink of an earlier
+       store into it is none. *)
+    let shrinks u = op u = Op.Shrink in
     let unsafe =
       Op.Permute
       ::
-      if op_in_backward_slice_with_self ~calls:Skip target [ Op.Shrink ] then
-        [ Op.Shrink ]
-      else []
+      (if List.exists shrinks (toposort ~calls:Skip ~gate:(fun u -> u != base) target)
+       then [ Op.Shrink ]
+       else [])
     in
+    (* The destination's own shrink, under its reshapes, reads in place. *)
+    let rec under_reshapes v = if op v = Op.Reshape then under_reshapes (nth v 0) else v in
+    let view = under_reshapes target in
     let reaches_base = Tbl.create 16 in
+    let reached c = c == base || Tbl.mem reaches_base c in
     let hazard s =
-      let r =
-        s == base || List.exists (fun c -> Tbl.mem reaches_base c) (Ops.src s)
-      in
+      let r = List.exists reached (Ops.src s) in
       if r then Tbl.replace reaches_base s ();
       (* A gather reorders through its source; its index reads in place. *)
       let reorders =
-        List.mem (op s) unsafe
-        || (Indexing.is_gather s && Tbl.mem reaches_base (nth s 0))
+        List.mem (op s) unsafe || (Indexing.is_gather s && reached (nth s 0))
       in
-      r && reorders && not (s == target && op s = Op.Shrink)
+      r && reorders && not (s == view && op s = Op.Shrink)
     in
     if
       List.exists hazard (toposort ~calls:Skip ~gate:store_hazard_boundary src)

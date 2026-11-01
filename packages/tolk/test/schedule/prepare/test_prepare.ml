@@ -16,6 +16,7 @@ let ints = List.map (fun n -> Ops.Int n)
 let programs =
   [
     "add";
+    "add_at_first_twice";
     "add_nothing";
     "alias_of_placed";
     "arange";
@@ -28,6 +29,7 @@ let programs =
     "assign_disjoint_self";
     "assign_double_bitcast";
     "assign_flipped_self";
+    "assign_overlapping_shrink_pending";
     "assign_own_contents";
     "assign_permuted_self";
     "assign_reshaped";
