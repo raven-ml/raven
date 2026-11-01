@@ -299,12 +299,18 @@ int rig_metal_room(void *self, int nwaits, const struct rig_part *parts,
 }
 
 /* Commits the residency set's additions, so that the work of this
-   submission finds every allocation made before it resident. */
+   submission finds every allocation made before it resident. Apple's
+   documentation of MTLResidencySet's commit names no exception; one Metal
+   raises anyway reaches [run]'s handler, which fails the device, so the
+   set's mutex goes back first, leaving the additions to the next commit. */
 static void commit_residency(struct rig_metal_run *r) {
   pthread_mutex_lock(&r->set_mutex);
-  if (r->changed) [r->set commit];
-  r->changed = 0;
-  pthread_mutex_unlock(&r->set_mutex);
+  @try {
+    if (r->changed) [r->set commit];
+    r->changed = 0;
+  } @finally {
+    pthread_mutex_unlock(&r->set_mutex);
+  }
 }
 
 /* Encodes the launch [p], its block in [args], into [q]'s encoder: its

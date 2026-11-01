@@ -216,6 +216,10 @@ value caml_rig_metal_facts(value v_d) {
 static value resident(struct rig_metal_run *r, id<MTLBuffer> b) {
   if (b == nil) return Val_none;
   atomic_fetch_add(&rig_metal_buffers, 1);
+  /* Apple's documentation of MTLResidencySet's addAllocation, and of
+     removeAllocation and commit in the free, names no exception. One Metal
+     raises anyway reaches no handler on its way to OCaml and aborts the
+     process. */
   pthread_mutex_lock(&r->set_mutex);
   [r->set addAllocation:b];
   r->changed = 1;
