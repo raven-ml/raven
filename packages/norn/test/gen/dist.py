@@ -86,7 +86,7 @@ SCALAR = {
 
 QUANTILE = ["normal", "half_normal", "lognormal", "cauchy", "half_cauchy", "laplace",
             "logistic", "exponential", "gamma", "gamma_small", "inverse_gamma",
-            "uniform"]
+            "beta", "beta_u", "uniform"]
 
 DISCRETE = {
     "poisson": (stats.poisson(3.2), list(range(0, 12)) + [-1], 12),
@@ -346,9 +346,17 @@ def tails(name, x):
         lo = mpmath.gammainc(a, 0, y, regularized=True)
         hi = mpmath.gammainc(a, y, mpmath.inf, regularized=True)
         return (lo, hi) if name != "inverse_gamma" else (hi, lo)
+    if name in BETAS:
+        a, b = (mpf(v) for v in BETAS[name])
+        lo = mpmath.betainc(a, b, 0, x, regularized=True)
+        hi = mpmath.betainc(a, b, x, 1, regularized=True)
+        return lo, hi
     if name == "uniform":
         return (x + 1) / 4, (3 - x) / 4
     raise ValueError(name)
+
+
+BETAS = {"beta": (2.0, 5.0), "beta_u": (0.5, 0.5)}
 
 
 def solve(tail, side, target, x0, low=None, high=None):
@@ -383,9 +391,10 @@ def exact_ppf(name, d, p):
     """The quantile at p, the root of its smaller tail's equation, from
     mpmath, searched from SciPy's."""
     side = 0 if p <= 0.5 else 1
-    low = 0.0 if name in POSITIVE else None
+    low = 0.0 if name in POSITIVE or name in BETAS else None
+    high = 1.0 if name in BETAS else None
     return solve(lambda x: tails(name, x), side, min(mpf(p), 1 - mpf(p)), d.ppf(p),
-                 low=low)
+                 low=low, high=high)
 
 
 POSITIVE = {"half_normal", "lognormal", "half_cauchy", "exponential", "gamma",
@@ -414,6 +423,9 @@ def logpdf_mp(name, x):
         return gamma_density(a, r, x)
     if name == "inverse_gamma":
         return gamma_density(3.0, 2.0, 1 / x) - 2 * mpmath.log(x)
+    if name in BETAS:
+        a, b = (mpf(v) for v in BETAS[name])
+        return (a - 1) * mpmath.log(x) + (b - 1) * mpmath.log1p(-x) - mpmath.log(mpmath.beta(a, b))
     if name == "uniform":
         return -mpmath.log(4)
     raise ValueError(name)
@@ -435,6 +447,7 @@ TRUNCATED = {
     "truncated_inverse_gamma": ("inverse_gamma", None, 0.05, [0.01, 0.04, 0.05, 0.1]),
     "truncated_uniform": ("uniform", 0.0, 1.0, [0.0, 0.5, 1.0, 2.0]),
     "truncated_half_normal": ("half_normal", None, 1e-3, [1e-6, 5e-4, 1e-3, 1.0]),
+    "truncated_beta": ("beta", 0.2, 0.6, [0.2, 0.4, 0.6, 0.1, 0.9]),
 }
 
 

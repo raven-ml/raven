@@ -896,7 +896,7 @@ module Dist : sig
       Raises [Invalid_argument] if neither bound is given, or if [d] is not
       {!normal}, {!half_normal}, {!lognormal}, {!cauchy}, {!half_cauchy},
       {!laplace}, {!logistic}, {!exponential}, {!gamma}, {!inverse_gamma},
-      {!uniform} or {!iid} of one: the families whose distribution function
+      {!beta}, {!uniform} or {!iid} of one: the families whose distribution function
       and its inverses nx computes. *)
 
   val mixture : logits:(float, 'f, 'd) Nx.t -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
@@ -959,15 +959,16 @@ module Dist : sig
   (** [quantile d p] is the value whose CDF is [p], elementwise, read from
       the smaller tail: above [1/2] it inverts the survival at [1 - p], which
       is exact there. For {!gamma} and {!inverse_gamma} it is [0.] at
-      [p = 0.] and [inf] at [p = 1.].
+      [p = 0.] and [inf] at [p = 1.]; for {!beta},
+      {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.].
 
-      {!Rune} differentiates it in [p] and in [d]'s parameters. For {!gamma}
-      and {!inverse_gamma} the first derivatives are finite wherever the exact
-      ones are; {!inverse_gamma}'s higher derivatives can overflow where the
-      quantile passes about [2^512].
+      {!Rune} differentiates it in [p] and in [d]'s parameters. For {!gamma},
+      {!inverse_gamma} and {!beta} the first derivatives are finite wherever
+      the exact ones are; {!inverse_gamma}'s higher derivatives can overflow
+      where the quantile passes about [2^512].
 
       Raises [Invalid_argument] for a family whose quantile nx does not compute:
-      {!student_t}, {!beta}, {!von_mises}, the vector and matrix families and
+      {!student_t}, {!von_mises}, the vector and matrix families and
       the combinators but {!iid} and {!truncated}. *)
 
   val coords : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t

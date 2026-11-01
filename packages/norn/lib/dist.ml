@@ -1195,6 +1195,16 @@ let beta ~a ~b =
     ~factors
     ~draw:(fun k s -> Nx.Rng.beta ~key:k (broadcast_to s a) (broadcast_to s b))
     ~coords:(Bij.interval ~low:(Nx.scalar_like a 0.) ~high:(Nx.scalar_like a 1.))
+    ~quantile:(fun p -> Nx.betaincinv a b p)
+    ~tails:
+      {
+        log_cdf = (fun x -> Nx.log_betainc a b x);
+        log_sf = (fun x -> Nx.log_betaincc a b x);
+        lower = (fun p -> Nx.betaincinv a b p);
+        upper = (fun q -> Nx.betainccinv a b q);
+        below = true;
+        above = true;
+      }
     a
 
 let uniform ~low ~high =

@@ -49,6 +49,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.quantile` computes the beta's quantile, by `Nx.betaincinv`, where it
+  raised, and `Dist.truncated` takes the beta.
 - `Evidence.expectation`'s nested-sampling error, which counted the volumes'
   noise twice, comes from runs resampled by lineage, and each error widens by
   Student's t over the new `Evidence.effective_groups`.

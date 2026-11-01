@@ -62,6 +62,7 @@ let reals =
         ("truncated_inverse_gamma", "inverse_gamma", None, Some 0.05);
         ("truncated_uniform", "uniform", Some 0., Some 1.);
         ("truncated_half_normal", "half_normal", None, Some 1e-3);
+        ("truncated_beta", "beta", Some 0.2, Some 0.6);
       ]
 
 (* Too concentrated for [normalisation]'s quadrature. *)
@@ -470,6 +471,69 @@ let compiled_quantile =
           let tol = 2. *. (5. +. (m /. x_density c x *. tail_ulps m)) in
           equal (ulps tol) x compiled.(i))
         ps)
+
+(* Quantiles of the beta *)
+
+(* [beta_quantile_of (a, (b, p))] is the beta's quantile as a function of its
+   shapes and [p]. *)
+let beta_quantile_of (a, (b, p)) = D.quantile (D.beta ~a ~b) p
+
+(* The exact derivatives are finite for shapes in [(0, inf)] and [p] in [(0,
+   1)]: in [p] [1 / f(x)], in a shape [-∂I/∂a / f(x)], [f] the density. Draws
+   reach shapes of [2^-60], where [log (a B(a, b))] is O(a), and quantiles
+   that underflow, whose derivatives are finite too. *)
+let beta_derivatives =
+  prop "the beta's quantile's first derivatives are finite"
+    Gen.(
+      let shape = map (fun e -> Float.pow 2. e) (float_range (-60.) 20.) in
+      let+ a = shape
+      and+ b = shape
+      and+ p =
+        one_of
+          [
+            float_range 0x1p-20 (1. -. 0x1p-20);
+            map (fun e -> Float.pow 2. e) (float_range (-1000.) (-1.));
+            map (fun e -> 1. -. Float.pow 2. e) (float_range (-52.) (-1.));
+          ]
+      in
+      (a, b, p))
+    (fun (a, b, p) ->
+      cover "a shape below 2^-30" (Float.min a b < 0x1p-30);
+      cover "a shape above 2^10" (Float.max a b > 0x1p10);
+      cover "p below 2^-100" (p < 0x1p-100);
+      cover "p above 1 - 2^-26" (p > 1. -. 0x1p-26);
+      let x, (da, (db, dp)) =
+        Rune.value_and_grad args beta_quantile_of (f64 a, (f64 b, f64 p))
+      in
+      let finite v = Float.is_finite (item v) in
+      equal bool true (finite x && finite da && finite db && finite dp))
+
+(* Forward mode applies the derivatives reverse mode transposes: both are
+   one program's, so they agree to its roundings. *)
+let beta_forward_mode =
+  Windtrap.cases "the beta's forward mode agrees with reverse mode"
+    ~id:(fun (n, _, _, _) -> n)
+    [
+      ("central", 2.5, 4., 0.3);
+      ("a of 1e-12", 1e-12, 1., 0.5);
+      ("b of 1e-20 against 2^20", 0x1p20, 1e-20, 1e-300);
+      ("a small beside b large", 0.5, 1e5, 1e-3);
+      ("near 1", 1e5, 0.5, 0.999);
+    ]
+    (fun (_, a, b, p) ->
+      let at = (f64 a, (f64 b, f64 p)) in
+      let da, (db, dp) = Rune.grad args beta_quantile_of at in
+      let along t =
+        item (snd (Rune.jvp args Nx.Ptree.tensor beta_quantile_of at t))
+      in
+      let zero = f64 0. and one = f64 1. in
+      let close = float_rel ~rel:0x1p-40 ~abs:0. in
+      equal close (item da) (along (one, (zero, zero)));
+      equal close (item db) (along (zero, (one, zero)));
+      equal close (item dp) (along (zero, (zero, one))))
+
+let beta_quantiles =
+  group "quantile of the beta" [ beta_derivatives; beta_forward_mode ]
 
 let gamma_quantiles =
   group "quantile of the gamma and the inverse gamma"
@@ -2136,7 +2200,8 @@ let truncation =
               D.truncated normal);
           raises_match (Exn.invalid_arg ~sub:"no distribution function")
             (fun () ->
-              D.truncated ~low:(f64 0.) (D.beta ~a:(f64 2.) ~b:(f64 2.))));
+              D.truncated ~low:(f64 0.)
+                (D.student_t ~df:(f64 3.5) ~loc:(f64 0.) ~scale:(f64 1.))));
     ]
 
 (* Von Mises *)
@@ -2624,6 +2689,7 @@ let () =
          densities;
          quantiles;
          gamma_quantiles;
+         beta_quantiles;
          fit;
          normalisation;
          group "laws" [ sums ];
