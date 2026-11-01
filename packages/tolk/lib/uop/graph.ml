@@ -674,7 +674,6 @@ let arg_value : Ops.arg -> value option = function
   | Range r -> Some (range_arg.write (r.axis_type, r.axis_id))
   | Reduce r -> Some ((pair op int).write (r.op, r.num_axes))
   | Device d -> Some (device.write d)
-  | Axes l -> Some ((list int).write l)
   | String s -> Some (str.write s)
   | Bytes s -> Some (bytes.write s)
   | Code c -> Some ((pair str dtype).write (c.code, c.dtype))
@@ -697,7 +696,6 @@ let arg_of (o : Op.t) v : Ops.arg =
       let op, num_axes = (pair op int).read v in
       Reduce { op; num_axes }
   | Copy -> Device (device.read v)
-  | Permute -> Axes ((list int).read v)
   | Special | Source | Load | Store | Linear -> String (str.read v)
   | Custom_function -> Custom_function (custom_function.read v)
   | Binary -> Bytes (bytes.read v)

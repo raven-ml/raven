@@ -278,7 +278,6 @@ type arg =
       (** {!Op.Reduce}: the operation, and how many leading axes it reduces ([0]
           for a kernel's reduction over range sources). *)
   | Device of device  (** {!Op.Copy}: the target. *)
-  | Axes of int list  (** {!Op.Permute}: the permutation. *)
   | String of string
       (** {!Op.Special}, {!Op.Linear}: a name;
           {!Op.Source}: the source text. *)

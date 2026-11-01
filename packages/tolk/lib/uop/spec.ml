@@ -374,9 +374,19 @@ let tensor : t =
            "x"
            (fun x -> shape_equal (shape (nth x 1)) (shape (nth x 2)));
          check
-           (pat [ Op.Permute ] ~name:"mv" ~src:[ Upat.wild ])
+           (pat [ Op.Permute ] ~name:"mv"
+              ~src:
+                [
+                  Upat.wild;
+                  Upat.op Op.Stack
+                    ~each:(Upat.op ~dtype:[ Dtype.Weak_int ] Op.Const);
+                ])
            "mv"
-           (fun mv -> match arg mv with Axes _ -> true | _ -> false);
+           (fun mv ->
+             let axis = function Int i -> i | Sym _ -> -1 in
+             let axes = List.map axis (as_shape (nth mv 1)) in
+             let n = List.length axes in
+             n >= 2 && List.sort Int.compare axes = List.init n Fun.id);
          check
            (pat [ Op.Reduce ] ~src:[ Upat.wild ] ~allow_any_len:true ~name:"x")
            "x" (fun x ->

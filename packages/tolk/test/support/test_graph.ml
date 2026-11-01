@@ -69,7 +69,6 @@ let kinds =
     ( "a reduction",
       Ops.v ~src:[ x ] ~arg:(Reduce { op = Add; num_axes = 1 }) Reduce );
     ("a copy", Ops.v ~src:[ x ] ~arg:(Device "CPU") Copy);
-    ("a permutation", Ops.v ~src:[ x ] ~arg:(Axes [ 1; 0 ]) Permute);
     ("a launch dimension", Ops.v ~src:[ int 4 ] ~arg:(String "gidx0") Special);
     ( "a flagged load",
       Ops.v ~src:[ Ops.index buffer [ int 0 ] ] ~arg:(String "nontemporal") Load

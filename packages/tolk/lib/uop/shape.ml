@@ -202,7 +202,12 @@ let marg u =
         | Op.Expand, _ -> Expand (shape_src 1)
         | Op.Pad, _ -> Pad (List.combine (shape_src 1) (shape_src 2))
         | Op.Shrink, _ -> Shrink (List.combine (shape_src 1) (shape_src 2))
-        | Op.Permute, Axes l -> Permute l
+        | Op.Permute, _ ->
+            let axis = function
+              | Int n -> n
+              | Sym _ -> invalid_arg "a permutation of a symbolic axis"
+            in
+            Permute (List.map axis (shape_src 1))
         | op, _ -> invalid_argf "%s is not a movement" (Op.name op)
       in
       set_movement_memo u m;
@@ -437,7 +442,8 @@ let mop u (m : movement) =
   | Pad b -> v Op.Pad ~src:(u :: simplified [ List.map fst b; List.map snd b ])
   | Shrink b ->
       v Op.Shrink ~src:(u :: simplified [ List.map fst b; List.map snd b ])
-  | Permute l -> v Op.Permute ~src:[ u ] ~arg:(Axes l)
+  | Permute l ->
+      v Op.Permute ~src:(u :: simplified [ List.map (fun i -> Int i) l ])
 
 let resolve_dim ?(extra = 0) u dim =
   let total = ndim u + extra in
@@ -1655,13 +1661,14 @@ let mop_cleanup =
             | _ -> None);
         (* Merge permutes. *)
         rule
-          (Upat.op Op.Permute ~name:"x" ~src:[ Upat.op Op.Permute ~name:"x2" ])
+          (Upat.op Op.Permute ~name:"x"
+             ~src:[ Upat.op Op.Permute ~name:"x2"; Upat.wild ])
           (fun m ->
             let x2 = m "x2" in
             let order =
               List.map (List.nth (permute_arg x2)) (permute_arg (m "x"))
             in
-            Some (replace ~arg:(Axes order) x2));
+            Some (permute (nth x2 0) order));
         (* Remove no-op permutes. *)
         rule (Upat.op Op.Permute ~name:"x") (fun m ->
             let x = m "x" in

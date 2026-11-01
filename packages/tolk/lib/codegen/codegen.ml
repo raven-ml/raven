@@ -192,7 +192,7 @@ let wmma_accumulate wmma add =
 let pm_wmma_add =
   let wmma = Upat.op Op.Wmma ~name:"wmma" in
   let plus p = Upat.add p (Upat.var "add") in
-  let permute_of p = Upat.op Op.Permute ~src:[ p ] ~name:"permute" in
+  let permute_of p = Upat.op Op.Permute ~src:[ p; Upat.wild ] ~name:"permute" in
   let order m =
     match marg (m "permute") with Permute o -> o | _ -> assert false
   in

@@ -261,7 +261,6 @@ let arguments =
             (Ops.equal_arg
                (Code { code = "a"; dtype = Void })
                (Code { code = "a"; dtype = Int32 }));
-          is_false (Ops.equal_arg (Axes [ 0; 1 ]) (Axes [ 1; 0 ]));
           is_false (Ops.equal_arg (Device "CPU") (String "CPU")));
       test "equal_arg compares constants by their bits and nodes physically"
         (fun () ->
@@ -732,7 +731,7 @@ let data_types =
         (fun () ->
           rejects (fun () -> Ops.v Op.Const);
           rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] Op.Cast);
-          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] ~arg:(Axes [ 3 ]) Op.Bitcast);
+          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] ~arg:(Device "CPU") Op.Bitcast);
           rejects (fun () -> Ops.v Op.Param);
           rejects (fun () -> Ops.v Op.Custom));
       test "a transcendental of Invalid is boolean" (fun () ->

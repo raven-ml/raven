@@ -176,7 +176,7 @@ EXPRESSIONS = [
     ("expand", UOp.param(4, dtypes.float, (4, 1)).expand((4, 8))),
     ("permute", p.permute((1, 0))),
     ("permute_three", UOp.param(5, dtypes.float, (2, 3, 4)).permute((2, 0, 1))),
-    ("permute_one", UOp(Ops.PERMUTE, src=(buf,), arg=(0,))),
+    ("permute_one", buf._mop(Ops.PERMUTE, (0,))),
     ("flip", p.flip((1,))),
     ("flip_all", p.flip((0, 1))),
     ("pad", p.pad(((0, 2), (1, 3)))),
