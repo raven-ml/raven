@@ -1417,10 +1417,11 @@ let mxfp4_four ~axis () =
       Array.map (Nx_quant.place (Four.split ~axis)) ws,
       ref 0 )
 
-(* The mixture of experts' layer with each weight split along its 32 experts
-   over four memory devices, the ids and tokens whole on each: each device
-   sums the rows of its own 8 experts, and the devices' sums close by
-   partials. *)
+(* The mixture of experts' layer with each weight split over four memory
+   devices, the ids whole on each: along its 32 experts, the tokens whole on
+   each, each device summing the rows of its own 8 experts; or along its
+   4096 inputs, the tokens cut alike, each device summing every row over its
+   own 32 blocks. The devices' sums close by partials. *)
 type cut_experts =
   | Cut_experts :
       'd Nx.int64_t
@@ -1429,14 +1430,15 @@ type cut_experts =
       * int ref
       -> cut_experts
 
-let experts_four () =
+let experts_four ~axis () =
   let module Four = (val Nx.devices [ memory 0; memory 1; memory 2; memory 3 ])
   in
   let ids, x, ws, turn = experts () in
+  let x_at = if axis = 2 then Four.split ~axis:2 else Four.on in
   Cut_experts
     ( Nx.place Four.on ids,
-      Nx.place Four.on x,
-      Array.map (Nx_quant.place (Four.split ~axis:0)) ws,
+      Nx.place x_at x,
+      Array.map (Nx_quant.place (Four.split ~axis)) ws,
       turn )
 
 let quant_rows =
@@ -1463,7 +1465,10 @@ let quant_rows =
           let w = next ws turn in
           Nx.Repr.array (Nx_quant.apply_experts ~ids w x));
       Thumper.bench_with_setup "mxfp4-moe-64x8of32-experts-split4"
-        ~setup:experts_four (fun (Cut_experts (ids, x, ws, turn)) ->
+        ~setup:(experts_four ~axis:0) (fun (Cut_experts (ids, x, ws, turn)) ->
+          Value (Nx_quant.apply_experts ~ids (next ws turn) x));
+      Thumper.bench_with_setup "mxfp4-moe-64x8of32-k-split4"
+        ~setup:(experts_four ~axis:2) (fun (Cut_experts (ids, x, ws, turn)) ->
           Value (Nx_quant.apply_experts ~ids (next ws turn) x));
     ]
 
