@@ -169,7 +169,7 @@ type t = private {
   emits : bool;
       (** Whether an equation emits ({!Emit}), or a program its constructs carry
           does. *)
-  drops : drops option Atomic.t;
+  mutable drops : drops option; [@atomic]
       (** Once {!eval} has run it, which values it drops after each equation:
           those it reads last, the outputs' excepted, and those it makes that
           nothing reads. *)

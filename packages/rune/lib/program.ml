@@ -153,7 +153,7 @@ type addition =
       ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form * ('v, 's, 'd) Nx.Prim.form
       -> addition
 
-type drops = { starts : int array; vars : int array; read : Bytes.t }
+type drops = { starts : int array; vars : int array; last : int array }
 
 type t = {
   owner : Nx.Prim.interpretation;
@@ -163,7 +163,7 @@ type t = {
   adds : addition array;
   slots : int;
   emits : bool;
-  drops : drops option Atomic.t;
+  mutable drops : drops option; [@atomic]
 }
 
 and eqn =
@@ -386,8 +386,8 @@ let operands = function
 
 (* For each of [eqns], the variables it reads last, those of [outputs]
    excepted, flat: equation [e]'s are [vars] from [starts.(e)] to
-   [starts.(e + 1)], and [read] marks the variables an equation or an output
-   reads. An evaluation drops each value once its last reader ran, and one
+   [starts.(e + 1)], and [last.(v)] is the last reader of variable [v], [-1]
+   for one nothing reads. An evaluation drops each value once its last reader ran, and one
    nothing reads once it is made, as the function applied eagerly lets each
    go. *)
 let drops owner eqns outputs slots =
@@ -400,56 +400,59 @@ let drops owner eqns outputs slots =
     | _ -> ()
   in
   let read (V x) = mark 0 x in
-  Array.iteri
-    (fun e eqn ->
-      at := e;
-      match eqn with
-      | Op { op; _ } -> Nx.Prim.iteri mark op
-      | Do { c; _ } -> List.iter read (operands c))
-    eqns;
+  for e = 0 to n - 1 do
+    at := e;
+    match eqns.(e) with
+    | Op { op; _ } -> Nx.Prim.iteri mark op
+    | Do { c; _ } -> List.iter read (operands c)
+  done;
   at := n;
   Array.iter read outputs;
+  (* The variables sorted by last reader, in order within each, counting
+     each equation's into [starts.(e + 1)]. [starts.(e)] then runs as the
+     cursor of [e]'s, ending at the start of [e + 1]'s, and moves up one. *)
   let starts = Array.make (n + 1) 0 in
-  Array.iter
-    (fun e -> if e >= 0 && e < n then starts.(e + 1) <- starts.(e + 1) + 1)
-    last;
+  for v = 0 to slots - 1 do
+    let e = last.(v) in
+    if e >= 0 && e < n then starts.(e + 1) <- starts.(e + 1) + 1
+  done;
   for e = 1 to n do
     starts.(e) <- starts.(e) + starts.(e - 1)
   done;
-  let vars = Array.make starts.(n) 0 and next = Array.sub starts 0 n in
-  Array.iteri
-    (fun v e ->
-      if e >= 0 && e < n then begin
-        vars.(next.(e)) <- v;
-        next.(e) <- next.(e) + 1
-      end)
-    last;
-  let read =
-    Bytes.init slots (fun v -> if last.(v) >= 0 then '\001' else '\000')
-  in
-  { starts; vars; read }
+  let vars = Array.make starts.(n) 0 in
+  for v = 0 to slots - 1 do
+    let e = last.(v) in
+    if e >= 0 && e < n then begin
+      vars.(starts.(e)) <- v;
+      starts.(e) <- starts.(e) + 1
+    end
+  done;
+  for e = n downto 1 do
+    starts.(e) <- starts.(e - 1)
+  done;
+  starts.(0) <- 0;
+  { starts; vars; last }
 
 let make ~owner ~params eqns ~outputs ~adds ~slots =
   let eqns = Array.of_list eqns in
   let emits = Array.exists emitting eqns in
-  let drops = Atomic.make None in
-  { owner; params; eqns; outputs; adds; slots; emits; drops }
+  { owner; params; eqns; outputs; adds; slots; emits; drops = None }
 
 (* [p] with [eqns] and [outputs], which [emits] says whether they emit. *)
 let remade ?eqns ?outputs ?emits p =
   let eqns = Option.value eqns ~default:p.eqns
   and outputs = Option.value outputs ~default:p.outputs in
   let emits = Option.value emits ~default:p.emits in
-  { p with eqns; outputs; emits; drops = Atomic.make None }
+  { p with eqns; outputs; emits; drops = None }
 
 (* [p]'s drops, found at its first evaluation: tracing makes many programs
    that are never evaluated. Two domains may both find them. *)
 let dropped p =
-  match Atomic.get p.drops with
+  match p.drops with
   | Some d -> d
   | None ->
       let d = drops p.owner p.eqns p.outputs p.slots in
-      Atomic.set p.drops (Some d);
+      p.drops <- Some d;
       d
 
 (* A construct travels in a cell, which {!perform} empties once no handler
@@ -1106,6 +1109,16 @@ let called c =
   conform c ys;
   ys
 
+(* In [env], the values the equation [e] made from [base] to [stop] that
+   nothing reads, then those [e] read last. *)
+let drop d env e base stop =
+  for v = base to stop - 1 do
+    if d.last.(v) < 0 then env.(v) <- hole
+  done;
+  for k = d.starts.(e) to d.starts.(e + 1) - 1 do
+    env.(d.vars.(k)) <- hole
+  done
+
 let rec eval ?totals p args =
   let na = Array.length p.adds in
   let totals =
@@ -1133,16 +1146,6 @@ let rec eval ?totals p args =
     incr at
   in
   let d = dropped p in
-  (* The values [eqn] made from [base] to [stop], those nothing reads, then
-     those it read last. *)
-  let drop e base stop =
-    for v = base to stop - 1 do
-      if Bytes.get d.read v = '\000' then env.(v) <- hole
-    done;
-    for k = d.starts.(e) to d.starts.(e + 1) - 1 do
-      env.(d.vars.(k)) <- hole
-    done
-  in
   Array.iteri
     (fun e eqn ->
       match eqn with
@@ -1151,11 +1154,11 @@ let rec eval ?totals p args =
           let r = Nx.Prim.eval ~by op in
           at := base;
           Nx.Prim.iter_results bind op r;
-          drop e base !at
+          drop d env e base !at
       | Do { c; base } ->
           let r = perform (map_operands m c) in
           Array.blit r 0 env base (Array.length r);
-          drop e base (base + Array.length r))
+          drop d env e base (base + Array.length r))
     p.eqns;
   map_values m p.outputs
 

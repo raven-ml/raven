@@ -345,6 +345,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- An evaluated program finds the values it drops with fewer words: the eager
+  gradient of a scan whose step holds a root allocates 3.2% fewer.
 - Reverse mode records each operation with fewer words: kaun's MLP train
   step with Adam allocates 27,157 words where it allocated 28,073.
 - A `custom_jvp` tangent map run on values, under `grad` or `jvp` with no map
