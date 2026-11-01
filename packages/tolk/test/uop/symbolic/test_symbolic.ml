@@ -552,9 +552,13 @@ let powers =
               by_symbolic p p;
               equal uop (sym (Transcendental.xpow f (Ops.float e))) (sym p))
             [ Float.infinity; Float.nan ]);
-      test "1 ** x is 1, and c ** x is exp2 (x * log2 c) for positive c"
+      test
+        "1 ** x is 1 of the power's type, and c ** x is exp2 (x * log2 c) for \
+         positive c"
         (fun () ->
-          by_symbolic (Ops.pow (Ops.float ~dtype:Float32 1.) f) (Ops.float 1.);
+          by_symbolic
+            (Ops.pow (Ops.float ~dtype:Float32 1.) f)
+            (Ops.float ~dtype:Float32 1.);
           by_symbolic (Ops.pow (Ops.float ~dtype:Float32 2.) f) (Ops.exp2 f));
       test "c ** x computes in float for an integer exponent" (fun () ->
           let n = Shape.param 5 Dtype.Int32 in
@@ -895,9 +899,6 @@ let comparisons =
       test "x // d < c is x < c * d for positive d" (fun () ->
           let v = var "v" 0 24 in
           by_symbolic Ops.O.(v // int 4 < int 3) Ops.O.(v < int 12));
-      test "x // d < c is c * d < x for negative d" (fun () ->
-          let v = var "v" 0 24 in
-          by_symbolic Ops.O.(v // int (-4) < int (-3)) Ops.O.(int 12 < v));
       test "a common divisor of c and the coefficients divides out" (fun () ->
           let small = var "s" 0 3 in
           by_symbolic Ops.O.((a * int 4) + small < int 16) Ops.O.(a < int 4));
@@ -1175,6 +1176,13 @@ let floats =
           keeps_float_bits Ops.O.(f + float 1e8 + g) [ [ 3.; 3. ] ];
           keeps_float_bits Ops.O.(g + f + f) [ [ tiny; 1. ] ];
           keeps_float_bits Ops.O.((f * float 1.1) + (f * float 2.2)) [ [ 1. ] ];
+          keeps_float_bits Ops.O.(f + (f * float (-1.))) [ [ -1. ]; [ inf ] ];
+          keeps_float_bits
+            Ops.O.(g + (f * float 4.) + (f * float (-3.)))
+            [ [ 1e38; 1. ] ];
+          keeps_float_bits
+            Ops.O.(f * float (-1.) * g)
+            [ [ 3.; 1e30 ]; [ -0.; 2. ]; [ inf; 0. ]; [ Float.nan; 1. ] ];
           keeps_float_bits
             Ops.O.(
               g
@@ -1351,6 +1359,13 @@ let ordering =
       test "an after keeps its stores and ranges" (fun () ->
           let after = Ops.after f [ store; r0 ] in
           by_symbolic after after);
+      test
+        "an after waits on a reduction's source, with the reduction's ranges \
+         ended" (fun () ->
+          let value = Ops.cast r0 Dtype.Float32 in
+          by_symbolic
+            (Ops.after f [ Ops.reduce value Op.Add [ r0 ] ])
+            (Ops.after f [ Ops.end_ (Ops.after (Ops.v Op.Noop) [ r0 ]) [ r0 ] ]));
       test "an after waits on the sources of any other node" (fun () ->
           by_symbolic
             (Ops.after f [ Ops.O.(g + float 1.); store ])

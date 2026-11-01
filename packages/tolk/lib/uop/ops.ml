@@ -1469,11 +1469,18 @@ and compute_min_max u : Dtype.value * Dtype.value =
       match (u.op, u.arg) with
       | Op.Where, _ -> (
           match u.src with
+          (* an integer [where (a < b) a b] is the minimum of [a] and [b] *)
+          | [ { op = Op.Cmplt; src = [ a; b ]; _ }; x; y ]
+            when Dtype.is_int dt && a == x && b == y ->
+              let (x0, x1), (y0, y1) = (bounds x, bounds y) in
+              (Value.min x0 y0, Value.min x1 y1)
           | [ c; x; y ] ->
               let (x0, x1), (y0, y1) = (selected c (bounds x) x, bounds y) in
               (Value.min x0 y0, Value.max x1 y1)
           | _ -> invalid_arg "where needs three sources")
-      | (Op.Param | Op.Buffer | Op.Alloc), Param { vmin_vmax = Some b; _ } -> b
+      | ( (Op.Param | Op.Refparam | Op.Buffer | Op.Alloc),
+          Param { vmin_vmax = Some b; _ } ) ->
+          b
       | (Op.Range | Op.Special), _ when not (Dtype.equal dt Dtype.Void) ->
           (`Int Bigint.zero, snd (min_max (sub (src0 ()) (int 1))))
       | Op.Stack, _ when not (List.is_empty u.src) ->
@@ -1632,7 +1639,8 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
   match u.op with
   | Op.Add -> Some (add s0_min s1_min, add s0_max s1_max)
   | Op.Sub -> Some (sub s0_min s1_max, sub s0_max s1_min)
-  | Op.And when Dtype.is_int u.dtype && c1 && le zero s1_max ->
+  | Op.And
+    when Dtype.is_int u.dtype && c1 && (le zero s0_min || le zero s1_max) ->
       if lt s0_min zero then Some (zero, s1_max)
       else
         let mask = Bigint.pred (Bigint.shift_left Bigint.one (Bigint.numbits (z s0_max))) in

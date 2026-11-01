@@ -594,9 +594,9 @@ scope, see README.
   restrictions touch float and committed-integer values only. The one rounding
   that stays is that of float powers, a constant one computed by products and
   square roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
-  - **Integer bounds wrap.** tinygrad: `uop/ops.py:59-61` (`wrapped`),
-    which `_min_max` (`:1077-1138`) applies to an unsigned sum, difference,
-    product, left shift and complement, `:1129-1138` (a cast), `:1122-1124`
+  - **Integer bounds wrap.** tinygrad: `uop/ops.py:58-60` (`wrapped`),
+    which `_min_max` (`:1053-1118`) applies to an unsigned sum, difference,
+    product, left shift and complement, `:1109-1118` (a cast), `:1102-1104`
     (a constant table). tolk: `Ops.at_width`, `Ops.min_max`,
     `Ops.cast_bounds`, and the constant table's case of
     `Ops.compute_min_max`. The bounds of a committed integer that leave its
@@ -609,11 +609,11 @@ scope, see README.
     `false`, which is `true` at 40, and so `y * 4 < 0` and `y << 2 < 0`,
     `true` at 40 too, and `cast (cast (y + 100) uint8) int32` to one cast,
     `-116` where the machine gives `140`.
-  - **Wrapping rules.** tinygrad: `uop/symbolic.py:294-296` (`(x // c1) //
-    c2`), `:298-300` (`c0 + x < c1`), `codegen/simplify.py:98-103` (`x + y <
-    c`, `x * y < c`) and `:122-123` (`x + y = c` under a cast),
-    `uop/symbolic.py:399-409` (`reduce_mul_chain`, a factor out of a maximum),
-    `uop/symbolic.py:310-311` (`-x < -y`, `-x < c`). tolk:
+  - **Wrapping rules.** tinygrad: `uop/symbolic.py:298-300` (`(x // c1) //
+    c2`), `:302-304` (`c0 + x < c1`), `codegen/simplify.py:96-101` (`x + y <
+    c`, `x * y < c`) and `:121-123` (`x + y = c` under a cast),
+    `uop/symbolic.py:401-411` (`reduce_mul_chain`, a factor out of a maximum),
+    `uop/symbolic.py:315-316` (`-x < -y`, `-x < c`). tolk:
     `Shape.symbolic_simple`, `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
     `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the comparisons
@@ -625,24 +625,25 @@ scope, see README.
     committed integer, and `-x < -y` and `-x < c` to a signed one only where no
     negation wraps. The comparisons of `Simplify` apply to integers only, since
     moving a float term rounds, and `x + y = c` only under a cast that does not
-    narrow. tinygrad folds the int8 maximum of `r * p * q` over `r < 2` to `p *
+    narrow, where tinygrad takes any cast whose operand's bounds fit its type
+    (7e36b6735). `where (a < b) c (a + (c - b))` is a maximum for a signed `a`
+    only where `a + (c - b)` does not wrap (`uop/symbolic.py:292-294`), where
+    tinygrad takes signed overflow to be undefined. tinygrad folds the int8 maximum of `r * p * q` over `r < 2` to `p *
     q`, `-112` at `12, 12` where the machine gives `0`, and int8 `-x < 3` to
     `-3 < x`, `false` at `x = -128` where the machine gives `true`.
-  - **Float folds.** tinygrad: `uop/symbolic.py:125` (`x + 0`), `:182-187`
+  - **Float folds.** tinygrad: `uop/symbolic.py:126` (`x + 0`), `:181-186`
     (`x / x`, `x * 0`). tolk: `Shape.symbolic_simple`. A float `x + 0` is `x`
     only for `-0.` (`-0. + +0.` is `+0.`); `x * 0` is `0` for integers and
     booleans only (a float product by zero is NaN at an infinity or a NaN
     and `-0.` at a negative `x`); `x / x` is gone, since true division is
     always a float, and `x / x` is NaN at 0.
-  - **Signed zeros.** tinygrad: `uop/symbolic.py:283` (complementary
-    selections), `:480-482` (`-(x + y)`). tolk: `Shape.symbolic`,
-    `Symbolic.sym` (its rule for `-(x + y)`). For integers and booleans only:
-    `-(x + y)` at `x = -3`, `y = 3` is `-0.`, where `-x + -y` is `+0.`, and
+  - **Signed zeros.** tinygrad: `uop/symbolic.py:284-285` (complementary
+    selections). tolk: `Shape.symbolic`. For integers and booleans only:
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
-  - **Reassociation.** tinygrad: `uop/symbolic.py:171-174` (two constants
-    of an associative operation), `:252-261` (like terms), `:280-281` (a sum
-    of two selections), `:305-306` (constants to the end), `:399-409,479`
+  - **Reassociation.** tinygrad: `uop/symbolic.py:170-173` (two constants
+    of an associative operation), `:251-264` (like terms), `:281-283` (a sum
+    of two selections), `:308-311` (constants to the end), `:401-411,481`
     (`reduce_mul_chain`). tolk: `Shape.fold_where_closure`,
     `Shape.symbolic_simple`, `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
     Sums, products and maxima regroup for integers and booleans only, and a
@@ -653,8 +654,14 @@ scope, see README.
     `(r * 2e38) * 0.25` is `inf`, where `0.25 * 2e38` times the sum of `r` is
     finite; and a maximum keeps a NaN only as its first operand, so
     `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
-    `x + x` is still `x * 2`, which is exact.
-  - **Maxima.** tinygrad: `uop/symbolic.py:289-291`. tolk:
+    `x + x` is still `x * 2`, which is exact, and `(x * -1) * y` is `(x * y) *
+    -1`, since a negation commutes with rounding. tinygrad restricts these
+    rules to integers too (7e36b6735), but for `x + x * -1`, which it makes
+    `x * 0`: at `x = -1.` that is `-0.`, where the sum is `+0.`. It checks that
+    an intermediate it makes does not overflow (`no_overflow`,
+    `uop/symbolic.py:34`), which holds wherever tolk would check it, since the
+    bounds of a committed integer wrap (`Ops.at_width`), so tolk makes none.
+  - **Maxima.** tinygrad: `uop/symbolic.py:290-295`. tolk:
     `Shape.symbolic`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
     `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
@@ -663,10 +670,10 @@ scope, see README.
     into a maximum that renders as the target's own, and it took `-0.` and
     `+0.` for one constant: `where (x < -0.) 0. x` at `-1e-45` is `+0.`,
     where `max (x, -0.)` is `-0.`. A float ReLU stays a selection.
-  - **Sigmoid forms.** tinygrad: `uop/symbolic.py:475-477`. tolk: the rules
+  - **Sigmoid forms.** tinygrad: `uop/symbolic.py:477-479`. tolk: the rules
     are left out of `sym`. `x * (1 / (1 + x))` at `1e-8` is `1e-8`, where
     `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it is `1.`.
-  - **Pow.** tinygrad: `uop/symbolic.py:16-22` (`simplify_pow`), `:201-202`
+  - **Pow.** tinygrad: `uop/symbolic.py:16-22` (`simplify_pow`), `:199-201`
     (`c ** x`). tolk: `Shape.simplify_pow` and the `c ** x` rule of
     `Shape.symbolic_simple`. The reciprocal of the
     base is taken for exponents of magnitude at least 1 only, where the power
@@ -674,9 +681,12 @@ scope, see README.
     `(1 / 1e-40) ** 0.8` is `inf`. A float half-integer power selects `+0.`
     at `-0.` and `+inf` at `-inf`, where `sqrt` gives `-0.` and NaN. `c ** x`
     goes to `xpow` for `c = inf`: `inf ** 0` is `1.`, where
-    `exp2 (0 * log2 inf)` is NaN.
-  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:104-111`
-    (`sum_between`), `:115-116` (a parameter lifted out of a sum) and `:118`
+    `exp2 (0 * log2 inf)` is NaN. `1 ** x` is `1` of the power's type, as
+    IEEE's `pow (1, x)` is at every `x`, NaN included: tinygrad no longer
+    folds it (89ce9c494, which fixed the type of the `1` it gave), and leaves
+    a float `x` to `exp2 (x * 0)`, NaN at an infinity.
+  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:102-109`
+    (`sum_between`), `:113-114` (a parameter lifted out of a sum) and `:116`
     (a product by a boolean cast). tolk: `Simplify.sum_between`,
     `Simplify.pm_reduce_collapse`.
     A float sum counted in closed form is `+0.` over an empty part of its
@@ -696,7 +706,7 @@ scope, see README.
     polynomial starts from its first coefficient, so the decompositions no
     longer rely on the float folds of `0. * x` and `x + 0` to be what tinygrad
     renders.
-  - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py:100-102`
+  - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py:101-103`
     (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator
     operand). tolk: `Codegen.wmma_accumulate`. A WMMA built for a sum starts
     from a zero accumulator, and the running sum used to be added to it,
@@ -3050,12 +3060,18 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
   while it holds, its trip in a word of the run's ints, which a call's scalar
   argument reads too (D140). The flag is storage the program makes or a
   buffer a caller binds. tinygrad's schedules run each call once, and stop on
-  no value.
+  no value. A range of one trip around a call folds to a constant, which
+  `Shape.symbolic` drops from the end, so that the call runs once; tinygrad
+  deleted that rule (07efd3877), since its ends close only a kernel's ranges,
+  where code generation drops a constant (`codegen/simplify.py:9-11`,
+  `flatten_range`).
 - **Reason:** (b). rune's `Rune.iterate` under `Rune.jit` stages a loop that
   stops on a condition of its carry as one body compiled once, which no
   schedule tinygrad makes can run.
 - **Pinned by:** the Engine suite: `link and run › a loop runs its call while
-  its flag holds, at most its trips`, `› a loop's flag that views wider
+  its flag holds, at most its trips`, `› a loop of one trip passes its call the
+  trip as a scalar argument`, and `Tolk.Symbolic › symbolic › ordering › an end
+  drops the ranges that became constants`, `› a loop's flag that views wider
   storage is refused`, `› a planned buffer a loop writes is not placed over
   one it leaves`, `› a loop's planned flag is not placed under a buffer before
   it`, `› a back edge whose flag is bound storage reads that storage` and

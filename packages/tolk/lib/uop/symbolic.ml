@@ -25,7 +25,6 @@ let conj = function
 
 let invalid_pat = Upat.op Op.Const ~arg:(Const `Invalid) ~name:"i"
 let boolean = [ Dtype.Bool ]
-let int_or_bool = Dtype.Bool :: Dtype.Weak_int :: Dtype.ints
 
 (* Valids *)
 
@@ -337,13 +336,6 @@ let sym =
             (Upat.reduce ~name:"r" ~allow_any_len:true (Upat.op Op.Mul) [])
             (fun m -> reduce_mul_chain (m "r"));
           (* Combine terms (opinionated) *)
-          rule
-            Upat.(int (-1) * named "a" (var ~dtype:int_or_bool "x" + var "y"))
-            (fun m ->
-              let a = m "a" in
-              let fit u = Shape.fits a V.(~-(vmin u)) in
-              if fit (m "x") && fit (m "y") then Some O.(-m "x" + -m "y")
-              else None);
           (* (x+y)*c -> x*c+y*c. only for int, float has inf*0=nan issue *)
           rule
             Upat.(

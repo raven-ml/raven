@@ -89,7 +89,8 @@ val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 
 val pm_load_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_load_collapse] replaces a sum over one range of a value selected where
-    an index equals the range, as when indexing a tensor with another one, by
-    the value at that index where it is within the range, and [0] elsewhere; and
+    an integer index equals the range, cast to a type that holds its values or
+    not, as when indexing a tensor with another one, by the value at that index
+    where it is within the range, and [0] elsewhere; and
     solves [x + y < c] for [x] when [x] is a {!Dtype.Weak_int} that reads memory
     and [y] and [c] do not. *)

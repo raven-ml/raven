@@ -79,6 +79,13 @@ let merging =
       test "ranges a kernel does not read merge" (fun () ->
           equal (list int) [ 60 ]
             (merged_size (Ops.end_ (store_at (Ops.int 0) one) [ r0; r1; r2 ])));
+      test "a range whose end is read after another range stays apart from it"
+        (fun () ->
+          let after_r0 =
+            Ops.range ~axis_type:Weak (Sym (Ops.after (Ops.int 4) [ r0 ])) [ 1 ]
+          in
+          let u = Ops.end_ (store_at (Ops.int 0) one) [ r0; after_r0 ] in
+          equal int 2 (List.length (ranges (simplify (kernel [ u ])))));
       test "ranges whose merge adds a division stay" (fun () ->
           equal (list int) [ 3; 4 ]
             (merged_size (Ops.end_ (store_at r0 one) [ r0; r1 ])));

@@ -63,10 +63,13 @@ let merge (r0, r1) scope =
   in
   if count_divmod after <= count_divmod before then Some (src after) else None
 
-(* Two ranges of one axis type merge when each reduction, listed in [reduced] by
-   the ranges it runs inside, runs inside both or neither. *)
+(* Two ranges of one axis type, neither of whose ends reads the other, merge
+   when each reduction, listed in [reduced] by the ranges it runs inside, runs
+   inside both or neither. *)
 let mergeable reduced (r0, r1) =
   Axis_type.equal (axis_type r0) (axis_type r1)
+  && (not (Nodes.mem r0 (ranges r1)))
+  && (not (Nodes.mem r1 (ranges r0)))
   && List.for_all (fun rngs -> Nodes.mem r0 rngs = Nodes.mem r1 rngs) reduced
 
 (* An end merges ranges it closes one after the other, and a reduction any two.
@@ -307,7 +310,7 @@ let pm_reduce_collapse =
           rule
             Upat.O.(
               Upat.op Op.Add
-                ~dtype:(Dtype.sints @ Dtype.floats @ Dtype.weaks)
+                ~dtype:(Dtype.Weak_int :: Dtype.sints)
                 ~perm:[ var "x"; var "y" ]
               < var "c")
             (fun m ->
@@ -404,24 +407,28 @@ let pm_reduce_load_collapse =
                 && exact dt [ vmin c; vmax c ]
               then Some (eq x O.(cast c dt - y))
               else None);
-          (* A sum of a load gated on its index equal to the range is the load
-             at that index. *)
+          (* A sum of a load gated on its integer index equal to the range is
+             the load at that index, where a cast of the range keeps its
+             values. *)
           rule
             (Upat.reduce ~op:Op.Add
                (Upat.where
-                  (Upat.eq (var "idx")
-                     (Upat.or_casted (Upat.op Op.Range ~name:"r")))
+                  (Upat.eq
+                     (var ~dtype:(Dtype.Weak_int :: Dtype.ints) "idx")
+                     (Upat.or_casted ~name:"rc" (Upat.op Op.Range ~name:"r")))
                   (var "expr") (Upat.O.int 0))
                [ var "r" ])
             (fun m ->
               let r = m "r" and expr = m "expr" in
-              let idx = cast (m "idx") (dtype r) in
-              let v = O.((idx >= int 0) land (idx < nth r 0)) in
-              Some
-                (where v
-                   (substitute ~calls:Skip ~pass:Fixed_point expr
-                      [ (r, valid idx v) ])
-                   (int 0)));
+              if overflows r (dtype (m "rc")) then None
+              else
+                let idx = cast (m "idx") (dtype r) in
+                let v = O.((idx >= int 0) land (idx < nth r 0)) in
+                Some
+                  (where v
+                     (substitute ~calls:Skip ~pass:Fixed_point expr
+                        [ (r, valid idx v) ])
+                     (int 0)));
         ]);
     ]
 

@@ -728,6 +728,15 @@ let bounds_group =
           check_bounds Ops.O.(s land int 511) (int_bounds 0 511);
           check_bounds Ops.O.(s land int 0x7FFFFFFF) (int_bounds 0 0x7FFFFFFF);
           check_bounds Ops.O.(s land int (-1)) (Dtype.min Int32, Dtype.max Int32));
+      test "a negative mask of a non-negative operand bounds it by the operand"
+        (fun () ->
+          check_bounds Ops.O.(weak_var "x" 0 20 land int (-4)) (int_bounds 0 20);
+          check_bounds Ops.O.(weak_var "x" 3 20 land int (-4)) (int_bounds 0 20));
+      test "an integer selection of the lesser of two values is their minimum"
+        (fun () ->
+          let a = weak_var "a" 0 10 and b = weak_var "b" 4 6 in
+          check_bounds (Ops.where Ops.O.(a < b) a b) (int_bounds 0 6);
+          check_bounds (Ops.where Ops.O.(b < a) a b) (int_bounds 0 10));
       test "maximum then minimum clamps" (fun () ->
           check_bounds
             (Ops.minimum

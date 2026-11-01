@@ -68,8 +68,7 @@ val sym : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b reductions}: the factors of an integer reduced product that do not
       depend on the reduction's ranges move out of a sum, and out of a maximum
       when they are non-negative;
-    - {b terms}: for integers, [-(x + y)] is [-x + -y], and [(x + y) * c] is
-      [x * c + y * c] for weak integers, where each value negated or multiplied
-      {!Shape.fits};
+    - {b terms}: [(x + y) * c] is [x * c + y * c] for weak integers, where
+      each value multiplied {!Shape.fits};
 
     then cleans up groups and sinks ({!pm_clean_up_group_sink}). *)

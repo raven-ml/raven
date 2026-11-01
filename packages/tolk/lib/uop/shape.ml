@@ -2340,13 +2340,13 @@ let symbolic_simple =
           rule
             Upat.(alu (var "x") Op.Pow [ cvar "c" ])
             (fun m -> simplify_pow (m "x") (m "c"));
-          (* positive const ** x *)
+          (* positive const ** x, and 1 ** x, which is 1 of the power's type at
+             every x, NaN included *)
           rule
-            Upat.(alu (cvar "c") Op.Pow [ var "x" ])
+            Upat.(named "p" (alu (cvar "c") Op.Pow [ var "x" ]))
             (fun m ->
-              let c = m "c" in
-              let cv = num c in
-              if V.(cv = one) then Some c
+              let cv = num (m "c") in
+              if V.(cv = one) then Some (const_v (m "p") one)
               else if
                 V.(cv > zero && cv < `Float Float.infinity)
                 && Dtype.is_float (dtype (m "x"))
@@ -2519,7 +2519,7 @@ let symbolic =
               sum rounds *)
            rule
              Upat.(
-               (var ~dtype:int_or_bool "x" * cvar "c0") + (var "x" * cvar "c1"))
+               (var ~dtype:int_like "x" * cvar "c0") + (var "x" * cvar "c1"))
              (fun m ->
                if fits (m "x") (like_sum m) then
                  Some O.(m "x" * (m "c0" + m "c1"))
@@ -2527,33 +2527,33 @@ let symbolic =
            rule
              Upat.(
                var "y"
-               + (var ~dtype:int_or_bool "x" * cvar "c0")
+               + (var ~dtype:int_like "x" * cvar "c0")
                + (var "x" * cvar "c1"))
              (fun m ->
                if fits (m "x") (like_sum m) then
                  Some O.(m "y" + (m "x" * (m "c0" + m "c1")))
                else None);
            rule
-             Upat.(var ~dtype:int_or_bool "x" + (var "x" * cvar "c"))
+             Upat.(var ~dtype:int_like "x" + (var "x" * cvar "c"))
              (fun m ->
                if fits (m "x") (like_succ m) then
                  Some O.(m "x" * (m "c" + int 1))
                else None);
            rule
-             Upat.(var "y" + var ~dtype:int_or_bool "x" + (var "x" * cvar "c"))
+             Upat.(var "y" + var ~dtype:int_like "x" + (var "x" * cvar "c"))
              (fun m ->
                if fits (m "x") (like_succ m) then
                  Some O.(m "y" + (m "x" * (m "c" + int 1)))
                else None);
            rule
-             Upat.(var "y" + (var ~dtype:int_or_bool "x" * cvar "c") + var "x")
+             Upat.(var "y" + (var ~dtype:int_like "x" * cvar "c") + var "x")
              (fun m ->
                if fits (m "x") (like_succ m) then
                  Some O.(m "y" + (m "x" * (m "c" + int 1)))
                else None);
            rule Upat.(var "x" + var "x") (fun m -> Some O.(m "x" * int 2));
            rule
-             Upat.(named "a" (var "y" + var ~dtype:int_or_bool "x" + var "x"))
+             Upat.(named "a" (var "y" + var ~dtype:int_like "x" + var "x"))
              (fun m ->
                let a = m "a" and x = m "x" in
                let two v = V.(of_int 2 * v) in
@@ -2623,7 +2623,7 @@ let symbolic =
               it reassociates the sum *)
            rule
              Upat.(
-               var ~dtype:int_or_bool "y"
+               var ~dtype:int_like "y"
                + where (var "c") (var "t") (var "f")
                + where (var "c") (var "tt") (var "ff"))
              (fun m ->
@@ -2677,31 +2677,35 @@ let symbolic =
                if V.(num (m "a") = num (m "c")) then
                  Some (maximum (m "a") (m "b"))
                else None);
+           (* where (a < b) c (a + (c - b)) is the maximum of a + (c - b) and
+              c, for a signed a whose shifted arm does not wrap *)
            rule
              Upat.(
                where
                  (var ~dtype:int_or_bool "a" < cvar "b")
-                 (cvar "c") (var "a"))
+                 (cvar "c") (var "y"))
              (fun m ->
-               if V.(num (m "b") = num (m "c")) then
-                 Some (maximum (m "a") (m "b"))
+               let a = m "a" and y = m "y" and c = m "c" in
+               let d = V.(num c - num (m "b")) in
+               if
+                 (y == a && V.(d = zero))
+                 || Dtype.is_int (dtype a)
+                    && (not (Dtype.is_unsigned (dtype a)))
+                    && exact (dtype a) V.[ d; vmin a + d; vmax a + d ]
+                    && y == O.(a + lit d)
+               then Some (maximum y c)
                else None);
            (* a float maximum's bounds leave out NaN and the order of zeros *)
            rule
              Upat.(named "m" (maximum (var ~dtype:int_or_bool "x") (var "y")))
              (fun m ->
-               let mx = m "m" and x = m "x" and y = m "y" in
-               let (x0, x1), (y0, y1) =
-                 (operand_bounds mx x, operand_bounds mx y)
-               in
+               let mx = m "m" and x = m "x" in
+               let lo = fst (operand_bounds mx x) in
+               if V.(lo < snd (operand_bounds mx (m "y"))) then None
                (* the operand kept is committed to the maximum's type *)
-               let keep u =
-                 if List.mem (dtype u) Dtype.weaks then ccast u (dtype mx)
-                 else u
-               in
-               if V.(x0 >= y1) then Some (keep x)
-               else if V.(x1 <= y0) then Some (keep y)
-               else None);
+               else if List.mem (dtype x) Dtype.weaks then
+                 Some (ccast x (dtype mx))
+               else Some x);
            (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)
            rule
              Upat.(var "x" // cvar "c1" // cvar "c2")
@@ -2722,28 +2726,30 @@ let symbolic =
                    V.[ c0; c1; vmin x + c0; vmax x + c0; c1 - c0 ]
                then Some O.(x < m "c1" - m "c0")
                else None);
-           (* x//d<c -> x<c*d for d>0, and -> c*d<x for d<0 *)
+           (* x//d<c -> x<c*d for d>0 *)
            rule
              Upat.(var ~dtype:[ Dtype.Weak_int ] "x" // cvar "d" < cvar "c")
              (fun m ->
-               let d = num (m "d")
-               and cd = lit V.(num (m "c") * num (m "d"))
-               and x = m "x" in
-               if V.(d > zero) then Some O.(x < cd)
-               else if V.(d < zero) then Some O.(x > cd)
+               let d = num (m "d") in
+               if V.(d > zero) then Some O.(m "x" < lit V.(num (m "c") * d))
                else None);
            (* Move add/mul consts to end (NOTE: this is still happening before
               constant folding), for integers: it reassociates *)
            rule
-             Upat.(var ~dtype:int_or_bool "x" + cvar "c1" + var "y")
+             Upat.(var ~dtype:int_like "x" + cvar "c1" + var "y")
              (fun m ->
                let y = m "y" in
                if is_const y then None else Some O.(m "x" + y + m "c1"));
+           (* a float product by -1 is the negation, which commutes with the
+              other product's rounding *)
            rule
-             Upat.(var ~dtype:int_or_bool "x" * cvar "c1" * var "y")
+             Upat.(var "x" * cvar "c1" * var "y")
              (fun m ->
-               let y = m "y" in
-               if is_const y then None else Some O.(m "x" * y * m "c1"));
+               let x = m "x" and y = m "y" and c1 = m "c1" in
+               if is_const y then None
+               else if List.mem (dtype x) int_like || V.(num c1 = of_int (-1))
+               then Some O.(x * y * c1)
+               else None);
            (* Rules from symbolic *)
            (* generic lt folding *)
            rule
@@ -2885,8 +2891,12 @@ let symbolic =
                      Op.Stage;
                    ]
                in
+               (* a reduction waited on is its source, with its ranges ended *)
                let deps y =
-                 if Op.Set.mem (op y) effects then [ y ] else src y
+                 if Op.Set.mem (op y) effects then [ y ]
+                 else if op y = Op.Reduce then
+                   [ end_ (after (v Op.Noop) [ nth y 0 ]) (List.tl (src y)) ]
+                 else src y
                in
                Some
                  (replace x
@@ -2898,8 +2908,8 @@ let symbolic =
            rule
              (Upat.v ~op:(ops [ Op.After; Op.End ]) ~src:[ Upat.var "s" ] ())
              (fun m -> Some (m "s"));
-           (* ranges can be subbed for CONSTs, remove them from ENDs. BACKEDGE
-              conditions are never range selectors. *)
+           (* a range that became a constant runs once, so an end drops it: a
+              loop of one trip around a call is that call *)
            rule (Upat.op Op.End ~name:"x") (fun m ->
                let x = m "x" in
                Some

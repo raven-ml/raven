@@ -604,9 +604,10 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b powers}: [x ** c], for a constant [c] that is an integer or a half
       integer, [0] or at least [1] in magnitude, is a product of powers of [x],
       its reciprocal and its square root, a float half-integer power being [+0.]
-      at [-0.] and [+inf] at [-inf]; [c ** x] is [c] if [c = 1], and
-      [exp2 (x * log2 c)] for positive finite [c]; a 64-bit integer packed from
-      two 32-bit halves and unpacked again is the half read;
+      at [-0.] and [+inf] at [-inf]; [c ** x] is [1] of the power's type if
+      [c = 1], and [exp2 (x * log2 c)] for positive finite [c]; a 64-bit
+      integer packed from two 32-bit halves and unpacked again is the half
+      read;
     - {b selections}: a selection between equal values is that value, and a
       selection by a constant is the branch it picks, keeping the selection's
       type;
@@ -625,8 +626,8 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b terms}: [x lor not x] is [true]; [x + x] is [x * 2]; for integers, like
       terms combine where the factor they make {!fits}, [x * c0 + x * c1] into
       [x * (c0 + c1)] and [y + x + x] into [y + x * 2], also as the last two
-      terms of a longer sum, and [-(x + c)] is [-x + -c]; [c * (x + c')] is
-      [c * x + c * c'] for a weak integer [x];
+      terms of a longer sum; [c * (x + c')] is [c * x + c * c'] for a weak
+      integer [x];
     - {b selections}: a selection by a negation swaps its branches; within
       [where c t f], [c] is [true] in [t] and [false] in [f], unless [c],
       [t] or [f] reaches an {!Op.Index} or an {!Op.Load}, or [c] reaches the
@@ -645,8 +646,9 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       bounds are equal is that constant; an integer maximum of two operands
       whose bounds, as it reads them ({!Ops.operand_bounds}), do not overlap is
       the greater, committed to its type; an integer selection that computes a
-      maximum, [where (a < b) b a] with [a] or [b] a constant, is
-      {!Ops.maximum};
+      maximum is {!Ops.maximum}: [where (a < b) b a] with [a] or [b] a constant,
+      and [where (a < b) c (a + (c - b))] for a signed [a] and constants [b] and
+      [c], where [a + (c - b)] does not wrap;
     - {b constants}: two applications of an associative operation to constants
       fold the constants together, sums, products and maxima for integers only,
       a signed result only where it {!fits}, and a weak result on an unsigned
@@ -654,11 +656,11 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       [x * 0];
       [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where [c1 * c2]
       does not wrap ({!Ops.exact}); constants move to the end of integer sums
-      and products;
+      and products, and a factor [-1] to the end of float products;
     - {b comparisons}, on integers: [c0 + x < c1] is [x < c1 - c0] where neither
       side wraps; [c0 * x < c1] divides both sides by [c0], rounding up, and
       flips [x]'s sign if [c0] is negative; [x // d < c] is [x < c * d] for
-      positive [d] and [c * d < x] for negative [d]; in [x < c] with [c]
+      positive [d]; in [x < c] with [c]
       positive, a divisor [d] common to [c] and the coefficients of some terms
       of [x], whose other terms stay within [0] and [d - 1], divides out;
       [-x < -y] is [y < x]; [not (x < 1)] with [x] a sum of non-negative terms
@@ -673,9 +675,10 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       32 bits computes in {!Dtype.Int32} and casts back; a cast of [x + c] to a
       signed integer is the cast of [x] plus [c];
     - {b ordering}: an {!Op.After} waits only on ranges, stores, calls,
-      barriers, ends, backedges, linear programs and stages, and on the sources
-      of any other node it names; an {!Op.After} or {!Op.End} of nothing is its
-      value, and an {!Op.End} drops the ranges that became constants;
+      barriers, ends, backedges, linear programs and stages, on a reduction's
+      source with the reduction's ranges ended, and on the sources of any other
+      node it names; an {!Op.After} or {!Op.End} of nothing is its value, and
+      an {!Op.End} drops the ranges that became constants;
 
     then simplifies division and remainder ({!div_and_mod_symbolic}), and
     restores bare constant operands ({!pm_uncast_const}). *)
