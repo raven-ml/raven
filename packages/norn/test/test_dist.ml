@@ -2110,10 +2110,14 @@ let truncation =
           equal
             (float (1e-12 *. (1. +. Float.abs x +. Float.abs ratio)))
             expected g);
+      (* A Laplace base, whose tails are closed forms: the truncation's own
+         operations are those of any base, and a normal's tails, read at
+         each of the quantile's Newton steps, compile to a kernel of 700 KB
+         that took a loaded runner past 60 s. *)
       test "a compiled density and quantile are the eager ones" (fun () ->
           let d loc =
             D.truncated ~low:(f64 20.) ~high:(f64 25.)
-              (D.iid [| 5 |] (D.normal ~loc ~scale:(f64 2.)))
+              (D.iid [| 5 |] (D.laplace ~loc ~scale:(f64 2.)))
           in
           let xs = vec [| 19.; 20.; 20.5; 23.; 25. |] in
           let ps = vec [| 1e-12; 0.1; 0.5; 0.9; 1. -. 1e-9 |] in
