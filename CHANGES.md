@@ -362,6 +362,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` converts `float16` and `bfloat16` by tolk's casts, so a product of
+  these dtypes, or of operands cast from them as kaun's attention scores are,
+  takes the tensor cores of CUDA, NV and AMD GPUs.
 - `Rune.jit` compiles a program over several devices that places a cut
   argument whole on each device, as fully sharded training's forward and
   backward do, where it evaluated it: each call holds within RFC 0005's bound.

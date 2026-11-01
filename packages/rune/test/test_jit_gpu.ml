@@ -5,11 +5,12 @@
 
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
    the host's eager values, a cast between float32 and a 16-bit float gives
-   eager's bits at every code and tie, a call's check raises at the next
-   wait, so the call returns while its work runs, a key split there has the
-   host's words, and a program over the GPU and a memory device, devices of
-   two targets, compiles to eager's values with replicas equal bit for bit.
-   It skips without a GPU, or without the compiler the GPU's kernels need. *)
+   eager's bits at every code and tie, a product of narrow floats holds its
+   bound, a call's check raises at the next wait, so the call returns while
+   its work runs, a key split there has the host's words, and a program over
+   the GPU and a memory device, devices of two targets, compiles to eager's
+   values with replicas equal bit for bit. It skips without a GPU, or without
+   the compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -471,6 +472,68 @@ let unit_cases =
     test "float16 into float32" (unit_case Nx.float16 2048.);
   ]
 
+(* A product of narrow floats: a [m; k] by [k; n] Nx.matmul compiled on the
+   GPU, against the product of the same values computed on the host in
+   float64, whose own error is 2^-29 of the bound's. rune.mli's bound for a
+   contraction of [k] products summed at float32 is [γ(k + 1) Σ|a b|]; the
+   result then rounds once into its dtype, by a relative [u] of that dtype or,
+   below its least normal, half its least subnormal. A GPU's tensor cores take
+   extents that 16 divides and refuse the others. *)
+
+type narrow = Narrow : (float, 's) Nx.dtype * float * float -> narrow
+
+let narrows =
+  [
+    Narrow (Nx.float16, 0x1p-11, 0x1p-25);
+    Narrow (Nx.bfloat16, 0x1p-8, 0x1p-134);
+  ]
+
+let pp_product ppf (Narrow (dt, _, _), (m, k, n), seed) =
+  Format.fprintf ppf "%a [%d; %d] by [%d; %d], seed %d" Nx.Dtype.pp dt m k k n
+    seed
+
+let products_gen =
+  let extent = Gen.of_list [ 0; 1; 7; 16; 17; 32; 48 ] in
+  let tiled = Gen.of_list [ 16; 32; 48 ] in
+  let shape =
+    Gen.frequency
+      [
+        (1, Gen.triple extent extent extent); (1, Gen.triple tiled tiled tiled);
+      ]
+  in
+  Gen.with_pp pp_product
+    (Gen.triple (Gen.of_list narrows) shape (Gen.int_range 0 1_000_000))
+
+let product_law (Narrow (dt, u, tiny), (m, k, n), seed) =
+  let _, (module S) = on_gpu () in
+  cover "extents that 16 divides"
+    (m > 0 && k > 0 && n > 0 && m mod 16 = 0 && k mod 16 = 0 && n mod 16 = 0);
+  let draw seed s =
+    let x = Nx.Rng.uniform ~key:(Nx.Rng.key seed) Nx.float32 s in
+    Nx.cast dt (Nx.sub_s (Nx.mul_s x 4.) 2.)
+  in
+  let a = draw seed [| m; k |] and b = draw (seed + 1) [| k; n |] in
+  let before = Rune.evaluations () in
+  let y =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      Nx.matmul (Nx.place S.on a) (Nx.place S.on b)
+  in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  let y = Nx.to_array (Nx.cast Nx.float64 (host y)) in
+  let a = Nx.cast Nx.float64 a and b = Nx.cast Nx.float64 b in
+  let exact = Nx.to_array (Nx.matmul a b) in
+  let mass = Nx.to_array (Nx.matmul (Nx.abs a) (Nx.abs b)) in
+  Array.iteri
+    (fun i z ->
+      let e = gamma (k + 1) *. mass.(i) in
+      let bound = e +. (u *. (Float.abs z +. e)) +. tiny in
+      less
+        ~msg:(Printf.sprintf "[%d; %d], exactly %h" (i / n) (i mod n) z)
+        float_exact ~than:bound
+        (Float.abs (y.(i) -. z)))
+    exact
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -486,6 +549,13 @@ let () =
            [
              test "float16 gives eager's bits" (casts16 Nx.float16);
              test "bfloat16 gives eager's bits" (casts16 Nx.bfloat16);
+           ];
+         group "products"
+           [
+             prop ~count:24
+               "a float16 or bfloat16 matmul is within its bound of the exact \
+                product"
+               products_gen product_law;
            ];
          group "checks"
            [

@@ -108,9 +108,9 @@ An entry is admitted for one of three reasons only:
 - **(c) the engine's contract:** rig's submission protocol.
 
 Each entry also gives the reference (tinygrad `79af1ca70`, or none), nx's
-meaning, the agreement class (exact, a NaN result being any NaN; an ulp
-bound; a rounded sum; a stated bound) and its reason. An ulp bound is the one
-`lower_real.mli` states, which `Lower_real`'s suite holds on the host; a
+meaning, the agreement class (exact, bit for bit as `rune.mli` defines it; an
+ulp bound; a rounded sum; a stated bound) and its reason. An ulp bound is the
+one `lower_real.mli` states, which `Lower_real`'s suite holds on the host; a
 rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 `lower_linalg.mli`'s.
 
@@ -119,19 +119,28 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
 - **Reference:** `mixin/elementwise.py`, each operation at the operands' dtype.
 - **Raven:** `lower_arith.ml` (`narrow`, `decode`, `encode`, `narrowed`).
 - **Differs:** an operation or comparison on `float16`, `bfloat16`, an 8-bit
-  float or `float4_e2m1fn` decodes its operands exactly to `float32` by integer
-  formulas on their bits, computes, and encodes the result once, to nearest
-  with ties to even. Neither a renderer's half-precision intrinsics nor a
-  target's own conversions apply, so no target decides a tie, a subnormal or a
-  NaN's bits.
+  float or `float4_e2m1fn` widens its operands exactly to `float32`, computes,
+  and narrows the result once, to nearest with ties to even. A renderer's
+  half-precision intrinsics never apply. `float16` and `bfloat16` convert by
+  tolk's casts, as tinygrad's do; a NaN they give is a NaN of unspecified sign
+  and payload, quiet where its operand is, as nx's NaN rule allows. The rule
+  departs from IEEE 754-2019 §6.2.1 as LLVM's semantics of NaN values
+  (LangRef, "Behavior of Floating-Point NaN values") and Rust's (RFC 3514) do:
+  no operation reads an exception flag, so a signalling NaN computes as a
+  quiet one. tolk holds
+  the 8- and 4-bit floats as bytes, which rune decodes and encodes by integer
+  formulas on their bits.
 - **nx:** `prog.mli`, Results: floats narrower than `float32` compute in
-  `float32` and round once to their dtype.
+  `float32` and round once to their dtype. `dtype.mli`, Stores: the NaN rule.
 - **Class:** as the operation's; a transcendental kind within one rank of the
   correctly rounded result.
 - **Reason:** (b).
 - **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`, `› exact
   binary kinds, comparisons, where and fma give eager's bits`, `› narrow
-  floats' transcendental kinds are within two ranks of eager's`.
+  floats' transcendental kinds are within one ulp of the correctly rounded
+  result`, `› 16-bit casts › *` on the host and `test_jit_gpu`'s `16-bit casts
+  › *` on a GPU (every code and every tie, the targets' casts against eager's
+  bits).
 
 ### A2. Integer arithmetic wraps
 

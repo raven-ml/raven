@@ -85,10 +85,12 @@ let one_if c u = where c (num u 1) (num u 0)
 
 (* Narrow floats
 
-   float16, bfloat16, the float8 dtypes and float4_e2m1fn compute in float32: a
-   code decodes exactly, and a result encodes once as [Dtype.of_float] stores,
-   by integer formulas on float32's bits. No target's own conversion decides a
-   tie, a subnormal or a NaN's bits. *)
+   float16, bfloat16, the float8 dtypes and float4_e2m1fn compute in float32.
+   float16 and bfloat16 convert by tolk's casts, which every target renders
+   exactly when widening and, when narrowing, rounds once to nearest with ties
+   to even; a NaN stays a NaN, as nx's NaN rule allows. tolk sees the 8- and
+   4-bit floats as bytes: a code decodes exactly, and a result encodes once as
+   [Dtype.of_float] stores, by integer formulas on float32's bits. *)
 
 let narrow (D.Any dt) =
   match dt with
@@ -96,17 +98,6 @@ let narrow (D.Any dt) =
     ->
       true
   | _ -> false
-
-let code (D.Any dt) x =
-  match dt with
-  | D.Float16 | D.Bfloat16 -> Ops.cast (Ops.bitcast x Uint16) Uint32
-  | _ -> Ops.cast x Uint32
-
-let of_code (D.Any dt) c =
-  match dt with
-  | D.Float16 -> Ops.bitcast (Ops.cast c Uint16) Float16
-  | D.Bfloat16 -> Ops.bitcast (Ops.cast c Uint16) Bfloat16
-  | _ -> Ops.cast c Uint8
 
 let f32 u = of_bits Float32 u
 let pow2 u e = Shape.const_like ~dtype:Float32 u (`Float (Float.ldexp 1. e))
@@ -125,22 +116,9 @@ let mini_value q m bias =
 (* [v], positive, with the sign bit [s], 0 or 1. *)
 let with_sign v s = f32 (bits v lor (s lsl 31))
 
-let decode (D.Any dt as d) x =
-  let c = code d x in
+(* A byte float's code [c], as a [Uint32], decoded. *)
+let of_byte (D.Any dt) c =
   match dt with
-  | D.Float16 ->
-      let q = c land 0x7FFF in
-      let frac = q land 0x3FF in
-      let quiet = where (frac <> num frac 0) (num q 0x400000) (num q 0) in
-      let special = f32 (num q 0x7F800000 lor (frac lsl 13) lor quiet) in
-      with_sign
-        (where (q < num q 0x7C00) (mini_value q 10 15) special)
-        (c lsr 15)
-  | D.Bfloat16 ->
-      (* A NaN gains float32's quiet bit, bit 6 of the code: a magnitude past
-         the infinity's makes the difference wrap, setting bit 15. *)
-      let past = (num c 0x7F80 - (c land 0x7FFF)) land 0xFFFF in
-      f32 ((c lor ((past lsr 9) land 0x40)) lsl 16)
   | D.Float8_e4m3fn ->
       let q = c land 0x7F in
       let v = where (q = num q 0x7F) (nan (f32 q)) (mini_value q 3 7) in
@@ -157,6 +135,11 @@ let decode (D.Any dt as d) x =
       in
       with_sign v (c lsr 7)
   | _ -> with_sign (mini_value (c land 7) 1 1) ((c lsr 3) land 1)
+
+let decode (D.Any dt as d) x =
+  match dt with
+  | D.Float16 | D.Bfloat16 -> Ops.cast x Float32
+  | _ -> of_byte d (Ops.cast x Uint32)
 
 (* The magnitude code of [f], not NaN, rounded to nearest, ties to even; one
    past the format's largest finite code means [f] overflows. Below the least
@@ -181,33 +164,30 @@ let mini_round f m bias =
 
 let saturate q top = where (num q top < q) (num q top) q
 
-(* [f], a float32, stored into the narrow float [d]. *)
-let encode (D.Any dt as d) f =
+(* [f], a float32, stored into the byte float [d] as its code. *)
+let to_byte (D.Any dt) f =
   let i = bits f in
   let u = i land 0x7FFFFFFF in
   let nan = num u 0x7F800000 < u in
   let sign = i lsr 31 in
-  of_code d
-    (match dt with
-    | D.Float16 ->
-        let q = mini_round f 10 15 in
-        let quiet = num u 0x7E00 lor ((u lsr 13) land 0x3FF) in
-        (sign lsl 15) lor where nan quiet (saturate q 0x7C00)
-    | D.Bfloat16 ->
-        (* NaN first: the rounding bias could carry a small NaN's fraction into
-           the exponent. *)
-        let rounded = (i + num i 0x7FFF + ((i lsr 16) land 1)) lsr 16 in
-        where nan ((i lsr 16) lor num i 0x40) rounded
-    | D.Float8_e4m3fn ->
-        let q = saturate (mini_round f 3 7) 0x7E in
-        (sign lsl 7) lor where nan (num q 0x7F) q
-    | D.Float8_e5m2 ->
-        let q = saturate (mini_round f 2 15) 0x7C in
-        let quiet = num u 0x7E lor ((u lsr 21) land 1) in
-        (sign lsl 7) lor where nan quiet q
-    | _ ->
-        let q = saturate (mini_round f 1 1) 7 in
-        where nan (num q 0) ((sign lsl 3) lor q))
+  match dt with
+  | D.Float8_e4m3fn ->
+      let q = saturate (mini_round f 3 7) 0x7E in
+      (sign lsl 7) lor where nan (num q 0x7F) q
+  | D.Float8_e5m2 ->
+      let q = saturate (mini_round f 2 15) 0x7C in
+      let quiet = num u 0x7E lor ((u lsr 21) land 1) in
+      (sign lsl 7) lor where nan quiet q
+  | _ ->
+      let q = saturate (mini_round f 1 1) 7 in
+      where nan (num q 0) ((sign lsl 3) lor q)
+
+(* [f], a float32, stored into the narrow float [d]. *)
+let encode (D.Any dt as d) f =
+  match dt with
+  | D.Float16 -> Ops.cast f Float16
+  | D.Bfloat16 -> Ops.cast f Bfloat16
+  | _ -> Ops.cast (to_byte d f) Uint8
 
 (* [x], a float64, as the float32 rounded to odd: truncated, with its last bit
    set where a discarded bit was. float32's grid is at least four times finer

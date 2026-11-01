@@ -11,8 +11,8 @@
     [float64]. An {e ulp} is one rank in the order of a type's bit patterns,
     [-0] and [+0] one rank apart, and an error of [n] ulps is a distance of [n]
     ranks from the correctly rounded result. A kind is {e exact} when it gives
-    the bits {!Nx_kernel.Prog} states for it, except that a NaN result of a
-    float kind has an unspecified sign and payload, here and in the kinds
+    the bits {!Nx_kernel.Prog} states for it, a NaN result as nx's NaN rule
+    allows ({!Nx_array.Dtype.section-stores}), here and in the kinds
     {!Lower_complex} and {!Lower_arith} build from these. These rules hold for
     every operand on a target that keeps subnormals. On a target that flushes
     them, as Metal's [float32] does, a kind may be inexact or break its bound

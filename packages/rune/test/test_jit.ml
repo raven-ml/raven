@@ -440,6 +440,7 @@ let test_nested_minimum () =
   List.iter
     (fun c ->
       at Nx.float16 c;
+      at Nx.bfloat16 c;
       at f32 c;
       at f64 c)
     [ 0.; 1. ]
