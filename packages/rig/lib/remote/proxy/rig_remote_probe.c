@@ -16,12 +16,19 @@
 #include <stdint.h>
 #include <time.h>
 
+#include "rig_edge.h"
 #include "rig_remote_proxy_stubs.h"
 
+/* A stub DLL loaded at run time on Windows reaches no clock_gettime, which is
+   winpthreads' (packages/rig/dune): there it reads rig's clock. */
 static int64_t now_ns(void) {
+#if defined(_WIN32)
+  return (int64_t)rig_now_ns();
+#else
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
+#endif
 }
 
 static pthread_mutex_t hook_mu = PTHREAD_MUTEX_INITIALIZER;

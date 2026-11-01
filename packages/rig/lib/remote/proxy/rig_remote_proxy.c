@@ -312,10 +312,16 @@ value caml_rig_remote_proxy_signaled(value vd) {
   return Val_long((intnat)atomic_load(Dev_val(vd)->word));
 }
 
+/* A stub DLL loaded at run time on Windows reaches no clock_gettime, which is
+   winpthreads' (packages/rig/dune): there it reads rig's clock. */
 static int64_t now_ns(void) {
+#if defined(_WIN32)
+  return (int64_t)rig_now_ns();
+#else
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
+#endif
 }
 
 /* Waits at most [ms] for the shadow to differ from [seen]: [false], or

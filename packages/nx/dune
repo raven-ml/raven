@@ -41,6 +41,11 @@
 ; their time. v=0 silences the debug runtime's messages, which an expect
 ; test would read as output.
 ;
+; Every profile also passes -DWINPTHREADS_USE_DLLIMPORT, which only mingw-w64's
+; pthread.h reads: a stub DLL loaded at run time on Windows then takes
+; winpthreads' functions from the OCaml runtime through pointers, which flexdll
+; can link at any distance (packages/rig/dune says why).
+;
 ; Benches are not attached to runtest: run them with `dune build @bench`, or
 ; run a built exe from its directory under _build/default. Every bench rule
 ; takes the workspace lock %{workspace_root}/bench.
@@ -54,6 +59,7 @@
     -ffp-contract=off
     -fno-trapping-math
     -fno-math-errno
+    -DWINPTHREADS_USE_DLLIMPORT
     -Wall
     -Wextra))
   (env-vars
@@ -65,6 +71,7 @@
     -ffp-contract=off
     -fno-trapping-math
     -fno-math-errno
+    -DWINPTHREADS_USE_DLLIMPORT
     -Wall
     -Wextra
     -Werror
@@ -89,6 +96,7 @@
     -ffp-contract=off
     -fno-trapping-math
     -fno-math-errno
+    -DWINPTHREADS_USE_DLLIMPORT
     -Wall
     -Wextra
     -Werror))
@@ -102,6 +110,7 @@
     -ffp-contract=off
     -fno-trapping-math
     -fno-math-errno
+    -DWINPTHREADS_USE_DLLIMPORT
     -Wall
     -Wextra
     -Werror))

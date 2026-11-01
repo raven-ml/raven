@@ -40,6 +40,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- On Windows, a bytecode program or a toplevel, such as `quill`'s, loads rig's
+  and nx's stub libraries: they call winpthreads through import pointers,
+  which flexdll links at any distance, and read no `clock_gettime`.
 - `Rig.Buffer.free` takes `?why`, the reason `Rig.Buffer.dead` then answers,
   so a library that frees memory it consumed for an operation keeps that
   operation's name in later refusals.

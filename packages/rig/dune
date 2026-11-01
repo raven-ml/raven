@@ -4,13 +4,29 @@
 ; 32 KiB minor heap (s=4k), major cycles far more often (o=20), pushed at once
 ; by custom blocks (M=1, m=1), and a heap check at the end of each (V=1); v=0
 ; silences the debug runtime's banner, which a cram test would read as output.
+;
+; Every profile compiles the C with WINPTHREADS_USE_DLLIMPORT, which only
+; mingw-w64's pthread.h and sched.h read (from mingw-w64 11). The OCaml runtime
+; links winpthreads statically, so a stub DLL that a bytecode program or a
+; toplevel loads takes pthread_* from the executable, which flexdll links at
+; load time. A direct call reaches 2 GiB, and Windows may load a DLL farther
+; than that from the executable, where flexdll refuses it ("cannot relocate
+; pthread_mutex_unlock RELOC_REL32, target is too far"). Declared dllimport,
+; each call goes through a pointer, which reaches any address, as calls to the
+; runtime's own functions do through CAMLextern. A program linked whole fills
+; the pointers at link time.
 
 (env
  (sanitize
+  (c_flags
+   (:standard -DWINPTHREADS_USE_DLLIMPORT))
   (link_flags
    (:standard -runtime-variant d))
   (env-vars
-   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1,v=0))))
+   (OCAMLRUNPARAM s=4k,o=20,M=1,m=1,V=1,v=0)))
+ (_
+  (c_flags
+   (:standard -DWINPTHREADS_USE_DLLIMPORT))))
 
 ; README.md's program runs under mdx, off under sanitize and tsan as the root
 ; dune says.

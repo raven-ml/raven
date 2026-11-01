@@ -53,6 +53,10 @@
 #include "cpu.h"
 #include "nx_kinds.h"
 
+#if defined(_WIN32)
+#include "rig_edge.h"
+#endif
+
 /* The most columns of a recursive routine's leaf; the columns of the
    blocks of reflectors eigh, svd and eig reduce and apply; the columns of
    eigh's update panels; the columns of Cholesky's blocks, and the order
@@ -688,10 +692,18 @@ static void advance(waiters *w, int64_t *x, int64_t d) {
   wake(w);
 }
 
+/* On Windows clock_gettime is winpthreads', which the OCaml runtime does not
+   link, and time.h never declares it dllimport (packages/rig/dune says why
+   that matters): nx.cpu's stub DLL, loaded by a bytecode program, would not
+   load. rig's clock reads QueryPerformanceCounter there. */
 static uint64_t now_ns(void) {
+#if defined(_WIN32)
+  return rig_now_ns();
+#else
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 /* Waits until [*x], which publish or advance moves, reaches [v]: spins
