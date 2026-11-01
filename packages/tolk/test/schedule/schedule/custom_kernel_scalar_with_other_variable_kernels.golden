@@ -1,0 +1,49 @@
+# tinygrad 1c5804aab3bc0164044e9e5b07fc65fbe5f511e2
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU:1") tag=()
+2 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU:1")
+3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+4 Ops.INDEX dtypes.i32 [2, 3]
+5 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU:1")
+6 Ops.INDEX dtypes.i32 [5, 3]
+7 Ops.STACK dtypes.void []
+8 Ops.PARAM dtypes.i32 [7] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 100), multiple_of=1, addrspace=AddrSpace.ALU)
+9 Ops.ADD dtypes.i32 [6, 8]
+10 Ops.STORE dtypes.void [4, 9]
+11 Ops.END dtypes.void [10, 3]
+12 Ops.SINK dtypes.void [11] KernelInfo()
+13 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU:1") tag=()
+14 Ops.CALL dtypes.void [12, 1, 13] CallInfo()
+15 Ops.AFTER dtypes.i32 [1, 14]
+16 Ops.PARAM dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, device="CPU:1") tag=()
+17 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
+18 Ops.INDEX dtypes.i32 [17, 3]
+19 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
+20 Ops.INDEX dtypes.i32 [19, 3]
+21 Ops.PARAM dtypes.i32 [7] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 100), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+22 Ops.ADD dtypes.i32 [20, 21]
+23 Ops.STORE dtypes.void [18, 22]
+24 Ops.END dtypes.void [23, 3]
+25 Ops.SINK dtypes.void [24] KernelInfo(name="add_n_4")
+26 Ops.PARAM dtypes.i32 [7] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 100), multiple_of=1, addrspace=AddrSpace.ALU)
+27 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU:1")
+28 Ops.CONST dtypes.weakint [] 2
+29 Ops.MUL dtypes.i32 [6, 28]
+30 Ops.STORE dtypes.void [4, 29]
+31 Ops.END dtypes.void [30, 3]
+32 Ops.SINK dtypes.void [31] KernelInfo()
+33 Ops.PARAM dtypes.i32 [0] ParamArg(slot=5, dtype=dtypes.i32, device="CPU:1") tag=()
+34 Ops.CALL dtypes.void [32, 27, 33] CallInfo()
+35 Ops.AFTER dtypes.i32 [27, 34]
+36 Ops.CALL dtypes.void [25, 16, 26, 35] CallInfo()
+37 Ops.AFTER dtypes.i32 [16, 36]
+38 Ops.PARAM dtypes.i32 [0] ParamArg(slot=6, dtype=dtypes.i32, device="CPU:1") tag=()
+39 Ops.CONST dtypes.weakint [] 1
+40 Ops.ADD dtypes.i32 [6, 39]
+41 Ops.STORE dtypes.void [4, 40]
+42 Ops.END dtypes.void [41, 3]
+43 Ops.SINK dtypes.void [42] KernelInfo()
+44 Ops.CALL dtypes.void [43, 38, 37] CallInfo()
+45 Ops.AFTER dtypes.i32 [38, 44]
+46 Ops.SINK dtypes.void [15, 37, 45]
+

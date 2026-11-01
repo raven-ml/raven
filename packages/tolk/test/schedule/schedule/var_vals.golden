@@ -30,6 +30,9 @@ clone	-
 full_invalid	-
 custom_kernel	-
 custom_kernel_scalar	n=5
+custom_kernel_scalar_first	n=5
+custom_kernel_scalar_with_other_variable	m=70 n=5
+custom_kernel_unused_then_variable	n=5
 inline_function	-
 precompiled_function	-
 chained_functions	-

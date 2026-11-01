@@ -651,16 +651,50 @@ let runs_a_custom_kernel () =
     (floats (Array.map (fun x -> (2. *. x) +. 2.) x))
     (contents (slot storage 4))
 
-(* custom_kernel_scalar: its kernel takes the variable [n], bound to 5, between
-   its two buffers, and stores a + n into c, for a the double of slot 3 and c
-   slot 2, and slot 4 is c + 1. *)
-let runs_a_custom_kernel_scalar ?(devices = devices) () =
-  let s, vars, storage = linked ~devices (program "custom_kernel_scalar") in
+(* A custom kernel that takes the variable [n], bound to 5, among its buffers
+   stores a + n + [k] into c, for a the double of slot [a] and c slot [c], and
+   slot [out] is c + 1. [k] is a variable of the kernel's own, which the run
+   binds. *)
+let runs_a_custom_kernel_scalar ?(devices = devices) ?(k = []) ?(c = 2)
+    ?(a = 3) ?(out = 4) name () =
+  let s, vars, storage = linked ~devices (program name) in
+  Engine.run ~vars:(k @ vars) s [||];
+  let k = List.fold_left (fun _ (_, v) -> v) 0 k in
+  let xs = Array.map Dtype.Value.to_int (slot storage a).before in
+  let ints f = Array.map (fun x -> `Int (Bigint.of_int (f x))) xs in
+  equal values (ints (fun x -> (2 * x) + 5 + k)) (contents (slot storage c));
+  equal values (ints (fun x -> (2 * x) + 6 + k)) (contents (slot storage out))
+
+(* custom_kernel_scalar_with_other_variable: slot 4 is slot 3 plus the
+   variable m, bound to 70, beside custom_kernel_scalar's kernel on slots 5 to
+   7. *)
+let runs_beside_another_variable ?(devices = devices) () =
+  runs_a_custom_kernel_scalar ~devices ~c:5 ~a:6 ~out:7
+    "custom_kernel_scalar_with_other_variable" ();
+  let s, vars, storage =
+    linked ~devices (program "custom_kernel_scalar_with_other_variable")
+  in
   Engine.run ~vars s [||];
-  let a = Array.map Dtype.Value.to_int (slot storage 3).before in
-  let ints f = Array.map (fun x -> `Int (Bigint.of_int (f x))) a in
-  equal values (ints (fun x -> (2 * x) + 5)) (contents (slot storage 2));
-  equal values (ints (fun x -> (2 * x) + 6)) (contents (slot storage 4))
+  let xs = Array.map Dtype.Value.to_int (slot storage 3).before in
+  equal values
+    (Array.map (fun x -> `Int (Bigint.of_int (x + 70))) xs)
+    (contents (slot storage 4))
+
+(* The custom kernels whose variable sits among their buffers. *)
+let custom_kernel_scalars ?(devices = devices) () =
+  [
+    test "a custom kernel takes a variable between its buffers"
+      (runs_a_custom_kernel_scalar ~devices "custom_kernel_scalar");
+    test "a custom kernel takes a variable before its buffers"
+      (runs_a_custom_kernel_scalar ~devices "custom_kernel_scalar_first");
+    test "a custom kernel takes a variable beside another kernel's"
+      (runs_beside_another_variable ~devices);
+    test
+      "a custom kernel that ignores a buffer takes a variable last and reads \
+       its own"
+      (runs_a_custom_kernel_scalar ~devices ~k:[ ("k", 10) ] ~c:3 ~a:5 ~out:6
+         "custom_kernel_unused_then_variable");
+  ]
 
 (* assign_bitcast: slot 2 takes the bits of slot 3 plus one, a float, and slot 4
    that float. *)
@@ -1699,8 +1733,7 @@ let schedules =
     [
       group "recorded" (List.map writes_what_it_computes recorded);
       slow @@ test "custom_kernel runs its custom kernel" runs_a_custom_kernel;
-      test "a custom kernel takes a variable between its buffers"
-        runs_a_custom_kernel_scalar;
+      group "custom kernels with variables" (custom_kernel_scalars ());
       slow
       @@ test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
@@ -2460,8 +2493,7 @@ let on_a_gpu (kind, _) =
   let devices = on_gpu kind in
   group kind
     [
-      test "a custom kernel takes a variable between its buffers"
-        (runs_a_custom_kernel_scalar ~devices);
+      group "custom kernels with variables" (custom_kernel_scalars ~devices ());
       group "recorded"
         (List.map (computes_on devices)
            [

@@ -30,6 +30,9 @@ clone_kernels	-
 full_invalid_kernels	-
 custom_kernel_kernels	-
 custom_kernel_scalar_kernels	1=5
+custom_kernel_scalar_first_kernels	1=5
+custom_kernel_scalar_with_other_variable_kernels	2=70 4=5
+custom_kernel_unused_then_variable_kernels	3=5
 inline_function_kernels	-
 precompiled_function_kernels	-
 precompiled_function_kernels_1	-

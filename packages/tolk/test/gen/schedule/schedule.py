@@ -97,6 +97,44 @@ def custom_kernel_scalar():
     return Tensor.custom_kernel(empty(4, dtype=dtypes.int32, device="CPU:1"), n, a, fxn=add_n)[0] + 1
 
 
+def add_first_n(n, C, A):
+    C, A = C.flatten(), A.flatten()
+    i = UOp.range(A.numel(), 0)
+    return C[i].store(A[i] + n).end(i).sink(arg=KernelInfo(name=f"add_first_n_{A.numel()}"))
+
+
+def custom_kernel_scalar_first():
+    """The variable in slot 0, before the buffers (test_scalar_arg_any_position
+    and test_scalar_arg_first_other_device), on CPU:1."""
+    n = Tensor(Variable("n", 0, 100, dtype=dtypes.int32).bind(5), device="CPU:1")
+    a = empty(4, dtype=dtypes.int32, device="CPU:1") * 2
+    return Tensor.custom_kernel(n, empty(4, dtype=dtypes.int32, device="CPU:1"), a, fxn=add_first_n)[1] + 1
+
+
+def custom_kernel_scalar_with_other_variable():
+    """A kernel of another variable realized beside the custom kernel's
+    (test_scalar_arg_with_other_variable), on CPU:1."""
+    m = Variable("m", 0, 100, dtype=dtypes.int32).bind(70)
+    other = (empty(4, dtype=dtypes.int32, device="CPU:1") + Tensor(m, device="CPU:1")).contiguous()
+    return other, custom_kernel_scalar()
+
+
+def add_ignoring_first(C, A, B, n):
+    C, B = C.flatten(), B.flatten()
+    k = UOp.variable("k", 0, 100, dtype=dtypes.int32)
+    i = UOp.range(C.numel(), 0)
+    return C[i].store(B[i] + n + k).end(i).sink(arg=KernelInfo(name=f"ignore_first_var_{C.numel()}"))
+
+
+def custom_kernel_unused_then_variable():
+    """A kernel that ignores its second buffer, takes a variable last and reads
+    one of its own, which the run binds (test_unused_arg_then_var), on CPU:1."""
+    n = Tensor(Variable("n", 0, 100, dtype=dtypes.int32).bind(5), device="CPU:1")
+    srcs = (empty(4, dtype=dtypes.int32, device="CPU:1"), empty(4, dtype=dtypes.int32, device="CPU:1"),
+            empty(4, dtype=dtypes.int32, device="CPU:1") * 2, n)
+    return Tensor.custom_kernel(*srcs, fxn=add_ignoring_first)[0] + 1
+
+
 def assign_double_diamond():
     # each assign reads, through a sum, the buffer the other overwrites
     b0, b1 = empty(16).contiguous(), empty(16).contiguous()
@@ -196,6 +234,9 @@ PROGRAMS = {
     # calls
     "custom_kernel": lambda: Tensor.custom_kernel(empty(4, 4), empty(4, 4) * 2, fxn=add_one)[0] + 1,
     "custom_kernel_scalar": custom_kernel_scalar,
+    "custom_kernel_scalar_first": custom_kernel_scalar_first,
+    "custom_kernel_scalar_with_other_variable": custom_kernel_scalar_with_other_variable,
+    "custom_kernel_unused_then_variable": custom_kernel_unused_then_variable,
     "inline_function": inline_function,
     "precompiled_function": precompiled_function,
     "chained_functions": chained_functions,

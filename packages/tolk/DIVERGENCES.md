@@ -971,8 +971,8 @@ scope, see README.
   holds rig's host entry after the kernel` and `› a host program runs as a
   launch of rig's host, with ten scalars past the argument registers`; the
   Tolk_engine suite, `host programs in blocks › a program writes the same
-  bits in 1, 3 and 32 blocks` and `link and run › a custom kernel takes a
-  variable between its buffers`.
+  bits in 1, 3 and 32 blocks` and `link and run › custom kernels with
+  variables` (four tests).
 
 ## D29. A float32 tensor core takes operands widened from its narrow input
 

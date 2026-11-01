@@ -17,6 +17,7 @@ a stack of float32 and the invalid constant	True	True	False	True	None
 a stack of a scalar and a vector	False	False	False	False	None
 a where over float32	True	True	True	True	None
 a where over float32 and a weak float	True	True	False	True	None
+a where over float32 and a weak integer	False	False	False	False	None
 a where over int32 and float32	False	False	False	False	None
 a where over float32 and the invalid constant	True	True	False	True	None
 a where over the invalid constant	True	True	False	True	None
@@ -60,6 +61,9 @@ a cdiv of float32 by the invalid constant	True	True	False	True	None
 a cmod of the invalid constant by int32	True	True	False	True	None
 a cdiv of int32 by float32	False	False	False	False	None
 a sum of int32	True	True	True	True	None
+a sum of int32 and a weak float	False	False	False	False	None
+a stack of float32 and a weak integer	False	False	False	False	None
+a cmplt of int32 and a weak float	False	False	False	False	None
 a sum of int32 and float32	False	False	False	False	None
 a sum of float16 and float32	False	False	False	False	None
 a sum of float32 and a weak float	True	True	False	True	None
@@ -185,6 +189,9 @@ a store to an allocation	True	True	True	True	None
 a store to a global buffer	True	True	True	True	None
 a store to a staged value	True	True	True	True	None
 a store to a reshape of a parameter	True	True	True	True	None
+a store of int32 into float32	False	False	False	True	None
+a store of a weak float into float32	True	True	False	True	None
+a store of a weak integer into float32	False	False	False	True	None
 a store to a parameter after a store	True	True	True	True	None
 a store to an index after a store	None	None	None	True	None
 a store to a constant	False	False	False	True	None
@@ -192,6 +199,7 @@ a store to a load	False	False	False	True	None
 a special over a weak integer	None	True	False	True	None
 a special over int32	None	None	True	True	None
 a reshape	None	True	False	True	None
+a reshape by a float shape	None	None	False	False	None
 an expand	None	True	False	True	None
 a pad	None	True	False	True	None
 a pad by a shorter end	None	False	False	False	None
