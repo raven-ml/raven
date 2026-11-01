@@ -855,6 +855,21 @@ thread.
 
 ### Tolk (new)
 
+- A call body inside a kernel is named in its lowering, numbered apart from
+  other bodies of its name, and a call of a program not yet compiled is
+  inlined too.
+- The fields of a CPU or Metal kernel's argument structure are named
+  `arg<slot>`.
+- A reduction of a gated value selects its identity in symbolic, and storing
+  `where g (load index) alt` stores `alt` where `g` does not hold.
+- `(x ^ y) ^ y` folds to `x` only for a weak `y`, where a typed `y` committed
+  a weak `x` to its type.
+- **Breaking:** `Ops.eq` builds `Op.Cmpeq`, and `Ops.ne` and `Ops.logical_not`
+  are equalities to false; a negated equality renders as `!=` where the
+  renderer has `Op.Cmpne`.
+- **Breaking:** `Op.Floordiv`, `Op.Floormod`, `Op.Cdiv`, `Op.Cmod` and
+  `Op.Reciprocal` are `Op.Div`, `Op.Mod`, `Op.Truncdiv`, `Op.Truncmod` and
+  `Op.Recip`, and printed graphs name them so.
 - A CPU program split into blocks over many buffers gives its values on
   x86_64 Windows, where they were garbage: its entry copies its parameters
   inline, where Clang called the process's `memcpy`, of another convention.
