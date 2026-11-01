@@ -161,6 +161,26 @@ let nested_step =
   in
   Thumper.bench_with_setup ~setup "gaussian5/400" (fun (step, k, s) -> step k s)
 
+(* A nested sampling run, compiled, to its evidence: from 100 of the points,
+   about 30 steps of 50 replacements, then the evidence's errors, whose cost
+   grows with the dead buffer, [budget * batch] points. *)
+let nested_run =
+  let t = Nx.Ptree.tensor in
+  let setup () =
+    let run =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> returns (Norn.Evidence.ptree t))
+        (fun k ->
+          Norn.Nested.run t ~budget:60 ~prior:cube_prior ~likelihood:gaussian
+            (Nx.Rng.fold_in k 0)
+            (Nx.slice [ Nx.R (0, 100) ] (points (Nx.Rng.fold_in k 1))))
+    in
+    let k = Nx.Rng.key 2 in
+    ignore (run k);
+    (run, k)
+  in
+  Thumper.bench_with_setup ~setup "run/gaussian5/100" (fun (run, k) -> run k)
+
 (* A tempering step, compiled: 20 chains of 20 states, moved by each kernel. *)
 let smc_step move name =
   let t = Nx.Ptree.tensor in
@@ -293,7 +313,7 @@ let () =
       Thumper.group "ensemble" [ ensemble_step ];
       Thumper.group "pathfinder" [ pathfinder ];
       Thumper.group "vi" [ vi_fit ];
-      Thumper.group "nested" [ nested_step ];
+      Thumper.group "nested" [ nested_step; nested_run ];
       Thumper.group "smc"
         [ smc_step Norn.Smc.Hmc "hmc"; smc_step Norn.Smc.Slice "slice" ];
       Thumper.group "model" [ log_density ];
