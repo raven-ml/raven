@@ -5,8 +5,8 @@ All notable changes to Ymir are documented in this file.
 ## Unreleased
 
 - `ymir.spk` reads SPK files' type 2 and 3 segments, as JPL's DE440 and DE441
-  hold them: `Spk.state` gives a body's geometric position and velocity from
-  another, chained through their centres, batched and differentiable.
+  hold them: `Ymir_spk.state` and `Ymir_spk.position` give a body's geometric
+  state from another, chained through their centres, batched and differentiable.
 - `Earth` holds the Earth's orientation, from `Earth.of_utc` (UT1 − UTC) or
   `Earth.of_tt` (ΔT): `era`, `gmst`, `gst` (IAU 2006/2000A), and SOFA's
   `iauEpv00` ephemeris, `Earth.heliocentric` and `Earth.barycentric`.

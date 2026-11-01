@@ -10,7 +10,6 @@
 
 open Ymir
 open Ymir_fits
-open Ymir_spk
 
 let f64 = Nx.float64
 let n = 1_000_000
@@ -621,7 +620,7 @@ let spk_rows () =
   (* Read before any case runs: a read inside a traced function would read
      traced values. *)
   let file =
-    match Spk.read ~at:Nx.Host.on "../test/spk/golden/de440s-2024.bsp" with
+    match Ymir_spk.read ~at:Nx.Host.on "../test/spk/golden/de440s-2024.bsp" with
     | Ok t -> t
     | Error e -> failwith e
   in
@@ -639,7 +638,7 @@ let spk_rows () =
   let moon s =
     let t = Time.v Time.tdb ~day:days ~second:(Quantity.v Unit.second s) in
     Quantity.value Unit.(kilo metre)
-      (Spk.position file ~target:301 ~center:399 t)
+      (Ymir_spk.position file ~target:301 ~center:399 t)
   in
   Thumper.group "spk-moon-10k"
     [

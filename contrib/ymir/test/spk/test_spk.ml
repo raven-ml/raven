@@ -9,7 +9,6 @@
 
 open Windtrap
 open Ymir
-open Ymir_spk
 
 let km = Unit.(kilo metre)
 let km_s = Unit.(kilo metre / second)
@@ -17,10 +16,10 @@ let seconds x = Quantity.v Unit.second x
 let scalar x = Nx.scalar Nx.float64 x
 
 let ok = function Ok x -> x | Error e -> failwith e
-let excerpt = lazy (ok (Spk.read ~at:Nx.Host.on "golden/de440s-2024.bsp"))
-let types = lazy (ok (Spk.read ~at:Nx.Host.on "golden/types.bsp"))
-let types_big = lazy (ok (Spk.read ~at:Nx.Host.on "golden/types-big.bsp"))
-let many = lazy (ok (Spk.read ~at:Nx.Host.on "golden/many.bsp"))
+let excerpt = lazy (ok (Ymir_spk.read ~at:Nx.Host.on "golden/de440s-2024.bsp"))
+let types = lazy (ok (Ymir_spk.read ~at:Nx.Host.on "golden/types.bsp"))
+let types_big = lazy (ok (Ymir_spk.read ~at:Nx.Host.on "golden/types-big.bsp"))
+let many = lazy (ok (Ymir_spk.read ~at:Nx.Host.on "golden/many.bsp"))
 
 let tdb day second =
   Time.v Time.tdb
@@ -28,7 +27,7 @@ let tdb day second =
     ~second:(seconds (scalar second))
 
 let state file ~target ~center t =
-  let p, v = Spk.state (Lazy.force file) ~target ~center t in
+  let p, v = Ymir_spk.state (Lazy.force file) ~target ~center t in
   (Nx.to_array (Quantity.value km p), Nx.to_array (Quantity.value km_s v))
 
 (* [close tol expected actual] holds when each component is within [tol]
@@ -96,22 +95,24 @@ let failures =
           equal (result unit string)
             (Error "x: 4 bytes, shorter than a DAF file record")
             (Result.map ignore
-               (Spk.of_string ~at:Nx.Host.on ~name:"x" "abcd")));
+               (Ymir_spk.of_string ~at:Nx.Host.on ~name:"x" "abcd")));
       test "a file cut short is an error" (fun () ->
           let s =
             In_channel.with_open_bin "golden/types.bsp" In_channel.input_all
           in
           match
-            Spk.of_string ~at:Nx.Host.on ~name:"cut" (String.sub s 0 3000)
+            Ymir_spk.of_string ~at:Nx.Host.on ~name:"cut" (String.sub s 0 3000)
           with
           | Ok _ -> failwith "a cut file read"
           | Error e -> equal bool true (String.starts_with ~prefix:"cut: " e));
       test "segments lists the file's, in order, with their instants"
         (fun () ->
-          let segs = Spk.segments (Lazy.force types) in
+          let segs = Ymir_spk.segments (Lazy.force types) in
           equal (list (pair int int))
             [ (301, 3); (301, 3); (1000, 399) ]
-            (List.map (fun (s : Spk.segment) -> (s.target, s.center)) segs);
+            (List.map
+               (fun (s : Ymir_spk.segment) -> (s.target, s.center))
+               segs);
           (* The first covers 760622400 s past J2000: MJD 60348, 0h. *)
           let s = List.hd segs in
           equal (pair int float_exact) (60348, 0.)
@@ -136,7 +137,7 @@ let little = In_channel.with_open_bin "golden/types.bsp" In_channel.input_all
 let corrupt f =
   let b = Bytes.of_string little in
   f b;
-  Spk.of_string ~at:Nx.Host.on ~name:"bad" (Bytes.to_string b)
+  Ymir_spk.of_string ~at:Nx.Host.on ~name:"bad" (Bytes.to_string b)
 
 let fward = Int32.to_int (String.get_int32_le little 76)
 let summary = (fward - 1) * 1024
@@ -184,7 +185,7 @@ let corrupted =
             (corrupt (fun b -> set_double b (summary + 24) 1e300)));
       test "a file read inside a traced function" (fun () ->
           let f x =
-            match Spk.of_string ~at:Nx.Host.on ~name:"t" little with
+            match Ymir_spk.of_string ~at:Nx.Host.on ~name:"t" little with
             | Ok _ -> x
             | Error e -> failwith e
           in
@@ -214,7 +215,7 @@ let laws =
         (fun ((d, s), (target, center)) ->
           let f s =
             Quantity.value km
-              (Spk.position (Lazy.force excerpt) ~target ~center
+              (Ymir_spk.position (Lazy.force excerpt) ~target ~center
                  (Time.v Time.tdb
                     ~day:(Nx.scalar Nx.int64 (Int64.of_int d))
                     ~second:(seconds s)))
@@ -262,7 +263,7 @@ let laws =
           let second = Nx.linspace Nx.float64 0. 86399. 8 in
           let f s =
             Quantity.value km
-              (Spk.position (Lazy.force excerpt) ~target:301 ~center:10
+              (Ymir_spk.position (Lazy.force excerpt) ~target:301 ~center:10
                  (Time.v Time.tdb ~day:(Nx.scalar Nx.int64 60700L)
                     ~second:(seconds s)))
           in

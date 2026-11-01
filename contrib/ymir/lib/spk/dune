@@ -1,5 +1,4 @@
 (library
  (name ymir_spk)
  (public_name ymir.spk)
- (private_modules spk)
  (libraries nx nx.array rig rig.disk ymir ymir.units))
