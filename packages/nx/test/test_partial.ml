@@ -1677,6 +1677,75 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
     in
     equal string want (printed (reduce_at w k.rshow r axes x))
 
+(* Replicas
+
+   A float fold over an axis cut across devices into a result whole on each
+   holds one value on every device, bit for bit: a scalar and a result shorter
+   than the devices, which every device computes whole, one each can share,
+   unevenly, and one whose share closes in several pieces of 256 KiB. The terms'
+   magnitudes span twenty binades, so that two orders of addition round
+   apart. *)
+
+type replica = { rname : string; devices : int; rshape : int array }
+
+let replicas =
+  [
+    { rname = "a scalar over 3"; devices = 3; rshape = [||] };
+    { rname = "2 elements over 3"; devices = 3; rshape = [| 2 |] };
+    { rname = "4 elements over 4"; devices = 4; rshape = [| 4 |] };
+    { rname = "9 by 2 over 4, uneven"; devices = 4; rshape = [| 9; 2 |] };
+    {
+      rname = "64 by 4096 over 4, in pieces";
+      devices = 4;
+      rshape = [| 64; 4096 |];
+    };
+  ]
+
+let spread n =
+  Nx.create D.Float32 [| n |]
+    (Array.init n (fun i ->
+         Float.ldexp (sin (Float.of_int (i + 1))) (i * 7 mod 20)))
+
+(* The bytes of each array of [x]'s placement. *)
+let shard_bytes (type v s d) (x : (v, s, d) Nx.t) =
+  Array.map
+    (fun a ->
+      let flat =
+        A.move (A.Move.Reshape [| A.Layout.numel (A.layout a) |]) (A.copy a)
+      in
+      A.to_array (Option.get (A.bitcast D.Uint8 (Option.get flat))))
+    (Iarray.to_array (Nx.Repr.shards x))
+
+let law_replicas c =
+  let run (type d) (s : d Nx.devices) =
+    let n = (2 * c.devices) + 1 and el = Array.fold_left ( * ) 1 c.rshape in
+    let x = Nx.reshape (Array.append [| n |] c.rshape) (spread (n * el)) in
+    let summed =
+      Nx.sum ~axes:[ 0 ] (Nx.place (Nx.Placement.split ~axis:0 s) x)
+    in
+    let a = Nx.reshape [| Int.max 1 el; n |] (spread (n * Int.max 1 el)) in
+    let b = Nx.reshape [| n; 1 |] (spread n) in
+    let product =
+      Nx.matmul
+        (Nx.place (Nx.Placement.split ~axis:1 s) a)
+        (Nx.place (Nx.Placement.split ~axis:0 s) b)
+    in
+    List.iter
+      (fun (what, y) ->
+        equal
+          ~msg:(what ^ " lies whole on each")
+          (placement ()) (Nx.Placement.on s) (Nx.placement y);
+        let bs = shard_bytes y in
+        Array.iteri
+          (fun k b ->
+            equal
+              ~msg:(Printf.sprintf "%s on device %d" what k)
+              (array int) bs.(0) b)
+          bs)
+      [ ("a sum", summed); ("a matrix product", product) ]
+  in
+  match c.devices with 3 -> run Set3.v | _ -> run Set4.v
+
 (* The minor words a float32 sum along an axis cut across devices allocates grow
    with the devices, each holding a partial that the closing stacks and moves,
    and not with the elements: three devices allocate more than one, and four
@@ -3445,6 +3514,11 @@ let reductions =
         "a float reduction over cut axes of many terms reduces its tiles' \
          stacked partials"
         lane_case law_lanes;
+      cases
+        "a float fold over a cut axis into a result whole on each device has \
+         one value's bits on every device"
+        ~id:(fun c -> c.rname)
+        replicas law_replicas;
     ]
 
 let contractions =

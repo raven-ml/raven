@@ -248,6 +248,34 @@ let grads set rows =
       within ~bound eager jit
   | r -> equal (outcome_t bits_t) (Value (bits eager)) (omap bits r)
 
+(* Replicas
+
+   A compiled sum over a cut axis into a result whole on each device holds one
+   value on every device, bit for bit: a result shorter than the devices, which
+   each computes whole, and one whose share each computes and copies to the
+   others. The terms' magnitudes span twenty binades, so that two orders of
+   addition round apart. *)
+
+let replicas set cols =
+  let rows = 9 in
+  let x =
+    Nx.create f32 [| rows; cols |]
+      (Array.init (rows * cols) (fun i ->
+           ldexp (sin (float_of_int (i + 1))) (i * 7 mod 20)))
+  in
+  let x = Nx.place (at set (Split 0)) x in
+  let f x _ = Nx.sum ~axes:[ 0 ] x in
+  match compiled f x x with
+  | Value y ->
+      equal ~msg:"placement" (placement ()) (at set On) (Nx.placement y);
+      let shard a = Array.map Int32.bits_of_float (Nx_array.to_array a) in
+      let bs = Array.map shard (Iarray.to_array (Nx.Repr.shards y)) in
+      Array.iteri
+        (fun k b ->
+          equal ~msg:(Printf.sprintf "device %d" k) (array int32) bs.(0) b)
+        bs
+  | Raised m -> fail m
+
 (* Kernels
 
    Each device that holds elements of an operation's results runs a kernel of
@@ -372,6 +400,15 @@ let () =
                  over 3 { law = (fun s -> grads s 7) });
              test "over four, one window empty" (fun () ->
                  over 4 { law = (fun s -> grads s 3) });
+           ];
+         group "replicas"
+           [
+             test "a result shorter than the devices" (fun () ->
+                 over 4 { law = (fun s -> replicas s 3) });
+             test "a share on each device, uneven" (fun () ->
+                 over 4 { law = (fun s -> replicas s 9) });
+             test "a share on each of three devices" (fun () ->
+                 over 3 { law = (fun s -> replicas s 6) });
            ];
          group "moves"
            [

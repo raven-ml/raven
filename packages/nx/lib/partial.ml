@@ -536,7 +536,9 @@ let closed (type d) (eng : Partition.engine) ~by c shape dts
         let w = Devices.window ~by r shape j in
         if Route.empty w then None
         else
-          (* The pieces within [w], of distinct windows, [k]'s first. *)
+          (* The pieces within [w], of distinct windows, [k]'s where it holds
+             one, in C order of their starts: each device gathers a window of
+             one shape from its boxes in one order, one program for all. *)
           let within = ref [] in
           let add own =
             Array.iter
@@ -553,7 +555,8 @@ let closed (type d) (eng : Partition.engine) ~by c shape dts
           in
           add true;
           add false;
-          match !within with
+          let start (p, _) = Array.map (fun (q : M.range) -> q.start) p in
+          match List.sort (fun a b -> compare (start a) (start b)) !within with
           | [ (p, y) ] when p = w -> Some y
           | boxes ->
               let here = Devices.one (Devices.set r) k in
