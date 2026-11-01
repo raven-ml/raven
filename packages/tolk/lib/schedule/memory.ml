@@ -39,6 +39,27 @@ let can_plan held b =
   (not (Tbl.mem held b))
   && match device b with Some d -> not (is_disk_device d) | None -> true
 
+let storage_ops = Op.Set.of_list Op.[ Buffer; Alloc; Param ]
+
+(* The storage an entry takes, each once, in the order its calls take it. *)
+let taken si =
+  let seen = Tbl.create 8 and acc = ref [] in
+  List.iter
+    (fun (_, args) ->
+      List.iter
+        (fun a ->
+          let b = storage_base a in
+          if
+            Op.Set.mem (op b) storage_ops
+            && not (Tbl.mem seen b)
+          then begin
+            Tbl.replace seen b ();
+            acc := b :: !acc
+          end)
+        args)
+    (uses si);
+  List.rev !acc
+
 type lane = { mutable peak : int; tlsf : Tlsf.t }
 
 let memory_plan_rewrite ?(held_bufs = []) linear =

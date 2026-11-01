@@ -42,3 +42,11 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     [linear] is itself if {!Setting.no_memory_planner} is set or no buffer is
     planned. With {!Setting.debug} at [1] or more, the memory saved is printed
     on standard output. *)
+
+val taken : Ops.t -> Ops.t list
+(** [taken si] is the storage that the entry [si] of a schedule takes, each
+    once, in the order its calls take it: the buffer, call-local storage or
+    parameter ({!Op.Buffer}, {!Op.Alloc}, {!Op.Param}) that each argument of its
+    calls names or views ({!Ops.storage_base}). A loop around calls takes the
+    storage of each of its calls and its back edge's flag, as
+    {!memory_plan_rewrite} counts a buffer's uses. *)

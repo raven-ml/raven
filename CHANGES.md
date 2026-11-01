@@ -900,6 +900,10 @@ thread.
 
 ### Tolk (new)
 
+- A schedule runs its ready kernels in the order the program reaches them,
+  and first one that frees storage without making more, where it ran them as
+  they became ready: a value is read soon after it is made, so a schedule
+  holds less at once.
 - A copy stored into a run of consecutive elements of storage on its device
   copies into the run, where it copied into storage of its own and a kernel
   stored that: the two are no longer live at once.

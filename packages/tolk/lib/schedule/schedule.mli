@@ -20,9 +20,12 @@ val create_schedule : Ops.t -> Ops.t
 (** [create_schedule sched_sink] is the {!Op.Linear} of the kernel calls of the
     kernel graph [sched_sink] ({!Rangeify.get_kernel_graph}), in an order that
     runs each kernel after those that write the storage it reads, and before
-    those that overwrite the storage it reads. Ready kernels run in the order
-    the graph reaches them. Each call's arguments are the storage of its reads
-    and writes, or the views of it that move with the loops the call runs in. A
+    those that overwrite the storage it reads. A ready kernel runs in the order
+    the graph reaches it, after any ready kernel that frees storage: one that
+    is the last to take storage a kernel wrote, and on no device makes more
+    storage than it frees, storage living from the first kernel that takes it
+    to the last ({!Memory.taken}). Each call's arguments are the storage of its
+    reads and writes, or the views of it that move with the loops the call runs in. A
     loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
     stays such an end around the call, and a back edge of a call
     ({!Ops.backedge}) stays a back edge, its condition the storage it reads.

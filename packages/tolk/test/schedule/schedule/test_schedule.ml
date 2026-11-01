@@ -901,6 +901,62 @@ let bound_argument () =
     [ copies ~into:x ~from:y ]
     (Ops.src (Schedule.create_schedule kg))
 
+(* Order by storage
+
+   A ready kernel runs by its number, the order the walk of the sink meets it,
+   and one that frees storage and on no device makes more than it frees runs
+   before it. Storage that kernels write lives from the first kernel that takes
+   it to the last. Each parameter below holds as many elements as [y]. *)
+
+let param slot = like_y slot
+
+(* [a] makes [t], [c] makes [w] from [y], which no kernel writes, and [b] makes
+   [z] from [t], its last reader: [b] makes as much as it frees. *)
+let frees_first () =
+  let t = param 4 and w = param 5 and z = param 6 in
+  let a = copies ~into:t ~from:y in
+  let c = copies ~into:w ~from:y in
+  let b = copies ~into:z ~from:(Ops.after t [ a ]) in
+  let kg = Ops.sink [ Ops.after t [ a ]; Ops.after w [ c ]; Ops.after z [ b ] ] in
+  equal (list uop)
+    [ a; copies ~into:z ~from:t; c ]
+    (Ops.src (Schedule.create_schedule kg));
+  keeps kg
+
+(* [p] makes a value that [s1] and [s2] each read into a piece of their own,
+   which [c1] and [c2] read: each piece is read before the next is made. *)
+let pieces_interleave () =
+  let p = param 4 and s1 = param 5 and s2 = param 6 in
+  let o1 = param 7 and o2 = param 8 in
+  let made = copies ~into:p ~from:y in
+  let pv = Ops.after p [ made ] in
+  let k1 = copies ~into:s1 ~from:pv and k2 = copies ~into:s2 ~from:pv in
+  let r1 = copies ~into:o1 ~from:(Ops.after s1 [ k1 ]) in
+  let r2 = copies ~into:o2 ~from:(Ops.after s2 [ k2 ]) in
+  let kg =
+    Ops.sink
+      [ Ops.after o1 [ r1 ]; Ops.after o2 [ r2 ]; pv; Ops.after s1 [ k1 ]; Ops.after s2 [ k2 ] ]
+  in
+  equal (list uop)
+    [
+      made;
+      copies ~into:s1 ~from:p;
+      copies ~into:o1 ~from:s1;
+      copies ~into:s2 ~from:p;
+      copies ~into:o2 ~from:s2;
+    ]
+    (Ops.src (Schedule.create_schedule kg));
+  keeps kg
+
+let by_storage =
+  group "create_schedule › order by storage"
+    [
+      test "a kernel that frees storage runs before one that only makes it"
+        frees_first;
+      test "pieces of one value are each read before the next is made"
+        pieces_interleave;
+    ]
+
 let ordering =
   group "create_schedule › rules"
     [
@@ -1791,6 +1847,7 @@ let () =
          spec;
          cache;
          ordering;
+         by_storage;
          flatten;
          store_after;
          views;

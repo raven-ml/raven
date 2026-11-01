@@ -4964,3 +4964,37 @@ fold wraps integers and holds its float bound`, hold.
   into columns lands in storage of its own` and `› a copy stored into a run
   of a bitcast lands in storage of its own`; the Engine suite's `link and run
   › a copy stored into rows of a buffer writes them alone`.
+
+## D183. Ready kernels run by their number, and one that frees storage first
+
+- **tinygrad:** `schedule/__init__.py:66-78` (`create_schedule`'s linearize:
+  Kahn's algorithm over a FIFO `deque`, so ready kernels run in the order
+  they became ready).
+- **tolk:** `Schedule.linearize` and `Schedule.scheduled`, and the storage
+  `Schedule.schedule` sees written; `Memory.taken`, the storage an entry
+  takes as the memory plan counts it; `test/gen/tinygrad.patch`, which gives
+  tinygrad the same before the goldens are recorded.
+- **Differs:** a ready kernel runs by its number, the order the walk of the
+  sink meets it, so a value is consumed soon after it is made, as the program
+  wrote it. A ready kernel that frees storage, being the last to take storage
+  an earlier kernel made, and that on no device makes more than it frees,
+  runs before the others. The storage a kernel writes lives from the first
+  kernel that takes it to the last; storage only kernels read lives
+  throughout. tinygrad runs every kernel whose inputs are ready breadth
+  first: a closing slices its whole partial into every piece before any is
+  copied or summed, and computes a partial gradient before the last reader of
+  the gathered weights. Picking costs one pass over each ready kernel's
+  storage, so a schedule of `k` kernels costs `O(k²)` at worst.
+- **Reason:** (b): rune's fully sharded training (RFC 0005's memory bound),
+  whose split programs make each buffer at its first call and free it after
+  its last (D173). With the split assembly as storage and copies landing in
+  place (D182), the backward call of one layer at d = 512 held 3.062, 3.031
+  and 3.016 layers beside its arguments over 2, 4 and 8 memory devices in
+  tinygrad's order, 2.875, 2.562 and 2.406 by number alone, and 1.812, 1.531
+  and 1.391 in this order, against the bound of 1.875, 1.562 and 1.406
+  (`rune jit › fully sharded`).
+- **Pinned by:** the Schedule suite (`test/schedule/schedule`):
+  `create_schedule › order by storage › a kernel that frees storage runs
+  before one that only makes it` and `› pieces of one value are each read
+  before the next is made`; every recorded schedule, from the equally patched
+  tinygrad.

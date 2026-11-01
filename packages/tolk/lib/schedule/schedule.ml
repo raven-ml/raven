@@ -160,14 +160,11 @@ let copy_before_overwrites sink hazards =
      copies too. *)
   substitute ~calls:Skip ~pass:Fixed_point sink rebuilt
 
-(* The kernels in an order of the graph [children], [in_degree] counting the
-   kernels each waits for. *)
-let linearize ~children in_degree =
-  let queue = Queue.create () in
-  List.iter
-    (fun (k, d) -> if d = 0 then Queue.push k queue)
-    (Ordered.bindings in_degree);
-  let linearized = ref [] in
+(* A kernel as the schedule runs it: a call of its storage, in a loop where it
+   runs in one. *)
+let scheduled rk =
+  let k = if is_loop rk then nth rk 0 else rk in
+  if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
   let loops r = Axis_type.equal (axis_type r) Axis_type.Loop in
   (* A call's argument is the storage it reads, or a view of it that moves with
      the loops the call runs in. *)
@@ -178,36 +175,99 @@ let linearize ~children in_degree =
     then replace s ~src:(argument (nth s 0) :: List.tl (src s))
     else buf_uop (unwrap_src s)
   in
-  while not (Queue.is_empty queue) do
-    let rk = Queue.pop queue in
-    let k = if is_loop rk then nth rk 0 else rk in
-    if op k <> Op.Call then invalid_arg "a scheduled kernel is a call";
-    let args =
-      List.filter_map
-        (fun s ->
-          if is_bound_var s then None
-          else if scalar_argument k s then Some s
-          else Some (argument s))
-        (List.tl (src k))
+  let args =
+    List.filter_map
+      (fun s ->
+        if is_bound_var s then None
+        else if scalar_argument k s then Some s
+        else Some (argument s))
+      (List.tl (src k))
+  in
+  let call = replace k ~src:(body k :: args) in
+  (* A loop around a call stays, a back edge's condition read from the storage
+     it names. *)
+  match op rk with
+  | Op.End when List.exists loops (List.tl (src rk)) ->
+      replace rk ~src:(call :: List.tl (src rk))
+  | Op.Backedge ->
+      replace rk ~src:[ call; nth rk 1; buf_uop (unwrap_src (nth rk 2)) ]
+  | _ -> call
+
+module Iset = Set.Make (Int)
+
+(* The kernels in an order of the graph [children], [in_degree] counting the
+   kernels each waits for and numbering them in the order the walk of the sink
+   meets them.
+
+   A ready kernel runs by its number, so that a value is consumed soon after it
+   is made, as the program wrote it, and one that frees storage and on no device
+   makes more than it frees runs before it. The storage a kernel writes,
+   [written], lives from the first kernel that takes it to the last
+   ({!Memory.taken}); other storage, which only kernels read, lives throughout.
+   So a closing that slices a partial for each device sums each slice before it
+   makes the next, and the last reader of a gathered value runs before the
+   kernels that make more. A pick walks the ready kernels: [O(k²)] for [k]
+   kernels at worst. *)
+let linearize ~written ~children in_degree =
+  let kernels = Array.of_list (List.map fst (Ordered.bindings in_degree)) in
+  let number = Tbl.create 64 in
+  Array.iteri (fun i k -> Tbl.replace number k i) kernels;
+  let entries = Array.map scheduled kernels in
+  let made_here b = Tbl.mem written b && not (on_disk b) in
+  let storage =
+    Array.map (fun e -> List.filter made_here (Memory.taken e)) entries
+  in
+  (* The kernels left to take each storage, and the storage made so far. *)
+  let users = Tbl.create 64 and made = Tbl.create 64 in
+  Array.iter
+    (List.iter (fun b ->
+         Tbl.replace users b (1 + Option.value (Tbl.find_opt users b) ~default:0)))
+    storage;
+  let bytes b = max_numel b * element_size b in
+  let net = Hashtbl.create 4 in
+  let frees i =
+    Hashtbl.reset net;
+    let add b n =
+      let d = Option.value (device b) ~default:"" in
+      Hashtbl.replace net d (n + Option.value (Hashtbl.find_opt net d) ~default:0)
     in
-    let call = replace k ~src:(body k :: args) in
-    (* A loop around a call stays, a back edge's condition read from the storage
-       it names. *)
-    let entry =
-      match op rk with
-      | Op.End when List.exists loops (List.tl (src rk)) ->
-          replace rk ~src:(call :: List.tl (src rk))
-      | Op.Backedge ->
-          replace rk ~src:[ call; nth rk 1; buf_uop (unwrap_src (nth rk 2)) ]
-      | _ -> call
-    in
-    linearized := entry :: !linearized;
+    let freed = ref false in
+    List.iter
+      (fun b ->
+        if not (Tbl.mem made b) then add b (bytes b)
+        else if Tbl.find users b = 1 then begin
+          add b (-bytes b);
+          freed := true
+        end)
+      storage.(i);
+    !freed && Hashtbl.fold (fun _ n ok -> ok && n <= 0) net true
+  in
+  let ready = ref Iset.empty in
+  Array.iteri
+    (fun i k ->
+      if Ordered.find_opt in_degree k = Some 0 then ready := Iset.add i !ready)
+    kernels;
+  let pick () =
+    match Seq.find frees (Iset.to_seq !ready) with
+    | Some i -> i
+    | None -> Iset.min_elt !ready
+  in
+  let linearized = ref [] in
+  while not (Iset.is_empty !ready) do
+    let i = pick () in
+    ready := Iset.remove i !ready;
+    List.iter
+      (fun b ->
+        Tbl.replace made b ();
+        Tbl.replace users b (Tbl.find users b - 1))
+      storage.(i);
+    linearized := entries.(i) :: !linearized;
     List.iter
       (fun x ->
         let d = Option.get (Ordered.find_opt in_degree x) - 1 in
         Ordered.replace in_degree x d;
-        if d = 0 then Queue.push x queue)
-      (List.rev (Option.value (Tbl.find_opt children rk) ~default:[]))
+        if d = 0 then ready := Iset.add (Tbl.find number x) !ready)
+      (List.rev (Option.value (Tbl.find_opt children kernels.(i)) ~default:[]))
   done;
   if List.exists (fun (_, d) -> d <> 0) (Ordered.bindings in_degree) then
     invalid_arg "cycle detected in assign graph";
@@ -224,10 +284,11 @@ let rec schedule ~copies sched_sink =
   in
   (* Each superseded state, with the afters that write it and their new kernels,
      and each read of a state; both last first. *)
-  let writes = Tbl.create 64 and reads = ref [] in
+  let writes = Tbl.create 64 and reads = ref [] and written = Tbl.create 64 in
   List.iter
     (fun u ->
       if op u = Op.After then begin
+        Tbl.replace written (buf_uop u) ();
         let kernels, after_deps = split_after u in
         let prev_state = unwrap_src (nth u 0) in
         let prev_kernels =
@@ -293,7 +354,7 @@ let rec schedule ~copies sched_sink =
         (List.rev (Option.value (Tbl.find_opt writes s) ~default:[])))
     (List.rev !reads);
   match List.rev !hazards with
-  | [] -> linearize ~children in_degree
+  | [] -> linearize ~written ~children in_degree
   | _ when not copies ->
       invalid_arg
         "a kernel reads a buffer state that a kernel it waits for overwrites"

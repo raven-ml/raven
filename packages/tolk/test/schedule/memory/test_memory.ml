@@ -115,6 +115,14 @@ let taken =
   let run args = Ops.v Linear ~src:[ Ops.call (Ops.sink args) args ] in
   group "memory_plan_rewrite › the buffers a call takes"
     [
+      test "an entry takes each buffer its calls pass or view, once" (fun () ->
+          let b = buf 32 in
+          let si =
+            Ops.v Linear
+              ~src:[ Ops.call (Ops.sink [ a; c ]) [ a; c ]; Ops.call (Ops.sink [ b; a ]) [ Shape.shrink b [ Some (Int 0, Int 4) ]; a ] ]
+          in
+          let r = Ops.range ~axis_type:Loop (Int 2) [ 0 ] in
+          equal (list uop) [ a; c; b ] (Memory.taken (Ops.end_ si [ r ])));
       test "a view of a buffer keeps it out of the plan" (fun () ->
           let linear = run [ c; Shape.shrink a [ Some (Int 0, Int 4) ] ] in
           let planned = Memory.memory_plan_rewrite linear in
