@@ -53,8 +53,10 @@ val pm_split_ranges : (Ops.t Ops.Tbl.t, Ops.t) Ops.Pattern_matcher.t
 
 val pm_reduce_unparented : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_reduce_unparented] removes from a sum, product or maximum ({!Op.Reduce})
-    the ranges its value does not run inside: a sum over such a range is
-    multiplied by its size, and a product raised to it.
+    the ranges its value does not run inside: a sum over such ranges is
+    multiplied by the product of their sizes, and a product raised to it, where
+    that product is positive; where it is not, the reduction is its operation's
+    identity.
 
     Raises [Invalid_argument] if a source of the reduction after its value is
     not a range. *)

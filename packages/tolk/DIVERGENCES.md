@@ -4043,26 +4043,19 @@ does.
 
 - **tinygrad:** `codegen/late/linearizer.py:20` (`run_count`, the product of
   `vmax + 1` over a node's ranges) and `:33` (the key, by run count, then
-  depth), `codegen/simplify.py:81-91`
-  (`reduce_unparented`, a sum times the size, a product to its power, and a
-  maximum or a bool sum or product the value where the size is positive and
-  its identity elsewhere) and `uop/symbolic.py:388-398` (`reduce_mul_chain`, an
-  integer maximum of a product times the factor that ignores its ranges).
-- **tolk:** `Linearizer.runs`, `Simplify.reduce_unparented` and
-  `Symbolic.reduce_mul_chain`; `gen/tinygrad.patch` makes
-  the three changes in tinygrad, so the goldens state tolk's order.
+  depth) and `uop/symbolic.py:388-398` (`reduce_mul_chain`, an integer
+  maximum of a product times the factor that ignores its ranges).
+- **tolk:** `Linearizer.runs` and `Symbolic.reduce_mul_chain`;
+  `gen/tinygrad.patch` makes the two changes in tinygrad, so the goldens
+  state tolk's order.
 - **Differs:** the linearizer counts a range as at least one run. Both
   order nodes by their run count, then by their depth, the number of ranges
   they run inside, so a loop's body sorts after the nodes around the loop
   that run as often. tinygrad counts a range whose size is at most 0 as no
   run, its body sorts before the nodes around the loop, and a sum's first
   store of its accumulator is placed inside the loop: where the loop runs no
-  time, the sum reads its accumulator unwritten. A
-  reduction over a range its value ignores, whose size may be 0, is its
-  identity where the size is 0: tinygrad's sum of an infinity over it is NaN
-  there. Where the size's bounds make each use of
-  the range fold, as `r // 2` for a size of at most 1, the value ignores the
-  range and the reduction took that form. An integer maximum of a product by
+  time, the sum reads its accumulator unwritten. An integer maximum of a
+  product by
   a factor that ignores its ranges, over a range whose size may be 0, is its
   identity there too: tinygrad's is the identity times the factor, which
   wraps. The order of the goldens'
@@ -4077,9 +4070,7 @@ does.
   and an int32 maximum of `2 k` among them;
   `Tolk.Linearizer › laws › after splitting and chaining, the rest runs
   outside each loop`, whose kernels hold ranges of constant sizes from 0 and
-  of variable sizes; `Tolk.Simplify › pm_reduce_unparented › a reduction
-  keeps its value over a range that may run no time`; the linearizer's
-  `orders_output` goldens.
+  of variable sizes; the linearizer's `orders_output` goldens.
 
 ## D155. A pad by -0. fills its padding with -0.
 

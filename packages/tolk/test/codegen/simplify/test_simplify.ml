@@ -274,6 +274,14 @@ let reduces_by_size (rop, x, hi) =
       else equal ~msg Dtypes.const (at size u) (at size (unparent u)))
     (List.init (hi + 1) Fun.id)
 
+(* [counted n rop v] is [v], the value of a reduction by [rop] over ranges of
+   [n] runs, where [n] is positive, and [rop]'s identity elsewhere. *)
+let counted n rop v =
+  Ops.where
+    Ops.O.(Ops.int 0 < n)
+    v
+    (Shape.const_like v (Ops.identity_element rop (Ops.dtype v)))
+
 let unparented =
   let r0 = reduce_range 4 0 and r1 = reduce_range 5 1 in
   let x = Ops.cast r0 Float32 in
@@ -282,18 +290,21 @@ let unparented =
       test "a sum over a range its value ignores is multiplied by its size"
         (fun () ->
           equal uop
-            Ops.O.(sum x [ r0 ] * Ops.int 5)
+            (counted (Ops.int 5) Add Ops.O.(sum x [ r0 ] * Ops.int 5))
             (unparent (sum x [ r0; r1 ])));
       test "a product is raised to its size" (fun () ->
           equal uop
-            (Ops.pow (Ops.reduce x Mul [ r0 ]) (Ops.int 5))
+            (counted (Ops.int 5) Mul (Ops.pow (Ops.reduce x Mul [ r0 ]) (Ops.int 5)))
             (unparent (Ops.reduce x Mul [ r0; r1 ])));
       test "a maximum drops the range" (fun () ->
-          equal uop (Ops.reduce x Max [ r0 ])
+          equal uop
+            (counted (Ops.int 5) Max (Ops.reduce x Max [ r0 ]))
             (unparent (Ops.reduce x Max [ r0; r1 ])));
       test "a reduction over no range its value reads is its value, scaled"
         (fun () ->
-          equal uop Ops.O.(f32 3. * Ops.int 4) (unparent (sum (f32 3.) [ r0 ])));
+          equal uop
+            (counted (Ops.int 4) Add Ops.O.(f32 3. * Ops.int 4))
+            (unparent (sum (f32 3.) [ r0 ])));
       test "a reduction over ranges its value reads is left" (fun () ->
           let u = sum Ops.O.(x + Ops.cast r1 Float32) [ r0; r1 ] in
           equal uop u (unparent u));
@@ -465,7 +476,7 @@ let reduce_simplifying =
           equal uop u (reduce_simplify u));
       test "an unparented range is removed" (fun () ->
           equal uop
-            Ops.O.(f32 3. * Ops.int 10)
+            (counted (Ops.int 10) Add Ops.O.(f32 3. * Ops.int 10))
             (reduce_simplify (sum (f32 3.) [ r ])));
     ]
 

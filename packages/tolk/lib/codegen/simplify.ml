@@ -224,12 +224,12 @@ let pm_split_ranges =
 
 let no_range u = not (op_in_backward_slice_with_self ~calls:Skip u [ Op.Range ])
 
-(* A reduction over a range its value ignores folds the value once per run of
-   the range: a sum multiplies it by the range's size, a product raises it to
-   it, and a maximum, or a bool sum or product, is the value. A range whose
-   size may be 0, as a variable's, runs no time when it is, and the reduction
-   is then its identity, where the sum of an infinity would be NaN and the
-   maximum the value. *)
+(* A reduction over ranges its value ignores folds the value once per run of
+   them, [n] times, [n] the product of their sizes: a sum multiplies it by [n],
+   a product raises it to [n], and a maximum, or a bool sum or product (an or,
+   an and), which are idempotent, is the value. Ranges that run no time, as a
+   variable's of size 0, make the reduction its identity, where the sum of an
+   infinity would be NaN and the maximum the value. *)
 let reduce_unparented red =
   match arg red with
   | Reduce { op = (Op.Add | Op.Max | Op.Mul) as rop; _ } -> (
@@ -239,28 +239,21 @@ let reduce_unparented red =
       let within = ranges value in
       match List.partition (fun x -> Nodes.mem x within) rngs with
       | _, [] -> None
-      | parented, unparented ->
+      | parented, r :: rs ->
           let ret =
             if List.is_empty parented then value
             else replace red ~src:(value :: parented)
           in
-          let fold ret r =
-            let size = nth r 0 in
-            (* A maximum, and a bool sum or product (an or, an and), is
-               idempotent: applied any number of times, it is the value. *)
-            let folded =
-              match rop with
-              | _ when Dtype.equal (dtype red) Dtype.Bool -> ret
-              | Op.Add -> O.(ret * size)
-              | Op.Mul -> pow ret size
-              | _ -> ret
-            in
-            if V.(vmin size > of_int 0) then folded
-            else
-              let identity = identity_element rop (dtype red) in
-              where O.(int 0 < size) folded (const_like red identity)
+          let n = uprod (nth r 0) (List.map (fun r -> nth r 0) rs) in
+          let ret =
+            match rop with
+            | _ when Dtype.equal (dtype red) Dtype.Bool -> ret
+            | Op.Add -> O.(ret * n)
+            | Op.Mul -> pow ret n
+            | _ -> ret
           in
-          Some (List.fold_left fold ret unparented))
+          let identity = identity_element rop (dtype red) in
+          Some (where O.(int 0 < n) ret (const_like ret identity)))
   | _ -> None
 
 let pm_reduce_unparented =
