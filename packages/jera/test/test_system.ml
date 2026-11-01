@@ -509,6 +509,16 @@ let in_lanes ?(budget = 50) a b guess =
   System.lanes ~tol:tight ~budget ~jacobian:(lane_jacobian a) (lane_field a b)
     guess
 
+(* Lanes whose zero has an unknown below the normal floats beside one at 1:
+   the steps reach it in the subnormals, whose products round by an absolute
+   2⁻¹⁰⁷⁵ rather than relatively. *)
+let subnormal_zeros =
+  List.map
+    (fun small ->
+      ( Nx.create f64 [| 1; 2; 2 |] [| 4.; 1.; 0.; 4. |],
+        Nx.create f64 [| 1; 2 |] [| 1.; small |] ))
+    [ 7.5e-311; 8.471802945955e-311; 8.6e-311 ]
+
 let lane_tests =
   [
     prop "each lane's zero is the one its system is built around" lane_systems
@@ -614,8 +624,8 @@ let lane_tests =
                         (System.lanes ~tol:tight ~budget:30 ~jacobian (mixed b)
                            (Nx.zeros f64 [| 2; 1 |])))))
               (Nx.create f64 [| 2; 1 |] [| 1.; 2. |])));
-    prop "seeded lanes reaching rounding in two steps converge" lane_systems
-      (fun (a, z) ->
+    prop "seeded lanes reaching rounding in two steps converge"
+      ~examples:subnormal_zeros lane_systems (fun (a, z) ->
         let b = Nx.add (apply a z) (Nx.sin z) in
         let seed = Nx.add z (Nx.mul_s (Nx.cos (Nx.mul_s z 7.)) 1e-6) in
         equal near z

@@ -493,6 +493,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `System.lanes` allows for the subnormals' absolute rounding when it checks
+  a lane's linear solve. A lane whose zero has an unknown below the normal
+  floats failed the check and ended `Stalled`.
 - `System.newton`, `System.broyden` and `Minimize.levenberg_marquardt` measure
   their merit, Jacobian update and cost on the residual or step divided by its
   largest magnitude. Below about `1e-154` the squares underflowed: Newton

@@ -357,13 +357,21 @@ let batched a b =
 let product a u =
   Nx.squeeze ~axes:[ -1 ] (Nx.matmul a (Nx.unsqueeze ~axes:[ -1 ] u))
 
-(* The backward error of an LU solve of [a u = b], per lane. *)
+(* The backward error of an LU solve of [a u = b], per lane. Below the normal
+   floats a product rounds by up to half the subnormals' spacing [η = tiny ε]
+   whatever its size, so the bound adds [(|a| + 1) η] to the relative part. *)
 let backward_bound a u b =
   let k = Nx.dim (-1) b in
+  let dtype = Nx.dtype b in
   let frobenius = Nx.sqrt (Nx.sum ~axes:[ -2; -1 ] (Nx.square a)) in
+  let eps = Num.eps dtype in
   Nx.mul_s
-    (Nx.add (Nx.mul frobenius (Search.norm u)) (Search.norm b))
-    (16. *. float k *. Num.eps (Nx.dtype b))
+    (Nx.add
+       (Nx.mul_s
+          (Nx.add (Nx.mul frobenius (Search.norm u)) (Search.norm b))
+          eps)
+       (Nx.mul_s (Nx.add_s frobenius 1.) (Num.tiny dtype *. eps)))
+    (16. *. float k)
 
 let blocks fn op b =
   let k = Nx.dim (-1) b in
