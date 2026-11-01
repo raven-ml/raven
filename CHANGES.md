@@ -818,6 +818,8 @@ thread.
 - HIP writes bfloat16 as `__bf16` on every AMD target.
 - Repeated stores into a shrink of their own destination, such as
   `x[0] += 1`, each store in place, without a copy.
+- `Ops.storage_base` remembers what it finds: the storage of n stores into one
+  buffer takes n steps in all, where it took n²/2.
 - **Breaking:** `Ops.Upat.v` and `Ops.Upat.op` take no `?tag`, and
   `Ops.remove_all_tags` is gone: patterns ignore tags.
 - **Breaking:** `Jit.jit_lower` makes each buffer it does not hold storage of

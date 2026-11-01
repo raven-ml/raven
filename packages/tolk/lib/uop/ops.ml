@@ -224,6 +224,7 @@ and memos = {
   mutable marg_memo : movement option; [@atomic]
   mutable key_memo : string option; [@atomic]
   mutable arg_repr_memo : string option; [@atomic]
+  mutable storage_base_memo : t option; [@atomic]
 }
 
 (* A set in the order its nodes joined it. Small sets are searched in order;
@@ -443,6 +444,7 @@ let memos () =
     marg_memo = None;
     key_memo = None;
     arg_repr_memo = None;
+    storage_base_memo = None;
   }
 
 let node op src arg tag dtype id =
@@ -2034,12 +2036,22 @@ let rec has_buffer_identity ?(after_ok = false) u =
 
 (* Movement *)
 
+(* Each node walked keeps the storage found: the n stores into one buffer
+   target a chain of n afters, which their storage bases then walk once in all,
+   not once each. *)
 let storage_base u =
-  let rec strip b =
-    if List.mem b.op Op.[ Bitcast; After ] then strip (base (first b.op b.src))
-    else b
+  let strips n =
+    Op.Set.mem n.op Op.Set.movement || List.mem n.op Op.[ Detach; Bitcast; After ]
   in
-  strip (base u)
+  let rec walk path n =
+    match n.memos.storage_base_memo with
+    | Some b -> (b, path)
+    | None -> if strips n then walk (n :: path) (first n.op n.src) else (n, path)
+  in
+  let b, path = walk [] u in
+  let memo = Some b in
+  List.iter (fun n -> n.memos.storage_base_memo <- memo) path;
+  b
 
 let needs_storage u =
   (not (is_virtual u))
