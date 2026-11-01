@@ -700,7 +700,7 @@ let before_growth = 32
 
 let test_reset_cut_lost () =
   needs_flock ();
-  let root = Tree.make functions in
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
   let refuse = ref true and taking = ref false in
   let reset _ =
     Atomic.incr vendor_resets;
@@ -715,12 +715,21 @@ let test_reset_cut_lost () =
     stop (hold g m 0);
     Atomic.get vendor_resets - before
   in
-  let rec walk n =
+  let lose g m =
+    refuse := true;
+    ignore (Driver.reset g m 0)
+  in
+  (* A driver whose table holds the lost GPUs of [before_growth] machines, the
+     machines oldest first. *)
+  let fresh () =
     let g = gpus ~reset ~unreleased () in
     let others = List.init before_growth (fun _ -> Machine.at root) in
+    List.iter (lose g) others;
+    (g, others)
+  in
+  let rec walk n (g, others) =
     let m = Machine.at root in
     refuse := true;
-    List.iter (fun m -> ignore (Driver.reset g m 0)) others;
     taking := false;
     let before = Atomic.get vendor_resets in
     let reached =
@@ -732,21 +741,37 @@ let test_reset_cut_lost () =
     (* A growth moves the oldest machines first: one cut short drops the
        newest it has not moved, the newest before this one among them, and
        the oldest too if cut at its first move. *)
+    let oldest = List.hd others
+    and newest = List.nth others (before_growth - 1) in
     List.iter
-      (fun k ->
+      (fun (which, o) ->
         equal
-          ~msg:(strf "from allocation %d, the renewals of machine %d's GPU" n k)
-          int 1
-          (renewals g (List.nth others k)))
-      [ 0; before_growth - 1 ];
+          ~msg:(strf "from allocation %d, the renewals of the %s lost GPU" n
+                  which)
+          int 1 (renewals g o))
+      [ ("oldest", oldest); ("newest", newest) ];
     let mine = renewals g m in
     if ran then
       equal ~msg:(strf "from allocation %d, the renewals of the GPU" n) int 1
         mine;
     if n = 1 then equal ~msg:"the walk lands" bool true reached;
-    if reached then walk (n + 1)
+    (* A cut that left the GPU unmarked left the table as it was, since a
+       mark publishes its copy with one store: losing the two GPUs renewed
+       again, now the newest, gives the next landing a table about to grow
+       with two resets in place of 32. A mark made grew it, and the next
+       landing starts afresh. *)
+    let next () =
+      if mine > 0 then fresh ()
+      else begin
+        let middle = List.filter (fun o -> o != oldest && o != newest) others in
+        lose g oldest;
+        lose g newest;
+        (g, middle @ [ oldest; newest ])
+      end
+    in
+    if reached then walk (n + 1) (next ())
   in
-  walk 1
+  walk 1 (fresh ())
 
 let resets =
   group ~timeout:patience "resets"
