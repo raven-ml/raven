@@ -146,6 +146,13 @@ NX_INLINE int nx_float_nan(float f) {
 NX_INLINE int nx_double_nan(double d) {
   return (nx_double_bits(d) & 0x7FFFFFFFFFFFFFFFu) > 0x7FF0000000000000u;
 }
+
+/* [d], quiet where it is a NaN: its quiet bit set, its sign and the rest of
+   its payload kept, as a store from OCaml gives it (dtype.mli, Stores). */
+NX_INLINE double nx_double_quiet(double d) {
+  if (!nx_double_nan(d)) return d;
+  return nx_bits_double(nx_double_bits(d) | 0x0008000000000000u);
+}
 #endif
 
 /* bfloat16: binary32's top half */

@@ -430,10 +430,18 @@ let small dt x = Int64.to_int (store (code dt) x)
 let word dt x = Int64.to_int32 (store (code dt) x)
 let complex32 x = { Complex.re = round (code Float32) x; im = 0. }
 
+(* [x], quiet where it is a NaN: its quiet bit set, its sign and the rest of
+   its payload kept. *)
+let quiet x =
+  if Float.is_nan x then
+    let bits = Int64.bits_of_float x in
+    Int64.float_of_bits (Int64.logor bits 0x0008000000000000L)
+  else x
+
 let of_float : type v s. (v, s) t -> float -> v =
  fun dt x ->
   match dt with
-  | Float64 -> x
+  | Float64 -> quiet x
   | Float32 -> round (code dt) x
   | Float16 -> round (code dt) x
   | Bfloat16 -> round (code dt) x
@@ -450,7 +458,7 @@ let of_float : type v s. (v, s) t -> float -> v =
   | Uint8 -> small dt x
   | Int4 -> small dt x
   | Uint4 -> small dt x
-  | Complex128 -> { Complex.re = x; im = 0. }
+  | Complex128 -> { Complex.re = quiet x; im = 0. }
   | Complex64 -> complex32 x
   | Bool -> x <> 0.
   | Bit -> x <> 0.

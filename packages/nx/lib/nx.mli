@@ -54,7 +54,10 @@ val dtype : ('v, 's, 'd) t -> ('v, 's) dtype
     [float32] stores 32-bit floats and reads them as [float], [int8] stores
     8-bit integers and reads them as [int]. The operands of an operation share a
     dtype by their types; {!cast} changes it. There is one value per constructor
-    of {!Dtype.t}, named in lowercase. *)
+    of {!Dtype.t}, named in lowercase. Every NaN result follows the NaN rule
+    ({!Dtype.section-stores}): where this page leaves its sign and payload
+    unspecified, it is still signalling only where an operand is a
+    signalling NaN. *)
 
 module Dtype = Nx_array.Dtype
 (** Dtypes: their constructors, element types and properties. *)

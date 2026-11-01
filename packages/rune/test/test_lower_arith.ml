@@ -949,6 +949,18 @@ let cast =
   conversion "casts give eager's values" K.Cast ~nan:true dtypes (fun _ ->
       dtypes)
 
+(* float16 and bfloat16 to float32 and back, every code and every tie
+   ([Rune_support.Casts16]): eager's bits, a NaN as a NaN quiet where its
+   operand is. *)
+let casts16 =
+  group "16-bit casts"
+    [
+      test "float16 gives eager's bits" (fun () ->
+          Rune_support.Casts16.law (module Nx.Host) Nx.float16);
+      test "bfloat16 gives eager's bits" (fun () ->
+          Rune_support.Casts16.law (module Nx.Host) Nx.bfloat16);
+    ]
+
 (* A 64-bit integer's low 53 bits, which its bounds hold within 2^53, cast into
    float32 and the narrow floats: float64 holds them exactly, so the cast rounds
    once, as eager's does. Its low 54 bits, past 2^53, round to odd first:
@@ -1091,6 +1103,7 @@ let () =
          constant_divisors;
          rounded;
          cast;
+         casts16;
          bounded_casts;
          into_complex128;
          bitcast;

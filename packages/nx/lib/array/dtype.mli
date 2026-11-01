@@ -260,16 +260,25 @@ val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
       infinity of its sign in the formats that have one, [Float64], [Float32],
       [Float16], [Bfloat16] and [Float8_e5m2], and saturates in those that
       have none: ±448 in [Float8_e4m3fn] and ±6 in [Float4_e2m1fn].
-    - NaN is a quiet NaN of its sign that keeps the top bits of its payload,
-      as many as the format's fraction holds below its quiet bit, the
-      fraction's top: a signalling NaN is quieted. [Float8_e4m3fn] has one
-      NaN of each sign, [S.1111.111], and [Float4_e2m1fn] none: NaN stores
-      there as [+0.].
+    - NaN is a NaN of the format, by the NaN rule below. [Float8_e4m3fn] has
+      one NaN of each sign, [S.1111.111], and [Float4_e2m1fn] none: NaN
+      stores there as [+0.]. {!of_float} gives the quiet NaN of [x]'s sign
+      that keeps the top bits of its payload, as many as the format's
+      fraction holds below its quiet bit, the fraction's top.
     - Integers truncate toward zero and saturate to their range, signed and
       unsigned alike; NaN stores as [0].
     - Complex numbers store [x] as their real part, rounded to their component's
       format, and a zero imaginary part. Booleans store [x <> 0.], [true] for
-      NaN. *)
+      NaN.
+
+    The {e NaN rule} holds for every NaN result, a store's and an
+    operation's: its sign and payload are unspecified, and it is signalling
+    only where an operand is a signalling NaN, so a quiet NaN stays quiet.
+    Moves of elements and the operations that act on the sign bit alone keep
+    a NaN's bits. This departs from IEEE 754-2019 (§6.2.1, §7.2), which has
+    every operation that computes quiet a signalling NaN: no operation here
+    raises or reads an exception flag, so a signalling NaN computes as a
+    quiet one. *)
 
 val of_float : ('v, 's) t -> float -> 'v
 (** [of_float dt x] is the value a store of [x] into [dt] holds

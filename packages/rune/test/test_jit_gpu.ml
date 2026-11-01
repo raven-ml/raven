@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
-   the host's eager values, a call's check raises at the next wait, so the
-   call returns while its work runs, a key split there has the host's words,
-   and a program over the GPU and a memory device, devices of two targets,
-   compiles to eager's values with replicas equal bit for bit. It skips without a GPU, or without the compiler the GPU's
-   kernels need. *)
+   the host's eager values, a cast between float32 and a 16-bit float gives
+   eager's bits at every code and tie, a call's check raises at the next
+   wait, so the call returns while its work runs, a key split there has the
+   host's words, and a program over the GPU and a memory device, devices of
+   two targets, compiles to eager's values with replicas equal bit for bit.
+   It skips without a GPU, or without the compiler the GPU's kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -59,6 +60,7 @@ let on_gpu () =
       (d, s)
 
 let law c = Scatters.law (snd (on_gpu ())) c
+let casts16 dt () = Casts16.law (snd (on_gpu ())) dt
 
 exception Big of int array * float
 
@@ -479,6 +481,11 @@ let () =
                "a scatter past 16 times eager's work compiles to eager's values"
                (Gen.with_pp Scatters.pp Scatters.gen)
                law;
+           ];
+         group "16-bit casts"
+           [
+             test "float16 gives eager's bits" (casts16 Nx.float16);
+             test "bfloat16 gives eager's bits" (casts16 Nx.bfloat16);
            ];
          group "checks"
            [

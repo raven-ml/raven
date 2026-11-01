@@ -163,10 +163,14 @@ let cast_value (type v s w r) (s : (v, s) D.t) (d : (w, r) D.t) (x : v) : w =
 let words (type v s) (a : (v, s) A.t) =
   Option.get (A.bitcast D.Uint32 (Option.get (A.bitcast D.Float32 a)))
 
+(* The bits of [a]'s float64s, as {!words} for float32s. *)
+let words64 (type v s) (a : (v, s) A.t) =
+  Option.get (A.bitcast D.Int64 (Option.get (A.bitcast D.Float64 a)))
+
 (* [a] cast to [d], element by element; a cast to [a]'s own dtype is a copy. A
-   float32 that stays one, into or out of complex64's real part, keeps its bits:
-   OCaml reads a float32 as a double, which quiets a signalling NaN, so those
-   bits are copied here. *)
+   float32 or float64 that stays one, into or out of a complex number's real
+   part, keeps its bits: OCaml reads a float32 as a double, and a store from
+   OCaml quiets a signalling NaN, so those bits are copied here. *)
 let reference (type v s w r) (a : (v, s) A.t) (d : (w, r) D.t) : (w, r) A.t =
   let s = A.dtype a in
   match D.equal_witness s d with
@@ -189,6 +193,12 @@ let reference (type v s w r) (a : (v, s) A.t) (d : (w, r) D.t) : (w, r) A.t =
           each (fun i -> A.set w (re i) (A.get x i))
       | D.Any D.Complex64, D.Any D.Float32 ->
           let w = words want and x = words a in
+          each (fun i -> A.set w i (A.get x (re i)))
+      | D.Any D.Float64, D.Any D.Complex128 ->
+          let w = words64 want and x = words64 a in
+          each (fun i -> A.set w (re i) (A.get x i))
+      | D.Any D.Complex128, D.Any D.Float64 ->
+          let w = words64 want and x = words64 a in
           each (fun i -> A.set w i (A.get x (re i)))
       | _ -> ());
       want

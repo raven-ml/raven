@@ -34,9 +34,11 @@
     its call executes ({!section-callbacks}).
 
     Two arrays agree {e bit for bit} when their elements have the same bits,
-    except for a NaN's sign and payload, which nx leaves unspecified. Outside
-    every transformation a construct other than {!jit} agrees bit for bit with
-    its functions applied eagerly: a {!scan} is the fold of its step. A {!jit}
+    except for what nx's NaN rule leaves unspecified
+    ({!Nx.Dtype.section-stores}): a NaN's sign and payload, and whether a NaN
+    made from a signalling NaN is signalling. Outside every transformation a
+    construct other than {!jit} agrees bit for bit with its functions applied
+    eagerly: a {!scan} is the fold of its step. A {!jit}
     computes to the accuracy {!section-numerics} states. A value rune makes
     lies where nx places it ({!Nx.section-routing}): a zero beside an array lies
     at that array's placement, an operation's result where nx routes it, and a
@@ -788,13 +790,12 @@ val vmap : ?axis:axis -> ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     depends on no lane is broadcast along that axis. [axis] names the map.
 
     Each lane computes what [f] computes on its rows, the elements of its arrays
-    bit for bit, but for a NaN's sign and payload and for the order in which a
-    float reduction or contraction associates its terms, which nx lets depend on
-    the shape of the arrays it reads. A lane lies where its rows lie: an
-    argument cut along axis 0 across devices computes each lane on the devices
-    that hold its row, and [Nx.place] of a lane at its own placement moves
-    nothing. The lanes of an {!iterate} stop apart where its [until] depends on
-    them.
+    bit for bit, but for the order in which a float reduction or contraction
+    associates its terms, which nx lets depend on the shape of the arrays it
+    reads. A lane lies where its rows lie: an argument cut along axis 0 across
+    devices computes each lane on the devices that hold its row, and [Nx.place]
+    of a lane at its own placement moves nothing. The lanes of an {!iterate}
+    stop apart where its [until] depends on them.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if the arguments hold no array
@@ -1280,17 +1281,17 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     memory. [f] is traced at each call over stand-ins of its arguments' arrays,
     every operation it applies staged, those over values it captures included,
     and its program evaluated, so outside every transformation [remat s f x] is
-    [f x], bit for bit but for a NaN's sign and payload. Every transformation
-    sees [remat s f] as it sees [f]: its derivatives in either mode, and its
-    map, are [f]'s. An addition to a {!Total} that [f] makes counts once,
-    however often the backward pass computes [f] again. Inside a {!jit}, the
-    backward pass computes again each of [f]'s intermediate values that reads a
-    value the program computes, among [f]'s arguments and captures, once the
-    cotangents of [f]'s results are computed, so the program keeps none of them
-    from one pass to the other. A value [f] computes from the program's
-    arguments and constants alone is the forward pass's, kept for the backward
-    pass, and so is one [f] computes in a {!scan}'s or an {!iterate}'s step from
-    the step's captures alone, which the loop computes once.
+    [f x], bit for bit. Every transformation sees [remat s f] as it sees [f]:
+    its derivatives in either mode, and its map, are [f]'s. An addition to a
+    {!Total} that [f] makes counts once, however often the backward pass
+    computes [f] again. Inside a {!jit}, the backward pass computes again each
+    of [f]'s intermediate values that reads a value the program computes, among
+    [f]'s arguments and captures, once the cotangents of [f]'s results are
+    computed, so the program keeps none of them from one pass to the other. A
+    value [f] computes from the program's arguments and constants alone is the
+    forward pass's, kept for the backward pass, and so is one [f] computes in a
+    {!scan}'s or an {!iterate}'s step from the step's captures alone, which the
+    loop computes once.
 
     A {!callback} that [f] calls outside a custom rule's derivative runs once:
     the backward pass keeps the results of each construct of [f] that runs
@@ -1483,8 +1484,8 @@ val jit :
     its parts for a complex one. An {e ulp} is one rank in the order of a
     dtype's bit patterns, [-0.] and [+0.] one rank apart, and an error of [n]
     ulps is a distance of [n] ranks from the correctly rounded result. [γ(k)] is
-    [k u / (1 - k u)]. A function is {e exact} when it gives eager's bits, a NaN
-    result's sign and payload excepted.
+    [k u / (1 - k u)]. A function is {e exact} when it agrees with eager bit
+    for bit.
 
     Moves of elements, such as {!Nx.take}, {!Nx.concatenate}, {!Nx.sort} and a
     {!Nx.scatter} by [Set], keep a NaN's bits too. Casts, bitcasts, {!Nx.where},

@@ -144,9 +144,13 @@ type op1 =
   | Unary of unary
   | Cast
       (** The operand's element stored into the result's dtype. A float stores
-          as {!Nx_array.Dtype.of_float} says. An integer stores as its exact
-          value rounded once to a float format, modulo the width to an integer
-          dtype, and as [x <> 0] to a boolean. A boolean stores as [0] or [1].
+          as {!Nx_array.Dtype.of_float} says, but for a NaN into a format
+          with NaNs, which follows the NaN rule
+          ({!Nx_array.Dtype.section-stores}): its sign and payload are
+          unspecified, and it is signalling only where the operand is. An
+          integer stores as its exact value rounded once to a float format,
+          modulo the width to an integer dtype, and as [x <> 0] to a
+          boolean. A boolean stores as [0] or [1].
           Into a complex dtype, these rules give the real part and the imaginary
           part is [0.]. A complex number stores part by part into a complex
           dtype, as [true] into a boolean if either part is non-zero, and by its
@@ -241,9 +245,11 @@ val accepts3 :
     A float kind with a NaN operand gives a NaN, but for [Pow] of a base
     [1] or an exponent [0], which Annex F makes [1]. A kind gives a NaN
     from numbers where IEEE 754 or Annex F does, as [Sin] of an infinity.
-    Which NaN, its sign and its payload are unspecified. They differ
-    between targets, and between a target's vector and scalar code. [Neg]
-    and [Abs] set a NaN's sign bit as they do a number's, its payload kept.
+    Such a NaN follows the NaN rule ({!Nx_array.Dtype.section-stores}): its
+    sign and its payload are unspecified, and it is signalling only where
+    an operand is a signalling NaN. Its bits differ between targets, and
+    between a target's vector and scalar code. [Neg] and [Abs] set a NaN's
+    sign bit as they do a number's, its payload kept.
 
     {2:complex_results Complex numbers}
 

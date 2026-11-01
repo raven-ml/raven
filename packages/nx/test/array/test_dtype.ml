@@ -471,9 +471,10 @@ let test_nan_sign (F (dt, _)) =
       equal ~msg bool (Float.sign_bit x) (Float.sign_bit (A.get a [| 0 |])))
     [ nan; -.nan ]
 
-(* A float16 or float8_e5m2 store of a NaN sets its quiet bit and keeps its
-   sign and the top bits of its payload, ten or one, as a run, one element at
-   a time, and into an array: the bits of each double and of its code. *)
+(* A float16 or float8_e5m2 store of a NaN from OCaml ([D.of_float]) sets
+   its quiet bit and keeps its sign and the top bits of its payload, ten or
+   one, as a run, one element at a time, and into an array: the bits of each
+   double and of its code. *)
 type payloads = Payloads : (float, 's) D.t * (int64 * int) list -> payloads
 
 let nan_payloads =
@@ -514,11 +515,27 @@ let test_nan_payloads (Payloads (dt, payloads)) =
   List.iteri (fun i x -> A.set one [| i |] x) xs;
   equal ~msg:"set" (array int) want (bits one)
 
-(* A decoder in C gives a NaN code a quiet binary32 NaN of its sign; float16,
-   bfloat16 and float8_e5m2 keep the code's payload in binary32's top fraction
-   bits, and float8_e4m3fn's one NaN of each sign has none. OCaml
-   cannot see a signalling NaN, which a widening to double quiets, so the bits
-   come from the C decoder. *)
+(* A float64 or complex128 store of a signalling NaN from OCaml quiets it,
+   keeping its sign and payload: of_float, and an array's of_array and set,
+   read back by their bits. *)
+let test_wide_nan_quieted () =
+  let snan = Int64.float_of_bits 0x7FF0000000000001L in
+  let want = 0x7FF8000000000001L in
+  let bits = Int64.bits_of_float in
+  equal ~msg:"float64" int64 want (bits (D.of_float D.Float64 snan));
+  equal ~msg:"complex128" int64 want
+    (bits (D.of_float D.Complex128 snan).Complex.re);
+  let words a = A.to_array (Option.get (A.bitcast D.Int64 a)) in
+  equal ~msg:"of_array" (array int64) [| want |]
+    (words (A.of_array D.Float64 [| 1 |] [| snan |]));
+  let one = A.create Rig.host D.Float64 [| 1 |] in
+  A.set one [| 0 |] snan;
+  equal ~msg:"set" (array int64) [| want |] (words one)
+
+(* A decoder in C gives a NaN code a binary32 NaN, quiet where the code is
+   quiet (the NaN rule): its fraction's top bit set, as float8_e4m3fn's one
+   NaN of each sign has it. OCaml cannot see a signalling NaN, which a
+   widening to double quiets, so the bits come from the C decoder. *)
 let test_decoded_nans (F (dt, f)) =
   let w = 1 + f.exp + f.frac in
   let nans =
@@ -526,21 +543,14 @@ let test_decoded_nans (F (dt, f)) =
       (fun c -> Float.is_nan (decode f (c land ((1 lsl (w - 1)) - 1))))
       (List.init (1 lsl w) Fun.id)
   in
-  let quiet = 0x7FC00000 in
-  let want c =
-    let sign = ((c lsr (w - 1)) land 1) lsl 31 in
-    let payload =
-      if f.top = Ieee then (c land ((1 lsl f.frac) - 1)) lsl (23 - f.frac)
-      else 0
-    in
-    sign lor quiet lor payload
-  in
+  let quiet c = c land (1 lsl (f.frac - 1)) <> 0 in
   let wrong =
     List.filter_map
       (fun c ->
         let got = Nx_array_support.decode (D.code dt) c in
-        if got = want c then None
-        else Some (strf "%#x read %#x, expected %#x" c got (want c)))
+        let nan = got land 0x7F800000 = 0x7F800000 && got land 0x7FFFFF <> 0 in
+        if nan && ((not (quiet c)) || got land 0x400000 <> 0) then None
+        else Some (strf "%#x read %#x" c got))
       nans
   in
   equal (list string) [] (List.filteri (fun i _ -> i < 8) wrong)
@@ -1211,11 +1221,13 @@ let tests =
         cases "a NaN keeps its sign" ~id:format_name
           (List.filter (fun (F (_, f)) -> f.top <> Finite) formats)
           test_nan_sign;
-        cases "a NaN is quieted, keeping its sign and the top of its payload"
-          ~id:payloads_name nan_payloads test_nan_payloads;
         cases
-          "a decoder quiets a NaN and keeps its sign, and the payload of the \
-           formats with infinities"
+          "of_float, of_array and set quiet a NaN, keeping its sign and the \
+           top of its payload"
+          ~id:payloads_name nan_payloads test_nan_payloads;
+        test "a float64 or complex128 store from OCaml quiets a NaN"
+          test_wide_nan_quieted;
+        cases "a decoder gives a NaN code a NaN, quiet where the code is quiet"
           ~id:format_name
           (List.filter (fun (F (_, f)) -> f.top <> Finite) narrow)
           test_decoded_nans;

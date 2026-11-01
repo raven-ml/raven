@@ -799,7 +799,11 @@ static int64_t load_int(const uint8_t *base, int dt, int64_t p) {
 static void store_float(uint8_t *base, int dt, int64_t p, int part,
                         double x) {
   switch (dt) {
-    case NX_FLOAT64: memcpy(base + 8 * p, &x, 8); return;
+    case NX_FLOAT64: {
+      double d = nx_double_quiet(x);
+      memcpy(base + 8 * p, &d, 8);
+      return;
+    }
     case NX_FLOAT32: {
       float f = (float)x;
       memcpy(base + 4 * p, &f, 4);
@@ -1054,7 +1058,7 @@ static void of_run(void *ctx, const int64_t *at, int64_t len) {
     for (int64_t j = 0; j < len; j++) dst[j * step] = encode(src[j]);     \
   } while (0)
       switch (dt) {
-        case NX_FLOAT64: ENCODE(double, (double)); return;
+        case NX_FLOAT64: ENCODE(double, nx_double_quiet); return;
         case NX_FLOAT32: ENCODE(float, (float)); return;
         case NX_FLOAT16:
           if (step == 1)

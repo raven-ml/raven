@@ -3563,6 +3563,11 @@ thread.
 
 ### Nx
 
+- A NaN result's sign and payload are unspecified, and it is signalling only
+  where an operand is a signalling NaN (`Nx.Dtype`, Stores). Casts and kernels
+  no longer promise to quiet a signalling NaN; `Nx.Dtype.of_float` still does,
+  and now quiets a `float64` and `complex128` one too, as does a store of an
+  OCaml float into such an array, which kept it signalling.
 - A fold over a cut axis closes each piece by folding its slots one at a time,
   in C order of their indices, where one `Reduce` read all of them: a device
   holds two slots of a piece at a time, so a fully sharded step's closing fits

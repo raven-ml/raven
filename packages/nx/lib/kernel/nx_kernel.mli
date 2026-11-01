@@ -78,8 +78,10 @@
       a {e box} of the results' indices, a range of them along each axis,
       computed alone from the parts of the operands it reads, has the bits
       of the whole.
-    - Only a move specifies a NaN result's bits. Every other kernel leaves
-      its sign and payload unspecified. *)
+    - Only a move specifies a NaN result's bits. Every other kernel's NaN
+      result follows the NaN rule ({!Nx_array.Dtype.section-stores}): its
+      sign and payload are unspecified, and it is signalling only where an
+      operand is a signalling NaN. *)
 
 module Prog = Prog
 (** Scalar programs: what a loop computes at each index. *)

@@ -54,9 +54,9 @@ val signalled : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
     fraction, cleared where the rest of its fraction is not zero. *)
 
 val quieted : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
-(** [quieted a] is a C-contiguous copy of [a] with each NaN quieted, as an
-    operation returns it: its quiet bit set, its sign and the rest of its
-    payload kept. float8_e4m3fn's NaNs are quiet already. *)
+(** [quieted a] is a C-contiguous copy of [a] with each NaN quieted, as
+    {!Nx_array.Dtype.of_float} stores it: its quiet bit set, its sign and the
+    rest of its payload kept. float8_e4m3fn's NaNs are quiet already. *)
 
 val signalling :
   ('v, 's) Nx_array.Dtype.t -> int array -> 'v array -> ('v, 's, Nx.host) Nx.t

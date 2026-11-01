@@ -119,7 +119,7 @@
   test_lower_index
   test_lower_linalg
   test_lower_fft)
- (libraries nx nx_array nx_kernel rune lowered windtrap))
+ (libraries nx nx_array nx_kernel rune rune_support lowered windtrap))
 
 ; search.t pins the searches a function given a width reports.
 

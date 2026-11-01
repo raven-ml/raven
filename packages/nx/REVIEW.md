@@ -37,7 +37,8 @@ at its own width.
 - A kernel answers `Declined` or a refusal before any write or queued work.
 - A change to an association, a lane order or an algorithm changes bits:
   the library's `.mli` states the new one.
-- NaN quieting, signed zeros and infinities through reductions and scans.
+- The NaN rule (a NaN result stays a NaN, signalling only where an operand
+  is), signed zeros and infinities through reductions and scans.
 - A kind computed outside `nx_kinds.h`'s functions gives their bits. No
   libm or libc call on a result path.
 - Donation: a consumer writes in place only where `Nx.donate`'s conditions
