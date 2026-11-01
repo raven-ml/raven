@@ -102,7 +102,11 @@ val reaches : reach -> reach -> bool
     GPUs' host bridges, some of them only for GPUs under one host bridge. A
     machine reached through a transport carries none.
     It is [false] for two reaches of one GPU, [reaches r r] included, since
-    the GPU maps its own memory already. *)
+    the GPU maps its own memory already.
+
+    It takes no lock, so a driver's peer check may call it at any time
+    ({!Rig_edge.Driver.peer}). Its first answer for [r] or [o] without a
+    transport reads the machine's files under [/sys]. *)
 
 (** {1:regions Regions} *)
 

@@ -19,8 +19,9 @@ type reach = {
   addressing : Machine.addressing;
   small_bar : bool;
   link : link option;
-  route : Sysfs.route option Lazy.t;
-      (* its way up the bus, without a transport, read at its first use *)
+  route : Sysfs.route option option Atomic.t;
+      (* its way up the bus, without a transport: [None] until its first use
+         reads it *)
 }
 
 (* The memory a GPU addresses: the facts [reaches] and errors read, and [held],
@@ -98,11 +99,7 @@ let create ?link fn tables ~bar =
         addressing = Function.addressing fn;
         small_bar = bar_size < Page_table.memory tables;
         link;
-        route =
-          lazy
-            (Option.bind
-               (Machine.files (Function.machine fn))
-               (fun files -> Sysfs.route files (Function.bus fn)));
+        route = Atomic.make None;
       };
     bar;
     bar_base;
@@ -155,9 +152,21 @@ let reach m = m.reach
 
 (* A route is read from the machine's files when a peer or another function
    first needs it, which a session that reaches neither never does: 4 ms of an
-   open on an R9700. Its lock lets two domains ask at once. *)
-let routes = Lock.create ()
-let route (r : reach) = Lock.protect routes (fun () -> Lazy.force r.route)
+   open on an R9700. The read takes no lock, as a peer's check must not
+   ([Rig_edge.Driver.peer]): checks at once, a callback's inside one
+   included, each read the same files, and the first store stays. An
+   exception that ends a read stores nothing, so the next check reads
+   again. *)
+let route (r : reach) =
+  match Atomic.get r.route with
+  | Some route -> route
+  | None ->
+      let route =
+        Option.bind (Machine.files r.machine) (fun files ->
+            Sysfs.route files r.bus)
+      in
+      ignore (Atomic.compare_and_set r.route None (Some route));
+      route
 
 let linked (r : reach) (o : reach) =
   match (r.link, o.link) with

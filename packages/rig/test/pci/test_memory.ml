@@ -498,6 +498,52 @@ let test_route (_, gpu, setup, carried) =
       contains ~sub:"carries requests between them" why);
   Memory.free o.t_memory r
 
+(* A peer's check takes no lock ([Rig_edge.Driver.peer]). Two GPUs under one
+   root port, whose bus carries requests between them, are checked from fresh
+   reaches, whose routes no check read yet. At each allocation of the first
+   check, a check from a Gc.Memprof callback answers as the first does, and an
+   exception that ends the first check leaves the next to answer so. *)
+let test_route_unlocked () =
+  let _, m, buses = tree_machine 2 in
+  let space = Space.create ~base:space_base space_length in
+  let x = take_gpu ~space m (List.nth buses 0) in
+  let o = take_gpu ~space m (List.nth buses 1) in
+  Fun.protect ~finally:(fun () ->
+      Function.release x.t_fn;
+      Function.release o.t_fn)
+  @@ fun () ->
+  let fresh g = Memory.reach (Memory.create g.t_fn g.t_tables ~bar:0) in
+  let answer r r' =
+    match Memory.reaches r r' with
+    | b -> string_of_bool b
+    | exception e -> Printexc.to_string e
+  in
+  let rec walk how n =
+    let r = fresh x and r' = fresh o in
+    let inner = ref [] in
+    let landing =
+      match how with
+      | `Call -> Rig_support.Call (fun () -> inner := answer r r' :: !inner)
+      | `Raise -> Rig_support.Raise
+    in
+    let at = strf "at allocation %d" n in
+    let first = ref None in
+    let reached =
+      Rig_support.interrupted ~landing n (fun () ->
+          first := Some (Memory.reaches r r'))
+    in
+    if how = `Call || not reached then
+      equal ~msg:(at ^ ", the check") (option bool) (Some true) !first;
+    equal ~msg:(at ^ ", a check from a callback") (list string)
+      (if reached && how = `Call then [ "true" ] else [])
+      !inner;
+    equal ~msg:(at ^ ", the next check") string "true" (answer r r');
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk how (n + 1)
+  in
+  walk `Call 1;
+  walk `Raise 1
+
 (* A peer's region maps the region its owner gave, at its address. *)
 let test_peer_of_peer () =
   with_gpus 3 @@ fun _ _ gpus ->
@@ -2004,6 +2050,8 @@ let on_files =
       cases "reaches holds where the bus carries requests between the GPUs"
         ~id:(fun (n, _, _, _) -> n)
         routes test_route;
+      test "a check of a route takes no lock, and an exception reads it again"
+        test_route_unlocked;
       test "map_peer of a peer's region maps the region its owner gave"
         test_peer_of_peer;
       test
