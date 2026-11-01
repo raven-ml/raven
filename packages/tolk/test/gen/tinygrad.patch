@@ -1616,7 +1616,7 @@ index d3aa36551..addcb4e04 100644
    ((UPat.var("idx")!=(UPat(Ops.RANGE, name="r").or_casted())).where(0, UPat.var("expr")).reduce(UPat.var("r"), arg=Ops.ADD),
     lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
 diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
-index 064d6ed88..6908c1c8c 100644
+index 064d6ed88..0fd6f9920 100644
 --- a/tinygrad/dtype.py
 +++ b/tinygrad/dtype.py
 @@ -6,7 +6,7 @@ from tinygrad.helpers import getenv, DEFAULT_FLOAT, DEFAULT_INT
@@ -1648,23 +1648,57 @@ index 064d6ed88..6908c1c8c 100644
      # int is the default. wrap floats in ConstFloat to distinguish -0.0 from 0.0 in cache
      return ConstFloat(truncate.get(self, float)(float(val))) if dtypes.is_float(self) else bool(val) if dtypes.is_bool(self) else int(val)
  
-@@ -293,12 +293,39 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
+@@ -293,12 +293,71 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
    **{getattr(dtypes, n): (lambda x, c=getattr(ctypes, f'c_{n}'): c(x).value)
       for n in ('float', 'double', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')}}
  
-+# A NaN's bits move by hand: struct and the float conversions quiet a signalling NaN and drop a half's payload. These are the
-+# formats whose NaNs have payloads, with their mantissa widths.
++# A NaN constant keeps its sign and the payload its type holds, a signalling NaN staying one. A double holds its own bits, C's
++# conversion between float and double places a float's payload (x86 and Arm keep a quiet NaN's), and a bfloat16 is a float's
++# upper half. A conversion quiets a signalling NaN, so it converts the NaN made quiet, and the quiet bit is cleared again where
++# a payload is left. The host has no conversion of a half that keeps the
++# payload (struct's drops it) and no fp8e5m2: their payloads move by hand, the leading bits of a double's, as a float's do. These
++# are the formats whose NaNs have payloads, with their mantissa widths.
 +_nan_mant = {dtypes.float16: 10, dtypes.bfloat16: 7, dtypes.float32: 23, dtypes.float64: 52, dtypes.fp8e5m2: 2}
++_QUIET = 1 << 51
 +def _double_bits(x:float) -> int: return struct.unpack('<Q', struct.pack('<d', x))[0]
 +def _double_of_bits(b:int) -> float: return struct.unpack('<d', struct.pack('<Q', b))[0]
++
++_by_hand = (dtypes.float16, dtypes.fp8e5m2)
++
++def _host_word(x:float, dtype:DType) -> int:
++  """The bits of the host's conversion of the double `x` to `dtype`."""
++  if dtype == dtypes.float64: return _double_bits(x)
++  if dtype == dtypes.bfloat16: return _host_word(x, dtypes.float32) >> 16
++  return struct.unpack('<I', struct.pack('<f', x))[0]
++
++def _host_double(word:int, dtype:DType) -> float:
++  """The host's conversion to a double of the `dtype` value of bits `word`."""
++  if dtype == dtypes.float64: return _double_of_bits(word)
++  if dtype == dtypes.bfloat16: return _host_double(word << 16, dtypes.float32)
++  return struct.unpack('<f', struct.pack('<I', word))[0]
++
++def _nan_word(x:float, dtype:DType) -> int:
++  """The bits of `dtype` that hold the NaN `x`."""
++  b, n, mant = _double_bits(x), dtype.itemsize * 8, _nan_mant[dtype]
++  quiet, payload = 1 << (mant - 1), (1 << (mant - 1)) - 1
++  if dtype in _by_hand: return (b >> 63) << (n - 1) | ((1 << (n - 1 - mant)) - 1) << mant | ((b >> (52 - mant)) & (quiet | payload) or quiet)
++  w = _host_word(_double_of_bits(b | _QUIET), dtype)
++  return w & ~quiet if not b & _QUIET and w & payload else w
++
++def _nan_double(word:int, dtype:DType) -> float:
++  """The double that holds the `dtype` NaN of bits `word`."""
++  n, mant = dtype.itemsize * 8, _nan_mant[dtype]
++  quiet = 1 << (mant - 1)
++  if dtype in _by_hand: return _double_of_bits((word >> (n - 1)) << 63 | 0x7FF << 52 | (word & (2 * quiet - 1)) << (52 - mant))
++  d = _double_bits(_host_double(word | quiet, dtype))
++  return _double_of_bits(d if word & quiet else d & ~_QUIET)
 +
 +def held_nan(x:float, dtype:DType) -> float:
 +  """The NaN `dtype` stores for the NaN `x`: its sign and the leading payload bits `dtype` has room for, quiet if there are none."""
 +  if dtype == dtypes.fp8e4m3: return math.copysign(math.nan, x)
 +  if dtype in dtypes.fp8_fnuz: return math.nan
 +  if dtype not in _nan_mant: return x
-+  b, mant = _double_bits(x), _nan_mant[dtype]
-+  return _double_of_bits(b & ~((1 << 52) - 1) | (b & (((1 << mant) - 1) << (52 - mant)) or 1 << 51))
++  return _nan_double(_nan_word(x, dtype), dtype)
 +
  def bitcast(x, in_dtype:DType, out_dtype:DType):
    assert in_dtype.itemsize == out_dtype.itemsize, "bitcast itemsize mismatch"
@@ -1676,13 +1710,11 @@ index 064d6ed88..6908c1c8c 100644
 +  """`bitcast`, with a NaN's bits kept, as a kernel's bitcast keeps them."""
 +  n = in_dtype.itemsize * 8
 +  word_fmt = {8: 'B', 16: 'H', 32: 'I', 64: 'Q'}[n]
-+  if in_dtype in _nan_mant and isinstance(x, float) and math.isnan(x):
-+    b, mant = _double_bits(held_nan(x, in_dtype)), _nan_mant[in_dtype]
-+    word = (b >> 63) << (n - 1) | ((1 << (n - 1 - mant)) - 1) << mant | (b >> (52 - mant)) & ((1 << mant) - 1)
++  if in_dtype in _nan_mant and isinstance(x, float) and math.isnan(x): word = _nan_word(x, in_dtype)
 +  else: word = struct.unpack(word_fmt, struct.pack(storage_fmt_for_dtype(in_dtype), to_storage_scalar(x, in_dtype)))[0]
 +  if out_dtype in _nan_mant and (mant := _nan_mant[out_dtype]) and (word >> mant) & ((1 << (n - 1 - mant)) - 1) == (1 << (n - 1 - mant)) - 1 \
 +      and word & ((1 << mant) - 1):
-+    return _double_of_bits((word >> (n - 1)) << 63 | 0x7FF << 52 | (word & ((1 << mant) - 1)) << (52 - mant))
++    return _nan_double(word, out_dtype)
 +  return from_storage_scalar(struct.unpack(storage_fmt_for_dtype(out_dtype), struct.pack(word_fmt, word))[0], out_dtype)
 +
  # numpy and torch dtype interop
@@ -2777,14 +2809,14 @@ index 39eb83a90..bcfb225e2 100644
    next_range = max((x.axis_id[0] for x in tsink.toposort() if x.op is Ops.RANGE), default=-1) + 1
    tsink = graph_rewrite(tsink, pm_limit_bufs, ctx=LimitBufsContext(range_idx=itertools.count(next_range)), name="limit buffers")
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 41a7fc11f..e65bf3921 100644
+index 41a7fc11f..9696da040 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -1,6 +1,7 @@
  from __future__ import annotations
  from typing import Any, Callable, cast, TYPE_CHECKING, Type, Sequence, Iterable, Final, Iterator
  import sys, time, functools, itertools, math, operator, hashlib, os, types, pickle, pathlib, inspect, weakref, collections, struct
-+import decimal, fractions
++import fractions, mpmath
  from dataclasses import dataclass, replace
  from enum import Enum, auto
  from tinygrad.uop import Ops, GroupOp
@@ -2951,21 +2983,35 @@ index 41a7fc11f..e65bf3921 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM: _params.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1387,22 +1456,103 @@ class CallInfo:
+@@ -1387,22 +1456,99 @@ class CallInfo:
  
  # ******** ops in python ********
  
 +# sin, log2, exp2 and pow are correctly rounded, so that a fold is the same on every host: the C library's differ in the last
-+# place between hosts. A power that is a fraction is computed exactly, any other value in decimal to CR_DIGITS digits, then
-+# rounded once; a decimal value so near halfway between two floats that it could round wrong raises.
-+CR_DIGITS = 80
-+def cr_round(v:decimal.Decimal) -> float:
-+  if math.isinf(f:=float(v)): return f
-+  # past the greatest float, the next value is the one at which rounding goes to infinity
-+  n = math.nextafter(f, math.inf if v > f else -math.inf)
-+  mid = (fractions.Fraction(f) + (fractions.Fraction(n) if math.isfinite(n) else fractions.Fraction(f) + (2**971 if f > 0 else -2**971))) / 2
-+  if abs(fractions.Fraction(v) - mid) * 10**(CR_DIGITS-5) <= abs(mid): raise ArithmeticError(f"{v} is too near halfway between floats")
-+  return f
++# place between hosts. A power that is a fraction is computed exactly. Any other value is mpmath's, at a precision doubled
++# until the value's error bound rounds to one double (Ziv's strategy): such a value is irrational, or a fraction no double and
++# no midpoint between two equals, so some precision decides.
++def to_double(v:mpmath.mpf) -> float:
++  # v rounded to the nearest double, ties to even, with the subnormals, and an infinity from the greatest double and half an ulp
++  if v == 0: return 0.0
++  m, e = mpmath.frexp(v)
++  if e > 1025: return math.copysign(math.inf, v)
++  if (p:=53 - max(0, -1021 - e)) <= 0: return math.copysign(5e-324 if p == 0 and abs(m) > 0.5 else 0.0, v)
++  r = mpmath.ldexp(mpmath.nint(mpmath.ldexp(m, p)), e - p)
++  return math.copysign(math.inf, v) if abs(r) >= mpmath.ldexp(1, 1024) else float(r)
++
++# mpmath's exp, log and sin err by a few units of the working precision, and exp(t) of a t so computed by that times |t|, below
++# 2^11 where the result is neither 0 nor infinite: ZIV_GUARD bits past the bound cover both
++ZIV_START, ZIV_LAST, ZIV_GUARD = 64, 1 << 16, 16
++def cr(f:Callable, *args) -> float:
++  prec = ZIV_START
++  while prec <= ZIV_LAST:
++    with mpmath.workprec(prec + ZIV_GUARD):
++      v = f(*map(mpmath.mpf, args))
++      err = abs(v) * mpmath.ldexp(1, -prec)
++      if (lo:=to_double(v - err)) == to_double(v + err): return lo
++    prec *= 2
++  raise ArithmeticError(f"{args} is too near halfway between doubles")
 +
 +def iroot(n:int, q:int) -> int|None:
 +  # the integer whose q-th power is n, if there is one
@@ -2975,34 +3021,10 @@ index 41a7fc11f..e65bf3921 100644
 +    else: hi = mid
 +  return lo if lo ** q == n else None
 +
-+@functools.cache
-+def cr_pi(digits:int) -> decimal.Decimal:
-+  # the decimal module's recipe: pi = 3 + 3/24 + 3/24*9/80 + 3/24*9/80*25/168 + ...
-+  with decimal.localcontext(prec=digits+2):
-+    lasts, t, s, n, na, d, da = 0, decimal.Decimal(3), 3, 1, 0, 0, 24
-+    while s != lasts:
-+      lasts, n, na, d, da = s, n+na, na+8, d+da, da+32
-+      t = (t * n) / d
-+      s += t
-+  with decimal.localcontext(prec=digits): return +s
-+
 +def cr_sin(x) -> float:
 +  if math.isinf(x:=float(x)): return math.nan
 +  if x == 0 or math.isnan(x): return x
-+  # x = k pi/2 + r, |r| <= pi/4: r has CR_DIGITS digits once pi has that many more than x has above r
-+  d, prec = decimal.Decimal(x), 2*CR_DIGITS + max(0, decimal.Decimal(x).adjusted())
-+  while True:
-+    with decimal.localcontext(prec=prec):
-+      k = (d / (half_pi:=cr_pi(prec) / 2)).to_integral_value()
-+      r = d - k * half_pi
-+    if r != 0 and prec >= d.adjusted() - r.adjusted() + CR_DIGITS + 10: break
-+    prec *= 2
-+  # sin x is sin r, cos r, -sin r, -cos r by k's quadrant; each series term is the last times -r^2/((j+1)(j+2))
-+  q = int(k) % 4
-+  with decimal.localcontext(prec=CR_DIGITS+10):
-+    r2, (s, t, j) = r * r, (r, r, 1) if q % 2 == 0 else (decimal.Decimal(1), decimal.Decimal(1), 0)
-+    while s + (t:=-t * r2 / ((j+1) * (j+2))) != s: s, j = s + t, j + 2
-+  return cr_round(-s if q >= 2 else s)
++  return cr(mpmath.sin, x)
 +
 +def cr_log2(x) -> float:
 +  if not x > 0: return -math.inf if x == 0 else math.nan
@@ -3010,7 +3032,11 @@ index 41a7fc11f..e65bf3921 100644
 +  # math.log2 rounds an integer to a float, but one too large for a float
 +  try: x = float(x)
 +  except OverflowError: pass
-+  with decimal.localcontext(prec=CR_DIGITS+10): return cr_round(decimal.Decimal(x).ln() / decimal.Decimal(2).ln())
++  # the logarithm of a power of two is an integer, of any other value irrational
++  num, den = fractions.Fraction(x).as_integer_ratio()
++  if num & (num - 1) == 0 and den == 1: return float(num.bit_length() - 1)
++  if num == 1 and den & (den - 1) == 0: return float(1 - den.bit_length())
++  return cr(lambda v: mpmath.log(v, 2), x)
 +
  def safe_exp2(x):
 -  try: return 2 ** x
@@ -3021,7 +3047,7 @@ index 41a7fc11f..e65bf3921 100644
 +    # past these, 2^x rounds to an infinity or to 0
 +    if x > 1024: return math.inf
 +    if x < -1076: return 0.0
-+    with decimal.localcontext(prec=CR_DIGITS+10): return cr_round((decimal.Decimal(x) * decimal.Decimal(2).ln()).exp())
++    return cr(lambda v: mpmath.exp(v * mpmath.ln2), x)
    except OverflowError: return math.inf
  
  def safe_pow(x, y):
@@ -3034,13 +3060,15 @@ index 41a7fc11f..e65bf3921 100644
 +  # a float power is of the operands as floats; x < 0 only with an integer y
 +  if not isinstance(p, float) or math.isnan(p) or not (math.isfinite(fx:=float(x)) and math.isfinite(fy:=float(y))) or fx == 0: return p
 +  sign = -1.0 if fx < 0 and fy.is_integer() and int(fy) % 2 else 1.0
-+  # with y = a/b, x^y is a fraction where |x| is a b-th power, which needs b <= 64 of a float; past |a| = 1100, only an x near 1
-+  # has a float power, and only 1 an exact one
++  # with y = a/b, x^y is a fraction where |x| is a b-th power. A power of two 2^k is one where k y is an integer; the odd part of
++  # another float, below 2^53, needs b <= 33; past |a| = 1100, its power is too long to be a double or a midpoint
 +  a, b = fractions.Fraction(fy).as_integer_ratio()
++  num, den = fractions.Fraction(abs(fx)).as_integer_ratio()
++  if num * den & (num * den - 1) == 0 and (k:=(num.bit_length() - den.bit_length()) * fractions.Fraction(fy)).denominator == 1:
++    return sign * (math.inf if k > 1023 else 0.0 if k < -1076 else float(fractions.Fraction(2) ** int(k)))
 +  if b <= 64 and abs(a) <= 1100:
-+    num, den = fractions.Fraction(abs(fx)).as_integer_ratio()
 +    if (rn:=iroot(num, b)) is not None and (rd:=iroot(den, b)) is not None: return sign * float(fractions.Fraction(rn, rd) ** a)
-+  with decimal.localcontext(prec=CR_DIGITS+10): return sign * cr_round((decimal.Decimal(fy) * decimal.Decimal(abs(fx)).ln()).exp())
++  return sign * cr(lambda x, y: mpmath.exp(y * mpmath.log(x)), abs(fx), fy)
 +
 +def fdiv(x, y):
 +  # IEEE division: a zero divisor gives an infinity of the quotient's sign, or nan
@@ -3061,7 +3089,7 @@ index 41a7fc11f..e65bf3921 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1413,6 +1563,8 @@ def exec_alu(op:Ops, dtype:DType, operands):
+@@ -1413,6 +1559,8 @@ def exec_alu(op:Ops, dtype:DType, operands):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

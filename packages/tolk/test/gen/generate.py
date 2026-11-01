@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["mpmath==1.3.0"]
 # ///
 """Generate the goldens of tolk from tinygrad.
 
@@ -10,11 +10,13 @@ Each generator file `gen/<path>.py` runs in a fresh interpreter against
 the tinygrad checkout, which must be clean and at TINYGRAD, with
 `gen/tinygrad.patch` applied to a copy of it: the patch makes tinygrad's
 rewrites keep IEEE and modular values, and its constants a NaN's bits, as
-tolk's do, and its constant arithmetic
-compute what the README's CPython rows say, with sin, log2, exp2 and pow
-correctly rounded, so that the goldens are the same on every host's C
-library; it also removes `spec_hcq`
-from `uop/spec.py`, which tolk does not port (see the README).
+tolk's do, and its constant arithmetic compute what the README's CPython rows
+say, with sin, log2, exp2 and pow correctly rounded by mpmath, so that the
+goldens are the same on every host's C library. A float NaN's payload is
+placed by C's conversion to and from a double, which keeps a quiet NaN's sign
+and payload on x86 and Arm (not on RISC-V, which makes every converted NaN
+canonical). It also removes `spec_hcq` from `uop/spec.py`, which tolk does
+not port (see the README).
 Moving TINYGRAD means re-applying it. MODULE, such as `dtype` or `uop/op`,
 limits the run to those generators; by default all run.
 

@@ -3936,8 +3936,9 @@ does.
 - **tinygrad:** `uop/ops.py:1403` (`python_alu`'s `SIN`, `math.sin`, the C
   library's).
 - **tolk:** `Ops.sine`, which `python_alu` calls; `test/gen/tinygrad.patch`,
-  which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`, in
-  decimal) before the goldens are generated.
+  which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`,
+  mpmath's, at a precision doubled until it rounds to one double) before the
+  goldens are generated.
 - **Differs:** `exec_alu` computes a sine on integers: the argument is
   reduced exactly by pi/2, held to 1200 bits, and the sine or cosine of the
   remainder is summed in fixed point to 192 bits, then rounded once. The

@@ -309,10 +309,15 @@ a NaN's bits (DIVERGENCES D13, D24 and D27), a selection of `-0.` beside
 a load, which stays a selection (D52), its tensor-core matcher the
 widened operands of D29, and its constant arithmetic the corrections of the
 README's CPython rows, so that the goldens hold the graphs and values
-tolk makes. No golden needs a GPU or its toolchain: the compilers of Metal and
-CUDA renderers are stand-ins with the real ones' cache keys that compile
-nothing, so the goldens are the same on every machine. No Python runs at test
-time. To regenerate:
+tolk makes. Its sine, logarithm, exponential and power are mpmath's,
+correctly rounded (D150), so a fold is the same on every host. A float NaN
+held in a double, and a bfloat16 one as a float's upper half, takes its
+payload from C's conversions, which keep a quiet NaN's sign and payload on
+x86 and Arm, the generator's hosts; a half's and an fp8e5m2's move by hand,
+since the generator has no conversion of theirs that keeps one. No golden needs a GPU
+or its toolchain: the compilers of Metal and CUDA renderers are stand-ins
+with the real ones' cache keys that compile nothing, so the goldens are the
+same on every machine. No Python runs at test time. To regenerate:
 
 1. `uv run packages/tolk/test/gen/generate.py --check` writes nothing,
    prints the diff of every golden that would change, and fails if one would.
