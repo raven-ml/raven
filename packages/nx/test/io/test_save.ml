@@ -288,69 +288,86 @@ let fate (h : held_model) =
     cover "its file removed" (ending = Some Removed)
   end
 
+(* A save syncs its file and its directory, milliseconds where every other
+   call takes microseconds, so the cheap calls are drawn more often: a
+   command of weight [w] is listed [w] times, which windtrap counts as one
+   command. *)
+let weighted l = List.concat_map (fun (w, c) -> List.init w (fun _ -> c)) l
+
 let commands =
   let save d c =
     ends d Saved_over;
     d.last <- d.last + 1;
     d.file <- Some (c, d.last)
   in
-  [
-    command "dir"
-      (Gen.unit @-> makes dir)
-      (fun () -> { file = None; ended = Hashtbl.create 8; last = 0 })
-      (fun () -> temp_dir ());
-    command "save"
-      ~pre:(fun d _ -> replaceable d)
-      (dir ^-> contents @-> returns unit)
-      save
-      (fun d c -> Nx_io.save_npy (path d) (value_of c));
-    command "load" ~pre:holds
-      (dir ^-> makes held)
-      (fun d ->
-        let loaded, file = Option.get d.file in
-        { loaded; dir = d; file })
-      (fun d ->
-        let x = Nx_io.load_npy (path d) in
-        equal ~msg:"the loaded value" memory Over_file (memory_of x);
-        Nx.unpack Nx.int32 x);
-    command "save_held"
-      ~pre:(fun _ d -> replaceable d)
-      (held ^-> dir ^-> returns unit)
-      (fun h d ->
-        fate h;
-        if not Sys.win32 then
-          cover "to its own file"
-            (match d.file with
-            | Some (_, file) -> h.dir == d && file = h.file
-            | None -> false);
-        save d h.loaded)
-      (fun x d -> Nx_io.save_npy (path d) x);
-    command "read"
-      (held ^-> returns packed)
-      (fun h ->
-        fate h;
-        Nx.P (value_of h.loaded))
-      (fun x -> Nx.P x);
-    command "collect" (Gen.unit @-> returns unit) Gc.full_major Gc.full_major;
-  ]
-  @
-  if Sys.win32 then []
-  else
-    [
-      command "remove" ~pre:holds
-        (dir ^-> returns unit)
-        (fun d ->
-          ends d Removed;
-          d.file <- None)
-        (fun d -> Sys.remove (path d));
-    ]
+  weighted
+    ([
+       ( 1,
+         command "dir"
+           (Gen.unit @-> makes dir)
+           (fun () -> { file = None; ended = Hashtbl.create 8; last = 0 })
+           (fun () -> temp_dir ()) );
+       ( 1,
+         command "save"
+           ~pre:(fun d _ -> replaceable d)
+           (dir ^-> contents @-> returns unit)
+           save
+           (fun d c -> Nx_io.save_npy (path d) (value_of c)) );
+       ( 3,
+         command "load" ~pre:holds
+           (dir ^-> makes held)
+           (fun d ->
+             let loaded, file = Option.get d.file in
+             { loaded; dir = d; file })
+           (fun d ->
+             let x = Nx_io.load_npy (path d) in
+             equal ~msg:"the loaded value" memory Over_file (memory_of x);
+             Nx.unpack Nx.int32 x) );
+       ( 2,
+         command "save_held"
+           ~pre:(fun _ d -> replaceable d)
+           (held ^-> dir ^-> returns unit)
+           (fun h d ->
+             fate h;
+             if not Sys.win32 then
+               cover "to its own file"
+                 (match d.file with
+                 | Some (_, file) -> h.dir == d && file = h.file
+                 | None -> false);
+             save d h.loaded)
+           (fun x d -> Nx_io.save_npy (path d) x) );
+       ( 3,
+         command "read"
+           (held ^-> returns packed)
+           (fun h ->
+             fate h;
+             Nx.P (value_of h.loaded))
+           (fun x -> Nx.P x) );
+       ( 1,
+         command "collect" (Gen.unit @-> returns unit) Gc.full_major
+           Gc.full_major );
+     ]
+    @
+    if Sys.win32 then []
+    else
+      [
+        ( 3,
+          command "remove" ~pre:holds
+            (dir ^-> returns unit)
+            (fun d ->
+              ends d Removed;
+              d.file <- None)
+            (fun d -> Sys.remove (path d)) );
+      ])
 
 let loaded =
   group "loaded values"
     [
-      (* Programs of 60 calls read a value whose file was removed in about one
-         case in five, so every run reaches each label. *)
-      stateful ~steps:60
+      (* Programs of 30 calls make about 3 saves, and read or save a value
+         whose file was saved over, or removed, or save one to its own file,
+         each in at least one case in seven, so every run reaches each
+         label. *)
+      stateful ~steps:30
         "a value loaded over its file's pages keeps its value after a save to \
          its file's path or a delete of the file, and saves again"
         commands;
