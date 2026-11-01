@@ -634,13 +634,10 @@ let variables =
           ignore (Shape.bind n (i 1));
           ignore (Shape.bind n (i 8)));
       test
-        "bind rejects a bound variable, a value out of range, and a value off \
-         its multiple" (fun () ->
+        "bind rejects a bound variable and a value out of range" (fun () ->
           rejects (fun () -> Shape.bind (Shape.bind n (i 3)) (i 4));
           rejects (fun () -> Shape.bind n (i 0));
           rejects (fun () -> Shape.bind n (i 9));
-          rejects (fun () -> Shape.bind (weak_var ~multiple_of:4 "m" 0 16) (i 6));
-          ignore (Shape.bind (weak_var ~multiple_of:4 "m" 0 16) (i 12));
           rejects (fun () -> Shape.bind (param [ 4 ] 0 Float32) (i 1)));
       test "unbound strips the value" (fun () ->
           is_true (Shape.unbound (Shape.bind n (i 3)) == n);

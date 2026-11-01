@@ -96,9 +96,6 @@ let storage_arg u (p : param_arg) =
         | Some (lo, hi) ->
             [ strf " bounds=[%s,%s]" (str_const lo) (str_const hi) ]
         | None -> []);
-        (match p.multiple_of with
-        | Some m -> [ strf " multiple_of=%d" m ]
-        | None -> []);
         (match p.addrspace with
         | Dtype.Global -> []
         | a -> [ " addrspace=" ^ addr_name a ]);

@@ -79,8 +79,8 @@ def add(shape, dtype): return lambda: last(empty(*shape, dtype=dtype) + empty(*s
 def shifted(n): return empty(n + 1).shrink(((1, n + 1),))
 
 
-x4 = Variable("x", 0, 4, multiple_of=4).bind(4)
-x2 = Variable("x", 0, 4, multiple_of=2).bind(4)
+x4 = Variable("k", 0, 1).bind(1) * 4
+x2 = Variable("k", 0, 2).bind(2) * 2
 conv = lambda n: last(empty(1, 1, n).conv2d(empty(1, 1, 5).shrink(((0, 1), (0, 1), (1, 5)))))
 
 # The kernels of test_gen_float4.py, each with its opts, two of
@@ -154,8 +154,8 @@ def access_cases():
     other = UOp.param(1, dtypes.float, 64)
     r = UOp.range(16, 0)
     i = UOp.variable("i", 0, 60)
-    m4 = UOp.variable("m4", 0, 60, multiple_of=4)
-    m2 = UOp.variable("m2", 0, 60, multiple_of=2)
+    m4 = UOp.variable("m4", 0, 15) * 4
+    m2 = UOp.variable("m2", 0, 30) * 2
     g = UOp.variable("g", False, True, dtypes.bool)
     h = UOp.variable("h", False, True, dtypes.bool)
     c = UOp.const

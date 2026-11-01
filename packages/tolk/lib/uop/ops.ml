@@ -136,7 +136,6 @@ type param_arg = {
   slot : int;
   dtype : Dtype.t;
   vmin_vmax : (Dtype.value * Dtype.value) option;
-  multiple_of : int option;
   name : string option;
   addrspace : Dtype.addr_space;
   device : device option;
@@ -270,7 +269,6 @@ let equal_param_arg (p0 : param_arg) (p1 : param_arg) =
   Int.equal p0.slot p1.slot
   && Dtype.equal p0.dtype p1.dtype
   && Option.equal equal_value_pair p0.vmin_vmax p1.vmin_vmax
-  && Option.equal Int.equal p0.multiple_of p1.multiple_of
   && Option.equal String.equal p0.name p1.name
   && p0.addrspace = p1.addrspace
   && Option.equal String.equal p0.device p1.device
@@ -600,7 +598,6 @@ let repr_param_arg (p : param_arg) =
   let fields =
     [
       ("vmin_vmax", Option.map repr_value_pair p.vmin_vmax);
-      ("multiple_of", Option.map string_of_int p.multiple_of);
       ("name", Option.map repr_string p.name);
       ( "addrspace",
         match p.addrspace with
@@ -2081,7 +2078,7 @@ let copy_to_device u d =
 let unique = Atomic.make 0
 let unique_num () = Atomic.fetch_and_add unique 1
 
-let param_arg ?vmin_vmax ?multiple_of ?name
+let param_arg ?vmin_vmax ?name
     ?(addrspace = Dtype.Global) ?device ?(volatile = false)
     ?(bind_on_realize = false) ?bound ?(phase = 0) ?(align = 16) ~slot dtype =
   if not (List.mem align [ 1; 2; 4; 8; 16 ]) then
@@ -2096,7 +2093,6 @@ let param_arg ?vmin_vmax ?multiple_of ?name
     slot;
     dtype;
     vmin_vmax;
-    multiple_of;
     name;
     addrspace;
     device;
@@ -2122,11 +2118,11 @@ let set ?(ends = []) p x = after (first p.op p.src) [ end_ (store p x) ends ]
 
 (* Variables *)
 
-let variable ?(dtype = Dtype.Weak_int) ?(multiple_of = 1) name lo hi =
+let variable ?(dtype = Dtype.Weak_int) name lo hi =
   v Op.Param ~src:[ size_src None ]
     ~arg:
       (Param
-         (param_arg ~vmin_vmax:(lo, hi) ~multiple_of ~name
+         (param_arg ~vmin_vmax:(lo, hi) ~name
             ~addrspace:Dtype.Alu ~slot:(-1) dtype))
 
 let expr u =
@@ -2139,17 +2135,11 @@ let expr u =
 let rec const_factor u : Bigint.t =
   match u.op with
   | Op.Const -> integer (value u)
-  | Op.Stack ->
-      List.fold_left (fun g s -> Bigint.gcd g (const_factor s)) Bigint.zero u.src
   | Op.Add -> Bigint.gcd (const_factor (nth u 0)) (const_factor (nth u 1))
   | Op.Mul ->
       if (nth u 0).op = Op.Const then integer (value (nth u 0))
       else if (nth u 1).op = Op.Const then integer (value (nth u 1))
       else Bigint.one
-  | op when Op.Set.mem op Op.Set.defines -> (
-      match u.arg with
-      | Param { multiple_of = Some m; _ } -> Bigint.of_int m
-      | _ -> Bigint.one)
   | _ -> Bigint.one
 
 and as_value (c : Dtype.const) : Dtype.value =

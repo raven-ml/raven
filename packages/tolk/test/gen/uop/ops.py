@@ -624,7 +624,7 @@ def custom_kernels():
 
 @graph
 def variables_and_binding():
-    n, m = UOp.variable("n", 1, 8), UOp.variable("m", 0, 4, multiple_of=2)
+    n, m = UOp.variable("n", 1, 8), UOp.variable("m", 0, 4)
     e = n.bind(3) * m.bind(2) + n
     unbound, _ = e.unbind_all()
     return UOp.sink(n.bind(3), n.bind(3).unbound(), unbound, *e.variables())

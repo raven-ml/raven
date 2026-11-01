@@ -108,7 +108,6 @@ type param_arg = {
   dtype : Dtype.t;  (** The element type. *)
   vmin_vmax : (Dtype.value * Dtype.value) option;
       (** The least and greatest value of a variable. *)
-  multiple_of : int option;  (** A number every value is a multiple of. *)
   name : string option;  (** The name of a variable or a named buffer. *)
   addrspace : Dtype.addr_space;
       (** Where the storage lives; {!Dtype.Alu} for a scalar. *)
@@ -134,7 +133,6 @@ type param_arg = {
 
 val param_arg :
   ?vmin_vmax:Dtype.value * Dtype.value ->
-  ?multiple_of:int ->
   ?name:string ->
   ?addrspace:Dtype.addr_space ->
   ?device:device ->
@@ -813,12 +811,11 @@ val set : ?ends:t list -> t -> t -> t
 
 val variable :
   ?dtype:Dtype.t ->
-  ?multiple_of:int ->
   string ->
   Dtype.value ->
   Dtype.value ->
   t
-(** [variable ~dtype ~multiple_of name lo hi] is the scalar variable [name] of
+(** [variable ~dtype name lo hi] is the scalar variable [name] of
     type [dtype] (default {!Dtype.Weak_int}) ranging over [lo] to [hi]. *)
 
 val expr : t -> string

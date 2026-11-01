@@ -437,7 +437,7 @@ val bind : Ops.t -> Dtype.value -> Ops.t
 (** [bind v x] is [v] bound to [x].
 
     Raises [Invalid_argument] if [v] is not an unbound variable, or [x] is out
-    of its range or not a multiple of its [multiple_of]. *)
+    of its range. *)
 
 val unbound : Ops.t -> Ops.t
 (** [unbound v] is [v] without its value and tag. *)
@@ -587,7 +587,7 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b zeros}: [x < x] is [false], [x = x] is [true] for integers and
       booleans, [x % x], [x lxor x] and [x land 0] are [0], and so is [x * 0]
       for integers and booleans; a mask that clears only bits that a right shift
-      or a division by a power of two drops is removed;
+      drops is removed;
     - {b constants}: an arithmetic operation on constants is its value
       ({!Ops.exec_alu}), except {!Op.Threefry}; weak constants keep their
       mathematical value, a committed integer holds its type's value (a weak
@@ -751,8 +751,7 @@ val mop_cleanup : (unit, Ops.t) Ops.Pattern_matcher.t
       the sum of their starts, of the outer one's sizes;
     - a reshape of a reshape is one reshape of the inner one's source, and a
       reshape to its source's shape is its source;
-    - a permutation of a permutation is their composition, and the identity
-      permutation is its source;
+    - a permutation of a permutation is their composition;
     - a stack of the elements [0], [1], ... of a node [x], in order and of [x]'s
       shape, is [x];
     - indexing a stack by a constant [i] and further indices is its [i]th source

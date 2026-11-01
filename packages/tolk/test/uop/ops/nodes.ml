@@ -103,7 +103,7 @@ let arguments =
           is_true (p.addrspace = Dtype.Global);
           is_false p.volatile;
           is_false p.bind_on_realize;
-          is_true (p.vmin_vmax = None && p.multiple_of = None);
+          is_true (p.vmin_vmax = None);
           is_true (p.name = None && p.device = None && p.bound = None);
           equal int 0 p.phase;
           equal int 16 p.align);
@@ -174,11 +174,15 @@ let arguments =
                (Shape.shrink
                   (Shape.permute square [ 1; 0 ])
                   [ Some (Int 1, Int 3); None ]));
-          let at ?multiple_of () =
+          (* a start [k * every] with [k] from 0 to [8 / every] *)
+          let multiple every hi =
             let k =
-              Ops.variable ?multiple_of "k" (`Int Bigint.zero)
-                (`Int (Bigint.of_int 8))
+              Ops.variable "k" (`Int Bigint.zero) (`Int (Bigint.of_int hi))
             in
+            if every = 1 then k else Ops.mul k (Ops.int every)
+          in
+          let at ?(every = 1) () =
+            let k = multiple every (8 / every) in
             Shape.shrink b [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]
           in
           let known u =
@@ -189,35 +193,26 @@ let arguments =
           equal (pair int int) ~msg:"a start of any element" (4, 0)
             (known (at ()));
           equal (pair int int) ~msg:"a start of every other element" (8, 4)
-            (known (at ~multiple_of:2 ()));
+            (known (at ~every:2 ()));
           equal (pair int int) ~msg:"a start of every fourth element" (16, 4)
-            (known (at ~multiple_of:4 ()));
+            (known (at ~every:4 ()));
           equal (pair int int) ~msg:"a start of every fourth element of a stage"
             (16, 0)
             (known
-               (let k =
-                  Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero)
-                    (`Int (Bigint.of_int 8))
-                in
+               (let k = multiple 4 2 in
                 Shape.shrink
                   (Ops.contiguous (Ops.add b b))
                   [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]));
           equal (pair int int) ~msg:"a start into a reordered view" (4, 0)
             (known
-               (let k =
-                  Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero)
-                    (`Int (Bigint.of_int 2))
-                in
+               (let k = multiple 1 2 in
                 Shape.shrink
                   (Shape.permute square [ 1; 0 ])
                   [ Some (Sym k, Sym (Ops.add k (Ops.int 2))); None ]));
           equal (pair int int) ~msg:"a start one past every fourth element"
             (16, 8)
             (known
-               (let k =
-                  Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero)
-                    (`Int (Bigint.of_int 8))
-                in
+               (let k = multiple 4 2 in
                 Shape.shrink b
                   [
                     Some

@@ -42,11 +42,9 @@ let ints l = List.map (fun n : Ops.sint -> Int n) l
 
 (* [var name lo hi] is the variable [name] of type [dtype] (default
    {!Dtype.Int32}) over the integers from [lo] to [hi]. *)
-let var ?(dtype = Dtype.Int32) ?multiple_of name lo hi =
-  Ops.variable ~dtype ?multiple_of name (i lo) (i hi)
+let var ?(dtype = Dtype.Int32) name lo hi = Ops.variable ~dtype name (i lo) (i hi)
 
-let weak_var ?multiple_of name lo hi =
-  var ~dtype:Dtype.Weak_int ?multiple_of name lo hi
+let weak_var name lo hi = var ~dtype:Dtype.Weak_int name lo hi
 
 let fvar ?(dtype = Dtype.Float32) name =
   Ops.variable ~dtype name (f (-10.)) (f 10.)

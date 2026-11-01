@@ -1035,29 +1035,17 @@ let divisibility =
           equal z (Bigint.of_int 5) (Ops.const_factor Ops.O.(int 5 * int 7));
           equal z (Bigint.of_int 3) (Ops.const_factor Ops.O.(x * int 3));
           equal z Bigint.one (Ops.const_factor Ops.O.(x // int 4));
-          equal z (Bigint.of_int 4)
-            (Ops.const_factor (weak_var ~multiple_of:4 "x" 16 32));
           let g = Ops.special (Int 8) "gidx0" in
           equal z Bigint.one (Ops.const_factor g);
           equal z (Bigint.of_int 3) (Ops.const_factor Ops.O.(g * int 3));
           equal z (Bigint.of_int 3)
             (Ops.const_factor Ops.O.((g * int 3) + int 6));
           equal z Bigint.one (Ops.const_factor Ops.O.((g * int 3) + int 1)));
-      test "divides divides a stack lane by lane" (fun () ->
-          equal (option uop)
-            (Some (Ops.v ~src:[ Ops.O.(x * int 1); Ops.O.(x * int 2) ] Op.Stack))
-            (Shape.divides
-               (Shape.stack Ops.O.[ x * int 2; x * int 4 ])
-               (Bigint.of_int 2));
-          is_none
-            (Shape.divides
-               (Shape.stack Ops.O.[ x * int 2; x * int 3 ])
-               (Bigint.of_int 2)));
       test "divides divides a product through its left factor first" (fun () ->
-          let m = weak_var ~multiple_of:4 "m" 0 16 in
+          let k = weak_var "k" 0 4 in
           equal (option uop)
-            (Some Ops.O.(m // int 2 * x))
-            (Shape.divides Ops.O.(m * x) (Bigint.of_int 2));
+            (Some Ops.O.(k * int 2 * x))
+            (Shape.divides Ops.O.(k * int 4 * x) (Bigint.of_int 2));
           is_none (Shape.divides Ops.O.(x + int 3) (Bigint.of_int 2)));
       test "const_factor of storage without a multiple is 1" (fun () ->
           equal z Bigint.one
@@ -1065,9 +1053,6 @@ let divisibility =
       test "gcd rejects nothing" (fun () -> rejects (fun () -> Shape.gcd []));
       test "gcd of constants is their gcd" (fun () ->
           equal uop (Ops.int 2) (Shape.gcd [ Ops.int 6; Ops.int 4 ]));
-      test "const_factor of a stack is the gcd of its lanes" (fun () ->
-          equal z (Bigint.of_int 2)
-            (Ops.const_factor (Shape.stack Ops.O.[ x * int 2; x * int 4 ])));
       test "divides divides a known multiple" (fun () ->
           equal (option z)
             (Some (Bigint.of_int 6))
@@ -1079,10 +1064,6 @@ let divisibility =
                (Shape.divides Ops.O.((x * int 6) + int 18) (Bigint.of_int 6)));
           is_none
             (Shape.divides Ops.O.(weak_var "x" 15 45 * int 4) (Bigint.of_int 3));
-          is_some
-            (Shape.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 4));
-          is_some
-            (Shape.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 2));
           equal (option uop) (Some x) (Shape.divides x Bigint.one));
       test "divides divides a float constant only into an integer" (fun () ->
           is_none (Shape.divides (Ops.float 2.5) (Bigint.of_int 2));

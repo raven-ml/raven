@@ -11,8 +11,7 @@ let uop = Uops.uop
 
 let i n = `Int (Bigint.of_int n)
 
-let var ?dtype ?multiple_of name lo hi =
-  Ops.variable ?dtype ?multiple_of name (i lo) (i hi)
+let var ?dtype name lo hi = Ops.variable ?dtype name (i lo) (i hi)
 
 (* [rewrite ~order m u] is [u] rewritten by [m], after the sources unless
    [order] is [before]. *)
@@ -79,10 +78,7 @@ let variable_value rng k (arg : Ops.param_arg) =
       | 1 -> `Bool hi
       | _ -> `Bool (Random.State.bool rng))
   | Some (lo, hi) ->
-      let m = Bigint.of_int (Option.value arg.multiple_of ~default:1) in
-      let lo = Bigint.(cdiv (Dtype.Value.to_z lo) m)
-      and hi = Bigint.(fdiv (Dtype.Value.to_z hi) m) in
-      `Int Bigint.(m * draw rng k lo hi)
+      `Int (draw rng k (Dtype.Value.to_z lo) (Dtype.Value.to_z hi))
   | None -> invalid_arg "a variable without bounds"
 
 (* A range and a hardware index count from 0 below their end, which the binding

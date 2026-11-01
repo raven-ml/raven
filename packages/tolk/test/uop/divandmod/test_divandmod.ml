@@ -7,8 +7,8 @@ open Tolk
 
 let i n = `Int (Bigint.of_int n)
 
-let var ?(dtype = Dtype.Weak_int) ?multiple_of name lo hi =
-  Ops.variable ~dtype ?multiple_of name (i lo) (i hi)
+let var ?(dtype = Dtype.Weak_int) name lo hi =
+  Ops.variable ~dtype name (i lo) (i hi)
 
 let x = var "x" 0 100
 let a = var "a" 0 99
@@ -85,20 +85,6 @@ let one_quotient =
         Ops.O.(var "x" 0 2 // y);
       rewrites "fold_a_remainder_by_a_variable_with_one_quotient"
         Ops.O.(var "x" 0 2 % y);
-    ]
-
-(* Variables declared a multiple of a number *)
-
-let declared_multiples =
-  let m = var ~multiple_of:4 "m" 0 100 in
-  group "declared multiples"
-    [
-      rewrites "fold_the_remainder_of_a_declared_multiple" Ops.O.(m % int 4);
-      rewrites "fold_the_remainder_of_a_declared_multiple_by_a_divisor_of_it"
-        Ops.O.(m % int 2);
-      rewrites "keep_the_division_of_a_declared_multiple" Ops.O.(m // int 4);
-      rewrites "rewrite_the_remainder_of_a_declared_multiple_by_another_divisor"
-        Ops.O.(m % int 3);
     ]
 
 (* x // c and x % c for a positive constant c *)
@@ -244,21 +230,15 @@ let int_bounds v =
   | `Int lo, `Int hi -> (lo, hi)
   | _ -> invalid_arg "a variable that is not an integer"
 
-(* A point binds each of a node's variables to one of its values: a multiple of
-   its declared divisor within its bounds, often the least or the greatest. *)
+(* A point binds each of a node's variables to one of its values within its
+   bounds, often the least or the greatest. *)
 let gen_point d =
   let within v =
     let lo, hi = int_bounds v in
-    let m =
-      match Ops.arg v with
-      | Param { multiple_of = Some m; _ } -> Bigint.of_int m
-      | _ -> Bigint.one
-    in
-    let first = Bigint.(cdiv lo m) in
-    let count = Bigint.(succ (fdiv hi m - first)) in
+    let count = Bigint.(succ (hi - lo)) in
     let wrap k = Bigint.(of_int k - (count * fdiv (of_int k) count)) in
     Gen.map
-      (fun k -> (Ops.expr v, `Int Bigint.(m * (first + wrap k))))
+      (fun k -> (Ops.expr v, `Int Bigint.(lo + wrap k)))
       (Gen.frequency
          [ (1, Gen.constant 0); (1, Gen.constant (-1)); (4, Gen.nat) ])
   in
@@ -404,7 +384,6 @@ let () =
          nested_divisions;
          constant_terms;
          one_quotient;
-         declared_multiples;
          constant_divisors;
          other_divisors;
          zero_divisors;

@@ -288,8 +288,6 @@ let zeros =
           folds_to Ops.O.(x land int 0) (int32 0));
       test "a mask of the bits a right shift drops is removed" (fun () ->
           folds_to Ops.O.((u land int (-4)) lsr int 2) Ops.O.(u lsr int 2));
-      test "a mask of the bits a division by a power of two drops is removed"
-        (fun () -> folds_to Ops.O.(u land int (-4) // int 4) Ops.O.(u // int 4));
       test "a mask of kept bits stays" (fun () ->
           let shifted = Ops.O.((u land int (-8)) lsr int 2) in
           folds_to shifted shifted;

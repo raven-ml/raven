@@ -70,9 +70,9 @@ val render_uir : Ops.t list -> string
       {!Dtype.pp_const} writes it, a constant being of a weak type or boolean
       ({!Ops.const});
     - for storage and variables, its name in double quotes if it has one,
-      then [dtype=] and [slot=], and then [bounds=[lo,hi]], [multiple_of=],
-      [addrspace=] (but global memory), [device=] (bare if a word of letters,
-      digits, [_] and [:], else as {!Ops.pp_device} writes it) and
+      then [dtype=] and [slot=], and then [bounds=[lo,hi]], [addrspace=] (but
+      global memory), [device=] (bare if a word of letters, digits, [_] and
+      [:], else as {!Ops.pp_device} writes it) and
       [volatile=true], where they apply;
     - for a range, its axis type and the parts of its identity, separated by
       spaces: [LOOP 1 2];

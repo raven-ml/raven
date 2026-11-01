@@ -1028,10 +1028,6 @@ let rec divides u (n : Bigint.t) =
         if Value.(x % n = of_int 0) then
           Some (const_like u (Value.(x // n) :> Dtype.const))
         else None
-    | Op.Stack ->
-        let srcs = List.map (fun s -> divides s n) (src u) in
-        if List.exists Option.is_none srcs then None
-        else Some (v Op.Stack ~src:(List.map Option.get srcs))
     | Op.Add -> (
         match (divides (nth u 0) n, divides (nth u 1) n) with
         | Some d0, Some d1 -> Some (add d0 d1)
@@ -1040,13 +1036,6 @@ let rec divides u (n : Bigint.t) =
         match divides (nth u 0) n with
         | Some d0 -> Some (mul d0 (nth u 1))
         | None -> Option.map (fun d1 -> mul (nth u 0) d1) (divides (nth u 1) n))
-    | op when Op.Set.mem op Op.Set.defines -> (
-        match arg u with
-        | Param { multiple_of = Some m; _ } ->
-            if Bigint.equal (Bigint.rem (Bigint.of_int m) n) Bigint.zero then
-              Some (div ~rounding:`Floor u (const (`Int n)))
-            else None
-        | _ -> None)
     | _ -> None
 
 (* Multisets of nodes, in order of first insertion. *)
@@ -1388,13 +1377,6 @@ end)
 let memo = Memo.create 64
 let memo_lock = Mutex.create ()
 
-(* PARAM // c is irreducible *)
-let irreducible x y =
-  match arg x with
-  | Param { multiple_of = Some m; _ } ->
-      op x = Op.Param && op y = Op.Const && V.(of_int m % num y = zero)
-  | _ -> false
-
 let rec fold_divmod_general d =
   match Mutex.protect memo_lock (fun () -> Memo.find_opt memo d) with
   | Some ret -> ret
@@ -1406,180 +1388,178 @@ let rec fold_divmod_general d =
 and fold d =
   let x = nth d 0 and y = nth d 1 and is_mod = op d = Op.Mod in
   if V.(vmin y = zero && vmax y = zero) then raise Division_by_zero;
-  let xdiv = O.(x // y) in
-  let q = vmin xdiv in
-  (* x // y is constant *)
-  if V.(q = vmax xdiv) then
-    Some
-      (if is_mod then O.(x - (lit q * y))
-       else const_like xdiv (q :> Dtype.const))
-  else if irreducible x y then if is_mod then Some (zero_like d) else None
-  else
-    let x_peeled, const = pop_const x in
-    let const = number const and uops_no_const = split_uop x_peeled Op.Add in
-    (* Constant denominator rules, for a constant c > 0 *)
-    let c = if op y = Op.Const then num y else zero in
-    (* nested_div: (x % (k * c)) // c is (x // c) % k for k > 0; the mod case is
-       remove_nested_mod's *)
-    let nested_div () =
-      if is_mod || op x <> Op.Mod then None
-      else
-        match divides (nth x 1) (V.to_z c) with
-        | Some k when V.(vmin k > zero) -> Some O.(nth x 0 // y % k)
-        | _ -> None
+  (* x % y is x - q * y where x // y is a constant q *)
+  let constant_quotient () =
+    if not is_mod then None
+    else
+      let q = O.(x // y) in
+      if V.(vmin q = vmax q) then Some O.(x - (lit (vmin q) * y)) else None
+  in
+  let x_peeled, const = pop_const x in
+  let const = number const and uops_no_const = split_uop x_peeled Op.Add in
+  (* Constant denominator rules, for a constant c > 0 *)
+  let c = if op y = Op.Const then num y else zero in
+  (* nested_div: (x % (k * c)) // c is (x // c) % k for k > 0; the mod case is
+     remove_nested_mod's *)
+  let nested_div () =
+    if is_mod || op x <> Op.Mod then None
+    else
+      match divides (nth x 1) (V.to_z c) with
+      | Some k when V.(vmin k > zero) -> Some O.(nth x 0 // y % k)
+      | _ -> None
+  in
+  (* remove_nested_mod in a sum: (a % 4 + b) % 2 is (a + b) % 2 *)
+  let remove_nested_mod () =
+    let unnest u =
+      if op u = Op.Mod && Option.is_some (divides (nth u 1) (V.to_z c))
+      then nth u 0
+      else u
     in
-    (* remove_nested_mod in a sum: (a % 4 + b) % 2 is (a + b) % 2 *)
-    let remove_nested_mod () =
-      let unnest u =
-        if op u = Op.Mod && Option.is_some (divides (nth u 1) (V.to_z c))
-        then nth u 0
-        else u
-      in
-      let xs = List.map unnest uops_no_const in
-      if (not is_mod) || List.equal ( == ) xs uops_no_const then None
-      else Some O.((usum (List.hd xs) (List.tl xs) + lit const) % y)
+    let xs = List.map unnest uops_no_const in
+    if (not is_mod) || List.equal ( == ) xs uops_no_const then None
+    else Some O.((usum (List.hd xs) (List.tl xs) + lit const) % y)
+  in
+  (* exact division keeps the structure of x: (q * c + k) // c is q + k // c *)
+  let exact_division () =
+    if is_mod then None
+    else
+      Option.map
+        (fun q -> O.(q + lit V.(const // c)))
+        (divides x_peeled (V.to_z c))
+  in
+  let folds () =
+    (* The shared decomposition: const_factor u divides u *)
+    let factors = List.map (fun u -> `Int (const_factor u)) uops_no_const in
+    let terms =
+      List.map2
+        (fun u f -> Option.get (divides u (V.to_z f)))
+        uops_no_const factors
     in
-    let folds () =
-      (* The shared decomposition: const_factor u divides u *)
-      let factors = List.map (fun u -> `Int (const_factor u)) uops_no_const in
-      let terms =
-        List.map2
-          (fun u f -> Option.get (divides u (V.to_z f)))
-          uops_no_const factors
+    (* fold_divmod_congruence: fold if x is congruent to an expression whose
+       range is within one period of c. A lone term (a binary numerator that
+       crosses one period) or an exact f % c = c // 2 tie tries both signs of
+       the remainder; otherwise the smaller keeps the product small. *)
+    let congruence () =
+      let lone = List.compare_length_with terms 1 = 0 in
+      let choices f =
+        (* r is in [0, c), so r is the smaller in magnitude iff r <= c - r *)
+        let r = V.(f % c) in
+        if V.(r * of_int 2 = c) || lone then [ r; V.(r - c) ]
+        else [ (if V.(r <= c - r) then r else V.(r - c)) ]
       in
-      (* fold_divmod_congruence: fold if x is congruent to an expression whose
-         range is within one period of c. A lone term (a binary numerator that
-         crosses one period) or an exact f % c = c // 2 tie tries both signs of
-         the remainder; otherwise the smaller keeps the product small. *)
-      let congruence () =
-        let lone = List.compare_length_with terms 1 = 0 in
-        let choices f =
-          (* r is in [0, c), so r is the smaller in magnitude iff r <= c - r *)
-          let r = V.(f % c) in
-          if V.(r * of_int 2 = c) || lone then [ r; V.(r - c) ]
-          else [ (if V.(r <= c - r) then r else V.(r - c)) ]
+      let fold rems =
+        let rem =
+          O.(
+            sum (List.map2 (fun r v -> lit r * v) rems terms)
+            + lit V.(const % c))
         in
-        let fold rems =
-          let rem =
-            O.(
-              sum (List.map2 (fun r v -> lit r * v) rems terms)
-              + lit V.(const % c))
-          in
-          let q = V.(vmin rem // c) in
-          if V.(q <> vmax rem // c) then None
-          else if is_mod then Some O.(rem - lit V.(q * c))
-          else
-            let quotient (f, r) v = O.(lit V.((f - r) // c) * v) in
-            let quotients =
-              List.map2 quotient (List.combine factors rems) terms
-            in
-            Some O.(sum quotients + lit V.(const // c) + lit q)
-        in
-        Seq.find_map fold (cartesian (List.map choices factors))
-      in
-      (* gcd_with_remainder: factor out the common gcd of the numerator *)
-      let gcd_with_remainder () =
-        let g =
-          `Int
-            (List.fold_left (fun g f -> Bigint.gcd g (V.to_z f)) (V.to_z c) factors)
-        in
-        if V.(g <= of_int 1) then None
+        let q = V.(vmin rem // c) in
+        if V.(q <> vmax rem // c) then None
+        else if is_mod then Some O.(rem - lit V.(q * c))
         else
-          let x_g = simplify (Option.get (divides x_peeled (V.to_z g))) in
-          let new_x = O.(x_g + lit V.(const // g % (c // g))) in
-          if V.(vmin new_x < zero) then None
-          else if is_mod then
-            Some O.((new_x % lit V.(c // g) * lit g) + lit V.(const % g))
-          else Some O.((new_x // lit V.(c // g)) + lit V.(const // c))
-      in
-      (* nest_by_factor: x // c is (x // f) // (c // f), and x % c is (x // f %
-         (c // f)) * f + x % f. The division holds for x of any sign; the
-         remainder's reconstruction needs x >= 0 *)
-      let nest_by_factor () =
-        let divisor u f =
-          let f = V.(max f (-f)) in
-          if op u <> Op.Const && V.(of_int 1 < f && f < c && c % f = zero) then
-            Some f
-          else None
-        in
-        let divs =
-          List.sort_uniq V.compare
-            (List.filter_map Fun.id (List.map2 divisor uops_no_const factors))
-        in
-        let remainder newxs div =
-          let part f t =
-            if V.(f % div = zero) then [] else [ O.(lit V.(f % div) * t) ]
+          let quotient (f, r) v = O.(lit V.((f - r) // c) * v) in
+          let quotients =
+            List.map2 quotient (List.combine factors rems) terms
           in
-          let parts = List.concat (List.map2 part factors terms) in
-          let parts =
-            if V.(const % div = zero) then parts
-            else parts @ [ const_like x (V.(const % div) :> Dtype.const) ]
-          in
-          let b = match parts with [] -> zero_like x | b :: bs -> usum b bs in
-          if V.(zero <= vmin b && vmax b < div) then
-            let r = O.((newxs % lit V.(c // div) * lit div) + b) in
-            Some (size r, r)
-          else None
-        in
-        let result div =
-          match fold_divmod_general O.(x // lit div) with
-          | Some newxs when not is_mod ->
-              Some (size newxs, O.(newxs // lit V.(c // div)))
-          | Some newxs when V.(vmin x >= zero && vmin newxs >= zero) ->
-              remainder newxs div
-          | _ -> None
-        in
-        let smaller (n0, r0) (n1, r1) =
-          if n1 < n0 then (n1, r1) else (n0, r0)
-        in
-        match List.filter_map result divs with
-        | [] -> None
-        | r :: rs -> Some (snd (List.fold_left smaller r rs))
+          Some O.(sum quotients + lit V.(const // c) + lit q)
       in
-      first_rule [ congruence; gcd_with_remainder; nest_by_factor ]
+      Seq.find_map fold (cartesian (List.map choices factors))
     in
-    (* Variable denominator and fallback rules *)
-    let all_uops = split_uop x Op.Add in
-    (* divide_by_gcd: x // y is (x // gcd) // (y // gcd) *)
-    let divide_by_gcd () =
-      let g = simplify (gcd (all_uops @ [ y ])) in
-      if op g = Op.Const && V.(num g = of_int 1) then None
-      else
-        let ret =
-          alu
-            (Option.get (divide_exact x g))
-            (op d)
-            [ Option.get (divide_exact y g) ]
-        in
-        Some (if is_mod then O.(ret * g) else ret)
-    in
-    (* factor_remainder: (d * x + y) // d is x + y // d *)
-    let factor_remainder () =
-      let split u (quo, rem) =
-        let f = `Int (const_factor u) in
-        match divide_exact u y with
-        | Some q -> (q :: quo, rem)
-        | None when op y = Op.Const && V.(f % c <> f) ->
-            let t = Option.get (divides u (V.to_z f)) in
-            let q = if is_mod then zero_like u else O.(t * lit V.(f // c)) in
-            (q :: quo, O.(t * lit V.(f % c)) :: rem)
-        | None -> (quo, u :: rem)
+    (* nest_by_factor: x // c is (x // f) // (c // f), and x % c is (x // f %
+       (c // f)) * f + x % f, for f a term's factor dividing c or the gcd of
+       every factor and c. The division holds for x of any sign; the
+       remainder's reconstruction needs x >= 0 *)
+    let nest_by_factor () =
+      let divisor f =
+        let f = V.(max f (-f)) in
+        if V.(of_int 1 < f && f < c && c % f = zero) then Some f else None
       in
-      match List.fold_right split all_uops ([], []) with
-      | [], _ -> None
-      | quo, rem ->
-          let new_x = O.(sum rem + zero_like x) in
-          if V.(vmin new_x < zero) then None
-          else
-            Some (if is_mod then O.(new_x % y) else O.((new_x // y) + sum quo))
+      let g =
+        `Int
+          (List.fold_left
+             (fun g f -> Bigint.gcd g (V.to_z f))
+             (V.to_z c) factors)
+      in
+      let divs =
+        List.sort_uniq V.compare (List.filter_map divisor (g :: factors))
+      in
+      let remainder newxs div =
+        let part f t =
+          if V.(f % div = zero) then [] else [ O.(lit V.(f % div) * t) ]
+        in
+        let parts = List.concat (List.map2 part factors terms) in
+        let parts =
+          if V.(const % div = zero) then parts
+          else parts @ [ const_like x (V.(const % div) :> Dtype.const) ]
+        in
+        let b = match parts with [] -> zero_like x | b :: bs -> usum b bs in
+        if V.(zero <= vmin b && vmax b < div) then
+          let r = O.((newxs % lit V.(c // div) * lit div) + b) in
+          Some (size r, r)
+        else None
+      in
+      let result div =
+        match fold_divmod_general O.(x // lit div) with
+        | Some newxs when not is_mod ->
+            Some (size newxs, O.(newxs // lit V.(c // div)))
+        | Some newxs when V.(vmin x >= zero && vmin newxs >= zero) ->
+            remainder newxs div
+        | _ -> None
+      in
+      let smaller (n0, r0) (n1, r1) =
+        if n1 < n0 then (n1, r1) else (n0, r0)
+      in
+      match List.filter_map result divs with
+      | [] -> None
+      | r :: rs -> Some (snd (List.fold_left smaller r rs))
     in
-    let fallback () =
-      if V.(vmin y < zero || vmin x < zero) then None else factor_remainder ()
+    first_rule [ congruence; nest_by_factor ]
+  in
+  (* Variable denominator and fallback rules *)
+  let all_uops = split_uop x Op.Add in
+  (* divide_by_gcd: x // y is (x // gcd) // (y // gcd) *)
+  let divide_by_gcd () =
+    let g = simplify (gcd (all_uops @ [ y ])) in
+    if op g = Op.Const && V.(num g = of_int 1) then None
+    else
+      let ret =
+        alu
+          (Option.get (divide_exact x g))
+          (op d)
+          [ Option.get (divide_exact y g) ]
+      in
+      Some (if is_mod then O.(ret * g) else ret)
+  in
+  (* factor_remainder: (d * x + y) // d is x + y // d *)
+  let factor_remainder () =
+    let split u (quo, rem) =
+      let f = `Int (const_factor u) in
+      match divide_exact u y with
+      | Some q -> (q :: quo, rem)
+      | None when op y = Op.Const && V.(f % c <> f) ->
+          let t = Option.get (divides u (V.to_z f)) in
+          let q = if is_mod then zero_like u else O.(t * lit V.(f // c)) in
+          (q :: quo, O.(t * lit V.(f % c)) :: rem)
+      | None -> (quo, u :: rem)
     in
-    let constant_rules =
-      if V.(c > zero) then [ nested_div; remove_nested_mod; folds ] else []
-    in
-    first_rule (constant_rules @ [ divide_by_gcd; fallback ])
+    match List.fold_right split all_uops ([], []) with
+    | [], _ -> None
+    | quo, rem ->
+        let new_x = O.(sum rem + zero_like x) in
+        if V.(vmin new_x < zero) then None
+        else
+          Some (if is_mod then O.(new_x % y) else O.((new_x // y) + sum quo))
+  in
+  let fallback () =
+    if V.(vmin y < zero || vmin x < zero) then None else factor_remainder ()
+  in
+  let constant_rules =
+    if V.(c > zero) then
+      [ nested_div; remove_nested_mod; exact_division; folds ]
+    else []
+  in
+  first_rule
+    ((constant_quotient :: constant_rules) @ [ divide_by_gcd; fallback ])
 
 let floor_ops = Op.Set.of_list [ Op.Div; Op.Mod ]
 
@@ -1669,12 +1649,6 @@ let mop_cleanup =
               List.map (List.nth (permute_arg x2)) (permute_arg (m "x"))
             in
             Some (permute (nth x2 0) order));
-        (* Remove no-op permutes. *)
-        rule (Upat.op Op.Permute ~name:"x") (fun m ->
-            let x = m "x" in
-            let order = permute_arg x in
-            let identity = List.init (List.length order) Fun.id in
-            if List.equal Int.equal order identity then Some (nth x 0) else None);
         (* A stack of indexes by constants. *)
         rule
           (Upat.op Op.Stack ~name:"stk"
@@ -2212,15 +2186,6 @@ let symbolic_simple =
                 [@mutate off "a shift by 0 is the x >> 0 rule's, tried first"]
                 && all_ones (m "x") Bigint.(logor mask (pred (shift_left one k)))
               then Some (shr (m "x") (lit (`Int (Bigint.of_int k))))
-              else None);
-          rule
-            Upat.(var "x" land cvar "mask" // cvar "c")
-            (fun m ->
-              let mask = V.to_z (num (m "mask")) and c = V.to_z (num (m "c")) in
-              if
-                Bigint.(gt c zero && equal (logand c (pred c)) zero)
-                && all_ones (m "x") Bigint.(logor mask (pred c))
-              then Some O.(m "x" // lit (`Int c))
               else None);
           (* x == x -> True (only ints) *)
           rule
@@ -3221,9 +3186,6 @@ let bind var x =
       (repr_const (vmin var))
       (repr_const (vmax var));
   let p = param_arg_of var in
-  let multiple = Option.value p.multiple_of ~default:1 in
-  if Option.is_none (divides c (Bigint.of_int multiple)) then
-    invalid_argf "%s is not a multiple of %d" (repr_const x) multiple;
   replace var ~arg:(Param { p with bound = Some x })
 
 let unbound var =

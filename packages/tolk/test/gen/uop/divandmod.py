@@ -39,9 +39,15 @@ def captured_divmods():
     by_test, seen, ran, current = {}, set(), set(), [None]
     simplify, rewrite = UOp.simplify, symbolic_tests.graph_rewrite
 
+    # a variable bounded by a node has no counterpart in tolk, whose bounds are
+    # values
+    def bounded_by_nodes(d):
+        return any(x.op is Ops.PARAM and x.arg.vmin_vmax is not None and
+                   any(isinstance(b, UOp) for b in x.arg.vmin_vmax) for x in d.toposort())
+
     def record(u):
         for d in u.toposort():
-            if d.op in DIVMOD and d not in seen:
+            if d.op in DIVMOD and d not in seen and not bounded_by_nodes(d):
                 seen.add(d)
                 by_test.setdefault(current[0], []).append(d)
 
@@ -158,28 +164,6 @@ def fold_a_division_by_a_variable_with_one_quotient():
 @graph
 def fold_a_remainder_by_a_variable_with_one_quotient():
     return once(v("x", 0, 2) % v("y", 3, 10**12))
-
-
-# Declared multiples
-
-@graph
-def fold_the_remainder_of_a_declared_multiple():
-    return once(v("m", 0, 100, multiple_of=4) % 4)
-
-
-@graph
-def fold_the_remainder_of_a_declared_multiple_by_a_divisor_of_it():
-    return once(v("m", 0, 100, multiple_of=4) % 2)
-
-
-@graph
-def keep_the_division_of_a_declared_multiple():
-    return once(v("m", 0, 100, multiple_of=4) // 4)
-
-
-@graph
-def rewrite_the_remainder_of_a_declared_multiple_by_another_divisor():
-    return once(v("m", 0, 100, multiple_of=4) % 3)
 
 
 # Constant divisors

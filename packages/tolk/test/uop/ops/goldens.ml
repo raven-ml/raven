@@ -488,7 +488,7 @@ let custom_kernels () =
   sink (custom_kernel [ a; b ] copy)
 
 let variables_and_binding () =
-  let n = weak_var "n" 1 8 and m = weak_var ~multiple_of:2 "m" 0 4 in
+  let n = weak_var "n" 1 8 and m = weak_var "m" 0 4 in
   let e = O.((bind n (i 3) * bind m (i 2)) + n) in
   let all_unbound, _ = unbind_all e in
   sink
