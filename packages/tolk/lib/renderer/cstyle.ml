@@ -1335,7 +1335,7 @@ let clang (target : Helpers.Target.t) =
      it aborts on a selection between vectors and calls compiler-rt's
      [__truncsfbf2], which no library of the process defines. Every bfloat16
      operation computes in float32 here, so on x86 a bfloat16 is held as its
-     bits, an [unsigned short], as HIP holds it.
+     bits, an [unsigned short], as OpenCL holds it.
 
      A processor with AVX-512 that prefers 256-bit vectors, as Intel's do,
      makes 512-bit types illegal, so LLVM splits the kernel's wider vectors.

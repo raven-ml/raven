@@ -654,7 +654,7 @@ scope, see README.
     `true` at 40 too, and `cast (cast (y + 100) uint8) int32` to one cast,
     `-116` where the machine gives `140`.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:287` (`(x // c1) // c2`),
-    `:290` (`c0 + x < c1`), `codegen/simplify.py:101-104` (`x + y < c`,
+    `:290` (`c0 + x < c1`), `codegen/simplify.py:100-104` (`x + y < c`,
     `x * y < c`) and `:124` (`x + y <> c` under a cast),
     `uop/symbolic.py:388-398` (`reduce_mul_chain`, a factor out of a
     maximum). tolk: `Shape.symbolic`, `Simplify.solves_sum`,

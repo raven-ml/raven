@@ -2021,7 +2021,7 @@ index 0b4d06d55..70ad4a04e 100644
      self.compiler = ClangCompiler(target.arch.split(","))
 +    # llvm's x86 backend legalizes a bfloat16 value it only moves (a select, a gated load's merge, a bitcast of stacked lanes)
 +    # through float32, aborting on a select of vectors or calling compiler-rt's __truncsfbf2. every bfloat16 alu computes in
-+    # float32, so on x86 a bfloat16 is held as its bits, as HIP holds it
++    # float32, so on x86 a bfloat16 is held as its bits, as OpenCL holds it
 +    if target.arch.startswith("x86"):
 +      self.type_map = {**self.type_map, dtypes.bfloat16: "unsigned short"}
 +      self.string_rewrite = pm_bf16_ushort_const + self.string_rewrite
