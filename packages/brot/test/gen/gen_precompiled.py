@@ -1,9 +1,12 @@
-#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11,<3.15"
+# dependencies = ["sentencepiece==0.2.2"]
+# ///
 """Build the small SentencePiece charsmap that the Precompiled tests read.
 
 Run from anywhere:
 
-    uv run --with sentencepiece==0.2.2 python3 packages/brot/test/gen/gen_precompiled.py
+    uv run packages/brot/test/gen/gen_precompiled.py [--check]
 
 A `Precompiled` normalizer carries a SentencePiece `precompiled_charsmap`: a
 darts-clone double-array trie over the UTF-8 bytes of the rules' sources,
@@ -29,12 +32,16 @@ commits it), NUL aside, which no source may hold: U+0308 becomes `<0308>`. A
 cluster under six bytes then comes out as its first character's name and a
 longer one as the names of all its characters, so the normalized text shows
 where the clusters of a test line end.
+
+With `--check` it writes nothing and fails if either file differs from what
+it would write.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import sys
 from pathlib import Path
 
 import sentencepiece as spm
@@ -137,32 +144,41 @@ def grapheme_rules(test: str) -> list[tuple[str, str]]:
     return [(chr(cp), f"<{cp:04X}>") for cp in sorted(points)]
 
 
-def main() -> None:
-    support = Path(__file__).resolve().parents[1] / "support"
+def documents(support: Path) -> dict[Path, str]:
+    """The text of each file this writes, by its path."""
+    out = support / "precompiled"
     blob = charsmap(RULES)
     # One rule per line, so that a change to the rules reads as one in a diff.
     rules = ",\n  ".join(json.dumps(rule) for rule in RULES)
-    document = (
+    charsmap_json = (
         f'{{\n "rules": [\n  {rules}\n ],\n'
         f' "normalizer": {json.dumps(normalizer(blob))}\n}}\n'
     )
-    out = support / "precompiled"
-    out.mkdir(exist_ok=True)
-    path = out / "charsmap.json"
-    path.write_text(document, encoding="utf-8", newline="\n")
-    print(f"wrote {path} ({len(blob)} bytes of charsmap)")
-
     test = (support / "unicode" / "GraphemeBreakTest-17.0.0.txt").read_text(
         encoding="utf-8"
     )
-    rules = grapheme_rules(test)
-    blob = charsmap(rules)
-    path = out / "graphemes.json"
-    path.write_text(
-        json.dumps(normalizer(blob)) + "\n", encoding="utf-8", newline="\n"
-    )
-    print(f"wrote {path} ({len(rules)} rules, {len(blob)} bytes of charsmap)")
+    graphemes = json.dumps(normalizer(charsmap(grapheme_rules(test)))) + "\n"
+    return {out / "charsmap.json": charsmap_json, out / "graphemes.json": graphemes}
+
+
+def main() -> int:
+    support = Path(__file__).resolve().parents[1] / "support"
+    files = documents(support)
+    if "--check" in sys.argv[1:]:
+        stale = [
+            path
+            for path, text in files.items()
+            if not path.exists() or path.read_bytes() != text.encode()
+        ]
+        for path in stale:
+            print(f"{path} differs from what the generator writes", file=sys.stderr)
+        return 1 if stale else 0
+    for path, text in files.items():
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        print(f"wrote {path} ({len(text)} bytes)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

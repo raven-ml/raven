@@ -1,17 +1,31 @@
-# Generates the expected rows of the regular-expression Split tests in
-# test_pretokenizers.ml (`test_split_regex_cl100k`, `test_split_regex_o200k`,
-# `test_split_regex_tekken`, `test_split_regex_kimi`,
-# `test_split_regex_classes`, `test_split_regex_behaviors`) and the
-# generated rows of `test_unicode_scripts`: the pieces HuggingFace tokenizers
-# gives for `pre_tokenizers.Split(Regex(pattern), behavior, invert)` and
-# `pre_tokenizers.UnicodeScripts()`, with its character offsets turned into
-# the byte offsets brot reports. Run with
-#
-#   uv run --with tokenizers==0.23.1 python3 gen_split_regex_expected.py
-#
-# from this directory and paste the printed fragments over the case lists.
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["tokenizers==0.23.1"]
+# ///
+"""Generate the expected rows of the regular-expression Split tests in
+test_pretokenizers.ml (`test_split_regex_cl100k`, `test_split_regex_o200k`,
+`test_split_regex_tekken`, `test_split_regex_kimi`,
+`test_split_regex_classes`, `test_split_regex_behaviors`) and the generated
+rows of `test_unicode_scripts`.
+
+    uv run packages/brot/test/gen/gen_split_regex_expected.py [--check]
+
+The rows are the pieces HuggingFace tokenizers gives for
+`pre_tokenizers.Split(Regex(pattern), behavior, invert)` and
+`pre_tokenizers.UnicodeScripts()`, with its character offsets turned into the
+byte offsets brot reports. Without `--check` it prints the fragments to paste
+over the case lists; with `--check` it compares them, and the patterns, with
+test_pretokenizers.ml and fails, naming each case that differs.
+"""
+
+import sys
+from pathlib import Path
 
 from tokenizers import Regex, pre_tokenizers
+
+import ocaml_cases
+
+TEST = Path(__file__).resolve().parents[1] / "test_pretokenizers.ml"
 
 # The pattern of Llama 3's tokenizer.json.
 CL100K = (
@@ -202,47 +216,94 @@ def pieces(pattern, behavior, invert, text):
     return rows
 
 
-def emit_scripts(text):
+def scripts_case(text):
     rows = []
     for piece, (start, stop) in pre_tokenizers.UnicodeScripts().pre_tokenize_str(text):
         rows.append(
             "(%s, (%d, %d))"
             % (ocaml(piece.encode()), len(text[:start].encode()), len(text[:stop].encode()))
         )
-    print("  test_case %s [ %s ];" % (ocaml(text.encode()), "; ".join(rows)))
+    return "  test_case %s [ %s ];" % (ocaml(text.encode()), "; ".join(rows))
 
 
-def emit(name, pattern, behavior, invert, text):
+def case(name, pattern, behavior, invert, text):
     body = "; ".join(
         "(%s, (%d, %d))" % (ocaml(p), a, b)
         for p, a, b in pieces(pattern, behavior, invert, text)
     )
-    print(
-        "  case %s %s ~invert:%s %s [ %s ];"
-        % (name, BEHAVIORS[behavior], str(invert).lower(), ocaml(text.encode()), body)
+    return "  case %s %s ~invert:%s %s [ %s ];" % (
+        name, BEHAVIORS[behavior], str(invert).lower(), ocaml(text.encode()), body
     )
 
 
-print("(* test_split_regex_cl100k *)")
-for text in CL100K_TEXTS:
-    emit("~pattern:cl100k", CL100K, "isolated", False, text)
-print("\n(* test_split_regex_o200k *)")
-for text in O200K_TEXTS:
-    emit("~pattern:o200k", O200K, "isolated", False, text)
-for name, pattern in (("o200k", O200K), ("tekken", TEKKEN), ("kimi", KIMI)):
-    print("\n(* test_split_regex_%s, the word texts *)" % name)
-    for text in WORD_TEXTS:
-        emit("~pattern:" + name, pattern, "isolated", False, text)
-print("\n(* test_split_regex_classes *)")
-for pattern, texts in CLASS_CASES:
-    for text in texts:
-        emit("~pattern:" + ocaml(pattern.encode()), pattern, "isolated", False, text)
-print("\n(* test_split_regex_behaviors *)")
-for pattern, texts in BEHAVIOR_CASES:
-    for behavior in BEHAVIORS:
-        for invert in (False, True):
-            for text in texts:
-                emit("~pattern:" + ocaml(pattern.encode()), pattern, behavior, invert, text)
-print("\n(* test_unicode_scripts *)")
-for text in SCRIPT_TEXTS:
-    emit_scripts(text)
+def fragments() -> dict[str, list[str]]:
+    """The lines of each case list, by the test function that holds it."""
+    out = {}
+    out["test_split_regex_cl100k"] = [
+        case("~pattern:cl100k", CL100K, "isolated", False, text)
+        for text in CL100K_TEXTS
+    ]
+    out["test_split_regex_o200k"] = [
+        case("~pattern:o200k", O200K, "isolated", False, text)
+        for text in O200K_TEXTS
+    ]
+    for name, pattern in (("o200k", O200K), ("tekken", TEKKEN), ("kimi", KIMI)):
+        out.setdefault("test_split_regex_" + name, []).extend(
+            case("~pattern:" + name, pattern, "isolated", False, text)
+            for text in WORD_TEXTS
+        )
+    out["test_split_regex_classes"] = [
+        case("~pattern:" + ocaml(pattern.encode()), pattern, "isolated", False, text)
+        for pattern, texts in CLASS_CASES
+        for text in texts
+    ]
+    out["test_split_regex_behaviors"] = [
+        case("~pattern:" + ocaml(pattern.encode()), pattern, behavior, invert, text)
+        for pattern, texts in BEHAVIOR_CASES
+        for behavior in BEHAVIORS
+        for invert in (False, True)
+        for text in texts
+    ]
+    out["test_unicode_scripts"] = [scripts_case(text) for text in SCRIPT_TEXTS]
+    return out
+
+
+# The groups whose test function also holds hand-written cases.
+PARTIAL = {"test_unicode_scripts": "test_case"}
+
+PATTERNS = {"cl100k": CL100K, "o200k": O200K, "tekken": TEKKEN, "kimi": KIMI}
+
+
+def check(groups: dict[str, list[str]]) -> int:
+    defined = ocaml_cases.definitions(ocaml_cases.read(TEST))
+    problems = []
+    # A pattern is one string, or `String.concat sep [ part; ... ]`.
+    for name, pattern in PATTERNS.items():
+        strings = [value for kind, value in defined[name] if kind == "str"]
+        text = strings[0] if len(strings) == 1 else strings[0].join(strings[1:])
+        if text != pattern.encode():
+            problems.append(f"{name}: the test's pattern is not the generator's")
+    for group, lines in groups.items():
+        head = PARTIAL.get(group, "case")
+        generated = ocaml_cases.cases(
+            ocaml_cases.tokens("\n".join(lines)), head, 1
+        )
+        recorded = ocaml_cases.cases(defined[group], head, 1)
+        problems += ocaml_cases.differences(
+            group, generated, recorded, partial=group in PARTIAL
+        )
+    return ocaml_cases.report(problems)
+
+
+def main() -> int:
+    groups = fragments()
+    if "--check" in sys.argv[1:]:
+        return check(groups)
+    for group, lines in groups.items():
+        print(f"(* {group} *)")
+        print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

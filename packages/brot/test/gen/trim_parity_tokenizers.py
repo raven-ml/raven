@@ -1,9 +1,12 @@
-#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["tokenizers==0.23.1"]
+# ///
 """Trim the parity tokenizers to what the parity corpora need.
 
 Run from anywhere, after `packages/brot/bench/download_data.sh`:
 
-    uv run --with tokenizers==0.23.1 python3 packages/brot/test/gen/trim_parity_tokenizers.py
+    uv run packages/brot/test/gen/trim_parity_tokenizers.py [--check]
 
 `test_parity.ml` checks brot against the encodings `gen_parity_expected.py`
 records from the full tokenizer files, which are tens of megabytes and are
@@ -12,7 +15,9 @@ allows redistribution, a copy that keeps only the part of the vocabulary and
 merges the corpora and `EXTRA` reach, to `support/tokenizers/<name>.json`.
 It then checks that the reference gives every recorded row again from the
 copy, and the full file's ids for `EXTRA`, so the copy encodes and decodes
-those texts exactly as the full file does. The tests read the full file when
+those texts exactly as the full file does. With `--check` it writes nothing,
+fails if a committed copy differs from what it would write, and runs the same
+check on the committed copy. The tests read the full file when
 it is downloaded, as on CI, and the copy otherwise, so they run on a fresh
 checkout. `support/tokenizers/NOTICE` records where each one comes from and
 under which licence.
@@ -342,6 +347,7 @@ def main() -> int:
     out_dir = test_root / "support" / "tokenizers"
     models_dir = test_root.parent / "bench" / "data"
     out_dir.mkdir(exist_ok=True)
+    check_only = "--check" in sys.argv[1:]
 
     ok = True
     for name in COMMITTED:
@@ -352,9 +358,17 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        data = trim(name, full, parity_dir)
+        text = dump(trim(name, full, parity_dir)).encode("utf-8")
         out = out_dir / f"{name}.json"
-        out.write_text(dump(data), encoding="utf-8", newline="\n")
+        if check_only:
+            fresh = out.exists() and out.read_bytes() == text
+            if not fresh:
+                print(f"{out} differs from what the generator writes",
+                      file=sys.stderr)
+            same = check(name, full, out, parity_dir)
+            ok = ok and fresh and same
+            continue
+        out.write_bytes(text)
         same = check(name, full, out, parity_dir)
         ok = ok and same
         print(

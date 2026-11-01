@@ -1,17 +1,23 @@
-#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["tokenizers==0.23.1"]
+# ///
 """Generate the expected encodings that brot is checked against.
 
-Run from anywhere, with the version the committed fixtures were generated with:
+Run from anywhere, after `packages/brot/bench/download_data.sh`:
 
-    uv run --with tokenizers==0.23.1 python3 packages/brot/test/gen/gen_parity_expected.py
+    uv run packages/brot/test/gen/gen_parity_expected.py [--check]
+
+With `--check` it writes nothing and fails, naming each file, if a fixture
+differs from what it would write.
 
 The reference is the HuggingFace `tokenizers` library. `test_parity.ml` reads
 the files this writes and requires brot to produce exactly the same encodings,
 so regenerate only when a fixture changes or when a divergence has been
 confirmed to be a bug in the reference rather than in brot. Regenerating with
-the pinned version rewrites every file byte for byte, so a `git diff` after a
-run over an unchanged corpus is a reference that moved, not a fixture to
-accept.
+the pinned version and the pinned tokenizer files rewrites every file byte for
+byte, so a difference after a run over an unchanged corpus is a reference that
+moved, not a fixture to accept.
 
 Tokenizers
 ----------
@@ -234,7 +240,9 @@ def main() -> int:
     test_root = Path(__file__).resolve().parents[1]
     parity_dir = test_root / "support" / "parity"
     models_dir = test_root.parent / "bench" / "data"
+    check = "--check" in sys.argv[1:]
 
+    stale = []
     for name, corpora in TOKENIZERS.items():
         model = models_dir / f"{name}.json"
         if not model.exists():
@@ -256,12 +264,17 @@ def main() -> int:
                 *rows(tokenizer, text),
             ]
             out = parity_dir / f"{corpus}.{name}.ids"
-            out.write_text(
-                "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
-            )
-            print(f"wrote {out} ({out.stat().st_size} bytes)")
+            data = ("\n".join(lines) + "\n").encode("utf-8")
+            if check:
+                if not out.exists() or out.read_bytes() != data:
+                    print(f"{out} differs from what the generator writes",
+                          file=sys.stderr)
+                    stale.append(out)
+                continue
+            out.write_bytes(data)
+            print(f"wrote {out} ({len(data)} bytes)")
 
-    return 0
+    return 1 if stale else 0
 
 
 if __name__ == "__main__":

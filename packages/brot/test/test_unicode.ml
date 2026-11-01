@@ -580,8 +580,8 @@ let test_word_scans () =
 
 (* The span every character of the normalized text reports on the input, in the
    order the characters come out. Expectations are what HuggingFace reports for
-   one-character tokens; regenerate them with [uv run --with tokenizers python3
-   test/gen/hf_alignments.py]. *)
+   one-character tokens; regenerate them with [uv run
+   packages/brot/test/gen/hf_alignments.py]. *)
 let char_spans normalizer input =
   let normalized, alignment = Normalizer.apply_aligned normalizer input in
   let buffer = Buffer.create 64 in
