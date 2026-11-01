@@ -1,10 +1,20 @@
 ; The tests of programs on disk make their caches under the working directory,
 ; which the sandbox makes fresh. The suite runs as three shards, which dune
-; runs in parallel.
+; runs in parallel. Its tensor-core tests run on the first CUDA GPU and skip
+; without one.
 
 (executable
  (name test_codegen)
- (libraries windtrap tolk tolk_test tolk_run tolk.engine rig rig.elf unix))
+ (libraries
+  windtrap
+  tolk
+  tolk_test
+  tolk_run
+  tolk.engine
+  rig
+  rig.cuda
+  rig.elf
+  unix))
 
 (rule
  (alias runtest)

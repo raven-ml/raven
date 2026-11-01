@@ -4903,3 +4903,30 @@ fold wraps integers and holds its float bound`, hold.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › a stored
   value of no device lives on each device whose kernels read it`; rune's
   `Rune.jit over several devices › values computed from constants`.
+
+## D181. A tensor core's addend broadcasts before it moves past a permute
+
+- **tinygrad:** `codegen/__init__.py:105-108` (`pm_wmma_add`: the sum of a
+  permuted WMMA, or of a permuted reshape of one, and an addend moves the
+  addend through the inverse permute, which takes the permute's axes).
+- **tolk:** `Codegen.pm_wmma_add`; `test/gen/tinygrad.patch`, which gives
+  tinygrad's rules the same broadcast before the goldens are generated.
+- **Differs:** the addend is first broadcast to the permute's shape, and the
+  rules leave a sum whose addend does not broadcast there. Before
+  `expand_broadcast` runs an addend may have fewer axes: a product that one
+  step of a core sums, with no loop left to accumulate it, reaches the rules
+  as a permute of the core plus the scalar the sum ends with, and tinygrad
+  raises (`IndexError: dim=1 out of range [-1, 0]`). At the pin, tinygrad
+  raises so on a float16 product of 16 by 16 summed into float32 plus `1.0` on
+  CUDA sm_89, with or without its splits after the core; 32 by 32 compiles.
+- **Reason:** (b). rune's contraction lowering (`Lower_reduce.close`) adds
+  `+0.` or the initial value to every float sum's result, a scalar, which D24
+  keeps. rune widens float16 and bfloat16 operands to float32 on their bits
+  today, which no core takes; once it converts them by tolk's casts, from the
+  change that lands after this entry, its products reach CUDA's cores through
+  D29, and a 16 by 16 by 16 product raised in lowering and was evaluated.
+- **Pinned by:** the Codegen suite, `stages › … › matmul_{half,bf16}_tile_*`
+  (a widened 16 by 16 product plus `0.`, on every target), and `tensor cores
+  on CUDA`: a product of one tile, one of 256 by 16 by 256, which the splits
+  after the core reshape, and the law over 1 to 4 tiles a side, of float16 and
+  bfloat16, equal to the exact product on fudge's RTX 5000 Ada.

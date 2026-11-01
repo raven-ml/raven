@@ -1,8 +1,8 @@
-(** Running kernels on the host through the engine.
+(** Running kernels on the host, or on a device, through the engine.
 
     Kernels are compiled for the host's target
-    ({!Tolk_engine.target}[ Rig.host]) and run on buffers made from arrays of
-    values, whose contents after the run are read back. *)
+    ({!Tolk_engine.target}[ Rig.host]), or the device's, and run on buffers
+    made from arrays of values, whose contents after the run are read back. *)
 
 open Tolk
 
@@ -27,6 +27,15 @@ val on_host :
 
     Raises [Invalid_argument] if an array's length is not its buffer's size, and
     as {!Tolk_engine.link_call} and {!Tolk_engine.run} do. *)
+
+val on :
+  ?vars:(string * int) list ->
+  Rig.t ->
+  Ops.t ->
+  (int * Dtype.value array) list ->
+  (int * Dtype.value array) list
+(** [on ~vars d prg buffers] is {!on_host} on the device [d]: [prg], compiled
+    for [d]'s target ({!Tolk_engine.target}), runs once on buffers of [d]. *)
 
 (** {1:buffers Buffers of values} *)
 

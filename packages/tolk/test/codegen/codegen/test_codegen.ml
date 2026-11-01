@@ -2135,6 +2135,121 @@ let accumulators =
         keeps_a_zero_accumulator_value;
     ]
 
+(* Tensor cores on CUDA
+
+   [c = cast dt (Σ_r float32 a.(i, r) * float32 b.(r, j) + 0)] for an [m] by [k]
+   matrix [a] and a [k] by [n] matrix [b] of [dt], row-major: a product of
+   16-bit floats summed in float32 from its initial value, as rune lowers a
+   contraction. On CUDA a tensor core of [dt] computes it in tiles of 16 by 16
+   by 16; a product of one tile sums in one step of the core. *)
+
+let widened_product dt (m, k, n) =
+  let c = Shape.param ~shape:[ Ops.Int (m * n) ] 0 dt
+  and a = Shape.param ~shape:[ Ops.Int (m * k) ] 1 dt
+  and b = Shape.param ~shape:[ Ops.Int (k * n) ] 2 dt in
+  let open Ops.O in
+  let i = Ops.range (Int m) [ 0 ]
+  and j = Ops.range (Int n) [ 1 ]
+  and r = Ops.range (Int k) [ 2 ] in
+  let at x idx = Ops.cast (Ops.index x [ idx ]) Float32 in
+  let sum =
+    Ops.reduce (at a ((i * int k) + r) * at b ((r * int n) + j)) Add [ r ]
+  in
+  let store =
+    Ops.store (Ops.index c [ (i * int n) + j ]) (Ops.cast (sum + float 0.) dt)
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ i; j ] ]
+
+let cuda = lazy (Rig.open_ (Rig_cuda.gpu 0))
+
+(* CUDA's first GPU and its renderer, skipping without them. A half float's
+   kernel reads CUDA's headers, which CUDA_PATH locates. *)
+let on_cuda () =
+  match Lazy.force cuda with
+  | Error why -> skip ~reason:why ()
+  | Ok d -> (
+      match Tolk_engine.renderer d with
+      | r -> (d, r)
+      | exception Failure why -> skip ~reason:why ())
+
+let says s m =
+  let n = String.length s in
+  let rec at i =
+    i + n <= String.length m && (String.sub m i n = s || at (i + 1))
+  in
+  at 0
+
+let compiled_for r k =
+  match Codegen.to_program k r with
+  | prg -> prg
+  | exception Renderer.Compiler.Compile_error m
+    when says "cannot open source file" m ->
+      skip ~reason:("a header is missing, set CUDA_PATH: " ^ m) ()
+
+(* Integers from -2 to 2: each product and every sum of at most 64 of them is
+   exact in float32, and each sum, at most 256 in magnitude, in [dt]. *)
+let small_integers seed size =
+  let st = Random.State.make [| seed |] in
+  Array.init size (fun _ -> Random.State.int st 5 - 2)
+
+let product_on_cuda (dt, (tm, tk, tn), seed) =
+  let d, r = on_cuda () in
+  let m, k, n = (16 * tm, 16 * tk, 16 * tn) in
+  let a = small_integers seed (m * k)
+  and b = small_integers (seed + 1) (k * n) in
+  let exact =
+    Array.init (m * n) (fun e ->
+        let i = e / n and j = e mod n in
+        let s = ref 0 in
+        for q = 0 to k - 1 do
+          s := !s + (a.((i * k) + q) * b.((q * n) + j))
+        done;
+        `Float (Float.of_int !s))
+  in
+  let values x = Array.map (fun v -> `Float (Float.of_int v)) x in
+  let prg = compiled_for r (widened_product dt (m, k, n)) in
+  let wmmas = List.filter (is Wmma) (Ops.src (Ops.nth prg 1)) in
+  less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
+  equal (array Dtypes.value) exact
+    (List.assoc 0 (Run.on d prg [ (1, values a); (2, values b) ]))
+
+let covered ((_, (tm, tk, tn), _) as c) =
+  cover "one tile" (tm = 1 && tk = 1 && tn = 1);
+  cover "a sum of one tile" (tk = 1);
+  product_on_cuda c
+
+let tiles =
+  let count = Gen.int_range 1 4 in
+  Gen.frequency
+    [ (1, Gen.constant (1, 1, 1)); (2, Gen.triple count count count) ]
+
+let products_gen =
+  Gen.with_pp
+    (fun ppf (dt, (tm, tk, tn), seed) ->
+      Format.fprintf ppf "%a [%d; %d] by [%d; %d], seed %d" Dtype.pp dt
+        (16 * tm) (16 * tk) (16 * tk) (16 * tn) seed)
+    (Gen.triple
+       (Gen.of_list [ Dtype.Float16; Dtype.Bfloat16 ])
+       tiles (Gen.int_range 0 1_000_000))
+
+let tensor_cores_on_cuda =
+  group "tensor cores on CUDA"
+    [
+      cases "a product of one tile is the exact product"
+        ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
+        (fun dt ->
+          product_on_cuda (dt, (1, 1, 1), 0));
+      cases
+        "a product summed in one step of the core, with the splits after it, \
+         is the exact product"
+        ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
+        (fun dt -> product_on_cuda (dt, (16, 1, 16), 0));
+      prop ~count:24
+        "a float16 or bfloat16 product of 1 to 4 tiles a side, summed in \
+         float32 from 0, is the exact product"
+        products_gen covered;
+    ]
+
 (* Reductions over a variable size
 
    A kernel reduces [x], of [hi] floats, over a range whose size is a variable
@@ -4382,6 +4497,7 @@ let () =
          lowering_claims;
          whole_graphs;
          accumulators;
+         tensor_cores_on_cuda;
          variable_sizes;
          multiply_adds;
          shared_ranges;

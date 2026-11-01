@@ -1,0 +1,102 @@
+# tinygrad 6b7b018dae9ec20264f2a4b6a1322da1bb49b141
+0 Ops.STACK dtypes.void []
+1 Ops.CONST dtypes.weakint [] 256
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
+3 Ops.CONST dtypes.weakint [] 32
+4 Ops.CAST dtypes.i32 [3] dtypes.i32
+5 Ops.SPECIAL dtypes.i32 [4] "lidx0"
+6 Ops.CONST dtypes.weakint [] 3
+7 Ops.CAST dtypes.i32 [6] dtypes.i32
+8 Ops.AND dtypes.i32 [5, 7]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.CAST dtypes.i32 [9] dtypes.i32
+11 Ops.SHL dtypes.i32 [8, 10]
+12 Ops.CONST dtypes.weakint [] 2
+13 Ops.CAST dtypes.i32 [12] dtypes.i32
+14 Ops.SPECIAL dtypes.i32 [13] "gidx0"
+15 Ops.SHL dtypes.i32 [14, 7]
+16 Ops.ADD dtypes.i32 [11, 15]
+17 Ops.SHR dtypes.i32 [5, 13]
+18 Ops.CONST dtypes.weakint [] 4
+19 Ops.CAST dtypes.i32 [18] dtypes.i32
+20 Ops.SHL dtypes.i32 [17, 19]
+21 Ops.ADD dtypes.i32 [16, 20]
+22 Ops.SHRINK dtypes.f16 [2, 21, 13]
+23 Ops.PARAM dtypes.f16 [1] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+24 Ops.ADD dtypes.i32 [20, 11]
+25 Ops.SHRINK dtypes.f16 [23, 24, 13]
+26 Ops.LOAD dtypes.f16 [25]
+27 Ops.CONST dtypes.weakint [] 0
+28 Ops.CAST dtypes.i32 [27] dtypes.i32
+29 Ops.INDEX dtypes.f16 [26, 28]
+30 Ops.INDEX dtypes.f16 [26, 10]
+31 Ops.CONST dtypes.weakint [] 128
+32 Ops.CAST dtypes.i32 [31] dtypes.i32
+33 Ops.ADD dtypes.i32 [24, 32]
+34 Ops.SHRINK dtypes.f16 [23, 33, 13]
+35 Ops.LOAD dtypes.f16 [34]
+36 Ops.INDEX dtypes.f16 [35, 28]
+37 Ops.INDEX dtypes.f16 [35, 10]
+38 Ops.CONST dtypes.weakint [] 8
+39 Ops.CAST dtypes.i32 [38] dtypes.i32
+40 Ops.ADD dtypes.i32 [24, 39]
+41 Ops.SHRINK dtypes.f16 [23, 40, 13]
+42 Ops.LOAD dtypes.f16 [41]
+43 Ops.INDEX dtypes.f16 [42, 28]
+44 Ops.INDEX dtypes.f16 [42, 10]
+45 Ops.CONST dtypes.weakint [] 136
+46 Ops.CAST dtypes.i32 [45] dtypes.i32
+47 Ops.ADD dtypes.i32 [24, 46]
+48 Ops.SHRINK dtypes.f16 [23, 47, 13]
+49 Ops.LOAD dtypes.f16 [48]
+50 Ops.INDEX dtypes.f16 [49, 28]
+51 Ops.INDEX dtypes.f16 [49, 10]
+52 Ops.STACK dtypes.f16 [29, 30, 36, 37, 43, 44, 50, 51]
+53 Ops.PARAM dtypes.f16 [1] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
+54 Ops.ADD dtypes.i32 [15, 17]
+55 Ops.CONST dtypes.weakint [] 5
+56 Ops.CAST dtypes.i32 [55] dtypes.i32
+57 Ops.SHL dtypes.i32 [8, 56]
+58 Ops.ADD dtypes.i32 [54, 57]
+59 Ops.INDEX dtypes.f16 [53, 58]
+60 Ops.LOAD dtypes.f16 [59]
+61 Ops.CONST dtypes.weakint [] 16
+62 Ops.CAST dtypes.i32 [61] dtypes.i32
+63 Ops.ADD dtypes.i32 [58, 62]
+64 Ops.INDEX dtypes.f16 [53, 63]
+65 Ops.LOAD dtypes.f16 [64]
+66 Ops.ADD dtypes.i32 [58, 32]
+67 Ops.INDEX dtypes.f16 [53, 66]
+68 Ops.LOAD dtypes.f16 [67]
+69 Ops.CONST dtypes.weakint [] 144
+70 Ops.CAST dtypes.i32 [69] dtypes.i32
+71 Ops.ADD dtypes.i32 [58, 70]
+72 Ops.INDEX dtypes.f16 [53, 71]
+73 Ops.LOAD dtypes.f16 [72]
+74 Ops.STACK dtypes.f16 [60, 65, 68, 73]
+75 Ops.CONST dtypes.weakfloat [] 0.0
+76 Ops.CAST dtypes.f32 [75] dtypes.f32
+77 Ops.STACK dtypes.f32 [76, 76, 76, 76]
+78 Ops.WMMA dtypes.f32 [52, 74, 77] ((8, 16, 16), dtypes.f16, 32, None)
+79 Ops.INDEX dtypes.f32 [78, 28]
+80 Ops.CAST dtypes.f16 [79] dtypes.f16
+81 Ops.INDEX dtypes.f32 [78, 10]
+82 Ops.CAST dtypes.f16 [81] dtypes.f16
+83 Ops.STACK dtypes.f16 [80, 82]
+84 Ops.STORE dtypes.void [22, 83]
+85 Ops.ADD dtypes.i32 [21, 32]
+86 Ops.SHRINK dtypes.f16 [2, 85, 13]
+87 Ops.INDEX dtypes.f32 [78, 13]
+88 Ops.CAST dtypes.f16 [87] dtypes.f16
+89 Ops.INDEX dtypes.f32 [78, 7]
+90 Ops.CAST dtypes.f16 [89] dtypes.f16
+91 Ops.STACK dtypes.f16 [88, 90]
+92 Ops.STORE dtypes.void [86, 91]
+93 Ops.AFTER dtypes.void [0, 84, 92]
+94 Ops.SINK dtypes.void [93] KernelInfo(name="r_2_32_2_2_2", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), optimized=True)
+95 Ops.SINK dtypes.void [93] KernelInfo(name="r_2_32_2_2_2", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),), estimates=Estimates(ops=8192, lds=2048, mem=1536), optimized=True)
+96 Ops.LINEAR dtypes.void [1, 2, 23, 53, 12, 13, 14, 3, 4, 5, 31, 32, 6, 7, 55, 56, 15, 17, 54, 8, 57, 58, 66, 67, 68, 69, 70, 71, 72, 73, 61, 62, 63, 64, 65, 59, 60, 9, 10, 18, 19, 20, 11, 24, 33, 34, 35, 45, 46, 47, 48, 49, 38, 39, 40, 41, 42, 25, 26, 0, 27, 28, 36, 37, 50, 51, 43, 44, 29, 30, 52, 74, 75, 76, 77, 78, 79, 81, 80, 82, 83, 87, 89, 88, 90, 91, 16, 21, 85, 86, 22, 92, 84, 93, 94]
+97 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\n#include <cuda_fp16.h>\nstruct __align__(16) half8 { half x, y, z, w, a, b, c, d; }; __device__ half8 make_half8(half x, half y, half z, half w, half a, half b, half c, half d) { half8 r={x, y, z, w, a, b, c, d}; return r; }\nstruct __align__(8) half4 { half x, y, z, w; }; __device__ half4 make_half4(half x, half y, half z, half w) { half4 r={x, y, z, w}; return r; }\n__device__ float4 __WMMA_8_16_16_f16_f32(half8 a, half4 b, float4 c){\n  int *a_pk = (int *)(&a), *b_pk = (int *)(&b), *c_pk = (int *)(&c);\n  asm(\"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32\"\n      \"{%0, %1, %2, %3}, {%4, %5, %6, %7},\"\n      \"{%8, %9}, {%0, %1, %2, %3};\"\n    : \"+r\"(c_pk[0]), \"+r\"(c_pk[1]), \"+r\"(c_pk[2]), \"+r\"(c_pk[3])\n    : \"r\"(a_pk[0]), \"r\"(a_pk[1]), \"r\"(a_pk[2]), \"r\"(a_pk[3]), \"r\"(b_pk[0]), \"r\"(b_pk[1]));\n  return c;\n}\nextern \"C\" __global__ void __launch_bounds__(32) r_2_32_2_2_2(half* data0_256, half* data1_256, half* data2_256) {\n  int gidx0 = blockIdx.x; /* 2 */\n  int lidx0 = threadIdx.x; /* 32 */\n  int alu0 = (gidx0<<3);\n  int alu1 = (lidx0>>2);\n  int alu2 = (lidx0&3);\n  int alu3 = (alu0+alu1+(alu2<<5));\n  half val0 = (*(data2_256+(alu3+128)));\n  half val1 = (*(data2_256+(alu3+144)));\n  half val2 = (*(data2_256+(alu3+16)));\n  half val3 = (*(data2_256+alu3));\n  int alu4 = (alu1<<4);\n  int alu5 = (alu2<<1);\n  int alu6 = (alu4+alu5);\n  half2 val4 = (*((half2*)((data1_256+(alu6+128)))));\n  half2 val5 = (*((half2*)((data1_256+(alu6+136)))));\n  half2 val6 = (*((half2*)((data1_256+(alu6+8)))));\n  half2 val7 = (*((half2*)((data1_256+alu6))));\n  float4 wmma0 = __WMMA_8_16_16_f16_f32(make_half8(val7.x,val7.y,val4.x,val4.y,val6.x,val6.y,val5.x,val5.y), make_half4(val3,val2,val0,val1), make_float4(0.0f,0.0f,0.0f,0.0f));\n  int alu7 = (alu5+alu0+alu4);\n  *((half2*)((data0_256+(alu7+128)))) = make_half2(((half)(wmma0.z)),((half)(wmma0.w)));\n  *((half2*)((data0_256+alu7))) = make_half2(((half)(wmma0.x)),((half)(wmma0.y)));\n}"
+98 Ops.PROGRAM dtypes.void [95, 96, 97] ProgramInfo(global_size=(2, 1, 1), local_size=(32, 1, 1), params=(%2, %23, %53), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+99 Ops.SINK dtypes.void [94, 98]
+

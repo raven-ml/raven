@@ -900,6 +900,9 @@ thread.
 
 ### Tolk (new)
 
+- `Codegen.to_program` compiles a tensor-core product that one step of the
+  core sums plus a scalar, such as a 16 by 16 float16 matmul plus its initial
+  value on CUDA, where it raised `Invalid_argument` in lowering.
 - A value of no device that a schedule stores, such as an arange, lives on the
   device of each kernel that reads it, stored once per device; it lived on the
   sink's first device, and kernels on the others refused to read it.

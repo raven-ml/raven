@@ -196,6 +196,16 @@ let pm_wmma_add =
   let order m =
     match marg (m "permute") with Permute o -> o | _ -> assert false
   in
+  (* The addend, broadcast to the permute's shape and moved to the order before
+     it, if it broadcasts there. An addend of fewer axes, such as the scalar
+     initial value of a sum that a tensor core computes in one step, broadcasts
+     before its axes can move. *)
+  let unpermuted m =
+    let s = shape (m "permute") and add = m "add" in
+    if equal_shape (broadcast_shape [ s; shape add ]) s then
+      Some (permute (expand add s) (Helpers.argsort (order m)))
+    else None
+  in
   pm
     (fun () -> [
       rule (plus wmma) (fun m -> Some (wmma_accumulate (m "wmma") (m "add")));
@@ -203,16 +213,20 @@ let pm_wmma_add =
       rule
         (plus (permute_of wmma))
         (fun m ->
-          let o = order m in
-          Some (permute O.(m "wmma" + permute (m "add") (Helpers.argsort o)) o));
+          Option.map
+            (fun add -> permute O.(m "wmma" + add) (order m))
+            (unpermuted m));
       rule
         (plus
            (permute_of
               (Upat.op Op.Reshape ~src:[ wmma; Upat.wild ] ~name:"reshape")))
         (fun m ->
-          let o = order m and w = m "wmma" in
-          let add = reshape (permute (m "add") (Helpers.argsort o)) (shape w) in
-          Some (permute (reshape O.(w + add) (shape (m "reshape"))) o));
+          let w = m "wmma" in
+          Option.map
+            (fun add ->
+              let sum = O.(w + reshape add (shape w)) in
+              permute (reshape sum (shape (m "reshape"))) (order m))
+            (unpermuted m));
     ])
 
 let pm_expand_broadcast =

@@ -14,7 +14,7 @@ index c19a95f13..b70de225a 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index f4535a4f7..8989f2251 100644
+index f4535a4f7..6ed22de4f 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -2,19 +2,19 @@ from dataclasses import replace, dataclass, field
@@ -49,7 +49,7 @@ index f4535a4f7..8989f2251 100644
  from tinygrad.device import TinyELF
  from tinygrad.uop.ops import _broadcast_shape, identity_element
  from tinygrad.schedule.rangeify import BufferizeOpts
-@@ -98,9 +98,15 @@ def broadcast_and_devec_wmma(b:UOp):
+@@ -98,14 +98,27 @@ def broadcast_and_devec_wmma(b:UOp):
      src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
    return UOp.stack(*src).reshape(b.shape)
  
@@ -60,14 +60,28 @@ index f4535a4f7..8989f2251 100644
 +  zero = bool(lanes) and all(s.op is Ops.CONST and s.arg == 0 for s in lanes)
 +  return UOp(wmma.op, src=(wmma.src[0], wmma.src[1], add if zero else acc+add), arg=wmma.arg)
 +
++# the addend broadcast to the permute's shape, then in the order before it: an addend of fewer axes, such as the scalar
++# initial value of a sum a WMMA computes in one step, broadcasts before its axes can move
++def unpermuted(permute:UOp, add:UOp) -> UOp|None:
++  if _broadcast_shape(permute.shape, add.shape) != permute.shape: return None
++  return add.expand(permute.shape).permute(argsort(permute.marg))
++
  pm_wmma_add = PatternMatcher([
 -  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"),
 -   lambda add, wmma: UOp(wmma.op, src=(wmma.src[0], wmma.src[1], wmma.src[2]+add), arg=wmma.arg)),
 +  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"), wmma_accumulate),
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="permute") + UPat.var("add"),
-     lambda wmma,permute,add: (wmma + add.permute(argsort(permute.marg))).permute(permute.marg)),
-@@ -113,10 +119,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+-    lambda wmma,permute,add: (wmma + add.permute(argsort(permute.marg))).permute(permute.marg)),
++    lambda wmma,permute,add: None if (a:=unpermuted(permute, add)) is None else (wmma + a).permute(permute.marg)),
+   (UPat(Ops.PERMUTE, src=(UPat(Ops.RESHAPE, src=(UPat(Ops.WMMA, name="wmma"), UPat()), name="reshape"), UPat()), name="permute") + UPat.var("add"),
+-    lambda wmma,reshape,permute,add: (wmma + add.permute(argsort(permute.marg)).reshape(wmma.shape)).reshape(reshape.shape).permute(permute.marg)),
++    lambda wmma,reshape,permute,add: None if (a:=unpermuted(permute, add)) is None else
++      (wmma + a.reshape(wmma.shape)).reshape(reshape.shape).permute(permute.marg)),
+ ])
+ 
+ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
+@@ -113,10 +126,82 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
    (UPat(Ops.WMMA, name="b"), broadcast_and_devec_wmma),
  ])
  
@@ -151,7 +165,7 @@ index f4535a4f7..8989f2251 100644
    src = []
    for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
      src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-@@ -133,9 +211,59 @@ def do_stack_wmma(u:UOp):
+@@ -133,9 +218,59 @@ def do_stack_wmma(u:UOp):
        src.append(b)
    return u.replace(src=tuple(src))
  
@@ -211,7 +225,7 @@ index f4535a4f7..8989f2251 100644
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
    # unpack WMMA
-@@ -180,17 +308,58 @@ def merge_reduce_ends(sink:UOp):
+@@ -180,17 +315,58 @@ def merge_reduce_ends(sink:UOp):
        for e in group: subs[e] = merged
    return sink.substitute(subs) if subs else None
  
@@ -274,7 +288,7 @@ index f4535a4f7..8989f2251 100644
    return acc.after(acc_out)
  
  pm_reduce_local = pm_wmma_add+PatternMatcher([
-@@ -251,6 +420,38 @@ pm_implicit_barriers = PatternMatcher([
+@@ -251,6 +427,38 @@ pm_implicit_barriers = PatternMatcher([
    (UPat((Ops.END, Ops.BACKEDGE), name="end"), add_war_barrier),
  ])
  
@@ -313,7 +327,7 @@ index f4535a4f7..8989f2251 100644
  def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    if DEBUG >= 5: print(render_uir(ast))
    if SPEC: type_verify(ast, spec_tensor)
-@@ -288,7 +489,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -288,7 +496,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
  
    # remove reduce
@@ -322,7 +336,7 @@ index f4535a4f7..8989f2251 100644
  
    # add locals
    sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
-@@ -301,7 +502,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -301,7 +509,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic_simple+pm_expand_broadcast+pm_add_loads, name="*** expand broadcast / add loads")
  
    # devectorize
@@ -331,7 +345,7 @@ index f4535a4f7..8989f2251 100644
  
    # some coalescing misses without this
    sink = graph_rewrite(sink, sym, name="early symbolic")
-@@ -326,11 +527,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -326,11 +534,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
    sink = graph_rewrite(sink, symbolic, name="final symbolic")
  
    sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
@@ -346,7 +360,7 @@ index f4535a4f7..8989f2251 100644
    pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
    sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
  
-@@ -345,11 +548,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+@@ -345,11 +555,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
  
    # final rules for the renderer (without sym)
    extra_matcher = ren.extra_matcher if ren.extra_matcher is not None else PatternMatcher([])
@@ -360,7 +374,7 @@ index f4535a4f7..8989f2251 100644
  
    # add implicit barriers (stores/loads through LOCAL memory ordered by AFTER or across loop iterations need workgroup barriers)
    sink = graph_rewrite(sink, pm_implicit_barriers, name="add implicit barriers")
-@@ -443,9 +647,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
+@@ -443,9 +654,23 @@ def do_linearize(ctx:Renderer, prg:UOp, sink:UOp) -> UOp:
      if DEBUG >= 4: print(ctx.asm_str(lst, sink.arg.function_name))
    return prg.replace(src=prg.src + (UOp(Ops.LINEAR, src=tuple(lst)),))
  
@@ -385,7 +399,7 @@ index f4535a4f7..8989f2251 100644
  
  def do_assemble(ctx:Renderer, prg:UOp, lin:UOp) -> UOp|None:
    if getattr(type(ctx), "asm") is Renderer.asm: return None
-@@ -493,7 +711,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
+@@ -493,7 +718,8 @@ def do_to_program(ast:UOp, renderer:Renderer) -> UOp:
      full_sink = full_rewrite_to_sink(ast, renderer, optimize=not ast.arg.optimized)
      prog_info = ProgramInfo.from_sink(full_sink, renderer.target)
      if (isinstance(renderer, ISARenderer) or renderer.packed_args) and full_sink.arg.estimates is None:

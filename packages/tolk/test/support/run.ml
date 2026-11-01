@@ -123,22 +123,22 @@ let values dt b =
   in
   decode dt (n / Dtype.itemsize dt) a
 
-(* A buffer of [n] bytes of the host that starts on 64 bytes. The kernels these
+(* A buffer of [n] bytes of [d] that starts on 64 bytes. The kernels these
    tests run, recorded from tinygrad, access vectors up to that width, wider
    than the host's alignment ([Rig.alignment]), so it views the first [n] bytes
-   of a host buffer of at least 128, which starts on 128
-   ([Rig.Buffer.create]). *)
-let aligned_host n =
-  Rig.Buffer.view (Rig.Buffer.create Rig.host (max n 128)) ~first:0 ~length:n
+   of a buffer of at least 128, which starts on 128 on the host
+   ([Rig.Buffer.create]) and on its alignment, a page or more, on a GPU. *)
+let aligned d n =
+  Rig.Buffer.view (Rig.Buffer.create d (max n 128)) ~first:0 ~length:n
 
-(* A buffer of the host holding [values] as the parameter [p]. *)
-let storage (p : Ops.param_arg) ~size:n values =
+(* A buffer of [d] holding [values] as the parameter [p]. *)
+let storage d (p : Ops.param_arg) ~size:n values =
   if Array.length values <> n then
     invalid_arg
       (Printf.sprintf "slot %d holds %d elements, not %d" p.slot n
          (Array.length values));
   let bytes = encode p.dtype values in
-  filled (aligned_host (Bigarray.Array1.dim bytes)) bytes
+  filled (aligned d (Bigarray.Array1.dim bytes)) bytes
 
 let contents (p : Ops.param_arg) ~size b = Array.sub (values p.dtype b) 0 size
 
@@ -151,7 +151,7 @@ let buffer_params prg =
       | _ -> None)
     (Shape.kernel_params prg)
 
-let on_host ?vars prg buffers =
+let on ?vars d prg buffers =
   let info =
     match Ops.arg prg with
     | Ops.Program info -> info
@@ -165,7 +165,7 @@ let on_host ?vars prg buffers =
   in
   let memory =
     List.map
-      (fun ((p, size) as pn) -> (pn, storage p ~size (initial pn)))
+      (fun ((p, size) as pn) -> (pn, storage d p ~size (initial pn)))
       params
   in
   (* The call passes each buffer parameter as the run's slot of its number, and
@@ -179,12 +179,13 @@ let on_host ?vars prg buffers =
       info.params
   in
   let slots = List.length info.globals + List.length positional in
+  let device = (Tolk_engine.target d).device in
   let arg slot =
     match
       List.find_opt (fun ((p : Ops.param_arg), _) -> p.slot = slot) params
     with
     | Some (p, size) ->
-        Shape.param ~shape:[ Int size ] ~device:"CPU" slot p.dtype
+        Shape.param ~shape:[ Int size ] ~device slot p.dtype
     | None ->
         List.find
           (fun v ->
@@ -192,7 +193,7 @@ let on_host ?vars prg buffers =
           positional
   in
   let call = Ops.call prg (List.init slots arg) in
-  let s = Tolk_engine.link_call ~devices:(fun _ -> Rig.host) call in
+  let s = Tolk_engine.link_call ~devices:(fun _ -> d) call in
   let buffers = Array.make (List.length info.globals) None in
   List.iter
     (fun (((p : Ops.param_arg), _), b) ->
@@ -202,6 +203,8 @@ let on_host ?vars prg buffers =
   List.map
     (fun (((p : Ops.param_arg), size), b) -> (p.slot, contents p ~size b))
     memory
+
+let on_host ?vars prg buffers = on ?vars Rig.host prg buffers
 
 (* Test devices *)
 

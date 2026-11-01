@@ -267,6 +267,10 @@ codegen/codegen/matmul_acc_half_clang_narrowed.golden
 codegen/codegen/matmul_acc_half_cuda.golden
 codegen/codegen/matmul_acc_half_hip.golden
 codegen/codegen/matmul_acc_half_metal.golden
+codegen/codegen/matmul_bf16_tile_clang.golden
+codegen/codegen/matmul_bf16_tile_cuda.golden
+codegen/codegen/matmul_bf16_tile_hip.golden
+codegen/codegen/matmul_bf16_tile_metal.golden
 codegen/codegen/matmul_big_clang.golden
 codegen/codegen/matmul_big_cuda.golden
 codegen/codegen/matmul_big_hip.golden
@@ -289,6 +293,10 @@ codegen/codegen/matmul_half_tc_shaped_clang.golden
 codegen/codegen/matmul_half_tc_shaped_cuda.golden
 codegen/codegen/matmul_half_tc_shaped_hip.golden
 codegen/codegen/matmul_half_tc_shaped_metal.golden
+codegen/codegen/matmul_half_tile_clang.golden
+codegen/codegen/matmul_half_tile_cuda.golden
+codegen/codegen/matmul_half_tile_hip.golden
+codegen/codegen/matmul_half_tile_metal.golden
 codegen/codegen/matmul_hip.golden
 codegen/codegen/matmul_local_cuda.golden
 codegen/codegen/matmul_local_hip.golden
