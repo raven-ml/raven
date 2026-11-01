@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["mpmath", "sympy"]
+# dependencies = ["mpmath==1.3.0", "sympy==1.14.0"]
 # ///
 """Generate the correct-rounding goldens of Unit.ratio.
 

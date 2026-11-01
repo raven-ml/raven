@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "astropy", "photutils", "regions"]
+# dependencies = ["numpy==2.5.4", "astropy==8.0.2", "photutils==3.1.1", "regions==0.13"]
 # ///
 """Generate the grids' test references.
 
@@ -292,13 +292,16 @@ def fit_inverse(a, b):
     x = u + poly(a, u, v)
     y = v + poly(b, u, v)
     terms = [(p, q) for p in range(SIP_INVERSE_ORDER + 1) for q in range(SIP_INVERSE_ORDER + 1 - p)]
-    design = np.stack([x**p * y**q for p, q in terms], axis=-1)
+    # In units of the half-width the design is well conditioned, so the
+    # fit is the same on every platform's LAPACK to rounding.
+    s = 1100.0
+    design = np.stack([(x / s) ** p * (y / s) ** q for p, q in terms], axis=-1)
     ap = np.zeros((SIP_INVERSE_ORDER + 1,) * 2)
     bp = np.zeros((SIP_INVERSE_ORDER + 1,) * 2)
     for target, m in ((u - x, ap), (v - y, bp)):
         coef, *_ = np.linalg.lstsq(design, target, rcond=None)
         for (p, q), c in zip(terms, coef):
-            m[p, q] = c
+            m[p, q] = c / s ** (p + q)
     return ap, bp
 
 

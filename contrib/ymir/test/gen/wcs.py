@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "astropy"]
+# dependencies = ["numpy==2.5.4", "astropy==8.0.2"]
 # ///
 """Generate the FITS WCS readers' test references.
 
