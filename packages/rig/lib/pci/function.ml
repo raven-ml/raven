@@ -15,7 +15,7 @@ let ( let* ) = Result.bind
 type t = {
   machine : Machine.t;
   bus : string;
-  fn : Machine.fn;
+  mutable fn : Machine.fn; (* [vacant] until its take returns *)
   inherited : bool Atomic.t; (* until [forget] *)
   releasing : bool Atomic.t; (* once a release was called *)
   dma_end : int Atomic.t;
@@ -45,40 +45,61 @@ let rec update a f =
   if not (Atomic.compare_and_set a v (f v)) then update a f
 
 (* The functions the process took whose release has not finished, with the
-   process that took each. A function is listed at its take, so that a
-   release begins with no allocation, as an exception handler's must, and an
-   exception at any of its steps leaves it listed for [finish_releases]. It
-   leaves the list once given back. A list in an atomic, so that a child of
-   fork meets no held lock; the child finishes none of its parent's. *)
+   process that took each. A function is listed before its take ([vacant]),
+   so that a release begins with no allocation, as an exception handler's
+   must, and an exception at any of its steps leaves it listed for
+   [finish_releases]. It leaves the list once given back. A list in an
+   atomic, so that a child of fork meets no held lock; the child finishes
+   none of its parent's. *)
 let unfinished = Atomic.make []
 
-let make machine bus taken =
-  Result.map
-    (fun fn ->
-      let f =
-        {
-          machine;
-          bus;
-          fn;
-          inherited = Atomic.make fn.inherited;
-          releasing = Atomic.make false;
-          dma_end = Atomic.make max_int;
-          state = Atomic.make 0;
-          kept = Atomic.make false;
-          quiet = Atomic.make false;
-          lock = Lock.create ();
-          maps = Tables.Window.create 16;
-          dmas = Tables.Window.create 16;
-          pins = Tables.Range.create 16;
-          giving = Lock.create ();
-          listed = false;
-          unmapping = [];
-          given = Atomic.make false;
-        }
-      in
-      update unfinished (List.cons (Unix.getpid (), f));
-      f)
-    taken
+(* What a function holds before its take returns: nothing, which its release
+   gives back. Only a release reaches it, since a take returns the function
+   only once it holds the machine's. *)
+let vacant_fn =
+  let no _ = invalid_arg "Function: the function is not taken" in
+  {
+    Machine.addressing = Physical;
+    inherited = false;
+    config = (fun _ -> no);
+    set_config = (fun _ _ -> no);
+    bar = no;
+    map = (fun ~combine:_ _ _ -> no);
+    unmap = no;
+    interrupt = no;
+    reset = no;
+    forget = no;
+    alloc_dma = (fun ~contiguous:_ ~va:_ ~below:_ -> no);
+    free_dma = no;
+    pin = (fun ~below:_ _ -> no);
+    unpin = (fun _ -> no);
+    release = (fun () -> true);
+  }
+
+let vacant machine bus =
+  let f =
+    {
+      machine;
+      bus;
+      fn = vacant_fn;
+      inherited = Atomic.make false;
+      releasing = Atomic.make false;
+      dma_end = Atomic.make max_int;
+      state = Atomic.make 0;
+      kept = Atomic.make false;
+      quiet = Atomic.make false;
+      lock = Lock.create ();
+      maps = Tables.Window.create 16;
+      dmas = Tables.Window.create 16;
+      pins = Tables.Range.create 16;
+      giving = Lock.create ();
+      listed = false;
+      unmapping = [];
+      given = Atomic.make false;
+    }
+  in
+  update unfinished (List.cons (Unix.getpid (), f));
+  f
 
 (* The functions [keep] keeps, by machine and bus, which the process takes no
    more. A list in an atomic, which only grows: a child of fork meets no held
@@ -101,21 +122,41 @@ let refused machine bus =
             bus))
   else None
 
-let take machine bus =
-  match refused machine bus with
-  | Some e -> e
-  | None -> (
-      make machine bus
-      @@
-      match Machine.failed machine with
-      | Some why -> Error why
-      | None -> Machine.take machine bus)
+(* Stores the machine's take in [f] and is [ok], [Ok f] allocated before the
+   take, so that nothing between the machine's take returning and the store
+   allocates or polls: an exception before leaves [f] vacant. *)
+let fill f ok = function
+  | Ok fn ->
+      f.fn <- fn;
+      Atomic.set f.inherited fn.inherited;
+      ok
+  | Error why -> Error why
 
-let take_locked machine l =
-  let bus = Sysfs.bus l in
-  match refused machine bus with
+let vacant_only fn f =
+  if f.fn != vacant_fn || Atomic.get f.releasing then
+    invalid_argf "Function.%s: %s is taken or released" fn f.bus
+
+let take_into f =
+  vacant_only "take_into" f;
+  match refused f.machine f.bus with
   | Some e -> e
-  | None -> make machine bus (Machine.take_locked machine l)
+  | None ->
+      let ok = Ok f in
+      fill f ok
+        (match Machine.failed f.machine with
+        | Some why -> Error why
+        | None -> Machine.take f.machine f.bus)
+
+let take_locked_into f l =
+  vacant_only "take_locked_into" f;
+  if Sysfs.bus l <> f.bus then
+    invalid_argf "Function.take_locked_into: the lock is of %s, not %s"
+      (Sysfs.bus l) f.bus;
+  match refused f.machine f.bus with
+  | Some e -> e
+  | None ->
+      let ok = Ok f in
+      fill f ok (Machine.take_locked f.machine l)
 
 let machine f = f.machine
 let bus f = f.bus
@@ -249,6 +290,30 @@ let release f =
       Lock.take f.giving;
       give_locked f
     end
+
+(* A take that fails leaves its function vacant, given back by its
+   release. *)
+let given_back f = function
+  | Ok _ as r -> r
+  | Error _ as e ->
+      release f;
+      e
+
+let take machine bus =
+  let f = vacant machine bus in
+  match take_into f with
+  | r -> given_back f r
+  | exception e ->
+      release f;
+      reraise e
+
+let take_locked machine l =
+  let f = vacant machine (Sysfs.bus l) in
+  match take_locked_into f l with
+  | r -> given_back f r
+  | exception e ->
+      release f;
+      reraise e
 
 (* A finish waits for the uses that run, then for a give-back that runs on
    another thread, so that the function is given back as it returns. A use

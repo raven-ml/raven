@@ -55,6 +55,53 @@ let open_device group bus : fd =
 let page = Sysmem.page
 let round_page n = (n + page - 1) / page * page
 
+(* Descriptors *)
+
+(* A take opens at most six descriptors: physically, its configuration file
+   and its lock, and through no-IOMMU VFIO the group, the container, the
+   function and the eventfd. *)
+let most_fds = 6
+
+(* The first [n] of [slots], in the order they opened. *)
+type fds = { slots : fd array; mutable n : int }
+
+let fds () = { slots = Array.make most_fds Unix.stdin; n = 0 }
+
+(* Allocates nothing, so that a descriptor recorded as the step after its
+   open is never lost to an exception. *)
+let opened r fd =
+  if r.n = most_fds then invalid_arg "Vfio.opened: more than six descriptors";
+  Array.unsafe_set r.slots r.n fd;
+  r.n <- r.n + 1
+
+(* Each descriptor is dropped as its close returns, with nothing between
+   that allocates or polls, so that a close called again after an exception
+   closes the rest and none twice: their numbers may be files opened since.
+   Linux frees a descriptor whatever its close answers, but for EBADF, which a
+   descriptor that was not open gives, and only a bug of this library's
+   closes such a one (close(2), NOTES). *)
+let rec close_fds r =
+  if r.n > 0 then
+    let fd = Array.unsafe_get r.slots (r.n - 1) in
+    match Unix.close fd with
+    | () ->
+        r.n <- r.n - 1;
+        close_fds r
+    | exception (Unix.Unix_error (EBADF, _, _) as e) ->
+        r.n <- r.n - 1;
+        Fail.bug "closing a descriptor of a take" (fun () -> raise e)
+    | exception Unix.Unix_error _ ->
+        r.n <- r.n - 1;
+        close_fds r
+
+(* Closes the descriptor opened last. *)
+let close_last r =
+  let fd = Array.unsafe_get r.slots (r.n - 1) in
+  r.n <- r.n - 1;
+  try Unix.close fd with Unix.Unix_error _ -> ()
+
+let last r = Array.unsafe_get r.slots (r.n - 1)
+
 (* Messages *)
 
 (* Opens the VFIO file [file] of [bus], naming the step that grants it. *)
@@ -87,9 +134,9 @@ let not_viable files bus g =
 
 (* Opening *)
 
-(* [bus]'s group file for the model [m], and the group's descriptor once
-   viable. *)
-let open_group files bus m =
+(* [bus]'s group file for the model [m], its descriptor on [fds] as it opens,
+   closed unless the group is viable. *)
+let open_group files fds bus m =
   let g =
     match Sysfs.group files bus with
     | Some g -> g
@@ -104,15 +151,16 @@ let open_group files bus m =
   let vfio = Sysfs.vfio_file files "vfio" in
   if not (Sys.file_exists vfio) then
     Fail.fail "%s does not exist; bind %s to vfio-pci" vfio bus;
-  let group = open_file bus file in
+  opened fds (open_file bus file);
+  let group = last fds in
   let status = "reading the status of " ^ file in
   match Fail.step status (fun () -> viable group) with
-  | true -> (file, group)
+  | true -> file
   | false ->
-      Unix.close group;
+      close_last fds;
       Fail.fail "%s" (not_viable files bus g)
   | exception e ->
-      Unix.close group;
+      close_last fds;
       raise e
 
 (* A new container with the model [m] that holds [group], open at [file]. *)
@@ -161,31 +209,25 @@ let new_container files bus file group m =
       raise e
 
 (* The function [bus] of [group], whose first MSI vector goes to a new eventfd:
-   their descriptors, each on [fds] once open. *)
+   their descriptors, each on [fds] as it opens. *)
 let open_device fds bus group =
-  let opened fd =
-    fds := fd :: !fds;
-    fd
-  in
-  let device =
-    opened
-      (Fail.step
-         ("opening " ^ bus ^ " through VFIO")
-         (fun () -> open_device group bus))
-  in
-  let efd = opened (Fail.step "creating an eventfd" eventfd) in
+  let what = "opening " ^ bus ^ " through VFIO" in
+  opened fds (Fail.step what (fun () -> open_device group bus));
+  let device = last fds in
+  opened fds (Fail.step "creating an eventfd" eventfd);
+  let efd = last fds in
   Fail.step ("routing the interrupt of " ^ bus) (fun () -> msi device efd);
   (device, efd)
 
 (* Opens [bus]'s group in a container of its own with the IOMMU model [m], then
    the function, whose first MSI vector goes to an eventfd. Each descriptor goes
-   on [fds] once open. Is the container, the function's descriptor and the
+   on [fds] as it opens. Is the container, the function's descriptor and the
    eventfd. *)
 let open_function files fds bus m =
-  let file, group = open_group files bus m in
-  fds := group :: !fds;
-  let container = new_container files bus file group m in
-  fds := container :: !fds;
+  let file = open_group files fds bus m in
+  let group = last fds in
+  opened fds (new_container files bus file group m);
+  let container = last fds in
   let device, efd = open_device fds bus group in
   (container, device, efd)
 
@@ -328,22 +370,18 @@ let keeps bus c =
 
 (* The container of [bus]'s group, open at [file], with a count for the
    function: the first of the machine's that this process opened, takes the
-   group and keeps its window, or a new one. [group] holds the group's
-   descriptor while one is open: a group taken out again by closing its file
-   opens anew. *)
-let join files bus file group =
+   group and keeps its window, or a new one. The group's descriptor is the
+   last of [fds]: a group taken out again by closing its file opens anew. *)
+let join files fds bus file =
   let root = Sysfs.root files and pid = Unix.getpid () in
   let reopen () =
-    Unix.close (Option.get !group);
-    group := None;
-    group := Some (open_file bus file)
+    close_last fds;
+    opened fds (open_file bus file)
   in
   let rec next = function
-    | [] ->
-        let g = Option.get !group in
-        container files bus (new_container files bus file g Type1v2)
+    | [] -> container files bus (new_container files bus file (last fds) Type1v2)
     | c :: rest -> (
-        match set_container (Option.get !group) c.fd with
+        match set_container (last fds) c.fd with
         | exception Unix.Unix_error _ -> next rest
         | () when keeps bus c -> c
         | () ->
@@ -387,24 +425,17 @@ let bad_close () =
   Fail.bug "closing a VFIO container" (fun () ->
       raise (Unix.Unix_error (EBADF, "close", "")))
 
-(* Opens [bus] behind its IOMMU, its descriptors but its container's on [fds]:
-   the function and the eventfd its interrupts signal. *)
+(* Opens [bus] behind its IOMMU, its descriptors but its container's on [fds]
+   as each opens: the group, the function and the eventfd its interrupts
+   signal. *)
 let open_ files fds bus =
-  let file, group = open_group files bus Type1v2 in
-  let group = ref (Some group) in
-  let c =
-    match
-      Lock.protect containers_lock (fun () -> join files bus file group)
-    with
-    | c -> c
-    | exception e ->
-        Option.iter Unix.close !group;
-        raise e
-  in
-  let group = Option.get !group in
-  fds := group :: !fds;
-  match open_device fds bus group with
-  | device, efd -> ({ c; device; released = false; left = false }, efd)
+  let file = open_group files fds bus Type1v2 in
+  let c = Lock.protect containers_lock (fun () -> join files fds bus file) in
+  match
+    let device, efd = open_device fds bus (last fds) in
+    ({ c; device; released = false; left = false }, efd)
+  with
+  | r -> r
   | exception e ->
       if not (leave c) then bad_close ();
       raise e

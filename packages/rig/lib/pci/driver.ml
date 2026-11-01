@@ -21,7 +21,10 @@ type siblings = Remove | Keep
 (* The buses lost on each machine, by an ephemeron on the machine, so that a
    driver keeps no machine the process dropped: the GC frees an entry once
    its machine goes, and the table drops the entry's cell as it grows.
-   Machines that no transport names hash alike. *)
+   Machines that no transport names hash alike. A table is changed only as a
+   copy, published with one store ([mark]): the stdlib's growth stores its
+   new buckets before it moves the bindings into them, so an exception there
+   would drop other machines' marks. *)
 module Spent = Ephemeron.K1.Make (struct
   type t = Machine.t
 
@@ -43,7 +46,7 @@ type t = {
   mutable exits : bool;
   holds : Lock.t;
   mutable held : hold list;
-  spent : string list Spent.t;
+  mutable spent : string list Spent.t; (* under [holds] *)
 }
 
 (* [pid] is the process that opened it: a child of fork inherits the hold, and
@@ -137,30 +140,36 @@ let nth g m i =
 let spent g m = Option.value (Spent.find_opt g.spent m) ~default:[]
 let lost g m bus = Lock.protect g.holds (fun () -> List.mem bus (spent g m))
 
-(* Records whether the function at [bus] of [m] is lost, under [holds]. *)
+(* Records whether the function at [bus] of [m] is lost, under [holds]. An
+   exception before the store leaves the mark as it was. *)
 let mark g m bus ~lost =
   let others = List.filter (( <> ) bus) (spent g m) in
-  Spent.replace g.spent m (if lost then bus :: others else others)
+  let buses = if lost then bus :: others else others in
+  (* The copy shares the table's bindings: [m]'s is removed from the copy and
+     a new one added, so that the table published stays as it was. *)
+  let t = Spent.copy g.spent in
+  Spent.remove t m;
+  if buses <> [] then Spent.add t m buses;
+  g.spent <- t
 
 (* Resets the taken function [fn] as its vendor does: it reaches none of the
    memory processes that died left then, which goes before the driver asks
-   whether the function is ready, whatever it answers. One whose reset failed
-   or raised, or that is not ready, is lost, and renewed by its next open. *)
+   whether the function is ready, whatever it answers. The function is
+   marked lost before the reset's first write and unmarked once it is ready,
+   so that one whose reset failed or raised, or an exception ended
+   anywhere, or that is not ready, stays lost, and its next open renews
+   it. *)
 let renew_taken g m bus fn =
-  let reset () =
+  Lock.protect g.holds (fun () -> mark g m bus ~lost:true);
+  let r =
     Function.set_bus_master fn false;
     let* () = g.reset fn in
     let* () = Function.forget fn in
     g.ready fn
   in
-  match reset () with
-  | r ->
-      Lock.protect g.holds (fun () -> mark g m bus ~lost:(Result.is_error r));
-      r
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Lock.protect g.holds (fun () -> mark g m bus ~lost:true);
-      Printexc.raise_with_backtrace e bt
+  if Result.is_ok r then
+    Lock.protect g.holds (fun () -> mark g m bus ~lost:false);
+  r
 
 let renew h =
   match renew_taken h.driver h.machine h.bus h.fn with
@@ -169,9 +178,8 @@ let renew h =
       h.unrenewed <- true;
       e
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
       h.unrenewed <- true;
-      Printexc.raise_with_backtrace e bt
+      reraise e
 
 (* Stopping *)
 
@@ -317,6 +325,15 @@ let take g m bus =
   | None -> Function.take m bus
   | Some files -> Sysfs.locked files bus (fun l -> take_locked g m l)
 
+(* [take] into the vacant [fn]. *)
+let take_into g m fn =
+  match Machine.files m with
+  | None -> Function.take_into fn
+  | Some files ->
+      Sysfs.locked files (Function.bus fn) (fun l ->
+          let* () = released g l in
+          Function.take_locked_into fn l)
+
 (* Ends what exceptions cut in this process before an open, a reset or a
    change, which all pass here, as a detach passes no take. First the holds of
    its opens of [g] that are no longer live, as their bracket would have: a
@@ -356,15 +373,18 @@ let ended g =
 
 (* A function this process lost, or one a process that died left reaching
    memory, is renewed before the driver starts; one whose renewal fails is
-   lost. *)
+   lost. The exit hook is registered and the hold listed, its function
+   vacant, before the take: from the take's first step on, an exception
+   leaves the hold for the next open or the exit to end. *)
 let open_ g m i f =
   Lock.check "Driver.open_";
   index "open_" i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->
+  register_exit g;
   ended g;
   let* bus = nth g m i in
-  let* fn = take g m bus in
+  let fn = Function.vacant m bus in
   let h =
     {
       driver = g;
@@ -386,6 +406,7 @@ let open_ g m i f =
      lost either way. *)
   let failed () = ignore (finish h ~failed:true) in
   match
+    let* _ = take_into g m fn in
     let* () =
       if lost g m bus || Function.inherited fn then renew h else Ok ()
     in
@@ -395,7 +416,6 @@ let open_ g m i f =
       failed ();
       invalid_argf "Driver.open_: the driver of %s answered Ok with no stop" bus
   | Ok _ as r ->
-      register_exit g;
       (* The last store before the open returns: nothing allocates after it,
          in [Lock.protect]'s give or in [named]. *)
       h.opened <- true;

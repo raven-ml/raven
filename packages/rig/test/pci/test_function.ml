@@ -2799,6 +2799,29 @@ let test_finish_raises () =
   in
   walk 1
 
+(* An exception at any allocation of a take, and at every one after, leaves
+   nothing of the function taken: no descriptor holds its lock, and the next
+   take takes it. *)
+let test_interrupted_take () =
+  let root, f = fixture () in
+  let bus = Function.bus f and m = Function.machine f in
+  Function.release f;
+  let rec walk n =
+    let taken = ref (Error "not reached") in
+    let reached =
+      Rig_support.interrupted n (fun () -> taken := Function.take m bus)
+    in
+    Result.iter Function.release !taken;
+    let at what = strf "%s, from allocation %d" what n in
+    equal ~msg:(at "locked") bool false (Tree.flocked (config_file root bus));
+    (match Function.take m bus with
+    | Ok f -> Function.release f
+    | Error why -> failf "%s: %s" (at "the take after") why);
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1
+
 let interrupts =
   group ~timeout:patience "interrupts"
     [
@@ -2812,6 +2835,8 @@ let interrupts =
         test_interrupted_release;
       test "an exception at any allocation of a wait ends its use"
         test_interrupted_wait;
+      test "an exception at any allocation of a take leaves nothing taken"
+        test_interrupted_take;
       test "an exception at any allocation of a keep leaves the function kept"
         test_interrupted_keep;
       test

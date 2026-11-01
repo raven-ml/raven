@@ -44,8 +44,7 @@ type taken = {
   intx : int option; (* the INTx bit as found, if the take turned INTx off *)
   way : way;
   inherited : bool; (* a dead process left it reaching memory, at the take *)
-  mutable fds : Unix.file_descr list;
-      (* every descriptor the take opened that no release closed *)
+  fds : Vfio.fds; (* every descriptor the take opened that no release closed *)
   mutable given : bool; (* once a release gave a physical take back *)
   mutable stopped : bool; (* whether that release turned bus mastering off *)
 }
@@ -300,26 +299,10 @@ let forget t =
   | Physical_take s -> Sysmem.forget ~root:(Sysmem.root s) ~bus:t.bus
   | Iommu_take _ -> ()
 
-(* Closes the take's descriptors, each dropped from [fds] as its close
-   returns, with nothing between that allocates or polls, so that a release
-   called again after an exception closes the rest and none twice: their
-   numbers may be files opened since. Linux frees a descriptor whatever its
-   close answers, but for EBADF, which a descriptor that was not open gives,
-   and only a bug of this library's closes such a one (close(2), NOTES). *)
-let rec close_fds t =
-  match t.fds with
-  | [] -> ()
-  | fd :: rest -> (
-      match Unix.close fd with
-      | () ->
-          t.fds <- rest;
-          close_fds t
-      | exception (Unix.Unix_error (EBADF, _, _) as e) ->
-          t.fds <- rest;
-          Fail.bug ("closing a descriptor of " ^ t.bus) (fun () -> raise e)
-      | exception Unix.Unix_error _ ->
-          t.fds <- rest;
-          close_fds t)
+(* A release called again after an exception closes the rest of the take's
+   descriptors and none twice ({!Vfio.close_fds}): their numbers may be files
+   opened since. *)
+let close_fds t = Vfio.close_fds t.fds
 
 (* A release that an exception ended goes on from where it was when called
    again. Behind an IOMMU a take's descriptors close whatever happens before:
@@ -394,7 +377,7 @@ let take_iommu files fds bus bars prefetchable =
     intx = None;
     way = Iommu_take c;
     inherited = false;
-    fds = !fds;
+    fds;
     given = false;
     stopped = false;
   }
@@ -406,19 +389,18 @@ let take_iommu files fds bus bars prefetchable =
 let take_physical l fds bars prefetchable =
   let files = Sysfs.files l and bus = Sysfs.bus l in
   let file = Sysfs.path files bus "config" in
-  let config =
-    try Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
-    | Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
-        Fail.fail
-          "opening %s: %s; taking %s needs write access to its files under \
-           /sys/bus/pci: run as root"
-          file (Unix.error_message e) bus
-    | Unix.Unix_error (e, _, _) ->
-        Fail.fail "opening %s: %s" file (Unix.error_message e)
-  in
-  fds := config :: !fds;
-  let lock = Fail.step ("locking " ^ file) (fun () -> Sysfs.keep l) in
-  fds := lock :: !fds;
+  (match Unix.openfile file [ O_RDWR; O_SYNC; O_CLOEXEC ] 0 with
+  | fd -> Vfio.opened fds fd
+  | exception Unix.Unix_error (((EACCES | EPERM) as e), _, _) ->
+      Fail.fail
+        "opening %s: %s; taking %s needs write access to its files under \
+         /sys/bus/pci: run as root"
+        file (Unix.error_message e) bus
+  | exception Unix.Unix_error (e, _, _) ->
+      Fail.fail "opening %s: %s" file (Unix.error_message e));
+  let config = Vfio.last fds in
+  let what = "locking " ^ file in
+  Vfio.opened fds (Fail.step what (fun () -> Sysfs.keep l));
   (* The first act of a process on the machine's memory: what processes that
      died left and no function reaches goes, without waiting for a reset. What
      the function still reaches stays, until its GPU is reset. *)
@@ -442,26 +424,22 @@ let take_physical l fds bars prefetchable =
       intx = None;
       way = Physical_take (Sysmem.store ~root ~bus);
       inherited;
-      fds = !fds;
+      fds;
       given = false;
       stopped = false;
     }
   in
-  let t =
-    if Option.is_some interrupts then t else { t with intx = Some (intx_off t) }
-  in
-  hold t;
-  t
+  if Option.is_some interrupts then t else { t with intx = Some (intx_off t) }
 
-(* A failure gives back every descriptor taken, as does a bug's [Failure].
-   Behind VFIO the group's file admits one process at a time; taken
-   physically, the function keeps its lock until its release. *)
+(* A failure gives back every descriptor taken, as does a bug's [Failure]:
+   each is recorded as it opens, and the handlers close them first, with
+   nothing before that allocates. Behind VFIO the group's file admits one
+   process at a time; taken physically, the function keeps its lock until its
+   release. A physical take is listed for the exit as its last step, with
+   nothing after that allocates or polls, so that no handler closes the
+   descriptors of a take the exit gives back. *)
 let take l =
-  let fds = ref [] in
-  let refused why =
-    List.iter Unix.close !fds;
-    Error why
-  in
+  let fds = Vfio.fds () in
   match
     let* addressing = Sysfs.access l in
     let bars = Sysfs.bars l and prefetchable = Sysfs.prefetchable l in
@@ -470,15 +448,22 @@ let take l =
         Ok
           (fn
              (take_iommu (Sysfs.files l) fds (Sysfs.bus l) bars prefetchable))
-    | Physical -> Ok (fn (take_physical l fds bars prefetchable))
+    | Physical ->
+        let t = take_physical l fds bars prefetchable in
+        let r = Ok (fn t) in
+        hold t;
+        r
   with
   | Ok _ as fn -> fn
-  | Error why -> refused why
-  | exception Fail.Failed why -> refused why
+  | Error _ as e ->
+      Vfio.close_fds fds;
+      e
+  | exception Fail.Failed why ->
+      Vfio.close_fds fds;
+      Error why
   | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      List.iter Unix.close !fds;
-      Printexc.raise_with_backtrace e bt
+      Vfio.close_fds fds;
+      reraise e
 
 let ops files =
   {

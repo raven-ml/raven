@@ -444,6 +444,25 @@ val unpin : t -> int -> int -> unit
    take keeps until its release. *)
 val take_locked : Machine.t -> 's Sysfs.lock -> (t, string) result
 
+(* [vacant m bus] is a function of [m] at [bus] that holds nothing yet, for
+   {!take_into}, made before the take so that a caller records it first: an
+   exception at any step of the take leaves it vacant or taken, and either way
+   its {!release} gives back what it holds. Its release is the only operation
+   before its take returns [Ok]. *)
+val vacant : Machine.t -> string -> t
+
+(* [take_into f] is {!take} of the vacant [f]'s bus into [f]: [Ok f] once [f]
+   holds the function, with nothing between the machine's take returning and
+   [f] holding it that allocates or polls. [Error] leaves [f] vacant.
+
+   Raises [Invalid_argument] if [f] is taken or released. *)
+val take_into : t -> (t, string) result
+
+(* [take_locked_into f l] is {!take_locked} into the vacant [f], as
+   {!take_into}. Raises [Invalid_argument] if [f] is taken or released, or if
+   [l] locks another bus. *)
+val take_locked_into : t -> 's Sysfs.lock -> (t, string) result
+
 (* [set_own_length n] makes each range of this process's own addresses that
    {!alloc_dma} reserves from then on, for memory of a function taken
    physically without [va], [n] bytes, or as many as a request needs, and is

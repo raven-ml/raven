@@ -477,47 +477,57 @@ let test_stop_cut (_, landing, next) =
   in
   walk 1
 
-(* A hold whose open an exception cut as it returned, after the driver gave
-   it a stop that always raises: the exception the stop raises as the next
-   open ends the hold passes to that open, once, and the GPU is given back
-   and lost. The open after succeeds, renewing the GPU without calling the
-   stop again. *)
+(* A driver that gives its GPU a stop that always raises, then fails, with an
+   exception at each allocation from its failure on and every one after, as
+   one that cuts the open's handler before it stops the GPU: the stop runs
+   once in all, in that open or as the next open ends the hold, which then
+   raises the stop's exception, and the GPU is given back and lost. The open
+   after renews it without calling the stop again. *)
 let test_cut_stop_raises () =
   needs_flock ();
+  let recorded = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recorded)
+  @@ fun () ->
   let g, m, root = three () in
-  let calls = ref 0 and started = ref false in
-  let start h _ =
-    Driver.set_stop h (fun () ->
-        incr calls;
-        raise Not_found);
-    let r = Ok h in
-    started := true;
-    r
+  let rec walk n =
+    let calls = ref 0 and started = ref false in
+    let start h _ =
+      Driver.set_stop h (fun () ->
+          incr calls;
+          raise Not_found);
+      started := true;
+      failwith "the driver failed"
+    in
+    let reached =
+      Rig_support.interrupted ~from:(fun _ -> !started) n (fun () ->
+          match Driver.open_ g m 0 start with
+          | _ -> ()
+          | exception (Not_found | Failure _) -> ())
+    in
+    let at what = strf "%s, from allocation %d" what n in
+    (match Driver.open_ g m 1 (fun h _ -> kept h) with
+    | Ok h -> stop h
+    | Error why -> failf "%s: %s" (at "the next open") why
+    | exception Not_found -> ());
+    equal ~msg:(at "the stops") int 1 !calls;
+    equal ~msg:(at "the GPU's take held") bool false (held root gpu_bus);
+    let before = Atomic.get vendor_resets in
+    stop (hold g m 0);
+    equal ~msg:(at "the stops after the open after") int 1 !calls;
+    equal ~msg:(at "the GPU renewed") int 1 (Atomic.get vendor_resets - before);
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
   in
-  started := false;
-  let reached =
-    Rig_support.interrupted ~from:(fun _ -> !started) 1 (fun () ->
-        ignore (Driver.open_ g m 0 start))
-  in
-  equal ~msg:"the open cut after its driver" bool true reached;
-  equal ~msg:"the stops after the cut" int 0 !calls;
-  raises Not_found (fun () -> ignore (Driver.open_ g m 1 (fun h _ -> kept h)));
-  equal ~msg:"the stops after the open that ended the hold" int 1 !calls;
-  equal ~msg:"the GPU's take held" bool false (held root gpu_bus);
-  let before = Atomic.get vendor_resets in
-  stop (hold g m 0);
-  equal ~msg:"the stops after the next open" int 1 !calls;
-  equal ~msg:"the GPU renewed" int 1 (Atomic.get vendor_resets - before)
+  walk 1
 
 (* An exception at any allocation of an open once its driver started: an
    open the exception ended is no open of the process's, and the next open
    ends it as the open's bracket would have. *)
 let test_open_interrupted () = walk_open ~after:true
 
-(* An exception before the driver starts, in the take, which holds the
-   function from the descriptor it opens to the hold the open lists, with
-   allocations between, leaves the function taken: the next open is refused
-   for the process. *)
+(* An exception at any allocation before the driver starts, in the take
+   included, leaves nothing of the GPU taken: the next open takes it. *)
 let test_take_interrupted () = walk_open ~after:false
 
 let opening =
@@ -530,16 +540,13 @@ let opening =
          leaves the GPU given back by what comes next"
         ~id:(fun (n, _, _) -> n)
         (crossed after_cut) test_stop_cut;
-      xfail
-        ~reason:"the take holds the function across allocations before the \
-                 open lists its hold"
-        (test
-           "an exception at any allocation before the driver starts leaves it \
-            to open again"
-           test_take_interrupted);
       test
-        "a driver's stop that raises as an open ends a cut hold passes to \
-         that open once, and the GPU opens after"
+        "an exception at any allocation before the driver starts leaves it to \
+         open again"
+        test_take_interrupted;
+      test
+        "a driver's stop that raises, in an open an exception cut, runs once, \
+         and the GPU opens after"
         test_cut_stop_raises;
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
@@ -658,6 +665,64 @@ let test_reset_cut (_, landing, next) =
   let _, m, root = three () in
   walk_cut root m (fun g m -> ignore (Driver.reset g m 0)) landing next
 
+(* A reset the vendor refuses, with an exception at any allocation from its
+   take on, leaves the GPUs lost on other machines lost, and its own GPU lost
+   once the vendor's reset ran: the next open of each renews it. The GPUs of
+   32 machines are lost first, so that the next machine's mark grows the
+   driver's table of lost GPUs, which holds two machines for each of its
+   first 16 buckets (stdlib ephemeron.ml). *)
+let before_growth = 32
+
+let test_reset_cut_lost () =
+  needs_flock ();
+  let root = Tree.make functions in
+  let refuse = ref true and taking = ref false in
+  let reset _ =
+    Atomic.incr vendor_resets;
+    if !refuse then Error "the GPU did not come back" else Ok ()
+  in
+  let unreleased ~root:_ _ =
+    taking := true;
+    None
+  in
+  let renewals g m =
+    let before = Atomic.get vendor_resets in
+    stop (hold g m 0);
+    Atomic.get vendor_resets - before
+  in
+  let rec walk n =
+    let g = gpus ~reset ~unreleased () in
+    let others = List.init before_growth (fun _ -> Machine.at root) in
+    let m = Machine.at root in
+    refuse := true;
+    List.iter (fun m -> ignore (Driver.reset g m 0)) others;
+    taking := false;
+    let before = Atomic.get vendor_resets in
+    let reached =
+      Rig_support.interrupted ~from:(fun _ -> !taking) n (fun () ->
+          ignore (Driver.reset g m 0))
+    in
+    let ran = Atomic.get vendor_resets > before in
+    refuse := false;
+    (* A growth moves the oldest machines first: one cut short drops the
+       newest it has not moved, the newest before this one among them, and
+       the oldest too if cut at its first move. *)
+    List.iter
+      (fun k ->
+        equal
+          ~msg:(strf "from allocation %d, the renewals of machine %d's GPU" n k)
+          int 1
+          (renewals g (List.nth others k)))
+      [ 0; before_growth - 1 ];
+    let mine = renewals g m in
+    if ran then
+      equal ~msg:(strf "from allocation %d, the renewals of the GPU" n) int 1
+        mine;
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1
+
 let resets =
   group ~timeout:patience "resets"
     [
@@ -673,6 +738,10 @@ let resets =
          leaves the GPU given back by what comes next"
         ~id:(fun (n, _, _) -> n)
         (crossed after_reset) test_reset_cut;
+      test
+        "an exception at any allocation of a refused reset leaves every GPU \
+         lost renewed by its next open"
+        test_reset_cut_lost;
     ]
 
 (* This machine *)
