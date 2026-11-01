@@ -518,15 +518,17 @@ let diff (Type.Any ty) =
 let exact (Type.Any ty) s =
   Int64.div (Time.Span.to_ns s) (Type.ns_per_unit (Option.get (unit_of ty)))
 
-(* [moved t c days x] is the values [x] of the column [c] of [t] moved to the
-   days [days], at the same time of day, failing with [why] out of range. *)
-let moved t c days x why =
+(* [moved t c days tod why] is the values of the column [c] of [t] moved to the
+   days [days] at the times of day [tod], failing with [why] out of range. The
+   caller gives the times of day: computed from a midnight outside the ticks,
+   they would wrap and hide an overflow of [days]. *)
+let moved t c days tod why =
   match t with
   | Type.Any Date ->
       checked t [ c ] ~ok:(in_int32 days) (Nx.cast Nx.int32 days) why
   | Any (Datetime { unit_; _ }) ->
       let day = ticks_per_day unit_ in
-      let r = Nx.add (Nx.mul_s days day) (floor_mod x day) in
+      let r = Nx.add (Nx.mul_s days day) tod in
       checked t [ c ] ~ok:(Nx.equal (floor_div r day) days) r why
   | _ -> assert false (* Binding checked the type. *)
 
@@ -560,8 +562,8 @@ let floor (step : Time.step) t =
   | _ ->
       fun c ->
         let x = int64s c in
-        let days, tod, _ = split t x in
-        moved t c (floor_days days) (Nx.sub x tod) (why c)
+        let days, _, _ = split t x in
+        moved t c (floor_days days) (Nx.zeros_like x) (why c)
 
 let offset (step : Time.step) t =
   let move_days days =
@@ -589,5 +591,5 @@ let offset (step : Time.step) t =
   | _ ->
       fun c ->
         let x = int64s c in
-        let days, _, _ = split t x in
-        moved t c (move_days days) x (why c)
+        let days, tod, _ = split t x in
+        moved t c (move_days days) tod (why c)

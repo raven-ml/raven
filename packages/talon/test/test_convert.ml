@@ -390,6 +390,15 @@ let time =
           equal (array (option int)) (some [| 9; 4 |]) (f `Month);
           equal (array (option int)) (some [| 21; 11 |]) (f `Day);
           equal (array (option int)) (some [| 0; 23 |]) (f `Hour));
+      test
+        "a datetime's day whose midnight is below the least tick has no floor"
+        (fun () ->
+          let t =
+            one "t" (Column.v (Type.datetime Ns) [| Time.of_ns Int64.min_int |])
+          in
+          expect (error (Expr.Temporal.floor (Days 1) (Col.instant "t")) t)
+          @@ __POS_OF__
+               {| select ["out" := Temporal.floor 1d t]: row 0: the 1d period of 1677-09-21T00:12:43.145224192 is out of range. |});
       test "add and diff" (fun () ->
           let t = dates [| Some (date 2024 2 28) |] in
           equal
@@ -1030,7 +1039,7 @@ let cast_ticks (Type.Any ty as t) (Type.Any into) xs =
    model gives [expected], [None] where a row fails: the run fails at the first
    row that fails and is not null, and otherwise gives each row's storage, null
    where [xs] is. *)
-let agrees ~expected xs r =
+let agrees ?(failure = "cannot cast ") ~expected xs r =
   let fails i = Option.is_some xs.(i) && Option.is_none expected.(i) in
   match List.find_opt fails (List.init (Array.length xs) Fun.id) with
   | None ->
@@ -1043,7 +1052,7 @@ let agrees ~expected xs r =
         (int64_options (require_ok ~pp:Error.pp r))
   | Some row ->
       contains
-        ~sub:(Printf.sprintf ": row %d: cannot cast " row)
+        ~sub:(Printf.sprintf ": row %d: %s" row failure)
         (Format.asprintf "%a" Error.pp (require_error r))
 
 let units = Type.[ S; Ms; Us; Ns ]
@@ -1177,26 +1186,49 @@ let days_floor =
     let open Gen in
     let* u = of_list units in
     let day = ticks_per_day u in
-    let+ ts =
-      array ~size:(int_range 0 12)
-        (option
-           (let+ d = int64_range (Int64.neg (reach u)) (reach u)
-            and+ k = int64_range 0L (Int64.pred day) in
-            Int64.add (Int64.mul d day) k))
+    let edges =
+      [ Int64.min_int; Int64.succ Int64.min_int; -1L; 0L; 1L ]
+      @ [ Int64.pred Int64.max_int; Int64.max_int ]
     in
+    let anywhere =
+      let+ d = int64_range (Int64.neg (reach u)) (reach u)
+      and+ k = int64_range 0L (Int64.pred day) in
+      Int64.add (Int64.mul d day) k
+    in
+    let tick = frequency [ (1, of_list edges); (3, anywhere); (1, int64) ] in
+    let+ ts = array ~size:(int_range 0 12) (option tick) in
     (u, ts)
   in
-  prop "a datetime cast to a date and back is Temporal.floor (Days 1) of it" gen
-    (fun (u, ts) ->
+  prop
+    "Temporal.floor (Days 1) is the midnight of a datetime's day, and a cast \
+     to a date and back is that midnight"
+    gen (fun (u, ts) ->
+      let day = ticks_per_day u in
+      let midnight t = mul_exact (floor_div t day) day in
+      let expected = Array.map (fun t -> Option.bind t midnight) ts in
       cover "a time of day before 1970" (before_1970 ts);
+      cover "a midnight below the least tick" (fails ts expected);
       let ty = Type.datetime u in
-      let x = Col.instant "x" and t = one "x" (ticks_column (Any ty) ts) in
+      let x = Col.instant "x" in
       let floor = Expr.Temporal.floor (Days 1) x in
-      let back = Expr.(cast ty (cast Type.date x)) in
+      agrees ~failure:"the 1d period of " ~expected ts
+        (compute floor (one "x" (ticks_column (Any ty) ts)));
+      (* The cast holds where the midnight and the date both exist. *)
+      let defined t =
+        let d = floor_div t day in
+        Option.is_some (midnight t) && d >= int32_lo && d <= int32_hi
+      in
+      let kept =
+        Array.of_list
+          (List.filter
+             (function Some t -> defined t | None -> true)
+             (Array.to_list ts))
+      in
+      let t = one "x" (ticks_column (Any ty) kept) in
       equal
         (array (option int64))
         (int64_options (result floor t))
-        (int64_options (result back t)))
+        (int64_options (result Expr.(cast ty (cast Type.date x)) t)))
 
 let clocks_and_durations =
   let gen =
