@@ -839,6 +839,110 @@ let nests_keep_values =
             values)
         cs)
 
+(* Nests of extremes of a 16-bit float computed as rune computes them, each
+   widened to float32, selected there and narrowed back, against a constant:
+   the outer one selects the 16-bit values by the comparison of their
+   widenings. Each computes as the nest at every 16-bit [v] of zeros of both
+   signs, a NaN, the infinities and values around them. Where every value
+   the narrowing sees is a 16-bit value, a widening, a constant the format
+   holds or a selection of such values at any depth, a nest of two minima or
+   two maxima is one selection, as LLVM sees through the casts. Where the
+   narrowing rounds, from a float32 sum, a constant the format does not hold
+   or the other 16-bit format, the nest is kept: the rewrite would give -0. for
+   the narrowed sum [v - 1e-10] at [v = 0]. *)
+type narrowed = Plain | Deep | Sum | Unheld | Across
+
+let narrow_nests_keep_values =
+  let f = Dtype.Float32 in
+  let wide u = Ops.cast u f in
+  let outer form m c16 c32 =
+    let w = wide m in
+    match form with
+    | Min_vc -> Ops.where Ops.O.(w < c32) m c16
+    | Min_cv -> Ops.where Ops.O.(c32 < w) c16 m
+    | Max_vc -> Ops.where Ops.O.(w < c32) c16 m
+    | Max_cv -> Ops.where Ops.O.(c32 < w) m c16
+  in
+  let kind = function Min_vc | Min_cv -> `Min | Max_vc | Max_cv -> `Max in
+  let name = function
+    | Min_vc -> "min v c"
+    | Min_cv -> "min c v"
+    | Max_vc -> "max v c"
+    | Max_cv -> "max c v"
+  in
+  let narrowed_name = function
+    | Plain -> "a widening"
+    | Deep -> "selections of widenings"
+    | Sum -> "a float32 sum"
+    | Unheld -> "a constant it does not hold"
+    | Across -> "the other format"
+  in
+  let selections u =
+    List.length
+      (List.filter (fun n -> Ops.op n = Where) (Ops.toposort ~calls:Enter u))
+  in
+  let values =
+    List.map
+      (fun x -> `Float x)
+      [
+        -0.; 0.; Float.nan; 1.; -1.; 2.; 0.5; Float.infinity; Float.neg_infinity;
+      ]
+  in
+  let constants = function
+    | Unheld -> [ 0.1 ]
+    | _ -> [ 0.; -0.; 1.; Float.nan ]
+  in
+  let all =
+    List.concat_map
+      (fun h ->
+        List.concat_map
+          (fun n ->
+            List.concat_map
+              (fun c -> List.map (fun io -> (h, n, c, io)) nest_forms)
+              (constants n))
+          [ Plain; Deep; Sum; Unheld; Across ])
+      [ Dtype.Float16; Dtype.Bfloat16 ]
+  in
+  cases "a nest of 16-bit extremes through float32 keeps its values"
+    ~id:(fun (h, n, c, (i, o)) ->
+      Format.asprintf "%a, %s of %s of %s against %g" Dtype.pp h (name o)
+        (name i) (narrowed_name n) c)
+    all
+    (fun (h, n, c, (i, o)) ->
+      let other =
+        if Dtype.equal h Dtype.Float16 then Dtype.Bfloat16 else Dtype.Float16
+      in
+      let x = param (match n with Across -> other | _ -> h) in
+      let c16 = Ops.float ~dtype:h c and c32 = Ops.float ~dtype:f c in
+      let v =
+        match n with
+        | Plain | Unheld | Across -> wide x
+        | Deep ->
+            let w = wide x in
+            Ops.where
+              Ops.O.(w < Ops.float ~dtype:f 1.)
+              (Ops.where Ops.O.(w < Ops.float ~dtype:f (-1.)) w
+                 (wide (Ops.neg x)))
+              w
+        | Sum -> Ops.O.(wide x + Ops.float ~dtype:f (-1e-10))
+      in
+      let m = Ops.cast (select i v c32) h in
+      let e = outer o m c16 c32 in
+      let r = late_with (ops [ Cmplt ]) e in
+      (match n with
+      | Plain | Deep ->
+          if kind i = kind o then
+            equal ~msg:"selections" int (1 + selections v) (selections r)
+      | Sum | Unheld | Across ->
+          equal ~msg:"selections" int (selections e) (selections r));
+      List.iter
+        (fun v ->
+          let msg = Format.asprintf "at %a" Dtype.pp_const v in
+          equal ~msg const
+            (at ~params:[ (0, v) ] [] e)
+            (at ~params:[ (0, v) ] [] r))
+        values)
+
 (* The divisions of the old tolk's run of constant integer division, lowered as
    code generation lowers them: the simplifying patterns, then the late ones
    with fast_idiv, for a target with Shr and And. *)
@@ -1065,6 +1169,7 @@ let late =
         unsigned_negations_keep_values;
         signed_negations_keep_values;
         nests_keep_values;
+        narrow_nests_keep_values;
         lowered_divisions;
         powers_at_width;
         quotients_at_width;

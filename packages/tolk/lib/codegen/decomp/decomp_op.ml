@@ -209,20 +209,92 @@ let simplifying_patterns ops =
 
 (* Nested extremes *)
 
+(* Answers of {!holds}, a table of nodes per float type. *)
+type memo = (Dtype.t * bool Ops.Tbl.t) list ref
+
+let answers (memo : memo) dt =
+  match List.find_opt (fun (d, _) -> Dtype.equal d dt) !memo with
+  | Some (_, t) -> t
+  | None ->
+      let t = Ops.Tbl.create 16 in
+      memo := (dt, t) :: !memo;
+      t
+
+(* Whether every value of the float node [u] is a value of the float type
+   [dt]: a value of a type [dt] holds, a constant [dt] holds, a selection of
+   such values, or such a value converted without change. Each node's answer
+   is kept, so a graph costs its size however its nodes are shared. *)
+let rec holds memo dt u =
+  let t = answers memo dt in
+  match Ops.Tbl.find_opt t u with
+  | Some b -> b
+  | None ->
+      let b =
+        Dtype.equal (dtype u) dt
+        || Dtype.can_lossless_cast (dtype u) dt
+        ||
+        match op u with
+        | Const -> (
+            match value u with
+            | `Float x when Float.is_nan x -> true
+            | `Float _ as v -> Dtype.equal_const (Dtype.truncate dt v) v
+            | _ -> false)
+        | Where -> holds memo dt (nth u 1) && holds memo dt (nth u 2)
+        | Cast -> keeps memo u && holds memo dt (nth u 0)
+        | _ -> false
+      in
+      Ops.Tbl.replace t u b;
+      b
+
+(* Whether the cast [u] keeps its float operand's value: it widens to a type
+   that holds all of its operand's type, or narrows a value its type holds. *)
+and keeps memo u =
+  let s = nth u 0 in
+  Dtype.is_float (dtype s)
+  && Dtype.is_float (dtype u)
+  && (Dtype.can_lossless_cast (dtype s) (dtype u) || holds memo (dtype u) s)
+
+(* [u] without the casts that keep its value. LLVM's InstCombine narrows a
+   float32 selection of widened float16 values to a float16 selection, which
+   keeps every value, and folds through a widening that keeps it, so a float16
+   selection widened to float32 and narrowed back, as rune computes one,
+   nests as the selection does. *)
+let unwrapped u =
+  let memo = ref [] in
+  let rec go u =
+    if Op.equal (op u) Cast && keeps memo u then go (nth u 0) else u
+  in
+  go u
+
+(* Whether [a] and [b] are one value: one node once unwrapped, or float
+   constants of the same bits. *)
+let same a b =
+  let a = unwrapped a and b = unwrapped b in
+  a == b
+  || Op.equal (op a) Const
+     && Op.equal (op b) Const
+     && Dtype.is_float (dtype a)
+     && Dtype.is_float (dtype b)
+     && Dtype.equal_const (value a) (value b)
+
 (* [u] as a selection of [v] and [c] by their comparison, [(v < c) ? v : c] or
    [(c < v) ? c : v] a minimum, [(v < c) ? c : v] or [(c < v) ? v : c] a
-   maximum: whether it is a minimum, and whether it picks [c] where the
-   comparison is false, at a tie or a NaN. *)
+   maximum, each up to casts that keep values: [v], whether it is a minimum,
+   whether it picks [c] where the comparison is false, at a tie or a NaN, the
+   comparison's [c] and the selection. *)
 let extreme_of c u =
+  let u = unwrapped u in
   if not (Op.equal (op u) Where) then None
   else
     match src u with
     | [ cond; t; f ] when Op.equal (op cond) Cmplt -> (
         match src cond with
-        | [ p; q ] when ((t == p && f == q) || (t == q && f == p)) && p != q ->
-            if p == c || q == c then
-              let v = if p == c then q else p in
-              Some (v, t == p, f == c)
+        | [ p; q ]
+          when ((same t p && same f q) || (same t q && same f p))
+               && not (same p q) ->
+            if same p c || same q c then
+              let v, c' = if same p c then (q, p) else (p, q) in
+              Some (v, same t p, same f c, c', u)
             else None
         | _ -> None)
     | _ -> None
@@ -230,11 +302,12 @@ let extreme_of c u =
 (* A minimum of a minimum against one [c], or a maximum of a maximum, is one
    selection: the inner one where it picks [c] at a tie or the two pick alike,
    and otherwise the one of [v] that picks [c] there, [(v < c) ? v : c] or
-   [(c < v) ? v : c]. LLVM's InstCombine folds the outer into the inner one
-   whatever they pick: with [m = (0.0 < v) ? 0.0 : v], [(m < 0.0) ? m : 0.0]
-   becomes [m], -0.0 at v = -0.0 where the selection gives 0.0, from -O1 on
-   every target in clang 19, and in NVRTC 13.4. Made one here, no such nest
-   reaches a compiler. *)
+   [(c < v) ? v : c], cast to the outer one's type, which holds its values.
+   LLVM's InstCombine folds the outer into the inner one whatever they pick:
+   with [m = (0.0 < v) ? 0.0 : v], [(m < 0.0) ? m : 0.0] becomes [m], -0.0 at
+   v = -0.0 where the selection gives 0.0, from -O1 on every target in clang
+   19, and in NVRTC 13.4. Made one here, LLVM finds no such nest to fold, up to
+   the casts {!unwrapped} sees through. *)
 let nested_extreme o =
   match src o with
   | [ cond; _; _ ] when Op.equal (op cond) Cmplt ->
@@ -242,11 +315,14 @@ let nested_extreme o =
         (fun m ->
           let c = if m == nth cond 0 then nth cond 1 else nth cond 0 in
           match (extreme_of c o, extreme_of c m) with
-          | Some (v_o, min_o, keeps_o), Some (v, min_i, keeps_i)
-            when v_o == m && min_o = min_i ->
-              if keeps_i || keeps_o = keeps_i then Some m
-              else if min_i then Some (where O.(v < c) v c)
-              else Some (where O.(c < v) v c)
+          | Some (v_o, min_o, keeps_o, _, _), Some (v, min_i, keeps_i, c, inner)
+            when same v_o m && min_o = min_i ->
+              let r =
+                if keeps_i || keeps_o = keeps_i then inner
+                else if min_i then where O.(v < c) v c
+                else where O.(c < v) v c
+              in
+              Some (if Dtype.equal (dtype r) (dtype o) then r else cast r (dtype o))
           | _ -> None)
         (src cond)
   | _ -> None
