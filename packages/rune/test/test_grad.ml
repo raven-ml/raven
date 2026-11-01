@@ -1465,7 +1465,7 @@ let () =
                law_placed;
            ];
          cases "errors" ~id:(fun (n, _, _) -> n) errors test_error;
-         stateful ~domains:2 ~count:10 ~steps:8
+         stateful ~domains:2 ~count:30 ~steps:8
            "results on two domains are one domain's" domain_commands;
          group "jit"
            [
