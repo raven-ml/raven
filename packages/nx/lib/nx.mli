@@ -1767,6 +1767,32 @@ val betaincc :
     edges are the complements of {!betainc}'s. Within
     [64 (1 + |log (1 - I)|) + 4] ulps for [0 < a, b ≤ 2{^20}]. *)
 
+val betaincinv :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [betaincinv a b p] is the [x] with [betainc a b x = p], the beta
+    distribution's quantile, for [a, b ≥ 0] and [p] in \[[0.], [1.]\]. A [p]
+    above [1/2] is read as one minus the upper tail, so the result keeps its
+    precision near either end. It is [0.] at [p = 0.] and [1.] at [p = 1.];
+    where all the mass is at [0.], at [a = 0.] or where [b] is [inf], [0.]
+    for [p < 1], and where it is at [1.], at [b = 0.] or where [a] is [inf],
+    [1.] for [p > 0]; NaN where both hold. For [0 < a, b ≤ 2{^20}] within
+    [4 + κ (64 (1 + |log m|) + 4)] ulps, where [m = min (p, 1 - p)] is the
+    smaller tail and [κ = |m / (x ∂ₓI_x(a, b))|] at the exact quantile [x].
+    Where that bound at [x = 1/2] reaches 1, [κ (64 (1 + |log m|) + 4) ε ≥ 1]
+    with [κ] there, as at shapes far below 1, the tail is flat between
+    masses near [0.] and [1.], and where [p] is within
+    [64 (1 + |log m|) + 4] ulps of [m] of [I_{1/2}(a, b)] the result may be
+    any [x] between them. *)
+
+val betainccinv :
+  (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [betainccinv a b q] is the [x] with [betaincc a b x = q], as
+    {!betaincinv} from the upper tail: [1.] at [q = 0.] and [0.] at [q = 1.].
+    Within the bound of {!betaincinv}, with [m = min (q, 1 - q)], and its
+    flat tail's carve-out with [1 - I_{1/2}(a, b)]. *)
+
 val log_betainc :
   (float, 's, 'd) t -> (float, 's, 'd) t -> (float, 's, 'd) t ->
   (float, 's, 'd) t

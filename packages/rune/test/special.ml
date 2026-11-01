@@ -54,13 +54,16 @@ let rows file short =
 
 (* The forms of a bound: [k] ulps; [k] ulps or [|f̂ - f| <= a eps] where [|f| <
    1]; [k] ulps or [|f̂ - f| <= k eps scale]; an inverse's [k] ulps plus its
-   condition number times its forward function's bound; and a relative bound at
-   float64 and at float32, alone or times the scale. *)
+   condition number times its forward function's bound; an inverse's [k (1 +
+   |log (m / κ)|)] ulps, the error of the density [m / κ] its logarithm gives,
+   plus [κ] times its forward function's bound, [κ] the scale; and a relative
+   bound at float64 and at float32, alone or times the scale. *)
 type bound =
   | Ulps of int
   | Near_zeros of int * int
   | Scaled of int
   | Inverse of int * int
+  | Inverse_density of { k : int; m : float; forward : int }
   | Relative of float * float
   | Relative_scaled of float * float
 
@@ -70,6 +73,9 @@ let pp_bound ppf = function
       Format.fprintf ppf "%d ulps, or %d eps where below 1" k a
   | Scaled k -> Format.fprintf ppf "%d ulps, or %d eps times the scale" k k
   | Inverse (k, f) -> Format.fprintf ppf "%d + kappa * %d ulps" k f
+  | Inverse_density { k; m; forward } ->
+      Format.fprintf ppf "%d (1 + |log (%g / kappa)|) + kappa * %d ulps" k m
+        forward
   | Relative (r64, r32) ->
       Format.fprintf ppf "%g relative (%g at float32)" r64 r32
   | Relative_scaled (r64, r32) ->
@@ -95,6 +101,14 @@ let ulps ~f32 a b =
     if Float.is_nan a && Float.is_nan b then 0. else Float.infinity
   else Int64.to_float (Int64.abs (Int64.sub (rank_of ~f32 a) (rank_of ~f32 b)))
 
+(* [Inverse_density]'s bound in ulps at the condition number [kappa]. *)
+let density_ulps bound kappa =
+  match bound with
+  | Inverse_density { k; m; forward } ->
+      (Float.of_int k *. (1. +. Float.abs (Float.log (m /. kappa))))
+      +. (kappa *. Float.of_int forward)
+  | _ -> invalid_arg "density_ulps"
+
 (* Whether [got] meets [bound] against the correctly rounded [row]: exactly
    where the value is an exact infinity or NaN. A derivative's zero is held
    without its sign. An overflow, read as the infinity one rank past the largest
@@ -113,6 +127,7 @@ let within ~f32 bound row got =
     | Ulps k | Near_zeros (k, _) | Scaled k -> Float.of_int k
     | Inverse (k, forward) ->
         Float.of_int k +. (row.scale *. Float.of_int forward)
+    | Inverse_density _ -> density_ulps bound row.scale
     | Relative (r64, r32) -> (if f32 then r32 else r64) /. eps
     | Relative_scaled (r64, r32) ->
         (if f32 then r32 else r64) *. row.scale /. eps
@@ -126,6 +141,7 @@ let within ~f32 bound row got =
         d <= Float.of_int k || error <= Float.of_int k *. eps *. row.scale
     | Inverse (k, forward) ->
         d <= Float.of_int k +. (row.scale *. Float.of_int forward)
+    | Inverse_density _ -> d <= density_ulps bound row.scale
     | Relative (r64, r32) ->
         d = 0. || error <= (if f32 then r32 else r64) *. Float.abs r
     | Relative_scaled (r64, r32) ->

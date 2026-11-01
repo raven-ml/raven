@@ -163,11 +163,11 @@ let pp_args ppf args =
 (* [check ~bound name f] holds [f] to [bound args] at every row of [name]'s
    golden that [keep] keeps, at float32 and float64, and fails listing the
    rows that miss it, worst first, or where it keeps none. *)
-let check ?(keep = fun _ -> true) ~bound name f =
+let check ?(keep = fun ~f32:_ _ -> true) ~bound name f =
   List.map
     (fun (short, f32) ->
       test short (fun () ->
-          let rows = List.filter keep (rows name short) in
+          let rows = List.filter (keep ~f32) (rows name short) in
           (* A golden without rows at this dtype holds nothing: [eval] would
              not know the function's arity. *)
           if rows = [] then failf "%s.golden has no %s row to hold" name short;
@@ -363,11 +363,11 @@ let narrow2 ?(keep = fun _ -> true) ~bound ?scale ~firsts ~seconds f =
           hold dt p emin ~bound ?scale f [| column fst; column snd |] n))
     narrows
 
-(* [narrow3 ~bound ~settings f] holds [f] of three arguments as [narrow]
-   holds one: at every float of each narrow dtype as the argument a setting
-   names, the others the setting's, rounded to the dtype; at the triples
-   whose parameters are at most [2^20], where the bound holds. *)
-let narrow3 ~bound ~settings f =
+(* [narrow3 ~bound ?scale ~settings f] holds [f] of three arguments as
+   [narrow] holds one: at every float of each narrow dtype as the argument a
+   setting names, the others the setting's, rounded to the dtype; at the
+   triples whose parameters are at most [2^20], where the bound holds. *)
+let narrow3 ~bound ?scale ~settings f =
   List.map
     (fun (Narrow (dt, p, emin)) ->
       test (D.name dt) (fun () ->
@@ -389,7 +389,7 @@ let narrow3 ~bound ~settings f =
               (Nx.create Nx.float64 [| n |]
                  (Array.of_list (List.map (fun t -> t.(i)) triples)))
           in
-          hold dt p emin ~bound f [| column 0; column 1; column 2 |] n))
+          hold dt p emin ~bound ?scale f [| column 0; column 1; column 2 |] n))
     narrows
 
 (* Suites against the goldens *)
@@ -504,6 +504,7 @@ let in_domain row =
   not (Float.is_finite a && a > 0x1p20)
 
 type b = { b : 's. 's v -> 's v -> 's v }
+type c = { c : 's. 's v -> 's v -> 's v -> 's v }
 
 let binary name ~bound ?scale ~firsts ~seconds { b } =
   let f = { f = (fun a -> b a.(0) a.(1)) } in
@@ -512,7 +513,7 @@ let binary name ~bound ?scale ~firsts ~seconds { b } =
   in
   group name
     [
-      group "against the goldens" (check ~keep:in_domain ~bound name f);
+      group "against the goldens" (check ~keep:(fun ~f32:_ -> in_domain) ~bound name f);
       group "at every narrow float"
         (narrow2
            ~keep:(fun args -> args.(0) <= 0x1p20)
@@ -574,6 +575,53 @@ let incomplete_gamma =
 let beta_settings =
   [ (2, [| 2.5; 10.; 0. |]); (0, [| 0.; 0.5; 0.3 |]); (1, [| 10.; 0.; 0.7 |]) ]
 
+(* The beta's quantile's condition number [|m / (x ∂ₓI)|] at its result [x],
+   [m = min (p, 1 - p)] the smaller tail and [∂ₓI = x^(a - 1) (1 - x)^(b - 1)
+   / B(a, b)]. *)
+let beta_kappa (inverse : c) =
+  {
+    f =
+      (fun args ->
+        let a = args.(0) and b = args.(1) and p = args.(2) in
+        let x = inverse.c a b p in
+        let open Nx in
+        let density =
+          sub (add (mul a (log x)) (mul (sub_s b 1.) (log1p (neg x)))) (lbeta a b)
+        in
+        let m = minimum p (rsub_s 1. p) in
+        exp (sub (log m) density));
+  }
+
+(* The beta's quantile's bound at its probability [args.(2)], read in the
+   smaller tail. *)
+let beta_inverse_bound args =
+  let p = args.(2) in
+  Inverse (4, int_of_float (log_ulps 32 (Float.min p (1. -. p))))
+
+(* Parameters at most [2^20], where the bound holds. *)
+let beta_in_domain row =
+  let a = row.args.(0) and b = row.args.(1) in
+  not ((Float.is_finite a && a > 0x1p20) || (Float.is_finite b && b > 0x1p20))
+
+(* nx.mli's carve-out: where the bound at [x = 1/2], [κ_h (64 (1 + |log m|)
+   + 4) ε] for [κ_h = m / (f(1/2) / 2)], reaches 1, the tail is flat between
+   masses near 0 and 1, and a [p] within [64 (1 + |log m|) + 4] ulps of [m]
+   of the tail at [1/2] may give any [x] between them. *)
+let beta_on_plateau ~f32 ~upper row =
+  let a = row.args.(0) and b = row.args.(1) and p = row.args.(2) in
+  let eps = if f32 then 0x1p-23 else 0x1p-52 in
+  let m = Float.min p (1. -. p) in
+  let s v = Nx.scalar Nx.float64 v in
+  let half = Nx.item [] ((if upper then Nx.betaincc else Nx.betainc) (s a) (s b) (s 0.5)) in
+  let log_f = (-.(a +. b -. 2.) *. Stdlib.log 2.) -. Nx.item [] (Nx.lbeta (s a) (s b)) in
+  let kappa = m /. (0.5 *. Float.exp log_f) in
+  let bound = log_ulps 32 m *. eps in
+  kappa *. bound >= 1. && Float.abs (p -. half) <= bound *. m
+
+(* Every float as [p] beside [a = 2.5, b = 10.], and as [a] beside [b = 0.5,
+   p = 0.3]: an inverse's program is three times as long. *)
+let beta_inverse_settings = [ (2, [| 2.5; 10.; 0. |]); (0, [| 0.; 0.5; 0.3 |]) ]
+
 let incomplete_beta =
   let ternary name ~bound f =
     let bound = everywhere bound in
@@ -582,6 +630,20 @@ let incomplete_beta =
         group "against the goldens" (check ~bound name f);
         group "at every narrow float"
           (narrow3 ~bound ~settings:beta_settings f);
+      ]
+  in
+  let inverse name ~upper inverse =
+    let f = { f = (fun a -> inverse.c a.(0) a.(1) a.(2)) } in
+    let keep ~f32 row =
+      beta_in_domain row && not (beta_on_plateau ~f32 ~upper row)
+    in
+    group name
+      [
+        group "against the goldens"
+          (check ~keep ~bound:beta_inverse_bound name f);
+        group "at every narrow float"
+          (narrow3 ~bound:beta_inverse_bound ~scale:(beta_kappa inverse)
+             ~settings:beta_inverse_settings f);
       ]
   in
   group "incomplete beta"
@@ -596,6 +658,8 @@ let incomplete_beta =
       ternary "log_betaincc"
         ~bound:(Near_zeros (32, 32))
         { f = (fun a -> Nx.log_betaincc a.(0) a.(1) a.(2)) };
+      inverse "betaincinv" ~upper:false { c = Nx.betaincinv };
+      inverse "betainccinv" ~upper:true { c = Nx.betainccinv };
     ]
 
 (* Laws
@@ -943,9 +1007,21 @@ let gamma_laws =
             (log_gammainc a x) r x);
     ]
 
+(* The quantile's condition number [m / (x ∂ₓI)] at the exact quantile [x],
+   [m] the smaller tail at it: where a tail is flat, the inverse's result may
+   lie far from [x] with no flatness where it lies. *)
+let beta_kappa_at a b x m =
+  let open Nx in
+  let density =
+    sub (add (mul a (log x)) (mul (sub_s b 1.) (log1p (neg x)))) (lbeta a b)
+  in
+  values (exp (sub (log m) density))
+
 let beta_laws =
   let open Nx in
   let shapes = log_batch 1e-3 1e4 in
+  (* The inverses' shapes reach down to where [log (a B(a, b))] is O(a). *)
+  let inverse_shapes = log_batch 1e-30 1e5 in
   group "incomplete beta laws"
     [
       prop "betaincc a b x is betainc b a (1 - x) bit for bit where x >= 1/2"
@@ -982,6 +1058,75 @@ let beta_laws =
           within (tol p) p (betainc a one x);
           let q = neg (expm1 (mul a (log1p (neg x)))) in
           within (tol q) q (betainc one a x));
+      prop "betaincinv inverts betainc"
+        (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
+        (fun (a, b, x) ->
+          (* [p] within [B(p)] ulps moves the quantile by [κ_p B(p)], for
+             [κ_p = κ p / m]; the inverse adds [4 + κ B(m)]. *)
+          let p = betainc a b x in
+          let back = betaincinv a b p in
+          let kappa = beta_kappa_at a b x (minimum p (rsub_s 1. p)) in
+          elementwise
+            (fun i x p back ->
+              if p >= 0x1p-1022 && p < 1. && x >= 0x1p-1022 then
+                let m = Float.min p (1. -. p) in
+                let moved = kappa.(i) *. p /. m *. log_ulps 32 p in
+                let own = 4. +. (kappa.(i) *. log_ulps 32 m) in
+                close i
+                  ~than:((own +. moved) *. eps *. x)
+                  (Float.abs (back -. x)))
+            x p back);
+      prop "betainccinv inverts betaincc"
+        (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
+        (fun (a, b, x) ->
+          let q = betaincc a b x in
+          let back = betainccinv a b q in
+          let kappa = beta_kappa_at a b x (minimum q (rsub_s 1. q)) in
+          elementwise
+            (fun i x q back ->
+              if q >= 0x1p-1022 && q < 1. && x >= 0x1p-1022 then
+                let m = Float.min q (1. -. q) in
+                let moved = kappa.(i) *. q /. m *. log_ulps 32 q in
+                let own = 4. +. (kappa.(i) *. log_ulps 32 m) in
+                close i
+                  ~than:((own +. moved) *. eps *. x)
+                  (Float.abs (back -. x)))
+            x q back);
+      prop "betainccinv a b q is 1 - betaincinv b a q"
+        (Gen.triple inverse_shapes inverse_shapes (batch 0. 1.))
+        (fun (a, b, q) ->
+          (* [1 - x] at [x = betaincinv b a q] has [x]'s error: within its
+             bound in [x]'s ulps, and the subtraction rounds once. *)
+          let x = betaincinv b a q in
+          let kappa = values ((beta_kappa { c = betaincinv }).f [| b; a; q |]) in
+          elementwise
+            (fun i x q c ->
+              if q >= 0x1p-1022 && q < 1. && x >= 0x1p-1022 && x < 1. then
+                let m = Float.min q (1. -. q) in
+                let l = log_ulps 32 m in
+                let own = 4. +. (kappa.(i) *. l) in
+                let mirror = 4. +. (kappa.(i) *. x /. (1. -. x) *. l) in
+                close i
+                  ~than:(((own *. x) +. (mirror *. c) +. c) *. eps)
+                  (Float.abs (c -. (1. -. x))))
+            x q (betainccinv a b q));
+      cases "betaincinv at closed forms" ~id:fst
+        [
+          ("a b 1/2 is 1/2 for a = b", (3.5, 3.5, 0.5, 0.5));
+          ( "1/2 1/2 p is sin^2 (pi p / 2)",
+            (0.5, 0.5, 0.3, Float.pow (Stdlib.sin (Float.pi *. 0.15)) 2.) );
+          ("a 1 p is p^(1/a)", (4., 1., 0.2, Float.pow 0.2 0.25));
+          ("1 b p is 1 - (1 - p)^(1/b)", (1., 4., 0.2, 1. -. Float.pow 0.8 0.25));
+          ("1 1 p is p", (1., 1., 0.3, 0.3));
+        ]
+        (fun (_, (a, b, p, x)) ->
+          (* Within the bound, and the closed form's own two roundings. *)
+          let args = Array.map (scalar Nx.float64) [| a; b; p |] in
+          let got = item [] (betaincinv args.(0) args.(1) args.(2)) in
+          let kappa = item [] ((beta_kappa { c = betaincinv }).f args) in
+          let m = Float.min p (1. -. p) in
+          let bound = 6. +. (kappa *. log_ulps 32 m) in
+          close 0 ~than:(bound *. eps *. x) (Float.abs (got -. x)));
       prop "exp log_betainc is betainc" (Gen.triple shapes shapes (batch 0. 1.))
         (fun (a, b, x) ->
           (* [log I] within 32 ulps, or 32 eps where below 1, moves [exp] by
@@ -1177,6 +1322,25 @@ let beta_edges =
       edges "log_betaincc"
         { f = (fun a -> Nx.log_betaincc a.(0) a.(1) a.(2)) }
         (tail (fun (_, _, _, lc) -> lc));
+      edges "betaincinv"
+        { f = (fun a -> Nx.betaincinv a.(0) a.(1) a.(2)) }
+        [ ([| 2.; 3.; 0. |], 0.); ([| 2.; 3.; 1. |], 1.); ([| 0.; 3.; 0.5 |], 0.);
+          ([| 2.; inf; 0.5 |], 0.); ([| 2.; 0.; 0.5 |], 1.);
+          ([| inf; 3.; 0.5 |], 1.); ([| 0.; 3.; 1. |], 1.);
+          ([| 2.; 0.; 0. |], 0.); ([| 0.; inf; 0.5 |], 0.);
+          ([| inf; 0.; 0.5 |], 1.); ([| 0.; 0.; 0.5 |], nan);
+          ([| inf; inf; 0.5 |], nan); ([| -1.; 3.; 0.5 |], nan);
+          ([| 2.; -1.; 0.5 |], nan); ([| 2.; 3.; -0.5 |], nan);
+          ([| 2.; 3.; 1.5 |], nan); ([| nan; 3.; 0.5 |], nan);
+          ([| 2.; nan; 0.5 |], nan); ([| 2.; 3.; nan |], nan) ];
+      edges "betainccinv"
+        { f = (fun a -> Nx.betainccinv a.(0) a.(1) a.(2)) }
+        [ ([| 2.; 3.; 1. |], 0.); ([| 2.; 3.; 0. |], 1.); ([| 0.; 3.; 0.5 |], 0.);
+          ([| 2.; inf; 0.5 |], 0.); ([| 2.; 0.; 0.5 |], 1.);
+          ([| inf; 3.; 0.5 |], 1.); ([| 0.; 3.; 0. |], 1.);
+          ([| 2.; 0.; 1. |], 0.); ([| 0.; 0.; 0.5 |], nan);
+          ([| inf; inf; 0.5 |], nan); ([| -1.; 3.; 0.5 |], nan);
+          ([| 2.; 3.; 1.5 |], nan); ([| 2.; 3.; nan |], nan) ];
     ]
 
 (* Platforms

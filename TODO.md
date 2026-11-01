@@ -180,10 +180,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
-- `Nx.betaincinv` and `betainccinv`, as the gamma's inverses are
-  (0947081db left them out): norn's `quantile` raises for `beta` for want
-  of them. First measure rune compiling a program of their size (~20-25k
-  operations)
 - a reshape that factors or merges a cut axis gathers it whole onto every
   device where the tiles don't divide both extents: gpt-oss's 2880 inputs,
   90 MXFP4 blocks, over 4 or 8 devices. A halo exchange, as GSPMD's

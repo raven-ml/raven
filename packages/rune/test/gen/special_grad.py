@@ -269,6 +269,65 @@ def igamma_quantile_d(upper, wrt):
 # smaller tail: the linear functions' derivatives are held where it is
 # normal, and at the domain's end x = 0, an inverse's where its result is.
 
+def beta_quantile_d(upper, wrt):
+    """The derivative of the beta's quantile x in a (wrt 0), b (1) or p (2):
+    1 / I'(x) in p, negated for the upper tail, and -dI/da / I'(x) at fixed x
+    in a shape, the smaller tail's logarithm differentiated."""
+    def d(a, b, p):
+        a, b = mpf(a), mpf(b)
+        z = nx.beta_quantile_logit(a, b, p, upper)
+        lx, ly = -mpmath.log1p(mpmath.exp(-z)), -mpmath.log1p(mpmath.exp(z))
+        lB = mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)
+        ld = (a - 1) * lx + (b - 1) * ly - lB
+        if wrt == 2:
+            return (-1 if upper else 1) * mpmath.exp(-ld)
+        target = mpmath.log(min(mpf(p), 1 - mpf(p)))
+        lp, lq = nx.beta_logit_tails(a, b, z, target)
+        k = 0 if lp <= lq else 1
+        tail = lambda s: (nx.beta_logit_tails(s, b, z, target) if wrt == 0
+                          else nx.beta_logit_tails(a, s, z, target))[k]
+        s0 = a if wrt == 0 else b
+        # A step relative to the shape, which a tiny one would pass below 0.
+        dl = mpmath.diff(tail, s0, h=s0 * mpf(2) ** -(mp.prec // 3))
+        di = dl * mpmath.exp(lp if k == 0 else lq) * (1 if k == 0 else -1)
+        return -di * mpmath.exp(-ld)
+    return d
+
+
+def beta_quantile_scale(fmt, value, a, b, p):
+    """1 + |log m|, m the smaller tail, min(p, 1 - p)."""
+    return nx.scale(1 + abs(mpmath.log(min(mpf(p), 1 - mpf(p)))))
+
+
+def beta_on_plateau(fmt, a, b, p, upper):
+    """nx.mli's carve-out: where the bound at x = 1/2, kappa_h (64 (1 + |log
+    m|) + 4) eps with kappa_h = m / (f(1/2) / 2), reaches 1 and p is within
+    64 (1 + |log m|) + 4 ulps of m of the tail at 1/2, where nx's quantile
+    may be anywhere between the tail's masses near 0 and 1."""
+    a, b, p = mpf(a), mpf(b), mpf(p)
+    m = min(p, 1 - p)
+    half = nx.betainc_exact(a, b, mpf(1) / 2, upper)
+    lB = mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)
+    kappa = m / (mpmath.exp(-(a + b - 2) * mpmath.log(2) - lB) / 2)
+    bound = (64 * (1 + abs(mpmath.log(m))) + 4) * fmt.eps
+    return kappa * bound >= 1 and abs(p - half) <= bound * m
+
+
+def beta_quantile_points(f, upper):
+    """Every third of nx's quantile points inside the domain of the bound,
+    with p inside (0, 1), off the plateau."""
+    def points(fmt):
+        pts = [p for p in f.points(fmt)
+               if all(math.isfinite(v) for v in p) and 0 < p[0] <= 2.0 ** 20 and 0 < p[1] <= 2.0 ** 20
+               and 0 < p[2] < 1 and not beta_on_plateau(fmt, *p, upper)]
+        return pts[::3]
+    return points
+
+
+def beta_result_normal(f):
+    return lambda fmt, a, b, p: min(abs(f.reference(fmt, a, b, p)), 1 - abs(f.reference(fmt, a, b, p))) >= fmt.min_normal
+
+
 def tails_normal(fmt, a, x):
     if x == 0 or a == 0:
         return True
@@ -428,6 +487,12 @@ DERIVATIVES = [
                normal=result_normal(F[name]))
     for name, upper in [("gammaincinv", False), ("gammainccinv", True)]
     for arg, wrt in [("a", 0), ("p", 1)]
+] + [
+    Derivative(f"{name}_{arg}", F[name], beta_quantile_d(upper, wrt),
+               extra=nx.beta_kappa(upper) if wrt == 2 else beta_quantile_scale,
+               points=beta_quantile_points(F[name], upper), normal=beta_result_normal(F[name]))
+    for name, upper in [("betaincinv", False), ("betainccinv", True)]
+    for arg, wrt in [("a", 0), ("b", 1), ("p", 2)]
 ] + [
     Derivative(f"{name}_{arg}", F[name], beta_d(upper, log, wrt), extra=log_scale,
                points=beta_points, normal=value_normal(F[name]) if log else tails_normal_beta)

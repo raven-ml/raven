@@ -274,8 +274,10 @@ val jvp :
     {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma}, {!Nx.lbeta}, {!Nx.i0e}, {!Nx.i1e},
     the incomplete gamma family ({!Nx.gammainc}, {!Nx.gammaincc}, their
     logarithms and their inverses) and the incomplete beta family
-    ({!Nx.betainc}, {!Nx.betaincc} and their logarithms) through the operations
-    nx computes them with, in every argument and at every order. Each derivative
+    ({!Nx.betainc}, {!Nx.betaincc}, their logarithms and their inverses)
+    through the operations
+    nx computes them with, in every argument and at every order, but the beta
+    inverses' past the second (see below). Each derivative
     is within the budget below of the exact derivative, at [float32] and
     [float64], eagerly and compiled, where the function and its derivative are
     finite, which leaves out such points as {!Nx.erfinv} at [±1] and {!Nx.ndtri}
@@ -311,6 +313,22 @@ val jvp :
       absolutely where below 1.
     - The four, in [a] or [b]: [2^-40 (1 + |log f|)] relative at [float64],
       [2^-16 (1 + |log f|)] at [float32].
+    - {!Nx.betaincinv}, {!Nx.betainccinv}, in [p] or [q]:
+      [64 (1 + |log (x ∂ₓI)|) + 16κ (64 (1 + |log m|) + 4)] ulps, [m] the
+      smaller tail: the derivative is [1 / ∂ₓI], the exponential of a
+      logarithm, and [x ∂ₓI = m / κ] at the quantile.
+    - The two, in [a] or [b]: [2^-40 (1 + |log m|)] relative at [float64],
+      [2^-16 (1 + |log m|)] at [float32].
+
+    Where {!Nx.betaincinv}'s tail is flat between its two masses, at shapes
+    far below 1, its result and so its derivatives may lie anywhere between
+    them, and no budget holds there. Where the quantile or one minus it is
+    subnormal, the beta inverses' derivatives are [0].
+
+    The beta's inverses differentiate their last Halley step alone, from an
+    iterate within [√ε] of the quantile's logit: their second derivatives
+    are the quantile's to within about [√ε] relative, and those past the
+    second are not the quantile's.
 
     [f] is the smaller of [P] and [Q], or of [I_x(a, b)] and its complement: a
     tail and its complement share one derivative up to sign, computed from the
@@ -318,7 +336,8 @@ val jvp :
     budgets hold for [0 < a ≤ 2^20]: those of {!Nx.gammainc} and {!Nx.gammaincc}
     where [f] is a normal number, below which the derivative underflows, and an
     inverse's where its quantile is normal. The incomplete beta's hold for
-    [0 < a, b ≤ 2^20] where the function is a normal number. At [x = 0],
+    [0 < a, b ≤ 2^20] where the function is a normal number, and an inverse's
+    where its quantile and one minus it are. At [x = 0],
     [∂P/∂a = 0] and [∂P/∂x] is its one-sided limit [x^{a-1} e^{-x} / Γ(a)]: [1]
     at [a = 1], [0] above and infinite below. At [a = 0], where
     [P = 1 - a E₁(x) + O(a²)] for [x > 0], [∂P/∂a] is its one-sided limit
@@ -332,8 +351,9 @@ val jvp :
     there are those of these forms, within [2^-40] relative at [float64] and
     [2^-16] at [float32], except the vanishing tail's logarithm in [a] or [b],
     which is infinite. An inverse's derivative in [a] is the implicit one,
-    [-(∂P/∂a) / (∂P/∂x)] at the quantile, for either tail; at [a = 0], where the
-    quantile is [0] away from its upper end, both its derivatives are [0].
+    [-(∂P/∂a) / (∂P/∂x)] at the quantile, for either tail, as is a beta
+    inverse's in [a] or [b]; at [a = 0], where the gamma's quantile is [0]
+    away from its upper end, both its derivatives are [0].
 
     Second derivatives of {!Nx.lgamma} and {!Nx.lbeta} are within [2^-40]
     relative at [float64] and [2^-16] at [float32]. Those of {!Nx.lbeta} hold

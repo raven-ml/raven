@@ -231,6 +231,47 @@ val beta_large : float
 
 val rlog1_series : float
 
+(** {1:beta_inverse The incomplete beta function's inverse}
+
+    The first guess of the beta's quantile, in z = log (x / (1 - x)). A tail's
+    power form solves BPSER's x^a / (a B(a, b)) (1 + a S(x)) = P for z, S(x) =
+    sum_k (1 - b)_k x^k / (k! (a + k)) to [beta_guess_terms] terms, by as many
+    fixed-point steps, and is taken where the first term it leaves is below
+    [beta_guess_gap], x at most 1/2 and b x at most [beta_guess_bx]; the other
+    tail's likewise. Else the gamma's form, P(a, -nu log (1 - x)) with nu = b +
+    (a - 1)/2, where the larger shape exceeds the smaller [beta_guess_ratio]
+    times, is at least [beta_guess_gamma_from] and the smaller is below
+    [beta_guess_temme_from]; else, where the smaller is below 1 and the larger
+    below [beta_guess_gamma_from], the power form whose terms left are fewer;
+    else Temme's asymptotic form in 1/(a + b) to its third term, its equation
+    for x solved by [beta_guess_newton] Newton steps. Its corrections e1, e2 and
+    e3 are sums over j of c_kj(s^2) eta0^j / (d_kj (s c)^n_kj): [beta_temme]
+    holds the c_kj one after the other, highest degree first, [beta_temme_scale]
+    the d_kj and [beta_temme_power] the n_kj, [beta_temme_terms] the count of
+    each e_k's terms. *)
+
+val beta_guess_terms : int
+
+val beta_guess_newton : int
+
+val beta_guess_gap : float
+
+val beta_guess_bx : float
+
+val beta_guess_ratio : float
+
+val beta_guess_temme_from : float
+
+val beta_guess_gamma_from : float
+
+val beta_temme : float array array
+
+val beta_temme_scale : float array
+
+val beta_temme_power : float array
+
+val beta_temme_terms : float array
+
 (** {1:dtypes Tables per dtype} *)
 
 type t = {
@@ -313,10 +354,14 @@ type t = {
           counts' bounds. [igamma_halley_steps] is the inverses' Halley steps
           after the first guess, the least after which the Newton step that
           follows them puts x within u/8 of the quantile, relatively, for a up
-          to 2^20 and either tail down to the least subnormal. [erfcx_series] is
-          erfc x e^(x^2) x sqrt pi from [erfc_far_from], (-1)^k (2k - 1)!! in
-          1/(2x^2), its least count within u/8 of the value and of the
-          derivative. *)
+          to 2^20 and either tail down to the least subnormal.
+          [beta_halley_steps] is the beta's quantile's Halley steps after its
+          first guess, the least after which a last Halley step puts x within
+          u/8 of the quantile, relatively, from an iterate within sqrt(u) of its
+          logit, for shapes from 1e-30 to 2^20 and either tail down to the least
+          subnormal. [erfcx_series] is erfc x e^(x^2) x sqrt pi from
+          [erfc_far_from], (-1)^k (2k - 1)!! in 1/(2x^2), its least count within
+          u/8 of the value and of the derivative. *)
   igamma_series_terms : float;
   igamma_cf_depth : float;
   igamma_atanh : float array;
@@ -324,6 +369,7 @@ type t = {
   igamma_temme : float array;
   igamma_temme_degrees : float array;
   igamma_halley_steps : float;
+  beta_halley_steps : float;
   erfcx_series : float array;
   beta_eps : float;
       (** TOMS 708's tolerance, the dtype's epsilon but 1e-15 at float64, below

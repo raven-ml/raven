@@ -191,6 +191,8 @@ def scale(v):
     s = float(v)
     if s == 0:
         return "0"
+    if abs(s) < 1e-300:
+        return "1e-300"
     e = int(mpmath.floor(mpmath.log10(abs(mpf(s)))))
     m = math.ceil(abs(s) / 10 ** (e - 3))
     return f"{m}e{e - 3}"
@@ -1314,6 +1316,7 @@ def igamma_tables(fmt):
         ("igamma_temme", ocaml_array(temme)),
         ("igamma_temme_degrees", ocaml_array([float(d) for d in degrees])),
         ("igamma_halley_steps", ocaml_float(float(igamma_halley_steps(fmt)))),
+        ("beta_halley_steps", ocaml_float(float(beta_halley_steps(fmt)))),
         ("erfcx_series", ocaml_array([float((-1) ** k * mpmath.fac2(2 * k - 1))
                                       for k in range(erfcx_far_terms(fmt) - 1, -1, -1)])),
     ]
@@ -1459,7 +1462,14 @@ def shared_tables():
         ("beta_bup_most", str(BETA_BUP_MOST)),
         ("beta_large", ocaml_float(BETA_LARGE)),
         ("rlog1_series", ocaml_float(RLOG1_SERIES)),
-    ]
+        ("beta_guess_terms", str(BETA_GUESS_TERMS)),
+        ("beta_guess_newton", str(BETA_GUESS_NEWTON)),
+        ("beta_guess_gap", ocaml_float(BETA_GUESS_GAP)),
+        ("beta_guess_bx", ocaml_float(BETA_GUESS_BX)),
+        ("beta_guess_ratio", ocaml_float(BETA_GUESS_RATIO)),
+        ("beta_guess_temme_from", ocaml_float(BETA_GUESS_TEMME_FROM)),
+        ("beta_guess_gamma_from", ocaml_float(BETA_GUESS_GAMMA_FROM)),
+    ] + beta_temme_tables()
 
 
 # erfc, ndtr and log_ndtr: their points are the boundaries of erfc's regions,
@@ -2278,6 +2288,153 @@ def betainc_points(fmt):
             + beta_boundary_points(fmt))
 
 
+# betaincinv and betainccinv: the beta's quantiles from either tail, at a
+# grid of a and b against probabilities from the least subnormal to 1, the
+# ends, the edges and seeded random points.
+
+
+def beta_logit_tails(a, b, z, small):
+    """(log I_x(a, b), log (1 - I_x(a, b))) at x = 1 / (1 + e^-z), the tail
+    below the mean from x or from 1 - x and the other as its complement, at
+    a precision that keeps the digits of a complement as small as `small`,
+    a logarithm."""
+    x, y = 1 / (1 + mpmath.exp(-z)), 1 / (1 + mpmath.exp(z))
+    extra = int(mpmath.log(a + b + 2, 2)) + 20 + int(-small / mpmath.log(2))
+    lower = x < (a + 1) / (a + b + 2)
+    # A complement smaller than the precision spares, as where a shape is
+    # tiny, takes more until it keeps its own digits.
+    while True:
+        with mp.workprec(mp.prec + extra):
+            t = beta_tail(a, b, x) if lower else beta_tail(b, a, y)
+            c = 1 - t
+            if c > 0 and c >= mpf(2) ** (16 - extra):
+                r = (mpmath.log(t), mpmath.log1p(-t)) if lower else (mpmath.log1p(-t), mpmath.log(t))
+                return (+r[0], +r[1])
+        extra *= 2
+        if extra > 100000:
+            raise RuntimeError(f"no tails at a = {a}, b = {b}, z = {z}")
+
+
+def beta_quantile_logit(a, b, p, upper):
+    """z = log (x / (1 - x)) with I_x(a, b) = p (1 - I_x(a, b) = p where
+    upper), by Newton in z on the logarithm of the smaller tail, which is
+    concave in z: from the bound on z that the tail's asymptote gives, on the
+    side where Newton approaches the root without passing it."""
+    a, b, p = mpf(a), mpf(b), mpf(p)
+    # The median of equal shapes is 1/2, where tiny ones make the tail so
+    # flat that Newton's step is all rounding.
+    if a == b and p == mpf(1) / 2:
+        return mpf(0)
+    small, tail = (p, upper) if p <= mpf(1) / 2 else (1 - p, not upper)
+    target = mpmath.log(small)
+    lB = mpmath.log(mpmath.beta(a, b)) if a + b < 1e4 else (mpmath.loggamma(a) + mpmath.loggamma(b)
+                                                           - mpmath.loggamma(a + b))
+    if tail:
+        z = -(target + mpmath.log(b) + lB) / b
+    else:
+        z = (target + mpmath.log(a) + lB) / a
+    for _ in range(2000):
+        lp, lq = beta_logit_tails(a, b, z, target)
+        lt = lq if tail else lp
+        x = 1 / (1 + mpmath.exp(-z))
+        log_front = a * mpmath.log(x) + b * mpmath.log(1 - x) - lB if abs(z) < 30 else (
+            a * -mpmath.log1p(mpmath.exp(-z)) + b * -mpmath.log1p(mpmath.exp(z)) - lB)
+        slope = mpmath.exp(log_front - lt) * (-1 if tail else 1)
+        step = (lt - target) / slope
+        z -= step
+        # The tails' last bits stall a step a little above the precision.
+        if abs(step) < mpf(2) ** -(mp.prec - 20) * max(abs(z), 1):
+            return z
+    raise RuntimeError(f"no quantile at a = {a}, b = {b}, p = {p}")
+
+
+def beta_quantile(a, b, p, upper):
+    z = beta_quantile_logit(a, b, p, upper)
+    return 1 / (1 + mpmath.exp(-z))
+
+
+def beta_quantile_edge(a, b, p, upper):
+    """The quantile at an edge, None inside the domain. Where the lower tail
+    is 1 on (0, 1), at a = 0 or b = inf, the mass is at 0; where it is 0, at
+    b = 0 or a = inf, at 1; both at once is NaN, as the tail is."""
+    if math.isnan(a) or math.isnan(b) or math.isnan(p) or a < 0 or b < 0 or p < 0 or p > 1:
+        return math.nan
+    one = a == 0 or math.isinf(b)
+    zero = b == 0 or math.isinf(a)
+    if one and zero:
+        return math.nan
+    low, high = (1.0, 0.0) if upper else (0.0, 1.0)
+    if p == low:
+        return 0.0
+    if p == high:
+        return 1.0
+    if one:
+        return 0.0
+    if zero:
+        return 1.0
+    return None
+
+
+def beta_quantile_reference(upper):
+    def f(fmt, a, b, p):
+        edge = beta_quantile_edge(a, b, p, upper)
+        if edge is not None:
+            return edge
+        return correctly_rounded(fmt, lambda a, b, p: beta_quantile(a, b, p, upper), a, b, p)
+    return f
+
+
+def beta_kappa(upper):
+    """|m / (x I'(x))| at the exact quantile x, m the smaller tail,
+    min(p, 1 - p), and I'(x) = x^(a-1) (1 - x)^(b-1) / B(a, b)."""
+    def extra(fmt, value, a, b, p):
+        if math.isnan(value) or math.isinf(value):
+            return "1"
+        if beta_quantile_edge(a, b, p, upper) is not None:
+            return "0"
+        with mp.workprec(fmt.p + 40):
+            a, b = mpf(a), mpf(b)
+            z = beta_quantile_logit(a, b, p, upper)
+            lx, ly = -mpmath.log1p(mpmath.exp(-z)), -mpmath.log1p(mpmath.exp(z))
+            lB = mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)
+            m = min(mpf(p), 1 - mpf(p))
+            return scale(mpmath.exp(mpmath.log(m) - (a * lx + (b - 1) * ly - lB)))
+    extra.__name__ = "kappa"
+    return extra
+
+
+BETA_QUANTILE_AXIS = [1e-3, 0.05, 0.5, 1.0, 2.5, 10.0, 60.0, 1e3, 1e5]
+
+
+def beta_quantile_points(fmt):
+    rng = random.Random(f"beta quantile {fmt.name}")
+    r = lambda v: round_to(fmt, mpf(v))
+    ps = ([fmt.tiny, r(1e-300) if fmt is F64 else r(1e-40), r(1e-30), r(1e-8), r(1e-3), r(0.1), r(0.3),
+           r(0.5), r(0.7), r(0.9), r(0.999)]
+          + [round_to(fmt, 1 - mpf(2) ** -k) for k in (12, fmt.p - 1, fmt.p)])
+    ps = [p for p in ps if 0 < p < 1]
+    axis = [r(v) for v in BETA_QUANTILE_AXIS]
+    points = [(a, b, p) for a in axis for b in axis for p in ps]
+    # Symmetric shapes, whose median is 1/2, and their neighbours.
+    points += [(a, a, p) for a in [r(v) for v in (0.2, 3.0, 300.0, 2.0 ** 20)] for p in ps]
+    # Shapes so small that log (a B(a, b)) is O(a), beside each other and
+    # larger ones.
+    tiny = [r(v) for v in (1e-30, 1e-20, 1e-12)]
+    others = tiny + [r(v) for v in (0.5, 1.0, 10.0, 2.0 ** 20)]
+    points += [pt for t in tiny for o in others for p in ps for pt in ((t, o, p), (o, t, p))]
+    points += [(a, b, p) for a in (0.0, 1.0, math.inf, math.nan, -1.0) for b in (0.0, 2.0, math.inf)
+               for p in (0.0, 0.5, 1.0, math.nan, -0.5, 2.0)]
+    with mp.workprec(POINT_PREC):
+        for _ in range(96):
+            a = r(mpf(10) ** mpf(rng.uniform(-3, 5)))
+            b = r(mpf(10) ** mpf(rng.uniform(-3, 5)))
+            p = rng.uniform(0, 1) if rng.random() < 0.5 else 10 ** rng.uniform(-30, 0)
+            p = r(mpf(p) if rng.random() < 0.5 else 1 - mpf(p))
+            if 0 < p < 1:
+                points.append((a, b, p))
+    return points
+
+
 # TOMS 708's regions (DiDonato and Morris, Algorithm 708, ACM TOMS 18 (1992)):
 # the boundaries the composition switches on and the goldens' points
 # surround.
@@ -2298,6 +2455,279 @@ BETA_BUP_MOST = 39       # the largest masked count, floor b0 - 1 or so below 40
 BETA_LARGE = 8.0         # x^a y^b / B(a, b) by its large-argument form from 8
 RLOG1_SERIES = 0.6       # e - log1p e by its series where |e| <= 0.6
 BETA_EPS = {F32: 2.0 ** -23, F64: 1e-15}
+
+# The beta's quantile: its first guess's choices and counts. Its Halley
+# steps are proven below, after the guess, which beta_guess mirrors.
+
+BETA_GUESS_TERMS = 3       # terms of 2F1 in the power forms, and their steps
+BETA_GUESS_NEWTON = 8      # Newton steps on Temme's equation for x
+BETA_GUESS_GAP = 0.05      # a power form's neglected terms below which it is taken
+BETA_GUESS_BX = 0.7        # and the b x up to which its series is BPSER's
+BETA_GUESS_RATIO = 4.0     # the gamma's form where one shape exceeds the other 4 times,
+BETA_GUESS_TEMME_FROM = 20.0   # the smaller is below 20,
+BETA_GUESS_GAMMA_FROM = 3.0    # and the larger at least 3
+
+BOOST_NOTICE = ("Copyright John Maddock 2006. Copyright Paul A. Bristow 2007. Use, "
+                "modification and distribution are subject to the Boost Software License, "
+                "Version 1.0: Permission is hereby granted, free of charge, to any person or "
+                "organization obtaining a copy of the software and accompanying documentation "
+                "covered by this license (the \"Software\") to use, reproduce, display, "
+                "distribute, execute, and transmit the Software, and to prepare derivative "
+                "works of the Software, and to permit third-parties to whom the Software is "
+                "furnished to do so, all subject to the following: The copyright notices in "
+                "the Software and this entire statement, including the above license grant, "
+                "this restriction and the following disclaimer, must be included in all "
+                "copies of the Software, in whole or in part, and all derivative works of the "
+                "Software, unless such copies or derivative works are solely in the form of "
+                "machine-executable object code generated by a source language processor. "
+                "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR "
+                "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, "
+                "FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT "
+                "SHALL THE COPYRIGHT HOLDERS OR ANYONE DISTRIBUTING THE SOFTWARE BE LIABLE FOR "
+                "ANY DAMAGES OR OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE, "
+                "ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER "
+                "DEALINGS IN THE SOFTWARE.")
+
+# Temme's corrections e1, e2 and e3 of eta = eta0 + e1/r + e2/r^2 + e3/r^3
+# (Temme, Asymptotic inversion of the incomplete beta function, J. Comput.
+# Appl. Math. 41 (1992), p. 151), as Boost's ibeta_inverse.hpp
+# (temme_method_2_ibeta_inverse) transcribes them: e_k is sum_j c_kj(s^2)
+# eta0^j / (d_kj (s c)^n_kj), s^2 = a / (a + b) and c^2 = 1 - s^2, each
+# entry (d, n, c ascending in s^2). beta_temme_check measures them against
+# the exact eta.
+
+BETA_TEMME = [
+    [(3, 1, [-1, 2]),
+     (-36, 2, [-1, -5, 5]),
+     (1620, 3, [1, 21, -69, 46]),
+     (-6480, 4, [7, -2, 33, -62, 31]),
+     (90720, 5, [25, -52, -17, 88, -115, 46])],
+    [(-405, 3, [7, 12, -78, 52]),
+     (2592, 4, [-7, 2, 183, -370, 185]),
+     (-204120, 5, [-533, 776, -1835, 10240, -13525, 5410]),
+     (-2099520, 6, [-1579, 3747, -3372, -15821, 45588, -45213, 15071])],
+    [(102060, 5, [449, -1259, -769, 6686, -9260, 3704]),
+     (-20995200, 6, [63149, -151557, 140052, -727469, 2239932, -2251437, 750479]),
+     (36741600, 7, [29233, -78755, 105222, 146879, -1602610, 3195183, -2554139, 729754])],
+]
+
+
+def beta_temme_eta(x0, eta0, r, k=3):
+    """eta0 + e1/r + ... + ek/r^k at s^2 = x0."""
+    sc = mpmath.sqrt(x0 * (1 - x0))
+    e = [sum(mpmath.polyval(list(reversed(c)), x0) * eta0 ** j / (d * sc ** n)
+             for j, (d, n, c) in enumerate(row)) for row in BETA_TEMME]
+    return eta0 + sum(e[i] / r ** (i + 1) for i in range(k))
+
+
+def beta_temme_check():
+    """Each correction lowers the error against the exact eta, at r = 400 and
+    4000 on both sides of the mean: e1 about r-fold, as Temme's order says;
+    e2 and e3 by less than their order would, so the transcription is held
+    to no order past e1, and the guess only by the Halley count's proof."""
+    with mp.workprec(200):
+        for x0 in (mpf("0.3"), mpf("0.5"), mpf("0.8")):
+            for eta0 in (mpf(-1) / 2, mpf(1) / 4):
+                for r in (mpf(400), mpf(4000)):
+                    a, b = x0 * r, (1 - x0) * r
+                    if eta0 < 0:
+                        z = beta_quantile_logit(a, b, mpmath.ncdf(eta0 * mpmath.sqrt(r)), False)
+                    else:
+                        z = beta_quantile_logit(a, b, mpmath.ncdf(-eta0 * mpmath.sqrt(r)), True)
+                    x = 1 / (1 + mpmath.exp(-z))
+                    f = x0 * mpmath.log(x / x0) + (1 - x0) * mpmath.log((1 - x) / (1 - x0))
+                    eta = mpmath.sign(x - x0) * mpmath.sqrt(-2 * f)
+                    errors = [abs(eta - beta_temme_eta(x0, eta0, r, k)) for k in range(4)]
+                    assert errors[1] < errors[0] * 20 / r, ("e1", x0, eta0, r)
+                    assert errors[3] < errors[1], ("e2, e3", x0, eta0, r)
+
+
+def beta_temme_tables():
+    beta_temme_check()
+    rows = [(d, n, c) for row in BETA_TEMME for d, n, c in row]
+    return [
+        ("beta_temme", ocaml_matrix([[float(v) for v in reversed(c)] for _, _, c in rows])),
+        ("beta_temme_scale", ocaml_array([float(d) for d, _, _ in rows])),
+        ("beta_temme_power", ocaml_array([float(n) for _, n, _ in rows])),
+        ("beta_temme_terms", ocaml_array([float(len(row)) for row in BETA_TEMME])),
+    ]
+
+
+# nx's guess for the beta's quantile, branch for branch, in exact arithmetic:
+# z = log (x / (1 - x)) from a, b > 0, the smaller tail's logarithm l and
+# whether that tail is Q.
+
+def beta_softplus(z):
+    return max(z, 0) + mpmath.log1p(mpmath.exp(-abs(z)))
+
+
+def beta_sigmoid(z):
+    return mpmath.exp(-beta_softplus(-z))
+
+
+def beta_power_guess(a, b, lp, la, z_lo, z_hi):
+    def series(z):
+        x = beta_sigmoid(z)
+        term, total = mpf(1), mpf(0)
+        for k in range(1, BETA_GUESS_TERMS + 1):
+            term *= (k - b) / k * x
+            total += term / (a + k)
+        k = BETA_GUESS_TERMS + 1
+        if x > mpf(1) / 2 or b * x > BETA_GUESS_BX or a * total <= mpf(-1) / 2:
+            return total, mpmath.inf
+        return total, abs(term * (k - b) / k * x / (a + k))
+    z = z_lo
+    for _ in range(BETA_GUESS_TERMS):
+        total, _ = series(z)
+        if a * total <= -1:
+            break
+        lx = min((lp + la - mpmath.log1p(a * total)) / a, -mpf(2) ** -52)
+        z = min(max(lx - mpmath.log(-mpmath.expm1(lx)), z_lo), z_hi)
+    return z, series(z)[1]
+
+
+def beta_gamma_guess(a, b, l, q_tail):
+    nu = b + (a - 1) / 2
+    u = mpmath.exp(gaminv_guess(a, l, q_tail) - mpmath.log(nu))
+    return mpmath.log(-mpmath.expm1(-u)) + u
+
+
+def beta_temme_guess(a, b, m, l, q_tail):
+    r = a + b
+    x0 = a / r
+    n = -ndtri_exact(m) if q_tail else ndtri_exact(m)
+    eta = beta_temme_eta(x0, n / mpmath.sqrt(r), r)
+    z0 = mpmath.log(x0) - mpmath.log1p(-x0)
+    target = -eta * eta / 2 + x0 * mpmath.log(x0) + (1 - x0) * mpmath.log1p(-x0)
+    z = z0 + eta / mpmath.sqrt(x0 * (1 - x0))
+    for _ in range(BETA_GUESS_NEWTON):
+        x = beta_sigmoid(z)
+        f = x0 * -beta_softplus(-z) + (1 - x0) * -beta_softplus(z) - target
+        slope = x0 - x
+        nxt = z if slope == 0 else z - f / slope
+        z = z0 + (z - z0) / 2 if (nxt - z0) * eta < 0 else nxt
+    return z
+
+
+def beta_guess(fmt, a, b, l, q_tail):
+    m = mpmath.exp(l)
+    lc = mpmath.log1p(-m)
+    lq, lp = (l, lc) if q_tail else (lc, l)
+    lB = mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)
+    la, lb = mpmath.log(a) + lB, mpmath.log(b) + lB
+    far = -2 * mpmath.log(fmt.tiny)
+    finite = lambda z: min(max(z, -far), far)
+    z_lo, z_hi = finite((lp + la) / a), finite(-(lq + lb) / b)
+    z_p, gap_p = beta_power_guess(a, b, lp, la, z_lo, z_hi)
+    z_q, gap_q = beta_power_guess(b, a, lq, lb, -z_hi, -z_lo)
+    lo, hi = min(a, b), max(a, b)
+    gamma = lo < BETA_GUESS_TEMME_FROM and hi >= BETA_GUESS_GAMMA_FROM and hi > BETA_GUESS_RATIO * lo
+    small = not gamma and hi < BETA_GUESS_GAMMA_FROM and lo < 1
+    if gap_p < BETA_GUESS_GAP:
+        z = z_p
+    elif gap_q < BETA_GUESS_GAP:
+        z = -z_q
+    elif gamma:
+        z = beta_gamma_guess(a, b, l, q_tail) if a <= b else -beta_gamma_guess(b, a, l, not q_tail)
+    elif small:
+        z = z_p if gap_p <= gap_q else -z_q
+    else:
+        z = beta_temme_guess(a, b, m, l, q_tail)
+    return min(max(z, z_lo), z_hi), z_lo, z_hi
+
+
+def beta_halley(a, b, l, q_tail, z, z_lo, z_hi):
+    """nx's Halley step in z on the smaller tail's logarithm, as the step in
+    z and the new z within [z_lo, z_hi]."""
+    lp, lq = beta_logit_tails(a, b, z, l)
+    lt = lq if q_tail else lp
+    lx, ly = -beta_softplus(-z), -beta_softplus(z)
+    lB = mpmath.loggamma(a) + mpmath.loggamma(b) - mpmath.loggamma(a + b)
+    slope = mpmath.exp(a * lx + b * ly - lB - lt) * (-1 if q_tail else 1)
+    lam = a - (a + b) * beta_sigmoid(z)
+    d = (lt - l) / slope
+    den = 1 - d * (lam - slope) / 2
+    d = d / den if mpf(1) / 2 < den < mpf(3) / 2 else d
+    return d, min(max(z - d, z_lo), z_hi)
+
+
+def beta_switch_neighbours(tails):
+    """Problems on both sides of each switch of the guess: shapes beside
+    BETA_GUESS_GAMMA_FROM, BETA_GUESS_TEMME_FROM and 1, pairs beside the
+    ratio BETA_GUESS_RATIO, and quantiles beside b x = BETA_GUESS_BX and
+    beside the power form's gap of BETA_GUESS_GAP, each as (a, b, l, q)."""
+    near = lambda v: [mpf(v) * (1 - mpf(2) ** -20), mpf(v) * (1 + mpf(2) ** -20)]
+    edges = near(BETA_GUESS_GAMMA_FROM) + near(BETA_GUESS_TEMME_FROM) + near(1)
+    others = [mpf(v) for v in ("0.3", "0.9", "4.5", "30", "1e3")]
+    out = [(a, b, l, q) for e in edges for o in others for a, b in ((e, o), (o, e))
+           for l in tails for q in (False, True)]
+    for lo in (mpf("0.3"), mpf(2), mpf(6), mpf(15)):
+        for hi in near(BETA_GUESS_RATIO * lo):
+            out += [(a, b, l, q) for a, b in ((lo, hi), (hi, lo)) for l in tails for q in (False, True)]
+
+    def at(a, b, x):
+        """Both tails' problems at the quantile x."""
+        z = mpmath.log(x) - mpmath.log1p(-x)
+        lp, lq = beta_logit_tails(a, b, z, min(mpmath.log(x), -1))
+        return [(a, b, lp, False) if lp <= lq else (a, b, lq, True)]
+
+    def gap(a, b, x):
+        term = mpf(1)
+        for k in range(1, BETA_GUESS_TERMS + 1):
+            term *= (k - b) / k * x
+        k = BETA_GUESS_TERMS + 1
+        return abs(term * (k - b) / k * x / (a + k))
+
+    for a in (mpf("0.5"), mpf(3), mpf(40)):
+        for b in (mpf(2), mpf(10), mpf(300)):
+            for x in near(BETA_GUESS_BX / b):
+                out += at(a, b, x) + [(b2, a2, l, not q) for a2, b2, l, q in at(b, a, 1 - x)]
+            lo, hi = mpf(0), mpf(1) / 2
+            if gap(a, b, hi) > BETA_GUESS_GAP:
+                for _ in range(60):
+                    mid = (lo + hi) / 2
+                    lo, hi = (mid, hi) if gap(a, b, mid) < BETA_GUESS_GAP else (lo, mid)
+                for x in near(lo):
+                    out += at(a, b, x)
+    return out
+
+
+def beta_halley_steps(fmt):
+    """The least Halley count after which nx's last Halley step, from the
+    iterate held constant, puts x within u/8 of the quantile, relatively,
+    and the iterate within sqrt(u) of its logit, so that the step's first
+    derivative, the quantile's to second order in that distance, is within
+    O(u) of it: from the guess at every
+    point of a grid of shapes from 1e-30 to 2^20 and of the smaller tail
+    down to the least subnormal, either tail, and on both sides of each of
+    the guess's switches, where neither x nor 1 - x underflows."""
+    least_log = math.log(fmt.tiny)
+    tails = [least_log * mpf(2) ** -k for k in (0, 2, 4, 6, 8)] + [mpf("-0.6931"), mpf(-1.5), mpf(-4)]
+    shapes = [mpf(v) for v in ("1e-30", "1e-12", "1e-3", "0.05", "0.5", "1", "2.5", "10", "60", "1e3", "1e5")]
+    shapes.append(mpf(2) ** 20)
+    with mp.workprec(128):
+        problems = [(a, b, l, q) for a in shapes for b in shapes for l in tails for q in (False, True)]
+        problems += beta_switch_neighbours(tails)
+        cases = []
+        for a, b, l, q in problems:
+            z = beta_quantile_logit(a, b, mpmath.exp(l), q)
+            if min(1 / (1 + mpmath.exp(-z)), 1 / (1 + mpmath.exp(z))) >= fmt.tiny:
+                cases.append((a, b, l, q, z, beta_guess(fmt, a, b, l, q)))
+        for count in range(1, 6):
+            def ok(case):
+                a, b, l, q, z_star, (z, z_lo, z_hi) = case
+                for _ in range(count):
+                    _, z = beta_halley(a, b, l, q, z, z_lo, z_hi)
+                if abs(z - z_star) > mpf(fmt.u) ** mpf("0.5"):
+                    return False
+                d, _ = beta_halley(a, b, l, q, z, -mpmath.inf, mpmath.inf)
+                x, y = beta_sigmoid(z), beta_sigmoid(-z)
+                xs = beta_sigmoid(z_star)
+                got = x - x * y * d * (1 - (y - x) * d / 2)
+                return abs(got - xs) <= mpf(fmt.u) / 8 * xs
+            if all(ok(c) for c in cases):
+                return count
+    sys.exit("no Halley count meets the beta's inverse's bound")
 
 # The counts of the incomplete beta's series, continued fractions and
 # expansions, each the least that meets its tolerance at its region's worst
@@ -2598,6 +3028,10 @@ FUNCTIONS = [
              extra=igamma_kappa(False)),
     Function("gammainccinv", ["a", "q"], igamma_quantile_reference(True), igamma_quantile_points,
              extra=igamma_kappa(True)),
+    Function("betaincinv", ["a", "b", "p"], beta_quantile_reference(False), beta_quantile_points,
+             extra=beta_kappa(False)),
+    Function("betainccinv", ["a", "b", "q"], beta_quantile_reference(True), beta_quantile_points,
+             extra=beta_kappa(True)),
     Function("betainc", ["a", "b", "x"], betainc_reference(False, False), betainc_points),
     Function("betaincc", ["a", "b", "x"], betainc_reference(True, False), betainc_points),
     Function("log_betainc", ["a", "b", "x"], betainc_reference(False, True), betainc_points),
@@ -2706,6 +3140,12 @@ SOURCES = {
                      "ratios and their inverse, ACM TOMS 12 (1986).",
     "igamma_guess_p": "DiDonato and Morris's GAMINV, Algorithm 654, ACM TOMS 13 (1987).",
     "beta_bpser_bx": "DiDonato and Morris, Algorithm 708, ACM TOMS 18 (1992).",
+    "beta_guess_terms": "Temme, Asymptotic inversion of the incomplete beta function, "
+                        "J. Comput. Appl. Math. 41 (1992), sections 3 and 4.",
+    "beta_temme": "Temme's corrections e1 to e3 (p. 151) as Boost's ibeta_inverse.hpp "
+                  "transcribes them; against the exact eta, e1 holds to Temme's order "
+                  "and e2 and e3 lower the error by less than theirs would: "
+                  + BOOST_NOTICE,
 }
 
 PER_DTYPE_SOURCES = (
@@ -2811,6 +3251,27 @@ SECTIONS = {
                       "most [beta_bup_most] terms. x^a y^b / B(a, b) takes its "
                       "large-argument form from [beta_large], and e - log1p e its series "
                       "where |e| <= [rlog1_series]."),
+    "beta_guess_terms": ("beta_inverse", "The incomplete beta function's inverse",
+                         "The first guess of the beta's quantile, in z = log (x / (1 - x)). "
+                         "A tail's power form solves BPSER's x^a / (a B(a, b)) (1 + a S(x)) "
+                         "= P for z, S(x) = sum_k (1 - b)_k x^k / (k! (a + k)) to "
+                         "[beta_guess_terms] terms, by as many fixed-point steps, and is "
+                         "taken where the first term it leaves is below [beta_guess_gap], "
+                         "x at most 1/2 and b x at most [beta_guess_bx]; "
+                         "the other tail's likewise. Else the gamma's form, P(a, -nu log (1 - x)) with nu = "
+                         "b + (a - 1)/2, where the larger shape exceeds the smaller "
+                         "[beta_guess_ratio] times, is at least [beta_guess_gamma_from] and "
+                         "the smaller is below [beta_guess_temme_from]; else, where the "
+                         "smaller is below 1 and the larger below [beta_guess_gamma_from], "
+                         "the power form whose terms left are fewer; else Temme's "
+                         "asymptotic form in 1/(a "
+                         "+ b) to its third term, its equation for x solved by "
+                         "[beta_guess_newton] Newton steps. Its corrections e1, e2 and e3 "
+                         "are sums over j of c_kj(s^2) eta0^j / (d_kj (s c)^n_kj): "
+                         "[beta_temme] holds the c_kj one after the other, highest "
+                         "degree first, [beta_temme_scale] the d_kj and "
+                         "[beta_temme_power] the n_kj, [beta_temme_terms] the count of "
+                         "each e_k's terms."),
 }
 
 # The record's field docs, each on the first field of its group.
@@ -2864,7 +3325,13 @@ FIELD_DOCS = {
                            "the inverses' Halley steps after the first guess, the least after "
                            "which the Newton step that follows them puts x within u/8 of the "
                            "quantile, relatively, for a up to 2^20 and either tail down to "
-                           "the least subnormal. [erfcx_series] is erfc x e^(x^2) x sqrt pi "
+                           "the least subnormal. [beta_halley_steps] is the beta's "
+                           "quantile's Halley steps after its first guess, the least after "
+                           "which a last Halley step puts x within u/8 of the quantile, "
+                           "relatively, from an iterate within sqrt(u) of its logit, for "
+                           "shapes from 1e-30 to 2^20 and either tail down to the least "
+                           "subnormal. "
+                           "[erfcx_series] is erfc x e^(x^2) x sqrt pi "
                            "from [erfc_far_from], (-1)^k (2k - 1)!! in 1/(2x^2), its least "
                            "count within u/8 of the value and of the derivative.",
     "beta_eps": "TOMS 708's tolerance, the dtype's epsilon but 1e-15 at float64, below which "

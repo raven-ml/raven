@@ -3307,6 +3307,10 @@ thread.
 
 ### Nx
 
+- Add `Nx.betaincinv` and `Nx.betainccinv`, the beta distribution's
+  quantiles from either tail, within `4 + κ (64 (1 + |log m|) + 4)` ulps for
+  shapes up to `2^20`. Rune differentiates them in the probability and in both
+  shapes.
 - An operation on a traced value allocates fewer words: `Nx.Prim.results`
   builds no route where its operands lie at one placement that cuts no axis,
   and `Nx.Prim.iteri` of a contraction or a transform allocates nothing.

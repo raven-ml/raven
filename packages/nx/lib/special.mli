@@ -34,6 +34,8 @@ val betainc : 'w e -> 'w e -> 'w e -> 'w e
 val betaincc : 'w e -> 'w e -> 'w e -> 'w e
 val log_betainc : 'w e -> 'w e -> 'w e -> 'w e
 val log_betaincc : 'w e -> 'w e -> 'w e -> 'w e
+val betaincinv : 'w e -> 'w e -> 'w e -> 'w e
+val betainccinv : 'w e -> 'w e -> 'w e -> 'w e
 val i0e : 'w e -> 'w e
 val i1e : 'w e -> 'w e
 

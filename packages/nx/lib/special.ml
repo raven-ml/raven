@@ -93,6 +93,10 @@ let log_two_over_sqrt_pi = 0x1.eeb95b094c191p-4
 let log_0_9 = -0x1.af8e8210a415cp-4
 let log_0_01 = -0x1.26bb1bbb55515p+2
 
+(* The logarithm of the least subnormal, [-(p - 1 - emin) log 2]. *)
+let log_least_of (type w) (x : (float, w) E.t) =
+  match E.dtype x with D.Float64 -> -1074. *. ln2 | _ -> -149. *. ln2
+
 let max_float_of (type w) (x : (float, w) E.t) =
   (D.float_format (E.dtype x)).max_finite
 
@@ -1588,33 +1592,53 @@ let log_beta_power_bx = -0x1.6d3c324e13f50p-2
    0] and [0 < x < 1]. After the swap, the regions name the method for [(a0, b0,
    x0)]; the direct tail is the swapped problem's lower one [w] or its upper one
    [w1]. *)
-let log_betainc_at upper a b x =
-  let t = tables x in
-  let eps = t.beta_eps in
-  let ( &&& ) = logical_and and ( ||| ) = logical_or and no = logical_not in
-  (* Everything comes from [s], the smaller of [x] and [1 - x], exact both ways,
-     so that [(b, a, 1 - x)] computes what [(a, b, x)] does bit for bit where [x
-     >= 1/2]: [y], the logarithms and [p - (p + q) v] for [v] either
-     variable. *)
+(* The variables of [log_betainc_point]: [x], [y = 1 - x], their logarithms
+   [lx] and [ly], [s] the smaller of [x] and [y], whether [x >= 1/2], and
+   whether [x = 1/2]. *)
+type 'b beta_point = {
+  x : (float, 'b) E.t;
+  y : (float, 'b) E.t;
+  lx : (float, 'b) E.t;
+  ly : (float, 'b) E.t;
+  s : (float, 'b) E.t;
+  upper_half : (bool, D.bool_elt) E.t;
+  half : (bool, D.bool_elt) E.t;
+}
+
+(* Everything comes from [s], the smaller of [x] and [1 - x], exact both ways,
+   so that [(b, a, 1 - x)] computes what [(a, b, x)] does bit for bit where [x
+   >= 1/2]: [y], the logarithms and [p - (p + q) v] for [v] either variable.
+   At [x = 1/2] both variables are 1/2: their logarithms are [log x] and [log
+   (1 - x)], the same bits with each its own derivative. *)
+let beta_point x =
   let upper_half = ge x 0.5 in
   let y = rsub_s 1. x in
   let s = where upper_half y x in
-  (* At [x = 1/2] both variables are 1/2: their logarithms are [log x] and [log
-     (1 - x)], the same bits with each its own derivative, and [p - (p + q) v]
-     is [(p - q)/2 + (p + q) (1/2 - v)], whose last term is an exact 0. *)
   let half = is x 0.5 in
   let ls = log s and l1s = log1p (neg s) in
   let lx = where half (log x) (where upper_half l1s ls) in
   let ly = where half (log y) (where upper_half ls l1s) in
-  let lam_at p q v_is_x =
-    let off = where v_is_x (rsub_s 0.5 x) (sub_s x 0.5) in
-    where half
-      (add (mul_s (sub p q) 0.5) (mul (add p q) off))
-      (where
-         (logical_xor v_is_x upper_half)
-         (lambda_of p q s)
-         (neg (lambda_of q p s)))
-  in
+  { x; y; lx; ly; s; upper_half; half }
+
+(* [p - (p + q) v] at [pt], [v] its [x] where [v_is_x], else its [y]: at [x =
+   1/2], [(p - q)/2 + (p + q) (1/2 - v)], whose last term is an exact 0. *)
+let lam_at pt p q v_is_x =
+  let off = where v_is_x (rsub_s 0.5 pt.x) (sub_s pt.x 0.5) in
+  where pt.half
+    (add (mul_s (sub p q) 0.5) (mul (add p q) off))
+    (where
+       (logical_xor v_is_x pt.upper_half)
+       (lambda_of p q pt.s)
+       (neg (lambda_of q p pt.s)))
+
+(* [log_betainc_at] at a point whose variables are given, so that [x] or [y]
+   may underflow where its logarithm does not. *)
+let log_betainc_point upper a b pt =
+  let { x; y; lx; ly; _ } = pt in
+  let t = tables x in
+  let eps = t.beta_eps in
+  let ( &&& ) = logical_and and ( ||| ) = logical_or and no = logical_not in
+  let lam_at = lam_at pt in
   let lam = lam_at a b yes in
   let small = le a 1. ||| le b 1. in
   (* A tie swaps to put the larger argument second, as [(b, a, 1 - x)] does, and
@@ -1764,6 +1788,8 @@ let log_betainc_at upper a b x =
   let wanted_upper = logical_xor swap upper in
   where (logical_xor direct_upper wanted_upper) (log1mexp l) l
 
+let log_betainc_at upper a b x = log_betainc_point upper a b (beta_point x)
+
 (* The argument a vanishing tail is measured at: its ratio to the argument there
    is the tail's slope at 0, to within its square. *)
 let beta_vanishing = 0x1p-61
@@ -1857,6 +1883,333 @@ let beta_tail upper a b x =
   in
   (where invalid nan l, where invalid nan v)
 
+(* Incomplete beta inverse
+
+   The beta's quantile works in [z = log (x / (1 - x))], in which both tails'
+   logarithms are concave, the logit of a beta draw having a log-concave
+   density: Newton on either converges from any start, and from the side
+   where the tail's tangent lies above it without passing the root. Each
+   tail is linear far out: [log I] meets [a z - log (a B(a, b))] as [z]
+   falls, and [log (1 - I)] meets [-b z - log (b B(a, b))] as [z] rises, and
+   lies below that line everywhere, by concavity. So the root lies between
+   the two lines' roots, [z_lo] for the lower tail at [log P] and [z_hi] for
+   the upper at [log Q]. *)
+
+(* [x] through its bits, which no derivative passes. *)
+let constant (type w) (x : (float, w) E.t) : (float, w) E.t =
+  let dt = E.dtype x in
+  if D.bits dt = 64 then E.bitcast dt (E.bitcast D.Int64 x)
+  else E.bitcast dt (E.bitcast D.Int32 x)
+
+(* [log (1 + e^z)], no term of which overflows. *)
+let softplus z =
+  add (where (gt z 0.) z (zeros_like z)) (log1p (exp (neg (abs z))))
+
+(* The point of logit [z]: [x] and [1 - x] each from its own logarithm, which
+   stays finite where the variable underflows. *)
+let logit_point z =
+  let lx = neg (softplus (neg z)) and ly = neg (softplus z) in
+  let x = exp lx and y = exp ly in
+  let upper_half = ge z 0. in
+  { x; y; lx; ly; s = where upper_half y x; upper_half; half = is z 0. }
+
+(* The lower tail's power form solved for [z] at [log P = lp]: [log I = a lx
+   - la + log1p (a S(x))], [la = log (a B(a, b))] and [S(x) = sum_k (1 - b)_k
+   x^k / (k! (a + k))], BPSER's series, which keeps its precision as [a]
+   falls. Its [lx = (lp + la - log1p (a S)) / a] is solved by
+   [beta_guess_terms] fixed-point steps from the line's root [z_lo], [S] to
+   as many terms, and [z = lx - log (1 - e^lx)] kept within [z_lo, z_hi];
+   with the first term it leaves, the error in [z], as its scale. *)
+let power_guess a b lp la z_lo z_hi =
+  let c = add lp la in
+  let series x =
+    let term = ref (ones_like x) and sum = ref (zeros_like x) in
+    for k = 1 to T.beta_guess_terms do
+      let fk = float_of_int k in
+      term := mul !term (mul (div (rsub_s fk b) (lit x fk)) x);
+      sum := add !sum (div !term (add_s a fk))
+    done;
+    let k = float_of_int (T.beta_guess_terms + 1) in
+    let next = mul !term (mul (div (rsub_s k b) (lit x k)) x) in
+    (* The series is BPSER's, and its terms fall at least twofold, where
+       [x] is at most 1/2 and [b x] at most [beta_guess_bx]. *)
+    let valid =
+      List.fold_left logical_and (le x 0.5)
+        [ le (mul b x) T.beta_guess_bx; gt (mul a !sum) (-0.5) ]
+    in
+    (!sum, where valid (abs (div next (add_s a k))) (lit x Float.infinity))
+  in
+  let within z = where (cmplt z z_lo) z_lo (where (cmpgt z z_hi) z_hi z) in
+  let z_of lx =
+    let lx = where (lt lx 0.) lx (lit lx (-.epsilon lx)) in
+    sub lx (log (neg (expm1 lx)))
+  in
+  let z = ref z_lo in
+  for _ = 1 to T.beta_guess_terms do
+    let sum, _ = series (exp (neg (softplus (neg !z)))) in
+    let next = z_of (div (sub c (log1p (mul a sum))) a) in
+    z := where (isnan next) !z (within next)
+  done;
+  (!z, snd (series (exp (neg (softplus (neg !z))))))
+
+(* Temme's asymptotic inversion in [r = a + b] (J. Comput. Appl. Math. 41
+   (1992), section 3): [eta = eta0 + e1 / r + e2 / r^2 + e3 / r^3], [eta0 =
+   -erfc^-1 (2 P) / sqrt (r / 2)] the normal quantile of [P] over [sqrt r] and
+   each [e_k] a polynomial in [eta0] whose coefficients are polynomials in [s^2
+   = x0] over powers of [s c = sqrt (x0 (1 - x0))], as Temme gives them on
+   page 151; then [z] with [x0 log (x / x0) + (1 - x0) log ((1 - x) / (1 -
+   x0)) = -eta^2 / 2] on the side of the mean [x0 = a / r] that [eta]'s sign
+   gives. That equation's left side is concave in [z], with the slope [x0 -
+   x], and Newton runs from its quadratic approximation about [z0 = logit
+   x0]. *)
+let temme_guess a b m l q_tail =
+  let r = add a b in
+  let x0 = div a r and y0 = div b r in
+  let s2 = x0 and sc = sqrt (mul x0 y0) in
+  let n = ndtri_mass (where q_tail (rsub_s 0.5 m) (sub_s m 0.5)) l in
+  let eta0 = div n (sqrt r) in
+  (* [e_k]'s term [j] is [c_kj(s^2) eta0^j / (d_kj (s c)^n_kj)], the tables'
+     rows one after the other. *)
+  let rec power x n = if n = 0 then ones_like x else mul x (power x (n - 1)) in
+  let row = ref 0 in
+  let e =
+    Array.map
+      (fun count ->
+        let count = int_of_float count in
+        let terms =
+          Array.init count (fun j ->
+              let k = !row + j in
+              div
+                (horner T.beta_temme.(k) s2)
+                (mul_s
+                   (power sc (int_of_float T.beta_temme_power.(k)))
+                   T.beta_temme_scale.(k)))
+        in
+        row := !row + count;
+        horner_t (Array.of_list (List.rev (Array.to_list terms))) eta0)
+      T.beta_temme_terms
+  in
+  let e1 = e.(0) and e2 = e.(1) and e3 = e.(2) in
+  let ir = recip r in
+  let eta = add eta0 (mul ir (add e1 (mul ir (add e2 (mul ir e3))))) in
+  let lx0 = log x0 and ly0 = log y0 in
+  let z0 = sub lx0 ly0 in
+  let h = add (mul x0 lx0) (mul y0 ly0) in
+  let target = add (mul_s (mul eta eta) (-0.5)) h in
+  let z = ref (add z0 (div eta sc)) in
+  for _ = 1 to T.beta_guess_newton do
+    let pt = logit_point !z in
+    let f = sub (add (mul x0 pt.lx) (mul y0 pt.ly)) target in
+    (* At the mean, where the slope is 0, [eta] is 0 and so is [f]. *)
+    let slope = sub x0 pt.x in
+    let flat = is slope 0. in
+    let step =
+      where flat (zeros_like f) (div f (where flat (ones_like slope) slope))
+    in
+    let next = sub !z step in
+    (* A step to the other side of [z0], or past the floats, halves the
+       distance to [z0] instead. *)
+    let wrong =
+      logical_or
+        (logical_not (isfinite next))
+        (lt (mul (sub next z0) eta) 0.)
+    in
+    z := where wrong (add z0 (mul_s (sub !z z0) 0.5)) next
+  done;
+  !z
+
+(* The logit of [x] where [I_x(a, b)] is near the gamma's [P(a, w)], [w = -nu
+   log (1 - x)] and [nu = b + (a - 1)/2], as it is for [b] large beside [a]
+   (Temme, section 4; BGRAT's leading term): GAMINV's guess for [log w], then
+   [log x] and [log (1 - x) = -w / nu]. *)
+let gamma_guess t a b l q_tail lp lq =
+  let nu = add b (mul_s (sub_s a 1.) 0.5) in
+  let lu = sub (gaminv_guess t a l q_tail lp lq) (log nu) in
+  let u = exp lu in
+  let small = lt u (Float.sqrt (epsilon u)) in
+  let us = clamp (logical_not small) u 1. in
+  let lx = where small (sub lu (mul_s u 0.5)) (log (neg (expm1 (neg us)))) in
+  add lx u
+
+(* [log (a B(a, b))] for finite [a, b > 0], which is O(a) as [a] falls: where
+   [a] is below 1 and at most [b], [log Γ(1 + a) - (log Γ(a + b) - log Γ(b))],
+   each part from its own form relative to [a], so that nothing cancels to
+   leave rounding divided by [a]; elsewhere [log a + log B(a, b)], whose terms
+   cancel nowhere their difference is small beside [a]. *)
+let log_scaled_beta a b =
+  let small = logical_and (lt a 1.) (cmple a b) in
+  let a_s = clamp small a 0.5 and b_s = clamp small b 1. in
+  let s = shift a_s b_s in
+  let difference = add (mul a_s (sub_s s.log_q 1.)) s.tail in
+  let near = sub (mul a_s (lgamma1p_ratio a_s)) difference in
+  where small near (add (log a) (lbeta_at a b))
+
+(* A first [z] for finite [a, b > 0], from the logarithms [lp] and [lq] of
+   [P] and [Q] at the root and [l], the smaller, within [z_lo, z_hi]: the
+   lower tail's power form where the terms it leaves are below
+   [beta_guess_gap], the upper's likewise; else the gamma's form where the
+   larger shape exceeds the smaller [beta_guess_ratio] times, is at least
+   [beta_guess_gamma_from] and the smaller is below [beta_guess_temme_from];
+   else, where the smaller is below 1 and the larger below
+   [beta_guess_gamma_from], the power form that leaves less; else Temme's. *)
+let beta_guess t a b m l q_tail lp lq =
+  let la = log_scaled_beta a b and lb = log_scaled_beta b a in
+  (* The bounds stay within twice the logarithm of the least subnormal, past
+     which [x] or [1 - x] rounds to 0, and where a shape so small would send
+     them past the floats. *)
+  let far = lit a (-2. *. log_least_of a) in
+  let finite z =
+    where (cmplt z (neg far)) (neg far) (where (cmpgt z far) far z)
+  in
+  (* Each bound moves out by the error of its terms, [log (a B)] within
+     [lbeta]'s 512 ulps, so that the root stays inside. *)
+  let out l s n =
+    mul_s (add_s (div (add (abs l) (abs s)) n) 1.) (512. *. epsilon a)
+  in
+  let z_lo = sub (div (add lp la) a) (out lp la a) in
+  let z_hi = add (neg (div (add lq lb) b)) (out lq lb b) in
+  let z_lo = finite z_lo and z_hi = finite z_hi in
+  let z_p, gap_p = power_guess a b lp la z_lo z_hi in
+  let z_q, gap_q = power_guess b a lq lb (neg z_hi) (neg z_lo) in
+  let lo = where (cmple a b) a b and hi = where (cmple a b) b a in
+  let gamma =
+    logical_and
+      (logical_and
+         (lt lo T.beta_guess_temme_from)
+         (ge hi T.beta_guess_gamma_from))
+      (cmpgt hi (mul_s lo T.beta_guess_ratio))
+  in
+  let small =
+    logical_and (logical_not gamma)
+      (logical_and (lt hi T.beta_guess_gamma_from) (lt lo 1.))
+  in
+  let power =
+    logical_or (lt gap_p T.beta_guess_gap) (lt gap_q T.beta_guess_gap)
+  in
+  let gamma = logical_and (logical_not power) gamma in
+  let temme = List.fold_left logical_or power [ gamma; small ] |> logical_not in
+  (* Each form reads its arguments where it is taken, and a point of its
+     domain elsewhere, so that its intermediates stay finite. *)
+  let low_first = logical_and gamma (cmple a b) in
+  let high_first = logical_and gamma (cmpgt a b) in
+  let z_g =
+    where low_first
+      (gamma_guess t (clamp low_first a 1.) (clamp low_first b 10.) l q_tail lp
+         lq)
+      (neg
+         (gamma_guess t (clamp high_first b 1.) (clamp high_first a 10.) l
+            (logical_not q_tail) lq lp))
+  in
+  let z_t = temme_guess (clamp temme a 2.) (clamp temme b 2.) m l q_tail in
+  let z_s = where (cmple gap_p gap_q) z_p (neg z_q) in
+  let z =
+    where (lt gap_p T.beta_guess_gap) z_p
+      (where (lt gap_q T.beta_guess_gap) (neg z_q)
+         (where gamma z_g (where small z_s z_t)))
+  in
+  (where (cmplt z z_lo) z_lo (where (cmpgt z z_hi) z_hi z), z_lo, z_hi)
+
+(* The beta's quantile at [p] from the lower tail, or from the upper where
+   [upper], for finite [a, b > 0] and [p] in (0, 1): the guess, then Halley
+   steps in [z] on the logarithm of the smaller tail, each kept within [z_lo,
+   z_hi], and one Halley step more in [x], so that the result's derivative is
+   the implicit one. Each step's slope [d log T / dz = ± x y pdf(x) / T] is
+   formed from [front]'s [log (x^a y^b / (a B(a, b)))], which keeps its
+   precision where [a] and [b] are large. *)
+let ibeta_inverse a b p upper =
+  let t = tables a in
+  let flip = cmpgt p (lit p 0.5) in
+  let m = where flip (rsub_s 1. p) p in
+  let q_tail = logical_xor upper flip in
+  let l = log m and lc = log1p (neg m) in
+  let lq = where q_tail l lc and lp = where q_tail lc l in
+  let z, z_lo, z_hi = beta_guess t a b m l q_tail lp lq in
+  let sign = where q_tail (lit a (-1.)) (ones_like a) in
+  (* [log T - l] at the point [pt] for the shapes [a] and [b], its slope in
+     [z], and [lam = a - (a + b) x]. *)
+  let residual_of a b pt =
+    let lt_ = log_betainc_point q_tail a b pt in
+    let lam = lam_at pt a b yes in
+    let fr, _ = front a b pt.x pt.y pt.lx pt.ly lam in
+    (sub lt_ l, mul sign (exp (sub (add fr (log a)) lt_)), lam)
+  in
+  let residual pt = residual_of a b pt in
+  (* Halley's correction of the Newton step [d] where it changes the step by
+     at most half: farther from the root it would shrink the step where the
+     tail is flat. *)
+  let halley_step d slope lam =
+    let den = rsub_s 1. (mul_s (mul d (sub lam slope)) 0.5) in
+    where (logical_and (gt den 0.5) (lt den 1.5)) (div d den) d
+  in
+  (* A step stays within [z_lo, z_hi]; one that is NaN, where [x] or [1 - x]
+     underflows at both bounds, keeps [z]. *)
+  let halley z =
+    let g, slope, lam = residual (logit_point z) in
+    let next = sub z (halley_step (div g slope) slope lam) in
+    where (isnan next) z
+      (where (cmplt next z_lo) z_lo (where (cmpgt next z_hi) z_hi next))
+  in
+  let z = ref z in
+  for _ = 1 to int_of_float t.beta_halley_steps do
+    z := halley !z
+  done;
+  (* The last Halley step runs from the iterate held constant, through its
+     bits, so that a derivative runs through that step alone, one incomplete
+     beta. Halley's step [H] meets the root to third order in every
+     parameter, [H - z* = O(e^3)] for the iterate's error [e], so its
+     derivatives are the quantile's to [O(e^2)] for the first and [O(e)] for
+     the second; those past the second are not. The step moves [x] to [x(z
+     - d)] by its Taylor series to third order, [x - x y d + x y (y - x)
+     d^2 / 2], [d] the step in [z] and [x y] and [x y (y - x)] the logistic's
+     first two derivatives, at the point of [z], whose [1 - x] keeps the
+     digits that [x] near 1 rounds away: a series cut at first order would
+     leave the result's derivatives the quantile's only to [O(e)]. *)
+  let z = constant !z in
+  let pt = logit_point z in
+  let x = where (cmplt pt.x (lit pt.x 0.5)) pt.x (rsub_s 1. pt.y) in
+  (* Where [x] or [1 - x] underflows the step reads [a = b = 2] at [z = 0],
+     so that no derivative of a step it does not take meets an infinite
+     one. *)
+  let normal = logical_and (ge x (min_normal x)) (ge pt.y (min_normal x)) in
+  let at = logit_point (where normal z (zeros_like z)) in
+  let g, slope, lam = residual_of (clamp normal a 2.) (clamp normal b 2.) at in
+  let d = halley_step (div g slope) slope lam in
+  let polish = logical_and normal (lt (abs (mul at.y d)) 0.5) in
+  let xy = mul x at.y in
+  let curve = mul_s (mul (sub at.y at.x) d) 0.5 in
+  where polish (sub x (mul (mul xy d) (rsub_s 1. curve))) x
+
+(* The quantile with the domain's edges: [0] at the probability that is [0]
+   at [x = 0], [1] at the other end; inside, [0] where the lower tail is 1,
+   at [a = 0] or [b = inf], and [1] where it is 0, at [b = 0] or [a = inf].
+   NaN outside [a, b >= 0] and [p] in [0, 1], and where both hold. *)
+let betaincinv_at a b p upper =
+  let one = logical_or (is a 0.) (is b Float.infinity) in
+  let nil = logical_or (is b 0.) (is a Float.infinity) in
+  let nan =
+    List.fold_left logical_or (isnan a)
+      [
+        isnan b;
+        isnan p;
+        lt a 0.;
+        lt b 0.;
+        lt p 0.;
+        gt p 1.;
+        logical_and one nil;
+      ]
+  in
+  let low = where upper (is p 1.) (is p 0.) in
+  let high = where upper (is p 0.) (is p 1.) in
+  let zero = logical_or low (logical_and one (logical_not high)) in
+  let unit = logical_or high nil in
+  let regular = logical_not (logical_or nan (logical_or zero unit)) in
+  let a = clamp regular a 2. and b = clamp regular b 2. in
+  let p = clamp regular p 0.5 in
+  let r = ibeta_inverse a b p upper in
+  where regular r
+    (where nan (lit r Float.nan)
+       (where zero (zeros_like r) (ones_like r)))
+
 (* The functions *)
 
 let nan_through x r = where (isnan x) x r
@@ -1898,3 +2251,5 @@ let log_betainc a b x = fst (beta_tail lower a b x)
 let log_betaincc a b x = fst (beta_tail upper a b x)
 let betainc a b x = snd (beta_tail lower a b x)
 let betaincc a b x = snd (beta_tail upper a b x)
+let betaincinv a b p = betaincinv_at a b p lower
+let betainccinv a b q = betaincinv_at a b q upper

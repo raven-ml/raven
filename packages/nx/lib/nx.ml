@@ -2348,6 +2348,14 @@ let betaincc a b x =
   float_map ~by:"Nx.betaincc" [ a; b; x ] (fun _ i ->
       Special.betaincc i.(0) i.(1) i.(2))
 
+let betaincinv a b p =
+  float_map ~by:"Nx.betaincinv" [ a; b; p ] (fun _ i ->
+      Special.betaincinv i.(0) i.(1) i.(2))
+
+let betainccinv a b q =
+  float_map ~by:"Nx.betainccinv" [ a; b; q ] (fun _ i ->
+      Special.betainccinv i.(0) i.(1) i.(2))
+
 let log_betainc a b x =
   float_map ~by:"Nx.log_betainc" [ a; b; x ] (fun _ i ->
       Special.log_betainc i.(0) i.(1) i.(2))
