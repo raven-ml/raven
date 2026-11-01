@@ -45,7 +45,9 @@ test/support/times_reference.ml
       each day that ends a 1961-1972 interval, and at random from 1961 to
       2035;
     - each day that ends an interval: its length in UTC seconds and TAI -
-      UTC at the next day's 0h, exact from the history and rounded once;
+      UTC at the next day's 0h, exact from the history and rounded once,
+      each checked against ERFA's own table (eraDat at the day's 0h, at
+      its end and at the next day's 0h) within 1e-12 s;
     - TDB - TT from eraDtdb at the geocentre, at TT 0.5 s past 0h of days
       drawn from 1600 to 2400.
 
@@ -308,6 +310,25 @@ def ends(intervals):
     return out
 
 
+END_TOLERANCE = 1e-12  # s: eraDat's rounding of a drift up to 4.3 s
+
+
+def check_ends(intervals):
+    """Fail unless each interval's end, from the history, is ERFA's: TAI -
+    UTC at the day's 0h, the rate over the day (eraDat at fraction 1 less
+    at 0) and TAI - UTC at the next day's 0h."""
+    for day, dat0, rate, jump in ends(intervals):
+        y, m, d = civil(day)
+        start = erfa.dat(y, m, d, 0.0)
+        drift = erfa.dat(y, m, d, 1.0) - start
+        after = erfa.dat(*civil(day + 1), 0.0)
+        theirs = (start, drift, after)
+        ours = (dat0, rate, dat0 + rate + jump)
+        if any(abs(float(o) - t) > END_TOLERANCE for o, t in zip(ours, theirs)):
+            sys.exit(f"eraDat {theirs} and the history {[float(o) for o in ours]} "
+                     f"differ at the end of MJD {day}")
+
+
 def utc_instants(intervals):
     """(date, clock) of UTC instants: around each leap second, around the
     end of each interval before 1972, and at random."""
@@ -526,6 +547,7 @@ def main():
     intervals = history(history_text)
     leaps, expires = bulletin(bulletin_text)
     agree(intervals, leaps)
+    check_ends(intervals)
     files = [
         (TABLES, render_tables(sources, intervals, expires, dtdb_text)),
         (REFERENCE, render_reference(sources, intervals)),
