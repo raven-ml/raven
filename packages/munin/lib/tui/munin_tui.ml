@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
+open Munin_float_text
 
 (* Model *)
 
@@ -183,10 +184,10 @@ let view_summary_banner m =
         let spark = mini_sparkline history ~width:8 in
         let value =
           match best_value m.run tag with
-          | Some v -> Printf.sprintf "%.4g" v
+          | Some v -> Float_text.g ~precision:4 v
           | None -> (
               match Munin_theme.last_value history with
-              | Some v -> Printf.sprintf "%.4g" v
+              | Some v -> Float_text.g ~precision:4 v
               | None -> "-")
         in
         box ~flex_direction:Row ~gap:(gap 1)

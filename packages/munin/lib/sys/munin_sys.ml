@@ -158,7 +158,8 @@ let mb bytes = bytes /. 1_048_576.
 let start ?(interval = 15.0) session =
   if not (interval > 0.) then
     invalid_arg
-      (Printf.sprintf "Munin_sys.start: interval %g is not positive" interval);
+      (Printf.sprintf "Munin_sys.start: interval %s is not positive"
+         (Munin_float_text.Float_text.exact interval));
   let cpu =
     source session Sysstat.Cpu.sample
       (fixed [ "sys/cpu_user"; "sys/cpu_system" ] (fun ~prev ~next ~dt:_ ->

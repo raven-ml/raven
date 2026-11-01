@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
+open Munin_float_text
 
 (* Exponential moving average: alpha in (0,1]. *)
 let ema alpha history =
@@ -68,16 +69,19 @@ let format_step step =
     done;
     Buffer.contents buf
 
+(* A statistic to four significant digits, as C's [%.4g] writes it. *)
+let g4 x = Float_text.g ~precision:4 x
+
 let view_stats_row stats =
   let parts =
-    [ Printf.sprintf "Last: %.4g" stats.last ]
+    [ "Last: " ^ g4 stats.last ]
     @ (match (stats.best, stats.best_step) with
       | Some bv, Some bs ->
-          [ Printf.sprintf "Best: %.4g (step %s)" bv (format_step bs) ]
-      | Some bv, None -> [ Printf.sprintf "Best: %.4g" bv ]
+          [ Printf.sprintf "Best: %s (step %s)" (g4 bv) (format_step bs) ]
+      | Some bv, None -> [ "Best: " ^ g4 bv ]
       | None, _ -> [])
     @ [
-        Printf.sprintf "Mean: %.4g" stats.mean;
+        "Mean: " ^ g4 stats.mean;
         Printf.sprintf "Samples: %s" (format_step stats.count);
       ]
   in
@@ -119,7 +123,7 @@ let view ~tag ~history_for_tag ~best ~size ~smooth ~metric_def =
   let title =
     match Munin_theme.last_value history with
     | None -> tag
-    | Some v -> Printf.sprintf "%s [%.4f]" tag v
+    | Some v -> Printf.sprintf "%s [%s]" tag (Float_text.f 4 v)
   in
   let title = if Option.is_some smooth then title ^ " (EMA)" else title in
   let stats = compute_stats history ~best in

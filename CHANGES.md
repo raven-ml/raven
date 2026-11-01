@@ -798,6 +798,10 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `munin metrics` writes each value as the fewest digits from 15 that read
+  back to it, where it kept six, and NaN and the infinities as `"NaN"`,
+  `"Infinity"` and `"-Infinity"` in JSON. Timestamps, `Value.pp` and the TUI
+  write C's `%.6f`, `%g` and `%.4f` text on every system, rounded once.
 - NaN and infinite floats read back: a metric's value is written as the
   string `"NaN"`, `"Infinity"` or `"-Infinity"`, a param, summary or
   metadata `` `Float `` as `{"float": "NaN"}`. They were written as `null`, and

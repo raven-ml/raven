@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
+open Munin_float_text
 
 (* Styles *)
 
@@ -22,14 +23,14 @@ let format_value (v : Munin.Value.t) =
   | `Bool b -> string_of_bool b
   | `Int i -> string_of_int i
   | `Float f ->
-      if Float.is_integer f && Float.abs f < 1e9 then Printf.sprintf "%.0f" f
-      else Printf.sprintf "%g" f
+      if Float.is_integer f && Float.abs f < 1e9 then Float_text.f 0 f
+      else Float_text.g f
   | `String s -> s
 
 let format_float f =
-  if Float.is_integer f && Float.abs f < 1e6 then Printf.sprintf "%.0f" f
-  else if Float.abs f >= 0.01 && Float.abs f < 1e6 then Printf.sprintf "%.4f" f
-  else Printf.sprintf "%.4g" f
+  if Float.is_integer f && Float.abs f < 1e6 then Float_text.f 0 f
+  else if Float.abs f >= 0.01 && Float.abs f < 1e6 then Float_text.f 4 f
+  else Float_text.g ~precision:4 f
 
 (* View *)
 

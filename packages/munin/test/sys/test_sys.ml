@@ -379,6 +379,15 @@ let test_system_monitor_bad_interval () =
       raises_match Exn.invalid_arg (fun () ->
           Munin_sys.start ~interval session))
     [ 0.; -1.; Float.nan ];
+  (* The interval prints as the shortest decimal that reads back, the same on
+     every system: the C library's [%g] wrote 1e+06, 1e+006 under
+     mingw-w64. *)
+  raises
+    (Invalid_argument "Munin_sys.start: interval -1000000 is not positive")
+    (fun () -> Munin_sys.start ~interval:(-1e6) session);
+  raises
+    (Invalid_argument "Munin_sys.start: interval -4.58e-72 is not positive")
+    (fun () -> Munin_sys.start ~interval:(-4.58e-72) session);
   Session.finish session;
   let defs = Run.metric_defs (Session.run session) in
   equal (list string) [] (sys_only (List.map fst defs))

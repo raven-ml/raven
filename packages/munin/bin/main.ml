@@ -4,6 +4,23 @@
   ---------------------------------------------------------------------------*)
 
 open Munin
+open Munin_float_text
+
+(* A metric value in an export: the fewest digits from 15 that read back to
+   it, the same on every system. JSON has no number for NaN or the
+   infinities: they are the strings "NaN", "Infinity" and "-Infinity", as
+   munin's event log holds them. *)
+let number x = Float_text.exact x
+
+let json_number x =
+  if Float.is_finite x then number x
+  else if Float.is_nan x then {|"NaN"|}
+  else if x > 0. then {|"Infinity"|}
+  else {|"-Infinity"|}
+
+(* A timestamp in seconds to the microsecond, as C's [%.6f] writes it where it
+   rounds once. *)
+let timestamp t = Float_text.f 6 t
 
 let pp_kv pairs =
   List.iter
@@ -93,9 +110,10 @@ let show_cmd =
                     (Option.value (Run.parent_id run) ~default:"-");
                   Printf.printf "status: %s\n"
                     (string_of_status (Run.status run));
-                  Printf.printf "started_at: %.0f\n" (Run.started_at run);
+                  Printf.printf "started_at: %s\n"
+                    (Float_text.f 0 (Run.started_at run));
                   Option.iter
-                    (Printf.printf "ended_at: %.0f\n")
+                    (fun t -> Printf.printf "ended_at: %s\n" (Float_text.f 0 t))
                     (Run.ended_at run);
                   Printf.printf "resumable: %b\n" (Run.resumable run);
                   Printf.printf "notes: %s\n"
@@ -128,8 +146,8 @@ let show_cmd =
                   Printf.printf "latest_metrics:\n";
                   List.iter
                     (fun (key, (metric : Metric.sample)) ->
-                      Printf.printf "  %s: step=%d value=%g\n" key metric.step
-                        metric.value)
+                      Printf.printf "  %s: step=%d value=%s\n" key metric.step
+                        (Float_text.g metric.value))
                     (Run.latest_metrics run);
                   Printf.printf "children:\n";
                   List.iter
@@ -296,7 +314,7 @@ let compare_cmd =
                       let s =
                         match List.nth values i with
                         | Some v ->
-                            let s = Printf.sprintf "%g" v in
+                            let s = Float_text.g v in
                             if Some i = best_idx then s ^ "*" else s
                         | None -> "-"
                       in
@@ -345,8 +363,8 @@ let metrics_cmd =
                           let count =
                             List.length (Run.metric_history run key)
                           in
-                          Printf.printf "%s\t%g\t%d\t%d\n" key m.value m.step
-                            count)
+                          Printf.printf "%s\t%s\t%d\t%d\n" key (number m.value)
+                            m.step count)
                         (Run.latest_metrics run)
                   | Some key -> (
                       let history = Run.metric_history run key in
@@ -355,15 +373,17 @@ let metrics_cmd =
                           Printf.printf "step\ttimestamp\tvalue\n";
                           List.iter
                             (fun (m : Metric.sample) ->
-                              Printf.printf "%d\t%.6f\t%g\n" m.step m.timestamp
-                                m.value)
+                              Printf.printf "%d\t%s\t%s\n" m.step
+                                (timestamp m.timestamp)
+                                (number m.value))
                             history
                       | `Csv ->
                           Printf.printf "step,timestamp,value\n";
                           List.iter
                             (fun (m : Metric.sample) ->
-                              Printf.printf "%d,%.6f,%g\n" m.step m.timestamp
-                                m.value)
+                              Printf.printf "%d,%s,%s\n" m.step
+                                (timestamp m.timestamp)
+                                (number m.value))
                             history
                       | `Json ->
                           Printf.printf "[";
@@ -371,8 +391,9 @@ let metrics_cmd =
                             (fun i (m : Metric.sample) ->
                               if i > 0 then Printf.printf ",";
                               Printf.printf
-                                "{\"step\":%d,\"timestamp\":%.6f,\"value\":%g}"
-                                m.step m.timestamp m.value)
+                                "{\"step\":%d,\"timestamp\":%s,\"value\":%s}"
+                                m.step (timestamp m.timestamp)
+                                (json_number m.value))
                             history;
                           Printf.printf "]\n"))))
       $ root $ run_id $ key $ format)

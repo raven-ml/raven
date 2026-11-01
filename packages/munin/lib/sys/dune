@@ -6,6 +6,7 @@
   unix
   str
   munin
+  munin_float_text
   threads.posix
   (select
    nvidia.ml

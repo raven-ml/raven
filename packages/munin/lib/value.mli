@@ -9,7 +9,8 @@ type t = [ `Bool of bool | `Int of int | `Float of float | `String of string ]
 (** The type for scalar values. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp ppf v] pretty-prints [v]. *)
+(** [pp ppf v] pretty-prints [v], a float to six significant digits as C's
+    [%g] writes it, the same text on every system: [1e+06], [0.333333]. *)
 
 val to_float : t -> float option
 (** [to_float v] extracts a float. [`Int] values are promoted. *)

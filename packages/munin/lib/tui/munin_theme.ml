@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
+open Munin_float_text
 module Charts = Matrix_charts
 
 (* Run status *)
@@ -82,8 +83,8 @@ let draw_metric_chart ~compact ?smoothed history grid ~width ~height =
   if history = [] then ()
   else
     let x_ticks, y_ticks, y_format =
-      if compact then (4, 2, fun _ v -> Printf.sprintf "%.1f" v)
-      else (6, 4, fun _ v -> Printf.sprintf "%.4g" v)
+      if compact then (4, 2, fun _ v -> Float_text.f 1 v)
+      else (6, 4, fun _ v -> Float_text.g ~precision:4 v)
     in
     let lines =
       match smoothed with

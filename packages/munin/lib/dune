@@ -2,7 +2,7 @@
  (name munin)
  (public_name munin)
  (private_modules env fs json_utils event_log index)
- (libraries unix jsont jsont.bytesrw)
+ (libraries unix jsont jsont.bytesrw munin_float_text)
  (foreign_stubs
   (language c)
   (names munin_stubs)))

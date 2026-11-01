@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
+open Munin_float_text
 
 (* Types *)
 
@@ -117,7 +118,7 @@ let draw_bar c ~y ~width ~label ~value_text ~percent ~spark =
 let draw_cpu_bar c ~y ~width ~label ~cpu_user ~cpu_system ~spark =
   let label_len = String.length label in
   let total = cpu_user +. cpu_system in
-  let value_text = Printf.sprintf "%.0f%%" total in
+  let value_text = Float_text.f 0 total ^ "%" in
   let value_len = String.length value_text in
   Canvas.draw_text c ~x:0 ~y ~text:label ~style:label_style;
   let spark_width = 12 in
@@ -182,9 +183,9 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
     sparkline (zip_add h1 h2) ~width:10
   in
   let format_rate mbs =
-    if mbs >= 1024. then Printf.sprintf "%.1f GB/s" (mbs /. 1024.)
-    else if mbs >= 1. then Printf.sprintf "%.1f MB/s" mbs
-    else Printf.sprintf "%.0f KB/s" (mbs *. 1024.)
+    if mbs >= 1024. then Float_text.f 1 (mbs /. 1024.) ^ " GB/s"
+    else if mbs >= 1. then Float_text.f 1 mbs ^ " MB/s"
+    else Float_text.f 0 (mbs *. 1024.) ^ " KB/s"
   in
   (* Each line draws at the [y] it is given: the lines present stack without
      gaps. *)
@@ -195,7 +196,9 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
   let either a b =
     match (a, b) with None, None -> None | _ -> Some (a, b)
   in
-  let some_text fmt = Option.fold ~none:"" ~some:(Printf.sprintf fmt) in
+  let some_text decimals unit =
+    Option.fold ~none:"" ~some:(fun x -> Float_text.f decimals x ^ unit)
+  in
   let gpu_lines (g : gpu) =
     let i = g.index in
     let key = Munin.Metric.gpu_key i in
@@ -203,19 +206,19 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
       line g.util_pct (fun util c ~y ~width ->
           draw_bar c ~y ~width
             ~label:(Printf.sprintf "GPU%-2d" i)
-            ~value_text:(Printf.sprintf "%.0f%%" util)
+            ~value_text:(Float_text.f 0 util ^ "%")
             ~percent:util ~spark:(spark (key "util_pct")));
       line (either g.mem_used_gb g.mem_used_pct) (fun (gb, pct) c ~y ~width ->
           draw_value_line c ~y ~width ~label:"  M  "
             ~value_text:
               (String.trim
-                 (some_text "%.0f%%" pct ^ "  " ^ some_text "%.1fG" gb))
+                 (some_text 0 "%" pct ^ "  " ^ some_text 1 "G" gb))
             ~spark:(spark (key "mem_used_gb")));
       line (either g.temp_c g.power_w) (fun (temp, power) c ~y ~width ->
           draw_value_line c ~y ~width ~label:"  T  "
             ~value_text:
               (String.trim
-                 (some_text "%.0fC" temp ^ "  " ^ some_text "%.0fW" power))
+                 (some_text 0 "C" temp ^ "  " ^ some_text 0 "W" power))
             ~spark:(spark (key "power_w")));
     ]
   in
@@ -229,19 +232,20 @@ let view (v : values) ~(history_for_tag : string -> (int * float) list) =
         line (both v.mem_pct v.mem_gb) (fun (mem_pct, mem_gb) ->
             fun c ~y ~width ->
              draw_bar c ~y ~width ~label:"Mem  "
-               ~value_text:(Printf.sprintf "%.0f%%  %.1fG" mem_pct mem_gb)
+               ~value_text:
+                (Float_text.f 0 mem_pct ^ "%  " ^ Float_text.f 1 mem_gb ^ "G")
                ~percent:mem_pct ~spark:(spark "sys/mem_used_pct"));
         line v.proc_cpu (fun proc_cpu c ~y ~width ->
             draw_bar c ~y ~width ~label:"Proc "
-              ~value_text:(Printf.sprintf "%.0f%%" proc_cpu)
+              ~value_text:(Float_text.f 0 proc_cpu ^ "%")
               ~percent:proc_cpu ~spark:(spark "sys/proc_cpu_pct"));
         line v.proc_mem_mb (fun proc_mem_mb c ~y ~width ->
             draw_value_line c ~y ~width ~label:"RSS  "
-              ~value_text:(Printf.sprintf "%.0fM" proc_mem_mb)
+              ~value_text:(Float_text.f 0 proc_mem_mb ^ "M")
               ~spark:(spark "sys/proc_mem_mb"));
         line v.disk_util_pct (fun disk_util_pct c ~y ~width ->
             draw_bar c ~y ~width ~label:"Disk "
-              ~value_text:(Printf.sprintf "%.0f%%" disk_util_pct)
+              ~value_text:(Float_text.f 0 disk_util_pct ^ "%")
               ~percent:disk_util_pct
               ~spark:(spark "sys/disk_util_pct"));
         line v.disk_read_mbs (fun disk_read_mbs c ~y ~width ->

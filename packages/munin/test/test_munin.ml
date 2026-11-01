@@ -2046,6 +2046,24 @@ let gpu_keys =
     test "gpu_key refuses a negative GPU or an empty name" test_gpu_key_domain;
   ]
 
+(* Values *)
+
+(* A float prints as C's [%g] writes it, the same on every system: msvcrt
+   writes 1e+006. *)
+let value_floats =
+  cases "a float prints six significant digits"
+    ~id:(fun (x, _) -> Printf.sprintf "%h" x)
+    [
+      (1e6, "1e+06");
+      (4.58e-72, "4.58e-72");
+      (1. /. 3., "0.333333");
+      (-0., "-0");
+      (Float.nan, "nan");
+      (Float.neg_infinity, "-inf");
+    ]
+  @@ fun (x, text) ->
+  equal string text (Format.asprintf "%a" Value.pp (`Float x))
+
 (* Suite *)
 
 let suite =
@@ -2064,6 +2082,7 @@ let suite =
     group "Grouping" grouping;
     group "Media" media;
     group "GPU metrics' keys" gpu_keys;
+    group "Values" [ value_floats ];
   ]
 
 let () = exit (run "Munin" suite)

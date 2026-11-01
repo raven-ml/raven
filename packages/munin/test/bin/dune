@@ -1,0 +1,7 @@
+(executable
+ (name log_run)
+ (libraries munin))
+
+(cram
+ (package munin)
+ (deps log_run.exe %{bin:munin}))

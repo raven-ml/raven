@@ -8,7 +8,7 @@ type t = [ `Bool of bool | `Int of int | `Float of float | `String of string ]
 let pp ppf = function
   | `Bool b -> Format.pp_print_bool ppf b
   | `Int n -> Format.pp_print_int ppf n
-  | `Float f -> Format.fprintf ppf "%g" f
+  | `Float f -> Format.pp_print_string ppf (Munin_float_text.Float_text.g f)
   | `String s -> Format.fprintf ppf "%S" s
 
 let to_float = function

@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
+open Munin_float_text
 
 (* Constants *)
 
@@ -180,8 +181,9 @@ let view_metric_chart ~history_for_tag ~(best_for_tag : string -> float option)
   let title =
     match (Munin_theme.last_value history, best) with
     | Some value, Some best_val ->
-        Printf.sprintf "%s [%.4f] best: %.4f%s" tag value best_val goal_arrow
-    | Some value, None -> Printf.sprintf "%s [%.4f]" tag value
+        Printf.sprintf "%s [%s] best: %s%s" tag (Float_text.f 4 value)
+          (Float_text.f 4 best_val) goal_arrow
+    | Some value, None -> Printf.sprintf "%s [%s]" tag (Float_text.f 4 value)
     | None, _ -> tag
   in
   let border_color = if selected then selected_border else dim_border in
