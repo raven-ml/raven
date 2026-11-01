@@ -92,9 +92,12 @@ val moves :
   Nx_array.Move.t list
 (** [moves ~by ~sizes p x] is the movements, in order, that rearrange the
     operand [x], a dtype's name and a shape, as the one-operand pattern [p]
-    says: a [Reshape] that splits groups and drops units, a [Permute], and a
-    [Reshape] that merges groups and adds units, each left out where it changes
-    nothing.
+    says: a [Reshape] that splits groups into their names of other than one
+    element, a [Permute] that leaves out the operand's axes of one element,
+    permutes, and adds the result's, and a [Reshape] that merges groups of
+    names of other than one element, each left out where it changes nothing.
+    A name of one element that is an axis of its own on both sides is carried
+    by the [Permute], so its cut stays on its axis.
 
     Raises [Invalid_argument] naming [by] as [Nx.rearrange] says, and if [p] is
     not [plain]. *)

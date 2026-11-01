@@ -926,6 +926,56 @@ let law_folded (mv, f, w) =
   in
   equal (placement ()) ~msg:"where a batch of one lies" (run 2) (run 1)
 
+(* Rearrangements that keep a batch name [b] as an axis of its own, each
+   with its operand's shape at a batch of [n] beside features of [f]. *)
+let rearranged =
+  [
+    ("b f -> 1 b f", [], fun n f -> [| n; f |]);
+    ("b f -> f b", [], fun n f -> [| n; f |]);
+    ("b f -> b 1 f", [], fun n f -> [| n; f |]);
+    ("b 1 f -> b f", [], fun n f -> [| n; 1; f |]);
+    ("1 b f -> b f 1", [], fun n f -> [| 1; n; f |]);
+    ("(h d) b -> h d b", [ ("h", 1) ], fun n f -> [| f; n |]);
+    ("b (h d) -> b h d", [ ("h", 1) ], fun n f -> [| n; f |]);
+    ("b h d -> b (h d)", [], fun n f -> [| n; 1; f |]);
+    ("b ... -> ... b", [], fun n f -> [| n; f; 1 |]);
+  ]
+
+let rearranged_case =
+  let open Gen in
+  (let* p, sizes, shape = of_list rearranged in
+   let* f = of_list [ 1; 4 ] in
+   let+ cut = int_range 0 (Array.length (shape 1 f) - 1) in
+   (p, sizes, shape, f, cut))
+  |> with_pp (fun ppf (p, _, shape, f, cut) ->
+         Format.fprintf ppf "%S of %a split %d" p pp_ints (shape 1 f) cut)
+
+(* A rearrangement of a value cut along any axis lies at a batch of one as
+   at a batch of two, or raises at both: each name keeps its cut on its
+   axis, a literal's cut is read whole. *)
+let law_rearranged (p, sizes, shape, f, cut) =
+  let pattern = Nx.Pattern.v p in
+  cover "a feature axis of one element" (f = 1);
+  let run n =
+    let s = shape n f in
+    let h = Nx.rearrange ~sizes pattern (iota s) in
+    let x = Nx.place (Mem.split ~axis:cut) (iota s) in
+    match Nx.rearrange ~sizes pattern x with
+    | y ->
+        holds_own h y;
+        Some (Nx.placement y)
+    | exception Invalid_argument _ -> None
+  in
+  let two = run 2 and one = run 1 in
+  cover "both lie" (two <> None);
+  cover "both raise" (two = None);
+  match (two, one) with
+  | Some two, Some one ->
+      equal (placement ()) ~msg:"where a batch of one lies" two one
+  | None, None -> ()
+  | Some _, None -> fail "a batch of one raises where a batch of two lies"
+  | None, Some _ -> fail "a batch of one lies where a batch of two raises"
+
 let units =
   group "axes of one element"
     [
@@ -961,6 +1011,8 @@ let units =
       (* A plain reshape states no map: it pairs axes of one element front to
          back, and regroups a cut axis only in tiles that divide both
          extents, at a batch of one as at three over two devices. *)
+      prop "a rearrangement lies at a batch of one as at a batch of two"
+        rearranged_case law_rearranged;
       test "a reshape pairs axes of one element front to back" (fun () ->
           let x = Nx.place (Mem.split ~axis:0) (iota [| 1; 8 |]) in
           let y = Nx.reshape [| 1; 1; 8 |] x in

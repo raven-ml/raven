@@ -3487,6 +3487,10 @@ thread.
 
 ### Nx
 
+- `Nx.rearrange` keeps the cut of a name that is an axis of its own on both
+  sides, whatever its extent: `"b f -> 1 b f"` of `[1; 4]` split along `b`
+  lay on the new literal axis, as its reshapes paired axes of one element
+  front to back.
 - `Nx.get`, `Nx.squeeze`, `Nx.unsqueeze` and `Nx.slice`'s `I` and `N` keep
   each kept axis's cut on the axis it becomes, whatever its extent, so a
   batch of one split across devices lies, sums and scans as a batch of two
