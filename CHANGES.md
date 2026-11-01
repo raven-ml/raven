@@ -822,6 +822,26 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** nodes have no tag: `Ops.Tag`, `Ops.tag`, `Ops.rtag` and the
+  `?tag` of `Ops.v`, `replace`, `sink`, `index`, `load`, `store`, `after` and
+  `ins` are gone, and the graph format has no `tag=`.
+- **Breaking:** a permute holds its order in its second source, a stack of
+  weak integer constants; the `Axes` argument is gone.
+- **Breaking:** `Shape.placeholder` takes no `?device`, `Shape.placeholder_like`
+  no `?addrspace` and `Shape.param` no `?multiple_of`.
+- Clang and Metal kernels take their parameters as one structure,
+  `struct NAME_args`, through a pointer; a host program's entry passes it on.
+- `x // -1` stays a division when `x` is unsigned, where a weak `-1` is the
+  type's greatest value; it was `-x`, wrong for every `x` but `0` and the
+  greatest.
+- `-x < -y` and `-x < c` become `y < x` and `-c < x` for signed integers only
+  where no negation wraps at the comparison's width, and the late rules that
+  did so without asking go.
+  `not (x < c)` becomes `c - 1 < x` for unsigned integers too, unless `c` is
+  the type's least value.
+- Two stage constant folding, `(x + 1) + 2` to `x + 3`, runs in
+  `Shape.symbolic_simple`, so the late decompositions fold too.
+- A kernel lowers the body of a call once per renderer and settings.
 - `Dtype.const` wraps an integer to an unsigned type: -1 as a `Uint8` is
   255. The negation and masked-shift rules read -1 at their operand's type,
   so they apply to unsigned constants.
