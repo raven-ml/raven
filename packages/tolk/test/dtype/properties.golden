@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 dtype	priority	bitsize	itemsize	name	fmt	min	max	is_int	is_float	is_unsigned	is_bool
 dtypes.void	-1	0	0	void	None	False	True	False	False	False	False
 dtypes.bool	0	1	1	bool	?	False	True	False	False	False	True

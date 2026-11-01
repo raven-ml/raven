@@ -1,49 +1,59 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 0
-1 Ops.CONST dtypes.weakint [] 2
-2 Ops.MUL dtypes.weakint [0, 1]
-3 Ops.CONST dtypes.weakint [] 3
-4 Ops.ADD dtypes.weakint [2, 3]
-5 Ops.SINK dtypes.void [4, 3] tag=("sym", 3, 3)
-6 Ops.CONST dtypes.weakint [] 1
-7 Ops.MUL dtypes.weakint [6, 1]
-8 Ops.ADD dtypes.weakint [7, 3]
-9 Ops.CONST dtypes.weakint [] 5
-10 Ops.SINK dtypes.void [8, 9] tag=("sym", 5, 5)
-11 Ops.MUL dtypes.weakint [1, 1]
-12 Ops.ADD dtypes.weakint [11, 3]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.ADD dtypes.weakint [4, 0]
+6 Ops.SINK dtypes.void [1, 5, 0]
+7 Ops.CONST dtypes.weakint [] 5
+8 Ops.CUSTOM dtypes.void [7, 7] ("sym", dtypes.void)
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.MUL dtypes.weakint [9, 3]
+11 Ops.ADD dtypes.weakint [10, 0]
+12 Ops.SINK dtypes.void [8, 11, 7]
 13 Ops.CONST dtypes.weakint [] 7
-14 Ops.SINK dtypes.void [12, 13] tag=("sym", 7, 7)
-15 Ops.MUL dtypes.weakint [3, 1]
-16 Ops.ADD dtypes.weakint [15, 3]
-17 Ops.CONST dtypes.weakint [] 9
-18 Ops.SINK dtypes.void [16, 17] tag=("sym", 9, 9)
-19 Ops.CONST dtypes.weakint [] 4
-20 Ops.MUL dtypes.weakint [19, 1]
-21 Ops.ADD dtypes.weakint [20, 3]
-22 Ops.CONST dtypes.weakint [] 11
-23 Ops.SINK dtypes.void [21, 22] tag=("sym", 11, 11)
-24 Ops.MUL dtypes.weakint [9, 1]
-25 Ops.ADD dtypes.weakint [24, 3]
-26 Ops.CONST dtypes.weakint [] 13
-27 Ops.SINK dtypes.void [25, 26] tag=("sym", 13, 13)
-28 Ops.CONST dtypes.weakint [] 6
-29 Ops.MUL dtypes.weakint [28, 1]
-30 Ops.ADD dtypes.weakint [29, 3]
-31 Ops.CONST dtypes.weakint [] 15
-32 Ops.SINK dtypes.void [30, 31] tag=("sym", 15, 15)
-33 Ops.MUL dtypes.weakint [13, 1]
-34 Ops.ADD dtypes.weakint [33, 3]
-35 Ops.CONST dtypes.weakint [] 17
-36 Ops.SINK dtypes.void [34, 35] tag=("sym", 17, 17)
-37 Ops.CONST dtypes.weakint [] 8
-38 Ops.MUL dtypes.weakint [37, 1]
-39 Ops.ADD dtypes.weakint [38, 3]
-40 Ops.CONST dtypes.weakint [] 19
-41 Ops.SINK dtypes.void [39, 40] tag=("sym", 19, 19)
-42 Ops.MUL dtypes.weakint [17, 1]
-43 Ops.ADD dtypes.weakint [42, 3]
-44 Ops.CONST dtypes.weakint [] 21
-45 Ops.SINK dtypes.void [43, 44] tag=("sym", 21, 21)
-46 Ops.SINK dtypes.void [5, 10, 14, 18, 23, 27, 32, 36, 41, 45]
+14 Ops.CUSTOM dtypes.void [13, 13] ("sym", dtypes.void)
+15 Ops.MUL dtypes.weakint [3, 3]
+16 Ops.ADD dtypes.weakint [15, 0]
+17 Ops.SINK dtypes.void [14, 16, 13]
+18 Ops.CONST dtypes.weakint [] 9
+19 Ops.CUSTOM dtypes.void [18, 18] ("sym", dtypes.void)
+20 Ops.MUL dtypes.weakint [0, 3]
+21 Ops.ADD dtypes.weakint [20, 0]
+22 Ops.SINK dtypes.void [19, 21, 18]
+23 Ops.CONST dtypes.weakint [] 11
+24 Ops.CUSTOM dtypes.void [23, 23] ("sym", dtypes.void)
+25 Ops.CONST dtypes.weakint [] 4
+26 Ops.MUL dtypes.weakint [25, 3]
+27 Ops.ADD dtypes.weakint [26, 0]
+28 Ops.SINK dtypes.void [24, 27, 23]
+29 Ops.CONST dtypes.weakint [] 13
+30 Ops.CUSTOM dtypes.void [29, 29] ("sym", dtypes.void)
+31 Ops.MUL dtypes.weakint [7, 3]
+32 Ops.ADD dtypes.weakint [31, 0]
+33 Ops.SINK dtypes.void [30, 32, 29]
+34 Ops.CONST dtypes.weakint [] 15
+35 Ops.CUSTOM dtypes.void [34, 34] ("sym", dtypes.void)
+36 Ops.CONST dtypes.weakint [] 6
+37 Ops.MUL dtypes.weakint [36, 3]
+38 Ops.ADD dtypes.weakint [37, 0]
+39 Ops.SINK dtypes.void [35, 38, 34]
+40 Ops.CONST dtypes.weakint [] 17
+41 Ops.CUSTOM dtypes.void [40, 40] ("sym", dtypes.void)
+42 Ops.MUL dtypes.weakint [13, 3]
+43 Ops.ADD dtypes.weakint [42, 0]
+44 Ops.SINK dtypes.void [41, 43, 40]
+45 Ops.CONST dtypes.weakint [] 19
+46 Ops.CUSTOM dtypes.void [45, 45] ("sym", dtypes.void)
+47 Ops.CONST dtypes.weakint [] 8
+48 Ops.MUL dtypes.weakint [47, 3]
+49 Ops.ADD dtypes.weakint [48, 0]
+50 Ops.SINK dtypes.void [46, 49, 45]
+51 Ops.CONST dtypes.weakint [] 21
+52 Ops.CUSTOM dtypes.void [51, 51] ("sym", dtypes.void)
+53 Ops.MUL dtypes.weakint [18, 3]
+54 Ops.ADD dtypes.weakint [53, 0]
+55 Ops.SINK dtypes.void [52, 54, 51]
+56 Ops.SINK dtypes.void [6, 12, 17, 22, 28, 33, 39, 44, 50, 55]
 

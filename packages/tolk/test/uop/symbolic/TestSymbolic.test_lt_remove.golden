@@ -1,23 +1,35 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 6), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] -3
-3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.CONST dtypes.bool [] False
-5 Ops.SINK dtypes.void [3, 4] tag=("sym", False, False)
-6 Ops.SINK dtypes.void [4, 4] tag=("commutative", False, False)
-7 Ops.SINK dtypes.void [4, 4] tag=("simplify", False, False)
-8 Ops.CONST dtypes.weakint [] 3
-9 Ops.CMPLT dtypes.bool [1, 8]
-10 Ops.SINK dtypes.void [9, 9] tag=("sym", False, True)
-11 Ops.SINK dtypes.void [1, 1] tag=("simplify", 0, 6)
-12 Ops.SINK dtypes.void [9, 9] tag=("commutative", False, True)
-13 Ops.SINK dtypes.void [9, 9] tag=("simplify", False, True)
-14 Ops.CONST dtypes.weakint [] 8
-15 Ops.CMPLT dtypes.bool [1, 14]
-16 Ops.CONST dtypes.bool [] True
-17 Ops.SINK dtypes.void [15, 16] tag=("sym", True, True)
-18 Ops.SINK dtypes.void [16, 16] tag=("commutative", True, True)
-19 Ops.SINK dtypes.void [16, 16] tag=("simplify", True, True)
-20 Ops.SINK dtypes.void [5, 6, 7, 10, 11, 12, 13, 17, 18, 19]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.bool [] False
+1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+2 Ops.STACK dtypes.void []
+3 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 6), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+4 Ops.CONST dtypes.weakint [] -3
+5 Ops.CMPLT dtypes.bool [3, 4]
+6 Ops.SINK dtypes.void [1, 5, 0]
+7 Ops.CUSTOM dtypes.void [0, 0] ("commutative", dtypes.void)
+8 Ops.SINK dtypes.void [7, 0, 0]
+9 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+10 Ops.SINK dtypes.void [9, 0, 0]
+11 Ops.CONST dtypes.bool [] True
+12 Ops.CUSTOM dtypes.void [0, 11] ("sym", dtypes.void)
+13 Ops.CONST dtypes.weakint [] 3
+14 Ops.CMPLT dtypes.bool [3, 13]
+15 Ops.SINK dtypes.void [12, 14, 14]
+16 Ops.CONST dtypes.weakint [] 0
+17 Ops.CONST dtypes.weakint [] 6
+18 Ops.CUSTOM dtypes.void [16, 17] ("simplify", dtypes.void)
+19 Ops.SINK dtypes.void [18, 3, 3]
+20 Ops.CUSTOM dtypes.void [0, 11] ("commutative", dtypes.void)
+21 Ops.SINK dtypes.void [20, 14, 14]
+22 Ops.CUSTOM dtypes.void [0, 11] ("simplify", dtypes.void)
+23 Ops.SINK dtypes.void [22, 14, 14]
+24 Ops.CUSTOM dtypes.void [11, 11] ("sym", dtypes.void)
+25 Ops.CONST dtypes.weakint [] 8
+26 Ops.CMPLT dtypes.bool [3, 25]
+27 Ops.SINK dtypes.void [24, 26, 11]
+28 Ops.CUSTOM dtypes.void [11, 11] ("commutative", dtypes.void)
+29 Ops.SINK dtypes.void [28, 11, 11]
+30 Ops.CUSTOM dtypes.void [11, 11] ("simplify", dtypes.void)
+31 Ops.SINK dtypes.void [30, 11, 11]
+32 Ops.SINK dtypes.void [6, 8, 10, 15, 19, 21, 23, 27, 29, 31]
 

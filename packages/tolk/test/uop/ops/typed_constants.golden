@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.CAST dtypes.i32 [0] dtypes.i32
 2 Ops.CONST dtypes.bool [] True

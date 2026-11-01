@@ -1,22 +1,23 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 2536655455
-1 Ops.CONST dtypes.weakint [] 798504640
-2 Ops.CAST dtypes.u32 [1] dtypes.u32
-3 Ops.CONST dtypes.weakint [] 36
-4 Ops.OR dtypes.u32 [2, 3]
-5 Ops.CAST dtypes.u64 [4] dtypes.u64
-6 Ops.MUL dtypes.u64 [0, 5]
-7 Ops.CONST dtypes.weakint [] 4294967296
-8 Ops.CONST dtypes.weakint [] 25366554550
-9 Ops.CAST dtypes.u64 [8] dtypes.u64
-10 Ops.MUL dtypes.u64 [7, 9]
-11 Ops.ADD dtypes.u64 [6, 10]
-12 Ops.CONST dtypes.weakint [] 2261737165
-13 Ops.ADD dtypes.u64 [11, 12]
-14 Ops.CONST dtypes.weakint [] 4611686018427387904
-15 Ops.FLOORDIV dtypes.u64 [13, 14]
-16 Ops.CONST dtypes.weakint [] 0
-17 Ops.CAST dtypes.u64 [16] dtypes.u64
-18 Ops.SINK dtypes.void [15, 17] tag=("simplify", 0, 0)
-19 Ops.SINK dtypes.void [18]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 2536655455
+3 Ops.CONST dtypes.weakint [] 798504640
+4 Ops.CAST dtypes.u32 [3] dtypes.u32
+5 Ops.CONST dtypes.weakint [] 36
+6 Ops.OR dtypes.u32 [4, 5]
+7 Ops.CAST dtypes.u64 [6] dtypes.u64
+8 Ops.MUL dtypes.u64 [2, 7]
+9 Ops.CONST dtypes.weakint [] 4294967296
+10 Ops.CONST dtypes.weakint [] 25366554550
+11 Ops.CAST dtypes.u64 [10] dtypes.u64
+12 Ops.MUL dtypes.u64 [9, 11]
+13 Ops.ADD dtypes.u64 [8, 12]
+14 Ops.CONST dtypes.weakint [] 2261737165
+15 Ops.ADD dtypes.u64 [13, 14]
+16 Ops.CONST dtypes.weakint [] 4611686018427387904
+17 Ops.FLOORDIV dtypes.u64 [15, 16]
+18 Ops.CAST dtypes.u64 [0] dtypes.u64
+19 Ops.SINK dtypes.void [1, 17, 18]
+20 Ops.SINK dtypes.void [19]
 

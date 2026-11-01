@@ -1,20 +1,23 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 3000000000
-1 Ops.CAST dtypes.i32 [0] dtypes.i32
-2 Ops.BITCAST dtypes.u32 [1] dtypes.u32
-3 Ops.CAST dtypes.u32 [0] dtypes.u32
-4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 3000000000, 3000000000)
-5 Ops.CONST dtypes.weakint [] 70000
-6 Ops.CAST dtypes.i16 [5] dtypes.i16
-7 Ops.BITCAST dtypes.u16 [6] dtypes.u16
-8 Ops.CONST dtypes.weakint [] 4464
-9 Ops.CAST dtypes.u16 [8] dtypes.u16
-10 Ops.SINK dtypes.void [7, 9] tag=("simplify", 4464, 4464)
-11 Ops.CONST dtypes.weakint [] 4294967291
-12 Ops.CAST dtypes.u32 [11] dtypes.u32
-13 Ops.BITCAST dtypes.i32 [12] dtypes.i32
-14 Ops.CONST dtypes.weakint [] -5
-15 Ops.CAST dtypes.i32 [14] dtypes.i32
-16 Ops.SINK dtypes.void [13, 15] tag=("simplify", -5, -5)
-17 Ops.SINK dtypes.void [4, 10, 16]
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+2 Ops.CAST dtypes.i32 [0] dtypes.i32
+3 Ops.BITCAST dtypes.u32 [2] dtypes.u32
+4 Ops.CAST dtypes.u32 [0] dtypes.u32
+5 Ops.SINK dtypes.void [1, 3, 4]
+6 Ops.CONST dtypes.weakint [] 4464
+7 Ops.CUSTOM dtypes.void [6, 6] ("simplify", dtypes.void)
+8 Ops.CONST dtypes.weakint [] 70000
+9 Ops.CAST dtypes.i16 [8] dtypes.i16
+10 Ops.BITCAST dtypes.u16 [9] dtypes.u16
+11 Ops.CAST dtypes.u16 [6] dtypes.u16
+12 Ops.SINK dtypes.void [7, 10, 11]
+13 Ops.CONST dtypes.weakint [] -5
+14 Ops.CUSTOM dtypes.void [13, 13] ("simplify", dtypes.void)
+15 Ops.CONST dtypes.weakint [] 4294967291
+16 Ops.CAST dtypes.u32 [15] dtypes.u32
+17 Ops.BITCAST dtypes.i32 [16] dtypes.i32
+18 Ops.CAST dtypes.i32 [13] dtypes.i32
+19 Ops.SINK dtypes.void [14, 17, 18]
+20 Ops.SINK dtypes.void [5, 12, 19]
 

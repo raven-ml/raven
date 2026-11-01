@@ -1,53 +1,59 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 0
-1 Ops.CONST dtypes.weakint [] 2
-2 Ops.MUL dtypes.weakint [0, 1]
-3 Ops.CONST dtypes.weakint [] 3
-4 Ops.ADD dtypes.weakint [2, 3]
-5 Ops.CONST dtypes.weakint [] 4
-6 Ops.FLOORDIV dtypes.weakint [4, 5]
-7 Ops.SINK dtypes.void [6, 0] tag=("sym", 0, 0)
-8 Ops.CONST dtypes.weakint [] 1
-9 Ops.MUL dtypes.weakint [8, 1]
-10 Ops.ADD dtypes.weakint [9, 3]
-11 Ops.FLOORDIV dtypes.weakint [10, 5]
-12 Ops.SINK dtypes.void [11, 8] tag=("sym", 1, 1)
-13 Ops.MUL dtypes.weakint [1, 1]
-14 Ops.ADD dtypes.weakint [13, 3]
-15 Ops.FLOORDIV dtypes.weakint [14, 5]
-16 Ops.SINK dtypes.void [15, 8] tag=("sym", 1, 1)
-17 Ops.MUL dtypes.weakint [3, 1]
-18 Ops.ADD dtypes.weakint [17, 3]
-19 Ops.FLOORDIV dtypes.weakint [18, 5]
-20 Ops.SINK dtypes.void [19, 1] tag=("sym", 2, 2)
-21 Ops.MUL dtypes.weakint [5, 1]
-22 Ops.ADD dtypes.weakint [21, 3]
-23 Ops.FLOORDIV dtypes.weakint [22, 5]
-24 Ops.SINK dtypes.void [23, 1] tag=("sym", 2, 2)
-25 Ops.CONST dtypes.weakint [] 5
-26 Ops.MUL dtypes.weakint [25, 1]
-27 Ops.ADD dtypes.weakint [26, 3]
-28 Ops.FLOORDIV dtypes.weakint [27, 5]
-29 Ops.SINK dtypes.void [28, 3] tag=("sym", 3, 3)
-30 Ops.CONST dtypes.weakint [] 6
-31 Ops.MUL dtypes.weakint [30, 1]
-32 Ops.ADD dtypes.weakint [31, 3]
-33 Ops.FLOORDIV dtypes.weakint [32, 5]
-34 Ops.SINK dtypes.void [33, 3] tag=("sym", 3, 3)
-35 Ops.CONST dtypes.weakint [] 7
-36 Ops.MUL dtypes.weakint [35, 1]
-37 Ops.ADD dtypes.weakint [36, 3]
-38 Ops.FLOORDIV dtypes.weakint [37, 5]
-39 Ops.SINK dtypes.void [38, 5] tag=("sym", 4, 4)
-40 Ops.CONST dtypes.weakint [] 8
-41 Ops.MUL dtypes.weakint [40, 1]
-42 Ops.ADD dtypes.weakint [41, 3]
-43 Ops.FLOORDIV dtypes.weakint [42, 5]
-44 Ops.SINK dtypes.void [43, 5] tag=("sym", 4, 4)
-45 Ops.CONST dtypes.weakint [] 9
-46 Ops.MUL dtypes.weakint [45, 1]
-47 Ops.ADD dtypes.weakint [46, 3]
-48 Ops.FLOORDIV dtypes.weakint [47, 5]
-49 Ops.SINK dtypes.void [48, 25] tag=("sym", 5, 5)
-50 Ops.SINK dtypes.void [7, 12, 16, 20, 24, 29, 34, 39, 44, 49]
+1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.MUL dtypes.weakint [0, 2]
+4 Ops.CONST dtypes.weakint [] 3
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.CONST dtypes.weakint [] 4
+7 Ops.FLOORDIV dtypes.weakint [5, 6]
+8 Ops.SINK dtypes.void [1, 7, 0]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.CUSTOM dtypes.void [9, 9] ("sym", dtypes.void)
+11 Ops.MUL dtypes.weakint [9, 2]
+12 Ops.ADD dtypes.weakint [11, 4]
+13 Ops.FLOORDIV dtypes.weakint [12, 6]
+14 Ops.SINK dtypes.void [10, 13, 9]
+15 Ops.MUL dtypes.weakint [2, 2]
+16 Ops.ADD dtypes.weakint [15, 4]
+17 Ops.FLOORDIV dtypes.weakint [16, 6]
+18 Ops.SINK dtypes.void [10, 17, 9]
+19 Ops.CUSTOM dtypes.void [2, 2] ("sym", dtypes.void)
+20 Ops.MUL dtypes.weakint [4, 2]
+21 Ops.ADD dtypes.weakint [20, 4]
+22 Ops.FLOORDIV dtypes.weakint [21, 6]
+23 Ops.SINK dtypes.void [19, 22, 2]
+24 Ops.MUL dtypes.weakint [6, 2]
+25 Ops.ADD dtypes.weakint [24, 4]
+26 Ops.FLOORDIV dtypes.weakint [25, 6]
+27 Ops.SINK dtypes.void [19, 26, 2]
+28 Ops.CUSTOM dtypes.void [4, 4] ("sym", dtypes.void)
+29 Ops.CONST dtypes.weakint [] 5
+30 Ops.MUL dtypes.weakint [29, 2]
+31 Ops.ADD dtypes.weakint [30, 4]
+32 Ops.FLOORDIV dtypes.weakint [31, 6]
+33 Ops.SINK dtypes.void [28, 32, 4]
+34 Ops.CONST dtypes.weakint [] 6
+35 Ops.MUL dtypes.weakint [34, 2]
+36 Ops.ADD dtypes.weakint [35, 4]
+37 Ops.FLOORDIV dtypes.weakint [36, 6]
+38 Ops.SINK dtypes.void [28, 37, 4]
+39 Ops.CUSTOM dtypes.void [6, 6] ("sym", dtypes.void)
+40 Ops.CONST dtypes.weakint [] 7
+41 Ops.MUL dtypes.weakint [40, 2]
+42 Ops.ADD dtypes.weakint [41, 4]
+43 Ops.FLOORDIV dtypes.weakint [42, 6]
+44 Ops.SINK dtypes.void [39, 43, 6]
+45 Ops.CONST dtypes.weakint [] 8
+46 Ops.MUL dtypes.weakint [45, 2]
+47 Ops.ADD dtypes.weakint [46, 4]
+48 Ops.FLOORDIV dtypes.weakint [47, 6]
+49 Ops.SINK dtypes.void [39, 48, 6]
+50 Ops.CUSTOM dtypes.void [29, 29] ("sym", dtypes.void)
+51 Ops.CONST dtypes.weakint [] 9
+52 Ops.MUL dtypes.weakint [51, 2]
+53 Ops.ADD dtypes.weakint [52, 4]
+54 Ops.FLOORDIV dtypes.weakint [53, 6]
+55 Ops.SINK dtypes.void [50, 54, 29]
+56 Ops.SINK dtypes.void [8, 14, 18, 23, 27, 33, 38, 44, 49, 55]
 

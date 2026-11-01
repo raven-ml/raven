@@ -1,18 +1,21 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CAST dtypes.i64 [1] dtypes.i64
-3 Ops.CAST dtypes.i32 [2] dtypes.i32
-4 Ops.SINK dtypes.void [3, 1] tag=("simplify", 1, 10)
-5 Ops.CAST dtypes.f64 [1] dtypes.f64
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.CONST dtypes.weakint [] 10
+2 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.i32 [3] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+5 Ops.CAST dtypes.i64 [4] dtypes.i64
 6 Ops.CAST dtypes.i32 [5] dtypes.i32
-7 Ops.SINK dtypes.void [6, 1] tag=("simplify", 1, 10)
-8 Ops.PARAM dtypes.u8 [0] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-9 Ops.CAST dtypes.i64 [8] dtypes.i64
-10 Ops.CAST dtypes.u8 [9] dtypes.u8
-11 Ops.SINK dtypes.void [10, 8] tag=("simplify", 1, 10)
-12 Ops.CAST dtypes.u32 [8] dtypes.u32
+7 Ops.SINK dtypes.void [2, 6, 4]
+8 Ops.CAST dtypes.f64 [4] dtypes.f64
+9 Ops.CAST dtypes.i32 [8] dtypes.i32
+10 Ops.SINK dtypes.void [2, 9, 4]
+11 Ops.PARAM dtypes.u8 [3] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+12 Ops.CAST dtypes.i64 [11] dtypes.i64
 13 Ops.CAST dtypes.u8 [12] dtypes.u8
-14 Ops.SINK dtypes.void [13, 8] tag=("simplify", 1, 10)
-15 Ops.SINK dtypes.void [4, 7, 11, 14]
+14 Ops.SINK dtypes.void [2, 13, 11]
+15 Ops.CAST dtypes.u32 [11] dtypes.u32
+16 Ops.CAST dtypes.u8 [15] dtypes.u8
+17 Ops.SINK dtypes.void [2, 16, 11]
+18 Ops.SINK dtypes.void [7, 10, 14, 17]
 

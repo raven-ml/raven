@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -46,7 +46,7 @@
 44 Ops.SINK dtypes.void [43] KernelInfo(name="r_2", estimates=Estimates(ops=3, lds=12, mem=12), optimized=True)
 45 Ops.SINK dtypes.void [43] KernelInfo(name="r_2", optimized=True)
 46 Ops.LINEAR dtypes.void [0, 1, 10, 16, 30, 2, 3, 31, 7, 8, 11, 32, 12, 17, 18, 33, 34, 35, 36, 37, 38, 39, 40, 41, 4, 25, 26, 42, 43, 45]
-47 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_1; device float* data1_2; };\nkernel void r_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args.data0_1; device float* data1_2 = args.data1_2;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    float val0 = (*(data1_2+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(data0_1+0) = ((*(buf0+0))*3.0f);\n}"
+47 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct r_2_args { device float* data0_1; device float* data1_2; };\nkernel void r_2(constant struct r_2_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args->data0_1;\n  device float* data1_2 = args->data1_2;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    float val0 = (*(data1_2+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(data0_1+0) = ((*(buf0+0))*3.0f);\n}"
 48 Ops.PROGRAM dtypes.void [44, 46, 47] ProgramInfo(params=(%1, %16), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 49 Ops.SINK dtypes.void [29, 48]
 

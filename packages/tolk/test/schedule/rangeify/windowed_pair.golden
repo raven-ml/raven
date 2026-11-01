@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 4
@@ -51,57 +51,60 @@
 49 Ops.PAD dtypes.f32 [43, 46, 48]
 50 Ops.CONST dtypes.weakint [] 17
 51 Ops.EXPAND dtypes.f32 [49, 50]
-52 Ops.PERMUTE dtypes.f32 [51] (1, 0, 2)
-53 Ops.CONST dtypes.weakint [] 527
-54 Ops.STACK dtypes.weakint [2, 53]
-55 Ops.RESHAPE dtypes.f32 [52, 54]
-56 Ops.STACK dtypes.weakint [44, 44]
-57 Ops.CONST dtypes.weakint [] 512
-58 Ops.STACK dtypes.weakint [2, 57]
-59 Ops.SHRINK dtypes.f32 [55, 56, 58]
-60 Ops.CONST dtypes.weakint [] 32
-61 Ops.STACK dtypes.weakint [2, 3, 60]
-62 Ops.RESHAPE dtypes.f32 [59, 61]
-63 Ops.STACK dtypes.weakint [44, 44, 44]
-64 Ops.STACK dtypes.weakint [2, 3, 3]
-65 Ops.SHRINK dtypes.f32 [62, 63, 64]
-66 Ops.PERMUTE dtypes.f32 [65] (1, 0, 2)
-67 Ops.REDUCE dtypes.f32 [66] (Ops.ADD, 1)
-68 Ops.PERMUTE dtypes.f32 [43] (1, 0)
-69 Ops.STACK dtypes.weakint [3, 2]
-70 Ops.PAD dtypes.f32 [68, 56, 69]
-71 Ops.CONST dtypes.weakint [] 1
-72 Ops.STACK dtypes.weakint [3, 71, 2]
-73 Ops.RESHAPE dtypes.f32 [70, 72]
-74 Ops.STACK dtypes.weakint [3, 45, 2]
-75 Ops.PAD dtypes.f32 [73, 63, 74]
-76 Ops.CONST dtypes.weakint [] 240
-77 Ops.STACK dtypes.weakint [76, 2]
-78 Ops.RESHAPE dtypes.f32 [75, 77]
-79 Ops.STACK dtypes.weakint [45, 44]
-80 Ops.CONST dtypes.weakint [] 256
-81 Ops.STACK dtypes.weakint [80, 2]
-82 Ops.PAD dtypes.f32 [78, 79, 81]
-83 Ops.STACK dtypes.weakint [3, 3, 2]
-84 Ops.RESHAPE dtypes.f32 [82, 83]
-85 Ops.PERMUTE dtypes.f32 [84] (1, 0, 2)
-86 Ops.RESHAPE dtypes.f32 [85, 81]
-87 Ops.SHRINK dtypes.f32 [86, 79, 77]
-88 Ops.RESHAPE dtypes.f32 [87, 74]
-89 Ops.SHRINK dtypes.f32 [88, 63, 72]
-90 Ops.RESHAPE dtypes.f32 [89, 69]
-91 Ops.PERMUTE dtypes.f32 [90] (1, 0)
-92 Ops.PAD dtypes.f32 [91, 46, 48]
-93 Ops.EXPAND dtypes.f32 [92, 50]
-94 Ops.PERMUTE dtypes.f32 [93] (1, 0, 2)
-95 Ops.RESHAPE dtypes.f32 [94, 54]
-96 Ops.SHRINK dtypes.f32 [95, 56, 58]
-97 Ops.RESHAPE dtypes.f32 [96, 61]
-98 Ops.SHRINK dtypes.f32 [97, 63, 64]
-99 Ops.PERMUTE dtypes.f32 [98] (1, 0, 2)
-100 Ops.REDUCE dtypes.f32 [99] (Ops.ADD, 1)
-101 Ops.ADD dtypes.f32 [67, 100]
-102 Ops.STORE dtypes.void [5, 101]
-103 Ops.AFTER dtypes.f32 [1, 102]
-104 Ops.SINK dtypes.void [103]
+52 Ops.CONST dtypes.weakint [] 1
+53 Ops.CONST dtypes.weakint [] 2
+54 Ops.STACK dtypes.weakint [52, 44, 53]
+55 Ops.PERMUTE dtypes.f32 [51, 54]
+56 Ops.CONST dtypes.weakint [] 527
+57 Ops.STACK dtypes.weakint [2, 56]
+58 Ops.RESHAPE dtypes.f32 [55, 57]
+59 Ops.STACK dtypes.weakint [44, 44]
+60 Ops.CONST dtypes.weakint [] 512
+61 Ops.STACK dtypes.weakint [2, 60]
+62 Ops.SHRINK dtypes.f32 [58, 59, 61]
+63 Ops.CONST dtypes.weakint [] 32
+64 Ops.STACK dtypes.weakint [2, 3, 63]
+65 Ops.RESHAPE dtypes.f32 [62, 64]
+66 Ops.STACK dtypes.weakint [44, 44, 44]
+67 Ops.STACK dtypes.weakint [2, 3, 3]
+68 Ops.SHRINK dtypes.f32 [65, 66, 67]
+69 Ops.PERMUTE dtypes.f32 [68, 54]
+70 Ops.REDUCE dtypes.f32 [69] (Ops.ADD, 1)
+71 Ops.STACK dtypes.weakint [52, 44]
+72 Ops.PERMUTE dtypes.f32 [43, 71]
+73 Ops.STACK dtypes.weakint [3, 2]
+74 Ops.PAD dtypes.f32 [72, 59, 73]
+75 Ops.STACK dtypes.weakint [3, 52, 2]
+76 Ops.RESHAPE dtypes.f32 [74, 75]
+77 Ops.STACK dtypes.weakint [3, 45, 2]
+78 Ops.PAD dtypes.f32 [76, 66, 77]
+79 Ops.CONST dtypes.weakint [] 240
+80 Ops.STACK dtypes.weakint [79, 2]
+81 Ops.RESHAPE dtypes.f32 [78, 80]
+82 Ops.STACK dtypes.weakint [45, 44]
+83 Ops.CONST dtypes.weakint [] 256
+84 Ops.STACK dtypes.weakint [83, 2]
+85 Ops.PAD dtypes.f32 [81, 82, 84]
+86 Ops.STACK dtypes.weakint [3, 3, 2]
+87 Ops.RESHAPE dtypes.f32 [85, 86]
+88 Ops.PERMUTE dtypes.f32 [87, 54]
+89 Ops.RESHAPE dtypes.f32 [88, 84]
+90 Ops.SHRINK dtypes.f32 [89, 82, 80]
+91 Ops.RESHAPE dtypes.f32 [90, 77]
+92 Ops.SHRINK dtypes.f32 [91, 66, 75]
+93 Ops.RESHAPE dtypes.f32 [92, 73]
+94 Ops.PERMUTE dtypes.f32 [93, 71]
+95 Ops.PAD dtypes.f32 [94, 46, 48]
+96 Ops.EXPAND dtypes.f32 [95, 50]
+97 Ops.PERMUTE dtypes.f32 [96, 54]
+98 Ops.RESHAPE dtypes.f32 [97, 57]
+99 Ops.SHRINK dtypes.f32 [98, 59, 61]
+100 Ops.RESHAPE dtypes.f32 [99, 64]
+101 Ops.SHRINK dtypes.f32 [100, 66, 67]
+102 Ops.PERMUTE dtypes.f32 [101, 54]
+103 Ops.REDUCE dtypes.f32 [102] (Ops.ADD, 1)
+104 Ops.ADD dtypes.f32 [70, 103]
+105 Ops.STORE dtypes.void [5, 104]
+106 Ops.AFTER dtypes.f32 [1, 105]
+107 Ops.SINK dtypes.void [106]
 

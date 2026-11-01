@@ -1,6 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 
-__attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* restrict data1_1) {
+struct E_args { float* data0_1; float* data1_1; };
+__attribute__((min_vector_width(512))) void E(const struct E_args* args) {
+  float* restrict data0_1 = args->data0_1;
+  float* restrict data1_1 = args->data1_1;
   float val0 = (*(data1_1+0));
   _Bool alu0 = (val0!=val0);
   _Bool alu1 = (val0!=((float)(-__builtin_inff())));
@@ -21,7 +24,7 @@ __attribute__((min_vector_width(512))) void E(float* restrict data0_1, float* re
   float alu13 = (alu12?(val0*1.8446744073709552e+19f):val0);
   float cast3 = ((float)((((__builtin_bit_cast(int, (float)((alu13*1.4142135381698608f)))>>23)&255)+-127)));
   unsigned int cast4 = __builtin_bit_cast(unsigned int, (float)(alu8));
-  int alu14 = (((int)((((cast4>>23u)&255u)+4294967169u+1u)))+104);
+  int alu14 = (((int)((((cast4>>23u)&255u)+4294967170u)))+104);
   int alu15 = ((alu14<0)?0:alu14);
   unsigned long cast5 = ((unsigned long)((alu15&31)));
   int alu16 = (alu15>>5);

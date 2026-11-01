@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 128
@@ -6,25 +6,27 @@
 4 Ops.CONST dtypes.weakint [] 32
 5 Ops.STACK dtypes.weakint [0, 4]
 6 Ops.RESHAPE dtypes.f32 [3, 5]
-7 Ops.PERMUTE dtypes.f32 [6] (1, 0)
-8 Ops.REDUCE dtypes.f32 [7] (Ops.ADD, 1)
-9 Ops.CONST dtypes.weakint [] 1
-10 Ops.STACK dtypes.weakint [0, 9]
-11 Ops.RESHAPE dtypes.f32 [8, 10]
-12 Ops.CONST dtypes.weakfloat [] 32.0
-13 Ops.RECIPROCAL dtypes.weakfloat [12]
-14 Ops.MUL dtypes.f32 [11, 13]
-15 Ops.CONST dtypes.weakfloat [] -1.0
-16 Ops.MUL dtypes.f32 [14, 15]
-17 Ops.ADD dtypes.f32 [6, 16]
-18 Ops.MUL dtypes.f32 [17, 17]
-19 Ops.PERMUTE dtypes.f32 [18] (1, 0)
-20 Ops.REDUCE dtypes.f32 [19] (Ops.ADD, 1)
-21 Ops.CONST dtypes.weakfloat [] 31.0
-22 Ops.RECIPROCAL dtypes.weakfloat [21]
-23 Ops.MUL dtypes.f32 [20, 22]
-24 Ops.SQRT dtypes.f32 [23]
-25 Ops.STORE dtypes.void [1, 24]
-26 Ops.AFTER dtypes.f32 [1, 25]
-27 Ops.SINK dtypes.void [26]
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.STACK dtypes.weakint [7, 8]
+10 Ops.PERMUTE dtypes.f32 [6, 9]
+11 Ops.REDUCE dtypes.f32 [10] (Ops.ADD, 1)
+12 Ops.STACK dtypes.weakint [0, 7]
+13 Ops.RESHAPE dtypes.f32 [11, 12]
+14 Ops.CONST dtypes.weakfloat [] 32.0
+15 Ops.RECIPROCAL dtypes.weakfloat [14]
+16 Ops.MUL dtypes.f32 [13, 15]
+17 Ops.CONST dtypes.weakfloat [] -1.0
+18 Ops.MUL dtypes.f32 [16, 17]
+19 Ops.ADD dtypes.f32 [6, 18]
+20 Ops.MUL dtypes.f32 [19, 19]
+21 Ops.PERMUTE dtypes.f32 [20, 9]
+22 Ops.REDUCE dtypes.f32 [21] (Ops.ADD, 1)
+23 Ops.CONST dtypes.weakfloat [] 31.0
+24 Ops.RECIPROCAL dtypes.weakfloat [23]
+25 Ops.MUL dtypes.f32 [22, 24]
+26 Ops.SQRT dtypes.f32 [25]
+27 Ops.STORE dtypes.void [1, 26]
+28 Ops.AFTER dtypes.f32 [1, 27]
+29 Ops.SINK dtypes.void [28]
 

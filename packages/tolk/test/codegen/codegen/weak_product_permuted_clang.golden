@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 8
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -51,7 +51,7 @@
 49 Ops.SINK dtypes.void [35, 35, 35, 35, 48, 48, 48, 48] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), optimized=True)
 50 Ops.SINK dtypes.void [35, 35, 35, 35, 48, 48, 48, 48] KernelInfo(name="E_4_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), estimates=Estimates(ops=8, lds=64, mem=64), optimized=True)
 51 Ops.LINEAR dtypes.void [0, 1, 7, 2, 3, 4, 5, 8, 9, 14, 15, 10, 18, 19, 20, 11, 12, 13, 21, 22, 23, 16, 24, 17, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 6, 36, 35, 48, 49]
-52 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef int int8 __attribute__((aligned(4),ext_vector_type(8)));\n__attribute__((min_vector_width(512))) void E_4_2(int* restrict data0_8, int* restrict data1_8) {\n  int4 val0 = (*((int4*)((data1_8+0))));\n  int4 val1 = (*((int4*)((data1_8+4))));\n  int8 alu0 = ((int8){val0[0],val0[2],val1[0],val1[2],val0[1],val0[3],val1[1],val1[3]}<<31);\n  *((int4*)((data0_8+0))) = (int4){alu0[0],alu0[1],alu0[2],alu0[3]};\n  *((int4*)((data0_8+4))) = (int4){alu0[4],alu0[5],alu0[6],alu0[7]};\n}\n"
+52 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\ntypedef int int8 __attribute__((aligned(4),ext_vector_type(8)));\nstruct E_4_2_args { int* data0_8; int* data1_8; };\n__attribute__((min_vector_width(512))) void E_4_2(const struct E_4_2_args* args) {\n  int* restrict data0_8 = args->data0_8;\n  int* restrict data1_8 = args->data1_8;\n  int4 val0 = (*((int4*)((data1_8+0))));\n  int4 val1 = (*((int4*)((data1_8+4))));\n  int8 alu0 = ((int8){val0[0],val0[2],val1[0],val1[2],val0[1],val0[3],val1[1],val1[3]}<<31);\n  *((int4*)((data0_8+0))) = (int4){alu0[0],alu0[1],alu0[2],alu0[3]};\n  *((int4*)((data0_8+4))) = (int4){alu0[4],alu0[5],alu0[6],alu0[7]};\n}\n"
 53 Ops.PROGRAM dtypes.void [50, 51, 52] ProgramInfo(params=(%1, %7), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 54 Ops.SINK dtypes.void [49, 53]
 

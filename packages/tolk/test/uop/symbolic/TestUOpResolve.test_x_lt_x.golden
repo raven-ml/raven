@@ -1,8 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
-2 Ops.CMPLT dtypes.bool [1, 1]
-3 Ops.CONST dtypes.bool [] False
-4 Ops.SINK dtypes.void [2, 3] tag=("simplify", False, False)
-5 Ops.SINK dtypes.void [4]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.bool [] False
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+2 Ops.STACK dtypes.void []
+3 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+4 Ops.CMPLT dtypes.bool [3, 3]
+5 Ops.SINK dtypes.void [1, 4, 0]
+6 Ops.SINK dtypes.void [5]
 

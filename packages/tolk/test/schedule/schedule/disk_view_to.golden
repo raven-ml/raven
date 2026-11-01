@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.BUFFER dtypes.u8 [0] ParamArg(slot=4, dtype=dtypes.u8, device="CPU")
 2 Ops.BUFFER dtypes.u8 [0] ParamArg(slot=2, dtype=dtypes.u8, device="CPU")

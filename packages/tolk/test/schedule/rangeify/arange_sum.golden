@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 1
@@ -27,9 +27,10 @@
 25 Ops.CONST dtypes.weakint [] 2
 26 Ops.STACK dtypes.weakint [0, 25]
 27 Ops.RESHAPE dtypes.i32 [24, 26]
-28 Ops.PERMUTE dtypes.i32 [27] (1, 0)
-29 Ops.REDUCE dtypes.i32 [28] (Ops.ADD, 1)
-30 Ops.STORE dtypes.void [1, 29]
-31 Ops.AFTER dtypes.i32 [1, 30]
-32 Ops.SINK dtypes.void [31]
+28 Ops.STACK dtypes.weakint [2, 13]
+29 Ops.PERMUTE dtypes.i32 [27, 28]
+30 Ops.REDUCE dtypes.i32 [29] (Ops.ADD, 1)
+31 Ops.STORE dtypes.void [1, 30]
+32 Ops.AFTER dtypes.i32 [1, 31]
+33 Ops.SINK dtypes.void [32]
 

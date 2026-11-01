@@ -1,6 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 
-__attribute__((min_vector_width(512))) void test(int* restrict data0_1, int* restrict data1_1) {
+struct test_args { int* data0_1; int* data1_1; };
+__attribute__((min_vector_width(512))) void test(const struct test_args* args) {
+  int* restrict data0_1 = args->data0_1;
+  int* restrict data1_1 = args->data1_1;
   int val0 = (*(data1_1+0));
   int alu0 = ((val0<-2147483647)?-2147483647:val0);
   *(data0_1+0) = alu0;

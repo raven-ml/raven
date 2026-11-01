@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -14,7 +14,7 @@
 12 Ops.SINK dtypes.void [11] KernelInfo(name="sparse", estimates=Estimates(ops=1, lds=8, mem=8), optimized=True)
 13 Ops.SINK dtypes.void [11] KernelInfo(name="sparse", optimized=True)
 14 Ops.LINEAR dtypes.void [0, 1, 5, 8, 9, 2, 3, 6, 7, 4, 10, 11, 13]
-15 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void sparse(int* restrict data2_1, int* restrict data7_1, const int increment_) {\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
-16 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void sparse(int* restrict data2_1, int* restrict data7_1, const int increment_) {\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
+15 Ops.SOURCE dtypes.void [] "\nstruct sparse_args { int* data2_1; int* data7_1; int increment_; };\n__attribute__((min_vector_width(512))) void sparse(const struct sparse_args* args) {\n  int* restrict data2_1 = args->data2_1;\n  int* restrict data7_1 = args->data7_1;\n  const int increment_ = args->increment_;\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
+16 Ops.BINARY dtypes.u8 [] b"\nstruct sparse_args { int* data2_1; int* data7_1; int increment_; };\n__attribute__((min_vector_width(512))) void sparse(const struct sparse_args* args) {\n  int* restrict data2_1 = args->data2_1;\n  int* restrict data7_1 = args->data7_1;\n  const int increment_ = args->increment_;\n  int val0 = (*(data7_1+0));\n  *(data2_1+0) = (val0+increment_);\n}\n"
 17 Ops.PROGRAM dtypes.void [12, 14, 15, 16] ProgramInfo(params=(%1, %5, %9), globals=(2, 7), outs=(2,), ins=(7,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 

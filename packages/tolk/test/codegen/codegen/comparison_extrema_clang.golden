@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.bool [0] ParamArg(slot=0, dtype=dtypes.bool)
 2 Ops.CONST dtypes.weakint [] 0
@@ -24,7 +24,7 @@
 22 Ops.SINK dtypes.void [7, 13, 17, 21] KernelInfo(name="E", optimized=True)
 23 Ops.SINK dtypes.void [7, 13, 17, 21] KernelInfo(name="E", estimates=Estimates(lds=4, mem=4), optimized=True)
 24 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 8, 9, 10, 14, 15, 16, 18, 19, 20, 5, 6, 11, 12, 7, 13, 17, 21, 22]
-25 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E(_Bool* restrict data0_4) {\n  *(data0_4+0) = 0;\n  *(data0_4+1) = 1;\n  *(data0_4+2) = 1;\n  *(data0_4+3) = 0;\n}\n"
+25 Ops.SOURCE dtypes.void [] "\nstruct E_args { _Bool* data0_4; };\n__attribute__((min_vector_width(512))) void E(const struct E_args* args) {\n  _Bool* restrict data0_4 = args->data0_4;\n  *(data0_4+0) = 0;\n  *(data0_4+1) = 1;\n  *(data0_4+2) = 1;\n  *(data0_4+3) = 0;\n}\n"
 26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 27 Ops.SINK dtypes.void [22, 26]
 

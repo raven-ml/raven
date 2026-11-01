@@ -1,11 +1,12 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakfloat [] 1.0
-1 Ops.CAST dtypes.f16 [0] dtypes.f16
-2 Ops.CONST dtypes.bool [] Invalid
-3 Ops.STACK dtypes.f16 [1, 2]
-4 Ops.CONST dtypes.weakfloat [] 0.0
-5 Ops.CAST dtypes.f16 [4] dtypes.f16
-6 Ops.STACK dtypes.f16 [1, 5]
-7 Ops.SINK dtypes.void [3, 6] tag="pm_remove_invalid"
-8 Ops.SINK dtypes.void [7]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CUSTOM dtypes.void [] ("pm_remove_invalid", dtypes.void)
+1 Ops.CONST dtypes.weakfloat [] 1.0
+2 Ops.CAST dtypes.f16 [1] dtypes.f16
+3 Ops.CONST dtypes.bool [] Invalid
+4 Ops.STACK dtypes.f16 [2, 3]
+5 Ops.CONST dtypes.weakfloat [] 0.0
+6 Ops.CAST dtypes.f16 [5] dtypes.f16
+7 Ops.STACK dtypes.f16 [2, 6]
+8 Ops.SINK dtypes.void [0, 4, 7]
+9 Ops.SINK dtypes.void [8]
 

@@ -1,28 +1,29 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 3
-1 Ops.SPECIAL dtypes.weakint [0] "lidx0"
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.SPECIAL dtypes.weakint [2] "gidx0"
-4 Ops.MUL dtypes.weakint [3, 0]
-5 Ops.ADD dtypes.weakint [1, 4]
-6 Ops.CONST dtypes.weakint [] 5
-7 Ops.CMPLT dtypes.bool [5, 6]
-8 Ops.CONST dtypes.weakint [] 1024
-9 Ops.PARAM dtypes.f32 [8] ParamArg(slot=0, dtype=dtypes.f32)
-10 Ops.CONST dtypes.weakint [] 4
-11 Ops.RANGE dtypes.weakint [10] (AxisType.WEAK, 2)
-12 Ops.MUL dtypes.weakint [11, 6]
-13 Ops.ADD dtypes.weakint [5, 12]
-14 Ops.CONST dtypes.weakint [] 40
-15 Ops.ADD dtypes.weakint [13, 14]
-16 Ops.CONST dtypes.bool [] Invalid
-17 Ops.WHERE dtypes.weakint [7, 15, 16]
-18 Ops.INDEX dtypes.f32 [9, 17]
-19 Ops.LOAD dtypes.f32 [18]
-20 Ops.CAST dtypes.bool [19] dtypes.bool
-21 Ops.CONST dtypes.bool [] True
-22 Ops.CMPNE dtypes.bool [20, 21]
-23 Ops.AND dtypes.bool [7, 22]
-24 Ops.SINK dtypes.void [23] tag="simplify_valid"
-25 Ops.SINK dtypes.void [24]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CUSTOM dtypes.void [] ("simplify_valid", dtypes.void)
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.SPECIAL dtypes.weakint [1] "lidx0"
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.SPECIAL dtypes.weakint [3] "gidx0"
+5 Ops.MUL dtypes.weakint [4, 1]
+6 Ops.ADD dtypes.weakint [2, 5]
+7 Ops.CONST dtypes.weakint [] 5
+8 Ops.CMPLT dtypes.bool [6, 7]
+9 Ops.CONST dtypes.weakint [] 1024
+10 Ops.PARAM dtypes.f32 [9] ParamArg(slot=0, dtype=dtypes.f32)
+11 Ops.CONST dtypes.weakint [] 4
+12 Ops.RANGE dtypes.weakint [11] (AxisType.WEAK, 2)
+13 Ops.MUL dtypes.weakint [12, 7]
+14 Ops.ADD dtypes.weakint [6, 13]
+15 Ops.CONST dtypes.weakint [] 40
+16 Ops.ADD dtypes.weakint [14, 15]
+17 Ops.CONST dtypes.bool [] Invalid
+18 Ops.WHERE dtypes.weakint [8, 16, 17]
+19 Ops.INDEX dtypes.f32 [10, 18]
+20 Ops.LOAD dtypes.f32 [19]
+21 Ops.CAST dtypes.bool [20] dtypes.bool
+22 Ops.CONST dtypes.bool [] True
+23 Ops.CMPNE dtypes.bool [21, 22]
+24 Ops.AND dtypes.bool [8, 23]
+25 Ops.SINK dtypes.void [0, 24]
+26 Ops.SINK dtypes.void [25]
 

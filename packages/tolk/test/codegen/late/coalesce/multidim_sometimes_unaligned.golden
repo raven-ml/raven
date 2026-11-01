@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 0
@@ -38,46 +38,46 @@
 36 Ops.MUL dtypes.f32 [25, 35]
 37 Ops.INDEX dtypes.f32 [36, 2]
 38 Ops.INDEX dtypes.f32 [36, 8]
-39 Ops.ADD dtypes.f32 [37, 38] tag="fusable"
+39 Ops.ADD dtypes.f32 [37, 38] "fusable"
 40 Ops.INDEX dtypes.f32 [36, 11]
-41 Ops.ADD dtypes.f32 [39, 40] tag="fusable"
+41 Ops.ADD dtypes.f32 [39, 40] "fusable"
 42 Ops.INDEX dtypes.f32 [36, 14]
-43 Ops.ADD dtypes.f32 [41, 42] tag="fusable"
+43 Ops.ADD dtypes.f32 [41, 42] "fusable"
 44 Ops.STORE dtypes.void [3, 43]
 45 Ops.INDEX dtypes.f32 [1, 8]
 46 Ops.INDEX dtypes.f32 [36, 0]
 47 Ops.INDEX dtypes.f32 [36, 19]
-48 Ops.ADD dtypes.f32 [46, 47] tag="fusable"
+48 Ops.ADD dtypes.f32 [46, 47] "fusable"
 49 Ops.INDEX dtypes.f32 [36, 22]
-50 Ops.ADD dtypes.f32 [48, 49] tag="fusable"
+50 Ops.ADD dtypes.f32 [48, 49] "fusable"
 51 Ops.INDEX dtypes.f32 [36, 4]
-52 Ops.ADD dtypes.f32 [50, 51] tag="fusable"
+52 Ops.ADD dtypes.f32 [50, 51] "fusable"
 53 Ops.STORE dtypes.void [45, 52]
 54 Ops.INDEX dtypes.f32 [1, 11]
 55 Ops.CONST dtypes.weakint [] 8
 56 Ops.INDEX dtypes.f32 [36, 55]
 57 Ops.CONST dtypes.weakint [] 9
 58 Ops.INDEX dtypes.f32 [36, 57]
-59 Ops.ADD dtypes.f32 [56, 58] tag="fusable"
+59 Ops.ADD dtypes.f32 [56, 58] "fusable"
 60 Ops.CONST dtypes.weakint [] 10
 61 Ops.INDEX dtypes.f32 [36, 60]
-62 Ops.ADD dtypes.f32 [59, 61] tag="fusable"
+62 Ops.ADD dtypes.f32 [59, 61] "fusable"
 63 Ops.CONST dtypes.weakint [] 11
 64 Ops.INDEX dtypes.f32 [36, 63]
-65 Ops.ADD dtypes.f32 [62, 64] tag="fusable"
+65 Ops.ADD dtypes.f32 [62, 64] "fusable"
 66 Ops.STORE dtypes.void [54, 65]
 67 Ops.INDEX dtypes.f32 [1, 14]
 68 Ops.CONST dtypes.weakint [] 12
 69 Ops.INDEX dtypes.f32 [36, 68]
 70 Ops.CONST dtypes.weakint [] 13
 71 Ops.INDEX dtypes.f32 [36, 70]
-72 Ops.ADD dtypes.f32 [69, 71] tag="fusable"
+72 Ops.ADD dtypes.f32 [69, 71] "fusable"
 73 Ops.CONST dtypes.weakint [] 14
 74 Ops.INDEX dtypes.f32 [36, 73]
-75 Ops.ADD dtypes.f32 [72, 74] tag="fusable"
+75 Ops.ADD dtypes.f32 [72, 74] "fusable"
 76 Ops.CONST dtypes.weakint [] 15
 77 Ops.INDEX dtypes.f32 [36, 76]
-78 Ops.ADD dtypes.f32 [75, 77] tag="fusable"
+78 Ops.ADD dtypes.f32 [75, 77] "fusable"
 79 Ops.STORE dtypes.void [67, 78]
 80 Ops.SINK dtypes.void [44, 53, 66, 79] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST))), optimized=True)
 

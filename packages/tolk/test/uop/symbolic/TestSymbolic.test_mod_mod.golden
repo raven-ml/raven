@@ -1,33 +1,45 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 31), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 12
-3 Ops.FLOORMOD dtypes.weakint [1, 2]
-4 Ops.CONST dtypes.weakint [] 4
-5 Ops.FLOORMOD dtypes.weakint [3, 4]
-6 Ops.FLOORMOD dtypes.weakint [1, 4]
-7 Ops.SINK dtypes.void [5, 6] tag=("sym", 0, 3)
-8 Ops.SINK dtypes.void [1, 1] tag=("simplify", 0, 31)
-9 Ops.SINK dtypes.void [6, 6] tag=("commutative", 0, 3)
-10 Ops.SINK dtypes.void [6, 6] tag=("simplify", 0, 3)
-11 Ops.MUL dtypes.weakint [4, 1]
-12 Ops.FLOORMOD dtypes.weakint [11, 2]
-13 Ops.FLOORMOD dtypes.weakint [12, 4]
-14 Ops.CONST dtypes.weakint [] 0
-15 Ops.SINK dtypes.void [13, 14] tag=("sym", 0, 0)
-16 Ops.SINK dtypes.void [14, 14] tag=("commutative", 0, 0)
-17 Ops.SINK dtypes.void [14, 14] tag=("simplify", 0, 0)
-18 Ops.CONST dtypes.weakint [] 5
-19 Ops.MUL dtypes.weakint [18, 1]
-20 Ops.FLOORMOD dtypes.weakint [19, 2]
-21 Ops.FLOORMOD dtypes.weakint [20, 18]
-22 Ops.MUL dtypes.weakint [1, 18]
-23 Ops.FLOORMOD dtypes.weakint [22, 2]
-24 Ops.FLOORMOD dtypes.weakint [23, 18]
-25 Ops.SINK dtypes.void [21, 24] tag=("sym", 0, 4)
-26 Ops.SINK dtypes.void [24, 24] tag=("commutative", 0, 4)
-27 Ops.SINK dtypes.void [24, 24] tag=("simplify", 0, 4)
-28 Ops.FLOORMOD dtypes.weakint [6, 2]
-29 Ops.SINK dtypes.void [28, 6] tag=("sym", 0, 3)
-30 Ops.SINK dtypes.void [7, 8, 9, 10, 15, 16, 17, 25, 26, 27, 29]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 31), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 12
+6 Ops.FLOORMOD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.FLOORMOD dtypes.weakint [6, 7]
+9 Ops.FLOORMOD dtypes.weakint [4, 7]
+10 Ops.SINK dtypes.void [2, 8, 9]
+11 Ops.CONST dtypes.weakint [] 31
+12 Ops.CUSTOM dtypes.void [0, 11] ("simplify", dtypes.void)
+13 Ops.SINK dtypes.void [12, 4, 4]
+14 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+15 Ops.SINK dtypes.void [14, 9, 9]
+16 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+17 Ops.SINK dtypes.void [16, 9, 9]
+18 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+19 Ops.MUL dtypes.weakint [7, 4]
+20 Ops.FLOORMOD dtypes.weakint [19, 5]
+21 Ops.FLOORMOD dtypes.weakint [20, 7]
+22 Ops.SINK dtypes.void [18, 21, 0]
+23 Ops.CUSTOM dtypes.void [0, 0] ("commutative", dtypes.void)
+24 Ops.SINK dtypes.void [23, 0, 0]
+25 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+26 Ops.SINK dtypes.void [25, 0, 0]
+27 Ops.CUSTOM dtypes.void [0, 7] ("sym", dtypes.void)
+28 Ops.CONST dtypes.weakint [] 5
+29 Ops.MUL dtypes.weakint [28, 4]
+30 Ops.FLOORMOD dtypes.weakint [29, 5]
+31 Ops.FLOORMOD dtypes.weakint [30, 28]
+32 Ops.MUL dtypes.weakint [4, 28]
+33 Ops.FLOORMOD dtypes.weakint [32, 5]
+34 Ops.FLOORMOD dtypes.weakint [33, 28]
+35 Ops.SINK dtypes.void [27, 31, 34]
+36 Ops.CUSTOM dtypes.void [0, 7] ("commutative", dtypes.void)
+37 Ops.SINK dtypes.void [36, 34, 34]
+38 Ops.CUSTOM dtypes.void [0, 7] ("simplify", dtypes.void)
+39 Ops.SINK dtypes.void [38, 34, 34]
+40 Ops.FLOORMOD dtypes.weakint [9, 5]
+41 Ops.SINK dtypes.void [2, 40, 9]
+42 Ops.SINK dtypes.void [10, 13, 15, 17, 22, 24, 26, 35, 37, 39, 41]
 

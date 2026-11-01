@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 case	shape_len	full_shape	axis_types	reduce_axes	upcastable_dims	upcastable_reduce_dims	upcast_size	group_for_reduces	reduceops	bufs	colored_shape	made
 local_and_grouped_reduce_0	3	[1024, 2, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	1024    2  128	1:1024:GLOBAL 2:2:LOCAL
 local_and_grouped_reduce_1	3	[128, 16, 128]	[AxisType.GLOBAL, AxisType.LOCAL, AxisType.WEAK]	[2]	[0, 1]	[2]	1	0	1	3	 128   16  128	1:128:GLOBAL 2:16:LOCAL
@@ -146,7 +146,6 @@ group_within_symbolic_shared_memory	3	[n, 2, 4]	[AxisType.LOCAL, AxisType.LOCAL,
 padto_beyond_host_integers	1	[4611686018427387904]	[AxisType.GLOBAL]	[]	[0]	[]	1	0	0	1	4611686018427387904	0:4611686018427387904:GLOBAL
 local_whole_axis_beyond_host_integers	1	[4611686018427387904]	[AxisType.LOCAL]	[]	[0]	[]	1	0	0	1	4611686018427387904	0:1:GLOBAL 1:4611686018427387904:LOCAL
 upcasts_beyond_host_integers	1	[18446744073709551616]	[AxisType.UPCAST]	[]	[]	[]	18446744073709551616	0	0	1	18446744073709551616	
-swap_keeps_tags	2	[8, 8]	[AxisType.GLOBAL, AxisType.GLOBAL]	[]	[0, 1]	[]	1	0	0	1	   8    8	
 nested_end_globals	2	[8, 4]	[AxisType.GLOBAL, AxisType.WEAK]	[]	[0, 1]	[]	1	0	0	1	   8    4	
 launched_upcast	2	[4, 2]	[AxisType.GLOBAL, AxisType.UPCAST]	[]	[0]	[]	2	0	0	1	   4    2	0:4:GLOBAL 1:2:UPCAST
 padto_reduction_bound	2	[8, (r0+1)]	[AxisType.GLOBAL, AxisType.WEAK]	[1]	[0]	[]	1	0	1	2	   8 (r0+1)	0:8:GLOBAL

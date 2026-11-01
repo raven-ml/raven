@@ -1,12 +1,13 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 2882344918
-1 Ops.CAST dtypes.u32 [0] dtypes.u32
-2 Ops.CONST dtypes.weakint [] 2864434397
-3 Ops.MUL dtypes.u32 [1, 2]
-4 Ops.CONST dtypes.weakint [] 11
-5 Ops.FLOORDIV dtypes.u32 [3, 4]
-6 Ops.CONST dtypes.weakint [] 104274379
-7 Ops.CAST dtypes.u32 [6] dtypes.u32
-8 Ops.SINK dtypes.void [5, 7] tag=("simplify", 104274379, 104274379)
-9 Ops.SINK dtypes.void [8]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 104274379
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 2882344918
+3 Ops.CAST dtypes.u32 [2] dtypes.u32
+4 Ops.CONST dtypes.weakint [] 2864434397
+5 Ops.MUL dtypes.u32 [3, 4]
+6 Ops.CONST dtypes.weakint [] 11
+7 Ops.FLOORDIV dtypes.u32 [5, 6]
+8 Ops.CAST dtypes.u32 [0] dtypes.u32
+9 Ops.SINK dtypes.void [1, 7, 8]
+10 Ops.SINK dtypes.void [9]
 

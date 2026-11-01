@@ -1,9 +1,10 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device bfloat* data0_1; device bfloat* data1_1; };
-kernel void E(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device bfloat* data0_1 = args.data0_1; device bfloat* data1_1 = args.data1_1;
+struct E_args { device bfloat* data0_1; device bfloat* data1_1; };
+kernel void E(constant struct E_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device bfloat* data0_1 = args->data0_1;
+  device bfloat* data1_1 = args->data1_1;
   bfloat val0 = (*(data1_1+0));
   float cast0 = as_type<float>((uint)((((uint)(as_type<unsigned short>((bfloat)(val0))))<<16u)));
   uint cast1 = as_type<uint>((float)(exp2(cast0)));

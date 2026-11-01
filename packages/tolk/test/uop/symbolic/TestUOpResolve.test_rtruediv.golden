@@ -1,11 +1,12 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakfloat [] 9.0
-1 Ops.CONST dtypes.weakfloat [] 4.0
-2 Ops.CAST dtypes.f32 [1] dtypes.f32
-3 Ops.RECIPROCAL dtypes.f32 [2]
-4 Ops.MUL dtypes.f32 [0, 3]
-5 Ops.CONST dtypes.weakfloat [] 2.25
-6 Ops.CAST dtypes.f32 [5] dtypes.f32
-7 Ops.SINK dtypes.void [4, 6] tag="simplify"
-8 Ops.SINK dtypes.void [7]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CUSTOM dtypes.void [] ("simplify", dtypes.void)
+1 Ops.CONST dtypes.weakfloat [] 9.0
+2 Ops.CONST dtypes.weakfloat [] 4.0
+3 Ops.CAST dtypes.f32 [2] dtypes.f32
+4 Ops.RECIPROCAL dtypes.f32 [3]
+5 Ops.MUL dtypes.f32 [1, 4]
+6 Ops.CONST dtypes.weakfloat [] 2.25
+7 Ops.CAST dtypes.f32 [6] dtypes.f32
+8 Ops.SINK dtypes.void [0, 5, 7]
+9 Ops.SINK dtypes.void [8]
 

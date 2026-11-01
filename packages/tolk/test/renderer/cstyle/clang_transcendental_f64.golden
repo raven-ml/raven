@@ -1,6 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 
-__attribute__((min_vector_width(512))) void E(double* restrict data0_1, double* restrict data1_1) {
+struct E_args { double* data0_1; double* data1_1; };
+__attribute__((min_vector_width(512))) void E(const struct E_args* args) {
+  double* restrict data0_1 = args->data0_1;
+  double* restrict data1_1 = args->data1_1;
   double val0 = (*(data1_1+0));
   _Bool alu0 = (val0!=val0);
   _Bool alu1 = (val0!=((double)(-__builtin_inff())));
@@ -22,7 +25,7 @@ __attribute__((min_vector_width(512))) void E(double* restrict data0_1, double* 
   double cast3 = ((double)((((__builtin_bit_cast(long, (double)((alu13*1.4142135623730951)))>>52l)&2047l)+-1023l)));
   unsigned long cast4 = __builtin_bit_cast(unsigned long, (double)(alu8));
   unsigned long cast5 = ((unsigned long)((__builtin_bit_cast(double, (unsigned long)(((cast4&4503599627370495ul)|4602678819172646912ul)))*9007199254740992.0)));
-  int alu14 = (((int)((((cast4>>52ul)&2047ul)+18446744073709550593ul+1ul)))+75);
+  int alu14 = (((int)((((cast4>>52ul)&2047ul)+18446744073709550594ul)))+75);
   int alu15 = ((alu14<0)?0:alu14);
   unsigned long cast6 = ((unsigned long)((alu15&31)));
   int alu16 = (alu15>>5);

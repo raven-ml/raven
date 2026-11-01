@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 #include <metal_stdlib>
 using namespace metal;
 bfloat2 __WMMA_8_8_8_bf16_bf16(bfloat2 a, bfloat2 b, bfloat2 c){
@@ -8,9 +8,11 @@ bfloat2 __WMMA_8_8_8_bf16_bf16(bfloat2 a, bfloat2 b, bfloat2 c){
   simdgroup_multiply_accumulate(mat_c, mat_a, mat_b, mat_c);
   return bfloat2(mat_c.thread_elements()[0], mat_c.thread_elements()[1]);
 }
-struct args_t { device bfloat* data0_64; device bfloat* data1_128; device bfloat* data2_128; };
-kernel void r_32_2_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device bfloat* data0_64 = args.data0_64; device bfloat* data1_128 = args.data1_128; device bfloat* data2_128 = args.data2_128;
+struct r_32_2_2_args { device bfloat* data0_64; device bfloat* data1_128; device bfloat* data2_128; };
+kernel void r_32_2_2(constant struct r_32_2_2_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device bfloat* data0_64 = args->data0_64;
+  device bfloat* data1_128 = args->data1_128;
+  device bfloat* data2_128 = args->data2_128;
   bfloat buf0[2];
   int lidx0 = lid.x; /* 32 */
   int alu0 = (lidx0>>4);

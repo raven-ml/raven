@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -72,7 +72,7 @@
 70 Ops.SINK dtypes.void [69] KernelInfo(estimates=Estimates(ops=5, lds=36, mem=20), optimized=True)
 71 Ops.SINK dtypes.void [69] KernelInfo(optimized=True)
 72 Ops.LINEAR dtypes.void [10, 16, 0, 1, 44, 61, 42, 2, 3, 45, 11, 46, 12, 17, 18, 47, 48, 49, 50, 51, 52, 62, 32, 33, 63, 64, 65, 66, 67, 53, 54, 55, 43, 56, 57, 58, 59, 60, 4, 68, 69, 71]
-73 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_4; device int* data1_1; };\nkernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_4 = args.data0_4; device int* data1_1 = args.data1_1;\n  int buf0[1];\n  threadgroup __attribute__((aligned(16))) int buf1[1];\n  threadgroup __attribute__((aligned(16))) int buf2[1];\n  *(buf0+0) = 0;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int val0 = (*(data0_4+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf1+0) = 3;\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val1 = (*(buf1+0));\n  *(buf2+0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val2 = (*(buf2+0));\n  *(data1_1+0) = (val2+val1);\n}"
+73 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct test_args { device int* data0_4; device int* data1_1; };\nkernel void test(constant struct test_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_4 = args->data0_4;\n  device int* data1_1 = args->data1_1;\n  int buf0[1];\n  threadgroup __attribute__((aligned(16))) int buf1[1];\n  threadgroup __attribute__((aligned(16))) int buf2[1];\n  *(buf0+0) = 0;\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int val0 = (*(data0_4+Lidx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(buf1+0) = 3;\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val1 = (*(buf1+0));\n  *(buf2+0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val2 = (*(buf2+0));\n  *(data1_1+0) = (val2+val1);\n}"
 74 Ops.PROGRAM dtypes.void [70, 72, 73] ProgramInfo(params=(%16, %1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 75 Ops.SINK dtypes.void [41, 74]
 

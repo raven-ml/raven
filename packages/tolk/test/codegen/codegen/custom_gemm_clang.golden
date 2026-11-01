@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 256
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 16), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 16), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 16), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 16), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -44,7 +44,7 @@
 42 Ops.SINK dtypes.void [41] KernelInfo(name="custom_gemm_16_16_16", optimized=True, split=(16, 3, 4))
 43 Ops.SINK dtypes.void [41] KernelInfo(name="custom_gemm_16_16_16", estimates=Estimates(ops=8192, lds=66560, mem=4096), optimized=True, split=(16, 3, 4))
 44 Ops.LINEAR dtypes.void [0, 1, 27, 31, 2, 3, 4, 17, 18, 11, 12, 8, 9, 5, 6, 13, 7, 10, 14, 22, 15, 16, 19, 20, 21, 23, 28, 29, 30, 32, 33, 34, 35, 24, 25, 26, 36, 37, 38, 39, 40, 41, 42]
-45 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void custom_gemm_16_16_16(float* restrict data0_256, float* restrict data1_256, float* restrict data2_256, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<4);\n    for (int Lidx1 = 0; Lidx1 < 16; Lidx1++) {\n      int alu1 = (alu0+Lidx1);\n      *(data0_256+alu1) = 0.0f;\n      for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {\n        float val0 = (*(data1_256+(alu0+Lidx2)));\n        float val1 = (*(data2_256+((Lidx2<<4)+Lidx1)));\n        float val2 = (*(data0_256+alu1));\n        *(data0_256+alu1) = (val2+(val0*val1));\n      }\n    }\n  }\n}\n"
+45 Ops.SOURCE dtypes.void [] "\nstruct custom_gemm_16_16_16_args { float* data0_256; float* data1_256; float* data2_256; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void custom_gemm_16_16_16(const struct custom_gemm_16_16_16_args* args) {\n  float* restrict data0_256 = args->data0_256;\n  float* restrict data1_256 = args->data1_256;\n  float* restrict data2_256 = args->data2_256;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = ((block_lo_+Lidx0)<<4);\n    for (int Lidx1 = 0; Lidx1 < 16; Lidx1++) {\n      int alu1 = (alu0+Lidx1);\n      *(data0_256+alu1) = 0.0f;\n      for (int Lidx2 = 0; Lidx2 < 16; Lidx2++) {\n        float val0 = (*(data1_256+(alu0+Lidx2)));\n        float val1 = (*(data2_256+((Lidx2<<4)+Lidx1)));\n        float val2 = (*(data0_256+alu1));\n        *(data0_256+alu1) = (val2+(val0*val1));\n      }\n    }\n  }\n}\n"
 46 Ops.PROGRAM dtypes.void [43, 44, 45] ProgramInfo(global_size=(16, 1, 1), params=(%1, %27, %31, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(0, 1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 47 Ops.SINK dtypes.void [42, 46]
 

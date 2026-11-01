@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU:1")
 2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
@@ -11,7 +11,7 @@
 9 Ops.END dtypes.void [8, 2]
 10 Ops.SINK dtypes.void [9] KernelInfo()
 11 Ops.ALLOC dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU:1")
-12 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU:1") tag=()
+12 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU:1")
 13 Ops.CALL dtypes.void [10, 11, 12] CallInfo()
 14 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 15 Ops.INDEX dtypes.i32 [14, 2]
@@ -25,16 +25,14 @@
 23 Ops.STORE dtypes.void [15, 22]
 24 Ops.END dtypes.void [23, 2]
 25 Ops.SINK dtypes.void [24] KernelInfo(name="ignore_first_var_4")
-26 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU:1") tag=()
-27 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU:1") tag=()
-28 Ops.PARAM dtypes.i32 [18] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 100), multiple_of=1, addrspace=AddrSpace.ALU)
-29 Ops.CALL dtypes.void [25, 26, 27, 11, 28] CallInfo()
-30 Ops.CONST dtypes.weakint [] 1
-31 Ops.ADD dtypes.i32 [5, 30]
-32 Ops.STORE dtypes.void [3, 31]
-33 Ops.END dtypes.void [32, 2]
-34 Ops.SINK dtypes.void [33] KernelInfo()
-35 Ops.PARAM dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, device="CPU:1") tag=()
-36 Ops.CALL dtypes.void [34, 35, 26] CallInfo()
-37 Ops.LINEAR dtypes.void [13, 29, 36]
+26 Ops.PARAM dtypes.i32 [18] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 100), multiple_of=1, addrspace=AddrSpace.ALU)
+27 Ops.CALL dtypes.void [25, 1, 4, 11, 26] CallInfo()
+28 Ops.CONST dtypes.weakint [] 1
+29 Ops.ADD dtypes.i32 [5, 28]
+30 Ops.STORE dtypes.void [3, 29]
+31 Ops.END dtypes.void [30, 2]
+32 Ops.SINK dtypes.void [31] KernelInfo()
+33 Ops.PARAM dtypes.i32 [0] ParamArg(slot=4, dtype=dtypes.i32, device="CPU:1")
+34 Ops.CALL dtypes.void [32, 33, 1] CallInfo()
+35 Ops.LINEAR dtypes.void [13, 27, 34]
 

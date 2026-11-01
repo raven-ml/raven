@@ -1,13 +1,16 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.ADD dtypes.weakint [1, 2]
-4 Ops.RANGE dtypes.weakint [3] (AxisType.WEAK, 0)
-5 Ops.FLOORDIV dtypes.weakint [4, 3]
-6 Ops.CONST dtypes.weakint [] 0
-7 Ops.SINK dtypes.void [5, 6] tag=("sym", 0, 0)
-8 Ops.SINK dtypes.void [6, 6] tag=("commutative", 0, 0)
-9 Ops.SINK dtypes.void [6, 6] tag=("simplify", 0, 0)
-10 Ops.SINK dtypes.void [7, 8, 9]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+2 Ops.STACK dtypes.void []
+3 Ops.PARAM dtypes.weakint [2] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 0)
+7 Ops.FLOORDIV dtypes.weakint [6, 5]
+8 Ops.SINK dtypes.void [1, 7, 0]
+9 Ops.CUSTOM dtypes.void [0, 0] ("commutative", dtypes.void)
+10 Ops.SINK dtypes.void [9, 0, 0]
+11 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+12 Ops.SINK dtypes.void [11, 0, 0]
+13 Ops.SINK dtypes.void [8, 10, 12]
 

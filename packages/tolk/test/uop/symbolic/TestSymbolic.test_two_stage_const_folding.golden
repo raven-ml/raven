@@ -1,0 +1,14 @@
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.CONST dtypes.weakint [] 13
+2 Ops.CUSTOM dtypes.void [0, 1] ("symbolic_simple", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 2
+8 Ops.ADD dtypes.weakint [6, 7]
+9 Ops.ADD dtypes.weakint [4, 0]
+10 Ops.SINK dtypes.void [2, 8, 9]
+11 Ops.SINK dtypes.void [10]
+

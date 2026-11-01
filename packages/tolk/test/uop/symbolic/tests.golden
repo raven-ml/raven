@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 file	class	test
 null/test_uop_symbolic.py	TestSymbolic	test_add_1
 null/test_uop_symbolic.py	TestSymbolic	test_add_div
@@ -168,6 +168,7 @@ null/test_uop_symbolic.py	TestSymbolic	test_symbolic_factor_remainder_div
 null/test_uop_symbolic.py	TestSymbolic	test_symbolic_gcd_div
 null/test_uop_symbolic.py	TestSymbolic	test_symbolic_range_doesnt_collapse
 null/test_uop_symbolic.py	TestSymbolic	test_trunc_noop
+null/test_uop_symbolic.py	TestSymbolic	test_two_stage_const_folding
 null/test_uop_symbolic.py	TestSymbolic	test_uop_gcd_method
 null/test_uop_symbolic.py	TestSymbolic	test_where_cast
 null/test_uop_symbolic.py	TestSymbolic	test_where_closure_folding

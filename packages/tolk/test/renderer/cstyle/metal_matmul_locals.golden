@@ -1,9 +1,11 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device float* data0_4096; device float* data1_4096; device float* data2_4096; };
-kernel void r_4_4_4_4_4_4_64(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_4096 = args.data0_4096; device float* data1_4096 = args.data1_4096; device float* data2_4096 = args.data2_4096;
+struct r_4_4_4_4_4_4_64_args { device float* data0_4096; device float* data1_4096; device float* data2_4096; };
+kernel void r_4_4_4_4_4_4_64(constant struct r_4_4_4_4_4_4_64_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_4096 = args->data0_4096;
+  device float* data1_4096 = args->data1_4096;
+  device float* data2_4096 = args->data2_4096;
   float buf0[16];
   int gidx0 = gid.x; /* 4 */
   int gidx1 = gid.y; /* 4 */

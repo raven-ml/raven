@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 1
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -66,7 +66,7 @@
 64 Ops.SINK dtypes.void [63] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=256, lds=1028, mem=1028), optimized=True)
 65 Ops.SINK dtypes.void [63] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 66 Ops.LINEAR dtypes.void [16, 17, 28, 0, 1, 51, 2, 3, 52, 7, 8, 34, 18, 19, 25, 26, 10, 11, 21, 22, 53, 12, 54, 55, 56, 20, 23, 24, 29, 30, 37, 35, 32, 27, 38, 36, 33, 31, 39, 40, 41, 42, 57, 58, 59, 60, 61, 62, 4, 63, 65]
-67 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void dot_product(float* restrict data0_128, float* restrict data1_128, float* restrict data2_1) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 32; Lidx0++) {\n    int alu1 = (Lidx0<<2);\n    float4 val0 = (*((float4*)((data0_128+alu1))));\n    float4 val1 = (*((float4*)((data1_128+alu1))));\n    *(buf0+0) = ((*(buf0+0))+__builtin_fmaf(val0[3],val1[3],__builtin_fmaf(val0[2],val1[2],__builtin_fmaf(val0[1],val1[1],(val0[0]*val1[0])))));\n  }\n  *(data2_1+0) = (*(buf0+0));\n}\n"
+67 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct dot_product_args { float* data0_128; float* data1_128; float* data2_1; };\n__attribute__((min_vector_width(512))) void dot_product(const struct dot_product_args* args) {\n  float* restrict data0_128 = args->data0_128;\n  float* restrict data1_128 = args->data1_128;\n  float* restrict data2_1 = args->data2_1;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Lidx0 = 0; Lidx0 < 32; Lidx0++) {\n    int alu1 = (Lidx0<<2);\n    float4 val0 = (*((float4*)((data0_128+alu1))));\n    float4 val1 = (*((float4*)((data1_128+alu1))));\n    *(buf0+0) = ((*(buf0+0))+__builtin_fmaf(val0[3],val1[3],__builtin_fmaf(val0[2],val1[2],__builtin_fmaf(val0[1],val1[1],(val0[0]*val1[0])))));\n  }\n  *(data2_1+0) = (*(buf0+0));\n}\n"
 68 Ops.PROGRAM dtypes.void [64, 66, 67] ProgramInfo(params=(%17, %28, %1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 69 Ops.SINK dtypes.void [50, 68]
 

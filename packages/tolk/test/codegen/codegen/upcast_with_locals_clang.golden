@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 128
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 128), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 128), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 128), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 128), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 1)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -96,7 +96,7 @@
 94 Ops.SINK dtypes.void [93] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=33024, lds=131584, mem=66560), optimized=True, split=(128, 3, 4))
 95 Ops.SINK dtypes.void [93] KernelInfo(name="r_128_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), optimized=True, split=(128, 3, 4))
 96 Ops.LINEAR dtypes.void [0, 1, 25, 36, 37, 2, 3, 4, 11, 77, 9, 10, 14, 15, 53, 55, 26, 27, 48, 49, 33, 34, 18, 19, 42, 43, 29, 30, 38, 39, 5, 6, 20, 7, 78, 79, 80, 21, 40, 41, 56, 57, 58, 50, 51, 52, 44, 45, 46, 60, 61, 81, 82, 83, 28, 31, 32, 59, 54, 47, 35, 62, 63, 64, 65, 84, 85, 86, 87, 88, 89, 8, 90, 91, 92, 93, 95]
-97 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_128_32_4(float* restrict data0_128, float* restrict data1_128, float* restrict data2_16384, const int block_lo_, const int block_hi_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Lidx0 = 0; Lidx0 < 32; Lidx0++) {\n      int alu2 = ((Lidx0<<9)+alu0);\n      float val0 = (*(data2_16384+(alu2+128)));\n      float val1 = (*(data2_16384+(alu2+256)));\n      float val2 = (*(data2_16384+(alu2+384)));\n      float val3 = (*(data2_16384+alu2));\n      float4 val4 = (*((float4*)((data1_128+(Lidx0<<2)))));\n      *(buf0+0) = ((*(buf0+0))+__builtin_fmaf(val4[3],val2,__builtin_fmaf(val4[2],val1,__builtin_fmaf(val4[1],val0,(val4[0]*val3)))));\n    }\n    float val5 = (*(buf0+0));\n    float alu5 = ((0.0f<val5)?val5:0.0f);\n    *(data0_128+alu0) = alu5;\n  }\n}\n"
+97 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct r_128_32_4_args { float* data0_128; float* data1_128; float* data2_16384; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_128_32_4(const struct r_128_32_4_args* args) {\n  float* restrict data0_128 = args->data0_128;\n  float* restrict data1_128 = args->data1_128;\n  float* restrict data2_16384 = args->data2_16384;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    *(buf0+0) = 0.0f;\n    for (int Lidx0 = 0; Lidx0 < 32; Lidx0++) {\n      int alu2 = ((Lidx0<<9)+alu0);\n      float val0 = (*(data2_16384+(alu2+128)));\n      float val1 = (*(data2_16384+(alu2+256)));\n      float val2 = (*(data2_16384+(alu2+384)));\n      float val3 = (*(data2_16384+alu2));\n      float4 val4 = (*((float4*)((data1_128+(Lidx0<<2)))));\n      *(buf0+0) = ((*(buf0+0))+__builtin_fmaf(val4[3],val2,__builtin_fmaf(val4[2],val1,__builtin_fmaf(val4[1],val0,(val4[0]*val3)))));\n    }\n    float val5 = (*(buf0+0));\n    float alu5 = ((0.0f<val5)?val5:0.0f);\n    *(data0_128+alu0) = alu5;\n  }\n}\n"
 98 Ops.PROGRAM dtypes.void [94, 96, 97] ProgramInfo(global_size=(128, 1, 1), params=(%1, %25, %37, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 99 Ops.SINK dtypes.void [76, 98]
 

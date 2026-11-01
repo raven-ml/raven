@@ -1,27 +1,29 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), multiple_of=1, name="r0", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 3
-3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.CONST dtypes.weakint [] -1
-5 Ops.ADD dtypes.weakint [1, 4]
-6 Ops.FLOORDIV dtypes.weakint [5, 2]
-7 Ops.CONST dtypes.bool [] Invalid
-8 Ops.WHERE dtypes.weakint [3, 6, 7]
-9 Ops.CONST dtypes.weakint [] 2
-10 Ops.ADD dtypes.weakint [1, 9]
-11 Ops.FLOORDIV dtypes.weakint [10, 2]
-12 Ops.ADD dtypes.weakint [11, 4]
-13 Ops.WHERE dtypes.weakint [3, 12, 7]
-14 Ops.SINK dtypes.void [8, 13] tag=("pm_simplify_valid", -1, True)
-15 Ops.CONST dtypes.weakint [] 1
-16 Ops.CMPLT dtypes.bool [15, 1]
-17 Ops.CONST dtypes.bool [] True
-18 Ops.CMPNE dtypes.bool [16, 17]
-19 Ops.FLOORDIV dtypes.weakint [1, 9]
-20 Ops.WHERE dtypes.weakint [18, 19, 7]
-21 Ops.CONST dtypes.weakint [] 0
-22 Ops.WHERE dtypes.weakint [18, 21, 7]
-23 Ops.SINK dtypes.void [20, 22] tag=("pm_simplify_valid", 0, True)
-24 Ops.SINK dtypes.void [14, 23]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] -1
+1 Ops.CONST dtypes.bool [] True
+2 Ops.CUSTOM dtypes.void [0, 1] ("pm_simplify_valid", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 2), multiple_of=1, name="r0", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 3
+6 Ops.CMPLT dtypes.bool [4, 5]
+7 Ops.ADD dtypes.weakint [4, 0]
+8 Ops.FLOORDIV dtypes.weakint [7, 5]
+9 Ops.CONST dtypes.bool [] Invalid
+10 Ops.WHERE dtypes.weakint [6, 8, 9]
+11 Ops.CONST dtypes.weakint [] 2
+12 Ops.ADD dtypes.weakint [4, 11]
+13 Ops.FLOORDIV dtypes.weakint [12, 5]
+14 Ops.ADD dtypes.weakint [13, 0]
+15 Ops.WHERE dtypes.weakint [6, 14, 9]
+16 Ops.SINK dtypes.void [2, 10, 15]
+17 Ops.CONST dtypes.weakint [] 0
+18 Ops.CUSTOM dtypes.void [17, 1] ("pm_simplify_valid", dtypes.void)
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.CMPLT dtypes.bool [19, 4]
+21 Ops.CMPNE dtypes.bool [20, 1]
+22 Ops.FLOORDIV dtypes.weakint [4, 11]
+23 Ops.WHERE dtypes.weakint [21, 22, 9]
+24 Ops.WHERE dtypes.weakint [21, 17, 9]
+25 Ops.SINK dtypes.void [18, 23, 24]
+26 Ops.SINK dtypes.void [16, 25]
 

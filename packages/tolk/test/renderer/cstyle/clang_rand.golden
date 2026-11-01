@@ -1,7 +1,13 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 typedef unsigned int unsigned_int2 __attribute__((aligned(4),ext_vector_type(2)));
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, unsigned int* restrict data1_2, unsigned int* restrict data2_2, const int block_lo_, const int block_hi_) {
+struct E_2_2_4_args { float* data0_16; unsigned int* data1_2; unsigned int* data2_2; int block_lo_; int block_hi_; };
+__attribute__((min_vector_width(512))) void E_2_2_4(const struct E_2_2_4_args* args) {
+  float* restrict data0_16 = args->data0_16;
+  unsigned int* restrict data1_2 = args->data1_2;
+  unsigned int* restrict data2_2 = args->data2_2;
+  const int block_lo_ = args->block_lo_;
+  const int block_hi_ = args->block_hi_;
   unsigned_int2 val0 = (*((unsigned_int2*)((data1_2+0))));
   unsigned_int2 val1 = (*((unsigned_int2*)((data2_2+0))));
   unsigned int alu0 = ((val0[1]-((unsigned int)((val0[0]<16u))))+val1[1]);
@@ -21,7 +27,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
   unsigned int alu14 = (alu12+alu13);
   unsigned int alu15 = (alu14^((alu13<<16u)+(alu13>>16u)));
   unsigned int alu16 = (alu14+alu15);
-  unsigned int alu17 = ((alu16^((alu15<<24u)+(alu15>>8u)))+val1[0]+1u+1u);
+  unsigned int alu17 = ((alu16^((alu15<<24u)+(alu15>>8u)))+val1[0]+2u);
   unsigned int alu18 = (alu16+alu8+alu17);
   unsigned int alu19 = (alu18^((alu17<<13u)+(alu17>>19u)));
   unsigned int alu20 = (alu18+alu19);
@@ -29,7 +35,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
   unsigned int alu22 = (alu20+alu21);
   unsigned int alu23 = (alu22^((alu21<<26u)+(alu21>>6u)));
   unsigned int alu24 = (alu22+alu23);
-  unsigned int alu25 = ((alu24^((alu23<<6u)+(alu23>>26u)))+val1[1]+2u+1u);
+  unsigned int alu25 = ((alu24^((alu23<<6u)+(alu23>>26u)))+val1[1]+3u);
   unsigned int alu26 = (alu24+val1[0]+alu25);
   unsigned int alu27 = (alu26^((alu25<<17u)+(alu25>>15u)));
   unsigned int alu28 = (alu26+alu27);
@@ -37,7 +43,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
   unsigned int alu30 = (alu28+alu29);
   unsigned int alu31 = (alu30^((alu29<<16u)+(alu29>>16u)));
   unsigned int alu32 = (alu30+alu31);
-  unsigned int alu33 = ((alu32^((alu31<<24u)+(alu31>>8u)))+alu8+3u+1u);
+  unsigned int alu33 = ((alu32^((alu31<<24u)+(alu31>>8u)))+alu8+4u);
   unsigned int alu34 = (alu32+val1[1]+alu33);
   unsigned int alu35 = (alu34^((alu33<<13u)+(alu33>>19u)));
   unsigned int alu36 = (alu34+alu35);
@@ -46,7 +52,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
   unsigned int alu39 = (alu38^((alu37<<26u)+(alu37>>6u)));
   unsigned int alu40 = (alu38+alu39);
   unsigned int alu41 = (alu40+alu8);
-  unsigned int alu42 = ((alu40^((alu39<<6u)+(alu39>>26u)))+val1[0]+4u+1u);
+  unsigned int alu42 = ((alu40^((alu39<<6u)+(alu39>>26u)))+val1[0]+5u);
   unsigned int alu43 = (alu41^alu42^466688986u);
   for (int Lidx0_1 = 0; Lidx0_1 < (block_hi_-block_lo_); Lidx0_1++) {
     int alu44 = ((block_lo_+Lidx0_1)<<2);
@@ -70,7 +76,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu58 = (alu56+alu57);
     unsigned int alu59 = (alu58^((alu57<<16u)+(alu57>>16u)));
     unsigned int alu60 = (alu58+alu59);
-    unsigned int alu61 = ((alu60^((alu59<<24u)+(alu59>>8u)))+alu41+1u+1u);
+    unsigned int alu61 = ((alu60^((alu59<<24u)+(alu59>>8u)))+alu41+2u);
     unsigned int alu62 = (alu60+alu43+alu61);
     unsigned int alu63 = (alu62^((alu61<<13u)+(alu61>>19u)));
     unsigned int alu64 = (alu62+alu63);
@@ -78,7 +84,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu66 = (alu64+alu65);
     unsigned int alu67 = (alu66^((alu65<<26u)+(alu65>>6u)));
     unsigned int alu68 = (alu66+alu67);
-    unsigned int alu69 = ((alu68^((alu67<<6u)+(alu67>>26u)))+alu42+2u+1u);
+    unsigned int alu69 = ((alu68^((alu67<<6u)+(alu67>>26u)))+alu42+3u);
     unsigned int alu70 = (alu68+alu41+alu69);
     unsigned int alu71 = (alu70^((alu69<<17u)+(alu69>>15u)));
     unsigned int alu72 = (alu70+alu71);
@@ -86,7 +92,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu74 = (alu72+alu73);
     unsigned int alu75 = (alu74^((alu73<<16u)+(alu73>>16u)));
     unsigned int alu76 = (alu74+alu75);
-    unsigned int alu77 = ((alu76^((alu75<<24u)+(alu75>>8u)))+alu43+3u+1u);
+    unsigned int alu77 = ((alu76^((alu75<<24u)+(alu75>>8u)))+alu43+4u);
     unsigned int alu78 = (alu76+alu42+alu77);
     unsigned int alu79 = (alu78^((alu77<<13u)+(alu77>>19u)));
     unsigned int alu80 = (alu78+alu79);
@@ -110,7 +116,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu98 = (alu96+alu97);
     unsigned int alu99 = (alu98^((alu97<<16u)+(alu97>>16u)));
     unsigned int alu100 = (alu98+alu99);
-    unsigned int alu101 = ((alu100^((alu99<<24u)+(alu99>>8u)))+alu41+1u+1u);
+    unsigned int alu101 = ((alu100^((alu99<<24u)+(alu99>>8u)))+alu41+2u);
     unsigned int alu102 = (alu100+alu43+alu101);
     unsigned int alu103 = (alu102^((alu101<<13u)+(alu101>>19u)));
     unsigned int alu104 = (alu102+alu103);
@@ -118,7 +124,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu106 = (alu104+alu105);
     unsigned int alu107 = (alu106^((alu105<<26u)+(alu105>>6u)));
     unsigned int alu108 = (alu106+alu107);
-    unsigned int alu109 = ((alu108^((alu107<<6u)+(alu107>>26u)))+alu42+2u+1u);
+    unsigned int alu109 = ((alu108^((alu107<<6u)+(alu107>>26u)))+alu42+3u);
     unsigned int alu110 = (alu108+alu41+alu109);
     unsigned int alu111 = (alu110^((alu109<<17u)+(alu109>>15u)));
     unsigned int alu112 = (alu110+alu111);
@@ -126,7 +132,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu114 = (alu112+alu113);
     unsigned int alu115 = (alu114^((alu113<<16u)+(alu113>>16u)));
     unsigned int alu116 = (alu114+alu115);
-    unsigned int alu117 = ((alu116^((alu115<<24u)+(alu115>>8u)))+alu43+3u+1u);
+    unsigned int alu117 = ((alu116^((alu115<<24u)+(alu115>>8u)))+alu43+4u);
     unsigned int alu118 = (alu116+alu42+alu117);
     unsigned int alu119 = (alu118^((alu117<<13u)+(alu117>>19u)));
     unsigned int alu120 = (alu118+alu119);
@@ -150,7 +156,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu138 = (alu136+alu137);
     unsigned int alu139 = (alu138^((alu137<<16u)+(alu137>>16u)));
     unsigned int alu140 = (alu138+alu139);
-    unsigned int alu141 = ((alu140^((alu139<<24u)+(alu139>>8u)))+alu41+1u+1u);
+    unsigned int alu141 = ((alu140^((alu139<<24u)+(alu139>>8u)))+alu41+2u);
     unsigned int alu142 = (alu140+alu43+alu141);
     unsigned int alu143 = (alu142^((alu141<<13u)+(alu141>>19u)));
     unsigned int alu144 = (alu142+alu143);
@@ -158,7 +164,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu146 = (alu144+alu145);
     unsigned int alu147 = (alu146^((alu145<<26u)+(alu145>>6u)));
     unsigned int alu148 = (alu146+alu147);
-    unsigned int alu149 = ((alu148^((alu147<<6u)+(alu147>>26u)))+alu42+2u+1u);
+    unsigned int alu149 = ((alu148^((alu147<<6u)+(alu147>>26u)))+alu42+3u);
     unsigned int alu150 = (alu148+alu41+alu149);
     unsigned int alu151 = (alu150^((alu149<<17u)+(alu149>>15u)));
     unsigned int alu152 = (alu150+alu151);
@@ -166,7 +172,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu154 = (alu152+alu153);
     unsigned int alu155 = (alu154^((alu153<<16u)+(alu153>>16u)));
     unsigned int alu156 = (alu154+alu155);
-    unsigned int alu157 = ((alu156^((alu155<<24u)+(alu155>>8u)))+alu43+3u+1u);
+    unsigned int alu157 = ((alu156^((alu155<<24u)+(alu155>>8u)))+alu43+4u);
     unsigned int alu158 = (alu156+alu42+alu157);
     unsigned int alu159 = (alu158^((alu157<<13u)+(alu157>>19u)));
     unsigned int alu160 = (alu158+alu159);
@@ -190,7 +196,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu178 = (alu176+alu177);
     unsigned int alu179 = (alu178^((alu177<<16u)+(alu177>>16u)));
     unsigned int alu180 = (alu178+alu179);
-    unsigned int alu181 = ((alu180^((alu179<<24u)+(alu179>>8u)))+alu41+1u+1u);
+    unsigned int alu181 = ((alu180^((alu179<<24u)+(alu179>>8u)))+alu41+2u);
     unsigned int alu182 = (alu180+alu43+alu181);
     unsigned int alu183 = (alu182^((alu181<<13u)+(alu181>>19u)));
     unsigned int alu184 = (alu182+alu183);
@@ -198,7 +204,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu186 = (alu184+alu185);
     unsigned int alu187 = (alu186^((alu185<<26u)+(alu185>>6u)));
     unsigned int alu188 = (alu186+alu187);
-    unsigned int alu189 = ((alu188^((alu187<<6u)+(alu187>>26u)))+alu42+2u+1u);
+    unsigned int alu189 = ((alu188^((alu187<<6u)+(alu187>>26u)))+alu42+3u);
     unsigned int alu190 = (alu188+alu41+alu189);
     unsigned int alu191 = (alu190^((alu189<<17u)+(alu189>>15u)));
     unsigned int alu192 = (alu190+alu191);
@@ -206,7 +212,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu194 = (alu192+alu193);
     unsigned int alu195 = (alu194^((alu193<<16u)+(alu193>>16u)));
     unsigned int alu196 = (alu194+alu195);
-    unsigned int alu197 = ((alu196^((alu195<<24u)+(alu195>>8u)))+alu43+3u+1u);
+    unsigned int alu197 = ((alu196^((alu195<<24u)+(alu195>>8u)))+alu43+4u);
     unsigned int alu198 = (alu196+alu42+alu197);
     unsigned int alu199 = (alu198^((alu197<<13u)+(alu197>>19u)));
     unsigned int alu200 = (alu198+alu199);
@@ -214,7 +220,7 @@ __attribute__((min_vector_width(512))) void E_2_2_4(float* restrict data0_16, un
     unsigned int alu202 = (alu200+alu201);
     unsigned int alu203 = (alu202^((alu201<<26u)+(alu201>>6u)));
     unsigned int alu204 = (alu202+alu203);
-    *((float4*)((data0_16+(alu44+8)))) = (float4){(__builtin_bit_cast(float, (unsigned int)(((((alu84^((alu83<<6u)+(alu83>>26u)))+alu41+4u+1u)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)(((((alu124^((alu123<<6u)+(alu123>>26u)))+alu41+4u+1u)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)(((((alu164^((alu163<<6u)+(alu163>>26u)))+alu41+4u+1u)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)(((((alu204^((alu203<<6u)+(alu203>>26u)))+alu41+4u+1u)>>9u)|1065353216u)))+-1.0f)};
+    *((float4*)((data0_16+(alu44+8)))) = (float4){(__builtin_bit_cast(float, (unsigned int)(((((alu84^((alu83<<6u)+(alu83>>26u)))+alu41+5u)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)(((((alu124^((alu123<<6u)+(alu123>>26u)))+alu41+5u)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)(((((alu164^((alu163<<6u)+(alu163>>26u)))+alu41+5u)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)(((((alu204^((alu203<<6u)+(alu203>>26u)))+alu41+5u)>>9u)|1065353216u)))+-1.0f)};
     *((float4*)((data0_16+alu44))) = (float4){(__builtin_bit_cast(float, (unsigned int)((((alu84+alu43)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)((((alu124+alu43)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)((((alu164+alu43)>>9u)|1065353216u)))+-1.0f),(__builtin_bit_cast(float, (unsigned int)((((alu204+alu43)>>9u)|1065353216u)))+-1.0f)};
   }
 }

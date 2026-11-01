@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 4096
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
@@ -114,7 +114,7 @@
 112 Ops.LOAD dtypes.f32 [111]
 113 Ops.INDEX dtypes.f32 [112, 5]
 114 Ops.MUL dtypes.f32 [107, 113]
-115 Ops.ADD dtypes.f32 [103, 114] tag="fusable"
+115 Ops.ADD dtypes.f32 [103, 114] "fusable"
 116 Ops.ADD dtypes.weakint [87, 55]
 117 Ops.WHERE dtypes.weakint [7, 116, 22]
 118 Ops.INDEX dtypes.f32 [84, 117]
@@ -125,7 +125,7 @@
 123 Ops.LOAD dtypes.f32 [122]
 124 Ops.INDEX dtypes.f32 [123, 5]
 125 Ops.MUL dtypes.f32 [119, 124]
-126 Ops.ADD dtypes.f32 [115, 125] tag="fusable"
+126 Ops.ADD dtypes.f32 [115, 125] "fusable"
 127 Ops.CONST dtypes.weakint [] 24
 128 Ops.ADD dtypes.weakint [87, 127]
 129 Ops.WHERE dtypes.weakint [7, 128, 22]
@@ -138,7 +138,7 @@
 136 Ops.LOAD dtypes.f32 [135]
 137 Ops.INDEX dtypes.f32 [136, 5]
 138 Ops.MUL dtypes.f32 [131, 137]
-139 Ops.ADD dtypes.f32 [126, 138] tag="fusable"
+139 Ops.ADD dtypes.f32 [126, 138] "fusable"
 140 Ops.ADD dtypes.f32 [83, 139]
 141 Ops.STORE dtypes.void [82, 140]
 142 Ops.INDEX dtypes.f32 [81, 31]
@@ -147,13 +147,13 @@
 145 Ops.MUL dtypes.f32 [91, 144]
 146 Ops.INDEX dtypes.f32 [112, 31]
 147 Ops.MUL dtypes.f32 [107, 146]
-148 Ops.ADD dtypes.f32 [145, 147] tag="fusable"
+148 Ops.ADD dtypes.f32 [145, 147] "fusable"
 149 Ops.INDEX dtypes.f32 [123, 31]
 150 Ops.MUL dtypes.f32 [119, 149]
-151 Ops.ADD dtypes.f32 [148, 150] tag="fusable"
+151 Ops.ADD dtypes.f32 [148, 150] "fusable"
 152 Ops.INDEX dtypes.f32 [136, 31]
 153 Ops.MUL dtypes.f32 [131, 152]
-154 Ops.ADD dtypes.f32 [151, 153] tag="fusable"
+154 Ops.ADD dtypes.f32 [151, 153] "fusable"
 155 Ops.ADD dtypes.f32 [143, 154]
 156 Ops.STORE dtypes.void [142, 155]
 157 Ops.INDEX dtypes.f32 [81, 3]
@@ -170,32 +170,32 @@
 168 Ops.INDEX dtypes.f32 [84, 167]
 169 Ops.LOAD dtypes.f32 [168]
 170 Ops.MUL dtypes.f32 [169, 113]
-171 Ops.ADD dtypes.f32 [164, 170] tag="fusable"
+171 Ops.ADD dtypes.f32 [164, 170] "fusable"
 172 Ops.CONST dtypes.weakint [] 272
 173 Ops.ADD dtypes.weakint [87, 172]
 174 Ops.WHERE dtypes.weakint [7, 173, 22]
 175 Ops.INDEX dtypes.f32 [84, 174]
 176 Ops.LOAD dtypes.f32 [175]
 177 Ops.MUL dtypes.f32 [176, 124]
-178 Ops.ADD dtypes.f32 [171, 177] tag="fusable"
+178 Ops.ADD dtypes.f32 [171, 177] "fusable"
 179 Ops.CONST dtypes.weakint [] 280
 180 Ops.ADD dtypes.weakint [87, 179]
 181 Ops.WHERE dtypes.weakint [7, 180, 22]
 182 Ops.INDEX dtypes.f32 [84, 181]
 183 Ops.LOAD dtypes.f32 [182]
 184 Ops.MUL dtypes.f32 [183, 137]
-185 Ops.ADD dtypes.f32 [178, 184] tag="fusable"
+185 Ops.ADD dtypes.f32 [178, 184] "fusable"
 186 Ops.ADD dtypes.f32 [158, 185]
 187 Ops.STORE dtypes.void [157, 186]
 188 Ops.INDEX dtypes.f32 [81, 36]
 189 Ops.LOAD dtypes.f32 [188]
 190 Ops.MUL dtypes.f32 [163, 144]
 191 Ops.MUL dtypes.f32 [169, 146]
-192 Ops.ADD dtypes.f32 [190, 191] tag="fusable"
+192 Ops.ADD dtypes.f32 [190, 191] "fusable"
 193 Ops.MUL dtypes.f32 [176, 149]
-194 Ops.ADD dtypes.f32 [192, 193] tag="fusable"
+194 Ops.ADD dtypes.f32 [192, 193] "fusable"
 195 Ops.MUL dtypes.f32 [183, 152]
-196 Ops.ADD dtypes.f32 [194, 195] tag="fusable"
+196 Ops.ADD dtypes.f32 [194, 195] "fusable"
 197 Ops.ADD dtypes.f32 [189, 196]
 198 Ops.STORE dtypes.void [188, 197]
 199 Ops.INDEX dtypes.f32 [81, 9]
@@ -211,32 +211,32 @@
 209 Ops.INDEX dtypes.f32 [84, 208]
 210 Ops.LOAD dtypes.f32 [209]
 211 Ops.MUL dtypes.f32 [210, 113]
-212 Ops.ADD dtypes.f32 [205, 211] tag="fusable"
+212 Ops.ADD dtypes.f32 [205, 211] "fusable"
 213 Ops.CONST dtypes.weakint [] 528
 214 Ops.ADD dtypes.weakint [87, 213]
 215 Ops.WHERE dtypes.weakint [7, 214, 22]
 216 Ops.INDEX dtypes.f32 [84, 215]
 217 Ops.LOAD dtypes.f32 [216]
 218 Ops.MUL dtypes.f32 [217, 124]
-219 Ops.ADD dtypes.f32 [212, 218] tag="fusable"
+219 Ops.ADD dtypes.f32 [212, 218] "fusable"
 220 Ops.CONST dtypes.weakint [] 536
 221 Ops.ADD dtypes.weakint [87, 220]
 222 Ops.WHERE dtypes.weakint [7, 221, 22]
 223 Ops.INDEX dtypes.f32 [84, 222]
 224 Ops.LOAD dtypes.f32 [223]
 225 Ops.MUL dtypes.f32 [224, 137]
-226 Ops.ADD dtypes.f32 [219, 225] tag="fusable"
+226 Ops.ADD dtypes.f32 [219, 225] "fusable"
 227 Ops.ADD dtypes.f32 [200, 226]
 228 Ops.STORE dtypes.void [199, 227]
 229 Ops.INDEX dtypes.f32 [81, 41]
 230 Ops.LOAD dtypes.f32 [229]
 231 Ops.MUL dtypes.f32 [204, 144]
 232 Ops.MUL dtypes.f32 [210, 146]
-233 Ops.ADD dtypes.f32 [231, 232] tag="fusable"
+233 Ops.ADD dtypes.f32 [231, 232] "fusable"
 234 Ops.MUL dtypes.f32 [217, 149]
-235 Ops.ADD dtypes.f32 [233, 234] tag="fusable"
+235 Ops.ADD dtypes.f32 [233, 234] "fusable"
 236 Ops.MUL dtypes.f32 [224, 152]
-237 Ops.ADD dtypes.f32 [235, 236] tag="fusable"
+237 Ops.ADD dtypes.f32 [235, 236] "fusable"
 238 Ops.ADD dtypes.f32 [230, 237]
 239 Ops.STORE dtypes.void [229, 238]
 240 Ops.INDEX dtypes.f32 [81, 44]
@@ -253,32 +253,32 @@
 251 Ops.INDEX dtypes.f32 [84, 250]
 252 Ops.LOAD dtypes.f32 [251]
 253 Ops.MUL dtypes.f32 [252, 113]
-254 Ops.ADD dtypes.f32 [247, 253] tag="fusable"
+254 Ops.ADD dtypes.f32 [247, 253] "fusable"
 255 Ops.CONST dtypes.weakint [] 784
 256 Ops.ADD dtypes.weakint [87, 255]
 257 Ops.WHERE dtypes.weakint [7, 256, 22]
 258 Ops.INDEX dtypes.f32 [84, 257]
 259 Ops.LOAD dtypes.f32 [258]
 260 Ops.MUL dtypes.f32 [259, 124]
-261 Ops.ADD dtypes.f32 [254, 260] tag="fusable"
+261 Ops.ADD dtypes.f32 [254, 260] "fusable"
 262 Ops.CONST dtypes.weakint [] 792
 263 Ops.ADD dtypes.weakint [87, 262]
 264 Ops.WHERE dtypes.weakint [7, 263, 22]
 265 Ops.INDEX dtypes.f32 [84, 264]
 266 Ops.LOAD dtypes.f32 [265]
 267 Ops.MUL dtypes.f32 [266, 137]
-268 Ops.ADD dtypes.f32 [261, 267] tag="fusable"
+268 Ops.ADD dtypes.f32 [261, 267] "fusable"
 269 Ops.ADD dtypes.f32 [241, 268]
 270 Ops.STORE dtypes.void [240, 269]
 271 Ops.INDEX dtypes.f32 [81, 47]
 272 Ops.LOAD dtypes.f32 [271]
 273 Ops.MUL dtypes.f32 [246, 144]
 274 Ops.MUL dtypes.f32 [252, 146]
-275 Ops.ADD dtypes.f32 [273, 274] tag="fusable"
+275 Ops.ADD dtypes.f32 [273, 274] "fusable"
 276 Ops.MUL dtypes.f32 [259, 149]
-277 Ops.ADD dtypes.f32 [275, 276] tag="fusable"
+277 Ops.ADD dtypes.f32 [275, 276] "fusable"
 278 Ops.MUL dtypes.f32 [266, 152]
-279 Ops.ADD dtypes.f32 [277, 278] tag="fusable"
+279 Ops.ADD dtypes.f32 [277, 278] "fusable"
 280 Ops.ADD dtypes.f32 [272, 279]
 281 Ops.STORE dtypes.void [271, 280]
 282 Ops.AFTER dtypes.void [0, 141, 156, 187, 198, 228, 239, 270, 281]

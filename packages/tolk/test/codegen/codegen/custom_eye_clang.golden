@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.STACK dtypes.void []
 1 Ops.CONST dtypes.weakint [] 64
 2 Ops.PARAM dtypes.f32 [1] ParamArg(slot=0, dtype=dtypes.f32)
-3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, vmin_vmax=(0, 4), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 4), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -80,7 +80,7 @@
 78 Ops.SINK dtypes.void [77] KernelInfo(name="custom_eye_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), optimized=True, split=(4, 1, 2))
 79 Ops.SINK dtypes.void [77] KernelInfo(name="custom_eye_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(8, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))), estimates=Estimates(ops=64, lds=256, mem=256), optimized=True, split=(4, 1, 2))
 80 Ops.LINEAR dtypes.void [1, 2, 0, 3, 4, 43, 44, 15, 16, 12, 13, 60, 61, 21, 22, 25, 26, 8, 9, 35, 36, 39, 40, 70, 71, 47, 48, 5, 6, 7, 14, 51, 64, 65, 66, 67, 68, 69, 72, 73, 74, 17, 18, 19, 20, 23, 24, 27, 28, 29, 33, 34, 37, 38, 41, 42, 45, 52, 53, 54, 55, 56, 57, 58, 10, 62, 63, 31, 32, 49, 50, 11, 75, 46, 59, 30, 76, 77, 78]
-81 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void custom_eye_64(float* restrict data0_64, const int block_lo_, const int block_hi_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0<<1);\n    int alu2 = (alu1+1);\n    int alu3 = (alu0<<4);\n    *((float4*)((data0_64+(alu3+12)))) = (float4){((float)((alu2==4))),((float)((alu2==5))),((float)((alu2==6))),((float)((alu2==7)))};\n    *((float4*)((data0_64+(alu3+4)))) = (float4){((float)((alu1==4))),((float)((alu1==5))),((float)((alu1==6))),0.0f};\n    *((float4*)((data0_64+(alu3+8)))) = (float4){0.0f,((float)((alu2==1))),((float)((alu2==2))),((float)((alu2==3)))};\n    *((float4*)((data0_64+alu3))) = (float4){((float)((alu1==0))),((float)((alu1==1))),((float)((alu1==2))),((float)((alu1==3)))};\n  }\n}\n"
+81 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct custom_eye_64_args { float* data0_64; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void custom_eye_64(const struct custom_eye_64_args* args) {\n  float* restrict data0_64 = args->data0_64;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0<<1);\n    int alu2 = (alu1+1);\n    int alu3 = (alu0<<4);\n    *((float4*)((data0_64+(alu3+12)))) = (float4){((float)((alu2==4))),((float)((alu2==5))),((float)((alu2==6))),((float)((alu2==7)))};\n    *((float4*)((data0_64+(alu3+4)))) = (float4){((float)((alu1==4))),((float)((alu1==5))),((float)((alu1==6))),0.0f};\n    *((float4*)((data0_64+(alu3+8)))) = (float4){0.0f,((float)((alu2==1))),((float)((alu2==2))),((float)((alu2==3)))};\n    *((float4*)((data0_64+alu3))) = (float4){((float)((alu1==0))),((float)((alu1==1))),((float)((alu1==2))),((float)((alu1==3)))};\n  }\n}\n"
 82 Ops.PROGRAM dtypes.void [79, 80, 81] ProgramInfo(global_size=(4, 1, 1), params=(%2, %3, %4), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 83 Ops.SINK dtypes.void [78, 82]
 

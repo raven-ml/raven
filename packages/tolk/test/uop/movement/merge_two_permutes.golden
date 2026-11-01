@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 24
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 2
@@ -6,8 +6,13 @@
 4 Ops.CONST dtypes.weakint [] 4
 5 Ops.STACK dtypes.weakint [2, 3, 4]
 6 Ops.RESHAPE dtypes.f32 [1, 5]
-7 Ops.PERMUTE dtypes.f32 [6] (1, 2, 0)
-8 Ops.PERMUTE dtypes.f32 [7] (0, 2, 1)
-9 Ops.PERMUTE dtypes.f32 [6] (1, 0, 2)
-10 Ops.SINK dtypes.void [8, 9]
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.STACK dtypes.weakint [7, 2, 8]
+10 Ops.PERMUTE dtypes.f32 [6, 9]
+11 Ops.STACK dtypes.weakint [8, 2, 7]
+12 Ops.PERMUTE dtypes.f32 [10, 11]
+13 Ops.STACK dtypes.weakint [7, 8, 2]
+14 Ops.PERMUTE dtypes.f32 [6, 13]
+15 Ops.SINK dtypes.void [12, 14]
 

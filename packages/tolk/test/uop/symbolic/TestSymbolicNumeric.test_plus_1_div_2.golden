@@ -1,43 +1,49 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 0
-1 Ops.CONST dtypes.weakint [] 1
-2 Ops.ADD dtypes.weakint [0, 1]
-3 Ops.CONST dtypes.weakint [] 2
-4 Ops.FLOORDIV dtypes.weakint [2, 3]
-5 Ops.SINK dtypes.void [4, 0] tag=("sym", 0, 0)
-6 Ops.ADD dtypes.weakint [1, 1]
-7 Ops.FLOORDIV dtypes.weakint [6, 3]
-8 Ops.SINK dtypes.void [7, 1] tag=("sym", 1, 1)
-9 Ops.ADD dtypes.weakint [3, 1]
-10 Ops.FLOORDIV dtypes.weakint [9, 3]
-11 Ops.SINK dtypes.void [10, 1] tag=("sym", 1, 1)
-12 Ops.CONST dtypes.weakint [] 3
-13 Ops.ADD dtypes.weakint [12, 1]
-14 Ops.FLOORDIV dtypes.weakint [13, 3]
-15 Ops.SINK dtypes.void [14, 3] tag=("sym", 2, 2)
-16 Ops.CONST dtypes.weakint [] 4
-17 Ops.ADD dtypes.weakint [16, 1]
-18 Ops.FLOORDIV dtypes.weakint [17, 3]
-19 Ops.SINK dtypes.void [18, 3] tag=("sym", 2, 2)
-20 Ops.CONST dtypes.weakint [] 5
-21 Ops.ADD dtypes.weakint [20, 1]
-22 Ops.FLOORDIV dtypes.weakint [21, 3]
-23 Ops.SINK dtypes.void [22, 12] tag=("sym", 3, 3)
-24 Ops.CONST dtypes.weakint [] 6
-25 Ops.ADD dtypes.weakint [24, 1]
-26 Ops.FLOORDIV dtypes.weakint [25, 3]
-27 Ops.SINK dtypes.void [26, 12] tag=("sym", 3, 3)
-28 Ops.CONST dtypes.weakint [] 7
-29 Ops.ADD dtypes.weakint [28, 1]
-30 Ops.FLOORDIV dtypes.weakint [29, 3]
-31 Ops.SINK dtypes.void [30, 16] tag=("sym", 4, 4)
-32 Ops.CONST dtypes.weakint [] 8
-33 Ops.ADD dtypes.weakint [32, 1]
-34 Ops.FLOORDIV dtypes.weakint [33, 3]
-35 Ops.SINK dtypes.void [34, 16] tag=("sym", 4, 4)
-36 Ops.CONST dtypes.weakint [] 9
-37 Ops.ADD dtypes.weakint [36, 1]
-38 Ops.FLOORDIV dtypes.weakint [37, 3]
-39 Ops.SINK dtypes.void [38, 20] tag=("sym", 5, 5)
-40 Ops.SINK dtypes.void [5, 8, 11, 15, 19, 23, 27, 31, 35, 39]
+1 Ops.CUSTOM dtypes.void [0, 0] ("sym", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 1
+3 Ops.ADD dtypes.weakint [0, 2]
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.FLOORDIV dtypes.weakint [3, 4]
+6 Ops.SINK dtypes.void [1, 5, 0]
+7 Ops.CUSTOM dtypes.void [2, 2] ("sym", dtypes.void)
+8 Ops.ADD dtypes.weakint [2, 2]
+9 Ops.FLOORDIV dtypes.weakint [8, 4]
+10 Ops.SINK dtypes.void [7, 9, 2]
+11 Ops.ADD dtypes.weakint [4, 2]
+12 Ops.FLOORDIV dtypes.weakint [11, 4]
+13 Ops.SINK dtypes.void [7, 12, 2]
+14 Ops.CUSTOM dtypes.void [4, 4] ("sym", dtypes.void)
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.ADD dtypes.weakint [15, 2]
+17 Ops.FLOORDIV dtypes.weakint [16, 4]
+18 Ops.SINK dtypes.void [14, 17, 4]
+19 Ops.CONST dtypes.weakint [] 4
+20 Ops.ADD dtypes.weakint [19, 2]
+21 Ops.FLOORDIV dtypes.weakint [20, 4]
+22 Ops.SINK dtypes.void [14, 21, 4]
+23 Ops.CUSTOM dtypes.void [15, 15] ("sym", dtypes.void)
+24 Ops.CONST dtypes.weakint [] 5
+25 Ops.ADD dtypes.weakint [24, 2]
+26 Ops.FLOORDIV dtypes.weakint [25, 4]
+27 Ops.SINK dtypes.void [23, 26, 15]
+28 Ops.CONST dtypes.weakint [] 6
+29 Ops.ADD dtypes.weakint [28, 2]
+30 Ops.FLOORDIV dtypes.weakint [29, 4]
+31 Ops.SINK dtypes.void [23, 30, 15]
+32 Ops.CUSTOM dtypes.void [19, 19] ("sym", dtypes.void)
+33 Ops.CONST dtypes.weakint [] 7
+34 Ops.ADD dtypes.weakint [33, 2]
+35 Ops.FLOORDIV dtypes.weakint [34, 4]
+36 Ops.SINK dtypes.void [32, 35, 19]
+37 Ops.CONST dtypes.weakint [] 8
+38 Ops.ADD dtypes.weakint [37, 2]
+39 Ops.FLOORDIV dtypes.weakint [38, 4]
+40 Ops.SINK dtypes.void [32, 39, 19]
+41 Ops.CUSTOM dtypes.void [24, 24] ("sym", dtypes.void)
+42 Ops.CONST dtypes.weakint [] 9
+43 Ops.ADD dtypes.weakint [42, 2]
+44 Ops.FLOORDIV dtypes.weakint [43, 4]
+45 Ops.SINK dtypes.void [41, 44, 24]
+46 Ops.SINK dtypes.void [6, 10, 13, 18, 22, 27, 31, 36, 40, 45]
 

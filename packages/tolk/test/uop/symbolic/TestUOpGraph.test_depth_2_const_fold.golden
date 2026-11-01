@@ -1,13 +1,15 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 1), multiple_of=1, name="tmp", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.ADD dtypes.i32 [1, 2]
-4 Ops.CONST dtypes.weakint [] 4
-5 Ops.ADD dtypes.i32 [3, 4]
-6 Ops.CONST dtypes.weakint [] 6
-7 Ops.ADD dtypes.i32 [1, 6]
-8 Ops.SINK dtypes.void [5, 7] tag=("simplify", 6, 7)
-9 Ops.SINK dtypes.void [7, 7] tag=("simplify", 6, 7)
-10 Ops.SINK dtypes.void [8, 9]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 6
+1 Ops.CONST dtypes.weakint [] 7
+2 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.i32 [3] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(0, 1), multiple_of=1, name="tmp", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.ADD dtypes.i32 [4, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.ADD dtypes.i32 [6, 7]
+9 Ops.ADD dtypes.i32 [4, 0]
+10 Ops.SINK dtypes.void [2, 8, 9]
+11 Ops.SINK dtypes.void [2, 9, 9]
+12 Ops.SINK dtypes.void [10, 11]
 

@@ -1,17 +1,27 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 24), multiple_of=1, name="idx", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 4
-3 Ops.FLOORDIV dtypes.weakint [1, 2]
-4 Ops.SINK dtypes.void [3, 3] tag=("sym", 0, 6)
-5 Ops.SINK dtypes.void [1, 1] tag=("simplify", 0, 24)
-6 Ops.SINK dtypes.void [3, 3] tag=("commutative", 0, 6)
-7 Ops.SINK dtypes.void [3, 3] tag=("simplify", 0, 6)
-8 Ops.CMPLT dtypes.bool [1, 2]
-9 Ops.CONST dtypes.weakint [] -1
-10 Ops.WHERE dtypes.weakint [8, 3, 9]
-11 Ops.SINK dtypes.void [10, 10] tag=("sym", -1, 6)
-12 Ops.SINK dtypes.void [10, 10] tag=("commutative", -1, 6)
-13 Ops.SINK dtypes.void [10, 10] tag=("simplify", -1, 6)
-14 Ops.SINK dtypes.void [4, 5, 6, 7, 11, 12, 13]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CONST dtypes.weakint [] 6
+2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 24), multiple_of=1, name="idx", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.FLOORDIV dtypes.weakint [4, 5]
+7 Ops.SINK dtypes.void [2, 6, 6]
+8 Ops.CONST dtypes.weakint [] 24
+9 Ops.CUSTOM dtypes.void [0, 8] ("simplify", dtypes.void)
+10 Ops.SINK dtypes.void [9, 4, 4]
+11 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+12 Ops.SINK dtypes.void [11, 6, 6]
+13 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+14 Ops.SINK dtypes.void [13, 6, 6]
+15 Ops.CONST dtypes.weakint [] -1
+16 Ops.CUSTOM dtypes.void [15, 1] ("sym", dtypes.void)
+17 Ops.CMPLT dtypes.bool [4, 5]
+18 Ops.WHERE dtypes.weakint [17, 6, 15]
+19 Ops.SINK dtypes.void [16, 18, 18]
+20 Ops.CUSTOM dtypes.void [15, 1] ("commutative", dtypes.void)
+21 Ops.SINK dtypes.void [20, 18, 18]
+22 Ops.CUSTOM dtypes.void [15, 1] ("simplify", dtypes.void)
+23 Ops.SINK dtypes.void [22, 18, 18]
+24 Ops.SINK dtypes.void [7, 10, 12, 14, 19, 21, 23]
 

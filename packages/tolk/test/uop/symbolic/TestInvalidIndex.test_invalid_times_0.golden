@@ -1,13 +1,15 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="ridx", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 5
-3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.CONST dtypes.bool [] Invalid
-5 Ops.WHERE dtypes.weakint [3, 1, 4]
-6 Ops.CONST dtypes.weakint [] 0
-7 Ops.MUL dtypes.weakint [5, 6]
-8 Ops.WHERE dtypes.weakint [3, 6, 4]
-9 Ops.SINK dtypes.void [7, 8] tag=("simplify", 0, True)
-10 Ops.SINK dtypes.void [9]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CONST dtypes.bool [] True
+2 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="ridx", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 5
+6 Ops.CMPLT dtypes.bool [4, 5]
+7 Ops.CONST dtypes.bool [] Invalid
+8 Ops.WHERE dtypes.weakint [6, 4, 7]
+9 Ops.MUL dtypes.weakint [8, 0]
+10 Ops.WHERE dtypes.weakint [6, 0, 7]
+11 Ops.SINK dtypes.void [2, 9, 10]
+12 Ops.SINK dtypes.void [11]
 

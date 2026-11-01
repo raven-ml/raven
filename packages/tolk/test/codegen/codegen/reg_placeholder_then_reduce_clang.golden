@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 4), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 4), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -70,7 +70,7 @@
 68 Ops.SINK dtypes.void [67] KernelInfo(name="r_4_8", estimates=Estimates(ops=36, lds=160, mem=144), optimized=True, split=(4, 2, 3))
 69 Ops.SINK dtypes.void [67] KernelInfo(name="r_4_8", optimized=True, split=(4, 2, 3))
 70 Ops.LINEAR dtypes.void [0, 1, 25, 26, 2, 3, 4, 9, 39, 52, 15, 16, 12, 13, 27, 28, 18, 19, 5, 6, 20, 7, 53, 54, 29, 55, 21, 30, 31, 32, 56, 57, 58, 59, 60, 61, 42, 43, 62, 63, 64, 40, 41, 44, 45, 46, 47, 8, 65, 66, 67, 69]
-71 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  float buf0[1];\n  float buf1[1];\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0<<3);\n    *(buf1+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val0 = (*(data1_32+(alu1+Lidx1)));\n      *(buf1+0) = ((*(buf1+0))+val0);\n    }\n    float val1 = (*(data1_32+alu1));\n    *(buf0+0) = val1;\n    *(data0_4+alu0) = ((*(buf1+0))+(*(buf0+0)));\n  }\n}\n"
+71 Ops.SOURCE dtypes.void [] "\nstruct r_4_8_args { float* data0_4; float* data1_32; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_4_8(const struct r_4_8_args* args) {\n  float* restrict data0_4 = args->data0_4;\n  float* restrict data1_32 = args->data1_32;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  float buf0[1];\n  float buf1[1];\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int alu1 = (alu0<<3);\n    *(buf1+0) = 0.0f;\n    for (int Lidx1 = 0; Lidx1 < 8; Lidx1++) {\n      float val0 = (*(data1_32+(alu1+Lidx1)));\n      *(buf1+0) = ((*(buf1+0))+val0);\n    }\n    float val1 = (*(data1_32+alu1));\n    *(buf0+0) = val1;\n    *(data0_4+alu0) = ((*(buf1+0))+(*(buf0+0)));\n  }\n}\n"
 72 Ops.PROGRAM dtypes.void [68, 70, 71] ProgramInfo(global_size=(4, 1, 1), params=(%1, %26, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 73 Ops.SINK dtypes.void [51, 72]
 

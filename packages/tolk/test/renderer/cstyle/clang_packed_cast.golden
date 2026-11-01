@@ -1,6 +1,8 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 
-__attribute__((min_vector_width(512))) void packed(signed char* restrict data0_4) {
+struct packed_args { signed char* data0_4; };
+__attribute__((min_vector_width(512))) void packed(const struct packed_args* args) {
+  signed char* restrict data0_4 = args->data0_4;
   unsigned int val0 = (*((unsigned int*)(((unsigned int*)((data0_4+0))))));
   *(data0_4+0) = (val0&4294967040u);
 }

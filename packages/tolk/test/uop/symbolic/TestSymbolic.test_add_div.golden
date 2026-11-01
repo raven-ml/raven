@@ -1,57 +1,74 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.CONST dtypes.weakint [] -1
-4 Ops.MUL dtypes.weakint [2, 3]
-5 Ops.ADD dtypes.weakint [1, 4]
-6 Ops.CONST dtypes.weakint [] 4
-7 Ops.FLOORDIV dtypes.weakint [5, 6]
-8 Ops.ADD dtypes.weakint [1, 2]
-9 Ops.FLOORDIV dtypes.weakint [8, 6]
-10 Ops.ADD dtypes.weakint [9, 3]
-11 Ops.SINK dtypes.void [7, 10] tag=("sym", -1, 0)
-12 Ops.SINK dtypes.void [1, 1] tag=("simplify", 0, 5)
-13 Ops.SINK dtypes.void [10, 10] tag=("commutative", -1, 0)
-14 Ops.SINK dtypes.void [10, 10] tag=("simplify", -1, 0)
-15 Ops.CONST dtypes.weakint [] 1
-16 Ops.MUL dtypes.weakint [15, 3]
-17 Ops.ADD dtypes.weakint [1, 16]
-18 Ops.FLOORDIV dtypes.weakint [17, 6]
-19 Ops.CONST dtypes.weakint [] 3
-20 Ops.ADD dtypes.weakint [1, 19]
-21 Ops.FLOORDIV dtypes.weakint [20, 6]
-22 Ops.ADD dtypes.weakint [21, 3]
-23 Ops.SINK dtypes.void [18, 22] tag=("sym", -1, 1)
-24 Ops.SINK dtypes.void [22, 22] tag=("commutative", -1, 1)
-25 Ops.SINK dtypes.void [22, 22] tag=("simplify", -1, 1)
-26 Ops.FLOORDIV dtypes.weakint [1, 6]
-27 Ops.SINK dtypes.void [26, 26] tag=("sym", 0, 1)
-28 Ops.SINK dtypes.void [26, 26] tag=("commutative", 0, 1)
-29 Ops.SINK dtypes.void [26, 26] tag=("simplify", 0, 1)
-30 Ops.ADD dtypes.weakint [1, 15]
-31 Ops.FLOORDIV dtypes.weakint [30, 6]
-32 Ops.SINK dtypes.void [31, 31] tag=("sym", 0, 1)
-33 Ops.SINK dtypes.void [31, 31] tag=("commutative", 0, 1)
-34 Ops.SINK dtypes.void [31, 31] tag=("simplify", 0, 1)
-35 Ops.SINK dtypes.void [9, 9] tag=("sym", 0, 1)
-36 Ops.SINK dtypes.void [9, 9] tag=("commutative", 0, 1)
-37 Ops.SINK dtypes.void [9, 9] tag=("simplify", 0, 1)
-38 Ops.SINK dtypes.void [21, 21] tag=("sym", 0, 2)
-39 Ops.SINK dtypes.void [21, 21] tag=("commutative", 0, 2)
-40 Ops.SINK dtypes.void [21, 21] tag=("simplify", 0, 2)
-41 Ops.ADD dtypes.weakint [1, 6]
-42 Ops.FLOORDIV dtypes.weakint [41, 6]
-43 Ops.ADD dtypes.weakint [26, 15]
-44 Ops.SINK dtypes.void [42, 43] tag=("sym", 1, 2)
-45 Ops.SINK dtypes.void [43, 43] tag=("commutative", 1, 2)
-46 Ops.SINK dtypes.void [43, 43] tag=("simplify", 1, 2)
-47 Ops.CONST dtypes.weakint [] 5
-48 Ops.ADD dtypes.weakint [1, 47]
-49 Ops.FLOORDIV dtypes.weakint [48, 6]
-50 Ops.ADD dtypes.weakint [31, 15]
-51 Ops.SINK dtypes.void [49, 50] tag=("sym", 1, 2)
-52 Ops.SINK dtypes.void [50, 50] tag=("commutative", 1, 2)
-53 Ops.SINK dtypes.void [50, 50] tag=("simplify", 1, 2)
-54 Ops.SINK dtypes.void [11, 12, 13, 14, 23, 24, 25, 27, 28, 29, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45, 46, 51, 52, 53]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] -1
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.MUL dtypes.weakint [5, 0]
+7 Ops.ADD dtypes.weakint [4, 6]
+8 Ops.CONST dtypes.weakint [] 4
+9 Ops.FLOORDIV dtypes.weakint [7, 8]
+10 Ops.ADD dtypes.weakint [4, 5]
+11 Ops.FLOORDIV dtypes.weakint [10, 8]
+12 Ops.ADD dtypes.weakint [11, 0]
+13 Ops.SINK dtypes.void [2, 9, 12]
+14 Ops.CONST dtypes.weakint [] 5
+15 Ops.CUSTOM dtypes.void [1, 14] ("simplify", dtypes.void)
+16 Ops.SINK dtypes.void [15, 4, 4]
+17 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+18 Ops.SINK dtypes.void [17, 12, 12]
+19 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+20 Ops.SINK dtypes.void [19, 12, 12]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CUSTOM dtypes.void [0, 21] ("sym", dtypes.void)
+23 Ops.MUL dtypes.weakint [21, 0]
+24 Ops.ADD dtypes.weakint [4, 23]
+25 Ops.FLOORDIV dtypes.weakint [24, 8]
+26 Ops.CONST dtypes.weakint [] 3
+27 Ops.ADD dtypes.weakint [4, 26]
+28 Ops.FLOORDIV dtypes.weakint [27, 8]
+29 Ops.ADD dtypes.weakint [28, 0]
+30 Ops.SINK dtypes.void [22, 25, 29]
+31 Ops.CUSTOM dtypes.void [0, 21] ("commutative", dtypes.void)
+32 Ops.SINK dtypes.void [31, 29, 29]
+33 Ops.CUSTOM dtypes.void [0, 21] ("simplify", dtypes.void)
+34 Ops.SINK dtypes.void [33, 29, 29]
+35 Ops.CUSTOM dtypes.void [1, 21] ("sym", dtypes.void)
+36 Ops.FLOORDIV dtypes.weakint [4, 8]
+37 Ops.SINK dtypes.void [35, 36, 36]
+38 Ops.CUSTOM dtypes.void [1, 21] ("commutative", dtypes.void)
+39 Ops.SINK dtypes.void [38, 36, 36]
+40 Ops.CUSTOM dtypes.void [1, 21] ("simplify", dtypes.void)
+41 Ops.SINK dtypes.void [40, 36, 36]
+42 Ops.ADD dtypes.weakint [4, 21]
+43 Ops.FLOORDIV dtypes.weakint [42, 8]
+44 Ops.SINK dtypes.void [35, 43, 43]
+45 Ops.SINK dtypes.void [38, 43, 43]
+46 Ops.SINK dtypes.void [40, 43, 43]
+47 Ops.SINK dtypes.void [35, 11, 11]
+48 Ops.SINK dtypes.void [38, 11, 11]
+49 Ops.SINK dtypes.void [40, 11, 11]
+50 Ops.CUSTOM dtypes.void [1, 5] ("sym", dtypes.void)
+51 Ops.SINK dtypes.void [50, 28, 28]
+52 Ops.CUSTOM dtypes.void [1, 5] ("commutative", dtypes.void)
+53 Ops.SINK dtypes.void [52, 28, 28]
+54 Ops.CUSTOM dtypes.void [1, 5] ("simplify", dtypes.void)
+55 Ops.SINK dtypes.void [54, 28, 28]
+56 Ops.CUSTOM dtypes.void [21, 5] ("sym", dtypes.void)
+57 Ops.ADD dtypes.weakint [4, 8]
+58 Ops.FLOORDIV dtypes.weakint [57, 8]
+59 Ops.ADD dtypes.weakint [36, 21]
+60 Ops.SINK dtypes.void [56, 58, 59]
+61 Ops.CUSTOM dtypes.void [21, 5] ("commutative", dtypes.void)
+62 Ops.SINK dtypes.void [61, 59, 59]
+63 Ops.CUSTOM dtypes.void [21, 5] ("simplify", dtypes.void)
+64 Ops.SINK dtypes.void [63, 59, 59]
+65 Ops.ADD dtypes.weakint [4, 14]
+66 Ops.FLOORDIV dtypes.weakint [65, 8]
+67 Ops.ADD dtypes.weakint [43, 21]
+68 Ops.SINK dtypes.void [56, 66, 67]
+69 Ops.SINK dtypes.void [61, 67, 67]
+70 Ops.SINK dtypes.void [63, 67, 67]
+71 Ops.SINK dtypes.void [13, 16, 18, 20, 30, 32, 34, 37, 39, 41, 44, 45, 46, 47, 48, 49, 51, 53, 55, 60, 62, 64, 68, 69, 70]
 

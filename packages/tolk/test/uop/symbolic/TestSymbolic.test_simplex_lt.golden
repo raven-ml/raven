@@ -1,85 +1,92 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 2
-3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.SINK dtypes.void [3, 3] tag=("sym", False, True)
-5 Ops.SINK dtypes.void [1, 1] tag=("simplify", 0, 3)
-6 Ops.SINK dtypes.void [3, 3] tag=("commutative", False, True)
-7 Ops.SINK dtypes.void [3, 3] tag=("simplify", False, True)
-8 Ops.CMPLT dtypes.bool [2, 1]
-9 Ops.CONST dtypes.bool [] True
-10 Ops.CMPNE dtypes.bool [8, 9]
-11 Ops.SINK dtypes.void [10, 10] tag=("sym", False, True)
-12 Ops.SINK dtypes.void [10, 10] tag=("commutative", False, True)
-13 Ops.SINK dtypes.void [10, 10] tag=("simplify", False, True)
-14 Ops.CONST dtypes.weakint [] 1
-15 Ops.CMPLT dtypes.bool [14, 1]
-16 Ops.SINK dtypes.void [15, 15] tag=("sym", False, True)
-17 Ops.SINK dtypes.void [15, 15] tag=("commutative", False, True)
-18 Ops.SINK dtypes.void [15, 15] tag=("simplify", False, True)
-19 Ops.CMPLT dtypes.bool [1, 14]
-20 Ops.CMPNE dtypes.bool [19, 9]
-21 Ops.SINK dtypes.void [20, 20] tag=("sym", False, True)
-22 Ops.SINK dtypes.void [20, 20] tag=("commutative", False, True)
-23 Ops.SINK dtypes.void [20, 20] tag=("simplify", False, True)
-24 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
-25 Ops.ADD dtypes.weakint [1, 24]
-26 Ops.CMPLT dtypes.bool [25, 14]
-27 Ops.CMPNE dtypes.bool [26, 9]
-28 Ops.SINK dtypes.void [27, 27] tag=("sym", False, True)
-29 Ops.SINK dtypes.void [24, 24] tag=("simplify", 0, 3)
-30 Ops.SINK dtypes.void [27, 27] tag=("commutative", False, True)
-31 Ops.SINK dtypes.void [27, 27] tag=("simplify", False, True)
-32 Ops.CONST dtypes.weakint [] 3
-33 Ops.MUL dtypes.weakint [1, 32]
-34 Ops.CONST dtypes.weakint [] 4
-35 Ops.MUL dtypes.weakint [24, 34]
-36 Ops.ADD dtypes.weakint [33, 35]
-37 Ops.CMPLT dtypes.bool [36, 14]
-38 Ops.CMPNE dtypes.bool [37, 9]
-39 Ops.SINK dtypes.void [38, 27] tag=("sym", False, True)
-40 Ops.CONST dtypes.weakint [] -3
-41 Ops.MUL dtypes.weakint [1, 40]
-42 Ops.ADD dtypes.weakint [41, 35]
-43 Ops.CMPLT dtypes.bool [42, 14]
-44 Ops.CMPNE dtypes.bool [43, 9]
-45 Ops.SINK dtypes.void [44, 44] tag=("sym", False, True)
-46 Ops.SINK dtypes.void [44, 44] tag=("commutative", False, True)
-47 Ops.SINK dtypes.void [44, 44] tag=("simplify", False, True)
-48 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-3, 3), multiple_of=1, name="d", addrspace=AddrSpace.ALU)
-49 Ops.MUL dtypes.weakint [48, 34]
-50 Ops.ADD dtypes.weakint [33, 49]
-51 Ops.CMPLT dtypes.bool [50, 14]
-52 Ops.CMPNE dtypes.bool [51, 9]
-53 Ops.ADD dtypes.weakint [49, 33]
-54 Ops.CMPLT dtypes.bool [53, 14]
-55 Ops.CMPNE dtypes.bool [54, 9]
-56 Ops.SINK dtypes.void [52, 55] tag=("sym", False, True)
-57 Ops.SINK dtypes.void [48, 48] tag=("simplify", -3, 3)
-58 Ops.SINK dtypes.void [52, 55] tag=("commutative", False, True)
-59 Ops.SINK dtypes.void [55, 55] tag=("simplify", False, True)
-60 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
-61 Ops.MUL dtypes.weakint [60, 2]
-62 Ops.ADD dtypes.weakint [25, 61]
-63 Ops.CMPLT dtypes.bool [62, 14]
-64 Ops.CMPNE dtypes.bool [63, 9]
-65 Ops.ADD dtypes.weakint [60, 25]
-66 Ops.CMPLT dtypes.bool [65, 14]
-67 Ops.CMPNE dtypes.bool [66, 9]
-68 Ops.SINK dtypes.void [64, 67] tag=("sym", False, True)
-69 Ops.SINK dtypes.void [60, 60] tag=("simplify", 0, 3)
-70 Ops.ADD dtypes.weakint [25, 60]
-71 Ops.CMPLT dtypes.bool [70, 14]
-72 Ops.CMPNE dtypes.bool [71, 9]
-73 Ops.SINK dtypes.void [72, 67] tag=("commutative", False, True)
-74 Ops.SINK dtypes.void [67, 67] tag=("simplify", False, True)
-75 Ops.MUL dtypes.weakint [24, 2]
-76 Ops.ADD dtypes.weakint [1, 75]
-77 Ops.MUL dtypes.weakint [60, 34]
-78 Ops.ADD dtypes.weakint [76, 77]
-79 Ops.CMPLT dtypes.bool [78, 14]
-80 Ops.CMPNE dtypes.bool [79, 9]
-81 Ops.SINK dtypes.void [80, 67] tag=("sym", False, True)
-82 Ops.SINK dtypes.void [4, 5, 6, 7, 11, 12, 13, 16, 17, 18, 21, 22, 23, 28, 29, 30, 31, 39, 45, 46, 47, 56, 57, 58, 59, 68, 69, 73, 74, 81]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.bool [] False
+1 Ops.CONST dtypes.bool [] True
+2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.CMPLT dtypes.bool [4, 5]
+7 Ops.SINK dtypes.void [2, 6, 6]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.CONST dtypes.weakint [] 3
+10 Ops.CUSTOM dtypes.void [8, 9] ("simplify", dtypes.void)
+11 Ops.SINK dtypes.void [10, 4, 4]
+12 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+13 Ops.SINK dtypes.void [12, 6, 6]
+14 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+15 Ops.SINK dtypes.void [14, 6, 6]
+16 Ops.CMPLT dtypes.bool [5, 4]
+17 Ops.CMPNE dtypes.bool [16, 1]
+18 Ops.SINK dtypes.void [2, 17, 17]
+19 Ops.SINK dtypes.void [12, 17, 17]
+20 Ops.SINK dtypes.void [14, 17, 17]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CMPLT dtypes.bool [21, 4]
+23 Ops.SINK dtypes.void [2, 22, 22]
+24 Ops.SINK dtypes.void [12, 22, 22]
+25 Ops.SINK dtypes.void [14, 22, 22]
+26 Ops.CMPLT dtypes.bool [4, 21]
+27 Ops.CMPNE dtypes.bool [26, 1]
+28 Ops.SINK dtypes.void [2, 27, 27]
+29 Ops.SINK dtypes.void [12, 27, 27]
+30 Ops.SINK dtypes.void [14, 27, 27]
+31 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+32 Ops.ADD dtypes.weakint [4, 31]
+33 Ops.CMPLT dtypes.bool [32, 21]
+34 Ops.CMPNE dtypes.bool [33, 1]
+35 Ops.SINK dtypes.void [2, 34, 34]
+36 Ops.SINK dtypes.void [10, 31, 31]
+37 Ops.SINK dtypes.void [12, 34, 34]
+38 Ops.SINK dtypes.void [14, 34, 34]
+39 Ops.MUL dtypes.weakint [4, 9]
+40 Ops.CONST dtypes.weakint [] 4
+41 Ops.MUL dtypes.weakint [31, 40]
+42 Ops.ADD dtypes.weakint [39, 41]
+43 Ops.CMPLT dtypes.bool [42, 21]
+44 Ops.CMPNE dtypes.bool [43, 1]
+45 Ops.SINK dtypes.void [2, 44, 34]
+46 Ops.CONST dtypes.weakint [] -3
+47 Ops.MUL dtypes.weakint [4, 46]
+48 Ops.ADD dtypes.weakint [47, 41]
+49 Ops.CMPLT dtypes.bool [48, 21]
+50 Ops.CMPNE dtypes.bool [49, 1]
+51 Ops.SINK dtypes.void [2, 50, 50]
+52 Ops.SINK dtypes.void [12, 50, 50]
+53 Ops.SINK dtypes.void [14, 50, 50]
+54 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-3, 3), multiple_of=1, name="d", addrspace=AddrSpace.ALU)
+55 Ops.MUL dtypes.weakint [54, 40]
+56 Ops.ADD dtypes.weakint [39, 55]
+57 Ops.CMPLT dtypes.bool [56, 21]
+58 Ops.CMPNE dtypes.bool [57, 1]
+59 Ops.ADD dtypes.weakint [55, 39]
+60 Ops.CMPLT dtypes.bool [59, 21]
+61 Ops.CMPNE dtypes.bool [60, 1]
+62 Ops.SINK dtypes.void [2, 58, 61]
+63 Ops.CUSTOM dtypes.void [46, 9] ("simplify", dtypes.void)
+64 Ops.SINK dtypes.void [63, 54, 54]
+65 Ops.SINK dtypes.void [12, 58, 61]
+66 Ops.SINK dtypes.void [14, 61, 61]
+67 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+68 Ops.MUL dtypes.weakint [67, 5]
+69 Ops.ADD dtypes.weakint [32, 68]
+70 Ops.CMPLT dtypes.bool [69, 21]
+71 Ops.CMPNE dtypes.bool [70, 1]
+72 Ops.ADD dtypes.weakint [67, 32]
+73 Ops.CMPLT dtypes.bool [72, 21]
+74 Ops.CMPNE dtypes.bool [73, 1]
+75 Ops.SINK dtypes.void [2, 71, 74]
+76 Ops.SINK dtypes.void [10, 67, 67]
+77 Ops.ADD dtypes.weakint [32, 67]
+78 Ops.CMPLT dtypes.bool [77, 21]
+79 Ops.CMPNE dtypes.bool [78, 1]
+80 Ops.SINK dtypes.void [12, 79, 74]
+81 Ops.SINK dtypes.void [14, 74, 74]
+82 Ops.MUL dtypes.weakint [31, 5]
+83 Ops.ADD dtypes.weakint [4, 82]
+84 Ops.MUL dtypes.weakint [67, 40]
+85 Ops.ADD dtypes.weakint [83, 84]
+86 Ops.CMPLT dtypes.bool [85, 21]
+87 Ops.CMPNE dtypes.bool [86, 1]
+88 Ops.SINK dtypes.void [2, 87, 74]
+89 Ops.SINK dtypes.void [7, 11, 13, 15, 18, 19, 20, 23, 24, 25, 28, 29, 30, 35, 36, 37, 38, 45, 51, 52, 53, 62, 64, 65, 66, 75, 76, 80, 81, 88]
 

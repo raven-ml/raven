@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 case	shared	tensor	program	full	kernel_graph
 a sink of a load	True	True	True	True	True
 a sink with kernel info	True	True	True	True	True
@@ -247,6 +247,6 @@ a call without call info	False	False	False	False	True
 a wmma without an argument	False	False	False	False	None
 a special without a name	None	False	False	False	None
 a special over int32 without a name	None	None	False	False	None
-a permute without an order	None	False	False	False	None
+a permute without an order	None	None	False	False	None
 a reduce without an argument	None	False	None	False	None
 a copy without a device	None	False	None	False	None

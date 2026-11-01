@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 5
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.bool [] True
@@ -46,11 +46,11 @@
 44 Ops.MUL dtypes.f32 [28, 43]
 45 Ops.INDEX dtypes.f32 [44, 4]
 46 Ops.INDEX dtypes.f32 [44, 13]
-47 Ops.ADD dtypes.f32 [45, 46] tag="fusable"
+47 Ops.ADD dtypes.f32 [45, 46] "fusable"
 48 Ops.INDEX dtypes.f32 [44, 18]
-49 Ops.ADD dtypes.f32 [47, 48] tag="fusable"
+49 Ops.ADD dtypes.f32 [47, 48] "fusable"
 50 Ops.INDEX dtypes.f32 [44, 23]
-51 Ops.ADD dtypes.f32 [49, 50] tag="fusable"
+51 Ops.ADD dtypes.f32 [49, 50] "fusable"
 52 Ops.STORE dtypes.void [8, 51]
 53 Ops.END dtypes.void [52, 3]
 54 Ops.SINK dtypes.void [53] KernelInfo(name="r_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), optimized=True)

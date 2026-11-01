@@ -1,28 +1,30 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.weakint [0] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 4
-3 Ops.CMPLT dtypes.bool [1, 2]
-4 Ops.CONST dtypes.weakint [] 8
-5 Ops.RANGE dtypes.weakint [4] (AxisType.WEAK, 0)
-6 Ops.CONST dtypes.weakint [] 2
-7 Ops.CMPLT dtypes.bool [5, 6]
-8 Ops.AND dtypes.bool [3, 7]
-9 Ops.PARAM dtypes.bool [4] ParamArg(slot=0, dtype=dtypes.bool)
-10 Ops.CMPLT dtypes.bool [1, 6]
-11 Ops.CONST dtypes.bool [] Invalid
-12 Ops.WHERE dtypes.weakint [10, 1, 11]
-13 Ops.INDEX dtypes.bool [9, 12]
-14 Ops.CAST dtypes.weakint [13] dtypes.weakint
-15 Ops.CONST dtypes.weakint [] 0
-16 Ops.WHERE dtypes.weakint [8, 14, 15]
-17 Ops.CONST dtypes.bool [] True
-18 Ops.AND dtypes.bool [17, 7]
-19 Ops.AND dtypes.bool [10, 3]
-20 Ops.WHERE dtypes.weakint [19, 1, 11]
-21 Ops.INDEX dtypes.bool [9, 20]
-22 Ops.CAST dtypes.weakint [21] dtypes.weakint
-23 Ops.WHERE dtypes.weakint [18, 22, 15]
-24 Ops.SINK dtypes.void [16, 23] tag=("pm_move_where_on_load", 0, 1)
-25 Ops.SINK dtypes.void [24]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CONST dtypes.weakint [] 1
+2 Ops.CUSTOM dtypes.void [0, 1] ("pm_move_where_on_load", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.weakint [3] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.CMPLT dtypes.bool [4, 5]
+7 Ops.CONST dtypes.weakint [] 8
+8 Ops.RANGE dtypes.weakint [7] (AxisType.WEAK, 0)
+9 Ops.CONST dtypes.weakint [] 2
+10 Ops.CMPLT dtypes.bool [8, 9]
+11 Ops.AND dtypes.bool [6, 10]
+12 Ops.PARAM dtypes.bool [7] ParamArg(slot=0, dtype=dtypes.bool)
+13 Ops.CMPLT dtypes.bool [4, 9]
+14 Ops.CONST dtypes.bool [] Invalid
+15 Ops.WHERE dtypes.weakint [13, 4, 14]
+16 Ops.INDEX dtypes.bool [12, 15]
+17 Ops.CAST dtypes.weakint [16] dtypes.weakint
+18 Ops.WHERE dtypes.weakint [11, 17, 0]
+19 Ops.CONST dtypes.bool [] True
+20 Ops.AND dtypes.bool [19, 10]
+21 Ops.AND dtypes.bool [13, 6]
+22 Ops.WHERE dtypes.weakint [21, 4, 14]
+23 Ops.INDEX dtypes.bool [12, 22]
+24 Ops.CAST dtypes.weakint [23] dtypes.weakint
+25 Ops.WHERE dtypes.weakint [20, 24, 0]
+26 Ops.SINK dtypes.void [2, 18, 25]
+27 Ops.SINK dtypes.void [26]
 

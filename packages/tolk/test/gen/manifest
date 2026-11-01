@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 codegen/codegen/add_big_clang.golden
 codegen/codegen/add_big_cuda.golden
 codegen/codegen/add_big_hip.golden
@@ -1574,12 +1574,10 @@ codegen/opt/postrange/sum_and_max_grouped.golden
 codegen/opt/postrange/sum_rows.golden
 codegen/opt/postrange/sum_rows_64.golden
 codegen/opt/postrange/swap_globals.golden
-codegen/opt/postrange/swap_keeps_tags.golden
 codegen/opt/postrange/swap_then_split.golden
 codegen/opt/postrange/swap_with_itself.golden
 codegen/opt/postrange/symbolic_local_16.golden
 codegen/opt/postrange/symbolic_local_8.golden
-codegen/opt/postrange/tagged_swap.golden
 codegen/opt/postrange/tc_amd_0.golden
 codegen/opt/postrange/tc_amd_0_basic.golden
 codegen/opt/postrange/tc_amd_0_padded.golden
@@ -4026,6 +4024,7 @@ uop/symbolic/TestSymbolic.test_symbolic_factor_remainder_div.golden
 uop/symbolic/TestSymbolic.test_symbolic_gcd_div.golden
 uop/symbolic/TestSymbolic.test_symbolic_range_doesnt_collapse.golden
 uop/symbolic/TestSymbolic.test_trunc_noop.golden
+uop/symbolic/TestSymbolic.test_two_stage_const_folding.golden
 uop/symbolic/TestSymbolic.test_uop_gcd_method.golden
 uop/symbolic/TestSymbolic.test_where_cast.golden
 uop/symbolic/TestSymbolic.test_where_closure_folding.golden

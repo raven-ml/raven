@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 4), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 4), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 4), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 1)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -45,8 +45,8 @@
 43 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=28, lds=144, mem=144), optimized=True, split=(4, 2, 3))
 44 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UPCAST)),), optimized=True, split=(4, 2, 3))
 45 Ops.LINEAR dtypes.void [0, 1, 9, 10, 2, 3, 4, 17, 18, 20, 21, 24, 25, 11, 12, 14, 5, 6, 7, 13, 30, 31, 32, 15, 16, 8, 33, 35, 37, 39, 19, 22, 26, 28, 23, 27, 29, 34, 36, 38, 40, 41, 42, 44]
-46 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"
-47 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void r_4_8(float* restrict data0_4, float* restrict data1_32, const int block_lo_, const int block_hi_) {\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"
+46 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct r_4_8_args { float* data0_4; float* data1_32; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_4_8(const struct r_4_8_args* args) {\n  float* restrict data0_4 = args->data0_4;\n  float* restrict data1_32 = args->data1_32;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"
+47 Ops.BINARY dtypes.u8 [] b"typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct r_4_8_args { float* data0_4; float* data1_32; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_4_8(const struct r_4_8_args* args) {\n  float* restrict data0_4 = args->data0_4;\n  float* restrict data1_32 = args->data1_32;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    float4 val0 = (*((float4*)((data1_32+(alu1+4)))));\n    float4 val1 = (*((float4*)((data1_32+alu1))));\n    *(data0_4+alu0) = (val1[0]+val1[1]+val1[2]+val1[3]+val0[0]+val0[1]+val0[2]+val0[3]);\n  }\n}\n"
 48 Ops.PROGRAM dtypes.void [43, 45, 46, 47] ProgramInfo(global_size=(4, 1, 1), params=(%1, %10, %3, %4), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 49 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=2, dtype=dtypes.f32, device="CPU")
 50 Ops.BUFFER dtypes.f32 [9] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")

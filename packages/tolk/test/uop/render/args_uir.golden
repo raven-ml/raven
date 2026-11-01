@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 %0 = cast -5 : i32
 %1 = cast 12345678901234 : i64
 %2 = cast 200 : u8
@@ -31,7 +31,7 @@
 %29 = param 4 : "w" dtype=i32 slot=1
 %30 = param 8 : dtype=f16 slot=2 device=CPU
 %31 = param 4 : dtype=i32 slot=4 volatile=true
-%32 = param () : dtype=i32 slot=5 bounds=[0,10] multiple_of=2 addrspace=ALU
+%32 = param () : dtype=i32 slot=5 bounds=[0,10] addrspace=ALU
 %33 = param () : "x" dtype=f32 slot=-1 bounds=[-1.0,1.0] multiple_of=1 addrspace=ALU
 %34 = param () : "g" dtype=bool slot=-1 bounds=[False,True] multiple_of=1 addrspace=ALU
 %35 = buffer 4 : dtype=f32 slot=6 addrspace=LOCAL

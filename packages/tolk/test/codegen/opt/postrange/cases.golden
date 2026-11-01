@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 case	kernel	renderer	opts	context	outcome	refused
 swap_invalid_arg_0	add_one	metal	(Opt(op=OptOps.SWAP, axis=0, arg=99),)		KernelOptError	0
 swap_invalid_arg_1	add_one	metal	(Opt(op=OptOps.SWAP, axis=0, arg=-1),)		KernelOptError	0
@@ -191,7 +191,6 @@ group_maybe_beyond_symbolic_shared_memory	symbolic_local_16	small_shared	(Opt(op
 padto_beyond_host_integers	huge_global	metal	(Opt(op=OptOps.PADTO, axis=0, arg=4),)		ok	
 local_whole_axis_beyond_host_integers	huge_global	metal	(Opt(op=OptOps.PADTO, axis=0, arg=4), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.LOCAL)))		ok	
 upcasts_beyond_host_integers	huge_upcasts	metal	()		ok	
-swap_keeps_tags	tagged_swap	metal	(Opt(op=OptOps.SWAP, axis=0, arg=1),)		ok	
 flatten_keeps_a_closed_extent	closed_extent	cpu	()		ok	
 nested_end_globals	nested_end	metal	()		ok	
 launched_upcast	launched	metal	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)		ok	

@@ -1,7 +1,11 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 typedef float float3 __attribute__((aligned(4),ext_vector_type(3)));
 typedef int int3 __attribute__((aligned(4),ext_vector_type(3)));
-__attribute__((min_vector_width(512))) void three(float* restrict data0_3, float* restrict data1_3, float* restrict data2_3) {
+struct three_args { float* data0_3; float* data1_3; float* data2_3; };
+__attribute__((min_vector_width(512))) void three(const struct three_args* args) {
+  float* restrict data0_3 = args->data0_3;
+  float* restrict data1_3 = args->data1_3;
+  float* restrict data2_3 = args->data2_3;
   float val0 = (*(data1_3+0));
   float val1 = (*(data1_3+1));
   float val2 = (*(data1_3+2));

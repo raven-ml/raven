@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 case	src	render	simplified
 variable	0	a	a
 bound_variable	1	a	a
@@ -143,4 +143,3 @@ stack_same	139	{0,0,0}	{0,0,0}
 stack_different	140	{0,1,2}	{0,1,2}
 stack_of_sums	141	{(a+b),(b*c)}	{(b+a),(b*c)}
 shared	142	((a+b)*(a+b))	((b+a)*(b+a))
-tagged	143	(a+2)	(a+2)

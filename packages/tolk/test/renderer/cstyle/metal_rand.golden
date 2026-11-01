@@ -1,9 +1,11 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device float* data0_16; device uint* data1_2; device uint* data2_2; };
-kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device float* data0_16 = args.data0_16; device uint* data1_2 = args.data1_2; device uint* data2_2 = args.data2_2;
+struct E_8_2_args { device float* data0_16; device uint* data1_2; device uint* data2_2; };
+kernel void E_8_2(constant struct E_8_2_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_16 = args->data0_16;
+  device uint* data1_2 = args->data1_2;
+  device uint* data2_2 = args->data2_2;
   uint2 val0 = (*((device uint2*)((data1_2+0))));
   uint2 val1 = (*((device uint2*)((data2_2+0))));
   int lidx0 = lid.x; /* 8 */
@@ -25,7 +27,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu14 = (alu12+alu13);
   uint alu15 = (alu14^((alu13<<16u)+(alu13>>16u)));
   uint alu16 = (alu14+alu15);
-  uint alu17 = ((alu16^((alu15<<24u)+(alu15>>8u)))+val1.x+1u+1u);
+  uint alu17 = ((alu16^((alu15<<24u)+(alu15>>8u)))+val1.x+2u);
   uint alu18 = (alu16+alu8+alu17);
   uint alu19 = (alu18^((alu17<<13u)+(alu17>>19u)));
   uint alu20 = (alu18+alu19);
@@ -33,7 +35,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu22 = (alu20+alu21);
   uint alu23 = (alu22^((alu21<<26u)+(alu21>>6u)));
   uint alu24 = (alu22+alu23);
-  uint alu25 = ((alu24^((alu23<<6u)+(alu23>>26u)))+val1.y+2u+1u);
+  uint alu25 = ((alu24^((alu23<<6u)+(alu23>>26u)))+val1.y+3u);
   uint alu26 = (alu24+val1.x+alu25);
   uint alu27 = (alu26^((alu25<<17u)+(alu25>>15u)));
   uint alu28 = (alu26+alu27);
@@ -41,7 +43,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu30 = (alu28+alu29);
   uint alu31 = (alu30^((alu29<<16u)+(alu29>>16u)));
   uint alu32 = (alu30+alu31);
-  uint alu33 = ((alu32^((alu31<<24u)+(alu31>>8u)))+alu8+3u+1u);
+  uint alu33 = ((alu32^((alu31<<24u)+(alu31>>8u)))+alu8+4u);
   uint alu34 = (alu32+val1.y+alu33);
   uint alu35 = (alu34^((alu33<<13u)+(alu33>>19u)));
   uint alu36 = (alu34+alu35);
@@ -50,7 +52,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu39 = (alu38^((alu37<<26u)+(alu37>>6u)));
   uint alu40 = (alu38+alu39);
   uint alu41 = (alu40+alu8);
-  uint alu42 = ((alu40^((alu39<<6u)+(alu39>>26u)))+val1.x+4u+1u);
+  uint alu42 = ((alu40^((alu39<<6u)+(alu39>>26u)))+val1.x+5u);
   uint alu43 = (cast0+7u+alu42);
   uint alu44 = (cast0+4294967295u+alu41+alu43);
   uint alu45 = (alu44^((alu43<<13u)+(alu43>>19u)));
@@ -68,7 +70,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu57 = (alu55+alu56);
   uint alu58 = (alu57^((alu56<<16u)+(alu56>>16u)));
   uint alu59 = (alu57+alu58);
-  uint alu60 = ((alu59^((alu58<<24u)+(alu58>>8u)))+alu41+1u+1u);
+  uint alu60 = ((alu59^((alu58<<24u)+(alu58>>8u)))+alu41+2u);
   uint alu61 = (alu59+alu51+alu60);
   uint alu62 = (alu61^((alu60<<13u)+(alu60>>19u)));
   uint alu63 = (alu61+alu62);
@@ -76,7 +78,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu65 = (alu63+alu64);
   uint alu66 = (alu65^((alu64<<26u)+(alu64>>6u)));
   uint alu67 = (alu65+alu66);
-  uint alu68 = ((alu67^((alu66<<6u)+(alu66>>26u)))+alu42+2u+1u);
+  uint alu68 = ((alu67^((alu66<<6u)+(alu66>>26u)))+alu42+3u);
   uint alu69 = (alu67+alu41+alu68);
   uint alu70 = (alu69^((alu68<<17u)+(alu68>>15u)));
   uint alu71 = (alu69+alu70);
@@ -84,7 +86,7 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu73 = (alu71+alu72);
   uint alu74 = (alu73^((alu72<<16u)+(alu72>>16u)));
   uint alu75 = (alu73+alu74);
-  uint alu76 = ((alu75^((alu74<<24u)+(alu74>>8u)))+alu51+3u+1u);
+  uint alu76 = ((alu75^((alu74<<24u)+(alu74>>8u)))+alu51+4u);
   uint alu77 = (alu75+alu42+alu76);
   uint alu78 = (alu77^((alu76<<13u)+(alu76>>19u)));
   uint alu79 = (alu77+alu78);
@@ -93,5 +95,5 @@ kernel void E_8_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   uint alu82 = (alu81^((alu80<<26u)+(alu80>>6u)));
   uint alu83 = (alu81+alu82);
   *(data0_16+lidx0) = (as_type<float>((uint)((((alu83+alu51)>>9u)|1065353216u)))+-1.0f);
-  *(data0_16+(lidx0+8)) = (as_type<float>((uint)(((((alu83^((alu82<<6u)+(alu82>>26u)))+alu41+4u+1u)>>9u)|1065353216u)))+-1.0f);
+  *(data0_16+(lidx0+8)) = (as_type<float>((uint)(((((alu83^((alu82<<6u)+(alu82>>26u)))+alu41+5u)>>9u)|1065353216u)))+-1.0f);
 }

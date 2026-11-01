@@ -1,9 +1,10 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device int* data0_4; device float* data1_4; };
-kernel void vector_cast(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device int* data0_4 = args.data0_4; device float* data1_4 = args.data1_4;
+struct vector_cast_args { device int* data0_4; device float* data1_4; };
+kernel void vector_cast(constant struct vector_cast_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device int* data0_4 = args->data0_4;
+  device float* data1_4 = args->data1_4;
   float4 val0 = (*((device float4*)((data1_4+0))));
   int4 cast0 = ((int4)(val0));
   *((device int4*)((data0_4+0))) = cast0;

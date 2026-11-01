@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 UOp(Ops.SQRT, arg=None, src=(
   UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.f32, vmin_vmax=(-1.0, 1.0), multiple_of=1, name='x', addrspace=AddrSpace.ALU), src=(
     UOp(Ops.STACK, arg=None, src=()),)),))
@@ -26,6 +26,3 @@ UOp(Ops.SINK, arg=None, src=(
     x1:=UOp(Ops.STACK, arg=None, src=()),)),
   UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(0, 9), multiple_of=1, name='b', addrspace=AddrSpace.ALU), src=(
     x1,)),))
-UOp(Ops.SQRT, arg=None, tag=t, src=(
-  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.f32, vmin_vmax=(-1.0, 1.0), multiple_of=1, name='x', addrspace=AddrSpace.ALU), src=(
-    UOp(Ops.STACK, arg=None, src=()),)),))

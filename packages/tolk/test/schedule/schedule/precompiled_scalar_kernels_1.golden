@@ -1,23 +1,21 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 3
-1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU") tag=()
-2 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
-3 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-4 Ops.INDEX dtypes.i32 [2, 3]
-5 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
-6 Ops.INDEX dtypes.i32 [5, 3]
-7 Ops.STACK dtypes.void []
-8 Ops.PARAM dtypes.i32 [7] ParamArg(slot=1, dtype=dtypes.i32, addrspace=AddrSpace.ALU)
-9 Ops.MUL dtypes.i32 [6, 8]
-10 Ops.STORE dtypes.void [4, 9]
-11 Ops.END dtypes.void [10, 3]
-12 Ops.SINK dtypes.void [11] KernelInfo()
-13 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU") tag=()
-14 Ops.CALL dtypes.void [12, 13, 1] CallInfo()
-15 Ops.LINEAR dtypes.void [14]
-16 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU") tag=()
-17 Ops.PARAM dtypes.i32 [7] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 8), multiple_of=1, addrspace=AddrSpace.ALU)
-18 Ops.CALL dtypes.void [15, 16, 17, 1] CallInfo(precompile=True)
-19 Ops.AFTER dtypes.i32 [1, 18]
-20 Ops.SINK dtypes.void [19]
+1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
+2 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
+3 Ops.INDEX dtypes.i32 [1, 2]
+4 Ops.PARAM dtypes.i32 [0] ParamArg(slot=1, dtype=dtypes.i32, device="CPU")
+5 Ops.INDEX dtypes.i32 [4, 2]
+6 Ops.STACK dtypes.void []
+7 Ops.PARAM dtypes.i32 [6] ParamArg(slot=1, dtype=dtypes.i32, addrspace=AddrSpace.ALU)
+8 Ops.MUL dtypes.i32 [5, 7]
+9 Ops.STORE dtypes.void [3, 8]
+10 Ops.END dtypes.void [9, 2]
+11 Ops.SINK dtypes.void [10] KernelInfo()
+12 Ops.PARAM dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
+13 Ops.CALL dtypes.void [11, 12, 1] CallInfo()
+14 Ops.LINEAR dtypes.void [13]
+15 Ops.PARAM dtypes.i32 [6] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(1, 8), multiple_of=1, addrspace=AddrSpace.ALU)
+16 Ops.CALL dtypes.void [14, 4, 15, 1] CallInfo(precompile=True)
+17 Ops.AFTER dtypes.i32 [1, 16]
+18 Ops.SINK dtypes.void [17]
 

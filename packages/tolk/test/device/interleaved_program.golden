@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 4
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -15,7 +15,7 @@
 13 Ops.SINK dtypes.void [12, 12, 12, 12] KernelInfo(name="interleaved", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32), optimized=True)
 14 Ops.SINK dtypes.void [12, 12, 12, 12] KernelInfo(name="interleaved", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), optimized=True)
 15 Ops.LINEAR dtypes.void [0, 1, 9, 10, 6, 2, 3, 4, 7, 8, 5, 11, 12, 14]
-16 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void interleaved(int* restrict data0_4, const int n_, int* restrict data2_4) {\n  int4 val0 = (*((int4*)((data2_4+0))));\n  *((int4*)((data0_4+0))) = (val0+n_);\n}\n"
-17 Ops.BINARY dtypes.u8 [] b"typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\n__attribute__((min_vector_width(512))) void interleaved(int* restrict data0_4, const int n_, int* restrict data2_4) {\n  int4 val0 = (*((int4*)((data2_4+0))));\n  *((int4*)((data0_4+0))) = (val0+n_);\n}\n"
+16 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct interleaved_args { int* data0_4; int n_; int* data2_4; };\n__attribute__((min_vector_width(512))) void interleaved(const struct interleaved_args* args) {\n  int* restrict data0_4 = args->data0_4;\n  const int n_ = args->n_;\n  int* restrict data2_4 = args->data2_4;\n  int4 val0 = (*((int4*)((data2_4+0))));\n  *((int4*)((data0_4+0))) = (val0+n_);\n}\n"
+17 Ops.BINARY dtypes.u8 [] b"typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));\nstruct interleaved_args { int* data0_4; int n_; int* data2_4; };\n__attribute__((min_vector_width(512))) void interleaved(const struct interleaved_args* args) {\n  int* restrict data0_4 = args->data0_4;\n  const int n_ = args->n_;\n  int* restrict data2_4 = args->data2_4;\n  int4 val0 = (*((int4*)((data2_4+0))));\n  *((int4*)((data0_4+0))) = (val0+n_);\n}\n"
 18 Ops.PROGRAM dtypes.void [13, 15, 16, 17] ProgramInfo(params=(%1, %10, %6), globals=(0, 2), outs=(0,), ins=(2,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 

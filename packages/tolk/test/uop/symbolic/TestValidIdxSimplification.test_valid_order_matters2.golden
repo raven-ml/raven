@@ -1,118 +1,120 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 13
-1 Ops.SPECIAL dtypes.weakint [0] "gidx0"
-2 Ops.CONST dtypes.weakint [] 11
-3 Ops.ADD dtypes.weakint [1, 2]
-4 Ops.CONST dtypes.weakint [] 14
-5 Ops.FLOORMOD dtypes.weakint [3, 4]
-6 Ops.CMPLT dtypes.bool [5, 2]
-7 Ops.SPECIAL dtypes.weakint [0] "gidx1"
-8 Ops.CONST dtypes.weakint [] 4
-9 Ops.RANGE dtypes.weakint [8] (AxisType.WEAK, 0)
-10 Ops.MUL dtypes.weakint [9, 0]
-11 Ops.ADD dtypes.weakint [7, 10]
-12 Ops.CONST dtypes.weakint [] 39
-13 Ops.ADD dtypes.weakint [1, 12]
-14 Ops.CONST dtypes.weakint [] 42
-15 Ops.FLOORDIV dtypes.weakint [13, 14]
-16 Ops.ADD dtypes.weakint [11, 15]
-17 Ops.FLOORMOD dtypes.weakint [16, 4]
-18 Ops.CMPLT dtypes.bool [17, 2]
-19 Ops.AND dtypes.bool [6, 18]
-20 Ops.CONST dtypes.weakint [] 3
-21 Ops.CMPLT dtypes.bool [1, 20]
-22 Ops.AND dtypes.bool [19, 21]
-23 Ops.CMPLT dtypes.bool [11, 14]
-24 Ops.AND dtypes.bool [22, 23]
-25 Ops.AND dtypes.bool [21, 23]
-26 Ops.CONST dtypes.bool [] False
-27 Ops.AND dtypes.bool [25, 26]
-28 Ops.FLOORMOD dtypes.weakint [11, 4]
-29 Ops.CMPLT dtypes.bool [28, 2]
-30 Ops.AND dtypes.bool [27, 29]
-31 Ops.SINK dtypes.void [24, 30] tag=("simplify_valid", False, False)
-32 Ops.SINK dtypes.void [30, 26] tag=("simplify", False, False)
-33 Ops.AND dtypes.bool [19, 23]
-34 Ops.AND dtypes.bool [33, 21]
-35 Ops.SINK dtypes.void [34, 30] tag=("simplify_valid", False, False)
-36 Ops.AND dtypes.bool [6, 21]
-37 Ops.AND dtypes.bool [36, 18]
-38 Ops.AND dtypes.bool [37, 23]
-39 Ops.SINK dtypes.void [38, 30] tag=("simplify_valid", False, False)
-40 Ops.AND dtypes.bool [36, 23]
-41 Ops.AND dtypes.bool [40, 18]
-42 Ops.SINK dtypes.void [41, 30] tag=("simplify_valid", False, False)
-43 Ops.AND dtypes.bool [6, 23]
-44 Ops.AND dtypes.bool [43, 18]
-45 Ops.AND dtypes.bool [44, 21]
-46 Ops.SINK dtypes.void [45, 30] tag=("simplify_valid", False, False)
-47 Ops.AND dtypes.bool [43, 21]
-48 Ops.AND dtypes.bool [47, 18]
-49 Ops.SINK dtypes.void [48, 30] tag=("simplify_valid", False, False)
-50 Ops.AND dtypes.bool [18, 6]
-51 Ops.AND dtypes.bool [50, 21]
-52 Ops.AND dtypes.bool [51, 23]
-53 Ops.AND dtypes.bool [25, 29]
-54 Ops.AND dtypes.bool [53, 26]
-55 Ops.SINK dtypes.void [52, 54] tag=("simplify_valid", False, False)
-56 Ops.SINK dtypes.void [54, 26] tag=("simplify", False, False)
-57 Ops.AND dtypes.bool [50, 23]
-58 Ops.AND dtypes.bool [57, 21]
-59 Ops.SINK dtypes.void [58, 54] tag=("simplify_valid", False, False)
-60 Ops.AND dtypes.bool [18, 21]
-61 Ops.AND dtypes.bool [60, 6]
-62 Ops.AND dtypes.bool [61, 23]
-63 Ops.SINK dtypes.void [62, 54] tag=("simplify_valid", False, False)
-64 Ops.AND dtypes.bool [60, 23]
-65 Ops.AND dtypes.bool [64, 6]
-66 Ops.SINK dtypes.void [65, 54] tag=("simplify_valid", False, False)
-67 Ops.AND dtypes.bool [18, 23]
-68 Ops.AND dtypes.bool [67, 6]
-69 Ops.AND dtypes.bool [68, 21]
-70 Ops.SINK dtypes.void [69, 54] tag=("simplify_valid", False, False)
-71 Ops.AND dtypes.bool [67, 21]
-72 Ops.AND dtypes.bool [71, 6]
-73 Ops.SINK dtypes.void [72, 54] tag=("simplify_valid", False, False)
-74 Ops.AND dtypes.bool [21, 6]
-75 Ops.AND dtypes.bool [74, 18]
-76 Ops.AND dtypes.bool [75, 23]
-77 Ops.SINK dtypes.void [76, 30] tag=("simplify_valid", False, False)
-78 Ops.AND dtypes.bool [74, 23]
-79 Ops.AND dtypes.bool [78, 18]
-80 Ops.SINK dtypes.void [79, 30] tag=("simplify_valid", False, False)
-81 Ops.AND dtypes.bool [21, 18]
-82 Ops.AND dtypes.bool [81, 6]
-83 Ops.AND dtypes.bool [82, 23]
-84 Ops.SINK dtypes.void [83, 54] tag=("simplify_valid", False, False)
-85 Ops.AND dtypes.bool [81, 23]
-86 Ops.AND dtypes.bool [85, 6]
-87 Ops.SINK dtypes.void [86, 54] tag=("simplify_valid", False, False)
-88 Ops.AND dtypes.bool [25, 6]
-89 Ops.AND dtypes.bool [88, 18]
-90 Ops.SINK dtypes.void [89, 30] tag=("simplify_valid", False, False)
-91 Ops.AND dtypes.bool [25, 18]
-92 Ops.AND dtypes.bool [91, 6]
-93 Ops.SINK dtypes.void [92, 54] tag=("simplify_valid", False, False)
-94 Ops.AND dtypes.bool [23, 6]
-95 Ops.AND dtypes.bool [94, 18]
-96 Ops.AND dtypes.bool [95, 21]
-97 Ops.SINK dtypes.void [96, 30] tag=("simplify_valid", False, False)
-98 Ops.AND dtypes.bool [94, 21]
-99 Ops.AND dtypes.bool [98, 18]
-100 Ops.SINK dtypes.void [99, 30] tag=("simplify_valid", False, False)
-101 Ops.AND dtypes.bool [23, 18]
-102 Ops.AND dtypes.bool [101, 6]
-103 Ops.AND dtypes.bool [102, 21]
-104 Ops.SINK dtypes.void [103, 54] tag=("simplify_valid", False, False)
-105 Ops.AND dtypes.bool [101, 21]
-106 Ops.AND dtypes.bool [105, 6]
-107 Ops.SINK dtypes.void [106, 54] tag=("simplify_valid", False, False)
-108 Ops.AND dtypes.bool [23, 21]
-109 Ops.AND dtypes.bool [108, 6]
-110 Ops.AND dtypes.bool [109, 18]
-111 Ops.SINK dtypes.void [110, 30] tag=("simplify_valid", False, False)
-112 Ops.AND dtypes.bool [108, 18]
-113 Ops.AND dtypes.bool [112, 6]
-114 Ops.SINK dtypes.void [113, 54] tag=("simplify_valid", False, False)
-115 Ops.SINK dtypes.void [31, 32, 35, 39, 42, 46, 49, 55, 56, 59, 63, 66, 70, 73, 77, 80, 84, 87, 90, 93, 97, 100, 104, 107, 111, 114]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.bool [] False
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify_valid", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 13
+3 Ops.SPECIAL dtypes.weakint [2] "gidx0"
+4 Ops.CONST dtypes.weakint [] 11
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.CONST dtypes.weakint [] 14
+7 Ops.FLOORMOD dtypes.weakint [5, 6]
+8 Ops.CMPLT dtypes.bool [7, 4]
+9 Ops.SPECIAL dtypes.weakint [2] "gidx1"
+10 Ops.CONST dtypes.weakint [] 4
+11 Ops.RANGE dtypes.weakint [10] (AxisType.WEAK, 0)
+12 Ops.MUL dtypes.weakint [11, 2]
+13 Ops.ADD dtypes.weakint [9, 12]
+14 Ops.CONST dtypes.weakint [] 39
+15 Ops.ADD dtypes.weakint [3, 14]
+16 Ops.CONST dtypes.weakint [] 42
+17 Ops.FLOORDIV dtypes.weakint [15, 16]
+18 Ops.ADD dtypes.weakint [13, 17]
+19 Ops.FLOORMOD dtypes.weakint [18, 6]
+20 Ops.CMPLT dtypes.bool [19, 4]
+21 Ops.AND dtypes.bool [8, 20]
+22 Ops.CONST dtypes.weakint [] 3
+23 Ops.CMPLT dtypes.bool [3, 22]
+24 Ops.AND dtypes.bool [21, 23]
+25 Ops.CMPLT dtypes.bool [13, 16]
+26 Ops.AND dtypes.bool [24, 25]
+27 Ops.AND dtypes.bool [23, 25]
+28 Ops.AND dtypes.bool [27, 0]
+29 Ops.FLOORMOD dtypes.weakint [13, 6]
+30 Ops.CMPLT dtypes.bool [29, 4]
+31 Ops.AND dtypes.bool [28, 30]
+32 Ops.SINK dtypes.void [1, 26, 31]
+33 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+34 Ops.SINK dtypes.void [33, 31, 0]
+35 Ops.AND dtypes.bool [21, 25]
+36 Ops.AND dtypes.bool [35, 23]
+37 Ops.SINK dtypes.void [1, 36, 31]
+38 Ops.AND dtypes.bool [8, 23]
+39 Ops.AND dtypes.bool [38, 20]
+40 Ops.AND dtypes.bool [39, 25]
+41 Ops.SINK dtypes.void [1, 40, 31]
+42 Ops.AND dtypes.bool [38, 25]
+43 Ops.AND dtypes.bool [42, 20]
+44 Ops.SINK dtypes.void [1, 43, 31]
+45 Ops.AND dtypes.bool [8, 25]
+46 Ops.AND dtypes.bool [45, 20]
+47 Ops.AND dtypes.bool [46, 23]
+48 Ops.SINK dtypes.void [1, 47, 31]
+49 Ops.AND dtypes.bool [45, 23]
+50 Ops.AND dtypes.bool [49, 20]
+51 Ops.SINK dtypes.void [1, 50, 31]
+52 Ops.AND dtypes.bool [20, 8]
+53 Ops.AND dtypes.bool [52, 23]
+54 Ops.AND dtypes.bool [53, 25]
+55 Ops.AND dtypes.bool [27, 30]
+56 Ops.AND dtypes.bool [55, 0]
+57 Ops.SINK dtypes.void [1, 54, 56]
+58 Ops.SINK dtypes.void [33, 56, 0]
+59 Ops.AND dtypes.bool [52, 25]
+60 Ops.AND dtypes.bool [59, 23]
+61 Ops.SINK dtypes.void [1, 60, 56]
+62 Ops.AND dtypes.bool [20, 23]
+63 Ops.AND dtypes.bool [62, 8]
+64 Ops.AND dtypes.bool [63, 25]
+65 Ops.SINK dtypes.void [1, 64, 56]
+66 Ops.AND dtypes.bool [62, 25]
+67 Ops.AND dtypes.bool [66, 8]
+68 Ops.SINK dtypes.void [1, 67, 56]
+69 Ops.AND dtypes.bool [20, 25]
+70 Ops.AND dtypes.bool [69, 8]
+71 Ops.AND dtypes.bool [70, 23]
+72 Ops.SINK dtypes.void [1, 71, 56]
+73 Ops.AND dtypes.bool [69, 23]
+74 Ops.AND dtypes.bool [73, 8]
+75 Ops.SINK dtypes.void [1, 74, 56]
+76 Ops.AND dtypes.bool [23, 8]
+77 Ops.AND dtypes.bool [76, 20]
+78 Ops.AND dtypes.bool [77, 25]
+79 Ops.SINK dtypes.void [1, 78, 31]
+80 Ops.AND dtypes.bool [76, 25]
+81 Ops.AND dtypes.bool [80, 20]
+82 Ops.SINK dtypes.void [1, 81, 31]
+83 Ops.AND dtypes.bool [23, 20]
+84 Ops.AND dtypes.bool [83, 8]
+85 Ops.AND dtypes.bool [84, 25]
+86 Ops.SINK dtypes.void [1, 85, 56]
+87 Ops.AND dtypes.bool [83, 25]
+88 Ops.AND dtypes.bool [87, 8]
+89 Ops.SINK dtypes.void [1, 88, 56]
+90 Ops.AND dtypes.bool [27, 8]
+91 Ops.AND dtypes.bool [90, 20]
+92 Ops.SINK dtypes.void [1, 91, 31]
+93 Ops.AND dtypes.bool [27, 20]
+94 Ops.AND dtypes.bool [93, 8]
+95 Ops.SINK dtypes.void [1, 94, 56]
+96 Ops.AND dtypes.bool [25, 8]
+97 Ops.AND dtypes.bool [96, 20]
+98 Ops.AND dtypes.bool [97, 23]
+99 Ops.SINK dtypes.void [1, 98, 31]
+100 Ops.AND dtypes.bool [96, 23]
+101 Ops.AND dtypes.bool [100, 20]
+102 Ops.SINK dtypes.void [1, 101, 31]
+103 Ops.AND dtypes.bool [25, 20]
+104 Ops.AND dtypes.bool [103, 8]
+105 Ops.AND dtypes.bool [104, 23]
+106 Ops.SINK dtypes.void [1, 105, 56]
+107 Ops.AND dtypes.bool [103, 23]
+108 Ops.AND dtypes.bool [107, 8]
+109 Ops.SINK dtypes.void [1, 108, 56]
+110 Ops.AND dtypes.bool [25, 23]
+111 Ops.AND dtypes.bool [110, 8]
+112 Ops.AND dtypes.bool [111, 20]
+113 Ops.SINK dtypes.void [1, 112, 31]
+114 Ops.AND dtypes.bool [110, 20]
+115 Ops.AND dtypes.bool [114, 8]
+116 Ops.SINK dtypes.void [1, 115, 56]
+117 Ops.SINK dtypes.void [32, 34, 37, 41, 44, 48, 51, 57, 58, 61, 65, 68, 72, 75, 79, 82, 86, 89, 92, 95, 99, 102, 106, 109, 113, 116]
 

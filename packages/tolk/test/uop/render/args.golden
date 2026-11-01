@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.bool [] True
 1 Ops.CONST dtypes.bool [] False
 2 Ops.CONST dtypes.weakint [] 3
@@ -58,7 +58,7 @@
 56 Ops.PARAM dtypes.f16 [55] ParamArg(slot=2, dtype=dtypes.f16, device="CPU")
 57 Ops.PARAM dtypes.i32 [53] ParamArg(slot=4, dtype=dtypes.i32, volatile=True)
 58 Ops.STACK dtypes.void []
-59 Ops.PARAM dtypes.i32 [58] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(0, 10), multiple_of=2, addrspace=AddrSpace.ALU)
+59 Ops.PARAM dtypes.i32 [58] ParamArg(slot=5, dtype=dtypes.i32, vmin_vmax=(0, 10), addrspace=AddrSpace.ALU)
 60 Ops.PARAM dtypes.f32 [58] ParamArg(slot=-1, dtype=dtypes.f32, vmin_vmax=(-1.0, 1.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
 61 Ops.PARAM dtypes.bool [58] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
 62 Ops.BUFFER dtypes.f32 [53] ParamArg(slot=6, dtype=dtypes.f32, addrspace=AddrSpace.LOCAL)

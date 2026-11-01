@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 program	position	name	addrspace	dtype	shape
 elementwise	0	None	AddrSpace.GLOBAL	dtypes.f32	(16,)
 elementwise	1	None	AddrSpace.GLOBAL	dtypes.f32	(16,)

@@ -1,7 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 
 extern void sqrt();
-__attribute__((min_vector_width(512))) void call_ret(int* restrict data0_1) {
+struct call_ret_args { int* data0_1; };
+__attribute__((min_vector_width(512))) void call_ret(const struct call_ret_args* args) {
+  int* restrict data0_1 = args->data0_1;
   double alu0 = ((double(*)(double))(sqrt))((double)(16.0));
   *(data0_1+0) = (((int)(alu0))<<1);
 }

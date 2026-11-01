@@ -1,7 +1,10 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void vector_cast(int* restrict data0_4, float* restrict data1_4) {
+struct vector_cast_args { int* data0_4; float* data1_4; };
+__attribute__((min_vector_width(512))) void vector_cast(const struct vector_cast_args* args) {
+  int* restrict data0_4 = args->data0_4;
+  float* restrict data1_4 = args->data1_4;
   float4 val0 = (*((float4*)((data1_4+0))));
   int4 cast0 = __builtin_convertvector(val0, int4);
   *((int4*)((data0_4+0))) = cast0;

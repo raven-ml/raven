@@ -1,9 +1,10 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 2882344918
-1 Ops.CAST dtypes.u32 [0] dtypes.u32
-2 Ops.CAST dtypes.u8 [1] dtypes.u8
-3 Ops.CONST dtypes.weakint [] 214
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 214
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+2 Ops.CONST dtypes.weakint [] 2882344918
+3 Ops.CAST dtypes.u32 [2] dtypes.u32
 4 Ops.CAST dtypes.u8 [3] dtypes.u8
-5 Ops.SINK dtypes.void [2, 4] tag=("simplify", 214, 214)
-6 Ops.SINK dtypes.void [5]
+5 Ops.CAST dtypes.u8 [0] dtypes.u8
+6 Ops.SINK dtypes.void [1, 4, 5]
+7 Ops.SINK dtypes.void [6]
 

@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 64
 1 Ops.PARAM dtypes.f16 [0] ParamArg(slot=0, dtype=dtypes.f16, device="CPU")
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 8), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 8), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=4, dtype=dtypes.i32, vmin_vmax=(0, 8), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 1)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -69,7 +69,7 @@
 67 Ops.SINK dtypes.void [66] KernelInfo(name="r_8_8_8", estimates=Estimates(ops=1024, lds=2176, mem=384), optimized=True, split=(8, 3, 4))
 68 Ops.SINK dtypes.void [66] KernelInfo(name="r_8_8_8", optimized=True, split=(8, 3, 4))
 69 Ops.LINEAR dtypes.void [0, 1, 31, 35, 2, 3, 4, 17, 51, 23, 24, 20, 21, 8, 9, 11, 12, 5, 6, 13, 7, 10, 14, 26, 52, 53, 54, 27, 32, 33, 34, 36, 37, 38, 39, 55, 56, 57, 40, 58, 59, 60, 61, 62, 63, 15, 16, 64, 65, 66, 68]
-70 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void r_8_8_8(__fp16* restrict data0_64, __fp16* restrict data1_64, __fp16* restrict data2_64, const int block_lo_, const int block_hi_) {\n  __fp16 buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {\n      *(buf0+0) = ((__fp16)(0.0f));\n      for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n        __fp16 val0 = (*(data1_64+(alu1+Lidx0)));\n        __fp16 val1 = (*(data2_64+((Lidx0<<3)+Lidx2)));\n        *(buf0+0) = ((*(buf0+0))+(val0*val1));\n      }\n      *(data0_64+(alu1+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
+70 Ops.SOURCE dtypes.void [] "\nstruct r_8_8_8_args { __fp16* data0_64; __fp16* data1_64; __fp16* data2_64; int block_lo_; int block_hi_; };\n__attribute__((min_vector_width(512))) void r_8_8_8(const struct r_8_8_8_args* args) {\n  __fp16* restrict data0_64 = args->data0_64;\n  __fp16* restrict data1_64 = args->data1_64;\n  __fp16* restrict data2_64 = args->data2_64;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  __fp16 buf0[1];\n  for (int Lidx1 = 0; Lidx1 < (block_hi_-block_lo_); Lidx1++) {\n    int alu0 = (block_lo_+Lidx1);\n    int alu1 = (alu0<<3);\n    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {\n      *(buf0+0) = ((__fp16)(0.0f));\n      for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n        __fp16 val0 = (*(data1_64+(alu1+Lidx0)));\n        __fp16 val1 = (*(data2_64+((Lidx0<<3)+Lidx2)));\n        *(buf0+0) = ((*(buf0+0))+(val0*val1));\n      }\n      *(data0_64+(alu1+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
 71 Ops.PROGRAM dtypes.void [67, 69, 70] ProgramInfo(global_size=(8, 1, 1), params=(%1, %31, %35, %3, %4), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 72 Ops.SINK dtypes.void [50, 71]
 

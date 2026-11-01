@@ -1,15 +1,22 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.u32 [0] ParamArg(slot=-1, dtype=dtypes.u32, vmin_vmax=(0, 255), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
-2 Ops.CONST dtypes.weakint [] 4294967292
-3 Ops.CAST dtypes.u32 [2] dtypes.u32
-4 Ops.AND dtypes.u32 [1, 3]
-5 Ops.CONST dtypes.weakint [] 2
-6 Ops.SHR dtypes.u32 [4, 5]
-7 Ops.SHR dtypes.u32 [1, 5]
-8 Ops.SINK dtypes.void [6, 7] tag=("sym", 0, 63)
-9 Ops.SINK dtypes.void [1, 1] tag=("simplify", 0, 255)
-10 Ops.SINK dtypes.void [7, 7] tag=("commutative", 0, 63)
-11 Ops.SINK dtypes.void [7, 7] tag=("simplify", 0, 63)
-12 Ops.SINK dtypes.void [8, 9, 10, 11]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CONST dtypes.weakint [] 63
+2 Ops.CUSTOM dtypes.void [0, 1] ("sym", dtypes.void)
+3 Ops.STACK dtypes.void []
+4 Ops.PARAM dtypes.u32 [3] ParamArg(slot=-1, dtype=dtypes.u32, vmin_vmax=(0, 255), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+5 Ops.CONST dtypes.weakint [] 4294967292
+6 Ops.CAST dtypes.u32 [5] dtypes.u32
+7 Ops.AND dtypes.u32 [4, 6]
+8 Ops.CONST dtypes.weakint [] 2
+9 Ops.SHR dtypes.u32 [7, 8]
+10 Ops.SHR dtypes.u32 [4, 8]
+11 Ops.SINK dtypes.void [2, 9, 10]
+12 Ops.CONST dtypes.weakint [] 255
+13 Ops.CUSTOM dtypes.void [0, 12] ("simplify", dtypes.void)
+14 Ops.SINK dtypes.void [13, 4, 4]
+15 Ops.CUSTOM dtypes.void [0, 1] ("commutative", dtypes.void)
+16 Ops.SINK dtypes.void [15, 10, 10]
+17 Ops.CUSTOM dtypes.void [0, 1] ("simplify", dtypes.void)
+18 Ops.SINK dtypes.void [17, 10, 10]
+19 Ops.SINK dtypes.void [11, 14, 16, 18]
 

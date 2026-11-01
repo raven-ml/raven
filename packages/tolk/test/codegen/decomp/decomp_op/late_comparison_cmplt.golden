@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.STACK dtypes.void []
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(-10, 10), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
 2 Ops.CONST dtypes.weakint [] 5
@@ -45,17 +45,15 @@
 43 Ops.ADD dtypes.weakint [2, 38]
 44 Ops.CAST dtypes.i32 [43] dtypes.i32
 45 Ops.CMPLT dtypes.bool [1, 44]
-46 Ops.MUL dtypes.weakint [14, 11]
-47 Ops.CAST dtypes.i32 [46] dtypes.i32
-48 Ops.MUL dtypes.i32 [13, 47]
-49 Ops.CMPLT dtypes.bool [48, 1]
-50 Ops.MUL dtypes.weakint [2, 11]
-51 Ops.CAST dtypes.i32 [50] dtypes.i32
-52 Ops.CMPLT dtypes.bool [51, 1]
-53 Ops.ADD dtypes.weakint [14, 38]
-54 Ops.CAST dtypes.i32 [53] dtypes.i32
-55 Ops.CMPNE dtypes.bool [1, 54]
-56 Ops.CMPNE dtypes.bool [55, 4]
-57 Ops.SINK dtypes.void [42, 45, 10, 49, 52, 56, 56, 23, 25, 30, 32, 36]
-58 Ops.SINK dtypes.void [37, 57]
+46 Ops.CAST dtypes.u32 [40] dtypes.u32
+47 Ops.CMPLT dtypes.bool [46, 8]
+48 Ops.ADD dtypes.weakint [14, 38]
+49 Ops.CAST dtypes.i32 [48] dtypes.i32
+50 Ops.CMPNE dtypes.bool [1, 49]
+51 Ops.CMPNE dtypes.bool [50, 4]
+52 Ops.CAST dtypes.u32 [48] dtypes.u32
+53 Ops.CMPNE dtypes.bool [8, 52]
+54 Ops.CMPNE dtypes.bool [53, 4]
+55 Ops.SINK dtypes.void [42, 45, 47, 16, 17, 51, 51, 23, 54, 30, 32, 36]
+56 Ops.SINK dtypes.void [37, 55]
 

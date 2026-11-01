@@ -1,9 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 3
 1 Ops.PARAM dtypes.i32 [0] ParamArg(slot=0, dtype=dtypes.i32, device="CPU")
 2 Ops.STACK dtypes.void []
-3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 3), multiple_of=1, name="block_lo", addrspace=AddrSpace.ALU)
-4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 3), multiple_of=1, name="block_hi", addrspace=AddrSpace.ALU)
+3 Ops.PARAM dtypes.i32 [2] ParamArg(slot=2, dtype=dtypes.i32, vmin_vmax=(0, 3), name="block_lo", addrspace=AddrSpace.ALU)
+4 Ops.PARAM dtypes.i32 [2] ParamArg(slot=3, dtype=dtypes.i32, vmin_vmax=(0, 3), name="block_hi", addrspace=AddrSpace.ALU)
 5 Ops.SUB dtypes.i32 [4, 3]
 6 Ops.RANGE dtypes.i32 [5] (AxisType.WEAK, 0)
 7 Ops.ADD dtypes.i32 [3, 6]
@@ -18,8 +18,8 @@
 16 Ops.SINK dtypes.void [15] KernelInfo(name="E_3", estimates=Estimates(ops=3, lds=24, mem=24), optimized=True, split=(3, 2, 3))
 17 Ops.SINK dtypes.void [15] KernelInfo(name="E_3", optimized=True, split=(3, 2, 3))
 18 Ops.LINEAR dtypes.void [0, 1, 9, 2, 3, 4, 12, 5, 6, 7, 10, 11, 8, 13, 14, 15, 17]
-19 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void E_3(int* restrict data0_3, int* restrict data1_3, const int block_lo_, const int block_hi_, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_3+alu0));\n    *(data0_3+alu0) = (val0*v_);\n  }\n}\n"
-20 Ops.BINARY dtypes.u8 [] b"\n__attribute__((min_vector_width(512))) void E_3(int* restrict data0_3, int* restrict data1_3, const int block_lo_, const int block_hi_, const int v_) {\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_3+alu0));\n    *(data0_3+alu0) = (val0*v_);\n  }\n}\n"
+19 Ops.SOURCE dtypes.void [] "\nstruct E_3_args { int* data0_3; int* data1_3; int block_lo_; int block_hi_; int v_; };\n__attribute__((min_vector_width(512))) void E_3(const struct E_3_args* args) {\n  int* restrict data0_3 = args->data0_3;\n  int* restrict data1_3 = args->data1_3;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  const int v_ = args->v_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_3+alu0));\n    *(data0_3+alu0) = (val0*v_);\n  }\n}\n"
+20 Ops.BINARY dtypes.u8 [] b"\nstruct E_3_args { int* data0_3; int* data1_3; int block_lo_; int block_hi_; int v_; };\n__attribute__((min_vector_width(512))) void E_3(const struct E_3_args* args) {\n  int* restrict data0_3 = args->data0_3;\n  int* restrict data1_3 = args->data1_3;\n  const int block_lo_ = args->block_lo_;\n  const int block_hi_ = args->block_hi_;\n  const int v_ = args->v_;\n  for (int Lidx0 = 0; Lidx0 < (block_hi_-block_lo_); Lidx0++) {\n    int alu0 = (block_lo_+Lidx0);\n    int val0 = (*(data1_3+alu0));\n    *(data0_3+alu0) = (val0*v_);\n  }\n}\n"
 21 Ops.PROGRAM dtypes.void [16, 18, 19, 20] ProgramInfo(global_size=(3, 1, 1), params=(%1, %9, %3, %4, %12), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
 22 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=2, dtype=dtypes.i32, device="CPU")
 23 Ops.BUFFER dtypes.i32 [0] ParamArg(slot=3, dtype=dtypes.i32, device="CPU")

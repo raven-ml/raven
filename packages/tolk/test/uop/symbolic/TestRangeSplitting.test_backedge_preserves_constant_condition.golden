@@ -1,8 +1,9 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.NOOP dtypes.void []
-1 Ops.RANGE dtypes.void [0] (AxisType.WEAK, 0)
-2 Ops.CONST dtypes.bool [] False
-3 Ops.BACKEDGE dtypes.void [0, 1, 2]
-4 Ops.SINK dtypes.void [3, 3] tag="sym"
-5 Ops.SINK dtypes.void [4]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CUSTOM dtypes.void [] ("sym", dtypes.void)
+1 Ops.NOOP dtypes.void []
+2 Ops.RANGE dtypes.void [1] (AxisType.WEAK, 0)
+3 Ops.CONST dtypes.bool [] False
+4 Ops.BACKEDGE dtypes.void [1, 2, 3]
+5 Ops.SINK dtypes.void [0, 4, 4]
+6 Ops.SINK dtypes.void [5]
 

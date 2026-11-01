@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 8
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -11,7 +11,7 @@
 9 Ops.SINK dtypes.void [8] KernelInfo(optimized=True)
 10 Ops.SINK dtypes.void [8] KernelInfo(estimates=Estimates(lds=32, mem=32), optimized=True)
 11 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 4, 7, 8, 9]
-12 Ops.SOURCE dtypes.void [] "\n__attribute__((min_vector_width(512))) void test(float* restrict data0_8) {\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    *(data0_8+Lidx0) = 1.0f;\n  }\n}\n"
+12 Ops.SOURCE dtypes.void [] "\nstruct test_args { float* data0_8; };\n__attribute__((min_vector_width(512))) void test(const struct test_args* args) {\n  float* restrict data0_8 = args->data0_8;\n  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {\n    *(data0_8+Lidx0) = 1.0f;\n  }\n}\n"
 13 Ops.PROGRAM dtypes.void [10, 11, 12] ProgramInfo(params=(%1,), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
 14 Ops.SINK dtypes.void [9, 13]
 

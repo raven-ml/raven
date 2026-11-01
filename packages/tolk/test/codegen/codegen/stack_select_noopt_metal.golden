@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 60
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CAST dtypes.i32 [0] dtypes.i32
@@ -24,7 +24,7 @@
 22 Ops.SINK dtypes.void [21] KernelInfo(name="E_60", optimized=True)
 23 Ops.SINK dtypes.void [21] KernelInfo(name="E_60", estimates=Estimates(ops=180, lds=480, mem=352), optimized=True)
 24 Ops.LINEAR dtypes.void [0, 1, 5, 6, 2, 3, 7, 8, 9, 10, 11, 12, 16, 17, 13, 14, 15, 18, 19, 20, 4, 21, 22]
-25 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_60; device float* data1_28; };\nkernel void E_60(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_60 = args.data0_60; device float* data1_28 = args.data1_28;\n  int gidx0 = gid.x; /* 60 */\n  float val0 = (((gidx0<40)&(11<gidx0))?*(data1_28+(gidx0+-12)):0.0f);\n  *(data0_60+gidx0) = val0;\n}"
+25 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct E_60_args { device float* data0_60; device float* data1_28; };\nkernel void E_60(constant struct E_60_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_60 = args->data0_60;\n  device float* data1_28 = args->data1_28;\n  int gidx0 = gid.x; /* 60 */\n  float val0 = (((gidx0<40)&(11<gidx0))?*(data1_28+(gidx0+-12)):0.0f);\n  *(data0_60+gidx0) = val0;\n}"
 26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(global_size=(60, 1, 1), params=(%1, %6), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
 27 Ops.SINK dtypes.void [22, 26]
 

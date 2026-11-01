@@ -1,9 +1,10 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 #include <metal_stdlib>
 using namespace metal;
-struct args_t { device half* data0_3; device half* data1_3; };
-kernel void vector_copy(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  device half* data0_3 = args.data0_3; device half* data1_3 = args.data1_3;
+struct vector_copy_args { device half* data0_3; device half* data1_3; };
+kernel void vector_copy(constant struct vector_copy_args* args, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device half* data0_3 = args->data0_3;
+  device half* data1_3 = args->data1_3;
   half3 val0 = (*((device half3*)((data1_3+0))));
   *((device half3*)((data0_3+0))) = val0;
 }

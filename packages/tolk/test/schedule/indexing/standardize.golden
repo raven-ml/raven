@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 32
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32, device="CPU")
 2 Ops.CONST dtypes.weakint [] 4
@@ -7,28 +7,30 @@
 5 Ops.RESHAPE dtypes.f32 [1, 4]
 6 Ops.PARAM dtypes.f32 [0] ParamArg(slot=1, dtype=dtypes.f32, device="CPU")
 7 Ops.RESHAPE dtypes.f32 [6, 4]
-8 Ops.PERMUTE dtypes.f32 [7] (1, 0)
-9 Ops.REDUCE dtypes.f32 [8] (Ops.ADD, 1)
-10 Ops.CONST dtypes.weakint [] 1
-11 Ops.STACK dtypes.weakint [2, 10]
-12 Ops.RESHAPE dtypes.f32 [9, 11]
-13 Ops.CONST dtypes.weakfloat [] 8.0
-14 Ops.RECIPROCAL dtypes.weakfloat [13]
-15 Ops.MUL dtypes.f32 [12, 14]
-16 Ops.CONST dtypes.weakfloat [] -1.0
-17 Ops.MUL dtypes.f32 [15, 16]
-18 Ops.ADD dtypes.f32 [7, 17]
-19 Ops.MUL dtypes.f32 [18, 18]
-20 Ops.PERMUTE dtypes.f32 [19] (1, 0)
-21 Ops.REDUCE dtypes.f32 [20] (Ops.ADD, 1)
-22 Ops.RESHAPE dtypes.f32 [21, 11]
-23 Ops.CONST dtypes.weakfloat [] 7.0
-24 Ops.RECIPROCAL dtypes.weakfloat [23]
-25 Ops.MUL dtypes.f32 [22, 24]
-26 Ops.SQRT dtypes.f32 [25]
-27 Ops.RECIPROCAL dtypes.f32 [26]
-28 Ops.MUL dtypes.f32 [18, 27]
-29 Ops.STORE dtypes.void [5, 28]
-30 Ops.AFTER dtypes.f32 [1, 29]
-31 Ops.SINK dtypes.void [30]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.CONST dtypes.weakint [] 0
+10 Ops.STACK dtypes.weakint [8, 9]
+11 Ops.PERMUTE dtypes.f32 [7, 10]
+12 Ops.REDUCE dtypes.f32 [11] (Ops.ADD, 1)
+13 Ops.STACK dtypes.weakint [2, 8]
+14 Ops.RESHAPE dtypes.f32 [12, 13]
+15 Ops.CONST dtypes.weakfloat [] 8.0
+16 Ops.RECIPROCAL dtypes.weakfloat [15]
+17 Ops.MUL dtypes.f32 [14, 16]
+18 Ops.CONST dtypes.weakfloat [] -1.0
+19 Ops.MUL dtypes.f32 [17, 18]
+20 Ops.ADD dtypes.f32 [7, 19]
+21 Ops.MUL dtypes.f32 [20, 20]
+22 Ops.PERMUTE dtypes.f32 [21, 10]
+23 Ops.REDUCE dtypes.f32 [22] (Ops.ADD, 1)
+24 Ops.RESHAPE dtypes.f32 [23, 13]
+25 Ops.CONST dtypes.weakfloat [] 7.0
+26 Ops.RECIPROCAL dtypes.weakfloat [25]
+27 Ops.MUL dtypes.f32 [24, 26]
+28 Ops.SQRT dtypes.f32 [27]
+29 Ops.RECIPROCAL dtypes.f32 [28]
+30 Ops.MUL dtypes.f32 [20, 29]
+31 Ops.STORE dtypes.void [5, 30]
+32 Ops.AFTER dtypes.f32 [1, 31]
+33 Ops.SINK dtypes.void [32]
 

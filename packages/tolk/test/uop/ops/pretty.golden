@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 UOp(Ops.CONST, arg=42, src=())
 
 UOp(Ops.ADD, arg=None, src=(
@@ -14,10 +14,6 @@ UOp(Ops.MUL, arg=None, src=(
     x1:=UOp(Ops.CONST, arg=1, src=()),
     x1,)),
   x0,))
-
-UOp(Ops.CONST, arg=42, tag=x, src=())
-
-UOp(Ops.CONST, arg=42, tag=('y', 1), src=())
 
 UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name='n', addrspace=AddrSpace.ALU), src=(
   UOp(Ops.STACK, arg=None, src=()),))

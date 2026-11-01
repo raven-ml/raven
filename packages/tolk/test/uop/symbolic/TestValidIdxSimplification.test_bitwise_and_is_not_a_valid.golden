@@ -1,16 +1,20 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakint [] 16
-1 Ops.RANGE dtypes.weakint [0] (AxisType.WEAK, 0)
-2 Ops.CAST dtypes.i32 [1] dtypes.i32
-3 Ops.CONST dtypes.weakint [] 12
-4 Ops.CAST dtypes.i32 [3] dtypes.i32
-5 Ops.AND dtypes.i32 [2, 4]
-6 Ops.AND dtypes.i32 [5, 2]
-7 Ops.SINK dtypes.void [6]
-8 Ops.AND dtypes.i32 [2, 3]
-9 Ops.AND dtypes.i32 [8, 2]
-10 Ops.SINK dtypes.void [9]
-11 Ops.SINK dtypes.void [7, 10] tag="sym+pm_move_where_on_load"
-12 Ops.SINK dtypes.void [9, 9] tag=("simplify", -2147483648, 2147483647)
-13 Ops.SINK dtypes.void [11, 12]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CUSTOM dtypes.void [] ("sym+pm_move_where_on_load", dtypes.void)
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.RANGE dtypes.weakint [1] (AxisType.WEAK, 0)
+3 Ops.CAST dtypes.i32 [2] dtypes.i32
+4 Ops.CONST dtypes.weakint [] 12
+5 Ops.CAST dtypes.i32 [4] dtypes.i32
+6 Ops.AND dtypes.i32 [3, 5]
+7 Ops.AND dtypes.i32 [6, 3]
+8 Ops.SINK dtypes.void [7]
+9 Ops.AND dtypes.i32 [3, 4]
+10 Ops.AND dtypes.i32 [9, 3]
+11 Ops.SINK dtypes.void [10]
+12 Ops.SINK dtypes.void [0, 8, 11]
+13 Ops.CONST dtypes.weakint [] -2147483648
+14 Ops.CONST dtypes.weakint [] 2147483647
+15 Ops.CUSTOM dtypes.void [13, 14] ("simplify", dtypes.void)
+16 Ops.SINK dtypes.void [15, 10, 10]
+17 Ops.SINK dtypes.void [12, 16]
 

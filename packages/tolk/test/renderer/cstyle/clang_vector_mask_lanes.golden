@@ -1,7 +1,11 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 typedef float float4 __attribute__((aligned(4),ext_vector_type(4)));
 typedef int int4 __attribute__((aligned(4),ext_vector_type(4)));
-__attribute__((min_vector_width(512))) void lanes(_Bool* restrict data0_4, float* restrict data1_4, float* restrict data2_4) {
+struct lanes_args { _Bool* data0_4; float* data1_4; float* data2_4; };
+__attribute__((min_vector_width(512))) void lanes(const struct lanes_args* args) {
+  _Bool* restrict data0_4 = args->data0_4;
+  float* restrict data1_4 = args->data1_4;
+  float* restrict data2_4 = args->data2_4;
   float val0 = (*(data1_4+0));
   float val1 = (*(data1_4+1));
   float val2 = (*(data1_4+2));

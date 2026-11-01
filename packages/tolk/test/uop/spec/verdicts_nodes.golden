@@ -1,4 +1,4 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 0 Ops.CONST dtypes.weakint [] 16
 1 Ops.PARAM dtypes.f32 [0] ParamArg(slot=0, dtype=dtypes.f32)
 2 Ops.CONST dtypes.weakint [] 0
@@ -298,75 +298,77 @@
 296 Ops.CONST dtypes.weakint [] 10
 297 Ops.STACK dtypes.weakint [296]
 298 Ops.SHRINK dtypes.f32 [1, 295, 297]
-299 Ops.PERMUTE dtypes.f32 [149] (1, 0)
-300 Ops.STACK dtypes.weakint [2, 2]
-301 Ops.PAD dtypes.f32 [149, 300, 148]
-302 Ops.STACK dtypes.weakint [142, 16, 142]
-303 Ops.RESHAPE dtypes.f32 [301, 302]
-304 Ops.STACK dtypes.weakint [2, 2, 2]
-305 Ops.STACK dtypes.weakint [142, 12, 142]
-306 Ops.PAD dtypes.f32 [303, 304, 305]
-307 Ops.CONST dtypes.weakint [] 12
-308 Ops.STACK dtypes.weakint [307, 142]
-309 Ops.RESHAPE dtypes.f32 [306, 308]
-310 Ops.STACK dtypes.weakint [12, 2]
-311 Ops.STACK dtypes.weakint [0, 142]
-312 Ops.PAD dtypes.f32 [309, 310, 311]
-313 Ops.STACK dtypes.weakint [142, 142, 142]
-314 Ops.RESHAPE dtypes.f32 [312, 313]
-315 Ops.PERMUTE dtypes.f32 [314] (1, 0, 2)
-316 Ops.RESHAPE dtypes.f32 [315, 311]
-317 Ops.SHRINK dtypes.f32 [316, 310, 308]
-318 Ops.RESHAPE dtypes.f32 [317, 305]
-319 Ops.SHRINK dtypes.f32 [318, 304, 302]
-320 Ops.RESHAPE dtypes.f32 [319, 148]
-321 Ops.REDUCE dtypes.f32 [1] (Ops.ADD, 1)
-322 Ops.REDUCE dtypes.f32 [4, 138, 166] (Ops.MAX, 0)
-323 Ops.RANGE dtypes.i32 [168] (AxisType.WEAK, 1)
-324 Ops.REDUCE dtypes.f32 [4, 323] (Ops.ADD, 0)
-325 Ops.CAST dtypes.u32 [142] dtypes.u32
-326 Ops.RANGE dtypes.u32 [325] (AxisType.WEAK, 1)
-327 Ops.REDUCE dtypes.f32 [4, 326] (Ops.ADD, 0)
-328 Ops.REDUCE dtypes.f32 [1] (Ops.SIN, 1)
-329 Ops.COPY dtypes.f32 [1] "CPU"
-330 Ops.COPY dtypes.f32 [1] "DISK:/tmp/x"
-331 Ops.DETACH dtypes.f32 [1]
-332 Ops.CONTIGUOUS_BACKWARD dtypes.f32 [1]
-333 Ops.STAGE dtypes.f32 [4, 138]
-334 Ops.LINEAR dtypes.void [8]
-335 Ops.SOURCE dtypes.void [] "void k(){}"
-336 Ops.PROGRAM dtypes.void [229]
-337 Ops.PROGRAM dtypes.void [229, 334]
-338 Ops.PROGRAM dtypes.void [229, 334, 335]
-339 Ops.BINARY dtypes.u8 [] b"\x00"
-340 Ops.PROGRAM dtypes.void [229, 334, 335, 339]
-341 Ops.PROGRAM dtypes.void [334]
-342 Ops.PROGRAM dtypes.void [1]
-343 Ops.AFTER dtypes.f32 [192, 8]
-344 Ops.PROGRAM dtypes.void [343]
-345 Ops.SHRINK dtypes.f32 [1, 254, 168]
-346 Ops.SHRINK dtypes.i32 [213, 254, 168]
-347 Ops.SHRINK dtypes.f32 [1, 254, 66]
-348 Ops.SHRINK dtypes.f32 [4, 254, 168]
-349 Ops.IF dtypes.void [251, 3]
-350 Ops.CAST dtypes.i32 [4] dtypes.i32
-351 Ops.IF dtypes.void [251, 350]
-352 Ops.IF dtypes.void [251, 345]
-353 Ops.IF dtypes.void [251, 4]
-354 Ops.IF dtypes.void [257, 3]
-355 Ops.ENDIF dtypes.void [349]
-356 Ops.ENDIF dtypes.void [8]
-357 Ops.STACK dtypes.f32 [1, 6]
-358 Ops.ADD dtypes.weakint [16, 100]
-359 Ops.STACK dtypes.weakint [358]
-360 Ops.CAST dtypes.i64 [16] dtypes.i64
-361 Ops.BINARY dtypes.u8 []
-362 Ops.CALL dtypes.void [229, 1, 6]
-363 Ops.WMMA dtypes.f32 [238, 239, 240]
-364 Ops.SPECIAL dtypes.weakint [155]
-365 Ops.SPECIAL dtypes.i32 [281]
-366 Ops.PERMUTE dtypes.f32 [149]
-367 Ops.REDUCE dtypes.f32 [1]
-368 Ops.COPY dtypes.f32 [1]
-369 Ops.SINK dtypes.void [5, 9, 10, 11, 12, 13, 14, 15, 17, 18, 22, 23, 26, 29, 30, 34, 35, 36, 38, 39, 40, 42, 43, 44, 45, 46, 47, 48, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 63, 65, 67, 70, 71, 72, 73, 74, 75, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 102, 105, 108, 111, 112, 113, 114, 116, 117, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 141, 143, 144, 145, 147, 150, 152, 153, 154, 158, 160, 165, 167, 170, 171, 173, 174, 175, 176, 179, 180, 182, 183, 184, 1, 185, 186, 187, 66, 188, 189, 190, 191, 192, 193, 194, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 208, 209, 210, 211, 212, 214, 216, 218, 220, 221, 222, 223, 224, 225, 226, 227, 228, 230, 231, 233, 234, 235, 236, 237, 241, 4, 243, 245, 247, 249, 250, 252, 253, 255, 256, 258, 8, 260, 262, 263, 264, 266, 267, 268, 270, 271, 272, 273, 275, 277, 278, 279, 280, 282, 149, 286, 290, 292, 294, 298, 299, 320, 321, 322, 324, 327, 328, 329, 330, 331, 332, 217, 333, 334, 335, 336, 337, 338, 340, 341, 342, 344, 98, 19, 345, 346, 347, 348, 349, 351, 352, 353, 354, 355, 356, 357, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368]
+299 Ops.STACK dtypes.weakint [16, 2]
+300 Ops.PERMUTE dtypes.f32 [149, 299]
+301 Ops.STACK dtypes.weakint [2, 2]
+302 Ops.PAD dtypes.f32 [149, 301, 148]
+303 Ops.STACK dtypes.weakint [142, 16, 142]
+304 Ops.RESHAPE dtypes.f32 [302, 303]
+305 Ops.STACK dtypes.weakint [2, 2, 2]
+306 Ops.STACK dtypes.weakint [142, 12, 142]
+307 Ops.PAD dtypes.f32 [304, 305, 306]
+308 Ops.CONST dtypes.weakint [] 12
+309 Ops.STACK dtypes.weakint [308, 142]
+310 Ops.RESHAPE dtypes.f32 [307, 309]
+311 Ops.STACK dtypes.weakint [12, 2]
+312 Ops.STACK dtypes.weakint [0, 142]
+313 Ops.PAD dtypes.f32 [310, 311, 312]
+314 Ops.STACK dtypes.weakint [142, 142, 142]
+315 Ops.RESHAPE dtypes.f32 [313, 314]
+316 Ops.STACK dtypes.weakint [16, 2, 20]
+317 Ops.PERMUTE dtypes.f32 [315, 316]
+318 Ops.RESHAPE dtypes.f32 [317, 312]
+319 Ops.SHRINK dtypes.f32 [318, 311, 309]
+320 Ops.RESHAPE dtypes.f32 [319, 306]
+321 Ops.SHRINK dtypes.f32 [320, 305, 303]
+322 Ops.RESHAPE dtypes.f32 [321, 148]
+323 Ops.REDUCE dtypes.f32 [1] (Ops.ADD, 1)
+324 Ops.REDUCE dtypes.f32 [4, 138, 166] (Ops.MAX, 0)
+325 Ops.RANGE dtypes.i32 [168] (AxisType.WEAK, 1)
+326 Ops.REDUCE dtypes.f32 [4, 325] (Ops.ADD, 0)
+327 Ops.CAST dtypes.u32 [142] dtypes.u32
+328 Ops.RANGE dtypes.u32 [327] (AxisType.WEAK, 1)
+329 Ops.REDUCE dtypes.f32 [4, 328] (Ops.ADD, 0)
+330 Ops.REDUCE dtypes.f32 [1] (Ops.SIN, 1)
+331 Ops.COPY dtypes.f32 [1] "CPU"
+332 Ops.COPY dtypes.f32 [1] "DISK:/tmp/x"
+333 Ops.DETACH dtypes.f32 [1]
+334 Ops.CONTIGUOUS_BACKWARD dtypes.f32 [1]
+335 Ops.STAGE dtypes.f32 [4, 138]
+336 Ops.LINEAR dtypes.void [8]
+337 Ops.SOURCE dtypes.void [] "void k(){}"
+338 Ops.PROGRAM dtypes.void [229]
+339 Ops.PROGRAM dtypes.void [229, 336]
+340 Ops.PROGRAM dtypes.void [229, 336, 337]
+341 Ops.BINARY dtypes.u8 [] b"\x00"
+342 Ops.PROGRAM dtypes.void [229, 336, 337, 341]
+343 Ops.PROGRAM dtypes.void [336]
+344 Ops.PROGRAM dtypes.void [1]
+345 Ops.AFTER dtypes.f32 [192, 8]
+346 Ops.PROGRAM dtypes.void [345]
+347 Ops.SHRINK dtypes.f32 [1, 254, 168]
+348 Ops.SHRINK dtypes.i32 [213, 254, 168]
+349 Ops.SHRINK dtypes.f32 [1, 254, 66]
+350 Ops.SHRINK dtypes.f32 [4, 254, 168]
+351 Ops.IF dtypes.void [251, 3]
+352 Ops.CAST dtypes.i32 [4] dtypes.i32
+353 Ops.IF dtypes.void [251, 352]
+354 Ops.IF dtypes.void [251, 347]
+355 Ops.IF dtypes.void [251, 4]
+356 Ops.IF dtypes.void [257, 3]
+357 Ops.ENDIF dtypes.void [351]
+358 Ops.ENDIF dtypes.void [8]
+359 Ops.STACK dtypes.f32 [1, 6]
+360 Ops.ADD dtypes.weakint [16, 100]
+361 Ops.STACK dtypes.weakint [360]
+362 Ops.CAST dtypes.i64 [16] dtypes.i64
+363 Ops.BINARY dtypes.u8 []
+364 Ops.CALL dtypes.void [229, 1, 6]
+365 Ops.WMMA dtypes.f32 [238, 239, 240]
+366 Ops.SPECIAL dtypes.weakint [155]
+367 Ops.SPECIAL dtypes.i32 [281]
+368 Ops.PERMUTE dtypes.f32 [149]
+369 Ops.REDUCE dtypes.f32 [1]
+370 Ops.COPY dtypes.f32 [1]
+371 Ops.SINK dtypes.void [5, 9, 10, 11, 12, 13, 14, 15, 17, 18, 22, 23, 26, 29, 30, 34, 35, 36, 38, 39, 40, 42, 43, 44, 45, 46, 47, 48, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 63, 65, 67, 70, 71, 72, 73, 74, 75, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 102, 105, 108, 111, 112, 113, 114, 116, 117, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 141, 143, 144, 145, 147, 150, 152, 153, 154, 158, 160, 165, 167, 170, 171, 173, 174, 175, 176, 179, 180, 182, 183, 184, 1, 185, 186, 187, 66, 188, 189, 190, 191, 192, 193, 194, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 208, 209, 210, 211, 212, 214, 216, 218, 220, 221, 222, 223, 224, 225, 226, 227, 228, 230, 231, 233, 234, 235, 236, 237, 241, 4, 243, 245, 247, 249, 250, 252, 253, 255, 256, 258, 8, 260, 262, 263, 264, 266, 267, 268, 270, 271, 272, 273, 275, 277, 278, 279, 280, 282, 149, 286, 290, 292, 294, 298, 300, 322, 323, 324, 326, 329, 330, 331, 332, 333, 334, 217, 335, 336, 337, 338, 339, 340, 342, 343, 344, 346, 98, 19, 347, 348, 349, 350, 351, 353, 354, 355, 356, 357, 358, 359, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370]
 

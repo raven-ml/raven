@@ -1,23 +1,27 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.STACK dtypes.void []
-1 Ops.PARAM dtypes.f16 [0] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(0.0, 100.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-2 Ops.CAST dtypes.f64 [1] dtypes.f64
-3 Ops.CAST dtypes.f32 [2] dtypes.f32
-4 Ops.CAST dtypes.f32 [1] dtypes.f32
-5 Ops.SINK dtypes.void [3, 4] tag="simplify"
-6 Ops.PARAM dtypes.i32 [0] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-7 Ops.CAST dtypes.f64 [6] dtypes.f64
-8 Ops.CAST dtypes.f32 [7] dtypes.f32
-9 Ops.CAST dtypes.f32 [6] dtypes.f32
-10 Ops.SINK dtypes.void [8, 9] tag="simplify"
-11 Ops.CAST dtypes.i64 [6] dtypes.i64
-12 Ops.CAST dtypes.i16 [11] dtypes.i16
-13 Ops.CAST dtypes.i16 [6] dtypes.i16
-14 Ops.SINK dtypes.void [12, 13] tag=("simplify", 1, 10)
-15 Ops.PARAM dtypes.u8 [0] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
-16 Ops.CAST dtypes.i64 [15] dtypes.i64
-17 Ops.CAST dtypes.i32 [16] dtypes.i32
-18 Ops.CAST dtypes.i32 [15] dtypes.i32
-19 Ops.SINK dtypes.void [17, 18] tag=("simplify", 1, 10)
-20 Ops.SINK dtypes.void [5, 10, 14, 19]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CUSTOM dtypes.void [] ("simplify", dtypes.void)
+1 Ops.STACK dtypes.void []
+2 Ops.PARAM dtypes.f16 [1] ParamArg(slot=-1, dtype=dtypes.f16, vmin_vmax=(0.0, 100.0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+3 Ops.CAST dtypes.f64 [2] dtypes.f64
+4 Ops.CAST dtypes.f32 [3] dtypes.f32
+5 Ops.CAST dtypes.f32 [2] dtypes.f32
+6 Ops.SINK dtypes.void [0, 4, 5]
+7 Ops.PARAM dtypes.i32 [1] ParamArg(slot=-1, dtype=dtypes.i32, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+8 Ops.CAST dtypes.f64 [7] dtypes.f64
+9 Ops.CAST dtypes.f32 [8] dtypes.f32
+10 Ops.CAST dtypes.f32 [7] dtypes.f32
+11 Ops.SINK dtypes.void [0, 9, 10]
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.CONST dtypes.weakint [] 10
+14 Ops.CUSTOM dtypes.void [12, 13] ("simplify", dtypes.void)
+15 Ops.CAST dtypes.i64 [7] dtypes.i64
+16 Ops.CAST dtypes.i16 [15] dtypes.i16
+17 Ops.CAST dtypes.i16 [7] dtypes.i16
+18 Ops.SINK dtypes.void [14, 16, 17]
+19 Ops.PARAM dtypes.u8 [1] ParamArg(slot=-1, dtype=dtypes.u8, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+20 Ops.CAST dtypes.i64 [19] dtypes.i64
+21 Ops.CAST dtypes.i32 [20] dtypes.i32
+22 Ops.CAST dtypes.i32 [19] dtypes.i32
+23 Ops.SINK dtypes.void [14, 21, 22]
+24 Ops.SINK dtypes.void [6, 11, 18, 23]
 

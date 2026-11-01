@@ -1,6 +1,14 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
 
-__attribute__((min_vector_width(512))) void E(_Bool* restrict data0_1, _Bool* restrict data1_1, _Bool* restrict data2_1, _Bool* restrict data3_1, _Bool* restrict data4_1, _Bool* restrict data5_1, _Bool* restrict data6_1) {
+struct E_args { _Bool* data0_1; _Bool* data1_1; _Bool* data2_1; _Bool* data3_1; _Bool* data4_1; _Bool* data5_1; _Bool* data6_1; };
+__attribute__((min_vector_width(512))) void E(const struct E_args* args) {
+  _Bool* restrict data0_1 = args->data0_1;
+  _Bool* restrict data1_1 = args->data1_1;
+  _Bool* restrict data2_1 = args->data2_1;
+  _Bool* restrict data3_1 = args->data3_1;
+  _Bool* restrict data4_1 = args->data4_1;
+  _Bool* restrict data5_1 = args->data5_1;
+  _Bool* restrict data6_1 = args->data6_1;
   _Bool val0 = (*(data1_1+0));
   _Bool val1 = (*(data2_1+0));
   _Bool val2 = (*(data3_1+0));

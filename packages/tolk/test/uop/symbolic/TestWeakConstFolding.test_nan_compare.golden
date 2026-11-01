@@ -1,7 +1,8 @@
-# tinygrad ddf4e41dd9f8051ef6b7313c924bd53d9b53d7bd
-0 Ops.CONST dtypes.weakfloat [] nan
-1 Ops.CMPNE dtypes.bool [0, 0]
-2 Ops.CONST dtypes.bool [] True
-3 Ops.SINK dtypes.void [1, 2] tag=("simplify", True, True)
-4 Ops.SINK dtypes.void [3]
+# tinygrad ef779292831899835aa94b12dc0b6fea7f6d5741
+0 Ops.CONST dtypes.bool [] True
+1 Ops.CUSTOM dtypes.void [0, 0] ("simplify", dtypes.void)
+2 Ops.CONST dtypes.weakfloat [] nan
+3 Ops.CMPNE dtypes.bool [2, 2]
+4 Ops.SINK dtypes.void [1, 3, 0]
+5 Ops.SINK dtypes.void [4]
 
