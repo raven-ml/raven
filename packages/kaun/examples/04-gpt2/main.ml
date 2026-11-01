@@ -52,14 +52,26 @@ let load_tokenizer () =
   | Ok t -> t
   | Error e -> failwith ("tokenizer: " ^ e)
 
+(* [bucket n] is the least power of two at or above [n]. *)
+let bucket n =
+  let rec up w = if w >= n then w else up (2 * w) in
+  up 1
+
 (* Greedy decoding with a key-value cache. One step function serves the whole
    generation: it reads the tokens its index places, fills the caches, and
-   returns the next token and the updated caches, and the host advances the
-   index between calls. Positions and slots enter as tensors, so under [--jit]
-   [Rune.jit] compiles exactly two variants: a prefill over the whole prompt,
-   and a single-token step replayed for every generated token, to which the
-   caches are donated. The caches are made where the model lies, and the index,
-   advanced on the host, is placed there for each call.
+   returns the next token and the updated caches, and the host makes the index
+   of each call. Positions and slots enter as tensors, so under [--jit] a
+   compiled program serves every position of one shape, and the caches are
+   donated to it. The caches are made where the model lies, and the index, made
+   on the host, is placed there for each call.
+
+   The shapes are bucketed, since [Rune.jit] compiles one program per shape: the
+   prefill pads the prompt on the left to a power of two, and a call reads the
+   table's first [w] columns, [w] the least power of two above its last
+   position. A decode of [n] tokens compiles about log2 [n] widths, and each
+   call reads at most twice the live context where a fixed width would read the
+   whole cache. A width compiles when the decode first reaches it, a stall of
+   about 1 s on the CPU from an empty disk cache and 0.2 s from a warm one.
 
    The step is generic over the parameters' float dtype [b]: the key-value
    caches carry the same dtype as the weights, so [--dtype float16] decodes with
@@ -99,35 +111,66 @@ let generate (type b d) ~jit cfg (params : ((float, b, d) Nx.t, d) Gpt2.params)
           (Kaun.Cache_index.place at index)
           (Nx.Ptree.donate caches cs)
   in
+  (* The table names slot [j] at column [j] up to the decode's length, and no
+     slot past it. Prefill pads the prompt on the left with tokens at position
+     [-1], which store nothing and which no token sees. *)
+  let width = bucket len in
+  if width > cfg.Gpt2.n_positions then
+    invalid_arg
+      (Printf.sprintf "generate: a table of %d columns exceeds n_positions %d"
+         width cfg.n_positions);
+  let table =
+    Nx.create Nx.int64 [| 1; width |]
+      (Array.init width (fun j -> if j < len then Int64.of_int j else -1L))
+  in
+  let index pos =
+    let seq = Array.length pos in
+    let w = bucket (pos.(seq - 1) + 1) in
+    Kaun.Cache_index.make
+      ~pos:(Nx.create Nx.int64 [| 1; seq |] (Array.map Int64.of_int pos))
+      ~table:(Nx.slice [ A; R (0, w) ] table)
+      ()
+  in
   let t0 = Unix.gettimeofday () in
-  let index = ref (Kaun.Cache_index.rows ~context:len [| n0 |]) in
+  let seq = bucket n0 in
+  let pad = seq - n0 in
   let state =
     ref
       (step
-         (Nx.place at (Nx.create Nx.int64 [| 1; n0 |] prompt))
-         !index
+         (Nx.place at
+            (Nx.create Nx.int64 [| 1; seq |]
+               (Array.append (Array.make pad 0L) prompt)))
+         (index (Array.init seq (fun i -> max (-1) (i - pad))))
          (Gpt2.cache ~placement:(fun _ ~axis:_ -> at) cfg ~slots:len dt))
   in
   tokens.(n0) <- Nx.item [ 0; 0 ] (fst !state);
   let prefill = Unix.gettimeofday () -. t0 in
-  let times = Array.make (max 1 (max_tokens - 1)) 0. in
+  (* The first step at each width compiles under [--jit]: those are timed apart
+     from the steps that replay a program. *)
+  let widths = ref 0 and compiling = ref 0. in
+  let steps = ref 0 and stepping = ref 0. in
   for n = n0 + 1 to len - 1 do
     let t0 = Unix.gettimeofday () in
     let token, caches = !state in
-    index := Kaun.Cache_index.advance !index;
-    state := step token !index caches;
+    state := step token (index [| n - 1 |]) caches;
     tokens.(n) <- Nx.item [ 0; 0 ] (fst !state);
-    times.(n - n0 - 1) <- Unix.gettimeofday () -. t0
+    let elapsed = Unix.gettimeofday () -. t0 in
+    if n = n0 + 1 || bucket n <> bucket (n - 1) then begin
+      incr widths;
+      compiling := !compiling +. elapsed
+    end
+    else begin
+      incr steps;
+      stepping := !stepping +. elapsed
+    end
   done;
-  if max_tokens > 2 then begin
-    let rest = Array.fold_left ( +. ) (-.times.(0)) times in
+  if !steps > 0 then
     Printf.printf
-      "prefill %.2f s, first step %.2f s (both compile under --jit), then %.2f \
-       tok/s\n\
+      "prefill %.2f s, first steps at %d widths %.2f s (all compile under \
+       --jit), then %.2f tok/s\n\
        %!"
-      prefill times.(0)
-      (float_of_int (max_tokens - 2) /. rest)
-  end;
+      prefill !widths !compiling
+      (float_of_int !steps /. !stepping);
   tokens
 
 (* The decode contract's law on this model and these weights: the prompt fed
@@ -206,6 +249,10 @@ let () =
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "gpt2 [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
+  if !count < 1 then begin
+    prerr_endline "gpt2: --count must be positive";
+    exit 2
+  end;
   let tokenizer = load_tokenizer () in
   let t0 = Unix.gettimeofday () in
   let cfg, weights = load_weights () in

@@ -219,10 +219,6 @@ raven / llama.cpp (Vulkan; ROCm):
   where a level's chunk is wider than a device's tile, the reshape reads
   the axis whole onto every device. Build the levels from slices of the
   cut axis, or after the reshape item above
-- symbolic extents: `Rune.jit` keys on each array's shape, so a decode
-  step retraces at each new context length or pads to a window, as kaun's
-  cached attention does; rune's lowering refuses tolk's `Sym` extents.
-  Design it from references before nx, rune and kaun take it
 - eager GPU kernel libraries, nx.cuda, nx.metal and nx.amd, onto nx's
   current kernel interface; until then a GPU set computes under
   `Rune.jit` only. Their last code is 64478fedf

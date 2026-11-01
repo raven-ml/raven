@@ -120,8 +120,8 @@ val cached :
     through [caches], and the caches with their keys and values written. A
     whole-prompt call prefills the caches; a single-token call advances decoding
     by one step. The index's positions and slots are tensors, so both trace
-    under {!Rune.jit} and one compiled single-token step serves the whole decode
-    loop. See {!Kaun.Attention.cached} and {!Kaun.Cache_index}.
+    under {!Rune.jit} and one compiled single-token step serves every position
+    at one context width. See {!Kaun.Attention.cached} and {!Kaun.Cache_index}.
 
     [?dropout:(rate, key)] enables training-time dropout at the canonical GPT-2
     sites — the embedding sum and each block's post-attention and post-MLP

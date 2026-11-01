@@ -36,6 +36,22 @@ Quant/host/routed-product-1-tokens-eager	wall_time	batch=1	n=20	2.760e-01	2.686e
 Quant/host/routed-product-64-tokens	alloc_words	exact	1155
 Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	1.887e-01	1.879e-01 1.880e-01 1.882e-01 1.882e-01 1.883e-01 1.884e-01 1.884e-01 1.885e-01 1.886e-01 1.887e-01 1.887e-01 1.888e-01 1.889e-01 1.889e-01 1.889e-01 1.891e-01 1.892e-01 1.892e-01 1.893e-01 1.897e-01
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed Gpt2/decode-step-cache-256 Gpt2/decode-step-cache-1024 Gpt2/decode-step-at-128-width-256 Gpt2/decode-step-at-128-width-1024 Gpt2/decode-step-at-128-width-4096 under load 9.0 on 14 cores
+
+Gpt2/decode-step-at-128-width-1024	alloc_words	exact	18374
+Gpt2/decode-step-at-128-width-1024	wall_time	batch=1	n=20	2.366e-02	2.222e-02 2.268e-02 2.286e-02 2.287e-02 2.291e-02 2.299e-02 2.333e-02 2.342e-02 2.342e-02 2.344e-02 2.389e-02 2.397e-02 2.400e-02 2.431e-02 2.450e-02 2.495e-02 2.547e-02 2.609e-02 2.731e-02 2.732e-02
+Gpt2/decode-step-at-128-width-256	alloc_words	exact	18374
+Gpt2/decode-step-at-128-width-256	wall_time	batch=1	n=20	2.303e-02	2.002e-02 2.038e-02 2.089e-02 2.093e-02 2.175e-02 2.201e-02 2.217e-02 2.232e-02 2.256e-02 2.300e-02 2.307e-02 2.316e-02 2.333e-02 2.347e-02 2.362e-02 2.367e-02 2.384e-02 2.403e-02 2.419e-02 2.456e-02
+Gpt2/decode-step-at-128-width-4096	alloc_words	exact	18374
+Gpt2/decode-step-at-128-width-4096	wall_time	batch=1	n=20	3.388e-02	2.992e-02 3.168e-02 3.270e-02 3.291e-02 3.302e-02 3.322e-02 3.329e-02 3.337e-02 3.338e-02 3.382e-02 3.394e-02 3.398e-02 3.433e-02 3.540e-02 3.543e-02 3.568e-02 3.583e-02 3.595e-02 3.722e-02 3.757e-02
+Gpt2/decode-step-cache-1024	alloc_words	exact	18374
+Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	2.457e-02	2.022e-02 2.158e-02 2.239e-02 2.253e-02 2.263e-02 2.352e-02 2.370e-02 2.373e-02 2.417e-02 2.442e-02 2.471e-02 2.488e-02 2.518e-02 2.541e-02 2.543e-02 2.561e-02 2.606e-02 2.609e-02 2.620e-02 2.691e-02
+Gpt2/decode-step-cache-256	alloc_words	exact	18374
+Gpt2/decode-step-cache-256	wall_time	batch=1	n=20	2.316e-02	2.007e-02 2.132e-02 2.183e-02 2.210e-02 2.224e-02 2.245e-02 2.256e-02 2.296e-02 2.310e-02 2.313e-02 2.318e-02 2.329e-02 2.368e-02 2.381e-02 2.400e-02 2.400e-02 2.432e-02 2.444e-02 2.476e-02 2.611e-02
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

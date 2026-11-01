@@ -51,13 +51,26 @@ module Sampling = struct
     { temperature; k; p }
 end
 
+(* [bucket n] is the least power of two at or above [n]. *)
+let bucket n =
+  let rec up w = if w >= n then w else up (2 * w) in
+  up 1
+
 (* One step function serves the whole generation: it reads the tokens its index
    places, the key and the sampling parameters, is given the caches, donated,
    fills them, and returns the next token, the next key and the written caches.
-   The host advances the index and places it for each call. Positions and slots
-   enter as tensors, so [Rune.jit] compiles a prefill and one single-token step.
-   The caches, the key and the sampling parameters are made where the
-   parameters are, [placement] placing each as [Llama.of_hf] did. *)
+   The host makes the index of each call and places it. Positions and slots
+   enter as tensors, so a program [Rune.jit] compiles serves every position of
+   one shape. The caches, the key and the sampling parameters are made where
+   the parameters are, [placement] placing each as [Llama.of_hf] did.
+
+   The shapes are bucketed, since [Rune.jit] compiles one program per shape: the
+   prefill pads the prompt on the left to a power of two, and a call reads the
+   table's first [w] columns, [w] the least power of two above its last
+   position. A decode of [n] tokens compiles about log2 [n] widths, and each
+   call reads at most twice the live context where a fixed width would read the
+   whole cache. A width compiles when the decode first reaches it, a stall of
+   about 1 s on the CPU from an empty disk cache and 0.2 s from a warm one. *)
 let generate (type b d) ~jit
     ~(placement : Llama.role -> axis:int -> d Nx.Placement.t) cfg
     (params : ((float, b, d) Nx.t, d) Llama.params) (dt : (float, b) Nx.dtype)
@@ -105,6 +118,22 @@ let generate (type b d) ~jit
   in
   let n0 = Array.length prompt in
   let context = n0 + max_tokens in
+  (* The table names slot [j] at column [j] up to the decode's length, and no
+     slot past it. Prefill pads the prompt on the left with tokens at position
+     [-1], which store nothing and which no token sees. *)
+  let width = bucket context in
+  let table =
+    Nx.create Nx.int64 [| 1; width |]
+      (Array.init width (fun j -> if j < context then Int64.of_int j else -1L))
+  in
+  let index pos =
+    let seq = Array.length pos in
+    let w = bucket (pos.(seq - 1) + 1) in
+    Cache_index.make
+      ~pos:(Nx.create Nx.int64 [| 1; seq |] (Array.map Int64.of_int pos))
+      ~table:(Nx.slice [ A; R (0, w) ] table)
+      ()
+  in
   let sampling =
     {
       temperature = Nx.scalar_at whole Nx.float32 (Float.max temperature 1e-6);
@@ -112,32 +141,40 @@ let generate (type b d) ~jit
       p = Nx.scalar_at whole Nx.float32 top_p;
     }
   in
-  let index = ref (Cache_index.rows ~context [| n0 |]) in
+  let seq = bucket n0 in
+  let pad = seq - n0 in
   let state =
     ref
       (step
-         (Nx.place whole (Nx.create Nx.int64 [| 1; n0 |] prompt))
-         !index
+         (Nx.place whole
+            (Nx.create Nx.int64 [| 1; seq |]
+               (Array.append (Array.make pad 0L) prompt)))
+         (index (Array.init seq (fun i -> max (-1) (i - pad))))
          (Nx.Rng.place whole (Nx.Rng.key seed))
          sampling
          (Llama.cache ~placement cfg ~slots:context dt))
   in
   let out = Array.make max_tokens 0L in
-  (* The first single-token step compiles under [--devices]: time from the
-     second. *)
-  let t0 = ref (Unix.gettimeofday ()) in
+  (* The first step at each width compiles under [--devices]: the rate counts
+     the steps that replay a program. *)
+  let steps = ref 0 and stepping = ref 0. in
   for n = 0 to max_tokens - 1 do
     let (token, key), caches = !state in
     out.(n) <- Nx.item [ 0; 0 ] token;
-    if n = 1 then t0 := Unix.gettimeofday ();
     if n < max_tokens - 1 then begin
-      index := Cache_index.advance !index;
-      state := step token !index key sampling caches
+      let pos = n0 + n in
+      let t0 = Unix.gettimeofday () in
+      state := step token (index [| pos |]) key sampling caches;
+      (* Reading the token waits for the step. *)
+      ignore (Nx.item [ 0; 0 ] (fst (fst !state)) : int64);
+      if n > 0 && bucket (pos + 1) = bucket pos then begin
+        incr steps;
+        stepping := !stepping +. (Unix.gettimeofday () -. t0)
+      end
     end
   done;
-  if max_tokens > 2 then
-    Printf.printf "%.2f tok/s\n%!"
-      (float_of_int (max_tokens - 2) /. (Unix.gettimeofday () -. !t0));
+  if !steps > 0 then
+    Printf.printf "%.2f tok/s\n%!" (float_of_int !steps /. !stepping);
   out
 
 (* Where the configuration and the weights come from. *)
@@ -180,6 +217,10 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "llama [--prompt P] [--count N] [--devices LIST] [--dtype DT] [--repo R] \
      [--gguf FILE]";
+  if !count < 0 then begin
+    prerr_endline "llama: --count must not be negative";
+    exit 2
+  end;
   let checkpoint =
     if !gguf = "" then Hf (Kaun_hf.load_safetensors !repo)
     else Gguf (Nx_io.load_gguf !gguf)

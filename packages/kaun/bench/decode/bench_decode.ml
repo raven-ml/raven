@@ -12,7 +12,10 @@
    constant is one element seen at every index, which a compiled call folds.
 
    The cache lengths show how the step scales with the cache it carries, not
-   only with the single position it writes.
+   only with the single position it writes. The widths hold the pools at 4096
+   slots and the position at 128 and read the table's first 256, 1024 or 4096
+   columns, as a decode loop that buckets its width does: they time the width a
+   step reads, apart from the slots it holds, which cost nothing.
 
    gpt-oss-20b's own decode step and prefill are measured by the example's
    suite, examples/06-gpt-oss/bench; the routed products below guard its
@@ -127,11 +130,11 @@ let lowered name f =
     failwith (name ^ ": a compiled call ran evaluated");
   y
 
-(* A decode loop warmed past its two compilations. The returned thunk decodes
-   one token at a fixed position in the middle of the cache, from the previous
-   call's token and caches: every measured step is in range, whatever the number
-   of samples. *)
-let decoder params ~len =
+(* A decode loop warmed past its two compilations, over pools of [slots] slots.
+   The returned thunk decodes one token at position [at], reading the table's
+   first [width] columns, from the previous call's token and caches: every
+   measured step is in range, whatever the number of samples. *)
+let decoder params ~slots ~width ~at =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
   let compiled =
     Rune.jit
@@ -149,18 +152,18 @@ let decoder params ~len =
     ref
       (step
          (Nx.zeros Nx.int64 [| 1; 8 |])
-         (Cache_index.rows ~context:len [| 8 |])
-         (cache ~slots:len))
+         (Cache_index.rows ~context:slots [| 8 |])
+         (cache ~slots))
   in
-  let at = Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int (len / 2) |] in
-  let middle =
-    Cache_index.make ~pos:at
-      ~table:(Nx.reshape [| 1; len |] (Nx.arange Nx.int64 0 len 1))
+  let index =
+    Cache_index.make
+      ~pos:(Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int at |])
+      ~table:(Nx.reshape [| 1; width |] (Nx.arange Nx.int64 0 width 1))
       ()
   in
   let advance () =
     let token, caches = !state in
-    state := step token middle caches;
+    state := step token index caches;
     ignore (Nx.item [ 0; 0 ] (fst !state) : int64)
   in
   lowered "decode" advance;
@@ -176,9 +179,17 @@ let gpt2 =
     (fun len ->
       {
         name = Printf.sprintf "decode step, cache %d" len;
-        setup = (fun () -> decoder (model ()) ~len);
+        setup =
+          (fun () -> decoder (model ()) ~slots:len ~width:len ~at:(len / 2));
       })
     [ 256; 1024 ]
+  @ List.map
+      (fun width ->
+        {
+          name = Printf.sprintf "decode step at 128, width %d" width;
+          setup = (fun () -> decoder (model ()) ~slots:4096 ~width ~at:128);
+        })
+      [ 256; 1024; 4096 ]
 
 (* Routed quantised products at gpt-oss-20b's shapes: the gate and up projection
    of one layer's 32 experts, MXFP4 [[| 32; 5760; 2880 |]], applied to each
