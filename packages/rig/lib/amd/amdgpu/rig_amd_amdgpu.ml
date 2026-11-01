@@ -257,8 +257,34 @@ end)
    driver lets a process acquire one once. *)
 let acquired : gpu Ids.t ref = ref Ids.empty
 
-(* The process's event page: its handle, host address and GPU. *)
+(* The render node through which the process acquired each GPU's address
+   space, by GPU id. KFD answers a second acquire through the same file with 0
+   and through another with EBUSY (kfd_chardev.c, kfd_ioctl_acquire_vm:
+   [pdd->drm_file == drm_file ? 0 : -EBUSY]), so the file stays open for the
+   process once ACQUIRE_VM answered, and an open after one that failed past
+   it takes the file and makes no second ACQUIRE_VM. *)
+let vms : int Ids.t ref = ref Ids.empty
+
+(* The process's event page: its handle, host address and GPU, offered to KFD
+   and never freed. *)
 let event_page : (int * int * int) option ref = ref None
+
+(* Whether KFD holds the event page, and whether a CREATE_EVENT that offered it
+   failed where KFD may have taken it. KFD takes the page before it makes the
+   event (kfd_chardev.c, kfd_ioctl_create_event: kfd_kmap_event_page, then
+   kfd_event_create), refusing the page with EINVAL while it holds one (EBUSY
+   in kfd_event_page_set before Linux 6.0). Its other refusals of the page,
+   EINVAL for an unknown GPU or handle, come before the take and would answer
+   the first offer so too.
+
+   One case is misread, and accepted as is: a first offer that KFD refused
+   before the take with another errno, such as ENOMEM where it maps the page
+   for the kernel, then a retry refused with EINVAL or EBUSY for a reason
+   other than a held page. The events are then made on a page KFD makes
+   itself, whose slots the host never arms, and the GPU's sleeps may wait out
+   their bound. *)
+let page_held = ref false
+let page_taken = ref false
 
 (* Views of another GPU's memory, by its handle and the viewing GPU's id: KFD
    maps a memory once per GPU, so the first view maps it and the last view's
@@ -291,9 +317,12 @@ let kfd_fd ~dev =
   | Some (p, fd) when p = Unix.getpid () -> Ok fd
   | _ ->
       acquired := Ids.empty;
+      vms := Ids.empty;
       views := Pairs.empty;
       registry := [];
       event_page := None;
+      page_held := false;
+      page_taken := false;
       let path = Filename.concat dev "kfd" in
       let* fd = opened path "the compute interface" in
       kfd := Some (Unix.getpid (), fd);
@@ -644,20 +673,33 @@ let acquire fd ~root ~gpus ~bus (node : Topology.node) =
   match Ids.find_opt node.gpu_id !acquired with
   | Some g -> Ok g
   | None ->
-      let path = Filename.concat root (strf "dev/dri/renderD%d" node.render) in
-      let* drm = opened path "the GPU's render node" in
+      let failed step e = Error (strf "%s: %s" step (message e)) in
+      let acquiring = "acquiring the GPU's address space" in
+      let* drm =
+        match Ids.find_opt node.gpu_id !vms with
+        | Some drm -> Ok drm
+        | None -> (
+            let path =
+              Filename.concat root (strf "dev/dri/renderD%d" node.render)
+            in
+            let* drm = opened path "the GPU's render node" in
+            (* Made before the request, so that nothing allocates between
+               KFD's answer and its record. *)
+            let table = Ids.add node.gpu_id drm !vms in
+            match kfd_acquire_vm fd drm node.gpu_id with
+            | () ->
+                vms := table;
+                Ok drm
+            | exception Unix.Unix_error (e, _, _) ->
+                close_file drm;
+                failed acquiring e)
+      in
       let ok step f =
         match f () with
         | v -> Ok v
-        | exception Unix.Unix_error (e, _, _) ->
-            close_file drm;
-            Error (strf "%s: %s" step (message e))
+        | exception Unix.Unix_error (e, _, _) -> failed step e
       in
-      let acquiring = "acquiring the GPU's address space" in
       let* version = ok "reading KFD's version" (fun () -> kfd_version fd) in
-      let* () =
-        ok acquiring (fun () -> kfd_acquire_vm fd drm node.gpu_id)
-      in
       let* () =
         if version < runtime_from then Ok ()
         else ok acquiring (fun () -> runtime_enable fd)
@@ -715,22 +757,39 @@ let arm id =
   | None -> ()
 
 (* The process's event page, made with a signal event of its own, which no
-   device uses, so that device events have ids above 0, and mapped for [g]. *)
+   device uses, so that device events have ids above 0, and mapped for [g].
+   The page is recorded before KFD is offered it, and offered again after an
+   offer that failed. A refusal of the page after an offer that may have left
+   it to KFD ([page_taken]) is KFD holding it, so the event is then made on
+   the page KFD holds. *)
 let page_for fd g =
-  match !event_page with
-  | Some (handle, _, owner) ->
-      if owner <> g.node.gpu_id && not g.events_mapped then
-        check "mapping the event page" (fun () ->
-            map_gpu fd handle g.node.gpu_id true);
-      g.events_mapped <- true
-  | None -> (
-      match alloc fd g Pinned event_page_bytes with
-      | None -> raise (Amd.Fault "no memory for the event page")
-      | Some m ->
-          check "making the event page" (fun () ->
-              ignore (kfd_event fd Signal m.data.handle : int));
-          event_page := Some (m.data.handle, m.address, g.node.gpu_id);
-          g.events_mapped <- true)
+  let handle, owner =
+    match !event_page with
+    | Some (handle, _, owner) -> (handle, owner)
+    | None -> (
+        match alloc fd g Pinned event_page_bytes with
+        | None -> raise (Amd.Fault "no memory for the event page")
+        | Some m ->
+            let page = Some (m.data.handle, m.address, g.node.gpu_id) in
+            event_page := page;
+            (m.data.handle, g.node.gpu_id))
+  in
+  (if not !page_held then
+     let taken = !page_taken in
+     match kfd_event fd Signal handle with
+     | (_ : int) -> page_held := true
+     | exception Unix.Unix_error ((EINVAL | EBUSY), _, _) when taken -> (
+         match kfd_event fd Signal 0 with
+         | (_ : int) -> page_held := true
+         | exception Unix.Unix_error (e, _, _) ->
+             fault "making the event page" e)
+     | exception Unix.Unix_error (e, _, _) ->
+         if e <> EINVAL && e <> EBUSY then page_taken := true;
+         fault "making the event page" e);
+  if owner <> g.node.gpu_id && not g.events_mapped then
+    check "mapping the event page" (fun () ->
+        map_gpu fd handle g.node.gpu_id true);
+  g.events_mapped <- true
 
 let make_events fd g =
   page_for fd g;
