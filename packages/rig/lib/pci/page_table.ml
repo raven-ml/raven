@@ -500,6 +500,12 @@ let tables t ~va n =
   if Tables.Address.length t.held > held then ignore (t.fmt.flush () : bool);
   path
 
+let discard t ~va n =
+  check t "discard" ~va n;
+  let lo = va - t.base in
+  ignore (clear t 0 t.root ~at:0 lo (lo + n) : bool);
+  t.fmt.flush ()
+
 let unmap t ~va n =
   check t "unmap" ~va n;
   let lo = va - t.base in
@@ -543,16 +549,27 @@ let map ?(uncached = false) ?(snooped = false) t ~va target ranges =
       reached = lo;
     }
   in
+  (* The result is made before the first entry, so that once the entries are
+     written nothing allocates before the flush and the return. *)
+  let mapped = Some { va; size; pages = ranges; target; uncached; snooped } in
   match write t 0 t.root ~at:0 lo (lo + size) r with
   | () ->
       ignore (t.fmt.flush () : bool);
-      Some { va; size; pages = ranges; target; uncached; snooped }
+      mapped
   | exception No_room ->
       (* Clearing through the page at [reached] also frees the tables made on
          the way to it, which hold nothing. *)
       ignore (clear t 0 t.root ~at:0 lo (r.reached + page) : bool);
       ignore (t.fmt.flush () : bool);
       None
+  | exception e ->
+      (* An exception part-way, such as an asynchronous one at an
+         allocation, takes back what the write made, as a lack of room
+         does, so that the range maps again. *)
+      let bt = Printexc.get_raw_backtrace () in
+      ignore (clear t 0 t.root ~at:0 lo (r.reached + page) : bool);
+      ignore (t.fmt.flush () : bool);
+      Printexc.raise_with_backtrace e bt
 
 (* Physical blocks for [n] bytes, the largest [pages] allows first, falling to
    smaller ones when the pool has none left. *)

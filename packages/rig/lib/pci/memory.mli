@@ -223,6 +223,11 @@ val map_peer : t -> region -> (region option, string) result
     GPU and given the memory out, or if the system memory cannot be pinned,
     with {!Function.pin}'s reason.
 
+    A [map_peer] that an exception other than [Invalid_argument] ended, such
+    as an asynchronous one, leaves what it wrote to the next [map_peer] on
+    [m] of the same memory, which adopts the mapping if the tables hold it
+    whole, and otherwise clears what they hold of it and maps it again.
+
     Raises [Invalid_argument] if [r], or the region it maps, was freed, or if
     [m]'s GPU maps other memory at [r]'s addresses. *)
 

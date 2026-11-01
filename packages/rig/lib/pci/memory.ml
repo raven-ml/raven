@@ -56,6 +56,7 @@ and held = {
   mutable unconfirmed : region list;
   mutable parked : shared list;
   due : bool Atomic.t;
+  mutable writing : writing list;
   mutable tables : Page_table.t option; (* [None] once released *)
   mutable given : int list;
       (* the GPU addresses of the mappings [bus] gave another function, which
@@ -75,6 +76,19 @@ and region = {
 }
 
 and source = Allocated | Borrowed of int | Peer of region
+
+(* A mapping of another GPU's memory that a [map_peer] is writing: [over] is
+   the origin it maps. [counted] is set once it counts there, in the section
+   that counts it. Once the tables hold it, [made] is set and [made_mapping]
+   is the mapping, with nothing allocated between, so that an exception
+   before its region is recorded leaves it for the next [map_peer] of [over]
+   to adopt. *)
+and writing = {
+  over : region;
+  mutable counted : bool;
+  mutable made : bool;
+  mutable made_mapping : Page_table.mapping;
+}
 
 (* A mapping and the regions out over it: [holder] made it and holds what it
    took, and each [map_peer] of memory the GPU maps already adds a region to
@@ -135,6 +149,7 @@ let create ?link fn tables ~bar =
           unconfirmed = [];
           parked = [];
           due = Atomic.make false;
+          writing = [];
           tables = Some tables;
           given = [];
         };
@@ -456,7 +471,7 @@ let alloc ?(uncached = false) m kind n =
 (* Mapping *)
 
 (* Pinned pages map at [va], with what [r] needs to give them back. *)
-let map_pinned m h tables ~va ~source ~host a n =
+let map_pinned ?writing m h tables ~va ~source ~host a n =
   match Function.pin h.fn a n with
   | (Error _ | Ok None) as r -> r
   | Ok (Some runs) -> (
@@ -467,6 +482,12 @@ let map_pinned m h tables ~va ~source ~host a n =
           Function.unpin h.fn a n;
           Ok None
       | Some mapping ->
+          (* No allocation between the table write and its record. *)
+          (match writing with
+          | Some w ->
+              w.made_mapping <- mapping;
+              w.made <- true
+          | None -> ());
           Ok
             (Some
                {
@@ -546,7 +567,7 @@ let released_error (o : t) =
    function, which keeps its release from giving its take back
    ({!Function.lend}). A release begun first refuses it. The counts are its
    last steps. *)
-let enter fn r =
+let enter fn r w =
   let o = r.owner in
   let counted =
     Lock.protect o.lock @@ fun () ->
@@ -555,6 +576,7 @@ let enter fn r =
     if lent r && not (Function.lend o.lender) then false
     else begin
       e.peers <- e.peers + 1;
+      w.counted <- true;
       true
     end
   in
@@ -563,35 +585,96 @@ let enter fn r =
   if not counted then Function.lend_refused o.lender;
   counted
 
-(* [f ()], a new mapping of the origin [r]'s memory for another GPU, counted
-   from before it writes the tables. [f] is made before the count, and the
-   count is the last step before the handler. A refusal takes nothing; any
-   other exception may leave the tables pointing at the memory, which then
-   stays reached. *)
-let counted_map h r f =
-  if not (enter "map_peer" r) then released_error r.owner
+(* Records, with no allocation, that the tables hold [w]'s mapping. *)
+let made w mapping =
+  w.made_mapping <- mapping;
+  w.made <- true
+
+let no_mapping =
+  {
+    Page_table.va = -1;
+    size = 0;
+    pages = [];
+    target = System;
+    uncached = false;
+    snooped = false;
+  }
+
+let unwrite h w = h.writing <- List.filter (fun w' -> w' != w) h.writing
+
+(* [f w], the mapping [w] lists, of the origin [r]'s memory, counted there.
+   A refusal, which takes nothing, and no room uncount it. Another exception,
+   such as an asynchronous one, whose handler would meet it again at its
+   first allocation, leaves [w] and the count to the next [map_peer] of [r]:
+   it adopts the mapping if the tables hold it whole ([made]), and otherwise
+   discards what they hold of it and writes it again. *)
+let write_counted h w r f =
+  match f w with
+  | exception (Invalid_argument _ as e) ->
+      leave r ~gone:true ~writer:h.fn;
+      unwrite h w;
+      reraise e
+  | (Ok None | Error _) as e ->
+      leave r ~gone:true ~writer:h.fn;
+      unwrite h w;
+      e
+  | Ok (Some p) -> Ok (Some (p, w))
+
+(* [f w], a new mapping of the origin [r]'s memory for another GPU, counted
+   from before it writes the tables and listed in [h.writing] as [w], or the
+   mapping [again] an exception left, counted unless the exception came
+   first. [w] and [f] are made before the count, and the count is the last
+   step before the handler. *)
+let counted_map ?again h r f =
+  let w =
+    match again with
+    | Some w -> w
+    | None ->
+        let w =
+          {
+            over = r;
+            counted = false;
+            made = false;
+            made_mapping = no_mapping;
+          }
+        in
+        h.writing <- w :: h.writing;
+        w
+  in
+  w.made <- false;
+  if w.counted then write_counted h w r f
   else
-    match f () with
-    | exception (Invalid_argument _ as e) ->
-        leave r ~gone:true ~writer:h.fn;
-        reraise e
+    (* An exception before the count, [mine]'s refusal included, leaves [w]
+       uncounted, and a next [map_peer] counts it. *)
+    match enter "map_peer" r w with
     | exception e ->
-        leave r ~gone:false ~writer:h.fn;
+        unwrite h w;
         reraise e
-    | (Ok None | Error _) as e ->
-        leave r ~gone:true ~writer:h.fn;
-        e
-    | Ok (Some _) as ok -> ok
+    | false ->
+        unwrite h w;
+        released_error r.owner
+    | true -> write_counted h w r f
+
+(* The region of [m] over [mapping], a mapping of the origin [r]. *)
+let peer_region m r mapping =
+  let map = r.mapping in
+  let pinned =
+    match map.target with
+    | System -> Some (Option.value r.pinned ~default:(map.va, map.size))
+    | Gpu | Peer _ -> None
+  in
+  { owner = m; mapping; off = r.off; host = None; source = Peer r; pinned }
 
 (* A new mapping, for [m]'s GPU, of [r], another GPU's memory, at its owner's
    address. *)
-let map_new m h tables r =
+let map_new ?again m h tables r =
   let o = r.owner in
   let map = r.mapping in
   let mapped = function
-    | Ok (Some p) ->
+    | Ok (Some (p, w)) ->
         let p = { p with off = r.off } in
         keep m h p;
+        unwrite h w;
         Ok (Some p)
     | (Ok None | Error _) as e -> e
   in
@@ -610,9 +693,9 @@ let map_new m h tables r =
            memory at its own address. *)
         let a, n = Option.value r.pinned ~default:(map.va, map.size) in
         mapped
-          (counted_map h r (fun () ->
-               map_pinned m h tables ~va:map.va ~source:(Peer r) ~host:None a
-                 n))
+          (counted_map ?again h r (fun w ->
+               map_pinned ~writing:w m h tables ~va:map.va ~source:(Peer r)
+                 ~host:None a n))
     | (Gpu | Peer _) when not (reaches m.reach o.reach) ->
         Error
           (strf
@@ -635,13 +718,14 @@ let map_new m h tables r =
         | None -> (
             let uncached = Some map.uncached in
             mapped
-              (counted_map h r (fun () ->
+              (counted_map ?again h r (fun w ->
                    match
                      Page_table.map ~snooped:true ?uncached tables ~va:map.va
                        target pages
                    with
                    | None -> Ok None
                    | Some mapping ->
+                       made w mapping;
                        Ok
                          (Some
                             {
@@ -669,13 +753,30 @@ let map_peer m r =
     && r.mapping.target <> System
     && Function.released owner.fn
   in
+  let left = List.find_opt (fun w -> w.over == r) h.writing in
   match Tables.Address.find_opt h.regions r.mapping.va with
   | _ when gone -> released_error r.owner
-  | None -> map_new m h tables r
+  | None -> (
+      match left with
+      | Some w when w.made ->
+          (* An exception left the tables holding this mapping, counted at
+             [r]'s owner, before its region was recorded. *)
+          let p = peer_region m r w.made_mapping in
+          keep m h p;
+          unwrite h w;
+          Ok (Some p)
+      | Some w ->
+          (* An exception left part of it, or none, in the tables. *)
+          ignore
+            (Page_table.discard tables ~va:r.mapping.va r.mapping.size : bool);
+          map_new ~again:w m h tables r
+      | None -> map_new m h tables r)
   | Some e when origin e.holder != r ->
       invalid_argf "Memory.map_peer: %s maps other memory at 0x%x" m.reach.bus
         r.mapping.va
   | Some e ->
+      (* A region recorded after an exception left [w] keeps it. *)
+      Option.iter (unwrite h) left;
       let p =
         {
           e.holder with

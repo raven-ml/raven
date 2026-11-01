@@ -735,12 +735,21 @@ let test_released_owner_due () =
     (snd (tree_capacity o))
 
 (* An exception at any allocation of a map_peer, then of the peer's free,
-   makes no later call wrong: the owner frees its region, and the GPUs map
-   and free another region as before. After the walk, a round with no cut
+   makes no later call wrong: the peer maps the region again after a cut
+   map, the owner frees it while the peer maps it and its next allocation
+   takes other memory, and the GPUs map and free another region as
+   before. After the walk, a round with no cut
    leaves the owner's room as it found it. A cut may leak: one inside the
    table writes leaves the region reached, and the tables it made, so a pair
    of GPUs serves [rounds] cuts. *)
 let rounds = 32
+
+(* Whether two regions' memory share a byte. *)
+let shares a b =
+  let within (pa, n) (pb, m) = pa < pb + m && pb < pa + n in
+  List.exists
+    (fun ra -> List.exists (within ra) (snd (Memory.pages b)))
+    (snd (Memory.pages a))
 
 let test_peer_cut () =
   let round o x n =
@@ -750,6 +759,17 @@ let test_peer_cut () =
       Rig_support.interrupted n (fun () ->
           got := Some (mapped (Memory.map_peer x.t_memory r)))
     in
+    if Option.is_none !got then
+      got := Some (mapped (Memory.map_peer x.t_memory r));
+    (* The owner's free first: the memory stays while the peer maps it, so
+       the owner's next allocation takes other memory and addresses. *)
+    Memory.free o.t_memory r;
+    let q = given (Memory.alloc o.t_memory Gpu page) in
+    let at what = strf "%s, cut at %d" what n in
+    equal ~msg:(at "the owner's next memory beside the peer's") bool false
+      (shares r q);
+    not_equal ~msg:(at "its address") hex (Memory.address r) (Memory.address q);
+    Memory.free o.t_memory q;
     let freeing =
       match !got with
       | None -> false
@@ -764,7 +784,6 @@ let test_peer_cut () =
             try Memory.free x.t_memory p with Invalid_argument _ -> ());
           cut
     in
-    Memory.free o.t_memory r;
     let r' = given (Memory.alloc o.t_memory Gpu page) in
     Memory.free x.t_memory (mapped (Memory.map_peer x.t_memory r'));
     Memory.free o.t_memory r';

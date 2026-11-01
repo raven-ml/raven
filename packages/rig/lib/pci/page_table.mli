@@ -206,7 +206,9 @@ val map :
     [va] on, creating the tables it needs, and flushes, whatever the flush
     returns. [uncached] and [snooped] default to [false]. It is [None] if the
     GPU's memory has no room for a table it needs, after unmapping what it
-    mapped and freeing the tables it made.
+    mapped and freeing the tables it made. Another exception, such as an
+    asynchronous one at an allocation, does the same before it passes, as far
+    as nothing raises it again; {!discard} clears what is left.
 
     Raises [Invalid_argument], changing nothing, if [va] or an address or length
     of [ranges] is not a multiple of 4 KiB, a range ends past the addresses
@@ -236,6 +238,15 @@ val unmap : t -> va:int -> int -> bool
     Raises [Invalid_argument], changing nothing, if the range is not as {!map}
     requires, an address of it is not mapped, or a page maps addresses on both
     sides of its bounds. *)
+
+val discard : t -> va:int -> int -> bool
+(** [discard t ~va n] is {!unmap} of whatever the [n] bytes from [va] map,
+    none or part of them included, as a {!map} that an exception ended
+    part-way leaves them. A page that maps addresses on both sides of the
+    range's bounds is unmapped whole.
+
+    Raises [Invalid_argument], changing nothing, if the range is not as {!map}
+    requires. *)
 
 val alloc :
   ?uncached:bool -> ?contiguous:bool -> ?below:int -> t -> int -> mapping option
