@@ -1279,8 +1279,8 @@ let linalg_rule l =
    its fences, read whole, and {!Partial} computes each tile's from them.
    Groups are otherwise computed uncut: [Rows]' axis of [a] and the result's
    axis of rows are read whole, as is the result's leading axis of
-   [Contracting]'s groups. A segmented contraction is read whole along its
-   contracting pairs. *)
+   [Contracting]'s groups. A [Contracting] contraction is read whole along
+   its contracting pairs. *)
 let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let nb = Iarray.length batch and nc = Iarray.length contracting in
   let lead, whole_a, groups =
@@ -1289,7 +1289,11 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
     | Some (Contracting _) -> (1, -1, -1)
     | None -> (0, -1, -1)
   in
-  let reduced = Option.is_none segments in
+  let reduced =
+    match segments with
+    | Some (Contracting _) -> false
+    | Some (Rows _) | None -> true
+  in
   let kept = ref (if lead = 1 then 0 else -1) in
   let operand pick r first segmented =
     let next = ref first in

@@ -31,18 +31,20 @@
     Cut along [k] over [t] devices, a weight of [b] blocks along [k] is cut
     at its blocks' boundaries where [t] divides [b]: each device decodes its
     own blocks, {!dequant}'s result is cut along [k] as the parts are, and
-    {!apply} sums the devices' partial products. {!apply}'s product of an
-    [Mxfp4] or [Q8_0] weight read where it lies reads the bytes where they
-    lie, at either cut, each device decoding its own blocks as it sums
-    them. Any other cut along [k] splits a block, which is read whole, so
-    {!dequant} and {!apply} raise as the operation reading it does, naming
-    the {!Nx.place} that puts it whole on each device. {!apply} of an
-    [Mxfp4] weight read where it lies names its scales: with them whole on
-    each device, and the weight rebuilt by {!mxfp4}, it reads the codes
-    where they lie where [t] divides [k / 2], their bytes, each device
-    holding every scale, and raises on the codes otherwise. Padding [k] and
-    the input with zero blocks to a multiple of [t] blocks keeps each block
-    on one device instead. {!apply_experts} reads [k] whole.
+    {!apply} and {!apply_experts} sum the devices' partial products. Their
+    product of an [Mxfp4] or [Q8_0] weight read where it lies reads the
+    bytes where they lie, at either cut, each device decoding its own blocks
+    as it sums them. Any other cut along [k] splits a block, which is read
+    whole, so {!dequant}, {!apply} and {!apply_experts} raise as the
+    operation reading it does, naming the {!Nx.place} that puts it whole on
+    each device. {!apply} and {!apply_experts} of an [Mxfp4] weight read
+    where it lies name its scales: with them whole on each device, and the
+    weight rebuilt by {!mxfp4}, they read the codes where they lie where [t]
+    divides [k / 2], their bytes, each device holding every scale, and raise
+    on the codes otherwise. Of one block, such a weight decodes so too, at
+    any dtype: {!dequant}'s result is cut along [k] as its codes are.
+    Padding [k] and the input with zero blocks to a multiple of [t] blocks
+    keeps each block on one device instead.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a
@@ -237,12 +239,14 @@ val apply_experts :
     along its experts, every expert is decoded, each device its own. A row's
     bits are a function of the shapes, the placements, its row and its
     expert: they do not depend on the other positions' experts, and may
-    differ from {!apply}'s. The sum reads [k] of each matrix whole, and
-    routing the positions sorts [ids], which reads them whole, and gathers
-    [x]'s rows where they lie ({!Nx.take}): a weight cut along [k], and
-    [ids] cut across devices, raise as the operation reading them does
-    ({!Nx.section-routing}). The sum needs kernels that compute a
-    segmented contraction, block-scaled for [Mxfp4], as nx.cpu's do.
+    differ from {!apply}'s. Cut along [k], each device sums its window of
+    [k] for every row and the devices' sums close by partials, as
+    {!Nx.contract}'s do, where the result would lie with [k] whole. Routing
+    the positions sorts [ids], which reads them whole, and gathers [x]'s
+    rows where they lie ({!Nx.take}): [ids] cut across devices raise as the
+    operation reading them does ({!Nx.section-routing}). The sum needs
+    kernels that compute a segmented contraction, block-scaled for [Mxfp4],
+    as nx.cpu's do.
 
     Raises [Invalid_argument] if the sum lies on a set whose kernels decline
     it, if [w] is not 3-d, if [x] does not have one axis more than [ids], if

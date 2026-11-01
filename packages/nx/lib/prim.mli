@@ -188,10 +188,10 @@ val rule : 'r prim -> Route.rule
     of [x] is reduced, each device gathering from its window of it, where
     [x] has fewer than {!Nx_array.Layout.max_rank} axes, a [complex128] one
     fewer, since its partials stack along a new axis; it is read whole
-    otherwise. Its positions are read at the results' windows. A segmented
-    contraction is read whole along its contracting pairs. An assembly's
-    axis becomes the result's where every piece's region covers all of it
-    in order, and is read whole elsewhere. *)
+    otherwise. Its positions are read at the results' windows. A
+    [Contracting] contraction is read whole along its contracting pairs. An
+    assembly's axis becomes the result's where every piece's region covers
+    all of it in order, and is read whole elsewhere. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over

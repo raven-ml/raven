@@ -578,7 +578,8 @@ let check_experts ws ids xs =
    [n], the result's free columns, is computed by each device for its columns
    over every row, in the whole's order. A weight cut along its experts is
    computed by each device for the rows of its own experts, [+0] in the
-   others, and the devices' sums close by partials. *)
+   others, and one cut along [k] by each device for every row over its
+   window of [k]: the devices' sums close by partials. *)
 
 (* The positions sorted by id, the permutation that sorts them, their count
    and the ids' shape. *)

@@ -2334,7 +2334,9 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     operand whole on every device is read at the other's cut; summed axes
     cut otherwise raise ({!section-routing}). [Nx_quant.apply_experts],
     which multiplies each row by its expert's matrix, computes so too with
-    the experts cut across devices: each device sums its own experts' rows.
+    the experts or the inputs cut across devices: each device sums its own
+    experts' rows, every row over its window of the inputs, or, over a mesh
+    that cuts both, its own experts' rows over its window of the inputs.
     Integer contractions keep the bits they have on one device. A float or
     complex one may differ from it within the bound {!contract} states, and
     is the same on every run for a given placement and set of devices:

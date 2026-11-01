@@ -2274,7 +2274,7 @@ module Scaled = struct
         test "b's scale cut along k as its weight gives one device's bits"
           (fun () ->
             along ~scales:true (module S2) (mx ~m:2 ~k:8256 ~n:2 ~per:1 ()));
-        (* A segmented contraction reads its contracting pairs whole. *)
+        (* [Contracting] reads its contracting pairs whole. *)
         test "groups of a cut contracted axis raise" (fun () ->
             let segs = Contracting [| 0L; 40L; 96L |] in
             raises
@@ -2283,15 +2283,15 @@ module Scaled = struct
                   on [m0; m1]; Nx.place (Placement.on s) x")
               (fun () ->
                 along (module S2) (mx ~segs ~g:2 ~m:2 ~k:96 ~n:2 ~per:1 ())));
-        test "rows by groups over a cut contracted axis raise" (fun () ->
+        test "rows by groups over a cut contracted axis give one device's bits"
+          (fun () ->
             let segs = Rows [| 0L; 1L; 4L |] in
-            raises
-              (Invalid_argument
-                 "t: operand 0 lies at split ~axis:1 [m0; m1] and is read at \
-                  on [m0; m1]; Nx.place (Placement.on s) x")
-              (fun () ->
-                along ~b:2 (module S2)
-                  (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ())));
+            along ~b:2 (module S2) (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ()));
+        test
+          "rows by groups over a cut inside the scale's blocks give one \
+           device's bits" (fun () ->
+            let segs = Rows [| 0L; 1L; 4L |] in
+            along ~b:2 (module S4) (mx ~segs ~g:2 ~m:4 ~k:96 ~n:2 ~per:2 ()));
       ]
 
   (* Rows by groups cut along b's groups *)

@@ -1047,12 +1047,13 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
   let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
   let resw j = Devices.window ~by p shape j in
   let here j = Devices.one set ks.(j) in
-  (* The folded axes: [a]'s of the pairs, or [b]'s of [Rows]' groups, the
-     factor after the pairs, which are then read whole. *)
+  (* The folded axes: [a]'s of the pairs, or [b]'s of the pairs then of
+     [Rows]' groups, the factor after the pairs. *)
   let operand, folded, of_folded =
     match (segments : d Value.index Nx_kernel.segments option) with
     | None -> (0, Array.map fst pairs, Prim.shape a)
-    | Some (Rows { b_axis; _ }) -> (1, [| b_axis |], Prim.shape b)
+    | Some (Rows { b_axis; _ }) ->
+        (1, Array.append (Array.map snd pairs) [| b_axis |], Prim.shape b)
     | Some (Contracting _) ->
         invalid_arg "Partial.contract: groups of a contracting pair"
   in
@@ -1060,15 +1061,6 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
   let cl =
     closing ~by route ~operand ~axes:(Array.to_list folded)
       ~extent:(Array.get of_folded) shape
-  in
-  (* Device [j]'s tile: its ranges of the folded factors, the pairs' in
-     order, then [Rows]' groups', the pairs then whole. *)
-  let tile j =
-    match segments with
-    | None -> tiles.(j)
-    | Some _ ->
-        let whole (x, _) = Route.full (Prim.dim a x) in
-        Array.append (Array.map whole pairs) tiles.(j)
   in
   (* Operand [i] on device [j], its factors' ranges [r]. *)
   let read (type w q) j i r (x : (w, q, d) Value.t) =
@@ -1110,8 +1102,9 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
   let runs =
     Array.append
       (Array.map (fun (i, k) -> run a i a_scale @ run b k b_scale) pairs)
-      (Array.map (fun x -> run b x b_scale)
-         (match segments with Some _ -> folded | None -> [||]))
+      (match segments with
+      | Some (Rows { b_axis; _ }) -> [| run b b_axis b_scale |]
+      | Some (Contracting _) | None -> [||])
   in
   (* The groups of a piece [r] on device [j]: [Rows] bounded by the fences
      of its range of them. *)
@@ -1152,7 +1145,7 @@ let contract (type v s d a b c e) eng ~by (route : unit Route.t) rule ~batch
      [Rows]' groups gives no products to a row of another group, which so
      keeps the sum before it, bit for bit. *)
   let partial j =
-    match tile_pieces runs (tile j) with
+    match tile_pieces runs tiles.(j) with
     | r :: rs ->
         let from s r = piece j (Some s) r in
         List.fold_left from (piece j None r) rs

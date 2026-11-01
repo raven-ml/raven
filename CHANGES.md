@@ -3460,6 +3460,12 @@ thread.
 
 ### Nx
 
+- `Nx_quant.apply_experts` computes with its weight cut along `k`, where it
+  raised: each device sums its window of every row and the sums close by
+  partials, as `Nx.contract`'s do. The cut keeps whole blocks where the devices
+  divide them; an MXFP4 weight read in place, by a float32, bfloat16 or float16
+  input, may instead cut its codes where the devices divide `k / 2`, its scales
+  whole on each device.
 - **Breaking:** `Nx.reduce_ranges` with `Add`, `Max` or `Min` raises on rows
   cut across devices, naming the `Nx.place` that keeps the other cuts; eight
   rows in two tiles used to compute. `Set` computes where the rows lie.

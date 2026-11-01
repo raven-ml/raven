@@ -212,11 +212,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
-- a reshape that factors or merges a cut axis gathers it whole onto every
-  device where the tiles don't divide both extents: gpt-oss's 2880 inputs,
-  90 MXFP4 blocks, over 4 or 8 devices. A halo exchange, as GSPMD's
-  reshape realigns an uneven cut (arXiv 2105.04663 §4.1), would move only
-  the rows across each window's boundary
 - eager GPU kernel libraries, nx.cuda, nx.metal and nx.amd, onto nx's
   current kernel interface; until then a GPU set computes under
   `Rune.jit` only. Their last code is 64478fedf

@@ -208,6 +208,111 @@ let matmul set c =
       | e, j -> equal (outcome_t bits_t) (omap bits e) (omap bits j))
   | _ -> assume false
 
+(* An expert product of an MXFP4 weight cut along [k], its scales cut with
+   its codes where the devices divide its blocks and whole on each device
+   otherwise, beside an input whole or cut alike: within twice the bound of
+   each, and the same bits on a second compiled call. *)
+
+type experts = {
+  devices : int;
+  e : int;
+  outs : int;
+  blocks : int;
+  ids : int array;
+  x_cut : bool;
+}
+
+let pp_experts ppf c =
+  Format.fprintf ppf "%d devices, %d experts of %d by %d blocks, ids [%s]%s"
+    c.devices c.e c.outs c.blocks
+    (String.concat "; " (Array.to_list (Array.map string_of_int c.ids)))
+    (if c.x_cut then ", x cut alike" else "")
+
+let experts_cases =
+  let open Gen in
+  (let* devices = int_range 2 4 in
+   let* e = int_range 1 4 and+ outs = int_range 1 3 in
+   (* Three devices divide the [16 b] bytes of codes only where they divide
+      the blocks. *)
+   let* blocks = if devices = 3 then constant 3 else int_range 1 4 in
+   let* ids = array ~size:(int_range 0 5) (int_range (-1) e) in
+   let+ x_cut = bool in
+   { devices; e; outs; blocks; ids; x_cut })
+  |> with_pp pp_experts
+
+(* Three devices over three blocks, an input cut alike and an id below the
+   range; scales whole over four devices with no position; scales cut over
+   two. *)
+let expert_examples =
+  [
+    {
+      devices = 3;
+      e = 2;
+      outs = 2;
+      blocks = 3;
+      ids = [| 1; -1; 0 |];
+      x_cut = true;
+    };
+    { devices = 4; e = 3; outs = 1; blocks = 1; ids = [||]; x_cut = false };
+    {
+      devices = 2;
+      e = 2;
+      outs = 3;
+      blocks = 2;
+      ids = [| 0; 2; 1 |];
+      x_cut = false;
+    };
+  ]
+
+let expert_product set c =
+  let k = 32 * c.blocks and p = Array.length c.ids in
+  cover "scales whole" (c.blocks mod c.devices <> 0);
+  cover "scales cut with the codes" (c.blocks mod c.devices = 0);
+  cover "x cut alike" c.x_cut;
+  cover "three devices" (c.devices = 3);
+  cover "no position" (p = 0);
+  let shape = [| c.e; c.outs; k / 2 |] in
+  let bytes = Array.fold_left ( * ) 1 shape in
+  let codes =
+    Nx.create Nx.uint8 shape (Array.init bytes (fun i -> i * 37 mod 256))
+  in
+  let scales =
+    Nx.init Nx.uint8 [| c.e; c.outs; c.blocks |] (fun i ->
+        118 + (Array.fold_left ( + ) 0 i mod 19))
+  in
+  let ids = Nx.create Nx.int64 [| p |] (Array.map Int64.of_int c.ids) in
+  let x = value [| p; k |] in
+  let cut = at set (Split 2) in
+  let scales_at = if c.blocks mod c.devices = 0 then cut else at set On in
+  let x_at = at set (if c.x_cut then Split 1 else On) in
+  let args =
+    ( (Nx.place cut codes, Nx.place scales_at scales),
+      (Nx.place (at set On) ids, Nx.place x_at x) )
+  in
+  let f (codes, scales) (ids, x) =
+    Nx_quant.apply_experts ~ids (Nx_quant.mxfp4 ~scales codes) x
+  in
+  let step =
+    Rune.jit
+      T.(pair tensor tensor @-> pair tensor tensor @-> returns tensor)
+      f
+  in
+  let eager = f (fst args) (snd args) in
+  let before = Rune.evaluations () in
+  let jit = step (fst args) (snd args) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  (* Each row's magnitudes: the codes without their sign bits by [|x|],
+     summed at float64, whose values are exact. *)
+  let magnitudes = Nx.bitwise_and codes (Nx.scalar_like codes 0x77) in
+  let mass =
+    Nx_quant.apply_experts ~ids
+      (Nx_quant.mxfp4 ~scales magnitudes)
+      (Nx.abs (Nx.cast Nx.float64 x))
+  in
+  within ~bound:(Nx.mul_s mass (2. *. gamma (k + 1))) eager jit;
+  equal ~msg:"a second compiled call" bits_t (bits jit)
+    (bits (step (fst args) (snd args)))
+
 (* A broadcast of a vector against a batch cut across the devices, and its sum,
    as a bias and a loss read them. *)
 let biased set c =
@@ -400,6 +505,52 @@ let iterated set c =
     (x, Nx.add x y)
   in
   same_pair (outcome (fun () -> f x x)) (jit_pair ~compiles:true f x x)
+
+(* The gradient in its input of an expert product's sum, its MXFP4 weight
+   cut along [n]: the transposed product contracts each row with its
+   expert's matrix over [n], which each device sums over its window and the
+   devices' sums close by partials. Eager and compiled lie where the input
+   does, each within twice the bound of the sum over [n] of the expert's
+   decoded columns. *)
+let expert_grad set =
+  let e = 3 and n = 6 and k = 64 and p = 5 in
+  let codes =
+    Nx.create Nx.uint8 [| e; n; k / 2 |]
+      (Array.init (e * n * k / 2) (fun i -> i * 37 mod 256))
+  in
+  let scales =
+    Nx.init Nx.uint8 [| e; n; k / 32 |] (fun i ->
+        118 + (Array.fold_left ( + ) 0 i mod 19))
+  in
+  let ids = Nx.create Nx.int64 [| p |] [| 2L; 0L; -1L; 2L; 1L |] in
+  let x = value [| p; k |] in
+  (* Each position's expert's columns summed over [n], at float64: zeros for
+     an id out of range. *)
+  let column t =
+    let summed = Nx.sum ~axes:[ 1 ] t in
+    let named = Nx.maximum ids (Nx.scalar_like ids 0L) in
+    let picked = Nx.take ~axis:0 named summed in
+    let inside =
+      Nx.logical_and (Nx.greater_equal_s ids 0L)
+        (Nx.less_s ids (Int64.of_int e))
+    in
+    Nx.where (Nx.unsqueeze ~axes:[ 1 ] inside) picked (Nx.zeros_like picked)
+  in
+  let decoded = Nx_quant.dequant Nx.float64 (Nx_quant.mxfp4 ~scales codes) in
+  let cut = at set (Split 1) and on = at set On in
+  let w = Nx_quant.mxfp4 ~scales:(Nx.place cut scales) (Nx.place cut codes) in
+  let g ids x =
+    Rune.grad' (fun x -> Nx.sum (Nx_quant.apply_experts ~ids w x)) x
+  in
+  let ids' = Nx.place on ids and x' = Nx.place on x in
+  let eager = g ids' x' in
+  let exact = column decoded and mass = column (Nx.abs decoded) in
+  let bound = Nx.mul_s mass (2. *. gamma (n + 1)) in
+  within ~bound exact (Nx.cast Nx.float64 (Nx.place Nx.Host.on eager));
+  equal ~msg:"placement" (placement ()) on (Nx.placement eager);
+  match compiled g ids' x' with
+  | Value jit -> within ~bound:(Nx.mul_s bound 2.) eager jit
+  | Raised m -> fail m
 
 (* Replicas
 
@@ -645,6 +796,9 @@ let () =
                (fun c -> over c.n { law = (fun set -> folds set c) });
              prop ~count:20 ~examples "a matrix product" cases (fun c ->
                  over c.n { law = (fun set -> matmul set c) });
+             prop ~count:10 ~examples:expert_examples
+               "an expert product cut along its inputs" experts_cases (fun c ->
+                 over c.devices { law = (fun set -> expert_product set c) });
              prop ~count:20 ~examples "a vector broadcast to a cut batch" cases
                (fun c -> over c.n { law = (fun set -> biased set c) });
            ];
@@ -680,6 +834,12 @@ let () =
                  over 3 { law = local_scan });
              test "an iterate reads its stop on the program's device"
                (fun () -> over 2 { law = stop_home });
+           ];
+         group "an expert product's gradient in its input"
+           [
+             test "its weight cut along n over two devices" (fun () ->
+                 over 2 { law = expert_grad });
+             test "over three, uneven" (fun () -> over 3 { law = expert_grad });
            ];
          group "replicas"
            [
