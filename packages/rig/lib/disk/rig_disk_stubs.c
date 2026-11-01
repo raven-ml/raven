@@ -539,12 +539,15 @@ value caml_rig_disk_remove(value v_path) {
 
 /* [sync h] returns once the bytes written to the file [h] are ordered before
    every later change to the file system, across a crash. Releases the
-   runtime. */
+   runtime without running a pending signal's handler: the caller marks the
+   file synced just before, and on Windows, where no mask blocks a Ctrl-C, a
+   handler that raised here would leave the mark over writes no sync made
+   durable, whose failure a later barrier would then never report. */
 value caml_rig_disk_sync(value v_handle) {
   intnat h = Long_val(v_handle);
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   int code = sync_file(h);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   if (code != 0) fail(code, "fsync", Nothing);
   return Val_unit;
 }
@@ -630,14 +633,15 @@ value caml_rig_disk_advise(value v_handle, value v_pages, value v_pos,
 
 /* [msync pages] returns once the writes through the shared mapping [pages]
    are in its file, as the file's sync then makes durable. Releases the
-   runtime, with [pages] rooted so the mapping outlives the call. */
+   runtime, with [pages] rooted so the mapping outlives the call, without
+   running a pending signal's handler, as [sync] does. */
 value caml_rig_disk_msync(value v_pages) {
   CAMLparam1(v_pages);
   void *addr = Caml_ba_data_val(v_pages);
   uintnat n = caml_ba_byte_size(Caml_ba_array_val(v_pages));
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   int code = sync_mapping(addr, n);
-  caml_acquire_runtime_system();
+  caml_leave_blocking_section();
   if (code != 0) fail(code, "msync", Nothing);
   CAMLreturn(Val_unit);
 }
