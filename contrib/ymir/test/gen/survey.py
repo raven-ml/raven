@@ -564,6 +564,10 @@ def values_lines(name, path):
         for i, hdu in enumerate(hdul):
             h = hdu.header
             if "CHECKSUM" in h:
+                # astropy's checksum=True only warns on a mismatch; the
+                # generator's own sums of the cut HDUs must pass its check.
+                if hdu.verify_checksum() != 1 or "DATASUM" in h and hdu.verify_datasum() != 1:
+                    sys.exit(f"{name}: HDU {i} fails astropy's checksum")
                 lines.append(f"{name} {i} verify")
             if isinstance(hdu, fits.GroupsHDU):
                 continue
