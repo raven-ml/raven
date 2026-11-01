@@ -472,7 +472,6 @@ let not_ported =
       "IMAGE";
       "JIT";
       "WINO";
-      "TRACEMETA";
       "TRAINING";
       "LRU";
       "FUSE_OPTIM";
