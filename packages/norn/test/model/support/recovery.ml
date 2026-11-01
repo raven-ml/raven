@@ -31,7 +31,7 @@ type verdict = Flagged of string | Compared of comparison list
 (* A cell: a sampler's run on one posterior, from a key. [comparisons] counts
    the comparisons it makes when it recovers, and [quantile p] is the multiple
    of a comparison's standard error that a two-sided error lies within with
-   probability [2p - 1]. Its run is compiled once, whatever the key. *)
+   probability [2p - 1]. *)
 type cell = {
   name : string;
   sampler : string;
@@ -84,8 +84,6 @@ let t_quantile ~df p =
       else bisect lo mid (n - 1)
   in
   bisect 0. (bracket 1.) 200
-
-let stats_ptree = Norn.Draws.ptree (Norn.Stats.ptree Nx.float64)
 
 (* A kernel: its chains, the superchains of its nested R-hat, and a run from a
    start, with the Hamiltonian transitions' statistics. *)
@@ -151,20 +149,15 @@ let ensemble ~ensembles ~draws =
         (d, None));
   }
 
+(* A kernel's run on a model, eagerly. A cell runs from one key, and compiling
+   its run would cost more than running it: NUTS on eight_schools compiles 464
+   kernels in 27 CPU seconds from a cold cache, and runs in 8 eagerly. *)
 let fit (type p y) kernel (m : (p, y, Nx.float64_elt, Nx.host) M.t)
-    (latent : (p, 'd) Nx.Ptree.t) (y : y) =
+    (latent : (p, 'd) Nx.Ptree.t) (y : y) k =
   let u = M.coords m in
   let lp = M.log_density m y in
-  let run =
-    Rune.jit
-      Nx.Ptree.(
-        Nx.Rng.ptree
-        @-> returns (pair (Norn.Draws.ptree u) (option stats_ptree)))
-      (fun k -> kernel.run u lp k (M.init m y ~chains:kernel.chains k))
-  in
-  fun k ->
-    let d, stats = run k in
-    (Norn.Draws.map u latent (M.constrain m) d, stats)
+  let d, stats = kernel.run u lp k (M.init m y ~chains:kernel.chains k) in
+  (Norn.Draws.map u latent (M.constrain m) d, stats)
 
 (* [mcse_mean x] is the Monte Carlo standard error of the mean of draws [x] of
    one element, chains by rows. *)
