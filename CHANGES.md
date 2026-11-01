@@ -3410,7 +3410,9 @@ thread.
 
 - `Nx_quant.apply` reads a Q8_0 weight where it lies at float32,
   bfloat16 and float16 inputs, as it reads MXFP4: it decoded the whole
-  weight at float32 on every call.
+  weight at float32 on every call. `Nx_quant.quantize_q8_0` stores a float
+  weight as Q8_0, its bytes ggml's `quantize_row_q8_0_ref`'s outside a
+  block holding a NaN, which makes its block's scale NaN.
 - nx.cpu reads a scaled contraction operand whose axes make several runs
   where it lies, scaling each run of a block once: it copied the operand
   whole, scaled, on every call.

@@ -488,6 +488,38 @@ let apply w x =
         Nx.cast dt
           (Nx.matmul (Nx.cast Nx.float32 x) (Nx.matrix_transpose (values w)))
 
+(* Quantising. Q8_0 as ggml's quantize_row_q8_0_ref stores a block of 32
+   float32 values [v]: [d = amax / 127] for the block's greatest magnitude
+   [amax], stored at float16, and quants [round (v * id)], halves away from
+   zero, for [id = 1 / d] at float32, [0] where [d] is. A product that is
+   not finite, where [id] is infinite or [v] or [d] is not finite, has the
+   quant [0], the low byte x86's conversion gives it in ggml. Nx.max keeps
+   a NaN, so a NaN makes its block's scale NaN. *)
+let quantize_q8_0 x =
+  let s = Nx.shape x in
+  let r = Array.length s in
+  if r < 2 || s.(r - 1) mod qk8_0 <> 0 then
+    invalid_arg
+      (strf
+         "Nx_quant.quantize_q8_0: x must have shape [...; n; k] with k a \
+          multiple of 32, got %s"
+         (pp_shape s));
+  let g = Array.copy s in
+  g.(r - 1) <- s.(r - 1) / qk8_0;
+  let v = Nx.reshape (Array.append g [| qk8_0 |]) (Nx.cast Nx.float32 x) in
+  let d = Nx.div_s (Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v)) 127. in
+  let id = Nx.where (Nx.equal_s d 0.) d (Nx.recip d) in
+  let q = Nx.round (Nx.mul v id) in
+  let q = Nx.where (Nx.isfinite q) q (Nx.scalar_like q 0.) in
+  let q = Nx.bitcast Nx.uint8 (Nx.cast Nx.int8 q) in
+  let d =
+    Nx.reshape
+      (Array.append g [| half_bytes |])
+      (Nx.bitcast Nx.uint8 (Nx.cast Nx.float16 d))
+  in
+  let blocks = Nx.concatenate ~axis:(-1) [ d; q ] in
+  Q8_0 { blocks = rows g ~values:q8_0_bytes blocks }
+
 (* [map f w] is [w] with [f] of each part. *)
 let map f = function
   | Mxfp4 { codes; scales } -> Mxfp4 { codes = f codes; scales = f scales }

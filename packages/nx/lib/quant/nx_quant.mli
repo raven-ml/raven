@@ -54,7 +54,7 @@
 (** {1:weights Weights} *)
 
 (** The type for quantised weights on the set ['d]. Match on a weight to read
-    its parts; only the constructors and {!walk} build one.
+    its parts; only the constructors, {!quantize_q8_0} and {!walk} build one.
 
     MXFP4 (OCP Microscaling Formats, 2023) decodes a value as its e2m1 code, a
     sign bit over a magnitude among 0, 0.5, 1, 1.5, 2, 3, 4 and 6, times
@@ -135,6 +135,31 @@ val q6_k : 'd Nx.uint8_t -> 'd t
 
     Raises [Invalid_argument] if [blocks] does not have shape
     [[| …; n; k / 256 * 210 |]]. *)
+
+val quantize_q8_0 : (float, 'b, 'd) Nx.t -> 'd t
+(** [quantize_q8_0 x] is the float weight [x], [[| …; n; k |]], stored as
+    Q8_0, [x] read at float32. A block of 32 values [v] has
+    [d = amax / 127] for its greatest magnitude [amax], stored at float16,
+    rounded to nearest, and the quants [round (v * (1 / d))], halves away
+    from zero, the products at float32, [0] where [d] is [0].
+
+    Outside a block holding a NaN, its bytes are those of ggml's
+    [quantize_row_q8_0_ref] (ggml-quants.c) wherever ggml's conversion of a
+    product to int8 is defined. A product that is not finite has the quant
+    [0], as ggml's conversion gives on x86-64:
+    - a block whose [1 / d] is infinite, [amax] below about [127 * 2^-128],
+      is zero bytes, which decode to [+0.];
+    - a block holding an infinity has the scale [+inf] and the quants [0];
+    - a block holding a NaN has a NaN scale and the quants [0]: the NaN
+      reaches its block's every value, where ggml leaves it out of [amax]
+      unless it is the block's last value.
+
+    A block holding an infinity or a NaN, or whose [d] rounds past
+    float16's largest, decodes to no value of its own: NaN, or an infinity
+    times its quant.
+
+    Raises [Invalid_argument] if [x] does not have shape [[| …; n; k |]] with
+    [k] a multiple of 32. *)
 
 val shape : 'd t -> int array
 (** [shape w] is [w]'s logical shape, [[| …; n; k |]]. *)

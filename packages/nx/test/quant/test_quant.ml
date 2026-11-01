@@ -684,6 +684,117 @@ let ggml =
       let got = if f = Mxfp4_blocks then Nx.add_s got 0. else got in
       equal (array float_exact) expected (Nx.to_array got))
 
+(* Quantising. golden/q8_0.floats holds a float32 tensor of 4 rows of 512
+   values, and golden/q8_0.quantized the Q8_0 bytes gguf-py quantises it to;
+   gen/generate.py writes them. *)
+
+let blocks_of (w : _ Nx_quant.t) =
+  match w with
+  | Q8_0 { blocks } ->
+      Array.map Int.of_float (Nx.to_array (Nx.cast Nx.float64 blocks))
+  | _ -> fail "a weight of another format"
+
+(* A weight's float32 values, a NaN of any sign or payload as "nan". *)
+let decoded w =
+  Array.to_list
+    (Array.map
+       (fun v ->
+         if Float.is_nan v then "nan"
+         else if v = Float.infinity then "inf"
+         else if v = Float.neg_infinity then "-inf"
+         else Printf.sprintf "%h" v)
+       (Nx.to_array (Nx.cast Nx.float64 (Nx_quant.dequant Nx.float32 w))))
+
+let quantising =
+  let read name = In_channel.with_open_bin name In_channel.input_all in
+  let golden_floats () =
+    let v = read "golden/q8_0.floats" in
+    Nx.create Nx.float32 [| 4; 512 |]
+      (Array.init
+         (String.length v / 4)
+         (fun i -> Int32.float_of_bits (String.get_int32_le v (4 * i))))
+  in
+  let golden_blocks () =
+    let b = read "golden/q8_0.quantized" in
+    Array.init (String.length b) (fun i -> Char.code b.[i])
+  in
+  group "quantising"
+    [
+      test "Q8_0's bytes are ggml's" (fun () ->
+          equal (array int) (golden_blocks ())
+            (blocks_of (Nx_quant.quantize_q8_0 (golden_floats ()))));
+      (* A greatest magnitude of 127 makes [d] 1, float16 0x3C00, and each
+         quant its value rounded, halves away from zero. *)
+      test "a block of halves rounds them away from zero" (fun () ->
+          let v = repeat 4 [ 127.; 2.5; -2.5; 0.5; -0.5; -127.; 1.5; -1.5 ] in
+          let q = [ 127; 3; -3; 1; -1; -127; 2; -2 ] in
+          let x = Nx.create Nx.float32 [| 1; 32 |] (Array.of_list v) in
+          let quants = List.map (fun q -> q land 255) (repeat 4 q) in
+          let bytes = le16 0x3C00 @ quants in
+          equal (array int) (Array.of_list bytes)
+            (blocks_of (Nx_quant.quantize_q8_0 x)));
+      test "a block of zeros is zero bytes" (fun () ->
+          let zeros = Array.of_list (repeat 16 [ -0.; 0. ]) in
+          let x = Nx.create Nx.float32 [| 1; 32 |] zeros in
+          equal (array int) (Array.make 34 0)
+            (blocks_of (Nx_quant.quantize_q8_0 x)));
+      test "a bfloat16 weight is read at float32" (fun () ->
+          let x = Nx.cast Nx.bfloat16 (golden_floats ()) in
+          equal (array int)
+            (blocks_of (Nx_quant.quantize_q8_0 (Nx.cast Nx.float32 x)))
+            (blocks_of (Nx_quant.quantize_q8_0 x)));
+      (* [1 / d] is infinite: x86's conversion gives each quant 0. *)
+      test "a block below 127 * 2^-128 is zero bytes" (fun () ->
+          let tiny = Float.ldexp 1. (-131) in
+          let v = repeat 16 [ tiny; -.tiny ] in
+          let x = Nx.create Nx.float32 [| 1; 32 |] (Array.of_list v) in
+          let w = Nx_quant.quantize_q8_0 x in
+          equal (array int) (Array.make 34 0) (blocks_of w);
+          equal (array int64) (Array.make 32 0L)
+            (bits (Nx_quant.dequant Nx.float32 w)));
+      test "a block holding an infinity has the scale +inf and quants 0"
+        (fun () ->
+          let v = Float.infinity :: repeat 31 [ 1. ] in
+          let x = Nx.create Nx.float32 [| 1; 32 |] (Array.of_list v) in
+          let w = Nx_quant.quantize_q8_0 x in
+          equal (array int)
+            (Array.of_list (le16 0x7C00 @ repeat 32 [ 0 ]))
+            (blocks_of w);
+          equal (list string) (repeat 32 [ "nan" ]) (decoded w));
+      test "a NaN not last makes its block's scale NaN and quants 0"
+        (fun () ->
+          let v = Float.nan :: repeat 31 [ 1. ] in
+          let x = Nx.create Nx.float32 [| 1; 32 |] (Array.of_list v) in
+          let w = Nx_quant.quantize_q8_0 x in
+          let b = blocks_of w in
+          let d = b.(0) lor (b.(1) lsl 8) in
+          let scale =
+            if d land 0x7C00 <> 0x7C00 then Printf.sprintf "finite 0x%04x" d
+            else if d land 0x3FF = 0 then "inf"
+            else "nan"
+          in
+          equal ~msg:"the scale" string "nan" scale;
+          equal ~msg:"the quants" (array int) (Array.make 32 0)
+            (Array.sub b 2 32);
+          equal (list string) (repeat 32 [ "nan" ]) (decoded w));
+      (* [amax] is 127 * 2^17: [d] is 2^17, past float16's largest, and its
+         quants are rounded from [v * 2^-17]. *)
+      test "a block past float16's range has the scale +inf" (fun () ->
+          let a = 127. *. Float.ldexp 1. 17 in
+          let v = repeat 8 [ a; -.a /. 2.; 0.; Float.ldexp 1. 17 ] in
+          let x = Nx.create Nx.float32 [| 1; 32 |] (Array.of_list v) in
+          let w = Nx_quant.quantize_q8_0 x in
+          equal (array int)
+            (Array.of_list (le16 0x7C00 @ repeat 8 [ 127; 256 - 64; 0; 1 ]))
+            (blocks_of w);
+          equal (list string)
+            (repeat 8 [ "inf"; "-inf"; "nan"; "inf" ])
+            (decoded w));
+      test "an empty weight has no blocks" (fun () ->
+          let w = Nx_quant.quantize_q8_0 (Nx.zeros Nx.float32 [| 2; 0; 64 |]) in
+          equal (array int) [| 2; 0; 64 |] (Nx_quant.shape w));
+    ]
+
 (* Takes *)
 
 (* A weight, an axis other than its last, counted from either end, and positions
@@ -929,6 +1040,12 @@ let errors =
       ( "experts' input whose positions do not broadcast to the ids'",
         "broadcast",
         experts w [| 3 |] [| 2; 64 |] );
+      ( "quantize a value of one axis",
+        "[...; n; k]",
+        fun () -> ignore (Nx_quant.quantize_q8_0 (x [| 32 |])) );
+      ( "quantize k not a multiple of 32",
+        "multiple of 32",
+        fun () -> ignore (Nx_quant.quantize_q8_0 (x [| 2; 48 |])) );
       ("take along the last axis", "last axis", take 2);
       ("take along the last axis, counted from the end", "last axis", take (-1));
       ("take along an axis past the weight's", "out of bounds", take 3);
@@ -1597,6 +1714,19 @@ let placements =
                 m3] and is read at on [m0; m1; m2; m3]; Nx.place \
                 (Placement.on s) z")
             (fun () -> Nx_quant.apply w x));
+      cases "a weight quantised where it lies has the host's bytes"
+        ~id:(fun (n, _) -> n)
+        [
+          ("cut along n", Mem.split ~axis:0);
+          ("cut along k at its blocks", Mem.split ~axis:1);
+          ("whole on each device", Mem.on);
+        ]
+        (fun (_, p) ->
+          let x = random_floats [| 8; 128 |] in
+          let w = Nx_quant.quantize_q8_0 (Nx.place p x) in
+          equal (array int)
+            (blocks_of (Nx_quant.quantize_q8_0 x))
+            (blocks_of w));
       prop
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and raises otherwise"
@@ -1700,6 +1830,7 @@ let () =
        [
          known;
          ggml;
+         quantising;
          values_and_products;
          file_layouts;
          errors;

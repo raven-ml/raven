@@ -14,6 +14,12 @@ subnormal scales, and blocks of random bytes under finite scales. MXFP4's
 blocks hold scale bytes 0, 1, 127, 253 and 254 and random ones, never 255,
 which ggml reads as 2^128 and the OCP format as NaN.
 
+golden/q8_0.floats holds a float32 tensor of shape (4, 512), little-endian,
+and golden/q8_0.quantized the Q8_0 bytes gguf-py quantises it to. Its blocks
+hold zeros, signed zeros, halves that round away from zero, a scale below
+float16's normal range and one at its largest, and random values of
+magnitudes from 2^-30 to 2^20.
+
 With --check nothing is written, and the run fails if a file would change.
 
 Usage:
@@ -26,7 +32,7 @@ import sys
 
 import numpy as np
 from gguf import GGMLQuantizationType
-from gguf.quants import dequantize
+from gguf.quants import dequantize, quantize
 
 ROWS, COLS = 4, 512
 OUT = os.path.join(os.path.dirname(__file__), "..", "golden")
@@ -75,6 +81,26 @@ def mxfp4_blocks():
     return b.reshape(ROWS, -1)
 
 
+def floats():
+    """Blocks of 32 float32 values for Q8_0's quantiser: the special ones
+    first, then random ones of a random magnitude each."""
+    n = ROWS * COLS // 32
+    special = [
+        np.zeros(32),
+        np.array([-0.0, 0.0] * 16),
+        # amax 127 makes d 1: quants of halves round away from zero.
+        np.array([127.0, 2.5, -2.5, 0.5, -0.5, -127.0, 1.5, -1.5] * 4),
+        # A scale below float16's normal range, and one at its largest.
+        rng.uniform(-1.0, 1.0, 32) * 2.0**-20,
+        np.array([65504.0 * 127.0] + list(rng.uniform(-1.0, 1.0, 31) * 1e6)),
+    ]
+    out = special + [
+        rng.uniform(-1.0, 1.0, 32) * 2.0 ** float(rng.integers(-30, 21))
+        for _ in range(n - len(special))
+    ]
+    return np.concatenate(out).astype(np.float32).reshape(ROWS, COLS)
+
+
 def files(name, raw, qtype):
     values = dequantize(raw, qtype).astype("<f4")
     assert values.shape == (ROWS, COLS)
@@ -94,6 +120,11 @@ def main():
     for name, qtype, nbytes, fields in cases:
         out |= files(name, blocks(qtype, nbytes, fields), qtype)
     out |= files("mxfp4", mxfp4_blocks(), GGMLQuantizationType.MXFP4)
+    x = floats()
+    q = quantize(x, GGMLQuantizationType.Q8_0)
+    assert q.shape == (ROWS, COLS // 32 * 34)
+    out["q8_0.floats"] = x.astype("<f4").tobytes()
+    out["q8_0.quantized"] = q.astype(np.uint8).tobytes()
     stale = []
     for name, data in out.items():
         path = os.path.join(OUT, name)
