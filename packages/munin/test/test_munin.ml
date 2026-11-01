@@ -1358,7 +1358,12 @@ let test_store_concurrent_starts () =
     (List.map Run.id (Store.list_runs store ~status:`Finished ()))
 
 (* Domains of one process that start and finish runs in one store at once each
-   keep their changes too. The model is the number of runs finished. *)
+   keep their changes too. The model is the number of runs finished.
+
+   A program calls "start" only when it holds the command, which it does with
+   probability 3/4, and its prefix opens a store, which an empty prefix, one in
+   21, does not: about one program in four never starts a run. Over 12
+   programs, a run misses "start" with odds below one in a million. *)
 
 let open_store () =
   let root = Filename.temp_file "munin" "test" in
@@ -1406,7 +1411,7 @@ let store_tests =
     test "log tail bound" test_store_log_tail_bound;
     test "run without a manifest" test_store_index_no_manifest;
     test "runs started by processes at once" test_store_concurrent_starts;
-    stateful ~count:4 ~domains:2 "runs started by domains at once"
+    stateful ~count:12 ~domains:2 "runs started by domains at once"
       store_commands;
   ]
 
