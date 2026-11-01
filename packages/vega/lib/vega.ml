@@ -22,17 +22,22 @@ let updates (type a b d) (p : (a, b, d) Nx.t) =
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* [num x] is the shortest decimal that reads as [x], the same on every system.
+   [Printf]'s [%g] is the C library's, which under mingw-w64 writes three
+   exponent digits: 1e+006. *)
+let num x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
+
 let validate_positive ctx name value =
   if value <= 0.0 then
-    invalid_argf "%s: expected %s > 0.0, got %g" ctx name value
+    invalid_argf "%s: expected %s > 0.0, got %s" ctx name (num value)
 
 let validate_non_negative ctx name value =
   if value < 0.0 then
-    invalid_argf "%s: expected %s >= 0.0, got %g" ctx name value
+    invalid_argf "%s: expected %s >= 0.0, got %s" ctx name (num value)
 
 let validate_unit_interval ctx name value =
   if value < 0.0 || value >= 1.0 then
-    invalid_argf "%s: expected 0.0 <= %s < 1.0, got %g" ctx name value
+    invalid_argf "%s: expected 0.0 <= %s < 1.0, got %s" ctx name (num value)
 
 (* Optimizers over parameter structures (Nx.Ptree.t). Optimizer state is itself
    parameter-shaped, and every scalar that changes across steps — the bias

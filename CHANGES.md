@@ -216,6 +216,9 @@ All notable changes to this project will be documented in this file.
 
 ### Vega (new)
 
+- Vega's argument errors write each float as the shortest decimal that reads
+  back, the same text on every system: `got -1000000` where they wrote
+  `got -1e+06`, or `-1e+006` under Windows.
 - Steps store float16 and bfloat16 leaves with stochastic rounding keyed by
   the state's counter and the leaf's path, so an update below half a spacing
   moves the value in expectation instead of being lost. Thread the state.

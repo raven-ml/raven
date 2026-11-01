@@ -109,7 +109,15 @@ let test_clip_validation () =
     (Invalid_argument "Vega.clip_by_global_norm: expected max_norm > 0.0, got 0")
     (fun () -> Vega.clip_by_global_norm Pair.ptree ~max_norm:0.0 grads);
   raises (Invalid_argument "Vega.clip_by_value: expected max > 0.0, got -1")
-    (fun () -> Vega.clip_by_value Pair.ptree ~max:(-1.0) grads)
+    (fun () -> Vega.clip_by_value Pair.ptree ~max:(-1.0) grads);
+  (* The shortest decimal that reads back, the same on every system: the C
+     library's [%g] wrote 1e+06, 1e+006 under mingw-w64. *)
+  raises
+    (Invalid_argument "Vega.clip_by_value: expected max > 0.0, got -1000000")
+    (fun () -> Vega.clip_by_value Pair.ptree ~max:(-1e6) grads);
+  raises
+    (Invalid_argument "Vega.clip_by_value: expected max > 0.0, got -4.58e-72")
+    (fun () -> Vega.clip_by_value Pair.ptree ~max:(-4.58e-72) grads)
 
 (* SGD *)
 
