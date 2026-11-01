@@ -1252,7 +1252,10 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       (After_sources pm_final_rewrite)
   in
   (* commit every const still bare so no renderer reads one *)
-  let sink = rewrite Uop_weak.pm_cast_const sink in
+  let sink =
+    graph_rewrite ~calls:Skip ~pass:Once ~ctx:() sink
+      (After_sources Uop_weak.pm_cast_const)
+  in
   let sink =
     if optimize && ren.target.device = "CPU" then split_blocks sink else sink
   in
