@@ -801,6 +801,11 @@ thread.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which
   `Postrange.Scheduler.get_optimized_ast` sets and `Postrange.apply_opts` and
   `Codegen.linearize` read, where the optimiser tagged the kernel's sink `1`.
+- A store that folds away, of a load of its own element or through an invalid
+  index or value, keeps its sources as dependencies (`Shape.symbolic_simple`,
+  `Symbolic.sym`), and a constant ordered after a store no longer folds to a
+  bare constant (`Shape.symbolic`). A kernel dropped the stores either waited
+  on.
 - **Breaking:** a program takes its parameters in slot order, buffers and
   scalars interleaved. `Ops.program_info.vars` is `params`, every parameter by
   slot; `Shape.kernel_params` is the order a kernel takes them;

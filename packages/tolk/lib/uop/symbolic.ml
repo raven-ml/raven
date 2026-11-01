@@ -307,16 +307,16 @@ let sym =
               else Some (Transcendental.xpow (nth p 0) (nth p 1)));
           (* Load/store folding *)
           rule
-            (Upat.store indexed [ Upat.load indexed [] ])
-            (fun _ -> Some (v Op.Noop));
+            (Upat.store ~name:"x" indexed [ Upat.load indexed [] ])
+            (fun m -> Some (after (v Op.Noop) (src (m "x"))));
           rule
             Upat.(
               store indexed [ where (var "gate") (var "alt") (load indexed []) ])
             (fun m -> Some (gated_store (m "index") (m "gate") (m "alt")));
           (* fold gated LOAD/STORE *)
           rule
-            (Upat.op Op.Store ~src:[ Upat.wild; invalid_pat ])
-            (fun _ -> Some (v Op.Noop));
+            (Upat.op Op.Store ~name:"x" ~src:[ Upat.wild; invalid_pat ])
+            (fun m -> Some (after (v Op.Noop) (src (m "x"))));
           (* store of where with invalid -> gated store *)
           rule
             (Upat.op Op.Store

@@ -3233,6 +3233,67 @@ let unselected_sum =
             (List.assoc 0 (Run.on_host prg [ (1, x) ])));
     ]
 
+(* Stores a kernel orders before others *)
+
+let int32s xs = Array.of_list (List.map (fun x -> `Int (Bigint.of_int x)) xs)
+
+let run_on_host kernel =
+  List.assoc 0 (Run.on_host (Codegen.to_program kernel (Lazy.force host)) [])
+
+(* [a.(0)] gets 7 before a constant 1, which indexes the store of 9 into [a],
+   directly or as the bound of a loop of one trip that stores at [r + 1]. *)
+let store_behind_constant ~loop =
+  let open Ops.O in
+  let a = Shape.param ~shape:[ Int 2 ] 0 Int32 in
+  let seven = Ops.store (Ops.index a [ int 0 ]) (Ops.int ~dtype:Int32 7) in
+  let one = Ops.after (int 1) [ seven ] in
+  let nine at = Ops.store (Ops.index a [ at ]) (Ops.int ~dtype:Int32 9) in
+  let stored =
+    if loop then
+      let r = Ops.range ~axis_type:Loop (Sym one) [ 0 ] in
+      Ops.end_ (nine (r + int 1)) [ r ]
+    else nine one
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:[] ()) [ stored ]
+
+(* A store that folds away, ordered after [a.(0)] getting 7: [f a s] stores
+   through [s], [a] after that store. *)
+let folded_store f =
+  let a = Shape.param ~shape:[ Int 3 ] 0 Int32 in
+  let seven = Ops.store (Ops.index a [ Ops.int 0 ]) (Ops.int ~dtype:Int32 7) in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:[] ())
+    [ f a (Ops.after a [ seven ]) ]
+
+let folded_stores =
+  let at s i = Ops.index s [ Ops.int i ] in
+  [
+    ( "of a load of its own element",
+      fun _ s -> Ops.store (at s 1) (Ops.load (at s 1) []) );
+    ( "to an invalid index",
+      fun _ s ->
+        Ops.store (Ops.index s [ Ops.invalid ]) (Ops.int ~dtype:Int32 5) );
+    ("of an invalid value", fun _ s -> Ops.store (at s 1) Ops.invalid);
+    ( "to an invalid index of storage before the store",
+      fun a s ->
+        Ops.store (Ops.index a [ Ops.invalid ]) (Ops.load (at s 1) []) );
+  ]
+
+let stores_before =
+  group "stores ordered before others"
+    [
+      test "a store a constant index waits on is kept" (fun () ->
+          equal (array Dtypes.value) (int32s [ 7; 9 ])
+            (run_on_host (store_behind_constant ~loop:false)));
+      test "a store a loop's constant bound waits on is kept" (fun () ->
+          equal (array Dtypes.value) (int32s [ 7; 9 ])
+            (run_on_host (store_behind_constant ~loop:true)));
+      cases "a store that folds away keeps the stores it waits on" ~id:fst
+        folded_stores (fun (_, f) ->
+          equal (array Dtypes.value) (int32s [ 7; 0; 0 ])
+            (run_on_host (folded_store f)));
+    ]
+
 (* A maximum of weak integers
 
    A pad's fill is a bare constant: where the value it pads folds away, a
@@ -4131,6 +4192,7 @@ let () =
          invalid_lanes;
          square_wrapping;
          unselected_sum;
+         stores_before;
          weak_max;
          gated_stores;
          divisions;

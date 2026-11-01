@@ -2015,14 +2015,14 @@ let pm_data_invalid =
           else Some (where O.(a lor m "cond") (where a b (m "x")) (m "i")));
       (* fold gated LOAD/STORE *)
       rule
-        (Upat.op Op.Store
+        (Upat.op Op.Store ~name:"x"
            ~src:
              [
                Upat.or_casted
                  (Upat.index ~allow_any_len:true Upat.wild [ invalid_pat ]);
                Upat.wild;
              ])
-        (fun _ -> Some (v Op.Noop));
+        (fun m -> Some (after (v Op.Noop) (src (m "x"))));
       rule
         (Upat.op Op.Load ~allow_any_len:true ~name:"x"
            ~src:
@@ -2584,7 +2584,6 @@ let symbolic =
                        Op.Floordiv;
                        Op.Floormod;
                        Op.Param;
-                       Op.After;
                        Op.Special;
                      ])
                 ~name:"x" ())

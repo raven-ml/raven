@@ -127,8 +127,10 @@ let invalid_values =
             (Shape.valid
                (Ops.reduce (Shape.valid a on_range) Add [ reduce_range ])
                cond));
-      test "a store to an invalid index does nothing" (fun () ->
-          folds_to (Ops.store (Ops.index buf [ Ops.invalid ]) f) (raw Noop []));
+      test "a store to an invalid index does nothing after its sources"
+        (fun () ->
+          let index = Ops.index buf [ Ops.invalid ] in
+          folds_to (Ops.store index f) (Ops.after (raw Noop []) [ index; f ]));
       test "a load from an invalid index is its alternative, or 0" (fun () ->
           let index = Ops.index buf [ Ops.invalid ] in
           folds_to (Ops.load index []) (Ops.float ~dtype:Float32 0.);

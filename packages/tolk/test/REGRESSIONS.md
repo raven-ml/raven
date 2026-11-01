@@ -1078,6 +1078,8 @@ one target, in turn; the slow run compiles every row.
 | tinygrad: `codegen/__init__.py` `do_linearize`, `do_render`, `do_compile` (`DEBUG`) | diagnostics | `CG › diagnostics` (every test) |
 | tinygrad: `codegen/__init__.py` `line_rewrite` | | `CG › line_rewrite` (every test) |
 | tinygrad: `codegen/__init__.py` (emulated narrow floats, D9) | an emulated float8 program computes IEEE conversions | `CG › stages › an emulated float8 program launches as tinygrad's`; `CG › values › on the host, a program writes what its kernel writes › fp8` |
+| tinygrad: `runtime/test_custom_kernel.py::TestCustomKernel::test_store_behind_value_after_kept` | a constant ordered after a store, as an index or a loop's bound, keeps the store | `CG › stores ordered before others › a store a constant index waits on is kept`, `› a store a loop's constant bound waits on is kept` |
+| tinygrad: `runtime/test_custom_kernel.py::TestCustomKernel::test_deleted_store_keeps_deps` | a store that folds away, of a load of its own element or through an invalid index or value, keeps the stores it waits on | `CG › stores ordered before others › a store that folds away keeps the stores it waits on` (4 rows); `Tolk.Symbolic › invalid values › a store to an invalid index does nothing after its sources` |
 
 ## Cstyle
 

@@ -88,7 +88,8 @@ module Estimates = struct
         | Op.Range ->
             mult_stack := !mults :: !mult_stack;
             if not (Dtype.equal (dtype u) Dtype.Void) then
-              mults := without_specials Sint.(!mults * ssimplify (nth u 0))
+              let n = ssimplify (without_after (nth u 0)) in
+              mults := without_specials Sint.(!mults * n)
         | Op.End | Op.Backedge -> (
             match !mult_stack with
             | m :: rest ->

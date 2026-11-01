@@ -4403,33 +4403,18 @@ merged into D137, which holds the loops that consumers of one domain share.
   rune's compile bench and the `Jit/cumsum-neg-log-uniform-8x1024` row of its
   bench.
 
-## D164. An accumulator's read waits on its initial store
+## D164. Withdrawn
 
-- **tinygrad:** `codegen/__init__.py:192-199` (`reduce_ranges_to_acc`), whose
-  read of the accumulator after the loop is ordered after the loop's END
-  alone, with `uop/symbolic.py:450` (`sym`'s first load/store folding rule, a
-  store of a load of its own index to `NOOP`).
-- **tolk:** `Codegen.reduce_ranges_to_acc`;
-  `test/gen/tinygrad.patch`, which makes tinygrad's the same before the
-  goldens are generated.
-- **Differs:** the read after the loop is ordered after the initial store as
-  well as the END. In tinygrad, when every lane of an accumulation folds to
-  adding 0, which devectorizing shows only lane by lane after the accumulator
-  is built, `sym` folds each store of the loop to `NOOP`: the END holds no
-  store, nothing orders the read after the initial store, which is then
-  removed, and the program reads registers it never wrote. tinygrad's later
-  `ef6ec5f15` (#18858) keeps a folded store's sources as an AFTER on its
-  `NOOP` instead, which its specification at the pinned commit rejects; the
-  entry goes when the pin passes it.
-- **Reason:** (b). rune's compiled Fold (rune's `Lower_index.fold`) of an
-  int16 `[3; 3]` by `lo [0; -1]`, `interior [0; 1]` and two
-  windows of step 2 sums no term into some elements, and it read uninitialized
-  registers there, where nx's Fold contract gives 0: rune's `a fold wraps
-  integers and holds its float bound` failed.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `an
-  accumulator no lane adds to › is stored before it is read` and `› sums to
-  zero`; rune's `Lower_index › folds and assemblies › a fold wraps integers
-  and holds its float bound`.
+The read of an accumulator after its loop waited on the initial store as well
+as the loop's end, since `sym` folded a store of a loaded accumulator to a bare
+`NOOP` and the loop could end holding no store, so nothing ordered the read
+after the initial store. At `uop/symbolic.py:451,456` a folded store is
+`NOOP.after(*x.src)`, which keeps its sources and so the initial store before
+the read, and `codegen/__init__.py:192-199` (`reduce_ranges_to_acc`) orders
+the read after the end alone, as `Codegen.reduce_ranges_to_acc` does. The
+`Codegen` suite's `an accumulator no lane adds to › is stored before it is
+read` and `› sums to zero`, and rune's `Lower_index › folds and assemblies › a
+fold wraps integers and holds its float bound`, hold.
 
 ## D165. A weak maximum's identity is its accumulator's least value
 
