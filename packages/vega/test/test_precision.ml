@@ -201,11 +201,18 @@ let lion_brackets (type b) (dt : (float, b) Nx.dtype) =
 let adam_brackets =
   let dt = Nx.bfloat16 in
   let f = format dt in
+  (* A third of the moments are about the least normal value, so that a
+     moment the step decays to a subnormal is drawn in most cases. *)
   let moments =
     Gen.(
+      let tiny = 2.0 *. min_normal f in
+      let moment lo =
+        frequency
+          [ (2, float_range lo 1.0); (1, float_range (lo *. tiny) tiny) ]
+      in
       pair
-        (array ~size:(constant 8) (float_range (-1.0) 1.0))
-        (array ~size:(constant 8) (float_range 0.0 1.0)))
+        (array ~size:(constant 8) (moment (-1.0)))
+        (array ~size:(constant 8) (moment 0.0)))
   in
   let gen = Gen.(triple (leaf f) moments (int_range 0 1000)) in
   prop "bfloat16 adam stores bracket the float32 step" gen
