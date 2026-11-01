@@ -592,8 +592,6 @@ let fix_group_for_reduce x =
       (* NOTE: we remove all horizontal reduces here, they remain in the first reduce *)
       Some (reduce buf (fst (reduce_arg x)) reduce_loop)
 
-let mergeable = Tag.String "mergeable"
-
 (* An association list keeps the order its keys were first added in, as the
    Python dictionaries it stands for do. *)
 let add_to key equal x l =
@@ -606,7 +604,7 @@ let same_nodes s0 s1 =
   && Nodes.fold (fun u ok -> ok && Nodes.mem u s1) s0 true
 
 let merge_reduce_ends sink =
-  (* merge ENDs that share the same range and nesting context (only those created by reduce_to_acc) *)
+  (* merge ENDs that share the same range and nesting context *)
   (* An END that closes a range an earlier END closes, at another nesting depth
      or along other ranges, gets cloned RANGEs so each RANGE maps to one END.
      Reductions that share a loop can stop closing the same ranges: a sum over
@@ -616,8 +614,7 @@ let merge_reduce_ends sink =
   let range_to_ends =
     List.fold_left
       (fun acc u ->
-        if is Op.End u && Option.equal Tag.equal (tag u) (Some mergeable) then
-          add_to (srcs u) (List.equal ( == )) u acc
+        if is Op.End u then add_to (srcs u) (List.equal ( == )) u acc
         else acc)
       [] slice
   in
@@ -704,7 +701,7 @@ let reduce_ranges_to_acc (slots, ren) r =
   let acc_out = store acc_initted update in
   (* The read waits on [acc_init] too: [sym] folds a store of the loaded
      accumulator away, so [acc_out]'s loop can end holding no store. *)
-  Some (after acc [ rtag ~tag:mergeable (end_ acc_out rngs); acc_init ])
+  Some (after acc [ end_ acc_out rngs; acc_init ])
 
 let expand_horizontal_reduce ren r =
   let op, num_axes = reduce_arg r and inp = nth r 0 in

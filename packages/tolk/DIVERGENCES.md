@@ -3416,11 +3416,12 @@ driver signals its own (D146).
   linearizer refuses. A reduction can stop closing its group's ranges: a sum
   over a range its source does not read drops it (`pm_reduce_unparented`), so
   a sum over `i` and `k` of a source that reads `k` alone closes `k` alone,
-  where a maximum beside it closes `k` within `i`'s loop. tinygrad gives a
-  reduction's end fresh ranges only when it closes the same ranges as another
-  at a different depth; tolk gives them to every end that closes a range an
-  earlier end closes, so each range has one end. No recorded kernel has such
-  ends, so the patch leaves tinygrad's `merge_reduce_ends` as it is.
+  where a maximum beside it closes `k` within `i`'s loop. Both merge every
+  end, a store's as a reduction's. tinygrad gives an end fresh ranges only
+  when it closes the same ranges as another at a different depth; tolk gives
+  them to every end that closes a range an earlier end closes, so each range
+  has one end. No recorded kernel has such ends, so the patch leaves
+  tinygrad's `merge_reduce_ends` as it is.
 - **Reason:** for stores, (d): `Nx_wide`, whose operations return a double
   word's high and low parts, the two ends of one chain. tinygrad schedules
   each part as a kernel that computes the whole chain: a compiled double-word

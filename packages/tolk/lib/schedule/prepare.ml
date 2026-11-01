@@ -605,7 +605,7 @@ let earliest_rewrites =
              let x = m "x" in
              match shape_opt x with
              | Some s when List.exists (Sint.equal (Int 0)) s ->
-                 Some (replace ~tag:(tag x) (const_like x (`Int Bigint.zero)))
+                 Some (const_like x (`Int Bigint.zero))
              | _ -> None);
          (* Effects lose their movements. *)
          rule (Upat.op Op.Sink ~name:"s") (fun m ->
