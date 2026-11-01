@@ -764,8 +764,8 @@ codegen/decomp/decomp_op/late_cdiv_none.golden
 codegen/decomp/decomp_op/late_cdiv_shr.golden
 codegen/decomp/decomp_op/late_cdiv_shr_fast_idiv.golden
 codegen/decomp/decomp_op/late_cdiv_shr_fast_idiv_narrow.golden
-codegen/decomp/decomp_op/late_comparison_cmpeq.golden
 codegen/decomp/decomp_op/late_comparison_cmplt.golden
+codegen/decomp/decomp_op/late_comparison_cmpne.golden
 codegen/decomp/decomp_op/late_comparison_none.golden
 codegen/decomp/decomp_op/late_division_fdiv.golden
 codegen/decomp/decomp_op/late_division_none.golden

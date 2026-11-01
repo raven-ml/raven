@@ -192,7 +192,8 @@ let identities =
           folds_to Ops.O.(cond land bool false) (Ops.bool false);
           folds_to Ops.O.(cond lor bool true) (Ops.bool true);
           folds_to Ops.O.(cond lor bool false) cond);
-      test "x <> false is x" (fun () ->
+      test "x = true and x <> false are x" (fun () ->
+          folds_to (Ops.eq cond (Ops.bool true)) cond;
           folds_to Ops.O.(cond <> bool false) cond);
       test "a double negation is x" (fun () ->
           folds_to (Ops.logical_not (Ops.logical_not cond)) cond);
@@ -216,6 +217,11 @@ let identities =
         (fun () ->
           folds_to Ops.O.(cast_bool Int32 <> int 2) (Ops.bool true);
           folds_to Ops.O.(cast_bool Int32 <> int (-1)) (Ops.bool true));
+      test "a boolean cast to an integer and equal to 0, 1 or another integer \
+            is its negation, itself or false" (fun () ->
+          folds_to (Ops.eq (cast_bool Int32) (Ops.int 0)) (Ops.logical_not cond);
+          folds_to (Ops.eq (cast_bool Weak_int) (Ops.int 1)) cond;
+          folds_to (Ops.eq (cast_bool Int32) (Ops.int 2)) (Ops.bool false));
       test "the truncation of an integer or a boolean is itself" (fun () ->
           folds_to (Ops.trunc x) x;
           folds_to (Ops.trunc a) a;
@@ -271,6 +277,9 @@ let zeros =
       test "x <> x is false for integers and booleans" (fun () ->
           folds_to Ops.O.(a <> a) (Ops.bool false);
           folds_to Ops.O.(cond <> cond) (Ops.bool false));
+      test "x = x is true for integers and booleans" (fun () ->
+          folds_to (Ops.eq a a) (Ops.bool true);
+          folds_to (Ops.eq x x) (Ops.bool true));
       test "x <> x stays for floats, which may be NaN" (fun () ->
           folds_to Ops.O.(f <> f) Ops.O.(f <> f));
       test "x % x, x lxor x and x land 0 are 0" (fun () ->
@@ -1625,6 +1634,19 @@ let sym_group =
           simplifies_to
             (Ops.store index (Ops.where cond f (Ops.load index [])))
             (Ops.store (Ops.index buf [ Shape.valid a cond ]) f));
+      test "storing a selection of the loaded value and another stores where \
+            it does not hold" (fun () ->
+          simplifies_to
+            (Ops.store index (Ops.where cond (Ops.load index []) f))
+            (Ops.store
+               (Ops.index buf [ Shape.valid a (Ops.logical_not cond) ])
+               f));
+      test "storing nested selections of the loaded value stores where the \
+            outer holds and the inner does not" (fun () ->
+          let l = Ops.load index [] in
+          let st = Ops.store index (Ops.where cond (Ops.where other l f) l) in
+          let gate = Ops.O.(cond land Ops.logical_not other) in
+          simplifies_to st (Ops.store (Ops.index buf [ Shape.valid a gate ]) f));
       test "storing invalid does nothing" (fun () ->
           simplifies_to (Ops.store index Ops.invalid) (raw Noop []));
       test "storing a gated value stores where its gate holds" (fun () ->

@@ -1124,7 +1124,14 @@ let inference =
           equal int (-1)
             (Shape.sym_infer
                (Sym (Ops.alu n Op.Truncmod [ Ops.int 3 ]))
-               [ ("n", -7) ]));
+               [ ("n", -7) ]);
+          let d = weak_var "d" (-10) 10 in
+          let at nv dv e = Shape.sym_infer (Sym e) [ ("n", nv); ("d", dv) ] in
+          equal int (-2) (at 7 (-3) (Ops.alu n Op.Truncdiv [ d ]));
+          equal int 1 (at 7 (-3) (Ops.alu n Op.Truncmod [ d ]));
+          equal int (-1) (at (-7) 3 (Ops.alu n Op.Truncmod [ d ]));
+          equal int 0 (at 7 0 (Ops.alu n Op.Truncdiv [ d ]));
+          equal int 7 (at 7 0 (Ops.alu n Op.Truncmod [ d ])));
       test "a cast converts without truncating to a width" (fun () ->
           let n = weak_var "n" (-1000) 1000 in
           let half = Ops.O.(Ops.cast n Float32 / float 2.) in

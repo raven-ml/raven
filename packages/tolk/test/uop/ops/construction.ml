@@ -93,6 +93,11 @@ let elementwise =
             (Ops.logical_not a));
       test "an inequality negates an equality" (fun () ->
           equal uop (Ops.logical_not (Ops.eq a b)) (Ops.ne a b));
+      test "an equality is CMPEQ, of type bool" (fun () ->
+          let e = Ops.eq a b in
+          equal string "CMPEQ" (Op.name (Ops.op e));
+          equal dtype Bool (Ops.dtype e);
+          equal uop (Ops.eq e (Ops.bool false)) (Ops.ne a b));
       test "negation and bitwise not of a boolean are logical not" (fun () ->
           let p = flag "p" in
           equal uop (Ops.logical_not p) (Ops.neg p);

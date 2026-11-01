@@ -522,6 +522,8 @@ let comparisons () =
       (c3 < x) land (x < c5);
       Ops.logical_not (x <> y);
       Ops.logical_not (fparam () <> fparam ~slot:1 ());
+      x <> y;
+      param Uint32 <> int 7;
     ]
 
 let extremes () =
@@ -601,7 +603,7 @@ let late_families =
       [ ("none", []); ("neg", [ Neg ]); ("neg_sub", [ Neg; Sub ]) ] );
     ( "comparison",
       comparisons,
-      [ ("none", []); ("cmplt", [ Cmplt ]); ("cmpeq", [ Cmpeq ]) ] );
+      [ ("none", []); ("cmplt", [ Cmplt ]); ("cmpne", [ Cmpne ]) ] );
     ("extremes", extremes, [ ("cmplt", [ Cmplt ]) ]);
     ("nests", nests, [ ("cmplt", [ Cmplt ]) ]);
     ( "mulacc",
@@ -700,6 +702,7 @@ let late_expressions =
       ("x * -1 < 7", x * int (-1) < int 7);
       ("6 < x and x < 8", (int 6 < x) land (x < int 8));
       ("not (x <> y)", Ops.logical_not (x <> y));
+      ("x <> y", x <> y);
       ("x * y + z", (x * y) + z);
       ("x << 3 + z", Ops.alu x Shl [ Ops.int ~dtype:Int32 3 ] + z);
       ("x * 8", x * int 8);
@@ -707,7 +710,7 @@ let late_expressions =
       ("x * -1", x * int (-1));
     ]
 
-let every_late_op = ops [ Cmplt; Or; Shl; Shr; Neg; Sub; Cmpeq; Mulacc; Fdiv ]
+let every_late_op = ops [ Cmplt; Or; Shl; Shr; Neg; Sub; Cmpne; Mulacc; Fdiv ]
 
 let late_rules_keep_values =
   let point = Gen.int_range (-50) 50 in

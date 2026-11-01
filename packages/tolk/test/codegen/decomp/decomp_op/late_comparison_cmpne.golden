@@ -38,6 +38,16 @@
 36 Ops.CMPEQ dtypes.bool [34, 35]
 37 Ops.CMPEQ dtypes.bool [36, 4]
 38 Ops.CMPEQ dtypes.bool [37, 4]
-39 Ops.SINK dtypes.void [5, 7, 10, 16, 17, 19, 20, 23, 25, 30, 33, 38]
-40 Ops.SINK dtypes.void [39, 39]
+39 Ops.PARAM dtypes.u32 [0] ParamArg(slot=0, dtype=dtypes.u32)
+40 Ops.CONST dtypes.weakint [] 7
+41 Ops.CMPEQ dtypes.bool [39, 40]
+42 Ops.CMPEQ dtypes.bool [41, 4]
+43 Ops.SINK dtypes.void [5, 7, 10, 16, 17, 19, 20, 23, 25, 30, 33, 38, 32, 42]
+44 Ops.CMPNE dtypes.bool [1, 13]
+45 Ops.CMPEQ dtypes.bool [44, 4]
+46 Ops.CMPNE dtypes.bool [34, 35]
+47 Ops.CMPEQ dtypes.bool [46, 4]
+48 Ops.CMPNE dtypes.bool [39, 40]
+49 Ops.SINK dtypes.void [5, 7, 10, 16, 17, 19, 20, 23, 25, 30, 45, 47, 44, 48]
+50 Ops.SINK dtypes.void [43, 49]
 

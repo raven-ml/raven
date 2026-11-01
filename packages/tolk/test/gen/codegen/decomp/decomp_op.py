@@ -172,7 +172,8 @@ def comparisons():
     return [(x < 5).logical_not(), (5 < x).logical_not(), (u < 5).logical_not(), x * -1 < y * 3, x * -1 < 5,
             (3 < x) & (x < 5), (x < 5) & (3 < x), (3 < x) & (x < 6), (3 < u) & (u < 5),
             (UOp.const(3, dtypes.int32) < x) & (x < UOp.const(5, dtypes.int32)),
-            x.ne(y).logical_not(), UOp.param(0, dtypes.float).ne(UOp.param(1, dtypes.float)).logical_not()]
+            x.ne(y).logical_not(), UOp.param(0, dtypes.float).ne(UOp.param(1, dtypes.float)).logical_not(),
+            x.ne(y), UOp.param(0, dtypes.uint32).ne(7)]
 
 
 def extremes():
@@ -210,7 +211,7 @@ LATE = {
     "mul": (muls, {"none": (), "shl": (Ops.SHL,)}),
     "cdiv": (cdivs, {"none": (), "shr": (Ops.SHR,)}),
     "negation": (negations, {"none": (), "neg": (Ops.NEG,), "neg_sub": (Ops.NEG, Ops.SUB)}),
-    "comparison": (comparisons, {"none": (), "cmplt": (Ops.CMPLT,), "cmpeq": (Ops.CMPEQ,)}),
+    "comparison": (comparisons, {"none": (), "cmplt": (Ops.CMPLT,), "cmpne": (Ops.CMPNE,)}),
     "extremes": (extremes, {"cmplt": (Ops.CMPLT,)}),
     "nests": (nests, {"cmplt": (Ops.CMPLT,)}),
     "mulacc": (mulaccs, {"none": (), "mulacc": (Ops.MULACC,), "mulacc_shl": (Ops.MULACC, Ops.SHL)}),

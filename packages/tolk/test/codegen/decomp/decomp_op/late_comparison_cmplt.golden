@@ -38,22 +38,26 @@
 36 Ops.CMPEQ dtypes.bool [34, 35]
 37 Ops.CMPEQ dtypes.bool [36, 4]
 38 Ops.CMPEQ dtypes.bool [37, 4]
-39 Ops.SINK dtypes.void [5, 7, 10, 16, 17, 19, 20, 23, 25, 30, 33, 38]
-40 Ops.CONST dtypes.weakint [] 1
-41 Ops.MUL dtypes.weakint [40, 11]
-42 Ops.ADD dtypes.weakint [2, 41]
-43 Ops.CAST dtypes.i32 [42] dtypes.i32
-44 Ops.CMPLT dtypes.bool [43, 1]
-45 Ops.ADD dtypes.weakint [2, 40]
-46 Ops.CAST dtypes.i32 [45] dtypes.i32
-47 Ops.CMPLT dtypes.bool [1, 46]
-48 Ops.CAST dtypes.u32 [42] dtypes.u32
-49 Ops.CMPLT dtypes.bool [48, 8]
-50 Ops.ADD dtypes.weakint [14, 40]
-51 Ops.CAST dtypes.i32 [50] dtypes.i32
-52 Ops.CMPEQ dtypes.bool [1, 51]
-53 Ops.CAST dtypes.u32 [50] dtypes.u32
-54 Ops.CMPEQ dtypes.bool [8, 53]
-55 Ops.SINK dtypes.void [44, 47, 49, 16, 17, 52, 52, 23, 54, 30, 33, 38]
-56 Ops.SINK dtypes.void [39, 55]
+39 Ops.PARAM dtypes.u32 [0] ParamArg(slot=0, dtype=dtypes.u32)
+40 Ops.CONST dtypes.weakint [] 7
+41 Ops.CMPEQ dtypes.bool [39, 40]
+42 Ops.CMPEQ dtypes.bool [41, 4]
+43 Ops.SINK dtypes.void [5, 7, 10, 16, 17, 19, 20, 23, 25, 30, 33, 38, 32, 42]
+44 Ops.CONST dtypes.weakint [] 1
+45 Ops.MUL dtypes.weakint [44, 11]
+46 Ops.ADD dtypes.weakint [2, 45]
+47 Ops.CAST dtypes.i32 [46] dtypes.i32
+48 Ops.CMPLT dtypes.bool [47, 1]
+49 Ops.ADD dtypes.weakint [2, 44]
+50 Ops.CAST dtypes.i32 [49] dtypes.i32
+51 Ops.CMPLT dtypes.bool [1, 50]
+52 Ops.CAST dtypes.u32 [46] dtypes.u32
+53 Ops.CMPLT dtypes.bool [52, 8]
+54 Ops.ADD dtypes.weakint [14, 44]
+55 Ops.CAST dtypes.i32 [54] dtypes.i32
+56 Ops.CMPEQ dtypes.bool [1, 55]
+57 Ops.CAST dtypes.u32 [54] dtypes.u32
+58 Ops.CMPEQ dtypes.bool [8, 57]
+59 Ops.SINK dtypes.void [48, 51, 53, 16, 17, 56, 56, 23, 58, 30, 33, 38, 32, 42]
+60 Ops.SINK dtypes.void [43, 59]
 

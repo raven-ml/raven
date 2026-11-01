@@ -3937,6 +3937,18 @@ let call_loop () =
   kernel "call_loop_mini"
     [ Ops.end_ (Ops.call ~name:"mul" mul [ at c i; at a i ]) [ i ] ]
 
+(* [C[i] = A[i] + i]: the loop's index passed to the body as a scalar. *)
+let call_scalar () =
+  let add =
+    let out = int_param ~name:"out" 0 1 and src = int_param ~name:"src" 1 1 in
+    let v = Shape.param ~addrspace:Alu 2 Int32 in
+    Ops.sink [ Ops.store (first out) Ops.O.(first src + v) ]
+  in
+  let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
+  let i = loop 4 0 in
+  let call = Ops.call ~name:"add" add [ at c i; at a i; Ops.cast i Int32 ] in
+  kernel "call_scalar_arg" [ Ops.end_ call [ i ] ]
+
 (* [out[idx[0]] = 7] where [idx[0]] is in bounds, called on a register that
    holds zeros; then [c[j] = tmp[j] + 1]. *)
 let gated_call () =
@@ -4184,6 +4196,10 @@ let calls =
         (runs_on_host call_loop
            [ (1, int_values [ 1; 2; 3; 4 ]) ]
            [ 3; 6; 9; 12 ]);
+      test "a call passes a scalar argument to its body"
+        (runs_on_host call_scalar
+           [ (1, int_values [ 1; 2; 3; 4 ]) ]
+           [ 1; 3; 5; 7 ]);
       test "a call's gated store writes where its gate holds"
         (runs_on_host gated_call [ (1, int_values [ 2 ]) ] [ 1; 1; 8; 1 ]);
       test
