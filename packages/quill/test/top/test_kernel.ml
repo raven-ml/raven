@@ -51,6 +51,24 @@ let svg data = Cell.Display { mime = "image/svg+xml"; id = None; data }
 let svg_tag content = "quill.display\nimage/svg+xml\n\n" ^ content
 let figure tag = outputs [ printer; Printf.sprintf "Fig %S" tag ]
 
+(* [stream kept outs] is [outs] without the other standard stream's text, with
+   adjacent text joined. The two streams reach the kernel apart, so each keeps
+   its order with the displays and none with the other. *)
+let stream kept outs =
+  let drop = function
+    | Cell.Stdout _ -> kept = `Stderr
+    | Cell.Stderr _ -> kept = `Stdout
+    | Cell.Error _ | Cell.Display _ -> false
+  in
+  let join o acc =
+    match (o, acc) with
+    | _ when drop o -> acc
+    | Cell.Stdout a, Cell.Stdout b :: rest -> Cell.Stdout (a ^ b) :: rest
+    | Cell.Stderr a, Cell.Stderr b :: rest -> Cell.Stderr (a ^ b) :: rest
+    | o, acc -> o :: acc
+  in
+  List.fold_right join outs []
+
 let printed_figures () =
   let cell =
     Printf.sprintf
@@ -63,6 +81,7 @@ let printed_figures () =
   Format.eprintf "%%a@." pp_fig (Fig %S)|}
       (svg_tag "<a/>") (svg_tag "<b/>") (svg_tag "<c/>")
   in
+  let outs = outputs [ printer; cell ] in
   equal (list output)
     [
       Cell.Stdout "a\n";
@@ -70,11 +89,18 @@ let printed_figures () =
       Cell.Stdout "a figure\nb\n";
       svg "PGIvPg==";
       Cell.Stdout "a figure\n";
+      svg "PGMvPg==";
+    ]
+    (stream `Stdout outs);
+  equal (list output)
+    [
+      svg "PGEvPg==";
+      svg "PGIvPg==";
       Cell.Stderr "e\n";
       svg "PGMvPg==";
       Cell.Stderr "a figure\n";
     ]
-    (outputs [ printer; cell ])
+    (stream `Stderr outs)
 
 (* [printed fmt] is the outputs of a cell printing a figure with the format
    [fmt] on [Format.std_formatter]. *)

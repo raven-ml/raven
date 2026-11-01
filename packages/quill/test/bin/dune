@@ -1,3 +1,7 @@
+; The package installs quill with its stub libraries, which the bytecode
+; executable loads at startup.
+
 (cram
  (package quill)
- (deps %{bin:quill}))
+ (deps
+  (package quill)))

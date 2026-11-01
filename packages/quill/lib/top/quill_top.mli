@@ -8,10 +8,11 @@
     Provides an in-process OCaml toplevel as a {!Quill.Kernel.t}. Stdout and
     stderr are streamed in real time during execution. The
     {{!Quill.Cell.display}display tags} a cell prints produce
-    {!Quill.Cell.Display} outputs, in order with its stdout and stderr. An
-    uncaught [Failure msg] or [Invalid_argument msg] is reported on stdout with
-    [msg] as written, newlines and quotes intact, as in
-    [Exception: Failure: msg]. *)
+    {!Quill.Cell.Display} outputs, in order with its stdout and with its
+    stderr. Stdout and stderr are captured apart, so text on one keeps no order
+    with text on the other. An uncaught [Failure msg] or [Invalid_argument msg]
+    is reported on stdout with [msg] as written, newlines and quotes intact, as
+    in [Exception: Failure: msg]. *)
 
 val initialize_if_needed : unit -> unit
 (** [initialize_if_needed ()] ensures the OCaml toplevel environment is

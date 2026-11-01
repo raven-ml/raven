@@ -321,10 +321,20 @@ let notebook_of frags =
   Doc.of_cells (merge (List.mapi cell frags))
 
 (* A language as [Cell.code] accepts it. *)
+(* A brace or a tilde in a language is where a fence's info string could be
+   misread, so a quarter of the draws hold each: drawn from the whole range,
+   a brace is rare enough that some seeds never draw one. *)
 let gen_language =
   let ok c = c <> '`' && c <> '\\' && c <> '&' in
-  Gen.string_of ~size:(Gen.int_range 1 8)
-    (Gen.such_that ok (Gen.char_range '!' '~'))
+  let word size =
+    Gen.string_of ~size (Gen.such_that ok (Gen.char_range '!' '~'))
+  in
+  let around mark =
+    let side = word (Gen.int_range 0 3) in
+    Gen.map (fun (a, b) -> a ^ mark ^ b) (Gen.pair side side)
+  in
+  Gen.frequency
+    [ (2, word (Gen.int_range 1 8)); (1, around "}"); (1, around "~") ]
   |> Gen.such_that (fun l -> l.[0] <> '{')
 
 let round_trip_tests =
