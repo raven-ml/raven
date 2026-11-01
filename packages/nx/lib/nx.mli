@@ -345,7 +345,8 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
     otherwise it holds a copy of its window, allocating at most the window's
     bytes. Across sets it changes the brand; within one, the arrangement.
     Placing onto {!Host} from another set is a {{!section-waiting}wait} on
-    [x]'s set.
+    [x]'s set; elsewhere it returns as {!Rig.Buffer.submit_copy} returns
+    for its copies.
 
     Raises [Invalid_argument] if [p] cuts an axis [x] does not have,
     {!Rig.Lost} for a lost device, and a failed check as a wait does. *)
@@ -726,31 +727,38 @@ val to_bigarray :
 
     A set's devices may compute while the caller goes on: an operation returns
     once its work is submitted. The host waits for a set only at a wait:
-    {!sync}, a {{!section-reads}read}, or {!place} onto {!Host}.
+    {!sync}, a {{!section-reads}read}, or {!place} onto {!Host}. A {!place}
+    elsewhere returns as nx.array's placement does
+    ({!Nx_array.section-placement}): where a device copies, as
+    {!Rig.Buffer.submit_copy} returns.
 
-    A check is a condition on data whose failure raises the caller's exception:
-    one stated with {!check}, a sampler's parameter outside its domain
-    ({!Rng}), or a {!Prim.Check}. On
-    the host it raises at the call. On another set it is computed where its data
-    lies, and its failure raises at the next wait on that set on the domain that
-    issued it, so that no check makes the host wait, except on a device of
-    another machine, where reading whether a check passed waits for the work
-    submitted there. The systhreads of a domain
-    share its checks. A wait drains the checks its domain issued on the set
-    before it and raises the earliest failure among them; the later ones are
-    dropped. A wait on one set raises nothing of another's checks; a check no
-    wait follows never raises. A check keeps its data's memory until a wait
-    drains it, or until a later check on its set is issued once its devices
-    report its flags computed, so a donation of that data meanwhile computes
-    into fresh memory. A device reports its work at most a fixed number of
-    submissions late while work is submitted on it ({!Rig.section-timeline}),
-    and a check on a device that gets no more work is found computed when the
-    next check is issued, so the checks of a loop that never waits keep the
-    data of a bounded window of steps. A failing check's data is read when
-    its failure is found, at a wait or at a later check's issue, and that
-    read may wait for the set. Once a check is known to fail, the checks
-    after it release their data, and a check issued later on its set is not
-    kept. *)
+    A device lost while it runs a value's work raises {!Rig.Lost} at the next
+    use of the memory that work wrote: an operation or a submit that reads it,
+    a wait or a read. Every other error of an operation raises in its call.
+    Memory that queued work reads stays allocated until that work is done, so
+    a loop that never waits holds the values of the steps its devices' queues
+    hold, and a submit waits for room once a queue is full.
+
+    A check is a condition on data whose failure raises the caller's
+    exception: one stated with {!check}, a sampler's parameter outside its
+    domain ({!Rng}), or a {!Prim.Check}. On the host it raises at the call. On
+    another set it is computed where its data lies, and its failure raises at
+    the next wait on that set on the domain that issued it, so that no check
+    makes the host wait. The systhreads of a domain share its checks. A wait
+    drains the checks its domain issued on the set before it and raises the
+    earliest failure among them; the later ones are dropped. A wait on one set
+    raises nothing of another's checks; a check no wait follows never raises.
+    A check keeps its data's memory until a wait drains it, or until a later
+    check on its set is issued once its devices report its flags computed, so
+    a donation of that data meanwhile computes into fresh memory. A device
+    reports its work at most a fixed number of submissions late while work is
+    submitted on it ({!Rig.section-timeline}), and a check on a device that
+    gets no more work is found computed when the next check is issued, so the
+    checks of a loop that never waits keep the data of a bounded window of
+    steps. A failing check's data is read when its failure is found, at a wait
+    or at a later check's issue, and that read may wait for the set. Once a
+    check is known to fail, the checks after it release their data, and a
+    check issued later on its set is not kept. *)
 
 val sync : ('v, 's, 'd) t -> unit
 (** [sync x] waits for the work [x] depends on, then drains the checks pending
@@ -4858,7 +4866,10 @@ module Repr : sig
   (** [of_array s a] is the value whose bytes are [a]'s. The value reads [a]'s
       memory from then on: a write to it through any handle leaves what values
       over it read unspecified. The memory stays its caller's: no donation of
-      the value writes it ({!donate}).
+      the value writes it ({!donate}). A {!place} of the value may leave its
+      copies queued, so a write to [a]'s memory before a
+      {{!section-waiting}wait} on the destination's set may reach the
+      placed value.
 
       Raises [Invalid_argument] naming [Nx.Repr.of_array] unless [a] lies on a
       device of [s]. *)

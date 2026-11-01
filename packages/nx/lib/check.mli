@@ -29,31 +29,28 @@
     one it builds, and a wait on another systhread meanwhile builds the
     exception itself and raises it. The failure raises at one wait.
 
-    Once a pending check's reduction is submitted, the check records the
-    value its device has submitted ({!Rig.submitted}). Issuing a check on a
-    set first settles that set's earlier pending checks whose reduction is
-    written: on a device the new check computes on, once the device has
-    reported that value ({!Rig.signaled}), which commits no work and waits
-    for none; on another, which may get no more work, as
+    Once a pending check's reduction, and its copy below, are submitted, the
+    check records the value its device has submitted ({!Rig.submitted}).
+    Issuing a check on a set first settles that set's earlier pending checks
+    whose reduction is written: on a device the new check computes on, once
+    the device has reported that value ({!Rig.signaled}), which commits no
+    work and waits for none; on another, which may get no more work, as
     {!Rig.Buffer.reached} finds it, which commits that device's work. A
-    passing check goes and a failing one keeps only its exception; the
-    checks after a failure go, since no wait can raise them. A device
-    reports its work at most its driver's batch of values late while work
-    is submitted on it, so the checks no wait follows hold the data of the
-    work in flight and of that batch; on a domain whose submits stop, they
-    hold it until a wait. The new check is computed and kept only if no
-    failure of the set is known then, and a raise while settling leaves it
-    unissued.
+    passing check goes and a failing one keeps only its exception; the checks
+    after a failure go, since no wait can raise them. A device reports its
+    work at most its driver's batch of values late while work is submitted on
+    it, so the checks no wait follows hold the data of the work in flight and
+    of that batch; on a domain whose submits stop, they hold it until a wait.
+    The new check is computed and kept only if no failure of the set is known
+    then, and a raise while settling leaves it unissued.
 
     The host reads a reduction in place where it addresses its device's
-    memory. On a device of this machine whose memory the host does not
-    address, whether all flags hold is copied in the device's order into
-    [Pinned] memory ({!Rig.Buffer.kind}), which both address: one more copy
-    submitted per check, which nothing waits for. On another machine's
-    device the host reads it through a copy, which follows that device's
-    later work, so settling such a check waits for the work submitted
-    there. A failing check's elements are read on the host, through a copy
-    where the host does not address them.
+    memory. Otherwise whether all flags hold is copied at issue, in the
+    device's order, into memory the host addresses: [Pinned] memory
+    ({!Rig.Buffer.kind}) of a device of this machine, host memory for a
+    device of another machine. That is one more copy submitted per check,
+    which nothing waits for. A failing check's elements are read on the
+    host, through a copy where the host does not address them.
 
     This module lies above {!Exec} and {!Partial}, which compute what it
     reads, and below {!Eval}, [Rng] and [Nx]. {!Eval.run} issues each check,

@@ -120,6 +120,30 @@ external host_address : Buffer.t -> (int[@untagged])
   = "nx_array_host_byte" "nx_array_host"
 [@@noalloc]
 
+let hosted b = host_address b >= 0
+
+(* Copies and fills
+
+   Where the host addresses both buffers it moves the bytes before returning,
+   which [Buffer.copy] does without allocating. Otherwise a device copies or
+   fills: the work is queued and its point dropped, since rig's stamps order
+   every later access of either buffer's memory after it, by the host or a
+   device. *)
+
+(* Copies [src]'s bytes into [dst], of one length. *)
+let copy_bytes ~src ~dst =
+  if hosted src && hosted dst then Buffer.copy ~src ~dst
+  else
+    ignore
+      (Buffer.submit_copy ~src ~dst [| Buffer.row (Buffer.length src) |]
+        : Rig.Point.t)
+
+(* Sets byte [k] of [b] to [c]. *)
+let set_byte b k c =
+  let v = Buffer.view b ~first:k ~length:1 in
+  if hosted b then Buffer.fill v c
+  else ignore (Buffer.submit_fill v c : Rig.Point.t)
+
 (* The alignment of a dtype's storage: its width for dtypes of a byte or
    more, one byte for narrower ones, one component's for complex ones. *)
 let alignment dt =
@@ -171,7 +195,9 @@ let v dtype layout buffer =
    not fill it: bits past the last element stay zero. *)
 let zero_tail bits n b =
   if bits < 8 && n mod (8 / bits) <> 0 then
-    Buffer.blit_from_string "\000" 0 b (Buffer.length b - 1) 1
+    let k = Buffer.length b - 1 in
+    if hosted b then Buffer.blit_from_string "\000" 0 b k 1
+    else set_byte b k '\000'
 
 (* A fresh array laid out by [layout], C-contiguous at offset 0. *)
 let alloc ?memory d dtype layout =
@@ -414,18 +440,15 @@ external load_byte : Buffer.t -> (int[@untagged]) -> (int[@untagged])
    as a kernel's stores to it are atomic. *)
 let copy_span ~head ~tail src dst =
   let n = Buffer.length src in
-  if (not (head || tail)) || host_address src < 0 then Buffer.copy ~src ~dst
+  if (not (head || tail)) || not (hosted src) then copy_bytes ~src ~dst
   else begin
     Buffer.wait src Rig.Read;
     let i = if head then 1 else 0 and j = if tail then n - 1 else n in
     if j > i then
-      Buffer.copy
+      copy_bytes
         ~src:(Buffer.view src ~first:i ~length:(j - i))
         ~dst:(Buffer.view dst ~first:i ~length:(j - i));
-    let edge k =
-      let byte = Char.chr (load_byte src k) in
-      Buffer.fill (Buffer.view dst ~first:k ~length:1) byte
-    in
+    let edge k = set_byte dst k (Char.chr (load_byte src k)) in
     if head then edge 0;
     if tail && (n > 1 || not head) then edge (n - 1)
   end
@@ -491,18 +514,16 @@ let runs s t =
   done;
   (Array.sub order 0 !k, !n)
 
-(* Calls [f ps pt n] for each run of [n] elements consecutive at position [ps]
-   of [s] and [pt] of [t], layouts of one shape. Runs follow [t]'s stride order,
-   so a transposed view's runs into its packed layout are as long as its rows in
-   memory. *)
-let iter_runs s t f =
-  let outer, n = runs s t in
+(* Calls [f ps pt] at each index of the axes [outer] of [s] and [t], layouts of
+   one shape, the other axes at 0: [ps] and [pt] are its positions in [s] and
+   [t]. The last axis of [outer] varies fastest. *)
+let walk s t outer f =
   let k = Array.length outer in
   let idx = Array.make k 0 in
   let ps = ref (Layout.offset s) and pt = ref (Layout.offset t) in
   let go = ref (Layout.numel t > 0) in
   while !go do
-    f !ps !pt n;
+    f !ps !pt;
     let j = ref (k - 1) in
     while !j >= 0 && idx.(!j) + 1 = Layout.dim t outer.(!j) do
       let a = outer.(!j) in
@@ -519,6 +540,51 @@ let iter_runs s t f =
       pt := !pt + Layout.stride t a
     end
   done
+
+(* Calls [f ps pt n] for each run of [n] elements consecutive at position [ps]
+   of [s] and [pt] of [t], layouts of one shape. Runs follow [t]'s stride order,
+   so a transposed view's runs into its packed layout are as long as its rows in
+   memory. *)
+let iter_runs s t f =
+  let outer, n = runs s t in
+  walk s t outer (fun ps pt -> f ps pt n)
+
+(* The boxes that copy the runs of [s] into those of [t] ([runs]), of elements
+   of [eb] bytes, at byte offsets from positions [s0] of [s] and [t0] of [t].
+   The runs along the innermost outer axis are one box's rows where both
+   layouts step along it the same way by at least a run, a box starting at its
+   least row; otherwise each run is a box. [t] has an element. *)
+let boxes s s0 t t0 eb =
+  let outer, n = runs s t in
+  let k = Array.length outer and width = n * eb in
+  let ss, st =
+    if k = 0 then (0, 0)
+    else (Layout.stride s outer.(k - 1), Layout.stride t outer.(k - 1))
+  in
+  let grouped =
+    k > 0 && abs ss >= n && abs st >= n && Bool.equal (ss > 0) (st > 0)
+  in
+  let rows = if grouped then Layout.dim t outer.(k - 1) else 1 in
+  let outer = if grouped then Array.sub outer 0 (k - 1) else outer in
+  (* A box's first row is its least: the last of a run of rows both layouts
+     step backwards. *)
+  let back = if grouped && ss < 0 then rows - 1 else 0 in
+  let src_pitch = if grouped then abs ss * eb else width
+  and dst_pitch = if grouped then abs st * eb else width in
+  let bs = Array.make (Layout.numel t / (n * rows)) (Buffer.row 0) in
+  let i = ref 0 in
+  walk s t outer (fun ps pt ->
+      bs.(!i) <-
+        {
+          Buffer.src_offset = (ps + (back * ss) - s0) * eb;
+          dst_offset = (pt + (back * st) - t0) * eb;
+          width;
+          rows;
+          src_pitch;
+          dst_pitch;
+        };
+      incr i);
+  bs
 
 (* [a] with each axis of stride 0 cut to its first index: [transfer] stores
    into a destination that reaches each element once. *)
@@ -571,56 +637,47 @@ let gather_runs fn a h =
       in
       blit fn ~src ~dst)
 
-(* [src]'s device copies [src]'s runs into [dst], on that device, one
-   [Submission.copy] per run of elements consecutive in both, in one
-   submission. *)
-let pack_on_device src dst =
-  let d = device src and eb = Dtype.bits src.dtype / 8 in
-  let parts = ref [] in
-  iter_runs src.layout dst.layout (fun ps pt n ->
-      let view b p =
-        Rig.Submission.Buffer (Buffer.view b ~first:(p * eb) ~length:(n * eb))
-      in
-      parts :=
-        Rig.Submission.copy ~src:(view src.buffer ps) ~dst:(view dst.buffer pt)
-        :: !parts);
-  if !parts <> [] then begin
-    let s = Rig.Submission.make d (Array.of_list (List.rev !parts)) in
-    ignore (Rig.submit (Rig.Submission.Run.make s) ~buffers:[||] : Rig.Point.t)
-  end
+(* The bytes [a]'s layout spans, as a view of its buffer. *)
+let span_bytes a =
+  let bits = Dtype.bits a.dtype and lo, hi = Layout.span a.layout in
+  let first = lo * bits / 8 and last = ((hi * bits) + 7) / 8 in
+  Buffer.view a.buffer ~first ~length:(last - first)
 
-(* Copies each run between [src] and [dst] by its own [Buffer.copy], which
-   chooses the path between their devices. *)
+(* Copies [src]'s elements, of a byte or more, into [dst], of the same shape,
+   whose bytes they share none of, where a device copies: one
+   [Buffer.submit_copy] of [boxes] between the bytes the two layouts span,
+   which rig runs on the path between their devices. *)
 let copy_runs src dst =
   let eb = Dtype.bits src.dtype / 8 in
-  iter_runs src.layout dst.layout (fun ps pt n ->
-      Buffer.copy
-        ~src:(Buffer.view src.buffer ~first:(ps * eb) ~length:(n * eb))
-        ~dst:(Buffer.view dst.buffer ~first:(pt * eb) ~length:(n * eb)))
+  let s0, _ = Layout.span src.layout and t0, _ = Layout.span dst.layout in
+  ignore
+    (Buffer.submit_copy ~src:(span_bytes src) ~dst:(span_bytes dst)
+       (boxes src.layout s0 dst.layout t0 eb)
+      : Rig.Point.t)
 
-(* Stores [s], laid out in [t]'s stride order, into [t]: by a [Buffer.copy] per
-   run, unless the host addresses [t] and the runs are several, where the host
-   blits from [s], brought to it by one [Buffer.copy] if the host does not
-   address it. *)
+(* Stores [s], laid out in [t]'s stride order, into [t]: by [copy_runs],
+   unless the host addresses [t] and the runs are several, where the host
+   blits from [s], brought to it by one copy if the host does not address
+   it. *)
 let spread fn s t =
   let _, n = runs s.layout t.layout in
-  if n = Layout.numel t.layout || host_address t.buffer < 0 then copy_runs s t
+  if n = Layout.numel t.layout || not (hosted t.buffer) then copy_runs s t
   else begin
     let h =
-      if host_address s.buffer >= 0 then s
+      if hosted s.buffer then s
       else { s with buffer = Buffer.create Rig.host (Buffer.length s.buffer) }
     in
-    if h != s then Buffer.copy ~src:s.buffer ~dst:h.buffer;
+    if h != s then copy_bytes ~src:s.buffer ~dst:h.buffer;
     blit fn ~src:h ~dst:t
   end
 
 (* The host blits where it addresses both arrays' memory. Otherwise a device
-   that computes and that the host does not address packs its source's runs; the
-   host gathers them from other memory, and of a sub-byte array, whose runs a
-   byte copy cannot cut. Each gathers into the destination where it reaches it,
-   otherwise into a buffer laid out in the destination's stride order on its
-   side, which [spread] moves, unless the runs between the two arrays are
-   already as long. *)
+   that computes and that the host does not address copies its source's runs
+   ([copy_runs]); the host gathers them from other memory, and of a sub-byte
+   array, whose runs a byte copy cannot cut. Each gathers into the destination
+   where it reaches it, otherwise into a buffer laid out in the destination's
+   stride order on its side, which [spread] moves, unless the runs between the
+   two arrays are already as long. *)
 let transfer_by fn ~src ~dst =
   live fn src.buffer;
   live fn dst.buffer;
@@ -628,7 +685,6 @@ let transfer_by fn ~src ~dst =
     refused fn Shape_mismatch [ Any dst; Any src ];
   if not (Layout.is_distinct dst.layout) then
     refused fn Repeated_elements [ Any dst; Any src ];
-  let hosted b = host_address b >= 0 in
   let bits = Dtype.bits src.dtype in
   if bits < 8 && not (hosted dst.buffer) then
     refused fn Off_host [ Any dst; Any src ];
@@ -638,27 +694,37 @@ let transfer_by fn ~src ~dst =
       bits >= 8 && (not (hosted src.buffer)) && Rig.computes (device src)
     in
     let gather t =
-      if packs then pack_on_device src t
+      if packs then copy_runs src t
       else if hosted src.buffer then blit fn ~src ~dst:t
       else gather_runs fn src t
     in
     let direct =
       if packs then Rig.equal (device src) (device dst) else hosted dst.buffer
     in
-    reading fn src (fun () ->
-        if direct then gather dst
-        else
-          let l = packed dst.layout in
-          if snd (runs src.layout dst.layout) >= snd (runs l dst.layout) then
-            copy_runs src dst
-          else begin
-            let side = if packs then device src else Rig.host in
-            let n = Layout.numel dst.layout in
-            let buffer = Buffer.create side (Dtype.bytes dst.dtype n) in
-            let stage = { dst with layout = l; buffer } in
-            gather stage;
-            spread fn stage dst
-          end)
+    let move () =
+      if direct then gather dst
+      else
+        let l = packed dst.layout in
+        if snd (runs src.layout dst.layout) >= snd (runs l dst.layout) then
+          copy_runs src dst
+        else begin
+          let side = if packs then device src else Rig.host in
+          let n = Layout.numel dst.layout in
+          let buffer = Buffer.create side (Dtype.bytes dst.dtype n) in
+          let stage = { dst with layout = l; buffer } in
+          gather stage;
+          spread fn stage dst
+        end
+    in
+    (* The door refuses a destination that shares a byte with the source
+       unless the two are identical, as the host's blit does, and then the
+       transfer stores each element onto itself. *)
+    let moved () =
+      if not (Buffer.overlaps (span_bytes src) (span_bytes dst)) then move ()
+    in
+    match door ~written:[| Any dst |] ~read:[| Any src |] moved () with
+    | Done -> ()
+    | refusal -> refused fn refusal [ Any dst; Any src ]
   end
 
 let transfer ~src ~dst = transfer_by "Nx_array.transfer" ~src ~dst
@@ -684,12 +750,12 @@ let move_packed d a =
   in
   transfer_by "Nx_array.to_device" ~src:(first_of_broadcast a)
     ~dst:(first_of_broadcast into);
-  if into != dst then Buffer.copy ~src:into.buffer ~dst:dst.buffer;
+  if into != dst then copy_bytes ~src:into.buffer ~dst:dst.buffer;
   dst
 
 (* [a] over a copy of the bytes from its first to its last position, one
-   [Buffer.copy] but for a sub-byte span's shared end bytes ([copy_span]), its
-   layout shifted to the copy. *)
+   copy but for a sub-byte span's shared end bytes ([copy_span]), its layout
+   shifted to the copy. *)
 let move_span d a =
   let l = a.layout and bits = Dtype.bits a.dtype in
   let lo, hi = Layout.span l in

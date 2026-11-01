@@ -102,3 +102,21 @@ val elements : ('v, 's) Nx_array.Dtype.t -> 'v list Windtrap.testable
 val equal_elements : ('v, 's) Nx_array.Dtype.t -> 'v array -> 'v array -> unit
 (** [equal_elements dt expected actual] asserts [equal (elements dt)] over
     the elements of [expected] and [actual]. *)
+
+(** {1:bits Bits to place} *)
+
+type bits = Bits : ('v, 's) Nx_array.t -> bits
+(** The type for host arrays of any dtype. *)
+
+val bits : bits Windtrap.Gen.t
+(** [bits] is host arrays of shape [[r; c]] of a dtype of a byte or more,
+    their bytes drawn, NaN payloads and [-0.] among them, laid out plainly,
+    transposed, flipped on both axes, at stride 2 along columns, broadcast
+    along rows or as windows over one axis, whose rows overlap. [r] and [c]
+    are mostly drawn from [0], [1], [2], [3] and [5]; one array in four is
+    [128] by [130]. *)
+
+val bytes : ('v, 's) Nx_array.t -> int array
+(** [bytes a] is the bytes of [a]'s elements in C order of indices, each
+    element's in memory order, read on the host. [a] must lie in memory the
+    host addresses. *)

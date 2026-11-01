@@ -728,5 +728,130 @@ let leading =
               Nx.Placement.with_leading_axis (S4.split ~axis:last)));
     ]
 
+(* Devices that hold their work. A Polled device runs its queue only when the
+   test runs it (Rig_support.Polled), so a placement that waited for a copy
+   would have run its queue. The host addresses neither device's memory; one
+   maps host memory and the other does not, so a copy into it stages through
+   memory of its own. Each one's queue waits for the other's work, as a GPU's
+   for a peer's of its driver, and holds the parts of every copy a case
+   submits: a full queue makes a submit wait for its work. *)
+
+module Polled = Rig_support.Polled
+
+let capacity = 1 lsl 16
+
+let mapping, mapping_q =
+  Polled.open_ ~capacity ~host_visible:false ~waits_on:[ `Host ]
+    "nx-place-mapping"
+
+let flat, flat_q =
+  Polled.open_ ~capacity ~host_visible:false ~maps_host:false
+    ~waits_on:[ `Host ] "nx-place-flat"
+
+module Map = (val Nx.devices [ mapping ])
+module Flat = (val Nx.devices [ flat ])
+module Both = (val Nx.devices [ mapping; flat ])
+
+(* Runs every queued copy. *)
+let drain () =
+  List.iter
+    (fun q ->
+      while Polled.run q > 0 do
+        ()
+      done)
+    [ mapping_q; flat_q ]
+
+type onto = Onto_map | Onto_flat | Onto_both | Onto_split of int
+
+let pp_onto ppf = function
+  | Onto_map -> Format.pp_print_string ppf "onto the mapping device"
+  | Onto_flat -> Format.pp_print_string ppf "onto the flat device"
+  | Onto_both -> Format.pp_print_string ppf "onto both"
+  | Onto_split a -> Format.fprintf ppf "split %d onto both" a
+
+type held = H : ('v, 's, 'd) Nx.t -> held
+
+let onto_held o x =
+  match o with
+  | Onto_map -> H (Nx.place Map.on x)
+  | Onto_flat -> H (Nx.place Flat.on x)
+  | Onto_both -> H (Nx.place Both.on x)
+  | Onto_split a -> H (Nx.place (Both.split ~axis:a) x)
+
+(* Bits, where they go, and where they come from: the host for [None], a
+   split of axis [a] over both devices for [Some a]. *)
+let held_case =
+  let open Gen in
+  let onto =
+    of_list ~pp:pp_onto
+      [ Onto_map; Onto_flat; Onto_both; Onto_split 0; Onto_split 1 ]
+  in
+  triple Nx_support.bits onto (option (int_range 0 1))
+
+(* A placement onto held devices returns with its copies queued and unrun,
+   and once they have run, the value's bytes are the source's. *)
+let law_held (Bits a, o, from) =
+  (match (from, o) with
+  | Some b, Onto_split a' -> assume (a' <> b)
+  | _ -> ());
+  let n = A.Layout.numel (A.layout a) in
+  cover "from the host" (from = None);
+  cover "from a split over both" (from <> None);
+  cover "split onto both" (match o with Onto_split _ -> true | _ -> false);
+  cover "a source of 64 KiB or more" (A.Dtype.bytes (A.dtype a) n >= 65536);
+  cover "a strided source" (not (A.Layout.is_contiguous (A.layout a)));
+  cover "no element" (n = 0);
+  let x = Nx.Repr.of_array Nx.Host.v a in
+  let check : type v s d. (v, s, d) Nx.t -> unit =
+   fun x ->
+    drain ();
+    let ds = [| mapping; flat |] in
+    let submitted = Array.map Rig.submitted ds in
+    let signaled = Array.map Rig.signaled ds in
+    let (H y) = onto_held o x in
+    let queued = ref 0 in
+    Array.iteri
+      (fun i d ->
+        let name = Rig.name d in
+        equal int ~msg:(name ^ ": ran nothing") signaled.(i) (Rig.signaled d);
+        if Rig.submitted d > submitted.(i) then
+          less int ~msg:(name ^ ": signaled") ~than:(Rig.submitted d)
+            (Rig.signaled d);
+        queued := !queued + Rig.submitted d - submitted.(i))
+      ds;
+    (* From the host every element is copied; from the devices a window one
+       already holds is a view. *)
+    if n > 0 && from = None then
+      at_least int ~msg:"copies queued" ~than:1 !queued;
+    drain ();
+    let back = Nx.place Nx.Host.on y in
+    equal (array int) ~msg:"its bytes" (Nx_support.bytes a)
+      (Nx_support.bytes (require_some (Nx.Repr.array back)))
+  in
+  match from with
+  | None -> check x
+  | Some b -> check (Nx.place (Both.split ~axis:b) x)
+
+(* Placing onto the host is a wait: it returns with the copies that brought
+   the elements done, here a value of 64 KiB, whose host memory the mapping
+   device copies into directly. *)
+let test_onto_host_waits () =
+  let x =
+    Nx.place Map.on (Nx.create Nx.float32 [| 16384 |] (Array.make 16384 1.))
+  in
+  drain ();
+  let back = Nx.place Nx.Host.on x in
+  equal int ~msg:"run" (Rig.submitted mapping) (Rig.signaled mapping);
+  equal float_exact 1. (Nx.item [ 16383 ] back)
+
+let held =
+  group "held devices"
+    [
+      prop "a placement onto held devices returns with its copies queued"
+        held_case law_held;
+      test "a placement onto the host returns with its copies done"
+        test_onto_host_waits;
+    ]
+
 let () =
-  exit (run "nx place" [ laws; reshapes; sharing; refusals; leading ])
+  exit (run "nx place" [ laws; reshapes; sharing; refusals; leading; held ])

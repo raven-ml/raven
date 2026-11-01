@@ -39,10 +39,10 @@ let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
 
 type ('d, 'e) issued = {
   holds : (bool, D.bool_elt) A.t;
-      (* Whether every flag holds, in memory the host addresses where its
-         device is of this machine ({!readable}). *)
-  mark : int;
-      (* [holds]'s device's last value once [holds] was written. *)
+      (* Whether every flag holds, in memory the host addresses
+         ({!readable}). *)
+  on : Rig.t;  (* The device that computed it. *)
+  mark : int;  (* [on]'s last value once [holds] was written. *)
   first : (int64, D.int64_elt, 'd) Value.t option;
       (* The first false flag's position in C order; [None] for one flag,
          whose position is [0]. *)
@@ -96,13 +96,17 @@ let release = function
   | Pending (_, h) | Marked (Failing (_, h)) -> Rig.Claim.release h
   | Raised _ -> ()
 
-(* [a] in memory the host addresses where its device is of this machine:
-   itself where the host addresses the device's memory, else a copy the
-   device makes in its order into memory both address, which the host then
-   reads without a copy once the device reports the copy done. *)
+(* [a] in memory the host addresses: itself where the host addresses its
+   device's memory, else a copy the device makes in its order, which the host
+   then reads in place once the device reports the copy done. A device of
+   this machine copies into [Pinned] memory, which both address, since a copy
+   into host memory it does not map would wait for its work. Another
+   machine's device copies into host memory, its agent sending the byte back
+   as one message. *)
 let readable a =
   let d = A.device a in
-  if Rig.reaches Rig.host d || not (Rig.equal (Rig.host_of d) Rig.host) then a
+  if Rig.reaches Rig.host d then a
+  else if not (Rig.equal (Rig.host_of d) Rig.host) then A.to_device Rig.host a
   else
     let dst = A.create ~memory:Pinned d (A.dtype a) (L.shape (A.layout a)) in
     A.transfer ~src:a ~dst;
@@ -114,19 +118,14 @@ let readable a =
    work at most its driver's batch of values late while work is submitted on
    it ({!Rig.section-timeline}). Another device may get no more work, and its
    last values would then stay unreported: asking commits them, since an idle
-   device has nothing to batch. The final reduction on [c.holds]'s device
-   follows the work on the others, so that device alone decides. *)
+   device has nothing to batch. The final reduction and its copy on [c.on]
+   follow the work on the others, so that device alone decides. *)
 let reached ds c =
-  let d = A.device c.holds in
-  if List.exists (Rig.equal d) ds then Rig.signaled d >= c.mark
+  if List.exists (Rig.equal c.on) ds then Rig.signaled c.on >= c.mark
   else Rig.Buffer.reached (A.buffer c.holds) Read
 
-(* [a]'s element, read on the host: in place where it addresses [a]'s memory,
-   else through a copy. *)
-let get_on_host a =
-  let d = A.device a in
-  if Rig.equal (Rig.host_of d) Rig.host then A.get a [||]
-  else A.get (A.to_device Rig.host a) [||]
+(* [a]'s element, which lies in memory the host addresses. *)
+let get_on_host a = A.get a [||]
 
 (* The one element of [a], as a 0-d view. *)
 let unit_view a = Option.get (A.move (Reshape [||]) a)
@@ -407,11 +406,12 @@ let issue : type d e.
             let (holds, first), () = reduce ~by ok (Arg (Min, 0, D.Bool)) in
             (Iarray.get (Prim.arrays holds) 0, Some first)
         in
+        let on = A.device holds in
         let holds = readable holds in
-        let mark = Rig.submitted (A.device holds) in
+        let mark = Rig.submitted on in
         let data = kept data in
         let held = Rig.Claim.hold (A.buffer holds :: data_buffers data) in
-        let c = { holds; mark; first; shape; data; fail } in
+        let c = { holds; on; mark; first; shape; data; fail } in
         if not (pend n (Pending (c, held))) then Rig.Claim.release held
       end
     end

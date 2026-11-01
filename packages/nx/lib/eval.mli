@@ -19,7 +19,8 @@
     claim ends. A movement of a handle claims nothing.
     It passes on a handle of the same donor over the moved arrays. A [Place]
     onto the host from another set first waits on that set ({!Check.wait}),
-    then places the value ({!Exec.place}). A [Check] is issued
+    then places the value ({!Exec.place}) and waits for the copies that
+    wrote its arrays ({!Rig.Buffer.wait}). A [Check] is issued
     ({!Check.issue}).
 
     Each interpretation's extent runs under a handler of its own. An operation

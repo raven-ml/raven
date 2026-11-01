@@ -1233,6 +1233,225 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
   | Some b -> check b
   | None -> check base
 
+(* Held devices. A Polled device runs its queue only when the test runs it
+   (Rig_support.Polled). The host addresses neither device's memory; one maps
+   host memory and the other does not. Each one's queue waits for the other's
+   work, as a GPU's for a peer's of its driver, and holds the parts of every
+   copy a case submits: a full queue makes a submit wait for its work. *)
+
+module Polled = Rig_support.Polled
+
+let capacity = 1 lsl 16
+
+let held, held_q =
+  Polled.open_ ~capacity ~host_visible:false ~waits_on:[ `Host ]
+    "nx-array-held"
+
+let flat, flat_q =
+  Polled.open_ ~capacity ~host_visible:false ~maps_host:false
+    ~waits_on:[ `Host ] "nx-array-flat"
+
+(* Runs every queued copy. *)
+let drain () =
+  List.iter
+    (fun q ->
+      while Polled.run q > 0 do
+        ()
+      done)
+    [ held_q; flat_q ]
+
+(* The bytes of [a]'s buffer, read on the host. *)
+let buffer_bytes a =
+  let a =
+    if Rig.reaches Rig.host (A.device a) then a else A.to_device Rig.host a
+  in
+  let b = A.buffer a in
+  let s = Bytes.create (B.length b) in
+  B.blit_to_bytes b 0 s 0 (B.length b);
+  Bytes.to_string s
+
+type side = On_host | Held | Flat
+
+let device_of = function On_host -> Rig.host | Held -> held | Flat -> flat
+
+let pp_side ppf s =
+  Format.pp_print_string ppf
+    (match s with On_host -> "host" | Held -> "held" | Flat -> "flat")
+
+(* Where a transfer's arrays lie: [Sides (s, d)] for a source on [s] and a
+   destination on [d]; [Shared k] for two views of one allocation, on the
+   host and on a held device:
+   - [Interleaved], whose spans share bytes and whose elements do not;
+   - [Itself], one view transferred onto itself;
+   - [Turned], a square's transpose onto the square;
+   - [Shifted], a window onto the window one row on. *)
+type shared = Interleaved | Itself | Turned | Shifted
+
+type route = Sides of side * side | Shared of shared
+
+let pp_route ppf = function
+  | Sides (s, d) -> Format.fprintf ppf "%a to %a" pp_side s pp_side d
+  | Shared k ->
+      Format.pp_print_string ppf
+        (match k with
+        | Interleaved -> "interleaved"
+        | Itself -> "itself"
+        | Turned -> "turned"
+        | Shifted -> "shifted")
+
+let route =
+  let sides = [ On_host; Held; Flat ] in
+  let pairs =
+    List.concat_map
+      (fun s ->
+        List.filter_map
+          (fun d ->
+            if s = On_host && d = On_host then None else Some (Sides (s, d)))
+          sides)
+      sides
+  in
+  let shared = [ Interleaved; Itself; Turned; Shifted ] in
+  Gen.with_pp pp_route
+    (Gen.frequency
+       (List.map (fun k -> (2, Gen.constant (Shared k))) shared
+       @ List.map (fun r -> (1, Gen.constant r)) pairs))
+
+(* The elements of [a], of shape [s], at odd indices along every axis, in
+   order or, [flip], reversed along each. *)
+let odd ~flip s a =
+  let range d =
+    if flip then { M.start = (2 * d) - 1; count = d; step = -2 }
+    else { M.start = 1; count = d; step = 2 }
+  in
+  Option.get (A.move (M.Slice (Iarray.map range s)) a)
+
+let pattern dt s =
+  let n = Iarray.fold_left ( * ) 1 s in
+  A.of_array dt s
+    (Array.init n (fun k -> D.of_float dt (float_of_int (k mod 5))))
+
+(* Element [k] along a last axis of extent 2 of [base], an array of shape [s]
+   and that axis, as an array of shape [s], reversed along each axis where
+   [flip]. *)
+let half ~flip s base k =
+  let r = Iarray.length s in
+  let range i =
+    if i < r then { M.start = 0; count = Iarray.get s i; step = 1 }
+    else { M.start = k; count = 1; step = 1 }
+  in
+  let w = Option.get (A.move (M.Slice (Iarray.init (r + 1) range)) base) in
+  let w = Option.get (A.move (M.Reshape s) w) in
+  if not flip then w
+  else
+    let back d = { M.start = d - 1; count = d; step = -1 } in
+    Option.get (A.move (M.Slice (Iarray.map back s)) w)
+
+(* transfer through held devices stores what the host's transfer stores
+   between host arrays of the same layouts: every byte of the destination's
+   buffer, its other elements included, ends as the host's. A sub-byte
+   destination the host does not address raises. *)
+let law_transfer_held ((Case (a, m), flip), r) =
+  let check : type v s. (v, s) A.t -> (v, s) A.t -> unit =
+   fun a v ->
+    let dt = A.dtype v and s = L.shape (A.layout v) in
+    let bits = D.bits dt in
+    cover "flipped destination" flip;
+    match r with
+    | Sides (ss, ds) ->
+        cover "into a held device" (ss = On_host && ds <> On_host);
+        cover "from a held device" (ss <> On_host && ds = On_host);
+        cover "between held devices" (ss <> On_host && ds <> On_host);
+        cover "a sub-byte source off the host" (bits < 8 && ss <> On_host);
+        let wide = Iarray.map (fun d -> (2 * d) + 1) s in
+        let before = pattern dt wide in
+        let reference = A.copy before in
+        A.transfer ~src:v ~dst:(odd ~flip s reference);
+        let src =
+          if ss = On_host then v
+          else
+            let on = A.to_device (device_of ss) a in
+            match Option.bind m (fun m -> A.move m on) with
+            | Some w -> w
+            | None -> on
+        in
+        let big = A.to_device (device_of ds) before in
+        let dst = odd ~flip s big in
+        if bits < 8 && ds <> On_host then
+          raises_match (Exn.invalid_arg ~sub:"host") (fun () ->
+              A.transfer ~src ~dst)
+        else begin
+          A.transfer ~src ~dst;
+          drain ();
+          equal string ~msg:"bytes" (buffer_bytes reference) (buffer_bytes big)
+        end
+    | Shared k ->
+        (* A held device stores no element narrower than a byte. *)
+        assume (bits >= 8);
+        cover "spans that share bytes"
+          (k = Interleaved && L.numel (A.layout v) > 1);
+        cover "onto itself" (k = Itself);
+        cover "a transpose onto itself" (k = Turned);
+        cover "a window onto the next"
+          (k = Shifted && L.numel (A.layout v) > 0);
+        let r = Iarray.length s in
+        let base_shape, views =
+          match k with
+          | Interleaved | Itself ->
+              let first = if k = Itself then 1 else 0 in
+              ( Iarray.append s [| 2 |],
+                fun b -> (half ~flip s b first, half ~flip s b 1) )
+          | Turned ->
+              ( [| 3; 3 |],
+                fun b -> (Option.get (A.move (M.Permute [| 1; 0 |]) b), b) )
+          | Shifted ->
+              let range start i =
+                if i = 0 then { M.start; count = 2; step = 1 }
+                else { M.start = 0; count = Iarray.get s (i - 1); step = 1 }
+              in
+              let rows start = M.Slice (Iarray.init (r + 1) (range start)) in
+              let from, onto = if flip then (1, 0) else (0, 1) in
+              ( Iarray.append [| 3 |] s,
+                fun b ->
+                  ( Option.get (A.move (rows from) b),
+                    Option.get (A.move (rows onto) b) ) )
+        in
+        let before = pattern dt base_shape in
+        let outcome base =
+          let src, dst = views base in
+          match A.transfer ~src ~dst with
+          | () -> "stored"
+          | exception Invalid_argument _ -> "refused"
+        in
+        let reference = A.copy before in
+        let expected = outcome reference in
+        let big = A.to_device held before in
+        let actual = outcome big in
+        cover "refused" (expected = "refused");
+        equal string ~msg:"outcome" expected actual;
+        drain ();
+        equal string ~msg:"bytes" (buffer_bytes reference) (buffer_bytes big)
+  in
+  match Option.bind m (fun m -> A.move m a) with
+  | Some b -> check a b
+  | None -> check a a
+
+(* A sub-byte array created on a held device leaves the fill of its last
+   byte queued, and once it has run the bits past the last element read zero:
+   in memory that a freed buffer filled with ones held, which rig may give the
+   array. *)
+let test_create_fill_queued () =
+  let dirty = B.create held 3 in
+  B.fill dirty '\xff';
+  ignore (B.free dirty : bool);
+  drain ();
+  let a = A.create held D.Int4 [| 5 |] in
+  less int ~msg:"the fill is queued" ~than:(Rig.submitted held)
+    (Rig.signaled held);
+  drain ();
+  let s = buffer_bytes a in
+  equal int ~msg:"bytes" 3 (String.length s);
+  equal int ~msg:"the padding" 0 (Char.code s.[2] lsr 4)
+
 (* Each refusal names transfer, on the host and off it. *)
 let test_transfer_refusals () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
@@ -1684,6 +1903,11 @@ let tests =
           law_transfer;
         test "transfer refuses what it cannot store, naming itself"
           test_transfer_refusals;
+        prop "transfer through held devices stores what the host's does"
+          (Gen.pair (Gen.pair case Gen.bool) route)
+          law_transfer_held;
+        test "create on a held device leaves its tail's fill queued"
+          test_create_fill_queued;
         test "to_device packs in stride order" test_to_device_layouts;
         test "to_device moves sub-byte views through an io device"
           test_to_device_io;

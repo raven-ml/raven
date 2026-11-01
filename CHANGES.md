@@ -3309,6 +3309,17 @@ thread.
 
 ### Nx
 
+- `Nx.place` onto devices and the moves of operations across devices return
+  as `Rig.Buffer.submit_copy` returns, where they waited for each device's
+  earlier work, and a window gathered into a device moves in one copy.
+- Until a wait, a placement's copy may read the memory a value wraps
+  (`Nx.Repr.of_array`), and a device lost meanwhile raises at the next use of
+  what it wrote.
+- `Nx_array.transfer` refuses views of one memory that share bytes off the
+  host too, where a device copied them in an order that could read a written
+  element, and a transfer of an array onto itself does nothing.
+- `Nx.check` on another machine's device copies its result to the host at
+  issue, so settling it no longer waits for the work submitted after it.
 - Add `Nx.betaincinv` and `Nx.betainccinv`, the beta distribution's
   quantiles from either tail, within `4 + κ (64 (1 + |log m|) + 4)` ulps for
   shapes up to `2^20`. Rune differentiates them in the probability and in both

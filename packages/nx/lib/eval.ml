@@ -25,12 +25,18 @@ let checked (type v s d) ~by (x : (v, s, d) t) =
         owner.name
   | Array _ | Shards _ | Handle _ -> Prim.alive ~by x
 
-(* [x] placed at [p], a value onto the host from another set waited for
-   first. *)
+(* [x] placed at [p]. Onto the host from another set it is a wait: on [x]'s
+   set first, then for the copies that brought the elements, so that it
+   returns with them there. *)
 let placed ~by p x =
-  if Devices.on_host_set p && not (Devices.on_host_set (Prim.placement x)) then
+  if Devices.on_host_set p && not (Devices.on_host_set (Prim.placement x))
+  then begin
     Check.wait ~by x;
-  Exec.place ~by p x
+    let y = Exec.place ~by p x in
+    Iarray.iter (fun a -> Rig.Buffer.wait (A.buffer a) Read) (Prim.arrays y);
+    y
+  end
+  else Exec.place ~by p x
 
 (* The memory of a handle [c] claimed that [op]'s first result may take
    ({!Donate.reuse}): the handle's buffer, dead from then on, and the array

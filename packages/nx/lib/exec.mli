@@ -84,8 +84,10 @@ val eager : Partition.engine
     ({!Nx_array.to_device}). A gather fills a fresh C-contiguous array from
     the boxes by {!Nx_array.transfer}, on the host for an element narrower
     than a byte where the host does not address the device's memory, then
-    brought to the device. An empty window is an array of no bytes of its
-    own. *)
+    brought to the device. Moves and gathers return as nx.array's placement
+    does ({!Nx_array.section-placement}): where a device copies, as
+    {!Rig.Buffer.submit_copy} returns. An empty window is an array of no
+    bytes of its own. *)
 
 (** {1:local Maps beside each other} *)
 
@@ -120,7 +122,7 @@ val value :
 
     Raises [Invalid_argument] naming [by] if [p] cuts an axis [x] lacks, and
     if [x] is traced or a handle, {!Rig.Lost} for a lost device, and what
-    {!Rig.Buffer.copy} raises. *)
+    {!Rig.Buffer.submit_copy} raises. *)
 
 val place :
   by:string ->

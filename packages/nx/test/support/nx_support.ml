@@ -303,3 +303,83 @@ let elements dt =
 
 let equal_elements dt a b =
   Windtrap.equal (elements dt) (Array.to_list a) (Array.to_list b)
+
+(* Bits to place *)
+
+module A = Nx_array
+module D = Nx_array.Dtype
+module M = Nx_array.Move
+
+type bits = Bits : ('v, 's) A.t -> bits
+
+let wide = List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all
+
+(* A fresh host array of [dt] of shape [s] over [bytes], [Dtype.bytes] of
+   one element per index of [s]: the bytes as uint8 elements, widened. *)
+let over_bytes dt s bytes =
+  let w = D.bits dt / 8 in
+  let shape = if w = 1 then s else Array.append s [| w |] in
+  let u = A.of_array D.Uint8 (Iarray.of_array shape) bytes in
+  Option.get (A.bitcast dt u)
+
+type view = Plain | Transposed | Flipped | Strided | Broadcast | Windowed
+
+let pp_view ppf v =
+  Format.pp_print_string ppf
+    (match v with
+    | Plain -> "plain"
+    | Transposed -> "transposed"
+    | Flipped -> "flipped"
+    | Strided -> "strided"
+    | Broadcast -> "broadcast"
+    | Windowed -> "windowed")
+
+(* The base shape whose view [v] has shape [[r; c]], and the view. *)
+let view_of v r c =
+  let range start count step = { M.start; count; step } in
+  match v with
+  | Plain -> ([| r; c |], None)
+  | Transposed -> ([| c; r |], Some (M.Permute [| 1; 0 |]))
+  | Flipped ->
+      let back d = range (d - 1) d (-1) in
+      ([| r; c |], Some (M.Slice [| back r; back c |]))
+  | Strided ->
+      ([| r; (2 * c) + 1 |], Some (M.Slice [| range 0 r 1; range 1 c 2 |]))
+  | Broadcast -> ([| 1; c |], Some (M.Broadcast [| r; c |]))
+  | Windowed when c = 0 -> ([| r; c |], None)
+  | Windowed ->
+      ( [| r + c - 1 |],
+        Some (M.Window [| { M.axis = 0; size = c; step = 1; dilation = 1 } |]) )
+
+let extent = Windtrap.Gen.of_list [ 0; 1; 2; 3; 5 ]
+
+let bits =
+  let open Windtrap.Gen in
+  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) wide in
+  let* v =
+    of_list ~pp:pp_view
+      [ Plain; Transposed; Flipped; Strided; Broadcast; Windowed ]
+  in
+  let* r, c =
+    frequency
+      [ (3, pair extent extent); (1, constant ((128, 130) : int * int)) ]
+  in
+  let s, m = view_of v r c in
+  let n = Array.fold_left ( * ) 1 s * (D.bits dt / 8) in
+  (* The bytes come from a drawn seed, so that drawing and shrinking a large
+     array costs one draw. *)
+  let+ seed = int in
+  let rs = Random.State.make [| seed |] in
+  let a = over_bytes dt s (Array.init n (fun _ -> Random.State.int rs 256)) in
+  let a = match m with None -> a | Some m -> Option.get (A.move m a) in
+  Bits a
+
+let pp_bits ppf (Bits a) =
+  Format.fprintf ppf "%a %a" D.pp (A.dtype a) A.Layout.pp (A.layout a)
+
+let bits = Windtrap.Gen.with_pp pp_bits bits
+
+let bytes (type v s) (a : (v, s) A.t) =
+  let c = A.copy a in
+  let u = Option.get (A.bitcast D.Uint8 c) in
+  A.to_array u

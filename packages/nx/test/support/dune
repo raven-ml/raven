@@ -24,3 +24,8 @@
  (foreign_stubs
   (language c)
   (names nx_stack_support_stubs)))
+
+; rig's test agent, beside the suites that start it through Remote_job.
+
+(rule
+ (copy ../../../rig/test/remote/support/agent.exe agent.exe))

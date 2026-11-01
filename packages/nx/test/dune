@@ -90,8 +90,26 @@
   nx_stack_support
   nx_support
   rig
+  rig_support
   threads.posix
   unix
   windtrap)
  (deps
   (glob_files golden/special/*.golden)))
+
+; Checks on a device of another machine, served by rig's test agent over the
+; loopback.
+
+(test
+ (name test_check_remote)
+ (modules test_check_remote)
+ (deps support/agent.exe)
+ (libraries nx rig rig_remote rig_remote_job windtrap))
+
+; Opens this machine's first GPU, so it holds the lock GPU tests share.
+
+(test
+ (name test_place_gpu)
+ (modules test_place_gpu)
+ (locks %{workspace_root}/gpu)
+ (libraries nx nx_array nx_support rig rig.gpus windtrap))

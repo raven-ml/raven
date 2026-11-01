@@ -89,7 +89,8 @@ val create :
     bits of a sub-byte array's last byte past its last element are zero.
 
     Raises [Invalid_argument] as {!Layout.contiguous} does, and what
-    {!Rig.Buffer.create} raises. *)
+    {!Rig.Buffer.create} raises and, for a sub-byte array, what
+    {!Rig.Buffer.submit_fill} raises. *)
 
 val dtype : ('v, 's) t -> ('v, 's) Dtype.t
 (** [dtype a] is [a]'s dtype. *)
@@ -174,10 +175,19 @@ val of_array : ('v, 's) Dtype.t -> int iarray -> 'v array -> ('v, 's) t
 (** {1:placement Placement}
 
     {!to_device}, {!transfer} and {!copy} store an array's elements bit for
-    bit, NaN payloads included, on any devices, and run no kernel. {!borrow}
-    shares an array's memory with another device instead, where that device
-    maps it. {!to_device} and {!transfer} also raise what
-    {!Rig.Buffer.create}, {!Rig.Buffer.copy} and {!Rig.submit} raise. *)
+    bit, NaN payloads included, on any devices, and run no kernel. Where the
+    host addresses the memory of both arrays it moves the bytes, and they
+    return once the bytes are there, as they do when the host gathers an
+    array narrower than a byte from memory it does not address. Otherwise a
+    device copies, and they return as {!Rig.Buffer.submit_copy} returns:
+    every later access of either array's memory, by the host or a device,
+    follows the copy ({!Rig.section-order}). Memory outside the claims, such
+    as a bigarray's ({!of_bigarray}), is read or written until the copy is
+    done, so a program orders its own access through such a bigarray after
+    a {!Rig.Buffer.wait}. {!borrow} shares an array's memory with another
+    device instead, where that device maps it. {!to_device} and {!transfer}
+    also raise what {!Rig.Buffer.create}, {!Rig.Buffer.submit_copy} and
+    {!Rig.Buffer.submit_fill} raise. *)
 
 val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
 (** [to_device d a] is [a]'s elements on [d], also when [a] is on [d], in a
@@ -202,10 +212,10 @@ val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
 
     Raises [Invalid_argument] if the shapes differ, a buffer is dead or its
     memory is held exclusive, [dst] reaches an element twice
-    ({!Layout.is_distinct}), or [dst]'s elements are narrower than a byte and
-    the host does not address its memory, and, where the host addresses both
-    arrays' memory, if [dst]'s memory is [Read] or [dst] shares a byte with
-    [src] without being identical to it ({!section-kernels}). *)
+    ({!Layout.is_distinct}), [dst]'s elements are narrower than a byte and
+    the host does not address its memory, [dst]'s memory is [Read], or
+    [dst] shares a byte with [src] without being identical to it
+    ({!section-kernels}). *)
 
 val copy : ('v, 's) t -> ('v, 's) t
 (** [copy a] is a fresh C-contiguous array on [a]'s device holding [a]'s

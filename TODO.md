@@ -56,13 +56,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### API
 
-- copies: nx's placement, allocation and assembly through
-  `Buffer.submit_copy`, boxes and `Buffer.submit_fill`; done when placing on
-  N GPUs costs one wait
-- a read of a remote device's memory that doesn't follow its later work:
-  `Nx.check` on another machine's device settles through
-  `Nx_array.to_device`, whose `Rig.Buffer.copy` follows every value
-  submitted there, so a check waits for its step
 - GPU memory between machines over RDMA (GPUDirect), as nx.rdma had: a
   copy between two machines' GPUs runs through rig.mlx5 or rig.bnxt, not
   TCP, over the memory `Rig.Buffer.dma` describes
