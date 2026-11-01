@@ -1616,27 +1616,39 @@ let rec moves_axes : type d. (d pick * int option) list -> bool = function
   | (Held h, _) :: _ when ndim h <> 1 -> true
   | ((Held _ | Span _ | Rows _ | From _), _) :: rest -> moves_axes rest
 
-(* The axis map of the selection [picks] of a value of rank [r], each axis
-   at the extent its pick gives it: an [At] axis, of extent 1, goes, and so
-   does a held axis of 0-d positions; each [New] axis comes. With whether a
-   held axis of positions of two axes or more must then take their shape. *)
-let axis_map picks r =
-  let map = ref [] and spread = ref false in
-  List.iter
-    (fun (pick, a) ->
-      match (pick, a) with
-      | At _, _ | Held _, None -> ()
-      | Held h, Some a ->
-          if ndim h > 0 then map := a :: !map;
-          if ndim h > 1 then spread := true
-      | (Span _ | Rows _ | From _), Some a -> map := a :: !map
-      | (Span _ | Rows _ | From _), None -> ()
-      | New, _ -> map := -1 :: !map)
-    picks;
-  for a = used_axes picks to r - 1 do
-    map := a :: !map
-  done;
-  (Iarray.of_list (List.rev !map), !spread)
+(* Whether a pick drops its axis: [At], and positions held 0-d. *)
+let drops : type d. d pick -> bool = function
+  | At _ -> true
+  | Held h -> ndim h = 0
+  | Span _ | Rows _ | From _ | New -> false
+
+(* The number of axes of the selection [picks] once each pick that drops
+   its axis has, beside the [rest] axes past the picks'. *)
+let rec mapped_rank : type d. (d pick * int option) list -> int -> int =
+ fun picks rest ->
+  match picks with
+  | [] -> rest
+  | (pick, _) :: picks ->
+      (if drops pick then 0 else 1) + mapped_rank picks rest
+
+(* The axis the [j]th of those comes from, [-1] for a new one: a pick's
+   axis, then the axes past [used], the picks' first unpicked axis. *)
+let rec map_entry : type d. (d pick * int option) list -> int -> int -> int =
+ fun picks j used ->
+  match picks with
+  | [] -> used + j
+  | (New, _) :: rest -> if j = 0 then -1 else map_entry rest (j - 1) used
+  | (pick, Some a) :: rest ->
+      if drops pick then map_entry rest j (a + 1)
+      else if j = 0 then a
+      else map_entry rest (j - 1) (a + 1)
+  | (_, None) :: rest -> map_entry rest j used
+
+(* Whether a held axis takes the shape of positions of two axes or more. *)
+let rec spreads : type d. (d pick * int option) list -> bool = function
+  | [] -> false
+  | (Held h, _) :: _ when ndim h > 1 -> true
+  | _ :: rest -> spreads rest
 
 (* [x] at the selection [picks]. *)
 let selected ~by picks x =
@@ -1652,11 +1664,14 @@ let selected ~by picks x =
      held axis takes its positions' shape. An axis map, so that each kept
      axis keeps its cut. *)
   let s' = selection x picks in
-  if not (moves_axes picks) then Eval.reshape ~by s' y
+  let n = mapped_rank picks (ndim x - used_axes picks) in
+  (* Without a pick that drops or adds an axis, or with no axis left, a
+     reshape has no axis of one element to guess at. *)
+  if n = 0 || not (moves_axes picks) then Eval.reshape ~by s' y
   else
-    let map, spread = axis_map picks (ndim x) in
+    let map = Iarray.init n (fun j -> map_entry picks j 0) in
     let y = Eval.mapped ~by map y in
-    if spread then Eval.reshape ~by s' y else y
+    if spreads picks then Eval.reshape ~by s' y else y
 
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
