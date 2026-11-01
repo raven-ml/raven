@@ -9,17 +9,17 @@
 # forced: blessed dist/hmm/100 dist/hmm/100/grad dist/lkj_cholesky/10000 dist/lkj_cholesky/10000/grad dist/truncated_normal/100000 dist/truncated_normal/100000/grad dist/von_mises/100000 dist/von_mises/100000/grad under load 44.1 on 14 cores
 # forced: blessed nested/gaussian5/400 nested/run/gaussian5/100 under load 29.5 on 14 cores
 
-dist/beta/100000	alloc_words	exact	7396
+dist/beta/100000	alloc_words	exact	6588
 dist/beta/100000/grad	alloc_words	exact	1324
 dist/binomial/100000	alloc_words	exact	31774
 dist/binomial/100000/grad	alloc_words	exact	1324
-dist/dirichlet/100000	alloc_words	exact	5916
+dist/dirichlet/100000	alloc_words	exact	5512
 dist/dirichlet/100000/grad	alloc_words	exact	1182
-dist/gamma/100000	alloc_words	exact	4508
+dist/gamma/100000	alloc_words	exact	4104
 dist/gamma/100000/grad	alloc_words	exact	1324
 dist/hmm/100	alloc_words	exact	15154
 dist/hmm/100/grad	alloc_words	exact	1608
-dist/inverse_gamma/100000	alloc_words	exact	4510
+dist/inverse_gamma/100000	alloc_words	exact	4106
 dist/inverse_gamma/100000/grad	alloc_words	exact	1324
 dist/lkj_cholesky/10000	alloc_words	exact	4101
 dist/lkj_cholesky/10000/grad	alloc_words	exact	1182
@@ -35,8 +35,8 @@ dist/von_mises/100000	alloc_words	exact	2347
 dist/von_mises/100000/grad	alloc_words	exact	1324
 nested/gaussian5/400	alloc_words	exact	5158
 nested/run/gaussian5/100	alloc_words	exact	3372
-pathfinder/schools/4	alloc_words	exact	9807778
-vi/schools/4	alloc_words	exact	11265956
+pathfinder/schools/4	alloc_words	exact	9445904
+vi/schools/4	alloc_words	exact	11106123
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
