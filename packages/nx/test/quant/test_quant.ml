@@ -327,6 +327,7 @@ let gguf_bytes format count =
   b
 
 let format = Gen.of_list ~pp:pp_format formats
+let mxfp4 = Gen.constant ~pp:pp_format Mxfp4
 
 (* An extent from [0] to [hi], [0] seldom. *)
 let extent hi = Gen.frequency [ (1, Gen.constant 0); (5, Gen.int_range 1 hi) ]
@@ -1072,6 +1073,9 @@ let pp_cut ppf = function
   | Whole -> Format.pp_print_string ppf "whole"
   | Cut { axis; tiles } -> Format.fprintf ppf "axis %d in %d" axis tiles
 
+(* A weight and its cut, MXFP4 three times in five: the law's reads in
+   place and its cuts along [k] at and across blocks' boundaries are
+   MXFP4's, and each needs cases in every run. *)
 let placed =
   let open Gen in
   with_pp
@@ -1081,6 +1085,7 @@ let placed =
        weight
          ~lead:(list ~size:(int_range 0 1) (extent 4))
          ~count:(Some (extent 6))
+         ~format:(frequency [ (1, mxfp4); (1, format) ])
          ()
      in
      let r = Array.length (Nx_quant.shape w) in
@@ -1347,17 +1352,13 @@ let decodes_law (f, f64, e, n, ids) =
 
 (* Experts *)
 
-(* A stack of experts [[| e; n; k |]], MXFP4 most often; ids of shape [[| p |]]
-   or [[| p; t |]], in range, at and past both bounds, or all one expert; and an
-   input of a row per position, or one row for all of them. *)
-let experts =
+(* A stack of experts [[| e; n; k |]] of [format], MXFP4 most often by
+   default; ids of shape [[| p |]] or [[| p; t |]], in range, at and past both
+   bounds, or all one expert; and an input of a row per position, or one row
+   for all of them. *)
+let draw_experts ?(format = Gen.frequency [ (3, mxfp4); (1, format) ]) () =
   let open Gen in
-  let* view, w =
-    weight
-      ~lead:(map (fun e -> [ e ]) (extent 4))
-      ~format:(frequency [ (3, constant ~pp:pp_format Mxfp4); (1, format) ])
-      ()
-  in
+  let* view, w = weight ~lead:(map (fun e -> [ e ]) (extent 4)) ~format () in
   let lead, _, k = dims w in
   let e = lead.(0) in
   let in_range = map Int64.of_int (int_range 0 (max 0 (e - 1))) in
@@ -1391,6 +1392,8 @@ let experts =
       (Nx.create Nx.float64 xs' (Array.sub xs 0 (Array.fold_left ( * ) 1 xs')))
   in
   (view, w, Nx.create Nx.int64 shape ids, X { at; x })
+
+let experts = draw_experts ()
 
 let pp_experts ppf (view, w, ids, X { x; _ }) =
   Format.fprintf ppf "@[<v>%a@,ids %a@,x %a@]" pp_weight (view, w) Nx.pp ids
@@ -1591,6 +1594,9 @@ let pp_expert_cut ppf = function
   | Split { axis; over } -> Format.fprintf ppf "axis %d over %d" axis over
   | Mesh_n -> Format.pp_print_string ppf "n over a mesh axis"
 
+(* A cut and experts, MXFP4 three times in five where {!experts} draws it
+   four times in five, so a GGUF weight cut along [k] has cases in every
+   run. *)
 let cut_experts =
   let open Gen in
   let cut =
@@ -1599,7 +1605,7 @@ let cut_experts =
   in
   let* c = frequency [ (6, cut); (1, constant Mesh_n) ] in
   let* split = bool in
-  let+ e = experts in
+  let+ e = draw_experts ~format:(frequency [ (1, mxfp4); (1, format) ]) () in
   (c, split, e)
 
 (* [apply_experts] with [w] at [c] and [ids] and [x] whole on every device, or
@@ -1795,7 +1801,7 @@ let placements =
           equal (array int)
             (blocks_of (Nx_quant.quantize_q8_0 x))
             (blocks_of w));
-      prop
+      prop ~count:300
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and raises otherwise"
         work work_law;
@@ -1803,7 +1809,8 @@ let placements =
         "a float32 product decodes no value of an MXFP4 or Q8_0 weight, and \
          any other weight as dequant does"
         applies applies_law;
-      prop "an expert product decodes a matrix per slot, min (positions, \
+      prop ~count:300
+        "an expert product decodes a matrix per slot, min (positions, \
          experts), or none read where it lies"
         decodes decodes_law;
       prop ~count:400
