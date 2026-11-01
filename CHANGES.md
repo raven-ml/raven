@@ -896,6 +896,25 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** a CPU or Metal kernel loads its arguments from one byte
+  parameter, a buffer's address as an `Op.Refparam`, where it took a structure
+  (`Renderer.t.packed_args`, `Codegen.pack_args`).
+- **Breaking:** `Ops.param_arg` and `Ops.variable` take no `~multiple_of`,
+  and the `param_arg` record has no such field; a value known to be a multiple
+  of `k` is written `v * k`.
+- A float constant cast to an integer type is 0 for NaN and the type's least
+  or greatest value for an infinity, where `Dtype.const` raised.
+- `1 ** x` folds to 1 of the power's type, where it took the base's.
+- A kernel whose loop is bounded by a value read from memory is ordered as
+  one bounded by its type: run counts are exact, where their product
+  overflowed and placed loads inside the loops that use them.
+- An index of a computed value by scalars compiles, where rangeify raised.
+- Estimates count a range whose end reads another range at its greatest
+  trips, and every count exactly, where one past an `int` raised.
+- `-(x + y)` and `(x & m) // c` are no longer rewritten, `x // d < c` folds
+  for positive `d` only, and like terms regroup integers, not booleans.
+- `(x * -1) * y` regroups floats, and `where (a < b) c (a + (c - b))` of a
+  signed `a` is a maximum where `a + (c - b)` does not wrap.
 - A CPU kernel on x86_64 Windows calls the process's functions, those it
   names and those Clang calls itself, by Windows' convention, where `frexp`
   crashed: `Tolk_engine.target` names Windows (`x86_64-windows,native`).

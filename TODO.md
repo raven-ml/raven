@@ -187,8 +187,15 @@ raven / llama.cpp (Vulkan; ROCm):
   host's value is acceptable
 - a call body that stores to LOCAL memory gets no barrier before the
   kernel reads it back: since tinygrad efb4cc8cb, `add_raw_barrier` does
-  not look into call bodies, and tolk follows. Nothing builds such a body
-  yet; check tinygrad HEAD before one does
+  not look into call bodies, and tolk follows. tinygrad 6b7b018da (its
+  HEAD on 2026-10-31) still walks an AFTER's dependencies without entering
+  calls (`codegen/__init__.py:230-235`), so upstream has no fix to port.
+  Nothing builds such a body yet; decide before one does
+- a kernel's estimate counts that do not fit an `int` (a loop bounded by
+  a loaded value) are exact constants, but `Search`'s compute filter,
+  the engine's `split_grid` and its DEBUG=2 report evaluate them through
+  `Shape.sym_compile`, which raises past an `int`: they need a magnitude,
+  so evaluate exactly and saturate
 - compile.thumper's fudge rows run 9-25% faster than c0682e939 does at
   equal load: find whether a regression landed unexplained before it or
   the baseline was recorded under other conditions
@@ -201,6 +208,8 @@ raven / llama.cpp (Vulkan; ROCm):
   physical part
 - decode's values kernel takes 23.6 us against 12 us in the formula form: a
   core reduce split, or `decoded` covering float widening
+- Metal's packed kernel arguments (8869adcc8, af8961676) have not run on
+  Metal hardware; check `rig_metal.mli`'s contract against them on a Mac
 
 ## rune, kaun, vega
 
