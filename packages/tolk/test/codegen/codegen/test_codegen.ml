@@ -4135,7 +4135,7 @@ let calls =
           equal (list string) [ "axpy"; "h"; "axpy_1" ] functions;
           equal (list string) externs (names_after "extern void " src);
           equal (list string) functions
-            (names_after "static inline void " src));
+            (names_after "static inline  void " src));
       test "a nested call runs its body twice through registers"
         (runs_on_host nested_calls
            [ (1, int_values [ 0; 1; 2; 3 ]) ]
@@ -4184,14 +4184,20 @@ let calls =
       test "bodies of one name traced apart are two functions" (fun () ->
           let prg = Codegen.to_program (two_bodies ()) (Lazy.force host) in
           let src = source prg in
-          equal int 1 (occurrences "static inline void axpy(" src);
-          equal int 1 (occurrences "static inline void axpy_1(" src);
+          equal int 1 (occurrences "static inline  void axpy(" src);
+          equal int 1 (occurrences "static inline  void axpy_1(" src);
           equal (array Dtypes.value)
             (int_values [ 6; 11; 16; 21 ])
             (List.assoc 0 (Run.on_host prg [ (1, int_values [ 1; 2; 3; 4 ]) ])));
+      test "a HIP kernel defines the functions it calls, as device functions"
+        (fun () ->
+          let hip = renderer_for (target "AMD" "HIP" "gfx1100") in
+          let src = source (Codegen.to_program (two_bodies ()) hip) in
+          let fn = "static inline __attribute__((device)) void " in
+          equal (list string) [ "axpy"; "axpy_1" ] (names_after fn src));
       test "one body called twice is one function" (fun () ->
           let prg = Codegen.to_program (nested_calls ()) (Lazy.force host) in
-          equal int 1 (occurrences "static inline void incr(" (source prg));
+          equal int 1 (occurrences "static inline  void incr(" (source prg));
           equal int 2 (occurrences "  incr(" (source prg)));
       test "a call of a sink without a name is refused" (fun () ->
           let p = int_param ~name:"p" 0 1 in

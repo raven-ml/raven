@@ -86,6 +86,7 @@ type lang = {
   type_map : (Dtype.t * string) list;
   infinity : string;
   nan : string;
+  fn_prefix : string; (* the qualifier of a call body's function *)
   bitcast : string -> string -> string -> string;
       (* [bitcast t s x] reads [x], of type [s], as a [t] *)
   promoted : Dtype.t list; (* scalars whose operations compute wider *)
@@ -736,6 +737,7 @@ let cstyle =
         ];
     infinity = "INFINITY";
     nan = "NAN";
+    fn_prefix = "";
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
     promoted = Dtype.[ Int8; Int16 ];
     vector_names = [];
@@ -1005,7 +1007,7 @@ let render render_kernel l uops =
       List.map (fun (n, p) -> strf "%s %s" (param_type l p) n) bufs
     in
     let fn =
-      strf "static inline void %s(%s) {\n%s\n}" name
+      strf "static inline %s void %s(%s) {\n%s\n}" l.fn_prefix name
         (String.concat ", " params)
         (String.concat "\n" lines)
     in
@@ -1018,8 +1020,8 @@ let render render_kernel l uops =
   render_kernel ?prefix l ~name kernel bufs
     (List.concat_map src (List.rev bodies) @ uops)
 
-(* Metal, CUDA and HIP write a prefix of their own in place of the one [render]
-   gives: the functions a kernel calls are Clang's alone. *)
+(* Metal and CUDA write a prefix of their own in place of the one [render]
+   gives: the functions a kernel calls are Clang's and HIP's alone. *)
 let own_prefix render_kernel ?prefix:_ l = render_kernel l
 
 (* Clang *)
@@ -1888,6 +1890,7 @@ let hip_lang arch =
           ];
     smem_prefix = "__attribute__((shared, aligned(16)))";
     smem_prefix_for_cast = false;
+    fn_prefix = "__attribute__((device))";
     barrier =
       "__builtin_amdgcn_fence(__ATOMIC_RELEASE, \"workgroup\");"
       ^ "__builtin_amdgcn_s_barrier();"
@@ -1987,7 +1990,7 @@ let hip_wmma arch tensor_cores type_map (name, (n, m, k), dtype_in, dtype_out, _
         "}";
       ]
 
-let hip_kernel arch tensor_cores l ~name kernel bufs uops =
+let hip_kernel arch tensor_cores ?(prefix = []) l ~name kernel bufs uops =
   let used = uops_to_dtypes uops in
   let uses p = List.exists (fun (dt, _) -> p dt) used in
   let is_fp8 dt = List.mem dt Dtype.fp8s in
@@ -2067,7 +2070,7 @@ let hip_kernel arch tensor_cores l ~name kernel bufs uops =
                ^ if fp8_index d = 0 then "fp8_fp8" else "bf8_bf8" ))
            Dtype.fp8s)
   in
-  let prefix =
+  let defines =
     (if List.exists (fun u -> const_cast u && non_finite u) uops then
        [
          "#define INFINITY (__builtin_inff())";
@@ -2086,7 +2089,8 @@ let hip_kernel arch tensor_cores l ~name kernel bufs uops =
         (List.filter (fun (_, count) -> count > 1) used)
     @ List.map (hip_wmma arch tensor_cores type_map) (wmma_args uops)
   in
-  render_kernel l ~prefix ~name kernel bufs uops
+  (* Its own definitions first, then the functions it calls. *)
+  render_kernel l ~prefix:(defines @ prefix) ~name kernel bufs uops
 
 let hip (target : Helpers.Target.t) =
   (* gfx942 => MI300, gfx1100 => RX 7900, gfx1201 => RX 9700 *)
@@ -2102,5 +2106,5 @@ let hip (target : Helpers.Target.t) =
     ~global_prod_max:[ 0xFFFFFFFF; 0xFFFFFFFF; 0xFFFFFFFF ]
     ~tensor_cores ~extra_matcher:(hip_extra_matcher arch)
     ~code_for_op:lang.code_for_op ~native
-    ~render:(render (own_prefix (hip_kernel arch tensor_cores)) lang)
+    ~render:(render (hip_kernel arch tensor_cores) lang)
     ~compiler:(Compiler_amd.hip arch) target
