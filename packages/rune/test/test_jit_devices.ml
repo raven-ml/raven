@@ -323,15 +323,11 @@ let expert_product set c =
 (* Quantised products
 
    [Nx_quant.apply] compiled, at each format and each input dtype, its weight
-   on one device of the set or cut along its rows: eager and compiled are each
-   within {!Nx.contract}'s bound of the exact product of [x] with the weight's
-   values, [γ(k + 1, 2u) Σ|x||v|] in its accumulator, float64's for a float64
-   [x], and round once to [x]'s dtype, half its ulp. A sum over a decode that
-   reads a sub-byte bitcast, as Q4_K's, Q6_K's and MXFP4 blocks' do, is
-   evaluated today where the weight lies whole on each of several devices, or
-   is cut along its rows under one row of [x]: the bitcast's table of shifts
-   lies on the first device, beside a kernel on another. So the weight lies on
-   one device, or is cut along its rows under two rows of [x] or more. *)
+   on one device of the set, whole on each device or cut along its rows, under
+   a vector or rows of [x]: eager and compiled are each within
+   {!Nx.contract}'s bound of the exact product of [x] with the weight's values,
+   [γ(k + 1, 2u) Σ|x||v|] in its accumulator, float64's for a float64 [x], and
+   round once to [x]'s dtype, half its ulp. *)
 
 type format = Q8_0 | Q6_K | Q4_K | Mxfp4 | Mxfp4_blocks
 
@@ -346,6 +342,10 @@ let formats = [ Q8_0; Q6_K; Q4_K; Mxfp4; Mxfp4_blocks ]
 
 type input = X : (float, 'b) Nx.dtype -> input
 
+(* Where the weight lies: on one device, whole on each, or cut along its
+   rows. *)
+type lies = One | Whole | Rows
+
 let inputs = [ X Nx.float32; X Nx.bfloat16; X Nx.float16; X Nx.float64 ]
 let input_name (X dt) = Nx_array.Dtype.name dt
 
@@ -356,14 +356,17 @@ type quant_case = {
   rows : int;
   blocks : int;
   m : int option;
-  by_rows : bool;
+  lies : lies;
 }
 
 let pp_quant_case ppf c =
   Format.fprintf ppf "%d devices, %s by %s, %d rows of %d blocks, %s%s" c.qn
     (format_name c.format) (input_name c.input) c.rows c.blocks
     (match c.m with None -> "a vector" | Some m -> Printf.sprintf "%d rows" m)
-    (if c.by_rows then ", the weight cut along its rows" else "")
+    (match c.lies with
+    | One -> ", the weight on one device"
+    | Whole -> ", the weight whole on each device"
+    | Rows -> ", the weight cut along its rows")
 
 (* Values and bytes of a block, and the offsets of its float16 fields. *)
 let block_values = function Q8_0 | Mxfp4 | Mxfp4_blocks -> 32 | _ -> 256
@@ -415,27 +418,39 @@ let quant_cases =
    and+ rows = int_range 1 (qn + 1)
    and+ blocks = int_range 1 2
    and+ m = option (int_range 0 3)
-   and+ by_rows = bool in
-   let rows_of_x = match m with Some m -> m >= 2 | None -> false in
-   { qn; format; input; rows; blocks; m; by_rows = by_rows && rows_of_x })
+   and+ lies = of_list [ One; Whole; Rows ] in
+   { qn; format; input; rows; blocks; m; lies })
   |> with_pp pp_quant_case
 
-(* Every format at every input dtype, each once. *)
+(* Every format at every input dtype, each once, and each format's vector by
+   its weight cut along its rows and whole on each of two devices. *)
 let quant_examples =
   List.concat_map
     (fun format ->
-      List.mapi
-        (fun i input ->
-          {
-            qn = 2 + (i mod 3);
-            format;
-            input;
-            rows = 3;
-            blocks = 2;
-            m = (if i = 0 then None else Some 2);
-            by_rows = i mod 2 = 1;
-          })
-        inputs)
+      let vector lies =
+        {
+          qn = 2;
+          format;
+          input = X Nx.float32;
+          rows = 3;
+          blocks = 1;
+          m = None;
+          lies;
+        }
+      in
+      vector Rows :: vector Whole
+      :: List.mapi
+           (fun i input ->
+             {
+               qn = 2 + (i mod 3);
+               format;
+               input;
+               rows = 3;
+               blocks = 2;
+               m = (if i = 0 then None else Some 2);
+               lies = List.nth [ One; Rows; Whole; Rows ] i;
+             })
+           inputs)
     formats
 
 let quant_product set c =
@@ -443,14 +458,26 @@ let quant_product set c =
   cover
     (Printf.sprintf "%s by %s" (format_name c.format) (input_name c.input))
     true;
-  cover "a weight cut along its rows" c.by_rows;
+  let one_row = match c.m with None | Some 1 -> true | Some _ -> false in
+  cover "a weight on one device" (c.lies = One);
+  cover "a weight whole on each device" (c.lies = Whole);
+  cover "a weight cut along its rows" (c.lies = Rows);
+  cover "one row of x by a weight cut along its rows"
+    (one_row && c.lies = Rows);
+  cover "one row of x by a weight whole on each device"
+    (one_row && c.lies = Whole);
   let k = c.blocks * block_values c.format in
   let w = quant_weight c.format ~rows:c.rows ~blocks:c.blocks in
   let shape = match c.m with None -> [| k |] | Some m -> [| m; k |] in
   let x = Nx.cast dt (value ~seed:3 shape) in
-  let w_at = if c.by_rows then Split 0 else Device 1 in
+  let w_at, x_at =
+    match c.lies with
+    | One -> (Device 1, Device 1)
+    | Whole -> (On, On)
+    | Rows -> (Split 0, On)
+  in
   let wp = Nx_quant.place (at set w_at) w in
-  let xp = Nx.place (at set (if c.by_rows then On else Device 1)) x in
+  let xp = Nx.place (at set x_at) x in
   let f x _ = Nx_quant.apply wp x in
   match compiled f xp xp with
   | Raised m -> fail m
