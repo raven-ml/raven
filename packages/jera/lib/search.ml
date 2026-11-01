@@ -57,26 +57,14 @@ let hold m next last =
   let m = Nx.reshape (Array.append (Nx.shape m) ones) m in
   Nx.where (Nx.broadcast_to (Nx.shape next) m) next last
 
-let accepted tol ~e ~y =
-  let ratio = Tol.ratio tol ~e ~y in
+(* Whether each lane's error [e], over its scale, has a root mean square of
+   at most 1. *)
+let within ~scale e =
+  let ratio = Tol.scaled ~scale e in
   let r = if width e = 1 then ratio else Num.rms_rows (rows ratio) in
   Nx.less_equal_s (Nx.reshape (lanes e) r) 1.
 
-(* Contraction *)
-
-let contraction delta ~q =
-  let shrinking = Nx.logical_and (Nx.greater_equal_s q 0.) (Nx.less_s q 1.) in
-  let factor =
-    Nx.where shrinking
-      (Nx.div q (Nx.rsub_s 1. q))
-      (Nx.full_like q Float.infinity)
-  in
-  (* A zero component counts zero, whatever the factor. *)
-  let e =
-    Nx.mul (Nx.abs delta)
-      (Nx.reshape (Array.append (Nx.shape factor) [| 1 |]) factor)
-  in
-  Nx.where (Nx.equal_s delta 0.) (Nx.zeros_like delta) e
+let accepted tol ~e ~y = within ~scale:(Tol.scale tol y) e
 
 (* Backtracking
 
@@ -84,36 +72,32 @@ let contraction delta ~q =
    searches, the trials each lane took and the count of trips. *)
 
 let backtrack p dtype ~trials ~running ~shrink trial last =
-  let step (alpha, (payload, (searching, (first, (n, j))))) =
+  let step (alpha, (payload, (searching, (n, j)))) =
     let next, phi, accepted = trial alpha in
     let n = Nx.add n (Nx.cast Nx.int32 searching) in
     let ok = Nx.logical_and searching accepted in
     let payload = Nx.Ptree.map2 p (fun _ a b -> hold ok a b) next payload in
-    let first = Nx.where (Nx.equal_s j 0l) phi first in
     let searching = Nx.logical_and searching (Nx.logical_not ok) in
     let alpha = Nx.where searching (shrink alpha phi) alpha in
-    (alpha, (payload, (searching, (first, (n, Nx.add_s j 1l)))))
+    (alpha, (payload, (searching, (n, Nx.add_s j 1l))))
   in
   let lanes = Nx.shape running in
   let at = Nx.placement running in
-  let _, (payload, (searching, (first, (n, _)))) =
+  let _, (payload, (searching, (n, _))) =
     Rune.iterate
-      Nx.Ptree.(
-        pair tensor (pair p (pair tensor (pair tensor (pair tensor tensor)))))
+      Nx.Ptree.(pair tensor (pair p (pair tensor (pair tensor tensor))))
       ~max:trials
-      ~until:(fun (_, (_, (searching, (_, (_, j))))) ->
+      ~until:(fun (_, (_, (searching, (_, j)))) ->
         Nx.logical_or
           (Nx.logical_not (Nx.any searching))
           (Nx.greater_equal_s j (Int32.of_int trials)))
       step
       ( Nx.ones_at at dtype lanes,
         ( last,
-          ( running,
-            ( Nx.full_at at dtype lanes Float.nan,
-              (Nx.zeros_at at Nx.int32 lanes, Nx.scalar_at at Nx.int32 0l) ) )
+          (running, (Nx.zeros_at at Nx.int32 lanes, Nx.scalar_at at Nx.int32 0l))
         ) )
   in
-  (payload, Nx.logical_and running (Nx.logical_not searching), n, first)
+  (payload, Nx.logical_and running (Nx.logical_not searching), n)
 
 (* The sufficient-decrease constant: a step must take [c] of the decrease the
    slope predicts. *)
@@ -322,31 +306,32 @@ let wolfe p dtype ~trials ~running ~longest ~phi0 ~slope0 trial origin =
   in
   (s.at, found, s.tries)
 
+
 (* Iterations
 
    A Newton-type search takes undamped steps [δ x] and carries the estimate [x],
    the function it steps on at [x] ([f] for a system, the gradient for a
-   minimum), the last point a step was tested at and the undamped map [N x = x +
-   δ x] there, the error estimate and the contraction [q] of the last test, the
-   status, the evaluations and the count of iterations, which every lane
-   shares. *)
+   minimum), the first end of the secant that reads the contraction of the
+   undamped map [N x = x + δ x] and [N] there, the error estimate, the two
+   newest settled readings, the status, the evaluations and the count of
+   iterations, which every lane shares. *)
 
 type ('q, 'd) state = {
   x : (float, 'q, 'd) Nx.t;
   fx : (float, 'q, 'd) Nx.t;
-  before : (float, 'q, 'd) Nx.t;
-  mapped : (float, 'q, 'd) Nx.t;
+  base : (float, 'q, 'd) Nx.t;
+  image : (float, 'q, 'd) Nx.t;
   e : (float, 'q, 'd) Nx.t;
   q : (float, 'q, 'd) Nx.t;
+  q' : (float, 'q, 'd) Nx.t;
   st : 'd Nx.int32_t;
   n : 'd Nx.int32_t;
   k : 'd Nx.int32_t;
 }
 
 let finite v = every (Nx.isfinite v)
-
-let along alpha v =
-  Nx.mul (Nx.reshape (Array.append (Nx.shape alpha) [| 1 |]) alpha) v
+let column v = Nx.reshape (Array.append (Nx.shape v) [| 1 |]) v
+let along alpha v = Nx.mul (column alpha) v
 
 let start x0 fx =
   let lanes = lanes x0 in
@@ -357,48 +342,135 @@ let start x0 fx =
       (Nx.logical_not (finite fx))
       Not_finite
   in
-  let nan = Nx.full_like x0 Float.nan in
+  let none = Nx.full_at at (Nx.dtype x0) lanes Float.nan in
   {
     x = x0;
     fx;
-    before = nan;
-    mapped = nan;
+    base = Nx.full_like x0 Float.nan;
+    image = Nx.full_like x0 Float.nan;
     e = Nx.full_like x0 Float.infinity;
-    q = Nx.full_at at (Nx.dtype x0) lanes Float.nan;
+    q = none;
+    q' = none;
     st;
     n = Nx.ones_at at Nx.int32 lanes;
     k = Nx.scalar_at at Nx.int32 0l;
   }
 
-(* [q] is the contraction of the undamped map over the last step, [|N x − N x'|
-   / |x − x'|] from the last tested point [x']: when that step was taken in
-   full, [x = N x'] and [q] is the ratio of the last two undamped steps, and
-   after a shortened, damped or mixed step it is still [N]'s contraction, which
-   the length of the step taken never enters. The error takes the larger of the
-   last two contractions: a quasi-Newton method's rate varies from step to step,
-   and one small ratio would promise steps that shrink faster than the next one
-   does. *)
-(* [N x] and [N x'] are each rounded to the floats, by up to half a unit in
-   their last place, which leaves [q] uncertain by [r = ε (|N x| + |N x'|) / (2
-   |x − x'|)] either way. [q] is the upper end, [|N x − N x'| / |x − x'| + r]:
-   the ratio of the rounded values would read a contraction of 0.999 over a step
-   of three ulps as 2/3. A step that did not move the estimate has no
-   contraction: [q] is then infinite, so the error stays unbounded. *)
-let measure s next =
-  let moved = norm (Nx.sub s.x s.before) in
-  let still = Nx.equal_s moved 0. in
-  let moved = Nx.where still (Nx.ones_like moved) moved in
-  let half = Num.eps (Nx.dtype next) /. 2. in
-  let inf = Nx.full_like moved Float.infinity in
+(* The error needs an overestimate of the rate (Kelley, Solving Nonlinear
+   Equations with Iterative Methods, 2022, §1.5), and one reading can be low: a
+   quasi-Newton method's rate varies from step to step, and one small ratio
+   would promise steps that shrink faster than the next one does. *)
+let contraction s = Nx.where (Nx.isnan s.q') s.q (Nx.maximum s.q s.q')
+
+(* [tol]'s scale at [y], floored at the smallest normal float so that a scale
+   that underflows divides by a positive number. *)
+let floored tol y = Nx.clamp ~min:(Num.tiny (Nx.dtype y)) (Tol.scale tol y)
+
+(* The reading [|N x − N x'| / |x − x'|] over the secant from [x' = s.base]
+   measures [N]'s contraction whatever step moved the estimate: after a full
+   step it is the ratio of the last two undamped steps, and the length of a
+   shortened, damped or mixed step never enters it. Lengths are in [tol]'s
+   scaled norm, the one in which a contraction bounds the error the tolerance
+   accepts (Hairer and Wanner's RADAU5 and Deuflhard's NLEQ1 measure Newton's
+   corrections in it): a Euclidean secant is dominated by the large components
+   and understates a small one that contracts slowly. The scale is taken at the
+   larger magnitude of the secant's ends, so a component that moved has a
+   positive one.
+
+   [N x] and [N x'] are each rounded, by up to half a unit in their last place,
+   which leaves the reading uncertain by [r = ε (|N x| + |N x'|) / (2 |x − x'|)]
+   either way; [q] is its upper end. A reading settles once the rounding
+   decides whether the map contracts, [q < 1] or [q − 2r ≥ 1]. Over a step of
+   [k] ulps [r] is about [1 / k], so the secant's first end advances only on a
+   settled reading: until then the secant spans more steps and its rounding
+   shrinks, so a map that contracts by 0.99 settles over a secant of about a
+   hundred ulps, which one step near its zero never spans. An unsettled reading
+   whose lower end [q − 2r] exceeds the contraction held refutes it: both
+   readings are dropped, and the next settled one counts alone. *)
+let read tol s ~map =
+  let run = searching s.st in
+  let image = Nx.add s.x map in
+  let scale = floored tol (Nx.maximum (Nx.abs s.x) (Nx.abs s.base)) in
+  let length v = norm (Nx.div v scale) in
+  let moved = length (Nx.sub s.x s.base) in
+  (* Before the first reading, or after a step that did not move the estimate,
+     the secant has no length: the next one starts here. *)
+  let fresh = Nx.logical_not (Nx.greater_s moved 0.) in
+  let moved = Nx.where fresh (Nx.ones_like moved) moved in
+  let half = Num.eps (Nx.dtype image) /. 2. in
   let r =
     Nx.div
-      (Nx.mul_s (norm (Nx.add (Nx.abs next) (Nx.abs s.mapped))) half)
+      (Nx.mul_s (length (Nx.add (Nx.abs image) (Nx.abs s.image))) half)
       moved
   in
-  let q = Nx.add (Nx.div (norm (Nx.sub next s.mapped)) moved) r in
-  (Nx.where still inf q, Nx.where still inf r)
+  let q = Nx.add (Nx.div (length (Nx.sub image s.image)) moved) r in
+  let lower = Nx.sub q (Nx.mul_s r 2.) in
+  let settled =
+    Nx.logical_and (Nx.logical_not fresh)
+      (Nx.logical_or (Nx.less_s q 1.) (Nx.greater_equal_s lower 1.))
+  in
+  let refuted =
+    Nx.logical_and
+      (Nx.logical_not (Nx.logical_or fresh settled))
+      (Nx.greater lower (contraction s))
+  in
+  let push = Nx.logical_and run settled
+  and drop = Nx.logical_and run refuted
+  and advance = Nx.logical_and run (Nx.logical_or fresh settled) in
+  let none = Nx.full_like s.q Float.nan in
+  {
+    s with
+    base = hold advance s.x s.base;
+    image = hold advance image s.image;
+    q = Nx.where push q (Nx.where drop none s.q);
+    q' = Nx.where push s.q (Nx.where drop none s.q');
+  }
 
-let secant s next = fst (measure s next)
+type ('q, 'd) source =
+  | Paired of (float, 'q, 'd) Nx.t
+  | Solved of (float, 'q, 'd) Nx.t
+
+let gap q =
+  let shrinking = Nx.logical_and (Nx.greater_equal_s q 0.) (Nx.less_s q 1.) in
+  column (Nx.where shrinking (Nx.rsub_s 1. q) (Nx.zeros_like q))
+
+(* Below the least normal float a step rounds by up to the subnormals' spacing
+   whatever its size, and underflows to 0 short of the zero: a step there
+   counts that spacing as well. A zero step counts zero only where it is
+   resolved, and where the answer is not a subnormal, at which [f] itself may
+   have underflowed: [x − x / 100] rounds both to 0 fifty spacings from its
+   zero. A step paired with its equation is resolved where that equation's
+   value is exactly 0; one solved from [f] by a linear system, where [f] is 0
+   or did not underflow, its largest magnitude at least [tiny / ε], since its
+   component [i] answers to every equation. The step's size and whether its
+   zero is exact. *)
+let size ~x ~f delta =
+  let dtype = Nx.dtype delta in
+  let tiny = Num.tiny dtype in
+  let size = Nx.abs delta in
+  let size =
+    Nx.where (Nx.less_s size tiny) (Nx.add_s size (tiny *. Num.eps dtype)) size
+  in
+  let resolved =
+    match f with
+    | Paired f -> Nx.equal_s f 0.
+    | Solved f ->
+        let m = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs f) in
+        Nx.broadcast_to (Nx.shape delta)
+          (Nx.logical_or (Nx.equal_s m 0.)
+             (Nx.greater_equal_s m (tiny /. Num.eps dtype)))
+  in
+  let answer = Nx.abs (Nx.add x delta) in
+  let exact =
+    Nx.logical_and
+      (Nx.logical_and (Nx.equal_s delta 0.) resolved)
+      (Nx.logical_or (Nx.equal_s answer 0.) (Nx.greater_equal_s answer tiny))
+  in
+  (size, exact)
+
+let error q ~x ~f delta =
+  let size, exact = size ~x ~f delta in
+  Nx.where exact (Nx.zeros_like delta) (Nx.div size (gap q))
 
 (* A step at the floats' resolution: within one unit of [x]'s last place in
    every component, so it moves the estimate by rounding at most, as a step that
@@ -410,94 +482,106 @@ let still x step =
        (Nx.equal (Nx.add x step) x)
        (Nx.less_equal (Nx.abs step) ulp))
 
-let contracting s =
-  Nx.logical_and (Nx.isfinite s.q)
-    (Nx.logical_and (Nx.greater_equal_s s.q 0.) (Nx.less_s s.q 1.))
+(* A quasi-Newton method's step ratios say nothing of its error: its rate jumps
+   from step to step, so a lane can meet [tol] by the steps' contraction far
+   from its minimum. Its gradient bounds the error instead, a test Kelley calls
+   reasonable for any gradient method (Iterative Methods for Optimization,
+   1999, §2.3.2). In [tol]'s scaled coordinates [u = x / σ], [σ] the scale, a
+   function whose curvature is at least [μ] has [|u − u*| ≤ |σ g| / μ], and [μ]
+   is estimated by the least curvature the method's accepted steps [d]
+   measured, [yᵀd / |d / σ|²], which is at least the least one. Each component
+   carries [|σ g| / (μ √n)] of its scale at the answer, whose root mean square
+   is that bound: zero where the gradient is, or before any step measured a
+   curvature. *)
+let gradient_bound ~scale ~mu g =
+  let size = norm (Nx.mul g scale) in
+  let n = Float.of_int (width g) in
+  let b = Nx.div_s (Nx.div size mu) (Float.sqrt n) in
+  let none = Nx.logical_or (Nx.isnan mu) (Nx.equal_s size 0.) in
+  Nx.mul scale (column (Nx.where none (Nx.zeros_like b) b))
 
-let remaining s delta =
-  let gap = Nx.rsub_s 1. s.q in
-  Nx.div (Nx.abs delta) (Nx.reshape (Array.append (Nx.shape gap) [| 1 |]) gap)
+(* [(σ y)ᵀ ŵ / |w|] with [w = d / σ] and [ŵ] its direction, whose terms
+   neither underflow nor overflow. *)
+let least tol mu ~x ~x' y =
+  let sigma = floored tol (Nx.maximum (Nx.abs x) (Nx.abs x')) in
+  let w = Nx.div (Nx.sub x' x) sigma in
+  let size = norm w in
+  let c = Nx.div (dot (Nx.mul sigma y) (Nx.div w (column size))) size in
+  let measured = Nx.logical_and (Nx.isfinite c) (Nx.greater_s c 0.) in
+  Nx.where measured (Nx.where (Nx.isnan mu) c (Nx.minimum mu c)) mu
 
-(* A step the search cannot take leaves the estimate [|δ| / (1 − q)] from its
-   zero when the last step that settled its contraction contracted: its
-   estimate stays where it is, so its error counts the step it could not take
-   and the ones after it. With a slope 1000 times too steep, [q = 0.999], and
-   the estimate is still 1000 such steps from its zero. *)
-let bounded tol s delta =
-  Nx.logical_and (contracting s) (accepted tol ~e:(remaining s delta) ~y:s.x)
+type ('q, 'd) limit = {
+  error : (float, 'q, 'd) Nx.t;
+  answer : (float, 'q, 'd) Nx.t;
+  scale : (float, 'q, 'd) Nx.t;
+}
 
-(* A running lane whose step cannot move its estimate has reached the floats'
-   resolution: it converges where the error [bounded] counts meets [tol], and
-   stalls otherwise, as under a tolerance finer than the floats resolve. A
-   stalled lane that contracted still reports that error. *)
-let resolved tol s ~delta ~stuck =
-  let stuck = Nx.logical_and (searching s.st) stuck in
-  let st = settle s.st (Nx.logical_and stuck (bounded tol s delta)) Converged in
-  let measured = Nx.logical_and stuck (contracting s) in
+(* A lane at the floats' limit gets no reading to replace an older one taken
+   before the map settled, as the overshooting first step of a quasi-Newton
+   method: its [q] is the newest settled reading. *)
+let limit s l ~at =
+  let run = Nx.logical_and (searching s.st) at in
+  let converged = Nx.logical_and run (within ~scale:l.scale l.error) in
+  let st = settle s.st converged Converged in
   {
     s with
-    st = settle st stuck Stalled;
-    e = hold measured (remaining s delta) s.e;
+    x = hold converged l.answer s.x;
+    e = hold run l.error s.e;
+    st = settle st run Stalled;
   }
 
-let judge tol s ~map ~q ~r delta =
+(* The error is tested at the evaluated estimate's step and the answer is the
+   point that step reaches, as Deuflhard's NLEQ1 does: if [N] reduces the error
+   by [L] from [x], [|x − x*| ≤ |δ| / (1 − L)] by the triangle inequality and
+   [|x + δ − x*| ≤ L |δ| / (1 − L)], within [e] wherever [L ≤ q] and within
+   [tol] wherever that step at least halves the error. The error with the newest
+   reading, which the floats' limit takes, shares all but the gap. *)
+let judge tol s ~map ~mu ~f delta =
   let run = searching s.st in
-  let next = Nx.add s.x delta and mapped = Nx.add s.x map in
-  let e = contraction delta ~q:(Nx.maximum q s.q) in
-  let st = settle s.st (accepted tol ~e ~y:next) Converged in
-  let converged =
-    Nx.logical_and run (Nx.equal_s st (Solution.code Converged))
+  let answer = Nx.add s.x delta in
+  let scale = Tol.scale tol answer in
+  let size, exact = size ~x:s.x ~f delta in
+  let bounded e =
+    match (mu, f) with
+    | None, _ -> e
+    | Some mu, (Paired g | Solved g) ->
+        let floor = Nx.clamp ~min:(Num.tiny (Nx.dtype g)) scale in
+        Nx.maximum e (gradient_bound ~scale:floor ~mu g)
   in
-  (* A step whose rounding leaves open whether the map contracts, [q − 2r < 1 ≤
-     q], tells nothing: over a step of one ulp, [r ≥ 1], as for a step that
-     flips between the floats either side of a zero. The state keeps the
-     contraction of the last step that settled it. *)
-  let settled =
-    Nx.logical_or (Nx.less_s q 1.)
-      (Nx.greater_equal_s (Nx.sub q (Nx.mul_s r 2.)) 1.)
+  let error q =
+    bounded (Nx.where exact (Nx.zeros_like delta) (Nx.div size (gap q)))
   in
-  let measured = Nx.logical_and run settled in
-  let s =
-    {
+  let newest = error s.q in
+  let stuck = still s.x map in
+  let e = Nx.where (column stuck) newest (error (contraction s)) in
+  let converged = Nx.logical_and run (within ~scale e) in
+  let st = settle s.st converged Converged in
+  ( {
       s with
-      x = hold converged next s.x;
-      before = hold run s.x s.before;
-      mapped = hold run mapped s.mapped;
+      x = hold converged answer s.x;
       e = hold run e s.e;
-      q = hold measured q s.q;
-      st;
-    }
-  in
-  resolved tol s ~delta ~stuck:(still s.x map)
+      st = settle st stuck Stalled;
+    },
+    { error = newest; answer; scale } )
 
-let decide tol s ~map ~q delta =
-  judge tol s ~map ~q ~r:(snd (measure s (Nx.add s.x map))) delta
-
-let test tol s delta =
-  let q, r = measure s (Nx.add s.x delta) in
-  judge tol s ~map:delta ~q ~r delta
-
-(* A step over which the undamped map moves by no more than the rounding of its
-   two values, [q ≤ 2 r]: the contraction it measures, [q − r], is within that
-   rounding, as at the floats' limit. A step over which the map moves by the
-   step's own length, [q] near 1 with [r] small, is not one, whatever
-   contraction the state holds from earlier steps. *)
-let test_at tol s delta =
-  let q, r = measure s (Nx.add s.x delta) in
-  (judge tol s ~map:delta ~q ~r delta, Nx.less_equal q (Nx.mul_s r 2.))
+let test tol s ~f delta =
+  fst (judge tol (read tol s ~map:delta) ~map:delta ~mu:None ~f delta)
 
 let iterations ~budget extra step (s, aux) =
   let carry =
     Nx.Ptree.(
       pair
         (pair tensor (pair tensor (pair tensor tensor)))
-        (pair (pair tensor tensor) (pair tensor (pair tensor tensor))))
+        (pair
+           (pair tensor (pair tensor tensor))
+           (pair tensor (pair tensor tensor))))
   in
   let pack s =
-    ((s.x, (s.fx, (s.before, s.mapped))), ((s.e, s.q), (s.st, (s.n, s.k))))
+    ( (s.x, (s.fx, (s.base, s.image))),
+      ((s.e, (s.q, s.q')), (s.st, (s.n, s.k))) )
   in
-  let unpack ((x, (fx, (before, mapped))), ((e, q), (st, (n, k)))) =
-    { x; fx; before; mapped; e; q; st; n; k }
+  let unpack ((x, (fx, (base, image))), ((e, (q, q')), (st, (n, k)))) =
+    { x; fx; base; image; e; q; q'; st; n; k }
   in
   let step (c, aux) =
     let s = unpack c in

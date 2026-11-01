@@ -219,32 +219,6 @@ raven / llama.cpp (Vulkan; ROCm):
   job.c, then port the winner; A/B c2c-4M-c64, c2c-64K-c64 and
   c2c-32x64K-c64 quiet on fudge, test_fft passing
 
-## norn, jera
-
-- jera: Newton stops at the floats' limit by three rules (`Search.still`,
-  System.newton's merit-rounding branch, `at_limit`), because `still`
-  floors each component at |x|·ε, which is 0 at 0. MINPACK `hybrd`'s test
-  in norm (a step within ε‖x‖ replacing all three) does not fit the
-  componentwise `Tol`: it ends a lane at its largest components'
-  resolution. Picard (`System.anderson ~memory:0`) on (z − x) / 2,
-  z = (1, 1e-3), from (1, 0) then stalls 1000 ulps off z₂ under
-  `Tol.rel 1e-13` or `Tol.ulps 256`, where the three rules converge it
-  within 2 ulps, and `anderson ~memory:2` in test_system "compiled equals
-  eager" stalls before the exact zero it reaches. A test in the
-  tolerance's own scaling might hold both
-- jera: the contraction is measured on the whole vector's norm and
-  multiplies each component's |δᵢ|, which understates a small component
-  coupled to a large one. `Minimize.lbfgs ~memory:3` on
-  0.25 Σ(x² − a)² from √a(1 + 1e-6) converges up to 17 times off
-  `Tol.ulps 0.5` (30 of 300); `System.anderson` with memory 0 and 3 on
-  M (a − x²) / (2√a), M = [[1, .5], [−.5, 1]], up to 220 and 6.5 times.
-  At the floats' limit the error |δ| / (1 − q) takes the last settled q,
-  whose upper end over a step of a few ulps can read 0.93 where the step
-  before measured 1e-8: Newton on √a at `Tol.ulps 4` stalls 2 elements
-  in 1000 held to an ulp. A limit step's bound on q cannot be told from
-  f's evaluation error growing, so lowering q on it converged a lane 120
-  ulps off
-
 ## talon, hugin, brot, munin, quill
 
 - talon benches: record the query suite's DuckDB/Polars baselines on fudge

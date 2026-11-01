@@ -963,8 +963,102 @@ let limited =
       Format.fprintf ppf "a = %a@ b = %a@ k = %g@ p = %a@ noise %g, %g" Nx.pp a
         Nx.pp b k Nx.pp p noise amp)
 
+(* The magnitude of a zero's component: in [0.5, 2], 0, below the least normal
+   float, where the floats resolve it only to the subnormals' spacing and an
+   answer within a tolerance in ulps is the zero itself, or tiny and normal. *)
+let magnitude =
+  let normal = Gen.float_range 0.5 2. in
+  Gen.one_of
+    [
+      normal;
+      normal;
+      normal;
+      Gen.constant 0.;
+      Gen.map (fun u -> Float.ldexp u (-1040)) (Gen.float_range 0.5 2.);
+      Gen.map (fun u -> Float.ldexp u (-960)) (Gen.float_range 0.5 2.);
+    ]
+
+(* Covers for the kinds of zero [magnitude] draws, in a vector [z]. *)
+let kinds z =
+  let any p = Array.exists p (Oracle.floats z) in
+  cover "a zero at 0" (any (fun v -> v = 0.));
+  cover "a subnormal zero"
+    (any (fun v -> v <> 0. && Float.abs v < Float.min_float));
+  cover "a tiny normal zero"
+    (any (fun v -> Float.abs v >= Float.min_float && Float.abs v < 1e-280))
+
+(* The spacing of the subnormals, float64's absolute resolution. *)
+let spacing = Float.ldexp 1. (-1074)
+
+(* [z + d r]: within [r] of a zero [z] of normal magnitude, within a thousand
+   subnormal spacings of a smaller one. *)
+let start_at z d r =
+  if Float.abs z < Float.min_float then z +. (d *. 1000. *. spacing)
+  else z +. (d *. r)
+
+(* [Σ dᵢ (xᵢ − cᵢ)² / 2] with curvatures [d] in [e^±3] and [c] of
+   {!magnitude}s, from {!start_at} [c] within 1 in each component, and a tolerance
+   of [k] ulps: its minimum is [c], exactly. *)
+let quadratics =
+  let open Gen in
+  (let* n = int_range 2 6 in
+   let+ d = list ~size:(constant n) (float_range (-3.) 3.)
+   and+ c = list ~size:(constant n) magnitude
+   and+ signs = list ~size:(constant n) bool
+   and+ offsets = list ~size:(constant n) (float_range (-1.) 1.)
+   and+ k = float_range 4. 64. in
+   let c =
+     Array.of_list (List.map2 (fun c s -> if s then c else -.c) c signs)
+   in
+   let x0 = Array.mapi (fun i o -> start_at c.(i) o 1.) (Array.of_list offsets) in
+   (vec (Array.of_list (List.map exp d)), (vec c, (vec x0, k))))
+  |> with_pp (fun ppf (d, (c, (x0, k))) ->
+      Format.fprintf ppf "d = %a@ c = %a@ x0 = %a@ k = %g" Nx.pp d Nx.pp c
+        Nx.pp x0 k)
+
 let law_tests =
   [
+    prop ~count:25 "a quasi-Newton answer on a quadratic is within its bound"
+      quadratics
+      (fun (d, (c, (x0, k))) ->
+        (* In [tol]'s scaled coordinates the curvatures are [dᵢ σᵢ²], [σᵢ]
+           proportional to [|cᵢ|] near the answer, and every curvature a step
+           measures is a Rayleigh quotient, at least the least: the gradient's
+           bound puts [x] within [κ] of [tol], [κ] the ratio of the largest
+           curvature to the least, and the answer [x + δ] one [tol] and its
+           rounding further. A zero at 0 or below the normal floats is met
+           exactly or not at all. *)
+        kinds c;
+        let kappa =
+          let logs =
+            List.filter_map
+              (fun (d, c) ->
+                if Float.abs c < Float.min_float then None
+                else Some (log d +. (2. *. log (Float.abs c))))
+              (List.combine
+                 (Array.to_list (Oracle.floats d))
+                 (Array.to_list (Oracle.floats c)))
+          in
+          match logs with
+          | [] -> 1.
+          | l -> exp (List.fold_left Float.max Float.neg_infinity l
+                      -. List.fold_left Float.min Float.infinity l)
+        in
+        let f x = Nx.mul_s (Nx.sum (Nx.mul d (Nx.square (Nx.sub x c)))) 0.5 in
+        List.iter
+          (fun (name, m) ->
+            let s = Minimize.solve one m ~tol:(Tol.ulps k) ~budget:500 f x0 in
+            cover (name ^ " converges") (is Converged s);
+            if is Converged s then
+              let x = Solution.best s in
+              at_most float_exact ~msg:name
+                ~than:(kappa +. 1. +. (1. /. k))
+                (Oracle.ulps ~k ~y:x (Nx.abs (Nx.sub x c))))
+          [
+            ("lbfgs 1", Minimize.lbfgs ~memory:1 ~linear:Linear.dense);
+            ("lbfgs 3", Minimize.lbfgs ~memory:3 ~linear:Linear.dense);
+            ("bfgs", Minimize.bfgs ~linear:Linear.dense);
+          ]);
     prop "a converged solve's error meets tol at its estimate" limited
       (fun ((a, b), (k, ((p, noise), amp))) ->
         (* Under a tolerance below an ulp, a search whose last steps contract

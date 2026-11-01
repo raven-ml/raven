@@ -207,7 +207,7 @@ let newton ~tol ~budget ~slope f x0 =
         (Nx.neg (Nx.div s.fx (Nx.where usable sl (Nx.ones_like sl))))
         (Nx.zeros_like s.x)
     in
-    let s = Search.test tol s delta in
+    let s = Search.test tol s ~f:(Search.Paired s.fx) delta in
     let moving = searching s.st in
     let next = Nx.add s.x delta in
     let fx = evaluate next in

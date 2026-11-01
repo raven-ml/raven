@@ -547,6 +547,18 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Root.newton`, `System` and `Minimize.solve` converge where `|δ| / (1 − q)`
+  meets `tol` at the answer `x + δ`, `q` in `tol`'s scaled norm: Broyden ended
+  38× past `tol`; a map whose rate rises near its zero 245×, now at most 99×.
+- `Minimize.bfgs` and `lbfgs` also bound their error by the gradient over the
+  least curvature their steps measured (L-BFGS converged 264× past `tol`); they
+  stall more lanes under tolerances near the floats' resolution.
+- These solves resolve a step below the least normal float to the subnormals'
+  spacing: one that underflowed to 0 counted as a zero, so a lane converged
+  under `Tol.ulps` at a subnormal fifty spacings from its zero.
+- `Root.newton`'s, `System.newton`'s and `System.lanes`' docs no longer promise
+  that a wrong derivative cannot end a solve early: one wrong by orders of
+  magnitude at the answer can.
 - `Ode.path` takes again only its accepted steps, whatever its `budget`: it
   took a step of zero length in each slot past them. Compiled, its search
   writes each attempt's records alone, where it wrote them through a mask

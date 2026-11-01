@@ -42,13 +42,6 @@ val accepted :
 (** [accepted tol ~e ~y] is [true] in each lane whose error [e] at [y] meets
     [tol]: the root mean square of the scaled components is at most [1]. *)
 
-val contraction :
-  (float, 'b, 'd) Nx.t -> q:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
-(** [contraction delta ~q] is the error of an iteration whose undamped step is
-    [delta] and whose undamped map contracts by [q] per lane:
-    [|delta| q / (1 − q)] per component. It is infinite unless [0 ≤ q < 1], and
-    zero where [delta] is. *)
-
 val backtrack :
   ('p, 'd) Nx.Ptree.t ->
   (float, 'b) Nx.dtype ->
@@ -57,15 +50,15 @@ val backtrack :
   shrink:((float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t) ->
   ((float, 'b, 'd) Nx.t -> 'p * (float, 'b, 'd) Nx.t * 'd Nx.bool_t) ->
   'p ->
-  'p * 'd Nx.bool_t * 'd Nx.int32_t * (float, 'b, 'd) Nx.t
+  'p * 'd Nx.bool_t * 'd Nx.int32_t
 (** [backtrack p dtype ~trials ~running ~shrink trial last] searches from the
     step length [α = 1] of [dtype] in each running lane: [trial α] is a point's
     payload of structure [p], whose tensors' shapes start with the lanes', its
     merit [φ] and whether the lane accepts it. A lane ends at the first accepted
     [α], and otherwise moves to [shrink α φ], which is at most [α / 2], for at
     most [trials] trials. The result is the accepted payload, or [last] in a
-    lane that accepted none, whether each lane accepted, the trials each lane
-    took, and the merit of the full step. *)
+    lane that accepted none, whether each lane accepted and the trials each
+    lane took. *)
 
 val c : float
 (** [c] is the sufficient-decrease constant, [10⁻⁴]: a step must take [c] of the
@@ -119,72 +112,114 @@ val along : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 type ('q, 'd) state = {
   x : (float, 'q, 'd) Nx.t;
   fx : (float, 'q, 'd) Nx.t;
-  before : (float, 'q, 'd) Nx.t;
-  mapped : (float, 'q, 'd) Nx.t;
+  base : (float, 'q, 'd) Nx.t;
+  image : (float, 'q, 'd) Nx.t;
   e : (float, 'q, 'd) Nx.t;
   q : (float, 'q, 'd) Nx.t;
+  q' : (float, 'q, 'd) Nx.t;
   st : 'd Nx.int32_t;
   n : 'd Nx.int32_t;
   k : 'd Nx.int32_t;
 }
 (** The state of a Newton-type search: the estimate [x], the function the search
-    steps on at [x] ([f] for a system, the gradient for a minimum), the last
-    point a step was tested at, the undamped map [N x = x + δ x] there, the
-    error estimate, the contraction of the last step whose rounding settled
-    whether the map contracts, the status, the evaluations and the count of
-    iterations, which every lane shares. *)
+    steps on at [x] ([f] for a system, the gradient for a minimum), the first
+    end [x'] of the secant that reads the contraction of the undamped map
+    [N x = x + δ x] and [N x'], the error estimate, the newest settled reading
+    of the contraction and the one before it, NaN while there is none, the
+    status, the evaluations and the count of iterations, which every lane
+    shares. *)
 
 val start : (float, 'q, 'd) Nx.t -> (float, 'q, 'd) Nx.t -> ('q, 'd) state
 (** [start x0 fx] is the state at [x0], where the function is [fx], after one
     evaluation: a lane where [fx] is not finite ends [Not_finite]. *)
 
-val test : Tol.t -> ('q, 'd) state -> (float, 'q, 'd) Nx.t -> ('q, 'd) state
-(** [test tol s delta] tests the undamped step [delta] at [s.x]:
-    [e = contraction delta ~q], with [q] the larger of the contraction of the
-    undamped map over the last step, {!secant}, and the one the state holds. The
-    state then holds the last step's contraction, unless that step's rounding
-    [r] leaves open whether the map contracts, [q − 2r < 1 ≤ q], as it does over
-    a step of one ulp. A running lane whose error meets [tol] converges at
-    [x + delta], and one whose step no longer moves its estimate ends as
-    {!resolved} says. *)
+val contraction : ('q, 'd) state -> (float, 'q, 'd) Nx.t
+(** [contraction s] is the contraction the error takes, per lane: the larger of
+    [s.q] and [s.q'], [s.q] while [s.q'] is NaN, and NaN before any reading. *)
 
-val test_at :
-  Tol.t -> ('q, 'd) state -> (float, 'q, 'd) Nx.t -> ('q, 'd) state * 'd Nx.bool_t
-(** [test_at tol s delta] is [test tol s delta] and, per lane, whether the
-    undamped map moves over the step [delta] from [s.x] by no more than the
-    rounding of its two values, [q ≤ 2 r] with [q] and [r] as {!secant}
-    measures them: the step is at the floats' limit. *)
+val read : Tol.t -> ('q, 'd) state -> map:(float, 'q, 'd) Nx.t -> ('q, 'd) state
+(** [read tol s ~map] reads the contraction of the map that sends [s.x] to
+    [s.x + map] in each running lane: [q = |N x − N x'| / |x − x'| + r] over
+    the secant from [x' = s.base], lengths in [tol]'s scaled norm at
+    [max (|x|, |x'|)], with [r = ε (|N x| + |N x'|) / (2 |x − x'|)] the
+    rounding of [N]'s two values. A reading settled by its rounding,
+    [q < 1] or [q − 2r ≥ 1], becomes [s.q], the one before [s.q'], and the
+    secant's first end moves to [s.x]; an unsettled one leaves the first end,
+    so the next secant spans more steps, and drops both readings where its
+    lower end [q − 2r] exceeds {!contraction}. A secant of no length, as before
+    the first reading, reads nothing and starts at [s.x]. *)
 
-val secant : ('q, 'd) state -> (float, 'q, 'd) Nx.t -> (float, 'q, 'd) Nx.t
-(** [secant s next] is the contraction [|next − N x'| / |x − x'| + r] of a map
-    that sends [s.x] to [next], per lane: the upper end of what the rounding of
-    [next] and [N x'] allows, [r = ε (|next| + |N x'|) / (2 |x − x'|)]. *)
+type ('q, 'd) source =
+  | Paired of (float, 'q, 'd) Nx.t
+      (** The function's component [i] is the equation of unknown [i]: an
+          elementwise solve, a fixed point, a gradient. *)
+  | Solved of (float, 'q, 'd) Nx.t
+      (** The step solves a linear system on the function, so each of its
+          components answers to every equation. *)
+(** The function a step is taken from, which decides when a zero step is a
+    zero. *)
 
-val resolved :
+val error :
+  (float, 'q, 'd) Nx.t ->
+  x:(float, 'q, 'd) Nx.t ->
+  f:('q, 'd) source ->
+  (float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t
+(** [error q ~x ~f delta] is [|delta| / (1 − q)] per component of the step
+    [delta] from [x], [q] one contraction per lane: infinite unless
+    [0 ≤ q < 1]. A component of [delta] below the dtype's least normal float
+    counts the subnormals' spacing as well. A zero one counts zero where it is
+    resolved and [x + delta] is not a subnormal there: for [Paired f] where
+    [f] is zero there, for [Solved f] where [f] is zero or its largest
+    magnitude is at least [tiny / ε]. *)
+
+val least :
   Tol.t ->
-  ('q, 'd) state ->
-  delta:(float, 'q, 'd) Nx.t ->
-  stuck:'d Nx.bool_t ->
-  ('q, 'd) state
-(** [resolved tol s ~delta ~stuck] ends each running lane whose step [delta]
-    cannot move its estimate, [stuck]. When the last step that settled its
-    contraction contracted, [0 ≤ s.q < 1], its error is [|delta| / (1 − s.q)],
-    the step it could not take and the ones after it: the lane ends [Converged]
-    if that error meets [tol] at [s.x], and [Stalled] otherwise. Any other
-    stuck lane ends [Stalled] with its error unchanged. *)
+  (float, 'q, 'd) Nx.t ->
+  x:(float, 'q, 'd) Nx.t ->
+  x':(float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t ->
+  (float, 'q, 'd) Nx.t
+(** [least tol mu ~x ~x' y] is [mu] lowered, per lane, to the curvature
+    [yᵀd / |d / σ|²] of the move [d] from [x] to [x'] that changed the gradient
+    by [y], [σ] [tol]'s scale at the move's larger end, where that curvature is
+    positive; NaN [mu] is none yet. *)
 
-val decide :
+type ('q, 'd) limit
+(** What a lane at the floats' limit converges with: its error with the newest
+    settled reading, its answer and the answer's scale. *)
+
+val judge :
   Tol.t ->
   ('q, 'd) state ->
   map:(float, 'q, 'd) Nx.t ->
-  q:(float, 'q, 'd) Nx.t ->
+  mu:(float, 'q, 'd) Nx.t option ->
+  f:('q, 'd) source ->
   (float, 'q, 'd) Nx.t ->
-  ('q, 'd) state
-(** [decide tol s ~map ~q delta] is {!test} for a method whose map steps by
-    [map] and whose test step is [delta]: [q] is [map]'s contraction, the state
-    records [x + map] as the map's value, a lane converges at [x + delta], and
-    stalls when [map] no longer moves its estimate. [test] is [decide] with
-    [map = delta]. *)
+  ('q, 'd) state * ('q, 'd) limit
+(** [judge tol s ~map ~mu ~f delta] tests the undamped step [delta] at [s.x] in
+    each running lane, [f] the function the step is taken from: the lane
+    converges at [s.x + delta] where its error meets [tol] there. The error is
+    [error q ~x:s.x ~f delta] with [q] the {!contraction}, and with [mu], the
+    least curvature a quasi-Newton method's steps measured, at least
+    [|σ g| / (mu √n)] times each component's scale [σ] at [s.x + delta], [g]
+    the gradient [f] holds. A lane whose [map], the step the method takes,
+    cannot move its estimate, one within a unit in the last place of every
+    component, is at the floats' limit, and ends as {!limit} says. The result
+    holds what {!limit} needs for the lanes the method's search leaves
+    there. *)
+
+val limit : ('q, 'd) state -> ('q, 'd) limit -> at:'d Nx.bool_t -> ('q, 'd) state
+(** [limit s l ~at] ends each running lane of [at] at the floats' limit, with
+    the [l] of the {!judge} that led to [s]: it converges at its answer where
+    its error with [q] the newest settled reading [s.q] meets the tolerance, and
+    stalls otherwise. *)
+
+val test :
+  Tol.t -> ('q, 'd) state -> f:('q, 'd) source -> (float, 'q, 'd) Nx.t -> ('q, 'd) state
+(** [test tol s ~f delta] is
+    [fst (judge tol (read tol s ~map:delta) ~map:delta ~mu:None ~f delta)], for
+    a method whose map steps by its test step and that has no line search. *)
 
 val iterations :
   budget:int ->

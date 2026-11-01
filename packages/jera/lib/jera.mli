@@ -412,21 +412,17 @@ module Root : sig
     ((float, 'b, 'd) Nx.t, 'd) Solution.t
   (** [newton ~tol ~budget ~slope f x0] is a zero of [f] near [x0] in each
       element, by Newton's method: [slope x] is [f]'s derivative, elementwise.
-      It steers the steps only, so a wrong slope slows a solve and cannot end it
-      early.
+      It steers the steps only: one too steep by a modest factor slows a solve,
+      one too shallow by 2 or more need not converge, and one wrong by orders of
+      magnitude at the answer can end it early, as {!System}'s error says.
 
       {b Method.} Undamped Newton steps [δ = −f x / slope x], quadratic near a
       simple zero. {b Error.} As {!System}'s, each element a system of one
-      unknown: [e = |δ| q / (1 − q)], with [q] the larger of the last two
-      contractions, unbounded while [q ≥ 1] or before three steps; [y] is the
-      estimate. A zero step is a zero. A step within a unit in the last place
-      leaves [e = |δ| / (1 − q)] with [q] the last settled contraction, as in
-      {!System}, and converges if [q < 1] and that [e] meets [tol]. A zero or
-      non-finite slope, or a step that cannot move the estimate without
-      converging, ends the element [Stalled]; a non-finite [f] ends it
-      [Not_finite]; [budget] iterations end it [Budget_spent], so a budget of 1
-      converges only on a zero step. {b Cost.} One call of [f] and
-      one of [slope] per iteration.
+      unknown: [e = |δ| / (1 − q)] and the answer [x + δ]. A zero or non-finite
+      slope ends the element [Stalled]; a non-finite [f] ends it [Not_finite];
+      [budget] iterations end it [Budget_spent], so a budget of 1 converges
+      only on a zero step. {b Cost.} One call of [f] and one of [slope] per
+      iteration.
 
       Raises [Invalid_argument] if [budget < 1]. *)
 end
@@ -455,28 +451,49 @@ module System : sig
 
       {b Error.} Every method takes undamped steps [δ]: Newton's or Broyden's
       direction before the line search scales it, Anderson's fixed-point
-      residual [f x]. [e = |δ| q / (1 − q)] per component, the distance left
-      when the steps shrink by [q], with [q] the larger of the contractions of
-      the undamped map [N x = x + δ] over the last two steps, each
-      [|N x − N x'| / |x − x'|] from the point [x'] its step started at; after a
-      step taken in full it is the ratio of the norms of the last two undamped
-      steps. [e] is unbounded while [q ≥ 1] or before three steps, and [y] is
-      the estimate. A lane that meets [tol] takes its last step in full. A
-      shortened or mixed step moves the estimate but its length never enters
-      [e], so a search cannot converge by shrinking its steps. A zero step is a
-      zero. A step that cannot move the estimate, one within a unit in the last
-      place of every component, or one whose line search finds no decrease while
-      the full step changes [|f|² / 2] by less than its rounding, marks the
-      arithmetic's limit, as does a line search that finds no decrease above
-      the rounding over a step at the floats' limit, one over which [N] moves
-      by no more than the rounding of its two values: there a step moves an
-      unknown at 0 by more than its ulps, and the merit it reaches can rise. A
-      lane at the limit whose last settled contraction is below 1, [q] over the
-      last step whose rounding does not leave open whether the map contracts,
-      has [e = |δ| / (1 − q)], the step it could not take and the ones after
-      it, and converges if that meets [tol]. Any other ends [Stalled], as does
-      a line search that finds no decrease otherwise or a failed linear solve.
-      A non-finite [f] at the guess or at an estimate ends it [Not_finite];
+      residual [f x]. A lane's error is [e = |δ| / (1 − q)] per component, at
+      the answer [x + δ], where [f] is not evaluated; [y] is the answer. [q] is
+      the contraction of the undamped map [N x = x + δ]: the larger of its two
+      newest readings [|N x − N x'| / |x − x'|], or the one while only one
+      exists, with lengths in [tol]'s scaled norm, the root mean square of the
+      components over their scales. A reading counts once the rounding of [N]'s
+      two values settles whether it is below 1; until then [x'] stays and the
+      next reading spans more steps, and one whose least value exceeds [q] drops
+      both. [e] is unbounded while [q ≥ 1] or before a reading. A component of
+      [δ] below the least normal float counts the subnormals' spacing as well,
+      the floats' resolution there. One that is zero counts zero unless [f]
+      may have underflowed short of the zero: where the answer there is a
+      subnormal, or for Anderson's residual, which pairs equation [i] with
+      unknown [i], where [f]'s component is not exactly zero, or for Newton's
+      and Broyden's solved steps, each of whose components answers to every
+      equation, where [f] is neither zero nor of largest magnitude at least
+      [tiny / ε]. A shortened or mixed step moves the estimate but its length
+      never enters [e], so a search cannot converge by shrinking its steps.
+
+      If the step from [x] reduces the distance to the zero [x*] by a factor [L]
+      in that norm, [|x − x*| ≤ |δ| / (1 − L)] and the answer is within [L |δ| /
+      (1 − L)] of [x*]: within [e] where [L ≤ q], and within [tol] wherever [e]
+      met it and that last step at least halved the distance, as Newton's and
+      Broyden's steps do near a simple zero. Otherwise [e] is an estimate, and
+      the answer is within [(1 − q) / (1 − L)] times [tol], which exceeds it in
+      these cases. The map's rate rises near the zero beyond what its readings
+      saw. The derivative is wrong at the answer by orders of magnitude, so that
+      the last step is tiny and [L] near 1. [f]'s evaluation error exceeds its
+      rounding. Or one component contracts much more slowly than another: the
+      readings see the fast one while the error lies in the slow one, as for
+      [(−x₀, (z − x₁) / 100)] from [(1, z + 300 ulps)], which converges at its
+      first reading about 50 times past [Tol.ulps 4].
+
+      A lane whose step cannot move the estimate, one within a unit in the last
+      place of every component, or whose line search finds no decrease, is at
+      the floats' limit, where no further reading comes: its [q] is the newest
+      settled reading, and it converges if [e] meets [tol] and ends [Stalled]
+      otherwise. A tolerance finer than the steps a method still takes within
+      an ulp of the answer cannot be met, and such a lane ends [Stalled] even
+      where its estimate holds the zero: up to [κ] ulps at a minimum of
+      condition [κ], where a quasi-Newton model's steps and the gradient's
+      bound both reach that far. A failed linear solve ends a lane [Stalled];
+      a non-finite [f] at the guess or at an estimate ends it [Not_finite];
       [budget] iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of [f] through
@@ -492,8 +509,9 @@ module System : sig
   val newton : derivative:('x -> 'x -> 'x) -> 'x t
   (** [newton ~derivative] is Newton's method: [derivative x dx] is [f]'s
       Jacobian at [x] applied to [dx], such as [snd (Rune.jvp' f x dx)]. It
-      steers the steps only, so a wrong one slows a solve and cannot end it
-      early.
+      steers the steps only: one too steep by a modest factor slows a solve,
+      one too shallow by 2 or more need not converge, and one wrong by orders
+      of magnitude at the answer can end it early, as the error above says.
 
       {b Method.} Each step solves [J δ = −f x] with [linear], then backtracks
       from [x + δ] to the sufficient decrease of [|f|² / 2], by safeguarded
@@ -615,15 +633,19 @@ module Minimize : sig
 
       {b Error.} The methods take undamped steps [δ], the quasi-Newton or Newton
       direction before the line search scales it, and measure them as {!System}
-      does: [e = |δ| q / (1 − q)] per component, with [q] the larger of the
-      contractions of the undamped map [x + δ] over the last two steps, and [y]
-      the estimate; a lane that meets [tol] takes its last step in full. A step
-      that cannot move the estimate converges as in {!System}, if
-      [e = |δ| / (1 − q)] with [q] the last settled contraction below 1 meets
-      [tol], and otherwise ends the lane [Stalled], as do a step that is not
-      downhill, a line search that finds no decrease and a failed linear
-      solve; a non-finite [f] or gradient at the start ends it [Not_finite];
-      [budget] iterations end it [Budget_spent].
+      does, with its answer [x + δ], its bound and the cases where its error is
+      an estimate; a zero step's component is paired with the gradient's,
+      projected in a box, as Anderson's is with its residual's. A quasi-Newton
+      method's rate varies from step to step, so {!bfgs} and {!lbfgs} also need
+      the gradient's bound to meet [tol]: [|σ ∇f| / (μ √n)] times each
+      component's scale [σ] at the answer, with [μ] the least curvature [yᵀs /
+      |s / σ|²] their accepted steps [s] measured, and no bound before one did.
+      It is the distance in [tol]'s scaled norm where [f]'s curvature near the
+      minimum is at least [μ], an estimate since the steps sample the curvature
+      only along their path. A lane whose error does not meet [tol] ends
+      [Stalled] as in {!System}, and at a step that is not downhill; a
+      non-finite [f] or gradient at the start ends it [Not_finite]; [budget]
+      iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of rune's gradient of [f]
       through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every
@@ -754,12 +776,14 @@ module Minimize : sig
       diagonal of [JᵀJ + λ D] on the held ones, so every step tends to zero as
       [λ] grows; its trial point is [P (x + δ)], rejected where the linear model
       predicts no decrease there. {!nelder_mead} clips its vertices. The
-      undamped step is the projected one, [P (x + δ) − x]. The answer is stated
-      as the zero of [x − P (x − ∇f x)], so its derivative is zero in a
-      coordinate held at a constant bound and follows a bound that moves; that
-      system is not symmetric, so its [linear] must not be {!Linear.cg}. A box
-      that holds no point, where a coordinate's [lo] exceeds its [hi] or is [+∞]
-      or its [hi] is [−∞], or either is NaN, ends the lane [Stalled].
+      undamped step is the projected one, [P (x + δ) − x], and the gradient of
+      {!bfgs}'s and {!lbfgs}'s bound the projected one, [x − P (x − ∇f x)]. The
+      answer is stated as the zero of [x − P (x − ∇f x)], so its derivative is
+      zero in a coordinate held at a constant bound and follows a bound that
+      moves; that system is not symmetric, so its [linear] must not be
+      {!Linear.cg}. A box that holds no point, where a coordinate's [lo] exceeds
+      its [hi] or is [+∞] or its [hi] is [−∞], or either is NaN, ends the lane
+      [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
       [f], with its gradient for a gradient method, and [budget] its iterations,

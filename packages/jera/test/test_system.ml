@@ -151,6 +151,45 @@ let newton_tests =
         let s = newton (fun x -> Nx.sub (Nx.matmul a x) b) (vec [| 0.; 0. |]) in
         equal (Oracle.tensor ~rel:1e-14 ()) (Nx.solve a b) (Solution.get s);
         equal int32 2l (Nx.item [] (Solution.evaluations s)));
+    test "a zero whose unknown at 0 is another equation's is met in ulps"
+      (fun () ->
+        (* (x₁² − 2, x₀) from (1, 1): the step to x₀ = 0 is solved from the
+           equation x₀ = 0, the second, while the first is never 0 in the
+           floats; x₀'s zero step is exact all the same. *)
+        let f v =
+          Nx.stack [ Nx.sub_s (Nx.square (Nx.get [ 1 ] v)) 2.; Nx.get [ 0 ] v ]
+        in
+        let s =
+          System.solve one
+            (System.newton ~derivative:(derivative f))
+            ~linear:Linear.dense ~tol:(Tol.ulps 4.) ~budget:50 f
+            (vec [| 1.; 1. |])
+        in
+        equal bool true (is Converged s);
+        let x = Solution.best s in
+        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 0 ] x);
+        at_most float_exact ~than:(1. +. (1. /. 4.))
+          (Oracle.ulps ~k:4. ~y:x
+             (Nx.abs (Nx.sub x (vec [| 0.; Float.sqrt 2. |])))));
+    test "a zero with a component at 0 is met in ulps" (fun () ->
+        (* (x₀, x₁² − 2) from (1, 1): Newton's last step at least halves the
+           distance, so the answer is within 4 ulps of (0, √2), its first
+           component exactly 0. *)
+        let f v =
+          Nx.stack [ Nx.get [ 0 ] v; Nx.sub_s (Nx.square (Nx.get [ 1 ] v)) 2. ]
+        in
+        let s =
+          System.solve one
+            (System.newton ~derivative:(derivative f))
+            ~linear:Linear.dense ~tol:(Tol.ulps 4.) ~budget:50 f
+            (vec [| 1.; 1. |])
+        in
+        equal bool true (is Converged s);
+        let x = Solution.best s in
+        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 0 ] x);
+        at_most float_exact ~than:1.
+          (Oracle.ulps ~k:4. ~y:x
+             (Nx.abs (Nx.sub x (vec [| 0.; Float.sqrt 2. |])))));
     test "x² + 1 = 0 never converges by shrinking its steps" (fun () ->
         let s = newton (fun x -> Nx.add_s (Nx.square x) 1.) (vec [| 0.5 |]) in
         equal bool false (Nx.item [] (Solution.ok s));
@@ -237,6 +276,17 @@ let broyden_tests =
 
 (* Anderson *)
 
+(* The bound on the answer of a map that shrinks the distance by at most [top]
+   per step, under a tolerance of [k] ulps, in units of it: the answer is
+   within [top / (1 − top)] of [tol], and the map's rounding of an ulp per
+   step adds [1 / (k (1 − top))]. *)
+let within ~top k = (top +. (1. /. k)) /. (1. -. top)
+
+(* The measure [Tol.ulps k] takes of the distance from [s]'s answer to [z]. *)
+let distance k s z =
+  let x = Solution.best s in
+  Oracle.ulps ~k ~y:x (Nx.abs (Nx.sub x z))
+
 (* The fixed point [z] of [g x = sin x / 2 + c], a contraction by 1/2. *)
 let fixed z =
   let c = Nx.sub z (Nx.mul_s (Nx.sin z) 0.5) in
@@ -275,13 +325,14 @@ let anderson_tests =
           (Oracle.tensor ~rel:1e-6 ())
           (Oracle.central ~eps:1e-5 (fun t -> Nx.sum (solve t)) theta v)
           (Nx.sum (Nx.mul (Rune.grad' (fun t -> Nx.sum (solve t)) theta) v)));
-    test "a lane 120 ulps off its zero at the floats' limit does not converge"
+    test "a lane whose computed zero is 120 ulps off is within its bound"
       (fun () ->
-        (* f's evaluation error in the large component, coupled into the
-           small one, leaves the small one's computed zero about 120 ulps from
-           √a₀ while Picard's steps shrink to nothing. A contraction of 0.79
-           read over the last steps within rounding puts it past [tol]; the
-           0.56 measured just before them would not. *)
+        (* f's rounding in the large component, coupled into the small one,
+           leaves the small one's computed zero about 120 ulps from √a₀: under
+           a few ulps that is the evaluation error the error does not see. The
+           map's rate near the zero is about 0.56, above 1/2, so under 1024
+           ulps, where that rounding is small, an answer is within
+           [0.56 / 0.44] of [tol] to rounding, not within [tol]. *)
         let a =
           vec
             [|
@@ -300,13 +351,88 @@ let anderson_tests =
                (Nx.mul_s root 2.))
             factor
         in
+        let k = 1024. in
         let s =
           System.solve one
             (System.anderson ~memory:0)
-            ~linear:Linear.dense ~tol:(Tol.ulps 2.) ~budget:400 f
+            ~linear:Linear.dense ~tol:(Tol.ulps k) ~budget:400 f
             (Nx.mul_s root (1. +. 1e-6))
         in
-        equal bool false (is Converged s));
+        if is Converged s then
+          at_most float_exact ~than:(within ~top:0.56 k) (distance k s root));
+    test "anderson with memory reaches the zero of a map that does not contract"
+      (fun () ->
+        (* 2 x + sin x = b: the Picard map x + f x expands by up to 3, and
+           mixing two steps still reaches its zero, which Newton in OCaml
+           floats gives. *)
+        let b = [| 1.; -2.; 0.5 |] in
+        let zero b =
+          let x = ref 0. in
+          for _ = 1 to 60 do
+            x := !x -. (((2. *. !x) +. sin !x -. b) /. (2. +. cos !x))
+          done;
+          !x
+        in
+        let a = Nx.mul_s (Nx.eye f64 3) 2. in
+        let s = anderson ~memory:2 (field a (vec b)) (Nx.zeros f64 [| 3 |]) in
+        equal bool true (is Converged s);
+        equal near (vec (Array.map zero b)) (Solution.best s));
+    test "a small slow component beside a large fast one converges in ulps"
+      (fun () ->
+        (* z + c ⊙ (x − z) with rates 0.027 and 0.94 and zeros 1.8 and 0.0028:
+           measured in [tol]'s scaled norm, the readings see the slow small
+           component settle at 0.94, and the answer is within
+           [(0.94 + 1 / 64) / 0.06] of [tol]; a Euclidean secant, dominated by
+           the large component, never settles it. *)
+        let h = Float.of_string in
+        let c = vec [| h "0x1.bd7651a93286dp-6"; h "0x1.e0ce22dde1eafp-1" |]
+        and z = vec [| h "-0x1.cc26fb884a3cep+0"; h "-0x1.7529c8bd30666p-9" |]
+        and x0 = vec [| h "-0x1.b78f6b62e373dp+0"; h "-0x1.752bf6ef80993p-9" |] in
+        let s =
+          System.solve one
+            (System.anderson ~memory:0)
+            ~linear:Linear.dense ~tol:(Tol.ulps 64.) ~budget:20000
+            (fun x -> Nx.mul (Nx.sub_s c 1.) (Nx.sub x z))
+            x0
+        in
+        equal bool true (is Converged s);
+        at_most float_exact
+          ~than:(within ~top:(Nx.item [ 1 ] c) 64.)
+          (distance 64. s z));
+    test "a slow map toward 0 converges in ulps at 0 alone" (fun () ->
+        (* x − x / 100 from a thousand subnormal spacings: the steps round to 0
+           at fifty spacings from 0, where [f] underflows too. That point is
+           no zero a tolerance in ulps admits; one in absolute terms admits
+           it. *)
+        let solve tol =
+          System.solve one
+            (System.anderson ~memory:0)
+            ~linear:Linear.dense ~tol ~budget:2000
+            (fun x -> Nx.mul_s x (-0.01))
+            (vec [| 1000. *. Float.ldexp 1. (-1074) |])
+        in
+        let s = solve (Tol.ulps 4.) in
+        if is Converged s then
+          equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.best s);
+        equal bool true (is Converged (solve (Tol.abs 1e-300))));
+    test "Picard on (z − x) / 2 from 0 reaches its small component" (fun () ->
+        (* The rate is 1/2: each step halves the distance, so the error
+           [2 |δ|] meets the tolerance once the steps fall to an eighth of it,
+           which the floats resolve in both components, and the answer is
+           within it. *)
+        let z = vec [| 1.; 1e-3 |] in
+        List.iter
+          (fun k ->
+            let s =
+              System.solve one
+                (System.anderson ~memory:0)
+                ~linear:Linear.dense ~tol:(Tol.ulps k) ~budget:400
+                (fun x -> Nx.div_s (Nx.sub z x) 2.)
+                (vec [| 1.; 0. |])
+            in
+            equal bool true (is Converged s);
+            at_most float_exact ~than:(within ~top:0.5 k) (distance k s z))
+          [ 16.; 256. ]);
     test "a negative memory raises" (fun () ->
         invalid_with "Jera.System.anderson: memory = -1 is negative" (fun () ->
             System.anderson ~memory:(-1)));
@@ -329,8 +455,206 @@ let limited =
       Format.fprintf ppf "a = %a@ z = %a@ factor = %g@ k = %g@ %s" Nx.pp a
         Nx.pp z factor k m)
 
+(* The magnitude of a zero's component: in [0.5, 2], 0, below the least normal
+   float, where the floats resolve it only to the subnormals' spacing and an
+   answer within a tolerance in ulps is the zero itself, or tiny and normal. *)
+let magnitude =
+  let normal = Gen.float_range 0.5 2. in
+  Gen.one_of
+    [
+      normal;
+      normal;
+      normal;
+      Gen.constant 0.;
+      Gen.map (fun u -> Float.ldexp u (-1040)) (Gen.float_range 0.5 2.);
+      Gen.map (fun u -> Float.ldexp u (-960)) (Gen.float_range 0.5 2.);
+    ]
+
+(* Covers for the kinds of zero [magnitude] draws, in a vector [z]. *)
+let kinds z =
+  let any p = Array.exists p (Oracle.floats z) in
+  cover "a zero at 0" (any (fun v -> v = 0.));
+  cover "a subnormal zero"
+    (any (fun v -> v <> 0. && Float.abs v < Float.min_float));
+  cover "a tiny normal zero"
+    (any (fun v -> Float.abs v >= Float.min_float && Float.abs v < 1e-280))
+
+(* The spacing of the subnormals, float64's absolute resolution. *)
+let spacing = Float.ldexp 1. (-1074)
+
+(* [z + d r]: within [r] of a zero [z] of normal magnitude, within a thousand
+   subnormal spacings of a smaller one. *)
+let start_at z d r =
+  if Float.abs z < Float.min_float then z +. (d *. 1000. *. spacing)
+  else z +. (d *. r)
+
+(* A linear map [z + c ⊙ (x − z)] of up to three components whose largest rate
+   is [top], the others anywhere below it, down to 0, and a tolerance: [k]
+   ulps, or [Tol.rel (k ε)] for [k] up to [10⁹·⁶]. A zero's components differ
+   in magnitude by up to [10³], and one of rate above 1/2 starts within 300
+   ulps of its zero, or five times a looser tolerance, the others within 1,
+   so that a fast large one can collapse while the error lies in a slow small
+   one; a zero below the normal floats is started as {!start_at} says. *)
+let linear_maps =
+  let open Gen in
+  (let* n = int_range 1 3 in
+   let* top = one_of (List.map constant [ 0.5; 0.9; 0.99 ]) in
+   let+ rest = list ~size:(constant (n - 1)) (float_range 0. top)
+   and+ zs = list ~size:(constant n) magnitude
+   and+ decades = list ~size:(constant n) (one_of [ constant 1.; constant 1e-3 ])
+   and+ signs = list ~size:(constant n) bool
+   and+ offsets = list ~size:(constant n) (float_range (-1.) 1.)
+   and+ rel, k =
+     one_of
+       [
+         map (fun k -> (false, k)) (float_range 4. 64.);
+         map (fun e -> (true, 10. ** e)) (float_range 5.6 9.6);
+       ]
+   in
+   let c = Array.of_list (top :: rest) in
+   let z =
+     Array.of_list
+       (List.map2
+          (fun (z, d) s -> if s then z *. d else -.(z *. d))
+          (List.combine zs decades) signs)
+   in
+   let x0 =
+     Array.mapi
+       (fun i d ->
+         let reach =
+           if c.(i) > 0.5 then
+             Float.max 300. (5. *. k) *. epsilon_float *. Float.abs z.(i)
+           else 1.
+         in
+         start_at z.(i) d reach)
+       (Array.of_list offsets)
+   in
+   (top, (vec c, (vec z, (vec x0, (rel, k))))))
+  |> with_pp (fun ppf (top, (c, (z, (x0, (rel, k))))) ->
+      Format.fprintf ppf "top = %g@ c = %a@ z = %a@ x0 = %a@ %s %g" top Nx.pp
+        c Nx.pp z Nx.pp x0 (if rel then "rel" else "ulps") k)
+
+(* [g x = z + h (x − z)], continuous, contracting by [far] beyond [w] ulps of
+   [z] and by 0.99 within, from [z + d0], and a tolerance of [k] ulps. *)
+let rising =
+  let open Gen in
+  (let+ z = float_range 1. 2.
+   and+ w = float_range 100. 1000.
+   and+ far, d0 = one_of [ constant (1e-8, 1e-6); constant (1e-3, 1e-3) ]
+   and+ k = float_range 4. 64. in
+   (z, (w, (far, (d0, k)))))
+  |> with_pp (fun ppf (z, (w, (far, (d0, k)))) ->
+      Format.fprintf ppf "z = %.17g@ w = %g@ far = %g@ d0 = %g@ k = %g" z w far
+        d0 k)
+
+let rising_residual ~far ~w z v =
+  let zt = scalar z in
+  let t = Nx.sub v zt in
+  let b = w *. epsilon_float *. Float.abs z in
+  let inside = Nx.mul_s t 0.99 in
+  let outside =
+    Nx.mul (Nx.sign t)
+      (Nx.add_s (Nx.mul_s (Nx.sub_s (Nx.abs t) b) far) (0.99 *. b))
+  in
+  Nx.sub (Nx.add zt (Nx.where (Nx.less_equal_s (Nx.abs t) b) inside outside)) v
+
+(* [d ⊙ t + t³ / 10] with [t = x − c] and its equations in the order [order],
+   so that equation [i] need not be unknown [i]'s, curvatures [d] in [e^±3]
+   and [c] of {!magnitude}s, from within 10⁻³ of [c] in each component, as
+   {!start_at} says, and a tolerance of [k] ulps. *)
+let cubics =
+  let open Gen in
+  (let* n = int_range 2 6 in
+   let+ d = list ~size:(constant n) (float_range (-3.) 3.)
+   and+ c = list ~size:(constant n) magnitude
+   and+ signs = list ~size:(constant n) bool
+   and+ offsets = list ~size:(constant n) (float_range (-1.) 1.)
+   and+ keys = list ~size:(constant n) (float_range 0. 1.)
+   and+ k = float_range 4. 64. in
+   let c =
+     Array.of_list (List.map2 (fun c s -> if s then c else -.c) c signs)
+   in
+   let x0 =
+     Array.mapi (fun i o -> start_at c.(i) o 1e-3) (Array.of_list offsets)
+   in
+   let order =
+     List.mapi (fun i key -> (key, i)) keys
+     |> List.sort compare |> List.map snd |> List.map Int64.of_int
+     |> Array.of_list
+   in
+   ( vec (Array.of_list (List.map exp d)),
+     (vec c, (vec x0, (Nx.create Nx.int64 [| n |] order, k))) ))
+  |> with_pp (fun ppf (d, (c, (x0, (order, k)))) ->
+      Format.fprintf ppf "d = %a@ c = %a@ x0 = %a@ order = %a@ k = %g" Nx.pp
+        d Nx.pp c Nx.pp x0 Nx.pp order k)
+
 let law_tests =
   [
+    prop "a linear map's answer is within c / (1 − c) of tol, c its top rate"
+      linear_maps (fun (top, (c, (z, (x0, (rel, k))))) ->
+        (* If the step from [x] shrinks the distance by [L], the answer
+           [x + δ] is within [L |δ| / (1 − L)] and [|δ|] within [tol]: [L] is
+           at most [top] here, and at most 1/2 brings the answer within
+           [tol], to rounding. *)
+        cover "rates that differ" (Nx.item [] (Nx.min c) < top /. 2.);
+        cover "a relative tolerance" rel;
+        kinds z;
+        let tol = if rel then Tol.rel (k *. epsilon_float) else Tol.ulps k in
+        let s =
+          System.solve one
+            (System.anderson ~memory:0)
+            ~linear:Linear.dense ~tol ~budget:2000
+            (fun x -> Nx.mul (Nx.sub_s c 1.) (Nx.sub x z))
+            x0
+        in
+        cover "a lane converges" (is Converged s);
+        if is Converged s then
+          at_most float_exact ~than:(within ~top k) (distance k s z));
+    prop "a map whose rate rises near its zero is within 99 tol" rising
+      (fun (z, (w, (far, (d0, k)))) ->
+        (* The rate is at most 0.99 everywhere, so a converged answer is within
+           [0.99 / 0.01] of [tol] to rounding, whatever rate the readings
+           saw. *)
+        let s =
+          System.solve one
+            (System.anderson ~memory:0)
+            ~linear:Linear.dense ~tol:(Tol.ulps k) ~budget:2000
+            (rising_residual ~far ~w z)
+            (vec [| z +. d0 |])
+        in
+        cover "a lane converges" (is Converged s);
+        if is Converged s then
+          at_most float_exact ~than:(within ~top:0.99 k)
+            (distance k s (vec [| z |])));
+    prop "newton and broyden near a simple zero converge within tol" cubics
+      (fun (d, (c, (x0, (order, k)))) ->
+        (* Within 10⁻³ of [c] the cubic moves the Jacobian by at most
+           [3 · 10⁻⁷] of itself, and Broyden's estimate, from differences
+           exact to [√ε] for a nearly linear [f], keeps to that: either map
+           shrinks the distance by far less than 1/2 at every step, and the
+           answer is within [tol] to its rounding, an ulp over [k]. *)
+        kinds c;
+        cover "equations out of order"
+          (Oracle.floats order <> Array.init (Nx.dim 0 order) Float.of_int);
+        let f x =
+          let t = Nx.sub x c in
+          Nx.take order
+            (Nx.add (Nx.mul d t) (Nx.mul_s (Nx.mul t (Nx.square t)) 0.1))
+        in
+        List.iter
+          (fun (name, m) ->
+            let s =
+              System.solve one m ~linear:Linear.dense ~tol:(Tol.ulps k)
+                ~budget:200 f x0
+            in
+            cover (name ^ " converges") (is Converged s);
+            if is Converged s then
+              at_most float_exact ~msg:name ~than:(1. +. (1. /. k))
+                (distance k s c))
+          [
+            ("newton", System.newton ~derivative:(derivative f));
+            ("broyden", System.broyden);
+          ]);
     prop "a converged solve's error meets tol at its estimate" limited
       (fun ((a, z), (factor, (k, m))) ->
         (* Seeded near the zero, the methods reach the floats' resolution,
@@ -696,11 +1020,11 @@ let lane_tests =
                 ~budget:20 ~jacobian:(lane_jacobian a) (lane_field a b) seed)));
     test "a lane far from its zero whose line search fails stalls" (fun () ->
         (* f x = x from 2, with the slope 2 above 1.5, 1000 down to 0.9995 and
-           -999 below. The steps from 2 and 1 contract, by 0.001 over the
-           second. The one from 0.999 is +0.001, uphill, and no trial lowers the
-           merit; the map moves over it by its own length, q = 1, far above its
-           rounding. The held 0.001 would give it the bound 0.001 / 0.999,
-           within the loose tol 999 times closer than the zero. *)
+           -999 below. The map contracts by 0.001 over the step from 2, which
+           leaves 1 the bound 0.001 / 0.999, twice the tolerance of 5 · 10⁻⁴. The
+           step from 0.999 is +0.001, uphill, and no trial lowers the merit;
+           the map moves over it by its own length, q = 1, far above its
+           rounding, which drops the 0.001 held. *)
         let jacobian x =
           Nx.reshape [| 1; 1; 1 |]
             (Nx.where (Nx.greater_s x 1.5) (Nx.full_like x 2.)
@@ -708,17 +1032,19 @@ let lane_tests =
                   (Nx.full_like x (-999.))))
         in
         let s =
-          System.lanes ~tol:(Tol.v ~rel:0. ~abs:1e-2) ~budget:20 ~jacobian
+          System.lanes ~tol:(Tol.v ~rel:0. ~abs:5e-4) ~budget:20 ~jacobian
             Fun.id
             (Nx.create f64 [| 1; 1 |] [| 2. |])
         in
         equal (array bool) [| false |] (Nx.to_array (Solution.ok s)));
     test "a lane of tiny unknowns far from its zero stalls" (fun () ->
         (* The lane above in its first unknown, scaled by [s], with a second
-           unknown at its zero. Every step of the first is a multiple of [s],
-           and the square of the one from 1 s, 10⁻³ s, is below the floats'
-           range: the search must still measure the map's contraction over
-           it. *)
+           unknown at its zero, and the tolerance halved again: its root mean
+           square counts the second's zero error, so the bound at 1 s is 2.8
+           times it. Every step of the first is a
+           multiple of [s], and the square of the one from 1 s, 10⁻³ s, is
+           below the floats' range: the search must still measure the map's
+           contraction over it. *)
         let s = Float.ldexp 1. (-530) in
         let jacobian x =
           let u = Nx.div_s (Nx.slice [ Nx.A; Nx.I 0 ] x) s in
@@ -733,7 +1059,7 @@ let lane_tests =
         in
         let st =
           System.lanes
-            ~tol:(Tol.v ~rel:0. ~abs:(1e-2 *. s))
+            ~tol:(Tol.v ~rel:0. ~abs:(2.5e-4 *. s))
             ~budget:20 ~jacobian Fun.id
             (Nx.create f64 [| 1; 2 |] [| 2. *. s; 0. |])
         in

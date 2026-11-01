@@ -42,7 +42,10 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
   let step (s : _ Search.state) () =
     let delta, jd, failed = direction s.x s.fx in
     let s = { s with st = settle s.st failed Stalled } in
-    let s, at_limit = Search.test_at tol s delta in
+    let s, at_limit =
+      Search.judge tol (Search.read tol s ~map:delta) ~map:delta ~mu:None
+        ~f:(Search.Solved s.fx) delta
+    in
     let run = searching s.st in
     let m = Search.largest s.fx in
     let merit v = half_square (Nx.div v m) in
@@ -56,35 +59,24 @@ let newton_search ~tol ~budget ~trials ~residual ~direction (s : _ Search.state)
       let phi = merit fx in
       ((x, fx), phi, accept alpha phi)
     in
-    let (x, fx), found, tries, full =
+    let (x, fx), found, tries =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
-    (* The step cannot move the estimate when it lands below the floats'
-       resolution, or when no trial decreases the merit and either the full step
-       changes the merit by less than its rounding, or the step is at the
-       floats' limit, the undamped map moving over it by no more than the
-       rounding of its two values. At [f]'s evaluation level a step moves an
-       unknown at 0 by more than its ulps, and the merit it reaches can rise. *)
-    let phi0 = merit s.fx in
-    let unmoved = Nx.all ~axes:[ -1 ] (Nx.equal x s.x) in
-    let rounded =
-      Nx.logical_and (Nx.logical_not found)
-        (Nx.logical_or
-           (Nx.less_equal
-              (Nx.abs (Nx.sub full phi0))
-              (Nx.mul_s phi0 (sqrt (Num.eps dtype))))
-           at_limit)
+    (* A search that finds no decrease, or one below the floats' resolution,
+       is at the floats' limit. *)
+    let moved =
+      Nx.logical_and found
+        (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal x s.x)))
     in
-    let s = { s with n = Nx.add s.n tries } in
-    let stuck =
-      Nx.logical_and run (Nx.logical_or rounded (Nx.logical_and found unmoved))
-    in
-    let s = Search.resolved tol s ~delta ~stuck in
-    let found = Nx.logical_and found (Nx.logical_not unmoved) in
-    let st = settle s.Search.st (Nx.logical_not found) Stalled in
-    ( { s with x = Search.hold found x s.x; fx = Search.hold found fx s.fx; st },
+    let s = Search.limit s at_limit ~at:(Nx.logical_not moved) in
+    ( {
+        s with
+        x = Search.hold moved x s.x;
+        fx = Search.hold moved fx s.fx;
+        n = Nx.add s.n tries;
+      },
       () )
   in
   fst @@ Search.iterations ~budget Nx.Ptree.unit step (s, ())
@@ -124,7 +116,10 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
   let step (s : _ Search.state) (b, k) =
     let delta, _, failed = solve (Num.matvec b) s.fx in
     let s = { s with st = settle s.st failed Stalled } in
-    let s = Search.test tol s delta in
+    let s, at_limit =
+      Search.judge tol (Search.read tol s ~map:delta) ~map:delta ~mu:None
+        ~f:(Search.Solved s.fx) delta
+    in
     let run = searching s.st in
     let norm0 = Search.norm s.fx in
     let eta = Nx.recip (Nx.square (Nx.add_s (Nx.cast dtype k) 1.)) in
@@ -142,12 +137,11 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
       let phi = Search.norm fx in
       ((x, fx), phi, accept alpha phi)
     in
-    let (x, fx), found, tries, _ =
+    let (x, fx), found, tries =
       Search.backtrack
         Nx.Ptree.(pair tensor tensor)
         dtype ~trials ~running:run ~shrink trial (s.x, s.fx)
     in
-    let st = settle s.Search.st (Nx.logical_not found) Stalled in
     (* The update divides by [sᵀ s] taken on [s / m], [m] its largest
        magnitude, whose square is below the floats' range for steps of
        10⁻¹⁵⁴. *)
@@ -163,7 +157,14 @@ let broyden_search ~tol ~budget ~trials ~residual ~solve (s : _ Search.state) =
         (Nx.where moved (Search.dot u u) (Nx.ones_like m))
     in
     let b = Nx.where moved (Nx.add b update) b in
-    ({ s with x; fx; st; n = Nx.add s.n tries }, (b, Nx.add_s k 1l))
+    let s = Search.limit s at_limit ~at:(Nx.logical_not found) in
+    ( {
+        s with
+        x = Search.hold found x s.x;
+        fx = Search.hold found fx s.fx;
+        n = Nx.add s.n tries;
+      },
+      (b, Nx.add_s k 1l) )
   in
   fst
   @@ Search.iterations ~budget
@@ -211,7 +212,7 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
   let step (s : _ Search.state) (df, (dg, count)) =
     let x0 = s.x and fx0 = s.fx in
     let g0 = Nx.add x0 fx0 in
-    let s = Search.test tol s fx0 in
+    let s = Search.test tol s ~f:(Search.Paired fx0) fx0 in
     let run = searching s.st in
     let x = mix (df, (dg, count)) x0 fx0 in
     let fx = residual x in
@@ -331,7 +332,11 @@ let solve x m ~linear ~tol ~budget f guess =
          (Linear.name linear) Tol.pp tol budget)
     ~spent:{ used = s.k; unit = "iterations"; budget }
     ~fix ~value ~error:(unravel s.e) ~status:s.st ~evaluations:s.n
-    ~facts:[ Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q) ]
+    ~facts:
+      [
+        Fact ("residual", Search.norm s.fx);
+        Fact ("contraction", Search.contraction s);
+      ]
     ()
 
 (* Lanes
@@ -474,5 +479,9 @@ let lanes ~tol ~budget ~jacobian f guess =
     ~settings:(Format.asprintf "tol %a, budget %d" Tol.pp tol budget)
     ~spent:{ used = Nx.broadcast_to lanes s.k; unit = "iterations"; budget }
     ~fix ~value ~error:s.e ~status:s.st ~evaluations:s.n
-    ~facts:[ Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q) ]
+    ~facts:
+      [
+        Fact ("residual", Search.norm s.fx);
+        Fact ("contraction", Search.contraction s);
+      ]
     ()

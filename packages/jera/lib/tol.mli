@@ -23,6 +23,9 @@ val ratio :
 (** [ratio t ~e ~y] is [|e / scale t y|] elementwise: [0] where [e = 0], and
     infinite where the scale is [0] and [e] is not. *)
 
+val scaled : scale:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+(** [scaled ~scale e] is {!ratio} for the scale [scale] of [e]'s elements. *)
+
 val zero_hint : t -> string
 (** [zero_hint t] is the sentence a failure report appends to say that an answer
     that may be zero needs [abs], or [""] if [t] has a positive [abs]. *)

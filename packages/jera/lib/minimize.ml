@@ -264,8 +264,9 @@ let name : type x f d. (x, f, d) t -> string = function
    failed, its scaling restricted to the coordinates [free] marks with ones and
    [−g] on the others, which a box holds, all of them free without a box; its
    search along [δ], to a point, its value and gradient, whether the search
-   found a decrease and its evaluations; and the update of its memory after a
-   move from [x] to [x + s] that changed [g] by [y]. *)
+   found a decrease and its evaluations; the update of its memory after a
+   move from [x] to [x + s] that changed [g] by [y]; and whether its error also
+   needs the gradient's bound by the least curvature its steps measured. *)
 
 type ('q, 'd) vector = (float, 'q, 'd) Nx.t
 
@@ -309,6 +310,7 @@ type ('q, 'm, 'd) descent = {
     ('q, 'd) point * 'd Nx.bool_t * 'd Nx.int32_t;
   update : ('q, 'd) vector -> ('q, 'd) vector -> 'm -> 'm;
   boxed : ('q, 'm, 'd) boxed;
+  curvature : bool;
 }
 
 (* How a method steps in a box: the quasi-Newton methods by the generalised
@@ -413,6 +415,7 @@ let bfgs_method at dtype n ~trials evaluate =
       search = wolfe dtype ~trials evaluate;
       update;
       boxed = Cauchy model;
+      curvature = true;
     }
 
 (* L-BFGS keeps the last [m] pairs of positive curvature, newest first, zero in
@@ -574,6 +577,7 @@ let lbfgs_method at dtype n m ~trials evaluate =
       search = wolfe dtype ~trials evaluate;
       update;
       boxed = Cauchy model;
+      curvature = true;
     }
 
 (* Newton solves [H δ = −g] with [linear] on Hessian-vector products, on the
@@ -592,6 +596,7 @@ let newton_method dtype ~trials evaluate ~solve =
       search = wolfe dtype ~trials evaluate;
       update = (fun _ _ () -> ());
       boxed = Projected restricted;
+      curvature = false;
     }
 
 (* Under a box every gradient method takes Bertsekas's (1982) projected step:
@@ -626,7 +631,7 @@ let projected ~trials evaluate ~project ~running (p : _ point) d =
     )
   in
   let shrink alpha _ = Nx.mul_s alpha 0.5 in
-  let q, found, tries, _ =
+  let q, found, tries =
     Search.backtrack (point_ptree ()) dtype ~trials ~running ~shrink trial
       (pack p)
   in
@@ -745,7 +750,7 @@ let cauchy model box x g =
 let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
     value =
   let unbounded = Nx.full_like value Float.infinity in
-  let step (s : _ Search.state) (value, memory) =
+  let step (s : _ Search.state) ((value, mu), memory) =
     let here = { x = s.x; value; g = s.fx } in
     let delta, failed, search =
       match (box, m.boxed) with
@@ -768,7 +773,18 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
               projected ~trials evaluate ~project:(project b) ~running here d )
     in
     let s = { s with st = settle s.st failed Stalled } in
-    let s = Search.test tol s delta in
+    let s = Search.read tol s ~map:delta in
+    (* In a box the gradient is the projected one, zero on a held
+       coordinate. *)
+    let g =
+      match box with
+      | None -> s.fx
+      | Some b -> Nx.sub s.x (project b (Nx.sub s.x s.fx))
+    in
+    let curvature = if m.curvature then Some mu else None in
+    let s, at_limit =
+      Search.judge tol s ~map:delta ~mu:curvature ~f:(Search.Paired g) delta
+    in
     let run = searching s.st in
     let downhill = Search.descends s.fx delta in
     let st = settle s.st (Nx.logical_not downhill) Stalled in
@@ -779,8 +795,9 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
       Nx.logical_and found
         (Nx.logical_not (Nx.all ~axes:[ -1 ] (Nx.equal q.x s.x)))
     in
-    let st = settle st (Nx.logical_not found) Stalled in
     let moved = Nx.logical_and run' found in
+    let s = Search.limit { s with st } at_limit ~at:(Nx.logical_not found) in
+    let st = s.st in
     let memory' = m.update (Nx.sub q.x s.x) (Nx.sub q.g s.fx) memory in
     let memory =
       Nx.Ptree.map2 m.memory (fun _ a b -> Search.hold moved a b) memory' memory
@@ -792,13 +809,19 @@ let descend ?box ~trials evaluate ~tol ~budget (Method m) (s : _ Search.state)
         st;
         n = Nx.add s.n tries;
       },
-      (Search.hold moved q.value value, memory) )
+      ( ( Search.hold moved q.value value,
+          if m.curvature then
+            Search.hold moved
+              (Search.least tol mu ~x:s.x ~x':q.x (Nx.sub q.g s.fx))
+              mu
+          else mu ),
+        memory ) )
   in
   fst
     (Search.iterations ~budget
-       Nx.Ptree.(pair tensor m.memory)
+       Nx.Ptree.(pair (pair tensor tensor) m.memory)
        step
-       (s, (value, m.init)))
+       (s, ((value, Nx.full_like value Float.nan), m.init)))
 
 (* The first [steps] iterates from [p], the first [p.x]: a lane stops at a zero
    gradient or when its search finds no decrease, and repeats its estimate. *)
@@ -1032,7 +1055,8 @@ let gradient_solve fn x m kind linear ?lo ?hi ~tol ~budget f start =
     ~evaluations:s.n
     ~facts:
       ([
-         Solution.Fact ("gradient", Search.norm s.fx); Fact ("contraction", s.q);
+         Solution.Fact ("gradient", Search.norm s.fx);
+         Fact ("contraction", Search.contraction s);
        ]
       @ box_facts p.dtype box)
     ()
@@ -1228,13 +1252,19 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
     let d = Nx.maximum d (columns j) in
     let toward v = Nx.sub (project (Nx.add s.x v)) s.x in
     let free = Option.map (fun b -> free b s.x g) box in
+    (* The gradient, projected in a box: zero on a held coordinate. *)
+    let gp =
+      match box with
+      | None -> g
+      | Some _ -> Nx.sub s.x (project (Nx.sub s.x g))
+    in
     let delta, failed = p.solve j ~free (Nx.mul lambda d) (Nx.neg g) in
     let delta = toward delta in
     let s = { s with st = settle s.st failed Stalled } in
-    let q = Search.secant s (Nx.add s.x delta) in
+    let s = Search.read tol s ~map:delta in
     let gate =
       Search.accepted tol
-        ~e:(Search.contraction delta ~q:(Nx.maximum q s.q))
+        ~e:(Search.error (Search.contraction s) ~x:s.x ~f:(Search.Paired gp) delta)
         ~y:(Nx.add s.x delta)
     in
     (* The Gauss–Newton step, solved only once the damped step has met the test;
@@ -1250,7 +1280,7 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
             Nx.scalar_at (Nx.beside g) Nx.bool true ))
         (delta, Nx.logical_not gate)
     in
-    let s = Search.decide tol s ~map:delta ~q gauss in
+    let s, _ = Search.judge tol s ~map:delta ~mu:None ~f:(Search.Paired gp) gauss in
     let running = searching s.st in
     let xt, rt, jt, gt, ok, rho =
       lm_trial p.residual ~jacobian:p.jacobian ~project ~running j s.x s.fx g
@@ -1298,7 +1328,8 @@ let lm_solve fn x r linear ?lo ?hi ~tol ~budget f start =
     ~evaluations:s.n
     ~facts:
       ([
-         Solution.Fact ("residual", Search.norm s.fx); Fact ("contraction", s.q);
+         Solution.Fact ("residual", Search.norm s.fx);
+         Fact ("contraction", Search.contraction s);
        ]
       @ box_facts p.dtype box)
     ()

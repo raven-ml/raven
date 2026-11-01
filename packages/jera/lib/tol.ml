@@ -36,12 +36,13 @@ let scale t y =
   | Scaled { rel; abs } -> Nx.add_s (Nx.mul_s (Nx.abs y) rel) abs
   | Ulps k -> Nx.mul_s (Nx.abs y) (k *. Num.eps (Nx.dtype y))
 
-let ratio t ~e ~y =
-  let s = scale t y in
+let scaled ~scale:s e =
   let zero = Nx.zeros_like e in
   let r = Nx.div e (Nx.where (Nx.equal s zero) (Nx.ones_like s) s) in
   Nx.where (Nx.equal e zero) zero
     (Nx.where (Nx.equal s zero) (Nx.full_like e Float.infinity) (Nx.abs r))
+
+let ratio t ~e ~y = scaled ~scale:(scale t y) e
 
 let zero_hint = function
   | Scaled { abs; _ } when abs > 0. -> ""

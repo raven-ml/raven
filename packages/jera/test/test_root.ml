@@ -218,14 +218,11 @@ let newton_tests =
   let m = vec [| 0.; 0.3; 1.; 2.5; 3.1 |] in
   let e = Nx.full f64 [| 5 |] 0.6 in
   [
-    prop "from a good seed, an element ends at its zero to rounding" positive
+    prop "from a good seed, every element converges within tol" positive
       (fun a ->
-        (* √a seeded within 1e-7: Newton reaches the floats' resolution in two
-           steps, where an element converges if [|δ| / (1 − q)] meets [tol].
-           Over a step of a few ulps the contraction [q] is the upper end of
-           its rounding, up to 0.93 where the steps before measured 10⁻⁸, so a
-           few elements in a thousand estimate more than 4 ulps and stall at a
-           zero they hold to one. *)
+        (* √a seeded within 1e-7: Newton's steps shrink quadratically, so the
+           answer [x + δ] is within [tol] once [|δ| / (1 − q)] meets it, two
+           steps from the seed. *)
         let seed =
           Nx.mul (Nx.sqrt a) (Nx.add_s (Nx.mul_s (Nx.cos a) 1e-7) 1.)
         in
@@ -235,11 +232,11 @@ let newton_tests =
             (fun x -> Nx.sub (Nx.square x) a)
             seed
         in
-        cover "an element converges" (Nx.item [] (Nx.any (Solution.ok s)));
-        equal (Oracle.tensor ())
-          (Nx.ones Nx.bool (Nx.shape a))
-          (Nx.logical_or (Solution.ok s) (Solution.is Stalled s));
-        equal (Oracle.tensor ~rel:1e-13 ()) (Nx.sqrt a) (Solution.best s));
+        equal (Oracle.tensor ()) (Nx.ones Nx.bool (Nx.shape a)) (Solution.ok s);
+        (* [Nx.sqrt] rounds the zero by half an ulp at most. *)
+        let x = Solution.best s in
+        at_most float_exact ~than:1.
+          (Oracle.ulps ~k:4.5 ~y:x (Nx.abs (Nx.sub x (Nx.sqrt a)))));
     prop "a converged element's error meets tol at its value" slowed
       (fun (a, (factor, k)) ->
         (* A slope [factor] times too steep contracts by [1 − 1 / factor]: the
