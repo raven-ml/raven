@@ -7,12 +7,16 @@ module P = Nx_kernel.Prog
 
 type key = { prog : P.t; mask : int; codes : int array }
 
+(* A plan and its key, as [last] holds it: the table keeps each one made, so
+   that a plan found there becomes [last] without an allocation. *)
+type 'v entry = { key : key; v : 'v }
+
 (* A domain's plans. [last] is read without the lock: a systhread switch never
    splits a word's write. The table is read and written under [lock], as
    Stdlib's Hashtbl relinks its buckets while it grows. *)
 type 'v state = {
-  mutable last : (key * 'v) option;
-  table : (key, 'v) Hashtbl.t;
+  mutable last : 'v entry option;
+  table : (key, 'v entry option) Hashtbl.t;
   lock : Mutex.t;
 }
 
@@ -35,10 +39,13 @@ external reraise : exn -> 'a = "%reraise"
    asynchronous exception, as a signal's, cannot leave the lock held. *)
 let[@inline never] lookup st key =
   Mutex.lock st.lock;
-  match Hashtbl.find_opt st.table key with
-  | v ->
+  match Hashtbl.find st.table key with
+  | e ->
       Mutex.unlock st.lock;
-      v
+      e
+  | exception Not_found ->
+      Mutex.unlock st.lock;
+      None
   | exception e ->
       Mutex.unlock st.lock;
       reraise e
@@ -60,19 +67,24 @@ let[@inline never] add st key v =
 let find t prog mask ~same ~codes ~make x =
   let st = Domain.DLS.get t in
   match st.last with
-  | Some (k, v) when k.prog == prog && k.mask = mask && same k.codes x -> v
-  | _ ->
-      let key = { prog; mask; codes = codes x } in
-      let v =
-        match lookup st key with
-        | Some v -> v
-        | None ->
-            let v = make key x in
-            add st key v;
-            v
-      in
-      st.last <- Some (key, v);
+  | Some { key = k; v } when k.prog == prog && k.mask = mask && same k.codes x
+    ->
       v
+  | _ -> (
+      let key = { prog; mask; codes = codes x } in
+      match lookup st key with
+      | Some { key = k; v } as e ->
+          (* The plan's own key holds the program that made it: an equal
+             program built since is kept as the last, so that its next call
+             finds it without hashing. *)
+          st.last <- (if k.prog == prog then e else Some { key; v });
+          v
+      | None ->
+          let v = make key x in
+          let e = Some { key; v } in
+          add st key e;
+          st.last <- e;
+          v)
 
 let any _ _ = true
 let none _ = [||]

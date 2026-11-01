@@ -54,16 +54,25 @@ let primal_load i : 'd Prim.load -> 'd Prim.load = function
   | Plain x -> Plain (primal i x)
   | Padded { x; fill; pad } -> Padded { x = primal i x; fill; pad }
 
+(* Whether [x] has a tangent: {!tangent} without its option, as a rule asks
+   of every load. *)
+let has_tangent i x =
+  match Prim.payload i x with Some (Dual _) -> true | _ -> false
+
 let tangent_load i : 'd Prim.load -> 'd Prim.load option = function
-  | Plain x -> Option.map (fun t -> Prim.Plain t) (tangent i x)
-  | Padded { x; pad; _ } ->
-      Option.map
-        (fun t -> Prim.Padded { x = t; fill = D.zero (Nx.dtype t); pad })
-        (tangent i x)
+  | Plain x -> (
+      match Prim.payload i x with
+      | Some (Dual d) -> Some (Prim.Plain d.tangent)
+      | _ -> None)
+  | Padded { x; pad; _ } -> (
+      match Prim.payload i x with
+      | Some (Dual { tangent = t; _ }) ->
+          Some (Prim.Padded { x = t; fill = D.zero (Nx.dtype t); pad })
+      | _ -> None)
 
 let load_has i : 'd Prim.load -> bool = function
-  | Plain x -> Option.is_some (tangent i x)
-  | Padded { x; _ } -> Option.is_some (tangent i x)
+  | Plain x -> has_tangent i x
+  | Padded { x; _ } -> has_tangent i x
 
 let load_dtype : 'd Prim.load -> D.any = function
   | Plain x -> D.Any (Nx.dtype x)
@@ -997,7 +1006,7 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
       dual i ~fresh:true y (assemble (D.zero a.dtype) (List.map piece a.pieces))
   | Contract c -> (
       let scaled = function
-        | Some (Prim.Value s) -> Option.is_some (tangent i s)
+        | Some (Prim.Value s) -> has_tangent i s
         | Some (Exponent _) | None -> false
       in
       if scaled c.a_scale || scaled c.b_scale then
@@ -1022,9 +1031,7 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
           match tangent i c.a with Some ta -> product ta pb t | None -> t
         in
         (* With no product, the tangent is the init's own. *)
-        let fresh =
-          Option.is_some (tangent i c.a) || Option.is_some (tangent i c.b)
-        in
+        let fresh = has_tangent i c.a || has_tangent i c.b in
         match t with Some t -> dual i ~fresh y t | None -> y)
   | Fft (C2c f) ->
       both ~fresh:true (fun x -> Prim.eval ~by (Fft (C2c { f with x }))) f.x

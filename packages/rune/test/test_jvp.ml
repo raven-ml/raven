@@ -1161,6 +1161,42 @@ let shared_law (steps, ux, uc, ts) =
             (Nx.create f64 [| 3 |] d))
     (List.combine steps ds)
 
+(* A chain of one kind of map
+
+   A chain of [Nx.mul_s] by one scalar applies one program, which a derivative
+   finds again as the last plan it found. nx keeps one program per kind,
+   dtype and scalar, rebuilt when the scalar changes, so [x * 2 * 3 * 2]
+   reaches its second [* 2] with a new program equal to the first. A link of
+   the chain after it costs what a link of a chain without the [* 3] does,
+   whose words a baseline records: a derivative that finds its plan again by
+   hashing allocates its key. *)
+
+let chain_words pre n =
+  let x = Nx.create f64 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let f x =
+    let y = List.fold_left Nx.mul_s x pre in
+    let rec go k y = if k = 0 then y else go (k - 1) (Nx.mul_s y 2.) in
+    go n y
+  in
+  let run () =
+    ignore (Sys.opaque_identity (Rune.jvp' f x x))
+  in
+  run ();
+  run ();
+  let rounds = 10 in
+  let before = Gc.minor_words () in
+  for _ = 1 to rounds do
+    run ()
+  done;
+  (Gc.minor_words () -. before) /. Float.of_int rounds
+
+let test_rebuilt_chain () =
+  let link pre = chain_words pre 9 -. chain_words pre 8 in
+  let rebuilt = link [ 2.; 3.; 2. ] in
+  equal ~msg:"words per link" float_exact (link [ 2. ]) rebuilt;
+  Windtrap.expect (Printf.sprintf "%.0f words" rebuilt)
+  @@ __POS_OF__ {| 253 words |}
+
 let () =
   exit
     (run "rune jvp"
@@ -1204,7 +1240,11 @@ let () =
                law_jit;
            ];
          group "kernels"
-           [ test "a map's tangent is one kernel" test_one_kernel ];
+           [
+             test "a map's tangent is one kernel" test_one_kernel;
+             test "a link after a rebuilt program costs what any link does"
+               test_rebuilt_chain;
+           ];
          group "placement"
            [
              prop ~count:200 "a tangent lies at its result's placement"

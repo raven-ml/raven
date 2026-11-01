@@ -175,10 +175,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## rune, kaun, vega
 
-- kaun's TrainStep/train-step allocated 27,332 words eagerly on the old
-  rune, ~2,300 of them two traced values and a recorded op per op:
-  re-measure on the new rune on fudge, and cut the per-op records if they
-  remain
 - fully sharded training: RFC 0005's bound (P+G+O)/n + 2 layers has no test
   since d478112cb removed the counting-device test
 

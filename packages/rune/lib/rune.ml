@@ -16,16 +16,27 @@ let pp_shape = Nx.pp_shape
 
 (* Structures as values *)
 
+(* A structure's leaves, in order. A fold walks it once and builds no
+   skeleton. *)
 let values s x =
-  Array.of_list (List.map (fun (Nx.P y) -> V y) (fst (Ptree.flatten s x)))
+  Array.of_list (List.rev (Ptree.fold s (fun _ y acc -> V y :: acc) x []))
 
-(* [vs] as a structure like [like], each at its leaf's type. *)
+(* [vs] as a structure like [like], each at its leaf's type, in one walk. A
+   leaf past the values keeps its own, so that the walk counts the leaves
+   before the counts are compared. *)
 let rebuild s ~like vs =
-  let leaves = fst (Ptree.flatten s like) in
-  Ptree.rebuild s ~like
-    (List.map2
-       (fun (Nx.P l) v -> Nx.P (Program.like l v))
-       leaves (Array.to_list vs))
+  let n = Array.length vs and k = ref 0 in
+  let y =
+    Ptree.map s
+      (fun _ l ->
+        let j = !k in
+        incr k;
+        if j < n then Program.like l vs.(j) else l)
+      like
+  in
+  if !k <> n then
+    invalid_argf "Rune: %d values for a structure of %d leaves" n !k;
+  y
 
 (* Outputs [i] to [j - 1]. *)
 let slice a i j = Array.sub a i (j - i)

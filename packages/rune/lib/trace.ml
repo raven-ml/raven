@@ -72,15 +72,16 @@ let operand (type v s d) st i (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
 
 let record_op (type r) st i ~by (op : r Nx.Prim.t) : r =
   let op = Nx.Prim.map (fun x -> operand st i x) op in
-  let base = st.next and n = ref 0 in
+  (* The results take the variables from [base] on, [st.next] past the last
+     made. *)
+  let base = st.next in
   let r =
     Nx.Prim.results ~by
       (fun k form ->
-        n := Int.max !n (k + 1);
+        st.next <- Int.max st.next (base + k + 1);
         Nx.Prim.traced i form (Var (base + k)))
       op
   in
-  st.next <- base + !n;
   st.eqns <- Op { by; op; base } :: st.eqns;
   r
 
