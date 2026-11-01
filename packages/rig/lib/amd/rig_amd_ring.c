@@ -192,6 +192,40 @@ static void fill_split(uint64_t dst, uint64_t n, uint64_t *head,
   *tail = n - h - *body;
 }
 
+/* The words of a COPY_LINEAR_SUB_WIND packet (ROCr's
+   SDMA_PKT_COPY_LINEAR_RECT, 52 bytes, laid out alike from GC 12). */
+#define WINDOW_WORDS 13
+
+/* The largest element, 16 bytes, as its base-2 logarithm. */
+#define WINDOW_ELEMENT 4
+
+/* The base-2 logarithm of the element in which COPY_LINEAR_SUB_WIND packets
+   copy the box [p], or -1 if each row takes linear copies, as one row does.
+   A side is an address rounded down to 4 bytes and an offset of whole
+   elements, and its pitch a multiple of 4 bytes (ROCr's
+   BuildCopyRectCommand), so the element is the largest that divides the
+   width, both pitches and both offsets, and the width and the pitches fit
+   the packet's fields in elements. A side's offset plus the width is at
+   most its pitch: ROCr refuses a rect past it ("Copy rect width out of
+   range"), and nothing shows the engine running one. */
+static int window_element(const struct rig_amd *d, const struct rig_part *p) {
+  const struct rig_amd_window *w = &d->window;
+  uint64_t width = p->copy.width, sp = p->copy.src_pitch;
+  uint64_t dp = p->copy.dst_pitch;
+  uint64_t src = p->copy.src + p->copy.src_offset;
+  uint64_t dst = p->copy.dst + p->copy.dst_offset;
+  if (p->copy.fill || width == 0 || p->copy.rows < 2 || sp % 4 != 0 ||
+      dp % 4 != 0 || (src & 3) + width > sp || (dst & 3) + width > dp)
+    return -1;
+  uint64_t all = width | sp | dp | (src & 3) | (dst & 3);
+  int e = 0;
+  while (e < WINDOW_ELEMENT && (all >> e & 1) == 0) e++;
+  if (width >> e > w->most_width || sp >> e > w->most_pitch ||
+      dp >> e > w->most_pitch)
+    return -1;
+  return e;
+}
+
 /* The words the copy engine's packets for the copy part [p] take, and in
    [*args] the segment bytes a fill's ends copy from: [copy] places them. */
 static uint64_t copy_words(const struct rig_amd *d, const struct rig_part *p,
@@ -206,6 +240,8 @@ static uint64_t copy_words(const struct rig_amd *d, const struct rig_part *p,
     return (uint64_t)((head > 0) + (tail > 0)) * words_of(d, S_COPY) +
            ceil_div(body, d->max_fill) * words_of(d, S_FILL);
   }
+  if (window_element(d, p) >= 0)
+    return ceil_div(rows, d->window.most_rows) * WINDOW_WORDS;
   return rows * copies(d, width) * (uint64_t)words_of(d, S_COPY);
 }
 
@@ -824,12 +860,47 @@ static void fill(struct submission *s, const struct rig_part *p) {
   if (tail > 0) emit(d, r, S_COPY, dst + head + body, ends, tail);
 }
 
-/* Places the copy part [p]: each row as linear copies. */
+/* Places the box [p] as COPY_LINEAR_SUB_WIND packets of elements of 2^[e]
+   bytes, each of at most most_rows rows. A pitch is a multiple of 4 bytes,
+   so each packet's sides keep the box's offsets. */
+static void windows(struct rig_amd *d, struct rig_amd_ring *r,
+                    const struct rig_part *p, int e) {
+  const struct rig_amd_window *w = &d->window;
+  uint64_t dst = p->copy.dst + p->copy.dst_offset;
+  uint64_t src = p->copy.src + p->copy.src_offset;
+  uint64_t sp = p->copy.src_pitch, dp = p->copy.dst_pitch;
+  uint64_t rows = p->copy.rows, width = (p->copy.width >> e) - 1;
+  uint32_t k[WINDOW_WORDS] = {0};
+  k[0] = w->header | (uint32_t)e << w->element;
+  k[3] = (uint32_t)((src & 3) >> e) << w->src_x;
+  k[4] = (uint32_t)((sp >> e) - 1) << w->src_pitch;
+  k[8] = (uint32_t)((dst & 3) >> e) << w->dst_x;
+  k[9] = (uint32_t)((dp >> e) - 1) << w->dst_pitch;
+  for (uint64_t i = 0; i < rows; i += w->most_rows) {
+    uint64_t n = rows - i < w->most_rows ? rows - i : w->most_rows;
+    uint64_t a = (src + i * sp) & ~(uint64_t)3;
+    uint64_t b = (dst + i * dp) & ~(uint64_t)3;
+    k[1] = LOW32(a);
+    k[2] = (uint32_t)(a >> 32);
+    k[6] = LOW32(b);
+    k[7] = (uint32_t)(b >> 32);
+    k[11] = (uint32_t)width << w->width | (uint32_t)(n - 1) << w->rows;
+    put_words(r, k, WINDOW_WORDS);
+  }
+}
+
+/* Places the copy part [p]: a box in sub-windows where it fits them, else
+   each row as linear copies. */
 static void copy(struct submission *s, const struct rig_part *p) {
   struct rig_amd *d = s->d;
   struct rig_amd_ring *r = &d->rings[RIG_AMD_COPY];
   if (p->copy.fill) {
     fill(s, p);
+    return;
+  }
+  int e = window_element(d, p);
+  if (e >= 0) {
+    windows(d, r, p, e);
     return;
   }
   uint64_t dst = p->copy.dst + p->copy.dst_offset;

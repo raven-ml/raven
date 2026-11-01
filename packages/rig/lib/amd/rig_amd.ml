@@ -260,6 +260,7 @@ external set_template : int -> int -> string -> string -> unit
   = "caml_rig_amd_template"
 
 external set_copies : int -> int -> int -> unit = "caml_rig_amd_copies"
+external set_window : int -> int array -> unit = "caml_rig_amd_window"
 
 external set_stamps : int -> int -> int -> int -> int -> unit
   = "caml_rig_amd_stamps"
@@ -521,7 +522,22 @@ let set_templates self gpu ~interrupt ~waits64 ~aql =
     set_template self i words holes
   in
   List.iter set templates;
-  set_copies self (Sdma.max_copy gpu) (Sdma.max_fill gpu)
+  set_copies self (Sdma.max_copy gpu) (Sdma.max_fill gpu);
+  let w = Sdma.window gpu in
+  set_window self
+    [|
+      w.header;
+      w.element;
+      w.src_x;
+      w.src_pitch;
+      w.dst_x;
+      w.dst_pitch;
+      w.width;
+      w.rows;
+      w.most_width;
+      w.most_rows;
+      w.most_pitch;
+    |]
 
 let supported (g : Abi.Gpu.t) =
   let major, _, _ = g.target in

@@ -540,6 +540,20 @@ value caml_rig_amd_copies(value v_self, value v_copy, value v_fill) {
   return Val_unit;
 }
 
+/* Sets the sub-window's layout from [v_w], the fields of
+   [struct rig_amd_window] in order. */
+value caml_rig_amd_window(value v_self, value v_w) {
+  struct rig_amd_window *w = &Device_val(v_self)->window;
+  int *bits[] = {&w->element, &w->src_x,     &w->src_pitch, &w->dst_x,
+                 &w->dst_pitch, &w->width, &w->rows};
+  w->header = (uint32_t)Long_val(Field(v_w, 0));
+  for (int i = 0; i < 7; i++) *bits[i] = (int)Long_val(Field(v_w, 1 + i));
+  w->most_width = (uint64_t)Long_val(Field(v_w, 8));
+  w->most_rows = (uint64_t)Long_val(Field(v_w, 9));
+  w->most_pitch = (uint64_t)Long_val(Field(v_w, 10));
+  return Val_unit;
+}
+
 /* The device's own HDP register, the path's, which takes the first entry
    for good with no region counted, so that the device's own [Mapped] memory
    always finds one and views of other GPUs' take at most the rest. */

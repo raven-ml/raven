@@ -55,12 +55,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### perf
 
-- AMD boxes as one COPY_LINEAR_SUB_WIND packet per 2^14 rows, where they
-  run as a COPY_LINEAR per row (rig_amd.mli). Linux drives SDMA 7 with the
-  v6 packet header (sdma_v7_0.c), so check SDMA 7's packet and measure on
-  nonnormal against rows; SDMA 4 to 6 wait for a host. On SDMA 4 over PCI
-  it also lifts a box's limit of about 170,000 rows, past which it never
-  fits the ring
 - kaun's GPU decode rows measure allocation again (bench_decode.ml's
   `gpu_metrics`) once a decode call's words are shown not to depend on
   the collector's phase: on fudge (CUDA) and nonnormal (AMD)

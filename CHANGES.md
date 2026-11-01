@@ -40,6 +40,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- AMD GPUs copy a box of two rows or more in one SDMA sub-window packet
+  per 2^14 rows (2^16 on GFX12) where it took one packet per row: on an
+  R9700, `Rig.Buffer.submit_copy` of 65,536 rows of 4 bytes takes 153 µs
+  instead of 7.5 ms.
 - On Windows, a bytecode program or a toplevel, such as `quill`'s, loads rig's
   and nx's stub libraries: they call winpthreads through import pointers,
   which flexdll links at any distance, and read no `clock_gettime`.

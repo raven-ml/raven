@@ -291,7 +291,14 @@ val capability : t -> Rig_amd_abi.Capability.t
        that starts at work-item 0. A group takes the kernel's group segment
        plus the launch's shared memory of local data share;}
     {- on ["COPY:0"], a copy between two GPU addresses, its handles, whose
-       ranges do not overlap. A box is linear copies of each row. A fill is
+       ranges do not overlap. A box of two rows or more whose pitches are
+       multiples of 4 bytes is sub-window copies
+       ({!Rig_amd_abi.Sdma.window}) of up to [most_rows] rows each, in the
+       largest element of up to 16 bytes that divides its width, its
+       pitches and each side's address modulo 4, if its width and pitches
+       fit the packet in those elements and each side's address modulo 4
+       plus its width is at most its pitch; any other box is linear copies
+       of each row. A fill is
        a [CONST_FILL] of its whole dwords, as many bytes a packet as a
        linear copy moves, and a linear copy of each unaligned end, at most
        three bytes, from four bytes of the argument segment that hold its
@@ -309,9 +316,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     path programs keeps the ring the device opens with), or that the device
     does not run, and [RIG_GROW] for parts that exceed its rings or its
     segment. On SDMA 4 over [Rig_amd_pci], a submission of copies past half
-    that ring, about 170,000 copies of one packet, never fits, and
-    [Rig.Buffer.submit_copy] then submits a strided copy of that many runs
-    in several submissions.
+    that ring, about 170,000 linear copies of one packet each, never fits,
+    and [Rig.Buffer.submit_copy] then submits a box of that many rows that
+    sub-windows do not copy in several submissions.
 
     {!val-grow} then makes, of [Pinned] memory of the first power of two
     from 4096 bytes that holds twice what the parts need and at most
@@ -333,8 +340,9 @@ val capability : t -> Rig_amd_abi.Capability.t
     the path lacks [n] bytes of memory, or another resource for a queue,
     having made nothing that stays and kept what a growth handed, and
     raises {!Fault} if the path refuses a queue for another reason. A copy
-    takes an SDMA copy packet for each 1 GiB of each row it moves (4 MiB on
-    SDMA engines before 4.4.2 and on 5.0 and 5.1). The device does not run:
+    in linear copies takes a packet for each 1 GiB of each row it moves
+    (4 MiB on SDMA engines before 4.4.2 and on 5.0 and 5.1). The device does
+    not run:
     {ul
     {- a copy of one byte or more on ["COMPUTE:0"];}
     {- words on an AQL queue that are not whole packets;}

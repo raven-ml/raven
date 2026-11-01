@@ -346,6 +346,15 @@ struct rig_amd_measure {
 
 
 
+/* The layout of the copy engine's COPY_LINEAR_SUB_WIND packet
+   (Rig_amd_abi.Sdma.window): its header, the lowest bit of each field, and
+   the most elements of a row, rows of a packet and elements of a pitch. */
+struct rig_amd_window {
+  uint32_t header;
+  int element, src_x, src_pitch, dst_x, dst_pitch, width, rows;
+  uint64_t most_width, most_rows, most_pitch;
+};
+
 /* What a device runs work with, from its open to its stop. */
 struct rig_amd {
   _Atomic uint64_t *word;
@@ -355,6 +364,7 @@ struct rig_amd {
   struct rig_amd_template templates[RIG_AMD_TEMPLATES];
   uint64_t max_copy;            /* the bytes one S_COPY moves */
   uint64_t max_fill;            /* the bytes one S_FILL sets */
+  struct rig_amd_window window;
   const struct rig_amd_launch *copy_launch; /* owned until confirmed stop */
   struct rig_amd_hdp hdps[RIG_AMD_HDPS];
   /* set while a submission stores to [hdps]' registers, from before its
