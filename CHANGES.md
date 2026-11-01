@@ -154,6 +154,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- A malformed CFF charstring's message writes its number with two exponent
+  digits under Windows too, as `9e+08`.
 - `Font.of_string` reads fonts with CFF and CFF2 outlines, running their
   Type 2 charstrings with bounded stacks, nesting and work so that a hostile
   font is rejected, and a variable CFF2 font as its default instance.

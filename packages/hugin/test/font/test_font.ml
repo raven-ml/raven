@@ -510,6 +510,12 @@ let hostile_cases =
       cff_result [ cat [ ns [ 1; 0 ]; esc 12; endchar ] ],
       `Malformed,
       "divides by zero" );
+    ( "a product past the 16.16 range",
+      (* Written as C's [%g] writes it, the same on every system: the C
+         library's printf writes 9e+008 under mingw-w64. *)
+      cff_result [ cat [ ns [ 30000; 30000 ]; esc 24; endchar ] ],
+      `Malformed,
+      "glyph 1: an arithmetic result 9e+08 out of range" );
     ( "the random operator",
       cff_result [ cat [ esc 23; endchar ] ],
       `Unsupported,
