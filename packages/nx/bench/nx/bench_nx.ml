@@ -1351,13 +1351,14 @@ let fft_rows =
     ]
 
 (* Products with MXFP4 weights as a checkpoint stores them, codes apart from
-   their scales, and with Q8_0 weights as GGUF stores them, each copy in
-   memory of its own: a decode step's 4096 × 4096 projection of one token,
-   cycling 16 MXFP4 copies or 8 Q8_0 ones (142 MB, past fudge's caches) so
-   that each call reads its weight from memory, and a mixture of experts'
-   layer, 64 tokens each through 8 of 32 experts of 4096 inputs to 1024
-   outputs, token [i]'s experts [(5i + 4j) mod 32] for [j] below 8, over 2
-   copies (71 MB each). *)
+   their scales, and with Q8_0, Q4_K and Q6_K weights as GGUF stores them,
+   each copy in memory of its own: a decode step's 4096 × 4096 projection of
+   one token, cycling 16 MXFP4 copies, 8 Q8_0 ones (142 MB, past fudge's
+   caches) or 4 Q4_K or Q6_K ones (38 and 55 MB) so that each call reads its
+   weight from memory, Q8_0's at a float64 input too, and a mixture of
+   experts' layer, 64 tokens each through 8 of 32 experts of 4096 inputs to
+   1024 outputs, token [i]'s experts [(5i + 4j) mod 32] for [j] below 8, over
+   2 copies (71 MB each). *)
 
 (* [copies] weights of shape [[| lead…; n; k |]], their rows alike: a fixed
    pattern of codes and scales near 1. *)
@@ -1376,15 +1377,28 @@ let mxfp4_weights ~copies lead n k =
   Array.init copies (fun _ ->
       Nx_quant.mxfp4 ~scales:(rows (k / 32) scales) (rows (k / 2) codes))
 
-(* [copies] Q8_0 weights of [n; k], their rows alike: each block's float16
-   scale 2^-7, then quants of a fixed pattern. *)
-let q8_0_weights ~copies n k =
-  let row = k / 32 * 34 in
+(* [copies] weights of [n; k] made by [make] from GGUF blocks of [size]
+   bytes per [values] values, their rows alike: each float16 field at the
+   offsets [halves] 2^-7, every other byte of a fixed pattern. *)
+let gguf_weights ~copies make ~values ~size ~halves n k =
+  let row = k / values * size in
   let bytes =
     Nx.init D.Uint8 [| n; row |] (fun i ->
-        match i.(1) mod 34 with 0 -> 0 | 1 -> 0x20 | j -> 37 * j mod 256)
+        let j = i.(1) mod size in
+        if List.mem j halves then 0
+        else if List.mem (j - 1) halves then 0x20
+        else 37 * j mod 256)
   in
-  Array.init copies (fun _ -> Nx_quant.q8_0 (on_host (Nx.copy bytes)))
+  Array.init copies (fun _ -> make (on_host (Nx.copy bytes)))
+
+let q8_0_weights ~copies =
+  gguf_weights ~copies Nx_quant.q8_0 ~values:32 ~size:34 ~halves:[ 0 ]
+
+let q4_k_weights ~copies =
+  gguf_weights ~copies Nx_quant.q4_k ~values:256 ~size:144 ~halves:[ 0; 2 ]
+
+let q6_k_weights ~copies =
+  gguf_weights ~copies Nx_quant.q6_k ~values:256 ~size:210 ~halves:[ 208 ]
 
 (* [next ws turn] is the weight after the last call's. *)
 let next ws turn =
@@ -1452,6 +1466,21 @@ let quant_rows =
       Thumper.bench_with_setup "q8_0-gemv-4096"
         ~setup:(fun () ->
           let ws = q8_0_weights ~copies:8 4096 4096 in
+          (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
+        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+      Thumper.bench_with_setup "q8_0-gemv-4096-f64"
+        ~setup:(fun () ->
+          let ws = q8_0_weights ~copies:8 4096 4096 in
+          (filled D.Float64 [| 1; 4096 |] 1., ws, ref 0))
+        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+      Thumper.bench_with_setup "q4_k-gemv-4096"
+        ~setup:(fun () ->
+          let ws = q4_k_weights ~copies:4 4096 4096 in
+          (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
+        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+      Thumper.bench_with_setup "q6_k-gemv-4096"
+        ~setup:(fun () ->
+          let ws = q6_k_weights ~copies:4 4096 4096 in
           (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
         (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "mxfp4-gemv-4096-n-split4"

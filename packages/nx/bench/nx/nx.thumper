@@ -5,6 +5,8 @@
 # host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.2 · 64-bit · release
 # forced: blessed under load 7.4 on 14 cores
+# forced: blessed quant/q8_0-gemv-4096-f64 quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 39.1 on 14 cores
+# forced: blessed quant/q8_0-gemv-4096-f64 quant/q4_k-gemv-4096 quant/q6_k-gemv-4096 under load 46.6 on 14 cores
 
 constant/chain-1000	alloc_words	exact	94146
 contract/contract-i32-m128x4096x4096	alloc_words	exact	342
@@ -211,6 +213,9 @@ quant/mxfp4-gemv-4096-n-split4	alloc_words	exact	17559
 quant/mxfp4-moe-64x8of32	alloc_words	exact	11531
 quant/mxfp4-moe-64x8of32-experts-split4	alloc_words	exact	133206
 quant/mxfp4-moe-64x8of32-k-split4	alloc_words	exact	143091
+quant/q4_k-gemv-4096	alloc_words	exact	7061
+quant/q6_k-gemv-4096	alloc_words	exact	6378
+quant/q8_0-gemv-4096-f64	alloc_words	exact	1453
 ragged/take-text-1K-of-512-to-1536B	alloc_words	exact	2661
 ragged/take-text-64K-of-4-to-20B	alloc_words	exact	2661
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1220
