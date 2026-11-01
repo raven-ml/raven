@@ -1055,7 +1055,9 @@ let cpu =
         (fun c ->
           b.around (fun () ->
               law_map2 ~kinds:P.[ Binary Add; Compare Less ] b c));
-      prop ~count:100
+      (* "a where" and "a load of one repeated element" come in one case
+         in twenty-five: 400 cases reach each in every run. *)
+      prop ~count:400
         (strf "%s computes every map its loop holds" b.name)
         split_cases
         (fun c -> b.around (fun () -> law_split ~declines:never b c));

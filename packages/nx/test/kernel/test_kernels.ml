@@ -1133,7 +1133,9 @@ let laws (b : Support.backend) =
         (unit (test_map_identical_view b));
       test "a map of a padded load reads its coordinates"
         (unit (test_padded_coordinate b));
-      prop ~count:300
+      (* "a where" and "a load of one repeated element" come in one case
+         in twenty-five: 400 cases reach each in every run. *)
+      prop ~count:400
         ~examples:(List.map (fun p -> (p, 1, Plain)) large_view_pairs)
         "a map gives the bits of its nodes run one by one, or declines and \
          writes nothing"
