@@ -21,7 +21,6 @@ let opts u =
   | _ -> invalid_arg "a stage needs its buffer's options"
 
 let sorted_ranges rs = List.sort_uniq compare_range_arg rs
-let is_tagged u = Option.equal Tag.equal (tag u) (Some (Tag.Tuple []))
 
 let rec zip l0 l1 =
   match (l0, l1) with x :: r0, y :: r1 -> (x, y) :: zip r0 r1 | _ -> []
@@ -423,12 +422,6 @@ let pm_no_views =
           let v = m "v" in
           if List.exists loop_range (Nodes.to_list (ranges v)) then None
           else Some (nth v 0));
-      (* A loop's range, outside every kernel, loses the tag that kernels
-         renumber their ranges by. *)
-      rule (Upat.op Op.Range ~name:"r") (fun m ->
-          let r = m "r" in
-          if is_tagged r && loop_range r then Some (replace r ~tag:None)
-          else None);
     ])
 
 module Bufs = Set.Make (struct
@@ -639,25 +632,15 @@ let pm_add_buffers =
         ]);
     ]
 
-(* Scalar parameters keep their identity across the call boundary. *)
-let pm_add_param_range_tags =
-  Pattern_matcher.v
-    (fun () -> [
-      rule
-        (Upat.v ~op:(ops Op.[ Param; Range ]) ~name:"x" ())
-        (fun m ->
-          let x = m "x" in
-          if op x = Op.Param && addrspace x = Some Dtype.Alu then None
-          else Some (rtag ~tag:(Tag.Tuple []) x));
-    ])
-
 (* Kernels *)
 
+(* A kernel's storage, each with the argument its call passes, and its ranges,
+   in the order the kernel reaches them. *)
 type local_ctx = {
-  mutable dg : int;
   map : t Tbl.t;
   mutable order : t list; (* The keys of [map], last first. *)
-  mutable range : int;
+  ranges : (Axis_type.t * int list, unit) Hashtbl.t;
+  mutable range_order : (Axis_type.t * int list) list; (* last first *)
 }
 
 let add_arg ctx buf value =
@@ -666,7 +649,13 @@ let add_arg ctx buf value =
     ctx.order <- buf :: ctx.order
   end
 
-let debuf ctx buf =
+(* Storage is a parameter of the kernel: its slot is set once the kernel's
+   storage is all known, and its sources are not the kernel's. *)
+let add_buf ctx buf =
+  add_arg ctx buf buf;
+  raise Bottom_up_gate
+
+let debuf slot buf =
   let align, phase = storage_phase buf in
   (* The kernel reads the storage's values within their bounds: an index
      clamped where it is stored is in range where a gather reads it. *)
@@ -675,22 +664,15 @@ let debuf ctx buf =
   in
   let param =
     Shape.param ~shape:[ Int (max_numel buf) ] ?vmin_vmax
-      ?addrspace:(addrspace buf) ?device:(device buf) ~phase ~align ctx.dg
+      ?addrspace:(addrspace buf) ?device:(device buf) ~phase ~align slot
       (dtype buf)
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in
   (* A buffer of symbolic shape is its greatest view, shrunk. *)
-  let ret =
-    if
-      List.equal Sint.equal
-        (List.map (fun n -> Int n) (max_shape buf))
-        (shape buf)
-    then ret
-    else shrink ret (List.map (fun s -> Some (Int 0, s)) (shape buf))
-  in
-  add_arg ctx buf buf;
-  ctx.dg <- ctx.dg + 1;
-  ret
+  if
+    List.equal Sint.equal (List.map (fun n -> Int n) (max_shape buf)) (shape buf)
+  then ret
+  else shrink ret (List.map (fun s -> Some (Int 0, s)) (shape buf))
 
 (* A group of stores is no state of a buffer. *)
 let handle_after ctx after =
@@ -701,21 +683,27 @@ let handle_after ctx after =
     add_arg ctx buf after;
     Some buf
 
-(* Ranges are renumbered from 0, so equal kernels dedupe. *)
-let renumber_range ctx r =
-  if not (is_tagged r) then None
-  else
-    let ret =
-      replace r ~tag:None
-        ~arg:
-          (Range
-             {
-               axis_type = axis_type r;
-               axis_id = ctx.range :: List.tl (axis_id r);
-             })
-    in
-    ctx.range <- ctx.range + 1;
-    Some ret
+let add_range ctx r =
+  let key = (axis_type r, axis_id r) in
+  if not (Hashtbl.mem ctx.ranges key) then begin
+    Hashtbl.replace ctx.ranges key ();
+    ctx.range_order <- key :: ctx.range_order
+  end
+
+(* A kernel's ranges are renumbered from 0 in the order it reaches them, so
+   equal kernels dedupe. *)
+let pm_renumber_range =
+  Pattern_matcher.v
+    (fun () -> [
+      rule_ctx (Upat.op Op.Range ~name:"r") (fun numbers m ->
+          let r = m "r" in
+          let axis_type = axis_type r in
+          Option.map
+            (fun n ->
+              replace r
+                ~arg:(Range { axis_type; axis_id = n :: List.tl (axis_id r) }))
+            (Hashtbl.find_opt numbers (axis_type, axis_id r)));
+    ])
 
 let check_buf_states x =
   let idxs =
@@ -744,13 +732,12 @@ let to_define_global =
           None);
       rule_ctx
         (Upat.v ~op:(ops Op.[ Buffer; Alloc ]) ~name:"buf" ())
-        (fun ctx m -> Some (debuf ctx (m "buf")));
+        (fun ctx m -> add_buf ctx (m "buf"));
       (* Only storage parameters get kernel-local slots; scalar parameters keep
          the slots of their enclosing call. *)
       rule_ctx (Upat.op Op.Param ~name:"buf") (fun ctx m ->
           let buf = m "buf" in
-          if (not (is_tagged buf)) || addrspace buf = Some Dtype.Alu then None
-          else Some (debuf ctx buf));
+          if addrspace buf = Some Dtype.Alu then None else add_buf ctx buf);
       (* Scalar parameters are values, not buffers. *)
       rule_ctx
         (Upat.op Op.Index ~src:[ Upat.op Op.Param ~name:"v" ])
@@ -763,7 +750,8 @@ let to_define_global =
           let b = m "b" in
           Some (replace b ~arg:(Bufferize { (opts b) with device = None })));
       rule_ctx (Upat.op Op.Range ~name:"r") (fun ctx m ->
-          renumber_range ctx (m "r"));
+          add_range ctx (m "r");
+          None);
     ])
 
 let split_store x =
@@ -775,16 +763,36 @@ let split_store x =
        && List.exists loop_range (List.tl (src x))
   then None
   else
-    let lctx = { dg = 0; map = Tbl.create 8; order = []; range = 0 } in
+    let lctx =
+      {
+        map = Tbl.create 8;
+        order = [];
+        ranges = Hashtbl.create 8;
+        range_order = [];
+      }
+    in
     let ret =
       graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:lctx x
         (Before_sources
            (Pattern_matcher.append to_define_global
               (with_ctx Simplify.pm_flatten_range)))
     in
+    let bufs = List.rev lctx.order in
+    let ret =
+      substitute ~calls:Skip ~pass:Once ret
+        (List.mapi (fun slot b -> (b, debuf slot b)) bufs)
+    in
+    let numbers = Hashtbl.create 8 in
+    List.iteri
+      (fun n key -> Hashtbl.replace numbers key n)
+      (List.rev lctx.range_order);
+    let ret =
+      graph_rewrite ~calls:Skip ~pass:Once ~ctx:numbers ret
+        (After_sources pm_renumber_range)
+    in
     (* Buffers can be on different devices here: the schedule compiles such
        kernels to copies. *)
-    let args = List.rev_map (Tbl.find lctx.map) lctx.order in
+    let args = List.map (Tbl.find lctx.map) bufs in
     Some (call (sink ~kernel:(kernel_info ()) [ ret ]) args)
 
 let split_kernels =
@@ -834,9 +842,7 @@ let get_kernel_graph tsink =
   let next_slot = ref (1 + List.fold_left max (-1) slots) in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:next_slot tsink
-      (Before_sources
-         (Pattern_matcher.append pm_add_buffers
-            (with_ctx pm_add_param_range_tags)))
+      (Before_sources pm_add_buffers)
   in
   let tsink =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() tsink

@@ -1429,16 +1429,16 @@ driver sizes local memory as it loads a function (D146).
   schedules the call of an end and drops the end), and `uop/spec.py:253-280`
   (`spec_kernel_graph`, which admits device ranges only, and no end).
 - **tolk:** `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a
-  view that moves with a loop's range and untags the range) and
-  `Rangeify.split_store`; `Schedule.create_schedule` (`loops`, `argument`
+  view that moves with a loop's range) and `Rangeify.split_store`; `Schedule.create_schedule` (`loops`, `argument`
   and the kept end); `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`;
   and `test/gen/tinygrad.patch`, which gives tinygrad's `spec_kernel_graph`
   the same rules.
 - **Differs:** an end of a precompiled call over loop ranges
   (`Axis_type.Loop`), `AFTER(buf, END(CALL(fn, args), r))`, is an effect of
   the kernel graph and no kernel. The arguments that move with `r` stay
-  views, the range loses the tag of kernel ranges, and `create_schedule`
-  keeps the end around the call, ordered by the call's reads and writes.
+  views, `r` keeps its number, since `split_store` renumbers only the
+  ranges of the kernel it makes, and `create_schedule` keeps the end around
+  the call, ordered by the call's reads and writes.
   Once the call's body is scheduled and resolved, the schedule is `LINEAR
   [END(LINEAR [CALL k1; CALL k2; ...], r)]`, the form that the memory plan of
   a range (D41) and `Tolk_engine.run`, a loop of rig's program (D146), run.

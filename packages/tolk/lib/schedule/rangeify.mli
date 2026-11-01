@@ -69,8 +69,8 @@ val get_kernel_graph : Ops.t -> Ops.t
         ranges is a loop that runs the call once per trip, and no kernel;
      }
      {- the calls' arguments and the storage lose their indices and their views,
-        but for the views a loop's call reads that move with the loop's ranges,
-        and the loops' ranges lose the tags of kernel ranges.
+        but for the views a loop's call reads that move with the loop's
+        ranges.
      }
     }
 
