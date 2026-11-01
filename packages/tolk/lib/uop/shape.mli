@@ -562,7 +562,8 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
 
     - {b invalid values}: an operation on a gated value moves inside the gate;
       an operation on {!Ops.invalid} is invalid; a gate on a reduction's operand
-      that does not depend on its ranges moves out of the reduction; a store to
+      that does not depend on its ranges moves out of the reduction, and one
+      that does selects the reduction's identity where it fails; a store to
       an invalid index does nothing, and a load from one is its alternative
       value, or [0];
     - {b identities}: [x + 0], [x lxor 0], [x lor 0], [x lsl 0], [x lsr 0],

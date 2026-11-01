@@ -119,14 +119,24 @@ let invalid_values =
           folds_to
             (Ops.reduce body Add [ reduce_range ])
             (Shape.valid (Ops.reduce a Add [ reduce_range ]) cond));
-      test "a gate clause on a reduction's range stays in it" (fun () ->
+      test "a gate clause on a reduction's range selects its identity in it"
+        (fun () ->
           let on_range = Ops.O.(reduce_range < int 2) in
           let body = Shape.valid a Ops.O.(cond land on_range) in
           folds_to
             (Ops.reduce body Add [ reduce_range ])
             (Shape.valid
-               (Ops.reduce (Shape.valid a on_range) Add [ reduce_range ])
+               (Ops.reduce (Ops.where on_range a (Ops.int 0)) Add
+                  [ reduce_range ])
                cond));
+      test "a gate on a reduction's range alone selects its identity" (fun () ->
+          let on_range = Ops.O.(reduce_range < int 2) in
+          folds_to
+            (Ops.reduce (Shape.valid a on_range) Max [ reduce_range ])
+            (Ops.reduce
+               (Ops.where on_range a
+                  (Shape.const_like a (Ops.identity_element Max (Ops.dtype a))))
+               Max [ reduce_range ]));
       test "a store to an invalid index does nothing after its sources"
         (fun () ->
           let index = Ops.index buf [ Ops.invalid ] in

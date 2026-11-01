@@ -1925,10 +1925,11 @@ let casted_const =
     any [ p; op Op.Stack ~each:(any [ p; op Op.Const ~arg:(Const `Invalid) ]) ])
 
 (* a REDUCE moves inside the gate clauses without its ranges: they invalidate
-   every lane at once, so that gate lifts out *)
+   every lane at once, so that gate lifts out. The clauses with its ranges
+   invalidate single lanes, and an Invalid lane is the reduce's identity *)
 let lift_reduce_gate red cond x i =
   match arg red with
-  | Reduce { num_axes = 0; _ } -> (
+  | Reduce { num_axes = 0; op = rop } -> (
       let ranges = List.tl (src red) in
       let in_reduce c =
         let crs = Ops.ranges c in
@@ -1940,10 +1941,12 @@ let lift_reduce_gate red cond x i =
           ranges
       in
       let keep, lift = List.partition in_reduce (split_uop cond Op.And) in
-      let inner = match keep with [] -> x | _ -> where (conj keep) x i in
-      match lift with
-      | [] -> None
-      | _ -> Some (where (conj lift) (replace red ~src:(inner :: ranges)) i))
+      let identity () = const_like x (identity_element rop (dtype red)) in
+      let inner =
+        match keep with [] -> x | _ -> where (conj keep) x (identity ())
+      in
+      let ret = replace red ~src:(inner :: ranges) in
+      match lift with [] -> Some ret | _ -> Some (where (conj lift) ret i))
   | _ -> None
 
 let unary_or_cast = Op.Set.union Op.Set.unary (ops [ Op.Cast; Op.Bitcast ])

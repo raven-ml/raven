@@ -518,26 +518,6 @@ let devectorizer2 =
          rule (Upat.op Op.Index ~src:[ Upat.var "x" ]) (fun m -> Some (m "x"));
          (* unpack WMMA *)
          rule (Upat.op Op.Wmma ~name:"u") (fun m -> do_stack_wmma (m "u"));
-         (* stacked INDEX is many INDEX *)
-         rule
-           (Upat.op Op.Index ~name:"x"
-              ~src:
-                [ Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.op Op.Stack ~name:"s" ])
-           (fun m ->
-             Some
-               (stack
-                  (List.map
-                     (fun u -> replace (m "x") ~src:[ m "b"; u ])
-                     (src (m "s")))));
-         (* INDEX into RESHAPE moves the RESHAPE *)
-         rule
-           (Upat.op Op.Index
-              ~src:
-                [
-                  Upat.v ~op:Op.Set.defines ~name:"b" (); Upat.op Op.Reshape ~name:"s";
-                ])
-           (fun m ->
-             Some (reshape (index (m "b") [ nth (m "s") 0 ]) (shape (m "s"))));
          (* RESHAPE a void is removed (hack for AFTER) *)
          rule (Upat.op Op.Reshape ~dtype:[ Dtype.Void ] ~name:"x") (fun m ->
              Some (nth (m "x") 0));
@@ -667,47 +647,37 @@ let fuses (ren : Renderer.t) r x =
 let fusable = String "fusable"
 let mark_fusable u = replace u ~arg:fusable
 
-let reduce_ranges_to_acc (slots, ren) r =
-  let op, num_axes = reduce_arg r and x = nth r 0 and rngs = srcs r in
-  let acc = alloc_like ~slot:(slots ()) ~addrspace:Dtype.Reg r in
-  let input_ranges =
-    List.filter (fun u -> not (List.memq u rngs)) (Nodes.to_list (ranges x))
+(* A reduce of [r]'s source over its first [num_axes] axes, in place, and
+   over the ranges after its source, into an accumulator. *)
+let lower_reduce (slots, ren) r =
+  let op, num_axes = reduce_arg r and inp = nth r 0 and rngs = srcs r in
+  let fused = fuses ren r inp in
+  let add x y =
+    let u = alu x op [ y ] in
+    if fused then mark_fusable u else u
   in
-  let acc_init =
-    store (after acc input_ranges) (const (identity_element op (dtype r)))
+  let ret =
+    if num_axes = 0 then inp
+    else
+      let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
+      match List.map (index_ints inp) (product sizes) with
+      | v0 :: vals -> List.fold_left add v0 vals
+      | [] -> assert false
   in
-  let acc_initted = after acc (acc_init :: rngs) in
-  let inp = if num_axes > 0 then v Op.Reduce ~src:[ x ] ~arg:(arg r) else x in
-  let update = alu acc_initted op [ inp ] in
-  let update =
-    if num_axes = 0 && fuses ren r x then mark_fusable update else update
-  in
-  Some (after acc [ end_ (store acc_initted update) rngs ])
-
-let expand_horizontal_reduce ren r =
-  let op, num_axes = reduce_arg r and inp = nth r 0 in
-  let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
-  let add =
-    if fuses ren r inp then fun x y -> mark_fusable (alu x op [ y ])
-    else fun x y -> alu x op [ y ]
-  in
-  match List.map (index_ints inp) (product sizes) with
-  | v0 :: vals -> Some (List.fold_left add v0 vals)
-  | [] -> assert false
-
-(* an Invalid in a REDUCE source is that reduce's identity *)
-let pm_reduce_identity =
-  pm
-    (fun () -> [
-      rule
-        (Upat.reduce ~allow_any_len:true ~name:"red" Shape.invalid_gate [])
-        (fun m ->
-          let red = m "red" and x = m "x" in
-          let id =
-            const_like x (identity_element (fst (reduce_arg red)) (dtype red))
-          in
-          Some (replace red ~src:(where (m "cond") x id :: srcs red)));
-    ])
+  if rngs = [] then Some ret
+  else
+    let acc = alloc_like ~slot:(slots ()) ~addrspace:Dtype.Reg r in
+    let input_ranges =
+      List.filter (fun u -> not (List.memq u rngs)) (Nodes.to_list (ranges inp))
+    in
+    let acc_init =
+      store (after acc input_ranges) (const (identity_element op (dtype r)))
+    in
+    let acc_initted = after acc (acc_init :: rngs) in
+    let update =
+      if num_axes = 0 then add acc_initted ret else alu acc_initted op [ ret ]
+    in
+    Some (after acc [ end_ (store acc_initted update) rngs ])
 
 let pm_reduce_local =
   lift pm_wmma_add
@@ -717,12 +687,8 @@ let pm_reduce_local =
          rule (Upat.op Op.Reduce ~name:"x") (fun m ->
              fix_group_for_reduce (m "x"));
          (* remove reduces *)
-         rule_ctx
-           (Upat.op Op.Reduce ~src:[ Upat.wild; Upat.wild ] ~allow_any_len:true
-              ~name:"r")
-           (fun ctx m -> reduce_ranges_to_acc ctx (m "r"));
-         rule_ctx (Upat.op Op.Reduce ~src:[ Upat.wild ] ~name:"r")
-           (fun (_, ren) m -> expand_horizontal_reduce ren (m "r"));
+         rule_ctx (Upat.op Op.Reduce ~name:"r") (fun ctx m ->
+             lower_reduce ctx (m "r"));
          rule (Upat.op Op.Sink ~name:"sink") (fun m ->
              merge_reduce_ends (m "sink"));
        ])
@@ -745,7 +711,7 @@ let pm_add_loads =
         (Upat.v
            ~op:
              (Op.Set.union Op.Set.elementwise
-                (ops [ Op.Reduce; Op.Wmma; Op.Stack ]))
+                (ops [ Op.Wmma; Op.Stack ]))
            ~name:"x" ())
         (fun m ->
           let x = m "x" in
@@ -1091,7 +1057,6 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
            Symbolic.pm_move_where_on_load;
            Simplify.pm_flatten_range;
            Simplify.pm_reduce_unparented;
-           pm_reduce_identity;
          ])
       sink
   in
