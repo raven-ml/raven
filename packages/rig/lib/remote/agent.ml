@@ -179,18 +179,29 @@ let ended report e =
 (* Fails the agent's process with [j]'s root cause once [j] fails, after it
    reports the failure on [report]; and fails [j] once a device of the process
    is lost other than by a close. Every device an agent opens is its job's. *)
-let watch report j =
-  let rec loop () =
-    match Link.wait j ~ms:1000 with
-    | Link.Failed why ->
-        ended report (`Failed why);
-        Rig.fail why
-    | Link.Closed -> ()
-    | Link.Open ->
-        Option.iter (Link.fail j) (Rig.failure ());
-        loop ()
-  in
-  ignore (spawn loop ())
+let watched report j =
+  match Link.wait j ~ms:1000 with
+  | Link.Failed why ->
+      ended report (`Failed why);
+      Rig.fail why;
+      false
+  | Link.Closed -> false
+  | Link.Open ->
+      Option.iter (Link.fail j) (Rig.failure ());
+      true
+
+(* Its loop's polls lie inside the handler, which restarts it by no tail
+   call ([settled]). *)
+let rec watching report j =
+  match
+    while settled watched report j do
+      ()
+    done
+  with
+  | () -> ()
+  | exception Sys.Break -> Sys.opaque_identity (watching report j)
+
+let watch report j = ignore (spawn (watching report) j)
 
 (* Addresses *)
 

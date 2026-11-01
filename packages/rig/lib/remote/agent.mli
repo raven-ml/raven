@@ -52,6 +52,13 @@ val spawn : ('a -> 'b) -> 'a -> Thread.t
 (** [spawn f x] is [Thread.create f x], whose thread blocks every signal but
     a fault's for its life. *)
 
+val settled : ('a -> 'b -> 'c) -> 'a -> 'b -> 'c
+(** [settled f x y] is [f x y], made again after each [Sys.Break] until it
+    returns, for a step whole when made again: on Windows a Ctrl-C reaches
+    every thread, rig's own included. It allocates nothing, and polls only
+    inside [f], under its handler, so that a [Sys.Break] at any poll point
+    is made again. *)
+
 (** {1:reports Reports to a launcher} *)
 
 type report

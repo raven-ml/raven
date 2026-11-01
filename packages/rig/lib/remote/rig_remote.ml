@@ -379,16 +379,28 @@ let loss j =
    reports [j]'s failure on its report. The controller's process goes on: the
    job's hosts and proxies fault with the root cause at their next use, and
    its own devices are no job's. *)
-let watch j =
-  let rec loop () =
-    match Link.wait j.job ~ms:1000 with
-    | Link.Failed why -> Agent.ended j.report (`Failed why)
-    | Link.Closed -> ()
-    | Link.Open ->
-        Option.iter (Link.fail j.job) (loss j);
-        loop ()
-  in
-  ignore (Agent.spawn loop ())
+let watched j () =
+  match Link.wait j.job ~ms:1000 with
+  | Link.Failed why ->
+      Agent.ended j.report (`Failed why);
+      false
+  | Link.Closed -> false
+  | Link.Open ->
+      Option.iter (Link.fail j.job) (loss j);
+      true
+
+(* Its loop's polls lie inside the handler, which restarts it by no tail
+   call ([Agent.settled]). *)
+let rec watching j =
+  match
+    while Agent.settled watched j () do
+      ()
+    done
+  with
+  | () -> ()
+  | exception Sys.Break -> Sys.opaque_identity (watching j)
+
+let watch j = ignore (Agent.spawn watching j)
 
 external reraise : exn -> 'a = "%reraise"
 
