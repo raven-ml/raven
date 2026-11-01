@@ -527,6 +527,7 @@ let modify f h (t : Path.transition) =
   let mask bits = (Q.attr_mask, List.fold_left ( lor ) D.ibv_qp_state bits) in
   let what, fields =
     match t with
+    | Reset -> ("resetting it", [ (Q.qp_state, D.ibv_qps_reset); mask [] ])
     | Init { access } ->
         ( "initialising",
           [

@@ -26,6 +26,7 @@ type kernel_event =
   | Port_changed of string
 
 type transition =
+  | Reset
   | Init of { access : access }
   | Ready_to_receive of {
       peer : endpoint;

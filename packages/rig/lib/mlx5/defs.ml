@@ -86,6 +86,7 @@ let uverbs_attr_reg_dmabuf_mr_access_flags = 6
 let uverbs_attr_reg_dmabuf_mr_resp_lkey = 7
 let uverbs_attr_reg_dmabuf_mr_resp_rkey = 8
 let uverbs_attr_f_mandatory = 1
+let ibv_qps_reset = 0
 let ibv_qps_init = 1
 let ibv_qps_rtr = 2
 let ibv_qps_rts = 3

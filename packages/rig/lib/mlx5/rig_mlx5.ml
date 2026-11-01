@@ -61,6 +61,7 @@ type kernel_event = Path.kernel_event =
   | Port_changed of string
 
 type transition = Path.transition =
+  | Reset
   | Init of { access : access }
   | Ready_to_receive of {
       peer : endpoint;
@@ -186,6 +187,7 @@ and qp = {
   received : int Atomic.t; (* the receive ring's producer count *)
   taken : int Atomic.t; (* receives whose slots are free again *)
   mutable rung : int;
+  mutable moved : bool; (* once a connect may have changed its state *)
   mutable connected : bool;
   mutable q_destroyed : (unit, string) result option; (* its destroy's answer *)
 }
@@ -311,6 +313,12 @@ let ring_of nic bytes =
 
 let free_ring r = if Atomic.exchange r.owned false then free r.mem r.size
 
+(* What an object's destroy or deregister is, from the step before its
+   request to the kernel until the kernel's answer is stored: a later call
+   answers it and issues no request, whose handle the kernel may have given
+   another object since. A constant, so that the store allocates nothing. *)
+let cut = Some (Error "an exception ended the first destroy")
+
 (* Driver data *)
 
 let data size fields =
@@ -419,7 +427,7 @@ let make p =
         }
   in
   match attempt () with
-  | Ok nic -> Ok nic
+  | Ok _ as r -> r
   | Error e ->
       p.close ();
       Error (strf "%s: %s" p.name e)
@@ -522,6 +530,7 @@ module Region = struct
     match r.gone with
     | Some answer -> answer
     | None ->
+        r.gone <- cut;
         let answer = r.nic.path.destroy `Region r.handle in
         r.gone <- Some answer;
         (* The kernel may already have reused the handle for another region. *)
@@ -623,15 +632,13 @@ module Cq = struct
 
   (* A completion of entry [index] of [q] frees the slots up to it: the latest
      posted entry with those low 16 bits, which a ring of at most 2^15 entries
-     makes the one. *)
+     makes the one. Only a poll of the pair's queue raises [completed], one
+     at a time, as [count] needs: a store serves, which polls nothing between
+     the poll's count and it. *)
   let complete q index =
     let posted = Atomic.get q.posted in
     let last = posted - 1 - ((posted - 1 - index) land 0xffff) in
-    let rec raise_to v =
-      let c = Atomic.get q.completed in
-      if v > c && not (Atomic.compare_and_set q.completed c v) then raise_to v
-    in
-    raise_to (last + 1)
+    if last + 1 > Atomic.get q.completed then Atomic.set q.completed (last + 1)
 
   (* A completion frees the slots of the ring it names. The receives of a
      queue pair complete in order, so each frees the oldest, as Linux's
@@ -640,8 +647,13 @@ module Cq = struct
   let free_slots q (c : A.Completion.t) =
     match c.status with
     | Done | Failed { ring = Send; _ } -> complete q c.index
-    | Received _ | Failed { ring = Receive; _ } -> Atomic.incr q.taken
+    | Received _ | Failed { ring = Receive; _ } ->
+        ignore (Atomic.fetch_and_add q.taken 1 : int)
     | Unexpected _ -> ()
+
+  let rec owner n = function
+    | [] -> None
+    | q :: rest -> if q.q_number = n then Some q else owner n rest
 
   let poll cq =
     live_cq "Cq.poll" cq;
@@ -654,12 +666,13 @@ module Cq = struct
     else begin
       acquire ();
       let c = A.Completion.read cq.c_ring.buf at in
+      let some = Some c and q = owner c.qp (Atomic.get cq.members) in
+      (* The completion is consumed and its slots freed with nothing between
+         that allocates, so that an exception leaves both or neither. *)
       cq.count <- cq.count + 1;
       consumed (cq.c_ring.record + A.Doorbell.consumed) cq.count;
-      List.iter
-        (fun q -> if q.q_number = c.qp then free_slots q c)
-        (Atomic.get cq.members);
-      Some c
+      (match q with Some q -> free_slots q c | None -> ());
+      some
     end
 
   let arm cq =
@@ -680,16 +693,23 @@ module Cq = struct
     guarded "Cq.destroy" @@ fun () ->
     let nic = cq.c_nic in
     alive "Cq.destroy" nic;
-    match cq.c_destroyed with
-    | Some answer -> answer
-    | None ->
-        if Atomic.get cq.members <> [] then
-          invalid_arg "Rig_mlx5.Cq.destroy: a queue pair of it is not destroyed";
-        let answer = nic.path.destroy `Cq cq.c_handle in
-        cq.c_destroyed <- Some answer;
-        with_lock nic (fun () -> nic.cqs <- List.remove_assoc cq.c_tag nic.cqs);
-        free_ring cq.c_ring;
-        answer
+    let answer =
+      match cq.c_destroyed with
+      | Some answer -> answer
+      | None ->
+          if Atomic.get cq.members <> [] then
+            invalid_arg
+              "Rig_mlx5.Cq.destroy: a queue pair of it is not destroyed";
+          cq.c_destroyed <- cut;
+          let answer = nic.path.destroy `Cq cq.c_handle in
+          cq.c_destroyed <- Some answer;
+          answer
+    in
+    (* Made again by each call, so that one an exception ended is finished by
+       the next. *)
+    with_lock nic (fun () -> nic.cqs <- List.remove_assoc cq.c_tag nic.cqs);
+    free_ring cq.c_ring;
+    answer
 end
 
 (* Queue pairs *)
@@ -753,91 +773,105 @@ module Qp = struct
         (entries ~least:1 n most)
     in
     let held = entries + receives in
-    (* The queue's room is taken before the kernel makes the pair, so that makes
-       at once never hold more than the queue. *)
-    with_lock nic (fun () ->
-        if cq.held + held > cq.c_entries then
-          invalid_arg
-            (strf "Rig_mlx5.Qp.make: %d entries beside %d, past the queue's %d"
-               held cq.held cq.c_entries);
-        cq.held <- cq.held + held);
-    let give_back () = with_lock nic (fun () -> cq.held <- cq.held - held) in
+    let reserve () =
+      if cq.held + held > cq.c_entries then
+        invalid_arg
+          (strf "Rig_mlx5.Qp.make: %d entries beside %d, past the queue's %d"
+             held cq.held cq.c_entries);
+      cq.held <- cq.held + held
+    and back () = cq.held <- cq.held - held in
     let sends_at = receives * A.Receive.size in
-    match ring_of nic (sends_at + (entries * A.Entry.size)) with
-    | Error e ->
-        give_back ();
-        Error e
-    | Ok ring -> (
-        let tag = tag nic in
-        let d =
-          data D.Create_qp.sizeof
-            [
-              (D.Create_qp.buf_addr, ring.mem);
-              (D.Create_qp.db_addr, ring.record);
-              (D.Create_qp.sq_wqe_count, entries);
-              (D.Create_qp.rq_wqe_count, receives);
-              ( D.Create_qp.rq_wqe_shift,
-                if receives = 0 then 0 else log2 A.Receive.size );
-              (D.Create_qp.uidx, D.mlx5_ib_default_uidx);
-            ]
+    let made ring =
+      let tag = tag nic in
+      let d =
+        data D.Create_qp.sizeof
+          [
+            (D.Create_qp.buf_addr, ring.mem);
+            (D.Create_qp.db_addr, ring.record);
+            (D.Create_qp.sq_wqe_count, entries);
+            (D.Create_qp.rq_wqe_count, receives);
+            ( D.Create_qp.rq_wqe_shift,
+              if receives = 0 then 0 else log2 A.Receive.size );
+            (D.Create_qp.uidx, D.mlx5_ib_default_uidx);
+          ]
+      in
+      let* handle, number, resp =
+        nic.path.qp ~cq:cq.c_handle ~sends:entries ~receives ~tag d
+          D.Create_qp_resp.sizeof
+      in
+      let page, at =
+        A.Uar.register ~per_page:nic.per_page ~size:nic.register_size
+          (read resp D.Create_qp_resp.bfreg_index)
+      in
+      if page >= Array.length nic.uar then begin
+        let kept =
+          match nic.path.destroy `Qp handle with
+          | Ok () -> ""
+          | Error e -> ", and " ^ e
         in
-        let made =
-          let* handle, number, resp =
-            nic.path.qp ~cq:cq.c_handle ~sends:entries ~receives ~tag d
-              D.Create_qp_resp.sizeof
-          in
-          let page, at =
-            A.Uar.register ~per_page:nic.per_page ~size:nic.register_size
-              (read resp D.Create_qp_resp.bfreg_index)
-          in
-          if page >= Array.length nic.uar then begin
-            let kept =
-              match nic.path.destroy `Qp handle with
-              | Ok () -> ""
-              | Error e -> ", and " ^ e
-            in
-            Error
-              (strf "the kernel gave a doorbell register on page %d, unmapped%s"
-                 page kept)
-          end
-          else Ok (handle, number, nic.uar.(page) + at)
+        Error
+          (strf "the kernel gave a doorbell register on page %d, unmapped%s"
+             page kept)
+      end
+      else
+        let psn =
+          with_lock nic (fun () -> Random.State.bits nic.random land 0xff_ffff)
         in
-        match made with
-        | Error e ->
-            free_ring ring;
-            give_back ();
-            Error e
-        | Ok (handle, number, register) ->
-            let psn =
-              with_lock nic (fun () ->
-                  Random.State.bits nic.random land 0xff_ffff)
-            in
-            let q =
-              {
-                q_nic = nic;
-                q_cq = cq;
-                q_handle = handle;
-                q_number = number;
-                q_tag = tag;
-                q_entries = entries;
-                q_receives = receives;
-                q_ring = ring;
-                sends_at;
-                register;
-                psn;
-                posted = Atomic.make 0;
-                completed = Atomic.make 0;
-                received = Atomic.make 0;
-                taken = Atomic.make 0;
-                rung = 0;
-                connected = false;
-                q_destroyed = None;
-              }
-            in
-            with_lock nic (fun () ->
-                nic.qps <- (tag, q) :: nic.qps;
-                Atomic.set cq.members (q :: Atomic.get cq.members));
-            Ok q)
+        let q =
+          {
+            q_nic = nic;
+            q_cq = cq;
+            q_handle = handle;
+            q_number = number;
+            q_tag = tag;
+            q_entries = entries;
+            q_receives = receives;
+            q_ring = ring;
+            sends_at;
+            register = nic.uar.(page) + at;
+            psn;
+            posted = Atomic.make 0;
+            completed = Atomic.make 0;
+            received = Atomic.make 0;
+            taken = Atomic.make 0;
+            rung = 0;
+            moved = false;
+            connected = false;
+            q_destroyed = None;
+          }
+        in
+        (* Published by two stores with nothing between that allocates, the
+           last step before the return. *)
+        let ok = Ok q in
+        with_lock nic (fun () ->
+            let qps = (tag, q) :: nic.qps
+            and members = q :: Atomic.get cq.members in
+            nic.qps <- qps;
+            Atomic.set cq.members members);
+        ok
+    in
+    let attempt () =
+      let* ring = ring_of nic (sends_at + (entries * A.Entry.size)) in
+      match made ring with
+      | Ok _ as r -> r
+      | Error _ as e ->
+          free_ring ring;
+          e
+    in
+    (* The queue's room is taken before the kernel makes the pair, so that
+       makes at once never hold more than the queue, and given back unless the
+       pair is published: by any exception, since a pair it leaves unpublished
+       was never connected and completes nothing. The step after the take is
+       the handler's, and nothing allocates in the give-back's section. *)
+    with_lock nic reserve;
+    match attempt () with
+    | Ok _ as r -> r
+    | Error _ as e ->
+        with_lock nic back;
+        e
+    | exception e ->
+        with_lock nic back;
+        reraise e
 
   let number q =
     live_qp "Qp.number" q;
@@ -870,6 +904,11 @@ module Qp = struct
           { psn = q.psn; timeout = timeout f.port; retries; reads = f.reads };
       ]
     in
+    (* A connect that an error or an exception ended may have left the pair
+       initialised or ready to receive, from which no initialisation goes: the
+       next starts from reset. [moved] is stored before the first change. *)
+    let steps = if q.moved then Reset :: steps else steps in
+    q.moved <- true;
     let* () =
       List.fold_left
         (fun r t -> Result.bind r (fun () -> p.modify q.q_handle t))
@@ -939,19 +978,31 @@ module Qp = struct
     guarded "Qp.destroy" @@ fun () ->
     let nic = q.q_nic in
     alive "Qp.destroy" nic;
-    match q.q_destroyed with
-    | Some answer -> answer
-    | None ->
-        let answer = nic.path.destroy `Qp q.q_handle in
-        q.q_destroyed <- Some answer;
-        with_lock nic (fun () ->
-            nic.qps <- List.remove_assoc q.q_tag nic.qps;
-            if Result.is_ok answer then
-              q.q_cq.held <- q.q_cq.held - q.q_entries - q.q_receives;
-            Atomic.set q.q_cq.members
-              (List.filter (fun m -> m != q) (Atomic.get q.q_cq.members)));
-        free_ring q.q_ring;
-        answer
+    let answer =
+      match q.q_destroyed with
+      | Some answer -> answer
+      | None ->
+          q.q_destroyed <- cut;
+          let answer = nic.path.destroy `Qp q.q_handle in
+          q.q_destroyed <- Some answer;
+          answer
+    in
+    (* The pair leaves the lists, and its room the queue, by stores with
+       nothing between that allocates, once: it is listed in [members] until
+       then. Each call makes it, so that one an exception ended is finished
+       by the next. *)
+    with_lock nic (fun () ->
+        let members = Atomic.get q.q_cq.members in
+        if List.memq q members then begin
+          let qps = List.remove_assoc q.q_tag nic.qps
+          and rest = List.filter (fun m -> m != q) members in
+          nic.qps <- qps;
+          if Result.is_ok answer then
+            q.q_cq.held <- q.q_cq.held - q.q_entries - q.q_receives;
+          Atomic.set q.q_cq.members rest
+        end);
+    free_ring q.q_ring;
+    answer
 end
 
 (* Events *)

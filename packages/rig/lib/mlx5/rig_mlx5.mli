@@ -97,7 +97,10 @@
     Misuse raises [Invalid_argument]: a call on a destroyed completion queue
     or queue pair, on a deregistered region, or on any object of a closed NIC.
     A second [destroy] or [deregister] on an open NIC calls nothing and returns
-    what the first returned, and a second {!val-close} does nothing.
+    what the first returned, or [Error msg] if an exception ended the first,
+    whose object then counts as destroyed or deregistered and keeps what the
+    kernel might still hold, as after a refusal. A second {!val-close} does
+    nothing.
 
     A child of [fork] must not use its parent's NICs or their objects. Their
     rings are not mapped in the child.
@@ -454,8 +457,9 @@ type kernel_event =
   | Port_changed of string  (** The port's state changed, to this state. *)
 
 (** The type for a queue pair's state changes, in the order {!Qp.connect}
-    makes them. *)
+    makes them, after a [Reset] of a queue pair an earlier connect moved. *)
 type transition =
+  | Reset  (** Back to reset, from any state. *)
   | Init of { access : Region.access }
       (** To initialised, on port 1, with the peer allowed [access] through
           the queue pair. *)
