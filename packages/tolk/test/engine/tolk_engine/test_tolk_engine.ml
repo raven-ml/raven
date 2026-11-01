@@ -735,6 +735,66 @@ let runs_each_binding () =
         (by_slot storage contents))
     [ 1; 10; 5 ]
 
+(* Each device [CPU:k] stores twice the window of four of its twelve floats
+   that starts at its start [k], plus one; the starts are variables of one
+   name. Its kernels differ in their device and start alone, so they are one
+   program, which each call launches with its own start. *)
+let windows_at starts =
+  let window (d, start) =
+    let a = Ops.new_buffer d 12 Float32 and c = Ops.new_buffer d 4 Float32 in
+    let v =
+      Shape.bind
+        (Ops.variable "start" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8))
+        (`Int (Bigint.of_int start))
+    in
+    let w = Shape.shrink a [ Some (Sym v, Sym Ops.O.(v + int 4)) ] in
+    Ops.after c [ Ops.store c Ops.O.((w * float 2.) + float 1.) ]
+  in
+  Ops.sink (List.map window starts)
+
+let one_program_per_start () =
+  let big = windows_at [ ("CPU:1", 0); ("CPU:2", 5); ("CPU:3", 8) ] in
+  let compiled, vars = schedule big in
+  equal (list (pair string int)) ~msg:"no run binds the start" [] vars;
+  let libs =
+    List.filter_map
+      (fun u ->
+        if Ops.op u <> Program then None
+        else Some (Device.Tiny_elf.of_program u).lib)
+      (Ops.toposort ~calls:Enter compiled)
+  in
+  equal int ~msg:"programs" 1 (List.length (List.sort_uniq String.compare libs));
+  let s, vars, storage = linked big in
+  Engine.run ~vars s [||];
+  equal slot_values (expected big storage) (by_slot storage contents)
+
+(* Two kernels on CPU:1 store twice the first [n] of their eight floats, plus
+   one, for [n] a variable bound to 3 in one and 6 in the other: their grids
+   read the value their calls pass, and at [DEBUG=2] so do their reports'
+   throughputs. *)
+let sizes_from_calls ?(devices = devices) ?(debug = 0) () =
+  let prefix n =
+    let a = Ops.new_buffer "CPU:1" 8 Float32
+    and c = Ops.new_buffer "CPU:1" 8 Float32 in
+    let n =
+      Shape.bind
+        (Ops.variable "n" (Dtype.Value.of_int 1) (Dtype.Value.of_int 8))
+        (`Int (Bigint.of_int n))
+    in
+    let first b = Shape.shrink b [ Some (Int 0, Sym n) ] in
+    Ops.after c [ Ops.store (first c) Ops.O.((first a * float 2.) + float 1.) ]
+  in
+  let big = Ops.sink (List.map prefix [ 3; 6 ]) in
+  let storage =
+    Setting.context
+      [ B (Setting.debug, debug) ]
+      (fun () ->
+        let s, vars, storage = linked ~devices big in
+        Engine.run ~vars s [||];
+        storage)
+  in
+  equal slot_values (expected big storage) (by_slot storage contents)
+
 (* The pad_idiv programs pad integer quotients of their inputs: of the inputs
    themselves, of a stored divisor at least 1, padded twice, and shrunk. Their
    inputs hold no zero, and their padding, which reads zeros, divides by none. *)
@@ -1747,6 +1807,12 @@ let schedules =
       @@ test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
+      test
+        "one program launched on several devices computes each device's \
+         window at its start"
+        one_program_per_start;
+      test "kernels whose sizes are one name of two values run each its own"
+        sizes_from_calls;
       test "a copy runs on a buffer off its parameter's phase" copies_off_phase;
       cases "a pad of integer divisions writes what its tensors compute"
         ~id:Fun.id
@@ -2558,6 +2624,10 @@ let on_a_gpu (kind, _) =
   group kind
     [
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
+      test "kernels whose sizes are one name of two values run each its own"
+        (sizes_from_calls ~devices);
+      test "kernels whose sizes are one name of two values report at DEBUG=2"
+        (sizes_from_calls ~devices ~debug:2);
       group "recorded"
         (List.map (computes_on devices)
            [

@@ -303,18 +303,17 @@ let rec schedule ~copies sched_sink =
 let create_schedule = schedule ~copies:true
 
 (* A linear in a linear is inlined into it. *)
-let pm_flatten_linear =
-  Pattern_matcher.v
-    (fun () -> [
-      rule (Upat.op Op.Linear ~name:"lin" ~early_reject:[ Op.Linear ]) (fun m ->
-          let lin = m "lin" in
-          Some
-            (replace lin
-               ~src:
-                 (List.concat_map
-                    (fun c -> if op c = Op.Linear then src c else [ c ])
-                    (src lin))));
-    ])
+let flatten_linear () =
+  rule (Upat.op Op.Linear ~name:"lin" ~early_reject:[ Op.Linear ]) (fun m ->
+      let lin = m "lin" in
+      Some
+        (replace lin
+           ~src:
+             (List.concat_map
+                (fun c -> if op c = Op.Linear then src c else [ c ])
+                (src lin))))
+
+let pm_flatten_linear = Pattern_matcher.v (fun () -> [ flatten_linear () ])
 
 (* Parameters and call-local storage *)
 
@@ -373,10 +372,12 @@ let pass_values values call =
 (* Nested linear calls are lexical scopes: their positional parameters shadow
    the enclosing scope, while calls without scalar arguments inherit it. A
    scalar argument that is a variable is bound into each kernel that reads it in
-   its slot, nameless; any other is a value its kernels are passed
-   ({!pass_values}). A named variable keeps its slot: a custom kernel's takes
-   its own. *)
-let rec resolve_linear_call ?(outer_binds = []) linear_call =
+   its slot, by its name, unbound: a run binds it. A variable bound to a value
+   of a name in [several], which the schedule binds to several values, and any
+   other scalar argument, is a value its kernels are passed ({!pass_values}):
+   each call passes its own. A named variable keeps its slot: a custom kernel's
+   takes its own. *)
+let rec resolve_linear_call ~several ?(outer_binds = []) linear_call =
   let args = List.tl (src linear_call) in
   let linear =
     graph_rewrite ~calls:Skip ~pass:Once ~ctx:args (body linear_call)
@@ -388,17 +389,21 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
         (List.mapi
            (fun i x ->
              if addrspace x <> Some Dtype.Alu then []
+             else if is_bound_var x && List.mem (expr x) several then
+               [ (i, x) ]
              else if is_variable x then [ (i, unbound x) ]
              else [ (i, x) ])
            args)
     in
     local @ List.filter (fun (i, _) -> not (List.mem_assoc i local)) outer_binds
   in
-  let params, values = List.partition (fun (_, x) -> op x = Op.Param) binds in
+  let params, values =
+    List.partition (fun (_, x) -> op x = Op.Param && not (is_bound_var x)) binds
+  in
   let apply_binds si =
     match (op si, src si) with
     | Op.Call, b :: _ when op b = Op.Linear ->
-        resolve_linear_call ~outer_binds:binds si
+        resolve_linear_call ~several ~outer_binds:binds si
     (* Compiled parameters already have their slots in the program. *)
     | Op.Call, b :: _ when op b = Op.Program -> si
     | _ ->
@@ -426,16 +431,31 @@ let rec resolve_linear_call ?(outer_binds = []) linear_call =
   in
   replace linear ~src:(List.map apply_binds (src linear))
 
+(* Its context is the names the schedule binds to several values. *)
 let pm_resolve_linear_call =
-  Pattern_matcher.append
-    (Pattern_matcher.v
-       (fun () -> [
-         rule
-           (Upat.op Op.Call ~name:"linear_call" ~allow_any_len:true
-              ~src:[ Upat.op Op.Linear ])
-           (fun m -> Some (resolve_linear_call (m "linear_call")));
-       ]))
-    pm_flatten_linear
+  Pattern_matcher.v (fun () -> [
+      rule_ctx
+        (Upat.op Op.Call ~name:"linear_call" ~allow_any_len:true
+           ~src:[ Upat.op Op.Linear ])
+        (fun several m ->
+          Some (resolve_linear_call ~several (m "linear_call")));
+      flatten_linear ();
+    ])
+
+(* The names that the bound variables of [u] bind to several values. *)
+let bound_several u =
+  let values = Hashtbl.create 8 in
+  List.iter
+    (fun v ->
+      if is_bound_var v then
+        let x = Dtype.Value.to_int (Option.get (param_of v).bound) in
+        let name = expr v in
+        let seen = Option.value (Hashtbl.find_opt values name) ~default:[] in
+        if not (List.mem x seen) then Hashtbl.replace values name (x :: seen))
+    (toposort ~calls:Enter u);
+  Hashtbl.fold
+    (fun name xs acc -> if List.length xs > 1 then name :: acc else acc)
+    values []
 
 (* Scheduling calls *)
 
@@ -785,6 +805,7 @@ let transform_to_call big_sink =
 (* Schedules *)
 
 let create_linear_with_vars ?(capturing = false) big_sink =
+  let several = bound_several big_sink in
   let big_sink = transform_to_call big_sink in
   (* The call's sources are the values to realize. *)
   let linear_call =
@@ -793,7 +814,7 @@ let create_linear_with_vars ?(capturing = false) big_sink =
   in
   (* The linear call is resolved recursively, and its storage allocated. *)
   let linear =
-    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() linear_call
+    graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:several linear_call
       (After_sources pm_resolve_linear_call)
   in
   let linear =
@@ -813,14 +834,13 @@ let create_linear_with_vars ?(capturing = false) big_sink =
         else
           let nm = expr b in
           let value = Dtype.Value.to_int (Option.get (param_of b).bound) in
-          if not (List.mem nm used_vars) then acc
-          else
-            match List.assoc_opt nm acc with
-            | Some v when v <> value ->
-                invalid_arg
-                  (Printf.sprintf "bind mismatch on %s, %d <> %d" nm v value)
-            | Some _ -> acc
-            | None -> acc @ [ (nm, value) ])
+          (* A name of several values is no run's: its calls pass them. *)
+          if
+            List.mem nm several
+            || (not (List.mem nm used_vars))
+            || List.mem_assoc nm acc
+          then acc
+          else acc @ [ (nm, value) ])
       []
       (List.tl (src big_sink))
   in

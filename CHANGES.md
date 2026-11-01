@@ -880,6 +880,10 @@ thread.
 
 ### Tolk (new)
 
+- `Schedule.create_linear_with_vars` takes variables of one name bound to
+  several values: each kernel that reads one takes it from its own call, so
+  kernels that differ in that value alone are one program. It raised "bind
+  mismatch".
 - A folded `Op.Where` or `Op.Neg` keeps a NaN's payload, a signalling NaN's
   included, where it quieted one: a selection and a negation convert nothing.
 - A CUDA conversion to `Fp8e4m3` or `Fp8e5m2` saturates an infinity to the

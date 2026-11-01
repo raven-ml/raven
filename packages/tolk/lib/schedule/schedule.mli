@@ -79,7 +79,12 @@ val create_linear_with_vars :
       library; a body scheduled under other values is scheduled again, in memory
       too; an entry that does not read as a schedule is made anew and replaced;
     + the schedule's parameters are bound to the call's arguments, and each
-      call-local storage to a new buffer on its device;
+      call-local storage to a new buffer on its device. A kernel reads a
+      variable by its name, a run binding it, except where [big_sink] binds
+      variables of that name to several values: each kernel that reads one
+      then takes it as a nameless parameter, its own call passing the bound
+      variable, so that kernels which differ in that value alone are one
+      program;
     + a kernel that only copies a buffer between devices, or to or from a disk,
       becomes a call of a store;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
@@ -92,6 +97,8 @@ val create_linear_with_vars :
     each schedule of more than one call prints its size and time on standard
     output.
 
-    Raises [Invalid_argument] if two bound variables of one name have different
-    values, if a kernel that is not a copy accesses buffers on several devices,
+    The values are those of the bound variables the kernels read by name, each
+    name bound to one value.
+
+    Raises [Invalid_argument] if a kernel that is not a copy accesses buffers on several devices,
     or as {!create_schedule} does. *)

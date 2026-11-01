@@ -1207,11 +1207,30 @@ let several_devices () =
 let variables =
   group "create_linear_with_vars › rules"
     [
-      test "two variables of one name bound to two values are refused"
+      test
+        "two variables of one name bound to two values are passed by the \
+         calls that read them"
         (fun () ->
-          let big = rebound 7 in
-          raises_match (Exn.invalid_arg ~sub:"bind mismatch on v") (fun () ->
-              Schedule.create_linear_with_vars big));
+          let linear, vars = Schedule.create_linear_with_vars (rebound 7) in
+          equal (list (pair string int)) ~msg:"no run binds v" [] vars;
+          let passed call =
+            List.filter_map
+              (fun s ->
+                match Ops.arg s with
+                | Param { bound = Some x; _ } when Shape.is_bound_var s ->
+                    Some (Dtype.Value.to_int x)
+                | _ -> None)
+              (Ops.src_without_body call)
+          in
+          equal (list (list int)) ~msg:"each call its own value" [ [ 4 ]; [ 7 ] ]
+            (List.map passed (Ops.src linear));
+          let named call =
+            List.filter_map
+              (fun v -> match Ops.arg v with Param p -> p.name | _ -> None)
+              (Shape.variables (Ops.body call))
+          in
+          equal (list (list string)) ~msg:"read by no name" [ []; [] ]
+            (List.map named (Ops.src linear)));
       test "two variables of one name bound to one value are one" (fun () ->
           equal
             (list (pair string int))
@@ -1309,6 +1328,53 @@ let trip_linear () =
             (Ops.Nodes.mem r (Ops.backward_slice ~calls:Skip (Ops.body k)))
       | calls -> failf "%d calls in the loop" (List.length calls))
   | entries -> failf "%d entries" (List.length entries)
+
+(* Two loops of three trips, each around a call whose body stores its scalar
+   parameter 0 into its row of its ys, the argument the variable v bound to 4
+   in one loop and 7 in the other. *)
+let bound_loops_linear () =
+  let loop (axis, value) =
+    let index = Shape.param ~addrspace:Alu 0 Int32
+    and y = Shape.param ~shape:[ Int 1 ] ~device:cpu 1 Int32 in
+    let body = Ops.sink [ Ops.store y (Shape.reshape index [ Int 1 ]) ] in
+    let ys = Ops.new_buffer cpu 12 Int32 in
+    let r = Ops.range ~axis_type:Loop (Int 3) [ axis ] in
+    let v =
+      Shape.bind
+        (Ops.variable ~dtype:Int32 "v" (Dtype.Value.of_int 0)
+           (Dtype.Value.of_int 10))
+        (`Int (Bigint.of_int value))
+    in
+    let row =
+      Shape.shrink ys
+        [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
+    in
+    Ops.after ys [ Ops.end_ (Ops.call ~precompile:true body [ v; row ]) [ r ] ]
+  in
+  let linear, vars =
+    Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink (List.map loop [ (100, 4); (101, 7) ]))
+  in
+  equal (list (pair string int)) ~msg:"no run binds v" [] vars;
+  let passed e =
+    match Ops.src (Ops.nth e 0) with
+    | [ k ] ->
+        let slot v =
+          match Ops.arg v with
+          | Param p -> (p.name, p.slot)
+          | _ -> failf "a variable without a parameter"
+        in
+        equal
+          (list (pair (option string) int))
+          ~msg:"the kernel's value, nameless, past its row" [ (None, 1) ]
+          (List.map slot (Shape.variables (Ops.body k)));
+        (match Ops.arg (List.nth (Ops.src_without_body k) 1) with
+        | Param { bound = Some x; _ } -> Dtype.Value.to_int x
+        | _ -> failf "the call passes no bound variable")
+    | calls -> failf "%d calls in the loop" (List.length calls)
+  in
+  equal (list int) ~msg:"each loop's call its value" [ 4; 7 ]
+    (List.sort compare (List.map passed (Ops.src linear)))
 
 (* The scan's body holds a loop of its own: each row of xs, of eight floats, is
    added to the carry in two halves, one inner trip each. *)
@@ -1436,6 +1502,9 @@ let loops =
         scan_linear;
       test "a loop's call passes its kernel the trip as a scalar argument"
         trip_linear;
+      test
+        "loops whose calls read one name at two values each pass their own"
+        bound_loops_linear;
       test "a loop inside a loop's body keeps its own end" nested_linear;
       test "a loop whose range has another number is the same body"
         renumbered_loop;

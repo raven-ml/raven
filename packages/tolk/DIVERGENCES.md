@@ -4718,3 +4718,39 @@ fold wraps integers and holds its float bound`, hold.
   signalling NaN's bits, and a negation flips only its sign`. On rune:
   missing; rune's `Lower_arith` suite brings it, with a compiled `where` whose
   folded branch is a signalling NaN constant.
+
+## D177. A name bound to several values is passed by each call that reads it
+
+- **tinygrad:** `schedule/__init__.py:282-288` (`create_linear_with_vars`),
+  which raises "bind mismatch" when a schedule's kernels read one variable
+  name bound to two values, and `:100-112` (`resolve_linear_call`), which
+  substitutes a bound variable into its kernels unbound, read by name from
+  the run's `var_vals`.
+- **tolk:** `Schedule.create_linear_with_vars` (`bound_several`),
+  `Schedule.resolve_linear_call` and `Schedule.pass_values`;
+  `Tolk_engine.var_word`, and the grid and split size of
+  `Tolk_engine.launch`, which read a nameless scalar from its call's slot.
+- **Differs:** where the graph binds variables of one name to several values,
+  a kernel that reads one takes it as a nameless parameter of its range, in a
+  slot past its arguments, and its call passes the bound variable there, as a
+  loop's call passes its trip (D140). The name is not among the schedule's
+  variables, and the engine reads each bound variable apart, so each launch
+  computes with its call's value, unless a run binds the name. Kernels that
+  differ in that value alone are one program. A name bound to one value is
+  read by name, as tinygrad reads it.
+- **Reason:** (b): rune's compiled programs over several devices
+  (`Pieces.split`, `Compile.moving`) bind each device's window start, of a
+  move or of a loop's coordinates, to a variable named by its bound, so that
+  every device's kernel is one program (D170) and the data-parallel step
+  makes as many programs over 2 to 16 memory devices.
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › two
+  variables of one name bound to two values are passed by the calls that read
+  them` and `› loops of calls › loops whose calls read one name at two values
+  each pass their own`; `Tolk_engine › link and run › one program launched
+  on several devices computes each device's window at its start` and `›
+  kernels whose sizes are one name of two values run each its own`, and the
+  same on each GPU; rune's `Rune.jit over
+  several devices › maps over a cut axis › per-device code makes as many
+  programs over 2 to 16`, `› programs › a data-parallel step makes as many
+  over 2, 4, 8 and 16`, `› loops › a step that reads its coordinates gives
+  eager's bits`.

@@ -214,7 +214,12 @@ type pending = {
 
 (* A kernel of the schedule, for reports and timing: the device it runs on, its
    function's name and its call. *)
-type kernel = { device : Rig.t; name : string; call : Ops.t }
+type kernel = {
+  device : Rig.t;
+  name : string;
+  call : Ops.t;
+  estimates : Ops.estimates;
+}
 
 (* What linking builds: the program's devices, memory, images, inputs and words,
    each by index, and the steps of the loop being built. *)
@@ -256,14 +261,24 @@ let device_index b d =
 
 let new_word b kind = push b.words kind
 
+(* A free variable is one word per name; a bound one, a word of its own,
+   since bound variables of one name may hold several values, one per call. *)
 let var_word b u =
-  let name = Ops.expr u in
-  match Hashtbl.find_opt b.var_words name with
-  | Some w -> w
-  | None ->
-      let w = new_word b (Computed (reader b.cells u)) in
-      Hashtbl.add b.var_words name w;
-      w
+  if Shape.is_bound_var u then (
+    match Ops.Tbl.find_opt b.computed u with
+    | Some w -> w
+    | None ->
+        let w = new_word b (Computed (reader b.cells u)) in
+        Ops.Tbl.replace b.computed u w;
+        w)
+  else
+    let name = Ops.expr u in
+    match Hashtbl.find_opt b.var_words name with
+    | Some w -> w
+    | None ->
+        let w = new_word b (Computed (reader b.cells u)) in
+        Hashtbl.add b.var_words name w;
+        w
 
 (* Whether [u] reads a range: a value that moves with its loop's trips. An
    after's value is its first source; the others only order it, as a loop's
@@ -605,8 +620,7 @@ let counter b (s : Ops.sint) =
 
 (* The grid of a host program that splits its loop of [extent] iterations into
    blocks: a group of threads per block, a thread per iteration. *)
-let split_grid b extent (k : Ops.kernel_info) : grid * grid =
-  let ops = match k.estimates with Some e -> e.ops | None -> extent in
+let split_grid b (extent : Ops.sint) (ops : Ops.sint) : grid * grid =
   match (extent, ops) with
   | Int extent, Int ops ->
       let n, t = blocks ~extent ~ops in
@@ -719,6 +733,22 @@ let launch b call prg d =
              [ { Rig_program.slot = slot_index p (whole l); at; use } ])
          fields offsets)
   in
+  (* A grid, as a split loop's size, reads a nameless scalar as its call
+     passes it, in its slot. *)
+  let args = Ops.src_without_body call in
+  let passed : Ops.sint -> Ops.sint = function
+    | Int n -> Int n
+    | Sym u ->
+        let slotted v =
+          match Ops.arg v with
+          | Ops.Param { name = None; slot; addrspace = Dtype.Alu; _ }
+            when slot >= 0 && slot < List.length args ->
+              Some (v, List.nth args slot)
+          | _ -> None
+        in
+        let subs = List.filter_map slotted (Ops.toposort ~calls:Skip u) in
+        Sym (Ops.substitute ~calls:Skip ~pass:Once u subs)
+  in
   let groups, threads =
     match k.split with
     | Some s ->
@@ -727,15 +757,22 @@ let launch b call prg d =
           List.find_map
             (fun (prm, x) -> if slot_of prm = s.hi then Some (sint x) else None)
             fields
-          |> Option.value ~default:s.iterations
+          |> Option.value ~default:(passed s.iterations)
         in
-        split_grid b extent k
+        let ops =
+          match k.estimates with Some e -> passed e.ops | None -> extent
+        in
+        split_grid b extent ops
     | None when host -> (one, one)
     | None ->
-        ( triple (List.map (value b) info.global_size),
-          triple (List.map (value b) info.local_size) )
+        let dims d = triple (List.map (fun s -> value b (passed s)) d) in
+        (dims info.global_size, dims info.local_size)
   in
-  b.kernels <- { device = on; name = elf.name; call } :: b.kernels;
+  let estimates =
+    let e = Realize.estimate_uop call in
+    { Ops.ops = passed e.ops; lds = passed e.lds; mem = passed e.mem }
+  in
+  b.kernels <- { device = on; name = elf.name; call; estimates } :: b.kernels;
   add_part b p
     (Launch
        {
@@ -1081,8 +1118,15 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
     match time with
     | None -> ""
     | Some s ->
+        (* A variable the run does not bind takes its bound value. *)
+        let var n vars =
+          match (List.assoc_opt (Ops.expr n) vars, Ops.arg n) with
+          | Some x, _ -> x
+          | None, Ops.Param { bound = Some x; _ } -> Dtype.Value.to_int x
+          | None, _ -> invalid_arg ("the variable " ^ Ops.expr n ^ " has no value")
+        in
         let per x =
-          Float.of_int (Shape.sym_infer x vars) /. Float.max s 1e-20
+          Float.of_int (Shape.sym_compile x var vars) /. Float.max s 1e-20
         in
         Printf.sprintf " tm %s (%7.0f GFLOPS %4.0f GB/s)"
           (Helpers.time_to_str ~w:9 s)
@@ -1108,9 +1152,7 @@ let print_reports t events =
     let args = Realize.get_call_arg_uops k.call in
     report ~device:(Rig.name k.device)
       ~name:(Realize.get_call_name ~var_vals:vars k.call args)
-      ~args:(List.length args) ~vars
-      (Realize.estimate_uop k.call)
-      time
+      ~args:(List.length args) ~vars k.estimates time
   in
   let kernel d name =
     List.find_opt (fun k -> Rig.equal k.device d && k.name = name) t.kernels
