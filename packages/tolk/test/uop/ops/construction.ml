@@ -566,9 +566,6 @@ let storage =
           rejects (fun () -> Ops.new_buffer cpu 4 Weak_float);
           rejects (fun () -> Shape.empty ~device:cpu (ints [ 4 ]) Weak_int);
           rejects (fun () -> Shape.param 0 Weak_int));
-      test "placeholder rejects a device for local storage" (fun () ->
-          rejects (fun () ->
-              Shape.placeholder ~slot:0 ~addrspace:Local ~device:cpu [ 4 ] Float32));
       test "placeholder commits a weak type" (fun () ->
           equal dtype Int32 (Ops.dtype (Shape.placeholder ~slot:0 [ 4 ] Weak_int)));
       test "a clone of a weak value commits its type" (fun () ->

@@ -45,9 +45,9 @@ def captured_divmods():
                 seen.add(d)
                 by_test.setdefault(current[0], []).append(d)
 
-    def recording_simplify(self, tracked=False):
+    def recording_simplify(self):
         record(self)
-        return simplify(self, tracked)
+        return simplify(self)
 
     def recording_rewrite(u, *args, **kwargs):
         record(u)

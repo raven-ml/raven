@@ -364,18 +364,13 @@ val alloc_like : ?slot:int -> ?addrspace:Dtype.addr_space -> Ops.t -> Ops.t
 (** [alloc_like u] is [alloc] of [u]'s greatest shape and type. *)
 
 val placeholder :
-  ?slot:int ->
-  ?addrspace:Dtype.addr_space ->
-  ?device:Ops.device ->
-  int list ->
-  Dtype.t ->
-  Ops.t
+  ?slot:int -> ?addrspace:Dtype.addr_space -> int list -> Dtype.t -> Ops.t
 (** [placeholder shape dt] is a parameter of [shape] and [dt] ([dt] committed,
     {!Dtype.strong}), or workgroup or register storage for those address spaces.
 
-    Raises [Invalid_argument] if local storage gets a device. *)
+    Raises [Invalid_argument] if the address space is the ALU's. *)
 
-val placeholder_like : ?addrspace:Dtype.addr_space -> Ops.t -> int -> Ops.t
+val placeholder_like : Ops.t -> int -> Ops.t
 (** [placeholder_like u slot] is a placeholder of [u]'s greatest shape and
     type. *)
 
@@ -383,7 +378,6 @@ val param :
   ?shape:Ops.sint list ->
   ?device:Ops.device ->
   ?vmin_vmax:Dtype.value * Dtype.value ->
-  ?multiple_of:int ->
   ?name:string ->
   ?addrspace:Dtype.addr_space ->
   ?volatile:bool ->

@@ -387,7 +387,7 @@ def arguments():
         UOp.param(1, dtypes.int, 4, name="w"),
         UOp.param(2, dtypes.half, 8, device="CPU"),
         UOp.param(4, dtypes.int, 4, volatile=True),
-        UOp.param(5, dtypes.int, vmin_vmax=(0, 10), multiple_of=2, addrspace=AddrSpace.ALU),
+        UOp.param(5, dtypes.int, vmin_vmax=(0, 10), addrspace=AddrSpace.ALU),
         UOp.variable("x", -1.0, 1.0, dtypes.float),
         UOp.variable("g", False, True, dtypes.bool),
         UOp.placeholder((4,), dtypes.float, slot=6, addrspace=AddrSpace.LOCAL),

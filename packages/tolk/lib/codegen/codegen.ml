@@ -1042,7 +1042,7 @@ let split_blocks sink =
       let bound slot name =
         param
           ~vmin_vmax:(`Int Bigint.zero, vmax n)
-          ~multiple_of:1 ~name:(fresh name) ~addrspace:Dtype.Alu slot dt
+          ~name:(fresh name) ~addrspace:Dtype.Alu slot dt
       in
       let lo = bound slots "block_lo" and hi = bound (slots + 1) "block_hi" in
       let r' = replace r ~src:[ alu hi Op.Sub [ lo ] ] in

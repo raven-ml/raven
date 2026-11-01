@@ -170,7 +170,7 @@ def record_all():
     simplify = UOp.simplify
     rewrites = {m: m.graph_rewrite for m, _ in FILES.values() if hasattr(m, "graph_rewrite")}
     simplify_valid = test_simplify_valid_idx.simplify_valid
-    UOp.simplify = outermost(simplify, lambda self, tracked=False: "simplify", lambda out, self, tracked=False: (self, out))
+    UOp.simplify = outermost(simplify, lambda self: "simplify", lambda out, self: (self, out))
     for m, rewrite in rewrites.items():
         m.graph_rewrite = outermost(rewrite, rewrite_kind, lambda out, sink, *a, **k: (sink, out))
     test_simplify_valid_idx.simplify_valid = outermost(
