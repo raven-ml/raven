@@ -461,7 +461,7 @@ let law_range (type s) (dt : (int, s) D.t) =
             [ min_int; lo - 1; lo; hi; hi + 1; max_int ] );
       ]
   in
-  prop (D.name dt) x (fun x ->
+  prop ~count:400 (D.name dt) x (fun x ->
       let a = A.create Rig.host dt [| 1 |] in
       if x < lo || x > hi then begin
         cover "out of range" true;
@@ -876,7 +876,7 @@ let bytes_of_seed seed n =
 
 (* A view of an array of [dt] over drawn bytes: transposed, sliced, a row
    broadcast, its last axis from the second element, or as it is, with
-   extents about 256 bytes. *)
+   extents about 256 bytes, and one in seventeen past 512. *)
 let tiles =
   let open Gen in
   let* (D.Any dt as d) = any_dtype in
@@ -884,8 +884,9 @@ let tiles =
   let extent =
     frequency
       [
-        (3, ints_of [ 1; 3; 4; 5; t - 1; t; t + 1 ]);
-        (1, int_range 1 ((2 * t) + 5));
+        (12, ints_of [ 1; 3; 4; 5; t - 1; t; t + 1 ]);
+        (4, int_range 1 ((2 * t) + 5));
+        (1, constant ((2 * t) + 1));
       ]
   in
   let* outer =
@@ -1814,11 +1815,11 @@ let tests =
         test "v keeps the layout inside the buffer" test_bounds;
         test "v refuses a misaligned first element" test_alignment;
         test "v refuses a dead buffer" test_dead;
-        prop ~count:500
+        prop ~count:2000
           "v takes a layout within its buffer's bytes on an aligned first \
            element, and only those"
           parts law_v;
-        prop
+        prop ~count:400
           "create is C-contiguous at offset 0 over its bytes, its tail bits \
            zero"
           dtype_and_shape law_create;
@@ -1833,7 +1834,7 @@ let tests =
           test_bitcast_bytes;
         test "sub-byte elements lie LSB first" test_bitcast_sub_byte;
         test "a widening refuses strides it cannot divide" test_bitcast_refuses;
-        prop "a narrowing then its widening is the identity" case
+        prop ~count:400 "a narrowing then its widening is the identity" case
           law_bitcast_round_trip;
         prop ~count:1000 "bitcast follows its rule over any layout" bitcast_case
           law_bitcast;
@@ -1880,7 +1881,8 @@ let tests =
     group "bulk"
       [
         prop "of_array then to_array is the identity" case law_round_trip;
-        prop "to_array reads any layout in C order" case law_to_array;
+        prop ~count:300 "to_array reads any layout in C order" case
+          law_to_array;
         test "run and scalar decodes agree over every pattern"
           test_decode_patterns;
         group "run and scalar stores agree"
@@ -1888,9 +1890,12 @@ let tests =
         test "copy gathers into a fresh buffer" test_copy;
         test "copy makes a fresh array off the host" test_copy_off_host;
         test "copy keeps NaN payloads" test_copy_bits;
-        prop "copy is contiguous with the same elements" case law_copy;
-        prop "copy keeps every byte of every element" raw law_copy_bits;
-        prop "transfer stores any layout's elements into any layout" case
+        prop ~count:300 "copy is contiguous with the same elements" case
+          law_copy;
+        prop ~count:300 "copy keeps every byte of every element" raw
+          law_copy_bits;
+        prop ~count:300 "transfer stores any layout's elements into any layout"
+          case
           law_transfer_layouts;
         test "transfer writes its destination's elements alone"
           test_transfer_writes;
@@ -1900,7 +1905,8 @@ let tests =
           "copy, to_array and of_array keep every element of views about 256 \
            bytes a side"
           tiles law_tiles;
-        prop "to_device copies the elements, keeping a layout that fits them"
+        prop ~count:400
+          "to_device copies the elements, keeping a layout that fits them"
           to_place law_to_device;
         test "to_device moves a column's elements alone" test_to_device_column;
         prop "transfer stores the elements alone, on the host or an io device"
@@ -1908,7 +1914,8 @@ let tests =
           law_transfer;
         test "transfer refuses what it cannot store, naming itself"
           test_transfer_refusals;
-        prop "transfer through held devices stores what the host's does"
+        prop ~count:600
+          "transfer through held devices stores what the host's does"
           (Gen.pair (Gen.pair case Gen.bool) route)
           law_transfer_held;
         test "create on a held device leaves its tail's fill queued"
@@ -1931,15 +1938,17 @@ let tests =
         test "bigarray waits for the work on its array's memory"
           test_wait_bigarray;
         test "of_bigarray shares the bigarray's bytes" test_of_bigarray;
-        prop "bigarray views a C-contiguous host array and raises otherwise"
-          case law_bigarray;
+        prop ~count:500
+          "bigarray views a C-contiguous host array and raises otherwise" case
+          law_bigarray;
         test "bigarray takes up to 16 axes" test_bigarray_rank;
         test "of_bigarray refuses a bigarray misaligned for its elements"
           test_of_bigarray_misaligned;
       ];
     group "read"
       [
-        prop "read passes a C-contiguous host-addressed array's bytes" case
+        prop ~count:300
+          "read passes a C-contiguous host-addressed array's bytes" case
           law_read;
         test "read claims the memory while its function runs" test_read_claim;
         test "read refuses what it cannot pass" test_read_refuses;
