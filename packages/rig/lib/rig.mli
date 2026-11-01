@@ -1681,8 +1681,9 @@ end
     [__extendhfsf2] where the machine has no instruction for a 16-bit float
     conversion, or [memcpy] for a large copy. The object defines these, or
     they come from the process and follow the process's convention. On x86_64
-    Windows that convention differs from the object's, so code for Windows
-    must define every function the compiler calls. *)
+    Windows that convention differs from that of an object for no system, so
+    code for Windows defines every function the compiler calls, or is
+    compiled for Windows' convention ({!section-host_abi}). *)
 
 (** {3:host_abi Calling conventions}
 
@@ -1691,11 +1692,14 @@ end
     arm64. x86_64 Windows has its own convention, but the host still calls a
     function by System V. A function of the process's libraries follows the
     platform's convention, so on x86_64 Windows linked code declares those it
-    calls [__attribute__((ms_abi))]. Code for an ELF target probes no stack,
-    and Windows commits a thread's stack one guard page at a time, so on
-    Windows a thread's stack is committed, but for its last 64 KiB, before
-    the thread first runs linked code. A stack frame of any size within it
-    then runs, as elsewhere. *)
+    calls [__attribute__((ms_abi))], or is compiled for Windows' convention,
+    as with [--target=x86_64-w64-windows-gnu-elf -mno-stack-arg-probe
+    -mno-red-zone], and declares the functions the host calls
+    [__attribute__((sysv_abi))]. Such code's [long] has 32 bits. Code for an
+    ELF target probes no stack, and Windows commits a thread's stack one
+    guard page at a time, so on Windows a thread's stack is committed, but for
+    its last 64 KiB, before the thread first runs linked code. A stack frame
+    of any size within it then runs, as elsewhere. *)
 
 (** {3:host_platforms Platform support}
 

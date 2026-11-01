@@ -87,11 +87,15 @@ external mac_fp16 : unit -> bool = "caml_tolk_cpu_mac_fp16"
    arithmetic macOS lists, which on a Mac Clang knows changes nothing. *)
 let mac_native = if mac_fp16 () then [ "fp16" ] else []
 
+let win64 arch =
+  List.hd (String.split_on_char ',' arch) = "x86_64-windows"
+
 let clang arch =
   let cc = Setting.value Setting.cc in
   let machine, cpu, feats =
     match String.split_on_char ',' arch with
-    | machine :: cpu :: feats -> (machine, cpu, feats)
+    | machine :: cpu :: feats ->
+        (List.hd (String.split_on_char '-' machine), cpu, feats)
     | _ ->
         invalid_arg
           (Printf.sprintf
@@ -125,7 +129,16 @@ let clang arch =
         [ "-march=" ^ String.concat "_" (cpu :: feats) ]
     | _ -> invalid_arg (Printf.sprintf "unsupported arch: '%s'" machine)
   in
-  (* -fno-math-errno is required for __builtin_sqrt to become an instruction
+  (* An object for x86_64 Windows calls by Windows' convention, the convention
+     of the process's functions, which it calls by name or which Clang calls
+     itself, such as [fma] or [memcpy]; its entry is declared System V's, by
+     which rig calls it. [w64-windows-gnu] is the system's triple that takes
+     -fPIC. rig commits a thread's stack before it runs linked code (rig's
+     host code), so the code probes none, and Windows may write below the
+     stack pointer, so the code keeps nothing there. On arm64, Windows' convention for
+     functions of fixed arguments is the ELF object's.
+
+     -fno-math-errno is required for __builtin_sqrt to become an instruction
      instead of a function call. -ffp-contract=off keeps each product and sum
      its own rounding, as the graph states them. -ffile-compilation-dir=. keeps
      the working directory out of the object, and out of what Clang states. *)
@@ -142,8 +155,14 @@ let clang arch =
       "-nostdlib";
       "-fno-ident";
       "-ffile-compilation-dir=.";
-      "--target=" ^ machine ^ "-none-unknown-elf";
     ]
+    @ (if win64 arch then
+         [
+           "--target=x86_64-w64-windows-gnu-elf";
+           "-mno-stack-arg-probe";
+           "-mno-red-zone";
+         ]
+       else [ "--target=" ^ machine ^ "-none-unknown-elf" ])
     @ target_args
   in
   let io = [ "-"; "-o"; "-" ] in

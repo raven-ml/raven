@@ -1438,11 +1438,14 @@ let do_render (ren : Renderer.t) prg lin =
    iterations. The kernel is renamed [NAME_], and [NAME] becomes the entry that
    passes [p] on, or for a split program a copy of the structure whose bounds
    are [first] and [end], [end] at most the iterations of the whole loop, which
-   the launch passes as its bound [hi]. The copy is inline: Clang compiles the
-   assignment of a large structure as a call of [memcpy], which on x86_64
-   Windows the process defines with a convention other than the object's
-   (rig's host code). The source the program keeps is the renderer's. *)
-let host_entry prg source =
+   the launch passes as its bound [hi]. The copy is inline, where Clang
+   compiles the assignment of a large structure as a call of [memcpy], which
+   a remote Windows host's object, compiled for no system, would call by the
+   wrong convention. On
+   x86_64 Windows, whose object calls by Windows' convention, the entry is
+   declared System V's, by which rig calls it (rig's host code). The source
+   the program keeps is the renderer's. *)
+let host_entry ~arch prg source =
   let k = kernel_info (nth prg 0) in
   let name = function_name k in
   let field slot = Printf.sprintf "arg%d" slot in
@@ -1463,15 +1466,17 @@ let host_entry prg source =
       source;
       Printf.sprintf "#undef %s" name;
       Printf.sprintf
-        "void %s(const void *p, long long first, long long end) { %s }" name
-        body;
+        "%svoid %s(const void *p, long long first, long long end) { %s }"
+        (if Compiler_cpu.win64 arch then "__attribute__((sysv_abi)) "
+         else "")
+        name body;
     ]
 
 let do_compile ((ren : Renderer.t), compile) prg source =
   let source = match arg source with String s -> s | _ -> assert false in
   if setting Setting.debug >= 4 then print_endline source;
   let source =
-    if ren.target.device = "CPU" then host_entry prg source
+    if ren.target.device = "CPU" then host_entry ~arch:ren.target.arch prg source
     else source
   in
   let lib = compile ren.compiler source in

@@ -32,8 +32,13 @@ let target d =
     when Rig.computes d && (Rig.equal (Rig.host_of d) d || Rig.runs_on_host d)
     ->
       let host = Rig.host_of d in
-      let cpu = if Rig.equal host Rig.host then "native" else "generic" in
-      of_kind ~renderer:"CLANG" ~arch:(Rig.arch host ^ "," ^ cpu) "CPU"
+      let here = Rig.equal host Rig.host in
+      let cpu = if here then "native" else "generic" in
+      (* The functions of a Windows process's libraries follow a convention of
+         their own, which the object is compiled for (rig's host code). *)
+      let windows = here && Sys.win32 in
+      let system = if windows then "-windows" else "" in
+      of_kind ~renderer:"CLANG" ~arch:(Rig.arch host ^ system ^ "," ^ cpu) "CPU"
   | None ->
       invalid_arg (strf "Tolk_engine.target: %s runs no program" (Rig.name d))
 

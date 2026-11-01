@@ -892,6 +892,9 @@ thread.
 
 ### Tolk (new)
 
+- A CPU kernel on x86_64 Windows calls the process's functions, those it
+  names and those Clang calls itself, by Windows' convention, where `frexp`
+  crashed: `Tolk_engine.target` names Windows (`x86_64-windows,native`).
 - `Schedule.create_linear_with_vars` takes variables of one name bound to
   several values: each kernel that reads one takes it from its own call, so
   kernels that differ in that value alone are one program. It raised "bind

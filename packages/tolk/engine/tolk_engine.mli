@@ -31,7 +31,11 @@ val target : Rig.t -> Helpers.Target.t
     or another, and a device whose work is this process's code
     ({!Rig.runs_on_host}), such as a {!Rig.memory_device}, run host programs:
     device ["CPU"], renderer ["CLANG"], and architecture its host's {!Rig.arch}
-    with the processor [native] on this machine and [generic] on another.
+    with the processor [native] on this machine and [generic] on another. On
+    this machine under Windows the architecture names the system, as in
+    ["x86_64-windows,native"], under which an x86_64 program is compiled for
+    Windows' calling convention ({!Tolk.Compiler_cpu.clang}). Another
+    machine's architecture names no system.
 
     Raises [Invalid_argument] if [d] runs no program: an io device, or another
     device that no vendor claims. *)

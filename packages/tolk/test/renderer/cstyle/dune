@@ -11,6 +11,7 @@
   tolk_run
   tolk.engine
   rig
+  rig.elf
   rig.metal)
  (deps
   (glob_files *.golden))

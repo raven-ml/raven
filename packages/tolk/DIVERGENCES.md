@@ -930,11 +930,12 @@ scope, see README.
   buffer's address among the parameters, and names a submission's span after
   the entry. It runs a launch's blocks of threads on several cores at once,
   each call with its own `first` and `end`, which the parameters every call
-  shares cannot hold. The entry keeps the kernel's name in profiles. Clang
-  compiles an assignment of a large structure as a call of `memcpy`, which
-  rig takes from the process, and on x86_64 Windows the process's `memcpy`
-  follows the Microsoft convention where the object calls by System V: the
-  inline copy calls nothing.
+  shares cannot hold. The entry keeps the kernel's name in profiles, and on
+  x86_64 Windows is declared System V's (D178). Clang compiles an assignment
+  of a large structure as a call of `memcpy`, which rig takes from the
+  process, and a remote Windows host's target names no system (D178), so its
+  object would call that `memcpy` by System V: the inline copy calls
+  nothing.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
   holds rig's host entry after the kernel` and `› a host program runs as a
   launch of rig's host, with ten scalars past the argument registers` and
@@ -3853,7 +3854,7 @@ The Clang renderer wrote no calling convention on Windows, where tinygrad wrote
 cast to. tinygrad no longer supports Windows: `ClangRenderer`
 (`renderer/cstyle.py:294`) keeps the empty `abi` and plain `kernel_typedef`
 of `CStyleLanguage` (`:131-132`) on every system, as `Cstyle.clang_lang`
-does.
+does. A Windows host's code is compiled for Windows' convention by D178.
 
 ## D150. The folder's sine is correctly rounded
 
@@ -4754,3 +4755,56 @@ fold wraps integers and holds its float bound`, hold.
   programs over 2 to 16`, `› programs › a data-parallel step makes as many
   over 2, 4, 8 and 16`, `› loops › a step that reads its coordinates gives
   eager's bits`.
+
+## D178. A Windows host's code is compiled for Windows' calling convention
+
+- **tinygrad:** `runtime/ops_cpu.py:68` (the CPU's arch, its machine and
+  `native`); `runtime/support/compiler_cpu.py:18-22` (`ClangCompiler.compile`,
+  which compiles for `<machine>-none-unknown-elf` on every system);
+  `renderer/cstyle.py:28` (an `int64` literal ends in `l`), `:131`
+  (`CStyleLanguage.abi`, `""`, which `ClangRenderer` at `:294` keeps) and
+  `:147-150` (`CStyleLanguage.type_map`, where an `int64` is a `long`).
+- **tolk:** `Tolk_engine.target`, whose host arch on this machine under Windows
+  is `x86_64-windows,native` (or `arm64-windows,native`);
+  `Compiler_cpu.clang` and `Compiler_cpu.win64`; `Cstyle.clang`, whose
+  language under `x86_64-windows` names a 64-bit integer `long long`, writes
+  its literals with `ll`, and declares the kernel `sysv_abi`;
+  `Codegen.host_entry`, which declares the entry `sysv_abi` there.
+- **Differs:** a host target names Windows after its machine. Under
+  `x86_64-windows` the object is compiled for
+  `x86_64-w64-windows-gnu-elf` with `-mno-stack-arg-probe` and
+  `-mno-red-zone`, so that it calls every function by Windows' convention,
+  and its kernel and entry are declared System V's. Windows is LLP64, so a 64-bit integer is a
+  `long long` and its literals end in `ll`. tinygrad compiles for no system
+  everywhere, and its CPU arch names none. Every other target renders and
+  compiles as before.
+- **Reason:** (c). rig calls linked code by System V and takes each symbol the
+  object does not define from the process, whose functions follow the
+  platform's convention (`Rig.section-host_abi`, `Rig.section-host_symbols`).
+  Compiled for no system, the object called them by System V: `frexp` read
+  its pointer from `rdx` where the kernel put it in `rdi`, and wrote the 32
+  bytes above its return address that Windows lets a callee use, so `CG ›
+  calls in a kernel › an external function writes through its pointer
+  argument` crashed on windows-2025. Clang also calls functions the source
+  does not name: `fma` and `trunc` without FMA or SSE4.1, `fminf` and
+  `fmaxf` for a half selected against a constant, half conversions without
+  F16C, `memcpy` for a large copy. Compiled for Windows, every such call
+  follows Windows' convention, as `Rig.section-host_abi` states such code.
+  rig commits a thread's stack before it runs linked code, so the code
+  probes none, and Windows may write below the stack pointer. The system comes from the device
+  (D95): this machine's host runs this process's system. A remote Windows
+  host's target names none, so its programs call by System V, until rig
+  states a machine's system. A program's key holds its target (D113), so it
+  holds the system.
+- **Pinned by:** `Tolk.Cstyle › x86_64 Windows`: every x86_64 Clang case
+  renders with no LP64 `long` and as its golden but for its 64-bit types,
+  literals and the kernel's `sysv_abi`; `› the kernel is declared System
+  V's`; `› a 64-bit integer is a long long and its literals end in ll`; `›
+  an object is compiled for Windows' triple and calls no stack probe`; and,
+  on an x86_64 host, every Clang case compiled for Windows loads and every
+  interpreted one that calls nothing of the process runs through rig's host
+  and writes what the interpreter computes, which a System V entry's
+  absence breaks. `Tolk_engine › target › the host compiles C for Clang on
+  its own processor, naming its system under Windows, whose functions
+  follow a convention of their own`. On windows-2025 CI, `CG › calls in a
+  kernel`.

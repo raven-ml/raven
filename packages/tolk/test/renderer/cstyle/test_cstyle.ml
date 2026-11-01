@@ -1058,11 +1058,29 @@ let interpreted uops (buffers, vars) =
       (slot, a))
     (buffers_of uops)
 
-let agrees_with_the_interpreter row =
+(* The symbols object [obj] calls and does not define. *)
+let undefined_in obj =
+  match Rig_elf.of_string obj with
+  | Error why -> failf "%s" why
+  | Ok o ->
+      List.sort_uniq String.compare
+        (List.filter_map
+           (fun (r : Rig_elf.relocation) ->
+             match r.symbol.place with
+             | Undefined -> Some r.symbol.name
+             | _ -> None)
+           o.relocations)
+
+let undefined p = undefined_in (Device.Tiny_elf.of_program p).lib
+
+(* [alone] skips a kernel whose object calls a function of the process. *)
+let agrees_with_the_interpreter ?(on = host) ?(alone = false) row =
   let uops = kernel row in
-  let k = lazy (Run.program (Lazy.force host) uops) in
+  let k = lazy (Run.program (Lazy.force on) uops) in
   prop ~count:10 (row "case") (draw_inputs uops)
     (fun ((buffers, vars) as inputs) ->
+      if alone && undefined (Lazy.force k) <> [] then
+        skip ~reason:"the object calls the process" ();
       equal
         (list (pair int values))
         (interpreted uops inputs)
@@ -1119,9 +1137,8 @@ let wraps_and_rounds_as_the_interpreter row =
         (interpreted uops inputs)
         (Run.on_host (Lazy.force k) buffers))
 
-let compiles_and_loads row =
-  test (row "case") (fun () ->
-      ignore (Run.program (Lazy.force host) (kernel row)))
+let compiles_and_loads ?(on = host) row =
+  test (row "case") (fun () -> ignore (Run.program (Lazy.force on) (kernel row)))
 
 let execution =
   group "execution on the host"
@@ -1403,6 +1420,159 @@ let zeros_compared =
           | _ -> failf "one float");
     ]
 
+(* x86_64 Windows
+
+   An object for x86_64 Windows calls by Windows' convention, where a [long]
+   has 32 bits, and is called by System V's. On an x86_64 host of another
+   system, a kernel that calls none of the process's functions runs as there:
+   the object's own calls follow one convention. *)
+
+let windows cpu = Cstyle.clang (target "CPU" "CLANG" ("x86_64-windows," ^ cpu))
+let sysv_abi = "__attribute__((sysv_abi)) "
+
+let x86_rows =
+  List.filter
+    (fun row -> String.starts_with ~prefix:"x86_64," (row "arch"))
+    clang_rows
+
+let on_windows row =
+  let cpu = List.nth (String.split_on_char ',' (row "arch")) 1 in
+  render (windows cpu) (kernel row)
+
+let replace_all ~sub ~by s =
+  let n = String.length sub and b = Buffer.create (String.length s) in
+  let rec go i =
+    if i >= String.length s then ()
+    else if i + n <= String.length s && String.sub s i n = sub then (
+      Buffer.add_string b by;
+      go (i + n))
+    else (
+      Buffer.add_char b s.[i];
+      go (i + 1))
+  in
+  go 0;
+  Buffer.contents b
+
+let is_digit c = c >= '0' && c <= '9'
+
+let is_word c =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || is_digit c || c = '_'
+
+(* [source] written for 64-bit [long]s and no System V attribute: [long long]
+   is [long], and a literal [5ll] or [0x7ffull] is [5l] or [0x7fful]. *)
+let as_lp64 source =
+  let s = replace_all ~sub:sysv_abi ~by:"" source in
+  let s = replace_all ~sub:"long long" ~by:"long" s in
+  let s = replace_all ~sub:"long_long" ~by:"long" s in
+  let b = Buffer.create (String.length s) in
+  let rec go i =
+    if i >= String.length s then ()
+    else if is_word s.[i] then (
+      let j = ref i in
+      while !j < String.length s && is_word s.[!j] do
+        incr j
+      done;
+      let w = String.sub s i (!j - i) in
+      let literal = is_digit w.[0] && String.ends_with ~suffix:"ll" w in
+      Buffer.add_string b
+        (if literal then String.sub w 0 (String.length w - 1) else w);
+      go !j)
+    else (
+      Buffer.add_char b s.[i];
+      go (i + 1))
+  in
+  go 0;
+  Buffer.contents b
+
+(* The words of [source] that spell a 64-bit integer as LP64 does: a [long]
+   not in a [long long], and an integer literal that ends in one [l]. *)
+let lp64_words source =
+  let words =
+    String.split_on_char ' '
+      (String.map (fun c -> if is_word c then c else ' ') source)
+    |> List.filter (( <> ) "")
+  in
+  let rec go = function
+    | "long" :: "long" :: rest -> go rest
+    | "long" :: rest -> "long" :: go rest
+    | w :: rest ->
+        let n = String.length w in
+        let lone_l =
+          is_digit w.[0] && n >= 2 && w.[n - 1] = 'l' && w.[n - 2] <> 'l'
+        in
+        if lone_l then w :: go rest else go rest
+    | [] -> []
+  in
+  go words
+
+let windows_host = lazy (windows "native")
+
+(* A source that compiles only for the Windows triple, without a stack probe:
+   [_WIN64] is the triple's, and a frame of 16 KiB would call [___chkstk_ms]
+   on the way in. *)
+let windows_only =
+  {|#ifndef _WIN64
+#error "not compiled for Windows"
+#endif
+_Static_assert(sizeof(long) == 4, "LLP64");
+__attribute__((sysv_abi)) void k(volatile char *p) {
+  volatile char b[16384];
+  b[p[0]] = p[1];
+  p[2] = b[p[3]];
+}
+|}
+
+(* On a host of another machine than x86_64 the objects do not run. *)
+let on_x86_64 name f =
+  if Rig.arch Rig.host = "x86_64" then f ()
+  else test name (fun () -> skip ~reason:"the host is not x86_64" ())
+
+let windows_group =
+  group "x86_64 Windows"
+    [
+      cases
+        "a kernel's source is its source for 64-bit longs, with its kernel \
+         System V's"
+        ~id:(fun row -> row "case")
+        x86_rows
+        (fun row ->
+          let src = on_windows row in
+          equal (list string) [] (lp64_words src);
+          equal text (render (renderer_of_row row) (kernel row)) (as_lp64 src));
+      test "the kernel is declared System V's" (fun () ->
+          let src = on_windows (find_case "clang_add") in
+          equal (list string)
+            [
+              "__attribute__((sysv_abi)) __attribute__((min_vector_width(512))) \
+               void E_16_4(const struct E_16_4_args* args) {";
+            ]
+            (List.filter
+               (fun l -> String.starts_with ~prefix:"__attribute__" l)
+               (String.split_on_char '\n' src)));
+      test "a 64-bit integer is a long long and its literals end in ll"
+        (fun () ->
+          let src = on_windows (find_case "clang_dtype_i64") in
+          Windtrap.contains ~sub:"long long " src;
+          Windtrap.contains ~sub:"*3ll)" src);
+      test
+        "an object is compiled for Windows' triple and calls no stack probe"
+        (fun () ->
+          let r = windows "x86-64" in
+          equal (list string) []
+            (undefined_in (Renderer.Compiler.compile r.compiler windows_only)));
+      on_x86_64 "every kernel compiles and loads" (fun () ->
+          slow
+          @@ group "every kernel compiles and loads"
+               (List.map (compiles_and_loads ~on:windows_host) clang_rows));
+      on_x86_64 "every kernel the interpreter runs writes what it computes"
+        (fun () ->
+          slow
+          @@ group "every kernel the interpreter runs writes what it computes"
+               (List.map
+                  (agrees_with_the_interpreter ~on:windows_host ~alone:true)
+                  interpreted_rows));
+    ]
+
 let () =
   exit
     (run "Tolk.Cstyle"
@@ -1423,4 +1593,5 @@ let () =
          execution;
          division_group;
          zeros_compared;
+         windows_group;
        ])

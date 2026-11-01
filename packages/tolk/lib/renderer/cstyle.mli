@@ -55,18 +55,22 @@ val param_name : Ops.t -> string
 
 val clang : Helpers.Target.t -> Renderer.t
 (** [clang target] renders C for Clang, for a CPU. [target]'s architecture is
-    written [ARCH,CPU[,FEATURES]], as ["x86_64,znver2"] or
-    ["arm64,apple-m1,-neon"], and chooses the compiler's flags.
+    written [ARCH[-SYSTEM],CPU[,FEATURES]], as ["x86_64,znver2"] or
+    ["arm64,apple-m1,-neon"], and chooses the compiler and its flags
+    ({!Compiler_cpu.clang}).
 
     The kernel is one thread with no workgroups. Vectors are Clang's vector
     extension. Half floats are [__fp16], and bfloat16 values are converted to
     and from floats with integer operations. The data types are those of
     {!Dtype.all} without the 8-bit floats, and without {!Dtype.Bfloat16} unless
-    the architecture starts with [x86] or [arm]. On Windows the kernel uses
-    Microsoft's calling convention.
+    the architecture starts with [x86] or [arm].
+
+    Under [x86_64-windows], whose objects call by Windows' convention and
+    whose [long] has 32 bits, a 64-bit integer is a [long long], its literals
+    end in [ll], and the kernel is declared [__attribute__((sysv_abi))].
 
     Raises [Invalid_argument] if the architecture has fewer than two fields or
-    is not [x86_64], [arm64] or [riscv64]. *)
+    its machine is not [x86_64], [arm64] or [riscv64]. *)
 
 val metal : Helpers.Target.t -> Renderer.t
 (** [metal target] renders Metal Shading Language for an Apple GPU. [target]'s

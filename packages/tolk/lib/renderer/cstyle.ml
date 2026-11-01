@@ -87,6 +87,7 @@ type lang = {
   infinity : string;
   nan : string;
   inline_prefix : string; (* the qualifier of a call body's function *)
+  suffix64 : string; (* the suffix of a 64-bit integer literal, after [u] *)
   bitcast : string -> string -> string -> string;
       (* [bitcast t s x] reads [x], of type [s], as a [t] *)
   promoted : Dtype.t list; (* scalars whose operations compute wider *)
@@ -212,7 +213,9 @@ let nan_const ctx x v =
     List.find (fun u -> Dtype.itemsize u = Dtype.itemsize dt) Dtype.uints
   in
   let bits = Dtype.Value.to_z (Dtype.bitcast dt u (`Float v)) in
-  let suffix = if Dtype.equal u Dtype.Uint64 then "ul" else "u" in
+  let suffix =
+    if Dtype.equal u Dtype.Uint64 then "u" ^ ctx.lang.suffix64 else "u"
+  in
   ctx.lang.bitcast (render_type ctx.lang x) (render_scalar ctx.lang u)
     (strf "0x%Lx%s" (Bigint.to_int64 (Bigint.signed_extract bits 0 64)) suffix)
 
@@ -231,9 +234,9 @@ let int_const ctx x (v : Dtype.value) =
       let s = Format.asprintf "%a" Dtype.pp_const n in
       match dt with
       | Int64 when Dtype.Value.(n = Dtype.min Int64) ->
-          "(-9223372036854775807l-1)"
-      | Int64 -> s ^ "l"
-      | Uint64 -> s ^ "ul"
+          strf "(-9223372036854775807%s-1)" ctx.lang.suffix64
+      | Int64 -> s ^ ctx.lang.suffix64
+      | Uint64 -> s ^ "u" ^ ctx.lang.suffix64
       | Uint32 -> s ^ "u"
       | Uint8 | Uint16 -> strf "(%s)" (render_cast ctx x (s ^ "u"))
       | Int8 | Int16 -> strf "(%s)" (render_cast ctx x s)
@@ -744,6 +747,7 @@ let cstyle =
     infinity = "INFINITY";
     nan = "NAN";
     inline_prefix = "";
+    suffix64 = "l";
     bitcast = strf "__builtin_bit_cast(%s, (%s)(%s))";
     promoted = Dtype.[ Int8; Int16 ];
     vector_names = [];
@@ -1406,6 +1410,23 @@ let clang (target : Helpers.Target.t) =
           Pattern_matcher.append
             (opaque_zeros ~reg:"f" Dtype.[ Float16; Float32; Float64 ])
             clang_lang.string_rewrite;
+      }
+  in
+  (* On x86_64 Windows the object calls by Windows' convention, where a [long]
+     has 32 bits ({!Compiler_cpu.clang}): a 64-bit integer is a [long long],
+     and the kernel is called by System V's, as rig calls. *)
+  let lang =
+    if not (Compiler_cpu.win64 arch) then lang
+    else
+      {
+        lang with
+        kernel_typedef =
+          (fun n -> "__attribute__((sysv_abi)) " ^ lang.kernel_typedef n);
+        type_map =
+          Dtype.(Int64, "long long")
+          :: (Dtype.Uint64, "unsigned long long")
+          :: lang.type_map;
+        suffix64 = "ll";
       }
   in
   Renderer.v ~name:"ClangRenderer" ~vector_alu:true ~has_local:false

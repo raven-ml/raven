@@ -13,8 +13,15 @@
 
 val clang : string -> Renderer.Compiler.t
 (** [clang arch] is the compiler of C source to objects for [arch], written
-    [MACHINE,CPU[,FEATURE]...], as in ["x86_64,znver2,avx,-avx512f"]:
+    [MACHINE[-SYSTEM],CPU[,FEATURE]...], as in ["x86_64,znver2,avx,-avx512f"]:
     - [MACHINE] is [x86_64], [arm64] or [riscv64];
+    - [SYSTEM] is the operating system the code runs on. [x86_64-windows]
+      compiles for Windows' calling convention, that of the process's
+      functions, which the object calls by name or which Clang calls itself,
+      such as [fma] or [memcpy], and for its LLP64 types, where a [long] has
+      32 bits ({!Cstyle.clang} renders for them). The function rig calls must
+      be declared [__attribute__((sysv_abi))], since rig calls by System V.
+      Any other system compiles as no system;
     - [CPU] is a processor model that Clang knows, [native] for the host's. On
       [riscv64], [native] is [rv64g]. On an arm64 Mac, [native] has the half
       arithmetic that macOS lists ([hw.optional.arm.FEAT_FP16]), which Clang
@@ -23,12 +30,14 @@ val clang : string -> Renderer.Compiler.t
       it starts with [-]. On [riscv64] features cannot be disabled: each is an
       extension that the processor model gains.
 
-    Objects are optimized at [-O2] and position independent. Math functions do
-    not set [errno], so that a square root is one instruction. On [arm64] the
+    Objects are ELF, optimized at [-O2] and position independent. Math functions
+    do not set [errno], so that a square root is one instruction. On [arm64] the
     register [x18] is left alone, since macOS and Windows clobber it. Under a
     Clang of LLVM 18, the straight-line vectorizer, which packs independent
     scalar operations into vectors, is off, since it writes invalid code for
-    some packed integer lanes.
+    some packed integer lanes. On x86_64 Windows the stack is not probed, since
+    rig commits a thread's stack before it runs linked code, and nothing is
+    kept below the stack pointer, which Windows may write.
 
     Objects do not depend on the working directory. With {!Setting.ccache}, they
     are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
@@ -46,3 +55,7 @@ val clang : string -> Renderer.Compiler.t
 
     Raises [Invalid_argument] naming [arch] if it has fewer than two fields, and
     naming its [MACHINE] if that is another. *)
+
+val win64 : string -> bool
+(** [win64 arch] is [true] iff [arch], as {!clang} reads it, is x86_64's
+    under Windows: its [MACHINE-SYSTEM] is [x86_64-windows]. *)
