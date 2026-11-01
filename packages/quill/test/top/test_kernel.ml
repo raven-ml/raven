@@ -281,9 +281,11 @@ let write path contents =
   Out_channel.with_open_bin path (fun oc -> output_string oc contents)
 
 (* [findlib_root broken] is a new directory, first on the findlib search path,
-   with the package [broken], whose archive is not bytecode, and
-   [needs_<broken>], which requires it. Findlib keeps a package's directory once
-   it has looked it up, so each test names its own packages. *)
+   with the package [broken], whose archive is not bytecode, [needs_<broken>],
+   which requires it, [needs_absent_<broken>], which requires a package that is
+   not installed, and [garbled_<broken>], whose META does not parse. Findlib
+   keeps a package's directory once it has looked it up, so each test names its
+   own packages. *)
 let findlib_root broken =
   let root = temp_dir ~prefix:"findlib" () in
   let package name meta =
@@ -296,6 +298,9 @@ let findlib_root broken =
     (Filename.concat (Filename.concat root broken) (broken ^ ".cma"))
     "this file is not a bytecode archive\n";
   package ("needs_" ^ broken) (Printf.sprintf "requires = %S" broken);
+  package ("needs_absent_" ^ broken)
+    (Printf.sprintf "requires = %S" ("absent_" ^ broken));
+  package ("garbled_" ^ broken) "requires = (";
   let sep = if Sys.win32 then ";" else ":" in
   let path =
     match Sys.getenv_opt "OCAMLPATH" with
@@ -306,33 +311,66 @@ let findlib_root broken =
   Quill_top.initialize_if_needed ();
   root
 
-(* The toplevel's report on the archive of [broken] in [root]. *)
+(* The error of loading the package [broken] in [root]: the toplevel's report
+   on its archive. *)
 let not_bytecode root broken =
   let archive =
     Filename.concat (Filename.concat root broken) (broken ^ ".cma")
   in
-  Printf.sprintf "File %s is not a bytecode object file." archive
+  let report =
+    Printf.sprintf "File %s is not a bytecode object file." archive
+  in
+  Quill_top.Failed { package = broken; report }
 
-let no_such_package = function
-  | Fl_package_base.No_such_package ("absent", _) -> true
-  | _ -> false
+let pp_load_error ppf = function
+  | Quill_top.Not_installed p -> Format.fprintf ppf "Not_installed %S" p
+  | Quill_top.Failed { package; report } ->
+      Format.fprintf ppf "Failed { package = %S; report = %S }" package report
+
+let load_error = Testable.make ~pp:pp_load_error ~equal:( = )
+let loaded = result unit load_error
+
+(* [failure r] is the package a [load_package] result [r] names as failing,
+   without findlib's wording. *)
+let failure = function
+  | Ok () -> None
+  | Error (Quill_top.Not_installed _) -> Some "not installed"
+  | Error (Quill_top.Failed { package; _ }) -> Some package
 
 let package_tests =
   [
-    test "an absent package raises No_such_package" (fun () ->
+    test "a package that is not installed is named" (fun () ->
         ignore (findlib_root "present");
-        raises_match no_such_package (fun () ->
-            Quill_top.load_package "absent"));
+        equal loaded
+          (Error (Not_installed "absent"))
+          (Quill_top.load_package "absent"));
+    test "a dependency that is not installed is named" (fun () ->
+        ignore (findlib_root "lonely");
+        equal loaded
+          (Error (Not_installed "absent_lonely"))
+          (Quill_top.load_package "needs_absent_lonely"));
     test "an archive that does not load is reported at each load" (fun () ->
         let root = findlib_root "reloaded" in
         let first = Quill_top.load_package "reloaded" in
         let second = Quill_top.load_package "reloaded" in
-        let report = Error (not_bytecode root "reloaded") in
-        equal (result unit string) report first;
-        equal (result unit string) report second);
-    test "a package whose dependency does not load is reported" (fun () ->
+        let error = Error (not_bytecode root "reloaded") in
+        equal loaded error first;
+        equal loaded error second);
+    test "a META that does not parse fails its package" (fun () ->
+        ignore (findlib_root "parsed");
+        equal (option string) (Some "garbled_parsed")
+          (failure (Quill_top.load_package "garbled_parsed")));
+    test "an empty name fails" (fun () ->
+        ignore (findlib_root "named");
+        equal (option string) (Some "")
+          (failure (Quill_top.load_package "")));
+    test "a #require that fails leaves the toplevel running" (fun () ->
+        equal (list output)
+          [ Cell.Stdout "after" ]
+          (outputs [ {|#require ""|}; {|let () = print_string "after"|} ]));
+    test "a dependency that does not load is named" (fun () ->
         let root = findlib_root "required" in
-        equal (result unit string)
+        equal loaded
           (Error (not_bytecode root "required"))
           (Quill_top.load_package "needs_required"));
   ]

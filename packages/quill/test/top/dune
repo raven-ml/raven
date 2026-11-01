@@ -6,7 +6,7 @@
  (link_flags
   (:standard -linkall))
  (package quill)
- (libraries quill quill.top findlib windtrap)
+ (libraries quill quill.top windtrap)
  (action
   (progn
    (run %{test} --corrected)

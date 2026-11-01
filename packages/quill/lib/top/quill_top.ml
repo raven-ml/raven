@@ -52,9 +52,13 @@ let report exn =
   Format.pp_print_flush ppf ();
   String.trim (Buffer.contents b)
 
+type load_error =
+  | Not_installed of string
+  | Failed of { package : string; report : string }
+
 (* The outcome of loading a package's archives. [Deferred] is an archive that
    refers to a module no archive loaded so far defines. *)
-type load = Loaded | Deferred of string | Failed of string
+type outcome = Loaded | Deferred of string | Broken of string
 
 (* [load_archive path] loads the bytecode archive [path], with the toplevel's
    report when it does not load. *)
@@ -65,10 +69,10 @@ let load_archive path =
   | true -> Loaded
   | false ->
       Format.pp_print_flush ppf ();
-      Failed (String.trim (Buffer.contents b))
+      Broken (String.trim (Buffer.contents b))
   | exception (Symtable.Error (Undefined_global _) as exn) ->
       Deferred (report exn)
-  | exception exn -> Failed (report exn)
+  | exception exn -> Broken (report exn)
 
 (* [load_ancestor p] loads the archives of the package [p] and records [p] as
    loaded once all of them are. *)
@@ -95,11 +99,13 @@ let load_ancestor p =
       | archive :: rest -> (
           match load_archive (Findlib.resolve_path ~base:d archive) with
           | Loaded -> load rest
-          | (Deferred _ | Failed _) as outcome -> outcome)
+          | (Deferred _ | Broken _) as outcome -> outcome)
     in
     load archives
 
-(* Findlib's topological sort does not account for virtual library
+(* [load_ancestors ps] loads the packages [ps], in order.
+
+   Findlib's topological sort does not account for virtual library
    implementations (a virtual package has no archive; its implementation archive
    may appear later in the ancestor list). This causes [Undefined_global] when a
    dependent is loaded before the implementation.
@@ -107,31 +113,52 @@ let load_ancestor p =
    We handle this with a fixpoint loop: load what we can, defer what refers to a
    module not loaded yet, and retry until everything loads or no progress is
    made. An archive that fails to load otherwise stops the load. *)
-let load_package pkg =
-  if not (ensure_findlib ()) then Error "findlib is unavailable"
-  else
-    (* [pass deferred ps] loads each of [ps] in turn and is the packages
-       deferred, in order, with their reports; [deferred] holds those deferred
-       so far, the latest first. *)
-    let rec pass deferred = function
-      | [] -> Ok (List.rev deferred)
-      | p :: rest -> (
-          match load_ancestor p with
-          | Loaded -> pass deferred rest
-          | Deferred report -> pass ((p, report) :: deferred) rest
-          | Failed report -> Error report)
-    in
-    let rec loop remaining =
-      match pass [] remaining with
-      | Error report -> Error report
-      | Ok [] -> Ok ()
-      | Ok deferred when List.length deferred < List.length remaining ->
-          loop (List.map fst deferred)
-      | Ok deferred ->
+let load_ancestors ps =
+  (* [pass deferred ps] loads each of [ps] in turn and is the packages
+     deferred, in order, with their reports; [deferred] holds those deferred so
+     far, the latest first. *)
+  let rec pass deferred = function
+    | [] -> Ok (List.rev deferred)
+    | p :: rest -> (
+        match load_ancestor p with
+        | Loaded -> pass deferred rest
+        | Deferred report -> pass ((p, report) :: deferred) rest
+        | Broken report -> Error (Failed { package = p; report }))
+  in
+  let rec loop remaining =
+    match pass [] remaining with
+    | Error e -> Error e
+    | Ok [] -> Ok ()
+    | Ok deferred when List.length deferred < List.length remaining ->
+        loop (List.map fst deferred)
+    | Ok ((package, _) :: _ as deferred) ->
+        let report =
           List.map (fun (p, report) -> p ^ ": " ^ report) deferred
-          |> String.concat "\n" |> Result.error
+          |> String.concat "\n"
+        in
+        Error (Failed { package; report })
+  in
+  loop ps
+
+(* findlib raises [Failure] or [Sys_error] for a META it cannot read or parse,
+   and [Invalid_argument] for a name it cannot look up, such as [""], whose
+   message names findlib's function. *)
+let load_package pkg =
+  let failed report = Error (Failed { package = pkg; report }) in
+  if not (ensure_findlib ()) then failed "findlib is unavailable"
+  else
+    let ancestors () =
+      Findlib.package_deep_ancestors !findlib_predicates [ pkg ]
     in
-    loop (Findlib.package_deep_ancestors !findlib_predicates [ pkg ])
+    match load_ancestors (ancestors ()) with
+    | result -> result
+    | exception Fl_package_base.No_such_package (missing, _) ->
+        Error (Not_installed missing)
+    | exception Fl_package_base.Package_loop p ->
+        let report = Printf.sprintf "%s is in a cycle of requirements" p in
+        Error (Failed { package = p; report })
+    | exception (Failure report | Sys_error report) -> failed report
+    | exception Invalid_argument _ -> failed "not a package name"
 
 (* ───── Initialization ───── *)
 
@@ -172,8 +199,10 @@ let initialize_if_needed () =
              (fun pkg ->
                match load_package pkg with
                | Ok () -> ()
-               | Error report ->
-                   Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
+               | Error (Not_installed p) ->
+                   Printf.eprintf "[quill] %s is not installed\n%!" p
+               | Error (Failed { package; report }) ->
+                   Printf.eprintf "[quill] failed to load %s: %s\n%!" package
                      report))
           { section = "Loading code"; doc = "Load a findlib package" };
         Sys.interactive := true;

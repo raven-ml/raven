@@ -24,19 +24,27 @@ let raven_packages =
     ("fehu", []);
   ]
 
-(* [load_optional pkg] loads [pkg] if it is installed. A package that is not
-   installed is skipped without a word; one that is but does not load is
-   reported. *)
-let load_optional pkg =
-  let failed report =
-    Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg report;
-    false
+(* [load_optional ~said pkg] loads [pkg] if it is installed. A package that is
+   not installed is skipped without a word. A dependency that is missing or a
+   package that does not load is reported once: [said] holds the packages
+   reported so far, so the packages that require a broken one add nothing. *)
+let load_optional ~said pkg =
+  let say package message =
+    if not (Hashtbl.mem said package) then begin
+      Hashtbl.add said package ();
+      Printf.eprintf "[quill] %s\n%!" message
+    end
   in
   match Quill_top.load_package pkg with
   | Ok () -> true
-  | Error report -> failed report
-  | exception Fl_package_base.No_such_package _ -> false
-  | exception exn -> failed (Printexc.to_string exn)
+  | Error (Not_installed missing) when missing = pkg -> false
+  | Error (Not_installed missing) ->
+      say missing
+        (Printf.sprintf "cannot load %s: %s is not installed" pkg missing);
+      false
+  | Error (Failed { package; report }) ->
+      say package (Printf.sprintf "failed to load %s: %s" package report);
+      false
 
 let install_printer name =
   match Quill_top.install_printer name with
@@ -63,9 +71,10 @@ let setup () =
   (* Load raven packages individually, and install the printers of each one that
      loads. We skip nx.top: it only installs printers during module init, which
      fails inside dir_load. *)
+  let said = Hashtbl.create 8 in
   List.iter
     (fun (pkg, printers) ->
-      if load_optional pkg then List.iter install_printer printers)
+      if load_optional ~said pkg then List.iter install_printer printers)
     raven_packages
 
 let create_kernel ~on_event = Quill_top.create ~setup ~on_event ()

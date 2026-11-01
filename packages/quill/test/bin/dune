@@ -11,3 +11,11 @@
  (package quill)
  (deps
   (alias_rec %{workspace_root}/install)))
+
+; preload.t puts packages first on OCAMLPATH, whose separator and paths
+; differ on Windows.
+
+(cram
+ (applies_to preload)
+ (enabled_if
+  (<> %{os_type} Win32)))

@@ -4571,10 +4571,9 @@ thread.
 
 ### Quill
 
-- **Breaking:** `Quill_top.load_package` returns `Error` with the toplevel's
-  report when an archive does not load, and no longer records that package as
-  loaded. A session that cannot load an installed raven package says so in one
-  message, without the errors of its printers.
+- **Breaking:** `Quill_top.load_package` returns `Not_installed` or `Failed`
+  instead of raising or printing. A raven package that does not load is
+  reported in one line, without its printers' or dependents' errors.
 - `quill run` names the notebook as given on the command line in its errors
   and its `Updated` line, as `quill clean` does, where it named the absolute
   path.

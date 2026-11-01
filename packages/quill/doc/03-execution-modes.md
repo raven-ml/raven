@@ -271,8 +271,10 @@ which loads each of these packages that is installed:
 - **Fehu** — reinforcement learning
 
 A package that is not installed is skipped. One that is installed but does
-not load, such as one whose C stubs fail to load, is reported on standard
-error, and the session goes on without it.
+not load, such as one whose C stubs fail to load or that requires a package
+that is not installed, is reported on standard error, and the session goes on
+without it. The package at fault is reported once, and those that require it
+add nothing.
 
 Pretty-printers for Nx arrays, Hugin figures and Talon dataframes and
 queries are installed with their packages.

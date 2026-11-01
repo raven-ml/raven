@@ -23,19 +23,28 @@ val add_packages : string list -> unit
     directory to the toplevel load path, marking each as already linked into the
     executable. Unknown packages are silently skipped. *)
 
-val load_package : string -> (unit, string) result
+(** Why {!load_package} did not load a package. *)
+type load_error =
+  | Not_installed of string
+      (** [Not_installed p] says that no installed package is named [p], the
+          package asked for or one it requires. *)
+  | Failed of { package : string; report : string }
+      (** [Failed { package; report }] says that [package], the package asked
+          for or one it requires, does not load, and [report] says why. A
+          package fails when findlib cannot read its META, or when one of its
+          archives is not bytecode, needs a shared library that does not load,
+          or refers to a module that no package defines. For an archive,
+          [report] is the toplevel's report. *)
+
+val load_package : string -> (unit, load_error) result
 (** [load_package pkg] resolves the findlib package [pkg] and all its transitive
     dependencies, adds their directories, and dynamically loads their bytecode
     archives. Packages already loaded or marked in-core via {!add_packages} are
     skipped.
 
-    [Error report] if an archive does not load, with the toplevel's report: it
-    is not bytecode, a shared library it needs does not load, or it refers to a
-    module that no package defines. A package is recorded as loaded only once
-    all its archives are, so a later [load_package] tries again.
-
-    Raises [Fl_package_base.No_such_package] if [pkg] or a package it requires
-    is not installed. *)
+    [Error] if a package is not installed or does not load. The packages loaded
+    before it stay loaded. A package is recorded as loaded only once all its
+    archives are, so a later [load_package] tries it again. *)
 
 val install_printer : string -> (unit, string) result
 (** [install_printer name] installs a toplevel pretty-printer by evaluating
