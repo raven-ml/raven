@@ -22,8 +22,11 @@ let device_name u =
   | Some d -> d
   | _ -> invalid_arg "storage on one device"
 
+(* Buffers, and the allocations a lowering makes of the arenas it plans. *)
 let storage u =
-  List.filter (fun n -> Ops.op n = Buffer) (Ops.toposort ~calls:Skip u)
+  List.filter
+    (fun n -> Ops.op n = Buffer || Ops.op n = Alloc)
+    (Ops.toposort ~calls:Skip u)
 
 (* The parameters of a lowered schedule that each run binds: those its calls
    take. *)
