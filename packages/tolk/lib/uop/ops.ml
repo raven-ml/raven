@@ -2012,8 +2012,10 @@ let rec addrspace u =
     ~set:(fun n a -> n.memos.addrspace_memo <- Some a)
     ~compute:compute_addrspace u
 
+(* A node of no value has no memory: it lives in the ALU. *)
 and compute_addrspace u =
   match (u.op, u.arg) with
+  | _ when Dtype.equal u.dtype Dtype.Void -> Some Dtype.Alu
   | (Op.Param | Op.Buffer | Op.Alloc), Param p -> Some p.addrspace
   | (Op.Special | Op.Range | Op.Const), _ | Op.Load, _ -> Some Dtype.Alu
   | Op.Binary, _ -> Some Dtype.Global

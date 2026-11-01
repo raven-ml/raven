@@ -806,7 +806,8 @@ type movement =
     [Invalid_argument]. *)
 
 val addrspace : t -> Dtype.addr_space option
-(** [addrspace u] is the address space [u] lives in. *)
+(** [addrspace u] is the address space [u] lives in. A node of type [Void]
+    holds no memory and lives in [Alu]. *)
 
 val buf_uop : t -> t
 (** [buf_uop u] is the storage node [u] accesses. *)

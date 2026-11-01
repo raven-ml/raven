@@ -890,7 +890,7 @@ let pm_fuse_products =
 
 (* Barriers *)
 
-let is_local_store x = is Op.Store x && addrspace x = Some Dtype.Local
+let is_local_store x = is Op.Store x && addrspace (nth x 0) = Some Dtype.Local
 
 let add_raw_barrier after =
   (* loads from a LOCAL buffer that depend (via AFTER) on stores to LOCAL memory
