@@ -1,42 +1,27 @@
 # thumper baseline v1
 # suite: fehu
 
-# machine: 6e4c99d648da0929
-# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
-# ocaml: 5.5.1 · 64-bit · release
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.2 · 64-bit · release
+# forced: blessed under load 43.9 on 14 cores
 
 Buffer-add/add-full-buffer-cap-10000	alloc_words	exact	0
-Buffer-add/add-full-buffer-cap-10000	wall_time	batch=1048576	n=20	5.316e-09	5.251e-09 5.252e-09 5.258e-09 5.258e-09 5.258e-09 5.259e-09 5.259e-09 5.271e-09 5.289e-09 5.315e-09 5.318e-09 5.331e-09 5.345e-09 5.424e-09 5.544e-09 5.576e-09 5.775e-09 5.802e-09 5.961e-09 6.408e-09
 Buffer-create/create-fill-cap-100	alloc_words	exact	2116
-Buffer-create/create-fill-cap-100	wall_time	batch=8192	n=20	7.971e-07	7.688e-07 7.749e-07 7.782e-07 7.841e-07 7.866e-07 7.879e-07 7.883e-07 7.895e-07 7.944e-07 7.946e-07 7.995e-07 8.062e-07 8.130e-07 8.133e-07 8.200e-07 8.257e-07 8.263e-07 8.350e-07 8.368e-07 8.468e-07
 Buffer-create/create-fill-cap-1000	alloc_words	exact	21016
-Buffer-create/create-fill-cap-1000	wall_time	batch=1024	n=20	9.709e-06	9.208e-06 9.332e-06 9.484e-06 9.520e-06 9.547e-06 9.586e-06 9.587e-06 9.642e-06 9.647e-06 9.670e-06 9.747e-06 9.790e-06 9.824e-06 9.835e-06 9.862e-06 9.864e-06 9.883e-06 9.887e-06 1.012e-05 1.024e-05
 Buffer-create/create-fill-cap-10000	alloc_words	exact	210016
-Buffer-create/create-fill-cap-10000	wall_time	batch=64	n=20	1.107e-04	1.032e-04 1.046e-04 1.057e-04 1.065e-04 1.074e-04 1.087e-04 1.088e-04 1.095e-04 1.097e-04 1.104e-04 1.110e-04 1.110e-04 1.118e-04 1.141e-04 1.154e-04 1.156e-04 1.157e-04 1.174e-04 1.186e-04 1.205e-04
 GAE-from-values/compute_from_values-n-1024	alloc_words	exact	5130
-GAE-from-values/compute_from_values-n-1024	wall_time	batch=1024	n=20	5.036e-06	4.943e-06 4.953e-06 4.958e-06 4.963e-06 4.984e-06 4.995e-06 5.010e-06 5.018e-06 5.018e-06 5.036e-06 5.037e-06 5.053e-06 5.085e-06 5.086e-06 5.095e-06 5.105e-06 5.114e-06 5.114e-06 5.147e-06 5.410e-06
 GAE-from-values/compute_from_values-n-256	alloc_words	exact	1290
-GAE-from-values/compute_from_values-n-256	wall_time	batch=8192	n=20	9.652e-07	9.630e-07 9.631e-07 9.633e-07 9.634e-07 9.636e-07 9.639e-07 9.644e-07 9.647e-07 9.649e-07 9.652e-07 9.652e-07 9.658e-07 9.660e-07 9.666e-07 9.671e-07 9.679e-07 9.680e-07 9.693e-07 9.703e-07 9.785e-07
 GAE-from-values/compute_from_values-n-4096	alloc_words	exact	20490
-GAE-from-values/compute_from_values-n-4096	wall_time	batch=256	n=20	2.059e-05	1.984e-05 2.014e-05 2.016e-05 2.021e-05 2.025e-05 2.037e-05 2.041e-05 2.052e-05 2.056e-05 2.058e-05 2.059e-05 2.069e-05 2.070e-05 2.071e-05 2.072e-05 2.074e-05 2.075e-05 2.089e-05 2.110e-05 2.174e-05
 GAE/compute-n-1024	alloc_words	exact	2053
-GAE/compute-n-1024	wall_time	batch=2048	n=20	3.468e-06	3.345e-06 3.399e-06 3.415e-06 3.417e-06 3.429e-06 3.440e-06 3.444e-06 3.450e-06 3.451e-06 3.467e-06 3.470e-06 3.470e-06 3.471e-06 3.472e-06 3.474e-06 3.479e-06 3.480e-06 3.489e-06 3.495e-06 3.561e-06
 GAE/compute-n-256	alloc_words	exact	517
-GAE/compute-n-256	wall_time	batch=8192	n=20	6.471e-07	6.461e-07 6.462e-07 6.462e-07 6.463e-07 6.465e-07 6.467e-07 6.467e-07 6.468e-07 6.469e-07 6.470e-07 6.472e-07 6.473e-07 6.474e-07 6.474e-07 6.475e-07 6.478e-07 6.478e-07 6.479e-07 6.483e-07 6.483e-07
 GAE/compute-n-4096	alloc_words	exact	8197
-GAE/compute-n-4096	wall_time	batch=512	n=20	1.400e-05	1.364e-05 1.365e-05 1.382e-05 1.383e-05 1.386e-05 1.387e-05 1.387e-05 1.393e-05 1.395e-05 1.397e-05 1.402e-05 1.402e-05 1.405e-05 1.405e-05 1.407e-05 1.407e-05 1.408e-05 1.411e-05 1.416e-05 1.421e-05
 Normalize/normalize-n-1024	alloc_words	exact	3083
-Normalize/normalize-n-1024	wall_time	batch=1024	n=20	5.435e-06	5.389e-06 5.391e-06 5.395e-06 5.409e-06 5.419e-06 5.424e-06 5.424e-06 5.428e-06 5.428e-06 5.435e-06 5.436e-06 5.441e-06 5.453e-06 5.455e-06 5.457e-06 5.458e-06 5.463e-06 5.507e-06 5.532e-06 5.538e-06
 Normalize/normalize-n-256	alloc_words	exact	779
-Normalize/normalize-n-256	wall_time	batch=8192	n=20	1.191e-06	1.188e-06 1.189e-06 1.190e-06 1.190e-06 1.190e-06 1.190e-06 1.190e-06 1.190e-06 1.191e-06 1.191e-06 1.191e-06 1.191e-06 1.191e-06 1.191e-06 1.191e-06 1.191e-06 1.193e-06 1.195e-06 1.198e-06 1.205e-06
 Normalize/normalize-n-4096	alloc_words	exact	12299
-Normalize/normalize-n-4096	wall_time	batch=256	n=20	2.178e-05	2.136e-05 2.137e-05 2.145e-05 2.150e-05 2.151e-05 2.154e-05 2.155e-05 2.163e-05 2.171e-05 2.176e-05 2.181e-05 2.184e-05 2.187e-05 2.190e-05 2.191e-05 2.203e-05 2.203e-05 2.206e-05 2.207e-05 2.212e-05
 Returns/returns-n-1024	alloc_words	exact	1025
-Returns/returns-n-1024	wall_time	batch=4096	n=20	1.833e-06	1.795e-06 1.803e-06 1.807e-06 1.811e-06 1.816e-06 1.827e-06 1.827e-06 1.829e-06 1.831e-06 1.832e-06 1.834e-06 1.838e-06 1.838e-06 1.839e-06 1.843e-06 1.844e-06 1.845e-06 1.845e-06 1.849e-06 1.880e-06
 Returns/returns-n-256	alloc_words	exact	257
-Returns/returns-n-256	wall_time	batch=16384	n=20	3.551e-07	3.541e-07 3.545e-07 3.548e-07 3.548e-07 3.549e-07 3.549e-07 3.550e-07 3.550e-07 3.550e-07 3.551e-07 3.551e-07 3.552e-07 3.552e-07 3.552e-07 3.553e-07 3.554e-07 3.554e-07 3.555e-07 3.555e-07 3.639e-07
 Returns/returns-n-4096	alloc_words	exact	4097
-Returns/returns-n-4096	wall_time	batch=1024	n=20	7.498e-06	7.375e-06 7.435e-06 7.442e-06 7.449e-06 7.459e-06 7.462e-06 7.465e-06 7.488e-06 7.495e-06 7.495e-06 7.501e-06 7.510e-06 7.519e-06 7.526e-06 7.536e-06 7.542e-06 7.556e-06 7.619e-06 7.691e-06 7.740e-06
 
 # machine: 943935ae6b4f79ac
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
