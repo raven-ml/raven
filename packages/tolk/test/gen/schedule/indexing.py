@@ -155,6 +155,10 @@ PROGRAMS = {
         Tensor(list(range(8)), dtype="int"), Tensor([0, 0], dtype="int")),
     "sort": lambda: empty(8).sort()[0],
     "topk": lambda: empty(16).topk(3)[0],
+    # a selection that no lane takes, as runtime/test_arange.py's test_index_collapse_no_valid_lane
+    "select_no_lane": lambda: (lambda x: ((x * x) == 2.).where(empty(4), 0.).sum())(Tensor.arange(4).cast(dtypes.float32)),
+    "select_no_lane_rows": lambda: (lambda x: ((x * x) == 2.).reshape(2, 2).where(empty(4).reshape(2, 2), 0.).sum(axis=1))(
+        Tensor.arange(4).cast(dtypes.float32)),
     # stores into storage
     "contiguous": lambda: (empty(4, 4) + 1).contiguous().sum(0),
     "assign": lambda: empty(4, 4).assign(empty(4, 4) + 1),

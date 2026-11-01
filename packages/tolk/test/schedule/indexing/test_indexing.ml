@@ -347,6 +347,8 @@ let programs =
     "two_gathers";
     "sort";
     "topk";
+    "select_no_lane";
+    "select_no_lane_rows";
     "contiguous";
     "assign";
     "assign_permuted";

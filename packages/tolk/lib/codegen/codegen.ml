@@ -547,23 +547,6 @@ let devectorizer2 =
              match (marg x, shape (nth x 0)) with
              | Reshape [], [ Int 1 ] -> Some (index_ints (nth x 0) [ 0 ])
              | _ -> None);
-         (* EXPAND on scalar -> nested STACKs with the same shape, except
-            where elementwise operations on vectors read the scalar *)
-         rule_ctx
-           (Upat.op Op.Expand ~src:[ Upat.var "x"; Upat.wild ] ~name:"out")
-           (fun vectors m ->
-             let x = m "x" and s = shape (m "out") in
-             let sizes =
-               List.filter_map (function Int n -> Some n | _ -> None) s
-             in
-             match shape x with
-             | []
-               when vectors = []
-                    && List.length sizes = List.length s
-                    && not (List.mem 0 sizes) ->
-                 let broadcast x n = stack (List.init n (fun _ -> x)) in
-                 Some (List.fold_left broadcast x (List.rev sizes))
-             | _ -> None);
        ])
 
 (* Reductions *)

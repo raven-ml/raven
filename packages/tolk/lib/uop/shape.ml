@@ -1953,6 +1953,11 @@ let unary_or_cast = Op.Set.union Op.Set.unary (ops [ Op.Cast; Op.Bitcast ])
 let pm_data_invalid =
   pm
     (fun () -> [
+      (* a stack of Invalid lanes is one Invalid, expanded to its width *)
+      rule (Upat.broadcast ~name:"s" invalid_pat) (fun m ->
+          match src (m "s") with
+          | [] -> None
+          | i :: _ -> Some (expand i (shape (m "s"))));
       rule (Upat.v ~op:unary_or_cast ~src:[ invalid_pat ] ()) (fun m ->
           Some (m "i"));
       rule (Upat.v ~op:unary_or_cast ~src:[ invalid_gate ] ~name:"op" ())

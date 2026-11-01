@@ -1396,8 +1396,9 @@ driver sizes local memory as it loads a function (D146).
   and code generation checks every lowered kernel against `Spec.program`, so
   a kernel that still holds vector arithmetic fails at lowering, naming the
   operation, on every target whose renderer computes lane by lane.
-  Devectorize leaves none there while every source keeps its width, which D76
-  keeps when every lane of a gated load's index is `Invalid`. A renderer that
+  Devectorize leaves none there while every source keeps its width, as an
+  `Invalid` expanded to its stack's width does when every lane of a gated
+  load's index is `Invalid`. A renderer that
   computes on vectors (D141) is checked against `Spec.vector_program`, which
   takes an operation on one axis.
 - **Reason:** none. CUDA's vectors are structs without arithmetic, casts or
@@ -1859,33 +1860,16 @@ does the same.
   whose step reads a draw and another scan's result made before it` went with
   its rewrite).
 
-## D76. A stack of Invalid lanes keeps its width
+## D76. Withdrawn
 
-- **tinygrad:** `uop/symbolic.py:82` (`pm_data_invalid`'s first rule,
-  `invalid_pat.broadcast()`), which folds a stack of `Invalid` lanes to one
-  `Invalid`.
-- **tolk:** `Shape.pm_data_invalid`, without that rule;
-  `test/gen/tinygrad.patch`, which removes it from tinygrad too.
-- **Differs:** a stack of `Invalid` lanes stays a stack. When every upcast or
-  unrolled lane of a gated index is `Invalid`, devectorize splits the index
-  and its load into lanes, each lane's load folds to its own `0`, and the
-  value keeps its width. One `Invalid` in the stack's place drops the width:
-  the reshape and permute that arranged the lanes no longer type (tinygrad
-  raises `bad reshape: () -> (1, 2)`), a select mixes a scalar with lanes,
-  which `Spec.program` refuses (D58), and a reduce's lanes read components
-  of a scalar, which the C compiler refuses.
-- **Reason:** (b): rune's compiled tangent of a Cholesky factor, once a gather
-  lowers to an INDEX: the diagonal's gather fuses with `tril`'s gated loads
-  into the triangular solve's kernel, whose upcast lanes all read `Invalid`,
-  and compiling it raised `cannot reshape () to (2, 1)`.
-- **Pinned by:** the `Symbolic` suite: `invalid values › a stack of invalid
-  keeps its width`; the `Codegen` suite: the `invalid_lanes` and
-  `invalid_lanes_int8` goldens, recorded from tinygrad with the rule removed;
-  `lanes of an unrolled reduce › a reduce whose lanes all read an Invalid
-  index sums to zero` and `› a sum of int8 lanes that all read an Invalid
-  index is zero`; `lanes all Invalid › a kernel whose upcast lanes all read
-  an Invalid index sums to zero`; `vectors in programs › a select of lanes
-  whose loads all fold is devectorized`.
+A stack of `Invalid` lanes stayed a stack, since tinygrad folded it to one
+`Invalid` and the lanes' reshape, select and reduce lost their width.
+tinygrad now folds it to an `Invalid` expanded to the stack's shape
+(`uop/symbolic.py:82`, `Shape.pm_data_invalid`), which keeps the width, and
+devectorizes no expanded scalar into a stack. The kernels that pinned the
+entry, whose upcast lanes all read an `Invalid` index, compile and sum to zero
+with tinygrad's rule (`Tolk.Codegen › lanes all Invalid`, `lanes of an
+unrolled reduce`).
 
 ## D77. A broadcast value that runs a transcendental stays stored
 
@@ -3554,7 +3538,7 @@ driver signals its own (D146).
 
 - **tinygrad:** `codegen/__init__.py:115` (`do_devectorize`, which splits
   every elementwise operation, load and store of several lanes into one per
-  lane, on every target) and `:135` (`devectorizer2`);
+  lane, on every target);
   `renderer/cstyle.py:40`, which writes every conversion as a C cast, for a
   vector a reinterpretation of its bits;
   `codegen/opt/heuristic.py:111-137` (the upcasts of output axes by 3 or 4)

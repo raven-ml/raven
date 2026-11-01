@@ -79,9 +79,9 @@ let invalid_values =
           folds_to Ops.O.(Ops.invalid * int 2) Ops.invalid;
           folds_to Ops.O.(Ops.invalid + a) Ops.invalid;
           folds_to (Ops.cast Ops.invalid Dtype.Int32) Ops.invalid);
-      test "a stack of invalid keeps its width" (fun () ->
+      test "a stack of invalid is invalid expanded to its width" (fun () ->
           let lanes = raw Stack [ Ops.invalid; Ops.invalid ] in
-          folds_to lanes lanes);
+          folds_to lanes (Shape.expand Ops.invalid [ Int 2 ]));
       test "a selection between invalid and invalid is invalid" (fun () ->
           folds_to (Ops.where cond Ops.invalid Ops.invalid) Ops.invalid);
       test "a rule that computes with the value of invalid does not apply"
