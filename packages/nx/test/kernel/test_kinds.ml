@@ -400,7 +400,9 @@ let test_narrow_zeros =
           (fun dt ->
             List.concat_map
               (fun (name, k) ->
-                List.map (fun z -> (b, dt, name, k, z)) signed_zeros)
+                let (Narrow d) = dt in
+                if not (b.computes (K2 (Binary k)) (D.Any d)) then []
+                else List.map (fun z -> (b, dt, name, k, z)) signed_zeros)
               kinds)
           narrow_floats)
       Support.backends

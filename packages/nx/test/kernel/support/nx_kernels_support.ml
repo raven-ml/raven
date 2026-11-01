@@ -19,6 +19,7 @@ type backend = {
   device : Rig.t;
   computes : kind -> Nx_array.Dtype.any -> bool;
   around : 'a. (unit -> 'a) -> 'a;
+  complete : bool;
 }
 
 (* nx_cpu.mli's promise: every kind at every dtype of its domain. *)
@@ -31,6 +32,7 @@ let under target =
     device = Rig.host;
     computes = cpu_computes;
     around = (fun f -> Nx_cpu.with_target target f);
+    complete = true;
   }
 
 let cpus = List.map under Nx_cpu.targets
@@ -38,7 +40,34 @@ let cpus = List.map under Nx_cpu.targets
 (* The best table, which nx.cpu runs from the start: the last. *)
 let cpu = under (List.nth Nx_cpu.targets (List.length Nx_cpu.targets - 1))
 
-let backends = [ cpu ]
+(* nx.cuda on GPU 0 of the machine's NVIDIA GPUs, opened by each rig driver
+   that reaches it: CUDA's library, and NVIDIA's kernel driver through rig.nv.
+   nx_cuda.mli states it computes no kind. *)
+let nvidia ~name open_ =
+  match open_ () with
+  | Error why -> failwith (name ^ ": " ^ why)
+  | Ok d when not (Nx_cuda.computes_on d) -> []
+  | Ok d ->
+      [
+        {
+          name;
+          kernels = (module Nx_cuda);
+          device = d;
+          computes = (fun _ _ -> false);
+          around = (fun f -> f ());
+          complete = false;
+        };
+      ]
+
+let sees count = match count () with Ok n -> n > 0 | Error _ -> false
+
+let gpus () =
+  let cuda () = Rig.open_ { (Rig_cuda.gpu 0) with name = "CUDA:0" } in
+  let nv () = Rig.open_ { (Rig_nv_nvidia.gpu 0) with name = "NV:0" } in
+  (if sees Rig_cuda.count then nvidia ~name:"cuda" cuda else [])
+  @ if sees Rig_nv_nvidia.count then nvidia ~name:"cuda/nv" nv else []
+
+let backends = cpu :: gpus ()
 
 external x86_64 : unit -> bool = "nx_kernels_support_x86_64" [@@noalloc]
 

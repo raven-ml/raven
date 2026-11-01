@@ -29,6 +29,11 @@ type backend = {
   around : 'a. (unit -> 'a) -> 'a;
       (** [around f] is [f ()] run as the backend: nx.cpu's under its target
           table. *)
+  complete : bool;
+      (** [complete] is [true] iff it states it computes every case the
+          contract offers, as nx.cpu does. The laws that a case's result
+          alone can state, a fold's, a carry's, run on complete backends
+          alone; on the others a decline is a law's answer. *)
 }
 (** The type for kernel libraries in one configuration. *)
 
@@ -41,8 +46,9 @@ val cpu : backend
     host runs. *)
 
 val backends : backend list
-(** [backends] is each kernel library under its own configuration:
-    [[cpu]]. *)
+(** [backends] is each kernel library under its own configuration: {!cpu},
+    then nx.cuda on the machine's NVIDIA GPU 0 where it has one, as ["cuda"]
+    through CUDA and as ["cuda/nv"] through rig.nv. *)
 
 val x86_64 : bool
 (** [x86_64] is [true] iff nx.cpu is compiled for x86-64, whose

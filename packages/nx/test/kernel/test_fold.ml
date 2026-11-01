@@ -573,4 +573,7 @@ let suite (b : Support.backend) =
         guard_cases (run (law_guards b));
     ]
 
-let () = exit (Windtrap.run "nx_kernel.fold" (List.map suite Support.backends))
+(* nx.cuda declines every fold: the suite runs on complete backends. *)
+let () =
+  let complete = List.filter (fun (b : Support.backend) -> b.complete) in
+  exit (Windtrap.run "nx_kernel.fold" (List.map suite (complete Support.backends)))

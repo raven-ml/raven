@@ -397,8 +397,12 @@ let law_bound (b : Support.backend) (c : case) =
       in
       let has v = Array.mem v vs in
       let kind = kind_of ~complex c.monoid in
+      (* A backend that is not complete may decline every complex case. *)
+      let covered k = b.complete || String.starts_with ~prefix:"a float" k in
       List.iter
-        (fun k -> cover (k ^ " within its bound") (k = kind && has Bounded))
+        (fun k ->
+          if covered k then
+            cover (k ^ " within its bound") (k = kind && has Bounded))
         kinds;
       cover "a scan within its bound" (c.scan && has Bounded);
       cover "a NaN or an infinity the terms make" (has Special);
@@ -1180,7 +1184,7 @@ let law_special (b : Support.backend) c =
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
-    [
+    ([
       prop ~examples:bound_examples
         "a float or complex sum or product is within its bound of the exact \
          one"
@@ -1189,21 +1193,26 @@ let laws (b : Support.backend) =
         scans (run (law_prefix b));
       prop ~examples:any_examples "a declined case writes nothing" any_case
         (run (law_declined b));
-      prop "an exact scan from a carry continues the scan whose terms it \
-            carries"
-        (carry_case Exact) (run (law_carry b));
-      prop
-        "a float or complex sum or product from a carry is within the bound \
-         of the carry's and the terms' reduction"
-        (carry_case Inexact) (run (law_carry_bound b));
       prop ~count:300 ~examples:special_examples
         "Logsumexp, Moments and Arg give the special values their terms make"
         special_case (run (law_special b));
-      test "a carry the scan cannot take is refused" (fun () ->
-          b.around (test_carry_refusals b));
-      test "an extreme's carry its destination aliases" (fun () ->
-          b.around (test_aliased_carry b));
     ]
+    @ (* Scans from a carry, which nx.cuda declines. *)
+    if not b.complete then []
+    else
+      [
+        prop "an exact scan from a carry continues the scan whose terms it \
+              carries"
+          (carry_case Exact) (run (law_carry b));
+        prop
+          "a float or complex sum or product from a carry is within the \
+           bound of the carry's and the terms' reduction"
+          (carry_case Inexact) (run (law_carry_bound b));
+        test "a carry the scan cannot take is refused" (fun () ->
+            b.around (test_carry_refusals b));
+        test "an extreme's carry its destination aliases" (fun () ->
+            b.around (test_aliased_carry b));
+      ])
 
 let () =
   exit (Windtrap.run "nx_kernel.reduce" (List.map laws Support.backends))
