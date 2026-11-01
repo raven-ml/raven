@@ -847,21 +847,23 @@ let law_lanes (Lanes c, compiled_too) =
     (* Compiled, the bits are each lane's loop's where the step's derivative
        also sums no terms along an axis. *)
     let g = unsummed exact in
-    let exact_lanes =
-      outcome (fun () -> bits (one_by_one (grad (written ~g ~y w)) n (x, t)))
-    in
-    let calls = Rune.evaluations () in
-    equal ~msg:"jit of vmap of grad" l exact_lanes
-      (outcome (fun () ->
-           let f = Rune.vmap s (grad (iterated ~g ~y w)) in
-           bits (Rune.jit s f (x, t))));
-    equal ~msg:"jit of grad of vmap" l exact_lanes
-      (outcome (fun () ->
-           let f =
-             grad_at c.dt (fun x -> Rune.vmap s (iterated ~g ~y w) (x, t))
-           in
-           bits (Rune.jit' f x)));
-    equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls);
+    if compiled_too then begin
+      let exact_lanes =
+        outcome (fun () -> bits (one_by_one (grad (written ~g ~y w)) n (x, t)))
+      in
+      let calls = Rune.evaluations () in
+      equal ~msg:"jit of vmap of grad" l exact_lanes
+        (outcome (fun () ->
+             let f = Rune.vmap s (grad (iterated ~g ~y w)) in
+             bits (Rune.jit s f (x, t))));
+      equal ~msg:"jit of grad of vmap" l exact_lanes
+        (outcome (fun () ->
+             let f =
+               grad_at c.dt (fun x -> Rune.vmap s (iterated ~g ~y w) (x, t))
+             in
+             bits (Rune.jit' f x)));
+      equal ~msg:"grad compiled" int 0 (Rune.evaluations () - calls)
+    end;
     (* Forward mode, inside and around the map. *)
     let jvp f xt =
       snd (Rune.jvp' (fun x -> f (x, snd xt)) (fst xt) (Nx.ones_like (fst xt)))
@@ -880,13 +882,16 @@ let law_lanes (Lanes c, compiled_too) =
                    x (Nx.ones_like x)))));
     (* Compiled, on the same step: a tie's share of a maximum sums the tied
        tangents, in an order a compiled call may change. *)
-    let calls = Rune.evaluations () in
-    equal ~msg:"jit of jvp of vmap" l
-      (outcome (fun () -> bits (one_by_one (jvp (written ~g ~y w)) n (x, t))))
-      (outcome (fun () ->
-           let f x = Rune.vmap s (iterated ~g ~y w) (x, t) in
-           bits (Rune.jit' (fun x -> snd (Rune.jvp' f x (Nx.ones_like x))) x)));
-    equal ~msg:"jvp compiled" int 0 (Rune.evaluations () - calls);
+    if compiled_too then begin
+      let calls = Rune.evaluations () in
+      equal ~msg:"jit of jvp of vmap" l
+        (outcome (fun () -> bits (one_by_one (jvp (written ~g ~y w)) n (x, t))))
+        (outcome (fun () ->
+             let f x = Rune.vmap s (iterated ~g ~y w) (x, t) in
+             bits
+               (Rune.jit' (fun x -> snd (Rune.jvp' f x (Nx.ones_like x))) x)));
+      equal ~msg:"jvp compiled" int 0 (Rune.evaluations () - calls)
+    end;
     (* A captured parameter's gradient sums each step's of every lane, in an
        order the map chooses: step [j]'s is the gradient at row [j] of a stack
        of the parameter, of the lane's loop whose step [j] reads that row. *)
