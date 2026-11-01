@@ -636,9 +636,13 @@ let move_rule env (mv : Move.t) x (V w) =
     match mv with
     | Reshape _ -> held (V (Nx.reshape s w))
     | Permute p ->
-        let inv = Array.make (Iarray.length p) 0 in
-        Iarray.iteri (fun i q -> inv.(q) <- i) p;
-        held (V (Nx.transpose ~axes:(Array.to_list inv) w))
+        (* The inverse map: each axis [p] lists at its place, each it leaves
+           out a new axis, each it adds left out. *)
+        let inv =
+          Iarray.init (Nx.ndim x) (fun a ->
+              Option.value ~default:(-1) (Iarray.find_index (( = ) a) p))
+        in
+        held (V (Prim.eval ~by:env.name (Move (Permute inv, w))))
     | Broadcast b ->
         (* Summed over each axis that repeats the operand. *)
         let b = Iarray.to_array b in

@@ -3484,6 +3484,8 @@ thread.
 
 ### Nx
 
+- `Nx_array.Move.Permute` is an axis map: it may leave out axes of one
+  element and add new ones, written as negative entries. It stays a view.
 - `Nx_quant.apply_experts` computes with its weight cut along `k`, where it
   raised: each device sums its window of every row and the sums close by
   partials, as `Nx.contract`'s do. The cut keeps whole blocks where the devices

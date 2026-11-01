@@ -161,13 +161,48 @@ let broadcast_of s =
        (Array.append extra
           (Array.mapi (fun i d -> if d = 1 then fill.(i) else d) s)))
 
-(* Permutations of [s]'s axes. *)
+(* Axis maps of [s], in order where [ordered]: [s]'s axes with some of
+   extent 1 left out, permuted unless [ordered], and up to two new axes of
+   one element ([-1]) put anywhere, within the greatest rank. *)
+let axis_map_of ?(ordered = false) s =
+  let open Gen in
+  let r = Array.length s in
+  let* keep =
+    array ~size:(constant r)
+      (frequency [ (3, constant true); (1, constant false) ])
+  in
+  let kept =
+    List.filter (fun a -> s.(a) <> 1 || keep.(a)) (List.init r Fun.id)
+  in
+  let* p =
+    if ordered then constant kept
+    else permutation ~pp:Format.pp_print_int kept
+  in
+  let room = Nx_array.Layout.max_rank - List.length p in
+  let* n = int_range 0 (Int.min 2 room) in
+  let rec insert p k =
+    if k = 0 then constant p
+    else
+      let* at = int_range 0 (List.length p) in
+      let before = List.filteri (fun i _ -> i < at) p
+      and after = List.filteri (fun i _ -> i >= at) p in
+      insert (before @ (-1 :: after)) (k - 1)
+  in
+  let+ p = insert p n in
+  M.Permute (Iarray.of_list p)
+
+(* Permutations of [s]'s axes, and axis maps that leave out or add axes of
+   one element. *)
 let permute_of s =
   let open Gen in
-  let+ p =
-    permutation ~pp:Format.pp_print_int (List.init (Array.length s) Fun.id)
-  in
-  M.Permute (Iarray.of_list p)
+  one_of
+    [
+      (let+ p =
+         permutation ~pp:Format.pp_print_int (List.init (Array.length s) Fun.id)
+       in
+       M.Permute (Iarray.of_list p));
+      axis_map_of s;
+    ]
 
 let movement ~apart s =
   let open Gen in

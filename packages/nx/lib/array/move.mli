@@ -30,7 +30,12 @@ type t =
           a new axis or an extent-1 one repeats the argument's elements along
           it. *)
   | Permute of int iarray
-      (** [Permute p] has the argument's axis [p.(i)] as its axis [i]. *)
+      (** [Permute p] has, as its axis [i], the argument's axis [p.(i)], or a
+          new axis of one element where [p.(i) < 0]. Each axis of the
+          argument that [p] does not list has one element. The map is a
+          bijection of elements, so it is a view: a permutation of the axes,
+          and a squeeze or an unsqueeze that states which axes go and
+          come. *)
   | Slice of range iarray
       (** [Slice rs] keeps the elements [rs.(i)] of each axis [i]. A negative
           step reverses the axis. *)
@@ -53,7 +58,9 @@ val shape : t -> int iarray -> int iarray
     - [Reshape s']: [s']'s extents are non-negative, their product [s]'s.
     - [Broadcast s']: [s']'s extents are non-negative; it has at least [s]'s
       rank, and each extent of [s] aligned from the right is [1] or [s']'s.
-    - [Permute p]: [p] is a permutation of [s]'s axes.
+    - [Permute p]: [p]'s entries [>= 0] are distinct axes of [s], every axis
+      of [s] it does not list has extent [1], and it has at most
+      {!Nx_array.Layout.max_rank} entries.
     - [Slice rs]: [rs] has a range per axis, each with [step <> 0] and
       [count >= 0]; if [count > 0], [start] and [start + (count - 1)·step] lie
       in [\[0, d)] for an axis of extent [d].

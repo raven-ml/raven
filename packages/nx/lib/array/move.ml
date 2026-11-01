@@ -41,31 +41,40 @@ let broadcast s s' =
   done;
   s'
 
-(* The axes [p] names are marked in the bits of an int: a rank is at most
+(* The axes [p] lists are marked in the bits of an int: a rank is at most
    [Shape.max_rank], below an int's width. *)
 let permute s p =
-  let r = Iarray.length s in
-  if Iarray.length p <> r then
-    invalid_argf "Move.Permute: %a has %d axes, not %d" Shape.pp p
-      (Iarray.length p) r;
+  let r = Iarray.length s and r' = Iarray.length p in
+  Shape.check_rank "Move.Permute" r';
   let seen = ref 0 in
-  for i = 0 to r - 1 do
+  for i = 0 to r' - 1 do
     let a = Iarray.get p i in
-    if a < 0 || a >= r then
+    if a >= r then
       invalid_argf
-        "Move.Permute: %a is not a permutation of %d axes: entry %d, %d, is \
-         not an axis of %d"
+        "Move.Permute: %a is not an axis map of %d axes: entry %d, %d, is not \
+         an axis of %d"
         Shape.pp p r i a r;
-    if !seen land (1 lsl a) <> 0 then
-      invalid_argf
-        "Move.Permute: %a is not a permutation of %d axes: entry %d repeats \
-         axis %d"
-        Shape.pp p r i a;
-    seen := !seen lor (1 lsl a)
+    if a >= 0 then begin
+      if !seen land (1 lsl a) <> 0 then
+        invalid_argf
+          "Move.Permute: %a is not an axis map of %d axes: entry %d repeats \
+           axis %d"
+          Shape.pp p r i a;
+      seen := !seen lor (1 lsl a)
+    end
   done;
-  let s' = Shape.zeros r in
-  for i = 0 to r - 1 do
-    s'.(i) <- Iarray.get s (Iarray.get p i)
+  for a = 0 to r - 1 do
+    let d = Iarray.get s a in
+    if !seen land (1 lsl a) = 0 && d <> 1 then
+      invalid_argf
+        "Move.Permute: %a is not an axis map of %a: axis %d, of %d elements, \
+         is left out"
+        Shape.pp p Shape.pp s a d
+  done;
+  let s' = Shape.zeros r' in
+  for i = 0 to r' - 1 do
+    let a = Iarray.get p i in
+    s'.(i) <- (if a < 0 then 1 else Iarray.get s a)
   done;
   Shape.freeze s'
 

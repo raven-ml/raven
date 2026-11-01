@@ -186,6 +186,32 @@ let slice1 u i ({ start; count; step } : Nx_array.Move.range) =
     Shape.reshape kept
       (List.mapi (fun j d -> if j = i then Ops.Int count else d) s)
 
+(* [u] through the axis map [p] ({!Nx_array.Move.Permute}): the axes [p]
+   lists, those it leaves out of one element dropped, permuted, then its new
+   axes of one element added. A permutation is one permute. *)
+let axis_map u p =
+  let r = Shape.ndim u in
+  if List.length p = r && List.for_all (fun a -> a >= 0) p then
+    Shape.permute u p
+  else
+    let s = Shape.shape u in
+    let kept = List.filter (fun a -> List.mem a p) (List.init r Fun.id) in
+    let u =
+      if List.length kept = r then u
+      else Shape.reshape u (List.map (List.nth s) kept)
+    in
+    (* Each listed axis's place among [kept]. *)
+    let place a = Option.get (List.find_index (( = ) a) kept) in
+    let order =
+      List.filter_map (fun a -> if a < 0 then None else Some (place a)) p
+    in
+    let u =
+      if order = List.init (List.length order) Fun.id then u
+      else Shape.permute u order
+    in
+    let s' = List.map (fun a -> if a < 0 then Ops.Int 1 else List.nth s a) p in
+    if List.length s' = List.length kept then u else Shape.reshape u s'
+
 let movement (m : Nx_array.Move.t) u =
   match m with
   | Reshape s -> Shape.reshape u (sints (Iarray.to_list s))
@@ -195,7 +221,7 @@ let movement (m : Nx_array.Move.t) u =
         List.init (List.length s - Shape.ndim u) (fun _ -> Ops.Int 1)
       in
       Shape.expand (Shape.reshape u (ones @ Shape.shape u)) (sints s)
-  | Permute p -> Shape.permute u (Iarray.to_list p)
+  | Permute p -> axis_map u (Iarray.to_list p)
   | Slice rs ->
       let u = ref u in
       Iarray.iteri (fun i r -> u := slice1 !u i r) rs;

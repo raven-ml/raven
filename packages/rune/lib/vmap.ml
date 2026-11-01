@@ -526,14 +526,19 @@ let move (type v s d) i n ~by mv (x : (v, s, d) Nx.t) () =
     match (mv : M.t) with
     | Reshape s -> eval (Reshape (lead n s)) b
     | Broadcast s ->
-        (* Ones between the lane axis and [x]'s, so that aligning from the right
-           keeps the lane axis in front. *)
+        (* New axes of one element between the lane axis and [x]'s, so that
+           aligning from the right keeps the lane axis in front. *)
         let k = Iarray.length s - Nx.ndim x in
-        let ones = Iarray.init k (fun _ -> 1) in
-        let s' = Iarray.append ones (Iarray.of_array (Nx.shape x)) in
-        let b = if k = 0 then b else eval (Reshape (lead n s')) b in
+        let b =
+          if k = 0 then b
+          else
+            let after i = if i < k then -1 else i - k + 1 in
+            eval (Permute (lead 0 (Iarray.init (k + Nx.ndim x) after))) b
+        in
         eval (Broadcast (lead n s)) b
-    | Permute p -> eval (Permute (lead 0 (Iarray.map succ p))) b
+    | Permute p ->
+        let shift a = if a < 0 then a else a + 1 in
+        eval (Permute (lead 0 (Iarray.map shift p))) b
     | Slice rs -> eval (Slice (lead (every n) rs)) b
     | Window ws -> eval (Window (Iarray.map shift_window ws)) b
   in

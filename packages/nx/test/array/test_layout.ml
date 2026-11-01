@@ -35,9 +35,10 @@ let source m s idx =
       let off = Array.length s' - r in
       Array.init r (fun i -> if s.(i) = 1 then 0 else idx.(off + i))
   | M.Permute p ->
+      (* An axis left out has one element, at index 0. *)
       let p = Iarray.to_array p in
       let src = Array.make r 0 in
-      Array.iteri (fun i a -> src.(a) <- idx.(i)) p;
+      Array.iteri (fun i a -> if a >= 0 then src.(a) <- idx.(i)) p;
       src
   | M.Slice rs ->
       let rs = Iarray.to_array rs in
@@ -436,6 +437,76 @@ let law_move (l, m) =
           equal ~msg:"strides express the reshape" bool false
             (expressible (Iarray.to_array s') target))
 
+(* Axis maps *)
+
+(* A layout of [any_layout] and an axis map of its shape, in order where
+   [ordered]. *)
+let layout_and_map ~ordered =
+  let open Gen in
+  with_pp
+    (fun ppf (l, m) -> Format.fprintf ppf "%a, %a" L.pp l pp_move m)
+    (let* l = any_layout in
+     let+ m = axis_map_of ~ordered (Iarray.to_array (L.shape l)) in
+     (l, m))
+
+let entries = function
+  | M.Permute p -> Iarray.to_array p
+  | M.Reshape _ | Broadcast _ | Slice _ | Window _ -> invalid_arg "entries"
+
+(* An axis map is a view, and one that keeps its axes in order reaches each
+   index's position as the reshape to its shape does. *)
+let law_map_reshape (l, m) =
+  let p = entries m in
+  let listed = List.filter (fun a -> a >= 0) (Array.to_list p) in
+  cover "an axis of one element left out" (List.length listed < L.rank l);
+  cover "a new axis" (Array.mem (-1) p);
+  let s = Iarray.to_array (L.shape l) in
+  let s' = M.shape m (L.shape l) in
+  match L.move m l with
+  | None -> fail "an axis map answered None"
+  | Some l' ->
+      List.iter
+        (fun idx ->
+          equal
+            ~msg:(Format.asprintf "%a" pp_ints idx)
+            int
+            (position l (source (M.Reshape s') s idx))
+            (position l' idx))
+        (indices (Iarray.to_array s'))
+
+(* The map that undoes [p] over [r] axes: each axis [p] lists at its place,
+   each it leaves out a new axis, each it adds left out. *)
+let undo r p =
+  Array.init r (fun a ->
+      match Array.find_index (( = ) a) p with Some i -> i | None -> -1)
+
+(* Removing the axes a map adds and adding back those it removes gives the
+   layout back: squeeze undoes unsqueeze, and unsqueeze squeeze. *)
+let law_map_undone (l, m) =
+  let l' = Option.get (L.move m l) in
+  let back = M.Permute (Iarray.of_array (undo (L.rank l) (entries m))) in
+  equal layout l (Option.get (L.move back l'))
+
+let maps_composed =
+  let open Gen in
+  with_pp
+    (fun ppf (l, m, m') ->
+      Format.fprintf ppf "%a, %a then %a" L.pp l pp_move m pp_move m')
+    (let* l = any_layout in
+     let* m = axis_map_of (Iarray.to_array (L.shape l)) in
+     let s' = M.shape m (L.shape l) in
+     let+ m' = axis_map_of (Iarray.to_array s') in
+     (l, m, m'))
+
+(* Two maps in turn are the map that composes them: axis [i] of the second
+   names axis [q.(i)] of the first's result, which names the argument's
+   [p.(q.(i))]. *)
+let law_map_composed (l, m, m') =
+  let p = entries m and q = entries m' in
+  let pq = Array.map (fun i -> if i < 0 then -1 else p.(i)) q in
+  let twice = Option.get (L.move m' (Option.get (L.move m l))) in
+  equal layout (Option.get (L.move (M.Permute (Iarray.of_array pq)) l)) twice
+
 (* Canonical form *)
 
 let law_canonical_move (l, m) =
@@ -682,6 +753,12 @@ let tests =
           layout_and_move law_move;
         prop "a movement's layout is canonical" layout_and_move
           law_canonical_move;
+        prop "an axis map in order reaches what the reshape to its shape does"
+          (layout_and_map ~ordered:true) law_map_reshape;
+        prop "a map's undoing gives the layout back"
+          (layout_and_map ~ordered:false) law_map_undone;
+        prop "two maps in turn are their composition" maps_composed
+          law_map_composed;
       ];
     group "equality"
       [

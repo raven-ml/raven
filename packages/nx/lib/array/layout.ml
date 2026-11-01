@@ -296,8 +296,11 @@ let move m l =
         done;
         Some (moved s' (Shape.freeze st) (offset l))
     | Permute p ->
+        (* A new axis has one element: its stride is 0, as in canonical
+           form. *)
         for i = 0 to r' - 1 do
-          st.(i) <- unsafe_stride l (Iarray.unsafe_get p i)
+          let a = Iarray.unsafe_get p i in
+          st.(i) <- (if a < 0 then 0 else unsafe_stride l a)
         done;
         Some (moved s' (Shape.freeze st) (offset l))
     | Slice rs ->

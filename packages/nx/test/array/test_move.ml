@@ -63,10 +63,19 @@ let expected m s =
         in
         Some s'
     | M.Permute p ->
+        (* The entries [>= 0] are distinct axes, and each axis left out has
+           extent 1. *)
         let p = Iarray.to_array p in
-        let sorted = List.sort compare (Array.to_list p) in
-        let* () = guard (sorted = List.init r Fun.id) in
-        Some (Array.map (fun a -> s.(a)) p)
+        let listed = List.filter (fun a -> a >= 0) (Array.to_list p) in
+        let* () =
+          guard
+            (List.for_all (in_axis r) listed
+            && List.length (List.sort_uniq compare listed) = List.length listed
+            && List.for_all
+                 (fun a -> List.mem a listed || s.(a) = 1)
+                 (List.init r Fun.id))
+        in
+        Some (Array.map (fun a -> if a < 0 then 1 else s.(a)) p)
     | M.Slice rs ->
         let rs = Iarray.to_array rs in
         let* () = guard (Array.length rs = r) in
@@ -234,6 +243,15 @@ let bounds =
       (M.Slice [| r 0 0 1; r 0 1 1; r 0 1 1 |])
       [| 0; 1 lsl 27; 1 lsl 27 |];
     ok "a permutation of no axis" (M.Permute [||]) [||] [||];
+    ok "a map of no axis to the most axes" (M.Permute (make 32 (-1))) [||]
+      (make 32 1);
+    refused "a map of no axis past the most axes" (M.Permute (make 33 (-1)))
+      [||];
+    ok "a map that leaves out every axis of one element" (M.Permute [||])
+      [| 1; 1 |] [||];
+    ok "a map that adds and leaves out axes of one element"
+      (M.Permute [| -1; 2; 0 |])
+      [| 3; 1; 4 |] [| 1; 4; 3 |];
     refused "a permutation of an argument past the most axes"
       (M.Permute (Iarray.init 33 Fun.id))
       (make 33 1);
@@ -271,6 +289,9 @@ let messages =
     ( "an axis past the argument names its entry",
       (fun () -> M.shape (M.Permute [| 0; 3 |]) [| 2; 3 |]),
       "entry 1, 3, is not an axis of 2" );
+    ( "an axis of more than one element left out names it",
+      (fun () -> M.shape (M.Permute [| 1 |]) [| 2; 3 |]),
+      "axis 0, of 2 elements, is left out" );
     ( "windows out of order name both",
       (fun () -> M.shape (M.Window [| w 1; w 0 |]) [| 3; 3 |]),
       "window 1's axis 0 is not after window 0's axis 1" );
