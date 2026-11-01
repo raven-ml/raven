@@ -639,12 +639,9 @@ type env = {
   shared : bool array;
   drawn : bool array;
   windows : bool array;
-      (** Whether each variable is a window, [Move (Slice _)], that a placement
-          reads: in a split program, the window of a piece that a move reads.
-          Empty in a program that is not split. *)
-  local : bool array;
-      (** Whether each variable is the placement of a window onto the device
-          it lies on. Empty in a program that is not split. *)
+      (** Whether each variable is a window that a move or a loop's
+          coordinates read at a start its call passes ({!windows}). Empty in a
+          program that is not split. *)
 }
 
 let slot (p : Program.t) x =
@@ -725,7 +722,6 @@ let env_of ~split ?(carried = 0) ?donated (p : Program.t) =
     shared = shared p;
     drawn = Array.make p.slots false;
     windows = (if split then windows p else [||]);
-    local = (if split then Array.make p.slots false else [||]);
   }
 
 let var env x = slot env.p x
@@ -897,16 +893,127 @@ let moved u d =
   | Some d' when not (String.equal d' d) -> Ops.copy_to_device u d
   | Some _ | None -> u
 
-(* [ys], the nodes of [x] placed at [q] by the equation [base], each a copy
-   where it lies on another device. A window placed on the device it lies on is
-   noted local. *)
-let placed st env base q x ys =
-  let d = device_at st q and n = var env x in
-  let here u =
-    match Ops.device u with Some d' -> String.equal d' d | None -> true
+(* Assemblies in storage
+
+   An assembly in a split program is storage of its own. Pieces that hold each
+   of its elements once are each stored into their region of the buffer, in
+   any order; otherwise the fill is stored over it, then each piece over the
+   state the earlier ones left, so that a later piece's elements stand where
+   two overlap, as {!Lower_index.assemble} states. Each store reads one piece,
+   which its last reader frees, and a piece copied from another device is
+   copied into its region; a select chain would read every piece in one
+   kernel, each live beside the result until then. A store into a region of
+   the buffer that is a run of its elements stores into a view of it, so
+   pieces of one shape are one program wherever they lie. *)
+
+(* A region's box along an axis: its first index, its extent, whether it runs
+   backwards, and the size of its step. *)
+let box (r : A.Move.range) =
+  let size = abs r.step in
+  let first =
+    if r.step < 0 then r.start + ((r.count - 1) * r.step) else r.start
   in
-  if st.split && n >= 0 && env.windows.(n) && Array.for_all here ys then
-    env.local.(base) <- true;
+  (first, ((r.count - 1) * size) + 1, r.step < 0, size)
+
+let dense b = Array.for_all (fun (_, _, _, size) -> size = 1) b
+
+(* Whether the regions [rs], each holding an element, hold each element of a
+   value of shape [s] once: each a box within it, no two meeting, as many
+   elements in all as it holds. *)
+let tiles s (rs : A.Move.range iarray list) =
+  let boxes = List.map (fun r -> Array.map box (Iarray.to_array r)) rs in
+  let inside b =
+    Array.for_all2
+      (fun (first, n, _, _) e -> first >= 0 && first + n <= e)
+      b s
+  in
+  let apart a b =
+    Array.exists2
+      (fun (f, n, _, _) (g, m, _, _) -> f + n <= g || g + m <= f)
+      a b
+  in
+  let rec disjoint = function
+    | [] -> true
+    | b :: rest -> List.for_all (apart b) rest && disjoint rest
+  in
+  let count b = Array.fold_left (fun k (_, n, _, _) -> k * n) 1 b in
+  List.for_all (fun b -> dense b && inside b) boxes
+  && disjoint boxes
+  && List.fold_left (fun k b -> k + count b) 0 boxes = numel s
+
+(* Whether a piece's region holds an element. *)
+let holds ((rs : A.Move.range iarray), _) =
+  Iarray.for_all (fun (r : A.Move.range) -> r.count > 0) rs
+
+(* [assembled ~device dt fill shape pieces] is the node of the assembly of
+   [dt] and [shape] of [pieces], each a region and its node, its storage on
+   [device], and that storage once filled. *)
+let assembled ~device (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
+  let s = Iarray.to_array shape in
+  let dims = Arith.dims (D.Any dt) s in
+  let pieces = List.filter holds pieces in
+  let buf = Ops.new_buffer device (numel s * parts dt) (tdtype dt) in
+  let whole u = Shape.reshape u dims in
+  (* Each piece stored into its box of [state]'s storage: itself where its
+     steps are of one, reversed along the axes it runs backwards, else the box
+     as [state] holds it with the piece selected over it. *)
+  let store state ((rs : A.Move.range iarray), u) =
+    let boxes = Array.map box (Iarray.to_array rs) in
+    let bounds =
+      List.map
+        (fun (first, n, _, _) -> Some (Ops.Int first, Ops.Int (first + n)))
+        (Array.to_list boxes)
+      @ if parts dt = 2 then [ None ] else []
+    in
+    let value =
+      if dense boxes then (
+        let backwards i =
+          let _, _, b, _ = boxes.(i) in
+          b
+        in
+        let axes = List.init (Array.length boxes) Fun.id in
+        match List.filter backwards axes with
+        | [] -> u
+        | axes -> Shape.flip u axes)
+      else
+        let extent =
+          Iarray.of_array (Array.map (fun (_, n, _, _) -> n) boxes)
+        in
+        let all =
+          Iarray.map (fun count -> { A.Move.start = 0; count; step = 1 }) extent
+        in
+        let within =
+          Iarray.mapi
+            (fun i (r : A.Move.range) ->
+              let first, _, _, _ = boxes.(i) in
+              { r with start = r.start - first })
+            rs
+        in
+        let was = Shape.shrink (whole state) bounds in
+        Lower_index.assemble dt fill extent [ (all, was); (within, u) ]
+    in
+    Ops.store (Shape.shrink (whole state) bounds) value
+  in
+  (* Pieces that tile it are stored apart, each into its run of the buffer;
+     others over the fill and the pieces before them, in order. *)
+  let filled =
+    if tiles s (List.map fst pieces) then
+      Ops.after buf (List.map (store buf) pieces)
+    else
+      let start =
+        Ops.after buf
+          [ Ops.store (whole buf) (Lower_index.assemble dt fill shape []) ]
+      in
+      List.fold_left
+        (fun state piece -> Ops.after state [ store state piece ])
+        start pieces
+  in
+  (whole filled, buf, filled)
+
+(* [ys], the nodes of a value placed at [q], each a copy where it lies on
+   another device. *)
+let placed st q ys =
+  let d = device_at st q in
   Array.map (fun u -> moved u d) ys
 
 let issue st cs env (type r) base (op : r Nx.Prim.t) =
@@ -943,31 +1050,31 @@ let issue st cs env (type r) base (op : r Nx.Prim.t) =
         | t -> String.equal t.device "CPU"
         | exception Invalid_argument _ -> false
       in
-      (* An assembly in a split program reads each window moved onto its own
-         device from storage of its own, as it reads those copied from other
-         devices, so that each device's assembly is one program. *)
-      let assembly =
-        st.split && match op with Assemble _ -> true | _ -> false
-      in
-      let read x =
-        let u = node st env x in
-        match var env x with
-        | n when assembly && n >= 0 && env.local.(n) -> Ops.contiguous u
-        | _ -> u
-      in
+      let read x = node st env x in
       let step1 (r : A.Move.range) = r.step = 1 in
       let ys =
         match op with
         | Move (Slice rs, x)
           when st.split && env.windows.(base) && Iarray.for_all step1 rs ->
             [| moving x (Iarray.to_array rs) (read x) |]
+        | Assemble { dtype; shape; fill; pieces }
+          when st.split && List.exists holds pieces ->
+            let pieces = List.map (fun (r, x) -> (r, read x)) pieces in
+            let y, buf, filled = assembled ~device dtype fill shape pieces in
+            (* A result takes the storage as its own, but for a dtype narrower
+               than a byte, whose result packs the storage's byte an
+               element. *)
+            if not (packed dtype) then
+              Ops.Tbl.replace st.dsts (unshaped y)
+                { buf; filled; into = filled; reads = List.map snd pieces };
+            [| y |]
         | _ -> (
             let ys =
               match Lower.op ?dst ~device ~host read op with
               | ys -> ys
               | exception Invalid_argument why -> decline "%s" why
             in
-            match op with Place (q, x) -> placed st env base q x ys | _ -> ys)
+            match op with Place (q, _) -> placed st q ys | _ -> ys)
       in
       (* A value that computes Threefry blocks, a draw or a key split or a map
          or view of one, is stored where it is read more than once: each

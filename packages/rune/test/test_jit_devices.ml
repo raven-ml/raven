@@ -1033,6 +1033,127 @@ let replicas set cols =
         bs
   | Raised m -> fail m
 
+(* Assemblies
+
+   An assembly of pieces on one device of a split program gives eager's bits
+   ({!Nx.Prim.Assemble}: the last piece's element where pieces overlap, the
+   fill where none holds the index), whether its pieces tile it, overlap,
+   leave a gap or both, run backwards or by steps, are runs of the storage or
+   not, of a real, a complex or a sub-byte dtype. *)
+
+let range start count step = { Nx_array.Move.start; count; step }
+
+let whole n = range 0 n 1
+
+(* Each case: its shape, and each piece's region, a range per axis. *)
+let assemblies =
+  [
+    ("pieces that tile it", [| 6 |], [ [ range 3 3 1 ]; [ range 0 3 1 ] ]);
+    ( "overlapping pieces that leave a gap",
+      [| 6 |],
+      [ [ range 0 3 1 ]; [ range 2 3 1 ] ] );
+    ("a gap alone", [| 6 |], [ [ range 0 2 1 ]; [ range 3 2 1 ] ]);
+    ("one piece over another", [| 6 |], [ [ range 0 6 1 ]; [ range 1 2 1 ] ]);
+    ("a piece backwards", [| 6 |], [ [ range 5 3 (-1) ]; [ range 0 3 1 ] ]);
+    ("pieces by steps", [| 6 |], [ [ range 0 3 2 ]; [ range 1 2 2 ] ]);
+    ("no piece", [| 6 |], []);
+    ( "rows that tile it",
+      [| 4; 6 |],
+      [ [ range 2 2 1; whole 6 ]; [ range 0 2 1; whole 6 ] ] );
+    ( "columns that tile it",
+      [| 4; 6 |],
+      [ [ whole 4; range 3 3 1 ]; [ whole 4; range 0 3 1 ] ] );
+    ( "boxes apart along one axis or the other",
+      [| 4; 6 |],
+      [
+        [ range 0 2 1; range 0 3 1 ];
+        [ range 0 2 1; range 3 3 1 ];
+        [ range 2 2 1; whole 6 ];
+      ] );
+    ( "boxes that meet on both axes",
+      [| 4; 6 |],
+      [ [ range 0 3 1; range 0 4 1 ]; [ range 2 2 1; range 3 3 1 ] ] );
+  ]
+
+(* The assembly of pieces at [regions] into a value of [shape], [dt] and
+   [fill] on the first device of [set], each piece made from a value cut
+   across the set. *)
+let assembly (type v s) set (dt : (v, s) Nx.dtype) of_real (fill : v) shape
+    regions =
+  let x = Nx.place (at set (Split 0)) (value [| 24 |]) in
+  let f x _ =
+    let p = Nx.place (at set (Device 0)) x in
+    let piece i rs =
+      let counts =
+        Array.of_list (List.map (fun (r : Nx_array.Move.range) -> r.count) rs)
+      in
+      let n = Array.fold_left ( * ) 1 counts in
+      let y = Nx.reshape counts (Nx.slice [ R (i, i + n) ] p) in
+      (Iarray.of_list rs, of_real (Nx.mul_s y (float_of_int (i + 2))))
+    in
+    Nx.Prim.eval ~by:"assembly"
+      (Assemble
+         {
+           dtype = dt;
+           shape = Iarray.of_array shape;
+           fill;
+           pieces = List.mapi piece regions;
+         })
+  in
+  let eager = outcome (fun () -> f x x) in
+  let before = Rune.evaluations () in
+  let s = T.(tensor @-> tensor @-> returns tensor) in
+  let jit = outcome (fun () -> Rune.jit s f x x) in
+  equal ~msg:"no call evaluated" int 0 (Rune.evaluations () - before);
+  equal (outcome_t codes_t) (omap codes eager) (omap codes jit)
+
+(* The bytes [run] copies between devices. *)
+let copied run =
+  let _, events = Rig.Profile.take run in
+  List.fold_left
+    (fun n -> function
+      | Rig.Profile.Copy { src; dst; bytes; _ } when not (Rig.equal src dst) ->
+          n + bytes
+      | _ -> n)
+    0 events
+
+(* A device's window of a value gathered whole on it reads the pieces within
+   the window. The gradient of [sum (x · place on (w ⊙ w))], [w] of 4 rows cut
+   across [n] devices and [x] of 8 rows by 4 cut along its rows, is
+   [2 w ⊙ xᵀ 1]: each device sums its rows of [x] into a partial [xᵀ 1] of 4
+   rows by 3, the closing gathers its sums whole on every device, and the
+   cotangent placed back at [w] keeps each device's window. Each device then
+   reads its rows of every device's partial, copied to it, [n - 1] windows of
+   [4 / n] rows by 3 float32s from each device, [48 (n - 1)] bytes in all, and
+   its own sums: the others' sums are copied nowhere. *)
+let own_window set =
+  let n = List.length (Nx.rigs set.s) in
+  let x = Nx.place (at set (Split 0)) (value [| 8; 4 |]) in
+  let w = Nx.place (at set (Split 0)) (value ~seed:1 [| 4; 3 |]) in
+  let loss w = Nx.sum (Nx.matmul x (Nx.place (at set On) (Nx.mul w w))) in
+  let g w _ = Rune.grad' loss w in
+  let eager = g w w in
+  let step = Rune.jit T.(tensor @-> tensor @-> returns tensor) g in
+  (match compiled g w w with
+  | Value jit ->
+      equal ~msg:"placement" (placement ()) (Nx.placement eager)
+        (Nx.placement jit);
+      let host x = Nx.abs (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
+      let sums = Nx.reshape [| 4; 1 |] (Nx.sum ~axes:[ 0 ] (host x)) in
+      let mass = Nx.mul (Nx.mul_s (host w) 2.) sums in
+      within ~bound:(Nx.mul_s mass (2. *. gamma 9)) eager jit
+  | Raised m -> fail m);
+  equal ~msg:"bytes copied" int
+    (48 * (n - 1))
+    (copied (fun () -> ignore (Nx.to_array (step w w))))
+
+let assembled set shape regions =
+  assembly set f32 Fun.id (-0.) shape regions;
+  let c64 y = Nx.complex Nx.complex64 ~re:y ~im:(Nx.neg y) in
+  assembly set Nx.complex64 c64 { Complex.re = 7.; im = -0. } shape regions;
+  let int4 y = Nx.cast Nx.int4 (Nx.mul_s y 3.) in
+  assembly set Nx.int4 int4 (-5) shape regions
+
 (* Gathers
 
    A program that places an argument so that a device holds more of it
@@ -1179,8 +1300,7 @@ let moves set =
   equal ~msg:"bytes copied" int (3 * 8) copied
 
 (* A value whole on each device placed onto a mesh moves a window along each
-   axis from one start, axes of other extents: each window's start is a
-   variable of its own. *)
+   axis from one start, axes of other extents. *)
 let onto_mesh set =
   match set.mesh with
   | None -> ()
@@ -1195,12 +1315,11 @@ let onto_mesh set =
 
    A program for one device serves every device of its target, so a
    data-parallel step over [n] memory devices takes as many programs whatever
-   [n]: each device's kernels, its moves of windows included, are another's.
-   A step's programs are counted by their keys, made or kept, so that one this
-   process made before counts. The hidden width grows with [n] so that every
-   cut, the gradients' closing sums' included, is even, and each device's
-   windows have one shape: a width of 24 over 16 devices cuts unevenly and
-   takes 16 programs where 8 devices take 13. *)
+   [n]: each device's kernels, its stores of pieces into their runs of an
+   assembly included, are another's. A step's programs are counted by their
+   keys, made or kept, so that one this process made before counts. The hidden
+   width grows with [n] so that every cut, the gradients' closing sums'
+   included, is even, and each device's windows have one shape. *)
 
 let sixteen =
   Array.init 16 (fun k ->
@@ -1491,7 +1610,17 @@ let () =
              test "over two devices" (fun () -> over 2 { law = gather_kinds });
              test "over four and their mesh" (fun () ->
                  over 4 { law = gather_kinds });
+             test "a window of a gathered value reads its own pieces"
+               (fun () ->
+                 over 2 { law = own_window };
+                 over 4 { law = own_window });
            ];
+         group "assemblies give eager's bits"
+           (List.map
+              (fun (name, shape, regions) ->
+                test name (fun () ->
+                    over 2 { law = (fun s -> assembled s shape regions) }))
+              assemblies);
          group "other sets"
            [
              prop ~count:20 ~examples:elsewhere_examples

@@ -539,14 +539,20 @@ rounded sum's is `lower_reduce.mli`'s; a matrix routine's is
   `where` over the pieces before it, floats as their bits; empty pieces are
   dropped first. The reference's sum turns a `-0.` into `+0.` and quiets a
   signalling NaN. An assembly whose selections exceed 16 times eager's work is
-  refused, and the program runs uncompiled.
+  refused, and the program runs uncompiled. In a program over several
+  devices an assembly is storage of its own (`compile.ml`, `assembled`):
+  pieces that hold each element once are each stored into their region;
+  otherwise the fill is stored over it, then each piece in order, a region by
+  steps as its box with the piece selected over what the box held. Each store
+  reads one piece, where a selection reads all of them in one kernel.
 - **nx:** `nx_kernel.mli`, `assemble`: the last piece holding each index, or
   the fill, bits copied.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
   eager's bits`, `Lower_index › work bounds › a scatter and an assembly past
-  16 times eager's work are refused`.
+  16 times eager's work are refused`, `Rune.jit over several devices ›
+  assemblies give eager's bits`.
 
 ### I3. Gather by an index
 

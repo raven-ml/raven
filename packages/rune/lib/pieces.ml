@@ -228,11 +228,95 @@ let windowed (type r w) (whole : w Nx.Prim.t) here (op : r Nx.Prim.t) origin :
           Scan { m with prog; loads })
   | _ -> op
 
-let engine ri ~by ~whole moves : Nx.Prim.engine =
+(* Gathered values
+
+   A value an engine gathers ({!engine}) is its boxes, each a piece placed on
+   the value's device that holds one window of it. A window of the value is
+   gathered again from the boxes within it, which lie on that device: a device
+   whose step reads its own window of a value gathered whole on it, as a
+   closing's cotangent placed back at a cut weight, reads its own pieces, and
+   the others' copies are never made. A split program's gathers are kept by
+   their variable. *)
+
+type gathered = (int, value * (M.range array * value) list) Hashtbl.t
+
+let var_of x =
+  match Nx.Prim.owner x with
+  | None -> None
+  | Some o -> (
+      match Nx.Prim.payload o x with Some (Var n) -> Some n | _ -> None)
+
+let boxes_of (gathered : gathered) x =
+  match var_of x with
+  | None -> None
+  | Some n -> (
+      match Hashtbl.find_opt gathered n with
+      | Some (y, boxes) when Program.same (V x) y -> Some boxes
+      | Some _ | None -> None)
+
+(* The common window of [a] and [b], if it holds an element. *)
+let meet (a : M.range array) (b : M.range array) =
+  let m =
+    Array.map2
+      (fun (a : M.range) (b : M.range) ->
+        let start = Int.max a.start b.start in
+        let stop = Int.min (a.start + a.count) (b.start + b.count) in
+        { M.start; count = stop - start; step = 1 })
+      a b
+  in
+  if Array.exists (fun (r : M.range) -> r.count <= 0) m then None else Some m
+
+(* [inner], a window of the whole, as a window of [outer]'s. *)
+let relative (outer : M.range array) (inner : M.range array) =
+  Array.map2
+    (fun (o : M.range) (i : M.range) -> { i with start = i.start - o.start })
+    outer inner
+
+let engine ri ~(gathered : gathered) ~by ~whole moves : Nx.Prim.engine =
   let run ~by ?into:_ ~origin here _ op =
     Nx.Prim.eval ~by (windowed whole here op origin)
   in
-  let view mv x = Nx.Prim.eval ~by (Move (mv, x)) in
+  (* The value of [dt] and shape [s] that holds, at each window of [boxes],
+     the box's piece, at the pieces' placement, kept as gathered. *)
+  let assembled (type v s e) (dt : (v, s) D.t) s
+      (boxes : (M.range array * (v, s, e) Nx.t) list) : (v, s, e) Nx.t =
+    let pieces = List.map (fun (w, p) -> (Iarray.of_array w, p)) boxes in
+    let y =
+      Nx.Prim.eval ~by
+        (Assemble { dtype = dt; shape = s; fill = D.zero dt; pieces })
+    in
+    Option.iter
+      (fun n ->
+        Hashtbl.replace gathered n
+          (V y, List.map (fun (w, p) -> (w, V p)) boxes))
+      (var_of y);
+    y
+  in
+  let rec view : type v s d. M.t -> (v, s, d) Nx.t -> (v, s, d) Nx.t =
+   fun mv x ->
+    let regathered w =
+      Iarray.for_all (fun (r : M.range) -> r.step = 1 && r.count > 0) w
+      && not (full x (Iarray.to_array w))
+    in
+    match (mv, boxes_of gathered x) with
+    | M.Slice w, Some boxes when regathered w -> (
+        let w = Iarray.to_array w in
+        (* Each box within [w]: its window of [w] and its piece's view. *)
+        let within (dw, p) =
+          Option.map
+            (fun m ->
+              let p = like x p and b = relative dw m in
+              let p =
+                if full p b then p else view (Slice (Iarray.of_array b)) p
+              in
+              (relative w m, p))
+            (meet dw w)
+        in
+        match List.filter_map within boxes with
+        | [ (_, p) ] when Nx.shape p = extents w -> p
+        | inside -> assembled (Nx.dtype x) (Iarray.of_array (extents w)) inside)
+    | _ -> Nx.Prim.eval ~by (Move (mv, x))
+  in
   let window x w =
     if full x w then x else view (M.Slice (Iarray.of_array w)) x
   in
@@ -260,11 +344,7 @@ let engine ri ~by ~whole moves : Nx.Prim.engine =
   let gather (type v s d e) (at : e Nx.Placement.t) (dt : (v, s) D.t) s
       (boxes : (M.range array * (v, s, d) Nx.t * M.range array) list) :
       (v, s, e) Nx.t =
-    let pieces =
-      List.map (fun (w, x, b) -> (Iarray.of_array w, put at (window x b))) boxes
-    in
-    Nx.Prim.eval ~by
-      (Assemble { dtype = dt; shape = s; fill = D.zero dt; pieces })
+    assembled dt s (List.map (fun (w, x, b) -> (w, put at (window x b))) boxes)
   in
   let assemble (type v s d e) (p : e Nx.Placement.t) s (dt : (v, s) D.t)
       (ps : (v, s, d) Nx.t option array) : (v, s, e) Nx.t =
@@ -391,6 +471,7 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
   if p.emits then decline "an emission over several devices";
   let leaves = Array.map piece_forms forms in
   let moves = ref [] and outputs = ref [||] in
+  let gathered = Hashtbl.create 16 in
   let refuse _ ~by _ =
     invalid_arg (by ^ ": a value over several devices outside its partition")
   in
@@ -442,7 +523,7 @@ let rec cut ~kind ~(home : Rig.t) ~name (p : Program.t) forms =
                     "Nx.place gathers an argument cut across devices: a \
                      compiled call holds all it gathers and closes at once"
               | _ ->
-                  let e = engine ri ~by ~whole:op moves in
+                  let e = engine ri ~gathered ~by ~whole:op moves in
                   Nx.Prim.partition e ~by op
             in
             bind := base;

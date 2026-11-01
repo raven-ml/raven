@@ -1382,13 +1382,16 @@ val jit :
     it. A program for one device serves every device of its target, so the
     devices of a set compile each kernel once: a window moves between devices,
     and a kernel reads the coordinates of its window, from a start each
-    device's launch of it passes. Where every window of a cut has one shape, a
+    device's launch of it passes. A value a device assembles from pieces, as a
+    closing or a gather does, is storage of its own, each piece stored or
+    copied into its region. Where every window of a cut has one shape, a
     program makes as many kernels whatever the number of devices. A {!scan} or
     an {!iterate} over such values is one loop, each trip running every
     device's kernels and moves of its step; each device reads its piece of a
-    row from its piece of the rows. Each argument's piece on a device is an argument of its own for
-    the variant, which a donated argument's piece lends to the result's piece
-    on that device ({!section-donation}). Such a program holds no memory
+    row from its piece of the rows. Each argument's piece on a device is an
+    argument of its own for the variant, which a donated argument's piece
+    lends to the result's piece on that device ({!section-donation}). Such a
+    program holds no memory
     between calls but the copies of its constants: each call makes on each
     device what it computes there and returns it once that work is done. With
     [RUNE_JIT_DEBUG] set, the first call prints each move between devices, the

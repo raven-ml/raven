@@ -362,6 +362,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled program over several devices assembles a value from its pieces
+  in storage of its own, one store per piece, a copied piece copied into its
+  region, so each piece may go once it is stored; it read every piece in one
+  kernel, all held beside the result. A device's window of a value gathered
+  whole on it reads only the pieces within the window: the cotangent of a
+  weight cut across devices and placed whole on each no longer copies every
+  device's sums to every other.
 - `Rune.jit` over several devices compiles a function that reads a table
   computed from constants, which it evaluated: a sum or product over a
   sub-byte `Nx.bitcast` (`Nx_quant.apply` of Q4_K and Q6_K weights by a
@@ -398,9 +405,9 @@ All notable changes to this project will be documented in this file.
   several devices holds no memory between calls: what it computes on each
   device is made per call and returned once that work is done.
 - A compiled program over the memory devices of one set compiles as many
-  kernels whatever the number of devices, where the cut is even: a move of a
-  window between devices reads it from a start bound when the program runs.
-  A data-parallel step over 16 devices made 73 programs and makes 13.
+  kernels whatever the number of devices, where the cut is even: each piece
+  is stored into a view of its run of storage, wherever the run lies. A
+  data-parallel step over 16 devices made 73 programs and makes 11.
 - `Rune.jit` compiles programs over several devices of one set, values cut
   across them, whole on each or whole on one: each device computes its
   windows in kernels of its own, compiled once per target, with eager's
