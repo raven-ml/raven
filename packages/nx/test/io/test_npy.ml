@@ -274,11 +274,11 @@ let npz =
            Gen.nat)
         (fun (run, noise, seed) ->
           let random = Random.State.make [| seed |] in
-          let t =
-            Nx.init Nx.uint8
-              [| run + noise |]
-              (fun i -> if i.(0) < run then 0 else Random.State.int random 256)
-          in
+          let b = Bigarray.(Array1.create int8_unsigned c_layout) (run + noise) in
+          for i = 0 to run + noise - 1 do
+            b.{i} <- (if i < run then 0 else Random.State.int random 256)
+          done;
+          let t = Nx.of_bigarray (Bigarray.genarray_of_array1 b) in
           let path = saved ".npz" save_npz [ ("w", Nx.P t) ] in
           equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
           equal packed (Nx.P t) (find (Nx_io.load_npz path) "w"));
