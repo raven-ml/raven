@@ -845,7 +845,7 @@ let comparisons =
           by_symbolic Ops.O.(a * int 4 < int 16) Ops.O.(a < int 4));
       test "c0 * x < c1 flips x's sign for a negative c0" (fun () ->
           let v = var "v" (-5) 5 in
-          by_symbolic Ops.O.(v * int (-4) < int 13) Ops.O.(v * int (-1) < int 4));
+          by_symbolic Ops.O.(v * int (-4) < int 13) Ops.O.(int (-4) < v));
       test "x // d < c is x < c * d for positive d" (fun () ->
           let v = var "v" 0 24 in
           by_symbolic Ops.O.(v // int 4 < int 3) Ops.O.(v < int 12));
@@ -903,6 +903,26 @@ let wrapping =
   let at_u n = [ ("u", i n) ] and at_y n = [ ("y", i n) ] in
   group "integers wrap"
     [
+      test "a negation crosses a comparison only where it does not wrap"
+        (fun () ->
+          let x = var ~dtype:Int8 "x" (-128) 127
+          and z = var ~dtype:Int8 "z" (-128) 127 in
+          let points =
+            List.concat_map
+              (fun a -> List.map (fun b -> [ ("x", i a); ("z", i b) ]) [ -128; 3 ])
+              [ -128; -3; 0; 5 ]
+          in
+          keeps_machine_value Ops.O.(x * int (-1) < z * int (-1)) points;
+          keeps_machine_value Ops.O.(x * int (-1) < int 3) points;
+          keeps_machine_value
+            Ops.O.(x * int (-1) < Ops.int ~dtype:Int8 (-128))
+            points;
+          keeps_machine_value Ops.O.(x * int (-1) < int 128) points;
+          (* a weak x negated, compared at int8 *)
+          let w = var "w" (-128) 0 in
+          keeps_machine_value
+            Ops.O.(w * int (-1) < Ops.int ~dtype:Int8 3)
+            (List.map (fun a -> [ ("w", i a) ]) [ -128; -3; 0 ]));
       test "an offset crosses a comparison only where neither side wraps"
         (fun () ->
           let points = List.map at_u [ 0; 5; 255 ] in

@@ -657,19 +657,23 @@ scope, see README.
     `:290` (`c0 + x < c1`), `codegen/simplify.py:100-104` (`x + y < c`,
     `x * y < c`) and `:124` (`x + y <> c` under a cast),
     `uop/symbolic.py:388-398` (`reduce_mul_chain`, a factor out of a
-    maximum). tolk: `Shape.symbolic`, `Simplify.solves_sum`,
+    maximum), `uop/symbolic.py:299-300` (`-x < -y`, `-x < c`). tolk:
+    `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
     `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the
     comparisons of `Simplify` but the last, and a factor out of a maximum
     from unsigned integers, which wrap, and applies them to signed ones,
     whose overflow it takes to be undefined; tolk applies each to a signed
     integer only where every value it computes fits the type, and so
-    `(x // c1) // c2` and `x + y <> c` to any committed integer. The
+    `(x // c1) // c2` and `x + y <> c` to any committed integer, and
+    `-x < -y` and `-x < c` to a signed one only where no negation wraps. The
     comparisons of `Simplify` apply to integers only, since moving a float
     term rounds, and `x + y <> c` only under a cast that does not narrow.
     tinygrad folds int32 `(w // 65536) // 65536` to a division by `2^32`,
-    which wraps to `0`, and the int8 maximum of `r * p * q` over `r < 2` to
-    `p * q`, `-112` at `12, 12` where the machine gives `0`.
+    which wraps to `0`, the int8 maximum of `r * p * q` over `r < 2` to
+    `p * q`, `-112` at `12, 12` where the machine gives `0`, and int8
+    `-x < 3` to `-3 < x`, `false` at `x = -128` where the machine gives
+    `true`.
   - **Float folds.** tinygrad: `uop/symbolic.py:120` (`x + 0`), `:173-179`
     (`x / x`, `(x * y) / y`, `x * 0`), `:252` (`(x / y) / z`). tolk:
     `Shape.symbolic_simple`. A float `x + 0` is `x` only for `-0.`

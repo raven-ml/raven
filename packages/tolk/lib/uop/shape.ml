@@ -2719,11 +2719,33 @@ let symbolic =
                match num (m "c") with
                | `Int c -> lt_folding (m "x") c
                | _ -> None);
+           (* -x < -y -> y < x, and -x < c -> -c < x, where no negation
+              wraps at the width the comparison computes at: at int8,
+              -(-128) is -128. A weak constant is read at that width. *)
            rule
              Upat.(
-               var ~dtype:[ Dtype.Weak_int ] "x" * int (-1)
-               < var "y" * int (-1))
-             (fun m -> Some O.(m "y" < m "x"));
+               named "cmp"
+                 (var ~dtype:(Dtype.Weak_int :: Dtype.sints) "x" * int (-1)
+                 < var "y" * int (-1)))
+             (fun m ->
+               let x = m "x" and y = m "y" in
+               let dt = promo_dtype (src (m "cmp")) in
+               if exact dt V.[ -vmin x; -vmin y ] then Some O.(y < x) else None);
+           rule
+             Upat.(
+               named "cmp"
+                 (var ~dtype:(Dtype.Weak_int :: Dtype.sints) "x" * int (-1)
+                 < cvar "c"))
+             (fun m ->
+               let x = m "x" and c = m "c" in
+               let dt = promo_dtype (src (m "cmp")) in
+               let c_at_width =
+                 if List.mem dt Dtype.ints then Dtype.truncate dt (num c)
+                 else num c
+               in
+               if V.(c_at_width <> Dtype.min dt) && exact dt V.[ -vmin x ] then
+                 Some O.(neg c < x)
+               else None);
            (* canonicalize a simplex with positive coefficients > 0. NOTE: not
               x < 1 means x > 0 *)
            rule

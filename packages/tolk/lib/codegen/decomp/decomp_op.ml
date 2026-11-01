@@ -251,8 +251,7 @@ let nested_extreme o =
 
 let late_patterns ~disable_fast_idiv ops =
   let var = Upat.var and cvar = Upat.cvar in
-  let x_int = var ~dtype:Dtype.ints "x"
-  and x_sint = var ~dtype:Dtype.sints "x" in
+  let x_int = var ~dtype:Dtype.ints "x" in
   let c = cvar "c" in
   let cdiv x d = Upat.op Cdiv ~src:[ x; d ]
   and cmod x d = Upat.op Cmod ~src:[ x; d ] in
@@ -343,20 +342,22 @@ let late_patterns ~disable_fast_idiv ops =
                 ]);
          when_ ops Cmplt
            [
+             (* not x < c is c-1 < x, and not c < x is x < c+1, unless c-1 or
+                c+1 wraps *)
              rule
-               (Upat.logical_not Upat.O.(x_sint < c))
-               (fun m -> Some O.(m "c" - int 1 < m "x"));
+               (Upat.logical_not Upat.O.(x_int < c))
+               (fun m ->
+                 if Dtype.Value.(vmin (m "c") = Dtype.min (dtype (m "x"))) then
+                   None
+                 else Some O.(m "c" - int 1 < m "x"));
              rule
-               (Upat.logical_not Upat.O.(c < x_sint))
-               (fun m -> Some O.(m "x" < m "c" + int 1));
+               (Upat.logical_not Upat.O.(c < x_int))
+               (fun m ->
+                 if Dtype.Value.(vmin (m "c") = Dtype.max (dtype (m "x"))) then
+                   None
+                 else Some O.(m "x" < m "c" + int 1));
              rule
-               Upat.O.(x_sint * int (-1) < var ~dtype:Dtype.sints "y" * c)
-               (fun m -> Some O.(m "y" * neg (m "c") < m "x"));
-             rule
-               Upat.O.(x_sint * int (-1) < c)
-               (fun m -> Some O.(neg (m "c") < m "x"));
-             rule
-               Upat.O.((cvar "c1" < x_sint) land (x_sint < cvar "c2"))
+               Upat.O.((cvar "c1" < x_int) land (x_int < cvar "c2"))
                (fun m ->
                  match (value (m "c1"), value (m "c2")) with
                  | (#Dtype.value as c1), (#Dtype.value as c2)

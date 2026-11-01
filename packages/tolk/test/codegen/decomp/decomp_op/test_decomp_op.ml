@@ -721,6 +721,44 @@ let late_rules_keep_values =
       cover "rewritten" (not (Ops.equal r e));
       equal const (at vars e) (at vars r))
 
+(* A negated comparison of an unsigned integer with a constant becomes a
+   comparison with the constant's neighbour, except at the type's bounds,
+   where the neighbour wraps: not (u < 0) holds for every u. *)
+let unsigned_negations_keep_values =
+  test "a negated unsigned comparison keeps its value at the type's bounds"
+    (fun () ->
+      let u = v ~dtype:Uint8 "u" 0 255 in
+      let c n = Ops.int ~dtype:Uint8 n in
+      List.iter
+        (fun e ->
+          let r = late_with (ops [ Cmplt ]) e in
+          List.iter
+            (fun n ->
+              let vars = [ ("u", i n) ] in
+              equal const (at vars e) (at vars r))
+            [ 0; 1; 5; 254; 255 ])
+        Ops.O.
+          [
+            Ops.logical_not (u < c 0);
+            Ops.logical_not (u < c 5);
+            Ops.logical_not (c 255 < u);
+            Ops.logical_not (c 5 < u);
+          ])
+
+(* A negated signed integer compared with a constant keeps its negation where
+   it wraps: at int8, -(-128) is -128, which is less than 3. *)
+let signed_negations_keep_values =
+  test "a negated signed comparison keeps its value where the negation wraps"
+    (fun () ->
+      let x = v ~dtype:Int8 "x" (-128) 127 in
+      let e = Ops.O.(x * int (-1) < int 3) in
+      let r = late_with (ops [ Cmplt ]) e in
+      List.iter
+        (fun n ->
+          let vars = [ ("x", i n) ] in
+          equal const (at vars e) (at vars r))
+        [ -128; -4; 0; 5 ])
+
 (* What a nest is against: a float32 constant, a float32 parameter, an int32
    constant or an int32 parameter. *)
 type against = Float_c of float | Float_p | Int_c of int | Int_p
@@ -1018,6 +1056,8 @@ let late =
     @ [
         truncations_keep_values;
         late_rules_keep_values;
+        unsigned_negations_keep_values;
+        signed_negations_keep_values;
         nests_keep_values;
         lowered_divisions;
         powers_at_width;
