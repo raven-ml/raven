@@ -142,8 +142,6 @@ let candidates =
         ("", ".dylib", [ "text" ]);
         ("", "", [ "text"; "dir" ]);
       ]
-  | _ when Sys.win32 ->
-      [ ("", ".dll", [ "text"; "dir" ]); ("lib", ".dll", [ "text" ]) ]
   | _ ->
       [
         ("lib", ".so", [ "elf"; "text"; "dir" ]);
@@ -179,10 +177,10 @@ let gen_layout =
     let+ kind = of_list kinds in
     (d, c, kind)
   in
-  (* Few entries are a library: on Windows only [p.dll] made as a file, one
-     entry in four. The tree holds up to a dozen entries and a search draws a
-     directory once more for each entry it holds, so that on every platform
-     each cover of the law below holds in one case in seven or more. *)
+  (* Few entries are a library: on Linux only an ELF [libp.so] or [libp.so.1],
+     about one entry in four. The tree holds up to a dozen entries and a search
+     draws a directory once more for each entry it holds, so that on every
+     platform each cover of the law below holds in one case in seven or more. *)
   (let* files = list ~size:(int_range 0 12) file in
    (* A name is made once in a directory. *)
    let files =

@@ -810,6 +810,7 @@ thread.
   `Symbolic.sym`), and a constant ordered after a store no longer folds to a
   bare constant (`Shape.symbolic`). A kernel dropped the stores either waited
   on.
+- `C.findlib` no longer looks for `p.dll` on Windows.
 - **Breaking:** a program takes its parameters in slot order, buffers and
   scalars interleaved. `Ops.program_info.vars` is `params`, every parameter by
   slot; `Shape.kernel_params` is the order a kernel takes them;

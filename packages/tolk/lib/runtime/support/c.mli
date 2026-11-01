@@ -29,11 +29,11 @@ val findlib : ?extra_paths:string list -> string -> string list -> string option
       [/usr/lib/wsl/lib], [/lib], [/lib64] and [/lib/]{!multiarch}; then
       [extra_paths] (default [[]]).
 
-    The library [p] in a directory is, on Windows, [p.dll]; on macOS, the first
-    of [libp.dylib], [p.dylib] and [p] (a framework's binary is a symbolic
-    link); elsewhere, a file [libp.so] or [libp.so.V], with [V] made of digits
-    and dots, that starts as an ELF file does, the first in the order of their
-    names. It is [None] if there is none. *)
+    The library [p] in a directory is, on macOS, the first of [libp.dylib],
+    [p.dylib] and [p] (a framework's binary is a symbolic link); elsewhere, a
+    file [libp.so] or [libp.so.V], with [V] made of digits and dots, that starts
+    as an ELF file does, the first in the order of their names. It is [None] if
+    there is none. *)
 
 val identity : string option -> string
 (** [identity file] names the library [file], as {!findlib} finds it: its path,

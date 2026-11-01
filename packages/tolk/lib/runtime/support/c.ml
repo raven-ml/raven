@@ -46,10 +46,7 @@ let is_versioned_so p f =
           (String.length f - String.length base))
 
 let library_in p dir =
-  if Sys.win32 then
-    let l = Filename.concat dir (p ^ ".dll") in
-    if is_file l then Some l else None
-  else if macos then
+  if macos then
     List.find_map
       (fun base ->
         let l = Filename.concat dir base in
