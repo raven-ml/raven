@@ -372,8 +372,10 @@ val of_io : device -> io_region -> access:access -> int -> memory
     live or Stopped, the cached memory that counts in the refusing budget,
     and for the host's budget the host's kept buffers. Then every device
     drains, and from the second round every device's free staging halves
-    return ({!return_half}), a full major collection runs and every device
-    drains again. *)
+    return ({!return_half}). The second round then runs a full major
+    collection and drains every device again, and so does a later round
+    once rig let go of a value that may hold memory, or a finaliser ran,
+    since the ladder's last collection began. *)
 
 val return_half : buffer -> unit
 (** [return_half b] returns [b], a staging half's buffer ({!Def.half}) that
@@ -427,15 +429,22 @@ val unload : device -> loaded -> entry option -> unit
     releases, as one, until [d] is Stopped if it is lost and not
     Stopped. *)
 
-val grow_queues : device -> round:int -> lacked:int -> int * int
-(** [grow_queues d ~round ~lacked] grows [d]'s queues for the parts its
+val never_collected : int
+(** [never_collected] is the [~seen] of a ladder's first ask
+    ({!grow_queues}). *)
+
+val grow_queues :
+  device -> round:int -> lacked:int -> seen:int -> int * int * int
+(** [grow_queues d ~round ~lacked ~seen] grows [d]'s queues for the parts its
     driver's room answered [RIG_GROW] for on this thread, a counted call
     ({!Rig_edge.Driver.grow}), as ask [round] of a submission's ladder
     ({!reclaiming}), [1] for its first, after the driver last lacked
-    [lacked] bytes, [0] for none. It is the round and the lacked bytes of
-    the submission's next ask: [round + 1] either way, after a round of the
-    ladder for [d]'s budget and the host's when the driver had no memory for
-    the growth. The caller asks room again after it. Raises
+    [lacked] bytes, [0] for none. [seen] stands for the ladder's last
+    collection, {!never_collected} before its first. It is the round, the
+    lacked bytes and the [seen] of the submission's next ask: [round + 1]
+    either way, after a round of the ladder for [d]'s budget and the host's
+    when the driver had no memory for the growth. The caller asks room again
+    after it. Raises
     {!Dev.Out_of_memory} once the driver has no memory for it at the last
     round, or if [round] is past the last, and [Invalid_argument] if [d] is
     the host or an io device. *)

@@ -218,6 +218,17 @@ external ba_address : ('a, 'b, 'c) Bigarray.Array1.t -> int
 let aligned_from = Int.max (64 * 1024) (4 * page)
 let () = heap_init aligned_from
 
+(* Counts a value rig lets go of that may hold memory the collector returns,
+   once it is gone: a submission's keep, an image, a borrowed host buffer's
+   bytes, a staging half's buffer. Each place that lets one go counts it, so
+   that a later round of the out-of-memory ladder collects again
+   ([collect]). The finalisers' runs count too (rig_heap.c). A program's
+   own drops, such as a [Rig.Buffer.free], count for no round: the ladder's
+   first collection follows them. *)
+external let_go : unit -> unit = "caml_rig_let_go" [@@noalloc]
+
+external let_go_count : unit -> int = "caml_rig_let_go_count" [@@noalloc]
+
 (* Smaller ones of a line or more start on one (rig_heap.c), so threads that
    write pieces of whole lines share none: on fudge (Core Ultra 5 235) a 64³
    float32 product, one 16-column sliver a thread, took 2.4 us with its
@@ -617,7 +628,9 @@ let give_back (e : entry) : Dev.given =
     match e.backing with
     | Driver_memory { region; _ } -> free_region d region
     | Io_memory { region; _ } -> free_io d region
-    | Kept _ -> Dev.Given
+    | Kept _ ->
+        let_go ();
+        Dev.Given
   in
   match given with
   | Given ->
@@ -937,7 +950,11 @@ let take_free_halves l =
 (* Whether a half of [l] has a buffer, which keeps [l]'s device's slot. *)
 let has_halves l = Array.exists (fun (h : half) -> h.buffer <> None) l.halves
 
-let return_half b = if buffer_free b "freed" = 1 then release_early b.mem.alloc
+let return_half b =
+  if buffer_free b "freed" = 1 then begin
+    release_early b.mem.alloc;
+    let_go ()
+  end
 
 (* Returns [d]'s free staging halves ([return_half]). *)
 let release_staging d =
@@ -1254,15 +1271,20 @@ let run_pending d : pending -> Dev.given = function
       | Given, None -> Given
       | Later, _ -> Later)
   | Unload (loaded, code) as p -> (
-      match (waits d p (unload_now d loaded), code) with
-      | Given, Some e when Dev.is_lost d || over_budget d e -> free_entry e
-      | Given, Some e ->
-          to_cache e;
-          Given
-      | Given, None -> Given
-      | Later, _ -> Later)
+      match waits d p (unload_now d loaded) with
+      | Later -> Later
+      | Given -> (
+          let_go ();
+          match code with
+          | Some e when Dev.is_lost d || over_budget d e -> free_entry e
+          | Some e ->
+              to_cache e;
+              Given
+          | None -> Given))
   | Unmap_word m -> unmap_word d m
-  | Let_go _ -> Given
+  | Let_go _ ->
+      let_go ();
+      Given
 
 (* Unloads [d]'s image [l] now, then gives back its code memory [code], or
    does both later ([waits]). *)
@@ -1297,7 +1319,8 @@ let is_let_go = function _, Let_go _ -> true | _ -> false
 let drop_let_go l =
   let front, back = l.pending in
   l.pending <-
-    (List.filter (fun p -> not (is_let_go p)) (front @ List.rev back), [])
+    (List.filter (fun p -> not (is_let_go p)) (front @ List.rev back), []);
+  let_go ()
 
 (* A forked child keeps nothing for an orphaned device: it routes the records
    the device's list gave and lets go of the values pending on it. Nothing
@@ -1419,38 +1442,62 @@ let drain_all () =
 
 let () = Dev.drain_all := drain_all
 
+(* [collect]'s mark before a ladder's first collection: no count. *)
+let never_collected = -1
+
+(* A round's collection, then a drain of every device: always the ladder's
+   first, since a program may have dropped buffers since any earlier one,
+   and later ones only once rig let go of a value or a finaliser ran
+   ([let_go]) since the ladder's last began. Only those make memory
+   unreachable that the last collection may have missed, such as a buffer
+   that a collected submission's keep held, or one a finaliser held, which
+   is unreachable only once the finaliser has run. [seen] is the count read
+   before the ladder's last collection, [never_collected] before its first;
+   the result is the one for the next round. *)
+let collect seen =
+  let n = let_go_count () in
+  if n = seen then seen
+  else begin
+    Gc.full_major ();
+    drain_all ();
+    n
+  end
+
 (* A round of the ladder for [pool]'s budget: every cached memory on any
    device that counts in it returns once its device's handed work is done,
    waited for; for the host, its kept buffers too. A device whose handed
    work holds back the return of memory that counts in it is waited for
    too, so that memory returns and a loss shows as one. Then every device
    drains, which returns collected memory and runs the unmaps that hold it;
-   from the second round a collection finds the memory unreachable since,
-   and every device drains again. *)
-let reclaim_round pool round =
+   from the second round free staging memory returns, and a collection
+   ([collect]) finds the memory unreachable since. [seen] and the result are
+   [collect]'s. *)
+let reclaim_round pool round seen =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
       if Dev.protect d holds_back (pool, d.live) && not (Dev.is_lost d) then
         wait_for d (Dev.submitted d);
       release_cache_if ~wait:true d (charged pool));
   drain_all ();
-  if round >= 2 then begin
+  if round < 2 then seen
+  else begin
     release_staging Dev.host;
     Dev.iter release_staging;
-    Gc.full_major ();
-    drain_all ()
+    collect seen
   end
 
 (* A round may find [d] lost, such as by a fault its wait finds. Its memory
    returns only once its close has stopped it, so the allocation raises the
    loss. *)
-let rec reclaim_from d pool n f round =
+let rec reclaim_from d pool n f round seen =
   if round >= rounds then raise (Dev.Out_of_memory (d, n));
-  reclaim_round pool round;
+  let seen = reclaim_round pool round seen in
   if Dev.is_lost d then Dev.raise_lost d;
-  match f () with Some x -> x | None -> reclaim_from d pool n f (round + 1)
+  match f () with
+  | Some x -> x
+  | None -> reclaim_from d pool n f (round + 1) seen
 
-let reclaiming d ~pool n f = reclaim_from d pool n f 1
+let reclaiming d ~pool n f = reclaim_from d pool n f 1 never_collected
 
 (* A driver's entry raises [Invalid_argument] for a function that needs more
    than the device offers, which loses nothing. *)
@@ -1492,20 +1539,21 @@ let kernel_entry image f =
    ladder, after a Short of [lacked] bytes, or 0. Every answer takes a round,
    so a submission asks at most [rounds] times whatever its room answers. A
    round reclaims the host's budget too: a driver may grow its queues in
-   pinned memory, which counts there. Only a driver's room answers that its
-   queues grow. *)
-let grow_queues d ~round ~lacked =
+   pinned memory, which counts there; its collection is the device's round's
+   when that one let go of nothing. Only a driver's room answers that its
+   queues grow. [seen] is [collect]'s. *)
+let grow_queues d ~round ~lacked ~seen =
   if round > rounds then raise (Dev.Out_of_memory (d, lacked));
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
       match Dev.counted d Dev.Any (fun () -> D.grow h) with
-      | Rig_edge.Grown -> (round + 1, lacked)
+      | Rig_edge.Grown -> (round + 1, lacked, seen)
       | Short n ->
           if round >= rounds then raise (Dev.Out_of_memory (d, n));
-          reclaim_round d round;
-          reclaim_round Dev.host round;
-          (round + 1, n))
+          let seen = reclaim_round d round seen in
+          let seen = reclaim_round Dev.host round seen in
+          (round + 1, n, seen))
   | Io _ | Host -> invalid_argf "Rig: %s has no queues to grow" d.name
 
 (* Allocation *)

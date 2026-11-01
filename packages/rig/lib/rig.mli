@@ -797,9 +797,13 @@ val failure : unit -> string option
     {- An allocation that its budget or its driver refuses first reclaims.
        rig frees the cached memory charged to that budget, waits for the work
        that holds back other collected memory, from the second round on
-       returns staging memory that no copy holds and runs the collector, and
-       tries again. The allocation raises {!Out_of_memory}
-       after three such rounds.}
+       returns staging memory that no copy holds, and tries again. The second
+       round also runs the collector before it tries. The third runs it again
+       only if, since the second's run began, a finaliser ran or rig let go
+       of a value that may hold memory, such as a collected submission's
+       [keep] ({!Submission.make}): only those make memory unreachable that
+       the second run missed. The allocation raises {!Out_of_memory} after
+       three such rounds.}
     {- A growth of a device's queues ({!submit}) that its driver has no
        memory for reclaims as an allocation does, both the device's budget
        and the host's, as the driver may grow them in memory that counts in

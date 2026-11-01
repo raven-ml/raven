@@ -585,6 +585,34 @@ let test_refused_lost () =
     (function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false)
     (fun () -> B.create d (32 * kib))
 
+(* A buffer that only a collected submission's keep holds returns to an
+   allocation its budget refuses: the second round's collection finds the
+   submission, the drain after it lets go of the keep, and the third round
+   collects again. *)
+let test_refused_kept () =
+  let d, p = P.open_ "memory:refused-kept" in
+  Rig.set_budget d (4 * kib);
+  let[@inline never] kept () =
+    let b = B.create d (4 * kib) in
+    ignore (submit (Sub.make ~keep:b d [||]))
+  in
+  kept ();
+  ignore (P.run p);
+  equal int (4 * kib) (B.length (B.create d (4 * kib)))
+
+(* A refusal that no collection can answer collects once when no finaliser
+   runs and rig lets go of nothing meanwhile. *)
+let test_refused_collects_once () =
+  let d, _ = P.open_ "memory:refused-once" in
+  Rig.set_budget d (4 * kib);
+  let live = B.create d (4 * kib) in
+  Gc.full_major ();
+  let forced () = (Gc.quick_stat ()).forced_major_collections in
+  let before = forced () in
+  raises_match (out_of_memory d (4 * kib)) (fun () -> B.create d (4 * kib));
+  equal ~msg:"collections" int 1 (forced () - before);
+  ignore (Sys.opaque_identity live)
+
 let test_free_cache () =
   let d, p = P.open_ "memory:free-cache" in
   let at = dropped d (4 * kib) in
@@ -1206,9 +1234,11 @@ let test_host_cache () =
    exceed it. A program opens the device, then each domain allocates on it up
    to five times against a budget of nine buffers, so the last allocation
    races for the room. Each refusal runs the out-of-memory ladder, whose
-   collections stop every domain, and a program runs 50 times: [~steps:1]
-   keeps other calls out, so a program refuses at most once. A program that
-   draws no open calls nothing, which [~count] allows for. *)
+   collection stops every domain, and a program runs 50 times: [~steps:1]
+   keeps other calls out, so a program refuses at most once. Every program
+   that opens is the same one, run 50 times, and half the programs draw no
+   open and call nothing: [~count:16] is for one to open, which all but
+   2^-16 of the seeds do, and the covers fail the others. *)
 type budgeted = { d : Rig.t; live : B.t list ref; lock : Mutex.t }
 type budgeted_model = { mutable held : int }
 
@@ -1369,6 +1399,10 @@ let tests =
           test_refused_waits;
         test "an allocation the budget refuses raises the loss of that work"
           test_refused_lost;
+        test "a buffer a collected submission kept returns to a refusal"
+          test_refused_kept;
+        test "a refusal that lets go of nothing collects once"
+          test_refused_collects_once;
         test "an allocation the driver refuses collects unreachable buffers"
           test_collects;
         test "set_budget returns cached memory, never live memory"

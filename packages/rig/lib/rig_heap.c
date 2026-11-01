@@ -409,7 +409,25 @@ static void cycle_ended(void) {
    itself. */
 extern uintnat caml_major_cycles_completed;
 
-static caml_timing_hook previous_slice_end;
+/* The hook each of rig's replaced, which it calls after its own work. A
+   hook may run on another domain as soon as it is installed, so its
+   predecessor is stored before ([chain]). */
+static _Atomic caml_timing_hook previous_slice_end;
+
+/* Calls the hook [previous] holds, if any. */
+static void call_previous(_Atomic caml_timing_hook *previous) {
+  caml_timing_hook h = atomic_load(previous);
+  if (h != NULL) h();
+}
+
+/* Installs [mine] in [hook], with the hook it replaces in [previous], stored
+   before [mine] is installed. */
+static void chain(_Atomic caml_timing_hook *hook,
+                  _Atomic caml_timing_hook *previous, caml_timing_hook mine) {
+  caml_timing_hook old = atomic_load(hook);
+  do atomic_store(previous, old);
+  while (!atomic_compare_exchange_weak(hook, &old, mine));
+}
 
 static void slice_end(void) {
   uintnat ended = caml_major_cycles_completed;
@@ -419,7 +437,40 @@ static void slice_end(void) {
                                               memory_order_relaxed,
                                               memory_order_relaxed))
     cycle_ended();
-  if (previous_slice_end != NULL) previous_slice_end();
+  call_previous(&previous_slice_end);
+}
+
+/* The values that rig let go of and that may hold memory the collector
+   returns, and the runs of finalisers, so far, on any domain. What either
+   lets go of may become unreachable after a collection began, which then
+   misses it, so the out-of-memory ladder collects again only once this
+   count changed. A batch of finalisers counts as it begins and as it ends:
+   the end comes after what the batch let go of, and a finaliser that raises
+   skips it, which the begin covers. */
+static _Atomic uintnat let_go_count;
+
+static _Atomic caml_timing_hook previous_finalise_begin;
+static _Atomic caml_timing_hook previous_finalise_end;
+
+static void finalise_begin(void) {
+  atomic_fetch_add(&let_go_count, 1);
+  call_previous(&previous_finalise_begin);
+}
+
+static void finalise_end(void) {
+  atomic_fetch_add(&let_go_count, 1);
+  call_previous(&previous_finalise_end);
+}
+
+value caml_rig_let_go(value unit) {
+  (void)unit;
+  atomic_fetch_add(&let_go_count, 1);
+  return Val_unit;
+}
+
+value caml_rig_let_go_count(value unit) {
+  (void)unit;
+  return Val_long(atomic_load(&let_go_count));
 }
 
 /* Half the host's last-level cache, which [caml_rig_heap_init] reads once. */
@@ -777,11 +828,11 @@ static void heap_finalize(value v) {
 /* Whether [caml_rig_heap_init] ran in this process. */
 static _Atomic int heap_initialized;
 
-/* Builds the operations and installs the slice hook as the library
-   initializes, with the size from which buffers start on a page. A process
-   holds one copy of this file however many copies of rig's OCaml modules a
-   toplevel loads, so a second call raises: installed twice, the hook would
-   be its own predecessor and [slice_end] would call itself forever. An
+/* Builds the operations and installs the slice and finaliser hooks as the
+   library initializes, with the size from which buffers start on a page. A
+   process holds one copy of this file however many copies of rig's OCaml
+   modules a toplevel loads, so a second call raises: installed twice, a hook
+   would be its own predecessor and would call itself forever. An
    interactive toplevel goes on after the failure, holding the second copies
    of the modules initialized before it, so the message asks for a restart. */
 value caml_rig_heap_init(value v_kept_from) {
@@ -795,8 +846,9 @@ value caml_rig_heap_init(value v_kept_from) {
   heap_cycle_floor = heap_llc_bytes() / 2;
   heap_ops = caml_ba_ops;
   heap_ops.finalize = heap_finalize;
-  previous_slice_end = atomic_exchange_explicit(
-      &caml_major_slice_end_hook, slice_end, memory_order_relaxed);
+  chain(&caml_major_slice_end_hook, &previous_slice_end, slice_end);
+  chain(&caml_finalise_begin_hook, &previous_finalise_begin, finalise_begin);
+  chain(&caml_finalise_end_hook, &previous_finalise_end, finalise_end);
   return Val_unit;
 }
 

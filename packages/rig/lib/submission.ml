@@ -1326,21 +1326,21 @@ let rec wait_points s c n i =
           wait_points s c n (i + 1)
         end
 
-let rec hand_over s c run round lacked =
+let rec hand_over s c run round lacked seen =
   let d = s.dev in
   let r = c_submit s.c c run in
   if r = Dev.Answer.ok then Point.make d.index (call_value c)
-  else if r = Dev.Answer.busy then hand_over s c run round lacked
+  else if r = Dev.Answer.busy then hand_over s c run round lacked seen
   else if r = Dev.Answer.no_room then begin
     let at = call_no_room_at c in
     let w = Dev.word d in
     if w < at then Dev.wait d (w + 1);
-    hand_over s c run round lacked
+    hand_over s c run round lacked seen
   end
   else if r = Dev.Answer.no_memory then raise Out_of_memory
   else if r = Dev.Answer.grow then
-    let round, lacked = Memory.grow_queues d ~round ~lacked in
-    hand_over s c run round lacked
+    let round, lacked, seen = Memory.grow_queues d ~round ~lacked ~seen in
+    hand_over s c run round lacked seen
   else if r = Dev.Answer.never then
     invalid_argf
       "Rig.%s: the parts never fit %s's queues, name work its driver does not \
@@ -1388,7 +1388,7 @@ let rec go s c run buffers waits k =
   let n = Array.length s.uses in
   if k >= n then begin
     wait_points s c (call_collect s.c c run waits) 0;
-    hand_over s c run 1 0
+    hand_over s c run 1 0 Memory.never_collected
   end
   else
     let m = min 4 (n - k) in
