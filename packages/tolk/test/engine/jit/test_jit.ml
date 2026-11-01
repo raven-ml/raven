@@ -695,6 +695,38 @@ let unbinds_capture_variables () =
         (Run.values Int32 dst))
     [ 1; 5; 7 ]
 
+(* Without arenas, the intermediate [mid] of a capture keeps storage of its own,
+   of its size and type, where with them it is a view of an arena of bytes. *)
+let storage_of_lowered ~arenas =
+  let linear, out, src = capture_with_variables () in
+  let lowered =
+    Jit.jit_lower ~arenas
+      ~targets:(fun n -> Engine.target (devices n))
+      ~held_bufs:[ Ops.buf_uop out; src ] ~inputs:[] ~input_vars:[] linear
+  in
+  List.filter_map
+    (fun u ->
+      if Ops.op u = Op.Alloc then Some (Shape.max_numel u, Ops.dtype u)
+      else None)
+    (Ops.toposort ~calls:Skip lowered)
+
+let arenas =
+  group "jit_lower › arenas"
+    [
+      test "without arenas, each buffer not held is storage of its own"
+        (fun () ->
+          equal
+            (list (pair int Dtypes.dtype))
+            [ (4, Dtype.Int32) ]
+            (storage_of_lowered ~arenas:false));
+      test "with arenas, a buffer not held is a view of an arena of bytes"
+        (fun () ->
+          equal
+            (list (pair int Dtypes.dtype))
+            [ (256, Dtype.Int8) ]
+            (storage_of_lowered ~arenas:true));
+    ]
+
 let captured_variables =
   group "jit_lower › variables"
     [
@@ -744,4 +776,12 @@ let drawn_laws =
 let () =
   exit
     (run "Jit"
-       [ captures; recorded; replays; phased; captured_variables; drawn_laws ])
+       [
+         captures;
+         recorded;
+         replays;
+         phased;
+         captured_variables;
+         arenas;
+         drawn_laws;
+       ])

@@ -2095,6 +2095,146 @@ let storage_per_run () =
   less int ~msg:"after a run" ~than:(before + one) (allocated ());
   ignore (Sys.opaque_identity s)
 
+(* Storage made per run, against a model of each buffer's first and last use
+
+   A schedule of calls [x <- y + z] over values of [per_run_size] floats on a
+   memory device of its own: value 0 is parameter 1, the others storage the
+   schedule makes, and a last call writes parameter 0 from the newest value and
+   value 0. A buffer lives from the call that writes it to the last that reads
+   it, so the most a run holds beyond its parameters is the most buffers live
+   at one call; a budget below it runs out of memory, and one at it does not. *)
+
+let per_run_size = 64
+let per_run_bytes = 4 * per_run_size
+
+let per_run_device =
+  lazy (Result.get_ok (Rig.memory_device "per-run-model"))
+
+let per_run_add =
+  lazy
+    (let open Ops.O in
+     let buffer slot = Shape.placeholder ~slot [ per_run_size ] Float32 in
+     let i = Ops.range (Int per_run_size) [ 0 ] in
+     let at b = Ops.index (buffer b) [ i ] in
+     Codegen.to_program
+       (Ops.sink ~kernel:(Ops.kernel_info ~name:"per_run_add" ())
+          [ Ops.end_ (Ops.store (at 0) (at 1 + at 2)) [ i ] ])
+       (Lazy.force clang))
+
+(* The model: each call's value and the two it reads, newest first. *)
+type uses = { count : int; reads : (int * int * int) list }
+
+(* The schedule: each value's node, newest first, and its calls. *)
+type calls = { nodes : Ops.t list; calls : Ops.t list }
+
+let per_run_param slot =
+  Shape.param ~shape:[ Ops.Int per_run_size ] ~device:"PER_RUN" slot Float32
+
+let pick n k = k mod n
+
+let model_add y z (m : uses) =
+  let y = pick m.count y and z = pick m.count z in
+  { count = m.count + 1; reads = (m.count, y, z) :: m.reads }
+
+let system_add y z (c : calls) =
+  let n = List.length c.nodes in
+  let node k = List.nth c.nodes (n - 1 - pick n k) in
+  let x = Ops.new_buffer "PER_RUN" per_run_size Float32 in
+  {
+    nodes = x :: c.nodes;
+    calls = Ops.call (Lazy.force per_run_add) [ x; node y; node z ] :: c.calls;
+  }
+
+let input_values = Array.init per_run_size (fun i -> Float.of_int (i + 1))
+
+(* The most bytes live at one call, and parameter 0's values. *)
+let model_run (m : uses) =
+  let calls = List.rev ((-1, m.count - 1, 0) :: m.reads) in
+  let first = Array.make m.count max_int and last = Array.make m.count (-1) in
+  List.iteri
+    (fun i (x, y, z) ->
+      if x > 0 then first.(x) <- i;
+      List.iter (fun v -> if v > 0 then last.(v) <- i) [ x; y; z ])
+    calls;
+  let live i =
+    let n = ref 0 in
+    for v = 1 to m.count - 1 do
+      if first.(v) <= i && i <= last.(v) then incr n
+    done;
+    !n
+  in
+  let peak = ref 0 in
+  List.iteri (fun i _ -> peak := max !peak (live i)) calls;
+  let value = Array.make m.count input_values in
+  List.iter
+    (fun (x, y, z) -> value.(x) <- Array.map2 ( +. ) value.(y) value.(z))
+    (List.rev m.reads);
+  ( !peak * per_run_bytes,
+    floats (Array.map2 ( +. ) value.(m.count - 1) value.(0)) )
+
+(* The least budget beyond what the device holds that a run fits in, found by
+   bisection, and parameter 0's values after a run. *)
+let system_run (c : calls) =
+  let d = Lazy.force per_run_device in
+  let newest = List.hd c.nodes and input = per_run_param 1 in
+  let last = Ops.call (Lazy.force per_run_add) [ per_run_param 0; newest; input ] in
+  let linear = Ops.v Op.Linear ~src:(List.rev (last :: c.calls)) in
+  let devices _ = d in
+  let s = Engine.link ~devices ~storage:Per_run (compile ~devices linear) in
+  let out = Run.buffer d Float32 (floats (Array.make per_run_size 0.)) in
+  let slots = [| Some out; Some (Run.buffer d Float32 (floats input_values)) |] in
+  (* The memory of earlier cases returns once collected. A run returns what it
+     makes, and the device's work is done when it is submitted, so after a run
+     its memory is back in the cache. *)
+  let settled () =
+    Rig.free_cache d;
+    Rig.allocated d
+  in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Rig.free_cache d
+  done;
+  let held = settled () in
+  let fits extra =
+    Rig.set_budget d (held + extra);
+    let fit =
+      match Engine.run s slots with
+      | () -> true
+      | exception Rig.Out_of_memory _ -> false
+    in
+    Rig.set_budget d max_int;
+    ignore (settled ());
+    fit
+  in
+  let rec least lo hi =
+    if lo >= hi then lo
+    else
+      let mid = (lo + hi) / 2 in
+      if fits mid then least lo mid else least (mid + 1) hi
+  in
+  let peak = least 0 (List.length c.nodes * per_run_bytes) in
+  Engine.run s slots;
+  (peak, Run.values Float32 out)
+
+let per_run_model =
+  let schedule = abstract "s" in
+  let k = Gen.int_range 0 63 in
+  stateful ~count:40 ~steps:12
+    "a run makes each buffer at its first call and returns it after its last"
+    [
+      command "start"
+        (Gen.unit @-> makes schedule)
+        (fun () -> { count = 1; reads = [] })
+        (fun () -> { nodes = [ per_run_param 1 ]; calls = [] });
+      command "add" (k @-> k @-> schedule ^-> makes schedule) model_add
+        system_add;
+      command "add" (k @-> k @-> schedule ^-> makes schedule) model_add
+        system_add;
+      command "run"
+        (schedule ^-> returns (pair int values))
+        model_run system_run;
+    ]
+
 (* A run keeps none of the buffers it was given: dropped after it, they return
    to their device while the schedule lives. *)
 let slots_let_go () =
@@ -2255,6 +2395,7 @@ let runs =
         holds_its_storage;
       test "a schedule linked per run holds no storage between runs"
         storage_per_run;
+      per_run_model;
       test "a run keeps none of the buffers it was given" slots_let_go;
       test "each kernel of a run is in a span of the host under a profile"
         spans_each_kernel;

@@ -969,9 +969,11 @@ thread.
 - A CPU program split into blocks over many buffers gives its values on
   x86_64 Windows, where they were garbage: its entry copies its parameters
   inline, where Clang called the process's `memcpy`, of another convention.
-- `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run
-  and returns it once the run's work is done, so the schedule holds none
-  between runs. A run keeps none of the buffers it was given once it returns.
+- `Tolk_engine.link ~storage:Per_run` makes a schedule's storage at each run,
+  each buffer before the first call that reads it and returned after the last,
+  so the schedule holds none between runs and a run holds only what its calls
+  need at once. `Jit.jit_lower ~arenas:false` leaves the buffers out of arenas
+  for it. A run keeps none of the buffers it was given once it returns.
 - `Dtype.const` wraps an integer to a signed type too: 300 as an `Int8` is
   44, as it was through `Ops`' reads at the width.
 - A HIP kernel that calls a body compiles: its program defines the body's

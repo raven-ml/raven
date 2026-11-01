@@ -182,14 +182,9 @@ type word_kind = Computed of (env -> int) | Trip
 (* Inputs *)
 
 (* An input of the program, a buffer a run is given: a parameter's buffer, by
-   slot, a buffer bound at link, with its hold, which keeps every call from
-   consuming what each run accesses while the schedule lives, or storage each
-   run makes of its bytes on its device, starting at its alignment and
-   phase. *)
-type input =
-  | Slot of int
-  | Bound of Rig.Buffer.t * Rig.Claim.hold
-  | Made of { device : Rig.t; bytes : int; start : int * int }
+   slot, or a buffer bound at link, with its hold, which keeps every call from
+   consuming what each run accesses while the schedule lives. *)
+type input = Slot of int | Bound of Rig.Buffer.t * Rig.Claim.hold
 
 type storage = Linked | Per_run
 
@@ -233,7 +228,6 @@ type builder = {
   named : string -> Rig.t;
   separate : bool;
   bound : Rig.Buffer.t Ops.Tbl.t;
-  storage : storage;
   cells : (string, int) Hashtbl.t;
   rigs : Rig.t Dynarray.t;
   memory : Rig_program.memory Dynarray.t;
@@ -426,42 +420,17 @@ let first_byte b base d =
       (Format.asprintf "%a" Ops.pp base)
   else p
 
-(* The input of storage [base] that each run makes on [d]. An io device's
-   storage starts anywhere. *)
-let made_input b base d =
-  match Ops.Tbl.find_opt b.memories base with
-  | Some i -> i
-  | None ->
-      let n = max 1 (bytes base) in
-      let start = if Rig.computes d then start base else (1, 0) in
-      let i =
-        add_input b
-          (Made { device = d; bytes = n; start })
-          { device = device_index b d; bytes = n }
-      in
-      Ops.Tbl.replace b.memories base i;
-      i
-
-(* Storage made for [base]: at link, or by each run. *)
+(* Storage made for [base] at link. *)
 let memory_place b base offset =
   let d = b.named (name base) in
-  match b.storage with
-  | Per_run ->
-      {
-        place = Input (made_input b base d);
-        offset;
-        device = d;
-        start = start base;
-      }
-  | Linked ->
-      let first = first_byte b base d in
-      let memory = memory b base d ~first in
-      {
-        place = Memory { memory; first; bytes = max 1 (bytes base) };
-        offset;
-        device = d;
-        start = start base;
-      }
+  let first = first_byte b base d in
+  let memory = memory b base d ~first in
+  {
+    place = Memory { memory; first; bytes = max 1 (bytes base) };
+    offset;
+    device = d;
+    start = start base;
+  }
 
 (* Where the view [u] lies: in a parameter's buffer, which a run gives; in
    bound storage; or in storage made at link. *)
@@ -662,7 +631,7 @@ let note_start b (l : located) =
             "a bound buffer of %s starts %d bytes past a multiple of %d, not %d"
             (Rig.name (Rig.Buffer.device buf))
             (phase buf align) align p
-      | Bound _ | Made _ -> ())
+      | Bound _ -> ())
 
 (* The launch of the compiled program [prg] that [call] makes on [d]. A host
    program runs on its device's host. *)
@@ -899,8 +868,13 @@ and call b e =
 
 (* Linked schedules *)
 
-type t = {
-  lock : Mutex.t; (* the frame is shared: one run at a time *)
+(* Storage each run of a schedule linked per run makes: [bytes] of [device]
+   starting at the alignment and phase [at], in the slot that the calls from
+   its first to its last read it from. *)
+type made = { slot : int; device : Rig.t; bytes : int; at : int * int }
+
+(* A loaded program of rig's that runs consecutive calls of a schedule. *)
+type part = {
   loaded : Rig_program.loaded;
   params : (int * Rig.t * int) list;
       (* the parameters the runs bind: slot, device and bytes *)
@@ -915,13 +889,26 @@ type t = {
   idle : Rig.Buffer.t;
       (* what the frame's inputs hold between runs, so that the schedule keeps
          none of a run's buffers *)
+  makes : made list; (* the storage a run makes before the part *)
+  frees : made list; (* and returns after it *)
+}
+
+type t = {
+  lock : Mutex.t; (* the frames are shared: one run at a time *)
+  parts : part array;
+  given : (int * Rig.t * int) list;
+      (* the parameters the caller binds: slot, device and bytes *)
+  given_starts : (int * (int * int)) list;
+      (* the given parameters kernels read, and where their buffers start *)
+  width : int; (* the slots a run binds, the made storage's included *)
+  made : made array;
   calls : int;
   kernels : kernel list;
 }
 
-(* The schedule [linear] that [b] links. *)
-let assemble b linear =
-  List.iter (entry b) (Ops.src linear);
+(* The calls [entries] that [b] links as a part. *)
+let assemble b entries ~makes ~frees =
+  List.iter (entry b) entries;
   flush b;
   let rigs = Dynarray.to_list b.rigs in
   let inputs = Dynarray.to_list b.inputs in
@@ -945,7 +932,6 @@ let assemble b linear =
   let inputs = Array.of_list (List.map fst inputs) in
   let idle = Rig.Buffer.of_string "" in
   {
-    lock = Mutex.create ();
     loaded;
     params = List.rev b.params;
     starts = Hashtbl.fold (fun k v l -> (k, v) :: l) b.starts [];
@@ -960,17 +946,128 @@ let assemble b linear =
         step_points = Rig_program.step_points loaded;
       };
     idle;
-    calls = List.length (Ops.src linear);
-    kernels = List.rev b.kernels;
+    makes;
+    frees;
   }
 
 (* Ends the holds of the buffers bound in [b], whose link raised, so that a
    donation right after the raise consumes their memory. *)
 let release_bound (b : builder) =
   Dynarray.iter
-    (function
-      | Bound (_, h), _ -> Rig.Claim.release h | (Slot _ | Made _), _ -> ())
+    (function Bound (_, h), _ -> Rig.Claim.release h | Slot _, _ -> ())
     b.inputs
+
+let builder ~fn ~separate ~devices bound =
+  {
+    fn;
+    named = devices;
+    separate;
+    bound;
+    cells = Hashtbl.create 16;
+    rigs = Dynarray.create ();
+    memory = Dynarray.create ();
+    memories = Ops.Tbl.create 16;
+    images = Dynarray.create ();
+    image_of = Hashtbl.create 16;
+    inputs = Dynarray.create ();
+    slot_inputs = Hashtbl.create 16;
+    bound_inputs = [];
+    params = [];
+    starts = Hashtbl.create 16;
+    words = Dynarray.create ();
+    var_words = Hashtbl.create 16;
+    computed = Ops.Tbl.create 16;
+    trips = Ops.Tbl.create 16;
+    steps = [];
+    pending = None;
+    kernels = [];
+  }
+
+(* Splitting a schedule linked per run
+
+   Each storage node that no buffer is bound to becomes a parameter in a slot
+   past the caller's, which each run binds to storage it makes before the first
+   call that reads the node and returns after the last. The calls are cut into
+   parts wherever storage starts or ends between two of them: a part is one
+   program of rig's, whose inputs it binds once, before its first step. A range
+   around calls is one call. Where calls 0 and 1 read [a] and call 2 reads [b],
+   calls 0 and 1 are a part, which makes [a] and returns it, and call 2 another,
+   which makes [b] and returns it. *)
+
+(* The storage nodes that [e] reads and no buffer is bound to. *)
+let made_storage bound e =
+  List.filter
+    (fun u ->
+      match Ops.op u with
+      | Op.Alloc -> true
+      | Op.Buffer -> not (Ops.Tbl.mem bound u)
+      | _ -> false)
+    (Ops.toposort ~calls:Skip e)
+
+let first_free_slot linear =
+  List.fold_left
+    (fun n u ->
+      match Ops.arg u with
+      | Ops.Param p when is_slot u -> max n (p.slot + 1)
+      | _ -> n)
+    0
+    (Ops.toposort ~calls:Skip linear)
+
+(* The parts of [linear] linked per run: each part's calls, and the storage made
+   before it and returned after it. *)
+let per_run_parts ~named bound linear =
+  let entries = Array.of_list (Ops.src linear) in
+  let reads = Array.map (made_storage bound) entries in
+  let first = Ops.Tbl.create 16 and last = Ops.Tbl.create 16 in
+  let order = ref [] in
+  Array.iteri
+    (fun i us ->
+      List.iter
+        (fun u ->
+          if not (Ops.Tbl.mem first u) then begin
+            Ops.Tbl.replace first u i;
+            order := u :: !order
+          end;
+          Ops.Tbl.replace last u i)
+        us)
+    reads;
+  let next = first_free_slot linear in
+  let made =
+    List.mapi
+      (fun k u ->
+        let d = named (name u) in
+        let at = if Rig.computes d then start u else (1, 0) in
+        (u, { slot = next + k; device = d; bytes = max 1 (bytes u); at }))
+      (List.rev !order)
+  in
+  let param (u, m) =
+    let align, phase = start u in
+    ( u,
+      Shape.param
+        ~shape:[ Ops.Int (Shape.max_numel u) ]
+        ?device:(Ops.device u) ~phase ~align m.slot (Ops.dtype u) )
+  in
+  let entries =
+    Array.of_list
+      (Ops.src
+         (Ops.substitute ~calls:Skip ~pass:Once linear (List.map param made)))
+  in
+  let starting i = List.filter (fun (u, _) -> Ops.Tbl.find first u = i) made
+  and ending i = List.filter (fun (u, _) -> Ops.Tbl.find last u = i) made in
+  let n = Array.length entries in
+  let parts = ref [] and calls = ref [] and makes = ref [] and frees = ref [] in
+  for i = 0 to n - 1 do
+    calls := entries.(i) :: !calls;
+    makes := List.map snd (starting i) @ !makes;
+    frees := List.map snd (ending i) @ !frees;
+    if i = n - 1 || !frees <> [] || starting (i + 1) <> [] then begin
+      parts := (List.rev !calls, List.rev !makes, List.rev !frees) :: !parts;
+      calls := [];
+      makes := [];
+      frees := []
+    end
+  done;
+  (List.rev !parts, Array.of_list (List.map snd made))
 
 let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
   let fn = "Tolk_engine.link" in
@@ -987,39 +1084,65 @@ let link_with ~separate ~devices ?(bound = []) ?(storage = Linked) linear =
       then fail fn "a storage node is not bound to %d bytes of %s" (bytes u) n;
       Ops.Tbl.replace tbl u buf)
     bound;
-  let b =
-    {
-      fn;
-      named = devices;
-      separate;
-      bound = tbl;
-      storage;
-      cells = Hashtbl.create 16;
-      rigs = Dynarray.create ();
-      memory = Dynarray.create ();
-      memories = Ops.Tbl.create 16;
-      images = Dynarray.create ();
-      image_of = Hashtbl.create 16;
-      inputs = Dynarray.create ();
-      slot_inputs = Hashtbl.create 16;
-      bound_inputs = [];
-      params = [];
-      starts = Hashtbl.create 16;
-      words = Dynarray.create ();
-      var_words = Hashtbl.create 16;
-      computed = Ops.Tbl.create 16;
-      trips = Ops.Tbl.create 16;
-      steps = [];
-      pending = None;
-      kernels = [];
-    }
+  let parts, made =
+    match storage with
+    | Linked -> ([ (Ops.src linear, [], []) ], [||])
+    | Per_run -> per_run_parts ~named:devices tbl linear
   in
-  match assemble b linear with
-  | t -> t
+  let built = ref [] in
+  match
+    List.map
+      (fun (entries, makes, frees) ->
+        let b = builder ~fn ~separate ~devices tbl in
+        built := b :: !built;
+        (b, assemble b entries ~makes ~frees))
+      parts
+  with
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      release_bound b;
+      List.iter release_bound !built;
       Printexc.raise_with_backtrace e bt
+  | linked ->
+      let is_made slot = Array.exists (fun m -> m.slot = slot) made in
+      let given = ref [] and given_starts = ref [] in
+      List.iter
+        (fun (_, (p : part)) ->
+          List.iter
+            (fun ((slot, _, _) as g) ->
+              let seen = List.exists (fun (s, _, _) -> s = slot) !given in
+              if not (is_made slot || seen) then given := g :: !given)
+            p.params;
+          List.iter
+            (fun (slot, ((align, ph) as s)) ->
+              if not (is_made slot) then
+                match List.assoc_opt slot !given_starts with
+                | None -> given_starts := (slot, s) :: !given_starts
+                | Some s' when s' = s -> ()
+                | Some (align', ph') ->
+                    List.iter release_bound !built;
+                    fail fn
+                      "slot %d is accessed %d bytes past a multiple of %d and \
+                       %d past %d"
+                      slot ph align ph' align')
+            p.starts)
+        linked;
+      let width =
+        List.fold_left
+          (fun n (s, _, _) -> max n (s + 1))
+          (Array.fold_left (fun n m -> max n (m.slot + 1)) 0 made)
+          !given
+      in
+      {
+        lock = Mutex.create ();
+        parts = Array.of_list (List.map snd linked);
+        given = List.rev !given;
+        given_starts = !given_starts;
+        width;
+        made;
+        calls = List.length (Ops.src linear);
+        kernels =
+          List.concat_map (fun ((b : builder), _) -> List.rev b.kernels) linked;
+      }
 
 let link ~devices ?bound ?storage linear =
   link_with
@@ -1058,57 +1181,74 @@ let check_slots t slots =
           if Rig.Buffer.length buf < n then
             fail fn "slot %d takes %d bytes, not %d" slot n
               (Rig.Buffer.length buf))
-    t.params;
-  check_starts fn slots t.starts
+    t.given;
+  check_starts fn slots t.given_starts
 
-(* Returns the storage a run made once the work on it is done. *)
-let release made =
-  List.iter
-    (fun b -> ignore (Rig.Buffer.free ~why:"a run's storage" b : bool))
-    made
-
-(* Ends a run: the frame lets its buffers go, and its storage is returned. *)
-let finish t made =
-  Array.fill t.frame.inputs 0 (Array.length t.frame.inputs) t.idle;
-  release made
-
-(* Writes the run's frame: its words, then its inputs. Storage the run makes is
-   allocated here and returned by [release], and is the answer. *)
-let frame t ~vars slots =
-  let env = t.env in
+(* Writes the words of [p]'s frame: the variables [vars] binds, and the values
+   computed from them. *)
+let words (p : part) ~vars =
+  let env = p.env in
   Array.fill env.set 0 (Array.length env.set) false;
   (* The first binding of a name binds it. *)
   List.iter
     (fun (name, v) ->
-      match Hashtbl.find_opt t.cells name with
+      match Hashtbl.find_opt p.cells name with
       | Some i when not env.set.(i) ->
           env.values.(i) <- v;
           env.set.(i) <- true
       | Some _ | None -> ())
     vars;
-  let ints = t.frame.ints in
-  for w = 0 to Array.length t.words - 1 do
-    match t.words.(w) with Computed f -> ints.(w) <- f env | Trip -> ()
-  done;
-  let made = ref [] in
-  let buffer = function
-    | Bound (buf, _) -> buf
-    | Slot slot -> slot_buffer slots slot
-    | Made { device; bytes; start } ->
-        let whole, buf = made_at device bytes start in
-        made := whole :: !made;
-        buf
+  let ints = p.frame.ints in
+  for w = 0 to Array.length p.words - 1 do
+    match p.words.(w) with Computed f -> ints.(w) <- f env | Trip -> ()
+  done
+
+(* Writes the inputs of [p]'s frame from [slots]. *)
+let inputs (p : part) slots =
+  for k = 0 to Array.length p.inputs - 1 do
+    p.frame.inputs.(k) <-
+      (match p.inputs.(k) with
+      | Bound (buf, _) -> buf
+      | Slot slot -> slot_buffer slots slot)
+  done
+
+(* Lets [p]'s frame drop the run's buffers. *)
+let idle (p : part) =
+  Array.fill p.frame.inputs 0 (Array.length p.frame.inputs) p.idle
+
+(* Runs [t]'s parts in order on [slots], calling [each] with each part and its
+   ends. A part's storage is made before it runs, in its slot, and returned
+   after the last part that reads it, its memory coming back once the work on it
+   is done; on a raise, all of it is returned. *)
+let run_parts t ~vars slots each =
+  let all = Array.make t.width None in
+  Array.blit slots 0 all 0 (Int.min (Array.length slots) t.width);
+  Array.iter (fun p -> words p ~vars) t.parts;
+  let held = Array.make t.width None in
+  let return m =
+    match held.(m.slot) with
+    | None -> ()
+    | Some whole ->
+        held.(m.slot) <- None;
+        all.(m.slot) <- None;
+        ignore (Rig.Buffer.free ~why:"a run's storage" whole : bool)
   in
-  match
-    for k = 0 to Array.length t.inputs - 1 do
-      t.frame.inputs.(k) <- buffer t.inputs.(k)
-    done
-  with
-  | () -> !made
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      finish t !made;
-      Printexc.raise_with_backtrace e bt
+  let make m =
+    let whole, buf = made_at m.device m.bytes m.at in
+    held.(m.slot) <- Some whole;
+    all.(m.slot) <- Some buf
+  in
+  let run_part (p : part) =
+    List.iter make p.makes;
+    inputs p all;
+    Fun.protect
+      ~finally:(fun () -> idle p)
+      (fun () -> each p (Rig_program.run p.loaded p.frame));
+    List.iter return p.frees
+  in
+  Fun.protect
+    ~finally:(fun () -> Array.iter return t.made)
+    (fun () -> Array.iter run_part t.parts)
 
 (* Reports *)
 
@@ -1144,10 +1284,15 @@ let report ~device ~name ~args ~vars (e : Ops.estimates) time =
 
 (* The variables the run binds, by name, for the reports. *)
 let bindings t =
-  Hashtbl.fold
-    (fun name i vars ->
-      if t.env.set.(i) then (name, t.env.values.(i)) :: vars else vars)
-    t.cells []
+  Array.fold_left
+    (fun vars (p : part) ->
+      Hashtbl.fold
+        (fun name i vars ->
+          if p.env.set.(i) && not (List.mem_assoc name vars) then
+            (name, p.env.values.(i)) :: vars
+          else vars)
+        p.cells vars)
+    [] t.parts
 
 (* A line for each kernel of each submission's work in [events], timed where the
    work is one kernel's. *)
@@ -1160,7 +1305,9 @@ let print_reports t events =
       ~args:(List.length args) ~vars k.estimates time
   in
   let kernel d name =
-    List.find_opt (fun k -> Rig.equal k.device d && k.name = name) t.kernels
+    List.find_opt
+      (fun (k : kernel) -> Rig.equal k.device d && k.name = name)
+      t.kernels
   in
   List.iter
     (function
@@ -1183,11 +1330,7 @@ let print_reports t events =
 
 let submit t ~vars slots =
   check_slots t slots;
-  Mutex.protect t.lock (fun () ->
-      let made = frame t ~vars slots in
-      Fun.protect
-        ~finally:(fun () -> finish t made)
-        (fun () -> Rig_program.run t.loaded t.frame))
+  Mutex.protect t.lock (fun () -> run_parts t ~vars slots (fun _ _ -> ()))
 
 let run ?(vars = []) t slots =
   let debug = Setting.value Setting.debug in
@@ -1199,17 +1342,17 @@ let run ?(vars = []) t slots =
     print_reports t events
 
 let slots t =
-  let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.params in
+  let n = List.fold_left (fun n (slot, _, _) -> max n (slot + 1)) 0 t.given in
   let slots = Array.make n None in
   List.iter
     (fun (slot, d, bytes) ->
       let buf =
-        match List.assoc_opt slot t.starts with
+        match List.assoc_opt slot t.given_starts with
         | Some start -> create_at d (max 1 bytes) start
         | None -> Rig.Buffer.create d (max 1 bytes)
       in
       slots.(slot) <- Some buf)
-    t.params;
+    t.given;
   slots
 
 (* Timing *)
@@ -1222,8 +1365,11 @@ let link_call ~devices call =
     (Realize.compile_linear ~targets (Ops.v Op.Linear ~src:[ call ]))
 
 let clock t =
-  if List.for_all (fun k -> Option.is_some (vendor k.device)) t.kernels then
-    Search.Device
+  if
+    List.for_all
+      (fun (k : kernel) -> Option.is_some (vendor k.device))
+      t.kernels
+  then Search.Device
   else Search.Host
 
 (* Whether the work [w] runs a kernel of [t]: its name lists the kernels of its
@@ -1233,7 +1379,7 @@ let runs_kernel t (w : Rig.Profile.event) =
   | Work { device; name; _ } ->
       let names = List.map String.trim (String.split_on_char ',' name) in
       List.exists
-        (fun k -> Rig.equal k.device device && List.mem k.name names)
+        (fun (k : kernel) -> Rig.equal k.device device && List.mem k.name names)
         t.kernels
   | _ -> false
 
@@ -1242,26 +1388,20 @@ let runs_kernel t (w : Rig.Profile.event) =
    another domain's work of the same kernels has other points. *)
 let time ?(vars = []) t slots =
   check_slots t slots;
-  let steps = ref [||] in
+  let steps = ref [] and ends = ref [] in
   let run () =
-    let ends =
-      Mutex.protect t.lock (fun () ->
-          let made = frame t ~vars slots in
-          Fun.protect
-            ~finally:(fun () -> finish t made)
-            (fun () ->
-              let ends = Rig_program.run t.loaded t.frame in
-              steps := Array.copy t.frame.step_points;
-              ends))
-    in
-    Array.iter Rig.Point.wait ends
+    Mutex.protect t.lock (fun () ->
+        run_parts t ~vars slots (fun p e ->
+            steps := Array.copy p.frame.step_points :: !steps;
+            ends := e :: !ends));
+    List.iter (Array.iter Rig.Point.wait) !ends
   in
   let (), events = Rig.Profile.take run in
   let ns = ref 0 in
   List.iter
     (function
-      | Rig.Profile.Work w as e when Array.mem w.point !steps && runs_kernel t e
-        ->
+      | Rig.Profile.Work w as e
+        when List.exists (Array.mem w.point) !steps && runs_kernel t e ->
           ns := !ns + (w.stop - w.start)
       | _ -> ())
     events;

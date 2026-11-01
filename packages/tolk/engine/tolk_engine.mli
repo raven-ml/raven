@@ -59,9 +59,12 @@ type storage =
       (** Made at link, in its device's memory, which the runs share and the
           schedule holds while it is reachable. *)
   | Per_run
-      (** Made by each run in its device's memory, and returned once the
-          run's work on it is done ({!Rig.Buffer.free}), so that the schedule
-          holds none of it between runs. *)
+      (** Made by each run in its device's memory before the first call that
+          reads it, and returned after the last ({!Rig.Buffer.free}), its
+          memory coming back once the work on it is done, so that the
+          schedule holds none of it between runs, and a run holds at each
+          call only the storage that calls before and after it read. A range
+          around calls counts as one call. *)
 
 val link :
   devices:(string -> Rig.t) ->
@@ -88,7 +91,9 @@ val link :
       ({!Rig.runs_on_host}); otherwise it is a move of the program
       ({!Rig_program.step}), one {!Rig.Buffer.submit_copy}.
     - Consecutive kernels and copies of one device are one submission
-      ({!Rig.Submission}), and each of them is a submission of its own while
+      ({!Rig.Submission}), but where a schedule linked {!Per_run} makes or
+      returns storage between them, and each of them is a submission of its
+      own while
       {!Tolk.Setting.debug} is [2] or more, so that a submission's work in a
       profile ({!Rig.Profile.Work}) is one kernel's.
     - A range around calls is a loop of the program, and so is a back edge,
@@ -147,8 +152,9 @@ val run : ?vars:(string * int) list -> t -> Rig.Buffer.t option array -> unit
     a buffer of its device holding its parameter's bytes, if a
     buffer a kernel accesses does not start at its parameter's phase, if a
     variable is unbound, and as {!Rig_program.run} does; {!Rig.Out_of_memory}
-    if a device cannot allocate the storage of a schedule linked {!Per_run},
-    allocating nothing then. *)
+    if a device cannot allocate the storage of a schedule linked {!Per_run}:
+    the calls before the first that reads it have run, and the storage the
+    run made is returned. *)
 
 val slots : t -> Rig.Buffer.t option array
 (** [slots s] is, for each slot that a parameter of [s] takes, a buffer of the

@@ -4650,23 +4650,37 @@ fold wraps integers and holds its float bound`, hold.
 
 - **tinygrad:** `engine/jit.py:50-80` (`CapturedJit`): the linked linear of a
   captured schedule holds its intermediates' buffers from its first call
-  until `free_intermediates` drops it, so they outlive every run.
-- **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.run`.
+  until `free_intermediates` drops it, so they outlive every run, and
+  `engine/jit.py:32` (`jit_lower`) places them in arenas
+  (`memory_plan_rewrite`).
+- **tolk:** `Tolk_engine.link`'s `storage`, `Tolk_engine.run_parts`,
+  `Tolk_engine.per_run_parts`; `Jit.jit_lower`'s `arenas`.
 - **Differs:** a schedule linked `Per_run` makes each storage node no buffer
-  is bound to at each run, as an input of the run, and frees it once the run
-  returns, its memory coming back once the run's work on it is done. Linked
-  `Linked`, the default, it is the program's, as tinygrad's. A run of either
-  keeps none of the buffers it was given once it returns.
+  is bound to at each run, before the first call that reads it, and frees it
+  after the last, its memory coming back once the work on it is done. The
+  calls between two points where storage is made or freed are one program of
+  rig's, which binds its inputs before its first step, so a submission ends
+  at each such point. Such a schedule is lowered without arenas
+  (`jit_lower ~arenas:false`): a buffer's own life is the plan, and an arena
+  would live from the first call of any buffer in it to the last. Linked
+  `Linked`, the default, its storage is the program's, as tinygrad's. A run
+  of either keeps none of the buffers it was given once it returns.
 - **Reason:** (b): rune's compiled programs over several devices
   (`Compile.variant`, for a split program) promise that a device holds
-  between calls only the values its caller keeps. Linked `Linked`, the
-  programs of fully sharded training over two memory devices, its gathers
-  compiled, held 4.75 layers on each device beside its share after a step
-  (`rune jit › fully sharded`, d = 128): 3.75 of scratch, and one of the
-  buffers the frames kept from their last runs.
+  between calls only the values its caller keeps, and RFC 0005 bounds what a
+  fully sharded step holds within a call. Linked `Linked`, the programs of
+  fully sharded training over two memory devices, its gathers compiled, held
+  4.75 layers on each device beside its share after a step (`rune jit ›
+  fully sharded`, d = 128): 3.75 of scratch, and one of the buffers the
+  frames kept from their last runs. Made at the start of each run and freed
+  at its end, the backward call of one layer at d = 512 held 3.625, 4.062
+  and 4.156 layers beside its arguments over 2, 4 and 8 memory devices; made
+  and freed at each buffer's first and last call, 2.562, 2.312 and 2.156.
 - **Pinned by:** `Tolk_engine › runs › a schedule linked per run holds no
-  storage between runs` and `a run keeps none of the buffers it was given`;
-  rune's `fully sharded` tests, whose shares are exact after a step.
+  storage between runs`, `› a run makes each buffer at its first call and
+  returns it after its last` (a model of each buffer's first and last use)
+  and `› a run keeps none of the buffers it was given`; rune's `fully
+  sharded` tests, whose shares are exact after a step.
 
 ## D174. A kernel's call bodies are functions of its own source on every target
 

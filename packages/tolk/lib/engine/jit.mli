@@ -23,13 +23,15 @@ val shaping : ?beam:int -> unit -> (string * string) list
 val jit_lower :
   ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
+  ?arenas:bool ->
   targets:(string -> Helpers.Target.t) ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->
   input_vars:(string * int) list ->
   Ops.t ->
   Ops.t
-(** [jit_lower ~beam ~search ~targets ~held_bufs ~inputs ~input_vars linear] is
+(** [jit_lower ~beam ~search ~arenas ~targets ~held_bufs ~inputs ~input_vars
+    linear] is
     the captured schedule [linear], an {!Op.Linear} of calls, ready to link:
     + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
       the parameter of slot [i] ({!Shape.param}), of its type, device, size,
@@ -37,9 +39,12 @@ val jit_lower :
     + each variable named in [input_vars], the variables of the capture, is
       unbound wherever [linear] binds it: a run binds it. A variable bound
       under another name keeps its binding;
-    + its buffers are placed in arenas ({!Memory.memory_plan_rewrite}), except
-      [held_bufs], whose contents outlive a run, such as the buffers a caller
-      keeps or that hold constants;
+    + where [arenas] (default [true]) holds, its buffers are placed in arenas
+      ({!Memory.memory_plan_rewrite}), except [held_bufs], whose contents
+      outlive a run, such as the buffers a caller keeps or that hold
+      constants. Otherwise each buffer keeps storage of its own, which a
+      schedule that makes its storage at each run can make at the buffer's
+      first call and return after its last;
     + each buffer not in [held_bufs], which holds only what one run computes,
       becomes storage of the program ({!Shape.alloc}) of its size, type and
       device, which the program's link allocates;

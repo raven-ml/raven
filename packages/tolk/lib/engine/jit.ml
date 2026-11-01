@@ -22,7 +22,8 @@ let bindings ?beam () =
 
 let shaping ?beam () = Setting.shaping_under (bindings ?beam ())
 
-let jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars linear =
+let jit_lower ?beam ?search ?(arenas = true) ~targets ~held_bufs ~inputs
+    ~input_vars linear =
   let param i u =
     let align, phase = Shape.storage_phase u in
     ( u,
@@ -44,7 +45,9 @@ let jit_lower ?beam ?search ~targets ~held_bufs ~inputs ~input_vars linear =
       (Ops.toposort ~calls:Skip linear)
   in
   let linear = Ops.substitute ~calls:Skip ~pass:Once linear unbound in
-  let linear = Memory.memory_plan_rewrite ~held_bufs linear in
+  let linear =
+    if arenas then Memory.memory_plan_rewrite ~held_bufs linear else linear
+  in
   (* The buffers left unheld hold only what one run computes: they become
      storage of the program, allocated where it is linked. *)
   let scratch =
