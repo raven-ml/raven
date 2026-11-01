@@ -4412,7 +4412,29 @@ val associative_scan :
     when a draw takes one, and no interpretation receives that computation,
     so its draws lie at any placement. A scope at any other key computes
     them where that key lies, as {!Rng.fold_in} does, and draws only on that
-    key's set. *)
+    key's set.
+
+    On a set without kernels ({!val-devices}) only a compiler's program
+    computes from a key: {!Rng.split}, {!Rng.fold_in} and a draw from
+    [~key] raise [Invalid_argument] there eagerly, as every computation
+    does. The message of a derivation from an untraced key, or of a keyless
+    draw in a scope at one, names [Nx.Rng.place Nx.Host.on key].
+    Keep the keys of such a program on the host, derive them there, and
+    place each where the program reads it, at its call:
+
+    {[
+    let root = Nx.Rng.key 0
+
+    let step =
+      Rune.jit
+        Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+        (fun key -> Nx.Rng.normal_at Gpu.on ~key Nx.float32 [| 4 |])
+
+    let x i = step (Nx.Rng.place Gpu.on (Nx.Rng.fold_in root i))
+    ]}
+
+    A key a program returns lies on the program's set: derive the next one
+    inside the program, or place it on the host first. *)
 module Rng : sig
   type +'d key = private 'd int32_t
   (** The type for keys, of shape [[|2|]], and batches of keys, of shape

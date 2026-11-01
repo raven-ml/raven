@@ -2574,6 +2574,71 @@ let scope =
           equal string want got);
     ]
 
+(* Keys on a set without kernels *)
+
+(* Each derivation, by its name, as the keys it gives of a key on [Bare]. *)
+let derivations : (string * (Bare.d Rng.key -> Bare.d Rng.key list)) list =
+  [
+    ("Nx.Rng.split", fun k -> Array.to_list (Rng.split k));
+    ("Nx.Rng.split_batch", fun k -> [ Rng.split_batch ~n:3 k ]);
+    ("Nx.Rng.fold_in", fun k -> [ Rng.fold_in k 5 ]);
+    ( "Nx.Rng.fold_in_tensor",
+      fun k ->
+        let p = Nx.placement (Rng.to_tensor k) in
+        [ Rng.fold_in_tensor k (Nx.scalar_at p Nx.int32 5l) ] );
+  ]
+
+(* A key's placements on [Bare]: copies on both its devices, and its io
+   device alone. *)
+let bare_key_placements =
+  [ ("on", Bare.on); ("io device", Nx.Placement.device Bare.v io) ]
+
+let bare_rows =
+  List.concat_map
+    (fun d -> List.map (fun p -> (d, p)) bare_key_placements)
+    derivations
+
+let bare_id ((by, _), (at, _)) = by ^ " at " ^ at
+
+let bare_keys =
+  group "keys on a set without kernels"
+    [
+      cases ~id:bare_id "an eager derivation raises naming the host's place"
+        bare_rows (fun ((by, derive), (_, p)) ->
+          let k = Rng.place p (Rng.key 1) in
+          raises_match
+            (Exn.invalid_arg ~sub:(by ^ ": the key lies on "))
+            (fun () -> derive k);
+          raises_match (Exn.invalid_arg ~sub:"Nx.Rng.place Nx.Host.on key")
+            (fun () -> derive k));
+      test "an eager keyless draw in a scope at such a key raises so" (fun () ->
+          let k = Rng.place Bare.on (Rng.key 2) in
+          raises_match (Exn.invalid_arg ~sub:"Nx.Rng.bits_at: the key lies on ")
+            (fun () -> Rng.with_key k (fun () -> Rng.bits_at Bare.on [| 3 |])));
+      cases ~id:bare_id "a derivation under a tracing extent is staged"
+        bare_rows (fun ((by, derive), (_, p)) ->
+          let k = Rng.place p (Rng.key 3) in
+          Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
+              let summary k =
+                let t = Rng.to_tensor k in
+                ( Nx.Placement.equal p (Nx.placement t),
+                  Option.is_some (Nx.Prim.payload i t) )
+              in
+              let got = List.map summary (derive k) in
+              equal ~msg:by
+                (list (pair bool bool))
+                (List.map (fun _ -> (true, true)) got)
+                got));
+      prop
+        ~examples:[ (0, 0); (1, -1); (-1, max_int); (max_int, min_int) ]
+        "a host key placed on the set and back keeps its words"
+        (Gen.pair seeds Gen.int)
+        (fun (seed, i) ->
+          let k = Rng.fold_in (Rng.key seed) i in
+          equal (array int32) (words k)
+            (words (Rng.place Nx.Host.on (Rng.place Bare.on k))));
+    ]
+
 (* Names *)
 
 (* The [by]s a rule receives while [f] runs under it, each once, sorted. *)
@@ -2882,6 +2947,7 @@ let () =
          group "tails" [ tails ];
          checks;
          scope;
+         bare_keys;
          names;
          refusals;
          goldens;

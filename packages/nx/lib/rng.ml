@@ -335,10 +335,24 @@ let walk c k = of_tensor (Ptree.Walk.tensor c k)
    application, whose set the first use would fix. *)
 let ptree visitor path k = Ptree.v walk visitor path k
 
+(* Raises naming [by] where deriving from [k] would compute now on a set
+   without kernels: [k] is untraced and no extent is live, when {!Eval.eval}
+   runs at once. The message names the host, where such keys are derived:
+   the generic advice leads to {!Nx.place}, whose array no sampler takes. *)
+let bare_key ~by (k : 'd key) =
+  let p = Prim.placement k in
+  if Devices.bare p && Option.is_none (Eval.owner k) && Eval.quiet () then
+    invalid_argf
+      "%s: the key lies on %a, which has no kernels; derive keys on the host, \
+       then place each where a program reads it; Nx.Rng.place Nx.Host.on key \
+       brings this one to the host"
+      by Devices.pp (Devices.set p)
+
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch: one map over [k], where [k] lies. The broadcast is dispatched;
    where [shape] is [k]'s batch, as for {!subkey}, it moves nothing. *)
 let keys ev ~by (k : 'd key) shape f : 'd key =
+  bare_key ~by k;
   let ins : D.any iarray = [| D.Any D.Uint64 |] in
   let out = f ~key:(E.input 0 D.Uint64) in
   let w = Eval.broadcast ~by shape (pack ev ~by k) in
@@ -394,8 +408,9 @@ let fold_in k data = fold_in_by dispatched ~by:"Nx.Rng.fold_in" k data
 let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
-  let w = pack dispatched ~by k in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
+  if Option.is_none (Eval.owner i) then bare_key ~by k;
+  let w = pack dispatched ~by k in
   let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
   let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
   let out = E.threefry (counter v) (E.input 0 D.Uint64) in

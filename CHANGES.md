@@ -3399,6 +3399,10 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.split`, `split_batch`, `fold_in` and `fold_in_tensor` of a key on
+  a set without kernels, such as a GPU's outside `Rune.jit`, raise naming
+  the host, where such keys are derived, and `Nx.Rng.place Nx.Host.on key`.
+  `Nx.Rng`'s docs show the idiom: derive on the host, place at the call.
 - `Nx.donate` of a value cut across devices lets the operation that
   consumes it write its result over each device's window where the result
   lies as the donor does, as it did for a value on one device.

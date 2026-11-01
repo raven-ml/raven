@@ -5,9 +5,10 @@
 
 (* Rune.jit on this machine's first GPU: a scatter past its work bound gives
    the host's eager values, a call's check raises at the next wait, so the
-   call returns while its work runs, and a program over the GPU and a memory
-   device, devices of two targets, is evaluated. It skips without a GPU, or
-   without the compiler the GPU's kernels need. *)
+   call returns while its work runs, a key split there has the host's words,
+   and a program over the GPU and a memory device, devices of two targets, is
+   evaluated. It skips without a GPU, or without the compiler the GPU's
+   kernels need. *)
 
 open Windtrap
 open Rune_support
@@ -126,6 +127,30 @@ let mixed () =
         (fun () -> ignore (Rune.jit' f x));
       equal ~msg:"evaluated" int 1 (Rune.evaluations () - before)
 
+(* [split k]'s second key under jit at the GPU's set. A GPU set has no
+   kernels, so a key there derives only in a program. *)
+type second =
+  | Second : 'd Nx.Placement.t * ('d Nx.Rng.key -> 'd Nx.Rng.key) -> second
+
+let second =
+  lazy
+    (let _, (module S) = on_gpu () in
+     Second
+       ( S.on,
+         Rune.jit
+           Nx.Ptree.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+           (fun k -> (Nx.Rng.split k).(1)) ))
+
+let words k = Nx.to_array (Nx.Rng.to_tensor (Nx.Rng.place Nx.Host.on k))
+
+let law_split seed =
+  let (Second (p, f)) = Lazy.force second in
+  let k = Nx.Rng.key seed in
+  equal
+    (Testable.array Testable.int32)
+    (words (Nx.Rng.split k).(1))
+    (words (f (Nx.Rng.place p k)))
+
 let () =
   exit
     (run "Rune.jit on a GPU"
@@ -146,5 +171,12 @@ let () =
            [
              test "a program over a GPU and a memory device is evaluated"
                mixed;
+           ];
+         group "keys"
+           [
+             prop ~count:20
+               ~examples:[ 0; -1; max_int; min_int ]
+               "a key split under jit has the eager split's words" Gen.int
+               law_split;
            ];
        ])
