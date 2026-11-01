@@ -227,6 +227,12 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ## nx
 
+- sharded jit: nx's partials write each tile's start as a constant
+  (`Partial.renumber`, `shift`), so argmax along a cut axis, scan
+  positions, and gather, scatter or sum over a cut axis still make a
+  kernel per device; pass the start as a bound variable, as maps do since
+  b6dfbb6b5. An evaluated split program builds an arange the length of
+  the whole axis on every device
 - the attention family: `Attention`, `Attention_tangent` and
   `Attention_cotangent` with nx.cpu's forward and cotangent kernels, in
   place of `Nx.attention`'s composition, which stores three float32
