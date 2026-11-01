@@ -91,7 +91,7 @@ let timed_call ~value prg =
       (fun u ->
         match arg u with
         | Param p when op u = Op.Param ->
-            if p.addrspace <> Some Dtype.Alu then Some (p.slot, u)
+            if p.addrspace <> Dtype.Alu then Some (p.slot, u)
             else if p.name = None then
               Some
                 (p.slot, const ~dtype:(dtype u) (`Int (Bigint.of_int (value u))))

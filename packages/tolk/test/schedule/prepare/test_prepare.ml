@@ -141,7 +141,7 @@ let storage u =
   List.filter_map
     (fun n ->
       match (Ops.op n, Ops.arg n) with
-      | (Param | Buffer | Alloc), Param p when p.addrspace <> Some Alu ->
+      | (Param | Buffer | Alloc), Param p when p.addrspace <> Alu ->
           Some (n, p)
       | _ -> None)
     (Ops.toposort ~calls:Enter u)

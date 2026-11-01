@@ -99,8 +99,8 @@ let storage_arg u (p : param_arg) =
         | Some m -> [ strf " multiple_of=%d" m ]
         | None -> []);
         (match p.addrspace with
-        | None | Some Dtype.Global -> []
-        | Some a -> [ " addrspace=" ^ addr_name a ]);
+        | Dtype.Global -> []
+        | a -> [ " addrspace=" ^ addr_name a ]);
         (match p.device with
         | Some s when word_device s -> [ " device=" ^ s ]
         | Some d -> [ " device=" ^ to_string pp_device d ]

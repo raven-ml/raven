@@ -678,7 +678,7 @@ let debuf ctx buf =
   in
   let param =
     Shape.param ~shape:[ Int (max_numel buf) ] ?vmin_vmax
-      ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align ctx.dg
+      ?addrspace:(addrspace buf) ?device:(device buf) ~phase ~align ctx.dg
       (dtype buf)
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in

@@ -439,7 +439,7 @@ let param_arg : Ops.param_arg codec =
   |> field "multiple_of" ~default:None (option int)
        (get (fun p -> p.multiple_of))
   |> field "name" ~default:None (option str) (get (fun p -> p.name))
-  |> field "addrspace" ~default:(Some Dtype.Global) (option addr_space)
+  |> field "addrspace" ~default:Dtype.Global addr_space
        (get (fun p -> p.addrspace))
   |> field "device" ~default:None (option device) (get (fun p -> p.device))
   |> field "volatile" ~default:false bool (get (fun p -> p.volatile))

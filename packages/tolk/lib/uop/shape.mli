@@ -385,7 +385,7 @@ val param :
   ?vmin_vmax:Dtype.value * Dtype.value ->
   ?multiple_of:int ->
   ?name:string ->
-  ?addrspace:Dtype.addr_space option ->
+  ?addrspace:Dtype.addr_space ->
   ?volatile:bool ->
   ?phase:int ->
   ?align:int ->

@@ -571,7 +571,7 @@ let symbolic_outputs () =
   let n = weak_var "n" 1 4 in
   let b = Shape.param ~device:"CPU" ~shape:[ Sym n ] 1 Float32 in
   let formal =
-    Shape.param ~vmin_vmax:(i 1, i 8) ~name:"d" ~addrspace:(Some Alu) 0 Int32
+    Shape.param ~vmin_vmax:(i 1, i 8) ~name:"d" ~addrspace:Alu 0 Int32
   in
   sink
     (call_with_outputs ~output_pos:[ 0 ] O.[ b + float 1. ] [ a; b ]

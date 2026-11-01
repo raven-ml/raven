@@ -1037,7 +1037,7 @@ let buffers_of uops =
   List.filter_map
     (fun u ->
       match Ops.arg u with
-      | Ops.Param ({ addrspace = Some Global; _ } as p)
+      | Ops.Param ({ addrspace = Global; _ } as p)
         when Shape.max_shape u <> [] ->
           Some (p.slot, p.dtype, Shape.max_numel u)
       | _ -> None)
@@ -1068,7 +1068,7 @@ let variables_of uops =
     match Ops.arg u with
     | Ops.Param
         {
-          addrspace = Some Alu;
+          addrspace = Alu;
           name = Some name;
           vmin_vmax = Some (`Int lo, `Int hi);
           slot;

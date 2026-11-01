@@ -115,7 +115,7 @@ let buffer_params prg =
     (fun u ->
       match Ops.arg u with
       | Ops.Param p
-        when Op.equal (Ops.op u) Param && p.addrspace <> Some Dtype.Alu ->
+        when Op.equal (Ops.op u) Param && p.addrspace <> Dtype.Alu ->
           Some (p, Shape.max_numel u)
       | _ -> None)
     (Ops.src (Ops.nth prg 1))

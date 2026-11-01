@@ -73,7 +73,7 @@ let scalar_arguments =
       let z n = `Int (Bigint.of_int n) in
       let named = Ops.variable ~dtype:Int32 "n" (z 3) (z 9) in
       let positional =
-        Shape.param ~addrspace:(Some Alu) ~vmin_vmax:(z (-7), z (-1)) slot Int32
+        Shape.param ~addrspace:Alu ~vmin_vmax:(z (-7), z (-1)) slot Int32
       in
       let output = Shape.param ~shape:[ Ops.Int 4 ] 0 Float32 in
       let r = Ops.range (Int 4) [ 0 ] in

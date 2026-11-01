@@ -192,7 +192,7 @@ let repeat device n init step =
         Ops.range ~axis_type:Loop (Ops.Int (n / 2)) [ Ops.unique_num () ]
       in
       let slot = next () in
-      let index = Shape.param ~addrspace:(Some Alu) slot Int32 in
+      let index = Shape.param ~addrspace:Alu slot Int32 in
       Ops.Tbl.replace own index ();
       let index' = Ops.add index (Shape.const_like index (`Int Bigint.one)) in
       let finals = step index' (List.map Ops.contiguous (step index params)) in

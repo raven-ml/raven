@@ -101,7 +101,7 @@ let move_index in_shape m idxs =
             ( u,
               param
                 ~vmin_vmax:(vmin u, vmax u)
-                ~addrspace:(Some Dtype.Alu) (-2 - i) (dtype u) ))
+                ~addrspace:Dtype.Alu (-2 - i) (dtype u) ))
           loads
       in
       let moved =

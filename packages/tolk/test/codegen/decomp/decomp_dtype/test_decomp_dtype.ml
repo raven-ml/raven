@@ -1512,7 +1512,7 @@ let pass =
                    (params k)))
             longs);
       test "64-bit storage of no known size keeps none" (fun () ->
-          let p = Shape.param ~addrspace:(Some Global) 0 Int64 in
+          let p = Shape.param ~addrspace:Global 0 Int64 in
           let k =
             Ops.sink
               [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int64 3) ]

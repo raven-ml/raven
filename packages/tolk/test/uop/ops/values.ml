@@ -980,7 +980,10 @@ let divisibility =
 (* Symbolic inference and programs *)
 
 let alu_param ?(lo = 0) ?(hi = 8) name slot =
-  Shape.param ~vmin_vmax:(i lo, i hi) ~name ~addrspace:(Some Alu) slot Int32
+  Shape.param ~vmin_vmax:(i lo, i hi) ~name ~addrspace:Alu slot Int32
+
+let slot u = match Ops.arg u with Param p -> p.slot | _ -> -2
+let scalar u = Ops.addrspace u = Some Alu
 
 let inference =
   group "sym_infer"

@@ -7,7 +7,7 @@ let fail fmt = Format.kasprintf invalid_arg fmt
 let rec storage_of u =
   match (Ops.op u, Ops.arg u) with
   | Op.After, _ -> storage_of (Ops.nth u 0)
-  | (Param | Buffer | Alloc), Param p when p.addrspace <> Some Alu ->
+  | (Param | Buffer | Alloc), Param p when p.addrspace <> Alu ->
       Some (Ops.op u = Alloc, p, Shape.max_numel u)
   | _ -> None
 

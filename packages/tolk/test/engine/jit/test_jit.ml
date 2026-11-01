@@ -51,7 +51,7 @@ let variables linear =
          | Param
              {
                name = Some v;
-               addrspace = Some Alu;
+               addrspace = Alu;
                bound = None;
                vmin_vmax = Some (lo, hi);
                _;

@@ -109,7 +109,7 @@ let args_fit c =
     (fun u ->
       match (op u, arg u) with
       | Op.Param, Param p
-        when p.addrspace = Some Dtype.Global
+        when p.addrspace = Dtype.Global
              && p.slot >= 0
              && p.slot < Array.length args ->
           let align, phase = storage_phase args.(p.slot) in

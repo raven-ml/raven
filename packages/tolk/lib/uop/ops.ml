@@ -169,7 +169,7 @@ type param_arg = {
   vmin_vmax : (Dtype.value * Dtype.value) option;
   multiple_of : int option;
   name : string option;
-  addrspace : Dtype.addr_space option;
+  addrspace : Dtype.addr_space;
   device : device option;
   volatile : bool;
   bind_on_realize : bool;
@@ -303,7 +303,7 @@ let equal_param_arg (p0 : param_arg) (p1 : param_arg) =
   && Option.equal equal_value_pair p0.vmin_vmax p1.vmin_vmax
   && Option.equal Int.equal p0.multiple_of p1.multiple_of
   && Option.equal String.equal p0.name p1.name
-  && Option.equal ( = ) p0.addrspace p1.addrspace
+  && p0.addrspace = p1.addrspace
   && Option.equal String.equal p0.device p1.device
   && Bool.equal p0.volatile p1.volatile
   && Bool.equal p0.bind_on_realize p1.bind_on_realize
@@ -648,8 +648,8 @@ let repr_param_arg (p : param_arg) =
       ("name", Option.map repr_string p.name);
       ( "addrspace",
         match p.addrspace with
-        | Some Dtype.Global -> None
-        | a -> Some (repr_option repr_addr_space a) );
+        | Dtype.Global -> None
+        | a -> Some (repr_addr_space a) );
       ("device", Option.map repr_device p.device);
       ("volatile", if p.volatile then Some "True" else None);
       ("bind_on_realize", if p.bind_on_realize then Some "True" else None);
@@ -2011,7 +2011,7 @@ let rec addrspace u =
 
 and compute_addrspace u =
   match (u.op, u.arg) with
-  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> p.addrspace
+  | (Op.Param | Op.Buffer | Op.Alloc), Param p -> Some p.addrspace
   | (Op.Special | Op.Range | Op.Const), _ | Op.Load, _ -> Some Dtype.Alu
   | Op.Binary, _ -> Some Dtype.Global
   | (Op.Index | Op.Cast | Op.After | Op.Reduce | Op.Store | Op.End), _ ->
@@ -2095,7 +2095,7 @@ let unique = Atomic.make 0
 let unique_num () = Atomic.fetch_and_add unique 1
 
 let param_arg ?vmin_vmax ?multiple_of ?name
-    ?(addrspace = Some Dtype.Global) ?device ?(volatile = false)
+    ?(addrspace = Dtype.Global) ?device ?(volatile = false)
     ?(bind_on_realize = false) ?bound ?(phase = 0) ?(align = 16) ~slot dtype =
   if not (List.mem align [ 1; 2; 4; 8; 16 ]) then
     invalid_argf "alignment %d is not a power of two up to 16" align;
@@ -2140,7 +2140,7 @@ let variable ?(dtype = Dtype.Weak_int) ?(multiple_of = 1) name lo hi =
     ~arg:
       (Param
          (param_arg ~vmin_vmax:(lo, hi) ~multiple_of ~name
-            ~addrspace:(Some Dtype.Alu) ~slot:(-1) dtype))
+            ~addrspace:Dtype.Alu ~slot:(-1) dtype))
 
 let expr u =
   match (u.op, u.arg) with

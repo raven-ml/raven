@@ -257,7 +257,7 @@ let current m at =
 
 let storage m u =
   match Ops.arg u with
-  | Param { slot; addrspace; _ } when addrspace <> Some Alu ->
+  | Param { slot; addrspace; _ } when addrspace <> Alu ->
       let cell index =
         let at = { scratch = Ops.op u = Alloc; slot; index } in
         { value = initial m at; at = Some at }

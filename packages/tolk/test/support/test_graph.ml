@@ -13,7 +13,7 @@ let n =
       (Param
          (Ops.param_arg ~slot:(-1)
             ~vmin_vmax:(`Int Bigint.zero, `Int (Bigint.of_int 9))
-            ~name:"n" ~addrspace:(Some Alu) Weak_int))
+            ~name:"n" ~addrspace:Alu Weak_int))
     Param
 
 let buffer =
@@ -56,7 +56,7 @@ let kinds =
         ~src:[ Ops.size_src None ]
         ~arg:
           (Param
-             (Ops.param_arg ~slot:1 ~addrspace:None ~volatile:true
+             (Ops.param_arg ~slot:1 ~addrspace:Alu ~volatile:true
                 ~bind_on_realize:true
                 ~bound:(`Int (Bigint.of_int 4))
                 Int32))

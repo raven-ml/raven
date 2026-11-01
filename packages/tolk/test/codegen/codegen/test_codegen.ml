@@ -3691,7 +3691,7 @@ let blocks =
    argument's address space and one element for an index. *)
 
 let int_param ?(addrspace = Dtype.Global) ?volatile ~name slot n =
-  Shape.param ~shape:[ Int n ] ~name ~addrspace:(Some addrspace) ?volatile slot
+  Shape.param ~shape:[ Int n ] ~name ~addrspace:addrspace ?volatile slot
     Int32
 
 let loop n axis = Ops.range ~axis_type:Loop ~dtype:Int32 (Int n) [ axis ]
@@ -4018,7 +4018,7 @@ let calls =
             List.filter_map
               (fun u ->
                 match (Ops.op u, Ops.arg u) with
-                | Buffer, Param p when p.addrspace = Some Reg -> Some p.slot
+                | Buffer, Param p when p.addrspace = Reg -> Some p.slot
                 | _ -> None)
               (Ops.toposort ~calls:Skip (Ops.nth prg 1))
           in

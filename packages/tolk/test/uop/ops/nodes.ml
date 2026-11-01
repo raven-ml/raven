@@ -102,7 +102,7 @@ let arguments =
             (str Ops.pp_estimates { ops = Int 0; lds = Int 0; mem = Int 0 }));
       test "param_arg defaults to global storage with no flags" (fun () ->
           let p = Ops.param_arg ~slot:3 Dtype.Float32 in
-          is_true (p.addrspace = Some Dtype.Global);
+          is_true (p.addrspace = Dtype.Global);
           is_false p.volatile;
           is_false p.bind_on_realize;
           is_true (p.vmin_vmax = None && p.multiple_of = None);

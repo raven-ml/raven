@@ -94,7 +94,7 @@ let linear_writes =
                   ])));
       test "a scalar parameter no call passes has the value of its slot"
         (fun () ->
-          let n = Shape.param ~addrspace:(Some Alu) 2 Int32 in
+          let n = Shape.param ~addrspace:Alu 2 Int32 in
           let shifted = kernel (fun x -> Ops.O.(x + n)) in
           equal write
             (List.init 4 (fun i -> (0, i, z (i + 5))))

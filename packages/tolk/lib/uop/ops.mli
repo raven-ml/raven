@@ -111,8 +111,8 @@ type param_arg = {
       (** The least and greatest value of a variable. *)
   multiple_of : int option;  (** A number every value is a multiple of. *)
   name : string option;  (** The name of a variable or a named buffer. *)
-  addrspace : Dtype.addr_space option;
-      (** Where the storage lives; {!Dtype.Alu} for a scalar variable. *)
+  addrspace : Dtype.addr_space;
+      (** Where the storage lives; {!Dtype.Alu} for a scalar. *)
   device : device option;  (** The placement of the storage. *)
   volatile : bool;  (** Accesses must not be merged or reordered. *)
   bind_on_realize : bool;
@@ -137,7 +137,7 @@ val param_arg :
   ?vmin_vmax:Dtype.value * Dtype.value ->
   ?multiple_of:int ->
   ?name:string ->
-  ?addrspace:Dtype.addr_space option ->
+  ?addrspace:Dtype.addr_space ->
   ?device:device ->
   ?volatile:bool ->
   ?bind_on_realize:bool ->
@@ -148,7 +148,7 @@ val param_arg :
   Dtype.t ->
   param_arg
 (** [param_arg ~slot dtype] is the argument with these fields. [addrspace]
-    defaults to [Some Global]; the flags default to [false], [phase] to [0],
+    defaults to {!Dtype.Global}; the flags default to [false], [phase] to [0],
     [align] to [16] and the other fields to [None].
 
     Raises [Invalid_argument] if [align] is not a power of two from [1] to

@@ -190,7 +190,7 @@ let given u =
   List.filter_map
     (fun n ->
       match (Ops.op n, Ops.arg n) with
-      | (Param | Buffer), Param p when p.addrspace <> Some Alu -> Some (n, p)
+      | (Param | Buffer), Param p when p.addrspace <> Alu -> Some (n, p)
       | _ -> None)
     (Ops.toposort ~calls:Skip u)
 
@@ -293,7 +293,7 @@ let has_variables u =
   List.exists
     (fun n ->
       match (Ops.op n, Ops.arg n) with
-      | Param, Param { addrspace = Some Alu; name = Some _; _ } -> true
+      | Param, Param { addrspace = Alu; name = Some _; _ } -> true
       | _ -> false)
     (Ops.toposort ~calls:Enter u)
 
@@ -1268,7 +1268,7 @@ let scan_linear () =
 (* A loop of three trips around a call whose body stores its scalar parameter 0,
    the argument [2r + 1], into its row of ys, its parameter 1. *)
 let trip_linear () =
-  let index = Shape.param ~addrspace:(Some Alu) 0 Int32
+  let index = Shape.param ~addrspace:Alu 0 Int32
   and y = Shape.param ~shape:[ Int 1 ] ~device:cpu 1 Int32 in
   let body = Ops.sink [ Ops.store y (Shape.reshape index [ Int 1 ]) ] in
   let ys = Ops.new_buffer cpu 12 Int32 in
@@ -1291,7 +1291,7 @@ let trip_linear () =
           equal uop ~msg:"the trip, past the row" trip
             (List.nth (Ops.src_without_body k) 1);
           equal (list uop) ~msg:"the kernel's variable, in the trip's slot"
-            [ Shape.param ~addrspace:(Some Alu) 1 Int32 ]
+            [ Shape.param ~addrspace:Alu 1 Int32 ]
             (Shape.variables (Ops.body k));
           equal bool ~msg:"the kernel reads no range" false
             (Ops.Nodes.mem r (Ops.backward_slice ~calls:Skip (Ops.body k)))

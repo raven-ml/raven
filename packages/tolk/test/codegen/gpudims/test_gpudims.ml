@@ -392,7 +392,7 @@ let group_gpudims_graphs =
     rewrites "group_gpudims_leaves_a_local_store_unmasked" (fun () ->
         let g = global (Int 32) 0 and l = local (Int 8) 1 in
         let shared =
-          Shape.param ~shape:[ Int 32 ] ~addrspace:(Some Local) 0 Float32
+          Shape.param ~shape:[ Int 32 ] ~addrspace:Local 0 Float32
         in
         let loaded =
           Ops.load (Ops.index (buffer ~slot:1 256) [ (g * int 8) + l ]) []

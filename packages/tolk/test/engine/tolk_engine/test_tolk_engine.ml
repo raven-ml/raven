@@ -500,7 +500,7 @@ let storage_of ?(devices = devices) ?(seed = 0) big =
   List.filter_map
     (fun n ->
       match (Ops.op n, Ops.arg n) with
-      | (Param | Buffer), Param p when p.addrspace <> Some Alu ->
+      | (Param | Buffer), Param p when p.addrspace <> Alu ->
           let before =
             Array.init (Shape.max_numel n) (fun j ->
                 element p.dtype ((((j * 7) + (p.slot * 3) + seed) mod 11) - 3))
@@ -545,7 +545,7 @@ let with_values vars big =
     (List.filter_map
        (fun n ->
          match (Ops.op n, Ops.arg n) with
-         | Param, Param { name = Some v; addrspace = Some Alu; bound; _ } -> (
+         | Param, Param { name = Some v; addrspace = Alu; bound; _ } -> (
              match (List.assoc_opt v vars, bound) with
              | Some x, _ -> Some (n, Ops.int ~dtype:(Ops.dtype n) x)
              | None, Some x ->
@@ -1193,7 +1193,7 @@ let trip_arguments n =
    [limit]. *)
 let trip_loop ?(devices = devices) ?limit ?(axis = 100) d n arg =
   let at = d in
-  let index = Shape.param ~addrspace:(Some Alu) 2 Int32 in
+  let index = Shape.param ~addrspace:Alu 2 Int32 in
   let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
   let flag =
     match limit with

@@ -205,7 +205,7 @@ let variables =
               equal uop (Ops.int 5) five
           | us -> failf "two values, not %d" (List.length us));
       test "is the call's argument in the slot of a scalar parameter" (fun () ->
-          let index = Shape.param ~addrspace:(Some Alu) 1 Int32 in
+          let index = Shape.param ~addrspace:Alu 1 Int32 in
           let prg = program (scaled_kernel [ n; index ]) in
           let trip = Ops.O.((loop * int 2) + int 1) in
           let call = Ops.call prg [ storage 1; trip; bound n 4 ] in

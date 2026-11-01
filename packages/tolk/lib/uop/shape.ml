@@ -1007,7 +1007,7 @@ let arange ?(start = 0) ?(step = 1) ?dtype stop =
 let is_variable u =
   op u = Op.Param
   && (match arg u with
-    | Param { vmin_vmax = Some _; addrspace = Some Dtype.Alu; _ } -> true
+    | Param { vmin_vmax = Some _; addrspace = Dtype.Alu; _ } -> true
     | _ -> false)
   && match shape_opt u with Some [] -> true | _ -> false
 
@@ -2910,7 +2910,7 @@ let alloc ?slot ?(addrspace = Dtype.Global) ?device ?vmin_vmax new_shape dt =
       ~src:[ size_src (Some (size_of (to_max_shape new_shape))) ]
       ~arg:
         (Param
-           (param_arg ~slot ~addrspace:(Some addrspace) ?device ?vmin_vmax
+           (param_arg ~slot ~addrspace ?device ?vmin_vmax
               (Dtype.strong dt)))
   in
   if List.is_empty new_shape then reshape ret []
@@ -2929,12 +2929,12 @@ let placeholder ?slot ?(addrspace = Dtype.Global) ?device new_shape dt =
     match addrspace with
     | Dtype.Global ->
         v Op.Param ~src
-          ~arg:(Param (param_arg ~slot ~addrspace:(Some addrspace) ?device dt))
+          ~arg:(Param (param_arg ~slot ~addrspace ?device dt))
     | Dtype.Local | Dtype.Reg ->
         if Option.is_some device then
           invalid_arg "workgroup and register storage has no device";
         v Op.Buffer ~src
-          ~arg:(Param (param_arg ~slot ~addrspace:(Some addrspace) dt))
+          ~arg:(Param (param_arg ~slot ~addrspace dt))
     | Dtype.Alu -> invalid_arg "a placeholder cannot be a scalar variable"
   in
   if List.length new_shape > 1 then
@@ -2947,7 +2947,7 @@ let placeholder_like ?addrspace u slot =
   placeholder ~slot ?addrspace (max_shape u) (dtype u)
 
 let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
-    ?(addrspace = Some Dtype.Global) ?(volatile = false) ?phase ?align slot dt
+    ?(addrspace = Dtype.Global) ?(volatile = false) ?phase ?align slot dt
     =
   weak_storage dt;
   let make size =

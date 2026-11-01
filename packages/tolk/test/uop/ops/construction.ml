@@ -645,7 +645,7 @@ let variables =
       test "unbound rejects a node that is not a variable" (fun () ->
           rejects (fun () -> Shape.unbound (param [ 4 ] 0 Float32)));
       test "variables lists a scalar parameter without a range" (fun () ->
-          let s = Shape.param ~addrspace:(Some Alu) 0 Int32 in
+          let s = Shape.param ~addrspace:Alu 0 Int32 in
           equal uops [ s ] (Shape.variables Ops.O.(s + int 1)));
       test "unbind rejects a variable that is not bound" (fun () ->
           rejects (fun () -> Shape.unbind n));
