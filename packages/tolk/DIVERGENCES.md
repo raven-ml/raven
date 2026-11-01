@@ -40,7 +40,7 @@ memory it uses, and tolk encodes no queue (D146).
 ## D2. Withdrawn
 
 tinygrad matches patterns without generating code when `UPAT_COMPILE` is 0
-(`uop/ops.py:1561`, `upat_interpret`), and `UPat`, `PatternMatcher` and
+(`uop/ops.py:1548`, `upat_interpret`), and `UPat`, `PatternMatcher` and
 `graph_rewrite` live in `uop/ops.py`. tolk ports that path in
 `Ops`, so leaving out `uop/upat.py`, the pattern compiler, is scope: see
 the Exclusions of `README.md`.
@@ -61,9 +61,9 @@ the Exclusions of `README.md`.
   `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
-  (`uop/ops.py:839-984`) are the engine's. Whether storage is bound is the
+  (`uop/ops.py:827-974`) are the engine's. Whether storage is bound is the
   operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
-  `ParamArg.buffer` (`uop/spec.py:151,155,266,268`) hold by construction.
+  `ParamArg.buffer` (`uop/spec.py:151,155,267,269`) hold by construction.
 - **Reason:** (c).
 - **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
   next slot without one` and `Tolk.Ops › arguments › reprs.golden`, where
@@ -76,7 +76,7 @@ the Exclusions of `README.md`.
 ## D4. Import cycles are broken
 
 - **tinygrad:** the imports inside functions that Python uses to hide a cycle:
-  - `uop/ops.py:15,199,264,499,921,1159-1182,1577` calls `symbolic`, `render`,
+  - `uop/ops.py:15,198,258,492,911,1148-1171,1564` calls `symbolic`, `render`,
     `spec`, `upat`, `schedule.prepare`, `mixin.rand` and `renderer`;
   - `uop/spec.py:6` against `device`;
   - `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
@@ -170,7 +170,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `engine/worker.py:1-2` (`multiprocessing` spawn workers);
   `helpers.py:170-187` (`Context` and `ContextVar`, one value per process);
-  `codegen/__init__.py:507-517` (`to_program_context`, the settings a worker
+  `codegen/__init__.py:509-519` (`to_program_context`, the settings a worker
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk:** `Worker.spawned` and `Worker.map`; `Setting.t` and
   `Setting.context`; `Codegen.to_program_cache` (`to_program`'s cache);
@@ -233,7 +233,7 @@ the Exclusions of `README.md`.
 
 ## D6. Devices are named, never parsed
 
-- **tinygrad:** `device.py:28,38,383,470` (device strings split at `:`).
+- **tinygrad:** `device.py:28,38,385,472` (device strings split at `:`).
 - **tolk:** `Device.renderers`, `Device.renderer`.
 - **Differs:** the caller gives a target, whose device is a kind and whose
   `arch` is the device's; tolk picks the renderer and compiler from the
@@ -258,7 +258,7 @@ stamps nothing (D146).
 
 ## D8. The disk cache maps strings to strings
 
-- **tinygrad:** `helpers.py:400-449` (an SQLite database of pickled values,
+- **tinygrad:** `helpers.py:393-442` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
 - **tolk:** `Helpers.Diskcache`; `Diskcache.generation`, `Diskcache.renew`
   and `Diskcache.clear`.
@@ -267,7 +267,7 @@ stamps nothing (D146).
   place; tables are versioned by tolk's own version. Entries belong to a
   generation, an empty file named by a count and a unique name; a clear
   makes one past the newest, which empties every table at one step, then
-  removes the old files. tinygrad's clear (`helpers.py:418-421`) drops the tables one by one,
+  removes the old files. tinygrad's clear (`helpers.py:411-414`) drops the tables one by one,
   each drop committed on its own, so a reader between two drops sees one
   table cleared and another not. A tolk from before generations reads an
   entry of one as a write in progress: its clear and trim remove it only
@@ -373,7 +373,7 @@ stamps nothing (D146).
 
 ## D12. A node's key is a BLAKE2 digest
 
-- **tinygrad:** `uop/ops.py:260-262` (`key`, the SHA-256 of
+- **tinygrad:** `uop/ops.py:254-256` (`key`, the SHA-256 of
   `str((op, dtype, arg))` followed by the keys of the sources).
 - **tolk:** `Ops.key`.
 - **Differs:** the same text is digested with BLAKE2b-256.
@@ -390,17 +390,17 @@ stamps nothing (D146).
   unsigned constant, and a folded unsigned result, hold their type's value;
   `uop/symbolic.py:30` (`fold_const_alu`), which writes a folded integer
   result at its type's width; `:156-158` (the collapse of committed const
-  conversions), and `fold_const_alu` and `:283-285` (two stage ALU folding),
+  conversions), and `fold_const_alu` and `:166-168` (two stage ALU folding),
   which read a weak operand of an operation on a committed integer as
   written;
-  `uop/ops.py:1094-1155` (`_min_max`), which bounds such an operand by its
+  `uop/ops.py:1083-1144` (`_min_max`), which bounds such an operand by its
   written value; `uop/weak.py:82-87` (`uncast_const`), which leaves the
   literal bare. tinygrad's own `TestModularWraparound` expects the wrapped
   results and is marked `xfail_broken_const_wraparound`: its cases fold to
   them at this commit, but for the signed one of `test_div`, whose `//`
   floors where the test truncates.
-- **tolk:** `Shape.fold_const_alu`; the two stage folds of a maximum in
-  `Shape.symbolic_simple` and `Shape.symbolic`; `Ops.at_width` and
+- **tolk:** `Shape.fold_const_alu`; the two stage fold of a maximum in
+  `Shape.symbolic_simple`; `Ops.at_width` and
   `Ops.operand_bounds`; `Shape.uncast_const`.
 - **Differs:** a committed integer constant holds its type's value, signed
   or not. A fold reads a committed constant, a cast of a literal to a type of
@@ -460,7 +460,7 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
 ## D15. Compilers load their library at the first compile
 
 - **tinygrad:** `runtime/support/compiler_cuda.py:62` (`NVRTCCompiler`
-  calls `nvrtcVersion`), `runtime/support/compiler_amd.py:80` (`HIPCompiler`
+  calls `nvrtcVersion`), `runtime/support/compiler_amd.py:79` (`HIPCompiler`
   asserts comgr is loaded) and `runtime/ops_metal.py:39` (`MetalCompiler`
   creates its code generation service), each when the compiler is made, so
   making the renderer that holds it fails without the library.
@@ -518,7 +518,7 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
 
 ## D17. Each operation on a narrow signed scalar is narrowed in the source
 
-- **tinygrad:** `renderer/cstyle.py:254-259` (an ALU used once is inlined into
+- **tinygrad:** `renderer/cstyle.py:259-264` (an ALU used once is inlined into
   its user, whatever its type) with `:64-65` (the operator text);
   `:79-81` (`pm_narrow_uint`), which computes the operations on an unsigned
   char or short that wrap in an unsigned int and casts them back, for these
@@ -557,7 +557,7 @@ folds to `True` there as in `Shape.fold_const_alu`; tinygrad's
 ## D18. Withdrawn
 
 Metal computed a bfloat16 `TRUNC` in float32 here, where tinygrad truncated the
-bfloat, which Metal has no `trunc` of. At `renderer/cstyle.py:385`
+bfloat, which Metal has no `trunc` of. At `renderer/cstyle.py:392`
 `MetalRenderer.extra_matcher` computes `TRUNC` in float32 with `SQRT`, `EXP2`,
 `LOG2` and `SIN`, as `Cstyle.metal_extra_matcher` does.
 
@@ -637,8 +637,8 @@ scope, see README.
   that stays is that of float powers, a constant one computed by products and
   square roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
   - **Integer bounds wrap.** tinygrad: `uop/ops.py:59-61` (`wrapped`),
-    which `_min_max` (`:1094-1155`) applies to an unsigned sum, difference,
-    product, left shift and complement, `:1146-1155` (a cast), `:1139-1141`
+    which `_min_max` (`:1083-1144`) applies to an unsigned sum, difference,
+    product, left shift and complement, `:1135-1144` (a cast), `:1128-1130`
     (a constant table). tolk: `Ops.at_width`, `Ops.min_max`,
     `Ops.cast_bounds`, and the constant table's case of
     `Ops.compute_min_max`. The bounds of a committed integer that leave its
@@ -651,8 +651,8 @@ scope, see README.
     `false`, which is `true` at 40, and so `y * 4 < 0` and `y << 2 < 0`,
     `true` at 40 too, and `cast (cast (y + 100) uint8) int32` to one cast,
     `-116` where the machine gives `140`.
-  - **Wrapping rules.** tinygrad: `uop/symbolic.py:287` (`(x // c1) // c2`),
-    `:290` (`c0 + x < c1`), `codegen/simplify.py:100-104` (`x + y < c`,
+  - **Wrapping rules.** tinygrad: `uop/symbolic.py:286` (`(x // c1) // c2`),
+    `:289` (`c0 + x < c1`), `codegen/simplify.py:100-104` (`x + y < c`,
     `x * y < c`) and `:124` (`x + y <> c` under a cast),
     `uop/symbolic.py:388-398` (`reduce_mul_chain`, a factor out of a
     maximum), `uop/symbolic.py:299-300` (`-x < -y`, `-x < c`), `:125`
@@ -676,8 +676,8 @@ scope, see README.
     `-x < 3` to `-3 < x`, `false` at `x = -128` where the machine gives
     `true`, and uint8 `u // -1` to `-u`, `255` at `u = 1` where the machine
     gives `0`.
-  - **Float folds.** tinygrad: `uop/symbolic.py:120` (`x + 0`), `:173-179`
-    (`x / x`, `(x * y) / y`, `x * 0`), `:252` (`(x / y) / z`). tolk:
+  - **Float folds.** tinygrad: `uop/symbolic.py:120` (`x + 0`), `:176-182`
+    (`x / x`, `(x * y) / y`, `x * 0`), `:255` (`(x / y) / z`). tolk:
     `Shape.symbolic_simple`. A float `x + 0` is `x` only for `-0.`
     (`-0. + +0.` is `+0.`); `x * 0` is `0` for integers and booleans only (a
     float product by zero is NaN at an infinity or a NaN and `-0.` at a
@@ -685,18 +685,18 @@ scope, see README.
     true division is always a float: `x / x` is NaN at 0, `(1e10 * 1e30) /
     1e30` is `inf`, and `(1e20 / 1e20) / 1e20` is `1e-20` where
     `1e20 / 1e40` is `0.`.
-  - **Signed zeros.** tinygrad: `uop/symbolic.py:272`
+  - **Signed zeros.** tinygrad: `uop/symbolic.py:274`
     (complementary selections), `:471` (`-(x + y)`). tolk: `Shape.symbolic`,
     `Symbolic.sym` (its rule for `-(x + y)`). For integers and
     booleans only: `-(x + y)` at `x = -3`, `y = 3` is `-0.`, where `-x + -y`
     is `+0.`, and
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
-  - **Reassociation.** tinygrad: `uop/symbolic.py:245-251` (like terms),
-    `:269-270` (a sum of two selections), `:284-285` (two constants of an
-    associative operation), `:295-296` (constants to the end), `:388-398,469`
+  - **Reassociation.** tinygrad: `uop/symbolic.py:166-168` (two constants
+    of an associative operation), `:248-254` (like terms), `:271-272` (a sum
+    of two selections), `:294-295` (constants to the end), `:388-398,469`
     (`reduce_mul_chain`). tolk: `Shape.fold_where_closure`,
-    `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
+    `Shape.symbolic_simple`, `Shape.symbolic`, `Symbolic.reduce_mul_chain`.
     Sums, products and maxima regroup for integers and booleans only, and a
     factor leaves a float reduction nowhere: `(x + 1e8) + -1e8` at `x = 1` is
     `0.`, where `x + 0.` is `1.`; `(y + x) + x` at `y = 1`, `x = 2^-24` is
@@ -706,7 +706,7 @@ scope, see README.
     finite; and a maximum keeps a NaN only as its first operand, so
     `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
     `x + x` is still `x * 2`, which is exact.
-  - **Maxima.** tinygrad: `uop/symbolic.py:278-280`. tolk:
+  - **Maxima.** tinygrad: `uop/symbolic.py:280-282`. tolk:
     `Shape.symbolic`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
     `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
@@ -720,7 +720,7 @@ scope, see README.
     `0.`, where `(1 / x) * (1 / x)` is `1e-40`; `x * (1 / (1 + x))` at `1e-8`
     is `1e-8`, where `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it
     is `1.`.
-  - **Pow.** tinygrad: `uop/symbolic.py:16-22` (`simplify_pow`), `:193-194`
+  - **Pow.** tinygrad: `uop/symbolic.py:16-22` (`simplify_pow`), `:196-197`
     (`c ** x`). tolk: `Shape.simplify_pow` and the `c ** x` rule of
     `Shape.symbolic_simple`. The reciprocal of the
     base is taken for exponents of magnitude at least 1 only, where the power
@@ -817,8 +817,8 @@ scope, see README.
   parameters): none turns floating-point contraction off.
   `codegen/__init__.py:192-204` (`reduce_ranges_to_acc`,
   `expand_horizontal_reduce`: a sum adds its products unfused),
-  `codegen/decomp/op.py:118-121` (`a*b + c` becomes `MULACC` for a renderer
-  that writes it), `renderer/cstyle.py:147-158` (no C-style language writes
+  `codegen/decomp/op.py:116-119` (`a*b + c` becomes `MULACC` for a renderer
+  that writes it), `renderer/cstyle.py:148-159` (no C-style language writes
   `MULACC`).
 - **tolk:** `Compiler_cpu` (`-ffp-contract=off`), `Compiler_amd`
   (`-ffp-contract=off`), `Compiler_cuda` (`--fmad=false`), `Compiler_metal`
@@ -903,7 +903,7 @@ scope, see README.
 
 ## D26. A minus never meets a minus in C-style source
 
-- **tinygrad:** `renderer/cstyle.py:148` (`Ops.NEG` is `-{x}`), `:152`
+- **tinygrad:** `renderer/cstyle.py:149` (`Ops.NEG` is `-{x}`), `:153`
   (`Ops.SUB` is `({a}-{b})`).
 - **tolk:** `Cstyle.joined`, `Cstyle.infix`, and `Neg` in
   `Cstyle.code_for_op`.
@@ -1186,8 +1186,8 @@ its dispatch packets (D146).
 
 ## D50. Every C-style renderer writes a division; a product by a reciprocal stays one
 
-- **tinygrad:** `renderer/cstyle.py:147-155` (`CStyleLanguage.code_for_op`
-  has no `FDIV`) and `:297-300` (Clang's adds it); `codegen/decomp/op.py:122-125`
+- **tinygrad:** `renderer/cstyle.py:148-156` (`CStyleLanguage.code_for_op`
+  has no `FDIV`) and `:303-306` (Clang's adds it); `codegen/decomp/op.py:120-123`
   (a target that lists `FDIV` gets its reciprocals as divisions, and a product
   by a reciprocal, `a * (1/b)`, as the quotient `a/b`).
 - **tolk:** the `FDIV` rule of `Cstyle.base_rewrite`; the `FDIV` rules of
@@ -1303,7 +1303,7 @@ driver sizes local memory as it loads a function (D146).
   double failed verification, its body compiled for storage on a boundary
   and passed the data 8 bytes past one. Those two failures were on the host,
   in Clang's vector types aligned to their size; on the CPU device they are
-  now aligned to their element (`renderer/cstyle.py:308`), so an access there
+  now aligned to their element (`renderer/cstyle.py:314`), so an access there
   is defined from any element's address: the merge there takes every buffer
   to start on a boundary, as tinygrad's does (`Coalesce.memory_coalescing`).
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase › one float past a boundary, eight loads are of one, two, four and
@@ -1341,9 +1341,9 @@ driver sizes local memory as it loads a function (D146).
 
 ## D55. Metal names a vector after its element's one-word name
 
-- **tinygrad:** `renderer/cstyle.py:194` (`_render_dtype` names a
+- **tinygrad:** `renderer/cstyle.py:199` (`_render_dtype` names a
   vector after its element's name in `type_map` with spaces made
-  underscores) and `:377` (`MetalRenderer.type_map` renames only
+  underscores) and `:384` (`MetalRenderer.type_map` renames only
   `uint` and `bfloat` of `CStyleLanguage.type_map`'s C names).
 - **tolk:** `Cstyle.lang`'s field `vector_names`, which
   `Cstyle.render_dtype` reads, and Metal's in `Cstyle.metal_lang`.
@@ -1392,7 +1392,7 @@ driver sizes local memory as it loads a function (D146).
 
 ## D58. A program applies no elementwise operation to a vector
 
-- **tinygrad:** `uop/spec.py:204` (`spec_program`, which accepts an
+- **tinygrad:** `uop/spec.py:205` (`spec_program`, which accepts an
   elementwise operation of any shape).
 - **tolk:** the first rule of `Spec.program_rules`.
 - **Differs:** `Spec.program` rejects an operation of `Op.Set.elementwise`
@@ -1422,15 +1422,17 @@ driver sizes local memory as it loads a function (D146).
 ## D60. A loop of a call stays in the schedule
 
 - **tinygrad:** `schedule/rangeify.py:160-163` (`pm_no_views`, which strips
-  every view of storage), `:326-328` (`split_store`, which makes a kernel of
-  an end of a call), `schedule/__init__.py:71-74` (`create_schedule`, which
-  schedules the call of an end and drops the end), and `uop/spec.py:253-280`
+  every view of storage), `:318-320` (`split_store`, which makes a kernel of
+  an end of a call), `:316` (`pm_renumber_range`, which renumbers the ranges
+  of that kernel), `schedule/__init__.py:71-74` (`create_schedule`, which
+  schedules the call of an end and drops the end), and `uop/spec.py:254-281`
   (`spec_kernel_graph`, which admits device ranges only, and no end).
-- **tolk:** `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a
-  view that moves with a loop's range) and `Rangeify.split_store`; `Schedule.create_schedule` (`loops`, `argument`
-  and the kept end); `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`;
-  and `test/gen/tinygrad.patch`, which gives tinygrad's `spec_kernel_graph`
-  the same rules.
+- **tolk:** `Rangeify.loop_range`, `Rangeify.pm_no_views` (which keeps a view
+  that moves with a loop's range) and `Rangeify.split_store`;
+  `Schedule.create_schedule` (`loops`, `argument` and the kept end);
+  `Spec.loop`, `Spec.loop_bound` and `Spec.kernel_graph`; and
+  `test/gen/tinygrad.patch`, which gives tinygrad's `spec_kernel_graph` the
+  same rules.
 - **Differs:** an end of a precompiled call over loop ranges
   (`Axis_type.Loop`), `AFTER(buf, END(CALL(fn, args), r))`, is an effect of
   the kernel graph and no kernel. The arguments that move with `r` stay
@@ -1509,7 +1511,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D63. Programs and schedules are kept on disk
 
-- **tinygrad:** `codegen/__init__.py:509-517` (`to_program_config`,
+- **tinygrad:** `codegen/__init__.py:511-519` (`to_program_config`,
   `to_program_key` and `to_program_cache`, a dictionary of the process),
   `schedule/__init__.py:124-134` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:288` (`SCACHE`, `1` by
@@ -1686,13 +1688,13 @@ its launch descriptors (D146).
 
 Only a view of storage had a contiguous view, since tinygrad's rewrite of a
 constant's index marked the constant and `symbolic` rebuilt it unmarked, without
-end. At `uop/ops.py:920-939` the rewrite marks nothing and finds a
+end. At `uop/ops.py:910-929` the rewrite marks nothing and finds a
 view of any value, a constant or a computed one included; `Prepare.contiguous_view`
 does the same.
 
 ## D73. A gather is an INDEX of a tensor by a value with axes
 
-- **tinygrad:** `uop/ops.py:343-346` (INDEX's shape: its index sources'
+- **tinygrad:** `uop/ops.py:336-339` (INDEX's shape: its index sources'
   shapes, then the rest of the source's), which no tinygrad pass puts in a
   tensor graph; `schedule/indexing.py:30-45` (`pm_generate_realize_map` and
   its rules), `:70` (the sources an INDEX's ranges reach),
@@ -1746,11 +1748,11 @@ does the same.
 
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
-- **tinygrad:** `uop/ops.py:1094-1155` (`UOp._min_max`), which bounds binary
-  operations on integers only (`:1095`), has no case for `TRUNC` or `NEG`, and
-  bounds a `WHERE` by both its branches whatever selects them (`:1134`),
+- **tinygrad:** `uop/ops.py:1083-1144` (`UOp._min_max`), which bounds binary
+  operations on integers only (`:1084`), has no case for `TRUNC` or `NEG`, and
+  bounds a `WHERE` by both its branches whatever selects them (`:1123`),
   and gives a value it cannot bound, or a cast it cannot, its type's
-  `min` and `max` (`:1155`), finite in the 8-bit formats without infinities
+  `min` and `max` (`:1144`), finite in the 8-bit formats without infinities
   (`dtype.py:74-78`);
   `codegen/decomp/transcendental.py:170-191` (`xsin`), which builds the
   Payne-Hanek reduction unless its caller passes `fast`, and chooses between
@@ -1827,8 +1829,8 @@ does the same.
 
 ## D75. A selection by a constant condition
 
-- **tinygrad:** `uop/symbolic.py:202`, which folds a `WHERE` whose condition is
-  a `CONST` (`UPat.cvar("gate")`), and `:233-238` (`fold_where_closure`),
+- **tinygrad:** `uop/symbolic.py:205`, which folds a `WHERE` whose condition is
+  a `CONST` (`UPat.cvar("gate")`), and `:236-241` (`fold_where_closure`),
   which substitutes `True` for a selection's condition in its true branch and
   `False` in its false branch, whatever the condition is.
 - **tolk:** `Shape.broadcast_const`, its rule in `Shape.symbolic_simple`,
@@ -1968,7 +1970,7 @@ does the same.
 
 ## D78. The CUDA device's kernels compile to a cubin
 
-- **tinygrad:** `renderer/cstyle.py:424` (`CUDARenderer`'s compiler, which
+- **tinygrad:** `renderer/cstyle.py:428` (`CUDARenderer`'s compiler, which
   makes PTX when the device is `CUDA` and a cubin otherwise).
 - **tolk:** `Cstyle.cuda`'s compiler.
 - **Differs:** the CUDA device's kernels compile to a cubin, as the NV
@@ -1991,11 +1993,11 @@ does the same.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 
-- **tinygrad:** `runtime/ops_cpu.py:48-62` (`CPUProgram.__call__`),
+- **tinygrad:** `runtime/ops_cpu.py:43-53` (`CPUProgram.__call__`),
   which calls a kernel once per launch on the calling thread;
   `codegen/__init__.py:367` (the pipeline after `pm_cast_const`),
-  `:33-38,378-380` (`do_number_param` and its pass) and `:444`
-  (`do_estimates`); `uop/ops.py:1332` (`KernelInfo`) and `:1358`
+  `:33-38,378-380` (`do_number_param` and its pass) and `:446`
+  (`do_estimates`); `uop/ops.py:1320` (`KernelInfo`) and `:1346`
   (`ProgramInfo.from_sink`); `engine/realize.py:17`
   (`get_call_kernel_args`) and `:155` (`exec_kernel`).
 - **tolk:** `Codegen.split_blocks`, its place in
@@ -2074,7 +2076,7 @@ A GFX11 trace set `TTRACE_EXEC` by name. tolk encodes no thread trace yet
 ## D86. A program reads a lane of a vector at a constant
 
 - **tinygrad:** `uop/spec.py:83` (`shared_spec`, which accepts an index of
-  any integer) and `:204` (`spec_program`); `renderer/cstyle.py:176`
+  any integer) and `:205` (`spec_program`); `renderer/cstyle.py:181`
   (`render_index`, which writes a lane picked by a value as `(v)[i]`).
 - **tolk:** the second rule of `Spec.program`.
 - **Differs:** `Spec.program` rejects an index of a vector value
@@ -2098,7 +2100,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D88. A float zero a host comparison reads reaches C as a value the backend cannot see
 
-- **tinygrad:** `renderer/cstyle.py:284` (`ClangRenderer`, whose
+- **tinygrad:** `renderer/cstyle.py:289` (`ClangRenderer`, whose
   `string_rewrite` writes a float zero as a literal, `0.0f`).
 - **tolk:** `Cstyle.float_zero`, `Cstyle.opaque`, `Cstyle.opaque_zeros`
   and `Cstyle.clang` (which adds it for each host target with its types);
@@ -2261,7 +2263,7 @@ Withdrawn: multi-device is out of scope, see README.
 
 - **tinygrad:** `engine/realize.py:130` (`resolve_params`) and `:155`
   (`exec_kernel`), which find a call's buffers, launch dimensions and variable
-  values on every run, and `uop/ops.py:1158-1171` (`UOp._sym_fxn`, a cached
+  values on every run, and `uop/ops.py:1147-1160` (`UOp._sym_fxn`, a cached
   property that simplifies a symbolic integer once and compiles it to a
   Python function, which `UOp.sym_infer` calls on each evaluation).
 - **tolk:** `Tolk_engine.affine`, `Tolk_engine.value`, `Tolk_engine.locate`
@@ -2359,11 +2361,11 @@ Withdrawn: multi-device is out of scope, see README.
 
 ## D93. The where-closure rule leaves loads alone, and its slice queries walk no more than they need
 
-- **tinygrad:** `uop/symbolic.py:233-237` (`fold_where_closure`, which asks
+- **tinygrad:** `uop/symbolic.py:236-240` (`fold_where_closure`, which asks
   whether the condition is in `t.bool_slice` or `f.bool_slice`, and whether
-  the condition or a branch reaches an `INDEX`); `uop/ops.py:283-287`
+  the condition or a branch reaches an `INDEX`); `uop/ops.py:276-280`
   (`_bool_slice`, a `recursive_property`: each node keeps the set of the
-  boolean nodes it reaches) and `:271-281` (`backward_slice`, a
+  boolean nodes it reaches) and `:264-274` (`backward_slice`, a
   `cached_property` holding the whole slice of each node asked, and
   `op_in_backward_slice_with_self`, which walks it);
   `codegen/late/coalesce.py:156` (`memory_coalescing`, which addresses a
@@ -2444,7 +2446,7 @@ gate read a set; merged into D93.
 ## D95. A device's target follows from the device alone
 
 - **tinygrad:** `helpers.py:222-237` (`_DEV`, the `DEV` setting, and
-  `DEV.target`); `device.py:462-467` (`_select_renderer`, which renders for
+  `DEV.target`); `device.py:464-469` (`_select_renderer`, which renders for
   `DEV.target` of the device's kind).
 - **tolk:** `Tolk_engine.target`; `Device.renderer`; `Helpers.Target`.
 - **Differs:** there is no `DEV` setting. `Tolk_engine.target` is a function
@@ -2529,7 +2531,7 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
 
 - **tinygrad:** `schedule/prepare.py:270` (the size-0 rule, which makes every
   value with no element a constant expanded to its shape), `schedule/rangeify.py:138`
-  (`no_indexing_calls`), `uop/spec.py:253-280` (`spec_kernel_graph`, which
+  (`no_indexing_calls`), `uop/spec.py:254-281` (`spec_kernel_graph`, which
   admits no expand) and `schedule/__init__.py:18-22,71-74` (`_states` and the
   call's arguments in `create_schedule`, which take buffer states only).
 - **tolk:** `Rangeify.no_indexing_calls`, `Schedule.scalar_argument` and
@@ -2756,11 +2758,11 @@ merged into D89.
 
 ## D111. A hung AM device is lost, never recovered in the process
 
-- **tinygrad:** `runtime/ops_amd.py:755-775` (`_collect_interrupts`, whose
+- **tinygrad:** `runtime/ops_amd.py:749-769` (`_collect_interrupts`, whose
   `reset` resets the compute engines through `AMDev.recover`, rewinds the
   compute queue and moves the timeline past the hung value, and
-  `on_device_hang`) and `:826` (`can_recover`, true under AM off a virtual
-  function); `runtime/support/am/amdev.py:283-292` (`recover`).
+  `on_device_hang`) and `:820` (`can_recover`, true under AM off a virtual
+  function); `runtime/support/am/amdev.py:282-291` (`recover`).
 - **tolk:** none: rig's AMD driver owns the GPU, and loses it on a hang,
   driver-less after its hang limit and under the kernel's driver when the
   driver reports one.
@@ -2786,12 +2788,12 @@ encodes its barriers (D146).
 
 ## D113. A compiled binary is kept under its compiler's identity
 
-- **tinygrad:** `device.py:324-330` (`Compiler.__init__`, which drops
+- **tinygrad:** `device.py:326-332` (`Compiler.__init__`, which drops
   `cachekey` when `CCACHE` is 0, and `compile_cached`: a binary is kept under
   its source in the table `cachekey`);
   `runtime/support/compiler_cpu.py:16`, `runtime/ops_metal.py:40`,
   `runtime/support/compiler_cuda.py:54` and
-  `runtime/support/compiler_amd.py:84` (the tables, named by the compiler,
+  `runtime/support/compiler_amd.py:83` (the tables, named by the compiler,
   the architecture and a key); `codegen/opt/search.py:106` (the beam search's
   key: the kernel, the width, `allow_test_size`, the device and the suffix).
 - **tolk:** `Renderer.Compiler.v`'s `cachekey` (a function asked once) and
@@ -2846,7 +2848,7 @@ encodes its barriers (D146).
   `1`, and `TC_OPT`, default `0`); `codegen/opt/search.py:17-21` (the
   actions, reading `getenv("TC", 1)` and `getenv("TC_OPT", 2)`);
   `codegen/opt/heuristic.py:21` (`TC_OPT`'s default, `2` during a search and
-  `0` otherwise); `engine/jit.py:40` (`getenv("JITBEAM", BEAM.value)`);
+  `0` otherwise); `engine/jit.py:35` (`getenv("JITBEAM", BEAM.value)`);
   `engine/realize.py:276` (`compile_linear`'s `profile`, `PROFILE or
   DEBUG >= 2` unless given, for `hcq_compile`); `codegen/__init__.py:385`
   (`os.environ.get("DBGTV")`, read on each failure).
@@ -2934,9 +2936,9 @@ encodes its barriers (D146).
 
 - **tinygrad:** `codegen/opt/search.py:133-143` (each candidate compiled,
   then dropped if its binary is in `seen_libs`), `:63` (`_try_compile` calls
-  `to_program`); `codegen/__init__.py:475-503` (`do_to_program` takes a
-  sink or a program at any stage), `:514-516` (`to_program_cache`) and
-  `:461` (`do_compile` calls `compile_cached`); `engine/realize.py:231`
+  `to_program`); `codegen/__init__.py:477-505` (`do_to_program` takes a
+  sink or a program at any stage), `:516-518` (`to_program_cache`) and
+  `:463` (`do_compile` calls `compile_cached`); `engine/realize.py:231`
   (`_get_call_to_compile` takes a program not yet compiled).
 - **tolk:** `Search.beam_search` (its `compiled`, the compiler it memoizes
   and its `compile`); `Search.memo`; `Search.try_compile`, `Codegen.compile`
@@ -3049,9 +3051,9 @@ AMD's packet layouts were nx.amd.packet's. tolk encodes no packet (D146).
 ## D122. A stored value keeps its bounds
 
 - **tinygrad:** `schedule/rangeify.py:221` (`bufferize_to_store`'s `ALLOC`),
-  `:274` (`debuf`) and `schedule/prepare.py:171,179` (`copy_to_anon_store`,
+  `:277` (`debuf`) and `schedule/prepare.py:171,179` (`copy_to_anon_store`,
   `stage_to_anon_store`), whose storage carries no bounds, so a read of it
-  has its type's; `uop/ops.py:1155` (`_min_max`, which bounds a `BITCAST` by
+  has its type's; `uop/ops.py:1144` (`_min_max`, which bounds a `BITCAST` by
   its type).
 - **tolk:** `Ops.stored_bounds` and `Ops.bitcast_bounds`;
   `Rangeify.bufferize_to_store` (a stage's storage) and `Rangeify.debuf`;
@@ -3234,7 +3236,7 @@ launch descriptors (D146).
 
 ## D128. A committed float operation reads a weak float operand rounded
 
-- **tinygrad:** `uop/ops.py:1094` (`UOp._min_max`), which bounds a weak float
+- **tinygrad:** `uop/ops.py:1083` (`UOp._min_max`), which bounds a weak float
   operand of a committed float operation by its value as written, at no
   width.
 - **tolk:** `Ops.rounded` and `Ops.operand_bounds`;
@@ -3289,7 +3291,7 @@ search's memos and what it keeps.
 
 ## D132. A contiguous view's rewrite stops at the effects its storage waits on
 
-- **tinygrad:** `uop/ops.py:931-939` (`UOp.contiguous_view`), whose
+- **tinygrad:** `uop/ops.py:921-929` (`UOp.contiguous_view`), whose
   rewrite of the index with `pm_mops` and `symbolic` visits every node the
   index reaches, the effects an `AFTER` orders its storage after and the graphs
   they compute included, and returns the node it reaches as rewritten
@@ -3317,7 +3319,7 @@ search's memos and what it keeps.
 
 ## D133. A greatest common divisor's coefficient is a scalar
 
-- **tinygrad:** `uop/ops.py:1073-1078` (`UOp.gcd`, whose coefficient is
+- **tinygrad:** `uop/ops.py:1062-1067` (`UOp.gcd`, whose coefficient is
   `uops[0].const_like(...)`, a constant broadcast to the shape of the first
   term) and `uop/divandmod.py:77-81` (`divide_by_gcd`, which divides every
   term by a divisor that is not the `CONST` 1). Over terms with a shape, a
@@ -3378,7 +3380,7 @@ driver signals its own (D146).
 - **tinygrad:** `schedule/indexing.py:226` (new ranges for every stored value)
   and `:246-269` (a node its consumers index apart is stored);
   `schedule/rangeify.py:48` (`remove_bufferize`, which inlines such a store
-  back into each consumer) and `:326-339` (`split_store`, one kernel per
+  back into each consumer) and `:318-333` (`split_store`, one kernel per
   store). Upstream calls scheduling several outputs into one kernel pending:
   `test/runtime/test_assign.py:345`, `:374` and `:387` skip "multi output not
   supported anymore", and `test/runtime/test_jit.py:485` skips "Pending
@@ -3507,7 +3509,7 @@ driver signals its own (D146).
 
 ## D139. Construction checks no specification
 
-- **tinygrad:** `uop/ops.py:198-204` (`UOpMetaClass.__call__`, which checks each
+- **tinygrad:** `uop/ops.py:197-203` (`UOpMetaClass.__call__`, which checks each
   node it creates against `spec_full` when `SPEC` is above 1, and computes its
   shape when `SPEC` is above 2), and `schedule/rangeify.py`'s
   `Context(SPEC=min(SPEC.value, 2))` around `pm_apply_rangeify`.
@@ -3861,15 +3863,15 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 ## D147. The x86 host holds bfloat16 as its bits
 
-- **tinygrad:** `renderer/cstyle.py:296` (`ClangRenderer.type_map`,
+- **tinygrad:** `renderer/cstyle.py:302` (`ClangRenderer.type_map`,
   which keeps `CStyleLanguage.type_map`'s bfloat16, Clang's `__bf16`
-  (`:140-144`), on every machine).
+  (`:141-145`), on every machine).
 - **tolk:** `Cstyle.clang` (the Clang renderer's language,
   which on x86 maps bfloat16 to `unsigned short` and renders its constants as
   their bits with `pm_bf16_ushort_const`).
 - **Differs:** on x86, a bfloat16 value, pointer or vector is written as
   `unsigned short`, and a bfloat16 constant as its bits, as OpenCL writes
-  them (`renderer/cstyle.py:338,341`: its type map's `ushort` and
+  them (`renderer/cstyle.py:344,347`: its type map's `ushort` and
   `pm_bf16_ushort_const`). The
   kernel's graph is tinygrad's; only its C
   types change. Every bfloat16 operation already computes in float32 through
@@ -3896,7 +3898,7 @@ merged into D137, which holds the loops that consumers of one domain share.
 
 ## D148. A selection keeps its guard of a conversion or a division
 
-- **tinygrad:** `uop/symbolic.py:233-240` (`fold_where_closure`, which
+- **tinygrad:** `uop/symbolic.py:236-243` (`fold_where_closure`, which
   assumes a selection's condition true in its true branch and false in the
   other, unless an `INDEX` is involved).
 - **tolk:** `Shape.guards_partial` and `Shape.fold_where_closure`.
@@ -3925,13 +3927,13 @@ merged into D137, which holds the loops that consumers of one domain share.
 The Clang renderer wrote no calling convention on Windows, where tinygrad wrote
 `__attribute__((ms_abi))` on its kernels and the function pointers its calls
 cast to. tinygrad no longer supports Windows: `ClangRenderer`
-(`renderer/cstyle.py:284`) keeps the empty `abi` and plain `kernel_typedef`
+(`renderer/cstyle.py:289`) keeps the empty `abi` and plain `kernel_typedef`
 of `CStyleLanguage` (`:125-126`) on every system, as `Cstyle.clang_lang`
 does.
 
 ## D150. The folder's sine is correctly rounded
 
-- **tinygrad:** `uop/ops.py:1415` (`python_alu`'s `SIN`, `math.sin`, the C
+- **tinygrad:** `uop/ops.py:1403` (`python_alu`'s `SIN`, `math.sin`, the C
   library's).
 - **tolk:** `Ops.sine`, which `python_alu` calls; `test/gen/tinygrad.patch`,
   which gives tinygrad's `python_alu` a correctly rounded sine (`cr_sin`, in
@@ -3957,7 +3959,7 @@ does.
 ## D151. An x86 kernel declares that it uses 512-bit vectors
 
 - **tinygrad:** `renderer/cstyle.py:126` (`kernel_typedef`, `void`) and
-  `:323` (`ClangRenderer.__init__`).
+  `:329` (`ClangRenderer.__init__`).
 - **tolk:** `Cstyle.clang` (the Clang renderer's language on
   x86, whose `kernel_typedef` is
   `__attribute__((min_vector_width(512))) void`); `gen/tinygrad.patch` makes
@@ -3994,7 +3996,7 @@ does.
 
 ## D152. The disk cache holds at most CACHESIZE bytes
 
-- **tinygrad:** `helpers.py:418-449` (`diskcache_clear`, `diskcache_get`,
+- **tinygrad:** `helpers.py:411-442` (`diskcache_clear`, `diskcache_get`,
   `diskcache_put`): a put inserts or replaces a row and nothing removes one
   but `diskcache_clear`.
 - **tolk:** `Helpers.Diskcache.mark`, `Helpers.Diskcache.size_file`,
@@ -4101,9 +4103,9 @@ does.
 ## D156. A NaN constant is written from its bits
 
 - **tinygrad:** `renderer/cstyle.py:25-26` (`base_rewrite` writes every NaN
-  constant as the language's `nan` cast to its type), `:146` (`NAN`), `:291`
-  (Clang's `__builtin_nanf("")`), `:460` (CUDA's
-  `#define NAN (__int_as_float(0x7fffffff))`) and `:521-523` (HIP's 8-bit
+  constant as the language's `nan` cast to its type), `:147` (`NAN`), `:297`
+  (Clang's `__builtin_nanf("")`), `:464` (CUDA's
+  `#define NAN (__int_as_float(0x7fffffff))`) and `:525-527` (HIP's 8-bit
   floats, `f32_to_fp8(NAN, …)`).
 - **tolk:** `Cstyle.nan_const`, the `bitcast` of each language
   (`Cstyle.cstyle`, `Cstyle.metal_lang`, `Cstyle.cuda_lang`) and
@@ -4130,7 +4132,7 @@ does.
 
 ## D157. A C-style expression nests at most 64 brackets
 
-- **tinygrad:** `renderer/cstyle.py:253-258` (`_render`'s rule that writes a
+- **tinygrad:** `renderer/cstyle.py:258-263` (`_render`'s rule that writes a
   value read once into its reader).
 - **tolk:** `Cstyle.max_nesting`, `Cstyle.nesting`, and `inlined` in
   `Cstyle.render_uops`, with its call there.
@@ -4181,8 +4183,8 @@ does.
 
 ## D159. A captured schedule tells the settings it compiles under
 
-- **tinygrad:** `engine/jit.py:29-42` (`jit_lower`), which reads `JITBEAM`,
-  or else `BEAM`, at `:40` and passes the width to `compile_linear` as its
+- **tinygrad:** `engine/jit.py:24-37` (`jit_lower`), which reads `JITBEAM`,
+  or else `BEAM`, at `:35` and passes the width to `compile_linear` as its
   `beam`, binding no setting; its search cache keys on no setting
   (`codegen/opt/search.py:106`).
 - **tolk:** `Jit.width`, `Jit.bindings`, `Jit.shaping`, and `Jit.jit_lower`,
@@ -4245,7 +4247,7 @@ does.
 
 ## D161. A folded weak constant wraps, and a power of two is read at its width
 
-- **tinygrad:** `uop/symbolic.py:283-285` (two stage ALU folding), which
+- **tinygrad:** `uop/symbolic.py:166-168` (two stage ALU folding), which
   folds `c1 op c2` as weak constants, unbounded, under an operation on a
   committed integer; `codegen/decomp/op.py:64-96` (`powers_of_two`), which
   turns a product, quotient or remainder by `2^i`, `i < 64`, into a shift or
@@ -4257,8 +4259,8 @@ does.
   renders `<< 32` and `<< 36` on the CPU for `c = 65536`, and for `c =
   -2**31` renders `<< 62` and the literal `73786976294838206464`, which clang
   refuses.
-- **tolk:** `Shape.wrap_folded` and its use in `Shape.symbolic` (the two
-  stage fold); `Decomp_op.at_width`, `Decomp_op.power_of_two` and
+- **tolk:** `Shape.wrap_folded` and its use in `Shape.symbolic_simple`
+  (the two stage fold); `Decomp_op.at_width`, `Decomp_op.power_of_two` and
   `Decomp_op.shift_of`; `test/gen/tinygrad.patch`, which makes
   tinygrad's rules the same before the goldens are generated.
 - **Differs:** a weak result of folding two weak constants under an
@@ -4309,7 +4311,7 @@ does.
 - **tinygrad:** `schedule/rangeify.py:48-97` (`remove_bufferize`, which
   inlines a stored value that reads at most three buffers and no reduction
   reading a buffer, at every position and every trip it is read at) and
-  `:342-349` (`get_kernel_graph`); `schedule/indexing.py:219-270`
+  `:336-343` (`get_kernel_graph`); `schedule/indexing.py:219-270`
   (`run_rangeify`, which stores a value its consumers index differently, or
   one a reduction or an elementwise operation reads past a broadcast, the
   stores `remove_bufferize` weighs).
@@ -4532,7 +4534,7 @@ fold wraps integers and holds its float bound`, hold.
 
 ## D168. The renderer finds a program's callees by a scan of its instructions
 
-- **tinygrad:** `renderer/cstyle.py:272-281` (`CStyleLanguage.render`, which
+- **tinygrad:** `renderer/cstyle.py:277-286` (`CStyleLanguage.render`, which
   lists the external functions and the call bodies by two toposorts of
   `UOp.sink(*uops)`, then renders each body, then the program).
 - **tolk:** `Cstyle.callees`, which `Cstyle.render` asks.
