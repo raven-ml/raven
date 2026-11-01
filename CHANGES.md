@@ -798,6 +798,28 @@ thread.
 
 ### Tolk (new)
 
+- **Breaking:** a program takes its parameters in slot order, buffers and
+  scalars interleaved. `Ops.program_info.vars` is `params`, every parameter by
+  slot; `Shape.kernel_params` is the order a kernel takes them;
+  `Device.Tiny_elf.param` carries its `addrspace` in place of a compact slot;
+  `Realize.get_call_var_uops` is `get_call_kernel_args`, one value per
+  parameter; `Ops.vals` is gone. A custom kernel's variable argument stays a
+  variable in its own slot (`Shape.custom_kernel`), and the engine lays out a
+  launch's parameters in that order.
+- **Breaking:** `Jit.jit_lower` takes `~input_vars`, the capture's variables:
+  it unbinds them, so each run reads the value it binds, and keeps any other
+  binding.
+- **Breaking:** `Ops.param_arg.addrspace` is a `Dtype.addr_space`, no option.
+- `Dtype.can_lossless_cast` decides by the types' bounds and widths: `Int8`,
+  `Uint8` and the 8-bit floats now cast to `Bfloat16` without loss.
+- A bool sum or product over a range its value ignores is the value, where it
+  multiplied the value by the range's size (`Simplify.pm_reduce_unparented`).
+- `Spec.shared` refuses a store whose value is not of its target's type, and a
+  weak operand of another kind than its result's.
+- A comparison of a sum of multiples with a constant folds for any constant
+  and any common factor (`Shape.symbolic`); an exclusive or of non-negative
+  integers is bounded by the wider operand's next power of two.
+
 - **Breaking:** `Op.Flip`, the argument `Ops.Flips` and the movement `Flip`
   are gone. `Shape.flip` reverses an axis with pads, reshapes, shrinks and
   permutes, whose index folds to `n - 1 - i` on an axis of known size; a store
