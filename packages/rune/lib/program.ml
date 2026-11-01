@@ -1119,7 +1119,109 @@ let drop d env e base stop =
     env.(d.vars.(k)) <- hole
   done
 
-let rec eval ?totals p args =
+let moves : type r. r Nx.Prim.t -> bool = function
+  | Nx.Prim.Move _ -> true
+  | _ -> false
+
+(* The evaluation of [p]'s equations over [env] that owns the memory of
+   each argument [donated] marks and of each value an operation makes,
+   and gives each to the operation that reads it last as a donation,
+   where that operation reads it once: nx may write that operation's
+   result over it, with the same bits. It owns the values its operations
+   make only in a program of operations alone, since a construct may keep
+   or give back what it reads; a value that two slots hold, as an
+   operation that gives an operand back makes, and one a construct reads
+   are owned by none, and a movement, which passes a donation on as a
+   handle for its readers to consume, receives none, so that no donation
+   kills what another reads. *)
+let owning p d env donated ~lookup ~perform =
+  let owner = p.owner in
+  let plain = Array.for_all (function Op _ -> true | Do _ -> false) p.eqns in
+  let owned = Bytes.make p.slots '\000' in
+  let mark k b = if b then Bytes.set owned p.params.(k) '\001' in
+  Array.iteri mark donated;
+  let given = Bytes.make p.slots '\000' in
+  let slots_of op =
+    let ns = ref [] in
+    let see : 'v 's 'd. int -> ('v, 's, 'd) Nx.t -> unit =
+     fun _ x ->
+      match Nx.Prim.payload owner x with
+      | Some (Var n) -> ns := n :: !ns
+      | _ -> ()
+    in
+    Nx.Prim.iteri see op;
+    !ns
+  in
+  (* Marks the slots of [ns] that [e] reads last, once each, given. *)
+  let giving e ns ~on =
+    for k = d.starts.(e) to d.starts.(e + 1) - 1 do
+      let n = d.vars.(k) in
+      let once = List.length (List.filter (( = ) n) ns) = 1 in
+      if Bytes.get owned n = '\001' && once then
+        Bytes.set given n (if on then '\001' else '\000')
+    done
+  in
+  let lookup_op (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
+    match Nx.Prim.payload owner x with
+    | Some (Var n) when Bytes.get given n = '\001' ->
+        Nx.donate (like x env.(n))
+    | _ -> lookup.f x
+  in
+  (* Marks the values an operation made from [base] to [stop] owned, but
+     one that is the value of one of its operands' slots [ns], which then
+     is disowned too: nx gives an operand back as it is. *)
+  let own ns base stop =
+    for v = base to stop - 1 do
+      let (V y) = env.(v) in
+      let aliased = ref false in
+      List.iter
+        (fun n ->
+          let (V x) = env.(n) in
+          if Obj.repr x == Obj.repr y then begin
+            Bytes.set owned n '\000';
+            aliased := true
+          end)
+        ns;
+      if not !aliased then Bytes.set owned v '\001'
+    done
+  in
+  (* A construct may keep its operands, as an addition to a total does, so
+     it disowns them. *)
+  let disown c =
+    List.iter
+      (fun (V x) ->
+        match Nx.Prim.payload owner x with
+        | Some (Var n) -> Bytes.set owned n '\000'
+        | _ -> ())
+      (operands c)
+  in
+  let at = ref 0 in
+  let bind (type v s d) (y : (v, s, d) Nx.t) =
+    env.(!at) <- V y;
+    incr at
+  in
+  Array.iteri
+    (fun e eqn ->
+      match eqn with
+      | Op { by; op; base } ->
+          let ns = slots_of op in
+          let donating = not (moves op) in
+          if donating then giving e ns ~on:true;
+          let op' = Nx.Prim.map lookup_op op in
+          if donating then giving e ns ~on:false;
+          let r = Nx.Prim.eval ~by op' in
+          at := base;
+          Nx.Prim.iter_results bind op' r;
+          if donating && plain then own ns base !at;
+          drop d env e base !at
+      | Do { c; base } ->
+          disown c;
+          let r = perform c in
+          Array.blit r 0 env base (Array.length r);
+          drop d env e base (base + Array.length r))
+    p.eqns
+
+let rec eval ?totals ?donated p args =
   let na = Array.length p.adds in
   let totals =
     match totals with
@@ -1146,20 +1248,25 @@ let rec eval ?totals p args =
     incr at
   in
   let d = dropped p in
-  Array.iteri
-    (fun e eqn ->
-      match eqn with
-      | Op { by; op; base } ->
-          let op = Nx.Prim.map lookup op in
-          let r = Nx.Prim.eval ~by op in
-          at := base;
-          Nx.Prim.iter_results bind op r;
-          drop d env e base !at
-      | Do { c; base } ->
-          let r = perform (map_operands m c) in
-          Array.blit r 0 env base (Array.length r);
-          drop d env e base (base + Array.length r))
-    p.eqns;
+  (match donated with
+  | Some donated ->
+      let perform c = perform (map_operands m c) in
+      owning p d env donated ~lookup:m ~perform
+  | None ->
+      Array.iteri
+        (fun e eqn ->
+          match eqn with
+          | Op { by; op; base } ->
+              let op = Nx.Prim.map lookup op in
+              let r = Nx.Prim.eval ~by op in
+              at := base;
+              Nx.Prim.iter_results bind op r;
+              drop d env e base !at
+          | Do { c; base } ->
+              let r = perform (map_operands m c) in
+              Array.blit r 0 env base (Array.length r);
+              drop d env e base (base + Array.length r))
+        p.eqns);
   map_values m p.outputs
 
 and perform c =

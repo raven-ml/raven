@@ -353,6 +353,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- An evaluated `Rune.jit` call, as one over values on several devices,
+  gives each donated argument, and in a program of operations alone each
+  value it makes, to the operation that reads it last as a donation, so an
+  optimiser update writes its state in place; a result over a donated
+  argument's memory is no longer copied. A fully sharded step holds its
+  share of the state, its activations and about two layers.
 - An evaluated program finds the values it drops with fewer words: the eager
   gradient of a scan whose step holds a root allocates 3.2% fewer.
 - Reverse mode records each operation with fewer words: kaun's MLP train

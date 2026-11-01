@@ -515,13 +515,21 @@ val lane_names : int array -> int -> string
     [", in lane k"] for each axis's position [k], outermost first. It is [""]
     where [i] is at least the number of lanes. *)
 
-val eval : ?totals:value array -> t -> value array -> value array
-(** [eval ~totals p args] is [p]'s outputs with its arguments bound to [args]
-    and its totals' running values in to [totals], in order. Without [totals],
-    each running value in is [-0.], the identity that keeps every sign ([0]
-    where the dtype has no negative zero), so that the running values out are
-    the sums of its additions. Raises [Invalid_argument] where [args] and
-    [totals] do not match [p]'s parameters, and what an equation raises. *)
+val eval :
+  ?totals:value array -> ?donated:bool array -> t -> value array -> value array
+(** [eval ~totals ~donated p args] is [p]'s outputs with its arguments bound
+    to [args] and its totals' running values in to [totals], in order.
+    Without [totals], each running value in is [-0.], the identity that keeps
+    every sign ([0] where the dtype has no negative zero), so that the
+    running values out are the sums of its additions. With [donated], each
+    argument [k] with [donated.(k)], whose memory it must own, and in a
+    program without constructs each value an operation makes, goes to the
+    operation that reads it last as {!Nx.donate} of it, where that
+    operation reads it once, is no movement and no output or other slot
+    reads it: the operation may write its result over that memory, with the
+    same bits. Raises
+    [Invalid_argument] where [args] and [totals] do not match [p]'s
+    parameters, and what an equation raises. *)
 
 val conform : callback -> value array -> unit
 (** [conform c ys] checks [ys] against [c]'s forms. Raises [Invalid_argument]

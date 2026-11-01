@@ -1691,10 +1691,17 @@ val jit :
 
     It also declines a program whose device computes nothing ({!Rig.computes}),
     and one tolk cannot compile. An evaluated call's results are fresh, as a
-    compiled call's are, and a call with donated arguments consumes them and
-    lends nothing. It holds each value of the program from the operation that
-    makes it until the last that reads it, as the function applied eagerly
-    lets each go.
+    compiled call's are, and a call with donated arguments consumes them. It
+    holds each value of the program from the operation that makes it until
+    the last that reads it, as the function applied eagerly lets each go.
+    With donated arguments, it gives each of them whose memory no other
+    argument shares, and in a program of operations alone each value one of
+    its operations made, to the operation that reads it last as
+    {!Nx.donate} of it, where that operation reads it once and no other
+    value is it, so that its result may take that memory as nx's donation
+    allows ({!Nx.section-moving}). As a compiled call's, a donated
+    argument's memory goes to one result at most, the first that took it,
+    and any other result over it is a copy.
 
     A declined program that runs a {!callback} is {e split} around it. Each
     maximal {e stretch} of its operations that runs no callback and adds to no
@@ -1715,23 +1722,27 @@ val jit :
     {b Fully sharded training.} Rajbhandari et al., "ZeRO: Memory
     Optimizations Toward Training Trillion Parameter Models" (SC 2020, §5),
     partition the parameters [P], gradients [G] and optimiser state [O]
-    over [n] devices, gather each layer's parameters where it runs and
-    reduce each gradient onto the device that updates it. Written with
-    placement, the three cut along axis 0 and each layer's weights placed
-    whole on every device inside its calls, one call forward, one backward
-    by {!vjp} and one update per layer, such a step evaluates over the
-    devices: each call lets a layer's gathered weights go after their last
-    read, and nx reduces each gradient's partial sums in pieces of at most
-    [C = 256] KiB ({!Nx.section-reductions}). For layers [relu (h w)] of
-    [L] bytes of weights, a step so holds on each device at most
-    [(P + G + O) / n], its share of the activations it keeps and of the
-    cotangent it carries back, and the larger of two terms: closing a
-    layer's gradient, its partial sum, its share and a piece,
-    [(1 + 1 / n) (L + min (L, C))]; and what a layer's update holds at once
-    beside the state. An evaluated call computes each operation into fresh
-    memory and copies each result, so an update holds its new state and a
-    copy of each part of it: for Adam, new weights and two moments and
-    their copies, six shares of the layer. *)
+    over [n] devices, gather each layer's parameters where it runs, reduce
+    each gradient onto the device that updates it and update in place.
+    Written with placement, the three cut along axis 0 and each layer's
+    weights placed whole on every device inside its calls, one call
+    forward, one backward by {!vjp} and one update per layer, its state
+    donated ({!Nx.donate}), such a step evaluates over the devices. Each
+    call lets a value go after its last read, nx reduces each gradient's
+    partial sums in pieces of at most [C = 256] KiB
+    ({!Nx.section-reductions}), and the update writes over the state it is
+    donated, each operation's result over the value it reads last, as an
+    evaluated call allows ({!section-evaluated}), with the same bits. An
+    update of elementwise operations so holds beside the state only the
+    values alive at once that no operation could write over its operand:
+    Adam's, written elementwise, one temporary of a share at a time, as
+    the gradient, which the step keeps, cannot take its square.
+    For layers [relu (h w)] of [L] bytes of weights, a step so holds on
+    each device at most [(P + G + O) / n], its share of the activations it
+    keeps and of the cotangent it carries back, and what closing a layer's
+    gradient holds, its partial sum, its share and a piece:
+    [(1 + 1 / n) (L + min (L, C))], under two layers where [L] holds
+    [C (n + 1) / (n - 1)] or more. *)
 
 (** {2:inspect Inspecting a trace} *)
 

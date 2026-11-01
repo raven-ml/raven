@@ -2412,14 +2412,16 @@ let evaluations_made = Domain.DLS.new_key (fun () -> ref 0)
 let evaluations () = !(Domain.DLS.get evaluations_made)
 let evaluated_call () = incr (Domain.DLS.get evaluations_made)
 
-(* [consumed ~by args f] is [f arrays take] under a consumer of [args],
-   [arrays k] the arrays of argument [k] and [take k a] the memory of its array
-   [a] for a result, if it may take it ({!Nx.Prim.Consumer.take}). *)
+(* [consumed ~by args f] is [f arrays take value] under a consumer of
+   [args], [arrays k] the arrays of argument [k], [take k a] the memory of its
+   array [a] for a result, if it may take it ({!Nx.Prim.Consumer.take}), and
+   [value k] the argument as a value of its own, owning its memory where a
+   donation of it may write there ({!Nx.Prim.Consumer.value}). *)
 let consumed ~by args f =
   match List.init (Array.length args) Fun.id with
   | [] ->
       let none _ = invalid_arg (by ^ ": no argument") in
-      f none (fun k _ -> none k)
+      f none (fun k _ -> none k) none
   | k0 :: _ as all ->
       let (V x0) = args.(k0) in
       let set = Nx.Placement.devices (Nx.placement x0) in
@@ -2434,7 +2436,10 @@ let consumed ~by args f =
             (fun k -> Nx.Prim.Consumer.arrays c k)
             (fun k (A.Any a) ->
               Option.map A.buffer
-                (Nx.Prim.Consumer.take c k (A.dtype a) (A.layout a))))
+                (Nx.Prim.Consumer.take c k (A.dtype a) (A.layout a)))
+            (fun k ->
+              let (V x) = args.(k) in
+              V (Nx.Prim.Consumer.value c k (Nx.dtype x))))
 
 let value rig r buffer =
   let (F f) = r.form in
@@ -2447,38 +2452,75 @@ let value rig r buffer =
 
 (* Evaluation *)
 
-(* [x] as a value over [arrays], its arrays under a consumer. *)
-let over (V x) arrays =
-  let f = Nx.Prim.form x in
-  V
-    (Nx.Repr.of_shards f.placement
-       (Iarray.of_array (Array.map (A.expect f.dtype) arrays)))
-
 (* [p] over [args], its arguments then its totals' running values in. *)
-let eval_all (p : Program.t) args =
+let eval_all ?donated (p : Program.t) args =
   let n = Array.length args - Array.length p.adds in
-  eval ~totals:(Array.sub args n (Array.length p.adds)) p (Array.sub args 0 n)
+  let totals = Array.sub args n (Array.length p.adds) in
+  eval ~totals ?donated p (Array.sub args 0 n)
+
+(* Whether [y] lies over memory a donated argument's last reader took, the
+   argument's buffer dead, and over no live memory of [arrays]: such a
+   result is the call's own. Any other is copied, as one may lie over an
+   argument or a constant, and no value over the arrays a consumer reads may
+   outlive it. *)
+let took arrays ys =
+  let buffers = List.concat_map Array.to_list arrays in
+  let dead (A.Any a) = Option.is_some (Rig.Buffer.dead (A.buffer a)) in
+  let over keep b =
+    List.exists
+      (fun (A.Any a as x) -> keep x && Rig.Buffer.overlaps b (A.buffer a))
+      buffers
+  in
+  Array.for_all
+    (fun (A.Any a) ->
+      let b = A.buffer a in
+      over dead b && not (over (fun x -> not (dead x)) b))
+    ys
 
 (* [p] evaluated over the arrays of a consumer of [args]: the donors it claimed
    are dead, so the arrays of every argument stand for it, a donor beside
-   its handle included. Each result is copied, since no value over the arrays
-   may outlive the consumer. A value over an argument's memory shares it for
-   good, so a later donation of that argument computes into fresh memory: the
-   cost of this path. *)
-let evaluated ~fresh p args arrays =
-  let values = Array.mapi (fun k v -> over v (arrays k)) args in
+   its handle included. Each argument is a value of its own over them,
+   owning the memory of a donated one that no other argument shares, which
+   goes to its last reader as a donation that may write over it. The first
+   result written so over a donated argument's memory is the call's, and
+   every other result is copied. A value over an argument's memory shares
+   it for good, so a later donation of that argument computes into fresh
+   memory: the cost of this path. *)
+let evaluated ~fresh p args arrays value =
+  let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
+  let values = Array.mapi (fun k _ -> value k) args in
   (* A callback may keep what it receives, so it receives copies. *)
   let values =
     if Program.holds Program.calls p then
       Array.map (fun (V x) -> V (Nx.copy x)) values
     else values
   in
-  let out = eval_all p values in
-  if fresh then out else Array.map (fun (V y) -> V (Nx.copy y)) out
+  (* Without a donated argument the evaluation owns nothing. *)
+  let donated = if Array.exists Fun.id donated then Some donated else None in
+  let out = eval_all ?donated p values in
+  if fresh then out
+  else
+    (* The results' arrays, read under a consumer of their own, which leaves
+       their memory unshared. *)
+    let arrays = List.init (Array.length args) arrays in
+    (* A donated argument's memory lends to one result at most, the first:
+       a result over memory an earlier kept result holds is copied. *)
+    let kept =
+      consumed ~by:"Rune.jit" out (fun ys _ _ ->
+          let held = ref [] in
+          Array.init (Array.length out) (fun i ->
+              let bs = Array.map (fun (A.Any a) -> A.buffer a) (ys i) in
+              let shares b = List.exists (Rig.Buffer.overlaps b) !held in
+              let keep = took arrays (ys i) && not (Array.exists shares bs) in
+              if keep then held := Array.to_list bs @ !held;
+              keep))
+    in
+    Array.mapi (fun i (V y as v) -> if kept.(i) then v else V (Nx.copy y)) out
 
 let evaluate ~fresh ~name p args =
   if Array.exists (fun (V x) -> Nx.Prim.donated x) args then
-    consumed ~by:name args (fun arrays _ -> evaluated ~fresh p args arrays)
+    consumed ~by:name args (fun arrays _ value ->
+        evaluated ~fresh p args arrays value)
   else
     (* Each result is a copy. [eval] returns an argument or a constant as
        itself, and a reshape of one lies over its memory. *)
@@ -2541,7 +2583,7 @@ let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
 let rec run t args =
   let p = t.program in
   let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
-  consumed ~by:t.name args @@ fun arrays take ->
+  consumed ~by:t.name args @@ fun arrays take value ->
   let leaves = Array.mapi (fun k _ -> (arrays k).(0)) args in
   let layouts =
     Array.map (fun (A.Any a) -> within (A.dtype a) (A.layout a)) leaves
@@ -2557,7 +2599,7 @@ let rec run t args =
   match (variant t layouts phases donated (settings t.shaping)).linked with
   | Error _ ->
       evaluated_call ();
-      evaluated ~fresh:false p args arrays
+      evaluated ~fresh:false p args arrays value
   | Ok v -> linked t v args leaves take
 
 (* [linked t v args leaves take] runs the variant [v] of [t] on [args], whose

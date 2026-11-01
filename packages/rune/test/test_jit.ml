@@ -1148,6 +1148,207 @@ let test_evaluated_memory () =
   in
   equal ~msg:"values nothing reads" refused None (fits (Rune.jit' (unread 8)))
 
+(* An evaluated call over values cut across two devices writes its donated
+   state in place: each donated argument, and each value an operation of
+   the update makes, goes to the operation that reads it last, which
+   writes its result there. So the update holds at most one temporary of a
+   share beside the state, and gives the bits it gives without donation. *)
+let test_evaluated_in_place () =
+  let rigs =
+    List.init 2 (fun k ->
+        Result.get_ok
+          (Rig.memory_device (Printf.sprintf "rune-in-place-%d" k)))
+  in
+  let module S = (val Nx.devices rigs) in
+  let n = 65536 in
+  let share = n / 2 * 4 in
+  let fill k =
+    Nx.init f32 [| n |] (fun i -> sin (Float.of_int ((k * n) + i.(0))))
+  in
+  let cut k =
+    let x = Nx.place (S.split ~axis:0) (fill k) in
+    Nx.add x (Nx.zeros_like x)
+  in
+  let state = T.(pair tensor tensor) in
+  let update =
+    Rune.jit
+      T.(state @-> tensor @-> returns state)
+      (fun (w, m) g ->
+        let m = Nx.add (Nx.mul_s m 0.9) (Nx.mul_s g 0.1) in
+        let s = Nx.add_s (Nx.sqrt (Nx.abs g)) 1e-3 in
+        (Nx.sub w (Nx.mul_s (Nx.div m s) 1e-3), m))
+  in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      List.iter Rig.free_cache rigs
+    done;
+    List.map Rig.allocated rigs
+  in
+  let g = cut 2 in
+  let w0, m0 = update (cut 0, cut 1) g in
+  let before = Rune.evaluations () in
+  let w, m = (cut 0, cut 1) in
+  let held = settled () in
+  List.iter2 (fun r h -> Rig.set_budget r (h + share)) rigs held;
+  let w1, m1 =
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun r -> Rig.set_budget r max_int) rigs)
+      (fun () -> update (Nx.donate w, Nx.donate m) g)
+  in
+  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  equal ~msg:"the weights" bits_t (bits w0) (bits w1);
+  equal ~msg:"the moment" bits_t (bits m0) (bits m1)
+
+(* Programs over values cut across two devices, evaluated: arguments drawn
+   from fewer sources, so that one value may be donated twice, and outputs
+   that may repeat one value. Donated or not, a call gives the same bits,
+   and its results lie apart from one another and from the arguments it
+   did not consume. *)
+type expr =
+  | Arg of int
+  | Neg of expr
+  | Scale of expr
+  | Add of expr * expr
+  | Mul of expr * expr
+
+type donating = {
+  sources : int list;
+  donated : bool list;
+  outs : expr list;
+  repeats : int list;
+}
+
+module Cut2 =
+  (val Nx.devices
+         (List.init 2 (fun k ->
+              Result.get_ok
+                (Rig.memory_device (Printf.sprintf "rune-donating-%d" k)))))
+
+let donating_case =
+  let open Gen in
+  bind (int_range 1 3) (fun n ->
+      let rec two d = pair (expr d) (expr d)
+      and expr d =
+        if d = 0 then map (fun k -> Arg k) (int_range 0 (n - 1))
+        else
+          frequency
+            [
+              (2, map (fun k -> Arg k) (int_range 0 (n - 1)));
+              (1, map (fun e -> Neg e) (expr (d - 1)));
+              (1, map (fun e -> Scale e) (expr (d - 1)));
+              (2, map (fun (a, b) -> Add (a, b)) (two (d - 1)));
+              (2, map (fun (a, b) -> Mul (a, b)) (two (d - 1)));
+            ]
+      in
+      bind (list ~size:(constant n) (int_range 0 (n - 1))) (fun sources ->
+          bind (list ~size:(constant n) bool) (fun donated ->
+              bind (list ~size:(int_range 1 3) (expr 3)) (fun outs ->
+                  map
+                    (fun repeats -> { sources; donated; outs; repeats })
+                    (list ~size:(int_range 0 2)
+                       (int_range 0 (List.length outs - 1)))))))
+
+(* One value donated twice, [neg a + b]; and one result returned twice. *)
+let donating_examples =
+  [
+    {
+      sources = [ 0; 0 ];
+      donated = [ true; true ];
+      outs = [ Add (Neg (Arg 0), Arg 1) ];
+      repeats = [];
+    };
+    {
+      sources = [ 0 ];
+      donated = [ true ];
+      outs = [ Neg (Arg 0) ];
+      repeats = [ 0 ];
+    };
+  ]
+
+let law_donating c =
+  let value i =
+    let x =
+      Nx.place (Cut2.split ~axis:0)
+        (Nx.init f32 [| 8 |] (fun j ->
+             Float.of_int (((i + 1) * 7) + j.(0)) /. 4.))
+    in
+    Nx.add x (Nx.zeros_like x)
+  in
+  let rec eval args = function
+    | Arg k -> List.nth args k
+    | Neg e -> Nx.neg (eval args e)
+    | Scale e -> Nx.mul_s (eval args e) 0.5
+    | Add (a, b) -> Nx.add (eval args a) (eval args b)
+    | Mul (a, b) -> Nx.mul (eval args a) (eval args b)
+  in
+  let f args =
+    let ys = List.map (eval args) c.outs in
+    ys @ List.map (List.nth ys) c.repeats
+  in
+  let g = Rune.jit T.(list tensor @-> returns (list tensor)) f in
+  let n = List.length c.sources in
+  let reference =
+    let vs = List.init n value in
+    List.map bits (g (List.map (List.nth vs) c.sources))
+  in
+  let vs = List.init n value in
+  let args = List.map (List.nth vs) c.sources in
+  let given =
+    List.map2 (fun x d -> if d then Nx.donate x else x) args c.donated
+  in
+  let donates = List.exists Fun.id c.donated in
+  (* Whether a donated argument's source is another argument's too. *)
+  let repeated =
+    List.exists Fun.id
+      (List.mapi
+         (fun i d ->
+           d
+           && List.exists Fun.id
+                (List.mapi
+                   (fun j s -> j <> i && s = List.nth c.sources i)
+                   c.sources))
+         c.donated)
+  in
+  cover "a donated argument" donates;
+  cover "a donor given twice" repeated;
+  cover "a repeated output" (c.repeats <> []);
+  let before = Rune.evaluations () in
+  let ys = g given in
+  equal ~msg:"evaluated" bool true (Rune.evaluations () > before);
+  equal ~msg:"donated or not, the bits" (list bits_t) reference
+    (List.map bits ys);
+  (* Each result's buffers, then those of each argument still alive. *)
+  let buffers x =
+    Iarray.to_list (Iarray.map Nx_array.buffer (Nx.Repr.shards x))
+  in
+  let named what i x =
+    List.map (fun b -> (Printf.sprintf "%s %d" what i, b)) (buffers x)
+  in
+  let results = List.concat (List.mapi (named "result") ys) in
+  let alive =
+    List.concat
+      (List.mapi
+         (fun i x ->
+           (* An argument lives where no position donates its source. *)
+           let src = List.nth c.sources i in
+           let given j d = d && List.nth c.sources j = src in
+           if List.exists Fun.id (List.mapi given c.donated) then []
+           else named "argument" i x)
+         args)
+  in
+  let rec apart = function
+    | [] -> ()
+    | (a, b) :: rest ->
+        List.iter
+          (fun (a', b') ->
+            if a <> a' && Rig.Buffer.overlaps b b' then
+              fail (Printf.sprintf "%s shares memory with %s" a a'))
+          (rest @ alive);
+        apart rest
+  in
+  apart results
+
 (* Fresh results: compiled and evaluated, a result has memory of its own, apart
    from the arguments', the captures' and the other results'. *)
 let test_fresh () =
@@ -4194,14 +4395,13 @@ let fits ~n ~d ~layers ~batch over =
 (* Each device holds its share of the parameters, gradients and moments, the
    batch lying in the host memory it was placed from. A step holds beside
    them its share of the activations it keeps and of the cotangent it
-   carries back, and the larger of two terms, for a layer of [L] bytes.
-   Closing a layer's gradient, the layer's partial sum, its share, and at
-   most a piece's 256 KiB of every device's partials and the piece's sum,
-   or, where those fit in a piece, all of them: [(1 + 1/n) (L + min (L,
-   C))]. Updating a layer, its new weights and moments and a copy of each,
-   six shares, [6 L / n]: an evaluated call computes into fresh memory and
-   copies each result. A layer's weights, placed whole, take a layer, so a
-   step refuses a layer beside the activations. *)
+   carries back, and, closing a layer's gradient of [L] bytes, the layer's
+   partial sum, its share, and at most a piece's 256 KiB of every device's
+   partials and the piece's sum, or, where those fit in a piece, all of
+   them: [(1 + 1/n) (L + min (L, C))]. The update writes over the state it
+   is donated, so it holds a share's temporary at a time, below that term.
+   A layer's weights, placed whole, take a layer, so a step refuses a layer
+   beside the activations. *)
 let test_sharded_bound ~n ~d ~layers () =
   let batch = 64 in
   let ds, _, keep = sharded ~n ~d ~layers ~batch in
@@ -4212,8 +4412,7 @@ let test_sharded_bound ~n ~d ~layers () =
     (settled_all ds);
   keep ();
   let activations = (layers + 1) * batch * d * 4 / n in
-  let closing = (n + 1) * (layer + Int.min layer c) / n in
-  let bound = activations + Int.max closing (6 * layer / n) in
+  let bound = activations + ((n + 1) * (layer + Int.min layer c) / n) in
   let fits = fits ~n ~d ~layers ~batch in
   let step = layer / 64 in
   let rec search lo hi =
@@ -4301,6 +4500,12 @@ let () =
              test "results are fresh" test_fresh;
              test "an evaluated program lets each value go"
                test_evaluated_memory;
+             test "an evaluated call writes its donated state in place"
+               test_evaluated_in_place;
+             prop ~count:200 ~examples:donating_examples
+               "an evaluated call gives the bits it gives undonated, its \
+                results apart"
+               donating_case law_donating;
              test "an argument off 16 bytes" test_phase;
              test "a donated argument is consumed" test_consumed;
              test "a result takes a donated argument's memory" test_lending;
