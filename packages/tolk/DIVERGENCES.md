@@ -679,10 +679,11 @@ scope, see README.
     true division is always a float: `x / x` is NaN at 0, `(1e10 * 1e30) /
     1e30` is `inf`, and `(1e20 / 1e20) / 1e20` is `1e-20` where
     `1e20 / 1e40` is `0.`.
-  - **Signed zeros.** tinygrad: `uop/symbolic.py:253` (`-(x + c)`), `:272`
+  - **Signed zeros.** tinygrad: `uop/symbolic.py:272`
     (complementary selections), `:471` (`-(x + y)`). tolk: `Shape.symbolic`,
     `Symbolic.sym` (its rule for `-(x + y)`). For integers and
-    booleans only: `-(x + 3)` at `x = -3` is `-0.`, where `-x + -3` is `+0.`, and
+    booleans only: `-(x + y)` at `x = -3`, `y = 3` is `-0.`, where `-x + -y`
+    is `+0.`, and
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py:245-251` (like terms),

@@ -2534,10 +2534,6 @@ let symbolic =
            rule
              Upat.(var "y" + var ~dtype:int_or_bool "x" + var "x")
              (fun m -> Some O.(m "y" + (m "x" * int 2)));
-           (* -(x+c) -> -x + -c, for integers: -(x + c) is -0. at x = -c *)
-           rule
-             Upat.(int (-1) * (var ~dtype:int_or_bool "x" + cvar "c"))
-             (fun m -> Some O.(-m "x" + -m "c"));
            rule
              Upat.(cvar "y" * (var ~dtype:[ Dtype.Weak_int ] "x" + cvar "c"))
              (fun m ->
