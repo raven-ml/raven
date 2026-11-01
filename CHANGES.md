@@ -845,6 +845,23 @@ thread.
 
 ### Tolk (new)
 
+- `Dtype.const` wraps an integer to a signed type too: 300 as an `Int8` is
+  44, as it was through `Ops`' reads at the width.
+- A HIP kernel that calls a body compiles: its program defines the body's
+  function, as a device function, where it dropped it.
+- A store whose value reads its destination elsewhere, as a flip, a roll
+  or a row of it, stores the value staged in `Rangeify`, by indices, where
+  `Prepare` staged it by movements.
+- **Breaking:** `Decomp_dtype.f2f_clamp` is gone: `Decomp_dtype.f2f`
+  narrows with its overflow and saturation itself. Without saturation,
+  e4m3's greatest value plus half an ulp now rounds to the greatest value.
+- `Gater` no longer moves a selection into a converted gated load, and no
+  longer has rules for two-index image accesses.
+- A reduction over ranges its value ignores folds once over the product of
+  their sizes, selecting its identity where the product is not positive.
+- A stack of `Invalid` lanes folds to an `Invalid` expanded to its width.
+- The high half of `(x << 32) | y` folds to `x`'s low half for any `uint64`
+  `x`.
 - `Codegen.program_key` gives the key a program is kept under, and
   `Codegen.programs` counts the programs made. `Realize.lower_and_compile`
   compiles one kernel of each key, so kernels that differ in their
