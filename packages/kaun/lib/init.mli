@@ -18,7 +18,10 @@
 
     The key makes an initialization reproducible and lets it compile under
     [Rune.jit], whose traces refuse draws without one; split it to initialize
-    several parameters ({!Nx.Rng.split}). The named families (Glorot/Xavier,
+    several parameters ({!Nx.Rng.split}). A random initializer computes from
+    its key, so on a set without kernels it raises outside a compiler
+    ({!Nx.Rng}): initialize there under [Rune.jit], or on the host and place
+    the parameters with {!Nx.Ptree.place}. The named families (Glorot/Xavier,
     He/Kaiming, LeCun) are instances of {!variance_scaling}. *)
 
 (** {1:types Types} *)
