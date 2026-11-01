@@ -762,6 +762,20 @@ let reduce_rows =
       work = [ F.Copy (bytes dt s); F.Copy (bytes dt s) ];
     }
   in
+  let complex_windows name r =
+    let s = [| 32; 16; 26; 26 |] in
+    {
+      bench =
+        reduce
+          (Printf.sprintf "reduce-%s-c64-2x2-windows-32x16x26x26" name)
+          r ~axes:[| 4; 5 |]
+          (fun () ->
+            let w axis = { M.axis; size = 2; step = 2; dilation = 1 } in
+            let a = filled D.Complex64 s in
+            A.Any (Option.get (A.move (M.Window [| w 2; w 3 |]) a)));
+      work = [ F.Read (bytes D.Complex64 s) ];
+    }
+  in
   let m = mib in
   [
     along "reduce-sum-f32-1M" f32 [| m |] [| 0 |] (Monoid Sum);
@@ -807,6 +821,12 @@ let reduce_rows =
       bench = padded_max "reduce-max-f32-3x3s2-padded-8x56x56x64";
       work = [ F.Read (bytes f32 [| 8; 56; 56; 64 |]) ];
     };
+    (* The product and the maximum of each complex64 2x2 window, lanes of
+       complex numbers held as arrays: the product's lanes start from their
+       first terms, by blocks, the maximum's from the identity, its few
+       terms side by side. *)
+    complex_windows "prod" (Monoid Prod);
+    complex_windows "max" (Monoid Max);
     running "scan-sum-f64-5M" f64 [| 5 * m |] 0;
     running "scan-sum-f32-4096x1024-axis1" f32 [| 4096; 1024 |] 1;
     running "scan-sum-f32-1024x4096-axis0" f32 [| 1024; 4096 |] 0;
