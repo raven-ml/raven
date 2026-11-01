@@ -227,9 +227,10 @@ val const : t -> [< const ] -> const
     NaN keeps its sign and the payload [dt] holds, a signalling NaN staying one;
     an integer is rounded once, from its exact value, as a finite value. For
     {!Bool} it is [`Bool], [true] iff [c] is nonzero. Otherwise it is an [`Int]:
-    a float rounded towards zero, and an integer unchanged, even out of [dt]'s
-    bounds, except that an unsigned [dt] wraps it modulo 2{^ bitsize}, as
-    unsigned arithmetic does: [const Uint8 (`Int (-1))] is [`Int 255].
+    a float rounded towards zero, then, for an integer [dt] of known width,
+    wrapped to it modulo 2{^ bitsize}, as its arithmetic does: [const Uint8
+    (`Int (-1))] is [`Int 255] and [const Int8 (`Int 300)] is [`Int 44]. A weak
+    integer keeps the value.
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is neither
     a float nor {!Bool}. *)

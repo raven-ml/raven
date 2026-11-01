@@ -719,7 +719,7 @@ let const dt (c : [< const ]) : const =
   | #value as v ->
       if is_float dt then `Float (truncate_float dt (float_value dt v))
       else if is_bool dt then `Bool (Value.to_bool v)
-      else if is_unsigned dt then (truncate dt (`Int (Value.to_z v)) :> const)
+      else if List.mem dt ints then (truncate dt (`Int (Value.to_z v)) :> const)
       else `Int (Value.to_z v)
 
 (* Names and defaults *)
