@@ -90,6 +90,14 @@
  (deps
   (glob_files golden/lower_complex/*.golden)))
 
+; A program compiled first in its process runs in a process of its own: the
+; storage its lowering makes is numbered from the process's start.
+
+(test
+ (name test_first_compile)
+ (modules test_first_compile)
+ (libraries nx rune rune_support windtrap))
+
 ; The lowering's suites compile each lowered graph on the host and run it
 ; against nx's eager result.
 

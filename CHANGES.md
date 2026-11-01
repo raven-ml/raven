@@ -353,6 +353,8 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled call of nested loops no longer raises or evaluates its program
+  depending on how much the process compiled before it.
 - A compiled loop whose step reads the result of a loop before it runs that
   loop once: it ran again in every trip, so a chain of loops took time
   exponential in its length, and the gradient of an `Ode.kvaerno5` solve in

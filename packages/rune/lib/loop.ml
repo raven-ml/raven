@@ -44,14 +44,19 @@ let cut ?(hoist = true) ~own next args body =
     | (Op.Param | Op.Buffer | Op.Alloc), _ | _, [] -> u
     | _, x :: _ -> storage x
   in
+  (* A call writes the arguments of the parameters its body stores into. A
+     buffer's slot is its identity, which may equal any argument's index, and
+     the body also reaches stores into storage around it, such as an enclosing
+     loop's first carries. *)
   let writes c =
     let slots =
       List.filter_map
         (fun u ->
           if Ops.op u <> Op.Store then None
           else
-            match Ops.arg (storage (Ops.nth u 0)) with
-            | Ops.Param p -> Some p.slot
+            let s = storage (Ops.nth u 0) in
+            match (Ops.op s, Ops.arg s) with
+            | Op.Param, Ops.Param p -> Some p.slot
             | _ -> None)
         (Ops.toposort ~calls:Skip (Ops.body c))
     in
