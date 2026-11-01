@@ -811,6 +811,8 @@ thread.
   solves (`x + y < c`, `x * y < c`) apply to signed and index integers only,
   `(x // c + a) // d` to index integers only, and `Symbolic.reduce_mul_chain`
   moves no factor out of an unsigned maximum: unsigned arithmetic wraps.
+- **Breaking:** `Ops.Upat.v` and `Ops.Upat.op` take no `?tag`, and
+  `Ops.remove_all_tags` is gone: patterns ignore tags.
 - **Breaking:** the `ALIGNED` setting (`Setting.aligned`) is gone: Clang's
   vector types are always aligned to their size, a bool vector's to one byte.
 - **Breaking:** `Ops.kernel_info` has `optimized`, which

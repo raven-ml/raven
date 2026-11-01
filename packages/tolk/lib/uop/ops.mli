@@ -1064,9 +1064,9 @@ val uprod : t -> t list -> t
 
 (** Patterns.
 
-    A pattern describes nodes by their operation, type, argument, tag and
-    sources, and names the nodes it matches. A name used twice must match the
-    same node. *)
+    A pattern describes nodes by their operation, type, argument and sources,
+    and names the nodes it matches. A name used twice must match the same
+    node. *)
 module Upat : sig
   type node := t
 
@@ -1082,12 +1082,11 @@ module Upat : sig
     ?allow_any_len:bool ->
     ?arg:arg ->
     ?name:string ->
-    ?tag:Tag.t list ->
     ?early_reject:Op.t list ->
     unit ->
     t
-  (** [v ()] matches the nodes of an operation in [op], a type in [dtype],
-      argument [arg] and a tag in [tag], each when given. Sources are matched in
+  (** [v ()] matches the nodes of an operation in [op], a type in [dtype] and
+      argument [arg], each when given. Sources are matched in
       order by [src], in any order by [perm], or each by [each]; [src] and
       [perm] require exactly as many sources unless [allow_any_len]. [name]
       names the node matched. [early_reject] is operations the node's sources
@@ -1108,7 +1107,6 @@ module Upat : sig
     ?allow_any_len:bool ->
     ?arg:arg ->
     ?name:string ->
-    ?tag:Tag.t list ->
     ?early_reject:Op.t list ->
     Op.t ->
     t
@@ -1306,9 +1304,6 @@ val substitute :
 
 val pm_substitute : (t Tbl.t, t) Pattern_matcher.t
 (** [pm_substitute] replaces each node its context maps by its image. *)
-
-val remove_all_tags : (unit, t) Pattern_matcher.t
-(** [remove_all_tags] removes every node's tag. *)
 
 val pm_drop_after : (unit, t) Pattern_matcher.t
 (** [pm_drop_after] replaces each {!Op.After} with its first source. *)

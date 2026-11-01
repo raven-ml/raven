@@ -2456,7 +2456,6 @@ module Upat = struct
     dtypes : Dtype.t list option;
     p_arg : arg option;
     p_name : string option;
-    tags : Tag.t list option;
     in_src : in_src option;
     is_any : bool;
     p_src : srcs option;
@@ -2493,7 +2492,7 @@ module Upat = struct
        && Option.equal equal_arg p.p_arg q.p_arg
 
   let make ?ops ?dtypes ?in_src ?(is_any = false) ?(allow_any_len = false) ?arg
-      ?name ?tags ?early_reject ?(cached = false) () =
+      ?name ?early_reject ?(cached = false) () =
     let p_src =
       match in_src with
       | None -> None
@@ -2530,7 +2529,6 @@ module Upat = struct
       dtypes;
       p_arg = arg;
       p_name = name;
-      tags;
       in_src;
       is_any;
       p_src;
@@ -2557,17 +2555,15 @@ module Upat = struct
     | None, None, Some p -> Some (Each p)
     | _ -> invalid_arg "a pattern takes one of src, perm and each"
 
-  let v ?op ?dtype ?src ?perm ?each ?allow_any_len ?arg ?name ?tag ?early_reject
-      () =
+  let v ?op ?dtype ?src ?perm ?each ?allow_any_len ?arg ?name ?early_reject () =
     make
       ?ops:(Option.map Op.Set.to_list op)
       ?dtypes:dtype ?in_src:(only ~src ~perm ~each) ?allow_any_len ?arg ?name
-      ?tags:tag ?early_reject ()
+      ?early_reject ()
 
-  let op ?dtype ?src ?perm ?each ?allow_any_len ?arg ?name ?tag ?early_reject o
-      =
+  let op ?dtype ?src ?perm ?each ?allow_any_len ?arg ?name ?early_reject o =
     make ~ops:[ o ] ?dtypes:dtype ?in_src:(only ~src ~perm ~each) ?allow_any_len
-      ?arg ?name ?tags:tag ?early_reject ()
+      ?arg ?name ?early_reject ()
 
   let wild = make ()
   let var ?dtype name = make ?dtypes:dtype ~name ~cached:true ()
@@ -2584,7 +2580,7 @@ module Upat = struct
     make
       ?ops:(Option.map Op.Set.to_list p.ops)
       ?dtypes:p.dtypes ?in_src:p.in_src
-      ~allow_any_len:(not p.strict_length) ?arg:p.p_arg ~name ?tags:p.tags
+      ~allow_any_len:(not p.strict_length) ?arg:p.p_arg ~name
       ?early_reject:p.custom_early_reject ()
 
   let dtype p = match p.dtypes with Some (dt :: _) -> dt | _ -> Dtype.Void
@@ -2694,19 +2690,11 @@ module Upat = struct
     | [] -> false
     | d :: rest -> Dtype.equal dt d || mem_dtype dt rest
 
-  let rec mem_tag g = function
-    | [] -> false
-    | t :: rest -> Tag.equal g t || mem_tag g rest
-
   (* Whether [u] itself fits [p], sources aside. *)
   let fits p u =
     let n_src = List.length u.src in
     (match p.dtypes with Some dts -> mem_dtype u.dtype dts | None -> true)
     && (match p.p_arg with Some a -> arg_matches a u.arg | None -> true)
-    && (match p.tags with
-      | Some tags -> (
-          match u.tag with Some g -> mem_tag g tags | None -> false)
-      | None -> true)
     && n_src >= p.required_len
     && not (p.strict_length && n_src <> p.required_len)
 
@@ -3133,15 +3121,6 @@ let substitute ?extra_pm ~calls ~pass u subs =
       | None -> pm_substitute
     in
     graph_rewrite ~calls ~pass ~ctx:tbl u (Before_sources pm)
-
-let remove_all_tags =
-  Pattern_matcher.(
-    v
-      (fun () -> [
-        rule (Upat.v ~op:Op.Set.all ~name:"x" ()) (fun m ->
-            let x = m "x" in
-            if Option.is_none x.tag then None else Some (replace ~tag:None x));
-      ]))
 
 let pm_drop_after =
   Pattern_matcher.(

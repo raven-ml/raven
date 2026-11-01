@@ -248,11 +248,10 @@ let upat =
             (list (list (pair string uop)))
             []
             (P.match_ (P.op Op.Mul) Ops.O.(a + b)));
-      test "a tag narrows the nodes a pattern matches" (fun () ->
+      test "a pattern matches a node whatever its tag" (fun () ->
           let t = Ops.rtag ~tag:(String "lane0") (Ops.int 1) in
-          is_true (matches (P.v ~tag:[ String "lane0" ] ()) t);
-          is_false (matches (P.v ~tag:[ String "lane1" ] ()) t);
-          is_false (matches (P.v ~tag:[ String "lane0" ] ()) (Ops.int 1)));
+          equal bool true (matches (P.cvar "c") t);
+          equal bool true (matches (P.op Op.Const) t));
       test "v rejects two ways of matching sources" (fun () ->
           rejects (fun () -> P.v ~src:[ P.wild ] ~perm:[ P.wild ] ());
           rejects (fun () -> P.v ~src:[ P.wild ] ~each:P.wild ()));
@@ -795,17 +794,7 @@ let rewriting =
           is_true
             (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() g
                (After_sources plus_one)
-            == g);
-          let g =
-            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() g
-              (After_sources Ops.remove_all_tags)
-          in
-          equal uop Ops.O.(int 2 + int 2) g;
-          let three = Ops.rtag ~tag:(Int 1) (Ops.int 3) in
-          equal uop
-            (Ops.v ~src:[ three; three ] Op.Add)
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() g
-               (After_sources plus_one)));
+            == g));
       test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
           equal string "REWRITE_STACK_LIMIT"
             (Setting.key Setting.rewrite_stack_limit);
@@ -1176,21 +1165,6 @@ let module_matchers =
   let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
   group "module matchers"
     [
-      test
-        "remove_all_tags removes every tag, and leaves an untagged graph alone"
-        (fun () ->
-          let leaf = Ops.rtag ~tag:(String "leaf") (Ops.int 1) in
-          let root = Ops.rtag ~tag:(String "root") Ops.O.(leaf + int 2) in
-          let stripped =
-            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() root
-              (After_sources Ops.remove_all_tags)
-          in
-          equal uop Ops.O.(int 1 + int 2) stripped;
-          let untagged = Ops.O.(int 4 + int 3) in
-          is_true
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() untagged
-               (After_sources Ops.remove_all_tags)
-            == untagged));
       test "pm_drop_after keeps the first source of each after" (fun () ->
           let st =
             Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.float ~dtype:Float32 1.)

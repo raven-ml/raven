@@ -778,12 +778,7 @@ let transform_to_call big_sink =
   let ret =
     graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx
       (sink (List.rev ctx.stores))
-      (Before_sources (Pattern_matcher.concat
-         [
-           pm_canonicalize_alloc;
-           pm_replace_buf;
-           with_ctx remove_all_tags;
-         ]))
+      (Before_sources (Pattern_matcher.concat [ pm_canonicalize_alloc; pm_replace_buf ]))
   in
   call ~precompile:true ret (List.rev ctx.replacements)
 
