@@ -36,10 +36,12 @@ val shared : t
       orderings of storage, custom code, calls of opaque bodies, barriers and
       instructions;
     - loads and stores through an index or a shrink, a gated load's alternative
-      being of the load's type, and stores into storage;
+      being of the load's type and a store's value of its target's type, and
+      stores into storage;
     - matrix multiply-accumulates.
 
-    A weak type ({!Dtype.weaks}) and {!Ops.invalid} match any type.
+    A weak type ({!Dtype.weaks}) matches any type of its kind
+    ({!Dtype.weak}), and {!Ops.invalid} any type.
 
     When {!Setting.check_oob} holds, a load or store through an index into
     storage must be proved in bounds: the bounds of the index ({!Ops.vmin},
@@ -52,7 +54,8 @@ val tensor : t
 (** [tensor] is {!shared} with the operations of tensor graphs: float-only unary
     math; global buffers with a size and a device, and storage declared without
     a buffer ({!Op.Alloc}); variables without a device; unlowered
-    {!Op.Special}s; movement; reductions; copies to a device other than a disk;
+    {!Op.Special}s; movement, the shape of a reshape or an expand being
+    integers; reductions; copies to a device other than a disk;
     {!Op.Detach}, {!Op.Contiguous_backward} and {!Op.Stage}; and programs as
     compilation fills them in: a sink, then its linear form, its source and its
     binary. *)

@@ -2100,7 +2100,8 @@ let lower ~rig ~uploads (p : Program.t) (forms : form array) ~layouts ~phases
             (fun acc c -> Ops.maximum acc (failing c))
             (int64 0) made
         in
-        Some (one Nx.bool (Ops.eq failed (int64 0)))
+        let held = Ops.eq failed (int64 0) in
+        Some (one Nx.bool (Ops.where held (uint8 held 1) (uint8 held 0)))
   in
   let sink =
     match !stores with [] -> None | s -> Some (Ops.sink (List.rev s))

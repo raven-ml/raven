@@ -77,7 +77,8 @@ let type_verify ~calls spec ast =
 
 let no_arg u = match arg u with No_arg -> true | _ -> false
 let matches_dtype x dt = Dtype.equal (dtype x) dt || is_invalid (base x)
-let is_weak x = List.mem (dtype x) Dtype.weaks
+(* A weak operand matches only its own kind. *)
+let is_weak_of dt x = Dtype.equal (dtype x) (Dtype.weak dt)
 let all_same eq = function [] -> true | x :: r -> List.for_all (eq x) r
 let shape_equal s0 s1 = List.equal Sint.equal s0 s1
 
@@ -127,7 +128,7 @@ let shared : t =
         "s" (fun s ->
           all_same shape_equal (List.map shape (src s))
           && List.for_all
-               (fun x -> matches_dtype x (dtype s) || is_weak x)
+               (fun x -> matches_dtype x (dtype s) || is_weak_of (dtype s) x)
                (src s));
       check
         (pat [ Op.Where ] ~name:"w"
@@ -135,7 +136,7 @@ let shared : t =
         "w"
         (fun w ->
           List.for_all
-            (fun s -> matches_dtype s (dtype w) || is_weak s)
+            (fun s -> matches_dtype s (dtype w) || is_weak_of (dtype w) s)
             (List.tl (src w)));
       Pattern_matcher.rule
         (Upat.v ~op:Op.Set.comparison ~dtype:[ Dtype.Bool ]
@@ -146,7 +147,8 @@ let shared : t =
           Some
             (matches_dtype x (dtype y)
             || matches_dtype y (dtype x)
-            || is_weak x || is_weak y));
+            || is_weak_of (dtype y) x
+            || is_weak_of (dtype x) y));
       decide
         (pat [ Op.And; Op.Or; Op.Xor; Op.Shl; Op.Shr ] ~name:"x")
         "x"
@@ -172,7 +174,9 @@ let shared : t =
           then None
           else Some false);
       check (Upat.v ~op:Op.Set.alu ~name:"x" ()) "x" (fun x ->
-          List.for_all (fun y -> matches_dtype y (dtype x) || is_weak y) (src x));
+          List.for_all
+            (fun y -> matches_dtype y (dtype x) || is_weak_of (dtype x) y)
+            (src x));
       accept (pat [ Op.Bitcast; Op.Cast ] ~src:[ Upat.wild ]);
       (* A range's one source is its bound: an ordering dependency wraps the
          bound in an after. *)
@@ -279,6 +283,15 @@ let shared : t =
         (fun x -> match arg x with Call _ -> args_fit x | _ -> false);
       accept (pat [ Op.Barrier ] ~dtype:[ Dtype.Void ]);
       accept (pat [ Op.Ins ]);
+      (* A store's value matches its target's dtype. *)
+      decide
+        (pat [ Op.Store ] ~src:[ Upat.var "t"; Upat.var "v" ]
+           ~allow_any_len:true ~name:"x")
+        "x"
+        (fun x ->
+          let t = nth x 0 and v = nth x 1 in
+          if matches_dtype v (dtype t) || is_weak_of (dtype t) v then None
+          else Some false);
       check (Upat.load memory []) "uidx" validate_index;
       Pattern_matcher.rule
         (Upat.load ~name:"load" memory
@@ -347,7 +360,13 @@ let tensor : t =
               ~name:"s")
            "s"
            (fun s -> match arg s with String _ -> true | _ -> false);
-         accept (pat [ Op.Reshape; Op.Expand ] ~src:[ Upat.wild; Upat.wild ]);
+         accept
+           (pat [ Op.Reshape; Op.Expand ]
+              ~src:
+                [
+                  Upat.wild;
+                  Upat.v ~dtype:(Dtype.Weak_int :: Dtype.Void :: Dtype.ints) ();
+                ]);
          check
            (pat [ Op.Pad; Op.Shrink ]
               ~src:[ Upat.wild; Upat.wild; Upat.wild ]
