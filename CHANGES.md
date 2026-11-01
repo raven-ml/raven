@@ -701,6 +701,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- `Munin_sys.Stat.Proc.Self.pid` is the current process's ID as
+  `Proc.Table.sample` lists it, and `Provenance.detect` records that ID. On
+  Windows `Unix.getpid` returns a handle to the process instead.
 - `Munin_sys.Stat.Gpu.sample` reads GPU load, memory, temperature and power:
   amdgpu's sysfs files and NVIDIA's kernel driver (load and memory, through
   `Rig_nv_nvidia.usage`) on Linux, IOKit's accelerators on macOS, with no

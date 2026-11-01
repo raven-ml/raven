@@ -189,16 +189,22 @@ let test_proc_self =
   greater ~msg:"rss_bytes" int64 ~than:0L p.rss_bytes;
   at_least ~msg:"vsize_bytes" int64 ~than:p.rss_bytes p.vsize_bytes
 
-(* This process is in the table, named and resident, whatever user owns the
-   others. *)
+(* This process is in the table by its ID, named and resident, whatever user
+   owns the others. *)
 let test_proc_table =
   reads "Proc.Table.sample" Munin_sys.Stat.Proc.Table.sample @@ fun ps ->
-  let me = Unix.getpid () in
+  let me = Munin_sys.Stat.Proc.Self.pid () in
   let pid (p : Munin_sys.Stat.Proc.Table.t) = p.pid in
   mem int me (List.map pid ps);
   let p = List.find (fun p -> pid p = me) ps in
   not_equal ~msg:"name" string "" p.name;
   greater ~msg:"resident_size" int64 ~than:0L p.resident_size
+
+(* A run's provenance names this process as the process table does. *)
+let test_provenance_pid =
+  test "Provenance.detect gives the process ID the table lists" @@ fun () ->
+  let p = Provenance.detect ~cwd:(Filename.get_temp_dir_name ()) () in
+  equal int (Munin_sys.Stat.Proc.Self.pid ()) p.pid
 
 let test_loadavg =
   unread_on_windows "loadavg" Munin_sys.Stat.loadavg @@ fun (l1, l5, l15) ->
@@ -332,9 +338,10 @@ let gpu_keys gs =
 
 (* The monitor defines a GPU's metric for each value that its samples have:
    every value a sample before and one after the monitor ran both have, and
-   none that neither has. *)
+   none that neither has. Windows has no sample: [Gpu.sample] raises there. *)
 let test_gpu_monitor =
   test "the monitor defines the GPU metrics its samples have" @@ fun () ->
+  let gpus () = if Sys.win32 then [] else gpus () in
   let before = gpus () in
   if before = [] then skip ~reason:"the machine has no GPU munin reads" ();
   with_temp_dir @@ fun root ->
@@ -401,6 +408,7 @@ let () =
              test_partitions;
              test_proc_self;
              test_proc_table;
+             test_provenance_pid;
              test_loadavg;
              test_uptime;
            ];

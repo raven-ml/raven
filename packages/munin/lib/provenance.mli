@@ -14,7 +14,9 @@ type t = {
   command : string list;  (** Command line that started the run. *)
   cwd : string;  (** Working directory at run start. *)
   hostname : string option;  (** Machine hostname. *)
-  pid : int;  (** Process identifier. *)
+  pid : int;
+      (** Process identifier, on Windows the ID Windows assigns, which
+          [Unix.getpid] does not return. *)
   git_commit : string option;  (** Git HEAD commit hash. *)
   git_dirty : bool option;  (** Whether the working tree was dirty. *)
   env : (string * string) list;  (** Captured environment variables. *)

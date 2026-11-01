@@ -322,6 +322,11 @@ module Proc : sig
     }
     (** Computed process statistics. *)
 
+    val pid : unit -> int
+    (** [pid ()] is the ID of the current process, as {!Table} lists it. On
+        Windows it is the ID Windows assigns, which [Unix.getpid] does not
+        return: it returns a handle to the process. *)
+
     val sample : unit -> t
     (** [sample ()] returns raw CPU times and memory usage for the current
         process.
@@ -351,7 +356,8 @@ module Proc : sig
   (** Process table statistics. *)
   module Table : sig
     type t = {
-      pid : int;  (** Process ID. *)
+      pid : int;
+          (** Process ID, the current process's being {!Self.pid}'s. *)
       ppid : int;  (** Parent process ID. *)
       name : string;  (** Process name (comm). *)
       cmdline : string;

@@ -26,13 +26,15 @@ let detect_git_dirty cwd =
   | None -> None
   | Some output -> Some (output <> "")
 
+external getpid : unit -> int = "caml_munin_getpid"
+
 let detect ?(capture_env = []) ?cwd () =
   let cwd = Option.value cwd ~default:(Sys.getcwd ()) in
   {
     command = Array.to_list Sys.argv;
     cwd;
     hostname = Some (Unix.gethostname ());
-    pid = Unix.getpid ();
+    pid = getpid ();
     git_commit = detect_git_commit cwd;
     git_dirty = detect_git_dirty cwd;
     env =

@@ -79,6 +79,8 @@ external c_proc_table : unit -> (int * raw_proc_info) array
 
 external c_statvfs : string -> raw_statvfs = "caml_sysstat_statvfs"
 external c_proc_self_mem : unit -> raw_self_mem = "caml_sysstat_proc_self_mem"
+(* Core munin's, which Provenance.detect reads. *)
+external c_getpid : unit -> int = "caml_munin_getpid"
 external c_get_timebase : unit -> raw_timebase = "caml_sysstat_get_timebase"
 
 external c_getmounts : unit -> (string * string * string) array
@@ -906,6 +908,8 @@ module Proc = struct
     }
 
     type stats = { cpu_percent : float; rss_bytes : int64; vsize_bytes : int64 }
+
+    let pid = c_getpid
 
     let read_proc_stat_tail (path : string) : string list option =
       try
