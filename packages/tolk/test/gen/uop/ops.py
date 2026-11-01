@@ -84,9 +84,8 @@ def pow_overflows(x, y):
 
 def alu_rows():
     rows = []
-    def row(op, dt, operands, truncate=True):
-        rows.append((str(op), repr(dt), values(operands), repr(truncate),
-                     value(attempt(exec_alu, op, dt, list(operands), truncate_output=truncate))))
+    def row(op, dt, operands):
+        rows.append((str(op), repr(dt), values(operands), value(attempt(exec_alu, op, dt, list(operands)))))
     for dt in INT_DTYPES:
         for op in INT_BINARY:
             for pair in INT_PAIRS: row(op, dtypes.bool if op in COMPARISONS else dt, pair)
@@ -154,18 +153,13 @@ def alu_rows():
                              (Ops.SQRT, dtypes.float, (Invalid,)), (Ops.ADD, dtypes.int32, (1,)),
                              (Ops.WHERE, dtypes.int32, (True, 1))]:
         row(op, dt, operands)
-    # without truncation, the exact value
-    for op, dt, pair in [(Ops.ADD, dtypes.uint8, (250, 250)), (Ops.MUL, dtypes.int32, (2**31 - 1, 2)),
-                         (Ops.NEG, dtypes.uint32, (1,)), (Ops.ADD, dtypes.float, (0.1, 0.2)),
-                         (Ops.RECIPROCAL, dtypes.half, (3.0,))]:
-        row(op, dt, pair, truncate=False)
     return rows
 
 
 @table
 def exec_alu_values():
     # a comparison's rows repeat across the dtypes of its operands
-    return ["op", "dtype", "operands", "truncate", "result"], list(dict.fromkeys(alu_rows()))
+    return ["op", "dtype", "operands", "result"], list(dict.fromkeys(alu_rows()))
 
 
 # Bounds

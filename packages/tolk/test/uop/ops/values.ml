@@ -7,11 +7,6 @@ open Common
 
 let str pp x = Format.asprintf "%a" pp x
 
-let bool_cell = function
-  | "True" -> true
-  | "False" -> false
-  | s -> invalid_arg s
-
 (* exec_alu *)
 
 (* The goldens hold correctly rounded values, and tolk computes these
@@ -34,11 +29,10 @@ let within_ulp =
 
 let alu_row cell =
   let o = op_of_cell (cell "op") and dt = dtype_of_cell (cell "dtype") in
-  let args = consts_of_cell (cell "operands")
-  and truncate_output = bool_cell (cell "truncate") in
+  let args = consts_of_cell (cell "operands") in
   let w = if List.exists (Op.equal o) host_libm then within_ulp else const in
   expect w const_of_cell (cell "result") (fun () ->
-      Ops.exec_alu ~truncate_output o dt args)
+      Ops.exec_alu o dt args)
 
 let alu dt o args = Ops.exec_alu o dt args
 let exact dt o args = Ops.exec_alu ~truncate_output:false o dt args
@@ -75,7 +69,7 @@ let exec_alu =
   group "exec_alu"
     [
       Golden.cases "exec_alu_values.golden"
-        ~key:[ "op"; "dtype"; "operands"; "truncate" ]
+        ~key:[ "op"; "dtype"; "operands" ]
         alu_row;
       test
         "max is its second operand only if that is greater, so a NaN wins first"
