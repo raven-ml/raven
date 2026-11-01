@@ -430,6 +430,8 @@ let released_buffer () =
   wait t (submit t [| f |]);
   await_release t.d w
 
+(* rig stops a lost device only at its close: until then the driver's sleep
+   raises the failure it kept, and from then on it refuses. *)
 let failing_fill () =
   S.with_ @@ fun s ->
   let t = dev_of s in
@@ -440,9 +442,10 @@ let failing_fill () =
   raises_match
     (function Rig.Lost (_, w) -> String.equal w why | _ -> false)
     (fun () -> submit t [| ok; S.failing 7 |]);
-  raises (Invalid_argument "Rig_metal.sleep: the device stopped") (fun () ->
-      Rig_metal.sleep t.g ~seen:reached ~still_ms:10);
+  let sleep () = Rig_metal.sleep t.g ~seen:reached ~still_ms:10 in
+  raises (Rig_metal.Fault why) sleep;
   S.close s;
+  raises (Invalid_argument "Rig_metal.sleep: the device stopped") sleep;
   await_word t.d (reached + 1)
 
 let work =
