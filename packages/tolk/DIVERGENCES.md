@@ -1693,14 +1693,13 @@ does the same.
   its rules), `:70` (the sources an INDEX's ranges reach),
   `:130` and `:138` (`pm_apply_rangeify`) and `:223` (`run_rangeify`'s
   consumer ranges); `schedule/prepare.py:65` (`_mop_index`), `:76`
-  (`pm_mops`), `:99-108` (`fix_store_hazard`) and `:281-283`
-  (`prepare_rangeify`).
+  (`pm_mops`) and `:261-263` (`prepare_rangeify`).
 - **tolk:** `Indexing.storage`, `Indexing.is_gather`,
   `Indexing.realize_gathered`, `Indexing.data_srcs`, `Indexing.convert_gather`
   and its rule in `Indexing.pm_apply_rangeify`, and
   `Indexing.assign_ranges`'s consumer ranges of a gather;
-  `Prepare.move_index`, `Prepare.mops`, `Prepare.pm_tensor_mops` and
-  `Prepare.fix_store_hazard`'s `reorders`; the same rules in
+  `Prepare.move_index`, `Prepare.mops` and `Prepare.pm_tensor_mops`; the
+  same rules in
   `test/gen/tinygrad.patch`, which the goldens are recorded with.
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
@@ -1717,9 +1716,6 @@ does the same.
   - in the tensor graph, prepare's movement rules leave the gather whole,
     since `L`'s shape would multiply the movement's index; `pm_mops`, which
     kernels use with vector indices, is tinygrad's;
-  - a store whose value gathers from its destination's storage materialises
-    the value first, as for a permutation; the index, and an index by
-    scalars, read the destination in place;
   - refused: a gather by several indices (rune emits one).
   The index is in range: rune clamps it and selects `0` where it was not.
 - **Reason:** (b): rune's gather lowering (`Lower_index`) emits this INDEX
@@ -4166,7 +4162,11 @@ does.
   Tensor([1., 2., 3.]).contiguous().realize(); b = a * 2; a.assign(a + 1);
   (b + (a * 3).contiguous()).tolist()` gives `[10, 15, 20]` for `[8, 13,
   18]`; `test/runtime/test_assign.py::TestAssignOrdering::
-  test_war_reader_already_depends_on_write` accepts the wrong value.
+  test_war_reader_already_depends_on_write` states the right value as an
+  expected failure. Its store hazard check (`schedule/rangeify.py:190-192`,
+  `fix_store_hazard`) stages a store's value that reads the store's own
+  destination at another index; the kernel here stores elsewhere, so the
+  check does not reach it.
 - **tolk:** `Schedule.copy_state`, `Schedule.copy_before_overwrites` and
   `Schedule.schedule`; `test/gen/tinygrad.patch`, which
   makes tinygrad copy the same way before the goldens are generated.

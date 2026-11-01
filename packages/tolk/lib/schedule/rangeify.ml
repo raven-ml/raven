@@ -474,12 +474,28 @@ let limit_bufs ctx root =
       in
       Some (replace root ~src:(List.map each (src root)))
 
+(* A store whose value reads its destination at another index than the one it
+   writes stores a stage of the value: the store would overwrite elements the
+   value reads. A stage or a store behind an [After] is read whole already. *)
+let fix_store_hazard ctx dst value =
+  let gate u = not (op u = Op.Stage || op u = Op.After) in
+  let at = get_idx (nth dst 1) in
+  let elsewhere u =
+    op u = Op.Index && buf_uop u == buf_uop dst && get_idx (nth u 1) != at
+  in
+  if List.exists elsewhere (toposort ~calls:Skip ~gate value) then
+    Some (store dst (stage ctx value))
+  else None
+
 let pm_limit_bufs =
   Pattern_matcher.v
     (fun () -> [
       rule_ctx
         (Upat.v ~op:(Op.Set.union Op.Set.binary Op.Set.ternary) ~name:"root" ())
         (fun ctx m -> limit_bufs ctx (m "root"));
+      rule_ctx
+        (Upat.op Op.Store ~src:[ Upat.op Op.Index ~name:"dst"; Upat.var "src" ])
+        (fun ctx m -> fix_store_hazard ctx (m "dst") (m "src"));
     ])
 
 (* Buffers *)

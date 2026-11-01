@@ -985,9 +985,7 @@ let earliest =
 
 (* [written n] is [n] stores in sequence, each into storage of its own made
    after the value it stores, which reads the storage the previous store wrote.
-   Each store asks whether its value reads its destination: a value built before
-   its destination cannot. Chains of other lengths store into other slots, and
-   share no node. *)
+   Chains of other lengths store into other slots, and share no node. *)
 let written n =
   let rec link prev k =
     if k > n then prev

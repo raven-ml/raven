@@ -70,10 +70,7 @@ val prepare_rangeify : Ops.t -> Ops.t
           any other stores its source into new storage on its device;
         - a store of a reshape into a reshape of the same shape stores the
           sources; a store across devices first materialises its value on its
-          own device; a store whose value reads its destination through a
-          permutation, a gather's gathered source or, when the destination
-          is itself shrunk, a shrink materialises the value first;
-          the second of two equal stores into the same storage is dropped, and
+          own device; the second of two equal stores into the same storage is dropped, and
           so is a store of a storage's contents into itself; a store into a
           bitcast of storage stores the value bitcast to the storage's type;
         - a bitcast between types of different sizes is shifts and masks on

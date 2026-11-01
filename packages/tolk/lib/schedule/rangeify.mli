@@ -54,7 +54,11 @@ val get_kernel_graph : Ops.t -> Ops.t
      }
      {- when a kernel may access at most [n] buffers (the setting
         {!Setting.max_kernel_buffers}, if not [0]), an operation that reads [n]
-        buffers or more stores its elementwise sources first;
+        buffers or more stores its elementwise sources first; and a store
+        whose value reads its destination's storage at another index than the
+        one it writes, other than through a stage or an {!Op.After}, stores
+        its value first, since the store would overwrite elements the value
+        reads;
      }
      {- each stage becomes a store into new storage ({!Op.Alloc}) of its
         committed type ({!Ops.commit_dtype}), closed by an {!Op.End} over its

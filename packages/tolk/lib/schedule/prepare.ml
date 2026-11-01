@@ -187,50 +187,6 @@ let pm_tensor_mops =
 
 (* A walk for store hazards stops where values are materialised: copies, stages,
    and the afters of the stores they are lowered to. *)
-let store_hazard_boundary s =
-  match op s with
-  | Op.Copy | Op.Stage -> false
-  | Op.After ->
-      not
-        (List.exists
-           (fun d -> op d = Op.Store && base (nth d 0) == base (nth s 0))
-           (List.tl (src s)))
-  | _ -> true
-
-let fix_store_hazard target src =
-  let base = base target in
-  if not (reaches src base) then None
-  else
-    (* A permute reorders indices, and a shrink can overlap when the
-       destination is shrunk too, above its storage: a shrink of an earlier
-       store into it is none. *)
-    let shrinks u = op u = Op.Shrink in
-    let unsafe =
-      Op.Permute
-      ::
-      (if List.exists shrinks (toposort ~calls:Skip ~gate:(fun u -> u != base) target)
-       then [ Op.Shrink ]
-       else [])
-    in
-    (* The destination's own shrink, under its reshapes, reads in place. *)
-    let rec under_reshapes v = if op v = Op.Reshape then under_reshapes (nth v 0) else v in
-    let view = under_reshapes target in
-    let reaches_base = Tbl.create 16 in
-    let reached c = c == base || Tbl.mem reaches_base c in
-    let hazard s =
-      let r = List.exists reached (Ops.src s) in
-      if r then Tbl.replace reaches_base s ();
-      (* A gather reorders through its source; its index reads in place. *)
-      let reorders =
-        List.mem (op s) unsafe || (Indexing.is_gather s && reached (nth s 0))
-      in
-      r && reorders && not (s == view && op s = Op.Shrink)
-    in
-    if
-      List.exists hazard (toposort ~calls:Skip ~gate:store_hazard_boundary src)
-    then Some (store target (contiguous src))
-    else None
-
 let pp_shape ppf s =
   Format.fprintf ppf "(%a%s)"
     (Format.pp_print_list
@@ -566,10 +522,6 @@ let earliest_rewrites =
          rule
            (Upat.op Op.Store ~src:[ var "dest"; var "src" ])
            (fun m -> materialize_cross_device_src (m "dest") (m "src"));
-         (* A value that reads its destination is materialised first. *)
-         rule
-           (Upat.op Op.Store ~src:[ var "target"; var "src" ])
-           (fun m -> fix_store_hazard (m "target") (m "src"));
          (* Two stores of the same value to the same place are one. *)
          rule
            (Upat.after
