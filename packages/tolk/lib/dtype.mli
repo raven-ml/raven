@@ -376,18 +376,17 @@ val least_upper_float : t -> t
 
 val can_lossless_cast : t -> t -> bool
 (** [can_lossless_cast d0 d1] is [true] iff a cast from [d0] to [d1] is known to
-    keep every value, that is iff [d0] is [d1] or {!Bool}, or [d1] is:
-    - {!Float64} and [d0] is a float of known width other than {!Float64}, or an
-      integer of 32 bits or fewer;
-    - {!Float32} and [d0] is {!Float16}, {!Bfloat16}, an 8-bit float, or an
-      integer of 16 bits or fewer;
-    - {!Float16} and [d0] is an 8-bit float, {!Int8} or {!Uint8};
-    - an unsigned integer and [d0] a narrower unsigned integer;
-    - a signed integer and [d0] a narrower integer;
-    - {!Weak_int} and [d0] is in {!ints}.
+    keep every value, that is iff [d0] is [d1] or {!Bool}, or:
+    - [d1] is an integer, weak included, and [d0] an integer whose {!min} and
+      {!max} lie within [d1]'s;
+    - [d1] is a float of known width and [d0] an integer of [b] bits, less one
+      for a signed one, with [b] at most one more than [d1]'s mantissa bits
+      ({!finfo});
+    - [d1] and [d0] are floats of known width, and [d0] has no more exponent
+      bits and no more mantissa bits than [d1], and fewer of one.
 
-    It is [false] for some casts that keep every value, such as from an 8-bit
-    float to {!Bfloat16}. *)
+    It is [false] between two floats of the same widths, such as
+    {!Fp8e4m3} and {!Fp8e4m3fnuz}. *)
 
 (** {1:casts Casts} *)
 

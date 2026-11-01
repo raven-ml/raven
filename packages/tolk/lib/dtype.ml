@@ -840,23 +840,17 @@ let least_upper_float dt =
   else least_upper [ dt; default_float () ]
 
 let can_lossless_cast d0 d1 =
-  d0 = d1 || d0 = Bool
-  ||
-  match d1 with
-  | Weak_int -> List.mem d0 ints
-  | Float64 ->
-      List.mem d0
-        ([ Float32; Float16; Bfloat16 ]
-        @ fp8s
-        @ [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ])
-  | Float32 ->
-      List.mem d0 ([ Float16; Bfloat16 ] @ fp8s @ [ Uint16; Uint8; Int16; Int8 ])
-  | Float16 -> List.mem d0 (fp8s @ [ Uint8; Int8 ])
-  | Uint64 -> List.mem d0 [ Uint32; Uint16; Uint8 ]
-  | Uint32 -> List.mem d0 [ Uint16; Uint8 ]
-  | Uint16 -> List.mem d0 [ Uint8 ]
-  | Int64 -> List.mem d0 [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
-  | Int32 -> List.mem d0 [ Uint16; Uint8; Int16; Int8 ]
-  | Int16 -> List.mem d0 [ Uint8; Int8 ]
-  | _ -> false
+  if d0 = d1 || d0 = Bool then true
+  else if is_int d1 then
+    is_int d0
+    && Value.( <= ) (min d1) (min d0)
+    && Value.( <= ) (max d0) (max d1)
+  else if not (List.mem d1 floats) then false
+  else
+    let e1, m1 = finfo d1 in
+    if is_int d0 then bitsize d0 - Bool.to_int (List.mem d0 sints) <= m1 + 1
+    else if not (List.mem d0 floats) then false
+    else
+      let e0, m0 = finfo d0 in
+      e0 <= e1 && m0 <= m1 && (e0, m0) <> (e1, m1)
 
