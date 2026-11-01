@@ -57,6 +57,7 @@ module Support : sig
   type t =
     | Real  (** The real numbers. *)
     | Greater of float  (** The reals above a bound, exclusive. *)
+    | Less of float  (** The reals below a bound, exclusive. *)
     | Interval of float * float  (** The reals between two bounds, exclusive. *)
     | Simplex of int  (** Vectors of [n] positive components that sum to one. *)
     | Ordered  (** Vectors whose components strictly increase. *)
@@ -74,7 +75,8 @@ module Support : sig
       equal arguments, floats compared with [Float.equal]. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp ppf s] formats [s] as a set: [(-inf, inf)], [(0, inf)], [(0, 1)],
+  (** [pp ppf s] formats [s] as a set: [(-inf, inf)], [(0, inf)], [(-inf, 0)],
+      [(0, 1)],
       [{0, 1, 2, ...}], [{0, 1, ..., 10}], [{false, true}], or a phrase such as
       [simplex of 3]. *)
 end
@@ -118,6 +120,10 @@ module Bij : sig
 
   val greater : low:(float, 'f, 'd) Nx.t -> ('f, 'd) t
   (** [greater ~low] maps [u] to [low + exp u], onto [(low, inf)]. [low]
+      broadcasts against the coordinates. *)
+
+  val less : high:(float, 'f, 'd) Nx.t -> ('f, 'd) t
+  (** [less ~high] maps [u] to [high - exp u], onto [(-inf, high)]. [high]
       broadcasts against the coordinates. *)
 
   val interval : low:(float, 'f, 'd) Nx.t -> high:(float, 'f, 'd) Nx.t -> ('f, 'd) t

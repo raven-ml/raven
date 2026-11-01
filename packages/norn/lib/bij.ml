@@ -105,6 +105,7 @@ let exp =
         match s with
         | Support.Greater a -> Support.Greater (Float.exp a)
         | Support.Interval (a, b) -> Support.Interval (Float.exp a, Float.exp b)
+        | Support.Less b -> Support.Interval (0., Float.exp b)
         | _ -> Support.Greater 0.);
     bounds = (fun lh -> monotone Nx.exp lh);
     forward;
@@ -126,10 +127,35 @@ let greater ~low =
     | Support.Greater a -> Support.Greater (lowest low +. Float.exp a)
     | Support.Interval (a, b) ->
         Support.Interval (lowest low +. Float.exp a, highest low +. Float.exp b)
+    | Support.Less b -> Support.Interval (lowest low, highest low +. Float.exp b)
     | _ -> Support.Greater (lowest low)
   in
   let bounds = monotone (fun x -> Nx.add low (Nx.exp x)) in
   { name = "greater"; image; bounds; forward; inverse; shape = Fun.id }
+
+(* [high - exp u], the mirror of [greater]: decreasing, so an image's bounds
+   swap. *)
+let less ~high =
+  let forward u =
+    let x = Nx.sub high (Nx.exp u) in
+    let below = Nx.less x high in
+    let ok = Nx.logical_and below (Nx.isfinite x) in
+    let x = finite_within (Nx.where below x (down high)) in
+    (x, saturate ok u)
+  in
+  let inverse x = Nx.log (Nx.sub high x) in
+  let image s _ =
+    match s with
+    | Support.Greater a -> Support.Less (highest high -. Float.exp a)
+    | Support.Interval (a, b) ->
+        let lo = lowest high -. Float.exp b in
+        Support.Interval (lo, highest high -. Float.exp a)
+    | Support.Less b ->
+        Support.Interval (lowest high -. Float.exp b, highest high)
+    | _ -> Support.Less (highest high)
+  in
+  let bounds (l, h) = (Nx.sub high (Nx.exp h), Nx.sub high (Nx.exp l)) in
+  { name = "less"; image; bounds; forward; inverse; shape = Fun.id }
 
 let interval ~low ~high =
   let forward u =
@@ -156,6 +182,7 @@ let interval ~low ~high =
     match s with
     | Support.Greater a -> Support.Interval (lowest (at a), highest high)
     | Support.Interval (a, b) -> Support.Interval (lowest (at a), highest (at b))
+    | Support.Less b -> Support.Interval (lowest low, highest (at b))
     | _ -> Support.Interval (lowest low, highest high)
   in
   let bounds =
@@ -173,11 +200,14 @@ let affine ~loc ~scale =
   let image s _ =
     (* A bound moves with a scalar location and scale read on the host. *)
     match (s, Nx.numel loc, Nx.numel scale) with
-    | (Support.Greater _ | Support.Interval _), 1, 1 -> (
+    | (Support.Greater _ | Support.Less _ | Support.Interval _), 1, 1 -> (
         let l = lowest loc and k = lowest scale in
         let at x = l +. (k *. x) in
         match s with
         | Support.Greater a when k > 0. -> Support.Greater (at a)
+        | Support.Greater a when k < 0. -> Support.Less (at a)
+        | Support.Less a when k > 0. -> Support.Less (at a)
+        | Support.Less a when k < 0. -> Support.Greater (at a)
         | Support.Interval (a, b) when k > 0. -> Support.Interval (at a, at b)
         | Support.Interval (a, b) when k < 0. -> Support.Interval (at b, at a)
         | _ -> Support.Real)

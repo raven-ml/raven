@@ -6,6 +6,7 @@
 type t =
   | Real
   | Greater of float
+  | Less of float
   | Interval of float * float
   | Simplex of int
   | Ordered
@@ -19,14 +20,14 @@ let equal s s' =
   match (s, s') with
   | Real, Real | Ordered, Ordered | Sum_to_zero, Sum_to_zero -> true
   | Boolean, Boolean -> true
-  | Greater a, Greater a' -> Float.equal a a'
+  | Greater a, Greater a' | Less a, Less a' -> Float.equal a a'
   | Interval (a, b), Interval (a', b') -> Float.equal a a' && Float.equal b b'
   | Simplex n, Simplex n' | Correlation_cholesky n, Correlation_cholesky n' ->
       Int.equal n n'
   | Integers_from n, Integers_from n' -> Int.equal n n'
   | Integer_interval (a, b), Integer_interval (a', b') ->
       Int.equal a a' && Int.equal b b'
-  | ( ( Real | Greater _ | Interval _ | Simplex _ | Ordered
+  | ( ( Real | Greater _ | Less _ | Interval _ | Simplex _ | Ordered
       | Correlation_cholesky _ | Sum_to_zero | Integers_from _
       | Integer_interval _ | Boolean ),
       _ ) ->
@@ -39,6 +40,7 @@ let pp_bound ppf x =
 let pp ppf = function
   | Real -> Format.pp_print_string ppf "(-inf, inf)"
   | Greater a -> Format.fprintf ppf "(%a, inf)" pp_bound a
+  | Less a -> Format.fprintf ppf "(-inf, %a)" pp_bound a
   | Interval (a, b) -> Format.fprintf ppf "(%a, %a)" pp_bound a pp_bound b
   | Simplex n -> Format.fprintf ppf "simplex of %d" n
   | Ordered -> Format.pp_print_string ppf "ordered vectors"

@@ -64,6 +64,12 @@ let cases (type f) (dt : (float, f) Nx.dtype) : f case list =
       inside = (fun ~tol:_ -> all (fun x -> x > low && Float.is_finite x));
     };
     {
+      name = "less";
+      b = B.less ~high:(c high);
+      dim = 3;
+      inside = (fun ~tol:_ -> all (fun x -> x < high && Float.is_finite x));
+    };
+    {
       name = "interval";
       b = B.interval ~low:(c low) ~high:(c high);
       dim = 3;

@@ -931,9 +931,11 @@ let support_of values lo hi =
   | Counts when Float.is_finite hi ->
       Norn.Support.Integer_interval (truncate lo, truncate hi)
   | Counts -> Norn.Support.Integers_from (truncate lo)
-  | Reals when not (Float.is_finite lo) -> Norn.Support.Real
-  | Reals when Float.is_finite hi -> Norn.Support.Interval (lo, hi)
-  | Reals -> Norn.Support.Greater lo
+  | Reals when Float.is_finite lo && Float.is_finite hi ->
+      Norn.Support.Interval (lo, hi)
+  | Reals when Float.is_finite lo -> Norn.Support.Greater lo
+  | Reals when Float.is_finite hi -> Norn.Support.Less hi
+  | Reals -> Norn.Support.Real
 
 (* [no_start m context terms data] refuses a start whose last candidate's terms
    [data] name no finite density. *)

@@ -799,7 +799,27 @@ let normal ~loc ~scale =
       Nx.add_s (Nx.mul_s (Nx.square z) (-0.5)) (-.half_log_2pi))
     ~draw:Noise.normal ~quantile:Nx.ndtri ()
 
-let cauchy_quantile p = Nx.tan (Nx.mul_s (Nx.sub_s p 0.5) Float.pi)
+(* [smaller p lower upper] is [lower p] up to [1/2] and [upper (1 - p)]
+   above, [1 - p] being exact there (Sterbenz): a quantile read from its
+   smaller tail, each arm reading [p] only where it is taken. *)
+let smaller p lower upper =
+  let low = Nx.less_equal p (const p 0.5) in
+  Nx.where low
+    (lower (inside low p 0.5))
+    (upper (Nx.where low (const p 0.5) (Nx.sub (const p 1.) p)))
+
+(* The Cauchy quantile below [1/2] is [-1 / tan (π p)] under [1/4], where
+   [tan (π (p - 1/2))] would meet the rounding of [p - 1/2] near its pole,
+   and that form from [1/4], where [p - 1/2] is exact; above, its mirror. *)
+let cauchy_lower p =
+  let deep = Nx.less p (const p 0.25) in
+  let lo = inside deep p 0.25 and hi = Nx.where deep (const p 0.5) p in
+  Nx.where deep
+    (Nx.neg (Nx.recip (Nx.tan (Nx.mul_s lo Float.pi))))
+    (Nx.tan (Nx.mul_s (Nx.sub_s hi 0.5) Float.pi))
+
+let cauchy_quantile p =
+  smaller p cauchy_lower (fun q -> Nx.neg (cauchy_lower q))
 
 let cauchy ~loc ~scale =
   location_scale "cauchy" ~loc ~scale
@@ -811,12 +831,8 @@ let cauchy ~loc ~scale =
    each arm reads [d] only where it is taken, so the arm at the median has
    its derivative [2] there, where [sign d |...|] would have [0]. *)
 let laplace_quantile p =
-  let d = Nx.sub_s p 0.5 in
-  let below = Nx.less d (const d 0.) in
-  let lo = inside below d 0. and hi = Nx.where below (const d 0.) d in
-  Nx.where below
-    (Nx.log1p (Nx.mul_s lo 2.))
-    (Nx.neg (Nx.log1p (Nx.mul_s hi (-2.))))
+  let lower p = Nx.log (Nx.mul_s p 2.) in
+  smaller p lower (fun q -> Nx.neg (lower q))
 
 let laplace ~loc ~scale =
   location_scale "laplace" ~loc ~scale
@@ -918,13 +934,27 @@ let half_normal ~scale =
            (Float.log 2. -. half_log_2pi))
         (Nx.log scale))
     ~draw:(fun k s -> Nx.mul scale (Nx.abs (Noise.normal k dt s)))
-    ~quantile:(fun p -> Nx.mul scale (Nx.ndtri (Nx.mul_s (Nx.add_s p 1.) 0.5)))
+    ~quantile:(fun p ->
+      (* [√2 erfinv p] keeps a small [p]'s digits, which [(1 + p) / 2]
+         rounds away; above [1/2], [-Φ⁻¹((1 - p) / 2)]. *)
+      Nx.mul scale
+        (smaller p
+           (fun p -> Nx.mul_s (Nx.erfinv p) (Float.sqrt 2.))
+           (fun q -> Nx.neg (Nx.ndtri (Nx.mul_s q 0.5)))))
     scale
 
 let half_cauchy ~scale =
   let family = "half_cauchy" in
   let dt = Nx.dtype scale in
-  let quantile p = Nx.mul scale (Nx.tan (Nx.mul_s p (Float.pi /. 2.))) in
+  (* [tan (π p / 2)] below [1/2] and [1 / tan (π (1 - p) / 2)] above, away
+     from the tangent's pole. *)
+  let quantile p =
+    let half q = Nx.mul_s q (Float.pi /. 2.) in
+    Nx.mul scale
+      (smaller p
+         (fun p -> Nx.tan (half p))
+         (fun q -> Nx.recip (Nx.tan (half q))))
+  in
   positive_family ~family ~closed:true
     ~params:[ param "scale" scale ]
     ~shape:(Nx.shape scale)
@@ -1496,6 +1526,7 @@ let hull_coords family d =
       | Support.Real -> Some Bij.identity
       | Support.Greater 0. -> Some Bij.exp
       | Support.Greater a -> Some (Bij.greater ~low:(c a))
+      | Support.Less a -> Some (Bij.less ~high:(c a))
       | Support.Interval (a, b) -> Some (Bij.interval ~low:(c a) ~high:(c b))
       | Support.Simplex _ -> Some Bij.simplex
       | Support.Ordered -> Some Bij.ordered

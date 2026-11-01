@@ -15,7 +15,8 @@ file would change.
 
 Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
 - `logpdf CASE X... V`: the log density (or mass) at the point X;
-- `ppf CASE P V`: the quantile at P;
+- `ppf CASE P V`: the quantile at P, the root of its smaller tail's
+  equation from mpmath;
 - `bin CASE LOW HIGH P`: the probability of [LOW, HIGH), the bins of a
   goodness-of-fit test, together of total probability one, each at least
   MIN_BIN;
@@ -301,6 +302,87 @@ def far_densities():
             v = gamma_density(a, s, mpf(1) / mpf(x)) - 2 * mpmath.log(mpf(x))
         out.append(f"density64 {family} {fmt(a)} {fmt(s)} {fmt(x)} {fmt(v)}\n")
     return list(dict.fromkeys(out))
+def tails(name, x):
+    """The CDF and survival of a QUANTILE case at x, from mpmath."""
+    x = mpf(x)
+    one = mpf(1)
+
+    def located(loc, scale, cdf):
+        z = (x - loc) / scale
+        return cdf(z), cdf(-z)
+
+    if name == "normal":
+        return located(mpf(0.5), mpf(2), mpmath.ncdf)
+    if name == "half_normal":
+        z = x / mpf(1.5)
+        return mpmath.erf(z / mpmath.sqrt(2)), mpmath.erfc(z / mpmath.sqrt(2))
+    if name == "lognormal":
+        z = (mpmath.log(x) - mpf(0.3)) / mpf(0.8)
+        return mpmath.ncdf(z), mpmath.ncdf(-z)
+    if name == "cauchy":
+        return located(mpf(1), mpf(0.5), lambda z: mpmath.atan2(1, -z) / mpmath.pi)
+    if name == "half_cauchy":
+        z = x / mpf(2)
+        return 2 * mpmath.atan(z) / mpmath.pi, 2 * mpmath.atan2(1, z) / mpmath.pi
+    if name == "laplace":
+        def cdf(z):
+            return mpmath.exp(z) / 2 if z < 0 else one - mpmath.exp(-z) / 2
+        return located(mpf(0), mpf(1.3), cdf)
+    if name == "logistic":
+        return located(mpf(2), mpf(0.4), lambda z: one / (one + mpmath.exp(-z)))
+    if name == "exponential":
+        return -mpmath.expm1(-mpf(1.7) * x), mpmath.exp(-mpf(1.7) * x)
+    if name in ("gamma", "gamma_small", "inverse_gamma"):
+        a, r = {"gamma": (2.5, 1.5), "gamma_small": (0.4, 0.8), "inverse_gamma": (3.0, 2.0)}[name]
+        a, r = mpf(a), mpf(r)
+        y = r * x if name != "inverse_gamma" else r / x
+        lo = mpmath.gammainc(a, 0, y, regularized=True)
+        hi = mpmath.gammainc(a, y, mpmath.inf, regularized=True)
+        return (lo, hi) if name != "inverse_gamma" else (hi, lo)
+    if name == "uniform":
+        return (x + 1) / 4, (3 - x) / 4
+    raise ValueError(name)
+
+
+def solve(tail, side, target, x0, low=None, high=None):
+    """The x where tail(x)[side] is target, the lower tail increasing in x
+    and the upper decreasing: bisection at 200 bits within [low, high],
+    their missing ends found by doubling away from x0."""
+    mp.prec = 200
+    below = lambda x: (tail(x)[0] < target) if side == 0 else (tail(x)[1] > target)
+    x0 = mpf(x0)
+    step = abs(x0) + 1
+    a = mpf(low) if low is not None else x0 - step
+    while low is None and below(a) is False:
+        step *= 2
+        a = x0 - step
+    step = abs(x0) + 1
+    b = mpf(high) if high is not None else x0 + step
+    while high is None and below(b):
+        step *= 2
+        b = x0 + step
+    for _ in range(400):
+        m = (a + b) / 2
+        if m == a or m == b:
+            break
+        if below(m):
+            a = m
+        else:
+            b = m
+    return (a + b) / 2
+
+
+def exact_ppf(name, d, p):
+    """The quantile at p, the root of its smaller tail's equation, from
+    mpmath, searched from SciPy's."""
+    side = 0 if p <= 0.5 else 1
+    low = 0.0 if name in POSITIVE else None
+    return solve(lambda x: tails(name, x), side, min(mpf(p), 1 - mpf(p)), d.ppf(p),
+                 low=low)
+
+
+POSITIVE = {"half_normal", "lognormal", "half_cauchy", "exponential", "gamma",
+            "gamma_small", "inverse_gamma"}
 
 
 def merge(bins):
@@ -338,8 +420,8 @@ def render():
         bins[name] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
     for name in QUANTILE:
         d, _ = SCALAR[name]
-        for p in [0.001, 0.1, 0.5, 0.9, 0.999]:
-            out.append(f"ppf {name} {fmt(p)} {fmt(d.ppf(p))}\n")
+        for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
+            out.append(f"ppf {name} {fmt(p)} {fmt(exact_ppf(name, d, p))}\n")
     for name, (d, xs, top) in DISCRETE.items():
         for x in xs:
             out.append(f"logpdf {name} {fmt(x)} {fmt(d.logpmf(x))}\n")

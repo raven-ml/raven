@@ -16,6 +16,8 @@ val exp : ('f, 'd) t
 
 val greater : low:(float, 'f, 'd) Nx.t -> ('f, 'd) t
 
+val less : high:(float, 'f, 'd) Nx.t -> ('f, 'd) t
+
 val interval : low:(float, 'f, 'd) Nx.t -> high:(float, 'f, 'd) Nx.t -> ('f, 'd) t
 
 val affine : loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ('f, 'd) t

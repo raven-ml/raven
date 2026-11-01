@@ -126,7 +126,7 @@ let densities =
        (lines "logpdf"))
 
 let quantiles =
-  group "quantile against SciPy"
+  group "quantile against mpmath"
     (List.map
        (fun l ->
          match l with

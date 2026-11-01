@@ -422,6 +422,19 @@ let refusals =
                  "site y has log density -inf: it is outside the support of \
                   uniform, (2, 3)") (fun () ->
               start (Nx.Rng.key 0) (f64 2.) (f64 3.) (f64 5.)));
+      test "a support bounded above is named as one" (fun () ->
+          let m =
+            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
+                let x = M.sample std in
+                let below = Norn.Bij.less ~high:(f64 2.) in
+                (x, M.sample (D.transform below (D.normal ~loc:x ~scale:(f64 1.)))))
+          in
+          raises_match
+            (Exn.invalid_arg
+               ~sub:
+                 "site y has log density -inf: it is outside the support of \
+                  transform, (-inf, 2)") (fun () ->
+              M.init m (f64 5.) ~chains:1 (Nx.Rng.key 0)));
     ]
 
 let coordinate_shapes =

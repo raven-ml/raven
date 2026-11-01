@@ -14,6 +14,8 @@ let all =
       Real;
       Greater 0.;
       Greater (-1.5);
+      Less 0.;
+      Less 2.5;
       Interval (0., 1.);
       Simplex 3;
       Ordered;
@@ -31,6 +33,7 @@ let printing =
       ("(-inf, inf)", S.Real);
       ("(0, inf)", S.Greater 0.);
       ("(-1.5, inf)", S.Greater (-1.5));
+      ("(-inf, 2.5)", S.Less 2.5);
       ("(0, 1)", S.Interval (0., 1.));
       ("{0, 1, 2, ...}", S.Integers_from 0);
       ("{0, 1}", S.Integer_interval (0, 1));

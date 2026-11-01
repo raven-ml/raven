@@ -49,6 +49,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.quantile` of `Dist.cauchy`, `half_cauchy`, `half_normal` and `laplace`
+  keeps its digits in the tails: cauchy's at `p = 1e-12` was off by 1.4e-5.
+- Add `Support.Less` and `Bij.less`, the reals below a bound. `Norn_model`
+  names such a support `(-inf, b)`, where it read as the reals.
 - `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta`, `Dist.dirichlet` and
   `Dist.student_t` compute their log densities in Loader's form, within a
   stated bound: a float32 gamma(1e7, 1e7) read 0 at 1 for 7.14.

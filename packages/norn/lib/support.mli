@@ -8,6 +8,7 @@
 type t =
   | Real
   | Greater of float
+  | Less of float
   | Interval of float * float
   | Simplex of int
   | Ordered
