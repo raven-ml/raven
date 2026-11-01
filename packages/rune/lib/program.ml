@@ -1698,6 +1698,59 @@ and prune p ~outputs =
   done;
   remade ~eqns:(Array.of_list !kept) ~outputs p
 
+(* A total and the sum of [f]'s additions to it in {!gathered}. *)
+type gathered =
+  | Gathered : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t ref -> gathered
+
+let gathered f =
+  let sums = ref [] in
+  (* A sum is of one total at one placement and shape: another is asked of
+     the collect around, which may refuse it. *)
+  let find : type v s d.
+      (v, s, d) total ->
+      d Nx.Placement.t ->
+      int array ->
+      (v, s, d) Nx.t ref option =
+   fun t p shape ->
+    List.find_map
+      (fun (Gathered (u, r)) : (v, s, d) Nx.t ref option ->
+        match same_total u (Nx.placement !r) t p with
+        | Some Type.Equal when Nx.shape !r = shape -> Some r
+        | _ -> None)
+      !sums
+  in
+  let effc (type a) (e : a Effect.t) :
+      ((a, _) Effect.Deep.continuation -> _) option =
+    match e with
+    | Running (t, f) ->
+        Some
+          (fun k ->
+            match find t f.placement (shape_of f) with
+            | Some r -> Effect.Deep.continue k (Some !r)
+            | None when Option.is_none (running t f) ->
+                Effect.Deep.continue k None
+            | None ->
+                let shape = shape_of f and zero = neg_zero f.dtype in
+                let r = ref (Nx.full_at f.placement f.dtype shape zero) in
+                sums := Gathered (t, r) :: !sums;
+                Effect.Deep.continue k (Some !r))
+    | Replace (t, x) -> (
+        match find t (Nx.placement x) (Nx.shape x) with
+        | Some r ->
+            Some
+              (fun k ->
+                r := x;
+                Effect.Deep.continue k ())
+        | None -> None)
+    | _ -> None
+  in
+  let reraise e =
+    Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+  in
+  let y = Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc } in
+  List.iter (fun (Gathered (t, r)) -> add_to t !r) (List.rev !sums);
+  y
+
 (* A total's running value, where a collect or a tracer answers for it. *)
 type seed = Seed : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> seed | Unseeded
 

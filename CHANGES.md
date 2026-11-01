@@ -330,6 +330,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `custom_jvp` tangent map run on values, under `grad` or `jvp` with no map
+  or traced function between, adds to a `Total` as one sum from `-0.`, as
+  `rune.mli` states and a traced rule does: its additions reached the total one
+  by one, which can round otherwise.
 - A `root`'s `linear_solve` run by a held lane, in an `iterate` whose lanes
   stop apart or a `switch` whose lanes take different branches, treats it as
   held: `lanes` of the map raises, its checks pass and a callback skips it.

@@ -1408,7 +1408,12 @@ module Rules = struct
     | Forward | Reverse when reverse && not tangible -> ys
     | Forward ->
         let ts = tangents c args in
-        let dys = if reverse then taped_map c d ts else d ts in
+        (* The tangent map's additions are one sum from -0, as where the rule
+           is traced. Outside the tape's check, which refuses a tangent. *)
+        let dys =
+          Program.gathered (fun () ->
+              if reverse then taped_map c d ts else d ts)
+        in
         tracks c ~name dys;
         with_tangents c ys dys
     | Reverse ->

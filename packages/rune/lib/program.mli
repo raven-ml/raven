@@ -765,6 +765,13 @@ val add_to : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.t -> unit
     tracer that answers for [t] ({!Running}) becomes its [Accumulate] with [x],
     and with none [Add] of [x] is performed. *)
 
+val gathered : (unit -> 'a) -> 'a
+(** [gathered f] is [f ()], with the additions [f] makes to each total that a
+    collect or tracer around answers for ({!Running}) summed from a negative
+    zero, and each sum then added to its total as one addition, in the order of
+    the totals' first additions. A custom_jvp tangent map's additions are made
+    so. Additions to other totals pass through. *)
+
 val added :
   lanes:int -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 (** [added ~lanes r x] is [r] plus each row of [x] over its first [lanes] axes,

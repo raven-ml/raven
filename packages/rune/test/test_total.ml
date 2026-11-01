@@ -1183,6 +1183,58 @@ let test_tangent_sign () =
   equal ~msg:"under jit" bits_t (tangent written)
     (tangent (Rune.jit' collected))
 
+(* A tangent map's additions are summed from -0 and that sum added as one
+   addition, with or without a map around. From 0.1 over [7.25] the tangent
+   map's [7.25] and [-6.25] added one after another round otherwise. *)
+let test_tangent_summed () =
+  let t = Total.make () in
+  let pair x =
+    Total.add t x;
+    Total.add t (Nx.sub (s 1.) x)
+  in
+  let f =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+        pair x;
+        (Nx.mul x x, fun dx ->
+           pair x;
+           Nx.mul (Nx.mul_s x 2.) dx))
+  in
+  let x = s 7.25 in
+  let expected =
+    let _, sum =
+      Total.collect t ~init:(s 0.1) (fun () ->
+          pair x;
+          Total.add t (Nx.add (Nx.add (zero ()) x) (Nx.sub (s 1.) x)))
+    in
+    bits sum
+  in
+  let collected g = bits (snd (Total.collect t ~init:(s 0.1) g)) in
+  equal ~msg:"under grad" bits_t expected
+    (collected (fun () -> ignore (Rune.grad' f x)));
+  equal ~msg:"under jvp" bits_t expected
+    (collected (fun () -> ignore (Rune.jvp' f x x)));
+  equal ~msg:"under grad of a map of one lane" bits_t expected
+    (collected (fun () ->
+         ignore (Rune.grad' (fun x -> Nx.sum (Rune.vmap' f x)) (v [| 7.25 |]))))
+
+(* A tangent map's additions of two shapes to one total: the one of another
+   shape than the collect's [init] is refused, naming both. *)
+let test_tangent_shapes () =
+  let t = Total.make () in
+  let f =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+        (x, fun dx ->
+           Total.add t (v [| 1.; 2.; 3. |]);
+           Total.add t (s 1.);
+           dx))
+  in
+  let refused d =
+    invalid ~sub:"Rune.Total.add: shape [], where the total's init has [3]"
+      (fun () -> Total.collect t ~init:(v [| 0.; 0.; 0. |]) d)
+  in
+  refused (fun () -> ignore (Rune.jvp' f (s 1.) (s 1.)));
+  refused (fun () -> ignore (Rune.grad' f (s 1.)))
+
 let () =
   exit
     (run "rune total"
@@ -1206,6 +1258,10 @@ let () =
          test "a jit takes the running value where it lies" test_jit_running;
          test "a jit adds in the order of each call's place" test_jit_mapped;
          test "a total's tangent keeps its sign" test_tangent_sign;
+         test "a tangent map's additions are one sum from -0"
+           test_tangent_summed;
+         test "a tangent map's addition of another shape raises"
+           test_tangent_shapes;
          test "a remat under a map adds once under reverse mode"
            test_remat_mapped;
          test "a jit adds once under maps a collect lies between"
