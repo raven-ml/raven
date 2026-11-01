@@ -18,6 +18,11 @@ val element : ('a, 'b, 'd) Nx.t -> string
 (** [element v] is the one element of [v], printed as {!Nx.Dtype.pp_value}
     prints it. *)
 
+val number : float -> string
+(** [number x] is [x] as {!Nx.Dtype.pp_value} prints a [float64]: the shortest
+    decimal that reads as it, the same on every system, where [Printf]'s [%g]
+    writes the C library's exponent, of three digits under mingw-w64. *)
+
 (** {1:arithmetic Arithmetic over chains} *)
 
 val column : (float, 'f, 'd) Nx.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t

@@ -577,7 +577,8 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   if max_depth < 1 then
     invalid_argf "%s: max_depth = %d is not positive" context max_depth;
   if not (accept > 0. && accept < 1.) then
-    invalid_argf "%s: accept = %g is not in (0, 1)" context accept;
+    invalid_argf "%s: accept = %s is not in (0, 1)" context
+      (Rows.number accept);
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
   let c = Rows.count context u position in
   let l, g = Rows.evaluate u lp position in

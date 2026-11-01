@@ -386,15 +386,19 @@ let columns s =
 
 (* Formatting *)
 
+(* Numbers to a count of decimals, as C's [%.*f] writes them where it rounds
+   once, the same text on every system. *)
+let fixed = Float_text.f
+
 let pp_finding ppf = function
   | Rhat_high { path; index; rhat } ->
-      Format.fprintf ppf "R-hat of %s is %.3f, above %.2f" (label path index)
-        rhat rhat_max
+      Format.fprintf ppf "R-hat of %s is %s, above %s" (label path index)
+        (fixed 3 rhat) (fixed 2 rhat_max)
   | Ess_low { path; index; bulk; tail } ->
       Format.fprintf ppf
-        "effective sample size of %s is %.0f in the bulk and %.0f in the \
-         tails, too few"
-        (label path index) bulk tail
+        "effective sample size of %s is %s in the bulk and %s in the tails, \
+         too few"
+        (label path index) (fixed 0 bulk) (fixed 0 tail)
   | Not_finite { path; index; count } ->
       Format.fprintf ppf "%s has %d draws that are not finite"
         (label path index) count
@@ -409,31 +413,33 @@ let pp_finding ppf = function
           (String.concat ", "
              (List.map
                 (fun (r : region) ->
-                  Printf.sprintf "%s (%+.1f sd)" (label r.path r.index) r.shift)
+                  let sign = if Float.sign_bit r.shift then "" else "+" in
+                  Printf.sprintf "%s (%s%s sd)" (label r.path r.index) sign
+                    (fixed 1 r.shift))
                 regions))
   | Saturated { count; total } ->
       Format.fprintf ppf "%d of %d transitions reached their maximum length"
         count total
   | Ebfmi_low { chain; ebfmi } ->
-      Format.fprintf ppf "E-BFMI of chain %d is %.2f, below %.1f" chain ebfmi
-        ebfmi_min
+      Format.fprintf ppf "E-BFMI of chain %d is %s, below %s" chain
+        (fixed 2 ebfmi) (fixed 1 ebfmi_min)
   | Pareto_k { khat; threshold } ->
       if Float.is_nan khat then
         Format.fprintf ppf
           "the weights have no Pareto k-hat: estimates from them are not judged"
       else
         Format.fprintf ppf
-          "Pareto k-hat of the weights is %.2f, above %.2f: estimates from \
-           them are unreliable"
-          khat threshold
+          "Pareto k-hat of the weights is %s, above %s: estimates from them \
+           are unreliable"
+          (fixed 2 khat) (fixed 2 threshold)
 
 let cell name x =
   if Float.is_nan x then "nan"
   else
     match name with
-    | "ess_bulk" | "ess_tail" | "ess" -> Printf.sprintf "%.0f" x
-    | "rhat" -> Printf.sprintf "%.2f" x
-    | _ -> Printf.sprintf "%.3g" x
+    | "ess_bulk" | "ess_tail" | "ess" -> fixed 0 x
+    | "rhat" -> fixed 2 x
+    | _ -> Float_text.g 3 x
 
 let pp ppf s =
   let names = List.map fst s.columns in

@@ -222,10 +222,16 @@ let stop z =
   else if code = temperature then Temperature (float z.reached)
   else Converged
 
+(* [f2 x] is [x] to two decimals, as C's [%.2f] writes it where it rounds
+   once, the same text on every system. *)
+let f2 = Float_text.f 2
+
 let pp ppf z =
-  Format.fprintf ppf "ln Z = %.2f ± %.2f, H = %.2f nats" (float z.log_evidence)
-    (float z.error) (float z.information);
+  Format.fprintf ppf "ln Z = %s ± %s, H = %s nats"
+    (f2 (float z.log_evidence))
+    (f2 (float z.error))
+    (f2 (float z.information));
   match stop z with
   | Converged -> ()
-  | Remaining r -> Format.fprintf ppf ", budget spent with %.2f nats left" r
-  | Temperature b -> Format.fprintf ppf ", budget spent at β = %.2f" b
+  | Remaining r -> Format.fprintf ppf ", budget spent with %s nats left" (f2 r)
+  | Temperature b -> Format.fprintf ppf ", budget spent at β = %s" (f2 b)

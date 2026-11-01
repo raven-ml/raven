@@ -472,6 +472,49 @@ let weighted_printing =
         the weights have no Pareto k-hat: estimates from them are not judged
         |})
 
+(* Cells print three significant digits, with an exponent of two digits past
+   five, the same on every system: the C library's [%.3g] writes 2e+006 under
+   mingw-w64. *)
+let exponent_printing =
+  test "a summary's cells print their exponents with two digits" (fun () ->
+      let w = weighted (vec [| 1e6; 3e6 |]) (vec [| 0.; 0. |]) in
+      expect (Format.asprintf "%a" S.pp (S.of_weighted Nx.Ptree.tensor w))
+      @@ __POS_OF__
+           {|
+                mean     sd     q5  median    q95      mcse  ess
+        value  2e+06  1e+06  1e+06   2e+06  3e+06  7.07e+05    2
+        the weights have no Pareto k-hat: estimates from them are not judged
+        |})
+
+(* A finding's numbers round once, ties to even, the same on every system:
+   msvcrt's [%.2f] writes 1.125 as 1.13. *)
+let finding_ties =
+  let root = Nx.Ptree.Path.root in
+  cases "a finding's numbers round ties to even" ~id:fst
+    [
+      ( "R-hat of value is 1.062, above 1.01",
+        S.Rhat_high { path = root; index = [||]; rhat = 1.0625 } );
+      ( "Pareto k-hat of the weights is 1.12, above 0.70: estimates from them \
+         are unreliable",
+        S.Pareto_k { khat = 1.125; threshold = 0.7 } );
+      ( "E-BFMI of chain 0 is 0.12, below 0.3",
+        S.Ebfmi_low { chain = 0; ebfmi = 0.125 } );
+      ( "1 of 2 transitions diverged; they gather at value (+0.2 sd), value \
+         (-0.2 sd)",
+        S.Divergent
+          {
+            count = 1;
+            total = 2;
+            regions =
+              [
+                { S.path = root; index = [||]; shift = 0.25 };
+                { S.path = root; index = [||]; shift = -0.25 };
+              ];
+          } );
+    ]
+  @@ fun (text, finding) ->
+  equal string text (Format.asprintf "%a" S.pp_finding finding)
+
 let () =
   exit
     (run "Norn.Summary"
@@ -479,5 +522,6 @@ let () =
          rows;
          findings;
          of_weighted;
-         group "pp" [ printing; weighted_printing ];
+         group "pp"
+           [ printing; weighted_printing; exponent_printing; finding_ties ];
        ])

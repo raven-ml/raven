@@ -942,14 +942,11 @@ let support_of values lo hi =
 let no_start m context (terms : (string * int array) list) (sites, factors) =
   let value t = Nx.item [] t in
   let parts =
-    List.map2
-      (fun (name, _) (t, _) -> Printf.sprintf "%s %g" name (value t))
-      terms sites
+    List.map2 (fun (name, _) (t, _) -> name ^ " " ^ element t) terms sites
   in
-  let factors = value factors in
   let parts =
-    if factors = 0. then parts
-    else parts @ [ Printf.sprintf "the factors %g" factors ]
+    if value factors = 0. then parts
+    else parts @ [ "the factors " ^ element factors ]
   in
   let rec first = function
     | [] -> ""
@@ -976,8 +973,8 @@ let no_start m context (terms : (string * int array) list) (sites, factors) =
                     (support_of l.values (value lo) (value hi))
               | None -> ""
           in
-          Printf.sprintf "; at the last, site %s has log density %g%s" name
-            (value t) why
+          Printf.sprintf "; at the last, site %s has log density %s%s" name
+            (element t) why
   in
   Invalid_argument
     (Printf.sprintf

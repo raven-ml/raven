@@ -79,7 +79,8 @@ let transition (type f) u lp k (s : (_, f, 'd) state) =
 let init u ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   let context = "Norn.Hmc.init" in
   if not (accept > 0. && accept < 1.) then
-    invalid_argf "%s: accept = %g is not in (0, 1)" context accept;
+    invalid_argf "%s: accept = %s is not in (0, 1)" context
+      (Rows.number accept);
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
   let c = Rows.count context u position in
   Rows.whole_chains context ~reads:"its chains share one step size and geometry" u position;

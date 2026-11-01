@@ -15,6 +15,8 @@ let float_leaf x = Nx.Dtype.is Float (Nx.dtype x)
 let element v =
   Format.asprintf "%a" (Nx.Dtype.pp_value (Nx.dtype v)) (Nx.item [] v)
 
+let number x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
+
 (* Arithmetic over chains
 
    Positions lead with the chain axis. A row operation acts on each chain: [dot]

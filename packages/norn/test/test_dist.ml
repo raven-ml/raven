@@ -772,7 +772,7 @@ let bijectors =
           let t =
             D.transform Norn.Bij.exp (D.uniform ~low:(f64 0.) ~high:(f64 1.))
           in
-          equal string (Printf.sprintf "(1, %g)" (Float.exp 1.)) (pp t);
+          equal string "(1, 2.718281828459045)" (pp t);
           equal string "(0, inf)"
             (pp
                (D.transform Norn.Bij.exp

@@ -52,6 +52,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Norn's messages and `Support.pp` write each float as the shortest decimal
+  that reads back; `Summary.pp`, `Summary.pp_finding` and `Evidence.pp` keep
+  their digits, rounded once, ties to even. The text is the same on every
+  system, where Windows wrote `2e+006`, and 1.125 to two decimals as `1.13`.
 - Eager `Nuts.step` allocates half the words and runs half the operations per
   leapfrog step: a leaf merges only where it completes a subtree. Compiled
   steps and builds measured faster, times pending. Draws are unchanged.

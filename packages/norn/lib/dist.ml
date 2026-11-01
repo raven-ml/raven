@@ -286,8 +286,8 @@ let stirling_terms dt cut =
   let eps = Prec.eps dt in
   let rec go k =
     if k = Array.length stirling then
-      invalid_argf "Norn.Dist: Stirling's series does not reach %g at %g" eps
-        cut
+      invalid_argf "Norn.Dist: Stirling's series does not reach %s at %s"
+        (Rows.number eps) (Rows.number cut)
     else
       let rel = stirling.(k) /. stirling.(0) in
       if rel /. (cut ** float_of_int (2 * k)) < eps /. 4. then k

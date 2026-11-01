@@ -207,7 +207,17 @@ let refusals =
             (fun () -> H.init t coupled (start 4)));
       test "an acceptance outside (0, 1) is refused" (fun () ->
           raises (Invalid_argument "Norn.Hmc.init: accept = 1 is not in (0, 1)")
-            (fun () -> H.init t ~accept:1. banana (start 2)));
+            (fun () -> H.init t ~accept:1. banana (start 2));
+          (* The shortest decimal that reads back, the same on every system:
+             the C library's [%g] wrote 1e+06, 1e+006 under mingw-w64. *)
+          raises
+            (Invalid_argument
+               "Norn.Hmc.init: accept = 1000000 is not in (0, 1)") (fun () ->
+              H.init t ~accept:1e6 banana (start 2));
+          raises
+            (Invalid_argument
+               "Norn.Hmc.init: accept = -4.58e-72 is not in (0, 1)")
+            (fun () -> H.init t ~accept:(-4.58e-72) banana (start 2)));
     ]
 
 (* Law 11: invariance. The banana's exact draws are [a] standard normal and [b =

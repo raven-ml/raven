@@ -244,9 +244,9 @@ let rank_uniformity u ~draws ranks =
             if not (Float.is_integer r && r >= 0. && r <= float_of_int draws)
             then
               invalid_argf
-                "Norn.Diag.rank_uniformity: %s: rank %g is not in 0, ..., %d"
+                "Norn.Diag.rank_uniformity: %s: rank %s is not in 0, ..., %d"
                 (Nx.Ptree.Path.to_string p)
-                r draws;
+                (Rows.number r) draws;
             for i = int_of_float r + 1 to draws do
               counts.(i - 1) <- counts.(i - 1) + 1
             done)

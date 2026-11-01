@@ -282,7 +282,8 @@ let init u ?batch ?(tolerance = 1e-3) ~budget ~prior ~likelihood live =
   if budget < 1 then
     invalid_argf "%s: budget = %d is not positive" context budget;
   if not (tolerance > 0.) then
-    invalid_argf "%s: tolerance = %g is not positive" context tolerance;
+    invalid_argf "%s: tolerance = %s is not positive" context
+      (Rows.number tolerance);
   let pl = prior live and ll = likelihood live in
   Rows.check_density context u prior live pl;
   Rows.check_density context u likelihood live ll;

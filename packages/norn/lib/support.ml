@@ -33,9 +33,10 @@ let equal s s' =
       _ ) ->
       false
 
-let pp_bound ppf x =
-  if Float.is_integer x && Float.abs x < 1e15 then Format.fprintf ppf "%.0f" x
-  else Format.fprintf ppf "%g" x
+(* The shortest decimal that reads as the bound, the same on every system:
+   [Printf]'s [%g] writes the C library's exponent, of three digits under
+   mingw-w64. *)
+let pp_bound = Nx.Dtype.pp_value Nx.float64
 
 let pp ppf = function
   | Real -> Format.pp_print_string ppf "(-inf, inf)"
